@@ -105,6 +105,12 @@ pub struct Runtime {
     /// Targeting, skills and combat (decision 0024 P2): the install's combat data and the
     /// plugin combat views.
     pub p2: crate::combat::CombatHub,
+    /// NPC windows (decision 0024 P3): their install names and facts, the plugin wallet
+    /// views' model, the windows on the game UI.
+    pub npc: crate::npc::NpcHub,
+    /// The quest journal (decision 0024 P3): the quest log, tracker, quest chat lines and
+    /// markers on the game UI.
+    pub quests: crate::quests::QuestHub,
     /// `--character-select`: the world session waits for the character screens.
     character_select: bool,
 }
@@ -324,6 +330,19 @@ impl Runtime {
             p1,
             load_p1: walker,
             p2,
+            npc: crate::npc::NpcHub::new(
+                args.open_panel
+                    .iter()
+                    .filter_map(|n| crate::npc::parse_npc_panel(n))
+                    .collect(),
+            ),
+            quests: crate::quests::QuestHub::new(
+                args.open_panel
+                    .iter()
+                    .filter_map(|n| crate::quests::parse_journal_panel(n))
+                    .collect(),
+            )
+            .with_icons(args.quest_icons),
             character_select: args.character_select,
         })
     }
@@ -484,6 +503,7 @@ impl Runtime {
                 self.plugins.attach_data(Arc::clone(&set));
                 if self.load_p1 {
                     self.p1.start_loading(root.clone());
+                    self.npc.start_refs(Arc::clone(&set));
                 }
                 self.status = DataStatus::Ready { root, stats };
                 self.archives = Some(set);
@@ -537,9 +557,15 @@ impl Runtime {
         {
             self.p2.set_data(&d);
         }
+        self.npc.poll(self.p1.data());
         if let Some(world) = &mut self.world {
             world.update(now);
             let changes = world.take_player_changes();
+            self.npc.after_events(
+                &changes,
+                world.player_state().wallet(),
+                self.plugins.manager_mut(),
+            );
             self.p1
                 .after_events(world.player_state(), changes, self.plugins.manager_mut());
             // The plugin combat views (`lua-plugin-api.md` §15.2), at the plugins' clock.

@@ -825,7 +825,7 @@ fn o8_routing() {
     );
 }
 
-/// §14.9 O10–O12 (revision 5, decision 0032 D3): no Combat-group step, trigger or input form
+/// §14.9 O10–O12 (revision 6, decision 0032 D3): no Combat-group step, trigger or input form
 /// in an overlay file, refused at the statement's first token.
 #[test]
 fn o10_o12_combat_group_is_not_in_the_overlay_subset() {

@@ -192,6 +192,16 @@ pub fn fill_choices_with(
     out
 }
 
+/// Shows `image` on element `k` once at the image's own size from `k`'s top-left corner
+/// (clipped to `k`'s box) instead of tiled over `k` (`ui-layout.md` §9.6 draws element
+/// images tiled at native size): a code-made child field of the image's size, as an
+/// [`super::IconImage::Layers`] icon with one layer. Call [`super::fit_icon_layers`] on `k`
+/// once the image has loaded. A **Tessera rule** for choice icons smaller than their part
+/// (`character-screens.md` §4.1 OPEN on the race button's parts).
+pub fn show_icon_once(ui: &mut Ui, k: ElementKey, image: &ImageRef) {
+    super::set_icon(ui, k, Some(&super::IconImage::Layers(vec![image.clone()])));
+}
+
 /// The element of entry `k` that shows the label ([`fill_choices_with`]).
 fn name_part(ui: &Ui, k: ElementKey, id: Option<u32>) -> Option<ElementKey> {
     if let Some(e) = id.and_then(|id| super::find_below(ui, k, id)) {

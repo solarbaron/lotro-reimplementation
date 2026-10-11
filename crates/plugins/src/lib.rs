@@ -19,7 +19,9 @@
 //!   queued [`InventoryViewEvent`]s ([`inventory`], `lua-plugin-api.md` §15.1); the
 //!   combat views (actor vitals, level and target, `EffectList`, `Effect`, `IsInCombat`,
 //!   the trained `SkillList`) fed by a [`CombatSource`] and queued [`CombatViewEvent`]s,
-//!   with [`CombatModel`] as a ready-made source ([`combat`], §15.2).
+//!   with [`CombatModel`] as a ready-made source ([`combat`], §15.2); the wallet and money
+//!   views (`Wallet`, `WalletItem`, `GetMoney`) fed by a [`WalletSource`] and queued
+//!   [`WalletViewEvent`]s ([`wallet`], §15.3).
 //! - [`HostApi`]: what the embedding client provides; it extends the core's
 //!   [`CoreHost`]. Plugin shell commands live in the host's one command registry
 //!   (`chat-window.md` §10 item 3); [`CommandTable`] is a registry for hosts without one.
@@ -62,6 +64,7 @@ mod root_ns;
 mod shared;
 pub mod ui;
 pub mod vfs;
+pub mod wallet;
 
 pub use combat::{
     ActorEvent, ActorKind, ActorValues, CombatModel, CombatSource, CombatViewEvent, CombatVital,
@@ -85,6 +88,7 @@ pub use mlua;
 pub use plugindata::{DataKey, DataValue, ParseLimits, PluginDataError};
 pub use root_ns::split_command_line;
 pub use tessera_script::{ErrorKind, Limits};
+pub use wallet::{WalletEntry, WalletItemData, WalletSource, WalletViewEvent};
 
 #[cfg(test)]
 mod send_check {

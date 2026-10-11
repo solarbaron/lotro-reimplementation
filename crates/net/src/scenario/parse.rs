@@ -47,6 +47,8 @@ pub const MAX_SELECTOR_N: u32 = 65_536;
 pub const MAX_DIDS: usize = 256;
 /// Most entries of a window entry list.
 pub const MAX_WINDOW_ENTRIES: usize = 1024;
+/// Largest coin amount of a price or cost (10^15, §6.3).
+pub(crate) const MAX_COIN: i128 = 1_000_000_000_000_000;
 /// Most entries of a trade side.
 pub const MAX_TRADE_ENTRIES: usize = 32;
 /// Most fellowship members.
@@ -215,6 +217,7 @@ impl Parser {
                 looks: Vec::new(),
                 props: Vec::new(),
                 overlay_violation: None,
+                numeric_action: false,
             },
             bindings: HashMap::new(),
             line: 0,
@@ -1351,9 +1354,9 @@ impl Parser {
         self.u32_in(tok, col, 1, 1_000_000_000)
     }
 
-    /// A coin amount, 0..=10^15.
+    /// A coin amount, 0..=[`MAX_COIN`].
     pub(crate) fn coin(&self, tok: &Token, col: u32) -> R<u64> {
-        self.uint(tok, col, 0, 1_000_000_000_000_000)
+        self.uint(tok, col, 0, MAX_COIN)
     }
 
     /// A decimal (finite).
@@ -1637,11 +1640,11 @@ impl Parser {
     }
 
     /// A TEXT: a string or a text function.
-    pub(crate) fn text_arg(&self, tok: &Token) -> R<TextArg> {
+    pub(crate) fn text_arg(&mut self, tok: &Token) -> R<TextArg> {
         self.text_at(tok, tok.col)
     }
 
-    pub(crate) fn text_at(&self, tok: &Token, col: u32) -> R<TextArg> {
+    pub(crate) fn text_at(&mut self, tok: &Token, col: u32) -> R<TextArg> {
         if let Some(s) = tok.string() {
             // No text form allows the empty string (§4.2).
             if s.is_empty() {
@@ -1651,6 +1654,9 @@ impl Parser {
         }
         let raw = tok.raw().ok_or_else(|| self.e(K::UnexpectedToken, col))?;
         let (f, inner) = func_call(raw).ok_or_else(|| self.e(K::UnexpectedToken, col))?;
+        if f == "action" {
+            return self.action_text(inner, col);
+        }
         let with_n = |inner: &str| -> R<(Element, u16)> {
             let (el, n) = inner
                 .rsplit_once(',')
@@ -1680,6 +1686,27 @@ impl Parser {
             }
             _ => return Err(self.e(K::UnexpectedToken, col)),
         })
+    }
+
+    /// The argument of `action(…)` (P3 revision, §4.2): a label (resolved with context
+    /// `NpcAction`) or an integer 0..=2^32−1.
+    fn action_text(&mut self, inner: &str, col: u32) -> R<TextArg> {
+        if inner.starts_with('@') {
+            let label = self.label_text(inner, col)?;
+            return Ok(TextArg::Action(self.label_site(
+                LabelContext::NpcAction,
+                label,
+                col,
+                "action",
+            )));
+        }
+        if !inner.starts_with('-') && !inner.bytes().next().is_some_and(|b| b.is_ascii_digit()) {
+            return Err(self.e(K::UnexpectedToken, col));
+        }
+        let v = lex::int(inner, false).map_err(|k| self.e(k, col))?;
+        let v = u32::try_from(v).map_err(|_| self.e(K::OutOfRange, col))?;
+        self.prog.numeric_action = true;
+        Ok(TextArg::Action(EnumArg::Value(v)))
     }
 
     /// A POSITION: `E,N,U` (each within ±100,000 m) or `place(ELEMENT)`.

@@ -1,0 +1,53 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# NPC dialogue windows (decision 0024 P3; docs/specs/npc-windows.md §5, §6;
+# docs/specs/scenario-feed.md §5.2, §6.3): a choice page with literal and action options,
+# a conversation page reached by `goto`, then, with an install, an NPC comment, a quest
+# offer with its reward amounts and a choice page whose text is a quest role line and whose
+# first option is a quest objective. The literal pages play without an install; the
+# install pages need their selectors (without an install the steps that need an element
+# are skipped).
+tessera-scenario 1
+title "Orchard talk"
+tick 100ms
+player "Tamsin"
+select $keeper = creature kind=npc has-appearance=yes n=1 seed=3
+select $errand = quest deed=no n=1 seed=11
+select $remark = npc-comment n=1 seed=7
+actor $grocer kind=npc name="Grocer" pos=2,2,0 body=$keeper[0]
+page $news speaker=$grocer "The bell rings at noon, and the ferry runs late."
+page $greet speaker=$grocer "Fresh from the orchard. Care to look around?"
+option $greet 1 action(@Vendor)
+option $greet 2 "Any news from the road?" goto=$news
+option $greet 3 "Goodbye." goto=close
+page $gossip speaker=$grocer comment($remark[0])
+page $tale speaker=$grocer role($errand[0],0)
+option $tale 1 objective($errand[0],1)
+option $tale 2 "Farewell." goto=close
+
+at 0s spawn $grocer
++0s wallet coin 1250
+
+on use $grocer times=1
++0s show $greet
+end
+on use $grocer times=1
++0s show $gossip
+end
+on use $grocer times=1
++0s offer "Lost satchel" from=$grocer
++0s offer $errand[0] from=$grocer
++0s rewards coin:1250 item-xp:500
+end
+on use $grocer
++0s show $tale
+end
+
+input
+at 0.5s use $grocer
+at 1s choose $greet 2
+at 1.5s close dialogue
+at 2s use $grocer
+at 2.5s use $grocer
+at 3s decline
+at 3.5s use $grocer
+end

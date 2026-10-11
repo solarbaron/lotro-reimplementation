@@ -64,9 +64,10 @@ fn light_index(i: u32) -> u32 {
 struct Shaded {
     // Colour in stored-value space, fog applied as for a base pass.
     color: vec3<f32>,
-    // Output alpha (material.md §11.3): the tested opacity x M.alpha (x vertex alpha where
-    // read), 1 x M.alpha without an opacity source; for a fixed blend the opacity source
-    // alone. Clamped by the fragment stages.
+    // Output alpha (material.md §11.3, MA61; lighting.md §5.12, L41): the tested opacity x
+    // M.alpha (x vertex alpha where read), 1 x M.alpha without an opacity-bearing role, the
+    // same as the original's base and additive light passes; for a fixed blend the tested
+    // opacity alone. Clamped by the fragment stages.
     alpha: f32,
     // The tested opacity for the alpha test (material.md §11.2; before vertex colours).
     opacity: f32,
@@ -109,8 +110,8 @@ fn lit_shade(in: LitVsOut) -> Shaded {
     // The tested opacity reaches the output alpha whatever its source (material.md §11.3,
     // revised 2026-10-10, MA60).
     out.alpha = out.opacity * m.a;
-    // A fixed blend's factors read the §11.2 opacity source, or 1 without one
-    // (material.md §11.3, rule for unlit records).
+    // A fixed blend's factors read the §11.2 tested opacity, or 1 without an
+    // opacity-bearing role (material.md §11.3, rule for unlit records).
     if (lit_flag(LIT_FACTOR_OPACITY)) {
         out.alpha = out.opacity;
     }
@@ -225,7 +226,7 @@ fn fs_lit_test_blend(in: LitVsOut) -> @location(0) vec4<f32> {
 }
 
 // Blended kinds: the threshold is -1 except for a fixed blend with an alpha test
-// (render.md R-D11), so only those discard.
+// (render.md §4.3 `Fixed`, the caller's reference R), so only those discard.
 @fragment
 fn fs_lit_blend(in: LitVsOut) -> @location(0) vec4<f32> {
     let s = lit_shade(in);

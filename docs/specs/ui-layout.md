@@ -986,6 +986,18 @@ geometry and changes no box that a hit test reads.
 6. Set the element's size to (*R* − *L* + 1, *Bm* − *T* + 1) and its position to (*L*, *T*).
    When its size changed, its children are laid out again.
 
+> **OPEN:** (implementer, `crates/ui`, 2026-10-10) whether step 6 sets the size of an element
+> that owns a surface in object mode Stretch through the element resize of `ui-behaviour.md`
+> §9.2.1 (its layout box kept at the old size, a scale vector set from the new size, its
+> children not laid out again) or takes the new size into its layout box as for any other
+> element. The case is common in data that the screens use: the side panels of
+> `chargen_appearance` (object mode Stretch, a non-root child of the screen's root, edge
+> modes (5, 5, 6, 5) and (6, 5, 5, 5)) laid out at 1280 × 720 become 400 × 720 from their
+> 500 × 900 design, while their own children stay at their design boxes (as laid out by
+> Tessera) and reach beyond the panels and the window
+> (`character-screens.md` §2.2 OPEN). As implemented: the layout box takes the new size (no
+> scale vector), steps 2–6 for the children. Please state which.
+
 Notes:
 
 - Modes 4 and 5 are mirror images: 4 means "this edge follows the parent side opposite to it",

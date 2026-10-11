@@ -4,7 +4,9 @@
 
 | | |
 |---|---|
-| **Status** | Open list; started 2026-10-04; last updated 2026-10-11 (P2 exit verification: O128 and O129 added; P2 documentation: O93–O109, O126 and O127 added; O110–O125 belong to P3, O130–O137 to P4); 2026-10-10 (P1 exit verification: O88–O90 added); 2026-10-10 (spec writer: O26 gains the question on the sky line of row W9; new items O91, the far sea of row W2, and O92, the generated fallen soldiers of 3, 0xD7E7); 2026-10-10 (O24 extended to the water rows W10–W17 of `m4-5-visual.md` §4.8, with the W13 and W17 questions); 2026-10-09 (decision 0024 P1 items O80–O86 added; merge of main: the M5 items O39–O49 joined the summary next to the 2026-10-08 statuses); 2026-10-08 (every pending item checked against the data and the offline client: O5, O14, O70 answered; O6, O18, O28 narrowed; the rest marked as needing the original) |
+| **Status** | Open list; started 2026-10-04;
+last updated 2026-10-11 (decision 0024 P3 items O110–O125 added: NPC windows, quest journal, wallet; P2 exit verification: O128 and O129 added; P2 documentation: O93–O109, O126 and O127 added; O130–O137 belong to P4); 2026-10-10 (spec writer: O85 and O86 gain the expectations the client gives for the creation screens, `character-screens.md` revision CS19–CS27); 2026-10-10 (spec writer: O24 gains the W14 question on the puddles' colour and opacity);
+2026-10-10 (P1 exit verification: O88–O90 added); 2026-10-10 (spec writer: O26 gains the question on the sky line of row W9; new items O91, the far sea of row W2, and O92, the generated fallen soldiers of 3, 0xD7E7); 2026-10-10 (O24 extended to the water rows W10–W17 of `m4-5-visual.md` §4.8, with the W13 and W17 questions); 2026-10-09 (decision 0024 P1 items O80–O86 added; merge of main: the M5 items O39–O49 joined the summary next to the 2026-10-08 statuses); 2026-10-08 (every pending item checked against the data and the offline client: O5, O14, O70 answered; O6, O18, O28 narrowed; the rest marked as needing the original) |
 | **Author role** | Spec writer (dirty room) |
 | **Who fills it in** | The project owner, in the original client, on their own account and install |
 | **Method** | Black-box observation of the unmodified official client: its own UI, `/loc`, and frame captures (RenderDoc or apitrace under Wine/DXVK). Allowed by `docs/CLEAN_ROOM.md` §4 (method M3) and [ROADMAP §2.1](../ROADMAP.md#method-allowed). |
@@ -49,7 +51,7 @@ marks the item **done** here.
 | [O12](#o12) | Look of random-appearance NPC figures | `appearance.md` §7.4 | Look at two spots, two visits | partly answered (`appearance.md` §7.4, §17: where outfits come from); left for the owner: two visits to one figure (same look or not); narrowed 2026-10-08: the picks come from the client's clock-seeded global generator with no per-object seed, so a different look per visit is expected (`script-runtime.md` §8, R40); the two visits confirm it |
 | [O13](#o13) | Where weapons, instruments and class items rest, drawn and stowed | `appearance.md` §5.3–§5.4, `skeleton-anim.md` §8.5 | Look | partly answered (`appearance.md` §5.6, §17: weapons, shields, ranged items); left for the owner: in-hand direction of long weapons (two side screenshots) and whether class items are ever visible; unchanged 2026-10-08 (look) |
 | [O14](#o14) | Animation playback: blending, layering, turn direction, speeds, scale inheritance, cloth | `skeleton-anim.md` §5.4, §6.5, §6.6, §7.3, §7.4, §13 | — | **Answered from the client (2026-10-08)**: all rows (`skeleton-anim.md` §15.1; O14.4 walking speeds 2.5 / 2.25 / 2.57 m/s from `collision.md` §11.8); `/loc` timing and visual checks optional |
-| [O15](#o15) | Skin, hair and eye colour tinting; face layers | `appearance.md` §3.3, §3.5 | Frame capture | partly answered (`appearance.md` §3.5, §17: one composited face texture, tints through the dye colour; colour byte order B, G, R, A, `property-system.md` §4.7); left for the owner: one face frame capture for the texture slot (low priority); unchanged 2026-10-08 (frame capture, low priority); 2026-10-10: slot answered from the client (3000), capture no longer needed; open: the eyebrow comparison and a face comparison with face compositing off (low priority) |
+| [O15](#o15) | Skin, hair and eye colour tinting; face layers | `appearance.md` §3.3, §3.5 | Frame capture | partly answered (`appearance.md` §3.5, §17: one composited face texture, tints through the dye colour; colour byte order B, G, R, A, `property-system.md` §4.7); left for the owner: one face frame capture for the texture slot (low priority); unchanged 2026-10-08 (frame capture, low priority); 2026-10-10: slot answered from the client (3000), capture no longer needed; open: the eyebrow comparison and a face comparison with face compositing off, an Elf or High-elf face included (low priority) |
 | [O16](#o16) | Which idle, walk and run clips play; idle variants and fidgets | `script-table.md` §8, §15.1, §16 | Look, explorer side by side | partly answered (`script-table.md` §8.6, §15.1: avatars fidget, timing predicted; mood idles answered); left for the owner: the side-by-side clip comparison and about 5 minutes standing still; unchanged 2026-10-08 (side-by-side look) |
 | [O17](#o17) | Static NPCs: position, facing and presence at the N spots | `m4-visual.md` §N, `appearance.md` §7, `entity-descriptor.md` §9.4 | In-game `/loc`, look | partly answered (`entity-descriptor.md` §9.4: presence rule, position and facing from the client); left for the owner: whether N4 and N6 are there for your character, and each figure's look; unchanged 2026-10-08 (server state and look) |
 | [O18](#o18)–[O27](#o27) | World fidelity: movement, scripted walks, visual rows, clock, draw distances, shadows and lights, water, frills, sky and fog, terrain bands | see [M4.5 items](#m4-5-items) | `/loc`, look, short videos | O18 mostly answered (2026-10-08; only the jump measurement left); O21, O22, O26 partly answered (2026-10-07); O19, O20, O23–O25, O27 need the original (visual) |
@@ -98,6 +100,22 @@ marks the item **done** here.
 | [O107](#o107) | Skill-granting item: the attached skill tooltip | `skill-tooltips.md` §12.4; `item-tooltips.md` §8.3 | Look | open (P2) |
 | [O108](#o108) | Stack count in an effect tooltip | `skill-tooltips.md` §12.2; `combat-ui.md` TR31 | Look | open (P2) |
 | [O109](#o109) | Casting and recovery times with tenths of a second | `skill-tooltips.md` §7.6, §7.15, §10.1, §16.3 | Look | open (P2) |
+| [O110](#o110) | Using an NPC: which inputs use it, the no-selection and out-of-range lines, the distance at which use stops | `npc-windows.md` §3.1 | Look, `/loc` | open (P3) |
+| [O111](#o111) | Dialogue windows: which window shows which kind of NPC talk, the option list's layout, closing when walking away | `npc-windows.md` §5.1, §5.3, §5.7 | Look, `/loc` | open (P3) |
+| [O112](#o112) | Quest-offer window: objective shown, reward rows and amounts, choosing a reward before Accept | `npc-windows.md` §6.2, §6.3, §6.5 | Look | open (P3) |
+| [O113](#o113) | Vendor window: buy modes and quantities, quantity dialog, unaffordable prices, sell list, drop to sell, Sell All, buy-back | `npc-windows.md` §7.2–§7.6, §7.8 | Look | open (P3) |
+| [O114](#o114) | Barter window: cost slots, coin costs, the cost text and its colour, pages | `npc-windows.md` §7.7 | Look | open (P3) |
+| [O115](#o115) | Loot window: coins, inputs that take one entry, Loot All and closing | `npc-windows.md` §8.2, §8.3 | Look | open (P3) |
+| [O116](#o116) | Wallet window: opening, category and entry order, capped currencies, search | `npc-windows.md` §9.1, §9.4 | Look | open (P3) |
+| [O117](#o117) | Coin display: which coins show for an amount, zero coins | `npc-windows.md` §9.2, §9.3 | Look | open (P3) |
+| [O118](#o118) | Quest log: category and quest order, row format, filters at first open, expanded state, counts | `quest-journal.md` §4.2–§4.6 | Look | open (P3) |
+| [O119](#o119) | Quest details pane: section order, counters of two counted parts, objectives without a counter | `quest-journal.md` §4.7, §5.2–§5.4 | Look | open (P3) |
+| [O120](#o120) | Quest tracker: auto-tracking, entry order, cutting long entries, completed quests, menu | `quest-journal.md` §6.2–§6.6 | Look | open (P3) |
+| [O121](#o121) | Quest messages: chat lines for new, updated, completed and abandoned quests; text on screen | `quest-journal.md` §7.1–§7.3 | Look | open (P3) |
+| [O122](#o122) | Quest rings over NPCs: available, off-level, talk-to and underway-elsewhere cases | `quest-journal.md` §8.1–§8.2 | Look | open (P3) |
+| [O123](#o123) | Quest markers on the minimap and the world map: icon, order with the player marker, tooltip, edge | `quest-journal.md` §8.3; `game-panels.md` §8.8, §9.3 | Look | open (P3) |
+| [O124](#o124) | Abandoning a quest: confirmation and what the log and tracker show after | `quest-journal.md` §4.8 | Look | open (P3) |
+| [O125](#o125) | Plugin wallet views: `GetWallet()` order, `GetMaxQuantity()` of a few items, `MoneyChanged` count | `lua-plugin-api.md` §15.3 | Own test plugin | open (P3) |
 | [O126](#o126) | Casts, hits, projectiles and combat stance; a weapon change mid-swing | `combat-visuals.md` §3, §4, §6, §11 rule 6, Q-CV7 | Look, private video | open (P2) |
 | [O127](#o127) | Effect visuals to their end; death pose, body fade and revive | `combat-visuals.md` §5, §7 | Look | open (P2) |
 | [O128](#o128) | Player and target frames as a whole: layout, name colour, level, morale and power, class resource, the target's effect icons | `combat-ui.md` §4, §5, §8 | Look, screenshots (private) | open (P2) |
@@ -131,11 +149,15 @@ status](../ROADMAP.md#m7-status)). They are numbered from O70 because other mile
 branches added items at the same time (M4.5 uses O18–O27, M6 uses O28); they keep their
 numbers.
 
+P3 items O110–O125 ([ROADMAP P3](../ROADMAP.md#p3)) compare the NPC windows, the quest
+journal and the wallet with the original; no P3 exit criterion waits on them, and they block
+nothing until P8 (decision 0024 §2.6).
+
 P2 items O93–O109 and O126–O129 ([below](#p2-items)) compare Tessera's combat presentation
 with the original: O93–O103 are the owner checks OC1–OC11 of `combat-ui.md` §18, O104–O109 the
 checks OS1–OS6 of `skill-tooltips.md` §17, O126–O127 looks at combat visuals
 (`combat-visuals.md`), O128–O129 whole-panel looks at the frames, the quickslot bar and the
-cast bars (P2 exit verification). They are numbered after P3's O110–O125, which the P3 branch holds. No P2
+cast bars (P2 exit verification). O126–O129 are numbered after P3's O110–O125 (the P3 branch holds those). No P2
 exit criterion waits on them ([ROADMAP P2](../ROADMAP.md#p2)); they settle OPENs and Tessera
 rules of those specs and block nothing until P8 (decision 0024 §2.6).
 
@@ -639,6 +661,17 @@ so the frame capture for the slot is no longer needed. New, low priority:
   (`appearance.md` §3.5, table "When face compositing is off"); a plain Human M face would
   mean the server sends a value the install does not hold.
 
+**2026-10-10 (one more face, same session as above):** whether an elf figure's start-up
+scripts run before or after it is first placed in the world could not be read from the client
+(`appearance.md` §3.5, narrow OPEN). The same comparison settles it.
+
+- **What to do:** with the face-compositing option off, log in (or switch) to an Elf or
+  High-elf character and look closely at its face.
+- **Record:** whether the face keeps the chosen details (eyebrows, scars, war paint, eye
+  colour) or turns plain. Detailed means the figure was placed before its start-up ran (the
+  option is not honoured for the elf bodies); plain means the start-up ran first, as Tessera
+  assumes.
+
 <a id="o16"></a>
 ## O16. Which idle, walk and run clips play (M4)
 
@@ -726,7 +759,7 @@ graphics settings (record any setting you changed) with the expected facts liste
 | [O21](#o21) | Game clock: time of day, day length, epoch | `environment.md` §6, §10.1, §11.1 | Clock in the UI or `/loc`, stopwatch | partly answered (`environment.md` §10.1, §11.1, §11.5: rate, date, night flag, day-type rule); left for the owner: two (in-game time, UTC) readings for the epoch, and the weather on several days; unchanged 2026-10-08 (the epoch is not in the client) |
 | [O22](#o22) | Default draw distances: landscape extent, object pop-in, fog clipping | `walker.md` §11.3–§11.4, `mesh.md` §8, `environment.md` §11.7 | Look, `/loc` | partly answered (`environment.md` §10.1, §11.7: fog-distance limits; the distance rules were already from the client); left for the owner: steps 1–6 as a visual check; unchanged 2026-10-08 (visual check) |
 | [O23](#o23) | Sun shadows and point lights | `lighting.md` §8–§9, `m4-5-visual.md` §4.6 | Look at a set time, frame capture optional | open; not answered from the client in this pass (shadow colour, cascades and fade stay `lighting.md` §9 OPEN; the rest is visual) |
-| [O24](#o24) | Water look: surface, lava, placed water, distant water, puddles cut by the ground (W13), river bed and ripples (W17) | `water.md` §8–§9, `m4-5-visual.md` §4.4, §4.8 | Look, frame capture optional | open; not answerable from the client (visual comparison; reflection, flow and foam stay `water.md` §8 OPEN) |
+| [O24](#o24) | Water look: surface, lava, placed water, distant water, puddles cut by the ground (W13), puddle colour against the mud (W14), river bed and ripples (W17) | `water.md` §8–§9, `m4-5-visual.md` §4.4, §4.8 | Look, frame capture optional | open; not answerable from the client (visual comparison; reflection, flow and foam stay `water.md` §8 OPEN) |
 | [O25](#o25) | Frills: radius, fade, density, sway, terrain tint | `scenery.md` §8.3–§8.4 | Look, short video | open; not answerable from the client (visual; radius, fade and density are already the client's, `scenery.md` §8.3–§8.4) |
 | [O26](#o26) | Sky and fog at four times of day; the day type; interior fog | `environment.md` §10.1, §11.2–§12, `lighting.md` §10 | Look at set times | partly answered (`environment.md` §10.1: day-type rule, interior fog rules, sun and moon path); left for the owner: the Y1–Y4 look at set times (after O21), sun and moon size, fog on the sky; unchanged 2026-10-08 (look at set times) |
 | [O27](#o27) | Terrain near and far bands, and the seam between them | `terrain-texturing.md` §12 | Look, short video | open; not answerable from the client (visual comparison) |
@@ -959,6 +992,12 @@ edges, fountain water, flow speeds). Two answers settle open points:
   outline all round, as if drawn on top of the ground? The data predict the first
   (`water.md` §8.5.4); a different look would mean the original raises, biases or projects
   puddles in a way the data do not show. Note the graphics settings (reflections on or off).
+- **W14 (puddles in the mine yard; added 2026-10-10):** what colour are the puddles against
+  the mud: a reflection of the sky and the yard (darker or lighter than the mud?), and does
+  each patch grow more opaque toward its far side? Tessera, without a reflection pass, tints
+  them with the fog colour, so they read blue-grey and lighter than the mud
+  (`m4-5-visual.md` row W14); the original's colour is the reflected scene × the diffuse
+  (`water.md` §8.5.4).
 - **W17 (river):** do moving ripples show (`water.md` §8.6.3 OPEN), and is the river bed
   visible through the water, or is the water dark at a few tens of metres? Note whether
   water reflections are enabled and which DirectX version the client runs.
@@ -1413,9 +1452,15 @@ characters in the list and which is selected first; the order of races (by speci
 own words) and of classes for two races; which racial traits the race panel lists (all, or
 only some); whether changing race keeps the selected class; on each screen, which of the
 back, continue and exit buttons, the turntable buttons and the avatar-update check box are
-shown (`character-screens.md` §2.3), when exit appears, how fast and in what steps the
-turntable turns the figure; whether the delete button is offered and what happens after a
-deletion is confirmed.
+shown (`character-screens.md` §2.3), when exit appears; whether the delete button is offered
+and what happens after a deletion is confirmed. Expectations from the client
+(`character-screens.md` §2.1–§2.3, §4.1, revised 2026-10-10), to confirm by look: on every
+screen the figure stands on its scene's spot facing the camera when the screen opens, whole
+from head to feet, with the race's scenery, lights and effects around it; a turn button
+moves the view around the figure (the scenery behind it turns too), about 20° per press and
+smoothly while held, and dragging over the picture does the same; zoom eases in and out; the
+gender buttons show the chosen one lit, and for a race with one gender the gender buttons are
+not shown at all.
 
 <a id="o86"></a>
 ## O86. Appearance and name screen (P1)
@@ -1427,7 +1472,12 @@ nationality and look at the hair, skin and eye colour choices; try the random-na
 
 **Record:** what randomise changes (all controls or some; the name too?); whether the colour
 choices change with the nationality (fewer swatches, other swatches, or only the default);
-the kind of widget each control kind uses (arrows, swatches, slider).
+the kind of widget each control kind uses (arrows, swatches, slider). Expectations from the
+client (`character-screens.md` §5.2.1–§5.2.2, revised 2026-10-10), to confirm by look: each
+control is labelled with its own name (each colour control a different one), the style and
+face controls show "current of total" beside the arrows, groups (where a race has them) have
+their own headers in a fixed order and start open; a fresh character shows the first style of
+every style control (head and hair present on every race and sex).
 
 ## O87. Water, waterfalls and puddles after the water fix (2026-10-10)
 
@@ -1813,6 +1863,343 @@ formatter), §16.3 (a stored 1.55 s that Tessera shows from its single-precision
 
 **Record:** per DID: the casting-time and recovery-time texts' form (decimals, unit word
 pattern) and the shown value; whether a value like 1.55 shows as 1.5 or 1.6.
+
+<a id="p3-items"></a>
+## Decision 0024 P3 items (NPC windows, quest journal and wallet)
+
+These rows compare Tessera's P3 windows with the original client. They block nothing until
+P8 (decision 0024 §2.6); the P3 exit criteria need no observation in the original. They
+settle the owner checks of [`npc-windows.md` §14](../specs/npc-windows.md#s14) (O110–O117),
+[`quest-journal.md` §13](../specs/quest-journal.md#s13) (O118–O124) and the wallet OPENs of
+[`lua-plugin-api.md` §15.3](../specs/lua-plugin-api.md#s15-3) (O125). Describe what you see
+in your own words; never copy NPC, quest, item or currency names, dialogue, objective text
+or chat lines into this file; use DIDs (the explorer shows them), counts and positions ("the
+second option", "the vendor's third entry").
+
+**Tessera's side** for every row: the committed scenarios `dialogue`, `vendor`, `loot` and
+`quest-log` in `apps/client/tests/scenarios/`, run windowed with your install
+(`tessera-client --ui --scenario-input --scenario FILE`, USER_GUIDE §3.14), and
+`--open-panel NAME` for each window opened empty.
+
+The P3 plan listed these observations under other numbers; this file keeps the specs'
+numbers. Plan's list → rows here: NPC use → O110; dialogue window → O111; quest-offer window
+→ O112; quest log → O118 (with O124 for abandoning); quest tracker and objective counters →
+O119, O120; quest messages → O121; quest markers → O122, O123; vendor window → O113, O114;
+loot window → O115; wallet and coin display → O116, O117; plugin wallet views → O125.
+
+<a id="o110"></a>
+## O110. Using an NPC (P3)
+
+**Spec:** `npc-windows.md` §3.1 (inputs, messages; Q1), `interaction.md` §3.4.1 (use range).
+
+**Tessera's side:** U uses the nearest entity in range that is not a player (an NPC, a
+creature or an object such as a chest; Tessera's stand-in until targeting, P2); out of range or with nobody near, a short line of Tessera's own text
+appears in chat.
+
+**What to do:** near a vendor or quest giver, use it in each of these ways: select it and
+press U; double-click it; right-click it; Shift and right-click a defeated creature you may
+loot. Press U with nothing selected. Select an NPC, walk away with `/loc` readings at each
+step, and press U until it stops working.
+
+**Record:** which inputs open its window (U, double-click, right click, Shift + right
+click); whether a right click on an NPC that is not the current selection uses it; with
+nothing selected and when too far away: whether a line appears, in which chat tab and
+colour (no text); the distance (from `/loc`) at which using stops working, for two NPCs of
+different size if you can; the mouse cursor shown over an NPC you can use, in and out of
+range (its shape in your own words).
+
+<a id="o111"></a>
+## O111. Dialogue windows and closing (P3)
+
+**Spec:** `npc-windows.md` §5.1 (which window; Q2), §5.3 (the choice list; Q4), §5.7
+(closing; Q3).
+
+**Tessera's side:** `dialogue.scenario` shows a choice page, a conversation page, an NPC
+comment and a quest offer; Tessera picks the window by the page's content (§5.1 Tessera
+rule) and closes a window when you walk out of the NPC's use range.
+
+**What to do:** talk to three kinds of NPC: one that only says a short remark, one with a
+single page of text, and a vendor or stable-master with several options. On the one with
+options, note the list's layout. Then open a conversation and walk away slowly; open
+another and let the NPC walk away or disappear if one does.
+
+**Record:** per kind, which window shows it (a small comment box, a large text window with
+one button, a list of options) and its position on screen; for the option list: whether it
+has section headers, the order of kinds of option (quests, services, goodbye), and whether
+greyed or hidden options appear; whether walking away closes the window, and at roughly what
+distance (`/loc`); what happens when the NPC disappears.
+
+<a id="o112"></a>
+## O112. Quest-offer window (P3)
+
+**Spec:** `npc-windows.md` §6.2 (objective block; Q5), §6.3 (reward block; Q5), §6.5
+(selectable rewards; Q6).
+
+**Tessera's side:** `dialogue.scenario` with an install offers one quest record with coin
+and item-experience amounts (`rewards` step); the objective block shows the lowest
+objective's description.
+
+**What to do:** read three quest offers: one with a fixed item reward, one with a choice of
+rewards, and one that rewards a title, an emote or a virtue if you meet one. On the one with
+a choice, press Accept without choosing, then choose and accept.
+
+**Record:** which objective the offer shows (the first, the current, all); the order of the
+reward rows by kind (coins, experience, reputation, items, choices, titles, virtues); how
+amounts are written (thousands separators, signs, the coin images); whether Accept is greyed
+or refused until a reward is chosen, and what tells you so (no text); where the accept and
+decline buttons sit and how they look; whether a long description scrolls or wraps.
+
+<a id="o113"></a>
+## O113. Vendor window: buying, selling, buy-back and quantities (P3)
+
+**Spec:** `npc-windows.md` §7.2–§7.6 (entries, prices, buy modes, quantity dialog,
+selling; Q7, Q13), §7.8 (buy-back and the controls).
+
+**Tessera's side:** `vendor.scenario` shows a buy list with prices and stock, the sell list
+from the backpack, a buy-back page, buying three, a sale and a buy-back; Alt, Shift and Tab
+held while buying select the quantity dialog, a full stack and filling partial stacks.
+
+**What to do:** at a vendor that sells a stackable item: buy one with a right click; with
+Alt held (the quantity dialog: try the full, half and lowest presets, the arrows, and typing
+a number above the maximum, then OK); with Shift held; with Tab held while you carry a
+partial stack of that item. Look at an entry you cannot afford. On the sell page, sell one
+item with a right click, drag an item from a bag onto the window, and try Sell All with a
+junk item and a locked item in the bags. Buy one item back from the buy-back page.
+
+**Record:** the quantity each mode buys (Tab: the quantity bought against your partial
+stack's quantity and the stack size); the dialog's starting quantity and what OK does with a
+value above the maximum or an empty entry; how an unaffordable price looks (colour); which
+items the sell page lists (all bag items, sellable ones only, locked ones?); whether
+dropping an item on the window sells it, and whether a confirmation appears; whether the
+sell page shows a price per item and whether it matches the item tooltip's worth; Sell All's
+scope; whether the buy-back tab is always shown or only after a sale; the tabs or pages
+the window has (buy, sell, buy-back, repair) and whether a barter vendor uses the same
+window; how a limited stock shows on an entry.
+
+<a id="o114"></a>
+## O114. Barter window (P3)
+
+**Spec:** `npc-windows.md` §7.7 (Q8).
+
+**Tessera's side:** the barter part of `vendor.scenario`: entries that cost a token, up to
+three cost slots, a coin cost drawn as coins in a slot, the required quantity in red when
+you hold fewer, 20 entries per page.
+
+**What to do:** open a barter vendor (one that trades items for tokens or other items), one
+that also asks for coins if you find one, and turn its pages.
+
+**Record:** per entry, how many cost slots show and in which order (items, then coins?);
+how a coin cost appears (in a slot, as a line, not at all); the format of the small text on
+a cost slot (a single number, "held / required", other) and when it turns red; whether a
+vendor mixes plain entries and barter entries in one window; how the page control looks
+(arrows, page number).
+
+<a id="o115"></a>
+## O115. Loot window (P3)
+
+**Spec:** `npc-windows.md` §8.2 (rows and coins; Q9), §8.3 (taking loot).
+
+**Tessera's side:** `loot.scenario`: coins in the first row, stacked entries, one entry
+taken with a right click, then Loot All; a chest from which the scenario takes one entry
+while the window stays open.
+
+**What to do:** loot a creature that drops coins and items; take one item with a right
+click, one with a double click, one by dragging it into a bag, then press Loot All. Loot
+another and press Enter. Loot a container that leaves items behind when your bags are full.
+
+**Record:** whether coins appear as a row in the window (where, and with coin images or
+text) or go straight to the wallet; which inputs take a single entry; whether Loot All
+closes the window at once, after everything is taken, or not when something is left; the
+button's label change after the last entry (only that it changes).
+
+<a id="o116"></a>
+## O116. Wallet window (P3)
+
+**Spec:** `npc-windows.md` §9.4 (Q10), §9.1 (where money is shown).
+
+**Tessera's side:** the wallet window opens from the character panel's wallet button or with
+`--open-panel wallet`: the money row first, then one row per category with a held currency
+(ascending category key), its currencies sorted by name, and a search field.
+
+**What to do:** open the wallet with its key and with the character panel's button; expand
+and collapse categories; search for part of a currency's name; look at a currency at its
+cap if you have one.
+
+**Record:** the key that opens it (key-binding panel, command name only); the order of the
+categories (by their position, in your own words, not their names if they are game text)
+and of the entries within one; whether categories start expanded; whether a total row or
+the coins come first; how a capped currency looks (colour, an icon, "x / max"); whether the
+search matches the start of a name or any part; how barter tokens you hold are listed (in a
+category of their own or mixed with other currencies).
+
+<a id="o117"></a>
+## O117. Coin display (P3)
+
+**Spec:** `npc-windows.md` §9.2 (which currency fills which coin; Q11), §9.3 (splitting an
+amount).
+
+**Tessera's side:** coins split by the install's coin values; a zero coin is hidden except
+where the display shows all coins, and a zero is shown only after a larger non-zero coin
+where leading zeroes are suppressed.
+
+**What to do:** look at amounts in four places: your money (wallet or bags), a vendor's
+price below one silver, a price of exactly one gold with no silver, and a quest reward in
+coins.
+
+**Record:** per place, which of the gold, silver and copper images show for each amount,
+including zero coins (shown or hidden, before or after a non-zero coin); whether any place
+shows all three coins always.
+
+<a id="o118"></a>
+## O118. Quest log (P3)
+
+**Spec:** `quest-journal.md` §4.2–§4.6 (which quests, grouping, row, filters, counts).
+
+**Tessera's side:** L opens the log; `quest-log.scenario` makes literal and install quests
+active, completed and failed.
+
+**What to do:** with several quests underway in different categories and some completed,
+open the quest log; switch to completed quests and back; press each filter button; collapse
+and expand everything; close and open the log again.
+
+**Record:** the order of the categories and of quests within one (level, name, time
+accepted); the format of a quest row (level in brackets, a suffix, colours by difficulty, in
+your own words); which filter buttons are pressed at first open and what each hides; whether
+categories start expanded and whether the log remembers that; the count texts in the header
+(the pattern, for example "number of number", without the game's words).
+
+<a id="o119"></a>
+## O119. Quest details pane and objective counters (P3)
+
+**Spec:** `quest-journal.md` §4.7 (details pane), §5.2–§5.4 (progress text and counters;
+Q1, Q2).
+
+**Tessera's side:** the details pane of `quest-log.scenario`'s quests shows the objective
+text and progress lines with counters (for example 2/4).
+
+**What to do:** select a quest with one counted objective (kill or collect a number of
+things), one with two counted parts in one objective, and one with an objective of a kind
+that has no counter (talk to, go to).
+
+**Record:** the order of the sections (progress lines before or after the objective text,
+rewards, the quest-giver line); how the numbers of an objective with two counted parts show
+(two lines, one line); the shape of the line for an objective without a counter (a bullet
+and a sentence, the word for done, nothing); whether reward amounts show in the details pane;
+whether a long background text wraps over several lines or is cut (Tessera cuts it at the
+pane width, `quest-journal.md` §4.7 OPEN).
+
+<a id="o120"></a>
+## O120. Quest tracker (P3)
+
+**Spec:** `quest-journal.md` §6.2–§6.6 (which quests, entry content, order, controls; Q3,
+Q4).
+
+**Tessera's side:** at most 10 tracked quests; the tracker shows the current objective and
+counters; a click opens the log at the quest; the right-click menu's items appear in chat
+(no popup yet).
+
+**What to do:** accept a new quest and see whether it appears in the tracker; track five or
+more quests with long objectives; complete an objective of one and complete one quest;
+right-click a tracker entry; click one.
+
+**Record:** whether accepting tracks a quest (and which option controls it, by its position
+in the options panel); the order of entries (newest first, oldest first, by level); how a
+long entry is cut (an ellipsis, a line limit) when several are tracked; what an entry shows
+after its quest is completed and for how long; the right-click menu's items (count and
+order, no text needed when they are the "show in log", "remove" and "remove all" kinds);
+the tracker's position on screen and how many quests it holds at most; the counter format
+(for example "2/4") and how a completed objective is drawn (colour, a mark).
+
+<a id="o121"></a>
+## O121. Quest messages in chat and on screen (P3)
+
+**Spec:** `quest-journal.md` §7.1–§7.3 (state, objective-update and server lines; Q5).
+
+**Tessera's side:** a line in the Quest chat type on a new, completed or failed quest, and on
+an objective update when the quest's record has an update text; nothing on abandon.
+
+**What to do:** accept a quest, advance a counted objective twice, complete the quest, and
+abandon another.
+
+**Record:** for each event: whether a chat line appears, in which tab and colour; whether
+text also appears in the middle of the screen (and where, for how long); whether two lines
+appear for one update. **Do not record the lines' text.**
+
+<a id="o122"></a>
+## O122. Quest rings over NPCs (P3)
+
+**Spec:** `quest-journal.md` §8.1–§8.2 (ring kinds and the feed rule; Q6).
+
+**Tessera's side:** an NPC whose scenario names a quest with `@Quest_CurrentBestowRingDID`
+shows a small sign over its head (available, continue, in progress) in place of the ring;
+`--quest-icons off` hides it.
+
+**What to do:** look at a quest giver with a quest available to you, one with a quest of a
+level well above or below yours, one you must talk to for a quest you are on, and the giver
+of a quest you are on whose next step is with another NPC.
+
+**Record:** for each, whether a ring or icon shows over or around the NPC, its shape and
+colour in your own words; whether an option in the options panel hides them (its position).
+
+<a id="o123"></a>
+## O123. Quest markers on the minimap and the world map (P3)
+
+**Spec:** `quest-journal.md` §8.3; `game-panels.md` §8.8, §9.3.
+
+**Tessera's side:** the quest markers of `quest-log.scenario` on the minimap (within its
+radius) and on the world map, the label as tooltip, a highlight on mouse-over, drawn below
+the player marker; markers of another region are hidden.
+
+**What to do:** with a quest underway whose objective is nearby, look at the minimap and the
+world map; hover over the objective's icon on each; look for the quest giver's icon of an
+available quest.
+
+**Record:** on each map: the icon's shape and colour in words; whether it is drawn above or
+below the player's arrow; the tooltip's pattern (quest name, objective, both; no text);
+whether objective areas are shaded; whether an icon at the minimap's edge stays pinned to
+the edge or disappears.
+
+<a id="o124"></a>
+## O124. Abandoning a quest (P3)
+
+**Spec:** `quest-journal.md` §4.8 (the abandon button and its confirmation).
+
+**Tessera's side:** the first click on Abandon posts the confirmation text in chat; a second
+click for the same quest sends the abandon (no dialog box yet).
+
+**What to do:** abandon a quest you can abandon from the log; try with a quest whose abandon
+button is greyed, if any.
+
+**Record:** the confirmation's shape (a dialog box with which buttons, no text); what the
+log shows afterwards (the quest gone, moved, greyed); whether a chat line appears; whether
+the tracker drops the quest.
+
+<a id="o125"></a>
+## O125. Plugin wallet views (P3)
+
+**Spec:** `lua-plugin-api.md` §15.3 (the OPENs on `GetMaxQuantity()`, the order of
+`GetWallet()`'s items, `MoneyChanged`).
+
+**Tessera's side:** `GetWallet()` lists the currencies in the order they reached a non-zero
+amount; `GetMaxQuantity()` follows the Tessera rule of §15.3; one `MoneyChanged` per change of
+the coin amount; `crates/plugins/tests/wallet_views.rs`.
+
+**What to do:** in the original client, run a small plugin of your own that prints, for each
+item of `LocalPlayer:GetWallet()`, its index, `GetQuantity()` and `GetMaxQuantity()`, and
+that counts `MoneyChanged` and `Wallet.ItemAdded` events. Gain and spend some coins; gain a
+currency you did not hold before.
+
+**Record:** for three or four wallet items, by DID (the explorer, not the name): the index
+and the maximum the plugin printed; whether the list's order follows the wallet window's,
+the order of acquisition or neither; how many `MoneyChanged` events one purchase and one loot
+gave; whether `ItemAdded` fired for the new currency and at which index; whether
+`GetMoney()` and `GetMoneyComponents()` match the coins the wallet window shows. **Do not
+record item names.**
+
+<a id="p2-items-visuals"></a>
+## Decision 0024 P2 items, continued (combat visuals and whole panels)
+
+O126–O129 belong to the P2 group above ([P2 items](#p2-items)); they stand here, after P3's O110–O125, to keep the numbers in order.
 
 <a id="o126"></a>
 ## O126. Casts, hits and stance (P2, combat visuals)

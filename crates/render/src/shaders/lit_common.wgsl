@@ -55,7 +55,7 @@ const LIT_SRGB_EMISSIVE: u32 = 8192u;
 const LIT_SRGB_GLOW: u32 = 16384u;
 const LIT_SRGB_OPACITY: u32 = 32768u;
 // A fixed-function blend (AlphaMode::Fixed): the output alpha a blend factor reads is the
-// opacity source alone, not x M.alpha (material.md §11.3, rule for unlit records).
+// tested opacity alone, not x M.alpha (material.md §11.3, rule for unlit records).
 const LIT_FACTOR_OPACITY: u32 = 65536u;
 // A second colour layer (material.md §10.3): sampled at texture matrix 1, its RGB added
 // (LIT_LAYER_ADD) or multiplied; its alpha multiplies the base alpha only with
@@ -68,9 +68,10 @@ const LIT_EMISSIVE_UV1: u32 = 524288u;
 const LIT_SRGB_LAYER2: u32 = 1048576u;
 const LIT_LAYER_ALPHA: u32 = 2097152u;
 const LIT_LAYER_OPACITY_ONLY: u32 = 4194304u;
-// A second opacity source (Opacity::BaseWith, material.md §11.2 table): two bits, 2 the
+// A second opacity source (Opacity::BaseWith, material.md §11.2 table): two bits, 0 the
+// constant 1 (a texture that is 0 or did not resolve, material.md §18 Decision), 2 the
 // emissive alpha, 3 the opacity texture's alpha; LIT_OPACITY_SUM adds the two alphas
-// (else they are multiplied). LIT_LAYER_SUM: the second colour layer's alpha is added to
+// (else they are multiplied), so with source 0 a sum is the first alpha + 1. LIT_LAYER_SUM: the second colour layer's alpha is added to
 // the base alpha (the sum records with ColorAndOpacity2).
 const LIT_OPACITY2_SHIFT: u32 = 23u;
 const LIT_OPACITY_SUM: u32 = 33554432u;
@@ -221,11 +222,8 @@ fn lit_opacity_part(code: u32, base: vec4<f32>, emissive: vec4<f32>, opacity: ve
 // test (also in the shadow pass) and, times M.alpha, as the output alpha (§11.3).
 fn lit_opacity(base: vec4<f32>, emissive: vec4<f32>, opacity: vec4<f32>) -> f32 {
     let a = lit_opacity_part(lit_source(LIT_OPACITY_SHIFT), base, emissive, opacity);
-    let second = lit_source(LIT_OPACITY2_SHIFT);
-    if (second == 0u) {
-        return a;
-    }
-    let b = lit_opacity_part(second, base, emissive, opacity);
+    // Source 0 reads 1: a product keeps the first alpha, a sum adds 1.
+    let b = lit_opacity_part(lit_source(LIT_OPACITY2_SHIFT), base, emissive, opacity);
     if (lit_flag(LIT_OPACITY_SUM)) {
         return a + b;
     }

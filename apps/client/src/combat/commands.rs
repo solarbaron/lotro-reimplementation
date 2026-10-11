@@ -5,7 +5,7 @@
 
 use tessera_input::TargetAction;
 use tessera_net::domain::{ItemId, Shortcut};
-use tessera_net::{CombatCommand, Command, EntityId, InventoryCommand, NpcCommand};
+use tessera_net::{CombatCommand, Command, EntityId, InventoryCommand};
 use tessera_ui::game::combat::CombatAction;
 
 use super::state::{CombatState, slot_of_index};
@@ -18,10 +18,10 @@ pub enum CombatInput {
     Target(TargetAction),
     /// Use the quickslot with this shortcut index (TR33).
     UseShortcut(i32),
-    /// A click on an entity in the world (TR3; `None`: empty ground or sky).
+    /// A click on an entity in the world (TR3; `None`: empty ground or sky). A double click
+    /// or a right click selects through this too; its use goes through the client's one
+    /// entry point for using an entity (`crate::npc::use_entity`, `npc-windows.md` §3.1).
     PickEntity(Option<EntityId>),
-    /// A double click on an entity in the world (TR3: select, then use).
-    UseEntity(EntityId),
     /// A widget's action.
     Widget(CombatAction),
 }
@@ -43,10 +43,6 @@ pub fn commands(input: CombatInput, state: &CombatState) -> Vec<Command> {
         CombatInput::UseShortcut(i) => use_shortcut(i, state).into_iter().collect(),
         // TR3: empty ground or sky sends nothing.
         CombatInput::PickEntity(e) => e.map(|e| vec![select(Some(e))]).unwrap_or_default(),
-        CombatInput::UseEntity(e) => vec![
-            select(Some(e)),
-            Command::Npc(NpcCommand::UseEntity { entity: e }),
-        ],
         CombatInput::Widget(a) => match a {
             CombatAction::CancelCast => vec![Command::Combat(CombatCommand::CancelCast)],
             CombatAction::ClearSelection => vec![select(None)],

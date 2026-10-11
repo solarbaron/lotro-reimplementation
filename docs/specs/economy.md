@@ -784,6 +784,11 @@ then exactly one reward, then at most one sound category, in that stored order:
 
 Two cost structs have no `Barter_Item` and quantity 1; treat their item as DID 0 (the object form stores 0 there too).
 
+> **Note (P3, 2026-10-10, `npc-windows.md` §9.5; no fact changed):** of the 58,554 cost structs
+> with a `Barter_Item`, 44,856 name one of the 610 wallet items of the record
+> `PaperItemControl` (423 distinct wallet items; 3,081 distinct cost items in all), so a
+> barter currency is usually a wallet item whose held amount the wallet reports.
+
 Meaning (Reported, LC): each list is one trade: give all cost items in the stated
 quantities, receive the reward item (or the reputation reward). A cost with a look-up table
 has a level-dependent quantity (§6.2). The profile's usage requirements gate the whole
@@ -933,6 +938,13 @@ WEENIECONTENT labels: **CurrencyDirectory** → class 1029; **CurrencyControl** 
 
 Values are data; read them at run time. The unit of the money-drop amounts of §4.12 is not
 known (OPEN in §11.6).
+
+> **Note (P3, 2026-10-10, [`npc-windows.md`](npc-windows.md) §9.3; no fact changed):** the
+> directory's two forms list the currencies in different orders. The object form (the 0x70
+> record's list of three references, which the class library's coin breakdown walks) is gold,
+> silver, copper; the property set's `Currency_CurrencyList` is stored silver, gold, copper.
+> A reader of the property set sorts by `Currency_Value`, largest first. How coins are drawn:
+> `npc-windows.md` §9.2.
 
 ---
 
@@ -1692,3 +1704,4 @@ Data questions:
 | 2026-10-08 | Revision (status Accepted → Revised): OPEN closure with fresh probes over all records (OBS2), the class library's code (WL, data) and one M4 question (BIN2). Closed: the order of the class-3308 array (§9.4.1, binary-heap rule, 1,007 of 1,007) and the order of `Vendor_ItemList` (§6.3.1, growing hash set, 1,439 of 1,439), removing the §6.3 OPEN and the third data OPEN of §14. Answered and narrowed: critical-success chance shown while crafting (§11.5.1; remaining OPEN: the server's roll); recipe experience value (§11.5.2; remaining: how it is credited); cooldown keys → CooldownControl durations in seconds (§11.5.3; remaining OPEN: execution time only); purchase price from a vendor (§11.6.1; remaining OPEN: the price a vendor pays). Added facts to the remaining OPENs: munge-override counts (§6.2), trophy-list description and icon in examination (§11.2), the class library's four-field key and classification filter (§9.5.1), profession attribute 5 accessor, class 3399 as a DID set with the reward-once set empty (§14). New §11.7 (functions declared without bodies), invariants E-I16–E-I18, examples §13.6–§13.8, provenance OBS2, WL, BIN2 and rows W5, V5, V6, R3, R4, R5, L7, L8, W6, V7. Owner observations that can settle the remaining behavioural OPENs are named in each. |
 | 2026-10-08 | Merge of the decoder branch (spec writer, dirty room). The implementer OPEN notes and census differences of 2026-10-07 are kept; those that the Accepted text of the 2026-10-08 revision already answers are marked with a pointer: §6.2 (progression types: answered by `combat-data.md` §4.1–§4.3) and §9.5 (packed field widths: answered by §9.5.1); the munge-override OPEN of the base text is replaced by the Accepted §6.2 text. No fact changed; status unchanged. |
 | 2026-10-09 | OPEN sweep (spec writer, dirty room; status Revised, waiting for review). New provenance key OBS3 and rows E1–E3. Answered the three implementer OPENs: §4.5/§4.8 type codes of the world-event condition fields (E1), §4.9 the stored `RunicLevelLootTable_Level` (E2), §6.2 `Usage_MinLevel` never stored in both places, top level first by decision (E3). Still OPEN (server behaviour or owner observation): the munge-level override, loot rolls, random generator and descent order, runic pulls, level index, filtered lists, species tables, critical crafts, craft XP, execution time, sale price, money drops and their unit, profession attributes, PVP key, reward-once set. |
+| 2026-10-10 | Notes only (no fact changed), for P3 (`npc-windows.md`): §7 order of the currency directory's two forms; §6.1 barter costs that are wallet items. Status unchanged. |

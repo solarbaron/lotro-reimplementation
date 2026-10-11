@@ -114,7 +114,7 @@ pub struct EffectData {
 
 impl EffectData {
     /// The change events of an in-place update from `self` to `new`, in the order of
-    /// §15.2 (P85); never `IsDispellableChanged`. `GetID` cannot change.
+    /// §15.2 (P91); never `IsDispellableChanged`. `GetID` cannot change.
     #[must_use]
     pub fn changes(&self, new: &Self) -> Vec<EffectEvent> {
         let mut v = Vec::new();
@@ -2084,7 +2084,7 @@ mod tests {
         assert_eq!(src.effect_at(1, 0).unwrap().id, 12);
         assert_eq!(src.effect_at(1, 1).unwrap().id, 11);
         assert_eq!(src.effect_position(1, 10), None);
-        // An in-place update gives the change events in the P85 order.
+        // An in-place update gives the change events in the P91 order.
         let mut e = effect(11);
         e.name = "New".into();
         e.category = 8;

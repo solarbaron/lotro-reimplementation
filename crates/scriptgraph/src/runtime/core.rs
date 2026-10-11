@@ -196,10 +196,15 @@ impl Runtime<'_> {
                 return None;
             }
         }
-        // 5. Intensity (§4.1).
+        // 5. Intensity (§4.1). On a Scriptlet node whose parameter set holds the PID, the
+        // pair wrote that parameter instead (`appearance.md` §7.4.1 rule 2).
+        let param_held = |pid: u32| match &n.data {
+            NodeData::Scriptlet { parameters, .. } => parameters.get(pid).is_some(),
+            _ => false,
+        };
         let mult = overrides
             .iter()
-            .find(|(p, _)| Some(*p) == self.vocab.intensity_multiplier)
+            .find(|(p, _)| Some(*p) == self.vocab.intensity_multiplier && !param_held(*p))
             .and_then(|(_, v)| as_f32(v))
             .unwrap_or(n.base.intensity_multiplier);
         let factor = self.factor(mult, n.base.intensity_variance);
@@ -609,17 +614,27 @@ impl Runtime<'_> {
                 set_override(&mut out, field, v);
             }
         }
+        // `appearance.md` §7.4.1 rule 3: only the invoking Scriptlet node's own set, as its
+        // pairs left it; never the run parameters merged from outer invocations.
         if !n.base.scriptlet_driven.is_empty()
             && let Some(sc) = self.enclosing_scriptlet(parent, nref.unit)
-            && let Some(set) = self.scriptlet_parameters(sc)
         {
             for &(field, ppid) in &n.base.scriptlet_driven {
-                if let Some(v) = set.get(ppid) {
-                    set_override(&mut out, field, v.clone());
+                if let Some(v) = self.scriptlet_parameter(sc, ppid) {
+                    set_override(&mut out, field, v);
                 }
             }
         }
         out
+    }
+
+    /// The parameter `pid` of the Scriptlet instance `sc`'s own set as the node's pairs
+    /// left it (`appearance.md` §7.4.1 rule 2): a pair of a PID the set holds replaced the
+    /// stored value. `None` when the set does not hold `pid`.
+    pub(crate) fn scriptlet_parameter(&self, sc: InstanceId, pid: u32) -> Option<PropertyValue> {
+        let stored = self.scriptlet_parameters(sc)?.get(pid)?;
+        let written = self.insts.get(sc).and_then(|i| i.override_of(Some(pid)));
+        Some(written.unwrap_or(stored).clone())
     }
 
     /// The nearest instance at or above `from` that is a Scriptlet invocation of `unit`

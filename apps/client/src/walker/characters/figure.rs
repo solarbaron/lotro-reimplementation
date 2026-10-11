@@ -40,8 +40,13 @@
 //! tint hair and skin with them (`appearance.md` §3.5).
 //!
 //! A figure on a character screen ([`FigureRequest::chargen_stage`]) carries its
-//! `CharGen_Stage` from the start and is not placed in a world (`appearance.md` §3.5
-//! Decision); every other figure gets `Physics_InWorld` after its start-up.
+//! `CharGen_Stage`, and its `CharGen_Action`, `Agent_Class` and `Render_AlwaysSelectable`
+//! when the request names them (`character-screens.md` §2.1.4), from the start and is not
+//! placed in a world (`appearance.md` §3.5 Decision); every other figure gets
+//! `Physics_InWorld` after its start-up. A character-screen figure also starts the script
+//! `Chargen` after `Startup` and its class table's start-up names (§2.1.4, CS28), which
+//! gives it its stage stance; it loops only its `LoopForever` clips and plays its certain
+//! one-shot clips once ([`OneShot`], `script-table.md` §6.10).
 //!
 //! A figure without a usable skeleton, or with no skinned part, is **static**: its parts
 //! are drawn rigid in the setup frame, unanimated. Every failure short of "no body" is a
@@ -142,6 +147,15 @@ pub struct FigureRequest {
     /// (`character-screens.md` §2.2; `appearance.md` §3.5 Decision: such a figure carries
     /// its stage and is not placed in a world); `None` for a figure in the world.
     pub chargen_stage: Option<u32>,
+    /// The `CharGen_Action` key of a character-screen figure (`character-screens.md`
+    /// §2.1.4: 2 `Idle`, 3 `Hover`), carried from the start like the stage.
+    pub chargen_action: Option<u32>,
+    /// The `Agent_Class` a character-screen figure is created with (the chosen class on
+    /// the creation stages, §2.1.4).
+    pub class: Option<u32>,
+    /// `Render_AlwaysSelectable` true (the race-and-class figure, `character-screens.md`
+    /// §2.1.4, CS28).
+    pub always_selectable: bool,
 }
 
 /// The look choices of a playable figure beyond its heights (decision 0025 D2: a
@@ -206,7 +220,16 @@ impl FigureRequest {
             look: look
                 .styles
                 .iter()
-                .map(|s| (s.key, s.modifier.to_bits()))
+                .map(|s| {
+                    let e = s.element.unwrap_or_default();
+                    (
+                        s.key,
+                        s.modifier.to_bits(),
+                        if s.element.is_some() { e.file.0 } else { 0 },
+                        e.toggle_file.map_or(0, |d| d.0),
+                        e.toggle_property.unwrap_or(0),
+                    )
+                })
                 .collect(),
             sliders: look.slider_values.clone(),
             values: look
@@ -236,6 +259,7 @@ impl FigureRequest {
             ],
             seed: self.seed,
             stage: self.chargen_stage,
+            screen: (self.chargen_action, self.class, self.always_selectable),
         }
     }
 }
@@ -243,7 +267,7 @@ impl FigureRequest {
 /// Identifies a figure: equal keys share one asset and one set of GPU resources.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct FigureKey {
-    look: Vec<(u32, u32)>,
+    look: Vec<(u32, u32, u32, u32, u32)>,
     sliders: Option<String>,
     values: Vec<(u32, ValueKey)>,
     body: Body,
@@ -253,6 +277,7 @@ pub struct FigureKey {
     shape: [u32; 2],
     seed: Option<u64>,
     stage: Option<u32>,
+    screen: (Option<u32>, Option<u32>, bool),
 }
 
 /// One part ready for upload.
@@ -290,13 +315,95 @@ pub struct ClipPlay {
     /// whole duration it shows (the held fraction × the played length, over the duration,
     /// `tessera_anim::held_clip_fraction`); it never advances.
     pub held: Option<f32>,
+    /// A one-shot clip of a character-screen figure ([`OneShot`]): played once and then
+    /// removed; `None` for looping and held clips.
+    pub once: Option<OneShot>,
+}
+
+/// How a one-shot clip plays (`LoopForever` 0, `ManualUpdate` 0, rate at least 0.0002;
+/// `script-table.md` §6.10 steps 3–5 and 8, `character-screens.md` §2.1.4 "One-shot stage
+/// clips"): from its start time for `length` seconds, faded out over `ramp_out` seconds
+/// that end at its end, then removed. Never held at its last frame, never looped beyond
+/// its `LoopCount`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct OneShot {
+    /// The clip time it starts at, seconds (§6.10 step 5: min(*f*₀ × duration ÷ rate,
+    /// duration)).
+    pub start: f32,
+    /// Wall-clock seconds from its start to its end *τ*_end (§6.10 step 4).
+    pub length: f32,
+    /// `RampOut`, seconds (below [`MIN_RATE`] it is removed at once at its end).
+    pub ramp_out: f32,
+    /// It plays its clip more than once (`LoopCount` above 1): the clip time wraps.
+    pub wraps: bool,
+}
+
+/// The smallest rate (and ramp) the client treats as non-zero (`script-table.md` §6.10).
+pub const MIN_RATE: f32 = 0.0002;
+
+/// What `script-table.md` §6.10 makes of a played (not held) clip.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum PlayPlan {
+    /// No end: a looping clip (`LoopForever` 1), or a rate below [`MIN_RATE`].
+    Endless,
+    /// A one-shot clip.
+    Once(OneShot),
+    /// Its end has passed before it starts (step 4): not started.
+    Skip,
+}
+
+impl PlayPlan {
+    /// The plan of a clip with `loop_forever`, `loop_count`, the start fraction
+    /// `start_fraction` (*f*₀), `end_time` (`EndTime`), `ramp_out`, its `duration` and its
+    /// playback `rate`. Non-finite inputs give [`PlayPlan::Skip`] for a one-shot clip.
+    #[must_use]
+    pub fn of(
+        loop_forever: bool,
+        loop_count: i32,
+        start_fraction: f32,
+        end_time: f32,
+        ramp_out: f32,
+        duration: f32,
+        rate: f32,
+    ) -> Self {
+        if loop_forever || !(rate.is_finite() && rate >= MIN_RATE) {
+            return Self::Endless;
+        }
+        if !(duration.is_finite() && duration > 0.0 && end_time.is_finite()) {
+            return Self::Skip;
+        }
+        let f0 = if start_fraction.is_finite() {
+            start_fraction.clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+        // τ₀ = now − f₀ × duration ÷ rate (step 3); τ_end = τ₀ + (LoopCount × duration −
+        // (1 − EndTime) × duration) ÷ rate (step 4).
+        let started = f0 * duration / rate;
+        let played = (loop_count as f32 * duration - (1.0 - end_time) * duration) / rate;
+        let length = played - started;
+        if !(length.is_finite() && length > 0.0) {
+            return Self::Skip;
+        }
+        Self::Once(OneShot {
+            start: started.min(duration),
+            length,
+            ramp_out: if ramp_out.is_finite() {
+                ramp_out.max(0.0)
+            } else {
+                0.0
+            },
+            wraps: loop_count > 1,
+        })
+    }
 }
 
 /// The clips of idle, walk and run.
 #[derive(Debug, Clone, Default)]
 pub struct FigureClips {
     /// The looping idle clips, one per data layer (the most likely of each), lowest layer
-    /// first, at most [`MAX_IDLE_LAYERS`].
+    /// first, at most [`MAX_IDLE_LAYERS`]; for a character-screen figure also its one-shot
+    /// stage clips ([`ClipPlay::once`]).
     pub idle: Vec<ClipPlay>,
     /// Walk forward.
     pub walk: Option<ClipPlay>,
@@ -308,7 +415,7 @@ pub struct FigureClips {
 }
 
 /// Most idle layers a figure plays.
-pub const MAX_IDLE_LAYERS: usize = 4;
+pub const MAX_IDLE_LAYERS: usize = 6;
 
 /// A built figure.
 #[derive(Debug)]
@@ -689,6 +796,7 @@ pub fn build_figure_with_look(
                 layer: h.held.layer,
                 track_weights: h.held.use_bone_opacity,
                 held: Some(h.clip_fraction),
+                once: None,
             })
             .collect();
     }
@@ -935,7 +1043,8 @@ fn build_part(
     })
 }
 
-/// Most material groups layered onto one surface (a hostile group list stays bounded).
+/// Most material groups layered onto one surface (a hostile group list stays bounded;
+/// on overflow the last ones in group-list order are kept, `material.md` §18).
 pub const MAX_SURFACE_GROUPS: usize = 16;
 
 /// The plan of `surface` with the figure's look (`material.md` §9.3 rules 1–4,
@@ -1010,6 +1119,76 @@ fn look_inputs<S: tessera_material::RecordSource>(
     (composed, edits)
 }
 
+/// A key-valued property of a character-screen figure (`CharGen_Action`, `Agent_Class`;
+/// `character-screens.md` §2.1.4) as a value of the property's dictionary type: an enum
+/// key, or an integer for an integer property; `None` when the dictionary lacks the name
+/// or types it otherwise.
+fn screen_property(
+    registry: &tessera_props::PropertyRegistry,
+    name: &str,
+    key: u32,
+) -> Option<(u32, PropertyValue)> {
+    let pid = registry.pid(name)?;
+    let v = match registry.property_type(pid)? {
+        tessera_formats::PropertyType::Enum => PropertyValue::Enum(key),
+        tessera_formats::PropertyType::Int => PropertyValue::Int(i32::try_from(key).ok()?),
+        tessera_formats::PropertyType::Int64 => PropertyValue::Int64(i64::from(key)),
+        _ => return None,
+    };
+    Some((pid, v))
+}
+
+/// A Random share or node probability at least this large counts as certain.
+const CERTAIN: f32 = 0.999;
+
+/// The one-shot clips a character-screen figure plays once at its start
+/// (`character-screens.md` §2.1.4 "One-shot stage clips"): the static resolution lists
+/// every clip the start-up scripts would start; of the played clips that do not loop
+/// (`LoopForever` 0, rate at least [`MIN_RATE`], not held), those started for certain
+/// (no Random share below [`CERTAIN`]), the first per data layer in start order. Gestures
+/// chosen by Random nodes, and later steps of Sequences and Timers, need the running graph
+/// and are not played (`character-screens.md` §2.1.4 implementer OPEN).
+fn screen_one_shots(candidates: &[ClipCandidate]) -> Vec<ClipCandidate> {
+    let mut out: Vec<ClipCandidate> = Vec::new();
+    for c in candidates {
+        if c.clip.is_null()
+            || c.is_held()
+            || c.loop_forever
+            || c.playback_rate() < MIN_RATE
+            || c.chance.is_nan()
+            || c.chance < CERTAIN
+            || out.iter().any(|o| o.layer == c.layer)
+        {
+            continue;
+        }
+        out.push(c.clone());
+    }
+    out
+}
+
+/// The start fraction *f*₀ of a played clip (`script-table.md` §6.10 step 1): `StartTime`,
+/// or with `RandomizeStartTime` a fraction in [`StartTime`, `EndTime`] drawn from the
+/// figure's seed and the clip (deterministic, so a figure keeps its look).
+fn start_fraction(c: &ClipCandidate, seed: u64) -> f32 {
+    if !c.randomize_start_time {
+        return c.start_time;
+    }
+    let mut x = seed ^ (u64::from(c.clip.0) << 17) ^ u64::from(c.node_id);
+    // SplitMix64 step.
+    x = x.wrapping_add(0x9E37_79B9_7F4A_7C15);
+    let mut z = x;
+    z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    z ^= z >> 31;
+    let u = (z >> 40) as f32 / (1u64 << 24) as f32;
+    let (a, b) = (c.start_time, c.end_time);
+    if a.is_finite() && b.is_finite() {
+        a + (b - a) * u
+    } else {
+        c.start_time
+    }
+}
+
 /// Chooses idle, walk and run (`script-table.md` §11.3). Idle: every looping candidate,
 /// the most likely per data layer (the original layers them, §6.2; a figure whose base
 /// idle is a reference stance shows its stance from a higher layer); without a looping one
@@ -1068,6 +1247,29 @@ fn select_clips(
         (Some(stage), Some(asm)) => {
             for (pid, v) in figure_on_screen(asm, stage) {
                 scripts.properties.set(pid, v);
+            }
+            for (name, key) in [
+                ("CharGen_Action", req.chargen_action),
+                ("Agent_Class", req.class),
+            ] {
+                if let Some((pid, v)) = key.and_then(|k| screen_property(registry, name, k)) {
+                    scripts.properties.set(pid, v);
+                }
+            }
+            if req.always_selectable
+                && let Some(pid) = registry.pid("Render_AlwaysSelectable")
+            {
+                scripts.properties.set(pid, PropertyValue::Bool(true));
+            }
+            // The screens append `Chargen` to the start-up names of the set they create
+            // the figure with (`character-screens.md` §2.1.4, CS28): it starts after
+            // `Startup` and the class table's start-up names.
+            match cat.chargen_script {
+                Some(k) if !scripts.startup_scripts.contains(&k) => {
+                    scripts.startup_scripts.push(k);
+                }
+                Some(_) => {}
+                None => notes.push("no Chargen script key; the stage stance may be missing".into()),
             }
             Vec::new()
         }
@@ -1139,8 +1341,18 @@ fn select_clips(
             }
             // Every looping candidate, the most likely one per layer (the data layers
             // them, `script-table.md` §6.2); one-shot fidgets are left out (§8.6 OPEN).
+            // A character-screen figure loops only its `LoopForever` clips and plays its
+            // certain one-shot clips once ([`screen_one_shots`]).
+            let screen = req.chargen_stage.is_some();
+            let looping = |c: &&ClipCandidate| {
+                if screen {
+                    c.loop_forever || c.playback_rate() < MIN_RATE
+                } else {
+                    c.loops()
+                }
+            };
             let mut per_layer: Vec<ClipCandidate> = Vec::new();
-            for c in r.candidates.iter().filter(usable).filter(|c| c.loops()) {
+            for c in r.candidates.iter().filter(usable).filter(looping) {
                 match per_layer.iter_mut().find(|p| p.layer == c.layer) {
                     Some(p) if weight(c) > weight(p) => *p = c.clone(),
                     Some(_) => {}
@@ -1148,7 +1360,10 @@ fn select_clips(
                 }
             }
             per_layer.sort_by_key(|c| c.layer);
-            if per_layer.is_empty() {
+            if screen {
+                per_layer.extend(screen_one_shots(&r.candidates));
+                per_layer.sort_by_key(|c| (c.layer, !c.loop_forever));
+            } else if per_layer.is_empty() {
                 // Nothing loops: the most likely candidate of the idle layer, else of any.
                 per_layer.extend(
                     cat.idle_layer
@@ -1194,6 +1409,25 @@ fn select_clips(
                 1.0
             };
             let natural = cand.natural_speed(bound.duration());
+            // A character-screen figure's one-shot clip (`script-table.md` §6.10).
+            let once = if req.chargen_stage.is_some() && state == MotionState::Idle {
+                let f0 = start_fraction(&cand, seed.unwrap_or(0));
+                match PlayPlan::of(
+                    cand.loop_forever,
+                    cand.loop_count,
+                    f0,
+                    cand.end_time,
+                    cand.ramp_out,
+                    bound.duration(),
+                    cand.playback_rate(),
+                ) {
+                    PlayPlan::Endless => None,
+                    PlayPlan::Once(o) => Some(o),
+                    PlayPlan::Skip => continue,
+                }
+            } else {
+                None
+            };
             let play = |fallback: f32| ClipPlay {
                 did: cand.clip.0,
                 clip: Arc::clone(&bound),
@@ -1205,6 +1439,7 @@ fn select_clips(
                 layer: cand.layer,
                 track_weights: cand.use_bone_opacity,
                 held: None,
+                once,
             };
             match state {
                 MotionState::Idle => out.idle.push(play(0.0)),
@@ -1221,4 +1456,56 @@ fn select_clips(
         out.run = None;
     }
     (out, shape, appearances, look, Some(figure_scripts))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `script-table.md` §6.10 steps 3–5: start time, end and the cases without one.
+    #[test]
+    fn play_plans_follow_the_start_and_end_rules() {
+        assert_eq!(
+            PlayPlan::of(true, 1, 0.0, 1.0, 0.2, 2.0, 1.0),
+            PlayPlan::Endless
+        );
+        assert_eq!(
+            PlayPlan::of(false, 1, 0.0, 1.0, 0.2, 2.0, 0.0),
+            PlayPlan::Endless
+        );
+        // Once from the start: the whole clip.
+        assert_eq!(
+            PlayPlan::of(false, 1, 0.0, 1.0, 0.2, 2.0, 1.0),
+            PlayPlan::Once(OneShot {
+                start: 0.0,
+                length: 2.0,
+                ramp_out: 0.2,
+                wraps: false,
+            })
+        );
+        // Start fraction 0.25 and end time 0.75 at rate 2: starts 0.25 s in, ends after
+        // (2 − 0.5) ÷ 2 − 0.25 = 0.5 s.
+        let PlayPlan::Once(o) = PlayPlan::of(false, 1, 0.25, 0.75, 0.0, 2.0, 2.0) else {
+            panic!("one-shot");
+        };
+        assert!((o.start - 0.25).abs() < 1e-6 && (o.length - 0.5).abs() < 1e-6);
+        // Twice: wraps, twice as long.
+        let PlayPlan::Once(o) = PlayPlan::of(false, 2, 0.0, 1.0, 0.0, 1.0, 1.0) else {
+            panic!("one-shot");
+        };
+        assert!(o.wraps && (o.length - 2.0).abs() < 1e-6);
+        // An end before the start is not started; hostile values do not panic.
+        assert_eq!(
+            PlayPlan::of(false, 1, 0.9, 0.5, 0.0, 1.0, 1.0),
+            PlayPlan::Skip
+        );
+        assert_eq!(
+            PlayPlan::of(false, 0, 0.0, 1.0, 0.0, 1.0, 1.0),
+            PlayPlan::Skip
+        );
+        assert_eq!(
+            PlayPlan::of(false, 1, f32::NAN, f32::NAN, f32::NAN, f32::NAN, 1.0),
+            PlayPlan::Skip
+        );
+    }
 }

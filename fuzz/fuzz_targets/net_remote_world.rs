@@ -3,7 +3,7 @@
 //! arbitrary world-stream, chat-stream and datagram bytes (`tessera-protocol.md` §6.3–§6.5,
 //! §13), with well-formed creations, removals, interest resets and teleports among them so
 //! entities really come and go, statics streamed from a small synthetic world source, and
-//! local selections in between (`scenario-feed.md` §9.7, revision 5). A selection names an
+//! local selections in between (`scenario-feed.md` §9.7, revision 6). A selection names an
 //! entity the client has seen (by its order of appearance) or a raw small ID (the player is
 //! 42). Must never panic, never surface an entity event for an entity it did not create, end
 //! with at most one `Disconnected`, and keep invariant 11 of `scenario-feed.md` §15: every

@@ -49,7 +49,7 @@ pub(crate) mod lit_flag {
     pub const OPACITY_SHIFT: u32 = 7;
     /// sRGB re-encode bit of material texture `i` (binding order).
     pub const SRGB_SHIFT: u32 = 9;
-    /// The output alpha is the opacity source alone ([`crate::AlphaMode::Fixed`],
+    /// The output alpha is the tested opacity alone ([`crate::AlphaMode::Fixed`],
     /// `material.md` §11.3).
     pub const FACTOR_OPACITY: u32 = 1 << 16;
     /// A second colour layer is drawn (`material.md` §10.3).
@@ -64,10 +64,12 @@ pub(crate) mod lit_flag {
     pub const LAYER_ALPHA: u32 = 1 << 21;
     /// Base RGB alone, alpha 2 × both alphas ([`crate::LayerAlpha::OpacityOnly`]).
     pub const LAYER_OPACITY_ONLY: u32 = 1 << 22;
-    /// Second opacity source of [`crate::Opacity::BaseWith`] (two bits: 0 none, 2 the
-    /// emissive alpha, 3 the opacity texture's alpha).
+    /// Second opacity source of [`crate::Opacity::BaseWith`] (two bits: 0 the constant 1
+    /// (none, or a texture that is 0 or did not resolve), 2 the emissive alpha, 3 the
+    /// opacity texture's alpha).
     pub const OPACITY2_SHIFT: u32 = 23;
-    /// The two opacity sources are added (else multiplied).
+    /// The two opacity sources are added (else multiplied); with source 0 the base alpha
+    /// + 1 (`material.md` §18 Decision).
     pub const OPACITY_SUM: u32 = 1 << 25;
     /// The second layer's alpha is added to the base alpha ([`crate::LayerAlpha::Summed`]).
     pub const LAYER_SUM: u32 = 1 << 26;
@@ -152,7 +154,9 @@ pub(crate) fn lit_fields(
     // mask would punch holes in dyeable cloth), so it neither tests nor reaches the output.
     let dye_in_base_alpha = u.flags[2] == DYE_SOURCE_BASE_ALPHA;
     let base_code = if dye_in_base_alpha { 0 } else { 1 };
-    // A source whose texture did not resolve contributes 1 (the white texture's alpha).
+    // A source whose texture did not resolve, or is 0 (`SecondOpacity::One`), contributes 1
+    // (the white texture's alpha; material.md §18 Decision): a product is the base alpha
+    // alone, a sum the base alpha + 1.
     let second_code = |second: SecondOpacity| match second {
         SecondOpacity::EmissiveAlpha if ctx.present[4] => 2,
         SecondOpacity::Texture(_) if ctx.present[6] => 3,
@@ -169,15 +173,15 @@ pub(crate) fn lit_fields(
     flags |= gloss << lit_flag::GLOSS_SHIFT;
     flags |= opacity << lit_flag::OPACITY_SHIFT;
     flags |= opacity2 << lit_flag::OPACITY2_SHIFT;
-    if sum && opacity2 != 0 {
+    if sum {
         flags |= lit_flag::OPACITY_SUM;
     }
     // material.md §11.3, rule for unlit records: "opacity" in a blend factor is the §11.2
-    // opacity source, or 1 without one (not × M.alpha).
+    // tested opacity, or 1 without an opacity-bearing role (not × M.alpha).
     if matches!(material.alpha, crate::AlphaMode::Fixed(_)) {
         flags |= lit_flag::FACTOR_OPACITY;
     }
-    // The blended fragment stages run the alpha test too (render.md R-D11, material.md
+    // The blended fragment stages run the alpha test too (render.md §4.3 `Fixed`, material.md
     // §11.2): a fixed blend with its record's threshold, every other blended kind with −1
     // (no fragment discarded).
     match material.alpha {
@@ -1020,7 +1024,7 @@ mod tests {
         assert_eq!(u.lit[3], 20.0);
     }
 
-    /// material.md §11.3: only fixed blends read the opacity source alone.
+    /// material.md §11.3: only fixed blends read the tested opacity alone.
     #[test]
     fn fixed_blends_flag_the_factor_opacity() {
         for (alpha, want) in [

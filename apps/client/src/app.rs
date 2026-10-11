@@ -163,8 +163,17 @@ impl App {
                  R reset, T say hello, P list plugins, Esc quit"
             );
         }
+        // The NPC windows' `--open-panel` names are the NPC hub's (decision 0024 P3).
+        let mut client_args = ui_args.clone();
+        client_args
+            .open_panel
+            .retain(|n| crate::npc::parse_npc_panel(n).is_none());
+        // The quest journal's names are the quest hub's (P3).
+        client_args
+            .open_panel
+            .retain(|n| crate::quests::parse_journal_panel(n).is_none());
         let mut ui = (host.is_some() && args.ui_enabled())
-            .then(|| crate::ui_host::client::ClientUi::new(&ui_args));
+            .then(|| crate::ui_host::client::ClientUi::new(&client_args));
         if let Some(u) = ui.as_mut() {
             u.prepare(&mut runtime);
         }
@@ -394,6 +403,34 @@ impl App {
             flight_done = ev.flight_done;
             if let Some(ui) = self.ui.as_mut() {
                 ui.after_update(walker, rt, &ev);
+                // The NPC windows (decision 0024 P3): after the frame's UI events.
+                let screens = ui.screens_open();
+                // The frame's UI events, taken once every frame: the NPC windows and the
+                // quest journal read the same list (the combat widgets have their own
+                // queue); the character screens own them while they are open.
+                let taken = ui
+                    .host_mut()
+                    .map(crate::ui_host::UiHost::take_game_events)
+                    .unwrap_or_default();
+                let events: &[tessera_ui::UiEvent] = if screens { &[] } else { &taken };
+                if ui.attached()
+                    && let (Some(host), Some(world)) = (ui.host_mut(), rt.world.as_mut())
+                {
+                    // The use range measures from the avatar (session frame, as `Move`).
+                    #[allow(clippy::cast_possible_truncation)]
+                    let avatar = walker
+                        .focus()
+                        .map(|p| tessera_net::Vec3::new(p.x as f32, p.y as f32, p.z as f32));
+                    rt.npc.frame(host, world, events, screens, avatar, now);
+                    // The quest journal (P3), after the NPC windows.
+                    let radar = walker.radar_input();
+                    rt.quests
+                        .frame(host, world, &rt.npc, events, radar.as_ref(), now);
+                    // The indicators over ringed NPCs (§8.2), at the walker's positions.
+                    let position = |id| walker.entity_render_pos(id);
+                    rt.quests
+                        .update_indicators(Some(&mut gfx.renderer), world, &rt.npc, &position);
+                }
                 ui.step8(walker, &mut gfx.renderer, rt);
             }
         } else {
@@ -414,6 +451,9 @@ impl App {
                 match host.walker.as_mut() {
                     Some(walker) => {
                         walker.draw(&gfx.renderer, &mut frame);
+                        // Quest indicators over NPCs (P3), under the game UI.
+                        let view_proj = walker.view_proj(frame.aspect());
+                        rt.quests.draw_indicators(&mut frame, view_proj);
                         if let Some(ui) = self.ui.as_mut() {
                             ui.draw(&mut frame, true);
                         }
@@ -617,6 +657,10 @@ impl App {
             }
             walker.shutdown(&mut gfx.renderer);
         }
+        // The quest indicators' glyphs (P3).
+        if let (Some(rt), Some(gfx)) = (self.runtime.as_mut(), self.gfx.as_mut()) {
+            rt.quests.release(&mut gfx.renderer);
+        }
         if let Some(mut rt) = self.runtime.take() {
             rt.shutdown();
         }
@@ -651,7 +695,28 @@ impl ApplicationHandler for App {
                 match (self.ui.as_mut(), self.runtime.as_mut(), self.gfx.as_ref()) {
                     (Some(ui), Some(rt), Some(gfx)) if ui.attached() => {
                         let mut cursor = WinitCursor(&gfx.window);
+                        if matches!(event, WindowEvent::Focused(false)) {
+                            rt.npc.release_keys();
+                            rt.quests.release_keys();
+                        }
                         tessera_input::winit_adapter::window_event(&event, |e| {
+                            // Escape and Enter on an active NPC window (P3, npc-windows.md
+                            // §5.7, §7.5, §8.3) go to that window only.
+                            if ui.host().is_some_and(|h| rt.npc.raw_key(h, &e)) {
+                                return;
+                            }
+                            // The input action "use nearest NPC in range" (P3).
+                            if crate::npc::commands::is_use_key(&e)
+                                && !ui.host().is_some_and(|h| h.keyboard_focused())
+                            {
+                                rt.npc.request_use();
+                            }
+                            // `ToggleQuestPanel` (P3, key L with no modifier).
+                            if rt.quests.log_key(&e)
+                                && !ui.host().is_some_and(|h| h.keyboard_focused())
+                            {
+                                rt.quests.request_toggle();
+                            }
                             ui.raw_event(walker, rt, &e, &mut cursor);
                         });
                     }

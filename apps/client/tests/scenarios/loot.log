@@ -1,0 +1,29 @@
+tessera-scenario-log 1
+install none
+tick 100
+title "After the skirmish"
+resolve $beast line=13 family=creature requested=1 candidates=0 got=0 note=no-install
+resolve $spoils line=14 family=item requested=5 candidates=0 got=0 note=no-install
+pre > Connect
+pre Connected characters=["Tamsin"]
+pre > EnterWorld character="Tamsin"
+0.000 WorldEntered entity=player name="Tamsin" at=0.000,0.000,0.000 facing=90.00
+0.000 LocationReport entity=player at=0:0.000,0.000,0.000 facing=90.00 anchor=none cause=entered
+0.000 EntitySpawned entity=$raider kind=creature name="Hill raider" at=2.000,1.000,0.000 facing=243.43
+0.000 EntitySpawned entity=$chest kind=object name="Iron-bound chest" at=-2.000,1.000,0.000 facing=116.57
+0.000 WalletChanged currency=coin amount=300
+0.200 LootShown window=1 source=$raider entries=[{entry=1 what="Satchel strap" quantity=2},{entry=2 what="Brass buckle" quantity=2},{entry=3 what="Old map" quantity=2}] coin=75
+0.500 > TakeLoot window=1 entry=2
+0.500 LootTaken window=1 entry=2
+0.500 ItemAdded item=item:1 what="Brass buckle" at=backpack:0 quantity=2
+1.000 > TakeLoot window=1 entry=none
+1.000 LootTaken window=1 entry=1
+1.000 ItemAdded item=item:2 what="Satchel strap" at=backpack:1 quantity=2
+1.000 LootTaken window=1 entry=3
+1.000 ItemAdded item=item:3 what="Old map" at=backpack:2 quantity=2
+1.000 WalletChanged currency=coin amount=375
+1.500 > CloseWindow window=1
+1.500 WindowClosed window=1
+2.000 LootShown window=2 source=$chest entries=[{entry=1 what="Cracked lantern" quantity=1},{entry=2 what="Tin cup" quantity=1},{entry=3 what="Waxed cord" quantity=1}] coin=0
+2.500 LootTaken window=2 entry=1
+2.500 end reason=complete skipped=1 input-skipped=0 dropped=0 spilled=0

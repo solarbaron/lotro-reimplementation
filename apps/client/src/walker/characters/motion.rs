@@ -6,6 +6,9 @@
 //! by bone, weighted by their per-track weights where the node asks for them):
 //!
 //! - the looping idle clips the script tables chose, one per data layer;
+//! - on a character-screen figure, its one-shot stage clips: each on its own layer from
+//!   its start time, faded out over its `RampOut` ending at its end, then removed
+//!   (`script-table.md` §6.10 steps 3–5 and 8, `character-screens.md` §2.1.4);
 //! - the held proportion clips (`script-table.md` §6.7, §6.8: the River-hobbit and
 //!   DwarfStoutAxe layer-110 `scale_blend` clips), shown at their held fraction with rate 0
 //!   and never faded: they shape the figure in every motion state. Held clips of one data
@@ -64,7 +67,48 @@ pub struct Locomotion {
     /// Animator indices of the idle layers above the locomotion layer (faded out while
     /// moving).
     pub above: Vec<usize>,
+    /// The one-shot clips still playing ([`OnceLayer`]).
+    pub once: Vec<OnceLayer>,
 }
+
+/// A one-shot clip on its own animator layer (`script-table.md` §6.10 steps 4 and 8): it
+/// fades out over its `RampOut` ending at its end and is then removed from the layer.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct OnceLayer {
+    /// Animator layer index.
+    pub index: usize,
+    /// Seconds until its end.
+    pub remaining: f32,
+    /// Fade-out seconds ending at the end.
+    pub ramp_out: f32,
+    /// The fade-out has begun.
+    pub fading: bool,
+}
+
+/// Advances the one-shot clips of `loco` by `dt` seconds: a clip whose fade-out time has
+/// come starts fading (over the time left), and a clip at its end is removed (its layer
+/// plays nothing). Call before the animator advances by the same `dt`.
+fn tick_once(a: &mut Animator, loco: &mut Locomotion, dt: f32) {
+    let dt = if dt.is_finite() { dt.max(0.0) } else { 0.0 };
+    loco.once.retain_mut(|o| {
+        o.remaining -= dt;
+        let Some(layer) = a.layer_mut(o.index) else {
+            return false;
+        };
+        if o.remaining <= 0.0 {
+            layer.source = None;
+            return false;
+        }
+        if !o.fading && o.ramp_out >= MIN_RAMP && o.remaining <= o.ramp_out {
+            layer.fade_to(0.0, o.remaining);
+            o.fading = true;
+        }
+        true
+    });
+}
+
+/// Ramps shorter than this end at once (`script-table.md` §6.10 step 8).
+const MIN_RAMP: f32 = 0.0002;
 
 impl Locomotion {
     /// The natural speed the blend shows at ground speed `speed`.
@@ -184,16 +228,32 @@ pub fn make_animator_with_keys(
             .find(|((_, e), _)| *e == Entry::Move)
             .map_or(0, |(_, (i, _))| *i),
         above: Vec::new(),
+        once: Vec::new(),
     };
     for ((key, entry), &(index, shared)) in order.iter().zip(&slots) {
         let started = match *entry {
             Entry::Idle(i) => {
                 let idle = &clips.idle[i];
-                let mut p = Playback::new(Arc::clone(&idle.clip), Wrap::Loop);
+                let wrap = match idle.once {
+                    Some(o) if !o.wraps => Wrap::Once,
+                    _ => Wrap::Loop,
+                };
+                let mut p = Playback::new(Arc::clone(&idle.clip), wrap);
                 p.rate = idle.rate;
+                if let Some(o) = idle.once {
+                    p.time = o.start;
+                }
                 let ok = a.play(index, p, 0.0, false).is_ok();
                 if ok && let Some(l) = a.layer_mut(index) {
                     l.use_track_weights = idle.track_weights;
+                }
+                if ok && let Some(o) = idle.once {
+                    loco.once.push(OnceLayer {
+                        index,
+                        remaining: o.length,
+                        ramp_out: o.ramp_out,
+                        fading: false,
+                    });
                 }
                 ok
             }
@@ -214,7 +274,10 @@ pub fn make_animator_with_keys(
         };
         if started {
             any = true;
-            if matches!(entry, Entry::Idle(_)) && move_key.is_some_and(|m| *key > m) {
+            if let Entry::Idle(i) = entry
+                && clips.idle[*i].once.is_none()
+                && move_key.is_some_and(|m| *key > m)
+            {
                 loco.above.push(index);
             }
         }
@@ -253,7 +316,9 @@ pub fn make_animator_with_keys(
         return None;
     }
     if phase.is_finite() && phase > 0.0 {
-        let _ = a.advance(phase.min(600.0));
+        let phase = phase.min(600.0);
+        tick_once(&mut a, &mut loco, phase);
+        let _ = a.advance(phase);
     }
     let mut keys = vec![0u32; a.layers().len()];
     for ((key, _), &(index, _)) in order.iter().zip(&slots) {
@@ -298,11 +363,13 @@ pub fn drive(a: &mut Animator, loco: &mut Locomotion, speed: f32, dt: f32) {
             }
         }
     }
-    let _ = a.advance(if dt.is_finite() {
+    let dt = if dt.is_finite() {
         dt.clamp(0.0, 1.0)
     } else {
         0.0
-    });
+    };
+    tick_once(a, loco, dt);
+    let _ = a.advance(dt);
 }
 
 #[cfg(test)]
@@ -361,6 +428,7 @@ mod tests {
             layer,
             track_weights: layer == 30,
             held: None,
+            once: None,
         }
     }
 
@@ -479,6 +547,44 @@ mod tests {
         assert!(!a.layers()[2].use_track_weights);
     }
 
+    /// `script-table.md` §6.10 steps 4 and 8: a one-shot clip plays from its start, fades
+    /// out over its ramp ending at its end and is then removed; the looping layer stays.
+    #[test]
+    fn one_shot_clips_play_once_and_are_removed() {
+        use super::super::figure::OneShot;
+        let skel = skeleton();
+        let mut gesture = play(&skel, 90, 0.0);
+        gesture.once = Some(OneShot {
+            start: 0.25,
+            length: 1.0,
+            ramp_out: 0.4,
+            wraps: false,
+        });
+        let clips = FigureClips {
+            idle: vec![play(&skel, 80, 0.0), gesture],
+            walk: None,
+            run: None,
+            held: Vec::new(),
+        };
+        let (mut a, mut loco) = make_animator(&skel, &clips, 0.0).expect("animator");
+        assert_eq!(loco.once.len(), 1);
+        let time = |a: &Animator| match &a.layers()[1].source {
+            Some(Source::Clip(p)) => Some(p.clip_time()),
+            _ => None,
+        };
+        assert_eq!(time(&a), Some(0.25), "starts at its start time");
+        drive(&mut a, &mut loco, 0.0, 0.5);
+        assert_eq!(a.layers()[1].weight, 1.0, "not fading yet");
+        drive(&mut a, &mut loco, 0.0, 0.2);
+        assert!(loco.once[0].fading, "the fade-out began");
+        drive(&mut a, &mut loco, 0.0, 0.2);
+        assert!(a.layers()[1].weight < 0.6);
+        drive(&mut a, &mut loco, 0.0, 0.2);
+        assert!(time(&a).is_none(), "removed at its end");
+        assert!(loco.once.is_empty());
+        assert!(matches!(a.layers()[0].source, Some(Source::Clip(_))));
+    }
+
     fn loco() -> Locomotion {
         Locomotion {
             walk_speed: 2.0,
@@ -488,6 +594,7 @@ mod tests {
             has_move: true,
             move_index: 1,
             above: Vec::new(),
+            once: Vec::new(),
         }
     }
 

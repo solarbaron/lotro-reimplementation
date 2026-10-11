@@ -96,6 +96,9 @@ pid_table! {
         bottom_margin = "UICore_Text_bottom_margin",
         markup = "UICore_Text_parse_markup_tags",
         tag_font_color = "UICore_Text_tag_font_color",
+        truncate = "UICore_Text_truncate_text_to_fit",
+        editable = "UICore_Text_editable",
+        selectable = "UICore_Text_selectable",
     }
 }
 
@@ -291,6 +294,37 @@ fn fallback_px(props: &[(u32, PropertyValue)]) -> Option<u32> {
     }
 }
 
+/// The truncation suffix of an element (`fonts.md` §7.6): the text of its
+/// `UICore_Text_truncate_text_to_fit` StringInfo in the normal slot and the element's
+/// colour. `None` (the element does not truncate) when the property is absent or not a
+/// StringInfo, its text does not resolve to at least one character, or the element is
+/// editable or selectable (§7.6 OPEN: the enabling condition Tessera uses).
+fn truncation_suffix(
+    st: &mut EnvState,
+    pids: &TextPids,
+    props: &[(u32, PropertyValue)],
+    colour: u32,
+) -> Option<Vec<tessera_ui::text::TextChar>> {
+    if get(props, pids.editable).is_some_and(as_bool)
+        || get(props, pids.selectable).is_some_and(as_bool)
+    {
+        return None;
+    }
+    let PropertyValue::StringInfo(info) = get(props, pids.truncate)? else {
+        return None;
+    };
+    let text = st.resolve_string(info)?;
+    if text.is_empty() {
+        return None;
+    }
+    let mut b = CharListBuilder::new();
+    b.slot(SLOT_NORMAL).colour(colour).push_str(&text);
+    if b.overflowed() {
+        return None;
+    }
+    Some(b.finish())
+}
+
 /// Shapes one request (module docs). `None` while a needed font is still loading, or when
 /// no font is available at all.
 pub(crate) fn shape(st: &mut EnvState, req: &TextRequest<'_>) -> Option<Arc<PreparedText>> {
@@ -340,10 +374,11 @@ pub(crate) fn shape(st: &mut EnvState, req: &TextRequest<'_>) -> Option<Arc<Prep
         return None;
     }
     let chars = b.finish();
+    let suffix = truncation_suffix(st, &pids, props, colour);
     let fonts = vec![normal, tag];
     let f0 = st.data().map_or(0.0, |d| d.locale_leading);
     let params = layout_params(&pids, props, req.size, req.wrap_width, f0);
-    let lay = layout(&chars, &fonts, &params, None).ok()?;
+    let lay = layout(&chars, &fonts, &params, suffix.as_deref()).ok()?;
     let truncated = lay.is_truncated();
     let extent = (lay.content_width, lay.content_height);
     Some(Arc::new(PreparedText {
@@ -397,6 +432,53 @@ mod tests {
         assert_eq!(lp.vertical, JUSTIFY_TOP);
         let lp = layout_params(&p, &props, (100, 20), Some(40), 0.0);
         assert_eq!(lp.width, 40);
+    }
+
+    /// `fonts.md` §7.6: an element with `UICore_Text_truncate_text_to_fit` is cut with the
+    /// suffix when its one line is wider than the element; never when editable or
+    /// selectable, nor when the suffix is empty.
+    #[test]
+    fn truncation_suffix_cuts_one_line_text() {
+        use tessera_formats::string_info::{StringInfo, StringSource};
+        let mut st = EnvState::new(None, 1, 1 << 20, 1 << 24);
+        let p = st.text_pids();
+        let suffix = |s: &str| {
+            PropertyValue::StringInfo(Box::new(StringInfo {
+                source: StringSource::Literal(s.into()),
+                args: None,
+            }))
+        };
+        let text = "a line of text far wider than its element";
+        let shape_with = |st: &mut EnvState, props: Vec<(u32, PropertyValue)>| {
+            let req = TextRequest {
+                text,
+                props: &props,
+                size: (60, 30),
+                wrap_width: None,
+            };
+            shape(st, &req).expect("shaped with the fallback font")
+        };
+        let one = (p.one_line, PropertyValue::Bool(true));
+        let t = shape_with(&mut st, vec![one.clone(), (p.truncate, suffix("..."))]);
+        assert!(t.truncated, "cut with the suffix");
+        assert!(
+            t.extent.0 <= 60,
+            "cut width {} within the element",
+            t.extent.0
+        );
+        let t = shape_with(&mut st, vec![one.clone()]);
+        assert!(!t.truncated, "no suffix property: not cut");
+        let t = shape_with(&mut st, vec![one.clone(), (p.truncate, suffix(""))]);
+        assert!(!t.truncated, "an empty suffix: not cut");
+        let t = shape_with(
+            &mut st,
+            vec![
+                one,
+                (p.truncate, suffix("...")),
+                (p.editable, PropertyValue::Bool(true)),
+            ],
+        );
+        assert!(!t.truncated, "editable text is never cut");
     }
 
     #[test]

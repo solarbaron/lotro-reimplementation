@@ -16,6 +16,10 @@
 //! ([`crate::combat::PluginCombat`]), with `Turbine.Engine.GetGameTime` on the scenario's
 //! virtual clock ([`ScenarioPlugins::observe_at`]: seconds since world entry), so the
 //! conformance checks 70–76 run on scenarios.
+//!
+//! The wallet and money views (`lua-plugin-api.md` §15.3, decision 0024 P3) are fed the
+//! same way: the local player carries the session's wallet model
+//! ([`crate::npc::SessionWallet`]), and each poll's wallet changes become its events.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -25,6 +29,8 @@ use tessera_net::Event;
 
 use crate::character::state::NO_INSTALL_BAGS;
 use crate::character::{CharacterData, CharacterHub, PlayerState};
+use crate::npc::NpcData;
+use crate::npc::wallet::{SessionWallet, WalletPlayer, wallet_item_facts};
 use crate::plugins::Plugins;
 use crate::ui_host::services::WalkerPlayer;
 
@@ -48,6 +54,10 @@ pub struct ScenarioPlugins {
     combat_install: Option<Arc<crate::combat::CombatInstall>>,
     /// World entry on the driver's clock (the game time's origin).
     base: Option<Instant>,
+    /// The wallet views' model (P3).
+    wallet: Arc<SessionWallet>,
+    /// The NPC facts of the install (the wallet items' values), when the run has one.
+    npc_data: Option<Arc<NpcData>>,
 }
 
 impl ScenarioPlugins {
@@ -75,13 +85,24 @@ impl ScenarioPlugins {
                         None
                     }
                 });
+        let npc_data = data
+            .as_ref()
+            .and_then(|d| match NpcData::new(Arc::clone(d)) {
+                Ok(n) => Some(Arc::new(n)),
+                Err(e) => {
+                    tracing::warn!("NPC facts unavailable: {e}");
+                    None
+                }
+            });
         if let Some(d) = data {
             hub.set_data(d);
         }
         hub.attach_plugins(plugins.manager_mut());
         let combat = crate::combat::PluginCombat::new();
         combat.attach(plugins.manager_mut());
-        let src: Arc<dyn tessera_plugins::LocalPlayerSource> = player.clone();
+        let wallet = SessionWallet::new();
+        let src: Arc<dyn tessera_plugins::LocalPlayerSource> =
+            WalletPlayer::new(player.clone(), Arc::clone(&wallet));
         plugins.manager_mut().set_local_player_source(Some(src));
         Self {
             plugins,
@@ -94,6 +115,8 @@ impl ScenarioPlugins {
             combat,
             combat_install,
             base: None,
+            wallet,
+            npc_data,
         }
     }
 
@@ -182,6 +205,13 @@ impl ScenarioPlugins {
         );
         if !self.queued && self.state.player().is_some() {
             self.load_now();
+        }
+        let data = self.npc_data.clone();
+        let facts = |r: &tessera_net::domain::Ref| wallet_item_facts(data.as_deref(), r);
+        for ev in self.wallet.apply(&changes, &facts) {
+            self.plugins
+                .manager_mut()
+                .raise_gameplay_event(tessera_plugins::GameplayEvent::Wallet(ev));
         }
         self.hub
             .after_events(&self.state, changes, self.plugins.manager_mut());

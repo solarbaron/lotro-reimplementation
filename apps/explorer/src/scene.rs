@@ -1641,7 +1641,8 @@ fn used_as(m: &ResolvedMaterial, plan: &GpuPlan, id: u32) -> String {
 /// (surface, matching (shader override, material) layers) of an assembled part's draw.
 type LayeredKey = (Did, Vec<(Option<Did>, Did)>);
 
-/// Most material groups layered onto one surface (a hostile group list stays bounded).
+/// Most material groups layered onto one surface (a hostile group list stays bounded;
+/// on overflow the last ones in group-list order are kept, `material.md` §18).
 const MAX_SURFACE_GROUPS: usize = 16;
 
 /// Collects distinct textures and thumbnails while materials are added.
@@ -1819,7 +1820,6 @@ impl<'a> Collector<'a> {
                 .iter()
                 .filter(|(_, _, g)| tessera_material::group_binding_matches(*g, k))
                 .map(|&(sh, m, _)| (sh, m))
-                .take(MAX_SURFACE_GROUPS)
                 .collect()
         });
         let layering = Layering::from_groups(matching.iter().copied(), MAX_SURFACE_GROUPS);

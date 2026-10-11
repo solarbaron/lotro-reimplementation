@@ -326,7 +326,7 @@ end
             .unwrap_or_default();
         assert_eq!(f[1], want_icon.to_string(), "GetIcon of {did}");
         assert_eq!(f[2], want_category.to_string(), "GetCategory of {did}");
-        assert!(want_category.count_ones() <= 1, "P86: at most one bit");
+        assert!(want_category.count_ones() <= 1, "P92: at most one bit");
         assert_eq!(f[3], want_debuff.to_string(), "IsDebuff of {did}");
         assert_eq!(f[4], want_curable.to_string(), "IsCurable of {did}");
         assert!(f[5] == want_name, "GetName of {did}");

@@ -4,11 +4,15 @@
 
 | | |
 |---|---|
-| **Status** | **Review** (revision 5, 2026-10-10, spec writer, design: [decision 0032](../decisions/0032-p2-targeting-on-test-server.md) D1–D4: local selection on the test-server backend, §9.5, §9.7, §12.5.1, §12.5.2, §14.9, §14.11, §15; an independent review by a session that wrote no part of revision 5 or of decision 0032 must check the changes listed in §18.4 and the cases of §14.9 and §14.11). Before: **Accepted** (revision 4, independent review 2026-10-10: CLEAN_ROOM.md §5.3 passed, every item; D1–D5 agree with decision 0025, `tessera-protocol.md` v1.1 §6.2.17 and Appendix A, and the code on branch `p1`; Vector G and Vector F's changed lines re-derived, the 15 new hostile rows checked; non-blocking notes (a)–(f) in §18.3). Before: Review (revision 4, 2026-10-10, spec writer, design: [decision 0025](../decisions/0025-p1-character-look-on-test-server.md) D1–D5, §18.3; an independent review by a session that wrote no part of revision 4 must check the changes listed there, Vectors F and G and the new hostile rows). Before: Accepted (revision 3, 2026-10-09). An independent review by a session that wrote none of revisions 1–3 re-checked R1–R31, S1–S31, Vectors A–F and the hostile table and passed (P0 exit criterion 1); no blocking OPEN. The non-blocking OPENs of §3.1, §8.3, §11.1, §12.4, §13 and §16 stay open for the spec owner; the reviewer's rulings on them are review notes in the review record and change no fact |
-| **Last updated** | 2026-10-10 |
+| **Status** | **Revision 5 (P3) Accepted; revision 6 (P2) in Review.** **Accepted** (revision 5, the P3 parts of §18.P3: independent review 2026-10-11, CLEAN_ROOM.md §5.3 passed, every item; record in §18.P3). **Review** (revision 6, the P2 parts of §18.4, 2026-10-10, spec writer, design: [decision 0032](../decisions/0032-p2-targeting-on-test-server.md) D1–D4: local selection on the test-server backend, §9.5, §9.7, §12.5.1, §12.5.2, §14.9, §14.11, §15; an independent review by a session that wrote no part of revision 6 or of decision 0032 must check the changes listed in §18.4 and the cases of §14.9 and §14.11; P2's revision was written as revision 5 and renumbered 6 at the merge with P3, 2026-10-11).
+Before: **Accepted** (revision 4, independent review 2026-10-10: CLEAN_ROOM.md §5.3 passed, every item; D1–D5 agree with decision 0025, `tessera-protocol.md` v1.1 §6.2.17 and Appendix A, and the code on branch `p1`; Vector G and Vector F's changed lines re-derived, the 15 new hostile rows checked; non-blocking notes (a)–(f) in §18.3). Before: Review (revision 4, 2026-10-10, spec writer, design: [decision 0025](../decisions/0025-p1-character-look-on-test-server.md) D1–D5, §18.3; an independent review by a session that wrote no part of revision 4 must check the changes listed there, Vectors F and G and the new hostile rows). Before: Accepted (revision 3, 2026-10-09). An independent review by a session that wrote none of revisions 1–3 re-checked R1–R31, S1–S31, Vectors A–F and the hostile table and passed (P0 exit criterion 1); no blocking OPEN. The non-blocking OPENs of §3.1, §8.3, §11.1, §12.4, §13 and §16 stay open for the spec owner; the reviewer's rulings on them are review notes in the review record and change no fact |
+| **Last updated** | 2026-10-11 |
 | **Author role** | Spec writer (design) |
-| **Reviewer** | Revision 2: spec reviewer (Clean-Room-Role: review), a session separate from the first-draft author, 2026-10-09; it also wrote R1–R31, so those fixes are unreviewed. Revision 3: pending (an independent session). Revision 4: a Claude review session in the spec-reviewer role (Clean-Room-Role: review) that wrote no part of decision 0025, of the P1 revisions of `scenario-feed.md`, `tessera-protocol.md`, `test-server.md` and `server-content.md`, or of the code, 2026-10-10 (passed, §18.3). Revision 5: pending (an independent session) |
-| **Review record** | 2026-10-10 (revision 4): independent review against CLEAN_ROOM.md §5.3, decision 0025 D1–D5, decision 0024 §2 and §4 and LEGAL.md §11.1 rule 5: **passed**; the record is in §18.3. Earlier: 2026-10-09 (revision 2), review against decision 0024 §2 and §4, LEGAL.md §11.1 rule 5, the CLAUDE.md content rules, ARCHITECTURE §19.1, the `tessera-net` API (`session.rs`, `model.rs`, `sandbox/mod.rs`) and every spec and decoder view cited in §8.3. 31 findings (R1–R31), all design defects fixed in this revision by the reviewer (allowed: the spec holds design facts only); no client fact was added. Every selector attribute was confirmed against an Accepted spec and, where named, its decoder view. Findings, fixes and the remaining non-blocking OPENs: §18.1. Revision 3 (spec owner, design role, 2026-10-09): 31 implementation-phase findings verified against this text and the `tessera-net` and client sources (§18.2: S1–S31): all real, 29 fixed, S12 accepted as a stated gap, the policy part of S24 recorded as an OPEN. Revision 3 independent review (spec reviewer, Clean-Room-Role: review, 2026-10-09; a session that wrote none of revisions 1–3 and no code): checked against `docs/CLEAN_ROOM.md` §5.3, decision 0024 §2 (client half only, data-free server, game rules stay T3) and §4 (values scripted, never derived), LEGAL.md §11.1 rule 5, the CLAUDE.md content rules, ARCHITECTURE §19.1 (every §9 variant listed; groups, session rules and the test-server refusals match) and the cited specs (all Accepted except `server-content.md`, Draft, from which the feed takes nothing LEGAL.md §11.1 does not state itself). Every §8.3 family and attribute was traced to its Accepted spec section and property name and to the named decoder view in `crates/formats` and `crates/wstate` (`ItemKind`'s 15 variants are the 15 keywords; `EffectRole`, `TemplateKind`, `MapKind`, `Role` variants exist as cited). R1–R31 and S1–S31: each fix is present and consistent with the rest of the text. Vectors: the SplitMix64 outputs, the seven samples and the trace of §14.3 were recomputed with a throwaway script and agree; Vectors A, B, D, E and F were re-derived line by line (times, event order, field order and formats, window and item ids, skips, drops, end times; facing 359.999 round-trips to 359.99899, written `0.00`) and agree; all 45 hostile rows agree with the grammar, the error order and the position rules; the implementation's vector tests agree (supporting evidence only). Result: **pass**. Rulings on the implementer OPENs (review notes, not facts; the spec owner writes them into the text at the next revision): §3.1 guard (1) agreed: the exception "`tessera-net` without `scenario`" cannot hold under cargo feature unification, drop it from the allow list; (2) and (3) confirmed (dev-dependencies are server builds; in-process server hosts such as `tessera-loadtest` are server builds and may link `tessera-net` only because `tessera-server` itself does not). §3.1 module naming: the `selector` module named in the placement table is placement, not an interface; `tessera-gamedata` exposing its selector types at the crate root conforms. §11.1 log size: non-blocking; a bound is recommended (for example 256 MiB with a run-time `LogOverflow`, exit 5), because a hostile local file within every limit can still write a very large log; until then the USER_GUIDE warning suffices. §12.4 (1) the unplayed windowed input script is an accepted P0 gap (windowed logs are not normative), refusing a windowed run whose `enter` needs an `accept-character` name (exit 2) is acceptable, and the proposed public input player in `tessera_net::scenario` is endorsed; (2) driver-only headless runs with an install, an exact or default spawn and no `--screenshot` are acceptable; (3) "the client's configured `avatar`" means the avatar the client actually configures for the sandbox: none in a driver-only run, which need not load the catalog for it; (4) exit 2 for a missing or non-regular `--scenario` path and 1 for an unreadable file are consistent with the exit table and should be added to it; (5) an install the user named that cannot be used exits 4 with `InstallUnreadable`: agreed (§8.7 covers only "no install found"). §13 (a) align rule 1 with `apps/client/tests/scenarios/`, where the replay test reads them; (b) keep "(or CC0-1.0)" (LEGAL.md §11.1 rule 7 and the CLAUDE.md fixture rule allow CC0) and widen the content test; a GPL-only test is stricter than the spec, not a violation. §16 `tessera-net` points: (1) `shared` in both `ItemPlace` and `ContainerSize` (the §10.3 example and the file keyword win over the general enum rule); (2)–(18) confirmed as implemented. §16 `tessera-gamedata` points (1)–(10) confirmed; for (5), keys 1–64 map to bits 0–63 (`property-system.md` §7.3), so a key above 64 matching nothing is right; for (7), `appearance.md` §2.1 (Accepted) states the two gender values, so using them with the per-install presence check is allowed. The owner-policy OPEN on numeric enum keys (§16) and the later-milestone OPENs (§8.3, §16) stay non-blocking. |
+| **Reviewer** | Revision 2: spec reviewer (Clean-Room-Role: review), a session separate from the first-draft author, 2026-10-09; it also wrote R1–R31, so those fixes are unreviewed. Revision 3: pending (an independent session). Revision 4: a Claude review session in the spec-reviewer role (Clean-Room-Role: review) that wrote no part of decision 0025, of the P1 revisions of `scenario-feed.md`, `tessera-protocol.md`, `test-server.md` and `server-content.md`, or of the code, 2026-10-10 (passed, §18.3).
+Revision 5 (P3 parts): a Claude review session in the spec-reviewer role (Clean-Room-Role: review) that wrote no part of the P3 revision, of `npc-windows.md` or of the P3 code, 2026-10-11 (passed, §18.P3)
+Revision 6 (P2 parts): pending (an independent session) |
+| **Review record** | Revision 6 (P2 parts): not yet reviewed. 2026-10-11 (revision 5, P3 parts N-D1 … N-D4): independent review against CLEAN_ROOM.md §5.3 and `npc-windows.md` §5.3, §6.3, §7.8, §10: **passed**; the record is in §18.P3. 2026-10-10 (revision 4): independent review against CLEAN_ROOM.md §5.3, decision 0025 D1–D5, decision 0024 §2 and §4 and LEGAL.md §11.1 rule 5: **passed**;
+the record is in §18.3. Earlier: 2026-10-09 (revision 2), review against decision 0024 §2 and §4, LEGAL.md §11.1 rule 5, the CLAUDE.md content rules, ARCHITECTURE §19.1, the `tessera-net` API (`session.rs`, `model.rs`, `sandbox/mod.rs`) and every spec and decoder view cited in §8.3. 31 findings (R1–R31), all design defects fixed in this revision by the reviewer (allowed: the spec holds design facts only); no client fact was added. Every selector attribute was confirmed against an Accepted spec and, where named, its decoder view. Findings, fixes and the remaining non-blocking OPENs: §18.1. Revision 3 (spec owner, design role, 2026-10-09): 31 implementation-phase findings verified against this text and the `tessera-net` and client sources (§18.2: S1–S31): all real, 29 fixed, S12 accepted as a stated gap, the policy part of S24 recorded as an OPEN. Revision 3 independent review (spec reviewer, Clean-Room-Role: review, 2026-10-09; a session that wrote none of revisions 1–3 and no code): checked against `docs/CLEAN_ROOM.md` §5.3, decision 0024 §2 (client half only, data-free server, game rules stay T3) and §4 (values scripted, never derived), LEGAL.md §11.1 rule 5, the CLAUDE.md content rules, ARCHITECTURE §19.1 (every §9 variant listed; groups, session rules and the test-server refusals match) and the cited specs (all Accepted except `server-content.md`, Draft, from which the feed takes nothing LEGAL.md §11.1 does not state itself). Every §8.3 family and attribute was traced to its Accepted spec section and property name and to the named decoder view in `crates/formats` and `crates/wstate` (`ItemKind`'s 15 variants are the 15 keywords; `EffectRole`, `TemplateKind`, `MapKind`, `Role` variants exist as cited). R1–R31 and S1–S31: each fix is present and consistent with the rest of the text. Vectors: the SplitMix64 outputs, the seven samples and the trace of §14.3 were recomputed with a throwaway script and agree; Vectors A, B, D, E and F were re-derived line by line (times, event order, field order and formats, window and item ids, skips, drops, end times; facing 359.999 round-trips to 359.99899, written `0.00`) and agree; all 45 hostile rows agree with the grammar, the error order and the position rules; the implementation's vector tests agree (supporting evidence only). Result: **pass**. Rulings on the implementer OPENs (review notes, not facts; the spec owner writes them into the text at the next revision): §3.1 guard (1) agreed: the exception "`tessera-net` without `scenario`" cannot hold under cargo feature unification, drop it from the allow list; (2) and (3) confirmed (dev-dependencies are server builds; in-process server hosts such as `tessera-loadtest` are server builds and may link `tessera-net` only because `tessera-server` itself does not). §3.1 module naming: the `selector` module named in the placement table is placement, not an interface; `tessera-gamedata` exposing its selector types at the crate root conforms. §11.1 log size: non-blocking; a bound is recommended (for example 256 MiB with a run-time `LogOverflow`, exit 5), because a hostile local file within every limit can still write a very large log; until then the USER_GUIDE warning suffices. §12.4 (1) the unplayed windowed input script is an accepted P0 gap (windowed logs are not normative), refusing a windowed run whose `enter` needs an `accept-character` name (exit 2) is acceptable, and the proposed public input player in `tessera_net::scenario` is endorsed; (2) driver-only headless runs with an install, an exact or default spawn and no `--screenshot` are acceptable; (3) "the client's configured `avatar`" means the avatar the client actually configures for the sandbox: none in a driver-only run, which need not load the catalog for it; (4) exit 2 for a missing or non-regular `--scenario` path and 1 for an unreadable file are consistent with the exit table and should be added to it; (5) an install the user named that cannot be used exits 4 with `InstallUnreadable`: agreed (§8.7 covers only "no install found"). §13 (a) align rule 1 with `apps/client/tests/scenarios/`, where the replay test reads them; (b) keep "(or CC0-1.0)" (LEGAL.md §11.1 rule 7 and the CLAUDE.md fixture rule allow CC0) and widen the content test; a GPL-only test is stricter than the spec, not a violation. §16 `tessera-net` points: (1) `shared` in both `ItemPlace` and `ContainerSize` (the §10.3 example and the file keyword win over the general enum rule); (2)–(18) confirmed as implemented. §16 `tessera-gamedata` points (1)–(10) confirmed; for (5), keys 1–64 map to bits 0–63 (`property-system.md` §7.3), so a key above 64 matching nothing is right; for (7), `appearance.md` §2.1 (Accepted) states the two gender values, so using them with the per-install presence check is allowed. The owner-policy OPEN on numeric enum keys (§16) and the later-milestone OPENs (§8.3, §16) stay non-blocking. |
 | **Implements into** | `crates/net` (`tessera_net::scenario`: parser, static checks, resolved scenario, run-time feed, headless driver, canonical log; the sandbox backend runs it; the overlay backend over the test-server backend, §12.5; plain-sandbox creation, §9.6), `crates/gamedata` (selector resolution against the user's install, §8; property labels and kinds, §5.8, §8.6), `apps/client` (`--scenario`, `--scenario-log`, `--scenario-input`, overlay runs, §12), `fuzz/` (§11.4) |
 | **Companion documents** | [Decision 0024](../decisions/0024-parity-track.md) §2, §4, §5 (the feed's mandate); [LEGAL.md](../LEGAL.md) §8 and §11.1; `server-content.md` §3 and §7; `docs/ARCHITECTURE.md` §19 (domain events; it lists the variants of §9 by group); the gameplay specs cited in §8.3 (`items.md`, `combat-data.md`, `creatures.md`, `quests.md`, `economy.md`, `map-data.md`, `interaction.md`, `player-character.md`, `instances.md`), `appearance.md` §2 and §7, `coordinates.md` §4 and §7, `property-system.md` §7, `records.md` §7 |
 
@@ -78,6 +82,7 @@ on the date given), **Standard** (a published algorithm or standard).
 | Partial Fisher–Yates shuffle; unbiased bounded integers by rejection | R. Durstenfeld, CACM 7(7), 1964; the rejection threshold (2^64 − *b*) mod *b* is the textbook construction | Standard |
 | UTF-8 | RFC 3629 | Standard |
 | Revision 4 (§18.3): overlay runs, looks and property values, the held-item slot, creation on the test-server backend, plain-sandbox creation, `remove-character`, `stat`, `item-property`, Vector G, the new hostile rows | [Decision 0025](../decisions/0025-p1-character-look-on-test-server.md) (spec writer, design, 2026-10-10); `character-screens.md` §5.2, §7.1, §7.1.1, §7.2, §8, `character-panels.md` §3.4, §7, §9, `item-tooltips.md` §6.5, §11 (Accepted, read 2026-10-10); `tessera-protocol.md` v1.1 §5.3, §6.2, §7.4 (revised the same day); `property-system.md` §3 (type codes), MP4 (the two PID families), §7.3 (bit ↔ key); `player-character.md` §6.2 (`NationalityTable_Nationality`). No game client, server or third-party tool was consulted | Design |
+| P3 revision (revision 5, §18.P3): the text function `action(…)` and `Text::Action`, the `rewards` and `buyback` steps, the events `QuestRewards` and `BuybackShown`, the command `BuyBack`, their patterns, input forms, log forms, limits, Vectors N1 and N2, the hostile rows N-H1 … N-H11 | [`npc-windows.md`](npc-windows.md) §5.3, §6.3, §7.8, §10 (spec writer, 2026-10-10; Review); `quests.md` §9 (Accepted). The windows' needs come from that dirty-room spec; the feed forms themselves are design | Design |
 | The review fixes of §18.1 (R1–R31) and §18.2 (S1–S31): design changes only | Review of 2026-10-09 (spec reviewer, review role) and the implementation-phase review of 2026-10-09 (fixed by the spec owner); the same clean sources as the first draft, read on that date. No game client, server or third-party tool was consulted | Design |
 
 ---
@@ -289,6 +294,11 @@ of a `key=` option, as an item of a comma-separated list (§6.3), before `:` in 
 | Property value | `@Label=VALUE`, or `pid:`INTEGER`:`KIND`=`VALUE | One token (a string inside it may hold spaces and `=`); the key is the text before the first `=`. `KIND` is one of the keywords `bool`, `int`, `int64`, `float`, `enum`, `bitfield32`, `bitfield64`, `did`, `string`, `instance`, `colour`; another word is `UnexpectedToken`. Meaning and value forms: §5.8. |
 | Colour | `rgba:`R`,`G`,`B`,`A` | Four decimal integers 0–255 (`OutOfRange` otherwise), red, green, blue, alpha. Only as a property value. |
 
+**Text function `action` (P3 revision).** The class Text function also holds `action(`LABEL`)`
+and `action(`INTEGER`)` (one token; the integer 0 … 2^32 − 1). It stands wherever a text
+stands and names an NPC action (§5.2). A string may also stand as the REF of the forms
+`rep:REF:N` and `wallet:REF:N` of the `rewards` step (§6.3).
+
 **Numeric components.** Each numeric component (an integer, decimal or duration; one
 coordinate of a Position; one side of a Fraction; one item of a numeric or hexadecimal list;
 the number of `REF:N`) is at most 32 characters, sign and unit included; a longer one is
@@ -465,6 +475,7 @@ install; the client half shows a literal ref as its text with a placeholder icon
 | `role-failure($q[i],N)` | `QuestRole { …, failure: true }` | the failure line of that role |
 | `comment($c[i])` | `Comment(DataId)` | the content of an NPC comment record (`quests.md` §7.7) |
 | `objective($q[i],N)` | `Objective { quest, objective: N }` | the description of the objective whose `Quest_ObjectiveIndex` is *N* (`quests.md` §5.1: the indices of a quest are 1 … *n*, not always in stored order); no such objective → a placeholder |
+| `action(@Label)`, `action(N)` (P3 revision) | `Action(u32)`: the label's key in the mapper the property dictionary names for `ActionPickerUI_Action` (`enum_value` context `NpcAction`, §8.6), or *N* as written | the install's text for that NPC action (`npc-windows.md` §5.3 rule 3). An unresolved label (no install, unknown label) gives `Literal` of the label without its `@` instead, with a `label` note (attribute `action`) when an install is present |
 
 Chat lines and character, actor and fellow names are plain strings (the existing events take
 `String`); text functions are not allowed there, except `name(…)` in actor declarations (§5.4).
@@ -750,6 +761,8 @@ Declarations: `page $p [speaker=ENTITY] TEXT` and `option $p N TEXT [goto=$page|
 | `loot` | `items=($sel\|REFLIST) [from=ENTITY] [qty=N] [coin=N]` | `LootShown` (entry quantity `qty`, default 1; `coin` default 0) |
 | `loot-taken` | `N` | `LootTaken` for entry N of the open loot window; none → skip |
 | `close` | `dialogue\|quest-offer\|vendor\|loot\|trainer\|travel\|instances\|trade` | `WindowClosed`; not open → skip |
+| `rewards` (P3 revision) | 1 … 16 reward tokens: `KIND:N` with KIND one of `coin`, `glory`, `item-xp`, `craft-xp`, `mount-xp`, `virtue-xp`, `trait-points` (each at most once), or `rep:REF:N`, `wallet:REF:N` (any number) | `QuestRewards` (§9.2) in the open quest-offer window, entries in written order; no quest-offer window open → skip |
+| `buyback` (P3 revision) | `items=($sel\|REFLIST) [qty=N] [price=N\|N,N,…] [barter=REF:N]` | `BuybackShown` (§9.2) in the open vendor window: entry *i* (1-based) per element or list item, quantity `qty` (default 1), `price` and `barter` as for `vendor`; no vendor window open → skip |
 
 Price and stock entries are scripted; the feed does not compute a price from item data
 (`economy.md` §11.6 describes the server's rule, which the feed does not run).
@@ -763,6 +776,29 @@ declared `$item`, which gives the entry's `item` and the item's ref, and a trade
 at most 32 entries: its REFLIST has 1 … 32 items (`LimitExceeded(entries)` at the `items=`
 key otherwise), and a binding longer than 32 is cut to its first 32 with a `window` note
 (§8.6 item 5).
+
+**Rewards and buy-back (P3 revision).** `rewards` amounts are integers: `coin`, the five
+experience and glory kinds and `wallet` 0 … 10^15, `trait-points` 0 … 10^6, `rep` −10^12 …
+10^12 (`OutOfRange` otherwise, at the token); a token of another form or kind, or a second
+token of one of the seven single kinds, is `UnexpectedToken` at that token; a 17th token is
+`LimitExceeded(entries)` at that token; no token is `MissingArgument`. `rep` names a
+faction (an element, for example of a `faction` selector, or a literal) and `wallet` a wallet
+item. The amounts are scripted: the feed computes none from reward tables (`quests.md` §9 is
+server data). `buyback` takes its entries like `vendor` (REFLIST or binding, at most 1,024).
+
+> **OPEN:** (implementer, P3 revision, 2026-10-10; non-blocking) Facts the revision leaves
+> open, implemented conservatively in `tessera-net`: (a) the buy-back page belongs to the
+> vendor window that got the `BuybackShown`; a later `vendor` step on the still-open window
+> keeps it, a later `buyback` step replaces it, and closing the window drops it. A
+> `buy-back` pattern matches only a `BuyBack` for that window whose entry lies in its last
+> buy-back list (§7.6 "unknown entry"). Please confirm whether a `vendor` step should drop
+> the page instead. (b) Error precedence within `rewards`: the 17-token limit is checked
+> before the 17th token's form, and a repeated single kind is reported after that token's
+> own form and range checks (`coin:1 coin:-5` gives `OutOfRange` at the second token). A
+> malformed amount (`coin:1.5`, `coin:0x10`) is `BadNumber`, a missing one (`coin:`) is
+> `UnexpectedToken`. (c) A non-numeric entry of the `buy-back` input form (`buy-back x`,
+> `buy-back entry=1`) or pattern (`entry=x`) is `BadNumber`, as for `buy`. (d) `npc-windows.md` §7.8 cites
+> "§10.4" for `BuybackShown`; that section does not exist (§10.1 lists the event).
 
 <a id="s6-4"></a>
 ### 6.4 Social
@@ -980,6 +1016,7 @@ matches anything explicitly; `none` matches an absent value.
 | `train [entry=N]`, `slot-trait [N]`, `craft [REF]` | progression commands | |
 | `create-character [name=STRING]`, `delete-character [STRING]` | character commands (before world entry) | The body may hold only character steps (§6.1) |
 | `close KIND` | `CloseWindow` of that kind | |
+| `buy-back [entry=N]` (P3 revision) | `BuyBack` | |
 
 A trigger on `create-character` or `delete-character` fires before world entry; its body
 runs at once in the processing of that command in `submit` (§3.3), in line order, with times
@@ -1064,6 +1101,7 @@ both see the state before that frame's poll.
 | `train N`, `slot-trait N (REF\|none)`, `craft REF [qty=Q]` | progression commands |
 | `create-character STRING [class=VALUE] [species=VALUE sex=VALUE] [nationality=VALUE] [look=$l]`, `delete-character STRING` | character commands; `at pre` only. `CreateCharacter.class` is the class value, none when `class=` is absent or its label unresolved; `nationality` likewise (a number, or a label resolved through the mapper the dictionary names for `NationalityTable_Nationality`, `player-character.md` §6.2; `enum_value` context `Nationality`); `appearance` is `Appearance::new(Body::Character { species, sex })` with the resolved look of `$l` (if any) when species and sex both resolve, otherwise none, and then the look is not sent (§9.4). Unresolved labels here do not skip the line |
 | `close KIND` | `CloseWindow` |
+| `buy-back N` (P3 revision; N 1 … 1,024) | `BuyBack` in the open vendor window |
 
 An input line whose target window, slot, page or element does not exist, whose label or
 `m`/`f` value is unresolved (except in `create-character`, above), or that the session refuses (`Session::send` returns an error)
@@ -1288,6 +1326,13 @@ and the property IDs, kinds and canonical looks of item 7 (whose values are the 
 ones). It holds no property value read from the install, no record content and no other
 install text.
 
+**Action labels (P3 revision).** `enum_value` also takes the context `NpcAction`: the key of
+the label in the enum mapper the property dictionary names for `ActionPickerUI_Action`
+(`npc-windows.md` §5.3). Resolution item 6 resolves the labels of `action(@Label)` texts in
+line order with that context; an unresolved one becomes `Text::Literal` of the label without
+its `@` and adds a `label` note (attribute `action`, label as written) when an install is
+present.
+
 <a id="s8-7"></a>
 ### 8.7 No install
 
@@ -1332,6 +1377,8 @@ names (§10) are the inner variant names, unique across groups.
 | `QuestStatus` | `Active` \| `Completed` \| `Failed` \| `Removed` |
 | `Price` | `{ coin: u64, items: Vec<(Ref, u32)> }` (at most 8 item costs) |
 | `Side` | `Own` \| `Peer` |
+| `RewardKind` (P3 revision) | `Coin` \| `Glory` \| `ItemXp` \| `CraftXp` \| `MountXp` \| `VirtueXp` \| `TraitPoints` \| `Reputation` \| `Wallet` |
+| `Text` (P3 revision) | gains `Action(u32)`: an NPC action key (§5.2) |
 | `ChatChannel` (existing) | gains `Fellowship` and `Named { name: String }` |
 | `PropertyKind` | `Bool` \| `Int` \| `Int64` \| `Float` \| `Enum` \| `Bitfield32` \| `Bitfield64` \| `Did` \| `String` \| `Instance` \| `Colour` \| `Unsupported` (§5.8) |
 | `PropertyValue` | `Bool(bool)` \| `Int(i32)` \| `Int64(i64)` \| `Float(f32)` (finite) \| `Enum(u32)` \| `Bitfield32(u32)` \| `Bitfield64(u64)` \| `Did(DataId)` \| `String(String)` (≤ 256 bytes, no control characters) \| `Instance(u64)` \| `Colour([u8; 4])` (R, G, B, A) |
@@ -1386,6 +1433,8 @@ Fields are listed in log order (§10.3).
 | | `LootShown` | `window: WindowId`, `source: Option<EntityId>`, `entries: Vec<{ entry: u16, what: Ref, quantity: u32 }>`, `coin: u64` |
 | | `LootTaken` | `window: WindowId`, `entry: u16` |
 | | `WindowClosed` | `window: WindowId` (every window kind) |
+| | `QuestRewards` (P3 revision) | `window: WindowId`, `entries: Vec<{ kind: RewardKind, amount: i64, what: Option<Ref> }>` (1 … 16 entries; `what` present exactly for `Reputation` and `Wallet`) |
+| | `BuybackShown` (P3 revision) | `window: WindowId`, `entries: Vec<{ entry: u16, what: Ref, quantity: u32, price: Price }>` |
 | Social | `ChannelJoined` / `ChannelLeft` | `channel: String` |
 | | `FellowshipChanged` | `members: Vec<{ name: String, entity: Option<EntityId>, leader: bool }>` (empty: no fellowship) |
 | | `FellowshipInvite` | `from: String` |
@@ -1455,6 +1504,7 @@ Fields are listed in log order (§10.3).
 | | `Buy` | `window: WindowId`, `entry: u16`, `quantity: u32` |
 | | `Sell` | `window: WindowId`, `item: ItemId`, `quantity: u32` |
 | | `TakeLoot` | `window: WindowId`, `entry: Option<u16>` (none = all) |
+| | `BuyBack` (P3 revision) | `window: WindowId`, `entry: u16` |
 | Social | `JoinChannel` / `LeaveChannel` | `name: String` |
 | | `InviteToFellowship` / `KickFromFellowship` / `SetFellowshipLeader` | `name: String` |
 | | `AnswerInvite` | `accept: bool` |
@@ -1496,9 +1546,16 @@ skill.
   and `ItemProperty`, at most 1,024 per entity and 1,024 per item; a report that would add a
   further property is ignored with a warning (rate-limited), a report for a property already
   kept replaces it, and `value` none removes it. They are dropped with their entity or item.
+- **P3 revision variants.** `QuestRewards` and `BuybackShown` follow the entity rule (surfaced
+  in `InWorld`); `BuyBack` is allowed in `InWorld` and needs `entry` ≥ 1. An event is invalid
+  (dropped with a warning) when a `QuestRewards` has 0 or more than 16 entries, an entry's
+  `what` does not match its kind, or an amount lies outside the step's range (§6.3); a
+  `BuybackShown` entry follows the `VendorShown` rules. `Text::Action` needs no cleaning. The
+  test-server backend refuses `BuyBack` like the other new commands. The feed gives no
+  generic answer to `BuyBack` (§7.6).
 - **Other backends.** The test-server backend follows §9.7: it takes `CreateCharacter` under
   `character-screens.md` §7.1.1, answers `SelectTarget` locally without sending anything
-  (revision 5, decision 0032 D1), and refuses every other new command with
+  (revision 6, decision 0032 D1), and refuses every other new command with
   `NetError::InvalidCommand` (rule 5: its server has no gameplay). It also refuses `Chat` on
   the new channels `Fellowship` and `Named` with `NetError::InvalidCommand` until a minor
   version of `tessera-protocol.md` gives them a wire form (rule 5 allows chat). The sandbox
@@ -1506,6 +1563,15 @@ skill.
   commands (debug log), so client panels can be opened offline. The overlay backend of
   §12.5 routes the Inventory group to the feed and everything else to the test-server
   backend.
+
+> **OPEN:** (non-blocking; for the spec owner, raised by the P3 implementer of `crates/net`
+> after review, 2026-10-10) The parser refuses a repeated single reward kind (`coin`,
+> `glory`, `item-xp`, `craft-xp`, `mount-xp`, `virtue-xp`, `trait-points` each at most once,
+> §6.3, N-H5), but the validity rule above does not say whether a `QuestRewards` from another
+> backend with two entries of one single kind (two `Coin` entries, say) is invalid. The
+> implementation follows the text as written and surfaces it; `npc-windows.md` §10.3 assumes
+> one money row and one row per experience kind. Decide whether a repeated single kind makes
+> the event invalid.
 
 <a id="s9-6"></a>
 ### 9.6 Plain sandbox: creating a character (revision 4, decision 0025 D5)
@@ -1531,7 +1597,7 @@ the delete button ghosted on this backend, `character-screens.md` §7.2). With a
 feed owns character answers (§7.5) and this rule does not run. Conformance: §14.10.
 
 <a id="s9-7"></a>
-### 9.7 Test-server backend (revision 4, decision 0025 D2, D4; revision 5, decision 0032 D1)
+### 9.7 Test-server backend (revision 4, decision 0025 D2, D4; revision 6, decision 0032 D1)
 
 The normative rule for `CreateCharacter` on the test-server (`remote`) backend is
 `character-screens.md` §7.1.1 (capability, command, `CharacterList` and
@@ -1551,7 +1617,7 @@ addition:
   `CharacterInfo { name, body: Some(the entry's body), class: None, level: None, look: the
   entry's look }` per entry, in the list's order, so the selection screen can show each
   character's figure.
-- **Local selection** (revision 5, [decision 0032](../decisions/0032-p2-targeting-on-test-server.md)
+- **Local selection** (revision 6, [decision 0032](../decisions/0032-p2-targeting-on-test-server.md)
   D1). In `InWorld` the backend answers `SelectTarget { target }` in `submit` and sends
   **nothing** to the server, at any minor version:
   1. The target is **known** when it is none, the player's entity, or an entity whose
@@ -1712,6 +1778,12 @@ without an appearance or a look). A variant added to
 `Event`, `Command` or one of their groups later MUST be given a log form in this table by the
 revision that adds it; until then the log writer writes its name followed by `unlogged`.
 
+**P3 revision log forms.** `Text::Action(n)` is written `action(N)` (*N* decimal);
+`RewardKind` values lower case with words joined by `-` (`coin`, `glory`, `item-xp`,
+`craft-xp`, `mount-xp`, `virtue-xp`, `trait-points`, `reputation`, `wallet`); the reward
+`amount` is a signed decimal integer. `QuestRewards`, `BuybackShown` and `BuyBack` write their
+fields in the order of §9.2 and §9.4 (Vectors N1, N2).
+
 <a id="s10-4"></a>
 ### 10.4 Counters
 
@@ -1788,6 +1860,9 @@ any input, every allocation bounded by the limits below, and each violation a ty
 | Property value numbers | per kind (§5.8): float finite with \|v\| ≤ 10^9, integers within the kind | `OutOfRange` (`pid:` form) or a `mismatch` note (`@Label` form) |
 | Properties kept by the client half | 1,024 per entity and 1,024 per item (§9.5) | further properties ignored with a warning |
 | Overlay `AppearanceSet` | one in flight, at least 250 ms apart, answer within 10 s (§12.5) | coalesced; a missing answer clears the in-flight mark with a warning |
+| Reward tokens per `rewards` step (P3 revision) | 1 … 16 | `MissingArgument`, `LimitExceeded(entries)` |
+| Reward amounts (P3 revision) | per kind (§6.3) | `OutOfRange` |
+| Buy-back entries (P3 revision) | 1,024 (REFLIST) | `LimitExceeded(entries)` (static) or cut with a note (binding) |
 
 > **OPEN:** (non-blocking; for the spec owner, raised by the documentation review of P0 and
 > recorded by the P0 exit verifier, 2026-10-09) No row bounds the size of the canonical log
@@ -2032,7 +2107,7 @@ way.
 | Blocks | `repeat`; `on` with the patterns `equip`, `unequip`, `move-item`, `destroy`, `split`, `use-item`; `input` |
 | Input lines | `at T` lines (not `at pre`) with the forms `equip`, `unequip`, `move-item`, `destroy`, `split`, `use-item` (target `player`, `current` or `none`) |
 
-**No Combat group** (revision 5, [decision 0032](../decisions/0032-p2-targeting-on-test-server.md)
+**No Combat group** (revision 6, [decision 0032](../decisions/0032-p2-targeting-on-test-server.md)
 D3). The subset deliberately holds no Combat-group statement: no step of §6.2 (`target`,
 `vital`, `combat`, `quickslot`, `cast`, `delay`, `interrupt`, `cooldown`, `effect`,
 `effect-end`, `damage`, `heal`, `defeat`, `revive`), no trigger on `target`, `use-skill` or
@@ -2049,7 +2124,7 @@ this client only.
   `DestroyItem`, `UseItem`) goes to the feed, which processes it at its next tick (§7.4) with
   the generic answers of §7.6 under `defaults on`. Every other command goes to the
   test-server backend unchanged, which answers `SelectTarget` locally and refuses the other
-  new commands (§9.7; revision 5). The feed never sees `SelectTarget`.
+  new commands (§9.7; revision 6). The feed never sees `SelectTarget`.
 - **Events.** In each poll the overlay first polls the test-server backend and queues its
   events, then lets the feed process its due ticks (at most 8, §7.1) and appends the feed's
   output. The per-tick delivery caps of §7.4 apply to the feed's output only.
@@ -2162,6 +2237,14 @@ criterion 3 (decision 0024).
    property forms and numeric values in the enum positions of rule 2 (the kind of a labelled
    property is unknown without an install, so its value rule is a review item), and replays every committed log. Review uses the checklist of
    `server-content.md` §9.3 for text (no game names or text).
+
+> **OPEN:** (non-blocking; for the spec owner, raised by the P3 implementer of `crates/net`
+> after review, 2026-10-10) Rule 2's list of enum positions predates the P3 revision: the
+> integer of the text function `action(N)` (§5.2) is a key of the NPC-action enum mapper
+> (§8.6), so it reads as an enum position, but the list does not name it. The implementation
+> treats `action(N)` as a numeric enum value (`Scenario::numeric_enum_values` reports it in
+> every text position) and `action(@Label)` as a label. Name `action(…)` in rule 2's list, or
+> say that `action(N)` may be committed.
 
 > **OPEN:** (non-blocking; for the spec owner, raised by the implementer of `apps/client`,
 > 2026-10-09) Rule 1 names `apps/client/scenarios/`; the P0 plan placed the committed
@@ -2435,6 +2518,22 @@ next line.
 | overlay run, lines 2–3 `on chat`, `end` | `NotAllowedInOverlay` 2:1 |
 | overlay run, lines 2–5 `item $i "Ring"`, `input`, `at pre destroy $i`, `end` | `NotAllowedInOverlay` 4:1 (no `at pre` lines) |
 
+**P3 revision hostile rows** (named N-H*n*; line 1 is the header as above):
+
+| # | Input | Expected error |
+|---|---|---|
+| N-H1 | lines 2–3 `page $p "x"`, `option $p 1 action(Vendor)` | `UnexpectedToken` 3:13 (an `action` argument is a label or an integer) |
+| N-H2 | line 2 `at 0s rewards` | `MissingArgument` 2:1 |
+| N-H3 | line 2 `at 0s rewards gold:5` | `UnexpectedToken` 2:15 (unknown kind) |
+| N-H4 | line 2 `at 0s rewards coin:-5` | `OutOfRange` 2:15 |
+| N-H5 | line 2 `at 0s rewards coin:1 coin:2` | `UnexpectedToken` 2:22 (a single kind twice) |
+| N-H6 | line 2 `at 0s rewards` followed by 17 tokens `rep:"a":1`, one space apart | `LimitExceeded(entries)` 2:175 (the 17th token) |
+| N-H7 | line 2 `at 0s rewards trait-points:1000001` | `OutOfRange` 2:15 |
+| N-H8 | line 2 `at 0s rewards rep:"a":1000000000001` | `OutOfRange` 2:15 |
+| N-H9 | line 2 `at 0s buyback qty=2` | `MissingArgument` 2:1 (no `items=`) |
+| N-H10 | lines 2–4 `input`, `at 1s buy-back 0`, `end` | `OutOfRange` 3:16 (entries 1 … 1,024) |
+| N-H11 | line 2 `at 0s say player action(@Vendor)` | `UnexpectedToken` 2:18 (text functions are not allowed in chat, §5.2) |
+
 <a id="s14-6"></a>
 ### 14.6 Vector E: inventory, generic answers, `move … over`, list entries, `end-at`
 
@@ -2659,11 +2758,11 @@ at 0.2s equip $shield slot=18
 | O5 | as O1, but *B*₀ holds the item 0x70009999 | *B*₀ marks the appearance dirty (its equipment differs from the empty *E*); the send at the end of the tick-0 poll carries both items, so the stored 0x70009999 is replaced. One send at tick 0, as in O1. (With no equip step in the file, that send would carry no items.) |
 | O6 | as O1, but the double refuses every `AppearanceSet` (answers *B*₀) | After the tick-0 send and its answer, no further `AppearanceSet` until *E* changes at 0.1 s; never more than one in flight. |
 | O7 | any | A file with `at 0s say "x"` is refused with `NotAllowedInOverlay` before anything connects (exit 3). |
-| O8 | as O1 | A `Chat` and a `Teleport` go to the double; an `EquipItem` goes to the feed; a `SelectTarget { target: None }` after world entry is answered by the test-server backend with `TargetChanged { entity: player, target: None }`, first in the next poll, the double receives no message for it, and no trigger of the feed sees it (revision 5, §9.7; before: refused). A `UseSkill` is refused with `NetError::InvalidCommand`. |
+| O8 | as O1 | A `Chat` and a `Teleport` go to the double; an `EquipItem` goes to the feed; a `SelectTarget { target: None }` after world entry is answered by the test-server backend with `TargetChanged { entity: player, target: None }`, first in the next poll, the double receives no message for it, and no trigger of the feed sees it (revision 6, §9.7; before: refused). A `UseSkill` is refused with `NetError::InvalidCommand`. |
 | O9 | `tessera-server` in process, `appearance_change` true, two clients at minor 1 | The observer sees an `AppearanceChanged` for the overlay player's entity with the items 0x70001234 slot 17 and 0x70005678 slot 18 (P1 exit criterion 3). |
-| O10 | any | (Revision 5.) The file `tessera-scenario 1` / `at 0s target player none` is refused with `NotAllowedInOverlay` 2:1 before anything connects (exit 3). So is `at 0s vital player health 5/10`. |
-| O11 | any | (Revision 5.) The file `tessera-scenario 1` / `on target any` / `end` is refused with `NotAllowedInOverlay` 2:1 (exit 3). |
-| O12 | any | (Revision 5.) The file `tessera-scenario 1` / `input` / `at 1s target none` / `end` is refused with `NotAllowedInOverlay` 3:1 (exit 3). |
+| O10 | any | (Revision 6.) The file `tessera-scenario 1` / `at 0s target player none` is refused with `NotAllowedInOverlay` 2:1 before anything connects (exit 3). So is `at 0s vital player health 5/10`. |
+| O11 | any | (Revision 6.) The file `tessera-scenario 1` / `on target any` / `end` is refused with `NotAllowedInOverlay` 2:1 (exit 3). |
+| O12 | any | (Revision 6.) The file `tessera-scenario 1` / `input` / `at 1s target none` / `end` is refused with `NotAllowedInOverlay` 3:1 (exit 3). |
 
 > **OPEN:** (implementer of `crates/net`, clean room, 2026-10-10; non-blocking) O7's file
 > `at 0s say "x"` does not parse (`say` needs a sender before its text, §6.4), so it is
@@ -2686,8 +2785,128 @@ The plain sandbox (no scenario) with the character list ["Testa"] and a configur
 | P4 | `CreateCharacter { name: "Dora", appearance: None, class: None, nationality: None }`, then `EnterWorld "Dora"` | `CharacterInfo { name: "Dora", body: None, class: None, level: None, look: None }`; world entry uses the configured avatar |
 | P5 | `DeleteCharacter "Cora"` after P1 | No event; "Cora" stays in the list |
 
+<a id="s14-n1"></a>
+### 14.N1 Vector N1: action label, quest offer with rewards (P3 revision)
+
+```text
+tessera-scenario 1
+title "Vector N1"
+tick 100ms
+player "Testa"
+actor $smith kind=npc name="Smith" pos=0,2,0 facing=180
+page $greet speaker=$smith "Well met."
+option $greet 1 action(@Vendor)
+option $greet 2 "Farewell." goto=close
+at 0s spawn $smith
+on use $smith
++0s show $greet
+end
+on choose $greet 1
++0s offer "Iron ore" from=$smith
++0s rewards coin:1250 rep:"Smiths":300
+end
+input
+at 0.1s use $smith
+at 0.2s choose 1
+at 0.3s accept
+end
+```
+
+With no install the label `@Vendor` stays unresolved, so option 1 carries `Text::Literal("Vendor")`
+and no note is written (§8.6, §8.7). Option 1 has no `goto`, so the trigger alone answers it; both
+body lines run in the tick of the command (§7.4). Expected log:
+
+```text
+tessera-scenario-log 1
+install none
+tick 100
+title "Vector N1"
+pre > Connect
+pre Connected characters=["Testa"]
+pre > EnterWorld character="Testa"
+0.000 WorldEntered entity=player name="Testa" at=0.000,0.000,0.000 facing=90.00
+0.000 LocationReport entity=player at=0:0.000,0.000,0.000 facing=90.00 anchor=none cause=entered
+0.000 EntitySpawned entity=$smith kind=non-player name="Smith" at=0.000,2.000,0.000 facing=180.00
+0.100 > UseEntity entity=$smith
+0.100 DialogueShown window=1 speaker=$smith text="Well met." options=[{option=1 text="Vendor"},{option=2 text="Farewell."}]
+0.200 > ChooseOption window=1 option=1
+0.200 QuestOffered window=2 quest="Iron ore" giver=$smith
+0.200 QuestRewards window=2 entries=[{kind=coin amount=1250 what=none},{kind=reputation amount=300 what="Smiths"}]
+0.300 > AnswerQuest window=2 accept=yes
+0.300 QuestState quest="Iron ore" state=active
+0.300 WindowClosed window=2
+0.300 end reason=complete skipped=0 input-skipped=0 dropped=0 spilled=0
+```
+
+With an install whose action mapper has the label `Vendor` with key 2, option 1 is
+`text=action(2)` and nothing else changes.
+
+<a id="s14-n2"></a>
+### 14.N2 Vector N2: vendor, buy-back, sell (P3 revision)
+
+```text
+tessera-scenario 1
+title "Vector N2"
+tick 100ms
+player "Testa"
+actor $trader kind=npc name="Trader" pos=3,0,0 facing=270
+item $knife "Knife"
+at 0s spawn $trader
++0s give $knife
+on use $trader
++0s vendor items="Bread","Rope" npc=$trader price=12,250 stock=5
++0s buyback items="Lamp" price=40
+end
+on buy entry=2
++0s wallet coin 750
+end
+on sell $knife
++0s remove $knife
++0s wallet coin 1750
+end
+on buy-back entry=1
++0s wallet coin 1710
+end
+input
+at 0.1s use $trader
+at 0.2s buy 2 qty=3
+at 0.3s sell $knife
+at 0.4s buy-back 1
+at 0.5s close vendor
+end
+```
+
+Expected log (`Buy`, `Sell` and `BuyBack` have no generic answer; the triggers script the money):
+
+```text
+tessera-scenario-log 1
+install none
+tick 100
+title "Vector N2"
+pre > Connect
+pre Connected characters=["Testa"]
+pre > EnterWorld character="Testa"
+0.000 WorldEntered entity=player name="Testa" at=0.000,0.000,0.000 facing=90.00
+0.000 LocationReport entity=player at=0:0.000,0.000,0.000 facing=90.00 anchor=none cause=entered
+0.000 EntitySpawned entity=$trader kind=non-player name="Trader" at=3.000,0.000,0.000 facing=270.00
+0.000 ItemAdded item=$knife what="Knife" at=backpack:0 quantity=1
+0.100 > UseEntity entity=$trader
+0.100 VendorShown window=1 vendor=$trader entries=[{entry=1 what="Bread" price=coin:12 stock=5},{entry=2 what="Rope" price=coin:250 stock=5}]
+0.100 BuybackShown window=1 entries=[{entry=1 what="Lamp" quantity=1 price=coin:40}]
+0.200 > Buy window=1 entry=2 quantity=3
+0.200 WalletChanged currency=coin amount=750
+0.300 > Sell window=1 item=$knife quantity=1
+0.300 ItemRemoved item=$knife
+0.300 WalletChanged currency=coin amount=1750
+0.400 > BuyBack window=1 entry=1
+0.400 WalletChanged currency=coin amount=1710
+0.500 > CloseWindow window=1
+0.500 WindowClosed window=1
+0.500 end reason=complete skipped=0 input-skipped=0 dropped=0 spilled=0
+```
+
 <a id="s14-11"></a>
-### 14.11 Test-server selection cases (revision 5)
+### 14.11 Test-server selection cases (revision 6)
 
 The test-server backend with a **test double** of the server at minor 1 (R9 also at minor 0)
 that records every client message, in `InWorld` with player entity 7. Before each case it
@@ -2734,7 +2953,7 @@ command. Moves and heartbeats are not counted as messages.
 10. Every value of a `PropertyChanged`, `ItemProperty` or look entry the feed emits is the
     value written in the file (or a `DataId` of a resolved element); the install supplies
     only property IDs, kinds and label keys (§5.8).
-11. (Revision 5.) A selection on the test-server backend never reaches the server: no client
+11. (Revision 6.) A selection on the test-server backend never reaches the server: no client
     message is caused by `SelectTarget`; the backend's only `TargetChanged` events answer a
     `SelectTarget`, name the player as `entity`, and lie between the target's creation and
     removal in the event stream (§9.7).
@@ -2869,7 +3088,10 @@ command. Moves and heartbeats are not counted as messages.
 | 2026-10-09 | Revision 3 (spec owner, design role): 31 implementation-phase findings verified (§18.2: S1–S31). Fixed: no welcome line and the feed owns chat (§3.2, §7.6); exact headless spawn and the resolve timeout in force (§3.2, §10.1, §12.2); pre-world output in `submit` (§3.3, §5.1, §7.5); *L* from the processing tick and input lines within `end-at` (§7.3, §7.7); queue weight, per-push checks, run total, effect cap, pre-world bounds, 8 ticks per poll (§7.1, §7.4, §7.5, §11); start = executing tick (§6.2); inventory edge cases (§5.5, §6.1, §7.6); block error kinds (§4.4); numeric components (§4.2); trade side 32 (§6.3, §8.6); input ranges (§7.7); optional create-character class and appearance (§7.7, §9.4); (DID, row) identity (§8.4); `CandidateOutcome` replaces `label_notes` (§8.6); remote chat channels (§9.5); heading `360.00` (§10.3); headless modes and `--screenshot` (§12); invented example name (§4.2). Vector F and eleven hostile rows added. Status back to Review. |
 | 2026-10-10 | Revision 4 (spec writer, design; decision 0025): property values and looks (§4.2, §4.5, §5.8), looks on characters and in the base appearance (§5.1), held-item slots in the player's appearance (§5.5), steps `remove-character`, `stat`, `item-property` and `accept-character … look=` (§6.1), `create-character … nationality= look=` (§7.7), resolver methods `property`, `property_by_id` and contexts `Nationality`, `PropertyKey` (§8.6), new types, events and command field (§9.1–§9.4), session rules and the client-side property bound (§9.5), plain-sandbox creation (§9.6), the test-server backend's creation, looks, slots and character list (§9.7), log forms (§10.2–§10.3), limits and error kinds (§11), overlay runs with `--server` (§12.1, §12.5), content rules (§13), Vector F's new fields, Vector G, overlay and plain-sandbox cases, 15 hostile rows (§14), invariants 9–10 (§15), §16 OPEN 1 answered. Status Accepted → Review (§18.3). |
 | 2026-10-10 | Independent review of revision 4 (spec reviewer, Clean-Room-Role: review): passed, every item of CLEAN_ROOM.md §5.3; status Review → Accepted. Non-blocking notes (a)–(f) in §18.3 |
-| 2026-10-10 | Revision 5 (spec writer, design; [decision 0032](../decisions/0032-p2-targeting-on-test-server.md)): local selection on the test-server backend (§9.5, §9.7), no Combat group in the overlay subset stated (§12.5.1), routing of `SelectTarget` in overlay runs (§12.5.2), O8 changed and O10–O12 added (§14.9; the implementer OPEN moved below the table), test-server selection cases R1–R10 (§14.11), invariant 11 (§15). No protocol change. Status Accepted → Review (§18.4). |
+| 2026-10-10 | P3 revision (revision 5; spec writer, for `npc-windows.md`, additive only, nothing renumbered): text function `action(…)` and `Text::Action` (§4.2, §5.2, §8.6, §9.1), steps `rewards` and `buyback` (§6.3), events `QuestRewards` and `BuybackShown` and command `BuyBack` (§9.1, §9.2, §9.4, §9.5), pattern `buy-back` (§7.5), input form `buy-back` (§7.7), log forms (§10.3), limits (§11.1), hostile rows N-H1 … N-H11 (§14.5), Vectors N1 and N2 (§14.N1, §14.N2), §18.P3. The parts of revision 5 are in Review (awaiting independent review); the Accepted revision-4 text is unchanged. |
+| 2026-10-10 | Revision 6 (spec writer, design; [decision 0032](../decisions/0032-p2-targeting-on-test-server.md)): local selection on the test-server backend (§9.5, §9.7), no Combat group in the overlay subset stated (§12.5.1), routing of `SelectTarget` in overlay runs (§12.5.2), O8 changed and O10–O12 added (§14.9; the implementer OPEN moved below the table), test-server selection cases R1–R10 (§14.11), invariant 11 (§15). No protocol change. Status Accepted → Review (§18.4). |
+| 2026-10-11 | Independent review of the P3 revision (revision 5; spec reviewer, Clean-Room-Role: review): passed, every item of CLEAN_ROOM.md §5.3; the P3 parts move Review → Accepted. Non-blocking notes (a)–(h) in §18.P3; no text other than the status, review record and this row changed |
+| 2026-10-11 | Merge of the P2 and P3 revisions (spec writer, design; no fact changed): both had been called revision 5, so P2's is renumbered **revision 6** (header, §9.5, §9.7, §12.5.1, §12.5.2, §14.9 O10–O12, §14.11, §17, §18.4); P3's revision 5 and §18.P3 stay. The vector and hostile-row names of the two do not collide (P2: O8, O10–O12, R1–R10 of §14.11, invariant 11; P3: N1, N2, N-H1 … N-H11, N-D1 … N-D4). Status: revision 5 (P3 parts) Accepted, revision 6 (P2 parts) Review. |
 
 ---
 
@@ -3060,8 +3282,99 @@ Non-blocking, for the spec owner at the next revision:
 - (e) §12.5.4 says nothing about re-sending after the 10 s time-out; the implementation sends again only when *E* changes. State it.
 - (f) §9.5's client-side bound (1,024 properties per entity and per item) bounds each object; the total is bounded only through the run's event limits (§11.1). Acceptable for a scripted local run; note it if a later backend can report properties.
 
+<a id="s18-p3"></a>
+### 18.P3 P3 revision (revision 5): NPC windows
+
+**2026-10-10** (spec writer, for decision 0024 P3; inputs: `npc-windows.md` §5.3, §6.3, §7.8,
+§10, `quests.md` §9, this spec). Status of these additions: **Review (awaiting independent
+review)**; the revision-4 text stays Accepted. P2 revises this spec in parallel; the P3 parts
+are additive (new rows, subsections and paragraphs, vectors named N1, N2 and hostile rows
+N-H*n*) so the two revisions merge without renumbering.
+
+| # | Change | Sections | Why (`npc-windows.md`) |
+|---|---|---|---|
+| N-D1 | `action(@Label)` / `action(N)` and `Text::Action(u32)`, resolved with `enum_value` context `NpcAction`; unresolved → literal label | §4.2, §5.2, §8.6, §9.1, §10.3 | choice rows with the install's action texts (§5.3) |
+| N-D2 | `rewards` step and `QuestRewards` event (`RewardKind`) | §6.3, §9.1, §9.2, §9.5, §10.3, §11.1 | reward amounts the client must not derive (§6.3) |
+| N-D3 | `buyback` step, `BuybackShown` event, `BuyBack` command, pattern and input form | §6.3, §7.5, §7.7, §9.2, §9.4, §9.5, §10.3, §11.1 | the vendor's buy-back page (§7.8) |
+| N-D4 | Vectors N1, N2; hostile rows N-H1 … N-H11 | §14.5, §14.N1, §14.N2 | conformance |
+
+Not added, because existing forms suffice (`npc-windows.md` §10.2): install-text dialogue
+pages (`Text::QuestRole`, `Comment`, `Name`, `Objective`), sell lists (the client builds them
+from the inventory model), wallet entries with names (a `Currency::Item` ref names its
+record), loot coin (`LootShown.coin`).
+
+Rule-5 check (LEGAL.md §11.1): nothing here runs in or is linked by `tessera-server`; the
+test-server backend refuses `BuyBack` (§9.5); every value stays scripted (§15 invariants 2
+and 10). The `net_scenario_run` fuzz target's synthetic resolver also answers `enum_value`
+for the context `NpcAction`. ARCHITECTURE §19 gains the three variants.
+
+**Status.** Accepted (2026-10-11, independent review below). Before: Review; an independent
+session that wrote no part of the P3 revision had to check N-D1 … N-D4 against
+`npc-windows.md`, re-derive Vectors N1 and N2 line by line, and check the hostile rows against
+the grammar and the position rules.
+
+**Review record (2026-10-11).** Reviewer: a Claude session in the spec-reviewer role
+(Clean-Room-Role: review) that wrote no part of the P3 revision, of `npc-windows.md` or of the
+P3 code. Result: **passed**, every item of CLEAN_ROOM.md §5.3.
+
+- **Scope.** The revision-5 text is additive: against the revision-4 text (4ec1f4a) commit
+  b62d0ae only inserts lines (246 insertions, no deletion), and the text on branch `p3` is
+  unchanged since b62d0ae, so the Accepted revision-4 text stands as reviewed in §18.3.
+- **Checklist.** Every new statement is a design fact (token forms, ranges, error kinds and
+  positions, event and command fields, log forms, limits). No code or pseudo-code: the two
+  vectors are files and logs in the project's own formats. No copied prose. No game text: the
+  vector strings are invented, and `Vendor` is an enum label of the install, quoted as an
+  interoperability identifier. Provenance: one Design row (§1). No byte layout. Vectors and
+  hostile rows make every rule testable. Unknowns are OPEN callouts (§6.3, §9.5, §13).
+- **N-D1 … N-D4 against `npc-windows.md`.** N-D1 serves §5.3 Tessera rule 3 (an option's text
+  `Text::Action(a)` picks the action entry whose `ActionPickerUI_Action` is *a*); N-D2 serves
+  §6.3 (amount rows only from feed amounts) and §10.3 (one row kind per `RewardKind`); N-D3
+  serves §7.8 (buy-back list, `BuyBack { window, entry }`) and §10.1. The kinds of §10.2 that
+  the revision does not add are covered by existing forms, as §18.P3 says.
+- **Install spot check (M1, read-only, 2026-10-11).** A throwaway probe over the repository's
+  property decoders: the property dictionary has `ActionPickerUI_Action` and names one enum
+  mapper for it, the mapper whose name is `NPCActionPickerType`; it has no base mapper, 34
+  names, no display texts, no repeated name, keys 0 … 42 (within the 0 … 2^32 − 1 of
+  `action(N)`), and `Vendor` has key 2, as Vector N1's install case assumes. This agrees with
+  `npc-windows.md` NW3. No other new fact depends on the install, and none rests only on a BIN
+  row (the reward-row order of NW17 is not used by this spec), so no disassembly was needed.
+- **Vectors.** N1 and N2 re-derived line by line from §5.2, §5.6, §6.1, §6.3, §7.4–§7.7 and
+  §10.3: times, window ids (the dialogue window 1 stays open, so the offer gets 2), the missing
+  generic answer to an option without `goto`, the order `QuestOffered` then `QuestRewards` in
+  one tick, field order and formats (`what=none`, `price=coin:N`, `stock=5`), the generic
+  answers to `AnswerQuest` and `CloseWindow`, the absence of generic answers to `Buy`, `Sell`
+  and `BuyBack`, and the end times. They agree. The tests `scenario_p3_vectors` and
+  `scenario_p3_hostile` of `tessera-net` pass on branch `p3` (supporting evidence only).
+- **Hostile rows.** N-H1 … N-H11 checked against §4.2, §4.5, §6.3, §6.4, §7.7 and §11.2:
+  every error kind and every line:column agrees (N-H6: the 17th token starts at column
+  15 + 16 × 10 = 175; N-H10: the entry number starts at column 16; N-H11: `say` takes a string,
+  not a text, at column 18).
+
+Non-blocking notes, for the spec owner at the next revision (review notes, not facts):
+
+- (a) §6.3 OPEN (a): keeping the buy-back page across a later `vendor` step on the same
+  window agrees with §5.6 (a step on an open kind replaces that kind's content only); state
+  it. Dropping the page instead would change implemented behaviour.
+- (b) §6.3 OPEN (b): `BadNumber` for a malformed amount follows §4.2 (a numeric position given
+  a token that is not a number) and should be stated, since the paragraph's "a token of
+  another form … is `UnexpectedToken`" can be read otherwise. The stated precedence matches
+  the implementation; writing a different one would change implemented behaviour.
+- (c) §6.3 OPEN (c): agreed, as for `buy`.
+- (d) §6.3 OPEN (d) is a defect of `npc-windows.md` §7.8 (its "§10.4"; also its §5.3 rule 3
+  "§10.2", which reads as this spec's log section): for that spec's reviewer.
+- (e) §9.5 OPEN (repeated single kind from another backend): making it invalid would match
+  the parser and `npc-windows.md` §10.3 but changes implemented behaviour (the
+  implementation surfaces it); either way, state it.
+- (f) §13 OPEN: name `action(N)` in rule 2's list of enum positions; the implementation
+  already reports it there, so this changes no behaviour.
+- (g) The provenance row marks the revision Design; the one install fact it relies on (the
+  dictionary names a mapper for `ActionPickerUI_Action`) could cite `npc-windows.md` NW3
+  (Confirmed) and this review's check.
+- (h) The lexical-class table of §4.2 and the `Text` row of §10.3 do not list `action(…)`;
+  the P3 paragraphs below them do. Fold them in when the text is next renumbered.
+
 <a id="s18-4"></a>
-### 18.4 Revision 5: decision 0032
+### 18.4 Revision 6: decision 0032
 
 **2026-10-10** (spec writer, design role). Tessera-own design for P2 exit criterion 4 ("M7's
 test actors can be selected and show a target frame"), recorded in
@@ -3084,6 +3397,6 @@ Rule-5 check (LEGAL.md §11.1): the server receives nothing new (a selection nev
 client), keeps nothing new and runs no rule; `tessera-server` and the server dependency
 check are unchanged.
 
-**Status.** Review. An independent session that wrote no part of revision 5 or of decision
+**Status.** Review. An independent session that wrote no part of revision 6 or of decision
 0032 must check D1–D4 against the cited specs and rule 5, re-derive §14.9 O8, O10–O12 (the
 positions against §12.5.1's first-token rule) and §14.11 R1–R10, and check invariant 11.

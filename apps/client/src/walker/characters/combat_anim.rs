@@ -409,6 +409,7 @@ mod tests {
             has_move: true,
             move_index: 1,
             above: vec![2],
+            once: Vec::new(),
         }
     }
 

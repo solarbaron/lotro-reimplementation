@@ -30,6 +30,10 @@
 //! - [`combat`]: targeting, skills and combat presentation (P2): the player's combat state
 //!   from the session, selection, the combat widgets, skill and effect tooltips, the
 //!   plugin combat views, the headless combat screens.
+//! - [`npc`]: NPC windows (P3): using an NPC, dialogue, quest offers, vendors, barter,
+//!   loot, the wallet window and the plugin wallet views, fed by the session's events.
+//! - [`quests`]: the quest journal (P3): quest log, tracker, objective counters, quest
+//!   chat lines, quest markers and NPC indicators, fed by the session's events.
 
 pub mod app;
 pub mod audio;
@@ -42,9 +46,11 @@ pub mod data;
 pub mod headless;
 pub mod input;
 pub mod net;
+pub mod npc;
 pub mod panels;
 pub mod plugins;
 pub mod pre_world;
+pub mod quests;
 pub mod runtime;
 pub mod scenario;
 pub mod scene;

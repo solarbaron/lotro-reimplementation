@@ -249,16 +249,14 @@ pub struct Portrait {
 }
 
 /// The figure a [`Portrait`] shows.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum PortraitFigure {
     /// The player's own figure (the paperdoll, `character-panels.md` §3.2).
     Player,
-    /// The character screens' figure (`character-screens.md` §2.1), with the turntable's
-    /// zoom (§2.3).
-    Screens {
-        /// Zoomed in.
-        zoomed: bool,
-    },
+    /// The character screens' viewport (`character-screens.md` §2.1): the race scene and
+    /// the figure through the stage camera; `None` without a camera frame (the figure
+    /// alone).
+    Screens(Option<crate::walker::stage::StageView>),
 }
 
 fn slot_place(p: SlotPlace) -> Option<ItemPlace> {

@@ -275,7 +275,15 @@ impl ClientUi {
             pre.frame(world, Some(&mut ui), &events, now)
         };
         match state {
-            crate::pre_world::PreWorldState::Open => walker.set_preview(pre.figure_job()),
+            crate::pre_world::PreWorldState::Open => {
+                {
+                    let ui = host.ui();
+                    pre.hover_frame(&ui, now, &|v| walker.preview_bounds(v));
+                }
+                walker.set_preview(pre.figure_job());
+                walker.set_preview_scene(pre.scene());
+                pre.set_figure_loading(walker.preview_loading());
+            }
             crate::pre_world::PreWorldState::Entered(name) => {
                 tracing::info!(character = %name, "entered the world from the character screens");
                 host.collect_screen_events(false);
@@ -427,6 +435,8 @@ impl ClientUi {
         walker.set_ui_attached(true, prefs.walker_hud, prefs.walker_minimap.shown(true));
         let (mapper, _) = walker.mapper_mut();
         host.attach_mapper(mapper);
+        // The plugins' local player carries the NPC windows' wallet views (P3).
+        host.set_plugin_wallet(std::sync::Arc::clone(rt.npc.wallet()));
         host.attach_plugins(&mut rt.plugins, &self.load);
         if self.options.hud {
             for (id, e) in host.open_hud(&mut rt.plugins) {
@@ -703,8 +713,8 @@ impl ClientUi {
                 crate::character::panel::PortraitFigure::Player => {
                     walker.draw_portrait(frame, p.yaw)
                 }
-                crate::character::panel::PortraitFigure::Screens { zoomed } => {
-                    walker.draw_preview(frame, p.yaw, zoomed)
+                crate::character::panel::PortraitFigure::Screens(view) => {
+                    walker.draw_preview(frame, view.as_ref())
                 }
             });
         }
@@ -930,6 +940,8 @@ fn combat_frame(host: &mut UiHost, rt: &mut Runtime, walker: &mut Walker) {
     #[allow(clippy::cast_possible_truncation)]
     let px = |x: f64, y: f64| [x as f32, y as f32];
     let mut extra = Vec::new();
+    // Entities to use after the selection was sent (`npc-windows.md` §3.1 rules 4 and 5).
+    let mut uses = Vec::new();
     for click in host.take_world_clicks() {
         match click {
             WorldClick::Select(x, y) => {
@@ -937,7 +949,18 @@ fn combat_frame(host: &mut UiHost, rt: &mut Runtime, walker: &mut Walker) {
             }
             WorldClick::Use(x, y) => {
                 if let Some(e) = walker.pick_entity(px(x, y)) {
-                    extra.push(CombatInput::UseEntity(e));
+                    extra.push(CombatInput::PickEntity(Some(e)));
+                    uses.push(e);
+                }
+            }
+            WorldClick::Right(x, y) => {
+                let picked = walker.pick_entity(px(x, y));
+                extra.push(CombatInput::PickEntity(picked));
+                if let Some(e) = picked
+                    && world.entities().get(&e).map(|v| v.kind)
+                        != Some(tessera_net::EntityKind::Player)
+                {
+                    uses.push(e);
                 }
             }
         }
@@ -962,6 +985,16 @@ fn combat_frame(host: &mut UiHost, rt: &mut Runtime, walker: &mut Walker) {
             if let Some(i) = slot {
                 host.combat_slot_error(i, now);
             }
+        }
+    }
+    // Using goes through the client's one entry point (use range, `npc::use_entity`).
+    if !uses.is_empty() {
+        #[allow(clippy::cast_possible_truncation)]
+        let avatar = walker
+            .focus()
+            .map(|p| tessera_net::Vec3::new(p.x as f32, p.y as f32, p.z as f32));
+        for e in uses {
+            rt.npc.use_selection(host, world, e, avatar, instant);
         }
     }
 }

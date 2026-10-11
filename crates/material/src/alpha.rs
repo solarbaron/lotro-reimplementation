@@ -10,8 +10,14 @@
 //!   permutation's own depth-write switch, the single-precision floor quantisation, and
 //!   the *R* = 0 / −1 rule when the test is off.
 //! - [`keeps`]: a fragment is kept only when its tested opacity is **greater than** *R*.
-//! - [`output_alpha`]: the lit base pass's output alpha, the tested opacity × the material
-//!   alpha, clamped to [0, 1] (§11.3 Tessera rule).
+//! - [`output_alpha`]: the output alpha of a lit record in every colour pass (base and
+//!   additive light passes alike), the tested opacity × the material alpha, clamped to
+//!   [0, 1] (§11.3 Tessera rule).
+//! - [`MISSING_TEXTURE_ALPHA`] and [`TestedOpacity::evaluate_textured`]: a slot whose
+//!   effective texture is 0 reads as an all-ones texel (§18, Tessera Decision answered
+//!   2026-10-10), so a missing opacity texture contributes alpha 1: a product is the other
+//!   alpha alone, a **sum** the other alpha + 1 (kept whenever the other alpha is above 0
+//!   or *R* < 1; output alpha min(1, (alpha + 1) × *A*)).
 //!
 //! ```
 //! use tessera_material::alpha::{AlphaReference, keeps};
@@ -48,6 +54,12 @@ pub const OPACITY_ROLES: [(u32, &str); 4] = [
     (ids::EMISSIVE, "EmissiveAndOpacity"),
     (ids::SECOND_LAYER, "ColorAndOpacity2"),
 ];
+
+/// The alpha a slot whose effective texture is 0 contributes to the tested opacity and the
+/// output alpha (`material.md` §18, Tessera Decision answered 2026-10-10): the texture reads
+/// as a texel whose four channels are 1, the white texture `render.md` §4.3 binds for an
+/// unset texture. The case does not occur in the install the spec counts (MA63).
+pub const MISSING_TEXTURE_ALPHA: f32 = 1.0;
 
 /// Threshold of the material alpha below which a permutation that does not write depth
 /// switches its alpha test off (`material.md` §11.2 step 2).
@@ -145,6 +157,26 @@ impl TestedOpacity {
             Self::Sum(a, b) => alpha(a) + alpha(b),
         }
     }
+
+    /// [`TestedOpacity::evaluate`] where `alpha(slot)` is `None` for a slot whose effective
+    /// texture is 0: that slot reads [`MISSING_TEXTURE_ALPHA`] (`material.md` §18 Decision),
+    /// one rule for every slot and both combinations. A lone source without a texture tests
+    /// 1, a product is the other alpha alone and a sum is the other alpha + 1 (at least 1,
+    /// so under the strict comparison of [`keeps`] it is kept whenever the other alpha is
+    /// above 0 or *R* < 1).
+    #[must_use]
+    pub fn evaluate_textured(self, alpha: impl Fn(u32) -> Option<f32>) -> f32 {
+        self.evaluate(|slot| alpha(slot).unwrap_or(MISSING_TEXTURE_ALPHA))
+    }
+
+    /// Whether a missing texture in `slot` (effective texture 0) **adds** 1 to the tested
+    /// opacity instead of dropping out of it: `slot` is one of the two alphas of a
+    /// [`TestedOpacity::Sum`] (`material.md` §18 Decision). In a product a missing texture
+    /// leaves the other alpha alone, and a lone source tests 1.
+    #[must_use]
+    pub fn missing_adds_one(self, slot: u32) -> bool {
+        matches!(self, Self::Sum(a, b) if a == slot || b == slot)
+    }
 }
 
 /// The inputs of the per-draw reference *R* (`material.md` §11.2 "What the client does
@@ -156,9 +188,16 @@ pub struct AlphaReference {
     pub test: bool,
     /// *W*: the permutation's own depth-write switch.
     pub depth_write: bool,
-    /// *r*: the alpha reference (1043) at the clock.
+    /// *r*: the alpha reference (1043) at the clock. A non-finite value falls back to
+    /// [`AlphaReference::block_reference`], then 0.5 (`material.md` §18).
     pub reference: f32,
-    /// *A*: the material colour's alpha × the per-object tint's alpha, in [0, 1].
+    /// The `alpha_ref` of the drawn permutation's render-state block (`material.md` §7.6;
+    /// record-level: the most common one), the fallback of a non-finite *r* (§18 Decision
+    /// of 2026-10-07, answer to the implementer note of commit b949a54, item 2 (a)).
+    /// `None` (or non-finite) when unknown: then 0.5.
+    pub block_reference: Option<f32>,
+    /// *A*: the material colour's alpha × the per-object tint's alpha, in [0, 1] (clamped;
+    /// a NaN counts as 0, `material.md` §18).
     pub material_alpha: f32,
     /// The permutation's `src_blend` is SRCALPHA (code 5).
     pub src_alpha: bool,
@@ -169,13 +208,14 @@ pub struct AlphaReference {
 impl AlphaReference {
     /// An alpha-tested permutation with reference `reference`, material alpha
     /// `material_alpha` and depth-write switch `depth_write` (source factor SRCALPHA, no
-    /// alpha-to-coverage).
+    /// alpha-to-coverage, no block reference).
     #[must_use]
     pub fn tested(reference: f32, material_alpha: f32, depth_write: bool) -> Self {
         Self {
             test: true,
             depth_write,
             reference,
+            block_reference: None,
             material_alpha,
             src_alpha: true,
             alpha_to_coverage: false,
@@ -202,16 +242,14 @@ impl AlphaReference {
     /// 3. test on: ⌊*r* × 255⌋ / 255 ([`quantise_reference`]); test off and (it was on
     ///    before step 2 or the source factor is SRCALPHA): 0; otherwise −1.
     ///
-    /// A non-finite *r* is taken as 0.5 (the fallback threshold of
-    /// [`crate::resolve::FALLBACK_ALPHA_THRESHOLD`]); a non-finite *A* as 1, and *A* is
-    /// clamped to [0, 1].
+    /// A non-finite *r* falls back to the block's `alpha_ref`
+    /// ([`AlphaReference::block_reference`]) and, when that is missing or non-finite too,
+    /// to 0.5 ([`crate::resolve::FALLBACK_ALPHA_THRESHOLD`]) (`material.md` §18). *A* is
+    /// clamped to [0, 1], a NaN *A* counting as 0 (§18: values handed to a renderer are
+    /// finite, NaN → 0, ±∞ → the largest finite value of its sign; Decisions).
     #[must_use]
     pub fn reference(&self) -> f32 {
-        let r = if self.reference.is_finite() {
-            self.reference
-        } else {
-            crate::resolve::FALLBACK_ALPHA_THRESHOLD
-        };
+        let r = self.r();
         let a = material_alpha(self.material_alpha);
         if self.test {
             if self.alpha_to_coverage {
@@ -228,15 +266,22 @@ impl AlphaReference {
         }
         if self.src_alpha { 0.0 } else { -1.0 }
     }
+
+    /// *r* after the fallbacks of a non-finite value: the block's `alpha_ref`, then 0.5.
+    #[must_use]
+    pub fn r(&self) -> f32 {
+        if self.reference.is_finite() {
+            return self.reference;
+        }
+        self.block_reference
+            .filter(|b| b.is_finite())
+            .unwrap_or(crate::resolve::FALLBACK_ALPHA_THRESHOLD)
+    }
 }
 
-/// *A* in [0, 1]; a non-finite value is 1.
+/// *A* in [0, 1]; NaN is 0, +∞ is 1, −∞ is 0 (`material.md` §18).
 fn material_alpha(a: f32) -> f32 {
-    if a.is_finite() {
-        a.clamp(0.0, 1.0)
-    } else {
-        1.0
-    }
+    if a.is_nan() { 0.0 } else { a.clamp(0.0, 1.0) }
 }
 
 /// Step 3 of §11.2: ⌊*r* × 255⌋ / 255, the multiplication, floor and division in single
@@ -253,10 +298,13 @@ pub fn keeps(opacity: f32, r: f32) -> bool {
     opacity > r
 }
 
-/// The output alpha of a lit base pass (`material.md` §11.3): the tested opacity × the
-/// material alpha *A*, clamped to [0, 1] before it is used as a blend factor (Tessera
-/// rule; a sum can exceed 1). Non-finite results give 1 for a non-finite opacity and 0
-/// otherwise.
+/// The output alpha of a lit record (`material.md` §11.3, MA61; `lighting.md` §5.12, L41):
+/// the tested opacity × the material alpha *A*, the same in every pass that writes colour
+/// (the base passes **and** the additive light passes, the glow pass and passes 0x00 and
+/// 0x09), whatever the opacity source; clamped to [0, 1] before it is used as a blend factor
+/// (Tessera rule; a sum can exceed 1). A non-finite opacity counts as 1 and a NaN *A* as 0;
+/// a non-finite product gives 0. (The view-space-normal pass 0x42 outputs the tested
+/// opacity without *A*; Tessera draws no such pass.)
 #[must_use]
 pub fn output_alpha(opacity: f32, material_alpha: f32) -> f32 {
     let o = if opacity.is_finite() { opacity } else { 1.0 };
@@ -349,6 +397,55 @@ mod tests {
         assert_eq!(output_alpha(0.5, 0.5), 0.25);
         assert_eq!(output_alpha(f32::NAN, 0.5), 0.5);
         assert_eq!(output_alpha(-1.0, 1.0), 0.0);
+        // A NaN A counts as 0, ±∞ clamps (material.md §18, item 2 (b)).
+        assert_eq!(output_alpha(0.5, f32::NAN), 0.0);
+        assert_eq!(output_alpha(0.5, f32::INFINITY), 0.5);
+        assert_eq!(output_alpha(0.5, f32::NEG_INFINITY), 0.0);
+    }
+
+    #[test]
+    fn nan_material_alpha_counts_as_zero() {
+        // W = 1: r × 0 = 0 → R = 0 (only opacity 0 is discarded).
+        let r = AlphaReference::tested(0.8, f32::NAN, true);
+        assert!(r.test_on());
+        assert_eq!(r.reference(), 0.0);
+        // W = 0: 0 < 0.9 switches the test off, R = 0.
+        let r = AlphaReference::tested(0.8, f32::NAN, false);
+        assert!(!r.test_on());
+        assert_eq!(r.reference(), 0.0);
+        // +∞ clamps to 1: nothing changes.
+        let r = AlphaReference::tested(0.8, f32::INFINITY, false);
+        assert!(r.test_on());
+        assert_eq!(r.reference(), 204.0 / 255.0);
+    }
+
+    #[test]
+    fn non_finite_r_falls_back_to_the_block_reference() {
+        // material.md §18: the block's alpha_ref first, then 0.5.
+        for bad in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+            let with_block = AlphaReference {
+                block_reference: Some(0.9),
+                ..AlphaReference::tested(bad, 1.0, true)
+            };
+            assert_eq!(with_block.r(), 0.9);
+            assert_eq!(with_block.reference(), 229.0 / 255.0);
+            let unusable = AlphaReference {
+                block_reference: Some(f32::NAN),
+                ..with_block
+            };
+            assert_eq!(unusable.reference(), 127.0 / 255.0);
+            let none = AlphaReference {
+                block_reference: None,
+                ..with_block
+            };
+            assert_eq!(none.reference(), 127.0 / 255.0);
+        }
+        // A finite r ignores the block value.
+        let finite = AlphaReference {
+            block_reference: Some(0.9),
+            ..AlphaReference::tested(0.65, 1.0, true)
+        };
+        assert_eq!(finite.reference(), 165.0 / 255.0);
     }
 
     #[test]
@@ -360,6 +457,58 @@ mod tests {
         assert_eq!(TestedOpacity::Sum(3000, 3018).evaluate(alpha), 1.25);
         // A sum above 1 is always kept (R ≤ 1).
         assert!(keeps(TestedOpacity::Sum(3000, 3018).evaluate(alpha), 1.0));
+    }
+
+    /// `material.md` §18 (Tessera Decision, wording of 2026-10-10): a sum record whose second
+    /// opacity texture is 0 tests the base alpha + 1, outputs min(1, (alpha + 1) × A), and is
+    /// kept whenever the base alpha is above 0 or R < 1.
+    #[test]
+    fn missing_opacity_texture_reads_one() {
+        let sum = TestedOpacity::Sum(ids::DIFFUSE, ids::EMISSIVE);
+        let base = |a: f32| move |s: u32| (s == ids::DIFFUSE).then_some(a);
+        // Base alpha + 1.
+        assert_eq!(sum.evaluate_textured(base(0.5)), 1.5);
+        assert_eq!(sum.evaluate_textured(base(0.0)), 1.0);
+        // Output alpha min(1, (alpha + 1) × A): the §18 examples, at least A.
+        let out = |a: f32, m: f32| output_alpha(sum.evaluate_textured(base(a)), m);
+        assert!((out(0.5, 0.4) - 0.6).abs() < 1e-6);
+        assert_eq!(out(0.5, 0.8), 1.0);
+        assert_eq!(out(0.0, 0.4), 0.4);
+        assert_eq!(out(0.5, 1.0), 1.0);
+        for m in [0.0_f32, 0.1, 0.4, 0.8, 1.0] {
+            for a in [0.0_f32, 0.25, 0.5, 1.0] {
+                assert!(out(a, m) >= m);
+            }
+        }
+        // Kept whenever the base alpha is above 0 or R < 1; a base alpha of 0 (sum exactly
+        // 1) is discarded at R = 1, which a threshold of 1.0 gives at A = 1.
+        let r1 = AlphaReference::tested(1.0, 1.0, true).reference();
+        assert_eq!(r1, 1.0);
+        assert!(!keeps(sum.evaluate_textured(base(0.0)), r1));
+        assert!(keeps(sum.evaluate_textured(base(1.0 / 255.0)), r1));
+        for t in [0.0_f32, 0.3, 0.65, 0.9, 0.999] {
+            let r = AlphaReference::tested(t, 1.0, true).reference();
+            assert!(r < 1.0);
+            assert!(keeps(sum.evaluate_textured(base(0.0)), r));
+        }
+        // The same rule in every slot and both combinations: a product is the other alpha
+        // alone, a lone source tests 1, a sum with the base missing is the second + 1.
+        let product = TestedOpacity::Product(ids::DIFFUSE, ids::OPACITY);
+        assert_eq!(product.evaluate_textured(base(0.5)), 0.5);
+        assert_eq!(
+            TestedOpacity::Slot(ids::OPACITY).evaluate_textured(|_| None),
+            1.0
+        );
+        let second = |s: u32| (s == ids::EMISSIVE).then_some(0.25);
+        assert_eq!(sum.evaluate_textured(second), 1.25);
+        assert_eq!(sum.evaluate_textured(|_| None), 2.0);
+        // Present textures evaluate as before.
+        assert_eq!(sum.evaluate_textured(|_| Some(0.5)), 1.0);
+        assert!(sum.missing_adds_one(ids::EMISSIVE));
+        assert!(sum.missing_adds_one(ids::DIFFUSE));
+        assert!(!sum.missing_adds_one(ids::OPACITY));
+        assert!(!product.missing_adds_one(ids::OPACITY));
+        assert!(!TestedOpacity::Slot(ids::DIFFUSE).missing_adds_one(ids::DIFFUSE));
     }
 
     #[test]

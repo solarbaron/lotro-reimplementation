@@ -3,7 +3,7 @@
 # 0032 — P2 on M7's server: local selection, target frames of test actors, no combat in overlay runs, no protocol minor
 
 **Status:** Proposed (spec writer, design, 2026-10-10). An independent review by a session
-that wrote no part of this decision or of `scenario-feed.md` revision 5 must check it before
+that wrote no part of this decision or of `scenario-feed.md` revision 6 must check it before
 it is Accepted (see [Review](#review)).
 
 **Number.** Out of sequence, like 0030: 0031 is taken on the parallel branch `p3`
@@ -174,7 +174,7 @@ and §14.11 (test-server selection cases R1–R10).
 ## Consequences
 
 - **Spec revised (status Review; independent review required):** `scenario-feed.md`
-  revision 5 (§9.5 other backends, §9.7, §12.5.1, §12.5.2, §14.9, §14.11, §15 invariant 11,
+  revision 6 (§9.5 other backends, §9.7, §12.5.1, §12.5.2, §14.9, §14.11, §15 invariant 11,
   §17, §18.4). `tessera-protocol.md`, `test-server.md` and `server-content.md` are
   unchanged.
 - **For the Draft `combat-ui.md`** (its writer and reviewer): its selection-eligibility rule
@@ -206,5 +206,5 @@ and §14.11 (test-server selection cases R1–R10).
 ## Review
 
 Pending. The reviewer checks D1–D4 against LEGAL.md §11.1 rule 5, decision 0024 §2,
-`scenario-feed.md` §0 item 3 and revision 5 (§18.4), and re-derives the cases of
+`scenario-feed.md` §0 item 3 and revision 6 (§18.4), and re-derives the cases of
 `scenario-feed.md` §14.9 (O8, O10–O12) and §14.11.

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Parsing of step verbs and their arguments (`scenario-feed.md` §6).
 
+use super::ast::RefArg;
 use super::ast::{
     ChannelArg, CurrencyArg, CutSite, Entries, Facing, ListItem, MemberArg, RefOrFan, Sender,
     SlotContent, Verb, VitalArg, WindowKind,
@@ -10,10 +11,17 @@ use super::lex::{Seg, Token};
 use super::parse::{
     Binding, MAX_FELLOWS, MAX_TRADE_ENTRIES, MAX_TUNE_BYTES, MAX_WINDOW_ENTRIES, Parser, R,
 };
+use super::parse::{MAX_COIN, Stmt};
+
+/// The coin prices and the barter cost of a `vendor` or `buyback` step.
+type PriceOpts = (Vec<u64>, Option<(RefArg, u32)>);
 use super::select::LabelContext;
 use crate::domain::{
     CastKind, CastOutcome, Container, CraftOutcome, DeltaKind, HitResult, QuestStatus, Side,
 };
+// P3 revision (NPC windows).
+use super::ast::RewardArg;
+use crate::domain::{MAX_REWARD_ENTRIES, RewardKind};
 
 /// Largest fan-out per step.
 pub const MAX_FANOUT: usize = 65_536;
@@ -374,20 +382,7 @@ impl Parser {
                     Some((v, c)) => Some(self.entity_at(&v, c)?),
                     None => None,
                 };
-                let prices = match st.opt("price") {
-                    Some((v, c)) => self.int_list(&v, c, 0, 1_000_000_000_000_000)?,
-                    None => Vec::new(),
-                };
-                let barter = match st.opt("barter") {
-                    Some((v, c)) => {
-                        let parts = v.split_on(':');
-                        let [r, n] = parts.as_slice() else {
-                            return Err(self.e(K::UnexpectedToken, c));
-                        };
-                        Some((self.ref_at(r, c)?, self.quantity(n, c)?))
-                    }
-                    None => None,
-                };
+                let (prices, barter) = self.price_opts(&mut st)?;
                 let stock = match st.opt("stock") {
                     Some((v, c)) => Some(self.u32_in(&v, c, 0, BILLION)?),
                     None => None,
@@ -424,6 +419,8 @@ impl Parser {
                     coin,
                 }
             }
+            "rewards" => self.verb_rewards(tokens)?,
+            "buyback" => self.verb_buyback(tokens)?,
             "say" => {
                 let mut st = self.split(tokens, 1, &["channel"])?;
                 let s = st.arg(0)?;
@@ -848,6 +845,105 @@ impl Parser {
             }
             _ => Err(self.e(K::WrongBindingKind, t.col)),
         }
+    }
+
+    /// `rewards TOKEN…` (P3 revision, §6.3): 1..=16 tokens `KIND:N`, `rep:REF:N` or
+    /// `wallet:REF:N`; every error is reported at its token.
+    fn verb_rewards(&mut self, tokens: &[Token]) -> R<Verb> {
+        let st = self.split(tokens, 1, &[])?;
+        st.arg(0)?;
+        let mut out: Vec<RewardArg> = Vec::with_capacity(st.pos.len().min(MAX_REWARD_ENTRIES));
+        for (i, t) in st.pos.iter().enumerate() {
+            let col = t.col;
+            if i >= MAX_REWARD_ENTRIES {
+                return Err(self.e(K::LimitExceeded(Limit::Entries), col));
+            }
+            let r = self.reward_token(t, col)?;
+            if !r.kind.has_what() && out.iter().any(|o| o.kind == r.kind) {
+                return Err(self.e(K::UnexpectedToken, col));
+            }
+            out.push(r);
+        }
+        Ok(Verb::Rewards(out))
+    }
+
+    /// One reward token.
+    fn reward_token(&self, t: &Token, col: u32) -> R<RewardArg> {
+        let parts = t.split_on(':');
+        let kind_word = match parts.first().and_then(Token::raw) {
+            Some(w) => w,
+            None => return Err(self.e(K::UnexpectedToken, col)),
+        };
+        let (kind, what, n) = match (kind_word, parts.as_slice()) {
+            ("rep", [_, r, n]) | ("wallet", [_, r, n]) => {
+                if r.segs.is_empty() {
+                    return Err(self.e(K::UnexpectedToken, col));
+                }
+                let kind = if kind_word == "rep" {
+                    RewardKind::Reputation
+                } else {
+                    RewardKind::Wallet
+                };
+                (kind, Some(self.ref_at(r, col)?), n)
+            }
+            (w, [_, n]) => {
+                let kind = match w {
+                    "coin" => RewardKind::Coin,
+                    "glory" => RewardKind::Glory,
+                    "item-xp" => RewardKind::ItemXp,
+                    "craft-xp" => RewardKind::CraftXp,
+                    "mount-xp" => RewardKind::MountXp,
+                    "virtue-xp" => RewardKind::VirtueXp,
+                    "trait-points" => RewardKind::TraitPoints,
+                    _ => return Err(self.e(K::UnexpectedToken, col)),
+                };
+                (kind, None, n)
+            }
+            _ => return Err(self.e(K::UnexpectedToken, col)),
+        };
+        let range = kind.amount_range();
+        let amount = self.sint(n, col, i128::from(*range.start()), i128::from(*range.end()))?;
+        Ok(RewardArg { kind, amount, what })
+    }
+
+    /// The `price=N|N,N,…` and `barter=REF:N` options shared by `vendor` and `buyback`
+    /// (§6.3: buy-back prices are written as for `vendor`).
+    fn price_opts(&mut self, st: &mut Stmt<'_>) -> R<PriceOpts> {
+        let prices = match st.opt("price") {
+            Some((v, c)) => self.int_list(&v, c, 0, MAX_COIN)?,
+            None => Vec::new(),
+        };
+        let barter = match st.opt("barter") {
+            Some((v, c)) => {
+                let parts = v.split_on(':');
+                let [r, n] = parts.as_slice() else {
+                    return Err(self.e(K::UnexpectedToken, c));
+                };
+                Some((self.ref_at(r, c)?, self.quantity(n, c)?))
+            }
+            None => None,
+        };
+        Ok((prices, barter))
+    }
+
+    /// `buyback items=($sel|REFLIST) [qty=N] [price=N|N,N,…] [barter=REF:N]` (P3 revision,
+    /// §6.3): entries as for `vendor`.
+    fn verb_buyback(&mut self, tokens: &[Token]) -> R<Verb> {
+        let mut st = self.split(tokens, 1, &["items", "qty", "price", "barter"])?;
+        st.no_more(0)?;
+        let (iv, ic) = st.req_opt("items")?;
+        let items = self.entries(&iv, ic, MAX_WINDOW_ENTRIES, false)?;
+        let qty = match st.opt("qty") {
+            Some((v, c)) => self.quantity(&v, c)?,
+            None => 1,
+        };
+        let (prices, barter) = self.price_opts(&mut st)?;
+        Ok(Verb::Buyback {
+            items,
+            qty,
+            prices,
+            barter,
+        })
     }
 
     fn verb_delta(&mut self, tokens: &[Token], damage: bool) -> R<Verb> {

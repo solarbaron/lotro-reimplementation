@@ -471,10 +471,20 @@ fn world(b: &mut Bytes<'_>, stress: bool) -> (MapSource, PropertySet, CharacterS
     }
     spec.ranged_skill_mode = b.chance(3);
     for _ in 0..b.small(2) {
-        spec.styles.push(StyleChoice {
-            key: b.pick(&KEYS),
-            modifier: b.pick(&VARIANTS),
-        });
+        spec.styles
+            .push(StyleChoice::modifier(b.pick(&KEYS), b.pick(&VARIANTS)));
+        if b.chance(2) {
+            // A written instance-list element (`appearance.md` §3.4).
+            spec.styles.push(StyleChoice::element(AppearanceKeyInfo {
+                key: b.pick(&KEYS),
+                file: Did(0x2000_0000 + u32::from(b.byte()) % RECORDS),
+                modifier: b.pick(&VARIANTS),
+                toggle_file: b
+                    .chance(2)
+                    .then(|| Did(0x2000_0000 + u32::from(b.byte()) % RECORDS)),
+                toggle_property: b.chance(2).then_some(0x10),
+            }));
+        }
     }
     let mut entries = Vec::new();
     if b.chance(4) {

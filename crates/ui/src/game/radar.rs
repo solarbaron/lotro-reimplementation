@@ -415,3 +415,30 @@ impl Radar {
         }
     }
 }
+
+/// Hooks for notes that game code places over the minimap (P3 quest markers,
+/// `quest-journal.md` §8.3, `game-panels.md` §8.8 note).
+impl Radar {
+    /// The georeference of the map the last position update showed: the outdoor grid's or
+    /// the indoor map's (`None` before an update, or when the shown map has none).
+    #[must_use]
+    pub fn shown_georef(&self) -> Option<Georef> {
+        match self.outdoors {
+            Some(true) => self.grid_georef,
+            Some(false) => self.indoor.as_ref().and_then(|(m, _)| m.georef()),
+            None => None,
+        }
+    }
+
+    /// `MinimapViewport`, when the radar found its parts.
+    #[must_use]
+    pub fn viewport(&self) -> Option<ElementKey> {
+        self.parts.map(|p| p.viewport)
+    }
+
+    /// `MinimapPlayerMarker`, when the radar found its parts.
+    #[must_use]
+    pub fn player_marker(&self) -> Option<ElementKey> {
+        self.parts.map(|p| p.marker)
+    }
+}

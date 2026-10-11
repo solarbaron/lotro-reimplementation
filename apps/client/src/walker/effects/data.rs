@@ -14,6 +14,7 @@ use std::sync::{Arc, Mutex, MutexGuard};
 
 use tessera_anim::AttachFrame;
 use tessera_dat::ArchiveSet;
+use tessera_formats::PropertyValue;
 use tessera_formats::gameplay::particles::{
     FORK_SYSTEM_PREFIX, ForkSystem, PARTICLE_SYSTEM_PREFIX, ParticleSystem,
 };
@@ -409,10 +410,13 @@ pub fn surface_alpha(m: &ResolvedMaterial, test: Option<f32>) -> AlphaMode {
     }
 }
 
+/// What the effect scan of an owner's scripts found.
 #[derive(Debug, Default)]
-struct ScanOut {
-    effects: Vec<(Did, f32)>,
-    attaches: bool,
+pub(crate) struct ScanOut {
+    /// Effect DIDs with the extra reach of their nodes (offset, fork fade).
+    pub effects: Vec<(Did, f32)>,
+    /// Whether a Particle node attaches to a holding location or a bone.
+    pub attaches: bool,
 }
 
 /// Shared data and caches (module docs).
@@ -570,78 +574,21 @@ impl EffectData {
         out
     }
 
-    fn scan_node(
-        root: &tessera_formats::Node,
-        out: &mut ScanOut,
-        keys: &mut Vec<u32>,
-        scriptlets: &mut Vec<Did>,
-    ) {
-        root.walk(&mut |n, _| match &n.data {
-            NodeData::Particle(p) => {
-                if let Some(d) = p.effect_did() {
-                    let o = p.bone_offset;
-                    let off = (o[0] * o[0] + o[1] * o[1] + o[2] * o[2]).sqrt();
-                    let off = if off.is_finite() {
-                        off.min(MAX_REACH)
-                    } else {
-                        0.0
-                    };
-                    let fork_reach = if p.far_fade_max.is_finite() {
-                        p.far_fade_max.clamp(0.0, MAX_REACH)
-                    } else {
-                        0.0
-                    };
-                    out.effects.push((
-                        d,
-                        if d.prefix() == FORK_SYSTEM_PREFIX {
-                            fork_reach + off
-                        } else {
-                            off
-                        },
-                    ));
-                }
-                out.attaches |= p.holding_location != 0 || p.bone_type != 0;
-            }
-            NodeData::Run(r) if !r.stop => keys.push(r.script),
-            NodeData::Scriptlet { file, .. } if !file.is_null() => scriptlets.push(*file),
-            _ => {}
-        });
-    }
-
     /// Walks the scripts `keys` of `closure`, every script their Run nodes start and every
     /// scriptlet they invoke (bounded), collecting the effect DIDs of their Particle nodes.
-    fn scan(&self, closure: &[Arc<ScriptTable>], keys: &[u32]) -> ScanOut {
-        let mut out = ScanOut::default();
-        let mut todo: Vec<u32> = keys.to_vec();
-        let mut seen_keys = HashSet::new();
-        let mut scriptlets: Vec<Did> = Vec::new();
-        let mut seen_scriptlets = HashSet::new();
-        loop {
-            if let Some(k) = todo.pop() {
-                if seen_keys.len() >= MAX_SCAN_KEYS || !seen_keys.insert(k) {
-                    continue;
-                }
-                for t in closure {
-                    if let Some(s) = t.script(k) {
-                        for r in &s.roots {
-                            Self::scan_node(r, &mut out, &mut todo, &mut scriptlets);
-                        }
-                    }
-                }
-            } else if let Some(d) = scriptlets.pop() {
-                if seen_scriptlets.len() >= MAX_SCAN_SCRIPTLETS || !seen_scriptlets.insert(d) {
-                    continue;
-                }
-                if let Some(s) = self.scriptlet(d) {
-                    for r in &s.roots {
-                        Self::scan_node(r, &mut out, &mut todo, &mut scriptlets);
-                    }
-                }
-            } else {
-                break;
-            }
-        }
-        out
+    /// A Scriptlet node's `ScriptletScript_File` pair is followed ([`scan_scripts`]).
+    fn scan(&self, closure: &[Arc<ScriptTable>], keys: &[u32], owner: &PropertyState) -> ScanOut {
+        let dict = &*self.dict;
+        let pairs = ScanPairs {
+            file: self.svocab.as_ref().and_then(|v| v.scriptlet.file),
+            owner,
+            default: &|pid| {
+                dict.definition(pid)
+                    .and_then(|d| d.default.as_ref())
+                    .and_then(PropertyValue::as_did)
+            },
+        };
+        scan_scripts(closure, keys, &pairs, |d| self.scriptlet(d))
     }
 
     /// The scripts of `object` (with `instance`, a figure's instance property set, added
@@ -662,7 +609,7 @@ impl EffectData {
         let closure = self.closure(&tables);
         let mut keys: Vec<u32> = self.startup_key.into_iter().collect();
         keys.extend_from_slice(&s.startup_scripts);
-        let scan = self.scan(&closure, &keys);
+        let scan = self.scan(&closure, &keys, &s.properties);
         if scan.effects.is_empty() {
             return None;
         }
@@ -963,6 +910,209 @@ impl EffectData {
     }
 }
 
+/// Most DID-valued parameters remembered per scriptlet for the effect scan's file pairs.
+pub const MAX_SCAN_PARAMETERS: usize = 64;
+
+/// What the effect scan needs to follow a Scriptlet node's `ScriptletScript_File` pair
+/// (`appearance.md` §7.4.1 rules 1–3 and the edge-case Decision on file pairs).
+pub(crate) struct ScanPairs<'a> {
+    /// `ScriptletScript_File` (`None`: no pair is followed).
+    pub file: Option<u32>,
+    /// The owner's stored property values (driven sources).
+    pub owner: &'a PropertyState,
+    /// The dictionary default of a property, when it is a DID.
+    pub default: &'a dyn Fn(u32) -> Option<Did>,
+}
+
+impl ScanPairs<'_> {
+    /// The DID a driven pair reads from `source`: the owner's value, else the default.
+    fn driven(&self, source: u32) -> Option<Did> {
+        match self.owner.get(source) {
+            Some(v) => v.as_did(),
+            None => (self.default)(source),
+        }
+    }
+}
+
+/// The DID values that a scriptlet-driven pair of `parameter` may read from the record's
+/// invocations (`context`), in order, each once.
+fn context_values(context: &[(u32, Did)], parameter: u32) -> Vec<Did> {
+    let mut out: Vec<Did> = Vec::new();
+    for &(p, d) in context {
+        if p == parameter && !out.contains(&d) {
+            out.push(d);
+        }
+    }
+    out
+}
+
+/// What a Scriptlet node with stored `file` and `parameters` may invoke, and the
+/// DID-valued parameters its set holds after its pairs (`appearance.md` §7.4.1 rules 1–3):
+/// driven pairs first (the owner's value or the dictionary default), then scriptlet-driven
+/// pairs, which read the parameters that the invocations of the node's own record hold
+/// (`context`; empty for a table script, where no Scriptlet node invokes the record). A
+/// pair whose field PID the set holds writes that parameter; a `ScriptletScript_File` pair
+/// the set does not hold chooses the record when its value is a DID. The scan walks every
+/// branch, so a scriptlet-driven pair that several invocations feed keeps every value.
+fn scriptlet_choices(
+    n: &tessera_formats::Node,
+    file: Did,
+    parameters: &PropertySet,
+    context: &[(u32, Did)],
+    pairs: &ScanPairs<'_>,
+) -> (Vec<Did>, Vec<(u32, Did)>) {
+    let held = |pid: u32| parameters.get(pid).is_some();
+    // The parameters as candidates per PID: stored, then replaced by the pairs that find a
+    // value.
+    let mut params: Vec<(u32, Vec<Did>)> = parameters
+        .entries
+        .iter()
+        .take(MAX_SCAN_PARAMETERS)
+        .map(|e| (e.pid, e.value.as_did().into_iter().collect()))
+        .collect();
+    let mut files: Vec<Did> = vec![file];
+    let mut write = |field: u32, values: Vec<Did>| {
+        if values.is_empty() {
+            return;
+        }
+        if held(field) {
+            if let Some(slot) = params.iter_mut().find(|(p, _)| *p == field) {
+                slot.1 = values;
+            }
+        } else if pairs.file == Some(field) {
+            files = values;
+        }
+    };
+    for &(field, source) in &n.base.driven {
+        write(field, pairs.driven(source).into_iter().collect());
+    }
+    for &(field, parameter) in &n.base.scriptlet_driven {
+        write(field, context_values(context, parameter));
+    }
+    files.retain(|d| !d.is_null());
+    let mut filled = Vec::new();
+    for (pid, values) in params {
+        for d in values {
+            if filled.len() < MAX_SCAN_PARAMETERS && !d.is_null() {
+                filled.push((pid, d));
+            }
+        }
+    }
+    (files, filled)
+}
+
+/// Collects what one tree of a record holds: Particle effects into `out`, the scripts its
+/// Run nodes start into `keys`, and the scriptlets its Scriptlet nodes may invoke, with the
+/// DID parameters they pass, into `invokes`.
+fn scan_node(
+    root: &tessera_formats::Node,
+    context: &[(u32, Did)],
+    pairs: &ScanPairs<'_>,
+    out: &mut ScanOut,
+    keys: &mut Vec<u32>,
+    invokes: &mut Vec<(Did, Vec<(u32, Did)>)>,
+) {
+    root.walk(&mut |n, _| match &n.data {
+        NodeData::Particle(p) => {
+            if let Some(d) = p.effect_did() {
+                let o = p.bone_offset;
+                let off = (o[0] * o[0] + o[1] * o[1] + o[2] * o[2]).sqrt();
+                let off = if off.is_finite() {
+                    off.min(MAX_REACH)
+                } else {
+                    0.0
+                };
+                let fork_reach = if p.far_fade_max.is_finite() {
+                    p.far_fade_max.clamp(0.0, MAX_REACH)
+                } else {
+                    0.0
+                };
+                out.effects.push((
+                    d,
+                    if d.prefix() == FORK_SYSTEM_PREFIX {
+                        fork_reach + off
+                    } else {
+                        off
+                    },
+                ));
+            }
+            out.attaches |= p.holding_location != 0 || p.bone_type != 0;
+        }
+        NodeData::Run(r) if !r.stop => keys.push(r.script),
+        NodeData::Scriptlet { file, parameters } => {
+            let (files, filled) = scriptlet_choices(n, *file, parameters, context, pairs);
+            for f in files {
+                invokes.push((f, filled.clone()));
+            }
+        }
+        _ => {}
+    });
+}
+
+/// Walks the scripts `keys` of `closure`, every script their Run nodes start and every
+/// scriptlet they invoke, also those a `ScriptletScript_File` pair chooses
+/// ([`scriptlet_choices`]), collecting the effect DIDs of their Particle nodes. Bounded:
+/// at most [`MAX_SCAN_KEYS`] script keys and [`MAX_SCAN_SCRIPTLETS`] scriptlet walks; a
+/// scriptlet is walked again only when its invocations bring parameters it had not seen
+/// (at most [`MAX_SCAN_PARAMETERS`] per scriptlet).
+pub(crate) fn scan_scripts(
+    closure: &[Arc<ScriptTable>],
+    keys: &[u32],
+    pairs: &ScanPairs<'_>,
+    mut load: impl FnMut(Did) -> Option<Arc<Scriptlet>>,
+) -> ScanOut {
+    let mut out = ScanOut::default();
+    let mut todo: Vec<u32> = keys.to_vec();
+    let mut seen_keys = HashSet::new();
+    let mut invokes: Vec<(Did, Vec<(u32, Did)>)> = Vec::new();
+    // Per scriptlet: the DID parameters its invocations hold, and how many of them it had
+    // when last walked.
+    let mut contexts: HashMap<Did, Vec<(u32, Did)>> = HashMap::new();
+    let mut walked: HashMap<Did, usize> = HashMap::new();
+    let mut walks = 0usize;
+    loop {
+        if let Some(k) = todo.pop() {
+            if seen_keys.len() >= MAX_SCAN_KEYS || !seen_keys.insert(k) {
+                continue;
+            }
+            for t in closure {
+                if let Some(s) = t.script(k) {
+                    for r in &s.roots {
+                        scan_node(r, &[], pairs, &mut out, &mut todo, &mut invokes);
+                    }
+                }
+            }
+        } else if let Some((d, passed)) = invokes.pop() {
+            let context = contexts.entry(d).or_default();
+            for e in passed {
+                if context.len() >= MAX_SCAN_PARAMETERS {
+                    break;
+                }
+                if !context.contains(&e) {
+                    context.push(e);
+                }
+            }
+            if walked.get(&d) == Some(&context.len()) {
+                continue;
+            }
+            if walks >= MAX_SCAN_SCRIPTLETS {
+                continue;
+            }
+            walks += 1;
+            walked.insert(d, context.len());
+            let context = context.clone();
+            if let Some(s) = load(d) {
+                for r in &s.roots {
+                    scan_node(r, &context, pairs, &mut out, &mut todo, &mut invokes);
+                }
+            }
+        } else {
+            break;
+        }
+    }
+    out
+}
+
 /// The runtime's script source: [`EffectData`]'s caches, reading on a miss (counted).
 #[derive(Debug)]
 pub struct EffectSource(pub Arc<EffectData>);
@@ -988,6 +1138,195 @@ impl ScriptSource for EffectSource {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // --- The effect scan follows `ScriptletScript_File` pairs (`appearance.md` §7.4.1) ---
+
+    use tessera_formats::script_table::{BaseBlock, NodeKind, ParticleScriptNode, Script};
+    use tessera_formats::{PropertyEntry, TSize};
+
+    /// `ScriptletScript_File`.
+    const FILE: u32 = 0x1000_0001;
+    /// An entity property holding a scriptlet DID.
+    const SOURCE: u32 = 0x1000_0002;
+    /// A DID scriptlet parameter.
+    const PARAM: u32 = 0x1000_0003;
+    const STARTUP: u32 = 5;
+    const EFFECT: Did = Did(0x3900_0001);
+    const NESTED_EFFECT: Did = Did(0x3900_0002);
+
+    fn script_node(kind: NodeKind, data: NodeData, base: BaseBlock) -> tessera_formats::Node {
+        tessera_formats::Node {
+            kind,
+            data,
+            base,
+            particle_flag: None,
+            ports: Vec::new(),
+            targets: Vec::new(),
+        }
+    }
+
+    fn particle(effect: Did) -> tessera_formats::Node {
+        script_node(
+            NodeKind::PARTICLE,
+            NodeData::Particle(Box::new(ParticleScriptNode {
+                particle_id: effect,
+                ..ParticleScriptNode::default()
+            })),
+            BaseBlock::default(),
+        )
+    }
+
+    fn invoke(
+        file: u32,
+        parameters: &[(u32, u32)],
+        driven: &[(u32, u32)],
+        from_params: &[(u32, u32)],
+    ) -> tessera_formats::Node {
+        let entries: Vec<PropertyEntry> = parameters
+            .iter()
+            .map(|&(pid, d)| PropertyEntry {
+                pid,
+                value: PropertyValue::DidRef(Did(d)),
+            })
+            .collect();
+        script_node(
+            NodeKind::SCRIPTLET,
+            NodeData::Scriptlet {
+                file: Did(file),
+                parameters: PropertySet {
+                    size: TSize {
+                        hint: 0,
+                        count: u32::try_from(entries.len()).unwrap_or(0),
+                    },
+                    entries,
+                },
+            },
+            BaseBlock {
+                driven: driven.to_vec(),
+                scriptlet_driven: from_params.to_vec(),
+                probability: 1.0,
+                ..BaseBlock::default()
+            },
+        )
+    }
+
+    fn startup(roots: Vec<tessera_formats::Node>) -> Vec<Arc<ScriptTable>> {
+        vec![Arc::new(ScriptTable {
+            did: Did(0x0700_0001),
+            kind: 2,
+            includes: Vec::new(),
+            scripts_size: TSize::default(),
+            scripts: vec![Script {
+                key: STARTUP,
+                roots,
+            }],
+            properties_size: TSize::default(),
+            script_properties: Vec::new(),
+            dids_size: TSize::default(),
+            script_dids: Vec::new(),
+        })]
+    }
+
+    /// The effects a scan finds, given the owner's values, with these scriptlets.
+    fn scan_effects(
+        closure: &[Arc<ScriptTable>],
+        owner: &PropertyState,
+        scriptlets: &[(u32, Vec<tessera_formats::Node>)],
+    ) -> Vec<Did> {
+        let pairs = ScanPairs {
+            file: Some(FILE),
+            owner,
+            default: &|_| None,
+        };
+        let out = scan_scripts(closure, &[STARTUP], &pairs, |d| {
+            scriptlets.iter().find(|s| s.0 == d.0).map(|s| {
+                Arc::new(Scriptlet {
+                    did: d,
+                    roots: s.1.clone(),
+                    dependencies: Vec::new(),
+                })
+            })
+        });
+        let mut found: Vec<Did> = out.effects.iter().map(|e| e.0).collect();
+        found.sort_unstable();
+        found.dedup();
+        found
+    }
+
+    /// `appearance.md` §7.4.1, edge-case Decision: a driven `ScriptletScript_File` pair on
+    /// a Scriptlet node whose set lacks that PID chooses the record (here a placeholder
+    /// with file 0); the scan follows it into the chosen scriptlet. Without the owner's
+    /// value the placeholder invokes nothing.
+    #[test]
+    fn effect_scan_follows_a_driven_file_pair() {
+        let scriptlets = [(0x0C00_0001, vec![particle(EFFECT)])];
+        let closure = startup(vec![invoke(0, &[], &[(FILE, SOURCE)], &[])]);
+        let mut owner = PropertyState::new();
+        owner.set(SOURCE, PropertyValue::DidRef(Did(0x0C00_0001)));
+        assert_eq!(scan_effects(&closure, &owner, &scriptlets), [EFFECT]);
+        assert!(scan_effects(&closure, &PropertyState::new(), &scriptlets).is_empty());
+        // A set that holds the file PID takes the value as a parameter (rule 2): the stored
+        // file (0) stays, so nothing is invoked.
+        let closure = startup(vec![invoke(
+            0,
+            &[(FILE, 0x0C00_0009)],
+            &[(FILE, SOURCE)],
+            &[],
+        )]);
+        assert!(scan_effects(&closure, &owner, &scriptlets).is_empty());
+    }
+
+    /// `appearance.md` §7.4.1 rules 2–3: a scriptlet-driven file pair reads the parameter
+    /// of the invoking Scriptlet node's own set, as that node's pairs left it (here filled
+    /// from the owner by a driven pair); it overrides a stored file.
+    #[test]
+    fn effect_scan_follows_a_scriptlet_driven_file_pair() {
+        let scriptlets = [
+            (
+                0x0C00_0001,
+                vec![invoke(0x0C00_0003, &[], &[], &[(FILE, PARAM)])],
+            ),
+            (0x0C00_0002, vec![particle(NESTED_EFFECT)]),
+            (0x0C00_0003, vec![particle(EFFECT)]),
+        ];
+        // The outer invocation holds the parameter (stored 0x0C000002).
+        let closure = startup(vec![invoke(0x0C00_0001, &[(PARAM, 0x0C00_0002)], &[], &[])]);
+        let owner = PropertyState::new();
+        assert_eq!(scan_effects(&closure, &owner, &scriptlets), [NESTED_EFFECT]);
+        // Its driven pair replaces the parameter before it is passed down.
+        let closure = startup(vec![invoke(
+            0x0C00_0001,
+            &[(PARAM, 0x0C00_0002)],
+            &[(PARAM, SOURCE)],
+            &[],
+        )]);
+        let mut owner = PropertyState::new();
+        owner.set(SOURCE, PropertyValue::DidRef(Did(0x0C00_0003)));
+        assert_eq!(scan_effects(&closure, &owner, &scriptlets), [EFFECT]);
+        // An invocation without the parameter: the inner node keeps its stored file.
+        let closure = startup(vec![invoke(0x0C00_0001, &[], &[], &[])]);
+        assert_eq!(scan_effects(&closure, &owner, &scriptlets), [EFFECT]);
+    }
+
+    /// A scriptlet reached again with a parameter it had not seen is walked again, so every
+    /// file its pairs may choose is scanned.
+    #[test]
+    fn effect_scan_walks_a_scriptlet_again_for_new_parameters() {
+        let scriptlets = [
+            (0x0C00_0001, vec![invoke(0, &[], &[], &[(FILE, PARAM)])]),
+            (0x0C00_0002, vec![particle(EFFECT)]),
+            (0x0C00_0003, vec![particle(NESTED_EFFECT)]),
+        ];
+        let closure = startup(vec![
+            invoke(0x0C00_0001, &[], &[], &[]),
+            invoke(0x0C00_0001, &[(PARAM, 0x0C00_0002)], &[], &[]),
+            invoke(0x0C00_0001, &[(PARAM, 0x0C00_0003)], &[], &[]),
+        ]);
+        assert_eq!(
+            scan_effects(&closure, &PropertyState::new(), &scriptlets),
+            [EFFECT, NESTED_EFFECT]
+        );
+    }
 
     #[test]
     fn owner_ids_do_not_collide_with_figure_tags() {

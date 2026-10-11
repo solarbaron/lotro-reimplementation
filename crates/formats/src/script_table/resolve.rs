@@ -174,20 +174,6 @@ impl ImpulseFieldPids {
             expected_gravity: p("PhysicsImpulseScript_ExpectedGravity"),
         }
     }
-
-    /// The PIDs that are defined.
-    fn all(&self) -> impl Iterator<Item = u32> {
-        [
-            self.is_jump,
-            self.impulse_type,
-            self.global_space,
-            self.impulse,
-            self.air_time,
-            self.expected_gravity,
-        ]
-        .into_iter()
-        .flatten()
-    }
 }
 
 impl MeshDeformerFieldPids {
@@ -269,23 +255,6 @@ impl MeshFxFieldPids {
             fade_in_time: p("MeshFXScript_FadeInTime"),
         }
     }
-
-    /// The PIDs that are defined.
-    fn all(&self) -> impl Iterator<Item = u32> {
-        [
-            self.entity,
-            self.holding_location,
-            self.bone_offset,
-            self.scale,
-            self.behavior,
-            self.yaw,
-            self.pitch,
-            self.roll,
-            self.fade_in_time,
-        ]
-        .into_iter()
-        .flatten()
-    }
 }
 
 /// PIDs of the EditMaterial (kind 60) fields that driven properties and scriptlet
@@ -327,22 +296,6 @@ impl EditMaterialFieldPids {
             texture_value: p("EditMaterialScript_TextureValue"),
             bool_value: p("EditMaterialScript_BoolValue"),
         }
-    }
-
-    /// The PIDs that are defined.
-    fn all(&self) -> impl Iterator<Item = u32> {
-        [
-            self.material_property,
-            self.mesh_type,
-            self.material_type,
-            self.priority,
-            self.waveform_value,
-            self.color_value,
-            self.texture_value,
-            self.bool_value,
-        ]
-        .into_iter()
-        .flatten()
     }
 }
 
@@ -393,6 +346,43 @@ impl CompositorFieldPids {
             mesh_type: p("TextureCompositorScript_MeshType"),
             material_type: p("TextureCompositorScript_MaterialType"),
         }
+    }
+}
+
+/// PIDs of the Scriptlet node's (kind 19) own fields: where a driven or scriptlet-driven
+/// pair writes when the node's parameter set does not hold its field PID (`appearance.md`
+/// §7.4.1 rule 2). Each is `None` when the dictionary lacks the name.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct ScriptletFieldPids {
+    /// `ScriptletScript_File`: a pair of this field chooses the record the node invokes.
+    pub file: Option<u32>,
+    /// `Script_IntensityMultiplier`, `Script_IntensityMultiplierVariance`,
+    /// `Script_UseParentIntensity` and `Script_Probability`: fields every node has. The
+    /// resolver does not model intensity, and the probability it uses is the stored one, so
+    /// a pair of these changes nothing here, but it is not reported as dropped.
+    pub base: [Option<u32>; 4],
+}
+
+impl ScriptletFieldPids {
+    /// Looks the field names up; missing names stay `None`.
+    #[must_use]
+    pub fn from_names<N: PropertyNames + ?Sized>(names: &N) -> Self {
+        let p = |n: &str| names.pid_of(n);
+        Self {
+            file: p("ScriptletScript_File"),
+            base: [
+                p("Script_IntensityMultiplier"),
+                p("Script_IntensityMultiplierVariance"),
+                p("Script_UseParentIntensity"),
+                p("Script_Probability"),
+            ],
+        }
+    }
+
+    /// Whether `pid` names one of the node's own fields.
+    #[must_use]
+    pub fn has_field(&self, pid: u32) -> bool {
+        self.file == Some(pid) || self.base.contains(&Some(pid))
     }
 }
 
@@ -473,6 +463,8 @@ pub struct ScriptVocabulary {
     pub edit_material: EditMaterialFieldPids,
     /// Field PIDs of the compositor kinds 33, 44 and 53 (`appearance.md` §3.5, A45).
     pub compositor: CompositorFieldPids,
+    /// The Scriptlet node's own field PIDs (`appearance.md` §7.4.1 rule 2).
+    pub scriptlet: ScriptletFieldPids,
 }
 
 /// The `Script_CombinationType` value of an overriding definition (`Overriding`, §8.2
@@ -569,6 +561,7 @@ impl ScriptVocabulary {
             impulse: ImpulseFieldPids::from_names(dict),
             edit_material: EditMaterialFieldPids::from_names(dict),
             compositor: CompositorFieldPids::from_names(dict),
+            scriptlet: ScriptletFieldPids::from_names(dict),
         })
     }
 }
@@ -2349,17 +2342,47 @@ struct Scope<'a> {
     parent: Option<&'a Scope<'a>>,
     invoker: Option<&'a Node>,
     params: Option<&'a PropertySet>,
+    /// Parameter values the invoking Scriptlet node's driven and scriptlet-driven pairs
+    /// wrote at its start (`appearance.md` §7.4.1 rules 1 and 2: a pair writes the
+    /// parameter of its field PID when the node's parameter set holds that PID). They
+    /// replace the stored parameter of the same PID; the last write of a PID wins.
+    filled: Vec<(u32, Cow<'a, PropertyValue>)>,
+    /// The roots of the record context the scope's nodes belong to: the running
+    /// definition's roots for a table, the scriptlet's roots for an invocation. A Goto
+    /// looks for its Label there (`script-runtime.md` §15 step 1).
+    roots: &'a [Node],
     scriptlet: Did,
 }
 
 impl<'a> Scope<'a> {
-    fn root() -> Self {
+    fn root(roots: &'a [Node]) -> Self {
         Self {
             parent: None,
             invoker: None,
             params: None,
+            filled: Vec::new(),
+            roots,
             scriptlet: Did(0),
         }
+    }
+
+    /// The value of the scriptlet parameter `pid` in this invocation: a value written by
+    /// the invoking node's pairs, else the stored parameter. Only this invocation's own
+    /// set is read, never an outer one (`appearance.md` §7.4.1 rule 3).
+    fn param(&self, pid: u32) -> Option<&PropertyValue> {
+        self.filled
+            .iter()
+            .rev()
+            .find(|(p, _)| *p == pid)
+            .map(|(_, v)| v.as_ref())
+            .or_else(|| self.params.and_then(|p| p.get(pid)))
+    }
+
+    /// The number of parameter entries a lookup in this scope scans.
+    fn param_entries(&self) -> usize {
+        self.params
+            .map_or(0, |p| p.entries.len())
+            .saturating_add(self.filled.len())
     }
 
     /// The children bound to `name` and the scope they run in: the innermost invocation
@@ -2385,11 +2408,17 @@ impl<'a> Scope<'a> {
     }
 }
 
+/// What a Scriptlet node's pairs write at its start: the parameters of its set they
+/// replace, and the record its `ScriptletScript_File` pair chose.
+type ScriptletWrites<'b> = (Vec<(u32, Cow<'b, PropertyValue>)>, Option<Did>);
+
 /// Active invocations, for cycle detection.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Call {
     Scriptlet(Did),
     Script(u32),
+    /// A Goto running its Label (`script-runtime.md` §15), by the Label node's address.
+    Goto(usize),
 }
 
 /// The firing order of a Sequence step or Timer port (§7.6): a total order, so sorting
@@ -2633,7 +2662,6 @@ where
             binds,
         });
         let saved = self.table;
-        let root = Scope::root();
         let mut res = Ok(());
         for &(ti, si) in defs {
             if self.stopped {
@@ -2646,6 +2674,7 @@ where
                 continue;
             };
             self.table = t.did;
+            let root = Scope::root(&sc.roots);
             res = self.nodes(&sc.roots, &root, ctx);
             if res.is_err() {
                 break;
@@ -2801,12 +2830,18 @@ where
                 self.invoke(n, *file, parameters, scope, ctx)
             }
             NodeData::ScriptletParameter { name } => self.parameter(n, name, scope, ctx),
+            NodeData::Goto { name } => self.goto(name, scope, ctx),
             NodeData::Run(run) => self.run(run, ctx),
             NodeData::WhenRunning { scripts, .. } => self.when_running(n, scripts, scope, ctx),
             NodeData::SetProperty {
                 property, value, ..
             } => {
-                self.set_property(n, *property, value.as_deref());
+                // With seeded picks only a picked branch sets its property: a Random over
+                // SetProperty nodes chooses one value (`appearance.md` §7.4 "Random dye
+                // colours" step 1). Without a generator every branch keeps setting it.
+                if ctx.picked || self.rng.is_none() || self.all_branches {
+                    self.set_property(n, *property, value.as_deref());
+                }
                 Ok(())
             }
             NodeData::MeshFx(m) => {
@@ -2818,14 +2853,14 @@ where
                 time,
                 use_bone_weights,
             } => {
-                self.mesh_deformer(n, *clip, *time, *use_bone_weights);
+                self.mesh_deformer(n, (*clip, *time, *use_bone_weights), scope);
                 Ok(())
             }
             NodeData::SliderMeshDeformer {
                 values,
                 definitions,
             } => {
-                self.slider_deformer(n, values, *definitions);
+                self.slider_deformer(n, values, *definitions, scope);
                 Ok(())
             }
             NodeData::PhysicsImpulse(p) => {
@@ -2874,7 +2909,7 @@ where
             NodeData::Sequence { .. } | NodeData::Timer(_) => self.steps(n, scope, ctx),
             NodeData::Label { .. } => self.children(n, None, scope, ctx),
             NodeData::While(w) => self.while_node(n, w, scope, ctx),
-            // OnStop runs only when its branch stops; Goto, effects, sounds, callbacks and
+            // OnStop runs only when its branch stops; effects, sounds, callbacks and
             // everything else start no clip in M4 (§11.3).
             _ => Ok(()),
         }
@@ -3247,7 +3282,9 @@ where
         Ok(())
     }
 
-    /// Scriptlet (§7.8): run the record's roots in a new scope.
+    /// Scriptlet (§7.8): run the record's roots in a new scope. The node's pairs are
+    /// applied first (`appearance.md` §7.4.1 rules 1 and 2): to its parameter set, or to
+    /// its own `ScriptletScript_File` field, which can choose the record.
     #[inline(never)]
     fn invoke<'a>(
         &mut self,
@@ -3257,6 +3294,10 @@ where
         scope: &Scope<'a>,
         ctx: Ctx,
     ) -> Result<(), ResolveError<E>> {
+        let Some((filled, driven_file)) = self.scriptlet_pairs(n, parameters, scope) else {
+            return Ok(());
+        };
+        let file = driven_file.unwrap_or(file);
         if file.is_null() {
             return Ok(());
         }
@@ -3276,12 +3317,159 @@ where
             parent: Some(scope),
             invoker: Some(n),
             params: Some(parameters),
+            filled,
+            roots: &s.roots,
             scriptlet: file,
         };
         self.calls.push(Call::Scriptlet(file));
         let res = self.nodes(&s.roots, &inner, ctx);
         self.calls.pop();
         res
+    }
+
+    /// Goto (`script-runtime.md` §15): starts the first Label of its name in its own record
+    /// context (the running definition of a table, all roots of a scriptlet) as its own
+    /// child, with the Goto's context; nothing else stops or jumps. No such Label: nothing
+    /// starts. Tessera choices: the Label is the first in a depth-first walk of the roots in
+    /// stored order (ports and children in stored order), names compare exactly, and a Goto
+    /// whose Label is already running through a Goto on the current path starts nothing
+    /// (an offline evaluation lists each start once).
+    #[inline(never)]
+    fn goto<'a>(&mut self, name: &str, scope: &Scope<'a>, ctx: Ctx) -> Result<(), ResolveError<E>> {
+        let Some(label) = self.find_label(scope.roots, name) else {
+            return Ok(());
+        };
+        let key = Call::Goto(std::ptr::from_ref(label) as usize);
+        if self.calls.contains(&key) {
+            return Ok(());
+        }
+        if self.calls.len() >= self.r.limits.max_call_depth {
+            self.limit("max_call_depth");
+            return Ok(());
+        }
+        self.calls.push(key);
+        let res = self.node(label, scope, ctx);
+        self.calls.pop();
+        res
+    }
+
+    /// The first Label named `name` in the trees of `roots` (depth first, stored order).
+    /// Every node looked at is charged; `None` when there is none or the budget ran out.
+    fn find_label<'a>(&mut self, roots: &'a [Node], name: &str) -> Option<&'a Node> {
+        let mut stack: Vec<&'a Node> = roots.iter().rev().collect();
+        while let Some(n) = stack.pop() {
+            if !self.charge(1) {
+                return None;
+            }
+            if let NodeData::Label { name: l } = &n.data
+                && l == name
+            {
+                return Some(n);
+            }
+            for p in n.ports.iter().rev() {
+                stack.extend(p.children.iter().rev());
+            }
+        }
+        None
+    }
+
+    /// What a Scriptlet node's pairs write at its start (`appearance.md` §7.4.1 rules 1–3):
+    /// each driven pair whose source has a value, then each scriptlet-driven pair whose
+    /// parameter the invocation of the node's own record (`scope`, `script-runtime.md` §17)
+    /// holds, in its own set only. A pair whose field PID the node's parameter set holds
+    /// replaces that parameter (this is how a dye chain's Scriptlet node hands the figure's
+    /// `Appearance_RandomDyeColorValue` to the EditMaterial nodes inside, and how an outer
+    /// scriptlet's parameters pass down); a pair of `ScriptletScript_File` chooses the
+    /// record (the second value, a DID); a pair of another field of the node changes
+    /// nothing the resolver models; any other pair is dropped and logged. Later writes win.
+    /// `None` when the work budget ran out.
+    fn scriptlet_pairs<'b>(
+        &mut self,
+        n: &Node,
+        parameters: &PropertySet,
+        scope: &'b Scope<'_>,
+    ) -> Option<ScriptletWrites<'b>> {
+        let (driven, from_params) = (&n.base.driven, &n.base.scriptlet_driven);
+        if driven.is_empty() && from_params.is_empty() {
+            return Some((Vec::new(), None));
+        }
+        // Each pair scans the node's own parameter set; a scriptlet-driven pair also the
+        // invocation's.
+        let own = parameters.entries.len().saturating_add(1);
+        let cost = driven.len().saturating_mul(own).saturating_add(
+            from_params
+                .len()
+                .saturating_mul(scope.param_entries().saturating_add(1).saturating_add(own)),
+        );
+        if !self.charge(cost) {
+            return None;
+        }
+        let fields = self.r.vocab.scriptlet;
+        let mut filled: Vec<(u32, Cow<'b, PropertyValue>)> = Vec::new();
+        let mut file = None;
+        let mut write = |field: u32, v: Cow<'b, PropertyValue>| {
+            if parameters.get(field).is_some() {
+                filled.push((field, v));
+            } else if fields.file == Some(field) {
+                if let Some(d) = v.as_did() {
+                    file = Some(d);
+                }
+            } else if !fields.has_field(field) {
+                tracing::debug!(
+                    node = n.base.node_id,
+                    field,
+                    "Scriptlet node pair names no parameter and no field; dropped"
+                );
+            }
+        };
+        let mut pending: Vec<(u32, PropertyValue)> = Vec::new();
+        for &(field, source) in driven {
+            // A run-time value is copied (the state keeps only small values; a dictionary
+            // default is charged by its size).
+            if let Some(v) = self.r.read(&self.state, source).map(Cow::into_owned) {
+                if !self.charge(value_size(&v)) {
+                    return None;
+                }
+                pending.push((field, v));
+            }
+        }
+        for (field, v) in pending {
+            write(field, Cow::Owned(v));
+        }
+        for &(field, parameter) in from_params {
+            if let Some(v) = scope.param(parameter) {
+                write(field, Cow::Borrowed(v));
+            }
+        }
+        Some((filled, file))
+    }
+
+    /// The values of `n`'s scriptlet-driven pairs (`appearance.md` §7.4.1 rule 3): for each
+    /// pair (field, parameter) the parameter of the invocation of the node's own record
+    /// (`scope`), as the invoking node's pairs left it; a parameter that invocation lacks
+    /// gives nothing, whatever outer invocations hold. In stored order; `None` when the
+    /// work budget ran out.
+    fn scriptlet_values<'b>(
+        &mut self,
+        n: &Node,
+        scope: &'b Scope<'_>,
+    ) -> Option<Vec<(u32, &'b PropertyValue)>> {
+        let pairs = &n.base.scriptlet_driven;
+        if pairs.is_empty() {
+            return Some(Vec::new());
+        }
+        let cost = pairs
+            .len()
+            .saturating_mul(scope.param_entries().saturating_add(1));
+        if !self.charge(cost) {
+            return None;
+        }
+        Some(
+            pairs
+                .iter()
+                .filter_map(|&(field, parameter)| scope.param(parameter).map(|v| (field, v)))
+                .collect(),
+        )
     }
 
     /// ScriptletParameter (§7.8): the bound children in the caller's scope, else the
@@ -3530,7 +3718,15 @@ where
     /// A node whose clip is the null DID registers nothing. The client registers it and it
     /// then contributes nothing to the deformation pose (§6.9 edge cases, BIN5); the §6.9
     /// answer accepts leaving it out as equivalent.
-    fn mesh_deformer(&mut self, n: &Node, clip: Did, time: f32, use_bone_weights: bool) {
+    ///
+    /// Scriptlet-driven pairs apply after the driven ones (`appearance.md` §7.4.1 rule 1);
+    /// they set a value, not a source to follow.
+    fn mesh_deformer(
+        &mut self,
+        n: &Node,
+        (clip, time, use_bone_weights): (Did, f32, bool),
+        scope: &Scope<'_>,
+    ) {
         if self.deformers.len() >= self.r.limits.max_candidates {
             self.limit("max_candidates");
             return;
@@ -3558,6 +3754,25 @@ where
                 use_bone_weights = v != 0.0;
             }
         }
+        let Some(from_params) = self.scriptlet_values(n, scope) else {
+            return;
+        };
+        for (field, v) in from_params {
+            if Some(field) == pids.time {
+                #[allow(clippy::cast_possible_truncation)]
+                if let Some(v) = v.as_f64() {
+                    time = v as f32;
+                }
+            } else if Some(field) == pids.asset {
+                if let Some(d) = v.as_did() {
+                    clip = d;
+                }
+            } else if Some(field) == pids.use_bone_weights
+                && let Some(v) = v.as_f64()
+            {
+                use_bone_weights = v != 0.0;
+            }
+        }
         if !clip.is_null() {
             self.deformers.push(DeformerCandidate::Mesh {
                 clip,
@@ -3569,10 +3784,10 @@ where
         }
     }
 
-    /// Registers a MeshFX node (§5.2) with scriptlet parameters, then driven properties,
-    /// applied to its fields (as for animation nodes: the innermost parameter, then the
-    /// run-time value, which wins; an absent source reads its dictionary default,
-    /// `appearance.md` §5.7 step 3).
+    /// Registers a MeshFX node (§5.2) with its pairs applied to its fields
+    /// (`appearance.md` §7.4.1 rule 1): driven pairs first (an absent source reads its
+    /// dictionary default, `appearance.md` §5.7 step 3), then scriptlet-driven pairs, which
+    /// win; no parameter reaches a field without a pair (rule 4).
     fn mesh_fx(&mut self, n: &Node, m: &MeshFxNode, scope: &Scope<'_>) {
         if self.mesh_fx.len() >= self.r.limits.max_candidates {
             self.limit("max_candidates");
@@ -3585,6 +3800,7 @@ where
             .len()
             .saturating_add(self.calls.len())
             .saturating_add(m.appearances.len());
+        // (The scriptlet-driven pairs are charged by [`Eval::scriptlet_values`].)
         if !self.charge(cost) {
             return;
         }
@@ -3599,24 +3815,10 @@ where
                 .iter()
                 .filter_map(|c| match c {
                     Call::Script(k) => Some(*k),
-                    Call::Scriptlet(_) => None,
+                    Call::Scriptlet(_) | Call::Goto(_) => None,
                 })
                 .collect(),
         };
-        for pid in pids.all() {
-            let mut s = Some(scope);
-            while let Some(sc) = s {
-                let entries = sc.params.map_or(0, |p| p.entries.len());
-                if !self.charge(entries.saturating_add(1)) {
-                    return;
-                }
-                if let Some(v) = sc.params.and_then(|p| p.get(pid)) {
-                    apply_mesh_fx_field(&mut c, &pids, pid, v);
-                    break;
-                }
-                s = sc.parent;
-            }
-        }
         // `appearance.md` §5.7 step 3 (A36): a driven field takes its source's current
         // value, an absent source its dictionary default (when the resolver has defaults).
         for &(field, source) in &n.base.driven {
@@ -3624,13 +3826,19 @@ where
                 apply_mesh_fx_field(&mut c, &pids, field, &v);
             }
         }
+        let Some(from_params) = self.scriptlet_values(n, scope) else {
+            return;
+        };
+        for (field, v) in from_params {
+            apply_mesh_fx_field(&mut c, &pids, field, v);
+        }
         self.mesh_fx.push(c);
     }
 
-    /// Lists a face-compositing or colour-edit node (`appearance.md` §3.5) with its driven
-    /// values: an EditMaterial field by its `EditMaterialScript_*` PID (scriptlet
-    /// parameters first, then driven properties, as [`Eval::mesh_fx`]); a compositor field
-    /// by its PID (A45, [`apply_look_field`]).
+    /// Lists a face-compositing or colour-edit node (`appearance.md` §3.5) with its pairs
+    /// applied: driven pairs, then scriptlet-driven pairs (§7.4.1 rule 1); an EditMaterial
+    /// field by its `EditMaterialScript_*` PID, a compositor field by its PID (A45,
+    /// [`apply_look_field`]). No parameter reaches a field without a pair (rule 4).
     fn look(&mut self, n: &Node, mut effect: LookEffect, scope: &Scope<'_>, ctx: Ctx) {
         if self.look.len() >= self.r.limits.max_candidates {
             self.limit("max_candidates");
@@ -3656,25 +3864,6 @@ where
                 .saturating_add(w.extra.as_ref().map_or(0, |x| x.pairs.len())),
             _ => 0,
         };
-        if let LookEffect::EditMaterial(e) = &mut effect {
-            for pid in pids.all() {
-                let mut s = Some(scope);
-                while let Some(sc) = s {
-                    let entries = sc.params.map_or(0, |p| p.entries.len());
-                    if !self.charge(entries.saturating_add(1)) {
-                        return;
-                    }
-                    if let Some(v) = sc.params.and_then(|p| p.get(pid)) {
-                        if !self.charge(copied(v)) {
-                            return;
-                        }
-                        driven |= apply_edit_material_field(e, &pids, pid, v);
-                        break;
-                    }
-                    s = sc.parent;
-                }
-            }
-        }
         let mut copy_cost = 0usize;
         for &(field, source) in &n.base.driven {
             let Some(v) = self.r.read(&self.state, source) else {
@@ -3684,6 +3873,21 @@ where
             driven |= match &mut effect {
                 LookEffect::EditMaterial(e) => apply_edit_material_field(e, &pids, field, &v),
                 other => apply_look_field(other, &compositor, field, &v),
+            };
+        }
+        // Scriptlet-driven pairs (`appearance.md` §7.4.1 rule 3): the parameter of the
+        // invocation of the node's own record (`scope`, `script-runtime.md` §17), as the
+        // invoking node's pairs filled it. This is how a random dye chain's colour
+        // replaces the stored placeholder of its EditMaterial nodes, whichever parameter
+        // each edits (§7.4 "Random dye colours").
+        let Some(from_params) = self.scriptlet_values(n, scope) else {
+            return;
+        };
+        for (field, v) in from_params {
+            copy_cost = copy_cost.saturating_add(copied(v));
+            driven |= match &mut effect {
+                LookEffect::EditMaterial(e) => apply_edit_material_field(e, &pids, field, v),
+                other => apply_look_field(other, &compositor, field, v),
             };
         }
         if !self.charge(copy_cost) {
@@ -3706,14 +3910,20 @@ where
                 .iter()
                 .filter_map(|c| match c {
                     Call::Script(k) => Some(*k),
-                    Call::Scriptlet(_) => None,
+                    Call::Scriptlet(_) | Call::Goto(_) => None,
                 })
                 .collect(),
         });
     }
 
     /// Registers a SliderMeshDeformer (§6.9) with its driven value string.
-    fn slider_deformer(&mut self, n: &Node, values: &str, definitions: Did) {
+    ///
+    /// Scriptlet-driven pairs apply after the driven ones (`appearance.md` §7.4.1 rule 1,
+    /// which holds for every kind; edge cases, A65): a string sets the value string, a DID
+    /// the definitions record. They set a value, not a source: `values_source` stays the
+    /// driven pair's (the MeshDeformer Decision of §7.4.1 applied alike; no node of the
+    /// install has such a pair).
+    fn slider_deformer(&mut self, n: &Node, values: &str, definitions: Did, scope: &Scope<'_>) {
         if self.deformers.len() >= self.r.limits.max_candidates {
             self.limit("max_candidates");
             return;
@@ -3751,18 +3961,44 @@ where
         if !self.charge(cost) {
             return;
         }
-        let values = text(&self.state, values_source, values).map(str::to_owned);
+        let mut definitions = driven_defs.unwrap_or(definitions);
+        let slider_pids = (self.r.vocab.slider_values, self.r.vocab.slider_definitions);
+        let mut from_param: Option<&str> = None;
+        let Some(pairs) = self.scriptlet_values(n, scope) else {
+            return;
+        };
+        for (field, v) in pairs {
+            if slider_pids.0 == Some(field) {
+                if let PropertyValue::String(s) = v {
+                    from_param = Some(s.as_str());
+                }
+            } else if slider_pids.1 == Some(field)
+                && let Some(d) = v.as_did()
+            {
+                definitions = d;
+            }
+        }
+        // The copy of a parameter's string is charged like the driven one.
+        if let Some(s) = from_param
+            && !self.charge(s.len())
+        {
+            return;
+        }
+        let values = match from_param {
+            Some(s) => Some(s.to_owned()),
+            None => text(&self.state, values_source, values).map(str::to_owned),
+        };
         self.deformers.push(DeformerCandidate::Slider {
-            definitions: driven_defs.unwrap_or(definitions),
+            definitions,
             values,
             values_source,
             table: self.table,
         });
     }
 
-    /// A PhysicsImpulse node (`collision.md` §11.10): its fields after scriptlet parameters
-    /// (the closest invocation wins) and driven values (they win over parameters), as for an
-    /// animation.
+    /// A PhysicsImpulse node (`collision.md` §11.10): its fields after its driven pairs,
+    /// then its scriptlet-driven pairs (`appearance.md` §7.4.1 rule 1), as for an
+    /// animation; no parameter reaches a field without a pair (rule 4).
     fn impulse(&mut self, n: &Node, p: &PhysicsImpulseNode, scope: &Scope<'_>, ctx: Ctx) {
         if self.impulses.len() >= self.r.limits.max_candidates {
             self.limit("max_candidates");
@@ -3774,28 +4010,16 @@ where
             return;
         }
         let mut node = *p;
-        let mut params: Vec<(u32, &PropertyValue)> = Vec::new();
-        for pid in pids.all() {
-            let mut s = Some(scope);
-            while let Some(sc) = s {
-                let entries = sc.params.map_or(0, |p| p.entries.len());
-                if !self.charge(entries.saturating_add(1)) {
-                    return;
-                }
-                if let Some(v) = sc.params.and_then(|p| p.get(pid)) {
-                    params.push((pid, v));
-                    break;
-                }
-                s = sc.parent;
-            }
-        }
-        for (pid, v) in params {
-            apply_impulse_field(&mut node, &pids, pid, v);
-        }
         for &(field, source) in &n.base.driven {
             if let Some(v) = self.state.get(source) {
                 apply_impulse_field(&mut node, &pids, field, v);
             }
+        }
+        let Some(from_params) = self.scriptlet_values(n, scope) else {
+            return;
+        };
+        for (field, v) in from_params {
+            apply_impulse_field(&mut node, &pids, field, v);
         }
         self.impulses.push(ImpulseCandidate {
             node,
@@ -3808,8 +4032,9 @@ where
     }
 
     /// Registers an Appearance node (kind 58) with its driven record, key and modifier
-    /// (`appearance.md` §7.4; driven values win, as for animation fields). The modifier is
-    /// the stored one (the node's intensity factor is 1 in the whole install, §7.4).
+    /// (`appearance.md` §7.4; driven pairs, then scriptlet-driven pairs, §7.4.1 rule 1).
+    /// The modifier is the stored one (the node's intensity factor is 1 in the whole
+    /// install, §7.4).
     fn appearance(
         &mut self,
         n: &Node,
@@ -3826,10 +4051,15 @@ where
         }
         let pids = self.r.vocab.appearance;
         let (mut appearance, mut key, mut modifier) = (appearance, key, modifier);
-        for &(field, source) in &n.base.driven {
-            let Some(v) = self.state.get(source) else {
-                continue;
-            };
+        let Some(from_params) = self.scriptlet_values(n, scope) else {
+            return;
+        };
+        let driven = n
+            .base
+            .driven
+            .iter()
+            .filter_map(|&(field, source)| self.state.get(source).map(|v| (field, v)));
+        for (field, v) in driven.chain(from_params) {
             if Some(field) == pids.appearance {
                 if let Some(d) = v.as_did() {
                     appearance = d;
@@ -3886,24 +4116,12 @@ where
         if !self.charge(cost) {
             return;
         }
-        // Scriptlet parameters (§7.8): the innermost value for each field PID (Decision: the
-        // closest invocation wins). Each scope walked and each parameter entry scanned is
-        // charged before the scan.
-        let mut params: Vec<(u32, &PropertyValue)> = Vec::new();
-        for pid in pids.all() {
-            let mut s = Some(scope);
-            while let Some(sc) = s {
-                let entries = sc.params.map_or(0, |p| p.entries.len());
-                if !self.charge(entries.saturating_add(1)) {
-                    return;
-                }
-                if let Some(v) = sc.params.and_then(|p| p.get(pid)) {
-                    params.push((pid, v));
-                    break;
-                }
-                s = sc.parent;
-            }
-        }
+        // Scriptlet-driven pairs (`appearance.md` §7.4.1 rule 3): the invocation of the
+        // node's own record only. A parameter without a pair never reaches a field (rule
+        // 4: no route by field PID, superseding `script-table.md` §7.8 point 1).
+        let Some(from_params) = self.scriptlet_values(n, scope) else {
+            return;
+        };
         let mut c = ClipCandidate {
             clip: a.asset,
             layer: a.layer,
@@ -3934,50 +4152,24 @@ where
                 .iter()
                 .filter_map(|c| match c {
                     Call::Script(k) => Some(*k),
-                    Call::Scriptlet(_) => None,
+                    Call::Scriptlet(_) | Call::Goto(_) => None,
                 })
                 .collect(),
         };
-        // Scriptlet parameters first (§7.8), then driven properties (run-time values;
-        // Decision: they win over parameters).
-        for (pid, v) in params {
-            apply_field(&mut c, &pids, pid, v);
-        }
+        // Driven pairs first, then scriptlet-driven pairs, the later write winning
+        // (`appearance.md` §7.4.1 rule 1).
         for &(field, source) in &n.base.driven {
             if let Some(v) = self.state.get(source) {
                 apply_field(&mut c, &pids, field, v);
             }
         }
+        for (field, v) in from_params {
+            apply_field(&mut c, &pids, field, v);
+        }
         // A node naming no clip (two in the reference install) starts nothing.
         if !c.clip.is_null() {
             self.out.push(c);
         }
-    }
-}
-
-impl AnimationFieldPids {
-    /// The PIDs that are defined.
-    fn all(&self) -> impl Iterator<Item = u32> {
-        [
-            self.asset,
-            self.loop_forever,
-            self.loop_count,
-            self.ramp_in,
-            self.ramp_out,
-            self.layer,
-            self.use_bone_opacity,
-            self.manual_update,
-            self.manual_time,
-            self.start_time,
-            self.end_time,
-            self.randomize_start_time,
-            self.speed,
-            self.speed_multiplier,
-            self.displacement,
-            self.synchronize_timing,
-        ]
-        .into_iter()
-        .flatten()
     }
 }
 
@@ -4118,6 +4310,21 @@ fn apply_mesh_fx_field(
     {
         node.fade_in_time = f;
         c.driven.fade_in_time = true;
+    }
+}
+
+/// A rough size of a value copied by the evaluator, in work units: the elements of
+/// strings, waveforms, structs and arrays (top level), 0 for a fixed-size value.
+fn value_size(v: &PropertyValue) -> usize {
+    match v {
+        PropertyValue::String(t) => t.len(),
+        PropertyValue::Waveform(w) => w
+            .values
+            .len()
+            .saturating_add(w.extra.as_ref().map_or(0, |x| x.pairs.len())),
+        PropertyValue::Struct(_) | PropertyValue::Array(_) => v.children().len(),
+        PropertyValue::BitfieldAny(_) | PropertyValue::StringInfo(_) => 1,
+        _ => 0,
     }
 }
 

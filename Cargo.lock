@@ -4358,6 +4358,7 @@ version = "0.1.0"
 dependencies = [
  "ab_glyph",
  "libc",
+ "png",
  "proptest",
  "tempfile",
  "tessera-dat",

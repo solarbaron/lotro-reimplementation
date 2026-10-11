@@ -1,0 +1,59 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# NPC vendor windows (decision 0024 P3; docs/specs/npc-windows.md §7, §9;
+# docs/specs/scenario-feed.md §5.5, §6.3): a vendor's buy list with scripted prices and
+# stock, the sell list from the backpack, the buy-back page, buying, selling and buying
+# back with the money the triggers script, then a barter list with an item cost. Literal
+# refs fill the windows without an install; with one, a second step of each kind shows
+# install items with their names and icons (its ref list names selector elements, so
+# without an install it is skipped and the literal list stays).
+tessera-scenario 1
+title "Market stall"
+tick 100ms
+player "Tamsin"
+select $keeper = creature kind=npc has-appearance=yes n=1 seed=5
+select $wares = item stackable=yes has-icon=yes n=6 seed=21
+select $sold = item kind=general has-icon=yes n=2 seed=9
+select $tokens = item stackable=yes has-icon=yes n=1 seed=33
+actor $trader kind=npc name="Trader" pos=3,0,0 body=$keeper[0]
+item $knife "Knife"
+item $rope "Rope" qty=3
+item $pick $sold[0]
+item $pair $sold[1] qty=2
+
+at 0s spawn $trader
++0s give $knife
++0s give $rope
++0s give $pick
++0s give $pair
++0s wallet coin 125000
++0s wallet "Guild token" 6
++0s wallet $tokens[0] 6
+
+on use $trader times=1
++0s vendor items="Bread","Rope","Lamp oil" npc=$trader price=12,250,100005 stock=5
++0s vendor items=$wares[0],$wares[1],$wares[2],$wares[3],$wares[4],$wares[5] npc=$trader price=40,1250,99,250000,7,15 stock=20
++0s buyback items="Lamp","Tinderbox" qty=2 price=40
++0s buyback items="Lamp",$sold[0] qty=2 price=40
+end
+on buy entry=2
++0s wallet coin 123750
+end
+on sell $knife
++0s remove $knife
++0s wallet coin 123760
+end
+on buy-back entry=1
++0s wallet coin 123720
+end
+on use $trader
++0s vendor items="Cloak","Hood" npc=$trader barter="Guild token":4 price=0,30
++0s vendor items=$wares[0],$wares[1],$wares[2] npc=$trader barter=$tokens[0]:4 price=0,30,0
+end
+
+input
+at 0.5s use $trader
+at 1s buy 2 qty=3
+at 1.5s sell $knife
+at 2s buy-back 1
+at 3s use $trader
+end

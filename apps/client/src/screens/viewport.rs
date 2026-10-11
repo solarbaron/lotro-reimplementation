@@ -1,46 +1,38 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! What the full-screen `chargen_viewport` shows (`character-screens.md` §2.1, §3, §4.1, §6):
-//! the race's UI scene (`RaceTable_UIScene`, `misc-records.md` §4), the camera of the stage
-//! (or its zoom variant, §2.3), and the figure: the selected character on the selection
-//! screen, the gender entry's `RaceTable_RaceSelect_Entity` on the race-and-class screen,
-//! the figure of the creation choices on the appearance screen, turned by the turntable.
+//! What the full-screen `chargen_viewport` shows (`character-screens.md` §2.1–§2.1.4, §2.3):
+//! the race's UI scene with the figure of the stage standing at the scene's marker, seen
+//! through the stage camera between its base and zoom frames, turned about the figure by
+//! the turntable.
 //!
-//! [`viewport_state`] derives it from the model; [`figure_job`] turns the figure into a
-//! request of the walker's figure path (`walker::characters::figure`, assembled and
-//! animated on the asset workers like every other figure) with every creation control
-//! applied (styles, slider string, heights and the appearance values from which the
-//! species tables compose the face and tint hair and skin) and the stage's
-//! `CharGen_Stage` key, from which a figure on these screens takes its face
-//! (`appearance.md` §3.5 Decision); [`SceneView`] reads a UI scene and picks its camera by
-//! the rule U4 of `misc-records.md` §4.2.
-//!
-//! The walker draws the figure alone into the viewport (`walker::Walker::draw_preview`):
-//! where a figure stands in the race's UI scene and how the scene's camera frames it are
-//! not specified (`character-screens.md` §2.1 OPEN), so the scene's objects and camera are
-//! not drawn yet.
+//! [`viewport_state`] derives it from the model: the scene, the stage camera keys, the
+//! camera frame and field of view of this moment ([`super::turntable::Turntable::camera`]),
+//! the figure's frame (the scene's marker, §2.1.2) and the stage figure (§2.1.4: the
+//! selected character with `CharGen_Stage` 4 and `CharGen_Action` 2 or 3; a new figure of
+//! the chosen race and gender with `CharGen_Stage` 1, `CharGen_Action` 2, `Agent_Class` and
+//! `Render_AlwaysSelectable` on the race-and-class stage; the same figure with
+//! `CharGen_Stage` 6 on the appearance stage; each runs the start-up script `Chargen`,
+//! which the walker's figure path adds). [`figure_job`] turns the figure into a request of the walker's figure path with
+//! every creation control applied (styles from the controls' own records, slider string,
+//! heights and the appearance values from which the species tables compose the face and
+//! tint hair and skin), and [`stage_view`] gives the walker the camera and the figure's
+//! frame to draw the scene with ([`crate::walker::stage`]).
 
 use tessera_formats::Did;
-use tessera_formats::gameplay::misc::{UI_SCENE_CAMERA_TYPE, UiScene};
-use tessera_formats::landblock::Placement;
 use tessera_mesh::assembly::CharacterSpec;
-use tessera_net::{Body, DataId, LookEntry};
-use tessera_props::{EnumSource, GameData, PropertySet, RecordSource};
+use tessera_net::{Body, LookEntry};
 
 use super::controls::{AppearanceChoices, accept_look};
 use super::data::ScreenData;
 use super::model::{ScreenModel, Stage};
+use super::scene::{CameraFrame, SceneFrame};
 use crate::walker::characters::figure::{FigureRequest, LookChoices};
-
-/// Most elements a scene view keeps (the data has at most 732 descriptors per scene).
-pub const MAX_SCENE_ELEMENTS: usize = 4096;
+use crate::walker::stage::StageView;
 
 /// The figure in the viewport.
 #[derive(Debug, Clone, PartialEq)]
 pub enum FigureChoice {
     /// No figure (no selection, or a body the install does not offer).
     None,
-    /// A visual entity (0x47): the gender entry's `RaceTable_RaceSelect_Entity` (§4.1).
-    Entity(Did),
     /// A playable body with its appearance choices.
     Character {
         /// Species key.
@@ -57,15 +49,28 @@ pub enum FigureChoice {
 pub struct ViewportState {
     /// The UI scene (0x21).
     pub scene: Option<Did>,
-    /// The camera key (`UISceneEntity` mapper), zoom variant applied.
+    /// The stage camera key (`UISceneEntity` mapper): the base frame's element (§2.1.3).
     pub camera: Option<u32>,
-    /// The figure's turn about its vertical axis, degrees (turntable, §2.3).
-    pub yaw_degrees: f32,
-    /// The turntable's zoom (§2.3).
-    pub zoomed: bool,
-    /// The `CharGen_Stage` key the figure carries (`character-screens.md` §2.2,
-    /// `appearance.md` §3.5).
+    /// The stage's zoom camera key: the zoom frame's element.
+    pub zoom_camera: Option<u32>,
+    /// The camera of this moment with its field of view in degrees; `None` without a
+    /// scene frame for the stage camera (§2.1.3 OPEN: the walker keeps its last view).
+    pub view: Option<(CameraFrame, f32)>,
+    /// Where the figure stands (§2.1.2).
+    pub figure_frame: SceneFrame,
+    /// The turn angle *θ*, degrees (§2.3).
+    pub turn: f32,
+    /// The zoom fraction *t* (§2.3).
+    pub zoom: f32,
+    /// The `CharGen_Stage` key the figure carries (§2.1.4).
     pub stage: u32,
+    /// The `CharGen_Action` key the figure carries (§2.1.4).
+    pub action: u32,
+    /// The `Agent_Class` the figure carries (race-and-class and appearance stages).
+    pub class: Option<u32>,
+    /// The figure is the race-and-class figure (kept on the appearance stage), created
+    /// with `Render_AlwaysSelectable` true (§2.1.4, CS28).
+    pub always_selectable: bool,
     /// The figure.
     pub figure: FigureChoice,
 }
@@ -74,44 +79,26 @@ pub struct ViewportState {
 #[must_use]
 pub fn viewport_state(model: &ScreenModel) -> ViewportState {
     let data = model.data();
-    let zoomed = model.turntable().zoomed();
-    let (body, select) = match model.stage() {
-        Stage::Select => (model.selected_row().and_then(|r| r.character_body()), true),
-        _ => (model.creation().species.zip(model.creation().sex), false),
+    let keys = data.stage_keys;
+    let stage = keys.of(model.stage());
+    let turntable = model.turntable();
+    let (camera, zoom_camera) = model.stage_cameras();
+    let rig = model.camera_rig();
+    let action = if model.stage() == Stage::Select && model.hovering_figure() {
+        keys.hover
+    } else {
+        keys.idle
     };
-    let stage = data.stage_keys.of(model.stage());
-    let Some((species, sex)) = body else {
-        return ViewportState {
-            scene: None,
-            camera: None,
-            yaw_degrees: model.turntable().angle(),
-            zoomed,
-            stage,
-            figure: FigureChoice::None,
-        };
+    let class = match model.stage() {
+        Stage::Select => None,
+        _ => model.creation().class,
     };
-    let race = data.chargen.race_with_gender(species, sex);
-    let gender = race.and_then(|r| r.gender(sex));
-    let camera = match (select, zoomed) {
-        (true, false) => race.and_then(|r| r.record.select_camera),
-        (true, true) => gender
-            .and_then(|g| g.select_zoom_camera)
-            .or_else(|| race.and_then(|r| r.record.select_camera)),
-        (false, false) => race.and_then(|r| r.record.chargen_camera),
-        (false, true) => gender
-            .and_then(|g| g.chargen_zoom_camera)
-            .or_else(|| race.and_then(|r| r.record.chargen_camera)),
-    };
-    let figure = match model.stage() {
-        Stage::RaceClass => gender
-            .and_then(|g| g.race_select_entity)
-            .map_or(FigureChoice::None, FigureChoice::Entity),
-        Stage::Appearance => FigureChoice::Character {
-            species,
-            sex,
-            choices: model.creation().appearance.clone(),
-        },
-        Stage::Select => {
+    let body = model.body_in_view();
+    let scene = body.and_then(|(s, _)| data.scene(s));
+    let figure_frame = scene.map_or(SceneFrame::ORIGIN, |s| s.figure_frame());
+    let figure = match (model.stage(), body) {
+        (_, None) => FigureChoice::None,
+        (Stage::Select, Some((species, sex))) => {
             let mut choices = AppearanceChoices::default();
             if let (Some(look), Some(d)) = (
                 model.selected_row().and_then(|r| r.look.as_ref()),
@@ -123,7 +110,7 @@ pub fn viewport_state(model: &ScreenModel) -> ViewportState {
                 }
                 choices.apply_entries(d, &accepted);
             }
-            if race.is_some() {
+            if data.chargen.race_with_gender(species, sex).is_some() {
                 FigureChoice::Character {
                     species,
                     sex,
@@ -133,36 +120,68 @@ pub fn viewport_state(model: &ScreenModel) -> ViewportState {
                 FigureChoice::None
             }
         }
+        // The race-and-class figure is created with the property set the screen keeps for
+        // the character being made; the appearance stage keeps it (§2.1.4).
+        (_, Some((species, sex))) => {
+            let c = model.creation();
+            let choices = if c.appearance_for == Some((species, sex)) {
+                c.appearance.clone()
+            } else {
+                AppearanceChoices::default()
+            };
+            FigureChoice::Character {
+                species,
+                sex,
+                choices,
+            }
+        }
     };
     ViewportState {
-        scene: race.and_then(|r| r.record.ui_scene),
+        scene: body.and_then(|(s, x)| data.chargen.race_with_gender(s, x)?.record.ui_scene),
         camera,
-        yaw_degrees: model.turntable().angle(),
-        zoomed,
+        zoom_camera,
+        view: rig.map(|r| turntable.camera(&r)),
+        figure_frame,
+        turn: turntable.angle(),
+        zoom: turntable.zoom(),
         stage,
+        action,
+        class,
+        always_selectable: model.stage() != Stage::Select,
         figure,
     }
 }
 
-/// The figure as a request of the walker's figure path: a visual entity as an object body,
-/// a playable body with its `AC_BoneScale_Test` and `AC_Avatar_Height` choices; both carry
-/// the stage's `CharGen_Stage` key. [`figure_job`] adds the rest of the look.
+/// The figure as a request of the walker's figure path (heights, stage keys, class; the
+/// rest of the look is in [`figure_job`]).
 #[must_use]
 pub fn figure_request(state: &ViewportState, data: &ScreenData) -> Option<FigureRequest> {
     figure_job(state, data).map(|(r, _)| r)
 }
 
 /// The figure as a job of the walker's figure path (module docs): the request (body,
-/// heights, stage) and the look choices of every set creation control (styles, slider
-/// string, appearance values), so the drawn figure follows each control at once
-/// (`character-screens.md` §6; `appearance.md` §3.5).
+/// heights, `CharGen_Stage`, `CharGen_Action`, `Agent_Class`) and the look choices of the
+/// creation controls (styles written by every style control with its value or starting
+/// value, slider string, appearance values), so the drawn figure follows each control at
+/// once (`character-screens.md` §5.2.1, §6; `appearance.md` §3.4, §3.5).
 #[must_use]
 pub fn figure_job(
     state: &ViewportState,
     data: &ScreenData,
 ) -> Option<(FigureRequest, LookChoices)> {
-    let base = |body| FigureRequest {
-        body,
+    let FigureChoice::Character {
+        species,
+        sex,
+        choices,
+    } = &state.figure
+    else {
+        return None;
+    };
+    let mut r = FigureRequest {
+        body: Body::Character {
+            species: *species,
+            sex: *sex,
+        },
         equipment: Vec::new(),
         instance: None,
         instance_key: None,
@@ -171,39 +190,26 @@ pub fn figure_job(
         bone_scale: None,
         seed: None,
         chargen_stage: Some(state.stage),
+        chargen_action: Some(state.action),
+        class: state.class,
+        always_selectable: state.always_selectable,
     };
-    match &state.figure {
-        FigureChoice::None => None,
-        FigureChoice::Entity(did) => {
-            Some((base(Body::Object(DataId(did.0))), LookChoices::default()))
-        }
-        FigureChoice::Character {
-            species,
-            sex,
-            choices,
-        } => {
-            let mut r = base(Body::Character {
-                species: *species,
-                sex: *sex,
-            });
-            let mut look = LookChoices::default();
-            if let Some(d) = data.avatar(*species, *sex) {
-                let spec = choices.character_spec(d, &data.pids, *species, *sex);
-                r.avatar_height = spec.avatar_height;
-                r.bone_scale = spec.bone_scale;
-                look = LookChoices {
-                    styles: spec.styles,
-                    slider_values: spec.slider_values,
-                    appearance_values: spec.appearance_values,
-                };
-            }
-            Some((r, look))
-        }
+    let mut look = LookChoices::default();
+    if let Some(d) = data.avatar(*species, *sex) {
+        let spec = choices.character_spec(d, &data.pids, *species, *sex);
+        r.avatar_height = spec.avatar_height;
+        r.bone_scale = spec.bone_scale;
+        look = LookChoices {
+            styles: spec.styles,
+            slider_values: spec.slider_values,
+            appearance_values: spec.appearance_values,
+        };
     }
+    Some((r, look))
 }
 
 /// The full figure of a character choice for `tessera-mesh`'s assembler (styles, sliders,
-/// heights, appearance values); `None` for an entity or no figure.
+/// heights, appearance values); `None` without a figure.
 #[must_use]
 pub fn character_spec(state: &ViewportState, data: &ScreenData) -> Option<CharacterSpec> {
     let FigureChoice::Character {
@@ -220,117 +226,21 @@ pub fn character_spec(state: &ViewportState, data: &ScreenData) -> Option<Charac
     })
 }
 
-/// One element of a UI scene (`misc-records.md` §4.2 U4 step 1).
-#[derive(Debug, Clone, PartialEq)]
-pub struct SceneElement {
-    /// The descriptor's type (2 decal, 7 physics, 9 light, 27 camera).
-    pub kind: u32,
-    /// The descriptor's name.
-    pub name: Option<String>,
-    /// The name as a key of the `UISceneEntity` mapper (U4 step 2).
-    pub identifier: Option<u32>,
-    /// The placed visual entity (0x47), for physics elements.
-    pub object: Option<Did>,
-    /// Position and rotation.
-    pub placement: Option<Placement>,
-    /// `CameraFOV` in 1–100 (U4 step 5), cameras only.
-    pub fov: Option<f32>,
-}
-
-/// A decoded UI scene with its elements.
-#[derive(Debug, Clone, PartialEq)]
-pub struct SceneView {
-    /// The scene.
-    pub did: Did,
-    /// Elements in creation order (types 2, 7, 9, 27 only).
-    pub elements: Vec<SceneElement>,
-    /// The fog trailer (`fog_override`, colour, start, end; `misc-records.md` §4.1).
-    pub fog: (bool, u32, f32, f32),
-}
-
-impl SceneView {
-    /// Reads scene `did` and names its elements through the camera mapper of the race
-    /// tables' `RaceTable_Chargen_Camera` property (the `UISceneEntity` mapper).
-    ///
-    /// # Errors
-    ///
-    /// A text when the record is missing or does not decode.
-    pub fn load<S: RecordSource>(gd: &GameData<S>, did: Did) -> Result<Self, String> {
-        let reg = gd.registry().map_err(|e| e.to_string())?.clone();
-        let bytes = gd
-            .read(did)
-            .map_err(|e| e.to_string())?
-            .ok_or("the scene is missing")?;
-        let scene = UiScene::parse(&bytes, reg.as_ref()).map_err(|e| e.to_string())?;
-        if scene.did != did {
-            return Err(format!("the record names {} instead", scene.did));
-        }
-        let mapper = reg
-            .pid("RaceTable_Chargen_Camera")
-            .and_then(|p| reg.enum_source(p))
-            .and_then(|s| match s {
-                EnumSource::Mapper(m) => gd.enum_mapper(m).ok().flatten(),
-                EnumSource::DidMap(_) => None,
-            });
-        let fov_pid = reg.pid("CameraFOV");
-        let mut elements = Vec::new();
-        for e in scene.entities.iter().take(MAX_SCENE_ELEMENTS) {
-            let Some(kind) = e.entity_type.filter(|k| matches!(k, 2 | 7 | 9 | 27)) else {
-                continue;
-            };
-            let identifier = match (&mapper, &e.name) {
-                (Some(m), Some(n)) => m.key_in_chain(|d| gd.enum_mapper(d).ok().flatten(), n),
-                _ => None,
-            };
-            let fov = if kind == UI_SCENE_CAMERA_TYPE {
-                e.properties
-                    .clone()
-                    .and_then(|raw| PropertySet::from_raw(raw).ok())
-                    .and_then(|s| s.get(fov_pid?).and_then(|v| v.as_f32()))
-                    .filter(|f| (1.0..=100.0).contains(f))
-            } else {
-                None
-            };
-            elements.push(SceneElement {
-                kind,
-                name: e.name.clone(),
-                identifier,
-                object: e.object,
-                placement: e.placement,
-                fov,
-            });
-        }
-        Ok(Self {
-            did,
-            elements,
-            fog: (
-                scene.flag,
-                scene.colour,
-                f32::from_bits(scene.value_a),
-                f32::from_bits(scene.value_b),
-            ),
-        })
-    }
-
-    /// The camera for `camera` (U4 steps 3–4): the first element whose identifier equals it,
-    /// when that element is a camera; `None` for 0, no match or a non-camera match.
-    #[must_use]
-    pub fn camera(&self, camera: u32) -> Option<&SceneElement> {
-        if camera == 0 {
-            return None;
-        }
-        self.elements
-            .iter()
-            .find(|e| e.identifier == Some(camera))
-            .filter(|e| e.kind == UI_SCENE_CAMERA_TYPE)
-    }
-
-    /// The physics elements with a visual entity: what the scene draws besides the figure.
-    pub fn objects(&self) -> impl Iterator<Item = &SceneElement> {
-        self.elements
-            .iter()
-            .filter(|e| e.kind == 7 && e.object.is_some())
-    }
+/// What the walker needs to draw the viewport (`crate::walker::stage`): the camera and
+/// its field of view, the figure's frame and the viewport's ambient input `ambient`
+/// (`character-screens.md` §2.1.1 step 4); `None` without a camera.
+#[must_use]
+pub fn stage_view(state: &ViewportState, ambient: [f32; 3]) -> Option<StageView> {
+    let (camera, fov) = state.view?;
+    Some(StageView {
+        scene: state.scene,
+        eye: camera.position,
+        rotation: camera.rotation,
+        fov_degrees: fov,
+        figure_position: state.figure_frame.position,
+        figure_rotation: state.figure_frame.rotation,
+        ambient,
+    })
 }
 
 /// Entries of a look that the figure of (`species`, `sex`) accepts in this install
@@ -345,39 +255,4 @@ pub fn accepted_look_entries(
     data.avatar(species, sex)
         .map(|d| accept_look(look, d).0)
         .unwrap_or_default()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn element(kind: u32, identifier: Option<u32>) -> SceneElement {
-        SceneElement {
-            kind,
-            name: None,
-            identifier,
-            object: None,
-            placement: None,
-            fov: None,
-        }
-    }
-
-    #[test]
-    fn camera_rule_u4() {
-        let v = SceneView {
-            did: Did(0x2100_0001),
-            elements: vec![
-                element(7, Some(5)),
-                element(27, Some(6)),
-                element(27, Some(6)),
-                element(27, Some(7)),
-            ],
-            fog: (false, 0, -1.0, -1.0),
-        };
-        assert!(v.camera(0).is_none());
-        assert!(v.camera(5).is_none(), "first match is not a camera");
-        assert!(std::ptr::eq(v.camera(6).unwrap(), &v.elements[1]));
-        assert!(v.camera(9).is_none());
-        assert_eq!(v.objects().count(), 0);
-    }
 }

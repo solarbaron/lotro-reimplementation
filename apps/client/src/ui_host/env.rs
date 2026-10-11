@@ -305,6 +305,31 @@ impl EnvState {
         self.data.as_ref()
     }
 
+    /// The text of a StringInfo value (`string-table.md`): a literal as it is, else rendered
+    /// through the install's string tables; a table loaded here, on the main thread, is
+    /// counted ([`EnvStats::late_string_tables`]).
+    pub(crate) fn resolve_string(&mut self, info: &StringInfo) -> Option<String> {
+        if let tessera_formats::string_info::StringSource::Literal(s) = &info.source {
+            return Some(s.to_string());
+        }
+        let data = self.data.clone()?;
+        let strings = data.strings.as_ref()?;
+        let before = strings.cache_stats().misses;
+        let r = strings.resolve(
+            info,
+            &tessera_text::Values::new(),
+            &tessera_text::RenderOptions::default(),
+        );
+        let loaded = strings.cache_stats().misses.saturating_sub(before);
+        if loaded > 0 {
+            // ARCHITECTURE §21: a table the start-up thread did not load was read here, on
+            // the main thread. Counted and logged, like a late layout.
+            self.stats.late_string_tables += loaded;
+            tracing::debug!(tables = loaded, "string table loaded on the main thread");
+        }
+        Some(r.plain_text())
+    }
+
     /// The UI's worker pool (the plugin file index walk runs here too).
     #[must_use]
     pub fn pool(&self) -> &WorkerPool {
@@ -902,26 +927,7 @@ impl UiEnv for ClientEnv {
     }
 
     fn resolve_string(&mut self, info: &StringInfo) -> Option<String> {
-        if let tessera_formats::string_info::StringSource::Literal(s) = &info.source {
-            return Some(s.to_string());
-        }
-        let mut st = self.state.borrow_mut();
-        let data = st.data.clone()?;
-        let strings = data.strings.as_ref()?;
-        let before = strings.cache_stats().misses;
-        let r = strings.resolve(
-            info,
-            &tessera_text::Values::new(),
-            &tessera_text::RenderOptions::default(),
-        );
-        let loaded = strings.cache_stats().misses.saturating_sub(before);
-        if loaded > 0 {
-            // ARCHITECTURE §21: a table the start-up thread did not load was read here, on
-            // the main thread. Counted and logged, like a late layout.
-            st.stats.late_string_tables += loaded;
-            tracing::debug!(tables = loaded, "string table loaded on the main thread");
-        }
-        Some(r.plain_text())
+        self.state.borrow_mut().resolve_string(info)
     }
 
     fn input_map_name(&mut self, value: u32) -> Option<String> {

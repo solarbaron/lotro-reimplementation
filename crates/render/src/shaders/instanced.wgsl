@@ -173,7 +173,7 @@ fn shade(in: InstOut) -> Shaded {
     if (surface_flag(SF_VERTEX_COLORS)) {
         m = m * in.color;
     }
-    // Output alpha (lighting.md §5.12); for a fixed blend the opacity source alone
+    // Output alpha (lighting.md §5.12); for a fixed blend the tested opacity alone
     // (material.md §11.3).
     out.alpha = select(surface_opacity(base) * m.a, out.opacity, surface_flag(SF_FACTOR_OPACITY));
     var c = base.rgb;
@@ -256,7 +256,7 @@ fn fs_test_blend(in: InstOut) -> @location(0) vec4<f32> {
 }
 
 // Blended kinds: the surface threshold is -1 except for a fixed blend with an alpha test
-// (render.md R-D11), so only those discard.
+// (render.md §4.3 `Fixed`), so only those discard.
 @fragment
 fn fs_blend(in: InstOut) -> @location(0) vec4<f32> {
     let s = shade(in);

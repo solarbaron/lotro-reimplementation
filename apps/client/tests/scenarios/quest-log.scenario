@@ -1,0 +1,61 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# The quest journal (decision 0024 P3; docs/specs/quest-journal.md §3-§8;
+# docs/specs/scenario-feed.md §6.3, §6.5, §7.5-§7.7): a quest offered and accepted,
+# objectives counting up and moving on, tracking from the feed and from the player, a
+# completion, a failure, an abandon answered with `removed`, quest markers added, moved and
+# removed, and an NPC ring. The literal quests play without an install; with one, the
+# selectors add quest records and a quest giver (without one, the steps that need an
+# element are skipped).
+tessera-scenario 1
+title "Errands at the mill"
+tick 100ms
+player "Tamsin"
+select $errands = quest deed=no level=1..30 n=3 seed=17
+select $giver = creature kind=npc quest-giver=yes n=1 seed=4
+actor $miller kind=npc name="Miller" pos=3,1,0 body=$giver[0]
+
+at 0s spawn $miller
++0s quest "Mill wheel" active
++0s objective "Mill wheel" 1 0/4
++0s track "Mill wheel" on
++0s marker $paddles 12,8,0 "Broken paddles" quest="Mill wheel"
++0s marker $pond -6,14,0 "Duck pond"
++0s stat $miller @Quest_CurrentBestowRingDID=$errands[0]
+
+on use $miller times=1
++0s offer "Flour delivery" from=$miller
+end
+on accept
++0.2s objective "Flour delivery" 1 0/3
+end
+on abandon "Lost lamb"
++0s quest "Lost lamb" removed
+end
+
+at 0.5s objective "Mill wheel" 1 1/4
++0.5s objective "Mill wheel" 1 2/4
++0.5s objective "Mill wheel" 1 4/4 done
++0s objective "Mill wheel" 2 0/1
++0s marker $paddles 14,9,0 "Paddles mended" quest="Mill wheel"
+at 2.5s objective "Flour delivery" 1 2/3
+at 3s quest "Lost lamb" active
++0s objective "Lost lamb" 1 0/1
+at 4s objective "Mill wheel" 2 1/1 done
++0s quest "Mill wheel" completed
++0s marker-remove $paddles
+at 4.5s quest "Night watch" active
++0s track "Night watch" on
++0.5s quest "Night watch" failed
+at 5.5s quest $errands active
++0s track $errands[0] on
++0s objective $errands[0] 1 1/2
++0.5s quest $errands[1] completed
++0s marker $errand 2,2,0 "Errand" quest=$errands[2]
+
+input
+at 1s use $miller
+at 1.5s accept
+at 2s track "Flour delivery" on
+at 3.5s abandon "Lost lamb"
+at 6.5s track "Mill wheel" off
+end

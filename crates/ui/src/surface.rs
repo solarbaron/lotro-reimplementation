@@ -740,6 +740,11 @@ impl Ui {
             }
             self.painter.structural = false;
         }
+        // Cleared before the paint jobs, not after them: a change the jobs make (a text
+        // cut to fit sets its truncated-text tooltip while its display list is built,
+        // `ui-behaviour.md` §10.2) marks its element dirty for the next frame, which must
+        // then run the surface pass, or the frame never settles.
+        self.painter.touched = false;
         let rotated = std::mem::take(&mut self.painter.rotated);
         // Paint jobs.
         let mut sched = std::mem::replace(
@@ -787,7 +792,6 @@ impl Ui {
             }
             None => CompositionList::default(),
         };
-        self.painter.touched = false;
         UiFrame {
             ops: out.ops,
             composition,

@@ -12,8 +12,9 @@
 //! | [`backend`] | the per-backend rules of the New and Delete buttons, where looks are kept | §7.1, §7.2 |
 //! | [`controls`] | appearance controls, values, looks, the receiver rule, the figure's spec | §5.2; `appearance.md` §3.4; protocol §7.4 |
 //! | [`data`] | the install's lists, names and control details, loaded once | §4, §5 |
-//! | [`turntable`] | turn and zoom | §2.3 |
-//! | [`viewport`] | the viewport's scene, camera and figure; UI-scene camera rule | §2.1; `misc-records.md` §4 |
+//! | [`scene`] | the race scenes: objects, lights, the figure's marker, named frames; the camera rig | §2.1.1–§2.1.3; `misc-records.md` §4 |
+//! | [`turntable`] | turn angle and zoom fraction, their easings and the timed zoom move | §2.1.3, §2.3 |
+//! | [`viewport`] | the viewport's scene, camera, figure and its stage keys | §2.1–§2.1.4 |
 //! | [`ui`] | the chargen layouts in the game UI: element states from the model, clicks to actions | §2–§5 |
 //! | [`texts`] | Tessera's own texts and the error lines | §2.3, §7 |
 //!
@@ -22,10 +23,12 @@
 //! [`CharacterScreens::open`] takes the [`Session`] (in any state; `Connect` is sent when
 //! it is idle) and the install's [`GameDataStore`]. The client's start-up opens them with
 //! `--character-select` (`crate::pre_world`); tests and the headless driver use them
-//! directly. The viewport's figure is the walker's (`walker::Walker::set_preview`, drawn
-//! alone into the viewport's external content by `walker::Walker::draw_preview`):
-//! [`viewport::figure_job`] gives it with every creation control applied and the stage's
-//! `CharGen_Stage` key, from which it takes its face (`appearance.md` §3.5). Each frame
+//! directly. The viewport's figure is the walker's (`walker::Walker::set_preview`), drawn
+//! with the race scene (`walker::Walker::set_preview_scene`) into the viewport's external
+//! content by `walker::Walker::draw_preview` through the stage camera
+//! ([`viewport::stage_view`]): [`viewport::figure_job`] gives it with every creation
+//! control applied and the stage's `CharGen_Stage`, `CharGen_Action` and `Agent_Class`,
+//! from which it takes its pose and face (`appearance.md` §3.5). Each frame
 //! the caller passes the session to [`CharacterScreens::pump`], which polls it, updates the screens, sends their
 //! commands and hands every event back to the caller; the player's input arrives as
 //! [`Action`]s ([`CharacterScreens::act`], or through [`ui::ScreenUi`]). When
@@ -47,6 +50,7 @@ pub mod backend;
 pub mod controls;
 pub mod data;
 pub mod model;
+pub mod scene;
 pub mod texts;
 pub mod turntable;
 pub mod ui;

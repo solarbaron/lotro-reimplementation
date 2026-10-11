@@ -229,6 +229,10 @@ commit message.
 | `TESSERA_PERF=1` | Also assert frame-time budgets in real-data tests (see "Performance assertions" below) |
 | `TESSERA_REQUIRE_GPU` | `1`: fail instead of skipping when no GPU adapter is available (CI). `0`: skip GPU tests even when an adapter exists but no device can be created |
 | `TESSERA_BLESS=1` | Regenerate golden images (check them on lavapipe/llvmpipe first) |
+| `TESSERA_GOLDEN_DIR` | Where local-only real-data goldens of panels live (decision 0031 tier 2; default `${XDG_CACHE_HOME:-~/.cache}/tessera/goldens`; never inside a work tree) |
+| `TESSERA_GOLDEN_REQUIRE=1` | A missing tier-2 golden fails instead of being blessed (the second run of a verification) |
+| `TESSERA_GOLDEN_BLESS_LOCAL=1` | Re-bless tier-2 goldens that differ (never together with `TESSERA_GOLDEN_REQUIRE`; `TESSERA_BLESS` does not touch them) |
+| `TESSERA_SHEET_DIR` | Also copy the pictures a panel test takes to this folder, for judging them by eye |
 | `TESSERA_SEED`, `TESSERA_SAMPLE` | Reproducible sampling in real-data tests |
 | `TESSERA_TARGET_DIR` | Used by `tools/dev-setup.sh --fix` to place the build cache |
 | `TESSERA_CLONES_DIR` | Where `tools/fetch-research-clones.sh` puts the research clones (default `${XDG_CACHE_HOME:-~/.cache}/tessera/clones`) |

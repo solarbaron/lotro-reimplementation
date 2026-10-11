@@ -216,6 +216,87 @@ fn output_alpha_follows_the_opacity_source() -> Result<(), RenderError> {
     Ok(())
 }
 
+/// `material.md` §18 (Tessera Decision, wording of 2026-10-10): a second opacity texture
+/// that is 0 (`SecondOpacity::One`) or does not resolve reads alpha 1. A sum record then
+/// tests the base alpha + 1 (kept whenever the base alpha is above 0 or *R* < 1) and outputs
+/// min(1, (alpha + 1) × *M*.alpha); a product is the base alpha alone.
+#[test]
+fn missing_second_opacity_reads_one() -> Result<(), RenderError> {
+    let Some(mut r) = gpu::headless_renderer([0.0, 0.0, 0.0, 1.0]) else {
+        return Ok(());
+    };
+    let plane = ground(&mut r)?;
+    let base_05 = texel(&mut r, [255, 255, 255, 128])?;
+    let base_06 = texel(&mut r, [255, 255, 255, 153])?;
+    let base_0 = texel(&mut r, [255, 255, 255, 0])?;
+    let gone = texel(&mut r, [0, 0, 0, 0])?;
+    assert!(r.destroy_texture(gone));
+    // White texel under ambient 0.5: lit colour 1.0, so a pixel over black is the output
+    // alpha.
+    let l = ambient_only(0.5);
+    let surface = |t, cutoff: f32, a: f32| Material {
+        alpha: AlphaMode::TestBlend { cutoff },
+        base_color: [1.0, 1.0, 1.0, a],
+        ..Material::textured(t)
+    };
+    let with = |second, sum| LitSurface {
+        opacity: Opacity::BaseWith { second, sum },
+        ..LitSurface::default()
+    };
+    let base_05_a = 128.0 / 255.0;
+    for (second, what) in [
+        (SecondOpacity::One, "texture 0"),
+        (SecondOpacity::Texture(gone), "unresolved texture"),
+        (SecondOpacity::EmissiveAlpha, "emissive without a texture"),
+    ] {
+        // Output alpha min(1, (alpha + 1) × A): 0.5 at A = 0.4 gives 0.6, at A = 0.8 gives 1.
+        let px = centre(
+            &mut r,
+            &l,
+            vec![draw(plane, surface(base_05, 0.0, 0.4), with(second, true))],
+        )?;
+        assert_pixel(px, [(base_05_a + 1.0) * 0.4; 3], &format!("{what}: A 0.4"));
+        let px = centre(
+            &mut r,
+            &l,
+            vec![draw(plane, surface(base_05, 0.0, 0.8), with(second, true))],
+        )?;
+        assert_pixel(px, [1.0; 3], &format!("{what}: A 0.8, clamped"));
+        // A base alpha above 0 is kept even at R = 1.
+        let px = centre(
+            &mut r,
+            &l,
+            vec![draw(plane, surface(base_05, 1.0, 1.0), with(second, true))],
+        )?;
+        assert_pixel(px, [1.0; 3], &format!("{what}: base 0.5 kept at R = 1"));
+        // A base alpha of 0 sums to exactly 1: discarded at R = 1, kept below.
+        let px = centre(
+            &mut r,
+            &l,
+            vec![draw(plane, surface(base_0, 1.0, 1.0), with(second, true))],
+        )?;
+        assert_eq!(px, [0, 0, 0, 255], "{what}: base 0 discarded at R = 1");
+        let px = centre(
+            &mut r,
+            &l,
+            vec![draw(
+                plane,
+                surface(base_0, 229.0 / 255.0, 0.4),
+                with(second, true),
+            )],
+        )?;
+        assert_pixel(px, [0.4; 3], &format!("{what}: base 0 kept below R = 1, A"));
+        // A product is the base alpha alone: 0.6 kept at 0.5 and blended by it.
+        let px = centre(
+            &mut r,
+            &l,
+            vec![draw(plane, surface(base_06, 0.5, 1.0), with(second, false))],
+        )?;
+        assert_pixel(px, [0.6; 3], &format!("{what}: product is the base alpha"));
+    }
+    Ok(())
+}
+
 /// The shading normal of a tangent-space texel on `MeshData::plane` (T = +X, B = +V = −Y,
 /// N₀ = +Z) by `lighting.md` §5.2.4: N = n.x T − n.y B + n.z N₀.
 fn plane_normal(t: [u8; 3]) -> Vec3 {

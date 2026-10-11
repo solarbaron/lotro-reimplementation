@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! Local selection on the test-server backend (`scenario-feed.md` §9.7 revision 5, decision
+//! Local selection on the test-server backend (`scenario-feed.md` §9.7 revision 6, decision
 //! 0032 D1): the cases R1–R10 of §14.11, overlay case O8 of §14.9 and invariant 11 of §15.
 //!
 //! The "test double of the server" is the scripted inbound side of [`InboundHarness`],

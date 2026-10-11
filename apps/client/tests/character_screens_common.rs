@@ -158,6 +158,7 @@ pub fn avatar_detail() -> AvatarDetail {
         entity: Some(Did(0x4700_1000)),
         controls: vec![
             ControlDetail {
+                meta: Default::default(),
                 control: control(
                     0,
                     ControlKind::Style {
@@ -174,6 +175,7 @@ pub fn avatar_detail() -> AvatarDetail {
                 default: Some(ControlValue::Style(0)),
             },
             ControlDetail {
+                meta: Default::default(),
                 control: control(
                     1,
                     ControlKind::Colour {
@@ -186,6 +188,7 @@ pub fn avatar_detail() -> AvatarDetail {
                 default: None,
             },
             ControlDetail {
+                meta: Default::default(),
                 control: control(
                     2,
                     ControlKind::BodyScale {
@@ -269,5 +272,6 @@ pub fn synthetic_data() -> Arc<ScreenData> {
             ..ScreenPids::default()
         },
         stage_keys: Default::default(),
+        ..Default::default()
     })
 }

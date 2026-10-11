@@ -727,7 +727,7 @@ impl SurfaceUniform {
         };
         let cutoff = match s.alpha {
             AlphaMode::Mask { cutoff } | AlphaMode::TestBlend { cutoff } => finite_or(cutoff, 0.5),
-            // A fixed blend's alpha test (render.md R-D11, material.md §11.2).
+            // A fixed blend's alpha test (render.md §4.3 `Fixed`, material.md §11.2).
             AlphaMode::Fixed(b) => b.cutoff(),
             _ => -1.0,
         };
@@ -747,7 +747,7 @@ impl SurfaceUniform {
             }
         }
         // material.md §11.3, rule for unlit records: the opacity a blend factor reads is the
-        // §11.2 opacity source, or 1 without one (not × M.alpha).
+        // §11.2 tested opacity, or 1 without an opacity-bearing role (not × M.alpha).
         if matches!(s.alpha, AlphaMode::Fixed(_)) {
             flags |= sf::FACTOR_OPACITY;
         }

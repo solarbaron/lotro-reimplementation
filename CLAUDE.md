@@ -80,21 +80,17 @@ compatibility in plain prose is fine. Format-level terms like "DID" or "landbloc
   walking (§6.5 OPEN, owner); explorer body-shape control range and its absence for bodies
   without sliders (minor UI gaps).
 - **M4 still open:** only owner comparisons with the original client (O8–O17).
-- **M4.5 (world fidelity), in progress; exit verification 2026-10-06, criteria 4, 5, 6, 9
-  re-verified 2026-10-07** (`docs/ROADMAP.md` M4.5 status): every deliverable exists (new
+- **M4.5 (world fidelity), in progress; exit verification 2026-10-06, criteria re-verified
+  2026-10-07 to 2026-10-10** (`docs/ROADMAP.md` M4.5 status): every deliverable exists (new
   decoders, `tessera-physics` with the 1/60 s controller, decision 0013; scenery, frills,
   water, sky/clock, lighting, draw distances in `tessera-world`; lit, terrain-layer, water,
   sky and instanced pipelines; walker `--walk-path`, switches, clock; explorer/dattool
-  views). Criteria 1, 2, 3, 7, 8 pass. Not met: 4 (25 / 32 walks; generated objects 1 of 3
-  (GN1, GN2, GN4 fail), caves 1 of 2 (CV1, CV2 fail), WL2 and FR1 near misses; soak 0
-  fall-throughs), 6 (45 / 54 rows pass on the image; L5 fails, T4, T5, T12, T15, T16, Y2,
-  L2, L7 not judgeable from their cameras), 9 (`walker.md` §13–§14 and `render.md` §4–§5
-  reviewed twice, changes requested; ten specs of the M4.5 table are Revised, not
-  Accepted). 5: one M3-b run under load passed (0 over 50 ms, 0 holes), indicative; the
-  owner re-measures on a quiet machine. Frame-time assertions in real-data tests run only
-  with `TESSERA_PERF=1` (`docs/DEVELOPMENT.md`), so loaded machines no longer fail them.
-  Checks on main after the M6 merge (2026-10-08): fmt, clippy `-D warnings` (workspace,
-  `--all-features`, fuzz) clean; release tests with the install 3,715 passed, 0 failed.
+  views). Criteria 1, 2, 3, 4 (32 / 32 walks, soak 0 fall-throughs), 6 (62 / 62 rows on
+  d287e50), 7, 8, 9 pass. Only 5 is open: one M3-b run under load passed (0 over 50 ms, 0
+  holes), indicative; the owner re-measures on a quiet machine. Frame-time assertions in
+  real-data tests run only with `TESSERA_PERF=1` (`docs/DEVELOPMENT.md`). Checks on main
+  after the conform-b21 merge (2026-10-10): fmt, clippy (workspace, fuzz), release tests with
+  the install 5,857 passed, 0 failed; content, SPDX, server deps clean.
 - **Incident 0018 (2026-10-07):** dirty-room reports reached clean implementer prompts in a
   hand-written close-out workflow. The owner released the held work (A) and kept the
   River-hobbit code after a clean audit (B); see `docs/decisions/0018-incident-review-notes-in-clean-prompts.md`. Rule: clean
@@ -142,9 +138,8 @@ compatibility in plain prose is fine. Format-level terms like "DID" or "landbloc
   `tessera-dattool fallback`, walker HUD/headless fallback counts. Open: puddle quads cut by the
   terrain (row W13, `water.md` §8.5.4 OPEN), owner comparison O87.
 - **Faces and colour tints (merged 2026-10-10):** `appearance.md` §3.5 in the shared figure
-  path (`tessera-mesh` `assembly::look`, client and explorer): composited faces (10 of 14
-  playable bodies; Elf and High-elf wait for the §15 `Physics_InWorld` OPEN) and hair, skin and
-  eye tints, with a shared composition cache. Open: §15 OPENs (option-off order, engineering
+  path (`tessera-mesh` `assembly::look`, client and explorer): composited faces (all 14
+  playable bodies in the real-data look test) and hair, skin and eye tints, with a shared composition cache. Open: §15 OPENs (option-off order, engineering
   choices), owner item O15 (Dwarf brow colour).
 - **Parity track (decision 0024, owner 2026-10-09: "client half only"):** P0–P8 build the
   client-side gameplay presentation from the install, fed by a sandbox scenario feed (and by
@@ -206,11 +201,15 @@ compatibility in plain prose is fine. Format-level terms like "DID" or "landbloc
   creation, entry and look transfer pass on real data; the creation viewport draws its
   figure (shared figure path, `CharGen_Stage`, composed face, colour controls live, 15 / 15
   bodies) and received looks carry colours and face layers
-  (`CharacterSpec::appearance_values`). Open visual defects of that figure: the Beorning
-  female's default appearance figure has no head, the River-hobbit female stands low (legs
-  cut at the viewport edge) and faces away, pictures under load may miss parts still
-  loading, no selected state on the gender buttons; the UI scene's objects and lights are
-  not drawn (`character-screens.md` §2.1, §6 OPENs). Built: decision 0025 (Accepted) with
+  (`CharacterSpec::appearance_values`). Creation-screen fixes merged 2026-10-11
+  (conform-b22, specs-22/23): every figure runs the `Chargen` start-up script (stance and
+  class costume on all 15 bodies, both stages), appears only once its textures are loaded,
+  stands on the scene marker with the scene's objects, lights and tints around it, camera
+  base/zoom frames and turntable, controls named from the data, gender selection shown.
+  Open: figure scripts are evaluated once, not run live (no gestures, class props, transition
+  ports; `character-screens.md` §2.1.4 OPEN), decals and effect particles not drawn, side
+  panels overflow at 1280×720 (`ui-layout.md` §8.4 OPEN), face-layer value 0 not offered
+  until the owner decides the per-figure image budget. Built: decision 0025 (Accepted) with
   `scenario-feed.md` rev 4, `tessera-protocol.md` v1.1 and `test-server.md` (Accepted) and
   `server-content.md` (Draft, owner); `tessera-gamedata` `tooltip`, `chargen`, `inventory`;
   protocol minor 1 (looks, `Equipped.slot`) in `tessera-protocol`, `tessera-net` (overlay
@@ -226,34 +225,33 @@ compatibility in plain prose is fine. Format-level terms like "DID" or "landbloc
   failed, 10 ignored. Open: empty stat rows on this install (`character-panels.md` §3.4),
   bag columns saved on the main thread (ARCH §21), `lua-plugin-api.md` §19 summary lacks the
   new §15.1 OPENs, walker and game HUDs over the screens in a normal run.
-- **P2 (targeting, skills and combat presentation; branch `p2` in worktree `wt-p2`, off main
-  4ec1f4a, uncommitted; exit verification 2026-10-11)** (`docs/ROADMAP.md` P2 status):
-  criteria 1–4 pass on Tessera's side. Not Accepted yet: `combat-ui.md`,
+- **P3 (NPC windows: dialogue, quests, vendors and loot; merged to main 2026-10-11, exit
+  verification 2026-10-11)** (`docs/ROADMAP.md` P3 status): criteria 1 and 2 pass, its specs
+  (`npc-windows.md`, `quest-journal.md`, `scenario-feed.md` rev 5, `lua-plugin-api.md` §15.3)
+  are Accepted. Built: `tessera-gamedata` `quest` and `npc`; `tessera-net` rev 5 (`action`,
+  rewards, buyback); `tessera-ui` `game::{npcvocab, npc, quest}`; `tessera-plugins` `wallet`;
+  `tessera-client` `npc` and `quests`; scenarios `dialogue`, `vendor`, `loot`, `quest-log`.
+  Real data: 20,807 quest records, 15,400 log rows, 0 failures; 19 local goldens matched.
+  Open: text-fitting defects (`quest-journal.md` §4.7 OPEN), barter window off screen, no
+  dialog-box or popup-menu widget, U and L are raw keys.
+- **P2 (targeting, skills and combat presentation; branch `p2` in worktree `wt-p2`, exit
+  verification 2026-10-11)** (`docs/ROADMAP.md` P2 status): criteria 1-4 pass on Tessera's
+  side; its specs await an independent review (not Accepted): `combat-ui.md`,
   `skill-tooltips.md`, `combat-visuals.md` (Draft), the P2 revisions of `item-tooltips.md`,
   `keymap.md`, `lua-plugin-api.md` §15.2, `script-table.md`, `particles.md`,
-  `particle-runtime.md`, `scenario-feed.md` rev 5 (Review) and decision 0032 (Proposed;
-  planned as 0031, taken by P3): an independent review must accept them, then the code is
-  re-checked against them before merge. Built: `tessera-gamedata` skill/effect tooltips,
-  census and `combat` (records, panel and visual data); `tessera-ui` `game::combat` (frames,
-  cast bars, effect rows, floating text, selection marker, combat state, defeat panel,
-  quickslot cooldowns, live tooltip timers); `tessera-input` targeting and 72 quickslot
-  actions; `tessera-plugins` §15.2 combat views; `tessera-net` local `SelectTarget` on the
-  test-server backend; walker `CombatLayer` (stories, hooks, effects, stance, death) with
-  scriptgraph combat runs, particle beams, anim layer insertion; client `combat` module,
-  headless combat screens, synthetic goldens; fuzz `ui_combat_feed`, `plugins_combat_views`,
-  `particles_beam`. Evidence: 20 / 20 elements shown at 11 checkpoints with and without the
-  install, 5 committed goldens; 13,247 skills and 32,971 effects categorised (33,601 tooltips
-  laid out, 0 failures); 11,155 particle descriptors categorised, 0 missing Particle-node
-  records, walker scenario draws combat particles; test-server selection in `combat_server`.
-  Checks: fmt, clippy (workspace `--all-features`, fuzz), content, SPDX, server deps, links
-  clean; release tests with the install 6,074 passed, 1 failed (fixed, then `tessera-ui` and
-  `tessera-client` 1,148 passed, 0 failed). Open: `keymap.md` §8.2 defaults take five walker
-  keys (owner); install-look defects (frame name and level text not drawn, defeat panel's
-  extra button); beam ribbons not drawn; main-thread record reads in combat cues (ARCH §21).
+  `particle-runtime.md`, `scenario-feed.md` rev 6 (Review) and decision 0032 (Proposed);
+  the code is re-checked against them before merge. Built: `tessera-gamedata` skill/effect
+  tooltips, census and `combat`; `tessera-ui` `game::combat`; `tessera-input` targeting and 72
+  quickslot actions; `tessera-plugins` §15.2 combat views; local `SelectTarget` in
+  `tessera-net`; walker `CombatLayer`, particle beams; client `combat` module and goldens.
+  Real data: 13,247 skills and 32,971 effects categorised (33,601 tooltips, 0 failures).
+  Open: `keymap.md` §8.2 defaults take five walker keys (owner); install-look defects (frame
+  name and level text, defeat panel's extra button); beam ribbons not drawn; main-thread
+  record reads in combat cues (ARCH §21).
 - **Pending owner input:** `docs/checklists/owner-observations.md` (`/loc` readings at the 20
   M3 reference locations, frame-capture questions from M2, M4 items O8–O17, M4.5 items
   O18–O27, M5 items O39–O49, M6 items O28, M7 items O70–O73, P1 items O80–O86 and
-  O88–O90, P2 items O93–O109 and O126–O129). They do not block the
+  O88–O90, P2 items O93–O109 and O126–O129, P3 items O110–O125). They do not block the
   Tessera-side work.
 - **Toolchain:** the laptop now has rustup (Gentoo `rustup-init-gentoo --symlink`; put
   `~/.cargo/bin` first in `PATH`); fmt, clippy and tests pass on the pinned 1.99.0.

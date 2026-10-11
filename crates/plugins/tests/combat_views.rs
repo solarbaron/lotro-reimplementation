@@ -448,7 +448,7 @@ fn check_73_effect_values() {
     );
 
     // An in-place update (a repeated instance) gives one event per changed value, in the
-    // P85 order, and never IsDispellableChanged.
+    // P91 order, and never IsDispellableChanged.
     let _: () = fx.eval(
         "Default",
         "T.Watch(T.PE:Get(1), 'e', { 'NameChanged', 'DescriptionChanged', 'IconChanged',

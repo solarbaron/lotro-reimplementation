@@ -32,7 +32,7 @@ use std::time::Duration;
 
 use common::Driver;
 use tessera_client::screens::model::Stage;
-use tessera_client::screens::viewport::{FigureChoice, character_spec, figure_job, figure_request};
+use tessera_client::screens::viewport::{character_spec, figure_job, figure_request};
 use tessera_client::screens::{
     Action, ButtonRule, CharacterScreens, ScreenData, ScreenModel, ScreenOptions, Status,
     viewport_state,
@@ -258,6 +258,7 @@ fn step_2_figures_through_the_walker_path() {
     m.apply(Action::New, now);
     let mut categories: BTreeMap<DiagnosticCategory, usize> = BTreeMap::new();
     let (mut figures, mut entities, mut entity_failures) = (0usize, 0usize, 0usize);
+    let (mut scenes, mut heads) = (0usize, 0usize);
     let (mut composed, mut coloured, mut follows) = (0usize, 0usize, 0usize);
     for (species, sex) in bodies(data) {
         if m.stage() == Stage::Appearance {
@@ -265,27 +266,47 @@ fn step_2_figures_through_the_walker_path() {
         }
         m.apply(Action::Race(species), now);
         m.apply(Action::Gender(sex), now);
-        // The race screen's figure: the gender entry's race-select entity.
+        // The race scene (§2.1.1–§2.1.3, CSI6): a marker for the figure, a
+        // `chargen_Camera`, and an element for each stage camera of the race and gender.
         let v = viewport_state(&m);
         assert!(v.scene.is_some(), "a UI scene for {species:#x}");
-        assert!(v.camera.is_some(), "a camera for {species:#x}");
-        if let FigureChoice::Entity(_) = v.figure {
-            let req = figure_request(&v, data).expect("entity request");
-            match build_figure(&ctx, &req, &|| false) {
-                Ok(f) => {
-                    entities += 1;
-                    eprintln!(
-                        "step 2: {species:#x}/{sex:#x} race-select entity: {} parts, {} notes",
-                        f.parts.len(),
-                        f.notes.len()
-                    );
-                }
-                Err(e) => {
-                    entity_failures += 1;
-                    eprintln!(
-                        "step 2: {species:#x}/{sex:#x} race-select entity does not build: {e}"
-                    );
-                }
+        let scene = data.scene(species).expect("the race scene loads");
+        assert!(scene.marker.is_some(), "a figure marker in {}", scene.did);
+        assert!(scene.has_chargen_camera, "chargen_Camera in {}", scene.did);
+        let (base, zoom) = (
+            v.camera.expect("camera"),
+            v.zoom_camera.expect("zoom camera"),
+        );
+        assert!(scene.frame_of(base).is_some() && scene.frame_of(zoom).is_some());
+        let (cam, fov) = v.view.expect("a camera frame");
+        assert!((fov - 65.0).abs() < 1e-4, "the base field of view");
+        // The camera looks towards the figure (CSI6: the race cameras look at the marker).
+        let to_figure = (v.figure_frame.position - cam.position).normalize();
+        assert!(
+            cam.forward().dot(to_figure) > 0.5,
+            "{species:#x}: the camera faces the figure"
+        );
+        scenes += 1;
+        // The race-and-class figure: the chosen body with `CharGen_Stage` 1 and the class
+        // (§2.1.4).
+        let req = figure_request(&v, data).expect("race-and-class figure");
+        assert_eq!(req.body, Body::Character { species, sex });
+        assert_eq!(req.chargen_stage, Some(data.stage_keys.class_select));
+        assert_eq!(req.class, m.creation().class);
+        match build_figure(&ctx, &req, &|| false) {
+            Ok(f) => {
+                entities += 1;
+                eprintln!(
+                    "step 2: {species:#x}/{sex:#x} race-and-class figure: {} parts, {} notes",
+                    f.parts.len(),
+                    f.notes.len()
+                );
+            }
+            Err(e) => {
+                entity_failures += 1;
+                eprintln!(
+                    "step 2: {species:#x}/{sex:#x} race-and-class figure does not build: {e}"
+                );
             }
         }
         m.apply(Action::Continue, now);
@@ -295,6 +316,36 @@ fn step_2_figures_through_the_walker_path() {
         assert_eq!(req.body, Body::Character { species, sex });
         let f = build_figure(&ctx, &req, &|| false)
             .unwrap_or_else(|e| panic!("default figure {species:#x}/{sex:#x}: {e}"));
+        // The default figure (§5.2.1, `appearance.md` §3.4): every style control writes its
+        // element; the head control's element gives a visible part (no figure without a
+        // head).
+        let spec = character_spec(&v, data).expect("spec");
+        let c = asm
+            .assemble_character(&spec)
+            .unwrap_or_else(|e| panic!("default figure {species:#x}/{sex:#x}: {e}"));
+        let head = m.current_avatar().and_then(|d| {
+            d.controls
+                .iter()
+                .find_map(|c| match (&c.choices, c.writes) {
+                    (
+                        tessera_client::screens::controls::ControlChoices::Styles { key, .. },
+                        Some(_),
+                    ) => *key,
+                    _ => None,
+                })
+        });
+        if let Some(head) = head {
+            let shown = c.parts.iter().any(|p| {
+                !p.hidden
+                    && matches!(p.origin,
+                        tessera_mesh::assembly::PartOrigin::Appearance { key, .. } if key == head)
+            });
+            assert!(
+                shown,
+                "{species:#x}/{sex:#x}: the default figure has a head part"
+            );
+            heads += 1;
+        }
         assert!(
             !f.parts.is_empty(),
             "figure {species:#x}/{sex:#x} has parts"
@@ -394,8 +445,9 @@ fn step_2_figures_through_the_walker_path() {
         figures += 1;
     }
     eprintln!(
-        "step 2: {figures} default figures, {entities} race-select entities ({entity_failures} failed); diagnostics by category: {categories:?}"
+        "step 2: {figures} default figures ({heads} with their head control's part), {scenes} race scenes with marker and cameras, {entities} race-and-class figures ({entity_failures} failed); diagnostics by category: {categories:?}"
     );
+    assert_eq!(entity_failures, 0, "every race-and-class figure builds");
     eprintln!(
         "step 2: creation figures with a composed face {composed} / {figures}; a colour control changed the look of {follows} / {coloured}"
     );
@@ -830,6 +882,9 @@ fn step_5_test_server_creation_and_looks() {
             bone_scale: spec.bone_scale,
             seed: None,
             chargen_stage: None,
+            chargen_action: None,
+            class: None,
+            always_selectable: false,
         };
         let choices = tessera_client::walker::characters::figure::LookChoices {
             styles: spec.styles,

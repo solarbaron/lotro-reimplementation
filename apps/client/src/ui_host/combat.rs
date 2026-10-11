@@ -25,10 +25,13 @@ pub const MAX_COMBAT_QUEUE: usize = 4096;
 /// A world click the UI declined (TR3), at a pointer position in physical pixels.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum WorldClick {
-    /// A click that selects (`select_left` as a tap, or `select_right`).
+    /// A click that selects (`select_left` as a tap).
     Select(f64, f64),
-    /// A double click that selects and uses.
+    /// A double click that selects and uses (`npc-windows.md` §3.1 rule 4).
     Use(f64, f64),
+    /// A right click (`select_right`): selects; a non-player entity is also used
+    /// (`npc-windows.md` §3.1 rule 5).
+    Right(f64, f64),
 }
 
 /// `ShortcutType.Skill` (`lua-plugin-api.md` Appendix A.1).
@@ -342,7 +345,7 @@ impl UiHost {
             }
             ("SelectRight", OfferPhase::Start) => {
                 if !locked && let Some((x, y)) = pos {
-                    HostCombat::push(&mut self.combat.clicks, WorldClick::Select(x, y));
+                    HostCombat::push(&mut self.combat.clicks, WorldClick::Right(x, y));
                 }
                 false
             }

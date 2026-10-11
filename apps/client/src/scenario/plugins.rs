@@ -12,6 +12,11 @@
 //! §15), before that poll's events are queued, so they see every inventory event; the
 //! plugins' chat output is logged and kept ([`ScenarioPlugins::lines`]).
 //!
+//! The combat views of §15.2 (decision 0024 P2) are fed the same way
+//! ([`crate::combat::PluginCombat`]), with `Turbine.Engine.GetGameTime` on the scenario's
+//! virtual clock ([`ScenarioPlugins::observe_at`]: seconds since world entry), so the
+//! conformance checks 70–76 run on scenarios.
+//!
 //! The wallet and money views (`lua-plugin-api.md` §15.3, decision 0024 P3) are fed the
 //! same way: the local player carries the session's wallet model
 //! ([`crate::npc::SessionWallet`]), and each poll's wallet changes become its events.
@@ -43,6 +48,12 @@ pub struct ScenarioPlugins {
     /// The loads were queued (at world entry).
     queued: bool,
     timeout: Duration,
+    /// The plugin combat views' source (§15.2).
+    combat: crate::combat::PluginCombat,
+    /// The install's combat data, with an install.
+    combat_install: Option<Arc<crate::combat::CombatInstall>>,
+    /// World entry on the driver's clock (the game time's origin).
+    base: Option<Instant>,
     /// The wallet views' model (P3).
     wallet: Arc<SessionWallet>,
     /// The NPC facts of the install (the wallet items' values), when the run has one.
@@ -65,6 +76,15 @@ impl ScenarioPlugins {
         let player = WalkerPlayer::new();
         let mut hub = CharacterHub::new();
         let bags = data.as_ref().map_or(NO_INSTALL_BAGS, |d| d.bags());
+        let combat_install =
+            data.as_ref()
+                .and_then(|d| match crate::combat::CombatInstall::new(Arc::clone(d)) {
+                    Ok(i) => Some(Arc::new(i)),
+                    Err(e) => {
+                        tracing::warn!("combat data unavailable: {e}");
+                        None
+                    }
+                });
         let npc_data = data
             .as_ref()
             .and_then(|d| match NpcData::new(Arc::clone(d)) {
@@ -78,6 +98,8 @@ impl ScenarioPlugins {
             hub.set_data(d);
         }
         hub.attach_plugins(plugins.manager_mut());
+        let combat = crate::combat::PluginCombat::new();
+        combat.attach(plugins.manager_mut());
         let wallet = SessionWallet::new();
         let src: Arc<dyn tessera_plugins::LocalPlayerSource> =
             WalletPlayer::new(player.clone(), Arc::clone(&wallet));
@@ -90,6 +112,9 @@ impl ScenarioPlugins {
             load: load.to_vec(),
             queued: false,
             timeout: PLUGIN_LOAD_WAIT,
+            combat,
+            combat_install,
+            base: None,
             wallet,
             npc_data,
         }
@@ -133,9 +158,26 @@ impl ScenarioPlugins {
         }
     }
 
-    /// One driver poll's events: applied to the player's state, the plugin views' events
-    /// queued, then one round of the plugin host's work.
+    /// One driver poll's events at the wall clock ([`Self::observe_at`]).
     pub fn observe(&mut self, events: &[Event]) {
+        self.observe_at(Instant::now(), events);
+    }
+
+    /// One driver poll's events at `now` (the driver's virtual clock): the game time
+    /// (seconds since world entry) is set, the events applied to the player's state, the
+    /// plugin views' events (inventory and combat) queued, then one round of the plugin
+    /// host's work.
+    pub fn observe_at(&mut self, now: Instant, events: &[Event]) {
+        if events
+            .iter()
+            .any(|e| matches!(e, Event::WorldEntered { .. }))
+        {
+            self.base = Some(now);
+        }
+        let game_time = self
+            .base
+            .map_or(0.0, |b| crate::combat::seconds_since(b, now));
+        self.plugins.set_game_time(game_time);
         let mut changes = Vec::new();
         for ev in events {
             self.state.apply(ev, &mut changes);
@@ -143,6 +185,24 @@ impl ScenarioPlugins {
         if self.player.set(self.state.name()) {
             self.plugins.set_character(self.state.name());
         }
+        let install = self.combat_install.clone();
+        // The combat views learn of the world entry (the player's entity and level)
+        // before the plugins load, so `LocalPlayer` reads them at load time; the rest of
+        // the poll's events are queued after the load, so the plugins see them.
+        let split = if self.queued {
+            0
+        } else {
+            events
+                .iter()
+                .position(|e| matches!(e, Event::WorldEntered { .. }))
+                .map_or(0, |i| i + 1)
+        };
+        self.combat.observe(
+            &events[..split],
+            game_time,
+            install.as_deref(),
+            self.plugins.manager_mut(),
+        );
         if !self.queued && self.state.player().is_some() {
             self.load_now();
         }
@@ -155,6 +215,12 @@ impl ScenarioPlugins {
         }
         self.hub
             .after_events(&self.state, changes, self.plugins.manager_mut());
+        self.combat.observe(
+            &events[split..],
+            game_time,
+            install.as_deref(),
+            self.plugins.manager_mut(),
+        );
         self.plugins.pump();
         let _ = self.hub.take_ui_changes();
         for line in self.plugins.host().take_fresh() {

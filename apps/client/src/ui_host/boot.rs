@@ -113,6 +113,8 @@ pub struct UiBooted {
     pub char_ids: crate::character::panel::PanelIds,
     /// The character screens' layouts and element IDs (`character-screens.md` §2).
     pub chargen: crate::screens::ui::ChargenRefs,
+    /// The combat widgets' layouts and vocabulary (decision 0024 P2, `combat-ui.md` §2).
+    pub combat: crate::combat::boot::CombatRefs,
     /// Layouts decoded.
     pub layouts: usize,
     /// Time taken.
@@ -320,6 +322,13 @@ fn load(
         &|n| dict.pid(n),
         &|t| labels.key(UiEnum::ElementType, t),
     );
+    let combat = crate::combat::boot::CombatRefs::resolve(
+        &mut |l| uilayout.by_label(l).filter(|d| d.0 >> 24 == 0x22),
+        &mut |n| labels.key(UiEnum::ElementType, n),
+        &mut |n| labels.key(UiEnum::ElementId, n),
+        &mut |n| labels.key(UiEnum::StateId, n),
+        &mut |n| dict.pid(n),
+    );
     let catalog = PanelCatalog::resolve(&uilayout, &mut |l| labels.key(UiEnum::ElementId, l));
     let mut panel_types = PanelTypes::default();
     panel_types.resolve_with(&mut |n| labels.key(UiEnum::ElementType, n));
@@ -380,6 +389,7 @@ fn load(
         char_vocab,
         char_ids,
         chargen,
+        combat,
         layouts: decoded,
         elapsed_ms,
     })

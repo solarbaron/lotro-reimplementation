@@ -446,10 +446,23 @@ pub struct FigureAsset {
     /// What the species tables' look gave the figure (`appearance.md` §3.5): composed
     /// faces and material edits, for tests and diagnostics.
     pub face: FaceSummary,
+    /// The figure's script tables and stored values, as its clips were chosen with
+    /// (`script-table.md` §8.1): what the combat scripts of `combat-visuals.md` run on.
+    pub scripts: Option<Arc<FigureScripts>>,
     /// Problems, for the log.
     pub notes: Vec<String>,
     /// Worker time.
     pub build_ms: f64,
+}
+
+/// The script state of a built figure: its tables (class, instance, additional; their
+/// closures are searched in this order) and its stored property values.
+#[derive(Debug, Clone, Default)]
+pub struct FigureScripts {
+    /// The tables.
+    pub tables: Vec<Did>,
+    /// The stored values.
+    pub properties: tessera_formats::script_table::resolve::PropertyState,
 }
 
 /// The figure's look in numbers (`appearance.md` §3.5): which compositors were attached,
@@ -553,7 +566,7 @@ impl ClipStore {
     }
 
     /// `did` bound to `skeleton`, with baked frames when they fit the bake budget.
-    fn bind(
+    pub(crate) fn bind(
         &self,
         set: &ArchiveSet,
         did: u32,
@@ -742,13 +755,14 @@ pub fn build_figure_with_look(
         }
     };
     let bones = skeleton.as_ref().map(|s| s.bone_count());
-    let (clips, shape, scripts, look) = match &skeleton {
+    let (clips, shape, scripts, look, figure_scripts) = match &skeleton {
         Some(s) => select_clips(ctx, &c, s, req, &mut notes),
         None => (
             FigureClips::default(),
             FigureShape::default(),
             Vec::new(),
             FigureLook::default(),
+            None,
         ),
     };
     notes.extend(look.notes.iter().take(4).map(|n| format!("look: {n}")));
@@ -905,6 +919,7 @@ pub fn build_figure_with_look(
         points,
         lod_class,
         face,
+        scripts: figure_scripts,
         notes,
         build_ms: started.elapsed().as_secs_f64() * 1e3,
     })
@@ -1187,7 +1202,13 @@ fn select_clips(
     skeleton: &Arc<AnimSkeleton>,
     req: &FigureRequest,
     notes: &mut Vec<String>,
-) -> (FigureClips, FigureShape, Vec<ScriptAppearance>, FigureLook) {
+) -> (
+    FigureClips,
+    FigureShape,
+    Vec<ScriptAppearance>,
+    FigureLook,
+    Option<Arc<FigureScripts>>,
+) {
     let seed = req.seed;
     let cat = &ctx.catalog;
     let data = &cat.data;
@@ -1197,17 +1218,17 @@ fn select_clips(
     let mut look = FigureLook::default();
     let Some(vocab) = cat.scripts.clone() else {
         notes.push("no script vocabulary; not animated".into());
-        return (out, shape, appearances, look);
+        return (out, shape, appearances, look, None);
     };
     let Ok(registry) = data.registry() else {
-        return (out, shape, appearances, look);
+        return (out, shape, appearances, look, None);
     };
     let dict = registry.dictionary();
     let chain = match collect_entity_scripts(c.clip_inputs.start, dict, &vocab, |d| data.read(d)) {
         Ok(ch) => ch,
         Err(e) => {
             notes.push(format!("scripts of {}: {e}", c.clip_inputs.start));
-            return (out, shape, appearances, look);
+            return (out, shape, appearances, look, None);
         }
     };
     let mut scripts = chain.scripts;
@@ -1254,6 +1275,16 @@ fn select_clips(
         }
         (Some(_), None) => Vec::new(),
         (None, asm) => asm.map(figure_after_startup).unwrap_or_default(),
+    };
+    let figure_scripts = {
+        let mut properties = scripts.properties.clone();
+        for (pid, v) in &after_startup {
+            properties.set(*pid, v.clone());
+        }
+        Arc::new(FigureScripts {
+            tables: scripts.tables(),
+            properties,
+        })
     };
     let mut resolver = ClipResolver::new(dict, vocab, |d: Did| data.read(d))
         .with_dictionary_defaults(dict)
@@ -1424,7 +1455,7 @@ fn select_clips(
     {
         out.run = None;
     }
-    (out, shape, appearances, look)
+    (out, shape, appearances, look, Some(figure_scripts))
 }
 
 #[cfg(test)]

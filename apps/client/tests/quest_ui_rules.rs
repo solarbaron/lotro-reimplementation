@@ -270,9 +270,9 @@ fn a_first_zero_report_and_a_new_total_redraw_the_tracker() {
     j.idle();
     assert_eq!(progress(&j), vec!["0/5".to_string()]);
     // The same report again changes nothing (no note).
-    let rev = j.state.npc().quests().revision();
+    let rev = j.state.quests().revision();
     j.apply(&report(5));
-    assert_eq!(j.state.npc().quests().revision(), rev);
+    assert_eq!(j.state.quests().revision(), rev);
 }
 
 #[test]
@@ -326,7 +326,7 @@ fn lost_notes_rebuild_the_markers() {
             tracked: i % 2 == 0,
         }));
     }
-    assert!(j.state.npc().quests().dropped_notes() > 0);
+    assert!(j.state.quests().dropped_notes() > 0);
     let out = j.idle();
     assert!(out.rings_changed);
     let ids: Vec<u32> = j.quests.markers().markers().keys().copied().collect();

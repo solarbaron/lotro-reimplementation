@@ -225,7 +225,7 @@ fn objective_lines_marker_labels_and_rings() {
         }
     }
     // Once the ring property is known, other DID properties of NPCs are not kept.
-    let session = world.player_state().npc().quests();
+    let session = world.player_state().quests();
     assert_eq!(session.ring_property(), Some(pid));
     let other = pid.wrapping_add(1);
     world.apply_polled(
@@ -237,12 +237,7 @@ fn objective_lines_marker_labels_and_rings() {
         })],
     );
     assert_eq!(
-        world
-            .player_state()
-            .npc()
-            .quests()
-            .entities_with(other)
-            .count(),
+        world.player_state().quests().entities_with(other).count(),
         0
     );
     println!("§8.2: ring {} over entity {npc_id:?}", quest);

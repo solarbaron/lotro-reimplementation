@@ -128,6 +128,8 @@ pub struct PlayerState {
     dropped_properties: u64,
     /// The NPC windows (decision 0024 P3).
     npc: crate::npc::NpcWindows,
+    /// The quest journal's session state (decision 0024 P3).
+    quests: crate::quests::QuestSession,
 }
 
 fn vital_index(k: VitalKind) -> u8 {
@@ -269,6 +271,7 @@ impl PlayerState {
             appearance: None,
             dropped_properties: 0,
             npc: crate::npc::NpcWindows::new(),
+            quests: crate::quests::QuestSession::new(),
         }
     }
 
@@ -464,11 +467,18 @@ impl PlayerState {
         &self.npc
     }
 
+    /// The quest journal's session state (decision 0024 P3; `crate::quests::session`).
+    #[must_use]
+    pub fn quests(&self) -> &crate::quests::QuestSession {
+        &self.quests
+    }
+
     /// Applies one session event; its changes are appended to `out`, in order.
     pub fn apply(&mut self, ev: &Event, out: &mut Vec<PlayerChange>) {
         let mut npc = Vec::new();
         self.npc.apply(ev, &mut npc);
         out.extend(npc.into_iter().map(PlayerChange::Npc));
+        self.quests.apply(ev);
         match ev {
             Event::Connected { .. } => {
                 // A new session: the character list is about to be reported again.

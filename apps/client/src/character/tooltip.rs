@@ -26,8 +26,9 @@ use tessera_formats::ui_layout::UiEnum;
 use tessera_formats::{Did, PropertyEntry};
 use tessera_gamedata::inventory::{Container, ItemId, ItemRef};
 use tessera_gamedata::tooltip::{
-    Condition, Equipped, Instance, Purpose, Row, RowContent as MRow, Subject, TemplateRef,
-    TooltipData, TooltipError, TooltipModel, TooltipRequest, Viewer, Widget,
+    Condition, Equipped, Instance, Purpose, Row, RowContent as MRow, SkillViewer, Subject,
+    TemplateRef, TooltipData, TooltipError, TooltipModel, TooltipRequest, VITAL_TYPE_HEALTH,
+    VITAL_TYPE_POWER, Viewer, Widget,
 };
 use tessera_ui::ImageRef;
 use tessera_ui::game::IconImage;
@@ -36,7 +37,7 @@ use tessera_ui::game::examine::{
 };
 
 use super::data::CharacterData;
-use super::state::PlayerState;
+use super::state::{PlayerState, VitalKind};
 
 /// `UILAYOUT` label of the examination layout (`item-tooltips.md` §2, §10).
 pub const EXAMINATION_LAYOUT_LABEL: &str = "examination";
@@ -155,6 +156,25 @@ pub fn viewer(state: &PlayerState, compare_equipped: bool) -> Viewer {
     }
 }
 
+/// The viewer's combat state for the skill rows of item tooltips (`skill-tooltips.md` §13):
+/// the morale and power maxima as `VitalType` keys 1 and 2 (ST25), so the skill-item vital
+/// cost rows (§7.10) and an attached skill tooltip show percentage costs. The level comes from
+/// [`viewer`].
+#[must_use]
+pub fn combat_viewer(state: &PlayerState) -> SkillViewer {
+    SkillViewer {
+        max_vitals: [
+            (VITAL_TYPE_HEALTH, VitalKind::Morale),
+            (VITAL_TYPE_POWER, VitalKind::Power),
+        ]
+        .into_iter()
+        .filter_map(|(key, k)| Some((key, state.vital(k)?.max)))
+        .filter(|(_, m)| m.is_finite() && *m > 0.0)
+        .collect(),
+        ..SkillViewer::default()
+    }
+}
+
 /// The hover (or pinned) tooltip request of item `id`; `None` for an unknown item.
 #[must_use]
 pub fn request(state: &PlayerState, id: ItemId, purpose: Purpose) -> Option<TooltipRequest> {
@@ -198,9 +218,11 @@ pub fn exam_tooltip_of(
     compare_equipped: bool,
 ) -> Result<ExamTooltip, TooltipError> {
     let req = request(state, id, purpose).ok_or(TooltipError::RecordMissing(Did(0)))?;
-    let model = data
-        .engine()
-        .build(&req, &viewer(state, compare_equipped))?;
+    let model = data.engine().build_with_combat(
+        &req,
+        &viewer(state, compare_equipped),
+        &combat_viewer(state),
+    )?;
     // Icon rows: the hovered item's own icon (with its instance override) for its record;
     // a comparison's for the equipped item in its slot.
     let own = state.inventory().item(id).and_then(|it| match &it.what {

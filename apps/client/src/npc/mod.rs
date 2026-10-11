@@ -25,8 +25,9 @@
 //!
 //! [`use_entity`] is the client's one entry point: it checks the use range and sends
 //! `UseEntity`. Its callers are the input action "use nearest NPC in range"
-//! ([`commands::USE_KEY`], keyboard U) and, after the P2 merge, the selection's `USE`, left
-//! double-click and right click (`npc-windows.md` §3.1). The scenario input script's `use`
+//! ([`commands::USE_KEY`], keyboard U) and P2's world clicks, a left double-click and a
+//! right click ([`NpcHub::use_selection`], `npc-windows.md` §3.1). The scenario input
+//! script's `use`
 //! is sent by the input player itself.
 
 pub mod commands;
@@ -39,14 +40,10 @@ pub mod texts;
 pub mod ui;
 pub mod wallet;
 
-/// The NPC windows' state as the player state holds it: [`state::NpcWindows`] (reached
-/// through `Deref`) together with the quest journal's session state (event routing hook
-/// of decision 0024 P3; [`crate::quests::session`] module docs).
-pub use crate::quests::SessionWindows as NpcWindows;
 pub use commands::{UseOutcome, command_of, use_entity};
 pub use data::{NpcData, NpcDataError};
 pub use hub::{NpcHub, parse_npc_panel};
 pub use refs::NpcRefs;
-pub use state::{FeedKind, NpcChange, WindowContent};
+pub use state::{FeedKind, NpcChange, NpcWindows, WindowContent};
 pub use ui::NpcUi;
 pub use wallet::SessionWallet;

@@ -418,6 +418,13 @@ impl NativePanels {
         Ok(k)
     }
 
+    /// Attaches the game widgets (`game-panels.md` §3: drag boxes, conditional fields,
+    /// quickslot bars, ...) to a root opened outside the catalogue (the combat panels of
+    /// `gameplayactivatables`, decision 0024 P2).
+    pub fn attach_game_widgets(&mut self, ui: &mut Ui, k: ElementKey) {
+        self.game.attach(ui, k, &self.data, &*self.shortcuts);
+    }
+
     /// Opens the HUD panels (P1–P5, P11, P14; P2 only with a chat setup). Returns each
     /// panel's result.
     pub fn open_hud(
@@ -581,6 +588,36 @@ impl NativePanels {
         out
     }
 
+    /// The panels the Escape rule may hide: the open on-demand panels (the own
+    /// plugin-manager window included) and the main menu.
+    fn escape_panels(&self) -> EscapePanels {
+        let mut on_demand: Vec<ElementKey> = self
+            .roots
+            .iter()
+            .filter(|(id, _)| id.is_on_demand() && **id != PanelId::MainMenu)
+            .map(|(_, k)| *k)
+            .collect();
+        if let Some(w) = self.manager.root().filter(|_| self.manager.is_own()) {
+            on_demand.push(w);
+        }
+        EscapePanels {
+            on_demand,
+            main_menu: self.root(PanelId::MainMenu),
+        }
+    }
+
+    /// Whether step 1 of the Escape rule (`game-panels.md` §16) finds a panel to hide: the
+    /// active panel is a visible on-demand panel, the main menu P6 and the own
+    /// plugin-manager window included (`combat-ui.md` TR5 runs its combat step only
+    /// otherwise).
+    #[must_use]
+    pub fn active_on_demand(&self, ui: &Ui) -> bool {
+        let p = self.escape_panels();
+        ui.active_panel()
+            .filter(|a| ui.exists(*a) && ui.is_visible(*a))
+            .is_some_and(|a| p.on_demand.contains(&a) || p.main_menu == Some(a))
+    }
+
     /// The Escape rule (`game-panels.md` §16) for a `menu` command the UI declined: a press
     /// that is not an auto-repeat hides the active on-demand panel, or else shows or hides
     /// the main menu P6 (opening it the first time). It never quits.
@@ -591,19 +628,7 @@ impl NativePanels {
         repeat: bool,
         sv: &mut Services<'_>,
     ) -> EscapeOutcome {
-        let mut on_demand: Vec<ElementKey> = self
-            .roots
-            .iter()
-            .filter(|(id, _)| id.is_on_demand() && **id != PanelId::MainMenu)
-            .map(|(_, k)| *k)
-            .collect();
-        if let Some(w) = self.manager.root().filter(|_| self.manager.is_own()) {
-            on_demand.push(w);
-        }
-        let panels = EscapePanels {
-            on_demand,
-            main_menu: self.root(PanelId::MainMenu),
-        };
+        let panels = self.escape_panels();
         let out = declined_escape(ui, &panels, press, repeat);
         match out {
             EscapeOutcome::HidActive(k) | EscapeOutcome::HidMainMenu(k) => {

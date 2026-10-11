@@ -71,21 +71,29 @@ plays scripted gameplay events on a virtual clock and writes the same event log 
 run, scenario selectors resolve against the user's install, the scenario parser is fuzzed,
 and CI checks that `tessera-server` links no data-decoding crate; the scenario-feed spec still
 waits for an independent re-review before it can be Accepted.
-**P1 (characters, inventory and equipment) is in its exit phase**
+**P1 (characters, inventory and equipment) passes its exit criteria and is merged**
 ([P1 status](docs/ROADMAP.md#p1-status)): with `--character-select` the selection and
 creation screens offer every race, gender, class and appearance control of the install, and
 made characters enter the world, offline or on a test server that passes their look on; the
 character panel with its paperdoll and the bag windows show scripted inventory, every one of
 151,230 item records gets its examination tooltip or a category, equipping changes the worn
-look, and plugins read `GetBackpack()` and `GetEquipment()`. Still open: the creation
-viewport's figure is not drawn, and colours and face layers of a look are not applied.
-**P3 (NPC windows: dialogue, quests, vendors and loot) passes its exit criteria on Tessera's
+look, and plugins read `GetBackpack()` and `GetEquipment()`. Visual defects of the creation
+figure remain open.
+**P3 (NPC windows: dialogue, quests, vendors and loot) passes its exit criteria and is merged on Tessera's
 side** ([P3 status](docs/ROADMAP.md#p3-status)): scripted NPCs open the install's dialogue,
 quest-offer, vendor (buy, sell, buy-back, quantity), barter and loot windows with install text
 and icons; the quest log and tracker show all 20,807 quest records of the install from a
 scenario without a failure; the wallet window and the plugin wallet views show scripted
-currencies; local golden images of 19 windows match (decision 0031). Still open: the new
-specs' independent review and some text-fitting defects of the windows.
+currencies; local golden images of 19 windows match (decision 0031). Its specs are
+Accepted. Still open: some text-fitting defects of the windows.
+**P2 (targeting, skills and combat presentation) passes its exit criteria on Tessera's
+side** ([P2 status](docs/ROADMAP.md#p2-status)): a scripted fight plays headless with the
+player and target frames, cast bars, effect icons, floating combat text, quickslot cooldowns
+and the defeat panel on screen (committed goldens without an install, local goldens with it);
+every one of 13,247 skill and 32,971 effect records gets its tooltip and icon or a category;
+combat scripts play their animations and particles on figures in the walker; actors on the
+test server can be selected and show a target frame. Its new specs still wait for an
+independent review before they are Accepted.
 
 | Area | State |
 |---|---|
@@ -110,8 +118,9 @@ specs' independent review and some text-fitting defects of the windows.
 | UI layout and font records, user skins, retained UI (`tessera-ui`) with CPU canvases and a UI pass in the renderer; game panels, chat window and plugin manager in the walker | M5 exit phase: 302 / 302 layouts and 48 / 48 fonts decode; 15 / 15 panels at their computed geometry; a user skin changes 13 / 13 skinnable panels; owner screenshots pending; UI budgets U1/U4 not met yet |
 | Lua plugin host (`tessera-plugins` over the plugin-free core `tessera-script`): discovery, apartments, import, plugin data, UI classes, class helper, `/plugins` | M5 exit phase: synthetic plugin suite and sandbox escape tests pass; real third-party plugins wait for the owner's install |
 | Scenario feed in the sandbox (`tessera_net::scenario`), presentation data layer `tessera-gamedata`, `tessera-client --scenario`, server dependency guard (`tools/check-server-deps.sh`) | P0 exit phase: 6 committed synthetic scenarios replay byte for byte; 383,343 install records indexed with 0 failures; 2 fuzz targets; criteria 2–4 pass, the spec's independent re-review (criterion 1) is pending |
-| Character selection and creation screens (`--character-select`), character panel and bag windows, item examination tooltips with comparison and pins, worn look from equipment, plugin inventory views; protocol 1.1 looks on the test server | P1 exit phase: 8 races, 15 bodies, 130 (race, gender, class) choices; 151,230 / 151,230 item records categorised (149,695 tooltips laid out, 0 failures); criteria 2–4 pass, criterion 1 partly (viewport figure, look colours and face layers open) |
-| NPC use, dialogue and quest-offer windows, vendor, barter and loot windows, wallet window, quest log, tracker and quest markers, plugin wallet views; scenario feed revision 5 (`rewards`, `buyback`, `action(…)`) | P3 criteria pass on Tessera's side: 20,807 / 20,807 quest records in log or tracker with 0 failures; 19 / 19 local window goldens match; 12 synthetic goldens; specs in review |
+| Character selection and creation screens (`--character-select`), character panel and bag windows, item examination tooltips with comparison and pins, worn look from equipment, plugin inventory views; protocol 1.1 looks on the test server | done (P1, merged): 8 races, 15 bodies, 130 (race, gender, class) choices; 151,230 / 151,230 item records categorised (149,695 tooltips laid out, 0 failures); criteria 1–4 pass |
+| NPC use, dialogue and quest-offer windows, vendor, barter and loot windows, wallet window, quest log, tracker and quest markers, plugin wallet views; scenario feed revision 5 (`rewards`, `buyback`, `action(…)`) | P3 criteria pass on Tessera's side: 20,807 / 20,807 quest records in log or tracker with 0 failures; 19 / 19 local window goldens match; 12 synthetic goldens; specs Accepted |
+| Combat presentation: selection and targeting keys, player and target frames, cast bars, effect bars, floating text, quickslot cooldowns, defeat panel (`tessera-ui` `game::combat`); skill and effect tooltips; combat animation and particles in the walker; plugin combat views; local selection on the test server | P2 exit phase: criteria 1–4 pass on Tessera's side; 20 / 20 elements shown at 11 checkpoints with and without the install; 33,601 skill and effect tooltips laid out, 12,617 categorised NoTooltip, 0 failures; 11,155 particle descriptors categorised; specs await independent review |
 | Official-server compatibility | **gated** behind legal review ([LEGAL.md §9](docs/LEGAL.md#9-gates-and-the-official-server-target)); no code exists |
 
 The full plan, with exit criteria per milestone, is in [docs/ROADMAP.md](docs/ROADMAP.md).

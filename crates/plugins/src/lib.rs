@@ -16,9 +16,12 @@
 //!   `PluginManager`, …) and `Turbine.Gameplay`'s read-only local-player views fed by a
 //!   [`LocalPlayerSource`] the client implements ([`gameplay`]); the inventory views
 //!   (`Backpack`, `Equipment`, `Item`, `ItemInfo`) fed by an [`InventorySource`] and
-//!   queued [`InventoryViewEvent`]s ([`inventory`], `lua-plugin-api.md` §15.1); the wallet
-//!   and money views (`Wallet`, `WalletItem`, `GetMoney`) fed by a [`WalletSource`] and
-//!   queued [`WalletViewEvent`]s ([`wallet`], §15.3).
+//!   queued [`InventoryViewEvent`]s ([`inventory`], `lua-plugin-api.md` §15.1); the
+//!   combat views (actor vitals, level and target, `EffectList`, `Effect`, `IsInCombat`,
+//!   the trained `SkillList`) fed by a [`CombatSource`] and queued [`CombatViewEvent`]s,
+//!   with [`CombatModel`] as a ready-made source ([`combat`], §15.2); the wallet and money
+//!   views (`Wallet`, `WalletItem`, `GetMoney`) fed by a [`WalletSource`] and queued
+//!   [`WalletViewEvent`]s ([`wallet`], §15.3).
 //! - [`HostApi`]: what the embedding client provides; it extends the core's
 //!   [`CoreHost`]. Plugin shell commands live in the host's one command registry
 //!   (`chat-window.md` §10 item 3); [`CommandTable`] is a registry for hosts without one.
@@ -40,6 +43,7 @@
 mod apartment;
 pub mod api;
 pub mod class_helper;
+pub mod combat;
 pub mod commands;
 mod data_io;
 pub mod descriptor;
@@ -62,6 +66,10 @@ pub mod ui;
 pub mod vfs;
 pub mod wallet;
 
+pub use combat::{
+    ActorEvent, ActorKind, ActorValues, CombatModel, CombatSource, CombatViewEvent, CombatVital,
+    EffectData, EffectEvent, SkillData, SkillKey, ViewEntity,
+};
 pub use commands::{CommandOwner, CommandTable};
 pub use descriptor::{DescriptorError, PluginDescriptor, parse_descriptor};
 pub use discovery::{AvailablePlugin, RefreshReport};

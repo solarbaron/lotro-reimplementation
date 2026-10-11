@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use rand::Rng;
 use tessera_formats::script_table::{
-    NodeData, NodeKind, ParticleScriptNode, PortPayload, PortType, SoundNode,
+    AnimationNode, NodeData, NodeKind, ParticleScriptNode, PortPayload, PortType, SoundNode,
 };
 use tessera_formats::{Did, PropertyValue};
 
@@ -15,8 +15,9 @@ use super::instance::{ParticleState, RunState, WhenRunningState};
 use super::{DeferredRun, Event, INTENSITY_EPSILON, InstanceId, KindState, RunCtx, Runtime};
 use crate::graph::{NodeRef, Unit};
 use crate::sink::{
-    AnimationOutcome, EffectSink, EntityId, EnvironmentRequest, ParticleStart, SoundPositioner,
-    SoundStart, SoundStartOutcome,
+    AnimationOutcome, BeamStart, EffectSink, EntityId, EnvironmentRequest, ExecuteRequest,
+    MAX_EXECUTE_OUTPUTS, ParticleStart, SoundPositioner, SoundStart, SoundStartOutcome,
+    StoryHookEvent,
 };
 use crate::values::{as_bool, as_f32, as_i32, as_u32, as_vec3};
 
@@ -116,8 +117,12 @@ impl Runtime<'_> {
                 self.issue(crate::RuntimeIssue::GameCallbackOpaque);
                 false
             }
-            // Native callbacks and gameplay hooks: complete at once (§18).
-            NodeKind::EXECUTE | NodeKind::STORY_HOOK => false,
+            NodeKind::EXECUTE => self.execute_start(sink, id, unit, nref),
+            NodeKind::STORY_HOOK => {
+                self.story_hook_start(sink, id, unit, nref);
+                false
+            }
+            NodeKind::BEAM => self.beam_start(sink, id, unit, nref),
             other => {
                 self.report_unimplemented(other);
                 false
@@ -139,6 +144,7 @@ impl Runtime<'_> {
             KindState::Switch(s) => Hook::Cancel(vec![s.delay_event.take(), s.fade_event.take()]),
             KindState::Animation { handle, event } => Hook::Animation(handle.take(), event.take()),
             KindState::Particle(p) => Hook::Particle(p.handle.take(), p.immediate),
+            KindState::Beam { handle, .. } => Hook::Beam(*handle),
             KindState::Run(r) if !r.unbind => Hook::Run(std::mem::take(&mut r.started)),
             KindState::OnStop if reason != 2 => Hook::OnStop,
             _ => Hook::None,
@@ -169,6 +175,10 @@ impl Runtime<'_> {
                 if let Some(h) = h {
                     sink.stop_particle(h, immediate);
                 }
+            }
+            Hook::Beam(h) => {
+                self.beams.remove(&h);
+                sink.stop_beam(h);
             }
             Hook::Run(started) => {
                 for root in started {
@@ -1177,7 +1187,11 @@ impl Runtime<'_> {
         let Some((entity, intensity)) = self.insts.get(id).map(|i| (i.entity, i.intensity)) else {
             return false;
         };
-        match sink.start_animation(entity, a, intensity) {
+        // Driven fields (§6.10: substituted before the start; `combat-visuals.md` §3.3:
+        // `AnimationScript_Speed` from `Combat_AnimationSpeedMultiplier`).
+        let copy = self.effective_animation(id, a);
+        let node = &copy;
+        match sink.start_animation(entity, node, intensity) {
             AnimationOutcome::CompleteAtOnce => false,
             AnimationOutcome::RunFor(h, secs) => {
                 let secs = if secs.is_finite() && secs > 0.0 {
@@ -1208,6 +1222,97 @@ impl Runtime<'_> {
     }
 
     // ----- Particle (`particle-runtime.md` §5.4–§5.8) -----
+
+    /// The Animation node's fields with the driven values of instance `id` applied
+    /// (`script-table.md` §6.10, §4.2): a field takes its driven value when its source
+    /// property has one, else keeps the stored value.
+    pub(crate) fn effective_animation(
+        &self,
+        id: InstanceId,
+        stored: &AnimationNode,
+    ) -> AnimationNode {
+        let mut a = *stored;
+        let Some(i) = self.insts.get(id) else {
+            return a;
+        };
+        let t = &self.vocab.timer;
+        let f = &self.vocab.animation;
+        let finite = |v: f32| v.is_finite().then_some(v);
+        if let Some(v) = i.override_of(t.speed).and_then(as_f32).and_then(finite) {
+            a.speed = v;
+        }
+        if let Some(v) = i
+            .override_of(t.speed_multiplier)
+            .and_then(as_f32)
+            .and_then(finite)
+        {
+            a.speed_multiplier = v;
+        }
+        if let Some(v) = i.override_of(t.loop_forever).and_then(as_bool) {
+            a.loop_forever = v;
+        }
+        if let Some(v) = i.override_of(t.loop_count).and_then(as_i32) {
+            a.loop_count = v;
+        }
+        if let Some(v) = i.override_of(self.vocab.use_bone_opacity).and_then(as_bool) {
+            a.use_bone_opacity = v;
+        }
+        if let Some(v) = i.override_of(f.asset).and_then(as_u32) {
+            a.asset = Did(v);
+        }
+        if let Some(v) = i.override_of(f.layer).and_then(as_u32) {
+            a.layer = v;
+        }
+        if let Some(v) = i.override_of(f.ramp_in).and_then(as_f32).and_then(finite) {
+            a.ramp_in = v;
+        }
+        if let Some(v) = i.override_of(f.ramp_out).and_then(as_f32).and_then(finite) {
+            a.ramp_out = v;
+        }
+        if let Some(v) = i.override_of(f.manual_update).and_then(as_bool) {
+            a.manual_update = v;
+        }
+        if let Some(v) = i
+            .override_of(f.manual_time)
+            .and_then(as_f32)
+            .and_then(finite)
+        {
+            a.manual_time = v;
+        }
+        if let Some(v) = i
+            .override_of(f.start_time)
+            .and_then(as_f32)
+            .and_then(finite)
+        {
+            a.start_time = v;
+        }
+        if let Some(v) = i.override_of(f.end_time).and_then(as_f32).and_then(finite) {
+            a.end_time = v;
+        }
+        if let Some(v) = i.override_of(f.randomize_start_time).and_then(as_bool) {
+            a.randomize_start_time = v;
+        }
+        a
+    }
+
+    /// A driven field of a running animation node changed (§6.10 step 7): the sink gets the
+    /// node's current fields for the new rate and `UseBoneOpacity`.
+    pub(crate) fn animation_fields_changed(
+        &mut self,
+        sink: &mut dyn EffectSink,
+        id: InstanceId,
+        stored: &AnimationNode,
+    ) {
+        let Some(KindState::Animation {
+            handle: Some(h), ..
+        }) = self.insts.get(id).map(|i| &i.kind)
+        else {
+            return;
+        };
+        let h = *h;
+        let node = self.effective_animation(id, stored);
+        sink.update_animation(h, &node);
+    }
 
     /// The Particle node's fields with the driven values of this start applied
     /// (`particle-runtime.md` §5.4 "Driven node fields", walker rule (c)): a field takes
@@ -1312,11 +1417,45 @@ impl Runtime<'_> {
             self.stats.particles_gated += 1;
             return false;
         }
-        // 4–5. Dropped or attached path.
+        // 4–5. Dropped or attached path. A node whose targets aim at entities named by
+        // properties (Property targets, type 3, and Random targets, type 6: the upcoming
+        // targets of a combat story, `combat-visuals.md` §4.6) attaches to the first entity
+        // they resolve to, and starts nothing when they resolve to none (implementer OPENs of
+        // `combat-visuals.md` §4.6 and `particle-runtime.md` §5.5); other nodes keep §5.5
+        // step 1 (the script's entity, or the redirect property's object).
+        let property_targets = !p.drop_effect
+            && p.redirect_property == 0
+            && n.targets.iter().any(|t| matches!(t.target_type, 3 | 6));
         let target = if p.drop_effect {
-            entity
+            Some(entity)
+        } else if property_targets {
+            let params = self
+                .insts
+                .get(id)
+                .map(|i| i.params.clone())
+                .unwrap_or_default();
+            self.resolve_targets_with(n, entity, &params)
+                .first()
+                .copied()
         } else {
-            self.particle_target(sink, entity, p.redirect_property)
+            Some(self.particle_target(sink, entity, p.redirect_property))
+        };
+        let Some(target) = target else {
+            // Nothing to attach to: a finite effect completes, a never-ending node keeps an
+            // instance with no effect until it is stopped (as §5.5 step 5 when nothing
+            // starts).
+            if !never_ending {
+                return false;
+            }
+            if let Some(i) = self.insts.get_mut(id) {
+                i.kind = KindState::Particle(Box::new(ParticleState {
+                    handle: None,
+                    target: entity,
+                    immediate: p.immediate_disposal,
+                    redirect: 0,
+                }));
+            }
+            return true;
         };
         let request = ParticleStart {
             entity,
@@ -1490,6 +1629,216 @@ pub(crate) fn silent(intensity: f32) -> bool {
     intensity <= INTENSITY_EPSILON
 }
 
+/// The combat-facing node kinds: StoryHook, Execute, Beam (`combat-visuals.md`).
+impl Runtime<'_> {
+    /// The run's story (`StorySystem_StoryID`, `combat-visuals.md` §3.2) of an instance.
+    fn story_of(&self, id: InstanceId) -> Option<i64> {
+        let pid = self.vocab.story_id?;
+        let i = self.insts.get(id)?;
+        let v = i.params.get(&pid)?;
+        v.as_f64().filter(|x| x.is_finite()).map(|x| {
+            #[allow(clippy::cast_possible_truncation)]
+            let n = x as i64;
+            n
+        })
+    }
+
+    /// A StoryHook node (`script-table.md` §9.1, T44): hands its type and the run's story to
+    /// the sink; the node completes at once.
+    fn story_hook_start(
+        &mut self,
+        sink: &mut dyn EffectSink,
+        id: InstanceId,
+        unit: &Arc<Unit>,
+        nref: NodeRef,
+    ) {
+        let Some(NodeData::StoryHook { hook_type }) = unit.node(nref.node).map(|n| &n.data) else {
+            return;
+        };
+        let Some(entity) = self.insts.get(id).map(|i| i.entity) else {
+            return;
+        };
+        let event = StoryHookEvent {
+            entity,
+            hook_type: *hook_type,
+            story: self.story_of(id),
+        };
+        sink.story_hook(&event);
+    }
+
+    /// An Execute node (`script-table.md` §9.1; `combat-visuals.md` §11 rule 8): the sink
+    /// answers with values written into the run's parameters, and the result ports (type 5)
+    /// whose payload (PID, value) matches the written value fire, otherwise the Default
+    /// ports. Without an answer the node fires the result ports matching its `DefaultValue`
+    /// (`script-runtime.md` §18), or completes at once.
+    fn execute_start(
+        &mut self,
+        sink: &mut dyn EffectSink,
+        id: InstanceId,
+        unit: &Arc<Unit>,
+        nref: NodeRef,
+    ) -> bool {
+        let Some(n) = unit.node(nref.node) else {
+            return false;
+        };
+        let NodeData::Execute(e) = &n.data else {
+            return false;
+        };
+        let Some((entity, params)) = self.insts.get(id).map(|i| (i.entity, i.params.clone()))
+        else {
+            return false;
+        };
+        let request = ExecuteRequest {
+            entity,
+            callback: e.callback,
+            default_value: e.default_value.as_ref(),
+            call_properties: &e.call_properties,
+            story: self.story_of(id),
+            node_id: n.base.node_id,
+        };
+        let reply = sink.execute(&request);
+        let matches = |pid: u32, want: u8, value: Option<&PropertyValue>| {
+            let _ = pid;
+            value.and_then(PropertyValue::as_bits) == Some(u64::from(want))
+        };
+        let mut fire: Vec<usize> = Vec::new();
+        match reply {
+            Some(r) => {
+                let mut set = (*params).clone();
+                for (pid, v) in r.outputs.into_iter().take(MAX_EXECUTE_OUTPUTS) {
+                    set.insert(pid, v);
+                }
+                for (i, port) in n.ports_of(PortType::SWITCH_VALUE) {
+                    if let PortPayload::ExecuteResult(pid, want) = port.payload
+                        && matches(pid, want, set.get(&pid))
+                    {
+                        fire.push(i);
+                    }
+                }
+                if fire.is_empty() {
+                    fire.extend(n.ports_of(PortType::DEFAULT).map(|(i, _)| i));
+                }
+                if let Some(i) = self.insts.get_mut(id) {
+                    i.params = Arc::new(set);
+                }
+            }
+            None => {
+                let Some(d) = &e.default_value else {
+                    return false;
+                };
+                for (i, port) in n.ports_of(PortType::SWITCH_VALUE) {
+                    if let PortPayload::ExecuteResult(pid, want) = port.payload
+                        && pid == d.pid
+                        && matches(pid, want, Some(&d.value))
+                    {
+                        fire.push(i);
+                    }
+                }
+                if fire.is_empty() {
+                    return false;
+                }
+            }
+        }
+        for p in fire {
+            self.run_port(sink, unit, nref.unit, nref.node, p, id, 0);
+            if self.stopped_or_ancestor(id) {
+                break;
+            }
+        }
+        self.arm(id);
+        true
+    }
+
+    /// A Beam node (`particle-runtime.md` §11.1 step 1, rule 14): the first entity of its
+    /// targets (none when it has none or they resolve to nothing); without one and without
+    /// `UseTargetPosition`, no beam is made and the node completes at once. Otherwise the
+    /// sink makes the beam and the node runs until [`Runtime::beam_finished`] (its Default
+    /// ports fire at [`Runtime::beam_arrived`]).
+    fn beam_start(
+        &mut self,
+        sink: &mut dyn EffectSink,
+        id: InstanceId,
+        unit: &Arc<Unit>,
+        nref: NodeRef,
+    ) -> bool {
+        let Some(n) = unit.node(nref.node) else {
+            return false;
+        };
+        let NodeData::Beam(b) = &n.data else {
+            return false;
+        };
+        let Some((entity, params, intensity)) = self
+            .insts
+            .get(id)
+            .map(|i| (i.entity, i.params.clone(), i.intensity))
+        else {
+            return false;
+        };
+        let target = if n.targets.is_empty() {
+            None
+        } else {
+            self.resolve_targets_with(n, entity, &params)
+                .first()
+                .copied()
+        };
+        if target.is_none() && !b.use_target_position {
+            tracing::debug!(
+                node = n.base.node_id,
+                targets = n.targets.len(),
+                "beam: no target entity; no beam"
+            );
+            return false;
+        }
+        let request = BeamStart {
+            entity,
+            target,
+            node: (**b).clone(),
+            intensity,
+            node_id: n.base.node_id,
+        };
+        let Some(handle) = sink.start_beam(&request) else {
+            return false;
+        };
+        self.beams.insert(handle, id);
+        if let Some(i) = self.insts.get_mut(id) {
+            i.kind = KindState::Beam {
+                handle,
+                fired: false,
+            };
+        }
+        true
+    }
+
+    /// Fires a Beam node's Default ports, once (`particle-runtime.md` §11.1 step 7).
+    pub(crate) fn beam_fire(&mut self, sink: &mut dyn EffectSink, id: InstanceId) -> bool {
+        let nref = match self.insts.get_mut(id) {
+            Some(i) if !i.stopped => match &mut i.kind {
+                KindState::Beam { fired, .. } if !*fired => {
+                    *fired = true;
+                    i.node
+                }
+                _ => return false,
+            },
+            _ => return false,
+        };
+        let Some(nref) = nref else { return false };
+        let Some(unit) = self.units.get(nref.unit as usize).cloned() else {
+            return false;
+        };
+        let Some(n) = unit.node(nref.node) else {
+            return false;
+        };
+        let ports: Vec<usize> = n.ports_of(PortType::DEFAULT).map(|(i, _)| i).collect();
+        for p in ports {
+            self.run_port(sink, &unit, nref.unit, nref.node, p, id, 0);
+            if self.stopped_or_ancestor(id) {
+                break;
+            }
+        }
+        true
+    }
+}
+
 /// What a stop hook does, taken out of the instance first.
 enum Hook {
     None,
@@ -1501,6 +1850,7 @@ enum Hook {
         Option<crate::sched::EventKey>,
     ),
     Particle(Option<crate::sink::ParticleHandle>, bool),
+    Beam(crate::sink::BeamHandle),
     Run(Vec<InstanceId>),
     OnStop,
 }

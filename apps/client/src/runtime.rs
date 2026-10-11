@@ -102,6 +102,9 @@ pub struct Runtime {
     pub p1: crate::character::CharacterHub,
     /// Whether the P1 facts are loaded once the archives open (walker runs).
     load_p1: bool,
+    /// Targeting, skills and combat (decision 0024 P2): the install's combat data and the
+    /// plugin combat views.
+    pub p2: crate::combat::CombatHub,
     /// NPC windows (decision 0024 P3): their install names and facts, the plugin wallet
     /// views' model, the windows on the game UI.
     pub npc: crate::npc::NpcHub,
@@ -300,6 +303,8 @@ impl Runtime {
         let mut p1 = crate::character::CharacterHub::new();
         p1.want_screens(args.character_select);
         p1.attach_plugins(plugins.manager_mut());
+        let p2 = crate::combat::CombatHub::new();
+        p2.attach_plugins(plugins.manager_mut());
         Ok(Self {
             loader,
             status: DataStatus::Loading,
@@ -324,6 +329,7 @@ impl Runtime {
             texture_settled: false,
             p1,
             load_p1: walker,
+            p2,
             npc: crate::npc::NpcHub::new(
                 args.open_panel
                     .iter()
@@ -536,14 +542,20 @@ impl Runtime {
 
     /// Per-frame update of the world session and the plugin host.
     pub fn tick(&mut self, now: Instant) {
-        if let Some(d) = self.p1.poll()
-            && let Some(w) = &mut self.world
+        if let Some(d) = self.p1.poll() {
+            self.p2.set_data(&d);
+            if let Some(w) = &mut self.world {
+                w.set_bag_layout(d.bags());
+                w.set_look_data(self.p1.screens().cloned());
+                // Items that arrived before the facts: the plugin views and the panels
+                // re-read them now.
+                self.p1.resync(w.player_state());
+            }
+        }
+        if self.p2.install().is_none()
+            && let Some(d) = self.p1.data().cloned()
         {
-            w.set_bag_layout(d.bags());
-            w.set_look_data(self.p1.screens().cloned());
-            // Items that arrived before the facts: the plugin views and the panels
-            // re-read them now.
-            self.p1.resync(w.player_state());
+            self.p2.set_data(&d);
         }
         self.npc.poll(self.p1.data());
         if let Some(world) = &mut self.world {
@@ -556,6 +568,11 @@ impl Runtime {
             );
             self.p1
                 .after_events(world.player_state(), changes, self.plugins.manager_mut());
+            // The plugin combat views (`lua-plugin-api.md` §15.2), at the plugins' clock.
+            let combat_events = world.take_combat_events();
+            let game_time = tessera_plugins::HostApi::game_time(self.plugins.host());
+            self.p2
+                .after_events(&combat_events, game_time, self.plugins.manager_mut());
             for line in world.take_chat() {
                 if line.sender.is_empty() && self.notices.len() < 64 {
                     self.notices.push(line.text.clone());

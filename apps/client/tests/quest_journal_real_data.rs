@@ -234,7 +234,7 @@ fn every_quest_record_in_the_log_and_the_tracker() {
     let (outcome, _, mut state) = play_path(&path, Some(&i.dir), Some(i.data.bags()), |_, _, _| {});
     assert_eq!(outcome.exit_code(), 0, "{outcome:?}");
     set_player(&mut state, &ctx);
-    let journal_len = state.npc().quests().journal().quests().len();
+    let journal_len = state.quests().journal().quests().len();
     println!(
         "scenario: {journal_len} quests reported active ({:?})",
         t0.elapsed()
@@ -296,7 +296,6 @@ fn every_quest_record_in_the_log_and_the_tracker() {
     // The tracker: batches of up to 10 until every record was tracked once.
     let t2 = Instant::now();
     let refs: Vec<RecordRef> = state
-        .npc()
         .quests()
         .journal()
         .quests()

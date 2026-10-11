@@ -171,7 +171,10 @@ impl PluginManager {
             index: Mutex::new(IndexState::default()),
             gameplay: Mutex::new(None),
             inventory: Mutex::new(None),
+            combat: Mutex::new(None),
+            combat_watch: Arc::default(),
             next_id: AtomicU64::new(1),
+            gameplay_seq: AtomicU64::new(0),
         });
         Self {
             shared,
@@ -397,6 +400,36 @@ impl PluginManager {
     /// [`Self::raise_gameplay_event`] and [`crate::GameplayEvent::Inventory`].
     pub fn set_inventory_source(&mut self, source: Option<Arc<dyn InventorySource>>) {
         *lock(&self.shared.inventory) = source;
+    }
+
+    /// Set (or clear) the source of the `Turbine.Gameplay` combat views (actor morale,
+    /// power, level and target, effect lists, `IsInCombat`, the trained-skill list;
+    /// `lua-plugin-api.md` §15.2). Without one, the `LocalPlayer` reads its actor values
+    /// from the [`LocalPlayerSource`], other actors are never returned, effect lists are
+    /// empty and the trained-skill list holds only the placeholder skill
+    /// (`plugin-api-usage.md` §7.4). Changes are raised with [`Self::raise_gameplay_event`]
+    /// and [`crate::GameplayEvent::Combat`] (or [`Self::raise_combat_events`]);
+    /// [`crate::combat::CombatModel`] derives them.
+    pub fn set_combat_source(&mut self, source: Option<Arc<dyn crate::combat::CombatSource>>) {
+        *lock(&self.shared.combat) = source;
+    }
+
+    /// Queue combat-view events for step 7, in order (`lua-plugin-api.md` §15, §15.2).
+    /// An event of an entity, effect or skill that no apartment has a view object of is
+    /// not queued (§15.2), so changes no plugin watches never fill the queue. To tell
+    /// whether `ViewEntity::Entity` names the player this may call
+    /// [`crate::combat::CombatSource::player`], so do not call it while holding a lock
+    /// the source takes (raise a [`crate::combat::CombatModel`]'s events after releasing
+    /// its lock).
+    pub fn raise_combat_events(
+        &mut self,
+        events: impl IntoIterator<Item = crate::combat::CombatViewEvent>,
+    ) {
+        let mut st = lock(&self.shared.state);
+        for e in events {
+            self.shared
+                .raise_gameplay(&mut st, GameplayEvent::Combat(e));
+        }
     }
 
     fn cell(&self, apartment: &str) -> Option<Arc<ApartmentCell>> {
@@ -805,7 +838,8 @@ impl PluginManager {
 
     /// Queue a gameplay `…Changed` event for step 7 (`lua-plugin-api.md` §15).
     pub fn raise_gameplay_event(&mut self, event: GameplayEvent) {
-        lock(&self.shared.state).queue_gameplay(event);
+        self.shared
+            .raise_gameplay(&mut lock(&self.shared.state), event);
     }
 
     /// Frame-loop step 7 after the UI tick: the deferred work (sliced) and the collector
@@ -839,7 +873,11 @@ impl PluginManager {
                 if ran > 0 && start.elapsed() >= self.shared.slice {
                     break;
                 }
-                st.queue.pop_front()
+                let item = st.queue.pop_front();
+                if matches!(item, Some(Item::Gameplay(..))) {
+                    st.gameplay_queued = st.gameplay_queued.saturating_sub(1);
+                }
+                item
             };
             let Some(item) = item else { break };
             self.run_item(item);
@@ -962,11 +1000,11 @@ impl PluginManager {
                 ok,
             } => self.write_callbacks(apartment, &callbacks, ok),
             Item::Chat { line, skip } => self.deliver_chat(&line, &skip),
-            Item::Gameplay(ev) => {
+            Item::Gameplay(ev, seq) => {
                 let cells: Vec<Arc<ApartmentCell>> = lock(&self.shared.state).apartments.clone();
                 for cell in cells {
                     if let Some(ap) = lock(&cell.slot).as_ref() {
-                        crate::gameplay::deliver(ap, &ev);
+                        crate::gameplay::deliver(ap, &ev, seq);
                     }
                 }
             }

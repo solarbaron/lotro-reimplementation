@@ -27,12 +27,20 @@
 //! | [`mod@place`] | placement and the comparison group | §9, §8.3 |
 //! | [`pin`] | the pin toggle and its limit | §10 |
 //! | `panel` | the element tree work | §4, §5, §7, §9, §10 |
+//! | [`timer`] | live timer rows of skill and effect tooltips | `skill-tooltips.md` §10.2, §12.2 |
+//!
+//! Skill and effect tooltips (`skill-tooltips.md`) use the same panel: the client fills an
+//! [`ExamTooltip`] from its skill or effect tooltip model (the layouts `Skill_ExamineLayout`
+//! and `Effect_ExamineLayout` are ordinary examination elements), shows it with
+//! [`ExamTooltips::show`] when a skill slot or effect icon asks ([`crate::Ui::set_examine`]
+//! is set on them), and tracks its timer rows with [`LiveTimers`].
 
 pub mod assemble;
 pub mod input;
 mod panel;
 pub mod pin;
 pub mod place;
+pub mod timer;
 
 pub use assemble::{AsmRow, Assembly, assemble, satisfies_iv6};
 pub use input::{
@@ -43,6 +51,7 @@ pub use panel::{BuiltTooltip, ExamTooltips, PinnedWindow, ShownTooltip};
 pub(crate) use panel::{DRAW_OVER, code_element};
 pub use pin::{MAX_PINNED, PinOutcome, PinRegistry};
 pub use place::{place, place_group};
+pub use timer::{LiveTimers, TimerText};
 
 /// Errors of the examination tooltips.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]

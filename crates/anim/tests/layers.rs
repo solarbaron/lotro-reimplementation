@@ -331,3 +331,71 @@ fn deformer_track_weights_are_truncated_without_tolerance() {
     let expect = (101.0 / 255.0) / (1.0 + 101.0 / 255.0);
     assert!((z - expect).abs() < 1e-6, "{z} vs {expect}");
 }
+
+/// A layer inserted between two others takes the priority between them; removing it
+/// restores the old result (a combat clip between idle and the held proportion layer).
+#[test]
+fn inserted_layers_take_the_priority_of_their_index() {
+    let s = Arc::new(Skeleton::from_parts(&[-1], &[Transform::IDENTITY]).unwrap());
+    let clip = |z: f32| bind(&interleaved_clip(2, 1, 1.0, |_, _| at_z(z)), &s);
+    let mut anim = Animator::new(Arc::clone(&s));
+    anim.play(0, Playback::new(clip(1.0), Wrap::Loop), 0.0, false)
+        .unwrap();
+    anim.play(1, Playback::new(clip(2.0), Wrap::Loop), 0.0, false)
+        .unwrap();
+    // Layer 1 is above layer 0 and takes the whole budget.
+    assert!((eval(&anim)[0].translation[2] - 2.0).abs() < 1e-5);
+    // An empty inserted layer changes nothing.
+    anim.insert_layer(1).unwrap();
+    assert_eq!(anim.layers().len(), 3);
+    assert!((eval(&anim)[0].translation[2] - 2.0).abs() < 1e-5);
+    // Inserted at the top, a clip overrides both.
+    let top = anim.layers().len();
+    anim.insert_layer(top).unwrap();
+    anim.play(top, Playback::new(clip(3.0), Wrap::Loop), 0.0, false)
+        .unwrap();
+    assert!((eval(&anim)[0].translation[2] - 3.0).abs() < 1e-5);
+    assert!(anim.remove_layer(top));
+    assert!(!anim.remove_layer(17));
+    assert!((eval(&anim)[0].translation[2] - 2.0).abs() < 1e-5);
+    // Out of range or too many layers: refused, unchanged.
+    assert!(anim.insert_layer(9).is_err());
+    while anim.layers().len() < Animator::MAX_LAYERS {
+        let n = anim.layers().len();
+        anim.insert_layer(n).unwrap();
+    }
+    assert!(anim.insert_layer(0).is_err());
+    assert_eq!(anim.layers().len(), Animator::MAX_LAYERS);
+}
+
+/// `skeleton-anim.md` §6.6, K22: a change of `UseBoneOpacity` while a clip plays moves the
+/// mixing factor linearly over 0.2 s; the track's opacity is *o* + *m* × (1 − *o*), ignored
+/// from 0.9998 on.
+#[test]
+fn a_bone_opacity_change_blends_over_a_fifth_of_a_second() {
+    let s = Arc::new(Skeleton::from_parts(&[-1], &[Transform::IDENTITY]).unwrap());
+    let mut weighted = interleaved_clip(2, 1, 1.0, |_, _| at_z(10.0));
+    weighted.weights = vec![0.5];
+    let mut anim = Animator::new(Arc::clone(&s));
+    anim.play(0, Playback::new(z_clip(&s, 0.0), Wrap::Loop), 0.0, false)
+        .unwrap();
+    let mut p = Playback::new(bind(&weighted, &s), Wrap::Loop);
+    p.use_track_weights = true;
+    anim.play(1, p, 0.0, false).unwrap();
+    let z0 = eval(&anim)[0].translation[2];
+    assert!((z0 - 5.0).abs() < 0.1, "half from the upper clip: {z0}");
+    anim.layer_mut(1).unwrap().blend_bone_opacity(false);
+    assert_eq!(anim.layers()[1].opacity_mix(), 0.0);
+    anim.advance(0.1);
+    assert!((anim.layers()[1].opacity_mix() - 0.5).abs() < 1e-5);
+    let z1 = eval(&anim)[0].translation[2];
+    assert!((z1 - 7.5).abs() < 0.2, "o = 0.75 halfway: {z1}");
+    anim.advance(0.1);
+    let z2 = eval(&anim)[0].translation[2];
+    assert!((z2 - 10.0).abs() < 0.05, "opacity ignored: {z2}");
+    // And back: from 1 to 0 over 0.2 s.
+    anim.layer_mut(1).unwrap().blend_bone_opacity(true);
+    anim.advance(0.2);
+    let z3 = eval(&anim)[0].translation[2];
+    assert!((z3 - 5.0).abs() < 0.1, "{z3}");
+}

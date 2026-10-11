@@ -29,9 +29,11 @@
 > on one machine and waits for a run between two machines on a LAN. The parity track
 > (P0–P8, [decision 0024](decisions/0024-parity-track.md)) started on 2026-10-09 with
 > [P0](#p0) (scenario feed and `tessera-gamedata`); [P1](#p1) (characters, inventory and
-> equipment) started on 2026-10-10, and [P3](#p3) (NPC windows) on the same day, beside P2;
-> P3's exit criteria pass on Tessera's side (exit verification 2026-10-11, [P3
-> status](#p3-status)), its new specs still wait for an independent review.
+> equipment) started on 2026-10-10, as did [P2](#p2) (combat presentation) and [P3](#p3)
+> (NPC windows). P3 is merged to main (2026-10-11, exit verification the same day, [P3
+> status](#p3-status)): its criteria pass and its specs are Accepted. P2's exit criteria pass
+> on Tessera's side on branch `p2` ([P2 status](#p2-status)); its new specs wait for an
+> independent review.
 > Milestones are ordered by
 > dependency and by legal risk: each one builds on the previous one, and the risk tier
 > (T0–T4, see `docs/LEGAL.md` §8) only rises when the earlier, safer tiers are solid.
@@ -1649,6 +1651,144 @@ on the main thread (ARCH §21 OPEN).
 
 ---
 
+<a id="p2"></a>
+### P2: Targeting, skills and combat presentation
+
+**Goal:** the combat presentation of the client half
+([decision 0024](decisions/0024-parity-track.md) §5 P2): selection and target frames, the
+player's vitals, the quickslot bar with cooldowns, cast and induction bars, floating combat
+text, effect icons, combat animation and particles, and the defeat display. Everything shown
+comes from the user's install; targets, vitals, casts, effects, damage numbers and defeats
+are scripted by the P0 scenario feed (or sent by a server backend), never derived (decision
+0024 §2.4). On M7's server the test actors can be selected and show a target frame; the
+server runs no gameplay rule (LEGAL.md §11.1 rule 5) and gains no combat state. Builds on P1
+and M4.5. Risk tier T1. Runs beside P3 (wt-p3): shared files (the `tessera-ui` game module
+index, `tessera-net` domain groups, client screens, ARCHITECTURE) take additive changes only.
+
+<a id="p2-deliverables"></a>
+**Deliverables**
+
+- Specs (new in P2, Accepted before the build): `combat-ui.md` (selection and targeting,
+  player and target frames, quickslot activation and cooldown display, cast and induction
+  bars, floating text, effect bars, combat state and defeat display, their layout elements
+  and key actions; the "combat UI behaviour" spec of decision 0024), `skill-tooltips.md`
+  (examination tooltips and icons of skills and effects, the per-record census categories
+  of the real-data test), `combat-visuals.md` (combat animation and particles: what plays on
+  cast start and end, attack hooks, effect visuals, hit reactions, combat stance, defeat and
+  revive); P2 revisions of `item-tooltips.md` (§6.16 effect lines, skill-item rows,
+  `SkillGrantingItem` comparison), `keymap.md` (targeting actions), `lua-plugin-api.md`
+  (§15.2 combat views and their conformance rows) and, where `combat-visuals.md` needs it,
+  `script-table.md`, `skeleton-anim.md`, `particles.md`, `particle-runtime.md`.
+- [Decision 0032](decisions/0032-p2-targeting-on-test-server.md) (P2 targeting on M7's
+  server; planned as 0031, which the parallel P3 branch took) with `scenario-feed.md`
+  revision 6 where the decision or the new specs need feed changes.
+- `tessera-gamedata`: typed skill and effect records, the skill and effect tooltip model and
+  its census over every skill and effect record, the data of the combat panels (vital
+  display overrides, consideration colours, effect icons) and of combat visuals (skill and
+  effect animation and script references).
+- `tessera-net`: what decision 0032 and `scenario-feed.md` revision 6 ask (local selection on
+  the test-server and overlay backends); no protocol minor unless the decision asks for one
+  that rule 5 allows.
+- `tessera-ui`: the combat widgets (`game::combat`): target and player frames, cast bar,
+  effect bars with timers and stacks, floating text layer, defeat panel, quickslot cooldown
+  and state display, skill and effect tooltips in the examination panel.
+- `tessera-plugins`: the `Turbine.Gameplay` combat views of `lua-plugin-api.md` §15.2.
+- `tessera-input`: the targeting actions and default keys of `keymap.md`.
+- `tessera-client`: the player's combat state from the session; selection (mouse pick,
+  targeting keys) on scenario actors and on M7's test actors; quickslot use; the combat
+  panels, floating text and tooltips; combat animation and particles on figures in the
+  walker; committed synthetic combat scenarios with logs; headless screenshots and golden
+  images (synthetic goldens committed, real-data goldens local only, ARCH §23.3).
+- Documentation: ARCH §3.1, §15, §19, §20; `docs/USER_GUIDE.md` (combat presentation);
+  owner rows from O93 in `docs/checklists/owner-observations.md`; at close-out `CLAUDE.md`
+  Current state.
+
+<a id="p2-specs"></a>
+**Specs needed:** `combat-ui.md`, `skill-tooltips.md`, `combat-visuals.md` (new);
+[`combat-data.md`](specs/combat-data.md), [`interaction.md`](specs/interaction.md),
+[`game-controls.md`](specs/game-controls.md), [`particles.md`](specs/particles.md),
+[`particle-runtime.md`](specs/particle-runtime.md), [`script-table.md`](specs/script-table.md),
+[`skeleton-anim.md`](specs/skeleton-anim.md), [`game-panels.md`](specs/game-panels.md),
+[`item-tooltips.md`](specs/item-tooltips.md), [`icon-layers.md`](specs/icon-layers.md),
+[`keymap.md`](specs/keymap.md), [`lua-plugin-api.md`](specs/lua-plugin-api.md) §15,
+[`scenario-feed.md`](specs/scenario-feed.md) (Accepted).
+
+**RE tasks:** the combat UI behaviour of the original client (decision 0024 Consequences:
+dirty-room work limited to presentation behaviour): floating text, target frame, effect bar,
+cast bar, defeat display; skill and effect tooltip layouts and rows; the animation and
+effect visuals the client plays for casts, hits, effects and defeat.
+
+<a id="p2-exit"></a>
+**Exit criteria** (decision 0024 §5, quoted)
+
+1. A combat scenario (target, cast, effect, damage numbers, defeat) runs headless with
+   every element on screen; golden images pass.
+2. Every skill and effect record's tooltip and icon render (or are categorised).
+3. Every particle descriptor decodes or is categorised; script-table particle nodes play
+   in the walker.
+4. M7's test actors can be selected and show a target frame.
+
+Owner observations in the original client: rows from O93
+([owner-observations.md](checklists/owner-observations.md)); they do not block the criteria.
+
+<a id="p2-status"></a>
+**Status:** exit criteria 1–4 pass on Tessera's side (started 2026-10-10, branch `p2` in
+worktree `wt-p2`, off main 4ec1f4a; exit verification 2026-10-11 on the uncommitted tree).
+**Specs Accepted (2026-10-11):** independent reviews accepted `combat-ui.md` (revision 2),
+`skill-tooltips.md`, `combat-visuals.md`, the P2 revisions of `item-tooltips.md`, `keymap.md`,
+`lua-plugin-api.md` §15.2, `script-table.md`, `particles.md` and `particle-runtime.md`,
+`scenario-feed.md` revision 6 and decision 0032. A clean conform pass then re-checked the code
+against the Accepted text (skill-item effect levels and vital keys, frame name and level text,
+the defeat panel's parts, beam ribbons and head entities drawn; install goldens under decision
+0031 tier 2), verified by a separate session. No criterion needs an observation in the original client; owner rows O93–O109 and
+O126–O129 ([owner-observations.md](checklists/owner-observations.md#p2-items)) block nothing
+until P8.
+
+Checks (2026-10-11, install present, `TESSERA_PERF` unset, machine shared with the P3 and P4
+builds): `cargo fmt --check` (workspace and `fuzz/`), clippy `-D warnings` (workspace
+`--all-targets --all-features`; `fuzz/` `--bins`), `tools/check-content.sh` (1,871 files),
+`tools/check-spdx.sh` (1,766 files), `tools/check-server-deps.sh` and a link and anchor check
+of the 138 Markdown files outside `research/`: clean. `cargo test --release --workspace
+--no-fail-fast` with the install: 6,074 passed, 1 failed, 10 ignored (431 test binaries); the
+failure was `tessera-ui` `game_combat::install_frames_set_meters_texts_and_states`, which
+the verifier's own literal-icon fix (below) broke; the test now gives the install effect an
+icon and checks the literal one's fallback box. After the fixes `tessera-ui` and
+`tessera-client` were run again in release with the install: 1,148 passed, 0 failed, 1
+ignored (94 binaries). `tools/fuzz-smoke.sh -t 60`: `ui_combat_feed` (28,860 runs on the
+final tree), `plugins_combat_views` (14,700), `particles_beam` (910,516), `net_remote_world`
+(53,904): no crash.
+
+Verifier fixes: (1) TR40 layer order: the floating layers had the lowest z-level, which
+`ui-layout.md` §9.3 draws in front, so floating texts covered the defeat panel and the
+selection indicator; they now take high levels (behind every panel; name blocks, texts, then
+the indicator) and the synthetic goldens were blessed again. (2) TR41 element by element in the
+install look: a literal effect takes the §13.5 box, a literal quickslot skill the §13.7
+content, and a resource without a pip record the §13.4 bar (at its §13.1 place; new
+`combat-ui.md` §13.4 OPEN), where the install look drew nothing; the headless E20 check now
+asks for the drawn bar. (3) `--scenario … --screenshot` runs now hand the walker the combat
+events (`DriverView`), so combat visuals play there; `combat_visuals_real_data` uses that path
+instead of filling the layer's inbox. (4) The walker test `keys_the_keymap_binds_are_left_to_it`
+now expects the `keymap.md` §8.2 defaults to take Backslash, Minus, Equal, F9 and F10 (the spec
+as written; whether the walker keys should move is the §8.2 implementer OPEN, owner).
+
+| # | Status | Evidence |
+|---|---|---|
+| 1 | **pass** | Synthetic (`combat_ui_golden`, 2 / 2): the §17.1 scenario plays headless with `--no-data` on its virtual clock; at the 11 checkpoints every §14 element is shown (read from the UI tree), the 5 committed goldens match (0 outliers of 786,432 pixels each), the canonical log equals the committed one byte for byte, and two runs give the same element states (CUI9). Install (`combat_ui_real_data`): 79 / 79 element labels resolve, 6 / 6 avoidance tokens, the floating-text settings read; 20 elements shown, 0 missing, at the 11 checkpoints; the 11 local goldens (never committed) compare with 0 outliers on the second run. `tessera-ui` `game_p2_real_data`: 11 / 11 widgets take their install look, 79 IDs, 39 states, 14 properties resolve; widget update 0.019 ms per frame (indicative). Pictures viewed (5 synthetic, 11 install): every element visible in the fallback look; in the install look the remaining defects are (a) the install frames draw no name or level text (E5, E6), (b) the defeat panel shows a third, unlabelled button and the divider, and its revive button looks no different when ghosted (E18; TR38), (c) with the synthetic camera the creature's critical text sits under the target frame and is hidden by it (TR40 puts texts behind panels), (d) the §13.4 bar overlaps the toolbar art. Rows of [`p2-visual.md`](checklists/p2-visual.md) §1 hold the per-element results. |
+| 2 | **pass** | `tessera-gamedata` `skill_tooltips_real_data`: 13,247 skills (5,201 Rendered, 8,046 NoTooltip) and 32,971 effects (27,150 Rendered, 1,250 RenderedNoName: 1,215 missing and 35 empty names, 4,571 NoTooltip), as `skill-tooltips.md` §14; icons: 13,247 skill and quickslot icons, 22,804 effect icons Rendered, 10,167 Absent; 0 row failures, 0 escaped. `tessera-client` `combat_tooltips_real_data`: 33,601 tooltips modelled and laid out in the examination panel (24,812 with an icon), 0 not laid out, 0 template failures; 12,617 NoTooltip. |
+| 3 | **pass** | `tessera-particles` `real_data`: 11,155 0x39 descriptors, each in one §10.1 category (9,829 plain, 1,061 lit, 134 post-pass, 128 `inherit_opacity`, 2 without a surface, 1 without an emitter), 254 0x44 fork records (lifetime only); 2,740 Beam nodes typed (0 untyped, 0 systems missing); 41,354 Particle nodes over every script table and scriptlet, 0 naming a missing record, 0 mismatches (2 script records do not decode and are counted). `combat_visuals_real_data` 2 / 2: 20,552 Particle nodes reachable from skill and effect records, 6,580 effect DIDs (6,438 0x39, 142 0x44), 0 missing; a headless walker scenario (`--scenario … --screenshot` path) brings 158 combat events to the combat layer, 2 session figures run their scripts, 130 effects asked for, 18 clips, up to 43 systems and 6,102 particle vertices drawn in a frame. `particles_real_data` (M3-03) passes in the suite. Beam ribbons and head entities are not drawn yet. |
+| 4 | **pass** | `combat_server` 2 / 2 (no install, loopback): an in-process `tessera-server`, two clients through the client's `net::World`; A selects a wanderer and then B's character, each answered locally by the test-server backend (decision 0032 D1), and the target frame shows the name, no level and the no-vitals form (D2); B leaving clears A's selection locally with no command; the same selection works in an overlay run. `tessera-net` `remote_selection` 13 / 13 (R1–R10 of `scenario-feed.md` §14.11), `remote_selection_backend` 1 / 1 over QUIC (nothing but pings on the wire), `scenario_p1` 14 / 14 (O8, O10–O12). The windowed check with the mouse (C8, rows S1–S3) was not run. |
+
+Remaining issues: the spec and decision reviews above; `keymap.md` §8.2 OPEN (defaults take
+five walker keys; owner); the install-look defects (a)–(d) of criterion 1; beam ribbons and head
+entities are not drawn; combat cues still read clip bindings, skill and effect lookups, stance
+item records and body records on the main thread (ARCH §21; only beam records moved to a
+worker); every session figure is spawned (no crowd measurement yet); plugin check 76's
+Quickslot click is not driven from the client (only its command mapping is tested); with
+`--ui` the walker's chat overlay is hidden (M5 open item, unchanged); the implementer OPENs of
+`combat-ui.md`, `skill-tooltips.md`, `combat-visuals.md`, `particle-runtime.md`, `keymap.md`,
+`scenario-feed.md` §9.7 and `lua-plugin-api.md` §15.2 wait for the spec review
+(`lua-plugin-api.md` §19 does not list the §15.2 implementer OPEN).
+
 <a id="p3"></a>
 ### P3: NPC windows: dialogue, quests, vendors and loot
 
@@ -1722,10 +1862,9 @@ Owner observations in the original client: rows from O110
 
 <a id="p3-status"></a>
 **Status:** exit criteria 1 and 2 pass on Tessera's side (started 2026-10-10, branch `p3`;
-exit verification 2026-10-11 on the uncommitted `p3` tree); to be committed and merged.
-Deliverables not yet met: `npc-windows.md` and `quest-journal.md` are in **Review**, the
-revision-5 parts of `scenario-feed.md` (§18.P3) are in Review and `lua-plugin-api.md` §15.3
-is Revised; each needs an independent review before it is Accepted. Decision 0031 is
+exit verification 2026-10-11); merged to main on 2026-10-11. `npc-windows.md`,
+`quest-journal.md`, the revision-5 parts of `scenario-feed.md` (§18.P3) and
+`lua-plugin-api.md` §15.3 are **Accepted** after independent reviews. Decision 0031 is
 Proposed (the owner accepts it). No criterion needs an observation in the original client;
 owner rows O110–O125 ([owner-observations.md](checklists/owner-observations.md#p3-items))
 block nothing until P8.

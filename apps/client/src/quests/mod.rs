@@ -12,7 +12,7 @@
 //!
 //! | Module | What | Spec |
 //! |---|---|---|
-//! | [`session`] | [`QuestSession`]: the reported quest state, quest markers, entity DID properties and change notes, fed through [`SessionWindows`] (in the player state) | QJ §3 |
+//! | [`session`] | [`QuestSession`]: the reported quest state, quest markers, entity DID properties and change notes, a field of the player state | QJ §3 |
 //! | [`present`] | [`JournalView`]: log entries, details, tracker entries, chat lines, rings, markers; [`JournalTexts`] | QJ §4–§8 |
 //! | [`refs`] | [`QuestRefs`]: layouts, roots, templates and note images by label | QJ §4.1, §6.1, §8.3 |
 //! | [`ui`] | [`QuestUi`]: the log, tracker and markers on the game UI; actions → commands | QJ §4, §6, §8.3 |
@@ -36,5 +36,5 @@ pub mod ui;
 pub use hub::{JournalPanel, QuestHub, is_log_key, parse_journal_panel};
 pub use present::{JournalTexts, JournalView};
 pub use refs::QuestRefs;
-pub use session::{QuestNote, QuestSession, SessionWindows};
+pub use session::{QuestNote, QuestSession};
 pub use ui::{JournalCensus, QuestFrame, QuestUi};

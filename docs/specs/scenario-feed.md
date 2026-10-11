@@ -4,11 +4,11 @@
 
 | | |
 |---|---|
-| **Status** | **Accepted** (revision 5, the P3 parts of §18.P3: independent review 2026-10-11, CLEAN_ROOM.md §5.3 passed, every item; record in §18.P3). Before: **Accepted** (revision 4, independent review 2026-10-10: CLEAN_ROOM.md §5.3 passed, every item; D1–D5 agree with decision 0025, `tessera-protocol.md` v1.1 §6.2.17 and Appendix A, and the code on branch `p1`; Vector G and Vector F's changed lines re-derived, the 15 new hostile rows checked; non-blocking notes (a)–(f) in §18.3). Before: Review (revision 4, 2026-10-10, spec writer, design: [decision 0025](../decisions/0025-p1-character-look-on-test-server.md) D1–D5, §18.3; an independent review by a session that wrote no part of revision 4 must check the changes listed there, Vectors F and G and the new hostile rows). Before: Accepted (revision 3, 2026-10-09). An independent review by a session that wrote none of revisions 1–3 re-checked R1–R31, S1–S31, Vectors A–F and the hostile table and passed (P0 exit criterion 1); no blocking OPEN. The non-blocking OPENs of §3.1, §8.3, §11.1, §12.4, §13 and §16 stay open for the spec owner; the reviewer's rulings on them are review notes in the review record and change no fact |
+| **Status** | **Accepted** (revision 6, the P2 parts of §18.4: independent review 2026-10-11 of commit 7b14f27, CLEAN_ROOM.md §5.3 passed, every item; D1–D4 agree with decision 0032, LEGAL.md §11.1 rule 5 and decision 0024 §2; record in §18.4.1). **Accepted** (revision 5, the P3 parts of §18.P3: independent review 2026-10-11, CLEAN_ROOM.md §5.3 passed, every item; record in §18.P3). Before: **Review** (revision 6, the P2 parts of §18.4, 2026-10-10, spec writer, design: [decision 0032](../decisions/0032-p2-targeting-on-test-server.md) D1–D4: local selection on the test-server backend, §9.5, §9.7, §12.5.1, §12.5.2, §14.9, §14.11, §15; an independent review by a session that wrote no part of revision 6 or of decision 0032 must check the changes listed in §18.4 and the cases of §14.9 and §14.11; P2's revision was written as revision 5 and renumbered 6 at the merge with P3, 2026-10-11). Before: **Accepted** (revision 4, independent review 2026-10-10: CLEAN_ROOM.md §5.3 passed, every item; D1–D5 agree with decision 0025, `tessera-protocol.md` v1.1 §6.2.17 and Appendix A, and the code on branch `p1`; Vector G and Vector F's changed lines re-derived, the 15 new hostile rows checked; non-blocking notes (a)–(f) in §18.3). Before: Review (revision 4, 2026-10-10, spec writer, design: [decision 0025](../decisions/0025-p1-character-look-on-test-server.md) D1–D5, §18.3; an independent review by a session that wrote no part of revision 4 must check the changes listed there, Vectors F and G and the new hostile rows). Before: Accepted (revision 3, 2026-10-09). An independent review by a session that wrote none of revisions 1–3 re-checked R1–R31, S1–S31, Vectors A–F and the hostile table and passed (P0 exit criterion 1); no blocking OPEN. The non-blocking OPENs of §3.1, §8.3, §11.1, §12.4, §13 and §16 stay open for the spec owner; the reviewer's rulings on them are review notes in the review record and change no fact |
 | **Last updated** | 2026-10-11 |
 | **Author role** | Spec writer (design) |
-| **Reviewer** | Revision 2: spec reviewer (Clean-Room-Role: review), a session separate from the first-draft author, 2026-10-09; it also wrote R1–R31, so those fixes are unreviewed. Revision 3: pending (an independent session). Revision 4: a Claude review session in the spec-reviewer role (Clean-Room-Role: review) that wrote no part of decision 0025, of the P1 revisions of `scenario-feed.md`, `tessera-protocol.md`, `test-server.md` and `server-content.md`, or of the code, 2026-10-10 (passed, §18.3). Revision 5 (P3 parts): a Claude review session in the spec-reviewer role (Clean-Room-Role: review) that wrote no part of the P3 revision, of `npc-windows.md` or of the P3 code, 2026-10-11 (passed, §18.P3) |
-| **Review record** | 2026-10-11 (revision 5, P3 parts N-D1 … N-D4): independent review against CLEAN_ROOM.md §5.3 and `npc-windows.md` §5.3, §6.3, §7.8, §10: **passed**; the record is in §18.P3. 2026-10-10 (revision 4): independent review against CLEAN_ROOM.md §5.3, decision 0025 D1–D5, decision 0024 §2 and §4 and LEGAL.md §11.1 rule 5: **passed**; the record is in §18.3. Earlier: 2026-10-09 (revision 2), review against decision 0024 §2 and §4, LEGAL.md §11.1 rule 5, the CLAUDE.md content rules, ARCHITECTURE §19.1, the `tessera-net` API (`session.rs`, `model.rs`, `sandbox/mod.rs`) and every spec and decoder view cited in §8.3. 31 findings (R1–R31), all design defects fixed in this revision by the reviewer (allowed: the spec holds design facts only); no client fact was added. Every selector attribute was confirmed against an Accepted spec and, where named, its decoder view. Findings, fixes and the remaining non-blocking OPENs: §18.1. Revision 3 (spec owner, design role, 2026-10-09): 31 implementation-phase findings verified against this text and the `tessera-net` and client sources (§18.2: S1–S31): all real, 29 fixed, S12 accepted as a stated gap, the policy part of S24 recorded as an OPEN. Revision 3 independent review (spec reviewer, Clean-Room-Role: review, 2026-10-09; a session that wrote none of revisions 1–3 and no code): checked against `docs/CLEAN_ROOM.md` §5.3, decision 0024 §2 (client half only, data-free server, game rules stay T3) and §4 (values scripted, never derived), LEGAL.md §11.1 rule 5, the CLAUDE.md content rules, ARCHITECTURE §19.1 (every §9 variant listed; groups, session rules and the test-server refusals match) and the cited specs (all Accepted except `server-content.md`, Draft, from which the feed takes nothing LEGAL.md §11.1 does not state itself). Every §8.3 family and attribute was traced to its Accepted spec section and property name and to the named decoder view in `crates/formats` and `crates/wstate` (`ItemKind`'s 15 variants are the 15 keywords; `EffectRole`, `TemplateKind`, `MapKind`, `Role` variants exist as cited). R1–R31 and S1–S31: each fix is present and consistent with the rest of the text. Vectors: the SplitMix64 outputs, the seven samples and the trace of §14.3 were recomputed with a throwaway script and agree; Vectors A, B, D, E and F were re-derived line by line (times, event order, field order and formats, window and item ids, skips, drops, end times; facing 359.999 round-trips to 359.99899, written `0.00`) and agree; all 45 hostile rows agree with the grammar, the error order and the position rules; the implementation's vector tests agree (supporting evidence only). Result: **pass**. Rulings on the implementer OPENs (review notes, not facts; the spec owner writes them into the text at the next revision): §3.1 guard (1) agreed: the exception "`tessera-net` without `scenario`" cannot hold under cargo feature unification, drop it from the allow list; (2) and (3) confirmed (dev-dependencies are server builds; in-process server hosts such as `tessera-loadtest` are server builds and may link `tessera-net` only because `tessera-server` itself does not). §3.1 module naming: the `selector` module named in the placement table is placement, not an interface; `tessera-gamedata` exposing its selector types at the crate root conforms. §11.1 log size: non-blocking; a bound is recommended (for example 256 MiB with a run-time `LogOverflow`, exit 5), because a hostile local file within every limit can still write a very large log; until then the USER_GUIDE warning suffices. §12.4 (1) the unplayed windowed input script is an accepted P0 gap (windowed logs are not normative), refusing a windowed run whose `enter` needs an `accept-character` name (exit 2) is acceptable, and the proposed public input player in `tessera_net::scenario` is endorsed; (2) driver-only headless runs with an install, an exact or default spawn and no `--screenshot` are acceptable; (3) "the client's configured `avatar`" means the avatar the client actually configures for the sandbox: none in a driver-only run, which need not load the catalog for it; (4) exit 2 for a missing or non-regular `--scenario` path and 1 for an unreadable file are consistent with the exit table and should be added to it; (5) an install the user named that cannot be used exits 4 with `InstallUnreadable`: agreed (§8.7 covers only "no install found"). §13 (a) align rule 1 with `apps/client/tests/scenarios/`, where the replay test reads them; (b) keep "(or CC0-1.0)" (LEGAL.md §11.1 rule 7 and the CLAUDE.md fixture rule allow CC0) and widen the content test; a GPL-only test is stricter than the spec, not a violation. §16 `tessera-net` points: (1) `shared` in both `ItemPlace` and `ContainerSize` (the §10.3 example and the file keyword win over the general enum rule); (2)–(18) confirmed as implemented. §16 `tessera-gamedata` points (1)–(10) confirmed; for (5), keys 1–64 map to bits 0–63 (`property-system.md` §7.3), so a key above 64 matching nothing is right; for (7), `appearance.md` §2.1 (Accepted) states the two gender values, so using them with the per-install presence check is allowed. The owner-policy OPEN on numeric enum keys (§16) and the later-milestone OPENs (§8.3, §16) stay non-blocking. |
+| **Reviewer** | Revision 2: spec reviewer (Clean-Room-Role: review), a session separate from the first-draft author, 2026-10-09; it also wrote R1–R31, so those fixes are unreviewed. Revision 3: pending (an independent session). Revision 4: a Claude review session in the spec-reviewer role (Clean-Room-Role: review) that wrote no part of decision 0025, of the P1 revisions of `scenario-feed.md`, `tessera-protocol.md`, `test-server.md` and `server-content.md`, or of the code, 2026-10-10 (passed, §18.3). Revision 5 (P3 parts): a Claude review session in the spec-reviewer role (Clean-Room-Role: review) that wrote no part of the P3 revision, of `npc-windows.md` or of the P3 code, 2026-10-11 (passed, §18.P3). Revision 6 (P2 parts): a Claude review session in the spec-reviewer role (Clean-Room-Role: review) that wrote no part of revision 6, of decision 0032, of the other P2 specs or of the P2 code, 2026-10-11 (passed, §18.4.1) |
+| **Review record** | 2026-10-11 (revision 6, P2 parts D1–D4, commit 7b14f27): independent review against CLEAN_ROOM.md §5.3, decision 0032 D1–D4, LEGAL.md §11.1 rule 5, decision 0024 §2 and §0 item 3: **passed**; §14.9 O8, O10–O12 and §14.11 R1–R10 re-derived, invariant 11 checked; non-blocking notes (a)–(e); the record is in §18.4.1. 2026-10-11 (revision 5, P3 parts N-D1 … N-D4): independent review against CLEAN_ROOM.md §5.3 and `npc-windows.md` §5.3, §6.3, §7.8, §10: **passed**; the record is in §18.P3. 2026-10-10 (revision 4): independent review against CLEAN_ROOM.md §5.3, decision 0025 D1–D5, decision 0024 §2 and §4 and LEGAL.md §11.1 rule 5: **passed**; the record is in §18.3. Earlier: 2026-10-09 (revision 2), review against decision 0024 §2 and §4, LEGAL.md §11.1 rule 5, the CLAUDE.md content rules, ARCHITECTURE §19.1, the `tessera-net` API (`session.rs`, `model.rs`, `sandbox/mod.rs`) and every spec and decoder view cited in §8.3. 31 findings (R1–R31), all design defects fixed in this revision by the reviewer (allowed: the spec holds design facts only); no client fact was added. Every selector attribute was confirmed against an Accepted spec and, where named, its decoder view. Findings, fixes and the remaining non-blocking OPENs: §18.1. Revision 3 (spec owner, design role, 2026-10-09): 31 implementation-phase findings verified against this text and the `tessera-net` and client sources (§18.2: S1–S31): all real, 29 fixed, S12 accepted as a stated gap, the policy part of S24 recorded as an OPEN. Revision 3 independent review (spec reviewer, Clean-Room-Role: review, 2026-10-09; a session that wrote none of revisions 1–3 and no code): checked against `docs/CLEAN_ROOM.md` §5.3, decision 0024 §2 (client half only, data-free server, game rules stay T3) and §4 (values scripted, never derived), LEGAL.md §11.1 rule 5, the CLAUDE.md content rules, ARCHITECTURE §19.1 (every §9 variant listed; groups, session rules and the test-server refusals match) and the cited specs (all Accepted except `server-content.md`, Draft, from which the feed takes nothing LEGAL.md §11.1 does not state itself). Every §8.3 family and attribute was traced to its Accepted spec section and property name and to the named decoder view in `crates/formats` and `crates/wstate` (`ItemKind`'s 15 variants are the 15 keywords; `EffectRole`, `TemplateKind`, `MapKind`, `Role` variants exist as cited). R1–R31 and S1–S31: each fix is present and consistent with the rest of the text. Vectors: the SplitMix64 outputs, the seven samples and the trace of §14.3 were recomputed with a throwaway script and agree; Vectors A, B, D, E and F were re-derived line by line (times, event order, field order and formats, window and item ids, skips, drops, end times; facing 359.999 round-trips to 359.99899, written `0.00`) and agree; all 45 hostile rows agree with the grammar, the error order and the position rules; the implementation's vector tests agree (supporting evidence only). Result: **pass**. Rulings on the implementer OPENs (review notes, not facts; the spec owner writes them into the text at the next revision): §3.1 guard (1) agreed: the exception "`tessera-net` without `scenario`" cannot hold under cargo feature unification, drop it from the allow list; (2) and (3) confirmed (dev-dependencies are server builds; in-process server hosts such as `tessera-loadtest` are server builds and may link `tessera-net` only because `tessera-server` itself does not). §3.1 module naming: the `selector` module named in the placement table is placement, not an interface; `tessera-gamedata` exposing its selector types at the crate root conforms. §11.1 log size: non-blocking; a bound is recommended (for example 256 MiB with a run-time `LogOverflow`, exit 5), because a hostile local file within every limit can still write a very large log; until then the USER_GUIDE warning suffices. §12.4 (1) the unplayed windowed input script is an accepted P0 gap (windowed logs are not normative), refusing a windowed run whose `enter` needs an `accept-character` name (exit 2) is acceptable, and the proposed public input player in `tessera_net::scenario` is endorsed; (2) driver-only headless runs with an install, an exact or default spawn and no `--screenshot` are acceptable; (3) "the client's configured `avatar`" means the avatar the client actually configures for the sandbox: none in a driver-only run, which need not load the catalog for it; (4) exit 2 for a missing or non-regular `--scenario` path and 1 for an unreadable file are consistent with the exit table and should be added to it; (5) an install the user named that cannot be used exits 4 with `InstallUnreadable`: agreed (§8.7 covers only "no install found"). §13 (a) align rule 1 with `apps/client/tests/scenarios/`, where the replay test reads them; (b) keep "(or CC0-1.0)" (LEGAL.md §11.1 rule 7 and the CLAUDE.md fixture rule allow CC0) and widen the content test; a GPL-only test is stricter than the spec, not a violation. §16 `tessera-net` points: (1) `shared` in both `ItemPlace` and `ContainerSize` (the §10.3 example and the file keyword win over the general enum rule); (2)–(18) confirmed as implemented. §16 `tessera-gamedata` points (1)–(10) confirmed; for (5), keys 1–64 map to bits 0–63 (`property-system.md` §7.3), so a key above 64 matching nothing is right; for (7), `appearance.md` §2.1 (Accepted) states the two gender values, so using them with the per-install presence check is allowed. The owner-policy OPEN on numeric enum keys (§16) and the later-milestone OPENs (§8.3, §16) stay non-blocking. |
 | **Implements into** | `crates/net` (`tessera_net::scenario`: parser, static checks, resolved scenario, run-time feed, headless driver, canonical log; the sandbox backend runs it; the overlay backend over the test-server backend, §12.5; plain-sandbox creation, §9.6), `crates/gamedata` (selector resolution against the user's install, §8; property labels and kinds, §5.8, §8.6), `apps/client` (`--scenario`, `--scenario-log`, `--scenario-input`, overlay runs, §12), `fuzz/` (§11.4) |
 | **Companion documents** | [Decision 0024](../decisions/0024-parity-track.md) §2, §4, §5 (the feed's mandate); [LEGAL.md](../LEGAL.md) §8 and §11.1; `server-content.md` §3 and §7; `docs/ARCHITECTURE.md` §19 (domain events; it lists the variants of §9 by group); the gameplay specs cited in §8.3 (`items.md`, `combat-data.md`, `creatures.md`, `quests.md`, `economy.md`, `map-data.md`, `interaction.md`, `player-character.md`, `instances.md`), `appearance.md` §2 and §7, `coordinates.md` §4 and §7, `property-system.md` §7, `records.md` §7 |
 
@@ -1550,7 +1550,8 @@ skill.
   test-server backend refuses `BuyBack` like the other new commands. The feed gives no
   generic answer to `BuyBack` (§7.6).
 - **Other backends.** The test-server backend follows §9.7: it takes `CreateCharacter` under
-  `character-screens.md` §7.1.1 and refuses every other new command with
+  `character-screens.md` §7.1.1, answers `SelectTarget` locally without sending anything
+  (revision 6, decision 0032 D1), and refuses every other new command with
   `NetError::InvalidCommand` (rule 5: its server has no gameplay). It also refuses `Chat` on
   the new channels `Fellowship` and `Named` with `NetError::InvalidCommand` until a minor
   version of `tessera-protocol.md` gives them a wire form (rule 5 allows chat). The sandbox
@@ -1592,7 +1593,7 @@ the delete button ghosted on this backend, `character-screens.md` §7.2). With a
 feed owns character answers (§7.5) and this rule does not run. Conformance: §14.10.
 
 <a id="s9-7"></a>
-### 9.7 Test-server backend (revision 4, decision 0025 D2, D4)
+### 9.7 Test-server backend (revision 4, decision 0025 D2, D4; revision 6, decision 0032 D1)
 
 The normative rule for `CreateCharacter` on the test-server (`remote`) backend is
 `character-screens.md` §7.1.1 (capability, command, `CharacterList` and
@@ -1612,7 +1613,45 @@ addition:
   `CharacterInfo { name, body: Some(the entry's body), class: None, level: None, look: the
   entry's look }` per entry, in the list's order, so the selection screen can show each
   character's figure.
-- `DeleteCharacter` and every other new command: refused as in §9.5.
+- **Local selection** (revision 6, [decision 0032](../decisions/0032-p2-targeting-on-test-server.md)
+  D1). In `InWorld` the backend answers `SelectTarget { target }` in `submit` and sends
+  **nothing** to the server, at any minor version:
+  1. The target is **known** when it is none, the player's entity, or an entity whose
+     creation the session has delivered and whose removal it has not: a remote entity
+     (`EntityCreated` delivered, no `EntityDespawned` since; `InterestReset` delivers a
+     despawn for each) or a streamed static (`StaticSpawned` delivered, no `EntityDespawned`
+     or `StaticsCleared` since). The check uses the events already handed to the session,
+     not messages received and not yet mapped.
+  2. For a known target the backend queues `TargetChanged { entity: the player, target }`.
+     Queued answers are delivered **first** in the next poll, before every event the backend
+     maps in that poll. So a `TargetChanged` naming an entity always lies between that
+     entity's creation and its removal in the event stream.
+  3. At most one answer is pending: a later `SelectTarget` with a known target before the
+     next poll replaces it.
+  4. Any other target: `Ok(())`, no event, a rate-limited debug log line; a pending answer
+     stays.
+  5. The backend keeps no selection and never emits `TargetChanged` on its own (not on a
+     despawn, `InterestReset`, teleport, appearance change or world entry), and never for an
+     entity other than the player.
+  6. Outside `InWorld`, `SelectTarget` is `NetError::InvalidState` (§9.5 states).
+  The client half clears a selection whose entity is removed by itself, sending no command
+  (decision 0032 D2); that rule is the same on every backend.
+- `DeleteCharacter`, `UseSkill`, `CancelCast`, `SetQuickslot` and every other new command:
+  refused as in §9.5.
+
+> **OPEN:** (implementer of `crates/net`, clean room, 2026-10-10; non-blocking) Item 1's
+> "known" is the backend's view of the events it handed to `Session`. `Session` may still drop
+> a handed `EntityCreated` or `StaticSpawned` as invalid (§9.5 event checks), which the
+> backend cannot see; such an entity stays known to the backend, so a `TargetChanged` naming
+> it could surface although its creation never did (invariant 11's "between creation and
+> removal" then holds only for the handed stream). The mapper builds those events from
+> protocol-validated messages and checked statics, so this is not expected to happen; the
+> implementation follows the text as written. Should the backend apply `Session`'s checks
+> itself, or should invariant 11 be read on the handed stream? Also: "static 900" of §14.11
+> is a label; a streamed static's ID comes from the backend's local range
+> (`tessera-protocol.md` §9.1), so the conformance tests use the ID its `StaticSpawned`
+> carried, and R8's statics are cleared by a region change, which needs `InterestReset` first
+> (§9.5 of the protocol), so 43 and 44 are despawned in that case too.
 
 ---
 
@@ -2064,13 +2103,24 @@ way.
 | Blocks | `repeat`; `on` with the patterns `equip`, `unequip`, `move-item`, `destroy`, `split`, `use-item`; `input` |
 | Input lines | `at T` lines (not `at pre`) with the forms `equip`, `unequip`, `move-item`, `destroy`, `split`, `use-item` (target `player`, `current` or `none`) |
 
+**No Combat group** (revision 6, [decision 0032](../decisions/0032-p2-targeting-on-test-server.md)
+D3). The subset deliberately holds no Combat-group statement: no step of §6.2 (`target`,
+`vital`, `combat`, `quickslot`, `cast`, `delay`, `interrupt`, `cooldown`, `effect`,
+`effect-end`, `damage`, `heal`, `defeat`, `revive`), no trigger on `target`, `use-skill` or
+`cancel-cast`, and no input form `target`, `use-skill`, `cancel-cast` or `quickslot`. Each is
+`NotAllowedInOverlay` at its line's first token (§14.9 O10–O12). Selection in an overlay run
+is the test-server backend's local answer (§9.7, §12.5.2); test actors are the server's
+entities, which a scenario cannot name, and combat values scripted on them would be seen by
+this client only.
+
 <a id="s12-5-2"></a>
 #### 12.5.2 Routing and order
 
 - **Commands.** The Inventory group (`MoveItem`, `EquipItem`, `UnequipItem`, `SplitStack`,
   `DestroyItem`, `UseItem`) goes to the feed, which processes it at its next tick (§7.4) with
   the generic answers of §7.6 under `defaults on`. Every other command goes to the
-  test-server backend unchanged, which refuses the other new groups (§9.7).
+  test-server backend unchanged, which answers `SelectTarget` locally and refuses the other
+  new commands (§9.7; revision 6). The feed never sees `SelectTarget`.
 - **Events.** In each poll the overlay first polls the test-server backend and queues its
   events, then lets the feed process its due ticks (at most 8, §7.1) and appends the feed's
   output. The per-tick delivery caps of §7.4 apply to the feed's output only.
@@ -2704,6 +2754,11 @@ at 0.2s equip $shield slot=18
 | O5 | as O1, but *B*₀ holds the item 0x70009999 | *B*₀ marks the appearance dirty (its equipment differs from the empty *E*); the send at the end of the tick-0 poll carries both items, so the stored 0x70009999 is replaced. One send at tick 0, as in O1. (With no equip step in the file, that send would carry no items.) |
 | O6 | as O1, but the double refuses every `AppearanceSet` (answers *B*₀) | After the tick-0 send and its answer, no further `AppearanceSet` until *E* changes at 0.1 s; never more than one in flight. |
 | O7 | any | A file with `at 0s say "x"` is refused with `NotAllowedInOverlay` before anything connects (exit 3). |
+| O8 | as O1 | A `Chat` and a `Teleport` go to the double; an `EquipItem` goes to the feed; a `SelectTarget { target: None }` after world entry is answered by the test-server backend with `TargetChanged { entity: player, target: None }`, first in the next poll, the double receives no message for it, and no trigger of the feed sees it (revision 6, §9.7; before: refused). A `UseSkill` is refused with `NetError::InvalidCommand`. |
+| O9 | `tessera-server` in process, `appearance_change` true, two clients at minor 1 | The observer sees an `AppearanceChanged` for the overlay player's entity with the items 0x70001234 slot 17 and 0x70005678 slot 18 (P1 exit criterion 3). |
+| O10 | any | (Revision 6.) The file `tessera-scenario 1` / `at 0s target player none` is refused with `NotAllowedInOverlay` 2:1 before anything connects (exit 3). So is `at 0s vital player health 5/10`. |
+| O11 | any | (Revision 6.) The file `tessera-scenario 1` / `on target any` / `end` is refused with `NotAllowedInOverlay` 2:1 (exit 3). |
+| O12 | any | (Revision 6.) The file `tessera-scenario 1` / `input` / `at 1s target none` / `end` is refused with `NotAllowedInOverlay` 3:1 (exit 3). |
 
 > **OPEN:** (implementer of `crates/net`, clean room, 2026-10-10; non-blocking) O7's file
 > `at 0s say "x"` does not parse (`say` needs a sender before its text, §6.4), so it is
@@ -2712,8 +2767,6 @@ at 0.2s equip $shield slot=18
 > `NotAllowedInOverlay` 2:1. O3's "at tick 0 … with both items" is read with §5.5 "every
 > change of that list emits": the two equips of tick 0 give two events in that tick, the
 > sword alone and then both; the test asserts both.
-| O8 | as O1 | A `Chat` and a `Teleport` go to the double; an `EquipItem` goes to the feed; a `SelectTarget` is refused with `NetError::InvalidCommand` by the test-server backend. |
-| O9 | `tessera-server` in process, `appearance_change` true, two clients at minor 1 | The observer sees an `AppearanceChanged` for the overlay player's entity with the items 0x70001234 slot 17 and 0x70005678 slot 18 (P1 exit criterion 3). |
 
 <a id="s14-10"></a>
 ### 14.10 Plain-sandbox creation cases (revision 4)
@@ -2848,6 +2901,29 @@ pre > EnterWorld character="Testa"
 0.500 end reason=complete skipped=0 input-skipped=0 dropped=0 spilled=0
 ```
 
+<a id="s14-11"></a>
+### 14.11 Test-server selection cases (revision 6)
+
+The test-server backend with a **test double** of the server at minor 1 (R9 also at minor 0)
+that records every client message, in `InWorld` with player entity 7. Before each case it
+has delivered `EntityCreated` for entity 43 (kind `NonPlayer`, name `Wanderer 1`) and
+entity 44 (kind `Player`), and the backend has streamed static 900 (`StaticSpawned`), each
+in an earlier poll than the case's first command. "Next poll" is the first poll after the
+command. Moves and heartbeats are not counted as messages.
+
+| # | Commands and server traffic | Expected |
+|---|---|---|
+| R1 | `SelectTarget { target: Some(43) }` | `Ok`; the next poll's first event is `TargetChanged { entity: 7, target: Some(43) }`; the double receives no message |
+| R2 | `SelectTarget { target: None }` | Next poll: `TargetChanged { entity: 7, target: None }`; no message |
+| R3 | `SelectTarget { target: Some(7) }` | Next poll: `TargetChanged { entity: 7, target: Some(7) }` |
+| R4 | `SelectTarget { target: Some(99) }` (never created) | `Ok`; no event; no message |
+| R5 | `SelectTarget { target: Some(43) }`; before the next poll the double sends `EntityDestroy` 43 | Next poll: `TargetChanged { entity: 7, target: Some(43) }`, then `EntityDespawned { id: 43 }`; no further `TargetChanged` in any later poll |
+| R6 | The double sends `EntityDestroy` 44; after the poll that delivers `EntityDespawned { id: 44 }`, `SelectTarget { target: Some(44) }` | `Ok`; no event |
+| R7 | `SelectTarget { target: Some(43) }`, then `SelectTarget { target: Some(44) }`, then `SelectTarget { target: Some(99) }`, all before the next poll | Next poll: exactly one `TargetChanged { entity: 7, target: Some(44) }` |
+| R8 | `SelectTarget { target: Some(900) }`; after its answer, the backend clears its statics (`StaticsCleared` delivered), then `SelectTarget { target: Some(900) }` | First: `TargetChanged { entity: 7, target: Some(900) }`; second: no event |
+| R9 | R1 at minor 0 | As R1 |
+| R10 | `SelectTarget` in `Connected` (before world entry); `UseSkill`, `CancelCast`, `SetQuickslot` in `InWorld` | `NetError::InvalidState`; each of the others `NetError::InvalidCommand`; no message |
+
 ---
 
 <a id="s15"></a>
@@ -2873,6 +2949,10 @@ pre > EnterWorld character="Testa"
 10. Every value of a `PropertyChanged`, `ItemProperty` or look entry the feed emits is the
     value written in the file (or a `DataId` of a resolved element); the install supplies
     only property IDs, kinds and label keys (§5.8).
+11. (Revision 6.) A selection on the test-server backend never reaches the server: no client
+    message is caused by `SelectTarget`; the backend's only `TargetChanged` events answer a
+    `SelectTarget`, name the player as `entity`, and lie between the target's creation and
+    removal in the event stream (§9.7).
 
 ---
 
@@ -3005,7 +3085,10 @@ pre > EnterWorld character="Testa"
 | 2026-10-10 | Revision 4 (spec writer, design; decision 0025): property values and looks (§4.2, §4.5, §5.8), looks on characters and in the base appearance (§5.1), held-item slots in the player's appearance (§5.5), steps `remove-character`, `stat`, `item-property` and `accept-character … look=` (§6.1), `create-character … nationality= look=` (§7.7), resolver methods `property`, `property_by_id` and contexts `Nationality`, `PropertyKey` (§8.6), new types, events and command field (§9.1–§9.4), session rules and the client-side property bound (§9.5), plain-sandbox creation (§9.6), the test-server backend's creation, looks, slots and character list (§9.7), log forms (§10.2–§10.3), limits and error kinds (§11), overlay runs with `--server` (§12.1, §12.5), content rules (§13), Vector F's new fields, Vector G, overlay and plain-sandbox cases, 15 hostile rows (§14), invariants 9–10 (§15), §16 OPEN 1 answered. Status Accepted → Review (§18.3). |
 | 2026-10-10 | Independent review of revision 4 (spec reviewer, Clean-Room-Role: review): passed, every item of CLEAN_ROOM.md §5.3; status Review → Accepted. Non-blocking notes (a)–(f) in §18.3 |
 | 2026-10-10 | P3 revision (revision 5; spec writer, for `npc-windows.md`, additive only, nothing renumbered): text function `action(…)` and `Text::Action` (§4.2, §5.2, §8.6, §9.1), steps `rewards` and `buyback` (§6.3), events `QuestRewards` and `BuybackShown` and command `BuyBack` (§9.1, §9.2, §9.4, §9.5), pattern `buy-back` (§7.5), input form `buy-back` (§7.7), log forms (§10.3), limits (§11.1), hostile rows N-H1 … N-H11 (§14.5), Vectors N1 and N2 (§14.N1, §14.N2), §18.P3. The parts of revision 5 are in Review (awaiting independent review); the Accepted revision-4 text is unchanged. |
+| 2026-10-10 | Revision 6 (spec writer, design; [decision 0032](../decisions/0032-p2-targeting-on-test-server.md)): local selection on the test-server backend (§9.5, §9.7), no Combat group in the overlay subset stated (§12.5.1), routing of `SelectTarget` in overlay runs (§12.5.2), O8 changed and O10–O12 added (§14.9; the implementer OPEN moved below the table), test-server selection cases R1–R10 (§14.11), invariant 11 (§15). No protocol change. Status Accepted → Review (§18.4). |
 | 2026-10-11 | Independent review of the P3 revision (revision 5; spec reviewer, Clean-Room-Role: review): passed, every item of CLEAN_ROOM.md §5.3; the P3 parts move Review → Accepted. Non-blocking notes (a)–(h) in §18.P3; no text other than the status, review record and this row changed |
+| 2026-10-11 | Merge of the P2 and P3 revisions (spec writer, design; no fact changed): both had been called revision 5, so P2's is renumbered **revision 6** (header, §9.5, §9.7, §12.5.1, §12.5.2, §14.9 O10–O12, §14.11, §17, §18.4); P3's revision 5 and §18.P3 stay. The vector and hostile-row names of the two do not collide (P2: O8, O10–O12, R1–R10 of §14.11, invariant 11; P3: N1, N2, N-H1 … N-H11, N-D1 … N-D4). Status: revision 5 (P3 parts) Accepted, revision 6 (P2 parts) Review. |
+| 2026-10-11 | Independent review of revision 6 (P2 parts; spec reviewer, Clean-Room-Role: review): passed, every item of CLEAN_ROOM.md §5.3; revision 6 moves Review → Accepted, and decision 0032 Proposed → Accepted. Non-blocking notes (a)–(e) in §18.4.1. No text other than the status, reviewer and review-record rows (rejoined onto one line each, so the header table renders), §18.4.1 and this row changed |
 
 ---
 
@@ -3286,3 +3369,82 @@ Non-blocking notes, for the spec owner at the next revision (review notes, not f
   (Confirmed) and this review's check.
 - (h) The lexical-class table of §4.2 and the `Text` row of §10.3 do not list `action(…)`;
   the P3 paragraphs below them do. Fold them in when the text is next renumbered.
+
+<a id="s18-4"></a>
+### 18.4 Revision 6: decision 0032
+
+**2026-10-10** (spec writer, design role). Tessera-own design for P2 exit criterion 4 ("M7's
+test actors can be selected and show a target frame"), recorded in
+[decision 0032](../decisions/0032-p2-targeting-on-test-server.md). Inputs: `docs/` only
+(decisions 0024 and 0025, LEGAL.md §11.1, this spec, `tessera-protocol.md`, `test-server.md`,
+`server-content.md`, and the event table of the Draft `combat-ui.md` §11 for what the client
+half does with the events named here); no research note, clone, client or decompiler output.
+
+| # | Change | Sections | Answers |
+|---|---|---|---|
+| D1 | The test-server backend answers `SelectTarget` locally with `TargetChanged` for the player: known targets only, at most one pending answer, delivered first in the next poll, no wire message, no own `TargetChanged` | §9.5, §9.7, §12.5.2, §14.9 O8, §14.11, §15 invariant 11 | P2 exit criterion 4 (selection) |
+| D2 | Target frames of test actors and clearing on despawn: client-half rules, no feed change; §9.7 records that the backend emits nothing on a despawn | §9.7 | P2 exit criterion 4 (target frame) |
+| D3 | The overlay subset holds no Combat-group step, trigger or input form (stated; unchanged in effect) | §12.5.1, §14.9 O10–O12 | Whether overlay runs script combat locally |
+| D4 | No protocol minor | — (§0 out of scope unchanged) | — |
+
+Editorial: the implementer OPEN inside the §14.9 table now stands below it (§18.3 note (b)),
+so rows O8–O12 render in the table; its text is unchanged.
+
+Rule-5 check (LEGAL.md §11.1): the server receives nothing new (a selection never leaves the
+client), keeps nothing new and runs no rule; `tessera-server` and the server dependency
+check are unchanged.
+
+**Status.** Review. An independent session that wrote no part of revision 6 or of decision
+0032 must check D1–D4 against the cited specs and rule 5, re-derive §14.9 O8, O10–O12 (the
+positions against §12.5.1's first-token rule) and §14.11 R1–R10, and check invariant 11.
+
+<a id="s18-4-1"></a>
+#### 18.4.1 Review record (revision 6)
+
+**2026-10-11**, spec reviewer (Clean-Room-Role: review), a Claude session that wrote no part
+of revision 6, of decision 0032, of the other P2 specs or of the P2 code. Text reviewed: this
+file and decision 0032 at commit 7b14f27 (`git diff origin/main...7b14f27`).
+
+Checked against CLEAN_ROOM.md §5.3, every item:
+
+- Functional facts only: the additions are Tessera's own design (a local answer, an ordering
+  rule, a bound, refusals, conformance cases); no client fact was added, so no provenance row
+  is due beyond the header statement that this spec holds design facts only. No code or
+  pseudo-code: §9.7 items 1–6 are plain rules. No copied prose, no game text, keys, hostnames
+  or traffic; "Wanderer 1" is a project-made name of `test-server.md` §5.4. No byte layout.
+- No install probe and no disassembly were needed: revision 6 states no fact about the
+  client or its data and has no `BIN` row (decision 0011 not engaged).
+- Gate and rule 5: D1 sends nothing new to the server and the server keeps nothing new;
+  `apps/server`, `apps/loadtest`, `crates/protocol` and `tools/check-server-deps.sh` are
+  unchanged in the P2 diff. D2 derives nothing (decision 0024 §2.4), D3 narrows overlay runs,
+  D4 adds no protocol minor (decision 0024 §2.6). §0 item 3 holds: the client half selects
+  through `SelectTarget` and `TargetChanged` on every backend.
+- Cases re-derived: O8 against §12.5.2 and §9.7; O10–O12 against the step, trigger and input
+  grammars (§6.2, §7.5, §7.7), the first-token rule of §12.5.1 and the existing hostile rows
+  (an empty `on` body parses, as in the `on chat` row), giving 2:1, 2:1 and 3:1; R1–R10
+  against §9.7 items 1–6 and the §9.5 states (R5: answer before the despawn mapped in the same
+  poll; R6: removed before the command; R7: the unknown 99 leaves 44 pending; R8: statics
+  known until `StaticsCleared`; R10: `InvalidState` outside `InWorld`, `InvalidCommand` for
+  the other Combat commands). Invariant 11 is testable by counting the double's messages and
+  the `TargetChanged` events. The implementation's tests for these cases agree (supporting
+  evidence only).
+
+Result: **pass**. Non-blocking notes for the spec owner (review notes, not facts; none
+changes implemented behaviour):
+
+- (a) The §14.9 preamble describes a double *of the test-server backend*; O8 (as O9) needs the
+  real test-server backend over a double of the server, since the backend's own answer is
+  under test. The conformance test is built that way. Reword at the next revision.
+- (b) Ruling on the §9.7 implementer OPEN: read item 1 and invariant 11 on the stream the
+  backend hands to `Session`; the backend need not repeat `Session`'s event checks, because it
+  builds those events from validated messages and checked statics. The implementation as
+  written conforms. "Static 900" of §14.11 is a label for the ID its `StaticSpawned` carried,
+  and R8's region change despawning 43 and 44 through `InterestReset` agrees with item 1.
+- (c) §9.7 does not say what happens to a pending answer when the session ends before the next
+  poll. The implementation drops it; entity events in `Closing` are stale anyway (§9.5), so
+  either reading is conformant. State it at the next revision.
+- (d) Decision 0032's "Number" paragraph says ROADMAP calls it 0031; ROADMAP now names 0032.
+  `docs/decisions/README.md` and ROADMAP P2 still list 0032 as Proposed; their owners update
+  them (outside this review's edit scope).
+- (e) D2 and the consequence for `combat-ui.md` (selection eligibility of test actors with a
+  `Character` body) bind that spec's own independent review; `combat-ui.md` is still Draft.

@@ -10,14 +10,11 @@
 //! reported one. The per-quest state is `tessera-gamedata`'s [`QuestJournal`] (its bounds
 //! apply: 65,536 quests, 262,144 objective reports).
 //!
-//! # Routing (the seam)
+//! # Routing
 //!
 //! Every event of a world session reaches [`crate::character::PlayerState::apply`], which
-//! hands it to the NPC windows' state. [`SessionWindows`] is that state as the player
-//! state holds it: the NPC windows ([`crate::npc::state::NpcWindows`], reached through
-//! `Deref`) plus this module's [`QuestSession`]. `crate::npc` re-exports it under the name
-//! `NpcWindows`, so the player state feeds both without a change of its own. At merge the
-//! session can move into its own field of the player state; nothing else changes.
+//! hands it to the NPC windows' state and to its own [`QuestSession`] field
+//! ([`crate::character::PlayerState::quests`]).
 //!
 //! # Hostile input
 //!
@@ -33,7 +30,6 @@
 //! DID-valued property is kept (the bound applies).
 
 use std::collections::{BTreeMap, VecDeque};
-use std::ops::Deref;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use tessera_gamedata::quest::{
@@ -41,8 +37,6 @@ use tessera_gamedata::quest::{
 };
 use tessera_net::domain::{CharacterEvent, NpcEvent, QuestStatus, Text, WorldEvent};
 use tessera_net::{DataId, EntityId, Event, Location, PropertyValue};
-
-use crate::npc::state::{NpcChange, NpcWindows as NpcWindowState};
 
 /// Most quest markers kept (`scenario-feed.md` §11.1: 1,024 marker bindings).
 pub const MAX_MARKERS: usize = 1024;
@@ -431,43 +425,6 @@ impl QuestSession {
             }
             _ => {}
         }
-    }
-}
-
-/// The NPC windows' state with the quest journal's (the routing seam of the module docs).
-/// Dereferences to the NPC windows' state, so its readers are unchanged.
-#[derive(Debug, Clone, Default)]
-pub struct SessionWindows {
-    npc: NpcWindowState,
-    quests: QuestSession,
-}
-
-impl SessionWindows {
-    /// Both states empty.
-    #[must_use]
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Applies one session event to both states; the NPC windows' changes are appended
-    /// to `out` (the quest journal's go to its own notes).
-    pub fn apply(&mut self, ev: &Event, out: &mut Vec<NpcChange>) {
-        self.npc.apply(ev, out);
-        self.quests.apply(ev);
-    }
-
-    /// The quest journal's state.
-    #[must_use]
-    pub fn quests(&self) -> &QuestSession {
-        &self.quests
-    }
-}
-
-impl Deref for SessionWindows {
-    type Target = NpcWindowState;
-
-    fn deref(&self) -> &NpcWindowState {
-        &self.npc
     }
 }
 

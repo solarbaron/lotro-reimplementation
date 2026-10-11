@@ -302,6 +302,28 @@ pub fn check(dir: &Path, name: &str, img: &Rgba) -> Result<Outcome, String> {
 /// A refused combination of flags, a missing golden with `require`, a mismatch (with the
 /// paths of the actual and diff images), or an I/O failure.
 pub fn check_with(dir: &Path, name: &str, img: &Rgba, flags: &Flags) -> Result<Outcome, String> {
+    check_with_compare(dir, name, img, flags, |want, got| {
+        let (bad, diff) = compare(want, got);
+        (bad == 0, format!("{bad} pixels differ"), diff)
+    })
+}
+
+/// [`check_with`] with another comparison: `cmp(golden, actual)` gives whether the
+/// picture passes, a summary for the failure message (counts only) and the diff picture.
+/// Pictures of the GPU renderer use the tolerance of
+/// `crates/render/tests/support/golden.rs` (decision 0031: the tolerance of tier 1 for the
+/// same painter); the CPU painter's pictures use [`check_with`]. The sizes are equal when
+/// `cmp` runs.
+///
+/// # Errors
+/// As [`check_with`].
+pub fn check_with_compare(
+    dir: &Path,
+    name: &str,
+    img: &Rgba,
+    flags: &Flags,
+    cmp: impl FnOnce(&Rgba, &Rgba) -> (bool, String, Rgba),
+) -> Result<Outcome, String> {
     let (require, bless) = (flags.require, flags.bless_local);
     if require && bless {
         return Err(
@@ -356,12 +378,12 @@ pub fn check_with(dir: &Path, name: &str, img: &Rgba, flags: &Flags) -> Result<O
             actual.display()
         ));
     }
-    let (bad, diff) = compare(&want, img);
-    if bad > 0 {
+    let (pass, summary, diff) = cmp(&want, img);
+    if !pass {
         write_atomic(&actual, img)?;
         write_atomic(&diff_path, &diff)?;
         return Err(format!(
-            "golden {name}: {bad} pixels differ; actual at {}, diff at {}",
+            "golden {name}: {summary}; actual at {}, diff at {}",
             actual.display(),
             diff_path.display()
         ));

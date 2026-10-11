@@ -48,6 +48,10 @@ pub const DRAW_INTERVAL_MS: u64 = 100;
 /// (an appearance change replaces the one still queued for the same entity); the walker
 /// drains the view every poll, so they never wait longer than one poll.
 pub const MAX_VIEW_EVENTS: usize = 1 << 18;
+/// Bound on the combat events [`DriverView`] holds for the walker's combat visuals
+/// (`combat-visuals.md` §9); further events are dropped on arrival and counted. The walker
+/// drains the view every poll, so the bound is reached only when it does not.
+pub const MAX_VIEW_COMBAT_EVENTS: usize = 1 << 16;
 
 /// The walker's view of a session the headless driver owns: the events of each driver poll
 /// are fed in with [`DriverView::observe`]; the walker reads the player's location, the
@@ -66,6 +70,9 @@ pub struct DriverView {
     /// The queued `AppearanceChanged` of an entity (its sequence number).
     queued_appearance: HashMap<EntityId, u64>,
     chat: VecDeque<ChatLine>,
+    /// The combat events of the driver's polls, for the walker's combat visuals.
+    combat: VecDeque<tessera_net::CombatEvent>,
+    dropped_combat: u64,
     status: Option<ScenarioStatus>,
     closed: bool,
     /// The creation controls received looks are read with (decision 0025 D2), once loaded.
@@ -129,6 +136,13 @@ impl DriverView {
                     self.player = None;
                     self.location = None;
                     self.closed = true;
+                }
+                Event::Combat(c) => {
+                    if self.combat.len() < MAX_VIEW_COMBAT_EVENTS {
+                        self.combat.push_back(c.clone());
+                    } else {
+                        self.dropped_combat += 1;
+                    }
                 }
                 _ => {}
             }
@@ -232,6 +246,12 @@ impl DriverView {
         self.coalesced_appearances
     }
 
+    /// Combat events dropped because the walker did not drain them.
+    #[must_use]
+    pub fn dropped_combat_events(&self) -> u64 {
+        self.dropped_combat
+    }
+
     /// Drops everything queued for the walker (it stopped).
     pub fn clear_queue(&mut self) {
         self.head_seq += self.events.len() as u64;
@@ -239,6 +259,7 @@ impl DriverView {
         self.queued_appearance.clear();
         self.moves = 0;
         self.chat.clear();
+        self.combat.clear();
     }
 }
 
@@ -274,6 +295,11 @@ impl WalkerSession for DriverView {
 
     fn drain_chat(&mut self, out: &mut Vec<ChatLine>) {
         out.extend(self.chat.drain(..));
+    }
+
+    fn drain_combat_events(&mut self, out: &mut Vec<tessera_net::CombatEvent>, max: usize) {
+        let n = self.combat.len().min(max);
+        out.extend(self.combat.drain(..n));
     }
 
     fn scenario_line(&self, _now: Instant) -> Option<String> {
@@ -531,6 +557,36 @@ fn step_walker(
 mod tests {
     use super::*;
     use tessera_net::{ChatChannel, EntityKind, LocationCause, RegionId, Transform};
+
+    #[test]
+    fn combat_events_reach_the_walker_in_order_and_in_parts() {
+        let mut v = DriverView::new();
+        let cs = |id: u64, on: bool| {
+            Event::Combat(tessera_net::CombatEvent::CombatState {
+                entity: EntityId(id),
+                in_combat: on,
+            })
+        };
+        v.observe(&[cs(1, true), cs(2, true), cs(1, false)]);
+        let mut out = Vec::new();
+        v.drain_combat_events(&mut out, 2);
+        assert_eq!(out.len(), 2);
+        v.drain_combat_events(&mut out, usize::MAX);
+        assert_eq!(out.len(), 3);
+        assert!(matches!(
+            out[2],
+            tessera_net::CombatEvent::CombatState {
+                in_combat: false,
+                ..
+            }
+        ));
+        v.observe(&[cs(3, true)]);
+        v.clear_queue();
+        out.clear();
+        v.drain_combat_events(&mut out, usize::MAX);
+        assert!(out.is_empty(), "a stopped walker's queue is dropped");
+        assert_eq!(v.dropped_combat_events(), 0);
+    }
 
     #[test]
     fn the_view_follows_the_driver_events() {

@@ -172,6 +172,26 @@ pub enum ScriptStart {
     Refused,
 }
 
+/// One run of a script key that the client started ([`Runtime::start_script_with`]).
+/// A stale ID (the run ended) never reaches a newer run.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct RunId(pub u64);
+
+/// What [`Runtime::start_script_with`] did: the outcome and, when the run stays live, its ID.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ScriptRun {
+    /// The outcome.
+    pub start: ScriptStart,
+    /// The live run ([`ScriptStart::Running`] only).
+    pub run: Option<RunId>,
+}
+
+/// Most values [`Runtime::switch_cases`] returns (hostile-input bound).
+pub const MAX_SWITCH_CASES: usize = 256;
+
+/// Most run parameters one client start takes (hostile-input bound).
+pub const MAX_RUN_PARAMETERS: usize = 64;
+
 /// What an entity starts with. [`EntityInit::default`] has no tables and runs `Startup`
 /// and the start-up scripts (`run_startup` = `true`).
 #[derive(Debug, Clone)]
@@ -363,6 +383,8 @@ pub struct Runtime<'a> {
     pub(crate) sched: Scheduler<Event>,
     pub(crate) random_memory: HashMap<NodeRef, u32>,
     pub(crate) sounds: HashMap<SoundHandle, InstanceId>,
+    /// Beam nodes with a beam, by the sink's handle (`particle-runtime.md` §11.1).
+    pub(crate) beams: HashMap<crate::sink::BeamHandle, InstanceId>,
     pub(crate) frame_updates: Vec<InstanceId>,
     pub(crate) player: Option<EntityId>,
     pub(crate) viewport: Option<EntityId>,
@@ -413,6 +435,7 @@ impl<'a> Runtime<'a> {
             sched: Scheduler::default(),
             random_memory: HashMap::new(),
             sounds: HashMap::new(),
+            beams: HashMap::new(),
             frame_updates: Vec::new(),
             player: None,
             viewport: None,
@@ -659,6 +682,151 @@ impl<'a> Runtime<'a> {
             Err(RunFail::Limit) => ScriptStart::LimitReached,
             Err(RunFail::Refused) => ScriptStart::Refused,
         })
+    }
+
+    /// Starts a script on an entity with a run-parameter set (`script-runtime.md` §5.1):
+    /// `params` are the values of script-parameter properties the run's nodes read (for a
+    /// combat behaviour `StorySystem_StoryID` and `Combat_AnimationSpeedMultiplier`,
+    /// `combat-visuals.md` §3.2, §4.4). Intensity 1, the client's permission. At most
+    /// [`MAX_RUN_PARAMETERS`] values are taken; a later value of the same PID wins.
+    ///
+    /// # Errors
+    ///
+    /// [`RuntimeError::NoSuchEntity`].
+    pub fn start_script_with(
+        &mut self,
+        sink: &mut dyn EffectSink,
+        id: EntityId,
+        key: u32,
+        params: &[(u32, PropertyValue)],
+    ) -> Result<ScriptRun, RuntimeError> {
+        if !self.entities.contains_key(&id) {
+            return Err(RuntimeError::NoSuchEntity(id));
+        }
+        self.begin_call();
+        let mut ctx = RunCtx::client();
+        if !params.is_empty() {
+            let set: ParamSet = params
+                .iter()
+                .take(MAX_RUN_PARAMETERS)
+                .map(|(p, v)| (*p, v.clone()))
+                .collect();
+            ctx.params = Arc::new(set);
+        }
+        Ok(match self.start_run(sink, id, key, ctx) {
+            Ok(Some(root)) => ScriptRun {
+                start: ScriptStart::Running,
+                run: Some(RunId(root.to_bits())),
+            },
+            Ok(None) => ScriptRun {
+                start: ScriptStart::Completed,
+                run: None,
+            },
+            Err(f) => ScriptRun {
+                start: match f {
+                    RunFail::NotDefined => ScriptStart::NotDefined,
+                    RunFail::Limit => ScriptStart::LimitReached,
+                    RunFail::Refused => ScriptStart::Refused,
+                },
+                run: None,
+            },
+        })
+    }
+
+    /// The case values of the Switch nodes on `property` in the definition of `key` on an
+    /// entity (every defining table of its closure, `script-runtime.md` §12.2), in node
+    /// order without repeats: for example the `Death_DeadScript` values a death script
+    /// switches on (`combat-visuals.md` §9.5). Scriptlets the definition invokes are not
+    /// searched. Empty when the key is not defined. At most [`MAX_SWITCH_CASES`] values.
+    pub fn switch_cases(&mut self, id: EntityId, key: u32, property: u32) -> Vec<PropertyValue> {
+        use tessera_formats::script_table::PortPayload;
+        let mut out: Vec<PropertyValue> = Vec::new();
+        let Some(def) = self.lookup(id, key) else {
+            return out;
+        };
+        for root in &def.roots {
+            let Some(unit) = self.units.get(root.unit as usize).cloned() else {
+                continue;
+            };
+            let mut stack = vec![root.node];
+            let mut visited = 0usize;
+            while let Some(i) = stack.pop() {
+                visited += 1;
+                if visited > self.limits.max_compiled_nodes {
+                    break;
+                }
+                let Some(n) = unit.node(i) else { continue };
+                if let tessera_formats::script_table::NodeData::Switch(sw) = &n.data
+                    && sw.property == property
+                {
+                    for p in &n.ports {
+                        if let PortPayload::SwitchCase(c) = &p.payload {
+                            for v in c.values.iter().flatten() {
+                                if out.len() < MAX_SWITCH_CASES
+                                    && !out.iter().any(|o| crate::values::values_equal(o, &v.value))
+                                {
+                                    out.push(v.value.clone());
+                                }
+                            }
+                        }
+                    }
+                }
+                for p in n.ports.iter().rev() {
+                    stack.extend(p.children.iter().rev());
+                }
+            }
+        }
+        out
+    }
+
+    /// Whether a run started by [`Runtime::start_script_with`] is still live.
+    #[must_use]
+    pub fn run_live(&self, run: RunId) -> bool {
+        let id = InstanceId::from_bits(run.0);
+        self.insts
+            .get(id)
+            .is_some_and(|i| !i.stopped && matches!(i.kind, KindState::RunRoot { .. }))
+    }
+
+    /// Stops one run started by [`Runtime::start_script_with`]; `false` when it had ended.
+    pub fn stop_run(&mut self, sink: &mut dyn EffectSink, run: RunId) -> bool {
+        if !self.run_live(run) {
+            return false;
+        }
+        self.begin_call();
+        self.stop(sink, InstanceId::from_bits(run.0), 0);
+        true
+    }
+
+    /// The head of a beam has arrived (`particle-runtime.md` §11.1 step 7): its Beam node
+    /// fires the children of its Default ports, once. `false` when the handle names no live
+    /// Beam node or it fired already.
+    pub fn beam_arrived(
+        &mut self,
+        sink: &mut dyn EffectSink,
+        handle: crate::sink::BeamHandle,
+    ) -> bool {
+        let Some(&id) = self.beams.get(&handle) else {
+            return false;
+        };
+        self.begin_call();
+        self.beam_fire(sink, id)
+    }
+
+    /// A beam was removed (`particle-runtime.md` §11.1 step 10): its Beam node completes once
+    /// the children its port started have completed (rule 14). `false` for an unknown handle.
+    pub fn beam_finished(
+        &mut self,
+        sink: &mut dyn EffectSink,
+        handle: crate::sink::BeamHandle,
+    ) -> bool {
+        let Some(id) = self.beams.remove(&handle) else {
+            return false;
+        };
+        self.begin_call();
+        self.arm(id);
+        self.check_complete(sink, id, 0);
+        true
     }
 
     /// Stops every run of `key` on an entity (as a Run node with `Stop` = 1 does) and

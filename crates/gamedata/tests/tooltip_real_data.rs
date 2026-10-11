@@ -147,6 +147,39 @@ fn every_item_record_gets_a_tooltip_model() {
         }
     }
 
+    // `skill-tooltips.md` §9.8 (ST24): the skill levels of skill items. Counts only.
+    let (mut naming, mut stored, mut calculators, mut level_one) = (0u64, 0u64, 0u64, 0u64);
+    let mut distinct = BTreeSet::new();
+    for &did in &items {
+        let Ok(Some(set)) = data.record(did) else {
+            continue;
+        };
+        let l = engine.skill_item_level(&set);
+        if l.calculator.is_some() {
+            calculators += 1;
+        }
+        if l.skill.is_none() {
+            continue;
+        }
+        naming += 1;
+        if let Some(v) = l.stored {
+            stored += 1;
+            distinct.insert(v);
+            if v == 1 {
+                level_one += 1;
+            }
+        }
+    }
+    eprintln!(
+        "skill items: {naming} name a skill, {stored} store Usage_SkillLevel ({} distinct, \
+         {level_one} of them 1, range {:?}..={:?}); {calculators} name a SkillLevelCalculator \
+         (not evaluated, Tessera rule)",
+        distinct.len(),
+        distinct.first(),
+        distinct.last()
+    );
+    assert!(stored <= naming);
+
     // IV2–IV4 over the tooltip elements item records name.
     let mut iv2 = 0;
     let mut iv3 = (0, 0);

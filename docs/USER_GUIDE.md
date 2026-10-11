@@ -12,8 +12,10 @@ fly over the world as an animated avatar, among the characters the data places, 
 combat. It can also join Tessera's own test server (not the game's servers) and attach an
 early game UI with Lua plugins (§3.12), with character selection and creation screens, a
 character panel with bag windows, and item tooltips (§3.13), and NPC windows, a quest log
-and tracker and the wallet (§3.14). Scenario files (§3.11) script
-gameplay events for testing; they play back what the file says and compute nothing.
+and tracker and the wallet (§3.14), and it shows targeting, skills and combat as a session
+reports them (§3.15). Scenario files (§3.11) script gameplay events
+for testing;
+they play back what the file says and compute nothing.
 
 ---
 
@@ -168,6 +170,25 @@ putting them on the avatar.
 
 For example `--time-of-day 0.9 --time-rate 0` holds the scene at night, and
 `--time-rate 600` runs a whole game day in a few minutes.
+
+While the walker runs, these keys work the clock and switch systems off and on:
+
+| Key | Does |
+|---|---|
+| `[`, `]` | move the clock back or forward by one game hour (1/24 of the day) |
+| Backslash (`\`) | stop or restart the clock |
+| Minus, Equal | halve or double the time rate |
+| F5, F6, F7, F8 | texture layers, shadows, water, sky on or off |
+| F9, F10, F11 | generated scenery, frills, distance detail (LOD) on or off |
+
+A key that the keymap binds (§4.2) belongs to the keymap, and the walker's own action on it
+stops. The built-in targeting and quickslot bindings (§3.15) take Backslash, Minus, Equal,
+F9 and F10, so by default those five keys do not stop the clock, change the time rate or
+switch scenery and frills. Without the game UI (`--ui`) they do nothing at all, because
+only the game UI acts on targeting and quickslot keys. To get the walker's keys back,
+unbind the targeting and quickslot actions on them in the keymap file. Which side keeps
+these keys is an open question (`keymap.md` §8.2). At start-up the walker logs which of its
+keys the keymap has taken.
 
 ### 3.6 Scripted flights and timing runs
 
@@ -532,7 +553,7 @@ none of them.
 creature or an object such as a chest): the client checks the distance (the NPC's use range, about 6 m when its record names none) and asks the
 session to use it; the scenario's `on use` block answers by opening a window. Out of range,
 or with nobody near, a short line in chat says so and nothing is sent. Selecting with the
-mouse (double-click, right click) comes with targeting (P2); until then U is the way. A
+mouse (a double click uses the entity) is part of targeting (§3.15); U works without a selection. A
 scenario's `input` block can also send `use` (headless runs, or `--scenario-input`).
 
 | Key | What it does |
@@ -669,6 +690,67 @@ golden. `TESSERA_BLESS=1` belongs to the committed synthetic goldens only
 (`cargo test -p tessera-ui --test p3_goldens`, images in `crates/ui/tests/golden/`); it never
 touches the local ones. Never commit a local picture: it shows your install's text and art.
 
+<a id="combat-ui"></a>
+### 3.15 Targeting, skills and combat presentation
+
+With the game UI attached, the client shows combat as the session reports it. Tessera does
+not compute combat: every value (health, damage, casts, effects, cooldowns, defeat) comes
+from the session, that is a scenario in the sandbox or, later, a server.
+
+**Selecting.** Click a character, creature or object in the world to select it. A click on
+the ground or the sky changes nothing. A double click selects the entity and then uses it.
+Escape cancels your cast if one is running; otherwise it clears your selection; with
+neither it opens the main menu. The selection appears only once the session confirms it,
+and it clears by itself when the selected entity leaves your view. The targeting keys
+search within 50 m:
+
+| Key | Selects |
+|---|---|
+| Tab, Shift+Tab | the next or previous creature that is not defeated (nearest first; wraps around) |
+| Backspace | the nearest such creature |
+| F10, Shift+F10, Ctrl+F10 | the nearest, next or previous creature (defeated ones included) |
+| F9 or Ctrl+Tab, Shift+F9, Ctrl+F9 | the nearest, next or previous other player |
+| Delete | the nearest object |
+| Backslash | yourself |
+| F | your selection's own target (assist) |
+
+`target_last`, `target_last_attacker` and `target_clear` have no default key; bind them in
+the keymap file (§4.2). The targeting keys and the quickslot keys below take Backslash,
+Minus, Equal, F9 and F10 from the walker's clock and switch keys (§3.5): with these
+defaults the clock's stop and time-rate keys and the scenery and frills switches no longer
+act, and without `--ui` those five keys do nothing (an open question in `keymap.md` §8.2).
+
+**What you see.** Your frame (name, level, health, power and class resource) and the
+target frame (name in its colour, level, health, or the name alone for a target without
+health). A small window shows your target's own target. The selection gets a marker and a
+name block over it in the world. Cast bars appear for your casts and your target's. Effect
+icons sit under the frames, beneficial ones in the first row and harmful ones in the
+second; an icon pulses in its last 15 seconds. Damage, heals and avoids rise as floating
+numbers and words over whoever took them; critical hits start large. The toolbar shows when
+you are in combat. When you are defeated, a panel says so; its buttons send nothing (OK
+closes it).
+
+**Quickslots.** Keys 1 to 0, Minus and Equal use the slots of the main bar. With Ctrl, Alt
+or Shift they use slots 13 to 48. A click on a slot uses it too. A skill slot sends a skill
+use, and an item slot an item use, both at your current selection. A slot shows a sweep
+while its cooldown runs, a frame while its skill is being cast, and a flash when the session
+refuses the use. Hold the mouse over a skill slot or an effect icon to see its tooltip; an
+effect's tooltip counts down its remaining time.
+
+**Plugins** see your target, vitals, level, effects, combat state and learned skills
+through `Turbine.Gameplay` (`LocalPlayer`, `Actor`, `EffectList`, `Effect`, `SkillList`).
+A plugin quickslot that holds a skill or an item uses it like the game's bar.
+
+**On a test server** (`--server`) you can select the server's wanderers and other players.
+Their frame shows a name and no level or health, because the server has no combat. Casting,
+quickslot changes and other combat commands are refused there. A scenario played over a
+server (`--scenario … --server`) may not script combat steps (exit 3).
+
+**Scenarios.** `apps/client/tests/scenarios/combat-ui.scenario` shows every combat display
+in turn.
+Play it with `tessera-client --scenario apps/client/tests/scenarios/combat-ui.scenario`
+(windowed), or headless with `--headless` to check its log.
+
 ---
 
 ## 4. Controls and the keymap file
@@ -693,6 +775,8 @@ touches the local ones. Never commit a local picture: it shows your install's te
 | F3 | HUD details on or off | HUD details on or off |
 | F12, Print Screen | screenshot | screenshot |
 | Escape | quit | quit |
+| Tab, Backspace, F9, F10, Delete, Backslash, F | targeting (§3.15, with the game UI) | targeting |
+| 1 … 0, Minus, Equal (also with Ctrl, Alt, Shift) | quickslots (§3.15, with the game UI) | quickslots |
 
 A gamepad works too: left stick moves, right stick looks, south button jumps, the left
 stick's click toggles autorun, and the shoulder buttons move up and down in fly mode.

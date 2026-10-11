@@ -11,6 +11,8 @@ use tessera_formats::gameplay::combat::{
 };
 use tessera_formats::gameplay::common::{GameObjectRecord, ObjectRoot};
 
+use tessera_gamedata::tooltip::{CombatRequest, CombatSubject, SkillViewer};
+
 use super::card::{Section, dump, opt_did_text, opt_text, opt_yes};
 use super::{Built, Cx, Object};
 
@@ -273,6 +275,8 @@ fn skill_card(cx: &Cx<'_>, sk: &Skill) -> Built {
     }
     b.card.add(hooks);
     b.card.add(references_section(cx, &sk.references));
+    b.card
+        .add(combat_tooltip_preview(cx, CombatSubject::Skill(sk.did)));
     b.groups = vec![
         ("Skill properties (§7)", p.all()),
         ("Attack hook properties (§7.7)", h.all()),
@@ -387,6 +391,8 @@ fn effect_card(cx: &Cx<'_>, e: &Effect) -> Built {
         &cx.s.combat.modifier,
     ));
     b.card.add(references_section(cx, &e.references));
+    b.card
+        .add(combat_tooltip_preview(cx, CombatSubject::Effect(e.did)));
     b.groups = vec![
         ("Effect properties (§6)", p.all()),
         ("Vital amounts (§6.4)", cx.s.combat.vital.all()),
@@ -524,6 +530,85 @@ pub(super) fn references_section(cx: &Cx<'_>, refs: &[EffectReference]) -> Secti
             ],
             d.map(|d| d.0).into_iter().collect(),
         );
+    }
+    s
+}
+
+/// The hover tooltip of a skill or effect (`skill-tooltips.md` §3–§11) for a viewer of level 1
+/// without vitals, cooldowns or a live effect, row by row with its colours and states, and
+/// its timers.
+fn combat_tooltip_preview(cx: &Cx<'_>, subject: CombatSubject) -> Section {
+    let mut s = Section::new(
+        "Tooltip preview (skill-tooltips.md)",
+        &["row", "text", "colour", "state"],
+    );
+    let engine = match super::item::preview_engine(cx) {
+        Ok(e) => e,
+        Err(e) => {
+            s.push(
+                vec!["unavailable".into(), e, String::new(), String::new()],
+                Vec::new(),
+            );
+            return s;
+        }
+    };
+    match engine.build_combat(&CombatRequest::hover(subject), &SkillViewer::default()) {
+        Ok(m) => {
+            if let Some(f) = &m.frame {
+                s.push(
+                    vec![
+                        "tooltip element".into(),
+                        format!(
+                            "{} in {} (width {})",
+                            f.label.as_deref().unwrap_or("?"),
+                            f.at.layout,
+                            m.assembly.width
+                        ),
+                        String::new(),
+                        String::new(),
+                    ],
+                    vec![f.at.layout.0],
+                );
+            }
+            super::item::preview_model(&mut s, &m);
+            for t in &m.timers {
+                s.push(
+                    vec![
+                        "timer".into(),
+                        format!(
+                            "{:?} of row {}: {} s{}",
+                            t.kind,
+                            t.row,
+                            t.seconds,
+                            if t.counting { ", counting down" } else { "" }
+                        ),
+                        String::new(),
+                        String::new(),
+                    ],
+                    Vec::new(),
+                );
+            }
+            if m.lookup_misses > 0 {
+                s.push(
+                    vec![
+                        "lookup misses".into(),
+                        m.lookup_misses.to_string(),
+                        String::new(),
+                        String::new(),
+                    ],
+                    Vec::new(),
+                );
+            }
+        }
+        Err(e) => s.push(
+            vec![
+                "no tooltip".into(),
+                e.to_string(),
+                String::new(),
+                String::new(),
+            ],
+            Vec::new(),
+        ),
     }
     s
 }

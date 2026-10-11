@@ -1225,6 +1225,14 @@ seconds of the global clock (§3.1); lengths metres.
 > (f) **Spawn times (step 8).** Spawn *i* of *n* is at the last spawn time + Δ × *i* / *n*
 > (the stated advance by Δ / *n* per spawn, formed without accumulated rounding).
 
+> **OPEN:** (implementer, 2026-10-11) step 8 does not say in which precision Δ (a difference
+> of two clock times) and the product ℓ / `SegmentSize` × *b* × Δ are formed, nor whether the
+> floor has a tolerance. With binary floating point an interval meant as exactly 0.05 s can
+> give a product just below 3, so RT-I18's ⌊6 × 10 × 0.05⌋ = 3 can come out as 2 in one
+> update (and the leftover time carries into the next). The code follows step 8 as written
+> (no tolerance, double-precision clock times); its RT-I18 test uses updates 0.050000001 s
+> apart so that each product lies just above 3.
+
 Census of the 2,740 Beam nodes (OBS4, RT44): `Persistent` 1 in 769; `HeadEntity` in 1,050;
 `BeamParticleSystem` in 571, `HeadParticleSystem` in 45 (2 of them without a beam system, so
 their head particles never spawn); `BeamSegmentParticlesPerSecond` 10 in 2,092, 30 in 292, 0 in

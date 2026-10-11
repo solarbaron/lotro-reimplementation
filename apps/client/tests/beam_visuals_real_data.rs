@@ -266,8 +266,10 @@ fn scenario_casts_draw_beam_ribbons_and_head_entities() {
     // starts. Two rounds; the scenario ends `tail` after the last cast (round 2's last cast
     // is at 68 + 0.8 × (casts − 1) s). `BEAM_TEST_LAST=rb2` (or `hd0`, …) casts only that
     // skill, once, at 60 s, for the picture.
+    let mut single: Option<String> = None;
     let casts: Vec<String> = match std::env::var("BEAM_TEST_LAST") {
         Ok(pick) if pick.len() > 2 && matches!(pick.get(..2), Some("hd" | "rb")) => {
+            single = Some(pick[..2].to_owned());
             vec![format!("${}[{}]", &pick[..2], &pick[2..])]
         }
         _ => (0..ribbons.len())
@@ -372,10 +374,19 @@ fn scenario_casts_draw_beam_ribbons_and_head_entities() {
         "both figures ran scripts before the casts"
     );
     assert!(p.beams_started > 0, "the behaviours started beams");
-    assert!(
-        p.beam_arrivals > 0,
-        "beam heads arrived and fired their ports"
-    );
-    assert!(p.max_beam_ribbons_drawn > 0, "beam ribbons were drawn");
-    assert!(p.max_beam_heads_drawn > 0, "beam head entities were drawn");
+    // A single cast for the picture (`BEAM_TEST_LAST`) ends with its beam in flight, so its
+    // head need not have arrived, and it draws only its own kind.
+    let single = single.as_deref();
+    if single.is_none() {
+        assert!(
+            p.beam_arrivals > 0,
+            "beam heads arrived and fired their ports"
+        );
+    }
+    if single != Some("hd") {
+        assert!(p.max_beam_ribbons_drawn > 0, "beam ribbons were drawn");
+    }
+    if single != Some("rb") {
+        assert!(p.max_beam_heads_drawn > 0, "beam head entities were drawn");
+    }
 }

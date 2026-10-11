@@ -12,6 +12,9 @@
 #             PE executables, pcap)
 #   size      binary blobs larger than 1 MiB (text files above 1 MiB are a warning)
 #   lfs       Git LFS filters in .gitattributes (LFS is disabled for this project)
+#   mcp       a .mcp.json file, or a .claude/settings*.json that declares an MCP server
+#             or names rea or ghidra: a decompiler MCP registration must never reach a
+#             checkout where workflows start clean agents (docs/decisions/0033)
 #
 # and, in the code under crates/ apps/ fuzz/:
 #
@@ -60,7 +63,7 @@ fi
 run_scan() {
     # $1 = root, $2 = use_git, $3 = quiet, $4 = allowlist path
     python3 - "$1" "$2" "$3" "$4" <<'PY'
-import fnmatch, os, re, subprocess, sys
+import fnmatch, json, os, re, subprocess, sys
 
 root, use_git, quiet, allow_path = sys.argv[1], sys.argv[2] == "1", sys.argv[3] == "1", sys.argv[4]
 
@@ -104,6 +107,38 @@ AUTONAME = re.compile(
 )
 
 CODE_DIRS = ("crates/", "apps/", "fuzz/")
+
+# Decompiler MCP registrations (decision 0033). "rea" only as a whole word, so that
+# "Read" or "area" do not match.
+CLAUDE_SETTINGS = re.compile(r"(?:^|/)\.claude/settings[^/]*\.json$")
+DECOMPILER_WORD = re.compile(r"(?<![A-Za-z0-9])rea(?![A-Za-z0-9])|rea-agents|ghidra", re.I)
+MCP_KEYS = {"mcpServers", "enabledMcpjsonServers", "enableAllProjectMcpServers"}
+
+
+def mcp_keys(node):
+    found = set()
+    if isinstance(node, dict):
+        for k, v in node.items():
+            if k in MCP_KEYS and v not in (None, False, {}, []):
+                found.add(k)
+            found |= mcp_keys(v)
+    elif isinstance(node, list):
+        for v in node:
+            found |= mcp_keys(v)
+    return found
+
+
+def check_claude_settings(path, text):
+    try:
+        keys = mcp_keys(json.loads(text))
+    except ValueError:
+        keys = {k for k in MCP_KEYS if f'"{k}"' in text}
+    for k in sorted(keys):
+        report("mcp", path, 0, f"declares MCP servers ('{k}'); attach them per session instead")
+    for n, l in enumerate(text.splitlines(), 1):
+        m = DECOMPILER_WORD.search(l)
+        if m:
+            report("mcp", path, n, f"names the decompiler tool '{m.group(0)}'")
 TOKEN_EXT = {".rs", ".wgsl"}
 
 errors, warnings = [], []
@@ -328,6 +363,12 @@ for path in files:
             for n, l in enumerate(f, 1):
                 if "filter=lfs" in l:
                     report("lfs", path, n, "Git LFS is disabled for this project")
+    if base == ".mcp.json":
+        report("mcp", path, 0, "MCP server registration file; attach servers per session "
+               "with --strict-mcp-config (decision 0033)")
+    if CLAUDE_SETTINGS.search(path):
+        with open(full, encoding="utf-8", errors="replace") as f:
+            check_claude_settings(path, f.read())
     if path.startswith(CODE_DIRS):
         for comp in path.split("/"):
             for w in sorted(mark_hits(os.path.splitext(comp)[0])):
@@ -353,7 +394,12 @@ allowlist="$root/tools/content-allowlist.txt"
 if [ "$self_test" = 1 ]; then
     t="$(mktemp -d)"
     trap 'rm -rf "$t"' EXIT
-    mkdir -p "$t/crates/demo/src" "$t/docs" "$t/assets"
+    mkdir -p "$t/crates/demo/src" "$t/docs" "$t/assets" "$t/.claude"
+    printf '{"mcpServers":{"x":{"command":"rea","args":["--mcp"]}}}\n' > "$t/.mcp.json"
+    printf '{\n  "mcpServers": {"dec": {}},\n  "permissions": {"allow": ["Read(*)", "mcp__ghidra__decompile"]}\n}\n' \
+        > "$t/.claude/settings.json"
+    printf '{\n  "permissions": {"allow": ["Read(*)", "Bash(cargo test:*)"]}\n}\n' \
+        > "$t/.claude/settings.local.json"
     printf 'x' > "$t/assets/client_general.dat"
     printf 'DDS |\x7c\x00\x00\x00' > "$t/assets/renamed.bin"
     head -c 2097152 /dev/zero > "$t/assets/blob.bin"
@@ -382,13 +428,16 @@ RS
         "lib.rs:3: \[mark\] trademark word 'lotro'" \
         "lib.rs:4: \[mark\] trademark word 'middleearth'" \
         "lib.rs:5: \[autoname\]" \
-        "Cargo.toml:2: \[mark\] trademark word 'hobbit'"; do
+        "Cargo.toml:2: \[mark\] trademark word 'hobbit'" \
+        ".mcp.json: \[mcp\]" \
+        "settings.json: \[mcp\] declares MCP servers" \
+        "settings.json:3: \[mcp\] names the decompiler tool 'ghidra'"; do
         if ! printf '%s\n' "$out" | grep -q -- "$want"; then
             echo "self-test: expected a finding matching: $want" >&2
             fail=1
         fi
     done
-    for unwanted in "lib.rs:2:" "lib.rs:6:" "lib.rs:7:"; do
+    for unwanted in "lib.rs:2:" "lib.rs:6:" "lib.rs:7:" "settings.local.json"; do
         if printf '%s\n' "$out" | grep -q -- "$unwanted"; then
             echo "self-test: false positive at $unwanted" >&2
             fail=1

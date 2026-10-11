@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! A short hostile run (ROADMAP M7 exit criterion 3): random datagrams, malformed,
-//! truncated and oversized frames, out-of-order handshakes and floods over real UDP while
-//! honest bots walk and chat. No panic anywhere, the honest bots see no desync and no
+//! truncated and oversized frames, out-of-order handshakes and floods over real UDP, and
+//! the protocol 1.2 cases in the world, while honest bots walk and chat. No panic anywhere, the honest bots see no desync and no
 //! disconnection, the server keeps ticking, its counts stay bounded and return to the
 //! baseline, and memory stays bounded.
 
@@ -34,6 +34,10 @@ fn hostile_clients_do_not_disturb_honest_bots() {
         "the server closes offenders: {:?}",
         h.closed_by_server
     );
+    // The 1.2 cases go in the world with the run's hostile characters (test-server.md
+    // §13.1), and the server answers each as the spec says.
+    assert!(h.v12_in_world > 0, "{h:?}");
+    assert_eq!(h.v12_wrong, 0, "{:?}", h.v12_wrong_examples);
     assert_eq!(r.inputs.panics, 0, "no panic in the server or the bots");
     assert_eq!(r.totals.unexpected_disconnects, 0);
     assert_eq!(

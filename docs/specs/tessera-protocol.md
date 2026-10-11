@@ -1785,6 +1785,16 @@ D1). Only on connections at minor ≥ 2 whose `HelloAck` set `CHAT_CHANNELS`.
   the client's scenario feed, decision 0035 D1), channel passwords, moderators, a list of
   existing channels, membership that outlives the connection.
 
+> **OPEN:** (implementer note, `apps/loadtest`, 2026-10-11) "Leave" lists `NOT_JOINED`,
+> `INVALID_NAME` and `RATE_LIMITED`, but `test-server.md` §9.1 "Leave" checks "placed in
+> the world" second, which only `NOT_IN_WORLD` (§14.8 code 8) can answer, and
+> `tessera-server` sends that code; §14.8 also allows `SERVER_ERROR` for any request. The
+> two Accepted texts do not yet name one code for this case (review note (a) of 2026-10-11
+> puts the fix here), so the code is unchanged: `tessera-server` answers such a leave with
+> `NOT_IN_WORLD`, clients show every code, and `tessera-loadtest` bots treat any refusal as
+> a failure. Spec writer: add `NOT_IN_WORLD` and `SERVER_ERROR` to the Leave list, or name
+> the code this case gets.
+
 ---
 
 <a id="s11"></a>

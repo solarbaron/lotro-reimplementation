@@ -154,6 +154,12 @@ pub struct Totals {
     pub chat_sent: u64,
     /// Chat lines the server rejected.
     pub chat_rejected: u64,
+    /// Channel joins answered.
+    pub channel_joins: u64,
+    /// Channel leaves answered.
+    pub channel_leaves: u64,
+    /// Channel requests refused.
+    pub channel_refusals: u64,
     /// System lines received.
     pub system_lines: u64,
     /// Commands refused by the session.
@@ -301,6 +307,9 @@ fn sum_totals(bots: &[(usize, bool, BotStats)]) -> (Totals, Vec<String>) {
         t.far_teleports_short += s.far_teleports_short;
         t.chat_sent += s.chat_sent;
         t.chat_rejected += s.chat_rejected;
+        t.channel_joins += s.channel_joins;
+        t.channel_leaves += s.channel_leaves;
+        t.channel_refusals += s.channel_refusals;
         t.system_lines += s.system_lines;
         t.send_errors += s.send_errors;
         t.appearance_changes += s.appearance_changes;
@@ -539,6 +548,15 @@ impl Report {
         if inputs.opts.hostile.is_some() && inputs.hostile.is_none() {
             f.push("hostile clients did not start (run too short?)".into());
         }
+        if let Some(h) = &inputs.hostile
+            && h.v12_wrong > 0
+        {
+            f.push(format!(
+                "hostile 1.2 cases: {} answered otherwise than the spec says ({})",
+                h.v12_wrong,
+                h.v12_wrong_examples.join("; ")
+            ));
+        }
         Self {
             inputs,
             totals,
@@ -645,7 +663,7 @@ impl Report {
         );
         let _ = writeln!(
             s,
-            "actions: teleports {} (far {}, far but short {}, refused {}, unanswered {}, late refusals {}), appearance changes {}, stance changes {}, chat lines {} (rejected {}), system lines {}",
+            "actions: teleports {} (far {}, far but short {}, refused {}, unanswered {}, late refusals {}), appearance changes {}, stance changes {}, chat lines {} (rejected {}), channel joins {} leaves {} refusals {}, system lines {}",
             t.teleports,
             t.far_teleports,
             t.far_teleports_short,
@@ -656,6 +674,9 @@ impl Report {
             t.stance_changes,
             t.chat_sent,
             t.chat_rejected,
+            t.channel_joins,
+            t.channel_leaves,
+            t.channel_refusals,
             t.system_lines
         );
         if t.cheats > 0 {
@@ -700,8 +721,9 @@ impl Report {
         let c = &i.ledger.counts;
         let _ = writeln!(
             s,
-            "chat: {} lines, {} certain deliveries, {} ok, {} late, {} lost, {} duplicated, {} out of order, {} unexpected, {} optional, {} rejected; latency ms {}",
+            "chat: {} lines ({} on channels), {} certain deliveries, {} ok, {} late, {} lost, {} duplicated, {} out of order, {} unexpected, {} optional, {} rejected; latency ms {}",
             c.lines,
+            c.channel_lines,
             c.expected,
             c.delivered,
             c.late,
@@ -818,14 +840,17 @@ impl Report {
                 .collect();
             let _ = writeln!(
                 s,
-                "hostile: from {:?}; attacks {} ({}); udp datagrams {}; connect failures {}; closed by server ({}); left open {}",
+                "hostile: from {:?}; attacks {} ({}); udp datagrams {}; connect failures {}; closed by server ({}); left open {}; 1.2 cases in the world {}, skipped {}, wrong {}",
                 h.bind,
                 h.attacks.values().sum::<u64>(),
                 attacks.join(", "),
                 h.udp_datagrams,
                 h.connect_failures,
                 closed.join(", "),
-                h.left_open
+                h.left_open,
+                h.v12_in_world,
+                h.v12_skipped,
+                h.v12_wrong
             );
         }
         if let Some(sd) = i.shutdown {
@@ -997,6 +1022,7 @@ impl Report {
             ("optional_received", c.optional_received),
             ("rejected", c.rejected),
             ("unknown", c.unknown),
+            ("channel_lines", c.channel_lines),
         ] {
             j.uint(Some(k), v);
         }
@@ -1035,6 +1061,9 @@ impl Report {
             ("stance_changes", t.stance_changes),
             ("chat_sent", t.chat_sent),
             ("chat_rejected", t.chat_rejected),
+            ("channel_joins", t.channel_joins),
+            ("channel_leaves", t.channel_leaves),
+            ("channel_refusals", t.channel_refusals),
             ("system_lines", t.system_lines),
             ("cheats", t.cheats),
             ("cheats_corrected", t.cheats_corrected),
@@ -1116,6 +1145,9 @@ impl Report {
             j.uint(Some("udp_datagrams"), h.udp_datagrams);
             j.uint(Some("connect_failures"), h.connect_failures);
             j.uint(Some("left_open"), h.left_open);
+            j.uint(Some("v12_in_world"), h.v12_in_world);
+            j.uint(Some("v12_skipped"), h.v12_skipped);
+            j.uint(Some("v12_wrong"), h.v12_wrong);
             j.end('}');
         }
         if let Some(sd) = i.shutdown {
@@ -1204,6 +1236,9 @@ impl Report {
         j.opt(Some("appearance_interval_s"), secs(b.appearance_interval));
         j.opt(Some("cheat_interval_s"), secs(b.cheat_interval));
         j.num(Some("cheat_fraction"), b.cheat_fraction);
+        j.uint(Some("channels"), u64::from(b.channels));
+        j.opt(Some("channel_cycle_s"), secs(b.channel_cycle));
+        j.num(Some("channel_fraction"), b.channel_fraction);
         j.num(Some("truth_bias_m"), b.truth_bias_m);
         j.end('}');
         j.begin(Some("server_params"), '{');

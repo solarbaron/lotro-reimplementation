@@ -14,7 +14,9 @@ use tessera_protocol::codes::{AppErrorCode, LoginFailedCode};
 use tessera_protocol::connect::ExpectedKey;
 use tessera_protocol::fingerprint::Fingerprint;
 use tessera_protocol::frame::{FrameDecoder, StreamKind, frame_to_vec_minor};
-use tessera_protocol::message::{CharacterCreate, Credentials, Disconnect, EnterWorld, Hello};
+use tessera_protocol::message::{
+    CharacterCreate, Credentials, Disconnect, EnterWorld, Hello, ServerCaps,
+};
 use tessera_protocol::transport::{PinnedServerVerifier, client_endpoint, quinn_client_config};
 use tessera_protocol::types::{Appearance, Body, Equipped, Look, LookEntry, LookValue};
 use tessera_protocol::{Channel, Message, Side};
@@ -569,6 +571,7 @@ pub struct WorldClient {
     decoder: FrameDecoder,
     pending: Vec<u8>,
     world: tokio::task::JoinHandle<()>,
+    caps: ServerCaps,
 }
 
 async fn accept_kind(
@@ -609,7 +612,11 @@ impl WorldClient {
         let conn = connect(endpoint, target, timeout).await?;
         let mut link = ControlLink::open(conn).await?;
         link.send(&hello_minor(minor_max)).await?;
-        link.expect(timeout, |m| matches!(m, Message::HelloAck(_)).then_some(()))
+        let caps = link
+            .expect(timeout, |m| match m {
+                Message::HelloAck(a) => Some(a.server_caps),
+                _ => None,
+            })
             .await?;
         link.send(&Message::Login(Credentials {
             account: account.to_owned(),
@@ -641,6 +648,7 @@ impl WorldClient {
             decoder: FrameDecoder::with_minor(Channel::Chat, Side::Server, minor),
             pending: Vec::new(),
             world,
+            caps,
         })
     }
 
@@ -648,6 +656,12 @@ impl WorldClient {
     #[must_use]
     pub fn minor(&self) -> u16 {
         self.link.minor()
+    }
+
+    /// The capabilities of the server's `HelloAck`.
+    #[must_use]
+    pub fn server_caps(&self) -> ServerCaps {
+        self.caps
     }
 
     /// The next chat-stream message within `timeout`: `Ok(None)` on timeout or end of

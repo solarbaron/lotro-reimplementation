@@ -3,8 +3,9 @@
 //! [`tessera_net::Session`] over the test-server [`RemoteBackend`] (`test-server.md` §13.1).
 //!
 //! A bot walks or runs scripted random paths inside an area of landblocks, stops and turns,
-//! teleports now and then, changes its appearance, chats when the run asks it to, and
-//! reconnects when told. It records its own true trajectory (what it simulated and sent)
+//! teleports now and then, changes its appearance, chats when the run asks it to, joins,
+//! speaks on and leaves one of the run's shared named channels at protocol minor 2 (the
+//! `chat` scenario), and reconnects when told. It records its own true trajectory (what it simulated and sent)
 //! and what it sees of everyone else, for the desync checks.
 
 use std::collections::{BTreeMap, HashMap, VecDeque};
@@ -16,7 +17,7 @@ use tessera_net::remote::{
 };
 use tessera_net::{
     Appearance, Body, ChatChannel, Command, Destination, EntityId, EntityKind, Event, Location,
-    LocationCause, RegionId, Session, Vec3,
+    LocationCause, RegionId, Session, SocialCommand, SocialEvent, Vec3,
 };
 
 use crate::chat::ChatLedger;
@@ -154,6 +155,16 @@ pub struct Behaviour {
     pub cheat_interval: Option<Duration>,
     /// Fraction of bots that cheat.
     pub cheat_fraction: f64,
+    /// Shared named channels (protocol minor 2, `test-server.md` §13.1 `chat`): bots whose
+    /// session negotiated channels join channel (index / [`CHANNEL_GROUP`]) mod `channels`
+    /// and send a share of their lines on it. 0: none.
+    pub channels: u8,
+    /// A member leaves its channel and joins it again about this often (jittered ±20 %,
+    /// at least [`MIN_CHANNEL_CYCLE`] so that the requests stay within the protocol's
+    /// request bucket); `None`: members stay.
+    pub channel_cycle: Option<Duration>,
+    /// Share of a member's chat lines sent on its channel.
+    pub channel_fraction: f64,
     /// Test hook: shifts every recorded truth sample this many metres east, so the desync
     /// checks must report Position episodes. Always 0 in real runs.
     pub truth_bias_m: f64,
@@ -174,6 +185,9 @@ impl Default for Behaviour {
             appearance_interval: Some(Duration::from_secs(300)),
             cheat_interval: None,
             cheat_fraction: 0.0,
+            channels: 0,
+            channel_cycle: None,
+            channel_fraction: 0.3,
             truth_bias_m: 0.0,
         }
     }
@@ -273,6 +287,12 @@ pub struct BotStats {
     pub chat_sent: u64,
     /// Chat lines the server rejected (`chat not sent:` lines).
     pub chat_rejected: u64,
+    /// Channel joins answered with `ChannelJoined`.
+    pub channel_joins: u64,
+    /// Channel leaves answered with `ChannelLeft`.
+    pub channel_leaves: u64,
+    /// Channel requests refused (`ChannelRefused`; a failure for a bot within the limits).
+    pub channel_refusals: u64,
     /// System lines received (all kinds).
     pub system_lines: u64,
     /// Commands the session refused (full queue, wrong state).
@@ -397,8 +417,30 @@ struct OpenCheat {
     answered: bool,
 }
 
-/// What a system line is. `tessera-net` turns `TeleportRefused`, `ChatRejected` and
-/// `ServerNotice` all into [`ChatChannel::System`] lines; the backend's prefixes tell them
+/// A bot's membership of its shared channel, as far as the bot knows it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ChannelState {
+    /// Not a member, nothing in flight.
+    Out,
+    /// `ChannelJoin` sent, not yet answered.
+    Joining,
+    /// `ChannelJoined` received.
+    Member,
+    /// `ChannelLeave` sent, not yet answered.
+    Leaving,
+}
+
+/// Bots per shared channel group: bots 0–3 use channel 0, 4–7 channel 1, and so on, modulo
+/// [`Behaviour::channels`], so that even a two-bot run shares a channel.
+pub const CHANNEL_GROUP: usize = 4;
+/// Shortest [`Behaviour::channel_cycle`]: a cycle costs two requests, and the protocol's
+/// request bucket refills one token per 6 s (`tessera-protocol.md` §10.6).
+pub const MIN_CHANNEL_CYCLE: Duration = Duration::from_secs(15);
+/// A channel request must be answered within this time.
+pub const CHANNEL_ANSWER: Duration = Duration::from_secs(10);
+
+/// What a system line is. `tessera-net` turns `TeleportRefused`, `ChatRejected`,
+/// `ChannelRefused` and `ServerNotice` all into [`ChatChannel::System`] lines; the backend's prefixes tell them
 /// apart (an operator notice could imitate them; `test-server.md` §15.2 asks for typed
 /// events).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -411,6 +453,8 @@ pub enum SystemLine {
         /// Expected in a run with reconnections.
         benign: bool,
     },
+    /// `Cannot join the channel …` or `Cannot leave the channel …` (`ChannelRefused`).
+    ChannelRefused,
     /// Anything else (notices, location descriptions).
     Other,
 }
@@ -430,6 +474,10 @@ pub fn classify_system_line(text: &str) -> SystemLine {
         return SystemLine::ChatRejected {
             benign: matches!(code, "UNKNOWN_RECIPIENT" | "NOT_IN_WORLD"),
         };
+    }
+    if text.starts_with("Cannot join the channel ") || text.starts_with("Cannot leave the channel ")
+    {
+        return SystemLine::ChannelRefused;
     }
     SystemLine::Other
 }
@@ -520,6 +568,16 @@ pub struct Bot {
     next_rtt: Instant,
     last_rtt: Option<Duration>,
     chat_seq: u32,
+    /// Membership of the bot's shared channel.
+    channel: ChannelState,
+    /// When the request in flight was sent.
+    channel_since: Instant,
+    /// Membership changes: request sent, answer received, world left (bounded).
+    channel_history: VecDeque<(Instant, ChannelState)>,
+    /// Entries were dropped from `channel_history`.
+    channel_history_cut: bool,
+    /// When the next join or leave is due (`None`: none planned).
+    next_channel: Option<Instant>,
     connect_started: Option<Instant>,
     enter_started: Option<Instant>,
     /// Entities this bot has created, by local ID.
@@ -610,6 +668,11 @@ impl Bot {
             next_rtt: start,
             last_rtt: None,
             chat_seq: 0,
+            channel: ChannelState::Out,
+            channel_since: start,
+            channel_history: VecDeque::new(),
+            channel_history_cut: false,
+            next_channel: None,
             connect_started: None,
             enter_started: None,
             view: BTreeMap::new(),
@@ -791,6 +854,11 @@ impl Bot {
         self.teleport_pending = None;
         self.cheat_hold = None;
         self.cheat_watch = None;
+        // Leaving the world ends every membership, silently (test-server.md §9.1).
+        if self.channel != ChannelState::Out {
+            self.set_channel(now, ChannelState::Out);
+        }
+        self.next_channel = None;
         if let Some(c) = self.open_cheat.take()
             && !c.answered
         {
@@ -887,6 +955,167 @@ impl Bot {
         Some(seq)
     }
 
+    /// The bot's shared channel number, when the run uses channels.
+    #[must_use]
+    pub fn channel_slot(&self) -> Option<u8> {
+        let n = usize::from(self.behaviour.channels);
+        (n > 0).then(|| u8::try_from((self.spec.index / CHANNEL_GROUP) % n).unwrap_or(0))
+    }
+
+    /// Its channel's number while it is a member (`ChannelJoined` received) in the world.
+    #[must_use]
+    pub fn channel_member(&self) -> Option<u8> {
+        if self.in_world() && self.channel == ChannelState::Member {
+            self.channel_slot()
+        } else {
+            None
+        }
+    }
+
+    /// Its channel's number while a join or leave of it is in flight.
+    #[must_use]
+    pub fn channel_pending(&self) -> Option<u8> {
+        if self.phase == Phase::InWorld
+            && matches!(self.channel, ChannelState::Joining | ChannelState::Leaving)
+        {
+            self.channel_slot()
+        } else {
+            None
+        }
+    }
+
+    /// Share of its chat lines sent on its channel while a member.
+    #[must_use]
+    pub fn channel_fraction(&self) -> f64 {
+        self.behaviour.channel_fraction
+    }
+
+    /// Its membership state now.
+    #[must_use]
+    pub fn channel_state(&self) -> ChannelState {
+        self.channel
+    }
+
+    /// Whether its membership held still during [`from`, `to`]: no request sent or answered
+    /// and no world exit in it, and no request in flight at its start.
+    #[must_use]
+    pub fn channel_settled_during(&self, from: Instant, to: Instant) -> bool {
+        if self
+            .channel_history
+            .iter()
+            .any(|(t, _)| *t >= from && *t <= to)
+        {
+            return false;
+        }
+        let before = self
+            .channel_history
+            .iter()
+            .rev()
+            .find(|(t, _)| *t < from)
+            .map(|(_, s)| *s);
+        let state = match before {
+            Some(s) => s,
+            None if !self.channel_history_cut => ChannelState::Out,
+            None => return false,
+        };
+        matches!(state, ChannelState::Out | ChannelState::Member)
+    }
+
+    fn set_channel(&mut self, now: Instant, state: ChannelState) {
+        self.channel = state;
+        self.channel_history.push_back((now, state));
+        while self.channel_history.len() > MAX_HISTORY {
+            self.channel_history.pop_front();
+            self.channel_history_cut = true;
+        }
+    }
+
+    /// Joins or leaves the bot's channel when due (`test-server.md` §13.1 `chat`), and fails
+    /// a request left unanswered.
+    fn channel_step(&mut self, now: Instant, ledger: &ChatLedger) {
+        let Some(k) = self.channel_slot() else {
+            return;
+        };
+        match self.channel {
+            ChannelState::Joining | ChannelState::Leaving => {
+                if self.next_channel.is_none()
+                    && now.saturating_duration_since(self.channel_since) > CHANNEL_ANSWER
+                {
+                    // Reported once; the state stays in flight, so nothing of this
+                    // channel is judged for the bot any more in this session.
+                    self.fail("channel request unanswered".into());
+                    self.next_channel = Some(now + Duration::from_secs(1 << 20));
+                }
+            }
+            ChannelState::Out | ChannelState::Member => {
+                // Quiet tail or a run without chat: no new requests.
+                if self.behaviour.chat_interval.is_none() {
+                    return;
+                }
+                let Some(at) = self.next_channel else {
+                    return;
+                };
+                if now < at {
+                    return;
+                }
+                if !self.backend().is_some_and(RemoteBackend::has_chat_channels) {
+                    // Minor below 2 or channels off: this session never joins.
+                    self.next_channel = None;
+                    return;
+                }
+                let name = ledger.channel_name(k);
+                let (cmd, state) = if self.channel == ChannelState::Out {
+                    (SocialCommand::JoinChannel { name }, ChannelState::Joining)
+                } else {
+                    (SocialCommand::LeaveChannel { name }, ChannelState::Leaving)
+                };
+                if self.send(now, Command::Social(cmd)) {
+                    self.next_channel = None;
+                    self.channel_since = now;
+                    self.set_channel(now, state);
+                } else {
+                    self.next_channel = Some(now + Duration::from_secs(10));
+                }
+            }
+        }
+    }
+
+    fn channel_event(&mut self, now: Instant, e: &SocialEvent, ledger: &ChatLedger) {
+        let expected = self.channel_slot().map(|k| ledger.channel_name(k));
+        match e {
+            SocialEvent::ChannelJoined { channel } => {
+                if self.channel == ChannelState::Joining && expected.as_ref() == Some(channel) {
+                    self.stats.channel_joins += 1;
+                    self.set_channel(now, ChannelState::Member);
+                    self.next_channel = self
+                        .behaviour
+                        .channel_cycle
+                        .map(|c| now + jitter(&mut self.rng, c.max(MIN_CHANNEL_CYCLE)));
+                } else {
+                    self.fail(format!(
+                        "unexpected ChannelJoined {channel:?} ({:?})",
+                        self.channel
+                    ));
+                }
+            }
+            SocialEvent::ChannelLeft { channel } => {
+                if self.channel == ChannelState::Leaving && expected.as_ref() == Some(channel) {
+                    self.stats.channel_leaves += 1;
+                    self.set_channel(now, ChannelState::Out);
+                    self.next_channel =
+                        Some(now + Duration::from_secs_f64(self.rng.range(1.0, 3.0)));
+                } else {
+                    // tessera-server never removes a member (test-server.md §9.1).
+                    self.fail(format!(
+                        "unexpected ChannelLeft {channel:?} ({:?})",
+                        self.channel
+                    ));
+                }
+            }
+            _ => {}
+        }
+    }
+
     /// Polls the session and handles its events.
     pub fn poll(&mut self, ctx: &mut Ctx<'_>) {
         let now = ctx.now;
@@ -949,7 +1178,15 @@ impl Bot {
                 self.plan = Plan::Pause {
                     until: now + Duration::from_millis(500),
                 };
+                // A new session holds no channel; the first join follows shortly.
+                if self.channel != ChannelState::Out {
+                    self.set_channel(now, ChannelState::Out);
+                }
+                self.next_channel = self
+                    .channel_slot()
+                    .map(|_| now + Duration::from_secs_f64(self.rng.range(1.0, 3.0)));
             }
+            Event::Social(social) => self.channel_event(now, &social, ctx.ledger),
             Event::LocationReport {
                 id,
                 location,
@@ -1083,6 +1320,20 @@ impl Bot {
                                 self.fail(text);
                             }
                         }
+                        SystemLine::ChannelRefused => {
+                            // Membership is unchanged by a refusal (§6.4.6); a bot within
+                            // the limits is never refused.
+                            self.stats.channel_refusals += 1;
+                            match self.channel {
+                                ChannelState::Joining => self.set_channel(now, ChannelState::Out),
+                                ChannelState::Leaving => {
+                                    self.set_channel(now, ChannelState::Member);
+                                }
+                                _ => {}
+                            }
+                            self.next_channel = Some(now + Duration::from_secs(10));
+                            self.fail(text);
+                        }
                         SystemLine::Other => {}
                     }
                 } else {
@@ -1170,6 +1421,7 @@ impl Bot {
             return;
         }
         self.adopt_server_speeds();
+        self.channel_step(now, ctx.ledger);
         if let Some(c) = self.open_cheat
             && now.saturating_duration_since(c.at) > CHEAT_HOLD + CHEAT_ANSWER
         {

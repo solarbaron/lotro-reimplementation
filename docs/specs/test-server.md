@@ -1831,6 +1831,34 @@ reviewer should confirm or correct it.
 > protocol clients (`apps/loadtest/tests/v12_channels.rs`); the hostile mode gained the
 > attack `v12-vectors` (the §16.9 client vectors right after `Hello`).
 
+> **OPEN:** (implementer note, `tessera-loadtest`, 2026-10-11) §13.1 `chat` bots and the
+> hostile 1.2 cases as now implemented; the code follows each reading, a reviewer should
+> confirm or correct it. (1) Minors: 80 % of the bots offer minor 2, 10 % minor 1 and 10 %
+> minor 0 (review note (a) of 2026-10-11; the sentence "Bots negotiate minor 1" still reads
+> otherwise). An observer and an entity of which either negotiated minor 0 are compared for
+> §13.2 State only in what minor 0 carries (no slots, no look). (2) The `chat` scenario uses
+> three shared channels (`--channels`), named from the run's tag (`lt<tag> ch<k>`, letters,
+> digits and one space); bots 4*k* to 4*k* + 3 (modulo the channel count) share channel *k*.
+> A bot whose session has `CHAT_CHANNELS` joins 1–3 s after world entry, sends 30 % of its
+> lines on the channel while a member, leaves about every 20 s (±20 %, at least 15 s,
+> `--channel-cycle`) and joins again 1–3 s after its `ChannelLeft`: at most two requests per
+> cycle, within the request bucket. A channel line must reach the members whose join was
+> answered and whose membership did not change from 1 s before to 2 s after the line; a
+> member with a request in flight may receive it; every other bot must not (invariant 15).
+> Any refusal of a bot's request fails the run. (3) Hostile 1.2 cases are sent after login
+> in the world with four characters the run provisions for the attackers (accounts and
+> names numbered after the bots'; a remote server without these accounts and without
+> registration leaves the cases unsent, counted as skipped); one attacker uses a character
+> at a time. The two vectors that need a server without `CHAT_CHANNELS` are sent only to
+> such a server. The non-fatal cases go in two variants of four requests each (the request
+> bucket's capacity: empty name, control character, name rule, leave not joined and a line
+> on it; or join, join of the same key, leave, leave again), each followed by the 30-join
+> burst until `FLOODING`. Joins beyond `max_channels_per_character`, `max_channel_members`
+> and `max_channels` are not sent by the hostile mode, because the honest bots run with the
+> default limits and one attack cannot spend that many requests; the end-to-end test
+> `apps/loadtest/tests/v12_channels.rs` sends them with lowered limits. A wrong answer to
+> any 1.2 case fails the run.
+
 ---
 
 <a id="s16"></a>

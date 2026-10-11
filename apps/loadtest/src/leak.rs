@@ -49,6 +49,12 @@ pub struct LeakSample {
 pub struct Bounds {
     /// Bots in the run.
     pub bots: usize,
+    /// Characters the hostile clients log in with (`test-server.md` §13.1 "Hostile 1.2
+    /// cases"); they are players in the world like the bots, but not bots.
+    pub hostile_characters: usize,
+    /// Most channel memberships the server may hold: every character in the world at the
+    /// largest per-character limit (§4.6).
+    pub max_memberships: usize,
     /// Wanderers in the content, when known (in-process: the tool's own content; remote:
     /// unknown, so a bot's non-bot entities are bounded only by its entity limit).
     pub wanderers: Option<usize>,
@@ -128,23 +134,25 @@ impl LeakMonitor {
                 }
             };
             let wanderers = b.wanderers.unwrap_or(0);
+            // Players: the bots and the hostile clients' characters.
+            let players = b.bots + b.hostile_characters;
             check(
-                v.entities <= wanderers + b.bots,
+                v.entities <= wanderers + players,
                 format!(
-                    "entities {} > wanderers + bots {}",
+                    "entities {} > wanderers + players {}",
                     v.entities,
-                    wanderers + b.bots
+                    wanderers + players
                 ),
             );
             check(
-                v.in_world <= b.bots,
-                format!("in world {} > bots {}", v.in_world, b.bots),
+                v.in_world <= players,
+                format!("in world {} > players {players}", v.in_world),
             );
             check(
-                v.logged_in <= b.bots,
-                format!("logged in {} > bots {}", v.logged_in, b.bots),
+                v.logged_in <= players,
+                format!("logged in {} > players {players}", v.logged_in),
             );
-            let pairs = b.bots * (b.bots + wanderers);
+            let pairs = players * (players + wanderers);
             check(
                 v.interest_pairs <= pairs,
                 format!("interest pairs {} > {pairs}", v.interest_pairs),
@@ -176,8 +184,27 @@ impl LeakMonitor {
                 format!("writer jobs {} > 4096", v.writer_jobs),
             );
             check(
-                v.character_files <= b.bots + 16,
-                format!("cached character files {} > bots + 16", v.character_files),
+                v.character_files <= players + 16,
+                format!(
+                    "cached character files {} > players + 16",
+                    v.character_files
+                ),
+            );
+            // Every channel has a member (§14 invariant 14); memberships are bounded by the
+            // characters in the world.
+            check(
+                v.channels <= v.channel_memberships,
+                format!(
+                    "channels {} > channel memberships {}",
+                    v.channels, v.channel_memberships
+                ),
+            );
+            check(
+                v.channel_memberships <= b.max_memberships,
+                format!(
+                    "channel memberships {} > {}",
+                    v.channel_memberships, b.max_memberships
+                ),
             );
             if let Some(prev) = self.samples.iter().rev().find_map(|p| p.server)
                 && v.ticks == prev.ticks
@@ -193,9 +220,9 @@ impl LeakMonitor {
                 s.bot_bots_max
             ));
         }
-        let per_bot = b
-            .wanderers
-            .map_or(b.max_entities, |w| (others + w).min(b.max_entities));
+        let per_bot = b.wanderers.map_or(b.max_entities, |w| {
+            (others + b.hostile_characters + w).min(b.max_entities)
+        });
         if s.bot_entities_max > per_bot {
             problems.push(format!(
                 "t={t:.0}s: a bot holds {} entities > {per_bot}",
@@ -325,6 +352,8 @@ mod tests {
     fn bounds() -> Bounds {
         Bounds {
             bots: 2,
+            hostile_characters: 0,
+            max_memberships: 64,
             wanderers: Some(0),
             max_connections: 64,
             max_handshakes: 32,
@@ -436,6 +465,34 @@ mod tests {
         s.bot_entities_max = 40;
         m.push(s, &bounds());
         assert_eq!(m.violation_count, 1);
+    }
+
+    /// Channels: an empty channel or more memberships than the characters can hold are
+    /// violations (§14 invariant 14).
+    #[test]
+    fn channel_counts_are_bounded() {
+        let mut m = LeakMonitor::new();
+        let mut s = sample(1.0, 1);
+        let mut st = StatsSnapshot {
+            ticks: 1,
+            channels: 2,
+            channel_memberships: 3,
+            ..StatsSnapshot::default()
+        };
+        s.server = Some(st);
+        m.push(s.clone(), &bounds());
+        assert_eq!(m.violation_count, 0, "{:?}", m.violations);
+        st.ticks = 2;
+        st.channels = 4;
+        s.server = Some(st);
+        m.push(s.clone(), &bounds());
+        assert_eq!(m.violation_count, 1, "{:?}", m.violations);
+        st.ticks = 3;
+        st.channels = 1;
+        st.channel_memberships = 65;
+        s.server = Some(st);
+        m.push(s, &bounds());
+        assert_eq!(m.violation_count, 2, "{:?}", m.violations);
     }
 
     #[test]

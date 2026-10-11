@@ -18,6 +18,7 @@ use std::sync::Arc;
 
 use tessera_gamedata::tooltip::{
     CombatRequest, CombatSubject, LiveEffect, SkillViewer, TimerRow, TooltipModel,
+    VITAL_TYPE_HEALTH, VITAL_TYPE_POWER,
 };
 use tessera_net::EntityId;
 use tessera_net::domain::{Ref, Shortcut};
@@ -662,9 +663,17 @@ fn effect_subject(r: &Ref) -> CombatSubject {
 /// cooldowns.
 #[must_use]
 pub fn skill_viewer(state: &CombatState, now: f64) -> SkillViewer {
-    // *M*ᵥ of §7.10: which `VitalType` keys are health and power is not named by the
-    // specs (OPEN, `skill-tooltips.md` §13); the Tessera rule's "0 when unknown" applies.
-    let max_vitals = Vec::new();
+    // *M*ᵥ of §7.10 (§13 vital keys, ST25): the feed's `Health` maximum is key 1, its `Power`
+    // maximum key 2; the mount keys 3 and 4 have no feed value and read as 0.
+    let player = state.player_entity();
+    let max_vitals = [
+        (VITAL_TYPE_HEALTH, player.and_then(|e| e.health)),
+        (VITAL_TYPE_POWER, player.and_then(|e| e.power)),
+    ]
+    .into_iter()
+    .filter_map(|(k, v)| Some((k, v?.max)))
+    .filter(|(_, m)| m.is_finite() && *m > 0.0)
+    .collect();
     #[allow(clippy::cast_possible_truncation)]
     let cooldowns = state
         .cooldowns()
@@ -683,4 +692,46 @@ pub fn skill_viewer(state: &CombatState, now: f64) -> SkillViewer {
 #[must_use]
 pub fn floaty_settings(install: Option<&Arc<CombatInstall>>) -> FloatySettings {
     install.map_or_else(FloatySettings::default, |i| i.floaty_settings())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tessera_net::domain::Vital as NetVital;
+    use tessera_net::{CombatEvent, Event, Transform, Vec3};
+
+    #[test]
+    fn skill_viewer_carries_the_vital_maxima_by_vital_type_key() {
+        // `skill-tooltips.md` §13 vital keys (ST25): Health → 1, Power → 2.
+        let mut s = CombatState::new();
+        let mut out = Vec::new();
+        s.apply(
+            &Event::WorldEntered {
+                player: EntityId(1),
+                name: "Tamsin".into(),
+                transform: Transform::new(Vec3::ZERO, 0.0),
+            },
+            0.0,
+            &mut out,
+        );
+        assert!(skill_viewer(&s, 0.0).max_vitals.is_empty());
+        for (vital, max) in [(NetVital::Health, 820.0), (NetVital::Power, 410.0)] {
+            s.apply(
+                &Event::Combat(CombatEvent::VitalChanged {
+                    entity: EntityId(1),
+                    vital,
+                    current: 1.0,
+                    max,
+                }),
+                0.0,
+                &mut out,
+            );
+        }
+        let v = skill_viewer(&s, 0.0);
+        assert_eq!(
+            v.max_vitals,
+            [(VITAL_TYPE_HEALTH, 820.0), (VITAL_TYPE_POWER, 410.0)]
+        );
+        assert_eq!((VITAL_TYPE_HEALTH, VITAL_TYPE_POWER), (1, 2));
+    }
 }

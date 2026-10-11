@@ -18,8 +18,8 @@ use tessera_gamedata::tooltip::rules::tokens;
 use tessera_gamedata::tooltip::{
     CombatCategory, CombatCensus, CombatRequest, CombatSubject, CompareKind, EffectMode,
     IconCategory, LineState, LiveEffect, NameState, Row, RowContent, SkillIconSize, SkillViewer,
-    TimerKind, TooltipEngine, TooltipModel, TooltipRequest, Viewer, Widget, line_tokens as lt,
-    skill_tokens as st,
+    TimerKind, TooltipEngine, TooltipModel, TooltipRequest, VITAL_TYPE_HEALTH, VITAL_TYPE_POWER,
+    Viewer, Widget, line_tokens as lt, skill_tokens as st,
 };
 
 const L_EXAM: Did = Did(0x2200_0000);
@@ -49,6 +49,13 @@ const EFFECT_C: Did = Did(0x7000_0124);
 const EFFECT_D: Did = Did(0x7000_0125);
 const EFFECT_OVERRIDE: Did = Did(0x7000_0126);
 const EFFECT_PULSED: Did = Did(0x7000_0127);
+const EFFECT_LEVELLED: Did = Did(0x7000_0128);
+const SKILL_LEVELLED: Did = Did(0x7000_0167);
+const ITEM_L50: Did = Did(0x7000_0168);
+const ITEM_LNONE: Did = Did(0x7000_0169);
+const ITEM_L0: Did = Did(0x7000_016A);
+const ITEM_CALC: Did = Did(0x7000_016B);
+const CALCULATOR: Did = Did(0x7000_016C);
 const ICON: Did = Did(0x4100_0001);
 const EFFECT_ICON: Did = Did(0x4100_0002);
 
@@ -83,6 +90,8 @@ const E_SPECIAL: u32 = 0x1000_0027;
 const E_CRIT5: u32 = 0x1000_0028;
 const E_CRIT6: u32 = 0x1000_0029;
 const E_CRIT7: u32 = 0x1000_002A;
+const E_SI_PLAIN: u32 = 0x1000_002B;
+const E_SI_FLOOR: u32 = 0x1000_002C;
 
 const S_BUFFED: u32 = 0x2000_0001;
 const S_DEBUFFED: u32 = 0x2000_0002;
@@ -119,6 +128,7 @@ const TYPES: &[(u32, &str)] = &[
     (0x3000_0010, "ExaminationEffectDescription"),
     (0x3000_0011, "ExaminationEffectTimeDisplay"),
     (0x3000_0012, "ExaminationSkillSpecialClass"),
+    (0x3000_0013, "ExaminationSkillEffectList"),
 ];
 
 fn ty(label: &str) -> u32 {
@@ -218,6 +228,8 @@ fn install() -> Mem {
         (E_CRIT5, "CriticalEffectDisplay_Base"),
         (E_CRIT6, "SuperCriticalEffectDisplay_Base"),
         (E_CRIT7, "BothCriticalEffectDisplay_Base"),
+        (E_SI_PLAIN, "SkillItem_ItemEffectDisplay_Base"),
+        (E_SI_FLOOR, "SkillItem_FloorEffectDisplay_Base"),
     ] {
         m.ui_label(UiEnum::ElementId, id, l);
     }
@@ -242,6 +254,7 @@ fn install() -> Mem {
     let for_skill_item = m.p("UI_Examination_Tooltip_For_SkillItem", T::Bool);
     let target = m.p("UI_Examination_Tooltip_SkillEffectTarget", T::Enum);
     let category = m.p("UI_Examination_Tooltip_EffectCategory", T::Bitfield32);
+    let min_level = m.p("UI_SkillDisplay_SkillMinLevel", T::Int);
     let two_place = m.p("UIComponent_Timer_ShowTwoPlaceFormat", T::Bool);
     let full = m.p("UIComponent_Timer_ShowFullFormat", T::Bool);
     let colours = m.p("UICore_Text_font_colors", T::Array);
@@ -388,7 +401,14 @@ fn install() -> Mem {
     let item_tt = frame(
         &mut m,
         E_ITEM_TT,
-        &[E_NAME, E_SI_RANGE, E_SI_EFFECTS, E_ITEM_EFFECTS],
+        &[
+            E_NAME,
+            E_SI_RANGE,
+            E_SI_EFFECTS,
+            E_ITEM_EFFECTS,
+            E_SI_PLAIN,
+            E_SI_FLOOR,
+        ],
     );
     let line_entries = entries(&mut m, &[E_LINE]);
     let line_colour = (
@@ -557,12 +577,37 @@ fn install() -> Mem {
         ),
         el(
             E_SI_EFFECTS,
-            "ExaminationEffectList",
+            "ExaminationSkillEffectList",
             220,
             0,
             vec![
                 (target, V::Enum(3)),
                 (for_skill_item, V::Bool(true)),
+                line_entries.clone(),
+            ],
+        ),
+        // §6.1 (ST23): a class-1062 row with the skill-item flag still examines the item.
+        el(
+            E_SI_PLAIN,
+            "ExaminationEffectList",
+            220,
+            0,
+            vec![
+                (category, V::Bitfield32(0x10)),
+                (for_skill_item, V::Bool(true)),
+                line_entries.clone(),
+            ],
+        ),
+        // §9.8 *V*₀: a skill-item list whose row set carries a minimum level.
+        el(
+            E_SI_FLOOR,
+            "ExaminationSkillEffectList",
+            220,
+            0,
+            vec![
+                (target, V::Enum(3)),
+                (for_skill_item, V::Bool(true)),
+                (min_level, V::Int(50)),
                 line_entries.clone(),
             ],
         ),
@@ -645,8 +690,8 @@ fn install() -> Mem {
         (induction, V::DidRef(INDUCTION)),
     ]);
     m.record(SKILL, skill);
-    // 1.56: a single-precision 1.55 gives t = 5 by the f32 rule of §10.1 step 1 (OPEN on the
-    // §16.3 example).
+    // 1.56 rather than 1.55: a stored 1.55 is 1.5499999523 in single precision and gives
+    // t = 5 by §10.1 step 1 (§16.3).
     m.record(INDUCTION, vec![(induction_duration, V::Float(1.56))]);
     m.record(TRAIT, vec![(trait_name, info(literal("Valour")))]);
     let mods = |x: i32| {
@@ -970,6 +1015,66 @@ fn more_records(m: &mut Mem, stat_y: u32) {
         ],
     );
     m.classes.insert(EFFECT_PULSED, 755);
+
+    // §9.8 (ST24): a skill whose target effect lasts by a progression (10 s at level 1, 500 s
+    // at level 50), and skill items storing levels 50, none and 0, and one naming a
+    // calculator beside a stored 50.
+    let interval_prog = m.p("Effect_Duration_ProgressionInterval", T::DidRef);
+    let hook_targets = m.p("Skill_AttackHook_TargetEffectList", T::Array);
+    let spellcraft = m.p("Skill_EffectSpellcraft", T::Float);
+    let usage_skill = m.p("Usage_SkillToExecute", T::DidRef);
+    let usage_level = m.p("Usage_SkillLevel", T::Int);
+    let calculator = m.p("SkillLevelCalculator", T::DidRef);
+    m.record(
+        EFFECT_LEVELLED,
+        vec![
+            (effect_name, info(literal("Ward"))),
+            (harmful, V::Bool(false)),
+            (def_desc, info(literal("Wards."))),
+            (interval_prog, V::DidRef(COST_PROG)),
+        ],
+    );
+    m.classes.insert(EFFECT_LEVELLED, 755);
+    let mut levelled = hover(E_SKILL_TT);
+    levelled.extend([
+        (skill_name, info(literal("Ward"))),
+        (
+            hooks,
+            structs(
+                hook_info,
+                vec![vec![(
+                    hook_targets,
+                    structs(
+                        effect_data,
+                        vec![vec![
+                            (skill_effect, V::DidRef(EFFECT_LEVELLED)),
+                            (spellcraft, V::Float(-1.0)),
+                        ]],
+                    ),
+                )]],
+            ),
+        ),
+    ]);
+    m.record(SKILL_LEVELLED, levelled);
+    for (did, level, calc) in [
+        (ITEM_L50, Some(50), None),
+        (ITEM_LNONE, None, None),
+        (ITEM_L0, Some(0), None),
+        (ITEM_CALC, Some(50), Some(CALCULATOR)),
+    ] {
+        let mut item = hover(E_ITEM_TT);
+        item.extend([
+            (name, info(literal("Rune"))),
+            (usage_skill, V::DidRef(SKILL_LEVELLED)),
+        ]);
+        if let Some(l) = level {
+            item.push((usage_level, V::Int(l)));
+        }
+        if let Some(c) = calc {
+            item.push((calculator, V::DidRef(c)));
+        }
+        m.record(did, item);
+    }
 }
 
 fn engine() -> TooltipEngine<Mem> {
@@ -1184,6 +1289,97 @@ fn skill_item_rows_and_item_stat_lines_6_16_6_20() {
         lines(row(&m, "ItemEffectDisplay_Base")),
         [l("+7 Might", Some("buffed"), BUFFED)]
     );
+    // §6.1 (ST23): the effect-list provider 1062 is no child of 1079, so its row examines the
+    // item even with the skill-item flag.
+    assert_eq!(
+        lines(row(&m, "SkillItem_ItemEffectDisplay_Base")),
+        [l("+7 Might", Some("buffed"), BUFFED)]
+    );
+}
+
+/// The duration line of a skill-item effect row (the effect of `SKILL_LEVELLED`).
+fn duration_line(m: &TooltipModel, label: &str) -> Option<String> {
+    lines(row(m, label))
+        .into_iter()
+        .map(|(t, _, _)| t)
+        .find(|t| t.starts_with("Duration"))
+}
+
+#[test]
+fn skill_item_effect_lines_use_the_item_skill_level_9_8() {
+    let e = engine();
+    let build = |did: Did, level: Option<i32>| {
+        let viewer = Viewer {
+            level,
+            ..Viewer::default()
+        };
+        let m = e
+            .build(&TooltipRequest::hover(did), &viewer)
+            .expect("item tooltip");
+        assert!(m.failures.is_empty(), "{:?}", m.failures);
+        m
+    };
+    let at_50 = Some("Duration: [|||8|20]".to_owned());
+    let at_1 = Some("Duration: [||||10]".to_owned());
+    // A stored Usage_SkillLevel wins over the viewer's level.
+    let m = build(ITEM_L50, Some(1));
+    assert_eq!(duration_line(&m, "SkillItem_EffectDisplay_Base"), at_50);
+    // ... and over the row set's minimum level (it replaces *V*₀).
+    assert_eq!(
+        duration_line(&m, "SkillItem_FloorEffectDisplay_Base"),
+        at_50
+    );
+    // None stored: the viewer's level (1 when unknown), raised to the row's minimum.
+    let m = build(ITEM_LNONE, None);
+    assert_eq!(duration_line(&m, "SkillItem_EffectDisplay_Base"), at_1);
+    assert_eq!(
+        duration_line(&m, "SkillItem_FloorEffectDisplay_Base"),
+        at_50
+    );
+    let m = build(ITEM_LNONE, Some(50));
+    assert_eq!(duration_line(&m, "SkillItem_EffectDisplay_Base"), at_50);
+    // A row level of 0 leaves the row empty.
+    let m = build(ITEM_L0, Some(50));
+    assert!(row(&m, "SkillItem_EffectDisplay_Base").is_empty());
+    assert!(row(&m, "SkillItem_FloorEffectDisplay_Base").is_empty());
+    // Tessera rule: a calculator is not evaluated; the item reads as storing no level.
+    let m = build(ITEM_CALC, Some(1));
+    assert_eq!(duration_line(&m, "SkillItem_EffectDisplay_Base"), at_1);
+
+    // The census view of the same items (ST24).
+    let level_of = |did: Did| {
+        let set = tessera_gamedata::tooltip::TooltipData::record(e.data(), did)
+            .ok()
+            .flatten()
+            .expect("item");
+        e.skill_item_level(&set)
+    };
+    let l50 = level_of(ITEM_L50);
+    assert_eq!(
+        (l50.skill, l50.stored, l50.calculator, l50.level()),
+        (Some(SKILL_LEVELLED), Some(50), None, 50)
+    );
+    assert_eq!(level_of(ITEM_LNONE).level(), -1);
+    assert_eq!(level_of(ITEM_LNONE).row_level(7), 7);
+    assert_eq!(level_of(ITEM_L0).row_level(7), 0);
+    let calc = level_of(ITEM_CALC);
+    assert_eq!((calc.calculator, calc.level()), (Some(CALCULATOR), -1));
+    assert_eq!(level_of(ITEM).skill, Some(SKILL));
+    assert_eq!(level_of(GRANTER).skill, None);
+
+    // The skill tooltip itself uses the list level *V* (the viewer's, at least 1).
+    let skill = |level| {
+        e.build_combat(
+            &CombatRequest::hover(CombatSubject::Skill(SKILL_LEVELLED)),
+            &SkillViewer {
+                level,
+                ..SkillViewer::default()
+            },
+        )
+        .expect("skill tooltip")
+    };
+    assert_eq!(duration_line(&skill(Some(50)), "EffectDisplay_Base"), at_50);
+    assert_eq!(duration_line(&skill(Some(0)), "EffectDisplay_Base"), at_1);
 }
 
 #[test]
@@ -1293,7 +1489,7 @@ fn hostile_records_do_not_panic() {
             &CombatRequest::hover(CombatSubject::Skill(bad)),
             &SkillViewer {
                 level: Some(i32::MIN),
-                max_vitals: vec![(2, f32::MAX)],
+                max_vitals: vec![(VITAL_TYPE_POWER, f32::MAX)],
                 ..SkillViewer::default()
             },
         )
@@ -1313,7 +1509,7 @@ fn vital_costs_progression_percent_per_second_7_10() {
     let e = engine();
     let viewer = SkillViewer {
         level: Some(50),
-        max_vitals: vec![(1, 12_345.0)],
+        max_vitals: vec![(VITAL_TYPE_HEALTH, 12_345.0)],
         ..SkillViewer::default()
     };
     let m = tooltip_of(&e, SKILL_COST, &viewer);

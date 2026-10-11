@@ -23,7 +23,7 @@ pub const UNIT_VARIABLES: [u32; 5] = [
 ];
 /// Number text of one unit (variable [`VAR_NUMBER`]).
 pub const NUMBER_TOKEN: u32 = 0x093D_D17F;
-/// Two-digit number text (with *pad*, values ≤ 9).
+/// Two-digit number text (with *pad*, values ≤ 9; minutes and seconds only, §10.1 step 3).
 pub const PADDED_NUMBER_TOKEN: u32 = 0x0871_F54F;
 /// Seconds with tenths: variable [`SECONDS_VARIABLE`] = the seconds text and
 /// [`TENTHS_VARIABLE`] = the tenths.
@@ -36,6 +36,9 @@ pub const SECONDS_VARIABLE: u32 = 0x0798_42C3;
 pub const TENTHS_VARIABLE: u32 = 0x058A_38D3;
 /// The variable a wrap string receives the timer text in (§10.2).
 pub const WRAP_VARIABLE: u32 = 0x0005_8E15;
+
+/// Index in [`UNIT_SECONDS`] of the first unit *pad* applies to: minutes (§10.1 step 3).
+const PAD_FROM_UNIT: usize = 3;
 
 /// Seconds per unit, largest first (§10.1 step 2).
 pub const UNIT_SECONDS: [u64; 5] = [2_592_000, 86_400, 3_600, 60, 1];
@@ -109,7 +112,8 @@ impl DurationOptions {
 pub struct ShownUnit {
     /// The unit's value.
     pub value: u64,
-    /// Two-digit form (*pad* and a value ≤ 9).
+    /// Two-digit form (*pad* and a value ≤ 9; only the minutes and seconds units, §10.1
+    /// step 3: the larger units never use *pad*).
     pub padded: bool,
     /// Tenths shown with it (seconds only, §10.1 step 4).
     pub tenths: Option<u8>,
@@ -168,7 +172,7 @@ impl DurationParts {
             if shown {
                 out.units[i] = Some(ShownUnit {
                     value,
-                    padded: opts.pad && value <= 9,
+                    padded: opts.pad && value <= 9 && i >= PAD_FROM_UNIT,
                     tenths: seconds_with_tenths.then_some(tenths),
                 });
                 k += 1;
@@ -319,10 +323,18 @@ mod tests {
         assert_eq!(units(&p), [None, None, Some(1), Some(2), Some(5)]);
         let p = DurationParts::split(3600.0, DurationOptions::FULL);
         assert_eq!(units(&p), [None, None, Some(1), Some(0), Some(0)]);
-        let p = DurationParts::split(1.55, DurationOptions::CASTING_TIME);
-        assert_eq!(p.units[4].and_then(|u| u.tenths), Some(6));
+        // Casting time 1.75 (exact in single precision): t = ⌊0.75 × 10 + 0.5⌋ = 8.
+        let p = DurationParts::split(1.75, DurationOptions::CASTING_TIME);
+        assert_eq!(p.units[4].and_then(|u| u.tenths), Some(8));
         assert_eq!(p.units[4].map(|u| u.value), Some(1));
-        let p = DurationParts::split(2.96, DurationOptions::CASTING_TIME);
+        assert_eq!(p.plain(), "1.8s");
+        // A stored 1.55 is 1.5499999523 in single precision: t = 5 (step 1 on the stored
+        // value).
+        let p = DurationParts::split(f64::from(1.55f32), DurationOptions::CASTING_TIME);
+        assert_eq!(p.units[4].and_then(|u| u.tenths), Some(5));
+        assert_eq!(p.units[4].map(|u| u.value), Some(1));
+        // A stored 2.96 (2.9600000381): t = 10 → 0 with a carry.
+        let p = DurationParts::split(f64::from(2.96f32), DurationOptions::CASTING_TIME);
         assert_eq!(
             p.units[4],
             Some(ShownUnit {
@@ -351,6 +363,26 @@ mod tests {
         assert_eq!(units(&p), [None, None, None, Some(1), None]);
         assert!(DurationParts::split(0.0, DurationOptions::timer_default(true)).is_empty());
         assert!(DurationParts::split(f64::NAN, DurationOptions::FULL).is_empty());
+    }
+
+    #[test]
+    fn pad_only_for_minutes_and_seconds() {
+        // §10.1 step 3: the larger units never use *pad*.
+        let opts = DurationOptions {
+            pad: true,
+            ..DurationOptions::FULL
+        };
+        // 1 day, 2 hours, 3 minutes, 4 seconds.
+        let p = DurationParts::split(93_784.0, opts);
+        let padded: Vec<Option<bool>> = p.units.iter().map(|u| u.map(|u| u.padded)).collect();
+        assert_eq!(
+            padded,
+            [None, Some(false), Some(false), Some(true), Some(true)]
+        );
+        assert_eq!(p.plain(), "1d 2h 03m 04s");
+        // 10 minutes are not padded (value > 9).
+        let p = DurationParts::split(605.0, opts);
+        assert_eq!(p.plain(), "10m 05s");
     }
 
     #[test]

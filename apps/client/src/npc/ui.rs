@@ -1226,7 +1226,11 @@ impl NpcUi {
                     override_compare_kind: None,
                 };
                 cd.engine()
-                    .build(&req, &crate::character::tooltip::viewer(state, false))
+                    .build_with_combat(
+                        &req,
+                        &crate::character::tooltip::viewer(state, false),
+                        &crate::character::tooltip::combat_viewer(state),
+                    )
                     .and_then(|m| {
                         crate::character::tooltip::convert(
                             cd,

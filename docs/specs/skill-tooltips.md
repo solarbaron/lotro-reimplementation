@@ -283,6 +283,18 @@ none of them is used for skill-item rows. The description row is a plain generic
 (`item-tooltips.md` §6.4) on the examined object, so in an item tooltip it shows the **item's**
 `Description` row instead (the skill-item layouts have no `Skill_Description_Base`, §12.3).
 
+> **OPEN:** (implementer, `crates/gamedata`, 2026-10-11) how a row's provider group is
+> recognised. The implementation decides it from the row template's widget type, using the
+> class column of §4.3: `ExaminationSkillDamage`, `…SkillEffectList`, `…SkillGeneroProperty`,
+> `…SkillMaterials`, `…SkillMaxTargets`, `…SkillPip`, `…SkillTrait`, `…SkillVitalCost`,
+> `…SkillQualifier`, `…SkillRemovedGambits`, `…SkillSpellcraftMod`, `…SkillMaxRange` and
+> `…SkillCastingTime` are children of 1079; every other type examines the examined object.
+> Two points are not stated: §4.3 gives `ExaminationSkillRemovedGambits` no class ("—"),
+> and the gambit and pip-cost composites (2290–2293) have no widget type of their own, so a
+> flagged composite would not find *K*. Neither occurs in the skill-item rows of §12.3, and
+> all of these rows are empty in P2. Please confirm the widget-type-to-group mapping, in
+> particular the class of `ExaminationSkillRemovedGambits`.
+
 <a id="s6-2"></a>
 ### 6.2 Record and live paths
 

@@ -171,8 +171,9 @@ impl<D: TooltipData> TooltipEngine<D> {
         failures: &mut Vec<RowFailure>,
     ) -> Row {
         // `skill-tooltips.md` §6.1 step 1: an item tooltip's skill-item rows show the item's
-        // skill.
-        if t.for_skill_item && ex.kind == Kind::Item {
+        // skill. Only rows whose provider is a child of the skill examination base do this
+        // (ST23); the other providers always examine the examined object.
+        if t.for_skill_item && ex.kind == Kind::Item && t.skill_provider() {
             return self.fill_skill_item(t, ex, viewer, failures);
         }
         let mut f = Fill {

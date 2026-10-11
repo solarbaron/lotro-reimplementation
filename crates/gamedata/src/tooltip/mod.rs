@@ -79,10 +79,13 @@ pub use effects::{
     PROPERTY_MOD_EFFECT_LABEL, line_tokens,
 };
 pub use error::TooltipError;
-pub use layout::{ListBoxInfo, RowTemplate, TemplateRef, TooltipFrame, Widget};
+pub use layout::{
+    ListBoxInfo, RowTemplate, SKILL_PROVIDER_TYPES, TemplateRef, TooltipFrame, Widget,
+};
 pub use skill::{
     CombatCategory, CombatCensus, CombatOutcome, CombatRequest, CombatSubject, IconCategory,
-    LiveEffect, NameState, SkillIconSize, SkillViewer, TimerKind, TimerRow, skill_tokens,
+    LiveEffect, NameState, SkillIconSize, SkillItemLevel, SkillViewer, TimerKind, TimerRow,
+    VITAL_TYPE_HEALTH, VITAL_TYPE_POWER, skill_tokens,
 };
 
 use layout::Budget;
@@ -754,6 +757,8 @@ pids! {
         hook_critical_effects = "Skill_AttackHook_CriticalTargetEffectList",
         hook_super_critical_effects = "Skill_AttackHook_SuperCriticalTargetEffectList",
         usage_skill = "Usage_SkillToExecute",
+        usage_skill_level = "Usage_SkillLevel",
+        skill_level_calculator = "SkillLevelCalculator",
         granted_skill = "Item_GrantedSkill",
         induction_duration = "Induction_Duration",
         induction_tooltip_override = "Induction_SkillTooltipOverride",
@@ -853,6 +858,9 @@ pub(crate) struct Examined<'a> {
     pub(crate) instance: &'a Instance,
     pub(crate) kind: Kind,
     pub(crate) ctx: &'a Ctx,
+    /// The row level a skill-item effect list writes as `UI_Examination_SkillEffectLevel`
+    /// (`skill-tooltips.md` §9.8, §12.3); `None` outside skill-item rows.
+    pub(crate) row_level: Option<i32>,
 }
 
 impl<D: TooltipData> TooltipEngine<D> {
@@ -1018,6 +1026,7 @@ impl<D: TooltipData> TooltipEngine<D> {
             instance: &request.instance,
             kind: Kind::Item,
             ctx: &ctx,
+            row_level: None,
         };
         let (rows, failures, timers) = self.fill_rows(&frame, &ex, viewer);
         let assembly = assemble(

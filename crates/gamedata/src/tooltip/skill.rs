@@ -98,6 +98,13 @@ use skill_tokens as st;
 /// Most running cooldowns, maximum vitals and traits a [`SkillViewer`] is read for.
 pub const MAX_VIEWER_ENTRIES: usize = 1024;
 
+/// `VitalType` key of the feed's `Health` (morale) maximum, *M*₁ of `skill-tooltips.md`
+/// §7.10 (§13 vital keys, ST25).
+pub const VITAL_TYPE_HEALTH: u32 = 1;
+/// `VitalType` key of the feed's `Power` maximum, *M*₂ of §7.10 (ST25). Keys 3 and 4
+/// (`MountEndurance`, `MountPower`) have no feed value in P2.
+pub const VITAL_TYPE_POWER: u32 = 2;
+
 /// What a skill or effect tooltip examines (`skill-tooltips.md` §3, §13).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CombatSubject {
@@ -134,7 +141,8 @@ pub struct LiveEffect {
 pub struct SkillViewer {
     /// Level (`CharacterInfo`, `LevelChanged`); `None` reads as 1.
     pub level: Option<i32>,
-    /// Maximum vitals: (vital type key, maximum), from the feed's vitals (§7.10).
+    /// Maximum vitals: (`VitalType` key, maximum), from the feed's vitals (§7.10, §13):
+    /// [`VITAL_TYPE_HEALTH`] and [`VITAL_TYPE_POWER`]; a key without an entry reads as 0.
     pub max_vitals: Vec<(u32, f32)>,
     /// Running cooldowns: (skill, remaining seconds) (§7.15).
     pub cooldowns: Vec<(Did, f32)>,
@@ -143,10 +151,36 @@ pub struct SkillViewer {
 }
 
 impl SkillViewer {
-    /// The level, 1 when unknown (§14.1 viewer).
+    /// The level, 1 when unknown (§14.1 viewer): the viewer's `Apparent_Level` of §9.8.
     #[must_use]
     pub fn level_or_one(&self) -> i32 {
         self.level.unwrap_or(1)
+    }
+
+    /// The row level *V*₀ of `skill-tooltips.md` §9.8 (skill-item rows, step 1; the level of
+    /// §7.10): the row set's `UI_Examination_SkillEffectLevel` when stored, else the viewer's
+    /// level, raised to the row set's `UI_SkillDisplay_SkillMinLevel` when that is greater.
+    /// No minimum of 1 and no mood amount.
+    #[must_use]
+    pub fn base_level(&self, t: &super::RowTemplate) -> i32 {
+        if let Some(v) = t.skill_effect_level {
+            return v;
+        }
+        let b = self.level_or_one();
+        t.skill_min_level.filter(|&m| m > b).unwrap_or(b)
+    }
+
+    /// The list level *V* of a skill tooltip's effect-list rows (§9.8 "Skills"): the row
+    /// set's `UI_Examination_SkillEffectLevel` when stored (nothing else is consulted), else
+    /// the larger of the viewer's level and 1 (Tessera rule: no mood amount), raised to the
+    /// row set's `UI_SkillDisplay_SkillMinLevel` when that is greater.
+    #[must_use]
+    pub fn list_level(&self, t: &super::RowTemplate) -> i32 {
+        if let Some(v) = t.skill_effect_level {
+            return v;
+        }
+        let b = self.level_or_one().max(1);
+        t.skill_min_level.filter(|&m| m > b).unwrap_or(b)
     }
 
     fn max_vital(&self, v: u32) -> f32 {
@@ -165,6 +199,39 @@ impl SkillViewer {
             .find(|(d, _)| *d == skill)
             .map(|(_, r)| *r)
             .filter(|r| r.is_finite() && *r > 0.0)
+    }
+}
+
+/// The skill level a skill item stores (`skill-tooltips.md` §9.8 step 2, §12.3, ST24).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct SkillItemLevel {
+    /// `Usage_SkillToExecute`: the skill *K* of the item's skill-item rows (§6.1).
+    pub skill: Option<Did>,
+    /// `Usage_SkillLevel`, when stored.
+    pub stored: Option<i32>,
+    /// A `SkillLevelCalculator` record the item names (none on the reference install).
+    pub calculator: Option<Did>,
+}
+
+impl SkillItemLevel {
+    /// The item's skill level *S* (§9.8 step 2) under the Tessera rule of §9.8: the stored
+    /// `Usage_SkillLevel`, −1 when absent; a calculator is not evaluated, so an item naming
+    /// one reads as storing no level (−1).
+    #[must_use]
+    pub fn level(&self) -> i32 {
+        if self.calculator.is_some() {
+            -1
+        } else {
+            self.stored.unwrap_or(-1)
+        }
+    }
+
+    /// The row level of a skill-item effect list (§9.8 step 3): *S* when ≥ 0, else `v0`
+    /// (*V*₀ of step 1). A row level of 0 leaves the row empty.
+    #[must_use]
+    pub fn row_level(&self, v0: i32) -> i32 {
+        let s = self.level();
+        if s >= 0 { s } else { v0 }
     }
 }
 
@@ -539,6 +606,7 @@ impl<D: TooltipData> TooltipEngine<D> {
             instance: &instance,
             kind,
             ctx: &ctx,
+            row_level: None,
         };
         let item_viewer = Viewer {
             level: viewer.level,
@@ -769,8 +837,28 @@ impl<D: TooltipData> TooltipEngine<D> {
     // §6.1 skill-item rows
     // -----------------------------------------------------------------------------------------
 
-    /// A row of an item tooltip marked `UI_Examination_Tooltip_For_SkillItem`: the row of the
-    /// item's `Usage_SkillToExecute`, empty without one (§6.1 step 1, §12.3).
+    /// The skill level an item stores for its skill-item rows (`skill-tooltips.md` §9.8
+    /// step 2, ST24): its `Usage_SkillToExecute`, `Usage_SkillLevel` and
+    /// `SkillLevelCalculator`.
+    #[must_use]
+    pub fn skill_item_level(&self, item: &PropertySet) -> SkillItemLevel {
+        let stored = match self.c.usage_skill_level.and_then(|p| item.get(p)) {
+            Some(PropertyValue::Int(i)) => Some(*i),
+            Some(PropertyValue::Int64(i)) => Some(i32::try_from(*i).unwrap_or(-1)),
+            _ => None,
+        };
+        SkillItemLevel {
+            skill: as_did(self.c.usage_skill.and_then(|p| item.get(p))),
+            stored,
+            calculator: as_did(self.c.skill_level_calculator.and_then(|p| item.get(p))),
+        }
+    }
+
+    /// A row of an item tooltip marked `UI_Examination_Tooltip_For_SkillItem` whose provider
+    /// is a child of the skill examination base (§6.1, ST23): the row of the item's
+    /// `Usage_SkillToExecute`, empty without one (§6.1 step 1, §12.3). A skill-item effect
+    /// list (`ExaminationSkillEffectList`) is evaluated at the row level of §9.8: the item's
+    /// `Usage_SkillLevel` when stored, else *V*₀ (Tessera rule of §9.8, the target entry).
     pub(crate) fn fill_skill_item(
         &self,
         t: &super::RowTemplate,
@@ -778,11 +866,8 @@ impl<D: TooltipData> TooltipEngine<D> {
         viewer: &Viewer,
         failures: &mut Vec<RowFailure>,
     ) -> Row {
-        let skill = self
-            .c
-            .usage_skill
-            .and_then(|p| ex.set.get(p))
-            .and_then(|v| as_did(Some(v)));
+        let level = self.skill_item_level(ex.set.as_ref());
+        let skill = level.skill;
         let set = skill.and_then(|d| match self.data.record(d) {
             Ok(s) => s,
             Err(e) => {
@@ -802,6 +887,9 @@ impl<D: TooltipData> TooltipEngine<D> {
             instance: ex.instance,
             kind: Kind::Skill,
             ctx: ex.ctx,
+            row_level: t
+                .skill_effect_list()
+                .then(|| level.row_level(ex.ctx.viewer.base_level(t))),
         };
         self.fill(t, &kex, viewer, failures)
     }
@@ -1027,7 +1115,8 @@ impl<D: TooltipData> TooltipEngine<D> {
         let Some(PropertyValue::Array(a)) = list.and_then(|p| f.ex.set.get(p)) else {
             return out;
         };
-        let level = f.ex.ctx.viewer.level_or_one();
+        // The level of §7.10 step 1: the row level *V*₀ of §9.8.
+        let level = f.ex.ctx.viewer.base_level(f.t);
         let entries: Vec<_> = a
             .elements
             .iter()
@@ -1279,9 +1368,16 @@ impl<D: TooltipData> TooltipEngine<D> {
         let Some(target) = t.effect_target else {
             return self.empty_row(t);
         };
+        // §9.8: a skill-item row's level (class 1080, written as the row set's
+        // `UI_Examination_SkillEffectLevel`), else the list level *V* of the skill tooltip.
+        let level = match f.ex.row_level {
+            Some(0) => return self.empty_row(t),
+            Some(l) => l,
+            None => f.ex.ctx.viewer.list_level(t),
+        };
         let effects = self.skill_list(f.ex.set.as_ref(), target);
         let mut misses = 0;
-        let lines = self.list_lines(&effects, f.ex.ctx.viewer.level_or_one(), &mut misses);
+        let lines = self.list_lines(&effects, level, &mut misses);
         f.ex.ctx.miss(misses);
         self.lines_row(f, lines)
     }

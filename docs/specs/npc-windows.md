@@ -4,10 +4,10 @@
 
 | | |
 |---|---|
-| **Status** | Review (review 1 of 2026-10-11: changes requested) |
+| **Status** | Revised (revision 2 of 2026-10-11, answering review 1; awaits review 2) |
 | **Last updated** | 2026-10-11 |
 | **Author role** | Spec writer (dirty room) |
-| **Reviewer** | Spec reviewer, an independent session that wrote no part of this spec (review 1, 2026-10-11) |
+| **Reviewer** | Spec reviewer, an independent session that wrote no part of this spec (review 1, 2026-10-11; review 2 pending, by a session that wrote no part of revisions 1–2) |
 | **Review record** | First version of 2026-10-10 for decision 0024 P3 (client half only). **Review 1, 2026-10-11** (text of commit b62d0ae, with its notes in `item-tooltips.md`, `economy.md`, `interaction.md`, `string-table.md`): **changes requested**. Checked (CLEAN_ROOM.md §5.3): functional facts only; no code or pseudo-code (the input, buying, quantity and loot rules are plain-word steps); no copied prose; identifiers are install labels quoted for interoperability; no game text (texts named by table and token only), keys, hostnames or traffic; every fact group has a provenance row with source and date, BIN rows name decision 0011, questions (a)–(e) and why M1–M3 were not enough; Tessera choices are marked; nothing under a closed gate. Spot checks, own read-only probes of the install: §4 catalogue (8 of 8 labels, keys, layouts, roots, widget types, design rects); §9.2 money templates, coin icon states and images, worth and cost labels; §7.1 tab rectangles and page bases; §6.1/§5.2 close button, text pane and intro text; §7.5 element set; §8.1 Loot All button and its label token; §9.4 wallet items (167 + 443, 577 small icons, all category counts, mapper 16 names / 14 texts); §9.3 property-set currency order; §11 counts (quest offers, wallet, 10,579 vendor items, 859 comments) agree with the implementation's own census. Own M4 spot checks (decision 0011, private copy deleted after use): NW18 (three coin elements, `Copper`, `Silver`, `Gold`, each hidden, front insertion by option; count format as stated), NW13 (label choice by whether any listed entry is visible), NW15 (half preset constant 0.5; clamp and write-back of the set-quantity step; OK rules). The notes in the four other specs match this spec and, for the `item-tooltips.md` worth template, the install; NW20 and NW21 counts were not re-derived. **Blocking:** (1) §7.5 rule 4 and §13.2 contradict rule 1, and the binary settles it: every character typed into the entry re-reads its text; a non-empty text is read as an unsigned number (a text that is not a number reads as 0) and set as the quantity, so it is clamped to 1 … *M* and the entry is rewritten at once (typing 80 with *M* = 50 leaves 50, and OK then buys 50); an empty entry leaves the quantity unchanged, and OK on an empty entry does nothing. Revise rule 4, rule 5's "above *M*" case and §13.2; this also answers the §7.5 implementer OPEN. Implemented behaviour changes: `tessera-ui` keeps the typed text unclamped and treats an empty entry at OK like 0. (2) §6.3 places `QuestRewards_VirtueExpField` with the fixed virtues (step 2) while §10.3 lists `VirtueXp` among the step-1 amount rows; state one position (implementer OPEN of §10.3; `tessera-gamedata` may have to move the row). (3) §5.3: the two implementer OPENs were inserted inside the numbered Tessera rule, so rules 4 and 5 now read as part of OPEN callouts; move the OPENs after rule 5 (no behaviour change). **Non-blocking:** answer the remaining implementer OPENs (§3.1, §5.2, §5.3, §5.5, §7.5 opening quantity, §7.6, §7.7, §8.3 both, §9.4, §11 both); §8.3 with a coin-only `LootShown` the Tessera rule closes in the frame of the Loot All, before the feed can answer (decide); §7.5 could add that the set-quantity step also puts one dialog element (by inference the OK button) in state `ghosted` while the entry is empty or the cost exceeds the player's coin, `normal` otherwise; the header date and change log did not record the OPENs added on 2026-10-11. Full record in the review log (decision 0018). |
 | **Implements into** | `crates/gamedata` (`npc` module: dialogue page text, the conversation and choice models, quest-offer content and reward rows, vendor, barter and loot entries with price display, wallet entries and the coin split, the census categories of §11), `crates/ui` (game widgets and fallback widgets of the window types named here: action list, vendor entry, quantity dialog, coin list, reward rows, wallet tree), `apps/client` (NPC use input, the windows, their commands to the session, `--open-panel` names), `crates/plugins` (the wallet display only, through the wallet model of §9; the plugin API itself is `lua-plugin-api.md` §15) |
 | **Companion specs** | [`interaction.md`](interaction.md) §3.4 (use range, cursor, mouse-over), [`ui-layout.md`](ui-layout.md) (layouts, `UILAYOUT`, §9 building panels, §17 opening), [`ui-behaviour.md`](ui-behaviour.md) (input routing, window manager, tooltips), [`ui-widgets.md`](ui-widgets.md) (scroll bars, list boxes), [`game-panels.md`](game-panels.md) (`HideWhenField`), [`string-table.md`](string-table.md) (rendering, markup, display cut, variables), [`quests.md`](quests.md) (§4 records, §7 roles and comments, §9 rewards), [`economy.md`](economy.md) (§6 vendors and barter, §7 currency), [`items.md`](items.md) (item properties, sellability §5.3), [`icon-layers.md`](icon-layers.md) (composed icons), [`item-tooltips.md`](item-tooltips.md) (examination tooltips, §6.11 worth), [`character-panels.md`](character-panels.md) (§5 item slots, bags), [`keymap.md`](keymap.md) (§12 key maps, K42–K46), [`scenario-feed.md`](scenario-feed.md) (revision 4 Accepted; revision 5, the P3 revision of §10 here), [`lua-plugin-api.md`](lua-plugin-api.md) §15 (wallet views) |
@@ -57,7 +57,7 @@ time.
 |---|---|
 | **OBS** | The user's install (Steam, client build 4906.0071.1794.4035), read-only, in place; archives unchanged since 2026-10-04 (file times re-checked 2026-10-10). All 302 UI layout records (dump of 2026-10-06 decoded per `ui-layout.md` §4, re-read with a throwaway value-decoding probe on 2026-10-10; layout 0x22000047 does not decode with that probe and holds none of the elements named here); the `UILAYOUT` DID map (0x28000003 here) and the DID maps `STRINGTABLE`, `WEENIECONTENT`, `EMAPPER`; the enum mappers named in the text; the key-map records 0x1D000000 and 0x1D000001 and the mappers 0x230000AF, 0x23000176, 0x230000B0 (`keymap.md` §12); with throwaway probes over the repository's own decoders (read-only): the property sets of all 20,807 quest records, all 3,449 barter profiles, the 400 vendor inventories and their 10,579 distinct items, the wallet control record and its 610 items, all 859 NPC comment records, the currency directory in both forms (property set and object record); the argument IDs (not the text) of the 57,534 string-table entries named by role-line properties of quest records and of the 859 comment contents. |
 | **BC** | The class library's code (record 0x56000000), data in the user's install (method M1), disassembled on 2026-10-10 with the repository's `tessera-dattool bytecode` (`wlib-bytecode.md`, Accepted) and a throwaway method-table probe over `tessera-wstate`. Read (class indices of this install): class 470 functions 5, 29, 44 (the player commands the executable calls, §3); the bodies behind slot 644, slot 486 and slots 137, 237, 269, 344, 426, 522 of the local player's class (1730 here, chain 512 … 787 … 484); class 295 functions 26 and 81 (the use dispatcher, read only to see what it is handed); class 404 function 2 (coin breakdown, already in `item-tooltips.md` §6.11); class 3126 function 16 (the player-variable filler of §5.5) with the helpers it calls. No message text was read. |
-| **BIN** | **M4 under the standing authorisation of decision 0011.** Client build 4906.0071.1794.4035 (`x64/lotroclient64.exe`, SHA-256 prefix d22363eb9aff0fb5), headless decompiler on a private copy of the shared analysis project (`~/tessera-re/work/p3npc`, deleted after use), 2026-10-10; functions found by instruction search for element IDs, input-action IDs, state IDs and property IDs. **Questions:** (a) which input uses a world entity, and what is used; (b) what the loot window's buttons do and when it closes; (c) how the vendor window buys, sells and buys back, and what the quantity dialog does; (d) the order of the rows of the quest-offer reward list and how many objectives it shows; (e) how the money display builds its coin elements. **Why M1–M3 were not enough:** the layouts name the elements and the key maps the bindings, but which command a click on a world entity or a list entry produces, the buy modes, the clamps of the quantity dialog, the reward-row order and the close-on-empty rule are native UI code that no record states; no published source describes them; the running client is not available to this session (owner checks §14 cover the visible results). **Read:** the game-view command handlers (two variants) and the world-click dispatcher behind the full-screen click field of layout `selection`; the use, select and loot wrappers they call (only to read the class-library function IDs they invoke); the loot window's click handler, its Loot All, close and list-change routines and the Loot All label routine; the vendor buy-page, sell-page and buy-back-page click handlers, the buy routine, its mode selector, the toggle handler of the `VendorBuyUI` input map, the sell and sell-all routines (to their class-library calls), the quantity dialog's constructor, click handler, set-quantity and confirm routines and one float constant; the quest reward list's outer fill routine, its static-row routine and the five entry-kind routines (to the treasure properties they read), the objective-list routine; the money display's constructor and coin-element builder. **Nothing from network, login, launcher or anti-tamper code was read** (decision 0004): every path above was followed only up to the class-library call or the UI element it drives. |
+| **BIN** | **M4 under the standing authorisation of decision 0011.** Client build 4906.0071.1794.4035 (`x64/lotroclient64.exe`, SHA-256 prefix d22363eb9aff0fb5), headless decompiler on a private copy of the shared analysis project (`~/tessera-re/work/p3npc`, deleted after use), 2026-10-10; functions found by instruction search for element IDs, input-action IDs, state IDs and property IDs. **Questions:** (a) which input uses a world entity, and what is used; (b) what the loot window's buttons do and when it closes; (c) how the vendor window buys, sells and buys back, and what the quantity dialog does; (d) the order of the rows of the quest-offer reward list and how many objectives it shows; (e) how the money display builds its coin elements. **Why M1–M3 were not enough:** the layouts name the elements and the key maps the bindings, but which command a click on a world entity or a list entry produces, the buy modes, the clamps of the quantity dialog, the reward-row order and the close-on-empty rule are native UI code that no record states; no published source describes them; the running client is not available to this session (owner checks §14 cover the visible results). **Read:** the game-view command handlers (two variants) and the world-click dispatcher behind the full-screen click field of layout `selection`; the use, select and loot wrappers they call (only to read the class-library function IDs they invoke); the loot window's click handler, its Loot All, close and list-change routines and the Loot All label routine; the vendor buy-page, sell-page and buy-back-page click handlers, the buy routine, its mode selector, the toggle handler of the `VendorBuyUI` input map, the sell and sell-all routines (to their class-library calls), the quantity dialog's constructor, click handler, set-quantity and confirm routines and one float constant; the quest reward list's outer fill routine, its static-row routine and the five entry-kind routines (to the treasure properties they read), the objective-list routine; the money display's constructor and coin-element builder. **Revision 2 pass** (2026-10-11, same build, private copy `~/tessera-re/work/p3nw-r1`, deleted after use), for review 1's questions (c′) what the quantity dialog does with each character typed into its entry, with an empty entry at OK, at opening and with the OK button's state, and (d′) where the virtue experience row stands: **read** the dialog's message handler again (its character-input branch), its set-quantity, confirm and open routines, the text-to-number helper, the OK-state routine, the money display's amount refresh and the player-coin query it calls (to the class-library call), and the reward list's fixed-entry routine with its six callees (to the property IDs they read); one instruction search of the whole executable for the property ID of `QuestTreasure_FixedVirtueArray` (no hit). Why M1–M3 were not enough: as above; the layout names the entry and the OK button but no record states the input handling. **Nothing from network, login, launcher or anti-tamper code was read** (decision 0004): every path above was followed only up to the class-library call or the UI element it drives. |
 | **Design** | Tessera rules, marked **Tessera rule**: what Tessera does where the original's behaviour is server data, untraced game code, or outside P3. Not claims about the original. |
 
 | # | Fact | Source | Mark |
@@ -76,9 +76,9 @@ time.
 | NW12 | World clicks: the clicked entity must pass the selectable test; it becomes the selection; a left double-click then uses it unless it is the player; a right click or `AutoLootAll` on a non-player entity uses it, `AutoLootAll` setting `Usage_DoMetaUsage` first (§3.1) | BIN (a); BC | BIN 2026-10-10 |
 | NW13 | Loot window: Loot All and Enter take everything, or close when the list is empty; the button's label follows the list; after Loot All the window closes when the list empties (§8.3) | BIN (b) | BIN 2026-10-10 |
 | NW14 | Vendor buying: right click and left double-click on a buy entry, or the Buy button, buy the selected entry; four buy modes by held toggle; items with a stack size below 2 always buy one (§7.4) | BIN (c) | BIN 2026-10-10 |
-| NW15 | Quantity dialog: presets, arrows, clamp to 1 … stack size, OK and Enter, cancel; the half preset multiplies by 0.5 (§7.5) | BIN (c) | BIN 2026-10-10 |
+| NW15 | Quantity dialog: presets, arrows, clamp to 1 … stack size, OK and Enter, cancel; the half preset multiplies by 0.5 (§7.5). Revision 2: every character input re-reads the entry and sets it (clamp and rewrite), an empty entry keeps the quantity and makes OK do nothing, the number reading, the `TooExpensive` check at OK, the OK button's `ghosted`/`normal` choice, the opening quantity (*M*, or the last purchase's quantity for the same vendor), the money display's own coin comparison; message key 0x28 is `Text_character_input` in the install's `UIElementMessage` mapper (base 0x230001AC) and state key 0x10000013 is `TooExpensive` in `UIStateID` | BIN (c), (c′); OBS (mapper labels) | BIN 2026-10-10, revised 2026-10-11 |
 | NW16 | Selling and buying back: entry clicks, Sell, Sell All (every listed item that is not locked), the show-locked check box; buy-back entry clicks and button (§7.6, §7.8) | BIN (c) | BIN 2026-10-10 |
-| NW17 | Quest-offer reward list: row order, kinds, headers; the objective list shows one objective entry (§6.2, §6.3) | BIN (d) | BIN 2026-10-10 |
+| NW17 | Quest-offer reward list: row order, kinds, headers; the objective list shows one objective entry (§6.2, §6.3). Revision 2: the virtue experience row is the last row of the fixed-entry step, conditioned on the treasure's `QuestTreasure_Virtue_XP_Tier`; no list routine reads `QuestTreasure_FixedVirtueArray` | BIN (d), (d′); OBS (property and element labels of the IDs) | BIN 2026-10-10, revised 2026-10-11 |
 | NW18 | The money display builds exactly three coin elements with icon states `Copper`, `Silver`, `Gold`, hidden until filled (§9.2) | BIN (e) | BIN 2026-10-10 |
 | NW19 | Currency directory: the object form lists gold, silver, copper; the property set stores silver, gold, copper (§9.3) | OBS (both forms); BC (class 404 walks the object form) | Confirmed 2026-10-10 |
 | NW20 | Player-variable filler: 20 argument IDs and the player value each receives (§5.5); role-line census of argument IDs (§5.5, §11) | BC (class 3126 function 16 and its helpers); OBS (argument IDs) | Confirmed (bytecode, census) 2026-10-10 |
@@ -336,22 +336,22 @@ table keyed by action when the window is built (BIN).
 >    the speaker's body record has one, else the entry's `ActionPickerUI_DefaultTextEntry`.
 >    An entry without a single template (quests, crafting, trainers) uses
 >    `ActionPickerMiscTemplate`.
+> 4. Option numbers are not drawn. Clicking a row (`SelectLeft` release on it, or `Enter`
+>    while it has focus) sends `ChooseOption { window, option }`. No row is in state
+>    `requirement_notmet`.
+> 5. More rows than fit scroll with the list's scroll bar (`ui-widgets.md` §5); the window
+>    keeps its size.
 
 > **OPEN:** (implementer, `apps/client`, 2026-10-10) an action entry with neither a value
 > of its `ActionPickerUI_EntryTextProperty` on the speaker's record nor an
 > `ActionPickerUI_DefaultTextEntry` (on this install the `Quest` action) gives no text:
 > the client shows the row with an empty text and the census counts `TextMissing`. Please
 > state the row's text for such actions (for example the quest's name).
-> 4. Option numbers are not drawn. Clicking a row (`SelectLeft` release on it, or `Enter`
->    while it has focus) sends `ChooseOption { window, option }`. No row is in state
->    `requirement_notmet`.
 
 > **OPEN:** (implementer, `apps/client`, 2026-10-11) rule 4's `Enter` on a focused row is not
 > wired: `tessera-ui`'s list rows take no keyboard focus, so no row can have it. Enter on the
 > choice window goes to the rest of the UI as before. Which row has focus when the window opens
 > (none, or the first option)?
-> 5. More rows than fit scroll with the list's scroll bar (`ui-widgets.md` §5); the window
->    keeps its size.
 
 <a id="s5-4"></a>
 ### 5.4 NPC comment window (NW4)
@@ -518,9 +518,15 @@ The block is an instance of `Quest_RewardsField` (based on `QuestRewards_Root`, 
 2. **Fixed reward entries** (`QuestRewards_StaticRewardField`, based on `QuestReward_Base` of
    layout 0x22000720), by kind in this order: items (`QuestTreasure_FixedItemArray`),
    relics, traits (`QuestTreasure_FixedTraitArray`), titles
-   (`QuestTreasure_FixedTitleArray`), emotes (`QuestTreasure_FixedEmoteArray`), then virtues
-   (`QuestTreasure_FixedVirtueArray`, with the virtue experience row
-   `QuestRewards_VirtueExpField`).
+   (`QuestTreasure_FixedTitleArray`), emotes (`QuestTreasure_FixedEmoteArray`); then, as the
+   last row of this step, the **virtue experience row** `QuestRewards_VirtueExpField`, added
+   when the quest's treasure record has a non-zero `QuestTreasure_Virtue_XP_Tier`. That row
+   is not a `QuestReward_Base` entry: it has the shape of the amount rows of step 1
+   (`QuestRewards_VirtueExpField_BG`, `QuestRewards_VirtueExpIcon`,
+   `QuestRewards_VirtueExpRewardText`), and its text is a formatted string with the amount
+   the class library reports for the quest. The list fill reads no
+   `QuestTreasure_FixedVirtueArray`: the five entry-kind routines read only the item, relic, trait, title and emote arrays, and the virtue row reads
+   only the tier (revision 2, BIN 2026-10-11).
 3. **Selectable rewards**, when the quest has any: the header
    `QuestRewards_SelectableRewardsHeader`, then entries (`QuestRewards_SelectableRewardField`,
    based on `QuestReward_Selectable`) by kind in the order items, relics, traits, titles,
@@ -534,8 +540,9 @@ about (12, 4) and a text 319 × 33 at (45, 4); entries of kinds 2–3 use the pa
 `TraitDisplay` with icon, name and overlays), `QuestReward_Image` with `QuestReward_Text`, and
 `QuestReward_BillingToken`.
 
-> **OPEN:** (Q5) the texts of title, emote and virtue rows and the amounts' formats; owner
-> check O112.
+> **OPEN:** (Q5) the texts of title, emote and virtue experience rows and the amounts'
+> formats; whether the original shows fixed virtue-rank rewards anywhere else in the offer;
+> owner check O112.
 
 > **Tessera rule (fill):**
 >
@@ -543,9 +550,14 @@ about (12, 4) and a text 319 × 33 at (45, 4); entries of kinds 2–3 use the pa
 >   `quests.md` §9.4): items as item displays with the composed icon and a quantity overlay
 >   for `QuestTreasure_ItemQuantity` > 1, and the item tooltip on hover; traits as trait
 >   displays (icon and name of the trait record, `icon-layers.md` §5.3); titles and emotes as
->   image and text (`Title_String`, `Emote_CommandString`; no image); virtues as a text row
->   naming the virtue property's label and the increment. Relics never occur here
->   (`quests.md` §9.4).
+>   image and text (`Title_String`, `Emote_CommandString`; no image). Entries of
+>   `QuestTreasure_FixedVirtueArray` are **not** shown (as in the original's list, step 2).
+>   Relics never occur here (`quests.md` §9.4).
+> - The virtue experience row of step 2 is shown only with a `VirtueXp` amount the feed
+>   supplies (§10.3), as the last row of step 2: after the fixed emote entries, before the
+>   selectable rewards. Its text element `QuestRewards_VirtueExpRewardText` shows the amount
+>   as a decimal integer. The row does not depend on the treasure record's
+>   `QuestTreasure_Virtue_XP_Tier` (the tier is a reward-level key, server data).
 > - Amount rows of step 1 are shown only with amounts the feed supplies (`QuestRewards`,
 >   revision 5, §10.3): the client never derives an amount from reward-level tables
 >   (`quests.md` §9.1–§9.2 are server data). A reputation row names the faction of the
@@ -558,7 +570,7 @@ about (12, 4) and a text 319 × 33 at (45, 4); entries of kinds 2–3 use the pa
 > an entry of each kind shows is not stated. Every part except the background carries the
 > layout's sample text. Tessera rule until settled: an item entry shows only
 > `QuestReward_Item`; a trait entry only `QuestReward_Trait` (its name in the trait display's
-> text); title, emote and virtue entries `QuestReward_Image` and `QuestReward_Text`;
+> text); title and emote entries `QuestReward_Image` and `QuestReward_Text`;
 > `QuestReward_BillingToken` and `QuestReward_Runic` stay hidden.
 
 <a id="s6-4"></a>
@@ -715,30 +727,67 @@ on `MoneyDisplay_ItemCostTemplate`: a label and a coin list), the item
 `VendorBuyStack_ItemDisplay` (medium item display), `VendorBuyStack_OkButton` and the close
 button `VendorBuyStack_CancelButton`.
 
-Rules (*M* = the maximum the dialog was opened with, the stack size):
+Rules (*M* = the maximum the dialog was opened with, the stack size). The original keeps the
+quantity only as the entry's text; "the entry's value" below is that text read as a number
+(rule 4).
 
-1. Setting a quantity clamps it to 1 … *M* and writes it to the entry as a decimal integer;
-   the cost display then shows the price for that quantity.
+1. **Setting a quantity** *q*: *q* is clamped to 1 … *M*, the entry's text is replaced by the
+   clamped value as a decimal integer, the cost display shows the price for that quantity, and
+   the OK button's state is chosen again (rule 7).
 2. Full sets *M*; Half sets *M* × 0.5 truncated (then clamped, so at least 1); the third
    preset sets 1.
-3. The arrows set the entry's current value minus or plus 1 (a non-numeric entry counts as
-   1).
-4. Typing in the entry: when its text is a number, the quantity is set from it.
-5. OK, or `AcceptInput` (Enter) while the dialog has focus: a value of 0 is set to 1 and the
-   dialog stays open; a value above *M* is clamped and the dialog stays open; otherwise the
-   purchase is made with that quantity and the dialog closes.
+3. The arrows set the entry's value minus or plus 1 (rule 1 clamps the result); an empty
+   entry counts as 1.
+4. **Typing.** Every character input to the entry (UI message `Text_character_input`, 0x28,
+   deletions included) re-reads the entry's whole text after the change:
+   - a non-empty text is read as a number and set as the quantity (rule 1), so it is clamped
+     and the entry is rewritten at once: with *M* = 50, typing 8 leaves 8, typing a 0 after
+     it gives 80, which is set as 50 and the entry shows 50;
+   - an empty text leaves the quantity (and the cost shown) unchanged; only the OK button's
+     state is chosen again (rule 7).
+
+   Reading a text as a number: leading `0` characters are skipped, then the value is the
+   unsigned decimal number formed by the leading digits that follow; a text that does not
+   start with a digit reads as 0 (so it is set as 1). With at most 5 characters no value
+   overflows. After any input the entry therefore holds either nothing or a decimal integer
+   1 … *M*. (In the original, a text that starts with white space or a sign goes through a
+   general unsigned conversion: white space is skipped, a `0x` or `0` prefix after it selects
+   base 16 or 8, a `-` negates modulo 2^32. **Tessera rule:** such a text reads as 0.)
+5. **OK**, or `AcceptInput` (Enter) while the dialog has focus:
+   1. an empty entry: nothing happens; the dialog stays open;
+   2. a value of 0 is set to 1, a value above *M* is set (clamped); the dialog stays open in
+      both cases (rule 4 keeps the entry from holding either, so this happens only if the
+      entry was filled some other way);
+   3. while the cost display (its money display) is in state `TooExpensive`: nothing happens;
+      the dialog stays open;
+   4. otherwise the purchase is made with the entry's value, the dialog remembers the vendor
+      and that quantity (rule 8), and closes.
+
+   A `ghosted` OK button sends no click (`ui-widgets.md` §7.1 step 3, unless the layout
+   sets `UICore_Button_click_when_ghosted`), but Enter reaches these steps in any OK state.
 6. The close button closes the dialog without buying.
+7. **OK button state:** after every set (rule 1) and after an input that leaves the entry
+   empty, `VendorBuyStack_OkButton` is put in state `ghosted` (0x12) when the entry is empty
+   or the player's coin is below the cost shown, and in state `normal` (0x0B) otherwise.
+8. **Opening.** Opening the dialog while it is open first closes the open one without buying.
+   The dialog opens with quantity *M* (set by rule 1), except when it is opened for the same
+   vendor as the last purchase made through it: then with that purchase's quantity, at most
+   *M*. Opening it for another vendor forgets the remembered quantity; closing the dialog
+   does not.
+
+The money display of the cost puts its count texts in state `TooExpensive` when the player's
+coin is below the amount it shows, and `normal` otherwise (BIN, revision 2: the money display
+does this itself when an option of the display is on; which layout property sets that option
+was not read).
 
 > **Tessera rule:** the cost display shows the entry's unit coin price × quantity (and item
 > costs × quantity in its tooltip); the purchase sends `Buy { window, entry, quantity }`. The
-> dialog closes when its vendor window closes.
-
-> **OPEN:** (implementer, `tessera-ui`, 2026-10-10) two facts of the dialog are not stated:
-> (1) the quantity the dialog shows when it opens; `tessera-ui` opens it with 1; (2) what OK
-> does with an entry that is not a number (empty, or other characters); `tessera-ui` treats
-> it like 0 (set to 1, the dialog stays open). Rule 4 is read as: typing changes the cost's
-> quantity (clamped) but not the entry's text, so that OK can still correct it (§13.2:
-> typing 80 with *M* = 50, then OK, clamps and stays open). Please confirm.
+> dialog closes when its vendor window closes. "The player's coin" in rules 5 and 7 and in the
+> `TooExpensive` state is the amount of the last `WalletChanged { Coin }`; before any, there is
+> no comparison (the OK button is `ghosted` only for an empty entry, and the cost display
+> stays `normal`). "The same vendor" in rule 8 is the vendor window's entity when the feed
+> names one, else its `WindowId`; the remembered quantity lasts for the client session and is
+> not saved. After a rewrite (rule 4) the caret stands after the last character.
 
 <a id="s7-6"></a>
 ### 7.6 Selling (BIN, NW16)
@@ -992,7 +1041,8 @@ and colour 0xFFC3B585, its coin list based on `MoneyDisplay_MoneyTemplate`.
 > `SuppressLeadingZeroes` as well, a zero coin is shown only after a larger non-zero coin
 > (`item-tooltips.md` §6.11). An amount of 0 with `ForceShowAll` shows only the copper coin
 > with 0 when `SuppressLeadingZeroes` is set, and all three otherwise. `TooExpensive` is set
-> by the window (§7.2), never by the display.
+> by the window (§7.2, §7.5), never by the display (the original's display can set it itself
+> when an option is on, §7.5; Tessera keeps the choice in the window, with the same result).
 
 <a id="s9-3"></a>
 ### 9.3 Splitting an amount (BC; NW19)
@@ -1148,17 +1198,13 @@ Revision 5 is in `scenario-feed.md` §4.2, §5.2, §6.3, §7.5, §7.7, §8.6, §
 |---|---|---|
 | `Coin` | `QuestRewards_MoneyRewardText` | coins (§9.2) |
 | `Reputation` (`what`: the faction) | `QuestRewards_ReputationField`, positive or negative state by the sign | the absolute amount, with the faction's name |
-| `Glory`, `ItemXp`, `CraftXp`, `MountXp`, `VirtueXp`, `TraitPoints` | the glory, item-, craft-, mount-, virtue-experience and class-trait-point rows | decimal integer |
+| `Glory`, `ItemXp`, `CraftXp`, `MountXp`, `TraitPoints` | the glory, item-, craft-, mount-experience and class-trait-point rows | decimal integer |
 | `Wallet` (`what`: the wallet item) | `QuestRewards_PaperItemField` | decimal integer with the item's name |
+| `VirtueXp` | `QuestRewards_VirtueExpField`: **not** a step-1 row; the last row of §6.3 step 2 (after the fixed emote entries, before the selectable rewards) | decimal integer |
 
-Rows follow the order of §6.3 step 1, not the order of the event's entries; several
-`Reputation` or `Wallet` entries keep their relative order.
-
-> **OPEN:** (implementer, 2026-10-10) `VirtueXp` is listed here among the step-1 amount rows,
-> but §6.3 step 1 does not name a virtue-experience row and places
-> `QuestRewards_VirtueExpField` with the fixed virtues of step 2. `tessera-gamedata` puts the
-> `VirtueXp` row after the fixed virtue rows (end of step 2, before the selectable rewards).
-> Please state its position.
+Rows of step 1 follow the order of §6.3 step 1, not the order of the event's entries; several
+`Reputation` or `Wallet` entries keep their relative order. The `VirtueXp` row is placed by
+§6.3 step 2 (revision 2 answers the implementer OPEN of 2026-10-10 on its position).
 
 ---
 
@@ -1237,6 +1283,8 @@ icon is scaled), `NoCategoryText` (items whose category has no display text: 0 h
 | NWI6 | The split of §9.3 reconstructs every amount 0 … 10^15 (Σ count × value = amount) when a currency of value 1 exists | Design check |
 | NWI7 | A window instance is hidden only on `WindowClosed` (§5.7) | Design check (scenario) |
 | NWI8 | The vendor quantity dialog never sends a quantity outside 1 … *M* (§7.5) | Design check |
+| NWI9 | After any input to the quantity dialog's entry, its text is empty or a decimal integer 1 … *M* without leading zeros (§7.5 rule 4); OK on an empty entry sends nothing | Design check |
+| NWI10 | No `QuestTreasure_FixedVirtueArray` entry becomes a reward row; at most one `QuestRewards_VirtueExpField` row, never before a fixed entry of the same offer (§6.3) | Design check |
 
 ---
 
@@ -1256,10 +1304,17 @@ copper 5.
 ### 13.2 Buy modes
 
 An item with `Inventory_MaxQuantity` 50. Shift held, right click on its entry → `Buy { entry,
-quantity: 50 }`. Alt held → the quantity dialog with *M* = 50: Half → 25; typing 80 then OK →
-clamped to 50, dialog stays open; OK again → `Buy { …, quantity: 50 }`. An item with
-`Inventory_MaxQuantity` 1 and Shift held → quantity 1. Tab held, backpack stacks of that record
-with quantities 47 and 10 → 3 + 40 = 43.
+quantity: 50 }`. Alt held → the quantity dialog with *M* = 50 opens showing 50 (no earlier
+purchase from this vendor through the dialog). Half → 25. Deleting both characters → the
+entry is empty, the quantity and cost stay at 25, OK is `ghosted`; OK or Enter now does
+nothing. Typing 8 → 8; typing 0 → 80 is set as 50 at once, the entry shows 50; OK →
+`Buy { …, quantity: 50 }`, the dialog closes. Opening the dialog again for an item of the same
+vendor with *M* = 20 → it shows 20 (50 remembered, at most *M*); for an item of another vendor
+→ it shows that item's *M*. Typing `x` into an empty entry → 0 → set as 1. With
+`WalletChanged { Coin }` 400 and a unit price of 10: quantity 50 costs 500 → OK `ghosted`, the
+cost display `TooExpensive`, Enter does nothing; Half → 25, cost 250 → OK `normal`. An item
+with `Inventory_MaxQuantity` 1 and Shift held → quantity 1. Tab held, backpack stacks of that
+record with quantities 47 and 10 → 3 + 40 = 43.
 
 <a id="s13-3"></a>
 ### 13.3 Loot All
@@ -1278,7 +1333,10 @@ A quest with a treasure record holding two fixed items and one title, and two se
 the feed sends `QuestRewards` with entries (`ItemXp` 500), (`Coin` 1,250), (`Reputation`
 faction F, 300). Block: `QuestRewards_Header`, money (silver 12, copper 50), reputation (F,
 positive), item experience 500, item 1, item 2, title, `QuestRewards_SelectableRewardsHeader`,
-selectable item 1, selectable item 2.
+selectable item 1, selectable item 2. With one more feed entry (`VirtueXp` 300) and a treasure
+record that also holds two `QuestTreasure_FixedVirtueArray` entries: the virtue experience row
+(300) comes after the title and before `QuestRewards_SelectableRewardsHeader`; the two virtue
+entries add no row.
 
 <a id="s13-5"></a>
 ### 13.5 Window choice
@@ -1303,7 +1361,7 @@ order 1, 2.
 | Q2 | Which native window shows which NPC conversation (comment, conversation, choice) | §5.1 | owner (O111) |
 | Q3 | Whether windows close when the player walks away, and at what distance | §5.7 | owner (O111) |
 | Q4 | How the choice list is assembled (sections, headers, order) | §5.3 | server-driven; owner (O111) |
-| Q5 | Which objective the offer shows; virtue, title and emote row texts | §6.2, §6.3 | BC (class 287 function 193 and its callers) or owner (O112) |
+| Q5 | Which objective the offer shows; virtue experience, title and emote row texts; whether fixed virtue ranks appear elsewhere | §6.2, §6.3 | BC (class 287 function 193 and its callers) or owner (O112) |
 | Q6 | Whether a selectable reward must be chosen before Accept, and how the choice is sent | §6.5 | owner (O112); feed revision if needed |
 | Q7 | Selling: drag onto the window, the sell price, Sell All's scope (locked, junk) | §7.6 | owner (O113); `economy.md` §11.6 |
 | Q8 | Barter window: coin costs, info text format, mixed vendors | §7.7 | owner (O114) |
@@ -1339,3 +1397,5 @@ O116 wallet; O117 coin display.
 |---|---|
 | 2026-10-10 | First version (Review), for decision 0024 P3: NPC use input (BIN), window catalogue, dialogue windows and text rendering with the player-variable filler (BC), quest-offer window with reward order (BIN), vendor, quantity, sell, buy-back and barter windows (BIN for the controls), loot window (BIN), money display and coin images (BIN), currency order caveat, wallet window and wallet items, scenario-feed revision 5 summary, census categories, invariants, examples. |
 | 2026-10-11 | Header only: review 1 (independent spec reviewer): changes requested, three blocking items (§7.5 rule 4 and §13.2, §6.3/§10.3 virtue-experience row, §5.3 rule list); status stays Review. No content changed. |
+| 2026-10-11 | Recorded late (review 1 note): OPEN callouts added on 2026-10-11 by the P3 implementer and the P3 exit verifier in §4 (quantity-dialog and barter root placement), §5.2 (settings key), §5.3 (Enter on a focused row), §6.3 (`QuestReward_Runic`, parts per kind), §7.7 (`BarterReward`), §8.3 (dragging a row into a bag), §9.4 (`PaperItemEntry_Total`). |
+| 2026-10-11 | **Revision 2** (status Revised), answering review 1. **Behaviour changes:** §7.5 rewritten from a second BIN pass: every character typed re-reads the entry and sets the quantity (clamped, entry rewritten at once); an empty entry keeps the quantity and OK or Enter on it does nothing; OK does nothing while the cost display is `TooExpensive`; new rules 7 (OK `ghosted` while the entry is empty or the cost exceeds the player's coin) and 8 (opening quantity *M*, or the last purchase's quantity for the same vendor); number reading stated; Tessera rule for coin before any `WalletChanged` and for "same vendor"; the §7.5 implementer OPEN is answered and removed. §6.3 step 2: the virtue experience row is the last row of the step (after emotes), conditioned in the original on the treasure's virtue-experience tier; fixed virtue-array entries are not shown (the original's list never reads that array); §10.3 moves `VirtueXp` out of the step-1 rows and its implementer OPEN is answered and removed. §13.2 and §13.4 examples revised; invariants NWI9, NWI10 added. **No behaviour change:** §5.3 implementer OPENs moved after rule 5 so rules 1–5 form one list; §9.2 note on the display's own `TooExpensive`; Q5 widened; the §6.3 exit-verifier OPEN's Tessera rule no longer names virtue entries; provenance BIN revision-2 pass, NW15 and NW17 revised. |

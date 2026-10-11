@@ -1661,7 +1661,10 @@ and close the instant-message tab.
 **Record:** how your own tell and an incoming tell look (prefix form, colour, by role); when
 the instant-message tab appears (first incoming tell, first outgoing, never by default) and
 what its title shows; what Shift or Ctrl with the line-up key does in the entry; which line
-an offline or unknown recipient gives (by role).
+an offline or unknown recipient gives (by role); whether typing the tell command word and a
+space changes the entry's channel label (the spec says it does not, while the reply word and a
+space does, `chat-window.md` CW44); whether the instant-message tab's session list ever
+reorders its rows (the spec says it does not, §15.4 step 4).
 
 <a id="o135"></a>
 ## O135. Channel join and leave lines, channel slots and tabs (P4)

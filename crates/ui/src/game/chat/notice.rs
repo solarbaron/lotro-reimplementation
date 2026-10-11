@@ -86,6 +86,10 @@ pub mod args {
     pub const NOTE_NAME: u32 = 0x0A2D_94C5;
     /// The name of the ignore row menu's heading (`social-panels.md` §3.6).
     pub const IGNORE_NAME: u32 = 0x046E_FA25;
+    /// The level of a fellowship row's level text (`social-panels.md` §4.2, SP28).
+    pub const FELLOW_LEVEL: u32 = 0x007C_83B5;
+    /// A coin element's count (`npc-windows.md` §9.2).
+    pub const COIN_COUNT: u32 = 0x0052_42A9;
 }
 
 /// An argument value.
@@ -371,7 +375,10 @@ pub fn fallback_text(table: u32, token: u32, vals: &[(u32, String)]) -> String {
         (T::UI_FRIENDS, 0x0BC2_5DB4) => "Name of the friend to add:".into(),
         (T::UI_FRIENDS, 0x0803_A974) => format!("Note for {}:", a(A::NOTE_NAME)),
         (T::UI_FRIENDS, 0x0903_7E74) => "Name to ignore:".into(),
-        (T::UI_FRIENDS, 0x0193_53F5) => a(A::NAME),
+        (T::UI_FRIENDS, 0x0193_53F5) => a(A::NOTE_NAME),
+        (T::UI, 0x070F_9F3C) => a(A::FELLOW_LEVEL),
+        (T::UI, 0x038B_9CDC) => a(A::LEVEL),
+        (T::UI, 0x0748_0C44) => a(A::COIN_COUNT),
         (T::UI_FRIENDS, 0x0743_846D) => "Send a tell".into(),
         (T::UI_FRIENDS, 0x0452_9325) => "Invite to group".into(),
         (T::UI_FRIENDS, 0x033D_8545) => "Remove friend".into(),

@@ -84,6 +84,13 @@ impl Invitation {
     }
 }
 
+/// An invitation row's level text (`social-panels.md` §5.1, SP28): (UI, 0x038B9CDC) with
+/// argument 0x50AA9C = the level.
+#[must_use]
+pub fn level_text(level: i64) -> TextRef {
+    TextRef::new(T::UI, 0x038B_9CDC).int(A::LEVEL, level)
+}
+
 /// The invitation window on the element tree.
 #[derive(Debug, Clone, PartialEq)]
 pub struct InviteWindow {
@@ -149,8 +156,10 @@ impl InviteWindow {
                     ui.set_text(e, Some(r.name.clone()));
                 }
                 if let Some(e) = find(ui, k, ids.invite_row_level) {
-                    // TR7: no level or area is shown empty, never as the layout's own text.
-                    ui.set_text(e, Some(r.level.map(|l| l.to_string()).unwrap_or_default()));
+                    // SP28: the level through (UI, 0x038B9CDC); TR7: no level or area is
+                    // shown empty, never as the layout's own (design-time) text.
+                    let text = r.level.map(|l| level_text(l).render(src));
+                    ui.set_text(e, Some(text.unwrap_or_default()));
                 }
                 if let Some(e) = find(ui, k, ids.invite_row_area) {
                     ui.set_text(e, Some(r.area.clone().unwrap_or_default()));

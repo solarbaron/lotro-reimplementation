@@ -312,7 +312,8 @@ impl FriendsModel {
         };
         let n = e.name.clone();
         Some(ContextMenu {
-            heading: Some(TextRef::new(T::UI_FRIENDS, 0x0193_53F5).text(A::NAME, n.clone())),
+            // §3.5, SP33: the heading declares the note question's argument 0xA2D94C5.
+            heading: Some(TextRef::new(T::UI_FRIENDS, 0x0193_53F5).text(A::NOTE_NAME, n.clone())),
             entries: vec![
                 entry(
                     0x0743_846D,

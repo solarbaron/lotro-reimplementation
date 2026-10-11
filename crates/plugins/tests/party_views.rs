@@ -120,13 +120,21 @@ impl LocalPlayerSource for Player {
     }
 }
 
-/// Actor values by entity (the client's TR3 member data).
+/// Actor values by entity (the client's TR3 member data), and by lower-cased name for
+/// members without an entity (`FellowVitalChanged`, §15.4 revision 1).
 #[derive(Default)]
-struct Actors(Mutex<HashMap<u64, MemberActorInfo>>);
+struct Actors(
+    Mutex<HashMap<u64, MemberActorInfo>>,
+    Mutex<HashMap<String, MemberActorInfo>>,
+);
 
 impl PartyActorSource for Actors {
     fn member_actor(&self, entity: u64) -> Option<MemberActorInfo> {
         self.0.lock().unwrap().get(&entity).copied()
+    }
+
+    fn member_actor_named(&self, name: &str) -> Option<MemberActorInfo> {
+        self.1.lock().unwrap().get(&name.to_lowercase()).copied()
     }
 }
 
@@ -389,6 +397,66 @@ fn check_96_assist_targets_and_no_ops() {
 // ---------------------------------------------------------------------------------------
 
 #[test]
+fn check_97_no_get_raid() {
+    let (fx, mut m) = setup();
+    step(&mut m, &[TAM, BRIN], Some(TAM));
+    let s: String = eval(
+        &m,
+        "Default",
+        "local b = T.P:GetParty():GetMember(2)
+        local ok = pcall(function() return b:GetRaid() end)
+        return tostring(b.GetRaid == nil) .. ' ' .. tostring(ok) .. ' '
+            .. tostring(Turbine.Gameplay.PartyMember.GetRaid == nil)",
+    );
+    assert_eq!(
+        s, "true false true",
+        "P95: no GetRaid; calling it is calling nil"
+    );
+    fx.assert_no_errors();
+}
+
+#[test]
+fn check_98_vitals_without_an_entity() {
+    let fx = Fx::new();
+    fx.plugin("Party", None, LOGGER);
+    let mut m = fx.manager();
+    let actors = Arc::new(Actors::default());
+    let src: Arc<dyn PartyActorSource> = actors.clone();
+    m.set_party_actor_source(Some(src));
+    m.load_plugin("Party").unwrap();
+    // `fellowship "Tam" "Cael" leader="Tam"`: Cael has no entity.
+    let mut members = list(&[TAM], Some(TAM));
+    members.push(FellowshipMember {
+        name: "Cael".into(),
+        entity: None,
+        leader: false,
+    });
+    // `fellow-vital "Cael" health 300/500`, as the client's source reports it.
+    let vital = |morale: f64| MemberActorInfo {
+        morale,
+        max_morale: 500.0,
+        base_max_morale: 500.0,
+        ..MemberActorInfo::default()
+    };
+    actors.1.lock().unwrap().insert("cael".into(), vital(300.0));
+    let _ = m.set_fellowship(&members, &tam());
+    m.pump();
+    let get = |m: &PluginManager| -> String {
+        eval(
+            m,
+            "Default",
+            "local c = T.P:GetParty():GetMember(2)
+            return table.concat({ c:GetName(), c:GetMorale(), c:GetMaxMorale(), c:GetLevel() },
+                ' ')",
+        )
+    };
+    assert_eq!(get(&m), "Cael 300 500 0");
+    actors.1.lock().unwrap().insert("cael".into(), vital(250.0));
+    assert_eq!(get(&m), "Cael 250 500 0", "a later fellow-vital gives 250");
+    fx.assert_no_errors();
+}
+
+#[test]
 fn member_events_order_in_one_step() {
     let (fx, mut m) = setup();
     step(&mut m, &[TAM, BRIN], Some(BRIN));
@@ -444,13 +512,13 @@ fn member_identity_and_values() {
             b:GetMaxPower(), b:GetBaseMaxMorale(), tostring(b:IsLocalPlayer()),
             b:GetClass(), b:GetRace(), b:GetAlignment(), b:GetReadyState(),
             tostring(b:IsLinkDead()), tostring(b:IsVoiceEnabled()),
-            tostring(b:IsVoiceActive()), tostring(b:GetTarget()), tostring(b:GetRaid()),
+            tostring(b:IsVoiceActive()), tostring(b:GetTarget()),
             tostring(b:GetPet()), b:GetEffects():GetCount(), tostring(b:GetParty() == p),
             d:GetName(), d:GetLevel(), d:GetMorale(), d:GetEffects():GetCount() }, ' ')",
     );
     assert_eq!(
         s,
-        "42 900 1000 50 300 0 false 0 0 0 0 false false false nil nil nil 0 true Dorn 0 0 0"
+        "42 900 1000 50 300 0 false 0 0 0 0 false false false nil nil 0 true Dorn 0 0 0"
     );
 
     // Brin leaves: the object keeps its last values; a level change after that is not
@@ -618,8 +686,8 @@ fn party_member_tables_without_native_objects() {
             tostring(fake:GetParty()) }, ' ')",
     );
     assert_eq!(s, "nil 0 nil");
-    // `Party`'s own methods and `PartyMember.GetRaid` raise a Lua error for a `self`
-    // without a bound object of their class (§8.2).
+    // `Party`'s own methods raise a Lua error for a `self` without a bound object of
+    // their class (§8.2).
     let s: String = eval(
         &m,
         "Default",
@@ -636,8 +704,6 @@ fn party_member_tables_without_native_objects() {
             function() return P.GetAssistTargetCount(nil) end,
             function() return P.GetAssistTarget({}, 1) end,
             function() return P.IsAssistTarget(T.P, fake) end,
-            function() return fake:GetRaid() end,
-            function() return Turbine.Gameplay.PartyMember.GetRaid(T.P) end,
         }) do
             local ok, err = pcall(f)
             out[#out + 1] = tostring(ok) .. ':' .. tostring(string.find(tostring(err),
@@ -648,7 +714,7 @@ fn party_member_tables_without_native_objects() {
     assert_eq!(
         s,
         "false:true false:true false:true false:true false:true false:true false:true \
-         false:true false:true false:true"
+         false:true"
     );
     fx.assert_no_errors();
 }
@@ -670,7 +736,8 @@ fn party_member_has_no_own_getters_and_base_replacements_reach_it() {
     m.set_party_actor_source(Some(src));
     m.load_plugin("Party").unwrap();
     step(&mut m, &[TAM, BRIN], Some(TAM));
-    // §8.6 rule 2: only `GetRaid` (§15.4) is `PartyMember`'s own.
+    // §8.6 rule 2: `PartyMember` has no method of its own (§15.4 revision 1, rule 2;
+    // no `GetRaid`, P95).
     let own: String = eval(
         &m,
         "Default",
@@ -683,7 +750,7 @@ fn party_member_has_no_own_getters_and_base_replacements_reach_it() {
         end
         return table.concat(out, ' ')",
     );
-    assert_eq!(own, "GetRaid");
+    assert_eq!(own, "");
     // §8.6 rule 3: wrappers on the base classes reach members.
     let s: String = eval(
         &m,

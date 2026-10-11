@@ -1058,6 +1058,22 @@ built):
 - **(d)** A trade drop offers the item's whole stack (§8.1 "the stack's quantity"), and only
   from the backpack container (TR9).
 
+> **OPEN:** (implementer note, conformance to revision 1 on `p4`, 2026-10-11) Engineering
+> choices made while building revision 1, for the next revision to confirm or replace:
+> (1) the client's text shaper reads only `UICore_Text_font_color`, so after the §6.2 name
+> state is requested the first entry of the name text's effective `UICore_Text_font_colors`
+> is copied into `UICore_Text_font_color` (the same colour `string-table.md` reads from
+> `ColorNameText`); (2) `FellowTemplateVolumeControl` is a scroll bar, which `ui-widgets.md`
+> §6.4 step 6 shows again at its first layout, so TR14 keeps it hidden by setting it disabled
+> with `hide_when_disabled` (`ui-widgets.md` §6.4 OPEN); (3) `VitalHealthFieldBg` keeps the
+> layout's default state (review 2 note (c)); (4) a money display whose coin template cannot
+> be created gets the fallback coin element of `npc-windows.md`'s implementation; (5) the
+> P4 portrait's elements are hidden again whenever the client binds a newly built P4.
+> Not yet built on `p4` although `combat-ui.md` has reached the branch with the merge of
+> `main`: TR16's effect icons on member rows (the interim, no icons, still applies) and the
+> `PartyMember` getters `GetTarget` and `GetEffects` by §15.2 (`lua-plugin-api.md` §15.4
+> "Further rules" item 2's interim still applies).
+
 ---
 
 <a id="s10"></a>

@@ -277,9 +277,33 @@ fn social_panels_on_the_install() {
             leader: false,
         },
     ]);
-    fp.refresh(&mut ui, &f);
+    fp.refresh(&mut ui, &f, &mut NoTables);
     assert!(ui.is_visible(fp.panels[0]));
     assert_eq!(fp.rows.len(), 2);
+    // TR14 (SPI13): no voice, squelched, sending-data or volume element on a row, though
+    // the layout shows the first three (SPI9); link-dead hidden.
+    for r in &fp.rows {
+        for (label, id) in [
+            ("FellowTemplateVoiceChat", sv.ids.fellow_voice),
+            (
+                "FellowTemplateVoiceChatSquelched",
+                sv.ids.fellow_voice_squelched,
+            ),
+            ("FellowTemplateSendingData", sv.ids.fellow_sending),
+            ("FellowTemplateVolumeControl", sv.ids.fellow_volume),
+            ("FellowTemplateLinkDead", sv.ids.fellow_link_dead),
+        ] {
+            let k = find_below(&ui, *r, id).unwrap_or_else(|| panic!("{label} on the row"));
+            assert!(!ui.is_visible(k), "TR14: {label} hidden");
+        }
+        // TR15: the array's current meters exist below the displays.
+        for (label, id) in [
+            ("VitalCurrentHealthMeter", sv.ids.vital_health_meter),
+            ("VitalCurrentPowerMeter", sv.ids.vital_power_meter),
+        ] {
+            assert!(find_below(&ui, *r, id).is_some(), "{label} on the row");
+        }
+    }
     let leader = find_below(&ui, fp.rows[0], sv.ids.fellow_leader).expect("leader marker");
     for s in [
         sv.states.leader_fellowship,
@@ -290,6 +314,35 @@ fn social_panels_on_the_install() {
     }
     assert!(ui.is_visible(leader));
     println!("fellowship rows {}", fp.rows.len());
+    // The player-vitals panel P4 (layout `toolbar`): TR14 hides its voice, squelched,
+    // sending-data and assistant elements, which the layout shows (SPI9).
+    let avatar = labels
+        .key(UiEnum::ElementId, "AvatarPanel")
+        .expect("AvatarPanel");
+    let p4 = ui
+        .open_panel_by_key(key("toolbar"), avatar)
+        .expect("P4 opens");
+    let p4_voice = [
+        ("PlayerVoiceChat", sv.ids.player_voice),
+        ("PlayerVoiceChatSquelched", sv.ids.player_voice_squelched),
+        ("PlayerSendingData", sv.ids.player_sending),
+    ];
+    for (label, id) in p4_voice {
+        let k = find_below(&ui, p4, id).unwrap_or_else(|| panic!("{label} on P4"));
+        assert!(ui.is_visible(k), "SPI9: {label} shown by the layout");
+    }
+    fp.attach_player_panel(&mut ui, p4, &f);
+    for (label, id) in p4_voice
+        .into_iter()
+        .chain([("PlayerAssistantIcon", sv.ids.player_assistant)])
+    {
+        let k = find_below(&ui, p4, id).unwrap_or_else(|| panic!("{label} on P4"));
+        assert!(!ui.is_visible(k), "TR14: {label} hidden");
+    }
+    assert!(
+        fp.player_leader.is_some_and(|k| !ui.is_visible(k)),
+        "PlayerLeaderIcon hidden: Brin leads"
+    );
 
     // The invitation window.
     let mut iw = InviteWindow::open(&mut ui, &sv).expect("FellowInvite opens");
@@ -329,13 +382,62 @@ fn social_panels_on_the_install() {
             name: "Rope".into(),
             item: Some(9),
             quantity: 2,
-            icon: None,
+            quality: Some(2),
+            ..TradeEntry::default()
         }],
         1_234,
     );
+    t.set_wallet(250_000);
     tw.refresh(&mut ui, &t, &mut NoTables);
     assert!(ui.is_visible(tw.root));
     assert_eq!(tw.entries.1.len(), 1, "one medium item display");
+    // §6.2 (SPI10): the quantity overlay precedes the name in tree order; the name goes
+    // into `ItemDisplay_Name` in its quality state, the quantity into the overlay.
+    let entry = tw.entries.1[0];
+    let order = tessera_ui::game::subtree(&ui, entry);
+    let name = find_below(&ui, entry, sv.ids.item_name).expect("ItemDisplay_Name");
+    let quantity = find_below(&ui, entry, cv.ids.quantity).expect("the quantity overlay");
+    let at = |k| order.iter().position(|x| *x == k);
+    assert!(at(quantity) < at(name), "SPI10");
+    assert_eq!(ui.text_of(name), "Rope");
+    assert!(defines_state(&ui, name, sv.states.quality_rare), "SP30");
+    assert_eq!(ui.state(name), Some(sv.states.quality_rare));
+    assert_eq!(ui.text_of(quantity), "2");
+    // SPI11: each coin field holds its editable entry by ID.
+    for (field, entry) in [
+        (sv.ids.coin_gold, sv.ids.coin_gold_entry),
+        (sv.ids.coin_silver, sv.ids.coin_silver_entry),
+        (sv.ids.coin_copper, sv.ids.coin_copper_entry),
+    ] {
+        let f = find_below(&ui, tw.root, field).expect("coin field");
+        let e = find_below(&ui, f, entry).expect("SPI11: the coin entry");
+        assert!(ui.prop(e, ui.vocab().pids.text_editable).bool());
+    }
+    // §6.1 (SP31): the wallet and the peer's coin are coin elements of the money display.
+    for (what, d, want) in [
+        ("wallet", tw.wallet.as_ref(), [2, 500, 0]),
+        ("peer coin", tw.peer_money.as_ref(), [0, 12, 34]),
+    ] {
+        let d = d.unwrap_or_else(|| panic!("{what} display"));
+        assert!(d.options.force_show_all, "{what}: ForceShowAll");
+        assert_eq!(ui.list_entries(d.element).len(), 3, "{what}: three coins");
+        let counts = d.counts().expect("shown");
+        assert_eq!([counts.gold, counts.silver, counts.copper], want, "{what}");
+        let shown = d
+            .coins
+            .iter()
+            .flatten()
+            .filter(|c| ui.is_visible(c.element))
+            .count();
+        println!("{what}: {shown} coin elements shown");
+        assert!(shown >= 2, "{what}: coins shown");
+    }
+    assert!(
+        tw.peer_money
+            .as_ref()
+            .is_some_and(|d| d.options.suppress_leading_zeroes),
+        "SP31: SuppressLeadingZeroes on the peer's display"
+    );
 
     // The instant-message tab (CW-I20).
     let mut ip = tessera_ui::game::chat::im::ImPids::default();

@@ -184,6 +184,42 @@ social_table! {
         fellow_assist = ("FellowAssist", 0xFFFB_4060),
         /// `PlayerLeaderIcon` (§4.3, of the player-vitals panel P4).
         player_leader = ("PlayerLeaderIcon", 0xFFFB_4061),
+        /// `FellowTemplateVoiceChat` (§4.2; hidden by TR14).
+        fellow_voice = ("FellowTemplateVoiceChat", 0xFFFB_4062),
+        /// `FellowTemplateVoiceChatSquelched` (hidden by TR14).
+        fellow_voice_squelched = ("FellowTemplateVoiceChatSquelched", 0xFFFB_4063),
+        /// `FellowTemplateSendingData` (hidden by TR14).
+        fellow_sending = ("FellowTemplateSendingData", 0xFFFB_4064),
+        /// `FellowTemplateVolumeControl` (hidden by TR14).
+        fellow_volume = ("FellowTemplateVolumeControl", 0xFFFB_4065),
+        /// `FellowTemplateAssistant` (micro template only; hidden, §4.2).
+        fellow_assistant = ("FellowTemplateAssistant", 0xFFFB_4066),
+        /// `FellowTemplatePetVitals` (hidden, §4.2).
+        fellow_pet_vitals = ("FellowTemplatePetVitals", 0xFFFB_4067),
+        /// `PlayerVoiceChat` (P4, §4.3; hidden by TR14).
+        player_voice = ("PlayerVoiceChat", 0xFFFB_4068),
+        /// `PlayerVoiceChatSquelched` (P4; hidden by TR14).
+        player_voice_squelched = ("PlayerVoiceChatSquelched", 0xFFFB_4069),
+        /// `PlayerSendingData` (P4; hidden by TR14).
+        player_sending = ("PlayerSendingData", 0xFFFB_406A),
+        /// `PlayerAssistantIcon` (P4; hidden by TR14).
+        player_assistant = ("PlayerAssistantIcon", 0xFFFB_406B),
+        /// `VitalCurrentHealthMeter` (§4.2: the `Health` entry's meter; TR15).
+        vital_health_meter = ("VitalCurrentHealthMeter", 0xFFFB_406C),
+        /// `VitalTemporaryHealthMeter` (kept at 0, TR15).
+        vital_temp_health = ("VitalTemporaryHealthMeter", 0xFFFB_406D),
+        /// `VitalCurrentDreadMeter` (the clamped meter, kept at 0, TR15).
+        vital_dread = ("VitalCurrentDreadMeter", 0xFFFB_406E),
+        /// `VitalCurrentHealthText` (kept hidden, TR15).
+        vital_health_text = ("VitalCurrentHealthText", 0xFFFB_406F),
+        /// `VitalCurrentPowerMeter` (the `Power` entry's meter; TR15).
+        vital_power_meter = ("VitalCurrentPowerMeter", 0xFFFB_40A0),
+        /// `VitalTemporaryPowerMeter` (kept at 0, TR15).
+        vital_temp_power = ("VitalTemporaryPowerMeter", 0xFFFB_40A1),
+        /// `CurrentPowerText` (kept hidden, TR15).
+        vital_power_text = ("CurrentPowerText", 0xFFFB_40A2),
+        /// `RageMeter` (the `Wrath` pip entry's field; kept hidden, TR15).
+        vital_rage_field = ("RageMeter", 0xFFFB_40A3),
         /// `FellowInvite` (§5.1).
         invite = ("FellowInvite", 0xFFFB_4070),
         /// `FellowInvite_TitleBar_Label` is not named as an ID in the spec; the title label.
@@ -242,6 +278,16 @@ social_table! {
         coin_copper = ("MoneyDisplay_Entry_CopperField", 0xFFFB_408E),
         /// `ItemDisplay_MediumTemplate` (layout `itemdisplay`, §6.2).
         item_medium = ("ItemDisplay_MediumTemplate", 0xFFFB_408F),
+        /// `ItemDisplay_Icon` (§6.2: an entry's icon, an `ItemIconDisplay`).
+        item_icon = ("ItemDisplay_Icon", 0xFFFB_4090),
+        /// `ItemDisplay_Name` (§6.2: an entry's name text).
+        item_name = ("ItemDisplay_Name", 0xFFFB_4091),
+        /// `MoneyDisplay_Entry_GoldEntry` (§6.1: the editable gold text).
+        coin_gold_entry = ("MoneyDisplay_Entry_GoldEntry", 0xFFFB_4092),
+        /// `MoneyDisplay_Entry_SilverEntry`.
+        coin_silver_entry = ("MoneyDisplay_Entry_SilverEntry", 0xFFFB_4093),
+        /// `MoneyDisplay_Entry_CopperEntry`.
+        coin_copper_entry = ("MoneyDisplay_Entry_CopperEntry", 0xFFFB_4094),
     }
 }
 
@@ -260,6 +306,18 @@ social_table! {
         leader_raid = ("raid", 0xFFFA_4005),
         /// `monsterplaygroup`.
         leader_monster = ("monsterplaygroup", 0xFFFA_4006),
+        /// `ItemQuality_Legendary_ColorName` (§6.2 name colour, `item-tooltips.md` §6.2).
+        quality_legendary = ("ItemQuality_Legendary_ColorName", 0xFFFA_4007),
+        /// `ItemQuality_Rare_ColorName`.
+        quality_rare = ("ItemQuality_Rare_ColorName", 0xFFFA_4008),
+        /// `ItemQuality_Incomparable_ColorName`.
+        quality_incomparable = ("ItemQuality_Incomparable_ColorName", 0xFFFA_4009),
+        /// `ItemQuality_Uncommon_ColorName`.
+        quality_uncommon = ("ItemQuality_Uncommon_ColorName", 0xFFFA_400A),
+        /// `ItemQuality_Common_ColorName`.
+        quality_common = ("ItemQuality_Common_ColorName", 0xFFFA_400B),
+        /// `Object_ColorName` (any other quality, and literal entries).
+        object_name = ("Object_ColorName", 0xFFFA_400C),
     }
 }
 
@@ -280,6 +338,9 @@ social_table! {
         currency_type = ("UI_SecureTrade_Currency_Type", 0xFFFD_4006),
         /// `UICore_Text_font_color` (the text colour the client's shaper reads).
         text_font_color = ("UICore_Text_font_color", 0xFFFD_4007),
+        /// `UICore_Text_font_colors` (a state's colours; its first entry is the colour,
+        /// `string-table.md` §6 step 3).
+        text_font_colors = ("UICore_Text_font_colors", 0xFFFD_4008),
     }
 }
 
@@ -330,6 +391,9 @@ pub struct SocialVocab {
     pub pids: SocialPids,
     /// Layout keys.
     pub layouts: SocialLayouts,
+    /// The NPC windows' vocabulary, for the trade window's money displays
+    /// (`social-panels.md` §6.1: the money display of `npc-windows.md` §9.2–§9.3).
+    pub npc: super::super::npcvocab::NpcVocab,
 }
 
 impl SocialVocab {
@@ -347,18 +411,27 @@ impl SocialVocab {
         self.ids.resolve_with(element);
         self.states.resolve_with(state);
         self.pids.resolve_with(pid);
+        self.npc.resolve_with(element_type, element, state, pid);
     }
 }
 
 impl SocialVocab {
     /// Registers the engine class of the P4 game types (Tessera rule): the fellowship
     /// panels' `ListboxMouseInvisible` is a ListBox (it holds the member rows, §4.1; its
-    /// other behaviour is GP §11's fallback). Call before the panels are built
-    /// ([`super::fellowship::FellowshipPanels::open`] calls it).
+    /// other behaviour is GP §11's fallback), and the trade window's `MoneyDisplay` and
+    /// `PlayerMoneyDisplay` are the horizontal coin lists of `npc-windows.md` §9.2 (§6.1).
+    /// Call before the panels are built ([`super::fellowship::FellowshipPanels::open`] and
+    /// [`super::trade::TradeWindow::open`] call it).
     pub fn register_classes(&self, ui: &mut crate::Ui) {
         ui.register_game_type(
             self.types.listbox_mouse_invisible,
             crate::WidgetClass::ListBox,
         );
+        for ty in [
+            self.npc.types.money_display,
+            self.npc.types.player_money_display,
+        ] {
+            ui.register_game_type(ty, crate::WidgetClass::ListBox);
+        }
     }
 }

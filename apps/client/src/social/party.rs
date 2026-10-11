@@ -3,7 +3,9 @@
 //! world session's fellowship: every `FellowshipChanged` list reaches the plugin host's
 //! [`tessera_plugins::PluginManager::set_fellowship`] (which derives the `Party` events), and
 //! the members' `Actor` values (level, morale, power) of every listed member come from the
-//! social state ([`SocialState::member_values`]) through a shared table ([`PartyActors`]).
+//! social state ([`SocialState::member_values`]) through a shared table ([`PartyActors`]):
+//! by entity, and for a member without an entity by name (morale and power from
+//! `FellowVitalChanged`, `lua-plugin-api.md` §15.4 revision 1, check 98).
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, PoisonError};
@@ -17,10 +19,18 @@ use super::SocialState;
 /// Most members whose values the table keeps (the feed's list is at most 64 long).
 pub const MAX_ACTORS: usize = 256;
 
-/// The members' `Actor` values by entity, shared with the plugin thread.
+/// The members' `Actor` values by entity, and by lower-cased name for members without an
+/// entity, shared with the plugin thread.
 #[derive(Debug, Default)]
 pub struct PartyActors {
-    values: Mutex<HashMap<u64, MemberActorInfo>>,
+    values: Mutex<ActorTables>,
+}
+
+/// The two tables of [`PartyActors`].
+#[derive(Debug, Default)]
+struct ActorTables {
+    by_entity: HashMap<u64, MemberActorInfo>,
+    by_name: HashMap<String, MemberActorInfo>,
 }
 
 impl PartyActorSource for PartyActors {
@@ -28,7 +38,17 @@ impl PartyActorSource for PartyActors {
         self.values
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
+            .by_entity
             .get(&entity)
+            .copied()
+    }
+
+    fn member_actor_named(&self, name: &str) -> Option<MemberActorInfo> {
+        self.values
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .by_name
+            .get(&name.to_lowercase())
             .copied()
     }
 }
@@ -92,31 +112,39 @@ impl PartyBridge {
             .values
             .lock()
             .unwrap_or_else(PoisonError::into_inner);
-        values.clear();
+        values.by_entity.clear();
+        values.by_name.clear();
         // Every listed member but the player, not only the panel's five rows
         // (`lua-plugin-api.md` §15.4: the feed's list may hold 64 members).
         let player = state.player_entity();
         for m in state.roster().iter().take(MAX_ACTORS) {
-            let Some(e) = m.entity else { continue };
-            if Some(e) == player || m.name.to_lowercase() == state.player().to_lowercase() {
+            if m.entity.is_some_and(|e| Some(e) == player)
+                || m.name.to_lowercase() == state.player().to_lowercase()
+            {
                 continue;
             }
             let v = state.member_values(m);
             let (mo, mm) = v.morale.unwrap_or((0.0, 0.0));
             let (p, pm) = v.power.unwrap_or((0.0, 0.0));
-            values.insert(
-                e.0,
-                MemberActorInfo {
-                    level: v.level.and_then(|l| u32::try_from(l).ok()).unwrap_or(0),
-                    morale: f64::from(mo),
-                    max_morale: f64::from(mm),
-                    base_max_morale: f64::from(mm),
-                    power: f64::from(p),
-                    max_power: f64::from(pm),
-                    base_max_power: f64::from(pm),
-                    ..MemberActorInfo::default()
-                },
-            );
+            let info = MemberActorInfo {
+                level: v.level.and_then(|l| u32::try_from(l).ok()).unwrap_or(0),
+                morale: f64::from(mo),
+                max_morale: f64::from(mm),
+                base_max_morale: f64::from(mm),
+                power: f64::from(p),
+                max_power: f64::from(pm),
+                base_max_power: f64::from(pm),
+                ..MemberActorInfo::default()
+            };
+            match m.entity {
+                Some(e) => {
+                    values.by_entity.insert(e.0, info);
+                }
+                // §15.4 revision 1: a member without an entity has morale and power too.
+                None => {
+                    values.by_name.insert(m.name.to_lowercase(), info);
+                }
+            }
         }
     }
 }
@@ -177,6 +205,63 @@ mod tests {
         assert!(b.actors.member_actor(1).is_none(), "the player has no row");
         // The list was handed over once.
         assert!(s.take_roster_change().is_none());
+    }
+
+    /// `lua-plugin-api.md` §15.4 revision 1 (check 98): a member without an entity has
+    /// morale and power from `FellowVitalChanged`, by name ignoring case; level 0.
+    #[test]
+    fn members_without_an_entity_have_their_fellow_vitals() {
+        let mut s = SocialState::new(true);
+        let _ = s.apply(
+            &Event::WorldEntered {
+                player: EntityId(1),
+                name: "Tam".into(),
+                transform: tessera_net::Transform::new(tessera_net::Vec3::ZERO, 0.0),
+            },
+            &|_| None,
+        );
+        let _ = s.apply(
+            &Event::Social(SocialEvent::FellowshipChanged {
+                members: vec![
+                    FellowMember {
+                        name: "Tam".into(),
+                        entity: Some(EntityId(1)),
+                        leader: true,
+                    },
+                    FellowMember {
+                        name: "Cael".into(),
+                        entity: None,
+                        leader: false,
+                    },
+                ],
+            }),
+            &|_| None,
+        );
+        let vital = |s: &mut SocialState, current: f32| {
+            let _ = s.apply(
+                &Event::Social(SocialEvent::FellowVitalChanged {
+                    member: "cael".into(),
+                    vital: tessera_net::domain::Vital::Health,
+                    current,
+                    max: 500.0,
+                }),
+                &|_| None,
+            );
+        };
+        vital(&mut s, 300.0);
+        let mut b = PartyBridge::default();
+        b.refresh_values(&s);
+        let v = b.actors.member_actor_named("CAEL").expect("Cael's values");
+        assert!((v.morale - 300.0).abs() < 1e-9 && (v.max_morale - 500.0).abs() < 1e-9);
+        assert_eq!(v.level, 0);
+        assert!(
+            b.actors.member_actor_named("Tam").is_none(),
+            "not the player"
+        );
+        vital(&mut s, 250.0);
+        b.refresh_values(&s);
+        let v = b.actors.member_actor_named("Cael").expect("Cael's values");
+        assert!((v.morale - 250.0).abs() < 1e-9);
     }
 
     /// Regression (P4 review): members past the panel's five rows have their values too.

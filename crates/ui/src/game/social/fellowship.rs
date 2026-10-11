@@ -14,8 +14,10 @@ use crate::tree::ElementKey;
 use crate::ui::Ui;
 use crate::widgets::WidgetClass;
 
-use super::super::chat::notice::{self as n, Notice, TextRef, args as A, name_equal, tables as T};
-use super::super::subtree;
+use super::super::chat::notice::{
+    self as n, Notice, TextRef, TextSource, args as A, name_equal, tables as T,
+};
+use super::super::find_below;
 use super::vocab::SocialVocab;
 use super::{
     ContextMenu, MenuEntry, SocialAction, SocialIntent, ensure_rows, find, game_message, listen_id,
@@ -113,8 +115,8 @@ pub struct MemberRow {
     pub power: Option<Vital>,
     /// Defeated.
     pub defeated: bool,
-    /// Effects. Modelled but not drawn yet: `FellowEffectDisplay` stays as the layout has
-    /// it (`social-panels.md` §4.2 OPEN (implementation), effect icons).
+    /// Effects. Kept but not drawn: `FellowEffectDisplay` shows no icons (TR16's interim
+    /// rule).
     pub effects: Vec<u64>,
     /// The leader marker is shown.
     pub leader: bool,
@@ -628,9 +630,10 @@ impl FellowshipPanels {
     }
 
     /// Shows the model (§4.6 rebuild, TR2, TR3): panel 1 shown while a fellowship exists,
-    /// panels 2–4 hidden, one row per member but the player, each filled, the leader
+    /// panels 2–4 hidden, one row per member but the player, each filled (name, the level
+    /// through its template, the meters of TR15, the status elements of TR14), the leader
     /// markers, and `PlayerLeaderIcon`.
-    pub fn refresh(&mut self, ui: &mut Ui, model: &Fellowship) {
+    pub fn refresh(&mut self, ui: &mut Ui, model: &Fellowship, src: &mut dyn TextSource) {
         let ids = self.vocab.ids;
         let st = self.vocab.states;
         for (i, p) in self.panels.iter().enumerate() {
@@ -654,24 +657,103 @@ impl FellowshipPanels {
                 ui.set_text(e, Some(r.name.clone()));
             }
             if let Some(e) = find(ui, k, ids.fellow_level) {
-                // TR3: an unknown level is empty, never the layout's own text.
-                ui.set_text(e, Some(r.level.map(|l| l.to_string()).unwrap_or_default()));
+                // SP28: the level through (UI, 0x070F9F3C); TR3: an unknown level is
+                // empty, never the layout's own (design-time) text.
+                let text = r.level.map(|l| level_text(l).render(src));
+                ui.set_text(e, Some(text.unwrap_or_default()));
             }
             if let Some(e) = find(ui, k, ids.fellow_leader) {
                 ui.switch_state_if_defined(e, st.leader_fellowship);
                 ui.set_shown(e, r.leader);
             }
-            if let Some(e) = find(ui, k, ids.fellow_link_dead) {
-                ui.set_shown(e, false);
+            // TR14: no voice chat, no link-dead report, no assistant or pet; the
+            // ready-check element gets no state request.
+            for id in [
+                ids.fellow_voice,
+                ids.fellow_voice_squelched,
+                ids.fellow_sending,
+                ids.fellow_volume,
+                ids.fellow_assistant,
+                ids.fellow_pet_vitals,
+                ids.fellow_link_dead,
+            ] {
+                if let Some(e) = find(ui, k, id) {
+                    ui.set_shown(e, false);
+                }
+            }
+            if let Some(e) = find(ui, k, ids.fellow_volume) {
+                // A scroll bar shows itself unless it is disabled with `hide_when_disabled`
+                // (`ui-widgets.md` §6.4 step 6), so the volume control is kept hidden by that
+                // rule: it is never enabled without voice chat.
+                let p = ui.vocab().pids;
+                for pid in [p.sb_disabled, p.sb_hide_when_disabled] {
+                    if !ui.prop(e, pid).bool() {
+                        ui.set_property(e, pid, PropertyValue::Bool(true));
+                    }
+                }
             }
             if let Some(e) = find(ui, k, ids.fellow_defeated) {
                 ui.set_shown(e, r.defeated);
             }
-            for (id, v) in [(ids.vital_health, r.morale), (ids.vital_power, r.power)] {
-                if let Some(e) = find(ui, k, id) {
-                    set_meters(ui, e, v.map_or(0.0, |v| v.fill()));
+            self.set_vitals(ui, k, r);
+        }
+    }
+
+    /// The member's meters (TR15): only the current morale and power meters take the
+    /// value; the temporary and dread meters stay at 0, the vital texts and the wrath field
+    /// hidden, the power field shown; every other meter is left as the layout has it.
+    fn set_vitals(&self, ui: &mut Ui, row: ElementKey, r: &MemberRow) {
+        let ids = self.vocab.ids;
+        let pos = ui.vocab().pids.meter_position;
+        let fill = |v: Option<Vital>| v.map_or(0.0, |v| v.fill());
+        for (display, meters) in [
+            (
+                ids.vital_health,
+                [
+                    (ids.vital_health_meter, fill(r.morale)),
+                    (ids.vital_temp_health, 0.0),
+                    (ids.vital_dread, 0.0),
+                ],
+            ),
+            (
+                ids.vital_power,
+                [
+                    (ids.vital_power_meter, fill(r.power)),
+                    (ids.vital_temp_power, 0.0),
+                    (0, 0.0),
+                ],
+            ),
+        ] {
+            let Some(d) = find(ui, row, display) else {
+                continue;
+            };
+            for (id, value) in meters {
+                if id == 0 {
+                    continue;
+                }
+                if let Some(m) = find(ui, d, id)
+                    && ui.el(m).is_some_and(|x| x.class == WidgetClass::Meter)
+                {
+                    ui.set_property(m, pos, PropertyValue::Float(value));
                 }
             }
+        }
+        for id in [
+            ids.vital_health_text,
+            ids.vital_power_text,
+            ids.vital_rage_field,
+        ] {
+            if let Some(e) = find(ui, row, id) {
+                ui.set_shown(e, false);
+            }
+        }
+        // The power display and its inner field of the same ID (the pip entry's
+        // replacement field) stay shown.
+        let mut at = find(ui, row, ids.vital_power);
+        for _ in 0..2 {
+            let Some(e) = at else { break };
+            ui.set_shown(e, true);
+            at = find_below(ui, e, ids.vital_power);
         }
     }
 
@@ -682,6 +764,16 @@ impl FellowshipPanels {
             ui.switch_state_if_defined(pl, self.vocab.states.leader_fellowship);
             ui.set_shown(pl, model.player_leads());
         }
+    }
+
+    /// Binds the player-vitals panel P4 (`root`, §4.3): `PlayerLeaderIcon` by the model
+    /// ([`Self::set_player_leader`]) and TR14's hidden elements, `PlayerVoiceChat`,
+    /// `PlayerVoiceChatSquelched`, `PlayerSendingData` and `PlayerAssistantIcon`. Call
+    /// whenever the panel is built.
+    pub fn attach_player_panel(&mut self, ui: &mut Ui, root: ElementKey, model: &Fellowship) {
+        hide_player_voice(ui, &self.vocab, root);
+        let k = find(ui, root, self.vocab.ids.player_leader);
+        self.set_player_leader(ui, k, model);
     }
 
     /// Handles a UI event (§4.4, §4.5): a left click on a row targets the member (or posts
@@ -713,13 +805,26 @@ impl FellowshipPanels {
     }
 }
 
-/// Sets every Meter at or below `k` to `fill` (the fallback of `MultiVitalDisplay`, GP §11:
-/// its meters show the member's vital).
-fn set_meters(ui: &mut Ui, k: ElementKey, fill: f32) {
-    let pos = ui.vocab().pids.meter_position;
-    for e in subtree(ui, k) {
-        if ui.el(e).is_some_and(|x| x.class == WidgetClass::Meter) {
-            ui.set_property(e, pos, PropertyValue::Float(fill));
+/// Hides TR14's elements of the player-vitals panel P4 (`root`): `PlayerVoiceChat`,
+/// `PlayerVoiceChatSquelched`, `PlayerSendingData` and `PlayerAssistantIcon` (§4.3;
+/// Tessera has no voice chat). Elements the panel lacks are skipped.
+pub fn hide_player_voice(ui: &mut Ui, vocab: &SocialVocab, root: ElementKey) {
+    let ids = vocab.ids;
+    for id in [
+        ids.player_voice,
+        ids.player_voice_squelched,
+        ids.player_sending,
+        ids.player_assistant,
+    ] {
+        if let Some(e) = find(ui, root, id) {
+            ui.set_shown(e, false);
         }
     }
+}
+
+/// A fellowship row's level text (`social-panels.md` §4.2, SP28): (UI, 0x070F9F3C) with
+/// argument 0x7C83B5 = the level.
+#[must_use]
+pub fn level_text(level: i64) -> TextRef {
+    TextRef::new(T::UI, 0x070F_9F3C).int(A::FELLOW_LEVEL, level)
 }

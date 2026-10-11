@@ -50,10 +50,21 @@ pub const UNKNOWN_COIN_VALUES: CoinValues = CoinValues {
     copper: 1,
 };
 
-/// Resolves a trade entry for the window (`social-panels.md` §6.2, TR9): its display name
-/// and icon. The client's resolver reads the install's item facts and the player's own
-/// items; without one, literal refs show their text and records an empty name.
-pub type ItemResolver = dyn Fn(&Ref, Option<u64>) -> (String, Option<IconImage>) + Send + Sync;
+/// What the client resolved for a trade entry (`social-panels.md` §6.2, TR9).
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct ResolvedEntry {
+    /// The display name.
+    pub name: String,
+    /// The composed icon (none: no item image).
+    pub icon: Option<IconImage>,
+    /// The record's `Item_Quality` key (the name colour, §6.2 Tessera rule).
+    pub quality: Option<u32>,
+}
+
+/// Resolves a trade entry for the window (`social-panels.md` §6.2, TR9): its display name,
+/// icon and quality. The client's resolver reads the install's item facts; without one,
+/// literal refs show their text and records an empty name.
+pub type ItemResolver = dyn Fn(&Ref, Option<u64>) -> ResolvedEntry + Send + Sync;
 
 /// The ordinal of a [`UiSide`] in [`SocialState`]'s raw trade sides.
 fn side_index(s: UiSide) -> usize {
@@ -498,18 +509,24 @@ impl SocialState {
             .iter()
             .map(|e| {
                 let item = e.item.map(|i| i.0);
-                let (name, icon) = match &self.items {
+                let literal = matches!(e.what, Ref::Literal(_));
+                let r = match &self.items {
                     Some(r) => r(&e.what, item),
                     None => match &e.what {
-                        Ref::Literal(t) => (t.clone(), None),
-                        Ref::Record(_) => (String::new(), None),
+                        Ref::Literal(t) => ResolvedEntry {
+                            name: t.clone(),
+                            ..ResolvedEntry::default()
+                        },
+                        Ref::Record(_) => ResolvedEntry::default(),
                     },
                 };
                 TradeEntry {
-                    name,
+                    name: r.name,
                     item,
                     quantity: e.quantity,
-                    icon,
+                    icon: if literal { None } else { r.icon },
+                    quality: if literal { None } else { r.quality },
+                    literal,
                 }
             })
             .collect()

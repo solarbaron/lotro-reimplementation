@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! The trade window (`social-panels.md` §6, Tessera rules §9 TR9, TR10): both sides'
 //! offers as one-column lists of item displays (reusing [`crate::game::items`] slots, so
-//! each entry has the item's icon and the examination tooltip), the coin display and the
-//! own coin entries with their validation, the accept states and their reset, the trade
-//! button's ghosting, cancel, close and completion.
+//! each entry has the item's icon and the examination tooltip; the entry's parts found by
+//! ID, §6.2), the wallet and the peer's coin as the money displays of the NPC windows
+//! (`npc-windows.md` §9.2–§9.3, [`crate::game::npc::coins`]), the own coin entries with
+//! their validation, the accept states and their reset, the trade button's ghosting,
+//! cancel, close and completion.
 
 use tessera_formats::property::PropertyValue;
 
@@ -15,7 +17,10 @@ use crate::widgets::WidgetClass;
 use super::super::charvocab::CharVocab;
 use super::super::chat::notice::{self as n, Notice, TextRef, TextSource, args as A, tables as T};
 use super::super::items::{ItemSlots, SlotItem, SlotPlace};
-use super::super::{IconImage, subtree};
+use super::super::npc::NpcTexts;
+use super::super::npc::coins::{CoinCounts, CoinKind, MoneyDisplay};
+use super::super::npc::kit::FallbackArt;
+use super::super::{IconImage, find_below, subtree};
 use super::vocab::SocialVocab;
 use super::{SocialAction, SocialIntent, ensure_rows, find, game_message, listen_id, set_ref};
 
@@ -53,8 +58,8 @@ pub struct CoinValues {
 }
 
 impl CoinValues {
-    /// Splits a coin amount into (gold, silver, copper), largest first (TR9). A zero value
-    /// takes nothing.
+    /// Splits a coin amount into (gold, silver, copper), largest first (TR9, EC §7). A zero
+    /// value takes nothing.
     #[must_use]
     pub fn split(&self, coin: u64) -> [u64; 3] {
         let mut rest = coin;
@@ -86,7 +91,7 @@ impl CoinValues {
 }
 
 /// One offered entry (TR9: a feed entry, with what the client resolved for it).
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct TradeEntry {
     /// The display name (an item's name, or a literal ref's text).
     pub name: String,
@@ -94,8 +99,14 @@ pub struct TradeEntry {
     pub item: Option<u64>,
     /// The quantity.
     pub quantity: u32,
-    /// The icon (none: a placeholder icon, TR9).
+    /// The icon (none: no item image, TR9).
     pub icon: Option<IconImage>,
+    /// The record's `Item_Quality` key (the name colour, §6.2 Tessera rule); none for a
+    /// literal entry or an unknown record.
+    pub quality: Option<u32>,
+    /// The entry is a literal ref (`scenario-feed.md` §5.2; TR9: `Object_ColorName`, no
+    /// icon, no quantity, no tooltip).
+    pub literal: bool,
 }
 
 /// One side's offer.
@@ -333,31 +344,30 @@ impl Trade {
         self.values.total(a).unwrap_or(u64::MAX)
     }
 
-    /// A coin entry lost focus or received Enter (§6.3): an entry that is not a number
-    /// posts (UST, 0x085F80B9) and is cleared; a total above the wallet posts
-    /// (UST, 0x06195A09) and clears `field`; then the amounts present are offered (as
-    /// §6.3 says, even when they are still above the wallet; `social-panels.md` §6.3 OPEN).
+    /// A coin entry lost focus or received Enter (§6.3, SP32): only `field` is tested and
+    /// cleared: a text that is not a number posts (UST, 0x085F80B9) and clears it; else a
+    /// total of the three entries above the wallet posts (UST, 0x06195A09) and clears it.
+    /// Then, in every case, the amounts present are offered (an entry that is not a number
+    /// counts as 0), even when they are still above the wallet (the session decides).
     pub fn commit_coin(&mut self, field: CoinField) -> Vec<SocialAction> {
         let Some(window) = self.window else {
             return Vec::new();
         };
         self.coin_gen = self.coin_gen.wrapping_add(1);
         let mut out = Vec::new();
-        for i in 0..3 {
-            if Self::parse(&self.typed[i]).is_none() {
-                out.push(SocialAction::Post(Notice::of(
-                    TextRef::new(T::UI_SECURE_TRADE, 0x085F_80B9),
-                    n::ERROR,
-                )));
-                self.typed[i].clear();
-            }
-        }
-        if self.entered_total() > self.wallet {
+        let i = field.index();
+        if Self::parse(&self.typed[i]).is_none() {
+            out.push(SocialAction::Post(Notice::of(
+                TextRef::new(T::UI_SECURE_TRADE, 0x085F_80B9),
+                n::ERROR,
+            )));
+            self.typed[i].clear();
+        } else if self.entered_total() > self.wallet {
             out.push(SocialAction::Post(Notice::of(
                 TextRef::new(T::UI_SECURE_TRADE, 0x0619_5A09),
                 n::ERROR,
             )));
-            self.typed[field.index()].clear();
+            self.typed[i].clear();
         }
         out.push(SocialAction::Intent(SocialIntent::OfferTrade {
             window,
@@ -406,21 +416,109 @@ impl Trade {
     }
 }
 
-/// The text of a coin amount on a money display (Tessera's fallback of `MoneyDisplay` and
-/// `PlayerMoneyDisplay`, GP §11: the three columns as numbers, leading zero denominations
-/// suppressed).
+/// The coin counts of an amount on a money display (§6.1: split by `Currency_Value`,
+/// largest first; the largest-value currency to `Gold`, `npc-windows.md` §9.2 Tessera rule
+/// (coins)).
 #[must_use]
-pub fn coin_text(values: CoinValues, coin: u64) -> String {
-    let [g, s, c] = values.split(coin);
-    let parts: Vec<String> = [g, s, c]
-        .iter()
-        .skip_while(|v| **v == 0)
-        .map(u64::to_string)
-        .collect();
-    if parts.is_empty() {
-        "0".to_string()
-    } else {
-        parts.join(" ")
+pub fn coin_counts(values: CoinValues, coin: u64) -> CoinCounts {
+    let [gold, silver, copper] = values.split(coin);
+    CoinCounts {
+        gold,
+        silver,
+        copper,
+    }
+}
+
+/// The name state of an entry (§6.2 Tessera rule: the state of `item-tooltips.md` §6.2 for
+/// the item's `Item_Quality`; any other value, and a literal entry, `Object_ColorName`).
+#[must_use]
+pub fn name_state(vocab: &SocialVocab, entry: &TradeEntry) -> u32 {
+    let st = vocab.states;
+    if entry.literal {
+        return st.object_name;
+    }
+    match entry.quality {
+        Some(1) => st.quality_legendary,
+        Some(2) => st.quality_rare,
+        Some(3) => st.quality_incomparable,
+        Some(4) => st.quality_uncommon,
+        Some(5) => st.quality_common,
+        _ => st.object_name,
+    }
+}
+
+/// Draws a text in its state's colour: the first entry of the effective
+/// `UICore_Text_font_colors` (the state's override, else the element's own) becomes the
+/// text's `UICore_Text_font_color`, which the client's text shaper reads (`fonts.md` §8.4
+/// leaves the colour sources to the colour properties). A text without such an array keeps
+/// its colour.
+fn apply_state_colour(ui: &mut Ui, vocab: &SocialVocab, k: ElementKey) {
+    let p = vocab.pids;
+    let first = ui
+        .prop(k, p.text_font_colors)
+        .value()
+        .and_then(|v| crate::props::array_elements(v).first())
+        .and_then(|e| {
+            crate::props::as_argb(&e.value).or_else(|| {
+                crate::props::struct_field(&e.value, p.text_font_color)
+                    .and_then(crate::props::as_argb)
+            })
+        });
+    if let Some(argb) = first {
+        let v = PropertyValue::Colour(argb.to_le_bytes());
+        if ui.prop(k, p.text_font_color).value() != Some(&v) {
+            ui.set_property(k, p.text_font_color, v);
+        }
+    }
+}
+
+/// The coin texts of the money displays, rendered once per refresh from the string
+/// tables (`npc-windows.md` §9.2: counts through (UI, 0x07480C44) with argument 0x5242A9,
+/// the coin icons' tooltips (UI, 0x0135BA5C), (UI, 0x01E4A5BC), (UI, 0x0BE07C7C)).
+struct CoinTexts {
+    counts: Vec<(u64, String)>,
+    tips: [Option<String>; 3],
+}
+
+impl CoinTexts {
+    fn new(src: &mut dyn TextSource, shown: &[CoinCounts]) -> Self {
+        let mut counts: Vec<(u64, String)> = Vec::new();
+        for c in shown {
+            for v in [c.gold, c.silver, c.copper] {
+                if !counts.iter().any(|(n, _)| *n == v) {
+                    let t = TextRef::new(T::UI, 0x0748_0C44).int(A::COIN_COUNT, v_i64(v));
+                    counts.push((v, t.render(src)));
+                }
+            }
+        }
+        let tips = [0x0135_BA5C, 0x01E4_A5BC, 0x0BE0_7C7C].map(|token| {
+            Some(TextRef::new(T::UI, token).render(src)).filter(|t| !t.trim().is_empty())
+        });
+        Self { counts, tips }
+    }
+}
+
+fn v_i64(v: u64) -> i64 {
+    i64::try_from(v).unwrap_or(i64::MAX)
+}
+
+impl NpcTexts for CoinTexts {
+    fn coin_count(&self, count: u64) -> String {
+        self.counts
+            .iter()
+            .find(|(n, _)| *n == count)
+            .map(|(_, t)| t.clone())
+            .filter(|t| !t.trim().is_empty())
+            .unwrap_or_else(|| count.to_string())
+    }
+
+    fn coin_tooltip(&self, kind: CoinKind) -> Option<String> {
+        let i = match kind {
+            CoinKind::Gold => 0,
+            CoinKind::Silver => 1,
+            CoinKind::Copper => 2,
+        };
+        self.tips[i].clone()
     }
 }
 
@@ -438,8 +536,10 @@ pub struct TradeWindow {
     cancel: Option<ElementKey>,
     close: Option<ElementKey>,
     peer_label: Option<ElementKey>,
-    wallet: Option<ElementKey>,
-    peer_money: Option<ElementKey>,
+    /// `SelfTrade_TotalMoney`: the player's money as coin elements (§6.1).
+    pub wallet: Option<MoneyDisplay>,
+    /// `OtherTrade_MoneyDisplay`: the peer's offered coin as coin elements (§6.1).
+    pub peer_money: Option<MoneyDisplay>,
     wait: Option<ElementKey>,
     /// The coin entries' editable texts (gold, silver, copper).
     coins: [Option<ElementKey>; 3],
@@ -447,7 +547,8 @@ pub struct TradeWindow {
     coin_gen: Option<u64>,
     /// The item slots of both lists (examination tooltips, icons, quantities).
     pub slots: ItemSlots,
-    /// `ItemIconDisplay`'s type (the entry's icon element).
+    /// `ItemIconDisplay`'s type (the entry's icon element when `ItemDisplay_Icon` is not
+    /// found).
     icon_type: u32,
     /// The entries of the own and peer lists, in list order.
     pub entries: (Vec<ElementKey>, Vec<ElementKey>),
@@ -463,21 +564,28 @@ impl TradeWindow {
         vocab: &SocialVocab,
         chars: CharVocab,
     ) -> Result<Self, crate::UiError> {
+        vocab.register_classes(ui);
         let root = ui.open_panel_by_key(vocab.layouts.securetrade, vocab.ids.trade)?;
         ui.set_shown(root, false);
         Ok(Self::attach(ui, vocab, chars, root))
     }
 
-    /// Binds a window the client opened: finds the parts, makes the own list a drop
+    /// Binds a window the client opened (after [`SocialVocab::register_classes`]): finds
+    /// the parts, builds the two money displays' coin elements, makes the own list a drop
     /// container and registers the handlers.
     pub fn attach(ui: &mut Ui, vocab: &SocialVocab, chars: CharVocab, root: ElementKey) -> Self {
         let ids = vocab.ids;
         let f = |id: u32| find(ui, root, id);
-        let coin = |id: u32| {
-            let field = f(id)?;
-            subtree(ui, field)
-                .into_iter()
-                .find(|k| ui.prop(*k, ui.vocab().pids.text_editable).bool())
+        // §6.1, SP31: the editable texts by ID; a tree without them (not the install's)
+        // falls back to the field's editable text.
+        let coin = |field_id: u32, entry_id: u32| {
+            let field = f(field_id)?;
+            find(ui, field, entry_id)
+                .or_else(|| {
+                    subtree(ui, field)
+                        .into_iter()
+                        .find(|k| ui.prop(*k, ui.vocab().pids.text_editable).bool())
+                })
                 .or_else(|| {
                     subtree(ui, field)
                         .into_iter()
@@ -485,6 +593,20 @@ impl TradeWindow {
                         .find(|k| ui.el(*k).is_some_and(|e| e.class == WidgetClass::Text))
                 })
         };
+        let coins = [
+            coin(ids.coin_gold, ids.coin_gold_entry),
+            coin(ids.coin_silver, ids.coin_silver_entry),
+            coin(ids.coin_copper, ids.coin_copper_entry),
+        ];
+        let art = FallbackArt::default();
+        let mut money = |id: u32| {
+            let k = find(ui, root, id)?;
+            let k = MoneyDisplay::find(ui, &vocab.npc, k).unwrap_or(k);
+            Some(MoneyDisplay::attach(ui, &vocab.npc, k, &art))
+        };
+        let wallet = money(ids.trade_wallet);
+        let peer_money = money(ids.trade_peer_money);
+        let f = |id: u32| find(ui, root, id);
         let w = Self {
             vocab: vocab.clone(),
             root,
@@ -496,14 +618,10 @@ impl TradeWindow {
             cancel: f(ids.trade_cancel),
             close: f(ids.trade_close),
             peer_label: f(ids.trade_peer_label),
-            wallet: f(ids.trade_wallet),
-            peer_money: f(ids.trade_peer_money),
+            wallet,
+            peer_money,
             wait: f(ids.trade_wait),
-            coins: [
-                coin(ids.coin_gold),
-                coin(ids.coin_silver),
-                coin(ids.coin_copper),
-            ],
+            coins,
             coin_gen: None,
             icon_type: chars.types.item_icon_display,
             slots: ItemSlots::new(chars),
@@ -547,33 +665,43 @@ impl TradeWindow {
             offer.entries.len(),
         );
         let icon_type = self.icon_type;
+        let ids = self.vocab.ids;
         for (i, (k, e)) in rows.iter().zip(&offer.entries).enumerate() {
-            // The name text: the entry's first Text element.
-            if let Some(t) = subtree(ui, *k)
-                .into_iter()
-                .skip(1)
-                .find(|x| ui.el(*x).is_some_and(|el| el.class == WidgetClass::Text))
-            {
+            // §6.2, TR9: the parts by ID, never by type order (the quantity overlay is a
+            // Text before the name). The name in its quality state.
+            if let Some(t) = find_below(ui, *k, ids.item_name) {
                 ui.set_text(t, Some(e.name.clone()));
+                ui.switch_state_if_defined(t, name_state(&self.vocab, e));
+                apply_state_colour(ui, &self.vocab, t);
             }
-            // The icon: the `ItemIconDisplay` element (else the entry) is the item slot.
-            let icon = subtree(ui, *k)
-                .into_iter()
-                .skip(1)
-                .find(|x| ui.element_type(*x) == Some(icon_type))
+            // The icon: `ItemDisplay_Icon` (else the first `ItemIconDisplay`, else the
+            // entry) is the item slot; its quantity overlay is the slot's.
+            let icon = find_below(ui, *k, ids.item_icon)
+                .or_else(|| {
+                    subtree(ui, *k)
+                        .into_iter()
+                        .skip(1)
+                        .find(|x| ui.element_type(*x) == Some(icon_type))
+                })
                 .unwrap_or(*k);
             let place = SlotPlace::Other {
                 container,
                 index: u32::try_from(i).unwrap_or(u32::MAX),
             };
             self.slots.attach(ui, icon, place);
+            // TR9: a literal entry has no item image, no quantity and no tooltip.
+            let (icon_image, quantity) = if e.literal {
+                (None, 0)
+            } else {
+                (e.icon.clone(), i64::from(e.quantity))
+            };
             self.slots.set(
                 ui,
                 place,
                 Some(SlotItem {
                     item: e.item.unwrap_or(0),
-                    icon: e.icon.clone(),
-                    quantity: i64::from(e.quantity),
+                    icon: icon_image,
+                    quantity,
                     ..SlotItem::default()
                 }),
             );
@@ -583,7 +711,7 @@ impl TradeWindow {
             ui.set_drag_payload(icon, None);
             let dragable = ui.vocab().pids.dragable;
             ui.set_property(icon, dragable, PropertyValue::Bool(false));
-            if e.item.is_none() {
+            if e.item.is_none() || e.literal {
                 ui.set_examine(icon, false);
             }
         }
@@ -608,12 +736,18 @@ impl TradeWindow {
         set_ref(ui, self.peer_label, model.peer_label().as_ref(), src);
         self.fill_list(ui, Side::Own, model.offer(Side::Own));
         self.fill_list(ui, Side::Peer, model.offer(Side::Peer));
+        // §6.1, TR9: the wallet and the peer's coin as coin elements.
         let values = model.values();
-        if let Some(w) = self.wallet {
-            ui.set_text(w, Some(coin_text(values, model.wallet())));
-        }
-        if let Some(p) = self.peer_money {
-            ui.set_text(p, Some(coin_text(values, model.offer(Side::Peer).coin)));
+        let wallet = coin_counts(values, model.wallet());
+        let peer = coin_counts(values, model.offer(Side::Peer).coin);
+        if self.wallet.is_some() || self.peer_money.is_some() {
+            let texts = CoinTexts::new(src, &[wallet, peer]);
+            if let Some(d) = self.wallet.as_mut() {
+                d.set(ui, wallet, false, &texts);
+            }
+            if let Some(d) = self.peer_money.as_mut() {
+                d.set(ui, peer, false, &texts);
+            }
         }
         if self.coin_gen != Some(model.coin_generation()) {
             self.write_coins(ui, model);

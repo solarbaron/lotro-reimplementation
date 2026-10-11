@@ -123,7 +123,8 @@ pub struct SocialUi {
     commands: Vec<String>,
     open: Vec<SocialOpen>,
     menu: Option<ContextMenu>,
-    leader_icon: bool,
+    /// The player-vitals panel P4 last bound ([`Self::attach_player_vitals`]).
+    player_panel: Option<ElementKey>,
 }
 
 impl std::fmt::Debug for SocialUi {
@@ -158,7 +159,7 @@ impl SocialUi {
             commands: Vec::new(),
             open: Vec::new(),
             menu: None,
-            leader_icon: false,
+            player_panel: None,
         }
     }
 
@@ -293,19 +294,18 @@ impl SocialUi {
         }
     }
 
-    /// Sets `PlayerLeaderIcon` of the player-vitals panel P4 (`root`), once.
+    /// Binds the player-vitals panel P4 (`root`) once per panel built: `PlayerLeaderIcon`
+    /// by the fellowship, and TR14's hidden voice, squelched, sending-data and assistant
+    /// elements (`social-panels.md` §4.3).
     pub fn attach_player_vitals(&mut self, ui: &mut Ui, root: ElementKey, state: &SocialState) {
-        if self.leader_icon {
+        if self.player_panel == Some(root) && ui.exists(root) {
             return;
         }
         let Some(f) = self.fellowship.as_mut() else {
             return;
         };
-        let k = tessera_ui::game::find_below(ui, root, self.vocab.ids.player_leader);
-        if k.is_some() {
-            f.set_player_leader(ui, k, state.fellowship());
-            self.leader_icon = true;
-        }
+        f.attach_player_panel(ui, root, state.fellowship());
+        self.player_panel = Some(root);
     }
 
     /// Chooses entry `i` of the kept row menu (as a click on it would): its action runs in
@@ -555,7 +555,7 @@ impl SocialUi {
             i.refresh(ui, parts.ignore);
         }
         if let Some(f) = self.fellowship.as_mut() {
-            f.refresh(ui, parts.fellowship);
+            f.refresh(ui, parts.fellowship, parts.text);
         }
         if let Some(w) = self.invite.as_mut() {
             w.refresh(ui, parts.invite, parts.text);

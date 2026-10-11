@@ -6,7 +6,7 @@
 //! Spec: `lua-plugin-api.md` §15 (queued delivery of game-raised events, frame-loop step
 //! 7), §15.4 (the model, the view table, the event derivation, object identity), §9.3
 //! (argument fields: `MemberAdded` and `MemberRemoved` carry `Player`, `LeaderChanged`
-//! and `PartyChanged` carry nothing), §18 checks 90–96; `social-panels.md` §9 TR2 (who
+//! and `PartyChanged` carry nothing), §18 checks 90–98; `social-panels.md` §9 TR2 (who
 //! the player is in a member list, a list without the player read with the player
 //! appended, the leader).
 //!
@@ -14,7 +14,9 @@
 //! ([`FellowshipMember`]) and the player's identity ([`PartyPlayer`]); this module never
 //! links a network crate. It applies TR2, keeps the current list, derives the §15.4 events
 //! by comparing consecutive lists by name and queues them for step 7. The actor values of
-//! members with an entity come from an optional [`PartyActorSource`].
+//! members come from an optional [`PartyActorSource`]: by entity, and for a member without
+//! an entity by name (morale and power from `FellowVitalChanged`, §15.4 revision 1).
+//! `PartyMember` has no method of its own (no `GetRaid`, P95).
 //!
 //! Object identity per apartment: one `Party` object per party episode (strongly held
 //! while the episode is current, weakly afterwards), one `PartyMember` object per member
@@ -80,9 +82,10 @@ pub struct PartyPlayer {
     pub entity: Option<u64>,
 }
 
-/// The `Actor` values of a member's entity (`lua-plugin-api.md` §15.4: as the `Actor`
-/// getters for that entity, from the events the feed sent for it). A member without an
-/// entity, or one the source does not know, answers the default (all 0).
+/// The `Actor` values of a member (`lua-plugin-api.md` §15.4: as the `Actor` getters for
+/// its entity, from the events the feed sent for it; morale and power the later of its
+/// `FellowVitalChanged` and its entity's `VitalChanged`). A member without an entity
+/// answers what the source gives by name (morale and power), else the default (all 0).
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct MemberActorInfo {
     /// `GetLevel()`.
@@ -114,6 +117,14 @@ pub struct MemberActorInfo {
 pub trait PartyActorSource: Send + Sync + 'static {
     /// The values of entity `entity`, or `None` when the client has none.
     fn member_actor(&self, entity: u64) -> Option<MemberActorInfo>;
+
+    /// The values of the member named `name` that has no entity (morale and power from
+    /// `FellowVitalChanged`, matched by name ignoring case; §15.4, check 98), or `None`
+    /// when the client has none (the member then answers 0). Default: none.
+    fn member_actor_named(&self, name: &str) -> Option<MemberActorInfo> {
+        let _ = name;
+        None
+    }
 }
 
 /// What one [`crate::PluginManager::set_fellowship`] call did. The client must read
@@ -377,15 +388,21 @@ fn actor_source(ctx: &ApartmentCtx) -> Option<Arc<dyn PartyActorSource>> {
     lock(&shared.party_actors).clone()
 }
 
-/// A member's actor values now: the default (all 0) for a member without an entity
-/// (§15.4), the source's values for one with an entity, `None` when the source has no
-/// values for that entity (the object then keeps the last values seen, §15.4).
+/// A member's actor values now: for a member without an entity the source's values by
+/// name, else the default (all 0) (§15.4 revision 1); the source's values for one with an
+/// entity, `None` when the source has no values for that entity (the object then keeps
+/// the last values seen, §15.4).
 pub(crate) fn actor_values(
     source: Option<&Arc<dyn PartyActorSource>>,
+    name: &str,
     entity: Option<u64>,
 ) -> Option<MemberActorInfo> {
     match entity {
-        None => Some(MemberActorInfo::default()),
+        None => Some(
+            source
+                .and_then(|s| s.member_actor_named(name))
+                .unwrap_or_default(),
+        ),
         Some(id) => source.and_then(|s| s.member_actor(id)),
     }
 }
@@ -606,7 +623,7 @@ fn current_member_values(
             .flatten()
     })
     .flatten()?;
-    Some(actor_values(actor_source(ctx).as_ref(), entity))
+    Some(actor_values(actor_source(ctx).as_ref(), name, entity))
 }
 
 /// The name of the `PartyMember` object `this`, or `None` when `this` is not one (for
@@ -693,8 +710,9 @@ pub(crate) fn install(
         })?,
     )?;
 
-    install_party(lua, ctx, classes.party, &is_local, &local)?;
-    install_member(lua, classes.party_member)
+    // `PartyMember` has no method of its own (§15.4 revision 1, P95: no `GetRaid` in this
+    // build); its getters are the base classes' (§8.6 rule 2).
+    install_party(lua, ctx, classes.party, &is_local, &local)
 }
 
 fn install_party(
@@ -795,27 +813,6 @@ fn first(args: &MultiValue) -> Value {
     args.iter().next().cloned().unwrap_or(Value::Nil)
 }
 
-/// `PartyMember`'s one own field. Everything else a member answers comes from the base
-/// classes' methods (`Entity`, `Actor`, `Player`), which dispatch on the `PartyMember`
-/// payload, so a plugin's replacement of a base method reaches members too (§8.6 rule 3).
-/// `GetRaid` is in §15.4's table but not in §16's `Player` row; it stays here, nil, until
-/// the §15.4 OPEN on it is answered.
-fn install_member(lua: &Lua, member: &Table) -> mlua::Result<()> {
-    member.raw_set(
-        "GetRaid",
-        api_fn(lua, "GetRaid", |lua, args: MultiValue| {
-            let is_member = match first(&args) {
-                Value::Table(t) => with_payload(lua, &t, |_: &MemberPayload| ())?.is_some(),
-                _ => false,
-            };
-            if !is_member {
-                return Err(host_error("GetRaid: expected a PartyMember object as self"));
-            }
-            Ok(Value::Nil)
-        })?,
-    )
-}
-
 /// Deliver one queued party event to the apartment `ap`: to its `Party` object of the
 /// event's episode (nothing when it has none).
 pub(crate) fn deliver(ap: &Apartment, ev: &PartyViewEvent) {
@@ -848,7 +845,7 @@ fn deliver_inner(ap: &Apartment, ev: &PartyViewEvent) -> mlua::Result<()> {
     };
     let args = lua.create_table()?;
     if let Some((member_name, entity)) = member {
-        let values = actor_values(actor_source(&ap.ctx).as_ref(), entity);
+        let values = actor_values(actor_source(&ap.ctx).as_ref(), member_name, entity);
         let obj = member_object(
             lua,
             &ap.ctx,

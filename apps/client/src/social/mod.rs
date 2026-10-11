@@ -23,7 +23,7 @@ pub mod ui;
 
 use std::sync::Arc;
 
-pub use state::{ItemResolver, SocialState};
+pub use state::{ItemResolver, ResolvedEntry, SocialState};
 pub use texts::InstallText;
 pub use ui::SocialUi;
 
@@ -43,15 +43,22 @@ pub fn coin_values(data: &CharacterData) -> Option<CoinValues> {
 }
 
 /// The trade entries' resolver over the install's item facts (`social-panels.md` §6.2, TR9):
-/// a record's rendered name and composed icon; a literal ref's text with the placeholder
-/// icon (none).
+/// a record's rendered name, composed icon and `Item_Quality` key; a literal ref's text
+/// without icon (TR9: no item image).
 #[must_use]
 pub fn item_resolver(data: Arc<CharacterData>) -> Arc<ItemResolver> {
     Arc::new(move |what: &Ref, _item: Option<u64>| match what {
-        Ref::Literal(t) => (t.clone(), None),
+        Ref::Literal(t) => ResolvedEntry {
+            name: t.clone(),
+            ..ResolvedEntry::default()
+        },
         Ref::Record(did) => match data.item(tessera_formats::Did(did.0)) {
-            Some(f) => (f.info.name.clone(), f.icon.clone()),
-            None => (String::new(), None),
+            Some(f) => ResolvedEntry {
+                name: f.info.name.clone(),
+                icon: f.icon.clone(),
+                quality: Some(f.info.quality).filter(|q| *q != 0),
+            },
+            None => ResolvedEntry::default(),
         },
     })
 }

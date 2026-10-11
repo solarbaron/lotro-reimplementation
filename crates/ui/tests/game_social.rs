@@ -12,6 +12,7 @@ use tessera_ui::game::CharVocab;
 use tessera_ui::game::chat::notice::{
     Arg, NoTables, Notice, TextRef, TextSource, args as A, tables as T,
 };
+use tessera_ui::game::npc::CoinCounts;
 use tessera_ui::game::social::fellowship::{Fellowship, FellowshipPanels, Member, VitalKind};
 use tessera_ui::game::social::friends::{
     FriendColumn, FriendEntry, FriendsModel, FriendsPage, GroupState,
@@ -20,7 +21,7 @@ use tessera_ui::game::social::ignore::{IgnoreColumn, IgnoreModel};
 use tessera_ui::game::social::invite::{Invitation, InviteWindow};
 use tessera_ui::game::social::panel::{SocialPage, SocialPanel, SocialPanelState, Toggle};
 use tessera_ui::game::social::trade::{
-    CoinField, CoinValues, Side, Trade, TradeEntry, TradeWindow, coin_text,
+    CoinField, CoinValues, Side, Trade, TradeEntry, TradeWindow, coin_counts, name_state,
 };
 use tessera_ui::game::social::{DialogPurpose, SocialAction, SocialIntent, SocialVocab};
 use tessera_ui::{ElementKey, Ui, UiEvent};
@@ -152,6 +153,12 @@ fn friends_rows_buttons_and_menu_tr5() {
     assert_eq!(FriendsModel::answer_add("   "), None);
     // The row menu.
     let menu = m.menu("Zed", GroupState::default()).unwrap();
+    // §3.5, SP33: the heading's argument is the note question's 0xA2D94C5.
+    let heading = menu.heading.clone().unwrap();
+    assert_eq!((heading.table, heading.token), (T::UI_FRIENDS, 0x0193_53F5));
+    assert!(matches!(heading.arg(A::NOTE_NAME), Some(Arg::Text(t)) if t == "Zed"));
+    assert!(heading.arg(A::NAME).is_none());
+    assert_eq!(heading.render(&mut NoTables), "Zed");
     assert_eq!(menu.entries.len(), 6);
     assert!(!menu.entries[0].enabled, "tell: offline");
     assert!(!menu.entries[1].enabled, "invite: offline");
@@ -440,12 +447,14 @@ fn invitation_tr7() {
 
 // ----- §12.2 trade, TR9, TR10, SPI8 -------------------------------------------------------
 
+/// An entry: an item instance with `item`, a literal ref (`scenario-feed.md` §5.2) without.
 fn entry(name: &str, item: Option<u64>) -> TradeEntry {
     TradeEntry {
         name: name.into(),
         item,
         quantity: 1,
-        icon: None,
+        literal: item.is_none(),
+        ..TradeEntry::default()
     }
 }
 
@@ -459,7 +468,14 @@ fn example_12_2_trade() {
     assert!(t.button_ghosted(), "both offers empty");
     t.set_offer(1, Side::Peer, vec![entry("Rope", None)], 1_234_567);
     assert_eq!(values().split(1_234_567), [12, 345, 67]);
-    assert_eq!(coin_text(values(), 1_234_567), "12 345 67");
+    assert_eq!(
+        coin_counts(values(), 1_234_567),
+        CoinCounts {
+            gold: 12,
+            silver: 345,
+            copper: 67
+        }
+    );
     assert!(!t.button_ghosted());
     assert_eq!(
         t.click_button(true),
@@ -882,6 +898,26 @@ fn social_panel_and_friends_page_on_the_tree() {
     assert_eq!(ui.list_entries(list).len(), 1);
 }
 
+/// A meter below the morale display that `UI_VitalDisplay_Array` does not name.
+const BACKGROUND_METER: u32 = 0x1000_5A01;
+/// The synthetic player-vitals panel's root.
+const P4_ROOT: u32 = 0x1000_5A10;
+
+/// A text source that renders the level templates of SP28 with a marker, so a test sees
+/// which entry a level text came from.
+struct Levels;
+
+impl TextSource for Levels {
+    fn render(&mut self, table: u32, token: u32, args: &[(u32, String)]) -> Option<String> {
+        let arg = |id: u32| args.iter().find(|(a, _)| *a == id).map(|(_, v)| v.clone());
+        match (table, token) {
+            (T::UI, 0x070F_9F3C) => Some(format!("Lv {}", arg(A::FELLOW_LEVEL)?)),
+            (T::UI, 0x038B_9CDC) => Some(format!("Level {}", arg(A::LEVEL)?)),
+            _ => None,
+        }
+    }
+}
+
 fn fellowship_layout() -> Vec<ElementDesc> {
     let i = sv().ids;
     let st = sv().states;
@@ -901,7 +937,31 @@ fn fellowship_layout() -> Vec<ElementDesc> {
     for s in [st.leader_fellowship, st.leader_raid, st.leader_monster] {
         leader = state(leader, s, 0, vec![], vec![]);
     }
-    let meter = typed(0x1000_5A01, v().types.meter, 0, 0, 99, 6);
+    let meter = |id: u32| typed(id, v().types.meter, 0, 0, 99, 6);
+    // §4.2: the displays with the meters `UI_VitalDisplay_Array` names, a background meter
+    // the array does not name, the hidden texts and the wrath field.
+    let mut health = field(i.vital_health, 52, 25, 99, 6);
+    for c in [
+        meter(BACKGROUND_METER),
+        meter(i.vital_health_meter),
+        meter(i.vital_temp_health),
+        meter(i.vital_dread),
+        text(i.vital_health_text),
+    ] {
+        health = child(health, c);
+    }
+    let mut inner_power = field(i.vital_power, 0, 0, 99, 6);
+    for c in [
+        meter(i.vital_power_meter),
+        meter(i.vital_temp_power),
+        text(i.vital_power_text),
+    ] {
+        inner_power = child(inner_power, c);
+    }
+    let power = child(
+        child(field(i.vital_power, 51, 32, 99, 6), inner_power),
+        child(field(i.vital_rage_field, 0, 0, 99, 6), meter(0x1000_5A02)),
+    );
     let mut row = field(i.fellow_template, 0, 0, 221, 75);
     for c in [
         text(i.fellow_name),
@@ -909,16 +969,30 @@ fn fellowship_layout() -> Vec<ElementDesc> {
         leader,
         field(i.fellow_defeated, 55, 20, 112, 16),
         field(i.fellow_link_dead, 55, 20, 112, 16),
-        child(
-            field(i.fellow_vitals, 3, -3, 170, 80),
-            child(field(i.vital_health, 52, 25, 99, 6), meter),
-        ),
+        child(child(field(i.fellow_vitals, 3, -3, 170, 80), health), power),
         button(i.fellow_assist, 153, 21),
+        // §4.2: the voice and status elements, none hidden by the layout (SPI9).
+        button(i.fellow_voice, 38, 0),
+        field(i.fellow_voice_squelched, 38, 0, 20, 20),
+        field(i.fellow_sending, 38, 0, 20, 20),
+        field(i.fellow_volume, 0, 0, 20, 60),
+        field(i.fellow_pet_vitals, 0, 0, 20, 20),
     ] {
         row = child(row, c);
     }
     out.push(row);
-    out.push(field(i.player_leader, 0, 0, 16, 16));
+    // The player-vitals panel P4's elements (§4.3).
+    let mut p4 = field(P4_ROOT, 0, 0, 200, 80);
+    for c in [
+        field(i.player_leader, 0, 0, 16, 16),
+        field(i.player_voice, 71, 11, 20, 20),
+        field(i.player_voice_squelched, 71, 11, 20, 20),
+        field(i.player_sending, 71, 11, 20, 20),
+        field(i.player_assistant, 0, 0, 16, 16),
+    ] {
+        p4 = child(p4, c);
+    }
+    out.push(p4);
     out
 }
 
@@ -930,12 +1004,29 @@ fn fellowship_panels_on_the_tree() {
     let mut panels = FellowshipPanels::open(&mut ui, &vocab);
     assert_eq!(panels.panels.len(), 4);
     assert!(panels.panels.iter().all(|p| !ui.is_visible(*p)));
-    let pl = ui
-        .open_panel(tessera_formats::did::Did(L), i.player_leader)
+    let p4 = ui
+        .open_panel(tessera_formats::did::Did(L), P4_ROOT)
         .unwrap();
+    let pl = tessera_ui::game::find_below(&ui, p4, i.player_leader).unwrap();
     let mut f = Fellowship::new("Tam", Some(P));
-    panels.set_player_leader(&mut ui, Some(pl), &f);
+    // TR14: the portrait's voice, squelched, sending-data and assistant elements are
+    // shown by the layout (SPI9) and hidden when the panel is bound.
+    let p4_voice = [
+        i.player_voice,
+        i.player_voice_squelched,
+        i.player_sending,
+        i.player_assistant,
+    ];
+    assert!(p4_voice.iter().all(|id| {
+        let k = tessera_ui::game::find_below(&ui, p4, *id).unwrap();
+        ui.is_visible(k)
+    }));
+    panels.attach_player_panel(&mut ui, p4, &f);
     assert!(!ui.is_visible(pl));
+    for id in p4_voice {
+        let k = tessera_ui::game::find_below(&ui, p4, id).unwrap();
+        assert!(!ui.is_visible(k), "TR14: P4 element {id:#x} hidden");
+    }
     f.changed(&[
         mem("Tam", Some(P), true),
         mem("Brin", Some(A_), false),
@@ -943,8 +1034,9 @@ fn fellowship_panels_on_the_tree() {
     ]);
     f.level(A_, 12);
     f.vital(A_, VitalKind::Morale, 30.0, 60.0);
+    f.vital(A_, VitalKind::Power, 10.0, 40.0);
     f.defeated(A_, true);
-    panels.refresh(&mut ui, &f);
+    panels.refresh(&mut ui, &f, &mut Levels);
     assert!(ui.is_visible(panels.panels[0]));
     assert!(panels.panels[1..].iter().all(|p| !ui.is_visible(*p)));
     assert!(ui.is_visible(pl), "PlayerLeaderIcon while the player leads");
@@ -954,25 +1046,57 @@ fn fellowship_panels_on_the_tree() {
     let name = get(&ui, r0, i.fellow_name);
     assert_eq!(ui.text_of(name), "Brin");
     let lvl = get(&ui, r0, i.fellow_level);
-    assert_eq!(ui.text_of(lvl), "12");
+    assert_eq!(
+        ui.text_of(lvl),
+        "Lv 12",
+        "SP28: (UI, 0x070F9F3C) with 0x7C83B5"
+    );
     // TR3: a member without an entity has an empty level, not the layout's own text.
     let lvl1 = get(&ui, panels.rows[1], i.fellow_level);
     assert_eq!(ui.text_of(lvl1), "");
     assert!(!ui.is_visible(get(&ui, r0, i.fellow_leader)));
     assert!(ui.is_visible(get(&ui, r0, i.fellow_defeated)));
     assert!(!ui.is_visible(get(&ui, r0, i.fellow_link_dead)));
-    let meter = get(&ui, r0, 0x1000_5A01);
+    // TR15: only the current meters take the value; the temporary and dread meters are
+    // at 0; the background meter keeps the layout's (no position); texts and the wrath
+    // field hidden, the power fields shown.
+    let pos = |ui: &Ui, id: u32| {
+        ui.property(get(ui, r0, id), v().pids.meter_position)
+            .cloned()
+    };
+    assert_eq!(pos(&ui, i.vital_health_meter), Some(f32_value(0.5)));
+    assert_eq!(pos(&ui, i.vital_power_meter), Some(f32_value(0.25)));
+    for id in [i.vital_temp_health, i.vital_dread, i.vital_temp_power] {
+        assert_eq!(pos(&ui, id), Some(f32_value(0.0)), "{id:#x} at 0");
+    }
     assert_eq!(
-        ui.property(meter, v().pids.meter_position),
-        Some(&f32_value(0.5))
+        pos(&ui, BACKGROUND_METER),
+        None,
+        "left as the layout has it"
     );
+    for id in [i.vital_health_text, i.vital_power_text, i.vital_rage_field] {
+        assert!(!ui.is_visible(get(&ui, r0, id)), "{id:#x} hidden");
+    }
+    assert!(ui.is_visible(get(&ui, r0, i.vital_power)));
+    // TR14 (SPI13): no voice, squelched, sending-data or volume element on a row.
+    for r in &panels.rows {
+        for id in [
+            i.fellow_voice,
+            i.fellow_voice_squelched,
+            i.fellow_sending,
+            i.fellow_volume,
+            i.fellow_pet_vitals,
+        ] {
+            assert!(!ui.is_visible(get(&ui, *r, id)), "TR14: {id:#x} hidden");
+        }
+    }
     // Leader change to Brin: the marker moves to Brin's row.
     f.changed(&[
         mem("Tam", Some(P), false),
         mem("Brin", Some(A_), true),
         mem("Cael", None, false),
     ]);
-    panels.refresh(&mut ui, &f);
+    panels.refresh(&mut ui, &f, &mut Levels);
     assert!(!ui.is_visible(pl));
     let leader = get(&ui, panels.rows[0], i.fellow_leader);
     assert!(ui.is_visible(leader));
@@ -991,7 +1115,7 @@ fn fellowship_panels_on_the_tree() {
     );
     // Disband: the rows go and panel 1 hides.
     f.changed(&[]);
-    panels.refresh(&mut ui, &f);
+    panels.refresh(&mut ui, &f, &mut Levels);
     assert!(panels.rows.is_empty());
     assert!(!ui.is_visible(panels.panels[0]));
 }
@@ -1079,11 +1203,19 @@ fn trade_ui() -> Ui {
         }
         child(f, typed(list, v().types.list_box, 0, 0, 226, 222))
     };
-    let coin = |id: u32| {
+    // §6.1: each coin field holds a label (a Field) and its editable entry, by ID.
+    let coin = |id: u32, entry: u32| {
         child(
-            field(id, 0, 0, 50, 20),
-            prop(text(0x1000_5B00 + id % 16), v().pids.text_editable, b(true)),
+            child(field(id, 0, 0, 50, 20), text(0x1000_5B10 + id % 16)),
+            prop(text(entry), v().pids.text_editable, b(true)),
         )
+    };
+    // §6.1, SP31: the two money displays, of the money-display types, without children.
+    let nv = &vocab.npc;
+    let money = |id: u32, ty: u32, suppress: bool| {
+        let d = typed(id, ty, 83, 5, 160, 22);
+        let d = prop(d, nv.pids.force_show_all, b(true));
+        prop(d, nv.pids.suppress_leading_zeroes, b(suppress))
     };
     let mut trade_button = button(i.trade_button, 31, 316);
     trade_button = prop(trade_button, v().pids.button_boolean, b(true));
@@ -1095,29 +1227,58 @@ fn trade_ui() -> Ui {
         button(i.trade_cancel, 130, 316),
         button(i.trade_close, 494, 23),
         text(i.trade_peer_label),
-        text(i.trade_wallet),
-        text(i.trade_peer_money),
+        money(i.trade_wallet, nv.types.player_money_display, false),
+        money(i.trade_peer_money, nv.types.money_display, true),
         field(i.trade_wait, 4, 85, 508, 266),
-        coin(i.coin_gold),
-        coin(i.coin_silver),
-        coin(i.coin_copper),
+        coin(i.coin_gold, i.coin_gold_entry),
+        coin(i.coin_silver, i.coin_silver_entry),
+        coin(i.coin_copper, i.coin_copper_entry),
     ] {
         win = child(win, c);
     }
+    // §6.2, SP30: the icon holds the (hidden) quantity overlay, a Text that comes before
+    // the name Text in tree order.
+    let mut name = typed(i.item_name, v().types.text, 35, 0, 165, 32);
+    for s in [
+        vocab.states.object_name,
+        vocab.states.quality_rare,
+        vocab.states.quality_common,
+    ] {
+        name = state(name, s, 0, vec![], vec![]);
+    }
+    let quantity = prop(
+        typed(cv.ids.quantity, v().types.text, 0, 0, 32, 32),
+        v().pids.hide,
+        b(true),
+    );
     let medium = child(
         child(
             field(i.item_medium, 0, 0, 200, 32),
-            typed(0x1000_5C01, cv.types.item_icon_display, 0, 0, 32, 32),
+            child(
+                field(0x1000_5C00, 0, 0, 32, 32),
+                child(
+                    typed(i.item_icon, cv.types.item_icon_display, 0, 0, 32, 32),
+                    quantity,
+                ),
+            ),
         ),
-        typed(0x1000_5C02, v().types.text, 34, 0, 165, 32),
+        name,
     );
     ui_social(vec![win, medium])
 }
 
-/// The coin entry's editable text of coin field `id`.
+/// The coin entry's editable text of coin field `id` (SP31: by its entry ID).
 fn coin_entry(ui: &Ui, root: ElementKey, id: u32) -> ElementKey {
+    let ids = sv().ids;
+    let entry = if id == ids.coin_gold {
+        ids.coin_gold_entry
+    } else if id == ids.coin_silver {
+        ids.coin_silver_entry
+    } else {
+        ids.coin_copper_entry
+    };
     let f = tessera_ui::game::find_below(ui, root, id).unwrap();
-    tessera_ui::game::find_below(ui, f, 0x1000_5B00 + id % 16).unwrap()
+    tessera_ui::game::find_below(ui, f, entry).unwrap()
 }
 
 #[test]
@@ -1145,16 +1306,70 @@ fn trade_window_on_the_tree() {
     let get = |ui: &Ui, id: u32| tessera_ui::game::find_below(ui, root, id).unwrap();
     let label = get(&ui, i.trade_peer_label);
     assert!(ui.text_of(label).contains("Dara"));
-    let money = get(&ui, i.trade_peer_money);
-    assert_eq!(ui.text_of(money), "12 345 67");
+    // §6.1, TR9: the money displays are coin elements, not texts.
+    let nv = &vocab.npc;
+    let coin_texts = |d: &tessera_ui::game::npc::MoneyDisplay, ui: &mut Ui| -> Vec<String> {
+        let shown: Vec<_> = d
+            .coins
+            .iter()
+            .flatten()
+            .filter(|c| ui.is_visible(c.element))
+            .filter_map(|c| c.text)
+            .collect();
+        shown.into_iter().map(|t| ui.text_of(t)).collect()
+    };
+    let peer_money = w.peer_money.clone().expect("the peer's money display");
+    assert_eq!(
+        peer_money.counts(),
+        Some(CoinCounts {
+            gold: 12,
+            silver: 345,
+            copper: 67
+        })
+    );
+    assert_eq!(coin_texts(&peer_money, &mut ui), ["12", "345", "67"]);
+    let money_el = get(&ui, i.trade_peer_money);
+    assert_eq!(ui.list_entries(money_el).len(), 3, "three coin elements");
+    assert_eq!(
+        ui.text_of(money_el),
+        "",
+        "the display has no text of its own"
+    );
+    let wallet = w.wallet.clone().expect("the wallet display");
+    // 300,000 with ForceShowAll and no SuppressLeadingZeroes: 3 gold, 0 silver, 0 copper.
+    assert_eq!(coin_texts(&wallet, &mut ui), ["3", "0", "0"]);
+    let _ = nv;
     assert_eq!(w.entries.1.len(), 2);
     assert_eq!(w.entries.0.len(), 0);
-    let name = tessera_ui::game::find_below(&ui, w.entries.1[0], 0x1000_5C02).unwrap();
+    // §6.2: the name goes into `ItemDisplay_Name`, not the quantity overlay before it.
+    let part =
+        |ui: &Ui, row: ElementKey, id: u32| tessera_ui::game::find_below(ui, row, id).unwrap();
+    let name = part(&ui, w.entries.1[0], i.item_name);
     assert_eq!(ui.text_of(name), "Rope");
-    let icon = tessera_ui::game::find_below(&ui, w.entries.1[0], 0x1000_5C01).unwrap();
+    assert_eq!(ui.state(name), Some(vocab.states.object_name), "no quality");
+    let quantity = part(&ui, w.entries.1[0], cv.ids.quantity);
+    assert_eq!(ui.text_of(quantity), "", "quantity 1 is not shown");
+    let icon = part(&ui, w.entries.1[0], i.item_icon);
     assert!(ui.examines(icon), "the examination tooltip of the item");
-    let icon2 = tessera_ui::game::find_below(&ui, w.entries.1[1], 0x1000_5C01).unwrap();
+    let name2 = part(&ui, w.entries.1[1], i.item_name);
+    assert_eq!(ui.text_of(name2), "Note");
+    assert_eq!(ui.state(name2), Some(vocab.states.object_name), "TR9");
+    let icon2 = part(&ui, w.entries.1[1], i.item_icon);
     assert!(!ui.examines(icon2), "a literal ref has nothing to examine");
+    // The name colour follows `Item_Quality` (§6.2 Tessera rule).
+    let rare = TradeEntry {
+        quality: Some(2),
+        quantity: 5,
+        ..entry("Lamp", Some(71))
+    };
+    assert_eq!(name_state(&vocab, &rare), vocab.states.quality_rare);
+    t.set_offer(1, Side::Peer, vec![rare, entry("Note", None)], 1_234_567);
+    w.refresh(&mut ui, &t, &mut NoTables);
+    let name = part(&ui, w.entries.1[0], i.item_name);
+    assert_eq!(ui.text_of(name), "Lamp");
+    assert_eq!(ui.state(name), Some(vocab.states.quality_rare));
+    let quantity = part(&ui, w.entries.1[0], cv.ids.quantity);
+    assert_eq!(ui.text_of(quantity), "5");
     let button_el = get(&ui, i.trade_button);
     assert!(!ghosted(&ui, button_el));
     // The trade button: on → SetTradeReady (optimistic).
@@ -1183,9 +1398,7 @@ fn trade_window_on_the_tree() {
     assert!(ghosted(&ui, button_el), "both offers empty");
     assert!(w.entries.1.is_empty());
     // A coin entry losing focus commits (§6.3).
-    let gold =
-        tessera_ui::game::find_below(&ui, get(&ui, i.coin_gold), 0x1000_5B00 + i.coin_gold % 16)
-            .unwrap();
+    let gold = tessera_ui::game::find_below(&ui, get(&ui, i.coin_gold), i.coin_gold_entry).unwrap();
     ui.set_text(gold, Some("2".into()));
     let ev = UiEvent::Game {
         message: Message {
@@ -1337,6 +1550,53 @@ fn over_wallet_commit_clears_only_that_entry() {
 }
 
 #[test]
+fn commit_tests_and_clears_only_the_committed_entry() {
+    // §6.3, SP32: only the committed entry is tested; an entry that is not a number
+    // elsewhere is not cleared and counts as 0 in the amounts sent.
+    let mut t = Trade::new(values());
+    t.set_wallet(1_000_000);
+    t.open(1, None);
+    t.type_coin(CoinField::Gold, "1");
+    t.type_coin(CoinField::Silver, "x");
+    let out = t.commit_coin(CoinField::Gold);
+    assert_eq!(
+        out,
+        vec![SocialAction::Intent(SocialIntent::OfferTrade {
+            window: 1,
+            item: None,
+            quantity: 0,
+            coin: 100_000
+        })]
+    );
+    assert_eq!(t.typed()[1], "x", "another entry is not tested");
+    // Committing the silver entry tests it: not a number, cleared, then sent.
+    let out = t.commit_coin(CoinField::Silver);
+    assert!(matches!(&out[0], SocialAction::Post(n) if n.text_ref().unwrap().token == 0x085F_80B9));
+    assert_eq!(t.typed()[1], "");
+    assert!(matches!(
+        out.last(),
+        Some(SocialAction::Intent(SocialIntent::OfferTrade {
+            coin: 100_000,
+            ..
+        }))
+    ));
+}
+
+#[test]
+fn level_templates_sp28() {
+    use tessera_ui::game::social::{fellowship, invite};
+    let f = fellowship::level_text(42);
+    assert_eq!((f.table, f.token), (T::UI, 0x070F_9F3C));
+    assert_eq!(f.arg(A::FELLOW_LEVEL), Some(&Arg::Int(42)));
+    let i = invite::level_text(7);
+    assert_eq!((i.table, i.token), (T::UI, 0x038B_9CDC));
+    assert_eq!(i.arg(A::LEVEL), Some(&Arg::Int(7)));
+    // Without the install's tables the level is the plain number.
+    assert_eq!(f.render(&mut NoTables), "42");
+    assert_eq!(i.render(&mut Levels), "Level 7");
+}
+
+#[test]
 fn trade_entries_are_not_drag_sources() {
     let vocab = sv();
     let mut ui = trade_ui();
@@ -1348,7 +1608,7 @@ fn trade_entries_are_not_drag_sources() {
     w.refresh(&mut ui, &t, &mut NoTables);
     let dragable = v().pids.dragable;
     for e in [w.entries.0[0], w.entries.1[0]] {
-        let icon = tessera_ui::game::find_below(&ui, e, 0x1000_5C01).unwrap();
+        let icon = tessera_ui::game::find_below(&ui, e, vocab.ids.item_icon).unwrap();
         assert_eq!(ui.property(icon, dragable), Some(&b(false)));
         assert!(ui.examines(icon), "an item entry keeps its examination");
     }
@@ -1375,7 +1635,7 @@ fn trade_lists_shrink_and_grow_in_batches() {
     w.refresh(&mut ui, &t, &mut NoTables);
     assert_eq!(ui.list_entries(list), w.entries.1);
     assert_eq!(w.entries.1.len(), 32);
-    let name = tessera_ui::game::find_below(&ui, w.entries.1[31], 0x1000_5C02).unwrap();
+    let name = tessera_ui::game::find_below(&ui, w.entries.1[31], vocab.ids.item_name).unwrap();
     assert_eq!(ui.text_of(name), "e31");
 }
 

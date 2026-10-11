@@ -11,11 +11,22 @@
 //! and counts the covered pixels of the panel's rectangle against the background: a shown
 //! panel covers a good part of its rectangle, a hidden one (after the disbanding, after the
 //! trade) none. With `TESSERA_SHEET_DIR` set the pictures are written there (never committed:
-//! they show the install's art). Only counts and invented names are printed.
+//! they show the install's art). The fellowship and trade pictures are also compared with
+//! local-only goldens (decision 0031 tier 2, `ui_common/goldens.rs`: `TESSERA_GOLDEN_DIR`,
+//! keyed by package, test binary, function and install version; blessed when missing,
+//! `TESSERA_GOLDEN_REQUIRE=1` makes a missing golden a failure). Revision 1 of
+//! `social-panels.md` is checked on the install: entry names in `ItemDisplay_Name` (§6.2),
+//! the wallet and the peer's coin as coin elements (§6.1), and no voice, squelched or
+//! sending-data icon on the member rows or the player's portrait (TR14). Only counts and
+//! invented names are printed.
 //!
 //! Skipped (reported as passed) unless `TESSERA_GAME_DIR` is set. Run with
 //! `cargo test --release -p tessera-client --test social_panels_real_data -- --nocapture`.
 
+#[path = "../../../crates/render/tests/support/golden.rs"]
+mod golden;
+#[path = "ui_common/goldens.rs"]
+mod goldens;
 mod ui_common;
 
 use std::path::{Path, PathBuf};
@@ -179,6 +190,32 @@ fn background(img: &(u32, u32, Vec<u8>)) -> [u8; 3] {
     [px[i], px[i + 1], px[i + 2]]
 }
 
+/// A picture: (width, height, RGBA bytes).
+type Shot = (u32, u32, Vec<u8>);
+
+/// Compares a GPU picture with its golden under the render crate's default tolerance.
+fn gpu_compare(want: &goldens::Rgba, got: &goldens::Rgba) -> (bool, String, goldens::Rgba) {
+    let image = |g: &goldens::Rgba| tessera_render::RgbaImage {
+        width: g.width,
+        height: g.height,
+        data: g.data.clone(),
+    };
+    let tol = golden::Tolerance::default();
+    let (c, diff) = golden::compare(&image(want), &image(got), tol);
+    (
+        c.passes(tol),
+        format!(
+            "{} outliers, {} strict mismatches of {} pixels, max difference {}",
+            c.outliers, c.strict_mismatches, c.pixels, c.max_diff
+        ),
+        goldens::Rgba {
+            width: diff.width,
+            height: diff.height,
+            data: diff.data,
+        },
+    )
+}
+
 fn save(name: &str, img: &(u32, u32, Vec<u8>)) {
     let Some(out) = std::env::var_os("TESSERA_SHEET_DIR") else {
         return;
@@ -269,6 +306,16 @@ fn visible(host: &UiHost, root: ElementKey, id: u32) -> bool {
 #[test]
 fn social_scenarios_render_on_the_install() {
     let Some(dir) = game_dir() else { return };
+    // Decision 0031 tier 2: refuse a golden folder in a work tree before any work.
+    let golden_dir = goldens::golden_dir(
+        env!("CARGO_PKG_NAME"),
+        "social_panels_real_data/social_scenarios_render_on_the_install",
+        &goldens::install_version(&dir),
+    )
+    .unwrap_or_else(|e| panic!("{e}"));
+    let mut flags = goldens::Flags::from_env();
+    flags.sheet = None;
+    let mut shots: Vec<(String, Shot)> = Vec::new();
     let data = Arc::new(CharacterData::open(&dir).expect("character data"));
     let set = Arc::new(ArchiveSet::open(&dir, SetOptions::default()).expect("archive set"));
     let empty = tempfile::tempdir().expect("tempdir");
@@ -281,7 +328,8 @@ fn social_scenarios_render_on_the_install() {
         rig.renderer = Some(r);
     }
     // The player-vitals panel holds `PlayerLeaderIcon` (social-panels.md §4.3).
-    rig.host
+    let p4 = rig
+        .host
         .open_panel(&mut rig.plugins, PanelId::PlayerVitals)
         .expect("P4 opens");
     let picture = Picture::new(&mut rig);
@@ -372,6 +420,27 @@ fn social_scenarios_render_on_the_install() {
                 1300 => {
                     assert!(shown);
                     assert_eq!(names, ["Brin"]);
+                    // TR14: no voice, squelched or sending-data icon (the red and green
+                    // one) on the rows or the portrait; no volume control.
+                    let voice = [
+                        ids.fellow_voice,
+                        ids.fellow_voice_squelched,
+                        ids.fellow_sending,
+                        ids.fellow_volume,
+                    ];
+                    for r in &f.rows {
+                        for id in voice {
+                            assert!(!visible(&rig.host, *r, id), "TR14: {id:#x} on a row");
+                        }
+                    }
+                    for id in [
+                        ids.player_voice,
+                        ids.player_voice_squelched,
+                        ids.player_sending,
+                        ids.player_assistant,
+                    ] {
+                        assert!(!visible(&rig.host, p4, id), "TR14: {id:#x} on P4");
+                    }
                     assert_eq!(leaders, [false]);
                     assert!(
                         player_leads,
@@ -425,6 +494,7 @@ fn social_scenarios_render_on_the_install() {
                     );
                 }
                 save(&format!("fellowship-{ms}"), &img);
+                shots.push((format!("fellowship-{ms:05}ms"), img));
                 pictures += 1;
             }
         },
@@ -498,6 +568,75 @@ fn social_scenarios_render_on_the_install() {
                 }
                 1600 => {
                     assert_eq!(peer, 3, "a literal and two items chosen by the selector");
+                    // §6.2, TR9: every entry's name is in `ItemDisplay_Name`; the literal
+                    // entry first, in `Object_ColorName`.
+                    let entry_names: Vec<String> = t
+                        .entries
+                        .1
+                        .iter()
+                        .filter_map(|r| text_of(&rig.host, *r, ids.item_name))
+                        .collect();
+                    eprintln!("trade at {ms} ms: {} peer entry names", entry_names.len());
+                    assert_eq!(entry_names.len(), 3);
+                    assert_eq!(entry_names[0], "Silver whistle");
+                    assert!(entry_names.iter().all(|n| !n.is_empty()), "names drawn");
+                    let states = s.vocab().states;
+                    let first = find_below(&rig.host.ui(), t.entries.1[0], ids.item_name)
+                        .and_then(|k| rig.host.ui().state(k));
+                    assert_eq!(first, Some(states.object_name), "TR9: literal colour");
+                    // §6.2 Tessera rule: the selector's items take their quality states.
+                    let label = |st: Option<u32>| {
+                        [
+                            (states.quality_legendary, "legendary"),
+                            (states.quality_rare, "rare"),
+                            (states.quality_incomparable, "incomparable"),
+                            (states.quality_uncommon, "uncommon"),
+                            (states.quality_common, "common"),
+                            (states.object_name, "object"),
+                        ]
+                        .into_iter()
+                        .find(|(s, _)| Some(*s) == st)
+                        .map_or("other", |(_, l)| l)
+                    };
+                    let name_states: Vec<&str> = t.entries.1[1..]
+                        .iter()
+                        .map(|r| {
+                            label(
+                                find_below(&rig.host.ui(), *r, ids.item_name)
+                                    .and_then(|k| rig.host.ui().state(k)),
+                            )
+                        })
+                        .collect();
+                    eprintln!("trade at {ms} ms: item name states {name_states:?}");
+                    assert!(!name_states.contains(&"other"), "a name state of §6.2");
+                    // §6.1: the wallet (1,234,567) and the peer's coin (40,000) as coin
+                    // elements: 12 / 345 / 67 and 4 / 0 / 0 hidden-leading 0 gold.
+                    let counts = |d: Option<&tessera_ui::game::npc::MoneyDisplay>| {
+                        d.and_then(|d| d.counts())
+                            .map(|c| [c.gold, c.silver, c.copper])
+                    };
+                    assert_eq!(counts(t.wallet.as_ref()), Some([12, 345, 67]), "wallet");
+                    assert_eq!(
+                        counts(t.peer_money.as_ref()),
+                        Some([0, 400, 0]),
+                        "peer coin"
+                    );
+                    let ui = rig.host.ui();
+                    let shown = |d: Option<&tessera_ui::game::npc::MoneyDisplay>| {
+                        d.map_or(0, |d| {
+                            d.coins
+                                .iter()
+                                .flatten()
+                                .filter(|c| ui.is_visible(c.element))
+                                .count()
+                        })
+                    };
+                    assert_eq!(shown(t.wallet.as_ref()), 3, "ForceShowAll");
+                    assert_eq!(
+                        shown(t.peer_money.as_ref()),
+                        2,
+                        "SuppressLeadingZeroes: silver and copper"
+                    );
                     let icons = t
                         .slots
                         .slots()
@@ -506,7 +645,16 @@ fn social_scenarios_render_on_the_install() {
                         .count();
                     assert_eq!(icons, 2, "the selector's items show the install's icons");
                 }
-                2800 => assert_eq!(own, 2),
+                2800 => {
+                    assert_eq!(own, 2);
+                    let own_names: Vec<String> = t
+                        .entries
+                        .0
+                        .iter()
+                        .filter_map(|r| text_of(&rig.host, *r, ids.item_name))
+                        .collect();
+                    assert_eq!(own_names, ["Copper ring", "Travel loaf"], "§6.2");
+                }
                 3800 => assert!(model.button_on()),
                 4300 => assert!(
                     model
@@ -538,6 +686,7 @@ fn social_scenarios_render_on_the_install() {
                     assert!(c < 0.01, "nothing is drawn after the trade");
                 }
                 save(&format!("trade-{ms}"), &img);
+                shots.push((format!("trade-{ms:05}ms"), img));
                 pictures += 1;
             }
         },
@@ -611,4 +760,23 @@ fn social_scenarios_render_on_the_install() {
     );
     eprintln!("pictures: {pictures}");
     rig.shutdown();
+
+    // Local-only goldens of the fellowship and trade pictures (decision 0031 tier 2).
+    let (mut blessed, mut matched) = (0, 0);
+    for (name, (width, height, data)) in shots {
+        let pic = goldens::Rgba {
+            width,
+            height,
+            data,
+        };
+        match goldens::check_with_compare(&golden_dir, &name, &pic, &flags, gpu_compare) {
+            Ok(goldens::Outcome::Blessed(_)) => blessed += 1,
+            Ok(goldens::Outcome::Passed(_)) => matched += 1,
+            Err(e) => panic!("{e}"),
+        }
+    }
+    eprintln!(
+        "goldens in {}: {blessed} blessed, {matched} passed",
+        golden_dir.display()
+    );
 }

@@ -446,6 +446,14 @@ fn social_scenarios_render_on_the_install() {
                         player_leads,
                         "PlayerLeaderIcon while the player leads (SPI6)"
                     );
+                    // Like the trade window below: no picture of a panel that is still
+                    // fading in (decision 0031).
+                    let deadline = Instant::now() + Duration::from_secs(5);
+                    while rig.host.ui().is_fading(panel1) {
+                        assert!(Instant::now() < deadline, "the fellowship panel fades in");
+                        frame(rig, client, &data);
+                        std::thread::sleep(Duration::from_millis(10));
+                    }
                 }
                 2600 => {
                     assert_eq!(
@@ -565,6 +573,15 @@ fn social_scenarios_render_on_the_install() {
                 1100 => {
                     assert!(shown);
                     assert_eq!(peer, 2);
+                    // The window fades in when shown (its auto-fade, UB §11.1): the picture
+                    // is taken once the fade is over, so it does not depend on the wall
+                    // clock (decision 0031).
+                    let deadline = Instant::now() + Duration::from_secs(5);
+                    while rig.host.ui().is_fading(troot) {
+                        assert!(Instant::now() < deadline, "the trade window fades in");
+                        frame(rig, client, &data);
+                        std::thread::sleep(Duration::from_millis(10));
+                    }
                 }
                 1600 => {
                     assert_eq!(peer, 3, "a literal and two items chosen by the selector");

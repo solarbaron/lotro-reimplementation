@@ -997,6 +997,16 @@ geometry and changes no box that a hit test reads.
 > Tessera) and reach beyond the panels and the window
 > (`character-screens.md` §2.2 OPEN). As implemented: the layout box takes the new size (no
 > scale vector), steps 2–6 for the children. Please state which.
+>
+> (P5 exit verifier, 2026-10-12, data that bear on the choice) The `loadscreen` layout
+> (2560 × 1080 design) at a 1600 × 900 screen: `LoadScreenImage` (edges 6, 5, 6, 5, object
+> mode Stretch) becomes 2133 × 900; its child `NormalBackground` (1024 × 768 at (768, 312),
+> edges 5, 5, 5, 5, object mode Stretch) becomes 597 × 588 under the implemented reading, and
+> its children `LoadScreenMeter` (199 × 14, edges 5, 5, 5, 5) and
+> `LoadingProgressUIElement_Label` (205 × 20, the same edges) get negative sizes (−228 × −166,
+> −222 × −160), so the travel loading screen (`travel-windows.md` §5.2) draws its image only.
+> Under the other reading (`NormalBackground` keeps its 1024 × 768 layout box and is scaled)
+> the meter and the label keep their design boxes.
 
 Notes:
 

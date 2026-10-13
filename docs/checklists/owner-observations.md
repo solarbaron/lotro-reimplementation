@@ -4,7 +4,7 @@
 
 | | |
 |---|---|
-| **Status** | Open list; started 2026-10-04; last updated 2026-10-11 (decision 0024 P3 items O110–O125 added: NPC windows, quest journal, wallet); 2026-10-10 (spec writer: O85 and O86 gain the expectations the client gives for the creation screens, `character-screens.md` revision CS19–CS27); 2026-10-10 (spec writer: O24 gains the W14 question on the puddles' colour and opacity); 2026-10-10 (P1 exit verification: O88–O90 added); 2026-10-10 (spec writer: O26 gains the question on the sky line of row W9; new items O91, the far sea of row W2, and O92, the generated fallen soldiers of 3, 0xD7E7); 2026-10-10 (O24 extended to the water rows W10–W17 of `m4-5-visual.md` §4.8, with the W13 and W17 questions); 2026-10-09 (decision 0024 P1 items O80–O86 added; merge of main: the M5 items O39–O49 joined the summary next to the 2026-10-08 statuses); 2026-10-08 (every pending item checked against the data and the offline client: O5, O14, O70 answered; O6, O18, O28 narrowed; the rest marked as needing the original) |
+| **Status** | Open list; started 2026-10-04; last updated 2026-10-11 (decision 0024 P5 items O140–O154 added: maps, travel, instance finder, mounts, plugin mount views; O155, server-added map markers, added at the P5 exit verification 2026-10-12); 2026-10-11 (decision 0024 P3 items O110–O125 added: NPC windows, quest journal, wallet); 2026-10-10 (spec writer: O85 and O86 gain the expectations the client gives for the creation screens, `character-screens.md` revision CS19–CS27); 2026-10-10 (spec writer: O24 gains the W14 question on the puddles' colour and opacity); 2026-10-10 (P1 exit verification: O88–O90 added); 2026-10-10 (spec writer: O26 gains the question on the sky line of row W9; new items O91, the far sea of row W2, and O92, the generated fallen soldiers of 3, 0xD7E7); 2026-10-10 (O24 extended to the water rows W10–W17 of `m4-5-visual.md` §4.8, with the W13 and W17 questions); 2026-10-09 (decision 0024 P1 items O80–O86 added; merge of main: the M5 items O39–O49 joined the summary next to the 2026-10-08 statuses); 2026-10-08 (every pending item checked against the data and the offline client: O5, O14, O70 answered; O6, O18, O28 narrowed; the rest marked as needing the original) |
 | **Author role** | Spec writer (dirty room) |
 | **Who fills it in** | The project owner, in the original client, on their own account and install |
 | **Method** | Black-box observation of the unmodified official client: its own UI, `/loc`, and frame captures (RenderDoc or apitrace under Wine/DXVK). Allowed by `docs/CLEAN_ROOM.md` §4 (method M3) and [ROADMAP §2.1](../ROADMAP.md#method-allowed). |
@@ -97,6 +97,22 @@ marks the item **done** here.
 | [O123](#o123) | Quest markers on the minimap and the world map: icon, order with the player marker, tooltip, edge | `quest-journal.md` §8.3; `game-panels.md` §8.8, §9.3 | Look | open (P3) |
 | [O124](#o124) | Abandoning a quest: confirmation and what the log and tracker show after | `quest-journal.md` §4.8 | Look | open (P3) |
 | [O125](#o125) | Plugin wallet views: `GetWallet()` order, `GetMaxQuantity()` of a few items, `MoneyChanged` count | `lua-plugin-api.md` §15.3 | Own test plugin | open (P3) |
+| [O140](#o140) | World map: presentation at first opening, full-screen size and position, controls per kind of map | `map-windows.md` §3.1, §3.4 | Look | open (P5) |
+| [O141](#o141) | World map overlays and filters: filter menu items, order and defaults, persistence, note order | `map-windows.md` §6.2, §6.3, §6.9 | Look | open (P5) |
+| [O142](#o142) | Map navigation: right click, the map menu's order, child-map buttons without a node | `map-windows.md` §4.3–§4.5 | Look | open (P5) |
+| [O143](#o143) | Dungeon maps: stretch, fog, tooltips under fog | `map-windows.md` §4.7; `game-panels.md` §8.5.3 | Look | open (P5) |
+| [O144](#o144) | Minimap notes and blips: rim icons and their turn, tooltip, the minimap's filter menu | `map-windows.md` §6.8 | Look | open (P5) |
+| [O145](#o145) | Place lookup: no search in the original; coordinates under the pointer against `/loc` | `map-windows.md` §3.4, §7.1 | Look, `/loc` | open (P5) |
+| [O146](#o146) | Travel window: headers, row order, search and case | `travel-windows.md` §4.4–§4.6 | Look | open (P5) |
+| [O147](#o147) | Travel window: cost display, marks, go button states, closing | `travel-windows.md` §4.7–§4.9 | Look | open (P5) |
+| [O148](#o148) | Travel presentation: end-travel box, loading screen, durations, chat lines | `travel-windows.md` §5 | Look, timing | open (P5) |
+| [O149](#o149) | Instance finder: window and page, header levels, featured field, size, tier and level controls | `travel-windows.md` §6.1–§6.4 | Look | open (P5) |
+| [O150](#o150) | Instance queue, invitation window and leaving an instance | `travel-windows.md` §6.5–§6.6, §7.2 | Look | open (P5) |
+| [O151](#o151) | Mounted gaits of a normal mount: speeds, strafing, camera height, River-hobbit mount scale | `mounts.md` §5.1, §14.6, §14.8, §14.9; `walker.md` §16.12 | Look, `/loc` | open (P5) |
+| [O152](#o152) | Mounted gaits of a war-steed: gait steps and timing, speed on release, braking | `mounts.md` §5.3–§5.7, §14.6; `walker.md` §16.12 | Look, timing, video (private) | open (P5) |
+| [O153](#o153) | Mount and dismount sequence: summon timing, cancels, bow and wait, water, forbidden areas | `mounts.md` §14.7, §14.12; `walker.md` §16.12 | Look, timing | open (P5) |
+| [O154](#o154) | Plugin mount views: `MountChanged` count, class, values | `lua-plugin-api.md` §15.5 | Own test plugin | open (P5) |
+| [O155](#o155) | Map markers a server adds outside quests: whether any exist, icon, label, tooltip on the map and the minimap | `map-windows.md` §6.7, §6.8 | Look | open (P5) |
 
 M4 exit criteria that wait on these items ([ROADMAP M4 status](../ROADMAP.md#m4-status)):
 criterion 2 (bodies play idle, walk and run): O8, O9, O16 (O14 answered from the client on 2026-10-08); criterion 3 (worn and held
@@ -129,6 +145,11 @@ numbers.
 P3 items O110–O125 ([ROADMAP P3](../ROADMAP.md#p3)) compare the NPC windows, the quest
 journal and the wallet with the original; no P3 exit criterion waits on them, and they block
 nothing until P8 (decision 0024 §2.6).
+
+P5 items O140–O155 ([ROADMAP P5](../ROADMAP.md#p5)) compare the maps, the travel and
+instance-finder windows, the mounted walker and the plugin mount views with the original; no P5
+exit criterion waits on them, and they block nothing until P8. They are numbered from O140
+because P2 and P4 add items on their own branches at the same time.
 
 ---
 
@@ -1902,3 +1923,357 @@ the order of acquisition or neither; how many `MoneyChanged` events one purchase
 gave; whether `ItemAdded` fired for the new currency and at which index; whether
 `GetMoney()` and `GetMoneyComponents()` match the coins the wallet window shows. **Do not
 record item names.**
+
+<a id="p5-items"></a>
+## Decision 0024 P5 items (maps, travel, instance finder and mounts)
+
+These rows compare Tessera's P5 windows and mounted walker with the original client. They
+block nothing until P8 (decision 0024 §2.6); the P5 exit criteria need no observation in the
+original ([ROADMAP P5](../ROADMAP.md#p5)). They settle the owner checks of
+[`map-windows.md` §13](../specs/map-windows.md#s13), [`travel-windows.md`
+§13](../specs/travel-windows.md#s13), [`walker.md` §16.12](../specs/walker.md#s16-12), the
+OPENs of [`mounts.md` §12](../specs/mounts.md#s12) that the original can show, and those of
+[`lua-plugin-api.md` §15.5](../specs/lua-plugin-api.md#s15-5). Describe what you see in your own
+words; never copy map, area, place, dungeon, destination, instance or mount names, note texts
+or chat lines into this file; use DIDs (the explorer shows them), `/loc` readings, counts and
+positions ("the third item of the menu", "the second destination under the first header").
+
+**Tessera's side** for every row: the committed scenarios `map`, `travel`, `instances` and
+`mount` in `apps/client/tests/scenarios/`, run windowed with your install
+(`tessera-client --ui --scenario-input --scenario FILE`, USER_GUIDE §3.15); `--open-panel map`;
+and, for the mount rows, the offline walker with `--mount SPEC` or `/ride` (USER_GUIDE §3.15).
+
+The two P5 specs proposed their own rows, both numbered from O140; this file numbers them in
+one sequence. Spec rows → rows here: `map-windows.md` O140 → O140 and O141, O141 → O142,
+O142 → O143, O143 → O144, O144 → O142, O145 → O142, O146 → O143; `travel-windows.md` O140 →
+O146, O141 → O147, O142 → O146, O143 → O148, O144 → O148, O145 → O149, O146 → O150, O147 →
+O150; `walker.md` §16.12 (a) → O153, (b) → O152, (c) → O151, (d) → O151, (e) → O153. The
+P5 plan's topics map as: world map overlays and filters → O140, O141 (with O142, O143 for
+navigation and dungeon maps); minimap notes and blips → O144; place lookup → O145; markers a
+server adds outside quests → O155; travel
+window and travel presentation → O146–O148; instance finder → O149, O150; mounted gaits of a
+normal mount and a war-steed → O151, O152; mount and dismount sequence → O153; plugin mount
+views → O154.
+
+<a id="o140"></a>
+## O140. World map: presentation and controls (P5)
+
+**Spec:** `map-windows.md` §3.1 (two presentations; OPEN on the full-screen placement and
+scale), §3.4 (controls), §13 row O140 (first part).
+
+**Tessera's side:** the map opens in the presentation of the install's option default (full
+screen here), centred and scaled by the largest factor that fits the screen (Tessera rule); the
+corner button switches and the choice is kept in Tessera's settings; the stable-master button
+and the quest-guide option are hidden.
+
+**What to do:** on a new character, or after resetting the options to their defaults, open the
+map with its key. Note the presentation, then switch with the corner button and back. Do this
+at two screen resolutions or UI scales if you can. Look at the world map, a territory map and an
+area map.
+
+**Record:** full screen or windowed at the first opening; in full screen, the map's size and
+position on screen (pixels or fractions of the screen) at each resolution; whether the choice is
+kept after closing and reopening, and after a relog; which buttons of the controls row are
+visible on each of the three kinds of map (by position and icon, no text); whether the
+coordinates under the pointer are shown, and where.
+
+<a id="o141"></a>
+## O141. World map overlays and filters (P5)
+
+**Spec:** `map-windows.md` §6.2 (drawing order), §6.3 (whether a note's z adds its relative z
+level, Probable), §6.6 (the player marker), §6.9 (filter menu, defaults, label collation), §13
+row O140 (second part).
+
+**Tessera's side:** table notes are drawn in read order, feed markers in front of them and the
+player marker in front of all; the filter menu lists *all* and *none*, then one item per kind of
+note sorted by Tessera's collation rule; the menu stays open while you click; the filter values
+are kept per kind of map (near and distant), not per character.
+
+**What to do:** on an area map, open the filter menu without changing anything; then untick one
+kind, close the menu, open another area map and then a distant map; relog. Find two notes that
+overlap and hover them.
+
+**Record:** the number of items and how many are ticked at first; whether the items are
+alphabetical in your client's language (describe the first five by their icons, no text);
+whether the menu stays open after a click; whether an unticked kind stays unticked on another
+area map, on a distant map and after a relog; for two overlapping notes, which kind is drawn on
+top; whether the player's arrow is drawn above every note.
+
+<a id="o142"></a>
+## O142. Map navigation and the map menu (P5)
+
+**Spec:** `map-windows.md` §4.3 (child maps, the three targets that are no node), §4.4 (going
+up; OPEN on the call at the top and on `UI_Map_PreventZoomOut`), §4.5 (the map menu; Tessera
+order), §13 rows O141, O144, O145.
+
+**Tessera's side:** a click on a marked area opens that map; a right click goes to the parent
+map, does nothing on the world map and does nothing on the one node that carries
+`UI_Map_PreventZoomOut` (§4.4); the map menu has one submenu per region in the region list's
+order, with the maps sorted by their labels; the three child-map buttons of §4.3 that name no
+node show their map without notes.
+
+**What to do:** right-click on an area map, on its territory map and on the world map; right-
+click on the map of the one node with `UI_Map_PreventZoomOut` (§4.4 names it). Open the map menu and one of its submenus. Click the three child-map buttons that
+§4.3 lists.
+
+**Record:** what each right click does (parent map, the map of your position, nothing); the
+order of the submenus (by region number, the region table's order, or another); whether the
+maps inside one submenu are alphabetical; for each of the three buttons, what appears (a map
+without notes, nothing, something else); whether a sound plays when the map changes.
+
+<a id="o143"></a>
+## O143. Dungeon maps (P5)
+
+**Spec:** `map-windows.md` §4.7 (the dungeon-map view; stretch into its frame), §6.3, §13 rows
+O142 and O146; `game-panels.md` §8.5.3 (fog of war, OPEN).
+
+**Tessera's side:** a dungeon map's image is stretched into the 800 × 600 field inside the
+frame, whatever its proportions; the unexplored-area shading is not drawn; notes and markers
+are placed as on outdoor maps.
+
+**What to do:** inside a dungeon whose map image is not 4 : 3 (a tall cave map), open the map.
+Hover a note in a part you have not explored yet. Right-click the dungeon map.
+
+**Record:** the map's `/loc` reading or DID; whether the image is squeezed into the frame,
+letterboxed or cropped; whether unexplored parts are shaded, and whether a note there shows a
+tooltip; what the right click does.
+
+<a id="o144"></a>
+## O144. Minimap notes and blips (P5)
+
+**Spec:** `map-windows.md` §6.8 (radius, off-screen images and their turn, Probable; tooltip;
+the radar's filter menu, not traced), §12 item 7, §13 row O143.
+
+**Tessera's side:** notes inside the radar's circle use their on-screen icons; outside, the
+kinds that have an off-screen icon are drawn on the rim in the direction of the note, turned to
+point that way; the tooltip shows the note's text and the horizontal distance; scenario markers
+show only inside the circle; every icon is drawn behind the player's arrow.
+
+**What to do:** stand so that a vendor's note is just outside the minimap's circle, then walk
+until it comes inside. Hover the note at the rim and inside. Open the minimap's menu for the
+kinds of notes, if you find one.
+
+**Record:** whether the note is drawn at the rim, and whether its icon turns towards the
+vendor; the tooltip's pattern (text, distance, its unit; no text copied); which control opens
+the minimap's filter menu and how many items it has; whether a quest objective's icon stays on
+the rim (see also O123).
+
+<a id="o145"></a>
+## O145. Place lookup and coordinates on the map (P5)
+
+**Spec:** `map-windows.md` §7.1 (the original has no place search), §7.3 (Tessera's
+`findplace`), §3.4 (coordinates under the pointer), §6.3 (note tooltips).
+
+**Tessera's side:** `/findplace TEXT` is Tessera's own command (coordinates, a `/loc` line, a
+place key or a name); the map shows the coordinates under the pointer when the install's option
+is on, and each note's tooltip shows its coordinates.
+
+**What to do:** look for any way in the original to search for a place by name (the map window,
+its menus, the command list). With the coordinates display on, point at three spots on an area
+map and compare the text with `/loc` taken when standing there. Hover two notes.
+
+**Record:** whether any place search exists (yes or no, and where); the coordinates' format
+(digits, decimal places, the letters for the directions, the order); whether the pointer's
+coordinates agree with `/loc` at the three spots, and by how much; whether note tooltips show
+coordinates.
+
+<a id="o146"></a>
+## O146. Travel window: list, headers and search (P5)
+
+**Spec:** `travel-windows.md` §4.4–§4.6 (rows, grouping and order; search, case OPEN), §13
+rows O140 and O142.
+
+**Tessera's side:** `travel.scenario`: rows in the scenario's order under territory headers,
+headers in the order of their first row, rows without a territory at the top; the search keeps
+rows whose search text contains the typed text, ignoring case (Tessera rule).
+
+**What to do:** talk to a stable master with many destinations. Expand one header. Type part of
+an area name into the search field, then the same in another letter case.
+
+**Record:** the stable master's DID or `/loc`; whether the headers are territories; whether the
+rows under one header are alphabetical; whether rows of other territories with that area text
+stay visible; whether case matters; whether empty headers disappear.
+
+<a id="o147"></a>
+## O147. Travel window: selection, cost and go button (P5)
+
+**Spec:** `travel-windows.md` §4.7 (selection display), §4.8 (go controls), §4.9 (closing),
+§13 row O141.
+
+**Tessera's side:** a free row shows the free text instead of the coins; marks for rows that
+are undiscovered, out of reach or unusable; the go button is greyed unless the row is
+discovered and usable, with the undiscovered label or the plain go label (Tessera uses no
+per-case reason); rows whose level or requirements are not met are marked but can be chosen;
+paper-item and buy-now buttons are hidden; the window waits for the session's answer before it
+closes.
+
+**What to do:** select a free row, a paid row and a row you have not discovered; try one you
+cannot use yet (level or other requirement). Press go on a usable row.
+
+**Record:** what the cost area shows for each (coins, a free label, nothing); the marks on the
+undiscovered and unusable rows (icon shapes in words); the go button's state and whether its
+label changes per case (no text); whether a paper-item or buy-now button appears; whether the
+window closes at once on go or after a delay.
+
+<a id="o148"></a>
+## O148. Travel presentation: slow and swift routes (P5)
+
+**Spec:** `travel-windows.md` §5.1 (started travel and arrival; OPEN on when the loading screen
+appears), §5.2 (Tessera presentation), §13 rows O143 and O144.
+
+**Tessera's side:** a swift route shows the loading screen with a bar filling over the
+scenario's duration; a slow route shows the end-travel box for its duration; its button asks
+to stop and the box stays until the session answers; no chat line is posted.
+
+**What to do:** ride a slow route, timing it from go to arrival; press the end-travel button on
+another slow route; take a swift route and time the loading screen.
+
+**Record:** where the end-travel box appears (position on screen); whether a chat line appears
+at start or arrival (where, no text); the ride's duration and the destination's DID; what the
+end-travel button does (stops at once, after a delay, puts you where); for the swift route,
+whether the loading screen shows and for how long, and whether its bar fills smoothly.
+
+<a id="o149"></a>
+## O149. Instance finder window (P5)
+
+**Spec:** `travel-windows.md` §6.1 (which window), §6.3 (the entry tree; featured field), §6.4
+(size, tier and level; OPEN on how the menus are filled), §13 row O145.
+
+**Tessera's side:** `instances.scenario`: the fellowship maker's finder page with kind and
+category headers, group rows, size and tier menus filled from the template's arrays (first item
+chosen), the level field clamped into the template's range, the featured field when the
+scenario names one, and the listings board shown unavailable.
+
+**What to do:** open the instance finder with its default key. Expand one kind and one category;
+select a group row; open the size and tier menus; change the level if the field allows it.
+
+**Record:** which window and page open; the tree's two header levels (kinds, then categories?)
+and the order of instances inside a category; the featured field (filled or empty, what it
+shows by icon); for the group row, the items of the size and tier menus (counts) and which is
+chosen first; whether the level field is editable and its range for two instances (by DID).
+
+<a id="o150"></a>
+## O150. Instance queue, invitation and leaving (P5)
+
+**Spec:** `travel-windows.md` §6.5 (queue, confirmation and invitation; OPEN on when the
+invitation window opens), §6.6 (inside an instance), §7.2 (alert fields), §13 rows O146 and
+O147.
+
+**Tessera's side:** the scenario's queue states show the waiting page with its timer counting
+up, the confirmation with its count-down and the queue alert; the leave-queue button sends the
+command; inside an instance the join button is greyed and `/leaveinstance` asks to leave (no
+button, no timer).
+
+**What to do:** queue for an instance through the finder and wait; leave the queue once; queue
+again until the instance is offered; enter, then leave it the way the client offers.
+
+**Record:** the waiting page (timer shape, counting up or down), the alert icon's position and
+its tooltip's pattern (no text); whether an invitation window appears and with which buttons;
+how the client offers leaving (a dialog, a command, a menu item, a button) and whether a timer
+is shown inside.
+
+<a id="o151"></a>
+## O151. Mounted gaits of a normal mount (P5)
+
+**Spec:** `mounts.md` §5.1 (speed; MQ6), §14.2–§14.3 (rider and mount clips), §14.6 (normal
+mounts), §14.8 (seat and scale), §14.9 (camera; MQ14); `walker.md` §16.6, §16.12 (c) and (d).
+
+**Tessera's side:** `--mount auto` (the first mount of your body's group) or `/ride`: the Mounted
+layer's speeds with the effect's speed factor; walk and run clips by the walking style (Shift held); the
+camera aimed 0.75 m higher and 0.2 m forward of its on-foot target; a River-hobbit's horse drawn
+at 0.7 scale; the HUD's mount line and the frame log's mount columns.
+
+**What to do:** on flat ground, ride a horse for 10 s at a run and 10 s at a walk, with `/loc` at
+start and end of each; walk backwards and strafe. Note the camera's height compared with on foot.
+With a River-hobbit and a Hobbit if you have them, mount the same kind of horse beside a Human's.
+
+**Record:** the mount's skill or effect DID; the distances covered (from `/loc`) for each run;
+whether strafing moves sideways; the camera's height and distance compared with on foot (in your
+own words, or two screenshots kept private); whether the River-hobbit's horse looks smaller than
+the Human's, and about how much.
+
+<a id="o152"></a>
+## O152. Mounted gaits of a war-steed (P5)
+
+**Spec:** `mounts.md` §5.3–§5.7 (the war-steed controller), §14.4 (gaits), §14.6 (Tessera's
+gear and gait rule; MQ9); `walker.md` §16.6, §16.12 (b).
+
+**Tessera's side:** `--mount steed:medium` or `/ride steed:medium`: holding forward starts at
+Walk and shifts up one gait every 0.5 s (gear-change rate 2.0) to Gallop; releasing the keys
+keeps the speed; holding back brakes, then backs off; the gait drives the rider's and the
+steed's clips; `@lock=` holds a gear.
+
+**What to do:** on flat ground on your war-steed, hold forward from a stop for 5 s, then release
+for 3 s, then hold back. Repeat with a video if you can (kept private). Try walking style.
+
+**Record:** whether the gait rises in steps and about how often; how long from a stop to the
+fastest gait; whether the speed holds when you release the keys, or drops; what holding back
+does (brake, reverse, both); whether walking style caps the gait; whether the steed ever shows a
+gait between standing and walking.
+
+<a id="o153"></a>
+## O153. Mount and dismount sequence (P5)
+
+**Spec:** `mounts.md` §14.7 (summoning, mounting, dismounting; MQ4), §14.12 (water, areas;
+MQ13, MQ15); `walker.md` §16.5, §16.12 (a) and (e).
+
+**Tessera's side:** `/ride` or Ctrl+M: summoning for the skill's time (2.0 s, 3.0 s for a
+war-steed), interrupted by movement, a jump, a fall or water; the mounting clip; the mount
+appears, fading in, 0.4 s after summoning ends; dismounting at rest by the player plays the mount's bow and waits
+1.5 s, moving or by other dismounts at once; riding into water dismounts; an area entered while
+mounted does not dismount.
+
+**What to do:** summon a normal mount standing still, timing from the key to the mount's
+appearance; summon again and move during the summoning; dismount standing still and again while
+moving; ride into deep water; ride into an area where mounts are not allowed (a town where your
+mount is refused, if you know one).
+
+**Record:** the time from the key to the end of the summoning bar and from there to the mount
+being visible; whether moving cancels the summoning; at rest, whether the mount bows and how
+long until you stand; while moving, whether you dismount at once; what deep water does (swim
+mounted, dismount, nothing) and at what depth; what entering the forbidden area does
+(dismount, nothing, a message: no text).
+
+<a id="o154"></a>
+## O154. Plugin mount views (P5)
+
+**Spec:** `lua-plugin-api.md` §15.5 (`GetMount`, `MountChanged`, `BasicMount`, `CombatMount`;
+OPENs on the extra `MountChanged` events, the second `BasicMount` event and the war-steed
+getters).
+
+**Tessera's side:** `GetMount()` is nil on foot and a `BasicMount` or `CombatMount` while
+mounted; one `MountChanged` per change of the mount model (mounted or not, which mount);
+the mount-view tests of `tessera-plugins` and the scenario checks 100–107 of `lua-plugin-api.md` §18.
+
+**What to do:** in the original client, run a small plugin of your own that counts
+`LocalPlayer.MountChanged` events and prints whether `GetMount()` is nil in each handler, its
+class (whether `GetFury` exists), and `GetMorale()`, `GetMaxMorale()`; for a war-steed also
+`GetPower()`, `GetFury()`, `GetStrength()` and `GetTurnRate()`. Mount and dismount a normal
+mount and a war-steed; take a hit while on the war-steed if you can.
+
+**Record:** how many `MountChanged` events one mount and one dismount gave, and in which of them
+`GetMount()` was nil; the class per mount; the numbers printed (no names); which events the
+mount object fired when its morale changed; whether the war-steed's strength and turn rate are
+0 or real values. **Do not record mount names.**
+
+<a id="o155"></a>
+## O155. Map markers a server adds outside quests (P5)
+
+**Spec:** `map-windows.md` §6.7 (feed markers: Tessera rules, because the spec found no
+counterpart in the client for a non-quest marker a server adds), §6.8 (markers on the minimap).
+
+**Tessera's side:** a scenario marker without a quest is drawn with the icon table's entry for
+the waypoint note type (or its own icon), in front of the table notes and behind the player
+marker; its tooltip is its label and its map coordinates on the world map, its label and the
+distance on the minimap, where it shows only inside the circle. The committed `map` scenario
+places such markers (`tessera-client --ui --scenario-input --scenario map.scenario`).
+
+**What to do:** watch the world map and the minimap for markers that are neither table notes nor
+quest objectives: during a festival or world event, a fellowship member's position, a marker
+the game sets after a command or a dialogue. Hover each one you find.
+
+**Record:** whether such markers exist at all (and the situation in which you saw one); for each,
+its icon (by DID if the explorer shows it, else its shape and colour), whether it has a label
+or tooltip and what the tooltip consists of (label, coordinates, distance; no text copied),
+whether it is drawn on the minimap and at the rim, and whether it is drawn above or below the
+table notes.

@@ -4,7 +4,7 @@
 
 | Field | Value |
 |---|---|
-| Status | **Accepted** (2026-10-11: the P3 revision (§15.3 wallet views, provenance P84–P89, §18 checks 80–85, §19 lines) passed an independent review; implementers may build §15.3; see the review record for the non-blocking notes). Before it: **Accepted** (2026-10-09: the P1 revision (§15.1, provenance P81–P83, §18 checks 66–69) with its review fixes passed an independent re-review; implementers may build §15.1 and re-check the `Turbine.Gameplay` `Backpack`, `Equipment`, `Item` and `ItemInfo` views in `crates/plugins`, see the last two change-log rows). Every section other than §15 (enum paragraph and OPEN), §15.1, §18 checks 66–69, §19 and §20 is unchanged from the text Accepted on 2026-10-06 (decision-alignment revision for decisions 0014/0015); section numbers and anchors are unchanged |
+| Status | **Revised** for the P5 parts (2026-10-11, spec writer, dirty room: §15.5 mount views, provenance P100–P103, §18 checks 100–107, §19 lines, change log; awaiting independent review; numbers chosen clear of the P2 and P4 revisions and reconciled at merge). Every other part: **Accepted** (2026-10-11: the P3 revision (§15.3 wallet views, provenance P84–P89, §18 checks 80–85, §19 lines) passed an independent review; implementers may build §15.3; see the review record for the non-blocking notes). Before it: **Accepted** (2026-10-09: the P1 revision (§15.1, provenance P81–P83, §18 checks 66–69) with its review fixes passed an independent re-review; implementers may build §15.1 and re-check the `Turbine.Gameplay` `Backpack`, `Equipment`, `Item` and `ItemInfo` views in `crates/plugins`, see the last two change-log rows). Every section other than §15 (enum paragraph and OPEN), §15.1, §18 checks 66–69, §19 and §20 is unchanged from the text Accepted on 2026-10-06 (decision-alignment revision for decisions 0014/0015); section numbers and anchors are unchanged |
 | Last updated | 2026-10-11 |
 | Author role | Spec writer (dirty room), AI-assisted |
 | Reviewer | Claude review session (spec-writer agent), a different session from the writer |
@@ -181,6 +181,10 @@ mark **Tessera rule** and need no observation.
 | P87 | Money. `GetMoney()` returns a number in 0 … 4,294,967,295 (an unsigned 32-bit field of the attributes object). The event name `MoneyChanged` is defined twice in the client and fired, each time with an empty argument table, by the notification handlers of two attributes classes that `LocalPlayer:GetAttributes()` creates; by their sizes and member sets they are the free-people and the monster-player attributes. §16 lists no events for either class. The client's table of event names around `MoneyChanged` also holds stat event names (`BaseVitalityChanged` … `VocationChanged`) that §16 does not list | BIN (same pass: the two event-name objects, the firing helpers and the attributes constructor); S6 (published plugins set `MoneyChanged` handlers on `GetAttributes()`; facts only); O1-type reading of the literal string order (2026-10-10) | **Confirmed** 2026-10-10 (BIN: the event exists and has empty arguments) + **Reported** (which class is which; the other names) |
 | P88 | Wallet items of this install. The record `PaperItemControl` (WEENIECONTENT label; 0x70024867 here) lists 610 distinct items: 167 in `PaperItemControl_Free_PaperItemArray` and 443 in `PaperItemControl_PaperItemArray`, none in both. 51 entries, all in the first array, carry `PaperItemControl_BaseCap` with `PaperItemControl_CapDefault` (500 in 21; 999 in 6; 1,000 and 10,000 in 4 each; 750 in 3; 40, 50, 60 and 5,000 in 2 each; 9, 10, 15, 250 and 20,000 in 1 each) and `PaperItemControl_TreatBaseCapAsHardCap` (true in 4); for 42 of them `CapDefault` equals the item's `Inventory_MaxQuantity`. Over the item records (with inheritance): all 610 have `Name`, `Description` (a StringInfo) and a non-zero `Icon_Layer_ImageDID`; 577 have `PaperItem_SmallIcon` (all 33 without it are in the first array); `Inventory_BindToAccount` is true in 185 (59 of the first array, 126 of the second) and false in 425; `Inventory_MaxQuantity` of the 559 items without `CapDefault`: 999,999,999 in 389, 9,999,999 in 138, 100 in 9, 0, 30 and 9,999 in 5 each, 50 in 4, 500 in 3, 40 in 1. The coin objects of the three currency records (`Currency_ObjectDID`, `economy.md` §7) are not among the 610 | O4-type observation 2026-10-10 (read-only, M1, throwaway probe over `tessera-props`); agrees with `npc-windows.md` NW9 | **Confirmed** 2026-10-10 |
 | P89 | Wallet views in Tessera (§15.3): the session's wallet model (coin amount and an ordered entry list of the currencies with a non-zero amount) and its updates from the feed's `WalletChanged`; event derivation and queueing; one `Wallet` per apartment, always present in the world; no events for the entries present when `GetWallet()` is first called; one `WalletItem` per entry per apartment; the getters' values for record refs, absent properties and literal refs; `GetMaxQuantity` from `PaperItemControl_CapDefault`, else `Inventory_MaxQuantity`; `MaxQuantityChanged` never fired; `MoneyChanged` once per change of the coin amount; amounts above 4,294,967,295 returned unchanged; the wallet cleared on leaving the world | DEC ([0024](../decisions/0024-parity-track.md) P3); [`npc-windows.md`](npc-windows.md) §9.4, §9.6 | **Tessera rule** (no observation; the original's open values are in the §15.3 OPENs) |
+| P100 | `LocalPlayer:GetMount()` returns the player's current mount, or nil when the player is not riding one; `LocalPlayer.MountChanged` fires when the player's mount changes; `Mount` extends `Entity` (`GetName`); `BasicMount` (`GetMorale`, `GetMaxMorale`, events `MoraleChanged`, `MaxMoraleChanged`) and `CombatMount` (the members and events of §16) extend `Mount`; the documented return type of `GetMount()` is `CombatMount`, `BasicMount` or `Mount`; the argument table of `MountChanged` captured in game is empty; the live dump lists no own member of `Mount`. Usage: `GetMount` in 7 distributions, `MountChanged` in 6, `Mount:GetName` in 8, no member of `BasicMount` or `CombatMount` | S2 (class and member pages of `LocalPlayer`, `Mount`, `BasicMount`, `CombatMount`); S3 (`TurbineDump.json`, `TurbineEventsDump.json`, the EmmyLua stubs); S6 through [`plugin-api-usage.md`](plugin-api-usage.md) §5.3 | **Reported** |
+| P101 | `GetMount()` and `MountChanged` (§15.5 items 1–3): nil unless the player's `Mount_CurrentMountStatus` is 5 (`Mounted`) at the call; one cached object, created on the first call and returned until released; its class from the player's `Mount_CurrentMountType`: `CombatMount` when it has a bit of 0x38, else `BasicMount`, never a plain `Mount`; three client feature conditions gate the creation; the player object watches both properties and, on each change notification of either, releases the cached object and fires `MountChanged`; a mount object refers to the rider's entity, and its name is the rider's `Mount_Name` (StringInfo) rendered, else the empty string; the `Mount` class registers no own member | BIN (P5 pass, 2026-10-11: method M4 under [decision 0011](../decisions/0011-standing-m4-authorisation.md) on the offline client `x64/lotroclient64.exe` build 4906.0071.1794.4035, through a private copy of the shared analysis project, deleted after use. Question: when `GetMount()` returns nil, which class it returns, when `MountChanged` fires and what a mount's `GetName()` returns. Why M1–M3 were not enough: S2 and S3 give only member lists and one-line descriptions, the data files hold no binding code, and no surveyed plugin shows these values. Code read: the `LocalPlayer` registration and its `GetMount` binding, the mount-object factory, the player object's property watch list and change handler, the event-name objects, the mount name getter and the `Mount` registration; the property IDs it uses were named from the install's property dictionary and the status value from mapper 0x230002C9, M1); S3 (empty argument table) | **Confirmed** 2026-10-11 (BIN only; not observed in a running client) |
+| P102 | Mount object values (§15.5 items 4–5): `BasicMount` morale and maximum are the rider's `Mount_Durability_Current_Value` and `Mount_Durability_Current_Max_Cached` (32-bit integers, 0 when absent), with `MoraleChanged` on a change of the first and the event of the paired slot (name not read) on a change of the second; `CombatMount` reads the rider's vitals of types 3 (`MountEndurance`) and 4 (`MountPower`) of mapper 0x23000003, five 32-bit floats each in the order current, maximum, base maximum, temporary, maximum temporary, each change firing only its own event; all 0 without the entity | BIN (same pass: the `BasicMount` and `CombatMount` registrations and their getters, the two objects' fill routines); M1 (the vital-type mapper 0x23000003 and the property dictionary, read-only, 2026-10-11) | **Confirmed** 2026-10-11 (BIN only); fury, strength, agility, armour, evasion and turn rate not traced (§15.5 OPEN) |
+| P103 | Mount views in Tessera (§15.5): the session's mount model of the local player (mount ref, class, four mount vitals) and its updates from the feed's `MountChanged` and `MountVitalChanged`, or from the walker's mount state without a feed; the class from `MountChanged.combat`, else the war-steed rule on the ref's record, literal refs basic; one `MountChanged` per model change; one mount object per apartment per mount period, released objects answering their last values; `GetName()` from the effect's `Mount_Name_Initial` or the literal text; the getter tables, the zero values and the event order; leaving the world | DEC ([0024](../decisions/0024-parity-track.md) P5); `scenario-feed.md` (P5 travel revision: `mount … kind=`, `mount-vital`); `walker.md` §16.1, §16.5; `mounts.md` §2.3, §2.8, §4.1 | **Tessera rule** (no observation; the original's untraced values are in the §15.5 OPENs) |
 
 > **Process note.** Static reading of client literals (O1) is superseded by BIN for every fact
 > it supported; O1 rows are kept for history.
@@ -3588,6 +3592,129 @@ Image getters return the DID as a plain number, which plugins pass to `SetBackgr
 > attributes object" is the one `GetAttributes()` returns now: only it receives
 > `MoneyChanged` and answers the money getters; the other answers 0.
 
+<a id="s15-5"></a>
+### 15.5 Mount views in Tessera (decision 0024 P5)
+
+The views read the session's **mount model** of the local player, which the scenario feed
+fills in the sandbox through `MountChanged` and `MountVitalChanged` (`scenario-feed.md` §6.5,
+§9.2, P5 travel revision) and a server backend would fill the same way; in the plain offline
+sandbox the walker's own mount state fills it (below). Every event follows the delivery rule
+of the first paragraph of §15: queued with its argument values, delivered in frame-loop step
+7, getters returning the value at delivery. An event is queued only for view objects that
+exist in the apartment at the change.
+
+The facts about the original are P100 (S2, S3, S6) and P101–P102 (BIN). Everything marked
+**Tessera rule** is P103: it says how Tessera derives the API values from its own model, not
+how the original does.
+
+**What the original does (P101, P102).**
+
+1. `LocalPlayer:GetMount()` returns nil unless the player's `Mount_CurrentMountStatus` is 5
+   (`Mounted`, mapper 0x230002C9; `mounts.md` §4.3) at the call. Otherwise it returns the
+   player's mount object, which it creates on the first such call: a `CombatMount` when the
+   player's `Mount_CurrentMountType` has any bit of 0x38 (the war-steed types of `mounts.md`
+   §2.8), else a `BasicMount`; never an object whose class is `Mount` itself. Later calls
+   return the same object until it is released (item 2). Three client feature conditions
+   gate the creation, one for `GetMount` and one per class (not traced further); while one is
+   off the result is nil.
+2. The player object watches `Mount_CurrentMountStatus` and `Mount_CurrentMountType` on the
+   player. On each change notification of either, it releases its mount object (which stops
+   following the player; the next `GetMount()` creates a new one or returns nil) and fires
+   `LocalPlayer.MountChanged`, whose argument table is empty (P100: captured in game).
+3. A mount object refers to the **rider's** entity, not to a mount entity. `GetName()` on it is
+   the player's `Mount_Name`, a StringInfo, rendered; the empty string when the player has
+   none or it is not a StringInfo. The `Mount` class registers no member of its own in this
+   build; the `GetName` of its §16 row is the one every entity object has.
+4. `BasicMount`: `GetMorale()` is the player's `Mount_Durability_Current_Value` and
+   `GetMaxMorale()` its `Mount_Durability_Current_Max_Cached`, both 32-bit integers, 0 when
+   absent: a normal mount's "morale" is its durability (`mounts.md` §2.4). The object fires
+   `MoraleChanged` when the first value it holds changes, and the event of the paired slot
+   (by position `MaxMoraleChanged`; its name object was not read) when the second does.
+5. `CombatMount`: the morale getters read the player's vital of type 3 (`MountEndurance` in
+   mapper 0x23000003, `combat-data.md` §6.4) and the power getters its vital of type 4
+   (`MountPower`): five numbers each, in the order current, maximum, base maximum,
+   temporary, maximum temporary (`GetMorale`, `GetMaxMorale`, `GetBaseMaxMorale`,
+   `GetTemporaryMorale`, `GetMaxTemporaryMorale`; the same for power). They are 32-bit
+   floats returned as numbers, and each fires its own event only when it differs. Without
+   the entity all ten are 0. `GetFury()` reads an integer property of the player whose ID the
+   object looks up when it is created, and `GetMaxFury()` is computed by the client from a
+   table; strength, agility, armour and their base values come from the client's stat
+   calculation, and `GetEvasion` and `GetTurnRate` are bound by another mechanism (none of
+   these traced further).
+
+**The session's mount model (Tessera rule).** For the local player only: a mount ref *m*
+(none: not mounted), a class (basic or combat), and per `MountVital` (`scenario-feed.md`
+§9.1) a current and a maximum number, all 0 at world entry.
+
+| Session event | Model change | Queued plugin event |
+|---|---|---|
+| `MountChanged { entity: player, mount: Some(r), combat }` that changes *m* or the class | *m* = *r*; class combat for `combat` `Some(true)`, basic for `Some(false)`; without `combat`, combat when *r* names a mount effect whose `Mount_Type` has a bit of 0x38 or a skill whose first `Skill_Toggle_Effect_List` element names such an effect (`mounts.md` §2.8, §4.1), otherwise basic (a literal ref is basic); the mount objects of the period end (released) | `LocalPlayer.MountChanged {}` |
+| `MountChanged { entity: player, mount: None }` while *m* is set | *m* = none; objects released | `LocalPlayer.MountChanged {}` |
+| A `MountChanged` that changes nothing, or one for another entity | none | none |
+| `MountVitalChanged { entity: player, vital, current, max }` | that vital's two numbers | the events of the tables below, on the current mount object of the class that shows that vital, in each apartment that holds it |
+| `MountVitalChanged` for another entity | none | none |
+
+The mount vitals belong to the rider, as in the original (P102), so they persist across
+mount changes and a new object reads the current values. In a session without a feed (the
+plain offline sandbox, `walker.md` §16), the walker's mount state feeds the same model:
+entering state 3 (mounted) is a `MountChanged` to the walker's mount effect, classed by the
+war-steed rule, and leaving it a `MountChanged` to none, as the original's status 5 is set
+and cleared. With a feed, the feed owns the mount state (`walker.md` §16.1) and the walker's
+state does not feed the model.
+
+**Views (Tessera rule).**
+
+| View | Rule |
+|---|---|
+| `LocalPlayer:GetMount()` | nil while *m* is none. Otherwise the apartment's mount object of the current **mount period** (the time between two model changes), created at the first call in that period: a `CombatMount` or a `BasicMount` by the model's class (as P101); every call in the period returns it. Never nil for a feature condition (not modelled). |
+| `LocalPlayer.MountChanged` | One per model change of the first two rows above; empty argument table (P100, P101). |
+| Objects of an ended period | Receive no further event and answer their getters with the values they had when the period ended; a later mount, of the same ref or not, gives a new object. |
+| `GetName()` on a mount object | *r* a mount-effect record: its rendered `Mount_Name_Initial` (`mounts.md` §2.3), the empty string when absent; *r* a skill: that of the effect its first `Skill_Toggle_Effect_List` element names; another record: the empty string; a literal ref: the literal text. (The original renders the rider's `Mount_Name`, which a server sets; the effect's initial name is the nearest value the install holds.) |
+
+`BasicMount` (the model's `Durability` vital):
+
+| Getter | Value | Event, queued when the value changes |
+|---|---|---|
+| `GetMorale()` | `Durability` current | `MoraleChanged` |
+| `GetMaxMorale()` | `Durability` maximum | `MaxMoraleChanged` |
+
+`CombatMount`:
+
+| Getter | Value | Event, queued when the value changes |
+|---|---|---|
+| `GetMorale()`, `GetMaxMorale()` | `Morale` current, maximum | `MoraleChanged`, `MaxMoraleChanged` |
+| `GetBaseMaxMorale()` | the value of `GetMaxMorale()` (the feed carries no base maximum) | `BaseMaxMoraleChanged`, after each `MaxMoraleChanged` |
+| `GetTemporaryMorale()`, `GetMaxTemporaryMorale()` | 0 | never |
+| `GetPower()`, `GetMaxPower()`, `GetBaseMaxPower()` | as the three morale rows, from `Power` | `PowerChanged`, `MaxPowerChanged`, `BaseMaxPowerChanged` |
+| `GetTemporaryPower()`, `GetMaxTemporaryPower()` | 0 | never |
+| `GetFury()`, `GetMaxFury()` | `Fury` current, maximum | `FuryChanged` when the current value changes (§16 lists no event for the maximum) |
+| `GetStrength()`, `GetBaseStrength()`, `GetAgility()`, `GetBaseAgility()`, `GetArmor()`, `GetBaseArmor()`, `GetEvasion()`, `GetTurnRate()` | 0 (the feed carries no mount stats) | never |
+
+A number is the event's `f32`, converted exactly to a Lua number; the original's `BasicMount`
+values are integers (P102), so a scenario that wants their shape scripts integers. One
+`MountVitalChanged` that changes both numbers queues the maximum's events first
+(`MaxMoraleChanged`, then `BaseMaxMoraleChanged` on a `CombatMount`), then the current
+value's (`MoraleChanged`); power and durability likewise, as §15.2 orders an actor's
+vitals. A `Durability` report reaches only a `BasicMount`; `Morale`, `Power` and `Fury`
+reports reach only a `CombatMount`. Every event carries an empty argument table.
+
+**Leaving the world.** On `Disconnected`, or a second `WorldEntered`, before the logout
+unload (§6.3): when *m* is set it becomes none, with one `MountChanged`; the mount vitals
+return to 0 with no event.
+
+> **OPEN:** what the original's `GetFury()`, `GetMaxFury()`, `GetStrength()`,
+> `GetBaseStrength()`, `GetAgility()`, `GetBaseAgility()`, `GetArmor()`, `GetBaseArmor()`,
+> `GetEvasion()` and `GetTurnRate()` read; the name of the `BasicMount` event read by position
+> as `MaxMoraleChanged`; the three client feature conditions of item 1. **Tessera rule:** the
+> tables above (P103).
+
+> **OPEN:** the original fires `MountChanged` on every change of the rider's mount status or
+> type (P101), so also while summoning and dismounting, when `GetMount()` stays nil; Tessera
+> fires only on changes of its model, which a server backend reports as mounted or not.
+> Whether a plugin can tell the difference (extra events with nil before and after) was not
+> examined; the six surveyed distributions that set `MountChanged` (`plugin-api-usage.md`
+> §5.3) were not read for it.
+
 ---
 
 ## 16. API inventory (client build 4906.0071.1794.4035)
@@ -4175,6 +4302,51 @@ currency refs and need no install; check 83 reads the install and skips without
     views' model by the test) gives `ItemRemoved` with `Index` 3, 2, 1 (C, B, A), then one
     `MoneyChanged`, after which `GetSize() == 0` and `GetMoney() == 0`.
 
+Checks 100–107 test §15.5 (decision 0024 P5) against a scenario feed (`scenario-feed.md`, P5
+travel revision), not against the original: the API facts P100–P101 they rest on (nil when
+not mounted, empty argument tables, the class rule on war-steed types) and the Tessera rules
+P103. Checks 100–105 and 107 use literal mount refs and need no install; check 106 reads the
+install and skips without `TESSERA_GAME_DIR`. "A handler saw" means a test plugin's handler
+recorded the event; `lp` is `Turbine.Gameplay.LocalPlayer.GetInstance()`.
+
+100. **Not mounted (§15.5):** before any `mount` step `lp:GetMount()` is nil and no
+     `MountChanged` handler has run; `mount-vital player morale 5/10` queues no plugin event.
+101. **Basic mount:** `mount player "Grey pony"` gives exactly one `MountChanged`, whose
+     argument table is empty (`next(args) == nil`); in its handler `lp:GetMount()` returns an
+     object `m` with `m:GetName() == "Grey pony"`, `m.GetMorale ~= nil` and `m.GetFury == nil`
+     (a `BasicMount`), and `m:GetMorale() == 0`; a second `lp:GetMount()` returns `m` (`==`).
+     Repeating the same step gives no event.
+102. **Durability:** continuing check 101, with handlers on `m`, `mount-vital player durability
+     40/100` gives `MaxMoraleChanged` then `MoraleChanged`, after which `m:GetMorale() == 40`
+     and `m:GetMaxMorale() == 100`; then `mount-vital player morale 1/2` gives no event on `m`.
+103. **Combat mount:** continuing, `mount player "Steed" kind=combat` gives one
+     `MountChanged`; `lp:GetMount()` now returns `c` ≠ `m` with `c.GetFury ~= nil` (a
+     `CombatMount`), `c:GetName() == "Steed"`, `c:GetMorale() == 1` and `c:GetMaxMorale() == 2`
+     (the rider's morale from check 102); `m` still answers `GetName() == "Grey pony"` and
+     `GetMorale() == 40` and gets no further event. Then `mount-vital player morale 800/1000`
+     gives, on `c`, `MaxMoraleChanged`, `BaseMaxMoraleChanged` and `MoraleChanged` in that
+     order; `c:GetBaseMaxMorale() == 1000`, `c:GetTemporaryMorale() == 0` and
+     `c:GetMaxTemporaryMorale() == 0`; no power event.
+104. **Fury, power and fixed values:** continuing, `mount-vital player fury 2/5` gives one
+     `FuryChanged`, then `c:GetFury() == 2` and `c:GetMaxFury() == 5`; `mount-vital player
+     power 30/60` gives `MaxPowerChanged`, `BaseMaxPowerChanged`, `PowerChanged` in that
+     order; `GetStrength()`, `GetBaseStrength()`, `GetAgility()`, `GetBaseAgility()`,
+     `GetArmor()`, `GetBaseArmor()`, `GetEvasion()` and `GetTurnRate()` of `c` are 0.
+105. **Dismount:** continuing, `mount player none` gives one `MountChanged`, in whose handler
+     `lp:GetMount()` is nil; `c` still answers `GetMorale() == 800`. A second `mount player
+     none` gives no event. `mount player "Steed" kind=combat` again gives one `MountChanged`
+     and a new object (≠ `c`) whose `GetMorale()` is 800 (the rider's vitals persist).
+106. **Class rule on the install:** with `select $w = effect role=mount war-steed=yes n=1` and
+     `select $b = effect role=mount war-steed=no n=1` (both non-empty on the install), `mount
+     player $b[0]` gives a `BasicMount` and then `mount player $w[0]` a `CombatMount`, each
+     without `kind=`; each object's `GetName()` is its record's rendered `Mount_Name_Initial`
+     (the empty string without one). `mount player $b[0] kind=combat` then gives a
+     `CombatMount`.
+107. **Other riders and leaving the world:** for an actor `$a`, `mount $a "Pony"` and
+     `mount-vital $a morale 1/1` give no plugin event and leave `lp:GetMount()` unchanged.
+     While mounted, leaving the world (a `Disconnected` given to the views' model by the test)
+     gives one `MountChanged`, after which `lp:GetMount()` is nil.
+
 ---
 
 ## 19. Open questions (summary)
@@ -4237,6 +4409,10 @@ All `> **OPEN:**` callouts above:
   triggers `MoneyChanged`, and which stat `…Changed` events of `FreePeopleAttributes` §16
   omits; (implementer note) the wallet and money views outside the world and the `Wallet`
   object across leaving the world.
+- Mounts (§15.5): what the original's `CombatMount` fury, strength, agility, armour,
+  evasion and turn-rate getters read; the name of the second `BasicMount` event; the client
+  feature conditions of `GetMount()`; the original's extra `MountChanged` events while
+  summoning and dismounting.
 
 The 2026-10-06 revision closed: the chat colour and prefix of reported errors (§6.6),
 `AssistTargetRemoved` arguments (§9.3), `Update` on hidden controls (§9.4), the general
@@ -4278,6 +4454,10 @@ order; the `MoneyChanged` trigger and the attributes events that §16 omits. It 
 The clean-room implementation of the wallet views (`crates/plugins/src/wallet.rs`,
 2026-10-10) added a fourth callout in §15.3 (implementer note: the views outside the world,
 the `Wallet` object across leaving the world), so §1–§18 count 65 OPEN markers with it.
+
+The P5 revision of 2026-10-11 (§15.5) added two callouts, both in §15.5, and closed none; the
+count of OPEN markers in §1–§18 is reconciled at merge with the P2 and P4 revisions, which
+add their own.
 
 ---
 
@@ -4445,3 +4625,4 @@ this revision. Implementers should re-check the affected code.
 | 2026-10-09 | P1 revision (spec writer, dirty room; status Accepted → **Revised**, awaiting review): new §15.1 (inventory views: `GetBackpack`, `GetEquipment`, `Item`, `ItemInfo` over the session's inventory model and the scenario feed), provenance P81–P82 (API facts S2, the `Equipment` ↔ `ContainerSlot` key relation from the data), §18 checks 66–69 for decision 0024 P1 exit criterion 4. No other text changed; section numbers and anchors unchanged. Implementers re-check: the `Turbine.Gameplay` inventory views in `crates/plugins`. |
 | 2026-10-09 | Review fixes for the P1 revision (spec writer, dirty room; no new research; status stays **Revised**, awaiting re-review by a session other than the writer and the first reviewer). Blocking (1): §15 enum paragraph and P41 now point to P82 (`Equipment` value = `ContainerSlot` key − 1; `ItemDurability`, `ItemWearState` follow their data enums); the §15 enum OPEN and its §19 line narrowed to `Alignment`, `Profession`, `Vocation`, `ReadyState`, `SkillType`, `EffectCategory` and the stance enums. (2): the §15.1 OPEN is listed in §19, with a closing note. (3): new provenance row P83 (**Tessera rule**, DEC 0024 P1, `character-panels.md` §4.3, §8, §9) covering every Tessera rule of §15.1; §15.1 says which facts are P81/P82 and which P83; §18 has a lead-in for checks 66–69. (4): §15.1 rewritten with a containers table and two getter tables covering every `Item` and `ItemInfo` getter of §16, each with its value for a present property, an absent property and a literal item; `GetItemInfo()` identity (one object per record DID per apartment) stated; the §15.1 OPEN widened to the original's values for absent properties. Non-blocking: (a) the delivery rule points to §15's first paragraph; (b) note that `scenario-feed.md` links resolve after `p0` is merged; (c) and (e) a `SizeChanged` rule for growth before the first `ContainerSize`, and a §20 row asking `character-panels.md` §8.1 to align; (d) check 67 names the `MoveItem` and `DestroyItem` input lines with `defaults on`; (f) blank lines fixed. Checks 66, 67, 69 extended. OPEN count: 57 callout markers in §1–§18 before and after (one narrowed, one widened; none closed, none added). Section numbers and anchors unchanged. Implementers re-check: `Turbine.Gameplay` `Backpack`, `Equipment`, `Item`, `ItemInfo` in `crates/plugins`. |
 | 2026-10-10 | P3 revision (spec writer, dirty room; status Accepted → **Revised**, awaiting independent review): new §15.3 (wallet views: `GetWallet`, `Wallet`, `WalletItem`, `GetMoney`, `GetMoneyComponents` and `MoneyChanged` over the session's wallet model, which the feed's `WalletChanged` fills; the install's wallet items and their values), provenance P84 (S2), P85–P87 (BIN fifth pass on build 4906.0071.1794.4035, 2026-10-10, method M4 under decision 0011, with the class library's code for three functions; question, method and reason in the rows), P88 (data, all 610 wallet items), P89 (Tessera rules, DEC 0024 P3); §18 lead-in and checks 80–85; §19 bullet and closing note. Numbering leaves §15.2 and checks 70–79 to the P2 revision. No other text changed: the §16 rows of `FreePeopleAttributes` and `MonsterPlayerAttributes`, which list no events, are read with the §15.3 note on `MoneyChanged` (P87). OPEN count: 61 callout markers in §1–§18 before, 64 after (three added in §15.3, none closed). Section numbers and existing anchors unchanged; one anchor added (`s15-3`). Implementers build: `Turbine.Gameplay` `Wallet`, `WalletItem`, `LocalPlayer:GetWallet()`, `FreePeopleAttributes:GetMoney()`, `GetMoneyComponents()` and `MoneyChanged` in `crates/plugins`, over a wallet source the client implements. |
+| 2026-10-11 | P5 revision (spec writer, dirty room; the P5 parts Revised, awaiting independent review; every other part keeps its status): new §15.5 (mount views: `GetMount`, `MountChanged`, `Mount`, `BasicMount`, `CombatMount` over the session's mount model, which the feed's `MountChanged` and `MountVitalChanged` or the walker's mount state fill; values when not mounted; Tessera rules where the original's values are server state), provenance P100 (S2, S3, S6), P101–P102 (BIN P5 pass on build 4906.0071.1794.4035, 2026-10-11, method M4 under decision 0011; question, method and reason in the rows), P103 (Tessera rule), §18 lead-in and checks 100–107, §19 bullet and closing note. Numbers P100–P103 and 100–107 were chosen clear of the P2 (P90–P93, checks 70–79) and P4 (P94 on, checks 90 on) revisions; section, provenance and check numbers are reconciled at merge. No other text changed. |

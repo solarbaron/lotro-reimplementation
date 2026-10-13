@@ -5,7 +5,7 @@
 | | |
 |---|---|
 | **Status** | Accepted (re-review of the repair of the 2026-10-09 OPEN sweep passed, 2026-10-09) |
-| **Last updated** | 2026-10-09 |
+| **Last updated** | 2026-10-11 |
 | **Author role** | Spec writer (dirty room), AI-assisted |
 | **Reviewer** | Spec reviewer (separate dirty-room session, AI-assisted), not the author; re-review by a second separate dirty-room reviewer session, AI-assisted, not the author |
 | **Review record** | Re-review 2026-10-07: **passed**, Accepted. OPEN-closing revision 2026-10-08: changes requested (four items), then repaired. Re-review of the repair 2026-10-08 by a separate dirty-room reviewer session (AI-assisted, not the author): **passed**, Accepted; three non-blocking notes. Details in the review log (decision 0018). OPEN sweep 2026-10-09 (spec writer, dirty room): normative text of §2.3, §2.4, §7, §9.7 and §11 changed (rows MD44–MD48); status Revised until a separate session reviews it. Review of the OPEN sweep 2026-10-09 by a separate dirty-room reviewer session (AI-assisted, not the author): **changes requested**. Spot checks, read-only, own probe: MD44 (2,733 `WeenieType` `Landmark` sets with `MapNote_Type`, all class 1210, 2,731 with `Landmark_Music`, one class-1995 set without), MD45 (3,434 / 3,419 / 15, 8 DIDs), MD46 (`tessera-dattool stat`: 1,616 + 2 = 1,618; the 2 local sets hold no map struct), MD47 (27 top-level fields, entry counts 37 / 10 / 14 / 3 / 5 / 6, 21 of 37, all types and mappers, icons 0x41, storage modifier defined but not an entry field) and MD48 (types; every field in all 341 + 7 records) all reproduce; no new BIN fact; no code, pseudo-code, copied prose or game text. Blocking: (1) §12 MI14 still requires every §2.4 edge to resolve, but §2.4 now has 15 `QuestEvent_LandmarkDID` values that name no record; restate MI14 (exception or count) so it holds on this install. (2) §6.2 still says landmarks (class 1210) carry `Landmark_Music`, contradicting MD44 (2 of 2,733 lack it). (3) §2.4 "a reader treats such a value as no landmark" is a reader rule with no provenance (MD45 covers only the counts) and what the client does with a dangling value is not stated; mark it as a Tessera rule (and list it with the §15 rules) or add an OPEN. (4) §9.7 interval units "seconds by their size, not confirmed" is a guess in normative text; give a source or mark it `> **OPEN:**`. Non-blocking: §2.2 still shows `HousingControl` class as "(singleton)" while §9.7 gives class 1184; §2.3 could say the `Landmark` label is read through the `WeenieType` mapper named by the dictionary (0x230000C9 here). Repair 2026-10-09 (spec writer, dirty room, own read-only probe over the OBS3 dump): (1) MI14 now excepts `QuestEvent_LandmarkDID`, whose dangling values are warnings; (2) §6.2 gives the landmark-only properties with their count (2,731 of 2,733, MD49); (3) §2.4 marks "no landmark" as a Tessera rule, adds an OPEN on the client's handling (§15 item 11); (4) §9.7 interval unit moved to an OPEN with values per field (MD49) and published weekly upkeep (MD50, Reported) (§15 item 12); non-blocking: §2.2 class 1184, §2.3 mapper. Status Revised until a separate session re-reviews it. Re-review of the repair 2026-10-09 by a separate dirty-room reviewer session (AI-assisted, neither the author nor the earlier reviewer): **passed**, Accepted. Checked the whole revision since the last Accepted text (OPEN sweep and repair) against CLEAN_ROOM.md §5.3: every new fact has a row (MD44–MD50, keys OBS3 and PUB), no code or pseudo-code, no copied prose, no game text; all four blocking items and both non-blocking notes are fixed (MI14 exception, §6.2 counts, §2.4 Tessera rule with an OPEN and §15 item 11, §9.7 unit as an OPEN and §15 item 12, §2.2 class 1184, §2.3 mapper); the two §14.4 implementer notes are really answered. Spot checks with an own read-only probe on the install (fresh read, not the OBS3 dump): MD44 (2,733 `WeenieType` `Landmark` sets with `MapNote_Type`, all class 1210; one class-1995 set without), MD49 (2,731 class-1210 sets carry `Landmark_Music` and both override booleans, 2 carry none; `WeenieType` enum of mapper 0x230000C9; intervals 604,800 / 86,400 / 86,400, type int, no mapper), MD47 (class 1184; 37 type entries, 10 tier entries; the storage modifier is a float the tier entry does not allow and no tier carries), MD48 (UI element enum of mapper 0x230000D1, world property a PID, the disable flag a bool; the layout field is a DID whose 348 values all have prefix 0x22, a UI layout); MD50 matches the published sources. No new BIN fact, so no analysis-project check was needed. Non-blocking: `quests.md` §5 counts the 2,705 + 729 `QuestEvent_LandmarkDID` values as landmark references without the 15 that name no record (MD45 here); a §16 note for `quests.md` would keep the two specs aligned. |
@@ -744,6 +744,16 @@ with one state, 170 with two, 8 with three); each of the 849 states has exactly 
 > state. The former item (d), the default map node for unlisted areas, is answered in §4.8.4 step 3
 > (MD43). **Tessera rule:** §14.1.
 
+> **Note (P5, 2026-10-11, [`map-windows.md`](map-windows.md) §6.3 and §6.9, status Review; no
+> fact of this spec changed):** item (a) is answered there (BIN, OBS): the map window creates a
+> note only when its `type` shares a bit with the shown node's display mask
+> (`UI_Map_MapNoteDisplayType`, ORed with a common mask when `UI_Map_IncludeCommonMapNoteTypes`
+> is true; every type on a dungeon map) and shows it while its `type` shares a bit with the
+> player option the node names in `UI_Map_MapNoteFilterProperty` (`GOP_Map_MapNoteFilter` or
+> `GOP_Map_Distant_MapNoteFilter`); the radar uses `GOP_Radar_MapNoteFilter`. Defaults come from
+> `GameplayOptionDefaults`; `FilterMenu` and the radar's menu change them. Items (b) and (c)
+> stay open; the client half's Tessera rules are in `map-windows.md` §8.
+
 ---
 
 <a id="s5"></a>
@@ -1094,6 +1104,19 @@ user's install, not server software.
 > `TravelHomeLocationsArray` are meant, and the meaning of the `Usage_QuestStatus` and
 > `Usage_Operator` values. A local server needs its own rule until then (§14.3). Prices shown by
 > the original client's stable-master panel (owner) can test a candidate formula.
+
+> **Note (P5, 2026-10-11, [`travel-windows.md`](travel-windows.md) §4.3–§4.9, status Review; no
+> fact of this spec changed):** the travel window's whole use of the class library is listed
+> there (BIN): besides 0x01CC0001 and 0x01CC0003 it starts 0x01CC0026 and 0x01CC0006 (which
+> destinations get a row; the second is the "discovered" test), 0x01CC002E, 0x01CC0007,
+> 0x01CC0008 and 0x01CC001B (row and go-button usability), 0x01CC0005 and 0x01CC0004 (request
+> test and travel request), 0x01CC0028 (paper-item path) and, for the end-travel box,
+> 0x01CC0009. Function 0x01CC0003 hands the window a native info object (class 3680 here: route,
+> name, territory and area texts, cost, minimum level, a paper-item service key, flags swift,
+> listed and requirements met). The class library computes the cost it hands over as the
+> single-precision product of a stored amount and a multiplier, plus 0.5, converted to an
+> integer (BC); the multiplier's body is where the OPEN price formula above lives. The census of
+> destinations and station rows by what the window can show is `travel-windows.md` §8.1.
 
 ---
 
@@ -1479,7 +1502,7 @@ range behaviour (§4.7), how the views select, filter and draw notes (§4.8), an
 properties versus the row (§6.2). Also closed in the revision after review (2026-10-08): the
 default map node for unlisted areas (§4.8.4, MD43). Remaining:
 
-1. §4.8.6: the initial note-type filters and the filter controls; the discovered state; the row's `icon` field (owner; discovered state is server state).
+1. §4.8.6: the discovered state; the row's `icon` field (owner; discovered state is server state). The initial note-type filters and the filter controls are answered in `map-windows.md` §6.9 (2026-10-11, status Review).
 2. §5.3: which fetched dungeon quest notes the client shows (server-side quest state).
 3. §8.5.1: the walking rule along SegmentNode links, and segment ends (server or data-driven logic; owner can observe a ride).
 4. §8.5.2, §8.6: units and use of hop delay, hop scene and travel-mode values (same).
@@ -1521,6 +1544,10 @@ default map node for unlisted areas (§4.8.4, MD43). Remaining:
 - `ui-layout.md` / `game-panels.md`: the travel window's elements named in §8.8 here
   (`Travel_Window`, `Travel_Currency_DestinationCost`, `Travel_Currency_DestinationCost_Free`,
   `Travel_Currency_MinLevel`) belong to a panel no spec yet describes.
+- `travel-windows.md` (P5, 2026-10-11, status Review): describes that panel (the travel window,
+  §4), the end-travel box and the loading screen during travel (§5), and the census of the 768
+  destinations and 5,199 station rows (§8.1); its note in §8.8 here lists the class-library
+  functions the window starts.
 
 ---
 
@@ -1537,3 +1564,5 @@ default map node for unlisted areas (§4.8.4, MD43). Remaining:
 | 2026-10-08 | Re-review of the revision after review: passed; status Accepted. No text change outside the header and this row; three non-blocking notes in the review log. | Spec reviewer (dirty room) |
 | 2026-10-09 | OPEN sweep (status Revised, waiting for review). New provenance key OBS3 and rows MD44–MD48. Answered both implementer notes of §14.4: landmark recognition rule (`WeenieType` `Landmark` with `MapNote_Type`, §2.3, MD44); landmark references with 15 dangling values (§2.4, MD45); 0x78 count per archive (§7, MD46); `HousingControl` labels and types, with the correction that no storage price modifier is stored (§9.7, MD47); ripcord field types (§11, MD48); the two allocation bounds confirmed. Still OPEN: locale lower-casing, the radar's invalid-position rectangle, note filters and discovery, quest-note selection, travel paths, hop and mode units, travel price, instancing, house links, ripcord gating. | Spec writer (dirty room) |
 | 2026-10-09 | Repair after the review of the OPEN sweep (changes requested; status stays Revised). Blocking: (1) MI14 excepts `QuestEvent_LandmarkDID`, whose values may name no record (warning), naming another kind stays a violation; (2) §6.2 no longer says every landmark carries `Landmark_Music`: 2,731 of 2,733 carry it and both `Landmark_OverrideMountedCombat_…` booleans, all three together, the other 2 none (MD49); (3) §2.4 "no landmark" marked as a Tessera rule with an OPEN on the client's handling; §14.4 answer (c) reworded to match; §15 item 11; (4) §9.7 interval unit moved from a guess to an OPEN, values given per field (MD49), published weekly upkeep added as Reported (new tag PUB, MD50); §15 item 12. Non-blocking: §2.2 `HousingControl` class 1184; §2.3 names the `WeenieType` mapper (0x230000C9 here). New rows MD49 (OBS3, own read-only probe over the 2026-10-07 dump) and MD50 (Reported). | Spec writer (dirty room) |
+| 2026-10-11 | Notes only (no fact changed), for P5: §4.8.6 points to `map-windows.md` (status Review) for item (a), the filters and their controls; §15 item 1 narrowed to the items still open. Status unchanged; the answer carries `map-windows.md`'s review status. | Spec writer (dirty room) |
+| 2026-10-11 | Notes only (no fact changed), for P5: a note at the end of §8.8 and a §16 bullet point to `travel-windows.md` (status Review) for the travel window's class-library functions, its info object and the cost rounding. Status unchanged. | Spec writer (dirty room) |

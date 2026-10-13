@@ -1275,3 +1275,21 @@ path = "fuzz_targets/mesh_figure_look.rs"
 test = false
 doc = false
 bench = false
+
+# --- P5: tessera-ui map windows, overlays, travel and finder models (map-windows.md, travel-windows.md) ---
+
+[[bin]]
+name = "ui_p5_map_windows"
+path = "fuzz_targets/ui_p5_map_windows.rs"
+test = false
+doc = false
+bench = false
+
+# --- P5: the walker's mount choice (`walker.md` §16.2, §16.3) ---
+
+[[bin]]
+name = "client_mount_spec"
+path = "fuzz_targets/client_mount_spec.rs"
+test = false
+doc = false
+bench = false

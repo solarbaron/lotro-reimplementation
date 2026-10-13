@@ -1,0 +1,23 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Map markers (decision 0024 P5; docs/specs/map-windows.md §5.4, §6.7, §6.8;
+# docs/specs/scenario-feed.md §6.5, revision "P5 travel"): plain and quest markers near the
+# spawn, a marker drawn with a note type's icon, a marker moved and one removed, and a marker
+# set on every map region (the census of P5 exit criterion 1, decision 0036 §1: with an
+# install every region gets a marker at its test point, named after it; without one the
+# selectors are empty and the set stays empty), then replaced by a set on the map nodes
+# only and removed.
+tessera-scenario 1
+title "Surveyor's table"
+tick 100ms
+player "Tamsin"
+select $regions = map-region all
+select $nodes = map-region kind=node all
+at 0s marker $camp 10,20,0 "Camp"
++0s marker $well -15,5,0 "Old well" quest="Lost satchel"
++0s marker $post 30,-10,0 "Waypost" note-type=@Waypoint
++0s markers $census $regions named
++1s marker $camp 12,22,0 "Camp, moved"
++0.5s marker-remove $well
++0.5s markers $census $nodes "Survey"
++0.5s marker-remove $census
++0.5s marker-remove $post

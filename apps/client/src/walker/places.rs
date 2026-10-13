@@ -297,6 +297,37 @@ impl Drop for PlaceBuild {
 mod tests {
     use super::*;
 
+    /// `--place` and `findplace` must normalise and score names alike (`map-windows.md`
+    /// §7.3). The walker keeps a std-only copy for its fuzz target (`client_walker_text`
+    /// includes `parse.rs` by path), so this test pins the copy to `tessera-gamedata`'s.
+    #[test]
+    fn place_matching_equals_the_map_lookup() {
+        use tessera_gamedata::map as gm;
+        let names = [
+            "  The  Old-Forest! ",
+            "Állúvale",
+            "\u{0}\u{7}",
+            "İx",
+            "old forest road",
+            "the old forest",
+            "the older forest",
+            "Ñandú ÿ Ø 12",
+            "",
+        ];
+        let long = "ab ".repeat(200);
+        for a in names.iter().copied().chain([long.as_str()]) {
+            assert_eq!(normalize_name(a), gm::normalize_name(a), "{a:?}");
+            for b in names {
+                let (na, nb) = (normalize_name(a), normalize_name(b));
+                assert_eq!(
+                    match_score(&na, &nb),
+                    gm::match_score(&na, &nb),
+                    "{a:?} {b:?}"
+                );
+            }
+        }
+    }
+
     fn place(name: &str, kind: PlaceKind, region: u8, blocks: u32) -> Place {
         Place {
             name: name.into(),

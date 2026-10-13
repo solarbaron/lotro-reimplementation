@@ -48,6 +48,14 @@
 //! | [`npcvocab`] | labels of the P3 types, element IDs, states, properties | naming notes |
 //! | [`npc`] | NPC windows: dialogue, quest offer, vendor, quantity, barter, loot, money, wallet | `npc-windows.md` §5–§9 |
 //! | [`quest`] | quest log, details pane, quest tracker, quest markers on the radar and world map | `quest-journal.md` §4–§8; GP §8.8, §9.3 |
+//! | [`p5vocab`] | labels of the P5 types, element IDs, states, properties | naming notes |
+//! | [`mapmarks`] | note types, masks, filters and their menu, icon tables, notes, feed markers, minimap blips | `map-windows.md` §6; `map-data.md` §4.8 |
+//! | [`mapwindow`] | the map window: presentations, navigation, dungeon maps, controls, player marker, place lookup | `map-windows.md` §3–§5, §7 |
+//! | [`mapfallback`] | the fallback map window, its elements and a fallback minimap | decision 0031; `map-windows.md` §8 OPEN |
+//! | [`popup`] | Tessera's popup list for the P5 menus | `map-windows.md` §4.5, §6.9; `travel-windows.md` §6.4 |
+//! | [`travel`] | the travel window, the end-travel box, the travel presentation | `travel-windows.md` §4, §5 |
+//! | [`finder`] | the instance finder, its queue page and alert, the instance-travel window | `travel-windows.md` §4.11, §6, §7.2 |
+//! | [`travelfallback`] | fallback travel, finder and instance-travel windows | decision 0031 |
 
 pub mod avatar;
 pub mod charvocab;
@@ -57,16 +65,24 @@ pub mod data;
 pub mod dragbox;
 pub mod escape;
 pub mod examine;
+pub mod finder;
 pub mod hidewhen;
 pub mod items;
 pub mod map;
+pub mod mapfallback;
+pub mod mapmarks;
+pub mod mapwindow;
 pub mod npc;
 pub mod npcvocab;
+pub mod p5vocab;
 mod panels;
+pub mod popup;
 pub mod quest;
 pub mod quickslot;
 pub mod radar;
 pub mod simple;
+pub mod travel;
+pub mod travelfallback;
 pub mod vocab;
 pub mod worldmap;
 
@@ -75,6 +91,7 @@ pub use data::{
     GameData, HideCondition, MapLookup, MapSource, NoShortcuts, SandboxData, Shortcut, Shortcuts,
 };
 pub use npcvocab::NpcVocab;
+pub use p5vocab::P5Vocab;
 pub use panels::{GameAction, GameLayouts, GamePanels};
 pub use vocab::GameVocab;
 

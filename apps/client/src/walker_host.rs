@@ -293,6 +293,8 @@ pub fn walker_config(args: &Args) -> WalkerConfig {
             ..crate::walker::farview::FarViewConfig::default()
         },
         hud: !args.no_hud,
+        // `--mount SPEC` (P5, `walker.md` §16.2).
+        mount: args.mount,
         camera: match (&args.camera_loop, args.turn_rate) {
             (Some(path), _) => Some(CameraPlan::Loop {
                 path: path.clone(),

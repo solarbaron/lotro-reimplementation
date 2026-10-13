@@ -485,6 +485,18 @@ impl Plugins {
         &self.dispatcher
     }
 
+    /// The requests of the P5 built-ins (`ride`, `findplace`, `leaveinstance`) since the
+    /// last call, in order (decision 0024 P5; [`crate::commands::p5`]).
+    pub fn take_p5_requests(&mut self) -> Vec<crate::commands::p5::P5Request> {
+        self.dispatcher.p5_queue().take()
+    }
+
+    /// Posts one line of the client's own (a P5 command's answer): the log, the walker's
+    /// chat display and, with a game UI attached, the chat window.
+    pub fn post_line(&mut self, line: LocalLine) {
+        self.post(line);
+    }
+
     /// Runs one line through the dispatcher in the `Say` mode (the walker's overlay, the
     /// start-up lines, tools).
     pub fn submit(

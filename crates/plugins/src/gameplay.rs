@@ -17,13 +17,14 @@ use tessera_script::{api_fn, host_error};
 
 use crate::gameplay_enums as en;
 use crate::inventory::{self, InventoryViewEvent};
+use crate::mount::{self, MountSource, MountViewEvent};
 use crate::object::{Builder, NativeKind, Payload, bind_native, native_of};
 use crate::root_ns::Handles;
 use crate::shared::{ApartmentCtx, lock};
 use crate::wallet::{self, WalletSource, WalletViewEvent};
 
 /// Registry name of the apartment's `LocalPlayer` instance.
-const LOCAL_PLAYER_KEY: &str = "tessera.plugins.localplayer";
+pub(crate) const LOCAL_PLAYER_KEY: &str = "tessera.plugins.localplayer";
 
 /// Registry name of the apartment's cache of gameplay views.
 const VIEWS_KEY: &str = "tessera.plugins.views";
@@ -111,6 +112,14 @@ pub trait LocalPlayerSource: Send + Sync + 'static {
     fn wallet(&self) -> Option<Arc<dyn WalletSource>> {
         None
     }
+
+    /// The source of the mount views (`LocalPlayer:GetMount()`, `LocalPlayer.MountChanged`,
+    /// `BasicMount`, `CombatMount`; `lua-plugin-api.md` §15.5), or `None` (the default):
+    /// `GetMount()` is then nil. Changes are raised with
+    /// [`crate::PluginManager::raise_gameplay_event`] and [`GameplayEvent::Mount`].
+    fn mount(&self) -> Option<Arc<dyn MountSource>> {
+        None
+    }
 }
 
 /// A `…Changed` event of the local player (`lua-plugin-api.md` §16, `Entity`, `Actor`,
@@ -176,6 +185,8 @@ pub enum GameplayEvent {
     Inventory(InventoryViewEvent),
     /// A change of the wallet or the coin amount (`lua-plugin-api.md` §15.3).
     Wallet(WalletViewEvent),
+    /// A change of the local player's mount model (`lua-plugin-api.md` §15.5).
+    Mount(MountViewEvent),
 }
 
 /// What a view object is (its native payload).
@@ -338,7 +349,10 @@ pub(crate) fn install(lua: &Lua, ctx: &Arc<ApartmentCtx>, handles: &Handles) -> 
         api_fn(lua, "GetName", move |lua, this: Table| {
             Ok(match view_of(lua, &this)? {
                 Some(View::LocalPlayer) => source(&c).map(|i| i.name),
-                _ => inventory::item_name(&c, lua, &this)?,
+                _ => match mount::mount_name(lua, &this)? {
+                    Some(name) => Some(name),
+                    None => inventory::item_name(&c, lua, &this)?,
+                },
             })
         })?,
     )?;
@@ -618,16 +632,16 @@ pub(crate) fn install(lua: &Lua, ctx: &Arc<ApartmentCtx>, handles: &Handles) -> 
     b.class(&gp, "Raid", Some(&object), None)?;
     let mount = b.class(&gp, "Mount", Some(&entity), None)?;
     let basic = b.class(&gp, "BasicMount", Some(&mount), None)?;
-    stubs(
+    let combat = b.class(&gp, "CombatMount", Some(&mount), None)?;
+    // `BasicMount` and `CombatMount` (§15.5, `mount`).
+    mount::install(
         lua,
-        &basic,
-        "BasicMount",
-        &[
-            ("GetMaxMorale", Default_::Zero),
-            ("GetMorale", Default_::Zero),
-        ],
+        ctx,
+        &mount::Classes {
+            basic: &basic,
+            combat: &combat,
+        },
     )?;
-    b.class(&gp, "CombatMount", Some(&mount), None)?;
     let wallet_item = b.class(&gp, "WalletItem", Some(&object), None)?;
     // Wallet, `WalletItem` and money (§15.3, `wallet`).
     wallet::install(
@@ -666,6 +680,7 @@ pub(crate) fn install(lua: &Lua, ctx: &Arc<ApartmentCtx>, handles: &Handles) -> 
                 return Ok(Value::Table(t));
             }
             let t = instance(lua, &lp_class, View::LocalPlayer)?;
+            mount::note_local_player(lua, &c)?;
             lua.set_named_registry_value(LOCAL_PLAYER_KEY, t.clone())?;
             Ok(Value::Table(t))
         })?,
@@ -737,9 +752,12 @@ pub(crate) fn install(lua: &Lua, ctx: &Arc<ApartmentCtx>, handles: &Handles) -> 
             cached_view(lua, "Wallet", &w, View::Wallet)
         })?,
     )?;
+    let c = Arc::clone(ctx);
     local_player.raw_set(
         "GetMount",
-        api_fn(lua, "GetMount", |_, _: MultiValue| Ok(Value::Nil))?,
+        api_fn(lua, "GetMount", move |lua, _: MultiValue| {
+            mount::get_mount(lua, &c)
+        })?,
     )?;
     let sl = skill_list.clone();
     local_player.raw_set(
@@ -971,6 +989,10 @@ pub(crate) fn deliver(ap: &crate::apartment::Apartment, ev: &GameplayEvent) {
         }
         GameplayEvent::Wallet(w) => {
             wallet::deliver(ap, w, cached_view_of, attributes_view(&ap.ctx));
+            return;
+        }
+        GameplayEvent::Mount(e) => {
+            mount::deliver(ap, e);
             return;
         }
     };

@@ -15,6 +15,9 @@
 //! The wallet and money views (`lua-plugin-api.md` §15.3, decision 0024 P3) are fed the
 //! same way: the local player carries the session's wallet model
 //! ([`crate::npc::SessionWallet`]), and each poll's wallet changes become its events.
+//! So are the mount views (`lua-plugin-api.md` §15.5, decision 0024 P5): the local player
+//! carries the session's mount model ([`crate::travel::SessionMount`]), fed by each poll's
+//! `MountChanged` and `MountVitalChanged`.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -47,6 +50,10 @@ pub struct ScenarioPlugins {
     wallet: Arc<SessionWallet>,
     /// The NPC facts of the install (the wallet items' values), when the run has one.
     npc_data: Option<Arc<NpcData>>,
+    /// The P5 state the mount views follow.
+    p5: crate::travel::P5State,
+    /// The mount views' model (P5).
+    mount: crate::travel::SessionMount,
 }
 
 impl ScenarioPlugins {
@@ -79,8 +86,11 @@ impl ScenarioPlugins {
         }
         hub.attach_plugins(plugins.manager_mut());
         let wallet = SessionWallet::new();
+        let mount = crate::travel::SessionMount::new();
         let src: Arc<dyn tessera_plugins::LocalPlayerSource> =
             WalletPlayer::new(player.clone(), Arc::clone(&wallet));
+        let src: Arc<dyn tessera_plugins::LocalPlayerSource> =
+            crate::travel::MountPlayer::new(src, mount.source());
         plugins.manager_mut().set_local_player_source(Some(src));
         Self {
             plugins,
@@ -92,6 +102,8 @@ impl ScenarioPlugins {
             timeout: PLUGIN_LOAD_WAIT,
             wallet,
             npc_data,
+            p5: crate::travel::P5State::new(),
+            mount,
         }
     }
 
@@ -137,8 +149,10 @@ impl ScenarioPlugins {
     /// queued, then one round of the plugin host's work.
     pub fn observe(&mut self, events: &[Event]) {
         let mut changes = Vec::new();
+        let mut p5 = Vec::new();
         for ev in events {
             self.state.apply(ev, &mut changes);
+            self.p5.apply(ev, &mut p5);
         }
         if self.player.set(self.state.name()) {
             self.plugins.set_character(self.state.name());
@@ -152,6 +166,12 @@ impl ScenarioPlugins {
             self.plugins
                 .manager_mut()
                 .raise_gameplay_event(tessera_plugins::GameplayEvent::Wallet(ev));
+        }
+        let player = self.state.player();
+        for ev in self.mount.apply(&p5, player, self.npc_data.as_deref()) {
+            self.plugins
+                .manager_mut()
+                .raise_gameplay_event(tessera_plugins::GameplayEvent::Mount(ev));
         }
         self.hub
             .after_events(&self.state, changes, self.plugins.manager_mut());

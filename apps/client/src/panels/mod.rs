@@ -172,6 +172,11 @@ pub struct NativePanels {
     /// Panels hidden by the panels' own code; with an auto-fade (`ui-behaviour.md` §11.1)
     /// such a panel keeps its visible flag until the fade ends, yet counts as hidden.
     hiding: BTreeSet<PanelId>,
+    /// The P5 map window replaces P10 for `MapZoom` (decision 0024 P5,
+    /// [`Self::set_world_map_external`]).
+    world_map_external: std::cell::Cell<bool>,
+    /// `MapZoom` requests not yet taken by the P5 map window.
+    world_map_requests: std::cell::Cell<u32>,
 }
 
 impl std::fmt::Debug for NativePanels {
@@ -203,7 +208,22 @@ impl NativePanels {
             target_selected: false,
             buttons: BTreeMap::new(),
             hiding: BTreeSet::new(),
+            world_map_external: std::cell::Cell::new(false),
+            world_map_requests: std::cell::Cell::new(0),
         }
+    }
+
+    /// Hands the minimap's `MapZoom` (`game-panels.md` §8.7.5) to the P5 map window
+    /// (`map-windows.md` MW28) instead of opening P10: each request is counted for
+    /// [`Self::take_world_map_requests`].
+    pub fn set_world_map_external(&self, on: bool) {
+        self.world_map_external.set(on);
+    }
+
+    /// The `MapZoom` requests since the last call (P5 map window).
+    #[must_use]
+    pub fn take_world_map_requests(&self) -> u32 {
+        self.world_map_requests.replace(0)
     }
 
     /// The catalogue.
@@ -557,7 +577,10 @@ impl NativePanels {
         let mut out = Vec::new();
         for a in self.game.handle_event(ui, ev) {
             out.push(PanelAction::Game(a));
-            if a == GameAction::OpenWorldMap {
+            if a == GameAction::OpenWorldMap && self.world_map_external.get() {
+                self.world_map_requests
+                    .set(self.world_map_requests.get().saturating_add(1));
+            } else if a == GameAction::OpenWorldMap {
                 match self.open(ui, PanelId::WorldMap, sv) {
                     Ok(_) => out.push(PanelAction::Opened(PanelId::WorldMap)),
                     Err(e) => tracing::debug!("world map: {e}"),

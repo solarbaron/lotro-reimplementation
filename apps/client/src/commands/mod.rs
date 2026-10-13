@@ -27,6 +27,7 @@
 //! ([`SharedRegistry`]); plugins load only after the install's names are in.
 
 pub mod line;
+pub mod p5;
 pub mod registry;
 pub mod text;
 
@@ -185,6 +186,8 @@ pub struct Dispatcher {
     registry: SharedRegistry,
     text: CommandText,
     history: History,
+    /// The requests of the P5 built-ins ([`p5`]).
+    p5: p5::P5Queue,
 }
 
 impl Default for Dispatcher {
@@ -258,6 +261,9 @@ fn builtins() -> Vec<(&'static str, Builtin, Help)> {
     ] {
         v.push((name, Builtin::Channel(ch), channel_help(ch)));
     }
+    for w in p5::P5Word::ALL {
+        v.push((w.name(), Builtin::P5(w), w.help()));
+    }
     v
 }
 
@@ -323,7 +329,14 @@ impl Dispatcher {
             registry: Arc::new(Mutex::new(registry)),
             text: CommandText::default(),
             history: History::new(),
+            p5: p5::P5Queue::default(),
         }
+    }
+
+    /// The requests the P5 built-ins queued ([`p5`]): the frame loop takes them.
+    #[must_use]
+    pub fn p5_queue(&self) -> &p5::P5Queue {
+        &self.p5
     }
 
     /// Takes the install's words (`chat-window.md` §10 items 3, 4, 6): the prefix, the
@@ -497,6 +510,7 @@ impl Dispatcher {
                 None => out.push(LocalLine::error(NO_PLUGINS)),
             },
             Builtin::Channel(ch) => self.channel(ch, inv, ctx, out),
+            Builtin::P5(word) => p5::run(word, &inv.arguments, &self.p5, out),
         }
     }
 

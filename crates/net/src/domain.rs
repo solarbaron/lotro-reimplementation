@@ -412,6 +412,14 @@ pub struct TravelEntry {
     pub destination: Ref,
     /// Its cost in coin.
     pub coin: u64,
+    /// The minimum level shown (P5 travel; 0 … 10,000), when scripted.
+    pub min_level: Option<u16>,
+    /// The row's marks (P5 travel).
+    pub flags: TravelFlags,
+    /// The route kind (P5 travel), when scripted.
+    pub route: Option<RouteMode>,
+    /// The area header the row is listed under (P5 travel), when scripted.
+    pub area: Option<Ref>,
 }
 
 /// One entry of an instance list.
@@ -421,6 +429,114 @@ pub struct InstanceEntry {
     pub entry: u16,
     /// The instance.
     pub instance: Ref,
+    /// The level shown (P5 travel; 1 … 10,000), when scripted.
+    pub level: Option<u16>,
+    /// The group-size key shown (P5 travel), when scripted.
+    pub size: Option<u32>,
+    /// The difficulty-tier key shown (P5 travel), when scripted.
+    pub tier: Option<u32>,
+    /// Whether the row is drawn in its error look (P5 travel).
+    pub locked: bool,
+}
+
+/// Largest minimum level of a travel row and level of an instance row (P5 travel).
+pub const MAX_ROW_LEVEL: u16 = 10_000;
+
+/// Largest map-note type key (P5 travel; keys 1 … 64).
+pub const MAX_NOTE_TYPE: u32 = 64;
+
+/// How a travel route goes (P5 travel, `scenario-feed.md` §9.1).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum RouteMode {
+    /// A swift route (loading screen).
+    Swift,
+    /// A slow route (ridden, with the end-travel box).
+    Slow,
+}
+
+/// The marks of a travel row (P5 travel, `scenario-feed.md` §9.1): bit 0 not discovered,
+/// bit 1 requirements not met, bit 2 not usable; the other bits are 0.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub struct TravelFlags(pub u8);
+
+impl TravelFlags {
+    /// No mark.
+    pub const NONE: Self = Self(0);
+    /// Bit 0: the destination is not discovered.
+    pub const UNDISCOVERED: Self = Self(1);
+    /// Bit 1: the requirements are not met.
+    pub const UNMET: Self = Self(2);
+    /// Bit 2: the destination is not usable.
+    pub const UNUSABLE: Self = Self(4);
+
+    /// Whether only bits 0 … 2 are set.
+    #[must_use]
+    pub fn is_valid(self) -> bool {
+        self.0 & !0b111 == 0
+    }
+
+    /// Whether every mark of `other` is set. Like any set inclusion this holds for
+    /// [`NONE`](Self::NONE); test one mark at a time to ask about a mark.
+    #[must_use]
+    pub fn contains(self, other: Self) -> bool {
+        self.0 & other.0 == other.0
+    }
+
+    /// Whether no mark is set.
+    #[must_use]
+    pub fn is_empty(self) -> bool {
+        self.0 == 0
+    }
+}
+
+impl std::ops::BitOr for TravelFlags {
+    type Output = Self;
+
+    fn bitor(self, rhs: Self) -> Self {
+        Self(self.0 | rhs.0)
+    }
+}
+
+impl std::ops::BitOrAssign for TravelFlags {
+    fn bitor_assign(&mut self, rhs: Self) {
+        self.0 |= rhs.0;
+    }
+}
+
+/// The instance-finder queue state (P5 travel, `scenario-feed.md` §9.1): the keywords of
+/// the `instance-queue` step in order. The client half maps `Confirm` … `WorldJoinQueue`
+/// to its player-state keys 1 … 7 and `None` to 0; `tessera-net` holds no data key.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum QueueState {
+    /// Not queued.
+    None,
+    /// The confirm page is open.
+    Confirm,
+    /// Queued.
+    Queued,
+    /// Waiting for the others to confirm.
+    OthersConfirm,
+    /// The join is pending.
+    JoinPending,
+    /// Confirming entry to the queue.
+    ConfirmEnterQueue,
+    /// Waiting for the others to confirm entry to the queue.
+    OthersConfirmEnterQueue,
+    /// In the world-join queue.
+    WorldJoinQueue,
+}
+
+/// A mount's vital (P5 travel, `scenario-feed.md` §9.1).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum MountVital {
+    /// Durability.
+    Durability,
+    /// Morale.
+    Morale,
+    /// Power.
+    Power,
+    /// Fury.
+    Fury,
 }
 
 /// One entry of a trainer window.
@@ -969,6 +1085,9 @@ pub enum WorldEvent {
         icon: Option<DataId>,
         /// The quest it belongs to.
         quest: Option<Ref>,
+        /// The map-note type (1 … 64) whose icon the client half draws when `icon` is
+        /// absent (P5 travel).
+        note_type: Option<u32>,
     },
     /// A map marker was removed.
     MarkerRemoved {
@@ -990,6 +1109,8 @@ pub enum WorldEvent {
         destination: Ref,
         /// Its duration in milliseconds.
         duration_ms: u32,
+        /// The route kind (P5 travel), when scripted.
+        route: Option<RouteMode>,
     },
     /// An entity's mount.
     MountChanged {
@@ -997,6 +1118,8 @@ pub enum WorldEvent {
         entity: EntityId,
         /// The mount, `None` for dismounted.
         mount: Option<Ref>,
+        /// Whether the mount is a combat mount (P5 travel), when scripted.
+        combat: Option<bool>,
     },
     /// An instance list window.
     InstanceListShown {
@@ -1004,11 +1127,37 @@ pub enum WorldEvent {
         window: WindowId,
         /// The entries.
         entries: Vec<InstanceEntry>,
+        /// The entity the window was opened from (P5 travel).
+        source: Option<EntityId>,
+        /// The featured instance (P5 travel).
+        featured: Option<Ref>,
     },
     /// The instance the player is in.
     InstanceChanged {
         /// The instance, `None` for the open world.
         instance: Option<Ref>,
+    },
+    /// The travel presentation ended (P5 travel).
+    TravelEnded,
+    /// A mount vital changed (P5 travel).
+    MountVitalChanged {
+        /// The rider.
+        entity: EntityId,
+        /// Which vital.
+        vital: MountVital,
+        /// Its current value (finite).
+        current: f32,
+        /// Its maximum (finite).
+        max: f32,
+    },
+    /// The instance-finder queue changed (P5 travel).
+    InstanceQueueChanged {
+        /// The queue state.
+        state: QueueState,
+        /// The instance queued for.
+        instance: Option<Ref>,
+        /// The scripted time in seconds (0 … 86,400).
+        seconds: Option<u32>,
     },
 }
 
@@ -1024,6 +1173,9 @@ impl WorldEvent {
             Self::MountChanged { .. } => "MountChanged",
             Self::InstanceListShown { .. } => "InstanceListShown",
             Self::InstanceChanged { .. } => "InstanceChanged",
+            Self::TravelEnded => "TravelEnded",
+            Self::MountVitalChanged { .. } => "MountVitalChanged",
+            Self::InstanceQueueChanged { .. } => "InstanceQueueChanged",
         }
     }
 }
@@ -1485,11 +1637,19 @@ pub enum WorldCommand {
         window: WindowId,
         /// The entry number.
         entry: u16,
+        /// The chosen group-size key (P5 travel).
+        size: Option<u32>,
+        /// The chosen difficulty-tier key (P5 travel).
+        tier: Option<u32>,
+        /// The chosen level (P5 travel; 1 … 10,000).
+        level: Option<u16>,
     },
     /// Leave the instance.
     LeaveInstance,
     /// Dismount.
     Dismount,
+    /// Leave the instance-finder queue (P5 travel).
+    LeaveQueue,
 }
 
 impl WorldCommand {
@@ -1501,6 +1661,7 @@ impl WorldCommand {
             Self::JoinInstance { .. } => "JoinInstance",
             Self::LeaveInstance => "LeaveInstance",
             Self::Dismount => "Dismount",
+            Self::LeaveQueue => "LeaveQueue",
         }
     }
 }
@@ -1659,7 +1820,15 @@ impl SocialCommand {
 
 impl WorldCommand {
     pub(crate) fn validate(&self) -> Result<(), &'static str> {
-        Ok(())
+        match self {
+            Self::JoinInstance {
+                level: Some(level), ..
+            } => check(
+                (1..=MAX_ROW_LEVEL).contains(level),
+                "instance level must be 1 … 10,000",
+            ),
+            _ => Ok(()),
+        }
     }
 }
 
@@ -1921,10 +2090,22 @@ impl SocialEvent {
 }
 
 impl WorldEvent {
-    /// Whether every location is valid.
+    /// Whether every location is valid and, for the P5 travel fields, every value lies in
+    /// its range (`scenario-feed.md` §9.6).
     pub(crate) fn is_valid(&self) -> bool {
         match self {
-            Self::MarkerAdded { location, .. } => location.is_valid(),
+            Self::MarkerAdded {
+                location,
+                note_type,
+                ..
+            } => location.is_valid() && note_type.is_none_or(|n| (1..=MAX_NOTE_TYPE).contains(&n)),
+            Self::TravelShown { entries, .. } => entries
+                .iter()
+                .all(|e| e.flags.is_valid() && e.min_level.is_none_or(|l| l <= MAX_ROW_LEVEL)),
+            Self::InstanceListShown { entries, .. } => entries
+                .iter()
+                .all(|e| e.level.is_none_or(|l| l <= MAX_ROW_LEVEL)),
+            Self::MountVitalChanged { current, max, .. } => current.is_finite() && max.is_finite(),
             _ => true,
         }
     }
@@ -1936,20 +2117,27 @@ impl WorldEvent {
                 let mut changed = false;
                 for e in entries {
                     changed |= clean_ref(&mut e.destination);
+                    changed |= clean_opt_ref(&mut e.area);
                 }
                 changed
             }
             Self::TravelStarted { destination, .. } => clean_ref(destination),
             Self::MountChanged { mount, .. } => clean_opt_ref(mount),
-            Self::InstanceListShown { entries, .. } => {
-                let mut changed = false;
+            Self::InstanceListShown {
+                entries, featured, ..
+            } => {
+                let mut changed = clean_opt_ref(featured);
                 for e in entries {
                     changed |= clean_ref(&mut e.instance);
                 }
                 changed
             }
-            Self::InstanceChanged { instance } => clean_opt_ref(instance),
-            Self::MarkerRemoved { .. } => false,
+            Self::InstanceChanged { instance } | Self::InstanceQueueChanged { instance, .. } => {
+                clean_opt_ref(instance)
+            }
+            Self::MarkerRemoved { .. } | Self::TravelEnded | Self::MountVitalChanged { .. } => {
+                false
+            }
         }
     }
 }

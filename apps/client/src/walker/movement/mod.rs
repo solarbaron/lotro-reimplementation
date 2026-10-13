@@ -607,6 +607,12 @@ pub struct PhysicsWalker {
     cell: Option<(LandblockKey, u16)>,
     required: Vec<LandblockKey>,
     check_placement: bool,
+    /// The mounted rider's runtime (`walker.md` §16.6), while a mount is involved.
+    mount: Option<crate::walker::mount::ride::MountMover>,
+    /// Events of a mount that has ended (taken by [`PhysicsWalker::take_mount_events`]).
+    mount_events: Vec<crate::walker::mount::state::MountEvent>,
+    /// The keyboard turn of the current frame, turn right − turn left (`Slider_Turn`).
+    turn_input: f32,
 }
 
 impl PhysicsWalker {
@@ -642,7 +648,50 @@ impl PhysicsWalker {
             cell: None,
             required: Vec::new(),
             check_placement: false,
+            mount: None,
+            mount_events: Vec::new(),
+            turn_input: 0.0,
         }
+    }
+
+    /// Puts a mount on the rider (`walker.md` §16.5), replacing any mount, or takes it away
+    /// at once (`None`; the controller is on foot again).
+    pub fn set_mount(&mut self, mover: Option<crate::walker::mount::ride::MountMover>) {
+        if let Some(mut old) = self.mount.take() {
+            old.release(&mut self.controller);
+        }
+        self.mount = mover;
+    }
+
+    /// The mounted rider's runtime, while a mount is involved (it is removed once the
+    /// mount is on foot and faded out).
+    #[must_use]
+    pub fn mount(&self) -> Option<&crate::walker::mount::ride::MountMover> {
+        self.mount.as_ref()
+    }
+
+    /// The mounted rider's runtime, for requests (dismount, interrupt).
+    pub fn mount_mut(&mut self) -> Option<&mut crate::walker::mount::ride::MountMover> {
+        self.mount.as_mut()
+    }
+
+    /// The mount events since the last call (cancels, water dismounts).
+    pub fn take_mount_events(&mut self) -> Vec<crate::walker::mount::state::MountEvent> {
+        let mut out = std::mem::take(&mut self.mount_events);
+        if let Some(m) = &mut self.mount {
+            out.extend(m.take_events());
+        }
+        out
+    }
+
+    /// Sets the keyboard turn input (turn right − turn left, −1 … 1) for the mounted rules
+    /// of the next steps (scripted walks; [`PhysicsWalker::frame`] sets it from its turn).
+    pub fn set_turn_input(&mut self, turn: f32) {
+        self.turn_input = if turn.is_finite() {
+            turn.clamp(-1.0, 1.0)
+        } else {
+            0.0
+        };
     }
 
     /// Landblocks every step needs besides those around the feet (at most
@@ -703,6 +752,15 @@ impl PhysicsWalker {
         };
         if !self.controller.set_state(state) {
             return false;
+        }
+        // `walker.md` §16.5: teleports keep the mount state (summoning is cancelled), and the
+        // mover stands still, so a war-steed's stored speed and gear go too.
+        if let Some(d) = self.controller.war_steed_mut() {
+            d.velocity = [0.0; 2];
+            d.last = None;
+        }
+        if let Some(m) = &mut self.mount {
+            m.teleported();
         }
         self.region = region;
         self.previous = *self.controller.state();
@@ -857,6 +915,12 @@ impl PhysicsWalker {
     #[must_use]
     pub fn controller(&self) -> &Controller {
         &self.controller
+    }
+
+    /// The controller, for tests that set its state directly.
+    #[cfg(test)]
+    pub(crate) fn controller_mut(&mut self) -> &mut Controller {
+        &mut self.controller
     }
 
     /// The region.
@@ -1053,10 +1117,31 @@ impl PhysicsWalker {
             self.controller.set_conditions(c);
         }
         self.walking = walking;
+        // Mounted riders (`walker.md` §16.6): conditions, speed factor or war-steed drive.
+        let ride = crate::walker::mount::ride::RideInput {
+            x: frame.x,
+            y: frame.y,
+            walking,
+            turn: if frame.turn != 0.0 {
+                frame.turn
+            } else {
+                self.turn_input
+            },
+            jump,
+        };
+        if let Some(m) = &mut self.mount {
+            m.before_step(&mut self.controller, &ride, STEP_SECONDS);
+        }
         let target_speed = {
             let p = self.controller.params();
-            let (f, side) = target_velocity(input.strafe, input.forward, &p, 1.0);
-            f.hypot(side)
+            match self.controller.war_steed() {
+                Some(d) => d.last.map_or(0.0, |l| l.limit),
+                None => {
+                    let m = self.controller.speed_multiplier();
+                    let (f, side) = target_velocity(input.strafe, input.forward, &p, m);
+                    f.hypot(side)
+                }
+            }
         };
         let pins = self.step_pins(world);
         if self.check_placement {
@@ -1080,8 +1165,22 @@ impl PhysicsWalker {
                 ..before
             };
             self.controller.set_state(held);
+            // The hold stops a ridden war-steed too: its stored control velocity is what
+            // moves the mover (`mounts.md` §5.4), so it is zeroed with the mover's.
+            if let Some(d) = self.controller.war_steed_mut() {
+                d.velocity = [0.0; 2];
+                d.last = None;
+            }
         }
         self.previous = before;
+        if let Some(m) = &mut self.mount {
+            m.after_step(&self.controller, &ride, STEP_SECONDS);
+            if !m.state().active() {
+                self.mount_events.extend(m.take_events());
+                m.release(&mut self.controller);
+                self.mount = None;
+            }
+        }
         let state = *self.controller.state();
         let cell = self.track_cell(&view, world, state.position);
         let (contacts, obstacle, penetration) = if self.details {
@@ -1213,9 +1312,17 @@ impl PhysicsWalker {
                 out.waiting = true;
                 break;
             }
+            // `Slider_Turn` is turn right − turn left; a positive `turn` turns left.
+            self.turn_input = if turn.is_finite() && turn != 0.0 {
+                -turn.signum()
+            } else {
+                0.0
+            };
+            // A ridden war-steed turns at its own rate (`mounts.md` §5.6).
+            let scale = self.mount.as_ref().map_or(1.0, |m| m.turn_scale());
             let heading = input.heading.unwrap_or(self.state().heading)
                 + if turn.is_finite() {
-                    turn * STEP_SECONDS
+                    turn * scale * STEP_SECONDS
                 } else {
                     0.0
                 };

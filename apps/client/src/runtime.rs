@@ -110,6 +110,11 @@ pub struct Runtime {
     pub quests: crate::quests::QuestHub,
     /// `--character-select`: the world session waits for the character screens.
     character_select: bool,
+    /// Travel, the instance finder and mounts (decision 0024 P5): the windows' install
+    /// names, the session's mount model and plugin source, the walker's feed mounts.
+    pub p5: crate::travel::TravelHub,
+    /// The map windows (decision 0024 P5): the install's map facts and the map window.
+    pub map: crate::map::MapHub,
 }
 
 /// Most session chat lines held for the game UI until it takes them.
@@ -338,7 +343,37 @@ impl Runtime {
             )
             .with_icons(args.quest_icons),
             character_select: args.character_select,
+            p5: crate::travel::TravelHub::new(
+                args.open_panel
+                    .iter()
+                    .filter_map(|n| crate::travel::parse_travel_panel(n))
+                    .collect(),
+            ),
+            map: crate::map::MapHub::new(
+                args.open_panel
+                    .iter()
+                    .any(|n| crate::map::parse_map_panel(n)),
+            )
+            .with_ui(args.ui && !args.headless)
+            .with_content_layer(args.content_layers.first().copied())
+            .with_saved_prefs(),
         })
+    }
+
+    /// Whether the map facts are still to come: their loader runs, the archives are
+    /// loading, or the P1 data they start from is still loading (`findplace` without the
+    /// game UI waits for them).
+    #[must_use]
+    pub fn map_facts_pending(&self) -> bool {
+        if self.map.facts().is_some() {
+            return false;
+        }
+        self.map.is_loading()
+            || matches!(self.status, DataStatus::Loading)
+            || (self.load_p1
+                && matches!(self.status, DataStatus::Ready { .. })
+                && !self.map.started()
+                && self.p1.failure().is_none())
     }
 
     /// Starts the walker's sandbox session with the avatar's appearance and the crowd's
@@ -498,6 +533,7 @@ impl Runtime {
                 if self.load_p1 {
                     self.p1.start_loading(root.clone());
                     self.npc.start_refs(Arc::clone(&set));
+                    self.p5.start_refs(Arc::clone(&set));
                 }
                 self.status = DataStatus::Ready { root, stats };
                 self.archives = Some(set);
@@ -546,8 +582,28 @@ impl Runtime {
             self.p1.resync(w.player_state());
         }
         self.npc.poll(self.p1.data());
+        // P5 (map, travel, mounts): the install names and the map facts load off the frame.
+        self.p5.poll();
+        self.map.poll();
+        if self.load_p1
+            && let (Some(c), Some(set), DataStatus::Ready { root, .. }) =
+                (self.p1.data(), &self.archives, &self.status)
+        {
+            self.map
+                .start(Arc::clone(c), Arc::clone(set), Some(root.clone()));
+        }
         if let Some(world) = &mut self.world {
             world.update(now);
+            // The P5 changes: the plugin mount views and the walker's feed mounts.
+            let p5 = world.take_p5_changes();
+            if !p5.is_empty() {
+                self.p5.after_events(
+                    &p5,
+                    world.player(),
+                    self.npc.data().map(|d| &**d),
+                    self.plugins.manager_mut(),
+                );
+            }
             let changes = world.take_player_changes();
             self.npc.after_events(
                 &changes,

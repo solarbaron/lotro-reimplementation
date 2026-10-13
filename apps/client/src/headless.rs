@@ -132,7 +132,8 @@ pub fn run(args: &Args) -> anyhow::Result<HeadlessReport> {
 pub fn run_with(args: &Args, wait: SettleWait) -> anyhow::Result<HeadlessReport> {
     if args.walk_path.is_some() {
         // Scripted walks need no GPU (`walker::movement::run`).
-        let report = crate::walker::movement::run::run_cli(args)?;
+        // `--mount SPEC` rides every walk (P5, `walker.md` §16.8).
+        let report = crate::walker::movement::run::run_cli_mounted(args, args.mount)?;
         if report.failed > 0 {
             bail!(
                 "{} of {} scripted walks failed",
@@ -235,6 +236,9 @@ pub fn run_with(args: &Args, wait: SettleWait) -> anyhow::Result<HeadlessReport>
             now,
             dt,
         );
+        // P5: `/ride` (also from `--command`), `/findplace`, `/leaveinstance`, the feed's
+        // player mounts and the plugin mount views.
+        crate::travel::hub::run_p5_requests(&mut rt, walker, now);
         // A renderer error ends the loop through `finish`, which still shuts the walker
         // down and writes what it can.
         let drawn = (|| -> anyhow::Result<()> {

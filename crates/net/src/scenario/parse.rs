@@ -77,6 +77,8 @@ pub(crate) enum Binding {
     Page(u32),
     Marker(u32),
     Look(u32),
+    /// A marker set (P5 travel, §5.3).
+    MarkerSet(u32),
 }
 
 /// An open block.
@@ -208,6 +210,7 @@ impl Parser {
                 items: Vec::new(),
                 pages: Vec::new(),
                 markers: Vec::new(),
+                marker_sets: Vec::new(),
                 steps: Vec::new(),
                 top: Vec::new(),
                 triggers: Vec::new(),

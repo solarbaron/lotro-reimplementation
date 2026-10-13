@@ -22,7 +22,7 @@
 //!    vertices deformed once in bind space by the figure's deformation; materials
 //!    resolved with the part's appearance layers (`material.md` §9.3), then the species
 //!    table's composited face texture and material edits (`appearance.md` §3.5, §8 step 6;
-//!    [`figure_look`], shared with the explorer), into the walker's material plans; held items' parts prepared rigid, keyed by holding location, with an
+//!    `figure_look`, shared with the explorer), into the walker's material plans; held items' parts prepared rigid, keyed by holding location, with an
 //!    attach table of the wearer's locations (`skeleton-anim.md` §8.4), each with its
 //!    stowed or wielded placement (`appearance.md` §5.6).
 //!
@@ -553,7 +553,7 @@ impl ClipStore {
     }
 
     /// `did` bound to `skeleton`, with baked frames when they fit the bake budget.
-    fn bind(
+    pub(crate) fn bind(
         &self,
         set: &ArchiveSet,
         did: u32,
@@ -1174,40 +1174,41 @@ fn start_fraction(c: &ClipCandidate, seed: u64) -> f32 {
     }
 }
 
-/// Chooses idle, walk and run (`script-table.md` §11.3). Idle: every looping candidate,
-/// the most likely per data layer (the original layers them, §6.2; a figure whose base
-/// idle is a reference stance shows its stance from a higher layer); without a looping one
-/// the most likely candidate of the `idle` layer, else of any layer. Walk and run: the
-/// most likely candidate on the `movement` layer, else of any layer that is not an idle
-/// clip. Held clips (`ManualUpdate`, §6.7) are never idle, walk or run clips: they are
-/// returned apart, with the figure's other shape inputs ([`figure_shape`]).
-fn select_clips(
-    ctx: &FigureContext,
+/// The script vocabulary, the entity's scripts and the values set after its start-up
+/// ([`prepare_figure_scripts`]).
+pub(crate) type PreparedScripts = (
+    tessera_formats::script_table::resolve::ScriptVocabulary,
+    tessera_formats::script_table::resolve::EntityScripts,
+    Vec<(u32, PropertyValue)>,
+);
+
+/// The script state of an assembled figure before clip selection (shared by the figure's
+/// clip choice and the walker's mounted evaluation, `mounts.md` §14.5): the vocabulary, the
+/// entity's scripts with its instance set, the options and appearance values of its lookup
+/// (`appearance.md` §3.3, §3.5), the character-screen stage when it has one, and the values
+/// set after its start-up. `None` (with a note) when the install lacks the script vocabulary
+/// or the scripts cannot be collected.
+pub(crate) fn prepare_figure_scripts(
+    cat: &CharacterCatalog,
+    options: AssemblyOptions,
     c: &AssembledCharacter,
-    skeleton: &Arc<AnimSkeleton>,
     req: &FigureRequest,
     notes: &mut Vec<String>,
-) -> (FigureClips, FigureShape, Vec<ScriptAppearance>, FigureLook) {
-    let seed = req.seed;
-    let cat = &ctx.catalog;
+) -> Option<PreparedScripts> {
     let data = &cat.data;
-    let mut out = FigureClips::default();
-    let mut shape = FigureShape::default();
-    let mut appearances = Vec::new();
-    let mut look = FigureLook::default();
     let Some(vocab) = cat.scripts.clone() else {
         notes.push("no script vocabulary; not animated".into());
-        return (out, shape, appearances, look);
+        return None;
     };
     let Ok(registry) = data.registry() else {
-        return (out, shape, appearances, look);
+        return None;
     };
     let dict = registry.dictionary();
     let chain = match collect_entity_scripts(c.clip_inputs.start, dict, &vocab, |d| data.read(d)) {
         Ok(ch) => ch,
         Err(e) => {
             notes.push(format!("scripts of {}: {e}", c.clip_inputs.start));
-            return (out, shape, appearances, look);
+            return None;
         }
     };
     let mut scripts = chain.scripts;
@@ -1217,7 +1218,7 @@ fn select_clips(
     // The options the figure's lookup answers first and the character's own appearance
     // values (`appearance.md` §3.3, §3.5).
     if let Some(asm) = &cat.assembly {
-        apply_figure_properties(&mut scripts, c, asm, ctx.assembly);
+        apply_figure_properties(&mut scripts, c, asm, options);
     }
     // A figure in the walker is placed in the world: `Physics_InWorld` turns true after its
     // start-up; a figure on a character screen carries its `CharGen_Stage` from the start
@@ -1255,6 +1256,39 @@ fn select_clips(
         (Some(_), None) => Vec::new(),
         (None, asm) => asm.map(figure_after_startup).unwrap_or_default(),
     };
+    Some((vocab, scripts, after_startup))
+}
+
+/// Chooses idle, walk and run (`script-table.md` §11.3). Idle: every looping candidate,
+/// the most likely per data layer (the original layers them, §6.2; a figure whose base
+/// idle is a reference stance shows its stance from a higher layer); without a looping one
+/// the most likely candidate of the `idle` layer, else of any layer. Walk and run: the
+/// most likely candidate on the `movement` layer, else of any layer that is not an idle
+/// clip. Held clips (`ManualUpdate`, §6.7) are never idle, walk or run clips: they are
+/// returned apart, with the figure's other shape inputs ([`figure_shape`]).
+fn select_clips(
+    ctx: &FigureContext,
+    c: &AssembledCharacter,
+    skeleton: &Arc<AnimSkeleton>,
+    req: &FigureRequest,
+    notes: &mut Vec<String>,
+) -> (FigureClips, FigureShape, Vec<ScriptAppearance>, FigureLook) {
+    let seed = req.seed;
+    let cat = &ctx.catalog;
+    let data = &cat.data;
+    let mut out = FigureClips::default();
+    let mut shape = FigureShape::default();
+    let mut appearances = Vec::new();
+    let mut look = FigureLook::default();
+    let Some((vocab, scripts, after_startup)) =
+        prepare_figure_scripts(cat, ctx.assembly, c, req, notes)
+    else {
+        return (out, shape, appearances, look);
+    };
+    let Ok(registry) = data.registry() else {
+        return (out, shape, appearances, look);
+    };
+    let dict = registry.dictionary();
     let mut resolver = ClipResolver::new(dict, vocab, |d: Did| data.read(d))
         .with_dictionary_defaults(dict)
         .with_random_seed(Some(seed.unwrap_or(0)))

@@ -56,6 +56,7 @@ pub(crate) mod jobs;
 pub mod liquid;
 pub mod looks;
 pub(crate) mod minimap;
+pub mod mount;
 pub mod movement;
 pub(crate) mod objects;
 pub mod parse;
@@ -170,6 +171,12 @@ pub trait WalkerSession {
     fn scenario_line(&self, now: Instant) -> Option<String> {
         let _ = now;
         None
+    }
+    /// Sends the scenario feed's `dismount` world command for the player (`walker.md`
+    /// §16.1); `false` when it was not sent. The default sends nothing.
+    fn send_dismount(&mut self, now: Instant) -> bool {
+        let _ = now;
+        false
     }
     /// The install's creation controls received looks are read with (decision 0025 D2),
     /// once loaded. The default has none (figures then show no look).
@@ -476,6 +483,9 @@ pub struct WalkerConfig {
     pub far_view: farview::FarViewConfig,
     /// Draw the HUD and the minimap.
     pub hud: bool,
+    /// The mount the avatar rides from the start (`--mount SPEC`, `walker.md` §16.2: the
+    /// default timing is instant, mounted when the walk controller is first placed).
+    pub mount: Option<mount::MountChoice>,
 }
 
 /// A scripted free-fly camera of a timing run (`m4-5-visual.md` §3): a loop flown at a
@@ -538,6 +548,7 @@ impl Default for WalkerConfig {
             far_band: DEFAULT_FAR_BAND,
             far_view: farview::FarViewConfig::default(),
             hud: true,
+            mount: None,
         }
     }
 }
@@ -781,6 +792,10 @@ pub struct Walker {
     show_hud: bool,
     /// Draw the walker minimap (`walker_minimap`, `walker.md` §6).
     show_minimap: bool,
+    /// Mounts (`walker.md` §16).
+    mount: mount::session::WalkerMount,
+    /// [`Walker::set_mount_server`] was called with true.
+    mount_server: bool,
 }
 
 /// How often the indoor record's interior overrides are re-read while the camera stays in
@@ -966,6 +981,9 @@ impl Walker {
             pool.clone(),
             ctx.options().active_content_layers.clone(),
         );
+        // Mounts (`walker.md` §16): resolved against the install when requested.
+        let mut mount = mount::session::WalkerMount::new(config.mount, set.dir().to_path_buf());
+        mount.set_rider(catalog.appearance(&config.avatar).ok().map(|a| a.body));
         // The collision walk mode: the mover (capsule, movement record, conditions) loads on
         // its own thread (locating the movement record reads the 0x79 sets).
         let mover_job = if config.collision_walk && ctx.options().build_collision {
@@ -1084,6 +1102,8 @@ impl Walker {
             scenario_line: None,
             show_hud: true,
             show_minimap: true,
+            mount,
+            mount_server: false,
         })
     }
 
@@ -1194,6 +1214,136 @@ impl Walker {
     #[must_use]
     pub fn systems(&self) -> Systems {
         self.systems
+    }
+
+    /// Mounts `spec` (`walker.md` §16.2–§16.5; `/ride SPEC`): the chat command's and the
+    /// key's default timing (summon) applies unless the spec says otherwise. Resolution and
+    /// evaluation run on worker threads; refusals show on the HUD and as chat lines.
+    pub fn mount(&mut self, spec: mount::MountSpec) {
+        let ctx = self.mount_context();
+        let figures = self.characters.figure_context().cloned();
+        self.mount.request(
+            spec,
+            true,
+            self.controls.physics(),
+            figures.as_ref(),
+            ctx,
+            Instant::now(),
+        );
+    }
+
+    /// Mounts the mount effect (or the skill toggling one) `did`, with summoning or at once:
+    /// the scenario feed's `mount` step for the player (`MountChanged`, `walker.md` §16.1),
+    /// accepted in scenario sessions.
+    pub fn mount_effect(&mut self, did: u32, summon: bool) {
+        let ctx = self.mount_context();
+        let figures = self.characters.figure_context().cloned();
+        self.mount.request_effect(
+            did,
+            summon,
+            self.controls.physics(),
+            figures.as_ref(),
+            ctx,
+            Instant::now(),
+        );
+    }
+
+    /// Dismounts by the player (`/ride off`, `walker.md` §16.3): cancels summoning or a
+    /// pending request. In a scenario session a dismount while mounted is sent as the feed's
+    /// `dismount` world command ([`WalkerSession::send_dismount`]) and changes nothing locally.
+    pub fn dismount(&mut self) {
+        let ctx = self.mount_context();
+        self.mount
+            .dismount(self.controls.physics_mut(), ctx, Instant::now());
+    }
+
+    /// Dismounts by another cause at once (the feed's `none`, `walker.md` §16.1: status 6,
+    /// no wait); cancels summoning or a pending request.
+    pub fn dismount_by_other(&mut self) {
+        self.mount
+            .interrupt(self.controls.physics_mut(), Instant::now());
+    }
+
+    /// `/ride` without arguments and the `toggle_mount` action (`walker.md` §16.3, §16.4).
+    pub fn toggle_mount(&mut self) {
+        let ctx = self.mount_context();
+        let figures = self.characters.figure_context().cloned();
+        self.mount.toggle(
+            self.controls.physics_mut(),
+            figures.as_ref(),
+            ctx,
+            Instant::now(),
+        );
+    }
+
+    /// `/ride list PAGE` (`walker.md` §16.3): the body's offered mounts are posted as `Log`
+    /// lines to the chat once read.
+    pub fn list_mounts(&mut self, page: u16) {
+        self.mount.list(page, Instant::now());
+    }
+
+    /// Refuses every mount request (a `--server` session, `walker.md` §16.1). The walker also
+    /// refuses them on its own whenever its session has a remote link.
+    pub fn set_mount_server(&mut self, on: bool) {
+        self.mount_server = on;
+        self.mount.set_server(on);
+    }
+
+    /// The mount columns of the current frame (`walker.md` §16.10).
+    #[must_use]
+    pub fn mount_row(&self) -> framelog::MountRow {
+        self.mount.log_row(self.controls.physics())
+    }
+
+    fn mount_context(&self) -> mount::session::Context {
+        mount::session::Context {
+            server: self.mount.server(),
+            fly: self.controls.mode() == MoveMode::Fly,
+            scenario: self.scenario_line.is_some(),
+            area: self.mount_area(),
+        }
+    }
+
+    /// The area at the walking feet for the mount check (`walker.md` §16.5, `mounts.md`
+    /// §14.12): in a cell its `Area_DID` and `Dungeon_DID`, outdoors the block's `Area_DID`;
+    /// unknown when the landblock or the property is not at hand.
+    fn mount_area(&self) -> mount::profile::AreaAt {
+        use mount::profile::AreaAt;
+        let Some(p) = self.controls.physics() else {
+            return AreaAt::Unknown;
+        };
+        if let Some((key, cell)) = p.cell() {
+            let props = self
+                .streamer
+                .bundle(key)
+                .and_then(|b| b.info.as_ref())
+                .and_then(|i| i.cells.as_ref())
+                .and_then(|c| c.items.iter().find(|c| c.index == cell))
+                .and_then(|c| c.properties.as_ref());
+            let Some(props) = props else {
+                return AreaAt::Unknown;
+            };
+            let dungeon_pid = self
+                .characters
+                .figure_context()
+                .and_then(|f| f.catalog.data.registry().ok())
+                .and_then(|r| r.pid("Dungeon_DID"));
+            let did = |pid: Option<u32>| {
+                pid.and_then(|p| props.get(p)).and_then(|v| match v {
+                    tessera_formats::PropertyValue::DidRef(d) if !d.is_null() => Some(*d),
+                    _ => None,
+                })
+            };
+            return AreaAt::Cell {
+                area: did(self.ctx.pids().landblock.area_did),
+                dungeon: did(dungeon_pid),
+            };
+        }
+        self.streamer
+            .block_props_at(&p.feet())
+            .and_then(|b| b.area)
+            .filter(|d| !d.is_null())
+            .map_or(AreaAt::Unknown, AreaAt::Outdoors)
     }
 
     /// Hands the frill switch to the streamer's frill ring.
@@ -1485,6 +1635,9 @@ impl Walker {
                 .map(|s| hud::net_line(&s));
             self.scenario_line = w.scenario_line(now);
         }
+        // `walker.md` §16.1: a session with a remote link refuses mounts.
+        self.mount
+            .set_server(self.mount_server || self.net_line.is_some());
         let mut chars_ms = t_chars.elapsed().as_secs_f64() * 1e3;
 
         // Input and movement: walk mode on collision once the mover has loaded.
@@ -1525,7 +1678,25 @@ impl Walker {
         }
         if ce.mode_changed {
             self.notice(format!("{} mode", self.controls.mode().name()));
+            // `walker.md` §16.1: fly mode cancels summoning and dismounts by other.
+            if self.controls.mode() == MoveMode::Fly {
+                self.mount.interrupt(self.controls.physics_mut(), now);
+            }
         }
+        // The `toggle_mount` action (`walker.md` §16.4) does what `/ride` does.
+        if ce.toggle_mount {
+            self.toggle_mount();
+        }
+        // Mounts (`walker.md` §16.8): requests, the mover, clips, the camera's offsets.
+        let mount_ctx = self.mount_context();
+        let offsets = self.mount.frame(
+            self.controls.physics_mut(),
+            &mut self.characters,
+            mount_ctx,
+            now,
+            dt,
+        );
+        self.controls.set_camera_offset(offsets);
         if let Some(done) = self.fly(now) {
             events.flight_done = done;
         }
@@ -1803,6 +1974,20 @@ impl Walker {
             self.notice = None;
         }
         chat::dispatch(&mut self.chat, commands, &mut world, now);
+        // Mount refusals, interruptions and listings (`walker.md` §16.3), and a scenario
+        // dismount for the feed (§16.1).
+        for line in self.mount.take_messages() {
+            self.chat.push_local_line(&line, now);
+        }
+        if self.mount.take_feed_dismount()
+            && let Some(w) = world.as_deref_mut()
+            && !w.send_dismount(now)
+        {
+            self.chat.push_local_line(
+                &crate::commands::LocalLine::error("The dismount could not be sent."),
+                now,
+            );
+        }
         let scale = if self.viewport.1 >= 1000 { 2 } else { 1 };
         self.chat.refresh(renderer, now, scale, self.viewport.0);
         if let Some(w) = world {
@@ -2441,6 +2626,10 @@ impl Walker {
                 ),
                 GREY,
             ));
+        }
+        // `walker.md` §16.9: the mount line below the movement-state line.
+        if let Some(line) = self.mount.hud_line(self.controls.physics(), now) {
+            out.push((line, GOLD));
         }
         if let Some(f) = &self.frame_env {
             let hours = f.time_of_day * 24.0;
@@ -3096,6 +3285,7 @@ impl Walker {
             phase_ms: self.phase_ms,
             ..framelog::FxRow::default()
         };
+        let mount_row = self.mount.log_row(self.controls.physics());
         let Some(log) = &mut self.log else { return };
         log.push(FrameRow {
             t: start
@@ -3128,6 +3318,7 @@ impl Walker {
             y: p.y,
             z: p.z,
             fx: fx_row,
+            mount: mount_row,
         });
     }
 

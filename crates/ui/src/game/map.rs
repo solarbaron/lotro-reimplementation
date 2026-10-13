@@ -46,6 +46,94 @@ impl Georef {
             self.pixel_y.saturating_sub(ty),
         )
     }
+
+    /// Map pixel → world point, the inverse of [`Georef::to_pixel`] (`map-windows.md`
+    /// §3.4): *G*x = 160·*bx* + (*px* − *px*0) / *s*, *G*y = 160·*by* + (*py*0 − *py*) / *s*.
+    /// `None` when the scale is 0 (or not finite), or the result is not finite.
+    #[must_use]
+    pub fn to_world(&self, px: i32, py: i32) -> Option<(f32, f32)> {
+        if self.scale == 0.0 || !self.scale.is_finite() {
+            return None;
+        }
+        #[allow(clippy::cast_precision_loss)]
+        let gx = 160.0 * self.block_x as f32 + (px as f32 - self.pixel_x as f32) / self.scale;
+        #[allow(clippy::cast_precision_loss)]
+        let gy = 160.0 * self.block_y as f32 + (self.pixel_y as f32 - py as f32) / self.scale;
+        (gx.is_finite() && gy.is_finite()).then_some((gx, gy))
+    }
+
+    /// World point → map pixel for a point whose region or instance differs from the map's
+    /// origin (`map-windows.md` §6.1, MW18): the block difference is replaced by
+    /// [`OTHER_REGION_OFFSET`] on each axis and the point's offsets inside its block still
+    /// add (§10.2), so the pixel lies far outside every frame.
+    #[must_use]
+    pub fn to_pixel_far(&self, gx: f32, gy: f32) -> (i32, i32) {
+        let dx = OTHER_REGION_OFFSET + block_local(gx);
+        let dy = OTHER_REGION_OFFSET + block_local(gy);
+        #[allow(clippy::cast_possible_truncation)]
+        let tx = (dx * self.scale) as i32;
+        #[allow(clippy::cast_possible_truncation)]
+        let ty = (dy * self.scale) as i32;
+        (
+            self.pixel_x.saturating_add(tx),
+            self.pixel_y.saturating_sub(ty),
+        )
+    }
+}
+
+/// The fixed offset, in world units on each axis, that replaces the block difference for a
+/// point of another region or instance (`map-windows.md` §6.1, BIN MW18).
+pub const OTHER_REGION_OFFSET: f32 = -2000.0;
+
+/// Width of a landblock in world units (`coordinates.md` §10).
+pub const BLOCK_UNITS: f32 = 160.0;
+
+/// A global coordinate's offset inside its landblock, 0 ≤ offset < 160 (0 for a value that
+/// is not finite).
+#[must_use]
+pub fn block_local(g: f32) -> f32 {
+    if g.is_finite() {
+        g.rem_euclid(BLOCK_UNITS)
+    } else {
+        0.0
+    }
+}
+
+/// A world point as the map overlays place it (`map-windows.md` §6.1): global coordinates
+/// (CO §10), the region (CO §7) and the instance (0 outside an instance).
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct MapPoint {
+    /// Global coordinates.
+    pub global: (f32, f32),
+    /// Region (0 when unknown).
+    pub region: u8,
+    /// Instance (0 outside an instance).
+    pub instance: u32,
+}
+
+/// World point → map pixel on a map whose origin lies in `origin_region` and
+/// `origin_instance` (`map-windows.md` §6.1): the map's own region (a node's
+/// `UI_Map_RegionID`), or, for a map without one (`None`: the root, a dungeon map), the
+/// point's own region. A point of another region or instance takes
+/// [`Georef::to_pixel_far`].
+///
+/// Tessera reading (§6.1 names no instance for a map's origin): the origin instance of a
+/// node is 0 (`Some(0)`); a map without a region takes the point's own instance (`None`),
+/// as it takes the point's region.
+#[must_use]
+pub fn pixel_in_region(
+    g: &Georef,
+    origin_region: Option<u8>,
+    origin_instance: Option<u32>,
+    p: &MapPoint,
+) -> (i32, i32) {
+    let region = origin_region.unwrap_or(p.region);
+    let instance = origin_instance.unwrap_or(p.instance);
+    if p.region != region || p.instance != instance {
+        g.to_pixel_far(p.global.0, p.global.1)
+    } else {
+        g.to_pixel(p.global.0, p.global.1)
+    }
 }
 
 /// A decoded `UI_Map_GameMap` struct (`landblock.md` §6.2, `game-panels.md` §8.4–§8.5).

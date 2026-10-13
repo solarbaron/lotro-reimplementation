@@ -211,6 +211,7 @@ impl Parser {
             "delete-character" => (Pattern::DeleteCharacter(opt_name(self, st)?), 1),
             "close" => (Pattern::Close(self.window_kind(st.arg(0)?)?), 1),
             "buy-back" => (Pattern::BuyBack(entry(self, st)?), 0),
+            "leave-queue" => (Pattern::LeaveQueue, 0),
             _ => return Err(self.unknown_word(word, col)),
         };
         st.no_more(max_pos)?;
@@ -310,6 +311,7 @@ impl Parser {
             "offer-trade" => &["qty", "coin"],
             "craft" => &["qty"],
             "create-character" => &["class", "species", "sex", "nationality", "look"],
+            "join-instance" => &["size", "tier", "level"],
             _ => &[],
         };
         let mut st = self.split(tokens, 1, keys)?;
@@ -489,7 +491,25 @@ impl Parser {
                 let e = self.u16_in(t, t.col, 1, 1024)?;
                 let c = match word {
                     "choose-travel" => InputCmd::ChooseTravel(e),
-                    "join-instance" => InputCmd::JoinInstance(e),
+                    "join-instance" => {
+                        // P5 travel options (§7.7).
+                        let (size, tier) = self.size_tier_opts(&mut st)?;
+                        let level = match st.opt("level") {
+                            Some((v, c)) => Some(self.u16_in(
+                                &v,
+                                c,
+                                1,
+                                i128::from(crate::domain::MAX_ROW_LEVEL),
+                            )?),
+                            None => None,
+                        };
+                        InputCmd::JoinInstance {
+                            entry: e,
+                            size,
+                            tier,
+                            level,
+                        }
+                    }
                     _ => InputCmd::Train(e),
                 };
                 (c, 1)
@@ -555,6 +575,7 @@ impl Parser {
                 let t = st.arg(0)?;
                 (InputCmd::BuyBack(self.u16_in(t, t.col, 1, 1024)?), 1)
             }
+            "leave-queue" => (InputCmd::LeaveQueue, 0),
             _ => return Err(self.unknown_word(word, wt.col)),
         };
         st.no_more(n)?;

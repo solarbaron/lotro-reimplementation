@@ -453,10 +453,25 @@ impl InputPlayer {
                 window: self.window(WindowKind::Travel)?,
                 entry: *e,
             }),
-            InputCmd::JoinInstance(e) => Command::World(WorldCommand::JoinInstance {
-                window: self.window(WindowKind::Instances)?,
-                entry: *e,
-            }),
+            InputCmd::JoinInstance {
+                entry,
+                size,
+                tier,
+                level,
+            } => {
+                // An unresolved `size=` or `tier=` label skips the line (P5 travel, §7.7).
+                let key = |e: &Option<super::ast::EnumArg>| match e {
+                    Some(e) => self.sc.enum_value(*e).map(Some),
+                    None => Some(None),
+                };
+                Command::World(WorldCommand::JoinInstance {
+                    window: self.window(WindowKind::Instances)?,
+                    entry: *entry,
+                    size: key(size)?,
+                    tier: key(tier)?,
+                    level: *level,
+                })
+            }
             InputCmd::LeaveInstance => Command::World(WorldCommand::LeaveInstance),
             InputCmd::Dismount => Command::World(WorldCommand::Dismount),
             InputCmd::Train(e) => Command::Progression(ProgressionCommand::TrainSkill {
@@ -511,6 +526,7 @@ impl InputPlayer {
                 window: self.window(WindowKind::Vendor)?,
                 entry: *entry,
             }),
+            InputCmd::LeaveQueue => Command::World(WorldCommand::LeaveQueue),
         })
     }
 }

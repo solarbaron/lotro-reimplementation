@@ -1,0 +1,36 @@
+tessera-scenario-log 1
+install none
+tick 100
+title "Warden's gate"
+resolve $pockets line=14 family=instance requested=3 candidates=0 got=0 note=no-install
+pre > Connect
+pre Connected characters=["Tamsin"]
+pre > EnterWorld character="Tamsin"
+0.000 WorldEntered entity=player name="Tamsin" at=0.000,0.000,0.000 facing=90.00
+0.000 LocationReport entity=player at=0:0.000,0.000,0.000 facing=90.00 anchor=none cause=entered
+0.000 EntitySpawned entity=$warden kind=non-player name="Warden" at=2.000,0.000,0.000 facing=270.00
+0.000 EntitySpawned entity=$keeper kind=non-player name="Barrow-keeper" at=-2.000,0.000,0.000 facing=90.00
+0.500 InstanceListShown window=1 entries=[{entry=1 instance="Old mine" level=20},{entry=2 instance="Deep vault" level=45},{entry=3 instance="Flooded cellar" level=45 locked=yes}] source=$warden featured="Deep vault"
+1.000 > JoinInstance window=1 entry=1 level=20
+1.000 InstanceQueueChanged state=queued instance="Old mine" seconds=0
+3.000 InstanceQueueChanged state=confirm instance="Old mine" seconds=30
+4.000 InstanceQueueChanged state=join-pending instance="Old mine" seconds=none
+4.500 InstanceQueueChanged state=none instance=none seconds=none
+4.500 WindowClosed window=1
+4.500 InstanceChanged instance="Old mine"
+5.000 > LeaveInstance
+5.000 InstanceChanged instance=none
+5.500 > UseEntity entity=$warden
+5.500 InstanceListShown window=2 entries=[{entry=1 instance="Old mine" level=20},{entry=2 instance="Deep vault" level=45}] source=$warden featured="Deep vault"
+6.000 > JoinInstance window=2 entry=2
+6.000 InstanceQueueChanged state=world-join-queue instance="Deep vault" seconds=75
+7.000 > LeaveQueue
+7.000 InstanceQueueChanged state=none instance=none seconds=none
+7.000 WindowClosed window=2
+7.500 > UseEntity entity=$keeper
+7.500 InstanceListShown window=3 entries=[{entry=1 instance="Barrow"}] source=$keeper
+8.000 > JoinInstance window=3 entry=1
+8.000 WindowClosed window=3
+8.000 InstanceChanged instance="Barrow"
+9.000 InstanceChanged instance=none
+9.000 end reason=complete skipped=1 input-skipped=0 dropped=0 spilled=0

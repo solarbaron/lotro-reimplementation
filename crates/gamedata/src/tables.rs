@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! The two table families of `scenario-feed.md` §8.3: entries of the places table
-//! (`map-data.md` §3) and rows of the map-notes table (`map-data.md` §4), as selector
-//! elements with a row number, a location and an anchor.
+//! The table families of `scenario-feed.md` §8.3: entries of the places table
+//! (`map-data.md` §3), rows of the map-notes table (`map-data.md` §4) and the map regions
+//! (P5 travel, `map-windows.md` §5.1), as selector elements with a row number, a location
+//! and an anchor.
 
 use tessera_formats::gameplay::map::{MapNotesTable, PlacesTable, PositionValues};
 use tessera_formats::property::Position;
@@ -19,6 +20,8 @@ pub(crate) struct TableElement {
     pub region: u8,
     /// The `MapNote_Type` bits (map notes only).
     pub type_bits: u64,
+    /// The `kind` keyword (map regions only; empty otherwise).
+    pub kind: &'static str,
 }
 
 /// The location and anchor of a stored position (`coordinates.md` §4, §7).
@@ -79,6 +82,7 @@ pub(crate) fn place_elements(table: &PlacesTable) -> Vec<TableElement> {
                 },
                 region: p.position.region().unwrap_or(0),
                 type_bits: 0,
+                kind: "",
             }
         })
         .collect()
@@ -101,6 +105,28 @@ pub(crate) fn map_note_elements(table: &MapNotesTable) -> Vec<TableElement> {
                 },
                 region: n.base.position.region().unwrap_or(0),
                 type_bits: n.note_type,
+                kind: "",
+            }
+        })
+        .collect()
+}
+
+/// The elements of the map regions (`scenario-feed.md` §8.3 `map-region`, P5 travel): an
+/// R-node is (active element ID, 1 + depth-first index), an R-dungeon (map-data set, 0);
+/// the location is the census test point; no anchor.
+pub(crate) fn map_region_elements(regions: &crate::map::MapRegions) -> Vec<TableElement> {
+    regions
+        .regions
+        .iter()
+        .map(|r| {
+            let candidate = r.candidate();
+            TableElement {
+                region: candidate
+                    .location
+                    .map_or(0, |l| u8::try_from(l.region).unwrap_or(0)),
+                candidate,
+                type_bits: 0,
+                kind: r.kind.keyword(),
             }
         })
         .collect()

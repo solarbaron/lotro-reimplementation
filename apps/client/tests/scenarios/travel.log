@@ -1,0 +1,27 @@
+tessera-scenario-log 1
+install none
+tick 100
+title "Stable yard"
+resolve $dests line=14 family=travel-destination requested=4 candidates=0 got=0 note=no-install
+resolve $areas line=15 family=area requested=2 candidates=0 got=0 note=no-install
+pre > Connect
+pre Connected characters=["Tamsin"]
+pre > EnterWorld character="Tamsin"
+0.000 WorldEntered entity=player name="Tamsin" at=0.000,0.000,0.000 facing=90.00
+0.000 LocationReport entity=player at=0:0.000,0.000,0.000 facing=90.00 anchor=none cause=entered
+0.000 EntitySpawned entity=$groom kind=non-player name="Stable-master" at=3.000,0.000,0.000 facing=270.00
+0.500 > UseEntity entity=$groom
+0.500 TravelShown window=1 source=$groom entries=[{entry=1 destination="Low road" coin=0 min_level=1 route=swift area="Vale"},{entry=2 destination="High pass" coin=250 min_level=40 flags=unmet route=swift area="Vale"},{entry=3 destination="Ferry" coin=1200 min_level=10 flags=undiscovered+unusable route=slow area="Marsh"},{entry=4 destination="Old bridge" coin=40 min_level=10 route=slow area="Marsh"}]
+1.000 > ChooseTravel window=1 entry=2
+1.000 WindowClosed window=1
+1.000 TravelStarted destination="High pass" duration_ms=3000 route=swift
+4.000 LocationReport entity=player at=0:400.000,-250.000,12.000 facing=45.00 anchor=none cause=teleported
+4.000 EntityMoved entity=player at=400.000,-250.000,12.000 facing=45.00 velocity=0.000,0.000,0.000
+5.000 > UseEntity entity=$groom
+5.000 TravelShown window=2 source=$groom entries=[{entry=1 destination="Ferry" coin=1200 route=slow area="Marsh"},{entry=2 destination="Old bridge" coin=40 route=slow area="Marsh"}]
+5.500 > ChooseTravel window=2 entry=2
+5.500 WindowClosed window=2
+5.500 TravelStarted destination="Old bridge" duration_ms=8000 route=slow
+7.000 > Dismount
+7.000 TravelEnded
+7.000 end reason=complete skipped=1 input-skipped=0 dropped=0 spilled=0

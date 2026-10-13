@@ -9,6 +9,8 @@ use crate::domain::{
 use crate::model::{DataId, EntityKind, PropertyKind};
 // P3 revision (NPC windows).
 use crate::domain::RewardKind;
+// P5 travel revision.
+use crate::domain::{MountVital, QueueState, RouteMode};
 
 /// An element `$sel[i]` of a selector binding.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -510,16 +512,22 @@ pub(crate) enum Verb {
         label: TextArg,
         icon: Option<Element>,
         quest: Option<RefArg>,
+        /// `note-type=` (P5 travel).
+        note_type: Option<EnumArg>,
     },
     MarkerRemove(u32),
     TravelList {
         dest: Entries,
         from: Option<EntityArg>,
         coins: Vec<u64>,
+        /// The P5 travel options.
+        opts: Box<TravelOpts>,
     },
     Travel {
         dest: RefArg,
         duration: u64,
+        /// `route=` (P5 travel).
+        route: Option<RouteMode>,
     },
     Teleport {
         pos: PosArg,
@@ -528,8 +536,14 @@ pub(crate) enum Verb {
     Mount {
         entity: EntityArg,
         mount: Option<RefArg>,
+        /// `kind=basic|combat` (P5 travel): `Some(true)` for a combat mount.
+        combat: Option<bool>,
     },
-    Instances(Entries),
+    Instances {
+        entries: Entries,
+        /// The P5 travel options.
+        opts: Box<InstanceOpts>,
+    },
     Instance(Option<RefArg>),
     Xp {
         current: u64,
@@ -570,6 +584,70 @@ pub(crate) enum Verb {
         tier: u16,
     },
     Title(RefArg),
+    /// `markers $ms $sel (TEXT|named) …` (P5 travel).
+    Markers(Box<MarkersStep>),
+    /// `marker-remove` of a marker set (P5 travel).
+    MarkerSetRemove(u32),
+    /// `travel-end` (P5 travel).
+    TravelEnd,
+    /// `instance-queue STATE [REF] [seconds=N]` (P5 travel).
+    InstanceQueue {
+        state: QueueState,
+        instance: Option<RefArg>,
+        seconds: Option<u32>,
+    },
+    /// `mount-vital ENTITY VITAL CUR/MAX` (P5 travel).
+    MountVital {
+        entity: EntityArg,
+        vital: MountVital,
+        current: f32,
+        max: f32,
+    },
+}
+
+/// The label of a `markers` step (P5 travel).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum MarkersLabel {
+    Text(TextArg),
+    /// `named`: each element's resolved name.
+    Named,
+}
+
+/// A `markers` step (P5 travel, §6.5).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct MarkersStep {
+    /// The marker set (index into [`Program::marker_sets`]).
+    pub set: u32,
+    /// The selector binding fanned out over.
+    pub sel: u32,
+    pub label: MarkersLabel,
+    pub icon: Option<Element>,
+    pub quest: Option<RefArg>,
+    pub note_type: Option<EnumArg>,
+}
+
+/// The P5 travel options of `travel-list` (§6.5). Entry lists hold distinct entry numbers
+/// 1 … 1,024 in written order.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub(crate) struct TravelOpts {
+    pub min_levels: Vec<u16>,
+    pub undiscovered: Vec<u16>,
+    pub unmet: Vec<u16>,
+    pub unusable: Vec<u16>,
+    pub swift: Vec<u16>,
+    pub slow: Vec<u16>,
+    pub areas: Vec<RefArg>,
+}
+
+/// The P5 travel options of `instances` (§6.5).
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub(crate) struct InstanceOpts {
+    pub from: Option<EntityArg>,
+    pub featured: Option<RefArg>,
+    pub levels: Vec<u16>,
+    pub sizes: Vec<EnumArg>,
+    pub tiers: Vec<EnumArg>,
+    pub locked: Vec<u16>,
 }
 
 /// One reward token of a `rewards` step (P3 revision).
@@ -687,6 +765,8 @@ pub(crate) enum Pattern {
     Close(WindowKind),
     /// `buy-back [entry=N]` (P3 revision).
     BuyBack(Option<u16>),
+    /// `leave-queue` (P5 travel).
+    LeaveQueue,
 }
 
 impl Pattern {
@@ -794,7 +874,13 @@ pub(crate) enum InputCmd {
     IgnorePlayer(String),
     Unignore(String),
     ChooseTravel(u16),
-    JoinInstance(u16),
+    /// `join-instance N [size=VALUE] [tier=VALUE] [level=N]` (options: P5 travel).
+    JoinInstance {
+        entry: u16,
+        size: Option<EnumArg>,
+        tier: Option<EnumArg>,
+        level: Option<u16>,
+    },
     LeaveInstance,
     Dismount,
     Train(u16),
@@ -817,6 +903,8 @@ pub(crate) enum InputCmd {
     Close(WindowKind),
     /// `buy-back N` (P3 revision).
     BuyBack(u16),
+    /// `leave-queue` (P5 travel).
+    LeaveQueue,
 }
 
 /// One input line: time (`None` for `pre`) and command.
@@ -914,6 +1002,8 @@ pub(crate) struct Program {
     pub items: Vec<ItemDecl>,
     pub pages: Vec<PageDecl>,
     pub markers: Vec<String>,
+    /// Marker sets, in file order of their first `markers` line (P5 travel, §5.3).
+    pub marker_sets: Vec<String>,
     pub steps: Vec<StepLine>,
     /// Top-level schedule sorted by (time, seq).
     pub top: Vec<Sched>,

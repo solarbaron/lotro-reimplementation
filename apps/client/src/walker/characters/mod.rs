@@ -46,6 +46,7 @@
 pub mod catalog;
 pub mod figure;
 pub mod motion;
+pub mod mounted;
 
 use std::collections::{HashMap, HashSet};
 use std::sync::mpsc::{Receiver, Sender, channel};
@@ -78,6 +79,10 @@ use super::view::{Anchor, Frustum};
 /// highest ID, which no session gives (the sandbox counts up from small IDs; the test-server
 /// backend's local IDs count up from 2⁶³).
 pub const PREVIEW_ID: EntityId = EntityId(u64::MAX);
+
+/// The entity ID of the player's mount figure ([`CharacterLayer::set_player_mount`],
+/// `walker.md` §16.7): owned by the walker as part of the avatar, never a sandbox entity.
+pub const MOUNT_ID: EntityId = EntityId(u64::MAX - 1);
 
 /// Most items of one appearance considered (equal to `tessera_net`'s limit).
 pub const MAX_EQUIPMENT: usize = tessera_net::model::MAX_EQUIPMENT;
@@ -261,6 +266,8 @@ pub struct CharAnim {
     instance: InstanceId,
     animator: Animator,
     loco: Locomotion,
+    /// The mounted clips (`walker.md` §16.7) that replace the on-foot ones while set.
+    mounted: Option<mounted::MountedAnim>,
 }
 
 /// Where a character stands, for the visibility test of `landblock.md` §4.11 ("Moving
@@ -307,6 +314,11 @@ struct Actor {
     /// The character screens' figure ([`CharacterLayer::set_preview`]): never drawn in
     /// the world, always animated, drawn alone into the screens' viewport.
     preview: bool,
+    /// The drawn scale per axis instead of the figure's model scale (the mount figure,
+    /// `mounts.md` §14.8).
+    draw_scale: Option<[f32; 3]>,
+    /// An opacity factor (the mount's fade, `mounts.md` §14.8 item 3).
+    alpha: f32,
 }
 
 struct GpuPart {
@@ -468,6 +480,13 @@ pub struct CharacterLayer {
     looks_changed: bool,
     /// Look entries ignored by the receiver rule (for the rate-limited log).
     look_ignored: u64,
+    /// The mounted player's view (`walker.md` §16.7), while a mount is involved.
+    mount_view: Option<mounted::PlayerMountView>,
+    /// Binds the mounted clips on the workers (`walker.md` §16.7).
+    mount_binder: mounted::ClipBinder,
+    /// The rider's shown mounted clip and its phase after the last frame (`mounts.md`
+    /// §14.5 item 6).
+    rider_phase: Option<(tessera_formats::Did, f32)>,
 }
 
 impl std::fmt::Debug for CharacterLayer {
@@ -582,6 +601,7 @@ impl CharacterLayer {
         pool: &WorkerPool,
     ) -> Self {
         let (tx, rx) = channel();
+        let ctx_for_binder = ctx.clone();
         Self {
             config,
             ctx,
@@ -613,6 +633,9 @@ impl CharacterLayer {
             look_appearances: HashMap::new(),
             looks_changed: false,
             look_ignored: 0,
+            mount_view: None,
+            mount_binder: mounted::ClipBinder::new(ctx_for_binder, pool),
+            rider_phase: None,
         }
     }
 
@@ -1212,6 +1235,8 @@ impl CharacterLayer {
             seen: false,
             seen_before: false,
             preview: false,
+            draw_scale: None,
+            alpha: 1.0,
         };
         if self.actors.insert(e, actor).is_err() {
             self.store.despawn(e);
@@ -1481,6 +1506,144 @@ impl CharacterLayer {
         }
     }
 
+    /// Shows the mounted player (`walker.md` §16.7): the mount figure (built through the
+    /// shared figure path as the entity [`MOUNT_ID`]) and the clips of rider and mount, or
+    /// nothing (`None`). A new figure request keeps the previous one until it is ready;
+    /// an unchanged one costs a key comparison.
+    pub fn set_player_mount(&mut self, view: Option<mounted::PlayerMountView>, now: Instant) {
+        let existing = self.store.entity_for(NetId(MOUNT_ID.0));
+        let figure = view.as_ref().and_then(|v| v.figure.clone());
+        self.mount_view = view;
+        let Some(req) = figure else {
+            if let Some(e) = existing {
+                self.despawn(e);
+                self.apply_changes();
+            }
+            return;
+        };
+        let e = match existing {
+            Some(e) => e,
+            None => {
+                let Some(e) = self.spawn(MOUNT_ID, 0, [0.0; 3], 0.0, None, now) else {
+                    return;
+                };
+                if let Some(a) = self.actors.get_mut(e) {
+                    a.snap = false;
+                    a.hidden = true;
+                }
+                e
+            }
+        };
+        let look = LookChoices::default();
+        let key = req.key_with(&look);
+        let Some(old) = self.actors.get(e).map(|a| a.slot) else {
+            return;
+        };
+        let same = old
+            .and_then(|s| self.slots.get(s as usize))
+            .and_then(|s| s.key.as_ref())
+            .is_some_and(|k| *k == key);
+        if same {
+            return;
+        }
+        let slot = self.acquire(req, look);
+        if let Some(old) = old {
+            self.release(old);
+        }
+        if let Some(a) = self.actors.get_mut(e) {
+            a.slot = Some(slot);
+        }
+    }
+
+    /// The figure context of the layer's jobs (`None` only in tests).
+    #[must_use]
+    pub fn figure_context(&self) -> Option<&Arc<FigureContext>> {
+        self.ctx.as_ref()
+    }
+
+    /// Puts the mount figure at the rider's holding location (`mounts.md` §14.8 item 1)
+    /// with the rider's current pose; hides it when no mount is drawn.
+    fn place_mount(&mut self) {
+        let Some(me) = self.store.entity_for(NetId(MOUNT_ID.0)) else {
+            return;
+        };
+        let placed = (|| {
+            let view = self.mount_view.as_ref()?;
+            let pe = self
+                .player
+                .and_then(|id| self.store.entity_for(NetId(id.0)))?;
+            let pa = self.actors.get(pe)?;
+            if pa.hidden || !view.drawn {
+                return None;
+            }
+            let ptf = *self.store.transform(pe)?;
+            let render = self.store.render(pe)?;
+            let Some(SlotState::Ready(g)) = self.slots.get(render.slot as usize).map(|s| &s.state)
+            else {
+                return None;
+            };
+            let points = g.asset.points.as_ref()?;
+            let model: Vec<Mat4> = match self.store.anim(pe) {
+                Some(anim) => self
+                    .scheduler
+                    .pose(anim.instance)
+                    .map(|p| p.model.clone())
+                    .unwrap_or_default(),
+                None => Vec::new(),
+            };
+            let location = crate::walker::mount::eval::location_matrix(
+                points,
+                view.mesh.holding_location,
+                &model,
+            )?;
+            let scale = Vec3::from_array(g.asset.model_scale) * ptf.scale[0];
+            let rot = Quat::from_array(ptf.rotation);
+            let rot = if rot.is_finite() && rot.length_squared() > 0.0 {
+                rot.normalize()
+            } else {
+                Quat::IDENTITY
+            };
+            let rider = Mat4::from_scale_rotation_translation(scale, rot, Vec3::ZERO);
+            let m = crate::walker::mount::mount_transform(
+                rider,
+                location,
+                &view.mesh,
+                view.rider_model_scale,
+            );
+            let (s, r, t) = m.to_scale_rotation_translation();
+            let pos = [
+                ptf.position[0] + f64::from(t.x),
+                ptf.position[1] + f64::from(t.y),
+                ptf.position[2] + f64::from(t.z),
+            ];
+            Some((pa.region, pos, r, s, view.alpha))
+        })();
+        let Some(a) = self.actors.get_mut(me) else {
+            return;
+        };
+        match placed {
+            Some((region, pos, rot, scale, alpha)) => {
+                a.hidden = false;
+                a.region = region;
+                a.base = pos;
+                a.velocity = [0.0; 3];
+                a.draw_scale = Some(scale.to_array());
+                a.alpha = alpha;
+                if let Some(t) = self.store.transform(me).copied() {
+                    let _ = self.store.set_transform(
+                        me,
+                        Transform {
+                            position: pos,
+                            rotation: rot.to_array(),
+                            ..t
+                        },
+                    );
+                }
+            }
+            None => a.hidden = true,
+        }
+    }
+
     /// Whether the avatar is on the GPU (the walker draws a stand-in until it is).
     #[must_use]
     pub fn player_ready(&self) -> bool {
@@ -1548,6 +1711,7 @@ impl CharacterLayer {
         }
 
         self.attach_ready(&|t| matches!(objects.texture(t), TexLookup::Pending));
+        self.place_mount();
 
         // Animation (ARCHITECTURE §20.3 step 6): collect the previous frame's poses, then
         // advance and submit.
@@ -1559,6 +1723,30 @@ impl CharacterLayer {
         let far = f64::from(self.config.anim_distance);
         let mut sampled = 0usize;
         let frame = self.frame;
+        // The mounted player and its mount (`walker.md` §16.7): their clips of the state key.
+        let player_e = self
+            .player
+            .and_then(|id| self.store.entity_for(NetId(id.0)));
+        let mount_e = self.store.entity_for(NetId(MOUNT_ID.0));
+        let held_of = |e: Option<Entity>| -> Vec<figure::ClipPlay> {
+            e.and_then(|e| self.store.render(e))
+                .and_then(
+                    |r| match self.slots.get(r.slot as usize).map(|s| &s.state) {
+                        Some(SlotState::Ready(g)) => Some(g.asset.clips.held.clone()),
+                        _ => None,
+                    },
+                )
+                .unwrap_or_default()
+        };
+        let (player_held, mount_held) = if self.mount_view.is_some() {
+            (held_of(player_e), held_of(mount_e))
+        } else {
+            (Vec::new(), Vec::new())
+        };
+        let view = self.mount_view.as_ref();
+        let binder = &mut self.mount_binder;
+        binder.poll();
+        let rider_phase = &mut self.rider_phase;
         let actors = &self.actors;
         let scheduler = &mut self.scheduler;
         for (e, anim, tf) in self.store.animated_mut() {
@@ -1578,9 +1766,71 @@ impl CharacterLayer {
             if !near && scheduler.has_pose(anim.instance) {
                 continue;
             }
-            drive(&mut anim.animator, &mut anim.loco, a.speed, dt);
+            let is_rider = Some(e) == player_e;
+            let wanted: Option<(
+                &[crate::walker::mount::eval::ShownClip],
+                &[figure::ClipPlay],
+            )> = match view {
+                Some(v) if is_rider => v
+                    .rider_clips
+                    .as_deref()
+                    .map(|c| (c, player_held.as_slice())),
+                Some(v) if Some(e) == mount_e && !v.mount_clips.is_empty() => {
+                    Some((v.mount_clips.as_slice(), mount_held.as_slice()))
+                }
+                _ => None,
+            };
+            match wanted {
+                Some((clips, held)) => {
+                    let skel = Arc::clone(anim.animator.skeleton());
+                    // Entering ramps from the pose shown now (on foot, or a mount being
+                    // left), `mounted::MountedAnim::entering`.
+                    let m = match anim.mounted.take() {
+                        Some(m) if !m.is_leaving() => m,
+                        Some(m) => mounted::MountedAnim::entering(m.animator(), held),
+                        None => mounted::MountedAnim::entering(&anim.animator, held),
+                    };
+                    let m = anim.mounted.insert(m);
+                    let started = m.apply(clips, &mut |d| binder.get(d, &skel));
+                    // `mounts.md` §14.5 item 6: a mount clip starts at the rider's phase
+                    // (halved for the back clips).
+                    if let Some(v) = view
+                        && !is_rider
+                        && let Some(ms) = v.mount_shown
+                        && started.contains(&ms.layer)
+                        && let (Some(rs), Some((clip, phase))) = (v.rider_shown, *rider_phase)
+                        && rs.clip == clip
+                    {
+                        m.set_phase(ms.layer, mounted::matched_phase(phase, v.back));
+                    }
+                    m.advance(dt);
+                    if is_rider {
+                        *rider_phase = view
+                            .and_then(|v| v.rider_shown)
+                            .filter(|rs| m.playing(rs.layer) == Some(rs.clip))
+                            .and_then(|rs| Some((rs.clip, m.phase(rs.layer)?)));
+                    }
+                }
+                None => {
+                    if let Some(m) = &mut anim.mounted {
+                        m.leave(&anim.animator, mounted::SWITCH_FADE);
+                        m.advance(dt);
+                        if m.left() {
+                            anim.mounted = None;
+                        }
+                    }
+                    if is_rider {
+                        *rider_phase = None;
+                    }
+                    drive(&mut anim.animator, &mut anim.loco, a.speed, dt);
+                }
+            }
+            let animator = anim
+                .mounted
+                .as_ref()
+                .map_or(&anim.animator, |m| m.animator());
             if matches!(
-                scheduler.submit(anim.instance, &anim.animator, frame),
+                scheduler.submit(anim.instance, animator, frame),
                 Ok(Submitted::Queued)
             ) {
                 sampled += 1;
@@ -1644,6 +1894,7 @@ impl CharacterLayer {
                                     instance,
                                     animator,
                                     loco,
+                                    mounted: None,
                                 },
                             ) {
                                 self.scheduler.remove(r.value.instance);
@@ -1778,7 +2029,10 @@ impl CharacterLayer {
             )) else {
                 continue;
             };
-            let scale = Vec3::from_array(g.asset.model_scale) * tf.scale[0];
+            let scale = a.draw_scale.map_or_else(
+                || Vec3::from_array(g.asset.model_scale) * tf.scale[0],
+                Vec3::from_array,
+            );
             let scale = if scale.is_finite() && scale.min_element() > 0.0 {
                 scale
             } else {
@@ -1811,6 +2065,7 @@ impl CharacterLayer {
                 df.lod,
             );
             a.seen = true;
+            let opacity = opacity * a.alpha.clamp(0.0, 1.0);
             if opacity <= 0.0 || !in_view {
                 continue;
             }

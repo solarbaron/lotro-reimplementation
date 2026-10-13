@@ -14,7 +14,7 @@
 //!    and `Mounted_Player_Cosmetic_Mesh` started; the MeshFX node that run starts, chosen
 //!    by the rider's mount type, species and sex, gives the mount entity, the holding
 //!    location, the bone offset and the scale ([`MountMesh`], §4.4, §11.4).
-//! 3. The mount entity is assembled like any figure ([`build_mount`]), at the rider's
+//! 3. The mount entity is assembled like any figure (`build_mount`), at the rider's
 //!    holding location (`Mount_Connection` in the data) by the Decision of §4.4; its clip
 //!    selection starts the node's `Behavior` (`Horsepants_Startup`) with the same gait.
 //!
@@ -239,7 +239,7 @@ pub fn gait_labels(ctx: &DataContext) -> Vec<(u32, String)> {
     out
 }
 
-/// What [`build_mount`] adds to the character scene.
+/// What `build_mount` adds to the character scene.
 #[derive(Debug)]
 pub struct MountBuilt {
     /// The mount.

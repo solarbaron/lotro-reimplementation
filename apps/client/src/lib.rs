@@ -31,6 +31,11 @@
 //!   loot, the wallet window and the plugin wallet views, fed by the session's events.
 //! - [`quests`]: the quest journal (P3): quest log, tracker, objective counters, quest
 //!   chat lines, quest markers and NPC indicators, fed by the session's events.
+//! - [`map`]: the map windows (P5): the world map with feed markers and notes, the
+//!   minimap's feed markers, place lookup (`findplace`) and the map-region census.
+//! - [`travel`]: travel and instances (P5): the travel window, the instance finder with its
+//!   queue, the instance-travel window, the travel presentation, the session's mount model
+//!   and the plugin mount views, the walker's feed mounts.
 
 pub mod app;
 pub mod audio;
@@ -41,6 +46,7 @@ pub mod commands;
 pub mod data;
 pub mod headless;
 pub mod input;
+pub mod map;
 pub mod net;
 pub mod npc;
 pub mod panels;
@@ -52,6 +58,7 @@ pub mod scenario;
 pub mod scene;
 pub mod screens;
 pub mod smoke;
+pub mod travel;
 pub mod ui_host;
 pub mod wait;
 pub mod walk_path;

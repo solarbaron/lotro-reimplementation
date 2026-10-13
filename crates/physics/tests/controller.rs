@@ -2598,3 +2598,81 @@ fn shallow_concave_crease_across_a_side_slope_is_crossed() {
     assert!(p[1] > 5.0, "crossed the crease: {p:?}");
     assert_eq!(c.state().element, MovementState::EarthControlledSurface);
 }
+
+// ---------------------------------------------------------------------------------------
+// Mounted riders (`mounts.md` §5.1 Decision, §5.2–§5.7; P5).
+
+fn hspeed(c: &Controller) -> f32 {
+    let v = c.state().velocity;
+    (v[0] * v[0] + v[1] * v[1]).sqrt()
+}
+
+/// `mounts.md` §5.1 Decision, worked example §11.5: the normal mount's speed factor scales
+/// the player controller's target (and its ramp), so the steady speed scales by it.
+#[test]
+fn normal_mount_speed_factor_scales_the_steady_speed() {
+    let mut s = Scene::new();
+    s.floor(-200.0, -200.0, 200.0, 200.0, 0.0);
+    let set = s.build();
+    let mounted = LayerConditions {
+        mounted: true,
+        ..LayerConditions::default()
+    };
+    let steady = |m: f32| {
+        let mut c = controller([0.0, 0.0, 0.0], 0.0);
+        c.set_conditions(mounted);
+        c.set_speed_multiplier(m);
+        run(&set, &mut c, MoveInput::default(), 10);
+        run(&set, &mut c, forward(), 180);
+        hspeed(&c)
+    };
+    let (one, factor) = (steady(1.0), steady(1.62));
+    assert!(one > 1.0);
+    assert!((factor / one - 1.62).abs() < 1e-3, "{one} → {factor}");
+    let mut c = controller([0.0, 0.0, 0.0], 0.0);
+    c.set_speed_multiplier(f32::NAN);
+    assert_eq!(c.speed_multiplier(), 1.0);
+}
+
+/// `mounts.md` §5.3–§5.5 through the controller (worked example §11.2's block): the
+/// war-steed's speed rises at *a*y to the forward limit, is not damped, and keeps its
+/// momentum at a forward gait when the keys are released (§5.4 step 3).
+#[test]
+fn war_steed_drive_moves_the_mover() {
+    use tessera_physics::controller::warsteed::{GaitMultipliers, WarSteedActor, WarSteedDrive};
+    let mut s = Scene::new();
+    s.floor(-400.0, -400.0, 400.0, 400.0, 0.0);
+    let set = s.build();
+    let mut c = controller([0.0, 0.0, 0.0], 0.0);
+    c.set_conditions(LayerConditions {
+        mounted: true,
+        ramp_up_controller: true,
+        ..LayerConditions::default()
+    });
+    run(&set, &mut c, MoveInput::default(), 10);
+    let actor = WarSteedActor {
+        max_speed_cached: Some(8.3),
+        acceleration_cached: Some(16.0),
+        gait: Some(7),
+        ..WarSteedActor::default()
+    };
+    let gaits = GaitMultipliers {
+        gallop_speed: 1.0,
+        locked_gear_speed: None,
+        turn: 1.0,
+    };
+    c.set_war_steed(Some(WarSteedDrive::new(actor, gaits, 16.0)));
+    run(&set, &mut c, forward(), 60);
+    let limit = c.war_steed().and_then(|d| d.last).map(|l| l.limit).unwrap();
+    assert!((limit - 8.3).abs() < 1e-4, "{limit}");
+    // 16 m/s² from rest reaches 8.3 m/s within 0.52 s.
+    assert!((hspeed(&c) - 8.3).abs() < 1e-3, "{}", hspeed(&c));
+    let x0 = x(&c);
+    run(&set, &mut c, MoveInput::default(), 60);
+    assert!((hspeed(&c) - 8.3).abs() < 1e-3, "momentum: {}", hspeed(&c));
+    assert!((x(&c) - x0 - 8.3).abs() < 0.01, "moved {}", x(&c) - x0);
+    // Removing the drive returns to the player controller.
+    c.set_war_steed(None);
+    run(&set, &mut c, MoveInput::default(), 120);
+    assert!(hspeed(&c) < 0.01);
+}

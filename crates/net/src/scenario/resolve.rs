@@ -9,8 +9,8 @@ use super::error::ResolveError;
 pub use super::props::PropertyNote;
 use super::props::{self, ResolvedProp};
 use super::select::{
-    self, Alt, Candidate, CandidateStatus, Family, FilterValue, ResolvedRecord, SelectorQuery,
-    SelectorResolver,
+    self, Alt, Candidate, CandidateStatus, Family, FilterValue, LabelContext, ResolvedRecord,
+    SelectorQuery, SelectorResolver,
 };
 use crate::model::{Body, Look, MAX_NAME_LEN, sanitize_text};
 
@@ -168,6 +168,10 @@ pub struct ResolvedScenario {
     pub(crate) notes: Vec<ResolveNote>,
     pub(crate) install: bool,
     pub(crate) play_input: bool,
+    /// The names `markers … named` steps use (P5 travel, §8.6 item 6): per selector
+    /// binding, one name per element of its first 65,536 (empty for an element without a
+    /// location, which adds no marker); empty for bindings no such step names.
+    pub(crate) marker_names: Vec<Vec<String>>,
 }
 
 impl ResolvedScenario {
@@ -305,6 +309,15 @@ impl ResolvedScenario {
         (body, class, look)
     }
 
+    /// The resolved name of element `index` of binding `sel` for a `markers … named` step
+    /// (P5 travel): the empty string when it has none.
+    pub(crate) fn marker_name(&self, sel: u32, index: usize) -> &str {
+        self.marker_names
+            .get(usize::try_from(sel).unwrap_or(usize::MAX))
+            .and_then(|v| v.get(index))
+            .map_or("", String::as_str)
+    }
+
     /// The elements of a binding a step fans out over, cut to `cap`.
     pub(crate) fn fan(&self, sel: u32, cap: usize) -> &[ResolvedRecord] {
         let list = self
@@ -316,7 +329,7 @@ impl ResolvedScenario {
 }
 
 fn is_table_family(f: Family) -> bool {
-    matches!(f, Family::Place | Family::MapNote)
+    matches!(f, Family::Place | Family::MapNote | Family::MapRegion)
 }
 
 /// Untrusted resolver output: drop invalid locations and anchors that do not own them.
@@ -452,6 +465,12 @@ pub(crate) fn resolve(
         } else {
             None
         };
+        // A map-note type label whose key lies outside 1 … 64 counts as unresolved (P5
+        // travel, §6.5).
+        let v = v.filter(|k| {
+            site.context != LabelContext::MapNoteType
+                || (1..=crate::domain::MAX_NOTE_TYPE).contains(k)
+        });
         if install && v.is_none() {
             late.push((
                 site.line,
@@ -465,6 +484,37 @@ pub(crate) fn resolve(
             ));
         }
         labels.push(v);
+    }
+    // The names of `markers … named` steps (P5 travel, item 6), in line order; each binding
+    // is asked once, for the elements with a location among its first 65,536.
+    let mut marker_names: Vec<Vec<String>> = vec![Vec::new(); bindings.len()];
+    let mut named_done = vec![false; bindings.len()];
+    for line in &prog.steps {
+        let super::ast::Verb::Markers(m) = &line.verb else {
+            continue;
+        };
+        if !matches!(m.label, super::ast::MarkersLabel::Named) {
+            continue;
+        }
+        let Some(i) = usize::try_from(m.sel).ok().filter(|i| *i < bindings.len()) else {
+            continue;
+        };
+        if std::mem::replace(&mut named_done[i], true) {
+            continue;
+        }
+        let used = &bindings[i][..bindings[i].len().min(super::verbs::MAX_FANOUT)];
+        marker_names[i] = used
+            .iter()
+            .map(|r| {
+                if r.location.is_none() {
+                    return String::new();
+                }
+                resolver
+                    .display_name(r.did, Some(r.row))
+                    .map(|n| sanitize_text(&n, MAX_NAME_LEN).into_owned())
+                    .unwrap_or_default()
+            })
+            .collect();
     }
     // Property values and looks (item 7).
     let (props, looks) = props::resolve_props(
@@ -536,5 +586,6 @@ pub(crate) fn resolve(
         notes,
         install,
         play_input: true,
+        marker_names,
     })
 }

@@ -67,11 +67,15 @@ pub enum Family {
     Induction,
     /// An explicit list of DIDs (local scenarios only).
     Did,
+    /// Map regions (P5 travel, `map-windows.md` §5.1): map-tree nodes and dungeon map
+    /// sets; elements carry a row and, when the region has a test point, a location.
+    MapRegion,
 }
 
 impl Family {
-    /// Every family, in the order of §8.3 (`did` last).
-    pub const ALL: [Family; 26] = [
+    /// Every family, in the order of §8.3 (`did`, then the families later revisions
+    /// added).
+    pub const ALL: [Family; 27] = [
         Self::Item,
         Self::Skill,
         Self::Effect,
@@ -98,6 +102,7 @@ impl Family {
         Self::Pet,
         Self::Induction,
         Self::Did,
+        Self::MapRegion,
     ];
 
     /// The family's keyword (`item`, `trait-tree`, ...).
@@ -130,6 +135,7 @@ impl Family {
             Self::Pet => "pet",
             Self::Induction => "induction",
             Self::Did => "did",
+            Self::MapRegion => "map-region",
         }
     }
 
@@ -213,6 +219,10 @@ pub enum Attribute {
     Of,
     /// `region`.
     Region,
+    /// `mount-type` (P5 travel; effects).
+    MountType,
+    /// `war-steed` (P5 travel; effects).
+    WarSteed,
 }
 
 impl Attribute {
@@ -254,6 +264,8 @@ impl Attribute {
             Self::Tier => "tier",
             Self::Of => "of",
             Self::Region => "region",
+            Self::MountType => "mount-type",
+            Self::WarSteed => "war-steed",
         }
     }
 }
@@ -346,6 +358,8 @@ const EFFECT_ROLES: &[&str] = &[
 
 const CREATURE_KINDS: &[&str] = &["mob", "npc", "container"];
 const AREA_LEVELS: &[&str] = &["area", "territory", "region", "dungeon"];
+/// The `kind` keywords of `map-region` (P5 travel, `map-windows.md` §5.1).
+const MAP_REGION_KINDS: &[&str] = &["node", "dungeon"];
 
 /// The attribute of `family` named `name`, with its value type (§8.3), or `None`.
 pub(crate) fn attribute(family: Family, name: &str) -> Option<(Attribute, AttrType)> {
@@ -376,7 +390,12 @@ pub(crate) fn attribute(family: Family, name: &str) -> Option<(Attribute, AttrTy
             (A::Induction, T::YesNo),
             (A::Toggle, T::YesNo),
         ],
-        F::Effect => &[(A::Role, T::Keyword(EFFECT_ROLES))],
+        F::Effect => &[
+            (A::Role, T::Keyword(EFFECT_ROLES)),
+            // P5 travel (`mounts.md` §2.8).
+            (A::MountType, T::Value),
+            (A::WarSteed, T::YesNo),
+        ],
         F::Trait => &[
             (A::Nature, T::Value),
             (A::Class, T::Value),
@@ -409,6 +428,10 @@ pub(crate) fn attribute(family: Family, name: &str) -> Option<(Attribute, AttrTy
         F::Place => &[(A::Region, T::Integer)],
         F::MapNote => &[(A::Type, T::Value), (A::Region, T::Integer)],
         F::Area => &[(A::Level, T::Keyword(AREA_LEVELS))],
+        F::MapRegion => &[
+            (A::Kind, T::Keyword(MAP_REGION_KINDS)),
+            (A::Region, T::Integer),
+        ],
         _ => &[],
     };
     table.iter().copied().find(|(a, _)| a.name() == name)
@@ -534,6 +557,15 @@ pub enum LabelContext {
     /// for `ActionPickerUI_Action` (`scenario-feed.md` §8.6, P3 revision;
     /// `npc-windows.md` §5.3).
     NpcAction,
+    /// A map-note type key (P5 travel): the label's key in the enum mapper the property
+    /// dictionary names for `MapNote_Type` (`map-data.md` §4.2); keys 1 … 64.
+    MapNoteType,
+    /// A group-size key: the mapper named for `FellowshipMakerUI_GroupSize` (P5 travel,
+    /// `travel-windows.md` §6.4).
+    GroupSize,
+    /// A difficulty-tier key: the mapper named for `FellowshipMakerUI_DifficultyTier` (P5
+    /// travel, `travel-windows.md` §6.4).
+    DifficultyTier,
 }
 
 /// A data property as the resolver reports it (`scenario-feed.md` §8.6 `property`).
@@ -837,5 +869,9 @@ mod tests {
         assert!(attribute(Family::Item, "colour").is_none());
         assert!(attribute(Family::Title, "kind").is_none());
         assert_eq!(Family::from_keyword("trait-tree"), Some(Family::TraitTree));
+        assert_eq!(Family::from_keyword("map-region"), Some(Family::MapRegion));
+        assert!(attribute(Family::MapRegion, "kind").is_some());
+        assert!(attribute(Family::Effect, "war-steed").is_some());
+        assert!(attribute(Family::Effect, "mount-type").is_some());
     }
 }

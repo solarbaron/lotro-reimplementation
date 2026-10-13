@@ -1,0 +1,25 @@
+tessera-scenario-log 1
+install none
+tick 100
+title "Paddock"
+resolve $horses line=13 family=effect requested=1 candidates=0 got=0 note=no-install
+resolve $steeds line=14 family=effect requested=1 candidates=0 got=0 note=no-install
+pre > Connect
+pre Connected characters=["Tamsin"]
+pre > EnterWorld character="Tamsin"
+0.000 WorldEntered entity=player name="Tamsin" at=0.000,0.000,0.000 facing=90.00
+0.000 LocationReport entity=player at=0:0.000,0.000,0.000 facing=90.00 anchor=none cause=entered
+0.000 EntitySpawned entity=$rider kind=player name="Rook" at=4.000,0.000,0.000 facing=270.00
+0.500 MountChanged entity=player mount="Grey pony" combat=no
+0.500 MountVitalChanged entity=player vital=durability current=90 max=100
+1.000 MountVitalChanged entity=player vital=durability current=75 max=100
+1.500 MountChanged entity=$rider mount="Bay horse"
+2.500 > Dismount
+2.500 MountChanged entity=player mount=none
+4.000 MountChanged entity=player mount="Dun steed" combat=yes
+4.000 MountVitalChanged entity=player vital=morale current=800 max=1000
+4.000 MountVitalChanged entity=player vital=power current=200 max=400
+4.500 MountVitalChanged entity=player vital=fury current=3 max=5
+5.000 MountVitalChanged entity=player vital=morale current=650 max=1000
+6.000 MountChanged entity=player mount=none
+6.000 end reason=complete skipped=2 input-skipped=0 dropped=0 spilled=0

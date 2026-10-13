@@ -142,6 +142,56 @@ fn runtime_rule_keep_inside_and_mode_zero() {
 }
 
 #[test]
+fn runtime_rule_rescues_a_degenerate_box() {
+    // The loadscreen meter (199 × 14, edges all SAME) in `NormalBackground` once it shrank
+    // from its 1024 × 768 design to 597 × 588: steps 2–5 would give −228 × −166 (the
+    // numbers of `ui-layout.md` §8.4 step 6 OPEN). The Tessera fallback keeps its design
+    // extent and shifts it inside the parent.
+    let d = IBox::from_xywh(412, 700, 199, 14);
+    let b = runtime(&RuntimeInput {
+        design: d,
+        current: d,
+        edges: [5, 5, 5, 5],
+        old: IBox::new(0, 0, 1023, 767),
+        new: IBox::new(0, 0, 596, 587),
+        finished: false,
+        keep_inside: false,
+    });
+    assert_eq!((b.w(), b.h()), (199, 14), "design extent kept");
+    assert!(
+        b.l >= 0 && b.t >= 0 && b.r <= 596 && b.b <= 587,
+        "inside parent: {b:?}"
+    );
+    assert_eq!(b, IBox::new(398, 574, 596, 587));
+    // A degenerate element whose design is wider than the shrunken parent takes the
+    // parent's whole width.
+    let d = IBox::from_xywh(0, 0, 5000, 14);
+    let b = runtime(&RuntimeInput {
+        design: d,
+        current: d,
+        edges: [5, 5, 5, 5],
+        old: IBox::new(0, 0, 9999, 767),
+        new: IBox::new(0, 0, 99, 587),
+        finished: false,
+        keep_inside: false,
+    });
+    assert_eq!((b.l, b.w()), (0, 100), "clamped to the parent width");
+    // A positive box that overflows its parent (a `chargen_appearance` side-panel child in
+    // the OPEN) is left exactly as steps 2–5 give it.
+    let d = IBox::from_xywh(10, 10, 600, 600);
+    let b = runtime(&RuntimeInput {
+        design: d,
+        current: d,
+        edges: [0, 0, 0, 0],
+        old: IBox::new(0, 0, 999, 999),
+        new: IBox::new(0, 0, 199, 199),
+        finished: true,
+        keep_inside: false,
+    });
+    assert_eq!(b, IBox::from_xywh(10, 10, 600, 600), "unchanged");
+}
+
+#[test]
 fn design_time_rule_skips_modes_2_and_6() {
     let d = IBox::new(5, 5, 114, 24);
     let b = design_time(d, [2, 6, 2, 6], 120, 30, 200, 30);

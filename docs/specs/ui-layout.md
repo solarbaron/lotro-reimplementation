@@ -1007,6 +1007,20 @@ geometry and changes no box that a hit test reads.
 > −222 × −160), so the travel loading screen (`travel-windows.md` §5.2) draws its image only.
 > Under the other reading (`NormalBackground` keeps its 1024 × 768 layout box and is scaled)
 > the meter and the label keep their design boxes.
+>
+> **Tessera rule** (a conservative implementer fallback, not a decision text; the owner still
+> settles which reading above is the original's): the run-time layout keeps the implemented
+> reading (step 6 takes the new size into the layout box and lays the children out again),
+> but after steps 2–5, when an element's computed box has a non-positive width or height, the
+> run-time rule rescues it rather than drop it: the degenerate axis takes the element's own
+> design extent (clamped into the parent's current width or height), and the box is shifted so
+> it lies inside the parent's current box (0 .. *Nw* − 1, 0 .. *Nh* − 1). A box with a
+> positive width and height — including one that overflows its parent, like the
+> `chargen_appearance` side-panel children of the OPEN above — is left exactly as steps 2–5
+> give it. This makes `LoadScreenMeter` and `LoadingProgressUIElement_Label` draw at their
+> design extent near the bottom of the shrunken `NormalBackground`; it is a stop-gap for
+> visibility, not the pixel-accurate placement that the "other reading" (a scaled surface)
+> would give. Implemented in `crates/ui/src/layout.rs` (`runtime`).
 
 Notes:
 

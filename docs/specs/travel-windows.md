@@ -486,6 +486,13 @@ lasts *duration_ms* or until the next `teleport` (`LocationReport` cause `Telepo
 > `LoadingProgressUIElement_Label` negative sizes (−228 × −166 and −222 × −160) below the
 > screen. This depends on the open question of `ui-layout.md` §8 (children of an element that
 > owns a Stretch surface); see the note added there.
+>
+> (implementer, 2026-10-13, `crates/ui`) Pending that decision, the run-time rule now rescues
+> an element whose computed box has a non-positive width or height (the Tessera fallback added
+> to `ui-layout.md` §8.4 step 6 OPEN): the meter and the label take their design extent inside
+> the shrunken `NormalBackground`, so the loading screen now draws its meter and label as well
+> as its image. This is a stop-gap for visibility, not the pixel-accurate placement of the
+> "other reading"; the owner's choice of reading still stands.
 
 ---
 

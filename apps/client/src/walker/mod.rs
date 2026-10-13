@@ -1323,6 +1323,14 @@ impl Walker {
         self.mount.list(page, Instant::now());
     }
 
+    /// Whether the walker still has an unapplied `--mount` choice (`walker.md` §16.12): the
+    /// P5 step holds `/ride` dispatcher requests until it is applied, so a `--command
+    /// "/ride …"` runs after `--mount` rather than before it has mounted.
+    #[must_use]
+    pub fn mount_choice_pending(&self) -> bool {
+        self.mount.choice_pending()
+    }
+
     /// Refuses every mount request (a `--server` session, `walker.md` §16.1). The walker also
     /// refuses them on its own whenever its session has a remote link.
     pub fn set_mount_server(&mut self, on: bool) {

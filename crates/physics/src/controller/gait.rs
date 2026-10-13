@@ -187,6 +187,29 @@ pub fn gait_from_speed(
         .unwrap_or(top)
 }
 
+/// The gait of one controller step, given the forward control velocity `previous` before the
+/// step and `v` after it (`walker.md` §16.11 check 3, §16.12 resolution): when braking
+/// carries the velocity from forward (above [`INPUT_THRESHOLD`]) to backward (below its
+/// negation) within one step, the step is held at Neutral, so while braking the gait falls
+/// 4 → 2 → 1 rather than straight 4 → 1. Item 4 of `mounts.md` §14.6 alone gives Neutral only
+/// within ±0.0002 m/s, a band a step of *a*y · 1/60 s skips. Otherwise this is
+/// [`gait_from_speed`] of `v`.
+#[must_use]
+pub fn gait_from_speed_step(
+    previous: f32,
+    v: f32,
+    forward: f32,
+    selected: Option<u32>,
+    speed: impl Fn(u32) -> f32,
+) -> u32 {
+    let previous = if previous.is_finite() { previous } else { 0.0 };
+    let now = if v.is_finite() { v } else { 0.0 };
+    if previous > INPUT_THRESHOLD && now < -INPUT_THRESHOLD {
+        return GAIT_NEUTRAL;
+    }
+    gait_from_speed(now, forward, selected, speed)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -280,6 +303,24 @@ mod tests {
             gb.shift(-1.0, false, 1.0, 2.0, DT);
         }
         assert_eq!(gb.selected(), Some(4));
+    }
+
+    #[test]
+    fn braking_shows_neutral_at_the_zero_crossing() {
+        // walker.md §16.11 check 3, §16.12: the step whose forward velocity crosses from
+        // positive to negative reads Neutral, so braking falls 4 → 2 → 1, not 4 → 1.
+        let f = 8.2_f32;
+        let s = Some(4);
+        // No crossing: the same readings as gait_from_speed.
+        assert_eq!(gait_from_speed_step(2.0, 1.0, f, s, mult), 4);
+        assert_eq!(gait_from_speed_step(8.0, 7.0, f, Some(7), mult), 7);
+        // Crossing forward → backward in one step gives Neutral, not Backwards.
+        assert_eq!(gait_from_speed_step(0.13, -0.14, f, s, mult), 2);
+        // The next step (already backward) is Backwards.
+        assert_eq!(gait_from_speed_step(-0.14, -0.41, f, s, mult), 1);
+        // Within the band both ways stays Neutral; hostile values never panic.
+        assert_eq!(gait_from_speed_step(0.0001, -0.0001, f, s, mult), 2);
+        let _ = gait_from_speed_step(f32::NAN, f32::INFINITY, f, s, mult);
     }
 
     #[test]

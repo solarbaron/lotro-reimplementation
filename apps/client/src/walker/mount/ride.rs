@@ -19,7 +19,7 @@
 use std::sync::Arc;
 
 use tessera_formats::gameplay::mounts::{MountType, controller_flags};
-use tessera_physics::controller::gait::{GAIT_CANTER, GAIT_WALK, GearBox, gait_from_speed};
+use tessera_physics::controller::gait::{GAIT_CANTER, GAIT_WALK, GearBox, gait_from_speed_step};
 use tessera_physics::controller::warsteed::{
     GAIT_NEUTRAL, GaitMultipliers, INPUT_THRESHOLD, WarSteedDrive,
 };
@@ -102,7 +102,9 @@ impl MountMover {
 
     /// The mover with the mounted branch's jump table (`walker.md` §16.6: the jump of
     /// `collision.md` §11.10 with the mounted branch). While the rider is mounted the
-    /// controller uses it instead of its on-foot table; `None` keeps the on-foot table.
+    /// controller uses it instead of its on-foot table. `None` or an empty table means the
+    /// mounted branch gives no jump node (the case on this install, `walker.md` §16.12): a
+    /// mounted rider then cannot jump — the on-foot table is **not** used while mounted.
     #[must_use]
     pub fn with_jump(mut self, table: Option<JumpTable>) -> Self {
         self.mounted_jump = table.filter(|t| !t.is_empty());
@@ -244,13 +246,19 @@ impl MountMover {
     pub fn before_step(&mut self, ctl: &mut Controller, input: &RideInput, dt: f32) {
         self.walking = input.walking;
         let mounted = self.state.is_mounted() && self.profile.rides();
-        // The jump's mounted branch while the channelling loop runs (`mounts.md` §14.12).
-        match (mounted, self.mounted_jump, self.foot_jump) {
-            (true, Some(t), None) => {
+        // The jump's mounted branch while the channelling loop runs (`mounts.md` §14.12;
+        // `walker.md` §16.6, §16.12 resolution, implementer 2026-10-13). The static scan of
+        // the rider's jump scripts reaches no node of the mounted branch on this install, so
+        // [`MountMover::mounted_jump`] is `None`: while mounted the controller is given an
+        // empty table, a mounted rider cannot jump, and the on-foot table does **not** carry
+        // over. Should a later install expose the mounted branch, `with_jump` carries it and
+        // it is swapped in instead.
+        match (mounted, self.foot_jump) {
+            (true, None) => {
                 self.foot_jump = Some(ctl.config().jump);
-                ctl.set_jump_table(Some(t));
+                ctl.set_jump_table(Some(self.mounted_jump.unwrap_or_default()));
             }
-            (false, _, Some(saved)) => {
+            (false, Some(saved)) => {
                 ctl.set_jump_table(saved);
                 self.foot_jump = None;
             }
@@ -331,8 +339,13 @@ impl MountMover {
                 let v = d.velocity[1];
                 let f = d.params(&ctl.params()).forward;
                 let gaits = &self.profile.gaits;
-                self.gait =
-                    gait_from_speed(v, f, self.gear.selected(), |g| gaits.speed_multiplier(g));
+                // §14.6 step 4 with the §16.11 check-3 / §16.12 crossing rule: the step whose
+                // forward control velocity crosses from forward to backward reads Neutral, so
+                // braking falls 4 → 2 → 1 (`self.control_speed` still holds the step before).
+                let selected = self.gear.selected();
+                self.gait = gait_from_speed_step(self.control_speed, v, f, selected, |g| {
+                    gaits.speed_multiplier(g)
+                });
                 let (strafe, propel) = d
                     .last
                     .map_or((0.0, 0.0), |l| (l.strafe_slider, l.propel_slider));
@@ -579,9 +592,19 @@ mod tests {
         let m = walker.mount().unwrap();
         assert!((m.control_speed() - 8.3).abs() < 1e-3);
         assert_eq!(m.gait(), 7);
-        // Braking: the gait falls to Backwards.
-        steps(&mut walker, &w, -1.0, false, 120);
-        assert_eq!(walker.mount().unwrap().gait(), 1);
+        // Braking: the gaits fall through Neutral (2) to Backwards (1) (`walker.md` §16.11
+        // check 3, §16.12: the step whose forward velocity crosses zero reads Neutral).
+        let mut back: Vec<u32> = Vec::new();
+        let c = MovementCommands::from_axes(-1.0, 0.0, 0.0);
+        for _ in 0..120 {
+            walker.step_commands(&c, false, None, false, &w).unwrap();
+            let g = walker.mount().unwrap().gait();
+            if back.last() != Some(&g) {
+                back.push(g);
+            }
+        }
+        assert_eq!(back.last(), Some(&1), "{back:?}");
+        assert!(back.contains(&2), "Neutral at the crossing: {back:?}");
     }
 
     /// `mounts.md` §14.6 Decision for the Clydesdale; §14.11 the hobby-horse stays on foot.
@@ -675,6 +698,23 @@ mod tests {
             .with_jump(Some(mounted)),
         ));
         steps(&mut walker, &w, 0.0, false, 1);
+        walker.set_mount(None);
+        assert_eq!(walker.controller().config().jump, on_foot);
+        // No mounted branch (this install, `walker.md` §16.12): while mounted the controller
+        // gets an empty jump table, so a mounted rider cannot jump and the on-foot table does
+        // not carry over; it returns on dismount.
+        walker.set_mount(Some(MountMover::new(
+            Arc::new(profile(MountKind::Normal, 0x1)),
+            timeline,
+            false,
+            None,
+        )));
+        steps(&mut walker, &w, 0.0, false, 1);
+        assert_eq!(
+            walker.controller().config().jump,
+            Some(JumpTable::new()),
+            "no jump while mounted without a mounted branch"
+        );
         walker.set_mount(None);
         assert_eq!(walker.controller().config().jump, on_foot);
     }

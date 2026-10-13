@@ -6,8 +6,9 @@
 //! log's mount columns (found by their header names) show the rider mounted on the
 //! controller's war-steed layer, rising through the gears 4, 5, 6 and 7 in that order while
 //! forward is held, with the rider's and the mount's clips playing and the feet moving.
-//! A run with `/ride off` as a start-up command is not checked here: such a command runs
-//! before `--mount` has mounted (`walker.md` §16.12 implementer OPEN (c)).
+//! A second run checks `walker.md` §16.12 resolution (c): `--command "/ride off"` with
+//! `--mount` ends the walker on foot, because the frame loop holds the `/ride` until the
+//! `--mount` choice has been applied, so the dismount acts after the initial mount.
 //!
 //! No DID is written here; only column values the walker logs are compared. Skipped
 //! (reported as passed) unless `TESSERA_GAME_DIR` is set; needs a GPU adapter (the headless
@@ -51,29 +52,40 @@ fn num(row: &BTreeMap<String, String>, col: &str) -> f64 {
     v.parse::<f64>().unwrap_or(f64::NAN)
 }
 
-/// Runs the client headless with `extra` and returns the frame log's rows.
+/// Runs the client headless mounted on `spec` and returns the frame log's rows.
 fn ride(dir: &Path, spec: &str) -> Vec<BTreeMap<String, String>> {
+    ride_with(dir, spec, &[])
+}
+
+/// Runs the client headless with `--mount spec` and `extra` arguments, returning the frame
+/// log's rows.
+fn ride_with(dir: &Path, spec: &str, extra: &[&str]) -> Vec<BTreeMap<String, String>> {
     let tmp = tempfile::tempdir().expect("tempdir");
     let log = tmp.path().join("frames.csv");
+    let data = tmp.path().join("data");
+    let log_str = log.to_str().expect("utf-8");
+    let data_str = data.to_str().expect("utf-8");
+    let mut args: Vec<&str> = vec![
+        "--headless",
+        "--avatar",
+        "human,m",
+        "--mount",
+        spec,
+        "--autorun",
+        "run",
+        "--duration",
+        "8",
+        "--unpaced",
+        "--frame-log",
+        log_str,
+        "--data-dir",
+        data_str,
+    ];
+    args.extend_from_slice(extra);
     let out = Command::new(env!("CARGO_BIN_EXE_tessera-client"))
         .env("TESSERA_GAME_DIR", dir)
         .env("RUST_LOG", "warn")
-        .args([
-            "--headless",
-            "--avatar",
-            "human,m",
-            "--mount",
-            spec,
-            "--autorun",
-            "run",
-            "--duration",
-            "8",
-            "--unpaced",
-            "--frame-log",
-            log.to_str().expect("utf-8"),
-            "--data-dir",
-            tmp.path().join("data").to_str().expect("utf-8"),
-        ])
+        .args(&args)
         .output()
         .expect("runs the client");
     assert!(
@@ -163,6 +175,30 @@ fn a_war_steed_rides_at_the_gallop_in_the_frame_loop() {
     assert!(
         rows.iter().any(|r| num(r, "mount_alpha") > 0.99),
         "the mount is drawn at full opacity"
+    );
+}
+
+#[test]
+fn a_start_up_ride_off_dismounts_the_command_line_mount() {
+    // `walker.md` §16.12 resolution (c): `--command "/ride off"` with `--mount` ends on foot,
+    // because the frame loop holds the `/ride` until `--mount` has been requested, so the
+    // dismount cancels the initial mount instead of running before it.
+    let Some(dir) = game_dir() else { return };
+    let rows = ride_with(&dir, "steed:medium", &["--command", "/ride off"]);
+    assert!(rows.len() > 60, "frames logged: {}", rows.len());
+    let states: std::collections::BTreeSet<u32> =
+        rows.iter().map(|r| num(r, "mount_state") as u32).collect();
+    println!("mount states with --command \"/ride off\": {states:?}");
+    // The run ends on foot and never settles into the mounted state at its end.
+    let tail = rows.len().saturating_sub(30);
+    assert!(
+        rows[tail..].iter().all(|r| num(r, "mount_state") == 0.0),
+        "on foot at the end: {states:?}"
+    );
+    assert_eq!(
+        rows.last().map(|r| num(r, "mount_effect")),
+        Some(0.0),
+        "no mount effect at the end"
     );
 }
 

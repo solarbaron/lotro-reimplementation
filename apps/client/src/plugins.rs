@@ -492,6 +492,13 @@ impl Plugins {
         self.dispatcher.p5_queue().take()
     }
 
+    /// Re-queues a P5 request to run in a later frame (`walker.md` §16.12: `/ride` is held
+    /// while the walker's initial `--mount` choice is still pending). `false` when the queue
+    /// is full, which drops the request.
+    pub fn requeue_p5_request(&self, r: crate::commands::p5::P5Request) -> bool {
+        self.dispatcher.p5_queue().push(r)
+    }
+
     /// Posts one line of the client's own (a P5 command's answer): the log, the walker's
     /// chat display and, with a game UI attached, the chat window.
     pub fn post_line(&mut self, line: LocalLine) {

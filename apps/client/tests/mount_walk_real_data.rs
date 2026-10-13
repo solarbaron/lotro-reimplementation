@@ -28,7 +28,6 @@ use tessera_client::walker::movement::{MovementState, PhysicsWalker};
 use tessera_formats::LandblockData;
 use tessera_formats::landblock::HeightGrid;
 use tessera_formats::{Did, LandblockId};
-use tessera_gamedata::mount::MountCategory;
 use tessera_mesh::assembly::AssemblyOptions;
 use tessera_net::Body;
 use tessera_physics::controller::LayerConditions;
@@ -138,37 +137,14 @@ fn steady(rows: &[RideRow], segment: usize) -> &RideRow {
         .expect("segment rows")
 }
 
-/// The index of the first normal mount in the body's offered list (`walker.md` §16.11
-/// checks 1 and 2 ride "a horse of its group"; `auto` is `dir:0`, which in this install's
-/// Tall group is a war-steed, `walker.md` §16.12 OPEN).
-fn first_normal(inst: &Install, avatar: &str) -> u16 {
-    let (body, _) = body_of(inst, avatar);
-    let Body::Character { species, sex } = body else {
-        panic!("{avatar} is not a playable body");
-    };
-    let rb = rider_body(inst.data.game_data(), species, sex).expect("race entry");
-    inst.data
-        .with_presenter(|p| {
-            p.offered(rb.species, rb.tall)
-                .iter()
-                .position(|m| {
-                    m.mount
-                        .as_ref()
-                        .is_some_and(|x| x.category == MountCategory::Normal)
-                })
-                .and_then(|i| u16::try_from(i).ok())
-        })
-        .expect("presenter")
-        .expect("a normal mount in the group")
-}
-
-/// `walker.md` §16.11 checks 1 and 2: a normal mount of the body's group.
+/// `walker.md` §16.11 checks 1 and 2: `auto` rides a normal mount of the body's group.
+/// `auto` skips the directory group's war-steed skills and picks the first normal mount
+/// (`walker.md` §16.2, §16.12 resolution), so Human M on `auto` is a horse, not a war-steed.
 fn normal_mount(inst: &Install, avatar: &str) {
-    let index = first_normal(inst, avatar);
     let r = ride(
         inst,
         avatar,
-        MountSource::Dir(index),
+        MountSource::Auto,
         &[
             Segment::moving(4.0, 1.0, false),
             Segment::idle(1.0),
@@ -179,7 +155,7 @@ fn normal_mount(inst: &Install, avatar: &str) {
     let p = &r.profile;
     assert!(
         matches!(p.kind, MountKind::Normal),
-        "{avatar}: dir:{index} is a normal mount ({:?})",
+        "{avatar}: auto is a normal mount ({:?})",
         p.kind
     );
     for row in &r.rows {
@@ -198,14 +174,15 @@ fn normal_mount(inst: &Install, avatar: &str) {
         "{avatar}: mounted idle layer"
     );
     // §14.12: the mounted jump branch (`collision.md` §11.10). The static scan reaches no
-    // node of the mounted branch on this install (`walker.md` §16.12 OPEN); when it does,
-    // the node is a valid jump.
+    // node of the mounted branch on this install, so the walker gives the controller an empty
+    // jump table while mounted and the rider cannot jump (`walker.md` §16.12 resolution); when
+    // the scan does find a node it is a valid jump.
     match r
         .jump
         .and_then(|t| t.get(MovementState::EarthControlledSurface))
     {
         Some(node) => assert!(node.air_time > 0.0 && node.expected_gravity > 0.0),
-        None => eprintln!("{avatar}: no mounted jump node; the on-foot jump applies"),
+        None => eprintln!("{avatar}: no mounted jump node; a mounted rider cannot jump"),
     }
     // Layers: Mounted while running, MountedWalking while walking.
     let run = steady(&r.rows, 1);
@@ -375,9 +352,9 @@ fn a_war_steed_shifts_through_every_gait() {
         );
         assert_eq!(row.mount.gait, 7);
     }
-    // Backward: the gaits fall step by step and end at 1 (Backwards). Neutral (2) shows
-    // only when a step's speed lands within ±0.0002 m/s, which braking at *a*y per 1/60 s
-    // step does not do (`walker.md` §16.12 OPEN on check 3).
+    // Backward: the gaits fall step by step through Neutral (2) to Backwards (1)
+    // (`walker.md` §16.11 check 3, §16.12 resolution: the step whose forward velocity crosses
+    // zero reads Neutral, so the gait falls 4 → 2 → 1 rather than 4 → 1).
     let mut back_seen: Vec<u32> = Vec::new();
     for row in r.rows.iter().filter(|r| r.segment == 3) {
         if back_seen.last() != Some(&row.mount.gait) {
@@ -387,6 +364,10 @@ fn a_war_steed_shifts_through_every_gait() {
     eprintln!("gaits while backward: {back_seen:?}");
     assert_eq!(back_seen.first(), Some(&7), "{back_seen:?}");
     assert_eq!(back_seen.last(), Some(&1), "{back_seen:?}");
+    assert!(
+        back_seen.contains(&2),
+        "Neutral at the zero crossing: {back_seen:?}"
+    );
     assert!(
         back_seen.windows(2).all(|w| w[1] < w[0]),
         "gaits only fall: {back_seen:?}"
@@ -476,14 +457,12 @@ fn summoning_and_mounting_follow_the_install_timeline() {
         eprintln!("TESSERA_GAME_DIR not set; skipped");
         return;
     };
-    let index = first_normal(&inst, "human,m");
     let (body, spec) = body_of(&inst, "human,m");
     let Body::Character { species, sex } = body else {
         panic!("playable");
     };
     let rb = rider_body(inst.data.game_data(), species, sex).expect("race entry");
-    let profile =
-        Arc::new(resolve_mount(&inst.data, &rb, MountSource::Dir(index)).expect("resolves"));
+    let profile = Arc::new(resolve_mount(&inst.data, &rb, MountSource::Auto).expect("resolves"));
     let induction = profile.induction.expect("the skill's induction");
     let mut ev = MountEvaluator::new(
         &inst.catalog,

@@ -78,6 +78,9 @@ pub enum MountRefusal {
     /// `steed:` of a tree the body's race lacks.
     #[error("steed:{}: this body's race has no war-steed of that tree", .0.keyword())]
     NoSteed(SteedTree),
+    /// `auto` but the body is offered no normal mount (`walker.md` §16.2, §16.12).
+    #[error("auto: this body is offered no normal mount")]
+    NoNormal,
     /// The effect cannot be drawn in the walker (`mounts.md` §14.11).
     #[error("{effect} cannot be drawn: {} (mounts.md §14.11)", category_text(.category))]
     NotDrawable {
@@ -430,15 +433,29 @@ fn source_effect(
                 .any(|m| m.mount.as_ref().is_some_and(|x| x.effect == info.effect));
             Ok((info, in_group, offered))
         }
-        MountSource::Auto | MountSource::Dir(_) => {
-            let index = match source {
-                MountSource::Dir(i) => usize::from(i),
-                _ => 0,
-            };
+        MountSource::Dir(i) => {
+            let index = usize::from(i);
             let m = offered.get(index).ok_or(MountRefusal::PastEnd {
                 index,
                 len: offered.len(),
             })?;
+            let info = pick(m)?;
+            Ok((info, true, offered))
+        }
+        MountSource::Auto => {
+            // `walker.md` §16.2/§16.12 (resolved, implementer 2026-10-13): `auto` is the
+            // body's first *normal* mount, not `dir:0`. In this install the directory group
+            // begins with war-steed skills, so `dir:0` is a war-steed for Human M; `auto`
+            // skips war-steeds and picks the first offered normal mount (`mounts.md` §14.11
+            // Normal category), so an automated `--mount auto` always rides a horse.
+            let m = offered
+                .iter()
+                .find(|m| {
+                    m.mount
+                        .as_ref()
+                        .is_some_and(|x| x.category == MountCategory::Normal)
+                })
+                .ok_or(MountRefusal::NoNormal)?;
             let info = pick(m)?;
             Ok((info, true, offered))
         }

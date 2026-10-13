@@ -2887,6 +2887,15 @@ written into the test):
 > rides the first normal mount of the body's offered list instead. Should the offered order of
 > `mounts.md` §14.10 leave the directory's war-steed skills out of the directory part, should
 > `auto` skip them, or should check 1 name another source?
+>
+> **Resolved for the walker (implementer, 2026-10-13):** `auto` skips the directory group's
+> war-steed skills and resolves to the body's first **normal** mount (`mounts.md` §14.11 Normal
+> category); it is no longer `dir:0`. So `--mount auto` always rides a horse (an automated run
+> never starts on a war-steed), `dir:N` still indexes the full offered list of §14.10 including
+> its war-steeds, and the real-data checks 1 and 2 ride `auto` directly. A body offered no
+> normal mount is a resolution error. Still open for the spec writer: reconcile the §16.2
+> grammar line (`"auto" = "dir:0"`) and the §16.11 check-1 prose ("a horse of its Tall group")
+> with this, and with the §14.10 offered order (per the header review note of 2026-10-13).
 
 > **OPEN:** (implementer, 2026-10-11) check 1 of §16.11 expects the steady forward
 > `control_speed` to equal the Mounted layer's forward speed × the speed factor within
@@ -2897,6 +2906,16 @@ written into the test):
 > applies that factor. Is the expectation meant without the damper (then the controller's
 > damping of the control velocity is the question, `collision.md` §11.6 item 2 says it is not
 > damped), or with it?
+>
+> **Resolved (implementer, 2026-10-13): with the damper.** `collision.md` §12.4 (b) is an
+> explicit Tessera Decision that the player controller damps its horizontal control velocity
+> (steady speed target × damper^(1/60) ≈ 6.33 m/s for players, not the original's 6.5), a known
+> departure from `collision.md` §11.6 items 2–3. The mounted layers keep BasePlayer's damper, so
+> §16.11 check 1's "forward speed × speed factor" is read with that same factor; the walker logs
+> the controller's (damped) horizontal control velocity and `mount_walk_real_data.rs` applies
+> `damper^(1/60)` to the expected speed. No change to `tessera-physics`: aligning the mounted
+> steady speed with the original's 6.5-style undamped control velocity is deferred together with
+> the on-foot §12.4 (b) departure (not a P5 item).
 
 > **OPEN:** (implementer, 2026-10-11) check 3 of §16.11 expects the gaits to "fall to 2 and 1"
 > while backward is held. By `mounts.md` §14.6 item 4 gait 2 needs a step whose forward
@@ -2904,6 +2923,13 @@ written into the test):
 > (0.27 m/s for *a*y 16 here), so the gait passes from Walk straight to Backwards (observed
 > 7, 6, 5, 4, 1 on the medium war-steed). Should the step in which the velocity changes sign
 > give Neutral, or does check 3 only need 1 at the end?
+>
+> **Resolved (implementer, 2026-10-13): the crossing step gives Neutral.** The walker holds the
+> gait at Neutral (2) for the single step whose forward control velocity crosses from forward
+> (> 0.0002 m/s) to backward (< −0.0002 m/s), so the gaits fall 7, 6, 5, 4, 2, 1 and check 3's
+> "fall to 2 and 1" is met. This refines `mounts.md` §14.6 item 4 for the walker only
+> (`tessera_physics::controller::gait::gait_from_speed_step`); the server's gait 3 /
+> `Neutral_Forwards` rule stays the OPEN of `mounts.md` §14.6.
 
 > **OPEN:** (implementer, 2026-10-11) observation for `mounts.md` §14.3: the table's single
 > "Back" column holds the **walking** back clips. With the merged evaluation of §14.1, Human M
@@ -2915,6 +2941,14 @@ written into the test):
 > summoning: §16.3 refuses it while not on foot ("Already mounted. Use /ride off first."), §16.5
 > says a summoning that meets another request is cancelled ("Summoning interrupted."). The
 > walker follows §16.3 (the request is refused and summoning goes on). Which rule applies?
+>
+> **Resolved (implementer, 2026-10-13): the two rules apply to different requests.** An explicit
+> `/ride SPEC` (a request for a *particular* mount) while not on foot is **refused** with §16.3's
+> message and summoning goes on; the toggle without arguments (`/ride`, the `toggle_mount` key,
+> §16.4) and the other interrupts of §16.5 (fly mode, a teleport, the feed's `none`) **cancel**
+> the summoning ("Summoning interrupted."). So "another request" of §16.5 is the toggle/interrupt,
+> not a second explicit spec. The walker already behaves this way; the spec writer may fold this
+> reading into §16.3/§16.5 at the next revision.
 
 > **OPEN:** (implementer, 2026-10-11) choices the section leaves open, taken as follows until
 > confirmed: (a) one request at a time: while a request resolves or evaluates another is
@@ -2940,6 +2974,14 @@ written into the test):
 > `Script_IsMounted` true), so the on-foot jump still applies. Which gate of the mounted branch
 > (beyond the WhenRunning and the gait cases) does the scan miss, and which property values
 > select the 0.285 s node?
+>
+> **Resolved for the walker (implementer, 2026-10-13): no mounted jump.** Because the static
+> scan finds no mounted-branch node, the walker gives the controller an **empty** jump table
+> while mounted, so a mounted rider cannot jump and the on-foot jump does **not** carry over (it
+> returns at the dismount). If a later install or a deeper scan exposes the mounted branch, the
+> found table is swapped in instead (`MountMover::with_jump`). The gate the scan misses and the
+> property values that select the 0.285 s node (and what the original does for a mounted jump)
+> stay open for the spec writer / server.
 
 > **OPEN:** (implementer, 2026-10-11, `apps/client` `travel::hub`, `map::hub`) Wiring
 > choices of the client: (a) the feed's `mount player REF` (§16.1) runs as an instant mount
@@ -2957,6 +2999,14 @@ written into the test):
 > run once the install's command words are read, which can be before the walker exists; a
 > queued `/ride` then runs in the walker's first frame, before a `--mount` given on the
 > command line has mounted (observed: `--command "/ride off"` with `--mount` ends mounted).
+>
+> **Resolved (implementer, 2026-10-13):** (a) a feed's `mount player REF` is applied as an
+> **instant** mount of REF's effect (no summon induction or mounting phase; the feed owns the
+> state and reports the rider already mounted); `none` dismounts by other. (c) the frame loop
+> **holds** the dispatcher's `/ride` requests while the walker still has an unapplied `--mount`
+> choice, so a `--command "/ride …"` queued before the walker exists runs **after** `--mount`
+> has been requested; `--command "/ride off"` with `--mount` now ends on foot. (b) stays closed
+> as the P5 exit verifier recorded.
 
 > **OPEN:** owner observations to be numbered by the checklist maintainer (P5 rows from O140):
 > in the original, (a) the delay between the end of the summon and the mount's appearance,
@@ -2995,3 +3045,4 @@ written into the test):
 | 2026-10-10 | Spec writer (dirty room), note (3) of the `water.md` re-review of 2026-10-09: both §14.6 OPENs name the lava record 0x2B000810 (draw by `water.md` §8.6.5; its curve-valued 1186 and 1187 evaluated each frame), and the flow-map OPEN points to the per-record colour of `water.md` §8.6.4 (revised the same day). §14.6 Accepted → Revised, awaiting review. |
 | 2026-10-11 | Spec writer (dirty room), P5: new §16, mounts in the walker (Tessera rules only; the client facts are in `mounts.md` §14): scope and sessions (offline sandbox; refused with `--server`; the feed owns mounts in scenario sessions), the `--mount SPEC` grammar with hostile-input limits and resolution, the `/ride` dispatcher built-in, the `toggle_mount` action (`movement`, exact, `Ctrl+M`), the five mount states with checks and cancels, mounted movement, figures, clips and drawing, scripted walks, the HUD line, frame-log and walk-log columns for headless checks, the exit-criterion test design and OPENs. Placed before the change log; no other section changed. §16 status: Review. |
 | 2026-10-13 | §16 reviewed by an independent spec reviewer (fresh session, not the writer): **passed** against CLEAN_ROOM.md §5.3 (all items). Verified that §16 adds no client fact and that the `mounts.md`/`game-controls.md`/`keymap.md`/decision-0020 references it relies on exist. No content change; §16 status Review → Accepted. See the review record (one non-blocking note on §16.11 check 1, already flagged by the §16.12 OPEN). |
+| 2026-10-13 | Implementer (clean room): resolution notes appended to the §16.12 implementer OPENs now that §16 is Accepted, and the walker/`tessera-physics` conformed: `auto` picks the body's first normal mount (not `dir:0`, so Human M is a horse); the war-steed gait holds Neutral at the forward→backward crossing so braking falls to 2 and 1 (check 3); the mounted steady speed keeps the `collision.md` §12.4 (b) damper (check 1 read with the factor, no physics change); no mounted jump (empty table while mounted, the on-foot jump not carried over); a feed's `mount` is instant; `/ride` dispatcher requests are held until `--mount` is applied. Residual spec-writer items (reconcile §16.2/§16.11 prose, the server gait-3 and mounted-jump rules) kept as OPENs. No normative §16 prose changed. |

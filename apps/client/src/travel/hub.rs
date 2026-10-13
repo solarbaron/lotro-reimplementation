@@ -310,8 +310,19 @@ pub fn run_p5_requests(
     use crate::commands::LocalLine;
     use crate::commands::p5::P5Request;
     use crate::walker::mount::spec::RideCommand;
+    // `walker.md` §16.12 resolution: hold `/ride` while the walker's initial `--mount` choice
+    // has not been applied, so a `--command "/ride …"` queued before the walker exists runs
+    // after `--mount` (which the walker applies in its own frame when first placed), not
+    // before it has mounted.
+    let hold_ride = walker.mount_choice_pending();
     for r in rt.plugins.take_p5_requests() {
         match r {
+            P5Request::Ride(c) if hold_ride => {
+                if !rt.plugins.requeue_p5_request(P5Request::Ride(c)) {
+                    rt.plugins
+                        .post_line(LocalLine::error("Too many /ride requests at once."));
+                }
+            }
             P5Request::Ride(c) => match c {
                 RideCommand::Toggle => walker.toggle_mount(),
                 RideCommand::Mount(spec) => walker.mount(spec),
@@ -350,6 +361,10 @@ pub fn run_p5_requests(
     }
     for w in rt.p5.take_walker_requests() {
         match w {
+            // `walker.md` §16.1, §16.12 resolution (implementer 2026-10-13): a feed's `mount`
+            // is applied as an **instant** mount of the ref's effect (no summon induction or
+            // mounting phase); the feed owns the state and says "mounted now". `none`
+            // dismounts by other.
             WalkerMount::Mount(did) => walker.mount_effect(did, false),
             WalkerMount::Dismount => walker.dismount_by_other(),
         }

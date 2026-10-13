@@ -269,6 +269,15 @@ impl WalkerMount {
         self.pending.is_some()
     }
 
+    /// Whether the `--mount` choice has not yet been applied (`walker.md` §16.12 resolution):
+    /// while true the frame loop holds `/ride` dispatcher requests, so a `--command "/ride …"`
+    /// acts after the initial `--mount` has been requested, not before (the observed
+    /// `--command "/ride off"` with `--mount` now ends on foot).
+    #[must_use]
+    pub fn choice_pending(&self) -> bool {
+        self.choice.is_some()
+    }
+
     /// Starts a worker thread named `name` running `f`, unless [`MAX_WORKERS`] run already.
     fn spawn(&self, name: &str, f: impl FnOnce() + Send + 'static) -> Result<(), MountRefusal> {
         if self.workers.fetch_add(1, Ordering::Relaxed) >= MAX_WORKERS {

@@ -14,6 +14,18 @@
 > fallback-window rule still OPEN in `map-windows.md` §8), are unchanged. The travel and instance
 > halves of §1–§2 rest on `travel-windows.md` and `instances.md`, reviewed separately.
 
+> **Review note (spec reviewer, Clean-Room-Role: review, 2026-10-13).** The scenario-feed
+> mechanism this record relies on — the `map-region` family and the `markers` step with marker
+> sets (`scenario-feed.md` "P5 travel", §18.P5 T-D7), cited in §1.3 and the Consequences, and the
+> travel and instance forms behind the §2 goldens — passed an independent CLEAN_ROOM.md §5.3
+> review on 2026-10-13 and its P5 parts are now **Accepted**; the `lua-plugin-api.md` §15.5 mount
+> views behind the criterion-2 presentation are likewise Accepted. So the feed half of §1–§2
+> rests on a reviewed definition. The status stays **Proposed**: owner acceptance of the record
+> itself is unchanged, and §1's `map-region` row and the §2 world-map tier-1 golden still carry
+> the dependencies the map-half note records (the `travel-windows.md`/`instances.md` reviews and
+> the still-OPEN fallback-window rule). Acceptance of the record is the owner's call, and this
+> record stands on decision 0031 (still Proposed); a reviewer does not move either.
+
 The number 0036 is out of sequence on purpose: P2 and P4 run in parallel on their own branches
 and take numbers below it, so P5 starts at 0036.
 

@@ -110,7 +110,7 @@ disbanding shown; tells, replies and named chat channels work on Tessera's own t
 synchronised `/play … sync` with `/playstart` starts every waiting part within 0.0001 s.
 Its specs are Accepted after independent reviews (2026-10-11) and the code is conformed to
 them; still open: effect icons on fellowship rows.
-**P5 (map, travel, mounts and instances) passes its exit criteria on Tessera's side**
+**P5 (map, travel, mounts and instances) is merged; it passes its exit criteria on Tessera's side**
 ([P5 status](docs/ROADMAP.md#p5-status)): the world map shows all 1,525 map regions of the
 install (227 map nodes, 1,298 dungeon maps), each with its scenario marker where it can carry
 one, with 0 failures; the minimap and `/findplace` use the same notes and places; the travel

@@ -273,14 +273,18 @@ compatibility in plain prose is fine. Format-level terms like "DID" or "landbloc
   (`map-windows.md`, `travel-windows.md`, `mounts.md` §14, `walker.md` §16,
   `scenario-feed.md` rev 8 "P5 travel", `lua-plugin-api.md` §15.5) are Accepted after
   independent review (2026-10-13); decision 0036 (map census, P5 goldens) is Proposed; the
-  code is conformed to the specs by the next pass. Built: `tessera-gamedata` `map`, `travel`,
+  code was conformed to them (loading-screen meter and label, the §16.12 walker gait rules,
+  headless `--ui` driving the P3/P5 and social window frames) and verified. Merged to main
+  2026-10-13. Built: `tessera-gamedata` `map`, `travel`,
   `instance`, `mount`; `tessera-net` "P5 travel" forms; `tessera-physics` `controller::gait`;
   `tessera-ui` `game::{mapwindow, mapmarks, travel, finder, popup, p5vocab}`; `tessera-plugins`
   `mount` views; `tessera-settings` `MapPrefs`; `tessera-input` `toggle_mount`;
   `tessera-client` `map`, `travel`, walker mounts (`--mount`, `/ride`, Ctrl+M); scenarios
   `map`, `travel`, `instances`, `mount`. Real data: 1,525 / 1,525 map regions shown, 13 local
-  goldens matched. Open: loading-screen progress bar, `walker.md` §16.12 OPENs, finder
-  join-label text cut, headless `--ui` runs skip the P3/P5 frames. Owner rows O140-O155.
+  goldens matched. Open: the loading-screen tier-2 golden captures a blank root surface so
+  it does not yet protect the meter/label (unit-test covered; strengthen the capture),
+  `ui-layout.md` §8.4 step 6 OPEN (owner), `walker.md` §16.12 spec-writer reconciliations,
+  finder join-label text cut. Owner rows O140-O155.
 - **REA (decision 0033, Proposed):** optional dirty-only analysis tool, pilot pending; never
   registered as an MCP server.
 - **Pending owner input:** `docs/checklists/owner-observations.md` (`/loc` readings at the 20

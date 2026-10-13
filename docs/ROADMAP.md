@@ -36,7 +36,7 @@
 > independent review. P2 and P4 are merged to main (2026-10-11); [P5](#p5) (map, travel,
 > mounts and instances) started on 2026-10-11 beside them: its exit criteria pass on Tessera's
 > side (exit verification 2026-10-12, [P5 status](#p5-status)), its specs are Accepted after
-> independent review (2026-10-13) and the code is conformed to them by the next pass.
+> independent review (2026-10-13); the code was conformed to them and P5 merged to main.
 > Milestones are ordered by
 > dependency and by legal risk: each one builds on the previous one, and the risk tier
 > (T0–T4, see `docs/LEGAL.md` §8) only rises when the earlier, safer tiers are solid.
@@ -2264,7 +2264,7 @@ until P8.
 verification 2026-10-12 on the uncommitted `p5` tree, install `3905db5e60168527`); to be
 committed and merged. The P5 specs (`map-windows.md`, `travel-windows.md`, `mounts.md` §14,
 `walker.md` §16, `scenario-feed.md` revision 8 and `lua-plugin-api.md` §15.5) are **Accepted**
-after independent reviews (2026-10-13); the code is conformed to them by the next pass.
+after independent reviews (2026-10-13); the code was conformed to them and P5 is merged to main.
 Decisions 0031 and 0036 are Proposed (the owner accepts them). No criterion needs an observation in the original client; owner rows O140–O155
 ([owner-observations.md](checklists/owner-observations.md#p5-items)) block nothing until P8.
 

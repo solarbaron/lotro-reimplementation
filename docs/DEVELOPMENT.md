@@ -173,6 +173,9 @@ Only one machine works at a time.
    room.
 4. Golden images tolerate driver differences. A golden test that fails on only one machine
    is a real finding: investigate it, don't re-bless.
+5. Never run `rea setup` or install the REA skill (decision 0033); `tools/dev-setup.sh`
+   fails if an REA or Ghidra MCP server is registered, or if `$TESSERA_RE_DIR/.mcp.json`
+   exists (dirty MCP servers are attached per session, `docs/TOOLING.md` §8 item 3).
 
 Claude's memory, transcripts and scratch files stay on the machine where they were made. A
 new Claude session learns the project from `CLAUDE.md`, `docs/decisions/`, the roadmap status
@@ -207,8 +210,17 @@ Each milestone in `docs/ROADMAP.md` runs as one workflow:
 4. Criteria that need the owner to observe the original client are collected in
    `docs/checklists/owner-observations.md`. Fill them in when convenient; they do not block
    the next milestone.
-5. **M8 is gated** ([decision 0004](decisions/0004-server-strategy.md)). Do not run it until
-   a legal review has been recorded as a new decision. The workflow refuses `M8`.
+5. **M8 is in scope** by the owner's decision of 2026-10-11
+   ([decision 0034](decisions/0034-official-server-compatibility.md)), without a legal review.
+   The workflow runs it and gives its spec writers the 0034 rules:
+   - G4: the ban-risk warning comes before any official connection;
+   - G5: the forbidden list of LEGAL.md §8;
+   - no key material, hostnames or account data in the repository or specs;
+   - captures stay in the dirty room;
+   - no anti-cheat or anti-tamper work.
+
+   Live logins happen only on the owner's own account, at the owner's own risk, and never
+   from CI. The workflow refuses `M9` until P8 and M8 are done.
 
 Without ultracode, do the same steps by hand: write the specs with the `spec-writer` agent,
 implement with `clean-implementer`, and audit with `clean-room-auditor` (`.claude/agents/`).
@@ -236,7 +248,7 @@ commit message.
 | `TESSERA_SEED`, `TESSERA_SAMPLE` | Reproducible sampling in real-data tests |
 | `TESSERA_TARGET_DIR` | Used by `tools/dev-setup.sh --fix` to place the build cache |
 | `TESSERA_CLONES_DIR` | Where `tools/fetch-research-clones.sh` puts the research clones (default `${XDG_CACHE_HOME:-~/.cache}/tessera/clones`) |
-| `TESSERA_RE_DIR` | Dirty-room data root for captures, snapshots, Wine prefixes, Ghidra projects (`docs/TOOLING.md` §5; default `~/.cache/tessera/re`) |
+| `TESSERA_RE_DIR` | Dirty-room data root for captures, snapshots, Wine prefixes, Ghidra projects (`docs/TOOLING.md` §5; default `~/.cache/tessera/re`). It also holds `tools/rea` and `tools/ghidra-shim` (decision 0033): machine-local, not carried by git; re-create them per `docs/TOOLING.md` §5.4 on a new machine |
 
 Other `TESSERA_*` variables are documented next to the tests and apps that read them.
 

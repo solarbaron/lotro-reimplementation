@@ -7,8 +7,8 @@
 //! markers follow the radars and the world map (§8.3).
 //!
 //! Frame order (after the NPC windows' frame): [`QuestHub::frame`] with the frame's UI
-//! events (the NPC hub collects them, [`NpcHub::frame_events`]) and the walker's radar
-//! input; then [`QuestHub::update_indicators`] with the walker's entity positions; in the
+//! events (the same list the NPC hub read, taken once from
+//! [`crate::ui_host::UiHost::take_game_events`]) and the walker's radar input; then [`QuestHub::update_indicators`] with the walker's entity positions; in the
 //! draw, [`QuestHub::draw_indicators`] after the walker's scene and before the game UI.
 //!
 //! `ToggleQuestPanel` (`npc-windows.md` NW10: key L, no modifier, `Main`) is
@@ -259,7 +259,7 @@ impl QuestHub {
             .as_deref()
             .and_then(|d| d.presenter().quest().data().pid(RING_PROPERTY))
         {
-            world.player_state().npc().quests().set_ring_property(pid);
+            world.player_state().quests().set_ring_property(pid);
         }
         let ui = self
             .ui
@@ -301,6 +301,8 @@ impl QuestHub {
                 text,
                 channel: ChatChannel::System,
                 chat_type: QUEST_CHAT_TYPE,
+                shown: None,
+                im: None,
             }));
         }
         if !out.notices.is_empty() {

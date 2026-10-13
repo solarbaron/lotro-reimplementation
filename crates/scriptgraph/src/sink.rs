@@ -8,8 +8,10 @@
 
 use std::collections::BTreeMap;
 
-use tessera_formats::Did;
-use tessera_formats::script_table::{AnimationNode, ParticleScriptNode, PhysicsImpulseNode};
+use tessera_formats::script_table::{
+    AnimationNode, BeamNode, ParticleScriptNode, PhysicsImpulseNode,
+};
+use tessera_formats::{Did, PropertyEntry, PropertySet, PropertyValue};
 
 /// An entity, identified by the caller.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -51,6 +53,71 @@ pub struct ParticleStart {
     /// The node's editor ID (for logs).
     pub node_id: u32,
 }
+
+/// A started beam, numbered by the sink (`particle-runtime.md` §11.1).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct BeamHandle(pub u64);
+
+/// A Beam node asking for a beam (`particle-runtime.md` §11.1 step 1): the node resolved its
+/// target (the first entity) or uses `TargetPosition`. The sink moves the beam's head and
+/// calls [`crate::Runtime::beam_arrived`] once it has arrived (step 7) and
+/// [`crate::Runtime::beam_finished`] when the beam is removed (step 10, rule 14).
+#[derive(Debug, Clone, PartialEq)]
+pub struct BeamStart {
+    /// The entity whose script runs the node (the beam's source).
+    pub entity: EntityId,
+    /// The target entity (`None` with `UseTargetPosition` = 1 and no resolved target).
+    pub target: Option<EntityId>,
+    /// The node's fields.
+    pub node: BeamNode,
+    /// The node's intensity.
+    pub intensity: f32,
+    /// The node's editor ID (for logs).
+    pub node_id: u32,
+}
+
+/// A StoryHook node ran (`script-table.md` §9.1): its type and the story of its run.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StoryHookEvent {
+    /// The entity whose script runs the node (the performer).
+    pub entity: EntityId,
+    /// `StoryHookScript_Type` (1 `Defend`, 2 `Attack` in the data).
+    pub hook_type: u32,
+    /// The run's `StorySystem_StoryID` parameter; `None` when the run belongs to no story
+    /// (the hook then releases nothing).
+    pub story: Option<i64>,
+}
+
+/// An Execute node calling its native callback (`script-table.md` §9.1).
+#[derive(Debug, Clone, Copy)]
+pub struct ExecuteRequest<'a> {
+    /// The entity whose script runs the node.
+    pub entity: EntityId,
+    /// `ExecuteScript_Callback`: a key of the callback DID map (0x28000007).
+    pub callback: u32,
+    /// The node's `DefaultValue`.
+    pub default_value: Option<&'a PropertyEntry>,
+    /// The node's `CallProperties` (for example `SCP_GetUpcomingTargets_CombatResultType_Filter`).
+    pub call_properties: &'a PropertySet,
+    /// The run's `StorySystem_StoryID` parameter, when the run belongs to a story.
+    pub story: Option<i64>,
+    /// The node's editor ID (for logs).
+    pub node_id: u32,
+}
+
+/// The answer to an [`ExecuteRequest`]: values written into the run's parameter set (the
+/// callback's outputs and its result property). The runtime then fires the result ports
+/// (type 5) whose payload (result PID, value) matches the written value, otherwise the
+/// Default ports (`combat-visuals.md` §11 rule 8).
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct ExecuteReply {
+    /// (PID, value) pairs written into the run parameters, in order (at most
+    /// [`MAX_EXECUTE_OUTPUTS`] are kept).
+    pub outputs: Vec<(u32, PropertyValue)>,
+}
+
+/// Most output values one Execute reply writes (hostile-input bound).
+pub const MAX_EXECUTE_OUTPUTS: usize = 64;
 
 /// The constant the client adds to an `IsJump` node's `AirTime` before multiplying by
 /// `ExpectedGravity`, seconds (`collision.md` §11.10 item 2; BIN, decision 0012).
@@ -202,6 +269,13 @@ pub trait EffectSink {
     fn stop_animation(&mut self, handle: AnimationHandle) {
         let _ = handle;
     }
+    /// A driven field of a running animation node changed (`script-table.md` §6.10 step 7):
+    /// `node` carries the node's fields with the current driven values; the clip takes the
+    /// new rate (`Speed` × `SpeedMultiplier`) at once and blends to the new
+    /// `UseBoneOpacity` (`skeleton-anim.md` §6.6). Default: ignored.
+    fn update_animation(&mut self, handle: AnimationHandle, node: &AnimationNode) {
+        let _ = (handle, node);
+    }
     /// The never-ending classification of `effect` for a Particle node without a stored
     /// byte (`particle-runtime.md` §5.3, rule §12.2: only synthetic nodes). Default: `None`,
     /// treated as finite.
@@ -238,6 +312,29 @@ pub trait EffectSink {
     /// 3); the node completes at once (§30.6 OPEN-20 Decision). Default: ignored.
     fn physics_impulse(&mut self, request: &ImpulseRequest) {
         let _ = request;
+    }
+    /// A StoryHook node ran (`script-table.md` §9.1; `combat-visuals.md` §4.2): the node
+    /// completes at once. Default: ignored.
+    fn story_hook(&mut self, event: &StoryHookEvent) {
+        let _ = event;
+    }
+    /// An Execute node calls its callback (`script-table.md` §9.1). `None`: the callback is
+    /// not implemented, and the node fires the result port matching its `DefaultValue`
+    /// (`script-runtime.md` §18), or completes at once. Default: `None`.
+    fn execute(&mut self, request: &ExecuteRequest<'_>) -> Option<ExecuteReply> {
+        let _ = request;
+        None
+    }
+    /// A Beam node asks for a beam (`particle-runtime.md` §11.1 step 1). `None`: no beam is
+    /// made and the node completes at once (rule 14). Default: `None`.
+    fn start_beam(&mut self, request: &BeamStart) -> Option<BeamHandle> {
+        let _ = request;
+        None
+    }
+    /// A Beam node with a beam stopped (§11.1 step 2: the node's stop stops its beam).
+    /// Default: ignored.
+    fn stop_beam(&mut self, handle: BeamHandle) {
+        let _ = handle;
     }
 }
 
@@ -280,6 +377,12 @@ pub enum SinkEvent {
     ParticleStopped(ParticleHandle, bool),
     /// `physics_impulse`.
     Impulse(ImpulseRequest),
+    /// `story_hook`.
+    StoryHook(StoryHookEvent),
+    /// `start_beam`, with the handle the sink gave.
+    BeamStarted(BeamHandle, Box<BeamStart>),
+    /// `stop_beam`.
+    BeamStopped(BeamHandle),
 }
 
 /// A sink that accepts everything and records what it was asked, for tests and tools.
@@ -300,6 +403,8 @@ pub struct RecordingSink {
     pub environments: BTreeMap<EnvironmentHandle, EnvironmentRequest>,
     /// Particle effects started and not stopped (finite ones are never stopped).
     pub particles: BTreeMap<ParticleHandle, ParticleStart>,
+    /// Beams started and not stopped.
+    pub beams: BTreeMap<BeamHandle, BeamStart>,
     /// Number of sound requests accepted.
     pub sounds_started: u64,
     /// Number of sound requests refused.
@@ -318,6 +423,7 @@ impl Default for RecordingSink {
             playing: BTreeMap::new(),
             environments: BTreeMap::new(),
             particles: BTreeMap::new(),
+            beams: BTreeMap::new(),
             sounds_started: 0,
             sounds_refused: 0,
             sounds_stopped: 0,
@@ -434,5 +540,20 @@ impl EffectSink for RecordingSink {
 
     fn physics_impulse(&mut self, request: &ImpulseRequest) {
         self.push(SinkEvent::Impulse(*request));
+    }
+    fn story_hook(&mut self, event: &StoryHookEvent) {
+        self.push(SinkEvent::StoryHook(*event));
+    }
+
+    fn start_beam(&mut self, request: &BeamStart) -> Option<BeamHandle> {
+        let h = BeamHandle(self.handle());
+        self.beams.insert(h, request.clone());
+        self.push(SinkEvent::BeamStarted(h, Box::new(request.clone())));
+        Some(h)
+    }
+
+    fn stop_beam(&mut self, handle: BeamHandle) {
+        self.beams.remove(&handle);
+        self.push(SinkEvent::BeamStopped(handle));
     }
 }

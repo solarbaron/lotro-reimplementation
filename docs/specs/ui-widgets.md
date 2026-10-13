@@ -787,6 +787,14 @@ position is set, and when it is resized. Steps:
 Step 4 runs even when the bar is disabled; the thumb's size then follows `widget_size` 1.0 or
 whatever the scrollable last set.
 
+> **OPEN:** (implementer note, 2026-10-11, from `social-panels.md` TR14) Step 6 shows the bar
+> whenever it is not both disabled and `hide_when_disabled`, so a bar the layout hides with
+> `UICore_Element_hide` (for example `FellowTemplateVolumeControl`, `social-panels.md` §4.2) is
+> shown again at its first layout. Does step 6 leave a bar hidden that the layout or game code
+> hid (is the element's own hidden flag separate from the bar's shown state)? Meanwhile
+> Tessera's fellowship rows keep that bar disabled with `hide_when_disabled` set, so step 6
+> hides it.
+
 <a id="s6-5"></a>
 ### 6.5 Value mapping and stops (BIN, W9)
 

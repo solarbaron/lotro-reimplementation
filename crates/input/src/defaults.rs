@@ -49,7 +49,7 @@ pub mod contexts {
 fn action_defs() -> Vec<ActionDef> {
     let sub = ModifierPolicy::Subset;
     let b = ActionDef::button;
-    vec![
+    let mut v = vec![
         // global
         b("menu"),
         b("screenshot"),
@@ -68,6 +68,31 @@ fn action_defs() -> Vec<ActionDef> {
         b("toggle_bag_5"),
         b("toggle_bag_6"),
         b("pin_tooltip"),
+        // P4 social panels (`social-panels.md` §7.2, §9 TR12): Tessera actions for the
+        // commands `ToggleSocialPanel`, the five page commands, `SelectFellowOne` … `Six`
+        // and `AssistFellowTwo` … `Six`.
+        b("toggle_social"),
+        b("toggle_social_grouping"),
+        b("toggle_social_friends"),
+        b("toggle_social_kinship"),
+        b("toggle_social_raid"),
+        b("toggle_social_raid_lock"),
+        b("select_fellow_1"),
+        b("select_fellow_2"),
+        b("select_fellow_3"),
+        b("select_fellow_4"),
+        b("select_fellow_5"),
+        b("select_fellow_6"),
+        b("assist_fellow_2"),
+        b("assist_fellow_3"),
+        b("assist_fellow_4"),
+        b("assist_fellow_5"),
+        b("assist_fellow_6"),
+    ];
+    // P2 targeting and quickslot actions (`keymap.md` §8.2): exact policy, no repeat.
+    v.extend(crate::combat::TARGET_ACTIONS.iter().map(|r| b(r.1)));
+    v.extend(crate::combat::QUICKSLOT_ACTIONS.iter().map(|n| b(n)));
+    v.extend(vec![
         // camera
         b("mouselook").with_modifiers(sub),
         ActionDef::axis("look_x"),
@@ -128,7 +153,8 @@ fn action_defs() -> Vec<ActionDef> {
         b("text_copy"),
         b("text_cut"),
         b("text_paste"),
-    ]
+    ]);
+    v
 }
 
 /// The built-in contexts (§8).
@@ -200,6 +226,28 @@ fn default_table() -> Vec<(&'static str, &'static str, Vec<Entry>)> {
         (GLOBAL, "toggle_bag_5", vec![]),
         (GLOBAL, "toggle_bag_6", vec![]),
         (GLOBAL, "pin_tooltip", vec![D("Ctrl+T")]),
+        // P4 social panels: O opens the Social panel (the install's default, SP20). The
+        // page commands are unbound there too. The install binds `SelectFellowOne` … `Six`
+        // to F1 … F6 and `AssistFellowTwo` … `Six` to Shift+F2 … F6 (SP20); Tessera's own
+        // map leaves them unbound because F3 is its debug key, and the key-map import
+        // (`keymap.md` §12.14) brings the install's keys.
+        (GLOBAL, "toggle_social", vec![D("O")]),
+        (GLOBAL, "toggle_social_grouping", vec![]),
+        (GLOBAL, "toggle_social_friends", vec![]),
+        (GLOBAL, "toggle_social_kinship", vec![]),
+        (GLOBAL, "toggle_social_raid", vec![]),
+        (GLOBAL, "toggle_social_raid_lock", vec![]),
+        (GLOBAL, "select_fellow_1", vec![]),
+        (GLOBAL, "select_fellow_2", vec![]),
+        (GLOBAL, "select_fellow_3", vec![]),
+        (GLOBAL, "select_fellow_4", vec![]),
+        (GLOBAL, "select_fellow_5", vec![]),
+        (GLOBAL, "select_fellow_6", vec![]),
+        (GLOBAL, "assist_fellow_2", vec![]),
+        (GLOBAL, "assist_fellow_3", vec![]),
+        (GLOBAL, "assist_fellow_4", vec![]),
+        (GLOBAL, "assist_fellow_5", vec![]),
+        (GLOBAL, "assist_fellow_6", vec![]),
         (CAMERA, "mouselook", vec![D("MouseRight")]),
         (
             CAMERA,
@@ -316,6 +364,17 @@ fn default_table() -> Vec<(&'static str, &'static str, Vec<Entry>)> {
             vec![D("Ctrl+V"), D("Shift+Insert")],
         ),
     ];
+    // P2 targeting and quickslot actions: the original's defaults (`keymap.md` §8.2, K47).
+    for (_, action, _, keys) in crate::combat::TARGET_ACTIONS {
+        t.push((GLOBAL, action, keys.iter().map(|k| D(k)).collect()));
+    }
+    for (i, action) in crate::combat::QUICKSLOT_ACTIONS.iter().enumerate() {
+        let chords = crate::combat::quickslot_default_chords(i)
+            .into_iter()
+            .map(Entry::S)
+            .collect();
+        t.push((GLOBAL, *action, chords));
+    }
     // Shared by text_entry and ui.chat_log.
     for ctx in [TEXT_ENTRY, UI_CHAT_LOG] {
         t.push((ctx, "text_page_up", vec![D("PageUp")]));
@@ -347,6 +406,8 @@ fn default_table() -> Vec<(&'static str, &'static str, Vec<Entry>)> {
 enum Entry {
     /// Digital, value 1.
     D(&'static str),
+    /// Digital, value 1, from a built chord text.
+    S(String),
     /// Digital with a value.
     V(&'static str, f32),
     /// Digital with an activation filter (`on`).
@@ -365,6 +426,7 @@ pub fn default_keymap() -> Keymap {
             .into_iter()
             .filter_map(|e| match e {
                 Entry::D(t) => BindingSpec::parse(t).ok(),
+                Entry::S(t) => BindingSpec::parse(&t).ok(),
                 Entry::V(t, v) => crate::Chord::parse(t)
                     .ok()
                     .map(|c| BindingSpec::digital(c, v)),
@@ -704,6 +766,59 @@ mod tests {
         ] {
             assert!(reg.action(retired).is_none(), "{retired}");
         }
+    }
+
+    #[test]
+    fn p2_targeting_and_quickslot_defaults() {
+        let (ids, mut m) = walk_mapper();
+        let t = Duration::ZERO;
+        let k = |key, pressed| RawEvent::Key {
+            key,
+            pressed,
+            repeat: false,
+        };
+        let a = |m: &InputMapper, n: &str| m.registry().action(n).expect(n);
+        let press = |m: &mut InputMapper, mods: &[KeyCode], key: KeyCode| {
+            for &mk in mods {
+                m.handle(&k(mk, true), t);
+            }
+            m.handle(&k(key, true), t);
+            m.update(t);
+        };
+        let release = |m: &mut InputMapper, mods: &[KeyCode], key: KeyCode| {
+            m.handle(&k(key, false), t);
+            for &mk in mods {
+                m.handle(&k(mk, false), t);
+            }
+            m.update(t);
+        };
+        use KeyCode::{AltLeft, Backslash, ControlLeft, Digit1, Equal, F, ShiftLeft, Tab};
+        for (mods, key, action) in [
+            (&[][..], Digit1, "quickslot_1"),
+            (&[ControlLeft][..], Digit1, "quickslot_13"),
+            (&[AltLeft][..], Equal, "quickslot_36"),
+            (&[ShiftLeft][..], Equal, "quickslot_48"),
+            (&[][..], Tab, "target_next_enemy"),
+            (&[ShiftLeft][..], Tab, "target_previous_enemy"),
+            (&[ControlLeft][..], Tab, "target_nearest_player"),
+            (&[][..], Backslash, "target_self"),
+            (&[][..], F, "target_assist"),
+        ] {
+            press(&mut m, mods, key);
+            assert!(m.just_pressed(a(&m, action)), "{mods:?} {key:?} {action}");
+            release(&mut m, mods, key);
+        }
+        // Exact policy: Ctrl+F stays `toggle_fly`, not `target_assist` (§8.2).
+        press(&mut m, &[ControlLeft], F);
+        assert!(m.just_pressed(ids.toggle_fly));
+        assert!(!m.just_pressed(a(&m, "target_assist")));
+        release(&mut m, &[ControlLeft], F);
+        // Shift+1 also holds `walk` (§8.2 interplay).
+        press(&mut m, &[ShiftLeft], Digit1);
+        assert!(m.just_pressed(a(&m, "quickslot_37")));
+        assert!(m.pressed(ids.walk));
+        assert!(!m.just_pressed(a(&m, "quickslot_1")));
+        release(&mut m, &[ShiftLeft], Digit1);
     }
 
     fn walk_mapper() -> (StandardActions, InputMapper) {

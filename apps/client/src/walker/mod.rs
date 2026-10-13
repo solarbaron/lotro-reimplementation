@@ -39,6 +39,7 @@
 pub(crate) mod boot;
 pub mod characters;
 pub mod chat;
+pub mod combat;
 pub(crate) mod controls;
 pub mod effects;
 pub mod env;
@@ -144,6 +145,12 @@ pub trait WalkerSession {
     fn drain_entity_events(&mut self, out: &mut Vec<Event>, max: usize) {
         let _ = (out, max);
     }
+    /// Appends at most `max` of the combat events received since the last call, oldest
+    /// first, for the combat visuals ([`combat`], `combat-visuals.md` §9). The default
+    /// has none.
+    fn drain_combat_events(&mut self, out: &mut Vec<tessera_net::CombatEvent>, max: usize) {
+        let _ = (out, max);
+    }
     /// The interpolated state of a networked entity at `now` (a remote session,
     /// `tessera-protocol.md` §8.6); `None` keeps the walker's extrapolation of its moves
     /// (the sandbox, the default).
@@ -183,7 +190,28 @@ pub trait WalkerSession {
     fn look_data(&self) -> Option<Arc<crate::screens::ScreenData>> {
         None
     }
+    /// The player's social state (decision 0024 P4: the chat model of `chat-window.md`
+    /// §15.10, the fellowship, lists, invitation and trade), which the command dispatcher's
+    /// P4 built-ins act on. The default has none (the built-ins then say they are not
+    /// connected).
+    fn social_mut(&mut self) -> Option<&mut crate::social::SocialState> {
+        None
+    }
+    /// Sends a command for the player (the P4 built-ins' channel and list commands, the
+    /// panels' actions); `Err` with the reason when it was not sent. The default sends
+    /// nothing.
+    ///
+    /// # Errors
+    ///
+    /// Why the command was not sent (not in the world, refused by the backend).
+    fn send_command(&mut self, now: Instant, command: tessera_net::Command) -> Result<(), String> {
+        let _ = (now, command);
+        Err("no world session".to_owned())
+    }
 }
+
+/// Most session combat events handled in one frame (the rest wait for the next frames).
+pub const MAX_COMBAT_EVENTS_PER_FRAME: usize = 1024;
 
 /// Most session entity events applied in one frame (decision 0008: the store's change
 /// lists are unbounded, so the client bounds what it applies); the rest wait, in order, for
@@ -730,6 +758,11 @@ pub struct Walker {
     audio: Option<crate::audio::WorldAudio>,
     /// Particle effects.
     effects: effects::EffectLayer,
+    /// Combat visuals on the figures and the selection's world indicator
+    /// (`combat-visuals.md`, `combat-ui.md` TR6).
+    combat: combat::CombatLayer,
+    /// Combat events drained from the session this frame.
+    combat_events: Vec<tessera_net::domain::CombatEvent>,
     /// The collision walk mode's mover, loading on its own thread.
     mover_job: Option<std::thread::JoinHandle<movement::setup::MoverSetup>>,
     /// The M4.5 systems in effect (`walker.md` §14.2).
@@ -974,6 +1007,11 @@ impl Walker {
                     ctx.options().active_content_layers.clone(),
                 )
             });
+        let combat_layer = combat::CombatLayer::new(
+            config.effects.enabled.then(|| set.dir().to_path_buf()),
+            &pool,
+            config.effects.seed,
+        );
         let effects = effects::EffectLayer::new(
             config.effects,
             Arc::clone(&set),
@@ -1016,6 +1054,7 @@ impl Walker {
             .map(|r| resolver::TintPids {
                 colour: r.pid("Render_Color"),
                 opacity: r.pid("Render_Opacity"),
+                scale: r.pid("Render_AdjustableScale"),
             })
             .unwrap_or_default();
         let resolver = Resolver::new(Arc::clone(&ctx), objects.materials(), tint)?;
@@ -1071,6 +1110,8 @@ impl Walker {
             player_region: config_region,
             chars_ms: 0.0,
             audio,
+            combat: combat_layer,
+            combat_events: Vec::new(),
             effects,
             mover_job,
             systems,
@@ -1221,7 +1262,7 @@ impl Walker {
     /// evaluation run on worker threads; refusals show on the HUD and as chat lines.
     pub fn mount(&mut self, spec: mount::MountSpec) {
         let ctx = self.mount_context();
-        let figures = self.characters.figure_context().cloned();
+        let figures = self.characters.figure_context();
         self.mount.request(
             spec,
             true,
@@ -1237,7 +1278,7 @@ impl Walker {
     /// accepted in scenario sessions.
     pub fn mount_effect(&mut self, did: u32, summon: bool) {
         let ctx = self.mount_context();
-        let figures = self.characters.figure_context().cloned();
+        let figures = self.characters.figure_context();
         self.mount.request_effect(
             did,
             summon,
@@ -1267,7 +1308,7 @@ impl Walker {
     /// `/ride` without arguments and the `toggle_mount` action (`walker.md` §16.3, §16.4).
     pub fn toggle_mount(&mut self) {
         let ctx = self.mount_context();
-        let figures = self.characters.figure_context().cloned();
+        let figures = self.characters.figure_context();
         self.mount.toggle(
             self.controls.physics_mut(),
             figures.as_ref(),
@@ -1323,9 +1364,9 @@ impl Walker {
             let Some(props) = props else {
                 return AreaAt::Unknown;
             };
-            let dungeon_pid = self
-                .characters
-                .figure_context()
+            let figures = self.characters.figure_context();
+            let dungeon_pid = figures
+                .as_ref()
                 .and_then(|f| f.catalog.data.registry().ok())
                 .and_then(|r| r.pid("Dungeon_DID"));
             let did = |pid: Option<u32>| {
@@ -1418,6 +1459,7 @@ impl Walker {
             && self.resolver.pending() == 0
             && self.far_view_settled()
             && self.effects.settled()
+            && self.combat.settled()
     }
 
     /// Whether landscape water is drawn: switched on and outdoor-visible (§4.12).
@@ -1480,6 +1522,9 @@ impl Walker {
         }
         if !self.effects.settled() {
             out.push("particle effects");
+        }
+        if !self.combat.settled() {
+            out.push("combat visuals");
         }
         out
     }
@@ -1927,6 +1972,24 @@ impl Walker {
             },
             &mut self.objects,
         );
+        // Beam head entities (`particle-runtime.md` §11.1 step 9) resolve and load.
+        self.effects
+            .update_heads(&mut self.resolver, &mut self.objects);
+
+        // Combat visuals (`combat-visuals.md` §9): the session's combat events, then the
+        // stories, strikes, effects, stances and deaths on the figures.
+        if let Some(w) = world.as_deref_mut() {
+            w.drain_combat_events(&mut self.combat_events, MAX_COMBAT_EVENTS_PER_FRAME);
+        }
+        for ev in self.combat_events.drain(..) {
+            self.combat.handle(&ev, player_id);
+        }
+        self.combat.update(combat::CombatInput {
+            now: time,
+            player: player_id,
+            characters: &mut self.characters,
+            effects: &mut self.effects,
+        });
 
         // World audio: listener at the camera, the avatar at the player (ROADMAP M6).
         if self.audio.is_some() {
@@ -3201,6 +3264,7 @@ impl Walker {
             }
             // Particle effects after the other translucent surfaces of the scene
             // (`particle-runtime.md` §9; their order is `particles.md` §8.15).
+            self.effects.draw_heads(pass, &anchor, &mut self.objects);
             self.effects.draw(pass, &anchor, eye, dir, &self.objects);
             let ms = |a: Instant, b: Instant| b.saturating_duration_since(a).as_secs_f64() * 1e3;
             self.phase_ms[3] = ms(t0, t1);
@@ -3320,6 +3384,68 @@ impl Walker {
             fx: fx_row,
             mount: mount_row,
         });
+    }
+
+    /// The combat layer: the neutral per-entity combat API (`combat-visuals.md` §9) and
+    /// its counters.
+    #[must_use]
+    pub fn combat(&self) -> &combat::CombatLayer {
+        &self.combat
+    }
+
+    /// The combat layer, to report casts, hits, effects, combat state, defeat, revive and
+    /// the selection by hand (the session's combat events reach it on their own).
+    pub fn combat_mut(&mut self) -> &mut combat::CombatLayer {
+        &mut self.combat
+    }
+
+    /// The view-projection of the world camera, its eye and the render anchor (`None`
+    /// before the viewer is placed).
+    fn camera_frame(&self) -> Option<(Mat4, Vec3, Anchor)> {
+        let anchor = self.anchor?;
+        if !self.controls.placed() {
+            return None;
+        }
+        let (eye_w, dir) = self.view();
+        let eye = anchor.to_render(&eye_w)?;
+        let camera = Camera {
+            eye,
+            target: eye + dir,
+            up: Vec3::Z,
+            projection: Perspective {
+                fov_y: FOV_Y,
+                near: NEAR,
+                far: self.far,
+            },
+        };
+        let (w, h) = self.viewport;
+        #[allow(clippy::cast_precision_loss)]
+        let aspect = w.max(1) as f32 / h.max(1) as f32;
+        Some((camera.view_proj(aspect), eye, anchor))
+    }
+
+    /// The selectable session entity whose figure lies under pixel `px` of the viewport
+    /// (top-left origin; `combat-ui.md` §3.2 TR3, eligibility TR1); `None` on empty ground
+    /// or sky.
+    #[must_use]
+    pub fn pick_entity(&self, px: [f32; 2]) -> Option<EntityId> {
+        let (vp, _, anchor) = self.camera_frame()?;
+        let ray = combat::pick::ray_through(vp, px, self.viewport)?;
+        let to_frame =
+            |region: u8, p: [f64; 3]| anchor.to_render(&WorldPos::new(region, p[0], p[1], p[2]));
+        self.combat.pick(&self.characters, &ray, &to_frame)
+    }
+
+    /// The screen anchor above entity `id`'s figure (`combat-ui.md` §6.4: the top of its box
+    /// plus 0.05 m, projected; with the camera distance for the distance scale of
+    /// [`combat::pick::distance_scale`]); `None` without a figure or a camera.
+    #[must_use]
+    pub fn entity_anchor(&self, id: EntityId) -> Option<combat::pick::ScreenAnchor> {
+        let (vp, eye, anchor) = self.camera_frame()?;
+        let to_frame =
+            |region: u8, p: [f64; 3]| anchor.to_render(&WorldPos::new(region, p[0], p[1], p[2]));
+        let (lo, hi) = combat::CombatLayer::anchor_box(&self.characters, id, &to_frame)?;
+        combat::pick::project(vp, eye, combat::pick::anchor_point(lo, hi), self.viewport)
     }
 
     /// The eye and view direction. The walk-mode third-person camera is kept above the
@@ -3466,9 +3592,19 @@ mod tests {
     #[test]
     fn keys_the_keymap_binds_are_left_to_it() {
         use tessera_input::{BindingSpec, KeyCode, Keymap, default_keymap};
-        assert!(
-            keys_taken_by(&default_keymap()).is_empty(),
-            "the built-in bindings leave the walker keys free"
+        // keymap.md §8.2 (P2) binds targeting and quickslot defaults on five of the
+        // walker's keys; walker.md §14.2 leaves a bound key to the keymap (keymap.md §8.2
+        // implementer OPEN asks the owner whether the walker keys should move).
+        assert_eq!(
+            keys_taken_by(&default_keymap()),
+            HashSet::from([
+                KeyCode::Backslash,
+                KeyCode::Minus,
+                KeyCode::Equal,
+                KeyCode::F9,
+                KeyCode::F10,
+            ]),
+            "the built-in bindings take exactly the keymap.md §8.2 walker keys"
         );
         let mut user = Keymap::new();
         user.set(
@@ -3483,7 +3619,7 @@ mod tests {
             vec![BindingSpec::parse("Ctrl+Equal").unwrap()],
         )
         .unwrap();
-        let taken = keys_taken_by(&default_keymap().overlay(&user));
+        let taken = keys_taken_by(&Keymap::new().overlay(&user));
         assert_eq!(taken, HashSet::from([KeyCode::F9, KeyCode::Equal]));
     }
 

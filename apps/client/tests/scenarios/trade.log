@@ -1,0 +1,25 @@
+tessera-scenario-log 1
+install none
+tick 100
+title "A fair exchange"
+resolve $wares line=11 family=item requested=2 candidates=0 got=0 note=no-install
+pre > Connect
+pre Connected characters=["Tamsin"]
+pre > EnterWorld character="Tamsin"
+0.000 WorldEntered entity=player name="Tamsin" at=0.000,0.000,0.000 facing=90.00
+0.000 LocationReport entity=player at=0:0.000,0.000,0.000 facing=90.00 anchor=none cause=entered
+0.000 EntitySpawned entity=$dara kind=player name="Dara" at=2.000,1.000,0.000 facing=200.00
+0.000 ItemAdded item=$ring what="Copper ring" at=backpack:0 quantity=1
+0.000 ItemAdded item=$bread what="Travel loaf" at=backpack:1 quantity=3
+0.000 WalletChanged currency=coin amount=1234567
+0.500 TradeShown window=1 peer=$dara
+1.000 TradeOffer window=1 side=peer entries=[{what="Silver whistle" item=none quantity=2},{what="Lamp oil" item=none quantity=2}] coin=40000
+2.500 > OfferTrade window=1 item=$ring quantity=1 coin=0
+2.700 TradeOffer window=1 side=own entries=[{what="Copper ring" item=$ring quantity=1},{what="Travel loaf" item=$bread quantity=1}] coin=2500
+3.500 > SetTradeReady window=1 ready=yes
+3.700 TradeReady window=1 side=own ready=yes
+4.200 TradeReady window=1 side=peer ready=yes
+4.700 WindowClosed window=1
+4.700 ItemRemoved item=$ring
+4.700 ChatMessage channel=system sender=none text="Trade complete."
+4.700 end reason=complete skipped=1 input-skipped=0 dropped=0 spilled=0

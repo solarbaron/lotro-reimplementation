@@ -58,6 +58,10 @@ pub enum InstrumentError {
         /// Events that were to be added.
         adding: usize,
     },
+    /// A time that must be finite is not (`instruments.md` §8.8.3: the start time of a
+    /// synchronised start).
+    #[error("invalid time: {0}")]
+    InvalidTime(&'static str),
     /// The character is not known to the player ([`super::MusicPlayer::add_character`]).
     #[error("unknown {0}")]
     UnknownCharacter(CharacterId),

@@ -29,12 +29,14 @@
 > on one machine and waits for a run between two machines on a LAN. The parity track
 > (P0–P8, [decision 0024](decisions/0024-parity-track.md)) started on 2026-10-09 with
 > [P0](#p0) (scenario feed and `tessera-gamedata`); [P1](#p1) (characters, inventory and
-> equipment) started on 2026-10-10, and [P3](#p3) (NPC windows) on the same day, beside P2;
-> P3's exit criteria pass on Tessera's side (exit verification 2026-10-11, [P3
-> status](#p3-status)), its new specs still wait for an independent review. [P5](#p5) (map,
-> travel, mounts and instances) started on 2026-10-11 beside P2 and P4; its exit criteria pass
-> on Tessera's side (exit verification 2026-10-12, [P5 status](#p5-status)), its new specs
-> still wait for an independent review.
+> equipment) started on 2026-10-10, as did [P2](#p2) (combat presentation) and [P3](#p3)
+> (NPC windows). P3 is merged to main (2026-10-11, exit verification the same day, [P3
+> status](#p3-status)): its criteria pass and its specs are Accepted. P2's exit criteria pass
+> on Tessera's side on branch `p2` ([P2 status](#p2-status)); its new specs wait for an
+> independent review. P2 and P4 are merged to main (2026-10-11); [P5](#p5) (map, travel,
+> mounts and instances) started on 2026-10-11 beside them: its exit criteria pass on Tessera's
+> side (exit verification 2026-10-12, [P5 status](#p5-status)), its specs are Accepted after
+> independent review (2026-10-13) and the code is conformed to them by the next pass.
 > Milestones are ordered by
 > dependency and by legal risk: each one builds on the previous one, and the risk tier
 > (T0–T4, see `docs/LEGAL.md` §8) only rises when the earlier, safer tiers are solid.
@@ -69,7 +71,7 @@ like "ARCH §8" refer to it.
 | Plugin system uses Lua 5.1 with apartments and `.plugin` XML descriptors | engine-client-re.md §5 | Reported |
 | Player music uses an ABC dialect with documented limits | engine-client-re.md §7 (Maestro test suite, MIT) | Reported |
 | No public, working server emulator exists; the official protocol descends from the AC lineage | research/notes/network.md §0 | Reported |
-| Risk tiers T0 format library, T1 offline engine, T2 own-server networked, T3 emulated gameplay, T4 official-server connectivity; the T4 gate G1–G5 | `docs/LEGAL.md` §8–§9 (from research/notes/legal.md §7) | Reported |
+| Risk tiers T0 format library, T1 offline engine, T2 own-server networked, T3 emulated gameplay, T4 official-server connectivity; the T4 conditions G1–G5 (G1, G2 set aside by decision 0034; G4, G5 binding) | `docs/LEGAL.md` §8–§9 (from research/notes/legal.md §7) | Reported |
 | Reimplementation practice: per-format CLIs first, gated real-data tests, golden images, fuzzing | research/notes/analogues.md §4 | Reported |
 
 ---
@@ -89,7 +91,7 @@ like "ARCH §8" refer to it.
 | **M6** | Audio and player music | T1 | `audio` |
 | **M7** | Own test server and own protocol | T2 | `protocol`, `server`, test-server backend |
 | **P0–P8** | Parity track, client half: gameplay presentation from the install, driven by a sandbox scenario feed (decision 0024) | T1 | `gamedata` (new, L3, P0); grows `net` (scenario feed, P0), `ui`, `plugins`, `wvm`, `client` |
-| **M8** | **Gated**: legal review, then (only if the gate passes) a compatibility layer | T4 (gated) | none before the gate |
+| **M8** | Official-server compatibility, in scope by the owner's decision without a legal review ([0034](decisions/0034-official-server-compatibility.md)): official login and protocol specs, a compatibility backend, the G4 warning | T4 | a compatibility backend crate (Phase 2) |
 | **M9** | Extended scripting: Tessera's own script API beside the standard plugins (planned earlier as M5.5; moved last by the owner on 2026-10-08) | T1 (sandbox) to T2 (own server) | `ext`, `ext-host` |
 
 M1–M6 depend on M0, and mostly on each other in order, but M5 (UI) and M6 (audio) can run
@@ -98,15 +100,18 @@ terrain), M2 (the material chain) and M4 (the walking avatar, setup collision vo
 and M6 do not depend on it; by the owner's decision of 2026-10-06 it runs before them.
 M9 (extended scripting) comes last by the owner's decision of 2026-10-08: it starts only
 after full parity with the original client and compatibility with the server (M8), or, if
-the M8 gate fails, after client parity with Tessera's own server.
+M8 stops on a rights holder's objection (LEGAL §9.4), after client parity with Tessera's own
+server. M8 is in scope since 2026-10-11 ([decision 0034](decisions/0034-official-server-compatibility.md))
+and may run beside the parity track whenever the owner schedules it; M9 stays last.
 
 **Parity track (P-track), accepted 2026-10-09:** milestones P0–P8 between M7 and M9
 ([decision 0024](decisions/0024-parity-track.md), [section](#p-track)). The owner chose the
 client half only: gameplay presentation from the user's install (creation screen,
 inventory, target frames, cast bars, quest log, vendors, social panels, maps, progression
-panels, client-run game code), driven by a scenario feed in the sandbox and, if the M8 gate
-passes, by M8 Phase 2. Tessera's own server keeps M7's scope; LEGAL.md §11.1 rule 5 is
-unchanged. M9 starts only after P8 and M8 (or its fallback).
+panels, client-run game code), driven by a scenario feed in the sandbox and, with M8
+(decision 0034), by an official server through M8 Phase 2. Tessera's own server keeps M7's
+scope; LEGAL.md §11.1 rule 5 is unchanged. M9 starts only after P8 and M8 (or, if M8 stops
+under LEGAL §9.4, after P8 and M7).
 
 Cross-cutting work that never stops: specs and their provenance, fuzz targets for every
 new parser, CI hygiene, `docs/LEGAL.md` upkeep, and performance budgets (frame time,
@@ -140,9 +145,11 @@ here.)
   exception needs a decision record (CLEAN_ROOM.md §4, method 4).
 - Invasive dynamic tools (injection, debuggers, memory reading) against the client; gated
   in `docs/TOOLING.md` §6.
-- Observing, capturing or describing the official login and session traffic. That is behind
-  the T4 gate (`docs/LEGAL.md` §9.3). M0–M7 never need it, because Tessera's network
-  protocol is its own (M7).
+- Observing, capturing or describing the official login and session traffic, outside M8.
+  M0–M7 and the P-track never need it, because Tessera's network protocol is its own (M7).
+  M8 does it within the scope of [decision 0034](decisions/0034-official-server-compatibility.md)
+  §2 (`docs/LEGAL.md` §9.3): passive captures of the owner's own sessions, dirty-room only,
+  never anti-cheat or anti-tamper.
 - Using any proprietary Turbine/Daybreak library (for example the circulating dat-export
   DLL), even as an oracle.
 
@@ -1332,56 +1339,105 @@ interpolation feel, interest distance, say range) tune defaults; no criterion wa
 ---
 
 <a id="m8"></a>
-## M8: GATED. Legal gate first, then a compatibility layer only if the gate passes
+## M8: Official-server compatibility (in scope by decision 0034)
 
-**Context.** The project owner's stated long-term goal is compatibility with the official
-servers. `docs/LEGAL.md` §8 rates official-server connectivity as tier **T4**, the
-highest-risk tier: it touches the EULA's protocol-emulation and unauthorised-connection
-clauses, the ToS ban on deciphering transmissions, DMCA §1201 theories that a recent case
-against an emulator of another game by the same rights holder accepted, and every user's
-account. `docs/LEGAL.md` §9.3 therefore gates it.
+**Goal:** a Tessera client that logs in to Daybreak's official servers with the user's own
+account and plays there, presenting the game through the client half that the parity track
+builds.
 
-M8 is split into a gate and a conditional build phase.
+**Context.** The project owner's stated goal is compatibility with the official servers.
+`docs/LEGAL.md` §8 rates official-server connectivity as tier **T4**, the highest-risk
+tier. It touches:
+- the EULA's protocol-emulation and unauthorised-connection clauses;
+- the ToS ban on deciphering transmissions;
+- DMCA §1201 theories that a recent case accepted against an emulator of another game by
+  the same rights holder;
+- every user's account.
+
+Until 2026-10-11 M8 was gated behind a written legal review (G1) and permission from the
+rights holders (G2). On 2026-10-11 the owner decided that M8 is **in scope now, without
+either** ([decision 0034](decisions/0034-official-server-compatibility.md),
+`docs/LEGAL.md` §9). No legal review exists and no permission has been given. The owner
+accepts the residual risks of LEGAL §9.2. M8 is no longer gated, and the milestone
+workflow runs it.
 
 <a id="m8-gate"></a>
-**Phase 1: the gate (allowed now)**
+**Conditions that bind every phase** (LEGAL §9.3, decision 0034 §1–§3):
 
-Work through conditions G1–G5 of `docs/LEGAL.md` §9.3 and record each in
-`docs/decisions/`:
+- **G4.** A ban-risk warning is shown before any connection to an official server is
+  possible. It states the terms of LEGAL §3 and that the project cannot protect the
+  account. It is accepted only by the user's explicit confirmation in the client's own
+  interface: no flag, variable, plugin, script or server can accept or skip it.
+- **G5.** The permanently forbidden list of LEGAL §8, as it stands there:
+  - shipping, mirroring or linking to client binaries, dat files, patches or old clients;
+  - modifying, patching, redirecting or injecting into the official client;
+  - embedding or publishing Daybreak keys or other secrets in the repository, releases or
+    documentation;
+  - committing packet captures from official servers;
+  - using leaked, NDA-covered or decompiled Turbine/SSG/Daybreak source code;
+  - monetisation of any kind beyond donations for infrastructure costs;
+  - bypassing account authentication, subscription checks, anti-cheat or any other access
+    control.
 
-- G1: a written legal review by a qualified IP lawyer of the specific design, covering at
-  least US and EU/UK law.
-- G2: a permission request to Daybreak Game Company LLC, and separately to Middle-earth
-  Enterprises for the marks, modelled on published precedents of written arrangements
-  with emulator projects (non-commercial, users bring their own client data, no assets
-  distributed, disclaimer).
-- G3: a maintainer decision record citing G1 and G2 and listing residual risks, accepted
-  by the project owner.
-- G4: the design of a user-facing warning about account risk, shown before any official
-  connection could be made.
-- G5: confirmation that the design obeys the permanently-forbidden list of
-  `docs/LEGAL.md` §8.
+  Key material is loaded at runtime from the user's own install only.
+- **Research scope.** Decision 0011 as amended by 0034 §2 sets it:
+  - Allowed: the official game protocol and the login flow, as far as interoperability needs
+    them.
+  - Excluded: anti-cheat, anti-tamper and code-signing checks, and no injection, debugger or
+    memory reading on a client connected to official servers.
+  - Captures stay in the dirty room and are reduced to field-level facts.
+- **No secrets in the repository.** No hostnames, endpoints, keys, certificates or account
+  data appear in the repository, specs, CI or releases. A spec states only where the client
+  finds them in the user's install at runtime. CI never connects to an official server.
+- **Stop conditions.**
+  - If the service can be used only by circumventing anti-cheat, anti-tamper or another
+    access control, M8 stops at that point and records why.
+  - On an explicit objection from Daybreak or MEE, M8 stops and the compatibility backend is
+    withdrawn (LEGAL §9.4).
+- **Extended scripts** come with M9, not here. On an official server they will need the
+  user's opt-in, and automation stays offline only (LEGAL §9.5).
 
-Before the gate passes, no spec about the official login, its encryption or key handling
-is written, and no code for it lands (`docs/LEGAL.md` §9.3).
+**Phase 1: specs and design**
 
-**Phase 2: build (only if G1–G5 are met)**
+- Dirty-room specs of the official login flow (the official launcher's part included) and of
+  the game protocol that the client half needs:
+  - framing, session set-up and encryption as used;
+  - where the key material and endpoints lie in the install;
+  - the messages behind the domain events and commands of `tessera_net::domain`.
+- A spec of the G4 warning: text, when it appears, how acceptance is stored and withdrawn.
+- A G5 review of the design by a session that wrote none of it.
 
-- Scope, methods and distribution exactly as the gate's decision record defines.
-- A compatibility backend implementing the `Backend` trait (ARCH §19.3), outside the
-  default workspace members, behind an explicit opt-in, not built by CI.
-- No hostnames, keys or tables from the official client in the repository, ever. Anything
-  of that kind is loaded at run time from the user's install, if the decision allows it
-  at all.
+**Phase 2: build**
 
-**If the gate fails** (G1 advises against it, or a rights holder objects), the project
-stays at T2 permanently, as `docs/LEGAL.md` §9.4 says. M1–M7 are useful on their own: an
-offline world explorer, a data-file toolkit, and a client for the project's own server.
+- A compatibility backend that implements the `Backend` trait (ARCH §19.3), in its own
+  crate, so that it can be withdrawn without restructuring the client. The plan decides where
+  it sits in the workspace and how it is built, under the CI rule above.
+- Login as the user with credentials the user enters, character selection, world entry,
+  movement, chat, and the gameplay events that drive the P-track windows.
+- The G4 warning in the client before the first connection.
 
-**Specs needed (Phase 2 only):** defined by the gate's decision record.
+**Specs needed:** the Phase 1 specs above, plus additions to `ARCHITECTURE.md` §19.
 
-**Exit criteria (Phase 1):** G1–G5 each recorded in `docs/decisions/` with an outcome, and
-a go/no-go decision accepted by the project owner.
+**RE tasks:**
+- method M4 on the client's protocol and login code;
+- passive capture of the owner's own sessions of the unmodified client (CLEAN_ROOM.md §4
+  M3);
+- REA only as decision 0033 and 0034 §2 item 5 allow (never in workflow runs).
+
+**Exit criteria**
+
+1. The specs of Phase 1 are Accepted after an independent review. They contain no key
+   values, certificates, hostnames, endpoints, account data or other player's data, and
+   they record which facts rest on BIN or capture provenance.
+2. No connection to an official server is possible before the G4 warning is accepted. A
+   synthetic test shows this.
+3. A G5 audit passes. `tools/check-content.sh` is clean, and no capture or secret is in the
+   repository or CI.
+4. Every parser of the official protocol has a fuzz target. Malformed or hostile input
+   cannot crash the client.
+5. The owner, with the owner's own account and at the owner's own risk, logs in, enters the
+   world, moves and chats. The P-track windows that the server drives show the server's
+   events. The owner records the result.
 
 ---
 
@@ -1652,6 +1708,144 @@ on the main thread (ARCH §21 OPEN).
 
 ---
 
+<a id="p2"></a>
+### P2: Targeting, skills and combat presentation
+
+**Goal:** the combat presentation of the client half
+([decision 0024](decisions/0024-parity-track.md) §5 P2): selection and target frames, the
+player's vitals, the quickslot bar with cooldowns, cast and induction bars, floating combat
+text, effect icons, combat animation and particles, and the defeat display. Everything shown
+comes from the user's install; targets, vitals, casts, effects, damage numbers and defeats
+are scripted by the P0 scenario feed (or sent by a server backend), never derived (decision
+0024 §2.4). On M7's server the test actors can be selected and show a target frame; the
+server runs no gameplay rule (LEGAL.md §11.1 rule 5) and gains no combat state. Builds on P1
+and M4.5. Risk tier T1. Runs beside P3 (wt-p3): shared files (the `tessera-ui` game module
+index, `tessera-net` domain groups, client screens, ARCHITECTURE) take additive changes only.
+
+<a id="p2-deliverables"></a>
+**Deliverables**
+
+- Specs (new in P2, Accepted before the build): `combat-ui.md` (selection and targeting,
+  player and target frames, quickslot activation and cooldown display, cast and induction
+  bars, floating text, effect bars, combat state and defeat display, their layout elements
+  and key actions; the "combat UI behaviour" spec of decision 0024), `skill-tooltips.md`
+  (examination tooltips and icons of skills and effects, the per-record census categories
+  of the real-data test), `combat-visuals.md` (combat animation and particles: what plays on
+  cast start and end, attack hooks, effect visuals, hit reactions, combat stance, defeat and
+  revive); P2 revisions of `item-tooltips.md` (§6.16 effect lines, skill-item rows,
+  `SkillGrantingItem` comparison), `keymap.md` (targeting actions), `lua-plugin-api.md`
+  (§15.2 combat views and their conformance rows) and, where `combat-visuals.md` needs it,
+  `script-table.md`, `skeleton-anim.md`, `particles.md`, `particle-runtime.md`.
+- [Decision 0032](decisions/0032-p2-targeting-on-test-server.md) (P2 targeting on M7's
+  server; planned as 0031, which the parallel P3 branch took) with `scenario-feed.md`
+  revision 6 where the decision or the new specs need feed changes.
+- `tessera-gamedata`: typed skill and effect records, the skill and effect tooltip model and
+  its census over every skill and effect record, the data of the combat panels (vital
+  display overrides, consideration colours, effect icons) and of combat visuals (skill and
+  effect animation and script references).
+- `tessera-net`: what decision 0032 and `scenario-feed.md` revision 6 ask (local selection on
+  the test-server and overlay backends); no protocol minor unless the decision asks for one
+  that rule 5 allows.
+- `tessera-ui`: the combat widgets (`game::combat`): target and player frames, cast bar,
+  effect bars with timers and stacks, floating text layer, defeat panel, quickslot cooldown
+  and state display, skill and effect tooltips in the examination panel.
+- `tessera-plugins`: the `Turbine.Gameplay` combat views of `lua-plugin-api.md` §15.2.
+- `tessera-input`: the targeting actions and default keys of `keymap.md`.
+- `tessera-client`: the player's combat state from the session; selection (mouse pick,
+  targeting keys) on scenario actors and on M7's test actors; quickslot use; the combat
+  panels, floating text and tooltips; combat animation and particles on figures in the
+  walker; committed synthetic combat scenarios with logs; headless screenshots and golden
+  images (synthetic goldens committed, real-data goldens local only, ARCH §23.3).
+- Documentation: ARCH §3.1, §15, §19, §20; `docs/USER_GUIDE.md` (combat presentation);
+  owner rows from O93 in `docs/checklists/owner-observations.md`; at close-out `CLAUDE.md`
+  Current state.
+
+<a id="p2-specs"></a>
+**Specs needed:** `combat-ui.md`, `skill-tooltips.md`, `combat-visuals.md` (new);
+[`combat-data.md`](specs/combat-data.md), [`interaction.md`](specs/interaction.md),
+[`game-controls.md`](specs/game-controls.md), [`particles.md`](specs/particles.md),
+[`particle-runtime.md`](specs/particle-runtime.md), [`script-table.md`](specs/script-table.md),
+[`skeleton-anim.md`](specs/skeleton-anim.md), [`game-panels.md`](specs/game-panels.md),
+[`item-tooltips.md`](specs/item-tooltips.md), [`icon-layers.md`](specs/icon-layers.md),
+[`keymap.md`](specs/keymap.md), [`lua-plugin-api.md`](specs/lua-plugin-api.md) §15,
+[`scenario-feed.md`](specs/scenario-feed.md) (Accepted).
+
+**RE tasks:** the combat UI behaviour of the original client (decision 0024 Consequences:
+dirty-room work limited to presentation behaviour): floating text, target frame, effect bar,
+cast bar, defeat display; skill and effect tooltip layouts and rows; the animation and
+effect visuals the client plays for casts, hits, effects and defeat.
+
+<a id="p2-exit"></a>
+**Exit criteria** (decision 0024 §5, quoted)
+
+1. A combat scenario (target, cast, effect, damage numbers, defeat) runs headless with
+   every element on screen; golden images pass.
+2. Every skill and effect record's tooltip and icon render (or are categorised).
+3. Every particle descriptor decodes or is categorised; script-table particle nodes play
+   in the walker.
+4. M7's test actors can be selected and show a target frame.
+
+Owner observations in the original client: rows from O93
+([owner-observations.md](checklists/owner-observations.md)); they do not block the criteria.
+
+<a id="p2-status"></a>
+**Status:** exit criteria 1–4 pass on Tessera's side (started 2026-10-10, branch `p2` in
+worktree `wt-p2`, off main 4ec1f4a; exit verification 2026-10-11 on the uncommitted tree).
+**Specs Accepted (2026-10-11):** independent reviews accepted `combat-ui.md` (revision 2),
+`skill-tooltips.md`, `combat-visuals.md`, the P2 revisions of `item-tooltips.md`, `keymap.md`,
+`lua-plugin-api.md` §15.2, `script-table.md`, `particles.md` and `particle-runtime.md`,
+`scenario-feed.md` revision 6 and decision 0032. A clean conform pass then re-checked the code
+against the Accepted text (skill-item effect levels and vital keys, frame name and level text,
+the defeat panel's parts, beam ribbons and head entities drawn; install goldens under decision
+0031 tier 2), verified by a separate session. No criterion needs an observation in the original client; owner rows O93–O109 and
+O126–O129 ([owner-observations.md](checklists/owner-observations.md#p2-items)) block nothing
+until P8.
+
+Checks (2026-10-11, install present, `TESSERA_PERF` unset, machine shared with the P3 and P4
+builds): `cargo fmt --check` (workspace and `fuzz/`), clippy `-D warnings` (workspace
+`--all-targets --all-features`; `fuzz/` `--bins`), `tools/check-content.sh` (1,871 files),
+`tools/check-spdx.sh` (1,766 files), `tools/check-server-deps.sh` and a link and anchor check
+of the 138 Markdown files outside `research/`: clean. `cargo test --release --workspace
+--no-fail-fast` with the install: 6,074 passed, 1 failed, 10 ignored (431 test binaries); the
+failure was `tessera-ui` `game_combat::install_frames_set_meters_texts_and_states`, which
+the verifier's own literal-icon fix (below) broke; the test now gives the install effect an
+icon and checks the literal one's fallback box. After the fixes `tessera-ui` and
+`tessera-client` were run again in release with the install: 1,148 passed, 0 failed, 1
+ignored (94 binaries). `tools/fuzz-smoke.sh -t 60`: `ui_combat_feed` (28,860 runs on the
+final tree), `plugins_combat_views` (14,700), `particles_beam` (910,516), `net_remote_world`
+(53,904): no crash.
+
+Verifier fixes: (1) TR40 layer order: the floating layers had the lowest z-level, which
+`ui-layout.md` §9.3 draws in front, so floating texts covered the defeat panel and the
+selection indicator; they now take high levels (behind every panel; name blocks, texts, then
+the indicator) and the synthetic goldens were blessed again. (2) TR41 element by element in the
+install look: a literal effect takes the §13.5 box, a literal quickslot skill the §13.7
+content, and a resource without a pip record the §13.4 bar (at its §13.1 place; new
+`combat-ui.md` §13.4 OPEN), where the install look drew nothing; the headless E20 check now
+asks for the drawn bar. (3) `--scenario … --screenshot` runs now hand the walker the combat
+events (`DriverView`), so combat visuals play there; `combat_visuals_real_data` uses that path
+instead of filling the layer's inbox. (4) The walker test `keys_the_keymap_binds_are_left_to_it`
+now expects the `keymap.md` §8.2 defaults to take Backslash, Minus, Equal, F9 and F10 (the spec
+as written; whether the walker keys should move is the §8.2 implementer OPEN, owner).
+
+| # | Status | Evidence |
+|---|---|---|
+| 1 | **pass** | Synthetic (`combat_ui_golden`, 2 / 2): the §17.1 scenario plays headless with `--no-data` on its virtual clock; at the 11 checkpoints every §14 element is shown (read from the UI tree), the 5 committed goldens match (0 outliers of 786,432 pixels each), the canonical log equals the committed one byte for byte, and two runs give the same element states (CUI9). Install (`combat_ui_real_data`): 79 / 79 element labels resolve, 6 / 6 avoidance tokens, the floating-text settings read; 20 elements shown, 0 missing, at the 11 checkpoints; the 11 local goldens (never committed) compare with 0 outliers on the second run. `tessera-ui` `game_p2_real_data`: 11 / 11 widgets take their install look, 79 IDs, 39 states, 14 properties resolve; widget update 0.019 ms per frame (indicative). Pictures viewed (5 synthetic, 11 install): every element visible in the fallback look; in the install look the remaining defects are (a) the install frames draw no name or level text (E5, E6), (b) the defeat panel shows a third, unlabelled button and the divider, and its revive button looks no different when ghosted (E18; TR38), (c) with the synthetic camera the creature's critical text sits under the target frame and is hidden by it (TR40 puts texts behind panels), (d) the §13.4 bar overlaps the toolbar art. Rows of [`p2-visual.md`](checklists/p2-visual.md) §1 hold the per-element results. |
+| 2 | **pass** | `tessera-gamedata` `skill_tooltips_real_data`: 13,247 skills (5,201 Rendered, 8,046 NoTooltip) and 32,971 effects (27,150 Rendered, 1,250 RenderedNoName: 1,215 missing and 35 empty names, 4,571 NoTooltip), as `skill-tooltips.md` §14; icons: 13,247 skill and quickslot icons, 22,804 effect icons Rendered, 10,167 Absent; 0 row failures, 0 escaped. `tessera-client` `combat_tooltips_real_data`: 33,601 tooltips modelled and laid out in the examination panel (24,812 with an icon), 0 not laid out, 0 template failures; 12,617 NoTooltip. |
+| 3 | **pass** | `tessera-particles` `real_data`: 11,155 0x39 descriptors, each in one §10.1 category (9,829 plain, 1,061 lit, 134 post-pass, 128 `inherit_opacity`, 2 without a surface, 1 without an emitter), 254 0x44 fork records (lifetime only); 2,740 Beam nodes typed (0 untyped, 0 systems missing); 41,354 Particle nodes over every script table and scriptlet, 0 naming a missing record, 0 mismatches (2 script records do not decode and are counted). `combat_visuals_real_data` 2 / 2: 20,552 Particle nodes reachable from skill and effect records, 6,580 effect DIDs (6,438 0x39, 142 0x44), 0 missing; a headless walker scenario (`--scenario … --screenshot` path) brings 158 combat events to the combat layer, 2 session figures run their scripts, 130 effects asked for, 18 clips, up to 43 systems and 6,102 particle vertices drawn in a frame. `particles_real_data` (M3-03) passes in the suite. Beam ribbons and head entities are not drawn yet. |
+| 4 | **pass** | `combat_server` 2 / 2 (no install, loopback): an in-process `tessera-server`, two clients through the client's `net::World`; A selects a wanderer and then B's character, each answered locally by the test-server backend (decision 0032 D1), and the target frame shows the name, no level and the no-vitals form (D2); B leaving clears A's selection locally with no command; the same selection works in an overlay run. `tessera-net` `remote_selection` 13 / 13 (R1–R10 of `scenario-feed.md` §14.11), `remote_selection_backend` 1 / 1 over QUIC (nothing but pings on the wire), `scenario_p1` 14 / 14 (O8, O10–O12). The windowed check with the mouse (C8, rows S1–S3) was not run. |
+
+Remaining issues: the spec and decision reviews above; `keymap.md` §8.2 OPEN (defaults take
+five walker keys; owner); the install-look defects (a)–(d) of criterion 1; beam ribbons and head
+entities are not drawn; combat cues still read clip bindings, skill and effect lookups, stance
+item records and body records on the main thread (ARCH §21; only beam records moved to a
+worker); every session figure is spawned (no crowd measurement yet); plugin check 76's
+Quickslot click is not driven from the client (only its command mapping is tested); with
+`--ui` the walker's chat overlay is hidden (M5 open item, unchanged); the implementer OPENs of
+`combat-ui.md`, `skill-tooltips.md`, `combat-visuals.md`, `particle-runtime.md`, `keymap.md`,
+`scenario-feed.md` §9.7 and `lua-plugin-api.md` §15.2 wait for the spec review
+(`lua-plugin-api.md` §19 does not list the §15.2 implementer OPEN).
+
 <a id="p3"></a>
 ### P3: NPC windows: dialogue, quests, vendors and loot
 
@@ -1725,10 +1919,9 @@ Owner observations in the original client: rows from O110
 
 <a id="p3-status"></a>
 **Status:** exit criteria 1 and 2 pass on Tessera's side (started 2026-10-10, branch `p3`;
-exit verification 2026-10-11 on the uncommitted `p3` tree); to be committed and merged.
-Deliverables not yet met: `npc-windows.md` and `quest-journal.md` are in **Review**, the
-revision-5 parts of `scenario-feed.md` (§18.P3) are in Review and `lua-plugin-api.md` §15.3
-is Revised; each needs an independent review before it is Accepted. Decision 0031 is
+exit verification 2026-10-11); merged to main on 2026-10-11. `npc-windows.md`,
+`quest-journal.md`, the revision-5 parts of `scenario-feed.md` (§18.P3) and
+`lua-plugin-api.md` §15.3 are **Accepted** after independent reviews. Decision 0031 is
 Proposed (the owner accepts it). No criterion needs an observation in the original client;
 owner rows O110–O125 ([owner-observations.md](checklists/owner-observations.md#p3-items))
 block nothing until P8.
@@ -1772,6 +1965,160 @@ item reward rows show only `QuestReward_Item`, barter reputation fields hidden.
 | 1 | **pass** | `tessera-client` `quest_journal_real_data::every_quest_record_in_the_log_and_the_tracker` (release, install): a scenario selects every quest record (`quest all`) and makes it active; 20,807 records: Shown 15,400 (15,400 log rows laid out, 15,400 details panes), Deed 5,407 (tracker only, `quest-journal.md` §4.2), NoName 0, Unreadable 0; every record tracked once in batches of 10 (20,807 tracker entries laid out); 20,258 quest chat lines; `JournalCensus` entries_failed 0, details_failed 0, tracker_failed 0. Flags as `tessera-gamedata` `quest_real_data`: CategoryFallback 2, LevelHidden 164, LevelFromPlayer 2,168, NoLevel 440, NoDescription 340, ObjectiveWithoutText 327, ObjectiveWithoutLines 1,238. Goldens of the log and tracker on a seeded sample (`log_and_tracker_goldens_on_a_seeded_sample`, 01-quest-log, 02-tracker) blessed, judged and matched as for criterion 2. Defect left (not a failure of the criterion): a long background or objective text is drawn on one line cut at the pane width (`quest-journal.md` §4.7 OPEN; owner row O119). |
 | 2 | **pass** (with visual defects listed) | Decision 0031 §3, install version `3905db5e60168527`: (1) tier 1: `tessera-ui` `p3_goldens` 12 / 12 committed synthetic goldens pass in the workspace run; (2) `npc_windows_real_data` and `quest_journal_real_data` blessed 19 images in a fresh `TESSERA_GOLDEN_DIR` of this verification alone (`~/.cache/tessera/scratch/P3/clean/verify3/goldens`); (3) each viewed and judged: dialogue 01 choice (action option with its template icon), 02 conversation, 03 and 04 NPC comment, 05 quest offer (install title, level, offer line, objective, coin and item-experience amounts, two install item rewards with icons and quantities), 06 choice with a quest-role line and an objective option; loot 01–05 (coins row, stacked entries, Loot All, then the chest's install items with icons and quality colours); vendor 01 buy (six install items, icons, prices in coins, stack overlays), 02 sell, 03 buy-back, 04 quantity dialog, 05 barter (token costs, coin cost); wallet 01 (coins row, currencies with totals); quest log 01 and tracker 02: correct install text and icons; (4) the same tests with the same directory and `TESSERA_GOLDEN_REQUIRE=1`: 19 / 19 passed. Census: dialogue lines Shown 12; vendor entries Shown 13, Literal 1, RecordUnreadable 0; loot Shown 10, Literal 9; wallet shown 4; 0 window failures. Visual defects left: a long option row wraps and is clipped instead of one truncated line (`npc-windows.md` §5.3 template), the offer's objective text is cut at the pane's right edge, long loot names wrap to two lines, a wallet currency that is not a wallet item sits under a category without a title (§9.4 OPEN), literal sell entries have no worth (§7.6 OPEN), and the barter window's root lands at x = −107 on a 1,600 px screen (§4 OPEN). |
 
+<a id="p4"></a>
+### P4: Social panels
+
+**Goal:** the social presentation of the client half
+([decision 0024](decisions/0024-parity-track.md) §5 P4): the Social panel's friend and
+ignore lists, the fellowship display with shared vitals, the fellowship invitation prompt,
+the trade window, tells, the instant-message tab and user chat channels in the chat window,
+and synchronised fellowship music. Everything shown comes from the user's install; fellowship,
+trade, lists, member vitals and performances are scripted by the scenario feed, never
+derived. On M7's test server P4 adds only chat: tells as before and named chat channels with
+join, leave and relay ([decision 0035](decisions/0035-p4-social-on-test-server.md); LEGAL.md
+§11.1 rule 5). Builds on P1. Risk tier T1.
+
+<a id="p4-deliverables"></a>
+**Deliverables**
+
+- Specs: `social-panels.md` (new: Social panel, fellowship display, invitation prompt, trade
+  window, commands, Tessera rules for the sandbox); `chat-window.md` revision 4 (tells, the
+  instant-message tab, user channels, the fellowship channel, ignore filter, friend notices);
+  P4 revisions of `abc-dialect.md` and `instruments.md` (the synchronised start and its
+  tolerance), `lua-plugin-api.md` (§15.4 Party views), `game-controls.md`, `game-panels.md`
+  and `ui-layout.md`.
+- [Decision 0035](decisions/0035-p4-social-on-test-server.md) and the revisions it asks for:
+  `tessera-protocol.md` v1.2 (minor 2: named chat channels), `test-server.md` (channel
+  registry, `[chat]` channel keys, limits, logs), `scenario-feed.md` revision 7 ("P4 social": waiting
+  parts and one synchronised start, the player's `/play … sync` and `/playstart` as
+  commands, fellow vitals, the disband command, the remote backend at minor 2; the sections
+  that collided with P2's and P3's revisions are Vector H §14.12, hostile rows and backend cases §14.13 and the review record §18.5).
+- `tessera-protocol`: minor 2 (`ChannelJoin`, `ChannelLeave`, `ChannelJoined`, `ChannelLeft`,
+  `ChannelRefused`, channel value 6 `Named`, `CHAT_CHANNELS`, `NOT_JOINED`, the §16.9
+  vectors). `tessera-server`: the channel registry (created on first join, dropped when
+  empty), limits, relay to members only, logging. `tessera-loadtest`: `chat` bots on channels
+  and the hostile 1.2 cases.
+- `tessera-net`: the remote backend at protocol 1.2 (`JoinChannel`, `LeaveChannel`, `Chat` on
+  `Named`); the feed's P4 steps, events (`PerformanceReady`, `PerformanceSyncStart`,
+  `PerformanceWithdrawn`, `FellowVitalChanged`), commands (`ReadyPerformance`,
+  `StartPerformance`, `DisbandFellowship`), patterns, input forms and generic answers; the
+  plain sandbox's answer to `StartPerformance`; Vector H and the P4 cases.
+- `tessera-ui`: `game::social` (fellowship rows and vitals, leader marker, the invitation
+  prompt, the trade window with both sides, coin and ready states, the friend and ignore
+  lists) and the chat additions (instant-message tab, channel tabs and slots).
+  `tessera-plugins`: the `Party` and `PartyMember` views. `tessera-audio`: the synchronised
+  start (waiting parts, one common start time within the tolerance of `instruments.md` §8.9).
+- `tessera-client`: the social panels fed by the session; the chat window on the decision
+  0020 dispatcher with `--ui` (closing the M5 gap: one command registry for the chat line,
+  the M5 chat window and `--command`); tells, replies and channel commands; `/play … sync`
+  and `/playstart` through the session; committed synthetic scenarios (fellowship with
+  leader change, removal and disbanding; trade; friends and ignore lists; synchronised
+  start) with their logs.
+- `fuzz/`: the protocol and scenario targets cover the 1.2 messages and the P4 steps; the
+  server target covers channel requests.
+- Documentation: ARCH §19 (the P4 events and commands, the remote backend's channels), §23;
+  `docs/USER_GUIDE.md` (social panels, channels on a test server, synchronised music); at
+  close-out `CLAUDE.md` Current state.
+
+<a id="p4-specs"></a>
+**Specs needed:** [`social-panels.md`](specs/social-panels.md) (new);
+[`chat-window.md`](specs/chat-window.md) revision 4; [`abc-dialect.md`](specs/abc-dialect.md),
+[`instruments.md`](specs/instruments.md) (synchronised start, start tolerance);
+[`lua-plugin-api.md`](specs/lua-plugin-api.md) §15 (Party views, §15.4);
+[`scenario-feed.md`](specs/scenario-feed.md) (revision 7, "P4 social");
+[`tessera-protocol.md`](specs/tessera-protocol.md) v1.2;
+[`test-server.md`](specs/test-server.md) (channel registry);
+[`game-controls.md`](specs/game-controls.md), [`game-panels.md`](specs/game-panels.md),
+[`ui-layout.md`](specs/ui-layout.md); decision 0020 (one command dispatcher).
+
+**RE tasks:** M1 on the install's layouts and string tables of the Social panel, the
+fellowship display, the invitation and trade windows and the chat window's tabs; M2
+(published plugin API and usage guides, facts only); M4 under
+[decision 0011](decisions/0011-standing-m4-authorisation.md) for what the layouts do not say:
+how the client wires these panels, the chat window's tell, channel and instant-message paths,
+and the client's synchronised-start path of player music (recorded as BIN rows in
+`social-panels.md`, `chat-window.md`, `instruments.md`, `lua-plugin-api.md`). Never the
+network protocol, login, keys, launcher or anti-tamper (decision 0004): where client code
+hands an action to the session layer, only that fact is recorded. Decision 0035 and the
+protocol, server and feed revisions are Tessera's own design and need none.
+
+<a id="p4-exit"></a>
+**Exit criteria** (decision 0024 §5, quoted)
+
+1. Fellowship, trade and friends scenarios render; leader change, removal and disbanding
+   are shown.
+2. Tells and channel join and leave work on M7's server (chat, rule 5).
+3. A synchronised `/play` from a scenario starts within the tolerance of
+   `instruments.md`.
+
+Owner observations in the original client: O130–O137
+([owner-observations.md](checklists/owner-observations.md#p4-items)); they do not block the
+criteria. O137 is the owner's answer to decision 0024 open item 2 (synchronised-music relay
+on Tessera's own server), which decision 0035 leaves open.
+
+<a id="p4-status"></a>
+**Status:** exit criteria 1–3 pass on Tessera's side (started 2026-10-11, branch `p4` in
+worktree `wt-p4` off bb43e74; exit verification 2026-10-11 on the uncommitted tree); main
+(P2 with its code, P3, the creation-screen fixes) was merged into the branch on 2026-10-11.
+No criterion needs an observation in the original client; the owner rows O130–O137
+([owner-observations.md](checklists/owner-observations.md#p4-items)) block nothing, and
+O137 is the owner's answer to decision 0024 open item 2. The P4 specs are **Accepted** after
+independent reviews (2026-10-11): `social-panels.md`, `chat-window.md` revision 4, the P4
+revisions of `abc-dialect.md` and `instruments.md`, `tessera-protocol.md` v1.2,
+`test-server.md`, `scenario-feed.md` revision 7 (P4's revision was written unnumbered and is
+numbered 7 after P2's 6 and P3's 5; Vector H is §14.12, the hostile rows and backend cases
+§14.13, the review record §18.5, the invariants 12–13), the P4 §15.4 revision of
+`lua-plugin-api.md` and decision 0035. A clean conform pass then brought the code in line
+with the Accepted text (trade entry names in quality colours and the NPC windows' coin
+displays for wallet and peer coin; member-row voice icons hidden (TR14); chat-window
+revision 4 fixes; loadtest bots on named channels and hostile 1.2 cases in the world;
+PartyMember target and effects follow the member's entity), verified by a separate session
+with 11 local tier-2 goldens matched under load and on a quiet machine. Merged to main
+2026-10-11; the merge-commit checks are in CLAUDE.md. Open: member-row effect icons (TR16),
+no committed synthetic P4 goldens (decision 0031 tier 1), the Leave error code
+(`tessera-protocol.md` §10.6 OPEN).
+
+Checks (install present, `TESSERA_PERF` unset, machine shared with other builds):
+`cargo fmt --check` (workspace and `fuzz/`); clippy `-D warnings` (workspace `--all-targets`,
+also `--all-features`; `fuzz/` `--bins`); `cargo test --release --workspace --no-fail-fast`
+with the install: **6,054 passed, 0 failed, 10 ignored** (431 test binaries);
+`tools/check-content.sh` (1,851 files), `tools/check-spdx.sh` (1,745 files),
+`tools/check-server-deps.sh` and a link and anchor check of the 138 Markdown files outside
+`research/`: 0 errors. `tools/fuzz-smoke.sh -t 60` on the new and changed targets:
+`protocol_v12_message` (2,281,072 runs), `server_v12_connection` (460,245),
+`net_social_channels` (67,710), `net_scenario_parse` (556,161), `audio_instruments` (53,667):
+no crash; `server_v12_world` crashed on its own membership check (a `Named` line queued for a
+connection whose session had just ended it for flooding, a line that never reaches the wire);
+the verifier made the check apply to open connections only, the crash input then ran clean
+and a new 60 s run gave 76,731 runs, no crash. The committed scenarios (13, the four P4 ones
+included) replay their logs byte for byte.
+
+| # | Status | Evidence |
+|---|---|---|
+| 1 | **pass** (visual defects open) | `tessera-client` `social_panels_real_data` (1 / 1, release, install): the committed `fellowship`, `trade` and `friends` scenarios play headless on their virtual clock, every event reaches the client's social and player state, and the game-UI host draws the panels from the install's layouts offscreen. Fellowship: the invitation shows at 0.9 s and hides after Accept; rows `Brin` (1.3 s, player leads), `Brin, Cael, Eda` (2.6 s), the leader change to Brin at 4.6 s (markers `[true, false, false]`, player no longer leads), the removal of Cael at 6.3 s (`Brin, Eda`), the disbanding at 8.2 s (panel hidden, 0 % covered); 9 fellowship lines of chat type 11, all 9 rendered from the install's tables, the kick giving the dismissed line. Trade: 2 then 3 peer entries (a literal and two items of the selector, both with the install's icons), 2 own entries after the drop, ready own then both, the window closed on completion (0 % covered). Friends: 4 rows, then 5 after `/friend`, ignore list 2 then 3, the ignored tell filtered. 16 pictures written to private scratch and viewed by the verifier (invitation, fellowship at five times, trade at six, friends at four): member rows with names, morale and power bars and levels, the leader marker moving to Brin, Cael's row gone, the panel gone after the disbanding; the trade window with both sides, the peer's item icons, the own coin (25 silver) and the highlighted Trade button; the Social panel's Friends page with online names green and offline yellow. The verifier fixed two defects seen in the pictures: an unknown level (Eda) and the invitation row's level and area showed the layout's own placeholder texts ("12", "123 / Menu option 2"); they are now empty (`tessera-ui` `game::social::{fellowship, invite}`, regression asserts in `crates/ui/tests/game_social.rs`, TR3 and TR7). Models and views: `tessera-ui` `game_social` 27 / 27, `game_chat_social` 17 / 17, `game_social_real_data` 1 / 1 (every label of the social layouts resolves on the install); `tessera-net` `scenario_p4` 13 / 13 (Vector H, the §14.13 hostile rows); `tessera-plugins` `party_views` 19 / 19 (`Party` and `PartyMember`, §18 checks 90–96). **Visual defects (open, not blocking):** (a) the trade window draws no entry names, no icon for literal entries, and neither the wallet (`SelfTrade_TotalMoney`) nor the peer's coin (`OtherTrade_MoneyDisplay`): the money displays are game-type elements whose own text is not drawn, and the name text and the displays' children are not given by the spec (`social-panels.md` §6.2 implementer OPEN, GP §11 OPEN; P3's money display widget on main may serve once merged); (b) a red and green state icon shows on every fellowship row and on the player portrait. |
+| 2 | **pass** | `tessera-client` `social_chat_server` (1 / 1): an in-process `tessera-server` at protocol 1.2 and two clients built from the client's own `net::World`, plugin host and game-UI host; every line enters as the M5 chat window's entry hands it over and runs through `UiHost::dispatch_entry_lines` (the decision 0020 dispatcher, closing the M5 `--ui` gap): `/tell`, the incoming tell, `/reply` to the reply target, a line in the Tell mode, `/join Lore` and `/join lore` (one channel, the server's spelling), `/ch1` heard by the other member in slot 1's form, `/part Lore` after which the other no longer hears the channel. Protocol and server: `tessera-protocol` `v12_channels` 13 / 13 (incl. code 6 below minor 2), `tessera-server` `channels` 9 / 9 and `channel_logs` 1 / 1, `tessera-loadtest` `v12_channels` 3 / 3 (tells and a channel between two clients while a minor-1 peer gets no 1.2 message; the hostile 1.2 cases end as specified, counts back at baseline), `tessera-net` `remote_channels` 3 / 3. The server learns only channel names and the chat it relays (decision 0035 D1, LEGAL.md §11.1 rule 5); `check-server-deps` passes. |
+| 3 | **pass** | `tessera-client` `social_music_sync` (7 / 7): the committed `music-sync` scenario plays headless with the audio clock stepped with the virtual clock; the time-0 of every part is read from the instruments' schedule log and checked against both rules of `instruments.md` §8.9 (0.0001 s). Scripted start at S = 2.500 s: three parts (the player's, Brin's, Cael's replacement after a withdrawal), 42 note events, spread 0 s, worst \|time-0 − S\| 0 s; the player's own `/play … sync` and `/playstart` (generic answer) at S = 4.200 s: 18 events, spread 8.9e-16 s, worst 8.9e-16 s. Also: the plain sandbox's answer to `/playstart` starts the part once, a refused start (test server) starts the waiting part locally once. `tessera-audio` `instruments_examples` (40) covers the head skip, refusal of parts that do not fit, non-finite times and long render blocks (`update_for`). |
+
+Remaining issues: the trade window's names, literal icons and money displays and the state
+icon of criterion 1's defects (a) and (b); `tessera-loadtest`'s `chat` bots do not join
+channels yet (`test-server.md` §13.1 and the §15.4 implementer OPEN; `tessera-net` now sends
+the channel commands, so this is unblocked), and its hostile mode still sends the 1.2
+vectors without logging in (§13.1 OPEN; the end-to-end test logs in); `test-server.md`
+§13.1 still says bots negotiate minor 1 (bots now offer 0, 1 and 2); `tessera-protocol.md`
+§10.6 lists no `NOT_IN_WORLD` for a leave while `test-server.md` §9.1 uses it (reviewer F2);
+the Social panel's Friends page grows a 1,024-row tree one row at a time (no batched tree
+add in `listbox.rs`); `PartyMember` actor values come from the client's member data; P2's actor
+views (`lua-plugin-api.md` §15.2) are now on main and the member getters should use them
+(§15.4 further rule 2); no engine text-input
+dialog or context menu (add dialogs post a command hint, `social-panels.md` implementer OPEN
+before §10); `select_fellow_1..6` and `assist_fellow_2..6` are unbound in the default key
+map (TR12 OPEN); the production headless run (`--headless --scenario`) makes no chat lines,
+since the driver's commands are in `tessera-net` (client review F3); the implementer OPENs
+of every P4 spec await the spec writer and the independent reviews. Merge seams with P2 and
+P3 (both changed the same shared files additively; merged with main 2026-10-11): the `tessera-ui` game module index, the
+`tessera-net` domain groups, the client's `PlayerState`, UI host and runtime frame order,
+`ARCHITECTURE.md` §19 and §20, `scenario-feed.md` and the fuzz `Cargo.toml` and README.
+
 ---
 
 <a id="p5"></a>
@@ -1784,7 +2131,7 @@ started travel, the instance finder with its queue and invitation displays, and 
 movement with the install's mounted gaits. Layouts, map images, notes, names, icons and clips
 come from the user's install. Travel rows, costs, levels and flags, the finder's entries and
 queue states, map markers and which mount the player rides in a scenario come from the
-scenario feed (`scenario-feed.md`, revision "P5 travel"), never derived: the client runs no
+scenario feed (`scenario-feed.md`, revision 8, "P5 travel"), never derived: the client runs no
 travel, eligibility, queue or mount rule (decision 0024 §2 principle 4). Mounted gaits run in
 the offline walker, which plays the server's part for its own avatar (`walker.md` §16).
 Client half only (owner, decision 0024): LEGAL.md §11.1 rule 5 is unchanged, so
@@ -1808,8 +2155,8 @@ module index, the `tessera-net` domain groups, the client's `PlayerState` and fr
   [`mounts.md`](specs/mounts.md) §14 (revised: mounted presentation and gaits, the mount and
   dismount sequence, placement, seat, camera, the census of mount effects);
   [`walker.md`](specs/walker.md) §16 (new: mounts in the walker);
-  [`scenario-feed.md`](specs/scenario-feed.md) revision "P5 travel" (§18.P5: additive forms;
-  its number is reconciled at merge with P2 and P4); [`lua-plugin-api.md`](specs/lua-plugin-api.md)
+  [`scenario-feed.md`](specs/scenario-feed.md) revision 8, "P5 travel" (§18.P5: additive forms;
+  numbered at the merge with P2, P3 and P4); [`lua-plugin-api.md`](specs/lua-plugin-api.md)
   §15.5 (mount views).
 - [Decision 0036](decisions/0036-p5-map-census-and-panel-goldens.md): what "every map region"
   means for criterion 1, and decision 0031's golden tiers applied to the P5 panels.
@@ -1891,7 +2238,7 @@ module index, the `tessera-net` domain groups, the client's `PlayerState` and fr
 (decision 0024 §5 P5), with [`collision.md`](specs/collision.md),
 [`script-table.md`](specs/script-table.md), [`interaction.md`](specs/interaction.md),
 [`npc-windows.md`](specs/npc-windows.md) and [`chat-window.md`](specs/chat-window.md);
-[`scenario-feed.md`](specs/scenario-feed.md) revision "P5 travel";
+[`scenario-feed.md`](specs/scenario-feed.md) revision 8 ("P5 travel");
 [`lua-plugin-api.md`](specs/lua-plugin-api.md) §15.5.
 
 **RE tasks:** the windows' layouts, element roles and fill rules from the install's UI
@@ -1915,11 +2262,10 @@ until P8.
 <a id="p5-status"></a>
 **Status:** exit criteria 1–3 pass on Tessera's side (started 2026-10-11, branch `p5`; exit
 verification 2026-10-12 on the uncommitted `p5` tree, install `3905db5e60168527`); to be
-committed and merged. Deliverables not yet met: `map-windows.md` and `travel-windows.md` are in
-**Review**, `mounts.md` §14 is **Revised**, `walker.md` §16 and the "P5 travel" parts of
-`scenario-feed.md` are in **Review** and `lua-plugin-api.md` §15.5 is **Revised**; each needs
-an independent review before it is Accepted. Decisions 0031 and 0036 are Proposed (the owner
-accepts them). No criterion needs an observation in the original client; owner rows O140–O155
+committed and merged. The P5 specs (`map-windows.md`, `travel-windows.md`, `mounts.md` §14,
+`walker.md` §16, `scenario-feed.md` revision 8 and `lua-plugin-api.md` §15.5) are **Accepted**
+after independent reviews (2026-10-13); the code is conformed to them by the next pass.
+Decisions 0031 and 0036 are Proposed (the owner accepts them). No criterion needs an observation in the original client; owner rows O140–O155
 ([owner-observations.md](checklists/owner-observations.md#p5-items)) block nothing until P8.
 
 | # | Status | Evidence |
@@ -1975,15 +2321,20 @@ target (pinned by a test).
 ## M9: Extended scripting (after full parity)
 
 **Placement (owner, 2026-10-08).** Extended scripting is not a priority. It starts only after
-Tessera reaches full parity with the original client and compatibility with the server (M8).
-If the M8 gate fails, it starts after client parity with Tessera's own server (M7). It was
+Tessera reaches full parity with the original client and compatibility with the server (M8,
+in scope since 2026-10-11 by decision 0034). If M8 stops on a rights holder's objection
+(LEGAL §9.4), it starts after client parity with Tessera's own server (M7). It was
 planned earlier as M5.5, right after M5.
 
 **Plan.** [Decision 0017](decisions/0017-extended-scripting.md) holds the design: Lua 5.1
 "ext" apartments under `Ext`, modules granted by capability, a fail-closed backend gate,
 and slices 1a (core), 1b, 2 and 3. Its specs are written and Accepted: `ext-threat-model.md`,
-`ext-manifest.md`, `ext-api-1a.md` and `ext-api-1b.md`. Ext scripts never run against an
-official server (decision 0017 §4, LEGAL §9), whatever M8 decides.
+`ext-manifest.md`, `ext-api-1a.md` and `ext-api-1b.md`. On an official server, ext scripts
+run only after the user's explicit opt-in, off by default and at the user's own risk;
+automation (`input.drive` and every module that issues movement, input or game commands)
+stays offline only ([decision 0034](decisions/0034-official-server-compatibility.md) §4,
+LEGAL §9.5). M9 revises those specs and replaces 0017 §6.3's build-level exclusion with
+tests of the runtime gate and the opt-in.
 
 **What stays in place until then.** M5 already split `tessera-script` (a plugin-free Lua core)
 from `tessera-plugins` (decision 0023), as decision 0017 asked. M9 therefore does not redo

@@ -21,9 +21,11 @@ use super::super::{GameError, find_below, set_image, subtree};
 use super::command::{CommandSetup, EntryHistory, EntryLine};
 use super::config::{ChatConfig, TabConfig};
 use super::entry::{
-    ChannelModes, GuardVerdict, KeyRepeatGuard, SAY, TELL, at_bottom, page_targets,
+    ChannelModes, GuardVerdict, KeyRepeatGuard, ModeKind, SAY, TELL, at_bottom, page_targets,
 };
+use super::im::{ImPids, ImTab};
 use super::mask::{FeedbackSounds, OpacityTable, StyleMap, UNFILTERED, log_takes};
+use super::social::TellTargets;
 
 /// The run-time text of a line (or any element), without resolving its layout text.
 #[must_use]
@@ -131,6 +133,19 @@ pub struct Chat {
     pub guard: Option<KeyRepeatGuard>,
     /// Game text.
     pub texts: ChatTexts,
+    /// The tell targets (`chat-window.md` §15.10 CT3), a copy of the client's
+    /// [`super::social::SocialChat::targets`] ([`Chat::set_tell_targets`]). The social
+    /// chat model is the only owner of the targets; this copy is what `ChatModeReply`, the
+    /// reply and retell mode words and Shift/Ctrl browsing read, so the client hands it
+    /// over after every [`super::social::SocialChat`] call that can change them
+    /// (`session_line`, `tell`, `reply`, `retell`, `world_entered`, `disconnected`).
+    pub tells: TellTargets,
+    /// The instant-message tab, once created ([`Chat::open_im_tab`], CT6).
+    pub im: Option<ImTab>,
+    /// Property IDs of the instant-message elements (resolved by label by the client).
+    pub im_pids: ImPids,
+    /// Browse indices into the recent senders and recipients (CT3; −1: none chosen).
+    pub(crate) browse: (i32, i32),
     pool: Vec<(i32, u32)>,
 }
 
@@ -177,8 +192,67 @@ impl Chat {
             target: String::new(),
             guard: None,
             texts: ChatTexts::default(),
+            tells: TellTargets::default(),
+            im: None,
+            im_pids: ImPids::default(),
+            browse: (-1, -1),
             pool: Vec::new(),
         }
+    }
+
+    /// Takes the tell targets of the client's social chat model (CT3). A browse index is
+    /// reset to −1 when its list changed.
+    pub fn set_tell_targets(&mut self, t: &TellTargets) {
+        if t.senders != self.tells.senders {
+            self.browse.0 = -1;
+        }
+        if t.recipients != self.tells.recipients {
+            self.browse.1 = -1;
+        }
+        self.tells = t.clone();
+    }
+
+    /// Sets the channel mode to `Tell` with `target` and updates the label (CT3, CT6).
+    pub fn set_tell_mode(&mut self, ui: &mut Ui, target: &str) {
+        self.previous_mode = self.mode;
+        self.mode = TELL;
+        self.target = target.to_string();
+        if let Some(p) = self.primary() {
+            let sel = self.windows[p].selected;
+            if let Some(t) = self.windows[p].tabs.get_mut(sel) {
+                t.mode = TELL;
+            }
+            let win = self.windows[p].clone();
+            self.update_label(ui, &win);
+        }
+    }
+
+    /// Shift or Ctrl with line up or down (CT3): moves the sender (`senders`) or recipient
+    /// index by one within its list (clamped) and makes the chosen name the `Tell` target.
+    /// Returns the chosen name; nothing happens with an empty list.
+    pub fn browse_targets(&mut self, ui: &mut Ui, senders: bool, up: bool) -> Option<String> {
+        let list = if senders {
+            self.tells.senders.names()
+        } else {
+            self.tells.recipients.names()
+        };
+        if list.is_empty() {
+            return None;
+        }
+        let last = i32::try_from(list.len() - 1).unwrap_or(i32::MAX);
+        let idx = if senders {
+            &mut self.browse.0
+        } else {
+            &mut self.browse.1
+        };
+        *idx = if up {
+            idx.saturating_add(1).min(last)
+        } else {
+            idx.saturating_sub(1).max(0)
+        };
+        let name = list[usize::try_from(*idx).unwrap_or(0)].clone();
+        self.set_tell_mode(ui, &name);
+        Some(name)
     }
 
     /// The pool of window elements (§3.2 step 1): (window ID, element ID) of every
@@ -375,6 +449,7 @@ impl Chat {
         }
         win.selected = i;
         let win = win.clone();
+        self.hide_im_log(ui, w);
         if let Some(tl) = win.tab_list
             && ui.list_selected(tl) != Some(win.tabs[i].tab)
         {
@@ -445,8 +520,32 @@ impl Chat {
         let Some(tab) = self.windows.get(w).and_then(|w| w.tabs.get(i)).cloned() else {
             return;
         };
-        let selected = self.windows[w].selected == i;
+        let im_selected = self
+            .im
+            .as_ref()
+            .is_some_and(|m| m.window == w && m.selected);
+        let selected = self.windows[w].selected == i && !im_selected;
         let Some(list) = tab.list else { return };
+        if !self.append_to(ui, list, tab.line_template, mask, text) {
+            return;
+        }
+        // Step 12.
+        if !selected && let Some(u) = tab.unread {
+            ui.set_shown(u, true);
+        }
+    }
+
+    /// §5.1 steps 1–11 on one log's list box: style, cap, line creation (or reuse at the
+    /// cap), text, sticking to the bottom and the feedback sound. Returns whether a line was
+    /// appended.
+    pub(crate) fn append_to(
+        &mut self,
+        ui: &mut Ui,
+        list: ElementKey,
+        line_template: u32,
+        mask: u64,
+        text: &str,
+    ) -> bool {
         // Steps 1–2.
         let t = mask & !UNFILTERED;
         let style = self.styles.style(t);
@@ -500,16 +599,16 @@ impl Chat {
             Some(k) => k,
             None => {
                 // Step 5.
-                let line = match ui.create_element(None, self.layout, tab.line_template) {
+                let line = match ui.create_element(None, self.layout, line_template) {
                     Ok(k) => k,
                     Err(e) => {
                         tracing::debug!("chat line not created: {e}");
-                        return;
+                        return false;
                     }
                 };
                 if ui.list_add(list, line, None).is_err() {
                     ui.destroy(line);
-                    return;
+                    return false;
                 }
                 line
             }
@@ -525,10 +624,7 @@ impl Chat {
         if let Some(did) = self.sounds.sound(mask) {
             ui.emit(UiEvent::Sound { did });
         }
-        // Step 12.
-        if !selected && let Some(u) = tab.unread {
-            ui.set_shown(u, true);
-        }
+        true
     }
 
     fn apply_style(&self, ui: &mut Ui, line: ElementKey, colour: u32, font: u32) {
@@ -738,7 +834,15 @@ impl Chat {
                 if focused {
                     return CommandOutcome::NotHandled;
                 }
-                // The sandbox has no reply target (§10 item 8).
+                // CT3: with a reply target the entry opens in the `Tell` mode with it;
+                // without, the no-reply line (§10 item 8).
+                if let Some(r) = self.tells.reply.clone()
+                    && let Some(e) = entry
+                {
+                    ui.set_focus(Some(e));
+                    self.set_tell_mode(ui, &r);
+                    return CommandOutcome::Handled;
+                }
                 let text = self.texts.no_reply_target.clone();
                 self.post_line(ui, REPLY_MASK, &text);
                 CommandOutcome::Handled
@@ -748,7 +852,10 @@ impl Chat {
                     return CommandOutcome::NotHandled;
                 }
                 if shift || ctrl {
-                    // §6.4: game-script callbacks; Tessera makes these keys do nothing.
+                    // §6.4 with CT3: Shift browses the recent senders, Ctrl the recent
+                    // recipients (Shift wins when both are held).
+                    let up = name == "CursorPreviousLine";
+                    self.browse_targets(ui, shift, up);
                     return CommandOutcome::Handled;
                 }
                 let t = if name == "CursorPreviousLine" {
@@ -855,8 +962,20 @@ impl Chat {
         let Some(row) = self.modes.switch_word(&text).cloned() else {
             return;
         };
-        // Step 3: a reply or tell-again word asks a callback for the target; the sandbox
-        // has none, so the target is unchanged (§6.4 Q11).
+        // Step 3 (revision 4 fixes, CW44, CT3, CW-I31): a reply word takes the reply
+        // target, a retell word the retell target (empty when there is none); a plain
+        // `Tell` word switches nothing (mode, target and entry text, with its typed space,
+        // stay, so the line is submitted as a command line); every other word empties the
+        // target.
+        if row.chat_type == TELL {
+            self.target = match row.kind {
+                ModeKind::Reply => self.tells.reply.clone().unwrap_or_default(),
+                ModeKind::TellAgain => self.tells.retell.clone().unwrap_or_default(),
+                ModeKind::Plain => return,
+            };
+        } else {
+            self.target.clear();
+        }
         self.previous_mode = self.mode;
         self.mode = row.chat_type;
         if let Some(p) = self.primary() {
@@ -883,6 +1002,14 @@ impl Chat {
         if m.msg != ui.vocab().msgs.listbox_new_selection {
             return;
         }
+        if self
+            .im
+            .as_ref()
+            .is_some_and(|im| im.sessions_list == m.source)
+        {
+            self.im_list_selection(ui);
+            return;
+        }
         let Some(w) = self
             .windows
             .iter()
@@ -895,6 +1022,8 @@ impl Chat {
         };
         if let Some(i) = self.windows[w].tabs.iter().position(|t| t.tab == sel) {
             self.select_tab(ui, w, i);
+        } else if self.im.as_ref().is_some_and(|im| im.tab == sel) {
+            self.select_im_tab(ui);
         }
     }
 }

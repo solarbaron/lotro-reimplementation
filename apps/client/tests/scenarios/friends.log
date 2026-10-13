@@ -1,0 +1,21 @@
+tessera-scenario-log 1
+install none
+tick 100
+title "Old friends"
+pre > Connect
+pre Connected characters=["Tamsin"]
+pre > EnterWorld character="Tamsin"
+0.000 WorldEntered entity=player name="Tamsin" at=0.000,0.000,0.000 facing=90.00
+0.000 LocationReport entity=player at=0:0.000,0.000,0.000 facing=90.00 anchor=none cause=entered
+0.000 FriendList entries=[{name="Brin" online=yes},{name="cael" online=no},{name="Eda" online=yes},{name="Fenn" online=no}]
+0.000 IgnoreList names=["Grumble","Hask"]
+1.000 FriendList entries=[{name="Brin" online=yes},{name="cael" online=yes},{name="Eda" online=no},{name="Fenn" online=no}]
+1.500 ChatMessage channel=tell:"Hask" sender="Hask" text="You there!"
+2.000 ChatMessage channel=tell:"cael" sender="cael" text="Back by the fire."
+3.000 > AddFriend name="Ivo"
+3.200 FriendList entries=[{name="Brin" online=yes},{name="cael" online=yes},{name="Eda" online=no},{name="Fenn" online=no},{name="Ivo" online=no}]
+4.000 > Ignore name="Jory"
+4.200 IgnoreList names=["Grumble","Hask","Jory"]
+5.000 > Chat channel=tell:"cael" text="Good to see you."
+5.000 ChatMessage channel=system sender=none text="cael is not in the sandbox."
+5.000 end reason=complete skipped=0 input-skipped=0 dropped=0 spilled=0

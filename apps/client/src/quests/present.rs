@@ -237,7 +237,7 @@ impl<'a> JournalView<'a> {
     /// The views of `state`'s quest journal with `data` (the install's facts, when present).
     #[must_use]
     pub fn new(state: &'a PlayerState, data: Option<&'a NpcData>) -> Self {
-        Self::with_session(state.npc().quests(), state, data)
+        Self::with_session(state.quests(), state, data)
     }
 
     /// The views of `session` with the player values of `state`.

@@ -20,6 +20,21 @@ pub(crate) struct InstanceId {
     generation: u32,
 }
 
+impl InstanceId {
+    /// Slot and generation packed into one number (a public run handle).
+    pub(crate) fn to_bits(self) -> u64 {
+        (u64::from(self.generation) << 32) | u64::from(self.idx)
+    }
+
+    /// The inverse of [`InstanceId::to_bits`].
+    pub(crate) fn from_bits(bits: u64) -> Self {
+        Self {
+            idx: (bits & 0xFFFF_FFFF) as u32,
+            generation: (bits >> 32) as u32,
+        }
+    }
+}
+
 /// A running child and the port group it was started into (0: none).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct Child {
@@ -160,6 +175,12 @@ pub(crate) enum KindState {
     /// (none when nothing started), its target, the `ImmediateDisposal` byte and the
     /// redirect PID it listens to (0 for none, §5.8).
     Particle(Box<ParticleState>),
+    /// A Beam node with a beam (`particle-runtime.md` §11.1): the sink's handle and whether
+    /// its Default ports fired (once, step 7).
+    Beam {
+        handle: crate::sink::BeamHandle,
+        fired: bool,
+    },
 }
 
 /// The state of a never-ending Particle node's instance.

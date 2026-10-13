@@ -23,9 +23,14 @@ application's About screen. Do not shorten or reword it. See
 - It reads data files from **your own, legally obtained installation** of the game, in place
   and read-only. It does not copy, modify, repack or redistribute them. Obtain the game only
   from its official distribution channels.
-- It **does not connect to official game servers** and must not be used to do so. Connecting
-  a third-party client to the official service may breach Daybreak's End User License
-  Agreement and Terms of Service and may result in your account being suspended or closed.
+- It **does not connect to official game servers today**. Official-server compatibility is
+  planned ([docs/LEGAL.md §9](docs/LEGAL.md#9-gates-and-the-official-server-target)). It is
+  being pursued without a legal review and without permission from the rights holders.
+  Connecting a third-party client to the official service may breach Daybreak's End User
+  License Agreement and Terms of Service, and may result in your account being suspended or
+  closed. If you connect, you bear that risk yourself. The project cannot protect your
+  account. Before any connection is possible, the client will make you accept a warning
+  that says so.
 - Using game data with any software other than the official client may itself fall outside
   the game's licence terms (Daybreak ToS §12). You are responsible for how you use this
   software and for your own agreements with Daybreak.

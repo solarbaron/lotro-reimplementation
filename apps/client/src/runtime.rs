@@ -102,6 +102,9 @@ pub struct Runtime {
     pub p1: crate::character::CharacterHub,
     /// Whether the P1 facts are loaded once the archives open (walker runs).
     load_p1: bool,
+    /// Targeting, skills and combat (decision 0024 P2): the install's combat data and the
+    /// plugin combat views.
+    pub p2: crate::combat::CombatHub,
     /// NPC windows (decision 0024 P3): their install names and facts, the plugin wallet
     /// views' model, the windows on the game UI.
     pub npc: crate::npc::NpcHub,
@@ -110,11 +113,58 @@ pub struct Runtime {
     pub quests: crate::quests::QuestHub,
     /// `--character-select`: the world session waits for the character screens.
     character_select: bool,
+    /// The plugins' party views fed from the session's fellowship (decision 0024 P4); the
+    /// game UI attaches its actor source with the plugins' other sources
+    /// ([`crate::ui_host::UiHost::attach_plugins`]).
+    party: crate::social::party::PartyBridge,
+    /// The generation of the dispatcher's command words the social state last took.
+    social_words: u64,
     /// Travel, the instance finder and mounts (decision 0024 P5): the windows' install
     /// names, the session's mount model and plugin source, the walker's feed mounts.
     pub p5: crate::travel::TravelHub,
     /// The map windows (decision 0024 P5): the install's map facts and the map window.
     pub map: crate::map::MapHub,
+}
+
+/// The P4 social work of a frame (decision 0024 P4): the dispatcher's channel-command
+/// names for the chat model (`chat-window.md` §15.10 CT5), the plugins' party views, and
+/// the synchronised `/play` (the session's performance events to the player music, its
+/// requests to the session; `instruments.md` §12 P4 Decision, `scenario-feed.md` §6.7).
+fn social_tick(
+    world: &mut World,
+    plugins: &mut Plugins,
+    party: &mut crate::social::party::PartyBridge,
+    words: &mut u64,
+    now: Instant,
+) {
+    let generation = plugins.command_text_generation();
+    if *words != generation {
+        *words = generation;
+        let names: Vec<String> = plugins
+            .command_text()
+            .modes
+            .iter()
+            .flat_map(|m| {
+                crate::commands::registry::split_names(&m.names)
+                    .map(str::to_owned)
+                    .collect::<Vec<_>>()
+            })
+            .collect();
+        world.social_mut().set_channel_command_names(names);
+    }
+    party.update(world.social_mut(), plugins.manager_mut());
+    let events = world.social_mut().take_music_events();
+    let session_starts = world.remote_backend().is_none();
+    let player = world.social().player().to_owned();
+    let entity = world.social().player_entity();
+    let Some(music) = plugins.music_mut() else {
+        return;
+    };
+    music.set_session_starts(session_starts);
+    for ev in &events {
+        music.social_event(ev, &player, entity);
+    }
+    crate::social::send_music_requests(world, music, now);
 }
 
 /// Most session chat lines held for the game UI until it takes them.
@@ -305,6 +355,8 @@ impl Runtime {
         let mut p1 = crate::character::CharacterHub::new();
         p1.want_screens(args.character_select);
         p1.attach_plugins(plugins.manager_mut());
+        let p2 = crate::combat::CombatHub::new();
+        p2.attach_plugins(plugins.manager_mut());
         Ok(Self {
             loader,
             status: DataStatus::Loading,
@@ -329,6 +381,7 @@ impl Runtime {
             texture_settled: false,
             p1,
             load_p1: walker,
+            p2,
             npc: crate::npc::NpcHub::new(
                 args.open_panel
                     .iter()
@@ -343,6 +396,8 @@ impl Runtime {
             )
             .with_icons(args.quest_icons),
             character_select: args.character_select,
+            party: crate::social::party::PartyBridge::new(),
+            social_words: u64::MAX,
             p5: crate::travel::TravelHub::new(
                 args.open_panel
                     .iter()
@@ -433,6 +488,7 @@ impl Runtime {
             Some(Ok(mut w)) => {
                 if let Some(d) = self.p1.data() {
                     w.set_bag_layout(d.bags());
+                    crate::social::attach_data(w.social_mut(), d);
                 }
                 w.set_look_data(self.p1.screens().cloned());
                 if self.character_select {
@@ -572,14 +628,21 @@ impl Runtime {
 
     /// Per-frame update of the world session and the plugin host.
     pub fn tick(&mut self, now: Instant) {
-        if let Some(d) = self.p1.poll()
-            && let Some(w) = &mut self.world
+        if let Some(d) = self.p1.poll() {
+            self.p2.set_data(&d);
+            if let Some(w) = &mut self.world {
+                w.set_bag_layout(d.bags());
+                crate::social::attach_data(w.social_mut(), &d);
+                w.set_look_data(self.p1.screens().cloned());
+                // Items that arrived before the facts: the plugin views and the panels
+                // re-read them now.
+                self.p1.resync(w.player_state());
+            }
+        }
+        if self.p2.install().is_none()
+            && let Some(d) = self.p1.data().cloned()
         {
-            w.set_bag_layout(d.bags());
-            w.set_look_data(self.p1.screens().cloned());
-            // Items that arrived before the facts: the plugin views and the panels
-            // re-read them now.
-            self.p1.resync(w.player_state());
+            self.p2.set_data(&d);
         }
         self.npc.poll(self.p1.data());
         // P5 (map, travel, mounts): the install names and the map facts load off the frame.
@@ -612,8 +675,15 @@ impl Runtime {
             );
             self.p1
                 .after_events(world.player_state(), changes, self.plugins.manager_mut());
+            // The plugin combat views (`lua-plugin-api.md` §15.2), at the plugins' clock.
+            let combat_events = world.take_combat_events();
+            let game_time = tessera_plugins::HostApi::game_time(self.plugins.host());
+            self.p2
+                .after_events(&combat_events, game_time, self.plugins.manager_mut());
             for line in world.take_chat() {
-                if line.sender.is_empty() && self.notices.len() < 64 {
+                // The session's own system lines go to the HUD too; the P4 lines the client
+                // derives (channel slots, friend and fellowship notices) only to the chat.
+                if line.sender.is_empty() && line.shown.is_none() && self.notices.len() < 64 {
                     self.notices.push(line.text.clone());
                 }
                 match &mut self.ui_chat {
@@ -627,9 +697,16 @@ impl Runtime {
                             self.ui_chat_dropped = self.ui_chat_dropped.saturating_add(1);
                         }
                     }
-                    None => self.plugins.chat(&line.sender, &line.text),
+                    None => self.plugins.chat_line(&line),
                 }
             }
+            social_tick(
+                world,
+                &mut self.plugins,
+                &mut self.party,
+                &mut self.social_words,
+                now,
+            );
             let name = world
                 .player()
                 .and_then(|id| world.entities().get(&id))
@@ -640,6 +717,13 @@ impl Runtime {
             }
         }
         self.plugins.pump();
+    }
+
+    /// The source of the party members' `Actor` values for the plugins' party views (P4),
+    /// for [`crate::ui_host::UiHost::set_plugin_party`].
+    #[must_use]
+    pub fn party_actor_source(&self) -> std::sync::Arc<dyn tessera_plugins::PartyActorSource> {
+        self.party.actor_source()
     }
 
     /// System messages from the world session since the last call (the walker's HUD).
@@ -660,7 +744,7 @@ impl Runtime {
         }
         if let Some(q) = self.ui_chat.take() {
             for line in q {
-                self.plugins.chat(&line.sender, &line.text);
+                self.plugins.chat_line(&line);
             }
         }
     }
@@ -691,7 +775,7 @@ impl Runtime {
         match &mut self.ui_chat {
             Some(q) if q.len() < MAX_HELD_CHAT => q.push_back(line),
             Some(_) => self.ui_chat_dropped = self.ui_chat_dropped.saturating_add(1),
-            None => self.plugins.chat(&line.sender, &line.text),
+            None => self.plugins.chat_line(&line),
         }
     }
 

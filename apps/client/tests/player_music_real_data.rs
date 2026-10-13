@@ -195,10 +195,20 @@ fn play_an_original_tune_on_the_offline_backend() {
     assert_eq!(st.missing_sound_info, 0);
     assert!(st.voices_accepted > 0 && peak > 0.0, "the tune is audible");
 
-    // 3. Synced: waits for /playstart, then starts 0.7 s after it.
+    // 3. Synced: waits for /playstart, then starts 0.7 s after it (without a session that
+    // starts parts, the local start of `instruments.md` §12 P4 Decision 3). An accepted
+    // synced part shows the own ready notice and starts nothing (§8.8.6, P4 Decision 1).
     assert!(m.command("/play tessera-test 2 sync"));
     assert!(m.wait_settled(MUSIC_WAIT));
-    assert!(m.take_lines().is_empty(), "a synced part waits silently");
+    let lines = m.take_lines();
+    assert_eq!(lines.len(), 1, "the own ready notice: {lines:?}");
+    assert_eq!(
+        m.take_requests(),
+        vec![tessera_client::audio::player_music::MusicRequest::Ready {
+            tune: "tessera-test".into()
+        }],
+        "the session is told (scenario-feed.md §6.7)"
+    );
     let before = m.schedule_log().count();
     m.render_offline(0.5);
     assert_eq!(m.schedule_log().count(), before, "still waiting");

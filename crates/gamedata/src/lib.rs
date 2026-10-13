@@ -6,7 +6,8 @@
 //! creatures, quests, economy, map and progression records, and the resolution of
 //! scenario selectors (`docs/specs/scenario-feed.md` §8) against the user's install.
 //! The P1 models live in modules: item tooltips ([`tooltip`]), the creation screens'
-//! lists and names ([`chargen`]) and the local player's inventory ([`inventory`]); the P3
+//! lists and names ([`chargen`]) and the local player's inventory ([`inventory`]); P2 adds
+//! skill and effect tooltips to [`tooltip`] and the combat data of [`combat`]; the P3
 //! models are the quest journal ([`quest`]) and the NPC windows ([`npc`]); the P5 models
 //! are the map windows ([`map`]), the travel window ([`travel`]), the instance finder
 //! ([`instance`]) and mounts ([`mount`]). Layer
@@ -27,6 +28,8 @@
 //! | [`tooltip`] | Item examination tooltip model (P1) | `item-tooltips.md` |
 //! | [`chargen`] | Selection and creation lists, names (P1) | `character-screens.md`, `player-character.md` |
 //! | [`inventory`] | The local player's inventory model (P1) | `character-panels.md`, `lua-plugin-api.md` §15.1 |
+//! | [`tooltip`] (P2) | Skill and effect examination tooltips, effect lines, durations and timers, the census categories; item effect lines, skill-item rows and the `SkillGrantingItem` comparison | `skill-tooltips.md`; `item-tooltips.md` §6.16, §6.20, §8.3 |
+//! | [`combat`] | Typed skill and effect records; combat-panel data (consideration and name colours, vital display overrides, target-frame decoration, effect icons, cast-bar labels, defeat records, floating-text settings); combat-visual script references | `combat-data.md`, `combat-ui.md`, `combat-visuals.md`, `game-controls.md` §5.8, §7.1, §7.5, `interaction.md` §3.8, §3.9, §8 |
 //! | [`quest`] | Quest log, details, progress texts and counters, tracker, quest chat lines, NPC rings and markers, census (P3) | `quest-journal.md` |
 //! | [`npc`] | Dialogue, quest offers, vendor, barter and loot entries, coins, wallet, census (P3) | `npc-windows.md` |
 //! | [`map`] | Map tree, every map region with its census category and test point, table notes of one map, icon tables, place lookup (P5) | `map-windows.md`, `map-data.md` §3.4, §4.8 |
@@ -60,6 +63,7 @@
 #![warn(missing_docs)]
 
 pub mod chargen;
+pub mod combat;
 mod error;
 mod filter;
 mod index;

@@ -33,6 +33,14 @@
 //!   velocity), [`Event::AppearanceChanged`], [`Event::EntityDespawned`]; chat, notices
 //!   and refusals → [`Event::ChatMessage`]; every end → one [`Event::Disconnected`] with
 //!   a reason ([`RemoteBackend::failure`] has the details).
+//! - **Named chat channels** (protocol minor 2, decision 0035, `scenario-feed.md` §9.8):
+//!   only when [`RemoteBackend::has_chat_channels`] is true (negotiated minor ≥ 2 and the
+//!   server's `CHAT_CHANNELS`), `JoinChannel`, `LeaveChannel` and `Named` chat lines are
+//!   sent; otherwise they are refused with [`NetError::InvalidCommand`] and nothing is
+//!   sent. `ChannelJoined` and `ChannelLeft` surface as [`Event::Social`]; a removal
+//!   (`ChannelLeft` reason `REMOVED`) then posts a System chat line, and a
+//!   `ChannelRefused` posts only a System line in Tessera's own words (the server's text
+//!   is logged).
 //! - **Movement** (§8.2): [`Command::Move`] updates the newest-move slot; the network
 //!   thread sends `MoveInput` at 15 Hz while moving, at once on gait changes, start and
 //!   stop, and as a 1 Hz heartbeat at rest. Moves the client sent before it saw a
@@ -41,6 +49,12 @@
 //!   [`crate::sandbox::WorldSource`] the backend streams the statics of the
 //!   player's neighbourhood from the client's own data ([`Event::StaticSpawned`],
 //!   [`Event::StaticsCleared`]), with the sandbox's streaming code.
+//! - **Selection is local** (`scenario-feed.md` §9.7, decision 0032 D1):
+//!   [`CombatCommand::SelectTarget`](crate::CombatCommand) with a known target is answered
+//!   by an [`Event::Combat`] `TargetChanged` for the player first in the next poll; nothing
+//!   is sent to the server. `CreateCharacter` is sent when the server allows creation
+//!   (`character-screens.md` §7.1.1); every other new gameplay command is refused with
+//!   [`NetError::InvalidCommand`].
 //! - **Interpolation** (§8.6): every remote entity has a snapshot buffer;
 //!   [`RemoteBackend::sample`] gives its state at the current render time, using the
 //!   clock-offset estimate (§11.2). [`RemoteBackend::stats`] has the transport and
@@ -101,12 +115,15 @@ pub use tessera_protocol::value::{Emote, Stance};
 
 use self::driver::{Driver, Inbound, MoveSlot, NetCommand};
 use self::mapper::Mapper;
-use crate::domain::CharacterCommand;
+use crate::domain::{CharacterCommand, CombatCommand, SocialCommand};
 use crate::interp::{Sample, render_time};
 use crate::model::{Appearance, EntityId, Vec3};
 use crate::sandbox::world::{StaticStats, WorldSource};
 use crate::session::{Backend, Command, Event};
 use crate::{NetError, Session};
+
+/// Why a channel command is refused below minor 2 or without `CHAT_CHANNELS`.
+const CHANNELS_UNAVAILABLE: &str = "chat channels need protocol minor 2 with CHAT_CHANNELS";
 
 /// What a [`Command`] becomes.
 enum Routed {
@@ -114,6 +131,9 @@ enum Routed {
     Net(NetCommand),
     Move(MoveSlot),
     Disconnect,
+    /// Answered on the main thread; nothing goes to the network thread
+    /// (`SelectTarget`, `scenario-feed.md` §9.7, decision 0032 D1).
+    Local,
 }
 
 /// Turns a command into network work, validating what `Session` cannot (the protocol's own
@@ -188,17 +208,39 @@ fn route(cmd: Command, mapper: &mut Mapper) -> Result<Routed, NetError> {
         )),
         Command::QueryLocation => Routed::Net(NetCommand::QueryLocation),
         Command::Chat { channel, text } => {
-            let channel = convert::wire_chat_channel(&channel).ok_or(NetError::InvalidCommand(
-                match channel {
+            let wire = convert::wire_chat_channel(&channel, mapper.chat_channels()).ok_or(
+                NetError::InvalidCommand(match channel {
                     crate::ChatChannel::System => "cannot send on the system channel",
+                    crate::ChatChannel::Named { .. } => CHANNELS_UNAVAILABLE,
                     _ => "chat channel has no wire form on the test server",
-                },
-            ))?;
-            Routed::Net(NetCommand::Chat(channel, text))
+                }),
+            )?;
+            Routed::Net(NetCommand::Chat(wire, text))
+        }
+        // Named channels at minor ≥ 2 with CHAT_CHANNELS (scenario-feed.md §9.8,
+        // decision 0035 D1); refused below it, nothing sent.
+        Command::Social(SocialCommand::JoinChannel { name }) => {
+            if !mapper.chat_channels() {
+                return Err(NetError::InvalidCommand(CHANNELS_UNAVAILABLE));
+            }
+            Routed::Net(NetCommand::JoinChannel(name))
+        }
+        Command::Social(SocialCommand::LeaveChannel { name }) => {
+            if !mapper.chat_channels() {
+                return Err(NetError::InvalidCommand(CHANNELS_UNAVAILABLE));
+            }
+            Routed::Net(NetCommand::LeaveChannel(name))
         }
         Command::Disconnect => Routed::Disconnect,
+        // Selection is local: the backend answers with `TargetChanged` for the player in
+        // the next poll and sends nothing (scenario-feed.md §9.7, decision 0032 D1).
+        Command::Combat(CombatCommand::SelectTarget { target }) => {
+            mapper.select_target(target)?;
+            Routed::Local
+        }
         // The test server has no gameplay (LEGAL.md §11.1 rule 5; scenario-feed.md §9.5,
-        // §9.7): DeleteCharacter and every other new command are refused.
+        // §9.7, §9.8): DeleteCharacter, every other Social command (fellowship, trade, lists,
+        // performances) and every other new command are refused.
         Command::Character(_)
         | Command::Inventory(_)
         | Command::Combat(_)
@@ -267,11 +309,7 @@ impl RemoteHandle {
     /// [`NetError::InvalidCommand`] when the appearance cannot travel (invalid, or an
     /// object body with DID 0), [`NetError::SendQueueFull`] or [`NetError::Closed`].
     pub fn set_appearance(&self, appearance: &Appearance) -> Result<(), NetError> {
-        if !appearance.is_valid() {
-            return Err(NetError::InvalidCommand("appearance out of range"));
-        }
-        let wire = convert::wire_appearance(appearance)
-            .ok_or(NetError::InvalidCommand("appearance cannot be sent"))?;
+        let wire = convert::checked_wire_appearance(appearance)?;
         self.send(NetCommand::Appearance(Box::new(wire)))
     }
 }
@@ -459,8 +497,17 @@ impl RemoteBackend {
             .is_some_and(|c| c.contains(ServerCaps::APPEARANCE_CHANGE))
     }
 
+    /// Whether the server takes named chat channels: negotiated minor ≥ 2 and
+    /// `CHAT_CHANNELS` advertised (`tessera-protocol.md` §10.6). Only then are
+    /// `JoinChannel`, `LeaveChannel` and `Chat` on `Named` sent (`scenario-feed.md` §9.8);
+    /// otherwise they are refused with [`NetError::InvalidCommand`].
+    #[must_use]
+    pub fn has_chat_channels(&self) -> bool {
+        self.mapper.chat_channels()
+    }
+
     /// The negotiated minor protocol version, once greeted (1 carries looks and slots,
-    /// `tessera-protocol.md` §3.1).
+    /// 2 named chat channels; `tessera-protocol.md` §3.1).
     #[must_use]
     pub fn negotiated_minor(&self) -> Option<u16> {
         self.mapper.server.as_ref().map(|s| s.minor)
@@ -636,6 +683,7 @@ impl Backend for RemoteBackend {
                 }
                 Ok(())
             }
+            Routed::Local => Ok(()),
         }
     }
 
@@ -644,6 +692,8 @@ impl Backend for RemoteBackend {
             self.stats.clone_from(&s);
         }
         let mut events = std::mem::take(&mut self.scratch);
+        // A local selection answer goes first, before anything mapped in this poll (§9.7).
+        self.mapper.deliver_local(&mut events);
         self.drain(&mut events);
         self.delay = self.mapper.interp.config().delay;
         self.mapper.update_statics(&mut events);
@@ -716,6 +766,123 @@ mod tests {
             ),
             Ok(Routed::Net(_))
         ));
+    }
+
+    /// `SelectTarget` never becomes network work (`scenario-feed.md` §9.7): without a player
+    /// it is refused, and `UseSkill`/`CancelCast`/`SetQuickslot` stay refused.
+    #[test]
+    fn selection_is_local_and_needs_a_player() {
+        use crate::domain::CombatCommand;
+        let mut m = Mapper::new(
+            crate::sandbox::world::StaticConfig::default(),
+            crate::interp::InterpConfig::default(),
+            None,
+        );
+        let select = Command::Combat(CombatCommand::SelectTarget { target: None });
+        assert!(matches!(
+            route(select.clone(), &mut m),
+            Err(NetError::InvalidCommand(_))
+        ));
+        let mut out = Vec::new();
+        m.deliver_local(&mut out);
+        assert!(out.is_empty());
+        for c in [
+            CombatCommand::CancelCast,
+            CombatCommand::SetQuickslot {
+                slot: 1,
+                content: None,
+            },
+        ] {
+            assert!(matches!(
+                route(Command::Combat(c), &mut m),
+                Err(NetError::InvalidCommand(_))
+            ));
+        }
+    }
+
+    fn greeted(minor: u16, caps: ServerCaps) -> Mapper {
+        let mut m = Mapper::new(
+            crate::sandbox::world::StaticConfig::default(),
+            crate::interp::InterpConfig::default(),
+            None,
+        );
+        m.server = Some(ServerInfo {
+            minor,
+            caps,
+            tick_rate: 30,
+            snapshot_rate: 15,
+            interest_radius: 2,
+            name: String::new(),
+            motd: String::new(),
+        });
+        m
+    }
+
+    /// `scenario-feed.md` §9.8 and §14.13 S5–S6: the channel commands go out only at
+    /// minor ≥ 2 with `CHAT_CHANNELS`; every other Social command is refused at every minor.
+    #[test]
+    fn channel_commands_need_minor_2_and_the_capability() {
+        let join = || {
+            Command::Social(SocialCommand::JoinChannel {
+                name: "Lore".into(),
+            })
+        };
+        let leave = || {
+            Command::Social(SocialCommand::LeaveChannel {
+                name: "Lore".into(),
+            })
+        };
+        let named = || Command::Chat {
+            channel: crate::ChatChannel::Named {
+                name: "Lore".into(),
+            },
+            text: "hi".into(),
+        };
+        let refused = |r: Result<Routed, NetError>| matches!(r, Err(NetError::InvalidCommand(_)));
+        for (minor, caps) in [
+            (1, ServerCaps::CHAT_CHANNELS),
+            (2, ServerCaps::NONE),
+            (1, ServerCaps::NONE),
+        ] {
+            let mut m = greeted(minor, caps);
+            assert!(!m.chat_channels());
+            for c in [join(), leave(), named()] {
+                assert!(refused(route(c, &mut m)), "minor {minor}");
+            }
+        }
+        let mut m = greeted(2, ServerCaps::CHAT_CHANNELS);
+        assert!(m.chat_channels());
+        assert!(matches!(
+            route(join(), &mut m),
+            Ok(Routed::Net(NetCommand::JoinChannel(n))) if n == "Lore"
+        ));
+        assert!(matches!(
+            route(leave(), &mut m),
+            Ok(Routed::Net(NetCommand::LeaveChannel(n))) if n == "Lore"
+        ));
+        assert!(matches!(
+            route(named(), &mut m),
+            Ok(Routed::Net(NetCommand::Chat(
+                tessera_protocol::message::ChatChannel::Named { .. },
+                _
+            )))
+        ));
+        for c in [
+            Command::Chat {
+                channel: crate::ChatChannel::Fellowship,
+                text: "hi".into(),
+            },
+            Command::Social(SocialCommand::ReadyPerformance {
+                tune: "Reel".into(),
+            }),
+            Command::Social(SocialCommand::StartPerformance),
+            Command::Social(SocialCommand::DisbandFellowship),
+            Command::Social(SocialCommand::InviteToFellowship {
+                name: "Brin".into(),
+            }),
+        ] {
+            assert!(refused(route(c, &mut m)));
+        }
     }
 
     /// A creation whose command never reaches the network thread is not outstanding

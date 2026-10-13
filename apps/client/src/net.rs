@@ -50,6 +50,11 @@ pub const DISCONNECT_GRACE: Duration = Duration::from_millis(500);
 /// and then QUIC flow control) instead of growing this queue: it holds at most this many
 /// events plus what one poll delivers.
 pub const MAX_QUEUED_ENTITY_EVENTS: usize = 1 << 18;
+/// Bound on the combat events queued for the walker's combat visuals between two
+/// [`World::drain_combat_events`] (P2, `combat-visuals.md` §9). Further events are dropped
+/// on arrival and counted; a walker drains every frame, so the bound is reached only when
+/// none does.
+pub const MAX_QUEUED_COMBAT_EVENTS: usize = 1 << 16;
 /// Most chat lines one message of the day shows (`tessera-protocol.md` §6.2.2).
 pub const MAX_MOTD_LINES: usize = 8;
 /// Chat lines kept for the walker's chat overlay ([`World::drain_hud_chat`]); older lines
@@ -162,8 +167,15 @@ pub struct ChatLine {
     pub channel: ChatChannel,
     /// The line's chat type for the game UI's chat window (`chat-window.md` §2): 5 `Say`,
     /// 6 `Tell`, 8 `Log` for the session's system lines (`chat-window.md` §10 item 2), 4
-    /// `Standard` for the other channels.
+    /// `Standard` for the other channels; for a line with [`Self::shown`] the highest type
+    /// of its mask (§9 Q18 rule, §15.10 CT10).
     pub chat_type: u32,
+    /// (P4) The line as the chat window shows it: its 64-bit chat-type mask and its text in
+    /// the original's line form (`chat-window.md` §15.10 CT1, CT5, CT9, CT12; the derived
+    /// fellowship lines of `social-panels.md` §9 TR4). `None`: shown by §10 item 2.
+    pub shown: Option<(u64, String)>,
+    /// (P4) The instant-message line of a tell (CT6).
+    pub im: Option<tessera_ui::game::chat::social::ImLine>,
 }
 
 impl ChatLine {
@@ -185,6 +197,8 @@ impl ChatLine {
             } else {
                 chat_type
             },
+            shown: None,
+            im: None,
         }
     }
 
@@ -196,6 +210,34 @@ impl ChatLine {
             text: text.into(),
             channel: ChatChannel::System,
             chat_type: 8,
+            shown: None,
+            im: None,
+        }
+    }
+
+    /// A line the client derives from the session's events (a P4 notice: channel slots,
+    /// friend notices, fellowship notices), shown with `mask` (no sender).
+    #[must_use]
+    pub fn shown(mask: u64, text: impl Into<String>) -> Self {
+        let text = text.into();
+        Self {
+            sender: String::new(),
+            text: text.clone(),
+            channel: ChatChannel::System,
+            chat_type: (64 - mask.leading_zeros()).max(1),
+            shown: Some((mask, text)),
+            im: None,
+        }
+    }
+
+    /// The text the chat shows: [`Self::shown`]'s, else the text (a system line) or
+    /// `Sender: text`.
+    #[must_use]
+    pub fn display_text(&self) -> String {
+        match &self.shown {
+            Some((_, t)) => t.clone(),
+            None if self.sender.is_empty() => self.text.clone(),
+            None => format!("{}: {}", self.sender, self.text),
         }
     }
 }
@@ -267,6 +309,10 @@ impl crate::walker::WalkerSession for World {
         World::drain_entity_events(self, out, max);
     }
 
+    fn drain_combat_events(&mut self, out: &mut Vec<tessera_net::CombatEvent>, max: usize) {
+        World::drain_combat_events(self, out, max);
+    }
+
     fn sample_entity(&self, id: EntityId, now: Instant) -> Option<Sample> {
         World::sample_entity(self, id, now)
     }
@@ -296,6 +342,14 @@ impl crate::walker::WalkerSession for World {
     fn look_data(&self) -> Option<Arc<crate::screens::ScreenData>> {
         self.look_data.clone()
     }
+
+    fn social_mut(&mut self) -> Option<&mut crate::social::SocialState> {
+        Some(&mut self.social)
+    }
+
+    fn send_command(&mut self, now: Instant, command: Command) -> Result<(), String> {
+        World::send_command(self, now, command).map_err(|e| e.to_string())
+    }
 }
 
 /// The client's view of the world source.
@@ -318,6 +372,11 @@ pub struct World {
     entity_events: Option<VecDeque<Event>>,
     /// Moves in `entity_events`.
     queued_moves: usize,
+    /// Combat events for the walker's combat visuals; captured exactly while
+    /// `entity_events` is (`None`: not captured).
+    combat_events: Option<VecDeque<tessera_net::CombatEvent>>,
+    /// Combat events dropped because their queue was full.
+    dropped_combat: u64,
     /// [`MAX_QUEUED_ENTITY_EVENTS`] (smaller in tests).
     queue_cap: usize,
     /// Moves dropped because the queue was full.
@@ -368,6 +427,22 @@ pub struct World {
     /// Someone else polls the session ([`World::apply_polled`]): [`World::update`] does
     /// not.
     external_poll: bool,
+    /// The player's social state (decision 0024 P4): chat lines in the original's forms,
+    /// fellowship, lists, invitation, trade, performance events for the player music.
+    social: crate::social::SocialState,
+    /// The local player's combat state (decision 0024 P2, [`crate::combat`]).
+    p2: crate::combat::CombatState,
+    /// Its changes not yet taken ([`World::take_combat_changes`]), at most
+    /// [`MAX_PLAYER_CHANGES`].
+    p2_changes: std::collections::VecDeque<crate::combat::CombatChange>,
+    /// The events of the combat state and plugin combat views not yet taken
+    /// ([`World::take_combat_events`]), at most [`MAX_PLAYER_CHANGES`].
+    p2_events: std::collections::VecDeque<Event>,
+    /// The origin of the combat clock ([`World::combat_clock`]).
+    p2_base: Instant,
+    /// Combat changes were dropped from a full queue since the last
+    /// [`World::take_combat_overflow`]: the consumer resynchronises from the state.
+    p2_overflowed: bool,
     /// The P5 state (decision 0024 P5): feed markers, travel and instance windows, the
     /// started travel, the instance, the queue ([`crate::travel::state`]).
     p5: crate::travel::state::P5State,
@@ -536,6 +611,8 @@ impl World {
             placed: std::collections::BTreeSet::new(),
             entity_events: None,
             queued_moves: 0,
+            combat_events: None,
+            dropped_combat: 0,
             queue_cap: MAX_QUEUED_ENTITY_EVENTS,
             dropped_moves: 0,
             hud_chat: VecDeque::new(),
@@ -557,9 +634,49 @@ impl World {
             p1_dropped: 0,
             manual_enter: false,
             external_poll: false,
+            social: crate::social::SocialState::new(true),
+            p2: crate::combat::CombatState::new(),
+            p2_changes: std::collections::VecDeque::new(),
+            p2_overflowed: false,
+            p2_events: std::collections::VecDeque::new(),
+            p2_base: now,
             p5: crate::travel::state::P5State::new(),
             p5_changes: std::collections::VecDeque::new(),
         })
+    }
+
+    /// The player's social state (decision 0024 P4).
+    #[must_use]
+    pub fn social(&self) -> &crate::social::SocialState {
+        &self.social
+    }
+
+    /// The player's social state, mutably (the panels and the dispatcher's built-ins).
+    pub fn social_mut(&mut self) -> &mut crate::social::SocialState {
+        &mut self.social
+    }
+
+    /// The social state, mutably, with the local player's state (the trade window's drops
+    /// and tooltips read the player's items).
+    pub fn social_and_player(
+        &mut self,
+    ) -> (
+        &mut crate::social::SocialState,
+        &crate::character::PlayerState,
+    ) {
+        (&mut self.social, &self.p1)
+    }
+
+    /// Whether the backend offers user chat channels (`chat-window.md` §15.10 CT11): the
+    /// sandbox does (its scenario feed fills slots; without one it accepts and ignores the
+    /// channel commands); the test server from protocol minor 2 with `CHAT_CHANNELS`
+    /// (`scenario-feed.md` §9.8).
+    #[must_use]
+    pub fn offers_user_chat(&self) -> bool {
+        match self.remote_backend() {
+            Some(r) => r.has_chat_channels(),
+            None => true,
+        }
     }
 
     /// The P5 state (decision 0024 P5; [`crate::travel::state`]).
@@ -578,6 +695,80 @@ impl World {
     #[must_use]
     pub fn player_state(&self) -> &crate::character::PlayerState {
         &self.p1
+    }
+
+    /// The local player's combat state (decision 0024 P2): selection, kept vitals, effects,
+    /// casts, quickslots, cooldowns.
+    #[must_use]
+    pub fn combat_state(&self) -> &crate::combat::CombatState {
+        &self.p2
+    }
+
+    /// Takes the combat-state changes since the last call, in order (the oldest are
+    /// dropped beyond [`MAX_PLAYER_CHANGES`]; [`World::take_combat_overflow`] then says
+    /// so, and consumers resynchronise from [`World::combat_state`]).
+    pub fn take_combat_changes(&mut self) -> Vec<crate::combat::CombatChange> {
+        Vec::from(std::mem::take(&mut self.p2_changes))
+    }
+
+    /// Whether combat changes were dropped from the full queue since the last call (the
+    /// flag is cleared): the consumer rebuilds its displays from the state.
+    pub fn take_combat_overflow(&mut self) -> bool {
+        std::mem::take(&mut self.p2_overflowed)
+    }
+
+    /// Drops every queued combat change and the overflow flag (a consumer that has just
+    /// rebuilt its displays from the state, such as a newly attached HUD). Returns whether
+    /// a local selection clear (decision 0032 D2) was among them, for the walker's marker.
+    pub fn discard_combat_changes(&mut self) -> bool {
+        self.p2_overflowed = false;
+        std::mem::take(&mut self.p2_changes).iter().any(|c| {
+            matches!(
+                c,
+                crate::combat::CombatChange::Selection { local: true, .. }
+            )
+        })
+    }
+
+    /// Takes the events the plugin combat views need since the last call, in order.
+    pub fn take_combat_events(&mut self) -> Vec<Event> {
+        Vec::from(std::mem::take(&mut self.p2_events))
+    }
+
+    /// The combat clock at `now`: seconds since the session was created (the times the
+    /// combat state keeps).
+    #[must_use]
+    pub fn combat_clock(&self, now: Instant) -> f64 {
+        crate::combat::seconds_since(self.p2_base, now)
+    }
+
+    fn apply_combat(&mut self, now: Instant, ev: &Event) {
+        let mut changes = Vec::new();
+        let t = self.combat_clock(now);
+        self.p2.apply(ev, t, &mut changes);
+        for c in changes {
+            if self.p2_changes.len() >= MAX_PLAYER_CHANGES {
+                self.p2_changes.pop_front();
+                if !self.p2_overflowed {
+                    tracing::debug!("combat changes dropped; the HUD resynchronises");
+                }
+                self.p2_overflowed = true;
+            }
+            self.p2_changes.push_back(c);
+        }
+        if crate::combat::is_combat_relevant(ev) {
+            if self.p2_events.len() >= MAX_PLAYER_CHANGES {
+                self.p2_events.pop_front();
+            }
+            self.p2_events.push_back(ev.clone());
+        }
+    }
+
+    /// Applies a session event to the combat state as if the session had delivered it
+    /// (tests of the combat consumers).
+    #[cfg(test)]
+    pub(crate) fn inject_combat_event(&mut self, now: Instant, ev: &Event) {
+        self.apply_combat(now, ev);
     }
 
     /// Takes the player-state changes since the last call, in order.
@@ -635,6 +826,27 @@ impl World {
     /// As `Session::send`.
     pub fn send_command(&mut self, now: Instant, command: Command) -> Result<(), NetError> {
         self.send(now, command)
+    }
+
+    /// Sends the social panels' commands (`social-panels.md` §8.1); returns a type 1 line
+    /// (`That was refused: ` and the reason) for every command the session refuses, for
+    /// the chat window (TR13: a refusal posts the session's error line).
+    pub fn send_panel_commands(
+        &mut self,
+        now: Instant,
+        commands: impl IntoIterator<Item = Command>,
+    ) -> Vec<ChatLine> {
+        let mut lines = Vec::new();
+        for c in commands {
+            if let Err(e) = self.send(now, c) {
+                tracing::info!("social command not sent: {e}");
+                lines.push(ChatLine::shown(
+                    tessera_ui::game::chat::notice::ERROR,
+                    format!("{}{e}", crate::commands::social::REFUSED),
+                ));
+            }
+        }
+        lines
     }
 
     /// The client enters the world itself (`true`: the character screens send
@@ -742,16 +954,30 @@ impl World {
     }
 
     /// Sends `command`, writing it to the scenario log when the session accepts it.
+    /// Every command the player sends passes here (the panels, the dispatcher's built-ins,
+    /// the windowed input script): the social state notes the fellowship commands TR4
+    /// derives its lines from ([`crate::social::SocialState::note_command`]).
     fn send(&mut self, now: Instant, command: Command) -> Result<(), NetError> {
+        let noted = matches!(
+            command,
+            Command::Social(
+                tessera_net::domain::SocialCommand::KickFromFellowship { .. }
+                    | tessera_net::domain::SocialCommand::LeaveFellowship
+            )
+        )
+        .then(|| command.clone());
         match &mut self.scenario_log {
             Some(log) if !log.is_closed() => {
                 let logged = command.clone();
                 self.session.send(now, command)?;
                 log.command(now, &logged);
-                Ok(())
             }
-            _ => self.session.send(now, command),
+            _ => self.session.send(now, command)?,
         }
+        if let Some(c) = noted {
+            self.social.note_command(&c);
+        }
+        Ok(())
     }
 
     /// The scenario's status when the sandbox plays one (`scenario-feed.md` §3.4).
@@ -859,6 +1085,7 @@ impl World {
     /// Stopping drops what is queued.
     pub fn capture_entity_events(&mut self, on: bool) {
         self.entity_events = on.then(VecDeque::new);
+        self.combat_events = on.then(VecDeque::new);
         self.queued_moves = 0;
         self.head_seq = 0;
         self.queued_appearance.clear();
@@ -916,6 +1143,47 @@ impl World {
                 _ => {}
             }
         }
+    }
+
+    /// Moves at most `max` of the queued combat events into `out` (appended, oldest
+    /// first); the rest stay queued, in order. Combat events are queued while
+    /// [`World::capture_entity_events`] is on, for the walker's combat visuals
+    /// (`combat-visuals.md` §9).
+    pub fn drain_combat_events(&mut self, out: &mut Vec<tessera_net::CombatEvent>, max: usize) {
+        let Some(q) = &mut self.combat_events else {
+            return;
+        };
+        let n = q.len().min(max);
+        out.extend(q.drain(..n));
+    }
+
+    /// Combat events waiting for [`World::drain_combat_events`].
+    #[must_use]
+    pub fn queued_combat_events(&self) -> usize {
+        self.combat_events.as_ref().map_or(0, VecDeque::len)
+    }
+
+    /// Combat events dropped because their queue was full.
+    #[must_use]
+    pub fn dropped_combat_events(&self) -> u64 {
+        self.dropped_combat
+    }
+
+    fn queue_combat_event(&mut self, ev: &tessera_net::CombatEvent) {
+        let Some(q) = &mut self.combat_events else {
+            return;
+        };
+        if q.len() >= MAX_QUEUED_COMBAT_EVENTS {
+            self.dropped_combat += 1;
+            if self.dropped_combat.is_power_of_two() {
+                tracing::warn!(
+                    dropped = self.dropped_combat,
+                    "net: combat events dropped (nobody drains them)"
+                );
+            }
+            return;
+        }
+        q.push_back(ev.clone());
     }
 
     /// Entity events waiting for [`World::drain_entity_events`].
@@ -996,6 +1264,12 @@ impl World {
     pub fn send_move(&mut self, now: Instant, location: Location, heading: f32, velocity: Vec3) {
         if self.player.is_none() || self.state() != SessionState::InWorld {
             return;
+        }
+        // The session never echoes the player's own walking: the combat state keeps it
+        // from here, so the targeting keys measure from where the player is (TR4).
+        if location.is_valid() {
+            let p = location.position();
+            self.p2.set_player_position([p.x, p.y, p.z]);
         }
         if let Err(e) = self.send(
             now,
@@ -1169,10 +1443,26 @@ impl World {
 
     fn apply(&mut self, now: Instant, ev: &Event) {
         self.events_seen += 1;
+        self.apply_combat(now, ev);
         let mut changes = Vec::new();
         self.p1.apply(ev, &mut changes);
         if !changes.is_empty() {
             self.push_player_changes(changes);
+        }
+        if matches!(ev, Event::WorldEntered { .. }) {
+            let on = self.offers_user_chat();
+            self.social.set_user_chat(on);
+        }
+        let lines = {
+            let entities = &self.entities;
+            self.social
+                .apply(ev, &|id| entities.get(&id).map(|e| e.name.clone()))
+        };
+        if let Some(coin) = self.p1.coin() {
+            self.social.set_wallet(coin);
+        }
+        for line in lines {
+            self.push_chat(line);
         }
         let mut p5 = Vec::new();
         self.p5.apply(ev, &mut p5);
@@ -1202,6 +1492,9 @@ impl World {
                 | Event::Disconnected { .. }
         ) {
             self.queue_entity_event(ev);
+        }
+        if let Event::Combat(c) = ev {
+            self.queue_combat_event(c);
         }
         match ev {
             Event::Connected { characters } => {
@@ -1327,12 +1620,12 @@ impl World {
                 sender,
                 text,
             } => {
+                // The line itself went to the chat through the social state (CT1, CT8).
                 tracing::info!(
                     ?channel,
                     sender = sender.as_deref().unwrap_or("-"),
                     "net chat: {text}"
                 );
-                self.push_chat(ChatLine::from_channel(channel, sender.as_deref(), text));
             }
             Event::LocationReport {
                 id,
@@ -1536,6 +1829,67 @@ mod tests {
         world.set_collect_player_changes(true);
         world.push_player_changes(changes(2, 0));
         assert_eq!(world.take_player_changes().len(), 2);
+    }
+
+    /// Regression (P4 review, TR13): a panel command the session refuses posts a type 1
+    /// line instead of only a log entry.
+    #[test]
+    fn refused_panel_commands_post_a_type_1_line() {
+        use tessera_net::domain::SocialCommand;
+        let now = Instant::now();
+        let mut world = World::sandbox(now).expect("sandbox");
+        // Not in the world yet: the session refuses.
+        let lines = world.send_panel_commands(
+            now,
+            [Command::Social(SocialCommand::AnswerInvite {
+                accept: true,
+            })],
+        );
+        assert_eq!(lines.len(), 1, "{lines:?}");
+        let (mask, text) = lines[0].shown.clone().expect("shown");
+        assert_eq!(mask, 0x1);
+        assert_eq!(lines[0].chat_type, 1);
+        assert!(text.starts_with(crate::commands::social::REFUSED), "{text}");
+    }
+
+    /// Regression (P4 review, TR4): a kick the world sends, whoever built it, is noted by
+    /// the social state, so the removal derives the dismissed line.
+    #[test]
+    fn a_sent_kick_derives_the_dismissed_line() {
+        use tessera_net::domain::{FellowMember, SocialCommand, SocialEvent};
+        let mut now = Instant::now();
+        let mut world = World::sandbox(now).expect("sandbox");
+        for _ in 0..30 {
+            world.update(now);
+            now += Duration::from_millis(16);
+        }
+        assert_eq!(world.state(), SessionState::InWorld);
+        let player = world.social().player().to_owned();
+        let member = |name: &str, leader: bool| FellowMember {
+            name: name.into(),
+            entity: None,
+            leader,
+        };
+        let changed = |members| Event::Social(SocialEvent::FellowshipChanged { members });
+        let _ = world.social_mut().apply(
+            &changed(vec![member(&player, true), member("Cael", false)]),
+            &|_| None,
+        );
+        let kick = Command::Social(SocialCommand::KickFromFellowship {
+            name: "Cael".into(),
+        });
+        world
+            .send_command(now, kick)
+            .expect("the plain sandbox accepts (and ignores) the kick");
+        let lines = world
+            .social_mut()
+            .apply(&changed(vec![member(&player, true)]), &|_| None);
+        assert!(
+            lines
+                .iter()
+                .any(|l| l.display_text().contains("was removed from the group")),
+            "{lines:?}"
+        );
     }
 
     #[test]
@@ -1899,6 +2253,48 @@ mod tests {
     }
 
     #[test]
+    fn combat_state_follows_the_players_walk_and_reports_overflow() {
+        let mut now = Instant::now();
+        let mut world = World::sandbox(now).expect("sandbox");
+        for _ in 0..30 {
+            world.update(now);
+            now += Duration::from_millis(16);
+        }
+        let at = world.player_location().expect("entered").location;
+        // A plausible step 3 m north: the combat state keeps it (TR4 measures from it).
+        let step = Location::new(at.region, at.x, at.y + 3.0, at.z);
+        world.send_move(now, step, 0.0, Vec3::ZERO);
+        let kept = world
+            .combat_state()
+            .player_entity()
+            .and_then(|e| e.position);
+        let p = step.position();
+        assert_eq!(kept, Some([p.x, p.y, p.z]));
+        // A full queue drops the oldest change and says so once.
+        let _ = world.take_combat_changes();
+        assert!(!world.take_combat_overflow());
+        let player = world.player().expect("player");
+        let ev = Event::Combat(tessera_net::CombatEvent::CombatState {
+            entity: player,
+            in_combat: true,
+        });
+        let off = Event::Combat(tessera_net::CombatEvent::CombatState {
+            entity: player,
+            in_combat: false,
+        });
+        for i in 0..=MAX_PLAYER_CHANGES {
+            world.apply_combat(now, if i % 2 == 0 { &ev } else { &off });
+        }
+        assert!(world.take_combat_overflow());
+        assert!(!world.take_combat_overflow(), "the flag is cleared");
+        assert_eq!(world.take_combat_changes().len(), MAX_PLAYER_CHANGES);
+        // Discarding drops the queue (an attached HUD resynchronised from the state).
+        world.apply_combat(now, &ev);
+        assert!(!world.discard_combat_changes(), "no local selection clear");
+        assert!(world.take_combat_changes().is_empty());
+    }
+
+    #[test]
     fn implausible_move_is_corrected() {
         let mut now = Instant::now();
         let mut world = World::sandbox(now).expect("sandbox");
@@ -1957,5 +2353,83 @@ mod tests {
         assert_eq!(taken.len(), 1, "only the mount change is queued");
         assert!(matches!(taken[0], P5Change::Mount { .. }));
         assert_eq!(world.p5().markers().len(), 4);
+    }
+}
+
+#[cfg(test)]
+mod combat_queue_tests {
+    use super::*;
+    use tessera_net::CombatEvent;
+    use tessera_net::scenario::{EmptyResolver, Scenario};
+
+    const SCENARIO: &str = "tessera-scenario 1
+tick 50ms
+player \"Tamsin\"
+actor $dummy kind=creature name=\"Dummy\" pos=0,4,0
+at 0s spawn $dummy
++0.1s cast player \"Jab\" 200ms target=$dummy
++0.2s damage player $dummy 10 result=normal with=\"Jab\" left=90
++0s effect $dummy \"Bleeding\" for=1s from=player
++0.1s defeat $dummy by=player
+";
+
+    fn world(text: &str) -> World {
+        let sc = Scenario::parse(text.as_bytes()).expect("parses");
+        let mut resolved = sc.resolve(&mut EmptyResolver).expect("resolves");
+        resolved.set_plays_input(false);
+        let config = SandboxConfig {
+            scenario: Some(Arc::new(resolved)),
+            ..SandboxConfig::default()
+        };
+        World::sandbox_with(Instant::now(), config).expect("session")
+    }
+
+    fn run(w: &mut World, ms: u64) {
+        let start = Instant::now();
+        for k in 0..ms / 10 {
+            w.update(start + Duration::from_millis(10 * k));
+        }
+    }
+
+    #[test]
+    fn combat_events_reach_the_walker_queue_in_feed_order() {
+        let mut w = world(SCENARIO);
+        w.capture_entity_events(true);
+        run(&mut w, 2_000);
+        let mut out = Vec::new();
+        crate::walker::WalkerSession::drain_combat_events(&mut w, &mut out, usize::MAX);
+        let names: Vec<&str> = out.iter().map(CombatEvent::name).collect();
+        let pos = |n: &str| names.iter().position(|x| *x == n);
+        let (Some(c), Some(d), Some(e), Some(f)) = (
+            pos("CastStarted"),
+            pos("VitalDelta"),
+            pos("EffectApplied"),
+            pos("Defeated"),
+        ) else {
+            panic!("missing combat events: {names:?}");
+        };
+        assert!(c < d && d < e && e < f, "feed order: {names:?}");
+        let mut again = Vec::new();
+        w.drain_combat_events(&mut again, usize::MAX);
+        assert!(again.is_empty(), "drained");
+        assert_eq!(w.dropped_combat_events(), 0);
+    }
+
+    #[test]
+    fn combat_events_are_not_queued_without_capture_and_drain_in_parts() {
+        let mut w = world(SCENARIO);
+        run(&mut w, 2_000);
+        assert_eq!(w.queued_combat_events(), 0, "not captured");
+        let mut w = world(SCENARIO);
+        w.capture_entity_events(true);
+        run(&mut w, 2_000);
+        let total = w.queued_combat_events();
+        assert!(total >= 4, "{total}");
+        let mut out = Vec::new();
+        w.drain_combat_events(&mut out, 2);
+        assert_eq!(out.len(), 2);
+        assert_eq!(w.queued_combat_events(), total - 2);
+        w.capture_entity_events(false);
+        assert_eq!(w.queued_combat_events(), 0, "stopping drops the queue");
     }
 }

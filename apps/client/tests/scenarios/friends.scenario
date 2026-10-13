@@ -1,0 +1,30 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Friends and ignore lists (docs/specs/scenario-feed.md §6.4; social-panels.md §3, §9 TR5,
+# TR6, §12.3; chat-window.md §15.10 CT8, CT9): the lists, a friend coming online and one
+# going offline, a tell from an ignored name (filtered) and from a friend, a friend added and
+# a name ignored by the player's commands. Synthetic: needs no install. Every name and text
+# is invented for Tessera.
+tessera-scenario 1
+title "Old friends"
+tick 100ms
+player "Tamsin"
+
+at 0s friends "Brin":on "cael":off "Eda":on "Fenn":off
++0s ignore "Grumble" "Hask"
++1s friends "Brin":on "cael":on "Eda":off "Fenn":off
++0.5s say "Hask" "You there!" channel=tell
++0.5s say "cael" "Back by the fire." channel=tell
+
+on friend "Ivo"
++0.2s friends "Brin":on "cael":on "Eda":off "Fenn":off "Ivo":off
+end
+
+on ignore-player
++0.2s ignore "Grumble" "Hask" "Jory"
+end
+
+input
+at 3s friend "Ivo"
+at 4s ignore-player "Jory"
+at 5s chat "Good to see you." channel=tell:"cael"
+end

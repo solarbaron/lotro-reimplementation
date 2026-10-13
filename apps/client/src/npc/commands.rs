@@ -13,9 +13,11 @@
 //! - the Tessera input action **use nearest NPC in range** ([`USE_KEY`], keyboard U as the
 //!   install's `USE` default, NW10): [`nearest_npc`] picks the closest non-player entity
 //!   whose gap distance is within its own *R*, then [`use_entity`];
-//! - P2's selection (parallel branch): `USE`, a left double-click and a right click on a
-//!   non-player entity call [`use_entity`] with the selection (`npc-windows.md` §3.1 rules
-//!   4 and 5); with no selection the caller posts [`NO_SELECTION_LINE`];
+//! - P2's world clicks: a left double-click and a right click on a non-player entity
+//!   select the entity under the pointer and then use it through
+//!   [`crate::npc::NpcHub::use_selection`] (`npc-windows.md` §3.1 rules 4 and 5). The key
+//!   `USE` stays the input action above; [`NO_SELECTION_LINE`] is for a selection-based
+//!   `USE`;
 //! - the scenario input script's `use ENTITY` (`scenario-feed.md` §7.7) is sent by the
 //!   input player itself (headless driver or `--scenario-input`), which owns the clock; it
 //!   names the entity exactly and sends `UseEntity` directly, without the range test.

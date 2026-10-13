@@ -21,9 +21,18 @@ between the people who study the formats and the people who write the code.
 > Middle-earth Enterprises, LLC used under license. Requires a legally obtained installation
 > of the game; no game content is distributed.
 
-Tessera **does not connect to official game servers** and must not be used to do so. See
-[DISCLAIMER.md](DISCLAIMER.md) for the full disclaimer and [docs/LEGAL.md](docs/LEGAL.md)
-for the project's legal position.
+Tessera **does not connect to official game servers today**.
+
+- **The plan.** Official-server compatibility is planned (milestone M8). The project owner
+  decided on 2026-10-11 to pursue it without a legal review and without permission from
+  the rights holders
+  ([decision 0034](docs/decisions/0034-official-server-compatibility.md)).
+- **The risk.** Connecting a third-party client to the official service may breach
+  Daybreak's EULA and Terms of Service, and can cost you your account. Anyone who does so
+  bears that risk, and the client will make you accept a warning first.
+
+See [DISCLAIMER.md](DISCLAIMER.md) for the full disclaimer and
+[docs/LEGAL.md](docs/LEGAL.md) for the project's legal position.
 
 ---
 
@@ -71,21 +80,36 @@ plays scripted gameplay events on a virtual clock and writes the same event log 
 run, scenario selectors resolve against the user's install, the scenario parser is fuzzed,
 and CI checks that `tessera-server` links no data-decoding crate; the scenario-feed spec still
 waits for an independent re-review before it can be Accepted.
-**P1 (characters, inventory and equipment) is in its exit phase**
+**P1 (characters, inventory and equipment) passes its exit criteria and is merged**
 ([P1 status](docs/ROADMAP.md#p1-status)): with `--character-select` the selection and
 creation screens offer every race, gender, class and appearance control of the install, and
 made characters enter the world, offline or on a test server that passes their look on; the
 character panel with its paperdoll and the bag windows show scripted inventory, every one of
 151,230 item records gets its examination tooltip or a category, equipping changes the worn
-look, and plugins read `GetBackpack()` and `GetEquipment()`. Still open: the creation
-viewport's figure is not drawn, and colours and face layers of a look are not applied.
-**P3 (NPC windows: dialogue, quests, vendors and loot) passes its exit criteria on Tessera's
+look, and plugins read `GetBackpack()` and `GetEquipment()`. Visual defects of the creation
+figure remain open.
+**P3 (NPC windows: dialogue, quests, vendors and loot) passes its exit criteria and is merged on Tessera's
 side** ([P3 status](docs/ROADMAP.md#p3-status)): scripted NPCs open the install's dialogue,
 quest-offer, vendor (buy, sell, buy-back, quantity), barter and loot windows with install text
 and icons; the quest log and tracker show all 20,807 quest records of the install from a
 scenario without a failure; the wallet window and the plugin wallet views show scripted
-currencies; local golden images of 19 windows match (decision 0031). Still open: the new
-specs' independent review and some text-fitting defects of the windows.
+currencies; local golden images of 19 windows match (decision 0031). Its specs are
+Accepted. Still open: some text-fitting defects of the windows.
+**P2 (targeting, skills and combat presentation) passes its exit criteria on Tessera's
+side** ([P2 status](docs/ROADMAP.md#p2-status)): a scripted fight plays headless with the
+player and target frames, cast bars, effect icons, floating combat text, quickslot cooldowns
+and the defeat panel on screen (committed goldens without an install, local goldens with it);
+every one of 13,247 skill and 32,971 effect records gets its tooltip and icon or a category;
+combat scripts play their animations and particles on figures in the walker; actors on the
+test server can be selected and show a target frame. Its specs are Accepted.
+**P4 (social panels) is in its exit phase** ([P4 status](docs/ROADMAP.md#p4-status)): scripted
+fellowships, trades and friend and ignore lists draw in the install's fellowship display,
+invitation prompt, trade window and Social panel, with leader changes, removals and the
+disbanding shown; tells, replies and named chat channels work on Tessera's own test server
+(protocol 1.2, chat only) from the chat window through the one command dispatcher; and a
+synchronised `/play … sync` with `/playstart` starts every waiting part within 0.0001 s.
+Its specs are Accepted after independent reviews (2026-10-11) and the code is conformed to
+them; still open: effect icons on fellowship rows.
 **P5 (map, travel, mounts and instances) passes its exit criteria on Tessera's side**
 ([P5 status](docs/ROADMAP.md#p5-status)): the world map shows all 1,525 map regions of the
 install (227 map nodes, 1,298 dungeon maps), each with its scenario marker where it can carry
@@ -93,8 +117,9 @@ one, with 0 failures; the minimap and `/findplace` use the same notes and places
 window, the end-travel box, the instance finder with its queue page and alert, and the
 instance-travel window show scripted travel and instances with install text; in the offline
 walker the avatar rides normal mounts and war-steeds (`--mount`, `/ride`, Ctrl+M) with the
-install's gaits and clips. Still open: the new specs' independent review, the loading screen's
-progress bar, and owner comparisons with the original client.
+install's gaits and clips. Its specs are Accepted after independent review (2026-10-13); still
+open: the loading screen's progress bar, conforming the code to the reviewed specs, and owner
+comparisons with the original client.
 
 | Area | State |
 |---|---|
@@ -119,10 +144,12 @@ progress bar, and owner comparisons with the original client.
 | UI layout and font records, user skins, retained UI (`tessera-ui`) with CPU canvases and a UI pass in the renderer; game panels, chat window and plugin manager in the walker | M5 exit phase: 302 / 302 layouts and 48 / 48 fonts decode; 15 / 15 panels at their computed geometry; a user skin changes 13 / 13 skinnable panels; owner screenshots pending; UI budgets U1/U4 not met yet |
 | Lua plugin host (`tessera-plugins` over the plugin-free core `tessera-script`): discovery, apartments, import, plugin data, UI classes, class helper, `/plugins` | M5 exit phase: synthetic plugin suite and sandbox escape tests pass; real third-party plugins wait for the owner's install |
 | Scenario feed in the sandbox (`tessera_net::scenario`), presentation data layer `tessera-gamedata`, `tessera-client --scenario`, server dependency guard (`tools/check-server-deps.sh`) | P0 exit phase: 6 committed synthetic scenarios replay byte for byte; 383,343 install records indexed with 0 failures; 2 fuzz targets; criteria 2–4 pass, the spec's independent re-review (criterion 1) is pending |
-| Character selection and creation screens (`--character-select`), character panel and bag windows, item examination tooltips with comparison and pins, worn look from equipment, plugin inventory views; protocol 1.1 looks on the test server | P1 exit phase: 8 races, 15 bodies, 130 (race, gender, class) choices; 151,230 / 151,230 item records categorised (149,695 tooltips laid out, 0 failures); criteria 2–4 pass, criterion 1 partly (viewport figure, look colours and face layers open) |
-| NPC use, dialogue and quest-offer windows, vendor, barter and loot windows, wallet window, quest log, tracker and quest markers, plugin wallet views; scenario feed revision 5 (`rewards`, `buyback`, `action(…)`) | P3 criteria pass on Tessera's side: 20,807 / 20,807 quest records in log or tracker with 0 failures; 19 / 19 local window goldens match; 12 synthetic goldens; specs in review |
+| Character selection and creation screens (`--character-select`), character panel and bag windows, item examination tooltips with comparison and pins, worn look from equipment, plugin inventory views; protocol 1.1 looks on the test server | done (P1, merged): 8 races, 15 bodies, 130 (race, gender, class) choices; 151,230 / 151,230 item records categorised (149,695 tooltips laid out, 0 failures); criteria 1–4 pass |
+| NPC use, dialogue and quest-offer windows, vendor, barter and loot windows, wallet window, quest log, tracker and quest markers, plugin wallet views; scenario feed revision 5 (`rewards`, `buyback`, `action(…)`) | P3 criteria pass on Tessera's side: 20,807 / 20,807 quest records in log or tracker with 0 failures; 19 / 19 local window goldens match; 12 synthetic goldens; specs Accepted |
+| Combat presentation: selection and targeting keys, player and target frames, cast bars, effect bars, floating text, quickslot cooldowns, defeat panel (`tessera-ui` `game::combat`); skill and effect tooltips; combat animation and particles in the walker; plugin combat views; local selection on the test server | P2 exit phase: criteria 1–4 pass on Tessera's side; 20 / 20 elements shown at 11 checkpoints with and without the install; 33,601 skill and effect tooltips laid out, 12,617 categorised NoTooltip, 0 failures; 11,155 particle descriptors categorised; specs await independent review |
+| Social panels (fellowship display with shared vitals, invitation prompt, trade window, Social panel friend and ignore lists), tells, instant-message tab and named chat channels (protocol 1.2 on the test server), synchronised fellowship music, plugin `Party` views | done (P4, merged): criteria 1–3 pass on Tessera's side; 4 committed synthetic scenarios with logs; synchronised starts within 0.0001 s (worst 8.9e-16 s); specs Accepted and code conformed (2026-10-11) |
 | World map with notes, feed markers and filters, minimap markers, place lookup (`/findplace`), travel window and travel presentation, instance finder with queue and alert, instance-travel window, mounted walker (`--mount`, `/ride`, `toggle_mount`), plugin mount views; scenario feed revision "P5 travel" | P5 criteria pass on Tessera's side: 1,525 / 1,525 map regions shown, 1,523 marked, 0 failures; 721 / 722 mount effects drawable per body (1 categorised); 13 local window goldens matched, 12 judged correct (the loading screen is not drawn whole); 6 synthetic goldens; specs in review |
-| Official-server compatibility | **gated** behind legal review ([LEGAL.md §9](docs/LEGAL.md#9-gates-and-the-official-server-target)); no code exists |
+| Official-server compatibility | in scope (M8) by the owner's decision of 2026-10-11, without a legal review ([decision 0034](docs/decisions/0034-official-server-compatibility.md), [LEGAL.md §9](docs/LEGAL.md#9-gates-and-the-official-server-target)); not started, no code exists |
 
 The full plan, with exit criteria per milestone, is in [docs/ROADMAP.md](docs/ROADMAP.md).
 
@@ -296,14 +323,14 @@ plugin host on top of `crates/script`); see
 | Document | What it covers |
 |---|---|
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Crate layers, data flow from install to frame, threading, DID routing, property and scripted-object systems, testing strategy |
-| [docs/ROADMAP.md](docs/ROADMAP.md) | Milestones M0–M8: deliverables, specs, research tasks, exit criteria |
+| [docs/ROADMAP.md](docs/ROADMAP.md) | Milestones M0–M9 and the parity track P0–P8: deliverables, specs, research tasks, exit criteria |
 | [docs/specs/](docs/specs/) | Clean-room format and protocol specifications, the only input for implementation |
-| [docs/LEGAL.md](docs/LEGAL.md) | Legal position, risk tiers, the official-server gate, naming and content rules |
+| [docs/LEGAL.md](docs/LEGAL.md) | Legal position, risk tiers, official-server compatibility and its conditions (G4, G5), naming and content rules |
 | [docs/CLEAN_ROOM.md](docs/CLEAN_ROOM.md) | Zones, roles, spec lifecycle, AI-assistance rules, commit trailers, attestation |
 | [docs/TOOLING.md](docs/TOOLING.md) | Tools for building, testing and research, by zone and milestone |
 | [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) | Machine setup, multi-machine hand-off, running a milestone with Claude Code |
 | [docs/USER_GUIDE.md](docs/USER_GUIDE.md) | Testing Tessera on your own install: the walker, explorer and dattool, their options and controls, the keymap file, where files go, reporting problems |
-| [docs/decisions/](docs/decisions/) | Decision records (stack, data handling, server gate, Bevy, multi-device workflow) |
+| [docs/decisions/](docs/decisions/) | Decision records (stack, data handling, server strategy and official-server compatibility, Bevy, multi-device workflow) |
 | [docs/checklists/](docs/checklists/) | Visual checklists and items only the owner can observe in the original client |
 | [DISCLAIMER.md](DISCLAIMER.md) | Non-affiliation statement and warranty disclaimer |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | How to contribute, required reading, commit rules |

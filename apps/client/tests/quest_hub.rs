@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! The quest journal's frame glue in the windowed client's order (decision 0024 P3,
 //! `quest-journal.md` §3, §4.8): a pointer click on the quest log's track button travels
-//! from the UI host through the NPC windows' event collector to the journal windows, and
-//! its `TrackQuest` reaches the world session once (a pointer click gives several click
-//! messages, `QuestUi`'s one-click rule). Sandbox session, no install.
+//! from the UI host's in-world event list (read by the NPC windows and the journal) to the
+//! journal windows, and its `TrackQuest` reaches the world session once (a pointer click
+//! gives several click messages, `QuestUi`'s one-click rule). Sandbox session, no install.
 
 mod npc_windows_common;
 mod ui_common;
@@ -28,14 +28,16 @@ struct Client {
 }
 
 impl Client {
-    /// One frame after the UI's own: the NPC windows, then the journal (as `app.rs`).
-    fn after_ui(&mut self) {
+    /// One frame after the UI's own: the NPC windows, then the journal (as `app.rs`), with
+    /// the frame's UI events; returns how many there were.
+    fn after_ui(&mut self) -> usize {
         let now = Instant::now();
         self.world.update(now);
+        let events = self.rig.host.take_game_events();
         self.npc.frame(
             &mut self.rig.host,
             &mut self.world,
-            &mut self.rig.plugins,
+            &events,
             false,
             None,
             now,
@@ -44,15 +46,16 @@ impl Client {
             &mut self.rig.host,
             &mut self.world,
             &self.npc,
-            self.npc.frame_events(),
+            &events,
             None,
             now,
         );
+        events.len()
     }
 
     fn frame(&mut self) {
         self.rig.frame();
-        self.after_ui();
+        let _ = self.after_ui();
     }
 }
 
@@ -98,11 +101,8 @@ fn a_click_on_the_track_button_reaches_the_session() {
     // The pointer click: raw input to the host, its UI events collected for the frame.
     c.rig
         .click(f64::from(b.l + b.w() / 2), f64::from(b.t + b.h() / 2));
-    c.after_ui();
-    assert!(
-        c.npc.frame_events().len() > 1,
-        "a pointer click gives several messages"
-    );
+    let n = c.after_ui();
+    assert!(n > 1, "a pointer click gives several messages");
     assert_eq!(
         c.quests.sent(),
         &[Command::Npc(NpcCommand::TrackQuest {

@@ -4,7 +4,7 @@
 //! properties and the interpolation buffers, tracks the player's position, and streams the
 //! statics of the client's own data around it.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use tessera_protocol::codes::CharacterCreateFailedCode;
 use tessera_protocol::limits::{DEFAULT_RUN_SPEED, DEFAULT_WALK_SPEED};
@@ -15,7 +15,8 @@ use tessera_protocol::value::{Emote, Property, Stance, Value, pid, speed_from_pr
 use super::convert;
 use super::driver::Inbound;
 use super::stats::{RemoteFailure, ServerInfo};
-use crate::domain::{CharacterEvent, Text};
+use crate::NetError;
+use crate::domain::{CharacterEvent, CombatEvent, SocialEvent, Text};
 use crate::interp::{InterpConfig, InterpolationSet, Snapshot};
 use crate::model::{
     Anchor, CharacterSummary, ChatChannel, DataId, EntityId, Landblock, Location, LocationCause,
@@ -108,6 +109,15 @@ pub(crate) struct Mapper {
     /// The name of the `CharacterCreate` sent and not yet answered
     /// (`character-screens.md` §7.1.1 step 2).
     pub(crate) outstanding_create: Option<String>,
+    /// Statics (and placed figures) streamed from the client's own data whose creation has
+    /// been handed to the session and whose removal has not (`scenario-feed.md` §9.7, local
+    /// selection item 1). Bounded by the streamer's resident budget.
+    live_statics: BTreeSet<EntityId>,
+    /// The local answer to the latest accepted `SelectTarget`, delivered first in the next
+    /// poll (§9.7 items 2 and 3; at most one).
+    pending_target: Option<Option<EntityId>>,
+    /// `SelectTarget`s with an unknown target so far (for the rate-limited log, item 4).
+    unknown_targets: u64,
     scratch: Vec<Event>,
 }
 
@@ -167,7 +177,69 @@ impl Mapper {
             server: None,
             ended: false,
             outstanding_create: None,
+            live_statics: BTreeSet::new(),
+            pending_target: None,
+            unknown_targets: 0,
             scratch: Vec::new(),
+        }
+    }
+
+    /// Whether the server takes named chat channels: negotiated minor ≥ 2 and
+    /// `CHAT_CHANNELS` advertised (`scenario-feed.md` §9.8). False before `HelloAck`.
+    pub(crate) fn chat_channels(&self) -> bool {
+        use tessera_protocol::limits::MINOR_CHANNELS;
+        use tessera_protocol::message::ServerCaps;
+        self.server.as_ref().is_some_and(|s| {
+            s.minor >= MINOR_CHANNELS
+                && s.caps
+                    .effective(s.minor)
+                    .contains(ServerCaps::CHAT_CHANNELS)
+        })
+    }
+
+    /// Whether `target` may be selected (`scenario-feed.md` §9.7, local selection item 1):
+    /// none, the player, a remote entity created and not removed, or a streamed static
+    /// spawned and not removed — all as of the events already handed to the session.
+    fn known_target(&self, target: Option<EntityId>) -> bool {
+        match target {
+            None => true,
+            Some(id) => self.known_server_id(id).is_some() || self.live_statics.contains(&id),
+        }
+    }
+
+    /// Answers `SelectTarget` locally (`scenario-feed.md` §9.7, decision 0032 D1): a known
+    /// target replaces the one pending answer; an unknown one is dropped with a rate-limited
+    /// debug line. Nothing is sent to the server and no selection is kept.
+    pub(crate) fn select_target(&mut self, target: Option<EntityId>) -> Result<(), NetError> {
+        if self.player.is_none() || self.ended {
+            // `Session` refuses this outside `InWorld` (§9.5); a backend driven directly
+            // before world entry has no player to answer for.
+            return Err(NetError::InvalidCommand(
+                "selection needs a player in the world",
+            ));
+        }
+        if self.known_target(target) {
+            self.pending_target = Some(target);
+        } else {
+            self.unknown_targets = self.unknown_targets.saturating_add(1);
+            let n = self.unknown_targets;
+            if n <= 4 || n.is_power_of_two() {
+                tracing::debug!(
+                    target = ?target,
+                    count = n,
+                    "SelectTarget names an entity not (or no longer) known; no answer"
+                );
+            }
+        }
+        Ok(())
+    }
+
+    /// Moves the pending local selection answer to `out` (called first in each poll).
+    pub(crate) fn deliver_local(&mut self, out: &mut Vec<Event>) {
+        if let Some(target) = self.pending_target.take()
+            && let Some(entity) = self.player
+        {
+            out.push(Event::Combat(CombatEvent::TargetChanged { entity, target }));
         }
     }
 
@@ -447,6 +519,20 @@ impl Mapper {
                     text: m.text,
                 });
             }
+            Inbound::ChannelJoined(channel) => {
+                out.push(Event::Social(SocialEvent::ChannelJoined { channel }));
+            }
+            Inbound::ChannelLeft { name, removed } => {
+                let text = removed.then(|| format!("You were removed from the channel {name}."));
+                out.push(Event::Social(SocialEvent::ChannelLeft { channel: name }));
+                if let Some(text) = text {
+                    out.push(Event::ChatMessage {
+                        channel: ChatChannel::System,
+                        sender: None,
+                        text,
+                    });
+                }
+            }
             Inbound::Motion {
                 server_time,
                 entries,
@@ -545,6 +631,8 @@ impl Mapper {
         self.failure = failure;
         // No answer comes after the end.
         self.outstanding_create = None;
+        self.pending_target = None;
+        self.live_statics.clear();
         self.entities.clear();
         self.remapped.clear();
         self.interp.clear();
@@ -571,6 +659,19 @@ impl Mapper {
         let mut alloc = || Self::alloc(next);
         self.statics
             .update(centre, source.as_mut(), &mut alloc, &mut events);
+        // Every event here is about statics: keep the set of delivered ones (§9.7 item 1).
+        for e in &events {
+            match e {
+                Event::StaticSpawned { id, .. } | Event::EntityCreated { id, .. } => {
+                    self.live_statics.insert(*id);
+                }
+                Event::EntityDespawned { id } => {
+                    self.live_statics.remove(id);
+                }
+                Event::StaticsCleared => self.live_statics.clear(),
+                _ => {}
+            }
+        }
         out.append(&mut events);
         self.scratch = events;
     }

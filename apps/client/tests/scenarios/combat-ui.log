@@ -1,0 +1,49 @@
+tessera-scenario-log 1
+install none
+tick 100
+title "Combat UI"
+resolve $drills line=11 family=skill requested=1 candidates=0 got=0 note=no-install
+resolve $wards line=12 family=effect requested=1 candidates=0 got=0 note=no-install
+pre > Connect
+pre Connected characters=["Tamsin"]
+pre CharacterInfo name="Tamsin" body=none class=none level=20 look=none
+pre > EnterWorld character="Tamsin"
+0.000 WorldEntered entity=player name="Tamsin" at=0.000,0.000,0.000 facing=90.00
+0.000 LocationReport entity=player at=0:0.000,0.000,0.000 facing=90.00 anchor=none cause=entered
+0.000 EntitySpawned entity=$boar kind=creature name="Grey boar" at=0.000,8.000,0.000 facing=180.00
+0.000 LevelChanged entity=$boar level=7
+0.000 EntitySpawned entity=$post kind=object name="Signpost" at=3.000,4.000,0.000 facing=216.87
+0.000 VitalChanged entity=player vital=health current=900 max=900
+0.000 VitalChanged entity=player vital=power current=400 max=400
+0.000 VitalChanged entity=player vital=resource:"Focus" current=2 max=5
+0.000 VitalChanged entity=$boar vital=health current=1200 max=1200
+0.000 QuickslotChanged slot=1 content=skill:"Jab"
+0.000 QuickslotChanged slot=2 content=skill:"Mend"
+1.000 TargetChanged entity=player target=$post
+2.000 TargetChanged entity=player target=$boar
+2.000 CombatState entity=player in_combat=yes
+2.000 TargetChanged entity=$boar target=player
+2.200 CastStarted entity=player cast=cast what="Jab" target=$boar duration_ms=800
+3.000 CastEnded entity=player outcome=completed
+3.000 VitalDelta source=player target=$boar vital=health kind=damage amount=210 result=critical what="Jab" damage_type=none
+3.000 VitalChanged entity=$boar vital=health current=990 max=1200
+3.000 CooldownStarted what="Jab" duration_ms=3000
+3.200 EffectApplied entity=player effect=1 what="Second wind" duration_ms=20000 stacks=1 source=none
+3.200 EffectApplied entity=$boar effect=2 what="Bleeding" duration_ms=4000 stacks=1 source=player
+3.500 VitalDelta source=$boar target=player vital=health kind=damage amount=75 result=normal what=none damage_type=none
+3.500 VitalChanged entity=player vital=health current=825 max=900
+3.800 VitalDelta source=player target=$boar vital=health kind=damage amount=0 result=parry what=none damage_type=none
+4.100 CastStarted entity=$boar cast=cast what="Gore" target=player duration_ms=1500
+4.600 VitalDelta source=player target=player vital=health kind=heal amount=60 result=normal what="Mend" damage_type=none
+4.600 VitalChanged entity=player vital=health current=885 max=900
+5.600 CastEnded entity=$boar outcome=completed
+6.000 CooldownEnded what="Jab"
+7.200 EffectRemoved entity=$boar effect=2
+8.000 VitalDelta source=$boar target=player vital=health kind=damage amount=885 result=normal what=none damage_type=none
+8.000 VitalChanged entity=player vital=health current=0 max=900
+8.000 Defeated entity=player by=$boar
+10.000 Revived entity=player
+10.000 VitalChanged entity=player vital=health current=900 max=900
+10.000 CombatState entity=player in_combat=no
+23.200 EffectRemoved entity=player effect=1
+23.200 end reason=complete skipped=2 input-skipped=0 dropped=0 spilled=0

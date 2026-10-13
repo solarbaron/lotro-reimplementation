@@ -88,6 +88,10 @@ pub fn server_params(config: &Config, content: &Content) -> ServerParams {
     if config.server.appearance_change {
         caps |= ServerCaps::APPEARANCE_CHANGE.0;
     }
+    // Sent only to connections at minor ≥ 2 (the session masks it below, §4.4, §4.6).
+    if config.chat.channels {
+        caps |= ServerCaps::CHAT_CHANNELS.0;
+    }
     ServerParams {
         caps: ServerCaps(caps),
         snapshot_rate: config.world.snapshot_rate,
@@ -133,6 +137,18 @@ fn config_problems(c: &Config) -> Vec<String> {
     check(
         (16..=1_024).contains(&c.limits.control_queue),
         "`limits.control_queue`",
+    );
+    check(
+        (1..=4_096).contains(&c.chat.max_channels),
+        "`chat.max_channels`",
+    );
+    check(
+        (1..=32).contains(&c.chat.max_channels_per_character),
+        "`chat.max_channels_per_character`",
+    );
+    check(
+        (2..=4_096).contains(&c.chat.max_channel_members),
+        "`chat.max_channel_members`",
     );
     out
 }

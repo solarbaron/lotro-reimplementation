@@ -16,9 +16,14 @@
 //!   `PluginManager`, …) and `Turbine.Gameplay`'s read-only local-player views fed by a
 //!   [`LocalPlayerSource`] the client implements ([`gameplay`]); the inventory views
 //!   (`Backpack`, `Equipment`, `Item`, `ItemInfo`) fed by an [`InventorySource`] and
-//!   queued [`InventoryViewEvent`]s ([`inventory`], `lua-plugin-api.md` §15.1); the wallet
-//!   and money views (`Wallet`, `WalletItem`, `GetMoney`) fed by a [`WalletSource`] and
-//!   queued [`WalletViewEvent`]s ([`wallet`], §15.3); the mount views (`GetMount`,
+//!   queued [`InventoryViewEvent`]s ([`inventory`], `lua-plugin-api.md` §15.1); the
+//!   combat views (actor vitals, level and target, `EffectList`, `Effect`, `IsInCombat`,
+//!   the trained `SkillList`) fed by a [`CombatSource`] and queued [`CombatViewEvent`]s,
+//!   with [`CombatModel`] as a ready-made source ([`combat`], §15.2); the wallet and money
+//!   views (`Wallet`, `WalletItem`, `GetMoney`) fed by a [`WalletSource`] and queued
+//!   [`WalletViewEvent`]s ([`wallet`], §15.3); the party views (`Party`, `PartyMember`,
+//!   `Player:GetParty()`) over the fellowship model the client sets with
+//!   [`PluginManager::set_fellowship`] ([`party`], §15.4); the mount views (`GetMount`,
 //!   `BasicMount`, `CombatMount`) fed by a [`MountSource`] and queued [`MountViewEvent`]s
 //!   ([`mount`], §15.5).
 //! - [`HostApi`]: what the embedding client provides; it extends the core's
@@ -42,6 +47,7 @@
 mod apartment;
 pub mod api;
 pub mod class_helper;
+pub mod combat;
 pub mod commands;
 mod data_io;
 pub mod descriptor;
@@ -57,6 +63,7 @@ pub mod mount;
 mod object;
 pub mod options;
 pub mod packages;
+pub mod party;
 pub mod paths;
 pub mod plugindata;
 mod root_ns;
@@ -65,6 +72,10 @@ pub mod ui;
 pub mod vfs;
 pub mod wallet;
 
+pub use combat::{
+    ActorEvent, ActorKind, ActorValues, CombatModel, CombatSource, CombatViewEvent, CombatVital,
+    EffectData, EffectEvent, SkillData, SkillKey, ViewEntity,
+};
 pub use commands::{CommandOwner, CommandTable};
 pub use descriptor::{DescriptorError, PluginDescriptor, parse_descriptor};
 pub use discovery::{AvailablePlugin, RefreshReport};
@@ -83,6 +94,9 @@ pub use mlua;
 pub use mount::{
     MountClass, MountModel, MountPeriod, MountPeriodEnd, MountRef, MountSource, MountViewEvent,
     MountVital, MountVitals, VitalValues,
+};
+pub use party::{
+    FellowshipMember, MemberActorInfo, PartyActorSource, PartyPlayer, PartyUpdate, PartyViewEvent,
 };
 pub use plugindata::{DataKey, DataValue, ParseLimits, PluginDataError};
 pub use root_ns::split_command_line;

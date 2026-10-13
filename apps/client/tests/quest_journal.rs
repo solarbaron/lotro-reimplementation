@@ -49,9 +49,9 @@ fn quest_log_replays_its_committed_log_in_process() {
 fn journal_state_follows_the_feed() {
     let mut most_markers = 0;
     let (_, _, end) = play_path(&committed(), None, None, |_, _, s| {
-        most_markers = most_markers.max(s.npc().quests().markers().len());
+        most_markers = most_markers.max(s.quests().markers().len());
     });
-    let q = end.npc().quests();
+    let q = end.quests();
     let names: Vec<RecordRef> = q
         .journal()
         .quests()

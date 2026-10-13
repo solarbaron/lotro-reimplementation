@@ -73,6 +73,9 @@ pub struct ClientUi {
     fell_back: bool,
     /// P1 panels asked for on the command line, opened once the player is in the world.
     p1_open: Vec<P1Panel>,
+    /// P4 social panels asked for on the command line (`--open-panel social|friends|
+    /// fellowship|trade`), handed to the social panels once the UI is attached.
+    social_open: Vec<crate::social::ui::SocialOpen>,
     /// `--character-select`: the character screens are still to open.
     want_screens: bool,
     /// The character screens before world entry, while open.
@@ -134,10 +137,15 @@ impl ClientUi {
             .iter()
             .filter_map(|n| parse_p1_panel(n))
             .collect();
+        let social_open: Vec<crate::social::ui::SocialOpen> = args
+            .open_panel
+            .iter()
+            .filter_map(|n| crate::social::ui::parse_open(n))
+            .collect();
         let panels: Vec<PanelId> = args
             .open_panel
             .iter()
-            .filter(|n| parse_p1_panel(n).is_none())
+            .filter(|n| parse_p1_panel(n).is_none() && crate::social::ui::parse_open(n).is_none())
             .filter_map(|n| {
                 let p = super::parse_panel(n);
                 if p.is_none() {
@@ -164,6 +172,7 @@ impl ClientUi {
             screen_request: None,
             fell_back: false,
             p1_open,
+            social_open,
             want_screens: args.character_select,
             pre_world: None,
             quit: false,
@@ -435,6 +444,13 @@ impl ClientUi {
         walker.set_ui_attached(true, prefs.walker_hud, prefs.walker_minimap.shown(true));
         let (mapper, _) = walker.mapper_mut();
         host.attach_mapper(mapper);
+        // The plugins' local player carries the NPC windows' wallet views (P3).
+        host.set_plugin_wallet(std::sync::Arc::clone(rt.npc.wallet()));
+        // The plugins' party views read their members' values from the runtime's party
+        // bridge (P4).
+        host.set_plugin_party(rt.party_actor_source());
+        // The plugins' local player carries the travel hub's mount views (P5).
+        host.set_plugin_mount(rt.p5.mount().source());
         host.attach_plugins(&mut rt.plugins, &self.load);
         if self.options.hud {
             for (id, e) in host.open_hud(&mut rt.plugins) {
@@ -449,6 +465,25 @@ impl ClientUi {
                 // Asked for by name: select a target so that P5 shows (§17.4).
                 host.set_target(&mut rt.plugins, true);
             }
+        }
+        // The P4 social panels asked for by name.
+        if let Some(s) = host.social_mut() {
+            for o in std::mem::take(&mut self.social_open) {
+                s.request_open(o);
+            }
+        }
+        // The combat widgets over the opened HUD (decision 0024 P2, `combat-ui.md`), built
+        // from the session's state; what was queued before is dropped, and the install's
+        // data, if already here, is in them (no rebuild for its arrival).
+        let _ = rt.p2.take_arrived();
+        let install = rt.p2.install().cloned();
+        match rt.world.as_mut() {
+            Some(w) => {
+                if host.attach_combat_to_world(w, install.as_ref(), Instant::now()) {
+                    walker.combat_mut().set_selection(None);
+                }
+            }
+            None => host.attach_combat(crate::combat::hud::floaty_settings(install.as_ref()), 0.0),
         }
         // `[UI] ui_scale_global` reaches every native panel through the panels' scalers as
         // it opens (UiHost::native_scale; `tessera-ui` has no `UIScale_Global` setter).
@@ -638,11 +673,16 @@ impl ClientUi {
         let State::Ready(host) = &mut self.state else {
             return;
         };
-        if events.menu
-            && !screens
-            && let Some(o) = host.escape(&mut rt.plugins, true, false)
-        {
-            tracing::debug!(?o, "Escape");
+        if events.menu && !screens {
+            // TR5: a cancellable cast or a selection before the main menu.
+            match host.combat_escape() {
+                Some(a) => send_combat(host, rt, &[(crate::combat::CombatInput::Widget(a), None)]),
+                None => {
+                    if let Some(o) = host.escape(&mut rt.plugins, true, false) {
+                        tracing::debug!(?o, "Escape");
+                    }
+                }
+            }
         }
         if let Some(input) = walker.radar_input() {
             host.update_position(input, None);
@@ -660,6 +700,8 @@ impl ClientUi {
         // The character panels (decision 0024 P1): panels asked for on the command line,
         // the player-state changes of this frame, item interactions as session commands.
         character_frame(host, rt, &mut self.p1_open, shift);
+        // The combat widgets (decision 0024 P2): changes, clicks, keys, anchors.
+        combat_frame(host, rt, walker);
         // Chat commands that quickslot aliases ran in step 7.
         dispatch_lines(host, rt);
         // The character screens before world entry (`--character-select`).
@@ -876,6 +918,142 @@ fn character_frame(host: &mut UiHost, rt: &mut Runtime, pending: &mut Vec<P1Pane
     for c in commands {
         if let Err(e) = world.send_command(now, c) {
             tracing::info!("item command not sent: {e}");
+        }
+    }
+}
+
+/// The social panels' frame (decision 0024 P4; after step 7, beside the NPC windows and
+/// the quest journal): the world session's social state drawn, the frame's UI events
+/// (`events`: the one list [`UiHost::take_game_events`] returns, empty while the character
+/// screens own them), the panels' actions sent to the session (`social-panels.md` §8.1).
+pub(crate) fn social_frame(
+    host: &mut UiHost,
+    world: &mut crate::net::World,
+    data: Option<&crate::character::CharacterData>,
+    events: &[tessera_ui::UiEvent],
+) {
+    let (social, player) = world.social_and_player();
+    let commands = host.social_frame(social, data, Some(player), events);
+    let refused = world.send_panel_commands(Instant::now(), commands);
+    host.post_session_lines(refused);
+}
+
+/// The combat frame (decision 0024 P2, after the character panels): the combat state's
+/// changes to the widgets, the world clicks the UI declined picked through the walker
+/// (`combat-ui.md` TR3), the commands of keys, clicks and widgets sent to the world
+/// session, the walker's selection cleared when the client cleared it locally (decision
+/// 0032 D2), and the floating elements anchored above the walker's figures (§6.4).
+fn combat_frame(host: &mut UiHost, rt: &mut Runtime, walker: &mut Walker) {
+    use crate::combat::{CombatChange, CombatInput};
+    use crate::ui_host::combat::WorldClick;
+    let Some(world) = rt.world.as_mut() else {
+        return;
+    };
+    let instant = Instant::now();
+    let now = world.combat_clock(instant);
+    // The install's data came after the widgets attached: rebuild them with it (CUI10,
+    // TR41).
+    if rt.p2.take_arrived()
+        && let Some(i) = rt.p2.install().cloned()
+    {
+        host.combat_install_arrived(world.combat_state(), &i, now);
+    }
+    // Changes dropped from the session's full queue: rebuild from the state.
+    if world.take_combat_overflow() {
+        let install = rt.p2.install().cloned();
+        host.combat_resync(world.combat_state(), install.as_deref(), now);
+        if world.combat_state().selection().is_none() {
+            walker.combat_mut().set_selection(None);
+        }
+    }
+    let changes = world.take_combat_changes();
+    if changes
+        .iter()
+        .any(|c| matches!(c, CombatChange::Selection { local: true, .. }))
+    {
+        walker.combat_mut().set_selection(None);
+    }
+    #[allow(clippy::cast_possible_truncation)]
+    let px = |x: f64, y: f64| [x as f32, y as f32];
+    let mut extra = Vec::new();
+    // Entities to use after the selection was sent (`npc-windows.md` §3.1 rules 4 and 5).
+    let mut uses = Vec::new();
+    for click in host.take_world_clicks() {
+        match click {
+            WorldClick::Select(x, y) => {
+                extra.push(CombatInput::PickEntity(walker.pick_entity(px(x, y))));
+            }
+            WorldClick::Use(x, y) => {
+                if let Some(e) = walker.pick_entity(px(x, y)) {
+                    extra.push(CombatInput::PickEntity(Some(e)));
+                    uses.push(e);
+                }
+            }
+            WorldClick::Right(x, y) => {
+                let picked = walker.pick_entity(px(x, y));
+                extra.push(CombatInput::PickEntity(picked));
+                if let Some(e) = picked
+                    && world.entities().get(&e).map(|v| v.kind)
+                        != Some(tessera_net::EntityKind::Player)
+                {
+                    uses.push(e);
+                }
+            }
+        }
+    }
+    let install = rt.p2.install().cloned();
+    let anchors = |e: u64| {
+        walker
+            .entity_anchor(tessera_net::EntityId(e))
+            .map(crate::combat::anchors::from_walker)
+    };
+    let commands = host.combat_frame(
+        world.combat_state(),
+        &changes,
+        extra,
+        install.as_deref(),
+        now,
+        &anchors,
+    );
+    for (c, slot) in commands {
+        if let Err(e) = world.send_command(instant, c) {
+            tracing::info!("combat command not sent: {e}");
+            if let Some(i) = slot {
+                host.combat_slot_error(i, now);
+            }
+        }
+    }
+    // Using goes through the client's one entry point (use range, `npc::use_entity`).
+    if !uses.is_empty() {
+        #[allow(clippy::cast_possible_truncation)]
+        let avatar = walker
+            .focus()
+            .map(|p| tessera_net::Vec3::new(p.x as f32, p.y as f32, p.z as f32));
+        for e in uses {
+            rt.npc.use_selection(host, world, e, avatar, instant);
+        }
+    }
+}
+
+/// Sends the commands of combat inputs outside the combat frame (Escape, TR5).
+fn send_combat(
+    host: &mut UiHost,
+    rt: &mut Runtime,
+    inputs: &[(crate::combat::CombatInput, Option<i32>)],
+) {
+    let Some(world) = rt.world.as_mut() else {
+        return;
+    };
+    let instant = Instant::now();
+    for (i, slot) in inputs {
+        for c in crate::combat::commands::commands(*i, world.combat_state()) {
+            if let Err(e) = world.send_command(instant, c) {
+                tracing::info!("combat command not sent: {e}");
+                if let Some(n) = slot {
+                    let now = world.combat_clock(instant);
+                    host.combat_slot_error(*n, now);
+                }
+            }
         }
     }
 }

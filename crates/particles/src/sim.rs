@@ -626,6 +626,41 @@ impl SystemSim {
         }
     }
 
+    /// Spawns one particle of the first emitter at time `t` (§8.5 steps 1–9, the spawn of
+    /// a timed emission), displaced by `offset` from the system's frame (a beam's particle
+    /// at a point along the beam, `particle-runtime.md` §11.1 step 8). The system must have
+    /// been placed (started) first; a spawn whose particle would be dead by `now`, beyond
+    /// the caps or not finite is skipped. Returns whether a particle was added.
+    pub fn spawn_at(&mut self, now: f64, t: f64, offset: Vec3, rng: &mut Ran2) -> bool {
+        let Some(start) = self.start else {
+            return false;
+        };
+        if !(now.is_finite() && t.is_finite() && offset.is_finite()) || self.stopped_at.is_some() {
+            return false;
+        }
+        let desc = Arc::clone(&self.desc);
+        let (Some(e), Some(_)) = (desc.emitters.first(), self.emitters.first()) else {
+            return false;
+        };
+        let live_other = self.live_particles() - self.emitters[0].particles.len();
+        let room_left = self.config.max_live_particles.saturating_sub(live_other);
+        let mut ctx = SpawnCtx {
+            desc: &desc,
+            e,
+            now,
+            start,
+            frame: self.frame,
+            anchor: self.anchor,
+            room_left,
+            config: self.config,
+            stats: &mut self.stats,
+        };
+        let s = &mut self.emitters[0];
+        let before = s.particles.len();
+        spawn(&mut ctx, s, t, offset, None, rng);
+        s.particles.len() > before
+    }
+
     /// Recomputes every emitter's gravity and wind from `wind` (the eased global wind) in
     /// the system's current frame (§8.8 "Recomputation"; only the weather code calls it).
     pub fn recompute_forces(&mut self, wind: Vec3) {

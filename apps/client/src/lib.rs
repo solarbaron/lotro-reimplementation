@@ -27,6 +27,9 @@
 //! - [`character`]: characters, inventory and equipment (P1): the player's state from the
 //!   session, the character panel and bag windows, item tooltips, the plugin inventory
 //!   views.
+//! - [`combat`]: targeting, skills and combat presentation (P2): the player's combat state
+//!   from the session, selection, the combat widgets, skill and effect tooltips, the
+//!   plugin combat views, the headless combat screens.
 //! - [`npc`]: NPC windows (P3): using an NPC, dialogue, quest offers, vendors, barter,
 //!   loot, the wallet window and the plugin wallet views, fed by the session's events.
 //! - [`quests`]: the quest journal (P3): quest log, tracker, objective counters, quest
@@ -42,6 +45,7 @@ pub mod audio;
 pub mod avatar;
 pub mod character;
 pub mod cli;
+pub mod combat;
 pub mod commands;
 pub mod data;
 pub mod headless;
@@ -58,6 +62,7 @@ pub mod scenario;
 pub mod scene;
 pub mod screens;
 pub mod smoke;
+pub mod social;
 pub mod travel;
 pub mod ui_host;
 pub mod wait;

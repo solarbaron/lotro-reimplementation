@@ -282,6 +282,12 @@ impl<S: RecordSource> GameDataStore<S> {
         Ok(self.store.library()?)
     }
 
+    /// The install's class library (its class parents, `wlib.md`), read once by the object
+    /// store.
+    pub fn class_library(&self) -> Result<Arc<ClassLibrary>> {
+        self.library()
+    }
+
     /// The record-family index, built on first use (a pass over every object record; see
     /// the cost note on [`GameDataStore`]). A failed build is kept: later calls return the
     /// same error ([`GameDataError::TooManyRecords`], [`GameDataError::Worker`], a
@@ -810,6 +816,17 @@ impl<S: RecordSource> GameDataStore<S> {
         let Some(record) = self.object(did)? else {
             return Ok(None);
         };
+        self.combat_of_record(family, did, &record)
+    }
+
+    /// The combat object of an already decoded object record `did`, if its root class puts
+    /// it in `family`.
+    pub(crate) fn combat_of_record(
+        &self,
+        family: CombatFamily,
+        did: Did,
+        record: &GameObjectRecord,
+    ) -> Result<Option<CombatObject>> {
         let vocab = self.vocab()?;
         let library = self.library()?;
         if vocab
@@ -819,7 +836,7 @@ impl<S: RecordSource> GameDataStore<S> {
         {
             return Ok(None);
         }
-        read_combat_object(&record, &vocab.combat_classes, &*library, &vocab.combat).map_err(|e| {
+        read_combat_object(record, &vocab.combat_classes, &*library, &vocab.combat).map_err(|e| {
             GameDataError::View {
                 did,
                 reason: e.to_string(),

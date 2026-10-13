@@ -569,8 +569,9 @@ fn invalid_account_and_empty_password_are_answered_by_the_session() {
 #[test]
 fn unsupported_version() {
     let mut params = params();
-    params.min_minor = 2;
-    params.max_minor = 3;
+    // Above every minor the default client offers (PROTOCOL_MINOR = 2).
+    params.min_minor = 3;
+    params.max_minor = 4;
     let p = Pair::new(ClientConfig::default(), params);
     assert_eq!(p.client.state(), ClientState::Closed);
     assert!(matches!(
@@ -1346,8 +1347,8 @@ fn server_keeps_the_clients_disconnect() {
 fn every_session_end_is_reported_once() {
     // UNSUPPORTED_VERSION after Hello.
     let mut prm = params();
-    prm.min_minor = 2;
-    prm.max_minor = 2;
+    prm.min_minor = 3;
+    prm.max_minor = 3;
     let p = Pair::new(ClientConfig::default(), prm);
     let closed = |ev: &[ServerEvent]| {
         ev.iter()

@@ -8,7 +8,7 @@
 | **Last updated** | 2026-10-08 |
 | **Author role** | Spec writer (dirty room) |
 | **Reviewer** | Spec reviewer (separate dirty-room session, AI-assisted), not the author |
-| **Review record** | Reviews 2026-10-07: first and second changes requested; third passed (Accepted). Revision 2026-10-08: reviewed 2026-10-08 by a separate session (spec reviewer, AI-assisted), **passed**, Accepted. Details in the review log (decision 0018). |
+| **Review record** | Reviews 2026-10-07: first and second changes requested; third passed (Accepted). Revision 2026-10-08: reviewed 2026-10-08 by a separate session (spec reviewer, AI-assisted), **passed**, Accepted. Implementer note of 2026-10-10 under §7.5 Q16: checked 2026-10-11 with the `combat-ui.md` review by an independent session (spec reviewer); it records the clamps `crates/gamedata` uses and changes no fact; status stays Accepted (the header date was not moved for the note). Details in the review log (decision 0018). |
 | **Implements into** | `crates/props` (typed views of the singletons of §3–§8, the WEENIECONTENT label index of §2); `apps/explorer` (generic typed singleton views, the label index, the reference graph of §9); `apps/client` (the mounted gait multipliers of §5.3.2, duel timings of §5.7, the player-note limit of §8.1, consideration and vital-display lookups once their OPENs close); Tessera's own server (M7: PvP, monster-play, perk, collection, reset and social rules); `apps/dattool` (`info` for the generic forms of §3) |
 | **Companion specs** | [`property-system.md`](property-system.md) §5 (property sets), §6.2 (the +0x09000000 rule), §7 (enum and bitfield labels, the bit-to-key rule §7.3), §8 (DID maps, the root key 0x0A WEENIECONTENT); [`wstate.md`](wstate.md) §3–§5 (object records, items, native classes; the small set of class 18 and the counted lists of classes 104 and 11, §5.3); [`wlib.md`](wlib.md) (class library, parent map); [`misc-records.md`](misc-records.md) §14 (the WEENIECONTENT map; this spec resolves the labels it hands on); [`combat-data.md`](combat-data.md) §4 (progressions, class 1385), §7 (skills, class 827), §8 (traits), §10.1 (the combat control); [`economy.md`](economy.md) §4.12 (loot singletons), §6.4 (perk vendors); [`items.md`](items.md) §6.4 (paper-item lists); [`map-data.md`](map-data.md) §9.7 (the housing control); [`quests.md`](quests.md) (reputation, reward-track experience); [`creatures.md`](creatures.md) §2.1 (classes 1653 and 1654); [`sound.md`](sound.md) §10.6 (combat music script); [`walker.md`](walker.md) (movement controller, for §5.3.2) |
 
@@ -45,8 +45,9 @@ With it an implementer can:
 Most of these records are **server tuning tables**: the data says what the numbers are, not
 how a server combines them. Those formulas are not in the data and are listed as OPEN
 (§12); Tessera's own server (M7) defines its own rules from them. No network behaviour is
-covered: the network protocol, login, keys and the launcher stay behind the M8 gate
-(`docs/LEGAL.md` §9.3, decision 0004).
+covered: the network protocol, login, keys and the launcher were behind the M8 gate when
+this spec was written (decision 0004); since 2026-10-11 they belong to M8's own specs
+(`docs/LEGAL.md` §9.3, decision 0034).
 
 Game text is never reproduced: records are named by DID, fields by property label and
 enum-mapper label. Those labels are interoperability identifiers (they are how a client
@@ -351,7 +352,8 @@ is the only information.
 > **OPEN:** (Q2) What the marker classes are used for. Their names suggest
 > confirmation-dialog callbacks and per-mode level directories whose behaviour is in code.
 > No native resolver for any of them was found (§2.4); whatever uses them is either the
-> client's script library or the server (whose traffic is gated). A Tessera client shows
+> client's script library or the server (whose traffic was gated when this spec was written;
+> since 2026-10-11 it is M8 research, decision 0034 §2). A Tessera client shows
 > them as named markers and gives them no behaviour.
 
 <a id="s3-3"></a>
@@ -1158,6 +1160,11 @@ colour state through `RankToUIState`. Worked example in §11.1.
 > clamped, which consider type applies to which target, and where quest tables are used.
 > Not read by native code with constant IDs (§2.4). This is visible behaviour (name
 > colours); M3 observation could test the reading.
+>
+> *Implementer note (2026-10-10, `crates/gamedata`):* until Q16 is settled the implementation
+> clamps the list element to the list (levels above the list's length use its last element,
+> levels below 1 its first) and the table element to 0–30; a rank without a
+> `RankToUIState` entry gives no state (`combat-ui.md` TR15 then uses `ConEven_ColorName`).
 
 <a id="s7-6"></a>
 ### 7.6 Formations (Confirmed, GC27)
@@ -1579,7 +1586,7 @@ no meaning.
 | # | Question | Section | What would settle it |
 |---|---|---|---|
 | Q1 | Which code reads the controls that native code does not read (consideration, vital-display overrides, combat music, aggro ping, alerts, discovery distance, tracking states, perks, pets, GRS): the client's script library or only the server; for GRSControl also whether the code-section matches of its property IDs (§7.16) are reads | §2.4, §7.16 | reading the client script library's bytecode (`wlib.md`) for these keys or property IDs; M3 observation |
-| Q2 | What the empty marker classes are used for | §3.2 | script-library reading; server traffic is gated |
+| Q2 | What the empty marker classes are used for | §3.2 | script-library reading; server traffic (M8 research since 2026-10-11, decision 0034 §2) |
 | Q3 | Purpose of the DID sets beyond membership | §3.3 | the store and big-battle specs |
 | Q4 | The three lists of a trait slot schedule (class 1490) | §4.2 | `combat-data.md` §8 work |
 | Q5 | Index base of class-849 lists; key meaning of class-852 maps | §4.10 | comparison with displayed rank thresholds (M3) |
@@ -1643,3 +1650,6 @@ This spec edits no other file. Proposed follow-ups for the owners of the other s
 | 2026-10-07 | Second revision, for the second review (changes requested), status stays Review. §5.2, GC13: the earlier statement that the 767 class-3509 traits carry no `Trait_Group` was wrong (a top-level-only check); each carries exactly one, nested as the single element of `Trait_Groups`, keys 8–14 with per-slot counts, equal to the keys of the appearance-group hash; the appearance fields, dye flags and the shared material mapper added; Q23 narrowed to how the appearance is applied; new Q29 (dye rule) and GCI16. §2.3: each labelled record's own DID at payload offset 0 named as the expected raw match. §6.2: the completion rule marked as a reading, Q30. §7.16: "no client use" replaced by the BIN facts (not resolved by key; byte scan, q4, finds unexamined code-section matches of 9 of 28 property IDs) and Q1. BIN row: q4. |
 | 2026-10-07 | Third review passed; status Review → Accepted (reviewer). No content change. |
 | 2026-10-08 | Revision answering the six implementer OPEN notes of 2026-10-08; status Accepted → Revised. No section renumbered. §2.1: role classes need not be defined in the class table; the entity base is undefined here and the cross-checks use the parent map only (GC1, OBS2). §3.1: the typed-view choices split into client behaviour (wrong type = absent for the native reads of §5.3.2, §5.7, §8.1) and Tessera Decisions (list cap, error on wrong type elsewhere, null DIDs dropped except in the consideration lists); no DID list in scope holds a null DID (new GC33). §3.4: the name property is `Name` (GC8, GCI4, new GCI19). §5.3.1: the flank fields are floats; both trait-tree struct kinds carry `Mount_Control_Trait_Tree` (GC14, new GCI18). §6.6: the tier-field labels spelled in full (GC22). §7.1: each unlock is the single element of the item's top-level `Usage_SetPropertyUsageData_Array` (GC23, new GCI17; reading added to Q13/Q25 context). §8.1: the client uses 48 also for a value that is not an int (BIN q5, GC29). §5.1: the per-species tall flag `RaceTable_IsTallRace` of the race table (GC12); Q6 narrowed to the link between flag and skill group. New provenance key OBS2; BIN row: q5. §13: an `items.md` proposal. |
+| 2026-10-10 | Implementer note under §7.5 Q16 (no fact changed): the clamps `crates/gamedata` uses until Q16 is settled. |
+| 2026-10-11 | Review record: the 2026-10-10 implementer note checked with the `combat-ui.md` review; no fact changed, status stays Accepted. |
+| 2026-10-11 | Policy wording only, after [decision 0034](../decisions/0034-official-server-compatibility.md); no fact changed, status unchanged. "Purpose", the §3.2 callout and row Q2 of §12 no longer say network traffic is gated: the owner set the M8 gate aside on 2026-10-11, and server traffic is M8 research within decision 0034 §2. |

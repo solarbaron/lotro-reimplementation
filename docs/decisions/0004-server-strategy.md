@@ -2,7 +2,10 @@
 
 # 0004 — Server strategy
 
-**Status:** Accepted, 2026-10-03
+**Status:** Accepted, 2026-10-03. **The gate part is superseded** by
+[decision 0034](0034-official-server-compatibility.md) (owner, 2026-10-11): M8 is in scope
+without the written legal review (G1) and the permission request (G2); G4 and G5 stay
+binding. The text below is kept as it was accepted.
 
 ## Context
 The owner's stated long-term goal is a client that is compatible with the official servers.
@@ -21,3 +24,10 @@ bans for users.
 ## Consequences
 `crates/net` keeps a neutral `Backend` trait so a later compatibility backend could plug in
 without restructuring the client.
+
+## Note (2026-10-11)
+[Decision 0034](0034-official-server-compatibility.md) supersedes the second and third
+bullets of "Decision": official-server compatibility (M8) is in scope by the owner's
+decision, sessions no longer stop at M8, and the legal review is no longer a precondition.
+The first bullet's history stands: M0–M7 were built against the sandbox and the
+project-owned server. The neutral `Backend` trait of "Consequences" is how M8 plugs in.

@@ -16,7 +16,7 @@
 
 > **Review note (spec reviewer, Clean-Room-Role: review, 2026-10-13).** The scenario-feed
 > mechanism this record relies on — the `map-region` family and the `markers` step with marker
-> sets (`scenario-feed.md` "P5 travel", §18.P5 T-D7), cited in §1.3 and the Consequences, and the
+> sets (`scenario-feed.md` revision 8 ("P5 travel"), §18.P5 T-D7), cited in §1.3 and the Consequences, and the
 > travel and instance forms behind the §2 goldens — passed an independent CLEAN_ROOM.md §5.3
 > review on 2026-10-13 and its P5 parts are now **Accepted**; the `lua-plugin-api.md` §15.5 mount
 > views behind the criterion-2 presentation are likewise Accepted. So the feed half of §1–§2
@@ -88,7 +88,7 @@ Review) gives the check of criterion 2 from the walk log.
    as a sub-count of it.
 3. **Scenario markers.** The markers come from the scenario feed, not from code in the test:
    a scenario selects the family `map-region` and puts one marker on each element with the
-   `markers` step (`scenario-feed.md`, revision "P5 travel", §18.P5 T-D7). Feed markers follow
+   `markers` step (`scenario-feed.md`, revision 8, "P5 travel", §18.P5 T-D7). Feed markers follow
    `map-windows.md` §6.7.
 4. **Pass.** Criterion 1 passes when the census visits every region exactly once
    (`map-windows.md` invariant MWI10), no region is a failure, and the counts per category are

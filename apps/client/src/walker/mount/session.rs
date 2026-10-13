@@ -244,7 +244,11 @@ impl WalkerMount {
 
     fn post(&mut self, kind: LineKind, text: String) {
         if self.messages.len() < MAX_MESSAGES {
-            self.messages.push(LocalLine { kind, text });
+            self.messages.push(LocalLine {
+                kind,
+                text,
+                mask: None,
+            });
         }
     }
 
@@ -523,12 +527,14 @@ impl WalkerMount {
                         .map(|(i, m)| LocalLine {
                             kind: LineKind::Log,
                             text: list_line(i, m),
+                            mask: None,
                         })
                         .collect();
                     if lines.is_empty() {
                         vec![LocalLine {
                             kind: LineKind::Log,
                             text: "No more mounts.".into(),
+                            mask: None,
                         }]
                     } else {
                         lines
@@ -599,7 +605,7 @@ impl WalkerMount {
         now: Instant,
         dt: f32,
     ) -> [f32; 2] {
-        let figures = characters.figure_context().cloned();
+        let figures = characters.figure_context();
         let mut physics = physics;
         if let Some(c) = self.choice
             && physics.is_some()

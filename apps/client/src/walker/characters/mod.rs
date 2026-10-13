@@ -44,6 +44,7 @@
 //! `tessera-protocol.md` §8.6), still on the terrain and still animated by ground speed.
 
 pub mod catalog;
+pub mod combat_anim;
 pub mod figure;
 pub mod motion;
 pub mod mounted;
@@ -68,7 +69,7 @@ use self::catalog::WeenieRole;
 use self::figure::{
     FigureAsset, FigureContext, FigureKey, FigureRequest, LookChoices, build_figure_with_look,
 };
-use self::motion::{Locomotion, drive, make_animator};
+use self::motion::{Locomotion, drive, make_animator_with_keys};
 use super::UploadBudget;
 use super::geometry::{MaterialPlan, TexRequest};
 use super::objects::{ObjectLayer, TexLookup, surface_draw};
@@ -266,6 +267,8 @@ pub struct CharAnim {
     instance: InstanceId,
     animator: Animator,
     loco: Locomotion,
+    /// Clips the scripts started ([`combat_anim`]).
+    clips: combat_anim::ScriptClips,
     /// The mounted clips (`walker.md` §16.7) that replace the on-foot ones while set.
     mounted: Option<mounted::MountedAnim>,
 }
@@ -314,6 +317,8 @@ struct Actor {
     /// The character screens' figure ([`CharacterLayer::set_preview`]): never drawn in
     /// the world, always animated, drawn alone into the screens' viewport.
     preview: bool,
+    /// The session's classification (`EntityCreated`), for selection (`combat-ui.md` TR1).
+    kind: Option<tessera_net::EntityKind>,
     /// The drawn scale per axis instead of the figure's model scale (the mount figure,
     /// `mounts.md` §14.8).
     draw_scale: Option<[f32; 3]>,
@@ -350,6 +355,31 @@ pub struct FigureEffectView {
     pub model: Vec<Mat4>,
     /// The setup's holding locations and bones.
     pub points: Option<Arc<crate::walker::effects::data::AttachPoints>>,
+    /// The figure's skeleton (clips that scripts start are bound to it).
+    pub skeleton: Option<Arc<tessera_anim::Skeleton>>,
+    /// The figure's script tables and stored values (`None` when not resolved).
+    pub scripts: Option<Arc<figure::FigureScripts>>,
+}
+
+/// Margin around a figure's joints for its picking box and anchor, metres (Tessera choice:
+/// the joints lie inside the skin).
+pub const BOX_MARGIN: f32 = 0.15;
+/// Half-width and height of the box of a figure without a skeleton, metres (Tessera choice).
+pub const DEFAULT_BOX: [f32; 2] = [0.35, 1.8];
+/// Most script clips tracked at once (hostile-input bound).
+pub const MAX_SCRIPT_CLIPS: usize = 4096;
+
+/// A figure's box in region-global coordinates ([`CharacterLayer::entity_box`]).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct EntityBox {
+    /// Region.
+    pub region: u8,
+    /// Lower corner.
+    pub min: [f64; 3],
+    /// Upper corner.
+    pub max: [f64; 3],
+    /// Whether this layer draws the figure.
+    pub drawn: bool,
 }
 
 /// The reference pose of a figure that has a skeleton but no animator: skinning palette
@@ -480,6 +510,8 @@ pub struct CharacterLayer {
     looks_changed: bool,
     /// Look entries ignored by the receiver rule (for the rate-limited log).
     look_ignored: u64,
+    /// The figure and ramp-out of each script clip playing ([`combat_anim`]).
+    clip_owners: HashMap<u64, (EntityId, f32)>,
     /// The mounted player's view (`walker.md` §16.7), while a mount is involved.
     mount_view: Option<mounted::PlayerMountView>,
     /// Binds the mounted clips on the workers (`walker.md` §16.7).
@@ -633,6 +665,7 @@ impl CharacterLayer {
             look_appearances: HashMap::new(),
             looks_changed: false,
             look_ignored: 0,
+            clip_owners: HashMap::new(),
             mount_view: None,
             mount_binder: mounted::ClipBinder::new(ctx_for_binder, pool),
             rider_phase: None,
@@ -725,6 +758,218 @@ impl CharacterLayer {
     #[must_use]
     pub fn figure_effect_view(&self, tag: u64) -> Option<FigureEffectView> {
         let (e, a) = self.actors.iter().find(|(_, a)| a.tag == Some(tag))?;
+        let mut v = self.effect_view(e, a)?;
+        v.drawn = !a.hidden && self.shown.contains(&tag);
+        Some(v)
+    }
+
+    /// The figure of the session entity `id` (a scenario actor, a test-server actor, the
+    /// player) as the particle effects and combat scripts see it, once it is on the GPU.
+    /// Its `drawn` is whether this layer draws it (not hidden, on the GPU, posed when
+    /// animated).
+    #[must_use]
+    pub fn entity_effect_view(&self, id: EntityId) -> Option<FigureEffectView> {
+        let e = self.store.entity_for(NetId(id.0))?;
+        let a = self.actors.get(e)?;
+        if a.preview {
+            return None;
+        }
+        let mut v = self.effect_view(e, a)?;
+        v.drawn = !a.hidden && self.drawable(e);
+        Some(v)
+    }
+
+    /// The figure context (decoded clips, shared with the figure jobs); `None` in tests
+    /// without one.
+    #[must_use]
+    pub fn figure_context(&self) -> Option<Arc<FigureContext>> {
+        self.ctx.clone()
+    }
+
+    /// The session's classification of entity `id` (from `EntityCreated`).
+    #[must_use]
+    pub fn entity_kind(&self, id: EntityId) -> Option<tessera_net::EntityKind> {
+        let e = self.store.entity_for(NetId(id.0))?;
+        self.actors.get(e)?.kind
+    }
+
+    /// The session entities (not placed by the landblock data, not the screens' figure).
+    #[must_use]
+    pub fn session_entities(&self) -> Vec<EntityId> {
+        self.actors
+            .iter()
+            .filter(|(_, a)| a.tag.is_none() && !a.preview)
+            .map(|(_, a)| a.net)
+            .collect()
+    }
+
+    /// Whether entity `id` is moving (its locomotion layer is in, else its ground speed is
+    /// above the start speed).
+    #[must_use]
+    pub fn entity_moving(&self, id: EntityId) -> Option<bool> {
+        let e = self.store.entity_for(NetId(id.0))?;
+        if let Some(anim) = self.store.anim(e) {
+            return Some(anim.loco.moving);
+        }
+        Some(self.actors.get(e)?.speed > motion::START_SPEED)
+    }
+
+    /// The region and the region-global axis-aligned box of entity `id`'s figure: the
+    /// joints of its current pose (else of its reference pose) with [`BOX_MARGIN`] around
+    /// them, or a standing [`DEFAULT_BOX`] for a figure without a skeleton. `None` before
+    /// its figure is on the GPU.
+    #[must_use]
+    pub fn entity_box(&self, id: EntityId) -> Option<EntityBox> {
+        let e = self.store.entity_for(NetId(id.0))?;
+        let a = self.actors.get(e)?;
+        let v = self.effect_view(e, a)?;
+        let tf = Mat4::from_scale_rotation_translation(v.scale, v.rotation, Vec3::ZERO);
+        let mut lo = Vec3::splat(f32::INFINITY);
+        let mut hi = Vec3::splat(f32::NEG_INFINITY);
+        for m in &v.model {
+            let p = tf.transform_point3(m.w_axis.truncate());
+            if p.is_finite() {
+                lo = lo.min(p);
+                hi = hi.max(p);
+            }
+        }
+        if !(lo.is_finite() && hi.is_finite()) {
+            let [w, h] = DEFAULT_BOX;
+            lo = Vec3::new(-w, -w, 0.0) * v.scale;
+            hi = Vec3::new(w, w, h) * v.scale;
+        }
+        lo -= Vec3::splat(BOX_MARGIN);
+        hi += Vec3::splat(BOX_MARGIN);
+        let at = |p: Vec3| {
+            [
+                v.position[0] + f64::from(p.x),
+                v.position[1] + f64::from(p.y),
+                v.position[2] + f64::from(p.z),
+            ]
+        };
+        Some(EntityBox {
+            region: v.region,
+            min: at(lo),
+            max: at(hi),
+            drawn: !a.hidden && self.drawable(e),
+        })
+    }
+
+    /// Applies the clips the scripts started or stopped ([`combat_anim`]): a figure with a
+    /// skeleton but no animator gets one for them.
+    pub fn apply_clip_commands(&mut self, commands: Vec<combat_anim::ClipCommand>) {
+        for c in commands {
+            match c {
+                combat_anim::ClipCommand::Play { entity, request } => {
+                    let Some(e) = self.store.entity_for(NetId(entity.0)) else {
+                        continue;
+                    };
+                    if self.store.anim(e).is_none() {
+                        self.add_bare_animator(e);
+                    }
+                    if self.clip_owners.len() >= MAX_SCRIPT_CLIPS {
+                        // Forget the clips whose layer is gone (one-shot clips end on their
+                        // own); with no room left the new clip is refused, so that the stops
+                        // of live clips are never lost.
+                        let store = &self.store;
+                        self.clip_owners.retain(|h, (owner, _)| {
+                            store
+                                .entity_for(NetId(owner.0))
+                                .and_then(|e| store.anim(e))
+                                .is_some_and(|a| a.clips.holds(*h))
+                        });
+                        if self.clip_owners.len() >= MAX_SCRIPT_CLIPS {
+                            continue;
+                        }
+                    }
+                    let Some(anim) = self.store.anim_mut(e) else {
+                        continue;
+                    };
+                    let CharAnim {
+                        animator,
+                        loco,
+                        clips,
+                        ..
+                    } = anim;
+                    if clips.play(animator, loco, &request) {
+                        self.clip_owners
+                            .insert(request.handle, (entity, request.node.ramp_out));
+                    }
+                }
+                combat_anim::ClipCommand::Update { handle, node } => {
+                    let Some(&(entity, _)) = self.clip_owners.get(&handle) else {
+                        continue;
+                    };
+                    if let Some(e) = self.store.entity_for(NetId(entity.0))
+                        && let Some(anim) = self.store.anim_mut(e)
+                    {
+                        anim.clips.update(&mut anim.animator, handle, &node);
+                    }
+                    if let Some(o) = self.clip_owners.get_mut(&handle) {
+                        o.1 = node.ramp_out;
+                    }
+                }
+                combat_anim::ClipCommand::Stop { handle } => {
+                    let Some((entity, ramp_out)) = self.clip_owners.remove(&handle) else {
+                        continue;
+                    };
+                    let Some(e) = self.store.entity_for(NetId(entity.0)) else {
+                        continue;
+                    };
+                    if let Some(anim) = self.store.anim_mut(e) {
+                        let CharAnim {
+                            animator,
+                            loco,
+                            clips,
+                            ..
+                        } = anim;
+                        clips.stop(animator, loco, handle, ramp_out);
+                    }
+                }
+            }
+        }
+    }
+
+    /// An empty animator (reference pose) for a figure that has a skeleton but no clips,
+    /// so that script clips can play on it.
+    fn add_bare_animator(&mut self, e: Entity) {
+        let Some(render) = self.store.render(e) else {
+            return;
+        };
+        let Some(SlotState::Ready(g)) = self.slots.get(render.slot as usize).map(|s| &s.state)
+        else {
+            return;
+        };
+        let Some(skel) = g.asset.skeleton.clone() else {
+            return;
+        };
+        let attach = g.asset.attach.clone();
+        let Ok(instance) = self.scheduler.add(Arc::clone(&skel), attach) else {
+            return;
+        };
+        let anim = CharAnim {
+            instance,
+            animator: Animator::new(skel),
+            loco: Locomotion {
+                walk_speed: 0.0,
+                run_speed: 0.0,
+                base_rate: 1.0,
+                moving: false,
+                has_move: false,
+                move_index: 0,
+                above: Vec::new(),
+                once: Vec::new(),
+            },
+            clips: combat_anim::ScriptClips::default(),
+            mounted: None,
+        };
+        if let Err(r) = self.store.set_anim(e, anim) {
+            self.scheduler.remove(r.value.instance);
+        }
+        self.apply_changes();
+    }
+
+    fn effect_view(&self, e: Entity, a: &Actor) -> Option<FigureEffectView> {
         let render = self.store.render(e)?;
         let Some(SlotState::Ready(g)) = self.slots.get(render.slot as usize).map(|s| &s.state)
         else {
@@ -759,9 +1004,11 @@ impl CharacterLayer {
             } else {
                 Vec3::ONE
             },
-            drawn: !a.hidden && self.shown.contains(&tag),
+            drawn: false,
             model,
             points: g.asset.points.clone(),
+            skeleton: g.asset.skeleton.clone(),
+            scripts: g.asset.scripts.clone(),
         })
     }
 
@@ -1235,6 +1482,7 @@ impl CharacterLayer {
             seen: false,
             seen_before: false,
             preview: false,
+            kind: None,
             draw_scale: None,
             alpha: 1.0,
         };
@@ -1353,6 +1601,7 @@ impl CharacterLayer {
             match ev {
                 Event::EntityCreated {
                     id,
+                    kind,
                     location,
                     heading,
                     appearance,
@@ -1370,6 +1619,9 @@ impl CharacterLayer {
                         tag,
                         now,
                     ) {
+                        if let Some(a) = self.actors.get_mut(e) {
+                            a.kind = Some(kind);
+                        }
                         self.set_appearance(e, &appearance, shared);
                     }
                 }
@@ -1553,12 +1805,6 @@ impl CharacterLayer {
         if let Some(a) = self.actors.get_mut(e) {
             a.slot = Some(slot);
         }
-    }
-
-    /// The figure context of the layer's jobs (`None` only in tests).
-    #[must_use]
-    pub fn figure_context(&self) -> Option<&Arc<FigureContext>> {
-        self.ctx.as_ref()
     }
 
     /// Puts the mount figure at the rider's holding location (`mounts.md` §14.8 item 1)
@@ -1823,6 +2069,8 @@ impl CharacterLayer {
                         *rider_phase = None;
                     }
                     drive(&mut anim.animator, &mut anim.loco, a.speed, dt);
+                    // Script-started clips ([`combat_anim`]) play on the on-foot animator.
+                    anim.clips.tick(&mut anim.animator, &mut anim.loco, dt);
                 }
             }
             let animator = anim
@@ -1885,7 +2133,9 @@ impl CharacterLayer {
             if let Some(skel) = &asset.skeleton {
                 let seed = self.actors.get(e).map_or(0, |a| a.seed);
                 let phase = (seed % 10_000) as f32 / 1000.0;
-                if let Some((animator, loco)) = make_animator(skel, &asset.clips, phase) {
+                if let Some((animator, loco, keys)) =
+                    make_animator_with_keys(skel, &asset.clips, phase)
+                {
                     match self.scheduler.add(Arc::clone(skel), asset.attach.clone()) {
                         Ok(instance) => {
                             if let Err(r) = self.store.set_anim(
@@ -1894,6 +2144,7 @@ impl CharacterLayer {
                                     instance,
                                     animator,
                                     loco,
+                                    clips: combat_anim::ScriptClips::new(keys),
                                     mounted: None,
                                 },
                             ) {

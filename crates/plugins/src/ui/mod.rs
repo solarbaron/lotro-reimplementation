@@ -83,6 +83,7 @@ use crate::api::NativeApi;
 use crate::manager::PluginManager;
 use state::State;
 
+pub use shortcut::GameShortcut;
 pub use state::{MAX_EVENTS_PER_DRAIN, MAX_OBJECTS_PER_APARTMENT, MAX_QUEUED_EVENTS};
 pub use text::MAX_TEXT_BYTES_PER_APARTMENT;
 
@@ -289,6 +290,37 @@ impl PluginUi {
     /// The chat commands run by quickslot `Alias` shortcuts since the last call.
     pub fn take_chat_commands(&self) -> Vec<String> {
         std::mem::take(&mut self.shared.st.borrow_mut().commands)
+    }
+
+    /// The game actions of plugin quickslots activated since the last call
+    /// (`lua-plugin-api.md` §15.2 "Quickslot shortcuts"), in order: the client sends
+    /// `UseSkill { what: Ref::Record(did), target }` for [`GameShortcut::Skill`] and
+    /// `UseItem { item, target }` for [`GameShortcut::Item`], with the current selection
+    /// as target. At most 256 wait; further activations are dropped.
+    pub fn take_game_actions(&self) -> Vec<GameShortcut> {
+        std::mem::take(&mut self.shared.st.borrow_mut().game_actions)
+    }
+
+    /// The content of the game's quickslot-bar slot a drag started on: the client calls
+    /// this after [`Self::deliver`] returned the drag's
+    /// [`UiEvent::DragBegan`] for such a slot, with
+    /// `None` for a literal skill or an empty slot. A plugin control's `DragDrop` event
+    /// then carries it as a new `Shortcut` (`Lotro.DragDropInfo:GetShortcut()`, §15.2).
+    /// Every new drag clears it.
+    pub fn set_game_drag(&self, content: Option<GameShortcut>) {
+        self.shared.st.borrow_mut().game_drag = content.map(|g| {
+            let (kind, data) = g.to_type_and_data();
+            shortcut::ShortcutData { kind, data }
+        });
+    }
+
+    /// The game content of the shortcut held by the current drag's source, when it is a
+    /// plugin quickslot with a well-formed `Skill` or `Item` shortcut: the client asks
+    /// this when such a drag ends on a slot of the game's quickslot bar and sends
+    /// `SetQuickslot { slot, content }` (§15.2).
+    #[must_use]
+    pub fn drag_source_shortcut(&self) -> Option<GameShortcut> {
+        shortcut::drag_source_game_shortcut(&self.shared.st.borrow())
     }
 
     /// A scaling group's scale changed (`UIScaleChanged`, §13.21 rule 8): fires the event

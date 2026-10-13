@@ -1065,6 +1065,11 @@ const BELL_SAMPLE: u32 = 0x0A00_0050;
 
 /// One Sound node for every note, as the cowbells have (§5.5).
 fn bell_player(rate: u32) -> (MusicPlayer, SampleBank) {
+    bell_player_with(rate, PlayerConfig::default())
+}
+
+/// [`bell_player`] with its own configuration.
+fn bell_player_with(rate: u32, config: PlayerConfig) -> (MusicPlayer, SampleBank) {
     let tree = driven_root(vec![switch(
         SONG,
         vec![(
@@ -1088,7 +1093,7 @@ fn bell_player(rate: u32) -> (MusicPlayer, SampleBank) {
     );
     let mut bank = SampleBank::new();
     bank.insert(Did(BELL_SAMPLE), dc(rate, 0.1));
-    (MusicPlayer::new(Arc::new(t), PlayerConfig::default()), bank)
+    (MusicPlayer::new(Arc::new(t), config), bank)
 }
 
 /// An original four-note tune (C D E F, eighth notes at 120 crotchets per minute, `p`).
@@ -1323,4 +1328,668 @@ fn bit_mask_cases_stay_exact() {
             );
         }
     }
+}
+
+// ---------------------------------------------------------------- synchronised group start
+// `instruments.md` §8.7 step 4, §8.8, §8.9, §12 P4 Decision, §14.9–§14.11.
+
+use tessera_audio::instruments::{
+    CATCH_UP_SECS, PartOrigin, QueueLimit, START_TOLERANCE, ScheduledEvent, SyncStart,
+    WaitingPerformance,
+};
+
+const M: CharacterId = CharacterId(3);
+
+/// The reference header of `abc-dialect.md` §12 (unit 0.25 s) with `body`.
+fn part(body: &str) -> abc::Performance {
+    let text = format!("X:1\nT:Part\nL:1/8\nQ:1/4=120\nK:C\n{body}\n");
+    abc::parse(text.as_bytes(), PartRequest::Unspecified).unwrap()
+}
+
+/// §14: **CDEF**.
+fn cdef() -> abc::Performance {
+    part("CDEF|")
+}
+
+/// §14.9: **zG** (a rest, then G at 0.5, off and end at 1.0).
+fn zg() -> abc::Performance {
+    part("z2 G2|")
+}
+
+/// Renders silence until the audio clock reaches `frame` (blocks of at most `block`).
+fn advance_to(p: &mut MusicPlayer, e: &mut AudioEngine, bank: &mut SampleBank, frame: u64) {
+    let now = e.clock().0;
+    assert!(now <= frame);
+    let block = (e.sample_rate() / 10) as usize;
+    run(p, e, bank, usize::try_from(frame - now).unwrap(), block);
+    assert_eq!(e.clock().0, frame);
+}
+
+/// The logged note events of `who`, as (scheduled frame, scheduled secs).
+fn notes_of(log: &[ScheduledEvent], who: CharacterId) -> Vec<(u64, MusicEventKind)> {
+    log.iter()
+        .filter(|s| s.character == who && s.kind != MusicEventKind::End)
+        .map(|s| (s.frame, s.kind))
+        .collect()
+}
+
+/// §14.9, Tessera sandbox: L waits with CDEF, member M with zG; the start is processed at
+/// 50.0 s, so *S* = 50.7 for both; at 44,100 Hz the events land on samples 2,235,870,
+/// 2,257,920 and 2,279,970 and both time-0s equal *S*.
+#[test]
+fn synced_start_14_9_on_time_is_within_the_tolerance() {
+    const RATE: u32 = 44_100;
+    let (mut p, mut bank) = bell_player(RATE);
+    let mut e = engine(RATE);
+    p.add_character(A, LivePosition::new([0.0; 3])).unwrap();
+    p.add_character(M, LivePosition::new([0.0; 3])).unwrap();
+    let mut group = SyncGroup::new();
+    group.register(A, cdef(), BELL).unwrap();
+    group.register_member(M, zg(), BELL).unwrap();
+    assert_eq!(group.waiting()[1].origin, PartOrigin::Member);
+    advance_to(&mut p, &mut e, &mut bank, 50 * u64::from(RATE));
+    p.set_schedule_log(1024);
+    let now = MusicPlayer::now(&e);
+    assert_eq!(now, 50.0);
+    let s = SyncGroup::start_time(now);
+    let start = group.start_at(&mut p, s, now).unwrap();
+    assert!(group.is_empty());
+    assert_eq!(start.characters, vec![A, M]);
+    assert!(start.parts.iter().all(|x| x.skipped == 0));
+    run(&mut p, &mut e, &mut bank, 2 * RATE as usize, 4410);
+
+    let log = p.schedule_log();
+    let l = notes_of(log, A);
+    assert_eq!(l.len(), 8);
+    assert_eq!(l[0], (2_235_870, MusicEventKind::NoteOn));
+    assert_eq!(l[7], (2_279_970, MusicEventKind::NoteOff));
+    assert_eq!(
+        notes_of(log, M),
+        vec![
+            (2_257_920, MusicEventKind::NoteOn),
+            (2_279_970, MusicEventKind::NoteOff)
+        ]
+    );
+    let timings = start.measure(log);
+    assert_eq!(timings.len(), 2);
+    for t in &timings {
+        assert_eq!(t.measured, t.expected);
+        assert!((t.earliest - 50.7).abs() < 1e-9 && (t.latest - 50.7).abs() < 1e-9);
+    }
+    let check = start.check_tolerance(log);
+    assert_eq!((check.measured, check.missing), (10, 0));
+    assert!(check.spread < 1e-9 && check.worst_from_start < 1e-9);
+    assert!(check.within() && check.passes());
+    assert_eq!(START_TOLERANCE, 0.0001);
+}
+
+/// §14.9 failing variants: M on its own processing time (a), M placed 0.00015 s late (b);
+/// and the passing one, 0.00004 s late (c), two samples after L's grid at 44,100 Hz.
+#[test]
+fn synced_start_14_9_variants() {
+    const RATE: u32 = 44_100;
+    let mut p = bell_player(RATE).0;
+    p.add_character(A, LivePosition::new([0.0; 3])).unwrap();
+    p.add_character(M, LivePosition::new([0.0; 3])).unwrap();
+
+    // (a) Two starts with their own *S*: 50.7 for L, 50.716 for M.
+    let mut g = SyncGroup::new();
+    g.register(A, cdef(), BELL).unwrap();
+    let l = g.start_at(&mut p, 50.7, 50.0).unwrap();
+    g.register_member(M, zg(), BELL).unwrap();
+    let m = g.start_at(&mut p, 50.716, 50.016).unwrap();
+    let joined = SyncStart {
+        start_secs: 50.7,
+        characters: vec![A, M],
+        parts: vec![l.parts[0].clone(), m.parts[0].clone()],
+        refused: Vec::new(),
+    };
+    // The schedule the player would log: every event on its exact frame.
+    let log: Vec<ScheduledEvent> = p
+        .queue()
+        .iter()
+        .map(|ev| {
+            let frame = (ev.time * f64::from(RATE)).round() as u64;
+            ScheduledEvent {
+                seq: ev.seq,
+                character: ev.character,
+                kind: ev.kind,
+                event_time: ev.time,
+                frame,
+                secs: frame as f64 / f64::from(RATE),
+            }
+        })
+        .collect();
+    let check = joined.check_tolerance(&log);
+    assert_eq!(check.missing, 0);
+    assert!((check.spread - 0.016).abs() < 2e-5, "{check:?}");
+    assert!(!check.within(), "(a) fails");
+    assert!(l.check_tolerance(&log).within(), "each start alone is fine");
+
+    // (b) and (c): M's events of the common start shifted late.
+    let shifted = |shift: f64| -> Vec<ScheduledEvent> {
+        log.iter()
+            .map(|s| {
+                if s.character != M {
+                    return *s;
+                }
+                // M's events as if started at 50.7, then placed `shift` late.
+                let t = s.event_time - 0.016 + shift;
+                let frame = (t * f64::from(RATE)).round() as u64;
+                ScheduledEvent {
+                    frame,
+                    secs: frame as f64 / f64::from(RATE),
+                    ..*s
+                }
+            })
+            .collect()
+    };
+    let common = SyncStart {
+        start_secs: 50.7,
+        characters: vec![A, M],
+        parts: joined.parts.clone(),
+        refused: Vec::new(),
+    };
+    let b = common.check_tolerance(&shifted(0.000_15));
+    assert!(!b.within(), "(b) fails: {b:?}");
+    let c_log = shifted(0.000_04);
+    let c = common.check_tolerance(&c_log);
+    assert!(c.within(), "(c) passes: {c:?}");
+    let on_g = c_log
+        .iter()
+        .find(|s| s.character == M && s.kind == MusicEventKind::NoteOn)
+        .unwrap();
+    assert_eq!(on_g.frame, 2_257_922);
+    assert!((on_g.secs - 51.2 - 2.0 / 44_100.0).abs() < 1e-9);
+}
+
+/// Several performers, local and received, with different parts, started by one start at
+/// a time that falls between samples: every time-0 is within the tolerance of *S* and of
+/// each other.
+#[test]
+fn several_performers_start_within_the_tolerance() {
+    const RATE: u32 = 48_000;
+    let (mut p, mut bank) = bell_player(RATE);
+    let mut e = engine(RATE);
+    let parts = [
+        cdef(),
+        zg(),
+        part("[C2E2G2] z G/2A/2 c'|"),
+        part("z/2 D3/2 F/2 ^F/2 G|"),
+        part("C,8|"),
+        part("(3cde f2|"),
+    ];
+    let mut group = SyncGroup::new();
+    for (i, perf) in parts.iter().enumerate() {
+        let who = CharacterId(10 + i as u64);
+        p.add_character(who, LivePosition::new([0.0; 3])).unwrap();
+        if i % 2 == 0 {
+            group.register(who, perf.clone(), BELL).unwrap();
+        } else {
+            group.register_member(who, perf.clone(), BELL).unwrap();
+        }
+    }
+    advance_to(&mut p, &mut e, &mut bank, 17_777);
+    p.set_schedule_log(4096);
+    let now = MusicPlayer::now(&e);
+    let s = SyncGroup::start_time_after(now, 0.712_345);
+    let start = group.start_at(&mut p, s, now).unwrap();
+    assert_eq!(start.characters.len(), parts.len());
+    run(&mut p, &mut e, &mut bank, 4 * RATE as usize, 480);
+    let check = start.check_tolerance(p.schedule_log());
+    assert_eq!(check.missing, 0);
+    let expected: usize = start.parts.iter().map(|x| x.queued_notes()).sum();
+    assert_eq!(check.measured, expected);
+    // Rounding to a sample: at most half a sample from *S*, one sample between parts.
+    assert!(
+        check.worst_from_start <= 0.5 / 48_000.0 + 1e-12,
+        "{check:?}"
+    );
+    assert!(check.spread <= 1.0 / 48_000.0 + 1e-12, "{check:?}");
+    assert!(check.within());
+}
+
+/// §14.10 in Tessera: the start is processed 0.2 s before *S*: the head up to the first
+/// event at or after now + 0.5 is skipped; F alone sounds, at *S* + 0.75, and the part's
+/// time-0 stays *S*.
+#[test]
+fn a_late_start_skips_the_head_and_keeps_time_0() {
+    const RATE: u32 = 8_000;
+    let (mut p, mut bank) = bell_player(RATE);
+    let mut e = engine(RATE);
+    p.add_character(A, LivePosition::new([0.0; 3])).unwrap();
+    let mut group = SyncGroup::new();
+    group.register(A, cdef(), BELL).unwrap();
+    advance_to(&mut p, &mut e, &mut bank, 98 * u64::from(RATE) / 10);
+    p.set_schedule_log(64);
+    let now = MusicPlayer::now(&e);
+    let start = group.start_at(&mut p, 10.0, now).unwrap();
+    assert!(10.0 - now < CATCH_UP_SECS);
+    let part = &start.parts[0];
+    assert_eq!(
+        (part.skipped, part.queued),
+        (5, 4),
+        "off E, on F, off F, end"
+    );
+    assert_eq!(part.queued_notes(), 3);
+    run(&mut p, &mut e, &mut bank, 2 * RATE as usize, 400);
+    assert_eq!(p.stats().voices_accepted, 1, "only F sounds");
+    assert_eq!(
+        notes_of(p.schedule_log(), A),
+        vec![
+            (86_000, MusicEventKind::NoteOff),
+            (86_000, MusicEventKind::NoteOn),
+            (88_000, MusicEventKind::NoteOff)
+        ]
+    );
+    let check = start.check_tolerance(p.schedule_log());
+    assert!(check.within() && check.missing == 0, "{check:?}");
+
+    // Processed after the end: nothing is queued, the part has left the group.
+    group.register(A, cdef(), BELL).unwrap();
+    let late = group.start_at(&mut p, 1.0, 5.0).unwrap();
+    assert_eq!(late.characters, vec![A]);
+    assert_eq!(late.parts[0].queued, 0);
+    assert!(group.is_empty() && !p.is_performing(A));
+}
+
+/// A part registered after a start waits for the next one; a start with nothing waiting
+/// starts nobody and leaves running performances alone (§14.11 step 8).
+#[test]
+fn late_registration_waits_for_the_next_start() {
+    let mut p = bell_player(8_000).0;
+    for who in [A, B, M] {
+        p.add_character(who, LivePosition::new([0.0; 3])).unwrap();
+    }
+    let mut group = SyncGroup::new();
+    group.register(A, cdef(), BELL).unwrap();
+    let first = group.start_at(&mut p, 5.0, 4.0).unwrap();
+    assert_eq!(first.characters, vec![A]);
+    group.register_member(M, zg(), BELL).unwrap();
+    assert!(group.is_waiting(M) && !p.is_performing(M));
+    let queued = p.queued();
+    let second = group.start_at(&mut p, 7.0, 6.0).unwrap();
+    assert_eq!(second.characters, vec![M]);
+    assert!(p.is_performing(A), "A has no waiting part: untouched");
+    assert_eq!(p.queued(), queued + zg().events.len());
+    let third = group.start_at(&mut p, 9.0, 8.0).unwrap();
+    assert!(third.characters.is_empty() && third.parts.is_empty());
+    assert!(p.is_performing(A) && p.is_performing(M));
+    assert!(!group.is_waiting(B));
+}
+
+/// §14.11 and §8.8.7: what replaces, keeps and withdraws a waiting part.
+#[test]
+fn waiting_parts_follow_8_8_7() {
+    let mut p = bell_player(8_000).0;
+    for who in [A, B, M] {
+        p.add_character(who, LivePosition::new([0.0; 3])).unwrap();
+    }
+    let mut group = SyncGroup::new();
+    // 1. `/play a sync`.
+    let a = part("C2|");
+    group.register(A, a.clone(), BELL).unwrap();
+    // 2. Solo `/play b`: the part keeps waiting, b runs.
+    let b = part("D2|");
+    p.play(A, &b, BELL, 1.0).unwrap();
+    assert!(group.is_waiting(A) && p.is_performing(A));
+    // 3. `/play c sync`: replaces a; b keeps running.
+    let c = part("E2|");
+    group.register(A, c.clone(), BELL).unwrap();
+    assert_eq!(group.len(), 1);
+    assert_eq!(*group.waiting()[0].performance, c);
+    assert!(p.is_performing(A));
+    // A member's part, and a member that runs a performance outside the start.
+    group.register_member(M, zg(), BELL).unwrap();
+    p.play(B, &b, BELL, 1.0).unwrap();
+    // 7. The start: b stops first, c starts; B (nothing waiting) keeps playing.
+    let s = group.start_at(&mut p, 3.0, 2.0).unwrap();
+    assert_eq!(s.characters, vec![A, M]);
+    assert_eq!(p.queue().iter().filter(|e| e.character == A).count(), 3);
+    assert!(
+        p.queue()
+            .iter()
+            .filter(|e| e.character == A)
+            .all(|e| e.time >= 3.0)
+    );
+    assert!(p.is_performing(B));
+    assert_eq!(p.queue().iter().filter(|e| e.character == B).count(), 3);
+
+    // Fellowship changes withdraw absent members, never the local part.
+    group.register(A, a.clone(), BELL).unwrap();
+    group.register_member(M, zg(), BELL).unwrap();
+    group.register_member(B, zg(), BELL).unwrap();
+    assert_eq!(group.withdraw_absent_members(&[B]), vec![M]);
+    assert!(group.is_waiting(A) && group.is_waiting(B));
+    assert_eq!(group.withdraw_absent_members(&[]), vec![B]);
+    assert_eq!(group.waiting().len(), 1);
+    // `/playstop`: cancels the running performance and withdraws the part.
+    assert!(p.is_performing(A));
+    assert!(group.cancel(&mut p, A));
+    assert!(!p.is_performing(A) && !group.is_waiting(A));
+    assert!(!group.cancel(&mut p, A));
+    // The feed stops a member: same.
+    group.register_member(M, zg(), BELL).unwrap();
+    assert!(group.cancel(&mut p, M));
+    assert!(!p.is_performing(M) && group.is_empty());
+    // A registration replaces whatever origin was there before, in place.
+    group.register(A, a.clone(), BELL).unwrap();
+    group
+        .register_part(WaitingPerformance {
+            character: A,
+            performance: Arc::new(a),
+            instrument: BELL,
+            origin: PartOrigin::Member,
+        })
+        .unwrap();
+    assert_eq!(group.waiting()[0].origin, PartOrigin::Member);
+    group.clear();
+    assert!(group.is_empty());
+}
+
+/// A non-finite start time is refused and changes nothing.
+#[test]
+fn a_non_finite_start_is_refused() {
+    let mut p = bell_player(8_000).0;
+    p.add_character(A, LivePosition::new([0.0; 3])).unwrap();
+    let mut group = SyncGroup::new();
+    group.register(A, cdef(), BELL).unwrap();
+    for bad in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+        assert!(matches!(
+            group.start_at(&mut p, bad, 0.0),
+            Err(InstrumentError::InvalidTime(_))
+        ));
+    }
+    assert!(group.is_waiting(A) && p.queued() == 0);
+    // A non-finite clock skips nothing.
+    let s = group.start_at(&mut p, 1.0, f64::NAN).unwrap();
+    assert_eq!(s.parts[0].skipped, 0);
+}
+
+/// The schedule log is bounded and can be turned off.
+#[test]
+fn the_schedule_log_is_bounded() {
+    const RATE: u32 = 8_000;
+    let (mut p, mut bank) = bell_player(RATE);
+    let mut e = engine(RATE);
+    p.add_character(A, LivePosition::new([0.0; 3])).unwrap();
+    p.set_schedule_log(3);
+    p.play(A, &cdef(), BELL, 0.2).unwrap();
+    run(&mut p, &mut e, &mut bank, 2 * RATE as usize, 400);
+    assert_eq!(p.schedule_log().len(), 3);
+    assert_eq!(p.schedule_log_dropped(), 6, "9 events, 3 kept");
+    assert_eq!(p.take_schedule_log().len(), 3);
+    assert_eq!(p.schedule_log_dropped(), 0);
+    p.set_schedule_log(0);
+    p.play(A, &cdef(), BELL, 2.2).unwrap();
+    run(&mut p, &mut e, &mut bank, 2 * RATE as usize, 400);
+    assert!(p.schedule_log().is_empty());
+}
+
+/// Renders `frames` frames in blocks of `block`, calling [`MusicPlayer::update_for`] with the
+/// block's length before each block.
+fn run_for(
+    player: &mut MusicPlayer,
+    e: &mut AudioEngine,
+    bank: &mut SampleBank,
+    frames: usize,
+    block: usize,
+) {
+    let rate = f64::from(e.sample_rate());
+    let mut done = 0;
+    while done < frames {
+        let n = block.min(frames - done);
+        player.update_for(e, bank, n as f64 / rate);
+        e.update();
+        let mut buf = vec![0.0f32; n * 2];
+        e.render(&mut buf).unwrap();
+        e.drain_events().for_each(drop);
+        done += n;
+    }
+}
+
+/// A CDEF start at *S* = now + 0.7, set up for rendering at 8 kHz from clock 0.
+fn cdef_start(rate: u32) -> (MusicPlayer, SampleBank, AudioEngine, SyncStart) {
+    let (mut p, bank) = bell_player(rate);
+    let e = engine(rate);
+    p.add_character(A, LivePosition::new([0.0; 3])).unwrap();
+    p.set_schedule_log(64);
+    let mut group = SyncGroup::new();
+    group.register(A, cdef(), BELL).unwrap();
+    let now = MusicPlayer::now(&e);
+    let start = group
+        .start_at(&mut p, SyncGroup::start_time(now), now)
+        .unwrap();
+    (p, bank, e, start)
+}
+
+/// Rendering in blocks longer than the look-ahead (a headless run on a virtual clock):
+/// with [`MusicPlayer::update`] events fall due inside a block and are handed on late, so
+/// the tolerance fails; with [`MusicPlayer::update_for`] every event keeps *S* + offset.
+#[test]
+fn long_blocks_keep_the_tolerance_with_update_for() {
+    const RATE: u32 = 8_000;
+    let block = RATE as usize / 4; // 0.25 s, more than the 0.1 s look-ahead.
+
+    let (mut p, mut bank, mut e, start) = cdef_start(RATE);
+    run(&mut p, &mut e, &mut bank, 2 * RATE as usize, block);
+    let late = start.check_tolerance(p.schedule_log());
+    assert!(!late.within() && !late.passes(), "{late:?}");
+
+    let (mut p, mut bank, mut e, start) = cdef_start(RATE);
+    run_for(&mut p, &mut e, &mut bank, 2 * RATE as usize, block);
+    let check = start.check_tolerance(p.schedule_log());
+    assert_eq!((check.measured, check.missing), (8, 0));
+    assert!(check.passes(), "{check:?}");
+
+    // Blocks longer than the 0.5 s clamp still need several calls: one call per 0.5 s.
+    let (mut p, mut bank, mut e, start) = cdef_start(RATE);
+    run_for(
+        &mut p,
+        &mut e,
+        &mut bank,
+        2 * RATE as usize,
+        RATE as usize / 2,
+    );
+    assert!(start.check_tolerance(p.schedule_log()).passes());
+}
+
+/// Nothing measured is no pass: before any update every note is missing, and
+/// [`ToleranceCheck::passes`] says so even though [`ToleranceCheck::within`] has nothing
+/// to judge.
+#[test]
+fn an_empty_measurement_does_not_pass() {
+    let (mut p, mut bank, mut e, start) = cdef_start(8_000);
+    let before = start.check_tolerance(p.schedule_log());
+    assert_eq!((before.measured, before.missing), (0, 8));
+    assert!(before.within(), "nothing judged");
+    assert!(!before.passes(), "{before:?}");
+    run(&mut p, &mut e, &mut bank, 8_000, 400);
+    let half = start.check_tolerance(p.schedule_log());
+    assert!(
+        half.measured > 0 && half.missing > 0 && !half.passes(),
+        "{half:?}"
+    );
+    run(&mut p, &mut e, &mut bank, 8_000, 400);
+    assert!(start.check_tolerance(p.schedule_log()).passes());
+    // Log overflow is missing too.
+    let (mut p, mut bank, mut e, start) = cdef_start(8_000);
+    p.set_schedule_log(3);
+    run(&mut p, &mut e, &mut bank, 16_000, 400);
+    let full = start.check_tolerance(p.schedule_log());
+    assert!(full.within() && !full.passes(), "{full:?}");
+}
+
+/// A non-finite time-0 (a hand-built performance with a NaN time) fails the tolerance and
+/// does not hide among the finite ones.
+#[test]
+fn a_non_finite_time_0_fails_the_tolerance() {
+    let mut perf = cdef();
+    perf.events[3].time = f64::NAN;
+    let mut p = bell_player(8_000).0;
+    p.add_character(A, LivePosition::new([0.0; 3])).unwrap();
+    let mut group = SyncGroup::new();
+    group.register(A, perf, BELL).unwrap();
+    let start = group.start(&mut p, 10.0).unwrap();
+    let part = &start.parts[0];
+    let log: Vec<ScheduledEvent> = p
+        .queue()
+        .iter()
+        .map(|ev| {
+            let j = usize::try_from(ev.seq - part.first_seq).unwrap();
+            let secs = if j == 3 { 3.0 } else { ev.time };
+            ScheduledEvent {
+                seq: ev.seq,
+                character: ev.character,
+                kind: ev.kind,
+                event_time: ev.time,
+                frame: (secs * 8_000.0) as u64,
+                secs,
+            }
+        })
+        .collect();
+    let timings = start.measure(&log);
+    assert_eq!((timings[0].measured, timings[0].non_finite), (8, 1));
+    assert!((timings[0].earliest - 10.0).abs() < 1e-9);
+    let check = start.check_tolerance(&log);
+    assert_eq!((check.measured, check.non_finite, check.missing), (8, 1, 0));
+    assert!(!check.within() && !check.passes(), "{check:?}");
+    // The first measured event non-finite: the next finite one still sets the range.
+    let mut first = cdef();
+    first.events[0].time = f64::NAN;
+    let mut g = SyncGroup::new();
+    g.register(A, first, BELL).unwrap();
+    let s2 = g.start(&mut p, 20.0).unwrap();
+    let log2: Vec<ScheduledEvent> = p
+        .queue()
+        .iter()
+        .filter(|ev| ev.character == A && ev.seq >= s2.parts[0].first_seq)
+        .map(|ev| ScheduledEvent {
+            seq: ev.seq,
+            character: ev.character,
+            kind: ev.kind,
+            event_time: ev.time,
+            frame: 0,
+            secs: ev.time,
+        })
+        .collect();
+    let t = s2.measure(&log2);
+    assert_eq!(t[0].non_finite, 1);
+    assert!((t[0].earliest - 20.0).abs() < 1e-9 && (t[0].latest - 20.0).abs() < 1e-9);
+    assert!(!s2.check_tolerance(&log2).within());
+}
+
+/// One part that cannot fit the queue does not block the start: the others start, it is
+/// reported as refused, and every slot is emptied (§8.8.3 step 2, §12 P4 Decision 3).
+#[test]
+fn a_part_that_cannot_fit_is_refused_alone() {
+    // The longest kind of part `abc::parse` accepts: 10,000 six-note chords.
+    let chords = "[CEGceg]".repeat(abc::MAX_EVENTS);
+    let long = part(&chords);
+    assert_eq!(long.events.len(), 2 * 6 * abc::MAX_EVENTS + 1);
+    let default = bell_player(8_000).0;
+    assert!(
+        default.check_part_size(M, &long).is_ok(),
+        "the default holds it"
+    );
+
+    let config = PlayerConfig {
+        max_events_per_character: 65_536,
+        ..PlayerConfig::default()
+    };
+    let mut p = bell_player_with(8_000, config).0;
+    for who in [A, M] {
+        p.add_character(who, LivePosition::new([0.0; 3])).unwrap();
+    }
+    assert!(matches!(
+        p.check_part_size(M, &long),
+        Err(InstrumentError::CharacterQueueFull {
+            character: M,
+            queued: 0,
+            adding: 120_001
+        })
+    ));
+    // M runs a solo performance, which a refused part leaves alone.
+    p.play(M, &zg(), BELL, 1.0).unwrap();
+    let mut group = SyncGroup::new();
+    group.register(A, cdef(), BELL).unwrap();
+    group.register_member(M, long, BELL).unwrap();
+    let s = group.start(&mut p, 10.0).unwrap();
+    assert_eq!(s.characters, vec![A]);
+    assert_eq!(s.refused.len(), 1);
+    let r = &s.refused[0];
+    assert_eq!(
+        (r.character, r.origin, r.limit, r.adding),
+        (M, PartOrigin::Member, QueueLimit::Character, 120_001)
+    );
+    assert!(group.is_empty());
+    assert!(p.is_performing(A) && p.is_performing(M));
+    assert_eq!(p.queue().iter().filter(|e| e.character == M).count(), 3);
+    // The next start is not blocked.
+    group.register(A, zg(), BELL).unwrap();
+    assert_eq!(group.start(&mut p, 20.0).unwrap().characters, vec![A]);
+}
+
+/// A part whose whole event list falls to the catch-up stops the performer's running
+/// performance (§12 implementation OPEN (b), §8.7 start step 1); its old events are gone.
+#[test]
+fn a_whole_part_skipped_stops_the_running_performance() {
+    let mut p = bell_player(8_000).0;
+    p.add_character(A, LivePosition::new([0.0; 3])).unwrap();
+    p.play(A, &part("C8 D8 E8 F8|"), BELL, 0.0).unwrap();
+    assert!(p.is_performing(A));
+    let mut group = SyncGroup::new();
+    group.register(A, cdef(), BELL).unwrap();
+    let s = group.start_at(&mut p, 1.0, 5.0).unwrap();
+    assert_eq!(s.characters, vec![A]);
+    assert_eq!(s.parts[0].queued, 0);
+    assert!(!p.is_performing(A) && group.is_empty());
+    assert!(
+        p.queue()
+            .iter()
+            .all(|e| e.character != A || (e.kind == MusicEventKind::NoteOff && !e.from_song)),
+        "only cancel note-offs may remain"
+    );
+}
+
+/// The room is checked for the events left after the head skip: a part too long for the
+/// performer's share whole fits once its head is skipped.
+#[test]
+fn the_room_check_counts_the_head_skip() {
+    let config = PlayerConfig {
+        max_events_per_character: 6,
+        ..PlayerConfig::default()
+    };
+    let mut p = bell_player_with(8_000, config).0;
+    p.add_character(A, LivePosition::new([0.0; 3])).unwrap();
+    let mut group = SyncGroup::new();
+    group.register(A, cdef(), BELL).unwrap();
+    // Whole (9 events): refused.
+    let s = group.start(&mut p, 10.0).unwrap();
+    assert!(s.characters.is_empty());
+    assert_eq!(
+        (s.refused[0].limit, s.refused[0].adding),
+        (QueueLimit::Character, 9)
+    );
+    // Processed 0.2 s before *S*: 5 events skipped, 4 queued.
+    group.register(A, cdef(), BELL).unwrap();
+    let s = group.start_at(&mut p, 10.0, 9.8).unwrap();
+    assert!(s.refused.is_empty());
+    assert_eq!((s.parts[0].skipped, s.parts[0].queued), (5, 4));
+    assert_eq!(p.queued(), 4);
+}
+
+/// A performer the player does not know leaves the group while the others start.
+#[test]
+fn an_unknown_performer_leaves_while_the_others_start() {
+    let mut p = bell_player(8_000).0;
+    p.add_character(A, LivePosition::new([0.0; 3])).unwrap();
+    let mut group = SyncGroup::new();
+    group.register_member(M, zg(), BELL).unwrap();
+    group.register(A, cdef(), BELL).unwrap();
+    let s = group.start(&mut p, 10.0).unwrap();
+    assert_eq!(s.characters, vec![A]);
+    assert!(s.refused.is_empty() && group.is_empty());
+    assert!(p.is_performing(A) && !p.has_character(M));
+    assert_eq!(p.queued(), cdef().events.len());
 }

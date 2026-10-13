@@ -4,11 +4,11 @@
 
 | | |
 |---|---|
-| **Status** | **Accepted** for the parts labelled "P5 travel" (independent review 2026-10-11, CLEAN_ROOM.md §5.3 passed, every item; record in §18.P5; revision number reconciled at merge); every other part keeps the status that follows. **Accepted** (revision 5, the P3 parts of §18.P3: independent review 2026-10-11, CLEAN_ROOM.md §5.3 passed, every item; record in §18.P3). Before: **Accepted** (revision 4, independent review 2026-10-10: CLEAN_ROOM.md §5.3 passed, every item; D1–D5 agree with decision 0025, `tessera-protocol.md` v1.1 §6.2.17 and Appendix A, and the code on branch `p1`; Vector G and Vector F's changed lines re-derived, the 15 new hostile rows checked; non-blocking notes (a)–(f) in §18.3). Before: Review (revision 4, 2026-10-10, spec writer, design: [decision 0025](../decisions/0025-p1-character-look-on-test-server.md) D1–D5, §18.3; an independent review by a session that wrote no part of revision 4 must check the changes listed there, Vectors F and G and the new hostile rows). Before: Accepted (revision 3, 2026-10-09). An independent review by a session that wrote none of revisions 1–3 re-checked R1–R31, S1–S31, Vectors A–F and the hostile table and passed (P0 exit criterion 1); no blocking OPEN. The non-blocking OPENs of §3.1, §8.3, §11.1, §12.4, §13 and §16 stay open for the spec owner; the reviewer's rulings on them are review notes in the review record and change no fact |
-| **Last updated** | 2026-10-11 |
+| **Status** | **Accepted** for the parts labelled "P5 travel" (revision 8: independent review 2026-10-11, CLEAN_ROOM.md §5.3 passed, every item; record in §18.P5); every other part keeps the status that follows. **Accepted** (revision 7, the P4 social parts of §18.5: independent review 2026-10-11, CLEAN_ROOM.md §5.3 passed, every item; H1–H6 agree with decision 0035 D2–D4, `tessera-protocol.md` v1.2 §10.6 and Appendix A, and the code on branch `p4`; Vector H re-derived line by line, the 8 hostile rows checked; non-blocking notes (a)–(c) in §18.5; written as the unnumbered "P4 social" revision and numbered 7 at the merge with P2 and P3, 2026-10-11). **Accepted** (revision 6, the P2 parts of §18.4: independent review 2026-10-11 of commit 7b14f27, CLEAN_ROOM.md §5.3 passed, every item; D1–D4 agree with decision 0032, LEGAL.md §11.1 rule 5 and decision 0024 §2; record in §18.4.1). **Accepted** (revision 5, the P3 parts of §18.P3: independent review 2026-10-11, CLEAN_ROOM.md §5.3 passed, every item; record in §18.P3). Before: Review (revision 7, "P4 social", 2026-10-11, spec writer, design, [decision 0035](../decisions/0035-p4-social-on-test-server.md) D2–D4, additive, §18.5: synchronised performances (`perform … sync`, `perform-start`, `perform-withdraw`), fellow vitals (`fellow-vital`), the commands `ReadyPerformance`, `StartPerformance`, `DisbandFellowship`, the remote backend at protocol minor 2 (§9.8), the plain sandbox's start answer, Vector H, P4 hostile and backend cases; no section renumbered, no earlier rule changed; an independent review must follow). Before: **Review** (revision 6, the P2 parts of §18.4, 2026-10-10, spec writer, design: [decision 0032](../decisions/0032-p2-targeting-on-test-server.md) D1–D4: local selection on the test-server backend, §9.5, §9.7, §12.5.1, §12.5.2, §14.9, §14.11, §15; an independent review by a session that wrote no part of revision 6 or of decision 0032 must check the changes listed in §18.4 and the cases of §14.9 and §14.11; P2's revision was written as revision 5 and renumbered 6 at the merge with P3, 2026-10-11). Before: **Accepted** (revision 4, independent review 2026-10-10: CLEAN_ROOM.md §5.3 passed, every item; D1–D5 agree with decision 0025, `tessera-protocol.md` v1.1 §6.2.17 and Appendix A, and the code on branch `p1`; Vector G and Vector F's changed lines re-derived, the 15 new hostile rows checked; non-blocking notes (a)–(f) in §18.3). Before: Review (revision 4, 2026-10-10, spec writer, design: [decision 0025](../decisions/0025-p1-character-look-on-test-server.md) D1–D5, §18.3; an independent review by a session that wrote no part of revision 4 must check the changes listed there, Vectors F and G and the new hostile rows). Before: Accepted (revision 3, 2026-10-09). An independent review by a session that wrote none of revisions 1–3 re-checked R1–R31, S1–S31, Vectors A–F and the hostile table and passed (P0 exit criterion 1); no blocking OPEN. The non-blocking OPENs of §3.1, §8.3, §11.1, §12.4, §13 and §16 stay open for the spec owner; the reviewer's rulings on them are review notes in the review record and change no fact |
+| **Last updated** | 2026-10-13
 | **Author role** | Spec writer (design) |
-| **Reviewer** | Revision 2: spec reviewer (Clean-Room-Role: review), a session separate from the first-draft author, 2026-10-09; it also wrote R1–R31, so those fixes are unreviewed. Revision 3: pending (an independent session). Revision 4: a Claude review session in the spec-reviewer role (Clean-Room-Role: review) that wrote no part of decision 0025, of the P1 revisions of `scenario-feed.md`, `tessera-protocol.md`, `test-server.md` and `server-content.md`, or of the code, 2026-10-10 (passed, §18.3). Revision 5 (P3 parts): a Claude review session in the spec-reviewer role (Clean-Room-Role: review) that wrote no part of the P3 revision, of `npc-windows.md` or of the P3 code, 2026-10-11 (passed, §18.P3). P5 travel parts: a Claude review session in the spec-reviewer role (Clean-Room-Role: review) that wrote no part of the P5 revision, of the P5 specs (`map-windows.md`, `travel-windows.md`, `mounts.md`, `walker.md`, `lua-plugin-api.md` §15.5) or of the P5 code, 2026-10-11 (passed, §18.P5) |
-| **Review record** | 2026-10-11 (P5 travel parts, T-D1 … T-D10): independent review by a session that wrote no part of the P5 revision or the P5 code, against CLEAN_ROOM.md §5.3, decision 0024 §2 and §4 (client half only; values scripted, never derived) and LEGAL.md §11.1 rule 5: **passed, every item**. Every P5 statement is a functional fact of Tessera's own feed format (step keywords, options, event fields with types and ranges, log forms, limits) or an install-derived reference marked for its source; no code or pseudo-code (the scenario and log blocks are Tessera's own text format, the braces name event fields as §9 does); API, event, property and label names are interoperability identifiers; all vector text is invented (§14.T3 notes this), no game strings, assets, keys, hostnames or captures; nothing runs in or is linked by `tessera-server` (no protocol minor); no gate touched. Provenance "Design" is this own-format spec's convention (as in revisions 4 and 5); the one install-derived claim (the four dictionary names `MapNote_Type`, `FellowshipMakerUI_GroupSize`, `FellowshipMakerUI_DifficultyTier`, `Mount_Type` with their kinds) carries an inline M1 mark. Spot-checks (read-only, 2026-10-13): the four dictionary names and the enum mappers are used by `crates/gamedata` and `crates/net` selector resolution over the install (passing P5 real-data tests), and `MapNote_Type`/`Mount_Type` are decoded as bitfields in `crates/formats`, corroborating the M1 claim; the cross-referenced mount facts (status mapper 0x230002C9, war-steed bit 0x38, vital mapper 0x23000003) were confirmed against the `lua-plugin-api.md` §15.5 BIN pass reviewed in parallel. Vectors T1–T3 and the ranges of the hostile rows are internally consistent with the §6.5, §9, §10.3, §11.1 and §13 rules. **Rulings on the P5 OPENs** (review notes, not facts): the numeric-enum-key question (§16) is the same owner policy already open for P1–P3, non-blocking; `MountChanged.combat` as a Tessera field (§16) and the implementer's seven conservative-implementation points are endorsed as implemented and left for the spec owner. **Dependency note (non-blocking):** the `map-region` family (§8.3) and the `MapNoteType`/`GroupSize`/`DifficultyTier` contexts (§8.6) reference `map-windows.md` §5/§6.7/§7.2 and `travel-windows.md` §6.4, both still in Review under other reviewers; acceptance here follows the P3 precedent (revision 5 accepted while `npc-windows.md` was in Review) and the §8.3 note that the row "stands until that spec is Accepted"; if a sibling review changes those definitions, §8.3/§8.6 must be re-checked. 2026-10-11 (revision 5, P3 parts N-D1 … N-D4): independent review against CLEAN_ROOM.md §5.3 and `npc-windows.md` §5.3, §6.3, §7.8, §10: **passed**; the record is in §18.P3. 2026-10-10 (revision 4): independent review against CLEAN_ROOM.md §5.3, decision 0025 D1–D5, decision 0024 §2 and §4 and LEGAL.md §11.1 rule 5: **passed**; the record is in §18.3. Earlier: 2026-10-09 (revision 2), review against decision 0024 §2 and §4, LEGAL.md §11.1 rule 5, the CLAUDE.md content rules, ARCHITECTURE §19.1, the `tessera-net` API (`session.rs`, `model.rs`, `sandbox/mod.rs`) and every spec and decoder view cited in §8.3. 31 findings (R1–R31), all design defects fixed in this revision by the reviewer (allowed: the spec holds design facts only); no client fact was added. Every selector attribute was confirmed against an Accepted spec and, where named, its decoder view. Findings, fixes and the remaining non-blocking OPENs: §18.1. Revision 3 (spec owner, design role, 2026-10-09): 31 implementation-phase findings verified against this text and the `tessera-net` and client sources (§18.2: S1–S31): all real, 29 fixed, S12 accepted as a stated gap, the policy part of S24 recorded as an OPEN. Revision 3 independent review (spec reviewer, Clean-Room-Role: review, 2026-10-09; a session that wrote none of revisions 1–3 and no code): checked against `docs/CLEAN_ROOM.md` §5.3, decision 0024 §2 (client half only, data-free server, game rules stay T3) and §4 (values scripted, never derived), LEGAL.md §11.1 rule 5, the CLAUDE.md content rules, ARCHITECTURE §19.1 (every §9 variant listed; groups, session rules and the test-server refusals match) and the cited specs (all Accepted except `server-content.md`, Draft, from which the feed takes nothing LEGAL.md §11.1 does not state itself). Every §8.3 family and attribute was traced to its Accepted spec section and property name and to the named decoder view in `crates/formats` and `crates/wstate` (`ItemKind`'s 15 variants are the 15 keywords; `EffectRole`, `TemplateKind`, `MapKind`, `Role` variants exist as cited). R1–R31 and S1–S31: each fix is present and consistent with the rest of the text. Vectors: the SplitMix64 outputs, the seven samples and the trace of §14.3 were recomputed with a throwaway script and agree; Vectors A, B, D, E and F were re-derived line by line (times, event order, field order and formats, window and item ids, skips, drops, end times; facing 359.999 round-trips to 359.99899, written `0.00`) and agree; all 45 hostile rows agree with the grammar, the error order and the position rules; the implementation's vector tests agree (supporting evidence only). Result: **pass**. Rulings on the implementer OPENs (review notes, not facts; the spec owner writes them into the text at the next revision): §3.1 guard (1) agreed: the exception "`tessera-net` without `scenario`" cannot hold under cargo feature unification, drop it from the allow list; (2) and (3) confirmed (dev-dependencies are server builds; in-process server hosts such as `tessera-loadtest` are server builds and may link `tessera-net` only because `tessera-server` itself does not). §3.1 module naming: the `selector` module named in the placement table is placement, not an interface; `tessera-gamedata` exposing its selector types at the crate root conforms. §11.1 log size: non-blocking; a bound is recommended (for example 256 MiB with a run-time `LogOverflow`, exit 5), because a hostile local file within every limit can still write a very large log; until then the USER_GUIDE warning suffices. §12.4 (1) the unplayed windowed input script is an accepted P0 gap (windowed logs are not normative), refusing a windowed run whose `enter` needs an `accept-character` name (exit 2) is acceptable, and the proposed public input player in `tessera_net::scenario` is endorsed; (2) driver-only headless runs with an install, an exact or default spawn and no `--screenshot` are acceptable; (3) "the client's configured `avatar`" means the avatar the client actually configures for the sandbox: none in a driver-only run, which need not load the catalog for it; (4) exit 2 for a missing or non-regular `--scenario` path and 1 for an unreadable file are consistent with the exit table and should be added to it; (5) an install the user named that cannot be used exits 4 with `InstallUnreadable`: agreed (§8.7 covers only "no install found"). §13 (a) align rule 1 with `apps/client/tests/scenarios/`, where the replay test reads them; (b) keep "(or CC0-1.0)" (LEGAL.md §11.1 rule 7 and the CLAUDE.md fixture rule allow CC0) and widen the content test; a GPL-only test is stricter than the spec, not a violation. §16 `tessera-net` points: (1) `shared` in both `ItemPlace` and `ContainerSize` (the §10.3 example and the file keyword win over the general enum rule); (2)–(18) confirmed as implemented. §16 `tessera-gamedata` points (1)–(10) confirmed; for (5), keys 1–64 map to bits 0–63 (`property-system.md` §7.3), so a key above 64 matching nothing is right; for (7), `appearance.md` §2.1 (Accepted) states the two gender values, so using them with the per-install presence check is allowed. The owner-policy OPEN on numeric enum keys (§16) and the later-milestone OPENs (§8.3, §16) stay non-blocking. |
+| **Reviewer** | Revision 2: spec reviewer (Clean-Room-Role: review), a session separate from the first-draft author, 2026-10-09; it also wrote R1–R31, so those fixes are unreviewed. Revision 3: pending (an independent session). Revision 4: a Claude review session in the spec-reviewer role (Clean-Room-Role: review) that wrote no part of decision 0025, of the P1 revisions of `scenario-feed.md`, `tessera-protocol.md`, `test-server.md` and `server-content.md`, or of the code, 2026-10-10 (passed, §18.3). Revision 5 (P3 parts): a Claude review session in the spec-reviewer role (Clean-Room-Role: review) that wrote no part of the P3 revision, of `npc-windows.md` or of the P3 code, 2026-10-11 (passed, §18.P3). Revision 6 (P2 parts): a Claude review session in the spec-reviewer role (Clean-Room-Role: review) that wrote no part of revision 6, of decision 0032, of the other P2 specs or of the P2 code, 2026-10-11 (passed, §18.4.1). Revision 7 ("P4 social" parts): a Claude review session in the spec-reviewer role (Clean-Room-Role: review) that wrote no part of decision 0035, of the P4 revisions of `tessera-protocol.md`, `test-server.md` or `scenario-feed.md`, or of the code, 2026-10-11 (passed, §18.5) Revision 8 (P5 travel parts): a Claude review session in the spec-reviewer role (Clean-Room-Role: review) that wrote no part of the P5 revision or the P5 code, 2026-10-11 (passed, §18.P5). |
+| **Review record** | 2026-10-11 (P5 travel parts, T-D1 … T-D10): independent review by a session that wrote no part of the P5 revision or the P5 code, against CLEAN_ROOM.md §5.3, decision 0024 §2 and §4 (client half only; values scripted, never derived) and LEGAL.md §11.1 rule 5: **passed, every item**. Every P5 statement is a functional fact of Tessera's own feed format (step keywords, options, event fields with types and ranges, log forms, limits) or an install-derived reference marked for its source; no code or pseudo-code (the scenario and log blocks are Tessera's own text format, the braces name event fields as §9 does); API, event, property and label names are interoperability identifiers; all vector text is invented (§14.T3 notes this), no game strings, assets, keys, hostnames or captures; nothing runs in or is linked by `tessera-server` (no protocol minor); no gate touched. Provenance "Design" is this own-format spec's convention (as in revisions 4 and 5); the one install-derived claim (the four dictionary names `MapNote_Type`, `FellowshipMakerUI_GroupSize`, `FellowshipMakerUI_DifficultyTier`, `Mount_Type` with their kinds) carries an inline M1 mark. Spot-checks (read-only, 2026-10-13): the four dictionary names and the enum mappers are used by `crates/gamedata` and `crates/net` selector resolution over the install (passing P5 real-data tests), and `MapNote_Type`/`Mount_Type` are decoded as bitfields in `crates/formats`, corroborating the M1 claim; the cross-referenced mount facts (status mapper 0x230002C9, war-steed bit 0x38, vital mapper 0x23000003) were confirmed against the `lua-plugin-api.md` §15.5 BIN pass reviewed in parallel. Vectors T1–T3 and the ranges of the hostile rows are internally consistent with the §6.5, §9, §10.3, §11.1 and §13 rules. **Rulings on the P5 OPENs** (review notes, not facts): the numeric-enum-key question (§16) is the same owner policy already open for P1–P3, non-blocking; `MountChanged.combat` as a Tessera field (§16) and the implementer's seven conservative-implementation points are endorsed as implemented and left for the spec owner. **Dependency note (non-blocking):** the `map-region` family (§8.3) and the `MapNoteType`/`GroupSize`/`DifficultyTier` contexts (§8.6) reference `map-windows.md` §5/§6.7/§7.2 and `travel-windows.md` §6.4, both still in Review under other reviewers; acceptance here follows the P3 precedent (revision 5 accepted while `npc-windows.md` was in Review) and the §8.3 note that the row "stands until that spec is Accepted"; if a sibling review changes those definitions, §8.3/§8.6 must be re-checked. 2026-10-11 (revision 7, "P4 social" parts): independent review against CLEAN_ROOM.md §5.3, decision 0035 D1–D4, decision 0024 §2 and LEGAL.md §11.1 rule 5: **passed**; the record is in §18.5. 2026-10-11 (revision 6, P2 parts D1–D4, commit 7b14f27): independent review against CLEAN_ROOM.md §5.3, decision 0032 D1–D4, LEGAL.md §11.1 rule 5, decision 0024 §2 and §0 item 3: **passed**; §14.9 O8, O10–O12 and §14.11 R1–R10 re-derived, invariant 11 checked; non-blocking notes (a)–(e); the record is in §18.4.1. 2026-10-11 (revision 5, P3 parts N-D1 … N-D4): independent review against CLEAN_ROOM.md §5.3 and `npc-windows.md` §5.3, §6.3, §7.8, §10: **passed**; the record is in §18.P3. 2026-10-10 (revision 4): independent review against CLEAN_ROOM.md §5.3, decision 0025 D1–D5, decision 0024 §2 and §4 and LEGAL.md §11.1 rule 5: **passed**; the record is in §18.3. Earlier: 2026-10-09 (revision 2), review against decision 0024 §2 and §4, LEGAL.md §11.1 rule 5, the CLAUDE.md content rules, ARCHITECTURE §19.1, the `tessera-net` API (`session.rs`, `model.rs`, `sandbox/mod.rs`) and every spec and decoder view cited in §8.3. 31 findings (R1–R31), all design defects fixed in this revision by the reviewer (allowed: the spec holds design facts only); no client fact was added. Every selector attribute was confirmed against an Accepted spec and, where named, its decoder view. Findings, fixes and the remaining non-blocking OPENs: §18.1. Revision 3 (spec owner, design role, 2026-10-09): 31 implementation-phase findings verified against this text and the `tessera-net` and client sources (§18.2: S1–S31): all real, 29 fixed, S12 accepted as a stated gap, the policy part of S24 recorded as an OPEN. Revision 3 independent review (spec reviewer, Clean-Room-Role: review, 2026-10-09; a session that wrote none of revisions 1–3 and no code): checked against `docs/CLEAN_ROOM.md` §5.3, decision 0024 §2 (client half only, data-free server, game rules stay T3) and §4 (values scripted, never derived), LEGAL.md §11.1 rule 5, the CLAUDE.md content rules, ARCHITECTURE §19.1 (every §9 variant listed; groups, session rules and the test-server refusals match) and the cited specs (all Accepted except `server-content.md`, Draft, from which the feed takes nothing LEGAL.md §11.1 does not state itself). Every §8.3 family and attribute was traced to its Accepted spec section and property name and to the named decoder view in `crates/formats` and `crates/wstate` (`ItemKind`'s 15 variants are the 15 keywords; `EffectRole`, `TemplateKind`, `MapKind`, `Role` variants exist as cited). R1–R31 and S1–S31: each fix is present and consistent with the rest of the text. Vectors: the SplitMix64 outputs, the seven samples and the trace of §14.3 were recomputed with a throwaway script and agree; Vectors A, B, D, E and F were re-derived line by line (times, event order, field order and formats, window and item ids, skips, drops, end times; facing 359.999 round-trips to 359.99899, written `0.00`) and agree; all 45 hostile rows agree with the grammar, the error order and the position rules; the implementation's vector tests agree (supporting evidence only). Result: **pass**. Rulings on the implementer OPENs (review notes, not facts; the spec owner writes them into the text at the next revision): §3.1 guard (1) agreed: the exception "`tessera-net` without `scenario`" cannot hold under cargo feature unification, drop it from the allow list; (2) and (3) confirmed (dev-dependencies are server builds; in-process server hosts such as `tessera-loadtest` are server builds and may link `tessera-net` only because `tessera-server` itself does not). §3.1 module naming: the `selector` module named in the placement table is placement, not an interface; `tessera-gamedata` exposing its selector types at the crate root conforms. §11.1 log size: non-blocking; a bound is recommended (for example 256 MiB with a run-time `LogOverflow`, exit 5), because a hostile local file within every limit can still write a very large log; until then the USER_GUIDE warning suffices. §12.4 (1) the unplayed windowed input script is an accepted P0 gap (windowed logs are not normative), refusing a windowed run whose `enter` needs an `accept-character` name (exit 2) is acceptable, and the proposed public input player in `tessera_net::scenario` is endorsed; (2) driver-only headless runs with an install, an exact or default spawn and no `--screenshot` are acceptable; (3) "the client's configured `avatar`" means the avatar the client actually configures for the sandbox: none in a driver-only run, which need not load the catalog for it; (4) exit 2 for a missing or non-regular `--scenario` path and 1 for an unreadable file are consistent with the exit table and should be added to it; (5) an install the user named that cannot be used exits 4 with `InstallUnreadable`: agreed (§8.7 covers only "no install found"). §13 (a) align rule 1 with `apps/client/tests/scenarios/`, where the replay test reads them; (b) keep "(or CC0-1.0)" (LEGAL.md §11.1 rule 7 and the CLAUDE.md fixture rule allow CC0) and widen the content test; a GPL-only test is stricter than the spec, not a violation. §16 `tessera-net` points: (1) `shared` in both `ItemPlace` and `ContainerSize` (the §10.3 example and the file keyword win over the general enum rule); (2)–(18) confirmed as implemented. §16 `tessera-gamedata` points (1)–(10) confirmed; for (5), keys 1–64 map to bits 0–63 (`property-system.md` §7.3), so a key above 64 matching nothing is right; for (7), `appearance.md` §2.1 (Accepted) states the two gender values, so using them with the per-install presence check is allowed. The owner-policy OPEN on numeric enum keys (§16) and the later-milestone OPENs (§8.3, §16) stay non-blocking. |
 | **Implements into** | `crates/net` (`tessera_net::scenario`: parser, static checks, resolved scenario, run-time feed, headless driver, canonical log; the sandbox backend runs it; the overlay backend over the test-server backend, §12.5; plain-sandbox creation, §9.6), `crates/gamedata` (selector resolution against the user's install, §8; property labels and kinds, §5.8, §8.6), `apps/client` (`--scenario`, `--scenario-log`, `--scenario-input`, overlay runs, §12), `fuzz/` (§11.4) |
 | **Companion documents** | [Decision 0024](../decisions/0024-parity-track.md) §2, §4, §5 (the feed's mandate); [LEGAL.md](../LEGAL.md) §8 and §11.1; `server-content.md` §3 and §7; `docs/ARCHITECTURE.md` §19 (domain events; it lists the variants of §9 by group); the gameplay specs cited in §8.3 (`items.md`, `combat-data.md`, `creatures.md`, `quests.md`, `economy.md`, `map-data.md`, `interaction.md`, `player-character.md`, `instances.md`), `appearance.md` §2 and §7, `coordinates.md` §4 and §7, `property-system.md` §7, `records.md` §7 |
 
@@ -79,7 +79,8 @@ on the date given), **Standard** (a published algorithm or standard).
 | UTF-8 | RFC 3629 | Standard |
 | Revision 4 (§18.3): overlay runs, looks and property values, the held-item slot, creation on the test-server backend, plain-sandbox creation, `remove-character`, `stat`, `item-property`, Vector G, the new hostile rows | [Decision 0025](../decisions/0025-p1-character-look-on-test-server.md) (spec writer, design, 2026-10-10); `character-screens.md` §5.2, §7.1, §7.1.1, §7.2, §8, `character-panels.md` §3.4, §7, §9, `item-tooltips.md` §6.5, §11 (Accepted, read 2026-10-10); `tessera-protocol.md` v1.1 §5.3, §6.2, §7.4 (revised the same day); `property-system.md` §3 (type codes), MP4 (the two PID families), §7.3 (bit ↔ key); `player-character.md` §6.2 (`NationalityTable_Nationality`). No game client, server or third-party tool was consulted | Design |
 | P3 revision (revision 5, §18.P3): the text function `action(…)` and `Text::Action`, the `rewards` and `buyback` steps, the events `QuestRewards` and `BuybackShown`, the command `BuyBack`, their patterns, input forms, log forms, limits, Vectors N1 and N2, the hostile rows N-H1 … N-H11 | [`npc-windows.md`](npc-windows.md) §5.3, §6.3, §7.8, §10 (spec writer, 2026-10-10; Review); `quests.md` §9 (Accepted). The windows' needs come from that dirty-room spec; the feed forms themselves are design | Design |
-| P5 travel revision (§18.P5): the step options and steps `markers`, `travel-end`, `instance-queue`, `mount-vital`, the options of `marker`, `travel-list`, `travel`, `instances`, `mount` and of the input form `join-instance`, marker sets and run-time marker ids, the family `map-region` and the `effect` attributes `mount-type` and `war-steed`, the label contexts `MapNoteType`, `GroupSize`, `DifficultyTier`, the types, fields, events `TravelEnded`, `MountVitalChanged`, `InstanceQueueChanged` and command `LeaveQueue`, their log forms (with the rule that fields added to existing variants are written only when not at their default), limits, Vectors T1–T3, hostile rows T-H1 … T-H18 | What the windows and views must show: `travel-windows.md` §4.10, §4.11, §5.2, §6.5, §6.8, §9; `map-windows.md` §5.1, §5.4, §6.7, §7.2; `mounts.md` §2.3, §2.8, §4.1; `walker.md` §16.1, §16.5; `lua-plugin-api.md` §15.5 (all revised or written for P5 on 2026-10-11, Review). The four dictionary names the new label contexts and filters use (`MapNote_Type` a 64-bit bitfield, `FellowshipMakerUI_GroupSize` and `FellowshipMakerUI_DifficultyTier` enums, `Mount_Type` a 32-bit bitfield) were checked present with those kinds in the owner's install (M1, read-only, 2026-10-11). The feed forms themselves are design; no client code was consulted for this spec | Design |
+| Revision 7, "P4 social" (§18.5): waiting parts and one synchronised start with its time and lead, the player's `/play … sync` and `/playstart` as commands, fellow vitals, the disband command, the remote backend at minor 2, the plain sandbox's start answer, Vector H, the P4 hostile and backend cases (2026-10-11) | [Decision 0035](../decisions/0035-p4-social-on-test-server.md) (spec writer, design); `tessera-protocol.md` v1.2 §10.6 and Appendix A (revised the same day); `instruments.md` §8.8, §8.9 and §12 P4 Decision (start tolerance, waiting parts, the 0.7 s lead; revised 2026-10-11, referred to, not restated); `social-panels.md` §4.4, §8, §9 (draft, 2026-10-11). No game client, server or third-party tool was consulted for this revision | Design |
+| Revision 8, "P5 travel" (§18.P5): the step options and steps `markers`, `travel-end`, `instance-queue`, `mount-vital`, the options of `marker`, `travel-list`, `travel`, `instances`, `mount` and of the input form `join-instance`, marker sets and run-time marker ids, the family `map-region` and the `effect` attributes `mount-type` and `war-steed`, the label contexts `MapNoteType`, `GroupSize`, `DifficultyTier`, the types, fields, events `TravelEnded`, `MountVitalChanged`, `InstanceQueueChanged` and command `LeaveQueue`, their log forms (with the rule that fields added to existing variants are written only when not at their default), limits, Vectors T1–T3, hostile rows T-H1 … T-H18 | What the windows and views must show: `travel-windows.md` §4.10, §4.11, §5.2, §6.5, §6.8, §9; `map-windows.md` §5.1, §5.4, §6.7, §7.2; `mounts.md` §2.3, §2.8, §4.1; `walker.md` §16.1, §16.5; `lua-plugin-api.md` §15.5 (all revised or written for P5 on 2026-10-11, Review). The four dictionary names the new label contexts and filters use (`MapNote_Type` a 64-bit bitfield, `FellowshipMakerUI_GroupSize` and `FellowshipMakerUI_DifficultyTier` enums, `Mount_Type` a 32-bit bitfield) were checked present with those kinds in the owner's install (M1, read-only, 2026-10-11). The feed forms themselves are design; no client code was consulted for this spec | Design |
 | The review fixes of §18.1 (R1–R31) and §18.2 (S1–S31): design changes only | Review of 2026-10-09 (spec reviewer, review role) and the implementation-phase review of 2026-10-09 (fixed by the spec owner); the same clean sources as the first draft, read on that date. No game client, server or third-party tool was consulted | Design |
 
 ---
@@ -106,6 +107,8 @@ on the date given), **Standard** (a published algorithm or standard).
 | **Look** | A character's creation choices: 1–48 (property, value) entries carried in `Appearance` (§5.8, §9.1). |
 | **Property value** | A scripted value of a data property, written `PROPERTY=VALUE` (§5.8). |
 | **Synthetic scenario** | A scenario whose output does not depend on an install: run with no install, it produces its full intended log. |
+| **Waiting part** | (P4 social) A fellowship member's performance that is ready and waits for a synchronised start (§6.7); at most one per member. |
+| **Synchronised start** | (P4 social) One start that starts every waiting part at one common time, *S* (§6.7). |
 
 ---
 
@@ -591,7 +594,9 @@ For the player and each actor: active flag, last scripted maximum per vital (for
 expiry), target, combat flag. For the player in addition: quickslots (slot → content),
 learned skills and recipes (for logs only), quest states, open windows. The feed never
 computes a value from this state; it uses it only to address events (which instance to end,
-which max to repeat). Each piece of state follows the events the feed itself emits, from steps
+which max to repeat). (P4 social, §6.7) The feed also keeps the **waiting parts**: member name
+→ tune, at most 64 entries, set by `perform … sync` and `ReadyPerformance`, removed by
+`perform-withdraw` and emptied by every synchronised start. Each piece of state follows the events the feed itself emits, from steps
 and generic answers alike (for example a quickslot's content is the one of the last
 `QuickslotChanged` the feed emitted for that slot); a command the feed does not answer changes
 nothing.
@@ -827,6 +832,8 @@ server data). `buyback` takes its entries like `vendor` (REFLIST or binding, at 
 
 `named:NAME` is one token, NAME a string (1–64 bytes): `channel=named:"Lore"`.
 
+P4 social additions (synchronised performances, fellow vitals): §6.7.
+
 <a id="s6-5"></a>
 ### 6.5 Map, travel, mounts and instances
 
@@ -892,6 +899,56 @@ half classifies a recorded mount itself (`lua-plugin-api.md` §15.5); the feed d
 | `title` | `REF` | `TitleGranted` |
 
 A crafting bar is `cast player REF DURATION kind=craft` followed by `craft-result`.
+
+<a id="s6-7"></a>
+### 6.7 P4 social: synchronised performances and fellow vitals (decision 0035 D4)
+
+| Step | Arguments and options | Emits |
+|---|---|---|
+| `perform` … `sync` | `(ENTITY\|STRING) STRING sync` | `PerformanceReady { member, entity, tune }`: the member's part waits for a synchronised start. `member` is the STRING, the player's character name for `player`, or the actor's name; `entity` is the player or the actor, none for a STRING. Replaces the member's earlier waiting part. A member with an empty name, or a 65th distinct waiting member → skip |
+| `perform-start` | `[by=(ENTITY\|STRING)] [lead=DURATION]` (lead 0 … 10 s, default 700 ms) | `PerformanceSyncStart { by, at_ms, lead_ms }`, then the feed's waiting parts are emptied. `by` is the starter's name as for `member` (none without `by=`); `at_ms` = the virtual time of the tick that executes the step + `lead_ms`. Emitted also when nothing waits |
+| `perform-withdraw` | `ENTITY\|STRING` | `PerformanceWithdrawn { member }`; removes the member's waiting part. None waiting → skip |
+| `fellow-vital` | `STRING (health\|power\|resource=REF) CUR/MAX` (name 1–64 bytes; values as `vital`, §6.2) | `FellowVitalChanged { member, vital, current, max }` |
+
+**Forms.** `sync` is a keyword that stands after the tune; with it the first argument may be
+a STRING, and `delay=` is not allowed (`UnexpectedToken` at the `delay=` key). Without `sync`,
+`perform` keeps its §6.4 form (an ENTITY first; a STRING there is `UnexpectedToken`).
+`fellow-vital` takes a STRING only (an ENTITY there is `UnexpectedToken`): a member with an
+entity reports its vitals through `vital` of that entity (§6.2).
+
+**Meaning for the client half** (normative for the feed's events; the playing is
+`instruments.md` §8.8–§8.9 and §12 P4 Decision, which the client follows):
+
+- `PerformanceReady` makes the named member's part wait (the tune is read from the user's
+  own music folder, like a `PerformanceStarted` tune). A `PerformanceReady` for the player
+  is handled like an accepted `/play … sync` of that tune by the player.
+- `PerformanceSyncStart` is **one** synchronised start. Every part waiting in the client at
+  that moment, the player's and every member's, starts with the same start time *S*: on the
+  client's audio clock, the time at which it processes the event plus `lead_ms`; in a
+  headless run on the virtual clock, `at_ms` itself. The **start tolerance** is the one of
+  `instruments.md` §8.9; the feed defines none. The default lead of 700 ms equals the lead
+  `instruments.md` §12 P4 Decision 3 gives a local start.
+- `PerformanceWithdrawn` removes that member's waiting part, if any.
+- `FellowVitalChanged` is a vital of the fellowship member named `member` as the group
+  reports it, whether or not the member has an entity (`social-panels.md` §4.4: a row keeps
+  its vitals out of view). The client half shows, for each member row, the latest of the
+  member's `FellowVitalChanged` and (for a member with an entity) its entity's
+  `VitalChanged`.
+- `PerformanceStarted` with `delay` keeps its meaning (a solo-like start, *S* = processing time
+  + delay) and never starts a waiting part.
+
+**The player's commands** (§9.4): the client sends `ReadyPerformance { tune }` once it has
+accepted the player's `/play … sync` locally, and `StartPerformance` for `/playstart`. The feed
+records the player's part as waiting on `ReadyPerformance` (no event) and answers
+`StartPerformance`, under `defaults on`, with one `PerformanceSyncStart` by the player's
+character name with the default lead (§7.6). With a backend that accepts `StartPerformance`
+(the feed and the plain sandbox, §9.8) the client starts waiting parts **only** on the
+`PerformanceSyncStart` that comes back, never also locally, so a `/playstart` gives exactly
+one start; with a backend that refuses it (the test-server backend) the client keeps its
+local start of `instruments.md` §12 P4 Decision 3.
+
+Values stay scripted: the feed computes nothing but `at_ms` = tick time + lead, a sum of two
+values of the run (§15 invariant 12).
 
 ---
 
@@ -1049,6 +1106,7 @@ matches anything explicitly; `none` matches an absent value.
 | `invite [STRING]`, `answer-invite [accept\|decline]`, `leave-fellowship`, `kick [STRING]`, `set-leader [STRING]` | fellowship commands | |
 | `open-trade [ENTITY]`, `offer-trade`, `trade-ready` | trade commands | |
 | `friend [STRING]`, `unfriend`, `ignore-player`, `unignore` | list commands | |
+| `play-sync [tune=STRING]`, `play-start`, `disband` | (P4 social) `ReadyPerformance`, `StartPerformance`, `DisbandFellowship` | `tune=`: exact tune |
 | `choose-travel [entry=N]`, `join-instance [entry=N]`, `leave-instance`, `dismount` | world commands | |
 | `train [entry=N]`, `slot-trait [N]`, `craft [REF]` | progression commands | |
 | `create-character [name=STRING]`, `delete-character [STRING]` | character commands (before world entry) | The body may hold only character steps (§6.1) |
@@ -1090,6 +1148,8 @@ compatibility, binding, stack limits, prices, levels or requirements.
 | `DestroyItem` | `ItemRemoved` |
 | `TakeLoot` | per taken entry, in entry order: `LootTaken`, then `ItemAdded` (new item, quantity of the entry) at the first free backpack slot; from the first entry for which no backpack slot is free, nothing more (neither `LootTaken` nor `ItemAdded`) |
 | `CancelCast` | `CastEnded` (`cancelled`) for the player's active cast, removing its scheduled end |
+| `StartPerformance` | (P4 social) `PerformanceSyncStart { by: Some(the player's character name), at_ms: the tick's time + 700, lead_ms: 700 }`, then the waiting parts are emptied (§6.7) |
+| `ReadyPerformance` | (P4 social) no event; the player's part is recorded as waiting with the command's tune (§5.7, §6.7) |
 | `Chat` | as the sandbox's own chat path does without a scenario, which does not run while the feed runs (§3.2): a `ChatMessage` on the same channel and text with the player's name as sender; a tell to *PEER* instead gets `ChatMessage` on `System`, sender none, text *PEER* followed by ` is not in the sandbox.` (Vector F) |
 
 Every other command gets no generic answer. A command that refers to an unknown item, window
@@ -1134,6 +1194,7 @@ both see the state before that frame's poll.
 | `equip $item slot=VALUE`, `unequip $item`, `move-item $item to=CONTAINER slot=N`, `destroy $item`, `split $item Q` | inventory commands |
 | `quickslot N (REF\|$item\|empty)` | `SetQuickslot` |
 | `chat STRING [channel=…]` | `Chat` (channel values §7.5; default `say`) |
+| `play-sync STRING`, `play-start`, `disband` | (P4 social) `ReadyPerformance { tune }` (tune 1–256 bytes), `StartPerformance`, `DisbandFellowship` |
 | `join-channel STRING`, `leave-channel STRING`, `invite STRING`, `answer-invite accept\|decline`, `leave-fellowship`, `kick STRING`, `set-leader STRING`, `open-trade ENTITY`, `offer-trade ($item [qty=Q]\|coin=N)`, `trade-ready on\|off`, `friend STRING`, `unfriend STRING`, `ignore-player STRING`, `unignore STRING` | social commands |
 | `choose-travel N`, `join-instance N`, `leave-instance`, `dismount` | world commands |
 | `train N`, `slot-trait N (REF\|none)`, `craft REF [qty=Q]` | progression commands |
@@ -1514,6 +1575,10 @@ Fields are listed in log order (§10.3).
 | | `IgnoreList` | `names: Vec<String>` |
 | | `PerformanceStarted` | `entity: EntityId`, `tune: String`, `delay_ms: u32` |
 | | `PerformanceStopped` | `entity: EntityId` |
+| | `PerformanceReady` (P4 social) | `member: String`, `entity: Option<EntityId>`, `tune: String` |
+| | `PerformanceSyncStart` (P4 social) | `by: Option<String>`, `at_ms: u64`, `lead_ms: u32` |
+| | `PerformanceWithdrawn` (P4 social) | `member: String` |
+| | `FellowVitalChanged` (P4 social) | `member: String`, `vital: Vital`, `current: f32`, `max: f32` |
 | World | `MarkerAdded` | `marker: MarkerId`, `location: Location`, `label: Text`, `icon: Option<DataId>`, `quest: Option<Ref>` |
 | | `MarkerRemoved` | `marker: MarkerId` |
 | | `TravelShown` | `window: WindowId`, `source: Option<EntityId>`, `entries: Vec<{ entry: u16, destination: Ref, coin: u64 }>` |
@@ -1590,6 +1655,8 @@ Fields are listed in log order (§10.3).
 | | `OfferTrade` | `window: WindowId`, `item: Option<ItemId>`, `quantity: u32`, `coin: u64` |
 | | `SetTradeReady` | `window: WindowId`, `ready: bool` |
 | | `AddFriend` / `RemoveFriend` / `Ignore` / `Unignore` | `name: String` |
+| | `ReadyPerformance` (P4 social) | `tune: String` (1–256 bytes, no control characters) |
+| | `StartPerformance` / `DisbandFellowship` (P4 social) | — |
 | World | `ChooseTravel` / `JoinInstance` | `window: WindowId`, `entry: u16` |
 | | `LeaveInstance` / `Dismount` | — |
 | Progression | `TrainSkill` | `window: WindowId`, `entry: u16` |
@@ -1647,7 +1714,8 @@ skill.
   sends it from `instance-queue none` without them; another backend may send them, and the
   client half ignores them for `None`.
 - **Other backends.** The test-server backend follows §9.7: it takes `CreateCharacter` under
-  `character-screens.md` §7.1.1 and refuses every other new command with
+  `character-screens.md` §7.1.1, answers `SelectTarget` locally without sending anything
+  (revision 6, decision 0032 D1), and refuses every other new command with
   `NetError::InvalidCommand` (rule 5: its server has no gameplay). It also refuses `Chat` on
   the new channels `Fellowship` and `Named` with `NetError::InvalidCommand` until a minor
   version of `tessera-protocol.md` gives them a wire form (rule 5 allows chat). The sandbox
@@ -1655,6 +1723,14 @@ skill.
   commands (debug log), so client panels can be opened offline. The overlay backend of
   §12.5 routes the Inventory group to the feed and everything else to the test-server
   backend.
+- **P4 social** (decision 0035). The events of §6.7 follow the entity rule (surfaced
+  `InWorld`); `ReadyPerformance`, `StartPerformance` and `DisbandFellowship` are allowed
+  `InWorld`. Validation: `ReadyPerformance.tune` 1–256 bytes without control characters;
+  inbound `member` and `by` are names (cut and cleaned to `MAX_NAME_LEN`), `tune` 256 bytes;
+  a non-finite `FellowVitalChanged` value makes the event invalid. On the test-server backend
+  at protocol minor 2, `JoinChannel`, `LeaveChannel` and `Chat` on `Named` are accepted
+  (§9.8); the sentence above about `Named` applies below minor 2. The plain sandbox answers
+  `StartPerformance` (§9.8).
 
 > **OPEN:** (non-blocking; for the spec owner, raised by the P3 implementer of `crates/net`
 > after review, 2026-10-10) The parser refuses a repeated single reward kind (`coin`,
@@ -1689,7 +1765,7 @@ the delete button ghosted on this backend, `character-screens.md` §7.2). With a
 feed owns character answers (§7.5) and this rule does not run. Conformance: §14.10.
 
 <a id="s9-7"></a>
-### 9.7 Test-server backend (revision 4, decision 0025 D2, D4)
+### 9.7 Test-server backend (revision 4, decision 0025 D2, D4; revision 6, decision 0032 D1)
 
 The normative rule for `CreateCharacter` on the test-server (`remote`) backend is
 `character-screens.md` §7.1.1 (capability, command, `CharacterList` and
@@ -1709,7 +1785,73 @@ addition:
   `CharacterInfo { name, body: Some(the entry's body), class: None, level: None, look: the
   entry's look }` per entry, in the list's order, so the selection screen can show each
   character's figure.
-- `DeleteCharacter` and every other new command: refused as in §9.5.
+- **Local selection** (revision 6, [decision 0032](../decisions/0032-p2-targeting-on-test-server.md)
+  D1). In `InWorld` the backend answers `SelectTarget { target }` in `submit` and sends
+  **nothing** to the server, at any minor version:
+  1. The target is **known** when it is none, the player's entity, or an entity whose
+     creation the session has delivered and whose removal it has not: a remote entity
+     (`EntityCreated` delivered, no `EntityDespawned` since; `InterestReset` delivers a
+     despawn for each) or a streamed static (`StaticSpawned` delivered, no `EntityDespawned`
+     or `StaticsCleared` since). The check uses the events already handed to the session,
+     not messages received and not yet mapped.
+  2. For a known target the backend queues `TargetChanged { entity: the player, target }`.
+     Queued answers are delivered **first** in the next poll, before every event the backend
+     maps in that poll. So a `TargetChanged` naming an entity always lies between that
+     entity's creation and its removal in the event stream.
+  3. At most one answer is pending: a later `SelectTarget` with a known target before the
+     next poll replaces it.
+  4. Any other target: `Ok(())`, no event, a rate-limited debug log line; a pending answer
+     stays.
+  5. The backend keeps no selection and never emits `TargetChanged` on its own (not on a
+     despawn, `InterestReset`, teleport, appearance change or world entry), and never for an
+     entity other than the player.
+  6. Outside `InWorld`, `SelectTarget` is `NetError::InvalidState` (§9.5 states).
+  The client half clears a selection whose entity is removed by itself, sending no command
+  (decision 0032 D2); that rule is the same on every backend.
+- `DeleteCharacter`, `UseSkill`, `CancelCast`, `SetQuickslot` and every other new command:
+  refused as in §9.5.
+
+> **OPEN:** (implementer of `crates/net`, clean room, 2026-10-10; non-blocking) Item 1's
+> "known" is the backend's view of the events it handed to `Session`. `Session` may still drop
+> a handed `EntityCreated` or `StaticSpawned` as invalid (§9.5 event checks), which the
+> backend cannot see; such an entity stays known to the backend, so a `TargetChanged` naming
+> it could surface although its creation never did (invariant 11's "between creation and
+> removal" then holds only for the handed stream). The mapper builds those events from
+> protocol-validated messages and checked statics, so this is not expected to happen; the
+> implementation follows the text as written. Should the backend apply `Session`'s checks
+> itself, or should invariant 11 be read on the handed stream? Also: "static 900" of §14.11
+> is a label; a streamed static's ID comes from the backend's local range
+> (`tessera-protocol.md` §9.1), so the conformance tests use the ID its `StaticSpawned`
+> carried, and R8's statics are cleared by a region change, which needs `InterestReset` first
+> (§9.5 of the protocol), so 43 and 44 are despawned in that case too.
+
+<a id="s9-8"></a>
+### 9.8 P4 social: the test-server backend at minor 2 and the plain sandbox (decision 0035 D1, D4)
+
+**Test-server backend.** At negotiated minor 2 or higher with `CHAT_CHANNELS` advertised
+(`tessera-protocol.md` §3.1, §6.2.2, §10.6, Appendix A):
+
+- `JoinChannel { name }` sends `ChannelJoin`, `LeaveChannel { name }` sends `ChannelLeave`,
+  and `Chat { channel: Named { name } }` sends `ChatSend` with channel 6.
+- `ChannelJoined` and `ChannelLeft` from the server surface as `ChannelJoined { channel }` and
+  `ChannelLeft { channel }` (§9.2) with the server's spelling of the name; a `ChatMessage` on
+  channel 6 surfaces as `ChatMessage` on `ChatChannel::Named { name }`; `ChannelRefused`
+  surfaces as a System `ChatMessage` in Tessera's own words (Appendix A there).
+- Below minor 2, or without `CHAT_CHANNELS`: the three commands are refused with
+  `NetError::InvalidCommand` and nothing is sent.
+- At every minor: `Chat` on `Fellowship` is refused (no wire value; a fellowship exists only
+  in the feed), and so is every other Social command, `ReadyPerformance`, `StartPerformance`
+  and `DisbandFellowship` included (decision 0035 D2: synchronised-music relay is the
+  owner's open question). The client then keeps its local start for `/playstart` (§6.7).
+- The overlay backend (§12.5) keeps its P1 subset (decision 0035 D3): Social-group
+  statements stay `NotAllowedInOverlay`, and Social commands of an overlay run, chat and
+  channel commands included, go to the test-server backend under these rules.
+
+**Plain sandbox** (no scenario): `StartPerformance` is answered in `submit` with
+`PerformanceSyncStart { by: Some(the entered character's name), at_ms, lead_ms: 700 }`,
+where `at_ms` is the milliseconds since world entry by the `now` of that `submit`, rounded
+down, plus 700. It keeps no waiting parts; `ReadyPerformance`, `DisbandFellowship`,
+`JoinChannel` and `LeaveChannel` stay accepted and ignored (§9.5). Conformance: §14.13.
 
 ---
 
@@ -1831,6 +1973,11 @@ text` with `channel` one of `say`, `yell`, `emote`, `system`, `fellowship`, `tel
 without an appearance or a look). A variant added to
 `Event`, `Command` or one of their groups later MUST be given a log form in this table by the
 revision that adds it; until then the log writer writes its name followed by `unlogged`.
+(P4 social) The variants of §6.7 and §9.8 use the general rule of this section with the
+value forms above: `PerformanceReady member entity tune`, `PerformanceSyncStart by at_ms
+lead_ms`, `PerformanceWithdrawn member`, `FellowVitalChanged member vital current max`,
+`ReadyPerformance tune`, `StartPerformance` and `DisbandFellowship` (no fields); `at_ms` and
+`lead_ms` decimal (Vector H, §14.12).
 
 **P3 revision log forms.** `Text::Action(n)` is written `action(N)` (*N* decimal);
 `RewardKind` values lower case with words joined by `-` (`coin`, `glory`, `item-xp`,
@@ -1944,6 +2091,9 @@ any input, every allocation bounded by the limits below, and each violation a ty
 | Queue seconds (P5 travel) | 0 … 86,400 | `OutOfRange` |
 | Mount vitals (P5 travel) | finite, 0 ≤ CUR ≤ MAX ≤ 10^9 | `OutOfRange` |
 | Run-time marker ids (P5 travel) | 65,536 per run (§5.3) | the `markers` step is skipped (counted) |
+| (P4 social) Waiting parts | 64 members (§5.7, §6.7) | a `perform … sync` for a 65th member is skipped (counted); `ReadyPerformance` beyond it records nothing |
+| (P4 social) `perform-start` lead | 0 … 10 s | `OutOfRange` |
+| (P4 social) `ReadyPerformance.tune` (input form `play-sync`) | 1–256 bytes | `TooLong` (static); an empty tune `OutOfRange`; a longer one from the client half: `NetError::InvalidCommand` |
 
 > **OPEN:** (non-blocking; for the spec owner, raised by the documentation review of P0 and
 > recorded by the P0 exit verifier, 2026-10-09) No row bounds the size of the canonical log
@@ -1960,6 +2110,16 @@ any input, every allocation bounded by the limits below, and each violation a ty
 > the next poll (windowed), the end line is `reason=error … error=LogOverflow line=0` and the
 > client exits 5. `LogOverflow` is not a `RuntimeErrorKind` of the feed (the feed does not
 > fail; only the log does), and §10.2 item 7 and the §12.2 exit table do not name it yet.
+
+> **OPEN:** (non-blocking; for the spec owner, raised by the P4 review of `tessera_net` and
+> recorded by its implementer, 2026-10-11) A string may hold a raw TAB (§4.1), but
+> `ReadyPerformance.tune` has no control characters (§9.4), and the row above names only
+> `TooLong` and `OutOfRange` for the length. Implemented pending this decision: a TAB in the
+> tune of the input form `play-sync` or of the pattern `play-sync tune=` is the static error
+> `OutOfRange` at the tune's column (before, the line was only counted as input-skipped when
+> `Session` refused it). Decide the error kind, and whether `perform … sync` with such a tune
+> should be skipped too: today its `PerformanceReady` is emitted (the client half cleans the
+> tune to a space, §9.5) while the feed's waiting record keeps the raw tune.
 
 <a id="s11-2"></a>
 ### 11.2 Static errors
@@ -2192,18 +2352,32 @@ way.
 | Blocks | `repeat`; `on` with the patterns `equip`, `unequip`, `move-item`, `destroy`, `split`, `use-item`; `input` |
 | Input lines | `at T` lines (not `at pre`) with the forms `equip`, `unequip`, `move-item`, `destroy`, `split`, `use-item` (target `player`, `current` or `none`) |
 
+**No Combat group** (revision 6, [decision 0032](../decisions/0032-p2-targeting-on-test-server.md)
+D3). The subset deliberately holds no Combat-group statement: no step of §6.2 (`target`,
+`vital`, `combat`, `quickslot`, `cast`, `delay`, `interrupt`, `cooldown`, `effect`,
+`effect-end`, `damage`, `heal`, `defeat`, `revive`), no trigger on `target`, `use-skill` or
+`cancel-cast`, and no input form `target`, `use-skill`, `cancel-cast` or `quickslot`. Each is
+`NotAllowedInOverlay` at its line's first token (§14.9 O10–O12). Selection in an overlay run
+is the test-server backend's local answer (§9.7, §12.5.2); test actors are the server's
+entities, which a scenario cannot name, and combat values scripted on them would be seen by
+this client only.
+
 <a id="s12-5-2"></a>
 #### 12.5.2 Routing and order
 
 - **Commands.** The Inventory group (`MoveItem`, `EquipItem`, `UnequipItem`, `SplitStack`,
   `DestroyItem`, `UseItem`) goes to the feed, which processes it at its next tick (§7.4) with
   the generic answers of §7.6 under `defaults on`. Every other command goes to the
-  test-server backend unchanged, which refuses the other new groups (§9.7).
+  test-server backend unchanged, which answers `SelectTarget` locally and refuses the other
+  new commands (§9.7; revision 6). The feed never sees `SelectTarget`.
 - **Events.** In each poll the overlay first polls the test-server backend and queues its
   events, then lets the feed process its due ticks (at most 8, §7.1) and appends the feed's
   output. The per-tick delivery caps of §7.4 apply to the feed's output only.
 - **Diagnostics.** `scenario_status()` and `scenario_counters()` as in §3.4, and
   `appearance_shared()`: whether the server advertised `APPEARANCE_CHANGE`.
+- **P4 social** (decision 0035 D3). The subset of §12.5.1 is unchanged: no Social-group step
+  (§6.4, §6.7), pattern or input form is allowed in an overlay file, and every Social command
+  goes to the test-server backend (§9.8).
 
 <a id="s12-5-3"></a>
 #### 12.5.3 Clock and end
@@ -2860,6 +3034,11 @@ at 0.2s equip $shield slot=18
 | O5 | as O1, but *B*₀ holds the item 0x70009999 | *B*₀ marks the appearance dirty (its equipment differs from the empty *E*); the send at the end of the tick-0 poll carries both items, so the stored 0x70009999 is replaced. One send at tick 0, as in O1. (With no equip step in the file, that send would carry no items.) |
 | O6 | as O1, but the double refuses every `AppearanceSet` (answers *B*₀) | After the tick-0 send and its answer, no further `AppearanceSet` until *E* changes at 0.1 s; never more than one in flight. |
 | O7 | any | A file with `at 0s say "x"` is refused with `NotAllowedInOverlay` before anything connects (exit 3). |
+| O8 | as O1 | A `Chat` and a `Teleport` go to the double; an `EquipItem` goes to the feed; a `SelectTarget { target: None }` after world entry is answered by the test-server backend with `TargetChanged { entity: player, target: None }`, first in the next poll, the double receives no message for it, and no trigger of the feed sees it (revision 6, §9.7; before: refused). A `UseSkill` is refused with `NetError::InvalidCommand`. |
+| O9 | `tessera-server` in process, `appearance_change` true, two clients at minor 1 | The observer sees an `AppearanceChanged` for the overlay player's entity with the items 0x70001234 slot 17 and 0x70005678 slot 18 (P1 exit criterion 3). |
+| O10 | any | (Revision 6.) The file `tessera-scenario 1` / `at 0s target player none` is refused with `NotAllowedInOverlay` 2:1 before anything connects (exit 3). So is `at 0s vital player health 5/10`. |
+| O11 | any | (Revision 6.) The file `tessera-scenario 1` / `on target any` / `end` is refused with `NotAllowedInOverlay` 2:1 (exit 3). |
+| O12 | any | (Revision 6.) The file `tessera-scenario 1` / `input` / `at 1s target none` / `end` is refused with `NotAllowedInOverlay` 3:1 (exit 3). |
 
 > **OPEN:** (implementer of `crates/net`, clean room, 2026-10-10; non-blocking) O7's file
 > `at 0s say "x"` does not parse (`say` needs a sender before its text, §6.4), so it is
@@ -2868,8 +3047,6 @@ at 0.2s equip $shield slot=18
 > `NotAllowedInOverlay` 2:1. O3's "at tick 0 … with both items" is read with §5.5 "every
 > change of that list emits": the two equips of tick 0 give two events in that tick, the
 > sword alone and then both; the test asserts both.
-| O8 | as O1 | A `Chat` and a `Teleport` go to the double; an `EquipItem` goes to the feed; a `SelectTarget` is refused with `NetError::InvalidCommand` by the test-server backend. |
-| O9 | `tessera-server` in process, `appearance_change` true, two clients at minor 1 | The observer sees an `AppearanceChanged` for the overlay player's entity with the items 0x70001234 slot 17 and 0x70005678 slot 18 (P1 exit criterion 3). |
 
 <a id="s14-10"></a>
 ### 14.10 Plain-sandbox creation cases (revision 4)
@@ -3004,6 +3181,131 @@ pre > EnterWorld character="Testa"
 0.500 end reason=complete skipped=0 input-skipped=0 dropped=0 spilled=0
 ```
 
+<a id="s14-11"></a>
+### 14.11 Test-server selection cases (revision 6)
+
+The test-server backend with a **test double** of the server at minor 1 (R9 also at minor 0)
+that records every client message, in `InWorld` with player entity 7. Before each case it
+has delivered `EntityCreated` for entity 43 (kind `NonPlayer`, name `Wanderer 1`) and
+entity 44 (kind `Player`), and the backend has streamed static 900 (`StaticSpawned`), each
+in an earlier poll than the case's first command. "Next poll" is the first poll after the
+command. Moves and heartbeats are not counted as messages.
+
+| # | Commands and server traffic | Expected |
+|---|---|---|
+| R1 | `SelectTarget { target: Some(43) }` | `Ok`; the next poll's first event is `TargetChanged { entity: 7, target: Some(43) }`; the double receives no message |
+| R2 | `SelectTarget { target: None }` | Next poll: `TargetChanged { entity: 7, target: None }`; no message |
+| R3 | `SelectTarget { target: Some(7) }` | Next poll: `TargetChanged { entity: 7, target: Some(7) }` |
+| R4 | `SelectTarget { target: Some(99) }` (never created) | `Ok`; no event; no message |
+| R5 | `SelectTarget { target: Some(43) }`; before the next poll the double sends `EntityDestroy` 43 | Next poll: `TargetChanged { entity: 7, target: Some(43) }`, then `EntityDespawned { id: 43 }`; no further `TargetChanged` in any later poll |
+| R6 | The double sends `EntityDestroy` 44; after the poll that delivers `EntityDespawned { id: 44 }`, `SelectTarget { target: Some(44) }` | `Ok`; no event |
+| R7 | `SelectTarget { target: Some(43) }`, then `SelectTarget { target: Some(44) }`, then `SelectTarget { target: Some(99) }`, all before the next poll | Next poll: exactly one `TargetChanged { entity: 7, target: Some(44) }` |
+| R8 | `SelectTarget { target: Some(900) }`; after its answer, the backend clears its statics (`StaticsCleared` delivered), then `SelectTarget { target: Some(900) }` | First: `TargetChanged { entity: 7, target: Some(900) }`; second: no event |
+| R9 | R1 at minor 0 | As R1 |
+| R10 | `SelectTarget` in `Connected` (before world entry); `UseSkill`, `CancelCast`, `SetQuickslot` in `InWorld` | `NetError::InvalidState`; each of the others `NetError::InvalidCommand`; no message |
+
+---
+
+<a id="s14-12"></a>
+### 14.12 Vector H: fellow out of view, synchronised start, player's commands (P4 social)
+
+```text
+tessera-scenario 1
+title "Vector H"
+tick 100ms
+player "Tam"
+actor $brin kind=player name="Brin" pos=3,0,0 facing=270
+at 0s spawn $brin
++0s fellowship player $brin "Cael" leader=player
++0s fellow-vital "Cael" health 300/500
++0s vital $brin health 800/800
++0.2s perform $brin "Reel" sync
++0s perform "Cael" "Reel" sync
+at 1s perform-withdraw "Cael"
++0s perform "Cael" "Jig" sync
+at 1.5s perform-start by="Cael" lead=1s
+on play-sync
++0s say $brin "Ready when you are."
+end
+on play-start
++0s fellow-vital "Cael" power 50/100
+end
+input
+at 0.5s play-sync "Reel"
+at 2s play-start
+end
+```
+
+Expected log. "Cael" has no entity, so its vitals come as `FellowVitalChanged` (§6.7). At
+0.500 the player's `ReadyPerformance` fires the first trigger; it has no generic event. At
+1.500 three parts wait (Brin "Reel", Cael "Jig", the player's "Reel"); the start is
+attributed to "Cael", and *S* = 1.500 + 1.000 = 2.500 on the virtual clock. At 2.000 the
+player's `StartPerformance` gets the generic answer (lead 700 ms, *S* = 2.700) before the
+trigger body (§7.4 step 1), although nothing waits any more. The last input is processed at
+2.000 and the agenda is then empty (§7.3).
+
+```text
+tessera-scenario-log 1
+install none
+tick 100
+title "Vector H"
+pre > Connect
+pre Connected characters=["Tam"]
+pre > EnterWorld character="Tam"
+0.000 WorldEntered entity=player name="Tam" at=0.000,0.000,0.000 facing=90.00
+0.000 LocationReport entity=player at=0:0.000,0.000,0.000 facing=90.00 anchor=none cause=entered
+0.000 EntitySpawned entity=$brin kind=player name="Brin" at=3.000,0.000,0.000 facing=270.00
+0.000 FellowshipChanged members=[{name="Tam" entity=player leader=yes},{name="Brin" entity=$brin leader=no},{name="Cael" entity=none leader=no}]
+0.000 FellowVitalChanged member="Cael" vital=health current=300 max=500
+0.000 VitalChanged entity=$brin vital=health current=800 max=800
+0.200 PerformanceReady member="Brin" entity=$brin tune="Reel"
+0.200 PerformanceReady member="Cael" entity=none tune="Reel"
+0.500 > ReadyPerformance tune="Reel"
+0.500 ChatMessage channel=say sender="Brin" text="Ready when you are."
+1.000 PerformanceWithdrawn member="Cael"
+1.000 PerformanceReady member="Cael" entity=none tune="Jig"
+1.500 PerformanceSyncStart by="Cael" at_ms=2500 lead_ms=1000
+2.000 > StartPerformance
+2.000 PerformanceSyncStart by="Tam" at_ms=2700 lead_ms=700
+2.000 FellowVitalChanged member="Cael" vital=power current=50 max=100
+2.000 end reason=complete skipped=0 input-skipped=0 dropped=0 spilled=0
+```
+
+For P4 exit criterion 3 a client test plays this vector (or a scenario like it with tunes
+from a test music folder) and checks the parts started at 1.500 against `instruments.md` §8.9
+with *S* = 2.500.
+
+<a id="s14-13"></a>
+### 14.13 P4 social: hostile rows and backend cases
+
+Hostile rows (as §14.5: line 1 is `tessera-scenario 1`):
+
+| Input | Expected error |
+|---|---|
+| line 2 `at 0s perform-start lead=11s` | `OutOfRange` 2:21 |
+| line 2 `at 0s perform-start by=$ghost` | `UndefinedBinding` 2:21 |
+| line 2 `at 0s perform "Ann" "Tune"` | `UnexpectedToken` 2:15 (a STRING member only with `sync`) |
+| line 2 `at 0s perform "Ann" "Tune" sync delay=1s` | `UnexpectedToken` 2:33 (`delay=` with `sync`) |
+| line 2 `at 0s fellow-vital "Ann" health 5/4` | `OutOfRange` 2:33 (CUR above MAX) |
+| line 2 `at 0s fellow-vital player health 1/1` | `UnexpectedToken` 2:20 (an entity reports through `vital`) |
+| overlay run (§12.5.1), line 2 `at 0s perform-start` | `NotAllowedInOverlay` 2:1 |
+| overlay run, lines 2–3 `on play-start`, `end` | `NotAllowedInOverlay` 2:1 |
+
+Backend cases (test doubles as in §14.9; no scenario file unless stated):
+
+| # | Backend | Commands | Expected |
+|---|---|---|---|
+| S1 | test-server double, minor 2, `CHAT_CHANNELS` | `JoinChannel "Lore"`; the double answers `ChannelJoined "Lore"` | one `ChannelJoin "Lore"` sent; event `ChannelJoined { channel: "Lore" }` |
+| S2 | as S1, joined | `Chat { Named "Lore", "hi" }`; the double echoes | one `ChatSend` channel 6 sent; event `ChatMessage` on `Named { name: "Lore" }`, sender the player's name |
+| S3 | as S1 | `JoinChannel "lore"`; the double answers `ChannelJoined "Lore"` (its spelling) | event `ChannelJoined { channel: "Lore" }` |
+| S4 | as S1 | `JoinChannel "Lore"` twice; the double answers `ChannelJoined`, then `ChannelRefused(ALREADY_JOINED)` | one `ChannelJoined` event, then one System `ChatMessage`; nothing else |
+| S5 | test-server double, minor 1 (or minor 2 without `CHAT_CHANNELS`) | `JoinChannel "Lore"`, `LeaveChannel "Lore"`, `Chat { Named "Lore", … }` | each refused with `NetError::InvalidCommand`; nothing sent |
+| S6 | test-server double, minor 2, `CHAT_CHANNELS` | `Chat { Fellowship, … }`, `ReadyPerformance { "Reel" }`, `StartPerformance`, `DisbandFellowship`, `InviteToFellowship { "Brin" }` | each refused with `NetError::InvalidCommand`; nothing sent |
+| S7 | plain sandbox, character "Testa" entered at `now` = *t*₀ | `StartPerformance` at *t*₀ + 1,234.5 ms | `PerformanceSyncStart { by: Some("Testa"), at_ms: 1,934, lead_ms: 700 }` |
+| S8 | plain sandbox | `ReadyPerformance { "Reel" }`, `DisbandFellowship`, `JoinChannel "Lore"` | no event |
+| S9 | `tessera-server` in process, two clients at minor 2 | A joins "Lore", B joins "lore", A sends "hi" on it, B leaves, A sends "again" | A: `ChannelJoined "Lore"`, then its echo of "hi", then its echo of "again"; B: `ChannelJoined "Lore"`, "hi" from A, `ChannelLeft "Lore"`, and not "again" (P4 exit criterion 2) |
+
+<a id="s15"></a>
 <a id="s14-t1"></a>
 ### 14.T1 Vector T1: travel rows, route, travel end, note type, empty marker set (P5 travel)
 
@@ -3165,9 +3467,6 @@ pre > EnterWorld character="Testa"
 This log names no record and holds only invented text, but it is not an `install none` log, so
 it is a test vector of `tessera-net`, never a committed log (§10.5).
 
----
-
-<a id="s15"></a>
 ## 15. Invariants
 
 1. `tessera-net` never interprets a `DataId` and has no dependency on a data-decoding crate;
@@ -3190,7 +3489,18 @@ it is a test vector of `tessera-net`, never a committed log (§10.5).
 10. Every value of a `PropertyChanged`, `ItemProperty` or look entry the feed emits is the
     value written in the file (or a `DataId` of a resolved element); the install supplies
     only property IDs, kinds and label keys (§5.8).
-11. (P5 travel) Every travel row value (cost, minimum level, flags, route, area), every
+11. (Revision 6.) A selection on the test-server backend never reaches the server: no client
+    message is caused by `SelectTarget`; the backend's only `TargetChanged` events answer a
+    `SelectTarget`, name the player as `entity`, and lie between the target's creation and
+    removal in the event stream (§9.7).
+12. (P4 social) A `PerformanceSyncStart`'s `at_ms` is the virtual time of the tick that emits
+    it plus its `lead_ms`, and `lead_ms` is the value written (700 for the generic answer);
+    every `FellowVitalChanged` value is the value written. After a `PerformanceSyncStart` the
+    feed holds no waiting part.
+13. (P4 social) The test-server backend sends nothing for a Social command except
+    `ChannelJoin`, `ChannelLeave` and `ChatSend` channel 6, and those only at minor ≥ 2 with
+    `CHAT_CHANNELS`; an overlay run sends the server nothing new (§12.5.5).
+14. (P5 travel) Every travel row value (cost, minimum level, flags, route, area), every
     instance row value (level, size, tier, locked), queue state and time, mount class and
     mount vital the feed emits is the one written in the file; the feed reads none of them
     from the install and never derives one from another.
@@ -3209,6 +3519,23 @@ it is a test vector of `tessera-net`, never a committed log (§10.5).
 > **OPEN:** (non-blocking, P4) The synchronised start tolerance of `PerformanceStarted` is
 > taken from `instruments.md` when P4 specifies the synchronised `/play`; v1 carries only the
 > scripted delay.
+>
+> **Answered ("P4 social", 2026-10-11, decision 0035 D4):** a synchronised `/play` is the
+> waiting parts and the one start of §6.7 (`PerformanceReady`, `PerformanceSyncStart` with
+> `at_ms` and `lead_ms`, `PerformanceWithdrawn`); the tolerance is `instruments.md` §8.9,
+> referred to and not restated. `PerformanceStarted` keeps its meaning (a scripted delay, no
+> tolerance).
+
+> **OPEN:** (non-blocking, "P4 social", for the owners of `instruments.md` and
+> `social-panels.md`) Two readings this revision asks of them: (1) `instruments.md` §12 P4
+> Decision 3 starts on the local `/playstart`; with a backend that accepts
+> `StartPerformance` the client starts only on the backend's `PerformanceSyncStart` (§6.7),
+> using its `lead_ms` as the lead, so one `/playstart` gives one start; and a
+> `PerformanceReady` for the player acts as an accepted `/play … sync`. (2) `social-panels.md`
+> TR3 shows member rows' vitals from `FellowVitalChanged` too (§6.7), and Q12's disband action
+> sends `DisbandFellowship`. Level, defeat and effects of a member **without** an entity have
+> no event yet; their row fields stay empty in the sandbox. If the owner's comparison (O130)
+> shows they matter, a later revision adds events like `FellowVitalChanged` for them.
 
 > **OPEN:** (non-blocking, P2) Golden images may need captures at several times within one
 > run (for example mid-cast). v1 captures only the frame after the last tick; a later
@@ -3313,6 +3640,28 @@ it is a test vector of `tessera-net`, never a committed log (§10.5).
 > `CraftRecipe_TierArray` (`economy.md` §5.1 rule 1; §8.2 "for a list, one of its
 > elements").
 
+> **OPEN:** (implementer note, "P4 social", `tessera-net`, 2026-10-11; non-blocking)
+> Readings the implementation of the "P4 social" revision had to choose; a reviewer should
+> confirm or correct them. (1) **`ReadyPerformance` under `defaults off`.** §6.7 says the feed
+> records the player's part on `ReadyPerformance` and puts "under `defaults on`" only on the
+> `StartPerformance` answer, but §7.6 lists the recording among the generic answers and §5.7
+> says a command the feed does not answer changes nothing. The code follows §5.7 and §7.6: with
+> `defaults off` a `ReadyPerformance` records nothing (a later `perform-withdraw player` then
+> skips). (2) **`perform-start by=ENTITY` and `perform-withdraw ENTITY`** take the player's or
+> actor's name and never skip for an actor that is not spawned (they carry no entity), while
+> `perform ENTITY … sync` skips like `fellowship` when the entity has no ID. (3) **Plain
+> sandbox with a finished scenario.** Once a scenario's feed has ended, the sandbox answers
+> `StartPerformance` as the plain sandbox of §9.8 does (as its chat path already answers chat
+> after the feed's end); §9.8 speaks only of "no scenario". (4) **Test-server backend, channel
+> answers** (`tessera-protocol.md` Appendix A): a `ChannelRefused` System line names the
+> channel as the client sent it (the request it answers), not the refusal's sanitised `name`
+> field; a channel request the protocol layer cannot send (the connection already closing, or
+> its 64 outstanding channel requests, `tessera-protocol.md` §17.4) gives one System line in
+> Tessera's words instead of an answer; `ChannelLeft(REMOVED)` gives `ChannelLeft`, then a
+> System line. (5) **Inbound `PerformanceStarted.tune`** is still cut to the chat length (1,024
+> bytes) as before this revision; the new events cut `tune` to 256 bytes (§9.5). §9.5 could
+> state the 256-byte cut for `PerformanceStarted` too.
+
 > **OPEN:** (non-blocking; P5 travel, for the spec owner) (1) The owner question on numeric
 > enum keys above now also covers `note-type=`, `size=` and `tier=` (§13 rule 6): until it is
 > decided, committed scenarios cannot show a map-note icon choice, a group size or a tier
@@ -3360,9 +3709,16 @@ it is a test vector of `tessera-net`, never a committed log (§10.5).
 | 2026-10-10 | Revision 4 (spec writer, design; decision 0025): property values and looks (§4.2, §4.5, §5.8), looks on characters and in the base appearance (§5.1), held-item slots in the player's appearance (§5.5), steps `remove-character`, `stat`, `item-property` and `accept-character … look=` (§6.1), `create-character … nationality= look=` (§7.7), resolver methods `property`, `property_by_id` and contexts `Nationality`, `PropertyKey` (§8.6), new types, events and command field (§9.1–§9.4), session rules and the client-side property bound (§9.5), plain-sandbox creation (§9.6), the test-server backend's creation, looks, slots and character list (§9.7), log forms (§10.2–§10.3), limits and error kinds (§11), overlay runs with `--server` (§12.1, §12.5), content rules (§13), Vector F's new fields, Vector G, overlay and plain-sandbox cases, 15 hostile rows (§14), invariants 9–10 (§15), §16 OPEN 1 answered. Status Accepted → Review (§18.3). |
 | 2026-10-10 | Independent review of revision 4 (spec reviewer, Clean-Room-Role: review): passed, every item of CLEAN_ROOM.md §5.3; status Review → Accepted. Non-blocking notes (a)–(f) in §18.3 |
 | 2026-10-10 | P3 revision (revision 5; spec writer, for `npc-windows.md`, additive only, nothing renumbered): text function `action(…)` and `Text::Action` (§4.2, §5.2, §8.6, §9.1), steps `rewards` and `buyback` (§6.3), events `QuestRewards` and `BuybackShown` and command `BuyBack` (§9.1, §9.2, §9.4, §9.5), pattern `buy-back` (§7.5), input form `buy-back` (§7.7), log forms (§10.3), limits (§11.1), hostile rows N-H1 … N-H11 (§14.5), Vectors N1 and N2 (§14.N1, §14.N2), §18.P3. The parts of revision 5 are in Review (awaiting independent review); the Accepted revision-4 text is unchanged. |
+| 2026-10-10 | Revision 6 (spec writer, design; [decision 0032](../decisions/0032-p2-targeting-on-test-server.md)): local selection on the test-server backend (§9.5, §9.7), no Combat group in the overlay subset stated (§12.5.1), routing of `SelectTarget` in overlay runs (§12.5.2), O8 changed and O10–O12 added (§14.9; the implementer OPEN moved below the table), test-server selection cases R1–R10 (§14.11), invariant 11 (§15). No protocol change. Status Accepted → Review (§18.4). |
 | 2026-10-11 | Independent review of the P3 revision (revision 5; spec reviewer, Clean-Room-Role: review): passed, every item of CLEAN_ROOM.md §5.3; the P3 parts move Review → Accepted. Non-blocking notes (a)–(h) in §18.P3; no text other than the status, review record and this row changed |
-| 2026-10-11 | P5 travel revision (spec writer, for decision 0024 P5; additive only, nothing renumbered; revision number reconciled at merge with P2 and P4): marker sets and run-time marker ids (§5.3), steps `markers`, `marker-remove` of a set, `travel-end`, `instance-queue`, `mount-vital` and the options of `marker`, `travel-list`, `travel`, `instances`, `mount` (§6.5), pattern `leave-queue` (§7.5), input forms `join-instance … size= tier= level=` and `leave-queue` (§7.7), family `map-region` and `effect` attributes `mount-type`, `war-steed` (§8.3), label contexts (§8.6), types, fields, events `TravelEnded`, `MountVitalChanged`, `InstanceQueueChanged` and command `LeaveQueue` (§9.1, §9.2, §9.4, §9.5), log forms with added fields written only off their default (§10.3), counters (§10.4), limits (§11.1), fuzz note (§11.4), rule 6 (§13), hostile rows T-H1 … T-H18 (§14.5), Vectors T1, T2 and resolver case T3 (§14.T1–§14.T3), invariant 11 (§15), one OPEN (§16), §18.P5. The P5 parts are in Review; every other part keeps its status. |
+| 2026-10-11 | Merge of the P2 and P3 revisions (spec writer, design; no fact changed): both had been called revision 5, so P2's is renumbered **revision 6** (header, §9.5, §9.7, §12.5.1, §12.5.2, §14.9 O10–O12, §14.11, §17, §18.4); P3's revision 5 and §18.P3 stay. The vector and hostile-row names of the two do not collide (P2: O8, O10–O12, R1–R10 of §14.11, invariant 11; P3: N1, N2, N-H1 … N-H11, N-D1 … N-D4). Status: revision 5 (P3 parts) Accepted, revision 6 (P2 parts) Review. |
+| 2026-10-11 | Independent review of revision 6 (P2 parts; spec reviewer, Clean-Room-Role: review): passed, every item of CLEAN_ROOM.md §5.3; revision 6 moves Review → Accepted, and decision 0032 Proposed → Accepted. Non-blocking notes (a)–(e) in §18.4.1. No text other than the status, reviewer and review-record rows (rejoined onto one line each, so the header table renders), §18.4.1 and this row changed |
+| 2026-10-11 | Revision 7, the "P4 social" revision (spec writer, design; [decision 0035](../decisions/0035-p4-social-on-test-server.md) D2–D4), additive, no earlier section renumbered: terms (§2), waiting parts in the feed state (§5.7), new §6.7 (`perform … sync`, `perform-start`, `perform-withdraw`, `fellow-vital`), patterns `play-sync`, `play-start`, `disband` (§7.5), generic answers to `StartPerformance` and `ReadyPerformance` (§7.6), input forms (§7.7), events `PerformanceReady`, `PerformanceSyncStart`, `PerformanceWithdrawn`, `FellowVitalChanged` (§9.2), commands `ReadyPerformance`, `StartPerformance`, `DisbandFellowship` (§9.4), session rules (§9.5), new §9.8 (test-server backend at protocol minor 2: channel join and leave and `Named` chat; plain-sandbox start answer), log forms (§10.3), limits (§11.1), overlay subset unchanged (§12.5.2), Vector H (§14.12), hostile rows and backend cases S1–S9 (§14.13), invariants 12–13 (§15), §16 P4 OPEN answered and a new OPEN for the `instruments.md` and `social-panels.md` owners, §18.5. Status Accepted → Review |
+| 2026-10-11 | Independent review of the "P4 social" revision (spec reviewer, Clean-Room-Role: review): passed, every item of CLEAN_ROOM.md §5.3; status Review → Accepted. Record and non-blocking notes (a)–(c) in §18.5 |
+| 2026-10-11 | Merge of the P4 revision (spec writer, design; no fact changed): the "P4 social" revision, written unnumbered, is numbered **revision 7**; its sections that collided with P2's and P3's are renumbered: Vector H §14.11 → **§14.12**, the P4 hostile rows and backend cases §14.12 → **§14.13**, the review section §18.4 → **§18.5**, invariants 11–12 → **12–13** (P2's invariant 11 stays; anchors `s14-12`, `s14-13`, `s18-5`). §6.7 and §9.8 do not collide and keep their numbers. Statuses: revision 7 (P4 social) Accepted, revision 6 (P2) Accepted, revision 5 (P3) Accepted, each as its own review recorded. |
+| 2026-10-11 | P5 travel revision, numbered **revision 8** at the merge with P2, P3 and P4 (spec writer, for decision 0024 P5; additive only; its invariant is renumbered **14** and its sections keep the numbers §14.T1–§14.T3 and §18.P5): marker sets and run-time marker ids (§5.3), steps `markers`, `marker-remove` of a set, `travel-end`, `instance-queue`, `mount-vital` and the options of `marker`, `travel-list`, `travel`, `instances`, `mount` (§6.5), pattern `leave-queue` (§7.5), input forms `join-instance … size= tier= level=` and `leave-queue` (§7.7), family `map-region` and `effect` attributes `mount-type`, `war-steed` (§8.3), label contexts (§8.6), types, fields, events `TravelEnded`, `MountVitalChanged`, `InstanceQueueChanged` and command `LeaveQueue` (§9.1, §9.2, §9.4, §9.5), log forms with added fields written only off their default (§10.3), counters (§10.4), limits (§11.1), fuzz note (§11.4), rule 6 (§13), hostile rows T-H1 … T-H18 (§14.5), Vectors T1, T2 and resolver case T3 (§14.T1–§14.T3), invariant 11 (§15), one OPEN (§16), §18.P5. The P5 parts are in Review; every other part keeps its status. |
 | 2026-10-11 | Independent review of the P5 travel revision (spec reviewer, Clean-Room-Role: review; a session that wrote no part of the P5 revision or the P5 code): passed, every item of CLEAN_ROOM.md §5.3; the P5 parts move Review → Accepted. Non-blocking notes and the dependency on `map-windows.md`/`travel-windows.md` (in Review) in the header review record and §18.P5; no text other than the status lines, review record and this row changed |
+| 2026-10-13 | Merge of the P5 revision (spec writer, design; no fact changed): the "P5 travel" revision, written unnumbered, is numbered **revision 8**; its invariant 11 (the feed derives no travel, instance or mount value) is renumbered **14** because main's invariants 11–13 (P2, P4) came first; Vectors T1–T3 (§14.T1–§14.T3) and the review record §18.P5 keep their numbers (no collision with main's §14.11–§14.13 and §18.4–§18.5). Code and test comments that cite invariant 11 for the P5 rule, or the revision as "P5 travel", follow. |
 
 ---
 
@@ -3644,8 +4000,167 @@ Non-blocking notes, for the spec owner at the next revision (review notes, not f
 - (h) The lexical-class table of §4.2 and the `Text` row of §10.3 do not list `action(…)`;
   the P3 paragraphs below them do. Fold them in when the text is next renumbered.
 
+<a id="s18-4"></a>
+### 18.4 Revision 6: decision 0032
+
+**2026-10-10** (spec writer, design role). Tessera-own design for P2 exit criterion 4 ("M7's
+test actors can be selected and show a target frame"), recorded in
+[decision 0032](../decisions/0032-p2-targeting-on-test-server.md). Inputs: `docs/` only
+(decisions 0024 and 0025, LEGAL.md §11.1, this spec, `tessera-protocol.md`, `test-server.md`,
+`server-content.md`, and the event table of the Draft `combat-ui.md` §11 for what the client
+half does with the events named here); no research note, clone, client or decompiler output.
+
+| # | Change | Sections | Answers |
+|---|---|---|---|
+| D1 | The test-server backend answers `SelectTarget` locally with `TargetChanged` for the player: known targets only, at most one pending answer, delivered first in the next poll, no wire message, no own `TargetChanged` | §9.5, §9.7, §12.5.2, §14.9 O8, §14.11, §15 invariant 11 | P2 exit criterion 4 (selection) |
+| D2 | Target frames of test actors and clearing on despawn: client-half rules, no feed change; §9.7 records that the backend emits nothing on a despawn | §9.7 | P2 exit criterion 4 (target frame) |
+| D3 | The overlay subset holds no Combat-group step, trigger or input form (stated; unchanged in effect) | §12.5.1, §14.9 O10–O12 | Whether overlay runs script combat locally |
+| D4 | No protocol minor | — (§0 out of scope unchanged) | — |
+
+Editorial: the implementer OPEN inside the §14.9 table now stands below it (§18.3 note (b)),
+so rows O8–O12 render in the table; its text is unchanged.
+
+Rule-5 check (LEGAL.md §11.1): the server receives nothing new (a selection never leaves the
+client), keeps nothing new and runs no rule; `tessera-server` and the server dependency
+check are unchanged.
+
+**Status.** Review. An independent session that wrote no part of revision 6 or of decision
+0032 must check D1–D4 against the cited specs and rule 5, re-derive §14.9 O8, O10–O12 (the
+positions against §12.5.1's first-token rule) and §14.11 R1–R10, and check invariant 11.
+
+<a id="s18-4-1"></a>
+#### 18.4.1 Review record (revision 6)
+
+**2026-10-11**, spec reviewer (Clean-Room-Role: review), a Claude session that wrote no part
+of revision 6, of decision 0032, of the other P2 specs or of the P2 code. Text reviewed: this
+file and decision 0032 at commit 7b14f27 (`git diff origin/main...7b14f27`).
+
+Checked against CLEAN_ROOM.md §5.3, every item:
+
+- Functional facts only: the additions are Tessera's own design (a local answer, an ordering
+  rule, a bound, refusals, conformance cases); no client fact was added, so no provenance row
+  is due beyond the header statement that this spec holds design facts only. No code or
+  pseudo-code: §9.7 items 1–6 are plain rules. No copied prose, no game text, keys, hostnames
+  or traffic; "Wanderer 1" is a project-made name of `test-server.md` §5.4. No byte layout.
+- No install probe and no disassembly were needed: revision 6 states no fact about the
+  client or its data and has no `BIN` row (decision 0011 not engaged).
+- Gate and rule 5: D1 sends nothing new to the server and the server keeps nothing new;
+  `apps/server`, `apps/loadtest`, `crates/protocol` and `tools/check-server-deps.sh` are
+  unchanged in the P2 diff. D2 derives nothing (decision 0024 §2.4), D3 narrows overlay runs,
+  D4 adds no protocol minor (decision 0024 §2.6). §0 item 3 holds: the client half selects
+  through `SelectTarget` and `TargetChanged` on every backend.
+- Cases re-derived: O8 against §12.5.2 and §9.7; O10–O12 against the step, trigger and input
+  grammars (§6.2, §7.5, §7.7), the first-token rule of §12.5.1 and the existing hostile rows
+  (an empty `on` body parses, as in the `on chat` row), giving 2:1, 2:1 and 3:1; R1–R10
+  against §9.7 items 1–6 and the §9.5 states (R5: answer before the despawn mapped in the same
+  poll; R6: removed before the command; R7: the unknown 99 leaves 44 pending; R8: statics
+  known until `StaticsCleared`; R10: `InvalidState` outside `InWorld`, `InvalidCommand` for
+  the other Combat commands). Invariant 11 is testable by counting the double's messages and
+  the `TargetChanged` events. The implementation's tests for these cases agree (supporting
+  evidence only).
+
+Result: **pass**. Non-blocking notes for the spec owner (review notes, not facts; none
+changes implemented behaviour):
+
+- (a) The §14.9 preamble describes a double *of the test-server backend*; O8 (as O9) needs the
+  real test-server backend over a double of the server, since the backend's own answer is
+  under test. The conformance test is built that way. Reword at the next revision.
+- (b) Ruling on the §9.7 implementer OPEN: read item 1 and invariant 11 on the stream the
+  backend hands to `Session`; the backend need not repeat `Session`'s event checks, because it
+  builds those events from validated messages and checked statics. The implementation as
+  written conforms. "Static 900" of §14.11 is a label for the ID its `StaticSpawned` carried,
+  and R8's region change despawning 43 and 44 through `InterestReset` agrees with item 1.
+- (c) §9.7 does not say what happens to a pending answer when the session ends before the next
+  poll. The implementation drops it; entity events in `Closing` are stale anyway (§9.5), so
+  either reading is conformant. State it at the next revision.
+- (d) Decision 0032's "Number" paragraph says ROADMAP calls it 0031; ROADMAP now names 0032.
+  `docs/decisions/README.md` and ROADMAP P2 still list 0032 as Proposed; their owners update
+  them (outside this review's edit scope).
+- (e) D2 and the consequence for `combat-ui.md` (selection eligibility of test actors with a
+  `Character` body) bind that spec's own independent review; `combat-ui.md` is still Draft.
+
+<a id="s18-5"></a>
+### 18.5 "P4 social" revision: decision 0035
+
+**2026-10-11** (spec writer, design role). Tessera-own design for decision 0024 P4, recorded
+in [decision 0035](../decisions/0035-p4-social-on-test-server.md). Inputs: `docs/` only
+(decisions 0024, 0025, LEGAL.md §11.1, `tessera-protocol.md` v1.2, `test-server.md`,
+`instruments.md` §8.8–§8.9 and §12, `social-panels.md` §4, §8, §9); no research note, clone,
+client or decompiler output was used for this revision.
+
+| # | Change | Sections | Answers |
+|---|---|---|---|
+| H1 | Waiting parts, one synchronised start with `at_ms` and `lead_ms`, withdrawal | §2, §5.7, §6.7, §9.2, §11.1, §15 | §16 OPEN (P4); P4 exit criterion 3 |
+| H2 | The player's `/play … sync` and `/playstart` as `ReadyPerformance` and `StartPerformance`; generic answer; one start per `/playstart` | §6.7, §7.5–§7.7, §9.4 | `instruments.md` §12 P4 Decision (start path) |
+| H3 | `FellowVitalChanged` for members without an entity | §6.7, §9.2 | `social-panels.md` §4.4 vs TR3 |
+| H4 | `DisbandFellowship` | §7.5, §7.7, §9.4 | `social-panels.md` Q12 |
+| H5 | Test-server backend at minor 2 (channels, `Named` chat); other Social commands refused; plain-sandbox start answer; overlay unchanged | §9.5, §9.8, §12.5.2 | decision 0035 D1–D3; P4 exit criterion 2 |
+| H6 | Vector H, 8 hostile rows, backend cases S1–S9 | §14.12, §14.13 | — |
+
+Rule-5 check (LEGAL.md §11.1): fellowship, trade, lists, vitals and performances stay in the
+client's feed; the server gains only the chat channels of `tessera-protocol.md` v1.2; an
+overlay run sends nothing new (§15 invariant 13).
+
+**Status.** Review. An independent session that wrote no part of this revision or of decision
+0035 must check H1–H6 against decision 0035 and the cited specs, re-derive Vector H line by
+line, check the 8 hostile rows against the grammar and the position rules of §11.2, and
+check §9.8 against `tessera-protocol.md` v1.2 §10.6 and Appendix A.
+
+**Review of the "P4 social" revision** (2026-10-11, spec reviewer, Clean-Room-Role: review; a
+Claude review session in the spec-reviewer role that wrote no part of decision 0035, of the
+P4 revisions of `tessera-protocol.md`, `test-server.md` or `scenario-feed.md`, or of the
+code). Checked against `docs/CLEAN_ROOM.md` §5.3, decision 0035 D1–D4, decision 0024 §2 and
+LEGAL.md §11.1 rule 5 (`git diff bb43e74..45b7fb9` of this file): **passed**, every item.
+
+- **Checklist.** Functional design facts only (steps, events, commands, limits, log forms,
+  backend rules); no code or pseudo-code; no copied prose; no game text (the tune and member
+  names of Vector H are made up); the new provenance row is Design and names its inputs
+  (`docs/` only); no Confirmed or BIN fact was added, so no install probe or decompiler
+  session was needed; invariants 12–13 testable; unknowns marked OPEN; nothing under a closed
+  gate.
+- **H1–H6.** Each change of the table above is present in the sections it names and agrees
+  with decision 0035 D2–D4 (waiting parts, one synchronised start with `at_ms` and `lead_ms`,
+  the player's two commands, fellow vitals, the disband command, the 64-member and 0–10 s
+  limits of the decision's table).
+- **Vector H**, re-derived line by line from §6.7, §7.2–§7.7 and §10.3: the step times (0,
+  0.2, 1.0, 1.5), the input ticks (5 and 20 at 100 ms), the trigger order of §7.4 step 1
+  (generic answer before the trigger body: the player's `PerformanceSyncStart` at 2.000
+  before the `FellowVitalChanged`), *S* = 2,500 and 2,700, and the end at *L* = 2.000 with an
+  empty agenda all match the expected log; the vector in `crates/net/tests/scenario_p4.rs`
+  is the same text and passes.
+- **Hostile rows.** All eight positions checked against §4.5 and §11.2 (columns 21, 21, 15,
+  33, 33, 20; the two overlay rows at 2:1 as §12.5.1 and the rows of §14.9).
+- **§9.8 against `tessera-protocol.md` v1.2.** The three channel commands only at minor ≥ 2
+  with `CHAT_CHANNELS`, `Fellowship` chat and the other Social commands refused at every
+  minor, `ChannelRefused` as a System line in Tessera's words, the server's spelling in
+  `ChannelJoined`: all agree with §10.6 and Appendix A. Rule 5: the server receives nothing
+  new beyond the chat of the protocol spec; an overlay run sends nothing new.
+- **Code on branch `p4`**, read to compare only: the `tessera-net` tests `scenario_p4`
+  (Vector H, the hostile rows, S7–S8) and `remote_channels` (S1–S6) and the
+  `tessera-loadtest` test `v12_channels` (S9 against an in-process `tessera-server`) passed,
+  with the protocol and server tests (291 passed, 0 failed).
+
+Non-blocking, for the next revision (none changes implemented behaviour unless said):
+
+- (a) §15 invariant 13 says the test-server backend "sends nothing for a Social command
+  except `ChannelJoin`, `ChannelLeave` and `ChatSend` channel 6", but `Chat` is not a
+  Social-group command (§9.4: the existing `Chat` carries the channels). Word it as: for
+  Social-group commands only `ChannelJoin` and `ChannelLeave`, and for `Chat` on `Named` only
+  `ChatSend` channel 6, all only at minor ≥ 2 with `CHAT_CHANNELS`.
+- (b) Rulings on the "P4 social" implementer note of §16: (1) confirmed: recording the
+  player's part on `ReadyPerformance` is a generic answer (§7.6) and does not run under
+  `defaults off`; reword §6.7 "The player's commands" so that "under `defaults on`" covers
+  both. (2) Confirmed: `by=` and `perform-withdraw` take names and never skip for an actor
+  that is not spawned. (3) Confirmed, provided one `/playstart` still gets exactly one
+  answer: the feed's while it answers commands (§7.3), the plain sandbox's after the feed's
+  end; §9.8 may say "no scenario, or a scenario whose feed no longer answers commands".
+  (4) Agrees with `tessera-protocol.md` Appendix A ("naming the channel"). (5) Stating the
+  256-byte cut for `PerformanceStarted.tune` in §9.5 would change implemented behaviour (today
+  1,024 bytes); the spec owner decides.
+- (c) The TAB OPEN of §11.1 stays with the spec owner; `OutOfRange` at the tune's column is a
+  consistent choice (the tune's value range excludes control characters, §9.4).
 <a id="s18-p5"></a>
-### 18.P5 P5 travel revision: map, travel, mounts and instances
+### 18.P5 P5 travel revision (revision 8): map, travel, mounts and instances
 
 **2026-10-11** (spec writer, for decision 0024 P5; inputs: `travel-windows.md` §4.10, §4.11,
 §5.2, §6.5, §6.8, §9; `map-windows.md` §5, §6.7, §7.2; `mounts.md` §2.3, §2.8, §4.1;
@@ -3675,7 +4190,7 @@ must show but must not derive:
 | T-D7 | `markers` with marker sets and run-time ids; family `map-region` | §5.3, §6.5, §8.3, §8.6 | markers on every map region in one step (`map-windows.md` §5.4), and markers on every element of a `place` or `map-note` selector |
 | T-D8 | `effect` attributes `mount-type`, `war-steed` | §8.3 | choosing normal or war-steed mounts for the walker and the plugin views by what they are |
 | T-D9 | `mount … kind=` (`MountChanged.combat`), `mount-vital` (`MountVitalChanged`, `MountVital`) | §6.5, §9.1, §9.2, §10.3 | the plugin mount views' class and values, which in the original are server state (`lua-plugin-api.md` §15.5) |
-| T-D10 | Log rule for added fields; Vectors T1, T2, resolver case T3; hostile rows T-H1 … T-H18; rule 6; invariant 11 | §10.3, §13, §14, §15 | conformance, and committed logs that stay byte-identical |
+| T-D10 | Log rule for added fields; Vectors T1, T2, resolver case T3; hostile rows T-H1 … T-H18; rule 6; invariant 14 | §10.3, §13, §14, §15 | conformance, and committed logs that stay byte-identical |
 
 Not added, because existing forms suffice: a list of every mount effect (`effect role=mount
 all`); travel destinations and routes (`travel-destination`; a route ref is resolved to its
@@ -3688,7 +4203,7 @@ leaving an instance (`leave-instance`, `instance none`); refusals and chat lines
 new events (§9.5); no protocol minor is needed (LEGAL.md §11.1 rule 5).
 
 **Rule-5 check (LEGAL.md §11.1).** Nothing here runs in or is linked by `tessera-server`. The
-feed's numbers stay scripted (invariants 2, 10 and 11); the client half alone reads the install
+feed's numbers stay scripted (invariants 2, 10 and 14); the client half alone reads the install
 for names, icons, mount types and route records. ARCHITECTURE §19 gains `TravelEnded`,
 `MountVitalChanged`, `InstanceQueueChanged` and `LeaveQueue` (for its owner).
 
@@ -3701,7 +4216,7 @@ committed `world.log` is unchanged under §10.3.
 **Review result (2026-10-11, independent spec reviewer, Clean-Room-Role: review).** **Passed,
 every item of CLEAN_ROOM.md §5.3.** T-D1 … T-D10 were read against the cited sections of the
 P5 specs; every addition carries a value the presentation must show and the spec restates
-invariant 11 that the feed derives none of them. The §5.3 checklist: all statements are
+invariant 14 that the feed derives none of them. The §5.3 checklist: all statements are
 functional facts of Tessera's own format or install-derived references with a source mark; no
 code or pseudo-code; no copied prose; API/event/property/label names are interoperability
 identifiers; all vector text is invented and no game strings, keys, hostnames or captures

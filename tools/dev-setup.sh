@@ -5,12 +5,15 @@
 #
 # Usage: tools/dev-setup.sh [--fix] [--fetch-research]
 #   (no args)         report what is present/missing; exit 1 if a REQUIRED item is missing
+#                     or a decompiler MCP server, the REA skill or REA leftovers are found
+#                     (decision 0033)
 #   --fix             write the machine-local .cargo/config.toml (build cache location) from
 #                     TESSERA_TARGET_DIR. Nothing else; never downloads anything.
 #   --fetch-research  download the dirty-room research clones (about 6 GB; spec writers
 #                     only) into $TESSERA_CLONES_DIR or ${XDG_CACHE_HOME:-~/.cache}/tessera/clones
 # Environment: TESSERA_GAME_DIR (game install), TESSERA_TARGET_DIR (cargo build cache dir),
-# TESSERA_CLONES_DIR (research clones). See docs/DEVELOPMENT.md.
+# TESSERA_CLONES_DIR (research clones), TESSERA_RE_DIR (dirty lab directory; its .mcp.json is
+# checked). See docs/DEVELOPMENT.md.
 
 set -uo pipefail
 
@@ -20,7 +23,7 @@ for a in "$@"; do
   case "$a" in
     --fix) fix=1 ;;
     --fetch-research) fetch=1 ;;
-    -h|--help) sed -n '3,14p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) sed -n '3,17p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "dev-setup: unknown argument $a (see --help)" >&2; exit 2 ;;
   esac
 done
@@ -33,6 +36,8 @@ if [[ -t 1 && -z "${NO_COLOR:-}" ]]; then g=$'\033[32m' y=$'\033[33m' r=$'\033[3
 ok()   { printf '  %sok%s       %s\n' "$g" "$n" "$*"; }
 warn() { printf '  %soptional%s %s\n' "$y" "$n" "$*"; }
 bad()  { printf '  %sMISSING%s  %s\n' "$r" "$n" "$*"; missing_required=1; }
+contaminated=0
+taint() { printf '  %sFAIL%s     %s\n' "$r" "$n" "$*"; contaminated=1; }
 have() { command -v "$1" >/dev/null 2>&1; }
 
 echo "== Required"
@@ -128,6 +133,70 @@ echo "== Claude Code"
 [[ -f .claude/workflows/tessera-milestone.js ]] && ok "milestone workflow (.claude/workflows/tessera-milestone.js)" || bad "milestone workflow missing"
 [[ -d .claude/agents ]] && ok "agents: $(ls .claude/agents | tr '\n' ' ')" || warn "no .claude/agents"
 
+echo "== Decompiler MCP isolation (docs/decisions/0033-rea-for-dirty-room-analysis.md)"
+# Reads configuration names only. A decompiler MCP server must never be registered where a
+# clean session or the milestone workflow could inherit it; it is attached per session with
+# --strict-mcp-config.
+clean_mcp=1
+for tool in rea rea-agents; do
+  if have "$tool"; then taint "'$tool' resolves on PATH ($(command -v "$tool")); call REA by absolute path only"; clean_mcp=0; fi
+done
+mcp_files=("$HOME/.claude.json" "$HOME/.claude/settings.json" "$root/.mcp.json")
+for f in "$root"/.claude/settings*.json; do [[ -f "$f" ]] && mcp_files+=("$f"); done
+if have python3; then
+  hits="$(python3 - "${mcp_files[@]}" <<'PY'
+import json, os, re, sys
+word = re.compile(r"(?<![A-Za-z0-9])rea(?![A-Za-z0-9])|rea-agents|ghidra", re.I)
+def servers(node):
+    if isinstance(node, dict):
+        for k, v in node.items():
+            if k == "mcpServers" and isinstance(v, dict):
+                for name, entry in v.items():
+                    spec = entry if isinstance(entry, dict) else {}
+                    yield name, " ".join([str(spec.get("command", ""))] + [str(a) for a in spec.get("args", []) or []])
+            else:
+                yield from servers(v)
+    elif isinstance(node, list):
+        for v in node:
+            yield from servers(v)
+for path in sys.argv[1:]:
+    if not os.path.isfile(path):
+        continue
+    try:
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, ValueError):
+        print(f"{path}: unreadable JSON, not checked")
+        continue
+    for name, cmd in servers(data):
+        if word.search(name) or word.search(cmd):
+            print(f"{path}: MCP server '{name}'")
+PY
+)"
+  if [[ -n "$hits" ]]; then
+    while IFS= read -r line; do taint "$line (remove it; attach decompiler servers per session)"; done <<<"$hits"
+    clean_mcp=0
+  fi
+else
+  warn "python3 missing: MCP registrations not checked"
+fi
+# The lab directory is a project scope when a session starts there, and its MCP servers
+# (decompiler, ImHex, RenderDoc, Frida, capture) all return dirty material: none may be
+# registered there at all (docs/TOOLING.md §8 item 3, §11).
+if [[ -n "${TESSERA_RE_DIR:-}" && -e "$TESSERA_RE_DIR/.mcp.json" ]]; then
+  taint "$TESSERA_RE_DIR/.mcp.json registers MCP servers at project scope (move them to per-session --mcp-config files)"
+  clean_mcp=0
+fi
+for d in "$HOME/.claude/skills/reverse-engineer-anything" "$HOME/.agents/skills/reverse-engineer-anything"; do
+  if [[ -e "$d" ]]; then taint "REA skill installed at $d (remove it; never run rea setup)"; clean_mcp=0; fi
+done
+if compgen -G "/tmp/rea-*" >/dev/null; then
+  taint "REA leftovers in /tmp ($(compgen -G "/tmp/rea-*" | head -n 3 | tr '\n' ' ')); delete them after the REA session"
+  clean_mcp=0
+fi
+[[ "$clean_mcp" == 1 ]] && ok "no REA or Ghidra MCP registration, REA skill, PATH entry or /tmp leftover"
+
 echo
+if [[ "$contaminated" == 1 ]]; then echo "Decompiler MCP isolation FAILED (decision 0033): fix the items above."; exit 1; fi
 if [[ "$missing_required" == 1 ]]; then echo "Some REQUIRED items are missing."; exit 1; fi
 echo "Machine is ready. Next: cargo test --workspace   (see docs/DEVELOPMENT.md)"

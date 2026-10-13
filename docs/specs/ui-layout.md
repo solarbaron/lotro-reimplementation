@@ -1667,6 +1667,19 @@ Confirmed on every record unless marked.
 > UL8 issue, and its lookups return the first stored entry until this is answered.
 - Resolution (§7) must detect cycles and missing bases without recursion limits being reached
   by hostile chains; a depth limit of 32 is ample (observed 3).
+
+> **OPEN:** (clean-room implementation, 2026-10-11) §4.7 bounds the nesting of one stored tree
+> and this section the length of one base chain, but a built tree can still be much deeper: a
+> based child whose base is the top-level element that contains it is re-created at every
+> level (§7.3 step 6 leaves it based, §9.2 step 1 resolves it again), and a creation can start
+> another one from a post-creation (§9.2 step 8: a Menu's popup, `ui-widgets.md` §11.2; list
+> templates, tree icons), from the bottom of such a deep build. Neither the depth of a built
+> tree nor the nesting of creations, nor whether the two add up, is stated. Engineering choice
+> (Tessera, hostile input, bounded stack): one outermost creation and every creation nested in
+> it share one build depth of 128 levels (`MAX_TREE_DEPTH`), with at most 16 nested creations
+> and 65,536 built elements; an element beyond the shared depth is not created (with its
+> subtree) and is counted as a refused creation. No layout in the install comes close (stored
+> nesting ≤ 7 below a top-level element, base chains ≤ 3). Confirm or give the client's rule.
 - Layout arithmetic (§8) must not overflow: use 64-bit intermediates or saturating 32-bit
   arithmetic; treat NaN from 0 ÷ 0 as 0 as the client does.
 
@@ -1921,6 +1934,9 @@ Every item has an in-section `> **OPEN:**` callout; this list only collects them
     2026-10-07; never occurs in the install).
 23. Movie items while Tessera plays no video (§6.9; added by the clean-room implementation,
     2026-10-07; Tessera: done at once).
+24. The depth of a built tree (self-based children re-created at every level) and of
+    creations nested in post-creations, and whether they add up (§12.1; added by the
+    clean-room implementation, 2026-10-11; Tessera: one shared build depth of 128 levels).
 
 None of the owner-observation items O1–O17 concerns UI layouts.
 
@@ -2093,6 +2109,16 @@ their sizes always and their positions only when the original has no saved locat
 | P14 | Shortcut slots of an extra bar | Yes, empty |
 | P15 | The bag's items (`InventoryDisplay`), a bag toolbar with a search entry (`InventoryToolbar`), the title, a store button (`BuyNowButton`), drag bar, resize bar and close box | Yes, as an empty bag: frame, title, drag bar, resize bar and close box work; the item list shows no items; the search entry accepts text and finds nothing; the store button is hidden (Tessera choice). Only bag 1 is required; bags 2–6 are the same layout with other roots |
 
+> **Note (P4, 2026-10-11, [`social-panels.md`](social-panels.md); no fact of this spec
+> changed):** for P8 the row above is refined there: the panel's five pages and their set-up
+> page (§3.1), the friends and ignore pages filled from the scenario feed (§3.2–§3.6, §9 TR5,
+> TR6), the other pages empty (§9 TR8), and the input commands that open P8 at a page (§3.1,
+> §7.2). The fellowship display (`minifellow`), the invitation window (`fellowinvite`) and the
+> trade window (`securetrade`) are not P8; they are specified there (§4–§6). For P4, the
+> voice elements `PlayerVoiceChat`, `PlayerVoiceChatSquelched` and `PlayerSendingData` are not
+> hidden by the layout but are hidden by Tessera (`social-panels.md` §4.3, TR14; the original
+> shows them only with voice chat).
+
 <a id="s17-5"></a>
 ### 17.5 Behaviour that is game code (OPEN)
 
@@ -2153,3 +2179,5 @@ their sizes always and their positions only when the original has no saved locat
 | 2026-10-06 | **Revision applying the accepted decisions 0014 (UI input bridge) and 0015 (UI rendering)** (status Accepted → Revised, review pending). No fact about the original is changed; the decisions fix only Tessera's behaviour. New provenance tag DEC. **Tessera rules now taken from the decisions:** §9.6.1 OPEN (composition onto the frame: premultiplied source-over on stored values, transparent-black initial content; **replaces** the earlier Tessera choice of straight source-over); §8.4 step-1 OPEN (canvas = layout box composed onto the displayed box; Tile with power-of-two sides repeated at the display-node scale, no surfaces below a Tile surface; a stand-in surface at opacity 1 for a shown mode-0 root panel); §9.6.2 OPEN (conversion of other source formats); §8.4 note (re-layout complete before any hit test, IB D8); §8.5 note (physical render size, no platform scale factor); §9.1 notes (modal dialog surface and container; `DialogBoxes` push); §9.3 hit-test note; §17.4 P4 portrait as external content. **New OPEN callouts with Tessera rules** (spec questions 1, 3, 5, 14 and 16 of decision 0015): §5.9 which descendants `ObjectOpacity` reaches when they own surfaces (own opacity only); §5.9 `ShouldEraseBackground` (always erase); §8.4 scope of the step-1 object-mode test against LPA §13.19, and the None branch of UB §9.2.1; §9.3 composition of non-root surfaces; §9.6.3 32-bit formats other than A8R8G8B8. §6.6 OPEN cites LPA §13.19, UW §4.5 and GP §8.2 step 3 as partial answers. **New data (spec question 7 of decision 0015):** §17.2 census of non-root elements with an object mode per panel (92 in the 15 panels: 86 Stretch, 6 CanvasResize), row U46, invariant UL22, measured 2026-10-06 on the instantiated panels with read-only probes. §15 row for the UB §9.2.1 conflict; §16 items 4, 7, 11 updated and items 16–20 added. Section numbers unchanged. |
 | 2026-10-06 | **Fixes after the review of the decision-0014/0015 revision** (status stays Revised, review pending). No fact about the original is changed. **§8.4 OPEN (scope):** explicit Tessera choice for question (1): the Stretch-parent test of step 1 applies only to root parents, so the children of a non-root Stretch surface are laid out by their edges; supporting data in new row U47 (a) (159 such children in the §17 panels, the readings differ only for P10's `Panel_Label_Title`, x 28 against 0); the OPEN now points to the matching `ui-behaviour.md` §9.2.1 OPEN. **§8.4:** new OPEN on the conflict between the Tile canvas of decision 0015 §2.1 (the layout box) and the BIN statement of `lua-plugin-api.md` §20 (the base image or a code-set size); §16 item 21. **§15:** the UB §9.2.1 row now reads "recorded in UB §9.2.1 OPEN; agreement". **§17.4:** the P5 row gets the external-content portrait note; the P4 and P5 rows say that the portraits also own CPU surfaces (`PlayerPortrait` mode 3; `OpponentPortrait` mode 1 with an own image and a mode-1 child; U47 (b)) and point to the new `ui-widgets.md` §12 OPEN and Tessera rule. **UL22 and the §17.2 note:** one definition of "surfaced ancestors" (ancestors with a non-zero resolved object mode, plus the root); counts re-checked, unchanged. §16 item 18 updated. |
 | 2026-10-06 | **Final-pass fixes** (status stays Revised, review pending). No fact about the original is changed. **§8.4 OPEN (scope):** one note that it is not known whether the flag by which an alpha-test meter asks for a surface (`ui-widgets.md` §4.5) is the "flagged by code" of §8.3 and §8.4 step 1, with the Tessera choice that it is not (the meter owns a surface but is laid out as a non-root element; no M5 panel affected); §16 item 18 extended to match. **§15:** new row recording the corrected citation in `lua-plugin-api.md` §13.18 (mode-1 row: the reason is UB §9.2.1, not §8.4 step 1), applied in the working-tree LPA, pending its review. |
+| 2026-10-11 | Note only (no fact changed), for P4: §17.4 points to `social-panels.md` for the Social panel P8 and the other social windows. Status unchanged. |
+| 2026-10-11 | Note only (no fact of this spec changed), P4 revision 1 of `social-panels.md`: the §17.4 P4 note adds the P4 voice elements that Tessera hides (`social-panels.md` TR14). Status unchanged. |

@@ -38,8 +38,20 @@ stop. Do not look the fact up elsewhere.
 - **No code from other LOTRO tools**, whatever their licence. Facts go into a spec;
   code is written fresh.
 - **No decompiler or disassembler output**, ever, in code or in a session that writes code.
-- **No official-server connectivity.** It is gated behind a legal review
-  ([LEGAL.md §9](docs/LEGAL.md#9-gates-and-the-official-server-target)).
+- **Official-server connectivity (M8) is in scope** by the owner's decision, without a legal
+  review ([LEGAL.md §9](docs/LEGAL.md#9-gates-and-the-official-server-target), decision
+  0034). Read the risks in [LEGAL.md §13](docs/LEGAL.md#13-contributor-risk-notice) before
+  working on it.
+  - G4: a ban-risk warning comes before any official connection.
+  - G5: the forbidden list of LEGAL.md §8 holds: no shipping, mirroring or linking to client
+    binaries, dat files, patches or old clients; no modified, patched, redirected or
+    injected official client; no Daybreak keys or other secrets in the repository, releases
+    or documentation; no committed captures from official servers; no leaked, NDA-covered or
+    decompiled vendor source; no monetisation beyond donations for infrastructure costs; no
+    bypassed authentication, subscription check, anti-cheat or other access control.
+  - Separately ([LEGAL.md §7](docs/LEGAL.md#7-what-these-facts-mean-for-project-design) item 4), no Daybreak hostnames
+    or endpoints in the repository: the client reads them at runtime from the user's install.
+  - Live logins never run from CI.
 - **No trademarks in names.** See [LEGAL.md §10](docs/LEGAL.md#10-naming-and-trademark-rules).
 
 ## Commits

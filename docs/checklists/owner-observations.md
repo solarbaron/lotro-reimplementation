@@ -4,7 +4,7 @@
 
 | | |
 |---|---|
-| **Status** | Open list; started 2026-10-04; last updated 2026-10-11 (decision 0024 P5 items O140–O154 added: maps, travel, instance finder, mounts, plugin mount views; O155, server-added map markers, added at the P5 exit verification 2026-10-12); 2026-10-11 (decision 0024 P3 items O110–O125 added: NPC windows, quest journal, wallet); 2026-10-10 (spec writer: O85 and O86 gain the expectations the client gives for the creation screens, `character-screens.md` revision CS19–CS27); 2026-10-10 (spec writer: O24 gains the W14 question on the puddles' colour and opacity); 2026-10-10 (P1 exit verification: O88–O90 added); 2026-10-10 (spec writer: O26 gains the question on the sky line of row W9; new items O91, the far sea of row W2, and O92, the generated fallen soldiers of 3, 0xD7E7); 2026-10-10 (O24 extended to the water rows W10–W17 of `m4-5-visual.md` §4.8, with the W13 and W17 questions); 2026-10-09 (decision 0024 P1 items O80–O86 added; merge of main: the M5 items O39–O49 joined the summary next to the 2026-10-08 statuses); 2026-10-08 (every pending item checked against the data and the offline client: O5, O14, O70 answered; O6, O18, O28 narrowed; the rest marked as needing the original) |
+| **Status** | Open list; started 2026-10-04; last updated 2026-10-13 (merge of p5: decision 0024 P5 items O140–O154 added: maps, travel, instance finder, mounts, plugin mount views; O155, server-added map markers, added at the P5 exit verification 2026-10-12); P4 spec writer: items O130–O137 added, decision 0035; `social-panels.md` revision 1: O130, O132, O133 gain questions; decision 0024 P3 items O110–O125 added: NPC windows, quest journal, wallet; P2 exit verification: O128 and O129 added; P2 documentation: O93–O109, O126 and O127 added); 2026-10-10 (spec writer: O85 and O86 gain the expectations the client gives for the creation screens, `character-screens.md` revision CS19–CS27); 2026-10-10 (spec writer: O24 gains the W14 question on the puddles' colour and opacity); 2026-10-10 (P1 exit verification: O88–O90 added); 2026-10-10 (spec writer: O26 gains the question on the sky line of row W9; new items O91, the far sea of row W2, and O92, the generated fallen soldiers of 3, 0xD7E7); 2026-10-10 (O24 extended to the water rows W10–W17 of `m4-5-visual.md` §4.8, with the W13 and W17 questions); 2026-10-09 (decision 0024 P1 items O80–O86 added; merge of main: the M5 items O39–O49 joined the summary next to the 2026-10-08 statuses); 2026-10-08 (every pending item checked against the data and the offline client: O5, O14, O70 answered; O6, O18, O28 narrowed; the rest marked as needing the original) |
 | **Author role** | Spec writer (dirty room) |
 | **Who fills it in** | The project owner, in the original client, on their own account and install |
 | **Method** | Black-box observation of the unmodified official client: its own UI, `/loc`, and frame captures (RenderDoc or apitrace under Wine/DXVK). Allowed by `docs/CLEAN_ROOM.md` §4 (method M3) and [ROADMAP §2.1](../ROADMAP.md#method-allowed). |
@@ -81,6 +81,23 @@ marks the item **done** here.
 | [O90](#o90) | Customised appearance (styles, a colour, height, a slider) compared with the same choices in Tessera; does the selection figure keep them | `character-screens.md` §5.2, §7.1 | Look, screenshots (private) | open (P1) |
 | [O91](#o91) | Far sea at row W2: as dark as Tessera's, or reflecting the sky? | `water.md` §8.4, §8.6.4; `m4-5-visual.md` W2 | Look | open (M4.5) |
 | [O92](#o92) | Fallen soldiers generated in landblock 3, 0xD7E7: pose and cloth colours | `appearance.md` §7.4; `m4-5-visual.md` §4.6 (L5 note) | Look | open (M4.5) |
+| [O93](#o93) | Targeting keys: what Tab, Backspace, F9, F10, Delete, Backslash and F select; range, order, wrap | `combat-ui.md` §3.3 | Look, `/loc` | open (P2) |
+| [O94](#o94) | Escape with a selection and a cast: order of cancelling, clearing and the main menu; craft cancel | `combat-ui.md` §3.4 | Look | open (P2) |
+| [O95](#o95) | World selection effect: look, distance bands, per kind | `combat-ui.md` §3.5 | Look | open (P2) |
+| [O96](#o96) | When the vital numbers show on the player and target frames, and their form | `combat-ui.md` §4.3 | Look | open (P2) |
+| [O97](#o97) | Target health-bar colours for hostile, neutral, tapped, NPC, player and defeated targets | `combat-ui.md` §5.3 | Look | open (P2) |
+| [O98](#o98) | Name colours at level differences −10 … +10 | `combat-ui.md` §5.4; `game-controls.md` §7.5 | Look | open (P2) |
+| [O99](#o99) | Selection's-target window: shown by default, place, content | `combat-ui.md` §5.7 | Look, options panel | open (P2) |
+| [O100](#o100) | Floating combat text: sign, wording, colours, motion, criticals | `combat-ui.md` §6.3–§6.6 | Look, private video | open (P2) |
+| [O101](#o101) | Channel bars fill or drain; craft bar and Escape | `combat-ui.md` §7.3, §7.4 | Look | open (P2) |
+| [O102](#o102) | Effect rows: which row holds what, icon order, timers or stacks, pulse, overflow | `combat-ui.md` §8.2 | Look | open (P2) |
+| [O103](#o103) | Defeat panel: buttons, ghosting, awaken timer, what OK does | `combat-ui.md` §10.2 | Look | open (P2) |
+| [O104](#o104) | Skill tooltip with damage, effects and a cost: rows, order, colours | `skill-tooltips.md` §4, §7, §9 | Look, screenshots (private) | open (P2) |
+| [O105](#o105) | Effect tooltip from the effect bar: lines, resistance, live countdown and its format | `skill-tooltips.md` §9, §10.2, §12.2 | Look | open (P2) |
+| [O106](#o106) | A stat line with a percentage and a decrease | `skill-tooltips.md` §9.4 | Look | open (P2) |
+| [O107](#o107) | Skill-granting item: the attached skill tooltip | `skill-tooltips.md` §12.4; `item-tooltips.md` §8.3 | Look | open (P2) |
+| [O108](#o108) | Stack count in an effect tooltip | `skill-tooltips.md` §12.2; `combat-ui.md` TR31 | Look | open (P2) |
+| [O109](#o109) | Casting and recovery times with tenths of a second | `skill-tooltips.md` §7.6, §7.15, §10.1, §16.3 | Look | open (P2) |
 | [O110](#o110) | Using an NPC: which inputs use it, the no-selection and out-of-range lines, the distance at which use stops | `npc-windows.md` §3.1 | Look, `/loc` | open (P3) |
 | [O111](#o111) | Dialogue windows: which window shows which kind of NPC talk, the option list's layout, closing when walking away | `npc-windows.md` §5.1, §5.3, §5.7 | Look, `/loc` | open (P3) |
 | [O112](#o112) | Quest-offer window: objective shown, reward rows and amounts, choosing a reward before Accept | `npc-windows.md` §6.2, §6.3, §6.5 | Look | open (P3) |
@@ -97,6 +114,18 @@ marks the item **done** here.
 | [O123](#o123) | Quest markers on the minimap and the world map: icon, order with the player marker, tooltip, edge | `quest-journal.md` §8.3; `game-panels.md` §8.8, §9.3 | Look | open (P3) |
 | [O124](#o124) | Abandoning a quest: confirmation and what the log and tracker show after | `quest-journal.md` §4.8 | Look | open (P3) |
 | [O125](#o125) | Plugin wallet views: `GetWallet()` order, `GetMaxQuantity()` of a few items, `MoneyChanged` count | `lua-plugin-api.md` §15.3 | Own test plugin | open (P3) |
+| [O126](#o126) | Casts, hits, projectiles and combat stance; a weapon change mid-swing | `combat-visuals.md` §3, §4, §6, §11 rule 6, Q-CV7 | Look, private video | open (P2) |
+| [O127](#o127) | Effect visuals to their end; death pose, body fade and revive | `combat-visuals.md` §5, §7 | Look | open (P2) |
+| [O128](#o128) | Player and target frames as a whole: layout, name colour, level, morale and power, class resource, the target's effect icons | `combat-ui.md` §4, §5, §8 | Look, screenshots (private) | open (P2) |
+| [O129](#o129) | Quickslot bar and cast bars: cooldown sweep and timer, greyed and unavailable slots; cast, induction and channel bars with delay, interrupt and cancel | `combat-ui.md` §7, §9 | Look, private video | open (P2) |
+| [O130](#o130) | Fellowship display and vitals: leader marker, member out of view, removal and disband lines | `social-panels.md` §4, §9 TR2–TR4; `scenario-feed.md` §6.7 | Look, a group with other players | open (P4) |
+| [O131](#o131) | Fellowship invitation prompt: window, buttons, expiry | `social-panels.md` §5 | Look, an invitation from another player | open (P4) |
+| [O132](#o132) | Trade window: both sides, coin, ready states, completion | `social-panels.md` §6 | Look, a trade with another player | open (P4) |
+| [O133](#o133) | Social panel: friend and ignore lists | `social-panels.md` §3 | Look | open (P4) |
+| [O134](#o134) | Tells and the instant-message tab | `chat-window.md` §15.2–§15.5 | Look, tells with another player | open (P4) |
+| [O135](#o135) | Channel join and leave lines, channel slots and tabs | `chat-window.md` §15.6; `tessera-protocol.md` §10.6, §17 | Look | open (P4) |
+| [O136](#o136) | How aligned a synchronised fellowship start sounds | `instruments.md` §8.8–§8.9, Q10–Q13 | Listening, stopwatch, a group with other players | open (P4) |
+| [O137](#o137) | Owner question: may Tessera's own server relay a synchronised `/play` start as chat? | decision 0024 open item 2; decision 0035 D2 | Owner decision | open (P4) |
 | [O140](#o140) | World map: presentation at first opening, full-screen size and position, controls per kind of map | `map-windows.md` §3.1, §3.4 | Look | open (P5) |
 | [O141](#o141) | World map overlays and filters: filter menu items, order and defaults, persistence, note order | `map-windows.md` §6.2, §6.3, §6.9 | Look | open (P5) |
 | [O142](#o142) | Map navigation: right click, the map menu's order, child-map buttons without a node | `map-windows.md` §4.3–§4.5 | Look | open (P5) |
@@ -145,6 +174,19 @@ numbers.
 P3 items O110–O125 ([ROADMAP P3](../ROADMAP.md#p3)) compare the NPC windows, the quest
 journal and the wallet with the original; no P3 exit criterion waits on them, and they block
 nothing until P8 (decision 0024 §2.6).
+
+P2 items O93–O109 and O126–O129 ([below](#p2-items)) compare Tessera's combat presentation
+with the original: O93–O103 are the owner checks OC1–OC11 of `combat-ui.md` §18, O104–O109 the
+checks OS1–OS6 of `skill-tooltips.md` §17, O126–O127 looks at combat visuals
+(`combat-visuals.md`), O128–O129 whole-panel looks at the frames, the quickslot bar and the
+cast bars (P2 exit verification). O126–O129 are numbered after P3's O110–O125 (the P3 branch holds those). No P2
+exit criterion waits on them ([ROADMAP P2](../ROADMAP.md#p2)); they settle OPENs and Tessera
+rules of those specs and block nothing until P8 (decision 0024 §2.6).
+
+P4 items O130–O137 compare Tessera's social panels and chat with the original
+([ROADMAP P4](../ROADMAP.md#p4)); they block nothing until P8 (decision 0024 §2.6). They are
+numbered from O130 because other P milestones add items at the same time (P2 from O93, P3
+from O110). O137 is a decision, not an observation.
 
 P5 items O140–O155 ([ROADMAP P5](../ROADMAP.md#p5)) compare the maps, the travel and
 instance-finder windows, the mounted walker and the plugin mount views with the original; no P5
@@ -1592,6 +1634,268 @@ in the original)? Do they lie on the ground, and in which poses (on the back, on
 face down)? Colours of the hooded figures' cloth and of the others' upper bodies, in your own
 words. Same or different on the second visit?
 
+
+<a id="p2-items"></a>
+## Decision 0024 P2 items (targeting, skills and combat presentation)
+
+These rows compare Tessera's P2 combat presentation with the original client. They are the
+owner checks OC1–OC11 of `combat-ui.md` §18 (O93–O103) and OS1–OS6 of `skill-tooltips.md` §17
+(O104–O109), plus two looks at combat visuals (O126, O127) and two whole-panel looks (O128,
+O129; O110–O125 are P3's, O130–O137 P4's). They block
+nothing until P8 (decision 0024 §2.6). Fighting is needed for most of them: a low-level
+creature in a starting area and a few skills of any class are enough. Describe what you see in your own words; never
+copy skill, effect, creature or item names, tooltip lines or the defeat text into this file.
+Name a skill or effect by its kind ("a melee skill with one hit", "a heal over time") or by its
+DID: search the name in the explorer (`tessera-explorer --search`) and write only the DID.
+Where a row names Tessera's side, the command lines and expected looks are in
+[`p2-visual.md`](p2-visual.md) (C1 is the reference scenario, C4 the combat-visuals scenario).
+
+<a id="o93"></a>
+## O93. Targeting keys (P2, OC1)
+
+**Spec:** `combat-ui.md` §3.3 (bindings and the OPEN on the search rules), TR4 (Tessera's rule:
+50 m, nearest first, ties by ID, wrap).
+
+**Tessera's side:** `p2-visual.md` row T3 (C4).
+
+**What to do:** stand among several creatures at different distances (some beyond 50 m, one
+defeated) with another player near; press Tab repeatedly, then Shift+Tab, Backspace, F10,
+Shift+F10, F9, Delete near an object, Backslash and F (with a selection that targets someone).
+
+**Record:** per key: what it selects (creature, player, object, yourself), whether defeated
+creatures, neutral creatures and NPCs are included, roughly the farthest distance it reaches
+(`/loc` difference), the order of the Tab cycle (nearest first, or another order) and whether
+it wraps; what F does when your selection has no target.
+
+<a id="o94"></a>
+## O94. Escape with a selection and a cast (P2, OC2)
+
+**Spec:** `combat-ui.md` §3.4 TR5; `game-panels.md` §16 (O45 covers Escape with panels open).
+
+**Tessera's side:** `p2-visual.md` row T5.
+
+**What to do:** select a creature and start a skill with an induction (a cast bar that fills);
+press Escape once during the bar; press it again; press it once more. Repeat with a panel open.
+
+**Record:** what each press did, in order (cancel the cast, clear the selection, open the main
+menu, close the panel); whether a crafting bar can be cancelled with Escape.
+
+<a id="o95"></a>
+## O95. World selection effect (P2, OC3)
+
+**Spec:** `combat-ui.md` §3.5 (E4: the selection script with four distance bands, 0–2, 2–15,
+15–35 and 35 m upward), TR6.
+
+**Tessera's side:** `p2-visual.md` row V0 (C4).
+
+**What to do:** select a creature and walk away from it slowly from close by to beyond 40 m;
+select an NPC and a player; clear the selection.
+
+**Record:** whether a marker appears on the ground or around the selected figure as soon as it
+is selected; its look in a few words (ring, glow, colour); at which distances it changes
+(compare with the four bands); whether it differs between creatures, NPCs and players; whether
+it goes away at once when the selection clears.
+
+<a id="o96"></a>
+## O96. Vital texts on the player and target frames (P2, OC4)
+
+**Spec:** `combat-ui.md` §4.3 TR10 (Tessera shows "current/maximum" while the pointer is over
+the vital field).
+
+**Tessera's side:** C1 of `p2-visual.md`, pointer over the player frame's health meter.
+
+**What to do:** look at your own frame and a target's frame with the pointer away, then over
+the health and power meters; look in the options panel for a setting about vital numbers.
+
+**Record:** when the numbers show (always, on hover, by an option); their form (current and
+maximum, a percentage, both) and separator; whether large numbers are grouped or shortened.
+
+<a id="o97"></a>
+## O97. Target health-bar colours (P2, OC5)
+
+**Spec:** `combat-ui.md` §5.3 TR14 (Tessera: green for players and NPCs, red for creatures,
+grey for defeated; yellow unused).
+
+**Tessera's side:** C1 (creature target), C8 (players and wanderers).
+
+**What to do:** select a hostile creature, a neutral creature (one that does not attack until
+attacked), a creature another player is fighting (tapped), an NPC, another player and a
+defeated creature.
+
+**Record:** the health bar's colour for each (green, yellow, red, grey, other).
+
+<a id="o98"></a>
+## O98. Name colours by level difference (P2, OC6)
+
+**Spec:** `combat-ui.md` §5.4 TR15 (Tessera's reading of `game-controls.md` §7.5: the
+consideration state by the level difference, the player's level picking the list).
+
+**Tessera's side:** C1: a level-20 player and a level-7 creature.
+
+**What to do:** at one character level, select creatures from well below to well above your
+level (as many differences between −10 and +10 as you can find, and the extremes).
+
+**Record:** your level; per creature: its level and the colour of its name in the target frame
+(in words: grey, green, cyan, blue, white, yellow, orange, red, purple); whether the colour of
+the same difference changes at another character level.
+
+<a id="o99"></a>
+## O99. Selection's-target window (P2, OC7)
+
+**Spec:** `combat-ui.md` §5.7 TR18.
+
+**Tessera's side:** C1 from 2 s: the small window shows the creature's target.
+
+**What to do:** on a character with default UI options, select a creature that is fighting you
+or someone else; then look in the options panel for a setting about the target's target.
+
+**Record:** whether the window shows by default; where it sits; whether it shows a name only or
+a name and health; the option's name in your own words and its default.
+
+<a id="o100"></a>
+## O100. Floating combat text (P2, OC8)
+
+**Spec:** `combat-ui.md` §6.3–§6.6, TR19 (Tessera: "−" and the number for damage, "+" for heals,
+the short avoidance word, no text for 0), TR20 (colours: damage on others pale yellow, on you
+red, heals green, avoidance white; life 2 s).
+
+**Tessera's side:** C1, 3–7 s (rows E13a–E13d of `p2-visual.md`).
+
+**What to do:** in a fight, watch the numbers over the creature and over yourself: your normal
+hits, a critical, a miss or parry by either side, damage you take, a heal on yourself. A short
+private video helps.
+
+**Record:** per case: the sign (none, minus, plus), the number's form, whether a word stands
+with it and which kind (short "Parry" style, past tense, a sentence) without copying it, the
+colour in words, the direction it moves (up, sideways), roughly how long it stays, and how a
+critical differs (larger, a different colour, a word).
+
+<a id="o101"></a>
+## O101. Channel bars and crafting bars (P2, OC9)
+
+**Spec:** `combat-ui.md` §7.3 TR26 (Tessera: every bar fills from empty to full), §7.4 TR28.
+
+**Tessera's side:** C4, the channel at 27–31 s (row V5 of `p2-visual.md`).
+
+**What to do:** use a channelled skill (one that keeps running while you hold still); craft an
+item that takes a few seconds and press Escape during its bar.
+
+**Record:** whether the channel's bar fills or empties; its colour against a normal cast bar;
+whether the craft stops on Escape.
+
+<a id="o102"></a>
+## O102. Effect rows (P2, OC10)
+
+**Spec:** `combat-ui.md` §8.2 (rows, order, pulse at 15 s), TR30 (Tessera: beneficial effects in
+row 1, harmful in row 2), TR31 (no stacks or timer on the icon).
+
+**Tessera's side:** C1, 3–8 s (rows E8–E10 of `p2-visual.md`).
+
+**What to do:** gain two beneficial effects and suffer two harmful ones at the same time; look
+at your own effect rows and at a target's; let one run out; get one effect that stacks.
+
+**Record:** which row holds beneficial and which harmful effects (or one mixed row); the order
+of icons (newest first or last); whether icons show a timer or a stack number; when an icon
+starts to pulse (seconds before its end); how many icons a row shows before it wraps or hides.
+
+<a id="o103"></a>
+## O103. Defeat panel (P2, OC11)
+
+**Spec:** `combat-ui.md` §10.2 (the OPEN on the statement, the buttons and the awaken timer),
+TR38 (Tessera: its own statement, OK closes, revive ghosted, no timer).
+
+**Tessera's side:** C1 at 8 s (row E18 of `p2-visual.md`).
+
+**What to do:** let your character be defeated by a creature (a low-level character in a
+starting area is enough). Wait without pressing anything for a minute, then press OK.
+
+**Record:** which buttons the panel shows and which are ghosted; whether a timer appears, where,
+and what it counts; what OK does (you return to a rally point, stay where you are, other); what
+the revive button needs before it is usable. Do not copy the panel's text.
+
+<a id="o104"></a>
+## O104. Skill tooltip with damage, effects and a cost (P2, OS1)
+
+**Spec:** `skill-tooltips.md` §4 (structure and row order), §7 (skill rows; §7.9 damage, §7.10 costs), §9 (effect lines).
+
+**Tessera's side:** C1, hover over quickslot 3 (row TT1 of `p2-visual.md`); or the record's
+card, C7.
+
+**What to do:** hover over a damaging skill on your quickslot bar that also applies an effect
+and costs power; then the same skill in the skills panel. Find its DID in the explorer.
+
+**Record:** the DID; for each row from top to bottom: its kind (name, rank, type, range,
+casting time, cooldown, cost, damage, effect line, description, requirement, other), its colour
+in words, and whether a blank gap follows; whether the two tooltips (bar and panel) differ.
+
+<a id="o105"></a>
+## O105. Effect tooltip from the effect bar (P2, OS2)
+
+**Spec:** `skill-tooltips.md` §8 (effect rows; §8.2 resistance), §9 (lines), §10.2 and §12.2
+(the remaining time counting down), §16.4 (resistance text).
+
+**Tessera's side:** C1, hover over the player's 30 s effect icon (row TT2).
+
+**What to do:** hover over one of your timed effects in the effect bar and keep the pointer
+still for ten seconds; then over a target's harmful effect that can be resisted.
+
+**Record:** the effect's DID; the rows in order (kind and colour); whether the remaining time
+counts down while the tooltip stays open and its format (minutes and seconds, a unit word,
+tenths); whether a resistance line shows and its pattern without the text.
+
+<a id="o106"></a>
+## O106. A stat line with a percentage and a decrease (P2, OS3)
+
+**Spec:** `skill-tooltips.md` §9.4 (modifier values as numbers), §16.2 (worked examples).
+
+**Tessera's side:** C7 on the effect's DID.
+
+**What to do:** find an effect (or a skill applying one) that raises one stat by a percentage
+and lowers another; hover over it.
+
+**Record:** the DID; for each stat line, the wording pattern without the stat's name (for
+example "plus, number, percent sign, stat name"), the number of decimals, how a decrease is
+written (minus sign, a word) and its colour.
+
+<a id="o107"></a>
+## O107. Skill-granting item (P2, OS4)
+
+**Spec:** `skill-tooltips.md` §12.3 (skill items), §12.4 (skill- and trait-granting items),
+`item-tooltips.md` §6.20 and §8.3 (`SkillGrantingItem`).
+
+**Tessera's side:** row TT5 of `p2-visual.md`.
+
+**What to do:** hover over an item in your bags that teaches or grants a skill when used.
+
+**Record:** the item's DID; whether a second tooltip with the skill appears next to the item's
+tooltip (which side, top-aligned or not), or the skill's rows are inside the item's tooltip;
+whether it appears for an item you have already used.
+
+<a id="o108"></a>
+## O108. Stack count in an effect tooltip (P2, OS5)
+
+**Spec:** `skill-tooltips.md` §12.2 Q10, `combat-ui.md` TR31.
+
+**What to do:** get an effect that stacks (the same effect applied several times) and hover
+over its icon at two and at three stacks.
+
+**Record:** whether the tooltip shows the stack count, where (name line, own row) and in what
+form; whether the icon itself shows it.
+
+<a id="o109"></a>
+## O109. Casting and recovery times with tenths (P2, OS6)
+
+**Spec:** `skill-tooltips.md` §7.6 (casting time), §7.15 (recovery time), §10.1 (the duration
+formatter), §16.3 (a stored 1.55 s that Tessera shows from its single-precision value).
+
+**Tessera's side:** C7 on the same skills.
+
+**What to do:** find two skills whose casting time or cooldown is not a whole number of seconds
+(for example about 1.5 s or 2.5 s) and hover over them; find their DIDs.
+
+**Record:** per DID: the casting-time and recovery-time texts' form (decimals, unit word
+pattern) and the shown value; whether a value like 1.55 shows as 1.5 or 1.6.
+
 <a id="p3-items"></a>
 ## Decision 0024 P3 items (NPC windows, quest journal and wallet)
 
@@ -1924,6 +2228,246 @@ gave; whether `ItemAdded` fired for the new currency and at which index; whether
 `GetMoney()` and `GetMoneyComponents()` match the coins the wallet window shows. **Do not
 record item names.**
 
+<a id="p2-items-visuals"></a>
+## Decision 0024 P2 items, continued (combat visuals and whole panels)
+
+O126–O129 belong to the P2 group above ([P2 items](#p2-items)); they stand here, after P3's O110–O125, to keep the numbers in order.
+
+<a id="o126"></a>
+## O126. Casts, hits and stance (P2, combat visuals)
+
+**Spec:** `combat-visuals.md` §3 (behaviours), §4 (strikes, hooks, hit reactions,
+projectiles), §6 and §11 rule 6 (stance by the main-hand item), Q-CV7 (a stance change while a
+behaviour plays).
+
+**Tessera's side:** C4 of `p2-visual.md`, rows V1–V3, V6, V8.
+
+**What to do:** with a one-handed weapon, then a two-handed weapon, then empty hands, attack a
+creature with a melee skill, once standing and once while walking; use a ranged skill; let the
+creature hit you. Draw or sheathe your weapon (or change weapons) in the middle of a swing. A
+short private video helps.
+
+**Record:** whether the attack plays on the whole body when standing and on the upper body
+only when walking; when the creature's hit reaction plays against the swing (at the moment the
+weapon lands, or at the end of the animation); whether a critical hit looks different; for the
+ranged skill, whether something travels to the target and the hit waits for it; the idle stance
+in combat for each weapon kind (weapon raised, held low, fists up); whether changing weapons
+mid-swing restarts or changes the swing.
+
+<a id="o127"></a>
+## O127. Effects, defeat and revive (P2, combat visuals)
+
+**Spec:** `combat-visuals.md` §5 (effect visuals: attach, loop, stop, linger), §7 (death clip,
+hold, revive), §9.5.
+
+**Tessera's side:** C4 of `p2-visual.md`, rows V7, V9, V10.
+
+**What to do:** apply a timed effect with a visible glow or particles to yourself and to a
+creature and watch it to its end; defeat a creature and watch its body; be defeated and revive
+(or be revived by another player).
+
+**Record:** whether the effect's visuals last exactly as long as the icon, and whether they cut
+off or fade at the end; the defeated creature's pose (falls once and stays down, or loops) and
+how long until the body fades; your own death pose and what plays when you revive (a get-up
+animation, a fade-in, nothing).
+
+<a id="o128"></a>
+## O128. Player and target frames as a whole (P2, exit verification)
+
+**Spec:** `combat-ui.md` §4 (player frame, class resource), §5 (target frame: field choice,
+decoration, vitals, name colour, level), §8 (the target's effect row).
+
+**Tessera's side:** C1 of `p2-visual.md`, rows E5, E6, E8–E10, E20.
+
+**What to do:** select a creature of your level, one 3–5 levels above and one far below; keep
+one of them selected while it carries one of your harmful effects and you carry a beneficial
+one. Use a class with a class resource (pips or a bar). A private screenshot of each helps.
+
+**Record:** the frames' layout (portrait, name, level, bars, resource) and how it differs per
+target kind; the name colour per level difference; how the level shows for a far higher
+target; the order and size of the target's effect icons under its frame; whether the class
+resource shows as pips or a bar, and where.
+
+<a id="o129"></a>
+## O129. Quickslot bar and cast bars (P2, exit verification)
+
+**Spec:** `combat-ui.md` §7 (cast, induction and channel bars: fill, delay, end states,
+interrupt, cancel), §9.3–§9.4 (cooldown display, slot states).
+
+**Tessera's side:** C1 of `p2-visual.md`, rows E11, E12, E15, E16.
+
+**What to do:** use a skill with a cooldown of several seconds, a skill with an induction, and
+a channelled skill; let a creature interrupt an induction; cancel one by moving or with Escape;
+try a skill that is not usable yet (out of range or without power). A short private video helps.
+
+**Record:** the cooldown sweep (direction, darkness, whether a number counts down); how a slot
+looks when the skill cannot be used and when it becomes available again; the cast bar's fill
+direction for an induction and for a channel, how a delay shows, and what the bar shows on
+success, interrupt and cancel, and for how long.
+
+<a id="p4-items"></a>
+## Decision 0024 P4 items (social panels)
+
+These rows compare Tessera's P4 panels and chat with the original client. They block nothing
+until P8 (decision 0024 §2.6). Most need other players (a friend, a kin member or a public
+group). Describe what you see in your own words; never copy player names, chat text,
+channel names or other game text into this file: write "member 2", "the leader", "the
+channel I made", and name notices by their role ("someone left").
+
+<a id="o130"></a>
+## O130. Fellowship display and vitals (P4)
+
+**Spec:** `social-panels.md` §4.1–§4.6 (panels, rows, leader marker, member out of view,
+leader change, removal, disbanding) and §9 TR2–TR4 (Tessera's rules); `scenario-feed.md` §6.7
+(vitals of members without an entity).
+
+**Tessera's side:** a committed P4 fellowship scenario run with `tessera-client --scenario
+FILE` shows the rows, the leader marker, a member out of view with vitals, a leader change,
+a removal and a disband, with the lines Tessera derives (TR4).
+
+**What to do:** in a fellowship of three or more, watch the fellowship display while (a) the
+leader passes leadership, (b) a member leaves or is dismissed, (c) a member walks out of
+view (another area, far away), (d) the fellowship is disbanded.
+
+**Record:** where the leader marker sits (on the leader's row; on your own portrait when you
+lead); whether you get a row yourself; row order (join order or another); for (c): does the
+row stay, do its morale and power keep changing, what does a left click on it do; for (b)
+and (d): which chat lines appear (by role, for example "X left", "the fellowship was
+disbanded"), in which order relative to the rows changing, and whether both "you dismissed"
+and "was dismissed" appear when you dismiss someone (Q14); whether the display hides after
+the disband. Also (added 2026-10-11, `social-panels.md` revision 1): with voice chat off,
+whether any voice icon shows on a member row or on your own portrait (Tessera hides them,
+TR14); what F1 and F2 select (Q6); what the two disband names and the two promote names do in
+a fellowship (Q5).
+
+<a id="o131"></a>
+## O131. Fellowship invitation prompt (P4)
+
+**Spec:** `social-panels.md` §5 (window, behaviour, keys), Q13.
+
+**Tessera's side:** a scenario `invite` step shows the prompt (TR7); Accept and Decline send
+`AnswerInvite`.
+
+**What to do:** have another player invite you twice: accept once, decline once, and once
+let it wait without answering.
+
+**Record:** where the window opens; what it lists (inviter only, or the members); the
+buttons; whether Escape or the close button counts as decline; after how many seconds an
+unanswered invitation disappears, and which line appears then (by role).
+
+<a id="o132"></a>
+## O132. Trade window (P4)
+
+**Spec:** `social-panels.md` §6 (layout, item entries, coin, accept states and resets), Q8,
+Q9, Q11.
+
+**Tessera's side:** a committed P4 trade scenario shows both sides, coin and the ready
+states (TR9, TR10).
+
+**What to do:** open a trade with another player; put in two items and some coin; let the
+other side do the same; press the trade button on one side, then change an item, then press
+it on both sides until the trade completes. Try to take an offered item back.
+
+**Record:** how each side looks (own items left or right, coin fields); how the ready state
+shows on each side; what happens to both ready states when either side changes its offer;
+how many items a side can hold; whether and how an offered item can be removed; what happens
+at completion (window closes, lines by role, items moved to which bag slots). Also (added
+2026-10-11, `social-panels.md` revision 1): how your money and the partner's coin are shown
+(coin images with counts; which coins show at 0), and the colour of the item names.
+
+<a id="o133"></a>
+## O133. Social panel: friend and ignore lists (P4)
+
+**Spec:** `social-panels.md` §3.1–§3.8 (pages, rows, sorting, buttons and dialogs, ignore
+page, notices), Q1, Q2, Q7.
+
+**Tessera's side:** a scenario's `friends` and `ignore` steps fill the pages (TR5, TR6);
+`/friend` and `/ignore` with `add`, `remove`, `list` work in the chat line (TR11).
+
+**What to do:** open the Social panel on the friends page and on the ignore page; add and
+remove a friend and an ignored name; watch a friend log in and out; sort by each column.
+
+**Record:** columns and the default sort column and direction for each page (Q7); what
+pressing O and a page command does while the panel is open at another page (Q1); colours of
+online and offline friends; what the add and remove dialogs ask; which lines a friend's login
+and logout give (by role); what `/friend list` and `/ignore list` print (by role, no names).
+
+<a id="o134"></a>
+## O134. Tells and the instant-message tab (P4)
+
+**Spec:** `chat-window.md` §15.2–§15.5 (sending tells, tell lines, the instant-message tab and
+its sessions, refusals) and §15.10 CT1–CT4.
+
+**Tessera's side:** on a test server (`--server`) tells work between two Tessera clients;
+`tell`, `reply` and `retell` run in the chat window's dispatcher.
+
+**What to do:** exchange tells with another player; reply with the reply key and with the
+reply command; send a tell to a name that is offline and to one that does not exist; open
+and close the instant-message tab.
+
+**Record:** how your own tell and an incoming tell look (prefix form, colour, by role); when
+the instant-message tab appears (first incoming tell, first outgoing, never by default) and
+what its title shows; what Shift or Ctrl with the line-up key does in the entry; which line
+an offline or unknown recipient gives (by role); whether typing the tell command word and a
+space changes the entry's channel label (the spec says it does not, while the reply word and a
+space does, `chat-window.md` CW44); whether the instant-message tab's session list ever
+reorders its rows (the spec says it does not, §15.4 step 4).
+
+<a id="o135"></a>
+## O135. Channel join and leave lines, channel slots and tabs (P4)
+
+**Spec:** `chat-window.md` §15.6 (user chat channels) and §15.10 CT5; `tessera-protocol.md`
+§10.6 and the §17 OPEN on membership notices; `test-server.md` §9.1 (name rule).
+
+**Tessera's side:** on a test server at protocol 1.2 `join` and `part` create and leave named
+channels (decision 0035 D1); lines reach only members.
+
+**What to do:** join a channel of your own invention, write a line, have another player join
+and leave it, leave it yourself; try a long name (over 30 characters), a name with digits and
+one with punctuation; join more channels than the client allows.
+
+**Record:** the lines shown on join and leave (by role), and whether you see others join or
+leave; which slot number the channel takes and how a line in it is prefixed; whether a
+channel gets its own tab or filter; the longest name accepted and which characters are
+refused; the per-character limit and its refusal line (by role).
+
+<a id="o136"></a>
+## O136. Synchronised fellowship start (P4)
+
+**Spec:** `instruments.md` §8.8 (waiting part, start, notices, withdrawal), §8.9 (start
+tolerance) and Q10–Q13; `scenario-feed.md` §6.7.
+
+**Tessera's side:** a committed P4 scenario makes two members' parts wait and starts them
+together (`perform … sync`, `perform-start`); with your own `/play x sync` and `/playstart`
+your part joins (P4 exit criterion 3).
+
+**What to do:** in a fellowship of two or more players with instruments, each runs
+`/play <song> <part> sync` with parts of one song; then one member runs `/playstart`.
+Repeat with the starter having no part of their own, and once with one member leaving music
+mode before the start.
+
+**Record:** time from pressing Enter on `/playstart` to the first note (stopwatch, a few
+tries; compare with a solo `/play`); how aligned the parts sound to you (together, a slight
+flam, an audible offset; estimate in milliseconds if you can); whether the starter needs a
+part; whether a member who left music mode still starts (Q11, Q13); which lines appear (by
+role) for "ready" and "start".
+
+<a id="o137"></a>
+## O137. Owner question: synchronised-start relay on Tessera's own server (P4)
+
+**Spec:** [decision 0024](../decisions/0024-parity-track.md) open item 2;
+[decision 0035](../decisions/0035-p4-social-on-test-server.md) D2, D3; `instruments.md` Q14;
+LEGAL.md §11.1 rule 5.
+
+**Question:** does relaying a synchronised `/play` start (a member's "ready" with a tune name
+and a common start time, `instruments.md` §8.8) through Tessera's own server count as chat
+under rule 5? Until answered, synchronised starts with other players exist only on the
+scenario feed; protocol v1.2 carries no message for them.
+
+**Record:** yes or no, with any condition (for example "only between members of one named
+channel", or "only the start time, no tune name"), and the date. A yes leads to a later
+protocol minor; a no closes the question.
+
 <a id="p5-items"></a>
 ## Decision 0024 P5 items (maps, travel, instance finder and mounts)
 
@@ -1940,8 +2484,8 @@ positions ("the third item of the menu", "the second destination under the first
 
 **Tessera's side** for every row: the committed scenarios `map`, `travel`, `instances` and
 `mount` in `apps/client/tests/scenarios/`, run windowed with your install
-(`tessera-client --ui --scenario-input --scenario FILE`, USER_GUIDE §3.15); `--open-panel map`;
-and, for the mount rows, the offline walker with `--mount SPEC` or `/ride` (USER_GUIDE §3.15).
+(`tessera-client --ui --scenario-input --scenario FILE`, USER_GUIDE §3.17); `--open-panel map`;
+and, for the mount rows, the offline walker with `--mount SPEC` or `/ride` (USER_GUIDE §3.17).
 
 The two P5 specs proposed their own rows, both numbered from O140; this file numbers them in
 one sequence. Spec rows → rows here: `map-windows.md` O140 → O140 and O141, O141 → O142,

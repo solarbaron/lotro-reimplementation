@@ -182,8 +182,17 @@ pub struct ChatSection {
     pub flood_rejections: u32,
     /// Flood window, seconds (60–3,600).
     pub flood_window_s: u32,
-    /// Log chat lines (debugging only).
+    /// Log chat lines (debugging only); with it, channel names appear in the channel events.
     pub log_chat: bool,
+    /// Named chat channels (§9.1): advertise `CHAT_CHANNELS` to connections at minor ≥ 2 and
+    /// run the channel registry.
+    pub channels: bool,
+    /// Channels that may exist at once on the server (1–4,096).
+    pub max_channels: u32,
+    /// Channels one character may be a member of at once (1–32).
+    pub max_channels_per_character: u32,
+    /// Members of one channel (2–4,096).
+    pub max_channel_members: u32,
 }
 
 /// `[limits]` (§4.7).
@@ -294,6 +303,10 @@ impl Default for Config {
                 flood_rejections: 20,
                 flood_window_s: 60,
                 log_chat: false,
+                channels: true,
+                max_channels: 256,
+                max_channels_per_character: 10,
+                max_channel_members: 256,
             },
             limits: LimitsSection {
                 max_connections: 64,
@@ -906,6 +919,10 @@ fn parse_chat(r: &mut Reader<'_, '_>, v: View<'_, '_>, c: &mut ChatSection) {
             "flood_rejections",
             "flood_window_s",
             "log_chat",
+            "channels",
+            "max_channels",
+            "max_channels_per_character",
+            "max_channel_members",
         ],
     );
     float_key(
@@ -948,6 +965,25 @@ fn parse_chat(r: &mut Reader<'_, '_>, v: View<'_, '_>, c: &mut ChatSection) {
     u32_key(r, v, "flood_rejections", 5, 20, &mut c.flood_rejections);
     u32_key(r, v, "flood_window_s", 60, 3_600, &mut c.flood_window_s);
     bool_key(r, v, "log_chat", &mut c.log_chat);
+    // Named channels (§4.6, §9.1; decision 0035).
+    bool_key(r, v, "channels", &mut c.channels);
+    u32_key(r, v, "max_channels", 1, 4_096, &mut c.max_channels);
+    u32_key(
+        r,
+        v,
+        "max_channels_per_character",
+        1,
+        32,
+        &mut c.max_channels_per_character,
+    );
+    u32_key(
+        r,
+        v,
+        "max_channel_members",
+        2,
+        4_096,
+        &mut c.max_channel_members,
+    );
 }
 
 fn parse_limits(r: &mut Reader<'_, '_>, v: View<'_, '_>, l: &mut LimitsSection) {
@@ -1164,6 +1200,38 @@ tolerance = 1.25
         );
         let lines: Vec<_> = f.iter().map(|f| (f.line, f.rule)).collect();
         for line in 2..=5 {
+            assert!(lines.contains(&(line, Rule::Config)), "line {line}: {f:?}");
+        }
+        assert_eq!(c.chat, Config::default().chat);
+        // §4.6 channel keys (decision 0035): defaults, the ends of their ranges, outside.
+        let c = Config::default().chat;
+        assert_eq!(
+            (
+                c.channels,
+                c.max_channels,
+                c.max_channels_per_character,
+                c.max_channel_members
+            ),
+            (true, 256, 10, 256)
+        );
+        let (c, f) = Config::parse(
+            "[chat]\nchannels = false\nmax_channels = 4096\nmax_channels_per_character = 1\nmax_channel_members = 2\n",
+        );
+        assert!(f.is_empty(), "{f:?}");
+        assert_eq!(
+            (
+                c.chat.channels,
+                c.chat.max_channels,
+                c.chat.max_channels_per_character,
+                c.chat.max_channel_members
+            ),
+            (false, 4_096, 1, 2)
+        );
+        let (c, f) = Config::parse(
+            "[chat]\nmax_channels = 0\nmax_channels_per_character = 33\nmax_channel_members = 1\n",
+        );
+        let lines: Vec<_> = f.iter().map(|f| (f.line, f.rule)).collect();
+        for line in 2..=4 {
             assert!(lines.contains(&(line, Rule::Config)), "line {line}: {f:?}");
         }
         assert_eq!(c.chat, Config::default().chat);

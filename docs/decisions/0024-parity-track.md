@@ -2,7 +2,13 @@
 
 # 0024 — Parity track, client half: milestones P0–P8 between M7 and M9
 
-**Status:** Accepted (owner, 2026-10-09).
+**Status:** Accepted (owner, 2026-10-09). Amended 2026-10-11 by
+[decision 0034](0034-official-server-compatibility.md): M8 is in scope without a gate, so
+"if the M8 gate passes" below reads "with M8", "M8 Phase 1 (the legal gate)" no longer
+exists, and the fallback "if the gate fails" applies only if M8 stops under LEGAL §9.4 (an
+explicit objection from a rights holder). M8 may run beside the track; M9 still starts only
+after P8 and M8. The client half only, LEGAL §11.1 rule 5 and the data-free server are
+unchanged.
 
 **Owner's choice: "Client half only."** LEGAL.md §11.1 rule 5 and `server-content.md` §7
 stay as they are. The track builds only what the original client shows and computes

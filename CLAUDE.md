@@ -13,7 +13,7 @@ The repo has two zones:
 
 | Zone | Paths | Who may read it |
 |------|-------|-----------------|
-| **Dirty room** (research) | `research/`, the research clones (`~/.cache/tessera/clones` or `$TESSERA_CLONES_DIR`), dirty scratch dirs (`~/.cache/tessera/scratch/*/dirty`, `$TESSERA_RE_DIR`), anything under a scratchpad `clones/` dir, game binaries, disassembly | Spec writers only |
+| **Dirty room** (research) | `research/`, the research clones (`~/.cache/tessera/clones` or `$TESSERA_CLONES_DIR`), dirty scratch dirs (`~/.cache/tessera/scratch/*/dirty`, `$TESSERA_RE_DIR`), `$TESSERA_RE_DIR/tools/` and `$TESSERA_RE_DIR/work/` (decompiler installs and project copies), `~/.rea`, `/tmp/rea-*`, anything under a scratchpad `clones/` dir, game binaries, disassembly | Spec writers only |
 | **Clean room** (implementation) | `crates/`, `apps/`, `fuzz/`, `tools/` | Implementers, working **only** from `docs/specs/` |
 
 - `docs/specs/*.md` is the **only** interface between the two. Specs are prose and tables of
@@ -123,7 +123,7 @@ compatibility in plain prose is fine. Format-level terms like "DID" or "landbloc
   line (offline and with `--server`) or given as `tessera-client --command "<line>"` (old
   name `--music-command`); unknown commands post an error line and are never sent. Merged
   with M4.5 and M7 on main (2026-10-08). M5 (UI and plugins) is merged too (status below);
-  M8 is gated.
+  M8 is in scope since 2026-10-11 (decision 0034, below).
 - **Beyond the milestones (merged 2026-10-09):** the far view (`far-view.md`, `--far-view on`:
   far terrain, sprites and horizon beyond a 3 × 3 full-detail field; far entities, the
   normal-mapped template and flow-map far water still open) and the particle runtime
@@ -142,15 +142,17 @@ compatibility in plain prose is fine. Format-level terms like "DID" or "landbloc
   playable bodies in the real-data look test) and hair, skin and eye tints, with a shared composition cache. Open: §15 OPENs (option-off order, engineering
   choices), owner item O15 (Dwarf brow colour).
 - **Parity track (decision 0024, owner 2026-10-09: "client half only"):** P0–P8 build the
-  client-side gameplay presentation from the install, fed by a sandbox scenario feed (and by
-  an official server only if the M8 gate passes); LEGAL.md §11.1 rule 5 is unchanged, so
+  client-side gameplay presentation from the install, fed by a sandbox scenario feed (and,
+  with M8, by an official server; decision 0034); LEGAL.md §11.1 rule 5 is unchanged, so
   Tessera's server never runs gameplay rules. P0 (scenario feed, `tessera-gamedata`,
   `tessera-client --scenario`, server dependency check) is merged to main (2026-10-10; exit
-  criteria 1–4 pass). P1 is merged to main (2026-10-10, below); P2 and P3 are next.
+  criteria 1–4 pass). P1, P2, P3 and P4 are merged to main (2026-10-10 and 2026-10-11, below); P5 is
+  in progress on branch `p5`.
 - **Priority (owner, 2026-10-08):** extended scripting (decision 0017, planned as M5.5) is
   now M9, the last milestone: it starts only after full client parity and server
-  compatibility (M8; or, if the M8 gate fails, client parity on the own server). Its specs
-  stay Accepted; do not start it earlier.
+  compatibility (M8; or, if M8 stops on a rights holder's objection, LEGAL.md §9.4, client
+  parity on the own server). Its specs stay Accepted (with decision 0034's amendment note);
+  do not start it earlier.
 - **M7 (merged to main 2026-10-08, verified 2026-10-07):** Tessera's own
   protocol and test server. `tessera-protocol.md` v1.0 Accepted after an independent review,
   decision 0030 (QUIC: quinn + rustls on ring), `crates/protocol`, `apps/server`,
@@ -224,63 +226,96 @@ compatibility in plain prose is fine. Format-level terms like "DID" or "landbloc
   failed, 10 ignored. Open: empty stat rows on this install (`character-panels.md` §3.4),
   bag columns saved on the main thread (ARCH §21), `lua-plugin-api.md` §19 summary lacks the
   new §15.1 OPENs, walker and game HUDs over the screens in a normal run.
-- **P3 (NPC windows: dialogue, quests, vendors and loot; branch `p3` in worktree `wt-p3`,
-  exit verification 2026-10-11 on the uncommitted tree)** (`docs/ROADMAP.md` P3 status):
-  criteria 1 and 2 pass on Tessera's side; to be committed and merged (P2 runs in parallel in
-  `wt-p2`: merge seams below). Not yet Accepted: `npc-windows.md`, `quest-journal.md`
-  (Review), `scenario-feed.md` §18.P3 rev 5 (Review), `lua-plugin-api.md` §15.3 (Revised);
-  decision 0031 (panel goldens: tier 1 committed synthetic, tier 2 local-only real data)
-  is Proposed. Built: `tessera-gamedata` `quest` and `npc`; `tessera-net` rev 5 (`action(…)`,
-  `rewards`/`QuestRewards`, `buyback`/`BuybackShown`/`BuyBack`); `tessera-ui`
-  `game::{npcvocab, npc, quest}` with 12 synthetic goldens; `tessera-plugins` `wallet`;
-  `tessera-client` `npc` (use on U, windows, wallet) and `quests` (log on L, tracker, chat
-  type 21, map markers, indicators, `--quest-icons`), scenarios `dialogue`, `vendor`, `loot`,
-  `quest-log` with logs. Criterion 1: 20,807 quest records, 15,400 log rows and details panes,
-  5,407 deeds in the tracker only, 0 failures. Criterion 2: 19 local goldens blessed, judged
-  and matched with `TESSERA_GOLDEN_REQUIRE=1` (install `3905db5e60168527`). Checks: fmt,
-  clippy `-D warnings` (workspace, `--all-features`, fuzz) clean; release tests with the
-  install 6,057 passed, 0 failed, 10 ignored; fuzz smoke 60 s clean; content, SPDX, server
-  deps, links clean. Open: text-fitting defects (option rows wrap, offer objective and
-  details texts cut at the pane width, `quest-journal.md` §4.7 OPEN), barter window off
-  screen at x = −107, no dialog-box or popup-menu widget (abandon on a second click,
-  tracker menu as a chat notice), U and L are raw keys; merge seams with P2: the
-  `NpcWindows` alias with `Deref` in `PlayerState` (becomes a `quests` field), UI events
-  taken from the character-screen collector (`ui_host` not changed), `npc::use_entity` for
-  P2's selection, the second `LocalPlayerSource` writer.
-- **P5 (map, travel, mounts and instances; branch `p5` in worktree `wt-p5`, exit
-  verification 2026-10-12 on the uncommitted tree)** (`docs/ROADMAP.md` P5 status): criteria
-  1–3 pass on Tessera's side; to be committed and merged (P2 and P4 ran in parallel: merge
-  seams are the `tessera-ui` game module index, `tessera-net` domain groups, the client's
-  `PlayerState` and frame order, `scenario-feed.md` (revision "P5 travel", number reconciled
-  at merge), `lua-plugin-api.md` §15.5, `fuzz/Cargo.toml`). Not yet Accepted: `map-windows.md`,
-  `travel-windows.md`, `walker.md` §16, `scenario-feed.md` §18.P5 (Review), `mounts.md` §14,
-  `lua-plugin-api.md` §15.5 (Revised); decision 0036 (map census, P5 goldens) Proposed. Built:
-  `tessera-gamedata` `map`, `travel`, `instance`, `mount` (and the `map-region` family);
-  `tessera-net` "P5 travel" forms (marker sets, `markers`, `travel-end`, `instance-queue`,
-  `mount-vital`, `LeaveQueue`); `tessera-physics` `controller::gait`, war-steed drive;
-  `tessera-ui` `game::{mapwindow, mapmarks, travel, finder, popup, p5vocab}` with fallbacks and
-  6 synthetic goldens; `tessera-plugins` `mount` views; `tessera-settings` `MapPrefs` (`[Map]`);
-  `tessera-input` `toggle_mount` (Ctrl+M); `tessera-client` `map` (M, `/findplace`, census),
-  `travel` (travel window, presentation, finder on Ctrl+J, `/leaveinstance`), walker mounts
-  (`--mount`, `/ride`, mount figure, HUD, frame/walk-log columns), scenarios `map`, `travel`,
-  `instances`, `mount` with logs; fuzz `client_mount_spec`, `ui_p5_map_windows`. Criterion 1:
-  1,525 / 1,525 regions shown, 1,523 marked, C5 2, 0 failures. Criterion 2: normal mounts and
-  the war-steed ride with the install's gaits and clips (gaits 4–7, summon 2.0 s, mount
-  0.4 s); 721 / 722 mount effects drawable per body. Criterion 3: travel and finder windows
-  from the install, 13 local goldens matched (12 judged correct; the loading screen draws its
-  image only, `ui-layout.md` §8 OPEN). Checks: fmt, clippy (workspace, `--all-features`,
-  fuzz), rustdoc clean; release tests with the install 6,332 passed, 0 failed, 10 ignored;
-  fuzz smoke 60 s clean; content, SPDX, server deps, links clean. Open: spec reviews, headless
-  `--ui` runs skip the P3/P5 frames, `walker.md` §16.12 OPENs, finder join-label text cut.
+- **P3 (NPC windows: dialogue, quests, vendors and loot; merged to main 2026-10-11, exit
+  verification 2026-10-11)** (`docs/ROADMAP.md` P3 status): criteria 1 and 2 pass, its specs
+  (`npc-windows.md`, `quest-journal.md`, `scenario-feed.md` rev 5, `lua-plugin-api.md` §15.3)
+  are Accepted. Built: `tessera-gamedata` `quest` and `npc`; `tessera-net` rev 5 (`action`,
+  rewards, buyback); `tessera-ui` `game::{npcvocab, npc, quest}`; `tessera-plugins` `wallet`;
+  `tessera-client` `npc` and `quests`; scenarios `dialogue`, `vendor`, `loot`, `quest-log`.
+  Real data: 20,807 quest records, 15,400 log rows, 0 failures; 19 local goldens matched.
+  Open: text-fitting defects (`quest-journal.md` §4.7 OPEN), barter window off screen, no
+  dialog-box or popup-menu widget, U and L are raw keys.
+- **P2 (targeting, skills and combat presentation; merged to main 2026-10-11, exit
+  verification 2026-10-11)** (`docs/ROADMAP.md` P2 status): criteria 1-4 pass on Tessera's
+  side. Accepted after independent review: `combat-ui.md` (rev 2), `skill-tooltips.md`,
+  `combat-visuals.md`, the P2 revisions of `item-tooltips.md`, `keymap.md`,
+  `lua-plugin-api.md` §15.2, `script-table.md`, `particles.md`, `particle-runtime.md`,
+  `scenario-feed.md` rev 6 and decision 0032; the code was conformed to them. Built:
+  `tessera-gamedata` skill/effect tooltips, census and `combat`; `tessera-ui` `game::combat`;
+  `tessera-input` targeting and 72 quickslot actions; `tessera-plugins` §15.2 combat views;
+  local `SelectTarget` in `tessera-net`; walker `CombatLayer`, beam ribbons and heads; client
+  `combat` module and goldens. Merged with P3: quest state is a `PlayerState` field, one
+  per-frame list of in-world UI events feeds the NPC hub, quest hub and combat UI, selection
+  use goes through `npc::use_entity`. Real data: 13,247 skills and 32,971 effects
+  categorised (33,601 tooltips, 0 failures). Open: `keymap.md` §8.2 defaults take five walker
+  keys (owner); target portrait drawn as a white disc (E6); the voice-chat icon over the
+  player name (§4.1 OPEN); main-thread record reads in combat cues (ARCH §21); U uses the
+  nearest NPC, not the selection.
+- **P4 (social panels: fellowship, trade, friends and ignore lists, tells, named chat channels,
+  synchronised music; merged to main 2026-10-11, exit verification 2026-10-11)**
+  (`docs/ROADMAP.md` P4 status): criteria 1-3 pass on Tessera's side. Accepted after
+  independent review: `social-panels.md` (rev 1), `chat-window.md` rev 4, `abc-dialect.md`
+  and `instruments.md` P4, `tessera-protocol.md` v1.2 (minor 2), `test-server.md`,
+  `scenario-feed.md` rev 7, `lua-plugin-api.md` §15.4, decision 0035; the code was conformed
+  to them and verified (trade entry names, quality colours and coin displays; member-row
+  voice icons hidden; chat-window rev 4 fixes; loadtest bots on named channels; PartyMember
+  target and effects follow the member's entity). Built: protocol minor 2 in
+  `tessera-protocol`, `tessera-server` and `tessera-loadtest`; `tessera-net` remote channels
+  and the feed's P4 forms; `tessera-ui` `game::social` and `game::chat::{social, im,
+  notice}`; `tessera-plugins` `party`; `tessera-audio` `instruments::sync`; `tessera-client`
+  `social`, the P4 dispatcher built-ins and `/play ... sync`; scenarios `fellowship`,
+  `trade`, `friends`, `music-sync`. The M5 `--ui` gap is closed (chat window, overlay and
+  `--command` share the dispatcher). Open: member-row effect icons (TR16), no committed
+  synthetic P4 goldens, no text-input dialog or context menu, the Leave error code
+  (`tessera-protocol.md` §10.6 OPEN). Owner rows O130-O137.
+- **P5 (map, travel, mounts and instances; branch `p5`, worktree `wt-p5`, exit verification
+  2026-10-12)** (`docs/ROADMAP.md` P5 status): criteria 1-3 pass on Tessera's side. Its specs
+  (`map-windows.md`, `travel-windows.md`, `mounts.md` §14, `walker.md` §16,
+  `scenario-feed.md` rev 8 "P5 travel", `lua-plugin-api.md` §15.5) are Accepted after
+  independent review (2026-10-13); decision 0036 (map census, P5 goldens) is Proposed; the
+  code is conformed to the specs by the next pass. Built: `tessera-gamedata` `map`, `travel`,
+  `instance`, `mount`; `tessera-net` "P5 travel" forms; `tessera-physics` `controller::gait`;
+  `tessera-ui` `game::{mapwindow, mapmarks, travel, finder, popup, p5vocab}`; `tessera-plugins`
+  `mount` views; `tessera-settings` `MapPrefs`; `tessera-input` `toggle_mount`;
+  `tessera-client` `map`, `travel`, walker mounts (`--mount`, `/ride`, Ctrl+M); scenarios
+  `map`, `travel`, `instances`, `mount`. Real data: 1,525 / 1,525 map regions shown, 13 local
+  goldens matched. Open: loading-screen progress bar, `walker.md` §16.12 OPENs, finder
+  join-label text cut, headless `--ui` runs skip the P3/P5 frames. Owner rows O140-O155.
+- **REA (decision 0033, Proposed):** optional dirty-only analysis tool, pilot pending; never
+  registered as an MCP server.
 - **Pending owner input:** `docs/checklists/owner-observations.md` (`/loc` readings at the 20
   M3 reference locations, frame-capture questions from M2, M4 items O8–O17, M4.5 items
   O18–O27, M5 items O39–O49, M6 items O28, M7 items O70–O73, P1 items O80–O86 and
-  O88–O90, P3 items O110–O125, P5 items O140–O155). They do not block the
+  O88–O90, P2 items O93–O109 and O126–O129, P3 items O110–O125, P4 items O130–O137, P5
+  items O140–O155). They
+  do not block the
   Tessera-side work.
 - **Toolchain:** the laptop now has rustup (Gentoo `rustup-init-gentoo --symlink`; put
   `~/.cargo/bin` first in `PATH`); fmt, clippy and tests pass on the pinned 1.99.0.
-- **Gate:** M8 (official-server compatibility) must not start without a recorded legal review
-  (`docs/decisions/0004-server-strategy.md`). Stop and ask the owner.
+- **M8 (official-server compatibility) is in scope** by the owner's decision of 2026-10-11
+  (`docs/decisions/0034-official-server-compatibility.md`).
+  - **The decision.** No legal review and no permission from the rights holders exist. The
+    owner set those conditions (G1, G2) aside and accepts the residual risks of
+    `docs/LEGAL.md` §9.2. Decision 0034 supersedes the gate of decision 0004.
+  - **Still binding:**
+    - G4: a ban-risk warning that the user must accept in the client before any official
+      connection;
+    - G5: the forbidden list of LEGAL.md §8. No shipping, mirroring or linking to client
+      binaries, dat files, patches or old clients; no modified, patched, redirected or
+      injected official client; no Daybreak keys or other secrets in the repository,
+      releases or documentation (key material is loaded at runtime from the user's
+      install); no committed captures from official servers; no leaked, NDA-covered or
+      decompiled vendor source; no monetisation beyond donations for infrastructure costs;
+      no bypassing account authentication, subscription checks, anti-cheat or any other
+      access control.
+  - **Research.** M4 and passive observation of the owner's own sessions may cover the
+    official protocol and login flow (the client binary, and the launcher binary for its
+    part of the login flow), never anti-cheat, anti-tamper, code-signing checks or the
+    patcher's update function. Captures are dirty-only.
+  - **Extended scripts (M9).** They may run on an official server only after the user's
+    explicit opt-in, which is off by default. Automation (`input.drive` and any module that
+    issues movement, input or game commands) stays offline only, as maintainer policy.
+  - **Stop.** The project stops if Daybreak or MEE objects (LEGAL.md §9.4).
 
 ## Working across machines and sessions
 
@@ -289,7 +324,9 @@ compatibility in plain prose is fine. Format-level terms like "DID" or "landbloc
   `docs/decisions/` and progress here or in the roadmap, then commit and push.
 - Setup and hand-off steps: `docs/DEVELOPMENT.md`. Check a machine with `tools/dev-setup.sh`.
 - Continue the roadmap with the saved workflow `.claude/workflows/tessera-milestone.js`
-  (one milestone per run, then review, commit, push; it refuses M8). Dirty-room research
+  (one milestone per run, then review, commit, push; it runs M8 with the decision-0034 rules
+  in its prompts and always refuses M9, which comes after P8 and M8 and needs a change to
+  the script). Dirty-room research
   clones go in `${XDG_CACHE_HOME:-~/.cache}/tessera/clones` (`tools/fetch-research-clones.sh`
   or `tools/dev-setup.sh --fetch-research`), never inside the repo.
 - Machine-local, git-ignored: `.cargo/config.toml` (build cache location) and

@@ -30,6 +30,10 @@
 //! - accepts player movement, correcting it back (an [`Event::EntityMoved`]
 //!   and a precise [`Event::LocationReport`]) if it moves implausibly fast or
 //!   into another region (a stand-in for server-side validation),
+//! - answers [`SocialCommand::StartPerformance`] with one
+//!   [`SocialEvent::PerformanceSyncStart`] by the player (lead
+//!   [`DEFAULT_PERFORMANCE_LEAD_MS`], `at_ms` counted from world entry;
+//!   `scenario-feed.md` §9.8),
 //! - optionally delays every event by a fixed latency,
 //! - with a resolved scenario ([`SandboxConfig::scenario`], feature `scenario`), plays the
 //!   scenario feed (`docs/specs/scenario-feed.md`): the scripted domain events of
@@ -80,7 +84,9 @@ pub use world::{
 };
 
 use crate::NetError;
-use crate::domain::{CharacterCommand, CharacterEvent, Text};
+use crate::domain::{
+    CharacterCommand, CharacterEvent, DEFAULT_PERFORMANCE_LEAD_MS, SocialCommand, SocialEvent, Text,
+};
 use crate::model::{
     Anchor, Appearance, CharacterSummary, ChatChannel, Destination, DisconnectReason, EntityId,
     EntityKind, Location, LocationCause, RegionId, Transform, Vec3,
@@ -1260,6 +1266,28 @@ impl SandboxBackend {
         }
     }
 
+    /// The plain sandbox's answer to `StartPerformance` (`scenario-feed.md` §9.8): one
+    /// `PerformanceSyncStart` by the entered character, `at_ms` the whole milliseconds since
+    /// world entry plus the 700 ms lead. It keeps no waiting parts.
+    fn start_performance(&mut self, now: Instant) {
+        let (Some(start), Some(name)) = (
+            self.world_start,
+            self.player.as_ref().map(|p| p.name.clone()),
+        ) else {
+            return;
+        };
+        let since =
+            u64::try_from(now.saturating_duration_since(start).as_millis()).unwrap_or(u64::MAX);
+        self.emit(
+            now,
+            Event::Social(SocialEvent::PerformanceSyncStart {
+                by: Some(name),
+                at_ms: since.saturating_add(u64::from(DEFAULT_PERFORMANCE_LEAD_MS)),
+                lead_ms: DEFAULT_PERFORMANCE_LEAD_MS,
+            }),
+        );
+    }
+
     fn tick(&mut self, now: Instant) {
         let (Some(start), Some(last)) = (self.world_start, self.last_tick) else {
             return;
@@ -1390,6 +1418,9 @@ impl Backend for SandboxBackend {
                 if let Some(feed) = self.feed.as_mut() {
                     feed.submit(now, command)?;
                 }
+            }
+            (Phase::InWorld, Command::Social(SocialCommand::StartPerformance)) => {
+                self.start_performance(now);
             }
             (Phase::InWorld, Command::Chat { channel, text }) => self.chat(now, channel, text),
             (Phase::Closed, _) => return Err(NetError::Closed),

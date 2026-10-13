@@ -45,9 +45,9 @@ pub use node::{
     when_op,
 };
 pub use node::{
-    CompositorColourNode, CompositorLayerNode, EditMaterialNode, GameCallbackNode, LightNode,
-    MeshFxAppearanceEntry, MeshFxNode, ParticleScriptNode, SoundNode, TextureCompositorNode,
-    sound_pid,
+    BeamNode, CompositorColourNode, CompositorLayerNode, EditMaterialNode, ExecuteNode,
+    GameCallbackNode, LightNode, MeshFxAppearanceEntry, MeshFxNode, ParticleScriptNode, SoundNode,
+    TextureCompositorNode, sound_pid,
 };
 pub use record::{NodeCensus, Script, ScriptTable, Scriptlet, TABLE_KINDS};
 

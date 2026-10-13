@@ -7,6 +7,7 @@
 use tessera_protocol::message as wire;
 use tessera_protocol::types as wt;
 
+use crate::NetError;
 use crate::model::{
     Anchor, Appearance, Body, ChatChannel, DataId, Destination, EntityKind, Equipped, Landblock,
     Location, Look, LookEntry, PropertyValue, RegionId, Transform, Vec3,
@@ -187,6 +188,20 @@ pub(crate) fn wire_appearance(a: &Appearance) -> Option<wt::Appearance> {
     Some(out)
 }
 
+/// The wire form of an appearance the client asks for (`AppearanceSet`), with the checks
+/// both the real backend and the harness apply before anything is queued.
+///
+/// # Errors
+///
+/// [`NetError::InvalidCommand`] when the appearance is out of range or cannot travel (an
+/// object body with DID 0).
+pub(crate) fn checked_wire_appearance(a: &Appearance) -> Result<wt::Appearance, NetError> {
+    if !a.is_valid() {
+        return Err(NetError::InvalidCommand("appearance out of range"));
+    }
+    wire_appearance(a).ok_or(NetError::InvalidCommand("appearance cannot be sent"))
+}
+
 pub(crate) fn kind(k: wire::EntityKind) -> EntityKind {
     match k {
         wire::EntityKind::Player => EntityKind::Player,
@@ -203,18 +218,20 @@ pub(crate) fn chat_channel(c: &wire::ChatChannel) -> ChatChannel {
         wire::ChatChannel::Emote => ChatChannel::Emote,
         wire::ChatChannel::Tell { peer } => ChatChannel::Tell { peer: peer.clone() },
         wire::ChatChannel::System => ChatChannel::System,
+        wire::ChatChannel::Named { name } => ChatChannel::Named { name: name.clone() },
     }
 }
 
-/// The wire channel for an outgoing line; `None` for System (server only).
-pub(crate) fn wire_chat_channel(c: &ChatChannel) -> Option<wire::ChatChannel> {
+/// The wire channel for an outgoing line; `None` for System (server only), for Fellowship
+/// (no wire value at any minor, decision 0035 D1) and for a named channel unless
+/// `channels` (negotiated minor ≥ 2 with `CHAT_CHANNELS`, `scenario-feed.md` §9.8).
+pub(crate) fn wire_chat_channel(c: &ChatChannel, channels: bool) -> Option<wire::ChatChannel> {
     Some(match c {
         ChatChannel::Say => wire::ChatChannel::Say,
         ChatChannel::Yell => wire::ChatChannel::Yell,
         ChatChannel::Emote => wire::ChatChannel::Emote,
         ChatChannel::Tell { peer } => wire::ChatChannel::Tell { peer: peer.clone() },
-        // Fellowship and named channels have no wire form until a minor version of
-        // `tessera-protocol.md` adds them (scenario-feed.md §9.5).
+        ChatChannel::Named { name } if channels => wire::ChatChannel::Named { name: name.clone() },
         ChatChannel::System | ChatChannel::Fellowship | ChatChannel::Named { .. } => return None,
     })
 }
@@ -246,6 +263,31 @@ pub(crate) fn wire_destination(d: &Destination) -> wt::Destination {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The shared `AppearanceSet` checks: an object body with DID 0 cannot travel; a
+    /// character body can.
+    #[test]
+    fn checked_wire_appearance_refuses_what_cannot_travel() {
+        assert!(matches!(
+            checked_wire_appearance(&Appearance::new(Body::Object(DataId(0)))),
+            Err(NetError::InvalidCommand(_))
+        ));
+        let bad = Appearance::new(Body::Character { species: 1, sex: 1 }).wearing(Equipped {
+            item: DataId(1),
+            dye: Some(f32::NAN),
+            secondary_dye: None,
+            stowed: false,
+            slot: None,
+        });
+        assert!(matches!(
+            checked_wire_appearance(&bad),
+            Err(NetError::InvalidCommand("appearance out of range"))
+        ));
+        assert!(
+            checked_wire_appearance(&Appearance::new(Body::Character { species: 1, sex: 1 }))
+                .is_ok()
+        );
+    }
 
     #[test]
     fn appearance_round_trip() {
@@ -301,7 +343,24 @@ mod tests {
             }
             other => panic!("{other:?}"),
         }
-        assert!(wire_chat_channel(&ChatChannel::System).is_none());
+        assert!(wire_chat_channel(&ChatChannel::System, true).is_none());
+        assert!(wire_chat_channel(&ChatChannel::Fellowship, true).is_none());
+        let lore = ChatChannel::Named {
+            name: "Lore".into(),
+        };
+        assert!(wire_chat_channel(&lore, false).is_none());
+        assert_eq!(
+            wire_chat_channel(&lore, true),
+            Some(wire::ChatChannel::Named {
+                name: "Lore".into()
+            })
+        );
+        assert_eq!(
+            chat_channel(&wire::ChatChannel::Named {
+                name: "Lore".into()
+            }),
+            lore
+        );
         assert_eq!(
             chat_channel(&wire::ChatChannel::Tell {
                 peer: "Bram".into()

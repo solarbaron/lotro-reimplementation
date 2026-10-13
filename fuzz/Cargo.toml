@@ -1276,6 +1276,55 @@ test = false
 doc = false
 bench = false
 
+[[bin]]
+name = "protocol_v12_message"
+path = "fuzz_targets/protocol_v12_message.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "ui_combat_feed"
+path = "fuzz_targets/ui_combat_feed.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "server_v12_connection"
+path = "fuzz_targets/server_v12_connection.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "plugins_combat_views"
+path = "fuzz_targets/plugins_combat_views.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "server_v12_world"
+path = "fuzz_targets/server_v12_world.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "net_social_channels"
+path = "fuzz_targets/net_social_channels.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "particles_beam"
+path = "fuzz_targets/particles_beam.rs"
+test = false
+doc = false
+bench = false
+
 # --- P5: tessera-ui map windows, overlays, travel and finder models (map-windows.md, travel-windows.md) ---
 
 [[bin]]

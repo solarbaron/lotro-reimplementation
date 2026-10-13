@@ -29,6 +29,7 @@
 pub mod line;
 pub mod p5;
 pub mod registry;
+pub mod social;
 pub mod text;
 
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
@@ -43,7 +44,7 @@ use crate::audio::player_music::{MusicWord, PlayerMusic};
 use crate::walker::WalkerSession;
 
 use self::line::{History, Invocation, LineError};
-use self::registry::{Builtin, Channel, Entry, Handler, Help, Owner, Registry};
+use self::registry::{Builtin, Channel, Entry, Handler, Help, Owner, Registry, SocialWord};
 use self::text::CommandText;
 
 /// Tessera's unknown-command line when the install's is missing (decision 0020 item 4;
@@ -55,10 +56,6 @@ pub const NOT_CONNECTED: &str = "Not connected: chat not sent";
 pub const NOT_IN_WORLD: &str = "Not in the world: chat not sent";
 /// The line of a channel the Tessera protocol does not carry (decision 0020 item 2).
 pub const CHANNEL_UNAVAILABLE: &str = "This channel is not available here.";
-/// The line of a tell in the sandbox (decision 0020 item 3).
-pub const NO_TELL_PEERS: &str = "There is no one to tell in the sandbox.";
-/// The line of a reply or tell-again word (no reply target in Tessera).
-pub const NO_REPLY_TARGET: &str = "There is no one to reply to.";
 /// The line of a music command without player music.
 pub const NO_MUSIC: &str = "Player music is not available.";
 /// The line of `/plugins` without a plugin host.
@@ -82,6 +79,10 @@ pub struct LocalLine {
     pub kind: LineKind,
     /// Its text (plain).
     pub text: String,
+    /// (P4) The line's 64-bit chat-type mask when it is not the kind's own (0x1 `Error`,
+    /// 0x80 `Log`): the lines of the P4 built-ins take the original's masks
+    /// (`chat-window.md` §15.10 CT2).
+    pub mask: Option<u64>,
 }
 
 impl LocalLine {
@@ -91,6 +92,7 @@ impl LocalLine {
         Self {
             kind: LineKind::Error,
             text: text.into(),
+            mask: None,
         }
     }
 
@@ -100,7 +102,32 @@ impl LocalLine {
         Self {
             kind: LineKind::Log,
             text: text.into(),
+            mask: None,
         }
+    }
+
+    /// A line with the chat-type mask `mask` (`chat-window.md` §15.10 CT2): an `Error`
+    /// line when bit 0 (type 1) is set, else a `Log`-kind line shown with the mask.
+    #[must_use]
+    pub fn masked(mask: u64, text: impl Into<String>) -> Self {
+        Self {
+            kind: if mask & 1 != 0 {
+                LineKind::Error
+            } else {
+                LineKind::Log
+            },
+            text: text.into(),
+            mask: Some(mask),
+        }
+    }
+
+    /// The line's mask: [`Self::mask`], else 0x1 for `Error` and 0x80 for `Log`.
+    #[must_use]
+    pub fn chat_mask(&self) -> u64 {
+        self.mask.unwrap_or(match self.kind {
+            LineKind::Error => 0x1,
+            LineKind::Log => 0x80,
+        })
     }
 }
 
@@ -205,22 +232,91 @@ fn text_help(short: &str, long: String) -> Help {
 
 fn channel_help(ch: Channel) -> Help {
     match ch {
-        Channel::Say => text_help("say something nearby", "/say <text>: says the text on the local channel.".into()),
-        Channel::Yell => text_help("yell something", "/yell <text>: yells the text, heard further away.".into()),
-        Channel::Emote => text_help("act something out", "/emote <text>: shows the text as an emote.".into()),
+        Channel::Say => text_help(
+            "say something nearby",
+            "/say <text>: says the text on the local channel.".into(),
+        ),
+        Channel::Yell => text_help(
+            "yell something",
+            "/yell <text>: yells the text, heard further away.".into(),
+        ),
+        Channel::Emote => text_help(
+            "act something out",
+            "/emote <text>: shows the text as an emote.".into(),
+        ),
         Channel::Tell => text_help(
             "send a private message",
-            "/tell <name> <text>: sends the text to one character (quote a name with spaces).".into(),
+            "/tell <name> <text>: sends the text to one character (quote a name with spaces)."
+                .into(),
         ),
-        Channel::TellReply => text_help(
+        Channel::Reply => text_help(
             "reply to the last private message",
-            "Replies to the last private message; Tessera keeps no reply target, so this posts a notice.".into(),
+            "/reply <text>: sends the text to the last character who sent you a tell.".into(),
+        ),
+        Channel::Retell => text_help(
+            "tell the last character you told again",
+            "/retell <text>: sends the text to the last character you sent a tell.".into(),
+        ),
+        Channel::Fellowship => text_help(
+            "speak to your fellowship",
+            "/fellowship <text>: says the text on your fellowship's channel.".into(),
+        ),
+        Channel::Slot(k) => text_help(
+            "speak on a joined chat channel",
+            format!("/ch{k} <text>: says the text on the chat channel in slot {k}."),
         ),
         Channel::Unavailable => text_help(
             "a channel not available here",
             "A chat channel the Tessera protocol does not carry; using it posts a notice.".into(),
         ),
     }
+}
+
+fn social_help(word: SocialWord) -> Help {
+    let (short, long) = match word {
+        SocialWord::Join => (
+            "join a chat channel",
+            "/join <channel>: joins the named chat channel (it takes the lowest free slot).",
+        ),
+        SocialWord::Part => (
+            "leave a chat channel",
+            "/part <channel>: leaves the chat channel.",
+        ),
+        SocialWord::Channels => (
+            "list your chat channels",
+            "/channels: lists the chat channels you joined, by slot.",
+        ),
+        SocialWord::ChSay => (
+            "speak on a chat channel by name",
+            "/chsay <channel> <text>: says the text on a joined chat channel.",
+        ),
+        SocialWord::Friend => (
+            "manage your friends list",
+            "/friend add <name> | remove <name> | list: adds, removes or lists friends.",
+        ),
+        SocialWord::Ignore => (
+            "manage your ignore list",
+            "/ignore add <name> | remove <name> | list: adds, removes or lists ignored names.",
+        ),
+        SocialWord::Invite => (
+            "invite someone to your fellowship",
+            "/invite <name>: invites the character to your fellowship.",
+        ),
+        SocialWord::Leave => ("leave your fellowship", "/leave: leaves your fellowship."),
+        SocialWord::Dismiss => (
+            "dismiss a member of your fellowship",
+            "/dismiss <name>: dismisses the member from your fellowship (as its leader).",
+        ),
+        SocialWord::Promote => (
+            "make someone the fellowship's leader",
+            "/promote <name>: makes the member the leader of your fellowship.",
+        ),
+        SocialWord::Disband => (
+            "disband your fellowship",
+            "/disband: disbands your fellowship.",
+        ),
+    };
+    text_help(short, long.to_owned())
 }
 
 fn music_help(word: MusicWord) -> Help {
@@ -258,8 +354,22 @@ fn builtins() -> Vec<(&'static str, Builtin, Help)> {
         ("yell", Channel::Yell),
         ("emote", Channel::Emote),
         ("tell", Channel::Tell),
+        ("reply", Channel::Reply),
+        ("retell", Channel::Retell),
+        ("fellowship", Channel::Fellowship),
+        ("ch1", Channel::Slot(1)),
+        ("ch2", Channel::Slot(2)),
+        ("ch3", Channel::Slot(3)),
+        ("ch4", Channel::Slot(4)),
+        ("ch5", Channel::Slot(5)),
+        ("ch6", Channel::Slot(6)),
+        ("ch7", Channel::Slot(7)),
+        ("ch8", Channel::Slot(8)),
     ] {
         v.push((name, Builtin::Channel(ch), channel_help(ch)));
+    }
+    for w in SocialWord::ALL {
+        v.push((w.name(), Builtin::Social(w), social_help(w)));
     }
     for w in p5::P5Word::ALL {
         v.push((w.name(), Builtin::P5(w), w.help()));
@@ -267,16 +377,28 @@ fn builtins() -> Vec<(&'static str, Builtin, Help)> {
     v
 }
 
-/// The protocol channel of a sending channel command.
-fn protocol_channel(ch: Channel, peer: &str) -> Option<ChatChannel> {
+/// The usage line of a client built-in by its Tessera name (decision 0020 item 5): its
+/// long help text, else `Usage: <prefix><name>`.
+#[must_use]
+pub fn usage_text(prefix: &str, name: &str) -> String {
+    builtins()
+        .into_iter()
+        .find(|(n, _, _)| *n == name)
+        .and_then(|(_, _, h)| match h {
+            Help::Text { long, .. } => Some(format!("Usage: {long}")),
+            Help::Plugin => None,
+        })
+        .unwrap_or_else(|| format!("Usage: {prefix}{name}"))
+}
+
+/// The protocol channel of a local-speech channel command (the P4 channels run through
+/// [`social`]).
+fn protocol_channel(ch: Channel) -> Option<ChatChannel> {
     match ch {
         Channel::Say => Some(ChatChannel::Say),
         Channel::Yell => Some(ChatChannel::Yell),
         Channel::Emote => Some(ChatChannel::Emote),
-        Channel::Tell => Some(ChatChannel::Tell {
-            peer: peer.to_owned(),
-        }),
-        Channel::TellReply | Channel::Unavailable => None,
+        _ => None,
     }
 }
 
@@ -309,11 +431,6 @@ pub fn shorten<'a>(
         Some(s) => Some(s),
         None => None,
     }
-}
-
-/// Whether the session is a remote one (`--server`), which carries tells.
-fn is_remote(session: &dyn WalkerSession) -> bool {
-    session.net_status().is_some_and(|s| s.link.is_some())
 }
 
 impl Dispatcher {
@@ -352,6 +469,7 @@ impl Dispatcher {
         let mut add = |reg: &mut Registry, names: &str, b: Builtin| {
             let help = match b {
                 Builtin::Channel(ch) => channel_help(ch),
+                Builtin::Social(w) => social_help(w),
                 _ => builtins()
                     .into_iter()
                     .find(|(_, x, _)| *x == b)
@@ -371,6 +489,10 @@ impl Dispatcher {
         }
         for m in &text.modes {
             add(&mut reg, &m.names, Builtin::Channel(m.channel));
+        }
+        // The P4 built-ins (`chat-window.md` §15.10 CT2, `social-panels.md` §9 TR11).
+        for (w, names) in &text.social {
+            add(&mut reg, names, Builtin::Social(*w));
         }
         drop(reg);
         tracing::info!(added, prefix = %text.prefix, "install command names registered");
@@ -510,8 +632,15 @@ impl Dispatcher {
                 None => out.push(LocalLine::error(NO_PLUGINS)),
             },
             Builtin::Channel(ch) => self.channel(ch, inv, ctx, out),
+            Builtin::Social(w) => social::run_word(self, w, inv, ctx, out),
             Builtin::P5(word) => p5::run(word, &inv.arguments, &self.p5, out),
         }
+    }
+
+    /// The usage line of a built-in by its Tessera name, with this dispatcher's prefix.
+    #[must_use]
+    pub fn usage(&self, name: &str) -> String {
+        usage_text(self.prefix(), name)
     }
 
     fn channel(
@@ -530,31 +659,33 @@ impl Dispatcher {
             )));
             return;
         }
-        let (peer, text) = match ch {
-            Channel::Unavailable => return out.push(LocalLine::error(CHANNEL_UNAVAILABLE)),
-            Channel::TellReply => return out.push(LocalLine::error(NO_REPLY_TARGET)),
-            Channel::Tell => split_tell(&inv.arguments),
-            _ => ("", inv.arguments.as_str()),
-        };
+        if matches!(
+            ch,
+            Channel::Tell
+                | Channel::Reply
+                | Channel::Retell
+                | Channel::Fellowship
+                | Channel::Slot(_)
+        ) {
+            return social::run_channel(self, ch, inv, ctx, out);
+        }
+        let text = inv.arguments.as_str();
         let usage = || match channel_help(ch) {
             Help::Text { long, .. } => long,
             Help::Plugin => String::new(),
         };
-        if text.is_empty() || (ch == Channel::Tell && peer.is_empty()) {
+        let Some(channel) = protocol_channel(ch) else {
+            return out.push(LocalLine::error(CHANNEL_UNAVAILABLE));
+        };
+        if text.is_empty() {
             return out.push(LocalLine::error(format!("Usage: {}", usage())));
         }
         if text.len() > MAX_CHAT_LEN {
             return out.push(LocalLine::error(TOO_LONG));
         }
-        let Some(channel) = protocol_channel(ch, peer) else {
-            return out.push(LocalLine::error(CHANNEL_UNAVAILABLE));
-        };
         let Some(session) = ctx.session.as_deref_mut() else {
             return out.push(LocalLine::error(NOT_CONNECTED));
         };
-        if ch == Channel::Tell && !is_remote(session) {
-            return out.push(LocalLine::error(NO_TELL_PEERS));
-        }
         if !session.send_chat(ctx.now, &channel, text) {
             out.push(LocalLine::error(NOT_IN_WORLD));
         }
@@ -647,8 +778,29 @@ mod tests {
     #[derive(Default)]
     struct Recorder {
         sent: Vec<(ChatChannel, String)>,
+        commands: Vec<tessera_net::Command>,
         refuse: bool,
         remote: bool,
+        social: Option<crate::social::SocialState>,
+    }
+
+    impl Recorder {
+        /// A recorder with a social state for player "Tam" (the P4 built-ins).
+        fn social() -> Self {
+            let mut st = crate::social::SocialState::new(true);
+            let _ = st.apply(
+                &tessera_net::Event::WorldEntered {
+                    player: tessera_net::EntityId(1),
+                    name: "Tam".into(),
+                    transform: tessera_net::Transform::new(tessera_net::Vec3::ZERO, 0.0),
+                },
+                &|_| None,
+            );
+            Self {
+                social: Some(st),
+                ..Self::default()
+            }
+        }
     }
 
     impl WalkerSession for Recorder {
@@ -680,6 +832,23 @@ mod tests {
             }
             self.sent.push((channel.clone(), text.to_owned()));
             true
+        }
+        fn social_mut(&mut self) -> Option<&mut crate::social::SocialState> {
+            self.social.as_mut()
+        }
+        fn send_command(
+            &mut self,
+            _: Instant,
+            command: tessera_net::Command,
+        ) -> Result<(), String> {
+            if self.refuse {
+                return Err("not in the world".into());
+            }
+            match command {
+                tessera_net::Command::Chat { channel, text } => self.sent.push((channel, text)),
+                c => self.commands.push(c),
+            }
+            Ok(())
         }
     }
 
@@ -787,11 +956,10 @@ mod tests {
                 (ChatChannel::Emote, "waves".to_owned()),
             ]
         );
-        // Tells: not in the sandbox; on a server, to the first token.
+        // Tells need the session's social state (CT4); without one, not connected.
         let (_, out) = run(&mut d, "/tell Bram hi", Some(&mut s), None, Origin::Chat);
-        assert_eq!(out, [LocalLine::error(NO_TELL_PEERS)]);
-        s.remote = true;
-        s.sent.clear();
+        assert_eq!(out, [LocalLine::error(NOT_CONNECTED)]);
+        let mut s = Recorder::social();
         run(
             &mut d,
             "/tell Bram  hi there",
@@ -874,8 +1042,9 @@ mod tests {
             modes: modes(&[
                 ("say;s", Channel::Say),
                 ("fellowship;f", Channel::Unavailable),
-                ("reply;r", Channel::TellReply),
+                ("reply;r", Channel::Reply),
             ]),
+            ..CommandText::default()
         });
         assert!(d.registry().is_command("AIDE"));
         assert!(d.registry().is_command("plugin"));
@@ -883,8 +1052,9 @@ mod tests {
         let mut s = Recorder::default();
         let (_, out) = run(&mut d, "#f hi", Some(&mut s), None, Origin::Chat);
         assert_eq!(out, [LocalLine::error(CHANNEL_UNAVAILABLE)]);
+        // The reply word needs the session's social state (CT4).
         let (_, out) = run(&mut d, "#r hi", Some(&mut s), None, Origin::Chat);
-        assert_eq!(out, [LocalLine::error(NO_REPLY_TARGET)]);
+        assert_eq!(out, [LocalLine::error(NOT_CONNECTED)]);
         let (_, out) = run(&mut d, "#zzz", Some(&mut s), None, Origin::Chat);
         assert_eq!(out, [LocalLine::error("Nope.")]);
         run(&mut d, "plain", Some(&mut s), None, Origin::Chat);
@@ -1024,11 +1194,9 @@ mod tests {
                 ("t;tell", Channel::Tell),
                 ("f", Channel::Unavailable),
             ]),
+            ..CommandText::default()
         });
-        let mut s = Recorder {
-            remote: true,
-            ..Recorder::default()
-        };
+        let mut s = Recorder::social();
         let mut m = PlayerMusic::new(MusicConfig::default());
         let sub = |d: &mut Dispatcher,
                    text: &str,
@@ -1130,6 +1298,208 @@ mod tests {
         }
         assert!(s.sent.iter().all(|(_, t)| t.len() <= MAX_CHAT_LEN));
         assert!(d.history().lines().count() < line::HISTORY_CAPACITY);
+    }
+
+    /// `chat-window.md` §15.10 CT5, CT7 and `social-panels.md` §9 TR11 through the
+    /// dispatcher: channels join, speak and part; the fellowship refusal without one; list
+    /// and fellowship commands as session commands; the lists printed; start-up lines never
+    /// chat.
+    #[test]
+    fn social_built_ins() {
+        use tessera_net::domain::{SocialCommand, SocialEvent};
+        let mut d = Dispatcher::new();
+        let mut s = Recorder::social();
+        let lines = |d: &mut Dispatcher, s: &mut Recorder, line: &str| -> Vec<LocalLine> {
+            run(d, line, Some(s), None, Origin::Chat).1
+        };
+        // CT5: join sends `JoinChannel`; nothing is shown until `ChannelJoined`.
+        assert!(lines(&mut d, &mut s, "/join Lore").is_empty());
+        assert_eq!(
+            s.commands.pop(),
+            Some(tessera_net::Command::Social(SocialCommand::JoinChannel {
+                name: "Lore".into()
+            }))
+        );
+        let st = s.social.as_mut().expect("social");
+        let l = st.apply(
+            &tessera_net::Event::Social(SocialEvent::ChannelJoined {
+                channel: "Lore".into(),
+            }),
+            &|_| None,
+        );
+        assert_eq!(l.len(), 1);
+        // A second join of the same name, a reserved name, a password.
+        let out = lines(&mut d, &mut s, "/join lore");
+        assert_eq!(out[0].mask, Some(0x8));
+        assert!(s.commands.is_empty());
+        let out = lines(&mut d, &mut s, "/join tell");
+        assert_eq!(out.len(), 1);
+        let out = lines(&mut d, &mut s, "/join Other secret");
+        assert_eq!(out.len(), 1);
+        assert!(s.commands.is_empty());
+        // Speak by slot and by name.
+        assert!(lines(&mut d, &mut s, "/ch1 any maps?").is_empty());
+        assert!(lines(&mut d, &mut s, "/chsay Lore old maps").is_empty());
+        assert_eq!(
+            s.sent,
+            [
+                (
+                    ChatChannel::Named {
+                        name: "Lore".into()
+                    },
+                    "any maps?".to_owned()
+                ),
+                (
+                    ChatChannel::Named {
+                        name: "Lore".into()
+                    },
+                    "old maps".to_owned()
+                ),
+            ]
+        );
+        // An empty slot, the channel list, leaving.
+        let out = lines(&mut d, &mut s, "/ch2 hello");
+        assert_eq!(out[0].mask, Some(0x8));
+        let out = lines(&mut d, &mut s, "/channels");
+        assert!(out.iter().any(|l| l.text.contains("Lore")), "{out:?}");
+        assert!(lines(&mut d, &mut s, "/part Lore").is_empty());
+        assert_eq!(
+            s.commands.pop(),
+            Some(tessera_net::Command::Social(SocialCommand::LeaveChannel {
+                name: "Lore".into()
+            }))
+        );
+        // CT7: no fellowship, the refusal (mask 0x1), nothing sent.
+        let before = s.sent.len();
+        let out = lines(&mut d, &mut s, "/fellowship hello all");
+        assert_eq!(out[0].mask, Some(0x1));
+        assert_eq!(s.sent.len(), before);
+        // TR11: list and fellowship commands.
+        for (line, want) in [
+            ("/friend add Brin", "AddFriend"),
+            ("/friend REMOVE Brin", "RemoveFriend"),
+            ("/ignore add Hask", "Ignore"),
+            ("/ignore remove Hask", "Unignore"),
+            ("/invite Brin", "InviteToFellowship"),
+            ("/dismiss Brin", "KickFromFellowship"),
+            ("/promote Brin", "SetFellowshipLeader"),
+            ("/leave", "LeaveFellowship"),
+            ("/disband", "DisbandFellowship"),
+        ] {
+            let out = lines(&mut d, &mut s, line);
+            assert!(out.is_empty(), "{line}: {out:?}");
+            assert_eq!(s.commands.pop().map(|c| c.name()), Some(want), "{line}");
+        }
+        // A missing name, an unknown sub-word: lines, nothing sent.
+        assert_eq!(lines(&mut d, &mut s, "/invite")[0].kind, LineKind::Error);
+        for line in ["/friend hug Brin", "/friend", "/ignore"] {
+            let out = lines(&mut d, &mut s, line);
+            assert_eq!(out.len(), 1, "{line}");
+            // TR11: type 8 (mask 0x80) or type 1, never the standard type.
+            assert_eq!(out[0].mask, Some(0x80), "{line}: {out:?}");
+        }
+        assert!(s.commands.is_empty());
+        // Lists: empty lines (Tessera's wording without an install, CT12), then the model.
+        let out = lines(&mut d, &mut s, "/friend list");
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].mask, Some(0x80));
+        assert!(!out[0].text.trim().is_empty(), "{out:?}");
+        let out = lines(&mut d, &mut s, "/ignore list");
+        assert_eq!(out.len(), 1);
+        assert!(!out[0].text.trim().is_empty(), "{out:?}");
+        let st = s.social.as_mut().expect("social");
+        let _ = st.apply(
+            &tessera_net::Event::Social(SocialEvent::FriendList {
+                entries: vec![
+                    tessera_net::domain::FriendEntry {
+                        name: "Brin".into(),
+                        online: true,
+                    },
+                    tessera_net::domain::FriendEntry {
+                        name: "Cael".into(),
+                        online: false,
+                    },
+                ],
+            }),
+            &|_| None,
+        );
+        let out = lines(&mut d, &mut s, "/friend list");
+        let texts: Vec<&str> = out.iter().map(|l| l.text.as_str()).collect();
+        assert_eq!(texts, ["Brin online", "Cael offline"]);
+        let st = s.social.as_mut().expect("social");
+        let _ = st.apply(
+            &tessera_net::Event::Social(SocialEvent::IgnoreList {
+                names: vec!["Zed".into(), "Ann".into()],
+            }),
+            &|_| None,
+        );
+        let out = lines(&mut d, &mut s, "/ignore list");
+        let texts: Vec<&str> = out.iter().map(|l| l.text.as_str()).collect();
+        assert_eq!(texts.len(), 3, "{texts:?}");
+        assert!(!texts[0].trim().is_empty(), "the header (CT12 fallback)");
+        assert_eq!(&texts[1..], ["Ann", "Zed"]);
+        // Start-up lines never chat or act.
+        let (_, out) = run(&mut d, "/join Lore", Some(&mut s), None, Origin::Startup);
+        assert_eq!(out.len(), 1);
+        assert!(s.commands.is_empty());
+        // D20 item 7 drops only channel commands: the lists run from start-up lines.
+        let (_, out) = run(&mut d, "/friend list", Some(&mut s), None, Origin::Startup);
+        assert_eq!(out.len(), 2, "{out:?}");
+        assert!(out.iter().all(|l| !l.text.starts_with("Start-up line")));
+        let (_, out) = run(&mut d, "/channels", Some(&mut s), None, Origin::Startup);
+        assert!(
+            out.iter().all(|l| !l.text.starts_with("Start-up line")),
+            "{out:?}"
+        );
+        // Every P4 Tessera name is registered.
+        for n in [
+            "reply",
+            "retell",
+            "fellowship",
+            "join",
+            "part",
+            "channels",
+            "chsay",
+            "ch8",
+        ] {
+            assert!(d.registry().is_command(n), "{n}");
+        }
+    }
+
+    /// The install's P4 names (CT2, TR11) are registered for the same built-ins; the
+    /// corrected reply and retell rows (CW43) run the reply and retell handlers.
+    #[test]
+    fn install_social_names() {
+        let mut d = Dispatcher::new();
+        d.apply_text(CommandText {
+            modes: modes(&[("r", Channel::Reply), ("rt", Channel::Retell)]),
+            social: vec![
+                (SocialWord::Join, "joinchannel".into()),
+                (SocialWord::Friend, "buddy".into()),
+            ],
+            sub_add: vec!["plus".into()],
+            ..CommandText::default()
+        });
+        let mut s = Recorder::social();
+        let (_, out) = run(&mut d, "/r hi", Some(&mut s), None, Origin::Chat);
+        // No reply target yet (CT4): the 0x00CC89CC line with mask 0x21.
+        assert_eq!(out[0].mask, Some(0x21));
+        let _ = run(&mut d, "/tell Bo first", Some(&mut s), None, Origin::Chat);
+        let _ = run(&mut d, "/rt again", Some(&mut s), None, Origin::Chat);
+        assert_eq!(
+            s.sent.last(),
+            Some(&(ChatChannel::Tell { peer: "Bo".into() }, "again".to_owned()))
+        );
+        let _ = run(
+            &mut d,
+            "/joinchannel Lore",
+            Some(&mut s),
+            None,
+            Origin::Chat,
+        );
+        let _ = run(&mut d, "/buddy plus Brin", Some(&mut s), None, Origin::Chat);
+        let names: Vec<&str> = s.commands.iter().map(|c| c.name()).collect();
+        assert_eq!(names, ["JoinChannel", "AddFriend"]);
     }
 
     #[test]

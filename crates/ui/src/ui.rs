@@ -26,7 +26,9 @@ use crate::vocab::Vocab;
 use crate::widgets::WidgetClass;
 
 /// Deepest element tree the UI accepts (Tessera cap against hostile plugin trees; layouts
-/// nest at most 64 deep, `ui-layout.md` §4.7). Attaching beyond it fails.
+/// nest at most 64 deep, `ui-layout.md` §4.7). Attaching beyond it fails, and one outermost
+/// creation builds at most this many levels below its root, the levels of the creations
+/// nested in it included (they share one depth, so the build recursion stays bounded).
 pub const MAX_TREE_DEPTH: usize = 128;
 
 /// Most live elements (Tessera cap, hostile input): creating more fails.
@@ -90,8 +92,9 @@ pub struct BuildCensus {
     /// Elements created.
     pub created: u64,
     /// Creations refused by the nesting guard ([`MAX_CREATE_NESTING`], a (layout, element)
-    /// pair created inside itself) or elements refused by the per-build budget
-    /// ([`MAX_BUILD_ELEMENTS`]).
+    /// pair created inside itself), elements refused by the per-build budget
+    /// ([`MAX_BUILD_ELEMENTS`]) or elements beyond the build depth shared by nested
+    /// creations ([`MAX_TREE_DEPTH`]).
     pub creation_refused: u64,
 }
 
@@ -130,6 +133,12 @@ pub struct Ui {
     pub(crate) creating: Vec<(u32, u32)>,
     /// Elements the current outermost creation may still build.
     pub(crate) build_budget: usize,
+    /// Build levels open across the current creation and every creation nested in it
+    /// (bounded by [`MAX_TREE_DEPTH`], so nested creations share one stack depth).
+    pub(crate) build_depth: usize,
+    /// Procedural images of the fallback looks (`game::combat::look`), by path; bounded.
+    pub(crate) procedural:
+        std::collections::HashMap<String, Arc<tessera_material::ui_image::UiImage>>,
 }
 
 impl std::fmt::Debug for Ui {
@@ -203,6 +212,8 @@ impl Ui {
             suppress_size: false,
             creating: Vec::new(),
             build_budget: MAX_BUILD_ELEMENTS,
+            build_depth: 0,
+            procedural: std::collections::HashMap::new(),
         }
     }
 

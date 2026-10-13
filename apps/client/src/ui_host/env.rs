@@ -68,6 +68,24 @@ const MAX_EVICT_PROBES: usize = 64;
 /// Size of Tessera's fallback font in pixels when the install gives no locale font
 /// (`fonts.md` §11).
 pub const FALLBACK_FONT_PX: u32 = 14;
+/// Most pixel sizes of the fallback font kept rasterised for the combat widgets' fallback
+/// looks (`combat-ui.md` §13: sizes per element, `LookPids::text_px`).
+pub const MAX_FALLBACK_SIZES: usize = 16;
+/// The code points the fallback font is rasterised with: `tessera-ui`'s default ranges and
+/// U+2212 MINUS SIGN, which the floating damage texts start with (`combat-ui.md` TR19).
+pub const FALLBACK_RANGES: &[(u16, u16)] = &[
+    (0x0020, 0x007E),
+    (0x00A0, 0x017F),
+    (0x0370, 0x03FF),
+    (0x0400, 0x04FF),
+    (0x2010, 0x2027),
+    (0x2030, 0x203A),
+    (0x20AC, 0x20AC),
+    (0x2122, 0x2122),
+    (0x2212, 0x2212),
+];
+/// The pixel sizes the fallback font is rasterised at for a size request (clamped).
+pub const FALLBACK_PX_RANGE: std::ops::RangeInclusive<u32> = 6..=64;
 
 /// The install side of the UI environment, built off the main thread (see
 /// [`super::boot`]). Everything is read-only and shared.
@@ -200,6 +218,8 @@ pub struct EnvState {
     plugins_dir: Option<PathBuf>,
     fonts: HashMap<u32, FontSlot>,
     fallback_font: Option<Arc<FontFace>>,
+    /// The fallback font at other pixel sizes, by size ([`MAX_FALLBACK_SIZES`]).
+    fallback_sizes: HashMap<u32, Option<Arc<FontFace>>>,
     shaper: TextShaper,
     images_arrived: bool,
     fonts_arrived: bool,
@@ -269,6 +289,7 @@ impl EnvState {
             plugins_dir: None,
             fonts: HashMap::new(),
             fallback_font: None,
+            fallback_sizes: HashMap::new(),
             shaper: TextShaper::new(pids),
             images_arrived: false,
             fonts_arrived: false,
@@ -718,13 +739,38 @@ impl EnvState {
     pub(crate) fn fallback_font(&mut self) -> Option<Arc<FontFace>> {
         if self.fallback_font.is_none() {
             match TesseraFont::bundled()
-                .and_then(|f| f.rasterise(FALLBACK_FONT_PX, tessera_ui::text::DEFAULT_RANGES))
+                .and_then(|f| f.rasterise(FALLBACK_FONT_PX, FALLBACK_RANGES))
             {
                 Ok(face) => self.fallback_font = Some(Arc::new(face)),
                 Err(e) => tracing::warn!("Tessera fallback font: {e}"),
             }
         }
         self.fallback_font.clone()
+    }
+
+    /// Tessera's fallback font at `px` pixels (clamped to [`FALLBACK_PX_RANGE`]): the
+    /// sizes of the combat widgets' fallback texts (`combat-ui.md` §13). The default size
+    /// is [`Self::fallback_font`]; at most [`MAX_FALLBACK_SIZES`] other sizes are kept.
+    pub(crate) fn fallback_font_px(&mut self, px: u32) -> Option<Arc<FontFace>> {
+        let px = px.clamp(*FALLBACK_PX_RANGE.start(), *FALLBACK_PX_RANGE.end());
+        if px == FALLBACK_FONT_PX {
+            return self.fallback_font();
+        }
+        if let Some(f) = self.fallback_sizes.get(&px) {
+            return f.clone();
+        }
+        if self.fallback_sizes.len() >= MAX_FALLBACK_SIZES {
+            return self.fallback_font();
+        }
+        let face = match TesseraFont::bundled().and_then(|f| f.rasterise(px, FALLBACK_RANGES)) {
+            Ok(face) => Some(Arc::new(face)),
+            Err(e) => {
+                tracing::warn!("Tessera fallback font at {px} px: {e}");
+                None
+            }
+        };
+        self.fallback_sizes.insert(px, face.clone());
+        face.or_else(|| self.fallback_font())
     }
 
     fn next_random(&mut self) -> f32 {

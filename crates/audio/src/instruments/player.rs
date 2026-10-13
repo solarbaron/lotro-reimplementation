@@ -98,8 +98,10 @@ impl SampleProvider for SampleBank {
 pub struct PlayerConfig {
     /// Events due up to this many seconds after the audio clock are handed to the engine
     /// at each [`MusicPlayer::update`] with their exact start or stop frame, so that notes
-    /// start and stop sample-accurately (§12 Decision 2). It should exceed the time
-    /// between two updates. Default 0.1 s.
+    /// start and stop sample-accurately (§12 Decision 2). It must be at least the time
+    /// between two updates: an event whose time passes between two updates is handed on at
+    /// the clock's frame, late, and fails the start tolerance (`instruments.md` §8.9). A
+    /// caller that renders in longer blocks uses [`MusicPlayer::update_for`]. Default 0.1 s.
     pub lookahead_secs: f64,
     /// Most events in the queue (default 262,144). A performance that does not fit is
     /// refused as a whole. The note-offs of a cancel (§8.5) are always accepted, even beyond
@@ -107,9 +109,12 @@ pub struct PlayerConfig {
     /// key (256 per character), a cancel first removes the character's queued events
     /// (earlier cancel note-offs included), and they are due at once.
     pub max_queued_events: usize,
-    /// Most queued events of one character (default 65,536, more than three performances of
-    /// the longest kind), so that one character, a remote peer's events included, cannot
-    /// take the whole queue from the others.
+    /// Most queued events of one character (default 131,072), so that one character, a
+    /// remote peer's events included, cannot take the whole queue from the others. The
+    /// default holds one performance of the longest kind [`crate::abc::parse`] accepts:
+    /// [`crate::abc::MAX_EVENTS`] elements that may each be a chord of 6 notes, so
+    /// 2 × 6 × 10,000 note events and the end, 120,001 events. A smaller value refuses such
+    /// parts; [`MusicPlayer::check_part_size`] tells at once whether a part can ever fit.
     pub max_events_per_character: usize,
     /// Most events one [`MusicPlayer::update`] processes (default 8192). The rest wait for
     /// the next call, where the late-drop rule (§8.3 step 2) applies to them as usual; this
@@ -127,7 +132,7 @@ impl Default for PlayerConfig {
         Self {
             lookahead_secs: 0.1,
             max_queued_events: 262_144,
-            max_events_per_character: 65_536,
+            max_events_per_character: 131_072,
             max_events_per_update: 8192,
             max_characters: 4096,
             seed: 0x7E55_E2A0,
@@ -175,6 +180,43 @@ pub struct PlayerStats {
     pub cancels: u64,
     /// Performances queued.
     pub performances: u64,
+}
+
+/// Most entries a schedule log keeps ([`MusicPlayer::set_schedule_log`]): the capacity
+/// asked for is clamped to this, and nothing is reserved ahead. It equals the default
+/// [`PlayerConfig::max_queued_events`], so one log holds every event of one start (about
+/// 12.6 MB at most); a caller that measures several starts takes the log
+/// ([`MusicPlayer::take_schedule_log`]) after each.
+pub const MAX_SCHEDULE_LOG: usize = 1 << 18;
+
+/// One queued event the player processed and handed on, with the audio-clock time it was
+/// scheduled at: the measurement behind the start tolerance (`instruments.md` §8.9).
+///
+/// A note-on or note-off whose time lies after the audio clock is handed to the engine with
+/// its exact frame (§12 Decision 2); one that is due already is handed on at the clock's
+/// frame (late, §8.3). A note-on dropped as 0.5 s or more late is not scheduled and not
+/// logged.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ScheduledEvent {
+    /// The event's sequence number in the queue (consecutive within one performance).
+    pub seq: u64,
+    /// The performer.
+    pub character: CharacterId,
+    /// Note-on, note-off or end.
+    pub kind: MusicEventKind,
+    /// The time the event asked for, seconds on the audio clock.
+    pub event_time: f64,
+    /// The audio-clock frame it was scheduled at.
+    pub frame: u64,
+    /// `frame` in seconds at the engine's sample rate: the actual time on the audio clock.
+    pub secs: f64,
+}
+
+#[derive(Debug, Default)]
+struct ScheduleLog {
+    capacity: usize,
+    entries: Vec<ScheduledEvent>,
+    dropped: u64,
 }
 
 #[derive(Debug)]
@@ -231,6 +273,16 @@ pub struct MusicPlayer {
     /// Voices handed ahead whose note-on a cancel withdrew, with their start time: stopped
     /// at the next update (or at once where the engine is at hand) unless already started.
     revoked: Vec<(VoiceHandle, f64)>,
+    /// The schedule log (off while the capacity is 0).
+    schedule: ScheduleLog,
+}
+
+/// The queue entries of one performance queued by [`MusicPlayer`]: consecutive sequence
+/// numbers from `first_seq`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct QueuedRange {
+    pub(super) first_seq: u64,
+    pub(super) count: usize,
 }
 
 impl MusicPlayer {
@@ -248,7 +300,59 @@ impl MusicPlayer {
             rng: SmallRng::seed_from_u64(config.seed),
             stats: PlayerStats::default(),
             revoked: Vec::new(),
+            schedule: ScheduleLog::default(),
         }
+    }
+
+    /// Starts (capacity > 0) or stops (0) logging every processed event with the frame it is
+    /// scheduled at ([`ScheduledEvent`]), for measuring time-0 against the start tolerance
+    /// (`instruments.md` §8.9). The log keeps at most `capacity` entries (clamped to
+    /// [`MAX_SCHEDULE_LOG`]); later ones are counted in [`Self::schedule_log_dropped`].
+    /// Changing the capacity clears the log. Take the log ([`Self::take_schedule_log`])
+    /// after each measured start so that it does not fill up over a long session.
+    pub fn set_schedule_log(&mut self, capacity: usize) {
+        self.schedule = ScheduleLog {
+            capacity: capacity.min(MAX_SCHEDULE_LOG),
+            entries: Vec::new(),
+            dropped: 0,
+        };
+    }
+
+    /// The logged events, in processing order.
+    #[must_use]
+    pub fn schedule_log(&self) -> &[ScheduledEvent] {
+        &self.schedule.entries
+    }
+
+    /// Takes the logged events, leaving the log empty (and still on).
+    pub fn take_schedule_log(&mut self) -> Vec<ScheduledEvent> {
+        self.schedule.dropped = 0;
+        std::mem::take(&mut self.schedule.entries)
+    }
+
+    /// Events processed while the log was full.
+    #[must_use]
+    pub fn schedule_log_dropped(&self) -> u64 {
+        self.schedule.dropped
+    }
+
+    fn log_scheduled(&mut self, ev: &MusicEvent, frame: u64, rate: u32) {
+        let log = &mut self.schedule;
+        if log.capacity == 0 {
+            return;
+        }
+        if log.entries.len() >= log.capacity {
+            log.dropped = log.dropped.saturating_add(1);
+            return;
+        }
+        log.entries.push(ScheduledEvent {
+            seq: ev.seq,
+            character: ev.character,
+            kind: ev.kind,
+            event_time: ev.time,
+            frame,
+            secs: AudioTime(frame).as_secs(rate),
+        });
     }
 
     /// The instrument table.
@@ -441,6 +545,38 @@ impl MusicPlayer {
         Ok(())
     }
 
+    /// Whether a part of `character` could ever be queued, whatever is queued now: its
+    /// events ([`Self::play`] counts an end it lacks) within
+    /// [`PlayerConfig::max_events_per_character`] and [`PlayerConfig::max_queued_events`].
+    /// The check a `/play … sync` makes at once (`instruments.md` §8.8.1) before the part
+    /// waits, so that a part that can never start is refused then, not at the start.
+    ///
+    /// # Errors
+    ///
+    /// [`InstrumentError::CharacterQueueFull`] (with `queued` 0) or
+    /// [`InstrumentError::QueueFull`] (with `queued` 0) for a part too long for the limits.
+    pub fn check_part_size(
+        &self,
+        character: CharacterId,
+        performance: &Performance,
+    ) -> Result<(), InstrumentError> {
+        let n = Self::events_needed(performance);
+        if n > self.config.max_events_per_character {
+            return Err(InstrumentError::CharacterQueueFull {
+                character,
+                queued: 0,
+                adding: n,
+            });
+        }
+        if n > self.config.max_queued_events {
+            return Err(InstrumentError::QueueFull {
+                queued: 0,
+                adding: n,
+            });
+        }
+        Ok(())
+    }
+
     /// Number of events [`Self::play`] queues for `performance`: its events, plus an end
     /// event when it has none.
     pub(super) fn events_needed(performance: &Performance) -> usize {
@@ -506,6 +642,32 @@ impl MusicPlayer {
         instrument: u32,
         start_secs: f64,
     ) -> usize {
+        self.play_from(id, performance, instrument, start_secs, 0)
+            .count
+    }
+
+    /// The time of the synthetic end event [`Self::play`] adds to a performance without
+    /// one: its latest finite event time, at least 0.
+    pub(super) fn synthetic_end_time(performance: &Performance) -> f64 {
+        performance
+            .events
+            .iter()
+            .map(|e| e.time)
+            .filter(|t| t.is_finite())
+            .fold(0.0f64, f64::max)
+    }
+
+    /// [`Self::play_checked`] without the first `skip` events of the list (the head a late
+    /// start skips, §8.7 step 4); the running performance is cancelled first all the same.
+    /// Returns the queue entries it added.
+    pub(super) fn play_from(
+        &mut self,
+        id: CharacterId,
+        performance: &Performance,
+        instrument: u32,
+        start_secs: f64,
+        skip: usize,
+    ) -> QueuedRange {
         if self.is_performing(id) {
             self.cancel(id, 0.0, f64::NEG_INFINITY);
         }
@@ -514,14 +676,12 @@ impl MusicPlayer {
         } else {
             0.0
         };
+        let first_seq = self.next_seq;
         let mut queued = 0usize;
-        let mut last = 0.0f64;
+        let last = Self::synthetic_end_time(performance);
         let mut has_end = false;
-        for e in &performance.events {
+        for e in performance.events.iter().skip(skip) {
             has_end |= e.kind == NoteEventKind::End;
-            if e.time.is_finite() {
-                last = last.max(e.time);
-            }
             let (kind, packed) = match e.kind {
                 NoteEventKind::On => (
                     MusicEventKind::NoteOn,
@@ -564,7 +724,10 @@ impl MusicPlayer {
             c.performing = true;
         }
         self.stats.performances += 1;
-        queued
+        QueuedRange {
+            first_seq,
+            count: queued,
+        }
     }
 
     /// `/play` without `sync`: [`Self::play`] starting [`SOLO_START_OFFSET`] (0.7 s) after
@@ -685,14 +848,34 @@ impl MusicPlayer {
     /// more late are dropped. At most [`PlayerConfig::max_events_per_update`] events are
     /// taken per call. Notes handed ahead whose note-on a cancel withdrew are stopped first
     /// unless they have started. Call once per frame, before [`AudioEngine::update`].
+    ///
+    /// The calls must come at most [`PlayerConfig::lookahead_secs`] apart on the audio
+    /// clock (at most that much audio rendered between two calls): an event whose time
+    /// passes between two calls is handed on at the clock's frame, late (dropped if 0.5 s
+    /// or more late), so a synchronised start no longer meets the start tolerance
+    /// (`instruments.md` §8.9). A caller that renders longer blocks (a headless run on a
+    /// virtual clock) calls [`Self::update_for`] with the block's length instead.
     pub fn update(&mut self, engine: &mut AudioEngine, samples: &mut dyn SampleProvider) {
+        self.update_for(engine, samples, 0.0);
+    }
+
+    /// [`Self::update`] before rendering a block of `block_secs` seconds: every event due
+    /// up to clock + max([`PlayerConfig::lookahead_secs`], `block_secs`) is handed on with
+    /// its exact frame, so that nothing falls due inside the block unhandled. `block_secs`
+    /// is clamped to [`super::CATCH_UP_SECS`] (0.5 s; the original hands events on at least
+    /// that early, §8.7), so a block longer than that still needs several calls; a
+    /// negative or non-finite value counts as 0.
+    pub fn update_for(
+        &mut self,
+        engine: &mut AudioEngine,
+        samples: &mut dyn SampleProvider,
+        block_secs: f64,
+    ) {
         let rate = engine.sample_rate();
         let now = Self::now(engine);
-        let ahead = if self.config.lookahead_secs.is_finite() {
-            self.config.lookahead_secs.max(0.0)
-        } else {
-            0.0
-        };
+        let finite_nonneg = |x: f64| if x.is_finite() { x.max(0.0) } else { 0.0 };
+        let ahead = finite_nonneg(self.config.lookahead_secs)
+            .max(finite_nonneg(block_secs).min(super::CATCH_UP_SECS));
         self.flush_revoked(engine, now);
         self.prune(engine, now);
         let mut budget = self.config.max_events_per_update;
@@ -708,6 +891,8 @@ impl MusicPlayer {
                 Due::Ready(ev) => ev,
             };
             let at = (ev.time > now).then(|| AudioTime(0).after_secs(ev.time, rate));
+            let frame = at.map_or_else(|| engine.clock().0, |t| t.0);
+            self.log_scheduled(&ev, frame, rate);
             match ev.kind {
                 MusicEventKind::NoteOn => self.note_on(engine, samples, &ev, at),
                 MusicEventKind::NoteOff => self.note_off(engine, &ev, at),

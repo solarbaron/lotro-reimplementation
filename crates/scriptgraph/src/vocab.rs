@@ -164,6 +164,31 @@ pub struct TimerFieldPids {
     pub speed_multiplier: Option<u32>,
 }
 
+/// PIDs of the Animation node fields (`script-table.md` §6.10) that driven pairs may name,
+/// besides the rate fields of [`TimerFieldPids`] and
+/// [`RuntimeVocabulary::use_bone_opacity`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct AnimationFieldPids {
+    /// `AnimationScript_AnimAsset`.
+    pub asset: Option<u32>,
+    /// `AnimationScript_Layer`.
+    pub layer: Option<u32>,
+    /// `AnimationScript_RampIn`.
+    pub ramp_in: Option<u32>,
+    /// `AnimationScript_RampOut`.
+    pub ramp_out: Option<u32>,
+    /// `AnimationScript_ManualUpdate`.
+    pub manual_update: Option<u32>,
+    /// `AnimationScript_ManualUpdateTime`.
+    pub manual_time: Option<u32>,
+    /// `AnimationScript_StartTime`.
+    pub start_time: Option<u32>,
+    /// `AnimationScript_EndTime`.
+    pub end_time: Option<u32>,
+    /// `AnimationScript_RandomizeStartTime`.
+    pub randomize_start_time: Option<u32>,
+}
+
 /// PIDs of the Particle node fields (`particle-runtime.md` §5.2, §5.4) that driven pairs
 /// may name.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -244,6 +269,14 @@ pub struct RuntimeVocabulary {
     pub environment_priority: Option<u32>,
     /// PhysicsImpulse node fields (`script-runtime.md` §30.6), for driven values.
     pub impulse: ImpulseFieldPids,
+    /// `StorySystem_StoryID`: the run parameter naming a run's story (`combat-visuals.md`
+    /// §3.2), handed to StoryHook and Execute nodes.
+    pub story_id: Option<u32>,
+    /// `AnimationScript_UseBoneOpacity`, a field animation nodes drive (from
+    /// `ScriptSystem_CurrentlyMoving`, `combat-visuals.md` §3.3).
+    pub use_bone_opacity: Option<u32>,
+    /// Further Animation node fields driven pairs may name (`script-table.md` §6.10).
+    pub animation: AnimationFieldPids,
 }
 
 impl RuntimeVocabulary {
@@ -308,6 +341,19 @@ impl RuntimeVocabulary {
             environment_name: p("SoundEnvironmentScript_Name"),
             environment_priority: p("SoundEnvironmentScript_Priority"),
             impulse: ImpulseFieldPids::from_names(names),
+            story_id: p("StorySystem_StoryID"),
+            use_bone_opacity: p("AnimationScript_UseBoneOpacity"),
+            animation: AnimationFieldPids {
+                asset: p("AnimationScript_AnimAsset"),
+                layer: p("AnimationScript_Layer"),
+                ramp_in: p("AnimationScript_RampIn"),
+                ramp_out: p("AnimationScript_RampOut"),
+                manual_update: p("AnimationScript_ManualUpdate"),
+                manual_time: p("AnimationScript_ManualUpdateTime"),
+                start_time: p("AnimationScript_StartTime"),
+                end_time: p("AnimationScript_EndTime"),
+                randomize_start_time: p("AnimationScript_RandomizeStartTime"),
+            },
         }
     }
 

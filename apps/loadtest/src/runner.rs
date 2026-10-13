@@ -22,7 +22,9 @@ use tessera_server::{
 };
 
 use crate::LoadtestError;
-use crate::bot::{Area, Behaviour, Bot, BotSpec, Ctx, Endpoint, MAX_ENTITIES, TimeBase};
+use crate::bot::{
+    Area, Behaviour, Bot, BotSpec, Ctx, Endpoint, MAX_ENTITIES, MIN_CHANNEL_CYCLE, TimeBase,
+};
 use crate::chat::{ChatLedger, Kind as ChatKind};
 use crate::desync::{DesyncConfig, DesyncTracker, Kind, SAMPLE_INTERVAL};
 use crate::hostile::{HostileConfig, HostileRun, MAX_PACE};
@@ -134,9 +136,13 @@ impl Scenario {
         match self {
             Self::Soak => Behaviour::default(),
             Self::Walk | Self::ConnectStorm => quiet,
+            // Bots at minor 2 also join one of three shared channels, leave and re-join it
+            // now and then, and speak on it (test-server.md §13.1 `chat`).
             Self::Chat => Behaviour {
                 walk_fraction: 0.5,
                 chat_interval: Some(s(3)),
+                channels: 3,
+                channel_cycle: Some(s(20)),
                 ..quiet
             },
             Self::Churn => Behaviour {
@@ -230,6 +236,16 @@ pub struct RunOptions {
     /// in it (`account_prefix` + number) get new random passwords.
     pub reuse_data_dir: bool,
 }
+
+/// The largest `[chat] max_channels_per_character` a server may hold (`test-server.md`
+/// §4.6 range), which bounds the memberships of every character.
+const MAX_CHANNELS_PER_CHARACTER: usize = 32;
+/// Most shared channels a run uses.
+pub const MAX_CHANNELS: u8 = 16;
+/// Characters the hostile clients log in with for the cases that must be sent in the world
+/// (`test-server.md` §13.1 "Hostile 1.2 cases"): accounts and characters numbered after the
+/// bots' (`account_prefix` + number, `name_prefix` + three letters).
+pub const HOSTILE_CHARACTERS: usize = 4;
 
 /// Longest duration any option may hold (the command line's limit, about 116 days).
 pub const MAX_OPTION_SECS: f64 = 1.0e7;
@@ -329,6 +345,7 @@ impl RunOptions {
             || !(0.0..=1.0).contains(&b.reconnect_fraction)
             || !(0.0..=1.0).contains(&b.cheat_fraction)
             || !(0.0..=1.0).contains(&b.far_teleport_fraction)
+            || !(0.0..=1.0).contains(&b.channel_fraction)
         {
             return bad("fractions must be within 0-1");
         }
@@ -338,6 +355,14 @@ impl RunOptions {
         }
         if !b.truth_bias_m.is_finite() || b.truth_bias_m.abs() > 1_000.0 {
             return bad("the truth bias must be within ±1000 m");
+        }
+        if b.channels > MAX_CHANNELS {
+            return bad("--channels must be 0-16");
+        }
+        if b.channel_cycle
+            .is_some_and(|c| c < MIN_CHANNEL_CYCLE || long(c))
+        {
+            return bad("--channel-cycle must be at least 15 s");
         }
         if let Some(h) = self.hostile {
             if !(1..=256).contains(&h.clients) {
@@ -431,7 +456,9 @@ pub fn in_process_config(bots: usize, hostile: Option<HostileOptions>) -> Config
     c.accounts.attempts_per_address_per_min = 10_000;
     c.accounts.lockout_base_s = 1;
     c.accounts.lockout_max_s = 30;
-    c.world.instance_capacity = u32::try_from(bots.clamp(64, 1_024)).unwrap_or(1_024);
+    let hostile_chars = hostile.map_or(0, |_| HOSTILE_CHARACTERS);
+    c.world.instance_capacity =
+        u32::try_from((bots + hostile_chars).clamp(64, 1_024)).unwrap_or(1_024);
     let hostile = hostile.map_or(0, |h| h.clients * 8);
     c.limits.max_connections = u32::try_from((bots + hostile + 64).min(4_096)).unwrap_or(4_096);
     c.limits.max_handshakes = 128;
@@ -579,7 +606,7 @@ pub fn run(opts: &RunOptions) -> Result<Report, LoadtestError> {
             data.create()?;
             let password =
                 Password::new(format!("lt-{:016x}{:016x}", rng.next_u64(), rng.next_u64()));
-            let names: Vec<String> = (0..opts.bots)
+            let names: Vec<String> = (0..opts.bots + hostile_characters(opts))
                 .map(|i| account_name(&opts.account_prefix, i))
                 .collect();
             let entries: Vec<(&str, &str)> = names
@@ -664,6 +691,28 @@ pub fn run(opts: &RunOptions) -> Result<Report, LoadtestError> {
     let provision_start = Instant::now();
     let (created, existing) = provision_all(&target, &specs, register)?;
     let provision_s = provision_start.elapsed().as_secs_f64();
+    // The hostile clients' own characters, numbered after the bots'. A remote server
+    // without these accounts (and without registration) leaves the in-world cases unsent;
+    // the report counts them as skipped.
+    let hostile_specs: Vec<BotSpec> = (opts.bots..opts.bots + hostile_characters(opts))
+        .map(|i| BotSpec {
+            index: i,
+            account: account_name(&opts.account_prefix, i),
+            password: password.clone(),
+            character: character_name(&opts.name_prefix, i),
+        })
+        .collect();
+    let hostile_characters = if hostile_specs.is_empty() {
+        Vec::new()
+    } else {
+        match provision_all(&target, &hostile_specs, register) {
+            Ok(_) => hostile_specs,
+            Err(e) => {
+                tracing::warn!(error = %e, "hostile characters not provisioned");
+                Vec::new()
+            }
+        }
+    };
 
     let baseline = handle.as_ref().map(|h| {
         wait_stats(h, Duration::from_secs(10), |s| {
@@ -673,6 +722,8 @@ pub fn run(opts: &RunOptions) -> Result<Report, LoadtestError> {
     });
     let bounds = Bounds {
         bots: opts.bots,
+        hostile_characters: hostile_characters.len(),
+        max_memberships: (opts.bots + hostile_characters.len()) * MAX_CHANNELS_PER_CHARACTER,
         wanderers: params.wanderers,
         max_connections: opts.bots + opts.hostile.map_or(0, |h| h.clients * 8) + 64,
         max_handshakes: 128,
@@ -780,6 +831,7 @@ pub fn run(opts: &RunOptions) -> Result<Report, LoadtestError> {
                     clients: h.clients,
                     pace: h.pace,
                     seed: rng.next_u64(),
+                    characters: hostile_characters.clone(),
                 })?);
             }
             if now >= to
@@ -896,9 +948,7 @@ pub fn run(opts: &RunOptions) -> Result<Report, LoadtestError> {
         }
         if now >= next_judge {
             next_judge = now + Duration::from_secs(1);
-            ledger.judge_due(now, &|r, from, to, positional| {
-                stable(&bots, r, from, to, positional)
-            });
+            ledger.judge_due(now, &|r, from, to, kind| stable(&bots, r, from, to, kind));
         }
         if now >= next_sample {
             next_sample = now + opts.sample_interval;
@@ -957,7 +1007,7 @@ pub fn run(opts: &RunOptions) -> Result<Report, LoadtestError> {
         }
         std::thread::sleep(Duration::from_millis(20));
     }
-    ledger.judge_all(&|r, from, to, positional| stable(&bots, r, from, to, positional));
+    ledger.judge_all(&|r, from, to, kind| stable(&bots, r, from, to, kind));
     let left_s = Instant::now().duration_since(now).as_secs_f64();
     let hostile_snapshot = hostile.take().map(HostileRun::stop);
 
@@ -1023,9 +1073,21 @@ pub fn run(opts: &RunOptions) -> Result<Report, LoadtestError> {
 /// schedule (overruns or skipped ticks slow the §9.4 create budget).
 const LAG_HOLD: Duration = Duration::from_secs(2);
 
-fn stable(bots: &[Bot], r: usize, from: Instant, to: Instant, positional: bool) -> bool {
-    bots.get(r)
-        .is_some_and(|b| b.online_during(from, to) && (!positional || !b.jumped_during(from, to)))
+/// Whether recipient `r`'s situation held still during [`from`, `to`] for a line of `kind`
+/// (see [`ChatLedger::judge_due`]). For a channel line, a bot of another channel is never a
+/// member, so it must not receive the line wherever it is; a bot of the line's channel is
+/// judged only when it was in the world and its membership held still.
+fn stable(bots: &[Bot], r: usize, from: Instant, to: Instant, kind: ChatKind) -> bool {
+    bots.get(r).is_some_and(|b| match kind {
+        ChatKind::Channel(k) if b.channel_slot() != Some(k) => true,
+        ChatKind::Channel(_) => b.online_during(from, to) && b.channel_settled_during(from, to),
+        _ => b.online_during(from, to) && (!kind.positional() || !b.jumped_during(from, to)),
+    })
+}
+
+/// Hostile characters the run provisions: [`HOSTILE_CHARACTERS`] with hostile clients.
+fn hostile_characters(opts: &RunOptions) -> usize {
+    opts.hostile.map_or(0, |_| HOSTILE_CHARACTERS)
 }
 
 fn leak_sample(
@@ -1094,8 +1156,13 @@ fn send_chat(
         let others: Vec<usize> = (0..bots.len())
             .filter(|&r| r != s && bots[r].in_world())
             .collect();
+        let member = bots[s].channel_member();
         let roll = rng.unit();
-        let kind = if roll < 0.4 {
+        let kind = if let Some(k) = member
+            && rng.unit() < bots[s].channel_fraction()
+        {
+            ChatKind::Channel(k)
+        } else if roll < 0.4 {
             ChatKind::Say
         } else if roll < 0.8 || others.is_empty() {
             ChatKind::Yell
@@ -1145,6 +1212,23 @@ fn send_chat(
                 certain.push(r);
                 ChatChannel::Tell {
                     peer: bots[r].spec.character.clone(),
+                }
+            }
+            // Exactly the members (§14 invariant 15): those whose join was answered must
+            // receive it, those with a join or leave in flight may.
+            ChatKind::Channel(k) => {
+                for (r, b) in bots.iter().enumerate() {
+                    if r == s {
+                        continue;
+                    }
+                    if b.channel_member() == Some(k) {
+                        certain.push(r);
+                    } else if b.channel_pending() == Some(k) {
+                        optional.push(r);
+                    }
+                }
+                ChatChannel::Named {
+                    name: ledger.channel_name(k),
                 }
             }
         };

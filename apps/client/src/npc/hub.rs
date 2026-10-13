@@ -4,15 +4,14 @@
 //! ([`SessionWallet`]) fed from each frame's player-state changes, and runs the windows
 //! ([`NpcUi`]) on the game UI once it is attached.
 //!
-//! Frame order (windowed client, after `ClientUi::after_update`): [`NpcHub::frame`] takes
+//! Frame order (windowed client, after `ClientUi::after_update`): [`NpcHub::frame`] reads
 //! the UI events of the frame, syncs the windows with the player state, sends the windows'
 //! commands and the input action's use through the world session, and posts the use's
 //! system lines to the chat window.
 //!
-//! The UI events reach the hub through the UI host's event collector (the one the
-//! character screens use while they are open; the hub turns it on once they are closed).
-//! A dedicated hook in the UI host, beside the character panels' queue, is the merge-time
-//! replacement.
+//! The UI events come from the UI host's in-world event list
+//! ([`UiHost::take_game_events`]): the caller takes it once per frame and hands the same
+//! events to this hub and to the quest journal's; the combat widgets have their own queue.
 
 use std::sync::Arc;
 use std::thread::JoinHandle;
@@ -29,10 +28,9 @@ use super::commands::{
 use super::data::{NpcData, NpcDataError};
 use super::refs::NpcRefs;
 use super::ui::{NpcKey, NpcUi};
-use super::wallet::{SessionWallet, WalletPlayer, wallet_item_facts};
+use super::wallet::{SessionWallet, wallet_item_facts};
 use crate::character::{CharacterData, PlayerChange};
 use crate::ui_host::UiHost;
-use crate::ui_host::services::WalkerPlayer;
 
 /// Parses an NPC window name of `--open-panel` (`npc-windows.md` §4 Tessera rule:
 /// `conversation`, `choice`, `npc-comment`, `vendor`, `vendor-quantity`, `barter`, `loot`,
@@ -51,21 +49,15 @@ pub struct NpcHub {
     loading_data: Option<JoinHandle<Result<NpcData, NpcDataError>>>,
     data_started: bool,
     wallet: Arc<SessionWallet>,
-    player: Arc<WalkerPlayer>,
     ui: Option<NpcUi>,
     pending_panels: Vec<NpcWindowKind>,
     use_requested: bool,
     wallet_toggle: bool,
-    collecting: bool,
     failed: Option<String>,
     /// NPC-window keys taken from the input this frame, run in [`Self::frame`].
     keys: Vec<NpcKey>,
     /// The `VendorBuyUI` keys held (§7.4): left and right Alt, left and right Shift, Tab.
     held: [bool; 5],
-    /// [`Self::player_source`], made once.
-    source: std::sync::OnceLock<Arc<dyn tessera_plugins::LocalPlayerSource>>,
-    /// The UI events of the last [`Self::frame`] (shared with the quest journal, P3).
-    frame_events: Vec<tessera_ui::UiEvent>,
 }
 
 /// Most NPC-window keys queued between two frames (Tessera bound).
@@ -225,30 +217,48 @@ impl NpcHub {
         self.use_requested = true;
     }
 
+    /// Uses `entity`, the entity P2's selection just picked (`npc-windows.md` §3.1 rules 4
+    /// and 5: a left double click, or a right click on a non-player entity), through the
+    /// client's one entry point [`use_entity`] (use range of `interaction.md` §3.4.1 from
+    /// `avatar`); the out-of-range line goes to the chat window. The local player is never
+    /// used (`None`).
+    pub fn use_selection(
+        &self,
+        host: &mut UiHost,
+        world: &mut crate::net::World,
+        entity: tessera_net::EntityId,
+        avatar: Option<tessera_net::Vec3>,
+        now: Instant,
+    ) -> Option<UseOutcome> {
+        if world.player() == Some(entity) {
+            return None;
+        }
+        let range = world
+            .player_state()
+            .npc()
+            .entity(entity)
+            .and_then(|e| e.body)
+            .zip(self.data.as_deref())
+            .and_then(|(b, d)| d.min_usage_dist(tessera_formats::Did(b.0)));
+        let range_of = |id: tessera_net::EntityId| if id == entity { range } else { None };
+        let out = {
+            let mut w = WorldUse::new(world, now, &range_of).with_avatar(avatar);
+            use_entity(&mut w, entity)
+        };
+        if let UseOutcome::Refused(e) = &out {
+            tracing::info!("UseEntity not sent: {e}");
+        }
+        if let Some(line) = out.line() {
+            host.post_notices([line.to_owned()]);
+        }
+        Some(out)
+    }
+
     /// `TogglePaperItemPanel` (the character panel's `Player_Wallet_Button`, §9.1) was
     /// triggered; the wallet window opens or closes in the next [`Self::frame`]. Tessera's
     /// key map binds the install's default key (B) to the bags, so no key calls this yet.
     pub fn request_wallet_toggle(&mut self) {
         self.wallet_toggle = true;
-    }
-
-    /// The local player the plugins see, with the wallet views (`gameplay::LocalPlayerSource`).
-    #[must_use]
-    pub fn player_source(&self) -> Arc<dyn tessera_plugins::LocalPlayerSource> {
-        WalletPlayer::new(Arc::clone(&self.player), Arc::clone(&self.wallet))
-    }
-
-    /// Makes [`Self::player_source`] the plugins' local player. The windowed client calls
-    /// it every frame once the UI is attached, right after the UI host attaches the
-    /// plugins (which installs its own player without the wallet views) and before step 7
-    /// runs the plugins, so plugins never see a player without the wallet views, also
-    /// after a re-attach.
-    pub fn install_source(&self, plugins: &mut crate::plugins::Plugins) {
-        plugins
-            .manager_mut()
-            .set_local_player_source(Some(Arc::clone(
-                self.source.get_or_init(|| self.player_source()),
-            )));
     }
 
     /// One raw input event of the windowed client, before the UI and the walker see it.
@@ -309,27 +319,20 @@ impl NpcHub {
         }
     }
 
-    /// One frame of the windows on `host` (module docs). `screens_open`: the character
-    /// screens own the UI events this frame. `avatar`: where the walker placed the avatar,
+    /// One frame of the windows on `host` (module docs) with the frame's UI `events`.
+    /// `screens_open`: the character screens own the UI events this frame (`events` is
+    /// ignored). `avatar`: where the walker placed the avatar,
     /// in the session's frame (the use range and the walk-away close measure from it; `None`
     /// before it is placed).
     pub fn frame(
         &mut self,
         host: &mut UiHost,
         world: &mut crate::net::World,
-        plugins: &mut crate::plugins::Plugins,
+        events: &[tessera_ui::UiEvent],
         screens_open: bool,
         avatar: Option<tessera_net::Vec3>,
         now: Instant,
     ) {
-        self.frame_events.clear();
-        // The plugins' local player carries the wallet views.
-        let name = world
-            .player()
-            .and_then(|id| world.entities().get(&id))
-            .map(|e| e.name.clone());
-        self.player.set(name.as_deref());
-        self.install_source(plugins);
         let Some(refs) = self.refs.clone() else {
             return;
         };
@@ -337,16 +340,7 @@ impl NpcHub {
         let ui = self
             .ui
             .get_or_insert_with(|| NpcUi::new(Arc::clone(&refs), FallbackArt::default()));
-        let events = if screens_open {
-            self.collecting = false;
-            Vec::new()
-        } else if self.collecting {
-            host.take_screen_events()
-        } else {
-            host.collect_screen_events(true);
-            self.collecting = true;
-            Vec::new()
-        };
+        let events = if screens_open { &[] } else { events };
         let data = self.data.clone();
         let mut lines = Vec::new();
         // The character panel's `Player_Wallet_Button` (§9.1, §9.4).
@@ -406,14 +400,12 @@ impl NpcHub {
                 &mut hui,
                 world.player_state(),
                 data.as_deref(),
-                &events,
+                events,
                 Some(&geo),
             ));
             ui.hide_closed_dialogs(&mut hui);
             actions
         };
-        // The journal windows read the same events after this frame (P3).
-        self.frame_events = events;
         for a in actions {
             if let Some(c) = command_of(a)
                 && let Err(e) = world.send_command(now, c)
@@ -437,14 +429,6 @@ impl NpcHub {
         if !lines.is_empty() {
             host.post_notices(lines);
         }
-    }
-
-    /// The UI events the last [`Self::frame`] collected (empty while the character screens
-    /// own them): the quest journal's windows take them after the NPC windows (P3,
-    /// `crate::quests::hub`).
-    #[must_use]
-    pub fn frame_events(&self) -> &[tessera_ui::UiEvent] {
-        &self.frame_events
     }
 
     /// Opens or closes the wallet window (`TogglePaperItemPanel`).

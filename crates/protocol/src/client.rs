@@ -7,7 +7,7 @@
 //! test-server backend) runs QUIC and TLS, feeds received bytes in and drains
 //! [`Transmit`]s out.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, VecDeque};
 use std::time::Duration;
 
 use crate::codes::{AppErrorCode, CharacterCreateFailedCode, ChatRejectedCode, ClientFailure};
@@ -19,11 +19,11 @@ use crate::limits::{
     MAX_MOVE_INPUTS_PER_SECOND, MAX_PINGS_PER_SECOND, PROTOCOL_MINOR,
 };
 use crate::message::{
-    Channel, CharacterCreate, ChatChannel, ChatMessage, ChatSend, Credentials, Disconnect,
-    EmoteSet, EnterWorld, EntityAppearance, EntityCreate, EntityUpdate, Failure, Hello, HelloAck,
-    LocationCause, LocationReport, LoginFailed, Message, MessageType, MotionEntry, MoveInput,
-    ServerCaps, ServerNotice, Side, TeleportRefused, TeleportRequest, TimeReply, WorldClock,
-    WorldEnter,
+    Channel, ChannelLeft, ChannelLeftReason, ChannelRefused, CharacterCreate, ChatChannel,
+    ChatMessage, ChatSend, Credentials, Disconnect, EmoteSet, EnterWorld, EntityAppearance,
+    EntityCreate, EntityUpdate, Failure, Hello, HelloAck, LocationCause, LocationReport,
+    LoginFailed, Message, MessageType, MotionEntry, MoveInput, ServerCaps, ServerNotice, Side,
+    TeleportRefused, TeleportRequest, TimeReply, WorldClock, WorldEnter,
 };
 use crate::rate::SlidingWindow;
 use crate::session::{
@@ -33,6 +33,25 @@ use crate::session::{
 use crate::time::{ClockOffsetEstimator, TimeSample};
 use crate::types::{Appearance, CharacterSummary, Destination, Location, Look, Motion, Vec3};
 use crate::value::Stance;
+
+/// Channel requests (`ChannelJoin`, `ChannelLeave`) a client may have unanswered at once.
+/// The server answers each in order (§10.6), so a well-behaved application never comes
+/// near it; it bounds the client's own bookkeeping.
+pub const MAX_PENDING_CHANNEL_REQUESTS: usize = 64;
+
+/// Dropped channel lines (§13.2, minor ≥ 2) logged one by one before the log is thinned to
+/// one line per [`STALE_CHANNEL_LOG_EVERY`] drops.
+const STALE_CHANNEL_LOG_FIRST: u64 = 16;
+const STALE_CHANNEL_LOG_EVERY: u64 = 1_024;
+
+/// A channel request the client sent and the server has not answered yet (minor ≥ 2).
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum ChannelRequest {
+    /// `ChannelJoin` with this name, as sent.
+    Join(String),
+    /// `ChannelLeave` with this name, as sent.
+    Leave(String),
+}
 
 /// Client states (§12.1).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -189,6 +208,30 @@ pub enum ClientEvent {
     Notice(ServerNotice),
     /// `ChatRejected`.
     ChatRejected(Failure<ChatRejectedCode>),
+    /// Minor ≥ 2: `ChannelJoined`, the answer to `request` (a [`ChannelRequest::Join`]).
+    /// `name` is the channel's name as the server holds it; the client now receives its
+    /// lines and compares their `channel_name` with it byte for byte (§10.6).
+    ChannelJoined {
+        /// The server's spelling of the channel.
+        name: String,
+        /// The request it answers.
+        request: ChannelRequest,
+    },
+    /// Minor ≥ 2: `ChannelLeft` for a channel the client held as joined: the answer to
+    /// `request` (reason `LEFT`) or the server's own decision (`REMOVED`, `request` None).
+    ChannelLeft {
+        /// The message.
+        left: ChannelLeft,
+        /// The request it answers, for reason `LEFT`.
+        request: Option<ChannelRequest>,
+    },
+    /// Minor ≥ 2: `ChannelRefused`, the answer to `request`; membership is unchanged.
+    ChannelRefused {
+        /// The message.
+        refused: ChannelRefused,
+        /// The request it answers.
+        request: ChannelRequest,
+    },
     /// The fresh entries of a `MotionBatch` (stale and unknown ones removed, §8.6).
     Motion {
         /// The batch's snapshot time.
@@ -247,6 +290,12 @@ pub struct ClientSession {
     uni_streams: u8,
     cause: Option<CloseCause>,
     dropped: u64,
+    /// Channels held as joined (the server's spellings, in joining order; minor ≥ 2).
+    channels: Vec<String>,
+    /// Channel requests sent and not answered, oldest first.
+    channel_requests: VecDeque<ChannelRequest>,
+    /// Channel lines and `ChannelLeft`s dropped under §13.2.
+    stale_channel: u64,
 }
 
 impl ClientSession {
@@ -278,7 +327,36 @@ impl ClientSession {
             uni_streams: 0,
             cause: None,
             dropped: 0,
+            channels: Vec::new(),
+            channel_requests: VecDeque::new(),
+            stale_channel: 0,
         }
+    }
+
+    /// The channels the client holds as joined, in joining order (the server's spellings,
+    /// minor ≥ 2, §10.6).
+    #[must_use]
+    pub fn joined_channels(&self) -> &[String] {
+        &self.channels
+    }
+
+    /// Whether the client holds a channel of exactly this name as joined.
+    #[must_use]
+    pub fn holds_channel(&self, name: &str) -> bool {
+        self.channels.iter().any(|c| c == name)
+    }
+
+    /// Channel requests sent and not yet answered, oldest first.
+    pub fn pending_channel_requests(&self) -> impl Iterator<Item = &ChannelRequest> + '_ {
+        self.channel_requests.iter()
+    }
+
+    /// The server's capabilities as they apply at the negotiated minor
+    /// ([`ServerCaps::effective`]): `CHAT_CHANNELS` only at minor ≥ 2. None before
+    /// `HelloAck`.
+    #[must_use]
+    pub fn server_caps(&self) -> ServerCaps {
+        self.caps()
     }
 
     /// The current state.
@@ -957,12 +1035,68 @@ impl ClientSession {
         ) {
             return Err(self.unexpected(msg.message_type()));
         }
+        let ty = msg.message_type();
         Ok(Some(match msg {
-            Message::ChatMessage(m) => ClientEvent::Chat(m),
+            Message::ChatMessage(m) => {
+                if let ChatChannel::Named { name } = &m.channel
+                    && !self.holds_channel(name)
+                {
+                    self.drop_stale_channel("ChatMessage", name);
+                    return Ok(None);
+                }
+                ClientEvent::Chat(m)
+            }
             Message::ServerNotice(n) => ClientEvent::Notice(n),
             Message::ChatRejected(f) => ClientEvent::ChatRejected(f),
+            Message::ChannelJoined { name } => {
+                let request = match self.channel_requests.pop_front() {
+                    Some(r @ ChannelRequest::Join(_)) => r,
+                    _ => return Err(self.unexpected(ty)),
+                };
+                if !self.holds_channel(&name) {
+                    self.channels.push(name.clone());
+                }
+                ClientEvent::ChannelJoined { name, request }
+            }
+            Message::ChannelLeft(left) => {
+                let request = match left.reason {
+                    ChannelLeftReason::Left => match self.channel_requests.pop_front() {
+                        Some(r @ ChannelRequest::Leave(_)) => Some(r),
+                        _ => return Err(self.unexpected(ty)),
+                    },
+                    ChannelLeftReason::Removed => None,
+                };
+                let Some(i) = self.channels.iter().position(|c| *c == left.name) else {
+                    self.drop_stale_channel("ChannelLeft", &left.name);
+                    return Ok(None);
+                };
+                self.channels.remove(i);
+                ClientEvent::ChannelLeft { left, request }
+            }
+            Message::ChannelRefused(refused) => {
+                let Some(request) = self.channel_requests.pop_front() else {
+                    return Err(self.unexpected(ty));
+                };
+                ClientEvent::ChannelRefused { refused, request }
+            }
             other => return Err(self.unexpected(other.message_type())),
         }))
+    }
+
+    /// Drops a well-formed channel message for a channel the client does not hold as joined
+    /// (§13.2): counted, logged at debug level, thinned out under a stream of them.
+    fn drop_stale_channel(&mut self, what: &'static str, name: &str) {
+        self.dropped += 1;
+        self.stale_channel += 1;
+        let n = self.stale_channel;
+        if n <= STALE_CHANNEL_LOG_FIRST || n.is_multiple_of(STALE_CHANNEL_LOG_EVERY) {
+            tracing::debug!(
+                what,
+                channel = name,
+                dropped = n,
+                "channel message for a channel not held as joined dropped"
+            );
+        }
     }
 
     fn on_dgram(&mut self, msg: Message, now: u64) -> Option<ClientEvent> {
@@ -1053,7 +1187,7 @@ impl ClientSession {
     fn caps(&self) -> ServerCaps {
         self.hello_ack
             .as_ref()
-            .map_or(ServerCaps::NONE, |a| a.server_caps)
+            .map_or(ServerCaps::NONE, |a| a.server_caps.effective(a.minor))
     }
 
     fn send_checked(&mut self, msg: Message) -> Result<(), UsageError> {
@@ -1172,10 +1306,47 @@ impl ClientSession {
         Ok(request_id)
     }
 
-    /// Sends `ChatSend`. System is refused.
+    /// Sends `ChatSend`. System is refused; `Named` needs minor ≥ 2 and `CHAT_CHANNELS`.
+    /// A line on a channel the client does not hold as joined is sent anyway: the server
+    /// answers it with `ChatRejected(NOT_JOINED)` (§10.6).
     pub fn chat(&mut self, channel: ChatChannel, text: String) -> Result<(), UsageError> {
         self.require_in_world()?;
+        if matches!(channel, ChatChannel::Named { .. })
+            && !self.caps().contains(ServerCaps::CHAT_CHANNELS)
+        {
+            return Err(UsageError::CapabilityMissing);
+        }
         self.send_checked(Message::ChatSend(ChatSend { channel, text }))
+    }
+
+    /// Sends `ChannelJoin` (InWorld, minor ≥ 2, `CHAT_CHANNELS`; §6.2.20). The name goes as
+    /// given (at most 64 bytes); the server judges its content. Answered in order by
+    /// [`ClientEvent::ChannelJoined`] or [`ClientEvent::ChannelRefused`].
+    pub fn join_channel(&mut self, name: String) -> Result<(), UsageError> {
+        self.send_channel_request(ChannelRequest::Join(name))
+    }
+
+    /// Sends `ChannelLeave` (same conditions as [`join_channel`](Self::join_channel);
+    /// §6.2.21). Answered by [`ClientEvent::ChannelLeft`] or [`ClientEvent::ChannelRefused`].
+    pub fn leave_channel(&mut self, name: String) -> Result<(), UsageError> {
+        self.send_channel_request(ChannelRequest::Leave(name))
+    }
+
+    fn send_channel_request(&mut self, request: ChannelRequest) -> Result<(), UsageError> {
+        self.require_in_world()?;
+        if !self.caps().contains(ServerCaps::CHAT_CHANNELS) {
+            return Err(UsageError::CapabilityMissing);
+        }
+        if self.channel_requests.len() >= MAX_PENDING_CHANNEL_REQUESTS {
+            return Err(UsageError::Outstanding);
+        }
+        let msg = match &request {
+            ChannelRequest::Join(name) => Message::ChannelJoin { name: name.clone() },
+            ChannelRequest::Leave(name) => Message::ChannelLeave { name: name.clone() },
+        };
+        self.send_checked(msg)?;
+        self.channel_requests.push_back(request);
+        Ok(())
     }
 
     /// Sends `EmoteSet` (anim 0 stops the emote).

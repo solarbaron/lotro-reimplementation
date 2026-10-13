@@ -366,12 +366,6 @@ impl App {
         host.poll(rt, &mut gfx.renderer);
         if let Some(ui) = self.ui.as_mut() {
             ui.poll(rt, host.walker.as_mut());
-            // The plugins' local player with the wallet views (P3), before step 7.
-            if ui.attached() {
-                rt.npc.install_source(&mut rt.plugins);
-                // With the mount views (P5).
-                rt.p5.install_source(&rt.npc, &mut rt.plugins);
-            }
         }
         let size = gfx.window.inner_size();
         let notices = rt.take_notices();
@@ -418,6 +412,15 @@ impl App {
                 ui.after_update(walker, rt, &ev);
                 // The NPC windows (decision 0024 P3): after the frame's UI events.
                 let screens = ui.screens_open();
+                // The frame's UI events, taken once every frame: the NPC windows, the
+                // quest journal and the social panels read the same list (the combat
+                // widgets have their own queue); the character screens own them while they
+                // are open.
+                let taken = ui
+                    .host_mut()
+                    .map(crate::ui_host::UiHost::take_game_events)
+                    .unwrap_or_default();
+                let events: &[tessera_ui::UiEvent] = if screens { &[] } else { &taken };
                 if ui.attached()
                     && let (Some(host), Some(world)) = (ui.host_mut(), rt.world.as_mut())
                 {
@@ -426,31 +429,19 @@ impl App {
                     let avatar = walker
                         .focus()
                         .map(|p| tessera_net::Vec3::new(p.x as f32, p.y as f32, p.z as f32));
-                    rt.npc
-                        .frame(host, world, &mut rt.plugins, screens, avatar, now);
-                    // The quest journal (P3), after the NPC windows, with the frame's UI
-                    // events the NPC hub collected.
+                    rt.npc.frame(host, world, events, screens, avatar, now);
+                    // The quest journal (P3), after the NPC windows.
                     let radar = walker.radar_input();
-                    rt.quests.frame(
-                        host,
-                        world,
-                        &rt.npc,
-                        rt.npc.frame_events(),
-                        radar.as_ref(),
-                        now,
-                    );
-                    // Travel and the instance finder (P5), then the map window, with the same
-                    // UI events.
-                    rt.p5
-                        .frame(host, world, &rt.npc, rt.npc.frame_events(), now);
-                    rt.map.frame(
-                        host,
-                        world,
-                        rt.p5.refs(),
-                        &rt.npc,
-                        rt.npc.frame_events(),
-                        radar.as_ref(),
-                    );
+                    rt.quests
+                        .frame(host, world, &rt.npc, events, radar.as_ref(), now);
+                    // The social panels (P4) read the same list.
+                    let data = rt.p1.data().cloned();
+                    crate::ui_host::client::social_frame(host, world, data.as_deref(), events);
+                    // Travel and the instance finder (P5), then the map window, read the
+                    // same list.
+                    rt.p5.frame(host, world, &rt.npc, events, now);
+                    rt.map
+                        .frame(host, world, rt.p5.refs(), &rt.npc, events, radar.as_ref());
                     // The indicators over ringed NPCs (§8.2), at the walker's positions.
                     let position = |id| walker.entity_render_pos(id);
                     rt.quests

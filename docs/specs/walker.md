@@ -2873,7 +2873,7 @@ written into the test):
 <a id="s16-12"></a>
 ### 16.12 Open items
 
-> **OPEN:** (scenario sessions) how `scenario-feed.md`'s P5 travel revision names the mount REF
+> **OPEN:** (scenario sessions) how `scenario-feed.md`'s P5 travel revision (revision 8) names the mount REF
 > of the `mount` step (effect, skill or either) and whether the walker's dismount should send
 > `dismount`; §16.1 assumes either and the command.
 

@@ -409,3 +409,179 @@ fn rt_i14_animated_particle_surface_curves() {
     assert_eq!(mode10, 2, "surfaces with a mode-10 curve");
     assert_eq!(animated_1043, 0, "non-constant 1043 curves");
 }
+
+/// The category of a 0x39 record in the census of `combat-visuals.md` §10.1 (combinations
+/// counted under the first matching row).
+fn census_category(ps: &ParticleSystem) -> &'static str {
+    if ps.use_lighting {
+        "lit"
+    } else if ps.uses_video_post {
+        "post-pass"
+    } else if ps.inherit_opacity {
+        "inherit_opacity"
+    } else if ps.surface.is_null() && ps.extra_surface.is_null() {
+        "no surface"
+    } else if ps.emitters.is_empty() {
+        "no emitter"
+    } else {
+        "plain"
+    }
+}
+
+/// `combat-visuals.md` §10.1 and §10.5: every 0x39 and 0x44 record decodes and falls into
+/// exactly one category; every Beam node of every table and scriptlet decodes to the fields
+/// of `particle-runtime.md` §11.1 and names only particle systems that exist and decode.
+#[test]
+fn every_descriptor_is_categorised_and_every_beam_decodes() {
+    let Some(set) = open_set() else {
+        return;
+    };
+    let mut cats: std::collections::BTreeMap<&'static str, usize> = Default::default();
+    let systems: HashMap<u32, Vec<u8>> =
+        records(&set, PARTICLE_SYSTEM_PREFIX).into_iter().collect();
+    for (did, payload) in &systems {
+        let ps = ParticleSystem::decode(payload)
+            .unwrap_or_else(|e| panic!("{did:#010x} does not decode: {e}"));
+        *cats.entry(census_category(&ps)).or_default() += 1;
+    }
+    let forks = records(&set, FORK_SYSTEM_PREFIX);
+    for (did, payload) in &forks {
+        ForkSystem::decode(payload, &NoSchema)
+            .unwrap_or_else(|e| panic!("{did:#010x} does not decode: {e}"));
+    }
+    let total: usize = cats.values().sum();
+    assert_eq!(total, systems.len(), "each record in exactly one category");
+    assert!(cats.get("plain").copied().unwrap_or(0) > 0);
+    eprintln!(
+        "§10.1: {} 0x39 records by category {cats:?}; {} 0x44 fork records (lifetime only)",
+        systems.len(),
+        forks.len()
+    );
+
+    let dict_bytes = set
+        .read(PROPERTY_DICTIONARY)
+        .expect("read the property dictionary");
+    let dict = PropertyDictionary::parse_expecting(&dict_bytes, PROPERTY_DICTIONARY)
+        .expect("property dictionary decodes");
+    #[derive(Default)]
+    struct Beams {
+        nodes: usize,
+        opaque: usize,
+        head_entity: usize,
+        with_beam_system: usize,
+        with_head_system: usize,
+        missing_systems: Vec<u32>,
+        execute: usize,
+        /// Distinct ribbon material DIDs (`particle-runtime.md` §11.1 step 6).
+        materials: std::collections::BTreeSet<u32>,
+        /// Distinct head entity DIDs (step 9).
+        head_entities: std::collections::BTreeSet<u32>,
+    }
+    let mut b = Beams::default();
+    let mut visit = |n: &Node| match &n.data {
+        NodeData::Beam(beam) => {
+            b.nodes += 1;
+            b.head_entity += usize::from(!beam.head_entity.is_null());
+            for m in [beam.head_material, beam.body_material, beam.tail_material] {
+                if !m.is_null() {
+                    b.materials.insert(m.0);
+                }
+            }
+            if !beam.head_entity.is_null() {
+                b.head_entities.insert(beam.head_entity.0);
+            }
+            for (did, count) in [
+                (beam.beam_particle_system, &mut b.with_beam_system),
+                (beam.head_particle_system, &mut b.with_head_system),
+            ] {
+                if did.is_null() {
+                    continue;
+                }
+                *count += 1;
+                match systems.get(&did.0) {
+                    Some(p) if ParticleSystem::decode(p).is_ok() => {}
+                    _ => b.missing_systems.push(did.0),
+                }
+            }
+        }
+        NodeData::Execute(_) => b.execute += 1,
+        _ if n.kind == tessera_formats::script_table::NodeKind::BEAM => b.opaque += 1,
+        _ => {}
+    };
+    for (did, payload) in records(&set, SCRIPT_TABLE_PREFIX) {
+        if let Ok(table) = ScriptTable::parse_expecting(&payload, did, &dict) {
+            for script in &table.scripts {
+                for root in &script.roots {
+                    root.walk(&mut |n, _| visit(n));
+                }
+            }
+        }
+    }
+    for (did, payload) in records(&set, SCRIPTLET_PREFIX) {
+        if let Ok(s) = Scriptlet::parse_expecting(&payload, did, &dict) {
+            for root in &s.roots {
+                root.walk(&mut |n, _| visit(n));
+            }
+        }
+    }
+    eprintln!(
+        "Beam nodes: {} typed, {} untyped; {} with a head entity, {} with a beam system, {} \
+         with a head system; {} systems missing; Execute nodes: {}",
+        b.nodes,
+        b.opaque,
+        b.head_entity,
+        b.with_beam_system,
+        b.with_head_system,
+        b.missing_systems.len(),
+        b.execute
+    );
+    // Ribbon materials are surface records (prefix 0x31, `material.md` §4) that the material
+    // library resolves; head entities are entity descriptors (prefix 0x47, §11.1 step 1).
+    let library = MaterialLibrary::new(&set);
+    let prefixes = |dids: &std::collections::BTreeSet<u32>| {
+        let mut m: std::collections::BTreeMap<u8, usize> = Default::default();
+        for d in dids {
+            *m.entry((d >> 24) as u8).or_default() += 1;
+        }
+        m
+    };
+    let unresolved: Vec<u32> = b
+        .materials
+        .iter()
+        .copied()
+        .filter(|d| (d >> 24) != 0x31 || library.resolve_surface(Did(*d)).is_err())
+        .collect();
+    let missing_entities: Vec<u32> = b
+        .head_entities
+        .iter()
+        .copied()
+        .filter(|d| set.locate(*d).ok().flatten().is_none())
+        .collect();
+    eprintln!(
+        "Beam ribbon materials: {} distinct, by prefix {:x?}, {} unresolved; head entities: {} \
+         distinct, by prefix {:x?}, {} missing",
+        b.materials.len(),
+        prefixes(&b.materials),
+        unresolved.len(),
+        b.head_entities.len(),
+        prefixes(&b.head_entities),
+        missing_entities.len()
+    );
+    assert!(b.nodes > 0, "no Beam nodes found");
+    assert_eq!(b.opaque, 0, "every Beam node decodes to its fields");
+    assert!(
+        unresolved.is_empty(),
+        "ribbon materials that are not resolvable surface records: {:x?}",
+        &unresolved[..unresolved.len().min(16)]
+    );
+    assert!(
+        missing_entities.is_empty(),
+        "head entities that do not exist: {:x?}",
+        &missing_entities[..missing_entities.len().min(16)]
+    );
+    assert!(
+        b.missing_systems.is_empty(),
+        "beam systems that do not exist or decode: {:?}",
+        &b.missing_systems[..b.missing_systems.len().min(16)]
+    );
+}

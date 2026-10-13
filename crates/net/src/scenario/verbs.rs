@@ -9,7 +9,8 @@ use super::ast::{
 use super::error::{Limit, ScenarioErrorKind as K};
 use super::lex::{Seg, Token};
 use super::parse::{
-    Binding, MAX_FELLOWS, MAX_TRADE_ENTRIES, MAX_TUNE_BYTES, MAX_WINDOW_ENTRIES, Parser, R,
+    Binding, DEFAULT_SYNC_LEAD_MS, MAX_FELLOWS, MAX_SYNC_LEAD_MS, MAX_TRADE_ENTRIES,
+    MAX_TUNE_BYTES, MAX_WINDOW_ENTRIES, Parser, R,
 };
 use super::parse::{MAX_COIN, Stmt};
 
@@ -539,6 +540,65 @@ impl Parser {
                     out.push(self.name_string(t)?);
                 }
                 Verb::Ignore(out)
+            }
+            "perform-start" => {
+                let mut st = self.split(tokens, 1, &["by", "lead"])?;
+                st.no_more(0)?;
+                let by = match st.opt("by") {
+                    Some((v, c)) => Some(self.member(&v, c)?),
+                    None => None,
+                };
+                let lead = match st.opt("lead") {
+                    Some((v, c)) => {
+                        let ms = self.duration_at(&v, c)?;
+                        if ms > MAX_SYNC_LEAD_MS {
+                            return Err(self.e(K::OutOfRange, c));
+                        }
+                        ms
+                    }
+                    None => DEFAULT_SYNC_LEAD_MS,
+                };
+                Verb::PerformStart { by, lead }
+            }
+            "perform-withdraw" => {
+                let st = self.split(tokens, 1, &[])?;
+                let m = st.arg(0)?;
+                let member = self.member(m, m.col)?;
+                st.no_more(1)?;
+                Verb::PerformWithdraw(member)
+            }
+            "fellow-vital" => {
+                // A member with an entity reports through `vital` (§6.7): a STRING only.
+                let st = self.split(tokens, 1, &[])?;
+                let member = self.name_string(st.arg(0)?)?;
+                let vital = self.vital_arg(st.arg(1)?, true)?;
+                let (cur, max) = self.fraction(st.arg(2)?, 0.0, 1.0e9, false, true)?;
+                st.no_more(3)?;
+                Verb::FellowVital {
+                    member,
+                    vital,
+                    current: to_f32(cur),
+                    max: to_f32(max),
+                }
+            }
+            "perform"
+                if self
+                    .split(tokens, 1, &["delay"])?
+                    .pos
+                    .get(2)
+                    .is_some_and(|t| t.is("sync")) =>
+            {
+                // §6.7: with `sync` the first argument may be a STRING and `delay=` is not
+                // allowed.
+                let mut st = self.split(tokens, 1, &["delay"])?;
+                let m = st.arg(0)?;
+                let member = self.member(m, m.col)?;
+                let tune = self.string_max(st.arg(1)?, MAX_TUNE_BYTES, false)?;
+                st.no_more(3)?;
+                if let Some((_, c)) = st.opt("delay") {
+                    return Err(self.e(K::UnexpectedToken, c));
+                }
+                Verb::PerformSync { member, tune }
             }
             "perform" => {
                 let mut st = self.split(tokens, 1, &["delay"])?;

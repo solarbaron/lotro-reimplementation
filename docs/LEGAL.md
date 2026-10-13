@@ -7,11 +7,17 @@
 > it may be wrong, and the law changes. Anyone who contributes, distributes or runs this
 > software is responsible for their own legal position. **Before any public release, and
 > before any networked feature beyond the local sandbox, the project must obtain review by
-> a qualified IP lawyer** (see [§9](#9-gates-and-the-official-server-target)).
+> a qualified IP lawyer** (see [§9](#9-gates-and-the-official-server-target)). For
+> official-server compatibility (T4) the project owner decided on 2026-10-11 to proceed
+> with development **without** such a review ([decision 0034](decisions/0034-official-server-compatibility.md));
+> no review exists, and §9 lists the risks that decision accepts. The call for a review
+> before any public release stands.
 
 Status: adopted 2026-10-03; §17 (plugin API names) added 2026-10-06; §9.5 and §18
 (extended scripting, [decision 0017](decisions/0017-extended-scripting.md)) added
-2026-10-07. Sources were fetched
+2026-10-07; §1, §8, §9, §13, §15, §16 and §18 updated 2026-10-11 for
+[decision 0034](decisions/0034-official-server-compatibility.md) (official-server
+compatibility in scope by the owner's decision, without a legal review). Sources were fetched
 and read on 2026-10-03 unless another date is given. Quoted contract text is from the versions dated below; Daybreak can change
 these documents at any time, so re-check them before relying on this page.
 
@@ -31,12 +37,18 @@ Related documents: [CLEAN_ROOM.md](CLEAN_ROOM.md) (how we write code without cop
    ([§6.1](#61-daybreak-v-takahashi-the-heroes-journey-2025-26)).
 3. Risk rises steeply with scope. The project orders its work on a five-step ladder
    ([§8](#8-risk-tier-ladder)): format library → offline engine → networked client with a
-   project-owned server → emulated gameplay → connectivity with official servers.
-4. The project owner has chosen **official-server compatibility** as the long-term target.
-   Research rates that the **highest-risk tier**. It is therefore **gated**: it is not in the
-   base, no code for it may land until the gate in [§9](#9-gates-and-the-official-server-target)
-   is passed, and until then development targets the in-process sandbox and a
-   project-owned test server.
+   project-owned server → emulated gameplay → connectivity with official servers. The
+   project works on every tier except emulated gameplay (T3, not planned).
+4. The project owner has chosen **official-server compatibility** (T4). Research rates that
+   the **highest-risk tier**. Until 2026-10-11 it was gated behind a written legal review and
+   permission from the rights holders. On 2026-10-11 the owner decided that it is **in scope
+   now, without either** ([decision 0034](decisions/0034-official-server-compatibility.md)):
+   no lawyer has reviewed it and no rights holder has agreed, and the owner accepts the
+   residual risks ([§9](#9-gates-and-the-official-server-target)). Two conditions stay
+   binding: a ban-risk warning every user must accept before any official connection (G4),
+   and the permanently forbidden list of §8 (G5). Users who connect to an official server
+   do so at their own risk. The project stops if Daybreak or MEE objects
+   ([§9.4](#94-how-the-gate-can-fail)).
 5. The most defensible shape for the project is the OpenMW/ScummVM model: original code,
    the user's own data read in place, no assets shipped, non-commercial, a neutral name,
    and a strict clean-room process ([CLEAN_ROOM.md](CLEAN_ROOM.md)).
@@ -260,7 +272,8 @@ These follow from §3–§6 and are binding project policy:
 3. The repository and releases contain **no game content** ([§11](#11-content-rules)).
 4. No Daybreak/SSG hostnames, keys or bulk data tables extracted from the client binary are
    hard-coded or committed. Anything of that kind is loaded at runtime from the user's own
-   install, and only where a passed gate allows it. Numeric constants that define an
+   install, and only where [decision 0034](decisions/0034-official-server-compatibility.md)
+   allows it (official endpoints and key material, for T4). Numeric constants that define an
    algorithm may be used when a spec records them
    ([decision 0012](decisions/0012-numeric-constants.md)).
 5. Never modify, redirect, inject into or wrap the official client.
@@ -280,9 +293,9 @@ Each tier includes everything below it. "Status" is the project's current positi
 | **T1 Offline engine** | Renderer, world walker and UI that read the user's install in place; no network. | T0 plus ToS §12 "used as a stand-alone game"; open MDY scope-condition question; MEE trademark if naming slips. | **In scope now.** |
 | **T2 Own-server networked** | Client speaks a **project-defined** protocol to the in-process sandbox or a **project-owned test server** that serves only original or test content. | T1 plus ToS §7.1 "server … not controlled or authorized by Daybreak"; ToS §12 "non-Daybreak game servers". Lower if the protocol is our own and the server holds no game content. | **In scope now: sandbox and project-owned test server only.** |
 | **T3 Emulated gameplay** | A server that reproduces the game's quests, NPC scripts, combat or world, or any publicly hosted shard, free or not. | Copyright in game content and server behaviour; EULA §4.3; ToS §7.1 "server emulator"; THJ, WoW private-server cases; MEE C&D precedent (EoA). | **Not planned. Requires written permission from Daybreak and MEE.** |
-| **T4 Official-server connectivity** | Client connects to Daybreak's live servers: official login/launcher protocol, session encryption, the live game protocol. | **Highest.** EULA §4.3, §4.4, §4.5; ToS §7.1, §10, §12; DMCA §1201 (THJ theory); account bans for every user. | **Owner's long-term target. Gated; see §9.** |
+| **T4 Official-server connectivity** | Client connects to Daybreak's live servers: official login/launcher protocol, session encryption, the live game protocol. | **Highest.** EULA §4.3, §4.4, §4.5; ToS §7.1, §10, §12; DMCA §1201 (THJ theory); account bans for every user. | **In scope by the owner's decision of 2026-10-11, without a legal review or permission ([decision 0034](decisions/0034-official-server-compatibility.md)); G4 and G5 binding; see §9.** |
 
-**Permanently forbidden at every tier, with or without the gate:**
+**Permanently forbidden at every tier, whatever any decision says (G5 of §9.3):**
 
 - shipping, mirroring or linking to client binaries, dat files, patches or old clients;
 - modifying, patching, redirecting or injecting into the official client;
@@ -299,98 +312,152 @@ Each tier includes everything below it. "Status" is the project's current positi
 
 ## 9. Gates and the official-server target
 
+Rewritten 2026-10-11 by [decision 0034](decisions/0034-official-server-compatibility.md).
+Until then this section gated T4 behind a written legal review; the text of that gate is
+kept in [decision 0004](decisions/0004-server-strategy.md) and in this file's history.
+
 ### 9.1 The decision
 
-The project owner has chosen **official-server compatibility** (T4) as the long-term
-target: a client that, like the official one, could log in to and play on Daybreak's servers.
-This document records that decision and the conditions attached to it.
+The project owner has chosen **official-server compatibility** (T4): a client that, like the
+official one, can log in to and play on Daybreak's servers. On 2026-10-11 the owner decided
+that this work is **in scope now** ("the official server compatibility will be here so
+change the legal and the plans"). Asked whether a lawyer's review or permission from the
+rights holders exists, the owner chose to proceed on the owner's own decision and to keep
+conditions G4 and G5 of §9.3 binding.
+
+Stated plainly:
+
+- **No legal review exists.** No qualified lawyer has reviewed the design.
+- **No permission exists.** Neither Daybreak Game Company LLC nor Middle-earth Enterprises
+  has been asked or has agreed.
+- The owner accepts the residual risks of §9.2 with that knowledge
+  ([decision 0034](decisions/0034-official-server-compatibility.md) §5). That acceptance
+  binds the project's plans; it does not change the law, the contract terms of §3, or any
+  user's or contributor's own exposure.
 
 ### 9.2 Why it is the highest-risk tier
 
-Research rates T4 as the riskiest thing this project could do. Plainly:
+Research rates T4 as the riskiest thing this project could do. These risks are **not
+removed** by the owner's decision; they are the residual risks the owner accepts. Plainly:
 
 - **Contract.** EULA §4.3 forbids providing any means of playing "through interception,
   emulation or redirection of the communication protocols"; §4.4 forbids "any unauthorized
   connection"; §4.5 forbids decrypting client–server data. ToS §7.1 forbids deciphering
   transmissions and circumventing access measures; ToS §10 repeats the decryption ban; ToS
   §12 restricts the client software. A third-party client on the live service breaches these
-  on its face unless Daybreak authorises it.
+  on its face unless Daybreak authorises it. Contributors who accepted the EULA carry this
+  personally ([§13](#13-contributor-risk-notice)).
 - **DMCA §1201.** The official login uses encryption and key material that ships inside
   the official client (reported by published third-party research). The THJ court treated
   server-side authentication as an access control and the act of distributing a
   workaround as trafficking. Implementing the official login in third-party code risks
   §1201(a)(1) circumvention and (a)(2) trafficking claims, and in the 9th Circuit those
   claims do not need any copyright infringement. §1201(f) is narrow, bnetd held it waived by
-  contract, and its element (4) fails if any infringement is involved.
+  contract, and its element (4) fails if any infringement is involved. The project's
+  position is that authenticating with the user's own credentials is not bypassing
+  authentication (G5); a court may disagree.
 - **Account bans for every user.** EULA §5 allows detection of "Unauthorized Third Party
   Programs", and ToS §26.2 allows termination "at any time and for any reason". Every person
-  who logs in with this client would be risking their account, purchases and characters.
+  who logs in with this client risks their account, purchases and characters. Extended
+  scripts on an official server ([§9.5](#95-extended-scripts-and-official-servers)) add to
+  that risk.
 - **Service integrity.** A third-party client on a live service can be treated as cheating
   or interference (ToS §7.1, §10) even if it does nothing unusual.
 - **EU law helps less than it seems.** Art 6 covers *obtaining* interface information. It
   does not license connecting to a service against its terms, and Art 6(3) protects the
-  rightholder's "normal exploitation".
+  rightholder's "normal exploitation". Outside the EU and UK even that does not apply.
 
 ### 9.3 The gate
 
-T4 work is **not implemented in the base**, and no code, spec or test for it may be merged
-until **all** of these are done and recorded in `docs/decisions/`:
+Until 2026-10-11, T4 work needed **all** of conditions G1–G5 recorded in
+`docs/decisions/`. Decision 0034 settles each one:
 
-| # | Condition |
-|---|---|
-| G1 | A **written legal review** by a qualified IP lawyer, covering at least US and EU/UK law, of the specific design to be built. |
-| G2 | **Written permission from Daybreak Game Company LLC** is strongly preferred (cf. the 2015 Project 1999 letter; the 2024 Homecoming licence). **Middle-earth Enterprises** must be approached separately for the marks. If permission is refused or unanswered, G1 must say explicitly whether proceeding is advisable at all. |
-| G3 | A maintainer decision record that cites G1 and G2, lists the residual risks, and is accepted by the project owner. |
-| G4 | A user-facing warning, shown before any official connection is possible, that states the account-ban risk and the terms in [§3](#3-contract-terms-that-bind-every-player-and-contributor). |
-| G5 | The design still obeys the "permanently forbidden" list in [§8](#8-risk-tier-ladder): no modified official client, no shipped keys, no bypassed authentication. |
+| # | Condition | Status (decision 0034) |
+|---|---|---|
+| G1 | A **written legal review** by a qualified IP lawyer, covering at least US and EU/UK law, of the specific design to be built. | **Set aside by the owner.** Not required for M8. Still recommended, above all before any public release (banner, [§16](#16-open-questions-for-counsel)). |
+| G2 | **Written permission from Daybreak Game Company LLC** (cf. the 2015 Project 1999 letter; the 2024 Homecoming licence), and **Middle-earth Enterprises** approached separately for the marks. | **Set aside by the owner.** Not required for M8. Engagement ([§15](#15-engagement-strategy)) stays the preferred route. |
+| G3 | A maintainer decision record that cites G1 and G2, lists the residual risks, and is accepted by the project owner. | **Met** by [decision 0034](decisions/0034-official-server-compatibility.md), which records the absence of G1 and G2 instead of citing them, lists the residual risks of §9.2, and was accepted by the owner on 2026-10-11. |
+| G4 | A user-facing warning, shown before any official connection is possible, that states the account-ban risk and the terms in [§3](#3-contract-terms-that-bind-every-player-and-contributor). | **Binding.** Shown before any connection to an official server is possible, on first use and whenever its text changes; accepted only by the user's explicit confirmation in the client's own interface; no flag, environment variable, configuration written by anything else, plugin, script or server can accept or skip it. |
+| G5 | The design still obeys the "permanently forbidden" list in [§8](#8-risk-tier-ladder): no modified official client, no shipped keys, no bypassed authentication. | **Binding**, in full, at every step of M8. |
 
-Before the gate passes:
+What this allows and what it still limits:
 
-- **Research is limited.** Dirty-room specs about the official login, its encryption or
-  key handling must not be written. Specs describing *observed* game-protocol structure may
-  be written only if a maintainer approves them as needed for T2 design, and they must be
-  marked as such.
-- **Code is limited.** `crates/net` provides a transport-agnostic session layer and a local
-  sandbox backend only. It contains no Daybreak hostnames, ports, keys, login flows or
-  official protocol handling, and the default build cannot reach official servers.
-- **Development targets** the in-process sandbox and a project-owned test server that uses a
-  project-defined protocol and serves only original or synthetic content.
+- **Research.** Dirty-room spec writers may study the official game protocol and the login
+  flow (the official launcher's part of it included) as far as interoperability needs
+  them, by disassembly and decompilation of read-only copies of the client and, for its
+  part of the login flow only, the official launcher
+  ([decision 0011](decisions/0011-standing-m4-authorisation.md) as amended by 0034 §2) and
+  by passive capture of the owner's own sessions of the unmodified client. Never anti-cheat,
+  anti-tamper or code-signing checks, never any circumvention of an access control, and no
+  injection, debugger or memory reading on a client connected to official servers.
+  Captures stay private to the dirty room, are never committed, and are reduced to
+  field-level facts; specs carry no other player's names, chat or account data.
+- **Specs and code.** Official-protocol specs and a compatibility backend may be written and
+  merged. No Daybreak keys, certificates or other secrets, hostnames, endpoints or account
+  data appear in the repository, CI or releases; the client loads them at runtime from the
+  user's own install, and a spec says only where to find them. CI never connects to an
+  official server. If the service can be used only by circumventing anti-cheat,
+  anti-tamper or another access control, the work stops there.
+- **Tessera's own server** is unchanged: it never connects to, proxies or imitates an
+  official service ([§11.1](#111-servers) rule 6).
 
-### 9.4 How the gate can fail
+<a id="94-how-the-gate-can-fail"></a>
 
-If G1 advises against T4, or Daybreak or MEE object, the project stays at T2 permanently and
-this section is updated to say so. The project will not proceed against an explicit
-objection from either rights holder (see [§14](#14-incident-response)).
+### 9.4 When T4 work stops
 
-### 9.5 Extended scripts never run against an official server
+G1 and G2 no longer exist as preconditions, so the gate cannot fail on them. T4 work still
+stops if Daybreak or MEE objects: **the project will not proceed against an explicit
+objection from either rights holder** (see [§14](#14-incident-response)). M8 work then stops,
+the compatibility backend is withdrawn (it is its own crate for that reason), the project
+returns to T2, and this section is updated to say so. The same happens if the owner
+withdraws decision 0034.
 
-Added 2026-10-07 by [decision 0017](decisions/0017-extended-scripting.md) (§6.4, §6.5).
+<a id="95-extended-scripts-never-run-against-an-official-server"></a>
+
+### 9.5 Extended scripts and official servers
+
+Added 2026-10-07 by [decision 0017](decisions/0017-extended-scripting.md) (§6.4, §6.5);
+rewritten 2026-10-11 by [decision 0034](decisions/0034-official-server-compatibility.md) §4.
 "Extended scripts" are scripts written for Tessera's own scripting API (global `Ext`,
 [§18](#18-extended-scripting)), not the plugins of [§17](#17-plugin-api-names-interoperability-record).
+Until 2026-10-11 the rule was that extended scripts never run against an official server.
+The owner changed it: "extended scripts will be able to run on official server its just up
+to the user if they want to bear the risk to do that".
 
-**Binding project policy: extended scripts never run against an official server.** This
-holds at every tier, before and after the gate of §9.3.
+**Binding project policy:**
 
-1. **How Tessera's builds keep it.** The extended-script host runs only while the session
-   is the in-process sandbox or, from slice 3 (with M7), Tessera's own protocol to the
-   project-owned test server. Before the client connects to any other backend it unloads
-   every extended script, and it starts none until that session ends. No setting, flag or
-   environment variable changes this. As defence in depth, a compatibility backend, if the
-   gate ever passes, is a separate crate outside the workspace, and a CI check fails any
-   build graph that holds both it and the extended-script crates.
-2. **Any M8 gate decision must address this rule explicitly.** The decision record of G3
-   cannot set it aside silently. Plugins are not covered by this rule: they are the
-   original client's own feature and follow whatever the gate decides.
-3. **It binds Tessera's own builds only.** A client-side gate can only rely on what the
-   build reports about its own backends. A modified build, or a proxy run by the user that
-   translates Tessera's protocol to another service, defeats any client-side gate: the
+1. **Off by default, by the user's own choice.** Extended scripts run on an official-server
+   session only after that user's **explicit opt-in**, separate from the warning of G4. The
+   opt-in shows the risks: the service may treat scripts as cheating or interference
+   (ToS §7.1, §10), the account can be suspended or closed (EULA §5, ToS §26.2), and the
+   project cannot know what the service tolerates or protect the account. It is stored per
+   user, can be withdrawn at any time, is asked again when its text changes, and is set only
+   by the user in the client's own interface: no setting file written by anything else,
+   flag, environment variable, plugin, script or server can set it. The user who opts in
+   bears the risk.
+2. **Grants still apply.** The opt-in grants no capability by itself; each script still needs
+   the user's grant, and an official-server session is a backend class of its own. Any
+   other backend that Tessera's builds do not know stays fail-closed.
+3. **Automation stays offline only.** This is project policy kept by the maintainer, not
+   part of the owner's words. Automation (`input.drive`) and every module that issues
+   movement, input or game commands on the user's behalf run **offline only** and are
+   never enabled on any official server, with or without the opt-in, because their effect
+   falls on other players and on the service, not only on the user who accepted the risk.
+   No server policy can turn them on. A later decision that wants them on any server must
+   address the proxy case of item 4.
+4. **It binds Tessera's own builds only.** A client-side rule can only rely on what the build
+   reports about its own backends. A modified build, or a proxy run by the user that
+   translates Tessera's protocol to another service, defeats any client-side rule: the
    client cannot know what lies behind a connection, and such a user is their own
    "operator", acting outside the project's builds and this policy. The project does not
    offer, document or support either.
-4. **The design answer to that limit is to keep automation away from every server.**
-   Automation (`input.drive`) and every later module that issues game-state commands or
-   movement on the user's behalf run **offline only**. No server policy can turn them on.
-   A future decision that wants them on any server must address the proxy case of item 3.
+5. **Other limits are unchanged.** `data.read` stays offline only
+   ([§18.4](#184-decoded-data-and-export)), the never-offered list of
+   [§18.3](#183-rules-binding-project-policy) rule 3 stands, and extended scripting is
+   milestone M9, so none of this is built before then.
+6. **Plugins** are not covered by this section: they are the original client's own feature
+   and run on an official server as they do in the original client, under
+   [§17](#17-plugin-api-names-interoperability-record).
 
 ---
 
@@ -545,6 +612,12 @@ database right (§5).
   to the extent of Art 5(3)/6 (UK s.296A).
 - Using this software with your own install may breach ToS §12, and Daybreak may close any
   account for any reason.
+- **Official-server compatibility is now in scope without a legal review**
+  ([§9](#9-gates-and-the-official-server-target), decision 0034). Working on the official
+  protocol or login (research, specs or code) carries the contract and DMCA §1201 exposure
+  of [§9.2](#92-why-it-is-the-highest-risk-tier) personally, including trafficking theories
+  for distributing it. The owner's acceptance of those risks does not cover yours. Nobody
+  is required to work on it; say so if you do not want to.
 - The project cannot indemnify you and offers no legal defence. A defence fund or a
   nonprofit fiscal host is being considered before any public launch.
 - You may contribute under a pseudonym. Maintainers' legal identities should be known
@@ -574,8 +647,11 @@ platform's action does not destroy history, not to evade a valid demand.
 
 ## 15. Engagement strategy
 
-Before shipping anything beyond T1, and as a hard requirement for T4, the project should
-approach:
+Before shipping anything beyond T1 the project should approach the rights holders. For T4
+this was a hard requirement (G2 of [§9.3](#93-the-gate)) until the owner set it aside on
+2026-10-11 ([decision 0034](decisions/0034-official-server-compatibility.md)); it remains
+the preferred route, above all before any public release of a build that can connect to
+an official server:
 
 - **Daybreak's General Counsel** with a Project 1999-style proposal: non-commercial,
   clean-room, no Daybreak code, users bring their own install, no marks, deference on
@@ -590,6 +666,9 @@ interaction.
 
 ## 16. Open questions for counsel
 
+These stay open. Decision 0034 (2026-10-11) proceeds with T4 without answers to them; they
+remain the questions to put to counsel, in particular before any public release.
+
 1. Is ToS §12 ("used as a stand-alone game … or … with non-Daybreak game servers") a
    licence-scope condition (copyright) or a covenant (contract) under *MDY*'s nexus test?
 2. Does the THJ "server authentication is an access control" theory reach a from-scratch
@@ -598,7 +677,10 @@ interaction.
    data files or a fan server; and how does Art 6(3) "normal exploitation" apply to a live
    subscription game?
 4. For T4: is any lawful route to official-server connectivity available without Daybreak's
-   permission, and what exposure would users carry?
+   permission, and what exposure would users carry? Does authenticating with the user's own
+   credentials avoid §1201 "circumvention" (G5), and does publishing a client that
+   implements the official login count as trafficking? What changes when extended scripts
+   run on an official server by the user's opt-in ([§9.5](#95-extended-scripts-and-official-servers))?
 5. Is any of the data in the archives encrypted or keyed? If so, a §1201(f)/Art 6 analysis is
    needed before reading it. (Published readers report zlib compression only.)
 6. What is MEE's position on an engine that contains no Tolkien content but exists to render
@@ -779,15 +861,18 @@ record's own §12, never [§12](#12-distribution-and-money) of this document.
   that protocol, its script policy and its defaults exist for the project-owned test
   server only. The project neither designs for, documents nor tests third-party operators.
 - The client cannot verify who runs a server: a user can point it at any address. That is
-  the threat-model limit of [§9.5](#95-extended-scripts-never-run-against-an-official-server)
-  item 3, not a supported use.
+  the threat-model limit of [§9.5](#95-extended-scripts-and-official-servers)
+  item 4, not a supported use.
 - **Third-party Tessera-protocol servers** are T3 territory ("any publicly hosted shard,
   free or not"). Supporting them, for extended scripts or for the client at all, needs its
   own decision, with the owner's and counsel's review, that amends
   [decision 0004](decisions/0004-server-strategy.md) and §8 first.
-- Extended scripts never run against an official server in Tessera's builds
-  ([§9.5](#95-extended-scripts-never-run-against-an-official-server)), so they cannot
-  raise the project's tier. §8 is unchanged.
+- **Official servers** (T4, [§9](#9-gates-and-the-official-server-target)). Since
+  2026-10-11 ([decision 0034](decisions/0034-official-server-compatibility.md) §4) extended
+  scripts may run on an official server only after the user's explicit opt-in, off by
+  default, at the user's own risk; automation stays offline only
+  ([§9.5](#95-extended-scripts-and-official-servers)). Until 2026-10-11 they never ran
+  there. The opt-in adds the user's own ban risk to T4; it does not change §8's tiers.
 
 ### 18.3 Rules (binding project policy)
 
@@ -822,7 +907,8 @@ record's own §12, never [§12](#12-distribution-and-money) of this document.
    and archive-headed files and warns that extracted game assets must not be packed
    ([§11](#11-content-rules)). Nothing in Tessera advertises scripts as extraction tools.
 6. **Automation** (`input.drive`) runs offline only, where it harms no one
-   ([§9.5](#95-extended-scripts-never-run-against-an-official-server) item 4). The
+   ([§9.5](#95-extended-scripts-and-official-servers) item 3), and is never enabled on an
+   official server, whatever the user's opt-in. The
    plugin API's anti-automation boundary stays as it is for plugins.
 
 ### 18.4 Decoded data and export
@@ -873,7 +959,7 @@ is a channel of layout only.
 
 - **This section rests on Tessera's builds.** Its guarantees hold for the builds the
   project publishes. A modified build is outside them
-  ([§9.5](#95-extended-scripts-never-run-against-an-official-server) item 3).
+  ([§9.5](#95-extended-scripts-and-official-servers) item 4).
 - **Open security items.** Decision 0017 lists security and design items that are still
   open and must be closed by the M5.5 threat model and its escape tests before the first
   slice ships. Two bear on this section: the actions that `input.drive` may press must be
@@ -882,8 +968,9 @@ is a channel of layout only.
   decode cache, and the layout residual of §18.5 between scripts) must be closed or added
   to the stated limit of §18.4. This section is updated with the result.
 - **Contract is unchanged.** Extended scripting does not cure ToS §12 or ToS §7.1
-  ([§3.3](#33-consequences)), and the account and server risks of [§9.2](#92-why-it-is-the-highest-risk-tier)
-  are why the rule of §9.5 exists.
+  ([§3.3](#33-consequences)). The account and server risks of [§9.2](#92-why-it-is-the-highest-risk-tier)
+  are why §9.5 keeps extended scripts off official servers by default, asks each user to
+  opt in, and keeps automation offline.
 
 ---
 

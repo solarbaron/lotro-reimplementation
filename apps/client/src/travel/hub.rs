@@ -12,17 +12,17 @@
 //! [`TravelHub::frame`] runs the windows with the frame's UI events (the NPC hub's
 //! collector) and sends their commands.
 
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 use std::thread::JoinHandle;
 use std::time::Instant;
 
 use tessera_dat::ArchiveSet;
 use tessera_net::EntityId;
-use tessera_plugins::{GameplayEvent, LocalPlayerSource, PluginManager};
+use tessera_plugins::{GameplayEvent, PluginManager};
 use tessera_ui::UiEvent;
 use tessera_ui::game::mapfallback::P5Art;
 
-use super::mount::{MountPlayer, SessionMount, walker_source};
+use super::mount::{SessionMount, walker_source};
 use super::refs::{P5Refs, P5Window};
 use super::state::P5Change;
 use super::ui::{TravelContext, TravelUi};
@@ -58,7 +58,6 @@ pub struct TravelHub {
     ui: Option<TravelUi>,
     pending_panels: Vec<P5Window>,
     mount: SessionMount,
-    source: OnceLock<Arc<dyn LocalPlayerSource>>,
     walker: Vec<WalkerMount>,
     failed: Option<String>,
     finder_toggle: bool,
@@ -213,17 +212,6 @@ impl TravelHub {
     /// The walker requests of the frame's feed mounts, in order.
     pub fn take_walker_requests(&mut self) -> Vec<WalkerMount> {
         std::mem::take(&mut self.walker)
-    }
-
-    /// Makes the plugins' local player the NPC hub's (wallet views) with the mount views.
-    /// Call right after [`NpcHub::install_source`] each frame.
-    pub fn install_source(&self, npc: &NpcHub, plugins: &mut crate::plugins::Plugins) {
-        let src = self.source.get_or_init(|| {
-            MountPlayer::new(npc.player_source(), self.mount.source()) as Arc<dyn LocalPlayerSource>
-        });
-        plugins
-            .manager_mut()
-            .set_local_player_source(Some(Arc::clone(src)));
     }
 
     /// One frame of the windows on `host` (module docs). When the player has left the

@@ -834,7 +834,7 @@ Finder templates (164) use 36 non-zero categories and category 0 (9 templates) o
 ---
 
 <a id="s9"></a>
-## 9. Scenario-feed forms (proposal for the revision labelled "P5 travel")
+## 9. Scenario-feed forms (proposal for the revision labelled "P5 travel", numbered revision 8 of `scenario-feed.md`)
 
 The existing forms (SF §6.5, §9.2, §9.3) render both windows: `travel-list` / `TravelShown`,
 `travel` / `TravelStarted`, `instances` / `InstanceListShown`, `instance` / `InstanceChanged`,
@@ -943,7 +943,7 @@ Choosing size 24 on the group row resolves P5.
   object and the cost rounding are in §4.3 here (notes added there, status of this spec).
 - `instances.md` §7.3, §15.1, §18: the finder's tree, headers, mappers and request dimensions
   are in §6.3–§6.4 here (notes added there).
-- `scenario-feed.md`: the additive forms of §9 (revision labelled "P5 travel").
+- `scenario-feed.md`: the additive forms of §9 (revision 8, labelled "P5 travel").
 - `interaction.md` §3.4.5: use types 9 and 21 open the travel and instance-travel windows
   (§4.1, §4.11).
 - `chat-window.md` §10: the built-in `leaveinstance` of §6.6 joins Tessera's registry.

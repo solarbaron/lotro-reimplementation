@@ -29,7 +29,8 @@
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
-use tessera_net::remote::Gait;
+use tessera_net::Appearance;
+use tessera_net::remote::{Gait, RemoteBackend};
 
 use crate::bot::Bot;
 use crate::metrics::Histogram;
@@ -784,8 +785,15 @@ impl DesyncTracker {
                 let e_in = info[e].is_some();
                 let state_differs = match created {
                     Some(id) if e_in => {
+                        // At minor 0 the server sends no slot and no look (protocol §3.1):
+                        // when either side is there, only what minor 0 carries is compared.
+                        let minor0 = [backend, eb.backend()]
+                            .into_iter()
+                            .any(|b| b.and_then(RemoteBackend::negotiated_minor) == Some(0));
                         let appearance = match (ob.view.get(&id), &eb.appearance) {
-                            (Some(seen), Some(truth)) => seen.appearance != *truth,
+                            (Some(seen), Some(truth)) => {
+                                !same_appearance(&seen.appearance, truth, minor0)
+                            }
                             _ => false,
                         };
                         let stance = backend
@@ -881,9 +889,48 @@ impl DesyncTracker {
     }
 }
 
+/// Whether two appearances agree; with `minor0`, only in what protocol minor 0 carries (no
+/// item slot, no look; `tessera-protocol.md` §3.1), since an observer or a bot at minor 0
+/// never learns the rest.
+#[must_use]
+pub fn same_appearance(a: &Appearance, b: &Appearance, minor0: bool) -> bool {
+    if !minor0 {
+        return a == b;
+    }
+    let strip = |x: &Appearance| {
+        let mut x = x.clone();
+        x.look = None;
+        for e in &mut x.equipment {
+            e.slot = None;
+        }
+        x
+    };
+    strip(a) == strip(b)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Regression: a bot at minor 0 (every tenth) saw every other bot's appearance without
+    /// item slots, and they saw its own with them, so each pair was a State desync.
+    #[test]
+    fn minor_zero_compares_what_minor_zero_carries() {
+        let mut with = Appearance::new(tessera_net::Body::Character { species: 1, sex: 1 });
+        let mut item = tessera_net::Equipped::new(tessera_net::DataId(0x7000_0001));
+        let plain = {
+            let mut a = with.clone();
+            a.equipment.push(item);
+            a
+        };
+        item.slot = Some(17);
+        with.equipment.push(item);
+        assert!(!same_appearance(&with, &plain, false));
+        assert!(same_appearance(&with, &plain, true));
+        let mut other = plain.clone();
+        other.scale = 2.0;
+        assert!(!same_appearance(&with, &other, true));
+    }
 
     #[derive(Default)]
     struct Recorded(Vec<(Kind, f64, String)>);

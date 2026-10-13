@@ -4,8 +4,8 @@
 
 | | |
 |---|---|
-| **Status** | Review (first version, 2026-10-11) |
-| **Last updated** | 2026-10-11 |
+| **Status** | Revised (2026-10-13) |
+| **Last updated** | 2026-10-13 |
 | **Author role** | Spec writer (dirty room), AI-assisted |
 | **Reviewer** | Independent spec reviewer (dirty-room session, AI-assisted), who wrote no part of this spec or of its P5 notes in `instances.md` and `map-data.md` |
 | **Review record** | First version for decision 0024 P5 (client half only), exit criterion 3 ("travel and instance-finder scenarios render"). Independent review 2026-10-13 against CLEAN_ROOM.md §5.3: **changes requested (one blocking)**; status stays Review. The §5.3 contamination items all pass (every statement is a functional fact; no code or pseudo-code and nothing following a decompiler-listing structure; no copied prose or non-interoperability identifiers; no game text, assets, keys, hostnames, endpoints, account data or official-traffic dumps; nothing outside LEGAL.md §9.3 — the BIN row records that the network side of the travel and join requests was not followed, decision 0004, and only offline UI code was read). Byte/element layouts carry units (design rects); invariants TI1–TI8 are testable; genuinely unknown facts are OPEN, not guessed. Provenance header spot-checked by own read-only probe of the install (M1, 2026-10-13): client version resource reads build 4906.0071.1794.4035, binary SHA-256 prefix d22363eb9aff0fb5 and archive dates 2026-10-04 all match the OBS/BIN rows. **Blocking:** §8.1's census is marked Confirmed (TW21) but its `Unreferenced` cell (1, 0x70005F75) contradicts the section's own definition — 0x70005F75 is named by `TravelVersioning` (`TravelVersioning_DestinationPairArray`, the destination's `TravelVersioning_SwiftDestination`), so by the `OtherReference` definition it is `OtherReference`, not `Unreferenced`; the merged implementation's census already produces `OtherReference` 5 / `Unreferenced` 0, so the table also disagrees with the code it describes. Reconcile §8.1 (correct the counts to 5 / 0, or narrow the `OtherReference` definition) and close the inline §8.1 OPEN before Accepted; no change to implemented behaviour (the code follows the definitions). **Non-blocking:** (a) §9's `JoinInstance` `size`/`tier` are typed `u8` while the reconciled `scenario-feed.md` "P5 travel" revision types them `u32` (SF World/`JoinInstance`); §9 defers types and names to that revision at merge, so align §9 to it. (b) The spec's own mark scheme (BIN, BC, Probable, Decision) is broader than §5.1's Confirmed/Reported pair; this follows established project practice (`map-data.md`, `instances.md`) and is noted only so a reader treats BIN/BC facts as resting on M4 / class-library data, not as "observed in real data". The P5 notes in `instances.md` §15.1/§18 and `map-data.md` §8.8/§16 add no fact and are faithful cross-references to this spec (checked). |
@@ -783,19 +783,16 @@ install's (TW21, TW22).
 | `Listed` | the destination of at least one route in at least one station's `TravelDestinationRecordArray`: a row of some travel window | 740 (swift 389, slow 351) |
 | `HomeOnly` | no station lists a route to it; it is some station's `TravelHomeLocation` | 22 (swift 3, slow 19) |
 | `UnsoldRouteOnly` | only routes no station sells lead to it | 1 (0x7000EB70) |
-| `OtherReference` | named only by `TravelVersioning`, `Travel_PlayerHomeLocationArray` or `TravelHomeLocationsArray` | 4 (0x7000D29F, 0x7000D393, 0x700308AB, 0x700616BE) |
-| `Unreferenced` | named by no record of the kinds above | 1 (0x70005F75) |
+| `OtherReference` | named by no station route and no station home, but named by `TravelVersioning` (its `TravelVersioning_DestinationPairArray`, as either destination of a pair, including the `TravelVersioning_SwiftDestination`), `Travel_PlayerHomeLocationArray` or `TravelHomeLocationsArray` | 5 (0x70005F75, 0x7000D29F, 0x7000D393, 0x700308AB, 0x700616BE) |
+| `Unreferenced` | named by no record of the kinds above | 0 |
 | `RecordUnreadable` | not a destination or fails to decode | 0 |
 
 All 768 carry `TravelDisplayName` as a table reference and `TravelDestinationIsSwiftTravel`.
 
-> **OPEN:** (implementer, 2026-10-11, `tessera-gamedata` `travel::travel_census`) Under the
-> definitions of this table, 0x70005F75 is `OtherReference`, not `Unreferenced`: the
-> travel-versioning record's `TravelVersioning_DestinationPairArray` names it (element 5,
-> `TravelVersioning_SwiftDestination`). The census therefore counts `OtherReference` 5 and
-> `Unreferenced` 0 on this install; every other count of this section matches. Either the
-> counts or the definition of `OtherReference` (for example "named only as a slow destination
-> of a versioning pair") needs correcting. The implementation follows the definitions.
+0x70005F75 is named only as the `TravelVersioning_SwiftDestination` (element 5 of a
+`TravelVersioning_DestinationPairArray` pair) and by no station route or home, so it is
+`OtherReference` by the definition above, not `Unreferenced`. This is the only destination in
+that pair position with no other reference; every other count of this section is unchanged.
 
 **Station rows** (421 stations, 1–40 rows each, 5,199 rows): every row has a route whose
 destination is a destination record; no station lists one destination twice; 3,079 rows lead
@@ -960,5 +957,6 @@ Choosing size 24 on the group row resolves P5.
 
 | Date | Change | By |
 |---|---|---|
+| 2026-10-13 | Revision answering the review's blocking item: §8.1 reconciled so that 0x70005F75 is `OtherReference` (named by `TravelVersioning`), not `Unreferenced`; the counts are now `OtherReference` 5 / `Unreferenced` 0, matching both the table's own definition and the merged census output; the `OtherReference` definition is widened to state that a pair's `TravelVersioning_SwiftDestination` counts; the inline §8.1 OPEN is closed and replaced by a resolution note. No fact of any other section changed; TI7's sums (768, 1,511) are unaffected. Behaviour-neutral: the implemented census already follows the definitions. Status → Revised. | Spec writer (dirty room) |
 | 2026-10-13 | Independent review against CLEAN_ROOM.md §5.3: changes requested (one blocking — the §8.1 `Unreferenced`/`OtherReference` census contradiction for 0x70005F75, which also disagrees with the merged code's output; behaviour-neutral) and two non-blocking notes (§9 `size`/`tier` type alignment with `scenario-feed.md`; the mark scheme). Status stays Review; details in the Review record. Provenance header spot-checked on the install (M1): build, binary SHA-256 prefix and archive dates match. | Spec reviewer (dirty room) |
 | 2026-10-11 | First version (Review): window catalogue; travel window (opening, tree, row source and info object, marks, grouping, search, selection display, go controls, closing, Tessera feed rules); instance-travel window; started travel and arrival (end-travel box, loading screen, Tessera presentation); instance finder (fellowship-maker launch-now page, entry tree, menus, join, queue and confirmation, invitation window, inside an instance, listings board out of scope); chat and alert lines; census of 768 destinations, 5,199 station rows and 1,511 templates; feed proposal for the "P5 travel" revision; invariants, examples, OPENs, owner rows O140–O147. Provenance OBS, BC, BIN (decision 0011, questions q1–q7), rows TW1–TW23. | Spec writer (dirty room) |

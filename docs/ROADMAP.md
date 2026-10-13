@@ -31,7 +31,10 @@
 > [P0](#p0) (scenario feed and `tessera-gamedata`); [P1](#p1) (characters, inventory and
 > equipment) started on 2026-10-10, and [P3](#p3) (NPC windows) on the same day, beside P2;
 > P3's exit criteria pass on Tessera's side (exit verification 2026-10-11, [P3
-> status](#p3-status)), its new specs still wait for an independent review.
+> status](#p3-status)), its new specs still wait for an independent review. [P5](#p5) (map,
+> travel, mounts and instances) started on 2026-10-11 beside P2 and P4; its exit criteria pass
+> on Tessera's side (exit verification 2026-10-12, [P5 status](#p5-status)), its new specs
+> still wait for an independent review.
 > Milestones are ordered by
 > dependency and by legal risk: each one builds on the previous one, and the risk tier
 > (T0–T4, see `docs/LEGAL.md` §8) only rises when the earlier, safer tiers are solid.
@@ -1768,6 +1771,203 @@ item reward rows show only `QuestReward_Item`, barter reputation fields hidden.
 |---|---|---|
 | 1 | **pass** | `tessera-client` `quest_journal_real_data::every_quest_record_in_the_log_and_the_tracker` (release, install): a scenario selects every quest record (`quest all`) and makes it active; 20,807 records: Shown 15,400 (15,400 log rows laid out, 15,400 details panes), Deed 5,407 (tracker only, `quest-journal.md` §4.2), NoName 0, Unreadable 0; every record tracked once in batches of 10 (20,807 tracker entries laid out); 20,258 quest chat lines; `JournalCensus` entries_failed 0, details_failed 0, tracker_failed 0. Flags as `tessera-gamedata` `quest_real_data`: CategoryFallback 2, LevelHidden 164, LevelFromPlayer 2,168, NoLevel 440, NoDescription 340, ObjectiveWithoutText 327, ObjectiveWithoutLines 1,238. Goldens of the log and tracker on a seeded sample (`log_and_tracker_goldens_on_a_seeded_sample`, 01-quest-log, 02-tracker) blessed, judged and matched as for criterion 2. Defect left (not a failure of the criterion): a long background or objective text is drawn on one line cut at the pane width (`quest-journal.md` §4.7 OPEN; owner row O119). |
 | 2 | **pass** (with visual defects listed) | Decision 0031 §3, install version `3905db5e60168527`: (1) tier 1: `tessera-ui` `p3_goldens` 12 / 12 committed synthetic goldens pass in the workspace run; (2) `npc_windows_real_data` and `quest_journal_real_data` blessed 19 images in a fresh `TESSERA_GOLDEN_DIR` of this verification alone (`~/.cache/tessera/scratch/P3/clean/verify3/goldens`); (3) each viewed and judged: dialogue 01 choice (action option with its template icon), 02 conversation, 03 and 04 NPC comment, 05 quest offer (install title, level, offer line, objective, coin and item-experience amounts, two install item rewards with icons and quantities), 06 choice with a quest-role line and an objective option; loot 01–05 (coins row, stacked entries, Loot All, then the chest's install items with icons and quality colours); vendor 01 buy (six install items, icons, prices in coins, stack overlays), 02 sell, 03 buy-back, 04 quantity dialog, 05 barter (token costs, coin cost); wallet 01 (coins row, currencies with totals); quest log 01 and tracker 02: correct install text and icons; (4) the same tests with the same directory and `TESSERA_GOLDEN_REQUIRE=1`: 19 / 19 passed. Census: dialogue lines Shown 12; vendor entries Shown 13, Literal 1, RecordUnreadable 0; loot Shown 10, Literal 9; wallet shown 4; 0 window failures. Visual defects left: a long option row wraps and is clipped instead of one truncated line (`npc-windows.md` §5.3 template), the offer's objective text is cut at the pane's right edge, long loot names wrap to two lines, a wallet currency that is not a wallet item sits under a category without a title (§9.4 OPEN), literal sell entries have no worth (§7.6 OPEN), and the barter window's root lands at x = −107 on a 1,600 px screen (§4 OPEN). |
+
+---
+
+<a id="p5"></a>
+### P5: Map, travel, mounts and instances
+
+**Goal:** the map, travel, mount and instance presentation of the client half
+([decision 0024](decisions/0024-parity-track.md) §5 P5): the world map and the minimap with
+markers and notes, place lookup, the stable master's travel window and the presentation of a
+started travel, the instance finder with its queue and invitation displays, and mounted
+movement with the install's mounted gaits. Layouts, map images, notes, names, icons and clips
+come from the user's install. Travel rows, costs, levels and flags, the finder's entries and
+queue states, map markers and which mount the player rides in a scenario come from the
+scenario feed (`scenario-feed.md`, revision "P5 travel"), never derived: the client runs no
+travel, eligibility, queue or mount rule (decision 0024 §2 principle 4). Mounted gaits run in
+the offline walker, which plays the server's part for its own avatar (`walker.md` §16).
+Client half only (owner, decision 0024): LEGAL.md §11.1 rule 5 is unchanged, so
+`tessera-server` runs no gameplay rule and links no data crate (`tools/check-server-deps.sh`);
+the test-server backend refuses the new commands and needs no protocol minor. Builds on P1.
+Risk tier T1. Started 2026-10-11 on branch `p5` (worktree `wt-p5`, off main 8e9670d), in
+parallel with P2 (branch `p2`) and P4 (branch `p4`): shared files (the `tessera-ui` game
+module index, the `tessera-net` domain groups, the client's `PlayerState` and frame order,
+`scenario-feed.md`, `lua-plugin-api.md` §15, `fuzz/Cargo.toml`) take additive changes only.
+
+<a id="p5-deliverables"></a>
+**Deliverables**
+
+- Specs (new or revised in the dirty room, Accepted before the build is verified):
+  [`map-windows.md`](specs/map-windows.md) (new: the map window's two presentations,
+  navigation, dungeon maps, the definition and census of "every map region", overlays on the
+  world map and the minimap, note-type filters, feed markers, place lookup);
+  [`travel-windows.md`](specs/travel-windows.md) (new: the travel window, the instance-travel
+  window, started travel and arrival, the instance finder with its queue, confirmation and
+  invitation displays, the census of destinations and templates);
+  [`mounts.md`](specs/mounts.md) §14 (revised: mounted presentation and gaits, the mount and
+  dismount sequence, placement, seat, camera, the census of mount effects);
+  [`walker.md`](specs/walker.md) §16 (new: mounts in the walker);
+  [`scenario-feed.md`](specs/scenario-feed.md) revision "P5 travel" (§18.P5: additive forms;
+  its number is reconciled at merge with P2 and P4); [`lua-plugin-api.md`](specs/lua-plugin-api.md)
+  §15.5 (mount views).
+- [Decision 0036](decisions/0036-p5-map-census-and-panel-goldens.md): what "every map region"
+  means for criterion 1, and decision 0031's golden tiers applied to the P5 panels.
+- `tessera-gamedata`: four presentation models, each a module: **`map`** (the map-region list
+  and its census categories, the test point of each region, `map-windows.md` §5; the
+  place lookup's name normalisation, matching and ranking of §7.3); **`travel`** (travel rows from feed entries with the
+  destination's or route's names, swift flag, level and territory and area texts, and the
+  census of destinations and station rows, `travel-windows.md` §4.10, §8.1); **`instance`**
+  (finder entries with kind and category headers, group rows, size, tier and level display,
+  and the template census, `travel-windows.md` §6.8, §8.2); **`mount`** (mount effects and
+  skills, the mounts each playable body is offered, mount types and the war-steed rule, names,
+  and the census of mount effects, `mounts.md` §14.10–§14.11). Also the scenario selector
+  resolution of the family `map-region` (`scenario-feed.md` §8.3, "P5 travel": elements with
+  row and DID, test-point locations, names, the attributes `kind` and `region`) and of the
+  `effect` attributes `mount-type` and `war-steed`; the client's resolver
+  (`apps/client/src/scenario/resolver.rs`) adapts them. Two sources stay single, and
+  `tessera-gamedata` gains no dependency (it still links neither `tessera-ui`, `tessera-dat`
+  nor `tessera-world`):
+  - **The map tree has one decoder**, `tessera-ui`'s `game::worldmap::MapTree` (from
+    `MapWindow`'s `UI_Map_AreaData`, with its caps). The client hands `map` a neutral list of
+    the decoded nodes (pre-order, with parent, depth, active element, menu name,
+    georeference, pixel frame, region and areas); `map` adds the R-dungeons from the dungeon
+    records and builds the region list, categories and test points from that. A test checks
+    that the census order and the `map-region` rows equal `MapTree`'s node order.
+  - **The place index stays the walker's** (`apps/client/src/walker/places.rs`, built from the
+    block maps with `tessera-dat` and `tessera-world`), so `findplace` reads the same index as
+    `--place` (`map-windows.md` §7.3). `map` owns the name normalisation and the match score,
+    which the walker's `--place` parser then uses instead of its own, and ranks a candidate list
+    the client passes in: the index's areas, territories and regions, the map nodes and the
+    dungeons.
+- `tessera-net`: the "P5 travel" forms (marker sets and run-time marker ids, the steps
+  `markers`, `marker-remove`, `travel-end`, `instance-queue`, `mount-vital`, the new options of
+  existing steps, the trigger pattern and input form `leave-queue`, the input options
+  `join-instance N size= tier= level=`, the family `map-region` and the `effect` attributes
+  `mount-type` and `war-steed` as selector syntax (resolution is `tessera-gamedata`'s), the
+  events `TravelEnded`, `MountVitalChanged`, `InstanceQueueChanged`, the command `LeaveQueue`,
+  their log forms), Vectors T1–T3 and hostile rows T-H1 … T-H18. No protocol minor.
+- `tessera-settings`: the map window's Tessera settings (`map-windows.md` §3.1, §3.4, §6.9,
+  §8): the presentation switch `map_fullscreen`, the near-map, distant-map and radar note
+  filters, `map_coordinates` and `map_discovery`; defaults read from the install's
+  `GameplayOptionDefaults` at run time (never hard-coded), `map_discovery` default `all`.
+- `tessera-input`: the `toggle_mount` action in the defaults (context `movement`, Ctrl+M,
+  policy exact; `walker.md` §16.4).
+- `tessera-plugins`: the mount views of `lua-plugin-api.md` §15.5 (`LocalPlayer:GetMount()`,
+  `MountChanged`, `BasicMount`, `CombatMount`) over a source the client implements, fed by the
+  feed's `MountChanged` and `MountVitalChanged` or, without a feed, by the walker's mount
+  state.
+- `tessera-ui`: the P5 game widgets (the map window's presentations, navigation, dungeon-map
+  view, notes, feed markers and filter menu in `game::worldmap`, `game::radar` and `game::map`;
+  the travel window, end-travel box, loading-screen presentation, instance-finder page,
+  invitation window and instance-travel window), each with a Tessera fallback window, and
+  committed synthetic goldens of the world map with markers, the travel window and the
+  instance finder (decision 0031 tier 1). The map window's fallback (code-made window with a
+  synthetic one-node tree and a literal georeference) waits for the rule asked for in
+  `map-windows.md` §8 (OPEN); the tier-1 world-map golden depends on it.
+- `tessera-client`: the world map with feed markers and notes on the map and the minimap; the
+  place lookup (`findplace`, over the walker's `--place` index); the adapters that hand
+  `tessera-gamedata` the decoded map tree and the place candidates; the travel and
+  instance-finder windows wired to the feed, with the travel presentation and `leaveinstance`;
+  the walker's mounting (`--mount SPEC`, `/ride`, wiring of the `toggle_mount` action, the
+  mount states, mounted movement, the mount figure, HUD line,
+  frame-log and walk-log columns); committed synthetic scenarios `map`, `travel`,
+  `instances` and `mount` with their logs in `apps/client/tests/scenarios/`; real-data tests
+  for each criterion (the map-region census with a marker on every region, the scripted
+  mounted walks of `walker.md` §16.11, the travel and finder windows on install records with
+  their census).
+- `fuzz/`: a target for each new parser (the mount text grammar, `client_mount_spec`); the
+  feed targets cover the new forms.
+- Documentation: ARCH §3.1, §15, §19.1, §23.3; `docs/USER_GUIDE.md` (map, travel, instance
+  finder, mounting); owner rows from O140 in
+  [owner-observations.md](checklists/owner-observations.md#p5-items); at close-out `CLAUDE.md`
+  Current state.
+
+<a id="p5-specs"></a>
+**Specs needed:** `map-windows.md`, `travel-windows.md` (new); `mounts.md` §14 and
+`walker.md` §16 (revised); [`map-data.md`](specs/map-data.md),
+[`coordinates.md`](specs/coordinates.md), [`game-controls.md`](specs/game-controls.md),
+[`instances.md`](specs/instances.md), [`game-panels.md`](specs/game-panels.md)
+(decision 0024 §5 P5), with [`collision.md`](specs/collision.md),
+[`script-table.md`](specs/script-table.md), [`interaction.md`](specs/interaction.md),
+[`npc-windows.md`](specs/npc-windows.md) and [`chat-window.md`](specs/chat-window.md);
+[`scenario-feed.md`](specs/scenario-feed.md) revision "P5 travel";
+[`lua-plugin-api.md`](specs/lua-plugin-api.md) §15.5.
+
+**RE tasks:** the windows' layouts, element roles and fill rules from the install's UI
+layouts (M1); the mounted clips of riders and mounts from the install's script tables
+(`mounts.md` §14.2–§14.5); where the data stop, the offline client (M4,
+[decision 0011](decisions/0011-standing-m4-authorisation.md)). No protocol or server work.
+
+<a id="p5-exit"></a>
+**Exit criteria** (decision 0024 §5, quoted)
+
+1. The map panel renders every map region with scenario markers.
+2. A mounted character walks in the walker with the install's mounted gaits.
+3. Travel and instance-finder scenarios render.
+
+"Every map region" and how the P5 panels' golden images are judged are fixed by
+[decision 0036](decisions/0036-p5-map-census-and-panel-goldens.md). Owner observations in the
+original client: rows from O140
+([owner-observations.md](checklists/owner-observations.md#p5-items)); they block nothing
+until P8.
+
+<a id="p5-status"></a>
+**Status:** exit criteria 1–3 pass on Tessera's side (started 2026-10-11, branch `p5`; exit
+verification 2026-10-12 on the uncommitted `p5` tree, install `3905db5e60168527`); to be
+committed and merged. Deliverables not yet met: `map-windows.md` and `travel-windows.md` are in
+**Review**, `mounts.md` §14 is **Revised**, `walker.md` §16 and the "P5 travel" parts of
+`scenario-feed.md` are in **Review** and `lua-plugin-api.md` §15.5 is **Revised**; each needs
+an independent review before it is Accepted. Decisions 0031 and 0036 are Proposed (the owner
+accepts them). No criterion needs an observation in the original client; owner rows O140–O155
+([owner-observations.md](checklists/owner-observations.md#p5-items)) block nothing until P8.
+
+| # | Status | Evidence |
+|---|---|---|
+| 1 | **pass** (Tessera's side) | `map_census_real_data`: the committed `map` scenario played with the install puts one feed marker on every map region with a test point (1,523 markers beside the 3 plain ones; the headless run logs 1,753 `MarkerAdded`, exit 0); the census shows the 1,525 regions of `map-windows.md` §5.2 once each (227 nodes, 1,298 dungeon maps): drawn 1,525, marked 1,523, C5 2 (the root and one dungeon set), C6 109 among the drawn, C1–C4 0, **0 failures**, every marker within one map pixel of its test point. Tier-2 goldens (decision 0031 §3, fresh directory of this verification): root (image, no marker by rule), first territory map, first area map, first marked dungeon map blessed, judged correct by eye and matched with `TESSERA_GOLDEN_REQUIRE=1`. Tier 1: `p5_map_window` (provisional fallback window, `map-windows.md` §8 OPEN), `p5_map_filter_menu`, `p5_minimap` pass. `tessera-gamedata` `map_real_data`: 15,002 notes selected, 62 / 62 place lookups found; `tessera-ui` `p5_real_data`: 227 nodes shown, 6,037 filter-menu items, 0 unresolved names. |
+| 2 | **pass** (Tessera's side; owner rows O151–O153 open) | `mount_walk_real_data` 4 / 4 (`walker.md` §16.11): Human M and Hobbit M ride their first normal mount with the install's idle, walk, run and back clips for rider and mount, steady speed 10.251 m/s (6.5 × 1.62 with the layer's damper, §16.12 OPEN); the medium war-steed shifts 4 → 5 → 6 → 7 while forward is held and 7, 6, 5, 4, 1 when backing, with the resolver's clip pair per gait; summoning 2.0 s, mounting 0.4 s, dismount wait 1.5 s (state changes at 2.000 and 2.400 s); census of 722 mount effects per body: 721 drawable (679 normal, 4 Clydesdale, 25 war-steed, 2 war-steed start-up, 3 mixed, 8 hobby-horse), 1 refused by category (no entity and no type). `mount_frame_log_real_data` 2 / 2 (headless frame loop: Warsteed layer, gaits 2–7, lock at the canter holds gear 6). Headless screenshots viewed: Human M on the medium war-steed and Hobbit M on a horse in Bree, HUD mount line and help line "Ctrl+M mount". |
+| 3 | **pass** (Tessera's side) | `travel_windows_real_data` and `instance_finder_real_data`: the committed `travel` and `instances` scenarios played with the install fill the install's `travel`, `fellowshipmaker`, `pe_travel`, end-travel and alert layouts (no `LayoutMissing` or `ElementMissing`); install rows carry install names under their territory and kind headers. Tier-2 goldens blessed in a fresh directory, judged and matched with `TESSERA_GOLDEN_REQUIRE=1`: travel window (literal and install rows), end-travel box, finder (twice), finder while queued, queue alert, instance-travel window correct; the loading screen is **wrong** (blank capture; with the install it draws its image without meter and label, `ui-layout.md` §8 OPEN) and is not part of this criterion (decision 0036 §2). Censuses (`tessera-gamedata`): travel destinations 740 listed, 22 home only, 1 unsold route only, 5 other reference (`travel-windows.md` §8.1 OPEN: the spec counts 4 and 1 unreferenced); templates 150 finder rows, 14 groups, 3 unlisted, 440 instance travel, 384 missions, 520 without a window; 56 travel-array holders, 455 references. Tier 1: `p5_travel`, `p5_finder`, `p5_finder_queue` pass. |
+
+Checks (2026-10-12, install present, `TESSERA_PERF` unset): `cargo fmt --check` (workspace and
+`fuzz/`); clippy `-D warnings` (workspace `--all-targets`, also `--all-features`; `fuzz/`
+`--bins`): clean; `RUSTDOCFLAGS=-D warnings cargo doc --workspace --no-deps`: clean after the
+verifier's fixes. `cargo test --workspace --release --no-fail-fast` with `TESSERA_GAME_DIR` and
+`TESSERA_GOLDEN_REQUIRE=1`: **6,332 passed, 0 failed, 10 ignored** (463 test binaries); after
+the verifier's later fixes `tessera-ui`, `tessera-client`, `tessera-settings` and
+`tessera-input` again: 1,595 passed, 0 failed, 2 ignored. `tools/fuzz-smoke.sh -t 60`:
+`client_mount_spec` 18,372,178 runs, `ui_p5_map_windows` 127,784, `net_scenario_parse`
+1,089,485, `net_scenario_run` 276,782, `client_walker_text` 949,610: no crash.
+`tools/check-content.sh` (1,999 files), `tools/check-spdx.sh` (1,867 files),
+`tools/check-server-deps.sh` and a relative-link and anchor check of the Markdown files outside
+`research/` (1,868 links): 0 errors. The four P5 scenarios also play headless with the install
+(exit 0).
+
+Fixes made by the verifier (spec facts unchanged; notes added to the OPENs of `map-windows.md`
+§6.9, `travel-windows.md` §5.2 and §6.8, `walker.md` §16.12 and `ui-layout.md` §8): the client's
+selector adapter did not map the `effect` attributes `mount-type` and `war-steed` nor the label
+contexts of note types, group sizes and difficulty tiers, so with an install `note-type=`,
+`size=`, `tier=` and those filters resolved to nothing (now mapped; the `map` scenario's
+waypoint marker gets note type 48); `toggle_mount` is now a `tessera-input` default (context
+`movement`, Ctrl+M, policy exact) taken by the walker's controls and named on the HUD help
+line, and the raw Ctrl+M paths are gone; `tessera-settings` gains `MapPrefs` (`[Map]`: the
+presentation, coordinate and discovery switches and the three note filters, unset keys = the
+install's defaults), which the client lays over the defaults and writes back off the frame; the
+install's confirm page of the finder was an empty field, so the queued finder showed nothing
+(the finder now creates `FellowshipMakerConfirmPage` in it and shows and hides both pages
+explicitly; a real-data assertion checks the waiting field and the leave-queue button); five
+broken or private rustdoc links; a test pins the walker's `--place` name matching to
+`tessera-gamedata`'s; owner row O155 (markers a server adds) added.
+
+Open (non-blocking): the specs' independent reviews; headless `--ui` runs (`ui_host::run`) do
+not run the P3 and P5 window frames; the loading screen's meter, label and animation (`ui-layout.md`
+§8 OPEN on Stretch children); the map window's fallback rule (`map-windows.md` §8 OPEN) and the
+`GameplayOptionDefaults` lookup rule (§6.9 OPEN); `walker.md` §16.12 OPENs (`auto` is a
+war-steed for Human M, steady-speed and braking expectations of §16.11, no mounted jump node in
+the data, feed mount timing, `--command /ride` before `--mount`, §16.3 against §16.5);
+`travel-windows.md` §8.1 count, §4.11 unknown bodies; text fitting (the finder's join label is cut
+after its first line; the travel window shows its no-selection text twice, label and button,
+owner row O147); the walker's `--place` keeps a std-only copy of the name matching for its fuzz
+target (pinned by a test).
 
 ---
 

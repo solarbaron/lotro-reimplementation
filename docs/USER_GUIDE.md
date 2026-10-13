@@ -12,7 +12,8 @@ fly over the world as an animated avatar, among the characters the data places, 
 combat. It can also join Tessera's own test server (not the game's servers) and attach an
 early game UI with Lua plugins (§3.12), with character selection and creation screens, a
 character panel with bag windows, and item tooltips (§3.13), and NPC windows, a quest log
-and tracker and the wallet (§3.14). Scenario files (§3.11) script
+and tracker and the wallet (§3.14), and maps, travel, the instance finder and mounts
+(§3.15). Scenario files (§3.11) script
 gameplay events for testing; they play back what the file says and compute nothing.
 
 ---
@@ -669,6 +670,117 @@ golden. `TESSERA_BLESS=1` belongs to the committed synthetic goldens only
 (`cargo test -p tessera-ui --test p3_goldens`, images in `crates/ui/tests/golden/`); it never
 touches the local ones. Never commit a local picture: it shows your install's text and art.
 
+<a id="map-travel"></a>
+### 3.15 Maps, travel, the instance finder and mounts
+
+These parts are early and are being built (P5). As for the NPC windows (§3.14), the windows'
+layouts, map images, names and icons come from your install, while what they list comes from
+a scenario file (§3.11): travel destinations, costs and levels, the instance finder's entries
+and queue, and the markers on the maps. Tessera runs none of the game's travel, instance or
+mount rules. The windows need the game UI (`--ui`, §3.12). The test server sends none of
+this, and mounts are not available with `--server`.
+
+**The world map.** Open it with M (with the game UI, while no text field has the keyboard),
+with the map button of the minimap, or at start with `--open-panel map`. It opens full screen or as a window (the install's default; the button in
+its corner switches, and Tessera remembers the choice). Click a marked area on a map to open
+that map; a right click goes back up to the parent map; the map menu lists the maps by region.
+Dungeon maps are drawn stretched into the map's frame. The filter menu turns the kinds of map
+notes on and off, with *all* and *none* at the top; the choice is kept per kind of map in
+Tessera's settings, not per character. On area and dungeon maps, when the coordinates option
+is on (the install's default, kept in Tessera's settings), the coordinates under the pointer are
+shown; the world map and the territory maps show none. Every note's tooltip shows its own
+coordinates. Tessera hides what needs game state it
+does not have: the stable-master button, the quest-guide option and the unexplored-area
+shading of dungeon maps.
+
+**Markers and notes.** A scenario's `marker` lines put markers on the world map and the
+minimap (`note-type=` picks the icon of a kind of map note; `icon=` gives an image), and a
+`markers` line puts one marker on every element of a selection, for example on every map
+region. On the minimap, notes outside its circle point at the rim towards their place (for the
+kinds that have such an icon); scenario markers show only inside the circle. Markers keep their
+place when you change maps and are shown on every map of their region that covers their
+position, with their label and coordinates as tooltip.
+
+**Finding a place.** `/findplace TEXT` looks up a place: map coordinates (such as
+`12.3S, 45.6W`) or a pasted `/loc` line, a place key, or the name of a map, area, territory,
+region or dungeon (matched as loosely as `--place`, §3.2). Up to ten results are posted in
+chat, and the map shows the first one with a marker; `/findplace` alone removes that marker.
+The original client has no such search: it is Tessera's own command.
+
+**Travel.** Using a stable master (U, §3.14) in a scenario whose `on use` block answers with
+`travel-list` opens the travel window: destinations grouped under their territory, a search
+field, the selected destination's cost (or free), level and area, and the go button. Rows the
+scenario marks as undiscovered or unusable carry the install's marks and cannot be chosen; rows
+whose level or requirements are not met show the install's mark but can still be chosen (the
+scenario answers). Go (or a double click) asks the session to travel; the window closes when the
+scenario answers. A started travel shows the loading screen with its progress bar for a swift
+route, or the end-travel box for a slow one; the box's button asks to stop. The client never
+moves you: the scenario places you at the destination with `teleport`.
+
+**The instance finder.** A scenario's `instances` step opens the instance finder page: instances
+under their kind and category, groups of instances as one row, the size, tier and level
+choices, and the join button. Join sends your choice to the session; the scenario's
+`instance-queue` lines then show the waiting page with its timer, the confirmation, and the
+alert while you wait (a click on the alert, or Ctrl+J, opens the finder); the leave-queue button asks the session to take you out of the queue. Inside an instance the join button
+is greyed; `/leaveinstance` asks to leave. The list of other players' groups on the right is shown
+as unavailable. `--open-panel` (§3.12) also takes `travel`, `instance-finder`,
+`instance-travel`, `end-travel`, `loading-screen` and `queue-alert`, which open these windows
+empty at start.
+
+**Mounts in the walker.** In the offline walker your avatar can ride (playable bodies only,
+on the collision walker, not in fly mode):
+
+| How | What it does |
+|---|---|
+| `--mount SPEC` | Start mounted (at once, without summoning). Cannot be combined with `--server`, `--scenario`, `--no-data`, `--fly` or `--showcase`. |
+| `/ride` | Mount the last mount (else `--mount`'s, else `auto`) with summoning; while summoning, mounting or mounted, dismount. |
+| `/ride SPEC`, `/ride off` | Mount SPEC with summoning; dismount. |
+| `/ride list [PAGE]` | List the mounts your body is offered, ten per page, with their index, DID and type. |
+| Ctrl+M (`toggle_mount`) | Same as `/ride` (keymap context `movement`, §4.2). |
+
+SPEC is `auto` (the first mount offered to your body), `dir:N` (the N-th of that list, from 0),
+`steed:light`, `steed:medium` or `steed:heavy` (your race's war-steed), or a DID of a mount
+effect or of a mount skill; options follow with `@`: `@summon` (start with the summoning),
+`@instant` (start mounted) and, for war-steeds, `@lock=walk|trot|canter|gallop` (hold the gait
+at that gear). Examples: `auto`, `dir:12@summon`, `steed:medium@lock=canter`.
+
+Summoning takes the mount skill's time (about 2 s, 3 s for a war-steed); moving, jumping,
+falling or stepping into water interrupts it. Then the mount appears and you ride with the mount's
+gaits: a normal mount walks while you hold Shift and runs otherwise; a war-steed shifts up one gait
+about every half second while you hold forward, keeps its speed when you let go, and slows down
+and backs off when you hold back. Riding into water dismounts you. The HUD shows a mount
+line with the state, the mount's DID and name, the gait, the speed and the clips playing; a
+refusal or an interruption shows its reason there for a few seconds. `--frame-log` and
+`--walk-log` gain the mount's columns, and `--walk-path` runs accept `--mount` (instant only).
+In a scenario the scenario decides who rides what (`mount` lines); your own `/ride` requests
+are then refused, except a dismount, which asks the session. Plugins see the mount through
+`LocalPlayer:GetMount()` and the `MountChanged` event.
+
+**The committed scenarios.** Four synthetic scenarios in `apps/client/tests/scenarios/` show
+these parts; each plays without an install (literal entries) and adds install records with
+one. Their exact steps are in the files:
+
+| File | What it shows |
+|---|---|
+| `map.scenario` | Markers on the maps, kinds of map notes, marker sets and their removal |
+| `travel.scenario` | A stable master's travel list, a swift and a slow travel with arrival |
+| `instances.scenario` | The instance finder, a join, the queue states and leaving an instance |
+| `mount.scenario` | Mounting a normal mount and a war-steed, mount values, dismounting |
+
+```sh
+# Headless, no install: the events in the log, the same on every run.
+cargo run --release -p tessera-client -- --headless --no-data \
+    --scenario apps/client/tests/scenarios/travel.scenario --scenario-log -
+# Windowed with your install, the input block played for you:
+cargo run --release -p tessera-client -- --ui --scenario-input \
+    --scenario apps/client/tests/scenarios/instances.scenario
+# Ride a war-steed in the offline walker:
+cargo run --release -p tessera-client -- --place "12.3S, 45.6W" --mount steed:medium
+```
+
+Local golden images of the map, travel and finder windows follow §3.14's rules
+([decision 0036](decisions/0036-p5-map-census-and-panel-goldens.md), Proposed).
+
 ---
 
 ## 4. Controls and the keymap file
@@ -690,6 +802,7 @@ touches the local ones. Never commit a local picture: it shows your install's te
 | R, Num Lock | autorun | |
 | Home | reset the camera | reset the camera |
 | Ctrl+F | switch to fly mode | switch to walk mode |
+| Ctrl+M | mount or dismount (§3.15) | |
 | F3 | HUD details on or off | HUD details on or off |
 | F12, Print Screen | screenshot | screenshot |
 | Escape | quit | quit |

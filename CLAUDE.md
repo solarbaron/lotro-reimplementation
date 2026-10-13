@@ -247,10 +247,35 @@ compatibility in plain prose is fine. Format-level terms like "DID" or "landbloc
   `NpcWindows` alias with `Deref` in `PlayerState` (becomes a `quests` field), UI events
   taken from the character-screen collector (`ui_host` not changed), `npc::use_entity` for
   P2's selection, the second `LocalPlayerSource` writer.
+- **P5 (map, travel, mounts and instances; branch `p5` in worktree `wt-p5`, exit
+  verification 2026-10-12 on the uncommitted tree)** (`docs/ROADMAP.md` P5 status): criteria
+  1–3 pass on Tessera's side; to be committed and merged (P2 and P4 ran in parallel: merge
+  seams are the `tessera-ui` game module index, `tessera-net` domain groups, the client's
+  `PlayerState` and frame order, `scenario-feed.md` (revision "P5 travel", number reconciled
+  at merge), `lua-plugin-api.md` §15.5, `fuzz/Cargo.toml`). Not yet Accepted: `map-windows.md`,
+  `travel-windows.md`, `walker.md` §16, `scenario-feed.md` §18.P5 (Review), `mounts.md` §14,
+  `lua-plugin-api.md` §15.5 (Revised); decision 0036 (map census, P5 goldens) Proposed. Built:
+  `tessera-gamedata` `map`, `travel`, `instance`, `mount` (and the `map-region` family);
+  `tessera-net` "P5 travel" forms (marker sets, `markers`, `travel-end`, `instance-queue`,
+  `mount-vital`, `LeaveQueue`); `tessera-physics` `controller::gait`, war-steed drive;
+  `tessera-ui` `game::{mapwindow, mapmarks, travel, finder, popup, p5vocab}` with fallbacks and
+  6 synthetic goldens; `tessera-plugins` `mount` views; `tessera-settings` `MapPrefs` (`[Map]`);
+  `tessera-input` `toggle_mount` (Ctrl+M); `tessera-client` `map` (M, `/findplace`, census),
+  `travel` (travel window, presentation, finder on Ctrl+J, `/leaveinstance`), walker mounts
+  (`--mount`, `/ride`, mount figure, HUD, frame/walk-log columns), scenarios `map`, `travel`,
+  `instances`, `mount` with logs; fuzz `client_mount_spec`, `ui_p5_map_windows`. Criterion 1:
+  1,525 / 1,525 regions shown, 1,523 marked, C5 2, 0 failures. Criterion 2: normal mounts and
+  the war-steed ride with the install's gaits and clips (gaits 4–7, summon 2.0 s, mount
+  0.4 s); 721 / 722 mount effects drawable per body. Criterion 3: travel and finder windows
+  from the install, 13 local goldens matched (12 judged correct; the loading screen draws its
+  image only, `ui-layout.md` §8 OPEN). Checks: fmt, clippy (workspace, `--all-features`,
+  fuzz), rustdoc clean; release tests with the install 6,332 passed, 0 failed, 10 ignored;
+  fuzz smoke 60 s clean; content, SPDX, server deps, links clean. Open: spec reviews, headless
+  `--ui` runs skip the P3/P5 frames, `walker.md` §16.12 OPENs, finder join-label text cut.
 - **Pending owner input:** `docs/checklists/owner-observations.md` (`/loc` readings at the 20
   M3 reference locations, frame-capture questions from M2, M4 items O8–O17, M4.5 items
   O18–O27, M5 items O39–O49, M6 items O28, M7 items O70–O73, P1 items O80–O86 and
-  O88–O90, P3 items O110–O125). They do not block the
+  O88–O90, P3 items O110–O125, P5 items O140–O155). They do not block the
   Tessera-side work.
 - **Toolchain:** the laptop now has rustup (Gentoo `rustup-init-gentoo --symlink`; put
   `~/.cargo/bin` first in `PATH`); fmt, clippy and tests pass on the pinned 1.99.0.

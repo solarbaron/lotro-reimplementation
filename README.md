@@ -86,6 +86,15 @@ and icons; the quest log and tracker show all 20,807 quest records of the instal
 scenario without a failure; the wallet window and the plugin wallet views show scripted
 currencies; local golden images of 19 windows match (decision 0031). Still open: the new
 specs' independent review and some text-fitting defects of the windows.
+**P5 (map, travel, mounts and instances) passes its exit criteria on Tessera's side**
+([P5 status](docs/ROADMAP.md#p5-status)): the world map shows all 1,525 map regions of the
+install (227 map nodes, 1,298 dungeon maps), each with its scenario marker where it can carry
+one, with 0 failures; the minimap and `/findplace` use the same notes and places; the travel
+window, the end-travel box, the instance finder with its queue page and alert, and the
+instance-travel window show scripted travel and instances with install text; in the offline
+walker the avatar rides normal mounts and war-steeds (`--mount`, `/ride`, Ctrl+M) with the
+install's gaits and clips. Still open: the new specs' independent review, the loading screen's
+progress bar, and owner comparisons with the original client.
 
 | Area | State |
 |---|---|
@@ -112,6 +121,7 @@ specs' independent review and some text-fitting defects of the windows.
 | Scenario feed in the sandbox (`tessera_net::scenario`), presentation data layer `tessera-gamedata`, `tessera-client --scenario`, server dependency guard (`tools/check-server-deps.sh`) | P0 exit phase: 6 committed synthetic scenarios replay byte for byte; 383,343 install records indexed with 0 failures; 2 fuzz targets; criteria 2–4 pass, the spec's independent re-review (criterion 1) is pending |
 | Character selection and creation screens (`--character-select`), character panel and bag windows, item examination tooltips with comparison and pins, worn look from equipment, plugin inventory views; protocol 1.1 looks on the test server | P1 exit phase: 8 races, 15 bodies, 130 (race, gender, class) choices; 151,230 / 151,230 item records categorised (149,695 tooltips laid out, 0 failures); criteria 2–4 pass, criterion 1 partly (viewport figure, look colours and face layers open) |
 | NPC use, dialogue and quest-offer windows, vendor, barter and loot windows, wallet window, quest log, tracker and quest markers, plugin wallet views; scenario feed revision 5 (`rewards`, `buyback`, `action(…)`) | P3 criteria pass on Tessera's side: 20,807 / 20,807 quest records in log or tracker with 0 failures; 19 / 19 local window goldens match; 12 synthetic goldens; specs in review |
+| World map with notes, feed markers and filters, minimap markers, place lookup (`/findplace`), travel window and travel presentation, instance finder with queue and alert, instance-travel window, mounted walker (`--mount`, `/ride`, `toggle_mount`), plugin mount views; scenario feed revision "P5 travel" | P5 criteria pass on Tessera's side: 1,525 / 1,525 map regions shown, 1,523 marked, 0 failures; 721 / 722 mount effects drawable per body (1 categorised); 13 local window goldens matched, 12 judged correct (the loading screen is not drawn whole); 6 synthetic goldens; specs in review |
 | Official-server compatibility | **gated** behind legal review ([LEGAL.md §9](docs/LEGAL.md#9-gates-and-the-official-server-target)); no code exists |
 
 The full plan, with exit criteria per milestone, is in [docs/ROADMAP.md](docs/ROADMAP.md).

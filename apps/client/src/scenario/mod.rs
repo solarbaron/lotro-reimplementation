@@ -361,6 +361,14 @@ pub fn run(mut args: Args) -> u8 {
     if headless && args.server.is_some() {
         return overlay::run_headless(&args, resolved);
     }
+    // A headless run with the game UI attached (`--ui`, `--open-panel`, `--skin`,
+    // `--ui-script`) and an install, without `--screenshot`: the walker runs offscreen with
+    // the UI, which drives the NPC, quest, social and P5 windows from the feed
+    // (`scenario-feed.md` §12.2 OPEN). `--server` (overlay), `--screenshot` and runs without
+    // an install keep the driver-only and walker-only paths above and below.
+    if headless && args.ui_enabled() && args.screenshot.is_none() && install.is_some() {
+        return run_headless_ui(args, resolved, install);
+    }
     if headless {
         return run_headless(&args, resolved, install);
     }
@@ -376,6 +384,31 @@ pub fn run(mut args: Args) -> u8 {
     args.scenario_log_slot.clone_from(&slot);
     let code = match crate::app::run(args) {
         Ok(()) => EXIT_OK,
+        Err(e) => {
+            tracing::error!("{e:#}");
+            EXIT_FAILURE
+        }
+    };
+    windowed_exit_code(code, slot.as_ref())
+}
+
+/// Runs a resolved scenario headless with the game UI attached and returns the exit code
+/// (`scenario-feed.md` §12.2 OPEN): the walker runs offscreen with the UI
+/// ([`crate::ui_host::run::run`]), the runtime plays the feed and writes the log, and the
+/// run ends when the feed reports `Finished`. A log that could not be written is a run-time
+/// error (5), as in a windowed run.
+fn run_headless_ui(mut args: Args, scenario: Arc<ResolvedScenario>, install: Option<&Path>) -> u8 {
+    let slot = match open_log(&args, install) {
+        Ok(l) => l.map(live_log::LiveLogSlot::new),
+        Err(e) => {
+            eprintln!("tessera-client: {e}");
+            return EXIT_RUNTIME;
+        }
+    };
+    args.scenario_prepared = Some(scenario);
+    args.scenario_log_slot.clone_from(&slot);
+    let code = match crate::ui_host::run::run(&args) {
+        Ok(_) => EXIT_OK,
         Err(e) => {
             tracing::error!("{e:#}");
             EXIT_FAILURE

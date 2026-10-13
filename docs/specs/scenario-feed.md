@@ -2237,6 +2237,21 @@ location report depends on frame timing.
   area around the player has loaded or `--settle-timeout` has passed, instead of the spawn point
   once loaded.
 
+> **OPEN:** The spec defines only driver-only and walker-only headless runs; it does not
+> say what a headless run with the game UI attached (`--ui`, `--open-panel`, `--skin`,
+> `--ui-script`) does with a scenario. The client needs such a path so a headless run can
+> exercise the P3/P5 window frames (the NPC, quest, social, travel, finder and map windows),
+> which only the UI runs. Conservative implementation, pending the spec owner: with an
+> install and no `--screenshot`, `tessera-client --scenario --headless --ui` runs the walker
+> offscreen with the UI attached (the ordinary runtime, so the walker's session plays the
+> feed on the wall clock and writes the log, not `HeadlessDriver`), ending the run when the
+> feed reports `Finished`; exit codes are the windowed run's (0/1/5 as the table, 2/3/4
+> before the world). `--screenshot`, `--server` (overlay) and runs without an install keep
+> the paths above. Open questions: (1) whether the UI run's wall-clock feed is acceptable
+> here (windowed runs already use it, §12.4) or a virtual-clock driver should drive the UI;
+> (2) the run deadline (currently the UI run's fixed budget plus `--duration`), which a very
+> long scenario could exceed.
+
 | Exit code | Meaning |
 |---|---|
 | 0 | Finished (`complete` or `horizon`) |

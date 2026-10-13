@@ -4,6 +4,16 @@
 
 **Status:** Proposed, 2026-10-11 (waits for the owner).
 
+> **Review note (spec reviewer, Clean-Room-Role: review, 2026-10-13).** The map half of this
+> record rests on `map-windows.md` §5 (the "every map region" definition §5.1, the counts §5.2,
+> the categories §5.3 and the census procedure §5.4) and §6.7 (feed markers). That spec passed an
+> independent CLEAN_ROOM.md §5.3 review on 2026-10-13 and is now **Accepted** with §5 and §6.7
+> unchanged, so §1 of this record stands on a reviewed definition (the Open bullet on a review
+> changing §5.1/§5.3 is resolved for the map part). The status stays **Proposed**: owner
+> acceptance of the record itself, and the §2 tier-1 world-map golden (which waits for the
+> fallback-window rule still OPEN in `map-windows.md` §8), are unchanged. The travel and instance
+> halves of §1–§2 rest on `travel-windows.md` and `instances.md`, reviewed separately.
+
 The number 0036 is out of sequence on purpose: P2 and P4 run in parallel on their own branches
 and take numbers below it, so P5 starts at 0036.
 

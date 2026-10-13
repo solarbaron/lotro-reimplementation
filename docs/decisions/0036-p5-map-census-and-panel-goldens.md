@@ -26,6 +26,17 @@
 > the still-OPEN fallback-window rule). Acceptance of the record is the owner's call, and this
 > record stands on decision 0031 (still Proposed); a reviewer does not move either.
 
+> **Review note (travel and instance census — spec reviewer, Clean-Room-Role: review, 2026-10-13).**
+> The travel and instance halves that the map-half note left "reviewed separately" now rest on
+> reviewed specs: the travel-destination census (`travel-windows.md` §8.1), the private-encounter
+> template census (§8.2) and the finder definitions (`instances.md` B1–B8) behind §1–§2 and the
+> §2 travel and instance-finder goldens. `travel-windows.md` passed an independent CLEAN_ROOM.md
+> §5.3 re-review on 2026-10-13 and is now **Accepted** — the §8.1 `OtherReference`/`Unreferenced`
+> reconciliation to 5 / 0 confirmed by an own read-only M1 probe of the owner's install — and
+> `instances.md` is already Accepted. So the census definitions of §1–§2 stand on reviewed text.
+> The record's own status stays **Proposed**: owner acceptance, and the §2 tier-1 world-map
+> golden still waiting on the `map-windows.md` §8 fallback-window OPEN, are unchanged.
+
 The number 0036 is out of sequence on purpose: P2 and P4 run in parallel on their own branches
 and take numbers below it, so P5 starts at 0036.
 
@@ -143,5 +154,9 @@ image is part of criterion 2; the look of the mounted figure is an owner row.
 - The owner accepts this record or asks for changes.
 - `map-windows.md` has no fallback map window for runs without an install (its §8 OPEN); the
   tier-1 world-map golden of §2 waits for that rule.
-- `map-windows.md` and `travel-windows.md` are in Review; if a review changes the definition of
-  §5.1 or the categories of §5.3, item 1 follows the reviewed spec.
+- `map-windows.md` and `travel-windows.md` are now both **Accepted** (independent reviews
+  2026-10-13); their reviewed definitions (map-region categories `map-windows.md` §5.1/§5.3,
+  travel/template census `travel-windows.md` §8) are what §1–§2 of this record stand on. No
+  review changed `map-windows.md` §5.1/§5.3; `travel-windows.md` §8.1 was reconciled to
+  `OtherReference` 5 / `Unreferenced` 0, which does not affect item 1 (a map-region, not a
+  travel, definition).

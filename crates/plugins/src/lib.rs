@@ -23,7 +23,9 @@
 //!   views (`Wallet`, `WalletItem`, `GetMoney`) fed by a [`WalletSource`] and queued
 //!   [`WalletViewEvent`]s ([`wallet`], §15.3); the party views (`Party`, `PartyMember`,
 //!   `Player:GetParty()`) over the fellowship model the client sets with
-//!   [`PluginManager::set_fellowship`] ([`party`], §15.4).
+//!   [`PluginManager::set_fellowship`] ([`party`], §15.4); the mount views (`GetMount`,
+//!   `BasicMount`, `CombatMount`) fed by a [`MountSource`] and queued [`MountViewEvent`]s
+//!   ([`mount`], §15.5).
 //! - [`HostApi`]: what the embedding client provides; it extends the core's
 //!   [`CoreHost`]. Plugin shell commands live in the host's one command registry
 //!   (`chat-window.md` §10 item 3); [`CommandTable`] is a registry for hosts without one.
@@ -57,6 +59,7 @@ mod host;
 mod import;
 pub mod inventory;
 mod manager;
+pub mod mount;
 mod object;
 pub mod options;
 pub mod packages;
@@ -88,6 +91,10 @@ pub use manager::{
     DEFAULT_APARTMENT, DEFAULT_DEFERRED_SLICE, LoadedPluginInfo, ManagerConfig, PluginManager,
 };
 pub use mlua;
+pub use mount::{
+    MountClass, MountModel, MountPeriod, MountPeriodEnd, MountRef, MountSource, MountViewEvent,
+    MountVital, MountVitals, VitalValues,
+};
 pub use party::{
     FellowshipMember, MemberActorInfo, PartyActorSource, PartyPlayer, PartyUpdate, PartyViewEvent,
 };

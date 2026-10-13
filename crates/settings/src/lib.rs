@@ -49,6 +49,9 @@
 //!   (skin, walker overlays, cursor, scale, tooltips, U5 budgets, chat window).
 //! * [`InputPrefs`] reads and writes the `[Input]` section (double-click time and
 //!   rectangle, `keymap.md` §7.7).
+//! * [`MapPrefs`] reads and writes the `[Map]` section: the map window's presentation,
+//!   coordinate and discovery switches and its three note filters (`map-windows.md` §6.9,
+//!   §8); unset keys take the install's defaults.
 //! * [`SCHEMA_VERSION`] and [`migrate()`] form the migration hook for future
 //!   incompatible changes. Unknown keys are preserved with their exact TOML
 //!   type at every level (the root, `[game]`, `[explorer]`, each bookmark
@@ -76,6 +79,7 @@ mod creation;
 mod error;
 mod graphics;
 mod input;
+mod map;
 mod migrate;
 mod model;
 mod nesting;
@@ -96,6 +100,10 @@ pub use graphics::{AVATAR_UPDATE_VISIBLE_KEY, GRAPHICS_SECTION, GraphicsPrefs};
 pub use input::{
     DEFAULT_DOUBLE_CLICK_MS, DEFAULT_DOUBLE_CLICK_PX, DOUBLE_CLICK_MS_RANGE, DOUBLE_CLICK_PX_RANGE,
     INPUT_SECTION, InputPrefs,
+};
+pub use map::{
+    DISTANT_FILTER_KEY, MAP_COORDINATES_KEY, MAP_DISCOVERY_KEY, MAP_FULLSCREEN_KEY, MAP_SECTION,
+    MapPrefs, NEAR_FILTER_KEY, RADAR_FILTER_KEY,
 };
 pub use migrate::{
     MIGRATIONS, Migration, MigrationFn, SCHEMA_VERSION, SCHEMA_VERSION_KEY, migrate, migrate_with,

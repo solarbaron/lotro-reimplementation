@@ -157,6 +157,8 @@ pub struct UiHost {
     /// The party members' actor values for the plugins' party views (P4,
     /// [`Self::set_plugin_party`]).
     plugin_party: Option<Arc<dyn tessera_plugins::PartyActorSource>>,
+    /// The mount views the plugins' local player carries (P5, [`Self::set_plugin_mount`]).
+    plugin_mount: Option<Arc<dyn tessera_plugins::MountSource>>,
     pending_position: Option<(RadarInput, Option<u32>)>,
     pending_notices: Vec<String>,
     pending_session: Vec<crate::net::ChatLine>,
@@ -309,6 +311,7 @@ impl UiHost {
             player: WalkerPlayer::new(),
             plugin_wallet: None,
             plugin_party: None,
+            plugin_mount: None,
             pending_position: None,
             pending_notices: Vec::new(),
             pending_session: Vec::new(),
@@ -584,6 +587,13 @@ impl UiHost {
             Some(w) => crate::npc::wallet::WalletPlayer::new(self.player.clone(), Arc::clone(w)),
             None => self.player.clone(),
         };
+        // The mount views (P5) wrap that source, keeping its other views
+        // ([`crate::travel::mount::MountPlayer`]).
+        let src = match &self.plugin_mount {
+            Some(m) => crate::travel::mount::MountPlayer::new(src, Arc::clone(m))
+                as Arc<dyn tessera_plugins::LocalPlayerSource>,
+            None => src,
+        };
         plugins.manager_mut().set_local_player_source(Some(src));
         if let Some(p) = &self.plugin_party {
             plugins
@@ -785,6 +795,13 @@ impl UiHost {
     /// party bridge (P4, [`crate::social::party::PartyBridge::actor_source`]).
     pub fn set_plugin_party(&mut self, source: Arc<dyn tessera_plugins::PartyActorSource>) {
         self.plugin_party = Some(source);
+    }
+
+    /// The source of the mount views (`lua-plugin-api.md` §15.5) the plugins' local player
+    /// carries from the next [`Self::attach_plugins`] on: the travel hub's session mount
+    /// (P5, [`crate::travel::mount::SessionMount::source`]).
+    pub fn set_plugin_mount(&mut self, source: Arc<dyn tessera_plugins::MountSource>) {
+        self.plugin_mount = Some(source);
     }
 
     /// The character the plugins see (the walker's avatar). A change raises `NameChanged`

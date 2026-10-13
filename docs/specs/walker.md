@@ -4,13 +4,13 @@
 
 | | |
 |---|---|
-| **Status** | §1–§10: M3–M4 design, implemented; the M5 rules for a game UI attached (the items marked M5 in §5 and §6, from the accepted decisions 0014 and 0015; added 2026-10-06, awaiting review of this change) are not implemented yet. §11 (the original's distances and camera): **Accepted** (2026-10-07 revision re-reviewed and passed; implementers re-check the §11.4 step 4 OPEN). §13–§14: M4.5 design (walk mode on collision; world fidelity, interiors), implemented; §14.5 and §14.6 revised 2026-10-09 (spec writer: three OPENs for water features), review of 2026-10-09 passed: **Accepted**; §14.6 **Accepted** 2026-10-10 (review of the lava revision passed, see the review record; before: **Revised** 2026-10-10, spec writer: both OPENs name the lava record); otherwise **Accepted** (fifth revision of 2026-10-08: body brought in line with the current code, implementer OPENs folded in, implementer choices labelled as Decisions; re-review passed 2026-10-08); §13.6 revised 2026-10-09 (spec writer: the implementer OPEN of 2026-10-08 answered by restating the `blocked` and slope-allowance readings); review of 2026-10-09 passed: **Accepted**. §7 and §10.8: Tessera rules added 2026-10-09 by the spec writer (settle wait, audio columns, overlay on the dispatcher); review of 2026-10-09 passed |
-| **Last updated** | 2026-10-10 (spec writer, dirty room: lava in the §14.6 OPENs). Before: 2026-10-09 (spec writer, dirty room: water-feature OPENs in §14.5 and §14.6; before that, spec writer: implementer OPENs of §7, §10.8 and §13.6 answered; before that, the same day, merge of main into remediation-2: main's M5 rules of §5 and §6 and implementer OPENs in §7, §10 and §13.6 combined with the fifth revision; earlier, 2026-10-08, spec writer, dirty room: fifth revision of §13.3, §14.3–§14.5, §14.7, §14.8, §14.11–§14.13; see §15) |
-| **Author role** | §1–§10: Clean-room implementer of `tessera-client`. §11: Spec writer (dirty room). §13–§14: clean-room implementer (M4.5), revised 2026-10-07 by a spec writer (dirty room), who also wrote §14.12–§14.13. §15: change log |
+| **Status** | §16 (mounts in the walker, P5): **Accepted** (new 2026-10-11, spec writer; Tessera rules on the facts of `mounts.md` §14; reviewed and accepted 2026-10-13 by an independent spec reviewer, fresh session, not the writer; CLEAN_ROOM.md §5.3, all items). §1–§10: M3–M4 design, implemented; the M5 rules for a game UI attached (the items marked M5 in §5 and §6, from the accepted decisions 0014 and 0015; added 2026-10-06, awaiting review of this change) are not implemented yet. §11 (the original's distances and camera): **Accepted** (2026-10-07 revision re-reviewed and passed; implementers re-check the §11.4 step 4 OPEN). §13–§14: M4.5 design (walk mode on collision; world fidelity, interiors), implemented; §14.5 and §14.6 revised 2026-10-09 (spec writer: three OPENs for water features), review of 2026-10-09 passed: **Accepted**; §14.6 **Accepted** 2026-10-10 (review of the lava revision passed, see the review record; before: **Revised** 2026-10-10, spec writer: both OPENs name the lava record); otherwise **Accepted** (fifth revision of 2026-10-08: body brought in line with the current code, implementer OPENs folded in, implementer choices labelled as Decisions; re-review passed 2026-10-08); §13.6 revised 2026-10-09 (spec writer: the implementer OPEN of 2026-10-08 answered by restating the `blocked` and slope-allowance readings); review of 2026-10-09 passed: **Accepted**. §7 and §10.8: Tessera rules added 2026-10-09 by the spec writer (settle wait, audio columns, overlay on the dispatcher); review of 2026-10-09 passed |
+| **Last updated** | 2026-10-11 (spec writer, dirty room: new §16, mounts in the walker, P5). Before: 2026-10-10 (spec writer, dirty room: lava in the §14.6 OPENs). Before that: 2026-10-09 (spec writer, dirty room: water-feature OPENs in §14.5 and §14.6; before that, spec writer: implementer OPENs of §7, §10.8 and §13.6 answered; before that, the same day, merge of main into remediation-2: main's M5 rules of §5 and §6 and implementer OPENs in §7, §10 and §13.6 combined with the fifth revision; earlier, 2026-10-08, spec writer, dirty room: fifth revision of §13.3, §14.3–§14.5, §14.7, §14.8, §14.11–§14.13; see §15) |
+| **Author role** | §16: Spec writer (dirty room), 2026-10-11. §1–§10: Clean-room implementer of `tessera-client`. §11: Spec writer (dirty room). §13–§14: clean-room implementer (M4.5), revised 2026-10-07 by a spec writer (dirty room), who also wrote §14.12–§14.13. §15: change log |
 | **Reviewer** | §11: Claude review session (spec-writer agent). §13–§14: Claude review sessions (spec-writer agent, M4.5 criterion 9), independent of the writer |
-| **Review record** | §11: 2026-10-05 changes requested, re-review **passed**; 2026-10-07 re-review of the revision: **passed**. §13–§14: 2026-10-07 first review and re-review: changes requested; 2026-10-07 re-review of the spec writer's revision: **changes requested**; 2026-10-07 re-review of the second revision (Claude review session, spec-writer agent): **changes requested** (one unlabelled departure in §14.3); 2026-10-07 re-review of the third revision (Claude review session, spec-writer agent): **passed, Accepted**; non-blocking notes applied in a fourth revision (Revised); 2026-10-07 re-review of the fourth revision (Claude review session, spec-writer agent): **changes requested**; 2026-10-08 re-review of the fifth revision (Claude review session, spec-writer agent): **passed, Accepted**. §11 unchanged: Accepted. 2026-10-09 review of the spec writer's change of §7, §10.8 and §13.6 (Claude review session, spec-reviewer agent, independent of the writer; CLEAN_ROOM.md §5.3): **passed**, §13.6 Accepted again. Spot-checked read-only: the §13.6 first-touch and slope-allowance wording agrees with `m4-5-visual.md` §2.2 (sampling at the axis and on rings of *r* and *r*/2, 16 directions; 0.05 m tolerances); decision 0020 and `chat-window.md` §10 items 2, 11–13 exist as cited; the settle-wait rule and the four audio columns match what the implementation does. No client fact added, no code, no game text. Non-blocking: the §7 frame cap could say that it counts start-up frames too. Details in the dirty-room review log (decision 0018). Claude review session (spec reviewer, fresh session; not the writer), 2026-10-09: review of the water-feature revision on branch `water-fix` (`git diff main...water-fix`, commits 88edc8f and 4be89e7) against CLEAN_ROOM.md §5.3 (OPENs at the end of §14.5 and §14.6, change log): **passed**, §14.5 and §14.6 Accepted (every item). The three OPENs are implementer tasks that point to `water.md` §8.5–§8.7, `material.md` §8.4, §10.3, §11.6 and `render.md` R-D12–R-D14; the statements about the current walker (parameters evaluated once at clock 0, generic path for placed water) describe Tessera's own code; no client fact, code, copied prose or game text. Checklist rows cited (W10–W14, W15–W17 of `m4-5-visual.md` §4.8) match. Claude review session (spec reviewer, fresh session; not the writer), 2026-10-09: independent re-review of the whole `water-fix` branch (`git diff main...water-fix` up to commit 8c578bc) against CLEAN_ROOM.md §5.3. The water-feature text of this spec did not change after its acceptance of the same day: **passed**, stays Accepted. Non-blocking: the §14.6 OPEN on R-D12 names only the two flow-map records; landblock lava (0x2B000810) is drawn by `water.md` §8.6.5 (recorded in `water.md` §13); add it at the next revision. Claude review session (spec reviewer, fresh session; not the writer), 2026-10-09: re-review of the whole `water-fix` branch up to commit 113462a (`git diff main...water-fix`) against CLEAN_ROOM.md §5.3. §14.5–§14.6 did not change after their acceptance: **passed**, stay Accepted; the lava note above stands (the §14.6 curve OPEN's census list also omits 1186 and 1187 of 0x31006FAE, now in `water.md` W37). Claude review session (spec reviewer, fresh session; not the writer), 2026-10-10: review of the revision of commit 9e9a29a (§14.6 both OPENs, §15 row) against CLEAN_ROOM.md §5.3: **passed**, §14.6 Accepted again (§14.5 unchanged, stays Accepted). The OPENs point to `water.md` §8.6.4 (per-record colour), §8.6.5 (lava) and `material.md` §11.6 (lava recognition) and list 1186 and 1187 of 0x31006FAE among the curve-valued parameters, as `water.md` W37 does; no new client fact, no code; nothing under a closed gate. The lava note of the previous rounds is resolved. |
-| **Implements into** | `apps/client/src/walker/` (M4.5: `interiors.rs`, `env.rs`, `terrain.rs`, `objects.rs`, `movement/`; M4: `walker/characters/` — layer, `figure.rs`, `catalog.rs`, `motion.rs` — and `walker/figures.rs`), `apps/client/src/walker_host.rs`, `apps/client/src/headless.rs`, `apps/client/src/avatar.rs`, `apps/client/src/net.rs`, `crates/net` (sandbox figures, crowd, entity events), `crates/world` (bundle figures), `fuzz/fuzz_targets/client_walker_text.rs`, `client_avatar_spec.rs`, `net_npc_events.rs`, `world_bundle.rs` |
-| **Format facts from** | `coordinates.md` (§3, §8–§12), `landblock.md` (§5, §6.3, §8), `entity-descriptor.md` (§5–§9), `setup.md` (§7), `mesh.md` (§8, §11), `material.md` (§9–§12), `terrain.md`, `keymap.md`, `wstate.md` (§11); M4: `appearance.md` (§2–§7), `skeleton-anim.md` (§2, §4, §7, §8), `script-table.md` (§6, §8, §11); M4.5: `landblock.md` (§4.4, §4.11–§4.14), `lighting.md` (§8.1, §8.3, §8.5, §9, §10), `terrain-texturing.md` (§4.8–§4.10, §10), `collision.md` (§5.8.1, §10–§12), `environment.md`, `water.md`, `scenery.md` (§8); the client facts §13–§14 rely on are restated with their provenance in §14.13 |
+| **Review record** | §11: 2026-10-05 changes requested, re-review **passed**; 2026-10-07 re-review of the revision: **passed**. §13–§14: 2026-10-07 first review and re-review: changes requested; 2026-10-07 re-review of the spec writer's revision: **changes requested**; 2026-10-07 re-review of the second revision (Claude review session, spec-writer agent): **changes requested** (one unlabelled departure in §14.3); 2026-10-07 re-review of the third revision (Claude review session, spec-writer agent): **passed, Accepted**; non-blocking notes applied in a fourth revision (Revised); 2026-10-07 re-review of the fourth revision (Claude review session, spec-writer agent): **changes requested**; 2026-10-08 re-review of the fifth revision (Claude review session, spec-writer agent): **passed, Accepted**. §11 unchanged: Accepted. 2026-10-09 review of the spec writer's change of §7, §10.8 and §13.6 (Claude review session, spec-reviewer agent, independent of the writer; CLEAN_ROOM.md §5.3): **passed**, §13.6 Accepted again. Spot-checked read-only: the §13.6 first-touch and slope-allowance wording agrees with `m4-5-visual.md` §2.2 (sampling at the axis and on rings of *r* and *r*/2, 16 directions; 0.05 m tolerances); decision 0020 and `chat-window.md` §10 items 2, 11–13 exist as cited; the settle-wait rule and the four audio columns match what the implementation does. No client fact added, no code, no game text. Non-blocking: the §7 frame cap could say that it counts start-up frames too. Details in the dirty-room review log (decision 0018). Claude review session (spec reviewer, fresh session; not the writer), 2026-10-09: review of the water-feature revision on branch `water-fix` (`git diff main...water-fix`, commits 88edc8f and 4be89e7) against CLEAN_ROOM.md §5.3 (OPENs at the end of §14.5 and §14.6, change log): **passed**, §14.5 and §14.6 Accepted (every item). The three OPENs are implementer tasks that point to `water.md` §8.5–§8.7, `material.md` §8.4, §10.3, §11.6 and `render.md` R-D12–R-D14; the statements about the current walker (parameters evaluated once at clock 0, generic path for placed water) describe Tessera's own code; no client fact, code, copied prose or game text. Checklist rows cited (W10–W14, W15–W17 of `m4-5-visual.md` §4.8) match. Claude review session (spec reviewer, fresh session; not the writer), 2026-10-09: independent re-review of the whole `water-fix` branch (`git diff main...water-fix` up to commit 8c578bc) against CLEAN_ROOM.md §5.3. The water-feature text of this spec did not change after its acceptance of the same day: **passed**, stays Accepted. Non-blocking: the §14.6 OPEN on R-D12 names only the two flow-map records; landblock lava (0x2B000810) is drawn by `water.md` §8.6.5 (recorded in `water.md` §13); add it at the next revision. Claude review session (spec reviewer, fresh session; not the writer), 2026-10-09: re-review of the whole `water-fix` branch up to commit 113462a (`git diff main...water-fix`) against CLEAN_ROOM.md §5.3. §14.5–§14.6 did not change after their acceptance: **passed**, stay Accepted; the lava note above stands (the §14.6 curve OPEN's census list also omits 1186 and 1187 of 0x31006FAE, now in `water.md` W37). Claude review session (spec reviewer, fresh session; not the writer), 2026-10-10: review of the revision of commit 9e9a29a (§14.6 both OPENs, §15 row) against CLEAN_ROOM.md §5.3: **passed**, §14.6 Accepted again (§14.5 unchanged, stays Accepted). The OPENs point to `water.md` §8.6.4 (per-record colour), §8.6.5 (lava) and `material.md` §11.6 (lava recognition) and list 1186 and 1187 of 0x31006FAE among the curve-valued parameters, as `water.md` W37 does; no new client fact, no code; nothing under a closed gate. The lava note of the previous rounds is resolved. §16 (mounts in the walker, P5): Claude review session (spec reviewer, fresh session; not the writer), 2026-10-13: review of the new §16 (`git diff 8e9670d..f18ddd7` of this file) against CLEAN_ROOM.md §5.3: **passed, Accepted** (every item). §16 is Tessera's own design for P5 exit criterion 2; every rule is a labelled Decision or cites a `mounts.md`/`collision.md`/`game-controls.md`/`keymap.md` fact, and the section states it adds no client fact. Verified read-only: the `mounts.md` identifiers §16 relies on are defined there — `Mount_Name_Initial` (§2.3), `Movement_MountSpeedBonus` and `ForwardSource_Movement_MountSpeedMultiplier` (§2.6), the §5.1 speed-factor Decision, the §4.6 item-4 Clydesdale rule, the §5.3–§5.7 war-steed controller and the §14 presentation facts; `game-controls.md` §5.3.2, `keymap.md` §7.2/§8 and decision 0020 exist as cited. The `--mount` grammar block (§16.2) is a declarative ABNF of Tessera's own command syntax, consistent with the accepted `client_avatar_spec` precedent, not pseudo-code transliterated from any source. No code, no copied prose, no game text (names read at run time from the install's string tables, never reproduced), no key/hostname/anti-cheat fact. Non-blocking: §16.11 check 1 describes `auto` as "a horse of its Tall group", which §16.12's own implementer OPEN already corrects (in this install `auto` = `dir:0` begins with a war-steed skill for Human M; the real-data test rides the first normal mount instead) — reconcile the check-1 prose with §16.2 and §14.10 at the next revision. |
+| **Implements into** | `apps/client/src/walker/` (M4.5: `interiors.rs`, `env.rs`, `terrain.rs`, `objects.rs`, `movement/`; M4: `walker/characters/` — layer, `figure.rs`, `catalog.rs`, `motion.rs` — and `walker/figures.rs`), `apps/client/src/walker_host.rs`, `apps/client/src/headless.rs`, `apps/client/src/avatar.rs`, `apps/client/src/net.rs`, `crates/net` (sandbox figures, crowd, entity events), `crates/world` (bundle figures), `fuzz/fuzz_targets/client_walker_text.rs`, `client_avatar_spec.rs`, `net_npc_events.rs`, `world_bundle.rs`; P5 (§16): a walker mount module in `apps/client/src/walker/`, the std-only mount text grammar with fuzz target `client_mount_spec`, the dispatcher built-in `ride`, the `toggle_mount` action of `crates/input` |
+| **Format facts from** | `coordinates.md` (§3, §8–§12), `landblock.md` (§5, §6.3, §8), `entity-descriptor.md` (§5–§9), `setup.md` (§7), `mesh.md` (§8, §11), `material.md` (§9–§12), `terrain.md`, `keymap.md`, `wstate.md` (§11); M4: `appearance.md` (§2–§7), `skeleton-anim.md` (§2, §4, §7, §8), `script-table.md` (§6, §8, §11); M4.5: `landblock.md` (§4.4, §4.11–§4.14), `lighting.md` (§8.1, §8.3, §8.5, §9, §10), `terrain-texturing.md` (§4.8–§4.10, §10), `collision.md` (§5.8.1, §10–§12), `environment.md`, `water.md`, `scenery.md` (§8); the client facts §13–§14 rely on are restated with their provenance in §14.13; P5 (§16): `mounts.md` (§2–§6, §14), `game-controls.md` (§5.3.2), `keymap.md` (§7.2, §8), decision 0020 |
 
 This file records **Tessera's own design decisions** for the world walker: how it streams,
 draws and reports the world, and how it is driven in automated runs. §1–§10 add no format
@@ -2635,6 +2635,387 @@ the fog, sky placement.
 
 ---
 
+<a id="s16"></a>
+## 16. Mounts in the walker (P5; spec writer, dirty room, 2026-10-11)
+
+Tessera's design for P5 exit criterion 2 of decision 0024 ("a mounted character walks in the
+walker with the install's mounted gaits"). The client facts it uses are those of `mounts.md`
+(§2–§6 and the P5 section §14), `collision.md` §10–§11, `game-controls.md` §5.3.2,
+`script-table.md` §8 and `keymap.md`; this section adds no client fact. Every rule here is a
+**Decision** unless it cites a fact. Planned code: a walker mount module in
+`apps/client/src/walker/` (state machine, gait rule, clip choice, placement), a std-only
+grammar module for the option and command text (fuzz target `client_mount_spec`, included by
+path like `client_avatar_spec`), the dispatcher built-in `ride` (`apps/client/src/commands/`),
+the `toggle_mount` action in `tessera-input`'s defaults, and the new log columns.
+
+<a id="s16-1"></a>
+### 16.1 Scope
+
+- **Sessions.** Mounts are walker presentation in the offline sandbox (decision 0024: client
+  half only). With `--server` every mount request is refused with the line "Mounts are not
+  available with --server." (Tessera's protocol carries no mount state; LEGAL.md §11.1 rule 5:
+  Tessera's server runs no gameplay rule.) In a scenario session the feed owns the mount state:
+  the feed's `mount ENTITY (REF|none)` step for the player (`MountChanged`, `scenario-feed.md`
+  §6.5) runs §16.5 with REF resolved as a SOURCE of §16.2 (none: dismount by other); the
+  walker's own requests are then refused, except a dismount while mounted, which sends the
+  feed's `dismount` world command and changes nothing locally until the feed answers.
+- **Bodies.** Only playable bodies ride (`--avatar SPECIES,SEX`, `appearance.md` §2.2). An
+  `--avatar` given as a figure DID refuses mounts ("This figure cannot ride.").
+- **Controller.** Mounted movement needs the physics walker of §13.1 (collision sets built and
+  the mover ready). Before that, and when collision is off, a request is refused ("Mounts need
+  the collision walker."). Fly mode refuses requests; switching to fly mode while summoning
+  cancels it, and while mounted or mounting dismounts by other (status 6) at once.
+
+<a id="s16-2"></a>
+### 16.2 Choosing a mount: `--mount SPEC`
+
+```text
+MOUNT  = SOURCE *( "@" OPTION )
+SOURCE = DID                     a 0x70 object: a mount effect (mounts.md §2.1), or a skill whose
+                                 Skill_Toggle_Effect_List names one (§4.1)
+       | "dir:" INDEX            the INDEX-th (0-based) mount of the body's offered list
+                                 (mounts.md §14.10: its directory group, then its war-steeds)
+       | "steed:" TREE           the body's war-steed of that tree (mounts.md §14.10)
+       | "auto"                  "dir:0"
+DID    = "0x" 1*8HEXDIG | 1*10DIGIT
+INDEX  = 1*4DIGIT                0 … 9,999
+TREE   = "light" | "medium" | "heavy"
+OPTION = "summon"                start with the skill's induction (§16.5)
+       | "instant"               start mounted, without summoning or mounting phases
+       | "lock=" GAIT            war-steeds: hold the selected gear at GAIT (mounts.md §14.6)
+GAIT   = "walk" | "trot" | "canter" | "gallop" | "4" | "5" | "6" | "7"
+```
+
+Examples: `auto`, `dir:12@summon`, `steed:medium@lock=canter`, `0x7001B475`.
+
+- **Text limits (hostile input).** At most 128 bytes after trimming ASCII whitespace at both
+  ends; printable ASCII without spaces inside; keywords compared without regard to ASCII case;
+  at most 4 options, each kind at most once, `summon` and `instant` not together; a DID above
+  0xFFFFFFFF or with more than 8 hex digits, an INDEX above 9,999, an empty part, an unknown
+  keyword or option are errors. The parser depends on `std` only, never panics and allocates
+  at most in proportion to the input.
+- **Errors.** On the command line a SPEC that does not parse is a usage error (exit status 2,
+  as for the other options). `--mount` together with `--server`, `--scenario`, `--no-data`,
+  `--fly` or `--showcase` is a usage error.
+- **Resolution** (at run time, against the install): a DID must name a mount effect, or a skill
+  whose `Skill_Toggle_Effect_List` names one (the first such element); `dir:` and `steed:` use the
+  body's list (an index past its end, or a tree the body's race lacks, is a resolution error).
+  A resolution error, a refusal (§16.5) or an effect the walker cannot draw (`mounts.md` §14.11:
+  no entity, no mesh found, hobby-horse) leaves the rider on foot, prints a warning, and shows the
+  reason on the HUD (§16.9). A hobby-horse effect is drawn as its held prop and the rider stays on
+  the on-foot controller and clips (`mounts.md` §14.11); its state is still "mounted" for §16.5.
+- **Default timing.** From the command line the default is `instant`: the rider is mounted when
+  the walk controller is first placed (§13.1), with the mount at full opacity, so that automated
+  runs start mounted. From the chat command and the key (§16.3, §16.4) the default is `summon`.
+
+<a id="s16-3"></a>
+### 16.3 Chat command `/ride`
+
+A client built-in of the command dispatcher (decision 0020 items 1–2, "Client options"),
+registered under the Tessera name `ride` with owner `Client` before any plugin loads. It sends
+nothing to a server or a feed (except the scenario dismount of §16.1). Arguments are the
+`chat-window.md` §7.3 tokens:
+
+| Line | Effect |
+|---|---|
+| `/ride` | Toggle: summoning is cancelled; mounting or mounted dismounts (by the player); on foot mounts the remembered SOURCE (the last one mounted, else `--mount`'s, else `auto`) with `summon` |
+| `/ride SPEC` | Mounts SPEC (§16.2 grammar and limits; default `summon`). Refused while not on foot: "Already mounted. Use /ride off first." |
+| `/ride off` | Dismounts by the player (cancels summoning) |
+| `/ride list [PAGE]` | Posts the body's offered mounts (§14.10 order of `mounts.md`), 10 per page as `Log` lines: index, DID, mount-type labels, and the effect's name from the install's string tables; PAGE 1 … 999 (default 1); a page past the end posts "No more mounts." |
+
+Errors and refusals are posted as one `Error` line (decision 0020 item 4) with the reason.
+Short help: "mount, dismount or list mounts"; long help: "/ride [SPEC | off | list [PAGE]]:
+toggles riding, mounts SPEC, dismounts, or lists this body's mounts."
+
+<a id="s16-4"></a>
+### 16.4 Key action `toggle_mount`
+
+A game-band action of context `movement` (`keymap.md` §8), kind button, policy **exact**,
+default binding `Ctrl+M`; a press does what `/ride` without arguments does. The policy is exact
+so that a subset binding of `M` elsewhere (a map panel key) is not fired by `Ctrl+M` and the
+other way round (`keymap.md` §7.2: pass 1 prefers exact matches). No command of the original's
+key map maps to it (`keymap.md` §12.14.2 is unchanged); users rebind it in Tessera's keymap
+file. While the chat entry is open the key types text, as every key does (decision 0020
+item 8). The HUD help line names it "mount".
+
+<a id="s16-5"></a>
+### 16.5 Mount states
+
+The walker keeps one state for the avatar, on the walker's clock (the physics step clock in
+scripted walks):
+
+| State | Entered by | Shown (`mounts.md`) | Left by |
+|---|---|---|---|
+| on foot (0) | start; the end of dismounting; a cancel | on-foot clips | a request that passes the checks below |
+| summoning (1) | a `summon` request | the skill's induction script on the rider (§14.7) | after `Induction_Duration` (2.0 or 3.0 s here) → mounting; cancelled → on foot |
+| mounting (2) | the end of summoning | the Decision of §4.1 applied; the start script and its mounting clip; after the start script's graph completes (0.4 s here), the mount appears with its fade-in and the channelling loop starts (§14.7) | when `Mount_Is_Mounted` is set (same frame as the loop's start) → mounted |
+| mounted (3) | the end of mounting; an `instant` request | §14.2–§14.9 | a dismount request (by the player), water, fly mode, a feed's `none` (by other) |
+| dismounting (4) | a dismount | the dismount script (§14.7): at rest and by the player, the mount's bow and a 1.5 s wait; otherwise none | the end of the wait (at once when moving or by other): the loop stops, `Mount_Is_Mounted` false, the mount fades out (it keeps being drawn for its 0.25 s fade, already in state 0) |
+
+**Checks before summoning or an instant mount** (refusals post their reason, §16.3, §16.9):
+the body can ride (§16.1); the effect resolves and is drawable (§16.2); the feet are not in
+water (`Entity_Element` 1–3, `mounts.md` §14.12); the area allows the type (`mounts.md` §4.7
+steps 5–6 with the walker's area lookup at the feet; an unknown area allows every type). A
+summoning that meets movement input (forward, back, strafe, jump, or a horizontal speed above
+0.05 m/s), a fall, water, fly mode or another request is cancelled ("Summoning interrupted.").
+A mounted rider entering water is dismounted by other. Teleports (`--place`, `/loc`, the
+sandbox) keep the state; summoning is cancelled by them.
+
+<a id="s16-6"></a>
+### 16.6 Movement while mounted
+
+- **Normal mounts and the Clydesdale:** the Generic controller with the Mounted or
+  MountedWalking layer, the speed factor of `mounts.md` §5.1 Decision (the effect's
+  `ForwardSource_Movement_MountSpeedMultiplier` entry added to the template's 1.0, with the
+  `Movement_MountSpeedBonus` rule of §2.6), on-foot turning; walking style from the `walk`
+  action and the walking flag (`collision.md` §11.8); the Clydesdale gait rule of `mounts.md`
+  §14.6.
+- **War-steeds:** the controller of `mounts.md` §5.3–§5.7 with the actor values and the gear
+  rule of §14.6 (`lock=` fixes the selected gear; walking style caps it at Walk), world limit
+  *W* from the world property of §5.5 (its dictionary default when the world has none).
+- **Both:** the jump of `collision.md` §11.10 with the mounted branch; autorun works as on
+  foot; the rider's capsule stays the collision shape; the movement log and the HUD use the
+  controller's layer names.
+
+<a id="s16-7"></a>
+### 16.7 Figures, clips and drawing
+
+- **The mount figure** is assembled from the MeshFX node's entity like a placed figure (§10.4;
+  its own appearance list; war-steed trait appearances are not applied, `mounts.md` MQ12), gets
+  its own animation component, and is sampled on the asset workers like every character
+  (§10.5), within the rider's animation distance. It is not a separate entity of the sandbox:
+  the walker owns it as part of the avatar.
+- **Clips** of rider and mount follow `mounts.md` §14.5 (state key, layers, ramps, the client's
+  rate, matched phases), evaluated on the workers when the state key changes and cached per
+  (body, effect, key), at most 64 keys per pair (least recently used first out). While a new
+  evaluation is pending the previous clips keep playing. The on-foot rules of §10.5 (speed blend,
+  rate matching) do not apply while mounted; they apply again from the frame the loop stops.
+- **Placement** per frame as `mounts.md` §14.8: after the rider's pose of the frame is known,
+  the mount's model transform is composed from the rider's bone 0 and the node's location,
+  offset and scale; the mount is drawn with the rider (same distance, level of detail and fade).
+- **Camera** as `mounts.md` §14.9.
+
+<a id="s16-8"></a>
+### 16.8 Scripted walks and the frame loop
+
+- `--walk-path` runs accept `--mount SPEC` (with `instant` only; `summon` is a usage error
+  there): every walk starts mounted before its 0.5 s settle; figures are not drawn, but the
+  rider's and the mount's clips are still chosen (resolver only, no GPU) so that the walk log
+  can report them.
+- In a frame the mount state machine and the gear rule run inside the physics steps (§13.1);
+  clip choice follows the controller state of the last step; placement follows the pose
+  collection of §10.5.
+
+<a id="s16-9"></a>
+### 16.9 HUD line
+
+While a mount is involved the HUD shows one line below the movement-state line of §13.1:
+
+`mount <state> <name> <DID> <type labels> | gait <key> <label> lock <label or -> | <walk or run> |
+<ground speed> m/s | rider <clip DID> mount <clip DID>`
+
+`<state>` is one of `summoning 1.4s` (time left), `mounting`, `mounted`, `dismounting`; the
+name is the effect's `Mount_Name_Initial` from the install's string tables (the DID alone when
+it cannot be read). After a refusal or an interruption the line reads `mount: <reason>` for 5 s.
+Text follows the HUD's sanitising and caps (§6).
+
+<a id="s16-10"></a>
+### 16.10 Logs for headless checks
+
+**Frame log** (`--frame-log`, §7): these columns are appended after the columns that exist when
+they are implemented; readers must find columns by their header names (other milestones append
+too). One value per frame, after the frame's last physics step:
+
+| Column | Value |
+|---|---|
+| `mount_effect` | the mount effect's DID in hex (`0x…`), 0 when none |
+| `mount_state` | 0–4 (§16.5) |
+| `mount_type` | the effect's `Mount_Type` in hex, 0 when none |
+| `gait` | `MountMovement_CurrentSpeed` of the rider (0 on foot; 2 when unset while mounted) |
+| `locked_gear` | the selected gear (4–7) or 0 |
+| `style` | 1 walking, 2 running (`Movement_MovementStyle`) |
+| `move_layer` | the controller's top movement layer (`BasePlayer`, `Mounted`, `Warsteed`, `MountedWalking`, `Walking`, `Falling`, `Swimming`, …) |
+| `control_speed` | the forward control velocity after the step, m/s (signed) |
+| `ground_speed` | the feet's horizontal speed over the frame, m/s |
+| `rider_clip`, `rider_layer`, `rider_rate` | the rider's shown locomotion clip (its idle clip when not moving): DID in hex, data layer, playback rate |
+| `mount_clip`, `mount_layer`, `mount_rate` | the same for the mount (0 when no mount is drawn) |
+| `mount_alpha` | the mount's opacity, 0–1 |
+
+The summary adds, when a mount was used: seconds per state, the gaits seen in the order they
+first appeared, the highest `control_speed` and `ground_speed` while mounted, and the number of
+clip changes of rider and mount.
+
+**Walk log** (`--walk-path`, §13.6): the same columns from `mount_effect` to `control_speed`, then
+`rider_clip`, `mount_clip`, appended after `contacts`, one row per step.
+
+<a id="s16-11"></a>
+### 16.11 The exit-criterion check (Tessera's verification design)
+
+A real-data test (skipped without `TESSERA_GAME_DIR`) runs scripted walks with `--mount`, reads
+the walk log and compares it with values it derives from the install at run time (no DID is
+written into the test):
+
+1. Human M on `auto` (a horse of its Tall group) on flat ground: 4 s forward, 1 s standing, 2 s
+   backward, 2 s walking forward. Pass: `mount_state` 3 throughout; `move_layer` Mounted (and
+   MountedWalking while walking); the steady forward `control_speed` equals the Mounted layer's
+   forward speed × the effect's speed factor within 0.05 m/s; `rider_clip` and `mount_clip`
+   equal the resolver's clips for each state key (`mounts.md` §14.5).
+2. Hobbit M on `auto` (a mount of its Short group): as 1.
+3. Human M on `steed:medium`: 4 s forward, 1 s released, 3 s backward. Pass: gaits 4, 5, 6, 7 in
+   that order while forward is held, one step per 1/*G* s at most; `control_speed` never above
+   the limit of `mounts.md` §5.4 step 3; held speed (± 0.01 m/s) while released; gaits then fall
+   to 2 and 1; rider and mount clips follow the gait as the resolver gives them.
+4. Human M with `@summon` in the frame loop (headless): states 1 → 2 → 3 at the induction
+   duration and the start script's length (±1 frame); with forward input during summoning the
+   state returns to 0.
+5. A walk that starts in water refuses the mount (state 0, the reason in the log notes).
+
+<a id="s16-12"></a>
+### 16.12 Open items
+
+> **OPEN:** (scenario sessions) how `scenario-feed.md`'s P5 travel revision (revision 8) names the mount REF
+> of the `mount` step (effect, skill or either) and whether the walker's dismount should send
+> `dismount`; §16.1 assumes either and the command.
+
+> **OPEN:** `Equipment_Hide`, which the start script runs on held implements of two types
+> (`mounts.md` §14.7): which held items it hides and how. Decision: the walker hides none.
+
+> **OPEN:** (implementer, 2026-10-11) check 1 of §16.11 rides `auto` as "a horse of its Tall
+> group", but `auto` is `dir:0` (§16.2) and in this install the MountDirectory's Tall group
+> begins with war-steed skills (its first skill toggles the medium war-steed effect), so `auto`
+> mounts a war-steed for Human M. The real-data test (`apps/client/tests/mount_walk_real_data.rs`)
+> rides the first normal mount of the body's offered list instead. Should the offered order of
+> `mounts.md` §14.10 leave the directory's war-steed skills out of the directory part, should
+> `auto` skip them, or should check 1 name another source?
+>
+> **Resolved for the walker (implementer, 2026-10-13):** `auto` skips the directory group's
+> war-steed skills and resolves to the body's first **normal** mount (`mounts.md` §14.11 Normal
+> category); it is no longer `dir:0`. So `--mount auto` always rides a horse (an automated run
+> never starts on a war-steed), `dir:N` still indexes the full offered list of §14.10 including
+> its war-steeds, and the real-data checks 1 and 2 ride `auto` directly. A body offered no
+> normal mount is a resolution error. Still open for the spec writer: reconcile the §16.2
+> grammar line (`"auto" = "dir:0"`) and the §16.11 check-1 prose ("a horse of its Tall group")
+> with this, and with the §14.10 offered order (per the header review note of 2026-10-13).
+
+> **OPEN:** (implementer, 2026-10-11) check 1 of §16.11 expects the steady forward
+> `control_speed` to equal the Mounted layer's forward speed × the speed factor within
+> 0.05 m/s. Tessera's step multiplies the horizontal velocity by the layer's `VelocityDamper`
+> to the power of the step length (`collision.md` §12.3 step 3; the mounted layers keep
+> BasePlayer's 0.2 here), so the steady speed is 6.5 × 1.62 × 0.2^(1/60) ≈ 10.25 m/s instead
+> of 10.53 m/s, as on foot. The walker logs the controller's horizontal velocity and the test
+> applies that factor. Is the expectation meant without the damper (then the controller's
+> damping of the control velocity is the question, `collision.md` §11.6 item 2 says it is not
+> damped), or with it?
+>
+> **Resolved (implementer, 2026-10-13): with the damper.** `collision.md` §12.4 (b) is an
+> explicit Tessera Decision that the player controller damps its horizontal control velocity
+> (steady speed target × damper^(1/60) ≈ 6.33 m/s for players, not the original's 6.5), a known
+> departure from `collision.md` §11.6 items 2–3. The mounted layers keep BasePlayer's damper, so
+> §16.11 check 1's "forward speed × speed factor" is read with that same factor; the walker logs
+> the controller's (damped) horizontal control velocity and `mount_walk_real_data.rs` applies
+> `damper^(1/60)` to the expected speed. No change to `tessera-physics`: aligning the mounted
+> steady speed with the original's 6.5-style undamped control velocity is deferred together with
+> the on-foot §12.4 (b) departure (not a P5 item).
+
+> **OPEN:** (implementer, 2026-10-11) check 3 of §16.11 expects the gaits to "fall to 2 and 1"
+> while backward is held. By `mounts.md` §14.6 item 4 gait 2 needs a step whose forward
+> control velocity lies within ±0.0002 m/s, but braking changes it by *a*y × 1/60 s per step
+> (0.27 m/s for *a*y 16 here), so the gait passes from Walk straight to Backwards (observed
+> 7, 6, 5, 4, 1 on the medium war-steed). Should the step in which the velocity changes sign
+> give Neutral, or does check 3 only need 1 at the end?
+>
+> **Resolved (implementer, 2026-10-13): the crossing step gives Neutral.** The walker holds the
+> gait at Neutral (2) for the single step whose forward control velocity crosses from forward
+> (> 0.0002 m/s) to backward (< −0.0002 m/s), so the gaits fall 7, 6, 5, 4, 2, 1 and check 3's
+> "fall to 2 and 1" is met. This refines `mounts.md` §14.6 item 4 for the walker only
+> (`tessera_physics::controller::gait::gait_from_speed_step`); the server's gait 3 /
+> `Neutral_Forwards` rule stays the OPEN of `mounts.md` §14.6.
+
+> **OPEN:** (implementer, 2026-10-11) observation for `mounts.md` §14.3: the table's single
+> "Back" column holds the **walking** back clips. With the merged evaluation of §14.1, Human M
+> on the first normal horse of its group plays the Horse A back clip 0x0500365F with style
+> `Walking` (rider 0x05003666), but 0x05000D17 with style `Running` (rider 0x0500144F), the clip
+> the table lists for the war-steeds. Should the table give both back clips per family?
+
+> **OPEN:** (implementer, 2026-10-11) §16.3 and §16.5 disagree on `/ride SPEC` during
+> summoning: §16.3 refuses it while not on foot ("Already mounted. Use /ride off first."), §16.5
+> says a summoning that meets another request is cancelled ("Summoning interrupted."). The
+> walker follows §16.3 (the request is refused and summoning goes on). Which rule applies?
+>
+> **Resolved (implementer, 2026-10-13): the two rules apply to different requests.** An explicit
+> `/ride SPEC` (a request for a *particular* mount) while not on foot is **refused** with §16.3's
+> message and summoning goes on; the toggle without arguments (`/ride`, the `toggle_mount` key,
+> §16.4) and the other interrupts of §16.5 (fly mode, a teleport, the feed's `none`) **cancel**
+> the summoning ("Summoning interrupted."). So "another request" of §16.5 is the toggle/interrupt,
+> not a second explicit spec. The walker already behaves this way; the spec writer may fold this
+> reading into §16.3/§16.5 at the next revision.
+
+> **OPEN:** (implementer, 2026-10-11) choices the section leaves open, taken as follows until
+> confirmed: (a) one request at a time: while a request resolves or evaluates another is
+> refused ("A mount request is pending."), and resolution, evaluation and `/ride list` run on
+> threads of their own (at most three), not on the asset workers named by §16.7, because a
+> resolution reads the gameplay store for hundreds of milliseconds; clip binding does run on
+> the asset workers; (b) the area check treats a cell without `Area_DID`, and an area or dungeon
+> object that cannot be read, as an unknown area (allowed), though `mounts.md` §4.7 step 5
+> refuses a cell without `Area_DID`; (c) the mounted jump table is scanned once per (body,
+> effect) with the gait unset, so gait-driven `Mount_Movement_Jump_Modifier` cases take their
+> unset branch; (d) the dismount wait shows the mount's `Emote_Mounted_Bow` by starting that
+> script on the mount itself (the resolver does not follow the Child target), and
+> `Emote_Idle10` is not shown; (e) a `--walk-path` walk whose first step is in water rides on
+> foot and its summary line notes "mount refused: You cannot mount in water." (check 5).
+
+> **OPEN:** (implementer, 2026-10-11) the mounted jump of §16.6 (`mounts.md` §14.12: the
+> mounted branch of `Loc_Jumping`, `AirTime` 0.285). The walker scans the rider's jump scripts as
+> `collision.md` §11.10 does on foot (`Movement_ActionKey`, then `Loc_Jumping`, `Entity_FinalElement`
+> 5) with `Mounted_Channeling_Loop` marked running, the rider fields, status 5 and
+> `Mount_Is_Mounted` true, and swaps the resulting table into the controller while mounted. On
+> this install the static scan reaches no `IsJump` node of the mounted branch (Human M on a
+> normal horse, `MountMovement_CurrentSpeed` unset, 2, 4, 6 or 7, with and without
+> `Script_IsMounted` true), so the on-foot jump still applies. Which gate of the mounted branch
+> (beyond the WhenRunning and the gait cases) does the scan miss, and which property values
+> select the 0.285 s node?
+>
+> **Resolved for the walker (implementer, 2026-10-13): no mounted jump.** Because the static
+> scan finds no mounted-branch node, the walker gives the controller an **empty** jump table
+> while mounted, so a mounted rider cannot jump and the on-foot jump does **not** carry over (it
+> returns at the dismount). If a later install or a deeper scan exposes the mounted branch, the
+> found table is swapped in instead (`MountMover::with_jump`). The gate the scan misses and the
+> property values that select the 0.285 s node (and what the original does for a mounted jump)
+> stay open for the spec writer / server.
+
+> **OPEN:** (implementer, 2026-10-11, `apps/client` `travel::hub`, `map::hub`) Wiring
+> choices of the client: (a) the feed's `mount player REF` (§16.1) runs as an instant mount
+> of REF's record (a mount effect, or a skill toggling one); a literal REF names nothing the
+> walker can draw and leaves the rider as it is (the plugin views still follow it, LPA
+> §15.5); `none` dismounts by other. Neither §16.1 nor §16.2 says whether the feed's mount is
+> summoned or instant. (b) `toggle_mount` (§16.4) is not in `tessera-input`'s defaults on
+> this branch, so the windowed client takes Ctrl+M (no other modifier) as the action itself,
+> with and without a game UI (with one, beside M for `ToggleMapPanel` and Ctrl+J for
+> `ToggleWorldJoin`, not while a text field has the keyboard); it is not rebindable and not on
+> the HUD help line until the action is added to `tessera-input` (owner of that crate)
+> [update, P5 exit verifier 2026-10-12: closed; `toggle_mount` is now a `tessera-input`
+> default (context `movement`, `Ctrl+M`, policy exact), taken by the walker's controls, named
+> "mount" on the HUD help line and rebindable; the raw Ctrl+M path is removed]. (c) `--command` lines
+> run once the install's command words are read, which can be before the walker exists; a
+> queued `/ride` then runs in the walker's first frame, before a `--mount` given on the
+> command line has mounted (observed: `--command "/ride off"` with `--mount` ends mounted).
+>
+> **Resolved (implementer, 2026-10-13):** (a) a feed's `mount player REF` is applied as an
+> **instant** mount of REF's effect (no summon induction or mounting phase; the feed owns the
+> state and reports the rider already mounted); `none` dismounts by other. (c) the frame loop
+> **holds** the dispatcher's `/ride` requests while the walker still has an unapplied `--mount`
+> choice, so a `--command "/ride …"` queued before the walker exists runs **after** `--mount`
+> has been requested; `--command "/ride off"` with `--mount` now ends on foot. (b) stays closed
+> as the P5 exit verifier recorded.
+
+> **OPEN:** owner observations to be numbered by the checklist maintainer (P5 rows from O140):
+> in the original, (a) the delay between the end of the summon and the mount's appearance,
+> (b) whether the steed's gait rises one step about every 0.5 s while forward is held and holds
+> its speed when released, (c) the camera's height while mounted, (d) whether a River-hobbit's
+> horse is drawn at 0.7 scale, (e) what happens when riding into deep water.
+
+---
+
 <a id="s12"></a>
 <a id="s15"></a>
 ## 15. Change log
@@ -2662,3 +3043,6 @@ the fog, sky placement.
 | 2026-10-09 | Spec writer (dirty room), water features (owner report of 2026-10-09): OPENs at the end of §14.5 (route placed water surfaces by `water.md` §8.5; draw second colour layers and animated texture matrices) and §14.6 (flow-map records by `water.md` §8.6). §14.5 and §14.6 Revised; review pending. |
 | 2026-10-09 | Spec writer (dirty room), second water-feature revision: OPEN at the end of §14.6 (evaluate curve-valued water parameters each frame; *B* for curve-valued scales; fast rates and scale 0, `water.md` §8.7.1–§8.7.2). §14.6 stays Revised; review pending. |
 | 2026-10-10 | Spec writer (dirty room), note (3) of the `water.md` re-review of 2026-10-09: both §14.6 OPENs name the lava record 0x2B000810 (draw by `water.md` §8.6.5; its curve-valued 1186 and 1187 evaluated each frame), and the flow-map OPEN points to the per-record colour of `water.md` §8.6.4 (revised the same day). §14.6 Accepted → Revised, awaiting review. |
+| 2026-10-11 | Spec writer (dirty room), P5: new §16, mounts in the walker (Tessera rules only; the client facts are in `mounts.md` §14): scope and sessions (offline sandbox; refused with `--server`; the feed owns mounts in scenario sessions), the `--mount SPEC` grammar with hostile-input limits and resolution, the `/ride` dispatcher built-in, the `toggle_mount` action (`movement`, exact, `Ctrl+M`), the five mount states with checks and cancels, mounted movement, figures, clips and drawing, scripted walks, the HUD line, frame-log and walk-log columns for headless checks, the exit-criterion test design and OPENs. Placed before the change log; no other section changed. §16 status: Review. |
+| 2026-10-13 | §16 reviewed by an independent spec reviewer (fresh session, not the writer): **passed** against CLEAN_ROOM.md §5.3 (all items). Verified that §16 adds no client fact and that the `mounts.md`/`game-controls.md`/`keymap.md`/decision-0020 references it relies on exist. No content change; §16 status Review → Accepted. See the review record (one non-blocking note on §16.11 check 1, already flagged by the §16.12 OPEN). |
+| 2026-10-13 | Implementer (clean room): resolution notes appended to the §16.12 implementer OPENs now that §16 is Accepted, and the walker/`tessera-physics` conformed: `auto` picks the body's first normal mount (not `dir:0`, so Human M is a horse); the war-steed gait holds Neutral at the forward→backward crossing so braking falls to 2 and 1 (check 3); the mounted steady speed keeps the `collision.md` §12.4 (b) damper (check 1 read with the factor, no physics change); no mounted jump (empty table while mounted, the on-foot jump not carried over); a feed's `mount` is instant; `/ride` dispatcher requests are held until `--mount` is applied. Residual spec-writer items (reconcile §16.2/§16.11 prose, the server gait-3 and mounted-jump rules) kept as OPENs. No normative §16 prose changed. |

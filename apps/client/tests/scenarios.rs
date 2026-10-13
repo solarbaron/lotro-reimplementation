@@ -26,6 +26,11 @@ const GROUPS: [(&str, &str); 6] = [
 /// `quest-journal.md`; ROADMAP P3 deliverables), each with its committed log.
 const P3_SCENARIOS: [&str; 4] = ["dialogue", "vendor", "loot", "quest-log"];
 
+/// The map, travel, instance and mount scenarios of decision 0024 P5 (`map-windows.md`,
+/// `travel-windows.md`, `walker.md` §16; ROADMAP P5 deliverables), each with its committed
+/// log.
+const P5_SCENARIOS: [&str; 4] = ["map", "travel", "instances", "mount"];
+
 fn scenarios_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/scenarios")
 }
@@ -87,6 +92,10 @@ fn every_system_group_has_a_committed_scenario_with_a_log() {
     for name in P3_SCENARIOS {
         let s = scenarios_dir().join(format!("{name}.scenario"));
         assert!(s.is_file(), "P3: {} missing", s.display());
+    }
+    for name in P5_SCENARIOS {
+        let s = scenarios_dir().join(format!("{name}.scenario"));
+        assert!(s.is_file(), "P5: {} missing", s.display());
     }
     for s in committed() {
         // All committed scenarios are synthetic (they play without an install), so each

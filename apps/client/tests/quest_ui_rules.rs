@@ -229,6 +229,7 @@ fn history_order_survives_unrelated_changes() {
         label: Text::Literal("Mill".into()),
         icon: None,
         quest: Some(lit("Bravo")),
+        note_type: None,
     }));
     j.idle();
     assert_eq!(j.quests.details_shown(), Some((LITERAL_KEY_BASE, true)));
@@ -306,6 +307,7 @@ fn lost_notes_rebuild_the_markers() {
         label: Text::Literal("Well".into()),
         icon: None,
         quest: Some(lit("Alpha")),
+        note_type: None,
     }));
     j.idle();
     assert!(j.quests.has_markers());
@@ -319,6 +321,7 @@ fn lost_notes_rebuild_the_markers() {
         label: Text::Literal("Mill".into()),
         icon: None,
         quest: Some(lit("Alpha")),
+        note_type: None,
     }));
     for i in 0..=MAX_NOTES {
         j.apply(&Event::Npc(NpcEvent::QuestTracked {

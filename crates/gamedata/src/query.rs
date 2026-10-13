@@ -63,13 +63,16 @@ pub enum Family {
     Pet,
     /// Induction actions (`interaction.md` §3.8; `combat-data.md` §7.9).
     Induction,
+    /// Map regions (P5 travel revision; `map-windows.md` §5.1): R-nodes and R-dungeons;
+    /// elements carry rows and, when markable, a location.
+    MapRegion,
     /// An explicit list of DIDs (local scenarios only).
     Did,
 }
 
 impl Family {
     /// Every family, in the order of §8.3 (`did` last).
-    pub const ALL: [Family; 26] = [
+    pub const ALL: [Family; 27] = [
         Self::Item,
         Self::Skill,
         Self::Effect,
@@ -95,6 +98,7 @@ impl Family {
         Self::Hotspot,
         Self::Pet,
         Self::Induction,
+        Self::MapRegion,
         Self::Did,
     ];
 
@@ -154,6 +158,7 @@ impl Family {
             Self::Hotspot => "hotspot",
             Self::Pet => "pet",
             Self::Induction => "induction",
+            Self::MapRegion => "map-region",
             Self::Did => "did",
         }
     }
@@ -164,10 +169,11 @@ impl Family {
         Self::ALL.into_iter().find(|f| f.keyword() == s)
     }
 
-    /// Whether the family's elements come from a table (row numbers, locations).
+    /// Whether the family's elements come from a table (row numbers, locations): the
+    /// places and map-notes tables and the map regions (P5 travel).
     #[must_use]
     pub fn is_table(self) -> bool {
-        matches!(self, Self::Place | Self::MapNote)
+        matches!(self, Self::Place | Self::MapNote | Self::MapRegion)
     }
 
     /// Whether this resolver has no decoder view for the family (`scenario-feed.md` §8.3
@@ -250,6 +256,10 @@ pub enum Attribute {
     Of,
     /// `region`.
     Region,
+    /// `mount-type` (P5 travel: effects).
+    MountType,
+    /// `war-steed` (P5 travel: effects).
+    WarSteed,
 }
 
 impl Attribute {
@@ -291,6 +301,8 @@ impl Attribute {
             Self::Tier => "tier",
             Self::Of => "of",
             Self::Region => "region",
+            Self::MountType => "mount-type",
+            Self::WarSteed => "war-steed",
         }
     }
 }
@@ -397,6 +409,9 @@ pub const CREATURE_KINDS: &[&str] = &["mob", "npc", "container"];
 /// The `level` keywords of the area family (`map-data.md` §2.3).
 pub const AREA_LEVELS: &[&str] = &["area", "territory", "region", "dungeon"];
 
+/// The `kind` keywords of the map-region family (`map-windows.md` §5.1; P5 travel).
+pub const MAP_REGION_KINDS: &[&str] = &["node", "dungeon"];
+
 /// The attribute of `family` named `name`, with its value type (§8.3), or `None`.
 #[must_use]
 pub fn attribute(family: Family, name: &str) -> Option<(Attribute, AttrType)> {
@@ -436,7 +451,11 @@ pub fn attributes(family: Family) -> &'static [(Attribute, AttrType)] {
             (A::Induction, T::YesNo),
             (A::Toggle, T::YesNo),
         ],
-        F::Effect => &[(A::Role, T::Keyword(EFFECT_ROLES))],
+        F::Effect => &[
+            (A::Role, T::Keyword(EFFECT_ROLES)),
+            (A::MountType, T::Value),
+            (A::WarSteed, T::YesNo),
+        ],
         F::Trait => &[
             (A::Nature, T::Value),
             (A::Class, T::Value),
@@ -469,6 +488,10 @@ pub fn attributes(family: Family) -> &'static [(Attribute, AttrType)] {
         F::Place => &[(A::Region, T::Integer)],
         F::MapNote => &[(A::Type, T::Value), (A::Region, T::Integer)],
         F::Area => &[(A::Level, T::Keyword(AREA_LEVELS))],
+        F::MapRegion => &[
+            (A::Kind, T::Keyword(MAP_REGION_KINDS)),
+            (A::Region, T::Integer),
+        ],
         _ => &[],
     }
 }
@@ -721,6 +744,12 @@ pub enum LabelContext {
     EquipSlot,
     /// A damage type (`Effect_DamageType`).
     DamageType,
+    /// A map-note type key (`MapNote_Type`'s mapper; P5 travel).
+    MapNoteType,
+    /// A group-size key (`FellowshipMakerUI_GroupSize`'s mapper; P5 travel).
+    GroupSize,
+    /// A difficulty-tier key (`FellowshipMakerUI_DifficultyTier`'s mapper; P5 travel).
+    DifficultyTier,
 }
 
 /// A note of one resolution (`scenario-feed.md` §8.6: shortfalls are notes, never errors).

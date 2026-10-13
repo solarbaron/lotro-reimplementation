@@ -172,6 +172,10 @@ impl App {
         client_args
             .open_panel
             .retain(|n| crate::quests::parse_journal_panel(n).is_none());
+        // The map window's and the travel windows' names are the P5 hubs'.
+        client_args.open_panel.retain(|n| {
+            !crate::map::parse_map_panel(n) && crate::travel::parse_travel_panel(n).is_none()
+        });
         let mut ui = (host.is_some() && args.ui_enabled())
             .then(|| crate::ui_host::client::ClientUi::new(&client_args));
         if let Some(u) = ui.as_mut() {
@@ -401,6 +405,9 @@ impl App {
             quit = ev.quit || ev.duration_done;
             shot = ev.screenshot;
             flight_done = ev.flight_done;
+            // P5: the dispatcher's `ride`, `findplace` and `leaveinstance`, the feed's
+            // mounts for the walker, and the walker's mount state for the plugin views.
+            crate::travel::hub::run_p5_requests(rt, walker, now);
             if let Some(ui) = self.ui.as_mut() {
                 ui.after_update(walker, rt, &ev);
                 // The NPC windows (decision 0024 P3): after the frame's UI events.
@@ -430,6 +437,11 @@ impl App {
                     // The social panels (P4) read the same list.
                     let data = rt.p1.data().cloned();
                     crate::ui_host::client::social_frame(host, world, data.as_deref(), events);
+                    // Travel and the instance finder (P5), then the map window, read the
+                    // same list.
+                    rt.p5.frame(host, world, &rt.npc, events, now);
+                    rt.map
+                        .frame(host, world, rt.p5.refs(), &rt.npc, events, radar.as_ref());
                     // The indicators over ringed NPCs (§8.2), at the walker's positions.
                     let position = |id| walker.entity_render_pos(id);
                     rt.quests
@@ -702,6 +714,7 @@ impl ApplicationHandler for App {
                         if matches!(event, WindowEvent::Focused(false)) {
                             rt.npc.release_keys();
                             rt.quests.release_keys();
+                            rt.map.release_keys();
                         }
                         tessera_input::winit_adapter::window_event(&event, |e| {
                             // Escape and Enter on an active NPC window (P3, npc-windows.md
@@ -721,9 +734,19 @@ impl ApplicationHandler for App {
                             {
                                 rt.quests.request_toggle();
                             }
+                            // P5: M (map), Ctrl+J (finder). Every event updates the
+                            // modifiers; the keys act only without focus. `toggle_mount`
+                            // (Ctrl+M) is a `tessera-input` action the walker's controls
+                            // take (`walker.md` §16.4).
+                            let focused = ui.host().is_some_and(|h| h.keyboard_focused());
+                            if let Some(crate::map::P5Key::Finder) = rt.map.key(&e, focused) {
+                                rt.p5.request_finder();
+                            }
                             ui.raw_event(walker, rt, &e, &mut cursor);
                         });
                     }
+                    // Without the game UI the walker's controls take every key,
+                    // `toggle_mount` (Ctrl+M, `walker.md` §16.4) among them.
                     _ => tessera_input::winit_adapter::window_event(&event, |e| walker.input(&e)),
                 }
             }

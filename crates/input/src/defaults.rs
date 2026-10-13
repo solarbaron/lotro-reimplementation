@@ -106,6 +106,9 @@ fn action_defs() -> Vec<ActionDef> {
         b("jump").with_modifiers(sub),
         b("walk").with_modifiers(sub),
         b("autorun").with_modifiers(sub),
+        // P5 (`walker.md` §16.4): mount or dismount, policy exact so that `Ctrl+M` and a
+        // plain `M` elsewhere never fire each other.
+        b("toggle_mount"),
         // fly
         ActionDef::axis("fly_vertical"),
         b("fly_boost").with_modifiers(sub),
@@ -294,6 +297,7 @@ fn default_table() -> Vec<(&'static str, &'static str, Vec<Entry>)> {
         (MOVEMENT, "jump", vec![D("Space"), D("PadSouth")]),
         (MOVEMENT, "walk", vec![D("Shift")]),
         (MOVEMENT, "autorun", vec![D("NumLock"), D("R"), D("PadL3")]),
+        (MOVEMENT, "toggle_mount", vec![D("Ctrl+M")]),
         (
             FLY,
             "fly_vertical",
@@ -467,6 +471,8 @@ pub struct StandardActions {
     pub jump: ActionId,
     pub walk: ActionId,
     pub autorun: ActionId,
+    /// Mount or dismount (`walker.md` §16.4).
+    pub toggle_mount: ActionId,
     pub fly_vertical: ActionId,
     pub fly_boost: ActionId,
     pub fly_slow: ActionId,
@@ -629,6 +635,7 @@ impl StandardActions {
             jump: a("jump")?,
             walk: a("walk")?,
             autorun: a("autorun")?,
+            toggle_mount: a("toggle_mount")?,
             fly_vertical: a("fly_vertical")?,
             fly_boost: a("fly_boost")?,
             fly_slow: a("fly_slow")?,

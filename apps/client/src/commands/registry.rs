@@ -123,6 +123,8 @@ pub enum Builtin {
     Channel(Channel),
     /// A P4 social command.
     Social(SocialWord),
+    /// A P5 built-in (`ride`, `findplace`, `leaveinstance`; [`super::p5`]).
+    P5(super::p5::P5Word),
 }
 
 /// What runs a command.

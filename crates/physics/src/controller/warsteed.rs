@@ -350,9 +350,94 @@ pub fn step(
     }
 }
 
+/// The war-steed controller as the [`super::Controller`] runs it (`mounts.md` §5.2: the
+/// controller kind Mounted for a mount type with a war-steed bit). It keeps the stored
+/// control velocity between updates (contacts never change it, §5.4) and the actor values;
+/// [`super::Controller::step`] calls [`WarSteedDrive::update`] instead of the player
+/// controller's target and acceleration, and the displacement, physics velocity and
+/// contacts follow as for the player controller (§5.4 last paragraph).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct WarSteedDrive {
+    /// The actor's properties (§5.3–§5.7); the caller keeps `gait` and `locked_gear`
+    /// current (Tessera's gear rule, `mounts.md` §14.6, [`super::gait`]).
+    pub actor: WarSteedActor,
+    /// The gait multipliers for the current gait and locked gear.
+    pub gaits: GaitMultipliers,
+    /// The world limit *W* (§5.5).
+    pub world_limit: f32,
+    /// The stored control velocity (sideways, forward), m/s.
+    pub velocity: [f32; 2],
+    /// The last update's result (`None` before the first).
+    pub last: Option<WarSteedStep>,
+}
+
+impl WarSteedDrive {
+    /// A drive at rest.
+    #[must_use]
+    pub fn new(actor: WarSteedActor, gaits: GaitMultipliers, world_limit: f32) -> Self {
+        Self {
+            actor,
+            gaits,
+            world_limit,
+            velocity: [0.0; 2],
+            last: None,
+        }
+    }
+
+    /// The parameter block for the layered parameters `layered` (§5.3).
+    #[must_use]
+    pub fn params(&self, layered: &MovementParams) -> WarSteedParams {
+        WarSteedParams::build(layered, &self.actor)
+    }
+
+    /// One update of `seconds` with input pair `input` (*x*, *y*): stores the new control
+    /// velocity and returns the update's mean control velocity (sideways, forward) for the
+    /// displacement. The turn is the caller's ([`turn_degrees`]).
+    pub fn update(&mut self, layered: &MovementParams, input: [f32; 2], seconds: f32) -> [f32; 2] {
+        let params = self.params(layered);
+        let s = step(
+            &params,
+            &self.actor,
+            &self.gaits,
+            self.world_limit,
+            StepInput {
+                input,
+                turn_input: 0.0,
+                velocity: self.velocity,
+                seconds,
+            },
+        );
+        self.velocity = s.velocity;
+        self.last = Some(s);
+        s.mean
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn drive_keeps_its_velocity_between_updates() {
+        // mounts.md §11.3 through the drive: the stored velocity carries over.
+        let a = WarSteedActor {
+            gait: Some(7),
+            ..actor()
+        };
+        let g = GaitMultipliers {
+            gallop_speed: 1.0,
+            locked_gear_speed: None,
+            turn: 0.47,
+        };
+        let mut d = WarSteedDrive::new(a, g, 16.0);
+        d.velocity = [0.0, 5.0];
+        let mean = d.update(&layered(), [0.57, 1.0], 0.1);
+        assert!(close(mean[1], 5.8) && close(d.velocity[1], 6.6));
+        // Released at a forward gait: momentum (§5.4 step 3).
+        let mean = d.update(&layered(), [0.0, 0.0], 0.1);
+        assert!(close(mean[1], 6.6) && close(d.velocity[1], 6.6));
+        assert!(d.last.is_some_and(|s| close(s.limit, 9.96)));
+    }
 
     fn layered() -> MovementParams {
         MovementParams {

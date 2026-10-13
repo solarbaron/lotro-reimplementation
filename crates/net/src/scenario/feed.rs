@@ -39,6 +39,9 @@ use crate::session::{Command, Event};
 // P3 revision (NPC windows): kept apart so parallel revisions merge cleanly.
 use super::ast::EnumArg;
 use crate::domain::{BuybackEntry, RewardEntry};
+// P5 travel revision.
+use super::ast::{MarkersLabel, MarkersStep, TravelOpts};
+use crate::domain::{RouteMode, TravelFlags};
 
 /// Most events in the output queue.
 pub const MAX_QUEUE_EVENTS: usize = 1_048_576;
@@ -326,7 +329,15 @@ pub(crate) struct Feed {
     /// The vendor window that last got a `BuybackShown`, with its buy-back entry count
     /// (P3 revision): what a `buy-back` pattern checks `BuyBack` against.
     buyback: Option<(WindowId, usize)>,
+    /// Run-time marker ids allocated so far (P5 travel, §5.3): the next one is
+    /// *M* + 1 + this count, at most [`MAX_RUNTIME_MARKERS`] per run.
+    runtime_markers: u32,
+    /// The ids each marker set holds, ascending (P5 travel, §5.3).
+    marker_sets: Vec<Vec<u32>>,
 }
+
+/// Most run-time marker ids per run (P5 travel, §5.3, §11.1).
+pub const MAX_RUNTIME_MARKERS: u32 = 65_536;
 
 fn container_index(c: Container) -> usize {
     match c {
@@ -356,6 +367,21 @@ fn nth_or_last<T: Copy + Default>(list: &[T], i: usize) -> T {
         .or_else(|| list.last())
         .copied()
         .unwrap_or_default()
+}
+
+/// The marks of travel entry `n` (P5 travel, §6.5).
+fn travel_flags(opts: &TravelOpts, n: u16) -> TravelFlags {
+    let mut flags = TravelFlags::NONE;
+    if opts.undiscovered.contains(&n) {
+        flags |= TravelFlags::UNDISCOVERED;
+    }
+    if opts.unmet.contains(&n) {
+        flags |= TravelFlags::UNMET;
+    }
+    if opts.unusable.contains(&n) {
+        flags |= TravelFlags::UNUSABLE;
+    }
+    flags
 }
 
 /// The price of entry `i` of a `vendor` or `buyback` window (§6.3: buy-back prices are
@@ -519,15 +545,17 @@ pub(crate) fn weight(e: &Event) -> u64 {
         },
         Event::World(w) => match w {
             WorldEvent::MarkerAdded { label, quest, .. } => tw(label) + orw(quest.as_ref()),
-            WorldEvent::TravelShown { entries, .. } => {
-                entries.iter().map(|t| 1 + rw(&t.destination)).sum()
-            }
+            WorldEvent::TravelShown { entries, .. } => entries
+                .iter()
+                .map(|t| 1 + rw(&t.destination) + orw(t.area.as_ref()))
+                .sum(),
             WorldEvent::TravelStarted { destination, .. } => rw(destination),
             WorldEvent::MountChanged { mount, .. } => orw(mount.as_ref()),
-            WorldEvent::InstanceListShown { entries, .. } => {
-                entries.iter().map(|i| 1 + rw(&i.instance)).sum()
-            }
-            WorldEvent::InstanceChanged { instance } => orw(instance.as_ref()),
+            WorldEvent::InstanceListShown {
+                entries, featured, ..
+            } => orw(featured.as_ref()) + entries.iter().map(|i| 1 + rw(&i.instance)).sum::<u64>(),
+            WorldEvent::InstanceChanged { instance }
+            | WorldEvent::InstanceQueueChanged { instance, .. } => orw(instance.as_ref()),
             _ => 0,
         },
         Event::Progression(p) => match p {
@@ -728,6 +756,8 @@ impl Feed {
             static_skip: vec![false; sc.prog.steps.len()],
             waiting: BTreeMap::new(),
             buyback: None,
+            runtime_markers: 0,
+            marker_sets: vec![Vec::new(); sc.prog.marker_sets.len()],
             sc,
         }
     }
@@ -1755,9 +1785,11 @@ impl Feed {
             (Pattern::ChooseTravel(f), C::World(WorldCommand::ChooseTravel { window, entry })) => {
                 self.entry_ok(WindowKind::Travel, *window, *entry, *f)
             }
-            (Pattern::JoinInstance(f), C::World(WorldCommand::JoinInstance { window, entry })) => {
-                self.entry_ok(WindowKind::Instances, *window, *entry, *f)
-            }
+            (
+                Pattern::JoinInstance(f),
+                C::World(WorldCommand::JoinInstance { window, entry, .. }),
+            ) => self.entry_ok(WindowKind::Instances, *window, *entry, *f),
+            (Pattern::LeaveQueue, C::World(WorldCommand::LeaveQueue)) => true,
             (
                 Pattern::Train(f),
                 C::Progression(ProgressionCommand::TrainSkill { window, entry }),
@@ -3089,6 +3121,7 @@ impl Feed {
                 label,
                 icon,
                 quest,
+                note_type,
             } => {
                 let (location, _) = need!(self.position(pos));
                 let label = need!(self.rtext(label));
@@ -3106,6 +3139,7 @@ impl Feed {
                     label,
                     icon,
                     quest,
+                    note_type: note_type.and_then(|e| sc.enum_value(e)),
                 }))?;
             }
             Verb::MarkerRemove(m) => {
@@ -3113,16 +3147,36 @@ impl Feed {
                     marker: MarkerId(m.saturating_add(1)),
                 }))?;
             }
-            Verb::TravelList { dest, from, coins } => {
+            Verb::TravelList {
+                dest,
+                from,
+                coins,
+                opts,
+            } => {
                 let refs = need!(self.entry_refs(idx, dest, super::parse::MAX_WINDOW_ENTRIES));
                 let source = need!(self.opt_id(*from));
+                let areas: Vec<Ref> = need!(opts.areas.iter().map(|r| self.rref(r)).collect());
                 let entries: Vec<TravelEntry> = refs
                     .into_iter()
                     .enumerate()
-                    .map(|(i, destination)| TravelEntry {
-                        entry: u16::try_from(i + 1).unwrap_or(u16::MAX),
-                        destination,
-                        coin: nth_or_last(coins, i),
+                    .map(|(i, destination)| {
+                        let n = u16::try_from(i + 1).unwrap_or(u16::MAX);
+                        TravelEntry {
+                            entry: n,
+                            destination,
+                            coin: nth_or_last(coins, i),
+                            min_level: (!opts.min_levels.is_empty())
+                                .then(|| nth_or_last(&opts.min_levels, i)),
+                            flags: travel_flags(opts, n),
+                            route: if opts.swift.contains(&n) {
+                                Some(RouteMode::Swift)
+                            } else if opts.slow.contains(&n) {
+                                Some(RouteMode::Slow)
+                            } else {
+                                None
+                            },
+                            area: areas.get(i).or_else(|| areas.last()).cloned(),
+                        }
                     })
                     .collect();
                 let window =
@@ -3133,11 +3187,16 @@ impl Feed {
                     entries,
                 }))?;
             }
-            Verb::Travel { dest, duration } => {
+            Verb::Travel {
+                dest,
+                duration,
+                route,
+            } => {
                 let destination = need!(self.rref(dest));
                 self.push(Event::World(WorldEvent::TravelStarted {
                     destination,
                     duration_ms: u32::try_from(*duration).unwrap_or(u32::MAX),
+                    route: *route,
                 }))?;
             }
             Verb::Teleport { pos, facing } => {
@@ -3162,22 +3221,47 @@ impl Feed {
                 })?;
                 self.relocations.push((location, heading, anchor));
             }
-            Verb::Mount { entity, mount } => {
+            Verb::Mount {
+                entity,
+                mount,
+                combat,
+            } => {
                 let id = need!(self.id(*entity));
                 let mount = match mount {
                     Some(r) => Some(need!(self.rref(r))),
                     None => None,
                 };
-                self.push(Event::World(WorldEvent::MountChanged { entity: id, mount }))?;
+                self.push(Event::World(WorldEvent::MountChanged {
+                    entity: id,
+                    mount,
+                    combat: *combat,
+                }))?;
             }
-            Verb::Instances(e) => {
+            Verb::Instances { entries: e, opts } => {
                 let refs = need!(self.entry_refs(idx, e, super::parse::MAX_WINDOW_ENTRIES));
+                let source = need!(self.opt_id(opts.from));
+                let featured = match &opts.featured {
+                    Some(r) => Some(need!(self.rref(r))),
+                    None => None,
+                };
+                let key = |list: &[EnumArg], i: usize| {
+                    list.get(i)
+                        .or_else(|| list.last())
+                        .and_then(|e| sc.enum_value(*e))
+                };
                 let entries: Vec<InstanceEntry> = refs
                     .into_iter()
                     .enumerate()
-                    .map(|(i, instance)| InstanceEntry {
-                        entry: u16::try_from(i + 1).unwrap_or(u16::MAX),
-                        instance,
+                    .map(|(i, instance)| {
+                        let n = u16::try_from(i + 1).unwrap_or(u16::MAX);
+                        InstanceEntry {
+                            entry: n,
+                            instance,
+                            level: (!opts.levels.is_empty()).then(|| nth_or_last(&opts.levels, i)),
+                            size: key(&opts.sizes, i),
+                            tier: key(&opts.tiers, i),
+                            locked: opts.locked.contains(&n),
+                        }
                     })
                     .collect();
                 let window =
@@ -3185,6 +3269,41 @@ impl Feed {
                 self.push(Event::World(WorldEvent::InstanceListShown {
                     window,
                     entries,
+                    source,
+                    featured,
+                }))?;
+            }
+            // P5 travel steps (§6.5).
+            Verb::Markers(m) => self.markers_step(&sc, m)?,
+            Verb::MarkerSetRemove(set) => self.remove_marker_set(*set)?,
+            Verb::TravelEnd => self.push(Event::World(WorldEvent::TravelEnded))?,
+            Verb::InstanceQueue {
+                state,
+                instance,
+                seconds,
+            } => {
+                let instance = match instance {
+                    Some(r) => Some(need!(self.rref(r))),
+                    None => None,
+                };
+                self.push(Event::World(WorldEvent::InstanceQueueChanged {
+                    state: *state,
+                    instance,
+                    seconds: *seconds,
+                }))?;
+            }
+            Verb::MountVital {
+                entity,
+                vital,
+                current,
+                max,
+            } => {
+                let id = need!(self.id(*entity));
+                self.push(Event::World(WorldEvent::MountVitalChanged {
+                    entity: id,
+                    vital: *vital,
+                    current: *current,
+                    max: *max,
                 }))?;
             }
             Verb::Instance(r) => {
@@ -3363,6 +3482,119 @@ impl Feed {
                 })
                 .collect(),
         }
+    }
+
+    /// A `markers` step (P5 travel, §5.3, §6.5): the set's markers are replaced by one
+    /// marker per element of the binding that has a location, with new run-time ids; a
+    /// step whose markers would pass the run-time cap is a skip that emits nothing.
+    fn markers_step(&mut self, sc: &ResolvedScenario, m: &MarkersStep) -> Rt<()> {
+        macro_rules! need {
+            ($e:expr) => {
+                match $e {
+                    Some(v) => v,
+                    None => return self.skip(),
+                }
+            };
+        }
+        let fixed_label = match &m.label {
+            MarkersLabel::Text(t) => Some(need!(self.rtext(t))),
+            MarkersLabel::Named => None,
+        };
+        let icon = match m.icon {
+            Some(el) => Some(need!(sc.element(el)).did),
+            None => None,
+        };
+        let quest = match &m.quest {
+            Some(r) => Some(need!(self.rref(r))),
+            None => None,
+        };
+        let note_type = m.note_type.and_then(|e| sc.enum_value(e));
+        let Some(held) = self
+            .marker_sets
+            .get(usize::try_from(m.set).unwrap_or(usize::MAX))
+        else {
+            return Ok(());
+        };
+        let elements = sc.fan(m.sel, MAX_FANOUT);
+        let adding = elements.iter().filter(|e| e.location.is_some()).count();
+        let adding32 = u32::try_from(adding).unwrap_or(u32::MAX);
+        if self
+            .runtime_markers
+            .checked_add(adding32)
+            .is_none_or(|n| n > MAX_RUNTIME_MARKERS)
+        {
+            return self.skip();
+        }
+        // Each addition weighs what `weight` charges a `MarkerAdded`: the base 1, its
+        // label and its quest ref (§7.4: the whole step is checked before it builds any).
+        let qw = orw(quest.as_ref());
+        let label_weight = |i: usize| match &fixed_label {
+            Some(t) => 1 + tw(t) + qw,
+            None => 1 + sw(sc.marker_name(m.sel, i)) + qw,
+        };
+        let add_weight: u64 = elements
+            .iter()
+            .enumerate()
+            .filter(|(_, e)| e.location.is_some())
+            .map(|(i, _)| label_weight(i))
+            .sum();
+        self.reserve(
+            held.len().saturating_add(adding),
+            len64(held.len()).saturating_add(add_weight),
+        )?;
+        let removed = std::mem::take(&mut self.marker_sets[usize::try_from(m.set).unwrap_or(0)]);
+        for id in removed {
+            self.push(Event::World(WorldEvent::MarkerRemoved {
+                marker: MarkerId(id),
+            }))?;
+        }
+        let base = u32::try_from(sc.prog.markers.len()).unwrap_or(u32::MAX);
+        let mut ids = Vec::with_capacity(adding);
+        for (i, e) in elements.iter().enumerate() {
+            let Some(location) = e.location else {
+                continue;
+            };
+            let id = base.saturating_add(1).saturating_add(self.runtime_markers);
+            self.runtime_markers += 1;
+            let label = match &fixed_label {
+                Some(t) => t.clone(),
+                None => Text::Literal(sc.marker_name(m.sel, i).to_owned()),
+            };
+            self.push(Event::World(WorldEvent::MarkerAdded {
+                marker: MarkerId(id),
+                location,
+                label,
+                icon,
+                quest: quest.clone(),
+                note_type,
+            }))?;
+            ids.push(id);
+        }
+        if let Some(set) = self
+            .marker_sets
+            .get_mut(usize::try_from(m.set).unwrap_or(usize::MAX))
+        {
+            *set = ids;
+        }
+        Ok(())
+    }
+
+    /// `marker-remove` of a marker set (P5 travel, §6.5): its markers in ascending id
+    /// order; the set is then empty.
+    fn remove_marker_set(&mut self, set: u32) -> Rt<()> {
+        let si = usize::try_from(set).unwrap_or(usize::MAX);
+        let Some(n) = self.marker_sets.get(si).map(Vec::len) else {
+            return Ok(());
+        };
+        // Checked before the set is emptied, so a queue overflow leaves it unchanged.
+        self.reserve(n, len64(n))?;
+        let removed = std::mem::take(&mut self.marker_sets[si]);
+        for id in removed {
+            self.push(Event::World(WorldEvent::MarkerRemoved {
+                marker: MarkerId(id),
+            }))?;
+        }
+        Ok(())
     }
 
     fn spawn(&mut self, a: u32) -> Rt<()> {
@@ -3552,6 +3784,90 @@ mod tests {
         f.step(1, 0).expect("step");
         assert_eq!(f.out.len(), 1);
         assert_eq!(f.static_skip, vec![true, false]);
+    }
+
+    /// Answers two located `map-region` candidates.
+    struct TwoRegions;
+
+    impl crate::scenario::SelectorResolver for TwoRegions {
+        fn has_install(&self) -> bool {
+            true
+        }
+
+        fn candidates(
+            &mut self,
+            query: &crate::scenario::SelectorQuery<'_>,
+            _limit: usize,
+            out: &mut Vec<crate::scenario::Candidate>,
+        ) -> crate::scenario::CandidateOutcome {
+            if query.family == crate::scenario::Family::MapRegion {
+                for i in 0..2u32 {
+                    out.push(crate::scenario::Candidate {
+                        did: crate::DataId(0x7800_0000 + i),
+                        row: 0,
+                        location: Some(crate::model::Location::new(
+                            crate::model::RegionId(1),
+                            f64::from(i),
+                            0.0,
+                            0.0,
+                        )),
+                        anchor: None,
+                    });
+                }
+            }
+            crate::scenario::CandidateOutcome::new(crate::scenario::CandidateStatus::Ready)
+        }
+
+        fn enum_value(
+            &mut self,
+            _context: crate::scenario::LabelContext,
+            _label: &str,
+        ) -> Option<u32> {
+            None
+        }
+
+        fn display_name(&mut self, _did: crate::DataId, _row: Option<u32>) -> Option<String> {
+            None
+        }
+    }
+
+    /// §7.4 and §16 OPEN (5): a `markers` step reserves the full weight of its events,
+    /// the `quest=` ref included, so a queue overflow is raised before the set changes;
+    /// `marker-remove` of a set likewise reserves before it empties the set.
+    #[test]
+    fn marker_set_steps_reserve_before_changing_the_set() {
+        let sc = crate::scenario::Scenario::parse(
+            "tessera-scenario 1\ntick 100ms\nplayer \"Testa\"\n\
+             select $r = map-region all\n\
+             at 0s markers $s $r \"S\" quest=\"Q\"\n\
+             +0s markers $s $r \"S\" quest=\"Q\"\n\
+             +0s marker-remove $s\n"
+                .as_bytes(),
+        )
+        .expect("parse")
+        .resolve(&mut TwoRegions)
+        .expect("resolve");
+        let mut f = Feed::new(Arc::new(sc), &[], true);
+        f.step(0, 0).expect("first markers step");
+        let held = f.marker_sets.first().cloned().expect("set");
+        assert_eq!(held.len(), 2);
+        f.out.clear();
+        f.line = 6;
+        // Room for the removals and the additions' labels, but not their quest refs.
+        let per_marker_without_quest = 1 + sw("S");
+        f.out_weight = MAX_QUEUE_WEIGHT - (2 + 2 * per_marker_without_quest);
+        let e = f.step(1, 0).expect_err("over the queue weight");
+        assert_eq!((e.kind, e.line), (RK::QueueOverflow, 6));
+        assert!(f.out.is_empty(), "no event of the step was queued");
+        assert_eq!(f.marker_sets.first(), Some(&held), "the set is unchanged");
+        assert_eq!(f.runtime_markers, 2, "no run-time id was taken");
+        // The same holds for `marker-remove` of the set.
+        f.line = 7;
+        f.out_weight = MAX_QUEUE_WEIGHT - 1;
+        let e = f.step(2, 0).expect_err("over the queue weight");
+        assert_eq!((e.kind, e.line), (RK::QueueOverflow, 7));
+        assert!(f.out.is_empty());
+        assert_eq!(f.marker_sets.first(), Some(&held), "the set is unchanged");
     }
 
     #[test]

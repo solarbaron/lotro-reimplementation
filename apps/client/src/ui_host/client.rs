@@ -449,6 +449,8 @@ impl ClientUi {
         // The plugins' party views read their members' values from the runtime's party
         // bridge (P4).
         host.set_plugin_party(rt.party_actor_source());
+        // The plugins' local player carries the travel hub's mount views (P5).
+        host.set_plugin_mount(rt.p5.mount().source());
         host.attach_plugins(&mut rt.plugins, &self.load);
         if self.options.hud {
             for (id, e) in host.open_hud(&mut rt.plugins) {
@@ -934,6 +936,59 @@ pub(crate) fn social_frame(
     let commands = host.social_frame(social, data, Some(player), events);
     let refused = world.send_panel_commands(Instant::now(), commands);
     host.post_session_lines(refused);
+}
+
+/// The per-frame window updates shared by the windowed client (`crate::app`) and the
+/// headless UI runs (`super::run`): the NPC windows (decision 0024 P3), the quest journal
+/// and its indicators (P3), the social panels (P4) and the P5 travel, instance-finder and
+/// map windows, all reading one list of in-world UI events taken once (the combat widgets
+/// keep their own queue, handled in [`ClientUi::after_update`]). Call after
+/// [`ClientUi::after_update`] and before [`ClientUi::step8`], as the windowed path does;
+/// the windowed path keeps its own inline copy of this block, which this function must stay
+/// in step with.
+pub(crate) fn window_frames(
+    ui: &mut ClientUi,
+    rt: &mut Runtime,
+    walker: &mut Walker,
+    renderer: &mut Renderer<'_>,
+    now: Instant,
+) {
+    // The frame's UI events, taken once every frame: the NPC windows, the quest journal,
+    // the social panels and the P5 windows read the same list; the character screens own
+    // them while they are open.
+    let screens = ui.screens_open();
+    let taken = ui
+        .host_mut()
+        .map(UiHost::take_game_events)
+        .unwrap_or_default();
+    let events: &[tessera_ui::UiEvent] = if screens { &[] } else { &taken };
+    if !ui.attached() {
+        return;
+    }
+    let (Some(host), Some(world)) = (ui.host_mut(), rt.world.as_mut()) else {
+        return;
+    };
+    // The use range measures from the avatar (session frame, as `Move`).
+    #[allow(clippy::cast_possible_truncation)]
+    let avatar = walker
+        .focus()
+        .map(|p| tessera_net::Vec3::new(p.x as f32, p.y as f32, p.z as f32));
+    rt.npc.frame(host, world, events, screens, avatar, now);
+    // The quest journal (P3), after the NPC windows.
+    let radar = walker.radar_input();
+    rt.quests
+        .frame(host, world, &rt.npc, events, radar.as_ref(), now);
+    // The social panels (P4) read the same list.
+    let data = rt.p1.data().cloned();
+    social_frame(host, world, data.as_deref(), events);
+    // Travel and the instance finder (P5), then the map window, read the same list.
+    rt.p5.frame(host, world, &rt.npc, events, now);
+    rt.map
+        .frame(host, world, rt.p5.refs(), &rt.npc, events, radar.as_ref());
+    // The indicators over ringed NPCs (§8.2), at the walker's positions.
+    let position = |id| walker.entity_render_pos(id);
+    rt.quests
+        .update_indicators(Some(renderer), world, &rt.npc, &position);
 }
 
 /// The combat frame (decision 0024 P2, after the character panels): the combat state's

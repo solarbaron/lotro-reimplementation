@@ -5,7 +5,7 @@
 | | |
 |---|---|
 | **Status** | Accepted (2026-10-06: accepted after revision for decisions 0014/0015) |
-| **Last updated** | 2026-10-06 |
+| **Last updated** | 2026-10-11 |
 | **Author role** | Spec writer (dirty room), AI-assisted |
 | **Reviewer** | Claude review session (spec-writer agent) |
 | **Review record** | Review of Revision 3 and its fixes, 2026-10-06: **passed**, Accepted (after revision for decisions 0014/0015). Full record moved to the review log (decision 0018). |
@@ -790,6 +790,14 @@ server data, bounded by `UI_Radar_RadarRadius` and filtered by `UI_Map_MapNoteDi
 > (image 0x410F8A54 here) stays hidden in P3; the rest of this OPEN (table notes, blips, filters)
 > is unchanged.
 
+> **Note (P5, 2026-10-11, [`map-windows.md`](map-windows.md) §6.8 and §6.9, status Review; no
+> fact of this spec changed):** answers the OPEN above. The radar's notes are instances of the
+> `map` layout's `MapNoteTemplate`; `UI_Radar_RadarRadius` is in map pixels (world radius = the
+> value ÷ the radar's scale); inside it a note shows its on-screen images at its pixel, outside
+> its off-screen images on that circle towards the note; the tooltip carries the note's text and
+> distance; the filter is the player option `GOP_Radar_MapNoteFilter` (default and menu commands
+> in `map-windows.md` §6.8). Feed markers on the radar: `map-windows.md` §6.7–§6.8.
+
 <a id="s8-9"></a>
 ### 8.9 Summary for the sandbox
 
@@ -856,6 +864,12 @@ element (this also covers the one element without an Image item).
 > **Tessera rule** until settled: a click shows the named node; a button whose target is no node's
 > active element does nothing.
 
+> **Note (P5, 2026-10-11, [`map-windows.md`](map-windows.md) §4.2–§4.3 and §11, status Review;
+> no fact of this spec changed):** both OPENs of this section are answered there (BIN): the
+> client sets the node image with draw mode 2; a left or double-left click on any element with
+> `UI_Map_Child_Map` shows the named element, and the 3 non-node targets are shown without node
+> data. `map-windows.md` §11 proposes the corresponding changes to the Tessera rules here.
+
 <a id="s9-3"></a>
 ### 9.3 Georeference
 
@@ -893,6 +907,13 @@ dungeon map of §8.5.1 in the same window (image and georeference from its `UI_M
 > the dungeon has no map, or while its lookup is pending, it shows the outdoor choice above;
 > a pending lookup is retried on each position update and replaces the node when it answers.
 
+> **Note (P5, 2026-10-11, [`map-windows.md`](map-windows.md) §4.6–§4.7 and §11, status Review;
+> no fact of this spec changed):** the OPENs of this section are answered there (BIN): an area in
+> no node shows `WorldMap` (no region or pixel-bounds fallback; G28 is supported by BIN); a
+> dungeon map is shown in the `map` layout's `DungeonMap`, its image stretched into the 800 × 600
+> `DungeonMap_ImageField` with a frame overlay. `map-windows.md` §11 proposes the corrections of
+> the Tessera rule and of the implementation note above.
+
 <a id="s9-5"></a>
 ### 9.5 Composing the panel (Tessera rule)
 
@@ -914,6 +935,13 @@ the player marker with `MinimapPlayerMarker`'s image (§8.6.3) at the player's p
 > of `MapBackground` (over the map and its overlays), centred on the player's pixel of the
 > shown map (offset by that map element's position), turned by the heading as in §8.6.3
 > (object mode 1), and hidden while the shown map has no georeference.
+
+> **Note (P5, 2026-10-11, [`map-windows.md`](map-windows.md) §3.1–§3.2, §6.2 and §6.6, status
+> Review; no fact of this spec changed):** the attachment OPEN is answered there (BIN): `MapField`
+> moves between the full-screen `MapWindow` (the default presentation) and `MapPanelPadding`
+> (windowed); active elements are children of `MapBackground`; the player marker is an instance
+> of `MapPlayerMarker` attached to the shown map element at z −500, hidden on the 7 elements with
+> `UI_Map_HidePlayerMapnote` and when its box leaves the frame.
 
 ---
 
@@ -1280,3 +1308,4 @@ line must not label Escape "quit" then (IB, Cost).
 | 2026-10-10 | Notes only (no fact changed), for P3: §8.8 and §9.3 point to `quest-journal.md` §8.3 for quest markers from the scenario feed and the quest-objective indicator properties. Status unchanged. |
 | 2026-10-11 | Note only (no fact changed), for P4: §14 points to `social-panels.md` for the fellowship panels (drag-box frames, §4 applies), `PlayerLeaderIcon` and the fallback of the social windows' game types. Status unchanged. |
 | 2026-10-11 | Note only (no fact of this spec changed), P4 revision 1 of `social-panels.md` (review 1 item B1): the §14 P4 note names the P4 voice elements and the member rows' status and voice elements that game code shows or hides, with the Tessera rule that hides the voice elements, and the coin-element lists of the two money-display types. Status unchanged. |
+| 2026-10-11 | Notes only (no fact changed), for P5: §8.8, §9.2, §9.4 and §9.5 point to `map-windows.md` (status Review), which answers their OPENs from a new BIN pass and proposes corrections to the Tessera rules of §9.2, §9.4 and §9.5 in its §11. Status unchanged; the answers carry `map-windows.md`'s review status. |

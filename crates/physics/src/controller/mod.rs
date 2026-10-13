@@ -18,7 +18,9 @@
 //! | [`turn_rate_on_foot`], [`TURN_KEY_SPEED_DEGREES`], [`mounted_turn_rate_degrees`] | §11.9 |
 //! | [`Impulse`], [`JumpNode`], [`JumpTable`], [`StoredImpulse`], [`Controller::add_impulse`] | §11.10 (impulses, the jump) |
 //! | [`WaterQuery`], [`LiquidWater`], [`NoWater`] (and `WaterQuery` for `CollisionSet` / `CollisionView`) | §12.3 step 7, `water.md` §7.4 |
-//! | [`warsteed`] | the war-steed (ramp-up) controller of `mounts.md` §5.3–§5.7 |
+//! | [`warsteed`] | the war-steed (ramp-up) controller of `mounts.md` §5.3–§5.7 ([`warsteed::WarSteedDrive`] in [`Controller::set_war_steed`]) |
+//! | [`gait`] | Tessera's gear and gait rule for a ridden war-steed (`mounts.md` §14.6) |
+//! | [`Controller::set_speed_multiplier`] | the speed factor *m* of §11.6 item 1 (`mounts.md` §5.1 Decision for normal mounts) |
 //!
 //! **Using it.** Read the player movement record once ([`PlayerMovementRecord::locate`] or
 //! [`PlayerMovementRecord::from_set`]), build a [`Controller`] with the avatar's capsule and
@@ -29,6 +31,7 @@
 //! per-step inputs and same sets give the same states, bit for bit.
 
 mod contact;
+pub mod gait;
 mod impulse;
 mod input;
 mod params;

@@ -20,6 +20,9 @@ use crate::model::{
 use crate::session::{Command, Event};
 // P3 revision (NPC windows).
 use crate::domain::RewardKind;
+// P5 travel revision.
+use super::travel::{mount_vital_keyword, queue_keyword, route_keyword};
+use crate::domain::{InstanceEntry, TravelEntry, TravelFlags};
 
 /// The first actor's entity id is `ACTOR_ID_BASE + 1` (§5.3).
 pub const ACTOR_ID_BASE: u64 = 1 << 48;
@@ -988,14 +991,22 @@ fn world_event(w: &WorldEvent, ctx: &LogContext) -> String {
             label,
             icon,
             quest,
-        } => format!(
-            "MarkerAdded marker={} location={} label={} icon={} quest={}",
-            marker.0,
-            location(l),
-            text(label),
-            icon.map_or_else(|| "none".to_owned(), did),
-            opt_ref(quest.as_ref())
-        ),
+            note_type,
+        } => {
+            let mut s = format!(
+                "MarkerAdded marker={} location={} label={} icon={} quest={}",
+                marker.0,
+                location(l),
+                text(label),
+                icon.map_or_else(|| "none".to_owned(), did),
+                opt_ref(quest.as_ref())
+            );
+            // P5 travel fields are written only off their default (§10.3).
+            if let Some(n) = note_type {
+                let _ = write!(s, " note_type={n}");
+            }
+            s
+        }
         WorldEvent::MarkerRemoved { marker } => format!("MarkerRemoved marker={}", marker.0),
         WorldEvent::TravelShown {
             window,
@@ -1005,37 +1016,141 @@ fn world_event(w: &WorldEvent, ctx: &LogContext) -> String {
             "TravelShown window={} source={} entries={}",
             window.0,
             ctx.opt_entity(*source),
-            list(entries, |t| format!(
-                "{{entry={} destination={} coin={}}}",
-                t.entry,
-                reference(&t.destination),
-                t.coin
-            ))
+            list(entries, |t| {
+                let mut s = format!(
+                    "{{entry={} destination={} coin={}",
+                    t.entry,
+                    reference(&t.destination),
+                    t.coin
+                );
+                travel_entry_tail(&mut s, t);
+                s.push('}');
+                s
+            })
         ),
         WorldEvent::TravelStarted {
             destination: d,
             duration_ms,
-        } => format!(
-            "TravelStarted destination={} duration_ms={duration_ms}",
-            reference(d)
-        ),
-        WorldEvent::MountChanged { entity, mount } => format!(
-            "MountChanged entity={} mount={}",
-            ctx.entity(*entity),
-            opt_ref(mount.as_ref())
-        ),
-        WorldEvent::InstanceListShown { window, entries } => format!(
-            "InstanceListShown window={} entries={}",
-            window.0,
-            list(entries, |i| format!(
-                "{{entry={} instance={}}}",
-                i.entry,
-                reference(&i.instance)
-            ))
-        ),
+            route,
+        } => {
+            let mut s = format!(
+                "TravelStarted destination={} duration_ms={duration_ms}",
+                reference(d)
+            );
+            if let Some(r) = route {
+                let _ = write!(s, " route={}", route_keyword(*r));
+            }
+            s
+        }
+        WorldEvent::MountChanged {
+            entity,
+            mount,
+            combat,
+        } => {
+            let mut s = format!(
+                "MountChanged entity={} mount={}",
+                ctx.entity(*entity),
+                opt_ref(mount.as_ref())
+            );
+            if let Some(c) = combat {
+                let _ = write!(s, " combat={}", yes(*c));
+            }
+            s
+        }
+        WorldEvent::InstanceListShown {
+            window,
+            entries,
+            source,
+            featured,
+        } => {
+            let mut s = format!(
+                "InstanceListShown window={} entries={}",
+                window.0,
+                list(entries, |i| {
+                    let mut s = format!("{{entry={} instance={}", i.entry, reference(&i.instance));
+                    instance_entry_tail(&mut s, i);
+                    s.push('}');
+                    s
+                })
+            );
+            if let Some(e) = source {
+                let _ = write!(s, " source={}", ctx.entity(*e));
+            }
+            if let Some(f) = featured {
+                let _ = write!(s, " featured={}", reference(f));
+            }
+            s
+        }
         WorldEvent::InstanceChanged { instance } => {
             format!("InstanceChanged instance={}", opt_ref(instance.as_ref()))
         }
+        // P5 travel variants (§10.3): every field written.
+        WorldEvent::TravelEnded => "TravelEnded".to_owned(),
+        WorldEvent::MountVitalChanged {
+            entity,
+            vital,
+            current,
+            max,
+        } => format!(
+            "MountVitalChanged entity={} vital={} current={} max={}",
+            ctx.entity(*entity),
+            mount_vital_keyword(*vital),
+            amount(*current),
+            amount(*max)
+        ),
+        WorldEvent::InstanceQueueChanged {
+            state,
+            instance,
+            seconds,
+        } => format!(
+            "InstanceQueueChanged state={} instance={} seconds={}",
+            queue_keyword(*state),
+            opt_ref(instance.as_ref()),
+            opt_u(*seconds)
+        ),
+    }
+}
+
+/// The P5 travel fields of a travel entry, after `coin`, each only off its default
+/// (§10.3).
+fn travel_entry_tail(s: &mut String, t: &TravelEntry) {
+    if let Some(l) = t.min_level {
+        let _ = write!(s, " min_level={l}");
+    }
+    if !t.flags.is_empty() {
+        let names: Vec<&str> = [
+            (TravelFlags::UNDISCOVERED, "undiscovered"),
+            (TravelFlags::UNMET, "unmet"),
+            (TravelFlags::UNUSABLE, "unusable"),
+        ]
+        .into_iter()
+        .filter(|(b, _)| t.flags.contains(*b))
+        .map(|(_, n)| n)
+        .collect();
+        let _ = write!(s, " flags={}", names.join("+"));
+    }
+    if let Some(r) = t.route {
+        let _ = write!(s, " route={}", route_keyword(r));
+    }
+    if let Some(a) = &t.area {
+        let _ = write!(s, " area={}", reference(a));
+    }
+}
+
+/// The P5 travel fields of an instance entry, after `instance`, each only off its default
+/// (§10.3).
+fn instance_entry_tail(s: &mut String, i: &InstanceEntry) {
+    if let Some(l) = i.level {
+        let _ = write!(s, " level={l}");
+    }
+    if let Some(v) = i.size {
+        let _ = write!(s, " size={v}");
+    }
+    if let Some(v) = i.tier {
+        let _ = write!(s, " tier={v}");
+    }
+    if i.locked {
+        s.push_str(" locked=yes");
     }
 }
 
@@ -1269,11 +1384,29 @@ pub fn format_command(command: &Command, ctx: &LogContext) -> String {
             WorldCommand::ChooseTravel { window, entry } => {
                 format!("ChooseTravel window={} entry={entry}", window.0)
             }
-            WorldCommand::JoinInstance { window, entry } => {
-                format!("JoinInstance window={} entry={entry}", window.0)
+            WorldCommand::JoinInstance {
+                window,
+                entry,
+                size,
+                tier,
+                level,
+            } => {
+                let mut s = format!("JoinInstance window={} entry={entry}", window.0);
+                // P5 travel fields, only when present (§10.3).
+                if let Some(v) = size {
+                    let _ = write!(s, " size={v}");
+                }
+                if let Some(v) = tier {
+                    let _ = write!(s, " tier={v}");
+                }
+                if let Some(v) = level {
+                    let _ = write!(s, " level={v}");
+                }
+                s
             }
             WorldCommand::LeaveInstance => "LeaveInstance".to_owned(),
             WorldCommand::Dismount => "Dismount".to_owned(),
+            WorldCommand::LeaveQueue => "LeaveQueue".to_owned(),
         },
         Command::Progression(c) => match c {
             ProgressionCommand::TrainSkill { window, entry } => {

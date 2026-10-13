@@ -5,7 +5,7 @@
 | | |
 |---|---|
 | **Status** | **Accepted** (2026-10-08, revision of the 2026-10-07 Accepted text) |
-| **Last updated** | 2026-10-08 |
+| **Last updated** | 2026-10-11 |
 | **Author role** | Spec writer (dirty room) |
 | **Reviewer** | Claude review session (spec reviewer, not the author session) |
 | **Review record** | 2026-10-07: first review and re-review (separate sessions) requested changes; both rounds answered by the writer (§19). Second re-review of the second revision, 2026-10-07 (a session separate from the writer and the earlier reviewers): **passed**, Accepted. Details in the dirty-room review log (decision 0018). 2026-10-08: revised by the writer to answer the implementer notes (§19). Review of the revision, 2026-10-08 (a fresh session, not the writer or an earlier reviewer): **passed**, Accepted; details in the dirty-room review log. |
@@ -1582,6 +1582,22 @@ carries the bitwise or of the flag words of the group's entries. In the function
 from template fields; how the entries reach the panel belongs to client–server messages and
 was not examined (decision 0004).
 
+> **Note (P5, 2026-10-11, [`travel-windows.md`](travel-windows.md) §6, status Review; no fact
+> of this spec changed):** the instance finder of this build is the fellowship maker's
+> launch-now page (`ToggleWorldJoin` opens `FellowshipMaker_Window` at
+> `FellowshipMaker_LaunchNowPage`; `WorldJoin_Window` is never built). Its tree puts each entry
+> under a kind header (the flag word & 0x18000F of B8, 8 when no kind bit is set) and a category
+> header (`WorldJoin_EncounterCategory`, §7.3; category 0 gets a fixed text), shows one row per
+> template (text `PrivateEncounterTemplate_Name`) or one row per instance group (B3), and
+> mirrors the featured template of B1 in a separate field. The header and group texts are the
+> display texts of the EMAPPER mappers `FellowshipMakerConfiguration` (0x23000343 here),
+> `WJEncounterCategory` (0x23000350, §7.3) and `WJInstanceGroup` (0x230003D1). The join request
+> is a class-library object carrying the template and, where the template uses them, level,
+> tier and size; it is checked by function 0x0A2B0005 and sent by 0x0A2B0004. The queue and
+> confirmation displays follow the player's `FellowshipMaker_PlayerState` (mapper
+> `FellowshipMakerUI_PlayerState`, keys 1–7). Census of all 1,511 templates by the window that
+> can present them: `travel-windows.md` §8.2.
+
 <a id="s15-2"></a>
 ### 15.2 What only a server decides (OPEN)
 
@@ -1721,6 +1737,14 @@ operation (add, an int statistic of value 2,000,000,000) and scale 1 uses intege
 - `map-data.md` §10 lists the place-key fields of templates; §4.3 adds the landblock-list
   encoding and §13.1 the resolved positions in the object form.
 - `quests.md` §7.1 counts 4,202 template roles; §14.2 splits them by class and role list.
+- `travel-windows.md` (P5, 2026-10-11, status Review): §6 gives the instance-finder page that
+  presents §7 and B1–B3 (the note at the end of §15.1 here summarises it), §4.11 the
+  instance-travel window for templates named by `PrivateEncounter_TravelArray` (440 distinct
+  ordinary templates, 56 holders), §8.2 a census of every template by the window that can show
+  it (finder row 150, finder group 14, finder-unlisted 3, instance travel 440, mission 384, no
+  window 520). §7.3's category names are the display texts of EMAPPER key 0x10000111
+  (`WJEncounterCategory`); instance-group labels have their own mapper, EMAPPER key 0x1000014C
+  (`WJInstanceGroup`).
 
 ---
 
@@ -1761,3 +1785,4 @@ authoritative.
 | 2026-10-07 | Second revision, after the re-review (status stays Review). §13.3 item 3, §10.2 item 1, §7.1, N-I8, N-I11: the grouped templates of the finder order follow ascending `WorldJoinControl_Instance_Group_Label`, each group's list in stored order, not the stored group order (was "in group order"). §3.2, §4.8: `IntroVO` has 942 values, 908 non-zero and 34 zero (was "908 values"). §10.2 item 3: the flag-bit map has exactly the 20 single-bit keys 0x1 … 0x100000 except 0x4000, 7 of them with empty bitsets (was "20 bits, 0x1 … 0x100000"); new OPEN on the rule behind the key set. Provenance: second-round OBS probes; rows I14, I18, I19, I21 extended. |
 | 2026-10-07 | Second re-review passed; status Accepted (reviewer). No text change besides the header. |
 | 2026-10-08 | Revision answering the implementer notes (status Revised; review pending). New §3.5 (full labels of every shortened label and array element) and §3.6 (value types, defaults and the client's type tests of the run-time fields). §3.3: rows for the `FellowshipMakerConfiguration` and `FX` mappers; derived, primary and secondary statistics named. §10.2 item 2: the flag word is a bitfield of mapper `FellowshipMakerConfiguration` (key *k* = bit *k* − 1); bits for sizes 1, 2, 3, 6 and tiers 1–10 (was: sizes 2, 3, 6 and tiers 1–5 by 0x80 << *t*); kind-precedence OPEN replaced by a Tessera Decision; item 3: the rule behind the 20 keys of the flag-bit map is the mapper's key set (OPEN closed). §13.3: Tessera Decision for groups without a label or with a repeated label. §15.1: B1, B2 accept only 32-bit integers (type 15); B3 ignores groups without a label and keeps the first of a repeated label; B4 integer arithmetic is signed 32-bit and wraps, floating point is single precision, operation-reading rules; B5 step 4 removal details (end of the offset array, unsigned count, growth and shrinking, first display, scripts); B5 ground clamping and B6 phasing flags need a boolean value; new B8 (the client takes fellowship-maker flag words as given). §16 N-I11 follows the mapper. §17.6 extended; new §17.7. Implementer notes answered (table). Provenance: OBS third revision probes; BIN second session (questions 6–10); rows I18, B1–B6 extended; new rows I27–I29, B8. |
+| 2026-10-11 | Notes only (no fact changed), for P5: a note at the end of §15.1 and a §18 bullet point to `travel-windows.md` (status Review) for the instance-finder page, its headers and mappers, the join request and the template census. Status unchanged. |

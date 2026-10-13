@@ -1,0 +1,48 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Travel (decision 0024 P5; docs/specs/travel-windows.md §4.10, §5.2;
+# docs/specs/scenario-feed.md §6.5, revision "P5 travel"): a stable-master's travel window
+# with scripted costs, levels, marks, routes and areas (free and paid rows, an undiscovered
+# and unusable row, a row whose requirements are not met), a swift travel ended by the
+# arrival teleport, then a slow travel stopped from the end-travel box. Literal refs fill the
+# window without an install; with one, the second window lists install destinations under
+# their territories (its ref list names selector elements, so without an install that step
+# is skipped and the literal list stays).
+tessera-scenario 1
+title "Stable yard"
+tick 100ms
+player "Tamsin"
+select $dests = travel-destination n=4 seed=8
+select $areas = area level=area n=2 seed=3
+actor $groom kind=npc name="Stable-master" pos=3,0,0 facing=270
+
+at 0s spawn $groom
+on use $groom times=1
++0s travel-list dest="Low road","High pass","Ferry","Old bridge" from=$groom coin=0,250,1200,40 min-level=1,40,10 undiscovered=3 unmet=2 unusable=3 swift=1,2 slow=3,4 area="Vale","Vale","Marsh"
+end
+on use $groom
++0s travel-list dest="Ferry","Old bridge" from=$groom coin=1200,40 slow=1,2 area="Marsh"
++0s travel-list dest=$dests[0],$dests[1],$dests[2],$dests[3] from=$groom coin=60,90,0 min-level=20 area=$areas[0],$areas[1]
+end
+on choose-travel entry=2 times=1
++0s close travel
++0s travel "High pass" 3s route=swift
++3s teleport 400,-250,12 facing=45
+end
+on choose-travel
++0s close travel
++0s travel "Old bridge" 8s route=slow
+end
+on close travel
++0s close travel
+end
+on dismount
++0s travel-end
+end
+
+input
+at 0.5s use $groom
+at 1s choose-travel 2
+at 5s use $groom
+at 5.5s choose-travel 2
+at 7s dismount
+end

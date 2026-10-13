@@ -86,6 +86,13 @@
 //! 8. **Water** (§12.3 step 7, `water.md` §7.4): the [`super::WaterQuery`] at the feet.
 //! 9. **Cell** (§12.3 step 8): the cell lookup of §5.8.1 at the feet, every step.
 //!
+//! **Mounted riders** (`mounts.md` §5.1, §5.2): the player controller's speed factor *m*
+//! (`collision.md` §11.6 item 1) is [`Controller::set_speed_multiplier`] (1 by default; the
+//! normal-mount Decision of `mounts.md` §5.1 sets it), and with a war-steed drive
+//! ([`Controller::set_war_steed`]) step 3's horizontal target and acceleration are the
+//! war-steed controller's (§5.3–§5.7, [`super::warsteed::WarSteedDrive`]): its mean control
+//! velocity moves the mover, undamped, and its stored control velocity carries over.
+//!
 //! Every value is checked: a step whose result is not finite or moves the mover more than
 //! [`MAX_STEP_DISPLACEMENT`] is undone and the velocity zeroed ([`StepOutcome::Reverted`]).
 //! A step's work is bounded by its query count and the water query. Capsule sweeps: at
@@ -113,6 +120,7 @@ use super::params::{
 };
 use super::shape::CharacterShape;
 use super::state::{MovementState, Support, WaterDepth};
+use super::warsteed::WarSteedDrive;
 use super::water::{LiquidWater, NoWater, WaterQuery};
 
 /// Controller steps per second (`collision.md` §12.3; decision 0013).
@@ -494,6 +502,10 @@ pub struct Controller {
     jump_time: Option<f32>,
     scratch: Vec<Contact>,
     push_planes: Vec<([f64; 3], f64)>,
+    /// The speed factor *m* of `collision.md` §11.6 item 1 (1 by default).
+    speed_multiplier: f32,
+    /// The war-steed controller, while a war-steed is ridden (`mounts.md` §5.2).
+    war_steed: Option<WarSteedDrive>,
 }
 
 /// The result of one slide.
@@ -543,7 +555,47 @@ impl Controller {
             jump_time: None,
             scratch: Vec::new(),
             push_planes: Vec::new(),
+            speed_multiplier: 1.0,
+            war_steed: None,
         }
+    }
+
+    /// The speed factor *m* of the player controller (`collision.md` §11.6 item 1): the
+    /// target's length and the acceleration limit of the ramp scale with it. A value that is
+    /// not finite or is negative gives 1. A mounted rider on a normal mount takes the
+    /// Decision of `mounts.md` §5.1.
+    pub fn set_speed_multiplier(&mut self, m: f32) {
+        self.speed_multiplier = if m.is_finite() && m >= 0.0 { m } else { 1.0 };
+    }
+
+    /// The speed factor in use.
+    #[must_use]
+    pub fn speed_multiplier(&self) -> f32 {
+        self.speed_multiplier
+    }
+
+    /// Sets (or, with `None`, removes) the war-steed controller (`mounts.md` §5.2): while
+    /// set, the step's horizontal control velocity is the drive's.
+    pub fn set_war_steed(&mut self, drive: Option<WarSteedDrive>) {
+        self.war_steed = drive;
+    }
+
+    /// The war-steed controller, while set.
+    #[must_use]
+    pub fn war_steed(&self) -> Option<&WarSteedDrive> {
+        self.war_steed.as_ref()
+    }
+
+    /// The war-steed controller, while set (the caller updates its gait and gear).
+    pub fn war_steed_mut(&mut self) -> Option<&mut WarSteedDrive> {
+        self.war_steed.as_mut()
+    }
+
+    /// Replaces the jump table of §11.10 (`None`: no jump). A mounted rider uses the
+    /// mounted branch's table while the channelling loop runs (`mounts.md` §14.12) and the
+    /// on-foot one again afterwards.
+    pub fn set_jump_table(&mut self, table: Option<JumpTable>) {
+        self.config.jump = table;
     }
 
     /// `Movement_IsJumping` (`collision.md` §11.10 Decision item 1): true from the step in
@@ -659,6 +711,7 @@ impl Controller {
         W: WaterQuery,
     {
         let before = self.state;
+        let drive_before = self.war_steed;
         let mut report = self.step_inner(input, env);
         let ok = self.state.is_finite() && {
             let p = self.state.position;
@@ -666,10 +719,7 @@ impl Controller {
             d2 <= f64::from(MAX_STEP_DISPLACEMENT).powi(2)
         };
         if !ok {
-            self.state = MoverState {
-                velocity: [0.0; 3],
-                ..before
-            };
+            self.revert(before, drive_before);
             report = StepReport::new(StepOutcome::Reverted);
         }
         self.state.steps = before.steps.wrapping_add(1);
@@ -694,6 +744,22 @@ impl Controller {
             self.push_planes.shrink_to(SCRATCH_KEEP);
         }
         report
+    }
+
+    /// Undoes a step (module docs): the state before it with the velocity zeroed, and the
+    /// war-steed drive as it was before the step with its stored control velocity zeroed
+    /// too, so the next step does not repeat the undone motion (`mounts.md` §5.4: the
+    /// drive's velocity is what moves the mover).
+    fn revert(&mut self, before: MoverState, drive_before: Option<WarSteedDrive>) {
+        self.state = MoverState {
+            velocity: [0.0; 3],
+            ..before
+        };
+        self.war_steed = drive_before.map(|mut d| {
+            d.velocity = [0.0; 2];
+            d.last = None;
+            d
+        });
     }
 
     #[allow(clippy::too_many_lines)]
@@ -732,25 +798,35 @@ impl Controller {
         let mut vf = v[0] * fwd[0] + v[1] * fwd[1];
         let mut vs = v[0] * right[0] + v[1] * right[1];
         let mut vz = v[2];
-        let (tf, ts) = target_velocity(input.strafe, input.forward, &params, 1.0);
+        let m = self.speed_multiplier;
+        let (tf, ts) = target_velocity(input.strafe, input.forward, &params, m);
         let rate = |axis: usize, top: f32| {
             let a = params.control_acceleration[axis];
             if params.ramp_time > 0.0 {
-                a.min(top / params.ramp_time)
+                a.min(m * top / params.ramp_time)
             } else {
                 a
             }
         };
-        vf = approach(
-            vf,
-            tf,
-            rate(0, params.forward_speed.max(params.backward_speed)) * dt,
-        );
-        vs = approach(
-            vs,
-            ts,
-            rate(1, params.strafe_left_speed.max(params.strafe_right_speed)) * dt,
-        );
+        let war_steed = if let Some(drive) = self.war_steed.as_mut() {
+            // `mounts.md` §5.4: the war-steed's mean control velocity (sideways, forward).
+            let [side, forward] = drive.update(&params, [input.strafe, input.forward], dt);
+            vf = forward;
+            vs = side;
+            true
+        } else {
+            vf = approach(
+                vf,
+                tf,
+                rate(0, params.forward_speed.max(params.backward_speed)) * dt,
+            );
+            vs = approach(
+                vs,
+                ts,
+                rate(1, params.strafe_left_speed.max(params.strafe_right_speed)) * dt,
+            );
+            false
+        };
         let walk_support = element.on_walkable();
         // The float line (buoyancy, module docs step 4): in water without walkable support.
         let float_line = if element.in_water() && !walk_support {
@@ -795,8 +871,11 @@ impl Controller {
             vz -= gravity * dt;
         }
         let d = params.velocity_damper.map(step_factor);
-        vf *= d[0];
-        vs *= d[1];
+        // The war-steed's control velocity is not damped (`mounts.md` §5.4).
+        if !war_steed {
+            vf *= d[0];
+            vs *= d[1];
+        }
         vz *= d[2];
         // The stored impulse (§11.6 item 3, §11.10): added once, after gravity and the
         // damper, the world part turned into the mover's frame. Its vertical part counts
@@ -1957,5 +2036,41 @@ mod tests {
         let speed = len3(w);
         assert!(w[2] > 1.0, "lifted onto the plane: {w:?}");
         assert!(speed <= 120.0 * (1.0 + 1e-6), "{speed}");
+    }
+
+    /// A reverted step also undoes the war-steed drive's update: its stored control velocity
+    /// is the one before the step, zeroed, so the next step does not repeat the motion.
+    #[test]
+    fn revert_zeroes_the_war_steed_drive() {
+        use super::super::warsteed::{GaitMultipliers, WarSteedActor};
+        let mut c = grounded(PlayerMovementRecord::builtin(), [3.0, 0.0, 0.0]);
+        let before = *c.state();
+        let mut d = WarSteedDrive::new(
+            WarSteedActor::default(),
+            GaitMultipliers {
+                gallop_speed: 1.0,
+                locked_gear_speed: None,
+                turn: 1.0,
+            },
+            16.0,
+        );
+        d.velocity = [0.0, 16.0];
+        let drive_before = Some(d);
+        // The step's update ran (the drive moved on), then the result was undone.
+        c.set_war_steed(Some(WarSteedDrive {
+            velocity: [0.0, 16.2],
+            ..d
+        }));
+        c.revert(before, drive_before);
+        assert_eq!(c.state().velocity, [0.0; 3]);
+        let after = c.war_steed().unwrap();
+        assert_eq!(after.velocity, [0.0; 2]);
+        assert!(after.last.is_none());
+        // Without a drive before the step there is none after it.
+        c.revert(before, None);
+        assert!(c.war_steed().is_none());
+        // The jump table can be swapped (mounted branch, `mounts.md` §14.12).
+        c.set_jump_table(None);
+        assert!(c.config().jump.is_none());
     }
 }

@@ -289,6 +289,19 @@ pub struct Args {
     #[arg(long, value_name = "SPEC", value_parser = parse_avatar_arg)]
     pub avatar: Option<crate::avatar::AvatarSpec>,
 
+    /// Ride a mount in the offline walker from the start (P5, `walker.md` §16.2): `auto`,
+    /// `dir:N` (the N-th mount offered to the body), `steed:light|medium|heavy` or the DID
+    /// of a mount effect or mount skill, then options `@summon`, `@instant` (the default
+    /// here: mounted at once) and `@lock=walk|trot|canter|gallop` (war-steeds). `--walk-path`
+    /// runs take it too (instant only).
+    #[arg(
+        long,
+        value_name = "SPEC",
+        value_parser = parse_mount_arg,
+        conflicts_with_all = ["server", "scenario", "no_data", "fly", "showcase"]
+    )]
+    pub mount: Option<crate::walker::mount::MountSpec>,
+
     /// Place N animated characters (every playable body in turn) on a grid in front of
     /// the spawn, standing, walking and running.
     #[arg(long, value_name = "N", default_value_t = 0, value_parser = parse_crowd)]
@@ -446,7 +459,9 @@ pub struct Args {
     /// `bags`, or an NPC window, opened empty (P3, `npc-windows.md` §4): `conversation`,
     /// `choice`, `npc-comment`, `vendor`, `vendor-quantity`, `barter`, `loot`, `wallet`
     /// (the wallet shows the player's wallet), or a quest journal window (P3,
-    /// `quest-journal.md` §4.1): `quest-log`, `tracker` (repeatable; implies `--ui`).
+    /// `quest-journal.md` §4.1): `quest-log`, `tracker`, or a P5 window: `map` (the world
+    /// map), `travel`, `instance-finder`, `instance-travel`, `end-travel`, `loading-screen`,
+    /// `queue-alert` (repeatable; implies `--ui`).
     #[arg(long = "open-panel", value_name = "NAME")]
     pub open_panel: Vec<String>,
 
@@ -913,6 +928,16 @@ impl Args {
                  overwritten)",
             ));
         }
+        // `walker.md` §16.8: scripted walks start mounted at once; `summon` is a usage error.
+        if self.walk_path.is_some()
+            && self
+                .mount
+                .is_some_and(|m| m.timing == crate::walker::mount::MountTiming::Summon)
+        {
+            return Err(crate::scenario::usage_error(
+                "the argument '--mount <SPEC>' cannot use '@summon' with '--walk-path <FILE>'",
+            ));
+        }
         if self.scenario.is_some() && self.screenshot.is_some() && self.no_data {
             return Err(crate::scenario::usage_error(
                 "the argument '--screenshot <PNG>' cannot be used with '--scenario <FILE>' and \
@@ -954,6 +979,15 @@ fn same_file(a: &std::path::Path, b: &std::path::Path) -> bool {
         (Ok(a), Ok(b)) => a == b,
         _ => false,
     }
+}
+
+/// Parses a `--mount` value (`walker.md` §16.2 grammar and text limits).
+///
+/// # Errors
+///
+/// The grammar's reason.
+pub fn parse_mount_arg(s: &str) -> Result<crate::walker::mount::MountSpec, String> {
+    crate::walker::mount::spec::parse_mount(s).map_err(|e| e.to_string())
 }
 
 /// Checks a `--spawn` value with the sandbox's spawn-point grammar.

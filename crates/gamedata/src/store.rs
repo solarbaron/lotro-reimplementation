@@ -3,10 +3,11 @@
 //! record-family index and the table families on first use, resolves selectors
 //! (`scenario-feed.md` §8.6) and gives typed access to the records of each family.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, OnceLock};
 
 use tessera_formats::Did;
+use tessera_formats::gameplay::combat::EffectRole;
 use tessera_formats::gameplay::combat::{
     ClassTable, CombatFamily, CombatObject, Effect, Skill, read_combat_object,
 };
@@ -17,6 +18,7 @@ use tessera_formats::gameplay::items::{ItemKind, ItemView, control_labels};
 use tessera_formats::gameplay::map::{
     MAP_NOTES_LABEL, MapKind, MapNotesTable, PLACES_TABLE_LABEL, PlacesTable, classify_set,
 };
+use tessera_formats::gameplay::mounts::{MountEffect, MountLabels};
 use tessera_formats::gameplay::quests::QuestRecord;
 use tessera_formats::{PropertySet, StringInfo};
 use tessera_props::{GameData, RecordSource};
@@ -27,12 +29,13 @@ use tessera_wstate::{ClassLibrary, ObjectStore, object_dids};
 use crate::error::{GameDataError, Result};
 use crate::filter::{self, label_source};
 use crate::index::{self, IndexOptions, RecordFailure, RecordIndex};
+use crate::map::{InstallMapData, MAP_SET_PREFIX, MapRegions};
 use crate::order::{apply_count, sort_dedup};
 use crate::query::{
     Attribute, Bindings, Candidate, CandidateOutcome, CandidateStatus, Family, LabelContext,
     MAX_DID_LIST, Resolution, ResolveNote, SelectorQuery,
 };
-use crate::tables::{TableElement, map_note_elements, place_elements};
+use crate::tables::{TableElement, map_note_elements, map_region_elements, place_elements};
 use crate::vocab::{Vocab, label_key};
 
 /// Candidates per selector (`scenario-feed.md` §8.6, §11.1).
@@ -46,6 +49,29 @@ pub const MAX_DISPLAY_NAME: usize = 64;
 
 /// UNIQUEDB label in the root DID map (`property-system.md` §8.1; `map-data.md` §2.1).
 const UNIQUEDB_LABEL: &str = "UNIQUEDB";
+
+/// Dictionary label of the mount-type bitfield (`mounts.md` §2.8; P5 travel `mount-type`).
+const MOUNT_TYPE_LABEL: &str = "Mount_Type";
+/// Dictionary label whose mapper resolves `GroupSize` labels (P5 travel, §8.6).
+const GROUP_SIZE_LABEL: &str = "FellowshipMakerUI_GroupSize";
+/// Dictionary label whose mapper resolves `DifficultyTier` labels (P5 travel, §8.6).
+const DIFFICULTY_TIER_LABEL: &str = "FellowshipMakerUI_DifficultyTier";
+
+/// Most records of one [`GameDataStore::scan_objects`] failure list.
+pub const MAX_SCAN_FAILURES: usize = 256;
+
+/// The result of [`GameDataStore::scan_objects`].
+#[derive(Debug, Clone, Default)]
+pub struct ObjectScan<R> {
+    /// The records `f` answered, ascending DID.
+    pub found: Vec<(Did, R)>,
+    /// Records read.
+    pub read: usize,
+    /// Records that could not be read or decoded.
+    pub failed: usize,
+    /// The first [`MAX_SCAN_FAILURES`] of them.
+    pub failures: Vec<RecordFailure>,
+}
 
 /// `RaceTable_GenderType` value of the male gender entries as observed (`appearance.md`
 /// §2.1). `sex=m` resolves to it only when a race table of the install holds it.
@@ -118,7 +144,12 @@ pub struct GameDataStore<S: RecordSource = InstallSource> {
     genders: OnceLock<BTreeSet<u32>>,
     places: OnceLock<Table<PlacesTable>>,
     notes: OnceLock<Table<MapNotesTable>>,
+    regions: OnceLock<Table<MapRegions>>,
+    mount_types: OnceLock<Result<Arc<MountTypes>>>,
 }
+
+/// Each mount effect (effect role `mount`) with its stored `Mount_Type` bits (P5 travel).
+type MountTypes = BTreeMap<u32, Option<u32>>;
 
 impl<S: RecordSource> std::fmt::Debug for GameDataStore<S> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -161,6 +192,8 @@ impl<S: RecordSource> GameDataStore<S> {
             genders: OnceLock::new(),
             places: OnceLock::new(),
             notes: OnceLock::new(),
+            regions: OnceLock::new(),
+            mount_types: OnceLock::new(),
         }
     }
 
@@ -349,13 +382,17 @@ impl<S: RecordSource> GameDataStore<S> {
         })
     }
 
-    /// Failures of the table families (places, map notes), if their records did not decode.
+    /// Failures of the table families (places, map notes), if their records did not decode,
+    /// and of the map regions when they were built and could not be read in full (the map
+    /// regions are not built by this call).
     pub fn table_failures(&self) -> Vec<RecordFailure> {
         [
-            self.places_table().failure.clone(),
-            self.notes_table().failure.clone(),
+            Some(self.places_table().failure.clone()),
+            Some(self.notes_table().failure.clone()),
+            self.regions.get().map(|t| t.failure.clone()),
         ]
         .into_iter()
+        .flatten()
         .flatten()
         .collect()
     }
@@ -410,7 +447,7 @@ impl<S: RecordSource> GameDataStore<S> {
             }
         };
         let mut unmatched = Vec::new();
-        let compiled = filter::compile(
+        let mut compiled = filter::compile(
             query.family,
             &query.filters,
             index.as_deref(),
@@ -418,14 +455,30 @@ impl<S: RecordSource> GameDataStore<S> {
             |attribute, name| self.filter_label(&vocab, query.family, attribute, name),
             &mut unmatched,
         );
+        if query.family == Family::Effect
+            && query
+                .filters
+                .iter()
+                .any(|f| matches!(f.attribute, Attribute::MountType | Attribute::WarSteed))
+            && let Some(ix) = &index
+        {
+            match self.mount_types() {
+                Ok(types) => {
+                    let effects: Vec<u32> =
+                        ix.entries(Family::Effect).iter().map(|e| e.did.0).collect();
+                    filter::apply_mount_types(&mut compiled, &types, &effects);
+                }
+                Err(e) => return CandidateOutcome::new(CandidateStatus::Failed(e.to_string())),
+            }
+        }
         let mut found: Vec<Candidate> = Vec::new();
         let mut truncated = false;
         match query.family {
-            Family::Place | Family::MapNote => {
-                let elements = if query.family == Family::Place {
-                    &self.places_table().elements
-                } else {
-                    &self.notes_table().elements
+            Family::Place | Family::MapNote | Family::MapRegion => {
+                let elements = match query.family {
+                    Family::Place => &self.places_table().elements,
+                    Family::MapNote => &self.notes_table().elements,
+                    _ => &self.regions_table().elements,
                 };
                 found.extend(
                     elements
@@ -498,6 +551,10 @@ impl<S: RecordSource> GameDataStore<S> {
         attribute: Attribute,
         name: &str,
     ) -> Option<u32> {
+        if (family, attribute) == (Family::Effect, Attribute::MountType) {
+            let pid = Pid::resolve(vocab.dict(), MOUNT_TYPE_LABEL);
+            return self.label(vocab, pid, name);
+        }
         let (pid, fallback) = label_source(&vocab.sel, family, attribute)?;
         self.label(vocab, pid, name)
             .or_else(|| fallback.and_then(|p| self.label(vocab, p, name)))
@@ -556,6 +613,9 @@ impl<S: RecordSource> GameDataStore<S> {
             }
             LabelContext::EquipSlot => s.default_slot,
             LabelContext::DamageType => s.damage_type,
+            LabelContext::MapNoteType => s.map_note_type,
+            LabelContext::GroupSize => Pid::resolve(vocab.dict(), GROUP_SIZE_LABEL),
+            LabelContext::DifficultyTier => Pid::resolve(vocab.dict(), DIFFICULTY_TIER_LABEL),
         };
         let name = label.strip_prefix('@').unwrap_or(label);
         self.label(&vocab, pid, name)
@@ -564,6 +624,8 @@ impl<S: RecordSource> GameDataStore<S> {
     /// The display name of a record or, with `row`, of a table element
     /// (`scenario-feed.md` §8.6 `display_name`): for a `place` element the entry's name;
     /// for a `map-note` element (DID = the row's entity) the entity record's display name;
+    /// for a `map-region` element the node's rendered `UI_Map_MenuName` or the dungeon
+    /// map's lowest-DID dungeon's `Dungeon_Name` (P5 travel);
     /// otherwise the record's name property by family (§5.2: `Skill_Name`, `Effect_Name`,
     /// `Trait_Name`, `Quest_Name`, `TravelDisplayName`, `Area_Name` / `Dungeon_Name`,
     /// `Reputation_Faction_Name`, `CraftRecipe_Name`, `CraftProfession_Name`,
@@ -589,7 +651,25 @@ impl<S: RecordSource> GameDataStore<S> {
                 .and_then(|t| t.notes.get(r))
                 .is_some_and(|n| n.base.entity == did);
             if !is_note_row {
-                return None;
+                // A map-region element (P5 travel): the node's menu name or the dungeon
+                // map's dungeon name. An R-dungeon is (a map-data set, 0) and an R-node (a
+                // UI element ID, row ≥ 1) (`scenario-feed.md` §8.3); other elements cannot be
+                // regions, so they do not build the region list.
+                let may_be_region = if row == 0 {
+                    did.prefix() == MAP_SET_PREFIX
+                } else {
+                    !is_object_did(did)
+                };
+                if !may_be_region && self.regions.get().is_none() {
+                    return None;
+                }
+                return self
+                    .regions_table()
+                    .table
+                    .as_ref()
+                    .and_then(|t| t.find(did, row))
+                    .and_then(|region| region.name.as_ref())
+                    .and_then(|info| self.text(info));
             }
         }
         self.record_name(did)
@@ -819,6 +899,192 @@ impl<S: RecordSource> GameDataStore<S> {
             &vocab.map,
             &vocab.map_weenie,
         ))
+    }
+
+    // -----------------------------------------------------------------------------------------
+    // P5 entry points (map regions, mount types, record scans)
+    // -----------------------------------------------------------------------------------------
+
+    /// The object records listed, in the order given.
+    pub fn object_dids(&self) -> &[Did] {
+        &self.object_dids
+    }
+
+    /// The strings given with [`GameDataStore::with_strings`], if any.
+    pub fn strings(&self) -> Option<&Arc<Strings>> {
+        self.strings.as_ref()
+    }
+
+    /// The strings, or an empty string source (no text renders) when none were given.
+    pub(crate) fn strings_or_empty(&self) -> Arc<Strings> {
+        self.strings
+            .clone()
+            .unwrap_or_else(|| Arc::new(Strings::new(tessera_text::MemorySource::new())))
+    }
+
+    fn regions_table(&self) -> &Table<MapRegions> {
+        self.regions.get_or_init(|| match InstallMapData::new(self) {
+            Ok(data) => {
+                let regions = MapRegions::load(&data);
+                if let Some(e) = &regions.layout_error {
+                    tracing::warn!(error = %e, "map tree unavailable; map-region lists only dungeon maps");
+                }
+                if let Some(e) = &regions.dungeon_error {
+                    tracing::warn!(error = %e, "dungeon list unavailable; map-region lists only map nodes");
+                }
+                if let Some(e) = &regions.area_error {
+                    tracing::warn!(error = %e, "area list unavailable; area map-data sets not excluded");
+                }
+                // A partial list is still served (a record that cannot be read is not a
+                // candidate, `scenario-feed.md` §8.6) and reported by `table_failures`.
+                let failure = [&regions.layout_error, &regions.dungeon_error]
+                    .into_iter()
+                    .flatten()
+                    .next()
+                    .map(|e| {
+                        RecordFailure::new(
+                            Did(0),
+                            Some(Family::MapRegion),
+                            index::FailureKind::Table,
+                            e,
+                        )
+                    });
+                Table {
+                    elements: map_region_elements(&regions),
+                    table: Some(Arc::new(regions)),
+                    failure,
+                }
+            }
+            Err(e) => table_failure(Did(0), Family::MapRegion, &e),
+        })
+    }
+
+    /// Every map region (`map-windows.md` §5; P5 travel `map-region`), built once on first
+    /// use (reads the `map` layout, every dungeon record and every map image's header;
+    /// needs the record index). `None` when the dictionary cannot be read.
+    pub fn map_regions(&self) -> Option<Arc<MapRegions>> {
+        self.regions_table().table.clone()
+    }
+
+    /// Each mount effect (effect role `mount`, `combat-data.md` §6.1) with its stored
+    /// `Mount_Type` bits (`mounts.md` §2.8), built once. Effects whose record cannot be read
+    /// are left out (with a warning).
+    pub fn mount_types(&self) -> Result<Arc<BTreeMap<u32, Option<u32>>>> {
+        self.mount_types
+            .get_or_init(|| {
+                let index = self.index()?;
+                let vocab = self.vocab()?;
+                let labels = MountLabels::resolve(vocab.dict());
+                let mut out = BTreeMap::new();
+                for e in index.entries(Family::Effect) {
+                    if !matches!(e.facts, index::Facts::Effect(EffectRole::Mount)) {
+                        continue;
+                    }
+                    match self.object(e.did) {
+                        Ok(Some(r)) => {
+                            let ty = MountEffect::new(&labels, &r.properties)
+                                .mount_type()
+                                .map(|t| t.0);
+                            out.insert(e.did.0, ty);
+                        }
+                        Ok(None) => {}
+                        Err(err) => {
+                            tracing::warn!(did = %e.did, error = %err, "mount effect unreadable")
+                        }
+                    }
+                }
+                Ok(Arc::new(out))
+            })
+            .clone()
+    }
+
+    /// Calls `f` on the property set of every listed object record (on up to
+    /// [`crate::MAX_INDEX_THREADS`] threads) and keeps its answers, ascending DID. Records
+    /// that cannot be read are counted and the first [`MAX_SCAN_FAILURES`] listed. A pass
+    /// over every record: seconds in a release build on an install of the observed size.
+    ///
+    /// # Errors
+    ///
+    /// The dictionary cannot be read, or a worker panicked ([`GameDataError::Worker`]).
+    pub fn scan_objects<R: Send>(
+        &self,
+        f: impl Fn(Did, &PropertySet) -> Option<R> + Sync,
+    ) -> Result<ObjectScan<R>> {
+        use std::panic::{AssertUnwindSafe, catch_unwind};
+        let vocab = self.vocab()?;
+        let dict = vocab.dict();
+        let data = self.store.game_data();
+        let mut dids: Vec<Did> = self
+            .object_dids
+            .iter()
+            .copied()
+            .filter(|d| is_object_did(*d))
+            .collect();
+        dids.sort_unstable_by_key(|d| d.0);
+        dids.dedup();
+        let threads = std::thread::available_parallelism()
+            .map_or(1, std::num::NonZero::get)
+            .clamp(1, crate::MAX_INDEX_THREADS);
+        let chunk = dids.len().div_ceil(threads).max(1);
+        type Part<R> = (Vec<(Did, R)>, usize, Vec<RecordFailure>);
+        let work = |part: &[Did]| -> Part<R> {
+            let mut found = Vec::new();
+            let mut failed = 0usize;
+            let mut failures = Vec::new();
+            for &did in part {
+                match index::read_object_set(data, dict, did) {
+                    Ok((_, set)) => {
+                        if let Some(r) = f(did, &set) {
+                            found.push((did, r));
+                        }
+                    }
+                    Err(fl) if fl.kind == index::FailureKind::Missing => {}
+                    Err(fl) => {
+                        failed += 1;
+                        if failures.len() < MAX_SCAN_FAILURES {
+                            failures.push(fl);
+                        }
+                    }
+                }
+            }
+            (found, failed, failures)
+        };
+        let parts: Vec<std::thread::Result<Part<R>>> = std::thread::scope(|s| {
+            let work = &work;
+            let handles: Vec<_> = dids
+                .chunks(chunk)
+                .map(|c| {
+                    std::thread::Builder::new()
+                        .name("gamedata-scan".into())
+                        .spawn_scoped(s, move || work(c))
+                        .map_err(|_| c)
+                })
+                .collect();
+            handles
+                .into_iter()
+                .map(|h| match h {
+                    Ok(h) => h.join(),
+                    Err(c) => catch_unwind(AssertUnwindSafe(|| work(c))),
+                })
+                .collect()
+        });
+        let mut out = ObjectScan {
+            found: Vec::new(),
+            read: dids.len(),
+            failed: 0,
+            failures: Vec::new(),
+        };
+        for p in parts {
+            let (found, failed, failures) = p.map_err(|_| GameDataError::Worker)?;
+            out.found.extend(found);
+            out.failed += failed;
+            for fl in failures {
+                if out.failures.len() < MAX_SCAN_FAILURES {
+                    out.failures.push(fl);
+                }
+            }
+        }
+        Ok(out)
     }
 
     /// The places table (`map-data.md` §3), if the install has one that decodes.

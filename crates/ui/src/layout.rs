@@ -100,7 +100,8 @@ pub struct RuntimeInput {
 
 /// Steps 2–5 of the run-time rule of `ui-layout.md` §8.4: the element's new box relative to
 /// its parent. (Step 1, the Stretch-parent test, and step 6, setting the box, belong to the
-/// tree.)
+/// tree.) A final Tessera step rescues a box that comes out with a non-positive width or
+/// height (§8.4 step 6 OPEN, the loadscreen meter and label).
 #[must_use]
 pub fn runtime(inp: &RuntimeInput) -> IBox {
     let d = inp.design;
@@ -180,6 +181,39 @@ pub fn runtime(inp: &RuntimeInput) -> IBox {
         t = t.max(0);
         r = r.min(nw);
         b = b.min(nh);
+    }
+    // Tessera fallback for a degenerate box (`ui-layout.md` §8.4 step 6 OPEN, implementer
+    // note): when the parent is far smaller than the design parent, an edge in SAME or
+    // OPPOSITE mode can carry the far edge past the near edge and give a non-positive width
+    // or height (the loadscreen meter and label, `travel-windows.md` §5.2). Such a box draws
+    // nothing. Rather than drop the element, keep its design extent on each degenerate axis
+    // and shift the box so it lies inside the parent's current box (0 .. Nw − 1, 0 .. Nh −
+    // 1). Non-degenerate boxes (including those that overflow the parent) are left untouched.
+    if sub(r, l) < 0 {
+        let ew = w.clamp(1, nw.max(1));
+        r = add(l, sub(ew, 1));
+        if r > sub(nw, 1) {
+            let s = sub(r, sub(nw, 1));
+            l = sub(l, s);
+            r = sub(r, s);
+        }
+        if l < 0 {
+            r = sub(r, l);
+            l = 0;
+        }
+    }
+    if sub(b, t) < 0 {
+        let eh = h.clamp(1, nh.max(1));
+        b = add(t, sub(eh, 1));
+        if b > sub(nh, 1) {
+            let s = sub(b, sub(nh, 1));
+            t = sub(t, s);
+            b = sub(b, s);
+        }
+        if t < 0 {
+            b = sub(b, t);
+            t = 0;
+        }
     }
     IBox::new(l, t, r, b)
 }

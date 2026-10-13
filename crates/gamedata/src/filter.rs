@@ -7,7 +7,7 @@
 //! attributes into the set of records the named class tables list. Matching a compiled
 //! filter against one record's facts is then a cheap test.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use tessera_formats::Did;
 use tessera_formats::gameplay::combat::EffectRole;
@@ -339,9 +339,61 @@ pub(crate) fn matches_record(
     }
 }
 
+/// The war-steed bits of a mount type (`mounts.md` §2.8, MT7).
+const WAR_STEED_MASK: u32 = tessera_formats::gameplay::mounts::WAR_STEED_MASK;
+
+/// Turns the effect attributes `mount-type` and `war-steed` (P5 travel, `scenario-feed.md`
+/// §8.3) into member sets: `types` maps each mount effect (role `mount`) to its stored
+/// `Mount_Type` bits (absent when the record has none), `effects` lists every effect.
+/// `mount-type=v` keeps the effects whose bits include key *v*'s bit; `war-steed=yes` the
+/// effects whose bits meet 0x38; `war-steed=no` every other effect (absent = no).
+pub(crate) fn apply_mount_types(
+    compiled: &mut [Compiled],
+    types: &BTreeMap<u32, Option<u32>>,
+    effects: &[u32],
+) {
+    for c in compiled {
+        let pred = match (c.attribute, &c.pred) {
+            (Attribute::MountType, Pred::Values(v)) => Pred::Members(
+                types
+                    .iter()
+                    .filter(|(_, bits)| bit(bits.map(u64::from), v))
+                    .map(|(d, _)| *d)
+                    .collect(),
+            ),
+            (Attribute::WarSteed, Pred::Bool(want)) => {
+                let steeds: BTreeSet<u32> = types
+                    .iter()
+                    .filter(|(_, bits)| bits.is_some_and(|b| b & WAR_STEED_MASK != 0))
+                    .map(|(d, _)| *d)
+                    .collect();
+                if *want {
+                    Pred::Members(steeds)
+                } else {
+                    Pred::Members(
+                        effects
+                            .iter()
+                            .copied()
+                            .filter(|d| !steeds.contains(d))
+                            .collect(),
+                    )
+                }
+            }
+            (Attribute::MountType | Attribute::WarSteed, _) => Pred::Never,
+            _ => continue,
+        };
+        c.pred = pred;
+    }
+}
+
 /// Whether table element `e` passes `c`.
 pub(crate) fn matches_element(family: Family, e: &TableElement, c: &Compiled) -> bool {
     match (family, c.attribute, &c.pred) {
+        (Family::MapRegion, Attribute::Region, Pred::Integers(v)) => e
+            .candidate
+            .location
+            .is_some_and(|l| v.contains(&i64::from(l.region))),
+        (Family::MapRegion, Attribute::Kind, Pred::Keywords(k)) => keyword(e.kind, k),
         (Family::Place | Family::MapNote, Attribute::Region, Pred::Integers(v)) => {
             v.contains(&i64::from(e.region))
         }

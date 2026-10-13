@@ -39,6 +39,11 @@ pub struct UiRunReport {
     pub panels: usize,
     /// Plugins loaded at the end.
     pub plugins: Vec<String>,
+    /// Short names of the game windows (`npc`, `quest`, `travel`, `finder`) seen open at any
+    /// frame of the run: the per-frame window updates of [`super::client::window_frames`]
+    /// drive them from the session's events (P3/P5), so a headless scenario run can check
+    /// that they opened.
+    pub game_windows: std::collections::BTreeSet<&'static str>,
 }
 
 /// The arguments of a run: with `--ui-script` and no `--plugins`, the scripted run's own
@@ -113,7 +118,8 @@ pub fn capture_with_ui(
 }
 
 /// Checks that a headless UI run has something that ends it: `--screenshot`,
-/// `--duration`, `--ui-script` or `--fly-path`.
+/// `--duration`, `--ui-script`, `--fly-path`, or a prepared scenario (which ends when the
+/// feed finishes, `scenario-feed.md` §12.2).
 ///
 /// # Errors
 ///
@@ -123,8 +129,11 @@ pub fn check_end_condition(args: &Args) -> anyhow::Result<()> {
         && args.duration.is_none()
         && !args.ui_script
         && args.fly_path.is_none()
+        && args.scenario_prepared.is_none()
     {
-        bail!("a headless UI run needs --screenshot, --duration, --ui-script or --fly-path to end");
+        bail!(
+            "a headless UI run needs --screenshot, --duration, --ui-script, --fly-path or a scenario to end"
+        );
     }
     Ok(())
 }
@@ -246,7 +255,15 @@ pub fn run(args: &Args) -> anyhow::Result<UiRunReport> {
             now,
             dt,
         );
+        // P5: the dispatcher's `ride`, `findplace` and `leaveinstance`, the feed's mounts
+        // for the walker, and the walker's mount state for the plugin views (as `crate::app`
+        // runs it, before `after_update`).
+        crate::travel::hub::run_p5_requests(&mut rt, walker, now);
         ui.after_update(walker, &mut rt, &ev);
+        // The NPC, quest, social and P5 travel/finder/map window frames (decision 0024
+        // P3–P5): the same per-frame window updates the windowed path runs.
+        super::client::window_frames(&mut ui, &mut rt, walker, &mut renderer, now);
+        record_game_windows(&ui, &rt, &mut report);
         ui.step8(walker, &mut renderer, &mut rt);
         // A renderer error ends the loop through `finish`, which unloads the plugins
         // (decision 0014 D8) and shuts the walker down.
@@ -271,6 +288,19 @@ pub fn run(args: &Args) -> anyhow::Result<UiRunReport> {
             let s = h.last_sample();
             s.bands == 0 && s.upload_bytes == 0 && h.env().is_none_or(|e| !e.borrow().busy())
         });
+        // A prepared scenario ends the run when the feed reports `Finished`
+        // (`scenario-feed.md` §12.2); the end line is written on that tick.
+        if args.scenario_prepared.is_some()
+            && matches!(
+                rt.world
+                    .as_ref()
+                    .and_then(crate::net::World::scenario_status),
+                Some(tessera_net::scenario::ScenarioStatus::Finished { .. })
+            )
+        {
+            report.settled = walker.settled();
+            break Ok(());
+        }
         if args.ui_script {
             if ui.script_done() {
                 break Ok(());
@@ -444,6 +474,38 @@ fn keep(first: &mut Option<anyhow::Error>, r: anyhow::Result<()>) {
         && first.is_none()
     {
         *first = Some(e);
+    }
+}
+
+/// Records the P3/P5 windows open this frame into the run report: the NPC windows
+/// (dialogue, vendor, loot, offer, barter), the quest log or tracker, and the travel or
+/// instance-finder windows, read through the hubs' UI. Called every frame; a window seen
+/// once stays recorded.
+fn record_game_windows(ui: &ClientUi, rt: &Runtime, report: &mut UiRunReport) {
+    if !ui.attached() {
+        return;
+    }
+    if rt
+        .npc
+        .ui()
+        .is_some_and(|u| u.open_windows().next().is_some())
+    {
+        report.game_windows.insert("npc");
+    }
+    if rt
+        .quests
+        .ui()
+        .is_some_and(|u| u.log().is_some() || u.tracker().is_some())
+    {
+        report.game_windows.insert("quest");
+    }
+    if let Some(u) = rt.p5.ui() {
+        if u.travel().is_some() {
+            report.game_windows.insert("travel");
+        }
+        if u.finder().is_some() {
+            report.game_windows.insert("finder");
+        }
     }
 }
 

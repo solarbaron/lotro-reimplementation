@@ -402,6 +402,37 @@ pub fn run_walk<W: WalkWorld>(
     setup: &MoverSetup,
     wait: LoadWait,
 ) -> Result<WalkOutcome, RunError> {
+    run_walk_with(walk, world, setup, wait, &mut NoHooks)
+}
+
+/// Callbacks of [`run_walk_with`]: what a scripted walk does besides moving (a mount,
+/// `walker.md` §16.8).
+pub trait WalkHooks {
+    /// After the mover is placed, before the settle.
+    fn start(&mut self, _walker: &mut PhysicsWalker) {}
+    /// After each step that ran, with the step's time (negative while settling) and its
+    /// row.
+    fn step(&mut self, _walker: &mut PhysicsWalker, _row: &WalkRow) {}
+}
+
+/// No callbacks.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct NoHooks;
+
+impl WalkHooks for NoHooks {}
+
+/// [`run_walk`] with `hooks`.
+///
+/// # Errors
+///
+/// [`RunError`] when the walk cannot run at all.
+pub fn run_walk_with<W: WalkWorld>(
+    walk: &Walk,
+    world: &mut W,
+    setup: &MoverSetup,
+    wait: LoadWait,
+    hooks: &mut dyn WalkHooks,
+) -> Result<WalkOutcome, RunError> {
     let block = LandblockKey::new(walk.region, walk.landblock.0, walk.landblock.1)
         .map_err(|_| RunError::BadLandblock)?;
     let o = block.origin();
@@ -421,6 +452,7 @@ pub fn run_walk<W: WalkWorld>(
     if walk.cell != 0 {
         walker.set_cell(Some((block, walk.cell)));
     }
+    hooks.start(&mut walker);
     let walking = walk.mode.walking();
     let mut rows = Vec::new();
     let settle = steps_for(SETTLE_SECONDS, f64::from(STEP_SECONDS));
@@ -464,14 +496,16 @@ pub fn run_walk<W: WalkWorld>(
             layer_speed
         };
         let feet = record.feet();
-        rows.push(WalkRow {
+        let row = WalkRow {
             t,
             local: to_local(record.state.position),
             terrain: world.terrain_height(&feet),
             terrain_normal_z: steepest_terrain_normal_z(world, &feet, setup.shape.radius()),
             forward_speed,
             record,
-        });
+        };
+        hooks.step(&mut walker, &row);
+        rows.push(row);
     }
     let settle_drift = rows
         .iter()
@@ -1082,6 +1116,20 @@ pub const LOG_HEADER: &str = "walk,step,t,x,y,z,vx,vy,vz,heading_deg,state,suppo
 ///
 /// I/O errors of `out`.
 pub fn write_log(out: &mut dyn std::io::Write, outcome: &WalkOutcome) -> std::io::Result<()> {
+    write_log_with(out, outcome, |_| None)
+}
+
+/// [`write_log`] with `extra(i)` appended to row `i` after `contacts` (comma first), when it
+/// gives fields: the mount columns of a mounted walk (`walker.md` §16.10 "Walk log").
+///
+/// # Errors
+///
+/// I/O errors of `out`.
+pub fn write_log_with(
+    out: &mut dyn std::io::Write,
+    outcome: &WalkOutcome,
+    extra: impl Fn(usize) -> Option<String>,
+) -> std::io::Result<()> {
     let mut line = String::new();
     for (i, r) in outcome.rows.iter().enumerate() {
         let s = &r.record.state;
@@ -1128,9 +1176,51 @@ pub fn write_log(out: &mut dyn std::io::Write, outcome: &WalkOutcome) -> std::io
             r.terrain.map_or_else(String::new, |t| format!("{t:.4}")),
             contacts.join(" "),
         );
+        if let Some(e) = extra(i) {
+            line.push(',');
+            line.push_str(&e);
+        }
         writeln!(out, "{line}")?;
     }
     out.flush()
+}
+
+/// Resolves and evaluates `spec` for `avatar` (`walker.md` §16.2, §16.8): the profile and
+/// the evaluator whose clips the walk log reports.
+///
+/// # Errors
+///
+/// The refusal of the resolution or evaluation (`mounts.md` §14.11).
+pub fn prepare_mount<'c>(
+    root: &std::path::Path,
+    catalog: &'c crate::walker::characters::catalog::CharacterCatalog,
+    avatar: &crate::avatar::AvatarSpec,
+    spec: crate::walker::mount::MountSpec,
+) -> Result<
+    (
+        Arc<crate::walker::mount::profile::MountProfile>,
+        crate::walker::mount::MountEvaluator<'c>,
+    ),
+    crate::walker::mount::profile::MountRefusal,
+> {
+    use crate::walker::mount::profile::{MountData, MountRefusal, resolve_mount, rider_body};
+    let body = catalog
+        .appearance(avatar)
+        .map_err(|e| MountRefusal::Unavailable(e.to_string()))?
+        .body;
+    let tessera_net::Body::Character { species, sex } = body else {
+        return Err(MountRefusal::NotPlayable);
+    };
+    let data = MountData::open(root)?;
+    let rb = rider_body(data.game_data(), species, sex).ok_or(MountRefusal::NotPlayable)?;
+    let profile = Arc::new(resolve_mount(&data, &rb, spec.source)?);
+    let ev = crate::walker::mount::MountEvaluator::new(
+        catalog,
+        tessera_mesh::assembly::AssemblyOptions::default(),
+        &crate::walker::mount::session::plain_request(body),
+        Arc::clone(&profile),
+    )?;
+    Ok((profile, ev))
 }
 
 /// The compass heading (degrees, 0 = north, 90 = east) of yaw `yaw` (radians, 0 = east,
@@ -1329,7 +1419,27 @@ pub struct WalkReport {
 ///
 /// No install, unreadable walk file or log path, or a log path inside the install.
 pub fn run_cli(args: &crate::cli::Args) -> anyhow::Result<WalkReport> {
+    run_cli_mounted(args, None)
+}
+
+/// [`run_cli`] with `--mount SPEC` (`walker.md` §16.8): every walk starts mounted (instant)
+/// before its settle, and the walk log gains the mount columns of §16.10 after `contacts`
+/// ([`crate::walker::mount::walk::WALK_LOG_COLUMNS`]). A mount that does not resolve or
+/// evaluate leaves the walks on foot with a warning (§16.2).
+///
+/// # Errors
+///
+/// As [`run_cli`]; a `summon` timing (instant only with `--walk-path`).
+pub fn run_cli_mounted(
+    args: &crate::cli::Args,
+    mount: Option<crate::walker::mount::MountSpec>,
+) -> anyhow::Result<WalkReport> {
+    use crate::walker::mount::walk::{MountHooks, WALK_LOG_COLUMNS, walk_log_fields};
+    use crate::walker::mount::{MountTiming, eval::ClipKey};
     use anyhow::Context as _;
+    if mount.is_some_and(|m| m.timing == MountTiming::Summon) {
+        anyhow::bail!("--mount with --walk-path starts mounted (instant); summon is not allowed");
+    }
     let Some(path) = &args.walk_path else {
         anyhow::bail!("--walk-path not given");
     };
@@ -1357,12 +1467,31 @@ pub fn run_cli(args: &crate::cli::Args) -> anyhow::Result<WalkReport> {
     let avatar = args.avatar.clone().unwrap_or_default();
     let session = WalkSession::open(&install.root, &avatar, &args.content_layers, 0)?;
     let mut world = session.world()?;
+    // The mount (`walker.md` §16.8): resolved and evaluated once for every walk.
+    let catalog = mount.map(|_| {
+        crate::walker::characters::catalog::CharacterCatalog::build(Arc::clone(&session.set))
+    });
+    let mut ride = match (mount, &catalog) {
+        (Some(spec), Some(cat)) => match prepare_mount(&install.root, cat, &avatar, spec) {
+            Ok((profile, ev)) => Some((spec, profile, ev)),
+            Err(e) => {
+                tracing::warn!("--mount {spec}: {e}; the walks run on foot");
+                None
+            }
+        },
+        _ => None,
+    };
+    let header = if mount.is_some() {
+        format!("{LOG_HEADER},{WALK_LOG_COLUMNS}")
+    } else {
+        LOG_HEADER.to_owned()
+    };
     let mut log = match &args.walk_log {
         Some(p) => {
             let mut f = std::io::BufWriter::new(
                 std::fs::File::create(p).with_context(|| format!("creating {}", p.display()))?,
             );
-            std::io::Write::write_all(&mut f, format!("{LOG_HEADER}\n").as_bytes())?;
+            std::io::Write::write_all(&mut f, format!("{header}\n").as_bytes())?;
             Some(f)
         }
         None => None,
@@ -1370,10 +1499,39 @@ pub fn run_cli(args: &crate::cli::Args) -> anyhow::Result<WalkReport> {
     let wait = LoadWait::Timeout(Duration::from_secs(args.settle_timeout));
     let mut report = WalkReport::default();
     for walk in &walks {
-        match run_walk(walk, &mut world, &session.setup, wait) {
-            Ok(out) => {
+        let mut mount_rows: Option<Vec<crate::walker::framelog::MountRow>> =
+            mount.map(|_| Vec::new());
+        let mut refusal = None;
+        let result = match &mut ride {
+            Some((spec, profile, ev)) => {
+                let mover = crate::walker::mount::ride::MountMover::new(
+                    Arc::clone(profile),
+                    ev.setup().timeline,
+                    false,
+                    spec.lock,
+                )
+                .with_jump(ev.setup().jump);
+                let mut clips = |k: &ClipKey| Some(ev.clips(k));
+                let mut hooks = MountHooks::new(mover, &mut clips);
+                let r = run_walk_with(walk, &mut world, &session.setup, wait, &mut hooks);
+                mount_rows = Some(std::mem::take(&mut hooks.rows));
+                refusal = hooks.refusal.take();
+                r
+            }
+            None => run_walk(walk, &mut world, &session.setup, wait),
+        };
+        match result {
+            Ok(mut out) => {
+                if let Some(r) = &refusal {
+                    out.verdict.notes.push(format!("mount refused: {r}"));
+                }
                 if let Some(f) = &mut log {
-                    write_log(f, &out)?;
+                    match &mount_rows {
+                        Some(m) => write_log_with(f, &out, |i| {
+                            Some(walk_log_fields(&m.get(i).cloned().unwrap_or_default()))
+                        })?,
+                        None => write_log(f, &out)?,
+                    }
                 }
                 let line = summary_line(&out);
                 if out.verdict.passed {

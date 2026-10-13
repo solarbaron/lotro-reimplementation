@@ -158,6 +158,9 @@ impl SelectorResolver for Bytes<'_> {
 
     // Every context answers from the bytes, `NpcAction` of `action(@Label)` texts (P3
     // revision, `scenario-feed.md` §18.P3) included.
+    // P5 travel (§11.4): `MapNoteType` (keys outside 1 … 64 included), `GroupSize` and
+    // `DifficultyTier` answer here too; `map-region` candidates come with and without a
+    // location from `candidates`, and their names from `display_name`.
     fn enum_value(&mut self, _context: LabelContext, _label: &str) -> Option<u32> {
         if !self.install {
             return None;

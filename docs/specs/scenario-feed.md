@@ -4,11 +4,11 @@
 
 | | |
 |---|---|
-| **Status** | **Accepted** (revision 7, the P4 social parts of §18.5: independent review 2026-10-11, CLEAN_ROOM.md §5.3 passed, every item; H1–H6 agree with decision 0035 D2–D4, `tessera-protocol.md` v1.2 §10.6 and Appendix A, and the code on branch `p4`; Vector H re-derived line by line, the 8 hostile rows checked; non-blocking notes (a)–(c) in §18.5; written as the unnumbered "P4 social" revision and numbered 7 at the merge with P2 and P3, 2026-10-11). **Accepted** (revision 6, the P2 parts of §18.4: independent review 2026-10-11 of commit 7b14f27, CLEAN_ROOM.md §5.3 passed, every item; D1–D4 agree with decision 0032, LEGAL.md §11.1 rule 5 and decision 0024 §2; record in §18.4.1). **Accepted** (revision 5, the P3 parts of §18.P3: independent review 2026-10-11, CLEAN_ROOM.md §5.3 passed, every item; record in §18.P3). Before: Review (revision 7, "P4 social", 2026-10-11, spec writer, design, [decision 0035](../decisions/0035-p4-social-on-test-server.md) D2–D4, additive, §18.5: synchronised performances (`perform … sync`, `perform-start`, `perform-withdraw`), fellow vitals (`fellow-vital`), the commands `ReadyPerformance`, `StartPerformance`, `DisbandFellowship`, the remote backend at protocol minor 2 (§9.8), the plain sandbox's start answer, Vector H, P4 hostile and backend cases; no section renumbered, no earlier rule changed; an independent review must follow). Before: **Review** (revision 6, the P2 parts of §18.4, 2026-10-10, spec writer, design: [decision 0032](../decisions/0032-p2-targeting-on-test-server.md) D1–D4: local selection on the test-server backend, §9.5, §9.7, §12.5.1, §12.5.2, §14.9, §14.11, §15; an independent review by a session that wrote no part of revision 6 or of decision 0032 must check the changes listed in §18.4 and the cases of §14.9 and §14.11; P2's revision was written as revision 5 and renumbered 6 at the merge with P3, 2026-10-11). Before: **Accepted** (revision 4, independent review 2026-10-10: CLEAN_ROOM.md §5.3 passed, every item; D1–D5 agree with decision 0025, `tessera-protocol.md` v1.1 §6.2.17 and Appendix A, and the code on branch `p1`; Vector G and Vector F's changed lines re-derived, the 15 new hostile rows checked; non-blocking notes (a)–(f) in §18.3). Before: Review (revision 4, 2026-10-10, spec writer, design: [decision 0025](../decisions/0025-p1-character-look-on-test-server.md) D1–D5, §18.3; an independent review by a session that wrote no part of revision 4 must check the changes listed there, Vectors F and G and the new hostile rows). Before: Accepted (revision 3, 2026-10-09). An independent review by a session that wrote none of revisions 1–3 re-checked R1–R31, S1–S31, Vectors A–F and the hostile table and passed (P0 exit criterion 1); no blocking OPEN. The non-blocking OPENs of §3.1, §8.3, §11.1, §12.4, §13 and §16 stay open for the spec owner; the reviewer's rulings on them are review notes in the review record and change no fact |
-| **Last updated** | 2026-10-11 |
+| **Status** | **Accepted** for the parts labelled "P5 travel" (revision 8: independent review 2026-10-11, CLEAN_ROOM.md §5.3 passed, every item; record in §18.P5); every other part keeps the status that follows. **Accepted** (revision 7, the P4 social parts of §18.5: independent review 2026-10-11, CLEAN_ROOM.md §5.3 passed, every item; H1–H6 agree with decision 0035 D2–D4, `tessera-protocol.md` v1.2 §10.6 and Appendix A, and the code on branch `p4`; Vector H re-derived line by line, the 8 hostile rows checked; non-blocking notes (a)–(c) in §18.5; written as the unnumbered "P4 social" revision and numbered 7 at the merge with P2 and P3, 2026-10-11). **Accepted** (revision 6, the P2 parts of §18.4: independent review 2026-10-11 of commit 7b14f27, CLEAN_ROOM.md §5.3 passed, every item; D1–D4 agree with decision 0032, LEGAL.md §11.1 rule 5 and decision 0024 §2; record in §18.4.1). **Accepted** (revision 5, the P3 parts of §18.P3: independent review 2026-10-11, CLEAN_ROOM.md §5.3 passed, every item; record in §18.P3). Before: Review (revision 7, "P4 social", 2026-10-11, spec writer, design, [decision 0035](../decisions/0035-p4-social-on-test-server.md) D2–D4, additive, §18.5: synchronised performances (`perform … sync`, `perform-start`, `perform-withdraw`), fellow vitals (`fellow-vital`), the commands `ReadyPerformance`, `StartPerformance`, `DisbandFellowship`, the remote backend at protocol minor 2 (§9.8), the plain sandbox's start answer, Vector H, P4 hostile and backend cases; no section renumbered, no earlier rule changed; an independent review must follow). Before: **Review** (revision 6, the P2 parts of §18.4, 2026-10-10, spec writer, design: [decision 0032](../decisions/0032-p2-targeting-on-test-server.md) D1–D4: local selection on the test-server backend, §9.5, §9.7, §12.5.1, §12.5.2, §14.9, §14.11, §15; an independent review by a session that wrote no part of revision 6 or of decision 0032 must check the changes listed in §18.4 and the cases of §14.9 and §14.11; P2's revision was written as revision 5 and renumbered 6 at the merge with P3, 2026-10-11). Before: **Accepted** (revision 4, independent review 2026-10-10: CLEAN_ROOM.md §5.3 passed, every item; D1–D5 agree with decision 0025, `tessera-protocol.md` v1.1 §6.2.17 and Appendix A, and the code on branch `p1`; Vector G and Vector F's changed lines re-derived, the 15 new hostile rows checked; non-blocking notes (a)–(f) in §18.3). Before: Review (revision 4, 2026-10-10, spec writer, design: [decision 0025](../decisions/0025-p1-character-look-on-test-server.md) D1–D5, §18.3; an independent review by a session that wrote no part of revision 4 must check the changes listed there, Vectors F and G and the new hostile rows). Before: Accepted (revision 3, 2026-10-09). An independent review by a session that wrote none of revisions 1–3 re-checked R1–R31, S1–S31, Vectors A–F and the hostile table and passed (P0 exit criterion 1); no blocking OPEN. The non-blocking OPENs of §3.1, §8.3, §11.1, §12.4, §13 and §16 stay open for the spec owner; the reviewer's rulings on them are review notes in the review record and change no fact |
+| **Last updated** | 2026-10-13
 | **Author role** | Spec writer (design) |
-| **Reviewer** | Revision 2: spec reviewer (Clean-Room-Role: review), a session separate from the first-draft author, 2026-10-09; it also wrote R1–R31, so those fixes are unreviewed. Revision 3: pending (an independent session). Revision 4: a Claude review session in the spec-reviewer role (Clean-Room-Role: review) that wrote no part of decision 0025, of the P1 revisions of `scenario-feed.md`, `tessera-protocol.md`, `test-server.md` and `server-content.md`, or of the code, 2026-10-10 (passed, §18.3). Revision 5 (P3 parts): a Claude review session in the spec-reviewer role (Clean-Room-Role: review) that wrote no part of the P3 revision, of `npc-windows.md` or of the P3 code, 2026-10-11 (passed, §18.P3). Revision 6 (P2 parts): a Claude review session in the spec-reviewer role (Clean-Room-Role: review) that wrote no part of revision 6, of decision 0032, of the other P2 specs or of the P2 code, 2026-10-11 (passed, §18.4.1). Revision 7 ("P4 social" parts): a Claude review session in the spec-reviewer role (Clean-Room-Role: review) that wrote no part of decision 0035, of the P4 revisions of `tessera-protocol.md`, `test-server.md` or `scenario-feed.md`, or of the code, 2026-10-11 (passed, §18.5) |
-| **Review record** | 2026-10-11 (revision 7, "P4 social" parts): independent review against CLEAN_ROOM.md §5.3, decision 0035 D1–D4, decision 0024 §2 and LEGAL.md §11.1 rule 5: **passed**; the record is in §18.5. 2026-10-11 (revision 6, P2 parts D1–D4, commit 7b14f27): independent review against CLEAN_ROOM.md §5.3, decision 0032 D1–D4, LEGAL.md §11.1 rule 5, decision 0024 §2 and §0 item 3: **passed**; §14.9 O8, O10–O12 and §14.11 R1–R10 re-derived, invariant 11 checked; non-blocking notes (a)–(e); the record is in §18.4.1. 2026-10-11 (revision 5, P3 parts N-D1 … N-D4): independent review against CLEAN_ROOM.md §5.3 and `npc-windows.md` §5.3, §6.3, §7.8, §10: **passed**; the record is in §18.P3. 2026-10-10 (revision 4): independent review against CLEAN_ROOM.md §5.3, decision 0025 D1–D5, decision 0024 §2 and §4 and LEGAL.md §11.1 rule 5: **passed**; the record is in §18.3. Earlier: 2026-10-09 (revision 2), review against decision 0024 §2 and §4, LEGAL.md §11.1 rule 5, the CLAUDE.md content rules, ARCHITECTURE §19.1, the `tessera-net` API (`session.rs`, `model.rs`, `sandbox/mod.rs`) and every spec and decoder view cited in §8.3. 31 findings (R1–R31), all design defects fixed in this revision by the reviewer (allowed: the spec holds design facts only); no client fact was added. Every selector attribute was confirmed against an Accepted spec and, where named, its decoder view. Findings, fixes and the remaining non-blocking OPENs: §18.1. Revision 3 (spec owner, design role, 2026-10-09): 31 implementation-phase findings verified against this text and the `tessera-net` and client sources (§18.2: S1–S31): all real, 29 fixed, S12 accepted as a stated gap, the policy part of S24 recorded as an OPEN. Revision 3 independent review (spec reviewer, Clean-Room-Role: review, 2026-10-09; a session that wrote none of revisions 1–3 and no code): checked against `docs/CLEAN_ROOM.md` §5.3, decision 0024 §2 (client half only, data-free server, game rules stay T3) and §4 (values scripted, never derived), LEGAL.md §11.1 rule 5, the CLAUDE.md content rules, ARCHITECTURE §19.1 (every §9 variant listed; groups, session rules and the test-server refusals match) and the cited specs (all Accepted except `server-content.md`, Draft, from which the feed takes nothing LEGAL.md §11.1 does not state itself). Every §8.3 family and attribute was traced to its Accepted spec section and property name and to the named decoder view in `crates/formats` and `crates/wstate` (`ItemKind`'s 15 variants are the 15 keywords; `EffectRole`, `TemplateKind`, `MapKind`, `Role` variants exist as cited). R1–R31 and S1–S31: each fix is present and consistent with the rest of the text. Vectors: the SplitMix64 outputs, the seven samples and the trace of §14.3 were recomputed with a throwaway script and agree; Vectors A, B, D, E and F were re-derived line by line (times, event order, field order and formats, window and item ids, skips, drops, end times; facing 359.999 round-trips to 359.99899, written `0.00`) and agree; all 45 hostile rows agree with the grammar, the error order and the position rules; the implementation's vector tests agree (supporting evidence only). Result: **pass**. Rulings on the implementer OPENs (review notes, not facts; the spec owner writes them into the text at the next revision): §3.1 guard (1) agreed: the exception "`tessera-net` without `scenario`" cannot hold under cargo feature unification, drop it from the allow list; (2) and (3) confirmed (dev-dependencies are server builds; in-process server hosts such as `tessera-loadtest` are server builds and may link `tessera-net` only because `tessera-server` itself does not). §3.1 module naming: the `selector` module named in the placement table is placement, not an interface; `tessera-gamedata` exposing its selector types at the crate root conforms. §11.1 log size: non-blocking; a bound is recommended (for example 256 MiB with a run-time `LogOverflow`, exit 5), because a hostile local file within every limit can still write a very large log; until then the USER_GUIDE warning suffices. §12.4 (1) the unplayed windowed input script is an accepted P0 gap (windowed logs are not normative), refusing a windowed run whose `enter` needs an `accept-character` name (exit 2) is acceptable, and the proposed public input player in `tessera_net::scenario` is endorsed; (2) driver-only headless runs with an install, an exact or default spawn and no `--screenshot` are acceptable; (3) "the client's configured `avatar`" means the avatar the client actually configures for the sandbox: none in a driver-only run, which need not load the catalog for it; (4) exit 2 for a missing or non-regular `--scenario` path and 1 for an unreadable file are consistent with the exit table and should be added to it; (5) an install the user named that cannot be used exits 4 with `InstallUnreadable`: agreed (§8.7 covers only "no install found"). §13 (a) align rule 1 with `apps/client/tests/scenarios/`, where the replay test reads them; (b) keep "(or CC0-1.0)" (LEGAL.md §11.1 rule 7 and the CLAUDE.md fixture rule allow CC0) and widen the content test; a GPL-only test is stricter than the spec, not a violation. §16 `tessera-net` points: (1) `shared` in both `ItemPlace` and `ContainerSize` (the §10.3 example and the file keyword win over the general enum rule); (2)–(18) confirmed as implemented. §16 `tessera-gamedata` points (1)–(10) confirmed; for (5), keys 1–64 map to bits 0–63 (`property-system.md` §7.3), so a key above 64 matching nothing is right; for (7), `appearance.md` §2.1 (Accepted) states the two gender values, so using them with the per-install presence check is allowed. The owner-policy OPEN on numeric enum keys (§16) and the later-milestone OPENs (§8.3, §16) stay non-blocking. |
+| **Reviewer** | Revision 2: spec reviewer (Clean-Room-Role: review), a session separate from the first-draft author, 2026-10-09; it also wrote R1–R31, so those fixes are unreviewed. Revision 3: pending (an independent session). Revision 4: a Claude review session in the spec-reviewer role (Clean-Room-Role: review) that wrote no part of decision 0025, of the P1 revisions of `scenario-feed.md`, `tessera-protocol.md`, `test-server.md` and `server-content.md`, or of the code, 2026-10-10 (passed, §18.3). Revision 5 (P3 parts): a Claude review session in the spec-reviewer role (Clean-Room-Role: review) that wrote no part of the P3 revision, of `npc-windows.md` or of the P3 code, 2026-10-11 (passed, §18.P3). Revision 6 (P2 parts): a Claude review session in the spec-reviewer role (Clean-Room-Role: review) that wrote no part of revision 6, of decision 0032, of the other P2 specs or of the P2 code, 2026-10-11 (passed, §18.4.1). Revision 7 ("P4 social" parts): a Claude review session in the spec-reviewer role (Clean-Room-Role: review) that wrote no part of decision 0035, of the P4 revisions of `tessera-protocol.md`, `test-server.md` or `scenario-feed.md`, or of the code, 2026-10-11 (passed, §18.5) Revision 8 (P5 travel parts): a Claude review session in the spec-reviewer role (Clean-Room-Role: review) that wrote no part of the P5 revision or the P5 code, 2026-10-11 (passed, §18.P5). |
+| **Review record** | 2026-10-11 (P5 travel parts, T-D1 … T-D10): independent review by a session that wrote no part of the P5 revision or the P5 code, against CLEAN_ROOM.md §5.3, decision 0024 §2 and §4 (client half only; values scripted, never derived) and LEGAL.md §11.1 rule 5: **passed, every item**. Every P5 statement is a functional fact of Tessera's own feed format (step keywords, options, event fields with types and ranges, log forms, limits) or an install-derived reference marked for its source; no code or pseudo-code (the scenario and log blocks are Tessera's own text format, the braces name event fields as §9 does); API, event, property and label names are interoperability identifiers; all vector text is invented (§14.T3 notes this), no game strings, assets, keys, hostnames or captures; nothing runs in or is linked by `tessera-server` (no protocol minor); no gate touched. Provenance "Design" is this own-format spec's convention (as in revisions 4 and 5); the one install-derived claim (the four dictionary names `MapNote_Type`, `FellowshipMakerUI_GroupSize`, `FellowshipMakerUI_DifficultyTier`, `Mount_Type` with their kinds) carries an inline M1 mark. Spot-checks (read-only, 2026-10-13): the four dictionary names and the enum mappers are used by `crates/gamedata` and `crates/net` selector resolution over the install (passing P5 real-data tests), and `MapNote_Type`/`Mount_Type` are decoded as bitfields in `crates/formats`, corroborating the M1 claim; the cross-referenced mount facts (status mapper 0x230002C9, war-steed bit 0x38, vital mapper 0x23000003) were confirmed against the `lua-plugin-api.md` §15.5 BIN pass reviewed in parallel. Vectors T1–T3 and the ranges of the hostile rows are internally consistent with the §6.5, §9, §10.3, §11.1 and §13 rules. **Rulings on the P5 OPENs** (review notes, not facts): the numeric-enum-key question (§16) is the same owner policy already open for P1–P3, non-blocking; `MountChanged.combat` as a Tessera field (§16) and the implementer's seven conservative-implementation points are endorsed as implemented and left for the spec owner. **Dependency note (non-blocking):** the `map-region` family (§8.3) and the `MapNoteType`/`GroupSize`/`DifficultyTier` contexts (§8.6) reference `map-windows.md` §5/§6.7/§7.2 and `travel-windows.md` §6.4, both still in Review under other reviewers; acceptance here follows the P3 precedent (revision 5 accepted while `npc-windows.md` was in Review) and the §8.3 note that the row "stands until that spec is Accepted"; if a sibling review changes those definitions, §8.3/§8.6 must be re-checked. 2026-10-11 (revision 7, "P4 social" parts): independent review against CLEAN_ROOM.md §5.3, decision 0035 D1–D4, decision 0024 §2 and LEGAL.md §11.1 rule 5: **passed**; the record is in §18.5. 2026-10-11 (revision 6, P2 parts D1–D4, commit 7b14f27): independent review against CLEAN_ROOM.md §5.3, decision 0032 D1–D4, LEGAL.md §11.1 rule 5, decision 0024 §2 and §0 item 3: **passed**; §14.9 O8, O10–O12 and §14.11 R1–R10 re-derived, invariant 11 checked; non-blocking notes (a)–(e); the record is in §18.4.1. 2026-10-11 (revision 5, P3 parts N-D1 … N-D4): independent review against CLEAN_ROOM.md §5.3 and `npc-windows.md` §5.3, §6.3, §7.8, §10: **passed**; the record is in §18.P3. 2026-10-10 (revision 4): independent review against CLEAN_ROOM.md §5.3, decision 0025 D1–D5, decision 0024 §2 and §4 and LEGAL.md §11.1 rule 5: **passed**; the record is in §18.3. Earlier: 2026-10-09 (revision 2), review against decision 0024 §2 and §4, LEGAL.md §11.1 rule 5, the CLAUDE.md content rules, ARCHITECTURE §19.1, the `tessera-net` API (`session.rs`, `model.rs`, `sandbox/mod.rs`) and every spec and decoder view cited in §8.3. 31 findings (R1–R31), all design defects fixed in this revision by the reviewer (allowed: the spec holds design facts only); no client fact was added. Every selector attribute was confirmed against an Accepted spec and, where named, its decoder view. Findings, fixes and the remaining non-blocking OPENs: §18.1. Revision 3 (spec owner, design role, 2026-10-09): 31 implementation-phase findings verified against this text and the `tessera-net` and client sources (§18.2: S1–S31): all real, 29 fixed, S12 accepted as a stated gap, the policy part of S24 recorded as an OPEN. Revision 3 independent review (spec reviewer, Clean-Room-Role: review, 2026-10-09; a session that wrote none of revisions 1–3 and no code): checked against `docs/CLEAN_ROOM.md` §5.3, decision 0024 §2 (client half only, data-free server, game rules stay T3) and §4 (values scripted, never derived), LEGAL.md §11.1 rule 5, the CLAUDE.md content rules, ARCHITECTURE §19.1 (every §9 variant listed; groups, session rules and the test-server refusals match) and the cited specs (all Accepted except `server-content.md`, Draft, from which the feed takes nothing LEGAL.md §11.1 does not state itself). Every §8.3 family and attribute was traced to its Accepted spec section and property name and to the named decoder view in `crates/formats` and `crates/wstate` (`ItemKind`'s 15 variants are the 15 keywords; `EffectRole`, `TemplateKind`, `MapKind`, `Role` variants exist as cited). R1–R31 and S1–S31: each fix is present and consistent with the rest of the text. Vectors: the SplitMix64 outputs, the seven samples and the trace of §14.3 were recomputed with a throwaway script and agree; Vectors A, B, D, E and F were re-derived line by line (times, event order, field order and formats, window and item ids, skips, drops, end times; facing 359.999 round-trips to 359.99899, written `0.00`) and agree; all 45 hostile rows agree with the grammar, the error order and the position rules; the implementation's vector tests agree (supporting evidence only). Result: **pass**. Rulings on the implementer OPENs (review notes, not facts; the spec owner writes them into the text at the next revision): §3.1 guard (1) agreed: the exception "`tessera-net` without `scenario`" cannot hold under cargo feature unification, drop it from the allow list; (2) and (3) confirmed (dev-dependencies are server builds; in-process server hosts such as `tessera-loadtest` are server builds and may link `tessera-net` only because `tessera-server` itself does not). §3.1 module naming: the `selector` module named in the placement table is placement, not an interface; `tessera-gamedata` exposing its selector types at the crate root conforms. §11.1 log size: non-blocking; a bound is recommended (for example 256 MiB with a run-time `LogOverflow`, exit 5), because a hostile local file within every limit can still write a very large log; until then the USER_GUIDE warning suffices. §12.4 (1) the unplayed windowed input script is an accepted P0 gap (windowed logs are not normative), refusing a windowed run whose `enter` needs an `accept-character` name (exit 2) is acceptable, and the proposed public input player in `tessera_net::scenario` is endorsed; (2) driver-only headless runs with an install, an exact or default spawn and no `--screenshot` are acceptable; (3) "the client's configured `avatar`" means the avatar the client actually configures for the sandbox: none in a driver-only run, which need not load the catalog for it; (4) exit 2 for a missing or non-regular `--scenario` path and 1 for an unreadable file are consistent with the exit table and should be added to it; (5) an install the user named that cannot be used exits 4 with `InstallUnreadable`: agreed (§8.7 covers only "no install found"). §13 (a) align rule 1 with `apps/client/tests/scenarios/`, where the replay test reads them; (b) keep "(or CC0-1.0)" (LEGAL.md §11.1 rule 7 and the CLAUDE.md fixture rule allow CC0) and widen the content test; a GPL-only test is stricter than the spec, not a violation. §16 `tessera-net` points: (1) `shared` in both `ItemPlace` and `ContainerSize` (the §10.3 example and the file keyword win over the general enum rule); (2)–(18) confirmed as implemented. §16 `tessera-gamedata` points (1)–(10) confirmed; for (5), keys 1–64 map to bits 0–63 (`property-system.md` §7.3), so a key above 64 matching nothing is right; for (7), `appearance.md` §2.1 (Accepted) states the two gender values, so using them with the per-install presence check is allowed. The owner-policy OPEN on numeric enum keys (§16) and the later-milestone OPENs (§8.3, §16) stay non-blocking. |
 | **Implements into** | `crates/net` (`tessera_net::scenario`: parser, static checks, resolved scenario, run-time feed, headless driver, canonical log; the sandbox backend runs it; the overlay backend over the test-server backend, §12.5; plain-sandbox creation, §9.6), `crates/gamedata` (selector resolution against the user's install, §8; property labels and kinds, §5.8, §8.6), `apps/client` (`--scenario`, `--scenario-log`, `--scenario-input`, overlay runs, §12), `fuzz/` (§11.4) |
 | **Companion documents** | [Decision 0024](../decisions/0024-parity-track.md) §2, §4, §5 (the feed's mandate); [LEGAL.md](../LEGAL.md) §8 and §11.1; `server-content.md` §3 and §7; `docs/ARCHITECTURE.md` §19 (domain events; it lists the variants of §9 by group); the gameplay specs cited in §8.3 (`items.md`, `combat-data.md`, `creatures.md`, `quests.md`, `economy.md`, `map-data.md`, `interaction.md`, `player-character.md`, `instances.md`), `appearance.md` §2 and §7, `coordinates.md` §4 and §7, `property-system.md` §7, `records.md` §7 |
 
@@ -80,6 +80,7 @@ on the date given), **Standard** (a published algorithm or standard).
 | Revision 4 (§18.3): overlay runs, looks and property values, the held-item slot, creation on the test-server backend, plain-sandbox creation, `remove-character`, `stat`, `item-property`, Vector G, the new hostile rows | [Decision 0025](../decisions/0025-p1-character-look-on-test-server.md) (spec writer, design, 2026-10-10); `character-screens.md` §5.2, §7.1, §7.1.1, §7.2, §8, `character-panels.md` §3.4, §7, §9, `item-tooltips.md` §6.5, §11 (Accepted, read 2026-10-10); `tessera-protocol.md` v1.1 §5.3, §6.2, §7.4 (revised the same day); `property-system.md` §3 (type codes), MP4 (the two PID families), §7.3 (bit ↔ key); `player-character.md` §6.2 (`NationalityTable_Nationality`). No game client, server or third-party tool was consulted | Design |
 | P3 revision (revision 5, §18.P3): the text function `action(…)` and `Text::Action`, the `rewards` and `buyback` steps, the events `QuestRewards` and `BuybackShown`, the command `BuyBack`, their patterns, input forms, log forms, limits, Vectors N1 and N2, the hostile rows N-H1 … N-H11 | [`npc-windows.md`](npc-windows.md) §5.3, §6.3, §7.8, §10 (spec writer, 2026-10-10; Review); `quests.md` §9 (Accepted). The windows' needs come from that dirty-room spec; the feed forms themselves are design | Design |
 | Revision 7, "P4 social" (§18.5): waiting parts and one synchronised start with its time and lead, the player's `/play … sync` and `/playstart` as commands, fellow vitals, the disband command, the remote backend at minor 2, the plain sandbox's start answer, Vector H, the P4 hostile and backend cases (2026-10-11) | [Decision 0035](../decisions/0035-p4-social-on-test-server.md) (spec writer, design); `tessera-protocol.md` v1.2 §10.6 and Appendix A (revised the same day); `instruments.md` §8.8, §8.9 and §12 P4 Decision (start tolerance, waiting parts, the 0.7 s lead; revised 2026-10-11, referred to, not restated); `social-panels.md` §4.4, §8, §9 (draft, 2026-10-11). No game client, server or third-party tool was consulted for this revision | Design |
+| Revision 8, "P5 travel" (§18.P5): the step options and steps `markers`, `travel-end`, `instance-queue`, `mount-vital`, the options of `marker`, `travel-list`, `travel`, `instances`, `mount` and of the input form `join-instance`, marker sets and run-time marker ids, the family `map-region` and the `effect` attributes `mount-type` and `war-steed`, the label contexts `MapNoteType`, `GroupSize`, `DifficultyTier`, the types, fields, events `TravelEnded`, `MountVitalChanged`, `InstanceQueueChanged` and command `LeaveQueue`, their log forms (with the rule that fields added to existing variants are written only when not at their default), limits, Vectors T1–T3, hostile rows T-H1 … T-H18 | What the windows and views must show: `travel-windows.md` §4.10, §4.11, §5.2, §6.5, §6.8, §9; `map-windows.md` §5.1, §5.4, §6.7, §7.2; `mounts.md` §2.3, §2.8, §4.1; `walker.md` §16.1, §16.5; `lua-plugin-api.md` §15.5 (all revised or written for P5 on 2026-10-11, Review). The four dictionary names the new label contexts and filters use (`MapNote_Type` a 64-bit bitfield, `FellowshipMakerUI_GroupSize` and `FellowshipMakerUI_DifficultyTier` enums, `Mount_Type` a 32-bit bitfield) were checked present with those kinds in the owner's install (M1, read-only, 2026-10-11). The feed forms themselves are design; no client code was consulted for this spec | Design |
 | The review fixes of §18.1 (R1–R31) and §18.2 (S1–S31): design changes only | Review of 2026-10-09 (spec reviewer, review role) and the implementation-phase review of 2026-10-09 (fixed by the spec owner); the same clean sources as the first draft, read on that date. No game client, server or third-party tool was consulted | Design |
 
 ---
@@ -495,6 +496,16 @@ All identifiers are allocated deterministically:
 Every counter uses checked arithmetic; a counter that would pass its type's maximum stops the
 feed with the run-time error `IdOverflow` (§11.3). Run-time items are also capped by §11.1.
 
+**Marker sets and run-time marker ids (P5 travel).** A marker binding first named by a
+`markers` step (§6.5) is a **marker set**; one first named by `marker` is a **single marker**.
+Both count toward the marker-binding limit of §11.1. The table's marker ids go to the single
+markers only: 1 … *M* in file order of their first `marker` line, so a file without sets
+numbers its markers exactly as before. Markers that `markers` steps create take **run-time
+marker ids** *M* + 1, *M* + 2, … in execution order, never reused; at most 65,536 per run
+(§11.1). A set holds the ids its last `markers` step created that no later `marker-remove`
+removed. A set named by `marker`, or a single marker named by `markers`, is
+`WrongBindingKind` at the binding; `marker-remove` takes both kinds.
+
 <a id="s5-4"></a>
 ### 5.4 Actors
 
@@ -836,9 +847,39 @@ P4 social additions (synchronised performances, fellow vitals): §6.7.
 | `mount` | `ENTITY (REF\|none)` | `MountChanged` |
 | `instances` | `$sel` or REFLIST | `InstanceListShown` |
 | `instance` | `REF\|none` | `InstanceChanged` |
+| `markers` (P5 travel) | `$ms $sel (TEXT\|named) [icon=ELEMENT] [quest=REF] [note-type=VALUE]` (`$ms` a marker set, `$sel` a selector binding) | First `MarkerRemoved` for each marker the set holds, in ascending id order; then, fan-out over `$sel` in binding order, one `MarkerAdded` with a new run-time marker id (§5.3) for each element that has a `Location`, at that location. The label is TEXT, or with `named` the element's resolved name as `Text::Literal` (§8.6; the empty string when it has none). Elements without a location add nothing and are not skips. A step whose new markers would pass the run-time marker cap (§11.1) is a skip: nothing is emitted, removals included |
+| `marker-remove` (P5 travel) | `$ms` (a marker set) | `MarkerRemoved` for each marker the set holds, ascending id order; the set is then empty. An empty set emits nothing and is not a skip |
+| `travel-end` (P5 travel) | — | `TravelEnded` (the feed keeps no travel state; the step always emits) |
+| `instance-queue` (P5 travel) | `STATE [REF] [seconds=N]`: STATE one of `none`, `confirm`, `queued`, `others-confirm`, `join-pending`, `confirm-enter-queue`, `others-confirm-enter-queue`, `world-join-queue`; N 0 … 86,400 | `InstanceQueueChanged { state, instance: REF or none, seconds: N or none }` |
+| `mount-vital` (P5 travel) | `ENTITY (durability\|morale\|power\|fury) CUR/MAX` (finite, 0 ≤ CUR ≤ MAX ≤ 10^9) | `MountVitalChanged`. The feed remembers nothing and computes nothing from it |
 
 `teleport` changes the frame of later `pos=` offsets: they stay relative to the **entry**
 spawn location, so a scenario that teleports far should use `place(…)` positions after it.
+
+**Options of existing steps (P5 travel).** All are optional; without them a step emits
+exactly what it emitted before. "Last value repeats" works as for `price` of `vendor` (§6.3):
+entry *i* takes the *i*-th list value, or the last one when the list is shorter. An
+**entry list** `E,E,…` is one token of 1 … 1,024 distinct entry numbers 1 … 1,024; a number
+beyond the step's last entry names nothing and is ignored. A **value list** `V,V,…` is one
+token of 1 … 1,024 items.
+
+| Step | Option | Event field |
+|---|---|---|
+| `marker`, `markers` | `note-type=VALUE`: an integer 1 … 64, or a label resolved with `enum_value` context `MapNoteType` (§8.6); a label whose key lies outside 1 … 64 counts as unresolved; unresolved: none, with a `label` note (attribute `note-type`) when an install is present | `MarkerAdded.note_type` (the map-note type whose icon the client half draws when `icon` is absent, `map-windows.md` §6.7) |
+| `travel-list` | `min-level=N\|N,N,…` (0 … 10,000; last value repeats) | entry `min_level` |
+| `travel-list` | `undiscovered=`, `unmet=`, `unusable=` (entry lists) | entry `flags` bits 0, 1, 2 |
+| `travel-list` | `swift=`, `slow=` (entry lists; an entry named by both is `UnexpectedToken` at the later of the two keys in the line) | entry `route` (`Swift`, `Slow`) |
+| `travel-list` | `area=REFLIST` (1 … 1,024 refs, usually elements of an `area` selector; last value repeats) | entry `area` |
+| `travel` | `route=swift\|slow` | `TravelStarted.route` |
+| `instances` | `from=ENTITY`, `featured=REF` | `InstanceListShown.source`, `.featured` |
+| `instances` | `level=N\|N,N,…` (1 … 10,000; last value repeats) | entry `level` (the level shown) |
+| `instances` | `size=V\|V,V,…`, `tier=V\|V,V,…` (value lists: integers 0 … 2^32 − 1 or labels resolved with `enum_value` contexts `GroupSize`, `DifficultyTier`; last value repeats; an unresolved label gives none for the entries that take it, with a `label` note when an install is present) | entry `size`, `tier` (the group-size and tier keys shown) |
+| `instances` | `locked=` (entry list) | entry `locked` (the row is drawn in its error look) |
+| `mount` | `kind=basic\|combat`, only with a REF (with `none` it is `UnexpectedToken` at the key) | `MountChanged.combat` (`basic` → `Some(false)`, `combat` → `Some(true)`; absent → none) |
+
+Every value is scripted: the feed computes no level, cost, flag, route, queue state, mount
+class or vital from the data (decision 0024 §2 principle 4). With `kind=` absent the client
+half classifies a recorded mount itself (`lua-plugin-api.md` §15.5); the feed does not.
 
 <a id="s6-6"></a>
 ### 6.6 Progression and crafting
@@ -1071,6 +1112,7 @@ matches anything explicitly; `none` matches an absent value.
 | `create-character [name=STRING]`, `delete-character [STRING]` | character commands (before world entry) | The body may hold only character steps (§6.1) |
 | `close KIND` | `CloseWindow` of that kind | |
 | `buy-back [entry=N]` (P3 revision) | `BuyBack` | |
+| `leave-queue` (P5 travel) | `LeaveQueue` | |
 
 A trigger on `create-character` or `delete-character` fires before world entry; its body
 runs at once in the processing of that command in `submit` (§3.3), in line order, with times
@@ -1159,6 +1201,8 @@ both see the state before that frame's poll.
 | `create-character STRING [class=VALUE] [species=VALUE sex=VALUE] [nationality=VALUE] [look=$l]`, `delete-character STRING` | character commands; `at pre` only. `CreateCharacter.class` is the class value, none when `class=` is absent or its label unresolved; `nationality` likewise (a number, or a label resolved through the mapper the dictionary names for `NationalityTable_Nationality`, `player-character.md` §6.2; `enum_value` context `Nationality`); `appearance` is `Appearance::new(Body::Character { species, sex })` with the resolved look of `$l` (if any) when species and sex both resolve, otherwise none, and then the look is not sent (§9.4). Unresolved labels here do not skip the line |
 | `close KIND` | `CloseWindow` |
 | `buy-back N` (P3 revision; N 1 … 1,024) | `BuyBack` in the open vendor window |
+| `join-instance N [size=VALUE] [tier=VALUE] [level=N]` (P5 travel options; `level` 1 … 10,000; `size` and `tier` an integer 0 … 2^32 − 1 or a label, contexts `GroupSize`, `DifficultyTier`) | `JoinInstance` in the open instances window with those fields (absent options: none). An unresolved label skips the line (`input-skipped`) |
+| `leave-queue` (P5 travel) | `LeaveQueue` |
 
 An input line whose target window, slot, page or element does not exist, whose label or
 `m`/`f` value is unresolved (except in `create-character`, above), or that the session refuses (`Session::send` returns an error)
@@ -1283,10 +1327,21 @@ says what one resolved element is when it is not a plain record.
 | `hotspot` | Hotspots (`interaction.md` §4), found by `interaction.md` §2.2 | — | | |
 | `pet` | Cosmetic pets (`interaction.md` §7.1) | — | | |
 | `induction` | Induction actions (`interaction.md` §3.8; `combat-data.md` §7.9) | — | | |
+| `map-region` (P5 travel) | Map regions (`map-windows.md` §5.1: R-nodes and R-dungeons). Elements: an R-node gives DID = its active element ID (a UI element ID, opaque to the feed) and row = 1 + its position in depth-first order of the map tree (`map-windows.md` §4.1); an R-dungeon gives DID = the map-data set's DID and row 0. `Location` = the test point of `map-windows.md` §5.4 step 2, absent for a region of categories C1–C5 (§5.3 there); no anchor. Resolved name = rendered `UI_Map_MenuName` of the node; for an R-dungeon the rendered `Dungeon_Name` of the lowest-DID dungeon whose `Dungeon_MapData` names the set (`map-windows.md` §7.2). As a ref an element names no record the client half can show (shown as unknown) | `kind` | keyword: `node`, `dungeon` | the region's kind (`map-windows.md` §5.1) |
+| | | `region` | integer | the region of the element's `Location` (no location: matches nothing) |
+| `effect` (P5 travel attributes) | as above | `mount-type` | value (mount-type mapper) | the bit of key *v* is set in `Mount_Type` (`mounts.md` §2.8; the `gameplay::mounts` view) |
+| | | `war-steed` | yes/no (absent = no) | `Mount_Type` has a bit of 0x38 (`mounts.md` §2.8, war-steed rule) |
 
 The families of `interaction.md` have no decoder view in `crates/formats` yet; `tessera-gamedata`
 implements their finding rule (`interaction.md` §2.2) when it adds their stores. Until then a
 resolver MAY report them as `Unsupported` (§8.6), which resolves empty with a note.
+
+**P5 travel families.** `map-region` cites `map-windows.md` (Review on 2026-10-11) and stands
+until that spec is Accepted, like the P3 rows citing specs then in Review; a resolver MAY
+report it `Unsupported` until `tessera-gamedata` builds the region list. With it, a scenario
+can put one marker on every map region (`select $r = map-region all`, then
+`markers $all $r named`), which is the marker census of `map-windows.md` §5.4. Every mount
+effect is `effect role=mount all`; `war-steed=` and `mount-type=` narrow it.
 
 > **OPEN:** (non-blocking) P1–P6 will want more attributes (for example item sets, deed
 > categories, recipe vocations). Each addition is a revision of this table citing an Accepted
@@ -1390,6 +1445,18 @@ line order with that context; an unresolved one becomes `Text::Literal` of the l
 its `@` and adds a `label` note (attribute `action`, label as written) when an install is
 present.
 
+**P5 travel contexts.** `enum_value` also takes the contexts `MapNoteType` (the key of the label
+in the enum mapper the property dictionary names for `MapNote_Type`, `map-data.md` §4.2),
+`GroupSize` and `DifficultyTier` (the mappers it names for `FellowshipMakerUI_GroupSize` and
+`FellowshipMakerUI_DifficultyTier`, `travel-windows.md` §6.4). Resolution item 6 resolves the
+labels of `note-type=`, `size=` and `tier=` (steps and input lines) in line order, token order
+and, within a list, item order; each unresolved one adds a `label` note whose attribute is the
+option key. Item 6 also fetches, for each `markers … named` step in line order, the
+`display_name` (with the row) of every element of its selector binding that the step uses
+(at most the first 65,536, §8.6 item 5), in binding order; the resolved scenario holds these
+names. The `effect` attributes `mount-type` and `war-steed` and the `map-region` family use
+`candidates` like every other filter and family.
+
 <a id="s8-7"></a>
 ### 8.7 No install
 
@@ -1443,6 +1510,12 @@ names (§10) are the inner variant names, unique across groups.
 | `Look` | 1–48 `LookEntry` with strictly ascending `property`, encoded size ≤ 768 bytes (`tessera-protocol.md` §5.3) |
 | `Equipped` (existing, `model.rs`) | gains `slot: Option<u8>`: the data's equipment slot key 1 … 64 that holds the item, when known (decision 0025 D3) |
 | `Appearance` (existing, `model.rs`) | gains `look: Option<Box<Look>>` (decision 0025 D2); `Appearance::is_valid` also checks the `Look` and slot rules above |
+| `RouteMode` (P5 travel) | `Swift` \| `Slow` |
+| `TravelFlags` (P5 travel) | `u8`: bit 0 not discovered, bit 1 requirements not met, bit 2 not usable; the other bits 0 |
+| `TravelEntry` (existing; P5 travel) | gains, after `coin`: `min_level: Option<u16>`, `flags: TravelFlags`, `route: Option<RouteMode>`, `area: Option<Ref>` |
+| `InstanceEntry` (existing; P5 travel) | gains, after `instance`: `level: Option<u16>`, `size: Option<u32>`, `tier: Option<u32>`, `locked: bool` |
+| `QueueState` (P5 travel) | `None` \| `Confirm` \| `Queued` \| `OthersConfirm` \| `JoinPending` \| `ConfirmEnterQueue` \| `OthersConfirmEnterQueue` \| `WorldJoinQueue`: the keywords of `instance-queue` (§6.5) in that order. The client half maps `Confirm` … `WorldJoinQueue` to the player-state keys 1 … 7 of `travel-windows.md` §6.5 and `None` to 0; `tessera-net` holds no data key |
+| `MountVital` (P5 travel) | `Durability` \| `Morale` \| `Power` \| `Fury` |
 
 Numbers in events are the scripted values: `f32` for vitals and amounts (finite, within the
 ranges of §6), integers elsewhere.
@@ -1523,6 +1596,14 @@ Fields are listed in log order (§10.3).
 | | `CraftResult` | `recipe: Ref`, `outcome: Success \| Critical \| Failed`, `item: Option<ItemId>` |
 | | `ReputationChanged` | `faction: Ref`, `points: i64`, `tier: u16` |
 | | `TitleGranted` | `what: Ref` |
+| World (P5 travel) | `MarkerAdded` (existing) | gains `note_type: Option<u32>` (a map-note type key 1 … 64) after `quest` |
+| | `TravelShown` (existing) | its entries carry the `TravelEntry` fields of §9.1 |
+| | `TravelStarted` (existing) | gains `route: Option<RouteMode>` after `duration_ms` |
+| | `TravelEnded` | — (no field) |
+| | `MountChanged` (existing) | gains `combat: Option<bool>` after `mount` |
+| | `MountVitalChanged` | `entity: EntityId`, `vital: MountVital`, `current: f32`, `max: f32` |
+| | `InstanceListShown` (existing) | gains `source: Option<EntityId>` and `featured: Option<Ref>` after `entries`; its entries carry the `InstanceEntry` fields of §9.1 |
+| | `InstanceQueueChanged` | `state: QueueState`, `instance: Option<Ref>`, `seconds: Option<u32>` |
 
 <a id="s9-3"></a>
 ### 9.3 Existing events reused
@@ -1581,6 +1662,8 @@ Fields are listed in log order (§10.3).
 | Progression | `TrainSkill` | `window: WindowId`, `entry: u16` |
 | | `SlotTrait` | `slot: u16`, `what: Option<Ref>` |
 | | `Craft` | `recipe: Ref`, `quantity: u16` |
+| World (P5 travel) | `JoinInstance` (existing) | gains `size: Option<u32>`, `tier: Option<u32>`, `level: Option<u16>` after `entry` |
+| | `LeaveQueue` | — |
 
 The existing `Chat` command carries the new channels. Mounting is `UseSkill` of a mount
 skill.
@@ -1616,6 +1699,20 @@ skill.
   `BuybackShown` entry follows the `VendorShown` rules. `Text::Action` needs no cleaning. The
   test-server backend refuses `BuyBack` like the other new commands. The feed gives no
   generic answer to `BuyBack` (§7.6).
+- **P5 travel variants.** `TravelEnded`, `MountVitalChanged` and `InstanceQueueChanged`
+  follow the entity rule (surfaced in `InWorld`); `LeaveQueue` is allowed in `InWorld`. A
+  `JoinInstance` whose `level` is present must have it 1 … 10,000 (`InvalidCommand`
+  otherwise). Literal refs in `TravelEntry.area`, `InstanceListShown.featured` and
+  `InstanceQueueChanged.instance` are cleaned like other literal refs. An event is invalid
+  (dropped with a warning) when a `MarkerAdded.note_type` lies outside 1 … 64, a
+  `TravelFlags` has a bit above 2, a `min_level` or an instance entry's `level` is above
+  10,000, or a `MountVitalChanged` number is not finite. The test-server backend refuses
+  `LeaveQueue` like the other new commands (it already refuses `JoinInstance`), never
+  produces the P5 events and needs no protocol minor (LEGAL.md §11.1 rule 5: its server
+  runs no gameplay). The feed gives no generic answer to `LeaveQueue` (§7.6). An
+  `InstanceQueueChanged` with state `None` carries no instance and no seconds when the feed
+  sends it from `instance-queue none` without them; another backend may send them, and the
+  client half ignores them for `None`.
 - **Other backends.** The test-server backend follows §9.7: it takes `CreateCharacter` under
   `character-screens.md` §7.1.1, answers `SelectTarget` locally without sending anything
   (revision 6, decision 0032 D1), and refuses every other new command with
@@ -1888,6 +1985,23 @@ lead_ms`, `PerformanceWithdrawn member`, `FellowVitalChanged member vital curren
 `amount` is a signed decimal integer. `QuestRewards`, `BuybackShown` and `BuyBack` write their
 fields in the order of §9.2 and §9.4 (Vectors N1, N2).
 
+**P5 travel log forms.** New variants write every field, in the order of §9.2 and §9.4:
+`TravelEnded` and `LeaveQueue` are their names alone; `MountVitalChanged entity vital current
+max` with `vital` one of `durability`, `morale`, `power`, `fury` and the numbers as `f32`
+amounts; `InstanceQueueChanged state instance seconds` with `state` the `instance-queue`
+keyword of §6.5 and `seconds` decimal or `none`. **Fields that this revision adds to existing
+variants and entries are written only when they are not at their default** (none for an
+optional value, 0 for `flags`, `no` for `locked`): an exception to "every field is always
+written", so that every log written before it, such as the committed `world.log`, stays
+byte for byte the same. They follow the existing fields in the order of §9.1–§9.4:
+`MarkerAdded … note_type=N`; `TravelStarted … route=(swift|slow)`; `MountChanged …
+combat=(yes|no)`; `InstanceListShown … source=ENTITY featured=REF`; `JoinInstance … size=N
+tier=N level=N`; inside a `TravelShown` entry, after `coin`, `min_level=N`, `flags=…`,
+`route=…`, `area=REF`; inside an `InstanceListShown` entry, after `instance`, `level=N`,
+`size=N`, `tier=N`, `locked=yes`. `flags` is the names of its set bits in bit order
+(`undiscovered`, `unmet`, `unusable`) joined by `+`, for example `flags=undiscovered+unusable`
+(Vectors T1–T3).
+
 <a id="s10-4"></a>
 ### 10.4 Counters
 
@@ -1897,6 +2011,9 @@ fields in the order of §9.2 and §9.4 (Vectors N1, N2).
 | `input-skipped` | input lines the driver could not send (§7.7) |
 | `dropped` | agenda entries discarded at the end or beyond the horizon |
 | `spilled` | events held over by the per-tick cap (§7.4), each counted once, in the tick it was first held over |
+
+(P5 travel) `skipped` also counts a `markers` step skipped by the run-time marker cap
+(§6.5, §11.1).
 
 <a id="s10-5"></a>
 ### 10.5 Which logs may be committed
@@ -1967,6 +2084,13 @@ any input, every allocation bounded by the limits below, and each violation a ty
 | Reward tokens per `rewards` step (P3 revision) | 1 … 16 | `MissingArgument`, `LimitExceeded(entries)` |
 | Reward amounts (P3 revision) | per kind (§6.3) | `OutOfRange` |
 | Buy-back entries (P3 revision) | 1,024 (REFLIST) | `LimitExceeded(entries)` (static) or cut with a note (binding) |
+| Entry lists (P5 travel: `undiscovered=`, `unmet=`, `unusable=`, `swift=`, `slow=`, `locked=`) | 1 … 1,024 distinct items, each 1 … 1,024 | `LimitExceeded(entries)` beyond 1,024 items; `OutOfRange`; a repeated number, or an entry in both `swift=` and `slow=`, `UnexpectedToken` |
+| Value lists (P5 travel: `min-level=`, `level=`, `size=`, `tier=`) | 1 … 1,024 items; `min-level` 0 … 10,000; `level` 1 … 10,000; `size`, `tier` 0 … 2^32 − 1 or labels | `LimitExceeded(entries)`; `OutOfRange`; another item form `UnexpectedToken` |
+| `area=` of `travel-list` (P5 travel) | 1 … 1,024 refs | `LimitExceeded(entries)` |
+| Map-note type (P5 travel) | 1 … 64 | `OutOfRange` |
+| Queue seconds (P5 travel) | 0 … 86,400 | `OutOfRange` |
+| Mount vitals (P5 travel) | finite, 0 ≤ CUR ≤ MAX ≤ 10^9 | `OutOfRange` |
+| Run-time marker ids (P5 travel) | 65,536 per run (§5.3) | the `markers` step is skipped (counted) |
 | (P4 social) Waiting parts | 64 members (§5.7, §6.7) | a `perform … sync` for a 65th member is skipped (counted); `ReadyPerformance` beyond it records nothing |
 | (P4 social) `perform-start` lead | 0 … 10 s | `OutOfRange` |
 | (P4 social) `ReadyPerformance.tune` (input form `play-sync`) | 1–256 bytes | `TooLong` (static); an empty tune `OutOfRange`; a longer one from the client half: `NetError::InvalidCommand` |
@@ -2052,6 +2176,10 @@ Two fuzz targets (appended to `fuzz/Cargo.toml` by the implementer of `crates/ne
 | `net_scenario_parse` | arbitrary bytes as a scenario file | parse and static checks return `Ok` or a typed error; no panic; peak allocation within a fixed multiple of the input size |
 | `net_scenario_run` | a scenario file plus bytes that drive a synthetic resolver (candidate counts and DIDs; since revision 4 also the answers of `property`, `property_by_id` and `enum_value`, kinds included); the target also applies the overlay check of §12.5.1 to every file that parses | resolution, then a headless run of at most 72,000 ticks with the input script; no panic, every limit of §11.1 honoured; the queued events never exceed 2,097,152 weight units (asserted after every tick), and the target runs within libFuzzer's default RSS limit (2,048 MB) on any input, which the weight limit and the per-push checks of §7.4 guarantee |
 
+(P5 travel) No new target: the synthetic resolver of `net_scenario_run` also answers the
+`enum_value` contexts `MapNoteType`, `GroupSize` and `DifficultyTier`, gives `map-region`
+candidates with and without a `Location`, and answers `display_name` for them.
+
 ---
 
 <a id="s12"></a>
@@ -2108,6 +2236,21 @@ location report depends on frame timing.
   under `--scenario`: it captures the frame after the last tick (after `Finished`), once the
   area around the player has loaded or `--settle-timeout` has passed, instead of the spawn point
   once loaded.
+
+> **OPEN:** The spec defines only driver-only and walker-only headless runs; it does not
+> say what a headless run with the game UI attached (`--ui`, `--open-panel`, `--skin`,
+> `--ui-script`) does with a scenario. The client needs such a path so a headless run can
+> exercise the P3/P5 window frames (the NPC, quest, social, travel, finder and map windows),
+> which only the UI runs. Conservative implementation, pending the spec owner: with an
+> install and no `--screenshot`, `tessera-client --scenario --headless --ui` runs the walker
+> offscreen with the UI attached (the ordinary runtime, so the walker's session plays the
+> feed on the wall clock and writes the log, not `HeadlessDriver`), ending the run when the
+> feed reports `Finished`; exit codes are the windowed run's (0/1/5 as the table, 2/3/4
+> before the world). `--screenshot`, `--server` (overlay) and runs without an install keep
+> the paths above. Open questions: (1) whether the UI run's wall-clock feed is acceptable
+> here (windowed runs already use it, §12.4) or a virtual-clock driver should drive the UI;
+> (2) the run deadline (currently the UI run's fixed budget plus `--duration`), which a very
+> long scenario could exceed.
 
 | Exit code | Meaning |
 |---|---|
@@ -2357,6 +2500,11 @@ criterion 3 (decision 0024).
    property forms and numeric values in the enum positions of rule 2 (the kind of a labelled
    property is unknown without an install, so its value rule is a review item), and replays every committed log. Review uses the checklist of
    `server-content.md` §9.3 for text (no game names or text).
+6. **P5 travel enum positions.** `note-type=` of `marker` and `markers`, and `size=` and
+   `tier=` of `instances` and of the input form `join-instance`, are enum positions under
+   rule 2 (labels only in committed scenarios); so is a `mount-type=` filter value. The
+   `route=`, `kind=`, `instance-queue` and `mount-vital` words are Tessera-defined keywords;
+   entry lists, levels, `min-level`, `seconds` and vital amounts are plain numbers.
 
 > **OPEN:** (non-blocking; for the spec owner, raised by the P3 implementer of `crates/net`
 > after review, 2026-10-10) Rule 2's list of enum positions predates the P3 revision: the
@@ -2653,6 +2801,29 @@ next line.
 | N-H9 | line 2 `at 0s buyback qty=2` | `MissingArgument` 2:1 (no `items=`) |
 | N-H10 | lines 2–4 `input`, `at 1s buy-back 0`, `end` | `OutOfRange` 3:16 (entries 1 … 1,024) |
 | N-H11 | line 2 `at 0s say player action(@Vendor)` | `UnexpectedToken` 2:18 (text functions are not allowed in chat, §5.2) |
+
+**P5 travel hostile rows** (named T-H*n*; line 1 is the header as above):
+
+| # | Input | Expected error |
+|---|---|---|
+| T-H1 | line 2 `at 0s travel-list dest="a" min-level=10001` | `OutOfRange` 2:28 |
+| T-H2 | line 2 `at 0s travel-list dest="a" undiscovered=0` | `OutOfRange` 2:28 (entry numbers 1 … 1,024) |
+| T-H3 | line 2 `at 0s travel-list dest="a" swift=1 slow=1` | `UnexpectedToken` 2:36 (entry 1 in both, reported at the later key) |
+| T-H4 | line 2 `at 0s travel "a" 1s route=fast` | `UnexpectedToken` 2:21 |
+| T-H5 | line 2 `at 0s instances "a" size=1,@Small,x` | `UnexpectedToken` 2:21 (`x` is neither an integer nor a label) |
+| T-H6 | line 2 `at 0s instances "a" locked=1,1` | `UnexpectedToken` 2:21 (a repeated entry number) |
+| T-H7 | line 2 `at 0s instance-queue waiting` | `UnexpectedToken` 2:22 |
+| T-H8 | line 2 `at 0s instance-queue queued seconds=86401` | `OutOfRange` 2:29 |
+| T-H9 | line 2 `at 0s mount player none kind=combat` | `UnexpectedToken` 2:25 (`kind` only with a ref) |
+| T-H10 | line 2 `at 0s mount-vital player morale 5/4` | `OutOfRange` 2:33 (CUR above MAX) |
+| T-H11 | line 2 `at 0s mount-vital player stamina 1/1` | `UnexpectedToken` 2:26 |
+| T-H12 | line 2 `at 0s marker $m 0,0,0 "x" note-type=65` | `OutOfRange` 2:27 |
+| T-H13 | line 2 `select $s = map-region all`, line 3 `at 0s marker $m 0,0,0 "x"`, line 4 `at 1s markers $m $s named` | `WrongBindingKind` 4:15 (`$m` is a single marker) |
+| T-H14 | line 2 `select $s = map-region kind=area all` | `UnexpectedToken` 2:24 (`area` is not a keyword of `kind`) |
+| T-H15 | lines 2–4 `input`, `at 1s join-instance 1 level=0`, `end` | `OutOfRange` 3:23 |
+| T-H16 | line 2 `at 0s travel-end now` | `UnexpectedToken` 2:18 |
+| T-H17 | line 2 `select $s = map-region all`, line 3 `at 0s markers $ms $s` | `MissingArgument` 3:1 (no label and no `named`) |
+| T-H18 | line 2 `at 0s travel-list dest="a" min-level=` followed by 1,025 items `1,1,…,1` | `LimitExceeded(entries)` 2:28 |
 
 <a id="s14-6"></a>
 ### 14.6 Vector E: inventory, generic answers, `move … over`, list entries, `end-at`
@@ -3150,6 +3321,167 @@ Backend cases (test doubles as in §14.9; no scenario file unless stated):
 | S9 | `tessera-server` in process, two clients at minor 2 | A joins "Lore", B joins "lore", A sends "hi" on it, B leaves, A sends "again" | A: `ChannelJoined "Lore"`, then its echo of "hi", then its echo of "again"; B: `ChannelJoined "Lore"`, "hi" from A, `ChannelLeft "Lore"`, and not "again" (P4 exit criterion 2) |
 
 <a id="s15"></a>
+<a id="s14-t1"></a>
+### 14.T1 Vector T1: travel rows, route, travel end, note type, empty marker set (P5 travel)
+
+```text
+tessera-scenario 1
+title "Vector T1"
+tick 100ms
+player "Testa"
+actor $groom kind=npc name="Groom" pos=0,3,0 facing=180
+select $regions = map-region all
+at 0s spawn $groom
++0s marker $camp 4,5,0 "Camp" note-type=7
++0s markers $maps $regions named
+on use $groom
++0s travel-list dest="Low road","High pass","Ferry" from=$groom coin=0,250 min-level=1,40 undiscovered=3 unusable=3 swift=2 area="Vale"
+end
+on choose-travel entry=2
++0s close travel
++0s travel "High pass" 2s route=swift
+end
+on dismount
++0s travel-end
+end
+input
+at 0.1s use $groom
+at 0.2s choose-travel 2
+at 0.5s dismount
+end
+```
+
+With no install `$regions` resolves empty, so the `markers` step emits nothing and is not a
+skip; `note-type=7` is a number, so it needs no install (a committed scenario would write a
+label, §13 rule 6). `coin`, `min-level` and `area` repeat their last value for entry 3.
+Expected log:
+
+```text
+tessera-scenario-log 1
+install none
+tick 100
+title "Vector T1"
+resolve $regions line=6 family=map-region requested=all candidates=0 got=0 note=no-install
+pre > Connect
+pre Connected characters=["Testa"]
+pre > EnterWorld character="Testa"
+0.000 WorldEntered entity=player name="Testa" at=0.000,0.000,0.000 facing=90.00
+0.000 LocationReport entity=player at=0:0.000,0.000,0.000 facing=90.00 anchor=none cause=entered
+0.000 EntitySpawned entity=$groom kind=non-player name="Groom" at=0.000,3.000,0.000 facing=180.00
+0.000 MarkerAdded marker=1 location=0:4.000,5.000,0.000 label="Camp" icon=none quest=none note_type=7
+0.100 > UseEntity entity=$groom
+0.100 TravelShown window=1 source=$groom entries=[{entry=1 destination="Low road" coin=0 min_level=1 area="Vale"},{entry=2 destination="High pass" coin=250 min_level=40 route=swift area="Vale"},{entry=3 destination="Ferry" coin=250 min_level=40 flags=undiscovered+unusable area="Vale"}]
+0.200 > ChooseTravel window=1 entry=2
+0.200 WindowClosed window=1
+0.200 TravelStarted destination="High pass" duration_ms=2000 route=swift
+0.500 > Dismount
+0.500 TravelEnded
+0.500 end reason=complete skipped=0 input-skipped=0 dropped=0 spilled=0
+```
+
+<a id="s14-t2"></a>
+### 14.T2 Vector T2: finder rows, join options, queue, mount class and mount vital (P5 travel)
+
+```text
+tessera-scenario 1
+title "Vector T2"
+tick 100ms
+player "Testa"
+actor $warden kind=npc name="Warden" pos=2,0,0 facing=270
+at 0s spawn $warden
++0s instances "Old mine","Deep vault" from=$warden featured="Deep vault" level=20,45 size=3,6 tier=1 locked=2
+on join-instance entry=1
++0s instance-queue queued "Old mine" seconds=0
+end
+on leave-queue
++0s instance-queue none
++0s close instances
+end
+at 1s mount player "Grey steed" kind=combat
++0s mount-vital player morale 800/1000
++0.5s mount player none
+input
+at 0.1s join-instance 1 size=3 tier=1 level=20
+at 0.3s leave-queue
+end
+```
+
+`JoinInstance` and `LeaveQueue` have no generic answer; the triggers script the queue. The last
+input line is processed at 0.300, and the agenda empties at 1.500. Expected log:
+
+```text
+tessera-scenario-log 1
+install none
+tick 100
+title "Vector T2"
+pre > Connect
+pre Connected characters=["Testa"]
+pre > EnterWorld character="Testa"
+0.000 WorldEntered entity=player name="Testa" at=0.000,0.000,0.000 facing=90.00
+0.000 LocationReport entity=player at=0:0.000,0.000,0.000 facing=90.00 anchor=none cause=entered
+0.000 EntitySpawned entity=$warden kind=non-player name="Warden" at=2.000,0.000,0.000 facing=270.00
+0.000 InstanceListShown window=1 entries=[{entry=1 instance="Old mine" level=20 size=3 tier=1},{entry=2 instance="Deep vault" level=45 size=6 tier=1 locked=yes}] source=$warden featured="Deep vault"
+0.100 > JoinInstance window=1 entry=1 size=3 tier=1 level=20
+0.100 InstanceQueueChanged state=queued instance="Old mine" seconds=0
+0.300 > LeaveQueue
+0.300 InstanceQueueChanged state=none instance=none seconds=none
+0.300 WindowClosed window=1
+1.000 MountChanged entity=player mount="Grey steed" combat=yes
+1.000 MountVitalChanged entity=player vital=morale current=800 max=1000
+1.500 MountChanged entity=player mount=none
+1.500 end reason=complete skipped=0 input-skipped=0 dropped=0 spilled=0
+```
+
+<a id="s14-t3"></a>
+### 14.T3 Resolver case T3: marker sets over map regions (P5 travel)
+
+A headless run with a synthetic resolver that has an install and answers the `map-region`
+query with three candidates: (0x78000010, row 0, `Location` 2:100,200,0), (0x10000500, row 3,
+`Location` 1:5,6,0) and (0x10000400, row 1, no location), with `display_name` "Pit", "Vale"
+and "North" for them. Canonical order (§8.4) is 0x10000400, 0x10000500, 0x78000010. The
+spawn is the exact default of §3.2, and the resolver gives no character details.
+
+```text
+tessera-scenario 1
+title "Vector T3"
+tick 100ms
+player "Testa"
+select $regions = map-region all
+at 0s marker $camp 4,5,0 "Camp"
++0s markers $maps $regions named note-type=7
++0.5s markers $maps $regions "Again"
++0.5s marker-remove $maps
+```
+
+The single marker `$camp` takes id 1 (*M* = 1), so run-time ids start at 2; the element
+without a location adds nothing. Expected log:
+
+```text
+tessera-scenario-log 1
+install present
+tick 100
+title "Vector T3"
+resolve $regions line=5 family=map-region requested=all candidates=3 got=3
+pre > Connect
+pre Connected characters=["Testa"]
+pre > EnterWorld character="Testa"
+0.000 WorldEntered entity=player name="Testa" at=0.000,0.000,0.000 facing=90.00
+0.000 LocationReport entity=player at=0:0.000,0.000,0.000 facing=90.00 anchor=none cause=entered
+0.000 MarkerAdded marker=1 location=0:4.000,5.000,0.000 label="Camp" icon=none quest=none
+0.000 MarkerAdded marker=2 location=1:5.000,6.000,0.000 label="Vale" icon=none quest=none note_type=7
+0.000 MarkerAdded marker=3 location=2:100.000,200.000,0.000 label="Pit" icon=none quest=none note_type=7
+0.500 MarkerRemoved marker=2
+0.500 MarkerRemoved marker=3
+0.500 MarkerAdded marker=4 location=1:5.000,6.000,0.000 label="Again" icon=none quest=none
+0.500 MarkerAdded marker=5 location=2:100.000,200.000,0.000 label="Again" icon=none quest=none
+1.000 MarkerRemoved marker=4
+1.000 MarkerRemoved marker=5
+1.000 end reason=complete skipped=0 input-skipped=0 dropped=0 spilled=0
+```
+
+This log names no record and holds only invented text, but it is not an `install none` log, so
+it is a test vector of `tessera-net`, never a committed log (§10.5).
+
 ## 15. Invariants
 
 1. `tessera-net` never interprets a `DataId` and has no dependency on a data-decoding crate;
@@ -3183,6 +3515,10 @@ Backend cases (test doubles as in §14.9; no scenario file unless stated):
 13. (P4 social) The test-server backend sends nothing for a Social command except
     `ChannelJoin`, `ChannelLeave` and `ChatSend` channel 6, and those only at minor ≥ 2 with
     `CHAT_CHANNELS`; an overlay run sends the server nothing new (§12.5.5).
+14. (P5 travel) Every travel row value (cost, minimum level, flags, route, area), every
+    instance row value (level, size, tier, locked), queue state and time, mount class and
+    mount vital the feed emits is the one written in the file; the feed reads none of them
+    from the install and never derives one from another.
 
 ---
 
@@ -3341,6 +3677,40 @@ Backend cases (test doubles as in §14.9; no scenario file unless stated):
 > bytes) as before this revision; the new events cut `tune` to 256 bytes (§9.5). §9.5 could
 > state the 256-byte cut for `PerformanceStarted` too.
 
+> **OPEN:** (non-blocking; P5 travel, for the spec owner) (1) The owner question on numeric
+> enum keys above now also covers `note-type=`, `size=` and `tier=` (§13 rule 6): until it is
+> decided, committed scenarios cannot show a map-note icon choice, a group size or a tier
+> without an install. (2) `MountChanged.combat` is a Tessera field: the original decides the
+> mount object's class from the rider's mount type (`lua-plugin-api.md` §15.5), which a server
+> would send as a property; if a later revision carries the mount type itself, `combat`
+> becomes a fallback. (3) `travel-windows.md` §7.1 names a feed `SystemMessage` for refused
+> travel; the feed has none: a refusal is a `system` step (`ChatMessage` on `System`).
+
+> **OPEN:** (non-blocking; P5 travel, for the spec owner, raised by the implementer of
+> `tessera_net::scenario`, 2026-10-11) Points the P5 travel parts leave open, implemented
+> conservatively as below; confirm or change each: (1) **Value-list items.** §4.2 makes a
+> token that is not a number `BadNumber` in a numeric position, while the §11.1 row for value
+> lists says "another item form `UnexpectedToken`" (T-H5). Implemented for `min-level=`,
+> `level=`, `size=` and `tier=` lists: an item that does not start with a digit or `-` (and,
+> for `size`/`tier`, not with `@`) is `UnexpectedToken`; a number-shaped item that is not an
+> integer (`1.5`, `0x10`) is `BadNumber`. Entry lists (`undiscovered=` … `locked=`) and the
+> single values of the input form `join-instance` follow §4.2 (`x` is `BadNumber`).
+> (2) **`area=` limit.** 1,025 refs cannot fit in one 4,096-byte line (the shortest ref,
+> `"v"`, takes 4 bytes with its comma), so `LimitExceeded(entries)` for `area=` is
+> unreachable: `LineTooLong` comes first. (3) **`markers … named` names** are fetched once
+> per selector binding (at the first such step in line order), only for the elements with a
+> `Location` among its first 65,536, always with the row (`display_name(did, Some(row))`,
+> whatever the family); later steps over the same binding reuse them. The log cannot tell
+> the difference; a stateful resolver can. `map-region` elements are table elements for
+> actor `name=` too (asked with their row, like `place` and `map-note`). (4) **`instance-queue
+> STATE none`**: `none` is not a REF; it is `UnexpectedToken` (write the step without a
+> REF). (5) **Weight** (§7.4): `TravelEntry.area`, `InstanceListShown.featured` and
+> `InstanceQueueChanged.instance` count ⌈b/64⌉ for a literal, like other refs. A `markers`
+> step reserves its removals and additions before emitting any (so a queue overflow is
+> raised before the set changes). (6) **Errors of one line** follow the option order of the
+> §6.5 table, not their columns, as for the existing steps. (7) The session's warning for a
+> dropped invalid World event names a marker location whatever the cause (text only).
+
 ---
 
 <a id="s17"></a>
@@ -3361,6 +3731,9 @@ Backend cases (test doubles as in §14.9; no scenario file unless stated):
 | 2026-10-11 | Revision 7, the "P4 social" revision (spec writer, design; [decision 0035](../decisions/0035-p4-social-on-test-server.md) D2–D4), additive, no earlier section renumbered: terms (§2), waiting parts in the feed state (§5.7), new §6.7 (`perform … sync`, `perform-start`, `perform-withdraw`, `fellow-vital`), patterns `play-sync`, `play-start`, `disband` (§7.5), generic answers to `StartPerformance` and `ReadyPerformance` (§7.6), input forms (§7.7), events `PerformanceReady`, `PerformanceSyncStart`, `PerformanceWithdrawn`, `FellowVitalChanged` (§9.2), commands `ReadyPerformance`, `StartPerformance`, `DisbandFellowship` (§9.4), session rules (§9.5), new §9.8 (test-server backend at protocol minor 2: channel join and leave and `Named` chat; plain-sandbox start answer), log forms (§10.3), limits (§11.1), overlay subset unchanged (§12.5.2), Vector H (§14.12), hostile rows and backend cases S1–S9 (§14.13), invariants 12–13 (§15), §16 P4 OPEN answered and a new OPEN for the `instruments.md` and `social-panels.md` owners, §18.5. Status Accepted → Review |
 | 2026-10-11 | Independent review of the "P4 social" revision (spec reviewer, Clean-Room-Role: review): passed, every item of CLEAN_ROOM.md §5.3; status Review → Accepted. Record and non-blocking notes (a)–(c) in §18.5 |
 | 2026-10-11 | Merge of the P4 revision (spec writer, design; no fact changed): the "P4 social" revision, written unnumbered, is numbered **revision 7**; its sections that collided with P2's and P3's are renumbered: Vector H §14.11 → **§14.12**, the P4 hostile rows and backend cases §14.12 → **§14.13**, the review section §18.4 → **§18.5**, invariants 11–12 → **12–13** (P2's invariant 11 stays; anchors `s14-12`, `s14-13`, `s18-5`). §6.7 and §9.8 do not collide and keep their numbers. Statuses: revision 7 (P4 social) Accepted, revision 6 (P2) Accepted, revision 5 (P3) Accepted, each as its own review recorded. |
+| 2026-10-11 | P5 travel revision, numbered **revision 8** at the merge with P2, P3 and P4 (spec writer, for decision 0024 P5; additive only; its invariant is renumbered **14** and its sections keep the numbers §14.T1–§14.T3 and §18.P5): marker sets and run-time marker ids (§5.3), steps `markers`, `marker-remove` of a set, `travel-end`, `instance-queue`, `mount-vital` and the options of `marker`, `travel-list`, `travel`, `instances`, `mount` (§6.5), pattern `leave-queue` (§7.5), input forms `join-instance … size= tier= level=` and `leave-queue` (§7.7), family `map-region` and `effect` attributes `mount-type`, `war-steed` (§8.3), label contexts (§8.6), types, fields, events `TravelEnded`, `MountVitalChanged`, `InstanceQueueChanged` and command `LeaveQueue` (§9.1, §9.2, §9.4, §9.5), log forms with added fields written only off their default (§10.3), counters (§10.4), limits (§11.1), fuzz note (§11.4), rule 6 (§13), hostile rows T-H1 … T-H18 (§14.5), Vectors T1, T2 and resolver case T3 (§14.T1–§14.T3), invariant 11 (§15), one OPEN (§16), §18.P5. The P5 parts are in Review; every other part keeps its status. |
+| 2026-10-11 | Independent review of the P5 travel revision (spec reviewer, Clean-Room-Role: review; a session that wrote no part of the P5 revision or the P5 code): passed, every item of CLEAN_ROOM.md §5.3; the P5 parts move Review → Accepted. Non-blocking notes and the dependency on `map-windows.md`/`travel-windows.md` (in Review) in the header review record and §18.P5; no text other than the status lines, review record and this row changed |
+| 2026-10-13 | Merge of the P5 revision (spec writer, design; no fact changed): the "P5 travel" revision, written unnumbered, is numbered **revision 8**; its invariant 11 (the feed derives no travel, instance or mount value) is renumbered **14** because main's invariants 11–13 (P2, P4) came first; Vectors T1–T3 (§14.T1–§14.T3) and the review record §18.P5 keep their numbers (no collision with main's §14.11–§14.13 and §18.4–§18.5). Code and test comments that cite invariant 11 for the P5 rule, or the revision as "P5 travel", follow. |
 
 ---
 
@@ -3801,3 +4174,74 @@ Non-blocking, for the next revision (none changes implemented behaviour unless s
   1,024 bytes); the spec owner decides.
 - (c) The TAB OPEN of §11.1 stays with the spec owner; `OutOfRange` at the tune's column is a
   consistent choice (the tune's value range excludes control characters, §9.4).
+<a id="s18-p5"></a>
+### 18.P5 P5 travel revision (revision 8): map, travel, mounts and instances
+
+**2026-10-11** (spec writer, for decision 0024 P5; inputs: `travel-windows.md` §4.10, §4.11,
+§5.2, §6.5, §6.8, §9; `map-windows.md` §5, §6.7, §7.2; `mounts.md` §2.3, §2.8, §4.1;
+`walker.md` §16.1, §16.5; `lua-plugin-api.md` §15.5; this spec). Status of these additions:
+**Accepted** (independent review 2026-10-11, CLEAN_ROOM.md §5.3 passed, every item; review
+record below and in the header); every other part keeps its status. P2 and P4 revise
+this spec on their branches; the P5 parts are additive (new rows, options, steps,
+paragraphs, a rule 6 in §13, vectors named T1–T3 and hostile rows T-H*n*), so the revisions
+merge without renumbering. The revision number is given at merge.
+
+**Check of the existing forms.** The forms of §6.5 render the four presentations without
+change: `marker`/`marker-remove` (`MarkerAdded`, `MarkerRemoved`) for map markers,
+`travel-list`/`travel` (`TravelShown`, `TravelStarted`, `ChooseTravel`) for the travel
+window, `instances`/`instance` (`InstanceListShown`, `InstanceChanged`, `JoinInstance`,
+`LeaveInstance`) for the finder, `mount` (`MountChanged`, `Dismount`) for the mounted walker
+(`walker.md` §16.1) and `teleport` for arrival. The additions carry values the presentation
+must show but must not derive:
+
+| # | Change | Sections | Why |
+|---|---|---|---|
+| T-D1 | `travel-list` options `min-level`, `undiscovered`, `unmet`, `unusable`, `swift`, `slow`, `area` and the `TravelEntry` fields | §6.5, §9.1, §9.2, §10.3, §11.1 | the travel row's level text, marks, ghosting, territory and area headers (`travel-windows.md` §4.10 rules 3–5) for literal and recorded destinations alike |
+| T-D2 | `travel … route=` (`TravelStarted.route`), `travel-end` (`TravelEnded`) | §6.5, §9.2, §10.3 | the loading-screen or end-travel-box choice for literal destinations, and the end of the presentation on the end-travel button (`travel-windows.md` §5.2 rules 1–4) |
+| T-D3 | `instances` options `from`, `featured`, `level`, `size`, `tier`, `locked`; `InstanceListShown.source`, `.featured`, the `InstanceEntry` fields | §6.5, §9.1, §9.2, §10.3, §11.1 | the instance-travel window's source, the featured field, the level, size and tier shown and the error look (`travel-windows.md` §4.11, §6.3 rule 5, §6.8) |
+| T-D4 | `JoinInstance.size`, `.tier`, `.level`; input options | §7.7, §9.4, §9.5, §10.3 | the finder's chosen size, tier and level (`travel-windows.md` §6.8 rule 5) |
+| T-D5 | `instance-queue` (`InstanceQueueChanged`, `QueueState`), `LeaveQueue` with pattern and input form | §6.5, §7.5, §7.7, §9.1, §9.2, §9.4, §9.5 | the confirm page, its timers and the queue alert (`travel-windows.md` §6.5, §6.8 rule 6, §7.2) |
+| T-D6 | `note-type=` (`MarkerAdded.note_type`, context `MapNoteType`) | §6.5, §8.6, §9.2 | an icon choice for markers by map-note type, since no selector family gives image DIDs for `icon=` (`map-windows.md` §6.7 item 2) |
+| T-D7 | `markers` with marker sets and run-time ids; family `map-region` | §5.3, §6.5, §8.3, §8.6 | markers on every map region in one step (`map-windows.md` §5.4), and markers on every element of a `place` or `map-note` selector |
+| T-D8 | `effect` attributes `mount-type`, `war-steed` | §8.3 | choosing normal or war-steed mounts for the walker and the plugin views by what they are |
+| T-D9 | `mount … kind=` (`MountChanged.combat`), `mount-vital` (`MountVitalChanged`, `MountVital`) | §6.5, §9.1, §9.2, §10.3 | the plugin mount views' class and values, which in the original are server state (`lua-plugin-api.md` §15.5) |
+| T-D10 | Log rule for added fields; Vectors T1, T2, resolver case T3; hostile rows T-H1 … T-H18; rule 6; invariant 14 | §10.3, §13, §14, §15 | conformance, and committed logs that stay byte-identical |
+
+Not added, because existing forms suffice: a list of every mount effect (`effect role=mount
+all`); travel destinations and routes (`travel-destination`; a route ref is resolved to its
+destination by the client half, `travel-windows.md` §4.10 rule 2); arrival (`teleport`);
+leaving an instance (`leave-instance`, `instance none`); refusals and chat lines (`system`,
+`say`); the instance-travel window (an `instances` step with `from=` and one entry,
+`travel-windows.md` §4.11).
+
+**Protocol.** None: the test-server backend refuses the new command and never produces the
+new events (§9.5); no protocol minor is needed (LEGAL.md §11.1 rule 5).
+
+**Rule-5 check (LEGAL.md §11.1).** Nothing here runs in or is linked by `tessera-server`. The
+feed's numbers stay scripted (invariants 2, 10 and 14); the client half alone reads the install
+for names, icons, mount types and route records. ARCHITECTURE §19 gains `TravelEnded`,
+`MountVitalChanged`, `InstanceQueueChanged` and `LeaveQueue` (for its owner).
+
+**What an independent review must check.** T-D1 … T-D10 against the cited sections of
+`travel-windows.md`, `map-windows.md`, `mounts.md`, `walker.md` and `lua-plugin-api.md`;
+Vectors T1 and T2 and case T3 line by line (times, window and marker ids, field order, the
+rule for added fields); T-H1 … T-H18 against §4.2, §4.5, §6.5, §7.7, §11.1 and §11.2; that the
+committed `world.log` is unchanged under §10.3.
+
+**Review result (2026-10-11, independent spec reviewer, Clean-Room-Role: review).** **Passed,
+every item of CLEAN_ROOM.md §5.3.** T-D1 … T-D10 were read against the cited sections of the
+P5 specs; every addition carries a value the presentation must show and the spec restates
+invariant 14 that the feed derives none of them. The §5.3 checklist: all statements are
+functional facts of Tessera's own format or install-derived references with a source mark; no
+code or pseudo-code; no copied prose; API/event/property/label names are interoperability
+identifiers; all vector text is invented and no game strings, keys, hostnames or captures
+appear; nothing is linked by `tessera-server` and no protocol minor is added; the scope rules
+of §9.3 (no anti-cheat, key values, certificates, endpoints or account data) are met. The
+single install-derived claim (four dictionary names and their kinds) was corroborated by
+read-only spot-checks of the install through the P5 decoders and selector resolution and by
+the §15.5 BIN pass reviewed in parallel; Vectors T1–T3 and the hostile-row ranges are
+internally consistent with §6.5, §9, §10.3, §11.1 and §13. Non-blocking: the `map-region`
+family and the new label contexts cite `map-windows.md` and `travel-windows.md`, still in
+Review; acceptance follows the P3 precedent and the §8.3 "stands until Accepted" note, and
+§8.3/§8.6 must be re-checked if those reviews change the cited definitions. The P5 OPENs stay
+non-blocking for the spec owner. Status of the P5 parts: **Review → Accepted**.

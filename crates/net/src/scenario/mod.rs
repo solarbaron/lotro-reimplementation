@@ -52,6 +52,7 @@ mod parse;
 mod props;
 mod resolve;
 mod select;
+mod travel;
 mod verbs;
 
 use std::sync::Arc;
@@ -60,7 +61,7 @@ pub use driver::{DriverFrame, DriverOutcome, HeadlessDriver};
 pub use error::{
     Limit, ResolveError, RuntimeErrorKind, ScenarioError, ScenarioErrorKind, ScenarioRuntimeError,
 };
-pub use feed::{FinishReason, ScenarioCounters, ScenarioStatus};
+pub use feed::{FinishReason, MAX_RUNTIME_MARKERS, ScenarioCounters, ScenarioStatus};
 pub use input::{InputLine, InputPlayer};
 pub use lex::MAX_FILE_BYTES;
 pub use log::{
@@ -75,6 +76,7 @@ pub use select::{
     FilterValue, LabelContext, PropertyInfo, ResolvedRecord, SelectorQuery, SelectorResolver,
     SplitMix64,
 };
+pub use travel::MAX_QUEUE_SECONDS;
 
 /// A parsed and statically checked scenario (`scenario-feed.md` §4–§7, §11): selectors
 /// still unresolved.
@@ -137,7 +139,8 @@ impl Scenario {
     }
 
     /// The labels written outside selectors (`class=`, `species=`, `sex=`, `slot=`,
-    /// `type=`, `nationality=`, and `action` for the text function `action(@Label)`), as
+    /// `type=`, `nationality=`, `action` for the text function `action(@Label)`, and the
+    /// P5 travel keys `note-type=`, `size=` and `tier=`), as
     /// (line, option key, label) in line order. Lets a content check refuse
     /// numeric enum values in committed scenarios (§13 rule 2) together with
     /// [`numeric_enum_values`](Self::numeric_enum_values).
@@ -201,8 +204,10 @@ impl Scenario {
 
     /// Whether any enum position holds a number instead of a label (§13 rule 2): selector
     /// value filters, the `class=`, `species=`, `sex=`, `slot=` (of `equip`) and
-    /// `type=` options, and the text function `action(N)` (an NPC-action enum key, P3
-    /// revision) wherever a text stands.
+    /// `type=` options, the text function `action(N)` (an NPC-action enum key, P3
+    /// revision) wherever a text stands, and (P5 travel, §13 rule 6) `note-type=` of
+    /// `marker` and `markers` and `size=` and `tier=` of `instances` and of the input form
+    /// `join-instance`.
     #[must_use]
     pub fn numeric_enum_values(&self) -> bool {
         use ast::{BodyArg, EnumArg, InputCmd, Verb};
@@ -234,10 +239,19 @@ impl Scenario {
                 Verb::Equip { slot, .. } => matches!(slot, EnumArg::Value(_)),
                 Verb::Delta { damage_type, .. } => num(damage_type),
                 Verb::AcceptCharacter(c) => num(&c.class) || num(&c.species) || num(&c.sex),
+                // P5 travel (§13 rule 6).
+                Verb::Marker { note_type, .. } => num(note_type),
+                Verb::Markers(m) => num(&m.note_type),
+                Verb::Instances { opts, .. } => opts
+                    .sizes
+                    .iter()
+                    .chain(&opts.tiers)
+                    .any(|e| matches!(e, EnumArg::Value(_))),
                 _ => false,
             })
             || p.input.iter().any(|l| match &l.cmd {
                 InputCmd::Equip { slot, .. } => matches!(slot, EnumArg::Value(_)),
+                InputCmd::JoinInstance { size, tier, .. } => num(size) || num(tier),
                 InputCmd::CreateCharacter {
                     class,
                     body,

@@ -616,7 +616,7 @@ impl Parser {
                 }
             }
             "marker" => {
-                let mut st = self.split(tokens, 1, &["icon", "quest"])?;
+                let mut st = self.split(tokens, 1, &["icon", "quest", "note-type"])?;
                 let mt = st.arg(0)?;
                 let marker = self.marker_binding(mt)?;
                 let pos = {
@@ -633,16 +633,34 @@ impl Parser {
                     Some((v, c)) => Some(self.ref_at(&v, c)?),
                     None => None,
                 };
+                let note_type = self.note_type_opt(&mut st)?;
                 Verb::Marker {
                     marker,
                     pos,
                     label,
                     icon,
                     quest,
+                    note_type,
                 }
             }
             "travel-list" => {
-                let mut st = self.split(tokens, 1, &["dest", "from", "coin"])?;
+                // P5 travel adds the options after `coin` (§6.5).
+                let mut st = self.split(
+                    tokens,
+                    1,
+                    &[
+                        "dest",
+                        "from",
+                        "coin",
+                        "min-level",
+                        "undiscovered",
+                        "unmet",
+                        "unusable",
+                        "swift",
+                        "slow",
+                        "area",
+                    ],
+                )?;
                 st.no_more(0)?;
                 let (dv, dc) = st.req_opt("dest")?;
                 let dest = self.entries(&dv, dc, MAX_WINDOW_ENTRIES, false)?;
@@ -654,14 +672,25 @@ impl Parser {
                     Some((v, c)) => self.int_list(&v, c, 0, 1_000_000_000_000_000)?,
                     None => Vec::new(),
                 };
-                Verb::TravelList { dest, from, coins }
+                let opts = Box::new(self.travel_opts(&mut st)?);
+                Verb::TravelList {
+                    dest,
+                    from,
+                    coins,
+                    opts,
+                }
             }
             "travel" => {
-                let st = self.split(tokens, 1, &[])?;
+                let mut st = self.split(tokens, 1, &["route"])?;
                 let dest = self.ref_arg(st.arg(0)?)?;
                 let duration = self.duration(st.arg(1)?)?;
                 st.no_more(2)?;
-                Verb::Travel { dest, duration }
+                let route = self.route_opt(&mut st)?;
+                Verb::Travel {
+                    dest,
+                    duration,
+                    route,
+                }
             }
             "teleport" => {
                 let mut st = self.split(tokens, 1, &["facing"])?;
@@ -677,20 +706,35 @@ impl Parser {
                 Verb::Teleport { pos, facing }
             }
             "mount" => {
-                let st = self.split(tokens, 1, &[])?;
+                let mut st = self.split(tokens, 1, &["kind"])?;
                 let entity = self.entity(st.arg(0)?)?;
                 let t = st.arg(1)?;
                 let mount = self.opt_ref_at(t, t.col)?;
                 st.no_more(2)?;
-                Verb::Mount { entity, mount }
+                let combat = self.mount_kind_opt(&mut st, mount.is_some())?;
+                Verb::Mount {
+                    entity,
+                    mount,
+                    combat,
+                }
             }
             "instances" => {
-                let st = self.split(tokens, 1, &[])?;
+                let mut st = self.split(
+                    tokens,
+                    1,
+                    &["from", "featured", "level", "size", "tier", "locked"],
+                )?;
                 let t = st.arg(0)?;
-                let e = self.entries(t, t.col, MAX_WINDOW_ENTRIES, false)?;
+                let entries = self.entries(t, t.col, MAX_WINDOW_ENTRIES, false)?;
                 st.no_more(1)?;
-                Verb::Instances(e)
+                let opts = Box::new(self.instance_opts(&mut st)?);
+                Verb::Instances { entries, opts }
             }
+            // P5 travel steps (§6.5).
+            "markers" => self.verb_markers(tokens)?,
+            "travel-end" => self.verb_travel_end(tokens)?,
+            "instance-queue" => self.verb_instance_queue(tokens)?,
+            "mount-vital" => self.verb_mount_vital(tokens)?,
             "xp" => {
                 let st = self.split(tokens, 1, &[])?;
                 let (current, needed) =
@@ -858,6 +902,7 @@ impl Parser {
             "perform-stop" => Verb::PerformStop(self.entity(t)?),
             "marker-remove" => match self.lookup(t, t.col)? {
                 Binding::Marker(i) => Verb::MarkerRemove(i),
+                Binding::MarkerSet(i) => Verb::MarkerSetRemove(i),
                 _ => return Err(self.e(K::WrongBindingKind, t.col)),
             },
             "system" => Verb::System(self.string_max(t, crate::model::MAX_CHAT_LEN, false)?),
@@ -1242,7 +1287,10 @@ impl Parser {
             Some(Binding::Marker(i)) => Ok(*i),
             Some(_) => Err(self.e(K::WrongBindingKind, tok.col)),
             None => {
-                if self.prog.markers.len() >= super::parse::MAX_MARKERS {
+                // Marker sets count toward the same limit (P5 travel, §5.3).
+                if self.prog.markers.len() + self.prog.marker_sets.len()
+                    >= super::parse::MAX_MARKERS
+                {
                     return Err(self.e(K::LimitExceeded(Limit::Markers), tok.col));
                 }
                 let i = u32::try_from(self.prog.markers.len()).unwrap_or(u32::MAX);

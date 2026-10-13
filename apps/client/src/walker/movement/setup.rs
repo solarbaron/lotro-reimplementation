@@ -274,19 +274,42 @@ pub fn load_jump_table(
     let mut resolver = ClipResolver::new(dict, vocab.clone(), |d: Did| data.read(d))
         .with_dictionary_defaults(dict)
         .unset_reads_as_zero(true);
+    let mut base = scripts.properties.clone();
+    MotionState::Idle.inputs().apply(vocab, &mut base);
+    scan_jump_scripts(&mut resolver, &scripts, &base, vocab, final_element, notes)
+}
+
+/// The jump table of an entity with `scripts` whose state before the jump is `base`
+/// ([`load_jump_table`]'s scan, shared with the mounted branch of `mounts.md` §14.12, where
+/// `scripts` mark `Mounted_Channeling_Loop` running and `base` holds the rider fields):
+/// `Movement_ActionKey` for states 1–6, else `Loc_Jumping` for states 1, 2, 3 and 5.
+/// `None` when neither script gives a node.
+pub fn scan_jump_scripts<S, F, B, E>(
+    resolver: &mut ClipResolver<'_, S, F, B, E>,
+    scripts: &EntityScripts,
+    base: &tessera_formats::script_table::resolve::PropertyState,
+    vocab: &ScriptVocabulary,
+    final_element: u32,
+    notes: &mut Vec<String>,
+) -> Option<JumpTable>
+where
+    S: tessera_formats::PropertySchema + ?Sized,
+    F: FnMut(Did) -> Result<Option<B>, E>,
+    B: AsRef<[u8]>,
+    E: std::fmt::Display,
+{
     let mut scan = |key: u32, states: &[u32], notes: &mut Vec<String>| -> JumpTable {
         let mut table = JumpTable::new();
         for &k in states {
             let Some(state) = MovementState::from_key(k) else {
                 continue;
             };
-            let mut props = scripts.properties.clone();
-            MotionState::Idle.inputs().apply(vocab, &mut props);
+            let mut props = base.clone();
             props.set(final_element, PropertyValue::Enum(k));
             if let Some(pid) = vocab.entity_element {
                 props.set(pid, PropertyValue::Enum(k));
             }
-            let r = match resolver.resolve_script(&scripts, key, props) {
+            let r = match resolver.resolve_script(scripts, key, props) {
                 Ok(r) => r,
                 Err(e) => {
                     notes.push(format!("jump: state {k}: {e}"));

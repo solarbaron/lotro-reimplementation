@@ -258,6 +258,8 @@ pub fn convert_attribute(a: Attribute) -> Option<gd::Attribute> {
         Attribute::Tier => G::Tier,
         Attribute::Of => G::Of,
         Attribute::Region => G::Region,
+        Attribute::MountType => G::MountType,
+        Attribute::WarSteed => G::WarSteed,
         _ => return None,
     })
 }
@@ -301,6 +303,8 @@ pub fn attribute_from_data(a: gd::Attribute) -> Option<Attribute> {
         G::Tier => Attribute::Tier,
         G::Of => Attribute::Of,
         G::Region => Attribute::Region,
+        G::MountType => Attribute::MountType,
+        G::WarSteed => Attribute::WarSteed,
         _ => return None,
     })
 }
@@ -425,6 +429,9 @@ pub fn convert_context(c: LabelContext) -> Option<gd::LabelContext> {
         LabelContext::Sex => gd::LabelContext::Sex,
         LabelContext::EquipSlot => gd::LabelContext::EquipSlot,
         LabelContext::DamageType => gd::LabelContext::DamageType,
+        LabelContext::MapNoteType => gd::LabelContext::MapNoteType,
+        LabelContext::GroupSize => gd::LabelContext::GroupSize,
+        LabelContext::DifficultyTier => gd::LabelContext::DifficultyTier,
         _ => return None,
     })
 }
@@ -433,7 +440,7 @@ pub fn convert_context(c: LabelContext) -> Option<gd::LabelContext> {
 mod tests {
     use super::*;
 
-    const ATTRIBUTES: [Attribute; 34] = [
+    const ATTRIBUTES: [Attribute; 36] = [
         Attribute::Kind,
         Attribute::Slot,
         Attribute::Fits,
@@ -468,6 +475,8 @@ mod tests {
         Attribute::Tier,
         Attribute::Of,
         Attribute::Region,
+        Attribute::MountType,
+        Attribute::WarSteed,
     ];
 
     #[test]
@@ -685,6 +694,12 @@ mod tests {
             (LabelContext::Sex, gd::LabelContext::Sex),
             (LabelContext::EquipSlot, gd::LabelContext::EquipSlot),
             (LabelContext::DamageType, gd::LabelContext::DamageType),
+            (LabelContext::MapNoteType, gd::LabelContext::MapNoteType),
+            (LabelContext::GroupSize, gd::LabelContext::GroupSize),
+            (
+                LabelContext::DifficultyTier,
+                gd::LabelContext::DifficultyTier,
+            ),
         ] {
             assert_eq!(convert_context(n), Some(g));
         }

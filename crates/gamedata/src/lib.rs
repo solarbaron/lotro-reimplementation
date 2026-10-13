@@ -8,7 +8,9 @@
 //! The P1 models live in modules: item tooltips ([`tooltip`]), the creation screens'
 //! lists and names ([`chargen`]) and the local player's inventory ([`inventory`]); P2 adds
 //! skill and effect tooltips to [`tooltip`] and the combat data of [`combat`]; the P3
-//! models are the quest journal ([`quest`]) and the NPC windows ([`npc`]). Layer
+//! models are the quest journal ([`quest`]) and the NPC windows ([`npc`]); the P5 models
+//! are the map windows ([`map`]), the travel window ([`travel`]), the instance finder
+//! ([`instance`]) and mounts ([`mount`]). Layer
 //! L3; it depends on `tessera-formats`, `tessera-props`, `tessera-text` and
 //! `tessera-wstate` only.
 //!
@@ -30,6 +32,11 @@
 //! | [`combat`] | Typed skill and effect records; combat-panel data (consideration and name colours, vital display overrides, target-frame decoration, effect icons, cast-bar labels, defeat records, floating-text settings); combat-visual script references | `combat-data.md`, `combat-ui.md`, `combat-visuals.md`, `game-controls.md` §5.8, §7.1, §7.5, `interaction.md` §3.8, §3.9, §8 |
 //! | [`quest`] | Quest log, details, progress texts and counters, tracker, quest chat lines, NPC rings and markers, census (P3) | `quest-journal.md` |
 //! | [`npc`] | Dialogue, quest offers, vendor, barter and loot entries, coins, wallet, census (P3) | `npc-windows.md` |
+//! | [`map`] | Map tree, every map region with its census category and test point, table notes of one map, icon tables, place lookup (P5) | `map-windows.md`, `map-data.md` §3.4, §4.8 |
+//! | [`travel`] | Travel window rows, grouping, search, selection display, travel presentation, destination census (P5) | `travel-windows.md` §4, §5.2, §8.1 |
+//! | [`instance`] | Instance-finder tree with B1–B3, menus, join and queue displays, instance-travel window, template census (P5) | `travel-windows.md` §4.11, §6, §8.2; `instances.md` §15.1 |
+//! | [`mount`] | Mount effect name, icon, type, war-steed flag and plugin class; offered mounts by body; gait multipliers; mount-effect census (P5) | `mounts.md` §2, §14.10, §14.11; `game-controls.md` §5 |
+//! | [`GameDataStore::map_regions`], [`GameDataStore::mount_types`], [`GameDataStore::scan_objects`], [`ObjectScan`] | P5 entry points: the `map-region` family, the effect attributes `mount-type` and `war-steed`, record scans for the censuses | `scenario-feed.md` §8.3 (P5 travel) |
 //!
 //! # Hostile input
 //!
@@ -60,7 +67,10 @@ pub mod combat;
 mod error;
 mod filter;
 mod index;
+pub mod instance;
 pub mod inventory;
+pub mod map;
+pub mod mount;
 pub mod npc;
 mod order;
 mod query;
@@ -68,6 +78,7 @@ pub mod quest;
 mod store;
 mod tables;
 pub mod tooltip;
+pub mod travel;
 mod vocab;
 
 pub use error::{GameDataError, Result};
@@ -80,12 +91,13 @@ pub use order::{SplitMix64, apply_count, canonical_cmp, sample, sort_dedup};
 pub use query::{
     AREA_LEVELS, Alt, Anchor, AttrType, Attribute, Bindings, CREATURE_KINDS, Candidate,
     CandidateOutcome, CandidateStatus, Count, EFFECT_ROLES, Family, Filter, FilterValue,
-    ITEM_KINDS, LabelContext, Location, MAX_DID_LIST, Resolution, ResolveNote, SelectorQuery,
-    attribute, attributes,
+    ITEM_KINDS, LabelContext, Location, MAP_REGION_KINDS, MAX_DID_LIST, Resolution, ResolveNote,
+    SelectorQuery, attribute, attributes,
 };
 pub use store::{
     GENDER_FEMALE, GENDER_MALE, GameDataStore, InstallSource, ItemRecord, MAX_CANDIDATES,
-    MAX_DISPLAY_NAME, MAX_RESOLVED_TOTAL, QuestEntry, resolve_with, resolve_without_install,
+    MAX_DISPLAY_NAME, MAX_RESOLVED_TOTAL, MAX_SCAN_FAILURES, ObjectScan, QuestEntry, resolve_with,
+    resolve_without_install,
 };
 pub use tables::position_location;
 pub use vocab::{EQUIPMENT_SLOT_LABEL, ICON_LAYER_PREFIX};

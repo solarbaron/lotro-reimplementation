@@ -4,13 +4,13 @@
 
 | | |
 |---|---|
-| **Status** | **Accepted** (2026-10-09; the same-day revision of §4.4 and §5.3 re-reviewed and accepted 2026-10-09) |
-| **Last updated** | 2026-10-09 |
+| **Status** | **Accepted** (P5 revision — new §14 on mounted presentation and gaits, MQ4/MQ5/MQ9 answered for Tessera — reviewed and accepted 2026-10-13 by an independent spec reviewer, fresh session, not the writer; CLEAN_ROOM.md §5.3, all items). Before: **Revised** (2026-10-11, P5 revision, awaiting review); **Accepted** (2026-10-09; the same-day revision of §4.4 and §5.3 re-reviewed and accepted 2026-10-09); §1–§13 unchanged in substance except the pointers named in §15 |
+| **Last updated** | 2026-10-11 (spec writer, dirty room: P5 revision, §14) |
 | **Author role** | Spec writer (dirty room) |
 | **Reviewer** | Spec reviewer (separate dirty-room session), not the author |
-| **Review record** | 2026-10-09, spec reviewer (fresh session): passed (CLEAN_ROOM.md §5.3; 7 OBS/BIN facts re-checked independently). Non-blocking notes in the review log. 2026-10-09, revision review by an independent spec reviewer (fresh session, not the writer): **passed** (CLEAN_ROOM.md §5.3, all items). Changes reviewed: §4.4 per-axis scale and the Answered note, §5.3 strafe pairing and the Answered note, §11.4 example, §13 row for `collision.md` §11.6, rows SCR2, BIN2, MT31, MT32, change log. Spot checks, read-only: MT31 re-counted over every decoded 0x07 and 0x0C record (10,349 MeshFX nodes; 38 with `Mount_MeshFX_Entity`, all with equal components, 18 driving `Scale`; 875 others unequal; both properties vector3 in the dictionary); MT32 re-read on a private copy of the analysed project (deleted after use): the field registration pairs `StrafeLeftMoveSpeed` and `StrafeRightMoveSpeed` with the last two of the four consecutive speed floats, and the war-steed block copies *S*1 and *S*2 from them in that order. The 397 stored slot-scale values were not re-counted. Non-blocking notes for the next revision: (N1) MT31 counts 38 mount MeshFX nodes while §4.4, MT11 and MI9 count the 35 nodes driven by `Mounted_Player_Cosmetic_Slot_Entity`; say in §4.4 that 3 more nodes write `Mount_MeshFX_Entity` with a stored, undriven entity. (N2) The §13 row for `collision.md` says "the third and fourth float after `ControlAcceleration`"; other fields lie between, so say "the third and fourth of the four consecutive speed floats", or drop the object layout from MT32 and §13 altogether (implementers do not need it; the pairing by property ID is the fact). (N3) The short names `StrafeLeftMoveSpeed` etc. omit the dictionary prefix `GenericPhysicsController_`, as `collision.md` §11.6 does; a one-line note in §1 would help readers look them up. |
-| **Implements into** | `crates/props` (typed views of the mount effect, §2, and of the template mount and war-steed properties, §6); `crates/physics` (the war-steed controller, §5.3–§5.8, next to the controller of `collision.md` §11); `crates/scriptgraph` and `apps/client` (rider presentation through the script tables, §4; the walker's summon and dismiss, §4.9); `apps/explorer` (mount card and mount viewer, §10); Tessera's own server (summoning, durability, war-steed stats, landblock riders, §2.4, §6, §7) |
-| **Companion specs** | [`combat-data.md`](combat-data.md) §3 (two halves), §5 (modifier entries), §6 (effects; class 2459 is listed there as "Mount"), §7 (skills); [`game-controls.md`](game-controls.md) §5.1 (MountDirectory), §5.2 (MountAppearanceTraits), §5.3 (MountedCombatControl, gait multipliers); [`collision.md`](collision.md) §10–§11 (movement parameters, layer choice, the player controller, the movement input, turning, the jump); [`script-table.md`](script-table.md) §4–§8 (nodes, driven properties, targets, MeshFX layout); [`script-runtime.md`](script-runtime.md) (how node graphs run); [`setup.md`](setup.md) and [`skeleton-anim.md`](skeleton-anim.md) §8 (holding locations); [`appearance.md`](appearance.md) §7 (instance sets, NPC figures); [`creatures.md`](creatures.md) §2, §3.2.1, §6 (templates, mirror properties, spawning); [`landblock.md`](landblock.md) §4.8; [`misc-records.md`](misc-records.md) §13.1 (PropertyMetaData); [`property-system.md`](property-system.md) §7.3 (bit-to-key rule), §8 (DID maps); [`wlib-bytecode.md`](wlib-bytecode.md) (the class library's code) |
+| **Review record** | 2026-10-09, spec reviewer (fresh session): passed (CLEAN_ROOM.md §5.3; 7 OBS/BIN facts re-checked independently). Non-blocking notes in the review log. 2026-10-09, revision review by an independent spec reviewer (fresh session, not the writer): **passed** (CLEAN_ROOM.md §5.3, all items). Changes reviewed: §4.4 per-axis scale and the Answered note, §5.3 strafe pairing and the Answered note, §11.4 example, §13 row for `collision.md` §11.6, rows SCR2, BIN2, MT31, MT32, change log. Spot checks, read-only: MT31 re-counted over every decoded 0x07 and 0x0C record (10,349 MeshFX nodes; 38 with `Mount_MeshFX_Entity`, all with equal components, 18 driving `Scale`; 875 others unequal; both properties vector3 in the dictionary); MT32 re-read on a private copy of the analysed project (deleted after use): the field registration pairs `StrafeLeftMoveSpeed` and `StrafeRightMoveSpeed` with the last two of the four consecutive speed floats, and the war-steed block copies *S*1 and *S*2 from them in that order. The 397 stored slot-scale values were not re-counted. Non-blocking notes for the next revision: (N1) MT31 counts 38 mount MeshFX nodes while §4.4, MT11 and MI9 count the 35 nodes driven by `Mounted_Player_Cosmetic_Slot_Entity`; say in §4.4 that 3 more nodes write `Mount_MeshFX_Entity` with a stored, undriven entity. (N2) The §13 row for `collision.md` says "the third and fourth float after `ControlAcceleration`"; other fields lie between, so say "the third and fourth of the four consecutive speed floats", or drop the object layout from MT32 and §13 altogether (implementers do not need it; the pairing by property ID is the fact). (N3) The short names `StrafeLeftMoveSpeed` etc. omit the dictionary prefix `GenericPhysicsController_`, as `collision.md` §11.6 does; a one-line note in §1 would help readers look them up. 2026-10-13, P5 revision review by an independent spec reviewer (fresh session, not the writer; reviewed `git diff 8e9670d..f18ddd7` of this file): **passed** (CLEAN_ROOM.md §5.3, all items). Changes reviewed: new §14 (§14.1–§14.13), rows OBS3, SCR3, MT33–MT47, invariants MI14–MI18, questions MQ4/MQ5/MQ9 (Answered notes), MQ13–MQ15, the pointers in §4.1/§4.4/§4.9/§5.8 and §13, and the §15 change-log row. The P5 revision adds no `BIN` row and used no method M4 (SCR3: "No method M4 was used for this revision"); BIN and BIN2 were accepted in the 2026-10-09 rounds, so no private Ghidra copy was needed for this review. Spot checks, read-only (M1, prebuilt `tessera-dattool cat` against the user install, in place): 19 representative DIDs named in §14 all resolve to records of the stated families — mount effects 0x7002D53C, 0x70031E9B, 0x70066B26, 0x7002D53D, war-steed startup-with-entity 0x7002EDDF and 0x7003230E, MountDirectory 0x79048B29, entities 0x47000361 (horse) and 0x47005D62 (medium war-steed), clips 0x05001447/0x0500522F/0x05005237/0x05005231/0x05005236, mount table 0x070007A8, locomotion template 0x0C000FFE, closure table 0x070003A3, player locomotion 0x0700001C, and the no-entity startup record 0x70033562. Internal arithmetic re-checked: the §14.11 census sums to 722 (normal 679 = 590 + 72 + 9 + 6 + 2; + Clydesdale 4 + war-steeds 25 + 2 startup + 3 horse-with-bit + 8 hobby-horse + 1 no-entity); §14.2 count 10,830 = 722 × 15, 10,815 = 10,830 − 15; §14.7 induction 688 = 660 + 28; the §14.13 gear and placement worked examples are self-consistent. Cross-references verified present and consistent: §5.1 Decision (speed factor), §4.6 item 4 (Clydesdale gait rule), §2.6 fields (`ForwardSource_Movement_MountSpeedMultiplier`, `Movement_MountSpeedBonus`), `Mount_Name_Initial` (§2.3). No code, no pseudo-code, no copied prose, no game text, no key/hostname/anti-cheat fact. Non-blocking notes in the review log. |
+| **Implements into** | `crates/props` (typed views of the mount effect, §2, and of the template mount and war-steed properties, §6); `crates/physics` (the war-steed controller, §5.3–§5.8, next to the controller of `collision.md` §11); `crates/scriptgraph` and `apps/client` (rider presentation through the script tables, §4; the walker's summon and dismiss, §4.9); `apps/explorer` (mount card and mount viewer, §10); `apps/client` walker mounts (P5: clip choice, gait rule, sequence, placement, camera, §14; the walker's side in `walker.md` §16); Tessera's own server (summoning, durability, war-steed stats, landblock riders, §2.4, §6, §7) |
+| **Companion specs** | [`combat-data.md`](combat-data.md) §3 (two halves), §5 (modifier entries), §6 (effects; class 2459 is listed there as "Mount"), §7 (skills); [`game-controls.md`](game-controls.md) §5.1 (MountDirectory), §5.2 (MountAppearanceTraits), §5.3 (MountedCombatControl, gait multipliers); [`collision.md`](collision.md) §10–§11 (movement parameters, layer choice, the player controller, the movement input, turning, the jump); [`script-table.md`](script-table.md) §4–§8 (nodes, driven properties, targets, MeshFX layout); [`script-runtime.md`](script-runtime.md) (how node graphs run); [`setup.md`](setup.md) and [`skeleton-anim.md`](skeleton-anim.md) §8 (holding locations); [`appearance.md`](appearance.md) §7 (instance sets, NPC figures); [`creatures.md`](creatures.md) §2, §3.2.1, §6 (templates, mirror properties, spawning); [`landblock.md`](landblock.md) §4.8; [`misc-records.md`](misc-records.md) §13.1 (PropertyMetaData); [`property-system.md`](property-system.md) §7.3 (bit-to-key rule), §8 (DID maps); [`wlib-bytecode.md`](wlib-bytecode.md) (the class library's code); [`walker.md`](walker.md) §16 (mounts in the walker, P5); [`combat-data.md`](combat-data.md) §7.9 (induction records) |
 
 ---
 
@@ -37,7 +37,10 @@ appearance traits, the gait multipliers). This spec adds:
 - the **NPC riders** of the landblocks: the per-instance mount, rider-pose and banner
   properties and how the data consumes them (§7);
 - the reference graph, invariants, worked examples and the open questions (§8, §9, §11,
-  §12).
+  §12);
+- (P5) the **mounted presentation in the walker**: the clips rider and mount play for each
+  motion and gait, the gait rules, the mount and dismount sequence, placement, seat and camera,
+  the mounts each playable body rides and a census of all mount effects (§14).
 
 Game text is never reproduced. Records are named by DID, fields by property label, values by
 enum-mapper label; those labels are interoperability identifiers (they are how a client finds
@@ -61,6 +64,8 @@ spec says so and stops.
 | BIN | **M4 (decision 0011).** Client `x64/lotroclient64.exe`, build 4906.0071.1794.4035, SHA-256 prefix d22363eb9aff0fb5 (verified on 2026-10-09), read on 2026-10-09 with Ghidra (headless, on a private copy of the shared analysed project, deleted after use) and a byte scan of the read-only file. **Questions:** (m1) does native code read the mount effect's rider fields or the cosmetic-slot fields by constant property ID; (m2) what native code does with `Mount_Movement_*_Cached`, `MountMovement_CurrentSpeed` and `MountedCombat_Current_LockedGear` (the war-steed controller); (m3) the source of the second forward-speed limit left open by `game-controls.md` Q8; (m4) what the property natives called by the mount-system bytecode do (package 169, functions 3 and 45), located with the registration pairing of `wlib-bytecode.md`'s BIN row; (m5) which bits of `Mount_CurrentMountType` native code tests. **Method:** an instruction scan for immediates equal to 230 mount-family PIDs; a byte scan of the whole file for the 4-byte PIDs of the 12 rider fields of §2.2, the 57 cosmetic-slot PIDs and the 9 mount script keys; decompilation of the functions found. **Why M1–M3 were not enough:** the movement controller and the native property functions exist only in the executable; the data say which properties exist, not which side reads them or how they combine; no published source describes them; no running client is available to this session (M3). **Not read:** network handling, login, keys, the launcher, anti-tamper. The war-steed controller blends its state toward server updates (the controller is server-authoritative, §5.9); that blending was seen at its entry and not followed (decision 0004). No listings, symbol names or addresses are carried into this spec. |
 | SCR2 | The same script tables and scriptlets, read again on 2026-10-09 for this revision with a new throwaway probe: the `Scale` field, its driven pair and `MeshIIDTargetProperty` of **every** MeshFX node (10,349 nodes in all decoded 0x07 and 0x0C records); the property dictionary entries of `MeshFXScript_Scale` and `Mounted_Player_Cosmetic_Slot_Scale`; every value of the latter in all 0x78 and 0x79 sets (nested values included) and all 3,768,840 landblock instance sets. |
 | BIN2 | **M4 (decision 0011)**, same build, 2026-10-09, Ghidra 12 on a private copy of the shared project (deleted after use). **Question (m6):** which property names the two strafe slots of the war-steed parameter block carry. **Why M1–M3 were not enough:** every observed movement layer has equal strafe speeds, so no data and no observation of the running client can tell the slots apart. **Read:** the field registration of the layered movement-parameter object (property ID and accessor of each field), the accessors of `ForwardMoveSpeed`, `BackwardMoveSpeed`, `StrafeLeftMoveSpeed`, `StrafeRightMoveSpeed` and `ControlAcceleration`, and again the war-steed parameter-block builder and the sideways target of §5.4. |
+| OBS3 | Observed in the same install (client build 4906.0071.1794.4035; archives unchanged since 2026-10-04) on 2026-10-11 with throwaway probes in the dirty-room scratch area built on the repository's decoders, the clip resolver of `tessera-formats` (`script_table::resolve`, `script-table.md` §11.3) and `tessera-anim`, read-only. **Rider census:** every one of the 722 mount effects on each of the 15 race-table entries (10,830 evaluations of the idle, walk and run states with the rider state of §14.2); full motion matrices (12 motion states, gaits 1–7 for war-steed types) for ten representative effects (one per mount type) on all 15 entries, the airborne states with the `Jump` script (key 1) running, and the hobby-horse with `Emote_Holding_HobbyHorse` running instead of the channelling loop; script runs of the summon, mounting and dismount scripts. **Mount census:** all 605 (mount entity, mount type) pairs that the 721 effects with an entity reach (601 entities), in the states idle, walk, run, back, turn, strafe, airborne and, for war-steed types, trot and canter; the resolver does not follow targets, so the probe gave the mount the rider's values of the properties its graph reads through `MeshFXScriptOutput_Source` (§14.1) and marked `Mounted_Channeling_Loop` running. **Skeletons:** 222 distinct (setup, clip) pairs of riders and mounts bound to their skeletons; 527 (setup, clip) pairs of mounted rider clips sampled at 16 times each for bone 0 and the bone height range. **Records:** the MountDirectory's two skill lists against every skill that toggles a mount effect; `Skill_MountRacialConversionAnalog` of all 688 mount skills; MountedCombatControl's `Mount_Control_Tree_To_Skill_Hash`; the five induction records (class 1195) the mount skills name; the player-avatar objects' mount template values; dictionary entries of the properties named in §14. |
+| SCR3 | The script tables and scriptlets of the install, read on 2026-10-11 with the repository's decoder: every node of all 7,524 decodable tables and 28,992 scriptlets with a Property target, tallied by the property it reads and by whether the same record reads it untargeted; a byte scan of every 0x07 and 0x0C record for the property IDs of `MountMovement_LastSpeedChangeTime`, `MountedCombat_Current_LockedGear`, `GOP_MountedMovement_ReleasedKeys_LoseMomentum` and `MountMovement_CurrentSpeed`; full node trees of `Mounted_Channeling_Start`, `…_Mounting`, `…_End`, `…_Failure`, `Mounted_Player_Cosmetic_Start` and the summon scripts, the mounted branch of the locomotion template 0x0C000FFE and the mount locomotion graph of 0x070007A8. No method M4 was used for this revision. |
 | SPEC | Facts stated, with their own provenance, in the companion specs; cross-references only. |
 | DEC | Tessera's own choices where the data, the client library and the executable say nothing. Marked **Decision**; not claims about the original. |
 
@@ -104,6 +109,21 @@ consistent with the data and code that was not traced end to end; **Decision** =
 | MT28 | Landblock rider instance sets: 1,549 instance sets carry at least one of the seven rider keys; census, link roles, enum mappers (§7.1–§7.3) | OBS (all 3,768,840 instance sets) | Confirmed |
 | MT29 | How the data consumes the rider keys: rider-pose scriptlets by `Mount_RiderType`, Appearance nodes by `Mount_MountAppearance`, banner scripts by the banner keys (§7.4) | SCR | Confirmed (script data) |
 | MT30 | Durability: 691 records with three change events (event IDs 22, 17, 31 in that order), base maxima 60–300, regeneration 1.0 or 1.5 (§2.4) | OBS | Confirmed (data); rules server-side |
+| MT33 | Mount scripts read the rider through Property targets on `MeshFXScriptOutput_Source` (55 records; sliders, style, gait, `Mount_Is_Mounted`, element, `CharGen_Stage`, type; 87 WhenRunning and 34 Run nodes); untargeted nodes read the mount (§14.1) | SCR3 | Confirmed (script data) |
+| MT34 | The rider's mounted clips come from the WhenRunning (`Mounted_Channeling_Loop`) branch of the locomotion template; layers 13, 20, 51, 54, 60, 65, 75; every effect × entry finds idle and walk clips, and run clips with the Clydesdale gait (§14.2) | OBS3 (10,830 of 10,830); SCR3 | Confirmed |
+| MT35 | Every (mount entity, type) pair finds idle, walk, run, back, turn, strafe and airborne clips except the 4 hobby-horse entities (§14.3) | OBS3 (605 pairs) | Confirmed |
+| MT36 | War-steed forward clips of rider and mount follow `MountMovement_CurrentSpeed`; rider and mount clip lengths match per gait (§14.3, §14.4) | OBS3 | Confirmed |
+| MT37 | Normal mount clips do not depend on the gait; the Clydesdale rider uses the war-steed riding set (§14.4) | OBS3 | Confirmed |
+| MT38 | Bone 0 stays at its reference position in all 504 sampled mounted rider clips of layers 13, 20, 51, 54, 60, 65; the 11 layer-75 offset clips (23 pairs) hold it at one fixed offset each (§14.8) | OBS3 | Confirmed |
+| MT39 | Each race's war-steed effect stores a `BoneOffset` that cancels its male riders' layer-75 bone-0 rise to within 0.001 m (12 effects; females within 0.04 m) (§14.8) | OBS3 | Confirmed (data); the reading "translation in the location frame" Inferred |
+| MT40 | `Mount_Control_Tree_To_Skill_Hash`: 24 entries, 12 skills, one per tree and race group, each toggling one war-steed mount effect and the same three class-718 effects (§14.10) | OBS3 | Confirmed |
+| MT41 | Tall/Short directory groups: 330 symmetric analog pairs, 328 Tall–Short; 324 of 329 Short skills' effects store a slot scale below 1, 332 of 347 Tall skills' effects none (§14.10) | OBS3 | Confirmed |
+| MT42 | Mount skills name five induction records: 2.0 s with `Mounted_Summon_Start` (660 skills), 3.0 s with `Mounted_Warsteed_Summon_Start` (28); none allowed while moving (§14.7) | OBS3 | Confirmed |
+| MT43 | The mounting clip is started by `Mounted_Channeling_Mounting` on layer 54; no dismount script starts a rider clip; the mount bows at rest (§14.7) | OBS3; SCR3 | Confirmed (script data) |
+| MT44 | Step 2 of `Mounted_Player_Cosmetic_Start` is a persistent Run; read with `script-runtime.md` §12.4 step 3 the graph never reaches step 4; `Mounted_Channeling_End` has the same shape (§14.7) | SCR3; SPEC | Confirmed (script data); consequence Inferred |
+| MT45 | Mounted clips are driven by `Movement_MountAnimationSpeedMultiplier` (default 1.0) except the 89-bone walk clips and war-steed summon clips (`Movement_SpeedMultiplier`); mount clips carry no displacement (§14.2, §14.3) | OBS3 | Confirmed |
+| MT46 | No script table or scriptlet names `MountMovement_LastSpeedChangeTime`, `MountedCombat_Current_LockedGear` or `GOP_MountedMovement_ReleasedKeys_LoseMomentum`; 62 name `MountMovement_CurrentSpeed` (§14.6) | SCR3 (byte scan) | Confirmed |
+| MT47 | 711 effects `Set` the camera look-at offsets 0.75 (*z*) and 0.2 (*y*); the dictionary holds `Entity_Camera_LookAt_OffsetX`/`Y`/`Z` (float, default 0.0); readers not traced (§14.9) | OBS3; OBS | Confirmed (data) |
 
 ---
 
@@ -120,7 +140,10 @@ consistent with the data and code that was not traced end to end; **Decision** =
 | **Gait** | A key of enum mapper `MountedMovementSpeed` (0x2300033B here; `game-controls.md` §5.3.2): 1 Backwards, 2 Neutral, 3 Neutral_Forwards, 4 Walk, 5 Trot, 6 Canter, 7 Gallop. |
 | **Instance set** | One entry of a landblock-info weenie list (`creatures.md` §1a). |
 
-Property types are those of `property-system.md` §3. "PID" is a property-ID value. Enum and
+Property types are those of `property-system.md` §3. "PID" is a property-ID value. The short
+movement-field names `ForwardMoveSpeed`, `BackwardMoveSpeed`, `StrafeLeftMoveSpeed`,
+`StrafeRightMoveSpeed` and `ControlAcceleration` stand for the dictionary labels with the prefix
+`GenericPhysicsController_`, as in `collision.md` §11.6. Enum and
 bitfield values are given as keys with their mapper labels where a rule depends on the label;
 bitfields follow the bit-to-key rule of `property-system.md` §7.3 (bit *i* stands for key
 *i* + 1). Holding locations are keys of mapper 0x23000068 (`skeleton-anim.md` §8.2); the one
@@ -413,6 +436,12 @@ from the data alone. This section gives the chain and the facts the data fixes.
 > `Mount_CurrentMountStatus` to 7 (dismissed by the player) or 6 (any other cause) and stops
 > that script (its OnStop branch then runs the dismount script, §4.3).
 
+> **Answered for Tessera (2026-10-11, P5; MQ4):** the original's path stays server-side, but
+> the step it leaves out is now known: the start script is a persistent Run in step 2 of the
+> Sequence, which by `script-runtime.md` §12.4 never completes (MT44), so the walker itself
+> starts step 4's scripts after the start script's graph has completed. The whole timeline (summon, mounting, mounted,
+> dismount) is the Decision of §14.7.
+
 <a id="s4-2"></a>
 ### 4.2 Rider properties read by script nodes (Confirmed (script data), MT11, MT12)
 
@@ -493,7 +522,8 @@ then (except for the hobby-horse) a Switch on `Agent_Species` (and once on `Sex`
 each hold **one MeshFX node** (23 nodes). Four other tables (0x07001693, 0x070018C7,
 0x070018D1, 0x070018D2) hold three nodes each, for the cases war-steed, 0x40 (warg) and
 default, without species branches (35 nodes in all); the two remaining tables that define the
-script hold no entity-driven MeshFX node.
+script hold no entity-driven MeshFX node. Three further MeshFX nodes write `Mount_MeshFX_Entity`
+with a stored, undriven entity (38 in all, MT31).
 
 MeshFX layout: `script-table.md` §5.2 (field labels `MeshFXScript_*`). The stored values of
 the mount nodes:
@@ -551,6 +581,12 @@ uniform.
 > **Answered (2026-10-09; was OPEN, implementer 2026-10-09):** no component is chosen: the
 > three components scale the three axes (Tessera's choice is the Decision above). How the
 > original applies the node's scale at run time is still part of the MeshFX OPEN above (MQ5).
+
+> **Partly answered (2026-10-11, P5; MQ5):** the translation part of the Decision now rests on
+> data: every race's war-steed effect stores a `BoneOffset` that cancels, along the location's
+> *z*, the rise of bone 0 in its riders' layer-75 offset clips (MT39, §14.8). The rotation
+> offsets, `RemoveRotation` and the fade semantics stay open; the walker's per-frame placement
+> and fade are §14.8.
 
 <a id="s4-5"></a>
 ### 4.5 Rider and mount talk through targets (Confirmed (script data), MT14)
@@ -678,6 +714,9 @@ To mount the player's character in the offline walker:
 
 Without a MeshFX implementation, a walker may draw the mount entity directly with the §4.4
 Decision transform and the stored scale of the node that the Switch would select.
+
+The P5 revision refines this procedure: clips of rider and mount §14.2–§14.5, gait §14.6,
+sequence and timing §14.7, placement, seat and fade §14.8, camera §14.9.
 
 ---
 
@@ -852,6 +891,11 @@ in the client's controller code that was read, nor in the class library.
 > gear-change rate *G* and `MountMovement_LastSpeedChangeTime` enter (reading: the server
 > shifts the gait toward the input at *G* gears per second). No reader of *G* was found among
 > the controller's methods.
+
+> **Answered for Tessera (2026-10-11, P5; MQ9):** the walker shifts a selected gear at *G* gears
+> per second from the input, keeps it in `MountedCombat_Current_LockedGear` (so §5.4 step 3
+> limits the speed) and derives the gait from the forward speed (§14.6). The original's rule
+> stays server-side (OPEN in §14.6).
 
 <a id="s5-9"></a>
 ### 5.9 Server authority (BIN; not followed)
@@ -1147,6 +1191,11 @@ keys as a rider's banner.
 | MI11 | `Mount_RiderType` in instance sets is between 0 and 7 (1,053 of 1,053); `Mount_MountAppearance` values are keys of mapper 0x23000338 (1,301 of 1,301). |
 | MI12 | The class-wide template values of §6.1 hold in every set of the classes named. |
 | MI13 (Decision) | Tessera's war-steed controller never produces a forward control velocity above the forward limit of §5.4 step 3 nor a sideways one outside −*S*1 … *S*2 after an update. |
+| MI14 | In every mounted rider clip of layers 13, 20, 51, 54, 60 and 65, bone 0 stays at its reference position (504 of 504 sampled pairs, within 0.3 mm). |
+| MI15 | Every (mount entity, mount type) pair reached by a mount effect, hobby-horse entities excepted, has idle, walk, run, back, turn, strafe and airborne clips that bind to its skeleton (601 of 601). |
+| MI16 | For each tree and race group, the war-steed effect of `Mount_Control_Tree_To_Skill_Hash` has a `BoneOffset` *z* equal, within 0.001 m, to minus the bone-0 rise of the male rider's layer-75 offset clip (12 of 12; 0 where there is no offset clip). |
+| MI17 | Every mount skill names exactly one induction record, with `Induction_AllowedWhileMoving` false (688 of 688). |
+| MI18 (Decision) | The walker's gait is 1 only while the forward control velocity is below −0.0002, 2 only while its magnitude is at most 0.0002, and never 3 (§14.6). |
 
 ---
 
@@ -1255,15 +1304,18 @@ rider takes a normal hit (200 → 170), then a critical hit (170 → 80), then 3
 | MQ1 | The original's durability rules (time unit, per-event application, zero, war-steeds). Server rule. | §2.4 |
 | MQ2 | The meaning of the two class-2464 attributes set only in war-steed records. | §2.7 |
 | MQ3 | Which mount type value (effect or entity) the rider's `Mount_CurrentMountType` takes. | §3.2 |
-| MQ4 | How the rider fields reach the rider and what starts `Mounted_Player_Cosmetic_Start` for a normal mount (likely server-driven). | §4.1 |
-| MQ5 | The MeshFX node's run-time composition of holding location, bone offset, rotation offsets, scale flags and fade times (`script-runtime.md` OPEN-17). | §4.4 |
+| MQ4 | How the rider fields reach the rider and what starts `Mounted_Player_Cosmetic_Start` for a normal mount (likely server-driven). **Answered for Tessera** (§14.7: the walker performs the server's part; step 4 is not reached by the graph, MT44); the original's path stays OPEN. | §4.1, §14.7 |
+| MQ5 | The MeshFX node's run-time composition of holding location, bone offset, rotation offsets, scale flags and fade times (`script-runtime.md` OPEN-17). **Partly answered:** the bone offset is a translation in the location frame (MT39); rotations, `RemoveRotation` and fades stay OPEN (Decisions in §14.8). | §4.4, §14.8 |
 | MQ6 | How `Movement_Effect_MountSpeedMultiplier` enters a normal mount's speed. | §5.1 |
 | MQ7 | The world limit's value when the world has none. | §5.5 |
 | MQ8 | The mouse-steering thresholds of the war-steed's turning. | §5.6 |
-| MQ9 | Who shifts the war-steed's gait and how the gear-change rate and `MountMovement_LastSpeedChangeTime` are used. | §5.8 |
+| MQ9 | Who shifts the war-steed's gait and how the gear-change rate and `MountMovement_LastSpeedChangeTime` are used. **Answered for Tessera** (§14.6, gear rule); the original's rule, and when it uses gait 3, stay OPEN (server). | §5.8, §14.6 |
 | MQ10 | How the 133 riders whose templates name no mount entity are drawn. | §6.6 |
 | MQ11 | How the 722 linkless rider instance sets are spawned. | §7.3 |
 | MQ12 | `game-controls.md` Q23 (how trait appearances reach the mount), narrowed: the war-steed MeshFX nodes take their `Appearances` from the rider's `Mount_Appearances`; the class-library functions that build that array from `Mount_Appearances_TraitDID`, `…_TraitsOverride` and `…_Slot_Colourization` (classes 3439 and 3470) were not read. | §4.2 |
+| MQ13 | What the original does when a mounted character enters deep water (Tessera: dismount by other). Server. | §14.12 |
+| MQ14 | How the original's camera uses `Entity_Camera_LookAt_Offset*` (Tessera: raise and advance the walker's target). | §14.9 |
+| MQ15 | Whether an area that forbids the mount type dismounts a mounted character (Tessera: no). Server. | §14.12 |
 
 ---
 
@@ -1277,14 +1329,545 @@ rider takes a normal hit (200 → 170), then a critical hit (170 → 80), then 3
 | `combat-data.md` §6.1, row 2459 | Point to mounts.md §2 for the fields and groups. |
 | `script-runtime.md` OPEN-17 | The mount MeshFX nodes are persistent (`Persistent` 1) and name their mesh-IID property; mounts.md §4.4 needs the MeshFX kind implemented. |
 | `creatures.md` §6.1 step 5 | Rider overrides of spawned objects (mounts.md §7). |
-| `collision.md` §11.6, OPEN (BIN 36) | The names of the two strafe fields need not rest on the registration order: the field registration gives each field's property ID with an accessor, and the accessors read `StrafeLeftMoveSpeed` and `StrafeRightMoveSpeed` from the third and fourth float after `ControlAcceleration`, directly after `ForwardMoveSpeed` and `BackwardMoveSpeed` (mounts.md MT32, BIN2). Which of the two the player controller's item 1 reads for *x* > 0 should be re-checked against these accessors. |
+| `collision.md` §11.6, OPEN (BIN 36) | The names of the two strafe fields need not rest on the registration order: the field registration gives each field's property ID with an accessor, and the accessors read `StrafeLeftMoveSpeed` and `StrafeRightMoveSpeed` from the third and fourth of the four consecutive speed floats (mounts.md MT32, BIN2). Which of the two the player controller's item 1 reads for *x* > 0 should be re-checked against these accessors. (Wording revised 2026-10-11, review note N2.) |
+| `script-table.md` §8.4 step 2 | Name the mounted branch's parameter families and layers (mounts.md §14.1–§14.2) and that the rider's airborne clips need the `Jump` script running while the mount's do not (§14.3). |
+| `game-controls.md` §5.1 Q6 | Data supporting the Tall/Short reading: mounts.md §14.10, MT41 (Short skills' effects carry a slot scale below 1). The war-steed skills per race come from `Mount_Control_Tree_To_Skill_Hash` (§5.3.1), MT40. |
+| `script-runtime.md` §6.2, §12.4 | A note that targets are per node (the mount graph's untargeted children of targeted nodes read the mount, mounts.md §14.1). An OPEN on §12.4 step 3: `Mounted_Player_Cosmetic_Start` and `Mounted_Channeling_End` put a persistent Run in an early Sequence step and needed work in later steps (mounts.md MT44, §14.7), which suggests a completion path when the started script ends; re-check with the client. |
+| `keymap.md` §8 | The walker's `toggle_mount` action (`walker.md` §16.4) belongs in the built-in table. |
+| `walker.md` | New §16 (mounts in the walker), written with this revision. |
 
 ---
 
 <a id="s14"></a>
-## 14. Change log
+## 14. Mounted presentation and gaits (P5)
+
+This section gives what the walker needs to show a mounted player character with the
+install's mounted gaits (decision 0024, P5 exit criterion 2): which clips the rider and the
+mount play for each motion and gait, how they are found, how the gait follows the input, the
+mount and dismount sequence, the mount's placement and scale without a full MeshFX runtime,
+the rider's seat, the camera, which mounts each playable body rides, and a census of all 722
+mount effects. Facts are from OBS3 and SCR3 (rows MT33–MT47); everything marked
+**Decision** is Tessera's choice for the offline walker. The walker side (options, command,
+key, HUD and logs) is `walker.md` §16.
+
+<a id="s14-1"></a>
+### 14.1 Two entities, one evaluation model (Confirmed (script data), MT33)
+
+The rider is the entity that moves and runs the input; the mount is the entity spawned by the
+MeshFX node of §4.4 and attached to the rider at `Mount_Connection`. Both choose their clips
+through their own script tables, the same way as any figure (`script-table.md` §8, §11.3):
+
+- **Rider.** The rider's closure is the body's avatar closure (`script-table.md` §8.3). Its
+  locomotion template 0x0C000FFE has a WhenRunning node on `Mounted_Channeling_Loop` as the
+  first test of the game tree (`script-table.md` §8.4 step 2): while that script runs, its
+  Running port leads to the mounted branch, whose Default ports are named (as stored; the
+  names are interoperability identifiers) `riding_idle`, `riding_walk`, `riding_run`,
+  `riding_run2`, `riding_walk_back`, `riding_run_back`, `riding_*_strafe_*`, `riding_*_turn_*`,
+  `riding_turn_*`, `riding_falling`, `riding_land_run`, the `camel_riding_*` and
+  `oryx_riding_*` families, the `mounted_combat_riding_*` family and
+  `riding_warsteed_heavy`, `…_light`, `…_medium`, plus the `mounted_combat_*_idle` stance
+  idles. The mounted branch switches on the rider's `Mount_CurrentMountType` (54 Switch
+  nodes), `Movement_MovementStyle`, `Mount_CurrentMountStatus` (10 Switches, case 5
+  `Mounted`, in front of some turn ports), `ScriptSystem_MeshPantsSync` (dictionary default true; false selects the
+  `riding_run2` variants), `Entity_Element` and `Agent_Class`, and blends on `Slider_Propel`,
+  `Slider_Strafe`, `Slider_Turn` and `ScriptSystem_Slider_Land`.
+- **Mount.** The mount's closure is its 0x47 entity's (for the common horse entity
+  0x47000361: class table 0x070003A3 and 14 includes, among them the player locomotion table
+  0x0700001C and the mount table 0x070007A8); its start-up adds the MeshFX node's `Behavior`
+  (`Horsepants_Startup`, §4.4). The mount's locomotion graph (the `Horsepants_Startup` of
+  0x070007A8) is a WhenRunning on `Mounted_Channeling_Loop`
+  **of the rider**, whose Running port holds a Switch on the rider's `Mount_CurrentMountType`
+  and below it the blends on the rider's sliders and switches on the rider's
+  `Movement_MovementStyle`, `MountMovement_CurrentSpeed`, `Entity_Element` and
+  `ScriptSystem_MeshPantsSync`.
+
+**The mount reads the rider through targets.** Every node of the mount's graph that reads a
+rider property carries a Property target (type 3, `script-table.md` §4.4) whose
+`PropertyTarget_PropertyName` is `MeshFXScriptOutput_Source`, the instance-ID property the
+MeshFX node sets on the spawned entity. Census over every table and scriptlet (SCR3): 55
+records hold such nodes; they read, through the target, `Slider_Turn` (218 ScalarBlends),
+`Slider_Strafe` (139), `Slider_Propel` (65 ScalarBlends, 9 Switches),
+`ScriptSystem_Slider_Land` (19), `MountMovement_CurrentSpeed` (72 Switches),
+`Movement_MovementStyle` (27), `Mount_Is_Mounted` (19), `ScriptSystem_MeshPantsSync` (19),
+`Entity_Element` (14), `CharGen_Stage` (11), `Mount_CurrentMountType` (9), and others with at
+most 22 nodes each; 87 WhenRunning nodes and 34 Run nodes are targeted the same way. A node
+**without** a target reads the running entity, here the mount itself (`script-runtime.md`
+§6.2): for example the `Mount_RiderType` Switches nested inside the targeted `CharGen_Stage`
+Switch of 0x070007A8 carry no target and read the mount's own `Mount_RiderType` (65 mount
+entities hold `Avatar`, §3.2). A few records read one property both with and without the
+target (13 records: `Shapeshifting_Target_Entity` in 4 scriptlets, `Mount_CurrentMountType` in
+the mount tables 0x070007A8 and 0x070007F7, the three sliders, `Movement_MovementStyle` and
+`Mount_CurrentMountStatus` in scriptlet 0x0C007D14, and detection, equipment, banner, combat and
+sex properties in 6 other tables).
+
+**Evaluating the mount (Decision).** Tessera's static evaluation (`script-table.md` §11.3)
+evaluates a graph against one entity's property state. The walker evaluates the mount with two
+property states: nodes whose Property target names `MeshFXScriptOutput_Source` read the
+**rider's** state, every other node reads the **mount's** state; WhenRunning nodes with that
+target see the rider's running scripts. Where the resolver cannot take a second state, the
+walker may use one merged state: the mount's own properties, overlaid with the rider's values
+of exactly the properties that the mount's closure reads through that target, and the rider's
+`Mounted_Channeling_Loop` marked running. OBS3 used the merged form. The two forms differ only
+where a record reads one property both with and without the target: in the mount table
+0x070007A8 (and 0x070007F7) `Mount_CurrentMountType` is read through the target by the
+locomotion Switch and without it by the rider-pose Switches, so the merged form gives the
+rider-pose Switches the rider's type, which differs from the mount entity's own type for the 45
+effects of §3.2; the two-state form is the rule.
+
+<a id="s14-2"></a>
+### 14.2 Rider clips by motion (Confirmed census, MT34, MT38)
+
+Rider state for the evaluation: the rider fields and `Mount_CurrentMountType` of the Decision
+of §4.1, `Mount_CurrentMountStatus` 5, `Mount_Is_Mounted` true, `Mounted_Channeling_Loop`
+running and started, `Mounted_Player_Cosmetic_Mesh` started, the movement inputs of
+`script-table.md` §8.4 (style, sliders, element) and, for war-steed types and the
+Clydesdale, the gait as `MountMovement_CurrentSpeed`. Layers are keys of the layer mapper
+(`script-table.md` §6.2) with their labels: 13 `mounted_idle`, 20 `movement`,
+51 `mounted_warsteed_idle`, 52 `mounted_idle_emote`, 54 `mounted_movement`,
+60 `mounted_jumping`, 65 `mounted_falling`, 75 `mounted_locomotion_offset`.
+
+**Normal mounts** (example: body P3 Human M of `appearance.md` §2.2 on any horse effect;
+clip DIDs are this install's and are read at run time; durations in seconds):
+
+| Motion | Inputs | Rider clip (layer) |
+|---|---|---|
+| idle | sliders 0 | 0x05001447 (13), looping, 1.983 |
+| walk | `Walking`, propel +1 | 0x05009359 (20), 1.983 |
+| run (gallop) | `Running`, propel +1 | 0x05009358 (54), 0.583, displacement 4.38 m |
+| walk back / run back | propel −1 | 0x05003666 (54), 1.983 / 0x0500144F (54), 0.983 |
+| strafe left / right | strafe −1 / +1 | 0x05001452 / 0x05001454 (54), 0.783 |
+| turn left / right | turn −1 / +1 | 0x05001456 / 0x05001458 (54), 1.000 |
+| jump, airborne | `Entity_Element` 4 and the `Jump` script (key 1) running | 0x05001440 (60, one-shot, 0.250), then 0x05001463 (65, looping, 0.366) |
+| falling without a jump | `Entity_Element` 4 | no airborne clip: the idle and locomotion layers continue |
+| in water | `Entity_Element` 1, 2 or 3 | no swim clip in the mounted branch: the idle continues; with propel +1 the run clip |
+
+Body P1 Hobbit M on the same horse: idle 0x05000E56 (13), walk 0x050036A5 (54), run 0x05000E57
+(54, displacement 4.38 m), run back 0x05000E5F, strafes 0x05000E62 / 0x05000E64, turns
+0x05000E66 / 0x05000E68, jump 0x05000E48 (60) then 0x05000E71 (65). The walk clip lies on
+layer 20 for the 89-bone bodies (Human, Elf, Beorning, HighElf, River-hobbit) and on layer 54
+for the 62-bone bodies (Hobbit, Dwarf, DwarfStoutAxe). Locomotion clips of the mounted branch
+carry `AnimationScript_Speed` driven by `Movement_MountAnimationSpeedMultiplier` (dictionary
+default 1.0; float, minimum 0.0), except the layer-20 walk clips of the 89-bone bodies and the
+war-steed summon clips, which are driven by `Movement_SpeedMultiplier`.
+
+**War-steeds and the Clydesdale** use the war-steed riding set: idle on layer 51 (Human M
+0x0500522F, looping, 10.666) with a looping **offset clip** on layer 75 (§14.8), and a forward
+clip chosen by the gait (§14.4). The Clydesdale (type 0x8000) rider uses this set too (its idle
+0x0500522F and offset clip 0x050054F6 for Human M), with the gait set by the rule of §4.6 item 4.
+
+**Census (OBS3).** For each of the 722 mount effects and each of the 15 race-table entries
+(the 14 bodies of `appearance.md` §2.2; DwarfStoutAxe has two entries), the evaluation above
+in the idle, walk and run states: 10,815 of 10,830 rows find the mount mesh (all but the 15
+rows of the startup record 0x70033562, which has no entity, §6.6); every row finds an idle
+clip (layer 13, or 51 for war-steed and Clydesdale types) and a walk clip (layer 20 or 54);
+every row finds a run clip (war-steed types evaluated at gait 7) except the 60 Clydesdale
+rows, whose run clip needs the gait 6 (`Canter`) that the Clydesdale rule sets. Every clip found binds to the body's skeleton (222
+distinct (setup, clip) pairs of riders and mounts, all with the skeleton's track count).
+
+<a id="s14-3"></a>
+### 14.3 Mount clips by motion (Confirmed census, MT35)
+
+Mount state for the evaluation: §14.1 (the rider's values through the target), the mount's own
+properties, `Horsepants_Startup` started. Over all 605 (mount entity, mount type) pairs that
+the 721 effects with an entity reach (601 entities), every pair finds an idle, walk, run, walk
+back, turn, strafe and airborne clip, except the 4 hobby-horse entities, which find none (they
+are held props, §14.11). The families:
+
+| Family (type) | Entities | Idle | Walk | Run | Back | Airborne (60 / 65) |
+|---|---|---|---|---|---|---|
+| Horse A (0x1) | 256 | 0x05000D13 (13) | 0x05003055 | 0x05000D20 | 0x0500365F | 0x05000D23 / 0x05000D12 |
+| Horse B (0x1) | 253 | 0x05000D13 | 0x05003055 | 0x05000D2A | 0x0500365F | – / 0x05000D32 |
+| Goat (0x4) | 30 + 29 | 0x05003A35 or 0x050046C8 | 0x05003A41 | 0x05003A37 or 0x050046CA | 0x05003A39 | – / 0x05003A2F or 0x050046D2 |
+| War-steed (0x8, 0x10, 0x20) | 6 + 6 + 8 | 0x05005234 (10) and 0x05000D13 (13) | by gait, §14.4 | by gait | 0x05000D17 | 0x05005F67 / 0x05005F6D |
+| Boar (0x4000) | 4 | 0x05007D7F | 0x05007D8B | 0x05007D72 | 0x05007D88 | – / 0x05007D78 |
+| Camel (0x20000) | 3 | 0x050098A7 | 0x050098A8 | 0x050098C4 | 0x050098B3 | – / 0x050098BB |
+| Oryx (0x10000) | 1 | 0x05009370 | 0x05009382 | 0x05009381 | 0x05009384 | – / 0x05009364 |
+| Clydesdale (0x8000) | 2 | 0x05008DF3 (10) | 0x05008DF5 (20) | 0x05008D38 | 0x05008DF4 | – / 0x05008D43 |
+| Horse with a war-steed bit (0x9, 0x11, 0x21) | 3 pairs | as Horse A | 0x05003055 | 0x05000D20 at every gait | 0x0500365F | as Horse A |
+| Hobby-horse (0x400) | 4 | none | none | none | none | none |
+
+Walk, run and back are on layer 54 unless stated. Strafe and turn clips are on layer 54 too
+(Horse A: strafes 0x05000D19 / 0x05000D1A, turns 0x05000D1B / 0x05000D1C). "–" means only the
+looping layer-65 clip was listed for the airborne state. The mount's airborne clips follow
+the rider's `Entity_Element` (4 or 6, through the target): a Sequence plays a one-shot jump-start
+scriptlet and then the falling loop; unlike the rider's, they do not need the `Jump` script.
+The mount's clips carry no `LocomotionDisplacement` (|displacement| ≤ 0.002 m in all sampled
+mount clips) and are driven by `Movement_MountAnimationSpeedMultiplier`.
+
+**Matching lengths.** For one motion the rider's and the mount's clips have the same length
+(Human M on Horse A and on the medium war-steed: idle 1.983, walk 1.983, gallop 0.583, strafe
+0.783, turn 1.000; war-steed walk 1.983, trot 0.800, canter 0.583, gallop 0.500, war-steed idle
+10.666); the exceptions are the back clip (rider 0.983, mount 1.967, an exact ratio of 2) and
+the airborne clips (rider 0.250 then 0.366, mount 0.750 then 2.000).
+
+<a id="s14-4"></a>
+### 14.4 War-steed gaits (Confirmed census, MT36, MT37)
+
+Forward input (propel +1, style `Running`) with the gait set as `MountMovement_CurrentSpeed`
+on the rider (and so read by the mount through the target); Human M on the medium war-steed
+(effect 0x7002D53C, entity 0x47005D62, setup 0x040044D6):
+
+| Gait (key, label) | Rider forward clip (54) | Mount forward clip (54) | Length |
+|---|---|---|---|
+| 1 `Backwards` | none | none | – |
+| 2 `Neutral` | none | 0x05005237 | – |
+| 3 `Neutral_Forwards` | 0x05005232 | 0x05005237 | 1.983 |
+| 4 `Walk` | 0x05005232 | 0x05005237 | 1.983 |
+| 5 `Trot` | 0x05005231 | 0x05005236 | 0.800 |
+| 6 `Canter` | 0x0500522E | 0x05005233 | 0.583 |
+| 7 `Gallop` | 0x05005230 | 0x05005235 | 0.500 |
+| unset | none (the dictionary default of the gait is 2) | 0x05005237 | – |
+
+With style `Walking` the rider plays 0x05005232 at every gait. Back input plays the rider's
+0x0500144F (`Running`) or 0x05007083 (`Walking`) and the mount's 0x05000D17 at every gait.
+Strafe input plays strafe clips at every gait (rider 0x0500536A / 0x0500536B at gaits 2–5,
+0x05005368 / 0x05005369 at 6, 0x0500536C / 0x0500536D at 7), but a moving war-steed has no
+sideways velocity (§5.4 step 1), so its published `Slider_Strafe` is 0 and these clips show
+only at gait 2. The idle (layers 51 and 75 on the rider, 10 and 13 on the mount) does not
+depend on the gait.
+
+**Normal mounts do not read the gait.** The horse, goat, boar, camel and oryx families give the
+same clips for gaits 2, 4, 5, 6 and 7 (OBS3, Horse A checked at every gait): their clips follow
+`Movement_MovementStyle` and the sliders only. The Clydesdale's **rider** reads the gait (the
+war-steed riding set); the Clydesdale **mount** does not.
+
+<a id="s14-5"></a>
+### 14.5 Finding the clips in the walker (Decision)
+
+1. **Rider set-up.** Apply the Decision of §4.1 to the walker's avatar (rider fields,
+   `Mount_CurrentMountType` = the effect's `Mount_Type`), then set
+   `Mount_CurrentMountStatus` 5 and `Mount_Is_Mounted` true when the sequence of §14.7
+   reaches "mounted", and mark `Mounted_Channeling_Loop` running.
+2. **Mount mesh.** Choose the MeshFX node as `MountMesh` does (the node that the evaluation of
+   `Mounted_Player_Cosmetic_Mesh` starts last, §4.4): entity, holding location, bone offset,
+   scale and its `UseParentScale` flag. The node depends on the rider's mount type, species and
+   sex only, so it is chosen once per (body, effect).
+3. **State key.** Clips are chosen per state key: (style, sign of `Slider_Propel`, sign of
+   `Slider_Strafe`, sign of `Slider_Turn` with a dead band of 0.05, element class ground / air /
+   water, gait, whether the `Jump` script runs). Each slider enters the evaluation as −1, 0 or
+   +1, as `MotionInputs` does; the controller's fractional slider values are logged but not used
+   as blend weights. A key change starts one evaluation of the rider and one of the mount on
+   the asset workers; results are cached per (body, effect, key).
+4. **Layers.** The rider shows the most likely looping candidate of each of its idle layers (13,
+   or 51 and 75), the most likely candidate of layer 54 (else 20) while moving, and 60 then 65
+   while airborne; the mount likewise with its layers 10/13, 54/20 and 60/65. Ramps are the
+   nodes' `RampIn` / `RampOut` (0.1 to 0.25 s in this data), not the on-foot fades of
+   `walker.md` §10.5.
+5. **Rate.** Mounted clips play at the client's rate: driven `Speed` × `SpeedMultiplier`
+   (`script-table.md` §8.5); there is no speed blend and no rate matching to the ground speed,
+   for rider and mount alike.
+6. **Phase.** When the rider's and the mount's clips of one key start in the same frame, both
+   start at phase 0 and are sampled at the same clip time (their lengths match, §14.3; for the
+   back clips the mount's phase is the rider's halved).
+
+<a id="s14-6"></a>
+### 14.6 How the gait follows the input
+
+**Normal mounts** (no war-steed bit; Confirmed rules of other specs, Decision where marked).
+The Generic controller of `collision.md` §11.6 runs with the Mounted layer, or MountedWalking
+in walking style (`collision.md` §11.1 step 4, §10.3: forward 6.5 and 3, backward 2 and 3,
+strafe 5 and 3, ramp 0.25 s), the speed factor of the Decision of §5.1 and the on-foot
+turning of `collision.md` §11.9. The "gait" is the walking flag of `collision.md` §11.8
+item 6: `Walking` plays the walk clips, `Running` the gallop clips; the sliders follow the
+input as on foot (`script-table.md` §8.4 slider rule, ramp time of the active layer).
+`MountMovement_CurrentSpeed` stays unset (Neutral) except for the Clydesdale, where the rider's
+script sets it (§4.6 item 4; **Decision:** the walker applies that rule itself: 4 while
+walking, 6 while `Slider_Propel` is not 0, else 2).
+
+**War-steeds** (a bit of 0x38; Tessera rule answering MQ9 for the walker). The controller of
+§5.3–§5.7 runs with the parameter block of §5.3: the actor values are the player avatar
+object's template values (`Mount_Movement_Max_Speed` 6.5, `…_Acceleration` 0, `…_Turn_Rate` 100,
+`…_Gear_Change_Rate` 2.0 here, §6.1) plus the effect's constant `Add` entries on those four
+properties (§2.6), written to the `_Cached` forms (Decision, as the forwarding of §6.2 would).
+**Decision:** when the summed acceleration is not above 0, the layered `ControlAcceleration`
+is kept (as if the actor lacked the value), so a steed whose effect has no acceleration entry
+still moves. The gear and the gait then follow this rule, once per controller step:
+
+1. **Selected gear** *s* (Tessera keeps it in `MountedCombat_Current_LockedGear`, so the forward
+   limit of §5.4 step 3 is the gear's speed multiplier × *F*). On mounting *s* is unset (no
+   limit beyond §5.5) and the gait is 2.
+2. **Shifting up.** While forward input is held (*y* > 0.0002): if *s* is unset or below 4, *s*
+   becomes 4 at once; afterwards *s* rises by one gear each time 1/*G* seconds of held forward
+   input have passed since the last change (*G* from the parameter block, 2.0 by default), up
+   to 7, or up to 4 while the style is `Walking`. Switching to `Walking` lowers *s* to 4 at once.
+3. **Shifting down.** While backward input is held (*y* < −0.0002) and the steed still moves
+   forward, *s* falls by one gear per 1/*G* seconds, down to 4. Releasing the keys keeps *s*.
+4. **Gait from speed.** With *v* the forward control velocity after the update and *F* the
+   block's forward speed: *v* < −0.0002 gives gait 1 (`Backwards`); |*v*| ≤ 0.0002 gives 2
+   (`Neutral`); otherwise the smallest gait *k* from 4 to *s* (to 7 when *s* is unset) whose
+   speed multiplier (`game-controls.md` §5.3.2 step 1) × *F* + 0.25 m/s is at least *v*, else
+   *s* (or 7). Gait 3 (`Neutral_Forwards`) is never produced (OPEN below). The gait is written
+   to `MountMovement_CurrentSpeed` on the rider, so the rider's and the mount's clips and the
+   turn rate of §5.6 follow it.
+5. **Momentum.** With the keys released the controller keeps the forward velocity while the
+   gait is above 3 (§5.4 step 3), because the walker never sets
+   `GOP_MountedMovement_ReleasedKeys_LoseMomentum` (dictionary default false). Backward input
+   brakes at *a*y (target *y* × *B*, §5.4 step 2) and then reverses.
+6. **Published sliders** are those of §5.7 (`Slider_Propel` = speed as a fraction of the
+   current limit); for the state key of §14.5 only their signs count.
+
+`MountMovement_LastSpeedChangeTime`, `MountedCombat_Current_LockedGear` and
+`GOP_MountedMovement_ReleasedKeys_LoseMomentum` are named by no script table or scriptlet of
+the install (MT46), so the rule above changes no script result except through the gait.
+
+> **OPEN:** (MQ9, narrowed) the original's gear and gait rules, which the server applies
+> (§5.9), and when it uses gait 3 (`Neutral_Forwards`); the rider's scripts treat gait 3 like
+> Walk (§14.4). Tessera's rule is the Decision above.
+
+<a id="s14-7"></a>
+### 14.7 The mount and dismount sequence (Confirmed data; timeline Decision; MQ4)
+
+**Summoning (the skill's induction; Confirmed, MT42).** Every mount skill names one induction
+record (class 1195, `combat-data.md` §7.9) in `Skill_InductionAction`. The 688 mount skills use
+five records:
+
+| Records | Skills | `Induction_Duration` | `Induction_AnimationScriptID` | Allowed in combat | Duration modifiers |
+|---|---|---|---|---|---|
+| 1 (0x7000A03E here) | 660 (every non-war-steed mount skill, hobby-horse included) | 2.0 s | `Mounted_Summon_Start` | false | none |
+| 4 | 28 (war-steed skills) | 3.0 s | `Mounted_Warsteed_Summon_Start` | true | `MTX_Mount_SummonTimeReduction` (multiplier list, 4), `Trait_Mount_SummonTime` (additive list, 1) |
+
+In all five `Induction_AllowedWhileMoving` is false and `Induction_Interruptable` true; they
+list set-back events (hit 22; the war-steed ones also 17, 11, 6, 23). The summon scripts are
+defined in nine species tables (`Mounted_Summon_Start`: 0x07000428, 0x07000457, 0x07000460,
+0x0700046A, 0x0700047C, 0x07000484, 0x0700048C, 0x0700204F, 0x0700205D; the war-steed one in
+the same and 0x070018F6). Each is a Sequence of two scriptlets: a one-shot clip on layer 40
+(`attack`; ramp-in 0.2 s; Human M 0x050032BE, 0.916 s) followed by a looping clip on layer 40
+(Hobbit M 0x050032BF). The war-steed version's first clip is driven by
+`Movement_SpeedMultiplier`.
+
+**Mounting (Confirmed script data, MT43).** `Mounted_Channeling_Start` runs
+`Mounted_Channeling_Mounting` (which sets `Script_IsMounted` true, runs `Visibility_Controller`
+and, for war-steed types, `Mounted_Warsteed_Manager`), a 0.4 s Timer that blocks random emotes,
+a game callback, and `Equipment_Hide` on the Child targets of held implements of two types.
+The rider's evaluation of that run starts one clip: the **mounting clip** on layer 54
+(Human M 0x05001450, 2.000 s, from the standing pose to the seated pose: lowest bone 0.02 m →
+0.82 m, highest 1.68 m → 2.41 m; Hobbit M 0x05000E5D). In `Mounted_Player_Cosmetic_Start` the
+start script is step 2 of a Sequence and the animation script and the mesh are step 4; step 2 is
+a Run with `Persistent` 1. Read with `script-runtime.md` §12.4 step 3 (a persistent Run stays
+running until it is stopped; no path that completes it when its script ends was found), step 4
+is never reached (MT44). The same shape occurs in `Mounted_Channeling_End` (below: a persistent
+Run of the unsummon effect in an early step, the loop's stop in a later one). Either such Runs
+do complete when the started script ends, or other code supplies the later steps; which one is
+OPEN (§13 proposal for `script-runtime.md`). The walker's timeline below gives the same
+presentation in both cases.
+
+**Dismounting (Confirmed script data).** The OnStop branch runs `Dismounted_ByPlayer_Script` for
+status 7 and `Dismounted_ByOther_Script` otherwise (§4.3). For the 714 channelling records
+these are `Mounted_Channeling_End` and `Mounted_Channeling_Failure`. In table 0x0700001C:
+
+- `Mounted_Channeling_End`, player, not a war-steed state, **no movement key held**: in parallel,
+  the mount plays `Emote_Mounted_Bow` (Child target; on the mount a one-shot clip on layer 52,
+  0x05004D50 on the horse and war-steed entities checked) and `Emote_Idle10`; the rider's
+  `Script_IsMounted` becomes false; after a **1.5 s** Timer `Visibility_Controller` runs and
+  `Mounted_Channeling_Loop` is stopped.
+- The same with **a movement key held**: `Mounted_Player_Cosmetic_Mesh` is stopped at once; a
+  Sequence then runs a game callback, the mount's `vfxMounted_natk_Unsummoned` (a persistent
+  Run), the stop of `Mounted_Channeling_Loop`, and `Script_IsMounted` false with
+  `Visibility_Controller`; no Timer delays it.
+- With the war-steed state set: the same bow and idle emotes on the mount, the loop stopped,
+  then `Mounted_Warsteed_Manager` stopped.
+- `Mounted_Channeling_Failure`: out of combat, the mesh, the loop and the mounting scripts are
+  stopped at once; in combat the mount first runs `vfxMounted_horse_death`.
+
+No dismount script starts a clip on the rider: when the loop stops, the rider's template
+leaves the mounted branch (WhenRunning NotRunning) and the on-foot idle of
+`script-table.md` §8.3 starts with its own ramp.
+
+**Timeline in the walker (Decision; answers MQ4 for Tessera).** The walker is its own server
+(decision 0024: the client half, offline), so it performs what the original's server does:
+
+| Phase | Starts | Presentation | Ends |
+|---|---|---|---|
+| Summoning | the request (§16 of `walker.md`) | the induction script of the skill on the rider (layer 40); a request without a skill uses the 2.0 s / 3.0 s record of a skill toggling the effect, else no summoning | after `Induction_Duration` (modifier lists ignored offline); any movement input, a jump, a fall or water cancels it (no mount) |
+| Mounting | the end of summoning | the Decision of §4.1; `Mounted_Player_Cosmetic_Start`; the start script and its mounting clip | when the start script's own graph has completed (0.4 s for `Mounted_Channeling_Start`, its longest child; for the hobby-horse `Emote_Pickup`'s run) the walker starts, as step 4 would, the animation script and `Mounted_Player_Cosmetic_Mesh`: the mount appears with its fade-in (§14.8) and `Mounted_Channeling_Loop` sets `Mount_Is_Mounted` |
+| Mounted | `Mount_Is_Mounted` true | §14.2–§14.6; the controller's Mounted or Warsteed layer | a dismount request |
+| Dismounting | status 7 (player) or 6 (other) | the dismount script; mount bow at rest; fade-out | at rest by the player: 1.5 s later the loop stops (`Mount_Is_Mounted` false, on-foot layers), and the mount fades out; moving, or by other: at once |
+
+Movement during "mounting" is allowed (the induction has ended); the mounting clip plays on
+layer 54 and yields to locomotion clips by its ramps.
+
+<a id="s14-8"></a>
+### 14.8 Placement, seat and scale (MQ5, partly answered)
+
+**The seat (Confirmed, MT38).** In every mounted rider clip on layers 13, 20, 51, 54, 60 and 65
+(504 (setup, clip) pairs, 16 samples each), bone 0 stays at its reference position (within
+0.3 mm). The rider's `Mount_Connection` is on bone 0 and cancels bone 0's reference height
+(§3.3), so the mount's origin is the rider's model origin: the controller's feet. The mounted
+clips raise the rider's body into the saddle around a fixed bone 0 (Human M: lowest bone 0.02
+→ 0.80 m, highest 1.69 → 2.42 m; Hobbit M: 0.02 → 0.51 m and 1.07 → 1.88 m). Only the layer-75
+**offset clips** move bone 0: 11 distinct clips in 23 sampled (setup, clip) pairs, each holding
+bone 0 at one fixed offset over the whole clip (equal in all 16 samples) (Human M medium 0x050054F5: 0.135 m up, 0.065 m forward of its reference position;
+heavy 0x050054F6: 0.300 m up, 0.192 m forward).
+
+**The bone offset is a translation in the location's frame (Confirmed by data, MT39).** The
+war-steed effects come per race and tree (§14.10), and each effect's
+`Mounted_Player_Cosmetic_Slot_BoneOffset` cancels the height its riders' layer-75 clip adds to
+bone 0:
+
+| Tree | Bodies (species) | Effect (here) | BoneOffset *z* | Rider offset clip (male) | Bone 0 rise | Net |
+|---|---|---|---|---|---|---|
+| Medium | Human, Elf, Beorning, HighElf | 0x7002D53C | −0.135 | 0x050054F5 | +0.1347 | −0.0003 |
+| Medium | Hobbit | 0x7002D540 | −0.16 | 0x0500598D | +0.1603 | +0.0003 |
+| Medium | Dwarf, DwarfStoutAxe | 0x70031E9B | −0.37 | 0x05005962 | +0.3703 | +0.0003 |
+| Medium | River-hobbit | 0x70066B26 | −0.135 (and +0.05 *y*) | 0x050054F5 | +0.1347 | −0.0003 |
+| Heavy | Human, Elf, Beorning, HighElf | 0x7002D53D | −0.30 | 0x050054F6 | +0.2997 | −0.0003 |
+| Heavy | Hobbit | 0x7002D53B | −0.32 | 0x05005992 | +0.3203 | +0.0003 |
+| Heavy | Dwarf, DwarfStoutAxe | 0x70031E9A | −0.50 | 0x0500595F | +0.5003 | +0.0003 |
+| Heavy | River-hobbit | 0x70066B23 | −0.30 | 0x050054F6 | +0.2997 | −0.0003 |
+| Light | Human, Elf, Beorning, HighElf | 0x7002D544 | none | none | 0 | 0 |
+| Light | Hobbit | 0x7002D53F | none | none | 0 | 0 |
+| Light | Dwarf, DwarfStoutAxe | 0x70031E99 | −0.23 | 0x05005C79 | +0.2303 | +0.0003 |
+| Light | River-hobbit | 0x70066B27 | none (+0.05 *y*) | none | 0 | 0 |
+
+Female bodies use their own offset clips: Human, Elf, Beorning, HighElf and River-hobbit F
+0x05005990 (medium) and 0x05005994 (heavy), which leave a net of +0.025 and +0.020 m; Hobbit F
+0x0500598F and 0x05005993, which leave −0.0003 and −0.040 m. So the node's
+`BoneOffset` is applied in the holding location's frame, after it, in metres, with *z* up, as
+the Decision of §4.4 states; the Decision now rests on the data (MT39) for the translation part.
+The rotation offsets (0 in every mount record), `RemoveRotation` and the fade semantics remain
+open (MQ5).
+
+**Scale (Confirmed census).** The node chosen for a (body, effect) drives `Scale` from the
+effect's `Mounted_Player_Cosmetic_Slot_Scale` for most bodies; the HighElf and River-hobbit
+branches of the horse, oryx and combined cases, the River-hobbit branch of the goat case (1.05)
+and every camel, boar and Clydesdale node use their stored scale (camel: 0.70 Hobbit, 0.80 Dwarf, 0.83 DwarfStoutAxe, 0.97 River-hobbit, 1.0 others;
+boar: 0.78 Hobbit, 0.95 Dwarf, 1.0 DwarfStoutAxe, 1.08 female, 1.15 male others; horse for
+HighElf 1.03 with `UseParentScale` 0; horse for River-hobbit 1.0 with `UseParentScale` 1, so
+the River-hobbit's final scale 0.7 (`appearance.md` §6.1) scales its horse to 0.7).
+
+**Placement without a MeshFX runtime (Decision; refines §4.9).** Each frame, after the rider's
+pose is sampled:
+
+1. The **attachment point** is *P* = *M*rider × *B*0 × *H* × T(`BoneOffset`), where *M*rider is
+   the rider's model transform (feet, heading and final model scale), *B*0 the rider's posed
+   model matrix of the location's bone (bone 0 for every player setup), *H* the location frame
+   (`skeleton-anim.md` §8.2); so the location and the bone offset scale with the rider. The
+   mount's model transform is the position and rotation of *P* followed by S(`Scale` ∘ *k*),
+   where *k* is the rider's final model scale per axis when `UseParentScale` is 1, else
+   (1, 1, 1): the rider's scale reaches the mount's size only through *k* (Decision; the
+   composition of §4.4).
+2. The mount's own pose is sampled from its clips (§14.5) and skinned with its own skeleton.
+3. **Fade (Decision):** the mount's opacity rises linearly from 0 to 1 over `FadeInTime`
+   (0.25 s; `Mount_FadeIn_Override` when the rider holds it) after it appears and falls from 1
+   to 0 over `FadeOutTime` (0.25 s) when it is removed; it is drawn and animated during both.
+4. **Collision:** the mount has none (`AllowPhysics` 0 in every mount node, MI9); the rider's
+   own capsule (`collision.md` §10.6) is the only collision shape while mounted.
+5. **Visibility:** the mount is drawn, culled and faded as part of the rider's figure (the
+   rider's character distance and level of detail, `walker.md` §11.4.2, §14.5).
+
+<a id="s14-9"></a>
+### 14.9 The camera while mounted (Confirmed data, MT47; Decision)
+
+711 mount effects (all but the 3 startup records and the 8 hobby-horse records) hold two
+modifier entries with operator `Set`: `ForwardSource_Entity_Camera_LookAt_OffsetZ` 0.75 and
+`ForwardSource_Entity_Camera_LookAt_OffsetY` 0.2 (§2.6). The dictionary defines
+`Entity_Camera_LookAt_OffsetX`, `…Y`, `…Z` (float, default 0.0) and the three `ForwardSource_`
+forms; which client code reads them was not traced. The offset matches the seat: the Human M
+rider's highest bone rises by 0.73 m and the Hobbit M's by 0.81 m when mounted (§14.8).
+
+**Decision (walker).** While mounted, the walker's follow camera (`walker.md` §5) aims at its
+on-foot target point raised by the effect's `…OffsetZ` and moved forward along the rider's
+heading by `…OffsetY` (0.75 m and 0.2 m here); without the entries (hobby-horse) nothing
+changes. Offsets change over the camera's smoothing like any target move.
+
+> **OPEN:** how the original's third-person camera (`walker.md` §11.7) uses
+> `Entity_Camera_LookAt_Offset*` (axis frame, smoothing).
+
+<a id="s14-10"></a>
+### 14.10 Which mounts a playable body rides (Confirmed data, MT40, MT41; Decision)
+
+**Normal mounts.** The MountDirectory (0x79048B29 here, `game-controls.md` §5.1) lists 347
+`Mount_SkillToGrantTall` and 329 `Mount_SkillToGrantShort` skills. 660 mount skills name a
+`Skill_MountRacialConversionAnalog`; the relation is symmetric (each names the other), and
+328 of the pairs join one Tall and one Short skill. In 324 of those 328 pairs the Short
+skill's effect stores `Mounted_Player_Cosmetic_Slot_Scale` (0.925 in 314, 0.95 in 6, 0.9 in 4)
+and the Tall skill's effect stores none (1.0 by the node's stored value); 309 of these 324
+pairs also name different entities. Over the directory: 324 of 329 Short skills toggle an effect
+with a scale below 1; 332 of 347 Tall skills toggle one without a scale. This supports the
+reading of `game-controls.md` Q6 (tall bodies use the Tall group).
+
+**War-steeds.** MountedCombatControl's `Mount_Control_Tree_To_Skill_Hash` maps each tree and
+`Mount_Control_Player_Race` to one skill (24 entries, 12 skills): Human, Beorning, Elf and
+HighElf share one skill per tree; Hobbit, River-hobbit and Dwarf/DwarfStoutAxe have their own.
+Each of the 12 skills toggles its war-steed mount effect and three class-718 effects (the same
+three in all 12). The 12 effects are those of the table in §14.8, and their bone offsets fit
+their riders' offset clips.
+
+**Decision (walker).** The mounts offered for a body are: the effects of the skills of its
+directory group (Tall when the species' `RaceTable_IsTallRace` is true, else Short), in the
+directory's stored order, then the three war-steed effects of its race in the order of the tree keys (1 `Heavy`,
+2 `Light`, 3 `Medium` here). Any other mount effect may still be chosen by DID; the walker
+then notes "not this body's group" on the HUD and draws it (the MeshFX node's species branch
+gives its scale).
+
+<a id="s14-11"></a>
+### 14.11 Census of all mount effects for the walker (Confirmed, OBS3)
+
+| Category | Effects | Drawable in the walker | Gaits |
+|---|---|---|---|
+| Normal mounts: Horse 0x1 (590), Goat 0x4 (72), Boar 0x4000 (9), Camel 0x20000 (6), Oryx 0x10000 (2) | 679 | yes, every body | walk / run style, back, strafe, turn, jump (§14.2, §14.3) |
+| Clydesdale 0x8000 | 4 | yes | war-steed riding set on the rider with the §4.6 item 4 gait; normal controller |
+| War-steeds 0x8 (8), 0x10 (8), 0x20 (9) | 25 | yes | gaits 1–7 (§14.4) on the war-steed controller |
+| War-steed startup records with an entity (0x7002EDDF, 0x7003230E; type 0x20) | 2 | yes (by DID; not offered, §14.10) | as war-steeds |
+| Horse with a war-steed bit (0x9, 0x11, 0x21) | 3 | yes (by DID; reached by no skill of the directory or the tree hash) | war-steed controller; horse clips at every gait (§14.3) |
+| Hobby-horse 0x400 | 8 | as a **held prop** at the node's stored holding location (`Wpn_LHand`, not driven), not as a mount: `Horsepants_Startup` runs `Emote_Holding_HobbyHorse` and `Mounted_Player_Cosmetic_Start` instead of the channelling loop, so `Mount_Is_Mounted` is never set and the rider keeps the on-foot controller and clips | on foot |
+| No entity, no type (0x70033562, the NPC startup record of §6.6) | 1 | no: the rider fields come from NPC templates (§4.7 step 3); a player has none | – |
+
+Sum: 722. Reasons a walker may still fail to draw a choice: a later install that changes these
+records; a body whose setup lacks `Mount_Connection` (none of the 14 bodies; `skeleton-anim.md`
+§8.4 rule: nothing is drawn); an evaluation that finds no mesh (the When node of §4.4 stops a
+null entity). The walker reports these on the HUD (`walker.md` §16).
+
+<a id="s14-12"></a>
+### 14.12 Water, air, areas and refusals (Confirmed data; Decision)
+
+- **Water.** The application check refuses a target whose `Entity_Element` is 1, 2 or 3
+  (§4.7 step 4). The rider's mounted branch has no swim clips and the mount's graph has no water
+  case; `collision.md` §11.1 step 9 gives a mounted rider in water the Swimming layer.
+  **Decision:** the walker refuses to start summoning in water, and a mounted rider whose
+  `Entity_Element` becomes 1, 2 or 3 is dismounted by "other" (status 6, no wait).
+  > **OPEN:** what the original does when a mounted character enters deep water (server).
+- **Air.** Summoning is cancelled by a jump or a fall (`Induction_AllowedWhileMoving` false);
+  mounted jumps follow `collision.md` §11.10 (mounted branch: `AirTime` 0.285, 7.275 m/s) with
+  the airborne clips of §14.2–§14.3.
+- **Areas.** **Decision:** before summoning, the walker applies the area, dungeon and mask
+  checks of §4.7 steps 5–6 to the feet's area (outdoors `Area_CurrentArea` from the walker's
+  area lookup; in a cell its `Area_DID` and dungeon); a refusal ends the request with a message.
+  An area entered while mounted does not dismount (OPEN: the original's rule is server-side).
+- **Shapeshift, combat.** The walker's avatar is never shapeshifted and never in combat
+  (`walker.md` §10.6), so those refusals do not arise.
+
+<a id="s14-13"></a>
+### 14.13 Worked examples (synthetic)
+
+**Gear rule (§14.6).** *F* = 8.2 m/s, *a*y = 9 m/s², *G* = 2.0, speed multipliers Walk 0.5, Trot
+0.7, Canter 0.8, Gallop 1.0, world limit 16, steps of 1/60 s. Forward is held from rest at
+*t* = 0: *s* = 4 at once (limit 4.1 m/s); *s* = 5 at *t* = 0.5 s (limit 5.74), 6 at 1.0 s
+(6.56), 7 at 1.5 s (8.2). Speed rises at 9 m/s² to each limit: 4.1 m/s at *t* ≈ 0.456 s. Gaits:
+4 from the first step with *v* > 0.0002; at *t* = 0.6 s, *v* = 4.1 + 9 × 0.1 = 5.0 ≤ 0.7 × 8.2 +
+0.25 = 5.99, but 5.0 > 0.5 × 8.2 + 0.25 = 4.35, so gait 5 (`Trot`); at *t* = 1.7 s, *v* = 8.2,
+gait 7. Releasing the key keeps 8.2 m/s and gait 7. Holding back: the target is −*B*, the speed
+falls by 9 m/s² (0 after about 0.91 s), the gait follows it down (6 below 6.81, 5 below 5.99, 4
+below 4.35, then 2 at |*v*| ≤ 0.0002 and 1 when *v* turns negative), and *s* falls one gear per
+0.5 s to 4.
+
+**Placement (§14.8).** A rider with model scale 0.7 (River-hobbit), bone 0 at its reference
+height 0.9953 m, `Mount_Connection` (0, −0.0075, −0.9953) on bone 0, node `BoneOffset`
+(0, 0, 0), stored scale 1.0, `UseParentScale` 1: the mount's origin is at the rider's feet and
+the mount is scaled 0.7 on every axis. The same rider on a medium war-steed node with
+`BoneOffset` (0, 0.05, −0.135) and offset clip 0x050054F5 (bone 0 0.135 m up and 0.065 m
+forward of its reference position, no rotation): the mount's origin lies 0.0003 m below the
+feet and 0.115 m forward of them in the rider's model frame (0.065 + 0.05), which the rider's
+0.7 model scale turns into 0.081 m in the world.
+
+---
+
+<a id="s15"></a>
+## 15. Change log
 
 | Date | Change |
 |---|---|
 | 2026-10-09 | First version (spec writer). Status Review. Sources OBS, SCR, BC, BIN (questions m1–m5). |
 | 2026-10-09 | Revision (spec writer), answering the two implementer OPENs of 2026-10-09. §4.4: the MeshFX `Scale` is applied per axis, with the rider's final model scale per axis (`appearance.md` §6.1); census of every MeshFX node's scale (SCR2, MT31); §11.4 example per axis. §5.3: strafe slots paired with `StrafeLeftMoveSpeed` (*S*1) and `StrafeRightMoveSpeed` (*S*2) from the field registration and accessors (BIN2 question m6, MT32). §13: proposal for `collision.md` §11.6. Status Revised. |
+| 2026-10-11 | P5 revision (spec writer, dirty room). New §14 (mounted presentation and gaits): the two-entity evaluation with the mount reading the rider through `MeshFXScriptOutput_Source` targets (§14.1), rider and mount clips by motion with a census over all 722 effects × 15 race-table entries and all 605 (entity, type) pairs (§14.2–§14.3), war-steed gaits (§14.4), how the walker finds the clips (§14.5), the gait rule for normal mounts and Tessera's gear rule for war-steeds (§14.6, MQ9), the summon, mounting and dismount sequence with the induction records and the persistent-Run finding (§14.7, MQ4), seat, bone offset, scale and per-frame placement (§14.8, MQ5 partly), camera (§14.9), mounts per body (§14.10), census by category (§14.11), water, air and areas (§14.12), examples (§14.13). Sources OBS3, SCR3 (no M4); rows MT33–MT47; invariants MI14–MI18; MQ13–MQ15; pointers in §4.1, §4.4, §4.9, §5.8; §13 rows; review notes N1 (§4.4), N2 (§13), N3 (§1) of 2026-10-09 applied. The change log moves to §15. Status Accepted → Revised. |
+| 2026-10-13 | P5 revision reviewed by an independent spec reviewer (fresh session, not the writer): **passed** against CLEAN_ROOM.md §5.3 (all items), with an M1 spot-check (19 §14 DIDs resolve in the install) and the §14.11/§14.2/§14.7 arithmetic re-checked. No content change; status Revised → Accepted. See the review record. |

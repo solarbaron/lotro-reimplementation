@@ -467,7 +467,7 @@ impl MaterialPlan {
 
     /// The plan with the reference inputs `reference` (*r* at this frame's clock,
     /// `material.md` §11.2): the alpha mask of the M2 plan and the lit inputs
-    /// ([`LitInputs::with_reference`]) take the new *R*.
+    /// (`LitInputs::with_reference`) take the new *R*.
     #[must_use]
     pub fn with_reference(self, reference: AlphaReference) -> Self {
         let alpha = match self.alpha {

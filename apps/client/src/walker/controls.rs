@@ -109,6 +109,8 @@ pub struct ControlEvents {
     /// A `menu` press that reached game code while a game UI is attached (the UI declined
     /// it): the host runs the Escape rule instead of quitting (`walker.md` §5).
     pub menu: bool,
+    /// The `toggle_mount` action was pressed (walk mode only; `walker.md` §16.4).
+    pub toggle_mount: bool,
 }
 
 /// Loads the keymap: `path` if given, else the default keymap file when it exists, laid
@@ -175,13 +177,14 @@ pub fn help_text(keymap: &Keymap) -> String {
         }
     };
     format!(
-        "{} move, {} turn, {} strafe, {} look, {} up/down, {} fly/walk, {} details, {} screenshot, {} quit",
+        "{} move, {} turn, {} strafe, {} look, {} up/down, {} fly/walk, {} mount, {} details, {} screenshot, {} quit",
         axis(MOVEMENT, "move_forward"),
         axis(MOVEMENT, "turn"),
         axis(MOVEMENT, "strafe"),
         button(CAMERA, "mouselook"),
         axis(FLY, "fly_vertical"),
         button(GLOBAL, "toggle_fly"),
+        button(MOVEMENT, "toggle_mount"),
         button(GLOBAL, "toggle_debug"),
         button(GLOBAL, "screenshot"),
         button(GLOBAL, "menu"),
@@ -216,6 +219,8 @@ pub struct Controls {
     mover: Option<MoverSetup>,
     /// The collision walk mode's controller (walk mode on `tessera-physics`).
     physics: Option<PhysicsWalker>,
+    /// The camera's look-at offsets while mounted, (forward, up) m (`mounts.md` §14.9).
+    camera_offset: [f32; 2],
 }
 
 impl Controls {
@@ -261,6 +266,7 @@ impl Controls {
             placed: false,
             mover: None,
             physics: None,
+            camera_offset: [0.0; 2],
             ui_attached: false,
         }
     }
@@ -307,6 +313,24 @@ impl Controls {
     #[must_use]
     pub fn physics(&self) -> Option<&PhysicsWalker> {
         self.physics.as_ref()
+    }
+
+    /// The collision walk mode's controller, mutable (mount requests, `walker.md` §16).
+    pub fn physics_mut(&mut self) -> Option<&mut PhysicsWalker> {
+        self.physics.as_mut()
+    }
+
+    /// The follow camera's target offsets while mounted (`mounts.md` §14.9 Decision):
+    /// moved forward along the heading by `offset[0]` and raised by `offset[1]` metres.
+    /// Values that are not finite count as 0.
+    pub fn set_camera_offset(&mut self, offset: [f32; 2]) {
+        self.camera_offset = offset.map(|v| {
+            if v.is_finite() {
+                v.clamp(-10.0, 10.0)
+            } else {
+                0.0
+            }
+        });
     }
 
     /// Whether walk mode runs on the collision controller.
@@ -452,6 +476,7 @@ impl Controls {
             toggle_debug: self.mapper.just_pressed(a.toggle_debug),
             reset_camera: self.mapper.just_pressed(a.reset_camera),
             mode_changed: false,
+            toggle_mount: self.mapper.just_pressed(a.toggle_mount),
         };
         if self.mapper.just_pressed(a.toggle_fly) {
             self.toggle_mode();
@@ -611,7 +636,10 @@ impl Controls {
                         self.walk.interpolated_yaw(alpha),
                     )
                 });
-                let head = feet + Vec3::Z * EYE_HEIGHT;
+                let [ahead, up] = self.camera_offset;
+                let head = feet
+                    + Vec3::Z * (EYE_HEIGHT + up)
+                    + Vec3::new(yaw.cos(), yaw.sin(), 0.0) * ahead;
                 let dir = view_direction(yaw, self.cam_pitch);
                 (head - dir * self.zoom + Vec3::Z * 0.6, dir)
             }
@@ -750,6 +778,7 @@ mod tests {
         let base = default_keymap();
         let text = help_text(&base);
         assert!(text.contains("F3 details"), "{text}");
+        assert!(text.contains("Ctrl+M mount"), "{text}");
         assert!(text.starts_with("W/S move, A/D turn, E/Q strafe"), "{text}");
         let mut user = Keymap::new();
         user.set(

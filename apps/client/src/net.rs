@@ -443,12 +443,24 @@ pub struct World {
     /// Combat changes were dropped from a full queue since the last
     /// [`World::take_combat_overflow`]: the consumer resynchronises from the state.
     p2_overflowed: bool,
+    /// The P5 state (decision 0024 P5): feed markers, travel and instance windows, the
+    /// started travel, the instance, the queue ([`crate::travel::state`]).
+    p5: crate::travel::state::P5State,
+    /// Its changes not yet taken ([`World::take_p5_changes`]): only the kinds with a
+    /// consumer (mounts, mount vitals, resets; the windows read the state itself), at most
+    /// [`MAX_P5_CHANGES`] (the oldest are dropped).
+    p5_changes: std::collections::VecDeque<crate::travel::state::P5Change>,
 }
 
 /// Most player-state changes kept for [`World::take_player_changes`] between two takes;
 /// beyond it the oldest are dropped (and logged), and consumers resynchronise from the
 /// state.
 pub const MAX_PLAYER_CHANGES: usize = 1 << 16;
+
+/// Most P5 changes kept for [`World::take_p5_changes`] between two takes; beyond it the
+/// oldest are dropped. Only mount, mount-vital and reset changes are queued, so a burst of
+/// marker or window changes never evicts them.
+pub const MAX_P5_CHANGES: usize = 1 << 12;
 
 impl World {
     /// A session with the in-process sandbox backend, already asked to connect.
@@ -628,6 +640,8 @@ impl World {
             p2_overflowed: false,
             p2_events: std::collections::VecDeque::new(),
             p2_base: now,
+            p5: crate::travel::state::P5State::new(),
+            p5_changes: std::collections::VecDeque::new(),
         })
     }
 
@@ -663,6 +677,18 @@ impl World {
             Some(r) => r.has_chat_channels(),
             None => true,
         }
+    }
+
+    /// The P5 state (decision 0024 P5; [`crate::travel::state`]).
+    #[must_use]
+    pub fn p5(&self) -> &crate::travel::state::P5State {
+        &self.p5
+    }
+
+    /// Takes the queued P5 changes (mounts, mount vitals, resets) since the last call, in
+    /// order.
+    pub fn take_p5_changes(&mut self) -> Vec<crate::travel::state::P5Change> {
+        Vec::from(std::mem::take(&mut self.p5_changes))
     }
 
     /// The local player's state (inventory, properties, header, look).
@@ -1437,6 +1463,24 @@ impl World {
         }
         for line in lines {
             self.push_chat(line);
+        }
+        let mut p5 = Vec::new();
+        self.p5.apply(ev, &mut p5);
+        for c in p5 {
+            // The windows read `P5State` directly; only these kinds are consumed
+            // (`TravelHub::after_events`: plugin mount views, walker requests).
+            if !matches!(
+                c,
+                crate::travel::state::P5Change::Mount { .. }
+                    | crate::travel::state::P5Change::MountVital { .. }
+                    | crate::travel::state::P5Change::Reset
+            ) {
+                continue;
+            }
+            if self.p5_changes.len() >= MAX_P5_CHANGES {
+                self.p5_changes.pop_front();
+            }
+            self.p5_changes.push_back(c);
         }
         if matches!(
             ev,
@@ -2274,6 +2318,41 @@ mod tests {
         assert!(after.seq > before.seq);
         assert_eq!(after.cause, LocationCause::Corrected);
         assert!((after.location.x - before.location.x).abs() < 1.0);
+    }
+
+    #[test]
+    fn marker_bursts_never_evict_mount_changes() {
+        use crate::travel::state::P5Change;
+        use tessera_net::domain::{MarkerId, Ref, Text, WorldEvent};
+        use tessera_net::model::{Location, RegionId};
+        let now = Instant::now();
+        let mut world = World::sandbox(now).expect("sandbox");
+        world.take_p5_changes();
+        world.apply(
+            now,
+            &Event::World(WorldEvent::MountChanged {
+                entity: EntityId(1),
+                mount: Some(Ref::Literal("Pony".into())),
+                combat: None,
+            }),
+        );
+        for i in 0..(MAX_P5_CHANGES as u32 + 100) {
+            world.apply(
+                now,
+                &Event::World(WorldEvent::MarkerAdded {
+                    marker: MarkerId(i % 4),
+                    location: Location::new(RegionId(1), 1.0, 1.0, 0.0),
+                    label: Text::Literal("x".into()),
+                    icon: None,
+                    quest: None,
+                    note_type: None,
+                }),
+            );
+        }
+        let taken = world.take_p5_changes();
+        assert_eq!(taken.len(), 1, "only the mount change is queued");
+        assert!(matches!(taken[0], P5Change::Mount { .. }));
+        assert_eq!(world.p5().markers().len(), 4);
     }
 }
 

@@ -268,12 +268,30 @@ compatibility in plain prose is fine. Format-level terms like "DID" or "landbloc
   `--command` share the dispatcher). Open: member-row effect icons (TR16), no committed
   synthetic P4 goldens, no text-input dialog or context menu, the Leave error code
   (`tessera-protocol.md` §10.6 OPEN). Owner rows O130-O137.
+- **P5 (map, travel, mounts and instances; branch `p5`, worktree `wt-p5`, exit verification
+  2026-10-12)** (`docs/ROADMAP.md` P5 status): criteria 1-3 pass on Tessera's side. Its specs
+  (`map-windows.md`, `travel-windows.md`, `mounts.md` §14, `walker.md` §16,
+  `scenario-feed.md` rev 8 "P5 travel", `lua-plugin-api.md` §15.5) are Accepted after
+  independent review (2026-10-13); decision 0036 (map census, P5 goldens) is Proposed; the
+  code was conformed to them (loading-screen meter and label, the §16.12 walker gait rules,
+  headless `--ui` driving the P3/P5 and social window frames) and verified. Merged to main
+  2026-10-13. Built: `tessera-gamedata` `map`, `travel`,
+  `instance`, `mount`; `tessera-net` "P5 travel" forms; `tessera-physics` `controller::gait`;
+  `tessera-ui` `game::{mapwindow, mapmarks, travel, finder, popup, p5vocab}`; `tessera-plugins`
+  `mount` views; `tessera-settings` `MapPrefs`; `tessera-input` `toggle_mount`;
+  `tessera-client` `map`, `travel`, walker mounts (`--mount`, `/ride`, Ctrl+M); scenarios
+  `map`, `travel`, `instances`, `mount`. Real data: 1,525 / 1,525 map regions shown, 13 local
+  goldens matched. Open: the loading-screen tier-2 golden captures a blank root surface so
+  it does not yet protect the meter/label (unit-test covered; strengthen the capture),
+  `ui-layout.md` §8.4 step 6 OPEN (owner), `walker.md` §16.12 spec-writer reconciliations,
+  finder join-label text cut. Owner rows O140-O155.
 - **REA (decision 0033, Proposed):** optional dirty-only analysis tool, pilot pending; never
   registered as an MCP server.
 - **Pending owner input:** `docs/checklists/owner-observations.md` (`/loc` readings at the 20
   M3 reference locations, frame-capture questions from M2, M4 items O8–O17, M4.5 items
   O18–O27, M5 items O39–O49, M6 items O28, M7 items O70–O73, P1 items O80–O86 and
-  O88–O90, P2 items O93–O109 and O126–O129, P3 items O110–O125, P4 items O130–O137). They
+  O88–O90, P2 items O93–O109 and O126–O129, P3 items O110–O125, P4 items O130–O137, P5
+  items O140–O155). They
   do not block the
   Tessera-side work.
 - **Toolchain:** the laptop now has rustup (Gentoo `rustup-init-gentoo --symlink`; put

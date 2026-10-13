@@ -1,0 +1,63 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# The instance finder (decision 0024 P5; docs/specs/travel-windows.md §4.11, §6.6, §6.8,
+# §7.2; docs/specs/scenario-feed.md §6.5, revision "P5 travel"): a finder list with a
+# featured instance, scripted levels and a locked row; a join answered by the queue states
+# (queued, confirm, joining) and the entry into the instance; leaving it; a second join
+# left in the world-join queue; and a barrow-keeper's instance-travel window for one
+# instance, whose teleport-now enters it. Literal refs fill the windows without an install;
+# with one, a second list shows install instances (its ref list names selector elements,
+# so without an install that step is skipped and the literal list stays).
+tessera-scenario 1
+title "Warden's gate"
+tick 100ms
+player "Tamsin"
+select $pockets = instance n=3 seed=2
+actor $warden kind=npc name="Warden" pos=2,0,0 facing=270
+actor $keeper kind=npc name="Barrow-keeper" pos=-2,0,0 facing=90
+
+at 0s spawn $warden
++0s spawn $keeper
++0.5s instances "Old mine","Deep vault","Flooded cellar" from=$warden featured="Deep vault" level=20,45 locked=3
++0s instances $pockets[0],$pockets[1],$pockets[2] from=$warden featured=$pockets[1] level=30
+on join-instance entry=1 times=1
++0s instance-queue queued "Old mine" seconds=0
++2s instance-queue confirm "Old mine" seconds=30
++1s instance-queue join-pending "Old mine"
++0.5s instance-queue none
++0s close instances
++0s instance "Old mine"
+end
+on leave-instance
++0s instance none
+end
+on use $warden
++0s instances "Old mine","Deep vault" from=$warden featured="Deep vault" level=20,45
+end
+on join-instance entry=2
++0s instance-queue world-join-queue "Deep vault" seconds=75
+end
+on leave-queue
++0s instance-queue none
++0s close instances
+end
+on use $keeper
++0s instances "Barrow" from=$keeper
+end
+on join-instance
++0s close instances
++0s instance "Barrow"
++1s instance none
+end
+on close instances
++0s close instances
+end
+
+input
+at 1s join-instance 1 level=20
+at 5s leave-instance
+at 5.5s use $warden
+at 6s join-instance 2
+at 7s leave-queue
+at 7.5s use $keeper
+at 8s join-instance 1
+end

@@ -325,6 +325,7 @@ impl QuestSession {
                 label,
                 icon,
                 quest,
+                note_type: _,
             }) => match quest {
                 Some(q) => {
                     let id = marker.0;
@@ -486,6 +487,7 @@ mod tests {
             label: Text::Literal("Well".into()),
             icon: None,
             quest: Some(lit("Lost satchel")),
+            note_type: None,
         }));
         s.apply(&Event::World(WorldEvent::MarkerAdded {
             marker: MarkerId(8),
@@ -493,6 +495,7 @@ mod tests {
             label: Text::Literal("Camp".into()),
             icon: None,
             quest: None,
+            note_type: None,
         }));
         assert_eq!(s.markers().len(), 1, "markers without a quest are P5's");
         s.apply(&Event::Character(CharacterEvent::PropertyChanged {
@@ -549,6 +552,7 @@ mod tests {
             label: Text::Literal("é".repeat(MAX_LABEL_BYTES)),
             icon: None,
             quest: Some(lit("Q")),
+            note_type: None,
         }));
         let Text::Literal(l) = &s.markers()[&1].label else {
             panic!("literal")

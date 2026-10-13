@@ -1,0 +1,36 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Mounts (decision 0024 P5; docs/specs/walker.md §16.1; docs/specs/lua-plugin-api.md §15.5;
+# docs/specs/scenario-feed.md §6.5, revision "P5 travel"): the feed owns who rides what in
+# a scenario: the player mounts a normal mount, its durability changes, the player
+# dismounts from the client (answered by the feed), then mounts a war-steed whose morale,
+# power and fury change, and another rider's mount is shown. Literal refs need no install;
+# with one, the selectors give a normal mount effect and a war-steed effect of the install
+# (their steps name selector elements, so without an install they are skipped).
+tessera-scenario 1
+title "Paddock"
+tick 100ms
+player "Tamsin"
+select $horses = effect role=mount war-steed=no n=1 seed=4
+select $steeds = effect role=mount war-steed=yes n=1 seed=6
+actor $rider kind=player name="Rook" pos=4,0,0 facing=270
+
+at 0s spawn $rider
++0.5s mount player "Grey pony" kind=basic
++0s mount player $horses[0]
++0s mount-vital player durability 90/100
++0.5s mount-vital player durability 75/100
++0.5s mount $rider "Bay horse"
+on dismount
++0s mount player none
+end
+at 4s mount player "Dun steed" kind=combat
++0s mount player $steeds[0]
++0s mount-vital player morale 800/1000
++0s mount-vital player power 200/400
++0.5s mount-vital player fury 3/5
++0.5s mount-vital player morale 650/1000
++1s mount player none
+
+input
+at 2.5s dismount
+end

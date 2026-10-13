@@ -17,6 +17,7 @@ use crate::ui::{Ui, object_mode};
 
 use super::data::{MapLookup, MapSource};
 use super::map::{GameMap, Georef};
+use super::p5vocab::P5Pids;
 use super::radar::{Radar, RadarInput};
 use super::vocab::{GamePids, GameVocab};
 use super::{
@@ -67,6 +68,78 @@ pub struct MapTree {
     pub nodes: Vec<MapNode>,
     by_area: HashMap<u32, usize>,
     by_element: HashMap<u32, usize>,
+    /// The map-window options of each node (`map-windows.md` MW3), by node index; read by
+    /// [`MapTree::read_options`] or given by [`MapTree::push`].
+    options: Vec<NodeOptions>,
+}
+
+/// The 28-bit common mask ORed into a node's display mask when
+/// `UI_Map_IncludeCommonMapNoteTypes` is true (`map-windows.md` MW3, BIN).
+pub const COMMON_NOTE_MASK: u64 = 0x1B7C_76E7_5CF0_0000;
+
+/// The map-window options of one node (`map-windows.md` MW3, §3.4, §4.4, §6.9).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct NodeOptions {
+    /// `UI_Map_MapNoteDisplayType` (0 when absent).
+    pub display_type: u64,
+    /// `UI_Map_IncludeCommonMapNoteTypes`.
+    pub include_common: bool,
+    /// `UI_Map_MapNoteFilterProperty`: the property ID of the filter option the node names
+    /// (0 when it names none: `GOP_Map_MapNoteFilter` applies, §6.9).
+    pub filter_property: u32,
+    /// `UI_Map_HideFilterButtons`.
+    pub hide_filter_buttons: bool,
+    /// `UI_Map_QuestGuideDisabled`.
+    pub quest_guide_disabled: bool,
+    /// `UI_Map_PreventZoomOut`.
+    pub prevent_zoom_out: bool,
+}
+
+impl NodeOptions {
+    /// Reads the options from a node struct (missing or mistyped fields are absent).
+    #[must_use]
+    pub fn from_struct(v: &PropertyValue, p: &P5Pids) -> Self {
+        let field = |pid: u32| crate::props::struct_field(v, pid);
+        let flag = |pid: u32| field(pid).is_some_and(crate::props::as_bool);
+        Self {
+            display_type: field(p.map_display_type).map_or(0, as_u64),
+            include_common: flag(p.map_include_common),
+            filter_property: field(p.map_filter_property).map_or(0, as_key),
+            hide_filter_buttons: flag(p.map_hide_filter_buttons),
+            quest_guide_disabled: flag(p.map_quest_guide_disabled),
+            prevent_zoom_out: flag(p.map_prevent_zoom_out),
+        }
+    }
+
+    /// The node's display mask (`map-windows.md` §2): `UI_Map_MapNoteDisplayType`, ORed
+    /// with [`COMMON_NOTE_MASK`] when `UI_Map_IncludeCommonMapNoteTypes` is true.
+    #[must_use]
+    pub fn display_mask(&self) -> u64 {
+        if self.include_common {
+            self.display_type | COMMON_NOTE_MASK
+        } else {
+            self.display_type
+        }
+    }
+}
+
+/// A property value as a 64-bit mask: 64- and 32-bit bitfields, integers and enum keys
+/// (as unsigned bit patterns), and the low 64 bits of a bitfield of any width; 0 for any
+/// other value.
+#[must_use]
+pub fn as_u64(v: &PropertyValue) -> u64 {
+    match v {
+        PropertyValue::Bitfield64(b) => *b,
+        PropertyValue::Int64(i) => u64::from_ne_bytes(i.to_ne_bytes()),
+        PropertyValue::Bitfield32(b) | PropertyValue::Enum(b) | PropertyValue::PropertyId(b) => {
+            u64::from(*b)
+        }
+        PropertyValue::Int(i) => u64::from(u32::from_ne_bytes(i.to_ne_bytes())),
+        PropertyValue::BitfieldAny(b) => (0..64u32)
+            .filter(|i| b.bit(*i))
+            .fold(0u64, |m, i| m | (1u64 << i)),
+        _ => 0,
+    }
 }
 
 impl MapTree {
@@ -143,7 +216,13 @@ impl MapTree {
                 pn.children.push(idx);
             }
             for a in &node.areas {
-                t.by_area.entry(*a).or_insert(idx);
+                if t.by_area.contains_key(a) {
+                    // `map-data.md` §4.8.4 step 3 Tessera rule: the first node in
+                    // depth-first order keeps the area.
+                    tracing::warn!("map tree: area {a:#010x} listed by a second node");
+                } else {
+                    t.by_area.insert(*a, idx);
+                }
             }
             if node.active_element != 0 {
                 t.by_element.entry(node.active_element).or_insert(idx);
@@ -156,6 +235,95 @@ impl MapTree {
             }
         }
         Ok(t)
+    }
+
+    /// Reads the map-window options of every node (`map-windows.md` MW3) from the same
+    /// root struct [`MapTree::from_value`] read, in the same pre-order. Nodes beyond the
+    /// tree (a different root) are ignored; bounded by the tree's own caps.
+    pub fn read_options(&mut self, root: &PropertyValue, gp: &GamePids, pp: &P5Pids) {
+        self.options.clear();
+        let mut stack: Vec<(&PropertyValue, usize)> = vec![(root, 0)];
+        while let Some((v, depth)) = stack.pop() {
+            if self.options.len() >= self.nodes.len().min(MAX_NODES) || depth > MAX_DEPTH {
+                break;
+            }
+            if v.as_struct().is_none() {
+                continue;
+            }
+            self.options.push(NodeOptions::from_struct(v, pp));
+            if let Some(c) = crate::props::struct_field(v, gp.map_children) {
+                for e in array_elements(c).iter().rev() {
+                    stack.push((&e.value, depth + 1));
+                }
+            }
+        }
+    }
+
+    /// The map-window options of node `i` (defaults when none were read or given).
+    #[must_use]
+    pub fn options(&self, i: usize) -> NodeOptions {
+        self.options.get(i).copied().unwrap_or_default()
+    }
+
+    /// Adds a node built by code (synthetic trees, the fallback map window), keeping the
+    /// area and element indexes and the parent's child list. Returns its index, or `None`
+    /// past [`MAX_NODES`].
+    pub fn push(&mut self, mut node: MapNode, options: NodeOptions) -> Option<usize> {
+        if self.nodes.len() >= MAX_NODES {
+            return None;
+        }
+        let idx = self.nodes.len();
+        if let Some(p) = node.parent {
+            match self.nodes.get_mut(p) {
+                Some(pn) => {
+                    pn.children.push(idx);
+                    node.depth = pn.depth + 1;
+                }
+                None => node.parent = None,
+            }
+        }
+        for a in &node.areas {
+            self.by_area.entry(*a).or_insert(idx);
+        }
+        if node.active_element != 0 {
+            self.by_element.entry(node.active_element).or_insert(idx);
+        }
+        self.nodes.push(node);
+        while self.options.len() < idx {
+            self.options.push(NodeOptions::default());
+        }
+        self.options.push(options);
+        Some(idx)
+    }
+
+    /// The node of the player's map outdoors (`map-windows.md` §4.6 step 3, MW9): the node
+    /// that lists `area`, else the root (an area registered to no node shows `WorldMap`;
+    /// no region or pixel-bounds fallback). `None` only for an empty tree.
+    #[must_use]
+    pub fn player_node(&self, area: Option<u32>) -> Option<usize> {
+        if self.nodes.is_empty() {
+            return None;
+        }
+        Some(area.and_then(|a| self.node_for_area(a)).unwrap_or(0))
+    }
+
+    /// Whether node `n` is node `of` or one of its descendants (walking parent links,
+    /// `map-data.md` §4.8.4 step 3).
+    #[must_use]
+    pub fn is_within(&self, n: usize, of: usize) -> bool {
+        let mut cur = Some(n);
+        let mut steps = 0;
+        while let Some(c) = cur {
+            if c == of {
+                return true;
+            }
+            steps += 1;
+            if steps > MAX_DEPTH + 1 {
+                return false;
+            }
+            cur = self.nodes.get(c).and_then(|x| x.parent);
+        }
+        false
     }
 
     /// The node that lists area `area` (§9.4; each area is in exactly one node, G27).

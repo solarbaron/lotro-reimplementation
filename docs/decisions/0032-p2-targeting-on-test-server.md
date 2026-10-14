@@ -6,9 +6,10 @@
 Proposed (spec writer, design, 2026-10-10). An independent review by a session that wrote no
 part of this decision or of `scenario-feed.md` revision 6 must check it before it is Accepted.
 
-**Number.** Out of sequence, like 0030: 0031 is taken on the parallel branch `p3`
-(`0031-parity-panel-goldens.md`), so this record takes the next free number of the
-out-of-sequence range. ROADMAP P2 calls it "decision 0031"; read 0032.
+**Number.** Out of sequence, like 0030: 0031 was taken on the parallel branch `p3`
+(`0031-parity-panel-goldens.md`), so this record took the next free number of the
+out-of-sequence range. It was planned as 0031; ROADMAP P2 and `docs/decisions/README.md`
+now name it 0032 (refreshed 2026-10-14; before, this paragraph said ROADMAP called it 0031).
 
 Tessera-own design. No client fact, research note, research clone or decompiler output was
 needed or used; the inputs are `docs/` only (decision 0024, decision 0025, LEGAL.md §11.1,
@@ -227,7 +228,9 @@ code; text at commit 7b14f27).
 
 Non-blocking: the "Number" paragraph's remark that ROADMAP calls this decision 0031 is stale
 (ROADMAP now names 0032); `docs/decisions/README.md` and ROADMAP P2 still say Proposed and are
-updated by their owners. The two owner questions above stay open.
+updated by their owners. The two owner questions above stay open. (Done 2026-10-14 by the
+spec writer: the "Number" paragraph is refreshed; `docs/decisions/README.md` lists 0032 as
+Accepted. Editorial only; D1–D4 are unchanged.)
 
 Before this review: pending. The reviewer checks D1–D4 against LEGAL.md §11.1 rule 5, decision 0024 §2,
 `scenario-feed.md` §0 item 3 and revision 6 (§18.4), and re-derives the cases of

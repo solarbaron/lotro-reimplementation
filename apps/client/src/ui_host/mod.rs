@@ -1596,6 +1596,13 @@ impl UiHost {
             s.attach_player_vitals(&mut ui, root, state);
         }
         let out = s.frame(&mut ui, state, data, player);
+        // The fellowship rows' effect lists go to the combat widgets (`social-panels.md`
+        // TR16), which bind them in their next frame.
+        let lists = s.member_effect_lists();
+        if lists != self.combat.member_lists.as_slice() {
+            self.combat.member_lists = lists.to_vec();
+            self.combat.members_dirty = true;
+        }
         if let Some(chat) = self.panels.as_mut().and_then(|p| p.chat.as_mut()) {
             chat.ensure_im_tab(&mut ui);
             if self.tells_generation != Some(state.targets_generation()) {

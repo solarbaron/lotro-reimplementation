@@ -971,6 +971,7 @@ fn fellowship_layout() -> Vec<ElementDesc> {
         field(i.fellow_link_dead, 55, 20, 112, 16),
         child(child(field(i.fellow_vitals, 3, -3, 170, 80), health), power),
         button(i.fellow_assist, 153, 21),
+        field(i.fellow_effects, 54, 37, 150, 37),
         // §4.2: the voice and status elements, none hidden by the layout (SPI9).
         button(i.fellow_voice, 38, 0),
         field(i.fellow_voice_squelched, 38, 0, 20, 20),
@@ -1090,6 +1091,16 @@ fn fellowship_panels_on_the_tree() {
             assert!(!ui.is_visible(get(&ui, *r, id)), "TR14: {id:#x} hidden");
         }
     }
+    // TR16: each row's effect list goes to the combat widgets with the member's entity.
+    let lists: Vec<(ElementKey, Option<u64>)> = panels
+        .rows
+        .iter()
+        .map(|r| (get(&ui, *r, i.fellow_effects), None))
+        .collect();
+    assert_eq!(
+        panels.effect_lists(),
+        &[(lists[0].0, Some(A_)), (lists[1].0, None)]
+    );
     // Leader change to Brin: the marker moves to Brin's row.
     f.changed(&[
         mem("Tam", Some(P), false),
@@ -1117,6 +1128,7 @@ fn fellowship_panels_on_the_tree() {
     f.changed(&[]);
     panels.refresh(&mut ui, &f, &mut Levels);
     assert!(panels.rows.is_empty());
+    assert!(panels.effect_lists().is_empty(), "TR16: no rows, no lists");
     assert!(!ui.is_visible(panels.panels[0]));
 }
 

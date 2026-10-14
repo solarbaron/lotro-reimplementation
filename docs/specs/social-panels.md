@@ -1080,6 +1080,21 @@ built):
 > left keeps the last entity seen, so its `GetTarget()` and list still follow that entity
 > while the client knows it.
 
+> **OPEN:** (implementer note, `crates/ui` and `apps/client`, 2026-10-14) TR16 is now built
+> with `combat-ui.md` on `main`, so the interim (no icons) no longer applies. Engineering
+> choices for the next revision to confirm: (8) the member lists are effect lists of the
+> combat widgets (`tessera-ui` `game::combat::CombatUi::set_member_lists`). Each list is
+> bound to a row's `FellowEffectDisplay` and the member's entity, filled from the effects
+> the client keeps for that entity, and then follows `EffectApplied`/`EffectRemoved` of the
+> entity. A member without an entity has no list. A list rebinds when its row shows another
+> member, and the binding reaches the lists one frame after the rows change. (9) A row
+> shows `UIComponent_EffectDisplay_MaxIconColumns` icons, 6 when the list lacks the property.
+> Rows and icons are placed as `combat-ui.md` §8.1 OPEN (arrangement) says: two rows of *e*
+> pixels in the 37-pixel list, so with *e* = 20 the second row overflows the list by 3
+> pixels. (10) The pulse of §8.2 uses the local player's combat state, as on E8 and E9.
+> (11) Member icons carry the tooltip properties of §8.1, and hovering one shows the effect
+> tooltip of `skill-tooltips.md` §12.2 for the member's effect instance.
+
 ---
 
 <a id="s10"></a>

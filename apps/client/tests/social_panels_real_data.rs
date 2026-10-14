@@ -61,10 +61,15 @@ fn game_dir() -> Option<PathBuf> {
     }
 }
 
-/// The client's state as the runtime keeps it: the social state and the player state.
+/// The client's state as the runtime keeps it: the social state, the player state and
+/// the combat state (its changes go to the combat widgets once they are attached).
 struct Client {
     social: SocialState,
     player: PlayerState,
+    combat: tessera_client::combat::CombatState,
+    combat_changes: Vec<tessera_client::combat::CombatChange>,
+    combat_install: Option<Arc<tessera_client::combat::CombatInstall>>,
+    start: Instant,
     names: std::collections::BTreeMap<EntityId, String>,
     lines: Vec<ChatLine>,
     /// The same events through a social state without the install's tables (Tessera's own
@@ -80,6 +85,10 @@ impl Client {
         Self {
             social,
             player: PlayerState::new(data.bags()),
+            combat: tessera_client::combat::CombatState::new(),
+            combat_changes: Vec::new(),
+            combat_install: None,
+            start: Instant::now(),
             names: std::collections::BTreeMap::new(),
             lines: Vec::new(),
             plain: SocialState::new(true),
@@ -99,6 +108,8 @@ impl Client {
         }
         let mut changes = Vec::new();
         self.player.apply(ev, &mut changes);
+        let now = self.start.elapsed().as_secs_f64();
+        self.combat.apply(ev, now, &mut self.combat_changes);
         let names = &self.names;
         self.lines
             .extend(self.social.apply(ev, &|id| names.get(&id).cloned()));
@@ -157,6 +168,20 @@ impl Picture {
 /// step 7, with the frame's one list of UI events).
 fn frame(rig: &mut Rig, client: &mut Client, data: &CharacterData) {
     rig.frame();
+    // The combat frame after the character panels, as the client runs it (nothing while
+    // the combat widgets are not attached).
+    let changes = std::mem::take(&mut client.combat_changes);
+    let now = client.start.elapsed().as_secs_f64();
+    let anchors =
+        tessera_client::combat::anchors::SyntheticAnchors::new(&client.combat, ui_common::SCREEN);
+    let _ = rig.host.combat_frame(
+        &client.combat,
+        &changes,
+        Vec::new(),
+        client.combat_install.as_deref(),
+        now,
+        &anchors,
+    );
     let events = rig.host.take_game_events();
     let _ = rig.host.social_frame(
         &mut client.social,
@@ -240,11 +265,25 @@ fn play(
     rig: &mut Rig,
     client: &mut Client,
     data: &CharacterData,
-    mut at: impl FnMut(u64, &mut Rig, &mut Client),
+    at: impl FnMut(u64, &mut Rig, &mut Client),
 ) {
     let path = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests/scenarios")
         .join(format!("{scenario}.scenario"));
+    play_path(dir, &path, checkpoints, rig, client, data, at);
+}
+
+/// [`play`] for a scenario file at `path`.
+fn play_path(
+    dir: &Path,
+    path: &Path,
+    checkpoints: &[u64],
+    rig: &mut Rig,
+    client: &mut Client,
+    data: &CharacterData,
+    mut at: impl FnMut(u64, &mut Rig, &mut Client),
+) {
+    let scenario = path.display();
     let args = Args::try_parse_from([
         "tessera-client",
         "--headless",
@@ -796,4 +835,171 @@ fn social_scenarios_render_on_the_install() {
         "goldens in {}: {blessed} blessed, {matched} passed",
         golden_dir.display()
     );
+}
+
+/// A fellowship whose members carry effects (invented names; the effect records are chosen
+/// by selector from the install, the literal one has no record).
+const MEMBER_EFFECTS: &str = "\
+# SPDX-License-Identifier: GPL-3.0-or-later
+tessera-scenario 1
+title \"Lantern wards\"
+tick 100ms
+player \"Tamsin\" level=20
+select $fx = effect role=vital-over-time n=4 seed=9
+actor $brin kind=player name=\"Brin\" pos=3,0,0 facing=270 level=31
+actor $cael kind=player name=\"Cael\" pos=-3,1,0 facing=90 level=29
+
+at 0s spawn $brin
++0s spawn $cael
++0.2s fellowship player $brin $cael leader=player
++0s vital $brin health 640/800
++0s vital $brin power 210/400
++0s vital $cael health 350/700
++0s vital $cael power 300/300
++0.2s effect $brin $fx[0] for=30s
++0s effect $brin $fx[1] for=40s
++0s effect $brin \"Ember\" for=50s from=$cael
++0s effect $cael $fx[2] for=60s
++0s effect $cael $fx[3] for=45s
++0s target player $brin
+at 2s vital $brin health 600/800
+";
+
+/// `social-panels.md` TR16 on the install: the member rows' `FellowEffectDisplay` show the
+/// members' effects through the combat widgets' lists (`combat-ui.md` §8.1–§8.2, at most
+/// 6 icons per row, icon size 20); and the combat frames of the same screen keep TR14's
+/// voice icons hidden on P4 and draw no portrait without a scene (`ui-widgets.md` §12).
+/// With `TESSERA_SHEET_DIR` the picture is written there (never committed).
+#[test]
+fn member_effects_render_on_the_install() {
+    let Some(dir) = game_dir() else { return };
+    let golden_dir = goldens::golden_dir(
+        env!("CARGO_PKG_NAME"),
+        "social_panels_real_data/member_effects_render_on_the_install",
+        &goldens::install_version(&dir),
+    )
+    .unwrap_or_else(|e| panic!("{e}"));
+    let mut flags = goldens::Flags::from_env();
+    flags.sheet = None;
+    let data = Arc::new(CharacterData::open(&dir).expect("character data"));
+    let install = Arc::new(
+        tessera_client::combat::CombatInstall::new(Arc::clone(&data)).expect("combat data"),
+    );
+    let set = Arc::new(ArchiveSet::open(&dir, SetOptions::default()).expect("archive set"));
+    let empty = tempfile::tempdir().expect("tempdir");
+    let booted = UiBoot::spawn(set, dir.clone(), Some(empty.path().to_path_buf()))
+        .expect("spawn")
+        .wait()
+        .expect("UI data");
+    let cv = booted.combat.vocab;
+    let mut rig = Rig::with_host(|_| {}, move |o| UiHost::from_boot(booted, o));
+    if let Ok(r) = Renderer::new_headless(&RendererConfig::default()) {
+        rig.renderer = Some(r);
+    }
+    rig.host.attach_combat(install.floaty_settings(), 0.0);
+    let picture = Picture::new(&mut rig);
+    let ids = rig.host.social().expect("social panels").vocab().ids;
+    let mut client = Client::new(&data);
+    client.combat_install = Some(Arc::clone(&install));
+    let scenario = empty.path().join("member-effects.scenario");
+    std::fs::write(&scenario, MEMBER_EFFECTS).expect("scenario file");
+    let mut shot: Option<Shot> = None;
+    play_path(
+        &dir,
+        &scenario,
+        &[1500],
+        &mut rig,
+        &mut client,
+        &data,
+        |_, rig, client| {
+            // Two more frames: the lists the social panels report are bound by the next
+            // combat frame.
+            frame(rig, client, &data);
+            frame(rig, client, &data);
+            let rows: Vec<(ElementKey, Option<u64>)> = rig
+                .host
+                .social()
+                .expect("social panels")
+                .member_effect_lists()
+                .to_vec();
+            assert_eq!(rows.len(), 2, "Brin and Cael have rows");
+            let hud = rig.host.combat_hud().expect("combat widgets");
+            let bars = &hud.widgets().member_effects;
+            assert_eq!(bars.len(), 2, "one list per member with an entity");
+            let ui = rig.host.ui();
+            let mut shown = 0;
+            let mut install_icons = 0;
+            for (list, entity) in &rows {
+                let bar = bars
+                    .iter()
+                    .find(|b| b.display() == Some(*list))
+                    .expect("the row's list is bound");
+                assert_eq!(
+                    bar.owner(),
+                    tessera_ui::game::combat::EffectOwner::Member(entity.expect("entity"))
+                );
+                assert!(bar.max_columns() <= 6, "TR16: at most 6 icons per row");
+                for r in 0..2 {
+                    for e in bar.rows().shown(r, bar.max_columns()) {
+                        let icon = bar.icon(e.instance).expect("a shown icon");
+                        assert!(ui.is_displayed(icon), "icon {} displayed", e.instance);
+                        assert!(ui.is_ancestor_or_self(*list, icon));
+                        assert_eq!(ui.layout_box(icon).map(|b| b.w()), Some(20));
+                        if ui.element_id(icon) == Some(cv.ids.effect_icon) {
+                            install_icons += 1;
+                        }
+                        shown += 1;
+                    }
+                }
+            }
+            eprintln!("member effects: {shown} icons shown, {install_icons} in the install look");
+            assert_eq!(shown, 5, "three on Brin's row, two on Cael's");
+            assert!(install_icons >= 1, "record effects use TimedEffectTemplate");
+            // The same screen's combat frames: no voice icon on P4 (TR14), no portrait
+            // without a scene on P5 (`ui-widgets.md` §12).
+            let w = hud.widgets();
+            let p4 = w.player.as_ref().expect("player frame").root();
+            for id in [
+                ids.player_voice,
+                ids.player_voice_squelched,
+                ids.player_sending,
+                ids.player_assistant,
+            ] {
+                if let Some(k) = find_below(&ui, p4, id) {
+                    assert!(!ui.is_displayed(k), "TR14: {id:#x} on P4");
+                }
+            }
+            let target = w.target.as_ref().expect("target frame");
+            assert!(
+                ui.is_displayed(target.root()),
+                "P5 shows the selected member"
+            );
+            let portrait = target.portrait().expect("OpponentPortrait");
+            assert!(!ui.is_displayed(portrait), "no portrait without a scene");
+            drop(ui);
+            if let Some(p) = picture.as_ref() {
+                shot = Some(p.take(rig, client, &data));
+            }
+        },
+    );
+    let Some(img) = shot else {
+        eprintln!("no GPU adapter; the lists are checked, not drawn");
+        return;
+    };
+    save("member-effects-1500", &img);
+    let pic = goldens::Rgba {
+        width: img.0,
+        height: img.1,
+        data: img.2,
+    };
+    match goldens::check_with_compare(
+        &golden_dir,
+        "member-effects-01500ms",
+        &pic,
+        &flags,
+        gpu_compare,
+    ) {
+        Ok(o) => eprintln!("golden: {o:?}"),
+        Err(e) => panic!("{e}"),
+    }
 }

@@ -229,6 +229,33 @@ impl CombatHud {
             self.widgets.clear_cast(ui, CastOwner::Player);
             self.widgets.player_revived(ui);
         }
+        // The fellowship members' lists (`social-panels.md` TR16) from the kept effects.
+        let members: Vec<u64> = self
+            .widgets
+            .member_effects
+            .iter()
+            .filter_map(|b| match b.owner() {
+                EffectOwner::Member(e) => Some(e),
+                _ => None,
+            })
+            .collect();
+        for e in members {
+            let effects = view::effect_views(state, EntityId(e), install);
+            self.widgets.set_effects(EffectOwner::Member(e), &effects);
+        }
+    }
+
+    /// Binds the effect lists of fellowship member rows (`social-panels.md` TR16): each
+    /// `FellowEffectDisplay` with its member's entity, filled from the kept effects.
+    pub fn set_member_lists(
+        &mut self,
+        ui: &mut Ui,
+        lists: &[(ElementKey, Option<u64>)],
+        state: &CombatState,
+        install: Option<&CombatInstall>,
+    ) {
+        let views = |e: u64| view::effect_views(state, EntityId(e), install);
+        self.widgets.set_member_lists(ui, lists, &views);
     }
 
     fn cooldown_started(&mut self, ui: &mut Ui, skill: u64, duration: f64, start: f64) {
@@ -428,8 +455,10 @@ impl CombatHud {
                         self.widgets.effect_applied(EffectOwner::Player, v.clone());
                     }
                     if Some(*e) == state.selection() {
-                        self.widgets.effect_applied(EffectOwner::Target, v);
+                        self.widgets.effect_applied(EffectOwner::Target, v.clone());
                     }
+                    // A fellowship member's row (TR16 of `social-panels.md`).
+                    self.widgets.effect_applied(EffectOwner::Member(e.0), v);
                 }
                 CombatChange::EffectRemoved(e, instance) => {
                     if Some(*e) == player {
@@ -440,6 +469,8 @@ impl CombatHud {
                         self.widgets
                             .effect_removed(EffectOwner::Target, u64::from(*instance));
                     }
+                    self.widgets
+                        .effect_removed(EffectOwner::Member(e.0), u64::from(*instance));
                     if let Some(l) = &self.live
                         && l.effect == Some((*e, *instance))
                     {
@@ -570,6 +601,7 @@ impl CombatHud {
             let holder = match owner {
                 EffectOwner::Player => state.player(),
                 EffectOwner::Target => state.selection(),
+                EffectOwner::Member(e) => Some(EntityId(e)),
             };
             let Some(holder) = holder else { return };
             let Ok(inst) = u32::try_from(instance) else {

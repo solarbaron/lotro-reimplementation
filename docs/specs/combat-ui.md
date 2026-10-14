@@ -334,6 +334,15 @@ location; `game-panels.md` §4). Children of `VitalsParent` (0, 20), 300 × 300,
 > `…Squelched`, `PlayerSendingData`, `PlayerPVP_Info`) keep the layout's own visibility; whether
 > the original's code hides the voice-chat icons when voice chat is off is not given.
 
+> **OPEN:** (implementer, `crates/ui`, 2026-10-14; for the spec owner to fold into the OPEN
+> above) `social-panels.md` §4.3 (SP27) answers the voice-chat question: the panel's set-up
+> hides `PlayerSendingData` and `PlayerVoiceChatSquelched`, and `PlayerVoiceChat` follows a
+> player property the sandbox never sets; its TR14 hides all three and `PlayerAssistantIcon`.
+> The layout shows them at (71, 11), over the first letter of `PlayerName`. `tessera-ui`
+> (`game::combat::frames::UnitFrame::install`) now applies TR14 whenever the player frame is
+> built, so the four elements are hidden with or without the social panels. `PlayerPVP_Info`
+> keeps the layout's visibility.
+
 <a id="s4-2"></a>
 ### 4.2 Frame state
 
@@ -431,6 +440,17 @@ Children:
 | ›› `OpponentPVP_RankDisplay` | (274, −3) 32 × 32 | PvP rank; not used |
 | ›› `OpponentName` (based on `ColorNameText`) | (2, 3) 216 × 36 | the target's name, truncated with a tooltip |
 | `InanimateObject_SelectionField` | (40, 1) 228 × 84 | the **non-vital field**: `InanimateObjectPanel_BG` (7, 26) 215 × 51, `InanimateObjectForeground` (−2, 19) 231 × 66, `InanimateObjectName` (based on `ColorNameText`, (11, 29) 205 × 47) |
+
+> **OPEN:** (implementer, `crates/ui`, 2026-10-14) the client draws no portrait scene yet
+> (§16.1 OPEN). `OpponentPortrait` has its own image (draw mode 2) and the child
+> `Target_Image`, and drawn alone they made a solid white disc in the frame.
+> `ui-widgets.md` §12 says "otherwise draw nothing there", and `ui-layout.md` §17.4 says the
+> portrait is "otherwise empty". `tessera-ui` reads both rules as covering the element's own
+> media and its children: while no scene is drawn, `OpponentPortrait` and `PlayerPortrait`
+> are hidden, so the frame art shows in their boxes. `UnitFrame::set_portrait_scene` shows
+> them again once a scene is drawn, and the composition order of §12 then applies. The
+> portrait floaters of §6.9 are not children of the portrait and still show. Confirm, or say
+> whether the own image should show without a scene.
 
 <a id="s5-2"></a>
 ### 5.2 Field choice and frame decoration (BIN d, CU6)

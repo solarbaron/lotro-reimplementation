@@ -438,6 +438,7 @@ impl CombatScreens {
             let b = match o {
                 EffectOwner::Player => &w.player_effects,
                 EffectOwner::Target => &w.target_effects,
+                EffectOwner::Member(_) => &None,
             };
             b.as_ref().map_or(0, |b| b.rows().len())
         };

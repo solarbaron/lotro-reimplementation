@@ -343,19 +343,36 @@ impl Shared {
     /// Queue a gameplay event for step 7 with the next sequence number. Raised events are
     /// numbered even when the full queue drops them.
     /// A combat event whose subject has no view object in any apartment is not queued
-    /// (`lua-plugin-api.md` §15.2). Returns `false` only when the full queue dropped the
-    /// event (the party views count those, §15.4).
+    /// (`lua-plugin-api.md` §15.2). An effect-list event of an entity that party members
+    /// with an `EffectList` object follow is also queued for their lists, right after it
+    /// (§15.4 further rule 7). Returns `false` only when the full queue dropped the event
+    /// (the party views count those, §15.4).
     pub(crate) fn raise_gameplay(&self, state: &mut SharedState, ev: GameplayEvent) -> bool {
-        if let GameplayEvent::Combat(c) = &ev
+        let members = match &ev {
+            GameplayEvent::Combat(c) => {
+                crate::party::member_effects_of(c).and_then(|(id, event)| {
+                    let members = lock(&self.party).followers(id);
+                    (!members.is_empty())
+                        .then_some(crate::party::PartyViewEvent::MemberEffects { members, event })
+                })
+            }
+            _ => None,
+        };
+        let queued = if let GameplayEvent::Combat(c) = &ev
             && !self.combat_watch.may_reach(c, || {
                 let src = lock(&self.combat).clone();
                 src.and_then(|s| s.player())
-            })
-        {
-            return true;
+            }) {
+            true
+        } else {
+            let seq = self.gameplay_seq.fetch_add(1, Ordering::SeqCst) + 1;
+            state.queue_gameplay(ev, seq)
+        };
+        if let Some(members) = members {
+            let seq = self.gameplay_seq.fetch_add(1, Ordering::SeqCst) + 1;
+            state.queue_gameplay(GameplayEvent::Party(members), seq);
         }
-        let seq = self.gameplay_seq.fetch_add(1, Ordering::SeqCst) + 1;
-        state.queue_gameplay(ev, seq)
+        queued
     }
 }
 

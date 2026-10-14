@@ -6,7 +6,7 @@
 //! Spec: `lua-plugin-api.md` §15 (queued delivery of game-raised events, frame-loop step
 //! 7), §15.4 (the model, the view table, the event derivation, object identity), §9.3
 //! (argument fields: `MemberAdded` and `MemberRemoved` carry `Player`, `LeaderChanged`
-//! and `PartyChanged` carry nothing), §18 checks 90–98; `social-panels.md` §9 TR2 (who
+//! and `PartyChanged` carry nothing), §18 checks 90–99; `social-panels.md` §9 TR2 (who
 //! the player is in a member list, a list without the player read with the player
 //! appended, the leader).
 //!
@@ -18,13 +18,23 @@
 //! an entity by name (morale and power from `FellowVitalChanged`, §15.4 revision 1).
 //! `PartyMember` has no method of its own (no `GetRaid`, P95).
 //!
+//! Further rules 7–8 (§15.4, 2026-10-14): each `PartyMember` **follows** an entity (the
+//! entity of its name's entry while the name is in its episode's list, afterwards the last
+//! one it followed). The host keeps one [`MemberLink`] per (episode, name) that every
+//! apartment's object of that member shares, updates it in [`PartyModel::apply`] and fans
+//! the §15.2 effect-list events of the followed entity out to the members' own
+//! `EffectList` objects ([`PartyViewEvent::MemberEffects`]); a change of the followed entity
+//! queues `EffectsCleared` and `EffectAdded { 1 … n }` ([`MemberEffectsEvent::Refollowed`]).
+//!
 //! Object identity per apartment: one `Party` object per party episode (strongly held
 //! while the episode is current, weakly afterwards), one `PartyMember` object per member
 //! name per episode (strongly held while the name is in the current list or until the
 //! member table reaches its prune threshold, weakly afterwards, as the inventory views do
 //! with `Item` objects).
 
-use std::sync::{Arc, Mutex};
+use std::collections::BTreeMap;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex, Weak};
 
 use mlua::{Lua, MultiValue, Table, Value};
 use tessera_script::{api_fn, host_error};
@@ -59,6 +69,15 @@ const MEMBER_CLASS_KEY: &str = "tessera.plugins.class.partymember";
 /// Number of `PartyMember` objects an apartment keeps strongly before it detaches those
 /// whose name left the current list (the threshold then doubles past the survivors).
 const MEMBERS_PRUNE_AT: i64 = 128;
+
+/// Number of follow records ([`MemberLink`]) the host keeps before it drops those no
+/// object holds any more (the threshold then doubles past the survivors).
+const LINKS_PRUNE_AT: usize = 128;
+
+/// Most `EffectAdded` events one change of a member's followed entity delivers (the
+/// effect bound per entity of [`crate::combat::CombatModel`]; a source reporting more is
+/// cut there).
+const MAX_REFOLLOW_EFFECTS: u32 = crate::combat::MAX_EFFECTS_PER_ACTOR as u32;
 
 /// One entry of a `FellowshipChanged` member list (`scenario-feed.md` §9.2), as the client
 /// passes it.
@@ -137,7 +156,8 @@ pub struct PartyUpdate {
     pub player_appended: bool,
     /// The list had more than [`MAX_PARTY_MEMBERS`] entries; the rest were ignored.
     pub truncated: bool,
-    /// Number of plugin events queued for step 7 (`PartyChanged` included).
+    /// Number of plugin events queued for step 7 (`PartyChanged` included; a change of
+    /// a member's followed entity, further rule 7, counts as one).
     pub events: usize,
     /// Number of derived events not queued because the plugin host's gameplay queue was
     /// full (each is also counted in the host's dropped-event total and logged).
@@ -178,6 +198,42 @@ pub enum PartyViewEvent {
         /// The party episode.
         episode: u64,
     },
+    /// `EffectList` events on the own effect lists of `PartyMember` objects (§15.4 further
+    /// rules 7–8), delivered in each apartment to the list of each named member that
+    /// existed when the event was raised, also after the member left or its episode ended.
+    MemberEffects {
+        /// The members whose lists receive the events: (episode, name), in order.
+        members: Vec<(u64, String)>,
+        /// The events.
+        event: MemberEffectsEvent,
+    },
+}
+
+/// The events of a [`PartyViewEvent::MemberEffects`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MemberEffectsEvent {
+    /// `EffectAdded { Index }`, as the followed entity's lists receive it (§15.2).
+    Added {
+        /// `Index`.
+        index: u32,
+    },
+    /// `EffectRemoved { Index }`, as the followed entity's lists receive it.
+    Removed {
+        /// `Index`.
+        index: u32,
+    },
+    /// `EffectsCleared`, as the followed entity's lists receive it.
+    Cleared,
+    /// The followed entity changed at a `FellowshipChanged` (further rule 7): one
+    /// `EffectsCleared` when `cleared` (the list was not empty), then `EffectAdded { Index }`
+    /// for `Index` 1 … `added` (the new entity's effects). One queue item, so the queue
+    /// bound never cuts the sequence.
+    Refollowed {
+        /// The list was not empty before the change.
+        cleared: bool,
+        /// The number of effects of the newly followed entity.
+        added: u32,
+    },
 }
 
 /// One member of the current list.
@@ -198,6 +254,33 @@ pub(crate) struct PartyModel {
     members: Vec<Entry>,
     /// Index of the leader in `members`.
     leader: Option<usize>,
+    /// The follow records of members of this and earlier episodes that some object holds.
+    follows: Follows,
+}
+
+/// The host's follow records: one [`MemberLink`] per (episode, name) while an object holds
+/// it, and the changes of followed entities the last [`PartyModel::apply`] made.
+#[derive(Debug, Default)]
+struct Follows {
+    links: BTreeMap<(u64, String), Weak<MemberLink>>,
+    prune_at: usize,
+    changes: Vec<Refollow>,
+}
+
+impl Follows {
+    fn prune(&mut self) {
+        self.links.retain(|_, w| w.strong_count() > 0);
+        self.prune_at = LINKS_PRUNE_AT.max(self.links.len().saturating_mul(2));
+    }
+}
+
+/// A change of a member's followed entity whose member had an `EffectList` object at the
+/// change (further rule 7).
+#[derive(Debug)]
+pub(crate) struct Refollow {
+    pub link: Arc<MemberLink>,
+    pub old: Option<u64>,
+    pub new: Option<u64>,
 }
 
 /// A member as a getter sees it.
@@ -264,11 +347,16 @@ impl PartyModel {
         };
         let list = &list[..list.len().min(MAX_PARTY_MEMBERS)];
         let mut events = Vec::new();
+        self.follows.changes.clear();
         if list.is_empty() {
             if self.episode != 0 {
-                // Rule 2: the old `Party` gets no events.
+                // Rule 2: the old `Party` gets no events. Further rule 8: the episode's
+                // members keep following their last entities (their records stay).
+                let mut follows = std::mem::take(&mut self.follows);
+                follows.prune();
                 *self = Self {
                     last_episode: self.last_episode,
+                    follows,
                     ..Self::default()
                 };
                 events.push(GameplayEvent::LocalPlayer(LocalPlayerEvent::PartyChanged));
@@ -298,15 +386,18 @@ impl PartyModel {
             });
         }
         let leader = list.iter().position(|m| m.leader);
-        let new = Self {
+        let mut new = Self {
             episode: self.episode,
             last_episode: self.last_episode,
             members,
             leader,
+            follows: std::mem::take(&mut self.follows),
         };
+        new.follows.prune();
 
         if self.episode == 0 {
-            // Rule 1: a new episode, `PartyChanged`, no member events.
+            // Rule 1: a new episode, `PartyChanged`, no member events (no object of the
+            // new episode exists yet, so no member follows anything to change).
             let episode = self.last_episode.saturating_add(1);
             *self = Self {
                 episode,
@@ -341,8 +432,89 @@ impl PartyModel {
                 episode,
             }));
         }
+        new.refollow(episode);
         *self = new;
         (events, update)
+    }
+
+    /// Further rule 7: every member of `episode` whose name is in the (new) current list
+    /// follows its entry's entity from now on; one whose name is not keeps its entity
+    /// (rule 8). Changes of members with an `EffectList` object are kept for
+    /// [`Self::take_refollows`].
+    fn refollow(&mut self, episode: u64) {
+        let mut changes = Vec::new();
+        for ((e, name), weak) in self.follows.links.range((episode, String::new())..) {
+            if *e != episode {
+                break;
+            }
+            let Some(link) = weak.upgrade() else {
+                continue;
+            };
+            let Some(now) = self.entity_of(name) else {
+                continue;
+            };
+            let old = std::mem::replace(&mut *lock(&link.followed), now);
+            if old != now && link.lists.load(Ordering::SeqCst) > 0 {
+                changes.push(Refollow {
+                    link,
+                    old,
+                    new: now,
+                });
+            }
+        }
+        self.follows.changes = changes;
+    }
+
+    /// The followed-entity changes of the last [`Self::apply`] (members with an
+    /// `EffectList` object only), in (episode, name) order.
+    pub(crate) fn take_refollows(&mut self) -> Vec<Refollow> {
+        std::mem::take(&mut self.follows.changes)
+    }
+
+    /// The follow record of (`episode`, `name`), created on first use: following the
+    /// entity of the name's entry when the name is in the current list of `episode`, else
+    /// `fallback` (the entity of the name's last entry, carried by its member event).
+    pub(crate) fn link(
+        &mut self,
+        episode: u64,
+        name: &str,
+        fallback: Option<u64>,
+    ) -> Arc<MemberLink> {
+        let key = (episode, name.to_owned());
+        if let Some(link) = self.follows.links.get(&key).and_then(Weak::upgrade) {
+            return link;
+        }
+        let followed = if self.episode() == Some(episode) {
+            self.entity_of(name).unwrap_or(fallback)
+        } else {
+            fallback
+        };
+        let link = Arc::new(MemberLink {
+            episode,
+            name: name.to_owned(),
+            followed: Mutex::new(followed),
+            lists: AtomicUsize::new(0),
+        });
+        if self.follows.links.len() >= self.follows.prune_at.max(LINKS_PRUNE_AT) {
+            self.follows.prune();
+        }
+        self.follows.links.insert(key, Arc::downgrade(&link));
+        link
+    }
+
+    /// The members (episode, name) with an `EffectList` object that follow `entity` now,
+    /// in (episode, name) order (further rule 7: the effect-list events of that entity are
+    /// queued on their lists too).
+    pub(crate) fn followers(&self, entity: u64) -> Vec<(u64, String)> {
+        self.follows
+            .links
+            .iter()
+            .filter_map(|(key, weak)| {
+                let link = weak.upgrade()?;
+                (link.lists.load(Ordering::SeqCst) > 0 && link.followed() == Some(entity))
+                    .then(|| key.clone())
+            })
+            .collect()
     }
 }
 
@@ -360,35 +532,79 @@ struct MemberPayload {
     link: Arc<MemberLink>,
 }
 
-/// Which entity a `PartyMember` object stands for (§15.4: its `GetTarget()` and
-/// `GetEffects()` are the §15.2 `Actor` getters of the member's entity). Shared with the
-/// object's `EffectList`; holds no Lua value.
+/// The entity a `PartyMember` follows (§15.4 further rules 7–8: its `GetTarget()` and
+/// its own `EffectList` show that entity). One per (episode, name), shared by the objects
+/// of that member in every apartment and by their `EffectList` objects; the host updates
+/// it at each member list. Holds no Lua value.
 #[derive(Debug)]
 pub(crate) struct MemberLink {
     episode: u64,
     name: String,
-    /// The last entity seen while the name was in its episode's list.
-    entity: Mutex<Option<u64>>,
+    /// The followed entity: while the name is in its episode's list, its entry's entity
+    /// (`None` for an entry without one); afterwards the last one it followed.
+    followed: Mutex<Option<u64>>,
+    /// Number of `EffectList` objects of this member alive in all apartments.
+    lists: AtomicUsize,
 }
 
 impl MemberLink {
-    /// The member's entity: while the name is in the current list of its episode, the
-    /// list's entity (`None` for a member without one), else the last one seen (an object
-    /// outlives its membership and answers with the last values seen, §15.4).
-    pub(crate) fn entity(&self, ctx: &ApartmentCtx) -> Option<u64> {
-        let mut last = lock(&self.entity);
-        let now = with_model(ctx, |m| {
-            if m.episode() == Some(self.episode) {
-                m.entity_of(&self.name)
-            } else {
-                None
-            }
-        })
-        .flatten();
-        if let Some(now) = now {
-            *last = now;
-        }
-        *last
+    /// The entity the member follows now (`None`: none).
+    pub(crate) fn followed(&self) -> Option<u64> {
+        *lock(&self.followed)
+    }
+
+    /// The member: (episode, name).
+    pub(crate) fn member(&self) -> (u64, String) {
+        (self.episode, self.name.clone())
+    }
+
+    /// The member's registry key in an apartment ("episode/name").
+    pub(crate) fn key(&self) -> String {
+        member_key(self.episode, &self.name)
+    }
+}
+
+/// Counts one `EffectList` object of a member while it exists (the host fans effect-list
+/// events out only to members that have one, the queue bound of §15.2).
+#[derive(Debug)]
+pub(crate) struct MemberListGuard(Arc<MemberLink>);
+
+impl MemberListGuard {
+    pub(crate) fn new(link: Arc<MemberLink>) -> Self {
+        link.lists.fetch_add(1, Ordering::SeqCst);
+        Self(link)
+    }
+
+    pub(crate) fn link(&self) -> &MemberLink {
+        &self.0
+    }
+}
+
+impl Drop for MemberListGuard {
+    fn drop(&mut self) {
+        self.0.lists.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
+/// The member-list events of a combat event (further rule 7): an `EffectAdded`,
+/// `EffectRemoved` or `EffectsCleared` of another entity's lists, with that entity.
+pub(crate) fn member_effects_of(
+    ev: &crate::combat::CombatViewEvent,
+) -> Option<(u64, MemberEffectsEvent)> {
+    use crate::combat::{CombatViewEvent as E, ViewEntity};
+    match *ev {
+        E::EffectAdded {
+            entity: ViewEntity::Entity(id),
+            index,
+        } => Some((id, MemberEffectsEvent::Added { index })),
+        E::EffectRemoved {
+            entity: ViewEntity::Entity(id),
+            index,
+        } => Some((id, MemberEffectsEvent::Removed { index })),
+        E::EffectsCleared {
+            entity: ViewEntity::Entity(id),
+        } => Some((id, MemberEffectsEvent::Cleared)),
+        _ => None,
     }
 }
 
@@ -499,14 +715,30 @@ fn member_key(episode: u64, name: &str) -> String {
     format!("{episode}/{name}")
 }
 
+/// The host's follow record of (`episode`, `name`) (see [`PartyModel::link`]); a record of
+/// its own, following `fallback`, once the manager is gone.
+fn link_of(ctx: &ApartmentCtx, episode: u64, name: &str, fallback: Option<u64>) -> Arc<MemberLink> {
+    match ctx.shared() {
+        Ok(shared) => lock(&shared.party).link(episode, name, fallback),
+        Err(_) => Arc::new(MemberLink {
+            episode,
+            name: name.to_owned(),
+            followed: Mutex::new(fallback),
+            lists: AtomicUsize::new(0),
+        }),
+    }
+}
+
 /// The apartment's `PartyMember` object for `name` in `episode` (one per name per
-/// episode), created on first use with last values `initial`.
+/// episode), created on first use with last values `initial`; a new object follows the
+/// entity of the name's entry, or `fallback` when the name is no longer listed.
 fn member_object(
     lua: &Lua,
     ctx: &ApartmentCtx,
     episode: u64,
     name: &str,
     initial: MemberActorInfo,
+    fallback: Option<u64>,
 ) -> mlua::Result<Table> {
     let members: Table = lua.named_registry_value(MEMBERS_KEY)?;
     let key = member_key(episode, name);
@@ -526,11 +758,7 @@ fn member_object(
                 episode,
                 name: name.to_owned(),
                 last: Mutex::new(initial),
-                link: Arc::new(MemberLink {
-                    episode,
-                    name: name.to_owned(),
-                    entity: Mutex::new(None),
-                }),
+                link: link_of(ctx, episode, name, fallback),
             })),
         )?
     };
@@ -644,6 +872,7 @@ fn member_value(
         episode,
         &member.name,
         initial,
+        None,
     )?))
 }
 
@@ -857,16 +1086,61 @@ fn first(args: &MultiValue) -> Value {
     args.iter().next().cloned().unwrap_or(Value::Nil)
 }
 
-/// Deliver one queued party event to the apartment `ap`: to its `Party` object of the
-/// event's episode (nothing when it has none).
-pub(crate) fn deliver(ap: &Apartment, ev: &PartyViewEvent) {
-    if let Err(e) = deliver_inner(ap, ev) {
+/// Deliver one queued party event (sequence number `seq`) to the apartment `ap`: to its
+/// `Party` object of the event's episode (nothing when it has none), or, for
+/// [`PartyViewEvent::MemberEffects`], to the named members' `EffectList` objects that
+/// existed when it was raised.
+pub(crate) fn deliver(ap: &Apartment, ev: &PartyViewEvent, seq: u64) {
+    if let Err(e) = deliver_inner(ap, ev, seq) {
         ap.report(None, "delivering a party event", &e);
     }
 }
 
-fn deliver_inner(ap: &Apartment, ev: &PartyViewEvent) -> mlua::Result<()> {
+/// Fire the events of `event` on the member list `list`.
+fn fire_member_effects(
+    ap: &Apartment,
+    list: &Table,
+    event: MemberEffectsEvent,
+) -> mlua::Result<()> {
     let lua = ap.lua();
+    let indexed = |name: &str, index: u32| -> mlua::Result<()> {
+        let args = lua.create_table()?;
+        args.raw_set("Index", f64::from(index))?;
+        ap.fire_event(list, name, args, None);
+        Ok(())
+    };
+    match event {
+        MemberEffectsEvent::Added { index } => indexed("EffectAdded", index)?,
+        MemberEffectsEvent::Removed { index } => indexed("EffectRemoved", index)?,
+        MemberEffectsEvent::Cleared => {
+            ap.fire_event(list, "EffectsCleared", lua.create_table()?, None);
+        }
+        MemberEffectsEvent::Refollowed { cleared, added } => {
+            if cleared {
+                ap.fire_event(list, "EffectsCleared", lua.create_table()?, None);
+            }
+            for index in 1..=added.min(MAX_REFOLLOW_EFFECTS) {
+                indexed("EffectAdded", index)?;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn deliver_inner(ap: &Apartment, ev: &PartyViewEvent, seq: u64) -> mlua::Result<()> {
+    let lua = ap.lua();
+    if let PartyViewEvent::MemberEffects { members, event } = ev {
+        // Further rules 7–8: the members' own lists, whether or not the member is still
+        // listed or its episode current.
+        for (episode, name) in members {
+            if let Some(list) =
+                crate::combat::existing_member_list(lua, &member_key(*episode, name), seq)?
+            {
+                fire_member_effects(ap, &list, *event)?;
+            }
+        }
+        return Ok(());
+    }
     let (episode, name, member) = match ev {
         PartyViewEvent::MemberAdded {
             episode,
@@ -879,6 +1153,7 @@ fn deliver_inner(ap: &Apartment, ev: &PartyViewEvent) -> mlua::Result<()> {
             entity,
         } => (*episode, "MemberRemoved", Some((name, *entity))),
         PartyViewEvent::LeaderChanged { episode } => (*episode, "LeaderChanged", None),
+        PartyViewEvent::MemberEffects { .. } => return Ok(()),
     };
     // Rule 2: the `Party` of an episode that ended before delivery gets no events.
     if !is_current(&ap.ctx, episode) {
@@ -896,6 +1171,7 @@ fn deliver_inner(ap: &Apartment, ev: &PartyViewEvent) -> mlua::Result<()> {
             episode,
             member_name,
             values.unwrap_or_default(),
+            entity,
         )?;
         // The values at delivery become the object's last values seen; a source without
         // values for the entity leaves the last values the plugin saw.

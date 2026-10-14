@@ -3945,6 +3945,19 @@ it):
    episode (the same object, table above), rule 7 applies again from that `FellowshipChanged`.
    This is what was built on `main`.
 
+> **OPEN:** (implementer note, `crates/plugins/src/party.rs`, 2026-10-14) Choices rules 7–8
+> leave open, as implemented in `tessera-plugins`: (1) the host keeps one follow record per
+> (episode, name) shared by that member's objects in every apartment, so all apartments'
+> objects of a member follow the same entity; a record no object holds is dropped, and an
+> object created later for a name no longer listed follows the entity its `MemberRemoved`
+> carried; (2) the `EffectsCleared` and `EffectAdded { 1 … n }` of one change of followed
+> entity are one queue item (as the skill reset of the §15.2 implementer note, item (1)),
+> with *n* and "not empty" read from the combat source at the `FellowshipChanged`, and *n*
+> cut at 1,024 (the per-entity effect bound of item (8)); (3) a member's list events are
+> queued only while some apartment holds that member's `EffectList` (the queueing bound of
+> item (8)); (4) a plugin that keeps a member's list after the member object was collected
+> keeps receiving its events, and the member's next object returns that same list.
+
 Worked example (`social-panels.md` §12.1, player Tam, actors Brin and Cael): the first list
 gives `PartyChanged`, `GetMemberCount() == 2`, `GetMember(1) == LocalPlayer.GetInstance()`,
 `GetMember(2):GetName() == "Brin"`, `GetLeader() == LocalPlayer.GetInstance()`; adding Cael

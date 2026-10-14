@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! The `Turbine.Gameplay` party views (`Party`, `PartyMember`, `Player:GetParty()`)
-//! against `lua-plugin-api.md` §15.4 and its conformance checks 90–96, with synthetic
-//! plugin trees and synthetic member lists.
+//! against `lua-plugin-api.md` §15.4 and its conformance checks 90–99 (check 99 and the
+//! tests after it: further rules 7–8, a member's own `EffectList`), with synthetic plugin
+//! trees and synthetic member lists.
 //!
 //! The tests play the client's part: each `fellowship` step of the checks becomes one
 //! `PluginManager::set_fellowship` call with the member list `FellowshipChanged` would
@@ -1016,5 +1017,484 @@ fn member_churn_is_pruned_and_held_objects_keep_identity() {
         return tostring(b == T.Keep) .. ' ' .. tostring(b.Mark)",
     );
     assert_eq!(s, "true 1");
+    fx.assert_no_errors();
+}
+
+// ---------------------------------------------------------------------------------------
+// Further rules 7–8 (2026-10-14): the entity a member follows and its own `EffectList`
+// ---------------------------------------------------------------------------------------
+
+const DORN: u64 = 4;
+
+/// The client's combat state ([`CombatModel`]) attached as the combat source; its events
+/// raised as the client raises them.
+struct Combat(Arc<Mutex<CombatModel>>);
+
+impl Combat {
+    fn attach(m: &mut PluginManager) -> Self {
+        let model = Arc::new(Mutex::new(CombatModel::new()));
+        let src: Arc<dyn CombatSource> = model.clone();
+        m.set_combat_source(Some(src));
+        let c = Self(model);
+        c.run(m, |c| {
+            let ev = c.world_entered(TAM, "Tam", Some(20));
+            for id in [BRIN, CAEL, DORN] {
+                c.entity_spawned(id, ActorKind::Player, name_of_all(id));
+            }
+            ev
+        });
+        c
+    }
+
+    fn run(
+        &self,
+        m: &mut PluginManager,
+        f: impl FnOnce(&mut CombatModel) -> Vec<tessera_plugins::CombatViewEvent>,
+    ) {
+        let ev = f(&mut self.0.lock().unwrap());
+        m.raise_combat_events(ev);
+    }
+
+    /// `effect <entity> "<name>"` with effect instance `id`.
+    fn effect(&self, m: &mut PluginManager, entity: u64, id: u32, name: &str) {
+        self.run(m, |c| {
+            c.effect_applied(
+                entity,
+                EffectData {
+                    id,
+                    name: name.into(),
+                    ..EffectData::default()
+                },
+            )
+        });
+    }
+}
+
+fn name_of_all(entity: u64) -> &'static str {
+    match entity {
+        DORN => "Dorn",
+        e => name_of(e),
+    }
+}
+
+/// A member entry by name with an optional entity.
+fn entry(name: &str, entity: Option<u64>, leader: bool) -> FellowshipMember {
+    FellowshipMember {
+        name: name.into(),
+        entity,
+        leader,
+    }
+}
+
+/// `T.Hook(list, tag)` logs the list's `EffectAdded`, `EffectRemoved` and
+/// `EffectsCleared` (whether its argument table is empty) under `tag`.
+const LIST_LOGGER: &str = r#"
+function T.Hook(list, tag)
+    list.EffectAdded = function(s, a)
+        T.Log[#T.Log + 1] = tag .. ' added ' .. a.Index .. ' ' .. s:GetCount()
+    end
+    list.EffectRemoved = function(s, a)
+        T.Log[#T.Log + 1] = tag .. ' removed ' .. a.Index .. ' ' .. s:GetCount()
+    end
+    list.EffectsCleared = function(s, a)
+        T.Log[#T.Log + 1] = tag .. ' cleared ' .. tostring(next(a) == nil) .. ' ' .. s:GetCount()
+    end
+end
+"#;
+
+fn setup_combat() -> (Fx, PluginManager, Combat) {
+    let fx = Fx::new();
+    fx.plugin("Party", None, &format!("{LOGGER}\n{LIST_LOGGER}"));
+    let mut m = fx.manager();
+    let combat = Combat::attach(&mut m);
+    m.load_plugin("Party").unwrap();
+    m.pump();
+    (fx, m, combat)
+}
+
+/// One `fellowship` step: the list handed over, then step 7.
+fn set(m: &mut PluginManager, members: &[FellowshipMember]) {
+    set_counted(m, members);
+}
+
+/// [`set`], returning the number of plugin events the step queued.
+fn set_counted(m: &mut PluginManager, members: &[FellowshipMember]) -> usize {
+    let u = m.set_fellowship(members, &tam());
+    m.pump();
+    u.events
+}
+
+#[test]
+fn check_99_a_members_effect_list() {
+    let (fx, mut m, combat) = setup_combat();
+    // `effect $c "Guard"`, then `fellowship "Tam" $a "Cael" leader="Tam"`.
+    combat.effect(&mut m, CAEL, 1, "Guard");
+    set(
+        &mut m,
+        &[
+            entry("Tam", Some(TAM), true),
+            entry("Brin", Some(BRIN), false),
+            entry("Cael", None, false),
+        ],
+    );
+    let s: String = eval(
+        &m,
+        "Default",
+        "local p = T.P:GetParty()
+        T.b, T.c = p:GetMember(2), p:GetMember(3)
+        T.lb, T.lc = T.b:GetEffects(), T.c:GetEffects()
+        T.Hook(T.lb, 'lb') T.Hook(T.lc, 'lc')
+        return table.concat({ tostring(T.b:GetEffects() == T.lb), tostring(T.c:GetTarget()),
+            T.lc:GetCount() }, ' ')",
+    );
+    assert_eq!(s, "true nil 0");
+    take_log(&m, "Default");
+
+    // `effect $a "Ward"`: one `EffectAdded` with `Index == 1` on `lb`.
+    combat.effect(&mut m, BRIN, 2, "Ward");
+    m.pump();
+    assert_eq!(take_log(&m, "Default"), ["lb added 1 1"]);
+
+    // `target player $a`: the same `Effect` objects, a different list.
+    combat.run(&mut m, |c| c.target_changed(TAM, Some(BRIN)));
+    m.pump();
+    let s: String = eval(
+        &m,
+        "Default",
+        "local t = Turbine.Gameplay.LocalPlayer.GetInstance():GetTarget()
+        return tostring(T.lb:Get(1) == t:GetEffects():Get(1)) .. ' '
+            .. tostring(T.lb ~= t:GetEffects())",
+    );
+    assert_eq!(s, "true true");
+
+    // `fellowship "Tam" $a $c leader="Tam"`: no member event; on `lc` one `EffectAdded`
+    // with `Index == 1` and no `EffectsCleared`; nothing on `lb`.
+    set(&mut m, &list(&[TAM, BRIN, CAEL], Some(TAM)));
+    assert_eq!(take_log(&m, "Default"), ["lc added 1 1"]);
+    assert_eq!(
+        eval::<String>(&m, "Default", "return T.lc:Get(1):GetName()"),
+        "Guard"
+    );
+
+    // `fellowship "Tam" $c leader="Tam"` (Brin leaves), then `effect $a "Shield"`.
+    set(&mut m, &list(&[TAM, CAEL], Some(TAM)));
+    assert_eq!(take_log(&m, "Default"), ["removed Brin 2"]);
+    combat.effect(&mut m, BRIN, 3, "Shield");
+    m.pump();
+    assert_eq!(take_log(&m, "Default"), ["lb added 2 2"]);
+    assert_eq!(eval::<u32>(&m, "Default", "return T.lb:GetCount()"), 2);
+
+    // `despawn $a`: one `EffectsCleared` on `lb`, after which it is empty.
+    combat.run(&mut m, |c| c.entity_despawned(BRIN));
+    m.pump();
+    assert_eq!(take_log(&m, "Default"), ["lb cleared true 0"]);
+    assert_eq!(eval::<u32>(&m, "Default", "return T.lb:GetCount()"), 0);
+    fx.assert_no_errors();
+}
+
+/// Rule 7: the followed entity changes when the entry names another entity (cleared,
+/// then one `EffectAdded` per effect of the new one, after the member events) or loses
+/// it (cleared only); the old entity's events stop reaching the list.
+#[test]
+fn rule_7_refollow_on_another_entity_and_on_none() {
+    let (fx, mut m, combat) = setup_combat();
+    combat.effect(&mut m, BRIN, 1, "Ward");
+    combat.effect(&mut m, DORN, 2, "Haste");
+    combat.effect(&mut m, DORN, 3, "Guard");
+    set(&mut m, &list(&[TAM, BRIN], Some(TAM)));
+    eval::<()>(
+        &m,
+        "Default",
+        "T.b = T.P:GetParty():GetMember(2) T.lb = T.b:GetEffects() T.Hook(T.lb, 'lb')",
+    );
+    take_log(&m, "Default");
+
+    // Brin's entry now names entity 4, and the leader changes in the same list: the
+    // leader event first, then the list's events.
+    set(
+        &mut m,
+        &[
+            entry("Tam", Some(TAM), false),
+            entry("Brin", Some(DORN), true),
+        ],
+    );
+    assert_eq!(
+        take_log(&m, "Default"),
+        [
+            "leader true Brin",
+            "lb cleared true 2",
+            "lb added 1 2",
+            "lb added 2 2"
+        ]
+    );
+    let s: String = eval(
+        &m,
+        "Default",
+        "return table.concat({ T.lb:GetCount(), T.lb:Get(1):GetName(), T.lb:Get(2):GetName(),
+            tostring(T.b:GetEffects() == T.lb) }, ' ')",
+    );
+    assert_eq!(s, "2 Haste Guard true");
+    // The old entity's changes no longer reach the list; the new one's do.
+    combat.effect(&mut m, BRIN, 4, "Shield");
+    combat.run(&mut m, |c| c.effect_removed(DORN, 2));
+    m.pump();
+    assert_eq!(take_log(&m, "Default"), ["lb removed 1 1"]);
+
+    // The entry loses its entity: `EffectsCleared` only, then nil and an empty list.
+    set(
+        &mut m,
+        &[entry("Tam", Some(TAM), false), entry("Brin", None, true)],
+    );
+    assert_eq!(take_log(&m, "Default"), ["lb cleared true 0"]);
+    let s: String = eval(
+        &m,
+        "Default",
+        "return tostring(T.b:GetTarget()) .. ' ' .. T.lb:GetCount()",
+    );
+    assert_eq!(s, "nil 0");
+    combat.effect(&mut m, DORN, 5, "Ward");
+    m.pump();
+    assert!(take_log(&m, "Default").is_empty());
+
+    // Gaining an entity without effects: the list was empty and stays so, no event.
+    combat.run(&mut m, |c| c.entity_despawned(CAEL));
+    m.pump();
+    set(
+        &mut m,
+        &[
+            entry("Tam", Some(TAM), false),
+            entry("Brin", Some(CAEL), true),
+        ],
+    );
+    assert!(take_log(&m, "Default").is_empty());
+    fx.assert_no_errors();
+}
+
+/// Rule 7: `GetTarget()` follows the followed entity's target.
+#[test]
+fn rule_7_target_of_the_followed_entity() {
+    let (fx, mut m, combat) = setup_combat();
+    combat.run(&mut m, |c| {
+        let mut ev = c.target_changed(BRIN, Some(CAEL));
+        ev.extend(c.target_changed(DORN, Some(TAM)));
+        ev
+    });
+    set(&mut m, &list(&[TAM, BRIN], Some(TAM)));
+    eval::<()>(&m, "Default", "T.b = T.P:GetParty():GetMember(2)");
+    assert_eq!(
+        eval::<String>(&m, "Default", "return T.b:GetTarget():GetName()"),
+        "Cael"
+    );
+    set(
+        &mut m,
+        &[
+            entry("Tam", Some(TAM), true),
+            entry("Brin", Some(DORN), false),
+        ],
+    );
+    assert!(eval::<bool>(
+        &m,
+        "Default",
+        "return T.b:GetTarget() == Turbine.Gameplay.LocalPlayer.GetInstance()"
+    ));
+    fx.assert_no_errors();
+}
+
+/// Rule 8: a member who left keeps following its last entity, also after the episode
+/// ends; one that followed none keeps nil and the empty list; a name that returns in the
+/// same episode follows its new entry from that list on.
+#[test]
+fn rule_8_a_member_who_left() {
+    let (fx, mut m, combat) = setup_combat();
+    combat.effect(&mut m, DORN, 1, "Haste");
+    set(
+        &mut m,
+        &[
+            entry("Tam", Some(TAM), true),
+            entry("Brin", Some(BRIN), false),
+            entry("Cael", None, false),
+        ],
+    );
+    eval::<()>(
+        &m,
+        "Default",
+        "local p = T.P:GetParty()
+        T.b, T.c = p:GetMember(2), p:GetMember(3)
+        T.lb, T.lc = T.b:GetEffects(), T.c:GetEffects()
+        T.Hook(T.lb, 'lb') T.Hook(T.lc, 'lc')",
+    );
+    take_log(&m, "Default");
+
+    // Both leave; Brin keeps following entity 2, Cael none.
+    set(&mut m, &list(&[TAM], Some(TAM)));
+    assert_eq!(
+        take_log(&m, "Default"),
+        ["removed Brin 1", "removed Cael 1"]
+    );
+    combat.effect(&mut m, BRIN, 2, "Ward");
+    combat.effect(&mut m, CAEL, 3, "Guard");
+    m.pump();
+    assert_eq!(take_log(&m, "Default"), ["lb added 1 1"]);
+    assert_eq!(
+        eval::<String>(
+            &m,
+            "Default",
+            "return tostring(T.c:GetTarget()) .. ' ' .. T.lc:GetCount()"
+        ),
+        "nil 0"
+    );
+
+    // Brin returns in the same episode with entity 4: rule 7 applies again.
+    set(
+        &mut m,
+        &[
+            entry("Tam", Some(TAM), true),
+            entry("Brin", Some(DORN), false),
+        ],
+    );
+    assert_eq!(
+        take_log(&m, "Default"),
+        ["added Brin true 2", "lb cleared true 1", "lb added 1 1"]
+    );
+    assert_eq!(
+        eval::<String>(&m, "Default", "return T.lb:Get(1):GetName()"),
+        "Haste"
+    );
+
+    // The episode ends: Brin keeps following entity 4.
+    set(&mut m, &[]);
+    assert_eq!(take_log(&m, "Default"), ["party true false"]);
+    combat.run(&mut m, |c| c.effect_removed(DORN, 1));
+    m.pump();
+    assert_eq!(take_log(&m, "Default"), ["lb removed 1 0"]);
+
+    // A new episode with Brin on entity 2: a new object; the old one keeps entity 4.
+    set(&mut m, &list(&[TAM, BRIN], Some(TAM)));
+    let s: String = eval(
+        &m,
+        "Default",
+        "local b = T.P:GetParty():GetMember(2)
+        return table.concat({ tostring(b ~= T.b), b:GetEffects():GetCount(),
+            tostring(b:GetEffects() ~= T.lb), T.lb:GetCount() }, ' ')",
+    );
+    assert_eq!(s, "true 1 true 0");
+    take_log(&m, "Default");
+    combat.effect(&mut m, DORN, 4, "Guard");
+    m.pump();
+    assert_eq!(take_log(&m, "Default"), ["lb added 1 1"]);
+    fx.assert_no_errors();
+}
+
+/// Lists receive only events raised after they were created (§15.2 queueing), and a
+/// change of followed entity is queued only for members that have a list.
+#[test]
+fn rule_7_events_only_for_lists_that_exist() {
+    let (fx, mut m, combat) = setup_combat();
+    combat.effect(&mut m, DORN, 1, "Haste");
+    set(&mut m, &list(&[TAM, BRIN], Some(TAM)));
+    eval::<()>(&m, "Default", "T.b = T.P:GetParty():GetMember(2)");
+    take_log(&m, "Default");
+    // No list yet: the change of followed entity queues nothing.
+    let events = set_counted(
+        &mut m,
+        &[
+            entry("Tam", Some(TAM), true),
+            entry("Brin", Some(DORN), false),
+        ],
+    );
+    assert_eq!(events, 0);
+    // A list created after an effect change but before step 7 does not receive it.
+    combat.effect(&mut m, DORN, 2, "Ward");
+    eval::<()>(&m, "Default", "T.lb = T.b:GetEffects() T.Hook(T.lb, 'lb')");
+    m.pump();
+    assert!(take_log(&m, "Default").is_empty());
+    assert_eq!(eval::<u32>(&m, "Default", "return T.lb:GetCount()"), 2);
+    // With the list: the change of followed entity is one queued item.
+    let events = set_counted(
+        &mut m,
+        &[
+            entry("Tam", Some(TAM), true),
+            entry("Brin", Some(BRIN), false),
+        ],
+    );
+    assert_eq!(events, 1);
+    assert_eq!(take_log(&m, "Default"), ["lb cleared true 0"]);
+    fx.assert_no_errors();
+}
+
+/// Every apartment's member list receives the events; objects differ per apartment but
+/// follow the same entity.
+#[test]
+fn rule_7_every_apartment() {
+    let fx = Fx::new();
+    let src = format!("{LOGGER}\n{LIST_LOGGER}");
+    fx.plugin("A", Some("One"), &src);
+    fx.plugin("B", Some("Two"), &src);
+    let mut m = fx.manager();
+    let combat = Combat::attach(&mut m);
+    m.load_plugin("A").unwrap();
+    m.load_plugin("B").unwrap();
+    set(&mut m, &list(&[TAM, BRIN], Some(TAM)));
+    for ap in ["One", "Two"] {
+        eval::<()>(
+            &m,
+            ap,
+            "T.lb = T.P:GetParty():GetMember(2):GetEffects() T.Hook(T.lb, 'lb')",
+        );
+        take_log(&m, ap);
+    }
+    // Only "One" has Cael's list.
+    set(&mut m, &list(&[TAM, BRIN, CAEL], Some(TAM)));
+    eval::<()>(
+        &m,
+        "One",
+        "T.lc = T.P:GetParty():GetMember(3):GetEffects() T.Hook(T.lc, 'lc')",
+    );
+    for ap in ["One", "Two"] {
+        take_log(&m, ap);
+    }
+    combat.effect(&mut m, BRIN, 1, "Ward");
+    combat.effect(&mut m, CAEL, 2, "Guard");
+    m.pump();
+    assert_eq!(take_log(&m, "One"), ["lb added 1 1", "lc added 1 1"]);
+    assert_eq!(take_log(&m, "Two"), ["lb added 1 1"]);
+    // An apartment that creates Cael's list now sees its content, without past events.
+    assert_eq!(
+        eval::<u32>(
+            &m,
+            "Two",
+            "return T.P:GetParty():GetMember(3):GetEffects():GetCount()"
+        ),
+        1
+    );
+    fx.assert_no_errors();
+}
+
+/// A member list survives the collector while its member object is held, and keeps its
+/// identity and events when a plugin holds only the list.
+#[test]
+fn rule_7_list_identity_across_collection() {
+    let (fx, mut m, combat) = setup_combat();
+    set(&mut m, &list(&[TAM, BRIN], Some(TAM)));
+    eval::<()>(
+        &m,
+        "Default",
+        "T.lb = T.P:GetParty():GetMember(2):GetEffects() T.Hook(T.lb, 'lb')
+        collectgarbage('collect')",
+    );
+    take_log(&m, "Default");
+    set(&mut m, &list(&[TAM], Some(TAM)));
+    take_log(&m, "Default");
+    eval::<()>(&m, "Default", "collectgarbage('collect')");
+    combat.effect(&mut m, BRIN, 1, "Ward");
+    m.pump();
+    assert_eq!(take_log(&m, "Default"), ["lb added 1 1"]);
+    // Brin returns: the same list for the member object.
+    set(&mut m, &list(&[TAM, BRIN], Some(TAM)));
+    assert!(eval::<bool>(
+        &m,
+        "Default",
+        "return T.P:GetParty():GetMember(2):GetEffects() == T.lb"
+    ));
     fx.assert_no_errors();
 }

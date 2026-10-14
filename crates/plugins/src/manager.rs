@@ -416,7 +416,10 @@ impl PluginManager {
     /// §9 TR2). The host keeps the list, derives `LocalPlayer.PartyChanged`,
     /// `Party.MemberRemoved`, `MemberAdded` and `LeaderChanged` from the previous list
     /// (members compared by name) and queues them for step 7; getters read the new list
-    /// at once. At most [`crate::party::MAX_PARTY_MEMBERS`] entries are read.
+    /// at once. At most [`crate::party::MAX_PARTY_MEMBERS`] entries are read. A member
+    /// whose followed entity changes gets, on its own `EffectList`, `EffectsCleared` and
+    /// `EffectAdded` after those events (§15.4 further rule 7; the counts are read from
+    /// the combat source, so do not call this while holding a lock the source takes).
     ///
     /// The returned [`PartyUpdate`] says whether the player was appended (the client warns
     /// once per run, TR2), whether the list was truncated, and how many events were queued
@@ -426,7 +429,36 @@ impl PluginManager {
         members: &[FellowshipMember],
         player: &PartyPlayer,
     ) -> PartyUpdate {
-        let (events, mut update) = lock(&self.shared.party).apply(members, player);
+        let (events, mut update, refollows) = {
+            let mut model = lock(&self.shared.party);
+            let (events, update) = model.apply(members, player);
+            (events, update, model.take_refollows())
+        };
+        // §15.4 further rule 7: a member whose followed entity changed gets, on its own
+        // `EffectList`, `EffectsCleared` (when the list was not empty) and one
+        // `EffectAdded` per effect of the new entity, after the member events.
+        let refollowed: Vec<GameplayEvent> = if refollows.is_empty() {
+            Vec::new()
+        } else {
+            let combat = lock(&self.shared.combat).clone();
+            let count = |e: Option<u64>| match (e, combat.as_ref()) {
+                (Some(e), Some(src)) => src.effect_count(e),
+                _ => 0,
+            };
+            refollows
+                .into_iter()
+                .filter_map(|r| {
+                    let cleared = count(r.old) > 0;
+                    let added = count(r.new);
+                    (cleared || added > 0).then(|| {
+                        GameplayEvent::Party(crate::party::PartyViewEvent::MemberEffects {
+                            members: vec![r.link.member()],
+                            event: crate::party::MemberEffectsEvent::Refollowed { cleared, added },
+                        })
+                    })
+                })
+                .collect()
+        };
         if update.truncated {
             tracing::debug!(
                 entries = members.len(),
@@ -438,7 +470,7 @@ impl PluginManager {
             tracing::debug!("fellowship list without the player; the player was appended");
         }
         let mut st = lock(&self.shared.state);
-        for ev in events {
+        for ev in events.into_iter().chain(refollowed) {
             if self.shared.raise_gameplay(&mut st, ev) {
                 update.events += 1;
             } else {

@@ -21,14 +21,19 @@ mod travel_real_common;
 mod ui_common;
 
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use tessera_client::travel::hub::holds_travel_array;
 use tessera_client::travel::{P5Change, TravelContext, TravelUi};
 use tessera_net::EntityId;
 use tessera_net::domain::Ref;
+use tessera_ui::game::finder::FinderWindow;
 use tessera_ui::game::mapfallback::P5Art;
 use travel_common::{game_dir, play};
 use travel_real_common::{Pictures, install};
+
+/// Longest wait for the fonts of the finder's join label.
+const FONT_WAIT: Duration = Duration::from_secs(60);
 
 #[test]
 fn finder_scenario_renders_with_install_text() {
@@ -60,6 +65,20 @@ fn finder_scenario_renders_with_install_text() {
             let mut ui = i.rig.host.ui_mut();
             tui.frame(&mut ui, p.p5, Some(&npc), &ctx, &[])
         };
+        // The finder fits its join label again once the label's fonts have arrived
+        // (`travel-windows.md` §6.4 OPEN); the client runs its frame every frame, so frames
+        // run here until no fit waits.
+        let start = Instant::now();
+        while tui.finder().is_some_and(FinderWindow::fit_pending) {
+            assert!(
+                start.elapsed() < FONT_WAIT,
+                "the join label's fonts did not arrive"
+            );
+            std::thread::sleep(Duration::from_millis(2));
+            i.rig.frame();
+            let mut ui = i.rig.host.ui_mut();
+            let _ = tui.frame(&mut ui, p.p5, Some(&npc), &ctx, &[]);
+        }
         if p.changes.contains(&P5Change::InstancesShown)
             && let Some(feed) = p.p5.instances()
         {
@@ -84,6 +103,16 @@ fn finder_scenario_renders_with_install_text() {
                         f.model.tree.rows.len()
                     );
                     install_entries += records;
+                }
+                // §6.4 OPEN (Tessera rule): the join label is fitted to its wrapped text
+                // inside its button.
+                if let (Some(j), Some(l)) = (f.parts.join, f.parts.join_label) {
+                    let ui = i.rig.host.ui();
+                    let (jb, lb) = (ui.layout_box(j).unwrap(), ui.layout_box(l).unwrap());
+                    assert!(
+                        lb.t >= 0 && lb.t + lb.h() <= jb.h() && lb.h() > 0,
+                        "join label inside its button: {lb:?} in {jb:?}"
+                    );
                 }
                 let root = f.root;
                 let what = format!("finder-{}", feed.window.0);

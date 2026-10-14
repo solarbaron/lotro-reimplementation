@@ -19,6 +19,7 @@ use tessera_formats::ui_layout::{DrawMode, ElementDesc, MediaItem, StateBlock};
 
 use crate::env::ImageRef;
 use crate::events::UiEvent;
+use crate::geom::IBox;
 use crate::tree::{Element, ElementKey};
 use crate::ui::{MAX_ELEMENTS, MAX_TREE_DEPTH, Ui};
 use crate::widgets::WidgetClass;
@@ -860,6 +861,55 @@ pub(crate) fn fit_text_row(
             ui.resize(text, b.w(), h);
         }
     }
+}
+
+/// Fits label `k`, a text element inside a control of fixed size (its parent), to its
+/// wrapped text vertically, from `laid_out`, the label's box (relative to the parent) as the
+/// layout placed it. The label keeps that box's left edge and width; when its text, wrapped
+/// at that width, is taller than the box, its height becomes the text's height (margins
+/// included), at most the parent's height, centred on the box's vertical centre and kept
+/// inside the parent; when the text fits (or is empty) it gets `laid_out` back. Returns
+/// `false` while the text cannot be measured yet (fonts loading): the label then keeps its
+/// current box and the caller fits it again later.
+///
+/// Tessera rule (`travel-windows.md` §6.4 OPEN): the instance finder's join label.
+pub(crate) fn fit_label_height(ui: &mut Ui, k: ElementKey, laid_out: IBox) -> bool {
+    if !ui.exists(k) {
+        return true;
+    }
+    let text = ui.text_of(k);
+    let (w, h0) = (laid_out.w().max(1), laid_out.h().max(0));
+    let need = if text.is_empty() {
+        0
+    } else {
+        match shaped_extent(ui, k, &text, w) {
+            Some((_, h)) => h,
+            None => return false,
+        }
+    };
+    let parent_h = ui
+        .parent(k)
+        .and_then(|p| ui.layout_box(p))
+        .map_or(h0, |b| b.h().max(0));
+    let (top, h) = if need > h0 {
+        let h = need.min(parent_h.max(h0));
+        // Centred on the laid-out box's vertical centre, then kept inside the parent.
+        let centre = i64::from(laid_out.t) * 2 + i64::from(h0);
+        let top = (centre - i64::from(h)).div_euclid(2);
+        let top = top.clamp(0, i64::from(parent_h.saturating_sub(h).max(0)));
+        (i32::try_from(top).unwrap_or(laid_out.t), h)
+    } else {
+        (laid_out.t, h0)
+    };
+    if let Some(b) = ui.layout_box(k)
+        && (b.l, b.t, b.w(), b.h()) != (laid_out.l, top, w, h)
+    {
+        if (b.w(), b.h()) != (w, h) {
+            ui.resize(k, w, h);
+        }
+        ui.move_to(k, laid_out.l, top);
+    }
+    true
 }
 
 /// Keeps root panel `root` on the screen (Tessera rule, `npc-windows.md` §4 OPEN): its

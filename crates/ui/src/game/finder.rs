@@ -21,7 +21,7 @@ use super::examine::ExamTemplate;
 use super::mapfallback::P5Art;
 use super::npc::kit::{
     ClickKind, FNode, Listen, TreeRow, clear_rows, colour_value, colours, commit_tree_rows, cut,
-    find, ghost, make_row, mark_row, put_text, row_of, text_part,
+    find, fit_label_height, ghost, make_row, mark_row, put_text, row_of, text_part,
 };
 use super::npc::{NpcTexts, WindowId};
 use super::npcvocab::NpcVocab;
@@ -607,6 +607,11 @@ pub struct FinderWindow {
     nv: NpcVocab,
     pv: P5Vocab,
     listen: Listen,
+    /// The join label's box as the layout placed it (relative to the join button), when the
+    /// label is an element of its own (§6.4 OPEN, Tessera rule).
+    join_label_box: Option<crate::geom::IBox>,
+    /// The join label was fitted while its text could not be measured (fonts loading).
+    join_label_pending: bool,
 }
 
 impl FinderWindow {
@@ -697,6 +702,11 @@ impl FinderWindow {
             nv: nv.clone(),
             pv: pv.clone(),
             listen: Listen::default(),
+            join_label_box: parts
+                .join_label
+                .filter(|l| parts.join.is_some_and(|j| ui.parent(*l) == Some(j)))
+                .and_then(|l| ui.layout_box(l)),
+            join_label_pending: false,
         };
         for k in [
             parts.close,
@@ -916,6 +926,7 @@ impl FinderWindow {
             .join_label
             .or_else(|| p.join.and_then(|j| text_part(ui, j, None)));
         put_text(ui, el, &finder_label(texts, label));
+        self.fit_join_label(ui);
         if let Some(f) = p.featured {
             let text = self
                 .model
@@ -1044,8 +1055,28 @@ impl FinderWindow {
         self.tick(ui, now, texts);
     }
 
-    /// Updates the queue timers at client time `now`.
+    /// Whether a text fit waits for fonts that are still loading (the join label, §6.4
+    /// OPEN); [`Self::tick`] makes it once they have arrived.
+    #[must_use]
+    pub fn fit_pending(&self) -> bool {
+        self.join_label_pending
+    }
+
+    /// Fits the join label to its text (§6.4 OPEN, Tessera rule: the label grows to its
+    /// wrapped text, at most to the button's height); fitted again by [`Self::tick`] when
+    /// its fonts were still loading.
+    fn fit_join_label(&mut self, ui: &mut Ui) {
+        if let (Some(k), Some(b)) = (self.parts.join_label, self.join_label_box) {
+            self.join_label_pending = !fit_label_height(ui, k, b);
+        }
+    }
+
+    /// Updates the queue timers at client time `now`, and fits the join label again once
+    /// fonts that were loading when its text was set have arrived.
     pub fn tick(&mut self, ui: &mut Ui, now: f64, texts: &dyn FinderTexts) {
+        if self.join_label_pending {
+            self.fit_join_label(ui);
+        }
         let q = self.queue;
         let p = self.parts;
         #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]

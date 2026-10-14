@@ -4,8 +4,8 @@
 
 | | |
 |---|---|
-| **Status** | Accepted (2026-10-06: accepted after revision for decisions 0014/0015) |
-| **Last updated** | 2026-10-06 |
+| **Status** | **Revised** (2026-10-14: §6.4 implementer OPEN answered, new provenance row W29, §6.10 census row, §17 item 18; awaiting independent review; no behaviour already implemented changes). Before: Accepted (2026-10-06: accepted after revision for decisions 0014/0015) |
+| **Last updated** | 2026-10-14 |
 | **Author role** | Spec writer (dirty room), AI-assisted |
 | **Reviewer** | Claude review session (spec-writer agent) |
 | **Review record** | Review of the decision-0014/0015 revision, 2026-10-06: **passed**, Accepted. Full record moved to the review log (decision 0018). |
@@ -96,6 +96,7 @@ by BIN or data with one step not traced; **OPEN** = unknown, with a callout in t
 | W26 | Scope of the early stops of the state-request translation: a stop applies only when that step changed `highlighted` (§7.3, WI12) | BIN (state-request routine, re-traced branch by branch) | BIN |
 | W27 | Tree placement adds `indent_amount` in both branches; a top-level node's width reserves an indent that placement does not apply (§9.3). ListBox placement under `ignore_cell_alignment`: only the horizontal fill uses the entry's own size (§8.3). Descendant lookup order (§2.3) | BIN (tree position and width routines, list layout routine, lookup routine) | BIN |
 | W28 | Tree-completion pass: a scrollable attaches itself to its scroll bars as a listener, sets its mouse-visible flag and runs §5.2 for both axes; a Tree then sets `click_select` and `layout_only_visible` true; a Button chooses its state again (§5.1, §5.2, §7.3, §9.1). Re-read: a scroll bar adopts arrow buttons that are not its descendants on its next frame update, and the track counts a button only when the mutual nearest-lookup test holds (§6.2, §6.3); a menu with selection display 0 updates no display (§11.4) | BIN (the pass routine of the base element, the scrollable, the Tree and the Button; the top-level creation routine that runs the pass; the scroll bar's frame update, button attach and track routine; the menu's selection display update) | BIN |
+| W29 | Scroll-bar visibility: §6.4 step 6 (and the fill parts of step 5) set visibility through the element's one show/hide routine, the routine a change of `UICore_Element_hide` also calls; the bar keeps no separate shown flag, so its next layout overrides an earlier hide (§6.4). The fellowship member row's set-up writes `FellowTemplateVolumeControl`'s visibility after setting its position (§6.4). Census: 4 of the 792 resolved Scrollbar instances are hidden by the layout (own block or default state), all with `hide_when_disabled` true and none disabled (§6.10) | BIN, revision 2 (2026-10-14): method M4 under [decision 0011](../decisions/0011-standing-m4-authorisation.md), client `x64/lotroclient64.exe` 4906.0071.1794.4035, SHA-256 prefix d22363eb9aff0fb5 (verified 2026-10-14), Ghidra 12.1.3 headless on a private read-only copy of the shared project (deleted after use); **question (m):** does the bar's layout leave a bar hidden that the layout data or game code hid; read: the scroll bar's property-change handler and layout routine, the base element's handler for `UICore_Element_hide` and the show/hide routine both reach, the fellowship row's set-up for the volume control; **why M1–M3 were not enough:** the data say only which bars are hidden, not whether the class's layout overrides it, and the original client cannot be observed in this session. OBS (2026-10-14, read-only: the 302 layout records of the 2026-10-06 dump, the archives unchanged since 2026-10-04 and five records re-read from the install byte-identical; every top-level element instantiated, 83,161 instances as in UL §7.3) | BIN; census Confirmed 2026-10-14 |
 
 ---
 
@@ -787,13 +788,36 @@ position is set, and when it is resized. Steps:
 Step 4 runs even when the bar is disabled; the thumb's size then follows `widget_size` 1.0 or
 whatever the scrollable last set.
 
-> **OPEN:** (implementer note, 2026-10-11, from `social-panels.md` TR14) Step 6 shows the bar
-> whenever it is not both disabled and `hide_when_disabled`, so a bar the layout hides with
-> `UICore_Element_hide` (for example `FellowTemplateVolumeControl`, `social-panels.md` §4.2) is
-> shown again at its first layout. Does step 6 leave a bar hidden that the layout or game code
-> hid (is the element's own hidden flag separate from the bar's shown state)? Meanwhile
-> Tessera's fellowship rows keep that bar disabled with `hide_when_disabled` set, so step 6
-> hides it.
+**Visibility is one flag (BIN, W29).** Step 6, and the showing of fill parts in step 5, go
+through the element's one show/hide routine (UB §11.2), the same routine a change of
+`UICore_Element_hide` reaches (true hides, false shows; UB §11.2 last paragraph). The bar keeps
+no shown flag of its own. Consequences:
+
+- A bar hidden by the layout data, by a state or by game code is shown again by its next
+  layout (any trigger at the top of this section: a "lays out" property, a position change,
+  a resize) unless at that moment it is disabled **and** `hide_when_disabled` is true.
+- A bar hidden by step 6 is shown again by a later `UICore_Element_hide` false (or a state
+  that sets it), until its next layout hides it again.
+- The original's game code that keeps a bar hidden writes the visibility **after** the bar's
+  last layout: the fellowship member row (`social-panels.md` §4.2) sets the volume control's
+  position first and then shows or hides it from its voice flag (BIN, W29).
+
+In the data, 4 of the 792 resolved Scrollbar instances are hidden by the layout (§6.10), all
+with `hide_when_disabled` true and none disabled; two of them are `FellowTemplateVolumeControl`.
+
+> **Answered (2026-10-14; was an implementer OPEN of 2026-10-11, from `social-panels.md`
+> TR14):** step 6 does **not** leave such a bar hidden: there is one visibility, and step 6
+> writes it (above). Tessera's step 6 as built (show unless disabled and `hide_when_disabled`)
+> is right, and so is keeping a bar hidden by disabling it with `hide_when_disabled` true
+> (`social-panels.md` TR14, §9.1 item (2)). No implemented behaviour changes.
+
+> **OPEN:** whether, in the original, a layout of a bar runs during creation **after** its
+> post-creation reports `UICore_Element_hide` (UL §9.2 step 8: the order in which the
+> effective properties are reported, and whether attaching the bar to its parent lays it out
+> again), that is, whether a bar hidden only by the layout data is visible once its tree is
+> created. Not traced. **Tessera rule:** no special case; steps 1–7 apply in Tessera's own
+> report order, so such a bar may be visible after creation. Code that must keep a bar hidden
+> sets it disabled with `hide_when_disabled` true, or hides it after its last layout.
 
 <a id="s6-5"></a>
 ### 6.5 Value mapping and stops (BIN, W9)
@@ -911,6 +935,7 @@ So one wheel step scrolls a list by one line step (§5.6).
 | `move_to_touched_position` | true on 27 (sliders) |
 | Stops | `num_stop_locations` 100 on 8 (each with `position` 0.5); none uses `stops_dont_include_endpoints` |
 | `disabled` | true on 12 |
+| `UICore_Element_hide` true (own block or default state; W29, 2026-10-14) | 4: `FellowTemplateVolumeControl` (2), `Webstore_URL_Scrollbar` (2); each with `hide_when_disabled` true, none disabled |
 | `ghost_when_disabled` | false on 2 |
 | `horizontal_allow_mouse_wheel` | true on 2 |
 | Thumb `widget` | a Button in the templates; its frame pieces are Field children with stretch edges and per-state images |
@@ -1688,6 +1713,9 @@ numbering).
     surface between its own content and its children).
 17. Whether the hover push of `ScrollableControls_Mouse` runs the ancestor walk of UB §5.2
     (§5.7; added by the clean-room implementation, 2026-10-07; Tessera: the single entry).
+18. Whether a scroll bar hidden only by the layout data is laid out again (and so shown) during
+    creation, after its hide is reported (§6.4; added 2026-10-14 when the implementer OPEN of
+    2026-10-11 on step 6 was answered; Tessera: no special case).
 
 Outside this spec: the Text class's own scrolling (Text is a Scrollable, §3.2, but its line
 layout belongs to FO). Unused in data and so not pursued: any reader of
@@ -1704,3 +1732,4 @@ layout belongs to FO). Unused in data and so not pursued: any reader of
 | 2026-10-06 | **Revision applying the accepted decisions 0014 (UI input bridge) and 0015 (UI rendering)** (status Accepted → Revised, review pending). No fact about the original is changed. New provenance tag DEC. §4.5: Tessera rule for where the alpha threshold acts (the meter's own surface, applied at composition, compared with the pixel's own alpha before opacity; a position change repaints nothing). §5.7: Tessera's mapping of the `ScrollableControls_Mouse` pushes to the context `ui.scroll_mouse` and the wheel-motion rule, with the capture and pointer-lock consequences; new OPEN callout with Tessera rule on plugin controls (every hovered plugin control pushes), §17 item 15. §6.9: pointer to §5.7. §12: Tessera rule for composing a portrait as external content (offscreen target at the layout-box size, linear RGBA, premultiplied, separate entry). §16: the `ScrollableControls_Mouse` row records the agreement with decision 0014; new agreement row for alpha-test meter surfaces. §17 item 6 updated. Section numbers unchanged. |
 | 2026-10-06 | **Fixes after the review of the decision-0014/0015 revision** (status stays Revised, review pending). §4.5: the Tessera rule now states that applying the alpha threshold before the entry's opacity departs from decision 0015 §8 ("UI pipeline" row) as written and follows the decision's open review item "Alpha-threshold order"; no M5 panel is affected. §12: new OPEN and Tessera rule for a viewport element that also owns a surface (both M5 portraits: `PlayerPortrait` mode 3, `OpponentPortrait` mode 1 with an own image and a mode-1 child; data from `ui-layout.md` U47): the external content is a direct nested entry of the element's own surface, between its own content and its children. §17 item 16 added. No fact about the original is changed. |
 | 2026-10-06 | **Final-pass fixes** (status stays Revised, review pending). No fact about the original is changed. §4.5: one note that it is not known whether the meter's surface flag is the "flagged by code" of UL §8.3 and §8.4 step 1, pointing to the UL §8.4 scope OPEN and its Tessera choice (it is not; no M5 panel affected). §16 row on UL §6.6 extended to match. |
+| 2026-10-14 | **Revision 2** (spec writer, dirty room; status Accepted → Revised, awaiting independent review). Answers the §6.4 implementer OPEN of 2026-10-11 (from `social-panels.md` TR14): new provenance row W29 (BIN question (m) on build 4906.0071.1794.4035, Ghidra 12.1.3 headless on a private copy; OBS census); §6.4 states that step 6 and the fill parts of step 5 write the element's one visibility, the one `UICore_Element_hide` also writes, so a bar's next layout overrides an earlier hide unless it is disabled with `hide_when_disabled`; the original's fellowship row writes the volume control's visibility after its position. The OPEN is closed; a narrower OPEN (whether a layout runs during creation after the hide is reported) is added with a Tessera rule (no special case), §17 item 18. §6.10 gains the census row of layout-hidden bars (4 of 792). **Implemented behaviour:** unchanged (Tessera's step 6 already shows the bar; the fellowship rows' disabled-with-`hide_when_disabled` choice is confirmed). |

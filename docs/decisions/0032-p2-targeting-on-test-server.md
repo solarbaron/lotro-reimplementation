@@ -232,6 +232,13 @@ updated by their owners. The two owner questions above stay open. (Done 2026-10-
 spec writer: the "Number" paragraph is refreshed; `docs/decisions/README.md` lists 0032 as
 Accepted. Editorial only; D1–D4 are unchanged.)
 
+**2026-10-14, passed** (spec reviewer, Clean-Room-Role: review; a Claude session that wrote no
+part of the refresh in commit bf41c0b or of the code). The refreshed "Number" paragraph is
+true: `docs/decisions/README.md` lists 0032 as Accepted and ROADMAP P2 names decision 0032
+(planned as 0031, which branch `p3` took). Only the "Number" paragraph and the note above
+changed; D1–D4, their consequences and the two owner questions are unchanged, so the status
+stays Accepted.
+
 Before this review: pending. The reviewer checks D1–D4 against LEGAL.md §11.1 rule 5, decision 0024 §2,
 `scenario-feed.md` §0 item 3 and revision 6 (§18.4), and re-derives the cases of
 `scenario-feed.md` §14.9 (O8, O10–O12) and §14.11.

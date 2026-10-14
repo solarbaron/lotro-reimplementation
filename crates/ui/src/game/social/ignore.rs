@@ -228,7 +228,8 @@ impl IgnorePage {
                 ui.set_text(l, Some(n.clone()));
             }
             if let Some(l) = find(ui, k, ids.ignore_row_note) {
-                ui.set_text(l, None);
+                // TR5, TR6: no note; cleared, never the layout's own text.
+                ui.set_text(l, Some(String::new()));
             }
             if model.selected() == Some(n.as_str()) {
                 sel = Some(k);

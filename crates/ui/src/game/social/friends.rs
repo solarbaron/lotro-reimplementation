@@ -458,7 +458,8 @@ impl FriendsPage {
                 src,
             );
             if let Some(n) = find(ui, k, ids.friend_row_note) {
-                ui.set_text(n, None);
+                // TR5, TR6: no note; cleared, never the layout's own text.
+                ui.set_text(n, Some(String::new()));
             }
             if let Some(g) = find(ui, k, ids.friend_row_grouped) {
                 let s = if r.grouped {

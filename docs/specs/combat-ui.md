@@ -4,8 +4,8 @@
 
 | | |
 |---|---|
-| **Status** | **Accepted** (review 3, 2026-10-11, of revision 2) |
-| **Last updated** | 2026-10-11 |
+| **Status** | **Revised** (revision 3, 2026-10-14: non-blocking items (a)–(c) of review 1 and (e)–(g) of review 2; awaiting independent review). Before: **Accepted** (review 3, 2026-10-11, of revision 2) |
+| **Last updated** | 2026-10-14 |
 | **Author role** | Spec writer (dirty room) |
 | **Reviewer** | Spec reviewers, independent sessions that wrote no part of this spec (review 1, 2026-10-11, changes requested; review 2, 2026-10-11, another session, changes requested; review 3, 2026-10-11, a third session, passed) |
 | **Review record** | **Review 1, 2026-10-11** (text of commit 7b14f27 on branch p2, with the P2 notes in `keymap.md` and `game-controls.md`): **changes requested**. Checked (CLEAN_ROOM.md §5.3): functional facts only; no code or pseudo-code (the floating-text motion, anchor, stacking, effect-order and cooldown rules are plain-word steps and formulas; the §17.1 block is a synthetic scenario in Tessera's own format); no copied prose; identifiers are install labels or command names quoted for interoperability; no game text (texts by table and token only; the §17.1 names and the TR38 statement are Tessera's own), keys, hostnames or traffic; every fact group has a provenance row (the BIN row names decision 0011, questions (a)–(i) and why M1–M3 were not enough); Tessera choices are numbered TR rules; layouts give boxes in design pixels; CUI1–CUI10 are testable; unknowns are OPEN; nothing under a closed gate. Spot checks, own read-only probes of the install (M1): the ten `UILAYOUT` labels of CU1; both settings sets of §6.2 (16 of 16 values each); `UI_ShortcutActivationInputMap` (72 of 72 entries); every K47 binding and the K48 toggle types (key maps 0x1D000000, 0x1D000001, 0x1D000004, 0x1D000009; action map 0x51000000); the §5.2 decoration mapper; the border-state mapper and the 16 `CombatResultType` keys; nine `ColorNameText` colours and the floating-text fonts and colours; `EntitySelectionIndicator`, `TimedEffectTemplate` and its two fields, both progress meters, the 60-frame reset-timer meter, the P4/P5 roots, effect lists and `ViolentModeIndicator`; the selection script table and its three keys; all 21 tokens named in §5.1, §5.7, §6.6, §7.1 and §10.2 resolve; `Selection_Script` on 191,868 sets, all 0x10000818. Own M4 spot checks (decision 0011, private copy deleted after use), all agree with the text: the floating-text settings reader (the sixteen built-in defaults, the type check, release spacing 0.35, anchor lift 0.05, the three smoothing constants, the column list, travel and rise derived after reading), the effect-list set-up (icon size default 20; effect ID, start, timeout and combat-only written on the icon), the pulse update (both rows; combat-only icons steady while violent), the icon insert routine (§8.2 Order: an untimed, non-combat-only icon at position 0; the scan from the end; an icon with the same effect ID sends the new icon to position 0). **Blocking:** (1) §5.2 census paragraph disagrees with the install: `MonsterLevel_ExaminationModStatType` is stored at top level in 16,605 property sets of prefix 0x79 (5: 16,044; 9: 152; 8: 139; 12: 91; 10: 38; 11: 33; 7: 28; 3: 23; 6: 22; 4: 19; 2: 16), and 309 further values sit nested inside 68 of those sets (0: 226; 7: 52; 4: 21; 8: 2; 1: 1; 42–48: one each), so 16,914 counts values, not sets, and 0, 1 and 42–48 never occur at top level; `NPC_HideLevelInDisplay` is stored in 949 sets of 0x79 and one entity descriptor of 0x47 (950); `NPC_HideLevelAndVitalText` is stored (true) at top level in 8 entity descriptors of 0x47, not in none. Restate the paragraph (and say whether TR13's body-record reading includes 0x47 descriptors). No implemented behaviour changes (`tessera-gamedata` already reads both hide properties). **Non-blocking (for the revision):** (a) the §8.2 implementer OPEN on CUI7: the binary confirms the §8.2 same-ID rule (a new icon whose effect ID is already in the row goes to position 0, timed or not), so CUI7 holds only while no icon with the same effect ID is in the row; the ID compared is the value the icon also carries as `UI_Examination_Tooltip_EffectID`. With TR30 each `EffectApplied` carries a new instance id, so the case does not arise from the feed; state this in CUI7 and TR30 (no behaviour change: `tessera-ui` keeps CUI7). (b) §8.2 Order omits combat-only icons: in the original a combat-only icon passes over timed icons in the scan and is placed right after the last untimed, non-combat-only icon; the placement of an untimed combat-only icon is not covered by the text. With feed start times (arrival order) timed icons end up in the same order; say what Tessera does with untimed combat-only icons. (c) Answer the implementer and exit-verifier OPENs listed in §19 (14 items). (d) Duplicate anchor `s18` before §18. Full record in the review log (decision 0018). **Review 2, 2026-10-11** (revision 1, commit 1a941c1 on branch p2, against the text of 7b14f27; a session that wrote no part of the spec and did not perform review 1): **changes requested**. Checked (CLEAN_ROOM.md §5.3) for the whole text and in detail for revision 1: functional facts only; no code or pseudo-code; no copied prose; the census adds counts, values and interoperability property names only, no record DIDs, text or assets; CU26 gives the census a provenance row and the OBS row names its scope; the new TR13 text is a numbered Tessera rule and the new composition question is an OPEN listed in §19; nothing under a closed gate. Own read-only probes of the install (M1, a new scratch crate over `tessera-dat`/`tessera-formats`): every 0x47 entity descriptor (40,643), 0x78 set (1,618: 1,616 in `client_gamelogic.dat`, 2 in `client_local_English.dat`) and 0x79 set (383,332), 0 decode failures, each top-level property walked to every depth: the §5.2 census table agrees in every cell (16,605 top-level 0x79 sets with the eleven value counts; 309 nested values in 68 sets, disjoint from the 16,605, 264 under `SpeciesLevelLootTable` and 45 under `Mod_Array`, values 0: 226, 7: 52, 4: 21, 8: 2, 1: 1, 42–48: one each; none in 0x47 or 0x78; `NPC_HideLevelInDisplay` 949 sets + 1 descriptor, `NPC_HideLevelAndVitalText` 8 descriptors, all true, none nested); the `PhysObj` paragraph agrees (8 descriptors, 7 named by 12 sets, one named by none; 11 sets store `NPC_HideLevelInDisplay` and name an `NPC_HideLevelAndVitalText` descriptor; 1 set stores neither and names the descriptor that stores both). M1 also: the state counts of §4.1 and §5.1 (125, 12, 86, 13; 139, 102, 26, 27) and all 26 decoration states of the §5.2 table present on `OpponentPanel_BG`, `OpponentVitals_Animations` and `OpponentLevel_BG`; `ViolentModeIndicator` box and states. Own M4 spot check (decision 0011, private copy deleted after use), question (d): the target-frame update maps every key of the §5.2 table to the state given there and every other key to `monster_normal`; `OpponentLevel` is hidden when either hide property is true and `OpponentLevelHiddenSkull` is shown exactly when `NPC_HideLevelInDisplay` is true, so the skull case of TR13 for a set storing both matches the original. Implementation read only to compare: `tessera-gamedata` reads the three properties at top level of the body record, puts the skull first, and gives a 0x47 DID no set, as TR13 says. **Blocking:** (1) TR31 says the effect tooltip shows the stack count when `stacks` > 1; `skill-tooltips.md` §12.2 (which §0 makes the owner of effect tooltips) gives the opposite Tessera rule (no stack-count row, the original shows none) and asks for TR31 to be aligned, and the code shows no stack count. Align TR31 (and OC10’s wording) with `skill-tooltips.md` §12.2; no implemented behaviour changes. **Non-blocking (for the same revision):** (a)–(d) of review 1 are still open (CUI7 scope against the §8.2 same-ID rule, with the compared ID being the per-application runtime ID of `skill-tooltips.md` §8.2; combat-only placement in §8.2; the 14 implementer and verifier OPENs of §19; duplicate anchor `s18`); (e) the OBS row says "all 1,616 0x78" sets: the archive set holds 1,618 (2 in `client_local_English.dat`, neither stores the three properties), so name the archives or the count; (f) TR13 says the 0x70–0x77 object is read "through its property set (… prefix 0x79)": per `property-system.md` §6.2 the prefix is the object prefix + 9 (0x79 only for 0x70) and Tessera gives 0x77 no set; (g) TR13 makes a `Body::Object` DID of prefix 0x78–0x7F "no body record", while `tessera-gamedata` reads such a DID as the set itself (`property-system.md` §6.2 step 2); prefer stating the code’s reading (keeping TR13 as written would change implemented behaviour), and the revision-1 change-log claim "no implemented behaviour changes" holds only once this is settled; (h) the companion-spec cell cites `scenario-feed.md` as "Accepted, revision 4"; revision 6 is now Accepted. **Review 3, 2026-10-11** (revision 2, commit 7468b14 on branch p2, whole text; a session that wrote no part of the spec and performed neither review 1 nor review 2): **passed**; status Revised → Accepted. Checked (CLEAN_ROOM.md §5.3): functional facts only; no code or pseudo-code (§6.3–§6.5, §8.2 and §9.3 are plain steps and formulas; §17.1 is a synthetic scenario in Tessera's own format); no copied prose; identifiers are install labels, property and command names quoted for interoperability; no game text, keys, hostnames or traffic; every fact group has a provenance row and a mark; Tessera choices are numbered TR rules; boxes in design pixels, units stated; CUI1–CUI10 testable; unknowns are OPEN and listed in §19; nothing under a closed gate. Revision 2: TR31 now agrees with `skill-tooltips.md` §12.2 (no stack-count row; remaining time counts down) and OC10 with OS5; no other text mentions a stack count; the duplicate `s18` anchor is gone; the companion cell cites `scenario-feed.md` revision 6. No implemented behaviour changes: neither the icon nor the tooltip code shows `stacks`. Own read-only probes of the install (M1, a new scratch crate over `tessera-dat`/`tessera-props`/`tessera-formats`): `TimedEffectTemplate` of `effects` is a 36 × 36 field with exactly two field children, `TimedEffectBorderField` (36 × 36, z −1, the eleven category states) and `TimedEffectImageField` ((2, 2) 32 × 32, z −2, `Pulse`, `Pulse_Reset`), and no text element (§8.1, TR31); `PlayerProgressUIElement` (255 × 26, auto-fade 0.5, the five root states) and its meter (direction 4, `move_fill` false, `smooth_movement` true, image 0x41007E92); the §7.1 drag boxes and their bars at (32, 28), (15, 12) and (2, 28); `GamePlay_SelectionTarget` (200, 450) 140 × 71; the defeat panel's OK (321, 163) and revive (137, 163) buttons and the OK token; `QuickslotSkillResetTimer` a 60-frame meter from 0x41007E35 and `MinResetTimeForAvailabilityAlert` 2.0; the archive set holds 40,643 0x47, 1,618 0x78 (1,616 + 2 in a second archive) and 383,332 0x79 records. Own M4 spot check (decision 0011, private copy deleted after use), questions (a) and (c), parts not checked by reviews 1 and 2: the anchor routine (§6.4: lift from the settings, a 30-position smoothing ring, width × screen width ÷ 1024 × (4/3 ÷ aspect), height × screen height ÷ 768, the preference factor clamp(0.75 × *g* + 0.25, 0.25, 1.75), *q* = (1 − *u*)², the σ blend, offsets × σ, centred, bottom at the anchor) and the selection-indicator update (§3.5: state from `Skill_DefaultSkillEnabled` and the line-of-sight result, vertical offset −75, scales 0.25 and 0.2, top margin 0.75 × height): all agree with the text. **Non-blocking, for a later revision** (none changes implemented behaviour unless said): (a)–(c) of review 1 and (e)–(f) of review 2 still stand; (g) of review 2 still stands: `tessera-gamedata` reads a `Body::Object` DID of prefix 0x78–0x7F as the set itself, so restating TR13 to that reading changes nothing, while keeping TR13 as written needs a code change; the revision-1 change-log claim holds only for 0x70 bodies; `skill-tooltips.md` §12.2 keeps an OPEN asking for the TR31 alignment that revision 2 made (its writer may close it). |
@@ -44,9 +44,9 @@ play and PvP frames.
 
 | Key | Source |
 |---|---|
-| **OBS** | The user's install, read-only, 2026-10-10 (archives unchanged since 2026-10-04): every UI layout record named here, decoded per `ui-layout.md` §4 with the throwaway decoder of the M5 dump (all 302 layout records, cached 2026-10-06; the layouts named here were re-read and agree); the DID maps `UILAYOUT`, `UNIQUEDB`, `WEENIECONTENT`, `STRINGTABLE`, `KEYMAP`, `FONT` (`records.md` §8); the enum mappers `UIStateID`, `UIElementMessage`, `UIElementID`, `InputActions` (0x230000AF and base 0x23000176), 0x23000064, 0x23000070, 0x2300002A, 0x230003A8; the property sets 0x78000004, 0x780029BA, 0x7800000D; the script table 0x07000000; the key-map records 0x1D000000, 0x1D000001, 0x1D000009 and the action-map record 0x51000000 (`keymap.md` §12.9–§12.10); a census over every property set of prefixes 0x47, 0x78 and 0x79 of `client_gamelogic.dat` and `client_general.dat` for `Selection_Script`, `MonsterLevel_ExaminationModStatType` and `NPC_HideLevelAndVitalText`; for revision 1 (2026-10-11, archives unchanged) a fresh census of `MonsterLevel_ExaminationModStatType`, `NPC_HideLevelInDisplay` and `NPC_HideLevelAndVitalText` over all 40,643 0x47 entity descriptors (their embedded sets, `setup.md` §4), all 1,616 0x78 and all 383,332 0x79 sets (none failed to decode), every value walked at every depth and counted by prefix, depth and record, with the containing top-level property of each nested value and the `PhysObj` references of every 0x79 set to the 0x47 descriptors that store a hide property; the string table 0x250001BB (the `UI` table) only to confirm that the tokens named here exist and to tell which token of a pair is which (no text is reproduced). Probes were throwaway scripts in the dirty scratch area. |
+| **OBS** | The user's install, read-only, 2026-10-10 (archives unchanged since 2026-10-04): every UI layout record named here, decoded per `ui-layout.md` §4 with the throwaway decoder of the M5 dump (all 302 layout records, cached 2026-10-06; the layouts named here were re-read and agree); the DID maps `UILAYOUT`, `UNIQUEDB`, `WEENIECONTENT`, `STRINGTABLE`, `KEYMAP`, `FONT` (`records.md` §8); the enum mappers `UIStateID`, `UIElementMessage`, `UIElementID`, `InputActions` (0x230000AF and base 0x23000176), 0x23000064, 0x23000070, 0x2300002A, 0x230003A8; the property sets 0x78000004, 0x780029BA, 0x7800000D; the script table 0x07000000; the key-map records 0x1D000000, 0x1D000001, 0x1D000009 and the action-map record 0x51000000 (`keymap.md` §12.9–§12.10); a census over every property set of prefixes 0x47, 0x78 and 0x79 of `client_gamelogic.dat` and `client_general.dat` for `Selection_Script`, `MonsterLevel_ExaminationModStatType` and `NPC_HideLevelAndVitalText`; for revision 1 (2026-10-11, archives unchanged) a fresh census of `MonsterLevel_ExaminationModStatType`, `NPC_HideLevelInDisplay` and `NPC_HideLevelAndVitalText` over all 40,643 0x47 entity descriptors (their embedded sets, `setup.md` §4), all 1,618 0x78 sets (1,616 in `client_gamelogic.dat` and 2 in `client_local_English.dat`, neither of which stores any of the three properties; recounted 2026-10-14) and all 383,332 0x79 sets (none failed to decode), every value walked at every depth and counted by prefix, depth and record, with the containing top-level property of each nested value and the `PhysObj` references of every 0x79 set to the 0x47 descriptors that store a hide property; the string table 0x250001BB (the `UI` table) only to confirm that the tokens named here exist and to tell which token of a pair is which (no text is reproduced); for revision 3 (2026-10-14, archives unchanged) the element trees of `SelectionMiniVitals`, `MicroVitalFieldBase`, `VitalHealthFieldBase` and `VitalPowerFieldBase` (0x2200007E), `SelectionTargetBase` (0x220000C4), `Awaken_DialogMessageField` (`Dialog`) with `Box_Silver_BlueGradient` (0x22000001), and every `UIComponent_PipDisplay_List` entry of `pip_display` (138 entries). Probes were throwaway scripts in the dirty scratch area. |
 | **BC** | The class-library record 0x56000000 (`wlib.md`), searched as bytes for the tokens of §6.6 (M1; no bytecode was decoded into this spec). |
-| **BIN** | Method M4 under [decision 0011](../decisions/0011-standing-m4-authorisation.md): the offline client `x64/lotroclient64.exe`, file version **4906.0071.1794.4035**, read on 2026-10-10 with Ghidra (headless, on a private copy of the project's auto-analysed database, deleted after use). **Questions:** (a) how the floating-text system reads its settings and moves, scales, fades, stacks and removes a text; (b) which preference bits gate floating texts; (c) how the selection indicator chooses its state and placement; (d) how the target frame chooses between its vital and non-vital fields, its frame decoration, its health-meter colour and its level display; (e) how an effect icon is created, sized, ordered into rows, pulsed and given a border; (f) how the quickslot cooldown meter is started and ended; (g) how another entity's induction bar chooses its style; (h) how the toolbar shows the combat state; (i) where the four combat-related layout keys and the main element IDs are used. **Why M1–M3 were not enough:** the layout data gives elements, states and property values but not the rules that pick states, fill meters, order icons, move floating text or combine the settings; these rules exist only in code; black-box observation (M3) of the running client is not available to this session and could not show constants such as fade fractions, rise speeds or pulse lead times. **Read:** a scan of all instructions for the 32-bit IDs of the layouts, elements, states, properties and input actions named here (hits that turned out to be other enumerations with the same value were discarded after reading the routine); the floating-text settings reader, the text factory, the per-entity text list update, the anchor and distance-scale routine, the smoothing helpers it calls, the generic floating-text producers and the preference handler; the selection-indicator update; the target-frame update and its vital-colour and has-vitals helpers; the effect-icon creation, ordering and pulse routines and the effect-list set-up; the skill display's reset-timer start, end and goal handler; the induction-bar style setter; the toolbar combat-state handlers; the options panel's floating-text checkboxes. Nothing from network, login, launcher, keys or anti-tamper code was read (decision 0004). |
+| **BIN** | Method M4 under [decision 0011](../decisions/0011-standing-m4-authorisation.md): the offline client `x64/lotroclient64.exe`, file version **4906.0071.1794.4035**, read on 2026-10-10 with Ghidra (headless, on a private copy of the project's auto-analysed database, deleted after use). **Questions:** (a) how the floating-text system reads its settings and moves, scales, fades, stacks and removes a text; (b) which preference bits gate floating texts; (c) how the selection indicator chooses its state and placement; (d) how the target frame chooses between its vital and non-vital fields, its frame decoration, its health-meter colour and its level display; (e) how an effect icon is created, sized, ordered into rows, pulsed and given a border; (f) how the quickslot cooldown meter is started and ended; (g) how another entity's induction bar chooses its style; (h) how the toolbar shows the combat state; (i) where the four combat-related layout keys and the main element IDs are used. **Why M1–M3 were not enough:** the layout data gives elements, states and property values but not the rules that pick states, fill meters, order icons, move floating text or combine the settings; these rules exist only in code; black-box observation (M3) of the running client is not available to this session and could not show constants such as fade fractions, rise speeds or pulse lead times. **Read:** a scan of all instructions for the 32-bit IDs of the layouts, elements, states, properties and input actions named here (hits that turned out to be other enumerations with the same value were discarded after reading the routine); the floating-text settings reader, the text factory, the per-entity text list update, the anchor and distance-scale routine, the smoothing helpers it calls, the generic floating-text producers and the preference handler; the selection-indicator update; the target-frame update and its vital-colour and has-vitals helpers; the effect-icon creation, ordering and pulse routines and the effect-list set-up; the skill display's reset-timer start, end and goal handler; the induction-bar style setter; the toolbar combat-state handlers; the options panel's floating-text checkboxes. Nothing from network, login, launcher, keys or anti-tamper code was read (decision 0004). **Revision 3 pass, 2026-10-14** (same build, SHA-256 of the client file re-checked, prefix d22363eb9aff0fb5; Ghidra 12.1.3 headless on a private copy of the project's database, deleted after use): **questions** (j) where the effect-icon insert routine places a combat-only icon, and which effect ID its same-ID test compares; (k) the time constant of the floating-text rise-speed smoothing and which height the release of a pending text compares with. **Read:** the effect-icon insert routine; the smoothing helper's initialiser, read and set routines and their constants; the per-entity list's creation and update; the text factory's size fields. **Why M1–M3 were not enough:** the order and the smoothing are code rules; the data holds neither, and black-box observation (M3) is not available to this session. |
 | **Project** | Other Tessera specs and decisions, as cited (read 2026-10-10). |
 | **Design** | Tessera rules, marked **TR*n***. |
 
@@ -78,6 +78,11 @@ play and PvP frames.
 | CU24 | `UI_Selection_*` properties on `TargettingReticle` (§3.1) | OBS | Confirmed 2026-10-10 (values; use not traced) |
 | CU25 | Every TR rule and the fallback looks of §13 | Design | Decision |
 | CU26 | Where the three target-frame properties of §5.2 steps 3–4 are stored: by prefix (0x47, 0x78, 0x79), by depth (top level or nested in another property) and by value; the 0x79 sets whose `PhysObj` names a 0x47 descriptor that stores a hide property (§5.2 census) | OBS (revision 1 census) | Confirmed 2026-10-11 |
+| CU27 | Element trees of the selection's mini vitals (`SelectionMiniVitals`), of `MicroVitalFieldBase` with `VitalHealthFieldBase` and `VitalPowerFieldBase`, and of `SelectionTargetBase` (§3.5, §5.7) | OBS (revision 3) | Confirmed 2026-10-14 |
+| CU28 | Every `UIComponent_PipDisplay_List` entry is a `UIComponent_PipDisplay_Entry` struct of `UIComponent_PipDisplay_EntryState` (enum, a `UIStateID`) and `UIComponent_PipDisplay_EntryValue` (int) (§4.4) | OBS (revision 3; 138 of 138 entries) | Confirmed 2026-10-14 |
+| CU29 | The children of the defeat panel's `DialogMessageBoxField`, among them `DialogMessage_Divider`, `SelfRevive_PaperItemTotal_NameLabel`, `SelfRevive_PaperItemBalance` and the box art inherited from `Box_Silver_BlueGradient` (§10.2) | OBS (revision 3) | Confirmed 2026-10-14 |
+| CU30 | Effect-icon order with combat-only icons and the same-ID test (§8.2) | BIN (j) | BIN |
+| CU31 | Rise-speed smoothing (base 2, time constant 1 s, snap within 0.0002) and the release comparison with the pending text's fitted height (§6.5) | BIN (k) | BIN |
 
 ---
 
@@ -216,11 +221,12 @@ not mapped in P2 (fellowship is P4).
 > 5. An empty result sends nothing. Otherwise the client sends `SelectTarget { target }` once
 >    per press (Impulse; repeats are ignored), with `None` for *clear*.
 
-> **OPEN:** (implementer, `apps/client`, 2026-10-11) TR4 says candidates are "the eligible
-> entities (§3.1)". The client's targeting reads no body records, so it applies TR1 by kind
-> only and treats every `Object` as eligible, including one whose body record fails the §3.1
-> test. Mouse picking (TR3) applies the full test through the walker. Should the targeting
-> keys read the body records too?
+> **Answered (revision 3, 2026-10-14; was OPEN, implementer, `apps/client`, 2026-10-11):** yes.
+> TR4's candidates are the entities that pass TR1 in full, the same test as mouse picking
+> (TR3): an `Object` with a body record is a candidate only when its effective properties pass
+> the §3.1 test, so the targeting keys read the body records as picking does. (The client then
+> needs a body record's effective properties for every candidate within 50 m, not only for the
+> entity under the pointer.)
 
 <a id="s3-4"></a>
 ### 3.4 Clearing with Escape
@@ -285,14 +291,20 @@ filling from the left, §7.3). The mini vitals are gated by the preference bit
 > §5.3 when the selection has vitals; the mini induction shows the selection's cast (§7.3).
 > Both preference bits are taken as set.
 
-> **OPEN:** (implementer, 2026-10-10) the mini vitals' meters are not named here. On the
-> install, `EntityMiniVitals` holds the target frame's parts of §5.3 in this order:
-> `OpponentHealthField` (`CurrentOpponentHealthMeter`, `TemporaryOpponentHealthMeter`),
-> `RageMeter` (`CurrentRageMeter`), `OpponentPowerField` (`CurrentOpponentPowerMeter`,
-> `TemporaryOpponentPowerMeter`) and an overlay. `tessera-ui` (`game::combat::selection`)
-> sets health on `CurrentOpponentHealthMeter` and power on `CurrentOpponentPowerMeter`
-> (by element ID), keeps both temporary meters at 0 (TR10), switches the health meter to
-> the TR14 state and the induction meter to `vitalmeter_yellow` or `vitalmeter_grey` (§7.2).
+**Mini vitals (Confirmed, CU27; answers the implementer OPEN of 2026-10-10).**
+`EntityMiniVitals` is based on `SelectionMiniVitals` (0x2200007E; widget type
+`MultiVitalDisplay`, 105 × 27), whose children are, in read order: `OpponentHealthField` at
+(2, 2) 100 × 9 (based on `VitalField` of 0x2200007F, four states) with
+`CurrentOpponentHealthMeter` (based on `VitalColorMeter`, so it carries the §5.3 colour states)
+and `TemporaryOpponentHealthMeter`; `RageMeter` at (2, 15) 100 × 9 with `CurrentRageMeter`;
+`OpponentPowerField` at (2, 15) 100 × 9 with `CurrentOpponentPowerMeter` and
+`TemporaryOpponentPowerMeter`; and `SelectionMiniVitals_Overlay` (105 × 26), the frame image.
+
+> **TR8a (mini vitals).** Health sets `CurrentOpponentHealthMeter` and power
+> `CurrentOpponentPowerMeter` (found by label); the temporary meters stay at 0 (TR10); the
+> health meter takes the TR14 state; `RageMeter` and the overlay keep the layout's visibility
+> (P2 has no wrath for other entities). The induction meter of `EntityMiniInduction` takes `vitalmeter_yellow` or
+> `vitalmeter_grey` (§7.2).
 
 ---
 
@@ -394,10 +406,11 @@ template of `pip_display` with `UIComponent_PipDisplay_Type` = a `PipType` key
 > lower). A literal ref, or a ref that resolves to no pip record, is shown only by the fallback
 > look of §13.4.
 
-> **OPEN:** (implementer, 2026-10-10) the member properties of a `UIComponent_PipDisplay_List`
-> entry (its state and its value) are not named here. `tessera-ui` (`game::combat::frames::
-> show_pips`) reads an entry's first Int member as the value and its first Enum member as the
-> state.
+**Entries (Confirmed, CU28; answers the implementer OPEN of 2026-10-10).** Each entry of a
+`UIComponent_PipDisplay_List` is a `UIComponent_PipDisplay_Entry` struct of two members:
+`UIComponent_PipDisplay_EntryState` (an enum key of `UIStateID`, the state to enter) and
+`UIComponent_PipDisplay_EntryValue` (an int, the pip count it stands for). All 138 entries of
+the `pip_display` templates have exactly these two members. TR11 reads them by name.
 
 ---
 
@@ -500,17 +513,23 @@ descriptor that stores both. These counts are observations of this install.
 > least one `VitalChanged` with `vital = Health` for it. M7's test actors and scenario actors
 > without a health report get the non-vital field (ROADMAP P2 exit criterion 4).
 
-> **TR13 (decoration).** The decoration key is read from the target's body record (the
-> `Body::Object` DID of `EntityCreated`, `scenario-feed.md` §5.4) when it has one; actors without
-> a body record take `monster_normal` (creatures and NPCs) or `normal` (players, other objects).
-> (Revision 1:) the body record is the game object that `Body::Object` names (prefix 0x70–0x77)
-> read through its property set (`property-system.md` §6.2, prefix 0x79). Steps 3 and 4 read
+> **TR13 (decoration).** The decoration key is read from the target's **body set**: the
+> property set that `property-system.md` §6.2 gives for the `Body::Object` DID of
+> `EntityCreated` (`scenario-feed.md` §5.4). For a game object of prefix 0x70–0x76 that is its
+> set (the object's prefix + 9: 0x79 for a 0x70 object; on this install only 0x70 objects have
+> a set, `property-system.md` §6.2); for a DID of prefix 0x78–0x7F it is that record itself; a DID of any other prefix
+> (0x77 and a 0x47 entity descriptor included) has no body set. (Revision 3: the earlier wording
+> named prefix 0x79 for every game object and made a 0x78–0x7F DID "no body record";
+> `tessera-gamedata` already follows the reading above.) Steps 3 and 4 read
 > `MonsterLevel_ExaminationModStatType`, `NPC_HideLevelInDisplay` and
-> `NPC_HideLevelAndVitalText` at the **top level** of that set only. They do **not** read:
-> values nested inside other properties; the 0x47 entity descriptor that the set names in
-> `PhysObj`; or a `Body::Object` DID of any other prefix (a 0x47 descriptor included), which
-> counts as no body record. When one set stores both hide properties as true, the skull case of
-> step 4 applies. On this install the reading leaves one template showing its level although its
+> `NPC_HideLevelAndVitalText` at the **top level** of the body set only. They do **not** read
+> values nested inside other properties, or the 0x47 entity descriptor that the set names in
+> `PhysObj`. When one set stores both hide properties as true, the skull case of step 4
+> applies. Decoration: a non-player target with a body set takes the state of step 3
+> (`monster_normal` when the set stores no key); without a body set, `monster_normal`
+> (creatures and NPCs) or `normal` (other objects). A **player** target takes `normal` (TR9)
+> whether or not it has a body set; step 4 still reads the player's body set when there is
+> one. On this install the reading leaves one template showing its level although its
 > `PhysObj` descriptor stores both hide properties; the 11 others named in the census show the
 > skull from their own `NPC_HideLevelInDisplay`.
 
@@ -520,9 +539,8 @@ descriptor that stores both. These counts are observations of this install.
 > later; owner check of the one template above when the owner meets it). TR13 stays as written
 > until then.
 
-> **OPEN:** (implementer, 2026-10-10) TR13 does not say which state a player target with a body
-> record takes (§5.2 step 3 says "its vital-display-override state", which the feed does not
-> carry, TR9). `crates/gamedata` gives players `normal` whether or not they have a body record.
+> **Answered (revision 3, 2026-10-14; was OPEN, implementer, 2026-10-10):** a player target with
+> a body set takes `normal` (TR13, last sentences), as `crates/gamedata` does.
 
 <a id="s5-3"></a>
 ### 5.3 Target vitals (Confirmed data, CU4; colour BIN d)
@@ -546,9 +564,9 @@ flags, its `AI_KungFu_IsNPC` property (true gives green), tapping and attackabil
 > (OPEN: owner check OC5 on the original's colours for neutral and tapped targets). Values follow
 > TR10 with the target's reports.
 
-> **OPEN:** (implementer, 2026-10-10) TR14 gives no colour for targets of kind `Object` that
-> have vitals. `crates/gamedata` (`health_meter_state`) gives them `vitalmeter_red`, the
-> meter's default state (§5.3).
+> **TR14a (objects with vitals; answers the implementer OPEN of 2026-10-10).** A target of kind
+> `Object` that has vitals (TR12) takes `vitalmeter_red`, the meter's default state (§5.3), or
+> `vitalmeter_grey` when defeated.
 
 <a id="s5-4"></a>
 ### 5.4 Name and name colour (Confirmed data, CU5; rule TR15)
@@ -613,14 +631,21 @@ properties name these parts (`UI_SelectionTarget_*`).
 > non-vital part (TR12); it is hidden otherwise. (OPEN: whether the original shows it by
 > default or only by an option; owner check OC7.)
 
-> **OPEN:** (implementer, 2026-10-10) the meter of `SelectionTargetVitalField` that shows
-> the health is not named here. On the install, `MicroVitalFieldBase` opens with
-> `VitalHealthBackground`, a meter without a fill, before `VitalHealthParentField` ›
-> `VitalCurrentHealthField` › `VitalCurrentHealthMeter`, `VitalTemporaryHealthMeter` and
-> `VitalCurrentDreadField` › `VitalCurrentDreadMeter`. `tessera-ui` (`game::combat::frames`)
-> sets the health position and the TR14 state on `VitalCurrentHealthMeter` (by element ID;
-> without it, on the first meter that has a child) and keeps the temporary and dread meters
-> at 0 (TR10).
+**Vital field (Confirmed, CU27; answers the implementer OPEN of 2026-10-10).**
+`SelectionTargetVitalField` is based on `MicroVitalFieldBase` of 0x2200007E (101 × 15), which
+holds `VitalHealthField` at (0, 0) 99 × 6 (based on `VitalHealthFieldBase`) and
+`VitalPowerField` at (0, 7) 99 × 6 (based on `VitalPowerFieldBase`). `VitalHealthFieldBase`
+(widget type `MultiVitalDisplay`) holds, in read order, `VitalHealthBackground` (a meter, z 10)
+and `VitalHealthParentField` (a meter) with `VitalCurrentHealthField` ›
+`VitalCurrentHealthMeter` (based on `VitalColorMeter`, so it carries the §5.3 colour states) and
+`VitalTemporaryHealthMeter`, `VitalCurrentDreadField` › `VitalCurrentDreadMeter`, and the text
+`VitalCurrentHealthText`. `VitalPowerFieldBase` holds `VitalPowerBackground`, `RageMeter` ›
+`CurrentRageMeter` and `VitalPowerField` › `VitalCurrentPowerMeter`,
+`VitalTemporaryPowerMeter` and `CurrentPowerText`.
+
+> **TR18a (E7 health meter).** The health position and the TR14 state go to
+> `VitalCurrentHealthMeter` (found by label); the temporary and dread meters stay at 0 (TR10);
+> the power part keeps the layout's look (E7 shows health only, TR18).
 
 ---
 
@@ -741,29 +766,41 @@ edge placed at the anchor plus the vertical offset.
 
 Each entity keeps its own list: **active** texts and a **pending** queue.
 
-- A new text goes to the pending queue. A pending text is released (made active) when the list
-  has no active non-critical text, or when the most recent active non-critical text has risen
-  more than (1 − 0.35) of its own height. Release happens at most once per frame. Texts thus
-  leave one after another in a column instead of overlapping.
+- A new text goes to the pending queue. After the frame's update of the active texts, the first
+  pending text is released (made active) when the list has no active text, or when every active
+  non-critical text shown this frame has risen more than (1 − 0.35) × the **pending** text's
+  height (BIN k, CU31): the smallest rise *r* (§6.3, before the distance factor *f*) among those
+  texts is compared; with no such text the test passes. The height is that of the pending text's
+  element right after its text was set (the template fits its box to the text, §6.1), in element
+  pixels, before *k* and *σ*. Release happens at most once per frame. Texts thus leave one after
+  another in a column instead of overlapping.
 - The **rise speed** target is the base rise speed (§6.2); when active plus pending texts
-  number *n* > 2, it is the base × (1 + min(*n* ÷ 10, 1)) (up to twice as fast). The speed
-  approaches its target exponentially (a smoothing helper); the time constant was not read.
+  number *n* > 2, it is the base × (1 + min(*n* ÷ 10, 1)) (up to twice as fast). The smoothed
+  speed *v*ₛ starts at the base rise speed when the list is created. Each frame the list first
+  reads *v*ₛ (the value reached towards the previous target), uses it for all its texts, and
+  then sets the new target (BIN k, CU31): between two frames Δ*t* apart, *v*ₛ moves by
+  (1 − 2^(−Δ*t* ÷ 1 s)) of its distance to the target, so it closes half of the gap per second,
+  and it takes the target's value once it is within 0.0002 of it. The 1 s time constant is the
+  smoothing helper's initial value; neither the list's creation nor its update changes it.
 - A new text is refused while more than 50 texts of the entity are **pending**; released
   (active) texts are not counted, and are bounded by the release rule.
 - `UI_FloatyText_DamageColumns`, `UI_FloatyText_DamageColumnSeparation` and the built-in column
   list (−1, 0, 1) were not found in use in the traced path (OPEN); the texts of one entity share
   one column; Tessera does the same.
 
-> **OPEN:** (implementer, 2026-10-11) "the top of its bounding box" (§6.4) and the box that the
-> mouse pick of TR3 tests are not defined for a skinned figure. The walker uses the joints of the
-> figure's current pose (else its reference pose), turned and scaled by its placement, with a
-> 0.15 m margin on every side (a figure without a skeleton: 0.7 × 0.7 × 1.8 m, scaled); the
-> anchor is the top centre of that box plus 0.05 m.
+> **TR19a (figure box; answers the implementer OPEN of 2026-10-11).** For a skinned figure,
+> "the top of its bounding box" (§6.4) and the box that the mouse pick of TR3 tests are the box
+> of the joints of the figure's current pose (else its reference pose), turned and scaled by its
+> placement, grown by 0.15 m on every side; a figure without a skeleton takes 0.7 × 0.7 × 1.8 m,
+> scaled. The anchor is the top centre of that box plus 0.05 m. (Tessera's choice: the
+> original's bounding-box source for figures was not traced.)
 
-> **OPEN:** (implementer, 2026-10-10) the time constant of the rise-speed smoothing (above) and the
-> height a pending text's release compares with. `tessera-ui` (`game::combat::floaty`) smooths
-> with a time constant of 0.25 s and uses the text element's layout height (design pixels, before
-> *k* and *σ*).
+> **Answered (revision 3, 2026-10-14, BIN k; was OPEN, implementer, 2026-10-10):** the rise
+> speed closes half of its gap to the target per second (above), not a 0.25 s time constant; the
+> release compares the smallest rise of the shown active non-critical texts with (1 − 0.35) ×
+> the pending text's fitted height, not with the layout height of the template (80) and not
+> with the most recent text's own height. Without an install (§13.6) the fitted height is that
+> of the fallback text's box.
 
 <a id="s6-6"></a>
 ### 6.6 Combat wording and colours (OPEN; tokens CU11)
@@ -968,12 +1005,28 @@ image), `Corruption` 0x410F25C2.
 - **Rows.** With the list's split option off, every icon goes to row 1. With it on, harmful and
   beneficial effects go to different rows; a second option swaps which is first. (Both options
   are settings of the list's owner; not traced further.)
-- **Order.** An effect without a duration that is not combat-only is inserted at the front of
-  the row (position 0). A timed icon is inserted after the last icon (scanning from the end)
-  whose start time is later than its own (an icon without a duration counts as the latest), so a
-  row holds the untimed icons first (most recently added first), then the timed ones by start
-  time, **most recent first**; an icon whose effect ID is already in the row goes to the front.
-  (The insert position of the untimed case is the list method's index argument 0, Probable.)
+- **Order** (revision 3 re-read, BIN j, CU30). Each icon carries its effect ID
+  (`UI_Effect_EffectID`; the same value as the image field's `UI_Examination_Tooltip_EffectID`,
+  the per-application runtime ID of `skill-tooltips.md` §8.2), its start
+  (`UI_Effect_EffectDuration`; the largest float for an icon without a duration) and its
+  combat-only flag. A new icon is placed in its row thus:
+  1. An icon without a duration that is not combat-only goes to position 0 (the list method's
+     index argument 0, Probable).
+  2. Otherwise the row is scanned from its last icon towards its first, passing over icons that
+     carry no effect ID. The scan stops at the first icon that has the new icon's effect ID (the
+     new icon then goes to position 0) or that passes the placement test of step 3 or 4 (the new
+     icon then goes right after it). A scan that reaches the front without stopping puts the new
+     icon at position 0.
+  3. A new icon that is not combat-only (so it is timed) stops at an icon whose start is later
+     than its own (an untimed icon counts as the latest).
+  4. A combat-only new icon passes over every timed icon; it stops at an untimed icon that is
+     not combat-only; at an untimed combat-only icon it stops when it is itself timed and passes
+     over it when it is itself untimed.
+
+  So the untimed, non-combat-only icons come first (most recent first) and an untimed
+  combat-only icon goes right after the last of them. With starts in arrival order (TR30) every
+  new timed icon, combat-only or not, goes right after the last untimed icon, so the timed
+  icons follow by start, **most recent first**.
 - **Pulse.** On each update, an icon whose timeout is less than **15 s** away starts pulsing: its
   image field enters `Pulse` (opacity 1 → 0.3 over 1 s, then 0.3 → 1 over 1 s, then `Pulse_Reset`,
   which restarts `Pulse`). A combat-only icon pulses while the local player's `Combat_Violent` is
@@ -983,8 +1036,13 @@ image), `Corruption` 0x410F25C2.
 
 > **TR30 (feed).** `EffectApplied { entity, effect, what, duration_ms, stacks, source }` adds an
 > icon to the effect list of every frame showing `entity` (E8 for the player, E9 when `entity` is
-> the selection; E9 is rebuilt from the client's kept effects on a selection change). Start = the
-> event's arrival; timeout = start + `duration_ms`, or none. Rows: the split option is on;
+> the selection; E9 is rebuilt on a selection change by placing the client's kept effects in
+> arrival order). Start = the event's arrival; timeout = start + `duration_ms`, or none. The
+> icon is placed by the Order rule above, with the feed's instance `effect` as its effect ID. An
+> `EffectApplied` for an instance that already has an icon in that list replaces it: the old
+> icon is removed first. No row therefore holds two icons with the same effect ID, and the
+> same-ID step of the Order rule never applies to feed effects. A literal ref is not
+> combat-only. Rows: the split option is on;
 > beneficial effects (`Effect_Harmful` false) in row 1, harmful in row 2; a literal ref counts
 > as harmful when the event's `source` is an entity other than `entity`, beneficial otherwise
 > (owner check OC10). `EffectRemoved { entity, effect }` removes the instance's icon. A row shows
@@ -992,19 +1050,21 @@ image), `Corruption` 0x410F25C2.
 > removed (OPEN: the original's overflow). The pulse rule above applies; combat-only is
 > `Effect_Duration_CombatOnly` of the record.
 
-> **OPEN:** (implementer, 2026-10-10) how the two rows and their icons are arranged inside an
-> `EffectDisplayList` (the row list boxes' spacing and the list's own layout of its rows).
-> `tessera-ui` (`game::combat::effects`) places two code-made rows one under the other, *e*
-> pixels apart, and the icons of a row side by side without spacing, from the list's top-left
-> corner. Because an empty row resizes to zero (§8.1), the second row moves to the top while
-> the first row shows no icon (install look only; the fallback rows keep §13.1's places).
+> **TR30a (row arrangement; answers the implementer OPEN of 2026-10-10).** Inside an
+> `EffectDisplayList` the two rows are placed one under the other, *e* pixels apart, from the
+> list's top-left corner, and the icons of a row side by side without spacing. Because an empty
+> row resizes to zero (§8.1), the second row moves to the top while the first row shows no icon
+> (install look only; the fallback rows keep §13.1's places). (Tessera's choice: the list's own
+> layout of its rows was not traced.)
 
-> **OPEN:** (implementer, 2026-10-10) the Order rule "an icon whose effect ID is already in
-> the row goes to the front" contradicts CUI7 for timed icons (a timed icon at position 0
-> would precede untimed icons, or later-started timed icons). Until decided, `tessera-ui`
-> (`game::combat::effects::EffectRows::insert`) keeps CUI7: the same-ID rule moves an icon to
-> the front of its own group only, which the other placements already give (an untimed icon
-> at position 0; a timed icon first among the icons that started no later than it).
+> **Answered (revision 3, 2026-10-14, BIN j; was OPEN, implementer, 2026-10-10):** the
+> original does put a new icon at position 0 when the backward scan meets an icon with the same
+> effect ID first, timed or not, so CUI7 holds in the original only while no icon with the same
+> effect ID is in the row. The ID is the per-application runtime ID; under TR30 a repeated
+> instance replaces its icon, so the case never arises from the feed and CUI7 (as restated in
+> §15) holds. The original also places combat-only icons by steps 2 and 4 of the Order rule;
+> Tessera follows them, so an untimed combat-only icon goes right after the last untimed,
+> non-combat-only icon, not to position 0.
 
 > **TR31 (stacks and timers).** The icon shows neither stacks nor a timer, as in the original's
 > template. The effect tooltip is owned by `skill-tooltips.md` §12.2: it shows the remaining
@@ -1148,21 +1208,30 @@ of table 0x25033EC5) and a `Timer` element (`UIComponent_Timer_*` settings).
 > **TR38 (defeat panel, presentation only).** On `Defeated { entity: player }` the client opens
 > E18 with the statement "Your character was defeated." (Tessera's own text), the OK button labelled
 > by its token, and the revive button labelled by its token and **ghosted**; the paid and store
-> buttons, the divider's paper-item parts and E19 stay hidden. The buttons send nothing (the feed
+> buttons, the divider, the paper-item parts and E19 stay hidden (the parts by label: TR38a). The buttons send nothing (the feed
 > has no release or revive command; OPEN for `scenario-feed.md`); OK closes the panel. On
 > `Revived { entity: player }` the panel closes.
 
-> **OPEN:** (implementer, `crates/ui`, 2026-10-11) TR38 hides "the divider's paper-item
-> parts", but §10.2 gives no element label for the divider or for the paper-item balance (only
-> the property `UI_PaperItem_PaperItemService` of the balance), so an implementation cannot find
-> them by label. `tessera-ui` (`game::combat::state`) shows exactly the parts TR38 lists: every
-> element below the panel that carries `UI_PaperItem_PaperItemService` is hidden; of the children
-> of `DialogMessageBoxField`, those before the child that holds `DialogMessageStatementText`
-> are taken as the box's own art and keep the layout's visibility, and from that child on only
-> the statement's holder, `DialogMessageOkButton` and `DialogMessageReviveButton` are shown
-> (the paid-revive and store buttons, the divider and the balance are hidden). The labels of
-> the divider and the balance, and whether the box's art is exactly the children inherited from
-> `Box_Silver_BlueGradient`, would let the rule name them instead.
+**Box children (Confirmed, CU29; answers the implementer OPEN of 2026-10-11).**
+`DialogMessageBoxField` (based on `Box_Silver_BlueGradient` of 0x22000001) has these own
+children, in read order: `DialogMessageBoxField_BG` (500 × 212 at (6, 4), hidden by the
+layout); `DialogMessageOuterTextField` (493 × 122 at (10, 8)), which holds the statement text;
+the OK button; `DialogMessageReviveButton`; `SelfRevive_PayForRevive` (the paid-revive button,
+with `SelfRevive_PayForRevive_MithrilIcon`); `SelfRevive_PaidCategory_BuyNowButton` (hidden by
+the layout); `DialogMessage_Divider` (400 × 26 at (57, 132)); `SelfRevive_PaperItemTotal_NameLabel`
+(hidden by the layout); and `SelfRevive_PaperItemBalance` (based on `PaperItemServiceBalance_Base`
+of 0x22000884; it carries `UI_PaperItem_PaperItemService` `Revival`). The box art is the ten
+children inherited from `Box_Silver_BlueGradient` (its corner, edge, background and centre-overlay
+fields, all labelled `Base_Box_Silver_…`).
+
+> **TR38a (defeat panel parts).** TR38 hides exactly `SelfRevive_PayForRevive`,
+> `SelfRevive_PaidCategory_BuyNowButton`, `DialogMessage_Divider`,
+> `SelfRevive_PaperItemTotal_NameLabel` and `SelfRevive_PaperItemBalance` (found by label), and
+> every other element below the panel that carries `UI_PaperItem_PaperItemService`. Every other
+> element, the inherited box art and `DialogMessageBoxField_BG` included, keeps the layout's
+> visibility. (Revision 3 replaces the implementation's position-based reading, which treated the
+> box's children before the statement's holder as its art; the result is the same only if the
+> inherited art comes before that holder in child order.)
 
 <a id="s10-3"></a>
 ### 10.3 Defeated entities
@@ -1210,13 +1279,12 @@ the client stores the value for later use.
 > distinguishing a refused `UseSkill` (TR36 needs one; until then no error is shown); (5) no
 > entity title or guild for E3's second line.
 
-> **OPEN:** (implementer, `apps/client`, 2026-10-11) the `SetQuickslot` row does not say what a
-> drag from one bar slot to another does (move, copy or swap), nor whether a slot dragged onto
-> other UI (a plugin window, a panel) counts as "dragged off". The client reads it
-> conservatively: a drop on bar slot *j* sends `SetQuickslot { j, content }` with the source
-> slot's content (from a bar slot) or the plugin shortcut's (`lua-plugin-api.md` §15.2) and
-> leaves the source slot alone; only a drop over the world (no UI element under the pointer)
-> sends `content: None` for the source slot; anything else sends nothing.
+> **TR45 (slot drags; answers the implementer OPEN of 2026-10-11).** A drop on bar slot *j*
+> sends `SetQuickslot { slot: j, content }` with the source's content (a bar slot's, or a plugin
+> shortcut's, `lua-plugin-api.md` §15.2) and leaves the source slot unchanged (a copy). Only a
+> drop over the world (no UI element under the pointer) counts as "dragged off" and sends
+> `content: None` for the source slot; a drop on any other UI sends nothing. (Tessera's choice:
+> the original's move, copy or swap rule was not traced; owner check OC12.)
 
 ---
 
@@ -1256,9 +1324,8 @@ is missing.
 
 E7: (264, 124) 120 × 32 box, name 12 px at (268, 126), health bar (268, 144) 112 × 6.
 
-> **OPEN:** (implementer, 2026-10-10) no E7 look is given for a target without vitals (TR12,
-> TR18). `tessera-ui` (`game::combat::frames`) draws the panel box and the name at the same
-> place and size, without the health bar.
+> **TR42 (E7 without vitals; answers the implementer OPEN of 2026-10-10).** E7's fallback for a
+> target without vitals is the same box and name, without the health bar.
 
 <a id="s13-2"></a>
 ### 13.2 Colours by state
@@ -1282,11 +1349,10 @@ each held 1 s, then fading out over 0.5 s. E12: box (264, 168) 240 × 18, meter 
 
 A literal resource ref (or one without a pip record): the player frame's resource bar of §13.1.
 
-> **OPEN:** (exit verifier, 2026-10-11) with an install the player frame takes its install look,
-> which has no element for a resource without a pip record, while TR11 and TR41 ask for the
-> fallback bar element by element; this section does not say where that bar goes then.
-> `tessera-ui` (`CombatUi::set_player`) draws it at its §13.1 place on the fallback root over
-> the install panels.
+> **TR43 (the bar beside an install-look frame; answers the exit verifier's OPEN of
+> 2026-10-11).** With an install, a resource without a pip record still draws the §13.1
+> resource bar, at its §13.1 place on the fallback root over the install panels (TR41 applies
+> element by element: the install has no element for it).
 
 <a id="s13-5"></a>
 ### 13.5 Effect icons (E10)
@@ -1329,17 +1395,17 @@ Entities behind this camera have no floating elements.
 - Defeat panel (E18): box (256, 274) 512 × 220, fill 0xE0101828; statement 16 px at (272, 300);
   buttons 170 × 36 at (393, 437) "Revive" (ghosted: text 0xFF808080) and (577, 437) "OK".
 
-> **OPEN:** (implementer, 2026-10-10) gaps in the fallback looks, filled by `tessera-ui`
-> (`game::combat`) as follows: (1) "box" border colours not given (cast bars, effect icons, E7,
+> **TR44 (fallback gaps; answers the implementer OPEN of 2026-10-10).** The fallback looks
+> also follow these rules: (1) "box" border colours not given (cast bars, effect icons, E7,
 > defeat panel and its buttons) take the panels' 0xFF808080, and the buttons a fill of
-> 0xFF303848; (2) §13.2 gives no colour for `Tapped_ColorName`: the trivial grey 0xFF8C8C8C;
-> (3) the selection indicator is "centred 12 px above the name block's anchor", while TR8 puts
-> the name block's bottom edge at that anchor, so the two would overlap: the triangle is
-> centred 12 px above the name block's top edge; the name block is 120 × 29 (name line 16 px
+> 0xFF303848; (2) `Tapped_ColorName` takes the trivial grey 0xFF8C8C8C (§13.2 gives none);
+> (3) the selection indicator's triangle is centred 12 px above the name block's **top** edge
+> (§13.7 says "above the name block's anchor", but TR8 puts the block's bottom edge at that
+> anchor, so the two would overlap); the name block is 120 × 29 (name line 16 px
 > high, the 60 × 5 health bar at y 18, the 60 × 4 cast bar at y 25), centred on the anchor;
 > (4) the level text of a hidden level (skull or not) is empty; (5) the text sizes need the
 > client's text shaper to draw the bundled font at the given size: the fallback text elements
-> carry the size in a Tessera property (`LookPids::text_px`).
+> carry the size in a Tessera property (an engineering detail of `tessera-ui`).
 
 > **TR41.** The fallback looks above apply element by element whenever the install's element (or
 > font, image, string) is missing; a run with an install never mixes them for the same element.
@@ -1383,7 +1449,7 @@ screen) in the screenshot. Element numbers are those of §2.
 | CUI4 | A floating text is removed at *t* ≥ 1.05 and never shown at *t* ≥ 1. |
 | CUI5 | The cooldown meter's frame index is trunc(59*p* + 0.5) ∈ [0, 59] and never increases during one cooldown. |
 | CUI6 | An effect icon exists exactly while its instance is applied (between `EffectApplied` and `EffectRemoved`, or the entity's despawn). |
-| CUI7 | Within a row, icons without a duration precede timed icons, and timed icons are in non-increasing order of start time (§8.2). |
+| CUI7 | Within a row: untimed icons that are not combat-only come first, then untimed combat-only icons, then timed icons; timed icons are in non-increasing order of start time; no two icons have the same effect ID (§8.2, TR30). |
 | CUI8 | No command is sent by any display update; commands are sent only by TR3, TR4, TR5, TR28, TR33 and §11 `SetQuickslot`. |
 | CUI9 | Running the same scenario twice headless gives the same element states at every tick (no wall-clock reads: elapsed times use the feed's virtual clock in headless runs). |
 | CUI10 | With `--no-data`, no element draws an install resource; with an install, no element uses a fallback look unless its resource is missing. |
@@ -1409,12 +1475,11 @@ screen) in the screenshot. Element numbers are those of §2.
    Real-data screenshots and goldens stay local (ARCHITECTURE §23.3).
 4. Report counts: elements resolved, data rows checked, checkpoints passed.
 
-> **OPEN:** (implementer, `apps/client`, 2026-10-11) §16.1 step 3 does not say whether the
-> real-data screenshots include the world. `apps/client/tests/combat_ui_real_data.rs`
-> renders the install's panels without a 3D scene. Its floating elements use the
-> synthetic camera of §13.6, and the portraits (`PlayerPortrait`, `OpponentPortrait`) stay
-> empty. Quickslots holding items (TR32) show empty buttons in the install look, because no
-> item content template is named for quickslots (`game-panels.md` §10.3 OPEN).
+> **TR46 (real-data screenshots; answers the implementer OPEN of 2026-10-11).** The §16.1
+> screenshots show the install's panels without a 3D scene: the floating elements use the
+> synthetic camera of §13.6 and the portraits (`PlayerPortrait`, `OpponentPortrait`) stay
+> empty. Quickslots holding items (TR32) show empty buttons in the install look until
+> `game-panels.md` §10.3 names an item content template for quickslots (OPEN there).
 
 <a id="s16-2"></a>
 ### 16.2 Synthetic goldens (`apps/client/tests/combat_ui_golden.rs`, committed)
@@ -1527,6 +1592,7 @@ Creatures at 5 m (ID 7), 12 m (ID 4), 12 m (ID 9) and 60 m (ID 2), no selection:
 | OC9 | Whether channel bars fill or drain; whether a craft can be cancelled with Escape | §7.3, §7.4 |
 | OC10 | Effect rows: which row holds buffs and debuffs; that the icons show neither a timer nor a stack count (whether the effect tooltip shows a stack count is `skill-tooltips.md` OS5) | §8.2 |
 | OC11 | Defeat panel: statement, buttons and the awaken timer | §10.2 |
+| OC12 | Dragging a skill from one quickslot to another: move, copy or swap; dragging one onto a window | §11 (TR45) |
 
 <a id="s19"></a>
 ## 19. Open questions (summary)
@@ -1542,17 +1608,8 @@ Creatures at 5 m (ID 7), 12 m (ID 4), 12 m (ID 9) and 60 m (ID 2), no selection:
 | Effect row options and overflow | §8.2 | owner OC10 |
 | Slot overlays not driven | §9.4 | later milestones |
 | Defeat panel behaviour | §10.2 | owner OC11 |
-| E3 mini-vitals meter labels (implementer) | §3.5 | spec review |
-| Pip-list entry members (implementer) | §4.4 | spec review |
-| TR13 player targets with a body record (implementer) | §5.2 | spec review |
-| Whether a 0x47 descriptor's hide properties reach the target frame (TR13 reads the template only) | §5.2 | BIN (later) / owner |
-| TR14 objects with vitals (implementer) | §5.3 | spec review |
-| E7 health-meter label (implementer) | §5.7 | spec review |
-| Rise smoothing and release height (implementer) | §6.5 | spec review |
-| Effect row and icon arrangement; same-ID front rule against CUI7 (implementer) | §8.2 | spec review |
-| E7 fallback without vitals (implementer) | §13.1 | spec review |
-| Fallback-look gaps (implementer) | §13.7 | spec review |
-| Place of the §13.4 bar beside an install-look player frame (exit verifier) | §13.4 | spec review |
+| Whether a 0x47 descriptor's hide properties reach the target frame (TR13 reads the body set only) | §5.2 | BIN (later) / owner |
+| Quickslot drags in the original (TR45) | §11 | owner OC12 |
 
 ---
 
@@ -1570,3 +1627,4 @@ Creatures at 5 m (ID 7), 12 m (ID 4), 12 m (ID 9) and 60 m (ID 2), no selection:
 | 2026-10-11 | Review 2 (independent spec reviewer, of revision 1): changes requested; status Revised → Review, not Accepted. Revision 1’s census and TR13 confirmed by own probes and an M4 spot check; one blocking item (TR31 stack count against `skill-tooltips.md` §12.2). No content change (header review record only). |
 | 2026-10-11 | Revision 2 (spec writer), blocking item (1) of review 2; status Review → Revised. §8.2 TR31 aligned with `skill-tooltips.md` §12.2: the effect tooltip has no stack-count row (the first version said it shows the count when `stacks` > 1); `EffectApplied.stacks` is not shown in P2. §18 OC10 reworded to match (the tooltip question is `skill-tooltips.md` OS5). Also non-blocking items (d) of review 1 (the duplicate `s18` anchor removed) and (h) of review 2 (companion cell: `scenario-feed.md` revision 6). No implemented behaviour changes: `tessera-ui` shows no stack count on the icon or in the tooltip. Non-blocking items (a)–(c) of review 1 and (e)–(g) of review 2 are not part of this revision and stay open. |
 | 2026-10-11 | Review 3 (independent spec reviewer, of revision 2): **passed**; status Revised → Accepted. TR31 and OC10 agree with `skill-tooltips.md` §12.2; own M1 probes and an M4 spot check of §3.5 and §6.4 agree with the text. Non-blocking items carried (review 1 (a)–(c), review 2 (e)–(g)). No content change (header review record only). |
+| 2026-10-14 | Revision 3 (spec writer), non-blocking items (a)–(c) of review 1 and (e)–(g) of review 2; status Accepted → Revised, awaiting independent review. Own read-only probes of the install (M1) and an M4 pass (BIN questions (j), (k)). **(a), (b)** §8.2 Order restated from the insert routine (CU30): the same-ID test compares the per-application runtime ID and sends a new icon to position 0 whatever its timing; combat-only icons pass over timed icons, an untimed one goes right after the last untimed non-combat-only icon; TR30 says a repeated instance replaces its icon (so the same-ID case never arises from the feed) and E9 is rebuilt in arrival order; CUI7 restated. **(c)** Every implementer and exit-verifier OPEN except §4.1 (left to a parallel branch) answered: §3.3 TR4 means the full TR1 test; §3.5 mini vitals named (CU27, TR8a); §4.4 pip entry members named (CU28); §5.2 player targets take `normal` (TR13); §5.3 objects with vitals red (TR14a); §5.7 E7 meter named (CU27, TR18a); §6.5 figure box (TR19a) and the rise smoothing and release height from the client (CU31); §8.2 row arrangement (TR30a); §10.2 box children named (CU29, TR38a); §11 slot drags (TR45, owner check OC12); §13.1 E7 without vitals (TR42); §13.4 bar place (TR43); §13.7 fallback gaps (TR44); §16.1 screenshots (TR46). §19 updated. **(e)** OBS row: 1,618 0x78 sets (1,616 + 2 in `client_local_English.dat`, neither stores the three properties). **(f), (g)** TR13 restated: the body set is the set `property-system.md` §6.2 gives (object prefix + 9 for 0x70–0x76; the record itself for 0x78–0x7F; none for 0x77, 0x47 and other prefixes). **Implemented behaviour that changes on main:** (i) an untimed combat-only effect icon goes right after the last untimed non-combat-only icon instead of position 0 (`tessera-ui` effects); (ii) the floating-text rise speed closes half its gap per second (was a 0.25 s time constant), and a pending text is released when the smallest rise of the shown active non-critical texts exceeds 0.65 × the pending text's fitted height (was the template's layout height compared with the most recent text) (`tessera-ui` floaty); (iii) the targeting keys apply the full TR1 test, reading body records (`apps/client` targeting); (iv) TR38a hides the defeat panel's parts by label, which changes the result only if the implemented position rule classified the inherited box art differently. Unchanged: TR13 (the code already reads a 0x78–0x7F DID as the set itself and gives 0x77 none), TR8a, TR14a, TR18a, TR19a, TR30a, TR42–TR46 (they record the implemented readings), CU28 (the code's first-Int / first-Enum reading gives the same members). |

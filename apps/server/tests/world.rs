@@ -671,7 +671,7 @@ async fn wanderers_follow_the_first_player() {
     }
     seen.sort();
     assert_eq!(seen, ["Wanderer 1", "Wanderer 2", "Wanderer 3"]);
-    assert_eq!(s.handle().stats().entities, 4);
+    assert_eq!(s.wait_stats(|st| st.entities, 4).await, 4);
     let _ = w;
 }
 

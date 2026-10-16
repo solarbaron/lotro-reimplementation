@@ -50,7 +50,7 @@ async fn hello_and_login_success() {
         .await
         .unwrap();
     assert_eq!(speeds.changes.len(), 2);
-    assert_eq!(s.handle().stats().in_world, 1);
+    assert_eq!(s.wait_stats(|st| st.in_world, 1).await, 1);
 }
 
 #[tokio::test(flavor = "current_thread")]

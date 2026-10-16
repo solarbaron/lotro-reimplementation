@@ -2344,8 +2344,9 @@ take additive changes only.
 - Specs (new or revised in the dirty room): [`crafting-panels.md`](specs/crafting-panels.md)
   (new: the crafting panel and recipe page, make controls, the crafting bar and results, the
   crafting trainers, recipe-scroll tooltips, gathering nodes and facilities, and the census of
-  recipes and the other crafting records, §10); `progression-panels.md` (**new, not yet in the
-  tree**: the experience bar, levels and level-up, the trait panel and trait trees, and skill
+  recipes and the other crafting records, §10);
+  [`progression-panels.md`](specs/progression-panels.md) (new: the experience bar, levels and
+  level-up, the trait panel and trait trees, and skill
   training, with the trait-tree census); [`scenario-feed.md`](specs/scenario-feed.md) the "P6
   progression" revision (§18.P6: additive steps, options, events, commands, selector families
   and label contexts; numbered at the merge); [`lua-plugin-api.md`](specs/lua-plugin-api.md)
@@ -2423,26 +2424,29 @@ observations in the original client: rows O160–O175
 P8.
 
 <a id="p6-status"></a>
-**Status:** exit criteria 1 and 2 pass on Tessera's side, with the **trait half of criterion 1
-held** by [decision 0037](decisions/0037-p6-trait-tree-and-recipe-census.md) §1.1 until the
-missing `progression-panels.md` lands (the trait-tree data layer and census run provisionally
-from the Accepted `combat-data.md` §8.5 and pass, 0 failures). Started 2026-10-16 on branch
-`p6` (worktree `wt-p6`, off main e9ed7bb; exit verification 2026-10-16 on the uncommitted `p6`
-tree, install `3905db5e60168527`). **Specs in Review, independent review pending:**
-`crafting-panels.md`, the `scenario-feed.md` "P6 progression" revision and `lua-plugin-api.md`
-§15.6; **missing from the tree:** `progression-panels.md` (the experience-bar, trait-panel and
-skill-training spec), which leaves the progression UI half fallback-only and leaves `keymap.md`
-without P6 trait/skill toggle rows. [Decision 0037](decisions/0037-p6-trait-tree-and-recipe-census.md)
-is Proposed (owner acceptance pending), as are the golden tiers of
+**Status:** exit criteria 1 and 2 pass on Tessera's side; **merged to main 2026-10-17**
+(merge commit 2f2b86c, with the trait-conform commit fb83a61 and the fuzz-fmt fix-up d2d1c26).
+Started 2026-10-16 on branch `p6` (worktree `wt-p6`, off main e9ed7bb; exit verification
+2026-10-16 on the `p6` tree, install `3905db5e60168527`). All P6 specs are **Accepted after an
+independent review** (2026-10-16): `crafting-panels.md`, `progression-panels.md`, the
+`scenario-feed.md` "P6 progression" revision and `lua-plugin-api.md` §15.6.
+`progression-panels.md` (the experience-bar, trait-panel and skill-training spec) was lost to a
+stray `git reset` in the milestone worktree and was rewritten from independent dirty-room
+observation; it is now in the tree and Accepted, so the trait half of criterion 1 is no longer
+provisional and the trait panel and census were conformed to it (commit fb83a61).
+[Decision 0037](decisions/0037-p6-trait-tree-and-recipe-census.md) stays Proposed (owner
+acceptance pending), as do the golden tiers of
 [decision 0031](decisions/0031-parity-panel-goldens.md) that it reuses
-([decision 0036](decisions/0036-p5-map-census-and-panel-goldens.md) was accepted 2026-10-16). No
-criterion needs an observation in the original client to pass on Tessera's side; owner rows
-O160–O175 ([owner-observations.md](checklists/owner-observations.md#p6-items)) block nothing
+([decision 0036](decisions/0036-p5-map-census-and-panel-goldens.md) was accepted 2026-10-16). The
+full merge-check on main passed (fmt, clippy workspace `--all-targets --all-features` and fuzz,
+release tests with the install 6,962 passed / 0 failed, content, SPDX, server deps and DCO
+clean). No criterion needs an observation in the original client to pass on Tessera's side; owner
+rows O160–O175 ([owner-observations.md](checklists/owner-observations.md#p6-items)) block nothing
 until P8.
 
 | # | Status | Evidence |
 |---|---|---|
-| 1 | **pass** (Tessera's side; trait half provisional, held by decision 0037 §1.1 pending `progression-panels.md`) | `crafting_real_data`: the crafting census over the install categorises every recipe record exactly once (count equals the recipe family size) with **0 failures** — 7,791 recipes (7,782 Shown, 9 `ResultImageMissing`); 10 professions, 7 vocations, 7 guilds, 32 trainers, 335 gathering nodes, 13 facility effects, 26 facility hotspots and 6,055 recipe scrolls each counted once; for every recipe the tree rows and each tier's recipe page are built, and the recipe-scroll tooltip rows (`ExaminationRecipeOneShot`/`ExaminationRecipeCooldown`) show exactly when the recipe is one-use or has a cooldown (1,339 one-use, 2,238 cooldown rows, 0 that disagree). `progression_real_data` (provisional, from `combat-data.md` §8.5): 17 / 17 trait trees and 1,216 / 1,216 placements categorised Shown, 1,216 trait tooltips built, **0 failures**, every tree and placement counted once, all 511 prerequisites resolve within their own branch (97 shared cell keys in 4 trees). |
+| 1 | **pass** (Tessera's side; trait half conformed to the Accepted `progression-panels.md`, commit fb83a61) | `crafting_real_data`: the crafting census over the install categorises every recipe record exactly once (count equals the recipe family size) with **0 failures** — 7,791 recipes (7,782 Shown, 9 `ResultImageMissing`); 10 professions, 7 vocations, 7 guilds, 32 trainers, 335 gathering nodes, 13 facility effects, 26 facility hotspots and 6,055 recipe scrolls each counted once; for every recipe the tree rows and each tier's recipe page are built, and the recipe-scroll tooltip rows (`ExaminationRecipeOneShot`/`ExaminationRecipeCooldown`) show exactly when the recipe is one-use or has a cooldown (1,339 one-use, 2,238 cooldown rows, 0 that disagree). `progression_real_data` (conformed to `progression-panels.md`, resting on the Accepted `combat-data.md` §8.5): 17 / 17 trait trees and 1,216 / 1,216 placements categorised Shown, 1,216 trait tooltips built, **0 failures**, every tree and placement counted once, all 511 prerequisites resolve within their own branch (97 shared cell keys in 4 trees). |
 | 2 | **pass** (Tessera's side; owner rows O160, O161, O167, O170 open) | The four committed synthetic scenarios `progression-panels` (level-up), `traits` (train/trait), `crafting` (craft) and `gathering` run `tessera-client --headless --no-data --scenario … --scenario-log …` and, with the install, with exit 0 and a byte-identical log on a second run; `scenario_committed_logs` (tessera-net) replays every committed log byte-identically. Golden images: 8 tier-1 committed synthetic goldens (`p6_xp_bar`, `p6_xp_levelup`, `p6_levelup_banner`, `p6_trait_panel`, `p6_skill_trainer`, `p6_craft_trainer`, `p6_crafting_a`, `p6_crafting_b`) match under `TESSERA_GOLDEN_REQUIRE=1`; viewed in this verification and judged correct (experience bar with level and fill, trait panel with trees/branches/cells/ranks/prerequisites and slotted traits, skill trainer with ghosted and too-expensive rows, craft trainer with its replace selector, the crafting panel with its recipe tree, recipe page and make controls). In-process panel tests (`p6_panels`, decision 0037 §3 item 4) assert each control sends the right command (Make/Make All, TrainSkill, TrainCraft, SetTraitRank, ChooseTraitBranch). |
 
 ---

@@ -287,7 +287,7 @@ compatibility in plain prose is fine. Format-level terms like "DID" or "landbloc
   it does not yet protect the meter/label (unit-test covered; strengthen the capture),
   `ui-layout.md` §8.4 step 6 OPEN (owner), `walker.md` §16.12 spec-writer reconciliations,
   finder join-label text cut. Owner rows O140-O155.
-- **P6 (progression and crafting panels; branch `p6`, worktree `wt-p6`, exit verification
+- **P6 (progression and crafting panels; merged to main 2026-10-17, exit verification
   2026-10-16)** (`docs/ROADMAP.md` P6 status): criteria 1 and 2 pass on Tessera's side. Its
   specs are Accepted after independent review (2026-10-16): `progression-panels.md`,
   `crafting-panels.md`, the `scenario-feed.md` "P6 progression" revision and `lua-plugin-api.md`
@@ -304,7 +304,10 @@ compatibility in plain prose is fine. Format-level terms like "DID" or "landbloc
   records categorised, 0 failures; every class-3486 tree censused — 17 trees and 1,216 placements
   all `Shown`, 914 distinct placed traits, 0 failures; 10 professions, 7 vocations. 8 tier-1
   panel goldens pass and were viewed; the committed level-up/train/craft scenario replays
-  byte-identical headless (criterion 2). Open: the live frame glue that opens the P6 windows in
+  byte-identical headless (criterion 2). Checks on the merge commit (2f2b86c) and the fuzz-fmt
+  fix-up (d2d1c26): fmt, clippy (workspace `--all-targets --all-features`, fuzz), release tests
+  with the install 6,962 passed, 0 failed; content, SPDX, server deps, DCO clean; pushed to
+  main. Open: the live frame glue that opens the P6 windows in
   the walker (`--open-panel` P6 names and `toggle_crafting` are defined but the client does not
   yet act on them); `keymap.md` carries an implementer OPEN for the trait/skill panel toggles;
   owner rows O160-O175.

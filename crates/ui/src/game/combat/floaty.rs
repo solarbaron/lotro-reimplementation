@@ -18,8 +18,9 @@ use super::data::{AnchorSource, EntityId, ScreenAnchor, cap_label, round_half_aw
 use super::look::{self, TextStyle};
 use super::vocab::CombatVocab;
 
-/// The release spacing of §6.5 (a pending text is released once the newest active one has
-/// risen more than (1 − 0.35) of its height).
+/// The release spacing of §6.5, CU31 (a pending text is released once the smallest rise of
+/// the shown active non-critical texts exceeds (1 − 0.35) of the **pending** text's fitted
+/// height).
 pub const RELEASE_SPACING: f32 = 0.35;
 
 /// A new text is refused while more than this many texts of the entity are pending (§6.5).
@@ -50,9 +51,14 @@ pub const MAX_ACTIVE: usize = 64;
 /// Most pooled elements kept for reuse (Tessera cap).
 pub const MAX_POOL: usize = 128;
 
-/// The time constant of the rise-speed smoothing, seconds (§6.5: not read; Tessera's
-/// choice).
-pub const RISE_SMOOTHING: f64 = 0.25;
+/// The time constant of the rise-speed smoothing, seconds (§6.5, BIN k, CU31: the smoothing
+/// helper's initial value; with base 2 the smoothed speed closes half of its gap to the
+/// target each second).
+pub const RISE_TIME_CONSTANT: f64 = 1.0;
+
+/// The smoothed rise speed takes the target's value once it is within this of it (§6.5,
+/// CU31).
+pub const RISE_SNAP: f32 = 0.0002;
 
 /// Life of the generic texts and of TR20's, seconds.
 pub const DEFAULT_LIFE: f32 = 2.0;
@@ -288,6 +294,9 @@ struct Entry {
     element: Option<ElementKey>,
     /// The rise so far, design pixels (before *σ*).
     rise: f32,
+    /// Whether the text was drawn (visible) in the last update (§6.5: the release compares
+    /// the rise of the *shown* active non-critical texts).
+    shown: bool,
 }
 
 /// The texts of one entity (§6.5).
@@ -296,7 +305,11 @@ struct EntityTexts {
     active: Vec<Entry>,
     pending: VecDeque<Entry>,
     slots: [bool; CRIT_SLOTS],
+    /// The smoothed rise speed *v*ₛ (§6.5, CU31); `None` starts it at the base rise speed.
     speed: Option<f32>,
+    /// The rise-speed target the previous update set (§6.5: *v*ₛ advances towards it before
+    /// the new target is set); `None` starts it at the base rise speed.
+    target: Option<f32>,
     last: Option<f64>,
     touched: u64,
 }
@@ -450,6 +463,7 @@ impl FloatingTexts {
             height: 0.0,
             element: None,
             rise: 0.0,
+            shown: false,
         });
         true
     }
@@ -527,60 +541,64 @@ impl FloatingTexts {
         for ent in entities {
             let anchor = anchors.anchor(ent);
             let y0 = -name_height(ent).max(0.0);
-            // Rise speed (§6.5).
-            let (n, dt) = {
-                let l = &self.lists[&ent];
-                let dt = l.last.map_or(0.0, |t| (now - t).max(0.0));
-                (l.active.len() + l.pending.len(), dt)
-            };
-            let target = if n > 2 {
-                base * (1.0 + (n as f32 / 10.0).min(1.0))
-            } else {
-                base
-            };
-            // Release (§6.5): at most one per frame.
+            let dt = self.lists[&ent].last.map_or(0.0, |t| (now - t).max(0.0));
+            // The front pending text's element and fitted height (§6.5, CU31): the release
+            // test compares the shown texts' rise with this height, so it is measured before
+            // the test. Prepared once and kept until the text is released or the list drops.
+            self.prepare_front(ui, ent);
+            // Release (§6.5, CU31): at most one per frame. The list releases its first
+            // pending text when it has no active text, or when the smallest rise of the
+            // *shown* active non-critical texts exceeds (1 − 0.35) × the pending text's
+            // fitted height (with no such shown text the test passes).
             let release = {
                 let l = &self.lists[&ent];
-                !l.pending.is_empty()
-                    && l.active.len() < MAX_ACTIVE
-                    && match l.active.iter().rev().find(|e| !e.crit) {
-                        None => true,
-                        Some(e) => e.rise > (1.0 - RELEASE_SPACING) * e.height,
-                    }
+                !l.pending.is_empty() && l.active.len() < MAX_ACTIVE && {
+                    let ph = l.pending.front().map_or(0.0, |f| f.height);
+                    l.active
+                        .iter()
+                        .filter(|e| !e.crit && e.shown)
+                        .map(|e| e.rise)
+                        .reduce(f32::min)
+                        .is_none_or(|r| r > (1.0 - RELEASE_SPACING) * ph)
+                }
             };
-            if release {
-                let entry = self.lists.get_mut(&ent).and_then(|l| l.pending.pop_front());
-                if let Some(mut e) = entry {
-                    let el = self.take_element(ui);
-                    if let Some(k) = el {
-                        self.style(ui, k, &e);
-                        crate::game::move_to_front(ui, k);
-                        e.height = ui.layout_box(k).map_or(0.0, |b| b.h() as f32);
+            if release
+                && let Some(mut e) = self.lists.get_mut(&ent).and_then(|l| l.pending.pop_front())
+            {
+                e.start = Some(now);
+                if let Some(l) = self.lists.get_mut(&ent) {
+                    if e.crit {
+                        let free = l.slots.iter().position(|s| !s).unwrap_or(0);
+                        l.slots[free] = true;
+                        e.slot = Some(free);
                     }
-                    e.element = el;
-                    e.start = Some(now);
-                    if let Some(l) = self.lists.get_mut(&ent) {
-                        if e.crit {
-                            let free = l.slots.iter().position(|s| !s).unwrap_or(0);
-                            l.slots[free] = true;
-                            e.slot = Some(free);
-                        }
-                        l.active.push(e);
-                    }
+                    l.active.push(e);
                 }
             }
             let Some(l) = self.lists.get_mut(&ent) else {
                 continue;
             };
-            let v = l.speed.unwrap_or(base);
+            // Rise speed (§6.5, CU31): read the smoothed speed (advanced towards the target
+            // the previous update set) before this update sets the new target.
+            let prev_target = l.target.unwrap_or(base);
             let a = if dt > 0.0 {
-                1.0 - (-dt / RISE_SMOOTHING).exp()
+                1.0 - 2f64.powf(-dt / RISE_TIME_CONSTANT)
             } else {
                 0.0
             };
-            let v = v + (target - v) * a as f32;
+            let mut v = l.speed.unwrap_or(base);
+            v += (prev_target - v) * a as f32;
+            if (v - prev_target).abs() <= RISE_SNAP {
+                v = prev_target;
+            }
             l.speed = Some(v);
             l.last = Some(now);
+            let n = l.active.len() + l.pending.len();
+            l.target = Some(if n > 2 {
+                base * (1.0 + (n as f32 / 10.0).min(1.0))
+            } else {
+                base
+            });
             let mut keep = Vec::with_capacity(l.active.len());
             for mut e in l.active.drain(..) {
                 let start = e.start.unwrap_or(now);
@@ -611,6 +629,7 @@ impl FloatingTexts {
                 });
                 let visible =
                     t < 1.0 && anchor.is_some_and(|a: ScreenAnchor| a.on_screen && a.drawn);
+                e.shown = visible && e.element.is_some();
                 if let (Some(elk), Some(a)) = (e.element, anchor) {
                     if visible {
                         let sigma = distance_scale(
@@ -657,6 +676,42 @@ impl FloatingTexts {
             if let Some(k) = self.pool.pop() {
                 ui.destroy(k);
             }
+        }
+    }
+
+    /// Prepares the front pending text of an entity (§6.5, CU31): gives it an element, sets
+    /// its text and style and measures its fitted height, so the release test can compare
+    /// the shown texts' rise with that height. Done once; the element is reused when the
+    /// text is released. A no-op when the front text already has an element or there is none.
+    fn prepare_front(&mut self, ui: &mut Ui, ent: EntityId) {
+        let needs = self
+            .lists
+            .get(&ent)
+            .and_then(|l| l.pending.front())
+            .is_some_and(|f| f.element.is_none());
+        if !needs {
+            return;
+        }
+        let Some(entry) = self
+            .lists
+            .get(&ent)
+            .and_then(|l| l.pending.front())
+            .cloned()
+        else {
+            return;
+        };
+        let Some(k) = self.take_element(ui) else {
+            return;
+        };
+        self.style(ui, k, &entry);
+        crate::game::move_to_front(ui, k);
+        let h = ui.layout_box(k).map_or(0.0, |b| b.h() as f32);
+        if let Some(f) = self.lists.get_mut(&ent).and_then(|l| l.pending.front_mut()) {
+            f.element = Some(k);
+            f.height = h;
+        } else {
+            ui.set_shown(k, false);
+            self.pool.push(k);
         }
     }
 

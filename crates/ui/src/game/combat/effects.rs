@@ -94,16 +94,41 @@ impl EffectRows {
         }
     }
 
-    /// Adds an effect (replacing an icon of the same instance) by §8.2: an untimed
-    /// effect goes to the front; a timed one goes after the last icon (from the end) whose
-    /// start is later than its own (untimed icons count as the latest), else to the front.
+    /// Whether a backward scan of the Order rule stops at icon `x` when placing `new`
+    /// (§8.2 steps 3 and 4), so that `new` goes right after `x`:
+    /// - a new icon that is not combat-only (so it is timed) stops at an icon whose start is
+    ///   later than its own (an untimed icon counts as the latest), i.e. [`Self::key`] of `x`
+    ///   greater than that of `new` (step 3);
+    /// - a combat-only new icon passes over every timed icon; it stops at an untimed icon
+    ///   that is not combat-only, and at an untimed combat-only icon when it is itself timed,
+    ///   passing over it when it is itself untimed (step 4).
+    fn stops(new: &EffectView, x: &EffectView) -> bool {
+        if new.combat_only {
+            if x.timeout().is_some() {
+                false
+            } else if !x.combat_only {
+                true
+            } else {
+                new.timeout().is_some()
+            }
+        } else {
+            Self::key(x) > Self::key(new)
+        }
+    }
+
+    /// Adds an effect (replacing an icon of the same instance) by the §8.2 Order rule
+    /// (revision 3, CU30): an untimed icon that is not combat-only goes to position 0;
+    /// otherwise the row is scanned from the last icon towards the first and the new icon is
+    /// placed right after the first icon the scan stops at ([`Self::stops`]), or at position
+    /// 0 when the scan reaches the front. So the untimed non-combat-only icons come first
+    /// (most recent first), an untimed combat-only icon goes right after the last of them,
+    /// and the timed icons follow by start (most recent first).
     ///
-    /// §8.2's "an icon whose effect ID is already in the row goes to the front" conflicts
-    /// with CUI7 for timed icons (`combat-ui.md` §8.2 OPEN). Tessera keeps CUI7: the rule
-    /// moves an icon to the front of its own group only, which is where the two placements
-    /// above already put it (untimed icons at position 0, a timed icon first among the
-    /// icons that started no later than it). Returns `false` when the list is full
-    /// ([`MAX_EFFECTS`]).
+    /// §8.2's same-effect-ID step (a new icon whose effect ID is already in the row goes to
+    /// position 0) never applies to feed effects: TR30 replaces a repeated instance's icon
+    /// (the ID compared is the per-application runtime instance ID) and [`Self::remove`]
+    /// above removes it first, so no row holds two icons with the same ID. Returns `false`
+    /// when the list is full ([`MAX_EFFECTS`]).
     pub fn insert(&mut self, e: EffectView) -> bool {
         self.remove(e.instance);
         if self.len() >= MAX_EFFECTS {
@@ -111,13 +136,11 @@ impl EffectRows {
         }
         let r = Self::row_of(&e);
         let row = &mut self.rows[r];
-        let untimed = e.timeout().is_none();
-        let at = if untimed {
+        let at = if e.timeout().is_none() && !e.combat_only {
             0
         } else {
-            let k = Self::key(&e);
             row.iter()
-                .rposition(|x| Self::key(x) > k)
+                .rposition(|x| Self::stops(&e, x))
                 .map_or(0, |j| j + 1)
         };
         row.insert(at.min(row.len()), e);
@@ -168,18 +191,25 @@ impl EffectRows {
         &row[..row.len().min(max_columns)]
     }
 
-    /// Whether the rows satisfy CUI7: untimed icons precede timed ones and timed icons are
-    /// in non-increasing order of start time.
+    /// Whether the rows satisfy CUI7 (revision 3): untimed icons that are not combat-only
+    /// come first, then untimed combat-only icons, then timed icons, and timed icons are in
+    /// non-increasing order of start time.
     #[must_use]
     pub fn satisfies_cui7(&self) -> bool {
+        // 0: untimed, not combat-only; 1: untimed, combat-only; 2: timed.
+        let class = |e: &EffectView| {
+            if e.timeout().is_some() {
+                2u8
+            } else if e.combat_only {
+                1
+            } else {
+                0
+            }
+        };
         self.rows.iter().all(|row| {
             row.windows(2).all(|w| {
                 let (a, b) = (&w[0], &w[1]);
-                match (a.timeout().is_some(), b.timeout().is_some()) {
-                    (true, false) => false,
-                    (true, true) => a.start >= b.start,
-                    _ => true,
-                }
+                class(a) <= class(b) && (class(a) != 2 || class(b) != 2 || a.start >= b.start)
             })
         })
     }

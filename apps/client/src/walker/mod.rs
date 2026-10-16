@@ -3447,6 +3447,15 @@ impl Walker {
         self.combat.pick(&self.characters, &ray, &to_frame)
     }
 
+    /// Whether session entity `id` may be selected (`combat-ui.md` §3.1, TR1), reading its
+    /// body record the way [`Self::pick_entity`] does. The targeting keys (TR4) use this so
+    /// an `Object` with a body record is a candidate only when its effective properties pass
+    /// the §3.1 test.
+    #[must_use]
+    pub fn entity_selectable(&self, id: EntityId) -> bool {
+        self.combat.selectable(&self.characters, id)
+    }
+
     /// The screen anchor above entity `id`'s figure (`combat-ui.md` §6.4: the top of its box
     /// plus 0.05 m, projected; with the camera distance for the distance scale of
     /// [`combat::pick::distance_scale`]); `None` without a figure or a camera.

@@ -465,6 +465,25 @@ impl UiHost {
         now: f64,
         anchors: &dyn tessera_ui::game::combat::AnchorSource,
     ) -> Vec<(tessera_net::Command, Option<i32>)> {
+        // Default: every object is selectable (the scenario and test-server objects carry no
+        // body record). The runtime path (`combat_frame_with`) reads body records.
+        self.combat_frame_with(state, changes, extra, install, now, anchors, &|_| true)
+    }
+
+    /// As [`Self::combat_frame`], but with `object_selectable` answering TR1's body-record
+    /// test for an `Object` candidate of a targeting action (TR4, the way mouse picking
+    /// does); the client's runtime passes its walker's reading.
+    #[allow(clippy::too_many_arguments)]
+    pub fn combat_frame_with(
+        &mut self,
+        state: &CombatState,
+        changes: &[CombatChange],
+        extra: Vec<CombatInput>,
+        install: Option<&CombatInstall>,
+        now: f64,
+        anchors: &dyn tessera_ui::game::combat::AnchorSource,
+        object_selectable: &dyn Fn(tessera_net::EntityId) -> bool,
+    ) -> Vec<(tessera_net::Command, Option<i32>)> {
         let Some(hud) = self.combat.hud.as_mut() else {
             self.combat.events.clear();
             self.combat.inputs.clear();
@@ -540,7 +559,7 @@ impl UiHost {
                 }
                 _ => None,
             };
-            for c in crate::combat::commands::commands(i, state) {
+            for c in crate::combat::commands::commands(i, state, object_selectable) {
                 out.push((c, slot));
             }
         }

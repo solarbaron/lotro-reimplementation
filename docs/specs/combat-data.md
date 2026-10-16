@@ -1503,6 +1503,32 @@ key alone).
 > layout is not computed by script code read in this pass. M3 observation of the trait panel (which
 > cell a known trait occupies), or a reading of the panel's layout data, would settle it.
 
+> **OPEN:** (implementer, P6, 2026-10-16) `progression-panels.md`, which decision 0037 §1 item 1
+> names for the trait-tree census categories and for what "rendered" means per cell, rank and
+> prerequisite, is not in the tree. `tessera-gamedata` (`progression`) runs a provisional
+> census: each tree of this section once and each placement once with its tree; a placement
+> is `TraitMissing` (the trait is not in the trait family), `NameMissing` (its `Trait_Name` does
+> not render), `CellMissing` (no location, key 0 or a key of no observed form),
+> `DependencyMissing` (a dependency names a cell no placement of the tree occupies), else
+> `Shown`; a tree takes the first category of its placements (`Empty` without placements). On
+> the owner's install all 17 trees and 1,216 placements are `Shown` (914 distinct traits, 55
+> branch keys). A dependency without `Trait_TraitTree_TraitDependencyRank` is taken as rank 1.
+> The progression spec should replace or confirm these categories.
+
+> **OPEN:** (implementer, P6 review fix, 2026-10-16) Cell keys are not unique per tree: on the
+> owner's install 97 cell keys are held by more than one placement, in 4 of the 17 trees
+> (placements of different branches share a key). This section does not say whether a
+> `Trait_TraitTree_TraitDependency` cell key is scoped to the dependent placement's branch.
+> `tessera-gamedata` takes it as branch-scoped (Tessera rule): a dependency names the first
+> placement of the same branch at that cell; when that branch places nothing there, the tree's
+> only placement at that cell, if exactly one; otherwise none (census `DependencyMissing`). On
+> the install all 511 dependencies resolve within their own branch. A stored
+> `_TraitDependencyRank` outside 1 … 65,535 is clamped to that range (0 and negative values
+> read as 1, never as "always met"). Two further provisional census rules: a placement past
+> the first 4,096 of its tree (the page's bound) is `TooManyCells`, a tree with one is too;
+> trainer rows take "requirements not met" only from the feed's entry flag
+> (`scenario-feed.md` §6.6), never from the player's level.
+
 Further tree fields: `Trait_TraitTree_SpecializationsArray` (13 trees, 39 entries: a branch and
 `Trait_TraitTree_SpecializationProgression`, a class-3800 sparse DID progression of traits,
 §4.6), `Trait_TraitTree_BranchDescriptionArray`, `Trait_TraitTree_RowToRequiredBranchRankProgression`
@@ -2114,3 +2140,4 @@ spec is silent. They are not facts about the original; a spec writer may confirm
 | 2026-10-08 | Re-review of the fixes (separate review session, not the author): passed; status moved to Accepted. No text change besides the header. |
 | 2026-10-08 | Merge of the decoder branch (spec writer, dirty room). The implementer OPEN notes and census differences of 2026-10-07 are kept; those that the Accepted text of the 2026-10-08 revision already answers are marked with a pointer: Implementer notes: out-of-range indices (§4.8), skipped entries (§5.6), operator arithmetic (§5.3) and the table index base (§10.2, Q12), each answered in part. No fact changed; status unchanged. |
 | 2026-10-09 | OPEN sweep (spec writer, dirty room; status Revised, waiting for review). New provenance key OBS3 (every set walked at every depth) and rows C53–C59, D6. Corrections: §4.1 float-array length 8 occurs once (C53); §4.6 sparse DID targets are traits of classes 1477 and 1483, not 3438 (C54). Added: §5.2 census depth and where nested `Mod_Array`s sit (C55); §6.3 `Effect_WSLEffect` zeros (C56); §6.4 grouping rule, counts without variance for both classes, full labels per stem (C57); §6.5, §8.1, §9.1, §9.2 field labels (C58). Implementer notes: all six closed (D6 confirms the choices, or a pointer to §4.8, §5.3, §5.6). §13.3 Q12: the literal sites once called reads are failure codes, return values and one UI identifier (C59); Q12 stays open. Still OPEN: Q4, Q6, Q9, Q10, Q11, Q12 (hook damage), Q13, Q15 (server logic, native code or owner observation). |
+| 2026-10-16 | Implementer OPEN from `crates/gamedata` (P6; no fact changed): §8.5, the provisional trait-tree census while `progression-panels.md` is missing. |

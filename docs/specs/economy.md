@@ -1690,6 +1690,21 @@ Data questions:
 - The progression spec owns the layout of class 1385 used in §6.2 and §4.11.
 - The item spec owns `Item_Value`, which the purchase price of §11.6.1 reads, and the
   `ItemMunging_*` properties counted in §6.2.
+- P6 (2026-10-16, [`crafting-panels.md`](crafting-panels.md); notes only, no fact of this spec
+  changed): (1) the name string of a recipe's object form equals `CraftRecipe_Name` when the
+  recipe has one (3,092) and the result item's `Name` otherwise (4,699), in all 7,791; the
+  crafting panel shows it (CP20 there). (2) The getters of the recipe-description function of
+  §11.5 (class 263 function 104) read, besides the values named in §11.5, the result and
+  critical result items and quantities, `CraftRecipe_RequiredFacilityEffect` and its name, the
+  profession's tool name, `CraftRecipe_OneTimeRecipe`, `CraftRecipe_CooldownDuration`,
+  `CraftRecipe_Cooldown_MithrilResetCost`, `CraftRecipe_UICategory`, the two field icons and
+  `CraftRecipe_LevelMungeOutput`; it reads no `CraftRecipe_RequiredCraftGuild` (CP10 there).
+  (3) For the §11.5.3 OPEN on `CraftRecipe_ExecutionTime`: it equals the `Induction_Duration`
+  of the recipe's `CraftRecipe_InductionAction` in 6,732 recipes and differs in 1,059 (12
+  induction records: one of 7 s per profession for almost all recipes, three of 25, 45 and 60 s
+  for one recipe each) (CP22 there). (4) The tool and facility tests the class library makes
+  for the panel (`Inventory_CraftToolCategory` against `CraftProfession_RequiredTool`; the
+  player's active effects against the facility effect) are in §5.3 there.
 
 ---
 
@@ -1705,3 +1720,4 @@ Data questions:
 | 2026-10-08 | Merge of the decoder branch (spec writer, dirty room). The implementer OPEN notes and census differences of 2026-10-07 are kept; those that the Accepted text of the 2026-10-08 revision already answers are marked with a pointer: §6.2 (progression types: answered by `combat-data.md` §4.1–§4.3) and §9.5 (packed field widths: answered by §9.5.1); the munge-override OPEN of the base text is replaced by the Accepted §6.2 text. No fact changed; status unchanged. |
 | 2026-10-09 | OPEN sweep (spec writer, dirty room; status Revised, waiting for review). New provenance key OBS3 and rows E1–E3. Answered the three implementer OPENs: §4.5/§4.8 type codes of the world-event condition fields (E1), §4.9 the stored `RunicLevelLootTable_Level` (E2), §6.2 `Usage_MinLevel` never stored in both places, top level first by decision (E3). Still OPEN (server behaviour or owner observation): the munge-level override, loot rolls, random generator and descent order, runic pulls, level index, filtered lists, species tables, critical crafts, craft XP, execution time, sale price, money drops and their unit, profession attributes, PVP key, reward-once set. |
 | 2026-10-10 | Notes only (no fact changed), for P3 (`npc-windows.md`): §7 order of the currency directory's two forms; §6.1 barter costs that are wallet items. Status unchanged. |
+| 2026-10-16 | Notes only (no fact changed), for P6 (`crafting-panels.md`): §15 recipe name rule, description getters, execution time against induction duration, tool and facility tests. Status unchanged. |

@@ -1551,6 +1551,16 @@ these actions are swallowed (`opaque_keys`, §3.3), and while `ui.dialog` is act
 > walker's keys move, or should these defaults give way? Implemented as written (the
 > original's defaults win).
 
+> **OPEN:** (implementer, `crates/input`, 2026-10-16, P6) this spec has no rows yet for the P6
+> panel toggles: `crafting-panels.md` §12 asks for four (`ToggleCraftingPanel` on `T` in `Main`;
+> `ToggleCraftingProf1Panel` … `Prof3Panel` unbound) and `progression-panels.md` (trait and
+> skills panels) is not in the tree. Implemented conservatively from `crafting-panels.md` §12
+> only: `global` actions `toggle_crafting` (`T`), `toggle_crafting_1` … `toggle_crafting_3`
+> (none), button, policy exact, no `R` flag, with the four commands paired in order in the
+> §12.14.2 import table; the action names are Tessera's and await this spec's rows. No trait or
+> skills-panel action is defined until their commands and defaults are specified. `T` clashes
+> with no default of §8 or §8.2 (`Ctrl+T` stays `pin_tooltip` under the exact policy).
+
 ---
 
 <a id="s9"></a>

@@ -4033,6 +4033,285 @@ return to 0 with no event.
 > examined; the six surveyed distributions that set `MountChanged` (`plugin-api-usage.md`
 > §5.3) were not read for it.
 
+<a id="s15-6"></a>
+### 15.6 Progression and crafting views in Tessera (decision 0024 P6)
+
+The views read the session's **progression model** of the local player, which the scenario
+feed fills in the sandbox through `LevelChanged`, `SkillLearned`, `SkillForgotten`,
+`UntrainedSkills`, `ProfessionChanged`, `RecipeLearned`, `RecipeForgotten` and
+`VocationChanged` (`scenario-feed.md` §6.6, §9.2, revision "P6 progression") and a server
+backend would fill the same way. Every event follows the delivery rule of the first paragraph
+of §15: queued with its argument values, delivered in frame-loop step 7, getters returning the
+value at delivery. An event is queued only for view objects that exist in the apartment at the
+change.
+
+This subsection is written as one unit on the P6 branch, while a parallel fix-up branch edits
+§15–§19: its provenance rows P110–P114, its conformance checks 110–119 and its summary lines
+stand here and move to the provenance table, §18, §19 and the change log at the merge, where
+their numbers are reconciled. It answers the `Profession` and `Vocation` parts of the §15 OPEN
+on enums (P113); the enum table of §15 gains their two rows at the merge.
+
+**Provenance of this subsection.**
+
+| # | Fact | Source | Mark |
+|---|---|---|---|
+| P110 | The members and their documented meaning: `LocalPlayer:GetUntrainedSkills()` returns a `SkillList` (of `UntrainedSkill`), whose `GetPrice()` is the cost to purchase the skill, `GetRequiredLevel()` and `GetRequiredRank()` the level and rank needed to purchase it; `FreePeopleAttributes:GetProfessionInfo(profession)` returns the `ProfessionInfo` of a `Profession` value, or nil when the player does not have that profession; `GetVocation()` returns the current vocation as a number; `ProfessionInfo` has the name, the current proficiency and mastery level, experience earned, target experience and title, `GetRecipeCount()` (recipes the player knows for the profession) and `GetRecipe(index)`, with one `…Changed` event per value and `RecipeAdded`, `RecipeRemoved`; `Recipe` has name, category and category name, profession, tier, result and critical-result item info and quantities, `HasCriticalResultItem`, ingredient and optional-ingredient counts and getters, the ingredient pack, the crafting experience rewarded, the base critical chance, the cooldown and `IsSingleUse`; `RecipeIngredient` has item info, required quantity and the critical chance it adds. The live dump lists the same members. No member or event of `Turbine.Gameplay` reports the character's experience, trait points, trait trees or slotted traits. Usage in surveyed plugins: `GetProfessionInfo` 7, `GetVocation` 5, `GetUntrainedSkills` 6, `ProfessionInfo:GetName` 8, `GetProficiencyLevel` 6, `GetRecipe` 5, `Recipe:GetName` 7, `GetTier` 6; `ProfessionInfo` events 1 each for four of them; no `UntrainedSkill` member | S2 (class and member pages of `LocalPlayer`, `UntrainedSkill`, `FreePeopleAttributes`, `ProfessionInfo`, `Recipe`, `RecipeIngredient`); S3 (`TurbineDump.json`; `TurbineEventsDump.json` holds none of these events); S6 through [`plugin-api-usage.md`](plugin-api-usage.md) §5.3 | **Reported** |
+| P111 | `GetProfessionInfo`, `ProfessionInfo` values, events and recipe list (items 1–4 below) | BIN, **method M4 under [decision 0011](../decisions/0011-standing-m4-authorisation.md)**: client `x64/lotroclient64.exe`, PE file version 4906.0071.1794.4035, SHA-256 d22363eb9aff0fb599fd04b3efa9a1769d08da8af9d8f9b73121c12bfd7e21ee; Ghidra 12.1.3 headless on a private copy of the shared analysis project (deleted after use), 2026-10-16. Functions found from the registration of the API names (string references), read by function. **Questions:** (q1) how `GetProfessionInfo` finds its object and which numbers it takes; (q2) where the `ProfessionInfo` values come from, when each event fires and in which order; (q3) how the recipe list and its two events are kept and what their argument tables hold; (q4) what each `Recipe` and `UntrainedSkill` getter returns (source, kind, index rule); (q5) where `GetVocation()` comes from, and whether `VocationChanged` or a character-experience event exists; (q6) how the trained and untrained skill lists are filled. **Why M1–M3 were not enough:** the behaviour is native code; the data hold only the records; S2 describes each member in one line; S3 captured none of these events; the original cannot be run here (M3). Only the plugin-API registrations and getters, the profession-information object and the two skill lists were read; nothing about network, login, launcher, anti-cheat, anti-tamper or the patcher | **Confirmed** 2026-10-16 (BIN only; not observed in a running client) |
+| P112 | `Recipe`, `UntrainedSkill`, `GetVocation`, `VocationChanged`, the skill lists and the absence of experience events (items 5–8 below) | BIN (same pass); an ASCII string search of the same executable for event names containing `Experience`, `XP`, `Trait`, `Level`, `Skill`, `Vocation`, `Profession` or `Recipe` and ending in `Changed` | **Confirmed** 2026-10-16 (BIN only) |
+| P113 | The root DID map (`records.md` §8.2) has the labels `PROFESSIONS` (root key 0x10000006) and `VOCATIONS` (root key 0x10000005). Their sub-maps hold, besides the `Undef` entry with key 0: `PROFESSIONS` keys 1–10 labelled `Metalsmith`, `Forester`, `Scholar`, `Jeweller`, `Tailor`, `Weaponsmith`, `Prospector`, `Woodworker`, `Farmer`, `Cook`, each naming one of the 10 profession records of `economy.md` §5.2; `VOCATIONS` keys 1–7 labelled `Explorer`, `Tinker`, `Yeoman`, `Historian`, `Armsman`, `Woodsman`, `Armorer`, each naming one of the 7 vocation records of §5.3. These keys and labels are exactly the API's `Profession` and `Vocation` values and names (Appendix A). All 10 professions have `CraftProfession_Name`; all 160 tier entries (16 per profession) name a `CraftProfession_ProficiencyTitle` and a `CraftProfession_MasteryTitle`, 320 distinct title records, every one with `Title_String` (`quests.md` §12.1) | M1 (the user's install, read-only, 2026-10-16, through the repository's DID-map and property readers) | **Confirmed** 2026-10-16 |
+| P114 | Progression and crafting views in Tessera: the session's progression model and its updates from the feed events; the profession value of a record by the `PROFESSIONS` map, literal professions unreachable; the getters' values for records and literals; event order and the recipe-list events; the untrained-skill list; `GetVocation` and `VocationChanged`; class attributes; leaving the world | DEC ([0024](../decisions/0024-parity-track.md) P6); `scenario-feed.md` (revision "P6 progression"); [`crafting-panels.md`](crafting-panels.md) CP20, §4.7; `economy.md` §5, §11.5 | **Tessera rule** (no observation; the original's untraced values are in the OPENs below) |
+
+**What the original does (P111–P113).**
+
+1. **Professions.** The free-people attributes object keeps a map from a profession number to
+   one `ProfessionInfo` object. It fills the map when it is built, under a client feature
+   condition: for each profession that a class-library function lists for the player (class
+   263 function 3 in this install), it turns the profession record's DID into its key in the
+   `PROFESSIONS` DID map, makes one `ProfessionInfo`, refreshes it with its recipes (item 3) and
+   stores it under that key. `GetProfessionInfo(p)` returns the object stored under the number
+   *p*, or nil when there is none; every call returns the same object. Whether a profession
+   learned later is added to the map was not traced.
+2. **Values and events.** A `ProfessionInfo` holds a copy of the profession information that a
+   class-library function returns (class 263 function 1): the name, the proficiency level,
+   mastery level, proficiency experience, proficiency target, mastery experience and mastery
+   target (32-bit integers), and the proficiency and mastery titles (strings). The getters
+   return the copy. On a refresh the object keeps the old copy, fetches the new one and compares
+   them field by field, firing, for each field that changed and in this order:
+   `ProficiencyLevelChanged`, `ProficiencyExperienceChanged`,
+   `ProficiencyExperienceTargetChanged`, `ProficiencyTitleChanged`, `MasteryLevelChanged`,
+   `MasteryExperienceChanged`, `MasteryExperienceTargetChanged`, `MasteryTitleChanged`, each
+   with an empty argument table. A change of the name fires nothing.
+3. **Recipe list.** Each `ProfessionInfo` keeps an ordered list of `Recipe` objects.
+   `GetRecipeCount()` is its length; `GetRecipe(i)` returns the entry at 1-based *i* and nil for
+   any *i* outside 1 … count (it raises no error). When the crafting state reports a recipe
+   learned for the profession, a new `Recipe` is appended and `RecipeAdded` fires with
+   `Index` = the new count; when it reports a recipe forgotten, the first entry of that recipe
+   is found, `RecipeRemoved` fires with `Index` = its position, and then it is removed and the
+   later entries move up by one. A refresh with recipes (at creation, and on refreshes that ask
+   for it, under a further feature condition) first removes, in list order, every entry whose
+   recipe the class library no longer lists (`RecipeRemoved`, then the removal), then appends
+   each listed recipe not yet in the list (`RecipeAdded` each), in the iteration order of an
+   internal hash set. Both argument tables hold `Index` (a number) and **`Recipe` = the boolean
+   true**, not the `Recipe` object: the code pushes "an object exists" as a boolean.
+4. **Recipe objects.** Each `Recipe` holds a copy of the recipe description that a
+   class-library function returns for the recipe (class 263 function 2; its field set was not
+   compared with that of function 104, which the crafting panel reads, `crafting-panels.md`
+   CP10).
+5. **Recipe getters.** `GetCategory()`, `GetResultItemQuantity()`,
+   `GetCriticalResultItemQuantity()`, `GetIngredientCount()`, `GetOptionalIngredientCount()`
+   and `GetExperienceReward()` return unsigned 32-bit integers of the copy;
+   `GetBaseCriticalSuccessChance()` and `GetCooldown()` return 32-bit floats of the copy as
+   numbers; `HasCriticalResultItem()` and `IsSingleUse()` booleans. `GetCategoryName()` is the
+   display text of the category key in the enum mapper that the EMAPPER DID map labels
+   `CraftUICategory`. `GetProfession()` turns the description's profession DID into its
+   `PROFESSIONS` key (0 when it is not there). `GetTier()` is the first element of the
+   description's tier list, 0 when the list is empty. `GetResultItemInfo()` and
+   `GetCriticalResultItemInfo()` create an `ItemInfo` of the item DID on the first call (none
+   for DID 0 or while a feature condition is off) and return that same object afterwards.
+   `GetIngredient(i)` and `GetOptionalIngredient(i)` build their `RecipeIngredient` lists on
+   first use and return the entry at 1-based *i*, nil outside 1 … count. `GetIngredientPack()`
+   and the three `RecipeIngredient` getters were not traced.
+6. **Untrained skills.** `UntrainedSkill` getters return three 32-bit fields of an entry of a
+   client table of trainable skills: required level, required rank, price (in that field
+   order). `GetTrainedSkills()` and `GetUntrainedSkills()` each create their `SkillList` on the
+   first call (under a feature condition) and return the same object afterwards. The trained
+   list is filled from a class-library function; the untrained list holds the entries of the
+   client's training table that are not marked trained, one `UntrainedSkill` per entry, in
+   table order. Where that table comes from was not traced.
+7. **Vocation.** `GetVocation()` reads the player's `Craft_Vocation` (a DID) and returns its key
+   in the `VOCATIONS` DID map; 0 without a player entity, a property or a map entry. The name
+   `VocationChanged` is defined in the client and fired, with an empty argument table, by a
+   method of the free-people attributes object (what calls it was not traced; §16 lists no event
+   for the class, P87).
+8. **No experience event.** The executable holds no event name for the character's experience
+   (no `ExperienceChanged` or `XPChanged`); the only `…Experience…Changed` names are the four of
+   `ProfessionInfo`. A level is reported only through `Actor:GetLevel()` and `LevelChanged`
+   (§15.2).
+
+**The session's progression model (Tessera rule, P114).** For the local player: per
+**profession value** *p*, a record (proficiency level, experience and target, mastery level,
+experience and target) and an ordered recipe list; a vocation ref; an untrained-skill list.
+The value *p* of a profession ref is the key of its DID in the `PROFESSIONS` DID map (P113;
+read by label at run time, never hard-coded); a literal ref, or a DID the map does not hold,
+has no value and reaches no view.
+
+| Session event | Model change | Queued plugin events |
+|---|---|---|
+| `ProfessionChanged { profession, tier, proficiency, proficiency_max, mastery, mastery_max, mastery_tier }` with value *p* | *p*'s record becomes: proficiency level `tier`, experience `proficiency`, target `proficiency_max`, mastery level `mastery_tier` (`tier` when absent), experience `mastery`, target `mastery_max`; *p* is held from its first report | on *p*'s `ProfessionInfo` objects, the events of item 2 for the values that changed, in item 2's order (the titles follow the levels, below) |
+| `RecipeLearned { what, profession, … }` | the recipe's profession is the event's `profession` when present, else the recipe record's `CraftRecipe_Profession`; with a value *p*, `what` is appended to *p*'s list unless already in it | `RecipeAdded { Index = the new count, Recipe = true }` on *p*'s objects |
+| `RecipeForgotten { what }` | `what` leaves the list that holds it; later entries move up | first `RecipeRemoved { Index = its position, Recipe = true }`, then the removal |
+| `VocationChanged { vocation, slots }` | the vocation becomes `vocation` | `VocationChanged {}` on the attributes object when `GetVocation()` changes |
+| `UntrainedSkills { entries }` | the untrained list becomes the entries, in order | the list events below |
+| `LevelChanged`, `SkillLearned`, `SkillForgotten` | as §15.2 (`quiet` changes nothing for plugins) | as §15.2 |
+
+A `RecipeLearned` for a profession not yet reported keeps its place in that profession's list,
+so the list is complete when the profession's first `ProfessionChanged` arrives (Tessera's
+answer to the original's refresh with recipes, item 3).
+
+**Views (Tessera rule).**
+
+| View | Rule |
+|---|---|
+| `FreePeopleAttributes:GetProfessionInfo(p)` | For a number *p* whose profession is held: the apartment's `ProfessionInfo` of *p*, created at the first call while held; every call returns it. Otherwise (not held, not a number, no such value) nil. |
+| `ProfessionInfo:GetName()` | rendered `CraftProfession_Name` of the profession record (the `PROFESSIONS` entry of *p*); the empty string when absent |
+| `GetProficiencyLevel()`, `GetProficiencyExperience()`, `GetProficiencyExperienceTarget()`, `GetMasteryLevel()`, `GetMasteryExperience()`, `GetMasteryExperienceTarget()` | the model's six numbers of *p*, as above |
+| `GetProficiencyTitle()`, `GetMasteryTitle()` | the rendered `Title_String` of the title record that the profession's `CraftProfession_TierEntry` whose `CraftProfession_Tier` equals the proficiency (or mastery) level names in `CraftProfession_ProficiencyTitle` (or `CraftProfession_MasteryTitle`); the empty string when there is no such entry or title. `ProficiencyTitleChanged` (`MasteryTitleChanged`) is queued when this text changes, in item 2's place |
+| `GetRecipeCount()`, `GetRecipe(i)` | the length of *p*'s list; the `Recipe` at 1-based *i*, nil for any other *i* (item 3). One `Recipe` object per recipe ref per apartment |
+| `FreePeopleAttributes:GetVocation()` | the key of the vocation ref's DID in the `VOCATIONS` DID map; 0 for none, a literal ref or a DID the map does not hold |
+| `LocalPlayer:GetUntrainedSkills()` | One `SkillList` per apartment. Its content is the untrained list: one `UntrainedSkill` per entry, in order (one object per skill ref per apartment; `GetSkillInfo()` as for §15.2's skills); empty (count 0; `GetItem` raises for every index, as §15.2) before the first `UntrainedSkills` |
+| `UntrainedSkills` list events | On each `UntrainedSkills`: first every listed ref that the new list lacks is removed, in ascending old position (`SkillRemoved { Index }` with its position at that moment); then every new ref not listed is appended in the event's order (`SkillAdded { Index, Skill }`); kept refs take their new values and keep their place, with no event |
+| `UntrainedSkill:GetPrice()`, `GetRequiredLevel()`, `GetRequiredRank()` | the entry's `coin`, `level` and `rank` (0 when the rank is none) |
+
+`Recipe` and `RecipeIngredient` (a recipe record read through its property set with
+inheritance, `economy.md` §5.1; "absent" means the record lacks the property):
+
+| Getter | Record present | Literal recipe ref |
+|---|---|---|
+| `GetName()` | the recipe name rule of `crafting-panels.md` CP20: rendered `CraftRecipe_Name`, else the result item's rendered `Name`; the empty string when neither | the literal text |
+| `GetCategory()`, `GetCategoryName()` | `CraftRecipe_UICategory`; its display text in the `CraftUICategory` mapper (item 5); 0 and the empty string when absent | the event's `category` and its display text; 0 and the empty string without one |
+| `GetProfession()`, `GetTier()` | the `PROFESSIONS` key of `CraftRecipe_Profession` (0 when not there); the first element of the tier list (`Recipe::tiers()`, 0 when empty) (item 5) | the value of the event's `profession` (0 without); the event's `tier` (0 without) |
+| `GetResultItemInfo()`, `GetCriticalResultItemInfo()` | the §15.1 `ItemInfo` of `CraftRecipe_ResultItem` / `CraftRecipe_CriticalResultItem`; nil when absent or 0 | nil |
+| `GetResultItemQuantity()`, `GetCriticalResultItemQuantity()` | `CraftRecipe_ResultItemQuantity` / `CraftRecipe_CriticalResultItemQuantity`, 0 when absent | 0 |
+| `HasCriticalResultItem()` | `CraftRecipe_CriticalResultItem` present and not 0 | false |
+| `GetIngredientCount()`, `GetIngredient(i)`; `GetOptionalIngredientCount()`, `GetOptionalIngredient(i)` | the number of `CraftRecipe_IngredientList` (`CraftRecipe_OptionalIngredientList`) entries; the entry at 1-based *i* as a `RecipeIngredient`, nil outside 1 … count | 0; nil |
+| `GetIngredientPack()` | a `RecipeIngredient` of `CraftRecipe_IngredientPack` with quantity `CraftRecipe_IngredientPackQuantity` and bonus 0; nil when absent | nil |
+| `GetExperienceReward()` | the experience value of `economy.md` §11.5.2 (the `CraftRecipe_XPReward` key in the craft control's experience table; 0 without an entry) | 0 |
+| `GetBaseCriticalSuccessChance()` | `CraftRecipe_CriticalSuccessChance` as stored (a fraction; 0 when absent, §11.5.1) | 0 |
+| `GetCooldown()` | the cooldown of `economy.md` §11.5.3 in seconds (−1 for a key without a map entry); 0 when `CraftRecipe_CooldownDuration` is absent | 0 |
+| `IsSingleUse()` | `CraftRecipe_OneTimeRecipe` (false when absent) | false |
+| `RecipeIngredient:GetItemInfo()`, `GetRequiredQuantity()`, `GetCriticalChanceBonus()` | the §15.1 `ItemInfo` of the entry's `CraftRecipe_Ingredient`; `CraftRecipe_IngredientQuantity` (1 when absent); `CraftRecipe_IngredientCritBonus` (0 when absent) | — |
+
+Values are numbers converted exactly; one `ItemInfo` per item DID per apartment (§15.1), so
+`GetResultItemInfo()` returns the same object on every call, as item 5 does.
+
+**Class attributes.** `LocalPlayer:GetClassAttributes()` returns one object per apartment
+whose class is `<Name>Attributes` for the API `Class` name of the entered character's class
+value (`CharacterInfo.class`, the class mapper key, P41) when §16 lists that class, and a plain
+`ClassAttributes` otherwise. Their own members are class resources and stances, not
+progression: every getter returns 0 (a boolean getter false) and no event fires, until a
+milestone feeds them. (Tessera rule; how the original picks the class was not traced.)
+
+**Experience, traits and levels.** The feed's `ExperienceChanged`, `TraitPoints`, `TraitRank`,
+`TraitTreeChanged` and `TraitSlotted` reach no plugin view (item 8; P110). Levels are §15.2's.
+
+**Leaving the world.** On `Disconnected`, or a second `WorldEntered`, before the logout unload
+(§6.3): every held profession's recipe list is emptied with one `RecipeRemoved` per entry,
+from the last position down, and the profession is no longer held (`GetProfessionInfo` nil;
+held objects answer their last values); the untrained list is emptied with `SkillRemoved`
+from the last position down; the vocation becomes none, with one `VocationChanged` when
+`GetVocation()` was not 0.
+
+> **OPEN:** what the original's `ProfessionInfo` values are in terms of the feed's: whether the
+> proficiency and mastery levels are the tier being earned or the number of completed tiers,
+> and whether the titles are those of that tier (item 2 reads them from the class library,
+> which was not traced; owner rows O192, O193). **Tessera rule:** the table above.
+
+> **OPEN:** the order of `GetRecipe` in the original (append order of the crafting state's
+> reports, and the hash-set order of a refresh, item 3) is not stable across sessions; Tessera
+> keeps the feed's report order. Whether `RecipeAdded`'s `Recipe` field is meant to be the
+> object (it is true, item 3) was not checked in game (owner row O194).
+
+> **OPEN:** where the original's untrained-skill table comes from (item 6), whether it is the
+> class's `AdvTable_AvailableSkillEntryList` (whose entries hold `AdvTable_Level`,
+> `AdvTable_Rank` and `AdvTable_TrainingCost`, `combat-data.md` §9.1) minus the trained skills,
+> and whether it changes outside a trainer (owner row O195). **Tessera rule:** the feed's
+> `UntrainedSkills`; Tessera derives no list from the class table.
+
+> **OPEN:** whether the original adds professions learned after the attributes object exists
+> (item 1), and what calls `VocationChanged` (item 7). **Tessera rule:** professions are held
+> from their first report; `VocationChanged` on every change of `GetVocation()`.
+
+> **OPEN:** (implementer, `crates/plugins`, 2026-10-16) choices where the views table is
+> silent, implemented as stated here until a spec writer confirms or changes them:
+> (a) a profession held again after leaving the world gets a **new** `ProfessionInfo` object
+> per apartment (the old one keeps its last values, answers `GetRecipeCount() == 0` and
+> `GetRecipe(i) == nil`, and receives no event raised after the change; events raised for
+> its own holding before it, such as leaving the world's `RecipeRemoved`, still reach it
+> while a plugin holds it, even when the new object was made before their delivery);
+> (b) `RecipeForgotten` for a recipe that several professions' lists hold removes it from
+> the list of the lowest profession value only, and the one `Recipe` object of that ref
+> shows the values of the lowest-valued list that holds it (whichever list it was reached
+> through), each list keeping the values the ref was first learned with there; (c) a skill ref repeated within one `UntrainedSkills` report counts once, with
+> its first entry's values; (d) an `ItemInfo` of a recipe result or ingredient whose item has
+> no record DID (not reachable from a recipe record) is a new object on every call;
+> (e) bounds: 64 professions, 4,096 recipes per profession, 4,096 untrained entries, 256
+> ingredients per list are kept, further reports ignored (logged); (f) under the queued
+> delivery of §15 the model has already removed the entry when `RecipeRemoved` is
+> delivered (and emptied the lists when leaving the world's `RecipeRemoved` events are),
+> so a handler's `GetRecipe(a.Index)` and `GetRecipeCount()` show the list after the
+> removal; the order "event, then removal" of the model table holds only for the order of
+> the events. Check 114 on the install
+> is the client's (it resolves recipe records into the getter values); the plugin host's
+> half runs on synthetic values.
+
+**Proposed owner observations** (rows O192–O195, chosen after the crafting spec's O180–O191;
+reconciled at the merge):
+
+| Row | Observation |
+|---|---|
+| O192 | With a test plugin, print `GetProficiencyLevel()`, `GetMasteryLevel()` and both titles for each profession of a character, next to the crafting panel's tier rows (screenshot). |
+| O193 | Craft until a proficiency tier completes; note which `ProfessionInfo` events the plugin receives and in which order. |
+| O194 | Learn a recipe with the plugin loaded: print `RecipeAdded`'s argument table (`Index`, the type of `Recipe`). |
+| O195 | Print `GetUntrainedSkills()` (names, price, level, rank) before and after training at a trainer, and after a level-up. |
+
+**Conformance checks** (synthetic scenarios with literal and record refs and a test plugin;
+they move to §18 at the merge):
+
+110. **Professions (§15.6):** before any `ProfessionChanged`, `GetProfessionInfo(9)` is nil. With
+    a resolver whose `PROFESSIONS` map gives 9 for the profession record *P*,
+    `profession $p[0] tier=2 proficiency=40/200 mastery=10/100` makes `GetProfessionInfo(9)`
+    return one object (the same on every call) with levels 2 and 2, experience 40 and 10,
+    targets 200 and 100; a literal profession ref makes no number return an object.
+111. **Event order:** a following `profession $p[0] tier=3 proficiency=0/300 mastery=10/100
+    mastery-tier=2` delivers, in this order, `ProficiencyLevelChanged`,
+    `ProficiencyExperienceChanged`, `ProficiencyExperienceTargetChanged`,
+    `ProficiencyTitleChanged` (the tier-3 title differs from tier 2's in this install, P113),
+    and no mastery event (the mastery level stays 2); every argument table empty.
+112. **Recipe list:** `recipe "Cup" profession=$p[0]`, `recipe "Mug" profession=$p[0]` give
+    `RecipeAdded { Index = 1, Recipe = true }`, then `{ Index = 2, Recipe = true }`;
+    `GetRecipe(2):GetName() == "Mug"`, `GetRecipe(0)` and `GetRecipe(3)` are nil;
+    `forget-recipe "Cup"` gives `RecipeRemoved { Index = 1, Recipe = true }`, after which
+    `GetRecipe(1):GetName() == "Mug"` and the count is 1. A repeated `recipe "Mug"` changes
+    nothing.
+113. **Literal recipe values:** for `recipe "Cup" profession=$p[0] tier=2 category=7`,
+    `GetTier() == 2`, `GetCategory() == 7`, `GetProfession() == 9`, `GetResultItemInfo()` nil,
+    `IsSingleUse() == false`, `GetIngredientCount() == 0`.
+114. **Recipe values on the install:** for a recipe selected with `recipe one-use=yes
+    critical=yes n=1`, `IsSingleUse()` is true, `HasCriticalResultItem()` true,
+    `GetResultItemInfo()` returns the same object twice, `GetCategoryName()` equals the display
+    text of its category key, `GetTier()` its first tier, and `GetIngredient(k)` for *k* = 1 …
+    `GetIngredientCount()` returns ingredients whose `GetRequiredQuantity()` sum to the record's
+    quantities; `GetIngredient(GetIngredientCount() + 1)` is nil.
+115. **Vocation:** before any `vocation` step `GetVocation() == 0`; with a resolver whose
+    `VOCATIONS` map gives 3 for the vocation record *V*, `vocation $v[0]` gives one
+    `VocationChanged` and `GetVocation() == 3`; `vocation "Potter"` (literal) gives one
+    `VocationChanged` and 0; `vocation none` then gives no event.
+116. **Untrained list:** before any `untrained` step the list's count is 0; `untrained
+    skills="Kick","Sweep" coin=50,80 level=10,12 rank=0,1` gives `SkillAdded { 1 }`, `{ 2 }`
+    and `GetItem(2):GetPrice() == 80`, `GetRequiredLevel() == 12`, `GetRequiredRank() == 1`;
+    `untrained skills="Sweep","Lunge" coin=90` gives `SkillRemoved { 1 }`, then
+    `SkillAdded { 2 }` (Lunge), and Sweep's price reads 90.
+117. **Enum values against the install (P113):** for each `Profession` and `Vocation` name of
+    Appendix A other than `Undefined`/`None`, the `PROFESSIONS` (`VOCATIONS`) map has an entry
+    with that label and that key, naming a profession (vocation) record of `economy.md` §5.2
+    (§5.3); there are 10 and 7.
+118. **No experience view:** `xp 1200/5000`, `trait-points 2/4` and `trait-rank "T" "A" 1`
+    queue no plugin event; `LevelChanged` keeps §15.2's `LevelChanged` (with or without
+    `quiet`).
+119. **Leaving the world:** with two recipes and an untrained list of two, a `Disconnected`
+    delivers `RecipeRemoved { 2 }`, `RecipeRemoved { 1 }`, `SkillRemoved { 2 }`,
+    `SkillRemoved { 1 }`, and `VocationChanged` when a vocation value was set; afterwards
+    `GetProfessionInfo(p)` is nil.
+
+**Change record (moves to the change log at the merge).** 2026-10-16, P6 (spec writer, dirty
+room; status of this subsection **Review**, awaiting independent review): new §15.6 with
+provenance P110–P114 (BIN pass q1–q6 under decision 0011 on the offline client; M1 of the
+`PROFESSIONS` and `VOCATIONS` DID maps and the profession titles), the original's
+`GetProfessionInfo`, `ProfessionInfo`, recipe list (`RecipeAdded`/`RecipeRemoved` with `Index`
+and a boolean `Recipe`), `Recipe`, `UntrainedSkill`, `GetVocation` and `VocationChanged`, the
+absence of experience events; Tessera's progression model, views, class attributes and leaving
+the world; four OPENs; owner rows O192–O195; checks 110–119.
+
 ---
 
 ## 16. API inventory (client build 4906.0071.1794.4035)

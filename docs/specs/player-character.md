@@ -1670,6 +1670,14 @@ whose every string equals an earlier part makes 101 rejected draws, and the name
 - `wstate.md` §5.4 (native class 3053, field meanings OPEN): answered by §8.4.
 - `appearance.md` §2.1 calls `RaceTable_Gender_AdminAvatar` "another avatar object": it is the
   administrator twin of §4.2.
+- **P6 progression panels.** The trait-configuration records of §13 (the configurations, their
+  save slots and natures, and the class→nature and group→nature maps) are the data behind the
+  trait panel's equipped-trait **slots** (by nature) in [`progression-panels.md`](progression-panels.md)
+  §3.6; the trait **trees** and their cells/branches are `combat-data.md` §8.5, not this spec.
+  The experience tables and level controls of §9 are the data behind the experience bar and the
+  client's level readout (`progression-panels.md` §2), but the client half never derives a level
+  from experience (`scenario-feed.md` §6.6); this spec's §9 OPENs (Q6, Q9) stay open. No fact of
+  this spec changes.
 
 ---
 
@@ -1684,3 +1692,4 @@ whose every string equals an earlier part makes 101 rejected draws, and the name
 | 2026-10-08 | Revision (status Revised; Accepted text changed), answering the implementer notes of 2026-10-07 and Q5. §3: client list bound and value types stated, new §3.1 text with census P30 and Decision D5 (cap 65,536, type mismatch is an error). §8.4: new text model (UTF-16 code units; the runtime's case-insensitive comparison under the start-up locale; P33, P35) with Decision D6 replacing the implementer's scalar-value and full-lower-case choice; the statement that native function 3 is called from script code is corrected (P36). §8.5 rewritten: the client's generation procedure (P31, P34) replaces most of Decision D2; changes against the old D2: shift tables tried in order until one applies (not only the first), repeated parts rejected (100 draws per part), case normalisation, failure yields the empty string, at most 100 attempts in all (not 21). §8.2 compiled-half sentence corrected (3047 = category, 3048 = option). §8.6 notes the client-side check. New provenance keys WLB and BIN2, rows P30–P36, D5, D6; D2 narrowed. Invariants PC18–PC20; example §19.6; §20 Q5 answered. |
 | 2026-10-09 | Revision (status stays Revised), answering the review of 2026-10-08. §8.5 step 3, P31 and §19.6: a part gets at most **101** draws (the first and up to 100 redraws, counted per part), not 100; re-checked on the part-draw body with the operand order of `wlib-bytecode.md` §5.10 (compare-and-branch). §8.2: option-weight sums corrected to 5 (2 categories), 10 (13), 99 (1), 100 (4), 103 (1), 21 in all. §8.5 step 4: the join is made for the first part too; it never applies there only because no trimmed *E* is empty in this install; OPEN added for an empty trimmed *E* (§20 Q16). |
 | 2026-10-09 | Re-review of the 2026-10-09 revision passed; status Accepted. No content change. |
+| 2026-10-16 | Notes only (status unchanged, Accepted; no fact, status or OPEN text changed), for P6: §21 gains a "P6 progression panels" note pointing the trait-configuration records of §13 and the experience/level controls of §9 to [`progression-panels.md`](progression-panels.md) §2, §3.6 (the trait panel's equipped slots and the experience bar), with the reminder that the client half derives no level from experience (`scenario-feed.md` §6.6). |

@@ -285,13 +285,35 @@ compatibility in plain prose is fine. Format-level terms like "DID" or "landbloc
   it does not yet protect the meter/label (unit-test covered; strengthen the capture),
   `ui-layout.md` §8.4 step 6 OPEN (owner), `walker.md` §16.12 spec-writer reconciliations,
   finder join-label text cut. Owner rows O140-O155.
+- **P6 (progression and crafting panels; branch `p6`, worktree `wt-p6`, exit verification
+  2026-10-16)** (`docs/ROADMAP.md` P6 status): criteria 1 and 2 pass on Tessera's side, with the
+  **trait half of criterion 1 held** by decision 0037 §1.1 until the missing
+  `progression-panels.md` lands. Not yet merged; left uncommitted/on branch `p6`. Specs in
+  Review, independent review pending: `crafting-panels.md`, the `scenario-feed.md` "P6
+  progression" revision and `lua-plugin-api.md` §15.6; **`progression-panels.md` is not in the
+  tree** (the experience-bar, trait-panel and skill-training spec), so the progression UI half
+  is a Tessera fallback and `keymap.md` has no P6 trait/skill toggle rows (only the crafting
+  toggles of `crafting-panels.md` §12). Decision 0037 (trait-tree and recipe census, P6 panel
+  goldens) is Proposed. Built: `tessera-gamedata` `crafting` and `progression` (provisional)
+  presenters plus recipe-scroll tooltip rows and the `vocation`/`craft-guild` selector families;
+  `tessera-net` "P6 progression" forms (`scenario::progression`); `tessera-ui` `game::crafting`,
+  `game::progression`, `game::p6vocab`; `tessera-plugins` `progression` views
+  (`ProgressionSource`/`ProgressionModel`); `tessera-input` `toggle_crafting` (T) +
+  `toggle_crafting_1`…`3`; `tessera-client` `progression` module and scenarios
+  `progression-panels`, `traits`, `crafting`, `gathering`; fuzz `ui_p6_panels`,
+  `plugins_progression_views`, `client_p6_panels`. Real data: 7,791 / 7,791 recipe records
+  categorised, 0 failures; 17 trees and 1,216 placements categorised (provisional), 0 failures;
+  10 professions, 7 vocations. 8 tier-1 panel goldens pass and were viewed. Open: the live frame
+  glue that opens the P6 windows in the walker (`--open-panel` P6 names and `toggle_crafting` are
+  defined but the client does not yet act on them); independent spec review and the missing
+  `progression-panels.md`; owner rows O160-O175.
 - **REA (decision 0033, Proposed):** optional dirty-only analysis tool, pilot pending; never
   registered as an MCP server.
 - **Pending owner input:** `docs/checklists/owner-observations.md` (`/loc` readings at the 20
   M3 reference locations, frame-capture questions from M2, M4 items O8–O17, M4.5 items
   O18–O27, M5 items O39–O49, M6 items O28, M7 items O70–O73, P1 items O80–O86 and
   O88–O90, P2 items O93–O109 and O126–O129, P3 items O110–O125, P4 items O130–O137, P5
-  items O140–O155). They
+  items O140–O155, P6 items O160–O175). They
   do not block the
   Tessera-side work.
 - **Toolchain:** the laptop now has rustup (Gentoo `rustup-init-gentoo --symlink`; put

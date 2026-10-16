@@ -4,7 +4,7 @@
 
 | | |
 |---|---|
-| **Status** | Open list; started 2026-10-04; last updated 2026-10-13 (merge of p5: decision 0024 P5 items O140–O154 added: maps, travel, instance finder, mounts, plugin mount views; O155, server-added map markers, added at the P5 exit verification 2026-10-12); P4 spec writer: items O130–O137 added, decision 0035; `social-panels.md` revision 1: O130, O132, O133 gain questions; decision 0024 P3 items O110–O125 added: NPC windows, quest journal, wallet; P2 exit verification: O128 and O129 added; P2 documentation: O93–O109, O126 and O127 added); 2026-10-10 (spec writer: O85 and O86 gain the expectations the client gives for the creation screens, `character-screens.md` revision CS19–CS27); 2026-10-10 (spec writer: O24 gains the W14 question on the puddles' colour and opacity); 2026-10-10 (P1 exit verification: O88–O90 added); 2026-10-10 (spec writer: O26 gains the question on the sky line of row W9; new items O91, the far sea of row W2, and O92, the generated fallen soldiers of 3, 0xD7E7); 2026-10-10 (O24 extended to the water rows W10–W17 of `m4-5-visual.md` §4.8, with the W13 and W17 questions); 2026-10-09 (decision 0024 P1 items O80–O86 added; merge of main: the M5 items O39–O49 joined the summary next to the 2026-10-08 statuses); 2026-10-08 (every pending item checked against the data and the offline client: O5, O14, O70 answered; O6, O18, O28 narrowed; the rest marked as needing the original) |
+| **Status** | Open list; started 2026-10-04; last updated 2026-10-16 (p6: decision 0024 P6 items O160–O175 added: experience bar, level-up, trait panel, skill training, crafting panel, crafting trainers, gathering, plugin progression and crafting views, panel keys); 2026-10-13 (merge of p5: decision 0024 P5 items O140–O154 added: maps, travel, instance finder, mounts, plugin mount views; O155, server-added map markers, added at the P5 exit verification 2026-10-12); P4 spec writer: items O130–O137 added, decision 0035; `social-panels.md` revision 1: O130, O132, O133 gain questions; decision 0024 P3 items O110–O125 added: NPC windows, quest journal, wallet; P2 exit verification: O128 and O129 added; P2 documentation: O93–O109, O126 and O127 added); 2026-10-10 (spec writer: O85 and O86 gain the expectations the client gives for the creation screens, `character-screens.md` revision CS19–CS27); 2026-10-10 (spec writer: O24 gains the W14 question on the puddles' colour and opacity); 2026-10-10 (P1 exit verification: O88–O90 added); 2026-10-10 (spec writer: O26 gains the question on the sky line of row W9; new items O91, the far sea of row W2, and O92, the generated fallen soldiers of 3, 0xD7E7); 2026-10-10 (O24 extended to the water rows W10–W17 of `m4-5-visual.md` §4.8, with the W13 and W17 questions); 2026-10-09 (decision 0024 P1 items O80–O86 added; merge of main: the M5 items O39–O49 joined the summary next to the 2026-10-08 statuses); 2026-10-08 (every pending item checked against the data and the offline client: O5, O14, O70 answered; O6, O18, O28 narrowed; the rest marked as needing the original) |
 | **Author role** | Spec writer (dirty room) |
 | **Who fills it in** | The project owner, in the original client, on their own account and install |
 | **Method** | Black-box observation of the unmodified official client: its own UI, `/loc`, and frame captures (RenderDoc or apitrace under Wine/DXVK). Allowed by `docs/CLEAN_ROOM.md` §4 (method M3) and [ROADMAP §2.1](../ROADMAP.md#method-allowed). |
@@ -142,6 +142,22 @@ marks the item **done** here.
 | [O153](#o153) | Mount and dismount sequence: summon timing, cancels, bow and wait, water, forbidden areas | `mounts.md` §14.7, §14.12; `walker.md` §16.12 | Look, timing | open (P5) |
 | [O154](#o154) | Plugin mount views: `MountChanged` count, class, values | `lua-plugin-api.md` §15.5 | Own test plugin | open (P5) |
 | [O155](#o155) | Map markers a server adds outside quests: whether any exist, icon, label, tooltip on the map and the minimap | `map-windows.md` §6.7, §6.8 | Look | open (P5) |
+| [O160](#o160) | Experience bar: place, segments, fill colours, tooltip, gain animation and floating text | `progression-panels.md`; `game-panels.md` §11 | Look | open (P6) |
+| [O161](#o161) | Level-up presentation: effect, sound, chat lines, banner, bar reset, announcements | `progression-panels.md`; `scenario-feed.md` §6.6 | Look, timing | open (P6) |
+| [O162](#o162) | Trait panel: tabs, trees and branches per class, cell rows and columns, branch choice | `progression-panels.md`; `combat-data.md` §8.5 | Look, explorer | open (P6) |
+| [O163](#o163) | Trait tree cells: rank display, locked cells and dependencies, points, spend and refund | `progression-panels.md`; `combat-data.md` §8.3–§8.5 | Look | open (P6) |
+| [O164](#o164) | Trait slots and trait tooltips: slot counts, locked slots, tooltip rows, slotting | `progression-panels.md`; `combat-data.md` §8.1–§8.3 | Look | open (P6) |
+| [O165](#o165) | Skill-training window: layout, rows shown, columns, ghosting, confirm, after training | `progression-panels.md`; `npc-windows.md` §5.3 | Look | open (P6) |
+| [O166](#o166) | Crafting panel: profession tab order, extra tabs, tier-row icons and meters | `crafting-panels.md` §4.3, §4.7 | Look | open (P6) |
+| [O167](#o167) | Recipe list: initial expansion, order of tiers, categories and recipes, counts, green states, search | `crafting-panels.md` §4.4–§4.6 | Look | open (P6) |
+| [O168](#o168) | Recipe page: multiple outputs, tool and facility lines, optional ingredients and critical chance | `crafting-panels.md` §5.2–§5.5 | Look | open (P6) |
+| [O169](#o169) | Make controls: quantity typing and arrows, Make during a batch, hide when crafting, interruption | `crafting-panels.md` §5.6–§5.8 | Look | open (P6) |
+| [O170](#o170) | Crafting bar and result lines: label, length, chat lines for success, critical and interruption | `crafting-panels.md` §6; `combat-ui.md` §7 | Look, timing | open (P6) |
+| [O171](#o171) | Recipe-scroll tooltips: one-use and cooldown rows, attached result tooltip, requirement rows | `crafting-panels.md` §7; `item-tooltips.md` §6.20 | Look | open (P6) |
+| [O172](#o172) | Crafting trainers: choice rows, trainer window texts, profession selector, vocation confirmation | `crafting-panels.md` §8.1, §8.3 | Look (do not confirm) | open (P6) |
+| [O173](#o173) | Gathering nodes: highlight, cursors, gathering bar, loot or bags, node removal, refusals | `crafting-panels.md` §9.1; `interaction.md` §3.3–§3.8 | Look, timing | open (P6) |
+| [O174](#o174) | Plugin progression and crafting views: profession levels and titles, events, `RecipeAdded`, untrained list, vocation | `lua-plugin-api.md` §15.6 | Own test plugin | open (P6) |
+| [O175](#o175) | Panel toggle keys: crafting, trait and skills panels, profession toggles, close behaviour | `crafting-panels.md` §12; `progression-panels.md`; `keymap.md` §8.2 | Key-binding options | open (P6) |
 
 M4 exit criteria that wait on these items ([ROADMAP M4 status](../ROADMAP.md#m4-status)):
 criterion 2 (bodies play idle, walk and run): O8, O9, O16 (O14 answered from the client on 2026-10-08); criterion 3 (worn and held
@@ -192,6 +208,13 @@ P5 items O140–O155 ([ROADMAP P5](../ROADMAP.md#p5)) compare the maps, the trav
 instance-finder windows, the mounted walker and the plugin mount views with the original; no P5
 exit criterion waits on them, and they block nothing until P8. They are numbered from O140
 because P2 and P4 add items on their own branches at the same time.
+
+P6 items O160–O175 ([below](#p6-items)) compare the experience bar and level-up, the trait
+panel, skill training, the crafting panel, crafting trainers, gathering and the plugin
+progression and crafting views with the original; no P6 exit criterion waits on them
+([decision 0037](../decisions/0037-p6-trait-tree-and-recipe-census.md)), and they block nothing
+until P8. They number in one sequence the rows the P6 specs proposed (`crafting-panels.md`
+O180–O191, `lua-plugin-api.md` O192–O195); the mapping is at the head of the section.
 
 ---
 
@@ -2821,3 +2844,377 @@ its icon (by DID if the explorer shows it, else its shape and colour), whether i
 or tooltip and what the tooltip consists of (label, coordinates, distance; no text copied),
 whether it is drawn on the minimap and at the rim, and whether it is drawn above or below the
 table notes.
+
+<a id="p6-items"></a>
+## Decision 0024 P6 items (progression and crafting panels)
+
+These rows compare Tessera's P6 panels with the original client: the experience bar and
+level-up, the trait panel, skill training, the crafting panel, crafting trainers, gathering and
+the plugin progression and crafting views. They block nothing until P8 (decision 0024 §2.6); the
+P6 exit criteria need no observation in the original
+([decision 0037](../decisions/0037-p6-trait-tree-and-recipe-census.md)). They settle the owner
+checks of `progression-panels.md`, [`crafting-panels.md` §17](../specs/crafting-panels.md#s17)
+and the proposed rows of [`lua-plugin-api.md` §15.6](../specs/lua-plugin-api.md#s15-6), and the
+Tessera rules those specs mark "owner check". Describe what you see in your own words; never copy
+skill, trait, recipe, item, profession, trainer or NPC names, tooltip texts or chat lines into
+this file; use DIDs (the explorer shows them), counts, numbers and positions ("the third tab",
+"the second recipe under the first category").
+
+**Tessera's side** for every row: the committed P6 scenarios in `apps/client/tests/scenarios/`
+(the progression scenario with its level-up, train and craft legs), run windowed with your
+install (`tessera-client --ui --scenario-input --scenario FILE`, USER_GUIDE §3.11); the `--open-panel`
+names `crafting`, `crafting-recipe`, `vocation-trainer`, `profession-trainer` and
+`craftguild-trainer` (`crafting-panels.md` §3) and those of `progression-panels.md`.
+
+The P6 specs proposed their own rows: `progression-panels.md` from O160, `crafting-panels.md`
+O180–O191 and `lua-plugin-api.md` §15.6 O192–O195. This file numbers them in one sequence:
+`crafting-panels.md` O180 → O166, O181 → O167, O182 → O167, O183 → O169, O184 → O168, O185 →
+O170, O186 → O167, O187 → O171, O188 → O172, O189 → O172, O190 → O173, O191 → O168, its §12
+keymap OPEN → O175; `lua-plugin-api.md` O192–O195 → O174. `progression-panels.md` is not yet
+in the tree (decision 0037, Open): the "Tessera's side" sentences of O160–O165 and O175 that
+cite it state the rules it is to give and are provisional until it is committed and they are
+checked against it and given its section numbers. The rows of `progression-panels.md`
+map to O160–O165 and O175 by topic (experience bar, level-up, trait panel and trees, trait
+slots and tooltips, skill training, keys); the spec writer reconciles its row numbers with these
+at the merge. The topics of the P6 plan map as: experience bar and level-up → O160, O161; trait
+panel and trees per class → O162, O163; trait slots and tooltips → O164; skill-training window →
+O165; crafting panel professions, tiers, meters and recipe list → O166, O167; recipe detail and
+make controls → O168, O169 (with O171 for recipe-scroll tooltips); crafting bar and result lines
+→ O170; crafting trainers → O172; gathering hotspot look, cursor, use and gathering bar → O173;
+plugin progression and crafting views → O174; panel toggle keys → O175.
+
+<a id="o160"></a>
+## O160. Experience bar (P6)
+
+**Spec:** `progression-panels.md` (the experience bar: element, fill, text and tooltip);
+`game-panels.md` §11 (`LevelProgressMeter`, panel P3);
+`scenario-feed.md` §6.6 (`xp`, `level`).
+
+**Tessera's side:** the bar's fill is the feed's current experience divided by the level's cap
+(`xp A/B`), clamped to 0 … 1 (provisional until `progression-panels.md` is committed); the text and tooltip show the scripted numbers in the forms the
+progression spec names. Tessera derives no experience and no cap from the install's level
+tables (decision 0024 §2 principle 4).
+
+**What to do:** on a character below the level cap, look at the experience bar at rest; hover
+it; earn some experience (a kill or a quest) and watch the bar; if the client has an option to
+show the experience as text, turn it on and off.
+
+**Record:** where the bar is drawn (which panel, top or bottom, its length relative to the
+screen); whether it is one bar or segmented (how many segments); the fill colour and whether a
+second colour shows rested or bonus experience; what the tooltip consists of (current, cap,
+remaining, percentage, rested amount; describe, no text copied); whether the fill animates or
+jumps when experience is earned; whether a floating "+N" text appears and where.
+
+<a id="o161"></a>
+## O161. Level-up presentation (P6)
+
+**Spec:** `progression-panels.md` (level-up presentation); `scenario-feed.md` §6.6 ("Meaning
+for the client half": a not-quiet `LevelChanged` that raises the level is a level-up);
+`combat-ui.md` §4 (the player frame's `PlayerLevel`, property `Advancement_Level`) and TR16
+(the target frame's `OpponentLevel`).
+
+**Tessera's side:** a `LevelChanged` for the player that raises the level and is not `quiet`
+runs the level-up presentation of `progression-panels.md`; the first level of a session and
+quiet reports set the level silently; the player frame's level changes with it.
+
+**What to do:** level up a character (or watch one level up). Note everything that happens in
+the first ten seconds: on the character, on screen, in chat, in the panels.
+
+**Record:** whether a visual effect plays on the character (and roughly how long); whether a
+sound plays; which chat lines appear (how many, in which chat tab; no text copied); whether a
+banner or window opens and whether it closes by itself (after how long); whether the experience
+bar empties at once or animates; whether the level number in the player frame changes at once;
+whether new skills or trait points are announced and how (a flashing button, a window, a line);
+whether the presentation also plays when two levels are gained at once.
+
+<a id="o162"></a>
+## O162. Trait panel: tabs and trees per class (P6)
+
+**Spec:** `progression-panels.md` (trait panel, tabs, tree pages); `combat-data.md` §8.5 (trait
+trees: 17 records, branches, cells, dependencies; OPEN on rows and columns of the cell keys)
+and §8.6 (the trait control object).
+
+**Tessera's side:** the trait panel opens with the tabs `progression-panels.md` names; the tree
+page shows the tree the feed reports active (`trait-tree`) with its branch (`branch=`), laid out
+from the cell keys by the progression spec's rule; points come from `trait-points … tree=`.
+
+**What to do:** open the trait panel on a character of two different classes. Go through every
+tab. On the class-tree tab, look at each branch's page and at the summary page if there is one.
+Note one known trait's cell on screen (count rows and columns from the top left) and its DID in
+the explorer.
+
+**Record:** the tabs in order (by position and icon, no text); for each class, how many branches
+the tree has and whether they are side by side or on separate pages; how many rows and columns a
+branch page has; for the noted trait, its row and column on screen and its DID (this settles the
+row/column OPEN of `combat-data.md` §8.5); whether a branch must be chosen before others open,
+and how the choice is shown.
+
+<a id="o163"></a>
+## O163. Trait tree cells: ranks, prerequisites and points (P6)
+
+**Spec:** `progression-panels.md` (cells, ranks, prerequisites, point display, spend and refund
+controls); `combat-data.md` §8.3 (ranks), §8.4 (prerequisites), §8.5 (dependencies, required
+ranks per row); `scenario-feed.md` §6.6 (`trait-rank`, `trait-points`, `SetTraitRank`,
+`ChooseTraitBranch`).
+
+**Tessera's side:** a cell shows the rank the feed reported (`trait-rank`) out of the trait's
+maximum rank; a cell whose dependencies or row requirement are not met is drawn as the progression
+spec says; a click sends `SetTraitRank` and the cell changes only on the answering event (the
+client spends nothing itself).
+
+**What to do:** on a class tree, look at a cell with no ranks, one part-ranked and one at its
+maximum; at a cell under an unmet dependency; at a row that needs more points in the branch.
+Spend one point and, if possible without cost, take it back (a reset or refund control).
+
+**Record:** how ranks are shown (a number, pips, an overlay icon; "N/M" or only N); how locked
+cells and unmet dependencies are drawn (greyed, dimmed, lines between cells, arrows); where the
+available and spent points appear and in what form; whether spending is immediate or needs a
+confirm or apply button; what a refund costs and how it is shown (no amounts copied if they are
+names; numbers are fine).
+
+<a id="o164"></a>
+## O164. Trait slots and trait tooltips (P6)
+
+**Spec:** `progression-panels.md` (slotted traits, trait tooltips); `combat-data.md` §8.1–§8.3
+(trait classes, common properties, ranks); `scenario-feed.md` §6.6 (`trait N REF rank=N`,
+`TraitSlotted`).
+
+**Tessera's side:** slotted traits (virtues, racial and other slotted kinds) come from the
+feed's `trait` step, with their rank; tooltips are built from the trait record (name, nature,
+rank, description, effects) in the row order of `progression-panels.md`.
+
+**What to do:** open the slotted-trait views (virtues, racial traits, others the panel has).
+Hover a slotted trait, an empty slot and a trait in a tree cell at rank 0, part-ranked and at its
+maximum. Drag a trait into a slot if the panel allows it.
+
+**Record:** how many slots each kind has at your level and how locked slots are drawn; the rows
+of each tooltip in order (by role: name, rank, nature, description, effect lines, requirement,
+"next rank" part; no text copied); whether a tree trait's tooltip shows the next rank's values;
+whether slotting is by drag, click or a list, and whether it needs a trainer or a confirm.
+
+<a id="o165"></a>
+## O165. Skill-training window (P6)
+
+**Spec:** `progression-panels.md` (skill training); `npc-windows.md` §5.3 (trainers reached
+from the choice window); `scenario-feed.md` §6.6 (`trainer … offers=…`, `rank=`, `trained=`,
+`unmet=`; `untrained`); `lua-plugin-api.md` §15.6 (untrained skills).
+
+**Tessera's side:** a trainer window opens only on the feed's `TrainerShown`; its rows are the
+feed's entries with price, level and rank, ghosted when the feed marks them trained or unmet; a
+click on train sends `TrainSkill` and the row changes only on the answering events.
+
+**What to do:** visit your class trainer at a level with something to train and at one with
+nothing to train. Look at the list, select a row, hover a row, train one skill.
+
+**Record:** the window's layout (a list, a tree by level, tabs); which rows are shown (only
+trainable now, also later levels, also trained); how a row above your level or rank is drawn;
+the row's columns (icon, level, price, rank; by role); whether training asks for a confirm;
+what changes after training (the row disappears, ghosts, the price line updates); whether a
+"train all" control exists.
+
+<a id="o166"></a>
+## O166. Crafting panel: profession tabs and tier rows (P6)
+
+**Spec:** `crafting-panels.md` §4.3 (profession tabs; Tessera rule from the feed), §4.7 (tier
+rows, proficiency and mastery meters and icons), §17 row O180.
+
+**Tessera's side:** one tab per profession the feed reported, in the order of first report,
+then a "train more" tab when the feed's slot count is larger; each tier row shows the
+proficiency icon and the mastery icon or meter by the rule of §4.7 (worked example §15.2).
+
+**What to do:** press T: the crafting panel opens. Take a screenshot (private) with each
+profession tab selected. On one page, look at the tier rows of completed tiers, of the tier
+being earned and of a later tier; hover a meter and an icon.
+
+**Record:** the tab order against the vocation's profession order (first, second, third);
+whether a "train more" or store tab is present; for the tier rows, which show an icon, which a
+meter, which nothing; the meter's text form ("current/cap", a percentage); whether proficiency
+and mastery meters sit side by side.
+
+<a id="o167"></a>
+## O167. Crafting panel: the recipe list (P6)
+
+**Spec:** `crafting-panels.md` §4.4 (tree, texts, order; Tessera rules on sorting and
+expansion), §4.5 (templates, makeable and pack counts, states), §4.6 (search), §17 rows O181,
+O182, O186.
+
+**Tessera's side:** tiers lowest first, categories sorted by name ignoring case, recipes in
+the feed's report order; every tier and category is expanded when a page is built; a craftable
+recipe's row shows "name (n)" and its row, category and tier texts turn green
+(`RecipeGroup_Active`); search keeps rows whose text holds every typed word.
+
+**What to do:** open a profession page fresh after login. Note which rows are expanded. Read the
+order of the tier rows, of the categories under one tier and of three neighbouring recipes.
+Note one recipe whose row shows a count and one without, and the ingredients you hold for
+both. Type two words in the search field.
+
+**Record:** expanded rows at first opening; tiers lowest or highest first; whether categories
+are alphabetical; whether the three recipes keep their order after a relog; whether the count
+equals what your held ingredients allow (§15.1); whether tier and category rows turn green with
+a craftable recipe below; whether search matches part words and the count text.
+
+<a id="o168"></a>
+## O168. Recipe page: result, outputs, ingredients and requirements (P6)
+
+**Spec:** `crafting-panels.md` §5.2 (name, result, experience line, cooldown, outputs; Tessera
+rule on output choices), §5.3 (tool and facility lines), §5.4 (ingredients, packs), §5.5
+(optional ingredients, critical result, critical chance), §17 rows O184, O191.
+
+**Tessera's side:** the page shows the result with its quantity, the experience line, the
+cooldown line, six ingredient slots with "held/needed name", the tool and facility lines (red
+in `requirement_notmet` when the feed's tool bits or effects do not pass), the optional slots
+one per page behind the master overlay until the tier is mastered, and the critical chance as
+a whole percentage; a multiple-output recipe has one page more than its output list, page 1
+being the recipe's own result.
+
+**What to do:** select a plain recipe, a recipe with a pack, one with optional ingredients and a
+critical result, a multiple-output recipe and a cooldown recipe. For a recipe that needs a
+facility, look at the page once next to the facility (a forge, an oven) and once away from it.
+Check and uncheck an optional ingredient and watch the critical chance.
+
+**Record:** for the multiple-output recipe, how many pages the selector shows and whether the
+first is the recipe's own result; the facility line's colour near and away from the facility,
+and the tool line's colour without the tool; how the optional slots are shown (one per page, all
+at once) and whether the chance changes by the slot's bonus; how the not-held ingredient is
+drawn; whether the experience line names the tier.
+
+<a id="o169"></a>
+## O169. Make controls: quantity, Make, Make All and hiding (P6)
+
+**Spec:** `crafting-panels.md` §5.6 (quantity rules, the request, busy state; Tessera rule on
+when busy ends), §5.7 (when Make is enabled), §5.8 (closing), §17 row O183.
+
+**Tessera's side:** the quantity entry takes at most 3 digits and is clamped to 1 … the
+makeable count; Make All sets min(count, 999); while a request is busy both buttons are ghosted;
+with "hide when crafting" checked the panel fades out and returns when the last result of the
+request (or an interrupted craft bar) has been reported.
+
+**What to do:** with ingredients for at least four, type 9 and then 007 in the quantity field;
+use the arrows past both ends; check "hide when crafting" and craft 3; during the batch, try to
+press Make; craft 3 again and move to interrupt it.
+
+**Record:** what the field shows after each typing; whether the panel reappears after each
+craft or after the last; whether Make can be pressed during the batch; what an interruption
+does to the remaining crafts and to the panel.
+
+<a id="o170"></a>
+## O170. Crafting bar and result lines (P6)
+
+**Spec:** `crafting-panels.md` §6.1 (the induction bar in the original), §6.2 (Tessera bar,
+result lines; "Critical success" is Tessera wording), §17 row O185; `combat-ui.md` §7 (cast
+bar) and TR25 (labels).
+
+**Tessera's side:** a craft shows the cast bar of kind `Craft` labelled with the recipe's
+induction title; each `CraftResult` posts one system line (success, failure or Tessera's own
+"Critical success") with the item's name and quantity; the proficiency meter moves only on the
+feed's `ProfessionChanged`.
+
+**What to do:** craft one item that succeeds, one that crits (with an optional ingredient), and
+interrupt one craft by moving. Watch the bar and the chat.
+
+**Record:** the bar's position, length and label (whether it is the recipe's name or a generic
+craft title; no text copied); how long it runs for a common recipe; the chat lines after a
+success, a critical success and an interruption (how many lines, which chat tab, whether the item
+name is a link, whether the quantity is shown); whether a floating text or sound accompanies a
+critical success; whether the experience gain is announced.
+
+<a id="o171"></a>
+## O171. Recipe-scroll tooltips (P6)
+
+**Spec:** `crafting-panels.md` §7 (rows of `Recipe_ExamineLayout`; Tessera rule for the one-use
+and cooldown rows), §17 row O187; `item-tooltips.md` §6.20, §8.3 (compare type 4).
+
+**Tessera's side:** a recipe scroll's tooltip has the one-use row for a one-use recipe and the
+cooldown row with the cooldown's duration for a cooldown recipe, otherwise neither; the
+requirement rows show profession, tier and (some scrolls) mastery; the result item's tooltip is
+attached beside it.
+
+**What to do:** hover a one-use recipe scroll, a cooldown recipe scroll and a plain one, in your
+bags or at a vendor.
+
+**Record:** the rows of each tooltip in order (by role); where the one-use and cooldown rows
+appear and how the duration is written (units); whether the result item's tooltip is attached
+and on which side; how the requirement rows look when you do not meet them.
+
+<a id="o172"></a>
+## O172. Crafting trainers (P6)
+
+**Spec:** `crafting-panels.md` §8.1 (choice-window rows; Tessera rule), §8.3 (trainer windows,
+selector, confirmation; Tessera rules), §17 rows O188, O189; `npc-windows.md` §5.3.
+
+**Tessera's side:** the choice window lists the trainer's professions, vocations or guilds with
+their icons and names (vocations with their three professions on a second line); the trainer
+window shows the NPC's name, the learn or change text, and for a profession trainer with full
+slots the "lose profession" selector; a vocation change asks for confirmation first.
+
+**What to do:** talk to a profession trainer, a vocation trainer and a craft-guild trainer.
+Screenshot (private) the choice rows and each trainer window. At a vocation trainer, with a
+vocation already chosen, press Train and look at the confirmation; **do not confirm**.
+
+**Record:** the number of choice rows and their order; whether vocation rows have a second line
+and what it lists (by role); which text the trainer window shows (learn or change, by role);
+whether the selector appears and what it lists; the confirmation's buttons and whether it names
+the old vocation.
+
+<a id="o173"></a>
+## O173. Gathering nodes: look, cursor, use and gathering bar (P6)
+
+**Spec:** `crafting-panels.md` §9.1 (gathering nodes; what the client shows; Tessera rule for
+gathering from the feed), §17 row O190; `interaction.md` §3.3–§3.4 (cursors, range, mouse-over)
+and §3.8 (inductions).
+
+**Tessera's side:** a node is drawn from its own object at its scale; hovering it shows the
+container cursor, and the out-of-range cursor beyond 3.5 m; using it sends a use request and the
+scenario answers with a 7-second bar labelled with the induction's title, a loot window and a
+profession report; the node then disappears.
+
+**What to do:** find an ore, wood, crop or ruin node. Hover it from far away and from close by,
+with and without the right tool and profession. Gather it once (and once while mounted, if the
+node allows it).
+
+**Record:** whether the node glows or is highlighted at a distance; the cursor in range, out of
+range and without the tool or profession; the bar's label (generic or per kind) and length; what
+opens afterwards (a loot window or straight to the bags); whether the node disappears at once or
+fades; whether a refusal shows as a chat line, a screen message or both.
+
+<a id="o174"></a>
+## O174. Plugin progression and crafting views (P6)
+
+**Spec:** `lua-plugin-api.md` §15.6 (progression and crafting views: `GetProfessionInfo`,
+`ProfessionInfo`, `Recipe`, `GetUntrainedSkills`, `GetVocation`, `VocationChanged`; its OPENs
+and proposed rows O192–O195).
+
+**Tessera's side:** the views read the feed's progression model; proficiency and mastery
+levels, recipe lists and the untrained list follow the Tessera rules of §15.6; events are queued
+and delivered in frame-loop step 7.
+
+**What to do:** with your own test plugin (as for O154), print for each profession of a character
+`GetProficiencyLevel()`, `GetMasteryLevel()` and both titles next to the crafting panel's tier
+rows; craft until a proficiency tier completes and log the `ProfessionInfo` events; learn a
+recipe and print `RecipeAdded`'s argument table (`Index`, the type of `Recipe`); print
+`GetUntrainedSkills()` (price, level, rank; no names) before and after training at a trainer and
+after a level-up; print `GetVocation()` before and after a vocation change.
+
+**Record:** whether the levels are the tier being earned or the number of completed tiers; the
+events and their order at a tier completion; the `RecipeAdded` fields and types; the untrained
+list's length and numbers at the three moments; whether `VocationChanged` fired and how often.
+**Do not record names.**
+
+<a id="o175"></a>
+## O175. Panel toggle keys (P6)
+
+**Spec:** `crafting-panels.md` §12 (`ToggleCraftingPanel` on T; the three profession toggles,
+unbound; OPEN for `keymap.md`); `progression-panels.md` (the trait panel and skill-training
+toggles); `keymap.md` §8.2 (defaults that take walker keys).
+
+**Tessera's side:** T toggles the crafting panel and the profession toggles open it at that tab
+(Tessera rule); the trait-panel toggle follows `progression-panels.md`; where a default clashes
+with a walker key, `keymap.md` records the choice.
+
+**What to do:** with default key bindings (or after a reset), press the keys for the crafting
+panel, the trait panel and the skills panel; open the key-binding options and look up the
+crafting profession entries and any trait or training entries.
+
+**Record:** which key opens which panel; whether a second press closes it and whether Escape
+does; whether the profession entries have a default key and what they do when pressed (open the
+panel at that tab or something else); whether opening one panel closes another.

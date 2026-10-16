@@ -234,8 +234,9 @@ fn trait_cells_outside_the_grid_are_dropped() {
 }
 
 #[test]
-fn trait_grid_holds_every_cell_key_in_either_orientation() {
-    // combat-data.md §8.5: a = 1–8, b = 1–12 (0-based rows and columns up to 7 and 11).
+fn trait_grid_holds_every_cell_position() {
+    // progression-panels.md §3.2: a = row 1–8, b = column 1–12, plus a floater top row; the
+    // 12 × 12 grid holds every 0-based (row, column) up to (11, 11) without dropping a cell.
     let mut ui = ui(1024, 768);
     let mut p = traits(&mut ui);
     let mut v = trait_view();

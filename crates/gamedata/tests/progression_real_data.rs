@@ -1,14 +1,15 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! Real-data test of the progression model (decision 0037 §1 item 1, trait half; the
-//! provisional census of `tessera_gamedata::progression`) against a user's own install,
-//! read-only.
+//! Real-data test of the trait-tree census (`progression-panels.md` §5, decision 0037 §1
+//! item 1, trait half) against a user's own install, read-only.
 //!
 //! Skipped (reported as passed) unless `TESSERA_GAME_DIR` points at an install. Visits every
 //! trait tree once and every placement once with its tree, builds each tree page and the
-//! tooltip of every placed trait, and checks that every tree and placement lands in exactly
-//! one category with no failure. Counts that differ from `combat-data.md` §8.5 (17 trees,
-//! 1,216 placements) are printed as warnings. Prints counts and identifiers only, never game
-//! text. Use `--release`.
+//! tooltip of every placed trait, and asserts the rules of §5.2: every tree and placement
+//! lands in exactly one category, no record is `Unreadable`, and no placement is a failure
+//! (invariant PPI7). The observed counts of §5.3 (17 trees, 1,216 placements all `Shown`, 914
+//! distinct traits) are printed as evidence and compared; a count that differs is a **warning**
+//! (a data change), not a failure (decision 0037 §1 item 5; `progression-panels.md` §5.3).
+//! Prints counts and identifiers only, never game text. Use `--release`.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -53,16 +54,35 @@ fn trait_tree_census_over_the_install() {
     for (did, i, why) in c.failures.iter().take(24) {
         eprintln!("    {did}[{i}]: {why}");
     }
+    // The observed counts of `progression-panels.md` §5.3; a difference is a warning, never a
+    // failure (decision 0037 §1 item 5). The test asserts the rules of §5.2 below.
+    let shown = c
+        .placements
+        .get(&tessera_gamedata::progression::PlacementCategory::Shown)
+        .copied()
+        .unwrap_or(0);
     if c.tree_total() != 17 {
         eprintln!(
-            "  WARNING (data change?): {} trees, combat-data.md §8.5 counts 17",
+            "  WARNING (data change?): {} trees, §5.3 counts 17",
             c.tree_total()
         );
     }
     if c.placement_total() != 1_216 {
         eprintln!(
-            "  WARNING (data change?): {} placements, combat-data.md §8.5 counts 1,216",
+            "  WARNING (data change?): {} placements, §5.3 counts 1,216",
             c.placement_total()
+        );
+    }
+    if shown != c.placement_total() {
+        eprintln!(
+            "  WARNING (data change?): {shown} of {} placements Shown, §5.3 expects all",
+            c.placement_total()
+        );
+    }
+    if c.distinct_traits != 914 {
+        eprintln!(
+            "  WARNING (data change?): {} distinct placed traits, §5.3 counts 914",
+            c.distinct_traits
         );
     }
     let trees = store.family(Family::TraitTree).expect("trait-tree family");

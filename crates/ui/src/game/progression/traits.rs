@@ -4,17 +4,18 @@
 //! cannot take a rank, a prerequisite mark green when met and red when not), the points
 //! text and the slotted traits.
 //!
-//! Interaction (Tessera rule; the client half spends nothing itself, `scenario-feed.md`
-//! §6.6): a left click on an available cell below its highest rank asks for rank + 1, a
-//! right click on a cell with a rank asks for rank − 1 ([`ProgressionAction::SetTraitRank`]);
-//! a branch button that is not the chosen one asks for that branch
-//! ([`ProgressionAction::ChooseBranch`]); a tab asks the client to show that tree. The panel
-//! changes only when the client shows the answering state.
+//! Interaction (`progression-panels.md` §3.7 Decision; the client half spends nothing itself,
+//! `scenario-feed.md` §6.6): a left click on an available cell below its highest rank asks for
+//! rank + 1, a right click on a cell with a rank asks for rank − 1
+//! ([`ProgressionAction::SetTraitRank`]); a branch button that is not the chosen one asks for
+//! that branch ([`ProgressionAction::ChooseBranch`]); a tab asks the client to show that tree.
+//! The panel changes only when the client shows the answering state.
 //!
 //! Cells sit at (column × [`CELL_STEP`].0, row × [`CELL_STEP`].1) in the grid, which holds
-//! [`GRID_CELLS`](super::fallback::GRID_CELLS) (12 × 12, every cell key of
-//! `combat-data.md` §8.5 in either orientation); a cell that does not fit the grid is not
-//! drawn ([`TraitPanel::dropped`]).
+//! [`GRID_CELLS`](super::fallback::GRID_CELLS) (12 × 12). `progression-panels.md` §3.2 settles
+//! the cell key: *a* = row (1–8), *b* = column (1–12), floater 0x10000000 + *n* in a top row
+//! (§6); the client maps each to a 0-based (row, column) before this panel draws it. A cell
+//! that does not fit the grid is not drawn ([`TraitPanel::dropped`]).
 
 use crate::events::UiEvent;
 use crate::tree::ElementKey;

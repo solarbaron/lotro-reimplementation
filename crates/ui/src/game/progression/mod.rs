@@ -1,23 +1,24 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! The progression widgets of decision 0024 P6: the experience bar and level display, the
-//! level-up presentation, the trait panel (tabs per tree, branches, cells with icon, rank
-//! and state, prerequisites, points, slotted traits) and the skill-training window (rows,
-//! prices with the P3 money display, the train request).
+//! The progression widgets of decision 0024 P6 (`progression-panels.md`, Accepted): the
+//! experience bar and level display (§2), the level-up presentation (§2.3), the trait panel
+//! (tabs per tree, branches, cells with icon, rank and state, prerequisites, points, slotted
+//! traits; §3) and the skill-training window (rows, prices with the P3 money display, the
+//! train request; §4).
 //!
-//! **Provisional (Tessera rules).** `progression-panels.md`, which decision 0037 names for
-//! these panels' layouts, texts and presentation, is not in the tree. This module implements
-//! what the accepted specs give and Tessera's own fallback windows for the rest:
+//! `progression-panels.md` names install layouts for these panels (`toolbar` 0x22000033,
+//! `trait` 0x22000091, `skilltrainer` 0x22000030); this module draws Tessera's own fallback
+//! windows (§6), which are what the committed tier-1 goldens capture, and the experience bar
+//! also works on the install's toolbar meter:
 //!
 //! - the experience bar works on the install's toolbar meter (the `LevelProgressMeter` game
-//!   type, an engine Meter: `game-panels.md` §11, `ui-widgets.md` §13 P3), whose
+//!   type, an engine Meter: §2.1, `game-panels.md` §11, `ui-widgets.md` §13 P3), whose
 //!   `UICore_Meter_position` it sets, or on Tessera's fallback bar ([`fallback::experience_bar`]);
-//! - the level-up banner, the trait panel and the skill-training window exist only as
-//!   Tessera's fallback windows ([`fallback`]) with Tessera's element IDs
-//!   ([`super::p6vocab::own`]); no install layout is named for them;
+//! - the level-up banner, the trait panel and the skill-training window draw as Tessera's
+//!   fallback windows ([`fallback`], §6) with Tessera's element IDs ([`super::p6vocab::own`]);
 //! - every value is the feed's (`scenario-feed.md` §6.6 "Meaning for the client half"):
 //!   experience, levels, ranks, points, trained skills and prices are scripted, never
-//!   derived (decision 0024 §2 principle 4). A trait-cell click sends a rank request and the
-//!   panel changes only on the answering events; Train sends the entry.
+//!   derived (decision 0024 §2 principle 4; §3.7, §4.4). A trait-cell click sends a rank
+//!   request and the panel changes only on the answering events; Train sends the entry.
 //!
 //! As with the other P-track widgets, the client renders views (texts, icons, coin counts)
 //! and passes every [`crate::UiEvent`] to the window's `handle_event`, which returns

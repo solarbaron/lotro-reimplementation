@@ -9,18 +9,16 @@
 //!
 //! | Module | What | Spec |
 //! |---|---|---|
-//! | [`state`] | [`state::P6State`]: level, experience, traits, skills, trainers, professions, recipes, the crafting bar (in [`crate::net::World::p6`]) | SF §6.6 |
-//! | [`data`] | [`data::P6Data`]: the install facts the panels read (`tessera-gamedata`'s progression and crafting presenters) | CP, combat-data.md |
-//! | [`present`] | the UI window views built from the state, the presenters and the player's holdings | CP §4–§8; progression windows provisional |
-//! | [`commands`] | the `--open-panel` names and the mapping from a window's action to its session command | CP §13, SF §9.4 |
+//! | [`state`] | [`state::P6State`]: level, experience, traits, skills, trainers, professions, recipes, the crafting bar (in [`crate::net::World::p6`]) | PP §2–§4, SF §6.6 |
+//! | [`data`] | [`data::P6Data`]: the install facts the panels read (`tessera-gamedata`'s progression and crafting presenters) | PP, CP, combat-data.md |
+//! | [`present`] | the UI window views built from the state, the presenters and the player's holdings | PP §2–§4, CP §4–§8 |
+//! | [`commands`] | the `--open-panel` names and the mapping from a window's action to its session command | PP §3.7/§4.4, CP §13, SF §9.4 |
 //!
-//! **Provisional (`progression-panels.md` is not in the tree, decision 0037 Open).** The
-//! crafting half rests on the accepted `crafting-panels.md`. The progression half (the
-//! experience bar, the level-up presentation, the trait panel and skill training) follows
-//! the accepted feed facts (SF §6.6), `combat-data.md` §8.5 for the trait records and the
-//! Tessera rules of `tessera-ui::game::progression`; sections those windows would take from
-//! `progression-panels.md` (layout labels, exact texts, the trait-cell grid) are marked
-//! `OPEN` where they arise.
+//! PP is `progression-panels.md` (Accepted), CP is `crafting-panels.md`, SF is
+//! `scenario-feed.md`. The crafting half rests on `crafting-panels.md`; the progression half
+//! (the experience bar §2, the level-up presentation §2.3, the trait panel §3 and skill
+//! training §4) rests on `progression-panels.md`, with `combat-data.md` §8.5 for the trait
+//! records and the fallback-window rules of `tessera-ui::game::progression` (PP §6).
 //!
 //! This layer is the client's presentation logic: it builds the UI window views from the
 //! session state and the install, and maps a window's action back to its command. It is

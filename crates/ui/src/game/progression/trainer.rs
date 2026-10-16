@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! The skill-training window (Tessera rules; see [`super`]): one row per trainer entry
-//! (`scenario-feed.md` §6.6 `trainer`, or the player's `untrained` list) with the skill's
-//! icon, name, level text and price in a P3 money display (`npc-windows.md` §9.2, red
-//! counts in `TooExpensive` when the price exceeds the player's coin); rows already trained
+//! The skill-training window (`progression-panels.md` §4; see [`super`]): one row per trainer
+//! entry (`scenario-feed.md` §6.6 `trainer`, or the player's `untrained` list) with the
+//! skill's icon, name, level text and price in a P3 money display (§4.5, `npc-windows.md`
+//! §9.2, red counts in `TooExpensive` when the price exceeds the player's coin); rows already
+//! trained
 //! or whose requirements are not met are ghosted (entry flags) and cannot be selected; a
 //! click selects a row, the train button (ghosted without a trainable selection) or a
 //! double-click sends [`ProgressionAction::TrainSkill`]. The window changes only when the

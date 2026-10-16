@@ -1,15 +1,17 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! The experience bar and the level-up banner (Tessera rules; see [`super`]).
+//! The experience bar and the level-up banner (`progression-panels.md` §2; see [`super`]).
 //!
-//! The bar works on the install's toolbar meter: the first element of the `LevelProgressMeter`
+//! The bar works on the install's toolbar meter (§2.1): the first element of the `LevelProgressMeter`
 //! game type below the panel root (`game-panels.md` §11; an engine Meter, `ui-widgets.md`
 //! §13 P3), whose `UICore_Meter_position` takes the fill and whose tooltip the value text;
 //! or on Tessera's fallback bar ([`super::fallback::experience_bar`]), whose fill is sized
 //! and whose level and value texts are set.
 //!
-//! The level-up banner is Tessera's presentation of a level-up (`scenario-feed.md` §6.6: a
-//! `LevelChanged` for the player that raises the level and is not `quiet`; the client
-//! decides that, this widget only presents it): shown for [`LEVELUP_SECONDS`] on the
+//! The level-up banner is Tessera's own visual presentation of a level-up
+//! (`progression-panels.md` §2.3 Decision; `scenario-feed.md` §6.6: a `LevelChanged` for the
+//! player that raises the level and is not `quiet`; the client decides that, this widget only
+//! presents it; the chat notice and audio cue of §2.3 are the client's, not this widget's):
+//! shown for [`LEVELUP_SECONDS`] on the
 //! client's clock, fading in over [`FADE_IN`] and out over [`FADE_OUT`] through the
 //! element's opacity. Its state at a time is a pure function of the start time, so a golden
 //! image freezes it at a fixed virtual time.

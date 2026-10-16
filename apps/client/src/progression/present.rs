@@ -15,9 +15,10 @@
 //! > tier-1 goldens use `tessera-ui`'s own art, not these icons. A later change resolves the
 //! > icons through the P1 item-icon layer.
 //!
-//! > **OPEN** (`progression-panels.md`, not in the tree, decision 0037): the trait panel's
-//! > tab set, cell grid and texts rest on `combat-data.md` §8.5 and the Tessera rules of
-//! > `tessera-ui::game::progression`; [`trait_panel_view`] is provisional.
+//! The trait panel's cell grid, dependency arrows, cell states and texts follow
+//! `progression-panels.md` §3 (which settles the cell-key orientation, §3.2) and
+//! `combat-data.md` §8.5. [`trait_panel_view`] builds one tree's page; a live client with
+//! several trees builds one per tree the feed names (§3.1) and sets `trees`/`current`.
 
 use std::collections::HashMap;
 
@@ -561,9 +562,9 @@ fn critical_view(
     }
 }
 
-/// A provisional trait-panel view (`progression-panels.md` is not in the tree, decision 0037
-/// Open): one tab for `tree`, its cells, branches, points and the player's slotted traits. A
-/// live client with several trees builds one of these per tree and sets `trees`/`current`.
+/// A trait-panel view (`progression-panels.md` §3): one tab for `tree`, its cells, branches,
+/// points and the player's slotted traits. A live client with several trees builds one of these
+/// per tree the feed names (§3.1) and sets `trees`/`current`.
 #[must_use]
 pub fn trait_panel_view(
     tree_did: Did,
@@ -619,9 +620,9 @@ fn cell_view(c: &GCellView, icons: &dyn P6Icons, handles: &mut P6Handles) -> Tra
     handles
         .cells
         .insert(handle, feed_ref(&RecordRef::Record(c.what)));
-    // `combat-data.md` §8.5 Q11 is OPEN on which of the two numbers is the row and which the
-    // column; Tessera takes *a* as the row and *b* as the column, both 0-based, and places a
-    // special or unknown cell in column 0 of successive rows by its stored order (provisional).
+    // `progression-panels.md` §3.2 settles the cell key: *a* = row (1–8), *b* = column (1–12),
+    // floater 0x10000000 + *n* in a top row above the grid (§3.1, §6 fallback). [`cell_grid`]
+    // maps each to a 0-based (row, column) for the fallback grid.
     let (row, col) = cell_grid(c.cell);
     let rank = c.tooltip.rank;
     #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
@@ -650,12 +651,16 @@ fn cell_view(c: &GCellView, icons: &dyn P6Icons, handles: &mut P6Handles) -> Tra
     }
 }
 
-/// The (row, column) of a cell key (both 0-based), per the provisional rule of [`cell_view`].
+/// The (row, column) of a cell key (both 0-based) for the fallback grid
+/// (`progression-panels.md` §3.2, §6). A grid cell *a* × *b* goes to row *a* (1-based, so row 0
+/// is left free for the floaters) and column *b* − 1; a floater 0x10000000 + *n* goes to the
+/// top row (row 0) at column *n* − 1 (§3.1 floater row). An absent, zero or unknown key draws
+/// at (0, 0) (it is categorised `CellMissing` by the census and does not reach a live panel).
 fn cell_grid(cell: Option<tessera_formats::gameplay::combat::TraitCell>) -> (u16, u16) {
     use tessera_formats::gameplay::combat::TraitCell as K;
     match cell {
-        Some(K::Grid { a, b }) => (a.saturating_sub(1), b.saturating_sub(1)),
-        Some(K::Special(n)) => (u16::try_from(n).unwrap_or(0), 0),
+        Some(K::Grid { a, b }) => (a, b.saturating_sub(1)),
+        Some(K::Special(n)) => (0, u16::try_from(n.saturating_sub(1)).unwrap_or(0)),
         Some(K::None | K::Unknown(_)) | None => (0, 0),
     }
 }

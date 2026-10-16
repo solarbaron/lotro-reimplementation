@@ -253,6 +253,13 @@ its chat line) lives in client code and was not read under M4 in this pass.
 > should show anything special at a cap, a feed form is needed; none exists, so Tessera shows the
 > ordinary presentation.
 
+> **OPEN:** (P6, implementer note) Beyond the chat notice and audio cue above, Tessera's
+> implementation also shows a short transient on-screen **level-up banner** naming the new level
+> (a pure presentation choice; `tessera-ui`'s `progression::xpbar::LevelUpBanner`, captured by the
+> decision 0037 §2 `p6_levelup_banner` golden). The spec does not require it; a later revision may
+> describe the original's on-screen presentation (if any) and either adopt or drop the banner. Its
+> appearance at a time is a pure function of the start time, so a golden freezes it deterministically.
+
 ---
 
 <a id="s3"></a>

@@ -25,9 +25,9 @@ use tessera_ui::game::progression::ProgressionAction;
 /// `tessera_ui::game::crafting::MAX_QUANTITY`).
 pub const MAX_CRAFT_QUANTITY: u16 = 999;
 
-/// Which P6 window a `--open-panel` name opens (`crafting-panels.md` §3 Tessera rule, plus
-/// the progression windows' Tessera names until `progression-panels.md` is committed,
-/// decision 0037 Open).
+/// Which P6 window a `--open-panel` name opens (`crafting-panels.md` §3 Tessera rule, and the
+/// progression windows' `--open-panel` names of `progression-panels.md` §1.4: `traits`,
+/// `skill-trainer`/`training`, the implementer's as that section allows).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum P6Panel {
     /// The experience bar and level display.

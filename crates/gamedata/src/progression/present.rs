@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! [`ProgressionPresenter`]: trait-tree pages, trait tooltip rows and trainer rows from the
-//! install's records and the feed's state.
+//! install's records and the feed's state (`progression-panels.md` §3, §4; `combat-data.md`
+//! §8.5).
 
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
@@ -107,12 +108,13 @@ pub struct TraitTooltip {
     pub rank: u16,
 }
 
-/// Where the prerequisites of a tree point (`Trait_TraitTree_TraitDependency`, §8.5).
+/// Where the prerequisites of a tree point (`Trait_TraitTree_TraitDependency`,
+/// `combat-data.md` §8.5).
 ///
-/// **Tessera rule** (OPEN in `combat-data.md` §8.5): cell keys repeat across the branches of
-/// some trees, so a dependency is taken as branch-scoped. It names the first placement of the
-/// dependent placement's own branch at that cell; when its branch places nothing there, the
-/// one placement of the tree at that cell, if exactly one; otherwise nothing.
+/// `progression-panels.md` §3.2 rule: cell keys repeat across the branches of some trees, so a
+/// dependency is branch-scoped. It names the first placement of the dependent placement's own
+/// branch at that cell; when its branch places nothing there, the one placement of the tree at
+/// that cell, if exactly one; otherwise it is unresolved (no met prerequisite).
 #[derive(Debug, Clone, Default)]
 pub(crate) struct CellIndex {
     /// (branch, cell) → first placement.
@@ -145,8 +147,8 @@ impl CellIndex {
 }
 
 /// The rank a dependency needs: `Trait_TraitTree_TraitDependencyRank`, 1 when absent
-/// (Tessera rule, OPEN in `combat-data.md` §8.5); a stored value is clamped to 1 … 65,535,
-/// so an out-of-range value never reads as an easier prerequisite.
+/// (`progression-panels.md` §3.2, §5.2); a stored value is clamped to 1 … 65,535, so an
+/// out-of-range value never reads as an easier prerequisite.
 #[must_use]
 pub(crate) fn dependency_rank(rank: Option<i64>) -> u16 {
     rank.map_or(1, |r| {
@@ -160,11 +162,11 @@ pub struct Prerequisite {
     /// The cell key it names.
     pub cell: u32,
     /// The placement occupying that cell: the one of the same branch, else the tree's only
-    /// placement there (Tessera rule, see the `combat-data.md` §8.5 OPEN); `None` when no
-    /// placement or several of other branches occupy it.
+    /// placement there (`progression-panels.md` §3.2); `None` when no placement or several of
+    /// other branches occupy it.
     pub placement: Option<usize>,
-    /// The rank it needs (`Trait_TraitTree_TraitDependencyRank`; absent: 1, Tessera rule;
-    /// stored values clamped to 1 … 65,535).
+    /// The rank it needs (`Trait_TraitTree_TraitDependencyRank`; absent: 1; stored values
+    /// clamped to 1 … 65,535; `progression-panels.md` §3.2).
     pub rank: u16,
     /// Met: the trait in that cell has at least that rank (feed ranks).
     pub met: bool,
@@ -179,8 +181,8 @@ pub struct CellView {
     pub what: Did,
     /// `Trait_TraitTree_Branch`.
     pub branch: Option<u32>,
-    /// The cell (`Trait_TraitTree_TraitLocation`); which number is the row is OPEN
-    /// (`combat-data.md` §8.5 Q11).
+    /// The cell (`Trait_TraitTree_TraitLocation`): *a* = row, *b* = column, floater
+    /// 0x10000000 + *n* (`progression-panels.md` §3.2).
     pub cell: Option<TraitCell>,
     /// The prerequisites, stored order.
     pub prerequisites: Vec<Prerequisite>,

@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! Tessera's fallback progression windows (Tessera rules; decision 0031 tier 1, runs
-//! without an install, and every run while `progression-panels.md` names no install layout
-//! for the banner, the trait panel and the skill-training window): the experience bar, the
-//! level-up banner, the trait panel and the skill-training window, built from code-made
-//! elements with Tessera's element IDs ([`own`]), Tessera's colours and the client's
-//! [`P6Art`]. Sizes and positions are Tessera's.
+//! Tessera's fallback progression windows (`progression-panels.md` §6; decision 0031 tier 1,
+//! runs without an install): the experience bar, the level-up banner, the trait panel and the
+//! skill-training window, built from code-made elements with Tessera's element IDs ([`own`]),
+//! Tessera's colours and the client's [`P6Art`]. `progression-panels.md` names install layouts
+//! for these (§2.1, §3, §4), but Tessera draws these fallbacks — which the committed tier-1
+//! goldens capture (decision 0037 §2) — for the banner, trait panel and trainer, and only the
+//! toolbar's `LevelProgressMeter` (§2.1) is read from the install, by [`super::xpbar`]. Sizes
+//! and positions are Tessera's.
 
 use tessera_formats::property::PropertyValue;
 
@@ -61,9 +63,10 @@ pub const CELL_SIZE: (i32, i32) = (40, 40);
 /// The step between trait cells (a column and a row).
 pub const CELL_STEP: (i32, i32) = (48, 42);
 
-/// The cells the trait grid holds (columns, rows): 12 × 12, so that the cell keys of
-/// `combat-data.md` §8.5 (*a* = 1–8, *b* = 1–12) fit whichever of the two numbers the client
-/// takes as the row (§8.5 OPEN Q11).
+/// The cells the trait grid holds (columns, rows): 12 × 12. `progression-panels.md` §3.2
+/// settles the cell key as *a* = row (1–8), *b* = column (1–12), so the grid needs 8 rows and
+/// 12 columns; the extra rows hold the floater top row (§3.1, §6 fallback) the client places
+/// above the grid.
 pub const GRID_CELLS: (u16, u16) = (12, 12);
 
 /// The trait grid's margin around the cells.

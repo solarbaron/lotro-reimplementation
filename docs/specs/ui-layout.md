@@ -1024,13 +1024,13 @@ geometry and changes no box that a hit test reads.
 >
 > **Answered (owner, 2026-10-16), [decision 0040](../decisions/0040-ui-scaling.md):** the
 > original client scales its interface badly, and Tessera does not copy it. Neither reading
-> above is reproduced: Tessera's own resolution-independent UI scaling (`ui-scaling.md`, to
-> be written and reviewed) decides how layouts designed for one size are shown at any window
-> size, aspect ratio and user scale. Until that spec is Accepted and built, the stop-gap rule
+> above is reproduced: Tessera's own resolution-independent UI scaling (`ui-scaling.md`,
+> Accepted 2026-10-16) decides how layouts designed for one size are shown at any window
+> size, aspect ratio and user scale. Until that spec is built, the stop-gap rule
 > above stays.
 >
 > **Note (2026-10-16, no rule of this spec changed):** [`ui-scaling.md`](ui-scaling.md) is
-> written (status Review). For Tessera it answers this OPEN in its §5.4 (Stretch elements
+> Accepted (revision 5). For Tessera it answers this OPEN in its §5.4 (Stretch elements
 > with an edge in mode 6 keep their design-size layout box and get a uniform fit factor;
 > full-cover ones that are layers of one screen share one factor and placement, bounded by
 > the screen's height),
@@ -2232,3 +2232,4 @@ their sizes always and their positions only when the original has no saved locat
 | 2026-10-11 | Note only (no fact of this spec changed), P4 revision 1 of `social-panels.md`: the §17.4 P4 note adds the P4 voice elements that Tessera hides (`social-panels.md` TR14). Status unchanged. |
 | 2026-10-16 | Notes only (no fact or rule of this spec changed), decision 0040: §8.4 step 6 OPEN, §8.5 Tessera rule, §9.6 and §9.9 point to `ui-scaling.md` (§5, §3.2, §6.3, §5.8), which supersedes the Tessera rules named there once it is Accepted and built. Status unchanged. |
 | 2026-10-16 | Note only (no fact or rule of this spec changed), `ui-scaling.md` revision 3: the §8.4 step 6 note adds that full-cover fit containers that are layers of one screen share one factor and placement, bounded by the screen's height. Status unchanged. |
+| 2026-10-16 | Note only (no fact or rule of this spec changed): `ui-scaling.md` is now Accepted (revision 5), so the §8.4 step 6 note no longer calls it "to be written and reviewed"; the stop-gap rule stays until that spec is built. Status unchanged. |

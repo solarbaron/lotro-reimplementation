@@ -5,9 +5,12 @@
 //! (Impulse).
 //!
 //! Candidates are the eligible entities (§3.1, TR1) other than the player whose 3D distance
-//! to the player is at most [`TARGET_RANGE`]. TR1's body-record test of objects needs the
-//! walker's records; here every object is eligible (the scenario's and test server's
-//! objects carry no body record).
+//! to the player is at most [`TARGET_RANGE`]. TR4 (revision 3): the targeting keys apply the
+//! full TR1 test, reading body records the way mouse picking does, so an `Object` with a
+//! body record is a candidate only when its effective properties pass the §3.1 test. The
+//! caller supplies that reading through an `object_selectable` predicate (the client's walker
+//! answers it like its mouse pick; the scenario and test-server objects carry no body record,
+//! so the predicate is `true` for them).
 
 use tessera_input::TargetAction;
 use tessera_net::{EntityId, EntityKind};
@@ -49,8 +52,14 @@ fn distance(a: [f32; 3], b: [f32; 3]) -> f32 {
     (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt()
 }
 
-/// The candidates of `set`, ordered by distance (ties by the smaller entity ID).
-fn ordered(state: &CombatState, set: Set) -> Vec<EntityId> {
+/// The candidates of `set`, ordered by distance (ties by the smaller entity ID). TR4/TR1:
+/// an `Object` candidate must pass `object_selectable` (its body-record test); the other
+/// kinds are always eligible.
+fn ordered(
+    state: &CombatState,
+    set: Set,
+    object_selectable: &dyn Fn(EntityId) -> bool,
+) -> Vec<EntityId> {
     let Some(me) = state.player() else {
         return Vec::new();
     };
@@ -61,6 +70,7 @@ fn ordered(state: &CombatState, set: Set) -> Vec<EntityId> {
         .entities()
         .filter(|(id, _)| *id != me)
         .filter(|(_, e)| in_set(set, e.kind, e.defeated))
+        .filter(|(id, e)| e.kind != EntityKind::Object || object_selectable(*id))
         .filter_map(|(id, e)| {
             let d = distance(origin, e.position?);
             (d.is_finite() && d <= TARGET_RANGE).then_some((d, id))
@@ -70,14 +80,19 @@ fn ordered(state: &CombatState, set: Set) -> Vec<EntityId> {
     v.into_iter().map(|(_, id)| id).collect()
 }
 
-fn nearest(state: &CombatState, set: Set) -> TargetPick {
-    ordered(state, set)
+fn nearest(state: &CombatState, set: Set, sel: &dyn Fn(EntityId) -> bool) -> TargetPick {
+    ordered(state, set, sel)
         .first()
         .map_or(TargetPick::Nothing, |e| TargetPick::Select(Some(*e)))
 }
 
-fn cycle(state: &CombatState, set: Set, forward: bool) -> TargetPick {
-    let v = ordered(state, set);
+fn cycle(
+    state: &CombatState,
+    set: Set,
+    forward: bool,
+    sel: &dyn Fn(EntityId) -> bool,
+) -> TargetPick {
+    let v = ordered(state, set, sel);
     if v.is_empty() {
         return TargetPick::Nothing;
     }
@@ -93,14 +108,20 @@ fn cycle(state: &CombatState, set: Set, forward: bool) -> TargetPick {
     TargetPick::Select(Some(v[i]))
 }
 
-/// The `SelectTarget` of a targeting action (TR4).
+/// The `SelectTarget` of a targeting action (TR4). `object_selectable` answers TR1's
+/// body-record test for an `Object` (the way mouse picking does); the other kinds ignore it.
 #[must_use]
-pub fn pick(action: TargetAction, state: &CombatState) -> TargetPick {
+pub fn pick(
+    action: TargetAction,
+    state: &CombatState,
+    object_selectable: &dyn Fn(EntityId) -> bool,
+) -> TargetPick {
     use TargetAction as A;
+    let sel = object_selectable;
     match action {
-        A::NearestEnemy => nearest(state, Set::Foe),
-        A::NextEnemy => cycle(state, Set::Foe, true),
-        A::PreviousEnemy => cycle(state, Set::Foe, false),
+        A::NearestEnemy => nearest(state, Set::Foe, sel),
+        A::NextEnemy => cycle(state, Set::Foe, true, sel),
+        A::PreviousEnemy => cycle(state, Set::Foe, false, sel),
         A::Myself => state
             .player()
             .map_or(TargetPick::Nothing, |p| TargetPick::Select(Some(p))),
@@ -109,13 +130,13 @@ pub fn pick(action: TargetAction, state: &CombatState) -> TargetPick {
             .and_then(|s| state.entity(s))
             .and_then(|e| e.target)
             .map_or(TargetPick::Nothing, |t| TargetPick::Select(Some(t))),
-        A::NearestPlayer => nearest(state, Set::Player),
-        A::NextPlayer => cycle(state, Set::Player, true),
-        A::PreviousPlayer => cycle(state, Set::Player, false),
-        A::NearestCreature => nearest(state, Set::Creature),
-        A::NextCreature => cycle(state, Set::Creature, true),
-        A::PreviousCreature => cycle(state, Set::Creature, false),
-        A::NearestObject => nearest(state, Set::Object),
+        A::NearestPlayer => nearest(state, Set::Player, sel),
+        A::NextPlayer => cycle(state, Set::Player, true, sel),
+        A::PreviousPlayer => cycle(state, Set::Player, false, sel),
+        A::NearestCreature => nearest(state, Set::Creature, sel),
+        A::NextCreature => cycle(state, Set::Creature, true, sel),
+        A::PreviousCreature => cycle(state, Set::Creature, false, sel),
+        A::NearestObject => nearest(state, Set::Object, sel),
         A::Last => state
             .previous_selection()
             .map_or(TargetPick::Nothing, |e| TargetPick::Select(Some(e))),
@@ -178,7 +199,7 @@ mod tests {
     #[test]
     fn section_17_5_cycle() {
         let mut s = state();
-        let next = |s: &CombatState| pick(TargetAction::NextEnemy, s);
+        let next = |s: &CombatState| pick(TargetAction::NextEnemy, s, &|_| true);
         assert_eq!(next(&s), TargetPick::Select(Some(EntityId(7))));
         let t = next(&s);
         select(&mut s, t);
@@ -192,11 +213,11 @@ mod tests {
         let t = next(&s);
         select(&mut s, t);
         assert_eq!(
-            pick(TargetAction::PreviousEnemy, &s),
+            pick(TargetAction::PreviousEnemy, &s, &|_| true),
             TargetPick::Select(Some(EntityId(9)))
         );
         assert_eq!(
-            pick(TargetAction::NearestEnemy, &s),
+            pick(TargetAction::NearestEnemy, &s, &|_| true),
             TargetPick::Select(Some(EntityId(7)))
         );
     }
@@ -208,28 +229,40 @@ mod tests {
         // at 60 m is now 2 m away, the one at 5 m is 53 m away (out of range).
         s.set_player_position([0.0, 58.0, 0.0]);
         assert_eq!(
-            pick(TargetAction::NearestEnemy, &s),
+            pick(TargetAction::NearestEnemy, &s, &|_| true),
             TargetPick::Select(Some(EntityId(2)))
         );
         s.set_player_position([0.0, 200.0, 0.0]);
-        assert_eq!(pick(TargetAction::NearestEnemy, &s), TargetPick::Nothing);
+        assert_eq!(
+            pick(TargetAction::NearestEnemy, &s, &|_| true),
+            TargetPick::Nothing
+        );
     }
 
     #[test]
     fn other_actions() {
         let mut s = state();
-        assert_eq!(pick(TargetAction::Assist, &s), TargetPick::Nothing);
-        assert_eq!(pick(TargetAction::NearestPlayer, &s), TargetPick::Nothing);
-        assert_eq!(pick(TargetAction::Last, &s), TargetPick::Nothing);
-        assert_eq!(pick(TargetAction::Clear, &s), TargetPick::Select(None));
         assert_eq!(
-            pick(TargetAction::Myself, &s),
+            pick(TargetAction::Assist, &s, &|_| true),
+            TargetPick::Nothing
+        );
+        assert_eq!(
+            pick(TargetAction::NearestPlayer, &s, &|_| true),
+            TargetPick::Nothing
+        );
+        assert_eq!(pick(TargetAction::Last, &s, &|_| true), TargetPick::Nothing);
+        assert_eq!(
+            pick(TargetAction::Clear, &s, &|_| true),
+            TargetPick::Select(None)
+        );
+        assert_eq!(
+            pick(TargetAction::Myself, &s, &|_| true),
             TargetPick::Select(Some(EntityId(1)))
         );
         select(&mut s, TargetPick::Select(Some(EntityId(4))));
         select(&mut s, TargetPick::Select(Some(EntityId(9))));
         assert_eq!(
-            pick(TargetAction::Last, &s),
+            pick(TargetAction::Last, &s, &|_| true),
             TargetPick::Select(Some(EntityId(4)))
         );
         let mut out = Vec::new();
@@ -242,7 +275,7 @@ mod tests {
             &mut out,
         );
         assert_eq!(
-            pick(TargetAction::Assist, &s),
+            pick(TargetAction::Assist, &s, &|_| true),
             TargetPick::Select(Some(EntityId(1)))
         );
         // A defeated creature is no foe but still a creature.
@@ -255,12 +288,56 @@ mod tests {
             &mut out,
         );
         assert_eq!(
-            pick(TargetAction::NearestEnemy, &s),
+            pick(TargetAction::NearestEnemy, &s, &|_| true),
             TargetPick::Select(Some(EntityId(4)))
         );
         assert_eq!(
-            pick(TargetAction::NearestCreature, &s),
+            pick(TargetAction::NearestCreature, &s, &|_| true),
             TargetPick::Select(Some(EntityId(7)))
+        );
+    }
+
+    #[test]
+    fn objects_apply_the_full_tr1_test() {
+        // TR4 (revision 3): the object set reads body records the way mouse picking does.
+        let mut s = CombatState::new();
+        let mut out = Vec::new();
+        s.apply(
+            &Event::WorldEntered {
+                player: EntityId(1),
+                name: "P".into(),
+                transform: Transform::new(Vec3::ZERO, 0.0),
+            },
+            0.0,
+            &mut out,
+        );
+        for (id, d) in [(10, 3.0), (11, 6.0)] {
+            s.apply(
+                &Event::EntitySpawned {
+                    id: EntityId(id),
+                    kind: EntityKind::Object,
+                    name: String::new(),
+                    transform: Transform::new(Vec3::new(0.0, d, 0.0), 0.0),
+                },
+                0.0,
+                &mut out,
+            );
+        }
+        // Every object selectable: the nearest object (ID 10).
+        assert_eq!(
+            pick(TargetAction::NearestObject, &s, &|_| true),
+            TargetPick::Select(Some(EntityId(10)))
+        );
+        // The nearest object fails its body-record test: the next one is picked.
+        let sel = |e: EntityId| e != EntityId(10);
+        assert_eq!(
+            pick(TargetAction::NearestObject, &s, &sel),
+            TargetPick::Select(Some(EntityId(11)))
+        );
+        // No object selectable: nothing.
+        assert_eq!(
+            pick(TargetAction::NearestObject, &s, &|_| false),
+            TargetPick::Nothing
         );
     }
 }

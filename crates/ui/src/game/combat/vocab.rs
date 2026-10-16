@@ -210,6 +210,12 @@ combat_table! {
         dialog_pay = ("SelfRevive_PayForRevive", 0xFFFB_2094),
         /// `SelfRevive_PaidCategory_BuyNowButton`.
         dialog_buy = ("SelfRevive_PaidCategory_BuyNowButton", 0xFFFB_2095),
+        /// `DialogMessage_Divider` (hidden by TR38a).
+        dialog_divider = ("DialogMessage_Divider", 0xFFFB_2097),
+        /// `SelfRevive_PaperItemTotal_NameLabel` (hidden by TR38a).
+        dialog_paper_name = ("SelfRevive_PaperItemTotal_NameLabel", 0xFFFB_2098),
+        /// `SelfRevive_PaperItemBalance` (hidden by TR38a).
+        dialog_paper_balance = ("SelfRevive_PaperItemBalance", 0xFFFB_2099),
         /// `SkillQuickslotDisplayTemplate` (E16).
         skill_slot = ("SkillQuickslotDisplayTemplate", 0xFFFB_20A0),
         /// `QuickslotSkillIcon`.

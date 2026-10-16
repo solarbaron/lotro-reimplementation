@@ -1159,3 +1159,90 @@ fn step_5_picture_of_a_received_look() {
         eprintln!("picture written: {}", to.display());
     }
 }
+
+/// The owner's answer of 2026-10-16 (`character-screens.md` §5.2, §5.2.2 rule 2;
+/// `appearance.md` §9 bounds (6)): a face-layer control whose minimum is 0 offers value 0,
+/// "none", as a choice (choices 0 … *m*), and the Elf male's face composes with layer value 0
+/// within the doubled `tessera-mesh` decode budget (`LookLimits`, 128 MiB per compositor and
+/// 256 MiB per figure). For every body of the install each face-layer control that offers 0
+/// is set to 0 and the creation figure is rebuilt through the walker's figure path; it must
+/// still compose. At least one body (the Elf male on this install) exercises value 0.
+#[test]
+fn step_2_face_layer_value_zero() {
+    use tessera_client::screens::ControlValue;
+    use tessera_client::screens::controls::ControlChoices;
+
+    let Some(env) = env() else {
+        return;
+    };
+    let data = &env.data;
+    let set = Arc::new(ArchiveSet::open(&env.dir, SetOptions::default()).expect("archives"));
+    let catalog = Arc::new(CharacterCatalog::build(Arc::clone(&set)));
+    let ctx = FigureContext::standalone(
+        Arc::clone(&set),
+        Arc::clone(&catalog),
+        tessera_render::MeshConfig::default(),
+    );
+    let now = std::time::Instant::now();
+    let mut m = ScreenModel::new(
+        Arc::clone(data),
+        tessera_client::screens::BackendKind::PlainSandbox,
+    );
+    connected(&mut m, &["Wanderer"]);
+    m.apply(Action::New, now);
+    let (mut offered, mut composed) = (0usize, 0usize);
+    for (species, sex) in bodies(data) {
+        if m.stage() == Stage::Appearance {
+            m.apply(Action::Back, now);
+        }
+        m.apply(Action::Race(species), now);
+        m.apply(Action::Gender(sex), now);
+        m.apply(Action::Continue, now);
+        // A face-layer control offers value 0 exactly when 0 is the lowest option it offers
+        // (its `AppearanceUI_MinControlValue` is 0; §5.2.2 rule 2).
+        let zero: Vec<usize> = m
+            .current_avatar()
+            .map(|a| {
+                a.controls
+                    .iter()
+                    .filter(|c| {
+                        matches!(&c.choices, ControlChoices::Options(o) if o.first() == Some(&0))
+                    })
+                    .map(|c| c.control.index)
+                    .collect()
+            })
+            .unwrap_or_default();
+        for c in zero {
+            offered += 1;
+            let detail = m.current_avatar().expect("avatar");
+            assert!(
+                detail
+                    .control(c)
+                    .expect("control")
+                    .accepts(&ControlValue::Option(0)),
+                "{species:#x}/{sex:#x}: control {c} accepts value 0"
+            );
+            m.apply(Action::Control(c, ControlValue::Option(0)), now);
+            assert_eq!(
+                m.creation().appearance.values.get(&c),
+                Some(&ControlValue::Option(0)),
+                "{species:#x}/{sex:#x}: control {c} is set to value 0"
+            );
+            let (req, look) = figure_job(&viewport_state(&m), data).expect("figure");
+            let shown = build_figure_with_look(&ctx, &req, &look, &|| false)
+                .unwrap_or_else(|e| panic!("value-0 figure {species:#x}/{sex:#x}: {e}"));
+            assert!(
+                shown.face.composed(),
+                "{species:#x}/{sex:#x}: the face composes with layer value 0 within the doubled budget"
+            );
+            composed += 1;
+        }
+    }
+    eprintln!(
+        "face-layer value 0: {offered} controls across the install offer value 0; {composed} figures composed with it"
+    );
+    assert!(
+        offered > 0,
+        "at least one body (the Elf male) offers a face-layer control with value 0"
+    );
+}

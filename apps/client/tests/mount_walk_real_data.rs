@@ -244,6 +244,77 @@ fn normal_mounts_ride_with_the_install_speed_and_clips() {
     normal_mount(&inst, "hobbit,m");
 }
 
+/// `mounts.md` §14.6 ("the sliders follow the input as on foot"), `script-table.md` §8.4
+/// slider rule (T30): a normal mount's published `Slider_Propel` eases toward the input at
+/// the active layer's ramp time — the install's Mounted layer, 0.25 s — instead of jumping
+/// to 1 in one step, so the mounted jump gate of `walker.md` §16.6 (`Slider_Propel` > 0.5)
+/// reads the smoothed value and the first forward steps do not yet clear it.
+#[test]
+fn a_normal_mount_eases_its_sliders_at_the_install_ramp() {
+    let Some(inst) = open() else {
+        eprintln!("TESSERA_GAME_DIR not set; skipped");
+        return;
+    };
+    // Settle at rest (prepended idle seeds the slider to 0), then hold forward for 1 s.
+    let r = ride(
+        &inst,
+        "human,m",
+        MountSource::Auto,
+        &[Segment::moving(1.0, 1.0, false)],
+    );
+    assert_eq!(r.profile.kind, MountKind::Normal);
+    // The ramp time of the install's Mounted layer (0.25 s here).
+    let conds = LayerConditions {
+        mounted: true,
+        ..r.setup.conditions
+    };
+    let layer = r
+        .setup
+        .record
+        .compose_movement(&conds, MovementState::EarthControlledSurface);
+    let t = layer.ramp_time;
+    let fwd: Vec<&RideRow> = r.rows.iter().filter(|row| row.segment == 1).collect();
+    let first = fwd.first().expect("forward rows");
+    eprintln!(
+        "mounted ramp {t:.3} s; Slider_Propel after one forward step {:.3}",
+        first.sliders[0]
+    );
+    assert!(
+        first.sliders[0] > 0.0 && first.sliders[0] < 0.5,
+        "eased, not jumped: {}",
+        first.sliders[0]
+    );
+    // The gate's propel threshold (0.5) is not met until the ramp has run for a while.
+    assert!(
+        first.sliders[0] <= 0.5,
+        "a jump pressed at the first forward step is turned away: {}",
+        first.sliders[0]
+    );
+    // Rises only (while forward is held) and reaches full propel at about the ramp time.
+    for w in fwd.windows(2) {
+        assert!(
+            w[1].sliders[0] >= w[0].sliders[0] - 1e-6,
+            "Slider_Propel only rises while forward is held: {} then {}",
+            w[0].sliders[0],
+            w[1].sliders[0]
+        );
+    }
+    let hit = fwd
+        .iter()
+        .position(|row| row.sliders[0] >= 1.0 - 1e-3)
+        .expect("reaches full propel");
+    let expected = (f64::from(t) * 60.0).round() as i64;
+    eprintln!(
+        "full Slider_Propel after {} steps (expected about {expected})",
+        hit + 1
+    );
+    assert!(
+        (hit as i64 + 1 - expected).abs() <= 2,
+        "eased over the ramp: {} steps vs about {expected}",
+        hit + 1
+    );
+}
+
 #[test]
 fn a_war_steed_shifts_through_every_gait() {
     let Some(inst) = open() else {

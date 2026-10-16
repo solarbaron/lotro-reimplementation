@@ -136,7 +136,7 @@ moving. "Fallback" means the look of `combat-ui.md` §13 (C2); "install" the ins
 | T4 | Delete selects the nearest object | C1 | press Delete after 1 s | The object actor becomes the selection (E6 non-vital field) | |
 | T5 | Escape order | C4 | Escape during the induction at 21–22.5 s; again with no cast; again with no selection | First press cancels the cast (the bar ends cancelled); second clears the selection; third opens the main menu (TR5) | |
 | T6 | Quickslot keys | C4 | press 1 and 2 with the creature selected | Each slot sends its skill use (no refusal flash in the sandbox); Ctrl+1 … Shift+= reach slots 13–48 (K47) | |
-| T7 | Walker keys taken by the defaults | C4 | press Backslash, Minus, Equal, F9, F10 | They act as targeting and quickslot keys, not as the clock and switch keys (`keymap.md` §8.2 OPEN; USER_GUIDE §3.5) | |
+| T7 | Walker keys taken by the defaults | C4 | press Backslash, Minus, Equal, F9, F10 | They act as targeting and quickslot keys (`keymap.md` §8.2; USER_GUIDE §3.5). The walker's clock and switch functions they used to carry moved to `/`, `,`, `.`, F2 and F4 (owner answer 2026-10-16, `walker.md` §14.2–§14.3), so these five keys are no longer walker keys | |
 
 ## 3. Skill and effect tooltips (`skill-tooltips.md`)
 

@@ -125,8 +125,8 @@ impl Default for LookLimits {
             max_edits: 1024,
             max_images: 256,
             max_texels: 1024 * 1024,
-            max_compositor_bytes: 64 << 20,
-            max_figure_bytes: 128 << 20,
+            max_compositor_bytes: 128 << 20,
+            max_figure_bytes: 256 << 20,
             max_notes: 32,
         }
     }

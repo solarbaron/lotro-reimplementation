@@ -140,6 +140,33 @@ fn harmful_effects_take_the_second_row_and_same_id_stays_in_order() {
 }
 
 #[test]
+fn combat_only_icons_follow_the_untimed_non_combat_group() {
+    // §8.2 Order (revision 3, CU30): an untimed combat-only icon goes right after the last
+    // untimed non-combat-only icon, not to position 0.
+    let mut r = EffectRows::default();
+    let ids = |r: &EffectRows| r.row(0).iter().map(|e| e.instance).collect::<Vec<_>>();
+    let co = |instance, start, duration, combat_only| {
+        let mut e = eff(instance, start, duration);
+        e.combat_only = combat_only;
+        e
+    };
+    r.insert(co(1, 1.0, Some(10.0), false)); // timed
+    r.insert(co(2, 2.0, None, false)); // untimed, not combat-only
+    r.insert(co(3, 3.0, None, false)); // untimed, not combat-only
+    assert_eq!(ids(&r), vec![3, 2, 1]);
+    // Right after the last untimed non-combat-only icon (position 2), not the front.
+    r.insert(co(4, 4.0, None, true));
+    assert_eq!(ids(&r), vec![3, 2, 4, 1]);
+    // A fresh untimed non-combat-only icon still goes to the front, before the combat-only one.
+    r.insert(co(5, 5.0, None, false));
+    assert_eq!(ids(&r), vec![5, 3, 2, 4, 1]);
+    // A timed combat-only icon passes the timed icons and sits after the last untimed icon.
+    r.insert(co(6, 6.0, Some(1.0), true));
+    assert_eq!(ids(&r), vec![5, 3, 2, 4, 6, 1]);
+    assert!(r.satisfies_cui7());
+}
+
+#[test]
 fn combat_only_icons_pulse_out_of_combat() {
     let mut e = eff(1, 0.0, None);
     e.combat_only = true;
@@ -773,9 +800,11 @@ fn combat_state_and_defeat_panel_fallbacks() {
 
 const DIALOG: u32 = 0x22FF_7100;
 
-/// A synthetic `Dialog` layout with the defeat panel of §10.2: the box's art first, then
-/// the statement, the two listed buttons, the paid-revive and store buttons, a divider and
-/// a paper-item balance (invented IDs for the parts the spec gives no label).
+/// A synthetic `Dialog` layout with the defeat panel of §10.2/CU29: the box's art first,
+/// then the statement, the two listed buttons, the paid-revive and store buttons, the
+/// divider, the paper-item name label and balance (each by its real label, TR38a), and —
+/// to prove the position-based reading is gone (TR38a) — a piece of box art placed **after**
+/// the statement's holder in child order, which must keep the layout's visibility.
 fn dialog_layout() -> tessera_formats::ui_layout::UiLayout {
     let i = cv().ids;
     let vv = v();
@@ -802,18 +831,21 @@ fn dialog_layout() -> tessera_formats::ui_layout::UiLayout {
     );
     bx = child(bx, typed(i.dialog_pay, vv.types.button, 137, 163, 170, 36));
     bx = child(bx, field(i.dialog_buy, 137, 163, 170, 36));
-    bx = child(bx, field(0x1000_7104, 57, 132, 400, 26));
+    bx = child(bx, field(i.dialog_divider, 57, 132, 400, 26));
+    bx = child(bx, field(i.dialog_paper_name, 28, 150, 200, 16));
     bx = child(
         bx,
         prop(
             child(
-                field(0x1000_7105, 28, 168, 87, 33),
+                field(i.dialog_paper_balance, 28, 168, 87, 33),
                 typed(0x1000_7106, vv.types.button, 0, 0, 87, 33),
             ),
             cv().pids.paper_item_service,
             int(1),
         ),
     );
+    // Box art after the statement in child order: TR38a keeps it (the old position rule hid it).
+    bx = child(bx, field(0x1000_7107, 0, 0, 512, 220));
     let root = child(field(i.awaken_dialog, 256, 274, 512, 220), bx);
     layout(DIALOG, 1024, 768, vec![root])
 }
@@ -826,8 +858,14 @@ fn install_defeat_panel_shows_only_tr38_parts() {
     assert!(d.open(&mut ui));
     let panel = d.panel().unwrap();
     let f = |id: u32, ui: &Ui| find_below(ui, panel, id).unwrap();
-    // Shown: the box's art, the statement (Tessera's own text), OK and the ghosted revive.
-    for id in [0x1000_7101, 0x1000_7102, c.ids.dialog_statement] {
+    // Shown: the box's art (before and after the statement in child order, TR38a), the
+    // statement (Tessera's own text), OK and the ghosted revive.
+    for id in [
+        0x1000_7101,
+        0x1000_7102,
+        0x1000_7107,
+        c.ids.dialog_statement,
+    ] {
         assert!(ui.is_displayed(f(id, &ui)), "{id:#x} shown");
     }
     assert_eq!(
@@ -842,12 +880,14 @@ fn install_defeat_panel_shows_only_tr38_parts() {
     let ghosted = ui.vocab().pids.button_ghosted;
     assert!(ui.prop(revive, ghosted).bool(), "TR38: revive ghosted");
     assert_eq!(ui.state(revive), Some(ui.vocab().states.ghosted));
-    // Hidden: paid revive, store, divider, paper-item balance; no other button shows.
+    // Hidden by label (TR38a): paid revive, store, divider, paper-item name and balance; the
+    // balance's child (under the hidden `UI_PaperItem_PaperItemService` holder) too.
     for id in [
         c.ids.dialog_pay,
         c.ids.dialog_buy,
-        0x1000_7104,
-        0x1000_7105,
+        c.ids.dialog_divider,
+        c.ids.dialog_paper_name,
+        c.ids.dialog_paper_balance,
         0x1000_7106,
     ] {
         assert!(!ui.is_displayed(f(id, &ui)), "{id:#x} hidden");

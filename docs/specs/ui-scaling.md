@@ -4,10 +4,10 @@
 
 | | |
 |---|---|
-| **Status** | Review (2026-10-16, first version; awaiting an independent review by a session that wrote no part of it) |
+| **Status** | Review (revision 2, 2026-10-16: revised for the first review's changes B1–B6; awaiting an independent re-review by a session that wrote no part of it. The spec was never Accepted, so the §5.2 state stays Review) |
 | **Last updated** | 2026-10-16 |
 | **Author role** | Spec writer (dirty room). A Tessera **design** spec for [decision 0040](../decisions/0040-ui-scaling.md), like `tessera-protocol.md`; the only install input is a read-only census of the layout records (§1, rows SC1–SC6) |
-| **Reviewer** | — (pending) |
+| **Reviewer** | First review 2026-10-16, independent review session: changes requested (B1–B6, answered in revision 2). Re-review pending |
 | **Implements into** | `crates/ui` (`tessera-ui`: UI screen, displayed boxes, fit rules, keep-on-screen, saved placements, painter at the content scale, derived glyphs, scaled images), `crates/settings` (the `[UI]` keys of §4.4 and §7), `crates/render` (no contract change; §6.6), `crates/plugins` (Display and scaling views, §7.7), `crates/input` (four Tessera actions, §7.3), `apps/client` (`ui_host`: pointer conversion, live change, the Interface window, the `/uiscale` command, `--ui-scale` and `--ui-safe-aspect`), `apps/explorer` (optional preview control), `fuzz/` (settings keys, configurations) |
 | **Companion specs** | [`ui-layout.md`](ui-layout.md) (**UL**: design size §5.1, edge modes §5.8, run-time layout §8, image drawing §9.6, saved locations §9.9, panel catalogue §17). [`ui-behaviour.md`](ui-behaviour.md) (**UB**: hit test §4, tooltips §6, drag and drop §7, window manager §8, the original's UI scale §9). [`ui-widgets.md`](ui-widgets.md) (**UW**: the slider-mode scroll bar §6). [`fonts.md`](fonts.md) (**FO**: font records §3, placement §6, layout §7, drawing §8, census §10, fallback font §11). [`render.md`](render.md) §6 (**RD**: UI pass). [`lua-plugin-api.md`](lua-plugin-api.md) (**LPA**: coordinates §13.1, `Display` §13.10, scale §13.21, game-styled controls §14.2, font enum A.2, scaling groups A.7). [`keymap.md`](keymap.md) (**KM**). [`character-screens.md`](character-screens.md) (**CS**) §2.2. [`travel-windows.md`](travel-windows.md) (**TW**) §5.2. Decisions [0014](../decisions/0014-ui-input-bridge.md) (**IB**), [0015](../decisions/0015-ui-rendering.md) (**UR**), [0020](../decisions/0020-chat-command-routing.md), [0031](../decisions/0031-parity-panel-goldens.md), [0040](../decisions/0040-ui-scaling.md) |
 
@@ -367,16 +367,62 @@ screens (for example on 32:9 with the default, a centred 21:9 area).
 A **full-screen root** is a root panel (UL §9.1) whose design box covers its layout's design
 area (left ≤ 0, top ≤ 0, right ≥ design width − 1, bottom ≥ design height − 1) and whose edges
 are (5, 5, 5, 5), or whose left and right edges are both 6 (SC3: 16 and 3 top-level elements
-in this install). Every other root panel is a **safe-area panel**.
+in this install). A layout whose design area has a zero width or height (SC1 holds one) has
+no full-screen roots. Every other root panel is a **safe-area panel**.
 
-- A full-screen root is laid out by UL §8.3–§8.4 with the screen-level row, *N* = *F*.
-- A safe-area panel is laid out by the same rules with *N* = (0, 0, *Aw* − 1, *Hu* − 1), and
-  its result is moved right by *Ax*. So anchored HUD panels (edge modes 4 and 5) sit at the
+- A full-screen root with edges (5, 5, 5, 5) is laid out by UL §8.3–§8.4 with the
+  screen-level row, *N* = *F*; its direct children are laid out by §5.3.
+- A full-screen root whose left and right edges are both 6 is a **fit root**: it is a Type A
+  fit container (§5.4) whatever its object mode (all three in this install are Stretch, SC2)
+  and is placed by §5.4 with *P* = *F* and *G* = *A*. Its children
+  keep their design layout (§5.4); §5.3 does not apply to it. It is exempt from §5.6 and from
+  keep-on-screen (§5.8), and no saved placement is applied to it, because its displayed box
+  may reach beyond *F* by design (a cover fit). Drawing and hit testing are clipped to *F*:
+  the part of its displayed box outside *F* is neither drawn nor hit, and its canvas need hold
+  only the part inside the window (the on-screen rule of §6.1, applied at any size). The part
+  of *F* it does not cover is filled by its letterbox bars (§5.4 step 5).
+- A safe-area panel is laid out by the same rules in the **frame** of the safe area,
+  *N* = (0, 0, *Aw* − 1, *Hu* − 1), and its result is moved right by *Ax* (the frame
+  offset; see "Layout frames" below). So anchored HUD panels (edge modes 4 and 5) sit at the
   safe area's edges, centred ones (mode 1) at its centre, proportional ones (mode 3) scale
   with it, and panels with edge mode 0 keep their design offset from the safe area's left.
 - Modal-dialog containers (UL §9.1) and the screen root are full-screen; a dialog inside its
   container is laid out against the container's safe box (§5.3).
 - Plugin windows are not laid out by edges; their positions are the plugin's (§7.7).
+
+**Stretch roots (UL §8.4 step 1).** For Tessera under this spec, the Stretch-parent step of
+UL §8.4 (step 1: a child of a Stretch root keeps its current box) is **not applied**: the
+children of a root panel in object mode Stretch are laid out by steps 2–6 like any other
+children, because Tessera never stretches a root's picture to follow the screen (§5.5). For
+the 4 Stretch full-screen roots of SC3 that means: their direct children are laid out by
+§5.3 (full box or safe box), deeper descendants by the ordinary rules. For a Stretch
+safe-area panel whose layout box the run-time layout changes, §5.5 applies (its children
+are laid out again). The children of a fit root keep their design layout through §5.4, so
+step 1 is not needed there either.
+
+<a id="s5-2-frames"></a>
+**Layout frames (re-layout without drift).** A panel laid out against a reference box that is
+not at its parent's origin (a safe-area panel in *A*, a child laid out in its root's safe box
+by §5.3) is laid out in that box's own coordinates, its **frame**, and then moved by the
+frame's offset (*Ax* for *A*; the safe box's left inside the root for §5.3; 0 vertically).
+Each such element records the offset that was added at its last layout (0 before its first
+layout). Every later layout of it, whatever triggers it (a change of *F*, *A*, the root's
+size, a saved placement being applied again), runs in this order:
+
+1. take the element's current box (its position relative to the parent, as code, the user
+   or keep-on-screen left it) and subtract the recorded offset, which puts it back into the
+   frame;
+2. run UL §8.4 steps 2–5 in the frame with the frame's *N*; step 4 (mode-0 edges take the
+   current box) reads the box of item 1, and the guard of §5.7 works in the frame;
+3. run UL §8.4 step 6, then add the **current** frame offset and record it.
+
+So an edge in mode 0, including one whose position the user dragged (without a saved
+placement) or keep-on-screen moved, keeps its distance from the frame's left edge across any
+number of re-layouts: the old offset is never added twice. At the first layout the current
+box is the design box, which is already in the frame. Example: a mode-0 panel at design
+left 100 is at 932 at C8 (*Ax* = 832, recorded); after a switch to `"full"` (C9,
+*Ax* = 0) it is laid out from 932 − 832 = 100 and ends at 100; back at C8 it is at 932
+again. Panels laid out with *N* = *F* (frame offset 0) are unaffected.
 
 <a id="s5-3"></a>
 ### 5.3 Children of a full-screen root
@@ -386,8 +432,13 @@ Each **direct child** of a full-screen root is laid out against one of two boxes
 - the root's **full box**, when the child is a backdrop: its design box covers the root's
   design box, or its left and right edges are both 6 (a full-cover fit container, §5.4);
 - otherwise the root's **safe box**: the part of the root's current box that lies inside *A*,
-  as a box of its own. The child is laid out by UL §8.4 with *O* = the root's design box and
-  *N* = the safe box's size, and moved right by the safe box's offset inside the root.
+  as a box of its own (the whole root's box when that part is empty). The child is laid out
+  by UL §8.4 with *O* = the root's design box and *N* = the safe box's size, in the safe box's
+  frame, and moved right by the safe box's offset inside the root (layout frames, §5.2).
+
+This section applies to full-screen roots with edges (5, 5, 5, 5) only, in any object mode
+(it replaces UL §8.4 step 1 for the Stretch ones, §5.2); a fit root keeps its children's
+design layout (§5.4).
 
 Deeper descendants follow the ordinary rules. Example: the side panels of the character
 screens are direct children that are not backdrops, so on a 32:9 screen they sit at the
@@ -398,34 +449,57 @@ the screen (§10.2, row C8).
 ### 5.4 Fit containers
 
 A **fit container** is an element whose object mode is Stretch and which has at least one
-edge in mode 6 (SC2: 26 elements, all Stretch). Its layout box always keeps its **design
+edge in mode 6 (SC2: 26 elements, all Stretch), or a fit root (§5.2). Its layout box always keeps its **design
 size**, so its children are laid out exactly as designed (they are never laid out again
 because the container changed size), and the container gets a uniform fit factor *f* (§3.4).
 Its displayed box has the size (*w* × *f*, *h* × *f*), with *w* × *h* its design size, and is
 placed by the type:
 
-**Type A — both left and right edges 6** (full-cover fit, 17 elements, all (6, 5, 6, 5)).
-Let *P* be the box it is laid out in (its parent's current box, or *F* for a root) and *G* the
-**guard box**: *P* intersected with the safe area *A* (in *P*'s coordinates). Let *C* be the
-**content box**: the union of the design boxes of the container's direct children, cut to the
-container's design box (*Cw* × *Ch*).
+**Type A — both left and right edges 6** (full-cover fit, 17 elements, all (6, 5, 6, 5); 3
+of them are fit roots, §5.2). Let *P* be the box it is laid out in (its parent's current box,
+or *F* for a fit root) and *G* the **guard box**: *P* intersected with the safe area *A* (in
+*P*'s coordinates), or *P* itself when that intersection is empty. Let *C* be the **content
+box**: the union of the design boxes of the container's direct children that have a width
+and height of at least 1, cut to the container's design box (*Cw* × *Ch*); *C* is **empty**
+when there is no such child or the cut leaves nothing.
 
 1. *f*contain = min(*Pw* ÷ *w*, *Ph* ÷ *h*); *f*cover = max(*Pw* ÷ *w*, *Ph* ÷ *h*).
-2. If the container has no children, *f* = *f*cover. Otherwise
-   *f*guard = min(*Gw* ÷ *Cw*, *Gh* ÷ *Ch*) and
+2. If *C* is empty, *f* = *f*cover. Otherwise
+   *f*guard = min(*Gw* ÷ *Cw*, *Gh* ÷ *Ch*), where a term whose divisor is 0 (a content box of
+   zero extent on that axis) is left out (both cannot be 0 for a non-empty *C*), and
    *f* = max(*f*contain, min(*f*cover, *f*guard)).
-   So the container covers *P* whenever its content still fits in the guard box, and never
-   becomes smaller than a contain fit.
-3. Place it centred in *P* on both axes. Then on each axis: if the scaled content box starts
-   before *G*, move the container by the difference; else if it ends after *G*, move it back
-   by the difference. If the content box is larger than *G* on that axis (possible only when
-   *f* = *f*contain > *f*guard), centre the content box on *G* instead.
+   So *f* is the cover factor unless the content box, scaled by it, would be larger than the
+   guard box on some axis, and it is never smaller than the contain factor. This is a test of
+   **size** only: whether the scaled content box also lies inside *G* depends on its position,
+   which steps 3 and 4 decide.
+3. Place it centred in *P* on both axes. Then, if *C* is not empty, on each axis: if the
+   scaled content box starts before *G*, move the container by the difference; else if it
+   ends after *G*, move it back by the difference. If the content box is larger than *G* on
+   that axis (possible only when *f* = *f*contain > *f*guard), centre the content box on *G*
+   instead.
 4. On each axis where the container is at least as large as *P*, clamp its position so that
-   it still covers *P* (left ≤ 0 and left + *w* × *f* ≥ *Pw*; top likewise). When step 2
-   chose *f* ≤ *f*guard, steps 3 and 4 never conflict (the content box lies inside the
-   container, so a position exists that satisfies both).
-5. The part of *P* that the container does not cover (letterbox bars) is filled with opaque
-   black when *P* is a full-screen root, so no stale picture or world shows through.
+   it still covers *P* (left ≤ 0 and left + *w* × *f* ≥ *Pw*; top likewise), moving it by the
+   least amount. Step 4 **wins** over step 3. Outcome:
+   - when some position on that axis satisfies both step 3 (content inside *G*) and step 4
+     (container covers *P*), the clamp lands on such a position, because it moves the
+     container by the least amount from a position that satisfies step 3;
+   - otherwise the content box reaches beyond *G* into the rest of *P* (the wings of a wide
+     screen). Example: at C8 a 2560 × 1080 fit root whose only child is 600 × 400 at
+     (0, 680) gets *f*contain 1.3333, *f*cover 2, *f*guard 3.6, so *f* = 2; step 3 moves the
+     5120 × 2160 container to left 832, but step 4 must put it at left 0 to cover *F*, so its
+     content spans 0 … 1200, in the left wing, although *G* starts at 832.
+   When step 3 has put the content box inside *P* on an axis, it stays inside *P* after
+   step 4: after a clamp to the left the container starts at *P*'s left edge, so the content
+   starts at or after it, and the content's right end only moved left; a clamp to the right
+   is the mirror image (top and bottom likewise).
+5. The part of *P* that the container does not cover (**letterbox bars**) is filled with
+   opaque black when *P* is a full-screen root or *F* (a fit root), so no stale picture or
+   world shows through. The bars are drawn: they are composed as opaque black fills directly
+   below the container's own picture, at its place in the drawing order, covering *P* minus
+   the container's displayed box (clipped to *F*). For hit testing a bar belongs to the box
+   *P* is (the full-screen root's own box); a fit root's bars count as part of the fit root,
+   so a pointer in a bar hits the fit root (not its children) and never reaches anything
+   behind a full-screen screen.
 
 This is the original's aspect mode on screens up to the design aspect (on 16:9 it fills the
 height and crops the sides, as UL §8.4 notes for mode 6), and it covers wider screens instead
@@ -444,6 +518,16 @@ drives: *W* from the left and right edges by UL §8.4 steps 2–5, *f* = min(*W*
 6 at its computed bottom, one with both 6 is centred on the computed box's vertical centre.
 Its left is the computed left.
 
+**Zero extents.** A fit factor is computed only from positive sizes. A fit container is
+**not fitted** when its design width *w* or height *h* is 0, or when a box it is fitted to has
+a zero extent on an axis the factor reads (Type A: *Pw* or *Ph*; Type B: *H* or *Pw*;
+Type C: *W* or *Ph*; this can happen only inside a parent that is empty by design, §5.7).
+A container that is not fitted gets *f* = 1, keeps its design-size layout box (empty on a
+zero axis, §5.7), is placed at the left and top that UL §8.4 steps 2–5 and the guard of §5.7
+compute for it, and draws no letterbox bars. No division by a zero extent occurs anywhere in
+this section: *f*guard leaves out zero terms (Type A step 2) and an empty content box skips
+the guard (step 2) and the content moves (step 3).
+
 **Content scale.** Everything inside a fit container is rasterised at
 *c* = *Se* × *u* with *f* included (§3.4), so scaled screens stay crisp. A consequence by
 design: a full-window screen (loading, character screens) follows the **window**, not the
@@ -461,7 +545,7 @@ This is a Tessera rule; it keeps such elements crisp.
 
 **Backdrop images.** UL §9.6 draws images at native size and tiles them. For such an element,
 an image layer whose native size equals the element's **design** size (the image was made
-for it) is drawn instead as a **cover** fit of the current box: scaled uniformly by
+for it; design width and height at least 1) is drawn instead as a **cover** fit of the current box: scaled uniformly by
 max(current width ÷ design width, current height ÷ design height), centred and clipped to the
 element (then resampled at *c* as §6.3 says). Images of any other size tile as UL §9.6 says.
 This keeps full-screen backgrounds, mattes and overlays of Stretch elements (SC3, SC4) whole
@@ -483,6 +567,9 @@ panel (UL §17.2 P10, 1038 × 802) on a 1365 × 768 UI screen gets *q* = 768 ÷ 
 
 A plugin window gets *q* the same way; its layout size (`GetSize()`) does not change.
 
+A fit root (§5.2) gets no *q*: its displayed box is larger than *F* by design (a cover fit),
+and it is clipped to *F* instead.
+
 <a id="s5-7"></a>
 ### 5.7 No degenerate boxes
 
@@ -490,15 +577,27 @@ The rules above prevent the known causes (the design floor of §4.3, fit contain
 one final guard makes the guarantee hold for any data:
 
 After UL §8.4 steps 2–5 (and before step 6), when an element's computed width or height is
-below 1 UI unit, that axis takes the element's **design** extent, reduced to its parent's
-current extent on that axis when larger, and the element is moved on that axis so that it
-lies inside the parent's current box (0 … parent extent). A box of positive size, even one
-that overflows its parent, is left as computed.
+below 1 UI unit, that axis takes the element's **design** extent, reduced to the extent of
+the box it is laid out in (its parent's current box, or the frame's *N* of §5.2) on that axis
+when larger, and the element is moved on that axis so that it lies inside that box
+(0 … extent of the box). A box of positive size, even one that overflows its parent, is left
+as computed. No extent is ever negative.
+
+**Empty by design.** When the guard's result on an axis is 0, because the element's design
+extent on that axis is 0 or because the box it is laid out in has a zero extent there (its
+parent is itself empty by design), the element is **empty by design** on that axis: its
+layout box has extent 0 there, its position on that axis is clamped into the box it is laid
+out in like any guarded axis, and it is neither drawn nor
+hit (its half-open displayed box contains no point). This is not a degenerate box: the data
+made it empty, the layout did not. Its children are laid out by the same rules; one with a
+positive computed extent keeps it (overflowing its empty parent), one below 1 becomes empty
+by design too. Fit containers with a zero extent are not fitted (§5.4 "Zero extents").
 
 Because the screen root is at least 1024 × 768 and every parent is laid out before its
-children, every element's layout box has a width and height of at least 1 UI unit
-(invariant I5). The guard is the stop-gap rule of UL §8.4 made permanent and general; with
-§5.4 the loading screen no longer needs it (SC5).
+children, every element's layout box has a width and height of at least 1 UI unit, except on
+an axis where it is empty by design, where the extent is exactly 0 (invariant I5). The guard
+is the stop-gap rule of UL §8.4 made permanent and general; with §5.4 the loading screen no
+longer needs it (SC5).
 
 A displayed box can still be smaller than one physical pixel when *Se* × *m* is small; such an
 element covers no pixel (§3.6 consequence 3), which is not a degenerate box.
@@ -521,7 +620,9 @@ resized. It runs:
    Tessera never overrides that explicit position, except to bring back a window that the
    screen's shrinking pushed out.
 
-The clamp uses *F*, not *A*: the user may drag panels into the wings of a wide screen.
+The clamp uses *F*, not *A*: the user may drag panels into the wings of a wide screen. Fit
+roots (§5.2) are exempt: they are never moved by keep-on-screen and are clipped to *F*
+instead.
 
 **Saved placements** (the Tessera store of UB §8.4 and UL §9.9, in place of the original's
 normalized corners). Key: the root's layout DID and element ID, written
@@ -565,7 +666,11 @@ behaviour:
   fit factor, placement by §5.4;
 - other Stretch elements: layout box takes the new size, children laid out again, backdrop
   images covered (§5.5);
-- the degenerate-box guard of §5.7 replaces the stop-gap rule, generalised.
+- the degenerate-box guard of §5.7 replaces the stop-gap rule, generalised, with elements of
+  zero design extent kept empty by design;
+- the Stretch-parent step of UL §8.4 (step 1) is not applied: children of Stretch roots are
+  laid out by steps 2–6, those of full-screen roots by §5.3, and a fit root keeps its
+  children's design layout (§5.2).
 
 The stop-gap stays in force until this spec is Accepted and built.
 
@@ -577,21 +682,48 @@ The stop-gap stays in force until this spec is Accepted and built.
 <a id="s6-1"></a>
 ### 6.1 Canvas sizes
 
-Every surface (UR Decision 1.1) is painted by the CPU painter into a canvas of the size of its
-**physical box**: (E*x*(*R*) − E*x*(*L*)) × (E*y*(*B*) − E*y*(*T*)) for its displayed box
-without the stretch vector of its own node (a stretched surface is painted at its unstretched
-size × *c* and stretched when composed). The limits of UR §7 apply in physical pixels (at most
-the device's largest texture dimension and 16,384 on each axis; beyond that only the on-screen
-part is stored, reported once). A Tile surface (UL §8.4 Tessera rules) is painted at its tile
-size × *c*, rounded to whole pixels, and repeated at that period.
+Every surface *s* (UR Decision 1.1) is painted by the CPU painter into a canvas. Let
+*σ*(*s*) be the product of the stretch vectors (§3.4) of *s* and of every ancestor of *s*: the
+non-uniform part of *m*(*s*). With *w* × *h* the layout size of *s*:
+
+- **Unstretched surface** (*σ*(*s*) = (1, 1), the normal case): the canvas has the size of
+  its **physical box**, (E*x*(*R*) − E*x*(*L*)) × (E*y*(*B*) − E*y*(*T*)) for its displayed
+  box [*L*, *R*) × [*T*, *B*), and is composed 1 : 1 (§6.6).
+- **Stretched surface** (*σ*(*s*) ≠ (1, 1)): the canvas is painted at the surface's
+  **unstretched** size: its **unstretched box** is (0, 0, *w* × *u*(*s*), *h* × *u*(*s*)) in
+  UI units (§3.4, uniform node scales only), and the canvas is E(*w* × *u*(*s*)) ×
+  E(*h* × *u*(*s*)) pixels, where E(*v*) is the pixel-centre edge mapping of §3.6 with the
+  factor *Se* on both axes (the smallest integer *X* with (*X* + ½) ÷ *Se* ≥ *v*). The stretch
+  is applied once, when the canvas is composed onto the physical box of the surface's full
+  displayed box (§6.6).
+
+The limits of UR §7 apply in physical pixels (at most the device's largest texture dimension
+and 16,384 on each axis; beyond that only the on-screen part is stored, reported once). A fit
+root (§5.2) may store only its on-screen part at any size. A Tile surface (UL §8.4 Tessera
+rules) is painted at its tile size × *c*, rounded to whole pixels, and repeated at that
+period.
 
 <a id="s6-2"></a>
 ### 6.2 Element boxes inside a canvas
 
-An element painted into a surface's canvas occupies its physical box (§3.6) minus the
-surface's physical origin. Clip rectangles, meter fills (UW §4), scroll offsets (UW §5) and
-any other extent that a rule gives in layout units are converted the same way: the layout
-coordinate is made absolute and displayed by §3.4, then mapped by §3.6. Line widths that the
+An element *e* painted into the canvas of surface *s* occupies its **canvas box**:
+
+- in an **unstretched** surface (§6.1): *e*'s physical box (§3.6) minus the canvas origin
+  (the top-left pixel of *s*'s physical box, or of the stored part when only part is stored,
+  §6.1);
+- in a **stretched** surface: *e*'s box mapped **without** the stretch vectors *σ*(*s*). Its
+  displayed box is computed by §3.4 inside *s*, starting from *s*'s unstretched box of §6.1
+  (origin 0, scale *u*(*s*)) instead of *s*'s displayed box, with the node scales of the
+  elements between *s* and *e* applied as usual, and its edges are mapped to canvas pixels by
+  E of §6.1 (factor *Se*). Elements painted into *s* carry no stretch vector of their own: an
+  element with one owns a surface (§3.4). So the elements land at their unstretched places in
+  the unstretched canvas, and the picture is stretched once, at composition.
+
+Clip rectangles, meter fills (UW §4), scroll offsets (UW §5) and any other extent that a rule
+gives in layout units are converted with the same mapping as the canvas box: the layout
+coordinate is displayed by §3.4 (in a stretched surface, from the unstretched box), then mapped
+to canvas pixels. Wherever this section, §6.3 and §6.4 speak of an element's physical box or
+physical pixels inside a canvas, they mean its canvas box and canvas pixels. Line widths that the
 specs give as one pixel (the caret, an underline of FO §8.5, the stamped outline of FO §8.3,
 the focus or selection frame) become max(1, round(*c*)) physical pixels.
 
@@ -748,7 +880,9 @@ word than at *c* = 1; this is accepted (invariant I7 guarantees identity only at
 A text element's hit tests (FO §6.3 item 3: character, link, selection) take the pointer's
 physical pixel, subtract the element's physical box origin, add the scroll offsets converted
 to physical pixels (§6.2) and look the point up in the physical layout. No division by a
-scale is needed.
+scale is needed. In a stretched surface (§6.1) the pointer is first taken into the canvas:
+its UI coordinate (§3.6) minus the surface's displayed left, divided by *σx*(*s*), times
+*Se* (likewise *y*); that point minus the element's canvas box origin is looked up.
 
 <a id="s6-5"></a>
 ### 6.5 Glyph cache
@@ -1032,12 +1166,19 @@ install's layouts at C1–C12:
 - **I2** At *Se* = 1 with every node scale 1, the painter's canvas of every surface is
   byte-identical to the canvas painted before this spec (the existing goldens pass).
 - **I3** For every element and every physical pixel: the pixel lies in the element's physical
-  box ⇔ the hit test at the pixel's centre is inside its displayed box (§3.6).
+  box ⇔ the hit test at the pixel's centre is inside its displayed box (§3.6). For a fit root
+  (§5.2) read both as clipped to *F* (window), and its letterbox bars as part of it (§5.4
+  step 5).
 - **I4** Sibling elements without node scales of their own whose layout boxes abut, abut in
   physical pixels (§3.6 consequence 2).
-- **I5** After layout, every element's layout box has width ≥ 1 and height ≥ 1 UI unit.
-- **I6** After any of the events of §5.8 items 1–4, every shown root panel's displayed box
-  lies inside *F*.
+- **I5** After layout, every element's layout box has width ≥ 1 and height ≥ 1 UI unit,
+  except on an axis where it is empty by design (§5.7), where the extent is exactly 0; no
+  extent is ever negative. Every fit factor is finite and positive.
+- **I6** After any of the events of §5.8 items 1–4, every shown native root panel's displayed
+  box lies inside *F*, except fit roots (§5.2), which are clipped to *F* and whose displayed
+  box together with their letterbox bars covers *F*. A plugin window that lay entirely inside
+  *F* before a change of *Se*, *F* or *A* lies inside the new *F* after it; other plugin
+  windows are where the plugin put them (§5.8 item 5).
 - **I7** At *c* × *x* = 1 every glyph comes from the font's own record; at a height with an
   exact ladder record, from that record.
 - **I8** A saved placement applied at the configuration where it was saved restores the same
@@ -1046,24 +1187,56 @@ install's layouts at C1–C12:
 - **I9** During a scale change no frame shows a surface without a picture that it showed
   before the change.
 - **I10** *S*auto follows the table of §4.2 for the listed inputs.
-- **I11** With safe aspect *a*, every safe-area panel laid out by edges (not moved by the
-  user) has its displayed box inside *A* when it fits in *A* at its design size.
-- **I12** For a safe-area panel not limited by §4.3 or §5.6, its physical size does not
-  decrease when *S* increases.
+- **I11** With safe aspect *a*, every safe-area panel that meets all of these has its
+  displayed box inside *A*: laid out by edges only (never moved by the user, a saved
+  placement or keep-on-screen; no node scale, *q* = 1); every edge in mode 0, 1, 3, 4 or 5;
+  its design box inside its layout's design area; and that design area no larger than *A*
+  (design width ≤ *Aw*, design height ≤ *Hu*; true for every 1024 × 768 layout). A design box
+  that overhangs its design area is excluded: the minimap of §10.3 (22 units beyond the
+  design width) ends at 4310 at C8, beyond *A*'s right end 4288, though it is narrower
+  than *A*.
+- **I12** For a safe-area panel with no node scale, not limited by §4.3 or §5.6, whose layout
+  width and height do not depend on the reference box (UL §8.4 steps 2–5 give the same
+  extents for every *N*: for example left and right edges both anchored to the same side, or
+  both centred, and no edge in mode 3 or 6, and not touched by the guard of §5.7): its
+  physical width and height do not decrease by more than one physical pixel when *S*
+  increases (the one pixel is the rounding of §3.6). A panel whose size follows *N* is
+  excluded: one with edges (5, 5, 5, 5) and 100-unit insets in a 1024 × 768 layout is
+  1720 physical pixels wide at C2 and 1670 at C3.
+- **I14** Layout frames (§5.2): laying out a configuration twice gives the same boxes, and a
+  change from one configuration to another and back (for example C8 → C9 → C8, or C2 → C3 →
+  C2) returns every element laid out by edges, and every panel the user moved without a
+  saved placement and not moved by keep-on-screen in between, to the same layout box.
+- **I15** Type A (§5.4): when some position satisfies both step 3 and step 4 on an axis, the
+  scaled content box lies inside *G* on that axis; when step 3 put it inside *P*, it lies
+  inside *P* after step 4.
 - **I13** Plugin `Display.GetSize()` equals (*Wu*, *Hu*), and `GetUIGroupScale(Global)` is 1.0.
 - **T1** A derived glyph that is a solid rectangle in the source stays a solid rectangle with
   at most one partial pixel row or column per edge.
 - **T2** A derived glyph's ink box is within one pixel of the source ink box scaled by *k*.
-- **T3** Downsampled glyphs keep total coverage within 1 % of the source total × *k*².
+- **T3** For a downsampled glyph whose source box *W* × *H* and derived box *W*′ × *H*′ are
+  both at least 1 × 1 (coverage in 0 … 1): the sum of the derived coverage is within
+  *W*′ × *H*′ ÷ 510 (half an 8-bit step per derived pixel) plus 1 % of the reference value,
+  where the reference value is the source sum × (*W*′ × *H*′) ÷ (*W* × *H*). The area filter
+  of §6.4.4 maps the source box onto the rounded derived box, so the ratio of the boxes, not
+  *k*², is the exact scale of the total (they differ by up to about 8 % for a 1-pixel stem at
+  *k* = 0.917); that filter meets T3 with the quantisation term alone, and the 1 % is for
+  other methods.
 
 <a id="s9-6"></a>
 ### 9.6 Other tests
 
 - **Fuzz:** the settings keys of §4.4 and §7.1 (`settings_ui` target: any TOML value, no
   panic, defaults and warnings); a configuration target (any *Wp*, *Hp* in 1–16,384, any *S*,
-  any aspect) over synthetic layouts, asserting I1, I5, I6 and no panic.
+  any aspect) over synthetic layouts, including elements, fit containers and layout design
+  areas with zero extents, asserting I1, I5, I6, I14 and no panic.
 - **Unit:** the pixel-centre mapping at *K* = 0.937729, 1, 1.5, 2.25, 3 (I3, I4); the Type A,
-  B and C fits with the numbers of §10; the anchors of §5.8; the `/uiscale` argument forms.
+  B and C fits with the numbers of §10; the Type A example of §5.4 step 4 (content in the
+  left wing at C8, I15); a fit root at C8 (bars drawn, no *q*, not moved, clipped); fit
+  containers with *w*, *h*, *Cw* or *Ch* of 0 and an empty content box (§5.4 "Zero extents");
+  the layout-frame example of §5.2 (I14); a stretched surface whose children are painted at
+  their unstretched canvas boxes (§6.2); the anchors of §5.8; the `/uiscale` argument
+  forms.
 - **Client:** `--ui-scale` and `--ui-safe-aspect` reach the UI; a scripted scale change
   measures S4.
 
@@ -1121,9 +1294,10 @@ Text in the panels uses *t* = ⌊*h* × *c* + ½⌋: for example a 16-pixel bold
 (1, 4, 1, 5)) is laid out in *N* = 3456 × 1440: left = half(3456) − half(1024) = 1216, moved by
 832 → 2048, top = 568 + 672 = 1240: centred on the screen at the bottom. The minimap (P1,
 224 × 280 at (822, 12), edges (4, 5, 5, 4)): left = 822 + 2432 = 3254 → 4086 on screen, right
-edge 4310 (its design box reaches 22 units beyond the design width, UL §17.3), well inside
-*F*. With `ui_safe_aspect = "full"` (C9) the minimap's left would be 822 + 4096 = 4918 and its
-right edge 5142, beyond *F*: keep-on-screen moves it to 4896.
+edge 4310 (its design box reaches 22 units beyond the design width, UL §17.3), inside *F*
+but 22 units beyond *A*'s right end 4288 (which I11 allows for, §9.5). With
+`ui_safe_aspect = "full"` (C9) the minimap's left would be 822 + 4096 = 4918 and its right
+edge 5142, beyond *F*: keep-on-screen moves it to 4896.
 
 <a id="s10-4"></a>
 ### 10.4 Saved placement across a scale change
@@ -1169,7 +1343,7 @@ Tessera when this spec is Accepted and built):
 
 | Spec | Section | Note |
 |---|---|---|
-| `ui-layout.md` | §8.4 step 6 OPEN, §8.5 Tessera rule, §9.6, §9.9 | answered and superseded by §5, §6.3, §5.8 |
+| `ui-layout.md` | §8.4 step 1 (Stretch parents), §8.4 step 6 OPEN, §8.5 Tessera rule, §9.6, §9.9 | answered and superseded by §5 (step 1: §5.2), §6.3, §5.8 |
 | `ui-behaviour.md` | §8.3 OPEN, §8.4, §9 (Tessera rules of §9.2, §9.2.1, §9.3, §9.4) | §5.8, §3.4, §6.7, §4.5 |
 | `render.md` | §6.6, §6.16 (scale filter OPEN) | §6.6: destinations from §3.6; the 1 : 1 path is the normal case |
 | `lua-plugin-api.md` | §13.1, §13.10, §13.21 | §7.7 |
@@ -1218,3 +1392,4 @@ settings module's documentation lists the keys of §7.1.
 | Date | Change |
 |---|---|
 | 2026-10-16 | First version (status Review), for decision 0040: coordinate spaces and the pixel-centre rule (§3), UI scale with auto default, design floor, storage and live change (§4), reference boxes, safe area, full-screen roots, fit containers, backdrop images, fit to screen, degenerate-box guard, keep-on-screen and anchored placements (§5), canvases, images, derived glyphs, composition and cursor at scale (§6), options and the Interface window (§7), budgets S1–S7 (§8), goldens, migration and invariants (§9), worked examples (§10), deviation note (§11), notes for other specs (§12), open questions (§13). Census rows SC1–SC6 from a read-only probe of the install's layout records. |
+| 2026-10-16 | **Revision 2** (answers the first review's B1–B6; status stays Review). **B1:** full-screen roots with left and right edges 6 are **fit roots** (§5.2): placed by §5.4 with *P* = *F*, *G* = *A*; children keep their design layout; exempt from §5.3, §5.6, keep-on-screen (§5.8), saved placements and I6; clipped to *F*; their letterbox bars are drawn and hit as the fit root (§5.4 step 5). UL §8.4 step 1 (Stretch parents) is not applied: children of the 4 Stretch full-screen roots are laid out by §5.3, of other Stretch roots by steps 2–6 (§5.2, §5.3, §5.9; note added to UL §8.4). **B2:** layout frames (§5.2 "Layout frames"): re-layout subtracts the recorded frame offset before UL §8.4 steps 2–5 and adds the current one after, so mode-0 edges and user moves never drift; §5.3 uses it; new invariant I14. **B3:** empty by design (§5.7): a zero design extent or a zero-extent parent gives extent 0, never negative, not drawn or hit; §5.4 "Zero extents" (fit containers with a zero size are not fitted, *f* = 1), *f*guard leaves out zero terms, an empty content box skips the guard and the content moves, an empty *G* falls back to *P*; I5 restated; backdrop rule needs a design size of at least 1 (§5.5). **B4:** I11 restricted (edges 0/1/3/4/5, design box inside a design area no larger than *A*, no moves or node scales; minimap example), I12 restricted to panels whose size does not depend on *N*, with a one-pixel rounding allowance, I6 exempts fit roots and states the plugin-window rule, I3 reads fit roots clipped to *F*, T3 uses the box ratio *W*′*H*′ ÷ *WH* with a quantisation tolerance; §10.3 notes the minimap beyond *A*. **B5:** §5.4 Type A step 2 is a size test only; step 4 wins over step 3, lands inside *G* whenever a position satisfies both, otherwise the content reaches into the wings (worked counterexample at C8); new invariant I15. **B6:** §6.1/§6.2: a surface under a stretch vector of its own or of an ancestor is painted at its unstretched box and its elements at canvas boxes mapped without the stretch; §6.4.6 takes the pointer into such a canvas. §9.6 tests extended for all of the above. |

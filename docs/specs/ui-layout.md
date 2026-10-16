@@ -1034,7 +1034,9 @@ geometry and changes no box that a hit test reads.
 > with an edge in mode 6 keep their design-size layout box and get a uniform fit factor),
 > §5.5 (other Stretch elements take the new size; images made for the element are drawn as
 > a cover fit) and §5.7 (the stop-gap rule above, made a general guard); summary in its
-> §5.9. It takes effect when that spec is Accepted and built.
+> §5.9. Its §5.2 also stops applying step 1 above to root panels: children of a Stretch root
+> are laid out by steps 2–6 (those of a full-screen root against the boxes of its §5.3). It
+> takes effect when that spec is Accepted and built.
 
 Notes:
 

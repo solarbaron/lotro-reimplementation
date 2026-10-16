@@ -1021,6 +1021,24 @@ geometry and changes no box that a hit test reads.
 > design extent near the bottom of the shrunken `NormalBackground`; it is a stop-gap for
 > visibility, not the pixel-accurate placement that the "other reading" (a scaled surface)
 > would give. Implemented in `crates/ui/src/layout.rs` (`runtime`).
+>
+> **Answered (owner, 2026-10-16), [decision 0040](../decisions/0040-ui-scaling.md):** the
+> original client scales its interface badly, and Tessera does not copy it. Neither reading
+> above is reproduced: Tessera's own resolution-independent UI scaling (`ui-scaling.md`,
+> Accepted 2026-10-16) decides how layouts designed for one size are shown at any window
+> size, aspect ratio and user scale. Until that spec is built, the stop-gap rule
+> above stays.
+>
+> **Note (2026-10-16, no rule of this spec changed):** [`ui-scaling.md`](ui-scaling.md) is
+> Accepted (revision 5). For Tessera it answers this OPEN in its §5.4 (Stretch elements
+> with an edge in mode 6 keep their design-size layout box and get a uniform fit factor;
+> full-cover ones that are layers of one screen share one factor and placement, bounded by
+> the screen's height),
+> §5.5 (other Stretch elements take the new size; images made for the element are drawn as
+> a cover fit) and §5.7 (the stop-gap rule above, made a general guard); summary in its
+> §5.9. Its §5.2 also stops applying step 1 above to root panels: children of a Stretch root
+> are laid out by steps 2–6 (those of a full-screen root against the boxes of its §5.3). It
+> takes effect when that spec is Accepted and built.
 
 Notes:
 
@@ -1057,6 +1075,12 @@ The platform's display scale factor is **not** applied to it, because the origin
 factor; larger panels come from `UIScale_Global` (`ui-behaviour.md` §9.1), as in the original.
 On a screen resize a root panel whose size does not change is only moved (§8.4 step 6), so its
 children are not laid out again.
+
+> **Note (2026-10-16, decision 0040):** when [`ui-scaling.md`](ui-scaling.md) is Accepted and
+> built, the screen root takes the size of the **UI screen** in UI units (its §3.2) instead of
+> the physical size, the operating system's scale factor feeds the default UI scale (its
+> §4.2), and `UIScale_Global` is no longer read (its §7.7, §11). Root panels are laid out
+> against the full screen or the safe area (its §5.2).
 
 ---
 
@@ -1301,6 +1325,12 @@ Data agreement: of 10,350 Image items on typed elements, the surface size equals
 size in 6,127 cases, is smaller on at least one axis in 3,000 (tiled "middle" pieces of
 frames, for example a 2-pixel-wide image on a 474-pixel-wide edge) and is larger in 1,223
 (clipped).
+
+> **Note (2026-10-16, decision 0040):** under a UI scale Tessera resamples each layer once at
+> the target size, per axis: fitted to the element when the image was made for it, tiled or
+> clipped at the content scale otherwise, with the filters of [`ui-scaling.md`](ui-scaling.md)
+> §6.3; at scale 1 the drawing above is unchanged. Its §5.5 draws images made for a
+> Stretch element that the layout resized as a cover fit instead of tiling them.
 
 Data agreement for `UICore_Element_DrawAfterChildren` (OBS, U44): it is true on text buttons of
 the main menu, options and plugin manager panels (§17 P6, P7, P12) whose frame pieces are child
@@ -1554,6 +1584,11 @@ format.)
 > and when. Tessera keeps its own store of these entries in its own settings (normalized
 > corners and visibility per panel), applies it by steps 1–5, and may import `.layout` files
 > read-only once (2) is settled. Without a store every panel uses its layout geometry (§8).
+
+> **Note (2026-10-16, decision 0040):** when [`ui-scaling.md`](ui-scaling.md) is Accepted and
+> built, Tessera's store holds anchored placements in UI units instead of normalized corners
+> (its §5.8, which also converts entries of the older form once), and every applied placement
+> is kept on screen.
 
 ---
 
@@ -2195,3 +2230,6 @@ their sizes always and their positions only when the original has no saved locat
 | 2026-10-06 | **Final-pass fixes** (status stays Revised, review pending). No fact about the original is changed. **§8.4 OPEN (scope):** one note that it is not known whether the flag by which an alpha-test meter asks for a surface (`ui-widgets.md` §4.5) is the "flagged by code" of §8.3 and §8.4 step 1, with the Tessera choice that it is not (the meter owns a surface but is laid out as a non-root element; no M5 panel affected); §16 item 18 extended to match. **§15:** new row recording the corrected citation in `lua-plugin-api.md` §13.18 (mode-1 row: the reason is UB §9.2.1, not §8.4 step 1), applied in the working-tree LPA, pending its review. |
 | 2026-10-11 | Note only (no fact changed), for P4: §17.4 points to `social-panels.md` for the Social panel P8 and the other social windows. Status unchanged. |
 | 2026-10-11 | Note only (no fact of this spec changed), P4 revision 1 of `social-panels.md`: the §17.4 P4 note adds the P4 voice elements that Tessera hides (`social-panels.md` TR14). Status unchanged. |
+| 2026-10-16 | Notes only (no fact or rule of this spec changed), decision 0040: §8.4 step 6 OPEN, §8.5 Tessera rule, §9.6 and §9.9 point to `ui-scaling.md` (§5, §3.2, §6.3, §5.8), which supersedes the Tessera rules named there once it is Accepted and built. Status unchanged. |
+| 2026-10-16 | Note only (no fact or rule of this spec changed), `ui-scaling.md` revision 3: the §8.4 step 6 note adds that full-cover fit containers that are layers of one screen share one factor and placement, bounded by the screen's height. Status unchanged. |
+| 2026-10-16 | Note only (no fact or rule of this spec changed): `ui-scaling.md` is now Accepted (revision 5), so the §8.4 step 6 note no longer calls it "to be written and reviewed"; the stop-gap rule stays until that spec is built. Status unchanged. |

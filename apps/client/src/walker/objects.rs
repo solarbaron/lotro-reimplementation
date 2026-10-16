@@ -3445,7 +3445,7 @@ mod tests {
         let (mut acq, _) = pass(&mut blocks, camera, &frame, 2_080.0);
         acq.sort_unstable();
         assert_eq!(acq, vec![1, 2]);
-        // Scenery off (F9) releases the generated object at once; on brings it back.
+        // Scenery off (F2) releases the generated object at once; on brings it back.
         let off = ObjectFrame {
             scenery: false,
             ..frame

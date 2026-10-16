@@ -176,19 +176,18 @@ While the walker runs, these keys work the clock and switch systems off and on:
 | Key | Does |
 |---|---|
 | `[`, `]` | move the clock back or forward by one game hour (1/24 of the day) |
-| Backslash (`\`) | stop or restart the clock |
-| Minus, Equal | halve or double the time rate |
+| Slash (`/`) | stop or restart the clock |
+| Comma, Period (`,`, `.`) | halve or double the time rate |
 | F5, F6, F7, F8 | texture layers, shadows, water, sky on or off |
-| F9, F10, F11 | generated scenery, frills, distance detail (LOD) on or off |
+| F2, F4 | generated scenery, frills on or off |
+| F11 | distance detail (LOD) on or off |
 
 A key that the keymap binds (§4.2) belongs to the keymap, and the walker's own action on it
 stops. The built-in targeting and quickslot bindings (§3.15) take Backslash, Minus, Equal,
-F9 and F10, so by default those five keys do not stop the clock, change the time rate or
-switch scenery and frills. Without the game UI (`--ui`) they do nothing at all, because
-only the game UI acts on targeting and quickslot keys. To get the walker's keys back,
-unbind the targeting and quickslot actions on them in the keymap file. Which side keeps
-these keys is an open question (`keymap.md` §8.2). At start-up the walker logs which of its
-keys the keymap has taken.
+F9 and F10; the walker's clock and switch keys used to sit on those five, so they were moved
+(the owner's answer of 2026-10-16): the clock now stops on `/`, the time rate changes on `,`
+and `.`, scenery toggles on F2 and frills on F4, none of which the keymap binds by default.
+At start-up the walker logs which of its keys a keymap override has taken.
 
 ### 3.6 Scripted flights and timing runs
 
@@ -715,10 +714,10 @@ search within 50 m:
 | F | your selection's own target (assist) |
 
 `target_last`, `target_last_attacker` and `target_clear` have no default key; bind them in
-the keymap file (§4.2). The targeting keys and the quickslot keys below take Backslash,
-Minus, Equal, F9 and F10 from the walker's clock and switch keys (§3.5): with these
-defaults the clock's stop and time-rate keys and the scenery and frills switches no longer
-act, and without `--ui` those five keys do nothing (an open question in `keymap.md` §8.2).
+the keymap file (§4.2). The targeting keys and the quickslot keys below keep Backslash,
+Minus, Equal, F9 and F10 (the original client's defaults); the walker's own clock and switch
+functions that once used those keys moved to other keys (§3.5, the owner's answer of
+2026-10-16), so nothing on the walker side competes with them.
 
 **What you see.** Your frame (name, level, health, power and class resource) and the
 target frame (name in its colour, level, health, or the name alone for a target without

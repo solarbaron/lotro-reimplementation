@@ -17,7 +17,7 @@ use tessera_client::walker::mount::eval::{ClipKey, MountVocab, Stage};
 use tessera_client::walker::mount::profile::{
     MountData, MountKind, MountProfile, resolve_mount, rider_body,
 };
-use tessera_client::walker::mount::ride::MountMover;
+use tessera_client::walker::mount::ride::{MountMover, MountedJump};
 use tessera_client::walker::mount::session::plain_request;
 use tessera_client::walker::mount::spec::{MountSource, SteedTree};
 use tessera_client::walker::mount::walk::{RideRow, Segment, ride_segments};
@@ -90,7 +90,7 @@ struct Ride {
     profile: Arc<MountProfile>,
     rows: Vec<RideRow>,
     setup: MoverSetup,
-    jump: Option<tessera_physics::controller::JumpTable>,
+    jump: MountedJump,
 }
 
 /// Mounts `source` on `avatar` (instant) and plays `segments`.
@@ -173,17 +173,9 @@ fn normal_mount(inst: &Install, avatar: &str) {
         vocab.layers.mounted_idle,
         "{avatar}: mounted idle layer"
     );
-    // §14.12: the mounted jump branch (`collision.md` §11.10). The static scan reaches no
-    // node of the mounted branch on this install, so the walker gives the controller an empty
-    // jump table while mounted and the rider cannot jump (`walker.md` §16.12 resolution); when
-    // the scan does find a node it is a valid jump.
-    match r
-        .jump
-        .and_then(|t| t.get(MovementState::EarthControlledSurface))
-    {
-        Some(node) => assert!(node.air_time > 0.0 && node.expected_gravity > 0.0),
-        None => eprintln!("{avatar}: no mounted jump node; a mounted rider cannot jump"),
-    }
+    // `mounts.md` §14.6 "Jumping while mounted": a normal mount takes the other branch,
+    // whose node the install gives where its gates hold (checked in check 6 below).
+    assert!(!r.jump.war_steed_branch, "{avatar}: {:?}", p.mount_type);
     // Layers: Mounted while running, MountedWalking while walking.
     let run = steady(&r.rows, 1);
     let walk = steady(&r.rows, 4);
@@ -250,6 +242,77 @@ fn normal_mounts_ride_with_the_install_speed_and_clips() {
     };
     normal_mount(&inst, "human,m");
     normal_mount(&inst, "hobbit,m");
+}
+
+/// `mounts.md` §14.6 ("the sliders follow the input as on foot"), `script-table.md` §8.4
+/// slider rule (T30): a normal mount's published `Slider_Propel` eases toward the input at
+/// the active layer's ramp time — the install's Mounted layer, 0.25 s — instead of jumping
+/// to 1 in one step, so the mounted jump gate of `walker.md` §16.6 (`Slider_Propel` > 0.5)
+/// reads the smoothed value and the first forward steps do not yet clear it.
+#[test]
+fn a_normal_mount_eases_its_sliders_at_the_install_ramp() {
+    let Some(inst) = open() else {
+        eprintln!("TESSERA_GAME_DIR not set; skipped");
+        return;
+    };
+    // Settle at rest (prepended idle seeds the slider to 0), then hold forward for 1 s.
+    let r = ride(
+        &inst,
+        "human,m",
+        MountSource::Auto,
+        &[Segment::moving(1.0, 1.0, false)],
+    );
+    assert_eq!(r.profile.kind, MountKind::Normal);
+    // The ramp time of the install's Mounted layer (0.25 s here).
+    let conds = LayerConditions {
+        mounted: true,
+        ..r.setup.conditions
+    };
+    let layer = r
+        .setup
+        .record
+        .compose_movement(&conds, MovementState::EarthControlledSurface);
+    let t = layer.ramp_time;
+    let fwd: Vec<&RideRow> = r.rows.iter().filter(|row| row.segment == 1).collect();
+    let first = fwd.first().expect("forward rows");
+    eprintln!(
+        "mounted ramp {t:.3} s; Slider_Propel after one forward step {:.3}",
+        first.sliders[0]
+    );
+    assert!(
+        first.sliders[0] > 0.0 && first.sliders[0] < 0.5,
+        "eased, not jumped: {}",
+        first.sliders[0]
+    );
+    // The gate's propel threshold (0.5) is not met until the ramp has run for a while.
+    assert!(
+        first.sliders[0] <= 0.5,
+        "a jump pressed at the first forward step is turned away: {}",
+        first.sliders[0]
+    );
+    // Rises only (while forward is held) and reaches full propel at about the ramp time.
+    for w in fwd.windows(2) {
+        assert!(
+            w[1].sliders[0] >= w[0].sliders[0] - 1e-6,
+            "Slider_Propel only rises while forward is held: {} then {}",
+            w[0].sliders[0],
+            w[1].sliders[0]
+        );
+    }
+    let hit = fwd
+        .iter()
+        .position(|row| row.sliders[0] >= 1.0 - 1e-3)
+        .expect("reaches full propel");
+    let expected = (f64::from(t) * 60.0).round() as i64;
+    eprintln!(
+        "full Slider_Propel after {} steps (expected about {expected})",
+        hit + 1
+    );
+    assert!(
+        (hit as i64 + 1 - expected).abs() <= 2,
+        "eased over the ramp: {} steps vs about {expected}",
+        hit + 1
+    );
 }
 
 #[test]
@@ -543,4 +606,148 @@ fn summoning_and_mounting_follow_the_install_timeline() {
     );
     assert!(rows.iter().any(|r| r.mount.state == 1));
     assert_eq!(rows.last().map(|r| r.mount.state), Some(0));
+}
+
+/// The rows of a ride's take-offs.
+fn take_offs(rows: &[RideRow]) -> Vec<&RideRow> {
+    rows.iter().filter(|r| r.take_off.is_some()).collect()
+}
+
+/// How far the feet rose above `ground` after the first take-off.
+fn rise(rows: &[RideRow], ground: f64) -> f64 {
+    rows.iter().map(|r| r.feet[2] - ground).fold(0.0, f64::max)
+}
+
+/// `walker.md` §16.11 check 6 (normal mount): Human M on `auto` presses jump once while
+/// standing (no take-off, no `Jump`) and again after 2 s of forward input: exactly one
+/// take-off, whose vertical impulse is (`AirTime` + 0.2) × `ExpectedGravity` of the
+/// mounted-branch node the install gives for the state (`mounts.md` §14.6); mounted
+/// throughout.
+#[test]
+fn check_6_a_normal_mount_jumps_only_moving_forward() {
+    let Some(inst) = open() else {
+        eprintln!("TESSERA_GAME_DIR not set; skipped");
+        return;
+    };
+    let r = ride(
+        &inst,
+        "human,m",
+        MountSource::Auto,
+        &[
+            Segment {
+                seconds: 1.0,
+                jump: true,
+                ..Segment::default()
+            },
+            Segment::moving(2.0, 1.0, false),
+            Segment {
+                seconds: 2.0,
+                forward: 1.0,
+                jump: true,
+                ..Segment::default()
+            },
+        ],
+    );
+    assert_eq!(r.profile.kind, MountKind::Normal);
+    assert!(!r.jump.war_steed_branch);
+    let node = r
+        .jump
+        .forward
+        .get(MovementState::EarthControlledSurface)
+        .expect("the install's mounted-branch node on land");
+    eprintln!(
+        "auto {}: mounted jump node {node:?}, {:.3} m/s",
+        r.profile.effect,
+        node.vertical_speed()
+    );
+    for row in &r.rows {
+        assert_eq!(row.mount.state, 3, "mounted throughout at {}", row.t);
+    }
+    // The standing press: no take-off and no `Jump`.
+    let standing: Vec<&RideRow> = r.rows.iter().filter(|row| row.segment == 1).collect();
+    assert!(standing.iter().all(|row| row.take_off.is_none()));
+    assert!(standing.iter().all(|row| !row.key.is_some_and(|k| k.jump)));
+    let ground = standing.last().expect("standing rows").feet[2];
+    assert!(
+        standing
+            .iter()
+            .all(|row| (row.feet[2] - ground).abs() < 0.01),
+        "the standing press does not lift"
+    );
+    // The moving press: exactly one take-off, at the first step of segment 3.
+    let offs = take_offs(&r.rows);
+    assert_eq!(offs.len(), 1, "one take-off");
+    let off = offs[0];
+    assert_eq!(off.segment, 3);
+    let v = off.take_off.unwrap().vertical_speed();
+    eprintln!("take-off {v:.3} m/s at {:.3} s", off.t);
+    assert!((v - node.vertical_speed()).abs() < 1e-5, "{v}");
+    // The impulse lifted the rider: under the Falling layer's gravity (equal to the node's
+    // `ExpectedGravity`, `collision.md` §11.10) the apex is about v² / (2 g).
+    let apex = rise(&r.rows, ground);
+    let expected = f64::from(v * v / (2.0 * node.expected_gravity));
+    eprintln!("rose {apex:.3} m (about {expected:.3} m expected)");
+    assert!(apex > 0.8 * expected, "rose {apex}");
+}
+
+/// `walker.md` §16.11 check 6 (war-steed): Human M on `steed:medium` presses jump at rest
+/// (gait 2: no take-off) and after 1 s of forward input (gait 4 or above: one take-off at
+/// the node the install gives for that gait).
+#[test]
+fn check_6_a_war_steed_jumps_only_at_gait_four_or_above() {
+    let Some(inst) = open() else {
+        eprintln!("TESSERA_GAME_DIR not set; skipped");
+        return;
+    };
+    let r = ride(
+        &inst,
+        "human,m",
+        MountSource::Steed(SteedTree::Medium),
+        &[
+            Segment {
+                seconds: 1.0,
+                jump: true,
+                ..Segment::default()
+            },
+            Segment::moving(1.0, 1.0, false),
+            Segment {
+                seconds: 2.0,
+                forward: 1.0,
+                jump: true,
+                ..Segment::default()
+            },
+        ],
+    );
+    assert_eq!(r.profile.kind, MountKind::WarSteed);
+    assert!(r.jump.war_steed_branch, "{:#x}", r.profile.mount_type);
+    for row in &r.rows {
+        assert_eq!(row.mount.state, 3, "mounted throughout at {}", row.t);
+    }
+    let rest: Vec<&RideRow> = r.rows.iter().filter(|row| row.segment == 1).collect();
+    assert_eq!(rest.first().map(|row| row.mount.gait), Some(2), "at rest");
+    assert!(rest.iter().all(|row| row.take_off.is_none()));
+    assert!(rest.iter().all(|row| !row.key.is_some_and(|k| k.jump)));
+    let offs = take_offs(&r.rows);
+    assert_eq!(offs.len(), 1, "one take-off");
+    let off = offs[0];
+    assert_eq!(off.segment, 3);
+    // The gait at the press: that of the step before it.
+    let i = r
+        .rows
+        .iter()
+        .position(|row| std::ptr::eq(row, off))
+        .unwrap();
+    let gait = r.rows[i - 1].mount.gait;
+    assert!(gait >= 4, "gait {gait} at the press");
+    let node = r.jump.by_gait[usize::try_from(gait - 4).unwrap()]
+        .get(MovementState::EarthControlledSurface)
+        .expect("the install's node for the gait");
+    let v = off.take_off.unwrap().vertical_speed();
+    eprintln!(
+        "steed {}: take-off at gait {gait}, {v:.3} m/s (node {node:?})",
+        r.profile.effect
+    );
+    assert!((v - node.vertical_speed()).abs() < 1e-5);
+    let ground = rest.last().unwrap().feet[2];
+    assert!(rise(&r.rows, ground) > 0.5);
 }

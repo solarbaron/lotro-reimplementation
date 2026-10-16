@@ -265,7 +265,9 @@ pub(crate) fn set_ref(
     src: &mut dyn TextSource,
 ) {
     if let Some(k) = k {
-        ui.set_text(k, r.map(|r| r.render(src)));
+        // No reference clears the text (empty), never falling back to the layout's own
+        // design-time text (§5.2 "clears the warning", TR7 "no warning", §6.4 "cleared").
+        ui.set_text(k, Some(r.map(|r| r.render(src)).unwrap_or_default()));
     }
 }
 

@@ -1187,7 +1187,7 @@ pub(crate) fn deliver(ap: &crate::apartment::Apartment, ev: &GameplayEvent, seq:
             return;
         }
         GameplayEvent::Party(ev) => {
-            party::deliver(ap, ev);
+            party::deliver(ap, ev, seq);
             return;
         }
         GameplayEvent::Mount(e) => {

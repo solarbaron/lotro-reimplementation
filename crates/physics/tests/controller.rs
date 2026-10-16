@@ -1238,6 +1238,42 @@ fn movement_is_jumping_holds_until_the_landing() {
     assert!(r.jump_started, "the next press jumps");
 }
 
+/// `mounts.md` §14.6 (a war-steed's press at gaits 1 and 3): `Movement_IsJumping` set
+/// without a take-off stays on the ground, refuses presses meanwhile and clears by
+/// `collision.md` §11.10 Decision item 1 at the end of the first step at least 0.2 s later.
+#[test]
+fn a_jump_without_lift_holds_the_flag_for_its_time() {
+    let mut s = Scene::new();
+    s.floor(-50.0, -50.0, 50.0, 50.0, 0.0);
+    let set = s.build();
+    let env = StepEnv::new(&set, [0.0; 3]);
+    let mut c = jumping_controller([0.0, 0.0, 0.0]);
+    run(&set, &mut c, MoveInput::default(), 10);
+    let ground = z(&c);
+    // The press's step, with an empty table: nothing starts in the controller itself.
+    c.set_jump_table(Some(JumpTable::new()));
+    let jump = MoveInput {
+        jump: true,
+        ..MoveInput::default()
+    };
+    let r = c.step(&jump, &env);
+    assert!(!r.jump_started && !r.jumped);
+    c.start_jump_without_lift();
+    assert!(c.is_jumping());
+    c.set_jump_table(Some(jump_table()));
+    let mut steps = 0;
+    while c.is_jumping() && steps < 600 {
+        let r = c.step(&jump, &env);
+        assert!(!r.jump_started, "refused while the flag is set");
+        assert!((z(&c) - ground).abs() < 1e-4, "no lift");
+        steps += 1;
+    }
+    // 0.2 s after the press's step: 12 steps of 1/60 s.
+    assert_eq!(steps, 12);
+    let r = c.step(&jump, &env);
+    assert!(r.jump_started, "the next press jumps");
+}
+
 /// `collision.md` §11.10 gate 3: no jump starts while sliding (state 6), even where the
 /// table holds a node for it (`Loc_Jumping` has a case for 6; `Movement_ActionKey` refuses
 /// it). Checked on the gate itself.

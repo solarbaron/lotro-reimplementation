@@ -495,11 +495,11 @@ pub fn capture(ui: &mut Ui, k: ElementKey) -> Rgba {
     }
 }
 
-fn golden_path(prefix: &str, name: &str) -> PathBuf {
+fn golden_path(stem: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("tests")
         .join("golden")
-        .join(format!("{prefix}_{name}.png"))
+        .join(format!("{stem}.png"))
 }
 
 fn write_png(path: &std::path::Path, img: &Rgba) {
@@ -534,13 +534,14 @@ fn read_png(path: &std::path::Path) -> Option<Rgba> {
 /// `TESSERA_BLESS=1` rewrites the image and passes. On a mismatch the actual image goes
 /// to the target's temporary directory.
 pub fn golden(name: &str, img: &Rgba) {
-    golden_with_prefix("p5", name, img);
+    golden_file(&format!("p5_{name}"), img);
 }
 
-/// [`golden`] for `tests/golden/<prefix>_<name>.png` (shared by the tests of later
-/// milestones, so that the tolerance and bless rules stay in one place).
-pub fn golden_with_prefix(prefix: &str, name: &str, img: &Rgba) {
-    let path = golden_path(prefix, name);
+/// [`golden`] for `tests/golden/<stem>.png` (the goldens of other milestones that share
+/// this support, such as `p4_<name>`).
+pub fn golden_file(stem: &str, img: &Rgba) {
+    let name = stem;
+    let path = golden_path(stem);
     if std::env::var_os("TESSERA_BLESS").is_some_and(|v| v == "1") {
         std::fs::create_dir_all(path.parent().expect("dir")).expect("golden dir");
         write_png(&path, img);
@@ -553,8 +554,7 @@ pub fn golden_with_prefix(prefix: &str, name: &str, img: &Rgba) {
             path.display()
         );
     };
-    let actual =
-        PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join(format!("{prefix}_{name}.actual.png"));
+    let actual = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join(format!("{name}.actual.png"));
     if (want.width, want.height) != (img.width, img.height) {
         write_png(&actual, img);
         panic!(

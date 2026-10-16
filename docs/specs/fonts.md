@@ -421,6 +421,12 @@ pick larger fonts and do not re-rasterise text at the scaled size.
 > exactly; otherwise a bilinear filter on premultiplied texels with clamp-to-edge, and no
 > mip chain; Tessera's setting `ui_scale_filter = linear | nearest` selects the filter.
 
+> **Note (2026-10-16, decision 0040; no fact about the original changed):** the Tessera
+> Decision above is replaced, once [`ui-scaling.md`](ui-scaling.md) is Accepted and built, by
+> its §6.4: text is laid out and drawn in physical pixels at the scaled size, from the same
+> ladder's record of that line height, or glyphs derived from a taller record (area filter)
+> or from the tallest (distance method). At scale 1 nothing changes.
+
 ---
 
 <a id="s7"></a>
@@ -1252,6 +1258,9 @@ of every record equals the number at the end of its plugin enum label.
    text in a Tessera font blends like game text and is scaled with its surface. Rasterising
    them at the scaled size, which an earlier version of this item allowed, is not done:
    there is one text path.
+   *(Note 2026-10-16, decision 0040: with [`ui-scaling.md`](ui-scaling.md) §6.4 built,
+   Tessera's own fonts are rasterised directly at the scaled size, which is again the one
+   text path.)*
 5. **Licence rule:** any font Tessera ships must be original or under a licence compatible
    with the project (for example the SIL Open Font License). Game fonts and atlases are read
    from the user's install at run time and are never shipped or extracted
@@ -1627,3 +1636,4 @@ checklist O1–O17; none of O1–O17 concerns fonts):
 | 2026-10-06 | Revision 5 (BIN questions 23–24; status Accepted → Review; answers the M5 completeness critique items B2 and B3). §7.6 declared the only statement of the truncation rule (`ui-behaviour.md` §10.1 now refers here); census reconciled and stated in full (325 values on 324 elements and 1 state: 319 + 1 naming three entries, 5 null); the clearing of the switch for editable or selectable text is now BIN (F41); step 4 points to the tooltip in UB §10.2. §6.3 item 4 corrected: the scaler requests unscaled size × scale and resizes in object mode Stretch, which keeps the layout box and changes the scale vector; the "(size + 1) × scale − 1" formula is the displayed-size formula of `ui-behaviour.md` §9.2.1; F35 updated. Q3 and Q13 rows updated; §14 rows for UB §10.1 and for revision 4's §6.3 item 4. |
 | 2026-10-06 | Revision 6 (BIN question 25; answers the revision-5 review, one blocking item; status stays Review). §6.3 item 1 corrected: an element's scale is the scale vector of the nearest display node at or above it (own node, else the nearest ancestor's by following parents), (1, 1, 1) only when none exists; it is the (*ex*, *ey*) of `ui-behaviour.md` §9.2.1. §6.3 item 3: the text hit tests convert through one step that always divides *x* and *y* by that scale (no 0.0002 tolerance, *z* unused), truncates and adds the scroll offsets. F35 updated; new FN26 and §13.12; §14 row for the revision-5 wording. Section numbers unchanged. |
 | 2026-10-06 | Revision 7 (status Accepted → Revised, awaiting review; applies the accepted decision record [0015](../decisions/0015-ui-rendering.md) (**UR**); no new research; no fact about the original changed; section numbers unchanged). **Reworded Tessera Decisions:** §6.3 (text painted at 1 : 1 into the CPU canvas of its surface, the surface composed scaled by the GPU; no re-rasterising), §8.4 (exact CPU compositing for all text; the allowance of a GPU text path is withdrawn), §11 item 4 (Tessera's own fonts are rasterised at 1 : 1 into the same coverage form and take the §8.4 path; rasterising them at the scaled size is no longer allowed). **Tessera rules added next to OPENs:** Q3 (whole-surface premultiplied bilinear resampling, exact copy at scale 1, no mips, setting `ui_scale_filter`; UR §2.2), Q6 (32-bit 0xAARRGGBB straight-alpha canvases shared by text and art; UR Decision 1.1, 1.6); both §15 rows updated, and the owner screenshot now also asks for scale 0.5. **Cross-references added:** §4.1 (atlases decoded on the workers into CPU coverage buffers, never uploaded; UR §3), §8.4 "Not covered here" (caret and selection drawn as rectangle fills; UR §3). §1: provenance tag UR; header companion entry. |
+| 2026-10-16 | Notes only (no fact changed), decision 0040: §6.3 Tessera Decision and §11 item 4 point to `ui-scaling.md` §6.4 (text at the scaled size). Status unchanged. |

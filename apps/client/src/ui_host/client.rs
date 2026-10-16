@@ -1060,13 +1060,16 @@ fn combat_frame(host: &mut UiHost, rt: &mut Runtime, walker: &mut Walker) {
             .entity_anchor(tessera_net::EntityId(e))
             .map(crate::combat::anchors::from_walker)
     };
-    let commands = host.combat_frame(
+    // TR4/TR1: the targeting keys read body records the way mouse picking does.
+    let object_selectable = |e: tessera_net::EntityId| walker.entity_selectable(e);
+    let commands = host.combat_frame_with(
         world.combat_state(),
         &changes,
         extra,
         install.as_deref(),
         now,
         &anchors,
+        &object_selectable,
     );
     for (c, slot) in commands {
         if let Err(e) = world.send_command(instant, c) {
@@ -1098,8 +1101,10 @@ fn send_combat(
         return;
     };
     let instant = Instant::now();
+    // TR5 sends only cast-cancel and selection-clear, never a targeting pick, so no object
+    // body-record reading is needed here.
     for (i, slot) in inputs {
-        for c in crate::combat::commands::commands(*i, world.combat_state()) {
+        for c in crate::combat::commands::commands(*i, world.combat_state(), &|_| true) {
             if let Err(e) = world.send_command(instant, c) {
                 tracing::info!("combat command not sent: {e}");
                 if let Some(n) = slot {

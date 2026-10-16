@@ -250,7 +250,7 @@ pub fn page_master(mastered: bool) -> RecipePageView {
 }
 
 /// Decision 0031 tier 1: compares `img` with `tests/golden/p6_<name>.png` (the P5 check,
-/// [`p5::golden_with_prefix`]).
+/// [`p5::golden_file`]).
 pub fn golden(name: &str, img: &Rgba) {
-    p5::golden_with_prefix("p6", name, img);
+    p5::golden_file(&format!("p6_{name}"), img);
 }

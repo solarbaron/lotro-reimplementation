@@ -113,6 +113,11 @@ pub struct HostCombat {
     pub(super) char_vocab: Option<tessera_ui::game::CharVocab>,
     /// The quickslot shortcuts of the install's bars.
     pub(super) shortcuts: Option<CombatShortcuts>,
+    /// The fellowship rows' effect lists with their members' entities, as the social
+    /// panels last showed them (`social-panels.md` TR16).
+    pub(super) member_lists: Vec<(tessera_ui::ElementKey, Option<u64>)>,
+    /// Whether [`Self::member_lists`] changed since the widgets last bound them.
+    pub(super) members_dirty: bool,
 }
 
 impl HostCombat {
@@ -284,6 +289,8 @@ impl UiHost {
             }
         };
         self.combat.hud = Some(hud);
+        // The new widgets bind the fellowship rows' effect lists in their next frame.
+        self.combat.members_dirty = true;
     }
 
     /// The combat widgets, once attached.
@@ -426,6 +433,9 @@ impl UiHost {
             return;
         };
         let mut ui = self.ui.borrow_mut();
+        if std::mem::take(&mut self.combat.members_dirty) {
+            hud.set_member_lists(&mut ui, &self.combat.member_lists, state, install);
+        }
         hud.resync(&mut ui, state, install, now);
         if let (Some(p), Some(sc)) = (self.panels.as_mut(), self.combat.shortcuts.as_ref())
             && sc.update(state)
@@ -455,6 +465,25 @@ impl UiHost {
         now: f64,
         anchors: &dyn tessera_ui::game::combat::AnchorSource,
     ) -> Vec<(tessera_net::Command, Option<i32>)> {
+        // Default: every object is selectable (the scenario and test-server objects carry no
+        // body record). The runtime path (`combat_frame_with`) reads body records.
+        self.combat_frame_with(state, changes, extra, install, now, anchors, &|_| true)
+    }
+
+    /// As [`Self::combat_frame`], but with `object_selectable` answering TR1's body-record
+    /// test for an `Object` candidate of a targeting action (TR4, the way mouse picking
+    /// does); the client's runtime passes its walker's reading.
+    #[allow(clippy::too_many_arguments)]
+    pub fn combat_frame_with(
+        &mut self,
+        state: &CombatState,
+        changes: &[CombatChange],
+        extra: Vec<CombatInput>,
+        install: Option<&CombatInstall>,
+        now: f64,
+        anchors: &dyn tessera_ui::game::combat::AnchorSource,
+        object_selectable: &dyn Fn(tessera_net::EntityId) -> bool,
+    ) -> Vec<(tessera_net::Command, Option<i32>)> {
         let Some(hud) = self.combat.hud.as_mut() else {
             self.combat.events.clear();
             self.combat.inputs.clear();
@@ -474,6 +503,11 @@ impl UiHost {
             .is_some_and(|s| s.update(state));
         {
             let mut ui = self.ui.borrow_mut();
+            // The fellowship rows' effect lists (TR16) first, so this frame's effect
+            // changes reach them too.
+            if std::mem::take(&mut self.combat.members_dirty) {
+                hud.set_member_lists(&mut ui, &self.combat.member_lists, state, install);
+            }
             hud.apply(&mut ui, state, changes, install, now);
             if rebuild
                 && let (Some(p), Some(sc)) = (self.panels.as_mut(), self.combat.shortcuts.as_ref())
@@ -525,7 +559,7 @@ impl UiHost {
                 }
                 _ => None,
             };
-            for c in crate::combat::commands::commands(i, state) {
+            for c in crate::combat::commands::commands(i, state, object_selectable) {
                 out.push((c, slot));
             }
         }
@@ -688,5 +722,77 @@ mod tests {
             hud.slots().cooldown(0).is_none(),
             "the new session reported no cooldown"
         );
+    }
+
+    /// `social-panels.md` TR16: the fellowship rows' effect lists the social panels report
+    /// are bound by the next combat frame and filled from the kept effects; later effects
+    /// of the member reach them; a new HUD binds them again.
+    #[test]
+    fn member_effect_lists_are_bound_and_follow_the_member() {
+        let mut host = host();
+        host.attach_combat(FloatySettings::default(), 0.0);
+        let mut state = CombatState::new();
+        let step = |host: &mut UiHost, state: &mut CombatState, ev: &Event, now: f64| {
+            let mut c = Vec::new();
+            state.apply(ev, now, &mut c);
+            frame(host, state, &c, now);
+        };
+        let brin = EntityId(7);
+        let applied = |n: u32| {
+            Event::Combat(CombatEvent::EffectApplied {
+                entity: brin,
+                effect: tessera_net::domain::EffectId(n),
+                what: Ref::Literal(format!("Ward {n}")),
+                duration_ms: Some(30_000),
+                stacks: 1,
+                source: None,
+            })
+        };
+        step(
+            &mut host,
+            &mut state,
+            &Event::WorldEntered {
+                player: EntityId(1),
+                name: "P".into(),
+                transform: Transform::new(Vec3::ZERO, 0.0),
+            },
+            0.0,
+        );
+        step(
+            &mut host,
+            &mut state,
+            &Event::EntitySpawned {
+                id: brin,
+                kind: tessera_net::EntityKind::Player,
+                name: "Brin".into(),
+                transform: Transform::new(Vec3::ZERO, 0.0),
+            },
+            0.1,
+        );
+        step(&mut host, &mut state, &applied(1), 0.2);
+        // The social panels report a row's list (here the screen root stands for it).
+        let display = host.ui().screen_root();
+        host.combat.member_lists = vec![(display, Some(brin.0))];
+        host.combat.members_dirty = true;
+        frame(&mut host, &state, &[], 0.3);
+        let count = |host: &UiHost| {
+            let w = host.combat_hud().expect("attached").widgets();
+            w.member_effects
+                .iter()
+                .map(|b| b.rows().len())
+                .sum::<usize>()
+        };
+        assert_eq!(count(&host), 1, "filled from the kept effects");
+        step(&mut host, &mut state, &applied(2), 0.4);
+        assert_eq!(count(&host), 2, "a later effect of the member");
+        // A new HUD (a rebuild) binds the lists again in its next frame.
+        host.attach_combat(FloatySettings::default(), 0.5);
+        frame(&mut host, &state, &[], 0.6);
+        assert_eq!(count(&host), 2);
+        // No fellowship any more.
+        host.combat.member_lists.clear();
+        host.combat.members_dirty = true;
+        frame(&mut host, &state, &[], 0.7);
+        assert_eq!(count(&host), 0);
     }
 }

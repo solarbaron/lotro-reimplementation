@@ -8,7 +8,10 @@
 exists, and the fallback "if the gate fails" applies only if M8 stops under LEGAL §9.4 (an
 explicit objection from a rights holder). M8 may run beside the track; M9 still starts only
 after P8 and M8. The client half only, LEGAL §11.1 rule 5 and the data-free server are
-unchanged.
+unchanged. Amended 2026-10-16 by the owner (answer to open item 1): **P7 (client-run game
+code) is dropped.** With server compatibility (M8) the official server runs that code, so
+Tessera does not build a client-side interpreter for it; the track is P0–P6 and P8, and P8
+depends on P1–P6.
 
 **Owner's choice: "Client half only."** LEGAL.md §11.1 rule 5 and `server-content.md` §7
 stay as they are. The track builds only what the original client shows and computes
@@ -118,10 +121,10 @@ A feature of the sandbox backend in `tessera-net`, specified in a new spec,
 | **P4** | Social panels | P1 |
 | **P5** | Map, travel, mounts and instances | P1 |
 | **P6** | Progression and crafting panels | P2 |
-| **P7** | Client-run game code | P2 |
-| **P8** | Parity audit | P1–P7 |
+| ~~**P7**~~ | ~~Client-run game code~~: dropped by the owner 2026-10-16 (not needed with M8) | — |
+| **P8** | Parity audit | P1–P6 |
 
-Risk tier: T1 throughout (client only, offline). P3–P7 can run in parallel once P1 is in.
+Risk tier: T1 throughout (client only, offline). P3–P6 can run in parallel once P1 is in.
 Open M4.5 and M7 items continue beside the track and block nothing here. "Every record"
 below means every record of that kind in the install at `TESSERA_GAME_DIR`; a record that
 cannot be shown is listed with a reason (categorised), never a crash.
@@ -206,7 +209,11 @@ cannot be shown is listed with a reason (categorised), never a crash.
   1. Every trait tree and recipe record renders (or is categorised).
   2. A progression scenario (level up, train, craft) runs headless; golden images pass.
 
-#### P7: Client-run game code
+#### P7: Client-run game code (dropped)
+> **Dropped by the owner on 2026-10-16:** "it won't be needed with the server
+> compatibility". With M8 the official server runs this code. The text below is kept as
+> the record of what was planned; nothing of it is built.
+
 - **Theme:** the class-library code the client itself runs (a `wvm` interpreter for those
   classes only, never linked by the server).
 - **Specs:** `wlib-bytecode.md`, `wlib.md`, `wstate.md`; new spec: the classes the client
@@ -241,10 +248,12 @@ cannot be shown is listed with a reason (categorised), never a crash.
   the LEGAL.md banner still apply to M7's server.
 - No playable loop on Tessera's server: outcomes exist only as scripted scenario events or
   from an official server.
-- Dirty-room work is limited to presentation behaviour (P2's combat UI spec, P7's
-  client-run classes).
+- Dirty-room work is limited to presentation behaviour (P2's combat UI spec; P7's
+  client-run classes were dropped on 2026-10-16).
 
 ## Open for the owner
-1. Is P7 (client-run game code) part of "full parity", or does it move to M8 Phase 2?
+1. ~~Is P7 (client-run game code) part of "full parity", or does it move to M8 Phase 2?~~
+   **Answered 2026-10-16 (owner):** P7 is dropped; it "won't be needed with the server
+   compatibility", because the official server runs that code.
 2. Does relaying a synchronised `/play` start through M7's server count as chat under rule
    5? Until answered, P4 tests it on the scenario feed only.

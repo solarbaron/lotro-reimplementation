@@ -160,9 +160,9 @@ Rules:
     (`wlib-bytecode.md`). One-way: `wstate`, `props` and `text` never depend on `wvm`, and
     no crate below the apps depends on `wvm` except `gamedata` (L3, from P0,
     [0024](decisions/0024-parity-track.md) §3). The reason for that one exception: the
-    presentation data layer evaluates tooltip and description text and, from P7, the
-    class-library code the client itself runs, and both need the decoded and validated
-    compiled code. `gamedata` serves only the client and the tools, so `wvm` still never
+    presentation data layer evaluates tooltip and description text, which needs the decoded
+    and validated compiled code (running the client's own class-library code was planned for
+    P7, which the owner dropped on 2026-10-16). `gamedata` serves only the client and the tools, so `wvm` still never
     reaches the server (rule on `gamedata` below). Today `dattool` uses `wvm` directly.
 - L0–L2 crates have no GPU, window or audio dependencies.
 - `render`, `audio` and `ui` do not depend on each other. The client app wires them

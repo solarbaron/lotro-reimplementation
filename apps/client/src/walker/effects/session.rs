@@ -295,7 +295,7 @@ fn step_beam(
     // Step 10: removed once finished and each system is absent, has a zero rate or holds no
     // live particle.
     if finished_env {
-        // Tessera choice (`particle-runtime.md` §11.1 implementer OPEN): a finished beam's
+        // `particle-runtime.md` §11.1 Decision (RT46 answered in part): a finished beam's
         // systems stop emitting on their own, so that step 10 is reached.
         for k in systems.iter().flatten() {
             if let Some(e) = manager.effect_mut(*k) {
@@ -541,7 +541,7 @@ impl FxState {
     }
 
     /// Creates a beam's particle system from its record (§11.1 step 1, without the start
-    /// gating).
+    /// gating), with the camera-distance fade switched off (step 8, RT46).
     fn beam_system(
         &mut self,
         owner: u64,
@@ -554,15 +554,22 @@ impl FxState {
         self.note_texture(record);
         let now = self.now;
         let node = tessera_formats::script_table::ParticleScriptNode::default();
-        self.manager
-            .start_attached(
+        let key = self
+            .manager
+            .start_attached_own(
                 owner,
                 did,
                 now,
                 || make_effect(record, now, &node),
                 AttachSpec::default(),
             )
-            .map(|(_, key)| key)
+            .map(|(_, key)| key)?;
+        // The beam's systems skip the camera-distance fade and cut of `particles.md` §8.13
+        // (§11.1 step 8, RT46).
+        if let Some(sim) = self.manager.effect_mut(key).and_then(|e| e.particles_mut()) {
+            sim.set_distance_fade(false);
+        }
+        Some(key)
     }
 
     /// Asks for the surface records of a beam's three materials (§11.1 steps 1, 6); once

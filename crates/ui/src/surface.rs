@@ -334,6 +334,27 @@ impl Ui {
         Some(self.painter.scheduler.canvases(id)?.below().pixel(x, y))
     }
 
+    /// A pixel of one canvas of surface `id` (CPU side, after the last [`Ui::paint`]): the
+    /// canvas below or a canvas above a nested entry (the textures a composition-list
+    /// entry names), `0xAARRGGBB`; `None` when the surface or the layer has no canvas. For
+    /// tests and tools that compose the composition list on the CPU.
+    #[must_use]
+    pub fn surface_layer_pixel(
+        &self,
+        id: SurfaceId,
+        layer: crate::paint::Layer,
+        x: i32,
+        y: i32,
+    ) -> Option<u32> {
+        Some(
+            self.painter
+                .scheduler
+                .canvases(id)?
+                .layer(layer)?
+                .pixel(x, y),
+        )
+    }
+
     /// Marks the elements that wait for an image for repaint: the client calls it when
     /// decoded images arrived (decision 0015 Decision 1.8: a pending image draws nothing
     /// until it arrives).

@@ -28,7 +28,7 @@ use crate::apartment::Apartment;
 use crate::gameplay::PLACEHOLDER_SKILL_NAME;
 use crate::inventory::{new_object, weak_table, with_payload};
 use crate::object::{Payload, native_class_of};
-use crate::party::{self, MemberLink};
+use crate::party::{self, MemberListGuard};
 use crate::shared::{ApartmentCtx, lock};
 
 // ---------------------------------------------------------------------------------------
@@ -1145,6 +1145,10 @@ impl Ident {
 
 /// Registry name of the weak-keyed table actor object → its `EffectList` object.
 const LISTS_KEY: &str = "tessera.plugins.combat.lists";
+/// Registry name of the weak-valued table `PartyMember` key ("episode/name") → its
+/// `EffectList` object (§15.4 further rule 7: the member's own list, which receives the
+/// followed entity's events).
+const MEMBER_LISTS_KEY: &str = "tessera.plugins.combat.memberlists";
 /// Registry name of the `LocalPlayer`'s `EffectList` object.
 const PLAYER_LIST_KEY: &str = "tessera.plugins.combat.playerlist";
 /// Registry name of the apartment's trained `SkillList` object.
@@ -1170,8 +1174,8 @@ enum Owner {
     /// The player, whatever its entity is at the call.
     LocalPlayer,
     Entity(u64),
-    /// A `PartyMember`: its member's entity at the call (`ListObj::member`), none for a
-    /// member without one (§15.4).
+    /// A `PartyMember`: the entity its member follows at the call (`ListObj::member`),
+    /// none while it follows none (§15.4 further rules 7–8).
     Member,
 }
 
@@ -1179,8 +1183,9 @@ enum Owner {
 struct ListObj {
     owner: Owner,
     created: u64,
-    /// The `PartyMember` link of an [`Owner::Member`] list.
-    member: Option<Arc<MemberLink>>,
+    /// The `PartyMember` follow record of an [`Owner::Member`] list (counted while the
+    /// list exists).
+    member: Option<MemberListGuard>,
 }
 
 /// Payload of an `Effect`.
@@ -1339,7 +1344,7 @@ pub(crate) fn target(
         match entity_values(lua, ctx, this)? {
             Some(v) => Some(v),
             None => party::member_link(lua, this)?
-                .and_then(|m| m.entity(ctx))
+                .and_then(|m| m.followed())
                 .zip(source(ctx))
                 .and_then(|(id, s)| s.actor(id).or_else(|| s.last_actor(id))),
         }
@@ -1375,8 +1380,9 @@ pub(crate) fn effects(
         lua.set_named_registry_value(PLAYER_LIST_KEY, t.clone())?;
         return Ok(Some(t));
     }
-    // An entity object's list, or a `PartyMember`'s (§15.4: the `Actor` getters of the
-    // member's entity; one list per member object, read live, with no events of its own).
+    // An entity object's list, or a `PartyMember`'s (§15.4 further rule 7: one list per
+    // member object, showing the entity the member follows, with the events the host
+    // fans out to it).
     let (owner, member) = match with_payload(lua, this, |p: &EntityObj| p.id)? {
         Some(id) => (Owner::Entity(id), None),
         None => match party::member_link(lua, this)? {
@@ -1388,17 +1394,40 @@ pub(crate) fn effects(
     if let Value::Table(t) = lists.raw_get::<Value>(this.clone())? {
         return Ok(Some(t));
     }
+    let member_lists: Table = lua.named_registry_value(MEMBER_LISTS_KEY)?;
+    let member_key = member.as_ref().map(|link| link.key());
+    if let Some(key) = &member_key
+        && let Value::Table(t) = member_lists.raw_get::<Value>(key.as_str())?
+    {
+        // A list a plugin still holds of an earlier object of the same member.
+        lists.raw_set(this.clone(), t.clone())?;
+        return Ok(Some(t));
+    }
     let t = new_object(
         lua,
         &cls,
         Payload(Arc::new(ListObj {
             owner,
             created: current_seq(ctx),
-            member,
+            member: member.map(MemberListGuard::new),
         })),
     )?;
     lists.raw_set(this.clone(), t.clone())?;
+    if let Some(key) = member_key {
+        member_lists.raw_set(key, t.clone())?;
+    }
     Ok(Some(t))
+}
+
+/// The `EffectList` object of the `PartyMember` with key `key` ("episode/name") in this
+/// apartment, if it existed before event `seq` was raised (§15.4 further rule 7).
+pub(crate) fn existing_member_list(lua: &Lua, key: &str, seq: u64) -> mlua::Result<Option<Table>> {
+    let member_lists: Table = lua.named_registry_value(MEMBER_LISTS_KEY)?;
+    let list = match member_lists.raw_get::<Value>(key)? {
+        Value::Table(t) => Some(t),
+        _ => None,
+    };
+    existed(lua, list, seq)
 }
 
 /// The entity an `EffectList` shows now (`None`: an empty list).
@@ -1406,7 +1435,7 @@ fn list_entity(lua: &Lua, ctx: &ApartmentCtx, this: &Table) -> mlua::Result<Opti
     Ok(with_payload(lua, this, |p: &ListObj| match p.owner {
         Owner::LocalPlayer => source(ctx).and_then(|s| s.player()),
         Owner::Entity(id) => Some(id),
-        Owner::Member => p.member.as_ref().and_then(|m| m.entity(ctx)),
+        Owner::Member => p.member.as_ref().and_then(|m| m.link().followed()),
     })?
     .flatten())
 }
@@ -1667,6 +1696,7 @@ pub(crate) fn install(
     EFFECTS.install(lua)?;
     SKILLS.install(lua)?;
     lua.set_named_registry_value(LISTS_KEY, weak_table(lua, "k")?)?;
+    lua.set_named_registry_value(MEMBER_LISTS_KEY, weak_table(lua, "v")?)?;
     lua.set_named_registry_value(SKILL_INFOS_KEY, weak_table(lua, "v")?)?;
     let cls = lua.create_table()?;
     for (name, t) in [

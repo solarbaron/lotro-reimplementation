@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Effect bars: the player's effect rows E8, the target's E9 and their icons E10
 //! (`combat-ui.md` §8, §13.5; TR29–TR31): rows by harm, order by start time, the pulse of
-//! icons near their end, removal by the session.
+//! icons near their end, removal by the session. The same lists show a fellowship
+//! member's effects on the member's row (`social-panels.md` §4.2, TR16:
+//! [`EffectOwner::Member`], [`EffectBar::install_display`]).
 
 use std::collections::BTreeMap;
 
@@ -29,6 +31,11 @@ pub const PULSE_LOW: f32 = 0.3;
 
 /// Icons a row shows (`UIComponent_EffectDisplay_MaxIconColumns`, 8 in P4 and P5; TR30).
 pub const DEFAULT_MAX_COLUMNS: usize = 8;
+
+/// Icons a row of a fellowship member's list shows (`social-panels.md` TR16:
+/// `UIComponent_EffectDisplay_MaxIconColumns` 6 on `FellowEffectDisplay`), used when the
+/// list lacks the property.
+pub const MEMBER_MAX_COLUMNS: usize = 6;
 
 /// The icon size when the list has no `EffectDisplayList_EffectSize` (§8.1).
 pub const DEFAULT_ICON_SIZE: i32 = 20;
@@ -87,16 +94,41 @@ impl EffectRows {
         }
     }
 
-    /// Adds an effect (replacing an icon of the same instance) by §8.2: an untimed
-    /// effect goes to the front; a timed one goes after the last icon (from the end) whose
-    /// start is later than its own (untimed icons count as the latest), else to the front.
+    /// Whether a backward scan of the Order rule stops at icon `x` when placing `new`
+    /// (§8.2 steps 3 and 4), so that `new` goes right after `x`:
+    /// - a new icon that is not combat-only (so it is timed) stops at an icon whose start is
+    ///   later than its own (an untimed icon counts as the latest), i.e. [`Self::key`] of `x`
+    ///   greater than that of `new` (step 3);
+    /// - a combat-only new icon passes over every timed icon; it stops at an untimed icon
+    ///   that is not combat-only, and at an untimed combat-only icon when it is itself timed,
+    ///   passing over it when it is itself untimed (step 4).
+    fn stops(new: &EffectView, x: &EffectView) -> bool {
+        if new.combat_only {
+            if x.timeout().is_some() {
+                false
+            } else if !x.combat_only {
+                true
+            } else {
+                new.timeout().is_some()
+            }
+        } else {
+            Self::key(x) > Self::key(new)
+        }
+    }
+
+    /// Adds an effect (replacing an icon of the same instance) by the §8.2 Order rule
+    /// (revision 3, CU30): an untimed icon that is not combat-only goes to position 0;
+    /// otherwise the row is scanned from the last icon towards the first and the new icon is
+    /// placed right after the first icon the scan stops at ([`Self::stops`]), or at position
+    /// 0 when the scan reaches the front. So the untimed non-combat-only icons come first
+    /// (most recent first), an untimed combat-only icon goes right after the last of them,
+    /// and the timed icons follow by start (most recent first).
     ///
-    /// §8.2's "an icon whose effect ID is already in the row goes to the front" conflicts
-    /// with CUI7 for timed icons (`combat-ui.md` §8.2 OPEN). Tessera keeps CUI7: the rule
-    /// moves an icon to the front of its own group only, which is where the two placements
-    /// above already put it (untimed icons at position 0, a timed icon first among the
-    /// icons that started no later than it). Returns `false` when the list is full
-    /// ([`MAX_EFFECTS`]).
+    /// §8.2's same-effect-ID step (a new icon whose effect ID is already in the row goes to
+    /// position 0) never applies to feed effects: TR30 replaces a repeated instance's icon
+    /// (the ID compared is the per-application runtime instance ID) and [`Self::remove`]
+    /// above removes it first, so no row holds two icons with the same ID. Returns `false`
+    /// when the list is full ([`MAX_EFFECTS`]).
     pub fn insert(&mut self, e: EffectView) -> bool {
         self.remove(e.instance);
         if self.len() >= MAX_EFFECTS {
@@ -104,13 +136,11 @@ impl EffectRows {
         }
         let r = Self::row_of(&e);
         let row = &mut self.rows[r];
-        let untimed = e.timeout().is_none();
-        let at = if untimed {
+        let at = if e.timeout().is_none() && !e.combat_only {
             0
         } else {
-            let k = Self::key(&e);
             row.iter()
-                .rposition(|x| Self::key(x) > k)
+                .rposition(|x| Self::stops(&e, x))
                 .map_or(0, |j| j + 1)
         };
         row.insert(at.min(row.len()), e);
@@ -161,18 +191,25 @@ impl EffectRows {
         &row[..row.len().min(max_columns)]
     }
 
-    /// Whether the rows satisfy CUI7: untimed icons precede timed ones and timed icons are
-    /// in non-increasing order of start time.
+    /// Whether the rows satisfy CUI7 (revision 3): untimed icons that are not combat-only
+    /// come first, then untimed combat-only icons, then timed icons, and timed icons are in
+    /// non-increasing order of start time.
     #[must_use]
     pub fn satisfies_cui7(&self) -> bool {
+        // 0: untimed, not combat-only; 1: untimed, combat-only; 2: timed.
+        let class = |e: &EffectView| {
+            if e.timeout().is_some() {
+                2u8
+            } else if e.combat_only {
+                1
+            } else {
+                0
+            }
+        };
         self.rows.iter().all(|row| {
             row.windows(2).all(|w| {
                 let (a, b) = (&w[0], &w[1]);
-                match (a.timeout().is_some(), b.timeout().is_some()) {
-                    (true, false) => false,
-                    (true, true) => a.start >= b.start,
-                    _ => true,
-                }
+                class(a) <= class(b) && (class(a) != 2 || class(b) != 2 || a.start >= b.start)
             })
         })
     }
@@ -185,6 +222,9 @@ pub enum EffectOwner {
     Player,
     /// E9, the selection's effects.
     Target,
+    /// `FellowEffectDisplay` of a fellowship member's row, bound to the member's entity
+    /// (`social-panels.md` §4.2, TR16).
+    Member(super::data::EntityId),
 }
 
 /// One shown icon.
@@ -201,7 +241,8 @@ struct Icon {
 enum EffectLook {
     Install {
         display: ElementKey,
-        layout: Did,
+        /// The `effects` layout; without it every icon takes the §13.5 look (TR41).
+        layout: Option<Did>,
         rows: [ElementKey; ROWS],
     },
     Fallback {
@@ -239,12 +280,33 @@ impl EffectBar {
         let id = match owner {
             EffectOwner::Player => cv.ids.player_effects,
             EffectOwner::Target => cv.ids.opponent_effects,
+            // A member's list is bound by its own element ([`EffectBar::install_display`]).
+            EffectOwner::Member(_) => return None,
         };
         let display = if ui.element_id(root) == Some(id) {
             root
         } else {
             find_below(ui, root, id)?
         };
+        Self::install_display(ui, cv, owner, display, Some(effects), DEFAULT_MAX_COLUMNS)
+    }
+
+    /// The list of an `EffectDisplayList` element `display` itself (§8.1): its
+    /// `EffectDisplayList_EffectSize` (default 20) and `UIComponent_EffectDisplay_MaxIconColumns`
+    /// (`default_columns` when absent), two code-made rows as in [`EffectBar::install`].
+    /// `effects` is the `effects` layout (`TimedEffectTemplate`); without it every icon takes
+    /// the §13.5 look. `None` when the rows cannot be created.
+    pub fn install_display(
+        ui: &mut Ui,
+        cv: &CombatVocab,
+        owner: EffectOwner,
+        display: ElementKey,
+        effects: Option<Did>,
+        default_columns: usize,
+    ) -> Option<Self> {
+        if !ui.exists(display) {
+            return None;
+        }
         let size = {
             let p = ui.prop(display, cv.pids.effect_size);
             if p.is_set() && p.int() > 0 {
@@ -256,11 +318,9 @@ impl EffectBar {
         let max_columns = {
             let p = ui.prop(display, cv.pids.effect_max_columns);
             if p.is_set() && p.int() > 0 {
-                usize::try_from(p.int())
-                    .unwrap_or(DEFAULT_MAX_COLUMNS)
-                    .min(64)
+                usize::try_from(p.int()).unwrap_or(default_columns).min(64)
             } else {
-                DEFAULT_MAX_COLUMNS
+                default_columns.clamp(1, 64)
             }
         };
         let w = size.saturating_mul(max_columns as i32);
@@ -305,6 +365,8 @@ impl EffectBar {
         let x = match owner {
             EffectOwner::Player => 46,
             EffectOwner::Target => 270,
+            // A member's list exists only on an install row (TR16).
+            EffectOwner::Member(_) => return None,
         };
         let size = DEFAULT_ICON_SIZE;
         let gap = 2;
@@ -360,6 +422,21 @@ impl EffectBar {
         match &self.look {
             EffectLook::Install { rows, .. } | EffectLook::Fallback { rows } => *rows,
         }
+    }
+
+    /// The `EffectDisplayList` element the rows were made in (install look only).
+    #[must_use]
+    pub fn display(&self) -> Option<ElementKey> {
+        match &self.look {
+            EffectLook::Install { display, .. } => Some(*display),
+            EffectLook::Fallback { .. } => None,
+        }
+    }
+
+    /// The icons shown per row (`UIComponent_EffectDisplay_MaxIconColumns`).
+    #[must_use]
+    pub fn max_columns(&self) -> usize {
+        self.max_columns
     }
 
     /// The icon element of an instance, while shown.
@@ -500,9 +577,10 @@ impl EffectBar {
         let icon = match &self.look {
             // TR41: the fallback look applies element by element, so an effect without
             // an icon (a literal, §13.5) takes it in the install look too.
-            EffectLook::Install { layout, .. } if e.icon.is_some() => {
-                self.install_icon(ui, *layout, row, bx, e)?
-            }
+            EffectLook::Install {
+                layout: Some(layout),
+                ..
+            } if e.icon.is_some() => self.install_icon(ui, *layout, row, bx, e)?,
             EffectLook::Install { .. } | EffectLook::Fallback { .. } => {
                 self.fallback_icon(ui, row, bx, e)?
             }

@@ -101,7 +101,8 @@ pub use mount::{
     MountVital, MountVitals, VitalValues,
 };
 pub use party::{
-    FellowshipMember, MemberActorInfo, PartyActorSource, PartyPlayer, PartyUpdate, PartyViewEvent,
+    FellowshipMember, MemberActorInfo, MemberEffectsEvent, PartyActorSource, PartyPlayer,
+    PartyUpdate, PartyViewEvent,
 };
 pub use plugindata::{DataKey, DataValue, ParseLimits, PluginDataError};
 pub use progression::{

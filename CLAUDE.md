@@ -141,13 +141,14 @@ compatibility in plain prose is fine. Format-level terms like "DID" or "landbloc
   path (`tessera-mesh` `assembly::look`, client and explorer): composited faces (all 14
   playable bodies in the real-data look test) and hair, skin and eye tints, with a shared composition cache. Open: §15 OPENs (option-off order, engineering
   choices), owner item O15 (Dwarf brow colour).
-- **Parity track (decision 0024, owner 2026-10-09: "client half only"):** P0–P8 build the
+- **Parity track (decision 0024, owner 2026-10-09: "client half only"):** P0–P6 and P8 build the
   client-side gameplay presentation from the install, fed by a sandbox scenario feed (and,
   with M8, by an official server; decision 0034); LEGAL.md §11.1 rule 5 is unchanged, so
   Tessera's server never runs gameplay rules. P0 (scenario feed, `tessera-gamedata`,
   `tessera-client --scenario`, server dependency check) is merged to main (2026-10-10; exit
-  criteria 1–4 pass). P1, P2, P3 and P4 are merged to main (2026-10-10 and 2026-10-11, below); P5 is
-  in progress on branch `p5`.
+  criteria 1–4 pass). P1–P5 are merged to main (2026-10-10 to 2026-10-13, below); P6 is in
+  progress on branch `p6`. P7 (client-run game code) was dropped by the owner on 2026-10-16: with server
+  compatibility (M8) the official server runs that code; the milestone workflow refuses P7.
 - **Priority (owner, 2026-10-08):** extended scripting (decision 0017, planned as M5.5) is
   now M9, the last milestone: it starts only after full client parity and server
   compatibility (M8; or, if M8 stops on a rights holder's objection, LEGAL.md §9.4, client
@@ -209,8 +210,9 @@ compatibility in plain prose is fine. Format-level terms like "DID" or "landbloc
   base/zoom frames and turntable, controls named from the data, gender selection shown.
   Open: figure scripts are evaluated once, not run live (no gestures, class props, transition
   ports; `character-screens.md` §2.1.4 OPEN), decals and effect particles not drawn, side
-  panels overflow at 1280×720 (`ui-layout.md` §8.4 OPEN), face-layer value 0 not offered
-  until the owner decides the per-figure image budget. Built: decision 0025 (Accepted) with
+  panels overflow at 1280×720 (`ui-layout.md` §8.4 OPEN), face-layer value 0 to be
+  offered once the doubled decode budget lands (owner, 2026-10-16: raise `tessera-mesh`
+  `LookLimits` to 128/256 MiB and offer value 0). Built: decision 0025 (Accepted) with
   `scenario-feed.md` rev 4, `tessera-protocol.md` v1.1 and `test-server.md` (Accepted) and
   `server-content.md` (Draft, owner); `tessera-gamedata` `tooltip`, `chargen`, `inventory`;
   protocol minor 1 (looks, `Equipped.slot`) in `tessera-protocol`, `tessera-net` (overlay
@@ -268,11 +270,11 @@ compatibility in plain prose is fine. Format-level terms like "DID" or "landbloc
   `--command` share the dispatcher). Open: member-row effect icons (TR16), no committed
   synthetic P4 goldens, no text-input dialog or context menu, the Leave error code
   (`tessera-protocol.md` §10.6 OPEN). Owner rows O130-O137.
-- **P5 (map, travel, mounts and instances; branch `p5`, worktree `wt-p5`, exit verification
+- **P5 (map, travel, mounts and instances; merged to main 2026-10-13, exit verification
   2026-10-12)** (`docs/ROADMAP.md` P5 status): criteria 1-3 pass on Tessera's side. Its specs
   (`map-windows.md`, `travel-windows.md`, `mounts.md` §14, `walker.md` §16,
   `scenario-feed.md` rev 8 "P5 travel", `lua-plugin-api.md` §15.5) are Accepted after
-  independent review (2026-10-13); decision 0036 (map census, P5 goldens) is Proposed; the
+  independent review (2026-10-13); decision 0036 (map census, P5 goldens) is Accepted (owner, 2026-10-16); the
   code was conformed to them (loading-screen meter and label, the §16.12 walker gait rules,
   headless `--ui` driving the P3/P5 and social window frames) and verified. Merged to main
   2026-10-13. Built: `tessera-gamedata` `map`, `travel`,
@@ -286,27 +288,32 @@ compatibility in plain prose is fine. Format-level terms like "DID" or "landbloc
   `ui-layout.md` §8.4 step 6 OPEN (owner), `walker.md` §16.12 spec-writer reconciliations,
   finder join-label text cut. Owner rows O140-O155.
 - **P6 (progression and crafting panels; branch `p6`, worktree `wt-p6`, exit verification
-  2026-10-16)** (`docs/ROADMAP.md` P6 status): criteria 1 and 2 pass on Tessera's side, with the
-  **trait half of criterion 1 held** by decision 0037 §1.1 until the missing
-  `progression-panels.md` lands. Not yet merged; left uncommitted/on branch `p6`. Specs in
-  Review, independent review pending: `crafting-panels.md`, the `scenario-feed.md` "P6
-  progression" revision and `lua-plugin-api.md` §15.6; **`progression-panels.md` is not in the
-  tree** (the experience-bar, trait-panel and skill-training spec), so the progression UI half
-  is a Tessera fallback and `keymap.md` has no P6 trait/skill toggle rows (only the crafting
-  toggles of `crafting-panels.md` §12). Decision 0037 (trait-tree and recipe census, P6 panel
-  goldens) is Proposed. Built: `tessera-gamedata` `crafting` and `progression` (provisional)
-  presenters plus recipe-scroll tooltip rows and the `vocation`/`craft-guild` selector families;
-  `tessera-net` "P6 progression" forms (`scenario::progression`); `tessera-ui` `game::crafting`,
-  `game::progression`, `game::p6vocab`; `tessera-plugins` `progression` views
-  (`ProgressionSource`/`ProgressionModel`); `tessera-input` `toggle_crafting` (T) +
-  `toggle_crafting_1`…`3`; `tessera-client` `progression` module and scenarios
-  `progression-panels`, `traits`, `crafting`, `gathering`; fuzz `ui_p6_panels`,
-  `plugins_progression_views`, `client_p6_panels`. Real data: 7,791 / 7,791 recipe records
-  categorised, 0 failures; 17 trees and 1,216 placements categorised (provisional), 0 failures;
-  10 professions, 7 vocations. 8 tier-1 panel goldens pass and were viewed. Open: the live frame
-  glue that opens the P6 windows in the walker (`--open-panel` P6 names and `toggle_crafting` are
-  defined but the client does not yet act on them); independent spec review and the missing
-  `progression-panels.md`; owner rows O160-O175.
+  2026-10-16)** (`docs/ROADMAP.md` P6 status): criteria 1 and 2 pass on Tessera's side. Its
+  specs are Accepted after independent review (2026-10-16): `progression-panels.md`,
+  `crafting-panels.md`, the `scenario-feed.md` "P6 progression" revision and `lua-plugin-api.md`
+  §15.6; decision 0037 (trait-tree and recipe census, P6 panel goldens) is Proposed (owner,
+  like 0031/0036). `progression-panels.md` was lost to a stray `git reset` in the milestone
+  worktree and rewritten from independent dirty-room observation. Built: `tessera-gamedata`
+  `crafting` and `progression` presenters plus recipe-scroll tooltip rows and the
+  `vocation`/`craft-guild` selector families; `tessera-net` "P6 progression" forms
+  (`scenario::progression`); `tessera-ui` `game::crafting`, `game::progression`, `game::p6vocab`;
+  `tessera-plugins` `progression` views (`ProgressionSource`/`ProgressionModel`); `tessera-input`
+  `toggle_crafting` (T) + `toggle_crafting_1`…`3`; `tessera-client` `progression` module and
+  scenarios `progression-panels`, `traits`, `crafting`, `gathering`; fuzz `ui_p6_panels`,
+  `plugins_progression_views`, `client_p6_panels`. Real data (criterion 1): 7,791 / 7,791 recipe
+  records categorised, 0 failures; every class-3486 tree censused — 17 trees and 1,216 placements
+  all `Shown`, 914 distinct placed traits, 0 failures; 10 professions, 7 vocations. 8 tier-1
+  panel goldens pass and were viewed; the committed level-up/train/craft scenario replays
+  byte-identical headless (criterion 2). Open: the live frame glue that opens the P6 windows in
+  the walker (`--open-panel` P6 names and `toggle_crafting` are defined but the client does not
+  yet act on them); `keymap.md` carries an implementer OPEN for the trait/skill panel toggles;
+  owner rows O160-O175.
+- **Owner decisions 2026-10-16:** decisions 0031 and 0036 (panel goldens: tier 1 committed
+  synthetic, tier 2 local-only real data; P5 map census) are Accepted; the world walker's
+  debug keys move off the five keys the keymap defaults take (`keymap.md` §8.2); and Tessera
+  builds its own UI scaling instead of copying the original's (decision 0040: any resolution
+  and aspect ratio incl. ultrawide and 4K, a user scale slider, crisp text and art; design
+  spec `ui-scaling.md` first).
 - **REA (decision 0033, Proposed):** optional dirty-only analysis tool, pilot pending; never
   registered as an MCP server.
 - **Pending owner input:** `docs/checklists/owner-observations.md` (`/loc` readings at the 20

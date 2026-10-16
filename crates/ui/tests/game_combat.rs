@@ -140,6 +140,33 @@ fn harmful_effects_take_the_second_row_and_same_id_stays_in_order() {
 }
 
 #[test]
+fn combat_only_icons_follow_the_untimed_non_combat_group() {
+    // §8.2 Order (revision 3, CU30): an untimed combat-only icon goes right after the last
+    // untimed non-combat-only icon, not to position 0.
+    let mut r = EffectRows::default();
+    let ids = |r: &EffectRows| r.row(0).iter().map(|e| e.instance).collect::<Vec<_>>();
+    let co = |instance, start, duration, combat_only| {
+        let mut e = eff(instance, start, duration);
+        e.combat_only = combat_only;
+        e
+    };
+    r.insert(co(1, 1.0, Some(10.0), false)); // timed
+    r.insert(co(2, 2.0, None, false)); // untimed, not combat-only
+    r.insert(co(3, 3.0, None, false)); // untimed, not combat-only
+    assert_eq!(ids(&r), vec![3, 2, 1]);
+    // Right after the last untimed non-combat-only icon (position 2), not the front.
+    r.insert(co(4, 4.0, None, true));
+    assert_eq!(ids(&r), vec![3, 2, 4, 1]);
+    // A fresh untimed non-combat-only icon still goes to the front, before the combat-only one.
+    r.insert(co(5, 5.0, None, false));
+    assert_eq!(ids(&r), vec![5, 3, 2, 4, 1]);
+    // A timed combat-only icon passes the timed icons and sits after the last untimed icon.
+    r.insert(co(6, 6.0, Some(1.0), true));
+    assert_eq!(ids(&r), vec![5, 3, 2, 4, 6, 1]);
+    assert!(r.satisfies_cui7());
+}
+
+#[test]
 fn combat_only_icons_pulse_out_of_combat() {
     let mut e = eff(1, 0.0, None);
     e.combat_only = true;
@@ -773,9 +800,11 @@ fn combat_state_and_defeat_panel_fallbacks() {
 
 const DIALOG: u32 = 0x22FF_7100;
 
-/// A synthetic `Dialog` layout with the defeat panel of §10.2: the box's art first, then
-/// the statement, the two listed buttons, the paid-revive and store buttons, a divider and
-/// a paper-item balance (invented IDs for the parts the spec gives no label).
+/// A synthetic `Dialog` layout with the defeat panel of §10.2/CU29: the box's art first,
+/// then the statement, the two listed buttons, the paid-revive and store buttons, the
+/// divider, the paper-item name label and balance (each by its real label, TR38a), and —
+/// to prove the position-based reading is gone (TR38a) — a piece of box art placed **after**
+/// the statement's holder in child order, which must keep the layout's visibility.
 fn dialog_layout() -> tessera_formats::ui_layout::UiLayout {
     let i = cv().ids;
     let vv = v();
@@ -802,18 +831,21 @@ fn dialog_layout() -> tessera_formats::ui_layout::UiLayout {
     );
     bx = child(bx, typed(i.dialog_pay, vv.types.button, 137, 163, 170, 36));
     bx = child(bx, field(i.dialog_buy, 137, 163, 170, 36));
-    bx = child(bx, field(0x1000_7104, 57, 132, 400, 26));
+    bx = child(bx, field(i.dialog_divider, 57, 132, 400, 26));
+    bx = child(bx, field(i.dialog_paper_name, 28, 150, 200, 16));
     bx = child(
         bx,
         prop(
             child(
-                field(0x1000_7105, 28, 168, 87, 33),
+                field(i.dialog_paper_balance, 28, 168, 87, 33),
                 typed(0x1000_7106, vv.types.button, 0, 0, 87, 33),
             ),
             cv().pids.paper_item_service,
             int(1),
         ),
     );
+    // Box art after the statement in child order: TR38a keeps it (the old position rule hid it).
+    bx = child(bx, field(0x1000_7107, 0, 0, 512, 220));
     let root = child(field(i.awaken_dialog, 256, 274, 512, 220), bx);
     layout(DIALOG, 1024, 768, vec![root])
 }
@@ -826,8 +858,14 @@ fn install_defeat_panel_shows_only_tr38_parts() {
     assert!(d.open(&mut ui));
     let panel = d.panel().unwrap();
     let f = |id: u32, ui: &Ui| find_below(ui, panel, id).unwrap();
-    // Shown: the box's art, the statement (Tessera's own text), OK and the ghosted revive.
-    for id in [0x1000_7101, 0x1000_7102, c.ids.dialog_statement] {
+    // Shown: the box's art (before and after the statement in child order, TR38a), the
+    // statement (Tessera's own text), OK and the ghosted revive.
+    for id in [
+        0x1000_7101,
+        0x1000_7102,
+        0x1000_7107,
+        c.ids.dialog_statement,
+    ] {
         assert!(ui.is_displayed(f(id, &ui)), "{id:#x} shown");
     }
     assert_eq!(
@@ -842,12 +880,14 @@ fn install_defeat_panel_shows_only_tr38_parts() {
     let ghosted = ui.vocab().pids.button_ghosted;
     assert!(ui.prop(revive, ghosted).bool(), "TR38: revive ghosted");
     assert_eq!(ui.state(revive), Some(ui.vocab().states.ghosted));
-    // Hidden: paid revive, store, divider, paper-item balance; no other button shows.
+    // Hidden by label (TR38a): paid revive, store, divider, paper-item name and balance; the
+    // balance's child (under the hidden `UI_PaperItem_PaperItemService` holder) too.
     for id in [
         c.ids.dialog_pay,
         c.ids.dialog_buy,
-        0x1000_7104,
-        0x1000_7105,
+        c.ids.dialog_divider,
+        c.ids.dialog_paper_name,
+        c.ids.dialog_paper_balance,
         0x1000_7106,
     ] {
         assert!(!ui.is_displayed(f(id, &ui)), "{id:#x} hidden");
@@ -1878,4 +1918,282 @@ fn text_properties_and_pip_type_resolve_by_label() {
         FloatySettings::default(),
     );
     assert_eq!(combat.pip_display_type, 0x1000_0042);
+}
+
+// ----- portraits, voice icons and member effect lists (fix-ups) ----------------------------
+
+/// P4 and P5 with their portraits (the P5 portrait with an own image and a child, as
+/// `Target_Image`), and P4's voice, squelched, sending-data and assistant icons at the
+/// start of the name (`social-panels.md` §4.3; none hidden by the layout, SPI9).
+fn portrait_layout() -> tessera_formats::ui_layout::UiLayout {
+    let i = cv().ids;
+    let vv = v();
+    let mut root = field(i.avatar_panel, 0, 0, 280, 300);
+    root = child(root, typed(i.player_name, vv.types.text, 87, 3, 191, 36));
+    root = child(root, field(i.player_portrait, 21, 21, 62, 62));
+    for id in [
+        i.player_voice,
+        i.player_voice_squelched,
+        i.player_sending,
+        i.player_assistant,
+    ] {
+        root = child(root, field(id, 71, 11, 20, 20));
+    }
+    let mut opp = field(i.opponent_panel, 300, 0, 305, 300);
+    let mut disp = field(i.opponent_display, 0, 20, 302, 300);
+    disp = child(disp, typed(i.opponent_name, vv.types.text, 2, 3, 216, 36));
+    let portrait = media(
+        field(i.opponent_portrait, 220, 19, 62, 62),
+        image_item(0x4100_0E4C, 2),
+    );
+    disp = child(disp, child(portrait, field(0x1000_0E01, 0, 0, 62, 62)));
+    opp = child(opp, disp);
+    layout(L, 1024, 768, vec![root, opp])
+}
+
+#[test]
+fn install_frames_hide_voice_icons_and_portraits_without_a_scene() {
+    let mut ui = ui_with(env_with(vec![portrait_layout()]), 1024, 768);
+    let c = cv();
+    let avatar = ui.open_panel(Did(L), c.ids.avatar_panel).unwrap();
+    let opp = ui.open_panel(Did(L), c.ids.opponent_panel).unwrap();
+    let f = |ui: &Ui, root, id: u32| find_below(ui, root, id).unwrap();
+    let voice = [
+        c.ids.player_voice,
+        c.ids.player_voice_squelched,
+        c.ids.player_sending,
+        c.ids.player_assistant,
+    ];
+    assert!(voice.iter().all(|id| ui.is_visible(f(&ui, avatar, *id))));
+    let mut combat = CombatUi::new(
+        &mut ui,
+        c,
+        CombatLayouts::default(),
+        CombatRoots {
+            avatar_panel: Some(avatar),
+            opponent_panel: Some(opp),
+            ..CombatRoots::default()
+        },
+        FloatySettings::default(),
+    );
+    // `social-panels.md` TR14 on the player frame: no voice icon over the name.
+    for id in voice {
+        assert!(!ui.is_visible(f(&ui, avatar, id)), "{id:#x} hidden");
+    }
+    combat.set_player(
+        &mut ui,
+        &FrameView {
+            entity: 1,
+            name: "Tamsin".into(),
+            has_vitals: true,
+            ..FrameView::default()
+        },
+    );
+    assert!(ui.is_visible(f(&ui, avatar, c.ids.player_name)));
+    // `ui-widgets.md` §12: no scene, no portrait (not its own image, not its child).
+    let t = FrameView {
+        entity: 2,
+        name: "Boar".into(),
+        has_vitals: true,
+        health: Some(Vital::new(3.0, 4.0)),
+        ..FrameView::default()
+    };
+    combat.set_target(&mut ui, Some(&t), None);
+    let portrait = f(&ui, opp, c.ids.opponent_portrait);
+    let image = f(&ui, portrait, 0x1000_0E01);
+    assert!(ui.is_visible(f(&ui, opp, c.ids.opponent_name)));
+    assert!(!ui.is_visible(portrait));
+    assert!(!ui.is_displayed(image), "nor its child");
+    assert!(!ui.is_visible(f(&ui, avatar, c.ids.player_portrait)));
+    let target = combat.target.as_ref().unwrap();
+    assert_eq!(target.portrait(), Some(portrait));
+    // A drawn scene shows the portrait again.
+    target.set_portrait_scene(&mut ui, true);
+    assert!(ui.is_displayed(portrait) && ui.is_displayed(image));
+    target.set_portrait_scene(&mut ui, false);
+    assert!(!ui.is_visible(portrait));
+    // The fallback look has no portrait.
+    let (_, fb) = fallback_ui();
+    assert_eq!(fb.target.as_ref().unwrap().portrait(), None);
+}
+
+/// Two fellowship rows, each with a `FellowEffectDisplay`-like list.
+const MEMBER_LIST: u32 = 0x1000_5E01;
+const MEMBER_ROW: u32 = 0x1000_5E00;
+
+fn member_rows_layout(columns: Option<i32>) -> tessera_formats::ui_layout::UiLayout {
+    let mut panel = field(0x1000_5D00, 0, 0, 221, 452);
+    for n in 0..2 {
+        let mut list = field(MEMBER_LIST, 54, 37, 150, 37);
+        if let Some(c) = columns {
+            list = prop(list, cv().pids.effect_max_columns, int(c));
+        }
+        panel = child(panel, child(field(MEMBER_ROW, 0, n * 75, 221, 75), list));
+    }
+    let i = cv().ids;
+    let icon = child(
+        child(
+            field(i.effect_icon, 0, 0, 36, 36),
+            field(i.effect_border, 0, 0, 36, 36),
+        ),
+        field(i.effect_image, 2, 2, 32, 32),
+    );
+    layout(L, 1024, 768, vec![panel, icon])
+}
+
+/// An effect with a record icon (the install look of §8.1).
+fn iconic(instance: u64, start: f64, duration: Option<f64>) -> EffectView {
+    EffectView {
+        icon: Some(tessera_ui::game::IconImage::Composed(ImageRef::Did(
+            0x4100_0005,
+        ))),
+        ..eff(instance, start, duration)
+    }
+}
+
+fn member_lists(ui: &Ui, panel: ElementKey) -> Vec<ElementKey> {
+    tessera_ui::game::subtree(ui, panel)
+        .into_iter()
+        .filter(|k| ui.element_id(*k) == Some(MEMBER_LIST))
+        .collect()
+}
+
+#[test]
+fn member_effect_lists_follow_their_entity_tr16() {
+    let mut ui = ui_with(env_with(vec![member_rows_layout(None)]), 1024, 768);
+    let panel = ui.open_panel(Did(L), 0x1000_5D00).unwrap();
+    let lists = member_lists(&ui, panel);
+    assert_eq!(lists.len(), 2);
+    let mut combat = CombatUi::new(
+        &mut ui,
+        cv(),
+        CombatLayouts {
+            effects: Some(Did(L)),
+            ..CombatLayouts::default()
+        },
+        CombatRoots::default(),
+        FloatySettings::default(),
+    );
+    // The kept effects of entity 7 (one timed, one untimed) bind with the list.
+    let kept = |e: u64| -> Vec<EffectView> {
+        if e == 7 {
+            vec![iconic(1, 0.0, Some(30.0)), iconic(2, 1.0, None)]
+        } else {
+            Vec::new()
+        }
+    };
+    combat.set_member_lists(&mut ui, &[(lists[0], Some(7)), (lists[1], None)], &kept);
+    assert_eq!(
+        combat.member_effects.len(),
+        1,
+        "a member without an entity: no list"
+    );
+    combat.update(&mut ui, 0.5, &|_| None);
+    let bar = &combat.member_effects[0];
+    assert_eq!(bar.owner(), EffectOwner::Member(7));
+    assert_eq!(bar.display(), Some(lists[0]));
+    assert_eq!(bar.max_columns(), MEMBER_MAX_COLUMNS);
+    assert_eq!(bar.rows().row(0).len(), 2);
+    // TR16 with §8.2: untimed first; 2 rows of at most 6 icons, the others kept.
+    assert_eq!(bar.rows().row(0)[0].instance, 2);
+    for n in 3..12 {
+        combat.effect_applied(EffectOwner::Member(7), iconic(n, n as f64, Some(60.0)));
+    }
+    // Another entity's effect does not reach this row.
+    combat.effect_applied(EffectOwner::Member(8), iconic(99, 0.0, Some(60.0)));
+    combat.update(&mut ui, 12.0, &|_| None);
+    let bar = &combat.member_effects[0];
+    assert_eq!(bar.rows().len(), 11);
+    assert!(bar.icon(99).is_none());
+    let shown: Vec<u64> = bar.rows().shown(0, 6).iter().map(|e| e.instance).collect();
+    assert_eq!(shown.len(), 6);
+    for i in &shown {
+        let icon = bar.icon(*i).unwrap();
+        assert!(ui.is_visible(icon));
+        assert_eq!(
+            ui.layout_box(icon).unwrap().w(),
+            20,
+            "EffectDisplayList_EffectSize 20"
+        );
+        assert!(ui.is_ancestor_or_self(lists[0], icon));
+    }
+    let hidden = bar.rows().row(0)[6].instance;
+    assert!(
+        bar.icon(hidden).is_none(),
+        "the seventh icon is kept, not shown"
+    );
+    // The examination hover finds a member icon (`skill-tooltips.md` §12.2).
+    let first = bar.icon(shown[0]).unwrap();
+    let image = find_below(&ui, first, cv().ids.effect_image).unwrap();
+    assert_eq!(
+        combat.effect_at(&ui, image),
+        Some((EffectOwner::Member(7), shown[0]))
+    );
+    // Removal by the session.
+    assert!(combat.effect_removed(EffectOwner::Member(7), shown[0]));
+    assert!(!combat.effect_removed(EffectOwner::Member(7), shown[0]));
+    // The row now shows another member: the old icons go, the new member's effects come.
+    let other = |e: u64| -> Vec<EffectView> {
+        if e == 8 {
+            vec![iconic(40, 0.0, Some(5.0))]
+        } else {
+            Vec::new()
+        }
+    };
+    combat.set_member_lists(&mut ui, &[(lists[0], Some(8))], &other);
+    combat.update(&mut ui, 12.5, &|_| None);
+    assert_eq!(combat.member_effects.len(), 1);
+    let bar = &combat.member_effects[0];
+    assert_eq!(bar.owner(), EffectOwner::Member(8));
+    assert_eq!(bar.rows().len(), 1);
+    let icons: Vec<ElementKey> = tessera_ui::game::subtree(&ui, lists[0])
+        .into_iter()
+        .filter(|k| ui.element_id(*k) == Some(cv().ids.effect_icon))
+        .collect();
+    assert_eq!(icons.len(), 1, "only the new member's icon is left");
+    // Keeping the same binding keeps the bar (no rebuild).
+    let before = combat.member_effects[0].row_elements();
+    combat.set_member_lists(&mut ui, &[(lists[0], Some(8))], &other);
+    assert_eq!(combat.member_effects[0].row_elements(), before);
+    // No fellowship: every list goes, with its rows.
+    combat.set_member_lists(&mut ui, &[], &other);
+    assert!(combat.member_effects.is_empty());
+    assert!(before.iter().all(|r| !ui.exists(*r)));
+    // A destroyed row is dropped at the next binding; detach removes the rest.
+    combat.set_member_lists(&mut ui, &[(lists[1], Some(8))], &other);
+    ui.destroy(lists[1]);
+    combat.update(&mut ui, 13.0, &|_| None);
+    combat.set_member_lists(&mut ui, &[(lists[1], Some(8))], &other);
+    assert!(combat.member_effects.is_empty());
+    combat.set_member_lists(&mut ui, &[(lists[0], Some(8))], &other);
+    combat.detach(&mut ui);
+    assert!(combat.member_effects.is_empty());
+}
+
+#[test]
+fn member_effect_lists_read_the_list_columns() {
+    let mut ui = ui_with(env_with(vec![member_rows_layout(Some(3))]), 1024, 768);
+    let panel = ui.open_panel(Did(L), 0x1000_5D00).unwrap();
+    let lists = member_lists(&ui, panel);
+    let mut combat = CombatUi::new(
+        &mut ui,
+        cv(),
+        CombatLayouts::default(),
+        CombatRoots::default(),
+        FloatySettings::default(),
+    );
+    let kept = |_: u64| {
+        (0..5)
+            .map(|n| eff(n, n as f64, Some(9.0)))
+            .collect::<Vec<_>>()
+    };
+    combat.set_member_lists(&mut ui, &[(lists[0], Some(3))], &kept);
+    combat.update(&mut ui, 1.0, &|_| None);
+    let bar = &combat.member_effects[0];
+    assert_eq!(bar.max_columns(), 3);
+    let shown = (0..5).filter(|n| bar.icon(*n).is_some()).count();
+    assert_eq!(shown, 3);
+    // Without the `effects` layout the icons take the §13.5 look (TR41).
+    let icon = bar.icon(4).unwrap();
+    assert_ne!(ui.element_id(icon), Some(cv().ids.effect_icon));
 }

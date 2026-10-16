@@ -15,6 +15,13 @@
 //! | Clydesdale | as normal | 4 while walking, 6 while `Slider_Propel` ≠ 0, else 2 (§14.6 Decision) |
 //! | war-steed | war-steed controller, Warsteed layer | from the speed, gear rule (§14.6) |
 //! | hobby-horse | on foot | – |
+//!
+//! While the channelling loop runs, each jump press that passes the on-foot gates of
+//! `collision.md` §11.10 is decided by the mounted branch of `Loc_Jumping` ([`MountedJump`],
+//! `walker.md` §16.6 "Jump", `mounts.md` §14.6) with the gait and the published sliders of
+//! the last step: war-steed types jump at gaits 4–7 and run `Jump` without lift at gaits 1
+//! and 3; every other type jumps only while moving forward within the strafe band. A press
+//! the branch turns away shows nothing. The hobby-horse rider keeps the on-foot jump.
 
 use std::sync::Arc;
 
@@ -24,7 +31,7 @@ use tessera_physics::controller::warsteed::{
     GAIT_NEUTRAL, GaitMultipliers, INPUT_THRESHOLD, WarSteedDrive,
 };
 use tessera_physics::controller::{
-    Controller, JumpTable, LayerConditions, MovementState, TURN_KEY_SPEED_DEGREES,
+    Controller, JumpNode, JumpTable, LayerConditions, MovementState, TURN_KEY_SPEED_DEGREES,
 };
 
 use super::eval::{ClipKey, ElementClass, SLIDER_DEAD_BAND, Stage, TURN_DEAD_BAND, slider_sign};
@@ -33,6 +40,94 @@ use super::state::{MountEvent, MountPhase, MountState, StepFacts, Timeline};
 
 /// Most events kept for the walker between frames.
 pub const MAX_EVENTS: usize = 16;
+
+/// The values of `Mount_CurrentMountType` whose mounted jump takes the war-steed branch
+/// (`mounts.md` §14.6 "Jumping while mounted": the Switch case Equal; a type with another
+/// bit as well takes the other branch).
+pub const WAR_STEED_JUMP_TYPES: [u32; 3] = [0x8, 0x10, 0x20];
+/// The other branch jumps only while `Slider_Propel` is greater than this (`mounts.md`
+/// §14.6, `walker.md` §16.6 "Jump").
+pub const JUMP_MIN_PROPEL: f32 = 0.5;
+/// … and while `Slider_Strafe` lies within ± this, bounds included.
+pub const JUMP_MAX_STRAFE: f32 = 0.25;
+/// The gaits at which the war-steed branch has an impulse (`walker.md` §16.6 "Jump").
+pub const JUMP_LIFT_GAITS: std::ops::RangeInclusive<u32> = 4..=7;
+
+/// Moves `current` toward `target` at a constant rate of 1/`t` per second over `dt` seconds,
+/// never overshooting (the slider rule of `script-table.md` §8.4 / T30: a change of size *d*
+/// takes *d* × *t* seconds). A non-finite or non-positive `t` or `dt` takes the target at
+/// once; a non-finite `target` holds `current`.
+#[must_use]
+pub fn ease_slider(current: f32, target: f32, t: f32, dt: f32) -> f32 {
+    let target = if target.is_finite() { target } else { current };
+    if !(t.is_finite() && t > 0.0) || !(dt.is_finite() && dt > 0.0) {
+        return target;
+    }
+    let step = dt / t;
+    let delta = target - current;
+    if delta.abs() <= step {
+        target
+    } else {
+        current + step * delta.signum()
+    }
+}
+
+/// The mounted branch of `Loc_Jumping` for one (body, effect) (`walker.md` §16.6 "Jump",
+/// `mounts.md` §14.6 "Jumping while mounted"): which branch the mount type takes and the
+/// impulse nodes the install gives where the branch's gates hold, by movement state. The
+/// gates themselves are applied at each press ([`MountedJump::decide`]) with the rider's
+/// gait and published sliders after the last physics step.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct MountedJump {
+    /// The war-steed branch applies (`Mount_CurrentMountType` exactly one of
+    /// [`WAR_STEED_JUMP_TYPES`]).
+    pub war_steed_branch: bool,
+    /// War-steed branch: the nodes the install gives at gaits 4, 5, 6 and 7 (index gait − 4).
+    pub by_gait: [JumpTable; 4],
+    /// Other branch: the nodes the install gives with the gates held (moving forward).
+    pub forward: JumpTable,
+}
+
+impl MountedJump {
+    /// Whether `mount_type` takes the war-steed branch.
+    #[must_use]
+    pub fn war_steed_type(mount_type: u32) -> bool {
+        WAR_STEED_JUMP_TYPES.contains(&mount_type)
+    }
+
+    /// The branch's answer to a press: `None` when it turns the press away (no jump, no
+    /// `Jump` clip; the mount's `Emote_Idle1` that the data start then is not shown,
+    /// `walker.md` §16.6 Decision); else the jump's nodes by state, empty where the jump runs
+    /// the `Jump` scripts without an impulse (a war-steed at gaits 1 and 3). `gait` is
+    /// `MountMovement_CurrentSpeed` (2 when unset), `propel` and `strafe` the published
+    /// sliders.
+    #[must_use]
+    pub fn decide(&self, gait: u32, propel: f32, strafe: f32) -> Option<JumpTable> {
+        if self.war_steed_branch {
+            match gait {
+                GAIT_NEUTRAL => None,
+                g if JUMP_LIFT_GAITS.contains(&g) => {
+                    let i = usize::try_from(g - JUMP_LIFT_GAITS.start()).ok()?;
+                    Some(self.by_gait.get(i).copied().unwrap_or_default())
+                }
+                _ => Some(JumpTable::new()),
+            }
+        } else {
+            (propel > JUMP_MIN_PROPEL && (-JUMP_MAX_STRAFE..=JUMP_MAX_STRAFE).contains(&strafe))
+                .then_some(self.forward)
+        }
+    }
+
+    /// Whether the install gives no impulse node at all for this branch.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        if self.war_steed_branch {
+            self.by_gait.iter().all(JumpTable::is_empty)
+        } else {
+            self.forward.is_empty()
+        }
+    }
+}
 
 /// What one step's input was, for the mounted rules.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
@@ -58,14 +153,24 @@ pub struct MountMover {
     gait: u32,
     walking: bool,
     sliders: [f32; 3],
+    /// `Slider_Propel` and `Slider_Strafe` have been published at least once while mounted,
+    /// so the first value is taken at once and later ones ease (`script-table.md` §8.4).
+    sliders_seeded: bool,
     control_speed: f32,
     turn_degrees: f32,
     events: Vec<MountEvent>,
     jumping: bool,
+    /// The current jump runs the `Jump` scripts without a take-off (war-steed gaits 1, 3).
+    jump_without_lift: bool,
     element: u32,
     lock: Option<u32>,
-    /// The mounted branch's jump table (`mounts.md` §14.12), when the data gives one.
-    mounted_jump: Option<JumpTable>,
+    /// The mounted branch of the jump (`walker.md` §16.6 "Jump").
+    mounted_jump: MountedJump,
+    /// The press of this step that the mounted branch let through: its nodes and the state
+    /// at the step's start.
+    press: Option<(JumpTable, MovementState)>,
+    /// The node of the take-off of the last step.
+    take_off: Option<JumpNode>,
     /// The controller's own (on-foot) table while the mounted one is swapped in.
     foot_jump: Option<Option<JumpTable>>,
 }
@@ -89,32 +194,41 @@ impl MountMover {
             gait: 0,
             walking: false,
             sliders: [0.0; 3],
+            sliders_seeded: false,
             control_speed: 0.0,
             turn_degrees: 0.0,
             events: Vec::new(),
             jumping: false,
+            jump_without_lift: false,
             element: 0,
             lock,
-            mounted_jump: None,
+            mounted_jump: MountedJump::default(),
+            press: None,
+            take_off: None,
             foot_jump: None,
         }
     }
 
-    /// The mover with the mounted branch's jump table (`walker.md` §16.6: the jump of
-    /// `collision.md` §11.10 with the mounted branch). While the rider is mounted the
-    /// controller uses it instead of its on-foot table. `None` or an empty table means the
-    /// mounted branch gives no jump node (the case on this install, `walker.md` §16.12): a
-    /// mounted rider then cannot jump — the on-foot table is **not** used while mounted.
+    /// The mover with the mounted branch of the jump (`walker.md` §16.6 "Jump": the jump of
+    /// `collision.md` §11.10 with the mounted branch of `Loc_Jumping`). While the rider is
+    /// mounted every press is decided by it ([`MountedJump::decide`]); the on-foot table is
+    /// **not** used while mounted. Without it (the default) no press takes off.
     #[must_use]
-    pub fn with_jump(mut self, table: Option<JumpTable>) -> Self {
-        self.mounted_jump = table.filter(|t| !t.is_empty());
+    pub fn with_jump(mut self, jump: MountedJump) -> Self {
+        self.mounted_jump = jump;
         self
     }
 
-    /// The mounted branch's jump table.
+    /// The mounted branch of the jump.
     #[must_use]
-    pub fn mounted_jump(&self) -> Option<&JumpTable> {
-        self.mounted_jump.as_ref()
+    pub fn mounted_jump(&self) -> &MountedJump {
+        &self.mounted_jump
+    }
+
+    /// The node of the take-off in the last step, if the rider took off in it.
+    #[must_use]
+    pub fn take_off(&self) -> Option<JumpNode> {
+        self.take_off
     }
 
     /// A teleport (`walker.md` §16.5): summoning is cancelled, the mount state is kept and
@@ -129,8 +243,12 @@ impl MountMover {
         self.gear = GearBox::new(self.lock);
         self.gait = 0;
         self.sliders = [0.0; 3];
+        self.sliders_seeded = false;
         self.control_speed = 0.0;
         self.jumping = false;
+        self.jump_without_lift = false;
+        self.press = None;
+        self.take_off = None;
     }
 
     /// The mount.
@@ -238,7 +356,10 @@ impl MountMover {
             } else {
                 0
             },
-            jump: self.jumping && self.element == MovementState::EarthNoSurface.key(),
+            // A take-off shows `Jump` in the air; a jump without lift (war-steed gaits 1
+            // and 3) shows it on the ground for as long as `Movement_IsJumping` holds.
+            jump: self.jumping
+                && (self.jump_without_lift || self.element == MovementState::EarthNoSurface.key()),
         }
     }
 
@@ -246,23 +367,34 @@ impl MountMover {
     pub fn before_step(&mut self, ctl: &mut Controller, input: &RideInput, dt: f32) {
         self.walking = input.walking;
         let mounted = self.state.is_mounted() && self.profile.rides();
-        // The jump's mounted branch while the channelling loop runs (`mounts.md` §14.12;
-        // `walker.md` §16.6, §16.12 resolution, implementer 2026-10-13). The static scan of
-        // the rider's jump scripts reaches no node of the mounted branch on this install, so
-        // [`MountMover::mounted_jump`] is `None`: while mounted the controller is given an
-        // empty table, a mounted rider cannot jump, and the on-foot table does **not** carry
-        // over. Should a later install expose the mounted branch, `with_jump` carries it and
-        // it is swapped in instead.
+        // The jump's mounted branch while the channelling loop runs (`walker.md` §16.6
+        // "Jump", `mounts.md` §14.6): evaluated at each press with the gait and the
+        // published sliders after the last step. The on-foot gates of `collision.md` §11.10
+        // (not jumping, a state that allows a jump) stay the controller's; a press they
+        // pass is decided by the branch, and the controller is given, for this step only,
+        // the nodes of a press the branch lets through, else an empty table. The on-foot
+        // table does **not** carry over while mounted.
+        self.press = None;
         match (mounted, self.foot_jump) {
-            (true, None) => {
-                self.foot_jump = Some(ctl.config().jump);
-                ctl.set_jump_table(Some(self.mounted_jump.unwrap_or_default()));
+            (true, saved) => {
+                if saved.is_none() {
+                    self.foot_jump = Some(ctl.config().jump);
+                }
+                let element = ctl.state().element;
+                if input.jump && !ctl.is_jumping() && element.allows_jump() {
+                    let [propel, strafe, _] = self.sliders;
+                    self.press = self
+                        .mounted_jump
+                        .decide(self.gait(), propel, strafe)
+                        .map(|t| (t, element));
+                }
+                ctl.set_jump_table(Some(self.press.map(|(t, _)| t).unwrap_or_default()));
             }
             (false, Some(saved)) => {
                 ctl.set_jump_table(saved);
                 self.foot_jump = None;
             }
-            _ => {}
+            (false, None) => {}
         }
         let (ramp_up, _) = controller_flags(MountType(self.profile.mount_type));
         let mut c: LayerConditions = *ctl.conditions();
@@ -324,13 +456,48 @@ impl MountMover {
         }
     }
 
-    /// The gait, sliders and states after a step of `dt` seconds (module docs). `jumping`
-    /// is the controller's `Movement_IsJumping`.
-    pub fn after_step(&mut self, ctl: &Controller, input: &RideInput, dt: f32) {
+    /// The published sliders of a normal mount or the Clydesdale from the input
+    /// (`mounts.md` §14.6 "the sliders follow the input as on foot"): `Slider_Propel`
+    /// (`input.y`) and `Slider_Strafe` (`input.x`) ease toward the input at the active
+    /// layer's ramp time *T* (0.25 s mounted; `script-table.md` §8.4 slider rule, T30), the
+    /// first value while mounted taken at once; `Slider_Turn` follows the frame's turn input
+    /// directly (reset every frame, §8.4).
+    fn input_sliders(&mut self, ctl: &Controller, input: &RideInput, dt: f32) -> [f32; 3] {
+        if self.sliders_seeded {
+            let t = ctl.params().ramp_time;
+            [
+                ease_slider(self.sliders[0], input.y, t, dt),
+                ease_slider(self.sliders[1], input.x, t, dt),
+                input.turn,
+            ]
+        } else {
+            self.sliders_seeded = true;
+            [input.y, input.x, input.turn]
+        }
+    }
+
+    /// The gait, sliders and states after a step of `dt` seconds (module docs). A press
+    /// the mounted branch let through either took off in the step (the node is kept,
+    /// [`MountMover::take_off`]) or runs without lift: the controller's
+    /// `Movement_IsJumping` is then set as for a take-off
+    /// ([`Controller::start_jump_without_lift`]).
+    pub fn after_step(&mut self, ctl: &mut Controller, input: &RideInput, dt: f32) {
+        self.take_off = None;
+        if let Some((table, state)) = self.press.take() {
+            if ctl.is_jumping() {
+                self.take_off = table.get(state);
+            } else {
+                ctl.start_jump_without_lift();
+                self.jump_without_lift = true;
+            }
+        }
+        self.jumping = ctl.is_jumping();
+        if !self.jumping {
+            self.jump_without_lift = false;
+        }
         let s = ctl.state();
         let element = s.element.key();
         self.element = element;
-        self.jumping = ctl.is_jumping();
         let (sin, cos) = s.heading.sin_cos();
         let forward_v = s.velocity[0] * cos + s.velocity[1] * sin;
         let mounted = self.state.is_mounted() && self.profile.rides();
@@ -353,7 +520,7 @@ impl MountMover {
                 self.control_speed = v;
             }
             (MountKind::Clydesdale, true, _) => {
-                self.sliders = [input.y, input.x, input.turn];
+                self.sliders = self.input_sliders(ctl, input, dt);
                 self.gait = if input.walking {
                     GAIT_WALK
                 } else if input.y.abs() > INPUT_THRESHOLD {
@@ -363,8 +530,16 @@ impl MountMover {
                 };
                 self.control_speed = forward_v;
             }
+            (MountKind::Normal, true, _) => {
+                self.sliders = self.input_sliders(ctl, input, dt);
+                self.gait = 0;
+                self.control_speed = forward_v;
+            }
             _ => {
+                // On foot (before mounting, hobby-horse) or a war-steed without a drive: the
+                // mover's sliders follow the input directly; re-seed for the next ride.
                 self.sliders = [input.y, input.x, input.turn];
+                self.sliders_seeded = false;
                 self.gait = 0;
                 self.control_speed = forward_v;
             }
@@ -394,6 +569,9 @@ impl MountMover {
         if let Some(saved) = self.foot_jump.take() {
             ctl.set_jump_table(saved);
         }
+        self.press = None;
+        self.jump_without_lift = false;
+        self.sliders_seeded = false;
         let mut c = *ctl.conditions();
         c.mounted = false;
         c.ramp_up_controller = false;
@@ -630,6 +808,64 @@ mod tests {
         assert_eq!(walker.mount().unwrap().state().phase(), MountPhase::Mounted);
     }
 
+    /// `mounts.md` §14.6 ("the sliders follow the input as on foot"), `script-table.md` §8.4
+    /// slider rule: a normal mount's published `Slider_Propel` and `Slider_Strafe` ease toward
+    /// the input at the mounted ramp (0.25 s in the built-in setup, 15 steps for 0 → 1) rather
+    /// than jumping to it; `Slider_Turn` follows the frame directly; [`ease_slider`] clamps.
+    #[test]
+    fn normal_mount_sliders_ease_toward_the_input() {
+        // The easing primitive: a constant rate of 1/T per second, no overshoot.
+        assert!((ease_slider(0.0, 1.0, 0.25, 1.0 / 60.0) - 1.0 / 15.0).abs() < 1e-6);
+        assert_eq!(
+            ease_slider(0.96, 1.0, 0.25, 1.0 / 60.0),
+            1.0,
+            "clamps to target"
+        );
+        assert_eq!(ease_slider(0.3, 0.3, 0.25, 1.0 / 60.0), 0.3);
+        assert_eq!(
+            ease_slider(0.3, 1.0, 0.0, 1.0 / 60.0),
+            1.0,
+            "T 0 takes at once"
+        );
+        assert_eq!(
+            ease_slider(0.3, f32::NAN, 0.25, 1.0 / 60.0),
+            0.3,
+            "holds on NaN"
+        );
+
+        let (mut walker, w) = mounted(profile(MountKind::Normal, 0x1));
+        // One mounted step at rest seeds the sliders to 0 (the first value is taken at once).
+        steps(&mut walker, &w, 0.0, false, 1);
+        assert_eq!(walker.mount().unwrap().sliders()[0], 0.0, "seeded at rest");
+        // Forward from rest: the slider eases up, not a jump to 1.
+        let fwd = MovementCommands::from_axes(1.0, 0.0, 0.0);
+        walker.step_commands(&fwd, false, None, false, &w).unwrap();
+        let p1 = walker.mount().unwrap().sliders()[0];
+        assert!(p1 > 0.0 && p1 < 0.2, "eased one step: {p1}");
+        // Reaches 1 after about the mounted ramp (0.25 s = 15 steps from rest).
+        let mut n = 1;
+        while walker.mount().unwrap().sliders()[0] < 1.0 - 1e-4 && n < 60 {
+            walker.step_commands(&fwd, false, None, false, &w).unwrap();
+            n += 1;
+        }
+        assert!(
+            (14..=16).contains(&n),
+            "reached full propel after {n} steps"
+        );
+        // Releasing eases it back down over the ramp (not an instant drop to 0).
+        let still = MovementCommands::default();
+        walker
+            .step_commands(&still, false, None, false, &w)
+            .unwrap();
+        let p = walker.mount().unwrap().sliders()[0];
+        assert!(p > 0.8 && p < 1.0, "eases back down: {p}");
+        // Turn follows the frame directly (reset every frame, not eased).
+        let turn = MovementCommands::from_axes(0.0, 0.0, 0.0);
+        walker.step_commands(&turn, false, None, false, &w).unwrap();
+        // The mounted idle still reads gait Neutral; the jump gate reads the eased propel.
+        assert_eq!(walker.mount().unwrap().gait(), GAIT_NEUTRAL);
+    }
+
     /// `walker.md` §16.5: a dismount on the move ends at once, the mount fades out, the
     /// controller is on foot again and the mover is removed once faded.
     #[test]
@@ -654,69 +890,209 @@ mod tests {
         assert!(walker.take_mount_events().is_empty());
     }
 
-    /// `walker.md` §16.6, `mounts.md` §14.12: while mounted the controller jumps with the
-    /// mounted branch's table; the on-foot table returns with the dismount.
+    /// The install's mounted-branch node (`mounts.md` §14.6: 0.285 s, 15 m/s², 7.275 m/s) on
+    /// every state, as the tests' stand-in for the evaluated branch.
+    fn mounted_nodes() -> JumpTable {
+        let mut t = JumpTable::new();
+        for k in 1..=6 {
+            let st = MovementState::from_key(k).unwrap();
+            t.set(st, JumpNode::new(0.285, 15.0));
+        }
+        t
+    }
+
+    fn mounted_jump(war_steed_branch: bool) -> MountedJump {
+        let t = mounted_nodes();
+        MountedJump {
+            war_steed_branch,
+            by_gait: [t; 4],
+            forward: t,
+        }
+    }
+
+    /// One step with `forward`, `strafe` and a jump press; the take-off node, if any.
+    fn press(
+        walker: &mut PhysicsWalker,
+        w: &StaticWorld,
+        forward: f32,
+        strafe: f32,
+    ) -> Option<JumpNode> {
+        let c = MovementCommands::from_axes(forward, strafe, 0.0);
+        assert!(walker.step_commands(&c, false, None, true, w).is_some());
+        walker.mount().unwrap().take_off()
+    }
+
+    /// `walker.md` §16.6 "Jump": while mounted the controller's table is the press's (empty
+    /// between presses); the on-foot table returns with the dismount and when the mover is
+    /// taken away; a hobby-horse rider keeps the on-foot jump.
     #[test]
-    fn mounted_jump_table_is_swapped_in_and_out() {
+    fn the_on_foot_jump_table_returns_after_riding() {
         let (w, feet) = world();
         let setup = MoverSetup::builtin();
         let mut walker = PhysicsWalker::new(&setup, 1, feet, 0.0);
         walker.check_placement();
         steps(&mut walker, &w, 0.0, false, 10);
         let on_foot = walker.controller().config().jump;
-        let mut mounted = JumpTable::new();
-        for k in 1..=6 {
-            let st = MovementState::from_key(k).unwrap();
-            mounted.set(st, tessera_physics::controller::JumpNode::new(0.285, 15.0));
-        }
         let timeline = Timeline {
             fade_out: 0.25,
             ..Timeline::default()
         };
-        walker.set_mount(Some(
-            MountMover::new(
-                Arc::new(profile(MountKind::Normal, 0x1)),
-                timeline,
-                false,
-                None,
-            )
-            .with_jump(Some(mounted)),
-        ));
+        let mover = |kind, ty| {
+            MountMover::new(Arc::new(profile(kind, ty)), timeline, false, None)
+                .with_jump(mounted_jump(false))
+        };
+        walker.set_mount(Some(mover(MountKind::Normal, 0x1)));
         steps(&mut walker, &w, 0.0, false, 1);
-        assert_eq!(walker.controller().config().jump, Some(mounted));
+        assert_eq!(walker.controller().config().jump, Some(JumpTable::new()));
         walker.mount_mut().unwrap().state_mut().dismount(true, true);
         steps(&mut walker, &w, 0.0, false, 1);
         assert_eq!(walker.controller().config().jump, on_foot, "on foot again");
         // Taking the mover away at once restores it too.
-        walker.set_mount(Some(
-            MountMover::new(
-                Arc::new(profile(MountKind::Normal, 0x1)),
-                timeline,
-                false,
-                None,
-            )
-            .with_jump(Some(mounted)),
-        ));
+        walker.set_mount(Some(mover(MountKind::Normal, 0x1)));
         steps(&mut walker, &w, 0.0, false, 1);
         walker.set_mount(None);
         assert_eq!(walker.controller().config().jump, on_foot);
-        // No mounted branch (this install, `walker.md` §16.12): while mounted the controller
-        // gets an empty jump table, so a mounted rider cannot jump and the on-foot table does
-        // not carry over; it returns on dismount.
-        walker.set_mount(Some(MountMover::new(
-            Arc::new(profile(MountKind::Normal, 0x1)),
-            timeline,
-            false,
-            None,
-        )));
+        // The hobby-horse rider never runs the channelling loop.
+        walker.set_mount(Some(mover(MountKind::HobbyHorse, 0x400)));
         steps(&mut walker, &w, 0.0, false, 1);
-        assert_eq!(
-            walker.controller().config().jump,
-            Some(JumpTable::new()),
-            "no jump while mounted without a mounted branch"
+        assert_eq!(walker.controller().config().jump, on_foot);
+    }
+
+    /// `walker.md` §16.6 "Jump", §16.11 check 6 (normal mounts): a press while standing is
+    /// turned away (no take-off, no `Jump`, `Movement_IsJumping` false); a press while
+    /// moving forward takes off once at the node's 7.275 m/s; a press while strafing beyond
+    /// ±0.25 is turned away.
+    #[test]
+    fn a_normal_mount_jumps_only_moving_forward() {
+        let (mut walker, w) = mounted(profile(MountKind::Normal, 0x1));
+        let mover = walker
+            .mount()
+            .unwrap()
+            .clone()
+            .with_jump(mounted_jump(false));
+        walker.set_mount(Some(mover));
+        steps(&mut walker, &w, 0.0, false, 5);
+        let ground = walker.state().position[2];
+        assert_eq!(press(&mut walker, &w, 0.0, 0.0), None, "standing");
+        assert!(!walker.controller().is_jumping());
+        assert!(!walker.mount().unwrap().clip_key().jump);
+        steps(&mut walker, &w, 0.0, false, 5);
+        assert!((walker.state().position[2] - ground).abs() < 1e-3);
+        // Strafing beyond the band turns the press away. `Slider_Strafe` eases toward the
+        // input at the mounted ramp (0.25 s, `script-table.md` §8.4), so it is held until it
+        // passes ±0.25 before the press.
+        steps(&mut walker, &w, 1.0, false, 30);
+        let c = MovementCommands::from_axes(1.0, 1.0, 0.0);
+        for _ in 0..30 {
+            walker.step_commands(&c, false, None, false, &w).unwrap();
+        }
+        assert!(
+            walker.mount().unwrap().sliders()[1].abs() > JUMP_MAX_STRAFE,
+            "strafe ramped past the band: {}",
+            walker.mount().unwrap().sliders()[1]
         );
-        walker.set_mount(None);
-        assert_eq!(walker.controller().config().jump, on_foot);
+        assert_eq!(press(&mut walker, &w, 1.0, 1.0), None, "strafing");
+        assert!(!walker.controller().is_jumping());
+        // Forward.
+        steps(&mut walker, &w, 1.0, false, 30);
+        let node = press(&mut walker, &w, 1.0, 0.0).expect("take-off");
+        assert!((node.vertical_speed() - 7.275).abs() < 1e-4);
+        assert!(walker.controller().is_jumping());
+        let mut apex = walker.state().position[2];
+        let mut take_offs = 1;
+        for _ in 0..120 {
+            take_offs += usize::from(press(&mut walker, &w, 1.0, 0.0).is_some());
+            apex = apex.max(walker.state().position[2]);
+            if walker.mount().unwrap().clip_key().element == ElementClass::Air {
+                assert!(walker.mount().unwrap().clip_key().jump, "`Jump` in the air");
+            }
+            if !walker.controller().is_jumping() {
+                break;
+            }
+        }
+        assert_eq!(take_offs, 1, "one take-off per jump");
+        // 7.275² / 30 ≈ 1.76 m above the ground.
+        assert!(apex - ground > 1.5, "rose {}", apex - ground);
+        assert_eq!(walker.mount().unwrap().state().phase(), MountPhase::Mounted);
+    }
+
+    /// `walker.md` §16.6 "Jump", §16.11 check 6 (war-steeds): at rest (gait 2) a press is
+    /// turned away; at gait 4 or above it takes off; backing (gait 1) it runs the `Jump`
+    /// clips without lift, and `Movement_IsJumping` clears after 0.2 s.
+    #[test]
+    fn a_war_steed_jumps_only_at_its_lift_gaits() {
+        let (mut walker, w) = mounted(profile(MountKind::WarSteed, 0x20));
+        let mover = walker
+            .mount()
+            .unwrap()
+            .clone()
+            .with_jump(mounted_jump(true));
+        walker.set_mount(Some(mover));
+        steps(&mut walker, &w, 0.0, false, 5);
+        assert_eq!(walker.mount().unwrap().gait(), GAIT_NEUTRAL);
+        assert_eq!(press(&mut walker, &w, 0.0, 0.0), None, "gait 2");
+        assert!(!walker.controller().is_jumping());
+        steps(&mut walker, &w, 1.0, false, 10);
+        assert!(walker.mount().unwrap().gait() >= 4);
+        let node = press(&mut walker, &w, 1.0, 0.0).expect("take-off at gait 4+");
+        assert!((node.vertical_speed() - 7.275).abs() < 1e-4);
+        // Land, stop and back up to gait 1.
+        steps(&mut walker, &w, 0.0, false, 120);
+        steps(&mut walker, &w, -1.0, false, 300);
+        assert!(!walker.controller().is_jumping());
+        assert_eq!(walker.mount().unwrap().gait(), 1);
+        let z0 = walker.state().position[2];
+        assert_eq!(press(&mut walker, &w, -1.0, 0.0), None, "no lift at gait 1");
+        assert!(walker.controller().is_jumping());
+        assert!(walker.mount().unwrap().clip_key().jump, "`Jump` clips run");
+        let mut held = 1;
+        while walker.controller().is_jumping() && held < 60 {
+            steps(&mut walker, &w, -1.0, false, 1);
+            held += 1;
+        }
+        assert_eq!(held, 13, "the press's step and 12 more");
+        assert!(!walker.mount().unwrap().clip_key().jump);
+        assert!((walker.state().position[2] - z0).abs() < 0.05);
+        // A mixed type (another bit as well) takes the other branch: standing, no jump.
+        let (mut walker, w) = mounted(profile(MountKind::WarSteed, 0x21));
+        let mover = walker
+            .mount()
+            .unwrap()
+            .clone()
+            .with_jump(mounted_jump(false));
+        walker.set_mount(Some(mover));
+        steps(&mut walker, &w, 0.0, false, 5);
+        assert_eq!(press(&mut walker, &w, 0.0, 0.0), None);
+        assert!(!walker.controller().is_jumping());
+    }
+
+    /// [`MountedJump::decide`]: the gates of `walker.md` §16.6 "Jump".
+    #[test]
+    fn mounted_jump_gates() {
+        let t = mounted_nodes();
+        let ws = mounted_jump(true);
+        assert_eq!(ws.decide(2, 1.0, 0.0), None);
+        for g in 4..=7 {
+            assert_eq!(ws.decide(g, 0.0, 1.0), Some(t), "gait {g}");
+        }
+        for g in [1, 3] {
+            assert_eq!(ws.decide(g, 1.0, 0.0), Some(JumpTable::new()), "gait {g}");
+        }
+        let n = mounted_jump(false);
+        assert_eq!(n.decide(2, 0.5, 0.0), None, "propel must exceed 0.5");
+        assert_eq!(n.decide(2, 0.51, 0.25), Some(t));
+        assert_eq!(n.decide(2, 0.51, -0.25), Some(t));
+        assert_eq!(n.decide(2, 1.0, 0.26), None);
+        assert_eq!(n.decide(2, 1.0, -0.26), None);
+        assert_eq!(n.decide(2, f32::NAN, 0.0), None);
+        assert_eq!(n.decide(2, 1.0, f32::NAN), None);
+        assert!(MountedJump::war_steed_type(0x8));
+        assert!(MountedJump::war_steed_type(0x10));
+        assert!(MountedJump::war_steed_type(0x20));
+        assert!(!MountedJump::war_steed_type(0x9));
+        assert!(!MountedJump::war_steed_type(0x1));
+        assert!(MountedJump::default().is_empty());
+        assert!(!n.is_empty());
     }
 
     /// `walker.md` §16.5: a teleport keeps the mount but stops the steed (stored velocity,

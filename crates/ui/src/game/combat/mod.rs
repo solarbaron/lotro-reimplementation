@@ -23,6 +23,9 @@
 //! - every frame: [`CombatUi::update`] with the clock and the anchors;
 //! - every [`crate::UiEvent`]: [`CombatUi::handle_event`];
 //! - a declined `menu` press with no on-demand panel: [`CombatUi::escape_action`] (TR5);
+//! - the effect lists of fellowship member rows (`social-panels.md` TR16), whenever the
+//!   rows or their members change: [`CombatUi::set_member_lists`]; their effects then
+//!   follow the `effect_*` methods with [`EffectOwner::Member`];
 //! - a screen size change: [`CombatUi::relayout`];
 //! - before rebuilding the widgets (world entry again, reconnect, skin switch) or dropping
 //!   them: [`CombatUi::detach`], which removes the layers, the fallback root, the
@@ -35,7 +38,7 @@
 //! | [`look`] | fallback primitives, the scaled HUD root, procedural images | §13 |
 //! | [`frames`] | player frame, target frame, selection's target, pip displays | §4, §5, §13.1–§13.2, §13.4 |
 //! | [`cast`] | cast, induction and channel bars | §7, §13.3 |
-//! | [`effects`] | effect rows and icons | §8, §13.5 |
+//! | [`effects`] | effect rows and icons (also on fellowship member rows, `social-panels.md` TR16) | §8, §13.5 |
 //! | [`floaty`] | floating-text layer | §6, §13.6 |
 //! | [`selection`] | selection indicator and name block | §3.5, §13.7 |
 //! | [`state`] | combat state, defeat panel | §10, §13.7 |
@@ -55,7 +58,7 @@ pub use data::{
     AnchorSource, CastOutcome, CastView, ClassResource, CombatAction, ConRank, EffectView,
     EntityId, FrameView, HealthColour, LevelShown, NameColour, ScreenAnchor, Vital,
 };
-pub use effects::{EffectBar, EffectOwner, EffectRows};
+pub use effects::{EffectBar, EffectOwner, EffectRows, MEMBER_MAX_COLUMNS};
 pub use floaty::{FloatingTexts, FloatySettings, FloatyText};
 pub use frames::{FrameKind, UnitFrame};
 pub use selection::{SelectionMarker, SelectionView};
@@ -79,6 +82,10 @@ pub struct CombatLayouts {
     /// `Dialog` (E18).
     pub dialog: Option<Did>,
 }
+
+/// Most fellowship member effect lists bound at once (Tessera cap; the four fellowship
+/// panels hold at most 5 rows each in Tessera's display, `social-panels.md` TR2).
+pub const MAX_MEMBER_LISTS: usize = 32;
 
 /// The opened install panels the combat widgets attach to; `None` for a panel that is not
 /// open (or without an install).
@@ -119,6 +126,11 @@ pub struct CombatUi {
     pub player_effects: Option<EffectBar>,
     /// E9.
     pub target_effects: Option<EffectBar>,
+    /// The effect lists of fellowship member rows (`social-panels.md` TR16), one per bound
+    /// `FellowEffectDisplay` ([`CombatUi::set_member_lists`]).
+    pub member_effects: Vec<EffectBar>,
+    /// The `effects` layout (icons of the member lists).
+    effects_layout: Option<Did>,
     /// E13.
     pub floaty: Option<FloatingTexts>,
     /// E1 and E3.
@@ -214,6 +226,8 @@ impl CombatUi {
             target_cast,
             player_effects,
             target_effects,
+            member_effects: Vec::new(),
+            effects_layout: layouts.effects,
             floaty,
             marker,
             combat_state,
@@ -397,30 +411,95 @@ impl CombatUi {
         }
     }
 
-    fn effects(&mut self, owner: EffectOwner) -> Option<&mut EffectBar> {
+    /// The lists of `owner`: E8, E9, or every member list bound to the member's entity.
+    fn effects(&mut self, owner: EffectOwner) -> Vec<&mut EffectBar> {
         match owner {
-            EffectOwner::Player => self.player_effects.as_mut(),
-            EffectOwner::Target => self.target_effects.as_mut(),
+            EffectOwner::Player => self.player_effects.as_mut().into_iter().collect(),
+            EffectOwner::Target => self.target_effects.as_mut().into_iter().collect(),
+            EffectOwner::Member(_) => self
+                .member_effects
+                .iter_mut()
+                .filter(|b| b.owner() == owner)
+                .collect(),
         }
     }
 
-    /// `EffectApplied` on the player (E8) or the selection (E9) (TR30).
+    /// `EffectApplied` on the player (E8), the selection (E9) or a fellowship member
+    /// (TR30; `social-panels.md` TR16).
     pub fn effect_applied(&mut self, owner: EffectOwner, view: EffectView) {
-        if let Some(b) = self.effects(owner) {
-            b.apply(view);
+        for b in self.effects(owner) {
+            b.apply(view.clone());
         }
     }
 
     /// `EffectRemoved` (TR30); whether an icon was removed.
     pub fn effect_removed(&mut self, owner: EffectOwner, instance: u64) -> bool {
-        self.effects(owner).is_some_and(|b| b.remove(instance))
+        let mut hit = false;
+        for b in self.effects(owner) {
+            hit |= b.remove(instance);
+        }
+        hit
     }
 
-    /// Replaces a list's effects (E9 on a selection change).
+    /// Replaces a list's effects (E9 on a selection change, a member's lists on a rebuild).
     pub fn set_effects(&mut self, owner: EffectOwner, views: &[EffectView]) {
-        if let Some(b) = self.effects(owner) {
+        for b in self.effects(owner) {
             b.set_all(views);
         }
+    }
+
+    /// Binds the effect lists of fellowship member rows (`social-panels.md` §4.2, TR16):
+    /// `lists` holds each row's `FellowEffectDisplay` with the member's entity (`None` for
+    /// a member without one, whose list shows nothing). A list already bound to the same
+    /// entity is kept; a list no longer named, or now naming another entity, loses its
+    /// rows and icons; a newly named list gets the code-made rows of
+    /// [`EffectBar::install_display`] (at most [`MEMBER_MAX_COLUMNS`] icons per row when the
+    /// list has no `UIComponent_EffectDisplay_MaxIconColumns`) and the entity's effects from
+    /// `views`. At most [`MAX_MEMBER_LISTS`] lists are bound.
+    pub fn set_member_lists(
+        &mut self,
+        ui: &mut Ui,
+        lists: &[(ElementKey, Option<EntityId>)],
+        views: &dyn Fn(EntityId) -> Vec<EffectView>,
+    ) {
+        let named =
+            |d: ElementKey, e: EntityId| lists.iter().any(|(k, x)| *k == d && *x == Some(e));
+        let mut keep: Vec<EffectBar> = Vec::new();
+        for mut b in std::mem::take(&mut self.member_effects) {
+            let wanted = match (b.owner(), b.display()) {
+                (EffectOwner::Member(e), Some(d)) => ui.exists(d) && named(d, e),
+                _ => false,
+            };
+            if wanted {
+                keep.push(b);
+            } else {
+                b.detach(ui);
+            }
+        }
+        for (d, e) in lists {
+            let Some(e) = *e else { continue };
+            if keep.len() >= MAX_MEMBER_LISTS {
+                break;
+            }
+            if keep.iter().any(|b| b.display() == Some(*d)) {
+                continue;
+            }
+            match EffectBar::install_display(
+                ui,
+                &self.vocab,
+                EffectOwner::Member(e),
+                *d,
+                self.effects_layout,
+                MEMBER_MAX_COLUMNS,
+            ) {
+                Some(mut b) => {
+                    b.set_all(&views(e));
+                    keep.push(b);
+                }
+                None => tracing::debug!("member effect list not bound"),
+            }
+        }
+        self.member_effects = keep;
     }
 
     /// The effect instance whose icon holds `k` (for the examination hover).
@@ -429,6 +508,7 @@ impl CombatUi {
         [&self.player_effects, &self.target_effects]
             .into_iter()
             .flatten()
+            .chain(&self.member_effects)
             .find_map(|b| b.effect_at(ui, k).map(|i| (b.owner(), i)))
     }
 
@@ -514,6 +594,7 @@ impl CombatUi {
         for b in [&mut self.player_effects, &mut self.target_effects]
             .into_iter()
             .flatten()
+            .chain(&mut self.member_effects)
         {
             b.update(ui, now, in_combat);
         }
@@ -572,6 +653,7 @@ impl CombatUi {
         for b in [self.player_effects.take(), self.target_effects.take()]
             .into_iter()
             .flatten()
+            .chain(std::mem::take(&mut self.member_effects))
         {
             let mut b = b;
             b.detach(ui);

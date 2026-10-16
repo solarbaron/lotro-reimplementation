@@ -616,6 +616,19 @@ button.
   without error it sends the request with 0x0A2B0004; with an error it shows it through
   class-library function 0x010C0001 (§7.1).
 
+> **OPEN:** (implementer, `tessera-ui` `game::finder`, 2026-10-14) how the join label fits
+> its text is not stated. On this install `…_JoinButtonLabel` is a text element smaller than
+> its button (about two thirds of its width and half its height), centred on both axes,
+> wrapping, without `UICore_Text_truncate_text_to_fit`; the no-template label wraps to two
+> lines, and the second is cut by the label's box. Tessera rule until settled: the label keeps
+> its width; when its text, wrapped at that width (`fonts.md` §7.3), is taller than the
+> label's box as laid out, the label's height becomes the text's height (margins included),
+> at most its button's height, centred on the old box's vertical centre and kept inside the
+> button; when the text fits it gets its laid-out box back. The fit is made when the label's
+> text changes, and again once fonts that were loading then have arrived. Text taller than
+> the button stays cut. Does the original grow, cut or shrink this label, or use another
+> font?
+
 <a id="s6-5"></a>
 ### 6.5 Queue, confirmation and invitation (BIN, OBS; TW18, TW19)
 
@@ -916,7 +929,8 @@ Choosing size 24 on the group row resolves P5.
 4. §5.1: what 0x01CC0009 sends; when the loading screen appears for a travel teleport.
 5. §6.3: test 0x0A2B002B; the error-look check; the featured reset button.
 6. §6.4: how the size and tier menus and the level field are filled; the tier gating by zone
-   events.
+   events; how the join label fits a text longer than one line (implementer OPEN,
+   2026-10-14).
 7. §6.5: when the invitation window opens and what its buttons send (traffic, decision 0004).
 8. §6.6: how the original lets a player leave a finder instance (IN §12 dialogs).
 9. §7.1: the presentation of finder errors.

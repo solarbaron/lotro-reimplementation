@@ -982,3 +982,66 @@ fn fork_effects_without_the_library() {
     assert!(mgr.effect(k).is_none(), "destroyed at once");
     assert!(mgr.lingering().is_empty(), "a fork effect never lingers");
 }
+
+/// `particle-runtime.md` §11.1 step 8 (RT46): a beam's systems skip the camera-distance fade
+/// and cut of `particles.md` §8.13: drawn at any distance, at full opacity, never frozen.
+#[test]
+fn beam_systems_skip_the_distance_fade() {
+    let mut sim = SystemSim::new(Arc::new(system(vec![emitter(30.0, 1.0)])), 0.0);
+    assert!(sim.distance_fade_enabled());
+    sim.set_distance_fade(false);
+    let mut rng = Ran2::new(3);
+    let far = CameraView::look_at(Vec3::new(0.0, -100_000.0, 0.0), Vec3::ZERO);
+    let env = Environment::default();
+    let mut drawn = 0usize;
+    for k in 0..30u64 {
+        let now = k as f64 / 30.0;
+        let p = Placement {
+            opacity: 0.5,
+            ..Placement::default()
+        };
+        sim.place(k, now, p, &env, &mut rng, &NoAttachments);
+        if let Some(d) = sim.draw(now, &far, &mut rng) {
+            drawn += 1;
+            assert!(
+                d.instances.iter().all(|i| (i.opacity - 0.5).abs() < 1e-6),
+                "no fade factor"
+            );
+        }
+        assert!(!sim.is_not_drawn());
+    }
+    assert!(drawn > 0);
+    assert!(sim.live_particles() > 0, "updated while far away");
+}
+
+/// `particle-runtime.md` §11.1 step 1: a beam makes its own systems; they are never shared
+/// with another owner's request, nor does the beam take a running shared copy.
+#[test]
+fn beam_systems_are_not_shared() {
+    let mut ps = system(vec![emitter(30.0, 10.0)]);
+    ps.shareable = true;
+    ps.world_space = false;
+    let desc = Arc::new(ps);
+    let make = || Some(Effect::Particles(SystemSim::new(Arc::clone(&desc), 0.0)));
+    let mut mgr = EffectManager::new();
+    mgr.begin_frame(0, 0.0);
+    let (_, shared) = mgr
+        .start_attached(1, 0x3900_0009, 0.0, make, AttachSpec::default())
+        .unwrap();
+    let (_, own) = mgr
+        .start_attached_own(2, 0x3900_0009, 0.0, make, AttachSpec::default())
+        .unwrap();
+    assert_ne!(shared, own, "the beam does not take the running copy");
+    mgr.effect_mut(own)
+        .and_then(Effect::particles_mut)
+        .unwrap()
+        .set_distance_fade(false);
+    assert_eq!(mgr.shared(0x3900_0009), Some(shared));
+    let (_, third) = mgr
+        .start_attached(3, 0x3900_0009, 0.0, make, AttachSpec::default())
+        .unwrap();
+    assert_eq!(
+        third, shared,
+        "a request shares the ordinary copy, not the beam's"
+    );
+}

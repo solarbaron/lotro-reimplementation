@@ -32,11 +32,17 @@ pub fn select(target: Option<EntityId>) -> Command {
     Command::Combat(CombatCommand::SelectTarget { target })
 }
 
-/// The commands of one input (in order; empty when nothing is sent).
+/// The commands of one input (in order; empty when nothing is sent). `object_selectable`
+/// answers TR1's body-record test for an `Object` candidate of a targeting action (TR4),
+/// the way mouse picking does; it is only consulted for targeting.
 #[must_use]
-pub fn commands(input: CombatInput, state: &CombatState) -> Vec<Command> {
+pub fn commands(
+    input: CombatInput,
+    state: &CombatState,
+    object_selectable: &dyn Fn(EntityId) -> bool,
+) -> Vec<Command> {
     match input {
-        CombatInput::Target(a) => match pick(a, state) {
+        CombatInput::Target(a) => match pick(a, state, object_selectable) {
             TargetPick::Nothing => Vec::new(),
             TargetPick::Select(t) => vec![select(t)],
         },
@@ -185,7 +191,7 @@ mod tests {
             &mut out,
         );
         assert!(
-            commands(CombatInput::UseShortcut(0), &s).is_empty(),
+            commands(CombatInput::UseShortcut(0), &s, &|_| true).is_empty(),
             "empty slot"
         );
         s.apply(
@@ -197,18 +203,29 @@ mod tests {
             &mut out,
         );
         assert_eq!(
-            commands(CombatInput::UseShortcut(0), &s),
+            commands(CombatInput::UseShortcut(0), &s, &|_| true),
             [Command::Combat(CombatCommand::UseSkill {
                 what: Ref::Literal("Jab".into()),
                 target: None
             })]
         );
-        assert!(commands(CombatInput::PickEntity(None), &s).is_empty());
+        assert!(commands(CombatInput::PickEntity(None), &s, &|_| true).is_empty());
         assert_eq!(
-            commands(CombatInput::Widget(CombatAction::ClearSelection), &s),
+            commands(
+                CombatInput::Widget(CombatAction::ClearSelection),
+                &s,
+                &|_| true
+            ),
             [select(None)]
         );
-        assert!(commands(CombatInput::Widget(CombatAction::DefeatAcknowledged), &s).is_empty());
+        assert!(
+            commands(
+                CombatInput::Widget(CombatAction::DefeatAcknowledged),
+                &s,
+                &|_| true
+            )
+            .is_empty()
+        );
         assert_eq!(
             input_of_command("quickslot_12"),
             Some(CombatInput::UseShortcut(11))

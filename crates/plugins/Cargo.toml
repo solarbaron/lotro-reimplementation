@@ -25,6 +25,8 @@ tracing.workspace = true
 tempfile = "3"
 # Real-data tests only: locate the user's settings folder (read-only).
 tessera-install.workspace = true
+# Real-data tests only: the install's DID maps (`lua-plugin-api.md` §15.6 check 117).
+tessera-props.workspace = true
 
 [lints]
 workspace = true

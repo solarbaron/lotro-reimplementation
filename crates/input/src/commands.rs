@@ -277,6 +277,24 @@ const TABLE: &[Compact] = {
             ],
             Button,
         ),
+        // P6 crafting panel (`crafting-panels.md` §12; `keymap.md` §8.2 P6 OPEN).
+        (
+            MAIN,
+            &[
+                "ToggleCraftingPanel",
+                "ToggleCraftingProf1Panel",
+                "ToggleCraftingProf2Panel",
+                "ToggleCraftingProf3Panel",
+            ],
+            &[GLOBAL],
+            &[
+                "toggle_crafting",
+                "toggle_crafting_1",
+                "toggle_crafting_2",
+                "toggle_crafting_3",
+            ],
+            Button,
+        ),
         (MAIN, &["AcceptInput"], &[GLOBAL], &["open_chat"], Button),
         // P2 targeting and quickslot rows (`keymap.md` §8.2, §12.14.2).
         (
@@ -661,6 +679,24 @@ mod tests {
             command_for_entry("global", "pin_tooltip", Button, &d("Ctrl+T")),
             Some("TOOLTIP_DETACH")
         );
+    }
+
+    #[test]
+    fn p6_crafting_commands() {
+        use ActionKind::Button;
+        let d = |t: &str| BindingSpec::digital(Chord::parse(t).unwrap(), 1.0);
+        for (action, command) in [
+            ("toggle_crafting", "ToggleCraftingPanel"),
+            ("toggle_crafting_1", "ToggleCraftingProf1Panel"),
+            ("toggle_crafting_2", "ToggleCraftingProf2Panel"),
+            ("toggle_crafting_3", "ToggleCraftingProf3Panel"),
+        ] {
+            assert_eq!(
+                command_for_entry("global", action, Button, &d("T")),
+                Some(command),
+                "{action}"
+            );
+        }
     }
 
     #[test]

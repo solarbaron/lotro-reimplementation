@@ -1,0 +1,49 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# P6 trait panel (decision 0037 §1 item 1, §3): the active trait tree and its branch, cell
+# ranks raised by the scripted input and answered by the feed, points per tree and the
+# class's points, slotted traits, and a trainer that offers traits with trained and unmet
+# rows. With an install the selectors add a trait tree of the install and traits it places;
+# without one they resolve empty and the literal tree plays alone. Synthetic.
+tessera-scenario 1
+title "Patterns of the loom"
+tick 100ms
+player "Bryn"
+select $trees = trait-tree n=1 seed=3
+select $placed = trait in-tree=$trees n=2 seed=5
+actor $weaver kind=npc name="Weaver" pos=1,2,0
+
+at 0s spawn $weaver
++0s level player 12 quiet
++0s trait-points 3/6
++0s trait-tree "Loom craft"
++0s trait-points 4/9 tree="Loom craft"
++0s trait-rank "Loom craft" "Even weft" 2
++0s trait-rank "Loom craft" "Tight warp" 0
++0s trait 0 "Patient eye" rank=1
++0s trait 1 "Quick shuttle" rank=3
++0s trait-tree $trees[0]
++0s trait-points 2/4 tree=$trees[0]
++0s trait-rank $trees[0] $placed[0] 1
++0.5s trait-tree "Loom craft"
+on use $weaver
++0s trainer skills="Patient eye","Quick shuttle","Bright dye" offers=traits npc=$weaver coin=0,250 level=10,14,20 rank=1,2,1 trained=1 unmet=3
+end
+on trait-rank tree="Loom craft"
++0s trait-rank "Loom craft" "Tight warp" 1
++0s trait-points 3/9 tree="Loom craft"
+end
+on train entry=2
++0s trait 1 "Quick shuttle" rank=4
++0s close trainer
+end
+on slot-trait
++0s trait 2 "Bright dye" rank=1
++0s trait-points 2/6
+end
+
+input
+at 1s trait-rank "Loom craft" "Tight warp" 1
+at 1.5s use $weaver
+at 2s train 2
+at 2.5s slot-trait 2 "Bright dye"
+end

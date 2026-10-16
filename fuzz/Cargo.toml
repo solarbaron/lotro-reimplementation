@@ -1342,3 +1342,30 @@ path = "fuzz_targets/client_mount_spec.rs"
 test = false
 doc = false
 bench = false
+
+# --- P6: tessera-ui crafting panel, crafting trainers and progression widgets (crafting-panels.md, decision 0037) ---
+
+[[bin]]
+name = "ui_p6_panels"
+path = "fuzz_targets/ui_p6_panels.rs"
+test = false
+doc = false
+bench = false
+
+# --- P6: tessera-plugins progression and crafting views (lua-plugin-api.md §15.6) ---
+
+[[bin]]
+name = "plugins_progression_views"
+path = "fuzz_targets/plugins_progression_views.rs"
+test = false
+doc = false
+bench = false
+
+# --- P6: tessera-client progression/crafting window commands (crafting-panels.md §13) ---
+
+[[bin]]
+name = "client_p6_panels"
+path = "fuzz_targets/client_p6_panels.rs"
+test = false
+doc = false
+bench = false

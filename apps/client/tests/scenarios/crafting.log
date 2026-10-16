@@ -1,0 +1,46 @@
+tessera-scenario-log 1
+install none
+tick 100
+title "Kiln and wheel"
+resolve $plans line=13 family=recipe requested=2 candidates=0 got=0 note=no-install
+pre > Connect
+pre Connected characters=["Cato"]
+pre > EnterWorld character="Cato"
+0.000 WorldEntered entity=player name="Cato" at=0.000,0.000,0.000 facing=90.00
+0.000 LocationReport entity=player at=0:0.000,0.000,0.000 facing=90.00 anchor=none cause=entered
+0.000 EntitySpawned entity=$master kind=non-player name="Kiln master" at=2.000,0.000,0.000 facing=270.00
+0.000 VocationChanged vocation="Builder" slots=2
+0.000 ProfessionChanged profession="Pottery" tier=3 proficiency=120 proficiency_max=400 mastery=60 mastery_max=800 mastery_tier=2
+0.000 ProfessionChanged profession="Masonry" tier=1 proficiency=10 proficiency_max=200 mastery=0 mastery_max=400
+0.000 RecipeLearned what="Roof tile" profession="Pottery" tier=1
+0.000 RecipeLearned what="Water pipe" profession="Pottery" tier=2
+0.000 RecipeLearned what="Garden urn" profession="Pottery" tier=3
+0.000 RecipeLearned what="Kiln brick" profession="Masonry" tier=1
+0.000 ItemAdded item=$clay what="Wet clay" at=backpack:0 quantity=1
+0.000 ItemQuantity item=$clay quantity=6
+0.000 CooldownStarted what="Garden urn" duration_ms=30000
+1.000 > UseEntity entity=$master
+1.000 DialogueShown window=1 speaker=$master text="Here to learn?" options=[{option=1 text="ProfessionTrainer"},{option=2 text="Not today."}]
+1.500 > ChooseOption window=1 option=1
+1.500 WindowClosed window=1
+1.500 CraftTrainerShown window=2 kind=profession what="Pottery" npc=$master
+2.000 > TrainCraft window=2 replace="Masonry"
+2.000 WindowClosed window=2
+2.000 ChatMessage channel=system sender=none text="You already practise that craft."
+2.000 TrainerShown window=3 trainer=$master entries=[{entry=1 what="Chimney pot" coin=75 level=1}] offers=recipes
+2.500 > TrainSkill window=3 entry=1
+2.500 RecipeLearned what="Chimney pot" profession="Pottery" tier=2
+2.500 WindowClosed window=3
+3.000 > Craft recipe="Roof tile" quantity=2 tier=1
+3.000 CastStarted entity=player cast=craft what="Roof tile" target=none duration_ms=2000
+5.000 CastEnded entity=player outcome=completed
+5.000 CraftResult recipe="Roof tile" outcome=failed item=none
+5.000 CastStarted entity=player cast=craft what="Roof tile" target=none duration_ms=2000
+7.000 CastEnded entity=player outcome=completed
+7.000 ItemAdded item=$tile what="Roof tile" at=backpack:1 quantity=1
+7.000 CraftResult recipe="Roof tile" outcome=success item=$tile
+7.000 ItemQuantity item=$clay quantity=2
+7.000 RecipeForgotten what="Roof tile"
+7.000 ProfessionChanged profession="Pottery" tier=3 proficiency=150 proficiency_max=400 mastery=60 mastery_max=800 mastery_tier=2
+30.000 CooldownEnded what="Garden urn"
+30.000 end reason=complete skipped=0 input-skipped=0 dropped=0 spilled=0

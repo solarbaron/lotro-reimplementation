@@ -49,6 +49,7 @@ mod lex;
 mod log;
 mod overlay;
 mod parse;
+mod progression;
 mod props;
 mod resolve;
 mod select;
@@ -139,8 +140,9 @@ impl Scenario {
     }
 
     /// The labels written outside selectors (`class=`, `species=`, `sex=`, `slot=`,
-    /// `type=`, `nationality=`, `action` for the text function `action(@Label)`, and the
-    /// P5 travel keys `note-type=`, `size=` and `tier=`), as
+    /// `type=`, `nationality=`, `action` for the text functions `action(@Label)` and
+    /// `action(@Label,REF)`, the P5 travel keys `note-type=`, `size=` and `tier=`, and the
+    /// P6 progression keys `category=` and `branch=`), as
     /// (line, option key, label) in line order. Lets a content check refuse
     /// numeric enum values in committed scenarios (§13 rule 2) together with
     /// [`numeric_enum_values`](Self::numeric_enum_values).
@@ -207,7 +209,8 @@ impl Scenario {
     /// `type=` options, the text function `action(N)` (an NPC-action enum key, P3
     /// revision) wherever a text stands, and (P5 travel, §13 rule 6) `note-type=` of
     /// `marker` and `markers` and `size=` and `tier=` of `instances` and of the input form
-    /// `join-instance`.
+    /// `join-instance`; (P6 progression, §13 rule 7) `category=` of `recipe`, `branch=` of
+    /// `trait-tree`, the VALUE of the input form `trait-branch` and `action(N,REF)`.
     #[must_use]
     pub fn numeric_enum_values(&self) -> bool {
         use ast::{BodyArg, EnumArg, InputCmd, Verb};
@@ -247,11 +250,15 @@ impl Scenario {
                     .iter()
                     .chain(&opts.tiers)
                     .any(|e| matches!(e, EnumArg::Value(_))),
+                // P6 progression (§13 rule 7).
+                Verb::Recipe(_, o) => num(&o.category),
+                Verb::TraitTree { branch, .. } => num(branch),
                 _ => false,
             })
             || p.input.iter().any(|l| match &l.cmd {
                 InputCmd::Equip { slot, .. } => matches!(slot, EnumArg::Value(_)),
                 InputCmd::JoinInstance { size, tier, .. } => num(size) || num(tier),
+                InputCmd::TraitBranch { branch, .. } => matches!(branch, EnumArg::Value(_)),
                 InputCmd::CreateCharacter {
                     class,
                     body,

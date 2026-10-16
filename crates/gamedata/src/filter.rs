@@ -75,6 +75,9 @@ pub(crate) fn label_source(
         (F::Creature, A::AgentClass) => (s.agent_class, None),
         (F::Quest, A::Category) => (s.quest_category, None),
         (F::Recipe, A::Tier) => (s.recipe_tier, None),
+        (F::Recipe, A::Category) => (s.recipe_category, None),
+        (F::TraitTree, A::Type) => (s.tree_type, None),
+        (F::TraitTree, A::Branch) => (s.tree_branch, None),
         (F::MapNote, A::Type) => (s.map_note_type, None),
         _ => return None,
     })
@@ -117,6 +120,7 @@ pub(crate) fn compile<B: Bindings + ?Sized>(
                 FilterValue::Integers(v) => Pred::Integers(v.clone()),
                 FilterValue::Bool(b) => match (family, f.attribute, index) {
                     (Family::Skill, Attribute::Mount, Some(ix)) => mount_members(ix, *b),
+                    (Family::Effect, Attribute::Facility, Some(ix)) => facility_members(ix, *b),
                     _ => Pred::Bool(*b),
                 },
                 FilterValue::Binding(i) => {
@@ -181,6 +185,38 @@ fn mount_members(index: &RecordIndex, want: bool) -> Pred {
     }
 }
 
+/// `effect facility=` (P6 progression): the effects some recipe names as its
+/// `CraftRecipe_RequiredFacilityEffect` (`economy.md` §5.1); `facility=no` is the
+/// complement over the effect family.
+fn facility_members(index: &RecordIndex, want: bool) -> Pred {
+    let mut set = BTreeSet::new();
+    for e in index.entries(Family::Recipe) {
+        if let Facts::Recipe(r) = &e.facts
+            && let Some(f) = r.facility
+        {
+            set.insert(f.0);
+        }
+    }
+    if want {
+        let effects: BTreeSet<u32> = index
+            .entries(Family::Effect)
+            .iter()
+            .map(|e| e.did.0)
+            .filter(|d| set.contains(d))
+            .collect();
+        Pred::Members(effects)
+    } else {
+        Pred::Members(
+            index
+                .entries(Family::Effect)
+                .iter()
+                .map(|e| e.did.0)
+                .filter(|d| !set.contains(d))
+                .collect(),
+        )
+    }
+}
+
 /// A binding attribute: the DIDs the bound records contribute.
 fn binding_dids(
     family: Family,
@@ -190,8 +226,52 @@ fn binding_dids(
 ) -> Pred {
     let mut set = BTreeSet::new();
     match (family, attribute) {
-        // The bound records themselves (recipe `profession=`).
-        (Family::Recipe, Attribute::Profession) => set.extend(bound.iter().map(|d| d.0)),
+        // The bound records themselves (recipe `profession=`; P6 progression: craft-guild
+        // `profession=`, creature `craft-profession=`).
+        (Family::Recipe | Family::CraftGuild, Attribute::Profession)
+        | (Family::Creature, Attribute::CraftProfession) => {
+            set.extend(bound.iter().map(|d| d.0));
+        }
+        // Traits placed in a bound tree (P6 progression `in-tree=`).
+        (Family::Trait, Attribute::InTree) => {
+            let Some(ix) = index else { return Pred::Never };
+            for &did in bound {
+                if let Some(Facts::TraitTree(t)) = ix.facts(Family::TraitTree, did) {
+                    set.extend(t.traits.iter().map(|d| d.0));
+                }
+            }
+        }
+        // Professions a bound vocation lists (P6 progression `profession of=`).
+        (Family::Profession, Attribute::Of) => {
+            let Some(ix) = index else { return Pred::Never };
+            for &did in bound {
+                if let Some(Facts::Vocation(list)) = ix.facts(Family::Vocation, did) {
+                    set.extend(list.iter().map(|d| d.0));
+                }
+            }
+        }
+        // Inductions a bound template, recipe or skill names (P6 progression
+        // `induction of=`; hotspots have no store here, so a hotspot binding adds nothing).
+        (Family::Induction, Attribute::Of) => {
+            let Some(ix) = index else { return Pred::Never };
+            for &did in bound {
+                if let Some(Facts::Creature(c)) = ix.facts(Family::Creature, did)
+                    && let Some(i) = c.induction
+                {
+                    set.insert(i.0);
+                }
+                if let Some(Facts::Recipe(r)) = ix.facts(Family::Recipe, did)
+                    && let Some(i) = r.induction
+                {
+                    set.insert(i.0);
+                }
+                if let Some(Facts::Skill(sk)) = ix.facts(Family::Skill, did)
+                    && let Some(i) = sk.induction_did
+                {
+                    set.insert(i.0);
+                }
+            }
+        }
         // Items listed by a bound vendor inventory or made by a bound recipe.
         (Family::Item, Attribute::ListedBy) => {
             let Some(ix) = index else { return Pred::Never };
@@ -305,6 +385,11 @@ pub(crate) fn matches_record(
         (Facts::Trait(t), A::MinLevel, P::Range(lo, hi)) => {
             range(t.min_level.map(i64::from), *lo, *hi)
         }
+        (Facts::Trait(t), A::PointBased, P::Bool(b)) => t.point_based == *b,
+        (Facts::Trait(t), A::Tier, P::Range(lo, hi)) => range(t.tier.map(i64::from), *lo, *hi),
+        (Facts::Trait(_), A::InTree, P::Dids(set)) => set.contains(&did.0),
+        (Facts::TraitTree(t), A::Type, P::Values(v)) => value(t.tree_type, v),
+        (Facts::TraitTree(t), A::Branch, P::Values(v)) => list(&t.branches, v),
         (Facts::Class(t), A::Class, P::Values(v)) => value(t.class, v),
         (Facts::Creature(cr), A::Kind, P::Keywords(k)) => cr
             .kind
@@ -317,6 +402,10 @@ pub(crate) fn matches_record(
         (Facts::Creature(cr), A::Vendor, P::Bool(b)) => cr.vendor == *b,
         (Facts::Creature(cr), A::Trainer, P::Bool(b)) => cr.trainer == *b,
         (Facts::Creature(cr), A::QuestGiver, P::Bool(b)) => cr.quest_giver == *b,
+        (Facts::Creature(cr), A::Gathering, P::Bool(b)) => cr.gathering == *b,
+        (Facts::Creature(cr), A::CraftProfession, P::Dids(set)) => {
+            cr.craft_profession.is_some_and(|p| set.contains(&p.0))
+        }
         (Facts::Quest(q), A::Deed, P::Bool(b)) => q.deed == *b,
         (Facts::Quest(q), A::Category, P::Values(v)) => value(q.category, v),
         (Facts::Quest(q), A::Level, P::Range(lo, hi)) => range(q.level.map(i64::from), *lo, *hi),
@@ -328,6 +417,16 @@ pub(crate) fn matches_record(
             r.profession.is_some_and(|p| set.contains(&p.0))
         }
         (Facts::Recipe(r), A::Tier, P::Values(v)) => list(&r.tiers, v),
+        (Facts::Recipe(r), A::Category, P::Values(v)) => value(r.category, v),
+        (Facts::Recipe(r), A::OneUse, P::Bool(b)) => r.one_use == *b,
+        (Facts::Recipe(r), A::Cooldown, P::Bool(b)) => r.cooldown == *b,
+        (Facts::Recipe(r), A::Critical, P::Bool(b)) => r.critical == *b,
+        (Facts::Recipe(r), A::Facility, P::Bool(b)) => r.facility.is_some() == *b,
+        (Facts::CraftGuild(p), A::Profession, P::Dids(set)) => {
+            p.is_some_and(|p| set.contains(&p.0))
+        }
+        // The member itself is in the bound set (profession `of=`, induction `of=`).
+        (Facts::None, A::Of, P::Dids(set)) => set.contains(&did.0),
         (Facts::VendorInventory(_), A::Of, P::Dids(set)) => set.contains(&did.0),
         (Facts::Area(k), A::Level, P::Keywords(w)) => {
             area_keyword(*k).is_some_and(|kw| keyword(kw, w))

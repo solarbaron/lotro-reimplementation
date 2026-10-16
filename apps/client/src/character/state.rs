@@ -555,7 +555,7 @@ impl PlayerState {
             CharacterEvent::CharacterRemoved { name } => {
                 self.infos.remove(&crate::net::name_key(name));
             }
-            CharacterEvent::LevelChanged { entity, level } if Some(*entity) == self.player => {
+            CharacterEvent::LevelChanged { entity, level, .. } if Some(*entity) == self.player => {
                 if self.level != Some(*level) {
                     self.level = Some(*level);
                     out.push(PlayerChange::Header);
@@ -828,6 +828,7 @@ mod tests {
             &Event::Character(CharacterEvent::LevelChanged {
                 entity: EntityId(7),
                 level: 13,
+                quiet: false,
             }),
             &mut out,
         );
@@ -839,6 +840,7 @@ mod tests {
             &Event::Character(CharacterEvent::LevelChanged {
                 entity: EntityId(8),
                 level: 50,
+                quiet: false,
             }),
             &mut out,
         );

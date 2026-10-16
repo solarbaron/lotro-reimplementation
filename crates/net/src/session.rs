@@ -754,6 +754,9 @@ impl Session {
             Event::Inventory(e) if !e.is_valid() => Verdict::Invalid("non-finite property value"),
             Event::Social(e) if !e.is_valid() => Verdict::Invalid("non-finite fellow vital"),
             Event::Npc(e) if !e.is_valid() => Verdict::Invalid("invalid quest rewards"),
+            Event::Progression(e) if !e.is_valid() => {
+                Verdict::Invalid("progression value out of range")
+            }
             Event::Character(e) if e.is_entity_event() => self.world_verdict(),
             Event::Inventory(_)
             | Event::Combat(_)
@@ -1062,6 +1065,7 @@ mod name_tests {
     fn name_reports_the_inner_variant() {
         use crate::domain::{CharacterCommand, CharacterEvent};
         let e = super::Event::Character(CharacterEvent::LevelChanged {
+            quiet: false,
             entity: crate::model::EntityId(1),
             level: 2,
         });

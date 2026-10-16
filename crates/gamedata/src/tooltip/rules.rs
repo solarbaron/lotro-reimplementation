@@ -95,6 +95,11 @@ pub mod tokens {
     pub const QUEST_ID: u32 = 0x0A4B_F4B4;
     /// Quest-ID variable.
     pub const VAR_QUEST: u32 = 0x0A89_7485;
+    /// `Examination`: the recipe one-use row's text (`crafting-panels.md` §7).
+    pub const RECIPE_ONE_SHOT: u32 = 0x0005_C674;
+    /// `Examination`: the recipe cooldown row's text, variable [`VAR_DECAY`] = the
+    /// duration (`crafting-panels.md` §7).
+    pub const RECIPE_COOLDOWN: u32 = 0x02B7_199E;
 }
 
 // ---------------------------------------------------------------------------------------------

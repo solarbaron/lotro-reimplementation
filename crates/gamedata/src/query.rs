@@ -66,13 +66,17 @@ pub enum Family {
     /// Map regions (P5 travel revision; `map-windows.md` §5.1): R-nodes and R-dungeons;
     /// elements carry rows and, when markable, a location.
     MapRegion,
+    /// Vocations (P6 progression; `economy.md` §5.3).
+    Vocation,
+    /// Craft guilds (P6 progression; `economy.md` §5.3).
+    CraftGuild,
     /// An explicit list of DIDs (local scenarios only).
     Did,
 }
 
 impl Family {
     /// Every family, in the order of §8.3 (`did` last).
-    pub const ALL: [Family; 27] = [
+    pub const ALL: [Family; 29] = [
         Self::Item,
         Self::Skill,
         Self::Effect,
@@ -99,13 +103,15 @@ impl Family {
         Self::Pet,
         Self::Induction,
         Self::MapRegion,
+        Self::Vocation,
+        Self::CraftGuild,
         Self::Did,
     ];
 
     /// The families whose elements are plain records found in the object-record index
     /// (everything but the two table families, the two families without a decoder view and
     /// `did`).
-    pub const RECORD_FAMILIES: [Family; 21] = [
+    pub const RECORD_FAMILIES: [Family; 23] = [
         Self::Item,
         Self::Skill,
         Self::Effect,
@@ -127,6 +133,8 @@ impl Family {
         Self::Area,
         Self::Instance,
         Self::Induction,
+        Self::Vocation,
+        Self::CraftGuild,
     ];
 
     /// The family's keyword (`item`, `trait-tree`, ...).
@@ -159,6 +167,8 @@ impl Family {
             Self::Pet => "pet",
             Self::Induction => "induction",
             Self::MapRegion => "map-region",
+            Self::Vocation => "vocation",
+            Self::CraftGuild => "craft-guild",
             Self::Did => "did",
         }
     }
@@ -260,6 +270,26 @@ pub enum Attribute {
     MountType,
     /// `war-steed` (P5 travel: effects).
     WarSteed,
+    /// `point-based` (P6 progression: traits).
+    PointBased,
+    /// `in-tree` (P6 progression: traits).
+    InTree,
+    /// `branch` (P6 progression: trait trees).
+    Branch,
+    /// `one-use` (P6 progression: recipes).
+    OneUse,
+    /// `cooldown` (P6 progression: recipes).
+    Cooldown,
+    /// `critical` (P6 progression: recipes).
+    Critical,
+    /// `facility` (P6 progression: recipes, effects, hotspots).
+    Facility,
+    /// `gathering` (P6 progression: creatures).
+    Gathering,
+    /// `craft-profession` (P6 progression: creatures).
+    CraftProfession,
+    /// `selectable` (P6 progression: hotspots).
+    Selectable,
 }
 
 impl Attribute {
@@ -303,6 +333,16 @@ impl Attribute {
             Self::Region => "region",
             Self::MountType => "mount-type",
             Self::WarSteed => "war-steed",
+            Self::PointBased => "point-based",
+            Self::InTree => "in-tree",
+            Self::Branch => "branch",
+            Self::OneUse => "one-use",
+            Self::Cooldown => "cooldown",
+            Self::Critical => "critical",
+            Self::Facility => "facility",
+            Self::Gathering => "gathering",
+            Self::CraftProfession => "craft-profession",
+            Self::Selectable => "selectable",
         }
     }
 }
@@ -455,12 +495,20 @@ pub fn attributes(family: Family) -> &'static [(Attribute, AttrType)] {
             (A::Role, T::Keyword(EFFECT_ROLES)),
             (A::MountType, T::Value),
             (A::WarSteed, T::YesNo),
+            // P6 progression (`economy.md` §5.1).
+            (A::Facility, T::YesNo),
         ],
         F::Trait => &[
             (A::Nature, T::Value),
             (A::Class, T::Value),
             (A::MinLevel, T::Range),
+            // P6 progression (`combat-data.md` §8.1, §8.2, §8.5).
+            (A::PointBased, T::YesNo),
+            (A::Tier, T::Range),
+            (A::InTree, T::Binding(&[F::TraitTree])),
         ],
+        // P6 progression (`combat-data.md` §8.5).
+        F::TraitTree => &[(A::Type, T::Value), (A::Branch, T::Value)],
         F::Class => &[(A::Class, T::Value)],
         F::Creature => &[
             (A::Kind, T::Keyword(CREATURE_KINDS)),
@@ -472,6 +520,9 @@ pub fn attributes(family: Family) -> &'static [(Attribute, AttrType)] {
             (A::Vendor, T::YesNo),
             (A::Trainer, T::YesNo),
             (A::QuestGiver, T::YesNo),
+            // P6 progression (`crafting-panels.md` §9.1).
+            (A::Gathering, T::YesNo),
+            (A::CraftProfession, T::Binding(&[F::Profession])),
         ],
         F::Quest => &[
             (A::Deed, T::YesNo),
@@ -483,7 +534,21 @@ pub fn attributes(family: Family) -> &'static [(Attribute, AttrType)] {
         F::Recipe => &[
             (A::Profession, T::Binding(&[F::Profession])),
             (A::Tier, T::Value),
+            // P6 progression (`economy.md` §5.1).
+            (A::Category, T::Value),
+            (A::OneUse, T::YesNo),
+            (A::Cooldown, T::YesNo),
+            (A::Critical, T::YesNo),
+            (A::Facility, T::YesNo),
         ],
+        // P6 progression (`economy.md` §5.3; `interaction.md` §3.8, §4).
+        F::Profession => &[(A::Of, T::Binding(&[F::Vocation]))],
+        F::CraftGuild => &[(A::Profession, T::Binding(&[F::Profession]))],
+        F::Hotspot => &[(A::Selectable, T::YesNo), (A::Facility, T::YesNo)],
+        F::Induction => &[(
+            A::Of,
+            T::Binding(&[F::Creature, F::Hotspot, F::Recipe, F::Skill]),
+        )],
         F::VendorInventory => &[(A::Of, T::Binding(&[F::Creature]))],
         F::Place => &[(A::Region, T::Integer)],
         F::MapNote => &[(A::Type, T::Value), (A::Region, T::Integer)],
@@ -750,6 +815,12 @@ pub enum LabelContext {
     GroupSize,
     /// A difficulty-tier key (`FellowshipMakerUI_DifficultyTier`'s mapper; P5 travel).
     DifficultyTier,
+    /// A trait-tree branch key (`Trait_TraitTree_Branch`'s mapper; P6 progression,
+    /// `combat-data.md` §8.5).
+    TraitBranch,
+    /// A recipe UI-category key (`CraftRecipe_UICategory`'s mapper; P6 progression,
+    /// `economy.md` §5.1).
+    RecipeCategory,
 }
 
 /// A note of one resolution (`scenario-feed.md` §8.6: shortfalls are notes, never errors).

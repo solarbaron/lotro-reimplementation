@@ -121,6 +121,19 @@ install's gaits and clips. Its specs are Accepted after independent review (2026
 open: the loading screen's progress bar, conforming the code to the reviewed specs, and owner
 comparisons with the original client.
 
+**P6 (progression and crafting panels) passes its exit criteria on Tessera's side**
+([P6 status](docs/ROADMAP.md#p6-status)): the crafting census categorises all 7,791 recipe
+records of the install (7,782 shown, 9 for a missing result image) with 0 failures, and the
+provisional trait-tree census categorises all 17 trait trees and 1,216 cell placements with 0
+failures; a progression scenario (level up, train, craft) runs headless with a byte-identical
+replay, and 8 synthetic panel goldens (experience bar, level-up, trait panel, skill and craft
+trainers, crafting panel) pass. Its specs are in review (`crafting-panels.md`, the
+`scenario-feed.md` "P6 progression" revision, `lua-plugin-api.md` §15.6), and
+`progression-panels.md` — the experience-bar, trait-panel and skill-training spec — is **not yet
+in the tree**, so the trait half of criterion 1 is held ([decision 0037](docs/decisions/0037-p6-trait-tree-and-recipe-census.md))
+and the progression UI half is a Tessera fallback. Still open: the live frame glue that opens
+the P6 windows in the walker, and owner comparisons with the original client.
+
 | Area | State |
 |---|---|
 | Archive reader (`.dat`/`.datx` container, directory, compression, DID routing) | done (M0): all 29 archives, 3.8 M entries validated and inflated with 0 errors |
@@ -149,6 +162,7 @@ comparisons with the original client.
 | Combat presentation: selection and targeting keys, player and target frames, cast bars, effect bars, floating text, quickslot cooldowns, defeat panel (`tessera-ui` `game::combat`); skill and effect tooltips; combat animation and particles in the walker; plugin combat views; local selection on the test server | P2 exit phase: criteria 1–4 pass on Tessera's side; 20 / 20 elements shown at 11 checkpoints with and without the install; 33,601 skill and effect tooltips laid out, 12,617 categorised NoTooltip, 0 failures; 11,155 particle descriptors categorised; specs await independent review |
 | Social panels (fellowship display with shared vitals, invitation prompt, trade window, Social panel friend and ignore lists), tells, instant-message tab and named chat channels (protocol 1.2 on the test server), synchronised fellowship music, plugin `Party` views | done (P4, merged): criteria 1–3 pass on Tessera's side; 4 committed synthetic scenarios with logs; synchronised starts within 0.0001 s (worst 8.9e-16 s); specs Accepted and code conformed (2026-10-11) |
 | World map with notes, feed markers and filters, minimap markers, place lookup (`/findplace`), travel window and travel presentation, instance finder with queue and alert, instance-travel window, mounted walker (`--mount`, `/ride`, `toggle_mount`), plugin mount views; scenario feed revision "P5 travel" | P5 criteria pass on Tessera's side: 1,525 / 1,525 map regions shown, 1,523 marked, 0 failures; 721 / 722 mount effects drawable per body (1 categorised); 13 local window goldens matched, 12 judged correct (the loading screen is not drawn whole); 6 synthetic goldens; specs in review |
+| Experience bar and level-up, trait panel with trees, branches, cells and slots, skill- and craft-training windows, crafting panel with professions, tiers, meters, recipe list and make controls, recipe-scroll tooltips, gathering hotspots, plugin progression and crafting views (`lua-plugin-api.md` §15.6); scenario feed revision "P6 progression" | P6 criteria pass on Tessera's side: 7,791 / 7,791 recipe records categorised with 0 failures (and 10 professions, 7 vocations, 7 guilds, 32 trainers, 335 gathering nodes, 6,055 scrolls); 17 trees and 1,216 placements categorised (trait half provisional, held by decision 0037 until `progression-panels.md` lands); 4 committed synthetic scenarios replay byte for byte; 8 synthetic panel goldens; 3 fuzz targets; specs in review, `progression-panels.md` not yet in the tree |
 | Official-server compatibility | in scope (M8) by the owner's decision of 2026-10-11, without a legal review ([decision 0034](docs/decisions/0034-official-server-compatibility.md), [LEGAL.md §9](docs/LEGAL.md#9-gates-and-the-official-server-target)); not started, no code exists |
 
 The full plan, with exit criteria per milestone, is in [docs/ROADMAP.md](docs/ROADMAP.md).

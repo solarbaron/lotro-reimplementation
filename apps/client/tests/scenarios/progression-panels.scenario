@@ -1,0 +1,59 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# P6 progression panels (decision 0037 §3): the three legs of the progression scenario.
+# Level up: experience reports and a raised, not quiet level. Train: a skill trainer whose
+# rows carry flags, answered by a learned skill; a trait tree whose cell is raised and whose
+# branch is chosen. Craft: the leg of crafting-panels.md §15.4 (a profession, a learned
+# recipe, held ingredients, a batch of two crafts with their bars and results, and the
+# profession report that moves the proficiency meter). Synthetic: literal refs only.
+tessera-scenario 1
+title "Workbench progress"
+tick 100ms
+player "Orla"
+actor $tutor kind=npc name="Tutor" pos=0,2,0
+item $clay "Wet clay"
+item $bowl "Glazed bowl"
+item $jug "Fine jug"
+
+at 0s spawn $tutor
++0s level player 4 quiet
++0s xp 900/1000
++0s trait-tree "Steady hands"
++0s trait-points 2/5 tree="Steady hands"
++0s trait-rank "Steady hands" "Firm grip" 1
++0s untrained skills="Throwing","Glazing" coin=40,90 level=5,6
++0s profession "Pottery" tier=1 proficiency=0/200 mastery=0/400
++0s recipe "Glazed bowl" profession="Pottery" tier=1
++0s give $clay
++0s quantity $clay 4
++0.5s xp 1000/1000
++0.1s level player 5
++0s xp 50/1500
+on use $tutor
++0s trainer skills="Throwing","Glazing","Kneading" npc=$tutor coin=40,90,10 level=5,6,1 trained=3 unmet=2
+end
+on train entry=1
++0s learn "Throwing"
++0s untrained skills="Glazing" coin=90 level=6
++0s close trainer
+end
+on trait-rank tree="Steady hands"
++0s trait-rank "Steady hands" "Firm grip" 2
++0s trait-points 1/5 tree="Steady hands"
+end
+on craft "Glazed bowl"
++0s cast player "Glazed bowl" 7s kind=craft
++7s give $bowl
++0s craft-result "Glazed bowl" success item=$bowl batch=1/2
++0s cast player "Glazed bowl" 7s kind=craft
++7s give $jug
++0s craft-result "Glazed bowl" critical item=$jug batch=2/2
++0s remove $clay
++0s profession "Pottery" tier=1 proficiency=40/200 mastery=0/400
+end
+
+input
+at 1s use $tutor
+at 1.5s train 1
+at 2s trait-rank "Steady hands" "Firm grip" 2
+at 3s craft "Glazed bowl" qty=2 tier=1
+end

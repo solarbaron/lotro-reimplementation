@@ -108,7 +108,7 @@ pub fn dialogue_text(t: &Text) -> DialogueText {
             quest: Did(quest.0),
             objective: *objective,
         },
-        Text::Action(a) => DialogueText::Action(*a),
+        Text::Action(a) | Text::ActionFor { action: a, .. } => DialogueText::Action(*a),
     }
 }
 

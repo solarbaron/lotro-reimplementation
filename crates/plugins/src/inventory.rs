@@ -435,6 +435,33 @@ fn item_info_object(lua: &Lua, ctx: &ApartmentCtx, this: &Table) -> mlua::Result
     Ok(obj)
 }
 
+/// The apartment's `ItemInfo` object of `info` for views outside the inventory
+/// (`lua-plugin-api.md` §15.6 recipe results and ingredients): for a record, the one object
+/// per record DID that the inventory views share (§15.1); an info without a record gets a
+/// new object on every call.
+pub(crate) fn info_object(lua: &Lua, info: &Arc<ItemInfoData>) -> mlua::Result<Table> {
+    let class: Table = lua.named_registry_value(INFO_CLASS_KEY)?;
+    let Some(did) = info.record else {
+        return new_object(
+            lua,
+            &class,
+            Payload(Arc::new(InfoPayload(Arc::clone(info)))),
+        );
+    };
+    let cache: Table = lua.named_registry_value(INFOS_KEY)?;
+    let key = Value::Number(f64::from(did));
+    if let Value::Table(t) = cache.raw_get::<Value>(key.clone())? {
+        return Ok(t);
+    }
+    let obj = new_object(
+        lua,
+        &class,
+        Payload(Arc::new(InfoPayload(Arc::clone(info)))),
+    )?;
+    cache.raw_set(key, obj.clone())?;
+    Ok(obj)
+}
+
 /// A whole number in `lo ..= hi` from a Lua argument, else `None` (§15.1: nil for a
 /// non-integer or out-of-range index; any other argument type counts as out of range).
 fn whole_index(v: &Value, lo: u32, hi: u32) -> Option<u32> {

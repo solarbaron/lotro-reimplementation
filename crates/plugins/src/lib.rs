@@ -25,7 +25,11 @@
 //!   `Player:GetParty()`) over the fellowship model the client sets with
 //!   [`PluginManager::set_fellowship`] ([`party`], §15.4); the mount views (`GetMount`,
 //!   `BasicMount`, `CombatMount`) fed by a [`MountSource`] and queued [`MountViewEvent`]s
-//!   ([`mount`], §15.5).
+//!   ([`mount`], §15.5); the progression and crafting views (`GetProfessionInfo`,
+//!   `ProfessionInfo`, `Recipe`, `RecipeIngredient`, `GetVocation`, the untrained
+//!   `SkillList`, `GetClassAttributes`) fed by a [`ProgressionSource`] and queued
+//!   [`ProgressionViewEvent`]s, with [`ProgressionModel`] as a ready-made source
+//!   ([`progression`], §15.6).
 //! - [`HostApi`]: what the embedding client provides; it extends the core's
 //!   [`CoreHost`]. Plugin shell commands live in the host's one command registry
 //!   (`chat-window.md` §10 item 3); [`CommandTable`] is a registry for hosts without one.
@@ -66,6 +70,7 @@ pub mod packages;
 pub mod party;
 pub mod paths;
 pub mod plugindata;
+pub mod progression;
 mod root_ns;
 mod shared;
 pub mod ui;
@@ -100,6 +105,11 @@ pub use party::{
     PartyUpdate, PartyViewEvent,
 };
 pub use plugindata::{DataKey, DataValue, ParseLimits, PluginDataError};
+pub use progression::{
+    EmptiedList, IngredientData, ProfessionEvent, ProfessionReport, ProfessionState,
+    ProfessionValues, ProgressionModel, ProgressionSource, ProgressionViewEvent, RecipeData,
+    RecipeKey, TitleKind, UntrainedSkillData,
+};
 pub use root_ns::split_command_line;
 pub use tessera_script::{ErrorKind, Limits};
 pub use wallet::{WalletEntry, WalletItemData, WalletSource, WalletViewEvent};

@@ -169,6 +169,12 @@ The three 0x76 records (0x76000614, 0x7600060B, 0x76000643) are the singletons o
 1556, 1547 and 1603 (`wlib.md` §7); they have no property set. Excluded: classes 794, 803
 and 1113 (`creatures.md`, `economy.md`, `items.md`).
 
+> **Note (P6, 2026-10-16, [`crafting-panels.md`](crafting-panels.md) §9.1; no fact of this
+> spec changed):** 335 of the class-794 container templates are gathering nodes (they hold
+> `Usage_RequiredCraftProfession`, `…CraftTool`, `…CraftTier`, a gathering induction in
+> `Induction_ActionDID`, `Usage_MinUsageDist` 3.5 and `UsageAction_Container`, mouse-over type
+> 16); their census and presentation are there.
+
 Ancestry (nearest first): 1170 → 1733 → 787 → 1726 → 488 → 223 → 89 → 485 → 484; the
 controller classes descend from 1733 too (1892 through 3668, 1995 through 1210, 2328, 4192
 and 5812 through 788, 2516 through 1113); every other class here descends from 486
@@ -1148,6 +1154,11 @@ bits (empty when the array is absent). These two hashes are the same as in induc
 - **Barred actions:** 0x0 in 18 records, `Combat` 23, `Emotes | Combat` 6, `Usage` 1,
   `Combat | Usage` 109, `Emotes | Crafting` 9, `Emotes | Combat | Crafting` 95, all four 140.
 
+> **Note (P6, 2026-10-16, [`crafting-panels.md`](crafting-panels.md) §5.7; no fact of this
+> spec changed):** the client's crafting panel reads the `Crafting` bit (0x8) of the player's
+> current channelling state (`Channeling_CurrentChannelingDID`) to grey its make buttons (BIN of
+> that spec). The server-side meaning of the other bits stays OPEN here.
+
 > **OPEN (server):** What a channelling setback does (shortens the remaining time, ends the
 > state, or something else), and the unit of `Channeling_SetbackTime`; how the duration
 > multiplier is applied; which requests each barred-action bit refuses; what the interrupt
@@ -1324,6 +1335,11 @@ it. Tessera draws the descriptor's meshes and ignores the property (an explorer 
 > radii. No client code names `Hotspot_Box_MinExtent`, `Hotspot_Box_MaxExtent` or
 > `Hotspot_RadiusOverride` (no native constant, no literal of the class library's code; BIN
 > e, BC), so the area is applied by the server only.
+
+> **Note (P6, 2026-10-16, [`crafting-panels.md`](crafting-panels.md) §9.2; no fact of this
+> spec changed):** 26 hotspot templates carry a crafting-facility effect (one of the 13 effects
+> named by `CraftRecipe_RequiredFacilityEffect`) in their effect lists; the crafting panel tests
+> only whether the player holds the effect, never the hotspot's area.
 
 ---
 
@@ -2214,3 +2230,4 @@ recorded. In the follow step, two points with equal scores resolve to the newer 
 | 2026-10-08 | header | Review 3 (spec reviewer, separate session): passed; status Review → Accepted. No content changed. |
 | 2026-10-08 | header, §1, §3.4.1, §3.4.2, §3.4.4, §3.4.5 (new), §3.4.6 (new), §3.5, §7.4, §16.3, §18, §19.5 (new), §19.6 (new), §20 | Revision 4 (spec writer). No implementer OPEN notes had been filed against this spec; this revision closes or narrows the writer's own OPENs and the four minor notes of review 3. **Corrected (behaviour change for implementers):** `Mouseover_Range` is not server-supplied: the class code writes it onto the local player from the hovered entity (`Usage_MinUsageDist_ClientOverride`, else `Usage_MinUsageDist`, else 2.0; I7d, §3.4.2); the pet trail is kept newest first and recorded per owner position change of more than 0.01 m, filtered by element (I20b, §7.4), which replaces the old Decision D7 rule; `CSM_DisplayInactiveOptions` is read from the clicked object, not the handler (§3.5). **Closed:** the cursor and effect step (§3.4.6, I7f); the seven overriding usage-action classes, with the NPC service rule (§3.4.5, I7e); selectability and usage-action lookup are shared by all world-entity classes (§3.4.4); trail recording (§7.4); hover-target choice and flag recomputation (§3.4.2, I7c). **Narrowed:** §3.4.1 (lookup routes by `field_b`; Decision D14), §3.4.2 entity tree (Decision D15, review note m4), §3.4.5 tests of other systems (Decisions D16, D17), §3.5 menu assembly, §7.4. **Review 3 notes:** m1 (§3.4.1 warning), m2 (§3.4.4 no default), m3 (BC named in rows I9, I13a, I17, I21, I22 and in the BC read list), m4 (D15). New provenance rows I7c–I7f, I20b; new BIN questions (o)–(s); new invariants IN23–IN27. Status Accepted → Revised. |
 | 2026-10-10 | §3.4 | Note only (no fact changed), for P3: the input that uses an entity is `npc-windows.md` §3.1. Status unchanged. |
+| 2026-10-16 | §2.1, §3.9.3, §4.6 | Notes only (no fact changed), for P6 (`crafting-panels.md`): gathering nodes among class 794, the panel's read of the `Crafting` barred-action bit, facility hotspots. Status unchanged. |

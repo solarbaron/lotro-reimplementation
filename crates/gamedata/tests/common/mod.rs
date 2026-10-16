@@ -34,6 +34,12 @@ pub const M_NOTE_TYPE: u32 = 0x2300_0010;
 pub const M_GENDER: u32 = 0x2300_0011;
 /// Base of the slot mapper (tests the base chain).
 pub const M_SLOT_BASE: u32 = 0x2300_0012;
+/// P6 progression: `Trait_TraitTree_TreeType`.
+pub const M_TREE_TYPE: u32 = 0x2300_0013;
+/// P6 progression: `Trait_TraitTree_Branch`.
+pub const M_BRANCH: u32 = 0x2300_0014;
+/// P6 progression: `CraftRecipe_UICategory`.
+pub const M_RECIPE_CAT: u32 = 0x2300_0015;
 
 /// (label, type code, enum mapper) of every property the synthetic install uses. PIDs are
 /// 0x1000_0001 + index.
@@ -120,6 +126,26 @@ pub const PROPS: &[(&str, u32, u32)] = &[
     ("PrivateEncounterTemplate_Name", 13, 0),
     ("Area_Name", 13, 0),
     ("Trait_Name", 13, 0),
+    // P6 progression attributes (appended: earlier PIDs stay as they were).
+    ("Trait_Tier", 15, 0),
+    ("Trait_PointBasedTrait_PointCostProgression", 20, 0),
+    ("Trait_TraitTree_TreeType", 8, M_TREE_TYPE),
+    ("Trait_TraitTree_TraitArray", 12, 0),
+    ("Trait_TraitTree_TraitStruct", 11, 0),
+    ("Trait_TraitTree_Trait", 20, 0),
+    ("Trait_TraitTree_Branch", 8, M_BRANCH),
+    ("CraftRecipe_UICategory", 8, M_RECIPE_CAT),
+    ("CraftRecipe_OneTimeRecipe", 21, 0),
+    ("CraftRecipe_CooldownDuration", 8, 0),
+    ("CraftRecipe_CriticalResultItem", 20, 0),
+    ("CraftRecipe_RequiredFacilityEffect", 20, 0),
+    ("CraftRecipe_InductionAction", 20, 0),
+    ("CraftVocation_ProfessionArray", 12, 0),
+    ("CraftVocation_Profession", 20, 0),
+    ("CraftVocation_Name", 13, 0),
+    ("CraftGuild_Profession", 20, 0),
+    ("Usage_RequiredCraftProfession", 20, 0),
+    ("Induction_ActionDID", 20, 0),
 ];
 
 /// The PID of `label`.
@@ -341,6 +367,9 @@ impl Synth {
                 &[(1, "Link"), (2, "Vendor"), (3, "Trainer")],
             ),
             (M_GENDER, 0, &[(0x1000, "Male"), (0x2000, "Female")]),
+            (M_TREE_TYPE, 0, &[(1, "Burglar"), (2, "Hunter")]),
+            (M_BRANCH, 0, &[(5, "Blue"), (6, "Red"), (7, "Yellow")]),
+            (M_RECIPE_CAT, 0, &[(7, "Swords"), (8, "Axes")]),
         ];
         for (did, base, names) in mappers {
             src.insert(*did, enum_mapper(*did, *base, names));

@@ -34,7 +34,8 @@
 //! `max_width` use their designed width (§4.1); requirement, effect, set, allowed-slot and
 //! duration texts use Tessera's own wording (§6.14–§6.17 except the effect lines, §6.18); the
 //! comparison option is on by default (§8.3). Rows of §6.20 are built empty and counted, except
-//! the skill-item rows, which show the item's skill (P2). The skill and effect rules are listed
+//! the skill-item rows, which show the item's skill (P2), and the recipe one-use and cooldown
+//! rows of recipe scrolls, which follow `crafting-panels.md` §7 (P6). The skill and effect rules are listed
 //! in the `skill` module's documentation (`skill-tooltips.md` ST21).
 //!
 //! # Hostile input
@@ -715,6 +716,8 @@ pids! {
         currency_list = "Currency_CurrencyList",
         currency_value = "Currency_Value",
         recipe = "RecipeItem_Recipe",
+        recipe_one_time = "CraftRecipe_OneTimeRecipe",
+        recipe_cooldown = "CraftRecipe_CooldownDuration",
         recipe_result = "CraftRecipe_ResultItem",
         recipe_result_quantity = "CraftRecipe_ResultItemQuantity",
         effect_name = "Effect_Name",

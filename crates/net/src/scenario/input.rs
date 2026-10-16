@@ -33,7 +33,7 @@ struct Mirror {
     player: Option<EntityId>,
     quickslots: BTreeMap<u16, Shortcut>,
     target: Option<EntityId>,
-    windows: [Option<WindowId>; 8],
+    windows: [Option<WindowId>; WindowKind::ALL.len()],
     /// The content of the last `DialogueShown` of the open dialogue window. The event
     /// carries no page identity, so `choose $page N` compares this with the named page's
     /// content (pages with identical content cannot be told apart).
@@ -232,6 +232,9 @@ impl InputPlayer {
             }
             Event::Social(SocialEvent::TradeShown { window, .. }) => {
                 m.windows[WindowKind::Trade.index()] = Some(*window);
+            }
+            Event::Progression(ProgressionEvent::CraftTrainerShown { window, .. }) => {
+                m.windows[WindowKind::CraftTrainer.index()] = Some(*window);
             }
             Event::Npc(NpcEvent::WindowClosed { window }) => {
                 for (i, w) in m.windows.iter_mut().enumerate() {
@@ -492,10 +495,43 @@ impl InputPlayer {
                     },
                 })
             }
-            InputCmd::Craft { recipe, qty } => Command::Progression(ProgressionCommand::Craft {
+            InputCmd::Craft {
+                recipe,
+                qty,
+                tier,
+                output,
+                optional,
+                pack,
+            } => Command::Progression(ProgressionCommand::Craft {
                 recipe: self.rref(recipe)?,
                 quantity: *qty,
+                tier: *tier,
+                output: *output,
+                optional: *optional,
+                pack: *pack,
             }),
+            // P6 progression (§7.7).
+            InputCmd::TrainCraft(replace) => Command::Progression(ProgressionCommand::TrainCraft {
+                window: self.window(WindowKind::CraftTrainer)?,
+                replace: match replace {
+                    Some(r) => Some(self.rref(r)?),
+                    None => None,
+                },
+            }),
+            InputCmd::TraitRank { tree, what, rank } => {
+                Command::Progression(ProgressionCommand::SetTraitRank {
+                    tree: self.rref(tree)?,
+                    what: self.rref(what)?,
+                    rank: *rank,
+                })
+            }
+            // An unresolved branch label skips the line.
+            InputCmd::TraitBranch { tree, branch } => {
+                Command::Progression(ProgressionCommand::ChooseTraitBranch {
+                    tree: self.rref(tree)?,
+                    branch: self.sc.enum_value(*branch)?,
+                })
+            }
             InputCmd::CreateCharacter {
                 name,
                 class,

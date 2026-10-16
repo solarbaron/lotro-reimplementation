@@ -1581,6 +1581,36 @@ fn skill_values(
     .unwrap_or((None, None)))
 }
 
+/// The apartment's `SkillInfo` object of `key` (`None`: the placeholder), one per skill
+/// reference per apartment, made with `data` as its last-seen values (§15.2 "Skills"; also
+/// the `UntrainedSkill` objects of §15.6).
+pub(crate) fn skill_info_object(
+    lua: &Lua,
+    key: Option<SkillKey>,
+    data: Option<Arc<SkillData>>,
+) -> mlua::Result<Table> {
+    let infos: Table = lua.named_registry_value(SKILL_INFOS_KEY)?;
+    let rkey = skill_registry_key(key.as_ref());
+    if let Value::Table(t) = infos.raw_get::<Value>(rkey.as_str())? {
+        if let Some(data) = data {
+            with_payload(lua, &t, |p: &SkillObj| *lock(&p.last) = Some(data))?;
+        }
+        return Ok(t);
+    }
+    let t = new_object(
+        lua,
+        &class(lua, "SkillInfo")?,
+        Payload(Arc::new(SkillObj {
+            key,
+            created: 0,
+            last: Mutex::new(data),
+            _watch: None,
+        })),
+    )?;
+    infos.raw_set(rkey, t.clone())?;
+    Ok(t)
+}
+
 /// `LocalPlayer:GetTrainedSkills()`: one `SkillList` per apartment.
 pub(crate) fn trained_skills(lua: &Lua, ctx: &ApartmentCtx) -> mlua::Result<Table> {
     if let Value::Table(t) = lua.named_registry_value::<Value>(TRAINED_KEY)? {
@@ -1796,28 +1826,11 @@ fn install_effect(lua: &Lua, ctx: &Arc<ApartmentCtx>, effect: &Table) -> mlua::R
 fn install_skills(lua: &Lua, ctx: &Arc<ApartmentCtx>, classes: &Classes<'_>) -> mlua::Result<()> {
     // Skill:GetSkillInfo(): one SkillInfo per skill reference per apartment.
     let c = Arc::clone(ctx);
-    let info_class = classes.skill_info.clone();
     classes.skill.raw_set(
         "GetSkillInfo",
         api_fn(lua, "GetSkillInfo", move |lua, this: Table| {
             let (key, data) = skill_values(lua, &c, &this)?;
-            let infos: Table = lua.named_registry_value(SKILL_INFOS_KEY)?;
-            let rkey = skill_registry_key(key.as_ref());
-            if let Value::Table(t) = infos.raw_get::<Value>(rkey.as_str())? {
-                return Ok(t);
-            }
-            let t = new_object(
-                lua,
-                &info_class,
-                Payload(Arc::new(SkillObj {
-                    key,
-                    created: 0,
-                    last: Mutex::new(data),
-                    _watch: None,
-                })),
-            )?;
-            infos.raw_set(rkey, t.clone())?;
-            Ok(t)
+            skill_info_object(lua, key, data)
         })?,
     )?;
 

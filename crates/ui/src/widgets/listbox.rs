@@ -96,15 +96,28 @@ impl Ui {
     }
 
     /// Removes every entry of a list box and destroys them in one batch
-    /// ([`Ui::destroy_many`]), then lays the list out once.
+    /// ([`Ui::destroy_many`]), then lays the list out once. A Tree drops all its nodes at
+    /// once and destroys their icon parts in the same batch (removing the nodes one entry
+    /// at a time would re-parent and re-apply the remaining nodes per entry, O(*n*²)).
     pub fn list_clear(&mut self, list: ElementKey) {
-        let entries = match self.el_mut(list).and_then(|e| e.widget.list.as_mut()) {
-            Some(l) => {
-                l.dirty = true;
-                std::mem::take(&mut l.entries)
-            }
+        let (mut entries, nodes) = match self.el_mut(list) {
+            Some(e) => match e.widget.list.as_mut() {
+                Some(l) => {
+                    l.dirty = true;
+                    let entries = std::mem::take(&mut l.entries);
+                    let nodes = e
+                        .widget
+                        .tree
+                        .as_mut()
+                        .map(|t| std::mem::take(&mut t.nodes))
+                        .unwrap_or_default();
+                    (entries, nodes)
+                }
+                None => return,
+            },
             None => return,
         };
+        entries.extend(nodes.into_iter().filter_map(|n| n.icon));
         self.destroy_many(&entries);
         self.list_layout_if_dirty(list);
     }
@@ -795,6 +808,109 @@ impl Ui {
         let p = self.v.pids;
         self.set_property(tree, p.lb_click_select, PropertyValue::Bool(true));
         self.set_property(tree, p.lb_only_visible, PropertyValue::Bool(true));
+    }
+
+    /// Whether the node of `entry` in `tree` is expanded; `None` when `entry` has no node.
+    #[must_use]
+    pub fn tree_expanded(&self, tree: ElementKey, entry: ElementKey) -> Option<bool> {
+        self.el(tree)
+            .and_then(|e| e.widget.tree.as_ref())
+            .and_then(|t| t.nodes.iter().find(|n| n.entry == entry))
+            .map(|n| n.expanded)
+    }
+
+    /// Appends several entries to a Tree as [`Ui::list_add`] does, each a node under its
+    /// parent entry (a top-level node when `None` or when the parent has no node) with the
+    /// given expanded flag, laying the tree out once at the end. A node under a collapsed
+    /// or hidden parent starts hidden; parents must come before their children. An entry
+    /// that already has a node keeps it. Stops at the first entry that cannot be added and
+    /// returns how many were added with that error; entries after it are untouched.
+    ///
+    /// # Errors
+    /// `(added, error)`: [`UiError::NotAList`] (a list box that is not a Tree),
+    /// [`UiError::Full`] or an attachment error.
+    pub fn tree_add_many(
+        &mut self,
+        tree: ElementKey,
+        nodes: &[(ElementKey, Option<ElementKey>, bool)],
+    ) -> Result<(), (usize, UiError)> {
+        let p = self.v.pids;
+        let (mut present, mut known): (HashSet<ElementKey>, HashMap<ElementKey, bool>) =
+            match self.el(tree) {
+                Some(e) => match (e.widget.list.as_ref(), e.widget.tree.as_ref()) {
+                    (Some(l), Some(t)) => (
+                        l.entries.iter().copied().collect(),
+                        t.nodes.iter().map(|n| (n.entry, n.expanded)).collect(),
+                    ),
+                    _ => return Err((0, UiError::NotAList)),
+                },
+                None => return Err((0, UiError::NotAList)),
+            };
+        let indent_id = self.prop(tree, p.tree_indent_element).key();
+        let icon_layout = self.prop(tree, p.tree_icon_layout).key();
+        let icon_id = self.prop(tree, p.tree_icon_id).key();
+        let mut result = Ok(());
+        for (i, &(entry, parent, expanded)) in nodes.iter().enumerate() {
+            if present.len() >= MAX_ENTRIES && !present.contains(&entry) {
+                result = Err((i, UiError::Full));
+                break;
+            }
+            if self.parent(entry) != Some(tree)
+                && let Err(e) = self.attach_raw(entry, tree)
+            {
+                result = Err((i, e));
+                break;
+            }
+            if present.insert(entry)
+                && let Some(l) = self.el_mut(tree).and_then(|e| e.widget.list.as_mut())
+            {
+                l.entries.push(entry);
+                l.dirty = true;
+            }
+            if known.contains_key(&entry) {
+                continue;
+            }
+            let parent = parent.filter(|pe| *pe != entry && known.contains_key(pe));
+            let indent = (indent_id != 0)
+                .then(|| self.find_child(entry, indent_id))
+                .flatten();
+            let icon = if icon_layout != 0 && icon_id != 0 {
+                self.create_element(Some(tree), Did(icon_layout), icon_id)
+                    .ok()
+            } else {
+                None
+            };
+            if let Some(t) = self.el_mut(tree).and_then(|e| e.widget.tree.as_mut()) {
+                t.nodes.push(TreeNode {
+                    entry,
+                    parent,
+                    expanded,
+                    icon,
+                    indent,
+                });
+            }
+            known.insert(entry, expanded);
+            if let Some(ic) = icon {
+                let st = if expanded {
+                    self.v.states.open
+                } else {
+                    self.v.states.closed
+                };
+                self.request_state(ic, st);
+            }
+            if let Some(pe) = parent {
+                let show = known.get(&pe).copied().unwrap_or(false) && self.is_visible(pe);
+                self.set_shown(entry, show);
+                if let Some(ic) = icon {
+                    self.set_shown(ic, show);
+                }
+            }
+        }
+        if let Some(l) = self.el_mut(tree).and_then(|e| e.widget.list.as_mut()) {
+            l.dirty = true;
+        }
+        self.list_layout_if_dirty(tree);
+        result
     }
 }
 

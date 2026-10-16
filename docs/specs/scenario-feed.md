@@ -4,11 +4,11 @@
 
 | | |
 |---|---|
-| **Status** | **Accepted** for the parts changed by revision 9 (independent review 2026-10-14 of commit bf41c0b: CLEAN_ROOM.md §5.3 passed, every item; §9.7 items 1 and 7, the §14.9 preamble and invariant 11 agree with follow-ups (a)–(c) of §18.4.1 and with the `crates/net` remote backend on main; non-blocking notes (a)–(b) in the header review record). Before: Revised for the parts changed by revision 9 (2026-10-14, spec writer, design: §9.7 items 1 and 7 and the answered §9.7 implementer OPEN, the §14.9 preamble for O8, §15 invariant 11 wording; follow-ups (a)–(c) of the review in §18.4.1; no implemented behaviour changes; awaiting review, see §17). Every other part keeps the status that follows. **Accepted** for the parts labelled "P5 travel" (revision 8: independent review 2026-10-11, CLEAN_ROOM.md §5.3 passed, every item; record in §18.P5); every other part keeps the status that follows. **Accepted** (revision 7, the P4 social parts of §18.5: independent review 2026-10-11, CLEAN_ROOM.md §5.3 passed, every item; H1–H6 agree with decision 0035 D2–D4, `tessera-protocol.md` v1.2 §10.6 and Appendix A, and the code on branch `p4`; Vector H re-derived line by line, the 8 hostile rows checked; non-blocking notes (a)–(c) in §18.5; written as the unnumbered "P4 social" revision and numbered 7 at the merge with P2 and P3, 2026-10-11). **Accepted** (revision 6, the P2 parts of §18.4: independent review 2026-10-11 of commit 7b14f27, CLEAN_ROOM.md §5.3 passed, every item; D1–D4 agree with decision 0032, LEGAL.md §11.1 rule 5 and decision 0024 §2; record in §18.4.1). **Accepted** (revision 5, the P3 parts of §18.P3: independent review 2026-10-11, CLEAN_ROOM.md §5.3 passed, every item; record in §18.P3). Before: Review (revision 7, "P4 social", 2026-10-11, spec writer, design, [decision 0035](../decisions/0035-p4-social-on-test-server.md) D2–D4, additive, §18.5: synchronised performances (`perform … sync`, `perform-start`, `perform-withdraw`), fellow vitals (`fellow-vital`), the commands `ReadyPerformance`, `StartPerformance`, `DisbandFellowship`, the remote backend at protocol minor 2 (§9.8), the plain sandbox's start answer, Vector H, P4 hostile and backend cases; no section renumbered, no earlier rule changed; an independent review must follow). Before: **Review** (revision 6, the P2 parts of §18.4, 2026-10-10, spec writer, design: [decision 0032](../decisions/0032-p2-targeting-on-test-server.md) D1–D4: local selection on the test-server backend, §9.5, §9.7, §12.5.1, §12.5.2, §14.9, §14.11, §15; an independent review by a session that wrote no part of revision 6 or of decision 0032 must check the changes listed in §18.4 and the cases of §14.9 and §14.11; P2's revision was written as revision 5 and renumbered 6 at the merge with P3, 2026-10-11). Before: **Accepted** (revision 4, independent review 2026-10-10: CLEAN_ROOM.md §5.3 passed, every item; D1–D5 agree with decision 0025, `tessera-protocol.md` v1.1 §6.2.17 and Appendix A, and the code on branch `p1`; Vector G and Vector F's changed lines re-derived, the 15 new hostile rows checked; non-blocking notes (a)–(f) in §18.3). Before: Review (revision 4, 2026-10-10, spec writer, design: [decision 0025](../decisions/0025-p1-character-look-on-test-server.md) D1–D5, §18.3; an independent review by a session that wrote no part of revision 4 must check the changes listed there, Vectors F and G and the new hostile rows). Before: Accepted (revision 3, 2026-10-09). An independent review by a session that wrote none of revisions 1–3 re-checked R1–R31, S1–S31, Vectors A–F and the hostile table and passed (P0 exit criterion 1); no blocking OPEN. The non-blocking OPENs of §3.1, §8.3, §11.1, §12.4, §13 and §16 stay open for the spec owner; the reviewer's rulings on them are review notes in the review record and change no fact |
-| **Last updated** | 2026-10-14
+| **Status** | **Accepted** for the parts labelled "P6 progression" (independent review 2026-10-16, CLEAN_ROOM.md §5.3 passed, every item; P6-D1–P6-D11 agree with decision 0024 §2 and §4 (client half only, values scripted and never derived) and LEGAL.md §11.1 rule 5; Vectors P6-V1, P6-V2 and resolver case P6-V3 and the 18 hostile rows re-derived, the M1 counts spot-checked against the owner's install; the review session wrote no part of the P6 revision or the P6 code; written as the unnumbered "P6 progression" revision, numbered at the merge; record in §18.P6); e**Accepted** for the parts changed by revision 9 (independent review 2026-10-14 of commit bf41c0b: CLEAN_ROOM.md §5.3 passed, every item; §9.7 items 1 and 7, the §14.9 preamble and invariant 11 agree with follow-ups (a)–(c) of §18.4.1 and with the `crates/net` remote backend on main; non-blocking notes (a)–(b) in the header review record). Before: Revised for the parts changed by revision 9 (2026-10-14, spec writer, design: §9.7 items 1 and 7 and the answered §9.7 implementer OPEN, the §14.9 preamble for O8, §15 invariant 11 wording; follow-ups (a)–(c) of the review in §18.4.1; no implemented behaviour changes; awaiting review, see §17). Every other part keeps the status that follows. **Accepted** for the parts labelled "P5 travel" (revision 8: independent review 2026-10-11, CLEAN_ROOM.md §5.3 passed, every item; record in §18.P5); every other part keeps the status that follows. **Accepted** (revision 7, the P4 social parts of §18.5: independent review 2026-10-11, CLEAN_ROOM.md §5.3 passed, every item; H1–H6 agree with decision 0035 D2–D4, `tessera-protocol.md` v1.2 §10.6 and Appendix A, and the code on branch `p4`; Vector H re-derived line by line, the 8 hostile rows checked; non-blocking notes (a)–(c) in §18.5; written as the unnumbered "P4 social" revision and numbered 7 at the merge with P2 and P3, 2026-10-11). **Accepted** (revision 6, the P2 parts of §18.4: independent review 2026-10-11 of commit 7b14f27, CLEAN_ROOM.md §5.3 passed, every item; D1–D4 agree with decision 0032, LEGAL.md §11.1 rule 5 and decision 0024 §2; record in §18.4.1). **Accepted** (revision 5, the P3 parts of §18.P3: independent review 2026-10-11, CLEAN_ROOM.md §5.3 passed, every item; record in §18.P3). Before: Review (revision 7, "P4 social", 2026-10-11, spec writer, design, [decision 0035](../decisions/0035-p4-social-on-test-server.md) D2–D4, additive, §18.5: synchronised performances (`perform … sync`, `perform-start`, `perform-withdraw`), fellow vitals (`fellow-vital`), the commands `ReadyPerformance`, `StartPerformance`, `DisbandFellowship`, the remote backend at protocol minor 2 (§9.8), the plain sandbox's start answer, Vector H, P4 hostile and backend cases; no section renumbered, no earlier rule changed; an independent review must follow). Before: **Review** (revision 6, the P2 parts of §18.4, 2026-10-10, spec writer, design: [decision 0032](../decisions/0032-p2-targeting-on-test-server.md) D1–D4: local selection on the test-server backend, §9.5, §9.7, §12.5.1, §12.5.2, §14.9, §14.11, §15; an independent review by a session that wrote no part of revision 6 or of decision 0032 must check the changes listed in §18.4 and the cases of §14.9 and §14.11; P2's revision was written as revision 5 and renumbered 6 at the merge with P3, 2026-10-11). Before: **Accepted** (revision 4, independent review 2026-10-10: CLEAN_ROOM.md §5.3 passed, every item; D1–D5 agree with decision 0025, `tessera-protocol.md` v1.1 §6.2.17 and Appendix A, and the code on branch `p1`; Vector G and Vector F's changed lines re-derived, the 15 new hostile rows checked; non-blocking notes (a)–(f) in §18.3). Before: Review (revision 4, 2026-10-10, spec writer, design: [decision 0025](../decisions/0025-p1-character-look-on-test-server.md) D1–D5, §18.3; an independent review by a session that wrote no part of revision 4 must check the changes listed there, Vectors F and G and the new hostile rows). Before: Accepted (revision 3, 2026-10-09). An independent review by a session that wrote none of revisions 1–3 re-checked R1–R31, S1–S31, Vectors A–F and the hostile table and passed (P0 exit criterion 1); no blocking OPEN. The non-blocking OPENs of §3.1, §8.3, §11.1, §12.4, §13 and §16 stay open for the spec owner; the reviewer's rulings on them are review notes in the review record and change no fact |
+| **Last updated** | 2026-10-16
 | **Author role** | Spec writer (design) |
 | **Reviewer** | Revision 2: spec reviewer (Clean-Room-Role: review), a session separate from the first-draft author, 2026-10-09; it also wrote R1–R31, so those fixes are unreviewed. Revision 3: pending (an independent session). Revision 4: a Claude review session in the spec-reviewer role (Clean-Room-Role: review) that wrote no part of decision 0025, of the P1 revisions of `scenario-feed.md`, `tessera-protocol.md`, `test-server.md` and `server-content.md`, or of the code, 2026-10-10 (passed, §18.3). Revision 5 (P3 parts): a Claude review session in the spec-reviewer role (Clean-Room-Role: review) that wrote no part of the P3 revision, of `npc-windows.md` or of the P3 code, 2026-10-11 (passed, §18.P3). Revision 6 (P2 parts): a Claude review session in the spec-reviewer role (Clean-Room-Role: review) that wrote no part of revision 6, of decision 0032, of the other P2 specs or of the P2 code, 2026-10-11 (passed, §18.4.1). Revision 7 ("P4 social" parts): a Claude review session in the spec-reviewer role (Clean-Room-Role: review) that wrote no part of decision 0035, of the P4 revisions of `tessera-protocol.md`, `test-server.md` or `scenario-feed.md`, or of the code, 2026-10-11 (passed, §18.5) Revision 8 (P5 travel parts): a Claude review session in the spec-reviewer role (Clean-Room-Role: review) that wrote no part of the P5 revision or the P5 code, 2026-10-11 (passed, §18.P5). Revision 9: a Claude review session in the spec-reviewer role (Clean-Room-Role: review) that wrote no part of revision 9 or of the code, 2026-10-14 (passed, header review record). |
-| **Review record** | 2026-10-14 (revision 9 parts: §9.7 items 1 and 7 and the Answered callout, the §14.9 preamble, §15 invariant 11; commit bf41c0b, `git show bf41c0b` of this file): independent review by a Claude session in the spec-reviewer role (Clean-Room-Role: review) that wrote no part of revision 9 or of the code, against CLEAN_ROOM.md §5.3 and follow-ups (a)–(c) of §18.4.1: **passed, every item**. Every new statement is a functional fact of Tessera's own backend and test design (which stream item 1 and invariant 11 are read on, what happens to a pending answer at the end of the session, which double each overlay case runs on); no code or pseudo-code; no copied prose; no game text, keys, hostnames or captures; no Confirmed or BIN fact, so no install probe or decompiler session was needed; no protocol or server change; nothing under a closed gate. Checked, reading `crates/net` on main (e9ed7bb) only to compare: (1) item 1 and the Answered callout restate ruling (b) of §18.4.1 (the backend does not repeat `Session`'s checks; "static 900" a label; R8 through `InterestReset`). (2) Item 7: the remote mapper's end of session clears the pending selection answer with every other entity state and refuses a later `SelectTarget`; each poll moves the pending answer out before it maps anything received, so an answer pending at the start of the poll that maps the end precedes `Disconnected`; nothing is delivered after the backend is dropped. This is note (c), stated as the code behaves. (3) The §14.9 preamble now names the double for each case: O1–O7 and O10–O12 the backend double, O8's `SelectTarget` part the real backend over a server double (the conformance test `o8_overlay_routes_selection_to_the_local_answer` in `remote_selection` is built that way), O9 `tessera-server` in process, as its row says; note (a) is done. (4) Invariant 11's new wording matches items 1 and 7. Non-blocking, for a later revision: (a) item 7 has no conformance row of its own in §14.11; a case R11 (select a known target, then map the end in the same poll, and select again after it) would make "dropped" and "accepts no `SelectTarget`" testable. (b) Item 7 says the backend "accepts no `SelectTarget`" after the end; `Session` refuses it first with `InvalidState` (item 6), and a backend driven directly refuses it with `InvalidCommand`; naming the error would settle the direct case. Earlier: 2026-10-11 (P5 travel parts, T-D1 … T-D10): independent review by a session that wrote no part of the P5 revision or the P5 code, against CLEAN_ROOM.md §5.3, decision 0024 §2 and §4 (client half only; values scripted, never derived) and LEGAL.md §11.1 rule 5: **passed, every item**. Every P5 statement is a functional fact of Tessera's own feed format (step keywords, options, event fields with types and ranges, log forms, limits) or an install-derived reference marked for its source; no code or pseudo-code (the scenario and log blocks are Tessera's own text format, the braces name event fields as §9 does); API, event, property and label names are interoperability identifiers; all vector text is invented (§14.T3 notes this), no game strings, assets, keys, hostnames or captures; nothing runs in or is linked by `tessera-server` (no protocol minor); no gate touched. Provenance "Design" is this own-format spec's convention (as in revisions 4 and 5); the one install-derived claim (the four dictionary names `MapNote_Type`, `FellowshipMakerUI_GroupSize`, `FellowshipMakerUI_DifficultyTier`, `Mount_Type` with their kinds) carries an inline M1 mark. Spot-checks (read-only, 2026-10-13): the four dictionary names and the enum mappers are used by `crates/gamedata` and `crates/net` selector resolution over the install (passing P5 real-data tests), and `MapNote_Type`/`Mount_Type` are decoded as bitfields in `crates/formats`, corroborating the M1 claim; the cross-referenced mount facts (status mapper 0x230002C9, war-steed bit 0x38, vital mapper 0x23000003) were confirmed against the `lua-plugin-api.md` §15.5 BIN pass reviewed in parallel. Vectors T1–T3 and the ranges of the hostile rows are internally consistent with the §6.5, §9, §10.3, §11.1 and §13 rules. **Rulings on the P5 OPENs** (review notes, not facts): the numeric-enum-key question (§16) is the same owner policy already open for P1–P3, non-blocking; `MountChanged.combat` as a Tessera field (§16) and the implementer's seven conservative-implementation points are endorsed as implemented and left for the spec owner. **Dependency note (non-blocking):** the `map-region` family (§8.3) and the `MapNoteType`/`GroupSize`/`DifficultyTier` contexts (§8.6) reference `map-windows.md` §5/§6.7/§7.2 and `travel-windows.md` §6.4, both still in Review under other reviewers; acceptance here follows the P3 precedent (revision 5 accepted while `npc-windows.md` was in Review) and the §8.3 note that the row "stands until that spec is Accepted"; if a sibling review changes those definitions, §8.3/§8.6 must be re-checked. 2026-10-11 (revision 7, "P4 social" parts): independent review against CLEAN_ROOM.md §5.3, decision 0035 D1–D4, decision 0024 §2 and LEGAL.md §11.1 rule 5: **passed**; the record is in §18.5. 2026-10-11 (revision 6, P2 parts D1–D4, commit 7b14f27): independent review against CLEAN_ROOM.md §5.3, decision 0032 D1–D4, LEGAL.md §11.1 rule 5, decision 0024 §2 and §0 item 3: **passed**; §14.9 O8, O10–O12 and §14.11 R1–R10 re-derived, invariant 11 checked; non-blocking notes (a)–(e); the record is in §18.4.1. 2026-10-11 (revision 5, P3 parts N-D1 … N-D4): independent review against CLEAN_ROOM.md §5.3 and `npc-windows.md` §5.3, §6.3, §7.8, §10: **passed**; the record is in §18.P3. 2026-10-10 (revision 4): independent review against CLEAN_ROOM.md §5.3, decision 0025 D1–D5, decision 0024 §2 and §4 and LEGAL.md §11.1 rule 5: **passed**; the record is in §18.3. Earlier: 2026-10-09 (revision 2), review against decision 0024 §2 and §4, LEGAL.md §11.1 rule 5, the CLAUDE.md content rules, ARCHITECTURE §19.1, the `tessera-net` API (`session.rs`, `model.rs`, `sandbox/mod.rs`) and every spec and decoder view cited in §8.3. 31 findings (R1–R31), all design defects fixed in this revision by the reviewer (allowed: the spec holds design facts only); no client fact was added. Every selector attribute was confirmed against an Accepted spec and, where named, its decoder view. Findings, fixes and the remaining non-blocking OPENs: §18.1. Revision 3 (spec owner, design role, 2026-10-09): 31 implementation-phase findings verified against this text and the `tessera-net` and client sources (§18.2: S1–S31): all real, 29 fixed, S12 accepted as a stated gap, the policy part of S24 recorded as an OPEN. Revision 3 independent review (spec reviewer, Clean-Room-Role: review, 2026-10-09; a session that wrote none of revisions 1–3 and no code): checked against `docs/CLEAN_ROOM.md` §5.3, decision 0024 §2 (client half only, data-free server, game rules stay T3) and §4 (values scripted, never derived), LEGAL.md §11.1 rule 5, the CLAUDE.md content rules, ARCHITECTURE §19.1 (every §9 variant listed; groups, session rules and the test-server refusals match) and the cited specs (all Accepted except `server-content.md`, Draft, from which the feed takes nothing LEGAL.md §11.1 does not state itself). Every §8.3 family and attribute was traced to its Accepted spec section and property name and to the named decoder view in `crates/formats` and `crates/wstate` (`ItemKind`'s 15 variants are the 15 keywords; `EffectRole`, `TemplateKind`, `MapKind`, `Role` variants exist as cited). R1–R31 and S1–S31: each fix is present and consistent with the rest of the text. Vectors: the SplitMix64 outputs, the seven samples and the trace of §14.3 were recomputed with a throwaway script and agree; Vectors A, B, D, E and F were re-derived line by line (times, event order, field order and formats, window and item ids, skips, drops, end times; facing 359.999 round-trips to 359.99899, written `0.00`) and agree; all 45 hostile rows agree with the grammar, the error order and the position rules; the implementation's vector tests agree (supporting evidence only). Result: **pass**. Rulings on the implementer OPENs (review notes, not facts; the spec owner writes them into the text at the next revision): §3.1 guard (1) agreed: the exception "`tessera-net` without `scenario`" cannot hold under cargo feature unification, drop it from the allow list; (2) and (3) confirmed (dev-dependencies are server builds; in-process server hosts such as `tessera-loadtest` are server builds and may link `tessera-net` only because `tessera-server` itself does not). §3.1 module naming: the `selector` module named in the placement table is placement, not an interface; `tessera-gamedata` exposing its selector types at the crate root conforms. §11.1 log size: non-blocking; a bound is recommended (for example 256 MiB with a run-time `LogOverflow`, exit 5), because a hostile local file within every limit can still write a very large log; until then the USER_GUIDE warning suffices. §12.4 (1) the unplayed windowed input script is an accepted P0 gap (windowed logs are not normative), refusing a windowed run whose `enter` needs an `accept-character` name (exit 2) is acceptable, and the proposed public input player in `tessera_net::scenario` is endorsed; (2) driver-only headless runs with an install, an exact or default spawn and no `--screenshot` are acceptable; (3) "the client's configured `avatar`" means the avatar the client actually configures for the sandbox: none in a driver-only run, which need not load the catalog for it; (4) exit 2 for a missing or non-regular `--scenario` path and 1 for an unreadable file are consistent with the exit table and should be added to it; (5) an install the user named that cannot be used exits 4 with `InstallUnreadable`: agreed (§8.7 covers only "no install found"). §13 (a) align rule 1 with `apps/client/tests/scenarios/`, where the replay test reads them; (b) keep "(or CC0-1.0)" (LEGAL.md §11.1 rule 7 and the CLAUDE.md fixture rule allow CC0) and widen the content test; a GPL-only test is stricter than the spec, not a violation. §16 `tessera-net` points: (1) `shared` in both `ItemPlace` and `ContainerSize` (the §10.3 example and the file keyword win over the general enum rule); (2)–(18) confirmed as implemented. §16 `tessera-gamedata` points (1)–(10) confirmed; for (5), keys 1–64 map to bits 0–63 (`property-system.md` §7.3), so a key above 64 matching nothing is right; for (7), `appearance.md` §2.1 (Accepted) states the two gender values, so using them with the per-install presence check is allowed. The owner-policy OPEN on numeric enum keys (§16) and the later-milestone OPENs (§8.3, §16) stay non-blocking. |
+| **Review record** | 2026-10-16 ("P6 progression" parts, P6-D1 … P6-D11): independent review by a session that wrote no part of the P6 revision or the P6 code, against CLEAN_ROOM.md §5.3, decision 0024 §2 and §4 (client half only; values scripted, never derived) and LEGAL.md §11.1 rule 5: **passed, every item**; the record is in §18.P6.2026-10-14 (revision 9 parts: §9.7 items 1 and 7 and the Answered callout, the §14.9 preamble, §15 invariant 11; commit bf41c0b, `git show bf41c0b` of this file): independent review by a Claude session in the spec-reviewer role (Clean-Room-Role: review) that wrote no part of revision 9 or of the code, against CLEAN_ROOM.md §5.3 and follow-ups (a)–(c) of §18.4.1: **passed, every item**. Every new statement is a functional fact of Tessera's own backend and test design (which stream item 1 and invariant 11 are read on, what happens to a pending answer at the end of the session, which double each overlay case runs on); no code or pseudo-code; no copied prose; no game text, keys, hostnames or captures; no Confirmed or BIN fact, so no install probe or decompiler session was needed; no protocol or server change; nothing under a closed gate. Checked, reading `crates/net` on main (e9ed7bb) only to compare: (1) item 1 and the Answered callout restate ruling (b) of §18.4.1 (the backend does not repeat `Session`'s checks; "static 900" a label; R8 through `InterestReset`). (2) Item 7: the remote mapper's end of session clears the pending selection answer with every other entity state and refuses a later `SelectTarget`; each poll moves the pending answer out before it maps anything received, so an answer pending at the start of the poll that maps the end precedes `Disconnected`; nothing is delivered after the backend is dropped. This is note (c), stated as the code behaves. (3) The §14.9 preamble now names the double for each case: O1–O7 and O10–O12 the backend double, O8's `SelectTarget` part the real backend over a server double (the conformance test `o8_overlay_routes_selection_to_the_local_answer` in `remote_selection` is built that way), O9 `tessera-server` in process, as its row says; note (a) is done. (4) Invariant 11's new wording matches items 1 and 7. Non-blocking, for a later revision: (a) item 7 has no conformance row of its own in §14.11; a case R11 (select a known target, then map the end in the same poll, and select again after it) would make "dropped" and "accepts no `SelectTarget`" testable. (b) Item 7 says the backend "accepts no `SelectTarget`" after the end; `Session` refuses it first with `InvalidState` (item 6), and a backend driven directly refuses it with `InvalidCommand`; naming the error would settle the direct case. Earlier: 2026-10-11 (P5 travel parts, T-D1 … T-D10): independent review by a session that wrote no part of the P5 revision or the P5 code, against CLEAN_ROOM.md §5.3, decision 0024 §2 and §4 (client half only; values scripted, never derived) and LEGAL.md §11.1 rule 5: **passed, every item**. Every P5 statement is a functional fact of Tessera's own feed format (step keywords, options, event fields with types and ranges, log forms, limits) or an install-derived reference marked for its source; no code or pseudo-code (the scenario and log blocks are Tessera's own text format, the braces name event fields as §9 does); API, event, property and label names are interoperability identifiers; all vector text is invented (§14.T3 notes this), no game strings, assets, keys, hostnames or captures; nothing runs in or is linked by `tessera-server` (no protocol minor); no gate touched. Provenance "Design" is this own-format spec's convention (as in revisions 4 and 5); the one install-derived claim (the four dictionary names `MapNote_Type`, `FellowshipMakerUI_GroupSize`, `FellowshipMakerUI_DifficultyTier`, `Mount_Type` with their kinds) carries an inline M1 mark. Spot-checks (read-only, 2026-10-13): the four dictionary names and the enum mappers are used by `crates/gamedata` and `crates/net` selector resolution over the install (passing P5 real-data tests), and `MapNote_Type`/`Mount_Type` are decoded as bitfields in `crates/formats`, corroborating the M1 claim; the cross-referenced mount facts (status mapper 0x230002C9, war-steed bit 0x38, vital mapper 0x23000003) were confirmed against the `lua-plugin-api.md` §15.5 BIN pass reviewed in parallel. Vectors T1–T3 and the ranges of the hostile rows are internally consistent with the §6.5, §9, §10.3, §11.1 and §13 rules. **Rulings on the P5 OPENs** (review notes, not facts): the numeric-enum-key question (§16) is the same owner policy already open for P1–P3, non-blocking; `MountChanged.combat` as a Tessera field (§16) and the implementer's seven conservative-implementation points are endorsed as implemented and left for the spec owner. **Dependency note (non-blocking):** the `map-region` family (§8.3) and the `MapNoteType`/`GroupSize`/`DifficultyTier` contexts (§8.6) reference `map-windows.md` §5/§6.7/§7.2 and `travel-windows.md` §6.4, both still in Review under other reviewers; acceptance here follows the P3 precedent (revision 5 accepted while `npc-windows.md` was in Review) and the §8.3 note that the row "stands until that spec is Accepted"; if a sibling review changes those definitions, §8.3/§8.6 must be re-checked. 2026-10-11 (revision 7, "P4 social" parts): independent review against CLEAN_ROOM.md §5.3, decision 0035 D1–D4, decision 0024 §2 and LEGAL.md §11.1 rule 5: **passed**; the record is in §18.5. 2026-10-11 (revision 6, P2 parts D1–D4, commit 7b14f27): independent review against CLEAN_ROOM.md §5.3, decision 0032 D1–D4, LEGAL.md §11.1 rule 5, decision 0024 §2 and §0 item 3: **passed**; §14.9 O8, O10–O12 and §14.11 R1–R10 re-derived, invariant 11 checked; non-blocking notes (a)–(e); the record is in §18.4.1. 2026-10-11 (revision 5, P3 parts N-D1 … N-D4): independent review against CLEAN_ROOM.md §5.3 and `npc-windows.md` §5.3, §6.3, §7.8, §10: **passed**; the record is in §18.P3. 2026-10-10 (revision 4): independent review against CLEAN_ROOM.md §5.3, decision 0025 D1–D5, decision 0024 §2 and §4 and LEGAL.md §11.1 rule 5: **passed**; the record is in §18.3. Earlier: 2026-10-09 (revision 2), review against decision 0024 §2 and §4, LEGAL.md §11.1 rule 5, the CLAUDE.md content rules, ARCHITECTURE §19.1, the `tessera-net` API (`session.rs`, `model.rs`, `sandbox/mod.rs`) and every spec and decoder view cited in §8.3. 31 findings (R1–R31), all design defects fixed in this revision by the reviewer (allowed: the spec holds design facts only); no client fact was added. Every selector attribute was confirmed against an Accepted spec and, where named, its decoder view. Findings, fixes and the remaining non-blocking OPENs: §18.1. Revision 3 (spec owner, design role, 2026-10-09): 31 implementation-phase findings verified against this text and the `tessera-net` and client sources (§18.2: S1–S31): all real, 29 fixed, S12 accepted as a stated gap, the policy part of S24 recorded as an OPEN. Revision 3 independent review (spec reviewer, Clean-Room-Role: review, 2026-10-09; a session that wrote none of revisions 1–3 and no code): checked against `docs/CLEAN_ROOM.md` §5.3, decision 0024 §2 (client half only, data-free server, game rules stay T3) and §4 (values scripted, never derived), LEGAL.md §11.1 rule 5, the CLAUDE.md content rules, ARCHITECTURE §19.1 (every §9 variant listed; groups, session rules and the test-server refusals match) and the cited specs (all Accepted except `server-content.md`, Draft, from which the feed takes nothing LEGAL.md §11.1 does not state itself). Every §8.3 family and attribute was traced to its Accepted spec section and property name and to the named decoder view in `crates/formats` and `crates/wstate` (`ItemKind`'s 15 variants are the 15 keywords; `EffectRole`, `TemplateKind`, `MapKind`, `Role` variants exist as cited). R1–R31 and S1–S31: each fix is present and consistent with the rest of the text. Vectors: the SplitMix64 outputs, the seven samples and the trace of §14.3 were recomputed with a throwaway script and agree; Vectors A, B, D, E and F were re-derived line by line (times, event order, field order and formats, window and item ids, skips, drops, end times; facing 359.999 round-trips to 359.99899, written `0.00`) and agree; all 45 hostile rows agree with the grammar, the error order and the position rules; the implementation's vector tests agree (supporting evidence only). Result: **pass**. Rulings on the implementer OPENs (review notes, not facts; the spec owner writes them into the text at the next revision): §3.1 guard (1) agreed: the exception "`tessera-net` without `scenario`" cannot hold under cargo feature unification, drop it from the allow list; (2) and (3) confirmed (dev-dependencies are server builds; in-process server hosts such as `tessera-loadtest` are server builds and may link `tessera-net` only because `tessera-server` itself does not). §3.1 module naming: the `selector` module named in the placement table is placement, not an interface; `tessera-gamedata` exposing its selector types at the crate root conforms. §11.1 log size: non-blocking; a bound is recommended (for example 256 MiB with a run-time `LogOverflow`, exit 5), because a hostile local file within every limit can still write a very large log; until then the USER_GUIDE warning suffices. §12.4 (1) the unplayed windowed input script is an accepted P0 gap (windowed logs are not normative), refusing a windowed run whose `enter` needs an `accept-character` name (exit 2) is acceptable, and the proposed public input player in `tessera_net::scenario` is endorsed; (2) driver-only headless runs with an install, an exact or default spawn and no `--screenshot` are acceptable; (3) "the client's configured `avatar`" means the avatar the client actually configures for the sandbox: none in a driver-only run, which need not load the catalog for it; (4) exit 2 for a missing or non-regular `--scenario` path and 1 for an unreadable file are consistent with the exit table and should be added to it; (5) an install the user named that cannot be used exits 4 with `InstallUnreadable`: agreed (§8.7 covers only "no install found"). §13 (a) align rule 1 with `apps/client/tests/scenarios/`, where the replay test reads them; (b) keep "(or CC0-1.0)" (LEGAL.md §11.1 rule 7 and the CLAUDE.md fixture rule allow CC0) and widen the content test; a GPL-only test is stricter than the spec, not a violation. §16 `tessera-net` points: (1) `shared` in both `ItemPlace` and `ContainerSize` (the §10.3 example and the file keyword win over the general enum rule); (2)–(18) confirmed as implemented. §16 `tessera-gamedata` points (1)–(10) confirmed; for (5), keys 1–64 map to bits 0–63 (`property-system.md` §7.3), so a key above 64 matching nothing is right; for (7), `appearance.md` §2.1 (Accepted) states the two gender values, so using them with the per-install presence check is allowed. The owner-policy OPEN on numeric enum keys (§16) and the later-milestone OPENs (§8.3, §16) stay non-blocking. |
 | **Implements into** | `crates/net` (`tessera_net::scenario`: parser, static checks, resolved scenario, run-time feed, headless driver, canonical log; the sandbox backend runs it; the overlay backend over the test-server backend, §12.5; plain-sandbox creation, §9.6), `crates/gamedata` (selector resolution against the user's install, §8; property labels and kinds, §5.8, §8.6), `apps/client` (`--scenario`, `--scenario-log`, `--scenario-input`, overlay runs, §12), `fuzz/` (§11.4) |
 | **Companion documents** | [Decision 0024](../decisions/0024-parity-track.md) §2, §4, §5 (the feed's mandate); [LEGAL.md](../LEGAL.md) §8 and §11.1; `server-content.md` §3 and §7; `docs/ARCHITECTURE.md` §19 (domain events; it lists the variants of §9 by group); the gameplay specs cited in §8.3 (`items.md`, `combat-data.md`, `creatures.md`, `quests.md`, `economy.md`, `map-data.md`, `interaction.md`, `player-character.md`, `instances.md`), `appearance.md` §2 and §7, `coordinates.md` §4 and §7, `property-system.md` §7, `records.md` §7 |
 
@@ -81,6 +81,7 @@ on the date given), **Standard** (a published algorithm or standard).
 | P3 revision (revision 5, §18.P3): the text function `action(…)` and `Text::Action`, the `rewards` and `buyback` steps, the events `QuestRewards` and `BuybackShown`, the command `BuyBack`, their patterns, input forms, log forms, limits, Vectors N1 and N2, the hostile rows N-H1 … N-H11 | [`npc-windows.md`](npc-windows.md) §5.3, §6.3, §7.8, §10 (spec writer, 2026-10-10; Review); `quests.md` §9 (Accepted). The windows' needs come from that dirty-room spec; the feed forms themselves are design | Design |
 | Revision 7, "P4 social" (§18.5): waiting parts and one synchronised start with its time and lead, the player's `/play … sync` and `/playstart` as commands, fellow vitals, the disband command, the remote backend at minor 2, the plain sandbox's start answer, Vector H, the P4 hostile and backend cases (2026-10-11) | [Decision 0035](../decisions/0035-p4-social-on-test-server.md) (spec writer, design); `tessera-protocol.md` v1.2 §10.6 and Appendix A (revised the same day); `instruments.md` §8.8, §8.9 and §12 P4 Decision (start tolerance, waiting parts, the 0.7 s lead; revised 2026-10-11, referred to, not restated); `social-panels.md` §4.4, §8, §9 (draft, 2026-10-11). No game client, server or third-party tool was consulted for this revision | Design |
 | Revision 8, "P5 travel" (§18.P5): the step options and steps `markers`, `travel-end`, `instance-queue`, `mount-vital`, the options of `marker`, `travel-list`, `travel`, `instances`, `mount` and of the input form `join-instance`, marker sets and run-time marker ids, the family `map-region` and the `effect` attributes `mount-type` and `war-steed`, the label contexts `MapNoteType`, `GroupSize`, `DifficultyTier`, the types, fields, events `TravelEnded`, `MountVitalChanged`, `InstanceQueueChanged` and command `LeaveQueue`, their log forms (with the rule that fields added to existing variants are written only when not at their default), limits, Vectors T1–T3, hostile rows T-H1 … T-H18 | What the windows and views must show: `travel-windows.md` §4.10, §4.11, §5.2, §6.5, §6.8, §9; `map-windows.md` §5.1, §5.4, §6.7, §7.2; `mounts.md` §2.3, §2.8, §4.1; `walker.md` §16.1, §16.5; `lua-plugin-api.md` §15.5 (all revised or written for P5 on 2026-10-11, Review). The four dictionary names the new label contexts and filters use (`MapNote_Type` a 64-bit bitfield, `FellowshipMakerUI_GroupSize` and `FellowshipMakerUI_DifficultyTier` enums, `Mount_Type` a 32-bit bitfield) were checked present with those kinds in the owner's install (M1, read-only, 2026-10-11). The feed forms themselves are design; no client code was consulted for this spec | Design |
+| "P6 progression" revision (§18.P6, unnumbered until the merge): the `quiet` keyword of `level`; the options of `trainer`, `trait-points`, `profession`, `recipe`, `craft-result` and of the input form `craft`; the steps `untrained`, `trait-rank`, `trait-tree`, `forget-recipe`, `vocation`, `craft-trainer`; the window kind `craft-trainer`; the text function `action(VALUE,REF)`; the patterns and input forms `train-craft`, `trait-rank`, `trait-branch`; the attributes of §8.3 marked "P6 progression" and the families `vocation`, `craft-guild`; the label contexts `TraitBranch`, `RecipeCategory`; the types, fields, events `UntrainedSkills`, `TraitRank`, `TraitTreeChanged`, `RecipeForgotten`, `VocationChanged`, `CraftTrainerShown` and commands `TrainCraft`, `SetTraitRank`, `ChooseTraitBranch`; their log forms, limits, rule 7 of §13, Vectors P6-V1, P6-V2 and resolver case P6-V3, hostile rows P6-H1 … P6-H18, invariant 15 | What the panels and plugin views must show: [`crafting-panels.md`](crafting-panels.md) §4.3, §4.7, §5.6, §6.2, §8.1, §8.3, §9, §13 (Review, 2026-10-16) and `lua-plugin-api.md` §15.6 (Review, 2026-10-16). The new selector attributes cite the Accepted `combat-data.md` §7.9, §8.1, §8.2, §8.5, `economy.md` §5.1, §5.3, `interaction.md` §3.8.1, §4.3, §4.4 and their decoder views; the `creature gathering` and `hotspot facility` rows also cite `crafting-panels.md` §9 (Review). The two mappers of the new label contexts (`Trait_TraitTree_Branch` names enum mapper 0x230003A1, `CraftRecipe_UICategory` names 0x23000065, both type code 8) and the counts quoted in §8.3 (946 traits with `Trait_PointBasedTrait_PointCostProgression`, `Trait_TraitTree_TreeType` in 17 of 17 trees) were checked in the owner's install (M1, read-only, 2026-10-16). The feed forms themselves are design; the offline-client pass of `lua-plugin-api.md` §15.6 (P111, P112 there) informed no feed form | Design |
 | The review fixes of §18.1 (R1–R31) and §18.2 (S1–S31): design changes only | Review of 2026-10-09 (spec reviewer, review role) and the implementation-phase review of 2026-10-09 (fixed by the spec owner); the same clean sources as the first draft, read on that date. No game client, server or third-party tool was consulted | Design |
 
 ---
@@ -299,6 +300,11 @@ and `action(`INTEGER`)` (one token; the integer 0 … 2^32 − 1). It stands whe
 stands and names an NPC action (§5.2). A string may also stand as the REF of the forms
 `rep:REF:N` and `wallet:REF:N` of the `rewards` step (§6.3).
 
+**Text function `action` with a record (P6 progression).** The class also holds
+`action(`LABEL`,`REF`)` and `action(`INTEGER`,`REF`)` (one token, no spaces outside the string;
+the integer 0 … 2^32 − 1; REF an element or a string, which may stand there). It names an NPC
+action entry offered for one record (§5.2).
+
 **Numeric components.** Each numeric component (an integer, decimal or duration; one
 coordinate of a Position; one side of a Fraction; one item of a numeric or hexadecimal list;
 the number of `REF:N`) is at most 32 characters, sign and unit included; a longer one is
@@ -476,6 +482,7 @@ install; the client half shows a literal ref as its text with a placeholder icon
 | `comment($c[i])` | `Comment(DataId)` | the content of an NPC comment record (`quests.md` §7.7) |
 | `objective($q[i],N)` | `Objective { quest, objective: N }` | the description of the objective whose `Quest_ObjectiveIndex` is *N* (`quests.md` §5.1: the indices of a quest are 1 … *n*, not always in stored order); no such objective → a placeholder |
 | `action(@Label)`, `action(N)` (P3 revision) | `Action(u32)`: the label's key in the mapper the property dictionary names for `ActionPickerUI_Action` (`enum_value` context `NpcAction`, §8.6), or *N* as written | the install's text for that NPC action (`npc-windows.md` §5.3 rule 3). An unresolved label (no install, unknown label) gives `Literal` of the label without its `@` instead, with a `label` note (attribute `action`) when an install is present |
+| `action(@Label,REF)`, `action(N,REF)` (P6 progression) | `ActionFor { action: u32, what: Ref }`: the action key as for `action(…)`, and the record (or literal) the action entry is for | the action entry's row for that record: for the crafting-trainer actions, the row of `crafting-panels.md` §8.1 (the profession's, vocation's or guild's template and name); for a literal REF or another action, the action's text followed by the ref's text. An unresolved label gives `Literal` of the label without its `@` (the REF is dropped), with the `label` note as above; a missing element is a missing element of the text (§6) |
 
 Chat lines and character, actor and fellow names are plain strings (the existing events take
 `String`); text functions are not allowed there, except `name(…)` in actor declarations (§5.4).
@@ -585,6 +592,11 @@ replaces its content and keeps its `WindowId`; otherwise a new id is allocated (
 | travel | `travel-list dest=$sel …` | destinations with scripted costs |
 | instances | `instances $sel` | instance entries |
 | trade | `trade ENTITY` | both sides' offers |
+| craft-trainer (P6 progression) | `craft-trainer KIND REF` | a crafting trainer's kind (profession, vocation or guild) and record (`crafting-panels.md` §8.3) |
+
+(P6 progression) `craft-trainer` is a window kind like the others: `close craft-trainer`, the
+pattern `close craft-trainer` and the generic answer to `CloseWindow` take it, and it counts for
+the `WindowId` allocation of §5.3.
 
 <a id="s5-7"></a>
 ### 5.7 Per-entity state the feed keeps
@@ -900,6 +912,69 @@ half classifies a recorded mount itself (`lua-plugin-api.md` §15.5); the feed d
 
 A crafting bar is `cast player REF DURATION kind=craft` followed by `craft-result`.
 
+**P6 progression steps.**
+
+| Step | Arguments and options | Emits |
+|---|---|---|
+| `untrained` | `skills=($sel\|REFLIST) [coin=N\|N,N,…] [level=N\|N,N,…] [rank=N\|N,N,…]`, or `none` | `UntrainedSkills { entries }` (§9.2): the whole list of skills the player can still train, entry *i* (1-based) per element or list item in order; `coin` (0 … 10^15), `level` (0 … 10,000) and `rank` (0 … 1,000) work as `price` of `vendor` (one value or a list whose last value repeats; `coin` and `level` default 0, `rank` default none); `none` gives an empty list. Each step replaces the previous list. A binding longer than 1,024 is cut with a `window` note (§8.6 item 5) |
+| `trait-rank` | `REF REF N` (the tree, the trait; N 0 … 1,000) | `TraitRank { tree, what, rank }` |
+| `trait-tree` | `(REF\|none) [branch=VALUE]` | `TraitTreeChanged { tree, branch }`: the active trait tree and its chosen branch; `none`: no active tree (`branch=` with `none` is `UnexpectedToken` at the key) |
+| `forget-recipe` | `REF` | `RecipeForgotten { what }`. The feed keeps no recipe state, so the step always emits |
+| `vocation` | `(REF\|none) [slots=N]` (N 0 … 32) | `VocationChanged { vocation, slots }`: the player's vocation (none: no vocation) and, with `slots`, the number of profession slots |
+| `craft-trainer` | `(profession\|vocation\|guild) REF [npc=ENTITY]` | `CraftTrainerShown { window, kind, what, npc }` in the `craft-trainer` window (§5.6): which trainer window of `crafting-panels.md` §8.3 opens, for which record |
+
+**P6 progression options of existing steps.** All are optional; without them a step emits
+exactly what it emitted before. Value lists and entry lists are those of §6.5 ("Options of
+existing steps (P5 travel)").
+
+| Step | Option | Event field |
+|---|---|---|
+| `level` | `quiet`, a keyword after N | `LevelChanged.quiet` = yes |
+| `trainer` | `offers=skills\|traits\|recipes` | `TrainerShown.offers` (absent: skills) |
+| `trainer` | `rank=N\|N,N,…` (0 … 1,000; last value repeats) | entry `rank` (the rank the entry requires) |
+| `trainer` | `trained=`, `unmet=` (entry lists; an entry may stand in both) | entry `flags` bits 0 (already trained), 1 (requirements not met) |
+| `trait-points` | `tree=REF` | `TraitPoints.tree`: the points of that trait tree (absent: the class's trait points, as before) |
+| `profession` | `mastery-tier=N` (0 … 1,000) | `ProfessionChanged.mastery_tier`: the tier whose mastery is being earned (absent: the client half takes `tier`, `crafting-panels.md` §4.7) |
+| `recipe` (both forms) | `profession=REF`, `tier=N` (0 … 1,000), `category=VALUE` | `RecipeLearned.profession`, `.tier`, `.category` of every event the step emits |
+| `craft-result` | `batch=K/N` (integers, 1 ≤ K ≤ N ≤ 65,535) | `CraftResult.batch`: the *K*-th of *N* crafts of one request |
+
+`category=VALUE` and `branch=VALUE` are an integer 0 … 2^32 − 1 or a label, resolved with
+`enum_value` contexts `RecipeCategory` and `TraitBranch` (§8.6); an unresolved label gives
+none, with a `label` note (attribute `category` or `branch`) when an install is present.
+
+**Meaning for the client half** (the presentations themselves are the P6 panel specs'):
+
+- `LevelChanged` for the player that raises the level the client knows and is not `quiet` is a
+  level-up: the client half runs its level-up presentation. A `quiet` report, a report that
+  does not raise the level, and the first level of a session (from `CharacterInfo.level` or
+  the first `LevelChanged`) set the level silently. The feed computes no level.
+- `TrainerShown.offers` tells which rows the trainer window draws (skill, trait or recipe rows
+  and tooltips), so literal refs draw the right rows; entry `flags` ghost rows that are already
+  trained or whose requirements are not met; `rank` is shown with the level.
+- `UntrainedSkills` is player state, not a window: the skill-training view and the plugin view
+  `LocalPlayer:GetUntrainedSkills()` (`lua-plugin-api.md` §15.6) show its latest list.
+- `TraitRank`, `TraitTreeChanged` and `TraitPoints … tree=` fill the trait-tree view; the
+  client half spends nothing itself: a click sends `SetTraitRank` or `ChooseTraitBranch`
+  (§9.4) and the view changes only on the answering events.
+- `RecipeLearned.profession`, `.tier` and `.category` place a recipe in the crafting panel's
+  tree when its ref is a literal or its record lacks them; for a recipe record the record's
+  own values win. `RecipeForgotten` removes the recipe from the panel and from the plugin's
+  `ProfessionInfo` (`lua-plugin-api.md` §15.6).
+- `VocationChanged` chooses the trainer texts and the profession selector of
+  `crafting-panels.md` §8.3; `slots` none means the slot count is unknown (the selector stays
+  hidden).
+- `CraftResult.batch` lets the crafting panel end its busy state with the last craft of a
+  request (*K* = *N*); a result without `batch` ends it as before (`crafting-panels.md` §5.6).
+
+**Gathering and facilities need no new form.** A gathering node or a facility is an actor
+whose `body=` is an element of `creature kind=container gathering=yes` or of `hotspot` (§8.3;
+`Body::Object` of the template, which the client half draws from its `PhysObj`); using it is
+the pattern `use ENTITY` and the input form `use`; the answer is scripted with `cast player REF
+DURATION kind=induction` (REF an element of `induction of=…`), then `loot` or `give`,
+`profession` and `despawn`; standing at a facility is `effect player REF` with an element of
+`effect facility=yes` and `effect-end` when leaving (`crafting-panels.md` §9). Vector P6-V3
+shows this. The feed derives none of these values from the node or the hotspot.
+
 <a id="s6-7"></a>
 ### 6.7 P4 social: synchronised performances and fellow vitals (decision 0035 D4)
 
@@ -1113,6 +1188,9 @@ matches anything explicitly; `none` matches an absent value.
 | `close KIND` | `CloseWindow` of that kind | |
 | `buy-back [entry=N]` (P3 revision) | `BuyBack` | |
 | `leave-queue` (P5 travel) | `LeaveQueue` | |
+| `train-craft [replace=(REF\|none\|any)]` (P6 progression) | `TrainCraft` | `replace=`: the profession the command asks to replace |
+| `trait-rank [REF] [tree=REF]` (P6 progression) | `SetTraitRank` | `REF`: the trait; `tree=`: the tree |
+| `trait-branch [tree=REF]` (P6 progression) | `ChooseTraitBranch` | `tree=`: the tree |
 
 A trigger on `create-character` or `delete-character` fires before world entry; its body
 runs at once in the processing of that command in `submit` (§3.3), in line order, with times
@@ -1203,6 +1281,10 @@ both see the state before that frame's poll.
 | `buy-back N` (P3 revision; N 1 … 1,024) | `BuyBack` in the open vendor window |
 | `join-instance N [size=VALUE] [tier=VALUE] [level=N]` (P5 travel options; `level` 1 … 10,000; `size` and `tier` an integer 0 … 2^32 − 1 or a label, contexts `GroupSize`, `DifficultyTier`) | `JoinInstance` in the open instances window with those fields (absent options: none). An unresolved label skips the line (`input-skipped`) |
 | `leave-queue` (P5 travel) | `LeaveQueue` |
+| `craft REF [qty=Q] [tier=N] [output=K] [optional=M] [pack]` (P6 progression options; N 0 … 1,000, K 0 … 64, M 0 … 255) | `Craft` with those fields (absent: tier none, output 0, optional 0, pack no) |
+| `train-craft [replace=REF]` (P6 progression) | `TrainCraft` in the open craft-trainer window (`replace` none without the option) |
+| `trait-rank REF REF N` (P6 progression; the tree, the trait, N 0 … 1,000) | `SetTraitRank { tree, what, rank }` |
+| `trait-branch REF VALUE` (P6 progression; VALUE an integer 0 … 2^32 − 1 or a label, context `TraitBranch`) | `ChooseTraitBranch { tree, branch }`. An unresolved label skips the line (`input-skipped`) |
 
 An input line whose target window, slot, page or element does not exist, whose label or
 `m`/`f` value is unresolved (except in `create-character`, above), or that the session refuses (`Session::send` returns an error)
@@ -1331,6 +1413,25 @@ says what one resolved element is when it is not a plain record.
 | | | `region` | integer | the region of the element's `Location` (no location: matches nothing) |
 | `effect` (P5 travel attributes) | as above | `mount-type` | value (mount-type mapper) | the bit of key *v* is set in `Mount_Type` (`mounts.md` §2.8; the `gameplay::mounts` view) |
 | | | `war-steed` | yes/no (absent = no) | `Mount_Type` has a bit of 0x38 (`mounts.md` §2.8, war-steed rule) |
+| `trait` (P6 progression attributes) | as above | `point-based` | yes/no (absent = no) | `Trait_PointBasedTrait_PointCostProgression` present: the trait-tree cell traits of `combat-data.md` §8.1 (`TraitPids::point_cost_progression`) |
+| | | `tier` | range | `Trait_Tier` (`combat-data.md` §8.2; `TraitPids::tier`) |
+| | | `in-tree` | binding of `trait-tree` | the trait is the `Trait_TraitTree_Trait` of an element of a bound tree's `Trait_TraitTree_TraitArray` (`combat-data.md` §8.5; `TraitPids::tree_trait`) |
+| `trait-tree` (P6 progression attributes) | as above | `type` | value | `Trait_TraitTree_TreeType` (`combat-data.md` §8.5; `TraitPids::tree_type`) |
+| | | `branch` | value | one of the `Trait_TraitTree_Branch` values of the tree's `Trait_TraitTree_TraitArray` (§8.5; `TraitPids::tree_branch`; the list rule of §8.2) |
+| `recipe` (P6 progression attributes) | as above | `category` | value | `CraftRecipe_UICategory` (`economy.md` §5.1; `Recipe::ui_category`) |
+| | | `one-use` | yes/no (absent = no) | `CraftRecipe_OneTimeRecipe` (`Recipe::one_time`) |
+| | | `cooldown` | yes/no (absent = no) | `CraftRecipe_CooldownDuration` present (`Recipe::cooldown`) |
+| | | `critical` | yes/no (absent = no) | `CraftRecipe_CriticalResultItem` present and not 0 (`Recipe::critical_result`) |
+| | | `facility` | yes/no (absent = no) | `CraftRecipe_RequiredFacilityEffect` present (`Recipe::required_facility`) |
+| `profession` (P6 progression attributes) | as above | `of` | binding of `vocation` | listed in a bound vocation's `CraftVocation_ProfessionArray` (`economy.md` §5.3; `Vocation`) |
+| `vocation` (P6 progression) | Vocations (`economy.md` §5.3; `EconomyKind::Vocation`) | — | | |
+| `craft-guild` (P6 progression) | Craft guilds (`economy.md` §5.3; `EconomyKind::CraftGuild`) | `profession` | binding of `profession` | `CraftGuild_Profession` names a bound profession (`CraftGuild`) |
+| `creature` (P6 progression attributes) | as above | `gathering` | yes/no (absent = no) | `Usage_RequiredCraftProfession` present: the gathering nodes among the container templates (`crafting-panels.md` §9.1) |
+| | | `craft-profession` | binding of `profession` | `Usage_RequiredCraftProfession` names a bound profession (`crafting-panels.md` §9.1) |
+| `effect` (P6 progression attributes) | as above | `facility` | yes/no (absent = no) | the effect is named by the `CraftRecipe_RequiredFacilityEffect` of some recipe (`economy.md` §5.1; `Recipe::required_facility`) |
+| `hotspot` (P6 progression attributes) | as above | `selectable` | yes/no (absent = no) | `IsSelectable` (`interaction.md` §4.4) |
+| | | `facility` | yes/no (absent = no) | an element of the template's `EffectGenerator_HotspotEffectList` names an effect that `effect facility=yes` selects (`interaction.md` §4.3; `crafting-panels.md` §9.2) |
+| `induction` (P6 progression attributes) | as above | `of` | binding of `creature`, `hotspot`, `recipe` or `skill` | named by a bound record's `Induction_ActionDID` (templates; `interaction.md` §3.8.1), `CraftRecipe_InductionAction` (`economy.md` §5.1; `Recipe::induction_action`) or `Skill_InductionAction` (`combat-data.md` §7.9) |
 
 The families of `interaction.md` have no decoder view in `crates/formats` yet; `tessera-gamedata`
 implements their finding rule (`interaction.md` §2.2) when it adds their stores. Until then a
@@ -1342,6 +1443,21 @@ report it `Unsupported` until `tessera-gamedata` builds the region list. With it
 can put one marker on every map region (`select $r = map-region all`, then
 `markers $all $r named`), which is the marker census of `map-windows.md` §5.4. Every mount
 effect is `effect role=mount all`; `war-steed=` and `mount-type=` narrow it.
+
+**P6 progression attributes.** The rows marked "P6 progression" let a scenario choose the
+records of the progression and crafting panels by what they are: the cells of one trait tree
+(`select $t = trait-tree all`, then `trait point-based=yes in-tree=$t all`), the recipes of one
+profession and kind (`recipe profession=$p one-use=yes n=3 seed=1`), the professions of one
+vocation, gathering nodes of one profession, crafting facilities, and the induction a node,
+recipe or skill names. A `recipe tier=` filter compares every element of the recipe's tier list
+(`CraftRecipe_Tier`, or the `CraftRecipe_Tier` elements of `CraftRecipe_TierArray`;
+`Recipe::tiers()`), by the list rule of §8.2. The `binding of` attributes with several allowed
+families (`induction of=`) accept a binding of any of them. The `creature gathering`,
+`creature craft-profession` and `hotspot facility` rows cite `crafting-panels.md` (Review on
+2026-10-16) and stand until that spec is Accepted, like the P3 and P5 rows citing specs then in
+Review; `vocation` and `craft-guild` resolve through the economy decoder like `profession`.
+`hotspot` and `induction` keep the note above: a resolver MAY report them `Unsupported` until
+`tessera-gamedata` has their stores.
 
 > **OPEN:** (non-blocking) P1–P6 will want more attributes (for example item sets, deed
 > categories, recipe vocations). Each addition is a revision of this table citing an Accepted
@@ -1457,6 +1573,16 @@ option key. Item 6 also fetches, for each `markers … named` step in line order
 names. The `effect` attributes `mount-type` and `war-steed` and the `map-region` family use
 `candidates` like every other filter and family.
 
+**P6 progression contexts.** `enum_value` also takes the contexts `TraitBranch` (the key of the
+label in the enum mapper the property dictionary names for `Trait_TraitTree_Branch`,
+`combat-data.md` §8.5) and `RecipeCategory` (the mapper it names for `CraftRecipe_UICategory`,
+`economy.md` §5.1). Resolution item 6 resolves the labels of `category=` (step `recipe`),
+`branch=` (step `trait-tree`) and the VALUE of the input form `trait-branch`, in line order and
+token order; each unresolved one adds a `label` note whose attribute is `category` or `branch`.
+It also resolves the label of each `action(@Label,REF)` text with the context `NpcAction`,
+exactly as `action(@Label)`. The new attributes and families of §8.3 use `candidates` like every
+other filter and family.
+
 <a id="s8-7"></a>
 ### 8.7 No install
 
@@ -1516,6 +1642,12 @@ names (§10) are the inner variant names, unique across groups.
 | `InstanceEntry` (existing; P5 travel) | gains, after `instance`: `level: Option<u16>`, `size: Option<u32>`, `tier: Option<u32>`, `locked: bool` |
 | `QueueState` (P5 travel) | `None` \| `Confirm` \| `Queued` \| `OthersConfirm` \| `JoinPending` \| `ConfirmEnterQueue` \| `OthersConfirmEnterQueue` \| `WorldJoinQueue`: the keywords of `instance-queue` (§6.5) in that order. The client half maps `Confirm` … `WorldJoinQueue` to the player-state keys 1 … 7 of `travel-windows.md` §6.5 and `None` to 0; `tessera-net` holds no data key |
 | `MountVital` (P5 travel) | `Durability` \| `Morale` \| `Power` \| `Fury` |
+| `Text` (P6 progression) | gains `ActionFor { action: u32, what: Ref }`: an NPC action entry for one record (§5.2) |
+| `TrainerOffer` (P6 progression) | `Skills` \| `Traits` \| `Recipes` |
+| `TrainerFlags` (P6 progression) | `u8`: bit 0 already trained, bit 1 requirements not met; the other bits 0 |
+| `TrainerEntry` (existing; P6 progression) | the entry of `TrainerShown`; gains, after `level`: `rank: Option<u16>`, `flags: TrainerFlags` |
+| `CraftTrainerKind` (P6 progression) | `Profession` \| `Vocation` \| `Guild` |
+| `Batch` (P6 progression) | `{ index: u16, count: u16 }`, 1 ≤ `index` ≤ `count` |
 
 Numbers in events are the scripted values: `f32` for vitals and amounts (finite, within the
 ranges of §6), integers elsewhere.
@@ -1604,6 +1736,18 @@ Fields are listed in log order (§10.3).
 | | `MountVitalChanged` | `entity: EntityId`, `vital: MountVital`, `current: f32`, `max: f32` |
 | | `InstanceListShown` (existing) | gains `source: Option<EntityId>` and `featured: Option<Ref>` after `entries`; its entries carry the `InstanceEntry` fields of §9.1 |
 | | `InstanceQueueChanged` | `state: QueueState`, `instance: Option<Ref>`, `seconds: Option<u32>` |
+| Character (P6 progression) | `LevelChanged` (existing) | gains `quiet: bool` after `level` |
+| Progression (P6 progression) | `TrainerShown` (existing) | gains `offers: TrainerOffer` after `entries`; its entries carry the `TrainerEntry` fields of §9.1 |
+| | `UntrainedSkills` | `entries: Vec<{ entry: u16, what: Ref, coin: u64, level: u32, rank: Option<u16> }>` (0 … 1,024 entries; empty: nothing left to train) |
+| | `TraitPoints` (existing) | gains `tree: Option<Ref>` after `total` |
+| | `TraitRank` | `tree: Ref`, `what: Ref`, `rank: u16` |
+| | `TraitTreeChanged` | `tree: Option<Ref>`, `branch: Option<u32>` |
+| | `ProfessionChanged` (existing) | gains `mastery_tier: Option<u16>` after `mastery_max` |
+| | `RecipeLearned` (existing) | gains `profession: Option<Ref>`, `tier: Option<u16>`, `category: Option<u32>` after `what` |
+| | `RecipeForgotten` | `what: Ref` |
+| | `VocationChanged` | `vocation: Option<Ref>`, `slots: Option<u8>` |
+| | `CraftTrainerShown` | `window: WindowId`, `kind: CraftTrainerKind`, `what: Ref`, `npc: Option<EntityId>` |
+| | `CraftResult` (existing) | gains `batch: Option<Batch>` after `item` |
 
 <a id="s9-3"></a>
 ### 9.3 Existing events reused
@@ -1664,6 +1808,10 @@ Fields are listed in log order (§10.3).
 | | `Craft` | `recipe: Ref`, `quantity: u16` |
 | World (P5 travel) | `JoinInstance` (existing) | gains `size: Option<u32>`, `tier: Option<u32>`, `level: Option<u16>` after `entry` |
 | | `LeaveQueue` | — |
+| Progression (P6 progression) | `Craft` (existing) | gains `tier: Option<u16>`, `output: u16`, `optional: u8`, `pack: bool` after `quantity` (the selected tier, output page 0 = the recipe's own result, one bit per checked optional-ingredient slot, the ingredient-pack flag; `crafting-panels.md` §5.6, CP14) |
+| | `TrainCraft` | `window: WindowId`, `replace: Option<Ref>` |
+| | `SetTraitRank` | `tree: Ref`, `what: Ref`, `rank: u16` |
+| | `ChooseTraitBranch` | `tree: Ref`, `branch: u32` |
 
 The existing `Chat` command carries the new channels. Mounting is `UseSkill` of a mount
 skill.
@@ -1731,6 +1879,22 @@ skill.
   at protocol minor 2, `JoinChannel`, `LeaveChannel` and `Chat` on `Named` are accepted
   (§9.8); the sentence above about `Named` applies below minor 2. The plain sandbox answers
   `StartPerformance` (§9.8).
+- **P6 progression variants.** `UntrainedSkills`, `TraitRank`, `TraitTreeChanged`,
+  `RecipeForgotten`, `VocationChanged` and `CraftTrainerShown` follow the entity rule (surfaced
+  in `InWorld`); `LevelChanged` keeps the Character-group rule above. `TrainCraft`,
+  `SetTraitRank` and `ChooseTraitBranch` are allowed in `InWorld`. Validation
+  (`NetError::InvalidCommand` otherwise): `SetTraitRank.rank` and a present `Craft.tier` 0 …
+  1,000, `Craft.output` 0 … 64, literal refs as above. An event is invalid (dropped with a
+  warning) when a `TrainerFlags` has a bit above 1, an entry `rank` or a `ProfessionChanged`
+  or `RecipeLearned` tier is above 1,000, an `UntrainedSkills` has more than 1,024 entries or a
+  `level` above 10,000, `VocationChanged.slots` is above 32, or a `Batch` has `index` 0 or
+  above `count`. The feed gives no generic answer to the three new commands (§7.6). The
+  test-server backend refuses them like the other new commands (it already refuses `Craft` and
+  `TrainSkill`), never produces the P6 events or fields and needs no protocol minor (LEGAL.md
+  §11.1 rule 5: its server runs no gameplay). The sandbox without a scenario accepts and
+  ignores them (debug log), so the panels can be opened offline. The overlay subset of §12.5.1
+  is unchanged: no P6 step, pattern or input form is in it, except `level player N quiet`,
+  since `level` with the entity `player` already is.
 
 > **OPEN:** (non-blocking; for the spec owner, raised by the P3 implementer of `crates/net`
 > after review, 2026-10-10) The parser refuses a repeated single reward kind (`coin`,
@@ -2007,6 +2171,24 @@ tier=N level=N`; inside a `TravelShown` entry, after `coin`, `min_level=N`, `fla
 (`undiscovered`, `unmet`, `unusable`) joined by `+`, for example `flags=undiscovered+unusable`
 (Vectors T1–T3).
 
+**P6 progression log forms.** New variants write every field, in the order of §9.2 and §9.4:
+`UntrainedSkills entries=[{entry=N what=REF coin=N level=N rank=(N|none)},…]`; `TraitRank tree
+what rank`; `TraitTreeChanged tree branch` (`tree` a ref or `none`, `branch` decimal or `none`);
+`RecipeForgotten what`; `VocationChanged vocation slots` (`slots` decimal or `none`);
+`CraftTrainerShown window kind what npc` with `kind` one of `profession`, `vocation`, `guild`;
+`TrainCraft window replace`; `SetTraitRank tree what rank`; `ChooseTraitBranch tree branch`.
+Fields that this revision adds to existing variants and entries are written only when they are
+not at their default (none for an optional value; `no` for `quiet` and `pack`; `skills` for
+`offers`; 0 for `flags`, `output` and `optional`), the rule of the P5 travel log forms above, so
+that every log written before, such as the committed `progression.log`, stays byte for byte the
+same. They follow the existing fields: `LevelChanged … quiet=yes`; `TrainerShown … offers=(traits|recipes)`
+after `entries`; inside a `TrainerShown` entry, after `level`, `rank=N` and `flags=…` (the
+names `trained`, `unmet` of its set bits in bit order, joined by `+`); `TraitPoints … tree=REF`;
+`ProfessionChanged … mastery_tier=N`; `RecipeLearned … profession=REF tier=N category=N`;
+`CraftResult … batch=K/N` (two decimals); `Craft … tier=N output=N optional=N pack=yes`.
+`Text::ActionFor` is written `action(N,REF)` (*N* decimal, REF as a `Ref`) (Vectors P6-V1 …
+P6-V3).
+
 <a id="s10-4"></a>
 ### 10.4 Counters
 
@@ -2099,6 +2281,14 @@ any input, every allocation bounded by the limits below, and each violation a ty
 | (P4 social) Waiting parts | 64 members (§5.7, §6.7) | a `perform … sync` for a 65th member is skipped (counted); `ReadyPerformance` beyond it records nothing |
 | (P4 social) `perform-start` lead | 0 … 10 s | `OutOfRange` |
 | (P4 social) `ReadyPerformance.tune` (input form `play-sync`) | 1–256 bytes | `TooLong` (static); an empty tune `OutOfRange`; a longer one from the client half: `NetError::InvalidCommand` |
+| (P6 progression) `untrained` entries | 1,024 (REFLIST); a longer binding is cut with a `window` note | `LimitExceeded(entries)` (static) |
+| (P6 progression) `coin=`, `level=`, `rank=` value lists of `untrained`; `rank=` of `trainer` | 1 … 1,024 items; coin 0 … 10^15, level 0 … 10,000, rank 0 … 1,000 | `LimitExceeded(entries)`; `OutOfRange` |
+| (P6 progression) `trained=`, `unmet=` of `trainer` | as the P5 entry lists (an entry may stand in both) | as the P5 entry lists |
+| (P6 progression) Trait ranks (`trait-rank`, input form `trait-rank`), `mastery-tier=`, `tier=` of `recipe` and of the input form `craft` | 0 … 1,000 | `OutOfRange` |
+| (P6 progression) `category=`, `branch=`, VALUE of the input form `trait-branch` | 0 … 2^32 − 1, or a label | `OutOfRange` |
+| (P6 progression) `slots=` of `vocation` | 0 … 32 | `OutOfRange` |
+| (P6 progression) `batch=K/N` of `craft-result` | integers, 1 ≤ *K* ≤ *N* ≤ 65,535 | `OutOfRange` (a decimal: `BadNumber`) |
+| (P6 progression) `output=`, `optional=` of the input form `craft` | 0 … 64; 0 … 255 | `OutOfRange` |
 
 > **OPEN:** (non-blocking; for the spec owner, raised by the documentation review of P0 and
 > recorded by the P0 exit verifier, 2026-10-09) No row bounds the size of the canonical log
@@ -2184,6 +2374,10 @@ Two fuzz targets (appended to `fuzz/Cargo.toml` by the implementer of `crates/ne
 (P5 travel) No new target: the synthetic resolver of `net_scenario_run` also answers the
 `enum_value` contexts `MapNoteType`, `GroupSize` and `DifficultyTier`, gives `map-region`
 candidates with and without a `Location`, and answers `display_name` for them.
+
+(P6 progression) No new target: the synthetic resolver of `net_scenario_run` also answers the
+`enum_value` contexts `TraitBranch` and `RecipeCategory` and gives candidates for the families
+`vocation` and `craft-guild` and for queries with the new attributes of §8.3.
 
 ---
 
@@ -2510,6 +2704,14 @@ criterion 3 (decision 0024).
    rule 2 (labels only in committed scenarios); so is a `mount-type=` filter value. The
    `route=`, `kind=`, `instance-queue` and `mount-vital` words are Tessera-defined keywords;
    entry lists, levels, `min-level`, `seconds` and vital amounts are plain numbers.
+7. **P6 progression enum positions.** `category=` of `recipe`, `branch=` of `trait-tree` and
+   the VALUE of the input form `trait-branch` are enum positions under rule 2 (labels only in
+   committed scenarios), and so are the values of the new filters `trait-tree type=`,
+   `trait-tree branch=` and `recipe category=`. The integer of `action(N,REF)` is the same
+   question as `action(N)` (the OPEN below); committed scenarios write `action(@Label,REF)`.
+   `quiet`, `pack`, `offers=` and the `craft-trainer` kinds are Tessera-defined keywords; tiers
+   (as `tier=` of `profession` in the committed `progression.scenario`), ranks, slot counts,
+   `batch`, `output`, `optional`, entry lists and amounts are plain numbers.
 
 > **OPEN:** (non-blocking; for the spec owner, raised by the P3 implementer of `crates/net`
 > after review, 2026-10-10) Rule 2's list of enum positions predates the P3 revision: the
@@ -2829,6 +3031,29 @@ next line.
 | T-H16 | line 2 `at 0s travel-end now` | `UnexpectedToken` 2:18 |
 | T-H17 | line 2 `select $s = map-region all`, line 3 `at 0s markers $ms $s` | `MissingArgument` 3:1 (no label and no `named`) |
 | T-H18 | line 2 `at 0s travel-list dest="a" min-level=` followed by 1,025 items `1,1,…,1` | `LimitExceeded(entries)` 2:28 |
+
+**P6 progression hostile rows** (named P6-H*n*; line 1 is the header as above):
+
+| # | Input | Expected error |
+|---|---|---|
+| P6-H1 | line 2 `at 0s level player 9 loud` | `UnexpectedToken` 2:22 (only `quiet` may follow N) |
+| P6-H2 | line 2 `at 0s trait-rank "T" "A" 1001` | `OutOfRange` 2:26 |
+| P6-H3 | line 2 `at 0s trait-tree none branch=4` | `UnexpectedToken` 2:23 (`branch=` only with a tree) |
+| P6-H4 | line 2 `at 0s trainer skills="a" rank=1001` | `OutOfRange` 2:26 |
+| P6-H5 | line 2 `at 0s trainer skills="a" offers=spells` | `UnexpectedToken` 2:26 |
+| P6-H6 | line 2 `at 0s untrained` | `MissingArgument` 2:1 (neither `skills=` nor `none`) |
+| P6-H7 | line 2 `at 0s craft-result "r" success batch=3/2` | `OutOfRange` 2:32 (*K* above *N*) |
+| P6-H8 | line 2 `at 0s vocation "v" slots=33` | `OutOfRange` 2:20 |
+| P6-H9 | line 2 `at 0s craft-trainer smith "p"` | `UnexpectedToken` 2:21 (not `profession`, `vocation` or `guild`) |
+| P6-H10 | lines 2–4 `input`, `at 1s craft "r" optional=256`, `end` | `OutOfRange` 3:17 |
+| P6-H11 | lines 2–4 `input`, `at 1s craft "r" output=65`, `end` | `OutOfRange` 3:17 |
+| P6-H12 | lines 2–4 `input`, `at 1s trait-rank "T" "A"`, `end` | `MissingArgument` 3:1 (no rank) |
+| P6-H13 | line 2 `at 0s recipe "r" tier=1001` | `OutOfRange` 2:18 |
+| P6-H14 | line 2 `select $s = recipe one-use=maybe all` | `UnexpectedToken` 2:20 (a yes/no attribute) |
+| P6-H15 | line 2 `at 0s trainer skills="a" trained=1 trained=2` | `UnexpectedToken` 2:36 (an option repeated, §4.5) |
+| P6-H16 | line 2 `at 0s untrained none coin=5` | `UnexpectedToken` 2:22 (options only with `skills=`) |
+| P6-H17 | line 2 `at 0s trait-points 1/2 tree=$t[0]` (no `$t` declared) | `UndefinedBinding` 2:24 |
+| P6-H18 | line 2 `at 0s craft-result "r" success batch=0/2` | `OutOfRange` 2:32 (*K* below 1) |
 
 <a id="s14-6"></a>
 ### 14.6 Vector E: inventory, generic answers, `move … over`, list entries, `end-at`
@@ -3494,6 +3719,225 @@ pre > EnterWorld character="Testa"
 This log names no record and holds only invented text, but it is not an `install none` log, so
 it is a test vector of `tessera-net`, never a committed log (§10.5).
 
+<a id="s14-p6-v1"></a>
+### 14.P6a Vector P6-V1: quiet level, untrained list, trainer rows, trait ranks and branch (P6 progression)
+
+```text
+tessera-scenario 1
+title "Vector P6-V1"
+tick 100ms
+player "Testa"
+actor $coach kind=npc name="Coach" pos=0,2,0
+at 0s spawn $coach
++0s level player 9 quiet
++0s untrained skills="Kick","Sweep" coin=50,80 level=10,12 rank=0,1
+on use $coach
++0s trainer skills="Kick","Sweep","Lunge" npc=$coach coin=50,80 level=10,12,14 rank=0,1 trained=3 unmet=2
+end
+on train entry=1
++0s learn "Kick"
++0s untrained skills="Sweep" coin=80 level=12 rank=1
++0s level player 10
+end
+on trait-rank tree="Valour"
++0s trait-rank "Valour" "Steady" 2
++0s trait-points 3/8 tree="Valour"
+end
+on trait-branch
++0s trait-tree "Valour" branch=4
+end
+input
+at 0.1s use $coach
+at 0.2s train 1
+at 0.3s trait-rank "Valour" "Steady" 2
+at 0.4s trait-branch "Valour" 4
+end
+```
+
+`coin` and `rank` of the `trainer` step repeat their last value for entry 3. `TrainSkill`,
+`SetTraitRank` and `ChooseTraitBranch` have no generic answer; the triggers script them. The
+`LevelChanged` to 10 is a level-up for the client half, the one to 9 is not (`quiet`). Expected
+log:
+
+```text
+tessera-scenario-log 1
+install none
+tick 100
+title "Vector P6-V1"
+pre > Connect
+pre Connected characters=["Testa"]
+pre > EnterWorld character="Testa"
+0.000 WorldEntered entity=player name="Testa" at=0.000,0.000,0.000 facing=90.00
+0.000 LocationReport entity=player at=0:0.000,0.000,0.000 facing=90.00 anchor=none cause=entered
+0.000 EntitySpawned entity=$coach kind=non-player name="Coach" at=0.000,2.000,0.000 facing=180.00
+0.000 LevelChanged entity=player level=9 quiet=yes
+0.000 UntrainedSkills entries=[{entry=1 what="Kick" coin=50 level=10 rank=0},{entry=2 what="Sweep" coin=80 level=12 rank=1}]
+0.100 > UseEntity entity=$coach
+0.100 TrainerShown window=1 trainer=$coach entries=[{entry=1 what="Kick" coin=50 level=10 rank=0},{entry=2 what="Sweep" coin=80 level=12 rank=1 flags=unmet},{entry=3 what="Lunge" coin=80 level=14 rank=1 flags=trained}]
+0.200 > TrainSkill window=1 entry=1
+0.200 SkillLearned what="Kick"
+0.200 UntrainedSkills entries=[{entry=1 what="Sweep" coin=80 level=12 rank=1}]
+0.200 LevelChanged entity=player level=10
+0.300 > SetTraitRank tree="Valour" what="Steady" rank=2
+0.300 TraitRank tree="Valour" what="Steady" rank=2
+0.300 TraitPoints available=3 total=8 tree="Valour"
+0.400 > ChooseTraitBranch tree="Valour" branch=4
+0.400 TraitTreeChanged tree="Valour" branch=4
+0.400 end reason=complete skipped=0 input-skipped=0 dropped=0 spilled=0
+```
+
+<a id="s14-p6-v2"></a>
+### 14.P6b Vector P6-V2: vocation, profession and recipes, trainer action row, craft trainer, a batch of two crafts (P6 progression)
+
+```text
+tessera-scenario 1
+title "Vector P6-V2"
+tick 100ms
+player "Testa"
+actor $smith kind=npc name="Smith" pos=2,0,0 facing=270
+item $cup "Cup"
+item $mug "Mug"
+page $hello speaker=$smith "Lessons?"
+option $hello 1 action(38,"Pottery") goto=close
+at 0s spawn $smith
++0s vocation "Potter" slots=3
++0s profession "Pottery" tier=2 proficiency=40/200 mastery=10/100 mastery-tier=1
++0s recipe "Cup" profession="Pottery" tier=2 category=7
++0s recipe "Mug" profession="Pottery" tier=1
+at 3s trainer skills="Bowl" offers=recipes coin=25
+on use $smith
++0s show $hello
+end
+on choose $hello 1
++0s craft-trainer profession "Pottery" npc=$smith
+end
+on train-craft
++0s close craft-trainer
++0s system "Already known."
+end
+on craft "Cup"
++0s cast player "Cup" 1s kind=craft
++1s give $cup
++0s craft-result "Cup" success item=$cup batch=1/2
++0s cast player "Cup" 1s kind=craft
++1s give $mug
++0s craft-result "Cup" critical item=$mug batch=2/2
++0s forget-recipe "Mug"
+end
+input
+at 0.1s use $smith
+at 0.2s choose $hello 1
+at 0.3s train-craft replace="Pottery"
+at 0.5s craft "Cup" qty=2 tier=2 output=1 optional=3 pack
+end
+```
+
+The action key 38 is a number, so it needs no install (a committed scenario would write a
+label, §13 rule 7). The trigger `on choose $hello 1` is chosen before the generic answer closes
+the dialogue (`goto=close`); the craft-trainer window then takes id 2 and the recipe trainer id
+3. In the trigger `on craft "Cup"` each automatic `CastEnded` (class 0) runs before the scripted
+steps due in the same tick (§7.4), so the second `cast` finds no active cast. Expected log:
+
+```text
+tessera-scenario-log 1
+install none
+tick 100
+title "Vector P6-V2"
+pre > Connect
+pre Connected characters=["Testa"]
+pre > EnterWorld character="Testa"
+0.000 WorldEntered entity=player name="Testa" at=0.000,0.000,0.000 facing=90.00
+0.000 LocationReport entity=player at=0:0.000,0.000,0.000 facing=90.00 anchor=none cause=entered
+0.000 EntitySpawned entity=$smith kind=non-player name="Smith" at=2.000,0.000,0.000 facing=270.00
+0.000 VocationChanged vocation="Potter" slots=3
+0.000 ProfessionChanged profession="Pottery" tier=2 proficiency=40 proficiency_max=200 mastery=10 mastery_max=100 mastery_tier=1
+0.000 RecipeLearned what="Cup" profession="Pottery" tier=2 category=7
+0.000 RecipeLearned what="Mug" profession="Pottery" tier=1
+0.100 > UseEntity entity=$smith
+0.100 DialogueShown window=1 speaker=$smith text="Lessons?" options=[{option=1 text=action(38,"Pottery")}]
+0.200 > ChooseOption window=1 option=1
+0.200 WindowClosed window=1
+0.200 CraftTrainerShown window=2 kind=profession what="Pottery" npc=$smith
+0.300 > TrainCraft window=2 replace="Pottery"
+0.300 WindowClosed window=2
+0.300 ChatMessage channel=system sender=none text="Already known."
+0.500 > Craft recipe="Cup" quantity=2 tier=2 output=1 optional=3 pack=yes
+0.500 CastStarted entity=player cast=craft what="Cup" target=none duration_ms=1000
+1.500 CastEnded entity=player outcome=completed
+1.500 ItemAdded item=$cup what="Cup" at=backpack:0 quantity=1
+1.500 CraftResult recipe="Cup" outcome=success item=$cup batch=1/2
+1.500 CastStarted entity=player cast=craft what="Cup" target=none duration_ms=1000
+2.500 CastEnded entity=player outcome=completed
+2.500 ItemAdded item=$mug what="Mug" at=backpack:1 quantity=1
+2.500 CraftResult recipe="Cup" outcome=critical item=$mug batch=2/2
+2.500 RecipeForgotten what="Mug"
+3.000 TrainerShown window=3 trainer=none entries=[{entry=1 what="Bowl" coin=25 level=0}] offers=recipes
+3.000 end reason=complete skipped=0 input-skipped=0 dropped=0 spilled=0
+```
+
+<a id="s14-p6-v3"></a>
+### 14.P6c Resolver case P6-V3: a gathering node, its induction and a facility (P6 progression)
+
+A headless run with a synthetic resolver that has an install and answers: the query `creature
+kind=container gathering=yes` with the candidates 0x70001001 and 0x70001000 (row 0, no
+location); `induction of=$nodes` (given the resolved list [0x70001000]) with 0x70002000; and
+`effect facility=yes` with 0x70003000. The spawn is the exact default of §3.2, and the resolver
+gives no character details.
+
+```text
+tessera-scenario 1
+title "Vector P6-V3"
+tick 100ms
+player "Testa"
+select $nodes = creature kind=container gathering=yes n=1
+select $gather = induction of=$nodes all
+select $forge = effect facility=yes n=1
+actor $node kind=object name="Node" body=$nodes[0] pos=0,3,0
+at 0s spawn $node
++0s effect player $forge[0]
+on use $node times=1
++0s cast player $gather[0] 7s kind=induction
++7s loot items="Ore" from=$node qty=3
++0s despawn $node
+end
+input
+at 0.2s use $node
+at 7.4s take-loot all
+end
+```
+
+`n=1` without a seed takes the first candidate in canonical order (§8.4), 0x70001000. The node
+is an `EntityCreated` (it has a body), whose location is written as a `Location`. Expected log:
+
+```text
+tessera-scenario-log 1
+install present
+tick 100
+title "Vector P6-V3"
+resolve $nodes line=5 family=creature requested=1 candidates=2 got=1
+resolve $gather line=6 family=induction requested=all candidates=1 got=1
+resolve $forge line=7 family=effect requested=1 candidates=1 got=1
+pre > Connect
+pre Connected characters=["Testa"]
+pre > EnterWorld character="Testa"
+0.000 WorldEntered entity=player name="Testa" at=0.000,0.000,0.000 facing=90.00
+0.000 LocationReport entity=player at=0:0.000,0.000,0.000 facing=90.00 anchor=none cause=entered
+0.000 EntityCreated entity=$node kind=object name="Node" class=0x70001000 at=0:0.000,3.000,0.000 facing=180.00 body=object:0x70001000 scale=1 equipment=[] idle=none look=none
+0.000 EffectApplied entity=player effect=1 what=0x70003000 duration_ms=none stacks=1 source=none
+0.200 > UseEntity entity=$node
+0.200 CastStarted entity=player cast=induction what=0x70002000 target=none duration_ms=7000
+7.200 CastEnded entity=player outcome=completed
+7.200 LootShown window=1 source=$node entries=[{entry=1 what="Ore" quantity=3}] coin=0
+7.200 EntityDespawned entity=$node
+7.400 > TakeLoot window=1 entry=none
+7.400 LootTaken window=1 entry=1
+7.400 ItemAdded item=item:1 what="Ore" at=backpack:0 quantity=3
+7.400 end reason=complete skipped=0 input-skipped=0 dropped=0 spilled=0
+```
+
+Like case T3 this is a test vector of `tessera-net`, never a committed log (§10.5); its DIDs
+are invented.
+
 ## 15. Invariants
 
 1. `tessera-net` never interprets a `DataId` and has no dependency on a data-decoding crate;
@@ -3532,6 +3976,13 @@ it is a test vector of `tessera-net`, never a committed log (§10.5).
     instance row value (level, size, tier, locked), queue state and time, mount class and
     mount vital the feed emits is the one written in the file; the feed reads none of them
     from the install and never derives one from another.
+15. (P6 progression) Every level and its `quiet` flag, trainer value (cost, level, rank,
+    flags, offer kind), untrained entry, trait point count, trait rank, active tree and
+    branch, profession tier, mastery tier and experience, recipe profession, tier and
+    category, vocation and slot count, and craft batch the feed emits is the one written in
+    the file; the feed reads none of them from the install, never derives one from another
+    (no experience curve, no level from experience, no trait cost, no craft outcome), and the
+    test-server backend neither sends the three P6 commands nor produces a P6 event.
 
 ---
 
@@ -3732,6 +4183,43 @@ it is a test vector of `tessera-net`, never a committed log (§10.5).
 > §6.5 table, not their columns, as for the existing steps. (7) The session's warning for a
 > dropped invalid World event names a marker location whatever the cause (text only).
 
+> **OPEN:** (non-blocking; for the spec owner and the P6 progression-panel spec, raised by the
+> writer of the "P6 progression" revision, 2026-10-16) (1) **Trait trees.** No P6 trait-panel
+> spec was available when this revision was written; `trait-rank`, `trait-tree`,
+> `trait-points … tree=`, `SetTraitRank` and `ChooseTraitBranch` are Tessera's minimal forms
+> for a point-based trait tree (a rank per cell, an active tree and branch, points per tree,
+> one request per click). If that spec needs more (a planned set of ranks committed at once, a
+> refund or reset request, per-branch points), it is a later additive revision. (2) **Class of
+> a trait tree.** No Accepted spec links a trait tree to a class, so `trait-tree` has no
+> `class` attribute; in this install the link runs from a class to trait branches through a
+> trait control record named in the WEENIECONTENT DID map (label `ClassToTraitControl`) and
+> from a tree to its branches (`combat-data.md` §8.5) (M1, read-only, 2026-10-16). Add the
+> attribute when a spec states the link. (3) **Untrained list.** `UntrainedSkills` is player
+> state replaced as a whole; whether a server would send it per trainer instead is open
+> (`lua-plugin-api.md` §15.6 OPEN). (4) The `tier=` filter of `recipe` now names the tier list
+> (§8.3 note); implementations that compared only `CraftRecipe_Tier` miss the 109 tier-array
+> recipes (`economy.md` §5.1) and should be checked.
+
+> **OPEN:** (non-blocking; for the spec owner, raised by the P6 implementer of `crates/net`,
+> 2026-10-16) Readings the implementation chose where the "P6 progression" text is silent:
+> (1) `vocation none slots=N` is accepted (`slots` with `none` is not refused, unlike
+> `branch=` of `trait-tree`). (2) "A `ProfessionChanged` … tier above 1,000" (§9.5) is read
+> as both `tier` and `mastery_tier`, and "an entry `rank`" as the rank of a `TrainerShown`
+> entry and of an `UntrainedSkills` entry; a `TraitRank.rank` above 1,000 is not listed and
+> stays valid. (3) `batch=` without a `/` is `BadFraction` at the key (§11.1 names only the
+> decimal case). (4) The `train-craft` pattern matches a `TrainCraft` only for the open
+> `craft-trainer` window (§7.6: a command naming an unknown window fires no trigger), like
+> `train` for the trainer window. (5) `action(1,2)`, `BadNumber` before this revision, is now
+> `UnexpectedToken` (a two-argument form whose REF is neither an element nor a string).
+> (6) For `action(@Label,REF)` whose label is unresolved and whose REF element is missing,
+> §5.2 gives two rules (an unresolved label gives the label as a literal and drops the REF; a
+> missing element makes the text missing). The implementation checks the element first: the
+> text is missing and its step is skipped, although the REF would be dropped. Without an
+> install every label is unresolved and every element missing, so a committed synthetic
+> scenario that writes `action(@Label,$sel[0])` (§13 rule 7) loses the whole page. If the
+> owner reverses this (label first, REF dropped, `Literal(label)` shown), the feed's text
+> check and resolution must test the label before the element.
+
 ---
 
 <a id="s17"></a>
@@ -3757,6 +4245,8 @@ it is a test vector of `tessera-net`, never a committed log (§10.5).
 | 2026-10-13 | Merge of the P5 revision (spec writer, design; no fact changed): the "P5 travel" revision, written unnumbered, is numbered **revision 8**; its invariant 11 (the feed derives no travel, instance or mount value) is renumbered **14** because main's invariants 11–13 (P2, P4) came first; Vectors T1–T3 (§14.T1–§14.T3) and the review record §18.P5 keep their numbers (no collision with main's §14.11–§14.13 and §18.4–§18.5). Code and test comments that cite invariant 11 for the P5 rule, or the revision as "P5 travel", follow. |
 | 2026-10-14 | Revision 9 (spec writer, design; no dirty-room input, no install probe or decompiler session: Tessera's own backend rules), follow-ups of the review of revision 6 (§18.4.1). §9.7 item 1: "handed" is the backend's view, it does not repeat `Session`'s event checks (ruling (b); the implementer OPEN of 2026-10-10 is answered, including "static 900" as a label and R8's despawns). New §9.7 item 7: no `TargetChanged` follows the end of the session; a pending answer is dropped once the backend has handed over `Disconnected` (and never delivered when the backend is dropped without a further poll), while an answer pending at the start of the poll that maps the end comes before `Disconnected` and `Session` surfaces it or treats it as stale by §9.5 (note (c)). §14.9 preamble: O8 needs the real test-server backend over a double of the server for its `SelectTarget` part, its routing parts may use the backend double, O9 runs `tessera-server` in process (note (a)). §15 invariant 11 is read on the handed stream and names the end of the session. **Behaviour on main:** none changes; the `crates/net` remote backend and its conformance tests (`remote_selection`, `scenario_p1`) already behave as stated |
 | 2026-10-14 | Independent review of revision 9 (spec reviewer, Clean-Room-Role: review; a session that wrote no part of revision 9 or of the code): passed, every item of CLEAN_ROOM.md §5.3; the revision 9 parts move Revised → Accepted. §9.7 items 1 and 7, the §14.9 preamble and invariant 11 agree with §18.4.1 (a)–(c) and the `crates/net` remote backend on main. Non-blocking notes (a)–(b) in the header review record (a conformance row for item 7, the refusal error after the end). No other text changed |
+| 2026-10-16 | "P6 progression" revision (spec writer, for decision 0024 P6; additive only, written unnumbered on branch `p6`, number given at the merge; nothing renumbered): text function `action(VALUE,REF)` (§4.2, §5.2, §8.6, §9.1), window kind `craft-trainer` (§5.6), steps `untrained`, `trait-rank`, `trait-tree`, `forget-recipe`, `vocation`, `craft-trainer` and the options of `level`, `trainer`, `trait-points`, `profession`, `recipe`, `craft-result` (§6.6), patterns `train-craft`, `trait-rank`, `trait-branch` (§7.5), input forms `craft …` options, `train-craft`, `trait-rank`, `trait-branch` (§7.7), attributes marked "P6 progression" and families `vocation`, `craft-guild` (§8.3), contexts `TraitBranch`, `RecipeCategory` (§8.6), types, fields, events `UntrainedSkills`, `TraitRank`, `TraitTreeChanged`, `RecipeForgotten`, `VocationChanged`, `CraftTrainerShown`, commands `TrainCraft`, `SetTraitRank`, `ChooseTraitBranch` (§9.1, §9.2, §9.4, §9.5), log forms with added fields written only off their default (§10.3), limits (§11.1), fuzz note (§11.4), rule 7 (§13), hostile rows P6-H1 … P6-H18 (§14.5), Vectors P6-V1, P6-V2 and resolver case P6-V3 (§14.P6a–§14.P6c), invariant 15 (§15), one OPEN (§16), §18.P6. The P6 parts are in Review; every other part keeps its status. |
+| 2026-10-16 | Independent review of the "P6 progression" revision (spec reviewer, Clean-Room-Role: review; a session that wrote no part of the P6 revision or the P6 code): passed, every item of CLEAN_ROOM.md §5.3; the P6 parts move Review → Accepted. Non-blocking notes in §18.P6; no text other than the status lines, review record and this row changed |
 
 ---
 
@@ -4268,3 +4758,97 @@ family and the new label contexts cite `map-windows.md` and `travel-windows.md`,
 Review; acceptance follows the P3 precedent and the §8.3 "stands until Accepted" note, and
 §8.3/§8.6 must be re-checked if those reviews change the cited definitions. The P5 OPENs stay
 non-blocking for the spec owner. Status of the P5 parts: **Review → Accepted**.
+
+<a id="s18-p6"></a>
+### 18.P6 "P6 progression" revision (unnumbered until the merge): levels, training, traits and crafting
+
+**2026-10-16** (spec writer, for decision 0024 P6; inputs: `crafting-panels.md` §4.3, §4.7,
+§5.6, §6.2, §8.1, §8.3, §9, §13 (Review, 2026-10-16); `lua-plugin-api.md` §15.6 (Review, same
+day); the Accepted `combat-data.md` §7.9, §8, `economy.md` §5, `interaction.md` §3.8, §4; this
+spec). Status of these additions: **Review**; every other part keeps its status. Main has
+revision 8; this revision is labelled "P6 progression" and numbered at the merge. It is
+additive: new rows, options, steps, paragraphs, a rule 7 in §13, an invariant 15, vectors named
+P6-V1 … P6-V3 (§14.P6a–§14.P6c) and hostile rows P6-H*n*, so it merges with the parallel
+fix-up branch without renumbering.
+
+**Check of the existing forms.** §6.6 already carries experience (`xp`), levels (`level`),
+learned and forgotten skills (`learn`, `forget`), the trainer window (`trainer`, `TrainSkill`),
+class trait points and slots (`trait-points`, `trait`, `SlotTrait`), professions
+(`profession`), learned recipes (`recipe`), the crafting bar (`cast … kind=craft`), craft
+results (`craft-result`) and the craft request (`Craft { recipe, quantity }`); §6.2 carries
+recipe cooldowns (`cooldown REF`) and facilities (`effect`); §6.1 and §6.3 carry holdings,
+loot and items. The additions carry values the panels and plugin views must show but must
+not derive:
+
+| # | Change | Sections | Why |
+|---|---|---|---|
+| P6-D1 | `level … quiet` (`LevelChanged.quiet`) | §6.6, §9.2, §10.3 | the level-up presentation runs on a raised level, never on a level set at entry or by a script that wants none |
+| P6-D2 | `trainer` options `offers`, `rank`, `trained`, `unmet` (`TrainerShown.offers`, `TrainerEntry.rank`, `.flags`) | §6.6, §9.1, §9.2, §10.3, §11.1 | trainer rows that carry traits or recipes as well as skills, the rank a row requires and the ghosted rows, for literal refs too |
+| P6-D3 | `untrained` (`UntrainedSkills`) | §6.6, §9.2, §10.3, §11.1 | the skill-training view and `LocalPlayer:GetUntrainedSkills()` with price, level and rank (`lua-plugin-api.md` §15.6) |
+| P6-D4 | `trait-rank`, `trait-tree`, `trait-points … tree=`; `SetTraitRank`, `ChooseTraitBranch` with patterns and input forms; context `TraitBranch` | §6.6, §7.5, §7.7, §8.6, §9.2, §9.4 | a point-based trait tree: ranks per cell, the active tree and branch, points per tree, and the requests a click sends (OPEN in §16) |
+| P6-D5 | `profession … mastery-tier=` (`ProfessionChanged.mastery_tier`) | §6.6, §9.2 | the tier rows' mastery meter (`crafting-panels.md` §4.7, §15.2) and `ProfessionInfo:GetMasteryLevel()` |
+| P6-D6 | `recipe` options `profession`, `tier`, `category` (context `RecipeCategory`); `forget-recipe` (`RecipeForgotten`) | §6.6, §8.6, §9.2 | the recipe tree for literal recipes in synthetic goldens; one-use recipes leaving the panel; `ProfessionInfo` recipe lists |
+| P6-D7 | `vocation` (`VocationChanged`); `craft-trainer` (`CraftTrainerShown`, window kind `craft-trainer`); `TrainCraft` with pattern and input form | §5.6, §6.6, §7.5, §7.7, §9.2, §9.4 | the three crafting trainer windows, their texts and the profession selector (`crafting-panels.md` §8.3); `GetVocation()` |
+| P6-D8 | `Craft.tier`, `.output`, `.optional`, `.pack` and the input options; `craft-result … batch=` (`CraftResult.batch`) | §6.6, §7.7, §9.4, §10.3 | what the make controls send (`crafting-panels.md` CP14) and a request of several crafts with one result each, ending the panel's busy state with the last |
+| P6-D9 | `action(VALUE,REF)` (`Text::ActionFor`) | §4.2, §5.2, §8.6, §9.1, §10.3 | the crafting-trainer rows of the NPC choice window, one per offered record (`crafting-panels.md` §8.1) |
+| P6-D10 | Attributes of `trait`, `trait-tree`, `recipe`, `profession`, `creature`, `effect`, `hotspot`, `induction`; families `vocation`, `craft-guild` | §8.3, §8.6, §11.4 | choosing tree cells, recipes, professions of a vocation, gathering nodes, facilities and inductions by what they are, so gathering and facilities need no new step (Vector P6-V3) |
+| P6-D11 | Log rule for added fields; Vectors P6-V1, P6-V2, case P6-V3; hostile rows P6-H1 … P6-H18; rule 7; invariant 15 | §10.3, §13, §14, §15 | conformance, and committed logs (`progression.log`) that stay byte-identical |
+
+Not added, because existing forms suffice: spawning a gathering node or a facility (an actor
+whose `body=` is a `creature kind=container gathering=yes` or `hotspot` element; no new actor
+kind); using it (`use`), its bar (`cast … kind=induction`), its yield (`loot`, `give`) and its
+experience (`profession`); standing at a facility (`effect player`, `effect-end`); recipe
+cooldowns (`cooldown REF`); the crafting bar (`cast … kind=craft`); experience and class trait
+points (`xp`, `trait-points`); a rested or capped experience bar (no data property names one,
+so nothing is scripted for it).
+
+**Protocol.** None: the test-server backend refuses the new commands and never produces the new
+events or fields (§9.5); no protocol minor is needed (LEGAL.md §11.1 rule 5).
+
+**Rule-5 check (LEGAL.md §11.1).** Nothing here runs in or is linked by `tessera-server`. The
+feed's numbers stay scripted (invariants 2, 10, 14 and 15); the client half alone reads the
+install for names, icons, trees, recipes and the key of a profession or vocation record.
+ARCHITECTURE §19 gains `UntrainedSkills`, `TraitRank`, `TraitTreeChanged`, `RecipeForgotten`,
+`VocationChanged`, `CraftTrainerShown`, `TrainCraft`, `SetTraitRank` and `ChooseTraitBranch`
+(for its owner).
+
+**What an independent review must check.** P6-D1 … P6-D11 against the cited sections of
+`crafting-panels.md`, `lua-plugin-api.md` §15.6, `combat-data.md`, `economy.md` and
+`interaction.md` (every new attribute traced to its spec section, property and decoder view);
+Vectors P6-V1, P6-V2 and case P6-V3 line by line (times, window and item ids, field order, the
+rule for added fields, the class-0 ordering of cast ends); P6-H1 … P6-H18 against §4.2, §4.5,
+§6.6, §7.7, §11.1 and §11.2; that the committed `progression.log` is unchanged under §10.3;
+that no form lets the feed compute a level, cost, rank, tier, experience or craft outcome.
+
+**2026-10-16 independent review** (spec reviewer, Clean-Room-Role: review; a session that wrote
+no part of the P6 revision or the P6 code), against CLEAN_ROOM.md §5.3, decision 0024 §2 and §4
+(client half only; values scripted, never derived) and LEGAL.md §11.1 rule 5: **passed, every
+item**. Every P6 statement is a functional fact of Tessera's own feed format (step keywords,
+options, event fields with types and ranges, log forms, limits) or an install-derived reference
+marked for its source; no code or pseudo-code (the scenario and log blocks are Tessera's own
+text format, the braces name event fields as §9 does); API, event, property and label names are
+interoperability identifiers; all vector text is invented (§14.P6c notes this for case P6-V3),
+no game strings, assets, keys, hostnames or captures; nothing runs in or is linked by
+`tessera-server` (no protocol minor); no gate touched. P6-D1 … P6-D11 were traced to the cited
+sections of `crafting-panels.md`, `lua-plugin-api.md` §15.6, `combat-data.md`, `economy.md` and
+`interaction.md`; every new §8.3 attribute names a property and decoder view. **Spot-checks**
+(read-only, 2026-10-16): the two new label-context mappers (`Trait_TraitTree_Branch`,
+`CraftRecipe_UICategory`) resolve through the property dictionary in `crates/gamedata` and
+`crates/net` selector resolution over the install (passing `selectors_p6`), and the install
+counts the revision cites were reproduced with the P6 real-data tests on the owner's install
+(17 trait trees, 1,216 placements, 946 point-based traits; 10 professions, 7 vocations, 7
+guilds; 7,791 recipe records), corroborating the M1 marks of §8.3, §8.6 and of
+`lua-plugin-api.md` P113. Vectors P6-V1, P6-V2 and case P6-V3 were re-derived line by line
+(times, the generic-answer-then-trigger order of §7.4, window-id allocation, the class-0
+ordering of automatic cast ends, item ids, and the "written only off their default" log rule);
+all 18 hostile rows P6-H1 … P6-H18 were re-derived (error kind and line:column) and agree with
+the grammar, §4.5 and §11.1; invariant 15 and the §9.5 and §18.P6 Rule-5 checks keep the feed's
+numbers scripted and the test-server backend free of the P6 commands, events and protocol
+minor. **Rulings on the P6 OPENs** (review notes, not facts): the four spec-writer OPENs and the
+implementer's six readings of §16, and the `lua-plugin-api.md` §15.6 OPENs, are endorsed as
+implemented and left for the spec owner; they add no client fact and block nothing. **Dependency
+note (non-blocking):** the `creature gathering`, `creature craft-profession` and `hotspot
+facility` rows (§8.3) and the P6 panel inputs of §18.P6 cite `crafting-panels.md`, in Review
+under another reviewer; acceptance here follows the P3 and P5 precedent and the §8.3 "stands
+until that spec is Accepted" note; if that review changes a cited definition, §8.3/§8.6 must be
+re-checked. Status of the P6 parts: **Review → Accepted**.

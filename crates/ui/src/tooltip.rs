@@ -114,6 +114,12 @@ impl Ui {
         }
     }
 
+    /// The run-time tooltip text of an element (§6.3 step 1), if any.
+    #[must_use]
+    pub fn tooltip_text(&self, k: ElementKey) -> Option<&str> {
+        self.el(k).and_then(|e| e.tooltip_text.as_deref())
+    }
+
     /// Sets the run-time tooltip text (§6.3 step 1); recomputes mouse-visible (§4.3).
     pub fn set_tooltip_text(&mut self, k: ElementKey, text: Option<String>) {
         if let Some(e) = self.el_mut(k) {

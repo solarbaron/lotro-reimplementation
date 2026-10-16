@@ -23,6 +23,9 @@ use crate::domain::RewardKind;
 // P5 travel revision.
 use super::travel::{mount_vital_keyword, queue_keyword, route_keyword};
 use crate::domain::{InstanceEntry, TravelEntry, TravelFlags};
+// P6 progression revision.
+use super::progression::{craft_trainer_keyword, offer_keyword};
+use crate::domain::{TrainerEntry, TrainerFlags, TrainerOffer};
 
 /// The first actor's entity id is `ACTOR_ID_BASE + 1` (§5.3).
 pub const ACTOR_ID_BASE: u64 = 1 << 48;
@@ -235,6 +238,7 @@ fn text(t: &Text) -> String {
         Text::Comment(d) => format!("comment({})", did(*d)),
         Text::Objective { quest, objective } => format!("objective({},{objective})", did(*quest)),
         Text::Action(n) => format!("action({n})"),
+        Text::ActionFor { action, what } => format!("action({action},{})", reference(what)),
     }
 }
 
@@ -608,8 +612,17 @@ fn character_event(c: &CharacterEvent, ctx: &LogContext) -> String {
             quote(name),
             text(reason)
         ),
-        CharacterEvent::LevelChanged { entity, level } => {
-            format!("LevelChanged entity={} level={level}", ctx.entity(*entity))
+        CharacterEvent::LevelChanged {
+            entity,
+            level,
+            quiet,
+        } => {
+            // `quiet=yes` only off its default (P6 progression, §10.3).
+            let q = if *quiet { " quiet=yes" } else { "" };
+            format!(
+                "LevelChanged entity={} level={level}{q}",
+                ctx.entity(*entity)
+            )
         }
     }
 }
@@ -1167,20 +1180,40 @@ fn progression_event(p: &ProgressionEvent, ctx: &LogContext) -> String {
             window,
             trainer,
             entries,
-        } => format!(
-            "TrainerShown window={} trainer={} entries={}",
-            window.0,
-            ctx.opt_entity(*trainer),
-            list(entries, |t| format!(
-                "{{entry={} what={} coin={} level={}}}",
-                t.entry,
-                reference(&t.what),
-                t.coin,
-                t.level
-            ))
-        ),
-        ProgressionEvent::TraitPoints { available, total } => {
-            format!("TraitPoints available={available} total={total}")
+            offers,
+        } => {
+            let mut s = format!(
+                "TrainerShown window={} trainer={} entries={}",
+                window.0,
+                ctx.opt_entity(*trainer),
+                list(entries, |t| {
+                    let mut e = format!(
+                        "{{entry={} what={} coin={} level={}",
+                        t.entry,
+                        reference(&t.what),
+                        t.coin,
+                        t.level
+                    );
+                    trainer_entry_tail(&mut e, t);
+                    e.push('}');
+                    e
+                })
+            );
+            if *offers != TrainerOffer::Skills {
+                let _ = write!(s, " offers={}", offer_keyword(*offers));
+            }
+            s
+        }
+        ProgressionEvent::TraitPoints {
+            available,
+            total,
+            tree,
+        } => {
+            let mut s = format!("TraitPoints available={available} total={total}");
+            if let Some(t) = tree {
+                let _ = write!(s, " tree={}", reference(t));
+            }
+            s
         }
         ProgressionEvent::TraitSlotted { slot, what, rank } => format!(
             "TraitSlotted slot={slot} what={} rank={rank}",
@@ -1193,27 +1226,56 @@ fn progression_event(p: &ProgressionEvent, ctx: &LogContext) -> String {
             proficiency_max,
             mastery,
             mastery_max,
-        } => format!(
-            "ProfessionChanged profession={} tier={tier} proficiency={proficiency} proficiency_max={proficiency_max} mastery={mastery} mastery_max={mastery_max}",
-            reference(profession)
-        ),
-        ProgressionEvent::RecipeLearned { what } => {
-            format!("RecipeLearned what={}", reference(what))
+            mastery_tier,
+        } => {
+            let mut s = format!(
+                "ProfessionChanged profession={} tier={tier} proficiency={proficiency} proficiency_max={proficiency_max} mastery={mastery} mastery_max={mastery_max}",
+                reference(profession)
+            );
+            if let Some(m) = mastery_tier {
+                let _ = write!(s, " mastery_tier={m}");
+            }
+            s
+        }
+        ProgressionEvent::RecipeLearned {
+            what,
+            profession,
+            tier,
+            category,
+        } => {
+            let mut s = format!("RecipeLearned what={}", reference(what));
+            if let Some(p) = profession {
+                let _ = write!(s, " profession={}", reference(p));
+            }
+            if let Some(t) = tier {
+                let _ = write!(s, " tier={t}");
+            }
+            if let Some(c) = category {
+                let _ = write!(s, " category={c}");
+            }
+            s
         }
         ProgressionEvent::CraftResult {
             recipe,
             outcome,
             item,
-        } => format!(
-            "CraftResult recipe={} outcome={} item={}",
-            reference(recipe),
-            match outcome {
-                CraftOutcome::Success => "success",
-                CraftOutcome::Critical => "critical",
-                CraftOutcome::Failed => "failed",
-            },
-            item.map_or_else(|| "none".to_owned(), |i| ctx.item(i))
-        ),
+            batch,
+        } => {
+            let mut s = format!(
+                "CraftResult recipe={} outcome={} item={}",
+                reference(recipe),
+                match outcome {
+                    CraftOutcome::Success => "success",
+                    CraftOutcome::Critical => "critical",
+                    CraftOutcome::Failed => "failed",
+                },
+                item.map_or_else(|| "none".to_owned(), |i| ctx.item(i))
+            );
+            if let Some(b) = batch {
+                let _ = write!(s, " batch={}/{}", b.index, b.count);
+            }
+            s
+        }
         ProgressionEvent::ReputationChanged {
             faction,
             points,
@@ -1223,6 +1285,67 @@ fn progression_event(p: &ProgressionEvent, ctx: &LogContext) -> String {
             reference(faction)
         ),
         ProgressionEvent::TitleGranted { what } => format!("TitleGranted what={}", reference(what)),
+        // P6 progression: new variants write every field (§10.3).
+        ProgressionEvent::UntrainedSkills { entries } => format!(
+            "UntrainedSkills entries={}",
+            list(entries, |u| format!(
+                "{{entry={} what={} coin={} level={} rank={}}}",
+                u.entry,
+                reference(&u.what),
+                u.coin,
+                u.level,
+                opt_u(u.rank)
+            ))
+        ),
+        ProgressionEvent::TraitRank { tree, what, rank } => format!(
+            "TraitRank tree={} what={} rank={rank}",
+            reference(tree),
+            reference(what)
+        ),
+        ProgressionEvent::TraitTreeChanged { tree, branch } => format!(
+            "TraitTreeChanged tree={} branch={}",
+            opt_ref(tree.as_ref()),
+            opt_u(*branch)
+        ),
+        ProgressionEvent::RecipeForgotten { what } => {
+            format!("RecipeForgotten what={}", reference(what))
+        }
+        ProgressionEvent::VocationChanged { vocation, slots } => format!(
+            "VocationChanged vocation={} slots={}",
+            opt_ref(vocation.as_ref()),
+            opt_u(*slots)
+        ),
+        ProgressionEvent::CraftTrainerShown {
+            window,
+            kind,
+            what,
+            npc,
+        } => format!(
+            "CraftTrainerShown window={} kind={} what={} npc={}",
+            window.0,
+            craft_trainer_keyword(*kind),
+            reference(what),
+            ctx.opt_entity(*npc)
+        ),
+    }
+}
+
+/// The P6 progression fields of a trainer entry, after `level`, each only off its default
+/// (§10.3).
+fn trainer_entry_tail(s: &mut String, t: &TrainerEntry) {
+    if let Some(r) = t.rank {
+        let _ = write!(s, " rank={r}");
+    }
+    if !t.flags.is_empty() {
+        let names: Vec<&str> = [
+            (TrainerFlags::TRAINED, "trained"),
+            (TrainerFlags::UNMET, "unmet"),
+        ]
+        .into_iter()
+        .filter(|(b, _)| t.flags.contains(*b))
+        .map(|(_, n)| n)
+        .collect();
+        let _ = write!(s, " flags={}", names.join("+"));
     }
 }
 
@@ -1415,8 +1538,42 @@ pub fn format_command(command: &Command, ctx: &LogContext) -> String {
             ProgressionCommand::SlotTrait { slot, what } => {
                 format!("SlotTrait slot={slot} what={}", opt_ref(what.as_ref()))
             }
-            ProgressionCommand::Craft { recipe, quantity } => {
-                format!("Craft recipe={} quantity={quantity}", reference(recipe))
+            ProgressionCommand::Craft {
+                recipe,
+                quantity,
+                tier,
+                output,
+                optional,
+                pack,
+            } => {
+                let mut s = format!("Craft recipe={} quantity={quantity}", reference(recipe));
+                // P6 progression fields, only off their defaults (§10.3).
+                if let Some(t) = tier {
+                    let _ = write!(s, " tier={t}");
+                }
+                if *output != 0 {
+                    let _ = write!(s, " output={output}");
+                }
+                if *optional != 0 {
+                    let _ = write!(s, " optional={optional}");
+                }
+                if *pack {
+                    s.push_str(" pack=yes");
+                }
+                s
+            }
+            ProgressionCommand::TrainCraft { window, replace } => format!(
+                "TrainCraft window={} replace={}",
+                window.0,
+                opt_ref(replace.as_ref())
+            ),
+            ProgressionCommand::SetTraitRank { tree, what, rank } => format!(
+                "SetTraitRank tree={} what={} rank={rank}",
+                reference(tree),
+                reference(what)
+            ),
+            ProgressionCommand::ChooseTraitBranch { tree, branch } => {
+                format!("ChooseTraitBranch tree={} branch={branch}", reference(tree))
             }
         },
         other => format!("{} unlogged", other.name()),

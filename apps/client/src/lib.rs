@@ -56,6 +56,7 @@ pub mod npc;
 pub mod panels;
 pub mod plugins;
 pub mod pre_world;
+pub mod progression;
 pub mod quests;
 pub mod runtime;
 pub mod scenario;

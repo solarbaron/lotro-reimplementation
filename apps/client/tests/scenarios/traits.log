@@ -1,0 +1,33 @@
+tessera-scenario-log 1
+install none
+tick 100
+title "Patterns of the loom"
+resolve $trees line=11 family=trait-tree requested=1 candidates=0 got=0 note=no-install
+resolve $placed line=12 family=trait requested=2 candidates=0 got=0 note=no-install
+pre > Connect
+pre Connected characters=["Bryn"]
+pre > EnterWorld character="Bryn"
+0.000 WorldEntered entity=player name="Bryn" at=0.000,0.000,0.000 facing=90.00
+0.000 LocationReport entity=player at=0:0.000,0.000,0.000 facing=90.00 anchor=none cause=entered
+0.000 EntitySpawned entity=$weaver kind=non-player name="Weaver" at=1.000,2.000,0.000 facing=206.57
+0.000 LevelChanged entity=player level=12 quiet=yes
+0.000 TraitPoints available=3 total=6
+0.000 TraitTreeChanged tree="Loom craft" branch=none
+0.000 TraitPoints available=4 total=9 tree="Loom craft"
+0.000 TraitRank tree="Loom craft" what="Even weft" rank=2
+0.000 TraitRank tree="Loom craft" what="Tight warp" rank=0
+0.000 TraitSlotted slot=0 what="Patient eye" rank=1
+0.000 TraitSlotted slot=1 what="Quick shuttle" rank=3
+0.500 TraitTreeChanged tree="Loom craft" branch=none
+1.000 > SetTraitRank tree="Loom craft" what="Tight warp" rank=1
+1.000 TraitRank tree="Loom craft" what="Tight warp" rank=1
+1.000 TraitPoints available=3 total=9 tree="Loom craft"
+1.500 > UseEntity entity=$weaver
+1.500 TrainerShown window=1 trainer=$weaver entries=[{entry=1 what="Patient eye" coin=0 level=10 rank=1 flags=trained},{entry=2 what="Quick shuttle" coin=250 level=14 rank=2},{entry=3 what="Bright dye" coin=250 level=20 rank=1 flags=unmet}] offers=traits
+2.000 > TrainSkill window=1 entry=2
+2.000 TraitSlotted slot=1 what="Quick shuttle" rank=4
+2.000 WindowClosed window=1
+2.500 > SlotTrait slot=2 what="Bright dye"
+2.500 TraitSlotted slot=2 what="Bright dye" rank=1
+2.500 TraitPoints available=2 total=6
+2.500 end reason=complete skipped=3 input-skipped=0 dropped=0 spilled=0

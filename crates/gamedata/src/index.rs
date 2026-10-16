@@ -16,7 +16,7 @@
 //! | race | `player-character.md` §2.3 (`CharacterRecords`, role `RaceTable`) |
 //! | creature | `creatures.md` §2.2 (`TemplateFinder`, `CreatureSubtree`) |
 //! | quest, npc-comment, title, emote, faction | `quests.md` §2.1–§2.3 (`QuestLabels::classify_record`) |
-//! | recipe, profession, vendor-inventory, trophy-list | `economy.md` §3.4 (characteristic property, then `KindByClass`) |
+//! | recipe, profession, vendor-inventory, trophy-list, vocation, craft-guild | `economy.md` §3.4 (characteristic property, then `KindByClass`) |
 //! | travel-destination, area | `map-data.md` §2.3 (`classify_set`) |
 //! | instance | `instances.md` §3.4 (`classify`, kind `Template`) |
 //!
@@ -29,7 +29,9 @@
 use std::collections::BTreeMap;
 use std::time::Instant;
 
-use tessera_formats::gameplay::combat::{ClassTable, CombatFamily, EffectRole, RelatedObject};
+use tessera_formats::gameplay::combat::{
+    ClassTable, CombatFamily, EffectRole, RelatedObject, TraitTree,
+};
 use tessera_formats::gameplay::common::{
     ClassIndex, ObjectRoot, Pid, PropertyAccess, decode_object_properties, is_object_did,
 };
@@ -208,6 +210,8 @@ pub(crate) struct SkillFacts {
     pub harmful: Option<bool>,
     pub monster: Option<bool>,
     pub induction: bool,
+    /// The induction record `Skill_InductionAction` names (P6 progression `induction of=`).
+    pub induction_did: Option<Did>,
     pub toggle: bool,
 }
 
@@ -216,6 +220,20 @@ pub(crate) struct SkillFacts {
 pub(crate) struct TraitFacts {
     pub nature: Option<u32>,
     pub min_level: Option<i32>,
+    /// `Trait_PointBasedTrait_PointCostProgression` present (P6 progression `point-based`).
+    pub point_based: bool,
+    /// `Trait_Tier` (P6 progression `tier`).
+    pub tier: Option<i32>,
+}
+
+/// What the trait-tree attributes and `trait in-tree=` read (`combat-data.md` §8.5).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct TraitTreeFacts {
+    pub tree_type: Option<u32>,
+    /// Every `Trait_TraitTree_Branch` value of the tree's placements, sorted, once each.
+    pub branches: Box<[u32]>,
+    /// Every placed trait, sorted, once each.
+    pub traits: Box<[Did]>,
 }
 
 /// A class table's class and lists (`combat-data.md` §9.1).
@@ -240,6 +258,12 @@ pub(crate) struct CreatureFacts {
     pub vendor_inventories: Box<[Did]>,
     pub trainer: bool,
     pub quest_giver: bool,
+    /// `Usage_RequiredCraftProfession` present (P6 progression `gathering`).
+    pub gathering: bool,
+    /// Its value, when non-null (P6 progression `craft-profession`).
+    pub craft_profession: Option<Did>,
+    /// `Induction_ActionDID`, when non-null (P6 progression `induction of=`).
+    pub induction: Option<Did>,
 }
 
 /// What the quest attributes read (`quests.md` §4, §5.1, §8).
@@ -260,6 +284,18 @@ pub(crate) struct RecipeFacts {
     /// `CraftRecipe_TierArray` (§5.1 rule 1; `Recipe::tiers`).
     pub tiers: Box<[u32]>,
     pub result: Did,
+    /// `CraftRecipe_UICategory` (P6 progression `category`).
+    pub category: Option<u32>,
+    /// `CraftRecipe_OneTimeRecipe` (P6 progression `one-use`).
+    pub one_use: bool,
+    /// `CraftRecipe_CooldownDuration` present (P6 progression `cooldown`).
+    pub cooldown: bool,
+    /// `CraftRecipe_CriticalResultItem` present and not 0 (P6 progression `critical`).
+    pub critical: bool,
+    /// `CraftRecipe_RequiredFacilityEffect`, when non-null (P6 progression `facility`).
+    pub facility: Option<Did>,
+    /// `CraftRecipe_InductionAction`, when non-null (P6 progression `induction of=`).
+    pub induction: Option<Did>,
 }
 
 /// The facts of one family member.
@@ -271,12 +307,17 @@ pub(crate) enum Facts {
     Skill(SkillFacts),
     Effect(EffectRole),
     Trait(TraitFacts),
+    TraitTree(Box<TraitTreeFacts>),
     Class(Box<ClassFacts>),
     Creature(Box<CreatureFacts>),
     Quest(Box<QuestFacts>),
     Recipe(Box<RecipeFacts>),
     VendorInventory(Box<[Did]>),
     Area(MapKind),
+    /// A vocation's professions (P6 progression).
+    Vocation(Box<[Did]>),
+    /// A craft guild's profession (P6 progression).
+    CraftGuild(Option<Did>),
 }
 
 /// One member of a family.
@@ -704,6 +745,8 @@ fn pass1<S: RecordSource>(ctx: &Ctx<'_, S>, did: Did) -> Pass1 {
             Facts::Trait(TraitFacts {
                 nature: set.enum_key(v.sel.trait_nature),
                 min_level: set.int(v.sel.trait_min_level),
+                point_based: set.has(v.sel.trait_point_cost),
+                tier: set.int(v.sel.trait_tier),
             }),
         )),
         Some(CombatFamily::ClassTable) => {
@@ -713,7 +756,10 @@ fn pass1<S: RecordSource>(ctx: &Ctx<'_, S>, did: Did) -> Pass1 {
         _ => {}
     }
     match v.combat_classes.related(class) {
-        Some(RelatedObject::TraitTree) => members.push((Family::TraitTree, Facts::None)),
+        Some(RelatedObject::TraitTree) => members.push((
+            Family::TraitTree,
+            Facts::TraitTree(Box::new(trait_tree_facts(v, &set))),
+        )),
         Some(RelatedObject::Induction) => members.push((Family::Induction, Facts::None)),
         _ => {}
     }
@@ -811,13 +857,16 @@ fn pass2<S: RecordSource>(
     out
 }
 
-/// The selector family of an economy kind, for the four kinds §8.3 names.
+/// The selector family of an economy kind, for the kinds §8.3 names (the vocation and
+/// craft-guild families of the P6 progression revision included).
 fn economy_family(kind: EconomyKind) -> Option<Family> {
     match kind {
         EconomyKind::Recipe => Some(Family::Recipe),
         EconomyKind::Profession => Some(Family::Profession),
         EconomyKind::VendorInventory => Some(Family::VendorInventory),
         EconomyKind::TrophyList => Some(Family::TrophyList),
+        EconomyKind::Vocation => Some(Family::Vocation),
+        EconomyKind::CraftGuild => Some(Family::CraftGuild),
         _ => None,
     }
 }
@@ -839,8 +888,22 @@ fn economy_member(
                 profession: r.profession,
                 tiers: r.tiers().into_boxed_slice(),
                 result: r.result,
+                category: r.ui_category,
+                one_use: r.one_time,
+                cooldown: r.cooldown.is_some(),
+                critical: r.critical_result.is_some(),
+                facility: r.required_facility,
+                induction: r.induction_action,
             }))
         }),
+        EconomyKind::Vocation => v
+            .economy
+            .vocation(set)
+            .map(|voc| Facts::Vocation(voc.professions.into_boxed_slice())),
+        EconomyKind::CraftGuild => v
+            .economy
+            .craft_guild(set)
+            .map(|g| Facts::CraftGuild(g.profession)),
         EconomyKind::VendorInventory => v
             .economy
             .vendor_inventory(set)
@@ -873,6 +936,10 @@ fn skill_facts(v: &Vocab, set: &PropertySet) -> SkillFacts {
             val.as_did()
                 .map_or_else(|| val.as_bits().is_some_and(|b| b != 0), |d| !d.is_null())
         }),
+        induction_did: set
+            .get_pid(s.skill_induction)
+            .and_then(PropertyValue::as_did)
+            .filter(|d| !d.is_null()),
         toggle: set.has(s.skill_toggle),
     }
 }
@@ -940,6 +1007,30 @@ fn creature_facts(v: &Vocab, set: &PropertySet) -> CreatureFacts {
         vendor_inventories: inventories.into_boxed_slice(),
         trainer: set.has(s.trainer_class),
         quest_giver: !set.elements(s.active_quests).is_empty(),
+        gathering: set.has(s.required_craft_profession),
+        craft_profession: set.did_nonnull(s.required_craft_profession),
+        induction: set.did_nonnull(s.induction_action),
+    }
+}
+
+/// The type, branches and placed traits of a trait tree (`combat-data.md` §8.5).
+fn trait_tree_facts(v: &Vocab, set: &PropertySet) -> TraitTreeFacts {
+    let tree = TraitTree::from_properties(set, &v.combat.traits);
+    let mut branches: Vec<u32> = tree.entries.iter().filter_map(|e| e.branch).collect();
+    branches.sort_unstable();
+    branches.dedup();
+    let mut traits: Vec<Did> = tree
+        .entries
+        .iter()
+        .map(|e| e.trait_did)
+        .filter(|d| !d.is_null())
+        .collect();
+    traits.sort_unstable_by_key(|d| d.0);
+    traits.dedup();
+    TraitTreeFacts {
+        tree_type: tree.tree_type,
+        branches: branches.into_boxed_slice(),
+        traits: traits.into_boxed_slice(),
     }
 }
 

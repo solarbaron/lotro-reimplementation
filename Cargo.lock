@@ -4223,6 +4223,7 @@ dependencies = [
  "tessera-formats",
  "tessera-install",
  "tessera-material",
+ "tessera-props",
  "tessera-script",
  "tessera-ui",
  "thiserror 2.0.21",

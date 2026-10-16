@@ -923,6 +923,80 @@ cargo run --release -p tessera-client -- --place "12.3S, 45.6W" --mount steed:me
 Local golden images of the map, travel and finder windows follow §3.14's rules
 ([decision 0036](decisions/0036-p5-map-census-and-panel-goldens.md), Proposed).
 
+### 3.18 Experience, traits, training and crafting
+
+These parts are early (P6). As for the NPC windows (§3.14), the panels' layouts, texts and
+icons come from your install, while what they show — your level and experience, trait ranks and
+points, the skills and recipes you can train, held ingredients and craft results — comes from a
+scenario file (§3.11). Tessera runs none of the game's experience, level, training, trait or
+crafting rules: every value is scripted (nothing is earned or computed). The test server
+(`--server`) sends none of this.
+
+The windows themselves are not yet attached to the live walker: the model is kept from the feed
+in every run, but the runtime glue that shows the panels on screen and opens them with
+`--open-panel` is still being built. So today the P6 panels are driven **headless** and in
+process, and are checked by the scenario logs and by golden images (below), not watched on
+screen. The crafting-panel toggle (`toggle_crafting`, default `T` in the keymap, §4.2) is a defined key
+action that the client does not yet act on, and the `--open-panel` names `crafting`,
+`crafting-recipe`, `vocation-trainer`, `profession-trainer`, `craftguild-trainer`, `traits`,
+`training` and `experience` are defined but their routing is not yet wired, so the client
+currently reports them as unknown and opens nothing.
+
+What each part shows, scripted by the feed:
+
+- **The experience bar** shows your level and the experience into it (feed steps `level` and
+  `xp`). A level raised without the `quiet` mark runs the level-up presentation.
+- **The trait panel** shows your trait trees as tabs, each tree's branches, its cells with their
+  rank and state, met and unmet prerequisites, the available and spent points, and your slotted
+  traits (`trait-tree`, `trait-rank`, `trait-points`, `trait`). Clicking a cell asks the session
+  to raise that trait's rank; the panel changes only when the feed answers.
+- **The skill-training window** lists what a trainer offers — skills, traits or recipes — with
+  each row's price in coin, its level and rank, and marks for rows already trained or whose
+  requirements are not met (`trainer … offers=…`). Train asks the session to train the row.
+- **The crafting panel** shows your professions (and your vocation and its slot count) as tabs,
+  the recipe tree grouped by tier and category with proficiency and mastery marks, search, and a
+  recipe page with the result, the tool and facility lines, ingredients held and needed, optional
+  ingredients and the critical chance, a one-use or cooldown note, and the quantity and Make and
+  Make All controls. Make asks the session to craft; the crafting bar and the result lines follow
+  the feed (`vocation`, `profession`, `recipe`, `cooldown`, `craft-result`).
+- **Crafting trainers** (profession, vocation and guild) open from an NPC dialogue option that
+  carries a trainer action, or from a `craft-trainer` step; Train asks the session to train the
+  profession, replacing one of yours when your slots are full.
+- **Gathering.** A gathering node is an object you use with U (use the nearest usable thing in
+  range, §3.14) when its body is one of the install's gathering containers; the feed answers with
+  an induction bar, a loot window, the profession's new experience and the node's removal, so a
+  node reuses the same use, induction-bar and loot paths as an NPC. Standing at a crafting
+  facility is shown as an effect on you.
+
+Plugins gain the `Turbine.Gameplay` progression and crafting views (profession and recipe info
+and the untrained-skill list; §3.10), though the client does not yet feed them.
+
+**The committed scenarios.** Four synthetic scenarios in `apps/client/tests/scenarios/` show
+these parts; each plays without an install (literal entries) and adds install records through
+selectors when you set `TESSERA_GAME_DIR`. Their exact steps are in the files:
+
+| File | What it shows |
+|---|---|
+| `progression-panels.scenario` | The whole progression scenario: a level-up, a skill trainer with its train, a trait tree raised, and a two-craft batch with its bars, results and moving proficiency meter |
+| `traits.scenario` | The active trait tree and its branch, cell ranks raised by scripted input, points per tree and per class, slotted traits, and a trainer that offers traits |
+| `crafting.scenario` | A vocation and professions with tiers and a mastery tier, literal recipes by profession, tier and category, a cooldown, a profession trainer from a dialogue option, a failed craft and a one-use recipe forgotten after use |
+| `gathering.scenario` | Using a gathering node answered by an induction, loot and profession experience, an interrupted gather, and a crafting facility as an effect |
+
+```sh
+# Headless, no install: the events in the log, the same on every run.
+cargo run --release -p tessera-client -- --headless --no-data \
+    --scenario apps/client/tests/scenarios/progression-panels.scenario --scenario-log -
+# With your install, the selectors add real trait trees and recipes:
+export TESSERA_GAME_DIR="$(cargo run -q -p tessera-dattool -- detect --path)"
+cargo run --release -p tessera-client -- --headless \
+    --scenario apps/client/tests/scenarios/crafting.scenario --scenario-log -
+```
+
+Committed golden images of the four P6 panels (the experience bar, the trait panel, the skill
+and crafting trainer windows and two states of the crafting panel) are in
+`crates/ui/tests/golden/p6_*.png`; local real-data golden images of the install layouts follow
+§3.14's rules ([decision 0037](decisions/0037-p6-trait-tree-and-recipe-census.md), Proposed).
+
 ---
 
 ## 4. Controls and the keymap file

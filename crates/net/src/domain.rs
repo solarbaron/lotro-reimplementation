@@ -110,6 +110,14 @@ pub enum Text {
     /// dictionary names for `ActionPickerUI_Action` (`docs/specs/npc-windows.md` §5.3;
     /// `scenario-feed.md` §5.2, P3 revision).
     Action(u32),
+    /// An NPC action entry offered for one record (P6 progression, `scenario-feed.md`
+    /// §5.2): for the crafting-trainer actions the row of `crafting-panels.md` §8.1.
+    ActionFor {
+        /// The action key, as for [`Text::Action`].
+        action: u32,
+        /// The record (or literal) the entry is for.
+        what: Ref,
+    },
 }
 
 /// An inventory container.
@@ -553,12 +561,137 @@ pub enum MountVital {
 pub struct TrainerEntry {
     /// The entry number (1-based).
     pub entry: u16,
-    /// The skill taught.
+    /// The skill (or, by [`TrainerOffer`], trait or recipe) taught.
     pub what: Ref,
     /// Its cost in coin.
     pub coin: u64,
     /// The level it needs.
     pub level: u32,
+    /// The rank the entry requires (P6 progression; 0 … [`MAX_TRAIT_RANK`]), when scripted.
+    pub rank: Option<u16>,
+    /// The row's marks (P6 progression).
+    pub flags: TrainerFlags,
+}
+
+// --- P6 progression (`scenario-feed.md` §6.6, §9.1, "P6 progression") ---------------------
+
+/// Largest trait rank, trainer-entry rank, recipe or profession tier and craft tier (P6
+/// progression).
+pub const MAX_TRAIT_RANK: u16 = 1000;
+
+/// Most entries of an [`ProgressionEvent::UntrainedSkills`] list (P6 progression).
+pub const MAX_UNTRAINED_ENTRIES: usize = 1024;
+
+/// Largest level of an untrained-skill entry (P6 progression).
+pub const MAX_UNTRAINED_LEVEL: u32 = 10_000;
+
+/// Largest profession slot count of a [`ProgressionEvent::VocationChanged`] (P6
+/// progression).
+pub const MAX_PROFESSION_SLOTS: u8 = 32;
+
+/// Largest output page of a [`ProgressionCommand::Craft`] (P6 progression).
+pub const MAX_CRAFT_OUTPUT: u16 = 64;
+
+/// What a trainer window offers (P6 progression, `scenario-feed.md` §9.1): which rows and
+/// tooltips the client half draws.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum TrainerOffer {
+    /// Skills (the default, as before P6).
+    #[default]
+    Skills,
+    /// Traits.
+    Traits,
+    /// Recipes.
+    Recipes,
+}
+
+/// The marks of a trainer row (P6 progression, `scenario-feed.md` §9.1): bit 0 already
+/// trained, bit 1 requirements not met; the other bits are 0.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub struct TrainerFlags(pub u8);
+
+impl TrainerFlags {
+    /// No mark.
+    pub const NONE: Self = Self(0);
+    /// Bit 0: already trained.
+    pub const TRAINED: Self = Self(1);
+    /// Bit 1: the requirements are not met.
+    pub const UNMET: Self = Self(2);
+
+    /// Whether only bits 0 and 1 are set.
+    #[must_use]
+    pub fn is_valid(self) -> bool {
+        self.0 & !0b11 == 0
+    }
+
+    /// Whether every mark of `other` is set (true for [`NONE`](Self::NONE)).
+    #[must_use]
+    pub fn contains(self, other: Self) -> bool {
+        self.0 & other.0 == other.0
+    }
+
+    /// Whether no mark is set.
+    #[must_use]
+    pub fn is_empty(self) -> bool {
+        self.0 == 0
+    }
+}
+
+impl std::ops::BitOr for TrainerFlags {
+    type Output = Self;
+
+    fn bitor(self, rhs: Self) -> Self {
+        Self(self.0 | rhs.0)
+    }
+}
+
+impl std::ops::BitOrAssign for TrainerFlags {
+    fn bitor_assign(&mut self, rhs: Self) {
+        self.0 |= rhs.0;
+    }
+}
+
+/// Which crafting trainer window opens (P6 progression, `crafting-panels.md` §8.3).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum CraftTrainerKind {
+    /// A profession trainer.
+    Profession,
+    /// A vocation trainer.
+    Vocation,
+    /// A craft-guild trainer.
+    Guild,
+}
+
+/// The *K*-th of *N* crafts of one request (P6 progression): 1 ≤ `index` ≤ `count`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct Batch {
+    /// *K*, 1-based.
+    pub index: u16,
+    /// *N*.
+    pub count: u16,
+}
+
+impl Batch {
+    /// Whether 1 ≤ `index` ≤ `count`.
+    #[must_use]
+    pub fn is_valid(self) -> bool {
+        self.index >= 1 && self.index <= self.count
+    }
+}
+
+/// One entry of an [`ProgressionEvent::UntrainedSkills`] list (P6 progression).
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct UntrainedEntry {
+    /// The entry number (1-based).
+    pub entry: u16,
+    /// The skill.
+    pub what: Ref,
+    /// Its cost in coin.
+    pub coin: u64,
+    /// The level it needs (0 … [`MAX_UNTRAINED_LEVEL`]).
+    pub level: u32,
+    /// The rank it requires (0 … [`MAX_TRAIT_RANK`]), when scripted.
+    pub rank: Option<u16>,
 }
 
 /// Character events (character list details, levels).
@@ -606,6 +739,9 @@ pub enum CharacterEvent {
         entity: EntityId,
         /// Its level.
         level: u32,
+        /// A quiet report (P6 progression): the client half sets the level without its
+        /// level-up presentation.
+        quiet: bool,
     },
 }
 
@@ -1265,6 +1401,8 @@ pub enum ProgressionEvent {
         trainer: Option<EntityId>,
         /// The entries.
         entries: Vec<TrainerEntry>,
+        /// What the rows offer (P6 progression; [`TrainerOffer::Skills`] as before).
+        offers: TrainerOffer,
     },
     /// Trait points.
     TraitPoints {
@@ -1272,6 +1410,9 @@ pub enum ProgressionEvent {
         available: u32,
         /// Points in total.
         total: u32,
+        /// The trait tree these points are for (P6 progression); `None`: the class's trait
+        /// points, as before.
+        tree: Option<Ref>,
     },
     /// A trait slot's content.
     TraitSlotted {
@@ -1296,11 +1437,20 @@ pub enum ProgressionEvent {
         mastery: u32,
         /// Mastery maximum.
         mastery_max: u32,
+        /// The tier whose mastery is being earned (P6 progression; 0 …
+        /// [`MAX_TRAIT_RANK`]), when scripted.
+        mastery_tier: Option<u16>,
     },
     /// A recipe was learned.
     RecipeLearned {
         /// The recipe.
         what: Ref,
+        /// The profession it is placed under (P6 progression), when scripted.
+        profession: Option<Ref>,
+        /// Its tier (P6 progression; 0 … [`MAX_TRAIT_RANK`]), when scripted.
+        tier: Option<u16>,
+        /// Its UI category key (P6 progression), when scripted.
+        category: Option<u32>,
     },
     /// The result of a craft.
     CraftResult {
@@ -1310,6 +1460,8 @@ pub enum ProgressionEvent {
         outcome: CraftOutcome,
         /// The item made.
         item: Option<ItemId>,
+        /// Which craft of a request of several this is (P6 progression).
+        batch: Option<Batch>,
     },
     /// Reputation with a faction.
     ReputationChanged {
@@ -1324,6 +1476,51 @@ pub enum ProgressionEvent {
     TitleGranted {
         /// The title.
         what: Ref,
+    },
+    /// The whole list of skills the player can still train (P6 progression); replaces the
+    /// previous list. Player state, not a window.
+    UntrainedSkills {
+        /// The entries (0 … [`MAX_UNTRAINED_ENTRIES`]; empty: nothing left to train).
+        entries: Vec<UntrainedEntry>,
+    },
+    /// The rank of one trait-tree cell (P6 progression).
+    TraitRank {
+        /// The trait tree.
+        tree: Ref,
+        /// The trait.
+        what: Ref,
+        /// Its rank.
+        rank: u16,
+    },
+    /// The active trait tree and its chosen branch (P6 progression).
+    TraitTreeChanged {
+        /// The tree; `None`: no active tree.
+        tree: Option<Ref>,
+        /// The branch key, when chosen.
+        branch: Option<u32>,
+    },
+    /// A recipe was forgotten (P6 progression).
+    RecipeForgotten {
+        /// The recipe.
+        what: Ref,
+    },
+    /// The player's vocation (P6 progression).
+    VocationChanged {
+        /// The vocation; `None`: no vocation.
+        vocation: Option<Ref>,
+        /// The number of profession slots (0 … [`MAX_PROFESSION_SLOTS`]); `None`: unknown.
+        slots: Option<u8>,
+    },
+    /// A crafting trainer window (P6 progression, `crafting-panels.md` §8.3).
+    CraftTrainerShown {
+        /// The window.
+        window: WindowId,
+        /// Which trainer window.
+        kind: CraftTrainerKind,
+        /// The profession, vocation or guild record.
+        what: Ref,
+        /// The trainer.
+        npc: Option<EntityId>,
     },
 }
 
@@ -1343,6 +1540,12 @@ impl ProgressionEvent {
             Self::CraftResult { .. } => "CraftResult",
             Self::ReputationChanged { .. } => "ReputationChanged",
             Self::TitleGranted { .. } => "TitleGranted",
+            Self::UntrainedSkills { .. } => "UntrainedSkills",
+            Self::TraitRank { .. } => "TraitRank",
+            Self::TraitTreeChanged { .. } => "TraitTreeChanged",
+            Self::RecipeForgotten { .. } => "RecipeForgotten",
+            Self::VocationChanged { .. } => "VocationChanged",
+            Self::CraftTrainerShown { .. } => "CraftTrainerShown",
         }
     }
 }
@@ -1760,6 +1963,38 @@ pub enum ProgressionCommand {
         recipe: Ref,
         /// How many.
         quantity: u16,
+        /// The selected tier (P6 progression; 0 … [`MAX_TRAIT_RANK`]), when any.
+        tier: Option<u16>,
+        /// The output page (P6 progression; 0 … [`MAX_CRAFT_OUTPUT`]; 0 = the recipe's own
+        /// result).
+        output: u16,
+        /// One bit per checked optional-ingredient slot (P6 progression).
+        optional: u8,
+        /// The ingredient-pack flag (P6 progression).
+        pack: bool,
+    },
+    /// Train at the open crafting trainer window (P6 progression).
+    TrainCraft {
+        /// The craft-trainer window.
+        window: WindowId,
+        /// The profession the request asks to replace, when any.
+        replace: Option<Ref>,
+    },
+    /// Set the rank of a trait-tree cell (P6 progression).
+    SetTraitRank {
+        /// The trait tree.
+        tree: Ref,
+        /// The trait.
+        what: Ref,
+        /// The requested rank (0 … [`MAX_TRAIT_RANK`]).
+        rank: u16,
+    },
+    /// Choose a trait tree's branch (P6 progression).
+    ChooseTraitBranch {
+        /// The trait tree.
+        tree: Ref,
+        /// The branch key.
+        branch: u32,
     },
 }
 
@@ -1771,6 +2006,9 @@ impl ProgressionCommand {
             Self::TrainSkill { .. } => "TrainSkill",
             Self::SlotTrait { .. } => "SlotTrait",
             Self::Craft { .. } => "Craft",
+            Self::TrainCraft { .. } => "TrainCraft",
+            Self::SetTraitRank { .. } => "SetTraitRank",
+            Self::ChooseTraitBranch { .. } => "ChooseTraitBranch",
         }
     }
 }
@@ -1914,11 +2152,29 @@ impl ProgressionCommand {
     pub(crate) fn validate(&self) -> Result<(), &'static str> {
         match self {
             Self::SlotTrait { what, .. } => what.as_ref().map_or(Ok(()), ref_ok),
-            Self::Craft { recipe, quantity } => {
+            Self::Craft {
+                recipe,
+                quantity,
+                tier,
+                output,
+                ..
+            } => {
                 ref_ok(recipe)?;
-                check(*quantity >= 1, "craft quantity must be at least 1")
+                check(*quantity >= 1, "craft quantity must be at least 1")?;
+                check(
+                    tier.is_none_or(|t| t <= MAX_TRAIT_RANK),
+                    "craft tier must be 0 … 1,000",
+                )?;
+                check(*output <= MAX_CRAFT_OUTPUT, "craft output must be 0 … 64")
             }
             Self::TrainSkill { .. } => Ok(()),
+            Self::TrainCraft { replace, .. } => replace.as_ref().map_or(Ok(()), ref_ok),
+            Self::SetTraitRank { tree, what, rank } => {
+                ref_ok(tree)?;
+                ref_ok(what)?;
+                check(*rank <= MAX_TRAIT_RANK, "trait rank must be 0 … 1,000")
+            }
+            Self::ChooseTraitBranch { tree, .. } => ref_ok(tree),
         }
     }
 }
@@ -1948,6 +2204,7 @@ fn clean_opt_ref(r: &mut Option<Ref>) -> bool {
 fn clean_text(t: &mut Text) -> bool {
     match t {
         Text::Literal(s) => clean_string(s, MAX_CHAT_LEN),
+        Text::ActionFor { what, .. } => clean_ref(what),
         _ => false,
     }
 }
@@ -2240,12 +2497,39 @@ impl WorldEvent {
 }
 
 impl ProgressionEvent {
+    /// Whether the P6 progression values lie in their ranges (`scenario-feed.md` §9.5;
+    /// invalid events are dropped).
+    pub(crate) fn is_valid(&self) -> bool {
+        let rank_ok = |r: Option<u16>| r.is_none_or(|r| r <= MAX_TRAIT_RANK);
+        match self {
+            Self::TrainerShown { entries, .. } => entries
+                .iter()
+                .all(|e| e.flags.is_valid() && rank_ok(e.rank)),
+            Self::UntrainedSkills { entries } => {
+                entries.len() <= MAX_UNTRAINED_ENTRIES
+                    && entries
+                        .iter()
+                        .all(|e| e.level <= MAX_UNTRAINED_LEVEL && rank_ok(e.rank))
+            }
+            Self::ProfessionChanged {
+                tier, mastery_tier, ..
+            } => *tier <= MAX_TRAIT_RANK && rank_ok(*mastery_tier),
+            Self::RecipeLearned { tier, .. } => rank_ok(*tier),
+            Self::VocationChanged { slots, .. } => slots.is_none_or(|n| n <= MAX_PROFESSION_SLOTS),
+            Self::CraftResult { batch, .. } => batch.is_none_or(Batch::is_valid),
+            _ => true,
+        }
+    }
+
     pub(crate) fn clean(&mut self) -> bool {
         match self {
             Self::SkillLearned { what }
             | Self::SkillForgotten { what }
-            | Self::RecipeLearned { what }
-            | Self::TitleGranted { what } => clean_ref(what),
+            | Self::TitleGranted { what }
+            | Self::RecipeForgotten { what } => clean_ref(what),
+            Self::RecipeLearned {
+                what, profession, ..
+            } => clean_ref(what) | clean_opt_ref(profession),
             Self::TrainerShown { entries, .. } => {
                 let mut changed = false;
                 for e in entries {
@@ -2253,11 +2537,23 @@ impl ProgressionEvent {
                 }
                 changed
             }
+            Self::UntrainedSkills { entries } => {
+                let mut changed = false;
+                for e in entries {
+                    changed |= clean_ref(&mut e.what);
+                }
+                changed
+            }
             Self::TraitSlotted { what, .. } => clean_opt_ref(what),
+            Self::TraitPoints { tree, .. } => clean_opt_ref(tree),
+            Self::TraitRank { tree, what, .. } => clean_ref(tree) | clean_ref(what),
+            Self::TraitTreeChanged { tree, .. } => clean_opt_ref(tree),
+            Self::VocationChanged { vocation, .. } => clean_opt_ref(vocation),
+            Self::CraftTrainerShown { what, .. } => clean_ref(what),
             Self::ProfessionChanged { profession, .. } => clean_ref(profession),
             Self::CraftResult { recipe, .. } => clean_ref(recipe),
             Self::ReputationChanged { faction, .. } => clean_ref(faction),
-            Self::ExperienceChanged { .. } | Self::TraitPoints { .. } => false,
+            Self::ExperienceChanged { .. } => false,
         }
     }
 }

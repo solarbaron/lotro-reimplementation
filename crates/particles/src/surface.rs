@@ -258,8 +258,8 @@ impl ParticleSurface {
     }
 
     /// The surface of a beam ribbon's material (`particle-runtime.md` §11.1 step 6), drawn
-    /// with the particle programs (Tessera reading; §11.1 names no program for ribbons,
-    /// implementer OPEN there): as [`ParticleSurface::of`], except that a shader record the
+    /// with the particle programs (§11.1 Decision (b); the client's ribbon program was not
+    /// traced): as [`ParticleSurface::of`], except that a shader record the
     /// §9.1.1 table does not list keeps a second colour layer whose alpha reaches the output
     /// (role `ColorAndOpacity2`, `material.md` §10.3 MA54): its RGB multiplies or adds as
     /// §10.3 states for the record, and its alpha multiplies the first layer's (the five

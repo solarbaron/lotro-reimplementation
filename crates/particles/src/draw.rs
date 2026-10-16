@@ -208,6 +208,12 @@ impl SystemSim {
         let desc = std::sync::Arc::clone(&self.desc);
         let mut passing: Vec<(Placement, f32)> = Vec::new();
         for inst in &self.instances {
+            if !self.distance_fade {
+                // A beam's systems skip the fade and the cut (`particle-runtime.md` §11.1
+                // step 8, RT46).
+                passing.push((*inst, finite(inst.opacity)));
+                continue;
+            }
             let d = (camera.eye - inst.position).length();
             if let Some(f) = distance_fade(
                 d,

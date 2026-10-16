@@ -348,6 +348,16 @@ fn the_cache_composes_a_face_once() {
 }
 
 #[test]
+fn default_decode_budget_is_the_doubled_owner_value() {
+    // The owner's answer of 2026-10-16 (`character-screens.md` §5.2, `appearance.md` §9
+    // bounds (6)) doubled the per-compositor and per-figure decode budgets to 128 / 256 MiB
+    // so a face-layer control may offer value 0.
+    let d = LookLimits::default();
+    assert_eq!(d.max_compositor_bytes, 128 << 20);
+    assert_eq!(d.max_figure_bytes, 256 << 20);
+}
+
+#[test]
 fn decoded_bytes_are_budgeted() {
     let m = records();
     // The base image is 2 × 1 texels (8 bytes), each eye option 1 texel (4 bytes).

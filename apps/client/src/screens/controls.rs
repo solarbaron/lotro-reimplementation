@@ -847,14 +847,27 @@ fn layer_options<S: RecordSource>(
     let Some(l) = comp.layers.iter().find(|l| l.layer_key == layer) else {
         return Ok(Vec::new());
     };
-    let set: BTreeSet<u32> = l
-        .options
-        .iter()
-        .map(|o| o.index)
+    Ok(offered_layer_options(
+        l.options.iter().map(|o| o.index),
+        min,
+    ))
+}
+
+/// The face-layer options a control offers, from its layer's option indices and its
+/// `AppearanceUI_MinControlValue`: the indices at or above the minimum, plus value 0
+/// ("none") when the minimum is 0, lowest first, at most [`MAX_CONTROL_CHOICES`]
+/// (`misc-records.md` §3.7; `character-screens.md` §5.2.2 rule 2, owner answer 2026-10-16:
+/// a control whose minimum is 0 offers choices 0 … *m*). The cap keeps the lowest numbers,
+/// so the offered value 0 is never dropped for a hostile record with many options.
+fn offered_layer_options(indices: impl IntoIterator<Item = u32>, min: i64) -> Vec<u32> {
+    let mut set: BTreeSet<u32> = indices
+        .into_iter()
         .filter(|i| i64::from(*i) >= min)
-        .take(MAX_CONTROL_CHOICES)
         .collect();
-    Ok(set.into_iter().collect())
+    if min <= 0 {
+        set.insert(0);
+    }
+    set.into_iter().take(MAX_CONTROL_CHOICES).collect()
 }
 
 /// The presets of a presets file: per `Character_AppearanceInfo` struct of its
@@ -1249,6 +1262,25 @@ mod tests {
             ],
             notes: Vec::new(),
         }
+    }
+
+    #[test]
+    fn face_layer_options_offer_zero_when_the_minimum_is_zero() {
+        // The install's layers are numbered 1 … m without gaps (OBS2).
+        let layer = [1u32, 2, 3];
+        // Minimum 0: value 0 ("none") is offered first, then the layer's options.
+        assert_eq!(offered_layer_options(layer, 0), vec![0, 1, 2, 3]);
+        // Minimum 1: value 0 is not offered.
+        assert_eq!(offered_layer_options(layer, 1), vec![1, 2, 3]);
+        // A negative minimum still offers 0 once (deduplicated), not a negative choice.
+        assert_eq!(offered_layer_options(layer, -5), vec![0, 1, 2, 3]);
+        // A record that already carries option 0 with minimum 0 offers it once.
+        assert_eq!(offered_layer_options([0u32, 1, 2], 0), vec![0, 1, 2]);
+        // The cap keeps the lowest numbers, so value 0 is never dropped.
+        let many: Vec<u32> = (1..=(MAX_CONTROL_CHOICES as u32 + 10)).collect();
+        let offered = offered_layer_options(many, 0);
+        assert_eq!(offered.len(), MAX_CONTROL_CHOICES);
+        assert_eq!(offered[0], 0);
     }
 
     #[test]

@@ -43,6 +43,7 @@ use tessera_render::glam::Mat4;
 use super::super::characters::catalog::CharacterCatalog;
 use super::super::characters::figure::{FigureRequest, prepare_figure_scripts};
 use super::super::effects::data::AttachPoints;
+use super::ride::{JUMP_LIFT_GAITS, MountedJump};
 
 /// Properties of the rider that the mount's closure reads through the
 /// `MeshFXScriptOutput_Source` target (`mounts.md` §14.1 census), overlaid on the mount's
@@ -763,57 +764,79 @@ pub fn evaluate_key(
     }
 }
 
-/// The jump table of the mounted branch (`mounts.md` §14.12, `collision.md` §11.10): the
-/// rider's jump scripts scanned as on foot ([`crate::walker::movement::setup::scan_jump_scripts`])
-/// with the rider state of the idle mounted key (the rider fields of `entries`, status 5,
-/// `Mount_Is_Mounted`, `Mounted_Channeling_Loop` running). One table per (body, effect): the
-/// gait is unset. `None` (with a note) when the data gives no node.
+/// The mounted branch of the jump for one (body, effect) (`walker.md` §16.6 "Jump",
+/// `mounts.md` §14.6 "Jumping while mounted", `collision.md` §11.10): the branch the
+/// effect's `Mount_Type` takes (the rider's `Mount_CurrentMountType`, Decision of
+/// `mounts.md` §4.1) and the impulse nodes the install gives where the branch's gates hold.
+/// The rider's jump scripts are scanned as on foot
+/// ([`crate::walker::movement::setup::scan_jump_scripts`]) with the mounted rider state
+/// (the rider fields of `entries`, status 5, `Mount_Is_Mounted`, `Mounted_Channeling_Loop`
+/// running) moving forward (`Slider_Propel` 1, `Slider_Strafe` 0): for the war-steed branch
+/// once per gait 4–7 (`MountMovement_CurrentSpeed` set), else once. The gates are applied
+/// per press by [`super::ride::MountedJump::decide`]. Where the data give no node the press
+/// runs without lift (with a note).
 #[must_use]
-pub fn mounted_jump_table(
+pub fn mounted_jump(
     cat: &CharacterCatalog,
     rider: &EntityContext,
     script_vocab: &ScriptVocabulary,
     vocab: &MountVocab,
     entries: &[PropertyEntry],
+    mount_type: u32,
     notes: &mut Vec<String>,
-) -> Option<tessera_physics::controller::JumpTable> {
+) -> MountedJump {
+    let mut out = MountedJump {
+        war_steed_branch: MountedJump::war_steed_type(mount_type),
+        ..MountedJump::default()
+    };
     let Some(final_element) = script_vocab.final_element else {
         notes.push("mounted jump: no Entity_FinalElement in the data".into());
-        return None;
+        return out;
     };
-    let registry = cat.data.registry().ok()?;
+    let Ok(registry) = cat.data.registry() else {
+        notes.push("mounted jump: no property registry".into());
+        return out;
+    };
     let dict = registry.dictionary();
     let data = &cat.data;
     let mut resolver = ClipResolver::new(dict, script_vocab.clone(), |d: Did| data.read(d))
         .with_dictionary_defaults(dict)
         .unset_reads_as_zero(true);
-    let (scripts, state) = rider_state(
-        rider,
-        script_vocab,
-        vocab,
-        entries,
-        &ClipKey::default(),
-        None,
-    );
     let mut jump_notes = Vec::new();
-    let t = crate::walker::movement::setup::scan_jump_scripts(
-        &mut resolver,
-        &scripts,
-        &state,
-        script_vocab,
-        final_element,
-        &mut jump_notes,
-    );
+    let mut scan = |key: ClipKey, jump_notes: &mut Vec<String>| {
+        let (scripts, state) = rider_state(rider, script_vocab, vocab, entries, &key, None);
+        crate::walker::movement::setup::scan_jump_scripts(
+            &mut resolver,
+            &scripts,
+            &state,
+            script_vocab,
+            final_element,
+            jump_notes,
+        )
+        .unwrap_or_default()
+    };
+    let moving = ClipKey {
+        stage: Stage::Riding,
+        propel: 1,
+        ..ClipKey::default()
+    };
+    if out.war_steed_branch {
+        for (slot, gait) in out.by_gait.iter_mut().zip(JUMP_LIFT_GAITS) {
+            *slot = scan(ClipKey { gait, ..moving }, &mut jump_notes);
+        }
+    } else {
+        out.forward = scan(moving, &mut jump_notes);
+    }
     notes.extend(
         jump_notes
             .into_iter()
             .take(4)
             .map(|n| format!("mounted {n}")),
     );
-    if t.is_none() {
-        notes.push("mounted jump: no jump node; the on-foot jump applies".into());
+    if out.is_empty() {
+        notes.push("mounted jump: no impulse node where the gates hold; jumps have no lift".into());
     }
-    t
+    out
 }
 
 /// One step of the measured script runs, seconds (the walker's 1/60 s step).

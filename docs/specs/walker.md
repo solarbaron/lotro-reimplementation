@@ -3004,6 +3004,18 @@ code comments that cite them still find them; the rules now live in the sections
 > default (§16.4; closed by the P5 exit verifier, 2026-10-12); (c) `/ride` lines are held until
 > the `--mount` request is made (§16.3). Matches main.
 
+> **OPEN:** (implementer, 2026-10-16, engineering choices for §16.6 "Jump"; confirm or
+> correct) (a) The nodes are read once per (body, effect) on the mount module's worker by
+> scanning the jump scripts with the mounted rider moving forward (`Slider_Propel` 1,
+> `Slider_Strafe` 0; for the war-steed branch once per gait 4–7), and the gates of §16.6 are
+> applied at each press on the frame thread with the gait and sliders after the last step;
+> the press does not run the resolver itself. (b) A press the branch lets through without an
+> impulse (war-steed gaits 1 and 3, or a state the data give no node for) sets
+> `Movement_IsJumping` as if the press's update were the take-off update of `collision.md`
+> §11.10 Decision item 1, so it clears at the end of the first update at least 0.2 s later;
+> while it holds, the clip key's `Jump` is on although the rider stays on the ground. (c) A
+> press whose impulse the stored impulse refuses (§11.10 item 2) counts as (b).
+
 > **OPEN:** owner observations to be numbered by the checklist maintainer (P5 rows from O140):
 > in the original, (a) the delay between the end of the summon and the mount's appearance,
 > (b) whether the steed's gait rises one step about every 0.5 s while forward is held and holds

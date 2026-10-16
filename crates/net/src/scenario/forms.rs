@@ -9,6 +9,9 @@ use super::error::{Limit, ScenarioErrorKind as K};
 use super::lex::Token;
 use super::parse::{HORIZON_MS, MAX_INPUT, MAX_TIMES, MAX_TUNE_BYTES, Parser, R, Stmt};
 use super::select::LabelContext;
+// P6 progression revision.
+use super::ast::ReplaceFilter;
+use crate::domain::{MAX_CRAFT_OUTPUT, MAX_TRAIT_RANK};
 
 impl Parser {
     /// Parses `on PATTERN [times=N]`; returns the pattern and `times`.
@@ -30,6 +33,9 @@ impl Parser {
             "create-character" => &["name", "times"],
             "play-sync" => &["tune", "times"],
             "buy-back" => &["entry", "times"],
+            // P6 progression.
+            "train-craft" => &["replace", "times"],
+            "trait-rank" | "trait-branch" => &["tree", "times"],
             _ => &["times"],
         };
         let mut st = self.split(tokens, 2, keys)?;
@@ -231,6 +237,31 @@ impl Parser {
             "close" => (Pattern::Close(self.window_kind(st.arg(0)?)?), 1),
             "buy-back" => (Pattern::BuyBack(entry(self, st)?), 0),
             "leave-queue" => (Pattern::LeaveQueue, 0),
+            // P6 progression (§7.5).
+            "train-craft" => {
+                let f = match st.opt("replace") {
+                    None => ReplaceFilter::Any,
+                    Some((v, _)) if v.is("any") => ReplaceFilter::Any,
+                    Some((v, _)) if v.is("none") => ReplaceFilter::None,
+                    Some((v, c)) => ReplaceFilter::Ref(self.ref_at(&v, c)?),
+                };
+                (Pattern::TrainCraft(f), 0)
+            }
+            "trait-rank" => {
+                let what = opt_ref(self, st)?;
+                let tree = match st.opt("tree") {
+                    Some((v, c)) => Some(self.ref_at(&v, c)?),
+                    None => None,
+                };
+                (Pattern::TraitRank { what, tree }, 1)
+            }
+            "trait-branch" => {
+                let tree = match st.opt("tree") {
+                    Some((v, c)) => Some(self.ref_at(&v, c)?),
+                    None => None,
+                };
+                (Pattern::TraitBranch(tree), 0)
+            }
             _ => return Err(self.unknown_word(word, col)),
         };
         st.no_more(max_pos)?;
@@ -328,7 +359,9 @@ impl Parser {
             "move-item" => &["to", "slot"],
             "chat" => &["channel"],
             "offer-trade" => &["qty", "coin"],
-            "craft" => &["qty"],
+            // `tier=`, `output=`, `optional=` (P6 progression).
+            "craft" => &["qty", "tier", "output", "optional"],
+            "train-craft" => &["replace"],
             "create-character" => &["class", "species", "sex", "nationality", "look"],
             "join-instance" => &["size", "tier", "level"],
             _ => &[],
@@ -566,7 +599,52 @@ impl Parser {
                     Some((v, c)) => self.u16_in(&v, c, 1, 65_535)?,
                     None => 1,
                 };
-                (InputCmd::Craft { recipe, qty }, 1)
+                // P6 progression options (§7.7).
+                let tier = match st.opt("tier") {
+                    Some((v, c)) => Some(self.u16_in(&v, c, 0, i128::from(MAX_TRAIT_RANK))?),
+                    None => None,
+                };
+                let output = match st.opt("output") {
+                    Some((v, c)) => self.u16_in(&v, c, 0, i128::from(MAX_CRAFT_OUTPUT))?,
+                    None => 0,
+                };
+                let optional = match st.opt("optional") {
+                    Some((v, c)) => u8::try_from(self.u16_in(&v, c, 0, 255)?).unwrap_or(u8::MAX),
+                    None => 0,
+                };
+                let pack = st.pos.get(1).is_some_and(|t| t.is("pack"));
+                (
+                    InputCmd::Craft {
+                        recipe,
+                        qty,
+                        tier,
+                        output,
+                        optional,
+                        pack,
+                    },
+                    if pack { 2 } else { 1 },
+                )
+            }
+            // P6 progression (§7.7).
+            "train-craft" => {
+                let replace = match st.opt("replace") {
+                    Some((v, c)) => Some(self.ref_at(&v, c)?),
+                    None => None,
+                };
+                (InputCmd::TrainCraft(replace), 0)
+            }
+            "trait-rank" => {
+                let tree = self.ref_arg(st.arg(0)?)?;
+                let what = self.ref_arg(st.arg(1)?)?;
+                let t = st.arg(2)?;
+                let rank = self.u16_in(t, t.col, 0, i128::from(MAX_TRAIT_RANK))?;
+                (InputCmd::TraitRank { tree, what, rank }, 3)
+            }
+            "trait-branch" => {
+                let tree = self.ref_arg(st.arg(0)?)?;
+                let t = st.arg(1)?;
+                let branch = self.enum_arg(t, t.col, LabelContext::TraitBranch, "branch")?;
+                (InputCmd::TraitBranch { tree, branch }, 2)
             }
             "create-character" => {
                 let name = name0(self, &st)?;

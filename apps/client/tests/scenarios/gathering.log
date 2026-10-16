@@ -1,0 +1,31 @@
+tessera-scenario-log 1
+install none
+tick 100
+title "Riverbank clay"
+resolve $nodes line=11 family=creature requested=1 candidates=0 got=0 note=no-install
+resolve $gather line=12 family=induction requested=all candidates=0 got=0 note=no-install
+resolve $kilns line=13 family=effect requested=1 candidates=0 got=0 note=no-install
+pre > Connect
+pre Connected characters=["Dara"]
+pre > EnterWorld character="Dara"
+0.000 WorldEntered entity=player name="Dara" at=0.000,0.000,0.000 facing=90.00
+0.000 LocationReport entity=player at=0:0.000,0.000,0.000 facing=90.00 anchor=none cause=entered
+0.000 EntitySpawned entity=$bank kind=object name="Clay bank" at=0.000,3.000,0.000 facing=180.00
+0.000 EntitySpawned entity=$other kind=object name="Clay bank" at=4.000,3.000,0.000 facing=233.13
+0.000 ProfessionChanged profession="Pottery" tier=1 proficiency=20 proficiency_max=200 mastery=0 mastery_max=400
+0.000 EffectApplied entity=player effect=1 what="Kiln" duration_ms=20000 stacks=1 source=none
+0.200 > UseEntity entity=$bank
+0.200 CastStarted entity=player cast=induction what="Digging clay" target=none duration_ms=7000
+7.200 CastEnded entity=player outcome=completed
+7.200 LootShown window=1 source=$bank entries=[{entry=1 what="Wet clay" quantity=3}] coin=0
+7.200 ProfessionChanged profession="Pottery" tier=1 proficiency=26 proficiency_max=200 mastery=0 mastery_max=400
+7.200 EntityDespawned entity=$bank
+7.400 > TakeLoot window=1 entry=none
+7.400 LootTaken window=1 entry=1
+7.400 ItemAdded item=item:1 what="Wet clay" at=backpack:0 quantity=3
+8.000 > UseEntity entity=$other
+8.000 CastStarted entity=player cast=induction what="Digging clay" target=none duration_ms=7000
+10.000 CastEnded entity=player outcome=interrupted
+10.000 ChatMessage channel=system sender=none text="You stop digging."
+20.000 EffectRemoved entity=player effect=1
+20.000 end reason=complete skipped=2 input-skipped=0 dropped=0 spilled=0

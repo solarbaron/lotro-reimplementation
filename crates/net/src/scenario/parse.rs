@@ -1662,6 +1662,32 @@ impl Parser {
             }
             return Ok(TextArg::Literal(s.to_owned()));
         }
+        // `action(VALUE,"string")` (P6 progression): the one text function whose token
+        // holds a string.
+        if let [
+            Seg::Raw { text: head, .. },
+            Seg::Str { text: lit, .. },
+            Seg::Raw { text: tail, .. },
+        ] = tok.segs.as_slice()
+            && let Some(key) = head
+                .strip_prefix("action(")
+                .and_then(|h| h.strip_suffix(','))
+        {
+            if tail != ")" {
+                return Err(self.e(K::UnexpectedToken, col));
+            }
+            if lit.is_empty() {
+                return Err(self.e(K::UnexpectedToken, col));
+            }
+            if lit.len() > crate::domain::MAX_LITERAL_REF_LEN {
+                return Err(self.e(K::TooLong, col));
+            }
+            let action = self.action_key(key, col)?;
+            return Ok(TextArg::ActionFor {
+                action,
+                what: RefArg::Literal(lit.clone()),
+            });
+        }
         let raw = tok.raw().ok_or_else(|| self.e(K::UnexpectedToken, col))?;
         let (f, inner) = func_call(raw).ok_or_else(|| self.e(K::UnexpectedToken, col))?;
         if f == "action" {
@@ -1701,14 +1727,21 @@ impl Parser {
     /// The argument of `action(…)` (P3 revision, §4.2): a label (resolved with context
     /// `NpcAction`) or an integer 0..=2^32−1.
     fn action_text(&mut self, inner: &str, col: u32) -> R<TextArg> {
+        // `action(VALUE,ELEMENT)` (P6 progression); a label holds no comma.
+        if let Some((key, el)) = inner.split_once(',') {
+            let what = RefArg::Element(self.element_text(el, col)?);
+            let action = self.action_key(key, col)?;
+            return Ok(TextArg::ActionFor { action, what });
+        }
+        Ok(TextArg::Action(self.action_key(inner, col)?))
+    }
+
+    /// The VALUE of `action(…)`: a label (context `NpcAction`) or an integer
+    /// 0..=2^32−1 (a numeric key is recorded for §13 rule 2).
+    fn action_key(&mut self, inner: &str, col: u32) -> R<EnumArg> {
         if inner.starts_with('@') {
             let label = self.label_text(inner, col)?;
-            return Ok(TextArg::Action(self.label_site(
-                LabelContext::NpcAction,
-                label,
-                col,
-                "action",
-            )));
+            return Ok(self.label_site(LabelContext::NpcAction, label, col, "action"));
         }
         if !inner.starts_with('-') && !inner.bytes().next().is_some_and(|b| b.is_ascii_digit()) {
             return Err(self.e(K::UnexpectedToken, col));
@@ -1716,7 +1749,7 @@ impl Parser {
         let v = lex::int(inner, false).map_err(|k| self.e(k, col))?;
         let v = u32::try_from(v).map_err(|_| self.e(K::OutOfRange, col))?;
         self.prog.numeric_action = true;
-        Ok(TextArg::Action(EnumArg::Value(v)))
+        Ok(EnumArg::Value(v))
     }
 
     /// A POSITION: `E,N,U` (each within ±100,000 m) or `place(ELEMENT)`.

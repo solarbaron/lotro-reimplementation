@@ -304,6 +304,7 @@ mod tests {
             &Event::Character(tessera_net::domain::CharacterEvent::LevelChanged {
                 entity: EntityId(8),
                 level: 33,
+                quiet: false,
             }),
             &|_| None,
         );

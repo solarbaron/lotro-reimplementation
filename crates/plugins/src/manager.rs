@@ -938,7 +938,7 @@ impl PluginManager {
                     break;
                 }
                 let item = st.queue.pop_front();
-                if matches!(item, Some(Item::Gameplay(..))) {
+                if matches!(item, Some(Item::Gameplay(..) | Item::GameplayBatch(_))) {
                     st.gameplay_queued = st.gameplay_queued.saturating_sub(1);
                 }
                 item
@@ -1004,6 +1004,16 @@ impl PluginManager {
         self.add_plugin_time(start);
     }
 
+    /// Deliver one queued gameplay event to every apartment.
+    fn deliver_gameplay(&self, ev: &crate::gameplay::GameplayEvent, seq: u64) {
+        let cells: Vec<Arc<ApartmentCell>> = lock(&self.shared.state).apartments.clone();
+        for cell in cells {
+            if let Some(ap) = lock(&cell.slot).as_ref() {
+                crate::gameplay::deliver(ap, ev, seq);
+            }
+        }
+    }
+
     fn run_item(&mut self, item: Item) {
         match item {
             Item::Load { name, origin } => match (self.load_plugin_inner(&name), origin) {
@@ -1064,12 +1074,10 @@ impl PluginManager {
                 ok,
             } => self.write_callbacks(apartment, &callbacks, ok),
             Item::Chat { line, skip } => self.deliver_chat(&line, &skip),
-            Item::Gameplay(ev, seq) => {
-                let cells: Vec<Arc<ApartmentCell>> = lock(&self.shared.state).apartments.clone();
-                for cell in cells {
-                    if let Some(ap) = lock(&cell.slot).as_ref() {
-                        crate::gameplay::deliver(ap, &ev, seq);
-                    }
+            Item::Gameplay(ev, seq) => self.deliver_gameplay(&ev, seq),
+            Item::GameplayBatch(evs) => {
+                for (ev, seq) in &evs {
+                    self.deliver_gameplay(ev, *seq);
                 }
             }
             Item::Logout => {

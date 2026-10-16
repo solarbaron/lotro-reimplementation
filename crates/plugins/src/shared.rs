@@ -28,6 +28,9 @@ pub(crate) const MAX_QUEUED_CHAT: usize = 256;
 /// Most game-raised gameplay events waiting for delivery.
 pub(crate) const MAX_QUEUED_GAMEPLAY: usize = 1024;
 
+/// Most events one [`Item::GameplayBatch`] holds; a further event starts a new item.
+pub(crate) const MAX_GAMEPLAY_BATCH: usize = 65_536;
+
 /// Most plugin-data items (writes and `Load` handlers) queued per apartment.
 pub(crate) const MAX_DATA_ITEMS: usize = 1024;
 
@@ -109,12 +112,22 @@ pub(crate) enum Item {
     /// A game-raised gameplay event with its sequence number (1, 2, …; the value of
     /// [`Shared::gameplay_seq`] after it was raised).
     Gameplay(GameplayEvent, u64),
+    /// Consecutive gameplay events that each change one entry of a long list (the
+    /// progression recipe lists, `lua-plugin-api.md` §15.6), with their sequence numbers,
+    /// as one queue item, so that a burst of them never overflows the queue part way
+    /// through; delivered in order, each as an [`Item::Gameplay`] would be.
+    GameplayBatch(Vec<(GameplayEvent, u64)>),
     /// The logout unload (`plugin-runtime.md` §8.4): when it runs it becomes one
     /// [`Item::Unload`] per apartment existing at that moment, in creation order.
     Logout,
     Unload {
         apartment: u64,
     },
+}
+
+/// Whether a gameplay event joins a preceding one in an [`Item::GameplayBatch`].
+fn batches(ev: &GameplayEvent) -> bool {
+    matches!(ev, GameplayEvent::Progression(p) if crate::progression::batches(p))
 }
 
 impl Item {
@@ -191,6 +204,22 @@ impl SharedState {
     /// Queue a gameplay event with its sequence number (see [`Shared::raise_gameplay`]);
     /// `false` when the queue was full and the event was dropped.
     pub(crate) fn queue_gameplay(&mut self, ev: GameplayEvent, seq: u64) -> bool {
+        if batches(&ev) {
+            match self.queue.pop_back() {
+                Some(Item::GameplayBatch(mut b)) if b.len() < MAX_GAMEPLAY_BATCH => {
+                    b.push((ev, seq));
+                    self.queue.push_back(Item::GameplayBatch(b));
+                    return true;
+                }
+                Some(Item::Gameplay(prev, s)) if batches(&prev) => {
+                    self.queue
+                        .push_back(Item::GameplayBatch(vec![(prev, s), (ev, seq)]));
+                    return true;
+                }
+                Some(other) => self.queue.push_back(other),
+                None => {}
+            }
+        }
         if self.gameplay_queued < MAX_QUEUED_GAMEPLAY {
             self.gameplay_queued += 1;
             self.queue.push_back(Item::Gameplay(ev, seq));

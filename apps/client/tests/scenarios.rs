@@ -31,6 +31,11 @@ const P3_SCENARIOS: [&str; 4] = ["dialogue", "vendor", "loot", "quest-log"];
 /// log.
 const P5_SCENARIOS: [&str; 4] = ["map", "travel", "instances", "mount"];
 
+/// The progression and crafting scenarios of decision 0024 P6 (`crafting-panels.md`,
+/// decision 0037 §3; ROADMAP P6 deliverables), each with its committed log: the three-leg
+/// progression scenario, the trait panel, the crafting panel and trainers, and gathering.
+const P6_SCENARIOS: [&str; 4] = ["progression-panels", "traits", "crafting", "gathering"];
+
 fn scenarios_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/scenarios")
 }
@@ -96,6 +101,10 @@ fn every_system_group_has_a_committed_scenario_with_a_log() {
     for name in P5_SCENARIOS {
         let s = scenarios_dir().join(format!("{name}.scenario"));
         assert!(s.is_file(), "P5: {} missing", s.display());
+    }
+    for name in P6_SCENARIOS {
+        let s = scenarios_dir().join(format!("{name}.scenario"));
+        assert!(s.is_file(), "P6: {} missing", s.display());
     }
     for s in committed() {
         // All committed scenarios are synthetic (they play without an install), so each

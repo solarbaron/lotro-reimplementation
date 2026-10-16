@@ -134,6 +134,8 @@ ui_pids! {
         timer_two_place = "UIComponent_Timer_ShowTwoPlaceFormat",
         timer_pad = "UIComponent_Timer_AlwaysShowDoubleDigitMinSec",
         timer_zeros = "UIComponent_Timer_AlwaysShowLowerZeros",
+        recipe_one_shot_text = "UI_Examination_Tooltip_RecipeOneShotText",
+        recipe_cooldown_text = "UI_Examination_Tooltip_RecipeCooldownText",
     }
 }
 
@@ -560,6 +562,10 @@ pub enum Widget {
     EffectDescription,
     /// `ExaminationEffectTimeDisplay`, a timer (§8.4).
     EffectTime,
+    /// `ExaminationRecipeOneShot` (`crafting-panels.md` §7 Tessera rule).
+    RecipeOneShot,
+    /// `ExaminationRecipeCooldown` (`crafting-panels.md` §7 Tessera rule).
+    RecipeCooldown,
     /// Any other widget type: left empty (`item-tooltips.md` §6.20; the skill damage and
     /// class-mechanics rows of `skill-tooltips.md` §7.9 and §7.12 in P2). Holds the type label.
     Deferred(String),
@@ -606,6 +612,8 @@ impl Widget {
             "ExaminationEffectResistance" => Self::EffectResistance,
             "ExaminationEffectDescription" => Self::EffectDescription,
             "ExaminationEffectTimeDisplay" => Self::EffectTime,
+            "ExaminationRecipeOneShot" => Self::RecipeOneShot,
+            "ExaminationRecipeCooldown" => Self::RecipeCooldown,
             _ => return None,
         })
     }
@@ -914,6 +922,8 @@ fn template_of(
         Widget::Uniqueness => string(p.unique_text),
         Widget::Indestructible => string(p.indestructible_text),
         Widget::StaticText => string(p.text_entry),
+        Widget::RecipeOneShot => string(p.recipe_one_shot_text),
+        Widget::RecipeCooldown => string(p.recipe_cooldown_text),
         _ => None,
     };
     let state_colours = state_colours(data, p, desc);

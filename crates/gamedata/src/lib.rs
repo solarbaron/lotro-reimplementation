@@ -10,7 +10,8 @@
 //! skill and effect tooltips to [`tooltip`] and the combat data of [`combat`]; the P3
 //! models are the quest journal ([`quest`]) and the NPC windows ([`npc`]); the P5 models
 //! are the map windows ([`map`]), the travel window ([`travel`]), the instance finder
-//! ([`instance`]) and mounts ([`mount`]). Layer
+//! ([`instance`]) and mounts ([`mount`]); the P6 models are the crafting panels
+//! ([`crafting`]) and the progression panels ([`progression`]). Layer
 //! L3; it depends on `tessera-formats`, `tessera-props`, `tessera-text` and
 //! `tessera-wstate` only.
 //!
@@ -37,6 +38,9 @@
 //! | [`instance`] | Instance-finder tree with B1–B3, menus, join and queue displays, instance-travel window, template census (P5) | `travel-windows.md` §4.11, §6, §8.2; `instances.md` §15.1 |
 //! | [`mount`] | Mount effect name, icon, type, war-steed flag and plugin class; offered mounts by body; gait multipliers; mount-effect census (P5) | `mounts.md` §2, §14.10, §14.11; `game-controls.md` §5 |
 //! | [`GameDataStore::map_regions`], [`GameDataStore::mount_types`], [`GameDataStore::scan_objects`], [`ObjectScan`] | P5 entry points: the `map-region` family, the effect attributes `mount-type` and `war-steed`, record scans for the censuses | `scenario-feed.md` §8.3 (P5 travel) |
+//! | [`crafting`] | Profession tabs, recipe tree, tier marks, search, recipe page, quantity and craft request, crafting bar and result lines, scroll rows, crafting trainers, gathering nodes and facilities, census (P6) | `crafting-panels.md` §4–§10; `economy.md` §5, §11.5 |
+//! | [`progression`] | Experience bar and level-up rule, trait-tree pages, trait tooltips, trainer rows, trait-tree census (P6, provisional) | `combat-data.md` §8, §9; `player-character.md` §9, §13; `scenario-feed.md` §6.6 |
+//! | [`Family::Vocation`], [`Family::CraftGuild`], the P6 [`Attribute`]s, [`LabelContext::TraitBranch`], [`LabelContext::RecipeCategory`] | P6 selector families, attributes and label contexts; recipe scrolls' recipe rows in [`tooltip`] | `scenario-feed.md` §8.3, §8.6 (P6 progression); `crafting-panels.md` §7 |
 //!
 //! # Hostile input
 //!
@@ -64,6 +68,7 @@
 
 pub mod chargen;
 pub mod combat;
+pub mod crafting;
 mod error;
 mod filter;
 mod index;
@@ -73,6 +78,7 @@ pub mod map;
 pub mod mount;
 pub mod npc;
 mod order;
+pub mod progression;
 mod query;
 pub mod quest;
 mod store;

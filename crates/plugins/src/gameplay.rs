@@ -21,6 +21,7 @@ use crate::inventory::{self, InventoryViewEvent};
 use crate::mount::{self, MountSource, MountViewEvent};
 use crate::object::{Builder, NativeKind, Payload, bind_native, native_of};
 use crate::party::{self, PartyViewEvent};
+use crate::progression::{self, ProgressionSource, ProgressionViewEvent};
 use crate::root_ns::Handles;
 use crate::shared::{ApartmentCtx, lock};
 use crate::wallet::{self, WalletSource, WalletViewEvent};
@@ -126,6 +127,16 @@ pub trait LocalPlayerSource: Send + Sync + 'static {
     fn mount(&self) -> Option<Arc<dyn MountSource>> {
         None
     }
+
+    /// The source of the progression and crafting views (`GetProfessionInfo`,
+    /// `ProfessionInfo`, `Recipe`, `RecipeIngredient`, `GetVocation`,
+    /// `GetUntrainedSkills`; `lua-plugin-api.md` §15.6), or `None` (the default): no
+    /// profession is then held, the vocation is 0 and the untrained list empty. Changes
+    /// are raised with [`crate::PluginManager::raise_gameplay_event`] and
+    /// [`GameplayEvent::Progression`].
+    fn progression(&self) -> Option<Arc<dyn ProgressionSource>> {
+        None
+    }
 }
 
 /// A `…Changed` event of the local player (`lua-plugin-api.md` §16, `Entity`, `Actor`,
@@ -201,6 +212,9 @@ pub enum GameplayEvent {
     Party(PartyViewEvent),
     /// A change of the local player's mount model (`lua-plugin-api.md` §15.5).
     Mount(MountViewEvent),
+    /// A change of the local player's progression model: professions, recipe lists, the
+    /// vocation, the untrained skills (`lua-plugin-api.md` §15.6).
+    Progression(ProgressionViewEvent),
 }
 
 /// What a view object is (its native payload).
@@ -216,8 +230,6 @@ enum View {
     /// The apartment's `LocalPlayer:GetAttributes()` object.
     Attributes,
     Empty,
-    /// A skill list of this many skills.
-    SkillList(u32),
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -303,13 +315,6 @@ fn cached_view(lua: &Lua, name: &str, class: &Table, view: View) -> mlua::Result
     let t = instance(lua, class, view)?;
     cache.raw_set(name, t.clone())?;
     Ok(t)
-}
-
-fn skill_count(lua: &Lua, this: &Table) -> mlua::Result<u32> {
-    Ok(match view_of(lua, this)? {
-        Some(View::SkillList(n)) => n,
-        _ => 0,
-    })
 }
 
 fn source(ctx: &ApartmentCtx) -> Option<LocalPlayerInfo> {
@@ -627,10 +632,11 @@ pub(crate) fn install(lua: &Lua, ctx: &Arc<ApartmentCtx>, handles: &Handles) -> 
             if let Some(n) = combat::trained_list_count(lua, &c, &this)? {
                 return Ok(f64::from(n));
             }
-            Ok(f64::from(skill_count(lua, &this)?))
+            Ok(f64::from(
+                progression::untrained_list_count(lua, &c, &this)?.unwrap_or(0),
+            ))
         })?,
     )?;
-    let sk = skill.clone();
     let c = Arc::clone(ctx);
     skill_list.raw_set(
         "GetItem",
@@ -638,16 +644,11 @@ pub(crate) fn install(lua: &Lua, ctx: &Arc<ApartmentCtx>, handles: &Handles) -> 
             if let Some(t) = combat::trained_list_item(lua, &c, &this, &i)? {
                 return Ok(t);
             }
-            let count = f64::from(skill_count(lua, &this)?);
-            let i = match i {
-                Value::Integer(i) => i as f64,
-                Value::Number(n) => n,
-                _ => f64::NAN,
-            };
-            if !(i >= 1.0 && i <= count && i.fract() == 0.0) {
-                return Err(host_error("SkillList.GetItem: index out of range"));
+            if let Some(t) = progression::untrained_list_item(lua, &c, &this, &i)? {
+                return Ok(t);
             }
-            cached_view(lua, "Skill", &sk, View::Empty)
+            // Any other skill list is empty.
+            Err(host_error("SkillList.GetItem: index out of range"))
         })?,
     )?;
     let ab = b.class(&gp, "ActiveSkill", Some(&skill), None)?;
@@ -820,9 +821,22 @@ pub(crate) fn install(lua: &Lua, ctx: &Arc<ApartmentCtx>, handles: &Handles) -> 
             })
         },
     )?;
-    for name in ["ProfessionInfo", "Recipe", "RecipeIngredient"] {
-        b.class(&gp, name, Some(&object), None)?;
-    }
+    // Progression and crafting views (§15.6, `progression`).
+    let profession_info = b.class(&gp, "ProfessionInfo", Some(&object), None)?;
+    let recipe = b.class(&gp, "Recipe", Some(&object), None)?;
+    let recipe_ingredient = b.class(&gp, "RecipeIngredient", Some(&object), None)?;
+    progression::install(
+        lua,
+        ctx,
+        &progression::Classes {
+            free_people: &free_people,
+            profession_info: &profession_info,
+            recipe: &recipe,
+            recipe_ingredient: &recipe_ingredient,
+            untrained_skill: &us,
+            skill_list: &skill_list,
+        },
+    )?;
 
     // `LocalPlayer` (static `GetInstance`; its own getters).
     let c = Arc::clone(ctx);
@@ -852,16 +866,45 @@ pub(crate) fn install(lua: &Lua, ctx: &Arc<ApartmentCtx>, handles: &Handles) -> 
             } else {
                 &fp
             };
-            cached_view(lua, name, class, View::Attributes)
+            let fresh = cached_view_of(lua, name).is_none();
+            let view = cached_view(lua, name, class, View::Attributes)?;
+            if fresh && name == FREE_PEOPLE_ATTRIBUTES {
+                progression::note_attributes(lua, &c)?;
+            }
+            Ok(view)
         })?,
     )?;
-    let views: [(&'static str, &'static str, Table, View); 6] = [
-        (
-            "GetClassAttributes",
-            "ClassAttributes",
-            class_attributes.clone(),
-            View::Empty,
-        ),
+    // `GetClassAttributes()` (§15.6 "Class attributes"): one object per apartment, of
+    // `<Name>Attributes` for the API `Class` name of the character's class when §16 lists
+    // that class, else a plain `ClassAttributes`; its getters return 0 or false.
+    let (c, ns, ca) = (
+        Arc::clone(ctx),
+        attributes.clone(),
+        class_attributes.clone(),
+    );
+    local_player.raw_set(
+        "GetClassAttributes",
+        api_fn(lua, "GetClassAttributes", move |lua, _: MultiValue| {
+            if let Some(t) = cached_view_of(lua, "ClassAttributes") {
+                return Ok(t);
+            }
+            let class = source(&c).map_or(0, |i| i.class);
+            let own = match en::CLASS.iter().find(|(_, v)| *v == class) {
+                Some((name, _)) => match ns.raw_get::<Value>(format!("{name}Attributes"))? {
+                    Value::Table(t) => Some(t),
+                    _ => None,
+                },
+                None => None,
+            };
+            cached_view(
+                lua,
+                "ClassAttributes",
+                own.as_ref().unwrap_or(&ca),
+                View::Empty,
+            )
+        })?,
+    )?;
+    let views: [(&'static str, &'static str, Table, View); 5] = [
         (
             "GetRaceAttributes",
             "RaceAttributes",
@@ -914,11 +957,11 @@ pub(crate) fn install(lua: &Lua, ctx: &Arc<ApartmentCtx>, handles: &Handles) -> 
             combat::trained_skills(lua, &c)
         })?,
     )?;
-    let sl = skill_list.clone();
+    let c = Arc::clone(ctx);
     local_player.raw_set(
         "GetUntrainedSkills",
         api_fn(lua, "GetUntrainedSkills", move |lua, _: MultiValue| {
-            cached_view(lua, "UntrainedSkills", &sl, View::SkillList(0))
+            progression::untrained_skills(lua, &c)
         })?,
     )?;
 
@@ -1149,6 +1192,12 @@ pub(crate) fn deliver(ap: &crate::apartment::Apartment, ev: &GameplayEvent, seq:
         }
         GameplayEvent::Mount(e) => {
             mount::deliver(ap, e);
+            return;
+        }
+        GameplayEvent::Progression(e) => {
+            progression::deliver(ap, e, seq, &|lua| {
+                cached_view_of(lua, FREE_PEOPLE_ATTRIBUTES)
+            });
             return;
         }
     };

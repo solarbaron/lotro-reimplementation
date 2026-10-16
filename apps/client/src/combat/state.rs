@@ -564,7 +564,7 @@ impl CombatState {
                     self.character_levels.insert(key, *level);
                 }
             }
-            CharacterEvent::LevelChanged { entity, level } => {
+            CharacterEvent::LevelChanged { entity, level, .. } => {
                 if let Some(e) = self.entities.get_mut(entity) {
                     e.level = Some(*level);
                     Self::change(out, CombatChange::Entity(*entity));

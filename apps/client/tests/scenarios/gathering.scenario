@@ -1,0 +1,39 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# P6 gathering and facilities (crafting-panels.md §9; scenario-feed.md §6.6 "Gathering and
+# facilities need no new form"): a gathering node is a feed actor whose body is a gathering
+# container of the install (none without one), used by the scripted input and answered by an
+# induction bar, a loot window, the profession's experience and the node's removal; standing
+# at a facility is an effect on the player. Synthetic.
+tessera-scenario 1
+title "Riverbank clay"
+tick 100ms
+player "Dara"
+select $nodes = creature kind=container gathering=yes n=1 seed=2
+select $gather = induction of=$nodes all
+select $kilns = effect facility=yes n=1 seed=2
+actor $bank kind=object name="Clay bank" body=$nodes[0] pos=0,3,0
+actor $other kind=object name="Clay bank" body=$nodes[0] pos=4,3,0
+
+at 0s spawn $bank
++0s spawn $other
++0s profession "Pottery" tier=1 proficiency=20/200 mastery=0/400
++0s effect player "Kiln" for=20s
++0s effect player $kilns[0]
+on use $bank times=1
++0s cast player "Digging clay" 7s kind=induction
++7s loot items="Wet clay" from=$bank qty=3
++0s profession "Pottery" tier=1 proficiency=26/200 mastery=0/400
++0s despawn $bank
+end
+on use $other times=1
++0s cast player $gather[0] 7s kind=induction
++0s cast player "Digging clay" 7s kind=induction
++2s interrupt player
++0s system "You stop digging."
+end
+
+input
+at 0.2s use $bank
+at 7.4s take-loot all
+at 8s use $other
+end

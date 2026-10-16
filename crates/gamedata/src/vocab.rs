@@ -43,6 +43,11 @@ tessera_formats::property_ids! {
         skill_toggle = "Skill_Toggle_Hook_Number",
         trait_nature = "Trait_Nature",
         trait_min_level = "Trait_Minimum_Level",
+        // P6 progression (combat-data.md §8.1, §8.2, §8.5).
+        trait_tier = "Trait_Tier",
+        trait_point_cost = "Trait_PointBasedTrait_PointCostProgression",
+        tree_type = "Trait_TraitTree_TreeType",
+        tree_branch = "Trait_TraitTree_Branch",
         // Class tables (combat-data.md §9.1).
         adv_class = "AdvTable_Class",
         // Creatures (creatures.md §4.1, §4.2, §4.6).
@@ -58,6 +63,10 @@ tessera_formats::property_ids! {
         quest_category = "Quest_Category",
         // Recipes (economy.md §5.1).
         recipe_tier = "CraftRecipe_Tier",
+        recipe_category = "CraftRecipe_UICategory",
+        // Gathering nodes and inductions (crafting-panels.md §9.1; interaction.md §3.8.1).
+        required_craft_profession = "Usage_RequiredCraftProfession",
+        induction_action = "Induction_ActionDID",
         // Map notes (map-data.md §4.2).
         map_note_type = "MapNote_Type",
         // Labels outside selectors (scenario-feed.md §8.6 `enum_value`).
@@ -81,6 +90,8 @@ tessera_formats::property_ids! {
         // economy.md §5.1, §5.2.
         recipe_name = "CraftRecipe_Name",
         profession_name = "CraftProfession_Name",
+        // economy.md §5.3 (P6 progression).
+        vocation_name = "CraftVocation_Name",
         // instances.md §4.2.
         instance_name = "PrivateEncounterTemplate_Name",
     }

@@ -288,6 +288,7 @@ fn the_players_level_redraws_the_details() {
     j.apply(&Event::Character(CharacterEvent::LevelChanged {
         entity: EntityId(1),
         level: 12,
+        quiet: false,
     }));
     j.idle();
     assert_eq!(

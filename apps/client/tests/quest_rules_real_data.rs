@@ -257,6 +257,7 @@ fn the_log_follows_the_player_and_refreshes_one_entry_per_report() {
     events.push(Event::Character(CharacterEvent::LevelChanged {
         entity: EntityId(1),
         level: 50,
+        quiet: false,
     }));
     let mut state = state_of(&events);
     let refs = Arc::new(QuestRefs::fallback());

@@ -100,7 +100,8 @@ fn action_arguments() {
         ("page $p action(-1)\n", (K::OutOfRange, 2, 9)),
         ("page $p action(4294967296)\n", (K::OutOfRange, 2, 9)),
         ("page $p action(0x10)\n", (K::BadNumber, 2, 9)),
-        ("page $p action(1,2)\n", (K::BadNumber, 2, 9)),
+        // Since the P6 progression revision `action(N,REF)` is a form; `2` is no REF.
+        ("page $p action(1,2)\n", (K::UnexpectedToken, 2, 9)),
         ("page $p action(01)\n", (K::BadNumber, 2, 9)),
         ("page $p action(@a b)\n", (K::UnexpectedToken, 2, 9)),
     ] {

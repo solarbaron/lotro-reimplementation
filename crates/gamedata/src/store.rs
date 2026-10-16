@@ -616,6 +616,8 @@ impl<S: RecordSource> GameDataStore<S> {
             LabelContext::MapNoteType => s.map_note_type,
             LabelContext::GroupSize => Pid::resolve(vocab.dict(), GROUP_SIZE_LABEL),
             LabelContext::DifficultyTier => Pid::resolve(vocab.dict(), DIFFICULTY_TIER_LABEL),
+            LabelContext::TraitBranch => s.tree_branch,
+            LabelContext::RecipeCategory => s.recipe_category,
         };
         let name = label.strip_prefix('@').unwrap_or(label);
         self.label(&vocab, pid, name)
@@ -629,7 +631,7 @@ impl<S: RecordSource> GameDataStore<S> {
     /// otherwise the record's name property by family (§5.2: `Skill_Name`, `Effect_Name`,
     /// `Trait_Name`, `Quest_Name`, `TravelDisplayName`, `Area_Name` / `Dungeon_Name`,
     /// `Reputation_Faction_Name`, `CraftRecipe_Name`, `CraftProfession_Name`,
-    /// `PrivateEncounterTemplate_Name`), then `Name`. Cleaned like
+    /// `CraftVocation_Name`, `PrivateEncounterTemplate_Name`), then `Name`. Cleaned like
     /// `tessera_net::model::sanitize_text`: every control character becomes a space, and
     /// the text is cut to [`MAX_DISPLAY_NAME`] bytes on a character boundary. `None` when
     /// the row and DID disagree, when the record has no name, for an empty rendered text,
@@ -699,6 +701,7 @@ impl<S: RecordSource> GameDataStore<S> {
                 Family::Faction => order.push(s.faction_name),
                 Family::Recipe => order.push(s.recipe_name),
                 Family::Profession => order.push(s.profession_name),
+                Family::Vocation => order.push(s.vocation_name),
                 Family::Instance => order.push(s.instance_name),
                 _ => {}
             }

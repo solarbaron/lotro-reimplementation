@@ -42,6 +42,9 @@ use crate::domain::{BuybackEntry, RewardEntry};
 // P5 travel revision.
 use super::ast::{MarkersLabel, MarkersStep, TravelOpts};
 use crate::domain::{RouteMode, TravelFlags};
+// P6 progression revision.
+use super::ast::{RecipeOpts, ReplaceFilter, TrainerOpts, UntrainedStep};
+use crate::domain::{Batch, TrainerFlags, UntrainedEntry};
 
 /// Most events in the output queue.
 pub const MAX_QUEUE_EVENTS: usize = 1_048_576;
@@ -242,6 +245,8 @@ enum WinContent {
     Entries(usize),
     Loot(Vec<(Ref, u32, bool)>),
     Trade,
+    /// A crafting trainer window (P6 progression): no entries.
+    CraftTrainer,
 }
 
 #[derive(Debug, Clone)]
@@ -310,7 +315,7 @@ pub(crate) struct Feed {
     runtime_items: u64,
     slots: [Slots; 4],
     equip_records: BTreeMap<u16, DataId>,
-    windows: [Option<Window>; 8],
+    windows: [Option<Window>; WindowKind::ALL.len()],
     next_window: u32,
     next_effect: u32,
     quickslots: BTreeMap<u16, Shortcut>,
@@ -384,6 +389,18 @@ fn travel_flags(opts: &TravelOpts, n: u16) -> TravelFlags {
     flags
 }
 
+/// The marks of trainer entry `n` (P6 progression, §6.6).
+fn trainer_flags(opts: &TrainerOpts, n: u16) -> TrainerFlags {
+    let mut flags = TrainerFlags::NONE;
+    if opts.trained.contains(&n) {
+        flags |= TrainerFlags::TRAINED;
+    }
+    if opts.unmet.contains(&n) {
+        flags |= TrainerFlags::UNMET;
+    }
+    flags
+}
+
 /// The price of entry `i` of a `vendor` or `buyback` window (§6.3: buy-back prices are
 /// written as for `vendor`): the i-th coin price (or the last one), plus the barter cost.
 fn entry_price(prices: &[u64], barter: Option<&(Ref, u32)>, i: usize) -> Price {
@@ -411,6 +428,7 @@ fn orw(r: Option<&Ref>) -> u64 {
 fn tw(t: &Text) -> u64 {
     match t {
         Text::Literal(s) => sw(s),
+        Text::ActionFor { what, .. } => rw(what),
         _ => 0,
     }
 }
@@ -561,11 +579,22 @@ pub(crate) fn weight(e: &Event) -> u64 {
         Event::Progression(p) => match p {
             ProgressionEvent::SkillLearned { what }
             | ProgressionEvent::SkillForgotten { what }
-            | ProgressionEvent::RecipeLearned { what }
-            | ProgressionEvent::TitleGranted { what } => rw(what),
+            | ProgressionEvent::TitleGranted { what }
+            | ProgressionEvent::RecipeForgotten { what }
+            | ProgressionEvent::CraftTrainerShown { what, .. } => rw(what),
+            ProgressionEvent::RecipeLearned {
+                what, profession, ..
+            } => rw(what) + orw(profession.as_ref()),
             ProgressionEvent::TrainerShown { entries, .. } => {
                 entries.iter().map(|t| 1 + rw(&t.what)).sum()
             }
+            ProgressionEvent::UntrainedSkills { entries } => {
+                entries.iter().map(|u| 1 + rw(&u.what)).sum()
+            }
+            ProgressionEvent::TraitPoints { tree, .. }
+            | ProgressionEvent::TraitTreeChanged { tree, .. } => orw(tree.as_ref()),
+            ProgressionEvent::TraitRank { tree, what, .. } => rw(tree) + rw(what),
+            ProgressionEvent::VocationChanged { vocation, .. } => orw(vocation.as_ref()),
             ProgressionEvent::TraitSlotted { what, .. } => orw(what.as_ref()),
             ProgressionEvent::ProfessionChanged { profession, .. } => rw(profession),
             ProgressionEvent::CraftResult { recipe, .. } => rw(recipe),
@@ -615,6 +644,10 @@ fn text_ok(sc: &ResolvedScenario, t: &TextArg) -> bool {
         | TextArg::Role { el, .. }
         | TextArg::Objective { el, .. } => sc.element(*el).is_some(),
         TextArg::Action(_) => true,
+        TextArg::ActionFor { what, .. } => match what {
+            RefArg::Element(el) => sc.element(*el).is_some(),
+            RefArg::Literal(_) => true,
+        },
     }
 }
 
@@ -642,6 +675,15 @@ fn resolve_text(sc: &ResolvedScenario, t: &TextArg) -> Option<Text> {
             objective: *n,
         },
         TextArg::Action(e) => action_text(sc, *e),
+        TextArg::ActionFor { action, what } => {
+            // A missing element is a missing element of the text (§5.2); an unresolved
+            // label gives the label as a literal and drops the REF.
+            let what = resolve_ref(sc, what)?;
+            match sc.enum_value(*action) {
+                Some(action) => Text::ActionFor { action, what },
+                None => action_text(sc, *action),
+            }
+        }
     })
 }
 
@@ -1803,6 +1845,28 @@ impl Feed {
             (Pattern::Close(kind), C::Npc(NpcCommand::CloseWindow { window })) => {
                 self.window_is(*kind, *window).is_some()
             }
+            // P6 progression (§7.5).
+            (
+                Pattern::TrainCraft(f),
+                C::Progression(ProgressionCommand::TrainCraft { window, replace }),
+            ) => {
+                self.window_is(WindowKind::CraftTrainer, *window).is_some()
+                    && match f {
+                        ReplaceFilter::Any => true,
+                        ReplaceFilter::None => replace.is_none(),
+                        ReplaceFilter::Ref(r) => {
+                            replace.is_some() && self.rref(r).as_ref() == replace.as_ref()
+                        }
+                    }
+            }
+            (
+                Pattern::TraitRank { what: fw, tree: ft },
+                C::Progression(ProgressionCommand::SetTraitRank { tree, what, .. }),
+            ) => self.ref_ok(fw.as_ref(), what) && self.ref_ok(ft.as_ref(), tree),
+            (
+                Pattern::TraitBranch(ft),
+                C::Progression(ProgressionCommand::ChooseTraitBranch { tree, .. }),
+            ) => self.ref_ok(ft.as_ref(), tree),
             (Pattern::BuyBack(f), C::Npc(NpcCommand::BuyBack { window, entry })) => {
                 self.window_is(WindowKind::Vendor, *window).is_some()
                     && self.buyback.is_some_and(|(w, n)| {
@@ -2342,11 +2406,16 @@ impl Feed {
                     velocity: Vec3::ZERO,
                 })?;
             }
-            Verb::Level { entity, level } => {
+            Verb::Level {
+                entity,
+                level,
+                quiet,
+            } => {
                 let id = need!(self.id(*entity));
                 self.push(Event::Character(CharacterEvent::LevelChanged {
                     entity: id,
                     level: *level,
+                    quiet: *quiet,
                 }))?;
             }
             Verb::Bag { slots, container } => {
@@ -3319,29 +3388,22 @@ impl Feed {
                     needed: *needed,
                 }))?;
             }
-            Verb::Learn(w) | Verb::Recipe(w) => {
-                let learn = matches!(line.verb, Verb::Learn(_));
-                let make = |what: Ref| {
-                    Event::Progression(if learn {
-                        ProgressionEvent::SkillLearned { what }
-                    } else {
-                        ProgressionEvent::RecipeLearned { what }
-                    })
-                };
-                match w {
-                    RefOrFan::Ref(r) => {
-                        let what = need!(self.rref(r));
-                        self.push(make(what))?;
-                    }
-                    RefOrFan::Fan(sel) => {
-                        let list = sc.fan(*sel, MAX_FANOUT);
-                        self.reserve(list.len(), len64(list.len()))?;
-                        for c in list {
-                            self.push(make(Ref::Record(c.did)))?;
-                        }
+            Verb::Learn(w) => match w {
+                RefOrFan::Ref(r) => {
+                    let what = need!(self.rref(r));
+                    self.push(Event::Progression(ProgressionEvent::SkillLearned { what }))?;
+                }
+                RefOrFan::Fan(sel) => {
+                    let list = sc.fan(*sel, MAX_FANOUT);
+                    self.reserve(list.len(), len64(list.len()))?;
+                    for c in list {
+                        self.push(Event::Progression(ProgressionEvent::SkillLearned {
+                            what: Ref::Record(c.did),
+                        }))?;
                     }
                 }
-            }
+            },
+            Verb::Recipe(w, opts) => self.recipe_step(&sc, w, opts)?,
             Verb::Forget(r) => {
                 let what = need!(self.rref(r));
                 self.push(Event::Progression(ProgressionEvent::SkillForgotten {
@@ -3353,17 +3415,24 @@ impl Feed {
                 npc,
                 coins,
                 levels,
+                opts,
             } => {
                 let refs = need!(self.entry_refs(idx, skills, super::parse::MAX_WINDOW_ENTRIES));
                 let trainer = need!(self.opt_id(*npc));
                 let entries: Vec<TrainerEntry> = refs
                     .into_iter()
                     .enumerate()
-                    .map(|(i, what)| TrainerEntry {
-                        entry: u16::try_from(i + 1).unwrap_or(u16::MAX),
-                        what,
-                        coin: nth_or_last(coins, i),
-                        level: nth_or_last(levels, i),
+                    .map(|(i, what)| {
+                        let n = u16::try_from(i + 1).unwrap_or(u16::MAX);
+                        TrainerEntry {
+                            entry: n,
+                            what,
+                            coin: nth_or_last(coins, i),
+                            level: nth_or_last(levels, i),
+                            // P6 progression (§6.6).
+                            rank: (!opts.ranks.is_empty()).then(|| nth_or_last(&opts.ranks, i)),
+                            flags: trainer_flags(opts, n),
+                        }
                     })
                     .collect();
                 let window =
@@ -3372,12 +3441,22 @@ impl Feed {
                     window,
                     trainer,
                     entries,
+                    offers: opts.offers,
                 }))?;
             }
-            Verb::TraitPoints { available, total } => {
+            Verb::TraitPoints {
+                available,
+                total,
+                tree,
+            } => {
+                let tree = match tree {
+                    Some(r) => Some(need!(self.rref(r))),
+                    None => None,
+                };
                 self.push(Event::Progression(ProgressionEvent::TraitPoints {
                     available: *available,
                     total: *total,
+                    tree,
                 }))?;
             }
             Verb::Trait { slot, what, rank } => {
@@ -3396,6 +3475,7 @@ impl Feed {
                 tier,
                 proficiency,
                 mastery,
+                mastery_tier,
             } => {
                 let profession = need!(self.rref(what));
                 self.push(Event::Progression(ProgressionEvent::ProfessionChanged {
@@ -3405,12 +3485,14 @@ impl Feed {
                     proficiency_max: proficiency.1,
                     mastery: mastery.0,
                     mastery_max: mastery.1,
+                    mastery_tier: *mastery_tier,
                 }))?;
             }
             Verb::CraftResult {
                 recipe,
                 outcome,
                 item,
+                batch,
             } => {
                 let recipe = need!(self.rref(recipe));
                 let item = match item {
@@ -3427,6 +3509,7 @@ impl Feed {
                     recipe,
                     outcome: *outcome,
                     item,
+                    batch: batch.map(|(index, count)| Batch { index, count }),
                 }))?;
             }
             Verb::Reputation {
@@ -3445,8 +3528,121 @@ impl Feed {
                 let what = need!(self.rref(r));
                 self.push(Event::Progression(ProgressionEvent::TitleGranted { what }))?;
             }
+            // P6 progression steps (§6.6).
+            Verb::Untrained(u) => {
+                let entries = match u {
+                    None => Vec::new(),
+                    Some(u) => need!(self.untrained_entries(idx, u)),
+                };
+                self.push(Event::Progression(ProgressionEvent::UntrainedSkills {
+                    entries,
+                }))?;
+            }
+            Verb::TraitRank { tree, what, rank } => {
+                let tree = need!(self.rref(tree));
+                let what = need!(self.rref(what));
+                self.push(Event::Progression(ProgressionEvent::TraitRank {
+                    tree,
+                    what,
+                    rank: *rank,
+                }))?;
+            }
+            Verb::TraitTree { tree, branch } => {
+                let tree = match tree {
+                    Some(r) => Some(need!(self.rref(r))),
+                    None => None,
+                };
+                // An unresolved branch label gives none (§6.6).
+                let branch = branch.and_then(|b| sc.enum_value(b));
+                self.push(Event::Progression(ProgressionEvent::TraitTreeChanged {
+                    tree,
+                    branch,
+                }))?;
+            }
+            Verb::ForgetRecipe(r) => {
+                // The feed keeps no recipe state: the step always emits.
+                let what = need!(self.rref(r));
+                self.push(Event::Progression(ProgressionEvent::RecipeForgotten {
+                    what,
+                }))?;
+            }
+            Verb::Vocation { vocation, slots } => {
+                let vocation = match vocation {
+                    Some(r) => Some(need!(self.rref(r))),
+                    None => None,
+                };
+                self.push(Event::Progression(ProgressionEvent::VocationChanged {
+                    vocation,
+                    slots: *slots,
+                }))?;
+            }
+            Verb::CraftTrainer { kind, what, npc } => {
+                let what = need!(self.rref(what));
+                let npc = need!(self.opt_id(*npc));
+                let window =
+                    self.open_window(WindowKind::CraftTrainer, WinContent::CraftTrainer)?;
+                self.push(Event::Progression(ProgressionEvent::CraftTrainerShown {
+                    window,
+                    kind: *kind,
+                    what,
+                    npc,
+                }))?;
+            }
         }
         Ok(())
+    }
+
+    /// A `recipe` step (§6.6): one `RecipeLearned` per ref, each with the P6 progression
+    /// options (an unresolved `category=` label gives none).
+    fn recipe_step(&mut self, sc: &ResolvedScenario, w: &RefOrFan, opts: &RecipeOpts) -> Rt<()> {
+        let profession = match &opts.profession {
+            Some(r) => match self.rref(r) {
+                Some(p) => Some(p),
+                None => return self.skip(),
+            },
+            None => None,
+        };
+        let category = opts.category.and_then(|c| sc.enum_value(c));
+        let make = |what: Ref| {
+            Event::Progression(ProgressionEvent::RecipeLearned {
+                what,
+                profession: profession.clone(),
+                tier: opts.tier,
+                category,
+            })
+        };
+        match w {
+            RefOrFan::Ref(r) => match self.rref(r) {
+                Some(what) => self.push(make(what)),
+                None => self.skip(),
+            },
+            RefOrFan::Fan(sel) => {
+                let list = sc.fan(*sel, MAX_FANOUT);
+                let each = 1 + orw(profession.as_ref());
+                self.reserve(list.len(), len64(list.len()).saturating_mul(each))?;
+                for c in list {
+                    self.push(make(Ref::Record(c.did)))?;
+                }
+                Ok(())
+            }
+        }
+    }
+
+    /// The entries of an `untrained` step (§6.6); `None` when a list element is missing.
+    fn untrained_entries(&mut self, step: u32, u: &UntrainedStep) -> Option<Vec<UntrainedEntry>> {
+        let refs = self.entry_refs(step, &u.skills, super::parse::MAX_WINDOW_ENTRIES)?;
+        Some(
+            refs.into_iter()
+                .enumerate()
+                .map(|(i, what)| UntrainedEntry {
+                    entry: u16::try_from(i + 1).unwrap_or(u16::MAX),
+                    what,
+                    coin: nth_or_last(&u.coins, i),
+                    level: nth_or_last(&u.levels, i),
+                    rank: (!u.ranks.is_empty()).then(|| nth_or_last(&u.ranks, i)),
+                })
+                .collect(),
+        )
     }
 
     fn vital(&self, v: &VitalArg) -> Option<Vital> {
@@ -3651,6 +3847,7 @@ impl Feed {
             self.push(Event::Character(CharacterEvent::LevelChanged {
                 entity: id,
                 level,
+                quiet: false,
             }))?;
         }
         Ok(())

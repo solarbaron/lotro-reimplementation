@@ -576,6 +576,7 @@ impl SocialState {
             Event::Character(tessera_net::domain::CharacterEvent::LevelChanged {
                 entity,
                 level,
+                ..
             }) => {
                 self.fellowship.level(entity.0, i64::from(*level));
                 if self.listed(entity.0)

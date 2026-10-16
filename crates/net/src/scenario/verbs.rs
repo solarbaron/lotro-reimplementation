@@ -69,8 +69,14 @@ impl Parser {
                 let entity = self.entity(st.arg(0)?)?;
                 let t = st.arg(1)?;
                 let level = self.u32_in(t, t.col, 1, 10_000)?;
-                st.no_more(2)?;
-                Verb::Level { entity, level }
+                // `quiet` (P6 progression) is the only word that may follow N.
+                let quiet = st.pos.get(2).is_some_and(|q| q.is("quiet"));
+                st.no_more(if quiet { 3 } else { 2 })?;
+                Verb::Level {
+                    entity,
+                    level,
+                    quiet,
+                }
             }
             "bag" => {
                 let mut st = self.split(tokens, 1, &["container"])?;
@@ -742,18 +748,36 @@ impl Parser {
                 st.no_more(1)?;
                 Verb::Xp { current, needed }
             }
-            "learn" | "recipe" => {
+            "learn" => {
                 let st = self.split(tokens, 1, &[])?;
                 let what = self.ref_or_fan(st.arg(0)?)?;
                 st.no_more(1)?;
-                if word == "learn" {
-                    Verb::Learn(what)
-                } else {
-                    Verb::Recipe(what)
-                }
+                Verb::Learn(what)
             }
+            "recipe" => {
+                // P6 progression options after the REF (§6.6).
+                let mut st = self.split(tokens, 1, &["profession", "tier", "category"])?;
+                let what = self.ref_or_fan(st.arg(0)?)?;
+                st.no_more(1)?;
+                let opts = Box::new(self.recipe_opts(&mut st)?);
+                Verb::Recipe(what, opts)
+            }
+            // P6 progression steps (§6.6).
+            "untrained" => self.verb_untrained(tokens)?,
+            "trait-rank" => self.verb_trait_rank(tokens)?,
+            "trait-tree" => self.verb_trait_tree(tokens)?,
+            "forget-recipe" => self.verb_forget_recipe(tokens)?,
+            "vocation" => self.verb_vocation(tokens)?,
+            "craft-trainer" => self.verb_craft_trainer(tokens)?,
             "trainer" => {
-                let mut st = self.split(tokens, 1, &["skills", "npc", "coin", "level"])?;
+                // P6 progression adds the options after `level` (§6.6).
+                let mut st = self.split(
+                    tokens,
+                    1,
+                    &[
+                        "skills", "npc", "coin", "level", "offers", "rank", "trained", "unmet",
+                    ],
+                )?;
                 st.no_more(0)?;
                 let (sv, sc) = st.req_opt("skills")?;
                 let skills = self.entries(&sv, sc, MAX_WINDOW_ENTRIES, false)?;
@@ -773,20 +797,28 @@ impl Parser {
                         .collect(),
                     None => Vec::new(),
                 };
+                let opts = Box::new(self.trainer_opts(&mut st)?);
                 Verb::Trainer {
                     skills,
                     npc,
                     coins,
                     levels,
+                    opts,
                 }
             }
             "trait-points" => {
-                let st = self.split(tokens, 1, &[])?;
+                let mut st = self.split(tokens, 1, &["tree"])?;
                 let (a, t) = self.int_fraction(st.arg(0)?, 1_000_000, false)?;
                 st.no_more(1)?;
+                // `tree=` (P6 progression).
+                let tree = match st.opt("tree") {
+                    Some((v, c)) => Some(self.ref_at(&v, c)?),
+                    None => None,
+                };
                 Verb::TraitPoints {
                     available: u32::try_from(a).unwrap_or(0),
                     total: u32::try_from(t).unwrap_or(0),
+                    tree,
                 }
             }
             "trait" => {
@@ -803,7 +835,11 @@ impl Parser {
                 Verb::Trait { slot, what, rank }
             }
             "profession" => {
-                let mut st = self.split(tokens, 1, &["tier", "proficiency", "mastery"])?;
+                let mut st = self.split(
+                    tokens,
+                    1,
+                    &["tier", "proficiency", "mastery", "mastery-tier"],
+                )?;
                 let what = self.ref_arg(st.arg(0)?)?;
                 st.no_more(1)?;
                 let (tv, tc) = st.req_opt("tier")?;
@@ -812,15 +848,21 @@ impl Parser {
                 let proficiency = self.u32_pair(&pv, pc)?;
                 let (mv, mc) = st.req_opt("mastery")?;
                 let mastery = self.u32_pair(&mv, mc)?;
+                // `mastery-tier=` (P6 progression).
+                let mastery_tier = match st.opt("mastery-tier") {
+                    Some((v, c)) => Some(self.u16_in(&v, c, 0, 1000)?),
+                    None => None,
+                };
                 Verb::Profession {
                     what,
                     tier,
                     proficiency,
                     mastery,
+                    mastery_tier,
                 }
             }
             "craft-result" => {
-                let mut st = self.split(tokens, 1, &["item"])?;
+                let mut st = self.split(tokens, 1, &["item", "batch"])?;
                 let recipe = self.ref_arg(st.arg(0)?)?;
                 let t = st.arg(1)?;
                 let outcome = match t.raw() {
@@ -834,10 +876,16 @@ impl Parser {
                     Some((v, c)) => Some(self.item_at(&v, c)?),
                     None => None,
                 };
+                // `batch=K/N` (P6 progression).
+                let batch = match st.opt("batch") {
+                    Some((v, c)) => Some(self.batch(&v, c)?),
+                    None => None,
+                };
                 Verb::CraftResult {
                     recipe,
                     outcome,
                     item,
+                    batch,
                 }
             }
             "reputation" => {
@@ -1160,7 +1208,7 @@ impl Parser {
     }
 
     /// A REF or a fan-out binding.
-    fn ref_or_fan(&mut self, tok: &Token) -> R<RefOrFan> {
+    pub(crate) fn ref_or_fan(&mut self, tok: &Token) -> R<RefOrFan> {
         if let Some(s) = tok.raw()
             && s.starts_with('$')
             && !s.contains('[')
@@ -1174,7 +1222,7 @@ impl Parser {
 
     /// An entry list: a selector binding or a REFLIST of at most `max` items (`trade`
     /// allows declared items).
-    fn entries(&mut self, tok: &Token, col: u32, max: usize, trade: bool) -> R<Entries> {
+    pub(crate) fn entries(&mut self, tok: &Token, col: u32, max: usize, trade: bool) -> R<Entries> {
         if let Some(s) = tok.raw()
             && s.starts_with('$')
             && !s.contains('[')

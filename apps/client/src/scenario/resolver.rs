@@ -260,6 +260,17 @@ pub fn convert_attribute(a: Attribute) -> Option<gd::Attribute> {
         Attribute::Region => G::Region,
         Attribute::MountType => G::MountType,
         Attribute::WarSteed => G::WarSteed,
+        // P6 progression (`scenario-feed.md` §8.3).
+        Attribute::PointBased => G::PointBased,
+        Attribute::InTree => G::InTree,
+        Attribute::Branch => G::Branch,
+        Attribute::OneUse => G::OneUse,
+        Attribute::Cooldown => G::Cooldown,
+        Attribute::Critical => G::Critical,
+        Attribute::Facility => G::Facility,
+        Attribute::Gathering => G::Gathering,
+        Attribute::CraftProfession => G::CraftProfession,
+        Attribute::Selectable => G::Selectable,
         _ => return None,
     })
 }
@@ -305,6 +316,17 @@ pub fn attribute_from_data(a: gd::Attribute) -> Option<Attribute> {
         G::Region => Attribute::Region,
         G::MountType => Attribute::MountType,
         G::WarSteed => Attribute::WarSteed,
+        // P6 progression.
+        G::PointBased => Attribute::PointBased,
+        G::InTree => Attribute::InTree,
+        G::Branch => Attribute::Branch,
+        G::OneUse => Attribute::OneUse,
+        G::Cooldown => Attribute::Cooldown,
+        G::Critical => Attribute::Critical,
+        G::Facility => Attribute::Facility,
+        G::Gathering => Attribute::Gathering,
+        G::CraftProfession => Attribute::CraftProfession,
+        G::Selectable => Attribute::Selectable,
         _ => return None,
     })
 }
@@ -432,6 +454,9 @@ pub fn convert_context(c: LabelContext) -> Option<gd::LabelContext> {
         LabelContext::MapNoteType => gd::LabelContext::MapNoteType,
         LabelContext::GroupSize => gd::LabelContext::GroupSize,
         LabelContext::DifficultyTier => gd::LabelContext::DifficultyTier,
+        // P6 progression (`scenario-feed.md` §8.6).
+        LabelContext::TraitBranch => gd::LabelContext::TraitBranch,
+        LabelContext::RecipeCategory => gd::LabelContext::RecipeCategory,
         _ => return None,
     })
 }
@@ -440,7 +465,7 @@ pub fn convert_context(c: LabelContext) -> Option<gd::LabelContext> {
 mod tests {
     use super::*;
 
-    const ATTRIBUTES: [Attribute; 36] = [
+    const ATTRIBUTES: [Attribute; 46] = [
         Attribute::Kind,
         Attribute::Slot,
         Attribute::Fits,
@@ -477,6 +502,16 @@ mod tests {
         Attribute::Region,
         Attribute::MountType,
         Attribute::WarSteed,
+        Attribute::PointBased,
+        Attribute::InTree,
+        Attribute::Branch,
+        Attribute::OneUse,
+        Attribute::Cooldown,
+        Attribute::Critical,
+        Attribute::Facility,
+        Attribute::Gathering,
+        Attribute::CraftProfession,
+        Attribute::Selectable,
     ];
 
     #[test]
@@ -699,6 +734,11 @@ mod tests {
             (
                 LabelContext::DifficultyTier,
                 gd::LabelContext::DifficultyTier,
+            ),
+            (LabelContext::TraitBranch, gd::LabelContext::TraitBranch),
+            (
+                LabelContext::RecipeCategory,
+                gd::LabelContext::RecipeCategory,
             ),
         ] {
             assert_eq!(convert_context(n), Some(g));

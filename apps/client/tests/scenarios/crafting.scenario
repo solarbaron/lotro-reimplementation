@@ -1,0 +1,65 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# P6 crafting panel and trainers (crafting-panels.md §4–§8, §13; decision 0037 §2, §3):
+# a vocation with its slot count, a profession at tier 3 with a mastery tier (the tier rows
+# of §15.2), literal recipes placed by profession, tier and category, a recipe cooldown, a
+# crafting-trainer row in the NPC choice window and its trainer window, the train request,
+# a recipe trainer, a failed craft, and a one-use recipe forgotten after use. With an
+# install the selectors add a profession's recipes; without one they resolve empty.
+# Synthetic.
+tessera-scenario 1
+title "Kiln and wheel"
+tick 100ms
+player "Cato"
+select $plans = recipe n=2 seed=21
+actor $master kind=npc name="Kiln master" pos=2,0,0 facing=270
+item $clay "Wet clay"
+item $tile "Roof tile"
+page $hello speaker=$master "Here to learn?"
+option $hello 1 action(@ProfessionTrainer,"Pottery") goto=close
+option $hello 2 "Not today." goto=close
+
+at 0s spawn $master
++0s vocation "Builder" slots=2
++0s profession "Pottery" tier=3 proficiency=120/400 mastery=60/800 mastery-tier=2
++0s profession "Masonry" tier=1 proficiency=10/200 mastery=0/400
++0s recipe "Roof tile" profession="Pottery" tier=1
++0s recipe "Water pipe" profession="Pottery" tier=2
++0s recipe "Garden urn" profession="Pottery" tier=3
++0s recipe "Kiln brick" profession="Masonry" tier=1
++0s recipe $plans
++0s give $clay
++0s quantity $clay 6
++0s cooldown "Garden urn" 30s
+on use $master
++0s show $hello
+end
+on choose $hello 1
++0s craft-trainer profession "Pottery" npc=$master
+end
+on train-craft
++0s close craft-trainer
++0s system "You already practise that craft."
++0s trainer skills="Chimney pot" offers=recipes npc=$master coin=75 level=1
+end
+on train entry=1
++0s recipe "Chimney pot" profession="Pottery" tier=2
++0s close trainer
+end
+on craft "Roof tile"
++0s cast player "Roof tile" 2s kind=craft
++2s craft-result "Roof tile" failed
++0s cast player "Roof tile" 2s kind=craft
++2s give $tile
++0s craft-result "Roof tile" success item=$tile
++0s quantity $clay 2
++0s forget-recipe "Roof tile"
++0s profession "Pottery" tier=3 proficiency=150/400 mastery=60/800 mastery-tier=2
+end
+
+input
+at 1s use $master
+at 1.5s choose $hello 1
+at 2s train-craft replace="Masonry"
+at 2.5s train 1
+at 3s craft "Roof tile" qty=2 tier=1
+end

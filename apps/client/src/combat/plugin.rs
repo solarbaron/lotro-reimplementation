@@ -243,7 +243,7 @@ impl PluginCombat {
                 }
                 Vec::new()
             }
-            Event::Character(CharacterEvent::LevelChanged { entity, level }) => {
+            Event::Character(CharacterEvent::LevelChanged { entity, level, .. }) => {
                 m.level_changed(entity.0, *level)
             }
             Event::Progression(ProgressionEvent::SkillLearned { what }) => {

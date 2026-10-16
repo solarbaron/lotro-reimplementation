@@ -57,11 +57,15 @@
 //! | [`travel`] | the travel window, the end-travel box, the travel presentation | `travel-windows.md` §4, §5 |
 //! | [`finder`] | the instance finder, its queue page and alert, the instance-travel window | `travel-windows.md` §4.11, §6, §7.2 |
 //! | [`travelfallback`] | fallback travel, finder and instance-travel windows | decision 0031 |
+//! | [`p6vocab`] | labels of the P6 element IDs and states; Tessera's own progression IDs | naming notes |
+//! | [`crafting`] | the crafting panel, recipe page and crafting-trainer windows | `crafting-panels.md` §4–§8, §11 |
+//! | [`progression`] | the experience bar, level-up banner, trait panel and skill-training window (provisional) | decision 0037; `scenario-feed.md` §6.6 |
 
 pub mod avatar;
 pub mod charvocab;
 pub mod chat;
 pub mod combat;
+pub mod crafting;
 pub mod creation;
 pub mod data;
 pub mod dragbox;
@@ -77,8 +81,10 @@ pub mod mapwindow;
 pub mod npc;
 pub mod npcvocab;
 pub mod p5vocab;
+pub mod p6vocab;
 mod panels;
 pub mod popup;
+pub mod progression;
 pub mod quest;
 pub mod quickslot;
 pub mod radar;
@@ -95,6 +101,7 @@ pub use data::{
 };
 pub use npcvocab::NpcVocab;
 pub use p5vocab::P5Vocab;
+pub use p6vocab::P6Vocab;
 pub use panels::{GameAction, GameLayouts, GamePanels};
 pub use vocab::GameVocab;
 

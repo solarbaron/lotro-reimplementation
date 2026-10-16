@@ -450,7 +450,16 @@ pub struct World {
     /// consumer (mounts, mount vitals, resets; the windows read the state itself), at most
     /// [`MAX_P5_CHANGES`] (the oldest are dropped).
     p5_changes: std::collections::VecDeque<crate::travel::state::P5Change>,
+    /// The P6 state (decision 0024 P6): level, experience, traits, skills, trainers,
+    /// professions, recipes and the crafting bar ([`crate::progression::state`]).
+    p6: crate::progression::state::P6State,
+    /// Its changes not yet taken ([`World::take_p6_changes`]), at most [`MAX_P6_CHANGES`]
+    /// (the oldest are dropped; consumers resynchronise from the state).
+    p6_changes: std::collections::VecDeque<crate::progression::state::P6Change>,
 }
+
+/// Most P6 changes kept for [`World::take_p6_changes`] between two takes.
+pub const MAX_P6_CHANGES: usize = 1 << 12;
 
 /// Most player-state changes kept for [`World::take_player_changes`] between two takes;
 /// beyond it the oldest are dropped (and logged), and consumers resynchronise from the
@@ -642,6 +651,8 @@ impl World {
             p2_base: now,
             p5: crate::travel::state::P5State::new(),
             p5_changes: std::collections::VecDeque::new(),
+            p6: crate::progression::state::P6State::new(),
+            p6_changes: std::collections::VecDeque::new(),
         })
     }
 
@@ -683,6 +694,23 @@ impl World {
     #[must_use]
     pub fn p5(&self) -> &crate::travel::state::P5State {
         &self.p5
+    }
+
+    /// The P6 state (decision 0024 P6; [`crate::progression::state`]).
+    #[must_use]
+    pub fn p6(&self) -> &crate::progression::state::P6State {
+        &self.p6
+    }
+
+    /// Takes the queued P6 changes since the last call, in event order.
+    pub fn take_p6_changes(&mut self) -> Vec<crate::progression::state::P6Change> {
+        Vec::from(std::mem::take(&mut self.p6_changes))
+    }
+
+    /// Posts a line the client made itself (P6 result and level-up lines) to the chat as a
+    /// session line would be: the HUD and the chat window or the plugins take it.
+    pub fn push_local_chat(&mut self, line: ChatLine) {
+        self.push_chat(line);
     }
 
     /// Takes the queued P5 changes (mounts, mount vitals, resets) since the last call, in
@@ -1463,6 +1491,18 @@ impl World {
         }
         for line in lines {
             self.push_chat(line);
+        }
+        let mut p6 = Vec::new();
+        self.p6.apply(ev, &mut p6);
+        if matches!(ev, Event::WorldEntered { .. }) {
+            // The character's level known at entry is the session's first level (silent).
+            self.p6.seed_level(self.p1.level(), &mut p6);
+        }
+        for c in p6 {
+            if self.p6_changes.len() >= MAX_P6_CHANGES {
+                self.p6_changes.pop_front();
+            }
+            self.p6_changes.push_back(c);
         }
         let mut p5 = Vec::new();
         self.p5.apply(ev, &mut p5);

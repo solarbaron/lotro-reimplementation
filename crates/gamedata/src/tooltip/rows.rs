@@ -253,6 +253,8 @@ impl<D: TooltipData> TooltipEngine<D> {
             | Widget::EffectTime => self.empty_row(t),
             Widget::SetMembers | Widget::SetBonuses => self.set_lines(&mut f),
             Widget::Cooldown | Widget::Decay => self.duration_row(&mut f),
+            Widget::RecipeOneShot | Widget::RecipeCooldown if item => self.recipe_row(&mut f),
+            Widget::RecipeOneShot | Widget::RecipeCooldown => self.empty_row(t),
             Widget::QuestId => self.quest(&mut f),
             Widget::Pair => {
                 let mut sides = t.children.iter().map(|c| {
@@ -1214,6 +1216,66 @@ impl<D: TooltipData> TooltipEngine<D> {
                 }
             },
             None => Some(RichText::plain(&d)),
+        };
+        self.text_row(t, text, None)
+    }
+
+    /// The recipe rows of a recipe scroll (`crafting-panels.md` §7 Tessera rule, replacing
+    /// the empty rows of §6.20 for these two): for an item with `RecipeItem_Recipe`, the
+    /// one-use row shows its text when the recipe is one-use, the cooldown row its text with
+    /// the recipe's cooldown duration (the duration text of §6.18) when it has one; any
+    /// other case gives an empty row (removed by §5).
+    fn recipe_row(&self, f: &mut Fill<'_, '_>) -> Row {
+        let t = f.t;
+        let empty = |s: &Self| s.row(t, RowContent::Empty, None);
+        let Some(recipe) = f.did(self.p.recipe) else {
+            return empty(self);
+        };
+        let set = match self.data.record(recipe) {
+            Ok(Some(set)) => set,
+            Ok(None) => return empty(self),
+            Err(e) => {
+                f.fail(e);
+                return empty(self);
+            }
+        };
+        let (token, values) = if t.widget == Widget::RecipeOneShot {
+            let one_use = matches!(
+                self.p.recipe_one_time.and_then(|p| set.get(p)),
+                Some(PropertyValue::Bool(true))
+            );
+            if !one_use {
+                return empty(self);
+            }
+            (tokens::RECIPE_ONE_SHOT, Values::new())
+        } else {
+            let key = match self.p.recipe_cooldown.and_then(|p| set.get(p)) {
+                Some(PropertyValue::Enum(k)) => *k,
+                _ => return empty(self),
+            };
+            let seconds = (key != 0)
+                .then(|| self.duration_map(true)?.seconds(key))
+                .flatten()
+                .filter(|s| s.is_finite() && *s > 0.0);
+            let Some(seconds) = seconds else {
+                return empty(self);
+            };
+            let d = rules::duration_text(f64::from(seconds));
+            (
+                tokens::RECIPE_COOLDOWN,
+                values([(tokens::VAR_DECAY, Value::Text(d))]),
+            )
+        };
+        let text = match &t.fixed_text {
+            Some(info) => self.render(f, TextRef::Info(info), &values),
+            None => self.render(
+                f,
+                TextRef::Token {
+                    table_key: tokens::EXAMINATION_TABLE_KEY,
+                    token,
+                },
+                &values,
+            ),
         };
         self.text_row(t, text, None)
     }

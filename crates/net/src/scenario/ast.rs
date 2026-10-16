@@ -11,6 +11,8 @@ use crate::model::{DataId, EntityKind, PropertyKind};
 use crate::domain::RewardKind;
 // P5 travel revision.
 use crate::domain::{MountVital, QueueState, RouteMode};
+// P6 progression revision.
+use crate::domain::{CraftTrainerKind, TrainerOffer};
 
 /// An element `$sel[i]` of a selector binding.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -43,9 +45,21 @@ pub(crate) enum TextArg {
     Name(Element),
     Desc(Element),
     Comment(Element),
-    Role { el: Element, n: u16, failure: bool },
-    Objective { el: Element, n: u16 },
+    Role {
+        el: Element,
+        n: u16,
+        failure: bool,
+    },
+    Objective {
+        el: Element,
+        n: u16,
+    },
     Action(EnumArg),
+    /// `action(VALUE,REF)` (P6 progression): an NPC action entry for one record.
+    ActionFor {
+        action: EnumArg,
+        what: RefArg,
+    },
 }
 
 /// A position: an offset from the spawn, or a place element's own location.
@@ -179,10 +193,12 @@ pub(crate) enum WindowKind {
     Travel,
     Instances,
     Trade,
+    /// A crafting trainer window (P6 progression, §5.6).
+    CraftTrainer,
 }
 
 impl WindowKind {
-    pub(crate) const ALL: [WindowKind; 8] = [
+    pub(crate) const ALL: [WindowKind; 9] = [
         Self::Dialogue,
         Self::QuestOffer,
         Self::Vendor,
@@ -191,6 +207,7 @@ impl WindowKind {
         Self::Travel,
         Self::Instances,
         Self::Trade,
+        Self::CraftTrainer,
     ];
 
     pub(crate) fn from_keyword(s: &str) -> Option<Self> {
@@ -203,6 +220,7 @@ impl WindowKind {
             "travel" => Self::Travel,
             "instances" => Self::Instances,
             "trade" => Self::Trade,
+            "craft-trainer" => Self::CraftTrainer,
             _ => return None,
         })
     }
@@ -313,6 +331,8 @@ pub(crate) enum Verb {
     Level {
         entity: EntityArg,
         level: u32,
+        /// `quiet` (P6 progression).
+        quiet: bool,
     },
     Bag {
         slots: u16,
@@ -576,10 +596,14 @@ pub(crate) enum Verb {
         npc: Option<EntityArg>,
         coins: Vec<u64>,
         levels: Vec<u32>,
+        /// The P6 progression options.
+        opts: Box<TrainerOpts>,
     },
     TraitPoints {
         available: u32,
         total: u32,
+        /// `tree=` (P6 progression).
+        tree: Option<RefArg>,
     },
     Trait {
         slot: u16,
@@ -591,12 +615,17 @@ pub(crate) enum Verb {
         tier: u16,
         proficiency: (u32, u32),
         mastery: (u32, u32),
+        /// `mastery-tier=` (P6 progression).
+        mastery_tier: Option<u16>,
     },
-    Recipe(RefOrFan),
+    /// `recipe`, with the P6 progression options.
+    Recipe(RefOrFan, Box<RecipeOpts>),
     CraftResult {
         recipe: RefArg,
         outcome: CraftOutcome,
         item: Option<u32>,
+        /// `batch=K/N` (P6 progression): (K, N).
+        batch: Option<(u16, u16)>,
     },
     Reputation {
         faction: RefArg,
@@ -623,6 +652,69 @@ pub(crate) enum Verb {
         current: f32,
         max: f32,
     },
+    /// `untrained …` (P6 progression); `None` for `untrained none`.
+    Untrained(Option<Box<UntrainedStep>>),
+    /// `trait-rank TREE TRAIT N` (P6 progression).
+    TraitRank {
+        tree: RefArg,
+        what: RefArg,
+        rank: u16,
+    },
+    /// `trait-tree (REF|none) [branch=VALUE]` (P6 progression).
+    TraitTree {
+        tree: Option<RefArg>,
+        branch: Option<EnumArg>,
+    },
+    /// `forget-recipe REF` (P6 progression).
+    ForgetRecipe(RefArg),
+    /// `vocation (REF|none) [slots=N]` (P6 progression).
+    Vocation {
+        vocation: Option<RefArg>,
+        slots: Option<u8>,
+    },
+    /// `craft-trainer KIND REF [npc=ENTITY]` (P6 progression).
+    CraftTrainer {
+        kind: CraftTrainerKind,
+        what: RefArg,
+        npc: Option<EntityArg>,
+    },
+}
+
+/// The P6 progression options of `trainer` (§6.6). Entry lists hold distinct entry
+/// numbers 1 … 1,024 in written order.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub(crate) struct TrainerOpts {
+    pub offers: TrainerOffer,
+    pub ranks: Vec<u16>,
+    pub trained: Vec<u16>,
+    pub unmet: Vec<u16>,
+}
+
+/// The P6 progression options of `recipe` (§6.6).
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub(crate) struct RecipeOpts {
+    pub profession: Option<RefArg>,
+    pub tier: Option<u16>,
+    pub category: Option<EnumArg>,
+}
+
+/// An `untrained skills=…` step (P6 progression, §6.6).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct UntrainedStep {
+    pub skills: Entries,
+    pub coins: Vec<u64>,
+    pub levels: Vec<u32>,
+    pub ranks: Vec<u16>,
+}
+
+/// The `replace=` filter of a `train-craft` pattern (P6 progression).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum ReplaceFilter {
+    /// Omitted or `any`.
+    Any,
+    /// `none`: the command names no profession.
+    None,
+    Ref(RefArg),
 }
 
 /// The label of a `markers` step (P5 travel).
@@ -793,6 +885,15 @@ pub(crate) enum Pattern {
     BuyBack(Option<u16>),
     /// `leave-queue` (P5 travel).
     LeaveQueue,
+    /// `train-craft [replace=(REF|none|any)]` (P6 progression).
+    TrainCraft(ReplaceFilter),
+    /// `trait-rank [REF] [tree=REF]` (P6 progression).
+    TraitRank {
+        what: Option<RefArg>,
+        tree: Option<RefArg>,
+    },
+    /// `trait-branch [tree=REF]` (P6 progression).
+    TraitBranch(Option<RefArg>),
 }
 
 impl Pattern {
@@ -920,9 +1021,15 @@ pub(crate) enum InputCmd {
         slot: u16,
         what: Option<RefArg>,
     },
+    /// `craft REF [qty=Q] [tier=N] [output=K] [optional=M] [pack]` (options: P6
+    /// progression).
     Craft {
         recipe: RefArg,
         qty: u16,
+        tier: Option<u16>,
+        output: u16,
+        optional: u8,
+        pack: bool,
     },
     CreateCharacter {
         name: String,
@@ -937,6 +1044,19 @@ pub(crate) enum InputCmd {
     BuyBack(u16),
     /// `leave-queue` (P5 travel).
     LeaveQueue,
+    /// `train-craft [replace=REF]` (P6 progression).
+    TrainCraft(Option<RefArg>),
+    /// `trait-rank TREE TRAIT N` (P6 progression).
+    TraitRank {
+        tree: RefArg,
+        what: RefArg,
+        rank: u16,
+    },
+    /// `trait-branch TREE VALUE` (P6 progression).
+    TraitBranch {
+        tree: RefArg,
+        branch: EnumArg,
+    },
 }
 
 /// One input line: time (`None` for `pre`) and command.

@@ -88,6 +88,13 @@ fn action_defs() -> Vec<ActionDef> {
         b("assist_fellow_4"),
         b("assist_fellow_5"),
         b("assist_fellow_6"),
+        // P6 crafting panel (`crafting-panels.md` §4.1, §12): Tessera actions for the
+        // commands `ToggleCraftingPanel` and `ToggleCraftingProf1Panel` … `Prof3Panel`
+        // (`keymap.md` §8.2 P6 OPEN: the rows are not yet in the keymap spec).
+        b("toggle_crafting"),
+        b("toggle_crafting_1"),
+        b("toggle_crafting_2"),
+        b("toggle_crafting_3"),
     ];
     // P2 targeting and quickslot actions (`keymap.md` §8.2): exact policy, no repeat.
     v.extend(crate::combat::TARGET_ACTIONS.iter().map(|r| b(r.1)));
@@ -248,6 +255,13 @@ fn default_table() -> Vec<(&'static str, &'static str, Vec<Entry>)> {
         (GLOBAL, "assist_fellow_4", vec![]),
         (GLOBAL, "assist_fellow_5", vec![]),
         (GLOBAL, "assist_fellow_6", vec![]),
+        // P6 crafting panel: T, no modifier (the install's default for
+        // `ToggleCraftingPanel`, `crafting-panels.md` §12, CP2); the three profession
+        // toggles are unbound there too.
+        (GLOBAL, "toggle_crafting", vec![D("T")]),
+        (GLOBAL, "toggle_crafting_1", vec![]),
+        (GLOBAL, "toggle_crafting_2", vec![]),
+        (GLOBAL, "toggle_crafting_3", vec![]),
         (CAMERA, "mouselook", vec![D("MouseRight")]),
         (
             CAMERA,
@@ -819,6 +833,80 @@ mod tests {
         assert!(m.pressed(ids.walk));
         assert!(!m.just_pressed(a(&m, "quickslot_1")));
         release(&mut m, &[ShiftLeft], Digit1);
+    }
+
+    /// P6 crafting toggles (`crafting-panels.md` §12): `T` opens the crafting panel under
+    /// the exact policy, `Ctrl+T` stays `pin_tooltip`, the profession toggles are unbound.
+    #[test]
+    fn p6_crafting_toggle_defaults() {
+        let reg = default_registry();
+        let km = default_keymap();
+        for (action, bound) in [
+            ("toggle_crafting", 1),
+            ("toggle_crafting_1", 0),
+            ("toggle_crafting_2", 0),
+            ("toggle_crafting_3", 0),
+        ] {
+            let def = reg
+                .actions()
+                .find(|(_, d)| d.name == action)
+                .map(|(_, d)| d.clone())
+                .expect(action);
+            assert_eq!(def.kind, crate::ActionKind::Button, "{action}");
+            assert_eq!(def.modifiers, ModifierPolicy::Exact, "{action}");
+            assert!(!def.repeat, "{action}");
+            assert_eq!(
+                km.get(contexts::GLOBAL, action).unwrap().len(),
+                bound,
+                "{action}"
+            );
+        }
+        let (ids, mut m) = walk_mapper();
+        let t = Duration::ZERO;
+        let k = |key, pressed| RawEvent::Key {
+            key,
+            pressed,
+            repeat: false,
+        };
+        let crafting = m.registry().action("toggle_crafting").unwrap();
+        let pin = m.registry().action("pin_tooltip").unwrap();
+        m.handle(&k(KeyCode::T, true), t);
+        m.update(t);
+        assert!(m.just_pressed(crafting));
+        assert!(!m.just_pressed(pin));
+        m.handle(&k(KeyCode::T, false), t);
+        m.update(t);
+        for mk in [KeyCode::ControlLeft, KeyCode::T] {
+            m.handle(&k(mk, true), t);
+        }
+        m.update(t);
+        assert!(m.just_pressed(pin));
+        assert!(!m.just_pressed(crafting));
+        assert!(!m.pressed(ids.toggle_fly));
+    }
+
+    /// No two actions of one context share a digital binding with the same chord (and
+    /// activation), so every default stroke fires one action per context under the
+    /// policies of §7.2 (`keymap.md` §8; P6 adds `T`).
+    #[test]
+    fn no_duplicate_default_strokes_per_context() {
+        let km = default_keymap();
+        let mut seen: Vec<(&str, String, &str)> = Vec::new();
+        for (ctx, action, list) in km.iter() {
+            for b in list {
+                let crate::BindingSpec::Digital { chord, .. } = b else {
+                    continue;
+                };
+                let key = format!("{chord:?}");
+                if let Some((_, _, other)) = seen
+                    .iter()
+                    .find(|(c, k, a)| *c == ctx && *k == key && *a != action)
+                {
+                    panic!("{ctx}: {key} binds both {other} and {action}");
+                }
+                seen.push((ctx, key, action));
+            }
+        }
     }
 
     fn walk_mapper() -> (StandardActions, InputMapper) {

@@ -1021,6 +1021,13 @@ geometry and changes no box that a hit test reads.
 > design extent near the bottom of the shrunken `NormalBackground`; it is a stop-gap for
 > visibility, not the pixel-accurate placement that the "other reading" (a scaled surface)
 > would give. Implemented in `crates/ui/src/layout.rs` (`runtime`).
+>
+> **Answered (owner, 2026-10-16), [decision 0040](../decisions/0040-ui-scaling.md):** the
+> original client scales its interface badly, and Tessera does not copy it. Neither reading
+> above is reproduced: Tessera's own resolution-independent UI scaling (`ui-scaling.md`, to
+> be written and reviewed) decides how layouts designed for one size are shown at any window
+> size, aspect ratio and user scale. Until that spec is Accepted and built, the stop-gap rule
+> above stays.
 
 Notes:
 

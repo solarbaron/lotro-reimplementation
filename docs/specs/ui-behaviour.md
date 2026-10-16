@@ -1282,6 +1282,12 @@ Panels are resized by **resize-bar** elements (engine type ResizeBar).
 > method: M3 (the owner resizes a resizable panel at UI scale 1.0 and 1.5 and reports its
 > size), or M4 on the display node's set-size routine. UB-I9 covers only targets without a
 > UI scale.
+
+> **Note (2026-10-16, decision 0040; no rule of this spec changed):** for Tessera, once
+> [`ui-scaling.md`](ui-scaling.md) is Accepted and built, its §3.5 "Moves and resizes"
+> replaces the Tessera rule above: a move divides the pointer offset by the scale of the
+> target's **parent** (1 for a root panel), a resize divides by the target's own scale and
+> keeps the opposite displayed edge. What this section says about the original is unchanged.
 5. **End** (`Element_mouse_release` with `SelectLeft`): the resize bar returns to `normal`; the
    target leaves resizing; if it has `UICore_Element_save_size`, game code is notified (§8.4).
 
@@ -1313,6 +1319,12 @@ the user can end up partly outside a smaller screen.
 > set on no layout element): it is handed to the element when set, and its effect (probably
 > shrinking the 3D view so that a docked panel does not cover it) was not traced.
 
+> **Note (2026-10-16, decision 0040; no rule of this spec changed):** for Tessera,
+> [`ui-scaling.md`](ui-scaling.md) §5.6 and §5.8 keep every root panel on screen after a
+> screen-size or scale change, after a saved placement is applied and at every move or resize
+> step (plugin windows only in the case its §5.8 item 5 names). Takes effect when that spec is
+> Accepted and built.
+
 <a id="s8-4"></a>
 ### 8.4 Saved positions, sizes and visibility (BIN; storage OPEN, UB29)
 
@@ -1337,6 +1349,10 @@ Census: `save_loc` on 194 elements (192 true), `save_size` 41 (34 true), `save_v
 > when game code applies the store (UL §9.9 OPEN items 1 and 3). Tessera
 > stores its own saved panel data in Tessera's settings (a Tessera decision, `crates/settings`),
 > keyed by root-panel element label and layout DID.
+
+> **Note (2026-10-16, decision 0040):** the form of that store is
+> [`ui-scaling.md`](ui-scaling.md) §5.8: anchored placements in UI units under `[UI.panels]`,
+> keyed by layout DID and element ID.
 
 <a id="s8-5"></a>
 ### 8.5 UI layout files (`ui/layouts`, BIN, UB30)
@@ -1543,6 +1559,14 @@ use the displayed boxes derived level by level with truncation, the drawn edge o
 inside a scaled surface and its hit-test box can differ by less than one pixel per nesting
 level below its surface (a recorded difference, UR §2.4 item 3); at scale 1 they are equal.
 
+> **Note (2026-10-16, decision 0040):** [`ui-scaling.md`](ui-scaling.md) replaces the Tessera
+> rules of §9.2 and §9.2.1 for Tessera's own scaling once it is Accepted and built: one UI
+> scale under the UI-unit space (its §3–§4), uniform node scales with exact (untruncated)
+> displayed boxes (its §3.4), surfaces painted at the scaled size with text and art
+> rasterised there (its §6), so drawing and hit testing agree exactly (its §3.6), and a plugin
+> `SetScale` as a uniform node scale (its §7.7). Element resizes of Stretch surfaces still set
+> a stretch vector. What this section says about the original is unchanged.
+
 <a id="s9-3"></a>
 ### 9.3 Cursor scale (BIN, UB33)
 
@@ -1554,6 +1578,9 @@ is the offset used for tooltips (§6.5).
 **Tessera (UR §2.5).** The image is resampled once to this size, with the filter setting of
 §9.2.1, and shown as an operating-system cursor at that physical size (a provisional rule; the
 setting `ui_cursor = software` draws it in the renderer at the exact size instead).
+
+> **Note (2026-10-16, decision 0040):** with [`ui-scaling.md`](ui-scaling.md) built, the cursor
+> is trunc(32 × effective UI scale × `UIScale_Cursor`) physical pixels square (its §6.7).
 
 <a id="s9-4"></a>
 ### 9.4 Screen size changes (BIN, UB34)
@@ -1576,6 +1603,11 @@ This answers the OPEN of UL §8.5 (§16).
 apply no operating-system scale factor to the UI: users enlarge panels with `UIScale_Global`
 (§9.1), as in the original. What a root panel does on the resize is UL §8.4: one whose size
 does not change is only moved (UL §8.4 step 6).
+
+> **Note (2026-10-16, decision 0040):** superseded for Tessera by
+> [`ui-scaling.md`](ui-scaling.md) §3.2, §4.2–§4.6 once it is Accepted and built: the screen
+> root has the size of the UI screen in UI units, the operating system's scale factor feeds
+> the automatic UI scale, and Tessera reads none of the preferences of §9.1 (its §11).
 
 ---
 
@@ -2166,3 +2198,5 @@ Every item has an in-section `> **OPEN:**` callout.
 | 2026-10-06 | **Revision 4** (status Accepted → Revised, awaiting review; applies the accepted decision records [0014](../decisions/0014-ui-input-bridge.md) (**IB**) and [0015](../decisions/0015-ui-rendering.md) (**UR**); no new research; no fact about the original changed; section numbers unchanged). **Header and §1:** companion entries and a provenance tag for IB and UR (Tessera rules only). **Tessera rules reworded:** §3.3 (*T*, *W*, *H* through the client, with Tessera's fallback settings and the scale-factor re-read; activation filter of IB D3–D4; the third-press OPEN gets IB's reading); §4.7 OPEN (the line step of lists and trees is UW §5.6, which supersedes the earlier Tessera rule; 16 pixels kept for other content, UR question 4); §5.2 OPEN (Tessera push rules of IB D5 for `EditControls`, `CopyAndPasteControls`, `DialogBoxes`, `ScrollableControls_Mouse` and the Tessera context `ui.chat_log`); §5.6 OPEN (`DialogBoxes` pushed only by engine dialogs). **Cross-references added (rule now in a decision):** §3.1 (commands as actions, offer protocol, verdict, same action to game code; IB D1, D2, D7), §3.2 (`pointer`, `ui.scroll_mouse`), §4.4 (coalesced moves, current geometry; IB D7, D8), §4.6 (Tessera consumption rule for mouse-button commands, IB D7), §4.7 (wheel motion and the band, IB D5, D7), §4.8 and §9.3 (OS or software cursor, UR §2.5), §4.9 (the lock as client state, IB D7), §5.2 (the UI band, IB D5, D6), §5.3 (same command to game code; Escape with a UI attached), §5.4 (character path, modifier policies), §6.2 (timer restart under coalescing), §9.2.1 (stand-in surface and the no-surface rule for mode 0; Tessera scale filter; hit-test rounding difference, UR §2.1, §2.2, §2.4), §9.4 (no OS scale factor, UR §2.6), §11.1 ("own opacity only", fade clock at the logical show, UR Decision 1.6–1.8), §11.2 (logical show at once, drawn picture withheld up to 100 ms, UR Decision 1.8). §9.2 (plugin `SetScale` follows step 6 until UR spec question 2 is reconciled with `lua-plugin-api.md` §13.21). **New OPEN callouts with Tessera rules:** §4.9 releases during the lock (IB Known difference 16) and the visible cursor during the lock (UR §2.5, UR question 9); §7.4 right press during a drag (IB D7, Known difference 20; the existing OPEN extended); §9.2.1 reachability of the None branch (UR question 14). §17 items 1, 6, 7, 10, 13, 18 updated; items 23–25 added. |
 | 2026-10-06 | **Revision 4, corrections after review** (status stays Revised, awaiting review; no fact about the original changed; section numbers kept). §3.3: Tessera's `[Input] double_click_ms` / `double_click_px` are the fallback when the platform publishes nothing **and can also override** the platform values (IB D3); the earlier "platform values always take precedence" contradicted D3 and is withdrawn; new OPEN on how an overriding setting is told apart from the default (interim Tessera rule: a key present in the settings file overrides), listed as §17 item 26. §3.1 and §5.3: "a declined command goes on to game code as the same action" now cites IB D7 instead of IB Options 4 (which only lists the options considered). §9.4: the UR §2.6 paragraph no longer states a fact about the original under the UR tag; not applying an OS scale factor is stated as Tessera's choice, and "a root panel whose size does not change is only moved" cites UL §8.4 step 6. |
 | 2026-10-09 | P1 revision (spec writer, dirty room; status Accepted → Revised, awaiting review): notes under the §6.4 OPEN (the `Tooltips` scaling group of pinned item tooltips) and the §6.6 OPEN (item and examination tooltips now in `item-tooltips.md`, which also says how the scenario feed drives them). No rule of this spec changed. |
+| 2026-10-16 | Notes only (no fact or rule of this spec changed), decision 0040: §8.3 OPEN, §8.4 OPEN, §9.2.1, §9.3 and §9.4 point to `ui-scaling.md` (§5.6, §5.8, §3–§4, §6, §6.7, §7.7), which supersedes the Tessera rules named there once it is Accepted and built. Status unchanged. |
+| 2026-10-16 | Note only (no fact or rule of this spec changed), `ui-scaling.md` revision 4: the §8.2 OPEN's Tessera rule is replaced, once that spec is built, by its §3.5 (moves divide by the parent's scale, resizes by the target's). Status unchanged. |

@@ -1022,6 +1022,12 @@ example `UiPass::cap_counters(UiCapCounters)`), and `end_frame` copies them unch
 | Chain | The entry's transform applies its rotations in list order (own first, root last), each about its own centre in 3-D, and projects **once at the end**, orthographically: it drops *z*. Tessera rule: a child lies in the plane of its tilted parent, as a card on a card (LPA §13.20 OPEN). With only *z* rotations this is the plain 2-D composition. A projected quad of zero area (a tilt of exactly ±90°) draws nothing. Rotated quads are drawn with **no culling**, because a tilt past 90° flips the winding. |
 | Who sets the angles | The angles are those held by the surfaces (UR §2.3), never `GetRotation()` values. Entries derived from a root (its nested entries and canvases above) carry the root's rotation as their last item, so they turn with it. The minimap marker's *z* is chosen by the client so that the east-pointing arrow turns clockwise on screen by *h* − 90° (GP §8.6.3), so *z* = 90 − *h* under the convention above. |
 
+> **Note (2026-10-16, decision 0040; the renderer's contract is unchanged):** with
+> [`ui-scaling.md`](ui-scaling.md) built, a destination is the physical box of a displayed box
+> by its pixel-centre mapping (§3.6 there, the same pixel rule as above), and canvases are
+> painted at that physical size (§6.1 there), so the 1 : 1 path is the normal case; entries
+> are scaled only for a scale-change preview, a stretch vector or a rotation (§6.6 there).
+
 <a id="s6-7"></a>
 ### 6.7 The UI pipeline
 
@@ -1425,6 +1431,10 @@ nested entry. The data give P1 18 non-root surfaces in two levels:
 > no mips is the Tessera default, switchable with `ui_scale_filter`. Owner observation 1 of UR
 > (the chat window at UI scale 1.0, 1.5 and 0.5) settles it; a premultiplied mip chain per
 > reduced surface is the change if it shows smoothing.
+>
+> **Note (2026-10-16, decision 0040):** Tessera no longer magnifies or reduces painted
+> surfaces for its UI scale ([`ui-scaling.md`](ui-scaling.md) §6): art is resampled once on the
+> CPU by its §6.3, so this filter applies only to previews, stretch vectors and rotations.
 
 > **OPEN:** Rotation direction, order and projection (LPA §13.20 OPEN), including how the
 > rotations of nested surfaces combine (§6.6 chooses 3-D composition with one projection at
@@ -1626,3 +1636,4 @@ rendering and environment code was read; no network, login, launcher or anti-tam
 | 2026-10-10 | Spec writer (dirty room), answering note (3) of the `water.md` re-review of 2026-10-09 and following the `water.md` revision of 2026-10-10: departure R-D12 and the §5.7 water OPEN (1) name the lava record 0x2B000810 and its drawing (`water.md` §8.6.5); the OPEN states that the flow-map colour is per record since that revision; new §7 rows R-W2 (flow-map and lava drawings) and R-W3 (mirror and liquid drawings, puddle depth state, liquid alpha test). No renderer behaviour described as current changed. §4–§5 and §7 Accepted → Revised, awaiting review. |
 | 2026-10-10 | Spec writer (dirty room), answering the implementer OPEN of §4.3 filed with commit b949a54 (conformance to `material.md` §11.2–§11.3 as revised 2026-10-10) and note N1 of the `material.md` review of commit d96e087 ("opacity source" in §4.3 and R-A1). §2.3: the M2 alpha test discards the base texel's alpha at or below the cutoff (was `alpha < cutoff` on the product). §4.3: `Mask` and `TestBlend` test the tested opacity of the `material.md` §11.2 table; `TestBlend` outside lit passes is drawn in `MeshShading::Lit` as in lit passes and as `Mask` in the debug shadings; cutoff 0 and −1 tied to *R* of §11.2 step 3; `Fixed` reads the tested opacity and has its alpha test with the caller's *R*; the output-alpha paragraph states *α* × *M*.alpha for every source, clamped (`lighting.md` L41, `material.md` MA61); new `Opacity` list (`BaseWith`, `LayerAlpha::Summed`, the sum and product records by DID); the cutoff is the caller's *R*; draw-uniform flag bits 16–26. §4.8: the `Fixed` alpha-test OPEN marked done. §7: R-A1 restated; R-D11 withdrawn (row kept). The implementer OPEN is marked Answered. No section number or anchor changed. §4–§5 and §7 Accepted → Revised, awaiting review. |
 | 2026-10-10 | Spec writer (dirty room), answering a wording conflict raised for the implementers: the §4.3 `Fixed` row said `FixedBlend::alpha_test` is "set when the record's test is on", while `material.md` §11.2 step 3 gives *R* = 0, not −1, when the test is off and the source factor is SRCALPHA (or step 2 switched it off). The row now says the test is set whenever *R* ≥ 0 and unset only for *R* = −1, and that a record without an opacity-bearing role discards nothing at *R* = 0. New §7 row R-A3 (the value handed to the programs, from `material.md` MA44, MA59); R-D11's client column restated. No renderer behaviour described as current changed beyond the wording; no section number or anchor changed. §4–§5 and §7 Accepted → Revised, awaiting review. |
+| 2026-10-16 | Notes only (no rule changed), decision 0040: §6.6 and the §6.16 scale-filter OPEN point to `ui-scaling.md` §3.6, §6.1, §6.3 and §6.6 (canvases at the physical size, 1 : 1 composition in the normal case). |

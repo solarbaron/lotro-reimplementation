@@ -1031,7 +1031,9 @@ geometry and changes no box that a hit test reads.
 >
 > **Note (2026-10-16, no rule of this spec changed):** [`ui-scaling.md`](ui-scaling.md) is
 > written (status Review). For Tessera it answers this OPEN in its §5.4 (Stretch elements
-> with an edge in mode 6 keep their design-size layout box and get a uniform fit factor),
+> with an edge in mode 6 keep their design-size layout box and get a uniform fit factor;
+> full-cover ones that are layers of one screen share one factor and placement, bounded by
+> the screen's height),
 > §5.5 (other Stretch elements take the new size; images made for the element are drawn as
 > a cover fit) and §5.7 (the stop-gap rule above, made a general guard); summary in its
 > §5.9. Its §5.2 also stops applying step 1 above to root panels: children of a Stretch root
@@ -2229,3 +2231,4 @@ their sizes always and their positions only when the original has no saved locat
 | 2026-10-11 | Note only (no fact changed), for P4: §17.4 points to `social-panels.md` for the Social panel P8 and the other social windows. Status unchanged. |
 | 2026-10-11 | Note only (no fact of this spec changed), P4 revision 1 of `social-panels.md`: the §17.4 P4 note adds the P4 voice elements that Tessera hides (`social-panels.md` TR14). Status unchanged. |
 | 2026-10-16 | Notes only (no fact or rule of this spec changed), decision 0040: §8.4 step 6 OPEN, §8.5 Tessera rule, §9.6 and §9.9 point to `ui-scaling.md` (§5, §3.2, §6.3, §5.8), which supersedes the Tessera rules named there once it is Accepted and built. Status unchanged. |
+| 2026-10-16 | Note only (no fact or rule of this spec changed), `ui-scaling.md` revision 3: the §8.4 step 6 note adds that full-cover fit containers that are layers of one screen share one factor and placement, bounded by the screen's height. Status unchanged. |

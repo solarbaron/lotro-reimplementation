@@ -46,6 +46,9 @@ if (!args || !args.milestone || !args.repo || !args.cache) {
   throw new Error('args.milestone, args.repo and args.cache are required (see header comment)')
 }
 const M = String(args.milestone).trim().toUpperCase()
+if (/^P7\b/.test(M)) {
+  throw new Error('P7 (client-run game code) was dropped by the owner on 2026-10-16: with server compatibility (M8) the official server runs that code (decision 0024, open item 1 answered); this workflow will not run it')
+}
 if (/^M9\b/.test(M)) {
   throw new Error('M9 (extended scripting) starts only after full parity: the P-track (decision 0024) and M8 (decision 0034; or, if M8 stops under LEGAL.md §9.4, P8 plus M7) (owner, 2026-10-08); this workflow will not run it')
 }

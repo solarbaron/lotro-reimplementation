@@ -1448,7 +1448,8 @@ workflow runs it.
 2026-10-09) holds the milestones, their specs and exit criteria: P0 foundations (scenario
 feed, `tessera-gamedata`), P1 characters, inventory and equipment, P2 targeting, skills and
 combat presentation, P3 NPC windows, P4 social panels, P5 map, travel, mounts and
-instances, P6 progression and crafting panels, P7 client-run game code, P8 parity audit.
+instances, P6 progression and crafting panels, P8 parity audit. P7 (client-run game code) was dropped
+by the owner on 2026-10-16: with server compatibility (M8) the official server runs that code.
 Only the client half is built; the game's own rules are not run, offline included (T3).
 Each milestone gets its own section here when it starts.
 

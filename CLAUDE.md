@@ -141,13 +141,14 @@ compatibility in plain prose is fine. Format-level terms like "DID" or "landbloc
   path (`tessera-mesh` `assembly::look`, client and explorer): composited faces (all 14
   playable bodies in the real-data look test) and hair, skin and eye tints, with a shared composition cache. Open: §15 OPENs (option-off order, engineering
   choices), owner item O15 (Dwarf brow colour).
-- **Parity track (decision 0024, owner 2026-10-09: "client half only"):** P0–P8 build the
+- **Parity track (decision 0024, owner 2026-10-09: "client half only"):** P0–P6 and P8 build the
   client-side gameplay presentation from the install, fed by a sandbox scenario feed (and,
   with M8, by an official server; decision 0034); LEGAL.md §11.1 rule 5 is unchanged, so
   Tessera's server never runs gameplay rules. P0 (scenario feed, `tessera-gamedata`,
   `tessera-client --scenario`, server dependency check) is merged to main (2026-10-10; exit
-  criteria 1–4 pass). P1, P2, P3 and P4 are merged to main (2026-10-10 and 2026-10-11, below); P5 is
-  in progress on branch `p5`.
+  criteria 1–4 pass). P1–P5 are merged to main (2026-10-10 to 2026-10-13, below); P6 is in
+  progress on branch `p6`. P7 (client-run game code) was dropped by the owner on 2026-10-16: with server
+  compatibility (M8) the official server runs that code; the milestone workflow refuses P7.
 - **Priority (owner, 2026-10-08):** extended scripting (decision 0017, planned as M5.5) is
   now M9, the last milestone: it starts only after full client parity and server
   compatibility (M8; or, if M8 stops on a rights holder's objection, LEGAL.md §9.4, client
@@ -268,7 +269,7 @@ compatibility in plain prose is fine. Format-level terms like "DID" or "landbloc
   `--command` share the dispatcher). Open: member-row effect icons (TR16), no committed
   synthetic P4 goldens, no text-input dialog or context menu, the Leave error code
   (`tessera-protocol.md` §10.6 OPEN). Owner rows O130-O137.
-- **P5 (map, travel, mounts and instances; branch `p5`, worktree `wt-p5`, exit verification
+- **P5 (map, travel, mounts and instances; merged to main 2026-10-13, exit verification
   2026-10-12)** (`docs/ROADMAP.md` P5 status): criteria 1-3 pass on Tessera's side. Its specs
   (`map-windows.md`, `travel-windows.md`, `mounts.md` §14, `walker.md` §16,
   `scenario-feed.md` rev 8 "P5 travel", `lua-plugin-api.md` §15.5) are Accepted after

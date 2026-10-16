@@ -2,7 +2,7 @@
 
 # 0036 — P5: the map-region census and golden images of the P5 panels
 
-**Status:** Proposed, 2026-10-11 (waits for the owner).
+**Status:** Accepted (owner, 2026-10-16). Proposed 2026-10-11.
 
 > **Review note (spec reviewer, Clean-Room-Role: review, 2026-10-13).** The map half of this
 > record rests on `map-windows.md` §5 (the "every map region" definition §5.1, the counts §5.2,

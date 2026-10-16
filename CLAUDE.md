@@ -273,7 +273,7 @@ compatibility in plain prose is fine. Format-level terms like "DID" or "landbloc
   2026-10-12)** (`docs/ROADMAP.md` P5 status): criteria 1-3 pass on Tessera's side. Its specs
   (`map-windows.md`, `travel-windows.md`, `mounts.md` §14, `walker.md` §16,
   `scenario-feed.md` rev 8 "P5 travel", `lua-plugin-api.md` §15.5) are Accepted after
-  independent review (2026-10-13); decision 0036 (map census, P5 goldens) is Proposed; the
+  independent review (2026-10-13); decision 0036 (map census, P5 goldens) is Accepted (owner, 2026-10-16); the
   code was conformed to them (loading-screen meter and label, the §16.12 walker gait rules,
   headless `--ui` driving the P3/P5 and social window frames) and verified. Merged to main
   2026-10-13. Built: `tessera-gamedata` `map`, `travel`,
@@ -286,6 +286,12 @@ compatibility in plain prose is fine. Format-level terms like "DID" or "landbloc
   it does not yet protect the meter/label (unit-test covered; strengthen the capture),
   `ui-layout.md` §8.4 step 6 OPEN (owner), `walker.md` §16.12 spec-writer reconciliations,
   finder join-label text cut. Owner rows O140-O155.
+- **Owner decisions 2026-10-16:** decisions 0031 and 0036 (panel goldens: tier 1 committed
+  synthetic, tier 2 local-only real data; P5 map census) are Accepted; the world walker's
+  debug keys move off the five keys the keymap defaults take (`keymap.md` §8.2); and Tessera
+  builds its own UI scaling instead of copying the original's (decision 0040: any resolution
+  and aspect ratio incl. ultrawide and 4K, a user scale slider, crisp text and art; design
+  spec `ui-scaling.md` first).
 - **REA (decision 0033, Proposed):** optional dirty-only analysis tool, pilot pending; never
   registered as an MCP server.
 - **Pending owner input:** `docs/checklists/owner-observations.md` (`/loc` readings at the 20

@@ -2,7 +2,7 @@
 
 # 0031 — Golden images of panels that show install content (parity track)
 
-**Status:** Proposed, 2026-10-10 (waits for the owner).
+**Status:** Accepted (owner, 2026-10-16). Proposed 2026-10-10.
 
 The number 0031 is out of sequence on purpose. P2 runs in parallel on its own branch and takes
 the next free numbers from 0026, so P3 takes a number after

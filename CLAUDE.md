@@ -210,8 +210,9 @@ compatibility in plain prose is fine. Format-level terms like "DID" or "landbloc
   base/zoom frames and turntable, controls named from the data, gender selection shown.
   Open: figure scripts are evaluated once, not run live (no gestures, class props, transition
   ports; `character-screens.md` §2.1.4 OPEN), decals and effect particles not drawn, side
-  panels overflow at 1280×720 (`ui-layout.md` §8.4 OPEN), face-layer value 0 not offered
-  until the owner decides the per-figure image budget. Built: decision 0025 (Accepted) with
+  panels overflow at 1280×720 (`ui-layout.md` §8.4 OPEN), face-layer value 0 to be
+  offered once the doubled decode budget lands (owner, 2026-10-16: raise `tessera-mesh`
+  `LookLimits` to 128/256 MiB and offer value 0). Built: decision 0025 (Accepted) with
   `scenario-feed.md` rev 4, `tessera-protocol.md` v1.1 and `test-server.md` (Accepted) and
   `server-content.md` (Draft, owner); `tessera-gamedata` `tooltip`, `chargen`, `inventory`;
   protocol minor 1 (looks, `Equipped.slot`) in `tessera-protocol`, `tessera-net` (overlay

@@ -920,8 +920,15 @@ Rules (BIN):
 > (1 to *m*); a starting value that is not among them, 0 included, starts at the first choice.
 > Offering 0 made the Elf male's face composition exceed the decoded-image budget of
 > `tessera-mesh` (`LookLimits`, 64 MiB per compositor, 128 MiB per figure) on this install
-> (no face composed); with twice those budgets it composed. Kept as is until the budgets are
-> reviewed with the owner (memory per figure job).
+> (no face composed); with twice those budgets it composed.
+>
+> **Answered (owner, 2026-10-16): offer value 0, and raise the budget.** A face-layer control
+> whose minimum is 0 offers 0 as a choice (choices 0 … *m*), and a starting value of 0 starts
+> there. The `tessera-mesh` `LookLimits` decode budget is doubled to 128 MiB per compositor
+> and 256 MiB per figure (`appearance.md` §9 bounds (6)), which the data shows is enough to
+> compose the Elf male's face with value 0 on this install; it stays a bounded guard. This
+> changes implemented behaviour: `tessera-mesh` `LookLimits` and
+> `apps/client/src/screens/controls.rs` are conformed to it.
 
 <a id="s5-3"></a>
 ### 5.3 Name

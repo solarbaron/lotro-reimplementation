@@ -3108,9 +3108,12 @@ implemented in `tessera-formats` and `tessera-mesh`.
 > (the older face "is stopped"); (5) a layer or colour change of a name not attached yet is
 > ignored and a second attach under one name is refused (`misc-records.md` §3.7); (6) bounds
 > (2026-10-10, after review): at most 8 compositors and 256 images per compositor, 1024 × 1024
-> texels per image (the composed canvas takes its base image's size), 64 MiB of decoded RGBA8
-> per compositor and 128 MiB per figure, checked before each image is decoded (the largest
-> playable face on the reference install decodes 22 MiB); a compositor that reaches a bound
+> texels per image (the composed canvas takes its base image's size), 128 MiB of decoded RGBA8
+> per compositor and 256 MiB per figure (doubled from 64 / 128 MiB by the owner's decision of
+> 2026-10-16 so a face-layer control may offer value 0, `character-screens.md` §5.2; the
+> largest playable face on the reference install decodes 22 MiB, and the Elf male's face with
+> layer value 0 composes within the doubled per-figure budget), checked before each image is
+> decoded; a compositor that reaches a bound
 > keeps what fitted and gets a note; (7) composed images, decoded sources and parsed 0x33
 > records are cached per client and per explorer, least recently used first, keyed by the
 > record and a digest of the selection and colours; a cached composition is charged what

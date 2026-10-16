@@ -3581,6 +3581,14 @@ it is a test vector of `tessera-net`, never a committed log (§10.5).
 > appearance may be absent (§7.7, §9.4; Vector F). Options: (a) allow opaque numeric keys
 > in committed files (`slot=3` names no record and no text); (b) keep labels only and cover
 > these paths by local real-data runs.
+>
+> **Answered (owner, 2026-10-16): option (b).** Committed scenarios use **names**, resolved
+> against the user's install at run time (for example `note-type=@Waypoint`), never opaque
+> numeric enum keys. A label resolves only with an install (§8.7); `pid:N:KIND` property
+> writes and numeric `enum`/`bitfield32`/`bitfield64` values stay disallowed in committed
+> files (§13 rule 2 is unchanged). Consequence accepted: the no-install CI replay (§10.5)
+> does not exercise the slot `equip`, damage-type or class/species/sex paths; local
+> real-data runs cover them.
 
 > **OPEN:** (non-blocking; for the spec owner, raised by the implementer of
 > `tessera_net::scenario`, 2026-10-09) Points this text leaves open, implemented

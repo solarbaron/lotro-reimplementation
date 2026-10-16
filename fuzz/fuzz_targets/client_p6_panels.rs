@@ -13,8 +13,8 @@
 mod commands;
 
 use commands::{
-    MAX_CRAFT_QUANTITY, P6Handles, P6Panel, craft_command, craft_command_of,
-    craft_trainer_command, parse_p6_panel, progression_command,
+    MAX_CRAFT_QUANTITY, P6Handles, P6Panel, craft_command, craft_command_of, craft_trainer_command,
+    parse_p6_panel, progression_command,
 };
 use libfuzzer_sys::fuzz_target;
 use tessera_net::Command;
@@ -37,7 +37,9 @@ fuzz_target!(|data: &[u8]| {
     // Build handles from the input so some actions resolve and some are stale.
     let mut handles = P6Handles::new();
     let h = u64::from(u16_at(data, 0));
-    handles.recipes.insert(h, Ref::Literal(text.chars().take(8).collect()));
+    handles
+        .recipes
+        .insert(h, Ref::Literal(text.chars().take(8).collect()));
     handles.trees.insert(h, Ref::Literal("tree".into()));
     handles.cells.insert(h, Ref::Literal("cell".into()));
     handles.replace = vec![Ref::Literal("prof".into())];
@@ -50,8 +52,15 @@ fuzz_target!(|data: &[u8]| {
 
     // Trait and skill actions.
     for action in [
-        ProgressionAction::SetTraitRank { tree: h, cell: h, rank },
-        ProgressionAction::ChooseBranch { tree: h, branch: u32::from(rank) },
+        ProgressionAction::SetTraitRank {
+            tree: h,
+            cell: h,
+            rank,
+        },
+        ProgressionAction::ChooseBranch {
+            tree: h,
+            branch: u32::from(rank),
+        },
         ProgressionAction::TrainSkill { window, entry: qty },
         ProgressionAction::CloseTrainer { window },
         ProgressionAction::ShowTree { index: 0 },

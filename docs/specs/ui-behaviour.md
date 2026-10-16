@@ -1282,6 +1282,12 @@ Panels are resized by **resize-bar** elements (engine type ResizeBar).
 > method: M3 (the owner resizes a resizable panel at UI scale 1.0 and 1.5 and reports its
 > size), or M4 on the display node's set-size routine. UB-I9 covers only targets without a
 > UI scale.
+
+> **Note (2026-10-16, decision 0040; no rule of this spec changed):** for Tessera, once
+> [`ui-scaling.md`](ui-scaling.md) is Accepted and built, its §3.5 "Moves and resizes"
+> replaces the Tessera rule above: a move divides the pointer offset by the scale of the
+> target's **parent** (1 for a root panel), a resize divides by the target's own scale and
+> keeps the opposite displayed edge. What this section says about the original is unchanged.
 5. **End** (`Element_mouse_release` with `SelectLeft`): the resize bar returns to `normal`; the
    target leaves resizing; if it has `UICore_Element_save_size`, game code is notified (§8.4).
 
@@ -2193,3 +2199,4 @@ Every item has an in-section `> **OPEN:**` callout.
 | 2026-10-06 | **Revision 4, corrections after review** (status stays Revised, awaiting review; no fact about the original changed; section numbers kept). §3.3: Tessera's `[Input] double_click_ms` / `double_click_px` are the fallback when the platform publishes nothing **and can also override** the platform values (IB D3); the earlier "platform values always take precedence" contradicted D3 and is withdrawn; new OPEN on how an overriding setting is told apart from the default (interim Tessera rule: a key present in the settings file overrides), listed as §17 item 26. §3.1 and §5.3: "a declined command goes on to game code as the same action" now cites IB D7 instead of IB Options 4 (which only lists the options considered). §9.4: the UR §2.6 paragraph no longer states a fact about the original under the UR tag; not applying an OS scale factor is stated as Tessera's choice, and "a root panel whose size does not change is only moved" cites UL §8.4 step 6. |
 | 2026-10-09 | P1 revision (spec writer, dirty room; status Accepted → Revised, awaiting review): notes under the §6.4 OPEN (the `Tooltips` scaling group of pinned item tooltips) and the §6.6 OPEN (item and examination tooltips now in `item-tooltips.md`, which also says how the scenario feed drives them). No rule of this spec changed. |
 | 2026-10-16 | Notes only (no fact or rule of this spec changed), decision 0040: §8.3 OPEN, §8.4 OPEN, §9.2.1, §9.3 and §9.4 point to `ui-scaling.md` (§5.6, §5.8, §3–§4, §6, §6.7, §7.7), which supersedes the Tessera rules named there once it is Accepted and built. Status unchanged. |
+| 2026-10-16 | Note only (no fact or rule of this spec changed), `ui-scaling.md` revision 4: the §8.2 OPEN's Tessera rule is replaced, once that spec is built, by its §3.5 (moves divide by the parent's scale, resizes by the target's). Status unchanged. |

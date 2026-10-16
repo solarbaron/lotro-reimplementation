@@ -4,10 +4,10 @@
 
 | | |
 |---|---|
-| **Status** | Revised (revision 3, 2026-10-16: revised for the second review's changes R2-B1 and R2-B2; awaiting an independent re-review by a session that wrote no part of it. The spec was never Accepted, so its §5.2 state for implementers is still Review: nothing here may be built before an Accepted re-review) |
+| **Status** | Revised (revision 4, 2026-10-16: revised for the third review's changes RV3-B1, RV3-B2 and RV3-B3; awaiting an independent re-review by a session that wrote no part of it. The spec was never Accepted, so its §5.2 state for implementers is still Review: nothing here may be built before an Accepted re-review) |
 | **Last updated** | 2026-10-16 |
-| **Author role** | Spec writer (dirty room). A Tessera **design** spec for [decision 0040](../decisions/0040-ui-scaling.md), like `tessera-protocol.md`; the only install input is a read-only census of the layout records (§1, rows SC1–SC6) |
-| **Reviewer** | First review 2026-10-16, independent review session: changes requested (B1–B6, answered in revision 2). Second review 2026-10-16: changes requested (R2-B1, R2-B2, answered in revision 3). Re-review pending |
+| **Author role** | Spec writer (dirty room). A Tessera **design** spec for [decision 0040](../decisions/0040-ui-scaling.md), like `tessera-protocol.md`; the only install input is a read-only census of the layout records (§1, rows SC1–SC6, SC13, SC14) |
+| **Reviewer** | First review 2026-10-16, independent review session: changes requested (B1–B6, answered in revision 2). Second review 2026-10-16: changes requested (R2-B1, R2-B2, answered in revision 3). Third review 2026-10-16: changes requested (RV3-B1–RV3-B3, answered in revision 4). Re-review pending |
 | **Implements into** | `crates/ui` (`tessera-ui`: UI screen, displayed boxes, fit rules, keep-on-screen, saved placements, painter at the content scale, derived glyphs, scaled images), `crates/settings` (the `[UI]` keys of §4.4 and §7), `crates/render` (no contract change; §6.6), `crates/plugins` (Display and scaling views, §7.7), `crates/input` (four Tessera actions, §7.3), `apps/client` (`ui_host`: pointer conversion, live change, the Interface window, the `/uiscale` command, `--ui-scale` and `--ui-safe-aspect`), `apps/explorer` (optional preview control), `fuzz/` (settings keys, configurations) |
 | **Companion specs** | [`ui-layout.md`](ui-layout.md) (**UL**: design size §5.1, edge modes §5.8, run-time layout §8, image drawing §9.6, saved locations §9.9, panel catalogue §17). [`ui-behaviour.md`](ui-behaviour.md) (**UB**: hit test §4, tooltips §6, drag and drop §7, window manager §8, the original's UI scale §9). [`ui-widgets.md`](ui-widgets.md) (**UW**: the slider-mode scroll bar §6). [`fonts.md`](fonts.md) (**FO**: font records §3, placement §6, layout §7, drawing §8, census §10, fallback font §11). [`render.md`](render.md) §6 (**RD**: UI pass). [`lua-plugin-api.md`](lua-plugin-api.md) (**LPA**: coordinates §13.1, `Display` §13.10, scale §13.21, game-styled controls §14.2, font enum A.2, scaling groups A.7). [`keymap.md`](keymap.md) (**KM**). [`character-screens.md`](character-screens.md) (**CS**) §2.2. [`travel-windows.md`](travel-windows.md) (**TW**) §5.2. Decisions [0014](../decisions/0014-ui-input-bridge.md) (**IB**), [0015](../decisions/0015-ui-rendering.md) (**UR**), [0020](../decisions/0020-chat-command-routing.md), [0031](../decisions/0031-parity-panel-goldens.md), [0040](../decisions/0040-ui-scaling.md) |
 
@@ -62,7 +62,8 @@ behind it). **Project** = a fact or rule of another Tessera spec or decision, re
 | SC10 | Plugin coordinates are pixels, a window's position is relative to the screen (`Display`); `Display.GetWidth/GetHeight` give the UI area; `GetUIGroupScale`; window scaling members and rules | LPA §13.1, §13.10, §13.21 | Project |
 | SC11 | Budgets U1–U5, the 4 ms paint slice, jobs and generations, "Workers if needed", surface limits | UR §6, §7, Decision 1.5; RD §6 | Project |
 | SC12 | Committed goldens on main: 18 panel goldens in `crates/ui/tests/golden` (220 × 84 to 1024 × 768, painted at 1 : 1), 5 client UI goldens at 1024 × 768, render and terrain goldens without game UI | The repository at a45e0e8, read 2026-10-16 | Project |
-| SC13 | Type A fit containers (both horizontal edges 6): 17, all (6, 5, 6, 5) Stretch. Under the grouping rule of §5.4 they form 14 fit groups: three of two members (the theatre layout's two fit roots `StoryField` and `Theater_LoadingProgress_Parent`, both 1024 × 768 at (0, 0); the map layout's `MapDecoration`, 1168 × 768 at (−73, 0) in the root `MapWindow`, with `MapBackground`, 1024 × 768 at (0, 0) in `MapField`, which fills `MapWindow` with edges (5, 5, 5, 5); the mission-controller layout's two scale parents, one inside a naming field that fills their common parent with edges (5, 5, 5, 5)) and 11 of one. No Type A container lies inside another. Content boxes used in §10: `StoryField` covers its whole design area; `Theater_LoadingProgress_Parent` has one child, 247 × 33 at (411, 735); the third fit root, `BaseTutorialChooserField` (layout 1440 × 900), has one child, 735 × 231 at (224, 0) | Probe of SC1 (every Type A container and every pair in one layout checked against the grouping rule) | Confirmed 2026-10-16 |
+| SC13 | Type A fit containers (both horizontal edges 6): 17, all (6, 5, 6, 5) Stretch. Under the grouping rule of §5.4 they form 14 fit groups: three of two members (the theatre layout's two fit roots `StoryField` and `Theater_LoadingProgress_Parent`, both 1024 × 768 at (0, 0); the map layout's `MapDecoration`, 1168 × 768 at (−73, 0) in the root `MapWindow`, with `MapBackground`, 1024 × 768 at (0, 0) in `MapField`, which fills `MapWindow` with edges (5, 5, 5, 5); the mission-controller layout's two scale parents, one inside a naming field that fills their common parent with edges (5, 5, 5, 5)) and 11 of one. No Type A container lies inside another. Content boxes used in §10: `StoryField` covers its whole design area; `Theater_LoadingProgress_Parent` has one child, 247 × 33 at (411, 735); the third fit root, `BaseTutorialChooserField` (layout 1440 × 900), has one child, 735 × 231 at (224, 0). **One fit container lies inside another** (the only one): the Type C `MPMissionController_NamingWindow` (1, 1, 1, 6), Stretch, 411 × 488 at (516, 206), is a direct child of the Type A `MPMissionController_NamingScaleParent`. Mission-controller layout (1440 × 900): root `MPMissionController_MainWindow` (5, 5, 5, 5), object mode None → `MPMissionController_Window` (5, 5, 5, 5), 1440 × 900 at (0, 0), holding `MPMissionController_NamingField` (5, 5, 5, 5), 1440 × 900 at (0, 0) → `MPMissionController_NamingScaleParent`, and `MPMissionController_ScaleParent`; both scale parents 1440 × 900 at (0, 0). Their direct children (content of §10.8): the naming window and a 265 × 86 field at (610, 0); in `ScaleParent` 100 × 100 at (671, 780) and 257 × 80 at (590, 700) | Probe of SC1 (every Type A container and every pair in one layout checked against the grouping rule; ancestor chains of all 26 mode-6 elements listed, 2026-10-16) | Confirmed 2026-10-16 |
+| SC14 | Drag bars and resize bars (UB §8.1, §8.2): 134 and 49 in the 301 decoded records; none has a fit container as its target (UB §8.1 step 1, §8.2 step 2) or lies inside a fit container. The 302nd record holds no element with an edge in mode 6 (SC2), hence no fit container, so this holds for the whole install | Probe of SC1, 2026-10-16 (the UB census counts 135 and 52 over all records) | Confirmed 2026-10-16 |
 
 ---
 
@@ -121,6 +122,30 @@ The whole element tree lives in UI units: the screen root has the size of *F* (i
 physical screen size of UL §8.5 and UB §9.4), layout boxes are integers in UI units, and the
 arithmetic of UL §8 is unchanged. At *Se* = 1, one UI unit is one physical pixel.
 
+<a id="s3-2-zero"></a>
+**A window with a zero side.** *Se*, *F*, *Kx* and *Ky* are computed only from sizes with
+*Wp* ≥ 1 and *Hp* ≥ 1. While the window's inner size has a zero side (a minimised window, on
+some platforms), **nothing changes**: *Se*, *F*, *Kx*, *Ky*, the safe area *A* (§5.1), every
+layout box, fit factor, fit-to-screen factor, displayed box and saved placement keep the
+values they had at the last size with both sides non-zero, and none of §4.5 runs (no layout,
+no keep-on-screen, no saved placement applied again, no `Display` change for plugins, no
+repaint at a new content scale). Nothing is drawn, and pointer events that arrive in that
+time are ignored. Rules:
+
+1. The UI host never replaces a zero side by a fallback size (such as 1 × 1, or a default
+   window size): laying out at a fallback screen would run keep-on-screen (§5.8 items 1, 3
+   and 5) and the placement rules there, and move native panels and plugin windows for good.
+2. A change of *S* in that time (a command, a settings reload) is stored (§4.4) and takes
+   effect, with the window's size, when both sides are non-zero again; a change of *σ* is
+   likewise kept for then. *S*auto and the 250 ms stable-size timer of §4.2 ignore sizes with
+   a zero side (they neither count as a size nor restart the timer).
+3. When both sides are non-zero again, §4.6 runs once for the new size. A window restored to
+   the size it had before has the same *Se*, *F* and *A*, so nothing is laid out again and
+   nothing moves (invariant I1).
+4. Before the window has had a size with both sides non-zero for the first time (it started
+   minimised), the UI screen does not exist: the UI host builds and lays out the UI at the
+   first such size, never at a fallback.
+
 <a id="s3-3"></a>
 ### 3.3 Design units
 
@@ -157,7 +182,18 @@ plugin as a picture stretch.
 layout box) and a **displayed box** in UI units relative to the screen, as real numbers:
 
 1. the screen root's displayed box is (0, 0, *Wu*, *Hu*);
-2. a fit container's displayed box is the result of §5.4;
+2. a fit container *e* with parent *P* (for a fit root, *P* is the screen root): §5.4 gives
+   its fit factor *f* and its **fitted position** (*x*, *y*), real numbers in **P's layout
+   coordinates** (the coordinates of *P*'s children: origin at *P*'s layout top-left, one
+   unit per layout unit of *P*, frame offsets of §5.2 included). Then
+   displayed left = (left of *P*'s displayed box) + *x* × *mx*(*P*), displayed top = (top of
+   *P*'s displayed box) + *y* × *my*(*P*), and the displayed size is
+   (*w* × *f* × *mx*(*P*), *h* × *f* × *my*(*P*)), with *w* × *h* the container's design
+   size; this equals *w* × *mx*(*e*) by *h* × *my*(*e*), since *m*(*e*) = *f* × *m*(*P*). So a
+   fit container under a node scale (inside another fit container, a per-window or plugin
+   window scale, a fit-to-screen factor) scales and moves with its parent. When *m*(*P*) = 1
+   (a fit root, or a parent with no node scale on it or above it), *P*'s layout coordinates
+   are UI units relative to *P*'s displayed top-left;
 3. any other element *e* with parent *P*, layout box left *l*, width *w* (relative to *P*):
    displayed left = (left of *P*'s displayed box) + *l* × *mx*(*P*). When *e* has no node
    scale of its own, its displayed right end is (left of *P*'s displayed box) +
@@ -184,7 +220,7 @@ of §3.4:
 | Click and drag thresholds of the UI (UB §7.1, the double-click distance of UB §3.3 where the UI applies it) | UI units. Thresholds applied inside the input layer (KM) stay in its own units |
 | Tooltips: placement, size, cursor offset (UB §6.4, §6.5) | UI units; the cursor offset is the cursor's physical size ÷ *Ky* |
 | Drag and drop: icon position, drop target (UB §7) | UI units |
-| Moves and resizes (UB §8.1, §8.2) | pointer offsets in UI units; for a target under a node scale they are divided by the target's *m* before the layout-box arithmetic (this is the Tessera rule of the UB §8.2 OPEN, now with exact division) |
+| Moves and resizes (UB §8.1, §8.2) | Pointer offsets (*dx*, *dy*) are differences of the real UI coordinates of §3.6, and the layout position and size they change are in two different spaces (§3.4 item 3): a target's layout position is in its **parent's** layout coordinates and is displayed through *m*(parent); its layout size is displayed through its **own** *m*(target). **Move** (UB §8.1 step 3): the target's displayed top-left becomes its displayed top-left at the press plus (*dx*, *dy*), clamped by UB §8.1 step 3 into the parent's displayed box (half-open, with the target's displayed size); its new layout position is (new displayed top-left − parent's displayed top-left) ÷ *m*(parent) per axis, rounded to the nearest integer (halves up). The offset is thus divided by the parent's *m*, never by the target's own scale: for a root panel the parent is the screen root (*m* = 1), so a root with a per-window factor, a plugin `SetScale` factor or *q* < 1 (§5.6; the world map at C1, *q* ≈ 0.9576) moves by the full offset and stays under the pointer. **Resize** (UB §8.2 step 4): *W0*, *H0* are the target's layout size and *dx*, *dy* are divided by the target's *m* (*dx* by *mx*, *dy* by *my*; exact division), so steps 4.1–4.4 work in the target's layout units; the raw size of step 4.1 and the size after step 4.4 are rounded to the nearest integer (halves up). Step 4.5 keeps the opposite **displayed** edge: for a handle that moves the left (top) edge, the layout left (top) changes by (old layout width − new layout width) × *mx*(target) ÷ *mx*(parent), rounded (heights with *my*); otherwise the layout position stays. The caps of step 4.6 compare the resulting displayed box with *F*. This replaces the Tessera rule of the UB §8.2 OPEN (which divided by the target's scale, truncating). With *Se* = 1 and every node scale 1 both rules are UB's. **Fit containers** are never move or resize targets: their boxes come from §5.4, so a move or resize step whose target is a fit container is skipped (SC14: none in this install) |
 | Saved positions and sizes (§5.8) | UI units, anchored |
 | Plugin API: `Display` size and mouse position, window positions, control positions, `PointToScreen`, `PointToClient`, `GetMousePosition` (LPA §13.1, §13.2, §13.10) | UI units (§7.7) |
 | World-anchored UI (floating names, floating text, combat cues) | the projected point in physical pixels divided by (*Kx*, *Ky*), drawn at *c* = *Se* |
@@ -266,14 +302,16 @@ window's size has been stable for 250 ms after a change, never during a live res
 <a id="s4-3"></a>
 ### 4.3 Effective scale and the design floor
 
-*Se* = min(*S* (or *S*auto), *Wp* ÷ 1024, *Hp* ÷ 768).
+*Se* = min(*S* (or *S*auto), *Wp* ÷ 1024, *Hp* ÷ 768), for *Wp* ≥ 1 and *Hp* ≥ 1 (a window
+with a zero side changes nothing, §3.2).
 
 So the UI screen is never smaller than 1024 × 768 UI units, the design size of 283 of the
 302 layouts (SC1): no layout of that size is ever laid out into a smaller screen, which is
 where shrinking edge pairs make boxes degenerate (SC5: 51 elements at a 720-unit height,
 none at 768). *Se* need not be a multiple of 0.05. When *Se* is below the user's *S*, the
 scale is **limited**, and the Interface window says so (§7.2). A window smaller than
-1024 × 768 physical pixels gets *Se* < 1; there is no lower bound other than *Se* > 0.
+1024 × 768 physical pixels gets *Se* < 1; there is no lower bound other than *Se* > 0 (at
+least 1 ÷ 1024 for a window of 1 × 1).
 
 <a id="s4-4"></a>
 ### 4.4 Storage
@@ -334,7 +372,9 @@ press on the slider to its release:
   1. the window gets an extra uniform node scale (§3.4, multiplied with any per-window factor
      it already has) of *Se*,press ÷ *Se*;
   2. its displayed top-left is set to (*X*p ÷ *Kx*, *Y*p ÷ *Ky*), converted with the **new**
-     axis factors, by moving its layout position by the difference;
+     axis factors, by moving its layout position by the difference (its parent is the screen
+     root, *m* = 1, so a UI-unit difference is a layout difference, §3.5 "Moves and
+     resizes");
   3. §5.6 and keep-on-screen (§5.8) are not run for it: its physical box is the one it had at
      the press, which lay inside the window.
 - **Outcome.** The factor is exactly 1 while *Se* equals *Se*,press, so a change of *S* that
@@ -353,7 +393,8 @@ press on the slider to its release:
 ### 4.6 Window size and OS scale changes
 
 A window resize changes *Wp* × *Hp*; an OS scale change changes *σ* (and, on most platforms,
-the window's physical size). Both run §4.5 from step 1. Pointer positions recorded by the
+the window's physical size). Both run §4.5 from step 1. A size with a zero side is not a
+change: nothing runs until both sides are non-zero again (§3.2 "A window with a zero side"). Pointer positions recorded by the
 input layer are rescaled by the input layer itself (KM §7.7, §7.8.9); the UI receives the
 converted positions of §3.6 afterwards.
 
@@ -478,8 +519,13 @@ A **fit container** is an element whose object mode is Stretch and which has at 
 edge in mode 6 (SC2: 26 elements, all Stretch), or a fit root (§5.2). Its layout box always keeps its **design
 size**, so its children are laid out exactly as designed (they are never laid out again
 because the container changed size), and the container gets a uniform fit factor *f* (§3.4).
-Its displayed box has the size (*w* × *f*, *h* × *f*), with *w* × *h* its design size, and is
-placed by the type:
+Everything in this section works in the **layout coordinates of the container's parent**
+(§3.4 item 2; for a fit root, the screen root's, which are UI units): the reference box *P*,
+the guard box, the sizes compared and the **fitted position** that each type computes. §3.4
+item 2 then gives the displayed box: the parent's displayed top-left plus the fitted position
+× *m*(parent), with the size *w* × *f* × *m*(parent) by *h* × *f* × *m*(parent), *w* × *h*
+the container's design size. When the parent has no node scale above or on it, *m* is 1 and
+the fitted position is in UI units. The fit is placed by the type:
 
 **Type A — both left and right edges 6** (full-cover fit, 17 elements, all (6, 5, 6, 5); 3
 of them are fit roots, §5.2). Type A containers are fitted in **fit groups**, so that
@@ -487,9 +533,20 @@ containers that are layers of one picture share one factor and one placement.
 
 *Reference box.* Let *P* be the box a Type A container is laid out in: its parent's current
 box (for a direct child of a full-screen root, the root's full box of §5.3, which is the
-root's own box), or *F* for a fit root. **P's design coordinates** are the coordinates in
-which the container's design rectangle is given: its parent's design box (UL §5.3), or the
-layout's design area for a fit root.
+root's own box), or *F* for a fit root. *P* is given in the parent's layout coordinates, so
+it is (0, 0, *Pw*, *Ph*) with *Pw* × *Ph* the parent's current layout size (*Wu* × *Hu* for a
+fit root). **P's design coordinates** are the coordinates in which the container's design
+rectangle is given: its parent's design box (UL §5.3), or the layout's design area for a fit
+root.
+
+*The safe area in P's coordinates.* The safe area *A* (§5.1) is a box of UI units relative
+to *F*. For the guard box below it is taken into the parent's layout coordinates: with
+(*dl*, *dt*) the parent's displayed top-left and (*mx*, *my*) = *m*(parent), *A*'s left and
+right ends *Ax* and *Ax* + *Aw* become (*Ax* − *dl*) ÷ *mx* and (*Ax* + *Aw* − *dl*) ÷ *mx*,
+its top and bottom 0 and *Hu* become (0 − *dt*) ÷ *my* and (*Hu* − *dt*) ÷ *my* (real
+numbers). For a fit root, and for a parent at the screen's origin without node scales, this is
+*A* itself. Example: §10.8 (a Type A container in a panel with a per-window factor of 2 that
+straddles the safe area's left end).
 
 *Fit groups.* Two Type A containers *X* and *Y* built from the same instance of one layout
 are **grouped** when
@@ -503,13 +560,17 @@ are **grouped** when
 
 A **fit group** is a largest set of Type A containers connected by this relation; a container
 grouped with no other is a group of one. All members of a group have the same *P* (as a box)
-and the same *P* design coordinates. Groups are formed at every layout from the current boxes,
+and the same *P* design coordinates, and their parents have the same displayed top-left and
+the same *m*: no element between *Q* and a member's parent carries a node scale, and the
+parents' boxes relative to *Q* are equal (fit roots all have the screen root as parent). So
+one fitted position, in *P*'s layout coordinates, and §3.4 item 2 give every member's
+displayed box. Groups are formed at every layout from the current boxes,
 over all members attached to the screen, **whether shown or not**, so showing or hiding one
 layer never moves another. In this install (SC13) the 17 Type A containers form 14 groups:
 the theatre layout's two fit roots, the map layout's decoration with its map background, and
 the mission controller's two scale parents, plus 11 groups of one. No Type A container lies
-inside another; if one did, the inner one's *P* is laid out inside the outer one's design
-layout and its group is fitted after the outer one's.
+inside another, but one Type C container lies inside a Type A group (SC13, §10.8); nested
+fits follow "Nesting and fitting order" below.
 
 *Group boxes.* In *P*'s design coordinates:
 
@@ -520,8 +581,8 @@ layout and its group is fitted after the outer one's.
   member's design rectangle and taken into *P*'s design coordinates (member's design position
   plus the child's); *Cw* × *Ch* is its size, and its position is taken relative to *U*. *C*
   is **empty** when no member has such a child or every cut leaves nothing;
-- the **guard box** *G* is *P* intersected with the safe area *A* (in *P*'s coordinates), or
-  *P* itself when that intersection is empty.
+- the **guard box** *G* is *P* intersected with the safe area *A* taken into *P*'s
+  coordinates (above), or *P* itself when that intersection is empty.
 
 *Factor and placement of a group:*
 
@@ -557,17 +618,18 @@ layout and its group is fitted after the outer one's.
    step 4: after a clamp to the left the group box starts at *P*'s left edge, so the content
    starts at or after it, and the content's right end only moved left; a clamp to the right
    is the mirror image (top and bottom likewise).
-5. **Members.** Every member *X* gets the fit factor *f*, and its displayed box is the image
-   of its design rectangle under the group's one map from *P*'s design coordinates to UI
-   units: displayed left = (left of the placed group box) + (*X*'s design left − *U*'s left)
-   × *f*, top likewise, size (*X*'s design width × *f*, design height × *f*), all relative to
-   *P*'s displayed top-left. Its layout box keeps its design size; its layout position is not
-   used for display. In a group of one, *U* is the member's own design rectangle and its
-   displayed box is the placed group box.
+5. **Members.** Every member *X* gets the fit factor *f* and the fitted position
+   (left of the placed group box + (*X*'s design left − *U*'s left) × *f*, top of the placed
+   group box + (*X*'s design top − *U*'s top) × *f*), in *P*'s layout coordinates; §3.4
+   item 2 maps it, with *m*(parent), to its displayed box. So every member's displayed box is
+   the image of its design rectangle under the group's one map from *P*'s design coordinates
+   to UI units. Its layout box keeps its design size; its layout position is not used for
+   display. In a group of one, *U* is the member's own design rectangle and its fitted box
+   is the placed group box.
 6. **Letterbox bars.** When *P* is *F* (a fit-root group) or a full-screen root's full box
    (*P*'s element is the full-screen root, or a descendant whose current box equals the
-   root's, as for the map group), the part of *P* that no **shown** member's displayed box
-   covers (the **letterbox bars**) is filled with opaque black, so no stale picture or world
+   root's, as for the map group), the part of *P*'s displayed box that no **shown** member's
+   displayed box covers (the **letterbox bars**) is filled with opaque black, so no stale picture or world
    shows through. The bars are drawn once per group: as opaque black fills directly below the
    picture of the group's lowest shown member in the drawing order (clipped to *F*); a group
    with no shown member draws none. For hit testing, the bars of a fit-root group count as
@@ -594,13 +656,45 @@ compute the top and bottom edges by UL §8.4 steps 2–5 in the box it is laid o
 the parent's current box or the safe box of §5.3), giving the height *H*; then
 *f* = min(*H* ÷ *h*, *Pw* ÷ *w*). The displayed width is *w* × *f*. A panel whose right edge
 is 6 is anchored at its computed left edge; one whose left edge is 6 is anchored at its
-computed right edge (exclusive end = computed right + 1). Its top is the computed top.
+computed right edge (exclusive end = computed right + 1). Its top is the computed top. These
+edges, *H*, *Pw* and the anchored left (computed right + 1 − *w* × *f* for a left edge 6)
+are in the parent's layout coordinates; they give the fitted position of §3.4 item 2.
 
 **Type C — no horizontal edge is 6, a vertical edge is** (1 element, (1, 1, 1, 6)). The width
 drives: *W* from the left and right edges by UL §8.4 steps 2–5, *f* = min(*W* ÷ *w*,
 *Ph* ÷ *h*); a panel whose bottom edge is 6 is anchored at its computed top, one whose top is
 6 at its computed bottom, one with both 6 is centred on the computed box's vertical centre.
-Its left is the computed left.
+Its left is the computed left. As for Type B, all of these are in the parent's layout
+coordinates and give the fitted position of §3.4 item 2.
+
+<a id="s5-4-nesting"></a>
+**Nesting and fitting order.** Layout runs parents before children (UL §8). A fit container
+is fitted (its factor and fitted position, and for Type A its whole group) once its parent's
+layout is done and before its own children are laid out; its children are then laid out in
+its layout box, which keeps its design size. Hence:
+
+1. The layout of everything inside a fit container, including any fit container among its
+   descendants, is the same at every screen size: the outer factor reaches the inside only
+   through *m* (§3.4), never through the layout. An inner fit container's factor and fitted
+   position are computed in its parent's layout coordinates, which lie inside the outer
+   container's design-size box.
+2. The inner container's displayed box is its parent's displayed top-left plus its fitted
+   position × *m*(parent), with the size *w* × *f* × *m*(parent) (§3.4 item 2), where
+   *m*(parent) includes the outer fit factor. So it scales and moves with the outer
+   container's picture, and its content scale is *Se* × (outer *f*) × (inner *f*) × any other
+   uniform scale (§3.4).
+3. A Type A group inside a fit container takes its guard box from *A* taken into its
+   parent's coordinates (above), and its group is fitted after the outer container's group.
+   Groups never span a fit container (the grouping rule), so this order is always defined.
+
+In this install (SC13) the one case is the Type C naming window inside the Type A naming scale
+parent of the mission-controller group. Its parent keeps its 1440 × 900 design size, so UL
+§8.4 steps 2–5 give the naming window (left, top and right edges in mode 1, centring) the
+same result at every screen size: left half(1440) − half(411) = 515, right
+half(1440) + half(411) − 1 = 924, so *W* = 410, and top half(900) − half(488) = 206; with
+*Ph* = 900 its own factor is *f* = min(410 ÷ 411, 900 ÷ 488) = 0.9976, and it is anchored at
+its computed top (its bottom edge is 6): fitted position (515, 206). It is displayed through
+the group's factor (§10.8).
 
 **Zero extents.** A fit factor is computed only from positive sizes. A fit container is
 **not fitted** when its design width or height is 0, or when a box it is fitted to has a zero
@@ -610,8 +704,8 @@ container that is not fitted takes no part in a fit group (it is left out before
 formed, so it never contributes to *U* or *C*); because the members of a group share *P*, a
 zero extent of *P* leaves the whole group not fitted, and the *U* of a group of fitted members
 always has a positive width and height. A container that is not fitted gets *f* = 1, keeps
-its design-size layout box (empty on a zero axis, §5.7), is placed at the left and top that
-UL §8.4 steps 2–5 and the guard of §5.7 compute for it, and draws no letterbox bars. No
+its design-size layout box (empty on a zero axis, §5.7), has as its fitted position the left
+and top that UL §8.4 steps 2–5 and the guard of §5.7 compute for it, and draws no letterbox bars. No
 division by a zero extent occurs anywhere in this section: *f*guard leaves out zero terms
 (Type A step 2) and an empty content box skips the guard (step 2) and the content moves
 (step 3).
@@ -702,7 +796,8 @@ resized. It runs:
 
 1. after a root panel is laid out (attached, or the screen root changed size);
 2. after a saved placement is applied;
-3. after a change of *Se*, *F*, *A* or a per-window scale;
+3. after a change of *Se*, *F*, *A* or a per-window scale (a window size with a zero side is
+   not such a change, §3.2);
 4. at each move step and resize step (UB §8.1 step 3 and §8.2 step 4.6 already clamp to the
    screen; in Tessera they use these displayed boxes);
 5. for **plugin windows** only in case 3, and only for a window that lay entirely inside the
@@ -1247,6 +1342,7 @@ With `TESSERA_GAME_DIR`, named `<subject>@<window>@<scale>[@<aspect>]` (decision
 | HUD set (UL §17 P1–P5, P11, P14) | C1, C2, C4, C5, C6, C8, C9 |
 | World map panel P10 (fit to screen at C1) | C1, C5 |
 | Interface window (§7.2) | C1, C5 |
+| Mission-controller screen with the naming window shown (§10.8) | C1, C2, C8 |
 
 <a id="s9-5"></a>
 ### 9.5 Invariants
@@ -1255,6 +1351,10 @@ Each is testable on synthetic layouts at random configurations (property tests) 
 install's layouts at C1–C12:
 
 - **I1** *Wu* ≥ 1024, *Hu* ≥ 768 and *Se* ≤ *S* for every window size ≥ 1 × 1 and every *S*.
+  For any sequence of window sizes, a size with a zero side (*Wp* = 0 or *Hp* = 0) leaves
+  *Se*, *F*, *Kx*, *Ky*, *A* and every layout box, fit factor, displayed box and saved
+  placement as they were before it, and no division by zero occurs; a minimise followed by a
+  restore to the same size moves nothing (§3.2).
 - **I2** At *Se* = 1 with every node scale 1, the painter's canvas of every surface is
   byte-identical to the canvas painted before this spec (the existing goldens pass).
 - **I3** For every element and every physical pixel: the pixel lies in the element's physical
@@ -1304,14 +1404,25 @@ install's layouts at C1–C12:
   inside *P* after step 4.
 - **I16** Fit groups (§5.4): after every layout, all members of a fit group have the same fit
   factor *f*, and one map from *P*'s design coordinates to UI units, (*x*, *y*) ↦
-  (*Ox* + *x* × *f*, *Oy* + *y* × *f*), gives every member's displayed box from its design
-  rectangle (within 10⁻⁶ UI units); so the same design point of two layers is displayed at the
+  (*Ox* + *x* × *f* × *mx*, *Oy* + *y* × *f* × *my*) with (*mx*, *my*) the members' common
+  *m*(parent), gives every member's displayed box from its design rectangle (within 10⁻⁶ UI
+  units); so the same design point of two layers is displayed at the
   same place. Showing or hiding a member changes no member's displayed box or factor. Two
   Type A containers that meet the grouping rule are never fitted with different factors.
 - **I17** Magnification bound (§5.4): every Type A factor satisfies *f* ≤ 4 ÷ 3 × *Ph* ÷ *h*
   (*h* the group box's design height), so for a *P* of a given height no Type A factor grows
   with *P*'s width; and *f* ≥ *f*contain. For the tutorial chooser of §10.7 at C7, C8 and C9
   *f* is 2.1333 (within 10⁻⁴).
+- **I18** Nested fits (§3.4 item 2, §5.4 "Nesting and fitting order"): every fit container's
+  displayed box equals its parent's displayed top-left + fitted position × *m*(parent), with
+  the size (*w* × *f* × *mx*(parent), *h* × *f* × *my*(parent)) (within 10⁻⁶ UI units), and its
+  fitted position and factor do not depend on the factors of fit containers above it. For the
+  naming window of §10.8 at C1, C2, C5 and C8 the displayed box and content scale match the
+  table (within 0.01 UI units and 10⁻⁴).
+- **I19** Moves (§3.5): during a move step whose target is not clamped, the target's displayed
+  top-left differs from its displayed top-left at the press plus the pointer offset by at most
+  half a layout unit × *m*(parent) on each axis, whatever the target's own node scale; a
+  resize keeps the displayed edge opposite the handle within the same bound.
 - **I13** Plugin `Display.GetSize()` equals (*Wu*, *Hu*), and `GetUIGroupScale(Global)` is 1.0.
 - **T1** A derived glyph that is a solid rectangle in the source stays a solid rectangle with
   at most one partial pixel row or column per edge.
@@ -1331,8 +1442,10 @@ install's layouts at C1–C12:
 - **Fuzz:** the settings keys of §4.4 and §7.1 (`settings_ui` target: any TOML value, no
   panic, defaults and warnings); a configuration target (any *Wp*, *Hp* in 1–16,384, any *S*,
   any aspect) over synthetic layouts, including elements, fit containers and layout design
-  areas with zero extents and layered fit containers, asserting I1, I5, I6, I14, I16, I17 and
-  no panic.
+  areas with zero extents, layered and nested fit containers (a Type B or C inside a Type A,
+  a Type A inside a panel with a per-window factor) and sequences of window sizes that include
+  zero sides (*Wp* or *Hp* = 0, in 0–16,384), asserting I1 (both parts), I5, I6, I14, I16,
+  I17, I18 and no panic.
 - **Unit:** the pixel-centre mapping at *K* = 0.937729, 1, 1.5, 2.25, 3 (I3, I4); the Type A,
   B and C fits with the numbers of §10; the Type A example of §5.4 step 4 (content in the
   left wing at C2 with the 4:3 safe area, I15); a fit root at C8 (bars drawn, no *q*, not
@@ -1340,7 +1453,15 @@ install's layouts at C1–C12:
   the lower shown layer, hiding a layer moves nothing, I16) and a group across two tree
   levels like the map group of SC13; the magnification bound of §10.7 at C2, C4, C7, C8, C9
   and C12 (I17); the Interface-window drag of §4.5 at C1 with a limited scale (factor 1, no
-  movement) and from C2 to C3 (physical top-left held, size within 0.14 %); fit
+  movement) and from C2 to C3 (physical top-left held, size within 0.14 %); the nested fits
+  of §10.8 (the naming window at C1, C2, C5, C8, and the Type A container under a per-window
+  factor at C8 with *G* taken into the parent's coordinates, I18); moves and resizes under
+  node scales (§3.5, I19): a root with *q* < 1 (the world map at C1) and one with a plugin
+  `SetScale` of 1.5 follow the pointer by the full offset, a child panel inside a parent with
+  a per-window factor of 2 moves by the offset ÷ 2, a resize of the root with *q* < 1 changes
+  its layout size by the offset ÷ *q* and keeps the opposite displayed edge; a minimise and
+  restore (sizes 0 × 0, *Wp* × 0 and 0 × *Hp*, then the old size) that changes nothing, and a
+  change of *S* while minimised that takes effect at the restore (§3.2, I1); fit
   containers with *w*, *h*, *Cw* or *Ch* of 0 and an empty content box (§5.4 "Zero extents");
   the layout-frame example of §5.2 (I14); a stretched surface whose children are painted at
   their unstretched canvas boxes (§6.2); the anchors of §5.8; the `/uiscale` argument
@@ -1469,6 +1590,62 @@ In every row the box is first centred and then moved down so that the content's 
 32:9 alike, whatever the safe-area setting: it follows the window's height. Up to 16:9 (C2,
 C4, C12) the bound does not take effect and the root covers *F* as before.
 
+<a id="s10-8"></a>
+### 10.8 Fit containers under a node scale
+
+**(a) The naming window inside its scale parent (SC13).** The mission-controller root
+`MPMissionController_MainWindow` is a full-screen root; its child `MPMissionController_Window`
+covers its design box, so it is laid out in the root's full box (§5.3) and is *F*; the naming
+field fills it. The two scale parents form one fit group (§5.4) with *P* = *F* (in the
+parent's layout coordinates, *m* = 1), *U* = 1440 × 900 at (0, 0) and the content box
+*C* = 411 × 880 at (516, 0) (the union of the naming window, the field at (610, 0) and the two
+children of the other scale parent). Order (§5.4 "Nesting and fitting order"): the group is
+fitted first; then the naming window, a Type C container, is fitted in its parent's
+1440 × 900 layout box: fitted position (515, 206), own *f* 0.9976 (§5.4), the same at every
+size. Its displayed box is the scale parent's displayed top-left + (515, 206) × *f*A, with the
+size 411 × 0.9976 × *f*A by 488 × 0.9976 × *f*A, where *f*A is the group's factor
+(*m*(parent) = *f*A), and its content scale is *Se* × *f*A × 0.9976:
+
+| Configuration | *f*contain / *f*cover / *f*guard / *f*cap → *f*A | Scale parents (UI) | Naming window (UI) | *c* | Naming window, physical |
+|---|---|---|---|---|---|
+| C1 (1365 × 768) | 0.8533 / 0.9479 / 0.8727 / 1.1378 → 0.8727 | (54.14, 0, 1256.73 × 785.45) | (503.59, 179.78, 357.82 × 424.85) | 0.8162 | (472, 169, 336, 398) |
+| C2 (1920 × 1080) | 1.2 / 1.3333 / 1.2273 / 1.6 → 1.2273 | (76.36, 0, 1767.27 × 1104.55) | (708.41, 252.82, 503.18 × 597.45) | 1.2243 | (708, 253, 504, 597) |
+| C5 (2560 × 1440 at *Se* 1.5) | 1.6 / 1.7778 / 1.6364 / 2.1333 → 1.6364 | (101.82, 0, 2356.36 × 1472.73) | (944.55, 337.09, 670.91 × 796.60) | 2.4486 | (1417, 506, 1006, 1195) |
+| C8 (5120 × 1440) | 1.6 / 3.5556 / 1.6364 / 2.1333 → 1.6364 | (1381.82, 0, 2356.36 × 1472.73), bars 1381.82 wide | (2224.55, 337.09, 670.91 × 796.60) | 1.6324 | (2225, 337, 670, 797) |
+
+In each row the content's top (the field at design top 0) would start above *F* after
+centring, so the group box is moved down to top 0 (§5.4 step 3); the content's height,
+880 × *f*A, then fills *F*'s height. The naming window keeps its design place in the scaled
+picture: at C2 it lies 515 × 1.2273 = 632.05 units right of the scale parents' left edge, as
+the other scale parent's children lie at their design places × 1.2273. Read without *m*(parent)
+(as revision 3's wording allowed), it would have been displayed at C2 as 410 × 486.81 at
+(515, 206) with a content scale of 0.9976, out of line with its screen (and so at every size
+other than *f*A = 1).
+
+**(b) A Type A container in a panel with a per-window factor (synthetic, C8).** A safe-area
+root panel *R*, 800 × 600 in layout and design size, has a per-window factor *p* = 2 and was
+dragged by the user so that its displayed box is (432, 100, 1600 × 1200), across the safe
+area's left end (*A* = 3456 wide at 832). Inside it, a Type A container *X* (a group of one),
+design 800 × 400 at (0, 100), has one child 200 × 100 at (200, 150).
+
+1. *P* = (0, 0, 800, 600) in *R*'s layout coordinates; *U* = *X*'s design rectangle;
+   *C* = 200 × 100 at (200, 150) relative to *U*.
+2. *A* taken into *R*'s coordinates (§5.4): left (832 − 432) ÷ 2 = 200, right
+   (4288 − 432) ÷ 2 = 1928, top (0 − 100) ÷ 2 = −50, bottom (1440 − 100) ÷ 2 = 670; so
+   *G* = (200, 0) … (800, 600), 600 × 600.
+3. *f*contain = 1, *f*cover = 1.5, *f*cap = 4 ÷ 3 × 600 ÷ 400 = 2, *f*guard =
+   min(600 ÷ 200, 600 ÷ 100) = 3, so *f* = 1.5. The 1200 × 600 group box centred in *P* is at
+   (−200, 0); its content spans 100 … 400 horizontally and starts before *G*, so the box moves
+   right by 100 to (−100, 0) (step 3), which step 4 keeps (−400 ≤ −100 ≤ 0). Fitted position
+   (−100, 0).
+4. Displayed (§3.4 item 2, *m*(*R*) = 2): left 432 + (−100) × 2 = 232, top 100, size
+   800 × 1.5 × 2 = 2400 by 400 × 1.5 × 2 = 1200; *m*(*X*) = 3, content scale 3. The child's
+   displayed left is 232 + 200 × 3 = 832: exactly the safe area's left end.
+
+Without taking *A* into *R*'s coordinates (reading 832 … 4288 as if it were in *R*'s units),
+*P* ∩ *A* would be empty, *G* would fall back to *P*, nothing would move the box, and the
+child would be displayed at 632, 200 units into the left wing.
+
 ---
 
 <a id="s11"></a>
@@ -1499,7 +1676,7 @@ Tessera when this spec is Accepted and built):
 | Spec | Section | Note |
 |---|---|---|
 | `ui-layout.md` | §8.4 step 1 (Stretch parents), §8.4 step 6 OPEN, §8.5 Tessera rule, §9.6, §9.9 | answered and superseded by §5 (step 1: §5.2), §6.3, §5.8 |
-| `ui-behaviour.md` | §8.3 OPEN, §8.4, §9 (Tessera rules of §9.2, §9.2.1, §9.3, §9.4) | §5.8, §3.4, §6.7, §4.5 |
+| `ui-behaviour.md` | §8.2 OPEN (Tessera rule for resizes under a scale), §8.3 OPEN, §8.4, §9 (Tessera rules of §9.2, §9.2.1, §9.3, §9.4) | §3.5 "Moves and resizes", §5.8, §3.4, §6.7, §4.5, §3.2 (zero-sized window) |
 | `render.md` | §6.6, §6.16 (scale filter OPEN) | §6.6: destinations from §3.6; the 1 : 1 path is the normal case |
 | `lua-plugin-api.md` | §13.1, §13.10, §13.21 | §7.7 |
 | `fonts.md` | §6.3 Tessera Decision, §11 item 4 | §6.4 |
@@ -1557,3 +1734,4 @@ settings module's documentation lists the keys of §7.1.
 | 2026-10-16 | First version (status Review), for decision 0040: coordinate spaces and the pixel-centre rule (§3), UI scale with auto default, design floor, storage and live change (§4), reference boxes, safe area, full-screen roots, fit containers, backdrop images, fit to screen, degenerate-box guard, keep-on-screen and anchored placements (§5), canvases, images, derived glyphs, composition and cursor at scale (§6), options and the Interface window (§7), budgets S1–S7 (§8), goldens, migration and invariants (§9), worked examples (§10), deviation note (§11), notes for other specs (§12), open questions (§13). Census rows SC1–SC6 from a read-only probe of the install's layout records. |
 | 2026-10-16 | **Revision 2** (answers the first review's B1–B6; status stays Review). **B1:** full-screen roots with left and right edges 6 are **fit roots** (§5.2): placed by §5.4 with *P* = *F*, *G* = *A*; children keep their design layout; exempt from §5.3, §5.6, keep-on-screen (§5.8), saved placements and I6; clipped to *F*; their letterbox bars are drawn and hit as the fit root (§5.4 step 5). UL §8.4 step 1 (Stretch parents) is not applied: children of the 4 Stretch full-screen roots are laid out by §5.3, of other Stretch roots by steps 2–6 (§5.2, §5.3, §5.9; note added to UL §8.4). **B2:** layout frames (§5.2 "Layout frames"): re-layout subtracts the recorded frame offset before UL §8.4 steps 2–5 and adds the current one after, so mode-0 edges and user moves never drift; §5.3 uses it; new invariant I14. **B3:** empty by design (§5.7): a zero design extent or a zero-extent parent gives extent 0, never negative, not drawn or hit; §5.4 "Zero extents" (fit containers with a zero size are not fitted, *f* = 1), *f*guard leaves out zero terms, an empty content box skips the guard and the content moves, an empty *G* falls back to *P*; I5 restated; backdrop rule needs a design size of at least 1 (§5.5). **B4:** I11 restricted (edges 0/1/3/4/5, design box inside a design area no larger than *A*, no moves or node scales; minimap example), I12 restricted to panels whose size does not depend on *N*, with a one-pixel rounding allowance, I6 exempts fit roots and states the plugin-window rule, I3 reads fit roots clipped to *F*, T3 uses the box ratio *W*′*H*′ ÷ *WH* with a quantisation tolerance; §10.3 notes the minimap beyond *A*. **B5:** §5.4 Type A step 2 is a size test only; step 4 wins over step 3, lands inside *G* whenever a position satisfies both, otherwise the content reaches into the wings (worked counterexample at C8); new invariant I15. **B6:** §6.1/§6.2: a surface under a stretch vector of its own or of an ancestor is painted at its unstretched box and its elements at canvas boxes mapped without the stretch; §6.4.6 takes the pointer into such a canvas. §9.6 tests extended for all of the above. |
 | 2026-10-16 | **Revision 3** (answers the second review's R2-B1 and R2-B2; status Revised, §5.2 state still Review). **R2-B1 (a):** Type A fit containers are fitted in **fit groups** (§5.4): all fit roots of one layout, and non-root Type A containers in one root panel whose parents have equal design sizes and equal current boxes relative to their lowest common ancestor (no fit container or node scale in between), share one factor and one map from *P*'s design coordinates to UI units, computed from the group box *U* (union of the members' design rectangles) and the union of the members' content; members shown or not, so toggling a layer moves nothing; letterbox bars drawn once per group below its lowest shown member and hit as its lowest shown fit root (§5.4 steps 5–6; §5.2, §5.6, I3, I6 follow). Census SC13: 14 groups, three of two (theatre fit roots, map decoration and background, mission-controller scale parents). Worked example §10.6, invariant I16. **R2-B1 (b):** magnification bound *f*cap = 4 ÷ 3 × *Ph* ÷ *h* (§5.4 steps 1–2, "About the bound"): Type A factors follow the height, not the width; the loading screen at C8 now has *f* 1.7778 and 284-unit bars (§10.1, *f*cap column added), the step-4 counterexample moves to C2 with a 4:3 safe area; worked example §10.7 (tutorial chooser), invariant I17, owner OPEN on *ρ* (§13); §2 and §11 mention it. **R2-B2:** the Interface window during a slider drag (§4.5) is compensated by *Se*,press ÷ *Se* (the effective scale at the press), its physical top-left is held by converting it with the new *Kx*, *Ky* after each change, §5.6 and keep-on-screen wait for the release; the C1 limited case gives a factor of 1. §9.3 golden G8, §9.4 theatre subject, §9.6 tests for all of the above. Note added to `ui-layout.md` §8.4. |
+| 2026-10-16 | **Revision 4** (answers the third review's RV3-B1–RV3-B3; status Revised, §5.2 state still Review). **RV3-B1:** §3.4 item 2 now gives a fit container's displayed box as its parent's displayed top-left + its **fitted position** (in the parent's layout coordinates) × *m*(parent), with the size design size × *f* × *m*(parent); §5.4 works in the parent's layout coordinates throughout (Type A *P*, the safe area taken into the parent's coordinates for *G*, step 5 fitted positions, step 6 bars in *P*'s displayed box; Types B and C give fitted positions); group members share their parents' displayed top-left and *m*; new paragraph "Nesting and fitting order" (parents first, inner fits in the outer design-size box, displayed through the outer factor). SC13 records the Type C `MPMissionController_NamingWindow` inside the Type A `MPMissionController_NamingScaleParent` and the mission-controller group's content; worked example §10.8 (the naming window at C1, C2, C5, C8, fitted position (515, 206) and own factor 410 ÷ 411 from the centring edges; a synthetic Type A under a per-window factor of 2 at C8); invariant I18 and unit tests; real-data golden subject added (§9.4); I16 includes *m*(parent). **RV3-B2:** §3.5 "Moves and resizes": a move divides the pointer offset by the **parent's** *m* (1 for a root panel), a resize divides by the target's *m* and keeps the opposite displayed edge; integer rounding stated; fit containers are never move or resize targets (SC14: no drag or resize bar targets or lies inside one in the install); §4.5 notes the Interface window's parent is the screen root; invariant I19 and unit tests. **RV3-B3:** §3.2 "A window with a zero side": a window size with a zero side changes nothing (*Se*, *F*, *Kx*, *Ky*, *A*, layout, fit factors, displayed boxes, placements kept; §4.5 does not run; no fallback size; *S* changes wait for a non-zero size; the UI is first built at the first non-zero size); §4.3, §4.6 and §5.8 item 3 refer to it; I1 extended; fuzz configurations include zero sides. Note added to `ui-behaviour.md` §8.2. |

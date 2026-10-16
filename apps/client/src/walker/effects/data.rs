@@ -289,7 +289,7 @@ pub fn uv_transforms(m: [TextureMatrix; 2]) -> [UvTransform; 2] {
 
 /// How a surface record draws through the particle pipeline (`particle-runtime.md` §9.1–
 /// §9.1.3): the surface of a 0x39 system, or a beam ribbon's material (§11.1 step 6, drawn
-/// with the same programs; Tessera reading, §11.1 implementer OPEN).
+/// with the same programs; §11.1 Decision (b)).
 #[derive(Debug)]
 pub struct SurfaceLook {
     /// The surface's colour texture (slot 3000) with its own alpha.

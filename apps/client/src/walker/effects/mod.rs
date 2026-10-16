@@ -446,11 +446,15 @@ fn look_textures(
     Some((tex, tex2))
 }
 
-/// Queues the ribbons of the beams drawn this frame (`particle-runtime.md` §11.1 step 6):
-/// camera-facing quads seen from `eye` (sim frame), coloured by `ColorAndOpacity` with its
-/// alpha × the envelope, each part with the look of its material's surface record through
-/// the particle pipeline (Tessera reading, §11.1 implementer OPEN), a part whose material
-/// is 0, missing or not loaded yet left out. Returns (ribbons with a part drawn, vertices).
+/// Queues the ribbons of the beams drawn this frame (`particle-runtime.md` §11.1 step 6 and
+/// the ribbon vertices, RT45): camera-facing quads seen from `eye` (sim frame) with one side
+/// vector per beam, coloured by `ColorAndOpacity` with its alpha × the envelope, tail, body
+/// and head parts in that order, each with the look of its material's surface record through
+/// the particle pipeline (§11.1 Decision (b)) and sampled with texture-coordinate pair 1
+/// (Decision (a)). A beam without a `BodyMaterial` draws no ribbon (RT45), nor one whose
+/// body material's record has not loaded yet (the client draws once the materials have
+/// loaded, step 8); a part whose material is 0, missing or not drawable is left out.
+/// Returns (ribbons with a part drawn, vertices).
 fn draw_ribbons(
     st: &mut FxState,
     pass: &mut Pass,
@@ -478,6 +482,9 @@ fn draw_ribbons(
     for (_, b) in beams {
         let Some(span) = b.ribbon else { continue };
         let node = b.node();
+        if data.cached_record(node.body_material.0).is_none() {
+            continue;
+        }
         let mesh = ribbon_mesh(node, &span, eye);
         if mesh.is_empty() {
             continue;
@@ -515,6 +522,7 @@ fn draw_ribbons(
                     .map(|v| ParticleVertex {
                         position: (v.position + shift).to_array(),
                         color: colour,
+                        // Pair 1 (§11.1 Decision (a)).
                         uv: v.uv,
                     })
                     .collect(),

@@ -115,8 +115,9 @@ pub struct MemberRow {
     pub power: Option<Vital>,
     /// Defeated.
     pub defeated: bool,
-    /// Effects. Kept but not drawn: `FellowEffectDisplay` shows no icons (TR16's interim
-    /// rule).
+    /// The effect instances applied to the member's entity. The icons of
+    /// `FellowEffectDisplay` are drawn by the combat widgets' effect list bound to the
+    /// member's entity (TR16, [`FellowshipPanels::effect_lists`]).
     pub effects: Vec<u64>,
     /// The leader marker is shown.
     pub leader: bool,
@@ -585,6 +586,9 @@ pub struct FellowshipPanels {
     pub rows: Vec<ElementKey>,
     /// `PlayerLeaderIcon` of the player-vitals panel, when given.
     pub player_leader: Option<ElementKey>,
+    /// Each row's `FellowEffectDisplay` with the member's entity, in row order, as of the
+    /// last [`Self::refresh`] (TR16).
+    effect_lists: Vec<(ElementKey, Option<u64>)>,
 }
 
 impl FellowshipPanels {
@@ -626,7 +630,18 @@ impl FellowshipPanels {
             list,
             rows: Vec::new(),
             player_leader: None,
+            effect_lists: Vec::new(),
         }
+    }
+
+    /// The effect lists of the shown rows (TR16): each row's `FellowEffectDisplay` with
+    /// the member's entity (`None` for a member without one), in row order, as of the last
+    /// [`Self::refresh`]; empty while no fellowship is shown. The client binds them to the
+    /// combat widgets' effect lists (`combat-ui.md` §8.1–§8.2, with the list's own limits:
+    /// 2 rows of at most 6 icons, icon size `EffectDisplayList_EffectSize` or 20).
+    #[must_use]
+    pub fn effect_lists(&self) -> &[(ElementKey, Option<u64>)] {
+        &self.effect_lists
     }
 
     /// Shows the model (§4.6 rebuild, TR2, TR3): panel 1 shown while a fellowship exists,
@@ -643,6 +658,7 @@ impl FellowshipPanels {
             ui.switch_state_if_defined(pl, st.leader_fellowship);
             ui.set_shown(pl, model.player_leads());
         }
+        self.effect_lists.clear();
         let Some(list) = self.list else { return };
         let rows = model.rows();
         self.rows = ensure_rows(
@@ -694,6 +710,9 @@ impl FellowshipPanels {
             }
             if let Some(e) = find(ui, k, ids.fellow_defeated) {
                 ui.set_shown(e, r.defeated);
+            }
+            if let Some(e) = find(ui, k, ids.fellow_effects) {
+                self.effect_lists.push((e, r.entity));
             }
             self.set_vitals(ui, k, r);
         }

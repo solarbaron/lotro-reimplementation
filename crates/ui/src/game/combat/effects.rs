@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Effect bars: the player's effect rows E8, the target's E9 and their icons E10
 //! (`combat-ui.md` §8, §13.5; TR29–TR31): rows by harm, order by start time, the pulse of
-//! icons near their end, removal by the session.
+//! icons near their end, removal by the session. The same lists show a fellowship
+//! member's effects on the member's row (`social-panels.md` §4.2, TR16:
+//! [`EffectOwner::Member`], [`EffectBar::install_display`]).
 
 use std::collections::BTreeMap;
 
@@ -29,6 +31,11 @@ pub const PULSE_LOW: f32 = 0.3;
 
 /// Icons a row shows (`UIComponent_EffectDisplay_MaxIconColumns`, 8 in P4 and P5; TR30).
 pub const DEFAULT_MAX_COLUMNS: usize = 8;
+
+/// Icons a row of a fellowship member's list shows (`social-panels.md` TR16:
+/// `UIComponent_EffectDisplay_MaxIconColumns` 6 on `FellowEffectDisplay`), used when the
+/// list lacks the property.
+pub const MEMBER_MAX_COLUMNS: usize = 6;
 
 /// The icon size when the list has no `EffectDisplayList_EffectSize` (§8.1).
 pub const DEFAULT_ICON_SIZE: i32 = 20;
@@ -185,6 +192,9 @@ pub enum EffectOwner {
     Player,
     /// E9, the selection's effects.
     Target,
+    /// `FellowEffectDisplay` of a fellowship member's row, bound to the member's entity
+    /// (`social-panels.md` §4.2, TR16).
+    Member(super::data::EntityId),
 }
 
 /// One shown icon.
@@ -201,7 +211,8 @@ struct Icon {
 enum EffectLook {
     Install {
         display: ElementKey,
-        layout: Did,
+        /// The `effects` layout; without it every icon takes the §13.5 look (TR41).
+        layout: Option<Did>,
         rows: [ElementKey; ROWS],
     },
     Fallback {
@@ -239,12 +250,33 @@ impl EffectBar {
         let id = match owner {
             EffectOwner::Player => cv.ids.player_effects,
             EffectOwner::Target => cv.ids.opponent_effects,
+            // A member's list is bound by its own element ([`EffectBar::install_display`]).
+            EffectOwner::Member(_) => return None,
         };
         let display = if ui.element_id(root) == Some(id) {
             root
         } else {
             find_below(ui, root, id)?
         };
+        Self::install_display(ui, cv, owner, display, Some(effects), DEFAULT_MAX_COLUMNS)
+    }
+
+    /// The list of an `EffectDisplayList` element `display` itself (§8.1): its
+    /// `EffectDisplayList_EffectSize` (default 20) and `UIComponent_EffectDisplay_MaxIconColumns`
+    /// (`default_columns` when absent), two code-made rows as in [`EffectBar::install`].
+    /// `effects` is the `effects` layout (`TimedEffectTemplate`); without it every icon takes
+    /// the §13.5 look. `None` when the rows cannot be created.
+    pub fn install_display(
+        ui: &mut Ui,
+        cv: &CombatVocab,
+        owner: EffectOwner,
+        display: ElementKey,
+        effects: Option<Did>,
+        default_columns: usize,
+    ) -> Option<Self> {
+        if !ui.exists(display) {
+            return None;
+        }
         let size = {
             let p = ui.prop(display, cv.pids.effect_size);
             if p.is_set() && p.int() > 0 {
@@ -256,11 +288,9 @@ impl EffectBar {
         let max_columns = {
             let p = ui.prop(display, cv.pids.effect_max_columns);
             if p.is_set() && p.int() > 0 {
-                usize::try_from(p.int())
-                    .unwrap_or(DEFAULT_MAX_COLUMNS)
-                    .min(64)
+                usize::try_from(p.int()).unwrap_or(default_columns).min(64)
             } else {
-                DEFAULT_MAX_COLUMNS
+                default_columns.clamp(1, 64)
             }
         };
         let w = size.saturating_mul(max_columns as i32);
@@ -305,6 +335,8 @@ impl EffectBar {
         let x = match owner {
             EffectOwner::Player => 46,
             EffectOwner::Target => 270,
+            // A member's list exists only on an install row (TR16).
+            EffectOwner::Member(_) => return None,
         };
         let size = DEFAULT_ICON_SIZE;
         let gap = 2;
@@ -360,6 +392,21 @@ impl EffectBar {
         match &self.look {
             EffectLook::Install { rows, .. } | EffectLook::Fallback { rows } => *rows,
         }
+    }
+
+    /// The `EffectDisplayList` element the rows were made in (install look only).
+    #[must_use]
+    pub fn display(&self) -> Option<ElementKey> {
+        match &self.look {
+            EffectLook::Install { display, .. } => Some(*display),
+            EffectLook::Fallback { .. } => None,
+        }
+    }
+
+    /// The icons shown per row (`UIComponent_EffectDisplay_MaxIconColumns`).
+    #[must_use]
+    pub fn max_columns(&self) -> usize {
+        self.max_columns
     }
 
     /// The icon element of an instance, while shown.
@@ -500,9 +547,10 @@ impl EffectBar {
         let icon = match &self.look {
             // TR41: the fallback look applies element by element, so an effect without
             // an icon (a literal, §13.5) takes it in the install look too.
-            EffectLook::Install { layout, .. } if e.icon.is_some() => {
-                self.install_icon(ui, *layout, row, bx, e)?
-            }
+            EffectLook::Install {
+                layout: Some(layout),
+                ..
+            } if e.icon.is_some() => self.install_icon(ui, *layout, row, bx, e)?,
             EffectLook::Install { .. } | EffectLook::Fallback { .. } => {
                 self.fallback_icon(ui, row, bx, e)?
             }

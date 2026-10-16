@@ -7,8 +7,10 @@
 //! layout with its row and header templates, the end-travel box and the loading screen. No
 //! window may be `LayoutMissing` or `ElementMissing` (`travel-windows.md` §8.2); the install
 //! destinations' rows carry the install's names and their territory headers. Every window
-//! shown is pictured once settled and checked against a local-only golden (decision 0031
-//! tier 2). Only counts and paths are printed.
+//! shown is pictured once its images are loaded and the UI has settled, composed with its
+//! nested surfaces (the loading screen's stretched image, meter and label live in surfaces
+//! of their own, not in the root canvas), and checked against a local-only golden
+//! (decision 0031 tier 2). Only counts and paths are printed.
 //!
 //! Skipped (reported as passed) unless `TESSERA_GAME_DIR` is set. Run with
 //! `cargo test --release -p tessera-client --test travel_windows_real_data -- --nocapture`.
@@ -96,7 +98,7 @@ fn travel_scenario_renders_with_install_text() {
             }
             let root = w.root;
             let what = format!("travel-window-{}", feed.window.0);
-            pics.take(&mut i.rig, root, &what);
+            pics.take_composed(&mut i.rig, root, &what);
         }
         let shown = tui.presentation().map(|pr| pr.shown(p.now));
         if shown == Some(TravelShow::EndTravelBox)
@@ -105,14 +107,18 @@ fn travel_scenario_renders_with_install_text() {
         {
             pictured_box = true;
             let root = b.root;
-            pics.take(&mut i.rig, root, "end-travel");
+            pics.take_composed(&mut i.rig, root, "end-travel");
         }
+        // The loading screen is pictured half-way (§5.2 rule 1: the meter fills linearly),
+        // at a fixed virtual time, so its meter shows; at the first frame it is empty.
+        let meter = tui.presentation().map_or(0.0, |pr| pr.meter(p.now));
         if shown == Some(TravelShow::LoadingScreen)
             && !pictured_loading
+            && meter >= 0.5
             && let Some(k) = tui.loading_screen()
         {
             pictured_loading = true;
-            pics.take(&mut i.rig, k, "loading-screen");
+            pics.take_composed(&mut i.rig, k, "loading-screen");
         }
     });
     assert_eq!(outcome.exit_code(), 0, "{outcome:?}");

@@ -803,3 +803,62 @@ fn locked_template_rows_keep_their_own_text_colour() {
     };
     assert_ne!(fcolour(&ui, 2), fcolour(&ui, 0));
 }
+
+/// `travel-windows.md` §6.4 OPEN (Tessera rule): a join label whose text wraps grows to its
+/// wrapped text inside its button, centred on its laid-out box; text taller than the button
+/// is capped at the button's height; a text that fits gets the laid-out box back.
+#[test]
+fn join_label_grows_to_its_wrapped_text() {
+    use tessera_ui::game::finder::{FinderLabel, FinderTexts};
+    struct JoinText(&'static str);
+    impl tessera_ui::game::npc::NpcTexts for JoinText {}
+    impl FinderTexts for JoinText {
+        fn finder_label(&self, l: FinderLabel) -> Option<String> {
+            (l == FinderLabel::JoinNone).then(|| self.0.to_string())
+        }
+    }
+    let mut ui = ui(1000, 700);
+    let mut w = open_finder(&mut ui);
+    let label = w.parts.join_label.unwrap();
+    let bh = ui.layout_box(w.parts.join.unwrap()).unwrap().h();
+    let laid = ui.layout_box(label).unwrap();
+    let view = FinderView {
+        window: 9,
+        entries: example_entries(),
+        featured: None,
+        player_level: 30,
+    };
+    // Two lines.
+    w.show(
+        &mut ui,
+        &view,
+        &JoinText("pick one entry from the list of instances on the left first"),
+    );
+    let b = ui.layout_box(label).unwrap();
+    assert_eq!((b.l, b.w()), (laid.l, laid.w()), "the width is kept");
+    assert!(b.h() > laid.h() && b.h() <= bh, "{b:?} in {bh}");
+    assert!(b.t >= 0 && b.t + b.h() <= bh, "inside the button: {b:?}");
+    let centre = |b: tessera_ui::IBox| b.t * 2 + b.h();
+    assert!(
+        (centre(b) - centre(laid)).abs() <= 1,
+        "centred: {b:?} {laid:?}"
+    );
+    // Taller than the button: capped.
+    w.show(
+        &mut ui,
+        &view,
+        &JoinText(concat!(
+            "a label text so long that it needs many lines in a button this small, ",
+            "longer than any label of the install would be, and then some more words"
+        )),
+    );
+    let b = ui.layout_box(label).unwrap();
+    assert_eq!((b.t, b.h()), (0, bh), "capped at the button's height");
+    // Short: the laid-out box again.
+    w.show(&mut ui, &view, &FT);
+    assert_eq!(ui.layout_box(label).unwrap(), laid);
+    // The frame tick keeps it.
+    w.tick(&mut ui, 1.0, &FT);
+    assert_eq!(ui.layout_box(label).unwrap(), laid);
+    w.detach(&mut ui);
+}

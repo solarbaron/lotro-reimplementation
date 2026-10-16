@@ -118,6 +118,7 @@ struct InstallParts {
     nonvital_field: Option<ElementKey>,
     decoration: Vec<ElementKey>,
     class: Option<ElementKey>,
+    portrait: Option<ElementKey>,
 }
 
 /// The parts of a fallback frame.
@@ -187,7 +188,9 @@ impl UnitFrame {
             nonvital_field: None,
             decoration: Vec::new(),
             class: None,
+            portrait: None,
         };
+        let mut hidden: Vec<ElementKey> = Vec::new();
         match kind {
             FrameKind::Player => {
                 p.name = Some(f(i.player_name)?);
@@ -211,6 +214,20 @@ impl UnitFrame {
                     i.player_animations,
                     i.player_level_bg,
                     i.avatar_cover,
+                ]
+                .into_iter()
+                .filter_map(f)
+                .collect();
+                p.portrait = f(i.player_portrait);
+                // `social-panels.md` TR14 (§4.3, SP27): Tessera has no voice chat, so the
+                // frame's voice, squelched, sending-data and assistant icons, which the
+                // layout shows at (71, 11) over the start of `PlayerName`, are hidden
+                // whenever the frame is built (the `combat-ui.md` §4.1 OPEN).
+                hidden = [
+                    i.player_voice,
+                    i.player_voice_squelched,
+                    i.player_sending,
+                    i.player_assistant,
                 ]
                 .into_iter()
                 .filter_map(f)
@@ -244,6 +261,7 @@ impl UnitFrame {
                     .filter_map(f)
                     .collect();
                 p.class = f(i.opponent_class);
+                p.portrait = f(i.opponent_portrait);
             }
             FrameKind::SelectionTarget => {
                 p.name = Some(f(i.selection_target_name)?);
@@ -265,6 +283,16 @@ impl UnitFrame {
                     .collect();
                 p.nonvital_field = f(i.selection_target_nonvital);
             }
+        }
+        for k in hidden {
+            ui.set_shown(k, false);
+        }
+        // `ui-widgets.md` §12, `ui-layout.md` §17.4: the portrait shows the figure when the
+        // client draws a scene into it, otherwise nothing; the client draws no portrait
+        // scene yet, so the element (with its own image and `Target_Image`) stays hidden
+        // until [`UnitFrame::set_portrait_scene`] says a scene is drawn.
+        if let Some(k) = p.portrait {
+            ui.set_shown(k, false);
         }
         // Until the frame has something to show, its texts are empty rather than the
         // layout's design-time samples (TR16; the name and level are set by `show`).
@@ -467,6 +495,26 @@ impl UnitFrame {
         match &self.look {
             FrameLook::Install(p) => p.root,
             FrameLook::Fallback(p) => p.root,
+        }
+    }
+
+    /// The portrait element (`PlayerPortrait` of E5, `OpponentPortrait` of E6), install
+    /// look only.
+    #[must_use]
+    pub fn portrait(&self) -> Option<ElementKey> {
+        match &self.look {
+            FrameLook::Install(p) => p.portrait,
+            FrameLook::Fallback(_) => None,
+        }
+    }
+
+    /// Whether the client draws a portrait scene into the portrait (external content,
+    /// `ui-widgets.md` §12): the portrait is shown only while one is drawn; without a scene
+    /// it draws nothing, so the frame art shows there (§12 Tessera rule, `ui-layout.md`
+    /// §17.4).
+    pub fn set_portrait_scene(&self, ui: &mut Ui, drawn: bool) {
+        if let Some(k) = self.portrait() {
+            ui.set_shown(k, drawn);
         }
     }
 

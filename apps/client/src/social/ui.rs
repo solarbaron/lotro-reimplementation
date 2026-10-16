@@ -205,6 +205,15 @@ impl SocialUi {
         self.trade.as_ref()
     }
 
+    /// The fellowship rows' `FellowEffectDisplay` lists with their members' entities
+    /// (`social-panels.md` TR16), for the combat widgets that draw the member effects.
+    #[must_use]
+    pub fn member_effect_lists(&self) -> &[(ElementKey, Option<u64>)] {
+        self.fellowship
+            .as_ref()
+            .map_or(&[], FellowshipPanels::effect_lists)
+    }
+
     /// The row menu the player last asked for (right click), until chosen or replaced.
     #[must_use]
     pub fn menu(&self) -> Option<&ContextMenu> {

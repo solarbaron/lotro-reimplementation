@@ -85,6 +85,19 @@ combat_table! {
         avatar_cover = ("AvatarPanel_COVER_LOWRES", 0xFFFB_2013),
         /// `PlayerEffectDisplay` (E8).
         player_effects = ("PlayerEffectDisplay", 0xFFFB_2014),
+        /// `PlayerPortrait` (P4's `TargetViewport`; empty while no scene is drawn, §4.1).
+        player_portrait = ("PlayerPortrait", 0xFFFB_20B0),
+        /// `PlayerVoiceChat` (hidden: `social-panels.md` TR14).
+        player_voice = ("PlayerVoiceChat", 0xFFFB_20B1),
+        /// `PlayerVoiceChatSquelched` (hidden: TR14).
+        player_voice_squelched = ("PlayerVoiceChatSquelched", 0xFFFB_20B2),
+        /// `PlayerSendingData` (hidden: TR14).
+        player_sending = ("PlayerSendingData", 0xFFFB_20B3),
+        /// `PlayerAssistantIcon` (hidden: TR14).
+        player_assistant = ("PlayerAssistantIcon", 0xFFFB_20B4),
+        /// `OpponentPortrait` (P5's `TargetViewport` with `Target_Image`; empty while no
+        /// scene is drawn, §5.1).
+        opponent_portrait = ("OpponentPortrait", 0xFFFB_20B5),
         /// `OpponentPanel` (P5).
         opponent_panel = ("OpponentPanel", 0xFFFB_2020),
         /// `OpponentDisplayParent` (the vital field).

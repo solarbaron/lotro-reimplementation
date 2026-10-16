@@ -53,6 +53,25 @@ pub const JUMP_MAX_STRAFE: f32 = 0.25;
 /// The gaits at which the war-steed branch has an impulse (`walker.md` §16.6 "Jump").
 pub const JUMP_LIFT_GAITS: std::ops::RangeInclusive<u32> = 4..=7;
 
+/// Moves `current` toward `target` at a constant rate of 1/`t` per second over `dt` seconds,
+/// never overshooting (the slider rule of `script-table.md` §8.4 / T30: a change of size *d*
+/// takes *d* × *t* seconds). A non-finite or non-positive `t` or `dt` takes the target at
+/// once; a non-finite `target` holds `current`.
+#[must_use]
+pub fn ease_slider(current: f32, target: f32, t: f32, dt: f32) -> f32 {
+    let target = if target.is_finite() { target } else { current };
+    if !(t.is_finite() && t > 0.0) || !(dt.is_finite() && dt > 0.0) {
+        return target;
+    }
+    let step = dt / t;
+    let delta = target - current;
+    if delta.abs() <= step {
+        target
+    } else {
+        current + step * delta.signum()
+    }
+}
+
 /// The mounted branch of `Loc_Jumping` for one (body, effect) (`walker.md` §16.6 "Jump",
 /// `mounts.md` §14.6 "Jumping while mounted"): which branch the mount type takes and the
 /// impulse nodes the install gives where the branch's gates hold, by movement state. The
@@ -134,6 +153,9 @@ pub struct MountMover {
     gait: u32,
     walking: bool,
     sliders: [f32; 3],
+    /// `Slider_Propel` and `Slider_Strafe` have been published at least once while mounted,
+    /// so the first value is taken at once and later ones ease (`script-table.md` §8.4).
+    sliders_seeded: bool,
     control_speed: f32,
     turn_degrees: f32,
     events: Vec<MountEvent>,
@@ -172,6 +194,7 @@ impl MountMover {
             gait: 0,
             walking: false,
             sliders: [0.0; 3],
+            sliders_seeded: false,
             control_speed: 0.0,
             turn_degrees: 0.0,
             events: Vec::new(),
@@ -220,6 +243,7 @@ impl MountMover {
         self.gear = GearBox::new(self.lock);
         self.gait = 0;
         self.sliders = [0.0; 3];
+        self.sliders_seeded = false;
         self.control_speed = 0.0;
         self.jumping = false;
         self.jump_without_lift = false;
@@ -432,6 +456,26 @@ impl MountMover {
         }
     }
 
+    /// The published sliders of a normal mount or the Clydesdale from the input
+    /// (`mounts.md` §14.6 "the sliders follow the input as on foot"): `Slider_Propel`
+    /// (`input.y`) and `Slider_Strafe` (`input.x`) ease toward the input at the active
+    /// layer's ramp time *T* (0.25 s mounted; `script-table.md` §8.4 slider rule, T30), the
+    /// first value while mounted taken at once; `Slider_Turn` follows the frame's turn input
+    /// directly (reset every frame, §8.4).
+    fn input_sliders(&mut self, ctl: &Controller, input: &RideInput, dt: f32) -> [f32; 3] {
+        if self.sliders_seeded {
+            let t = ctl.params().ramp_time;
+            [
+                ease_slider(self.sliders[0], input.y, t, dt),
+                ease_slider(self.sliders[1], input.x, t, dt),
+                input.turn,
+            ]
+        } else {
+            self.sliders_seeded = true;
+            [input.y, input.x, input.turn]
+        }
+    }
+
     /// The gait, sliders and states after a step of `dt` seconds (module docs). A press
     /// the mounted branch let through either took off in the step (the node is kept,
     /// [`MountMover::take_off`]) or runs without lift: the controller's
@@ -476,7 +520,7 @@ impl MountMover {
                 self.control_speed = v;
             }
             (MountKind::Clydesdale, true, _) => {
-                self.sliders = [input.y, input.x, input.turn];
+                self.sliders = self.input_sliders(ctl, input, dt);
                 self.gait = if input.walking {
                     GAIT_WALK
                 } else if input.y.abs() > INPUT_THRESHOLD {
@@ -486,8 +530,16 @@ impl MountMover {
                 };
                 self.control_speed = forward_v;
             }
+            (MountKind::Normal, true, _) => {
+                self.sliders = self.input_sliders(ctl, input, dt);
+                self.gait = 0;
+                self.control_speed = forward_v;
+            }
             _ => {
+                // On foot (before mounting, hobby-horse) or a war-steed without a drive: the
+                // mover's sliders follow the input directly; re-seed for the next ride.
                 self.sliders = [input.y, input.x, input.turn];
+                self.sliders_seeded = false;
                 self.gait = 0;
                 self.control_speed = forward_v;
             }
@@ -519,6 +571,7 @@ impl MountMover {
         }
         self.press = None;
         self.jump_without_lift = false;
+        self.sliders_seeded = false;
         let mut c = *ctl.conditions();
         c.mounted = false;
         c.ramp_up_controller = false;
@@ -755,6 +808,64 @@ mod tests {
         assert_eq!(walker.mount().unwrap().state().phase(), MountPhase::Mounted);
     }
 
+    /// `mounts.md` §14.6 ("the sliders follow the input as on foot"), `script-table.md` §8.4
+    /// slider rule: a normal mount's published `Slider_Propel` and `Slider_Strafe` ease toward
+    /// the input at the mounted ramp (0.25 s in the built-in setup, 15 steps for 0 → 1) rather
+    /// than jumping to it; `Slider_Turn` follows the frame directly; [`ease_slider`] clamps.
+    #[test]
+    fn normal_mount_sliders_ease_toward_the_input() {
+        // The easing primitive: a constant rate of 1/T per second, no overshoot.
+        assert!((ease_slider(0.0, 1.0, 0.25, 1.0 / 60.0) - 1.0 / 15.0).abs() < 1e-6);
+        assert_eq!(
+            ease_slider(0.96, 1.0, 0.25, 1.0 / 60.0),
+            1.0,
+            "clamps to target"
+        );
+        assert_eq!(ease_slider(0.3, 0.3, 0.25, 1.0 / 60.0), 0.3);
+        assert_eq!(
+            ease_slider(0.3, 1.0, 0.0, 1.0 / 60.0),
+            1.0,
+            "T 0 takes at once"
+        );
+        assert_eq!(
+            ease_slider(0.3, f32::NAN, 0.25, 1.0 / 60.0),
+            0.3,
+            "holds on NaN"
+        );
+
+        let (mut walker, w) = mounted(profile(MountKind::Normal, 0x1));
+        // One mounted step at rest seeds the sliders to 0 (the first value is taken at once).
+        steps(&mut walker, &w, 0.0, false, 1);
+        assert_eq!(walker.mount().unwrap().sliders()[0], 0.0, "seeded at rest");
+        // Forward from rest: the slider eases up, not a jump to 1.
+        let fwd = MovementCommands::from_axes(1.0, 0.0, 0.0);
+        walker.step_commands(&fwd, false, None, false, &w).unwrap();
+        let p1 = walker.mount().unwrap().sliders()[0];
+        assert!(p1 > 0.0 && p1 < 0.2, "eased one step: {p1}");
+        // Reaches 1 after about the mounted ramp (0.25 s = 15 steps from rest).
+        let mut n = 1;
+        while walker.mount().unwrap().sliders()[0] < 1.0 - 1e-4 && n < 60 {
+            walker.step_commands(&fwd, false, None, false, &w).unwrap();
+            n += 1;
+        }
+        assert!(
+            (14..=16).contains(&n),
+            "reached full propel after {n} steps"
+        );
+        // Releasing eases it back down over the ramp (not an instant drop to 0).
+        let still = MovementCommands::default();
+        walker
+            .step_commands(&still, false, None, false, &w)
+            .unwrap();
+        let p = walker.mount().unwrap().sliders()[0];
+        assert!(p > 0.8 && p < 1.0, "eases back down: {p}");
+        // Turn follows the frame directly (reset every frame, not eased).
+        let turn = MovementCommands::from_axes(0.0, 0.0, 0.0);
+        walker.step_commands(&turn, false, None, false, &w).unwrap();
+        // The mounted idle still reads gait Neutral; the jump gate reads the eased propel.
+        assert_eq!(walker.mount().unwrap().gait(), GAIT_NEUTRAL);
+    }
+
     /// `walker.md` §16.5: a dismount on the move ends at once, the mount fades out, the
     /// controller is on foot again and the mover is removed once faded.
     #[test]
@@ -867,10 +978,19 @@ mod tests {
         assert!(!walker.mount().unwrap().clip_key().jump);
         steps(&mut walker, &w, 0.0, false, 5);
         assert!((walker.state().position[2] - ground).abs() < 1e-3);
-        // Strafing: the sliders of the last step are the input (`Slider_Strafe` 1).
+        // Strafing beyond the band turns the press away. `Slider_Strafe` eases toward the
+        // input at the mounted ramp (0.25 s, `script-table.md` §8.4), so it is held until it
+        // passes ±0.25 before the press.
         steps(&mut walker, &w, 1.0, false, 30);
         let c = MovementCommands::from_axes(1.0, 1.0, 0.0);
-        walker.step_commands(&c, false, None, false, &w).unwrap();
+        for _ in 0..30 {
+            walker.step_commands(&c, false, None, false, &w).unwrap();
+        }
+        assert!(
+            walker.mount().unwrap().sliders()[1].abs() > JUMP_MAX_STRAFE,
+            "strafe ramped past the band: {}",
+            walker.mount().unwrap().sliders()[1]
+        );
         assert_eq!(press(&mut walker, &w, 1.0, 1.0), None, "strafing");
         assert!(!walker.controller().is_jumping());
         // Forward.

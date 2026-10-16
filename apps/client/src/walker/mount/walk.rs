@@ -74,6 +74,9 @@ pub struct RideRow {
     pub mount: MountRow,
     /// The clip state key.
     pub key: Option<ClipKey>,
+    /// The rider's published sliders (`Slider_Propel`, `Slider_Strafe`, `Slider_Turn`) after
+    /// the step (`script-table.md` §8.4 slider rule; eased while mounted, `mounts.md` §14.6).
+    pub sliders: [f32; 3],
     /// Feet, region frame.
     pub feet: [f64; 3],
     /// `Entity_Element`.
@@ -142,6 +145,7 @@ pub fn ride_segments(
                 segment: i,
                 mount: mount_row(walker, c.as_deref(), ground),
                 key,
+                sliders: walker.mount().map_or([0.0; 3], MountMover::sliders),
                 feet: after,
                 element: walker.state().element.key(),
                 take_off: walker.mount().and_then(MountMover::take_off),

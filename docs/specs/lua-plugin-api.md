@@ -4304,13 +4304,39 @@ they move to §18 at the merge):
     `GetProfessionInfo(p)` is nil.
 
 **Change record (moves to the change log at the merge).** 2026-10-16, P6 (spec writer, dirty
-room; status of this subsection **Review**, awaiting independent review): new §15.6 with
+room): new §15.6 with
 provenance P110–P114 (BIN pass q1–q6 under decision 0011 on the offline client; M1 of the
 `PROFESSIONS` and `VOCATIONS` DID maps and the profession titles), the original's
 `GetProfessionInfo`, `ProfessionInfo`, recipe list (`RecipeAdded`/`RecipeRemoved` with `Index`
 and a boolean `Recipe`), `Recipe`, `UntrainedSkill`, `GetVocation` and `VocationChanged`, the
 absence of experience events; Tessera's progression model, views, class attributes and leaving
 the world; four OPENs; owner rows O192–O195; checks 110–119.
+
+**2026-10-16 independent review** (spec reviewer, Clean-Room-Role: review; a session that wrote
+no part of §15.6 or the P6 plugin code), against CLEAN_ROOM.md §5.3, decision 0024 §2 and §4 and
+LEGAL.md §11.1 rule 5: **passed, every item**. Status of §15.6: **Review → Accepted**;
+implementers may build §15.6, and its provenance rows P110–P114, conformance checks 110–119 and
+summary lines move to the provenance table, §18, §19 and the change log at the merge, where
+their numbers are reconciled. Review notes: every statement is a functional fact of Tessera's
+progression model and views or a described behaviour of the original; the API member and event
+names are interoperability identifiers (stated as such); no code or pseudo-code, no copied prose,
+no game text, keys, hostnames or captures. The BIN provenance (P111, P112) was spot-checked
+read-only: the analysed `x64/lotroclient64.exe` has the recorded SHA-256
+`d22363eb9aff0fb599fd04b3efa9a1769d08da8af9d8f9b73121c12bfd7e21ee`, and every member and event
+name of P110–P112 (`GetProfessionInfo`, `GetUntrainedSkills`, `GetVocation`, `VocationChanged`,
+the eight `ProfessionInfo` `…Changed` events, `RecipeAdded`, `RecipeRemoved`, the `Recipe` and
+`UntrainedSkill` getters) is present in the binary, while no character `ExperienceChanged` or
+`XPChanged` name exists, corroborating item 8; the decision-0011 scope note (plugin-API
+registrations and getters only; no network, login, launcher, anti-cheat, anti-tamper or
+patcher) is respected. The detailed native behaviour (event firing order, the boolean-`true`
+`Recipe` field, the class-library function indices) rests on the writer's single M4 pass and
+was not independently re-traced; it is internally consistent and the untraced parts are bound by
+the four OPENs and the owner rows O192–O195. The M1 row P113 was corroborated against the
+install: the P6 real-data tests build 10 professions and 7 vocations with 320 tier titles, and
+the `PROFESSIONS`/`VOCATIONS` label resolution passes. **Dependency note (non-blocking):** P114
+cites `crafting-panels.md`, in Review under another reviewer; acceptance follows the P3/P5
+precedent and the recipe getter table is re-checked if that review changes `CraftRecipe_*`
+definitions. The four OPENs and the implementer OPEN are endorsed and left for the spec owner.
 
 ---
 

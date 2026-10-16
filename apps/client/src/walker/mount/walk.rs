@@ -78,6 +78,8 @@ pub struct RideRow {
     pub feet: [f64; 3],
     /// `Entity_Element`.
     pub element: u32,
+    /// The jump node the rider took off with in this step (`walker.md` §16.6 "Jump").
+    pub take_off: Option<tessera_physics::controller::JumpNode>,
 }
 
 /// Plays `segments` on `walker` over `world`, one row per step that ran; `clips` answers
@@ -142,6 +144,7 @@ pub fn ride_segments(
                 key,
                 feet: after,
                 element: walker.state().element.key(),
+                take_off: walker.mount().and_then(MountMover::take_off),
             });
         }
     }

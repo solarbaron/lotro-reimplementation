@@ -607,6 +607,17 @@ impl Controller {
         self.jump_time.is_some()
     }
 
+    /// Sets `Movement_IsJumping` for a jump whose script starts no impulse (`mounts.md`
+    /// §14.6 "Jumping while mounted": a war-steed's press at gaits 1 and 3 runs the `Jump`
+    /// scripts without a take-off). Call it after the step of the press, in place of that
+    /// step's take-off: the flag then clears by the rule of `collision.md` §11.10 Decision
+    /// item 1, as after a take-off. Does nothing while the flag is already true.
+    pub fn start_jump_without_lift(&mut self) {
+        if self.jump_time.is_none() {
+            self.jump_time = Some(0.0);
+        }
+    }
+
     /// Adds a PhysicsImpulse node's effect to the stored impulse (`collision.md` §11.10
     /// items 1–2); the next step adds it to the velocity once and clears it (item 3).
     /// Returns whether something was added (a jump adds nothing while a vertical impulse

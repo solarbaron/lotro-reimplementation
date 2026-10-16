@@ -362,6 +362,9 @@ pub struct SystemSim {
     pub(crate) start: Option<f64>,
     pub(crate) stopped_at: Option<f64>,
     pub(crate) not_drawn: bool,
+    /// The camera-distance fade and cut of `particles.md` §8.13 apply (cleared for a beam's
+    /// systems, `particle-runtime.md` §11.1 step 8, RT46).
+    pub(crate) distance_fade: bool,
     pub(crate) last_placed_frame: Option<u64>,
     pub(crate) instance_frame: Option<u64>,
     pub(crate) instances: Vec<Placement>,
@@ -427,6 +430,7 @@ impl SystemSim {
             start: None,
             stopped_at: None,
             not_drawn: false,
+            distance_fade: true,
             last_placed_frame: None,
             instance_frame: None,
             instances: Vec::new(),
@@ -460,6 +464,23 @@ impl SystemSim {
     #[must_use]
     pub fn is_not_drawn(&self) -> bool {
         self.not_drawn
+    }
+
+    /// Switches the camera-distance fade and cut of `particles.md` §8.13 on or off (on by
+    /// default). A beam switches it off for both of its systems at their creation
+    /// (`particle-runtime.md` §11.1 step 8, RT46): every instance is then drawn with factor 1
+    /// whatever its distance, and the system never enters the not-drawn state.
+    pub fn set_distance_fade(&mut self, on: bool) {
+        self.distance_fade = on;
+        if !on {
+            self.not_drawn = false;
+        }
+    }
+
+    /// Whether the camera-distance fade of `particles.md` §8.13 applies.
+    #[must_use]
+    pub fn distance_fade_enabled(&self) -> bool {
+        self.distance_fade
     }
 
     /// Counts since creation.

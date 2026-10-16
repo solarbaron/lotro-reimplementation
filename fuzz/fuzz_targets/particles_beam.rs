@@ -7,7 +7,7 @@
 //! a stop, and the beam and head systems switched on and off. Nothing may panic or hang;
 //! every spawn and span is finite; no update spawns more than `MAX_BEAM_SPAWNS` particles;
 //! the ribbon layout stays within `MAX_RIBBON_SEGMENTS`; the ribbon's quads (four corners per
-//! segment, every corner finite), its colour (each channel in 0..=1), the beam's frame and the
+//! segment, every corner and both texture-coordinate pairs finite), its colour (each channel in 0..=1), the beam's frame and the
 //! head entity's scale vector stay finite.
 
 #![no_main]
@@ -83,6 +83,8 @@ fuzz_target!(|data: &[u8]| {
         head_entity: Did(i.u32()),
         head_entity_scale_source: i.u32(),
         color: i.u32().to_le_bytes(),
+        // Without a body material no ribbon is built (§11.1 RT45).
+        body_material: Did(i.u32()),
         ..BeamNode::default()
     };
     let segs = ribbon_segments(&node, i.f32());
@@ -124,7 +126,9 @@ fuzz_target!(|data: &[u8]| {
             for part in [&mesh.tail, &mesh.body, &mesh.head] {
                 assert_eq!(part.vertices.len() % 4, 0);
                 for v in &part.vertices {
-                    assert!(v.position.is_finite() && v.uv.iter().all(|c| c.is_finite()));
+                    assert!(
+                        v.position.is_finite() && v.uv.iter().chain(&v.uv2).all(|c| c.is_finite())
+                    );
                 }
             }
             assert!(

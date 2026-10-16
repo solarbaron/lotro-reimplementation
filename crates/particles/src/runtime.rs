@@ -726,13 +726,17 @@ impl EffectManager {
             .enumerate()
             .filter_map(|(index, s)| {
                 let r = s.running.as_ref()?;
-                (r.did == did && r.refs > 0 && r.effect.is_shareable_kind()).then_some((
-                    r.seq,
-                    SystemKey {
-                        index,
-                        generation: s.generation,
-                    },
-                ))
+                // A system without the distance fade is a beam's own (§11.1, RT46).
+                let beams_own =
+                    matches!(&r.effect, Effect::Particles(p) if !p.distance_fade_enabled());
+                (r.did == did && r.refs > 0 && r.effect.is_shareable_kind() && !beams_own)
+                    .then_some((
+                        r.seq,
+                        SystemKey {
+                            index,
+                            generation: s.generation,
+                        },
+                    ))
             })
             .max_by_key(|(seq, _)| *seq)
             .map(|(_, k)| k)
@@ -786,10 +790,21 @@ impl EffectManager {
         make: impl FnOnce() -> Option<Effect>,
         spec: AttachSpec,
     ) -> Option<SystemKey> {
+        self.serve_with(owner, handle, make, spec, true)
+    }
+
+    fn serve_with(
+        &mut self,
+        owner: OwnerId,
+        handle: EffectHandle,
+        make: impl FnOnce() -> Option<Effect>,
+        spec: AttachSpec,
+        share: bool,
+    ) -> Option<SystemKey> {
         let comp = self.components.get_mut(&owner)?;
         let at = comp.pending.iter().position(|(h, _)| *h == handle)?;
         let (_, did) = comp.pending.remove(at);
-        let key = match self.shared(did) {
+        let key = match self.shared(did).filter(|_| share) {
             Some(k) => {
                 if let Some(r) = self.running_mut(k) {
                     r.refs += 1;
@@ -825,6 +840,22 @@ impl EffectManager {
     ) -> Option<(EffectHandle, SystemKey)> {
         let handle = self.request(owner, did, now);
         let key = self.serve(owner, handle, make, spec)?;
+        Some((handle, key))
+    }
+
+    /// [`EffectManager::start_attached`] that always makes its own system, never a shared
+    /// running copy: a beam creates its systems itself (`particle-runtime.md` §11.1 step 1)
+    /// and drives them (step 8).
+    pub fn start_attached_own(
+        &mut self,
+        owner: OwnerId,
+        did: u32,
+        now: f64,
+        make: impl FnOnce() -> Option<Effect>,
+        spec: AttachSpec,
+    ) -> Option<(EffectHandle, SystemKey)> {
+        let handle = self.request(owner, did, now);
+        let key = self.serve_with(owner, handle, make, spec, false)?;
         Some((handle, key))
     }
 

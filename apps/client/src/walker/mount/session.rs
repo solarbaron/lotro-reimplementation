@@ -969,7 +969,7 @@ mod tests {
             },
             timeline: Timeline::default(),
             rider_model_scale: [1.0; 3],
-            jump: None,
+            jump: crate::walker::mount::ride::MountedJump::default(),
             mount_animated: true,
             notes: Vec::new(),
         }

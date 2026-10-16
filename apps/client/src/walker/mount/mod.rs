@@ -65,8 +65,9 @@ pub struct MountSetup {
     pub timeline: Timeline,
     /// The rider's final model scale per axis.
     pub rider_model_scale: [f32; 3],
-    /// The jump table of the mounted branch (`mounts.md` §14.12; `None`: the on-foot one).
-    pub jump: Option<tessera_physics::controller::JumpTable>,
+    /// The mounted branch of the jump (`walker.md` §16.6 "Jump", `mounts.md` §14.6);
+    /// unused for a hobby-horse, whose rider keeps the on-foot jump.
+    pub jump: ride::MountedJump,
     /// The mount entity evaluates (clips are found); a mount without is drawn in its
     /// reference pose.
     pub mount_animated: bool,
@@ -318,16 +319,17 @@ impl<'s> MountEvaluator<'s> {
         stop()?;
         let rider_model_scale = r.rider().model_scale;
         let jump = if profile.rides() {
-            eval::mounted_jump_table(
+            eval::mounted_jump(
                 cat,
                 &r.rider,
                 &r.script_vocab,
                 &r.vocab,
                 &profile.entries,
+                profile.mount_type,
                 &mut notes,
             )
         } else {
-            None
+            ride::MountedJump::default()
         };
         let mut me = Self {
             rider: r,

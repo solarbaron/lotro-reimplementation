@@ -1174,7 +1174,7 @@ impl PhysicsWalker {
         }
         self.previous = before;
         if let Some(m) = &mut self.mount {
-            m.after_step(&self.controller, &ride, STEP_SECONDS);
+            m.after_step(&mut self.controller, &ride, STEP_SECONDS);
             if !m.state().active() {
                 self.mount_events.extend(m.take_events());
                 m.release(&mut self.controller);

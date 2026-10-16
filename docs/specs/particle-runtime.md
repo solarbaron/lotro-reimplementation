@@ -1279,6 +1279,26 @@ traced.
 > exactly 3 in single precision, so each update spawns 3; the test needs no 0.050000001 s
 > spacing once the code computes in single precision.
 
+> **OPEN (implementer, 2026-10-16):** RT-I18's "3 every time" does not follow from step 8 as
+> written. The first update's three spawns each add the single-precision 0.05 / 3
+> (0.0166666675), so the last spawn time ends at about 0.0500000026 s, not 0.05. The next Δ
+> (0.1 − that) rounds to 0.049999997 in single precision, 60 × Δ rounds to 2.9999998 and the
+> floor gives 2. The counts then alternate 3, 2, 3, 2. Which is the client's behaviour: does
+> the last spawn time accumulate as step 8 says (giving 3, 2), or does something else (another
+> rounding, a time kept apart from the accumulated spawn times) keep the count at 3? Tessera
+> follows the step-8 text: accumulated spawn times and single-precision Δ, count and floor.
+> The RT-I18 unit test asserts 3 for the first update and 3, 2, 3, 2 after it.
+
+> **OPEN (implementer, 2026-10-16; engineering choices where §11.1 is silent):** (1) a beam
+> whose `BodyMaterial` record has not loaded yet draws no ribbon that frame (the client draws
+> once the materials have loaded, step 8); a body record that failed or is not drawable leaves
+> only the body part out. (2) The beam's two systems are always new systems of their own, never
+> a running shared copy of `particles.md` §8.16, and are never shared with other requests, so
+> that the fade switch of step 8 stays with the beam. (3) A negative `BeamWidth` is drawn as
+> written (corners *p* ± *s* × `BeamWidth` / 2, *v* = 1 at the "+" corner); a zero width draws
+> nothing. (4) The tail and head counts in the pair-1 sums are the counts after the segment
+> cap of rule 14.
+
 Census of the 2,740 Beam nodes (OBS4, RT44): `Persistent` 1 in 769; `HeadEntity` in 1,050;
 `BeamParticleSystem` in 571, `HeadParticleSystem` in 45 (2 of them without a beam system, so
 their head particles never spawn); `BeamSegmentParticlesPerSecond` 10 in 2,092, 30 in 292, 0 in

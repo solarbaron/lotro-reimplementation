@@ -1133,7 +1133,7 @@ fn ignore_list() {
     m.set_list(&[
         "Torvald".to_string(),
         "anwen".to_string(),
-        "Grimbold".to_string(),
+        "Gustav".to_string(),
     ]);
     m.select(Some("Torvald"));
     page.refresh(&mut ui, &m);

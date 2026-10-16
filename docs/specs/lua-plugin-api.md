@@ -1582,6 +1582,10 @@ have not been observed in this build.
 
 - **Coordinates:** pixels; a control's position is relative to its parent's top-left; a
   `Window`'s position is relative to the screen (`Display`) (S2, Reported).
+  > **Note (2026-10-16, decision 0040):** in Tessera these "pixels" are the UI units of
+  > [`ui-scaling.md`](ui-scaling.md) §3.2 (one physical pixel at UI scale 1); its §7.7 gives
+  > the plugin view of `Display`, positions, `SetScale` and the global factor (1.0 for
+  > plugins). Takes effect when that spec is Accepted and built.
 - **Initial geometry (P64, P65):** every new control, of every class, is created at left 0,
   top 0 with width 50 and height 50 (BIN): `GetSize()` of a fresh `Turbine.UI.Control()`
   returns 50, 50. The seven game-styled classes of §14.2 name a layout element as the
@@ -1944,6 +1948,10 @@ byte/255 fails equality tests that plugins may make against `Color` fields.
   `GetMouseX()`, `GetMouseY()`, `GetMousePosition()`→x,y in screen pixels;
   `GetUIGroupScale(group)` → the current scale of a `UIScalingGroupType` (1.0 by default).
   > **OPEN:** its exact semantics for `Global` and for groups that were never scaled.
+  >
+  > **Note (2026-10-16, decision 0040):** Tessera answers for itself in
+  > [`ui-scaling.md`](ui-scaling.md) §7.7: `Display` sizes and mouse positions are UI units,
+  > and `GetUIGroupScale(Global)` is 1.0 (Tessera's UI scale lies under the UI-unit space).
 - `DragDropInfo`: `IsSuccessful()`, `SetSuccessful(b)` (a drop handler marks the drop as
   accepted).
 - `ContextMenu` (tier 2): `GetItems()`→MenuItemList, `ShowMenu()`, `ShowMenuAt(x, y)`,
@@ -2951,6 +2959,12 @@ position stays (100, 100); `GetScale()` returns 1.5. With `UIScale_Global` 0.8 i
 *s* = 1.2 and the size 360 × 240. Without the `RegisterForGlobalScaling()` call,
 `SetScale(1.5)` alone marks the window non-global and *s* = 1.5 whatever `UIScale_Global`
 is.
+
+> **Note (2026-10-16, decision 0040):** in Tessera, once [`ui-scaling.md`](ui-scaling.md) is
+> Accepted and built, `UIScale_Global` is 1.0 in rules 3, 4 and 6, and a `SetScale` factor is
+> applied as a uniform node scale: the window's layout box and children stay unchanged and its
+> content is rasterised at the scaled size (that spec's §3.4, §7.7), which also settles rule
+> 1's OPEN for Tessera. A change of Tessera's UI scale fires no `UIScaleChanged`.
 
 ---
 
@@ -5146,3 +5160,4 @@ this revision. Implementers should re-check the affected code.
 | 2026-10-13 | Merge of main into the P5 branch (spec writer, dirty room; no new research, no fact changed): the P5 text already used §15.5 (anchor `s15-5`), provenance P100–P103 and checks 100–107, clear of P2's, P3's and P4's, so nothing is renumbered; §15.5 now follows §15.4 in the file; "P5 travel" names the scenario feed's revision 8. |
 | 2026-10-14 | Revision of §15.4 (spec writer, dirty room; a session that wrote no part of the P4 revision, its review or its code; the changed parts Revised, awaiting independent review; every other part keeps its status). Answers the implementer choices (6) and (7) of 2026-10-11 recorded in `social-panels.md` §9.1: new further rules 7–8 in §15.4 (the entity a `PartyMember` follows; its own `EffectList`, which now receives the §15.2 effect events of that entity and, when the followed entity changes, `EffectsCleared` then `EffectAdded` per effect; a member who left keeps following its last entity), one sentence before the §15.4 OPEN, P97 extended, §18 lead-in "checks 90–99" and new check 99, §19: the P4 paragraph said "checks 90–96" (the first version's range) and now says 90–98, and a closing note for this revision. No fact about the original changed (no new research was needed: the rules are Tessera's; P91 is the cited fact). **Changes to behaviour already implemented on `main`:** further rule 7: a `PartyMember`'s `EffectList` receives `EffectAdded`, `EffectRemoved` and `EffectsCleared` (on `main` it receives none), including the re-synchronisation events when its followed entity changes. Unchanged: one list per `PartyMember`, content read for the followed entity, nil and the empty list without an entity, and rule 8 (as built). |
 | 2026-10-14 | Review of the §15.4 revision of 2026-10-14 (spec reviewer, independent session): **passed; the revised parts Revised → Accepted.** Header status and review record updated; no other text changed. Implementers build further rule 7 (the behaviour change in the row above). |
+| 2026-10-16 | Notes only (no rule changed), decision 0040: §13.1 coordinates, §13.10 `Display` and §13.21 point to `ui-scaling.md` §3.2 and §7.7 (UI units, global factor 1.0 for plugins, `SetScale` as a uniform node scale). Status unchanged. |

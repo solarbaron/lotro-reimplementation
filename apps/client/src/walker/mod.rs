@@ -601,21 +601,24 @@ pub struct WalkerEvents {
 }
 
 /// The walker's own keys, read as raw key codes (`walker.md` §14.2–§14.3): `[`, `]`,
-/// `\`, `-`, `=` and F5–F11.
+/// `/`, `,`, `.`, F2, F4 and F5–F8, F11. The clock-stop and rate keys (`/`, `,`, `.`)
+/// and the scenery (F2) and frills (F4) switches moved off `\`, `-`, `=`, F9 and F10 so
+/// they no longer collide with the `keymap.md` §8.2 targeting and quickslot defaults
+/// (owner answer, 2026-10-16).
 pub const WORLD_KEYS: [tessera_input::KeyCode; 12] = {
     use tessera_input::KeyCode as K;
     [
         K::BracketLeft,
         K::BracketRight,
-        K::Backslash,
-        K::Minus,
-        K::Equal,
+        K::Slash,
+        K::Comma,
+        K::Period,
         K::F5,
         K::F6,
         K::F7,
         K::F8,
-        K::F9,
-        K::F10,
+        K::F2,
+        K::F4,
         K::F11,
     ]
 };
@@ -1222,7 +1225,7 @@ impl Walker {
             match key {
                 K::BracketLeft => self.env.step_time(-1.0),
                 K::BracketRight => self.env.step_time(1.0),
-                K::Backslash => {
+                K::Slash => {
                     let paused = self.env.toggle_pause();
                     self.notice(if paused {
                         "clock stopped"
@@ -1230,14 +1233,14 @@ impl Walker {
                         "clock running"
                     });
                 }
-                K::Minus => self.env.scale_rate(0.5),
-                K::Equal => self.env.scale_rate(2.0),
+                K::Comma => self.env.scale_rate(0.5),
+                K::Period => self.env.scale_rate(2.0),
                 K::F5 => self.toggle_system(System::TerrainLayers),
                 K::F6 => self.toggle_system(System::Shadows),
                 K::F7 => self.toggle_system(System::Water),
                 K::F8 => self.toggle_system(System::Sky),
-                K::F9 => self.toggle_system(System::Scenery),
-                K::F10 => self.toggle_system(System::Frills),
+                K::F2 => self.toggle_system(System::Scenery),
+                K::F4 => self.toggle_system(System::Frills),
                 K::F11 => self.toggle_system(System::Lod),
                 _ => {}
             }
@@ -3600,35 +3603,30 @@ mod tests {
     #[test]
     fn keys_the_keymap_binds_are_left_to_it() {
         use tessera_input::{BindingSpec, KeyCode, Keymap, default_keymap};
-        // keymap.md §8.2 (P2) binds targeting and quickslot defaults on five of the
-        // walker's keys; walker.md §14.2 leaves a bound key to the keymap (keymap.md §8.2
-        // implementer OPEN asks the owner whether the walker keys should move).
+        // The owner (keymap.md §8.2, 2026-10-16) moved the walker's clock and switch keys
+        // off the keymap.md §8.2 targeting and quickslot defaults (Backslash, Minus, Equal,
+        // F9, F10), so no built-in binding takes a walker key any more (walker.md §14.2).
         assert_eq!(
             keys_taken_by(&default_keymap()),
-            HashSet::from([
-                KeyCode::Backslash,
-                KeyCode::Minus,
-                KeyCode::Equal,
-                KeyCode::F9,
-                KeyCode::F10,
-            ]),
-            "the built-in bindings take exactly the keymap.md §8.2 walker keys"
+            HashSet::new(),
+            "no built-in binding takes a walker key after the §8.2 move"
         );
+        // A user override that binds a current walker key is still left to the keymap.
         let mut user = Keymap::new();
         user.set(
             tessera_input::contexts::GLOBAL,
             "toggle_debug",
-            vec![BindingSpec::parse("F9").unwrap()],
+            vec![BindingSpec::parse("F2").unwrap()],
         )
         .unwrap();
         user.set(
             tessera_input::contexts::CAMERA,
             "zoom",
-            vec![BindingSpec::parse("Ctrl+Equal").unwrap()],
+            vec![BindingSpec::parse("Ctrl+Comma").unwrap()],
         )
         .unwrap();
         let taken = keys_taken_by(&Keymap::new().overlay(&user));
-        assert_eq!(taken, HashSet::from([KeyCode::F9, KeyCode::Equal]));
+        assert_eq!(taken, HashSet::from([KeyCode::F2, KeyCode::Comma]));
     }
 
     #[test]

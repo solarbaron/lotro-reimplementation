@@ -1619,10 +1619,13 @@ needs a lit pass: layers, shadows, lights, water, sky, instancing, frills), `sha
 defaults of `lighting.md` §8.1 instead), `fog`, `scenery` (generated objects), `instancing`
 (every object as single mesh draws), `frills`, `lod` (per-class distances, fades and
 detail levels; every object to the distance cap at its finest level); `all` gives the
-M3/M4 walker. At run time F5–F11 toggle layers, shadows, water, sky, scenery, frills and
-LOD. The HUD names the systems that are off. The walker reads these keys and those of
-§14.3 as raw key codes; a key that a keymap binding uses (any context, alone or in a
-chord) is left to the keymap, and the HUD's key line lists them (OPEN §14.11).
+M3/M4 walker. At run time F5–F8 toggle layers, shadows, water and sky, F2 and F4 toggle
+scenery and frills, and F11 toggles LOD. The HUD names the systems that are off. The walker
+reads these keys and those of §14.3 as raw key codes; a key that a keymap binding uses (any
+context, alone or in a chord) is left to the keymap, and the HUD's key line lists them (OPEN
+§14.11). Scenery (F2) and frills (F4) moved off F9 and F10 so they no longer collide with
+the targeting defaults of `keymap.md` §8.2 (owner answer, 2026-10-16; §15 change log); F9 and
+F10 now belong to the keymap.
 
 <a id="s14-3"></a>
 ### 14.3 Environment, clock and lighting (Decisions)
@@ -1635,13 +1638,16 @@ chord) is left to the keymap, and the HUD's key line lists them (OPEN §14.11).
   (default 2, `environment.md` §11.2). `--day` takes ±20,000,000 at most (days whose *G* the
   game clock holds, ±10¹² s, with any calendar of days up to 50,000 s); a day the clock still
   cannot hold starts the clock on day 12,240 with a warning. Keys: `[` and `]` move *G* by
-  1/24 of the calendar's day length, across midnight into the next or previous day; `\`
-  stops and restarts the clock; `-` and `=` halve and double the rate, never past 1/64 or
+  1/24 of the calendar's day length, across midnight into the next or previous day; `/`
+  stops and restarts the clock; `,` and `.` halve and double the rate, never past 1/64 or
   the `--time-rate` maximum of 100,000 and never in the wrong direction; while the clock is
   stopped they change the rate it restarts at. A clock restarts at the rate it had before
   it was stopped, or at rate 1 when that was 0: a clock started with `--time-rate 0` counts
-  as stopped from the start, so `\` starts it at rate 1 on the first press and `-` and `=`
+  as stopped from the start, so `/` starts it at rate 1 on the first press and `,` and `.`
   change the rate it will start at. The keys act on both environment records below at once.
+  (The clock-stop and rate keys moved off `\`, `-` and `=` so they no longer collide with the
+  `target_self` and quickslot defaults of `keymap.md` §8.2; owner answer, 2026-10-16, §15
+  change log.)
 - **Two environment records** (`landblock.md` §4.13, `environment.md` §7.1.1, §7.2, §11.6;
   rows W-E1, W-E2, W-E6, W-E7 of §14.13). The walker keeps two environments on the same
   clock and blends both every frame, each on its own: the **outdoor record** from sky key A
@@ -3056,3 +3062,4 @@ code comments that cite them still find them; the rules now live in the sections
 | 2026-10-13 | Implementer (clean room): resolution notes appended to the §16.12 implementer OPENs now that §16 is Accepted, and the walker/`tessera-physics` conformed: `auto` picks the body's first normal mount (not `dir:0`, so Human M is a horse); the war-steed gait holds Neutral at the forward→backward crossing so braking falls to 2 and 1 (check 3); the mounted steady speed keeps the `collision.md` §12.4 (b) damper (check 1 read with the factor, no physics change); no mounted jump (empty table while mounted, the on-foot jump not carried over); a feed's `mount` is instant; `/ride` dispatcher requests are held until `--mount` is applied. Residual spec-writer items (reconcile §16.2/§16.11 prose, the server gait-3 and mounted-jump rules) kept as OPENs. No normative §16 prose changed. |
 | 2026-10-14 | Spec writer (dirty room), §16 revised for the follow-ups of the 2026-10-13 review and the P5 implementer OPENs; facts checked in the install (M1; `mounts.md` rows MT48–MT51) and one M4 question (`mounts.md` BIN3). **Folded in, no change to behaviour on main:** §16.1 the feed's `mount` REF (a record resolved as a DID SOURCE, a literal ignored) applied as an instant mount, dismount sends `dismount`; §16.2 grammar and resolution: `auto` is the body's first Normal-category entry of the offered list (not `dir:0`; this install: entry 18 Tall, 1 Short, a horse for all 15 race-table entries), `dir:N` indexes the whole, non-de-duplicated list; §16.3 `/ride SPEC` refused during summoning, one request at a time, `/ride` lines held until `--mount` is requested; §16.5 the toggle and interrupts cancel summoning, the cell-without-`Area_DID` Decision (departs from `mounts.md` §4.7 step 5), the bow on the mount figure without `Emote_Idle10`; §16.6 "Steady speed" Decision (damped control velocity, departs from the original, `collision.md` §12.4 (b)); §16.7 the mount module's own worker threads (at most three); §16.8 refused walks note the reason; §16.10 `control_speed` is the damped velocity; §16.11 checks 1–3 read with `auto`, the damper and the crossing step. **Changes behaviour implemented on main:** §16.6 "Jump": the mounted branch of `Loc_Jumping` is evaluated at each press with the published sliders and the gait (`mounts.md` §14.6 "Jumping while mounted"), replacing the empty jump table while mounted, so a mounted rider jumps (7.275 m/s here) when the gates hold; §16.11 new check 6. §16.12: eight items closed with notes; `Equipment_Hide`, the §14.3 back-clip question and the owner observations stay open. No section number or anchor changed. §16 status Accepted → Revised. |
 | 2026-10-14 | §16 revision of commit e5ce2c6 reviewed by an independent spec reviewer (fresh session, not the writer): **passed** against CLEAN_ROOM.md §5.3 (all items); claims of "matches main" checked against the code on main, the facts behind them re-checked through `mounts.md` MT48–MT51 and BIN3. No content change; §16 status Revised → Accepted. The behaviour change of the previous row (§16.6 "Jump", §16.11 check 6) stands: the walker on main must be conformed. See the review record (two non-blocking notes). |
+| 2026-10-16 | Implementer (clean room): §14.2–§14.3 record the walker's moved default keys, following the owner's answer to the `keymap.md` §8.2 implementer OPEN (2026-10-16: the targeting and quickslot defaults keep the original's keys, the walker's colliding keys move to keys no `keymap.md` default binds). Scenery moves from F9 to F2 and frills from F10 to F4; the clock stop/restart key moves from `\` to `/` and the rate keys from `-`/`=` to `,`/`.`. The remaining walker keys (`[`, `]`, F5–F8, F11) are unchanged, and no `keymap.md` default binding now shares a walker key. No other section changed; no client fact added. |

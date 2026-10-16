@@ -1550,6 +1550,11 @@ these actions are swallowed (`opaque_keys`, §3.3), and while `ui.dialog` is act
 > longer act unless the user unbinds the targeting and quickslot actions there. Should the
 > walker's keys move, or should these defaults give way? Implemented as written (the
 > original's defaults win).
+>
+> **Answered (owner, 2026-10-16):** the walker's keys move. These defaults (the original's)
+> keep `Backslash`, `Minus`, `Equal`, `F9` and `F10`; the world walker's time-of-day and
+> switch keys on them get new default keys that no default binding of this spec uses, and
+> `walker.md` §14.2–§14.3 lists the new keys once they are moved.
 
 ---
 

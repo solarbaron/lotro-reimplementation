@@ -208,6 +208,60 @@ fn physical_boxes_match_and_abut() {
     }
 }
 
+/// §6.1 crisp canvases: a surface's canvas is allocated at the **content scale** (its physical
+/// box in window pixels) and composed 1 : 1 onto that box, instead of a UI-unit canvas
+/// GPU-upscaled. At `Se` = 2 the root's canvas is twice its UI-unit size; at `Se` = 1 (identity)
+/// it is exactly the UI-unit size, byte-identical to before this increment (invariant I2).
+#[test]
+fn canvas_is_crisp_at_content_scale() {
+    // Se = 1 (C2, 1920 × 1080): the canvas equals the root's displayed (UI-unit) box.
+    let mut ui = build();
+    let (r, _, _) = open(&mut ui);
+    let f1 = screen_of(&C2);
+    ui.set_ui_screen(f1, scaling::safe_area(&f1, A21));
+    let fr1 = frames(&mut ui, 4);
+    let d1 = ui.displayed_box(r).to_rect();
+    assert_eq!(
+        fr1.composition.entries[0].canvas,
+        [d1.width(), d1.height()],
+        "identity canvas = displayed (UI-unit) box"
+    );
+    assert_eq!(fr1.composition.entries[0].canvas, [1920, 1080]);
+
+    // Se = 2 (3840 × 2160 @ S = 2.0): the canvas is the physical box, twice the UI-unit size,
+    // and composes 1 : 1 onto its physical box.
+    let mut ui = build();
+    let (r, _, _) = open(&mut ui);
+    let se2 = scaling::effective_scale(2.0, 3840, 2160);
+    assert_eq!(se2, 2.0);
+    let f2 = UiScreen::new(3840, 2160, se2).unwrap();
+    assert_eq!(f2.ui_size(), (1920, 1080));
+    ui.set_ui_screen(f2, scaling::safe_area(&f2, A21));
+    let fr2 = frames(&mut ui, 4);
+    let phys = ui.physical_box(r);
+    assert_eq!(
+        fr2.composition.entries[0].canvas,
+        [phys.width(), phys.height()],
+        "Se = 2 canvas = physical box"
+    );
+    assert_eq!(fr2.composition.entries[0].canvas, [3840, 2160]);
+    let d2 = ui.displayed_box(r).to_rect();
+    assert!(
+        fr2.composition.entries[0].canvas[0] > d2.width()
+            && fr2.composition.entries[0].canvas[1] > d2.height(),
+        "Se = 2 canvas {:?} larger than the UI-unit box {}×{}",
+        fr2.composition.entries[0].canvas,
+        d2.width(),
+        d2.height()
+    );
+    // 1 : 1: the composition destination is the physical box, equal in size to the canvas.
+    assert_eq!(fr2.composition.entries[0].dest, phys);
+    assert_eq!(
+        [phys.width(), phys.height()],
+        fr2.composition.entries[0].canvas
+    );
+}
+
 /// I1 / I14 (live slice): a window change re-lays the roots into the new `F`, and a change back
 /// to the first configuration restores every box exactly (no drift).
 #[test]
@@ -291,4 +345,142 @@ fn safe_area_default_is_full_screen() {
     assert_eq!(ui.ui_screen(), None);
     let a = ui.safe_area_box();
     assert_eq!(a, DBox::new(0.0, 0.0, 1024.0, 768.0));
+}
+
+// ----- §5.2–§5.6 live fit rules: ultrawide and tall windows --------------------------------
+
+const LAYOUT2: u32 = 0x22FF_5200;
+const FITROOT: u32 = 0x1000_5201;
+const FITKID: u32 = 0x1000_5202;
+const PANEL: u32 = 0x1000_5203;
+
+/// A fit-root scene (`ui-scaling.md` §5.2, §5.4 Type A): a full-cover root with both horizontal
+/// edges 6 over a 1024 × 768 design area, holding one child that covers it (so the content box
+/// `C` is the whole area, which drives the magnification bound).
+fn build_fit() -> Ui {
+    let kid = edges(field(FITKID, 0, 0, 1024, 768), [0, 0, 0, 0]);
+    let root = child(edges(field(FITROOT, 0, 0, 1024, 768), [6, 5, 6, 5]), kid);
+    let env = env_with(vec![layout(LAYOUT2, 1024, 768, vec![root])]);
+    ui_with(env, 1024, 768)
+}
+
+/// A safe-area panel scene (`ui-scaling.md` §5.2): a 200 × 100 HUD panel pinned to the right
+/// (left edge OPPOSITE, right edge SAME, top SAME, bottom KEEP) in a 1024 × 768 design area. It
+/// does not cover the area, so it is a safe-area panel, not a full-screen root.
+fn build_safe_panel() -> Ui {
+    let root = edges(field(PANEL, 824, 50, 200, 100), [4, 5, 5, 0]);
+    let env = env_with(vec![layout(LAYOUT2, 1024, 768, vec![root])]);
+    ui_with(env, 1024, 768)
+}
+
+/// C8 (32:9 ultrawide, 5120 × 1440 @ 1.0): a fit root covers within the §5.4 magnification
+/// bound — 1024 × 768 is magnified by f = 1.875 to 1920 × 1440 and centred (left wing 1600),
+/// **not** stretched across the full 32:9 width. The ultrawide guarantee of decision 0040 §2.3
+/// and invariant I17, driven live through the tree.
+#[test]
+fn fit_root_covers_within_bound_c8() {
+    let mut ui = build_fit();
+    let fr = ui.open_panel(Did(LAYOUT2), FITROOT).unwrap();
+    let f = screen_of(&C8);
+    ui.set_ui_screen(f, scaling::safe_area(&f, A21));
+    let d = ui.displayed_box(fr);
+    assert_eq!(d.l, 1600, "fit root centred (left wing 1600)");
+    assert_eq!(d.t, 0, "fit root top");
+    assert!((d.w() - 1920).abs() <= 2, "fit root width {} ~ 1920", d.w());
+    assert!(
+        d.w() < f.wu(),
+        "fit root {} not stretched to the full {} width",
+        d.w(),
+        f.wu()
+    );
+}
+
+/// C8: a safe-area panel anchors to the safe area's right edge (832 + 3456 = 4288), not the
+/// screen's far edge (5120). The §5.2 safe-area frame on a 32:9 screen.
+#[test]
+fn safe_area_panel_anchors_to_safe_edge_c8() {
+    let mut ui = build_safe_panel();
+    let p = ui.open_panel(Did(LAYOUT2), PANEL).unwrap();
+    let f = screen_of(&C8);
+    ui.set_ui_screen(f, scaling::safe_area(&f, A21));
+    let d = ui.displayed_box(p);
+    assert_eq!(d.w(), 200, "panel width kept");
+    assert_eq!(d.h(), 100, "panel height kept");
+    assert_eq!(d.r + 1, 4288, "panel right at the safe-area edge");
+    assert!(
+        d.r + 1 < f.physical().0,
+        "panel not at the screen's far edge"
+    );
+}
+
+/// A tall 1024 × 1600 window @ Se = 1: the 21:9 safe area is wider than the window, so A = F and
+/// nothing is constrained horizontally. The fit root fits by height (f = 1) and is letterboxed
+/// top and bottom (centred at 416), never stretched to the 1600 height; the safe-area panel
+/// spans to the full width (A = F).
+#[test]
+fn tall_window_fits_by_height() {
+    let se = scaling::effective_scale(1.0, 1024, 1600);
+    let f = UiScreen::new(1024, 1600, se).unwrap();
+    assert_eq!(f.ui_size(), (1024, 1600));
+    let a = scaling::safe_area(&f, A21);
+    assert_eq!(
+        a,
+        DBox::new(0.0, 0.0, 1024.0, 1600.0),
+        "A = F on a tall window"
+    );
+
+    let mut ui = build_fit();
+    let fr = ui.open_panel(Did(LAYOUT2), FITROOT).unwrap();
+    ui.set_ui_screen(f, a);
+    let d = ui.displayed_box(fr);
+    assert_eq!(d.w(), 1024, "fit root fills the width at f = 1");
+    assert!((d.h() - 768).abs() <= 2, "fit root height {} ~ 768", d.h());
+    assert_eq!(d.t, 416, "fit root centred vertically ((1600 - 768) / 2)");
+
+    let mut ui = build_safe_panel();
+    let p = ui.open_panel(Did(LAYOUT2), PANEL).unwrap();
+    ui.set_ui_screen(f, a);
+    let dp = ui.displayed_box(p);
+    assert_eq!(dp.w(), 200, "panel width kept");
+    assert_eq!(dp.r + 1, 1024, "A = F: panel at the full-width right edge");
+}
+
+/// C2 (Se = 1) and C1 (1280 × 720 @ Se = 0.9375) keep the full-screen (5, 5, 5, 5) root on the
+/// plain path: it fills `F` and the window exactly, with no safe-area fit and no node scale, so
+/// the default configurations behave exactly as before this increment (invariant I2 / C1).
+#[test]
+fn full_screen_root_unchanged_at_c1_and_c2() {
+    // C2: A = F, Se = 1 — byte-identical to the layout box made absolute.
+    let mut ui = build_safe_panel();
+    let p = ui.open_panel(Did(LAYOUT2), PANEL).unwrap();
+    let f2 = screen_of(&C2);
+    ui.set_ui_screen(f2, scaling::safe_area(&f2, A21));
+    let d = ui.displayed_box(p);
+    assert_eq!(d.w(), 200);
+    assert_eq!(
+        d.r + 1,
+        1920,
+        "A = F at C2: panel at the screen's right edge"
+    );
+
+    // C1: a full-screen root fills F (1365 × 768) and maps to the whole window; children abut.
+    let mut ui = build();
+    let (r, a, b) = open(&mut ui);
+    let f1 = UiScreen::new(1280, 720, scaling::effective_scale(1.0, 1280, 720)).unwrap();
+    ui.set_ui_screen(f1, scaling::safe_area(&f1, A21));
+    assert_eq!(
+        ui.displayed_box(r),
+        tessera_ui::geom::IBox::new(0, 0, f1.wu() - 1, f1.hu() - 1),
+        "C1 full-screen root fills F"
+    );
+    assert_eq!(
+        ui.physical_box(r),
+        Rect::new(0, 0, 1280, 720),
+        "C1 fills window"
+    );
+    assert_eq!(
+        ui.physical_box(a).x1,
+        ui.physical_box(b).x0,
+        "C1 children still abut"
+    );
 }

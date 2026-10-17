@@ -886,10 +886,27 @@ The stop-gap stays in force until this spec is Accepted and built.
 > pass) and §5.6 fit-to-screen; (b) the §6.1–§6.5 **crisp** painting (canvases painted at the
 > content scale, per-axis image resampling, glyphs chosen/derived at the target height and
 > cached), which this increment approximates by GPU-scaling the UI-unit canvas at composition
-> (soft, not crisp, at `Se` ≠ 1); (c) the anchored `SavedPlacement` **store** of §5.8, whose
-> persisted form crosses into `crates/settings` and so is out of a `crates/ui`-only change — the
-> in-memory store keeps its normalized-corner form for now and keep-on-screen is applied after a
-> placement is restored. The pure core each part calls is already present and tested.
+> (soft, not crisp, at `Se` ≠ 1). The pure core each part calls is already present and tested.
+
+> **OPEN (implementer):** the anchored `SavedPlacement` **store** of §5.8 is now **built**.
+> `crates/ui`'s window manager (`crates/ui/src/wm.rs`) records a placement as a
+> `scaling::SavedPlacement` (an anchor to a `RefBox` + a UI-unit offset, via
+> `SavedPlacement::from_box`) and restores it with `SavedPlacement::position` followed by
+> keep-on-screen (§5.8 "Applying"), choosing the reference box `R` per root (the full screen `F`
+> for a full-cover (5, 5, 5, 5) root, else the safe area `A`). `SavedStore` keeps both the
+> anchored `placements` (authoritative) and the old normalized-corner `entries` (retained for
+> `to_xml` and as the §5.8 "Migration" fallback `apply_saved` uses when a key has only an old
+> entry). The persisted form is the `[UI.panels]` `PanelPlacement` of `crates/settings`
+> (`crates/settings/src/ui.rs`), which mirrors `SavedPlacement` field-for-field; because
+> `tessera-ui` does not depend on `tessera-settings`, the field-copy bridge between the in-memory
+> store and the settings table is left to the client's UI host (out of a
+> `crates/ui`-plus-`crates/settings` change). **Settings-layer migration limitation:** §5.8
+> "Migration" converts an old normalized-corner entry "at the current configuration", which needs
+> `Wu` × `Hu`; the settings loader has no screen, so `PanelPlacement::from_legacy` recovers only
+> the anchor *directions* (scale-free, from which third the box centre falls in) and the
+> visibility, and docks the window to the anchor (offset 0), keeping its laid-out size. The exact
+> UI-unit offset is then re-established the next time the user moves the window. This is a
+> defensive path: no released schema wrote normalized `[UI.panels]` entries.
 
 ---
 
@@ -919,6 +936,23 @@ and 16,384 on each axis; beyond that only the on-screen part is stored, reported
 root (§5.2) may store only its on-screen part at any size. A Tile surface (UL §8.4 Tessera
 rules) is painted at its tile size × *c*, rounded to whole pixels, and repeated at that
 period.
+
+> **OPEN (implementer):** `crates/ui` now allocates each surface's canvas at its physical box
+> and composes it 1 : 1 onto that box (§6.6), with the display list and damage mapped to canvas
+> pixels by the per-coordinate edge map of §3.6 (so they agree with the physical boxes and the
+> nested-entry coverage regions). **Images** are resampled by the §6.3 per-axis filter
+> **selection** (sharp bilinear at a scale ≥ 1, the area filter below 1, chosen per axis kind
+> from the element's layout extent). **Text** is the remaining soft path: the painter resamples
+> each glyph's **native** coverage by the uniform content scale *c* = (*mx*·*Kx*, *my*·*Ky*)
+> (straight bilinear), so scaled text is correctly sized but soft, not yet crisp. The §6.4
+> **derived-glyph** machinery (target-height source selection, derived metrics and the §6.5
+> glyph cache) is built as additive entry points in `crates/ui/src/text` (`layout_scaled`,
+> `draw_scaled`) but is **not yet wired** into the surface/painter draw path; wiring it is the
+> next increment, after which this soft text path is retired. Also, the uniform resample scale
+> *c* can differ from the per-coordinate edge spacing of the mapped geometry by at most one pixel
+> at non-integer scales; reconcile when the derived-glyph path lands. At the identity (*Se* = 1
+> with *A* = *F*, or no UI screen) everything is byte-identical to the pre-scaling path
+> (invariant I2).
 
 <a id="s6-2"></a>
 ### 6.2 Element boxes inside a canvas
@@ -1109,6 +1143,13 @@ source kind, outline or fill). The cache is bounded (it counts toward the decode
 §8) and evicts least recently used heights. Deriving counts toward the frame's paint slice
 (UR §6 U4 (b)); a client may derive the printable ASCII range of the fonts on screen on the
 asset workers ahead of a settle (§4.5 step 4).
+
+> **OPEN (implementer):** the key names a "font DID", but Tessera's own fallback faces
+> (FO §11 item 2) have no DID. The `tessera-ui` text module folds a Tessera face's
+> (file, code-set, pixel-size) triple into the 32-bit DID field and sets the top bit so it
+> cannot alias a real data DID; two distinct Tessera faces could still in principle collide and
+> serve one another's derived glyph (data records, the common case, never collide). Confirm the
+> intended key for DID-less faces, or widen the key.
 
 <a id="s6-6"></a>
 ### 6.6 Composition (RD §6)

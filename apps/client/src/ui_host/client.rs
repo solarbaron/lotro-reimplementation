@@ -983,6 +983,11 @@ pub(crate) fn window_frames(
         .map(UiHost::take_game_events)
         .unwrap_or_default();
     let events: &[tessera_ui::UiEvent] = if screens { &[] } else { &taken };
+    // The Interface window (decision 0040, `ui-scaling.md` §7.2) reads the same per-frame
+    // event list; it works in any mode, so it runs before the attached/world gates below.
+    if let Some(host) = ui.host_mut() {
+        host.interface_frame(events, now);
+    }
     if !ui.attached() {
         return;
     }
@@ -1147,24 +1152,15 @@ fn apply_uiscale(host: &mut UiHost, rt: &mut Runtime, now: Instant) {
     }
     host.scale_tick(now);
     if host.take_interface_request() {
-        // The Interface window (`ui-scaling.md` §7.2) is not built yet; until it is, the
-        // request is logged so the command and action have a visible effect.
-        // > OPEN (`ui-scaling.md` §7.2): build Tessera's own Interface window from the
-        // > game-styled controls of `lua-plugin-api.md` §14.2 and open it here.
-        tracing::info!("interface window requested (ui-scaling.md §7.2; window not built yet)");
-        rt.plugins
-            .post_line(crate::commands::LocalLine::log(format!(
-                "Interface scale: {} %{}",
-                host.scale().display_percent(),
-                if host.scale().is_limited() {
-                    " (limited by the window size)"
-                } else {
-                    ""
-                }
-            )));
+        // Tessera's own Interface window (`ui-scaling.md` §7.2): opened (or toggled closed)
+        // here; its events are handled in the per-frame window pass ([`window_frames`]).
+        host.open_interface();
     }
     if let Some((scale, aspect)) = host.take_scale_persist(now) {
         persist_ui_scale(scale, aspect);
+    }
+    if let Some(extra) = host.take_interface_persist() {
+        persist_ui_extra(extra);
     }
 }
 
@@ -1229,6 +1225,63 @@ fn write_ui_scale(
     });
     if let Err(e) = r {
         tracing::warn!("UI scale not saved: {e}");
+    }
+}
+
+/// Hands the Interface window's optional-row changes (art filter, text size, panel and
+/// window-scale resets) to the settings writer off the main thread (`ui-scaling.md` §4.4,
+/// §7.1), like [`persist_ui_scale`].
+fn persist_ui_extra(extra: crate::ui_host::interface::ExtraPersist) {
+    let store = match tessera_settings::SettingsStore::open_default() {
+        Ok(s) => s,
+        Err(e) => {
+            tracing::debug!("settings unavailable ({e}); UI options not saved");
+            return;
+        }
+    };
+    drop(spawn_ui_extra_write(store, extra));
+}
+
+/// Spawns the optional-row write off the frame thread; falls back to this thread when no
+/// thread can be spawned. Returns the join handle (the frame loop drops it; tests keep it).
+fn spawn_ui_extra_write(
+    store: tessera_settings::SettingsStore,
+    extra: crate::ui_host::interface::ExtraPersist,
+) -> Option<std::thread::JoinHandle<()>> {
+    let fallback = store.clone();
+    match std::thread::Builder::new()
+        .name("ui-options-settings".to_owned())
+        .spawn(move || write_ui_extra(&store, extra))
+    {
+        Ok(h) => Some(h),
+        Err(e) => {
+            tracing::debug!("no settings thread ({e}); writing UI options on this thread");
+            write_ui_extra(&fallback, extra);
+            None
+        }
+    }
+}
+
+/// Merges the optional-row keys into the settings file under its advisory lock
+/// (`ui-scaling.md` §4.4). A failure is logged, not fatal.
+fn write_ui_extra(
+    store: &tessera_settings::SettingsStore,
+    extra: crate::ui_host::interface::ExtraPersist,
+) {
+    let r = store.update(|s| {
+        let (mut prefs, _) = tessera_settings::UiPrefs::from_settings(s);
+        prefs.art_filter = extra.art;
+        prefs.text_scale = extra.text_scale;
+        if extra.clear_panels {
+            prefs.panels.clear();
+        }
+        if extra.clear_groups {
+            prefs.group_scale.clear();
+        }
+        prefs.store(s);
+    });
+    if let Err(e) = r {
+        tracing::warn!("UI options not saved: {e}");
     }
 }
 

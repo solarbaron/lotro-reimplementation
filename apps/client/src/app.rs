@@ -421,6 +421,11 @@ impl App {
                     .map(crate::ui_host::UiHost::take_game_events)
                     .unwrap_or_default();
                 let events: &[tessera_ui::UiEvent] = if screens { &[] } else { &taken };
+                // The Interface window (decision 0040, `ui-scaling.md` §7.2) reads the same
+                // per-frame event list and works in any mode (before the attached gate).
+                if let Some(host) = ui.host_mut() {
+                    host.interface_frame(events, now);
+                }
                 if ui.attached()
                     && let (Some(host), Some(world)) = (ui.host_mut(), rt.world.as_mut())
                 {

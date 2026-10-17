@@ -16,7 +16,10 @@ use std::sync::Arc;
 use tessera_formats::font::Glyph;
 
 use super::chars::{SLOT_NORMAL, TextChar};
-use super::{FontFace, MAX_TEXT_UNITS, TextError, sat32};
+use super::{FontFace, FontLadder, MAX_TEXT_UNITS, TextError, sat32};
+use crate::scaling::{
+    GlyphMetrics, SourceKind, choose_glyph_source, derive_metrics, target_height,
+};
 
 /// Justification value 1 (`Bottom` in enum mapper 0x23000177): the far side on either axis.
 pub const JUSTIFY_BOTTOM: u32 = 1;
@@ -257,6 +260,197 @@ pub(crate) fn metrics(c: &TextChar, fonts: &[Option<Arc<FontFace>>]) -> Metrics 
             baseline,
             glyph: None,
         },
+    }
+}
+
+/// The content scale and font ladders for the crisp scaled-text path (`ui-scaling.md` §6.4).
+///
+/// Passed to [`layout_scaled`] and [`super::draw_scaled`]; the ordinary [`layout`]/[`super::draw`]
+/// entry points are the identity path (no scaling, byte-identical output, invariant I7). `c` is
+/// the element's content scale *c* (§3.4, the screen's effective scale *Se* for an unstretched
+/// surface) and `x` the optional text factor (§7.5, 1.0 unless it applies). `ladders` gives, per
+/// font slot (index [`TextChar::font`]), the sibling records of that slot's font; a slot with no
+/// ladder (empty or out of range) falls back to a one-face ladder of the slot's own face (a font
+/// that stands alone, §6.4.3).
+#[derive(Debug, Clone, Copy)]
+pub struct ScaleCtx<'a> {
+    /// Content scale *c* (§3.4).
+    pub c: f64,
+    /// Text factor *x* (§7.5), 1.0 unless the optional text size applies.
+    pub x: f64,
+    /// Per-slot font ladders (§6.4.2).
+    pub ladders: &'a [FontLadder],
+}
+
+impl ScaleCtx<'_> {
+    /// Whether this context is the identity (`c × x = 1`): the chosen size, metrics and layout
+    /// then equal the unscaled path (invariant I7), so the scaled entry points may take the
+    /// native path. `None` factors are treated as the identity.
+    #[must_use]
+    pub fn is_identity(&self) -> bool {
+        let c = if self.c.is_finite() && self.c > 0.0 {
+            self.c
+        } else {
+            1.0
+        };
+        let x = if self.x.is_finite() && self.x > 0.0 {
+            self.x
+        } else {
+            1.0
+        };
+        (c * x - 1.0).abs() < f64::EPSILON
+    }
+}
+
+/// How one character is drawn in the scaled path (`ui-scaling.md` §6.4.3): resolved once and
+/// shared by layout (metrics only) and drawing (metrics plus coverage).
+#[derive(Debug, Clone)]
+pub(crate) enum ResolvedDraw {
+    /// No glyph drawn: either the slot has no font, or the font has neither the unit's glyph nor
+    /// `?` (§5 step 3). Layout still reserves the blank 1 × 1; drawing advances 0.
+    None,
+    /// An exact ladder hit (§6.4.3 item 1): draw natively from this face's atlas and glyph.
+    Native {
+        /// The record serving the glyph (the slot's face, or a sibling at the exact height).
+        face: Arc<FontFace>,
+        /// The glyph.
+        glyph: Glyph,
+    },
+    /// A derived glyph (§6.4.3 items 2–3, §6.4.4): coverage is downsampled (`kind`
+    /// [`SourceKind::Downsampled`]) or distance-derived (`kind` [`SourceKind::Distance`]) from
+    /// `face`'s glyph at derivation scale `k`, with the derived metrics `dm`.
+    Derived {
+        /// The source record the coverage is derived from.
+        face: Arc<FontFace>,
+        /// The source glyph.
+        glyph: Glyph,
+        /// The code unit (for the cache key; may be `?` after substitution, matching the glyph).
+        unit: u16,
+        /// Downsample or distance (the derivation scale `k` is recovered from the metrics).
+        kind: SourceKind,
+        /// The derived metrics (§6.4.4).
+        dm: GlyphMetrics,
+    },
+}
+
+/// One character resolved for the scaled path: its layout metrics and how it draws.
+#[derive(Debug, Clone)]
+pub(crate) struct Resolved {
+    pub a: i64,
+    pub w: i64,
+    pub b: i64,
+    pub line_height: i64,
+    pub baseline: i64,
+    pub draw: ResolvedDraw,
+}
+
+impl Resolved {
+    /// The layout metrics this resolution contributes (§6.4.5): layout never reads the glyph, so
+    /// it is carried only for the native draw.
+    fn to_metrics(&self) -> Metrics {
+        let glyph = match &self.draw {
+            ResolvedDraw::Native { glyph, .. } => Some(*glyph),
+            _ => None,
+        };
+        Metrics {
+            a: self.a,
+            w: self.w,
+            b: self.b,
+            line_height: self.line_height,
+            baseline: self.baseline,
+            glyph,
+        }
+    }
+}
+
+/// Resolves one character for the scaled path (`ui-scaling.md` §6.4.1–§6.4.4): picks the target
+/// height, the ladder source and, for a derived glyph, the derived metrics. Pure (no cache, no
+/// allocation of coverage); [`super::draw_scaled`] derives and caches the coverage.
+pub(crate) fn resolve_scaled(
+    c: &TextChar,
+    fonts: &[Option<Arc<FontFace>>],
+    ctx: &ScaleCtx<'_>,
+) -> Resolved {
+    let slot = usize::from(c.font);
+    let Some(slot_face) = fonts.get(slot).and_then(Option::as_ref) else {
+        // A slot without a font: the blank 1 × 1 glyph, line height 0, not drawn.
+        return Resolved {
+            a: 0,
+            w: 1,
+            b: 0,
+            line_height: 0,
+            baseline: 0,
+            draw: ResolvedDraw::None,
+        };
+    };
+    // The ladder: the supplied siblings, or the face standing alone (§6.4.3).
+    let single;
+    let ladder: &FontLadder = match ctx.ladders.get(slot) {
+        Some(l) if !l.is_empty() => l,
+        _ => {
+            single = FontLadder::single(Arc::clone(slot_face));
+            &single
+        }
+    };
+    let base_lh = slot_face.line_height_i32();
+    let t = target_height(base_lh, ctx.c, ctx.x);
+    let src = choose_glyph_source(&ladder.heights(), t);
+    let source_face = ladder
+        .face_at(src.source_height)
+        .cloned()
+        .unwrap_or_else(|| Arc::clone(slot_face));
+    let line_height = i64::from(source_face.line_height().min(255));
+    let baseline_face = i64::from(source_face.baseline().min(65_535));
+    match source_face.lookup(c.unit).glyph {
+        None => Resolved {
+            a: 0,
+            w: 1,
+            b: 0,
+            line_height,
+            baseline: baseline_face,
+            draw: ResolvedDraw::None,
+        },
+        Some(g) if src.kind == SourceKind::Exact => Resolved {
+            a: i64::from(g.left_bearing),
+            w: i64::from(g.width),
+            b: i64::from(g.right_bearing),
+            line_height,
+            baseline: baseline_face,
+            draw: ResolvedDraw::Native {
+                face: source_face,
+                glyph: g,
+            },
+        },
+        Some(g) => {
+            let sm = GlyphMetrics {
+                a: i32::from(g.left_bearing),
+                w: i32::from(g.width),
+                b: i32::from(g.right_bearing),
+                t: i32::from(g.top),
+                h: i32::from(g.height),
+                advance: i32::from(g.left_bearing)
+                    + i32::from(g.width)
+                    + i32::from(g.right_bearing),
+                line_height: source_face.line_height_i32(),
+                baseline: i32::try_from(source_face.baseline()).unwrap_or(i32::MAX),
+                outline_border: i32::try_from(source_face.borders()[0]).unwrap_or(i32::MAX),
+            };
+            let dm = derive_metrics(sm, src.k, t);
+            Resolved {
+                a: i64::from(dm.a),
+                w: i64::from(dm.w),
+                b: i64::from(dm.b),
+                line_height: i64::from(dm.line_height),
+                baseline: i64::from(dm.baseline),
+                draw: ResolvedDraw::Derived {
+                    face: source_face,
+                    glyph: g,
+                    unit: c.unit,
+                    kind: src.kind,
+                    dm,
+                },
+            }
+        }
     }
 }
 
@@ -570,6 +764,37 @@ pub fn layout(
     params: &LayoutParams,
     suffix: Option<&[TextChar]>,
 ) -> Result<TextLayout, TextError> {
+    layout_impl(chars, fonts, params, suffix, None)
+}
+
+/// Lays out a character list at a content scale (`ui-scaling.md` §6.4.5), choosing a crisp glyph
+/// size per font from the ladders in `scale`. At `scale.is_identity()` the result is byte-identical
+/// to [`layout`] (invariant I7). Pair it with [`super::draw_scaled`] using the same `scale`.
+///
+/// # Errors
+/// [`TextError::TextTooLong`] when text and suffix together exceed [`super::MAX_TEXT_UNITS`].
+pub fn layout_scaled(
+    chars: &[TextChar],
+    fonts: &[Option<Arc<FontFace>>],
+    params: &LayoutParams,
+    suffix: Option<&[TextChar]>,
+    scale: &ScaleCtx<'_>,
+) -> Result<TextLayout, TextError> {
+    let scale = if scale.is_identity() {
+        None
+    } else {
+        Some(scale)
+    };
+    layout_impl(chars, fonts, params, suffix, scale)
+}
+
+fn layout_impl(
+    chars: &[TextChar],
+    fonts: &[Option<Arc<FontFace>>],
+    params: &LayoutParams,
+    suffix: Option<&[TextChar]>,
+    scale: Option<&ScaleCtx<'_>>,
+) -> Result<TextLayout, TextError> {
     let total = chars.len() + suffix.map_or(0, <[TextChar]>::len);
     if total > MAX_TEXT_UNITS {
         return Err(TextError::TextTooLong(total));
@@ -590,7 +815,13 @@ pub fn layout(
     let (ew, eh) = (i64::from(params.width), i64::from(params.height));
 
     let prepare = |cs: &[TextChar]| {
-        let m: Vec<Metrics> = cs.iter().map(|c| metrics(c, fonts)).collect();
+        let m: Vec<Metrics> = cs
+            .iter()
+            .map(|c| match scale {
+                None => metrics(c, fonts),
+                Some(s) => resolve_scaled(c, fonts, s).to_metrics(),
+            })
+            .collect();
         let extra: Vec<i64> = cs
             .iter()
             .map(|c| if c.list_item { x_extra } else { 0 })

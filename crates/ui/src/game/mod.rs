@@ -60,6 +60,7 @@
 //! | [`p6vocab`] | labels of the P6 element IDs and states; Tessera's own progression IDs | naming notes |
 //! | [`crafting`] | the crafting panel, recipe page and crafting-trainer windows | `crafting-panels.md` §4–§8, §11 |
 //! | [`progression`] | the experience bar, level-up banner, trait panel and skill-training window (provisional) | decision 0037; `scenario-feed.md` §6.6 |
+//! | [`interface`] | Tessera's own Interface window: the UI-scale slider and Auto toggle, the safe-aspect choice, and the optional text-size, art-filter and window-scale controls | `ui-scaling.md` §7.2 |
 
 pub mod avatar;
 pub mod charvocab;
@@ -73,6 +74,7 @@ pub mod escape;
 pub mod examine;
 pub mod finder;
 pub mod hidewhen;
+pub mod interface;
 pub mod items;
 pub mod map;
 pub mod mapfallback;

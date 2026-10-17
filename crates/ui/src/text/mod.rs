@@ -43,16 +43,16 @@ mod fallback;
 mod layout;
 mod select;
 
-pub use atlas::{FontFace, FontId, GlyphLookup};
+pub use atlas::{FontFace, FontId, FontLadder, GlyphLookup};
 pub use chars::{CharListBuilder, SLOT_NORMAL, SLOT_TAG, TextChar};
-pub use draw::{BulletArt, DrawParams, TextOp, TextPaint, draw};
+pub use draw::{BulletArt, DrawParams, TextOp, TextPaint, draw, draw_scaled};
 pub use fallback::{
     DEFAULT_RANGES, MAX_FALLBACK_PX, MIN_FALLBACK_PX, TesseraFont, bundled_font_bytes,
 };
 pub use layout::{
     CharPlace, JUSTIFY_BOTTOM, JUSTIFY_CENTER, JUSTIFY_LEFT, JUSTIFY_RIGHT, JUSTIFY_TOP,
-    LayoutParams, LineBox, Margins, TextLayout, Truncation, layout, leading_factor, list_extra,
-    mouse_to_text, underline_thickness,
+    LayoutParams, LineBox, Margins, ScaleCtx, TextLayout, Truncation, layout, layout_scaled,
+    leading_factor, list_extra, mouse_to_text, underline_thickness,
 };
 pub use select::{FontIndexSession, FontProps, FontSlots, FontStruct, SlotSource, StructMember};
 

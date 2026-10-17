@@ -7,6 +7,7 @@
 //! floats can change results by one pixel); integer sums use 64 bits and saturate.
 
 use crate::geom::{IBox, half, sat, trunc_f32};
+use crate::scaling::degenerate_guard;
 
 /// Edge modes (`ui-layout.md` §5.8).
 pub mod edge {
@@ -182,15 +183,18 @@ pub fn runtime(inp: &RuntimeInput) -> IBox {
         r = r.min(nw);
         b = b.min(nh);
     }
-    // Tessera fallback for a degenerate box (`ui-layout.md` §8.4 step 6 OPEN, implementer
-    // note): when the parent is far smaller than the design parent, an edge in SAME or
-    // OPPOSITE mode can carry the far edge past the near edge and give a non-positive width
-    // or height (the loadscreen meter and label, `travel-windows.md` §5.2). Such a box draws
-    // nothing. Rather than drop the element, keep its design extent on each degenerate axis
-    // and shift the box so it lies inside the parent's current box (0 .. Nw − 1, 0 .. Nh −
-    // 1). Non-degenerate boxes (including those that overflow the parent) are left untouched.
-    if sub(r, l) < 0 {
-        let ew = w.clamp(1, nw.max(1));
+    // Degenerate-box guard (`ui-scaling.md` §5.7, §5.9 via `scaling::degenerate_guard`): this
+    // replaces the `ui-layout.md` §8.4 step 6 stop-gap. When steps 2–5 give a width or height
+    // below 1 UI unit — as a SAME/OPPOSITE far edge carried past the near edge can when the
+    // parent is far smaller than the design parent (the loadscreen meter and label,
+    // `travel-windows.md` §5.2) — that axis takes the element's **design** extent reduced to
+    // the box it is laid out in (here *N*'s width/height), and the box is shifted inside that
+    // box (0 .. Nw − 1, 0 .. Nh − 1). A zero design or box extent leaves the element **empty
+    // by design** (extent 0), not degenerate. A box of positive size, even one overflowing the
+    // parent, is left untouched.
+    let cw = add(sub(r, l), 1);
+    if cw < 1 {
+        let (ew, _empty) = degenerate_guard(cw, w, nw);
         r = add(l, sub(ew, 1));
         if r > sub(nw, 1) {
             let s = sub(r, sub(nw, 1));
@@ -202,8 +206,9 @@ pub fn runtime(inp: &RuntimeInput) -> IBox {
             l = 0;
         }
     }
-    if sub(b, t) < 0 {
-        let eh = h.clamp(1, nh.max(1));
+    let ch = add(sub(b, t), 1);
+    if ch < 1 {
+        let (eh, _empty) = degenerate_guard(ch, h, nh);
         b = add(t, sub(eh, 1));
         if b > sub(nh, 1) {
             let s = sub(b, sub(nh, 1));

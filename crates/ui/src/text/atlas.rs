@@ -21,6 +21,11 @@ const ATLAS_CATEGORY: u32 = 13;
 /// Marks a lookup-table slot with no glyph.
 const NONE: u32 = u32::MAX;
 
+/// Largest source coverage box this module copies out of an atlas (`ui-scaling.md` §6.4.4): a
+/// bound so a hostile outline border on a glyph cannot drive an unbounded allocation. Far above
+/// any real glyph box (a 256-pixel glyph with a 256-pixel border on every side is well under it).
+const MAX_COVER_TEXELS: usize = 1 << 22;
+
 /// Where a [`FontFace`] comes from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum FontId {
@@ -344,6 +349,144 @@ impl FontFace {
             + self.background.as_ref().map_or(0, |b| b.data().len())
             + self.glyphs.len() * std::mem::size_of::<Glyph>()
             + self.table.len() * 4
+    }
+
+    /// Line height as a signed value, for the scaling decisions of `ui-scaling.md` §6.4
+    /// (`target_height`, the ladder). Saturated to [`i32::MAX`].
+    #[must_use]
+    pub fn line_height_i32(&self) -> i32 {
+        i32::try_from(self.line_height).unwrap_or(i32::MAX)
+    }
+
+    /// A 32-bit key identifying this face for the derived-glyph cache (`ui-scaling.md` §6.5
+    /// [`crate::scaling::GlyphKey`]). A data record returns its own DID; a Tessera face folds
+    /// its (file, code-set, pixel-size) triple into 32 bits.
+    ///
+    /// > **OPEN (implementer):** `ui-scaling.md` §6.5 keys the derived-glyph cache on the
+    /// > "font DID", but Tessera's own fallback faces (`fonts.md` §11 item 2) have no DID. This
+    /// > folds their identity into a `u32`, so two distinct Tessera faces could in principle
+    /// > collide and serve one another's derived glyph. Data records (the common case) never
+    /// > collide. Confirm the intended key for DID-less faces, or key the cache on a wider id.
+    #[must_use]
+    pub(crate) fn cache_did(&self) -> u32 {
+        match self.id {
+            FontId::Data(did) => did,
+            FontId::Tessera { font, ranges, px } => {
+                let h = font ^ ranges ^ u64::from(px);
+                // Fold to 32 bits; set the top bit so a Tessera face cannot alias a real DID
+                // (data DIDs have prefix 0x42.. and never set bit 31 of the low word here).
+                ((h as u32) ^ ((h >> 32) as u32)) | 0x8000_0000
+            }
+        }
+    }
+
+    /// Copies a glyph's source coverage box out of an atlas, for derivation (`ui-scaling.md`
+    /// §6.4.4). With `outline` false it is the fill box `W × H` at the glyph's `(X, Y)` in the
+    /// foreground atlas; with `outline` true it is the bordered box `(W + 2·bx) × (H + 2·by)` at
+    /// `(X − bx, Y − by)` in the background atlas (`fonts.md` §8.2). Coverage outside the atlas
+    /// reads 0 ([`CoverageMap::at`]). Returns the bytes (row-major) and the box size.
+    ///
+    /// `None` when `outline` is set but the face has no background atlas, when the box is empty,
+    /// or when a hostile border would make the box exceed [`MAX_COVER_TEXELS`].
+    #[must_use]
+    pub(crate) fn cover_box(&self, g: &Glyph, outline: bool) -> Option<(Vec<u8>, usize, usize)> {
+        let (map, x0, y0, bw, bh) = if outline {
+            let bg = self.background.as_ref()?;
+            let bx = i64::from(self.border_x);
+            let by = i64::from(self.border_y);
+            (
+                bg.as_ref(),
+                i64::from(g.x) - bx,
+                i64::from(g.y) - by,
+                i64::from(g.width) + 2 * bx,
+                i64::from(g.height) + 2 * by,
+            )
+        } else {
+            (
+                self.foreground.as_ref(),
+                i64::from(g.x),
+                i64::from(g.y),
+                i64::from(g.width),
+                i64::from(g.height),
+            )
+        };
+        if bw <= 0 || bh <= 0 {
+            return None;
+        }
+        let (w, h) = (usize::try_from(bw).ok()?, usize::try_from(bh).ok()?);
+        if w.checked_mul(h)? > MAX_COVER_TEXELS {
+            return None;
+        }
+        let mut out = vec![0u8; w * h];
+        for yy in 0..h {
+            let row_y = y0.saturating_add(yy as i64);
+            for xx in 0..w {
+                let px = x0.saturating_add(xx as i64);
+                // `at` clamps to 0 outside the atlas; the coordinates stay in i32 range for any
+                // real atlas, and saturation keeps a hostile position from wrapping.
+                out[yy * w + xx] = map.at(
+                    i32::try_from(px).unwrap_or(i32::MAX),
+                    i32::try_from(row_y).unwrap_or(i32::MAX),
+                );
+            }
+        }
+        Some((out, w, h))
+    }
+}
+
+/// A font *ladder* for crisp scaling (`ui-scaling.md` §6.4.2): the sibling records of one
+/// logical font that differ only in size, held as faces in ascending line-height order. The
+/// scaled text path chooses a source record from the ladder for a target height
+/// ([`crate::scaling::choose_glyph_source`]). A font that stands alone (no siblings, or a DID
+/// the font enum does not name, §6.4.3) is a one-face ladder.
+#[derive(Clone, Default)]
+pub struct FontLadder {
+    faces: Vec<Arc<FontFace>>,
+}
+
+impl std::fmt::Debug for FontLadder {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("FontLadder")
+            .field("heights", &self.heights())
+            .finish()
+    }
+}
+
+impl FontLadder {
+    /// A ladder from a set of sibling faces; sorted by line height (ascending). Duplicates and
+    /// unsorted input are accepted.
+    #[must_use]
+    pub fn new(mut faces: Vec<Arc<FontFace>>) -> Self {
+        faces.sort_by_key(|f| f.line_height());
+        Self { faces }
+    }
+
+    /// A one-face ladder (a font that stands alone, §6.4.3).
+    #[must_use]
+    pub fn single(face: Arc<FontFace>) -> Self {
+        Self { faces: vec![face] }
+    }
+
+    /// Whether the ladder holds no face.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.faces.is_empty()
+    }
+
+    /// The line heights of the ladder's records, ascending, for
+    /// [`crate::scaling::choose_glyph_source`].
+    #[must_use]
+    pub fn heights(&self) -> Vec<i32> {
+        self.faces.iter().map(|f| f.line_height_i32()).collect()
+    }
+
+    /// The face whose line height is `line_height`, if any (the record
+    /// [`crate::scaling::choose_glyph_source`] picked).
+    #[must_use]
+    pub fn face_at(&self, line_height: i32) -> Option<&Arc<FontFace>> {
+        self.faces
+            .iter()
+            .find(|f| f.line_height_i32() == line_height)
     }
 }
 

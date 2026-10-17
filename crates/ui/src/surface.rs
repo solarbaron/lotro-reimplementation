@@ -28,6 +28,124 @@ use crate::text::DrawParams;
 use crate::tree::ElementKey;
 use crate::ui::{Ui, object_mode};
 
+/// The mapping from a surface owner's own (owner-relative, UI-unit) layout coordinates to its
+/// canvas pixels (`ui-scaling.md` §6.1 canvas sizes, §6.2 element boxes). The surface's canvas
+/// is allocated at this physical resolution and composed 1 : 1 onto its physical box (§6.6), so
+/// drawing is crisp instead of GPU-upscaled.
+///
+/// At the **identity** — no UI screen, or `Se` = 1 with no node scale, which is every surface
+/// built before scaling is wired in and the C2/C4/C7/C9/C10/C12 configurations — the map is
+/// `x ↦ x`, the content scale is `(1, 1)`, and every produced box and canvas size equals
+/// today's, so all existing goldens and paint tests stay byte-identical (invariant I2).
+#[derive(Debug, Clone, Copy)]
+struct CanvasMap {
+    screen: Option<crate::scaling::UiScreen>,
+    /// The owner's displayed top-left (UI units) and node scale `m`.
+    dl: f64,
+    dt: f64,
+    mx: f64,
+    my: f64,
+    /// The owner's physical origin `(Ex(dl), Ey(dt))`, subtracted so the owner maps to (0, 0).
+    ox: i32,
+    oy: i32,
+}
+
+impl CanvasMap {
+    /// The byte-exact identity (`x ↦ x`).
+    fn identity() -> Self {
+        Self {
+            screen: None,
+            dl: 0.0,
+            dt: 0.0,
+            mx: 1.0,
+            my: 1.0,
+            ox: 0,
+            oy: 0,
+        }
+    }
+
+    /// Whether a non-identity mapping is in force (a UI screen is set). At the identity every
+    /// method below is `x ↦ x` / `(1, 1)` and callers take the current byte-exact paths.
+    fn active(&self) -> bool {
+        self.screen.is_some()
+    }
+
+    /// Maps an owner-relative layout x coordinate to a canvas pixel column (`ui-scaling.md`
+    /// §3.6, §6.2): `Ex(dl + x·mx) − ox`.
+    fn cx(&self, x: i32) -> i32 {
+        match self.screen {
+            Some(f) => f.edge_x(self.dl + f64::from(x) * self.mx) - self.ox,
+            None => x,
+        }
+    }
+
+    /// Maps an owner-relative layout y coordinate to a canvas pixel row.
+    fn cy(&self, y: i32) -> i32 {
+        match self.screen {
+            Some(f) => f.edge_y(self.dt + f64::from(y) * self.my) - self.oy,
+            None => y,
+        }
+    }
+
+    /// Maps an owner-relative **layout** inclusive box to its canvas [`Rect`] (half-open, as
+    /// [`IBox::to_rect`]).
+    fn rect(&self, b: IBox) -> Rect {
+        if b.is_empty() {
+            return Rect::EMPTY;
+        }
+        if !self.active() {
+            return b.to_rect();
+        }
+        let r = i64::from(b.r).saturating_add(1);
+        let bot = i64::from(b.b).saturating_add(1);
+        Rect::new(
+            self.cx(b.l),
+            self.cy(b.t),
+            self.cx(clamp_i32(r)),
+            self.cy(clamp_i32(bot)),
+        )
+    }
+
+    /// Maps a half-open [`Rect`] given in owner-relative layout coordinates to canvas pixels.
+    fn rect_r(&self, r: Rect) -> Rect {
+        if !self.active() || r.is_empty() {
+            return r;
+        }
+        Rect::new(self.cx(r.x0), self.cy(r.y0), self.cx(r.x1), self.cy(r.y1))
+    }
+
+    /// Maps an owner-relative layout point (an image/overlay anchor) to a canvas pixel.
+    fn point(&self, x: i32, y: i32) -> [i32; 2] {
+        [self.cx(x), self.cy(y)]
+    }
+
+    /// The content scale `c` = (`mx·Kx`, `my·Ky`) (`ui-scaling.md` §3.4, §6.1): canvas pixels
+    /// per owner UI unit, used to resample image and glyph sources in the painter.
+    fn content_scale(&self) -> [f64; 2] {
+        match self.screen {
+            Some(f) => [self.mx * f.kx(), self.my * f.ky()],
+            None => [1.0, 1.0],
+        }
+    }
+
+    /// Scales a glyph box size (native coverage cell) to its canvas size by the content scale.
+    fn scale_size(&self, w: u32, h: u32) -> [u32; 2] {
+        if !self.active() {
+            return [w, h];
+        }
+        let c = self.content_scale();
+        let s = |v: u32, k: f64| -> u32 {
+            (f64::from(v) * k).round().clamp(0.0, f64::from(u32::MAX)) as u32
+        };
+        [s(w, c[0]), s(h, c[1])]
+    }
+}
+
+/// Clamps an `i64` coordinate into `i32` range (bounded canvas arithmetic, §7 hostile input).
+fn clamp_i32(v: i64) -> i32 {
+    v.clamp(i64::from(i32::MIN), i64::from(i32::MAX)) as i32
+}
+
 /// The geometry of a group as last swapped: each surface's displayed box relative to the
 /// root's displayed origin, and its canvas size.
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -106,6 +224,10 @@ pub(crate) struct Painter {
 /// Where the damage walk reaches an element: its box in canvas coordinates, its parent's
 /// clip and its depth below the surface owner; `None` when the walk does not draw it.
 type WalkState = Option<(IBox, IBox, usize)>;
+
+/// A [`Ui::light_sync`] start: a recorded element and, when it is drawn, the surface that draws
+/// it, that surface's owner→canvas map ([`CanvasMap`], `ui-scaling.md` §6.2) and the walk state.
+type LightStart = (ElementKey, Option<(SurfaceId, CanvasMap, WalkState)>);
 
 /// What [`Ui::decide_surfaces`] finds.
 #[derive(Debug, Default)]
@@ -492,14 +614,95 @@ impl Ui {
         out
     }
 
-    /// The canvas size of a surface (decision 0015 §2.1).
+    /// The canvas size of a surface (decision 0015 §2.1, `ui-scaling.md` §6.1): the owner's
+    /// **physical box** in window pixels, so the canvas is painted at the content scale and
+    /// composed 1 : 1 (§6.6). At the identity (no UI screen, or `Se` = 1 with no node scale)
+    /// this is the owner's layout size unchanged (invariant I2). Clamped to the device's largest
+    /// texture dimension (and so to [`crate::scaling::MAX_WINDOW_PX`], §6.1).
     fn canvas_size(&self, k: ElementKey) -> [u32; 2] {
         let b = self.layout_box(k).unwrap_or_default();
+        let m = self.canvas_map(k);
+        let r = m.rect(IBox::from_xywh(0, 0, b.w(), b.h()));
         let max = self.painter.limits.max_surface_dim.max(1);
-        [
-            (b.w().max(0) as u32).min(max),
-            (b.h().max(0) as u32).min(max),
-        ]
+        [r.width().min(max), r.height().min(max)]
+    }
+
+    /// The owner→canvas mapping of a surface (`ui-scaling.md` §6.1, §6.2). It is the identity
+    /// when no UI screen is set ([`Ui::set_ui_screen`]) and, in effect, when `Se` = 1 with no
+    /// node scale on or above the owner (then `Kx` = `Ky` = 1 and `m` = 1, so every coordinate
+    /// maps to itself).
+    fn canvas_map(&self, k: ElementKey) -> CanvasMap {
+        let Some(screen) = self.ui_screen else {
+            return CanvasMap::identity();
+        };
+        let d = self.displayed_box(k);
+        let (mx, my, _) = self.node_scale_at_or_above(k);
+        CanvasMap {
+            screen: Some(screen),
+            dl: f64::from(d.l),
+            dt: f64::from(d.t),
+            mx: f64::from(mx),
+            my: f64::from(my),
+            ox: screen.edge_x(f64::from(d.l)),
+            oy: screen.edge_y(f64::from(d.t)),
+        }
+    }
+
+    /// Maps one cached paint operation from a surface's owner-relative layout coordinates to its
+    /// canvas pixels (`ui-scaling.md` §6.2). Image and glyph **sources** stay native (the
+    /// painter resamples them by the content scale); only geometry is mapped. A [`PaintOp::Nested`]
+    /// marker's coverage is already in canvas pixels (`coverage_region`), so it is kept as is. At
+    /// the identity the op is returned unchanged (invariant I2).
+    fn map_paint_op(op: &PaintOp, m: &CanvasMap) -> PaintOp {
+        if !m.active() {
+            return op.clone();
+        }
+        match op {
+            PaintOp::Image(l) => PaintOp::Image(ImageLayer {
+                rect: m.rect_r(l.rect),
+                clip: m.rect_r(l.clip),
+                anchor: m.point(l.anchor[0], l.anchor[1]),
+                image: l.image.clone(),
+                op: l.op,
+                opacity: l.opacity,
+            }),
+            PaintOp::Overlay(l) => PaintOp::Overlay(OverlayLayer {
+                rect: m.rect_r(l.rect),
+                clip: m.rect_r(l.clip),
+                colour: l.colour,
+                op: l.op,
+                image: l
+                    .image
+                    .as_ref()
+                    .map(|(img, a)| (img.clone(), m.point(a[0], a[1]))),
+            }),
+            PaintOp::Fill(f) => PaintOp::Fill(crate::paint::FillRect {
+                rect: m.rect_r(f.rect),
+                clip: m.rect_r(f.clip),
+                colour: f.colour,
+            }),
+            PaintOp::Text(run) => {
+                let glyphs = run
+                    .glyphs
+                    .iter()
+                    .map(|g| crate::paint::GlyphBox {
+                        dest: m.point(g.dest[0], g.dest[1]),
+                        size: m.scale_size(g.size[0], g.size[1]),
+                        src: g.src,
+                    })
+                    .collect();
+                PaintOp::Text(Arc::new(crate::paint::GlyphRun {
+                    clip: m.rect_r(run.clip),
+                    colour: run.colour,
+                    coverage: run.coverage.clone(),
+                    glyphs,
+                }))
+            }
+            PaintOp::Nested { entry, coverage } => PaintOp::Nested {
+                entry: *entry,
+                coverage: *coverage,
+            },
+        }
     }
 
     fn to_paint_rect(b: &IBox) -> Rect {
@@ -512,6 +715,7 @@ impl Ui {
         let recs = std::mem::take(&mut self.painter.recs);
         let mut list = DisplayList::new();
         let mut pending = false;
+        let m = self.canvas_map(owner);
         if let Some(b) = self.layout_box(owner) {
             let root_box = IBox::from_xywh(0, 0, b.w(), b.h());
             self.emit_rec(
@@ -523,6 +727,7 @@ impl Ui {
                 &mut list,
                 &mut pending,
                 0,
+                &m,
             );
         }
         self.painter.recs = recs;
@@ -540,6 +745,7 @@ impl Ui {
         list: &mut DisplayList,
         pending: &mut bool,
         depth: usize,
+        m: &CanvasMap,
     ) {
         if depth > crate::ui::MAX_TREE_DEPTH + 2 {
             return;
@@ -556,6 +762,7 @@ impl Ui {
                 .and_then(|o| o.coverage.iter().find(|(id, _)| *id == r.id.0))
                 .map(|(_, c)| *c)
             {
+                // `cov` is already in canvas pixels (`coverage_region`), so it is not mapped.
                 let _ = list.push(PaintOp::Nested {
                     entry: r.id.0,
                     coverage: cov,
@@ -570,15 +777,15 @@ impl Ui {
         let after = e.draw_after_children;
         let children = e.children.clone();
         if after {
-            self.emit_children(owner, &children, bx, clip, recs, list, pending, depth);
-            self.emit_own(k, bx, clip, list, pending);
+            self.emit_children(owner, &children, bx, clip, recs, list, pending, depth, m);
+            self.emit_own(k, bx, clip, list, pending, m);
         } else {
-            self.emit_own(k, bx, clip, list, pending);
-            self.emit_external(k, bx, recs, owner, list);
-            self.emit_children(owner, &children, bx, clip, recs, list, pending, depth);
+            self.emit_own(k, bx, clip, list, pending, m);
+            self.emit_external(k, bx, recs, owner, list, m);
+            self.emit_children(owner, &children, bx, clip, recs, list, pending, depth, m);
         }
         if after {
-            self.emit_external(k, bx, recs, owner, list);
+            self.emit_external(k, bx, recs, owner, list, m);
         }
     }
 
@@ -593,11 +800,22 @@ impl Ui {
         list: &mut DisplayList,
         pending: &mut bool,
         depth: usize,
+        m: &CanvasMap,
     ) {
         for c in children {
             if let Some(cb) = self.layout_box(*c) {
                 let child_box = cb.offset(bx.l, bx.t);
-                self.emit_rec(owner, *c, child_box, clip, recs, list, pending, depth + 1);
+                self.emit_rec(
+                    owner,
+                    *c,
+                    child_box,
+                    clip,
+                    recs,
+                    list,
+                    pending,
+                    depth + 1,
+                    m,
+                );
             }
         }
     }
@@ -609,6 +827,7 @@ impl Ui {
         recs: &BTreeMap<ElementKey, SurfaceRec>,
         owner: ElementKey,
         list: &mut DisplayList,
+        m: &CanvasMap,
     ) {
         if let Some(id) = self.painter.external.get(&k).copied() {
             let entry = (id & 0xFFFF_FFFF) as u32 | 0x8000_0000;
@@ -616,7 +835,7 @@ impl Ui {
             let _ = owner;
             let _ = list.push(PaintOp::Nested {
                 entry,
-                coverage: bx.to_rect(),
+                coverage: m.rect(bx),
             });
         }
     }
@@ -650,14 +869,18 @@ impl Ui {
         clip: IBox,
         list: &mut DisplayList,
         pending: &mut bool,
+        m: &CanvasMap,
     ) {
         let Some(e) = self.el(k) else { return };
         let base = e.base.clone();
         let overlay = e.overlay.clone();
         let (ox, oy) = e.image_offset;
-        let rect = Self::to_paint_rect(&bx);
-        let cl = Self::to_paint_rect(&clip);
-        let anchor = [bx.l.saturating_add(ox), bx.t.saturating_add(oy)];
+        // Geometry is mapped to canvas pixels (`ui-scaling.md` §6.2); image sources stay
+        // native (the painter resamples them by the content scale). At the identity the map is
+        // `x ↦ x`, so these equal `to_paint_rect` and the layout anchor (invariant I2).
+        let rect = m.rect(bx);
+        let cl = m.rect(clip);
+        let anchor = m.point(bx.l.saturating_add(ox), bx.t.saturating_add(oy));
         let mut waiting = false;
         if let Some(b) = base
             && let Some(op) = CompositeOp::from_draw_mode(b.draw_mode)
@@ -705,18 +928,21 @@ impl Ui {
                 .map(|s| s.offset)
                 .unwrap_or((0, 0));
             let origin = [bx.l.saturating_sub(sx), bx.t.saturating_sub(sy)];
+            // Text is laid out and cached in the surface's **layout** coordinates (so the cache
+            // is reused across scales); the ops are mapped to canvas pixels on push (§6.2).
+            let cl_layout = Self::to_paint_rect(&clip);
             let cached = self.painter.text_runs.get(&k).filter(|c| {
                 !self.painter.always_full
                     && Arc::ptr_eq(&c.prepared, &pt)
                     && c.origin == origin
-                    && c.clip == cl
+                    && c.clip == cl_layout
                     && c.outline == pt.outline
                     && c.outline_colour == pt.outline_colour
             });
             if cached.is_none() {
                 let params = DrawParams {
                     origin,
-                    clip: cl,
+                    clip: cl_layout,
                     outline: pt.outline,
                     outline_colour: pt.outline_colour,
                     bullet: None,
@@ -731,7 +957,7 @@ impl Ui {
                     TextRuns {
                         prepared: Arc::clone(&pt),
                         origin,
-                        clip: cl,
+                        clip: cl_layout,
                         outline: pt.outline,
                         outline_colour: pt.outline_colour,
                         ops,
@@ -741,8 +967,16 @@ impl Ui {
             if let Some(ops) = self.painter.text_runs.get(&k).and_then(|c| c.ops.as_ref())
                 && list.len().saturating_add(ops.len()) <= crate::paint::MAX_OPS
             {
-                for op in ops {
-                    let _ = list.push(op.clone());
+                if m.active() {
+                    let mapped: Vec<PaintOp> =
+                        ops.iter().map(|op| Self::map_paint_op(op, m)).collect();
+                    for op in mapped {
+                        let _ = list.push(op);
+                    }
+                } else {
+                    for op in ops {
+                        let _ = list.push(op.clone());
+                    }
                 }
             }
         }
@@ -926,6 +1160,12 @@ impl Ui {
                 r.coverage = cov;
             }
         }
+        // The per-surface content scale `c` the painter resamples by (`ui-scaling.md` §6.1):
+        // the owner's content scale, `(1, 1)` at the identity so the crisp native paths run.
+        for (k, r) in &new_recs {
+            let c = self.canvas_map(*k).content_scale();
+            self.painter.scheduler.set_surface_scale(r.id, c);
+        }
         // Layout changes and damage.
         let mut changed_groups: BTreeMap<GroupId, Vec<SurfaceId>> = BTreeMap::new();
         for (k, r) in &new_recs {
@@ -1043,7 +1283,7 @@ impl Ui {
         let mut below = 0usize;
         // Where each walk starts: the element, and the surface that draws it with the walk
         // state the full walk gives it, or `None` when it is not drawn.
-        let mut starts: Vec<(ElementKey, Option<(SurfaceId, WalkState)>)> = Vec::new();
+        let mut starts: Vec<LightStart> = Vec::new();
         for &k in &recorded {
             if self.is_structural(k) {
                 return false;
@@ -1083,7 +1323,8 @@ impl Ui {
             }
             let drawn = owner.and_then(|o| {
                 let id = self.painter.recs.get(&o)?.id;
-                Some((id, self.walk_state_below(o, &path, k)))
+                let m = self.canvas_map(o);
+                Some((id, m, self.walk_state_below(o, &path, k)))
             });
             starts.push((k, drawn));
         }
@@ -1104,7 +1345,7 @@ impl Ui {
         let mut walk: Vec<(ElementKey, WalkState)> = Vec::new();
         let mut cleaned: Vec<ElementKey> = Vec::new();
         for (k, drawn) in starts {
-            let Some((owner_id, start @ Some(_))) = drawn else {
+            let Some((owner_id, canvas_map, start @ Some(_))) = drawn else {
                 walk.clear();
                 walk.push((k, None));
                 self.retire_walk(&mut walk, &mut painted);
@@ -1123,7 +1364,7 @@ impl Ui {
                 });
                 match drawn {
                     Some((bx, clip, depth)) => {
-                        let area = clip.to_rect();
+                        let area = canvas_map.rect(clip);
                         match painted.get(n) {
                             Some((s, a)) if s == owner_id && a == area && !e.paint_dirty => {}
                             Some((s, a)) => {
@@ -1231,6 +1472,10 @@ impl Ui {
                 continue;
             };
             let root_box = IBox::from_xywh(0, 0, b.w(), b.h());
+            // Damage is in canvas pixels (`ui-scaling.md` §6.2), mapped by the same owner→canvas
+            // transform the display list uses, so damage aligns with painting at every scale. At
+            // the identity this is `clip.to_rect()` (invariant I2).
+            let m = self.canvas_map(*owner);
             let mut walked = 0usize;
             stack.clear();
             stack.push((*owner, root_box, root_box, 0));
@@ -1251,7 +1496,7 @@ impl Ui {
                     continue;
                 }
                 walked += 1;
-                let area = clip.to_rect();
+                let area = m.rect(clip);
                 let dirty = e.paint_dirty;
                 match painted.get(k) {
                     Some((s, a)) if s == r.id && a == area && !dirty => {}

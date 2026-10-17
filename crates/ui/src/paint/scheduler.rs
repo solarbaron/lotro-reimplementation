@@ -283,6 +283,9 @@ pub struct Scheduler<G> {
     limits: PaintLimits,
     surfaces: BTreeMap<SurfaceId, SurfaceState>,
     groups: BTreeMap<GroupId, GroupState<G>>,
+    /// Per-surface content scale `c` (`ui-scaling.md` §6.1), applied to the surface's
+    /// [`super::CanvasSet`] when a job starts. Absent means `(1.0, 1.0)` (the crisp identity).
+    surface_scale: BTreeMap<SurfaceId, [f64; 2]>,
     pending_ops: Vec<GpuOp>,
     next_order: u64,
     next_gen: u64,
@@ -314,6 +317,7 @@ impl<G> Scheduler<G> {
         Self {
             limits,
             surfaces: BTreeMap::new(),
+            surface_scale: BTreeMap::new(),
             groups: BTreeMap::new(),
             pending_ops: Vec::new(),
             next_order: 0,
@@ -391,6 +395,7 @@ impl<G> Scheduler<G> {
     /// Releases a surface (hidden, or its element destroyed): its canvases go now, its
     /// textures are destroyed by the next frame's operations.
     pub fn release_surface(&mut self, id: SurfaceId) {
+        self.surface_scale.remove(&id);
         let Some(s) = self.surfaces.remove(&id) else {
             return;
         };
@@ -415,6 +420,17 @@ impl<G> Scheduler<G> {
             if let Some((_, m)) = &mut g.pending {
                 m.remove(&id);
             }
+        }
+    }
+
+    /// Sets a surface's content scale `c` (`ui-scaling.md` §6.1), applied to its
+    /// [`super::CanvasSet`] whenever a paint job starts. `(1.0, 1.0)` (the default) keeps the
+    /// byte-exact crisp identity path. The UI sets it from the surface's UI-screen mapping.
+    pub fn set_surface_scale(&mut self, id: SurfaceId, scale: [f64; 2]) {
+        if scale == [1.0, 1.0] {
+            self.surface_scale.remove(&id);
+        } else {
+            self.surface_scale.insert(id, scale);
         }
     }
 
@@ -713,6 +729,7 @@ impl<G> Scheduler<G> {
             };
             let order = self.next_order;
             self.next_order += 1;
+            let surface_scale = self.surface_scale.get(&id).copied().unwrap_or([1.0, 1.0]);
             let Some(s) = self.surfaces.get_mut(&id) else {
                 continue;
             };
@@ -774,6 +791,7 @@ impl<G> Scheduler<G> {
                 None => s.damage.take_merged(snap.size),
             };
             if let Some(c) = &mut s.canvases {
+                c.set_scale(surface_scale);
                 c.retain_nested(&snap.list);
             }
             s.coverage = snap.list.nested().collect();

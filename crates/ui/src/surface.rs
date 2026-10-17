@@ -1378,7 +1378,10 @@ impl Ui {
                     Addressing::Fit
                 };
                 let rotation = e.rotation;
-                let mut n = CompNode::new(r.id, parent_idx, displayed);
+                // The destination is the surface's physical box (`ui-scaling.md` §3.6, §6.6):
+                // the canvas (painted in UI units) is composed onto it, 1 : 1 at `Se` = 1
+                // (invariant I2) and GPU-scaled with `ui_scale_filter` at other scales.
+                let mut n = CompNode::new(r.id, parent_idx, self.to_physical_rect(displayed));
                 n.window = e.root_panel;
                 n.content = NodeContent::Canvas;
                 n.shown = shown;
@@ -1392,7 +1395,11 @@ impl Ui {
                 index.insert(k, nodes.len());
                 nodes.push(n);
             } else if window_without {
-                let mut n = CompNode::new(SurfaceId(0), parent_idx, displayed_now);
+                let mut n = CompNode::new(
+                    SurfaceId(0),
+                    parent_idx,
+                    self.to_physical_rect(displayed_now),
+                );
                 n.window = true;
                 n.content = NodeContent::None;
                 n.shown = displayed_flag;
@@ -1402,7 +1409,11 @@ impl Ui {
             }
             if let Some(id) = ext {
                 let entry = (id & 0xFFFF_FFFF) as u32 | 0x8000_0000;
-                let mut n = CompNode::new(SurfaceId(entry), own_idx, displayed_now);
+                let mut n = CompNode::new(
+                    SurfaceId(entry),
+                    own_idx,
+                    self.to_physical_rect(displayed_now),
+                );
                 n.content = NodeContent::External(id);
                 n.shown = displayed_flag;
                 n.canvas = self.canvas_size(k);

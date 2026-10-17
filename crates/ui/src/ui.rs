@@ -139,6 +139,14 @@ pub struct Ui {
     /// Procedural images of the fallback looks (`game::combat::look`), by path; bounded.
     pub(crate) procedural:
         std::collections::HashMap<String, Arc<tessera_material::ui_image::UiImage>>,
+    /// The current UI screen *F* (`ui-scaling.md` §3.2): the window's physical size, the
+    /// effective scale and the axis factors. `None` is the identity (`Se` = 1, one UI unit =
+    /// one physical pixel, the screen root fills the window), so the UI behaves exactly as it
+    /// did before scaling was wired in. The UI host sets it with [`Ui::set_ui_screen`].
+    pub(crate) ui_screen: Option<crate::scaling::UiScreen>,
+    /// The safe area *A* (`ui-scaling.md` §5.1), in UI units relative to *F*. `None` is the
+    /// identity (*A* = *F*).
+    pub(crate) safe_area: Option<crate::scaling::DBox>,
 }
 
 impl std::fmt::Debug for Ui {
@@ -214,6 +222,8 @@ impl Ui {
             build_budget: MAX_BUILD_ELEMENTS,
             build_depth: 0,
             procedural: std::collections::HashMap::new(),
+            ui_screen: None,
+            safe_area: None,
         }
     }
 

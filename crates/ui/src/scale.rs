@@ -172,4 +172,74 @@ impl Ui {
         self.input.hover_dirty = true;
         self.choose_cursor();
     }
+
+    /// Sets the current UI screen *F* and safe area *A* (`ui-scaling.md` §3.2, §5.1), applied
+    /// live. The UI host computes `screen` from the window's inner physical size and the
+    /// effective scale ([`crate::scaling::effective_scale`], [`crate::scaling::UiScreen::new`])
+    /// and `safe` from [`crate::scaling::safe_area`]; this routine resizes the screen root to
+    /// *F*'s UI-unit size (`Wu` × `Hu`), so every root panel is laid out again in UI units
+    /// (the screen-size path of `ui-layout.md` §8.5 and `ui-behaviour.md` §9.4), and records
+    /// the axis factors (`Kx`, `Ky`) used to place every surface on its physical box at
+    /// composition (§3.6, §6.6).
+    ///
+    /// Before any call the UI is at the **identity** (`Se` = 1, *A* = *F* = the screen size
+    /// passed to [`Ui::new`]), so existing behaviour and goldens are byte-identical (invariant
+    /// I2). At `Se` = 1 the axis factors are 1 and the pixel-centre mapping is `x ↦ x`, so the
+    /// identity holds for a real `UiScreen` too (configurations C2, C4, C7, C9, C10, C12).
+    ///
+    /// A window with a zero side has no screen (`ui-scaling.md` §3.2): the host passes no
+    /// `UiScreen` for it ([`crate::scaling::UiScreen::new`] returns `None`) and simply does not
+    /// call this, so the last good screen is kept.
+    pub fn set_ui_screen(&mut self, screen: crate::scaling::UiScreen, safe: crate::scaling::DBox) {
+        self.ui_screen = Some(screen);
+        self.safe_area = Some(safe);
+        let (wu, hu) = screen.ui_size();
+        self.resize_screen(wu, hu);
+    }
+
+    /// The current UI screen *F*, or `None` at the identity (`ui-scaling.md` §3.2). The UI
+    /// host and tools read it for the pixel-centre mapping of §3.6.
+    #[must_use]
+    pub fn ui_screen(&self) -> Option<crate::scaling::UiScreen> {
+        self.ui_screen
+    }
+
+    /// The safe area *A* (`ui-scaling.md` §5.1), in UI units relative to *F*. At the identity
+    /// (no UI screen set, or none stored) it is the full screen *F*.
+    #[must_use]
+    pub fn safe_area_box(&self) -> crate::scaling::DBox {
+        if let Some(a) = self.safe_area {
+            return a;
+        }
+        let (w, h) = self.screen_size;
+        crate::scaling::DBox::new(0.0, 0.0, f64::from(w), f64::from(h))
+    }
+
+    /// Maps a half-open rectangle in UI units (relative to *F*) to its **physical box** in the
+    /// window's pixels (`ui-scaling.md` §3.6 "Box → physical"): the physical columns
+    /// `Ex(l) … Ex(r) − 1` and rows `Ey(t) … Ey(b) − 1`. At the identity (no UI screen, or
+    /// `Se` = 1 so `Kx` = `Ky` = 1) it returns `r` unchanged, which keeps the composition and
+    /// hit geometry byte-identical (invariant I2).
+    #[must_use]
+    pub(crate) fn to_physical_rect(&self, r: crate::paint::Rect) -> crate::paint::Rect {
+        match self.ui_screen {
+            Some(f) => crate::paint::Rect::new(
+                f.edge_x(f64::from(r.x0)),
+                f.edge_y(f64::from(r.y0)),
+                f.edge_x(f64::from(r.x1)),
+                f.edge_y(f64::from(r.y1)),
+            ),
+            None => r,
+        }
+    }
+
+    /// The physical box of an element (`ui-scaling.md` §3.6): its displayed box (UI units)
+    /// mapped to the window's pixels by [`Ui::to_physical_rect`]. At the identity this equals
+    /// the displayed box made a rectangle. Drawing and hit testing agree on it (invariants
+    /// I3, I4): a physical pixel lies in this box exactly when a pointer at its centre hits the
+    /// displayed box.
+    #[must_use]
+    pub fn physical_box(&self, k: ElementKey) -> crate::paint::Rect {
+        self.to_physical_rect(self.displayed_box(k).to_rect())
+    }
 }

@@ -859,6 +859,38 @@ behaviour:
 
 The stop-gap stays in force until this spec is Accepted and built.
 
+> **OPEN (implementer):** the §5.9 degenerate-box guard is now **built**: `tessera-ui`'s
+> run-time layout (`crates/ui/src/layout.rs`, `fn runtime`) calls
+> `scaling::degenerate_guard(computed, design, box_extent)` in place of the stop-gap, with a
+> code comment pointing here. The trigger is unchanged from the old stop-gap (a width or height
+> below 1 UI unit), so non-degenerate boxes are byte-identical (invariant I2); the only
+> behavioural change is that an element with a **zero** design or box extent is now left empty
+> by design (extent 0) instead of being forced to 1. A **spec writer** should now update the
+> `ui-layout.md` §8.4 step 6 note (and its "stop-gap stays in force" wording), which this spec
+> replaced, to point at §5.9 as the built answer rather than describing an open stop-gap.
+
+> **OPEN (implementer):** this is the **first live-wiring increment** on top of the merged pure
+> geometry core (`crates/ui/src/scaling`), and it does not yet build all of §5–§6, in the same
+> staged way §9.3 (G2) and §9.6 already record for the pure core. **Built now:** the UI screen
+> *F* and safe area *A* are stored on `Ui` (`Ui::set_ui_screen`, identity default = `Se` 1,
+> *A* = *F* = the screen size, so I2 holds); the screen root is resized to *F*'s UI-unit size so
+> every root is laid out again in UI units on a scale or window change; every surface is composed
+> onto its **physical box** (§3.6, §6.6) via the axis factors, so the whole UI scales to the
+> window (1 : 1 at `Se` = 1; GPU-scaled with `ui_scale_filter` otherwise, the §4.5-step-3 /
+> §6.6 composed path); `Ui::physical_box` gives §3.6 physical boxes for the host's hit test and
+> draw; the degenerate guard (§5.9) and keep-on-screen for saved placements (§5.8) run through
+> the module. **Deferred to a following increment (not missing facts; volume and regression
+> risk against the committed goldens):** (a) the §5.2–§5.4 fit-container, fit-group and
+> safe-area-panel *layout* integration into the live tree (today a root is laid out against *F*
+> as before; fit roots, Type A/B/C fitting and letterbox bars are not yet applied in the live
+> pass) and §5.6 fit-to-screen; (b) the §6.1–§6.5 **crisp** painting (canvases painted at the
+> content scale, per-axis image resampling, glyphs chosen/derived at the target height and
+> cached), which this increment approximates by GPU-scaling the UI-unit canvas at composition
+> (soft, not crisp, at `Se` ≠ 1); (c) the anchored `SavedPlacement` **store** of §5.8, whose
+> persisted form crosses into `crates/settings` and so is out of a `crates/ui`-only change — the
+> in-memory store keeps its normalized-corner form for now and keep-on-screen is applied after a
+> placement is restored. The pure core each part calls is already present and tested.
+
 ---
 
 <a id="s6"></a>

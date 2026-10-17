@@ -6,7 +6,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 
 use crate::events::{Answer, Message, MsgArg, UiEvent};
-use crate::geom::{IBox, add, sub, trunc_f32};
+use crate::geom::{IBox, add, sub, trunc_f32, trunc_f64};
+use crate::scaling::keep_on_screen;
 use crate::tree::ElementKey;
 use crate::ui::Ui;
 use crate::vocab::commands;
@@ -196,8 +197,36 @@ impl Ui {
         if ss {
             self.resize(k, add(sub(x1, x0), 1), add(sub(y1, y0), 1));
         }
+        self.keep_root_on_screen(k);
         self.post(k, self.v.msgs.saved_location_applied, MsgArg::default());
         true
+    }
+
+    /// Brings a root panel back inside the screen *F* after a saved placement is applied
+    /// (`ui-scaling.md` §5.8 "Keep-on-screen", item 2), through [`keep_on_screen`]. A panel
+    /// already inside *F* does not move, so at the identity (`Se` = 1 with *F* = the screen
+    /// size) this is a no-op and existing behaviour is unchanged. Non-root elements keep the
+    /// layout's own clamping; a root panel's parent is the screen root (no node scale), so its
+    /// displayed box is its absolute layout box and the clamp is exact in integers.
+    fn keep_root_on_screen(&mut self, k: ElementKey) {
+        if !self.el(k).is_some_and(|e| e.root_panel) {
+            return;
+        }
+        let d = self.displayed_box(k);
+        let (wu, hu) = self.screen_size;
+        let (nx, ny) = keep_on_screen(
+            f64::from(d.l),
+            f64::from(d.t),
+            f64::from(d.w()),
+            f64::from(d.h()),
+            wu,
+            hu,
+        );
+        let (nx, ny) = (trunc_f64(nx + 0.5), trunc_f64(ny + 0.5));
+        if nx != d.l || ny != d.t {
+            let b = self.layout_box(k).unwrap_or_default();
+            self.move_to(k, add(b.l, sub(nx, d.l)), add(b.t, sub(ny, d.t)));
+        }
     }
 
     // ----- drag bars and resize bars -----------------------------------------------------

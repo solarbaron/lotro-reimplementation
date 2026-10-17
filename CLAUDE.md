@@ -329,12 +329,28 @@ compatibility in plain prose is fine. Format-level terms like "DID" or "landbloc
   tests with the install 7,080 passed / 0 failed; fuzz smoke `ui_settings_keys` 116,861 and
   `ui_scale_config` 2,360,150 executions, 0 crashes; content, SPDX, server deps, DCO, doc links clean.
   Invariants §9.5 (I1,I3,I4,I5,I8,I10,I15,I16,I17,I18,T1,T3) and the §9.2 named configs C1–C12 are
-  tested; the committed tier-1 golden is the **G2 glyph-derivation stand-in** only. **Not yet
-  built (follow-up):** the §5–§6 live layout/paint/text integration into the `tessera-ui` element
-  tree — it blocks committed goldens G1 and G3–G8 and all §9.4 tier-2 real-data goldens, the §7.2
-  Interface window, the per-window/text/art options wiring, and the §8 scale-dependent paint
-  budgets; the `ui-layout.md` §8.4 step-6 stop-gap can be retired once it lands (§5.9). At *Se* = 1
-  the geometry is the identity (I2), so existing goldens/tests are unchanged.
+  tested.
+- **UI scaling — §5–§6 live integration merged to main 2026-10-17 (`6015d0e`):** the deferred
+  layout/paint integration is built on the foundation — live §5.2–§5.6 fit rules in the
+  `tessera-ui` element tree, crisp canvases painted at the content scale with §6.3 per-axis
+  image resampling, the §5.8 anchored saved-placement store (with a `[UI.panels]` settings
+  mirror), the §7.2 Interface window wired to the client scale state (`feed_screen` →
+  `Ui::set_ui_screen`; `UiHost::new` sets *F*/*A* from the first frame), and the §9.3 synthetic
+  tier-1 goldens G1 and G3–G8 (committed alongside the G2 glyph stand-in). Gate on the merged
+  tree (install, 2026-10-17): fmt, fuzz-fmt, clippy (workspace `--all-targets --all-features`,
+  fuzz 0), release tests with the install 0 failed; content, SPDX, server-deps, DCO clean. One
+  tier-2 local-only combat golden drifted at the 1.7× critical floaty text (node-scaled text now
+  routes through the §6 scaling paint, soft) in a single 237×202 region and was re-blessed
+  (decision 0031; local goldens are never committed and do not gate CI). At *Se* = 1 with
+  *A* = *F* the geometry is the identity (I2), so existing goldens/tests are unchanged; the
+  `ui-layout.md` §8.4 step-6 stop-gap is retired (§5.9). **Still deferred:** wiring the §6.4
+  **derived-glyph** path into the draw loop (scaled text is correctly sized but soft until then;
+  the `layout_scaled`/`draw_scaled`/`FontLadder` entry points and the §6.5 glyph cache exist),
+  multi-member fit groups / §5.3 per-child safe boxes / §5.4 letterbox-bar fills, the §8
+  scale-dependent paint budgets, the §9.4 tier-2 real-data goldens and the G7 mid-scale-change
+  golden (needs a `tessera-render` test), and the in-memory-store↔settings placement bridge in
+  the client host. A dirty-room spec-writer still updates `ui-layout.md` §8.4 to record the
+  retirement.
 - **REA (decision 0033, Proposed):** optional dirty-only analysis tool, pilot pending; never
   registered as an MCP server.
 - **Pending owner input:** `docs/checklists/owner-observations.md` (`/loc` readings at the 20

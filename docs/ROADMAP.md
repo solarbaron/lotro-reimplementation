@@ -2451,6 +2451,81 @@ until P8.
 
 ---
 
+<a id="ui-scaling"></a>
+## UI scaling (decision 0040)
+
+**Tessera's own UI scaling** ([decision 0040](decisions/0040-ui-scaling.md),
+design spec [`ui-scaling.md`](specs/ui-scaling.md), Accepted): any resolution and aspect ratio
+(4:3 … 32:9, 1280 × 720 … 7680 × 4320), a user scale slider, a configurable safe area for
+ultrawide, and crisp text and art at the scaled size, instead of copying the original's
+interface scaling. The **geometry foundation and the settings/input/host/plugin/renderer
+wiring are implemented** (branch `uiscale`, exit-verified 2026-10-17, install
+`3905db5e60168527`); the §5–§6 **live layout/paint/text integration into the `tessera-ui`
+element tree is the outstanding follow-up** (see below).
+
+Built:
+
+- `tessera-ui::scaling` — the pure, engine-neutral geometry core (coordinate spaces and the
+  one space §3, the UI scale and the design floor §4, reference boxes, fit containers Type A/B/C,
+  fit groups, keep-on-screen and saved placements §5, canvas/image/glyph crispness and the
+  §6.4.4 glyph derivation §6). All entry points guard non-finite and zero input; no panics,
+  bounded allocations.
+- `tessera-settings` — the `[UI]` keys of §4.4/§7.1 (`ui_scale`, `ui_safe_aspect`,
+  `ui_art_filter`, `ui_text_scale`, `ui_text_source`, `[UI.panels]`, `[UI.group_scale]`),
+  snapped, clamped and bounded, with the `ui_scale_global → ui_scale` migration.
+- `tessera-input` — the four §7.3 actions (`ui_scale_up`/`down`/`auto`, `ui_interface_window`),
+  unbound by default in the `global` context.
+- `apps/client` — the UI host `ScaleState` (resolves *Se*, the UI screen *F*, the safe area *A*
+  from window size + OS σ + settings; auto default with the 250 ms stable timer; live apply and
+  150 ms settle; pointer ↔ physical conversion §3.6; off-thread persistence), the `/uiscale`
+  command and `--ui-scale`/`--ui-safe-aspect` CLI overrides.
+- `tessera-plugins` — `Display` and the scaling API bound to the one space (§7.7): global factor
+  1.0, `GetUIGroupScale(Global) = 1.0`, no double-scale, sizes and pointer in UI units.
+- `tessera-render` — the §6.6 composition (1:1 path at *Se* = 1, scaled path for the live
+  scale-change preview and stretch/rotation); no contract change.
+- `apps/explorer` — an optional UI-scale preview inspection aid (C1–C12 named configurations).
+
+Evidence (exit verification 2026-10-17, `TESSERA_GAME_DIR` set): `cargo fmt --check`,
+`cargo clippy --workspace --all-targets --all-features -D warnings` and the fuzz crate's fmt and
+clippy clean; `cargo test --release --workspace` with the install **7,079 passed, 0 failed, 10 ignored**
+(511 test binaries, 0 panics); a
+60 s fuzz smoke of the two new targets clean (`ui_settings_keys` 116,861 executions,
+`ui_scale_config` 2,360,150 executions, 0 crashes); `check-content.sh`, `check-spdx.sh`,
+`check-server-deps.sh` and a relative-doc-link check clean. Invariants §9.5 are exercised by
+`crates/ui/tests/ui_scaling_invariants.rs` (I1, I3, I4, I5, I8, I10, I15, I16, I17, I18, T1, T3
+as property and example tests) together with the §9.2 named-configuration table C1–C12
+(`named_configurations_match_and_hold_i1`, `safe_area_at_named_configurations`); the real-data
+`ui_scale_real_data` smoke test boots the install's panels at C1 (1280 × 720 → *Se* 0.9375,
+*F* 1365 × 768), confirms the UI screen is sized in *F* and a live scale change re-lays out and
+settles. Golden coverage (decision 0031 tier 1): the committed **G2 glyph-derivation stand-in**
+(`crates/ui/tests/ui_scaling_glyph_golden.rs`, `golden/uiscale_glyph_ladder.png`, viewed and
+judged correct) exercises the §6.4.4 derivation at an exact, two downsampled and two
+distance-derived heights.
+
+Open (follow-up, the §5–§6 live integration — not yet built this increment):
+
+- the pure geometry core is **not yet wired into the live `tessera-ui` layout, paint and text
+  paths**, which still use the pre-spec truncating displayed-box/screen-size model. This blocks
+  the committed goldens **G1, G3–G8** (§9.3) and **all tier-2 real-data goldens** (§9.4, loading
+  screen, theatre, character screen, HUD set, world map, Interface window, mission controller),
+  which are therefore not produced yet;
+- the **Interface window** (§7.2) is requested (`/uiscale` with no argument, the
+  `ui_interface_window` action) but the game-styled control window (slider, Automatic check,
+  aspect choice group, Reset) is not built;
+- the per-window scale, text-size and art-filter options (§7.4–§7.6) are stored and exposed in
+  the settings/plugin/explorer APIs but not yet wired through the live layout/paint;
+- the §8 scale-dependent paint budgets (S4/S5 scale-change and per-pixel work) are owner-measured
+  perf items (§8 OPEN) and are measurable only once the live paint integration lands; at
+  *Se* = 1 the geometry is the identity (I2), so the existing goldens and ~6.9 k tests are
+  unchanged;
+- **UL §8.4 step 6's stop-gap** (`ui-layout.md` §8.4) can be **retired once this integration
+  lands** — §5.9 answers the OPEN by decision 0040 and its generalised degenerate-box guard
+  (§5.7) is built in the core, but §5.9 keeps the stop-gap in force "until built", i.e. until the
+  live layout applies it. (Do not edit `ui-layout.md` facts; retire the stop-gap in that spec as a
+  follow-up when the integration is built.)
+
+---
+
 <a id="m9"></a>
 ## M9: Extended scripting (after full parity)
 

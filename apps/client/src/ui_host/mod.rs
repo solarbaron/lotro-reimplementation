@@ -26,6 +26,7 @@ pub mod combat;
 pub mod cursor;
 pub mod env;
 pub mod gpu;
+pub mod interface;
 pub mod run;
 pub mod scaling;
 pub mod script;
@@ -48,7 +49,7 @@ use tessera_plugins::{GameplayEvent, LocalPlayerEvent};
 use tessera_render::{Frame, Renderer, TextureId};
 use tessera_settings::{CursorMode, UiPrefs};
 use tessera_ui::BandChange;
-use tessera_ui::bridge::{CommandOffer, Phase, UiChange, UiInput};
+use tessera_ui::bridge::{CommandOffer, Phase, UiInput};
 use tessera_ui::events::Command;
 use tessera_ui::game::chat::{CommandOutcome, EntryLine, TextInputOutcome};
 use tessera_ui::game::escape::EscapeOutcome;
@@ -63,6 +64,7 @@ use crate::plugins::Plugins;
 use cursor::{CursorWindow, PointerLock, PointerReport, StartOutcome};
 use env::{ClientEnv, EnvHandle, EnvState};
 use gpu::UiTextures;
+use interface::InterfaceController;
 use scaling::ScaleState;
 use services::{Deferred, PluginView, WalkerPlayer};
 use stats::{FrameSample, Recorder, ms};
@@ -234,6 +236,12 @@ pub struct UiHost {
     /// Whether `/uiscale` or the `ui_interface_window` action asked for the Interface window
     /// (`ui-scaling.md` §7.2): the frame loop takes it with [`Self::take_interface_request`].
     want_interface: bool,
+    /// Tessera's own Interface window while it is open (`ui-scaling.md` §7.2).
+    interface: Option<InterfaceController>,
+    /// The optional-row settings a window action changed and that wait to be written
+    /// (`ui-scaling.md` §4.4, §7.1): art filter, text size and the two resets. `None` when
+    /// nothing is pending. Scale and safe aspect persist through [`Self::take_scale_persist`].
+    interface_persist: Option<interface::ExtraPersist>,
 }
 
 /// Most UI events and panel commands queued for the character panels in one frame.
@@ -309,6 +317,12 @@ impl UiHost {
         ui.set_paint_limits(limits);
         ui.set_tooltip_preferences(options.prefs.tooltip_enable, options.prefs.tooltip_delay);
         ui.set_cursor_scale(options.prefs.scale_cursor);
+        // Decision 0040 (`ui-scaling.md` §3.2, §4.5 step 1): make the UI screen *F* and the
+        // safe area *A* live from the first frame, so surfaces map to their physical box
+        // (§3.6, §6.6) and roots fit by the §5 rules. The screen root is already *F*-sized
+        // (given to [`Ui::new`] above), so this stores *F*/*A* without changing its size. At
+        // *Se* = 1 with *A* = *F* every mapping is the identity, so nothing changes (I2).
+        ui.set_ui_screen(*scale.screen(), scale.safe_area());
         let ui = Rc::new(RefCell::new(ui));
         let plugin_ui = PluginUi::new(Rc::clone(&ui));
         if let Some(h) = &handle {
@@ -372,6 +386,8 @@ impl UiHost {
             combat: combat::HostCombat::default(),
             scale,
             want_interface: false,
+            interface: None,
+            interface_persist: None,
         }
     }
 
@@ -894,11 +910,19 @@ impl UiHost {
         }
     }
 
-    /// Resizes the `tessera-ui` screen root to the current UI screen *F* (`ui-scaling.md`
-    /// §3.2, §4.5 step 2). The bridge lays the roots out again.
+    /// Feeds the current UI screen *F* and safe area *A* into `tessera-ui` live
+    /// (`ui-scaling.md` §4.5). [`Ui::set_ui_screen`] stores *F*/*A* for the §3.6 physical
+    /// mapping and resizes the screen root to *F*'s UI-unit size, so every root is laid out
+    /// again by the §5 fit rules (step 2); [`Ui::invalidate_paint`] then asks for a full
+    /// repaint so every surface re-paints crisply at the new content scale (steps 2-4). At
+    /// *Se* = 1 with *A* = *F* the mappings are the identity and the root size is unchanged, so
+    /// the result stays byte-identical (invariant I2); only the repaint is extra work.
     fn feed_screen(&mut self) {
-        let (wu, hu) = self.scale.ui_size();
-        self.ui.borrow_mut().request(UiChange::Screen(wu, hu));
+        let screen = *self.scale.screen();
+        let safe = self.scale.safe_area();
+        let mut ui = self.ui.borrow_mut();
+        ui.set_ui_screen(screen, safe);
+        ui.invalidate_paint();
     }
 
     /// The UI-scaling state (decision 0040, `ui-scaling.md` §4): the effective scale, the UI
@@ -955,6 +979,135 @@ impl UiHost {
     /// `/uiscale` with no argument or the `ui_interface_window` action.
     pub fn take_interface_request(&mut self) -> bool {
         std::mem::take(&mut self.want_interface)
+    }
+
+    /// Opens Tessera's own Interface window (`ui-scaling.md` §7.2), or closes it when it is
+    /// already open (the command and the action toggle it). Built from the current scale and
+    /// settings with neutral fallback art.
+    pub fn open_interface(&mut self) {
+        self.frame.event = true;
+        if let Some(mut w) = self.interface.take() {
+            // Toggle closed.
+            let mut ui = self.ui.borrow_mut();
+            w.close(&mut ui);
+            return;
+        }
+        let mut ui = self.ui.borrow_mut();
+        match InterfaceController::open(&mut ui, &self.scale, &self.prefs) {
+            Ok(w) => self.interface = Some(w),
+            Err(e) => tracing::warn!("Interface window not opened: {e}"),
+        }
+    }
+
+    /// Whether the Interface window is open.
+    #[must_use]
+    pub fn interface_open(&self) -> bool {
+        self.interface.is_some()
+    }
+
+    /// Feeds this frame's UI events to the open Interface window and applies its actions live
+    /// (`ui-scaling.md` §4.5, §7.1-§7.6): the scale slider and Auto set *S*, the safe-aspect
+    /// buttons set `ui_safe_aspect`, the optional controls set the art filter and text size
+    /// and clear the saved placements or window scales. The close box closes the window. The
+    /// events are the one per-frame list the in-world windows also read; the window owns only
+    /// its own elements' events, so the others ignore them.
+    pub fn interface_frame(&mut self, events: &[UiEvent], now: Instant) {
+        use interface::{choice_to_art, choice_to_aspect, scale_of_stop, text_of_stop};
+        use tessera_ui::game::interface::InterfaceAction as A;
+        let Some(mut w) = self.interface.take() else {
+            return;
+        };
+        let mut touched_scale = false;
+        let mut closed = false;
+        for ev in events {
+            let action = {
+                let ui = self.ui.borrow();
+                w.handle_event(&ui, ev)
+            };
+            let Some(action) = action else { continue };
+            match action {
+                A::SetScaleStop(i) => {
+                    self.scale.set_scale(scale_of_stop(i), now);
+                    touched_scale = true;
+                }
+                A::SetAuto(true) => {
+                    self.scale.set_auto(now);
+                    touched_scale = true;
+                }
+                A::SetAuto(false) => {
+                    // Leave auto for the value the slider currently shows (§7.2 row 3).
+                    let s = self.scale.resolved_scale() as f32;
+                    self.scale.set_scale(s, now);
+                    touched_scale = true;
+                }
+                A::SetAspect(c) => {
+                    self.scale.set_safe_aspect(choice_to_aspect(c), now);
+                    touched_scale = true;
+                }
+                A::SetTextStop(i) => {
+                    self.prefs.text_scale = text_of_stop(i);
+                    self.note_interface_persist();
+                    self.ui.borrow_mut().invalidate_paint();
+                }
+                A::SetArt(c) => {
+                    self.prefs.art_filter = choice_to_art(c);
+                    self.note_interface_persist();
+                    self.ui.borrow_mut().invalidate_paint();
+                }
+                A::ResetPanels => {
+                    self.prefs.panels.clear();
+                    let p = self.note_interface_persist();
+                    p.clear_panels = true;
+                    touched_scale = true;
+                }
+                A::ResetWindowScales => {
+                    self.prefs.group_scale.clear();
+                    let p = self.note_interface_persist();
+                    p.clear_groups = true;
+                }
+                A::Close => {
+                    closed = true;
+                    break;
+                }
+            }
+        }
+        if touched_scale {
+            self.frame.event = true;
+            self.feed_screen();
+        }
+        if closed {
+            let mut ui = self.ui.borrow_mut();
+            w.close(&mut ui);
+            return;
+        }
+        {
+            let mut ui = self.ui.borrow_mut();
+            w.refresh(&mut ui, &self.scale, &self.prefs);
+        }
+        self.interface = Some(w);
+    }
+
+    /// Seeds (if needed) and returns the pending optional-row persist snapshot from the
+    /// current preferences (`ui-scaling.md` §7.1).
+    fn note_interface_persist(&mut self) -> &mut interface::ExtraPersist {
+        self.interface_persist
+            .get_or_insert(interface::ExtraPersist {
+                art: self.prefs.art_filter,
+                text_scale: self.prefs.text_scale,
+                clear_panels: false,
+                clear_groups: false,
+            });
+        // Always reflect the latest art/text in the snapshot.
+        let p = self.interface_persist.as_mut().expect("just inserted");
+        p.art = self.prefs.art_filter;
+        p.text_scale = self.prefs.text_scale;
+        p
+    }
+
+    /// Takes the pending optional-row persist (art filter, text size, the two resets), once
+    /// (`ui-scaling.md` §4.4, §7.1). The frame loop writes them off the main thread.
+    pub fn take_interface_persist(&mut self) -> Option<interface::ExtraPersist> {
+        self.interface_persist.take()
     }
 
     /// Applies the four UI-scaling actions pressed this frame (`ui-scaling.md` §7.3):

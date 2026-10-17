@@ -478,7 +478,16 @@ pub struct PanelPlacement {
 }
 
 impl PanelPlacement {
+    /// Parse one `[UI.panels]` entry. The current anchored form (`ui-scaling.md` §5.8) is
+    /// tried first; a legacy normalized-corner entry (the fraction form of `ui-layout.md`
+    /// §9.9) is migrated so an older settings file still loads ([`PanelPlacement::from_legacy`]).
     fn from_table(t: &toml::Table) -> Option<Self> {
+        Self::from_anchored(t).or_else(|| Self::from_legacy(t))
+    }
+
+    /// The anchored form (`ui-scaling.md` §5.8): `ref`, `ax`, `dx`, `ay`, `dy`, optional
+    /// `w`/`h` and `shown`.
+    fn from_anchored(t: &toml::Table) -> Option<Self> {
         let reference = t
             .get("ref")
             .and_then(toml::Value::as_str)
@@ -508,6 +517,56 @@ impl PanelPlacement {
             dy,
             w,
             h,
+            shown,
+        })
+    }
+
+    /// Migrate a legacy normalized-corner entry (`ui-scaling.md` §5.8 "Migration"): the fraction
+    /// form of `ui-layout.md` §9.9, with `x`, `y`, `width`, `height` as screen fractions in
+    /// [0, 1] and an optional `shown` bool or `visible` 0/1. The anchor direction on each axis is
+    /// recovered scale-free from which third of the (unit) reference the box centre lies in. The
+    /// UI-unit offset cannot be resolved without the current configuration (§5.8 applies the
+    /// conversion "at the current configuration", which the settings layer does not have), so the
+    /// window is docked to the chosen anchor (offset 0) and keeps its laid-out size; the UI
+    /// finalises the placement the next time the user moves it. Returns `None` when the table is
+    /// not a legacy entry.
+    fn from_legacy(t: &toml::Table) -> Option<Self> {
+        let x = t.get("x").and_then(number)?;
+        let y = t.get("y").and_then(number)?;
+        let w = t.get("width").and_then(number)?;
+        let h = t.get("height").and_then(number)?;
+        if !(x.is_finite() && y.is_finite() && w.is_finite() && h.is_finite()) {
+            return None;
+        }
+        let cx = x + w / 2.0;
+        let cy = y + h / 2.0;
+        let ax = if cx < 1.0 / 3.0 {
+            AnchorX::Left
+        } else if cx >= 2.0 / 3.0 {
+            AnchorX::Right
+        } else {
+            AnchorX::Centre
+        };
+        let ay = if cy < 1.0 / 3.0 {
+            AnchorY::Top
+        } else if cy >= 2.0 / 3.0 {
+            AnchorY::Bottom
+        } else {
+            AnchorY::Centre
+        };
+        let shown = match (t.get("shown"), t.get("visible")) {
+            (Some(toml::Value::Boolean(b)), _) => Some(*b),
+            (_, Some(v)) => number(v).map(|n| n != 0.0),
+            _ => None,
+        };
+        Some(Self {
+            reference: PanelRef::default(),
+            ax,
+            dx: 0.0,
+            ay,
+            dy: 0.0,
+            w: None,
+            h: None,
             shown,
         })
     }
@@ -1092,6 +1151,68 @@ opacity = 40
             ..UiPrefs::default()
         };
         assert_eq!(reparse(&p).ui_scale, UiScale::Auto);
+    }
+
+    /// A full anchored placement (`ui-scaling.md` §5.8) survives a store/load cycle unchanged,
+    /// for every anchor and with and without the optional size and visibility.
+    #[test]
+    fn panel_placement_round_trips_through_toml() {
+        let key = "0x22FF0008/0x10000001".to_owned();
+        for pp in [
+            PanelPlacement {
+                reference: PanelRef::Screen,
+                ax: AnchorX::Right,
+                dx: 20.0,
+                ay: AnchorY::Top,
+                dy: 40.0,
+                w: None,
+                h: None,
+                shown: None,
+            },
+            PanelPlacement {
+                reference: PanelRef::Safe,
+                ax: AnchorX::Centre,
+                dx: -12.5,
+                ay: AnchorY::Bottom,
+                dy: 6.0,
+                w: Some(400),
+                h: Some(500),
+                shown: Some(false),
+            },
+        ] {
+            let mut p = UiPrefs::default();
+            p.panels.insert(key.clone(), pp.clone());
+            let back = reparse(&p);
+            assert_eq!(back.panels.get(&key), Some(&pp));
+        }
+    }
+
+    /// A legacy normalized-corner `[UI.panels]` entry (`ui-scaling.md` §5.8 "Migration") still
+    /// loads, migrated to anchored directions chosen by which third of the screen the box centre
+    /// falls in, docked to the anchor (offset 0) since the UI-unit offset needs the live
+    /// configuration.
+    #[test]
+    fn legacy_panel_entry_migrates() {
+        let text = r#"
+schema_version = 1
+
+[UI.panels]
+"0x41000001/0x10000001" = { x = 0.05, y = 0.05, width = 0.2, height = 0.2, visible = 1 }
+"0x41000001/0x10000002" = { x = 0.8, y = 0.85, width = 0.15, height = 0.1, shown = false }
+"#;
+        let s = Settings::from_toml_str(text).expect("parse");
+        let (p, warn) = UiPrefs::from_settings(&s);
+        assert!(warn.is_empty(), "{warn:?}");
+        assert_eq!(p.panels.len(), 2);
+        let a = &p.panels["0x41000001/0x10000001"];
+        assert_eq!((a.ax, a.ay), (AnchorX::Left, AnchorY::Top));
+        assert_eq!((a.dx, a.dy), (0.0, 0.0));
+        assert_eq!(a.shown, Some(true));
+        assert_eq!((a.w, a.h), (None, None));
+        assert_eq!(a.reference, PanelRef::Safe);
+        let b = &p.panels["0x41000001/0x10000002"];
+        assert_eq!((b.ax, b.ay), (AnchorX::Right, AnchorY::Bottom));
+        assert_eq!(b.shown, Some(false));
     }
 
     #[test]

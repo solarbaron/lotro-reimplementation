@@ -20,7 +20,9 @@ use tessera_protocol::transport::{PinnedServerVerifier, client_endpoint, quinn_c
 use tessera_protocol::types::{Appearance, Body, Location, Motion, Vec3};
 use tessera_protocol::{Channel, Message, Side};
 use tessera_server::accounts::{self, HashParams};
-use tessera_server::{Config, Content, DataDir, Server, ServerHandle, ServerOptions};
+use tessera_server::{
+    Config, Content, DataDir, Server, ServerHandle, ServerOptions, StatsSnapshot,
+};
 use tokio::sync::mpsc;
 
 /// Longest wait for one expected message.
@@ -90,6 +92,29 @@ impl TestServer {
 
     pub fn handle(&self) -> &ServerHandle {
         self.handle.as_ref().unwrap()
+    }
+
+    /// Wait until a tick-published stat reaches `expected` (up to [`WAIT`]), then return the
+    /// value seen.
+    ///
+    /// The simulation refreshes its live counters (`in_world`, `entities`, ...) once per tick
+    /// in `publish_stats`, so a read taken the instant a client observes a world transition
+    /// can still see the previous tick's value under parallel-test load. This polls with a
+    /// short real-time sleep so the sim tick can run, instead of asserting the counter the
+    /// moment the client's messages arrive.
+    pub async fn wait_stats(
+        &self,
+        mut f: impl FnMut(&StatsSnapshot) -> usize,
+        expected: usize,
+    ) -> usize {
+        let deadline = tokio::time::Instant::now() + WAIT;
+        loop {
+            let n = f(&self.handle().stats());
+            if n == expected || tokio::time::Instant::now() >= deadline {
+                return n;
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
     }
 
     pub fn addr(&self) -> SocketAddr {

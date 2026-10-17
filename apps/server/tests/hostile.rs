@@ -240,5 +240,5 @@ async fn counts_return_to_baseline() {
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
     // Wanderers stay once created (§5.4); every player entity is gone.
-    assert_eq!(s.handle().stats().entities, 3);
+    assert_eq!(s.wait_stats(|st| st.entities, 3).await, 3);
 }

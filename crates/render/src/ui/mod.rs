@@ -214,6 +214,19 @@ impl UiClip {
 
 /// One composition entry (render.md §6.5): a quad that draws (part of) a
 /// surface's canvas onto its displayed box.
+///
+/// Under the UI scale (`ui-scaling.md` §6.6, decision 0040) the renderer's
+/// contract is unchanged: [`dest`](Self::dest) is the displayed box in
+/// physical pixels and the canvas is painted by `tessera-ui` at the content
+/// scale, so in the normal case `dest` has exactly the [`canvas`](Self::canvas)
+/// size and the entry takes the exact 1 : 1 path ([`UiGeometry::one_to_one`],
+/// no filtering). An entry is scaled — using [`filter`](Self::filter) — only
+/// when the `Fit` `dest` differs from the canvas size, which the renderer
+/// neither can nor needs to tell apart as a live scale-change preview (the
+/// surface keeps its last complete picture and is composed onto its new,
+/// differently sized box, `ui-scaling.md` §4.5 step 3, so the old canvas is
+/// composed scaled rather than re-rendered) or a stretch vector
+/// (`ui-scaling.md` §3.4), or when the entry is rotated.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct UiEntry<'a> {
     /// A UI texture, or a registered `Rgba8Unorm` render target (external

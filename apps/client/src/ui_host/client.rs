@@ -125,6 +125,14 @@ pub fn prefs_from(args: &Args) -> UiPrefs {
     if let Some(c) = args.ui_cursor {
         prefs.cursor = c;
     }
+    // `--ui-scale` / `--ui-safe-aspect` override the settings for the run only (not saved,
+    // `ui-scaling.md` §7.3).
+    if let Some(s) = args.ui_scale {
+        prefs.ui_scale = s;
+    }
+    if let Some(a) = args.ui_safe_aspect {
+        prefs.safe_aspect = a;
+    }
     prefs
 }
 
@@ -696,6 +704,9 @@ impl ClientUi {
         host.post_session_lines(rt.take_ui_chat());
         let (mapper, _) = walker.mapper_mut();
         let shift = mapper.mods().contains(tessera_input::Modifiers::SHIFT);
+        // The four UI-scaling actions pressed this frame (`ui-scaling.md` §7.3; unbound by
+        // default, so a no-op in normal runs).
+        host.poll_scale_actions(mapper, Instant::now());
         host.step7(&mut rt.plugins, Some(mapper));
         // The character panels (decision 0024 P1): panels asked for on the command line,
         // the player-state changes of this frame, item interactions as session commands.
@@ -704,6 +715,8 @@ impl ClientUi {
         combat_frame(host, rt, walker);
         // Chat commands that quickslot aliases ran in step 7.
         dispatch_lines(host, rt);
+        // The UI-scaling requests and per-frame tick (decision 0040, `ui-scaling.md` §4).
+        apply_uiscale(host, rt, Instant::now());
         // The character screens before world entry (`--character-select`).
         self.screens_frame(walker, rt, events.menu && screens);
     }
@@ -807,6 +820,14 @@ impl ClientUi {
         self.options.screen = (width, height);
         if let State::Ready(host) = &mut self.state {
             host.resize(width, height);
+        }
+    }
+
+    /// A change of the operating system's scale factor σ for the window's monitor
+    /// (`ui-scaling.md` §4.2, §4.6): with the automatic scale the UI screen is re-evaluated.
+    pub fn set_os_scale(&mut self, sigma: f64) {
+        if let State::Ready(host) = &mut self.state {
+            host.set_os_scale(sigma);
         }
     }
 
@@ -1116,6 +1137,101 @@ fn send_combat(
     }
 }
 
+/// Applies the UI-scaling work of a frame (decision 0040, `ui-scaling.md` §4, §7.3): the
+/// `/uiscale` requests and the `ui_interface_window` action open the Interface window or
+/// change the scale live; the per-frame tick applies the automatic default once the window
+/// size settles; a settled change is written to the settings file.
+fn apply_uiscale(host: &mut UiHost, rt: &mut Runtime, now: Instant) {
+    for req in rt.plugins.take_uiscale_requests() {
+        host.apply_uiscale_request(&req, now);
+    }
+    host.scale_tick(now);
+    if host.take_interface_request() {
+        // The Interface window (`ui-scaling.md` §7.2) is not built yet; until it is, the
+        // request is logged so the command and action have a visible effect.
+        // > OPEN (`ui-scaling.md` §7.2): build Tessera's own Interface window from the
+        // > game-styled controls of `lua-plugin-api.md` §14.2 and open it here.
+        tracing::info!("interface window requested (ui-scaling.md §7.2; window not built yet)");
+        rt.plugins
+            .post_line(crate::commands::LocalLine::log(format!(
+                "Interface scale: {} %{}",
+                host.scale().display_percent(),
+                if host.scale().is_limited() {
+                    " (limited by the window size)"
+                } else {
+                    ""
+                }
+            )));
+    }
+    if let Some((scale, aspect)) = host.take_scale_persist(now) {
+        persist_ui_scale(scale, aspect);
+    }
+}
+
+/// Hands the settled UI scale and safe aspect to the settings writer **off the main thread**
+/// (`ui-scaling.md` §4.4, §4.5 step 5). The spec requires the settled write to go "through the
+/// settings writer off the main thread"; this is called from the frame loop
+/// ([`ClientUi::after_update`]), so it must not touch the disk or the advisory settings lock
+/// inline. It only opens the store and hands the values to a short-lived background thread (as
+/// the character screens' saver does, `screens::save_settings`), then returns. Best-effort: a
+/// failure is logged, not fatal, and the join handle is dropped so the write runs detached.
+fn persist_ui_scale(scale: tessera_settings::UiScale, aspect: tessera_settings::SafeAspect) {
+    let store = match tessera_settings::SettingsStore::open_default() {
+        Ok(s) => s,
+        Err(e) => {
+            tracing::debug!("settings unavailable ({e}); UI scale not saved");
+            return;
+        }
+    };
+    // Detached: the frame loop never waits for the write (§4.4). The tests keep the handle to
+    // join on it.
+    drop(spawn_ui_scale_write(store, scale, aspect));
+}
+
+/// Spawns the settled UI-scale write on a short-lived background thread so the frame loop
+/// never blocks on the settings file lock or the disk (`ui-scaling.md` §4.4 "off the main
+/// thread"). Returns the join handle for a caller that wants to wait for the write (the
+/// tests); the frame loop drops it. When a thread cannot be spawned the write falls back to
+/// the calling thread, as the character screens' saver does.
+fn spawn_ui_scale_write(
+    store: tessera_settings::SettingsStore,
+    scale: tessera_settings::UiScale,
+    aspect: tessera_settings::SafeAspect,
+) -> Option<std::thread::JoinHandle<()>> {
+    // A cheap clone (the store is only a file path) for the fallback, so a failed spawn can
+    // still write without the moved value.
+    let fallback = store.clone();
+    match std::thread::Builder::new()
+        .name("ui-scale-settings".to_owned())
+        .spawn(move || write_ui_scale(&store, scale, aspect))
+    {
+        Ok(h) => Some(h),
+        Err(e) => {
+            tracing::debug!("no settings thread ({e}); writing UI scale on this thread");
+            write_ui_scale(&fallback, scale, aspect);
+            None
+        }
+    }
+}
+
+/// The settled write itself: merges `ui_scale` and `ui_safe_aspect` into the settings file
+/// under its advisory lock (`ui-scaling.md` §4.4). A failure is logged, not fatal.
+fn write_ui_scale(
+    store: &tessera_settings::SettingsStore,
+    scale: tessera_settings::UiScale,
+    aspect: tessera_settings::SafeAspect,
+) {
+    let r = store.update(|s| {
+        let (mut prefs, _) = tessera_settings::UiPrefs::from_settings(s);
+        prefs.ui_scale = scale;
+        prefs.safe_aspect = aspect;
+        prefs.store(s);
+    });
+    if let Err(e) = r {
+        tracing::warn!("UI scale not saved: {e}");
+    }
+}
+
 /// Runs the lines submitted in the chat window through the client's command dispatcher
 /// with the world session (decision 0020 items 1 and 3: `--server` or the sandbox).
 fn dispatch_lines(host: &mut UiHost, rt: &mut Runtime) {
@@ -1145,6 +1261,28 @@ mod tests {
             s(&dir.join("data")),
         ])
         .expect("args")
+    }
+
+    /// The settled UI-scale write goes to a background thread and round-trips through the
+    /// settings file (`ui-scaling.md` §4.4 "off the main thread"). The test joins the spawned
+    /// writer (which the frame loop drops) and reads the values back.
+    #[test]
+    fn ui_scale_persists_off_thread() {
+        use tessera_settings::{SafeAspect, SettingsStore, UiPrefs, UiScale};
+        let dir = tempfile::tempdir().expect("tempdir");
+        let store = SettingsStore::new(dir.path().join("tessera.toml"));
+        let main = std::thread::current().id();
+        let handle = spawn_ui_scale_write(store, UiScale::Fixed(1.5), SafeAspect::R16_9)
+            .expect("the writer thread spawns");
+        // The write runs on another thread, never the frame loop's.
+        assert_ne!(handle.thread().id(), main, "write is off the main thread");
+        handle.join().expect("writer thread");
+        // The file now holds the written values.
+        let store = SettingsStore::new(dir.path().join("tessera.toml"));
+        let settings = store.update(|_| {}).expect("read back");
+        let (prefs, _) = UiPrefs::from_settings(&settings);
+        assert_eq!(prefs.ui_scale, UiScale::Fixed(1.5));
+        assert_eq!(prefs.safe_aspect, SafeAspect::R16_9);
     }
 
     #[test]

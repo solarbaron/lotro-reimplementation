@@ -72,6 +72,7 @@
 //! | [`hex`] | Hex-dump and size formatting |
 //! | [`history`] | Back/forward history |
 //! | [`frame_stats`] | Frame-time statistics |
+//! | [`scale_preview`] | Optional UI-scale preview: window size, aspect and scale previewed against the fit rules (`ui-scaling.md` §7.4, §9.2) |
 //! | [`persist`] | Settings persistence (`tessera-settings`) |
 //! | [`screenshot`] | PNG output for `--screenshot` |
 //! | [`fonts`] | UI fonts from the system (none are embedded) |
@@ -122,6 +123,7 @@ pub mod particle_view;
 pub mod persist;
 pub mod query;
 pub mod richtext;
+pub mod scale_preview;
 pub mod scene;
 pub mod screenshot;
 pub mod script_view;

@@ -125,6 +125,8 @@ pub enum Builtin {
     Social(SocialWord),
     /// A P5 built-in (`ride`, `findplace`, `leaveinstance`; [`super::p5`]).
     P5(super::p5::P5Word),
+    /// `uiscale` (the UI-scaling built-in, `ui-scaling.md` §7.3; [`super::uiscale`]).
+    UiScale,
 }
 
 /// What runs a command.

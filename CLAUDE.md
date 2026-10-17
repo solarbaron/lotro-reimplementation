@@ -317,6 +317,24 @@ compatibility in plain prose is fine. Format-level terms like "DID" or "landbloc
   builds its own UI scaling instead of copying the original's (decision 0040: any resolution
   and aspect ratio incl. ultrawide and 4K, a user scale slider, crisp text and art; design
   spec `ui-scaling.md` first).
+- **UI scaling (decision 0040) — foundation implemented (branch `uiscale`, exit-verified
+  2026-10-17):** `ui-scaling.md` is Accepted and its **geometry foundation plus the
+  settings/input/host/plugin/renderer wiring are built**: the pure `tessera-ui::scaling` core
+  (coordinate spaces §3, UI scale and design floor §4, fit containers/safe area/keep-on-screen
+  §5, canvas/image/glyph crispness §6), the `[UI]` settings keys with the `ui_scale_global`
+  migration, the four §7.3 input actions, the client `ScaleState` (UI screen *F* sizing, pointer
+  §3.6, auto default, live scale change, `/uiscale`, `--ui-scale`/`--ui-safe-aspect`), the plugin
+  `Display` one-space binding (§7.7) and the renderer §6.6 composition. Gate on `uiscale`
+  (install, 2026-10-17): fmt, clippy (workspace `--all-targets --all-features`, fuzz), release
+  tests with the install passed/0 failed; fuzz smoke `ui_settings_keys` 116,861 and
+  `ui_scale_config` 2,360,150 executions, 0 crashes; content, SPDX, server deps, doc links clean.
+  Invariants §9.5 (I1,I3,I4,I5,I8,I10,I15,I16,I17,I18,T1,T3) and the §9.2 named configs C1–C12 are
+  tested; the committed tier-1 golden is the **G2 glyph-derivation stand-in** only. **Not yet
+  built (follow-up):** the §5–§6 live layout/paint/text integration into the `tessera-ui` element
+  tree — it blocks committed goldens G1 and G3–G8 and all §9.4 tier-2 real-data goldens, the §7.2
+  Interface window, the per-window/text/art options wiring, and the §8 scale-dependent paint
+  budgets; the `ui-layout.md` §8.4 step-6 stop-gap can be retired once it lands (§5.9). At *Se* = 1
+  the geometry is the identity (I2), so existing goldens/tests are unchanged. Not committed.
 - **REA (decision 0033, Proposed):** optional dirty-only analysis tool, pilot pending; never
   registered as an MCP server.
 - **Pending owner input:** `docs/checklists/owner-observations.md` (`/loc` readings at the 20

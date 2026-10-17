@@ -1328,6 +1328,16 @@ channel) and, where composition is under test, by the headless renderer:
 | G7 preview | a frame in the middle of a scale change (old canvases composed scaled) | C2 → C3 |
 | G8 fit group | two layered 1024 × 768 fit roots, one with content over its whole area and one with a small content box near the bottom (§10.6), and a sparse 1440 × 900 fit root (§10.7) | C1, C2, C7, C8, C9 |
 
+> **OPEN (implementer):** G2's painted-paragraph form — the same paragraph **laid out and
+> painted** at the content scales *c* = 1, 1.25, 1.5, 2, 3 over the text layout and painter — is
+> not yet committed: this increment builds the §6.4.4 glyph derivation (the pure core) but not
+> the §6 text layout/paint integration that selects derived glyphs at the content scale. The
+> committed golden (`crates/ui/tests/ui_scaling_glyph_golden.rs`,
+> `golden/uiscale_glyph_ladder.png`) exercises the derivation directly — one synthetic ladder
+> glyph at an exact, two downsampled and two distance-derived heights — which is the heart of G2
+> but not the painted paragraph at the named content scales. Add the painted-paragraph G2 over
+> the headless renderer once the painter lands; until then the derivation golden is the stand-in.
+
 <a id="s9-4"></a>
 ### 9.4 Local real-data goldens (decision 0031 tier 2)
 
@@ -1451,6 +1461,18 @@ install's layouts at C1–C12:
   a Type A inside a panel with a per-window factor) and sequences of window sizes that include
   zero sides (*Wp* or *Hp* = 0, in 0–16,384), asserting I1 (both parts), I5, I6, I14, I16,
   I17, I18 and no panic.
+
+  > **OPEN (implementer):** the `ui_scale_config` fuzz target (the pure `tessera_ui::scaling`
+  > core of this increment) asserts the parts of these the stateless geometry can establish:
+  > I5, I6 (proxy), I16, I17, I18, the pure-core slice of I14 (recomputing a size, and
+  > `A → B → A`, is byte-identical), a Type C fitted inside a Type A member box (a B/C inside a
+  > Type A), and the pure half of I1 part 2 (a zero side yields no screen and leaves the
+  > retained last-good state intact). The **stateful** halves — that a zero side leaves a
+  > *retained* `Se`/`F`/`A` and every laid-out box, factor and saved placement unchanged, a
+  > minimise→restore moving a live panel nothing, and the frame-system re-layout determinism of
+  > I14 over the live element tree — belong to the §5–§6 layout/paint host, which this increment
+  > does not build. Extend the configuration fuzz (or add a stateful companion) to drive a size
+  > sequence through that host and assert them once it lands.
 - **Unit:** the pixel-centre mapping at *K* = 0.937729, 1, 1.5, 2.25, 3 (I3, I4); the Type A,
   B and C fits with the numbers of §10; the Type A example of §5.4 step 4 (content in the
   left wing at C2 with the 4:3 safe area, I15); a fit root at C8 (bars drawn, no *q*, not

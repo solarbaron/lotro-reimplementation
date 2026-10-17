@@ -39,6 +39,7 @@
 //! | [`events`], `message` | UI messages, the listener registry, the outbox | UB §12, LPA §9.7 |
 //! | [`bridge`] | offers, verdicts, band requests, change requests, the step-1 and step-7 entry points | IB D5, D7, D8 |
 //! | [`surface`] | surfaces, display lists, damage, composition | UR §1–§2 |
+//! | [`scaling`] | the UI-scaling geometry foundation: coordinate spaces, the UI screen, fit rules, keep-on-screen, saved placements, content-scale sizing, derived glyphs and the cursor | ui-scaling.md §3–§6 (decision 0040) |
 //! | [`control`] | the plugin-control API | LPA §13, UR §5 |
 //! | [`env`](mod@env) | the services the client provides (layouts, images, text, strings) | — |
 //! | [`vocab`] | property IDs, messages, states, types by label | UL §3.3 |
@@ -61,6 +62,7 @@ mod pointer;
 pub mod props;
 pub mod resolve;
 mod scale;
+pub mod scaling;
 pub mod skin;
 mod state;
 pub mod surface;

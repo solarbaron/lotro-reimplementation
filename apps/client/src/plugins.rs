@@ -499,6 +499,13 @@ impl Plugins {
         self.dispatcher.p5_queue().push(r)
     }
 
+    /// The requests of the `/uiscale` built-in since the last call, in order
+    /// (`ui-scaling.md` §7.3; [`crate::commands::uiscale`]). The frame loop applies them to
+    /// the UI host (open the Interface window, change the scale or the safe aspect).
+    pub fn take_uiscale_requests(&mut self) -> Vec<crate::commands::uiscale::UiScaleRequest> {
+        self.dispatcher.uiscale_queue().take()
+    }
+
     /// Posts one line of the client's own (a P5 command's answer): the log, the walker's
     /// chat display and, with a game UI attached, the chat window.
     pub fn post_line(&mut self, line: LocalLine) {

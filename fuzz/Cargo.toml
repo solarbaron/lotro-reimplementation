@@ -1369,3 +1369,21 @@ path = "fuzz_targets/client_p6_panels.rs"
 test = false
 doc = false
 bench = false
+
+# --- decision 0040: tessera-settings [UI] UI-scaling keys (ui-scaling.md §4.4, §7.1) ---
+
+[[bin]]
+name = "ui_settings_keys"
+path = "fuzz_targets/ui_settings_keys.rs"
+test = false
+doc = false
+bench = false
+
+# --- decision 0040: tessera-ui UI-scaling fit computation (ui-scaling.md §3–§6, §9.6) ---
+
+[[bin]]
+name = "ui_scale_config"
+path = "fuzz_targets/ui_scale_config.rs"
+test = false
+doc = false
+bench = false

@@ -95,6 +95,14 @@ fn action_defs() -> Vec<ActionDef> {
         b("toggle_crafting_1"),
         b("toggle_crafting_2"),
         b("toggle_crafting_3"),
+        // UI scaling (`ui-scaling.md` §7.3): Tessera actions for the UI-scale
+        // controls. Unbound by default — the free keys are taken (KM §8.2) —
+        // so the controls are reached by the `/uiscale` command and the
+        // Interface window unless the user binds them.
+        b("ui_scale_up"),
+        b("ui_scale_down"),
+        b("ui_scale_auto"),
+        b("ui_interface_window"),
     ];
     // P2 targeting and quickslot actions (`keymap.md` §8.2): exact policy, no repeat.
     v.extend(crate::combat::TARGET_ACTIONS.iter().map(|r| b(r.1)));
@@ -262,6 +270,13 @@ fn default_table() -> Vec<(&'static str, &'static str, Vec<Entry>)> {
         (GLOBAL, "toggle_crafting_1", vec![]),
         (GLOBAL, "toggle_crafting_2", vec![]),
         (GLOBAL, "toggle_crafting_3", vec![]),
+        // UI scaling (`ui-scaling.md` §7.3): unbound by default. KM §8.2 binds
+        // Minus and Equal with every modifier, so there is no free key; the
+        // Interface window and the `/uiscale` command reach the same controls.
+        (GLOBAL, "ui_scale_up", vec![]),
+        (GLOBAL, "ui_scale_down", vec![]),
+        (GLOBAL, "ui_scale_auto", vec![]),
+        (GLOBAL, "ui_interface_window", vec![]),
         (CAMERA, "mouselook", vec![D("MouseRight")]),
         (
             CAMERA,
@@ -779,6 +794,42 @@ mod tests {
             "text_history_next",
         ] {
             assert!(reg.action(retired).is_none(), "{retired}");
+        }
+    }
+
+    #[test]
+    fn ui_scaling_actions_exist_unbound_in_global() {
+        // `ui-scaling.md` §7.3: the four UI-scale actions live in the `global`
+        // context and are unbound by default (the free keys are taken).
+        let reg = default_registry();
+        let km = default_keymap();
+        for name in [
+            "ui_scale_up",
+            "ui_scale_down",
+            "ui_scale_auto",
+            "ui_interface_window",
+        ] {
+            // Registered as a button action.
+            let id = reg
+                .action(name)
+                .unwrap_or_else(|| panic!("{name} missing from registry"));
+            assert_eq!(
+                reg.action_def(id).unwrap().kind,
+                crate::ActionKind::Button,
+                "{name} kind"
+            );
+            // Listed in the `global` context and unbound there.
+            let bindings = km
+                .get(contexts::GLOBAL, name)
+                .unwrap_or_else(|| panic!("{name} not in the global context"));
+            assert!(bindings.is_empty(), "{name} should be unbound by default");
+            // In no other context.
+            let ctxs: Vec<&str> = km
+                .iter()
+                .filter(|(_, a, _)| *a == name)
+                .map(|(c, _, _)| c)
+                .collect();
+            assert_eq!(ctxs, vec![contexts::GLOBAL], "{name} should be global only");
         }
     }
 

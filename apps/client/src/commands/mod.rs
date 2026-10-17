@@ -31,6 +31,7 @@ pub mod p5;
 pub mod registry;
 pub mod social;
 pub mod text;
+pub mod uiscale;
 
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Instant;
@@ -215,6 +216,8 @@ pub struct Dispatcher {
     history: History,
     /// The requests of the P5 built-ins ([`p5`]).
     p5: p5::P5Queue,
+    /// The requests of the `/uiscale` built-in ([`uiscale`]).
+    uiscale: uiscale::UiScaleQueue,
 }
 
 impl Default for Dispatcher {
@@ -374,6 +377,7 @@ fn builtins() -> Vec<(&'static str, Builtin, Help)> {
     for w in p5::P5Word::ALL {
         v.push((w.name(), Builtin::P5(w), w.help()));
     }
+    v.push(("uiscale", Builtin::UiScale, uiscale::help()));
     v
 }
 
@@ -447,6 +451,7 @@ impl Dispatcher {
             text: CommandText::default(),
             history: History::new(),
             p5: p5::P5Queue::default(),
+            uiscale: uiscale::UiScaleQueue::default(),
         }
     }
 
@@ -454,6 +459,12 @@ impl Dispatcher {
     #[must_use]
     pub fn p5_queue(&self) -> &p5::P5Queue {
         &self.p5
+    }
+
+    /// The requests the `/uiscale` built-in queued ([`uiscale`]): the frame loop takes them.
+    #[must_use]
+    pub fn uiscale_queue(&self) -> &uiscale::UiScaleQueue {
+        &self.uiscale
     }
 
     /// Takes the install's words (`chat-window.md` §10 items 3, 4, 6): the prefix, the
@@ -634,6 +645,7 @@ impl Dispatcher {
             Builtin::Channel(ch) => self.channel(ch, inv, ctx, out),
             Builtin::Social(w) => social::run_word(self, w, inv, ctx, out),
             Builtin::P5(word) => p5::run(word, &inv.arguments, &self.p5, out),
+            Builtin::UiScale => uiscale::run(&inv.arguments, &self.uiscale, out),
         }
     }
 

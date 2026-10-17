@@ -32,6 +32,9 @@ tessera-text.workspace = true
 tessera-assets.workspace = true
 tessera-material.workspace = true
 tessera-settings.workspace = true
+# Optional UI-scale preview (src/scale_preview.rs): the UI-scaling geometry core only
+# (coordinate spaces, the UI screen, fit rules); no element tree, no canvas, no wgpu.
+tessera-ui.workspace = true
 tessera-mesh.workspace = true
 tessera-render.workspace = true
 # M4 character viewer and animation browser: skeletons, clips, sampling on workers.

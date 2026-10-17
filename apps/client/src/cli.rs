@@ -502,6 +502,17 @@ pub struct Args {
     #[arg(long, value_name = "KIND", value_parser = parse_cursor)]
     pub ui_cursor: Option<tessera_settings::CursorMode>,
 
+    /// UI scale for this run (`ui-scaling.md` §7.3): `auto` or a number 0.5–4.0. Overrides
+    /// `[UI] ui_scale` for the run only; not saved.
+    #[arg(long, value_name = "auto|N", value_parser = parse_ui_scale)]
+    pub ui_scale: Option<tessera_settings::UiScale>,
+
+    /// Wide-screen safe-area width for this run (`ui-scaling.md` §5.1, §7.3): `4:3`, `16:10`,
+    /// `16:9`, `21:9`, `full`, or a ratio. Overrides `[UI] ui_safe_aspect` for the run only;
+    /// not saved.
+    #[arg(long, value_name = "VALUE", value_parser = parse_safe_aspect)]
+    pub ui_safe_aspect: Option<tessera_settings::SafeAspect>,
+
     /// Run the scripted UI measurement of decision 0015 §6 (with `--headless`, offscreen;
     /// implies `--ui`).
     #[arg(long)]
@@ -853,6 +864,24 @@ fn parse_minimap(s: &str) -> Result<tessera_settings::MinimapMode, String> {
 
 fn parse_cursor(s: &str) -> Result<tessera_settings::CursorMode, String> {
     tessera_settings::CursorMode::parse(s).ok_or_else(|| "expected os or software".into())
+}
+
+/// `--ui-scale <auto|N>` (`ui-scaling.md` §7.3): the string `auto`, or a number 0.5–4.0
+/// (rounded to the 0.05 step and clamped).
+fn parse_ui_scale(s: &str) -> Result<tessera_settings::UiScale, String> {
+    tessera_settings::UiScale::parse_value(&tessera_settings::toml::Value::String(
+        s.trim().to_owned(),
+    ))
+    .ok_or_else(|| "expected auto or a number from 0.5 to 4.0".into())
+}
+
+/// `--ui-safe-aspect <value>` (`ui-scaling.md` §5.1, §7.3): `4:3`, `16:10`, `16:9`, `21:9`,
+/// `full`, or a ratio (clamped to 4/3 … 4.0).
+fn parse_safe_aspect(s: &str) -> Result<tessera_settings::SafeAspect, String> {
+    tessera_settings::SafeAspect::parse_value(&tessera_settings::toml::Value::String(
+        s.trim().to_owned(),
+    ))
+    .ok_or_else(|| "expected 4:3, 16:10, 16:9, 21:9, full, or a ratio".into())
 }
 
 fn parse_spacing(s: &str) -> Result<f32, String> {
@@ -1630,5 +1659,26 @@ mod tests {
     fn fly_speed_is_capped() {
         assert!(Args::try_parse_from(["t", "--fly-speed", "2000"]).is_ok());
         assert!(Args::try_parse_from(["t", "--fly-speed", "2001"]).is_err());
+    }
+
+    #[test]
+    fn ui_scale_flags() {
+        use tessera_settings::{SafeAspect, UiScale};
+        let a = Args::try_parse_from(["t"]).unwrap();
+        assert_eq!(a.ui_scale, None);
+        assert_eq!(a.ui_safe_aspect, None);
+        let a = Args::try_parse_from(["t", "--ui-scale", "auto"]).unwrap();
+        assert_eq!(a.ui_scale, Some(UiScale::Auto));
+        // A number is rounded to the 0.05 step and clamped.
+        let a = Args::try_parse_from(["t", "--ui-scale", "1.53"]).unwrap();
+        assert_eq!(a.ui_scale, Some(UiScale::Fixed(1.55)));
+        let a = Args::try_parse_from(["t", "--ui-scale", "9"]).unwrap();
+        assert_eq!(a.ui_scale, Some(UiScale::Fixed(4.0)));
+        assert!(Args::try_parse_from(["t", "--ui-scale", "wobble"]).is_err());
+        let a = Args::try_parse_from(["t", "--ui-safe-aspect", "16:9"]).unwrap();
+        assert_eq!(a.ui_safe_aspect, Some(SafeAspect::R16_9));
+        let a = Args::try_parse_from(["t", "--ui-safe-aspect", "full"]).unwrap();
+        assert_eq!(a.ui_safe_aspect, Some(SafeAspect::Full));
+        assert!(Args::try_parse_from(["t", "--ui-safe-aspect", "nope"]).is_err());
     }
 }

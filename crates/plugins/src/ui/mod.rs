@@ -323,10 +323,14 @@ impl PluginUi {
         shortcut::drag_source_game_shortcut(&self.shared.st.borrow())
     }
 
-    /// A scaling group's scale changed (`UIScaleChanged`, §13.21 rule 8): fires the event
-    /// on every marked window and records the value for `Display.GetUIGroupScale`. The
-    /// events are delivered at once, like a [`Self::deliver`] call, whose client events
-    /// (everything waiting in the UI outbox) are returned for the client to handle.
+    /// A scaling group's value changed (the optional per-window scale of `ui-scaling.md`
+    /// §7.4): records it for `Display.GetUIGroupScale`, re-scales the marked windows that
+    /// follow the group, and fires `UIScaleChanged` (§13.21 rule 8) on every marked window
+    /// of the group. The `Global` group (60) is ignored, because Tessera's UI scale lies
+    /// below the UI-unit space and is 1.0 for plugins (decision 0040, §7.7); so is a
+    /// non-finite or non-positive value. The events are delivered at once, like a
+    /// [`Self::deliver`] call, whose client events (everything waiting in the UI outbox)
+    /// are returned for the client to handle.
     #[must_use = "the client events of the delivery are returned"]
     pub fn scale_changed(&self, manager: &PluginManager, group: u32, value: f32) -> Vec<UiEvent> {
         window::scale_changed(&self.shared, group, value);

@@ -522,9 +522,15 @@ fn install_display(api: &NativeApi<'_>, sh: &Rc<Shared>, ui: &Table) -> mlua::Re
     })?;
     def_static(api, sh, &d, "GetUIGroupScale", |_, sh, args| {
         let g = int(args.front()) as u32;
-        Ok(f64::from(
-            sh.st.borrow().group_scales.get(&g).copied().unwrap_or(1.0),
-        ))
+        // §7.7: the `Global` group is 1.0 for plugins (Tessera's UI scale lies below the
+        // UI-unit space, decision 0040); any other group reports its recorded value, 1.0
+        // when it was never scaled (a group without a `UIScaleDefinition` entry has 1.0).
+        let s = if g == super::window::GLOBAL_GROUP {
+            1.0
+        } else {
+            sh.st.borrow().group_scales.get(&g).copied().unwrap_or(1.0)
+        };
+        Ok(f64::from(s))
     })?;
     Ok(())
 }

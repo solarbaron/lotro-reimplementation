@@ -478,6 +478,62 @@ mod tests {
         assert!(!tile.geometry().expect("valid").one_to_one);
     }
 
+    /// The renderer cannot and need not tell a scale-change preview from a
+    /// stretch vector (`ui-scaling.md` §6.6, §3.4): both present as a `Fit`
+    /// entry whose `dest` differs from the canvas, so both leave the 1 : 1 path
+    /// identically. This locks the contract the `UiEntry` doc comment states.
+    #[test]
+    fn stretch_and_preview_are_indistinguishable() {
+        // Preview: the old canvas kept, composed onto a larger box.
+        let preview = UiEntry::new(TextureId::dangling(), [80, 60], UiRect::new(5, 5, 120, 90));
+        // Stretch vector: a surface asked to draw its canvas into a wider box.
+        let stretch = UiEntry::new(TextureId::dangling(), [80, 60], UiRect::new(5, 5, 160, 60));
+        for e in [preview, stretch] {
+            let g = e.geometry().expect("valid");
+            assert!(
+                !g.one_to_one,
+                "a Fit dest != canvas must take the scaled path"
+            );
+            assert!(!g.rotated && g.drawable);
+        }
+    }
+
+    /// A live scale change composes the old canvas scaled onto the new box
+    /// (`ui-scaling.md` §6.6, §4.5 step 3): the surface keeps its last picture,
+    /// so the entry carries the **old** canvas size with a **new**, differently
+    /// sized `dest`. That entry is not 1 : 1 — it takes the scaled path and is
+    /// resampled — while once the surface is repainted at the new content scale
+    /// (canvas size back to the box size) the entry is 1 : 1 again.
+    #[test]
+    fn preview_composes_old_canvas_scaled() {
+        // Surface painted at the old scale: an 80 × 60 canvas, drawn 1 : 1.
+        let painted = UiEntry::new(TextureId::dangling(), [80, 60], UiRect::new(5, 5, 80, 60));
+        assert!(painted.geometry().expect("valid").one_to_one);
+
+        // The scale grows while the repaint is in flight: the new displayed box
+        // is 120 × 90 but the canvas is still the old 80 × 60. The old picture
+        // is composed scaled, not re-rendered.
+        let preview = UiEntry {
+            dest: UiRect::new(5, 5, 120, 90),
+            ..painted
+        };
+        let g = preview.geometry().expect("valid");
+        assert!(!g.one_to_one, "a differently sized box must scale");
+        assert!(g.drawable && !g.rotated);
+
+        // The scale can also shrink the box below the old canvas.
+        let shrink = UiEntry {
+            dest: UiRect::new(5, 5, 40, 30),
+            ..painted
+        };
+        assert!(!shrink.geometry().expect("valid").one_to_one);
+
+        // After the settle the surface is repainted at the new scale, so the
+        // canvas matches the box again and composition returns to 1 : 1.
+        let repainted = UiEntry::new(TextureId::dangling(), [120, 90], UiRect::new(5, 5, 120, 90));
+        assert!(repainted.geometry().expect("valid").one_to_one);
+    }
+
     #[test]
     fn hostile_entries_are_refused() {
         let ok = entry(UiRect::new(0, 0, 4, 4));

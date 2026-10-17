@@ -162,8 +162,14 @@ fn shared_apartment_reference_windows() {
     for name in ["RefA", "RefB"] {
         assert!(fx.manager.options_panel(name).is_some(), "{name}");
     }
-    // UIScaleChanged reaches the window registered for global scaling.
+    // UIScaleChanged reaches the marked window through its own group (group 72 after
+    // `RegisterForGlobalScaling`). The `Global` group (60) is fixed at 1.0 for plugins and
+    // fires nothing (decision 0040, `ui-scaling.md` §7.7).
     let ev = fx.pui.scale_changed(&fx.manager, 60, 1.25);
+    fx.client.extend(ev);
+    let unchanged: Option<f64> = fx.eval("Refs", "return refA.scale");
+    assert_eq!(unchanged, None, "no event, so refA.scale is still nil");
+    let ev = fx.pui.scale_changed(&fx.manager, 72, 1.25);
     fx.client.extend(ev);
     let s: f64 = fx.eval("Refs", "return refA.scale");
     assert_eq!(s, 1.25);

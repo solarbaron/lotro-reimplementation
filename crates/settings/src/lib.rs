@@ -120,6 +120,9 @@ pub use store::{
     SettingsStore, check_not_inside_game_dirs, default_path,
 };
 pub use ui::{
-    BUDGET_MIB_RANGE, ChatPrefs, CursorMode, MAX_UI_TEXT_BYTES, MinimapMode, SCALE_RANGE,
-    ScaleFilter, UI_SECTION, USER_SKIN_KEY, UiPrefs,
+    AnchorX, AnchorY, ArtFilter, BUDGET_MIB_RANGE, ChatPrefs, CursorMode, GROUP_SCALE_RANGE,
+    MAX_GROUP_SCALES, MAX_PANEL_DIM, MAX_PANEL_KEY_BYTES, MAX_PANEL_OFFSET, MAX_UI_PANELS,
+    MAX_UI_TEXT_BYTES, MinimapMode, PanelPlacement, PanelRef, SAFE_ASPECT_RANGE, SafeAspect,
+    ScaleFilter, TEXT_SCALE_RANGE, TextSource, UI_SCALE_RANGE, UI_SCALE_STEP, UI_SECTION,
+    USER_SKIN_KEY, UiPrefs, UiScale,
 };

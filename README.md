@@ -134,6 +134,17 @@ in the tree**, so the trait half of criterion 1 is held ([decision 0037](docs/de
 and the progression UI half is a Tessera fallback. Still open: the live frame glue that opens
 the P6 windows in the walker, and owner comparisons with the original client.
 
+**UI scaling (its own, any resolution and aspect ratio) has its foundation implemented**
+([UI scaling status](docs/ROADMAP.md#ui-scaling)): [decision 0040](docs/decisions/0040-ui-scaling.md)
+and the Accepted [`ui-scaling.md`](docs/specs/ui-scaling.md) give Tessera a user scale slider, a
+configurable safe area for ultrawide, and crisp text and art from 4:3 to 32:9 and up to 4K and
+beyond, instead of copying the original's interface scaling. The pure geometry core
+(`tessera-ui::scaling`), the settings keys, the input actions, the client UI-host scaling (UI
+screen sizing, pointer mapping, auto default, live scale change, `/uiscale`), the plugin display
+binding and the renderer composition are built and verified; the §5–§6 live layout, paint and
+text integration into the UI element tree — which the committed goldens G1, G3–G8 and the
+real-data goldens depend on — is the outstanding follow-up.
+
 | Area | State |
 |---|---|
 | Archive reader (`.dat`/`.datx` container, directory, compression, DID routing) | done (M0): all 29 archives, 3.8 M entries validated and inflated with 0 errors |

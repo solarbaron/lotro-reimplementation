@@ -18,8 +18,15 @@ use crate::api::{NativeApi, script_error};
 
 /// The scaling group `SetScale` and a zero group use (§13.21 rule 2).
 const SCALE_GROUP: u32 = 72;
-/// The `Global` scaling group (Appendix A.7).
-const GLOBAL_GROUP: u32 = 60;
+/// The `Global` scaling group (Appendix A.7). Under decision 0040 (`ui-scaling.md` §7.7) its
+/// value is fixed at 1.0 for plugins: Tessera's UI scale lies below the UI-unit space, so a
+/// plugin never sees it except as the `Display` size.
+pub(crate) const GLOBAL_GROUP: u32 = 60;
+
+/// `UIScale_Global` as a plugin sees it: 1.0, always (decision 0040, `ui-scaling.md` §7.7).
+/// The window's "global wanted" flag (§13.21 rule 3) still selects it, so a global window
+/// behaves like a non-global one numerically and never scales twice.
+const PLUGIN_UI_SCALE_GLOBAL: f32 = 1.0;
 
 fn window(d: &ObjData) -> bool {
     ctl_of(d, &[Kind::Window])
@@ -84,14 +91,20 @@ fn group_value(sh: &Shared, group: u32) -> f32 {
 }
 
 /// Apply a marked window's effective scale (§13.21 rules 4–5).
+///
+/// The effective scale is the group's value `b` (§13.21 rule 2): the window's own scale when
+/// one was set, otherwise the group's option value. Under decision 0040 (`ui-scaling.md`
+/// §7.7) `UIScale_Global` is 1.0 for plugins, so the global factor is never applied: the
+/// node scale is `b` whether or not the window is registered for global scaling, and the
+/// window never scales twice. The factor is applied as a uniform, crisp node scale
+/// (`window_set_scale` with no global multiply).
 fn apply_scale(cx: &Cx<'_>) -> mlua::Result<()> {
     let Some((key, w)) = ctl_get(cx.sh, cx.id, |c| (c.key, c.window.as_deref().cloned())) else {
         return Ok(());
     };
     let Some(w) = w else { return Ok(()) };
     let b = w.own_scale.unwrap_or_else(|| group_value(cx.sh, w.group));
-    let global = w.global;
-    let r = with_ui(cx.sh, |u| u.window_set_scale(key, b, global));
+    let r = with_ui(cx.sh, |u| u.window_set_scale(key, b, false));
     match r {
         Some(Err(e)) => Err(script_error(e.to_string())),
         _ => Ok(()),
@@ -118,23 +131,48 @@ fn mark(cx: &Cx<'_>) -> bool {
     true
 }
 
-/// `UIScaleChanged` for the windows of every apartment (§13.21 rule 8).
+/// A scaling group's value changed: record it, re-apply it to the marked windows that
+/// follow the group (those without an own scale, §13.21 rule 2), and fire `UIScaleChanged`
+/// on every marked window of the group (§13.21 rule 8, the optional per-window scale of
+/// `ui-scaling.md` §7.4).
+///
+/// The `Global` group (60) is ignored: under decision 0040 (`ui-scaling.md` §7.7)
+/// `UIScale_Global` is fixed at 1.0 for plugins, so a change of Tessera's UI scale fires no
+/// `UIScaleChanged` and `Display.GetUIGroupScale(Global)` stays 1.0. A non-finite or
+/// non-positive value is rejected (it would not be a valid node scale).
 pub(crate) fn scale_changed(sh: &Shared, group: u32, value: f32) {
+    if group == GLOBAL_GROUP || !value.is_finite() || value <= 0.0 {
+        return;
+    }
+    // Which marked windows follow this group (rule 2: an own scale overrides the group's
+    // value), and which of them should be re-scaled to the new value.
+    let mut fire: Vec<u64> = Vec::new();
+    let mut reapply: Vec<(u64, tessera_ui::ElementKey)> = Vec::new();
+    {
+        let mut st = sh.st.borrow_mut();
+        st.group_scales.insert(group, value);
+        for (id, o) in &st.objs {
+            if let ObjData::Ctl(c) = &o.data
+                && let Some(w) = c.window.as_deref()
+                && w.marked
+                && w.group == group
+            {
+                fire.push(*id);
+                if w.own_scale.is_none() {
+                    reapply.push((*id, c.key));
+                }
+            }
+        }
+    }
+    // Re-apply the new node scale to the windows that take the group's value (§13.21 rule 5;
+    // the global factor is 1.0 for plugins, §7.7).
+    for (_, key) in &reapply {
+        with_ui(sh, |u| {
+            let _ = u.window_set_scale(*key, value, false);
+        });
+    }
     let mut st = sh.st.borrow_mut();
-    st.group_scales.insert(group, value);
-    let targets: Vec<u64> = st
-        .objs
-        .iter()
-        .filter_map(|(id, o)| match &o.data {
-            ObjData::Ctl(c) => c
-                .window
-                .as_deref()
-                .filter(|w| w.marked && (group == GLOBAL_GROUP || w.group == group))
-                .map(|_| *id),
-            _ => None,
-        })
-        .collect();
-    for id in targets {
+    for id in fire {
         push(
             &mut st,
             Pending::Fire {
@@ -389,12 +427,13 @@ pub(crate) fn install(
         if !w.marked {
             return Ok(1.0);
         }
+        // §13.21 rule 6: the effective scale *s*, the global factor included. With `b` the
+        // group's value (rule 2), a global window has *s* = b × `UIScale_Global`, which is
+        // 1.0 for plugins (decision 0040, `ui-scaling.md` §7.7), so a global window does not
+        // scale twice.
         let b = w.own_scale.unwrap_or_else(|| group_value(cx.sh, w.group));
         let g = if w.global {
-            cx.sh
-                .ui
-                .try_borrow()
-                .map_or(1.0, |u| u.settings().scale_global)
+            PLUGIN_UI_SCALE_GLOBAL
         } else {
             1.0
         };

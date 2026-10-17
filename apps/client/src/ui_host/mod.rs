@@ -27,6 +27,7 @@ pub mod cursor;
 pub mod env;
 pub mod gpu;
 pub mod run;
+pub mod scaling;
 pub mod script;
 pub mod services;
 pub mod stats;
@@ -62,6 +63,7 @@ use crate::plugins::Plugins;
 use cursor::{CursorWindow, PointerLock, PointerReport, StartOutcome};
 use env::{ClientEnv, EnvHandle, EnvState};
 use gpu::UiTextures;
+use scaling::ScaleState;
 use services::{Deferred, PluginView, WalkerPlayer};
 use stats::{FrameSample, Recorder, ms};
 
@@ -110,6 +112,12 @@ struct BridgeIds {
     contexts: Vec<(&'static str, ContextId)>,
     mouselook: Option<tessera_input::ActionId>,
     menu: Option<tessera_input::ActionId>,
+    /// The four UI-scaling actions (`ui-scaling.md` §7.3), unbound by default, polled each
+    /// frame ([`UiHost::poll_scale_actions`]).
+    ui_scale_up: Option<tessera_input::ActionId>,
+    ui_scale_down: Option<tessera_input::ActionId>,
+    ui_scale_auto: Option<tessera_input::ActionId>,
+    ui_interface_window: Option<tessera_input::ActionId>,
 }
 
 impl BridgeIds {
@@ -219,6 +227,13 @@ pub struct UiHost {
     portrait_failed: Option<(u64, (u32, u32))>,
     /// The combat widgets and their queues (decision 0024 P2, [`combat`]).
     combat: combat::HostCombat,
+    /// The UI-scaling state (decision 0040, `ui-scaling.md` §4): resolves the effective
+    /// scale, the UI screen *F* and the safe area *A*, and converts pointers ([`scaling`]).
+    /// The `tessera-ui` screen root is sized in UI units (*F*), never physical pixels (§3.2).
+    scale: ScaleState,
+    /// Whether `/uiscale` or the `ui_interface_window` action asked for the Interface window
+    /// (`ui-scaling.md` §7.2): the frame loop takes it with [`Self::take_interface_request`].
+    want_interface: bool,
 }
 
 /// Most UI events and panel commands queued for the character panels in one frame.
@@ -269,14 +284,21 @@ impl UiHost {
         options: &UiOptions,
     ) -> Self {
         let (w, h) = options.screen;
-        let mut ui = Ui::new(
-            env,
-            vocab,
+        // Decision 0040 (`ui-scaling.md` §3.2, §4): the UI screen root is sized in UI units
+        // (*F*), derived from the window's physical size and the UI scale, not in physical
+        // pixels. σ = 1.0 here; the windowed client updates it from the monitor
+        // ([`Self::set_os_scale`]). At *Se* = 1 (1024 × 768, 1920 × 1080 …) *F* equals the
+        // physical size, so nothing changes (invariant I2).
+        let scale = ScaleState::new(
+            options.prefs.ui_scale,
+            options.prefs.safe_aspect,
             (
                 i32::try_from(w).unwrap_or(i32::MAX),
                 i32::try_from(h).unwrap_or(i32::MAX),
             ),
+            1.0,
         );
+        let mut ui = Ui::new(env, vocab, scale.ui_size());
         let limits = limits_of(&options.prefs);
         let mut textures = UiTextures::new();
         if options.prefs.scale_filter == tessera_settings::ScaleFilter::Nearest {
@@ -348,6 +370,8 @@ impl UiHost {
             pending_im: Vec::new(),
             tells_generation: None,
             combat: combat::HostCombat::default(),
+            scale,
+            want_interface: false,
         }
     }
 
@@ -630,6 +654,12 @@ impl UiHost {
         }
         ids.mouselook = reg.action("mouselook");
         ids.menu = reg.action("menu");
+        // The four UI-scaling actions (`ui-scaling.md` §7.3), registered unbound in the
+        // input crate's default registry.
+        ids.ui_scale_up = reg.action("ui_scale_up");
+        ids.ui_scale_down = reg.action("ui_scale_down");
+        ids.ui_scale_auto = reg.action("ui_scale_auto");
+        ids.ui_interface_window = reg.action("ui_interface_window");
         let pointer = reg.context(contexts::POINTER);
         if let Some(p) = pointer {
             mapper.activate(p);
@@ -769,9 +799,12 @@ impl UiHost {
     ) {
         let cursor = match self.lock.rescale(ratio, area) {
             Some(f) => {
-                self.ui
-                    .borrow_mut()
-                    .set_pointer_lock(Some((f.0.floor() as i32, f.1.floor() as i32)));
+                // The frozen position is a physical pixel; the UI's lock point is in UI units
+                // (`ui-scaling.md` §3.6). At Se = 1 this is the identity.
+                let (ux, uy) = self
+                    .scale
+                    .pointer_to_ui(f.0.floor() as i32, f.1.floor() as i32);
+                self.ui.borrow_mut().set_pointer_lock(Some((ux, uy)));
                 Some(f)
             }
             None => rescaled_cursor(mapper.cursor(), ratio),
@@ -836,14 +869,116 @@ impl UiHost {
         }
     }
 
-    /// A new screen size (applied at the start of step 7, decision 0014 Amendment 1
-    /// item 2).
+    /// A new window size in **physical** pixels (applied at the start of step 7, decision
+    /// 0014 Amendment 1 item 2). The UI scale recomputes the UI screen *F* and the safe area
+    /// (`ui-scaling.md` §4.6); the `tessera-ui` screen root is sized in UI units (§3.2). A
+    /// size with a zero side changes nothing (§3.2).
     pub fn resize(&mut self, width: u32, height: u32) {
         self.frame.event = true;
-        self.ui.borrow_mut().request(UiChange::Screen(
-            i32::try_from(width.max(1)).unwrap_or(i32::MAX),
-            i32::try_from(height.max(1)).unwrap_or(i32::MAX),
-        ));
+        let phys = (
+            i32::try_from(width).unwrap_or(i32::MAX),
+            i32::try_from(height).unwrap_or(i32::MAX),
+        );
+        if self.scale.set_physical(phys, Instant::now()).screen_changed {
+            self.feed_screen();
+        }
+    }
+
+    /// A change of the operating system's scale factor σ for the window's monitor (the window
+    /// moved to another monitor, `ui-scaling.md` §4.2, §4.6): with the automatic scale *F*
+    /// is re-evaluated. The windowed client calls this on `ScaleFactorChanged`.
+    pub fn set_os_scale(&mut self, sigma: f64) {
+        if self.scale.set_os_scale(sigma).screen_changed {
+            self.frame.event = true;
+            self.feed_screen();
+        }
+    }
+
+    /// Resizes the `tessera-ui` screen root to the current UI screen *F* (`ui-scaling.md`
+    /// §3.2, §4.5 step 2). The bridge lays the roots out again.
+    fn feed_screen(&mut self) {
+        let (wu, hu) = self.scale.ui_size();
+        self.ui.borrow_mut().request(UiChange::Screen(wu, hu));
+    }
+
+    /// The UI-scaling state (decision 0040, `ui-scaling.md` §4): the effective scale, the UI
+    /// screen *F*, the safe area *A* and the pointer conversion.
+    #[must_use]
+    pub fn scale(&self) -> &ScaleState {
+        &self.scale
+    }
+
+    /// Applies one `/uiscale` request (`ui-scaling.md` §7.3; [`crate::commands::uiscale`]):
+    /// opens the Interface window, or changes the scale or the safe aspect live (§4.5). Call
+    /// from the frame loop with the frame time.
+    pub fn apply_uiscale_request(
+        &mut self,
+        req: &crate::commands::uiscale::UiScaleRequest,
+        now: Instant,
+    ) {
+        use crate::commands::uiscale::UiScaleRequest as R;
+        let applied = match req {
+            R::Open => {
+                self.want_interface = true;
+                return;
+            }
+            R::Auto => self.scale.set_auto(now),
+            R::Set(v) => self.scale.set_scale(*v, now),
+            R::Step(d) => self.scale.step_scale(*d, now),
+            R::Aspect(a) => self.scale.set_safe_aspect(*a, now),
+        };
+        if applied.screen_changed {
+            self.frame.event = true;
+            self.feed_screen();
+        }
+    }
+
+    /// The per-frame UI-scaling tick: applies the automatic default once the window size has
+    /// settled (`ui-scaling.md` §4.2). Call once per frame with the frame time.
+    pub fn scale_tick(&mut self, now: Instant) {
+        if self.scale.tick(now).screen_changed {
+            self.frame.event = true;
+            self.feed_screen();
+        }
+    }
+
+    /// Takes the settled UI-scale change for the settings writer, once the settle elapsed
+    /// (`ui-scaling.md` §4.5 step 5). The frame loop writes `ui_scale` and `ui_safe_aspect`.
+    pub fn take_scale_persist(
+        &mut self,
+        now: Instant,
+    ) -> Option<(tessera_settings::UiScale, tessera_settings::SafeAspect)> {
+        self.scale.take_persist(now)
+    }
+
+    /// Takes a pending request to open the Interface window (`ui-scaling.md` §7.2), set by
+    /// `/uiscale` with no argument or the `ui_interface_window` action.
+    pub fn take_interface_request(&mut self) -> bool {
+        std::mem::take(&mut self.want_interface)
+    }
+
+    /// Applies the four UI-scaling actions pressed this frame (`ui-scaling.md` §7.3):
+    /// `ui_scale_up`/`_down` step by 0.05, `ui_scale_auto` sets auto, `ui_interface_window`
+    /// opens the Interface window. The actions are unbound by default (the Interface window
+    /// and `/uiscale` are the usual way in), so this does nothing until the user binds them.
+    pub fn poll_scale_actions(&mut self, mapper: &InputMapper, now: Instant) {
+        let pressed =
+            |id: Option<tessera_input::ActionId>| id.is_some_and(|i| mapper.just_pressed(i));
+        if pressed(self.ids.ui_scale_up) && self.scale.step_scale(0.05, now).screen_changed {
+            self.frame.event = true;
+            self.feed_screen();
+        }
+        if pressed(self.ids.ui_scale_down) && self.scale.step_scale(-0.05, now).screen_changed {
+            self.frame.event = true;
+            self.feed_screen();
+        }
+        if pressed(self.ids.ui_scale_auto) && self.scale.set_auto(now).screen_changed {
+            self.frame.event = true;
+            self.feed_screen();
+        }
+        if pressed(self.ids.ui_interface_window) {
+            self.want_interface = true;
+        }
     }
 
     /// Scales every open native panel, and every panel opened later (the scale-change
@@ -1098,9 +1233,12 @@ impl UiHost {
             OfferedEvent::Text { ch, .. } => self.offer_text(*ch, plugins),
             OfferedEvent::PointerMoved { x, y, .. } => {
                 self.frame.pointer_events = self.frame.pointer_events.saturating_add(1);
+                // The mapper reports the pointer as a continuous physical position; the UI
+                // works in UI units (`ui-scaling.md` §3.6). At Se = 1 this is the identity.
+                let (ux, uy) = self.scale.physical_to_ui(*x, *y);
                 self.ui
                     .borrow_mut()
-                    .offer(&UiInput::PointerMoved { x: *x, y: *y })
+                    .offer(&UiInput::PointerMoved { x: ux, y: uy })
             }
             OfferedEvent::PointerLeft { .. } => self.ui.borrow_mut().offer(&UiInput::PointerLeft),
             OfferedEvent::FocusLost { .. } => {
@@ -1198,10 +1336,11 @@ impl UiHost {
                     let drag = self.ui.borrow().item_drag_active();
                     let out = self.lock.start(hold, consumed, drag, a.position, window);
                     if out == StartOutcome::Locked {
-                        let f = self
-                            .lock
-                            .frozen()
-                            .map(|(x, y)| (x.floor() as i32, y.floor() as i32));
+                        // The frozen cursor is a physical pixel; the UI lock point is in UI
+                        // units (`ui-scaling.md` §3.6; identity at Se = 1).
+                        let f = self.lock.frozen().map(|(x, y)| {
+                            self.scale.pointer_to_ui(x.floor() as i32, y.floor() as i32)
+                        });
                         self.ui.borrow_mut().set_pointer_lock(f);
                         return false;
                     }

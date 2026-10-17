@@ -496,6 +496,10 @@ pub struct ExplorerApp {
     pub(crate) mesh_start: Option<MeshState>,
     /// The character view's state (it persists while browsing).
     pub(crate) character: crate::anim_view::CharacterState,
+    /// Whether the optional UI-scale preview window is open (`ui-scaling.md` §7.4, §9.2).
+    pub(crate) show_scale_preview: bool,
+    /// The UI-scale preview's control state.
+    pub(crate) scale_preview: crate::scale_preview::ScalePreview,
 }
 
 impl std::fmt::Debug for ExplorerApp {
@@ -577,6 +581,8 @@ impl ExplorerApp {
             mesh_settings,
             mesh_start,
             character,
+            show_scale_preview: false,
+            scale_preview: crate::scale_preview::ScalePreview::default(),
         };
         match dir {
             Some(d) => {
@@ -1048,6 +1054,7 @@ impl ExplorerApp {
                 });
                 ui.menu_button("View", |ui| {
                     ui.checkbox(&mut self.show_overlay, "Frame-time overlay");
+                    ui.checkbox(&mut self.show_scale_preview, "UI scale preview");
                 });
             });
             ui.add_space(2.0);
@@ -1855,6 +1862,9 @@ impl eframe::App for ExplorerApp {
             self.welcome(ui);
         }
         self.overlay(&ctx);
+        if self.show_scale_preview {
+            self.scale_preview.show(&ctx, &mut self.show_scale_preview);
+        }
         self.screenshot_step(&ctx);
         if ctx.input(|i| i.viewport().close_requested()) {
             self.remember_window(&ctx);

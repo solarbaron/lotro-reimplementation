@@ -606,6 +606,114 @@ fn scaling_origin_point_stays_in_place() {
     assert_eq!(o, (300.0, 200.0));
 }
 
+/// `Display` reads in the one space (`ui-scaling.md` §3.5, §7.7): the size and the mouse
+/// position are UI units, the global factor is 1.0 for plugins, and `Display` follows the UI
+/// screen `F` when it changes.
+#[test]
+fn display_is_the_ui_screen_in_ui_units() {
+    let mut fx = fx_with("");
+    // The size and the per-axis getters are the UI screen in UI units.
+    let (w, h, gw, gh): (f64, f64, f64, f64) = eval(
+        &fx,
+        "local w, h = Turbine.UI.Display.GetSize() \
+         return w, h, Turbine.UI.Display.GetWidth(), Turbine.UI.Display.GetHeight()",
+    );
+    assert_eq!(
+        (w, h, gw, gh),
+        (
+            f64::from(harness::SCREEN.0),
+            f64::from(harness::SCREEN.1),
+            f64::from(harness::SCREEN.0),
+            f64::from(harness::SCREEN.1),
+        )
+    );
+    // The global factor is 1.0 for plugins (§7.7); a group that was never scaled is 1.0 too.
+    let (global, unset): (f64, f64) = eval(
+        &fx,
+        "return Turbine.UI.Display.GetUIGroupScale(Turbine.UI.Lotro.UIScalingGroupType.Global), \
+                Turbine.UI.Display.GetUIGroupScale(Turbine.UI.Lotro.UIScalingGroupType.Toolbar)",
+    );
+    assert_eq!((global, unset), (1.0, 1.0));
+    // When F changes (a window resize or a UI-scale change recomputes Wu x Hu), Display
+    // follows it, still in UI units.
+    fx.pui.ui().borrow_mut().resize_screen(1280, 720);
+    let (w2, h2): (f64, f64) = eval(&fx, "local w, h = Turbine.UI.Display.GetSize() return w, h");
+    assert_eq!((w2, h2), (1280.0, 720.0));
+    // The mouse position is in UI units (floor of ux, uy; §7.7); the three getters agree.
+    fx.move_to(640, 360);
+    let (px, py, mx, my): (f64, f64, f64, f64) = eval(
+        &fx,
+        "local x, y = Turbine.UI.Display.GetMousePosition() \
+         return x, y, Turbine.UI.Display.GetMouseX(), Turbine.UI.Display.GetMouseY()",
+    );
+    assert_eq!((px, py, mx, my), (640.0, 360.0, 640.0, 360.0));
+}
+
+/// A scaling group (A.7) under two scales (`ui-scaling.md` §7.4, §7.7; §13.21 rules 2, 6,
+/// 8): the window follows the group's value, `Display.GetUIGroupScale` and `GetScale` report
+/// it, and `UIScaleChanged` fires on each change. The global factor stays 1.0.
+#[test]
+fn scaling_group_under_two_scales() {
+    let mut fx = fx_with(
+        "w = Turbine.UI.Window() w:SetSize(300, 200) w:SetPosition(100, 100) w:SetVisible(true) \
+         w.changes = {} \
+         w.UIScaleChanged = function(_, a) w.changes[#w.changes + 1] = a.Value end \
+         w:SetUIScalingGroup(Turbine.UI.Lotro.UIScalingGroupType.Toolbar)",
+    );
+    // Group membership: the window follows Toolbar (6); with no own scale, its effective
+    // scale is the group's value, 1.0 by default (a group without a definition entry).
+    let (group, scale): (f64, f64) = eval(&fx, "return w:GetUIScalingGroup(), w:GetScale()");
+    assert_eq!((group, scale), (6.0, 1.0));
+    // Unscaled, the window is its natural 300 x 200 on screen.
+    fx.frame(0.016);
+    let (_, _, w0, h0) = fx.screen_box("Probe", "w");
+    assert_eq!((w0, h0), (300, 200));
+
+    // First scale: the group's value becomes 1.5.
+    let _ = fx.pui.scale_changed(&fx.manager, 6, 1.5);
+    let (gs, ws): (f64, f64) = eval(
+        &fx,
+        "return Turbine.UI.Display.GetUIGroupScale(6), w:GetScale()",
+    );
+    assert_eq!(
+        (gs, ws),
+        (1.5, 1.5),
+        "Display and GetScale follow the group"
+    );
+    // The group value was re-applied as a real node scale (§7.7, LPA §13.21 rule 5): the
+    // window actually resizes on screen, not only in GetScale (pins the reapply loop of
+    // `window::scale_changed`, which GetScale/GetUIGroupScale alone would not catch).
+    fx.frame(0.016);
+    let (_, _, w1, h1) = fx.screen_box("Probe", "w");
+    assert!(
+        (w1 - 450).abs() <= 1 && (h1 - 300).abs() <= 1,
+        "group scale 1.5 resizes the window: {w1}x{h1}"
+    );
+
+    // Second scale: the group's value becomes 0.75.
+    let _ = fx.pui.scale_changed(&fx.manager, 6, 0.75);
+    let (gs, ws): (f64, f64) = eval(
+        &fx,
+        "return Turbine.UI.Display.GetUIGroupScale(6), w:GetScale()",
+    );
+    assert_eq!((gs, ws), (0.75, 0.75));
+    // Re-applied again: the window shrinks on screen to the new factor.
+    fx.frame(0.016);
+    let (_, _, w2, h2) = fx.screen_box("Probe", "w");
+    assert!(
+        (w2 - 225).abs() <= 1 && (h2 - 150).abs() <= 1,
+        "group scale 0.75 resizes the window: {w2}x{h2}"
+    );
+
+    // The global factor never enters a plugin's scale.
+    let g: f64 = eval(&fx, "return Turbine.UI.Display.GetUIGroupScale(60)");
+    assert_eq!(g, 1.0);
+
+    // Both changes reached the window's UIScaleChanged handler, in order (§13.21 rule 8).
+    let (a, b, n): (f64, f64, f64) = eval(&fx, "return w.changes[1], w.changes[2], #w.changes");
+    assert_eq!((a, b, n), (1.5, 0.75, 2.0));
+}
+
 #[test]
 fn game_styled_window_members() {
     let fx = fx_with("w = Turbine.UI.Lotro.Window() w:SetSize(400, 300) w:SetText('Caption')");

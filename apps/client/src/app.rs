@@ -772,6 +772,11 @@ impl ApplicationHandler for App {
                     let old = self.scale_factor;
                     let ratio = if old > 0.0 { scale_factor / old } else { 1.0 };
                     self.scale_factor = scale_factor;
+                    // The automatic UI scale follows the monitor's scale factor σ
+                    // (`ui-scaling.md` §4.2, §4.6).
+                    if let Some(ui) = self.ui.as_mut() {
+                        ui.set_os_scale(scale_factor);
+                    }
                     if let Some(walker) = host.walker.as_mut() {
                         let timing = crate::ui_host::cursor::activation_timing(
                             &self.input_prefs,

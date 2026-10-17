@@ -4056,6 +4056,7 @@ dependencies = [
  "tessera-render",
  "tessera-settings",
  "tessera-text",
+ "tessera-ui",
  "tessera-world",
  "tessera-wstate",
  "thiserror 2.0.21",

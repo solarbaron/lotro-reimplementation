@@ -147,6 +147,11 @@ pub struct Ui {
     /// The safe area *A* (`ui-scaling.md` §5.1), in UI units relative to *F*. `None` is the
     /// identity (*A* = *F*).
     pub(crate) safe_area: Option<crate::scaling::DBox>,
+    /// The frame offset last added to each safe-area panel root (`ui-scaling.md` §5.2 "Layout
+    /// frames": the amount a root laid out in the safe area's frame was moved by, so a later
+    /// re-layout puts it back into the frame first and never adds the offset twice). Empty at
+    /// the identity; only safe-area panel roots get an entry.
+    pub(crate) frame_offsets: std::collections::HashMap<ElementKey, (i32, i32)>,
 }
 
 impl std::fmt::Debug for Ui {
@@ -224,6 +229,7 @@ impl Ui {
             procedural: std::collections::HashMap::new(),
             ui_screen: None,
             safe_area: None,
+            frame_offsets: std::collections::HashMap::new(),
         }
     }
 
@@ -890,6 +896,22 @@ impl Ui {
         {
             return;
         }
+        // The UI-scaling fit rules (`ui-scaling.md` §5.2–§5.6) replace the plain run-time
+        // layout for fit containers and safe-area panel roots once a UI screen *F* is set
+        // (`Ui::set_ui_screen`); at the identity (`ui_screen` = `None`, or `Se` = 1 with
+        // *A* = *F*) `scaled_layout` never changes the result, so existing behaviour and every
+        // committed golden are byte-identical (invariant I2, `crate::scale`).
+        if self.ui_screen.is_some() && self.scaled_layout(k) {
+            return;
+        }
+        self.layout_default(k);
+    }
+
+    /// The plain run-time layout of `ui-layout.md` §8.4 (steps 2–6 through [`runtime`]) against
+    /// the element's reference boxes (§8.3). This is the path for every element at the identity
+    /// and for every element the UI-scaling fit rules do not take over (ordinary children, and
+    /// full-screen roots with edges (5, 5, 5, 5), `ui-scaling.md` §5.2).
+    pub(crate) fn layout_default(&mut self, k: ElementKey) {
         let (old, new) = self.reference_boxes(k);
         let Some(e) = self.el(k) else { return };
         let inp = RuntimeInput {

@@ -7,6 +7,7 @@ use std::io::Write;
 
 use flate2::Compression;
 use flate2::write::ZlibEncoder;
+use tessera_compat::world::MAX_WORLD_COORDINATE_M;
 use tessera_compat::world::{
     AccountBooted, ActionErrorResponse, ActionPayload, ActionStatusResponse, ActionSubEntry,
     CharDesc, CharacterCreateError, CharacterCreateSuccess, CharacterDeletedResult, CharacterError,
@@ -1190,4 +1191,112 @@ fn hostile_input_bounds_and_validation() {
         DeleteEntity::from_bytes(&[0x01]),
         Err(WorldError::InvalidBaseFlags(0x01))
     );
+}
+
+// ---------------------------------------------------------------------------
+// Coordinate finiteness and world bounds (`official-messages-play.md` §9.1 rule 4)
+// ---------------------------------------------------------------------------
+
+fn portal_with(offset: [f32; 3], linear: [f32; 3], angular: [f32; 3]) -> PortalPlacement {
+    PortalPlacement {
+        pos_sync_flags: 0x7E,
+        sequence_or_reason: 1,
+        position: WirePosition::from_components(1, 0x7F, 0x85, 0, 0, offset, [1.0, 0.0, 0.0, 0.0]),
+        heading_raw: 0x40,
+        movement_mode: 0x01,
+        linear_velocity: linear,
+        angular_velocity: angular,
+        anim_or_context_did: CompactDid(0x2300_018E),
+        state_schema_id: DEFAULT_PORTAL_STATE_SCHEMA_ID,
+        bool_states: vec![false; 8],
+        enum_states: vec![0; 6],
+        extra_blob: Vec::new(),
+    }
+}
+
+#[test]
+fn portal_placement_rejects_non_finite_position_and_velocity() {
+    let ok = portal_with([1.0, 2.0, 3.0], [1.0, 2.0, 3.0], [0.1, 0.2, 0.3]);
+    assert_eq!(
+        PortalPlacement::from_bytes(&ok.to_bytes().unwrap()).unwrap(),
+        ok
+    );
+
+    let cases = [
+        (
+            portal_with([f32::NAN, 2.0, 3.0], [0.0; 3], [0.0; 3]),
+            "pos_x",
+        ),
+        (
+            portal_with([1.0, 2.0, f32::INFINITY], [0.0; 3], [0.0; 3]),
+            "pos_z",
+        ),
+        (
+            portal_with([1.0, 2.0, 3.0], [0.0, f32::NEG_INFINITY, 0.0], [0.0; 3]),
+            "vel_y",
+        ),
+        (
+            portal_with([1.0, 2.0, 3.0], [0.0; 3], [0.0, 0.0, f32::NAN]),
+            "ang_vel_z",
+        ),
+    ];
+    for (portal, field) in cases {
+        let bytes = portal.to_bytes().unwrap();
+        assert_eq!(
+            PortalPlacement::from_bytes(&bytes),
+            Err(WorldError::NonFiniteFloat { field })
+        );
+    }
+}
+
+fn ce_world(offset: [f32; 3], velocity: [f32; 3], heading: bool) -> EntityPositionUpdate {
+    let position = WirePosition::from_components(1, 0x7F, 0x85, 0, 0, offset, [1.0, 0.0, 0.0, 0.0]);
+    EntityPositionUpdate {
+        header_flags: 0x10 | 0x20 | 0x40,
+        entity_id: 0x0200_0000_0000_0055,
+        mode_flags: if heading { 0x00 } else { 0x10 },
+        seq_byte: None,
+        velocity,
+        anim_state: 0,
+        placement: if heading {
+            EntityPlacement::WorldWithHeading {
+                position,
+                heading_raw: 0x10,
+            }
+        } else {
+            EntityPlacement::WorldPositionOnly { position }
+        },
+        interp_param_a: 5,
+        interp_param_b: 2,
+    }
+}
+
+#[test]
+fn entity_position_update_rejects_non_finite_and_out_of_range_values() {
+    let edge = MAX_WORLD_COORDINATE_M;
+    for heading in [true, false] {
+        let ok = ce_world([edge, -edge, 0.5], [1.0, -2.0, 3.0], heading);
+        assert_eq!(
+            EntityPositionUpdate::from_bytes(&ok.to_bytes().unwrap()).unwrap(),
+            ok
+        );
+
+        let bad_vel = ce_world([1.0, 2.0, 3.0], [f32::NAN, 0.0, 0.0], heading);
+        assert_eq!(
+            EntityPositionUpdate::from_bytes(&bad_vel.to_bytes().unwrap()),
+            Err(WorldError::NonFiniteFloat { field: "vel_x" })
+        );
+
+        let bad_pos = ce_world([1.0, f32::INFINITY, 3.0], [0.0; 3], heading);
+        assert_eq!(
+            EntityPositionUpdate::from_bytes(&bad_pos.to_bytes().unwrap()),
+            Err(WorldError::NonFiniteFloat { field: "pos_y" })
+        );
+
+        let far = ce_world([1.0, 2.0, 100_001.0], [0.0; 3], heading);
+        assert_eq!(
+            EntityPositionUpdate::from_bytes(&far.to_bytes().unwrap()),
+            Err(WorldError::CoordinateOutOfRange { field: "pos_z" })
+        );
+    }
 }

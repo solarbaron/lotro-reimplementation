@@ -291,6 +291,15 @@ pub enum SessionError {
         /// Current expected sequence number.
         expected: u32,
     },
+    /// Sequenced packet at or below `recvSeqExpected` that is not a tracked gap: its masked
+    /// checksum cannot be verified, so it is dropped before any header acts (§5.3, §10.1 rule 6).
+    #[error("sequence number {seq_num} already received (expected watermark {expected})")]
+    DuplicateSequence {
+        /// Packet sequence number.
+        seq_num: u32,
+        /// Current expected sequence number.
+        expected: u32,
+    },
     /// Missing sequence gap count exceeds `160,000` (§5.1, §10.1 rule 5).
     #[error("missing sequence gap count {count} exceeds maximum {MAX_MISSING_SEQ_GAPS}")]
     GapLimitExceeded {
@@ -368,6 +377,18 @@ pub enum SessionError {
     InvalidFragmentDataLen {
         /// Decoded `fragDataLen`.
         len: u32,
+    },
+    /// Multi-fragment `NetBlob` slice would end past the `numFrags * 436` reassembly buffer (§5.6.4).
+    #[error(
+        "NetBlob fragment {frag_index} with {len} bytes overruns the {buffer_len}-byte reassembly buffer"
+    )]
+    FragmentOverrunsReassembly {
+        /// Decoded `fragIndex`.
+        frag_index: u32,
+        /// Decoded `fragDataLen`.
+        len: u32,
+        /// Reassembly buffer size in bytes (`numFrags * 436`).
+        buffer_len: usize,
     },
     /// `NetBlob` fragment header odd-length alignment pad byte was non-zero (§5.6.3, §10.1 rule 8).
     #[error("NetBlob fragment alignment pad byte was {pad:#04x}, expected 0x00")]
@@ -1937,7 +1958,8 @@ pub fn des3_cbc_decrypt(key: &[u8; 24], ciphertext: &[u8]) -> Result<Vec<u8>, Se
         return Err(SessionError::InvalidPkcs7Padding);
     };
     let pad_len = usize::from(pad_byte);
-    if pad_len == 0 || pad_len > 8 || pad_len > out.len() {
+    // §7.1: the receiver verifies `padLen < len`, so a block that is all padding is rejected.
+    if pad_len == 0 || pad_len > 8 || pad_len >= out.len() {
         return Err(SessionError::InvalidPkcs7Padding);
     }
     for &b in &out[out.len() - pad_len..] {
@@ -3819,6 +3841,22 @@ impl NetBlobReassembler {
                 limit: self.max_blob_bytes,
             });
         }
+        // Multi-fragment slices land at `fragIndex * 436` in a `numFrags * 436` buffer (§5.6.4
+        // rules 4, 5). A slice longer than 436 bytes is only accepted where it still fits that
+        // buffer, so the final fragment of a blob cannot exceed 436 bytes (engineering choice:
+        // the spec does not say what a receiver does with a longer final slice).
+        if hdr.num_frags > 1 {
+            let slice_end = (hdr.frag_index as usize)
+                .saturating_mul(MAX_BLOB_FRAG_PAYLOAD)
+                .saturating_add(frag.payload.len());
+            if slice_end > alloc_size {
+                return Err(SessionError::FragmentOverrunsReassembly {
+                    frag_index: hdr.frag_index,
+                    len: hdr.frag_data_len,
+                    buffer_len: alloc_size,
+                });
+            }
+        }
 
         // Fast path for single-fragment NetBlobs (numFrags == 1, fragIndex == 0, §5.6.4 rule 2)
         if hdr.num_frags == 1 {
@@ -4106,7 +4144,7 @@ pub fn decode_datagram(
 // §6.1 Connection State Machine (0..8), Reliability, and Multiplexer
 // ---------------------------------------------------------------------------
 
-/// Lifecycle state (`0..8`) of a `CConnection` (§6.1).
+/// Lifecycle state (`0..8`) of a session connection (§6.1).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[repr(u8)]
 pub enum ConnectionState {
@@ -4607,7 +4645,6 @@ impl SessionConnection {
         let hdr = pkt.header;
 
         // Rule 5 & 6: Sequence window check BEFORE advancing ISAAC PRNG or mutating state (§5.1, §10.1 rules 5, 6)
-        let mut is_duplicate_seq = false;
         if (hdr.flags & FLAG_ENCRYPTED_CHECKSUM) != 0 {
             let seq = hdr.seq_num;
             if seq > self.recv_seq_expected.saturating_add(MAX_SEQ_LOOKAHEAD) {
@@ -4622,8 +4659,13 @@ impl SessionConnection {
                     verify_packet_checksum(hdr, &pkt.raw_payload, Some(saved_mask))?;
                     self.missing_gaps.remove(&seq);
                 } else {
-                    // Duplicate or already processed sequence number: reject if checksum cannot be verified
-                    is_duplicate_seq = true;
+                    // Duplicate or already processed sequence number: its ISAAC mask was consumed
+                    // and not kept, so the checksum cannot be verified. Drop the packet before any
+                    // optional header acts or the receive timestamp moves (§10.1 rule 6).
+                    return Err(SessionError::DuplicateSequence {
+                        seq_num: seq,
+                        expected: self.recv_seq_expected,
+                    });
                 }
             } else {
                 let new_gaps = (seq - self.recv_seq_expected - 1) as usize;
@@ -4673,17 +4715,15 @@ impl SessionConnection {
         // Process optional headers (§5.2–§5.4, §6.3–§6.7, §8.1–§8.3)
         self.process_optional_headers(&pkt.opt_headers, now_sec, wire_codec)?;
 
-        // Process NetBlob fragments if not a duplicate sequenced packet (§5.6.4)
-        if !is_duplicate_seq {
-            for frag in &pkt.fragments {
-                if let Some(blob) = self.reassembler.ingest(
-                    self.server_rec_id,
-                    frag.clone(),
-                    now_sec,
-                    self.des3_key.as_ref(),
-                )? {
-                    self.events.push_back(SessionEvent::NetBlobReceived(blob));
-                }
+        // Process NetBlob fragments (duplicate sequenced packets were dropped above, §5.6.4)
+        for frag in &pkt.fragments {
+            if let Some(blob) = self.reassembler.ingest(
+                self.server_rec_id,
+                frag.clone(),
+                now_sec,
+                self.des3_key.as_ref(),
+            )? {
+                self.events.push_back(SessionEvent::NetBlobReceived(blob));
             }
         }
 
@@ -5716,7 +5756,7 @@ impl AdminMessage {
     }
 }
 
-/// Parsed `CNetLayer` post-handshake session/version negotiation message (`0x0000012C`..`0x00000130`, §9.3).
+/// Parsed post-handshake session/version negotiation message (`0x0000012C`..`0x00000130`, §9.3).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SessionControlMessage {
     /// `0x0000012F` (`ReqVersionSend`, Server -> Client, 0 bytes).
@@ -5868,7 +5908,7 @@ pub fn decode_world_event_batch(opcode: u32, body: &[u8]) -> Result<WorldEventBa
 }
 
 // ---------------------------------------------------------------------------
-// §9.4.2 CNetLayer / ChatNet Envelope Containers (0x00000186 and 0x00000179)
+// §9.4.2 Session Control Message / Chat Envelope Containers (0x00000186 and 0x00000179)
 // ---------------------------------------------------------------------------
 
 /// Serializes a batch container (`0x00000186`) envelope payload from `(sub_opcode, sub_envelope_payload)`

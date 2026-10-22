@@ -22,7 +22,6 @@ clap.workspace = true
 tessera-anim.workspace = true
 tessera-assets.workspace = true
 tessera-audio.workspace = true
-tessera-compat.workspace = true
 tessera-dat.workspace = true
 tessera-entity.workspace = true
 tessera-formats.workspace = true

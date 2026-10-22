@@ -332,6 +332,50 @@ pub enum WorldError {
     /// Trailing unread bytes remained after decoding a fixed-framing payload.
     #[error("{0} trailing byte(s) remained after decoding payload")]
     TrailingBytes(usize),
+    /// A wire `StringInfo` argument kind outside `1..=7` reached a payload decoder (§2.6).
+    #[error("invalid wire StringInfo argument kind {0}")]
+    InvalidStringArgKind(u16),
+    /// A decoded `f32` position or velocity component was NaN or infinite
+    /// (`official-messages-play.md` §9.1 rule 4).
+    #[error("non-finite {field} value in movement payload")]
+    NonFiniteFloat {
+        /// Name of the offending field.
+        field: &'static str,
+    },
+    /// A decoded world coordinate lay outside `[-100000.0, 100000.0]` metres
+    /// (`official-messages-play.md` §9.1 rule 4).
+    #[error(
+        "{field} coordinate outside [-{MAX_WORLD_COORDINATE_M}, {MAX_WORLD_COORDINATE_M}] metres"
+    )]
+    CoordinateOutOfRange {
+        /// Name of the offending field.
+        field: &'static str,
+    },
+}
+
+/// Largest absolute world coordinate (metres) accepted in `0xCE`
+/// (`official-messages-play.md` §9.1 rule 4).
+pub const MAX_WORLD_COORDINATE_M: f32 = 100_000.0;
+
+/// Rejects a NaN or infinite position or velocity component
+/// (`official-messages-play.md` §9.1 rule 4).
+fn require_finite(field: &'static str, value: f32) -> Result<f32, WorldError> {
+    if value.is_finite() {
+        Ok(value)
+    } else {
+        Err(WorldError::NonFiniteFloat { field })
+    }
+}
+
+/// Rejects a non-finite world coordinate or one outside `±MAX_WORLD_COORDINATE_M`
+/// (`official-messages-play.md` §9.1 rule 4).
+fn require_world_coordinate(field: &'static str, value: f32) -> Result<f32, WorldError> {
+    let value = require_finite(field, value)?;
+    if (-MAX_WORLD_COORDINATE_M..=MAX_WORLD_COORDINATE_M).contains(&value) {
+        Ok(value)
+    } else {
+        Err(WorldError::CoordinateOutOfRange { field })
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1688,7 +1732,7 @@ impl WireStringInfo {
                             radix,
                         }
                     }
-                    _ => unreachable!(),
+                    other => return Err(WorldError::InvalidStringArgKind(other)),
                 };
                 arguments.push(WireStringArg {
                     key,
@@ -3810,38 +3854,27 @@ impl PortalPlacement {
         let pos_sync_flags = reader.read_u8()?;
         let sequence_or_reason = reader.read_u32_le()?;
         let position = WirePosition::decode_base(reader)?;
+        // Play §9.1 rule 4: position and velocity components must be finite.
+        for (field, v) in ["pos_x", "pos_y", "pos_z"].into_iter().zip(position.offset) {
+            require_finite(field, v)?;
+        }
         let heading_raw = reader.read_u8()?;
         let movement_mode = reader.read_u8()?;
-        let vel_x = if (pos_sync_flags & 0x02) != 0 {
-            reader.read_f32_le()?
-        } else {
-            0.0
-        };
-        let vel_y = if (pos_sync_flags & 0x04) != 0 {
-            reader.read_f32_le()?
-        } else {
-            0.0
-        };
-        let vel_z = if (pos_sync_flags & 0x08) != 0 {
-            reader.read_f32_le()?
-        } else {
-            0.0
-        };
-        let ang_x = if (pos_sync_flags & 0x10) != 0 {
-            reader.read_f32_le()?
-        } else {
-            0.0
-        };
-        let ang_y = if (pos_sync_flags & 0x20) != 0 {
-            reader.read_f32_le()?
-        } else {
-            0.0
-        };
-        let ang_z = if (pos_sync_flags & 0x40) != 0 {
-            reader.read_f32_le()?
-        } else {
-            0.0
-        };
+        let mut kinematics = [0.0f32; 6];
+        let names = [
+            "vel_x",
+            "vel_y",
+            "vel_z",
+            "ang_vel_x",
+            "ang_vel_y",
+            "ang_vel_z",
+        ];
+        for (bit, (slot, field)) in kinematics.iter_mut().zip(names).enumerate() {
+            if (pos_sync_flags & (0x02 << bit)) != 0 {
+                *slot = require_finite(field, reader.read_f32_le()?)?;
+            }
+        }
+        let [vel_x, vel_y, vel_z, ang_x, ang_y, ang_z] = kinematics;
         let anim_or_context_did = CompactDid::decode(reader)?;
         let state_schema_id = if (pos_sync_flags & 0x80) != 0 {
             reader.read_u32_le()?
@@ -4670,6 +4703,16 @@ impl QueryMissingEntity {
     }
 }
 
+/// Decodes a `0xCE` base wire `Position` and checks its local offset against play §9.1 rule 4
+/// (finite and within `±MAX_WORLD_COORDINATE_M` metres).
+fn decode_ce_world_position(reader: &mut WireReader<'_>) -> Result<WirePosition, WorldError> {
+    let position = WirePosition::decode_base(reader)?;
+    for (field, v) in ["pos_x", "pos_y", "pos_z"].into_iter().zip(position.offset) {
+        require_world_coordinate(field, v)?;
+    }
+    Ok(position)
+}
+
 /// Placement mode payload inside [`EntityPositionUpdate`] (`0xCE`, §5.4).
 #[derive(Debug, Clone, PartialEq)]
 pub enum EntityPlacement {
@@ -4799,17 +4842,17 @@ impl EntityPositionUpdate {
             None
         };
         let vel_x = if (header_flags & 0x10) != 0 {
-            reader.read_f32_le()?
+            require_finite("vel_x", reader.read_f32_le()?)?
         } else {
             0.0
         };
         let vel_y = if (header_flags & 0x20) != 0 {
-            reader.read_f32_le()?
+            require_finite("vel_y", reader.read_f32_le()?)?
         } else {
             0.0
         };
         let vel_z = if (header_flags & 0x40) != 0 {
-            reader.read_f32_le()?
+            require_finite("vel_z", reader.read_f32_le()?)?
         } else {
             0.0
         };
@@ -4829,10 +4872,10 @@ impl EntityPositionUpdate {
                 attach_slot,
             }
         } else if (mode_flags & 0x10) != 0 {
-            let position = WirePosition::decode_base(reader)?;
+            let position = decode_ce_world_position(reader)?;
             EntityPlacement::WorldPositionOnly { position }
         } else {
-            let position = WirePosition::decode_base(reader)?;
+            let position = decode_ce_world_position(reader)?;
             let heading_raw = reader.read_u8()?;
             EntityPlacement::WorldWithHeading {
                 position,

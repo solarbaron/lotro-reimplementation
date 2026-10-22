@@ -3951,7 +3951,6 @@ dependencies = [
  "tessera-anim",
  "tessera-assets",
  "tessera-audio",
- "tessera-compat",
  "tessera-dat",
  "tessera-entity",
  "tessera-formats",

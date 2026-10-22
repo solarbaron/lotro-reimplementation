@@ -227,7 +227,9 @@ fn des3_cbc_and_isaac_prng_invariants() {
         0x01, 0x23, 0x45, 0x67, 0x89, 0xAB, 0xCD, 0xEF, 0xFE, 0xDC, 0xBA, 0x98, 0x76, 0x54, 0x32,
         0x10, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88,
     ];
-    for len in [0usize, 1, 7, 8, 15, 16, 43, 512] {
+    // Length 0 is not round-trippable: §7.1 rejects a block that is all padding
+    // (`des3_cbc_rejects_all_padding_block`).
+    for len in [1usize, 7, 8, 15, 16, 43, 512] {
         let plain: Vec<u8> = (0..len).map(|i| (i * 37 + 13) as u8).collect();
         let ct = des3_cbc_encrypt(&key, &plain);
         assert_eq!(ct.len() % 8, 0);
@@ -1242,4 +1244,136 @@ fn net_message_routing_header_and_post_handshake_control_messages() {
     let decoded_eb =
         decode_world_event_batch(OPCODE_EVENT_BATCH, &encoded_eb).expect("decode EventBatch");
     assert_eq!(decoded_eb, event_batch);
+}
+
+// ---------------------------------------------------------------------------
+// Hostile-input hardening regressions (§5.6.4, §7.1, §10.1 rules 6 and 8)
+// ---------------------------------------------------------------------------
+
+fn multi_frag(frag_index: u32, num_frags: u32, len: usize) -> NetBlobFragment {
+    NetBlobFragment {
+        header: NetBlobFragmentHeader {
+            queue_id: 2,
+            ext_word: None,
+            blob_flags: BLOB_FLAG_DEFAULT_RECIPIENT,
+            seq_group: 0,
+            order_num: 1,
+            blob_id: 7,
+            frag_index,
+            num_frags,
+            recipient_id: 2,
+            blob_header_word: if frag_index == 0 { Some(0x55) } else { None },
+            frag_data_len: len as u32,
+            attachment: None,
+        },
+        payload: vec![0xA5; len],
+    }
+}
+
+#[test]
+fn reassembly_rejects_final_fragment_past_buffer_end() {
+    let mut reassembler = NetBlobReassembler::default();
+    // numFrags = 2, fragIndex = 1, fragDataLen = 464: 436 + 464 > 2 * 436.
+    let err = reassembler
+        .ingest(1, multi_frag(1, 2, 464), 0.0, None)
+        .expect_err("final fragment overruns the reassembly buffer");
+    assert_eq!(
+        err,
+        SessionError::FragmentOverrunsReassembly {
+            frag_index: 1,
+            len: 464,
+            buffer_len: 2 * MAX_BLOB_FRAG_PAYLOAD,
+        }
+    );
+    assert_eq!(reassembler.incomplete_len(), 0);
+
+    // The largest final slice that fits (436 bytes) still completes the blob.
+    assert!(
+        reassembler
+            .ingest(1, multi_frag(0, 2, 436), 0.0, None)
+            .expect("first fragment")
+            .is_none()
+    );
+    let blob = reassembler
+        .ingest(1, multi_frag(1, 2, 436), 0.0, None)
+        .expect("final fragment")
+        .expect("completed blob");
+    assert_eq!(blob.payload.len(), 2 * MAX_BLOB_FRAG_PAYLOAD);
+    assert_eq!(blob.blob_header_word, 0x55);
+}
+
+#[test]
+fn duplicate_sequenced_packet_is_dropped_before_headers_act() {
+    let peer = SocketAddrV4::new(Ipv4Addr::new(198, 51, 100, 20), 9000);
+    let mut conn = SessionConnection::new(0x0100, peer, 0.0);
+    // Without a ConnectRequest the incoming ISAAC stream is seeded with 0.
+    let mask_seq_2 = IsaacCipher::from_seed(0).next_mask();
+    let seq_hdr = ProtoHeader {
+        rec_id: 0x0100,
+        seq_num: 2,
+        ..ProtoHeader::default()
+    };
+    let first = encode_datagram(
+        seq_hdr,
+        &OptionalHeaders::default(),
+        &[],
+        Some(mask_seq_2),
+        None,
+    )
+    .expect("encode seq 2");
+    conn.receive_datagram(&first, peer, 0.1, None)
+        .expect("accept seq 2");
+    assert_eq!(conn.recv_seq_expected(), 2);
+    while conn.pop_event().is_some() {}
+    let state_before = conn.state();
+
+    // A replay of seq 2 (and an older seq 1) carrying Disconnect and NetError must not act.
+    let hostile_opt = OptionalHeaders {
+        disconnect: true,
+        net_error: Some(NetErrorHeader {
+            error_code: 0x1234_5678,
+            error_subcode: 0,
+        }),
+        ..OptionalHeaders::default()
+    };
+    for seq_num in [2u32, 1] {
+        let replay = encode_datagram(
+            ProtoHeader { seq_num, ..seq_hdr },
+            &hostile_opt,
+            &[],
+            Some(mask_seq_2),
+            None,
+        )
+        .expect("encode replay");
+        assert_eq!(
+            conn.receive_datagram(&replay, peer, 50.0, None)
+                .expect_err("duplicate sequenced packet is dropped"),
+            SessionError::DuplicateSequence {
+                seq_num,
+                expected: 2,
+            }
+        );
+    }
+    assert_eq!(conn.state(), state_before);
+    assert_eq!(conn.recv_seq_expected(), 2);
+    assert!(conn.pop_event().is_none());
+}
+
+#[test]
+fn des3_cbc_rejects_all_padding_block() {
+    let key: [u8; 24] = [
+        0x01, 0x23, 0x45, 0x67, 0x89, 0xAB, 0xCD, 0xEF, 0xFE, 0xDC, 0xBA, 0x98, 0x76, 0x54, 0x32,
+        0x10, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88,
+    ];
+    // Encrypting an empty plaintext yields one block of eight 0x08 bytes: padLen == len,
+    // which §7.1 (`padLen < len`) forbids on decryption.
+    let ct = des3_cbc_encrypt(&key, &[]);
+    assert_eq!(ct.len(), 8);
+    assert_eq!(
+        des3_cbc_decrypt(&key, &ct),
+        Err(SessionError::InvalidPkcs7Padding)
+    );
+    // One byte of plaintext (padLen = 7 < 8) still decrypts.
+    let ct1 = des3_cbc_encrypt(&key, &[0x42]);
+    assert_eq!(des3_cbc_decrypt(&key, &ct1).expect("decrypt"), vec![0x42]);
 }

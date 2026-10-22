@@ -2058,9 +2058,7 @@ name = "tessera-compat"
 version = "0.1.0"
 dependencies = [
  "flate2",
- "sha2",
  "tessera-net",
- "tessera-settings",
  "thiserror",
  "tracing",
 ]

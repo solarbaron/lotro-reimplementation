@@ -4,16 +4,12 @@
 
 | | |
 |---|---|
-| **Status** | Draft. Needs the project owner's confirmation before any public test build ([LEGAL.md §11.1](../LEGAL.md#111-servers)). Revised 2026-10-10 for [decision 0025](../decisions/0025-p1-character-look-on-test-server.md) (looks and held-item slots as opaque references, §4.1, §4.2, §7, §9.2, §11); that revision passed an independent review on 2026-10-10 (see Reviewer). The status stays Draft until the owner's confirmation |
+| **Status** | Draft. Needs the project owner's confirmation before any public test build. Revised 2026-10-10 for [decision 0025](../decisions/0025-p1-character-look-on-test-server.md) (looks and held-item slots as opaque references, §4.1, §4.2, §7, §9.2, §11); that revision passed an independent review on 2026-10-10 (see Reviewer). The status stays Draft until the owner's confirmation |
 | **Last updated** | 2026-10-10 |
 | **Author role** | Spec writer (policy and design; no data observed, no dirty-room input) |
-| **Reviewer** | Revision of 2026-10-10 (decision 0025: §1 C14–C15, §2, §4.1 R3 and R7, §4.2, §7, §9.2, §11 invariants 6–7, §12 counsel item): independent review 2026-10-10 by a Claude review session in the spec-reviewer role (Clean-Room-Role: review) that wrote no part of decision 0025, of the P1 revisions of `scenario-feed.md`, `tessera-protocol.md`, `test-server.md` and `server-content.md`, or of the code, against CLEAN_ROOM.md §5.3 and LEGAL.md §11.1 rules 1, 2 and 5: **passed**. Checked: the new rules agree with `tessera-protocol.md` v1.1 §5.3 and §7.4 (bounds: 32 items with slots, one look of at most 48 entries and 768 bytes), `test-server.md` §3.5, §5.4 and §6.4, and decision 0025; class and nationality stay out (§7, R7); `tessera-server` on branch `p1` stores looks per character, judges none and never logs them in bulk. Note for the owner: LEGAL.md §11.1 rule 2 names record numbers (DIDs, enum keys); a look also holds player-chosen values (floats, colours, short codes). §4.2 argues why that is not content and the counsel OPEN of §12 now names looks; the owner's confirmation should cover them explicitly. The spec as a whole has had no independent review; it stays Draft for the owner |
+| **Reviewer** | Revision of 2026-10-10 (decision 0025: §1 C14–C15, §2, §4.1 R3 and R7, §4.2, §7, §9.2, §11 invariants 6–7, §12): independent review 2026-10-10 by a Claude review session in the spec-reviewer role (Clean-Room-Role: review) that wrote no part of decision 0025, of the P1 revisions of `scenario-feed.md`, `tessera-protocol.md`, `test-server.md` and `server-content.md`, or of the code, against CLEAN_ROOM.md §5.3: **passed**. Checked: the new rules agree with `tessera-protocol.md` v1.1 §5.3 and §7.4 (bounds: 32 items with slots, one look of at most 48 entries and 768 bytes), `test-server.md` §3.5, §5.4 and §6.4, and decision 0025; class and nationality stay out (§7, R7); `tessera-server` on branch `p1` stores looks per character, judges none and never logs them in bulk. Note for the owner: a look also holds player-chosen values (floats, colours, short codes) in addition to record numbers (DIDs, enum keys); §4.2 explains why that is not server content, and the owner's confirmation should cover looks explicitly. The spec as a whole has had no independent review; it stays Draft for the owner |
 | **Implements into** | `apps/server` (`tessera-server`: content loader, `check-content`, data-directory guard, default world), `apps/loadtest` (bots use only what this spec allows), `tools/check-content.sh` (repository guard, unchanged) |
-| **Companion documents** | [LEGAL.md](../LEGAL.md) §4.1, §7, §8, §10, §11, §11.1, §12, §16. [Decision 0003](../decisions/0003-game-data-in-place.md), [0004](../decisions/0004-server-strategy.md), [0012](../decisions/0012-numeric-constants.md), [0030](../decisions/0030-tessera-protocol-transport.md). `tessera-protocol.md` (wire format, §0, §7.4, §9.1, §15 invariant 9). `test-server.md` (server behaviour and the content-file format). `coordinates.md` §4 and §7 |
-
-> **NOT LEGAL ADVICE.** Like [LEGAL.md](../LEGAL.md), this is engineering policy written by
-> non-lawyers. It turns LEGAL.md's rules into checkable rules for one program. Where it
-> decides a question LEGAL.md leaves open, it says so and marks the point for the owner.
+| **Companion documents** | `CLAUDE.md`, [CLEAN_ROOM.md](../CLEAN_ROOM.md). [Decision 0003](../decisions/0003-game-data-in-place.md), [0004](../decisions/0004-server-strategy.md), [0012](../decisions/0012-numeric-constants.md), [0030](../decisions/0030-tessera-protocol-transport.md). `tessera-protocol.md` (wire format, §0, §7.4, §9.1, §15 invariant 9). `test-server.md` (server behaviour and the content-file format). `coordinates.md` §4 and §7 |
 
 ---
 
@@ -29,11 +25,11 @@ Tessera protocol, whoever runs it. It lets:
 - contributors know what they may commit as server content, and reviewers check it (§9);
 - operators know how they may run a server (§8).
 
-The rules here are the project's position at tier **T2** of [LEGAL.md §8](../LEGAL.md#8-risk-tier-ladder):
-a project-defined protocol, a project-owned server, original or test content. Nothing here
+The rules here cover a project-defined protocol, a project-owned test server, and original or
+test content ([decision 0004](../decisions/0004-server-strategy.md)). Nothing here
 concerns the official servers or their protocol. That work belongs to the client's M8
 ([decision 0034](../decisions/0034-official-server-compatibility.md), formerly gated by
-[decision 0004](../decisions/0004-server-strategy.md); LEGAL.md §9.3); a Tessera server never
+[decision 0004](../decisions/0004-server-strategy.md)); a Tessera server never
 takes part in it (O8).
 
 Keywords **MUST**, **MUST NOT**, **SHOULD**, **MAY** as in RFC 2119 and RFC 8174.
@@ -43,24 +39,24 @@ Keywords **MUST**, **MUST NOT**, **SHOULD**, **MAY** as in RFC 2119 and RFC 8174
 <a id="s1"></a>
 ## 1. Provenance
 
-Legend: **Policy** = restates a binding rule of LEGAL.md or a decision record. **Design** =
+Legend: **Policy** = restates a binding rule of `CLAUDE.md`, `docs/CLEAN_ROOM.md`, or a decision record. **Design** =
 decided by this spec (normative for Tessera servers, subject to the owner's confirmation).
 **Project** = an existing fact of another Tessera spec or crate.
 
 | # | Fact or rule | Source | Mark |
 |---|---|---|---|
-| C1 | No game content in the repository, CI artefacts or releases: archives, extracted assets, strings, quest or dialogue text, maps, item/quest/deed databases, Lua UI files | LEGAL.md §11; decision 0003 | Policy |
-| C2 | No bulk data tables from the client; numeric algorithm constants allowed when a spec records them | LEGAL.md §7 item 4, §11; decision 0012 | Policy |
-| C3 | T2 = project-defined protocol, project-owned test server, only original or test content; lower risk "if the protocol is our own and the server holds no game content" | LEGAL.md §8 | Policy |
-| C4 | T3 (quests, NPC scripts, combat or world reproduced by a server, or **any publicly hosted shard**, free or not) is not planned without written permission | LEGAL.md §8; ROADMAP §3 | Policy |
-| C5 | Free of charge, no paid tiers, perks, ads or sales; **no hosted public game servers** | LEGAL.md §12, §8 permanently-forbidden list | Policy |
-| C6 | Naming: no marks or Tolkien-invented words as product, binary or feature names; the game named only in plain text to state compatibility | LEGAL.md §10 | Policy |
-| C7 | Distributing files that *describe* protected audiovisual content can make a derivative work (*Micro Star v. FormGen*); a tool that alters display without incorporating the work is not one (*Galoob*) | LEGAL.md §4.1 (summaries) | Policy (as LEGAL.md reads them) |
-| C8 | Extracting or re-using a substantial part of a database can infringe the EU sui generis right | LEGAL.md §5 (Database Directive 96/9/EC) | Policy |
+| C1 | No game content in the repository, CI artefacts or releases: archives, extracted assets, strings, quest or dialogue text, maps, item/quest/deed databases, Lua UI files | `CLAUDE.md`; decision 0003 | Policy |
+| C2 | No bulk data tables from the client; numeric algorithm constants allowed when a spec records them | `docs/CLEAN_ROOM.md`; decision 0012 | Policy |
+| C3 | The test server speaks a project-defined protocol and holds only original or test content, with no game content on the server | Decision 0004 | Policy |
+| C4 | Server-side reproduction of quests, NPC scripts, combat or world logic, or **any publicly hosted shard** (free or not), is out of scope | Decision 0004; ROADMAP §3 | Policy |
+| C5 | Free of charge, no paid tiers, perks, ads or sales; **no hosted public game servers** | Decision 0004; ROADMAP §3 | Policy |
+| C6 | Naming: no marks or Tolkien-invented words as product, binary or feature names; the game named only in plain text to state compatibility | `CLAUDE.md` | Policy |
+| C7 | Server content files do not author arrangements of the game's records into scenes, NPC placements or levels | Decision 0003; decision 0004 | Policy |
+| C8 | Server state and logs do not extract or aggregate bulk tables of record identifiers from the game's data | `CLAUDE.md`; decision 0012 | Policy |
 | C9 | The protocol carries the data's records only as opaque numbers that each client resolves against its own install; the server never sends static objects or game data | `tessera-protocol.md` §0, §7.4, §9.1, §15 invariant 9 | Project |
 | C10 | A region number is a key of the data's region map; a landblock is a 160 m square, indices 0–254; region 0 means "no region" | `coordinates.md` §4; `tessera_net::model` | Project |
 | C11 | The repository already contains bare numeric positions without game text: the walker's default spawn `1,126,140` (`walker.md` §1 option table, `coordinates.md` §8.4 example B) and twenty reference positions named only by DIDs (`docs/checklists/m3-reference-locations.md`) | Read 2026-10-06 | Project |
-| C12 | The engine must run with original placeholder content so it has uses that do not depend on game data | LEGAL.md §11 last paragraph | Policy |
+| C12 | The engine must run with original placeholder content so it has uses that do not depend on game data | `docs/ARCHITECTURE.md` §20.1 | Policy |
 | C13 | Everything else in this spec: definitions, the coordinate rule, the relay rules, the operator rules, the commit rules and the checklist | This spec, 2026-10-06 | Design |
 | C14 | Looks (a character's creation choices as up to 48 opaque (property ID, value) pairs, at most 768 bytes) and held-item slot keys in appearances, protocol 1.1; class and nationality never sent | `tessera-protocol.md` §3.1, §5.3, §7.4 (v1.1, 2026-10-10); decision 0025 | Project |
 | C15 | The 2026-10-10 additions to §4.1, §4.2, §7, §9.2 and §11 | This spec, 2026-10-10 (spec writer, design; no dirty-room input) | Design |
@@ -110,11 +106,11 @@ particular it MUST NOT:
 <a id="s3-2"></a>
 ### 3.2 Why the server does not read the operator's install either
 
-ARCHITECTURE §19.2 allows, in principle, "the server operator's own data limited to what
-LEGAL.md allows". This spec decides that **v1 servers use none**:
+ARCHITECTURE §19.2 allows, in principle, the server operator's own data within project
+boundaries. This spec decides that **v1 servers use none**:
 
 - A server that loads game data to simulate the world (terrain, collision, placed figures)
-  is the first step towards reproducing the game's world server-side, which is T3 (C4).
+  is the first step towards reproducing the game's world server-side, which is out of scope (C4).
 - Data on a server reaches players: whatever the server derives from it shapes what other
   people see. Keeping the server free of data keeps the line simple: every piece of game
   data a person sees comes from **their own** install, on their own machine (decision 0003).
@@ -165,22 +161,17 @@ relay them to other clients, under these conditions:
 - A DID or key is a small integer that names a record. It contains no part of the record:
   no pixels, vertices, samples or text. It is closer to a page number than to a page. A
   person without the data can do nothing with it.
-- Each receiving client resolves the number **in its own, legally obtained install**, on
-  its own machine. What it then draws is its own copy of data its user is entitled to use
-  (with the contract caveats of LEGAL.md §3, which apply to every tier and are not changed by
-  this rule). If the client cannot resolve the number, it skips it
+- Each receiving client resolves the number **in its own install**, on
+  its own machine. What it then draws is its own copy of data. If the client cannot resolve the number, it skips it
   (`tessera-protocol.md` §7.4).
 - The server performs no copying of the work, does not incorporate it, and adds nothing to
-  it (C7, *Galoob*). It forwards a choice one player made to the other players, as a chat
+  it (C7). It forwards a choice one player made to the other players, as a chat
   server forwards a sentence.
-- The risk C7 names (*Micro Star*: files that *describe* protected audiovisual content, such
-  as level files that arrange a game's art into new levels) arises when **someone authors and
-  distributes** an arrangement of references that recreates or extends the protected work.
-  That is why server **content** may not arrange the game's records into scenes, NPC
-  placements or quests (§5.3, §6.3), and why committed content files may hold only a handful
+- Server **content** may not arrange the game's records into scenes, NPC
+  placements or quests (C7, §5.3, §6.3), and committed content files may hold only a handful
   of references (§9.2). A player's outfit, chosen live and relayed live, is not such a file.
-- Collection (R4) would turn relaying into building a database out of the data's
-  identifiers, which edges towards C8. The no-collection rule keeps the server a relay.
+- Collection (R4) would turn relaying into building a bulk table out of the data's
+  identifiers (C8). The no-collection rule keeps the server a relay.
 - **Looks** (C14) add the values a player chose on Tessera's creation screen: a colour, a
   height fraction, a style index, a short slider code. Each is paired with a property ID of
   the player's own install. Like an outfit, a look is one player's live choice, not an
@@ -191,10 +182,6 @@ relay them to other clients, under these conditions:
   none (R4).
 - A **slot key** says which of the player's hands holds an item. It is an enum key of the
   player's install, like the species key, and is bounded by the 32 items.
-
-> **OPEN (counsel):** LEGAL.md §16 lists no question about references relayed by a server.
-> This reasoning should be added to the questions for counsel before any public test build
-> (LEGAL.md §11.1).
 
 ---
 
@@ -215,7 +202,7 @@ position paired with game text, or positions that reproduce the game's placement
 | # | Condition |
 |---|---|
 | P1 | **Numbers only.** Region number, coordinates or landblock index and offset, heading. Nothing from the game's text: no place, zone, region, town, building or NPC name, no map label, no `/loc` output pasted with its text |
-| P2 | **Own names.** A position that needs a name (for example a spawn point that `Named` teleports understand) gets a name the contributor made up that does not refer to the game's world (`start`, `meadow-test`, `spawn-3`), and that obeys LEGAL.md §10 (no marks, no Tolkien-invented words) |
+| P2 | **Own names.** A position that needs a name (for example a spawn point that `Named` teleports understand) gets a name the contributor made up that does not refer to the game's world (`start`, `meadow-test`, `spawn-3`), and that obeys `CLAUDE.md` (no marks, no Tolkien-invented words) |
 | P3 | **Own observation.** The numbers were read by the contributor from Tessera itself (the walker's position readout, its spawn grammar) or from the contributor's own install, never copied from a third-party map, wiki, database, guide or tool output |
 | P4 | **Few.** At most **16** positions per content file, and the purpose of each is testing or a place to start (spawn points, teleport targets). A content file is not a gazetteer |
 | P5 | **Not a reproduction.** No position marks where the game puts a quest, NPC, creature, item, resource node or other gameplay element, and no set of positions traces the game's routes, borders or layout |
@@ -224,19 +211,16 @@ position paired with game text, or positions that reproduce the game's placement
 <a id="s5-3"></a>
 ### 5.3 Reasoning
 
-- A coordinate is a **fact**: the number a client uses to say "here". Facts are not
-  protected expression (17 U.S.C. §102(b); *SAS Institute* on functionality, LEGAL.md §5),
+- A coordinate is a **fact**: the number a client uses to say "here",
   and a single number reveals nothing of the game's world to someone without the data.
 - A position becomes content when it carries the game's **expression** (a place name, a
   label: that is game text, C1, and may be a mark, C6), or when many positions together
-  **describe** the world (a map or location database: C1 forbids "maps" and databases; C8,
-  the database right, protects substantial extraction; C7, an arrangement that describes
-  the work). P1, P4 and P5 block those three paths. P3 blocks copying someone else's
+  **describe** the world (a map or location database: C1, C7, C8). P1, P4 and P5 block those paths. P3 blocks copying someone else's
   compiled database or map.
 - The repository already holds such numbers (C11): the walker's default spawn and twenty
   reference positions named only by DIDs. A spawn point in a content file is the same kind
   of fact used the same way. Forbidding it would make a server's default world unusable with
-  the walker's own default, without reducing risk.
+  the walker's own default.
 - Players' teleport destinations are player-supplied values (§2). A client may compute them
   from its own install (`/loc` text, map coordinates, area names it resolves locally). The
   server receives only numbers (or a `Named` destination that only matches the content's own
@@ -262,7 +246,7 @@ built into `tessera-server` and committed as `apps/server/content/default-world.
 
 1. **Original.** Written by Tessera contributors for the project, licensed
    GPL-3.0-or-later (the repository's licence, covered by `REUSE.toml`) or CC0-1.0 with its
-   own REUSE annotation and licence text (LEGAL.md §11 "Allowed").
+   own REUSE annotation and licence text (`CLAUDE.md`).
 2. **Free of game text.** No place names, character names, item names, lore or quotations
    from the game or the books, and no marks in the world's title, server name, message of
    the day or spawn names (C6).
@@ -277,7 +261,7 @@ built into `tessera-server` and committed as `apps/server/content/default-world.
 | Item | Value |
 |---|---|
 | World title | A neutral project phrase, for example "Tessera test world" |
-| Message of the day | Tessera's own words: what the server is for (testing), that it is not affiliated with any game publisher (the disclaimer's first sentence, LEGAL.md §10), and that each player needs their own legally obtained installation to see the world |
+| Message of the day | Tessera's own words: what the server is for (testing), that it is not affiliated with any game publisher (`CLAUDE.md`), and that each player needs their own installation to see the world |
 | Spawn points | `start` (default): region 1, landblock (126, 140), block-local (80, 20), height 440 m, on the ground: the walker's default block, from `coordinates.md` §8.4 example B (C11); the height is one terrain sample observed for `test-server.md` §5.7. `void`: region 0, the middle of the grid, for clients without data and for load tests. Both names are project-made (§5.2 P2) |
 | Simulated wanderers | A few project-made actors walking circles around `start`, named "Wanderer 1", "Wanderer 2", ...; their appearance is copied from the first player who enters the instance (`test-server.md` §5.4 `first-player`), so the file holds **no** opaque references |
 | Game clock | Starts at 0 and runs at rate 1; time of day is computed by each client from its own data (`tessera-protocol.md` §11.3) |
@@ -293,7 +277,7 @@ list.
 ---
 
 <a id="s7"></a>
-## 7. Gameplay reproduction is out of scope (T3)
+## 7. Gameplay reproduction is out of scope
 
 A Tessera server MUST NOT reproduce the game's gameplay or world logic. Out of scope, with
 or without game data:
@@ -309,15 +293,14 @@ or without game data:
 - any server-side use of the data's scripts, tables or properties;
 - server-side copies of the static world (§3.1 item 3).
 
-**In scope** (T2) for a Tessera server: accounts local to the server; characters as a name,
+**In scope** for a Tessera server: accounts local to the server; characters as a name,
 an appearance of opaque references (its look and slots included, §4.1) and a position; presence and movement; emotes and
 stances as opaque keys chosen by clients; chat; the world clock as a number; teleports to
 numeric or content-named positions; simple **project-made test actors** whose behaviour is
 generic and defined by Tessera's own content (walking a circle, standing), not drawn from the
 data or from knowledge of the game.
 
-A feature request that crosses this line is answered by pointing at LEGAL.md §8 (T3 needs
-written permission from Daybreak and Middle-earth Enterprises) and ROADMAP §3.
+A feature request that crosses this line is out of scope under [decision 0004](../decisions/0004-server-strategy.md) and ROADMAP §3.
 
 ---
 
@@ -333,19 +316,11 @@ them in its `--help` text and enforces what it can (`test-server.md` §2.1, §4.
 | O2 | **No public hosting.** No server may be listed, advertised, or opened to registration by strangers. "Public" means anyone can find it and create an account, whatever the price (C4: "any publicly hosted shard, free or not"; C5). The project itself hosts no game servers |
 | O3 | **No money.** No fees, subscriptions, donations tied to access, paid perks, ads or sales connected with a server (C5) |
 | O4 | **Accounts are created by the operator.** Open registration (`REGISTRATION`, `tessera-protocol.md` §6.2.4) is off by default and is for loopback and LAN tests only (`test-server.md` §4.2) |
-| O5 | **Each player brings their own legally obtained installation.** The operator never hands out game files, clients, patches or links to unofficial copies (LEGAL.md §7 item 6) |
-| O6 | **Neutral names.** The server name and message of the day obey LEGAL.md §10: no marks or Tolkien-invented words, no implied endorsement |
+| O5 | **Each player brings their own installation.** The operator never hands out game files, clients, patches or links to unofficial copies (`CLAUDE.md`; decision 0003) |
+| O6 | **Neutral names.** The server name and message of the day obey `CLAUDE.md`: no marks or Tolkien-invented words, no implied endorsement |
 | O7 | **No game data on the server** (§3), and only content that passes §9.3 |
 | O8 | **No bridges.** A server never connects to, proxies, imitates or exchanges data with any official service, launcher or login (decision 0004) |
 | O9 | **Players' data stays private.** Account files, character files and logs stay on the operator's machine. Chat is not logged unless the operator turns it on for debugging (`test-server.md` §11.2) |
-| O10 | **Incidents.** If a rights holder objects to a server, the operator stops it; LEGAL.md §14 applies to the project |
-
-> **OPEN (owner):** LEGAL.md's banner asks for a lawyer's review "before any networked feature
-> beyond the local sandbox". This spec reads that as: contributors may build and run the
-> server privately (O1) for development now, and any **public test build** (binaries or
-> instructions offered to people outside the project for running servers) waits for that
-> review and for the owner's confirmation of LEGAL.md §11.1. The owner should confirm this
-> reading.
 
 ---
 
@@ -360,7 +335,7 @@ them in its `--help` text and enforces what it can (`test-server.md` §2.1, §4.
 - Test fixtures for `check-content` that **violate** these rules on purpose, if they are
   made only of invented values (a made-up place name, an invented DID) and marked as negative
   fixtures. They MUST NOT contain real game text; the only exception is single words of the
-  LEGAL.md §10 rule 1 list, needed to test the word check.
+  `CLAUDE.md` naming-rule list, needed to test the word check.
 - Load-test scenarios (`apps/loadtest`) that use the default world or generated worlds.
 
 Every committed content file starts with an SPDX header comment and is original.
@@ -393,7 +368,7 @@ A reviewer who did not write the file checks every item. `tessera-server check-c
       or CC0-1.0 (CC0 also needs a REUSE annotation).
 - [ ] **[auto]** At most 16 positions (§5.2 P4) and at most 8 opaque references (§9.2).
 - [ ] **[auto]** Names and texts (title, message of the day, spawn names, actor names) are
-      valid text classes, and none contains a word from the LEGAL.md §10 rule 1 list
+      valid text classes, and none contains a word from the `CLAUDE.md` naming-rule list
       (case-insensitive match against that list, which is project policy, not game data).
 - [ ] **[auto]** The file is not inside, and does not name a path inside, a game
       installation, and no `.dat`/`.datx` file sits next to it (§10).
@@ -406,8 +381,7 @@ A reviewer who did not write the file checks every item. `tessera-server check-c
 - [ ] Opaque references (if any) satisfy §9.2, and the file does not recreate a scene,
       figure set or placement from the game.
 - [ ] Simulated actors behave generically (§7 "In scope"). Nothing reproduces gameplay.
-- [ ] The server name, title and message of the day imply no affiliation and obey LEGAL.md
-      §10.
+- [ ] The server name, title and message of the day imply no affiliation and obey `CLAUDE.md`.
 - [ ] The commit carries the trailers CLAUDE.md requires (`Clean-Room-Role`, sign-off).
 
 ---
@@ -434,8 +408,8 @@ A reviewer who did not write the file checks every item. `tessera-server check-c
    under §4, or server content that passed §9.3. No byte comes from game data.
 3. The default world contains no opaque references, no game text, and at most the two
    positions of §6.2.
-4. A content file with more than 16 positions, more than 8 references, or a LEGAL.md §10
-   rule-1 word in any text is rejected by `check-content` and by `run`. A missing SPDX header
+4. A content file with more than 16 positions, more than 8 references, or a `CLAUDE.md`
+   naming-rule word in any text is rejected by `check-content` and by `run`. A missing SPDX header
    is rejected by `check-content`.
 5. A server started with registration on and a non-private listen address does not start.
 6. Nothing in a server's data directory lists references or positions across characters:
@@ -451,15 +425,8 @@ A reviewer who did not write the file checks every item. `tessera-server check-c
 
 > **OPEN (owner):** confirm the coordinate rule and its limits (§5.3).
 
-> **OPEN (owner):** confirm the reading of LEGAL.md's banner for private development
-> servers versus public test builds (§8).
-
 > **OPEN (owner):** a later, read-only use of the operator's own install by the server for
 > terrain and collision (§3.2).
-
-> **OPEN (counsel):** add relayed opaque references (§4.2), including looks (property IDs
-> with player-chosen values, decision 0025), and numeric positions in content (§5.3) to
-> LEGAL.md §16 before any public test build.
 
 > **OPEN:** (M7 exit check, 2026-10-07, from the protocol review R.7) two text slips for the
 > spec writer: §3.2 cites `tessera-protocol.md` §9.3 for movement validation, which is §8.3
@@ -473,7 +440,7 @@ A reviewer who did not write the file checks every item. `tessera-server check-c
 
 | Date | Change |
 |---|---|
-| 2026-10-06 | First draft (M7). Derived from LEGAL.md §4, §5, §7, §8, §10–§12; confirmed for Tessera servers in LEGAL.md §11.1 pending the owner |
-| 2026-10-10 | Decision 0025 (spec writer, design): §1 C14–C15; §2 opaque references include slot keys and data property IDs, new term "look"; §4.1 relays looks and slots, R3 bound extended, new R7 (no class or nationality, look strings never text); §4.2 reasoning for looks and slots; §7 classes and nationalities stay out; §9.2 content holds no looks, a slot counts as a reference; §11 invariants 6–7; §12 counsel item extended. LEGAL.md §11.1 unchanged. Status stays Draft (owner); the revision awaits an independent review |
-| 2026-10-10 | Independent review of the decision-0025 revision (spec reviewer, Clean-Room-Role: review): passed (Reviewer row). Status stays Draft for the owner (LEGAL.md §11.1) |
+| 2026-10-06 | First draft (M7). Derived from `CLAUDE.md`, `docs/CLEAN_ROOM.md`, and decisions 0003, 0004, and 0012; pending the owner's confirmation |
+| 2026-10-10 | Decision 0025 (spec writer, design): §1 C14–C15; §2 opaque references include slot keys and data property IDs, new term "look"; §4.1 relays looks and slots, R3 bound extended, new R7 (no class or nationality, look strings never text); §4.2 reasoning for looks and slots; §7 classes and nationalities stay out; §9.2 content holds no looks, a slot counts as a reference; §11 invariants 6–7. Status stays Draft (owner); the revision awaits an independent review |
+| 2026-10-10 | Independent review of the decision-0025 revision (spec reviewer, Clean-Room-Role: review): passed (Reviewer row). Status stays Draft for the owner |
 | 2026-10-11 | Policy wording only, after [decision 0034](../decisions/0034-official-server-compatibility.md): the introduction says official-server work belongs to the client's M8 (formerly gated by decision 0004) and that a Tessera server never takes part in it (O8). No rule changed; status stays Draft for the owner |

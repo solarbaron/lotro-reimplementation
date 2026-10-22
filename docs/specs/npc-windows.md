@@ -36,7 +36,7 @@ the install's UI layouts and records (M1) and, where the data stop, from the off
   `scenario-feed.md`);
 - how a real-data test categorises records the windows cannot show (§11).
 
-**Client half only** (decision 0024 §2.4, LEGAL.md §11.1 rule 5): the client runs no vendor,
+**Client half only** (decision 0024 §2.4, `server-content.md` §2): the client runs no vendor,
 loot, price, quest or dialogue rule. Which window opens, its entries, prices, stock,
 quantities, reward amounts and quest states come from the scenario feed or a server. The
 client computes only presentation (layout, text rendering, coin splitting, sorting for

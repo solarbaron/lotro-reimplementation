@@ -48,7 +48,7 @@ the records and fields at run time) and are quoted for that reason only. Every c
 is an observation of this install and is read at run time.
 
 The network protocol, login, keys, the launcher and anti-tamper are out of scope (decision
-0004, `docs/LEGAL.md` §9.3). Where the original's behaviour depends on server messages, this
+0004). Where the original's behaviour depends on server messages, this
 spec says so and stops.
 
 ---

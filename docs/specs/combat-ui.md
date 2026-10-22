@@ -22,7 +22,7 @@ that the client half can show targeting, skills and combat that the scenario fee
 backend) reports. This spec gives, for every combat element on screen: which layout record and
 element draws it, what the data says about its look, what the original's native code does with
 it (method M4, decision 0011, rows marked BIN), and, where a behaviour was not traced or is game
-logic that Tessera must not reproduce (decision 0024 §2.4, LEGAL.md §8), a numbered **Tessera
+logic that Tessera must not reproduce (decision 0024 §2.4, `server-content.md` §2), a numbered **Tessera
 rule** (TR*n*). §11 maps every Combat-group event and command of `scenario-feed.md` §9 to the
 elements it drives. §13 gives a look for every element when no install is present, so that
 synthetic golden images can be committed (ARCHITECTURE §23.3).
@@ -200,7 +200,7 @@ not mapped in P2 (fellowship is P4).
 > **OPEN:** the original's search rules (what counts as a foe, the range, the order of the
 > cycle, how the "nearest" and "next" commands interact, what `SELECTION_LAST` remembers). They
 > are game code that was not traced, and "foe" is a reaction rule (attackability) that the
-> sandbox does not have (LEGAL.md §8). Owner check OC1.
+> sandbox does not have (`server-content.md` §2). Owner check OC1.
 
 > **TR4 (targeting rules).** Candidates are the eligible entities (§3.1) other than the player
 > whose distance (3D, entity origin to player origin) is at most 50 m. The **foe** set is the

@@ -739,7 +739,7 @@ step 3 never started. For the honoured ones the step-3 Switch follows the option
 
 > **OPEN (narrow, 2026-10-10):** whether the client gives a figure `ScriptSystem_ServerScriptlet`
 > by another route than the install: the object properties its server sends are outside what
-> can be observed (`LEGAL.md` §9.3 gate closed). What the install and the client code give is
+> can be observed offline (decision 0004). What the install and the client code give is
 > the table above. A comparison in the original client (owner item O15, 2026-10-10 addition)
 > settles it for the four kind-1 rows.
 

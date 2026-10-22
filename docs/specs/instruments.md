@@ -1526,7 +1526,7 @@ and map to key 0 elsewhere (§7.1), which no note switch has a case for. Within 
 >    performance and withdraws the local waiting part; a `MusicEndSong` key action, when bound,
 >    follows the original (finishes the running performance only, notice 0x0B87AC37, the part
 >    keeps waiting).
-> 7. **Tessera's own server** relays chat only (decision 0024, LEGAL.md §11.1 rule 5); whether a
+> 7. **Tessera's own server** relays chat only (decision 0024, `server-content.md` §2); whether a
 >    synchronised start may cross it is the owner's open question in decision 0024. Until it is
 >    answered, synchronised starts with other members exist only through the scenario feed.
 > 8. **Music-mode check** (revision 2). Tessera has no music mode yet: no channelling state and
@@ -1885,7 +1885,7 @@ Each question has a `> **OPEN:**` callout at the place named in "Where".
 | Q11 | Which situations raise the two notifications that withdraw a waiting part | §8.8.7 | Owner test with a second member (`/music off` or unequip between `/play x sync` and `/playstart`) |
 | Q12 | What the object checked by `/playstart`, `/play … sync` and the own ready notice is: fellowship, raid, or other group; which notices keys 0x100003B0 and 0x10000335 resolve to | §8.8.1, §8.8.2 | Partly answered (revision 2, M1): `/play … sync` runs the same check with the same key (I54); every `/play` first runs the music-mode check, key 0x10000335 (I58). Rest: owner test (`/playstart` outside any group, `/play x` outside music mode); M1 on the script's general notice path |
 | Q13 | Server side of the group: whether the start reaches members without a waiting part, whether readiness is forgotten when a member withdraws, leaves the group or replaces its part | §8.8.2, §8.8.7 | Owner observation with a second account (watch for 0x012DD4A4 on a member that did not `/play … sync`) |
-| Q14 | Whether a synchronised start may cross Tessera's own server (chat-only relay, LEGAL.md §11.1 rule 5) | §12 P4 Decision 7 | Owner decision (decision 0024, open item 2) |
+| Q14 | Whether a synchronised start may cross Tessera's own server (chat-only relay, `server-content.md` §2) | §12 P4 Decision 7 | Owner decision (decision 0024, open item 2) |
 
 ---
 

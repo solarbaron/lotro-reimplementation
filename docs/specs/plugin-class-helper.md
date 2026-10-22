@@ -38,11 +38,11 @@
 > The other type-object methods, the type-information table and its field names, the original
 > log's name and members other than those of §7.7, and the original's default `ToString` text
 > have no interop path and are **not** reproduced: Tessera's behaviour for them is its own
-> (§6.2, §6.8, §6.9, §7.7, §8). The record is `docs/LEGAL.md` §17, whose §17.2 rules bind
-> every use (names only inside the plugin subsystem, as string data; never product, crate,
-> module or UI names). The publisher's 2010 sample package was read for **behaviour only**: no
+> (§6.2, §6.8, §6.9, §7.7, §8). Per `docs/CLEAN_ROOM.md` §5.3, these
+> names appear only inside the plugin subsystem, as string data; never as product, crate,
+> module or UI names. The publisher's 2010 sample package was read for **behaviour only**: no
 > line of its code, none of its comments, file layout beyond the import names, or message
-> texts are reproduced here, and Tessera ships none of it (LEGAL §17.2 rule 4). Plugin names
+> texts are reproduced here, and Tessera ships none of it (`CLAUDE.md`). Plugin names
 > and file IDs identify counted material only.
 
 ---
@@ -239,7 +239,7 @@ load without protection, so in the original they load only for users who have su
 <a id="4-6"></a>
 ### 4.6 The needed set
 
-From §4.2–§4.5, the built-in package provides (Tessera rule, DEC, LEGAL §17.2 rule 5):
+From §4.2–§4.5, the built-in package provides (Tessera rule, DEC):
 
 | Item | Why | Section |
 |---|---|---|
@@ -299,7 +299,7 @@ plugin-descriptor §7.2): at creation, after the native `Turbine` part, a
 `Plugins/Turbine/__init__.lua` (if present) runs as the merged disk part of `Turbine`; every
 `Turbine.*` sub-package resolves from disk; a name missing from the user's tree fails to import.
 Tessera never fills a gap with a built-in name. The user's files are read in place, read-only,
-under the normal sandbox and limits (LEGAL §17.2 rule 4).
+under the normal sandbox and limits (`CLAUDE.md`).
 
 <a id="5-3"></a>
 ### 5.3 Built-in mode: names served
@@ -730,7 +730,7 @@ raises when `x` has no `GetType` function (§6.7 step 1), when the target is not
 (step 2), when the target's type reports neither a class nor a mixin (step 5), and when a query
 fails. The methods of §6.8 raise when called on a table that is not one of Tessera's type
 objects; `ToString` and `GetUniqueID` raise on a value that is not a table. Message texts are
-Tessera's own (LEGAL §17.2 rule 3); plugins observe only that an error is raised. Tessera's
+Tessera's own (`CLAUDE.md`); plugins observe only that an error is raised. Tessera's
 helper never catches errors raised by plugin code or by other helpers (constructors, `GetType`
 functions, type-object methods, `ToString`, `IsA` of mixins).
 

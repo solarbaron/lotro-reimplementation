@@ -402,7 +402,7 @@ archive; 35 are the null reference (table 0, token 0: "no text", `property-syste
 > overhead speech text, what the `Instance*` types reach, what the say channel selects, and which
 > line of a multi-line list is spoken (one at random, in turn, or all). The client does not read
 > these fields (§9.5); the server turns them into the messages the client shows, which falls
-> under the official-server gate for traffic (`docs/LEGAL.md` §9.3). **Hypothesis** (labels
+> under the official-server gate for traffic (decision 0004). **Hypothesis** (labels
 > only): `Say`/`Shout`/`Spew` are local chat at increasing reach, `Color*` adds the overhead
 > speech display that barks use (`quests.md` §7.8), `ColorOnly` shows the overhead text without
 > chat, `Instance*` reaches every player of the instance. Owner observation (M3) of NPCs whose
@@ -1303,7 +1303,7 @@ reaches 50 % or less, the runner performs "turn": the line is spoken and the ent
 | §9.5 | What the client's reads of `AI_KungFu_IsNPC` decide |
 
 All but the last are server behaviour: no client code holds them (§9). They can be narrowed by owner
-observation (M3) of the original; the traffic side stays behind the gate of `docs/LEGAL.md` §9.3.
+observation (M3) of the original; the traffic side stays behind the gate of decision 0004.
 
 ---
 

@@ -30,7 +30,7 @@
 
 Decision 0024 P4 asks for the social panels of the original client, presented from the
 install's data and fed by the scenario feed (SF) and protocol v1.1, with the client half
-only (LEGAL.md §11.1 rule 5 unchanged: Tessera's server runs no gameplay rules). This spec
+only (`server-content.md` §7 unchanged: Tessera's server runs no gameplay rules). This spec
 gives, for each panel, the layout structure, what each element shows, how the original's
 game code drives it (where it was traced), the system chat lines that accompany the changes,
 the built-in command names and key-map commands that open or act on it, and how every user

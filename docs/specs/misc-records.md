@@ -36,9 +36,9 @@ object-state ranges. With it an implementer can:
   follow the references between all of these records (§15).
 
 The compression dictionaries (0x0E010000–0x0E010002) are described in **stored form only**
-(§11). Their use belongs to the network protocol, which was behind the M8 legal gate when this
+(§11). Their use belongs to the network protocol, which was behind the M8 gate when this
 spec was written (decision 0004) and since 2026-10-11 belongs to M8's own specs
-(`docs/LEGAL.md` §9.3, decision 0034). The locale record 0x58000000 is fully specified in
+(decision 0034). The locale record 0x58000000 is fully specified in
 `string-table.md` §10.3 and is only cross-referenced here (§8).
 
 Game text is never reproduced: records are named by DID, fields by property label or by
@@ -996,9 +996,9 @@ character filter, which was not traced in detail.
 
 **Gate (until 2026-10-11).** The three labels of these records (COMPRESSIONDICTIONARY DID map 0x28000010,
 keys 0x10000001–0x10000003) name directions of client–server traffic. Their use belongs to
-the official network protocol, which was behind the M8 legal gate when this section was
-written (decision 0004) and since 2026-10-11 belongs to M8's own specs (`docs/LEGAL.md` §9.3,
-decision 0034 §2). This section gives only what a container tool needs to list and validate
+the official network protocol, which was behind the M8 gate when this section was
+written (decision 0004) and since 2026-10-11 belongs to M8's own specs (decision 0034 §2).
+This section gives only what a container tool needs to list and validate
 the records; nothing here describes how the dictionaries are applied, and no BIN reading
 was done for them. The entries' directory timestamps date from 2007.
 

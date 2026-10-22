@@ -23,8 +23,7 @@
 > entry and its arguments, §10.2) are identifiers that the user's
 > data, preference file and key map use. They appear here only because a compatible client
 > cannot work without them; they are read from the install or the user's files at run time
-> wherever possible. The interoperability rationale is the *Google v. Oracle* row of
-> `docs/LEGAL.md` §4.1 and `docs/ARCHITECTURE.md` §15/§18; `docs/LEGAL.md` §10 is cited for
+> wherever possible. The interoperability rationale is `docs/ARCHITECTURE.md` §15/§18; `CLAUDE.md` is cited for
 > the naming rule only. No client message text, game text or third-party prose is reproduced.
 
 ---

@@ -10,13 +10,13 @@
 | Reviewer | Independent clean-room review |
 | Review record | Review of revision 6, 2026-10-07: **accepted**, with minor follow-ups for the next revision. Full record moved to the review log (decision 0018). |
 | Implements into | `crates/ext` (registry entries, validation, leases, overlay lists, hand-off serialisation), `crates/ext-host` (Camera, Overlay and Sandbox ports, the clock port, the file watcher, the reload sequence), `crates/render` (filled world boxes with back faces culled and a world style without depth test, §5.4), `apps/client` (feature `ext`: lease application in step 3, pointer picking under a lease, overlay encoding and coverage counting in step 10, the lease indicator, the developer console), `apps/scripttool` (`dump-api`, EM §11.2), `crates/net` (one additive event, §7.5), `tools/` (the reference check, §10.6) |
-| Related | Decision [0017](../decisions/0017-extended-scripting.md) (**D17**, accepted 2026-10-07); [`ext-threat-model.md`](ext-threat-model.md) (**TM**, normative for every limit, every rule of its §7–§9 and the escape catalogue); [`ext-api-1a.md`](ext-api-1a.md) (**EA1a**, the slice-1a modules and the general rules of the API); [`ext-manifest.md`](ext-manifest.md) (**EM**, manifest, grants, backend gate, the script tool and the walk file); [0014](../decisions/0014-ui-input-bridge.md) (**IB**), [0015](../decisions/0015-ui-rendering.md) (**UR**), [`keymap.md`](keymap.md) (**KM**), `docs/ARCHITECTURE.md` (**ARCH**), `docs/LEGAL.md` §18 |
+| Related | Decision [0017](../decisions/0017-extended-scripting.md) (**D17**, accepted 2026-10-07); [`ext-threat-model.md`](ext-threat-model.md) (**TM**, normative for every limit, every rule of its §7–§9 and the escape catalogue); [`ext-api-1a.md`](ext-api-1a.md) (**EA1a**, the slice-1a modules and the general rules of the API); [`ext-manifest.md`](ext-manifest.md) (**EM**, manifest, grants, backend gate, the script tool and the walk file); [0014](../decisions/0014-ui-input-bridge.md) (**IB**), [0015](../decisions/0015-ui-rendering.md) (**UR**), [`keymap.md`](keymap.md) (**KM**), `docs/ARCHITECTURE.md` (**ARCH**) |
 
 > **Amended by [decision 0034](../decisions/0034-official-server-compatibility.md) §4
 > (2026-10-11); not yet carried into this text.** The rule "extended scripts never run
 > against an official server" is replaced: on an official-server session (a backend class
 > of its own, named by the M8 and M9 specs) extended scripts run only after the user's
-> explicit opt-in, which is off by default, shows the risks, is stored per user and can be
+> explicit opt-in, which is off by default, is stored per user and can be
 > set by nothing but the user in the client's own interface; per-script grants still apply.
 > Automation (`input.drive` and every module that issues movement, input or game commands)
 > stays offline only and is never enabled on an official server. `Other` stays fail-closed.
@@ -27,12 +27,12 @@
 > **Clean-room and naming note.** Everything here is Tessera's own design, written from the
 > accepted decision D17, Tessera's other decisions and specs, and Tessera's own code
 > (`tessera-net`'s command model, `tessera-world`'s game clock, `tessera-render`'s pass
-> primitives, the client's streaming focus). No dirty-room material was read. LEGAL §18.3
-> rule 1 applies: no fact that rests on disassembly is part of this contract. In particular
+> primitives, the client's streaming focus). No dirty-room material was read. D17 §12
+> applies: no fact that rests on disassembly is part of this contract. In particular
 > the camera behaviour that `walker.md` §11 records from the original client (its field of
 > view, its look-at heights, its activation rules) is **not** the behaviour of the `Camera`
 > module. The module names, function names and every string in this document are neutral
-> (LEGAL §10, §18.3 rule 4) and none is an interop name of the plugin API.
+> (`CLAUDE.md`) and none is an interop name of the plugin API.
 
 ---
 
@@ -1441,8 +1441,7 @@ EA1a §2.11, §4.3).
 | Option table, record, forms | name; fields with types, ranges, defaults and presence conditions (for example `Follow`'s options, a pose); for `forms`, each form's name and field set (§10.2) |
 | Reason table | every reason string with its meaning (EA1a §2.4, §3.2) |
 
-All descriptions, names and reasons are Tessera's own words and carry no BIN fact (LEGAL
-§18.3 rule 1; D17 §12).
+All descriptions, names and reasons are Tessera's own words and carry no BIN fact (D17 §12).
 
 <a id="s10-2"></a>
 ### 10.2 The type vocabulary

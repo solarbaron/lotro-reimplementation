@@ -2660,7 +2660,7 @@ the `toggle_mount` action in `tessera-input`'s defaults, and the new log columns
 
 - **Sessions.** Mounts are walker presentation in the offline sandbox (decision 0024: client
   half only). With `--server` every mount request is refused with the line "Mounts are not
-  available with --server." (Tessera's protocol carries no mount state; LEGAL.md §11.1 rule 5:
+  available with --server." (Tessera's protocol carries no mount state; `server-content.md` §7:
   Tessera's server runs no gameplay rule.) In a scenario session the feed owns the mount state:
   the feed's `mount ENTITY (REF|none)` step for the player (`MountChanged`, `scenario-feed.md`
   §6.5) runs §16.5 with REF resolved as a DID SOURCE of §16.2 (a mount effect, or a skill

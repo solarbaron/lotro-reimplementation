@@ -1264,7 +1264,7 @@ of every record equals the number at the end of its plugin enum label.
 5. **Licence rule:** any font Tessera ships must be original or under a licence compatible
    with the project (for example the SIL Open Font License). Game fonts and atlases are read
    from the user's install at run time and are never shipped or extracted
-   (`docs/LEGAL.md` §11).
+   (`CLAUDE.md`).
 
 ---
 

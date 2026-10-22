@@ -30,7 +30,7 @@ test server, tools, future backends) can share one tested reliability layer.
 It is **not** a description of any third-party or official protocol and has no
 compatibility goal. Whether Tessera's own multiplayer protocol (ROADMAP M7) uses it or
 something else, such as QUIC, is decided by that milestone's decision record. Nothing here
-relates to the compatibility tier (M8, LEGAL.md §9.3, decision 0034).
+relates to the compatibility tier (M8, decision 0034).
 
 ## 2. Provenance
 

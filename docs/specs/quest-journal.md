@@ -40,7 +40,7 @@ stop, from the offline client (M4, decision 0011):
 - the rings over NPCs and the quest markers on the minimap and the world map (§8);
 - a census of every quest record for the criterion (§9) and the place of deeds (§10).
 
-**Client half only** (decision 0024 §2.4, LEGAL.md §11.1 rule 5). Quest states, objective
+**Client half only** (decision 0024 §2.4, `server-content.md` §2). Quest states, objective
 counts, tracking and NPC rings come from the scenario feed (`QuestState`, `QuestObjective`,
 `QuestTracked`, `MarkerAdded`, `PropertyChanged`, `scenario-feed.md` §9.2) or a server. The
 client derives no quest state: it never decides that an objective advanced, that a quest is

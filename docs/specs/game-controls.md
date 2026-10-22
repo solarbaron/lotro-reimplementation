@@ -47,7 +47,7 @@ how a server combines them. Those formulas are not in the data and are listed as
 (§12); Tessera's own server (M7) defines its own rules from them. No network behaviour is
 covered: the network protocol, login, keys and the launcher were behind the M8 gate when
 this spec was written (decision 0004); since 2026-10-11 they belong to M8's own specs
-(`docs/LEGAL.md` §9.3, decision 0034).
+(decision 0034).
 
 Game text is never reproduced: records are named by DID, fields by property label and
 enum-mapper label. Those labels are interoperability identifiers (they are how a client

@@ -8,15 +8,15 @@
 | Last updated | 2026-10-07 |
 | Author role | Design (Tessera's own API, written from the accepted decision 0017 and Tessera's own specs; no dirty-room input), AI-assisted |
 | Reviewer | Independent clean-room review session |
-| Review record | Re-review of revision 6, 2026-10-07: **accepted**, with minor follow-ups (G1–G6) for the next revision. Full record moved to the review log (decision 0018). |
+| Review record | Re-review of revision 6, 2026-10-07: **accepted**, with minor follow-ups for the next revision. Full record moved to the review log (decision 0018). |
 | Implements into | `crates/ext` (`tessera-ext`: the binding descriptions of these modules, argument validation, the value model, scheduling), `crates/ext-host` (`tessera-ext-host`: the ports of these modules over `world`, `physics`, `entity`, `input`, `ui`, `settings`; `Store` file I/O; the headless harness), `apps/client` (feature `ext`: the frame steps, the heavy-frame gate and its floor, the reserved layer, ext UI routing, the ownership badge), `crates/ui` (the solid-press test, selection and copy, composition coverage of ext entries), `crates/input` (the ext context priority), `apps/scripttool` (`check`, `test`) |
-| Related records and specs | [decision 0017](../decisions/0017-extended-scripting.md) (abbreviated **D17**; the architecture this spec details, including its "Open security and design items" and "Required follow-ups"); [`ext-threat-model.md`](ext-threat-model.md) (**TM**: **normative** for every limit, cited as TM L*n*, for every rule of its §7–§9, cited as TM §*n.m*, and for the escape tests, cited as TM X*n*; TM §0.1); [`ext-manifest.md`](ext-manifest.md) (**EM**: manifest grammar, folder rules, grant store, backend gate states, the script tool); [`ext-api-1b.md`](ext-api-1b.md) (**EA1b**: the slice-1b modules); [decision 0014](../decisions/0014-ui-input-bridge.md) (**IB**: frame steps D8, UI band D5, `opaque_keys` D6); [decision 0015](../decisions/0015-ui-rendering.md) (**UR**: surfaces, composition, U1); [decision 0004](../decisions/0004-server-strategy.md) (server scope); [decision 0016](../decisions/0016-plugin-class-helper.md) item 2; [`keymap.md`](keymap.md) (**KM**: names, actions, contexts, bindings, resolution, KM §9.1 angle conventions); [`plugin-runtime.md`](plugin-runtime.md) (**PR**: the shared runtime core only); [`coordinates.md`](coordinates.md) (frames); [`environment.md`](environment.md) §11 (game clock and sky, BIN); `docs/ARCHITECTURE.md` (**ARCH** §9.1 coordinates, §20.3 frame loop, §21 threading); `docs/LEGAL.md` §18 |
+| Related records and specs | [decision 0017](../decisions/0017-extended-scripting.md) (abbreviated **D17**; the architecture this spec details, including its "Open security and design items" and "Required follow-ups"); [`ext-threat-model.md`](ext-threat-model.md) (**TM**: **normative** for every limit, cited as TM L*n*, for every rule of its §7–§9, cited as TM §*n.m*, and for the escape tests, cited as TM X*n*; TM §0.1); [`ext-manifest.md`](ext-manifest.md) (**EM**: manifest grammar, folder rules, grant store, backend gate states, the script tool); [`ext-api-1b.md`](ext-api-1b.md) (**EA1b**: the slice-1b modules); [decision 0014](../decisions/0014-ui-input-bridge.md) (**IB**: frame steps D8, UI band D5, `opaque_keys` D6); [decision 0015](../decisions/0015-ui-rendering.md) (**UR**: surfaces, composition, U1); [decision 0004](../decisions/0004-server-strategy.md) (server scope); [decision 0016](../decisions/0016-plugin-class-helper.md) item 2; [`keymap.md`](keymap.md) (**KM**: names, actions, contexts, bindings, resolution, KM §9.1 angle conventions); [`plugin-runtime.md`](plugin-runtime.md) (**PR**: the shared runtime core only); [`coordinates.md`](coordinates.md) (frames); [`environment.md`](environment.md) §11 (game clock and sky, BIN); `docs/ARCHITECTURE.md` (**ARCH** §9.1 coordinates, §20.3 frame loop, §21 threading) |
 
 > **Amended by [decision 0034](../decisions/0034-official-server-compatibility.md) §4
 > (2026-10-11); not yet carried into this text.** The rule "extended scripts never run
 > against an official server" is replaced: on an official-server session (a backend class
 > of its own, named by the M8 and M9 specs) extended scripts run only after the user's
-> explicit opt-in, which is off by default, shows the risks, is stored per user and can be
+> explicit opt-in, which is off by default, is stored per user and can be
 > set by nothing but the user in the client's own interface; per-script grants still apply.
 > Automation (`input.drive` and every module that issues movement, input or game commands)
 > stays offline only and is never enabled on an official server. `Other` stays fail-closed.
@@ -86,8 +86,8 @@ What it does **not** define, because D17 or a companion spec does:
 Where this spec restates a rule of D17 or TM, that document is the source; where it adds a
 rule, the rule is marked **(1a rule)** and the provenance table says why.
 
-**No facts from disassembly.** The ext contract is Tessera's own design (D17 §12, LEGAL
-§18.3 rule 1). Nothing here adopts behaviour that the plugin specs or the UI specs record
+**No facts from disassembly.** The ext contract is Tessera's own design (D17 §12).
+Nothing here adopts behaviour that the plugin specs or the UI specs record
 from the original client as the ext contract: the ext widgets, their input behaviour, their
 notifications and their drawing are defined below in their own terms. Four `World`
 results pass through text or numbers that Tessera's own client computes with rules some of
@@ -95,12 +95,12 @@ which are recorded from the original (BIN): the map-coordinate value, the `/loc`
 game clock (`environment.md` §11.1, "BIN unless stated", and the night rule of `sound.md`
 §10.3.5) and the sky state (the day-description choice of `environment.md` §11.2 and the
 blending of §11.3). For each, the ext contract promises only units, ranges and directions
-(§9.2), never a formula, a rounding, a threshold or a format (LEGAL §18.3 rule 1; OPEN-3,
+(§9.2), never a formula, a rounding, a threshold or a format (D17 §12; OPEN-3,
 closed by the reviewer's confirmation).
 
 **Names.** `Ext`, the module names and every function, property, notification and element
 kind name in this spec are Tessera's own choices. Element kinds deliberately avoid every
-class name of the plugin API's interoperability record (LEGAL §17, D17 §12: "Ext UI classes
+class name of the plugin API's interoperability record (`lua-plugin-api.md` §1, D17 §12: "Ext UI classes
 never reuse the interop names"). A word that also appears in another API (for example
 `Exists`) implies no shared behaviour.
 
@@ -1746,7 +1746,7 @@ data** (D17 §3, §8). Positions are in the region frame of the player's current
 - Nothing in this module waits, triggers streaming, decodes or reads files (D17 §8).
 
 <a id="s9-2"></a>
-### 9.2 Contract limits of values Tessera computes (LEGAL §18.3 rule 1)
+### 9.2 Contract limits of values Tessera computes (D17 §12)
 
 `MapCoords`, `LocText`, `Clock` and `Sky` hand the script values that Tessera's client
 computes with rules recorded partly from the original client (`coordinates.md` §8–§9;
@@ -1770,8 +1770,8 @@ part of the ext contract. The contract is only **(1a rule)**:
 A script may display these values, compare them with each other in the same frame, and
 react to their changes; it must not depend on any figure in the right column. The values
 may change between Tessera releases without a major version change of `World`. The
-re-review of revision 3 confirmed that this promise-only contract satisfies D17 §12 and
-LEGAL §18.3 rule 1 for all four functions (OPEN-3, closed); OPEN-3 keeps the fallback in
+re-review of revision 3 confirmed that this promise-only contract satisfies D17 §12
+for all four functions (OPEN-3, closed); OPEN-3 keeps the fallback in
 case the owner decides otherwise.
 
 ---
@@ -2321,7 +2321,7 @@ rule is TM §8.14 (§5.3); the neutral reader's declared expansion ratio is meas
 
 **OPEN-3 (values Tessera computes): closed by the reviewer's confirmation** (re-review of
 revision 3): §9.2's promise-only contract (units, ranges, directions; no formula, rounding
-or format) satisfies D17 §12 and LEGAL §18.3 rule 1 for `World.MapCoords`,
+or format) satisfies D17 §12 for `World.MapCoords`,
 `World.LocText`, `World.Clock` and `World.Sky`. The fallback stays recorded as the plan if
 the owner disagrees: `MapCoords` keeps `north` and `east` from a Tessera-defined linear
 function of the region frame and drops `text`; `LocText` is withdrawn from the major;

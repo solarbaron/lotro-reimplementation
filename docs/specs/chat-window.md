@@ -24,8 +24,8 @@
 > (`AcceptInput`, `EscapeKey`, `START_COMMAND`, …) and plugin-API names (`Turbine.Shell`,
 > `IsCommand`, `AddCommand`, `ShellCommand`, `Execute`, `WriteLine`, `Turbine.Chat`) are
 > identifiers that the user's data, key map and plugins use. They appear only because a
-> compatible client cannot work without them (the *Google v. Oracle* row of `docs/LEGAL.md`
-> §4.1 and the plugin-namespace record in `docs/LEGAL.md` §17). **No game text appears in this
+> compatible client cannot work without them (`docs/CLEAN_ROOM.md` §5.3 and
+> `lua-plugin-api.md` §1). **No game text appears in this
 > spec.** Command words, tab names, channel names and messages are game text in the user's
 > language; they are identified here only by string table and token, and Tessera reads them
 > from the user's install at run time or uses its own wording. The only characters quoted from

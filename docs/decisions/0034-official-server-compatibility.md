@@ -46,6 +46,14 @@
      access control.
 3. **Order.** M8 may run beside the parity track (P0–P8, decision 0024) whenever the owner
    schedules it. M9 (extended scripting) stays last: it starts after P8 and after M8.
+4. **Ban-risk consent stays binding (owner, 2026-10-22).** Before any connection to an
+   official server is possible, the client shows a warning about the account risk of using
+   a third-party client:
+   - it is shown on first use and again whenever its text changes;
+   - only the user's explicit confirmation in the client's own interface accepts it. No
+     command-line flag, environment variable, configuration file written by anything else,
+     plugin, script or server can accept or skip it;
+   - until it is accepted, the client makes no official connection.
 
 ### 2. Research scope (amends decision 0011)
 1. **What M4 may now cover.** Disassembly and decompilation (decision 0011) may now cover the

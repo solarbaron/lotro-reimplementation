@@ -192,6 +192,7 @@ fn route(cmd: Command, mapper: &mut Mapper) -> Result<Routed, NetError> {
             location,
             heading,
             velocity,
+            on_ground,
         } => {
             mapper.player_moved(location, heading);
             let state = mapper.player_state();
@@ -200,7 +201,13 @@ fn route(cmd: Command, mapper: &mut Mapper) -> Result<Routed, NetError> {
                 location: convert::wire_location(&location),
                 heading,
                 velocity: convert::wire_vec3(velocity),
-                motion: derive_motion(velocity, heading, state.walk_speed, state.run_speed),
+                motion: derive_motion(
+                    on_ground,
+                    velocity,
+                    heading,
+                    state.walk_speed,
+                    state.run_speed,
+                ),
             })
         }
         Command::Teleport { destination } => Routed::Net(NetCommand::Teleport(
@@ -255,14 +262,15 @@ fn route(cmd: Command, mapper: &mut Mapper) -> Result<Routed, NetError> {
     })
 }
 
-/// The motion byte for a move (§8.1). `Command::Move` carries no ground state, so the gait
-/// is never Airborne here (see the spec's OPEN note); walk and run come from the
-/// horizontal speed and the player's `WALK_SPEED`/`RUN_SPEED`.
-fn derive_motion(velocity: Vec3, heading: f32, walk: f32, run: f32) -> Motion {
+/// The motion byte for a move (§8.1): Airborne when the controller is not on the ground
+/// (`Command::Move::on_ground`), otherwise walk and run from the horizontal speed and the
+/// player's `WALK_SPEED`/`RUN_SPEED`. Backward when the velocity points more than 90° away
+/// from the heading.
+fn derive_motion(on_ground: bool, velocity: Vec3, heading: f32, walk: f32, run: f32) -> Motion {
     let horizontal = velocity.x.hypot(velocity.y);
     let forward = velocity.x * heading.cos() + velocity.y * heading.sin();
     let backward = horizontal >= tessera_protocol::limits::STANDING_SPEED && forward < -1e-3;
-    Motion::derive(true, horizontal, walk, run, backward)
+    Motion::derive(on_ground, horizontal, walk, run, backward)
 }
 
 /// Commands beyond the neutral [`Command`] set, for a client or tool that knows it talks
@@ -975,13 +983,32 @@ mod tests {
 
     #[test]
     fn motion_from_velocity() {
-        let m = derive_motion(Vec3::new(6.0, 0.0, 0.0), 0.0, 2.0, 6.0);
+        let m = derive_motion(true, Vec3::new(6.0, 0.0, 0.0), 0.0, 2.0, 6.0);
         assert_eq!(m.gait, Gait::Running);
         assert!(!m.backward);
-        let m = derive_motion(Vec3::new(-2.0, 0.0, 0.0), 0.0, 2.0, 6.0);
+        let m = derive_motion(true, Vec3::new(-2.0, 0.0, 0.0), 0.0, 2.0, 6.0);
         assert_eq!(m.gait, Gait::Walking);
         assert!(m.backward);
-        assert_eq!(derive_motion(Vec3::ZERO, 1.0, 2.0, 6.0), Motion::STANDING);
+        assert_eq!(
+            derive_motion(true, Vec3::ZERO, 1.0, 2.0, 6.0),
+            Motion::STANDING
+        );
+    }
+
+    /// Review finding (§8.1): the gait is Airborne whenever the controller is off the
+    /// ground, at any speed, also when jumping in place.
+    #[test]
+    fn motion_is_airborne_off_the_ground() {
+        for v in [
+            Vec3::ZERO,
+            Vec3::new(0.0, 0.0, 5.2),
+            Vec3::new(1.0, 0.0, -3.0),
+            Vec3::new(6.0, 0.0, 0.0),
+        ] {
+            assert_eq!(derive_motion(false, v, 0.0, 2.0, 6.0).gait, Gait::Airborne);
+        }
+        let m = derive_motion(false, Vec3::new(-6.0, 0.0, 0.0), 0.0, 2.0, 6.0);
+        assert!(m.backward);
     }
 
     #[test]

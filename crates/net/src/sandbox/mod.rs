@@ -1394,6 +1394,7 @@ impl Backend for SandboxBackend {
                     location,
                     heading,
                     velocity,
+                    ..
                 },
             ) => self.player_move(now, location, heading, velocity),
             (Phase::InWorld, Command::Teleport { destination }) => {

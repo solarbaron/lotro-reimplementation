@@ -66,6 +66,7 @@ fn assert_valid(command: &Command) {
             location,
             heading,
             velocity,
+            ..
         } => assert!(
             location.is_valid() && heading.is_finite() && velocity.is_finite(),
             "invalid move reached backend: {command:?}"
@@ -182,6 +183,7 @@ enum Op {
         region: u16,
         heading: f32,
         vel: [f32; 3],
+        on_ground: bool,
     },
     Chat {
         chan: Chan,
@@ -252,10 +254,12 @@ fuzz_target!(|input: (Config, Vec<Op>)| {
                 region,
                 heading,
                 vel,
+                on_ground,
             } => Some(Command::Move {
                 location: Location::new(RegionId(region % 4), pos[0], pos[1], pos[2]),
                 heading,
                 velocity: v3(vel),
+                on_ground,
             }),
             Op::Chat { chan, text } => Some(Command::Chat {
                 channel: match chan {

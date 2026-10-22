@@ -1449,6 +1449,7 @@ impl Bot {
                     location: to,
                     heading: self.heading,
                     velocity: Vec3::new(6.0, 0.0, 0.0),
+                    on_ground: true,
                 };
                 self.send(now, cmd);
                 self.record_truth(now, ctx.time, false);
@@ -1464,6 +1465,7 @@ impl Bot {
             location: self.pos,
             heading: self.heading,
             velocity: self.vel,
+            on_ground: true,
         };
         self.send(now, cmd);
         self.record_truth(now, ctx.time, false);

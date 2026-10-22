@@ -21,11 +21,11 @@ use std::time::{Duration, Instant};
 
 use tessera_input::controller::view_direction;
 use tessera_input::{
-    BindingSpec, FixedTimestep, FlyConfig, FlyController, HeightQuery, InputMapper, IntentLatch,
-    Keymap, LookSettings, MoveIntent, RawEvent, StandardActions, WalkConfig, WalkController,
-    default_keymap, default_registry,
+    BindingSpec, FixedTimestep, FlyConfig, FlyController, GroundState, HeightQuery, InputMapper,
+    IntentLatch, Keymap, LookSettings, MoveIntent, RawEvent, StandardActions, WalkConfig,
+    WalkController, default_keymap, default_registry,
 };
-use tessera_physics::controller::{TURN_KEY_SPEED_DEGREES, turn_rate_on_foot};
+use tessera_physics::controller::{MovementState, TURN_KEY_SPEED_DEGREES, turn_rate_on_foot};
 use tessera_render::glam::Vec3;
 use tessera_world::WorldPos;
 
@@ -695,6 +695,23 @@ impl Controls {
         match self.mode {
             MoveMode::Fly => self.fly.velocity(),
             MoveMode::Walk => self.walk.velocity(),
+        }
+    }
+
+    /// Whether the controller stands on the ground, for the gait of the moves it reports
+    /// (`tessera-protocol.md` §8.1): `false` while jumping or falling (collision controller
+    /// state 4, or the plain walk controller airborne) and for the free-fly camera.
+    /// Swimming, wading and sliding count as on the ground.
+    #[must_use]
+    pub fn on_ground(&self) -> bool {
+        if self.on_physics()
+            && let Some(w) = &self.physics
+        {
+            return w.state().element != MovementState::EarthNoSurface;
+        }
+        match self.mode {
+            MoveMode::Fly => false,
+            MoveMode::Walk => self.walk.state() != GroundState::Airborne,
         }
     }
 

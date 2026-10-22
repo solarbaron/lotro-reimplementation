@@ -47,7 +47,15 @@ impl WalkerSession for Recorder {
     fn player_location(&self) -> Option<PlayerLocation> {
         None
     }
-    fn send_move(&mut self, _: Instant, _: tessera_net::Location, _: f32, _: tessera_net::Vec3) {}
+    fn send_move(
+        &mut self,
+        _: Instant,
+        _: tessera_net::Location,
+        _: f32,
+        _: tessera_net::Vec3,
+        _: bool,
+    ) {
+    }
     fn send_chat(&mut self, _: Instant, channel: &ChatChannel, text: &str) -> bool {
         self.sent.push((channel.clone(), text.to_owned()));
         true

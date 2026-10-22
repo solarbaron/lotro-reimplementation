@@ -268,7 +268,14 @@ impl WalkerSession for DriverView {
         self.location
     }
 
-    fn send_move(&mut self, _now: Instant, _location: Location, _heading: f32, _velocity: Vec3) {
+    fn send_move(
+        &mut self,
+        _now: Instant,
+        _location: Location,
+        _heading: f32,
+        _velocity: Vec3,
+        _on_ground: bool,
+    ) {
         // Headless scenario runs send no `Move` (`scenario-feed.md` §12.2).
     }
 
@@ -639,7 +646,7 @@ mod tests {
         v.drain_chat(&mut chat);
         assert_eq!(chat.len(), 1);
         assert_eq!(chat[0].text, "Hello");
-        v.send_move(Instant::now(), loc, 0.0, Vec3::ZERO);
+        v.send_move(Instant::now(), loc, 0.0, Vec3::ZERO, true);
         v.observe(&[Event::Disconnected {
             reason: tessera_net::DisconnectReason::ClientRequested,
         }]);

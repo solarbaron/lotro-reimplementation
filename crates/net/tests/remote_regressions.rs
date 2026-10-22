@@ -121,9 +121,19 @@ fn move_inputs(s: &Session) -> Vec<tessera_protocol::message::MoveInput> {
         .collect()
 }
 
-/// Moves the player for `frames` frames of `step` each with `velocity`, one
+/// Moves the player on the ground for `frames` frames of `step` each with `velocity`, one
 /// `Command::Move` and one `Advance(step)` per frame. Returns the `MoveInput`s sent meanwhile.
 fn drive(velocity: Vec3, step: Duration, frames: u32) -> Vec<tessera_protocol::message::MoveInput> {
+    drive_with(velocity, true, step, frames)
+}
+
+/// [`drive`] with the controller's ground state given.
+fn drive_with(
+    velocity: Vec3,
+    on_ground: bool,
+    step: Duration,
+    frames: u32,
+) -> Vec<tessera_protocol::message::MoveInput> {
     let (mut s, _) = in_world((0..frames).map(|_| HarnessInput::Advance(step)));
     // Settle the world-entry send first.
     let before = move_inputs(&s).len();
@@ -139,6 +149,7 @@ fn drive(velocity: Vec3, step: Duration, frames: u32) -> Vec<tessera_protocol::m
                 location: loc,
                 heading: 0.0,
                 velocity,
+                on_ground,
             },
         )
         .unwrap();
@@ -164,6 +175,25 @@ fn vertical_motion_is_sent_at_15_hz() {
         "{} MoveInputs in 1 s of walking",
         horizontal.len()
     );
+}
+
+#[test]
+fn airborne_movement_is_sent_with_gait_airborne() {
+    // Finding: the backend derived the gait as if always on the ground, so `MoveInput`
+    // never carried Airborne (§8.1, Appendix A).
+    use tessera_protocol::types::Gait;
+    for velocity in [Vec3::new(0.0, 0.0, 5.2), Vec3::new(4.0, 0.0, -3.0)] {
+        let sent = drive_with(velocity, false, TICK, 30);
+        assert!(!sent.is_empty(), "no MoveInput while airborne");
+        for mi in &sent {
+            assert_eq!(mi.motion.gait, Gait::Airborne, "{mi:?}");
+            assert_eq!(mi.motion.to_byte() & 0x07, 3, "{mi:?}");
+        }
+    }
+    // The same movement on the ground is never Airborne.
+    let grounded = drive_with(Vec3::new(4.0, 0.0, 0.0), true, TICK, 30);
+    assert!(!grounded.is_empty());
+    assert!(grounded.iter().all(|mi| mi.motion.gait != Gait::Airborne));
 }
 
 #[test]
@@ -207,6 +237,7 @@ fn correction_adopts_the_new_epoch_and_drops_older_moves() {
         location: ahead,
         heading: 0.0,
         velocity: Vec3::new(4.0, 0.0, 0.0),
+        on_ground: true,
     };
     s.send(Instant::now(), stale).unwrap();
     let mut events = Vec::new();
@@ -258,6 +289,7 @@ fn correction_adopts_the_new_epoch_and_drops_older_moves() {
             location: next,
             heading: 1.0,
             velocity: Vec3::new(4.0, 0.0, 0.0),
+            on_ground: true,
         },
     )
     .unwrap();

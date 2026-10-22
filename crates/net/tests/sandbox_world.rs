@@ -281,6 +281,7 @@ impl Harness {
             location,
             heading: 0.0,
             velocity: Vec3::ZERO,
+            on_ground: true,
         })
         .unwrap();
         self.poll()
@@ -1532,6 +1533,7 @@ fn stale_move_does_not_undo_a_teleport() {
         location: old,
         heading: 0.0,
         velocity: Vec3::ZERO,
+        on_ground: true,
     })
     .unwrap();
     let ev = h.poll();
@@ -1590,6 +1592,7 @@ fn moves_keep_full_precision() {
             location: here,
             heading: 0.0,
             velocity: Vec3::new(0.2, 0.0, 0.0),
+            on_ground: true,
         })
         .unwrap();
         let _ = h.poll();
@@ -1604,6 +1607,7 @@ fn moves_keep_full_precision() {
         location: Location { x: 1.0e6, ..here },
         heading: 0.0,
         velocity: Vec3::ZERO,
+        on_ground: true,
     })
     .unwrap();
     let ev = h.poll();

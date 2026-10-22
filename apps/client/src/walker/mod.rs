@@ -127,13 +127,15 @@ use crate::net::PlayerLocation;
 pub trait WalkerSession {
     /// The latest location report of the player.
     fn player_location(&self) -> Option<PlayerLocation>;
-    /// Reports the player's movement (`heading` in radians, 0 = east, counter-clockwise).
+    /// Reports the player's movement (`heading` in radians, 0 = east, counter-clockwise;
+    /// `on_ground` false while jumping or falling, `tessera-protocol.md` §8.1).
     fn send_move(
         &mut self,
         now: Instant,
         location: tessera_net::Location,
         heading: f32,
         velocity: tessera_net::Vec3,
+        on_ground: bool,
     );
     /// The player's entity, once in the world.
     fn player_id(&self) -> Option<EntityId> {
@@ -2554,6 +2556,7 @@ impl Walker {
             tessera_net::Location::new(RegionId(u16::from(p.region)), p.x, p.y, p.z),
             self.controls.heading(),
             tessera_net::Vec3::new(v.x, v.y, v.z),
+            self.controls.on_ground(),
         );
         self.move_sent = Some(now);
     }

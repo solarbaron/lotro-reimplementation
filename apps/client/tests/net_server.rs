@@ -208,7 +208,7 @@ fn two_clients_see_each_other_move_and_chat() {
             } else {
                 Vec3::ZERO
             };
-            WalkerSession::send_move(w[0], now, loc, 0.0, v);
+            WalkerSession::send_move(w[0], now, loc, 0.0, v, true);
             if let Some(s) = WalkerSession::sample_entity(w[1], aldith_in_bob, now) {
                 kinds.insert(s.kind);
                 xs.push((now, s.position.x));

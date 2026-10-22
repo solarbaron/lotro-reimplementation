@@ -256,6 +256,10 @@ pub enum Command {
         heading: f32,
         /// Current velocity in metres per second.
         velocity: Vec3,
+        /// Whether the player's controller stands on the ground. `false` while jumping
+        /// or falling; the test-server backend then sends gait Airborne
+        /// (`tessera-protocol.md` §8.1). Other backends may ignore it.
+        on_ground: bool,
     },
     /// Ask to be moved to another place. The world source answers every
     /// request exactly once: with [`Event::LocationReport`] (cause
@@ -824,6 +828,7 @@ fn validate(command: &Command) -> Result<(), NetError> {
             location,
             heading,
             velocity,
+            ..
         } => {
             if !location.is_valid() || !heading.is_finite() || !velocity.is_finite() {
                 return Err(NetError::InvalidCommand(

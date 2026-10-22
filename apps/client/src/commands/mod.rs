@@ -825,6 +825,7 @@ mod tests {
             _: tessera_net::Location,
             _: f32,
             _: tessera_net::Vec3,
+            _: bool,
         ) {
         }
         fn net_status(&self) -> Option<crate::net::NetStatus> {

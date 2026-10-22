@@ -43,6 +43,7 @@ enum Op {
         heading: f32,
         vx: f32,
         vy: f32,
+        on_ground: bool,
     },
     Chat(String),
     Query,
@@ -73,6 +74,7 @@ fuzz_target!(|ops: Vec<Op>| {
                 heading,
                 vx,
                 vy,
+                on_ground,
             } => {
                 commands.push((
                     i,
@@ -80,6 +82,7 @@ fuzz_target!(|ops: Vec<Op>| {
                         location: Location::new(RegionId(1), x, y, z),
                         heading,
                         velocity: Vec3::new(vx, vy, 0.0),
+                        on_ground,
                     },
                 ));
                 continue;

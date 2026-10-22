@@ -19,6 +19,7 @@ fn mv(t: Transform, velocity: Vec3) -> Command {
         location: Location::from_position(RegionId(0), t.position),
         heading: t.heading,
         velocity,
+        on_ground: true,
     }
 }
 
@@ -253,12 +254,14 @@ fn commands_are_validated() {
             location: Location::new(RegionId(0), 1.0e300, 0.0, 0.0),
             heading: 0.0,
             velocity: Vec3::ZERO,
+            on_ground: true,
         },
         // The player is in region 0; regions change only by teleport.
         Command::Move {
             location: Location::new(RegionId(7), 0.0, 0.0, 0.0),
             heading: 0.0,
             velocity: Vec3::ZERO,
+            on_ground: true,
         },
         Command::Chat {
             channel: ChatChannel::Tell {

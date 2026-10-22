@@ -2770,6 +2770,14 @@ them.
 > than 90° away from the heading. A ground flag on `Command::Move` (or a new command) would
 > close this.
 
+> **OPEN:** (implementer note, 2026-10-23, review finding) the previous note is addressed in
+> code: `Command::Move` now carries `on_ground: bool` and the backend sends gait Airborne
+> when it is false. A spec writer should retire the previous note. Engineering choices to
+> confirm: the walker reports `on_ground = false` only while jumping or falling (collision
+> controller state 4, or the plain walk controller airborne) and for the free-fly camera;
+> swimming, wading, sliding and "no height data yet" count as on the ground. The sandbox
+> backend ignores the flag; the load-test bots always send `true`.
+
 > **OPEN:** (implementer note) Appendix A, `LoginFailed`: the backend logs in once with the
 > credentials it was built with. Any `LoginFailed` ends the session (`Disconnect(NO_ERROR)`,
 > then `Disconnected { ServerClosed("login failed: CODE[: text]") }`, details in

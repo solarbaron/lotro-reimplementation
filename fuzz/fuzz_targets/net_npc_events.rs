@@ -341,6 +341,7 @@ fuzz_target!(|input: Input| {
                     location: Location::new(region, pos[0], pos[1], pos[2]),
                     heading,
                     velocity: Vec3::ZERO,
+                    on_ground: true,
                 })
             }
             Op::Teleport { pos } => {

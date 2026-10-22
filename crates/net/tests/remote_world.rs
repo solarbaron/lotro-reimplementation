@@ -255,6 +255,7 @@ fn world_lifecycle_end_to_end() {
             },
             heading: 0.0,
             velocity: Vec3::new(6.0, 0.0, 0.0),
+            on_ground: true,
         },
     );
     let _ = pump_for(&mut s, Duration::from_millis(150));
@@ -304,6 +305,7 @@ fn world_lifecycle_end_to_end() {
             location: Location::new(RegionId(1), 1_000.0, 1_000.0, 10.0),
             heading: 1.0,
             velocity: Vec3::ZERO,
+            on_ground: true,
         },
     );
     send(&mut s, Command::QueryLocation);

@@ -297,8 +297,15 @@ impl crate::walker::WalkerSession for World {
         World::player_location(self)
     }
 
-    fn send_move(&mut self, now: Instant, location: Location, heading: f32, velocity: Vec3) {
-        World::send_move(self, now, location, heading, velocity);
+    fn send_move(
+        &mut self,
+        now: Instant,
+        location: Location,
+        heading: f32,
+        velocity: Vec3,
+        on_ground: bool,
+    ) {
+        World::send_move(self, now, location, heading, velocity, on_ground);
     }
 
     fn player_id(&self) -> Option<EntityId> {
@@ -1289,7 +1296,15 @@ impl World {
     }
 
     /// Reports the player's movement (ignored before the player is in the world).
-    pub fn send_move(&mut self, now: Instant, location: Location, heading: f32, velocity: Vec3) {
+    /// `on_ground` is the controller's ground state (`tessera-protocol.md` §8.1).
+    pub fn send_move(
+        &mut self,
+        now: Instant,
+        location: Location,
+        heading: f32,
+        velocity: Vec3,
+        on_ground: bool,
+    ) {
         if self.player.is_none() || self.state() != SessionState::InWorld {
             return;
         }
@@ -1305,6 +1320,7 @@ impl World {
                 location,
                 heading,
                 velocity,
+                on_ground,
             },
         ) {
             tracing::debug!("move not sent: {e}");
@@ -2303,7 +2319,7 @@ mod tests {
         let at = world.player_location().expect("entered").location;
         // A plausible step 3 m north: the combat state keeps it (TR4 measures from it).
         let step = Location::new(at.region, at.x, at.y + 3.0, at.z);
-        world.send_move(now, step, 0.0, Vec3::ZERO);
+        world.send_move(now, step, 0.0, Vec3::ZERO, true);
         let kept = world
             .combat_state()
             .player_entity()
@@ -2349,7 +2365,7 @@ mod tests {
             before.location.y,
             before.location.z,
         );
-        world.send_move(now, far, 0.0, Vec3::ZERO);
+        world.send_move(now, far, 0.0, Vec3::ZERO, true);
         for _ in 0..5 {
             now += Duration::from_millis(16);
             world.update(now);

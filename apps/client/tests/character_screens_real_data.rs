@@ -1069,6 +1069,7 @@ fn step_5_picture_of_a_received_look() {
                 location: loc,
                 heading,
                 velocity: v,
+                on_ground: true,
             },
         );
         d.screens.pump(&mut d.session, now, &mut d.events);
@@ -1083,6 +1084,7 @@ fn step_5_picture_of_a_received_look() {
             location: end,
             heading: back,
             velocity: tessera_net::Vec3::new(0.0, 0.0, 0.0),
+            on_ground: true,
         },
     );
     // The watcher: the client binary, headless, with a screenshot of its spawn point.

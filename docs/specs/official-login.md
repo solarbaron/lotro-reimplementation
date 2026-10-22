@@ -4,7 +4,7 @@
 
 | Field | Value |
 |---|---|
-| Status | `Accepted` |
+| Status | `Revised` (changed after its 2026-10-20 review; re-review required, decision 0041) |
 | Last updated | `2026-10-20` |
 | Author role | `Spec writer (dirty room)` |
 | Reviewer | `Independent clean-room review (2026-10-20; passed CLEAN_ROOM.md §5.3)` |

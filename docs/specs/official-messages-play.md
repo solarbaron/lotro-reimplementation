@@ -4,7 +4,7 @@
 
 | | |
 |---|---|
-| **Status** | Accepted |
+| **Status** | Review (the 2026-10-20 acceptance by the orchestrating session is not an independent review; decision 0041) |
 | **Last updated** | 2026-10-20 |
 | **Author role** | Spec writer (dirty room) |
 | **Reviewer** | Clean-room orchestrator (CLEAN_ROOM.md §5.3) |

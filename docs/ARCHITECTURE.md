@@ -1707,7 +1707,7 @@ Architecturally this means:
   [`official-session.md`](specs/official-session.md),
   [`official-messages-world.md`](specs/official-messages-world.md),
   [`official-messages-play.md`](specs/official-messages-play.md),
-  [`official-messages-gameplay.md`](specs/official-messages-gameplay.md), and
+  `official-messages-gameplay.md` (held, incident 0041), and
   [`property-system.md`](specs/property-system.md) §10 — and the `backend`,
   `login`, `session`, and `world` modules are built, while play/gameplay message handlers
   and live client connector wiring still need more work.

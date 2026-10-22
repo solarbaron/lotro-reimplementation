@@ -364,9 +364,12 @@ fine. Format-level terms like "DID" or "landblock" are fine.
 - **M8 (official-server compatibility) is in scope** by the owner's decision of 2026-10-11
   (`docs/decisions/0034-official-server-compatibility.md`); **partly done and needs more
   work** (`docs/ROADMAP.md` M8 status):
-  - **Specs (all Accepted, `0` open questions):** `official-login.md`,
-    `official-session.md`, `official-messages-world.md`, `official-messages-play.md`,
-    `official-messages-gameplay.md`, and `property-system.md` §10.
+  - **Specs: none Accepted (incident 0041, 2026-10-22).** The gameplay spec held disassembly
+    prose and is held in `research/held/incident-0041/`; `official-messages-world.md`,
+    `official-messages-play.md` and `property-system.md` §10 are back in Review (no
+    independent review); `official-login.md` and `official-session.md` are Revised.
+    Official-protocol building is paused until they are re-accepted
+    (`docs/decisions/0041-incident-m8-spec-contamination.md`).
   - **Partly built (`crates/compat`, `fuzz/`):**
     `tessera-compat` (`backend` `CompatBackend` shell, `login` config/locale/version
     discovery + GLS SOAP 1.1 + world status + queue + ticket refresh, `session` UDP

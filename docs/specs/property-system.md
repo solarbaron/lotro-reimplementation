@@ -4,7 +4,7 @@
 
 | | |
 |---|---|
-| **Status** | **Accepted** (stored `.dat` formats accepted on re-review 2026-10-07; §10 official-protocol wire encoding accepted on review 2026-10-20 under [decision 0034](../decisions/0034-official-server-compatibility.md)). Stored-format sections (§1–§9, §11–§12, §14–§17) are unchanged from the Accepted 2026-10-07 text. |
+| **Status** | **Accepted** (stored `.dat` formats accepted on re-review 2026-10-07; §10 official-protocol wire encoding back in Review: its 2026-10-20 acceptance by the orchestrating session is not an independent review, [decision 0041](../decisions/0041-incident-m8-spec-contamination.md)). Stored-format sections (§1–§9, §11–§12, §14–§17) are unchanged from the Accepted 2026-10-07 text. |
 | **Last updated** | 2026-10-20 |
 | **Author role** | Spec writer (dirty room) |
 | **Reviewer** | Claude review session (spec-writer agent), 2026-10-05; re-reviews of the 2026-10-07 revision and of its repair by a separate Claude review session (spec-reviewer), 2026-10-07; §10 reviewed by clean-room orchestrator session, 2026-10-20 |

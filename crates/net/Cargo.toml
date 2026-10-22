@@ -16,8 +16,7 @@ default = ["remote", "scenario"]
 remote = ["dep:tokio", "dep:quinn", "dep:unicode-normalization", "tessera-protocol/transport"]
 # The scenario feed (`tessera_net::scenario`, docs/specs/scenario-feed.md): the scenario
 # parser, selector resolution contract, the run-time feed of the sandbox backend, the
-# canonical event log and the headless driver. tessera-server never links it (LEGAL.md
-# §11.1 rule 5).
+# canonical event log and the headless driver. tessera-server never links it.
 scenario = []
 
 [dependencies]

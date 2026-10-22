@@ -4,7 +4,7 @@
 //! invalid P5 values are dropped and literal refs cleaned, `LeaveQueue` needs `InWorld`, a
 //! `JoinInstance` level must be 1 … 10,000, the new World forms play through the sandbox
 //! with a scenario and commands sent by the client itself, and the test-server backend
-//! refuses `LeaveQueue` (LEGAL.md §11.1 rule 5).
+//! refuses `LeaveQueue`.
 #![cfg(feature = "scenario")]
 
 use std::sync::Arc;

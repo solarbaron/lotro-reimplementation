@@ -15,8 +15,8 @@
 //! L3; it depends on `tessera-formats`, `tessera-props`, `tessera-text` and
 //! `tessera-wstate` only.
 //!
-//! Client and tools only: `tessera-server` must never link this crate (LEGAL.md §11.1
-//! rule 5; enforced by a CI check on the server's dependency graph).
+//! Client and tools only: `tessera-server` must never link this crate (enforced by a CI
+//! check on the server's dependency graph).
 //!
 //! | Item | Purpose | Spec |
 //! |---|---|---|

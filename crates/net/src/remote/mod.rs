@@ -238,7 +238,7 @@ fn route(cmd: Command, mapper: &mut Mapper) -> Result<Routed, NetError> {
             mapper.select_target(target)?;
             Routed::Local
         }
-        // The test server has no gameplay (LEGAL.md §11.1 rule 5; scenario-feed.md §9.5,
+        // The test server has no gameplay (decision 0004; scenario-feed.md §9.5,
         // §9.7, §9.8): DeleteCharacter, every other Social command (fellowship, trade, lists,
         // performances) and every other new command are refused.
         Command::Character(_)

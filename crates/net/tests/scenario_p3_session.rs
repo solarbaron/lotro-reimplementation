@@ -2,8 +2,7 @@
 //! Session rules of the P3 revision (`docs/specs/scenario-feed.md` §9.5): `QuestRewards`
 //! and `BuybackShown` follow the entity rule, invalid `QuestRewards` are dropped, buy-back
 //! entries are cleaned like vendor entries, `BuyBack` needs `InWorld` and an entry from 1,
-//! the sandbox without a scenario accepts it, and the test-server backend refuses it
-//! (LEGAL.md §11.1 rule 5).
+//! the sandbox without a scenario accepts it, and the test-server backend refuses it.
 
 use std::time::Instant;
 

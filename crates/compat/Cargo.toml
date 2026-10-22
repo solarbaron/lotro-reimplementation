@@ -1,0 +1,21 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+[package]
+name = "tessera-compat"
+description = "Official-server compatibility crate: login, session, and world protocol modules (partly done; needs more work)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+flate2.workspace = true
+tessera-net.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+tempfile = "3"
+
+[lints]
+workspace = true

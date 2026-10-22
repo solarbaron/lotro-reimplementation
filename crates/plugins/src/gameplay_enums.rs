@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Enumeration values of `Turbine.Gameplay` (generated from `lua-plugin-api.md` Appendix
-//! A.1 and A.4; interoperability values, `docs/LEGAL.md` §17).
+//! A.1 and A.4; interoperability values).
 
 /// `Turbine.Gameplay.Alignment` (`lua-plugin-api.md` Appendix A).
 pub(crate) const ALIGNMENT: &[(&str, u32)] =

@@ -30,6 +30,7 @@ members = [
     "crates/scriptgraph",
     "crates/particles",
     "crates/gamedata",
+    "crates/compat",
     "apps/dattool",
     "apps/client",
     "apps/explorer",
@@ -75,6 +76,7 @@ tessera-audio = { path = "crates/audio" }
 tessera-scriptgraph = { path = "crates/scriptgraph" }
 tessera-particles = { path = "crates/particles" }
 tessera-gamedata = { path = "crates/gamedata" }
+tessera-compat = { path = "crates/compat" }
 
 anyhow = "1"
 bitflags = "2"

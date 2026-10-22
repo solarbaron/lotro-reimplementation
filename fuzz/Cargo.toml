@@ -44,6 +44,7 @@ tessera-audio = { path = "../crates/audio" }
 tessera-scriptgraph = { path = "../crates/scriptgraph" }
 tessera-assets = { path = "../crates/assets" }
 tessera-particles = { path = "../crates/particles" }
+tessera-compat = { path = "../crates/compat" }
 
 # Not a member of the root workspace.
 [workspace]
@@ -1384,6 +1385,33 @@ bench = false
 [[bin]]
 name = "ui_scale_config"
 path = "fuzz_targets/ui_scale_config.rs"
+test = false
+doc = false
+bench = false
+
+# --- M8: tessera-compat official login XML/SOAP/config/status/queue parsers (official-login.md §2–§7) ---
+
+[[bin]]
+name = "compat_login_xml"
+path = "fuzz_targets/compat_login_xml.rs"
+test = false
+doc = false
+bench = false
+
+# --- M8: tessera-compat official UDP session/packet/fragment/envelope parsers (official-session.md §4–§10) ---
+
+[[bin]]
+name = "compat_session_packet"
+path = "fuzz_targets/compat_session_packet.rs"
+test = false
+doc = false
+bench = false
+
+# --- M8: tessera-compat official world-session messages and wire value encodings (official-messages-world.md §1–§7) ---
+
+[[bin]]
+name = "compat_world_message"
+path = "fuzz_targets/compat_world_message.rs"
 test = false
 doc = false
 bench = false

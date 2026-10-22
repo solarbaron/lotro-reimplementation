@@ -3,8 +3,8 @@
 //! `PluginManager`, `Shell`, `ShellCommand`, `Engine` and the `ChatType`, `DataScope`,
 //! `Language` enumerations.
 //!
-//! The identifiers are the interoperability names that existing plugins call
-//! (`docs/LEGAL.md` §17); they appear only inside the Lua API surface.
+//! The identifiers are the interoperability names that existing plugins call;
+//! they appear only inside the Lua API surface.
 //!
 //! Spec: `lua-plugin-api.md` §7.4, §8, §10, §11, §12, §16, §17.1, Appendix A.1.
 

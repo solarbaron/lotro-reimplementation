@@ -13,7 +13,7 @@
 //!
 //! The command dispatcher's P4 built-ins (`tell`, `reply`, `join`, `friend`, ...) live in
 //! [`crate::commands`]; the synchronised `/play` in [`crate::audio::player_music`].
-//! Tessera's own server runs no gameplay rules (LEGAL.md §11.1 rule 5): on the test server
+//! Tessera's own server runs no gameplay rules (decision 0004): on the test server
 //! only tells and named channels work, and the panels stay empty (TR13).
 
 pub mod party;

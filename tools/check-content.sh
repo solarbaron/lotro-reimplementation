@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# Forbidden-content guard (CLAUDE.md "Content rules" and "Naming", docs/LEGAL.md §10-11,
+# Forbidden-content guard (CLAUDE.md "Content rules" and "Naming",
 # docs/CLEAN_ROOM.md §8). Rejects, anywhere in the tree:
 #
 #   ext       files with game-data, capture or disassembler extensions

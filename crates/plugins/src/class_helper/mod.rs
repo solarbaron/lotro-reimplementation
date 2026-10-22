@@ -25,7 +25,7 @@
 //! [`HostApi::engine_date`](crate::HostApi::engine_date)). Its class registry (§6.13)
 //! lives in locals of that chunk, out of reach of plugin code.
 //!
-//! Spec: `plugin-class-helper.md` §5–§7; `lua-plugin-api.md` §7.2; `docs/LEGAL.md` §17.
+//! Spec: `plugin-class-helper.md` §5–§7; `lua-plugin-api.md` §7.2.
 
 use std::sync::Arc;
 

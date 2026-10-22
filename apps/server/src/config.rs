@@ -606,7 +606,7 @@ fn config_text(r: &mut Reader<'_, '_>, path: &str, text: &str, max: usize, line:
         r.push(
             line,
             Rule::Word,
-            format!("`{path}` contains \"{w}\" (LEGAL.md §10 rule 1)"),
+            format!("`{path}` contains \"{w}\" (CLAUDE.md Naming rule)"),
         );
         ok = false;
     }

@@ -1,35 +1,30 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! Placeholder for a future server-compatibility protocol adapter.
+//! Documentation stub for the official-server compatibility adapter.
 //!
-//! **This module intentionally contains no implementation.**
+//! **This module intentionally contains no implementation.** The official-server
+//! compatibility backend lives in its own crate, `tessera-compat`
+//! (`crates/compat`, `docs/decisions/0034-official-server-compatibility.md`), so
+//! that it stays separate from `tessera-net`'s neutral world session model.
 //!
-//! # Where an adapter would plug in
+//! # Where the adapter plugs in
 //!
-//! A compatibility adapter would be one more [`Backend`](crate::Backend):
-//! it would translate a separately specified wire protocol into the neutral
-//! [`Event`](crate::Event) / [`Command`](crate::Command) model, so the
-//! client, renderer and UI never see protocol details. It could reuse
-//! [`transport`](crate::transport) only if the specified protocol happened to
-//! fit it; more likely it would bring its own framing behind the
-//! [`Datagram`](crate::transport::Datagram) trait.
+//! `tessera-compat` implements [`Backend`](crate::Backend): it translates the
+//! official wire protocol (`docs/specs/official-login.md`,
+//! `docs/specs/official-session.md`, `docs/specs/official-messages-world.md`,
+//! `docs/specs/official-messages-play.md`,
+//! `docs/specs/official-messages-gameplay.md`) into the neutral
+//! [`Event`](crate::Event) / [`Command`](crate::Command) model, so the client,
+//! renderer and UI never see wire protocol details.
 //!
-//! # Preconditions (gating)
+//! # Clean-room rules (decision 0034)
 //!
-//! Work on this module is **blocked on legal review**. `docs/LEGAL.md` §8
-//! rates connectivity with official servers as risk tier T4 (the highest),
-//! and §9.3 defines the gate that must pass first (see also
-//! `docs/ARCHITECTURE.md` §19.3 and milestone M8 in `docs/ROADMAP.md`).
-//! In particular, before any code lands here:
+//! Every protocol fact in `tessera-compat` comes from an accepted clean-room
+//! specification under `docs/specs/` written by someone other than the
+//! implementer (`docs/CLEAN_ROOM.md`), and no official server hostnames,
+//! addresses, ports, keys, certificates or account data appear in code, tests,
+//! fixtures or documentation (anything of that kind is read at runtime from the
+//! user's own install).
 //!
-//! - the protocol must be described in a clean-room specification under
-//!   `docs/specs/`, written by someone other than the implementer, with a
-//!   provenance table, following the project's clean-room rules;
-//! - no server hostnames, addresses, ports, keys or tables taken from any
-//!   vendor binary may be committed. Anything of that kind must be supplied
-//!   at runtime by the user (e.g. read from their own install or typed in);
-//! - interoperability scope (which servers, under what terms of service)
-//!   must be explicitly approved in `docs/LEGAL.md`.
-//!
-//! Until then, development uses the [`sandbox`](crate::sandbox) backend, and
-//! later Tessera's own test-server protocol (milestone M7), which is design
-//! work and needs no gate.
+//! Offline development uses the [`sandbox`](crate::sandbox) backend and the
+//! [`scenario`](crate::scenario) feed, and multiplayer testing uses Tessera's own
+//! test-server protocol ([`remote`](crate::remote), milestone M7).

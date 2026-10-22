@@ -17,7 +17,7 @@ game's glyph atlases. Game fonts and atlases are only ever read from the user's 
 directory that are not GPL-3.0-or-later: the font is OFL-1.1 (copyright The Noto Project
 Authors) and stays under the OFL when Tessera is distributed (OFL §2, §4, §5); `OFL.txt` is
 the licence text itself. The owner accepted bundling it in decision 0022
-(`docs/decisions/0022-bundled-ui-font.md`, recorded in `docs/LEGAL.md` §11): `REUSE.toml`
+(`docs/decisions/0022-bundled-ui-font.md`): `REUSE.toml`
 carries an override annotation for both files (OFL-1.1, The Noto Project Authors), the
 licence text is `LICENSES/OFL-1.1.txt`, and `tools/content-allowlist.txt` exempts exactly the
 font file from the extension and font-magic checks. Do not rename or modify the font.

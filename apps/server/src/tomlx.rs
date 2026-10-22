@@ -35,7 +35,7 @@ pub enum Rule {
     References,
     /// A name or text that breaks its text class.
     Text,
-    /// A word or phrase of LEGAL.md §10 rule 1.
+    /// A disallowed third-party mark or name (`server-content.md` §3.1).
     Word,
     /// The file lies in a game installation.
     InstallPath,

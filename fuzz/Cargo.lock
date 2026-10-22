@@ -2054,6 +2054,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "tessera-compat"
+version = "0.1.0"
+dependencies = [
+ "flate2",
+ "sha2",
+ "tessera-net",
+ "tessera-settings",
+ "thiserror",
+ "tracing",
+]
+
+[[package]]
 name = "tessera-dat"
 version = "0.1.0"
 dependencies = [
@@ -2101,6 +2113,7 @@ dependencies = [
  "tessera-anim",
  "tessera-assets",
  "tessera-audio",
+ "tessera-compat",
  "tessera-dat",
  "tessera-dattool",
  "tessera-formats",

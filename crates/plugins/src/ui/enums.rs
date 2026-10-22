@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Enumeration values and named colours of `Turbine.UI` and `Turbine.UI.Lotro` (generated
 //! from `lua-plugin-api.md` Appendix A.1, A.2, A.3, A.5, A.6 and A.7; interoperability
-//! values, `docs/LEGAL.md` §17).
+//! values).
 
 /// `Turbine.UI.BlendMode` (Appendix A.1).
 pub(crate) const BLEND_MODE: &[(&str, u32)] = &[

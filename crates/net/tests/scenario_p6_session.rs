@@ -3,7 +3,7 @@
 //! (`docs/specs/scenario-feed.md` §6.6, §7.5, §7.7, §8.6, §9.5, §18.P6): the new
 //! Progression events follow the entity rule, invalid P6 values are dropped and literal refs
 //! cleaned, the three new commands need `InWorld` and are range-checked, the plain sandbox
-//! ignores them, the test-server backend refuses them (LEGAL.md §11.1 rule 5), and the
+//! ignores them, the test-server backend refuses them, and the
 //! feed plays the new steps, labels, patterns and input forms as scripted.
 #![cfg(feature = "scenario")]
 

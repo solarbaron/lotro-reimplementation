@@ -2,7 +2,8 @@
 //! The word check of `test-server.md` §5.6 item 4 (`server-content.md` §9.3).
 //!
 //! Every text and name of a content file and of the configuration's `[server] name` and
-//! `motd` is checked, ignoring case, against the words and phrases of LEGAL.md §10 rule 1.
+//! `motd` is checked, ignoring case, against the disallowed third-party marks and names
+//! (`server-content.md` §3.1, `CLAUDE.md` Naming).
 //! A word matches only at word boundaries: a boundary is the start, the end, or a character
 //! that is not a letter or digit. The text is split into words at boundaries, and a listed
 //! phrase matches a run of consecutive words, so `Middle-earth` also matches `middle earth`
@@ -12,7 +13,7 @@
 //! The list is project policy compiled into the server, not game data. It cannot catch every
 //! invented word; the human review items of `server-content.md` §9.3 cover the rest.
 
-/// The words and phrases of LEGAL.md §10 rule 1, as written there.
+/// Disallowed third-party marks and names (`server-content.md` §3.1, `CLAUDE.md` Naming).
 pub const RULE_ONE: &[&str] = &[
     "LOTRO",
     "Lord of the Rings",

@@ -265,7 +265,7 @@ fn text_class(
         r.push(
             line,
             Rule::Word,
-            format!("`{path}` contains \"{w}\" (LEGAL.md §10 rule 1)"),
+            format!("`{path}` contains \"{w}\" (CLAUDE.md Naming rule)"),
         );
         ok = false;
     }
@@ -286,7 +286,7 @@ fn id_class(r: &mut Reader<'_, '_>, path: &str, text: &str, line: usize) -> bool
         r.push(
             line,
             Rule::Word,
-            format!("`{path}` contains \"{w}\" (LEGAL.md §10 rule 1)"),
+            format!("`{path}` contains \"{w}\" (CLAUDE.md Naming rule)"),
         );
         ok = false;
     }
@@ -652,7 +652,7 @@ pub fn check_text(text: &str, spdx: bool) -> (Option<Content>, Vec<Finding>) {
                         r.push(
                             nline,
                             Rule::Word,
-                            format!("`wanderers.name` contains \"{w}\" (LEGAL.md §10 rule 1)"),
+                            format!("`wanderers.name` contains \"{w}\" (CLAUDE.md Naming rule)"),
                         );
                         false
                     }

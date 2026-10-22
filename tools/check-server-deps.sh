@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# Server dependency guard (docs/LEGAL.md §11.1 rules 1 and 5, docs/specs/server-content.md
-# §3.2 and §10 E1, docs/specs/scenario-feed.md §3.1, decision 0024 §2.3 and P0 exit criterion
+# Server dependency guard (docs/specs/server-content.md §3.2 and §10 E1,
+# docs/specs/scenario-feed.md §3.1, decision 0024 §2.3 and P0 exit criterion
 # 4). tessera-server must never link a crate that decodes game data, tessera-gamedata or the
 # scenario feed (tessera-net), and must contain no code taken from one.
 #
@@ -308,7 +308,7 @@ check() {
         return 0
     fi
     echo "check-server-deps: FAIL: $root links packages that a server must not link" >&2
-    echo "  (LEGAL.md §11.1 rules 1 and 5, server-content.md §3.2 and §10 E1, decision 0024 §2.3):" >&2
+    echo "  (server-content.md §3.2 and §10 E1, decision 0024 §2.3):" >&2
     while IFS="$(printf '\t')" read -r name src label; do
         [ -n "$name" ] || continue
         if is_member "$name"; then

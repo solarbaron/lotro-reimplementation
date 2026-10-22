@@ -3951,6 +3951,7 @@ dependencies = [
  "tessera-anim",
  "tessera-assets",
  "tessera-audio",
+ "tessera-compat",
  "tessera-dat",
  "tessera-entity",
  "tessera-formats",
@@ -3980,6 +3981,17 @@ dependencies = [
  "tracing-subscriber",
  "unicode-normalization",
  "winit",
+]
+
+[[package]]
+name = "tessera-compat"
+version = "0.1.0"
+dependencies = [
+ "flate2",
+ "tempfile",
+ "tessera-net",
+ "thiserror 2.0.21",
+ "tracing",
 ]
 
 [[package]]

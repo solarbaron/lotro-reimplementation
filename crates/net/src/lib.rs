@@ -25,8 +25,7 @@
 //!   `SelectorResolver` contract the client implements over its install (this
 //!   crate decodes no game data), the resolved scenario, the deterministic
 //!   playback engine the sandbox runs on a virtual clock, the canonical event
-//!   log and the headless driver. `tessera-server` never links it (LEGAL.md
-//!   §11.1 rule 5).
+//!   log and the headless driver. `tessera-server` never links it.
 //! - `remote` (feature `remote`, on by default): the test-server backend. It
 //!   connects to a `tessera-server` over Tessera's own protocol
 //!   (`docs/specs/tessera-protocol.md`, QUIC per decision 0030) on one network
@@ -38,8 +37,8 @@
 //!   pluggable [`transport::Datagram`]. Like the session it is poll-driven on
 //!   the caller's thread: it spawns no thread and runs no async runtime. The
 //!   Tessera protocol does not use it (decision 0030).
-//! - [`compat`]: documentation-only placeholder for a future, legally
-//!   reviewed server-compatibility adapter.
+//! - [`compat`]: documentation-only note pointing to the separate `tessera-compat`
+//!   server-compatibility crate (decision 0034).
 //!
 //! ```
 //! use std::time::{Duration, Instant};

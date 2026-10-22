@@ -41,9 +41,8 @@ observation of the running client (M3) shows nothing about serialised field orde
 - The owner retroactively authorises method M4 for exactly this question: the node-kind
   registration and the reflected field lists of the script-table node classes. The purpose is
   interoperability with the script-table records in the owner's own install.
-- **Analyst:** a dirty-room AI spec-writing session operated by the owner (`solarbaron`), who
-  is a lawful licensee acting under EU law (Software Directive 2009/24/EC, Art. 6), in an EU
-  member state.
+- **Analyst:** a dirty-room AI spec-writing session operated by the owner (`solarbaron`) on
+  the owner's local install.
 - **Build:** client 4906.0071.1794.4035.
 - **Output:** prose and tables of functional facts in `docs/specs/script-table.md` only. No
   disassembly output, scripts or notes from that analysis enter the repository. The dirty

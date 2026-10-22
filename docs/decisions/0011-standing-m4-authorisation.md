@@ -14,7 +14,7 @@ are not documented anywhere public. Examples:
 - how character sliders and the `scale_blend` animation layer are driven.
 
 On 2026-10-05 the owner asked to "reverse engineer and decompile the client for all the stuff
-such as the world". The owner is a lawful licensee in an EU member state.
+such as the world" on the owner's local install.
 
 ## Decision
 The owner authorises M4 as a standing method for the **offline client**, on these terms:
@@ -22,15 +22,15 @@ The owner authorises M4 as a standing method for the **offline client**, on thes
 - **Scope:** everything M0–M7 need to reproduce the client's own behaviour on the owner's own
   data. That covers formats, the world (terrain, scenery, collision, environment), rendering,
   characters and animation, UI, audio and scripting.
-- **Excluded**, and still gated by decision 0004, `docs/LEGAL.md` §9 and the "Forbidden" row of
+- **Excluded**, and still deferred by decision 0004 and the "Forbidden" row of
   `CLEAN_ROOM.md` §4:
   - the network protocol;
   - login and authentication, keys and encryption;
   - the launcher and patcher;
   - anti-cheat and anti-tamper;
-  - any circumvention of an access control.
-- **Analyst:** dirty-room spec-writing sessions operated by the owner, under EU law (Directive
-  2009/24/EC, Art. 6), on the client build installed at the time.
+  - bypassing authentication or access controls.
+- **Analyst:** dirty-room spec-writing sessions operated by the owner on the client build
+  installed at the time.
 - **Order of methods:** a spec writer still tries M1–M3 first. M4 is for facts those methods
   cannot give, or for confirming a hypothesis.
 - **Record:** each spec that uses M4 lists a `BIN` source in its provenance table: the client
@@ -44,10 +44,7 @@ The owner authorises M4 as a standing method for the **offline client**, on thes
 ## Consequences
 - `CLEAN_ROOM.md` §4 and the milestone workflow's spec-writer instructions point to this
   record.
-- The owner accepts the remaining risks, which `docs/LEGAL.md` describes:
-  - **contract:** EULA §4.2 and ToS §10 prohibit reverse engineering;
-  - **outside the EU:** exposure where Art. 6 does not apply.
-- The clean-room split, the content rules and the M8 gate are unchanged.
+- The clean-room split, the content rules and the M8 boundary are unchanged.
 - Withdrawing this authorisation means removing the BIN-only facts from the specs and
   re-implementing the code built on them, as decision 0009 describes.
 
@@ -59,8 +56,8 @@ where key material lies in the user's install, never its values. Targets are set
 subject: read-only copies of the client binary and of the official launcher binary (the
 launcher only for its part of the login flow), and of a library either loads where in-scope
 code lies in it. Still excluded:
-anti-cheat, anti-tamper and code-signing checks, any circumvention of an access control,
+anti-cheat, anti-tamper and code-signing checks, bypassing official authentication,
 and the patcher with its update and download function. Captures of official-server traffic stay
-in the dirty room, are never committed, and are reduced to field-level facts. "Still gated
-by decision 0004" above now reads "excluded by decision 0034 §2", and "the M8 gate" in
-Consequences no longer exists (M8 is in scope).
+in the dirty room, are never committed, and are reduced to field-level facts. "Still deferred
+by decision 0004" above now reads "excluded by decision 0034 §2", and the M8 staging boundary
+in Consequences no longer exists (M8 is in scope).

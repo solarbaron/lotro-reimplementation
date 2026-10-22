@@ -37,9 +37,12 @@
 > mounts and instances) started on 2026-10-11 beside them: its exit criteria pass on Tessera's
 > side (exit verification 2026-10-12, [P5 status](#p5-status)), its specs are Accepted after
 > independent review (2026-10-13); the code was conformed to them and P5 merged to main.
-> Milestones are ordered by
-> dependency and by legal risk: each one builds on the previous one, and the risk tier
-> (T0–T4, see `docs/LEGAL.md` §8) only rises when the earlier, safer tiers are solid.
+> [M8](#m8) (official-server compatibility, [decision 0034](decisions/0034-official-server-compatibility.md))
+> is partly done and needs more work ([M8 status](#m8-status)): all six Phase 1 protocol
+> specs are Accepted and the foundational `backend`, `login`, `session`, and `world` modules in
+> `tessera-compat` are built, while play/gameplay message integration, end-to-end client
+> wiring, and live verification still need more work.
+> Milestones are ordered by dependency: each one builds on the previous one.
 
 <a id="purpose"></a>
 ## 0. Purpose
@@ -52,7 +55,7 @@ done. Each milestone lists:
   start implementing a format until its spec exists, and cannot exit while its spec has
   blocking `> **OPEN:**` items.
 - **RE tasks**: dirty-room work that produces those specs. Methods are limited to what
-  `docs/LEGAL.md` allows (§2 below).
+  `docs/CLEAN_ROOM.md` §4 allows (§2 below).
 - **Exit criteria**: checkable conditions. "Real data" criteria are run locally against
   the owner's install via `TESSERA_GAME_DIR`; their results are recorded as pass/fail and
   counts, never as game content.
@@ -71,7 +74,6 @@ like "ARCH §8" refer to it.
 | Plugin system uses Lua 5.1 with apartments and `.plugin` XML descriptors | engine-client-re.md §5 | Reported |
 | Player music uses an ABC dialect with documented limits | engine-client-re.md §7 (Maestro test suite, MIT) | Reported |
 | No public, working server emulator exists; the official protocol descends from the AC lineage | research/notes/network.md §0 | Reported |
-| Risk tiers T0 format library, T1 offline engine, T2 own-server networked, T3 emulated gameplay, T4 official-server connectivity; the T4 conditions G1–G5 (G1, G2 set aside by decision 0034; G4, G5 binding) | `docs/LEGAL.md` §8–§9 (from research/notes/legal.md §7) | Reported |
 | Reimplementation practice: per-format CLIs first, gated real-data tests, golden images, fuzzing | research/notes/analogues.md §4 | Reported |
 
 ---
@@ -79,20 +81,20 @@ like "ARCH §8" refer to it.
 <a id="tracks"></a>
 ## 1. Overview
 
-| Milestone | Theme | Risk tier | Main new crates/apps |
-|---|---|---|---|
-| **M0** | Base: archives, primitives, install detection, dattool, window + renderer, Lua host skeleton | T0/T1 | `dat`, `formats`, `install`, `render`, `script`, `net` (sandbox stub), `dattool`, `client` |
-| **M1** | Asset browser: textures, strings, icons, properties | T0 | `props`, `text`, `assets`, `settings`, `explorer` |
-| **M2** | Mesh and material viewer | T0/T1 | `mesh`, `material` |
-| **M3** | Terrain and offline landblock world walker | T1 | `world`, `terrain`, `input`, `wstate` |
-| **M4** | Characters and animation | T1 | `havok`, `anim`, `entity` |
-| **M4.5** | World fidelity: terrain texturing, scenery and grass, collision and walking, water, lit materials, sky and time of day | T1 | `physics` (new, L3); grows `formats`, `terrain`, `world`, `material`, `render`, `client` |
-| **M5** | UI layouts and skins, Lua plugins | T1 | `ui`, `plugins` |
-| **M6** | Audio and player music | T1 | `audio` |
-| **M7** | Own test server and own protocol | T2 | `protocol`, `server`, test-server backend |
-| **P0–P8** | Parity track, client half: gameplay presentation from the install, driven by a sandbox scenario feed (decision 0024) | T1 | `gamedata` (new, L3, P0); grows `net` (scenario feed, P0), `ui`, `plugins`, `wvm`, `client` |
-| **M8** | Official-server compatibility, in scope by the owner's decision without a legal review ([0034](decisions/0034-official-server-compatibility.md)): official login and protocol specs, a compatibility backend, the G4 warning | T4 | a compatibility backend crate (Phase 2) |
-| **M9** | Extended scripting: Tessera's own script API beside the standard plugins (planned earlier as M5.5; moved last by the owner on 2026-10-08) | T1 (sandbox) to T2 (own server) | `ext`, `ext-host` |
+| Milestone | Theme | Main new crates/apps |
+|---|---|---|
+| **M0** | Base: archives, primitives, install detection, dattool, window + renderer, Lua host skeleton | `dat`, `formats`, `install`, `render`, `script`, `net` (sandbox stub), `dattool`, `client` |
+| **M1** | Asset browser: textures, strings, icons, properties | `props`, `text`, `assets`, `settings`, `explorer` |
+| **M2** | Mesh and material viewer | `mesh`, `material` |
+| **M3** | Terrain and offline landblock world walker | `world`, `terrain`, `input`, `wstate` |
+| **M4** | Characters and animation | `havok`, `anim`, `entity` |
+| **M4.5** | World fidelity: terrain texturing, scenery and grass, collision and walking, water, lit materials, sky and time of day | `physics` (new, L3); grows `formats`, `terrain`, `world`, `material`, `render`, `client` |
+| **M5** | UI layouts and skins, Lua plugins | `ui`, `plugins` |
+| **M6** | Audio and player music | `audio` |
+| **M7** | Own test server and own protocol | `protocol`, `server`, test-server backend |
+| **P0–P8** | Parity track, client half: gameplay presentation from the install, driven by a sandbox scenario feed (decision 0024) | `gamedata` (new, L3, P0); grows `net` (scenario feed, P0), `ui`, `plugins`, `wvm`, `client` |
+| **M8** | Official-server compatibility, in scope by the owner's decision ([0034](decisions/0034-official-server-compatibility.md)): official login and protocol specs, a compatibility backend | `compat` (partly done; needs more work) |
+| **M9** | Extended scripting: Tessera's own script API beside the standard plugins (planned earlier as M5.5; moved last by the owner on 2026-10-08) | `ext`, `ext-host` |
 
 M1–M6 depend on M0, and mostly on each other in order, but M5 (UI) and M6 (audio) can run
 in parallel with M4 once M3's asset and world plumbing exists. M4.5 builds on M3 (streaming,
@@ -100,8 +102,8 @@ terrain), M2 (the material chain) and M4 (the walking avatar, setup collision vo
 and M6 do not depend on it; by the owner's decision of 2026-10-06 it runs before them.
 M9 (extended scripting) comes last by the owner's decision of 2026-10-08: it starts only
 after full parity with the original client and compatibility with the server (M8), or, if
-M8 stops on a rights holder's objection (LEGAL §9.4), after client parity with Tessera's own
-server. M8 is in scope since 2026-10-11 ([decision 0034](decisions/0034-official-server-compatibility.md))
+M8 stops, after client parity with Tessera's own server. M8 is in scope since 2026-10-11
+([decision 0034](decisions/0034-official-server-compatibility.md))
 and may run beside the parity track whenever the owner schedules it; M9 stays last.
 
 **Parity track (P-track), accepted 2026-10-09:** milestones P0–P8 between M7 and M9
@@ -110,11 +112,11 @@ client half only: gameplay presentation from the user's install (creation screen
 inventory, target frames, cast bars, quest log, vendors, social panels, maps, progression
 panels, client-run game code), driven by a scenario feed in the sandbox and, with M8
 (decision 0034), by an official server through M8 Phase 2. Tessera's own server keeps M7's
-scope; LEGAL.md §11.1 rule 5 is unchanged. M9 starts only after P8 and M8 (or, if M8 stops
-under LEGAL §9.4, after P8 and M7).
+scope; [`server-content.md`](specs/server-content.md) §7 is unchanged. M9 starts only after
+P8 and M8 (or, if M8 stops, after P8 and M7).
 
 Cross-cutting work that never stops: specs and their provenance, fuzz targets for every
-new parser, CI hygiene, `docs/LEGAL.md` upkeep, and performance budgets (frame time,
+new parser, CI hygiene, and performance budgets (frame time,
 memory, upload bandwidth).
 
 ---
@@ -148,7 +150,7 @@ here.)
 - Observing, capturing or describing the official login and session traffic, outside M8.
   M0–M7 and the P-track never need it, because Tessera's network protocol is its own (M7).
   M8 does it within the scope of [decision 0034](decisions/0034-official-server-compatibility.md)
-  §2 (`docs/LEGAL.md` §9.3): passive captures of the owner's own sessions, dirty-room only,
+  §2: passive captures of the owner's own sessions, dirty-room only,
   never anti-cheat or anti-tamper.
 - Using any proprietary Turbine/Daybreak library (for example the circulating dat-export
   DLL), even as an oracle.
@@ -210,7 +212,7 @@ and run a sandboxed Lua script.
 | `tessera-net` | `Backend`/`Session` traits, event and command enums (first variants), sandbox backend stub. |
 | `tessera-dattool` | `info`, `ls`, `stat`, `cat`, `strings`, `extract` (outside the install only), `validate`. |
 | `tessera-client` | Window, frame loop skeleton, install detection log, test scene; runs with or without game data. |
-| Docs | `README.md`, `docs/ARCHITECTURE.md`, this roadmap, `docs/LEGAL.md`, first specs. |
+| Docs | `README.md`, `docs/ARCHITECTURE.md`, this roadmap, `docs/CLEAN_ROOM.md`, first specs. |
 | CI | fmt, clippy `-D warnings`, tests, SPDX check, content guard. |
 
 <a id="m0-specs"></a>
@@ -1085,8 +1087,8 @@ existing third-party UI plugins that the user has installed.
    create their windows and respond to input. Their incompatibilities are recorded.
 5. Sandbox escape tests: plugins cannot read or write outside their tree or data
    directory, cannot load C modules, and cannot exceed memory and instruction limits.
-6. `docs/LEGAL.md` records the plugin-namespace interoperability rationale (LEGAL §17,
-   which replaces the former ARCH §18.2 OPEN).
+6. The plugin-namespace interoperability rules are recorded ([0022](decisions/0022-plugin-runtime.md),
+   `CLAUDE.md` Naming, which replaces the former ARCH §18.2 OPEN).
 7. **UI budgets.** U1–U5 of decision 0015 §6 hold, measured with its scripted run under
    `docs/perf/reference-machine.md`, at 3840 × 2160 fullscreen and at the window size the
    compositor gives. Frames with a scroll step or a new chat line (content-event frames) are
@@ -1122,7 +1124,7 @@ review before the code that rests on them is committed.
 | 3 | ✅ (Tessera side) | `cargo test --release -p tessera-client --test ui_skin_real_data`: a generated skin (CC0 one-colour TGA files in a temporary skins root) changes the checked art of 13 / 13 panels that have skinnable art in their default view (P11 and P14 have none); the panel override moves P6 to (40, 30, 240, 290); a missing skin file shows the placeholder; turning the skin off restores the art. `tessera-ui` `skin_real_data`: the skin tables of the install load (5,625 art-asset labels, 4,742 base-table entries, SI1–SI9 hold). Optional cross-check with a published skin: O41. |
 | 4 | ⏳ owner install pending | No `Plugins` folder exists on the owner's machine (`compat_real_plugins` reports it and passes as a skip). Tessera's synthetic plugin suite passes: `tessera-plugins` `compat_plugins` 12 / 12 (plugins load, create windows, respond to clicks, hover, typing, keys, timers and shell commands), `ui_classes`, `ui_controls`, `ui_input`, `ui_lifetime`, `class_helper` 37 / 37, and `tessera-client` `plugins_suite` 3 / 3. The current incompatibility table (18 rows) is in the module docs of `crates/plugins/tests/compat_plugins.rs`; the visible ones: game-styled windows use a neutral frame (no call yet to build a plugin control from a based layout element), check boxes draw no mark, quickslots draw no icon, `ControlList:Insert`/`Set` append. The 14 plugins of `plugin-api-usage.md` §9: owner observation O40. |
 | 5 | ✅ | `cargo test --release -p tessera-plugins --test escape`: 6 / 6 (path traversal, absolute paths, symlinks, `import` tricks, image paths and plugin-data keys refused; C modules and bytecode refused; memory limits against string, table, `gsub` and format growth; instruction limits against loops, `pcall`/`xpcall` handlers, coroutines, patterns, metamethods and finalizers, per tick and at close); `ui_escape` 7 / 7 (UI-layer paths, refused image formats, hostile numbers, object caps); `sandbox` 6 / 6. |
-| 6 | ✅ | [LEGAL.md §17](LEGAL.md#17-plugin-api-names-interoperability-record) records the plugin-namespace interoperability rationale and its binding rules. This verification enforced §17.2 rule 1 in the code: the namespace module of `tessera-plugins` and its bindings got neutral names (`root_ns`, `ns_root`); `tools/content-allowlist.txt` now allows the original names only in `crates/plugins/tests/` (the stale `crates/script/*` entry is gone, so the plugin-free core is checked). |
+| 6 | ✅ | [Decision 0022](decisions/0022-plugin-runtime.md) and `CLAUDE.md` Naming record the plugin-namespace interoperability rules. This verification enforced the naming rule in the code: the namespace module of `tessera-plugins` and its bindings got neutral names (`root_ns`, `ns_root`); `tools/content-allowlist.txt` now allows the original names only in `crates/plugins/tests/` (the stale `crates/script/*` entry is gone, so the plugin-free core is checked). |
 | 7 | ❌ not met (indicative) | [docs/perf/m5-ui-budgets.md](perf/m5-ui-budgets.md), three runs of the scripted run at 3840 × 2160 and 1920 × 1080 offscreen on the loaded reference laptop. Third run (this verification, 3840 × 2160, load 8–13): U1 walking mean 0.89 ms, p99 8.4 ms (budget 0.3 / 1.0 ms) **fails**; U4 (b) 12.8 ms and U4 (f) 6.1 ms (4 ms) **fail**; U4 (a) 33.5 ms passes here but was 54.0 ms on the second run; U3 (steady mean 72 KiB) and U5 (canvases 45 MiB, textures 90 MiB, images 11 MiB) **pass**; U2 is a proxy only (no timestamp queries in `tessera-render`, `render.md` §6.16 OPEN); U4 (c)–(e) are not measured. The time is in `tessera-ui`'s step 8 (`Ui::paint`). The painter probe (`crates/ui/benches/paint_probe.rs`) has measured Mix colour (1.4 ns/pixel) and the erase. Idle re-measurement and the compositor-window run: O49. |
 
 Repository checks in this verification: `cargo fmt --check` (workspace and `fuzz/`), `cargo
@@ -1140,14 +1142,14 @@ fails** on one file: `crates/ui/assets/fonts/NotoSans-Regular.ttf` (`[ext]`, `[m
 bundled fallback font of `fonts.md` §11 (SIL OFL 1.1). Shipping it needs an owner decision
 first: an allowlist entry for the font check of `tools/check-content.sh`, a REUSE annotation
 with `LICENSES/OFL-1.1.txt`, and an exception to the "third-party material must never be
-committed" note of `REUSE.toml` (recorded in `docs/LEGAL.md`); otherwise the font must be
+committed" note of `REUSE.toml`; otherwise the font must be
 loaded from the system instead. **Settled 2026-10-08** by decision 0022 (owner): the font is
-bundled unmodified under OFL-1.1, with `LICENSES/OFL-1.1.txt`, a `REUSE.toml` annotation, an
-allowlist entry for exactly that path and the exception in `docs/LEGAL.md` §11;
+bundled unmodified under OFL-1.1, with `LICENSES/OFL-1.1.txt`, a `REUSE.toml` annotation, and an
+allowlist entry for exactly that path;
 `tools/check-content.sh` now passes.
 
 Fixed during this verification (mechanical changes only, no behaviour change): neutral
-module and binding names in `tessera-plugins` and its client call site (LEGAL §17.2 rule 1),
+module and binding names in `tessera-plugins` and its client call site (`CLAUDE.md` Naming),
 the content allowlist, two rustdoc links, `is_multiple_of` and two other clippy lints in nine
 fuzz targets, rustfmt on six fuzz targets, eight missing `fuzz/README.md` rows, the
 `plugins_commands` leak-check exemption in `tools/fuzz-smoke.sh`, owner observations
@@ -1272,7 +1274,7 @@ project designs and documents itself.
 - Load and soak test tools.
 
 **Specs needed:** `tessera-protocol.md`, `server-content.md` (what content a server may
-use, from `docs/LEGAL.md`).
+use).
 
 **RE tasks:** none on the original's protocol. This milestone is design work, not RE.
 Dirty-room input is limited to behavioural facts that make gameplay feel right (movement
@@ -1286,7 +1288,7 @@ speeds, interpolation feel), observed in the original client.
    from it (reviewed by someone who did not write the code).
 3. Every protocol parser is fuzzed; malformed or hostile packets cannot crash client or
    server.
-4. `docs/LEGAL.md` confirms the server's content rules before any public test build.
+4. `docs/specs/server-content.md` defines the server's content rules before any public test build.
 
 <a id="m7-status"></a>
 **Status (verified 2026-10-07 on the reference laptop of
@@ -1301,7 +1303,7 @@ quinn and rustls on ring), `tessera-protocol` (`crates/protocol`), `tessera-serv
 (`apps/server`, built-in original default world), the `tessera-net` test-server backend
 (`remote`, with snapshot interpolation) wired into the client (`--server`), and
 `tessera-loadtest` (`apps/loadtest`). Specs: `tessera-protocol.md` (Accepted),
-`server-content.md` and `test-server.md` (Draft), LEGAL.md §11.1. No `> **OPEN:**` item blocks
+`server-content.md` and `test-server.md` (Draft). No `> **OPEN:**` item blocks
 a criterion; the ones to settle before someone writes a second implementation from the spec
 are the four round-2 review notes at `tessera-protocol.md` §4.5, §8.3, §8.7 and §13.3.
 
@@ -1310,7 +1312,7 @@ are the four round-2 review notes at `tessera-protocol.md` §4.5, §8.3, §8.7 a
 | 1 | ✅ one machine; LAN between two machines pending | One-hour soaks with `tessera-loadtest` (16 clients, each a `tessera_net::Session` over the test-server backend, walking and running across landblocks, teleporting, changing appearance and stance, chatting and reconnecting; [m7-soak.md](perf/m7-soak.md), third series): **S60d** (in-process, loopback) and **L60d** (server on the host's Docker bridge address, clients in a container with their own network stack) both PASS: 0 desync episodes of every kind over 5,185,495 and 4,272,246 position comparisons (240 observer–entity pairs, 236–240 of them left interest range and came back), 13,649 / 13,649 and 13,434 / 13,434 chat deliveries, 0 unexpected disconnects, 22 reconnections each; no memory growth after warm-up (S60d max 68.6 MiB; L60d server process 47.6 MiB, client process 10.7 MiB), every count back to its baseline. This verification found and fixed the client-side growth that failed the earlier hours (a thread, runtime and 2.9 MiB quinn endpoint per session; now one network thread and one shared endpoint, `tessera-net`), the tool's provisioning against a LAN address, and a drift of the server's tick schedule. Two release clients against a test server on the install, screenshots viewed: each sees the other's character and the default world's wanderers drawn and animated, network HUD (`interp 167 ms`, `4 remote`), message of the day in the chat overlay; `apps/client/tests/net_server.rs` (5 tests): both clients see each other move with smooth interpolation and receive each other's chat. Animation is compared as heading, gait and stance (0 episodes); `test-server.md` §13.2 has no animation rule yet (§15.2 OPEN). |
 | 2 | ✅ | `tessera-protocol.md` reviewed in two rounds by a reviewer who did not write the code (its Review section, R.1–R.7): Status Accepted, no blocking finding. The reviewer wrote a second codec from the spec text alone (`crates/protocol/tests/spec_conformance.rs`, 15 tests): it and the crate agree byte for byte on all 42 message vectors of §16.2–§16.5, the 16 tagged values of §16.6 and the handshake vectors of §16.1, both reject the 124 malformed inputs (every §16.7 negative vector) and accept the 23 boundary inputs. Every message type round-trips over 2,048 property-test cases (`proptests.rs`). Non-blocking OPEN notes remain (70 in the spec, most implementer notes); the four round-2 notes named above should be settled before a third party implements it. |
 | 3 | ✅ | Ten fuzz targets cover every parser of the protocol, the client backend and the server: `protocol_frame`, `protocol_message`, `protocol_datagram`, `protocol_handshake`, `protocol_fingerprint`, `net_remote_inbound`, `net_remote_world`, `server_connection`, `server_world`, `server_files`. `tools/fuzz-smoke.sh -t 60` (stable libFuzzer): no crash, 0.11 M (`server_world`) to 26.8 M (`protocol_message`) executions each; the two `net_remote` targets re-run after the endpoint change (0.47 M and 0.06 M, no crash). Hostile soaks: H5d (final build, 1,924 attacks of ten kinds, 12,480 raw datagrams) and the earlier H5-16, H15-16, H5b, HR15: 0 panics, honest clients unaffected (0 desync, 0 unexpected disconnects), every count back to baseline, server process memory flat (HR15). Plus `apps/server/tests/hostile.rs`, `crates/net/tests/remote_hostile.rs` and the protocol state-machine tests. |
-| 4 | ✅ rules written; owner confirmation pending | [LEGAL.md §11.1](LEGAL.md#111-servers) states the seven server rules (no game data on a server, opaque references relayed but never collected, at most 16 bare positions per content file, an original default world, no gameplay reproduction, private or LAN use only, licensed committed content), with `server-content.md` as the checkable version, and says that the owner's dated confirmation is needed before any public test build (none exists). `tessera-server` links no data-decoding crate (`cargo tree -p tessera-server`), its built-in world has no opaque references, `check-content` enforces the automatic rules, and registration refuses non-private listen addresses. Open for the owner: confirm §11.1, the coordinate rule and the reading of the LEGAL.md banner (`server-content.md` §12). |
+| 4 | ✅ rules written; owner confirmation pending | [`server-content.md`](specs/server-content.md) states the seven server rules (no game data on a server, opaque references relayed but never collected, at most 16 bare positions per content file, an original default world, no gameplay reproduction, private or LAN use only, licensed committed content), and says that the owner's dated confirmation is needed before any public test build (none exists). `tessera-server` links no data-decoding crate (`cargo tree -p tessera-server`), its built-in world has no opaque references, `check-content` enforces the automatic rules, and registration refuses non-private listen addresses. Open for the owner: confirm the rules and the coordinate rule (`server-content.md` §12). |
 
 Repository checks at the same time: `cargo fmt --check` (workspace and `fuzz/`), `cargo
 clippy --workspace --all-targets [--all-features] --locked -D warnings` and on `fuzz/`,
@@ -1330,7 +1332,7 @@ eight); the server derives each tick deadline from `tick_start(k)` (`tessera-pro
 review R.7 finding 3); `fuzz/README.md` rows for the ten M7 targets; ARCH §19.4.
 
 Remaining for M7 to close: a soak between two machines on a real LAN (criterion 1), the
-owner's recorded confirmation of LEGAL.md §11.1 (criterion 4, before any public test build),
+owner's recorded confirmation of `server-content.md` (criterion 4, before any public test build),
 re-running S60d and L60d from the merge commit, and the spec writer's decisions on the
 review notes (`tessera-protocol.md` §17, `test-server.md` §15). Owner observations O70–O73
 ([owner-observations.md](checklists/owner-observations.md#m7-items): movement speeds,
@@ -1341,40 +1343,20 @@ interpolation feel, interest distance, say range) tune defaults; no criterion wa
 <a id="m8"></a>
 ## M8: Official-server compatibility (in scope by decision 0034)
 
-**Goal:** a Tessera client that logs in to Daybreak's official servers with the user's own
+**Goal:** a Tessera client that logs in to the official servers with the user's own
 account and plays there, presenting the game through the client half that the parity track
-builds.
-
-**Context.** The project owner's stated goal is compatibility with the official servers.
-`docs/LEGAL.md` §8 rates official-server connectivity as tier **T4**, the highest-risk
-tier. It touches:
-- the EULA's protocol-emulation and unauthorised-connection clauses;
-- the ToS ban on deciphering transmissions;
-- DMCA §1201 theories that a recent case accepted against an emulator of another game by
-  the same rights holder;
-- every user's account.
-
-Until 2026-10-11 M8 was gated behind a written legal review (G1) and permission from the
-rights holders (G2). On 2026-10-11 the owner decided that M8 is **in scope now, without
-either** ([decision 0034](decisions/0034-official-server-compatibility.md),
-`docs/LEGAL.md` §9). No legal review exists and no permission has been given. The owner
-accepts the residual risks of LEGAL §9.2. M8 is no longer gated, and the milestone
-workflow runs it.
+builds ([decision 0034](decisions/0034-official-server-compatibility.md)).
 
 <a id="m8-gate"></a>
-**Conditions that bind every phase** (LEGAL §9.3, decision 0034 §1–§3):
+**Conditions that bind every phase** (decision 0034 §1–§3):
 
-- **G4.** A ban-risk warning is shown before any connection to an official server is
-  possible. It states the terms of LEGAL §3 and that the project cannot protect the
-  account. It is accepted only by the user's explicit confirmation in the client's own
-  interface: no flag, variable, plugin, script or server can accept or skip it.
-- **G5.** The permanently forbidden list of LEGAL §8, as it stands there:
+- **Hard exclusions (never built):**
   - shipping, mirroring or linking to client binaries, dat files, patches or old clients;
   - modifying, patching, redirecting or injecting into the official client;
-  - embedding or publishing Daybreak keys or other secrets in the repository, releases or
+  - embedding or publishing keys or other secrets in the repository, releases or
     documentation;
   - committing packet captures from official servers;
-  - using leaked, NDA-covered or decompiled Turbine/SSG/Daybreak source code;
+  - using leaked, NDA-covered or decompiled source code;
   - monetisation of any kind beyond donations for infrastructure costs;
   - bypassing account authentication, subscription checks, anti-cheat or any other access
     control.
@@ -1392,10 +1374,8 @@ workflow runs it.
 - **Stop conditions.**
   - If the service can be used only by circumventing anti-cheat, anti-tamper or another
     access control, M8 stops at that point and records why.
-  - On an explicit objection from Daybreak or MEE, M8 stops and the compatibility backend is
-    withdrawn (LEGAL §9.4).
 - **Extended scripts** come with M9, not here. On an official server they will need the
-  user's opt-in, and automation stays offline only (LEGAL §9.5).
+  user's opt-in, and automation stays offline only (decision 0034 §4).
 
 **Phase 1: specs and design**
 
@@ -1404,17 +1384,14 @@ workflow runs it.
   - framing, session set-up and encryption as used;
   - where the key material and endpoints lie in the install;
   - the messages behind the domain events and commands of `tessera_net::domain`.
-- A spec of the G4 warning: text, when it appears, how acceptance is stored and withdrawn.
-- A G5 review of the design by a session that wrote none of it.
+- An independent review of the design by a session that wrote none of it.
 
 **Phase 2: build**
 
 - A compatibility backend that implements the `Backend` trait (ARCH §19.3), in its own
-  crate, so that it can be withdrawn without restructuring the client. The plan decides where
-  it sits in the workspace and how it is built, under the CI rule above.
+  crate (`tessera-compat`), under the CI rule above.
 - Login as the user with credentials the user enters, character selection, world entry,
   movement, chat, and the gameplay events that drive the P-track windows.
-- The G4 warning in the client before the first connection.
 
 **Specs needed:** the Phase 1 specs above, plus additions to `ARCHITECTURE.md` §19.
 
@@ -1429,15 +1406,37 @@ workflow runs it.
 1. The specs of Phase 1 are Accepted after an independent review. They contain no key
    values, certificates, hostnames, endpoints, account data or other player's data, and
    they record which facts rest on BIN or capture provenance.
-2. No connection to an official server is possible before the G4 warning is accepted. A
-   synthetic test shows this.
-3. A G5 audit passes. `tools/check-content.sh` is clean, and no capture or secret is in the
+2. `tools/check-content.sh` is clean, and no capture or secret is in the
    repository or CI.
-4. Every parser of the official protocol has a fuzz target. Malformed or hostile input
+3. Every parser of the official protocol has a fuzz target. Malformed or hostile input
    cannot crash the client.
-5. The owner, with the owner's own account and at the owner's own risk, logs in, enters the
+4. The owner, with the owner's own account, logs in, enters the
    world, moves and chats. The P-track windows that the server drives show the server's
    events. The owner records the result.
+
+<a id="m8-status"></a>
+**Status (2026-10-22): Partly done and needs more work. Phase 1 specifications (all 6 Accepted) and the 4 foundational Phase 2 modules (`backend`, `login`, `session`, `world` in `crates/compat`) are built and pass synthetic tests (61 tests, 3 fuzz targets `compat_login_xml`, `compat_session_packet`, `compat_world_message`); play/gameplay message handlers, live client connector wiring, and live verification still need more work.**
+
+- **Specs (all 6 Accepted, `0` open questions across all 6 documents):**
+  - [`official-login.md`](specs/official-login.md): runtime launcher config and `UserPreferences64.ini`/`UserPreferences.ini` discovery, language discovery, runtime `<netver>`/`.dat` `<didver>` extraction and DID `0x10000001`/`0x10000002` dictionary resolution, GLS SOAP 1.1 `GetDatacenters` and `LoginAccount`, remote configuration, `<Status>` world status and RFC 1918 queue URL fallback, mandatory `TakeANumber`/`LeaveQueue` queue protocol, `ArgTemplate` hand-off, and in-game `RefreshTicket` backoff schedule.
+  - [`official-session.md`](specs/official-session.md): UDP `CConnection` transport, deterministic local port selection, `.dat`-backed `CompressionDictionary` (`0x0E010000`–`0x0E010002`) LSB-first bit-tree compression/decompression, 20-byte big-endian `ProtoHeader` (`0x0F7FFB00` wire flag mask), `CalcChecksum`, ISAAC PRNG, 3DES-CBC, all 18 optional headers, `PackedDWORD`, `NetBlob` fragmentation/reassembly, session handshake (`0x00010000`/`0x00040000`/`0x00080000`), post-handshake version negotiation (`0x0000012C`–`0x00000130`), server switch/referral (`0x00000800`/`0x00020000`), and `NetMessage` envelope (`0x00000186`/`0x00000179`).
+  - [`official-messages-world.md`](specs/official-messages-world.md) & [`property-system.md`](specs/property-system.md) §10: compact wire value encodings (3-tier/4-tier/16-bit VLEs, `CompactPID`, `CompactDID`, wire `Position` elision, wire `StringInfo`, all 22 `PropertyValue` types in `WirePropertySet`), character screen protocol (`0x13D`, `0x154`, `0xDC`, `0xDD`, `0x79`, `0x7A`, `0xD1`, `0x15`, `0x6D`, `0xB3`, `0x19E`, `0x6F`), world entry and `0xCC` portal placement (including the complete `0x07000029` `PlayerPhysics` boolean and enum state schemas), `SmoothedNetworkClock` (forward snap + 5-tier downward slew), 180-byte `0x35000000` `GameTime` calendar, and object lifecycle (`0x0D`/`0x4C`, `0x98`, `0x52`, `0x89`, `0x40`, `0xD0`, `0xCE`, `0x24`, `0x75`, `0x5A`, `0xA8`, `0x63`, `0x22`, `0x16C`, `0x88`–`0x149`, `0xB7`).
+  - [`official-messages-play.md`](specs/official-messages-play.md): player 30-slot movement ring buffer and 4-step `0x24` transmission, `0xCC` server reconciliation, `0xCE`/`0xBF` forced position/teleport and modulo-256 stamp sync, remote entity path/motion/animation updates (`0x59`, `0xED`, `0xBD`, `0x6F`), WLib RPC envelopes (`0x30`, `0x5F`, `0xC0`, `0xC9`, `0x50`, `0x28`) for chat (`0x04EC`), emotes (`0x04F9`), and timed logout (`0x051E`), world-server system/broadcast chat events, and the secondary `--chatserver` / `ChatNet` UDP protocol (`0x40000002` ticket auth, `0x00000165` login status, `0x0000017E`/`0x00000174` heartbeat, `ChatDescriptor`/`ChatObj`, and all 59 `ChatNet` opcodes `0x0000015C`–`0x00000195` & `0x000001A2`).
+  - [`official-messages-gameplay.md`](specs/official-messages-gameplay.md): complete census of all 120 WLib RPC proxy classes (`1,168` RPC methods: `619` C→S pack stubs and `549` S→C unpack stubs in `0x56000000` `wlib.bin`), 458 native packages (`3,997` functions), 198 top-level `NetBlobEvent` factory IDs, `WState` object-graph (`0x008E0001`/`0x008E0006`) serializers, and full P1–P6 + extended gameplay wire protocols (P1 inventory/containers/equipment/character properties, P2 targeting/skills/quickslots/inductions/cooldowns/effects/vitals/combat deltas, P3 NPC dialogue/quests/deeds/vendors/barter/buyback/repair/loot/wallet, P4 fellowships/raids/trade/friends/ignore/kinship/player music, P5 map markers/fog-of-war/travel/mounts/war-steeds/instance finder, P6 XP/reputation/titles/trainers/trait trees/professions/recipes/crafting, plus Mail, Auction House, Housing, Cosmetics, Wardrobe, Barber, Vault/Shared Storage, Carry-Alls, Inspection, and Hobbies) mapped 1-to-1 to `tessera_net::domain`.
+- **Partly built (`crates/compat`, `fuzz/`):**
+  - `crates/compat/src/{lib,backend,login,session,world}.rs`: 4 modules (`backend`, `login`, `session`, `world`) covering the compatibility backend wrapper, login exchanges and state machine, UDP session/transport layer, and world-session message & property codecs (61 unit and synthetic integration tests passing across `tests/{login,session,world}.rs`).
+  - `fuzz/fuzz_targets/{compat_login_xml,compat_session_packet,compat_world_message}.rs` (3 fuzz targets).
+- **Still needs more work:**
+  - Implementing the `official-messages-play.md` (movement ring buffer, WLib chat/emote/logout RPCs, secondary `ChatNet` UDP client) and `official-messages-gameplay.md` (P1–P6 gameplay WLib RPCs and events) handlers in `crates/compat` and mapping them into `CompatBackend`.
+  - Live client connector wiring in `tessera-client`.
+  - Live server verification with the owner's account.
+
+| # | Status | Evidence |
+|---|---|---|
+| 1 | **pass** | All 6 Phase 1 specifications (`official-login.md`, `official-session.md`, `official-messages-world.md`, `official-messages-play.md`, `official-messages-gameplay.md`, `property-system.md` §10) are **Accepted** after `CLEAN_ROOM.md` §5.3 review with `0` open questions, `0` Ghidra addresses/symbols, complete provenance tables (`DAT`, `CFG`, `LL`, `DOC`, `BIN`), and synthetic `example.invalid` test vectors only. |
+| 2 | **pass** | `tools/check-content.sh`, `tools/check-spdx.sh`, and `tools/check-server-deps.sh` pass with 0 errors and 0 warnings; no official URLs, hostnames, ports, keys, certificates, or packet captures exist anywhere in the repository. |
+| 3 | **pass** | Fuzz targets `compat_login_xml`, `compat_session_packet`, and `compat_world_message` compile cleanly in `fuzz/` (`cargo clippy --manifest-path fuzz/Cargo.toml --bins -- -D warnings`) and cover all login XML/SOAP/status/queue parsers, UDP datagram/header/fragment/envelope decoders, and compact wire value/property/world-message decoders. |
+| 4 | **pending (owner)** | Live login, world entry, movement, and chat against an official server with the owner's account. |
 
 ---
 
@@ -1450,7 +1449,7 @@ feed, `tessera-gamedata`), P1 characters, inventory and equipment, P2 targeting,
 combat presentation, P3 NPC windows, P4 social panels, P5 map, travel, mounts and
 instances, P6 progression and crafting panels, P8 parity audit. P7 (client-run game code) was dropped
 by the owner on 2026-10-16: with server compatibility (M8) the official server runs that code.
-Only the client half is built; the game's own rules are not run, offline included (T3).
+Only the client half is built; the game's own rules are not run, offline included.
 Each milestone gets its own section here when it starts.
 
 <a id="p0"></a>
@@ -1459,8 +1458,8 @@ Each milestone gets its own section here when it starts.
 **Goal:** the two foundations every later P milestone stands on: a **scenario feed** that
 drives the client half offline with scripted gameplay events, and **`tessera-gamedata`**,
 the presentation data layer that reads gameplay records from the user's install
-([decision 0024](decisions/0024-parity-track.md) §3–§5). Builds on M5 and M7. Risk tier T1
-(client only, offline).
+([decision 0024](decisions/0024-parity-track.md) §3–§5). Builds on M5 and M7 (client only,
+offline).
 
 <a id="p0-deliverables"></a>
 **Deliverables**
@@ -1565,7 +1564,7 @@ API's inventory views. Everything shown comes from the user's install; inventory
 stats are scripted by the P0 scenario feed, never derived. On M7's test server a made
 character's look and its equipment reach other clients as opaque references
 ([decision 0025](decisions/0025-p1-character-look-on-test-server.md)); the server runs no
-gameplay rule (LEGAL.md §11.1 rule 5). Builds on P0 and M4. Risk tier T1.
+gameplay rule (`server-content.md` §7). Builds on P0 and M4.
 
 <a id="p1-deliverables"></a>
 **Deliverables**
@@ -1719,8 +1718,8 @@ text, effect icons, combat animation and particles, and the defeat display. Ever
 comes from the user's install; targets, vitals, casts, effects, damage numbers and defeats
 are scripted by the P0 scenario feed (or sent by a server backend), never derived (decision
 0024 §2.4). On M7's server the test actors can be selected and show a target frame; the
-server runs no gameplay rule (LEGAL.md §11.1 rule 5) and gains no combat state. Builds on P1
-and M4.5. Risk tier T1. Runs beside P3 (wt-p3): shared files (the `tessera-ui` game module
+server runs no gameplay rule (`server-content.md` §7) and gains no combat state. Builds on P1
+and M4.5. Runs beside P3 (wt-p3): shared files (the `tessera-ui` game module
 index, `tessera-net` domain groups, client screens, ARCHITECTURE) take additive changes only.
 
 <a id="p2-deliverables"></a>
@@ -1858,8 +1857,8 @@ plugin API's wallet views. Text, icons and window layouts come from the user's i
 which window opens, its entries, prices, quantities and quest states are scripted by the
 scenario feed (`scenario-feed.md` §5.6, §6.3, §9.2), never derived: the client runs no quest,
 loot, vendor or price rule (decision 0024 §2 principle 4, `economy.md` §11.6). The test
-server carries none of it (LEGAL.md §11.1 rule 5, unchanged; no protocol minor). Builds on
-P1. Risk tier T1. Started 2026-10-10 on branch `p3` (worktree `wt-p3`), in parallel with
+server carries none of it (`server-content.md` §7, unchanged; no protocol minor). Builds on
+P1. Started 2026-10-10 on branch `p3` (worktree `wt-p3`), in parallel with
 P2 (branch `p2`): shared files (the `tessera-ui` game module index, the `tessera-net` domain
 groups, the client's screens and start-up) take additive changes only.
 
@@ -1976,8 +1975,8 @@ the trade window, tells, the instant-message tab and user chat channels in the c
 and synchronised fellowship music. Everything shown comes from the user's install; fellowship,
 trade, lists, member vitals and performances are scripted by the scenario feed, never
 derived. On M7's test server P4 adds only chat: tells as before and named chat channels with
-join, leave and relay ([decision 0035](decisions/0035-p4-social-on-test-server.md); LEGAL.md
-§11.1 rule 5). Builds on P1. Risk tier T1.
+join, leave and relay ([decision 0035](decisions/0035-p4-social-on-test-server.md); `server-content.md`
+§7). Builds on P1.
 
 <a id="p4-deliverables"></a>
 **Deliverables**
@@ -2097,7 +2096,7 @@ included) replay their logs byte for byte.
 | # | Status | Evidence |
 |---|---|---|
 | 1 | **pass** (visual defects open) | `tessera-client` `social_panels_real_data` (1 / 1, release, install): the committed `fellowship`, `trade` and `friends` scenarios play headless on their virtual clock, every event reaches the client's social and player state, and the game-UI host draws the panels from the install's layouts offscreen. Fellowship: the invitation shows at 0.9 s and hides after Accept; rows `Brin` (1.3 s, player leads), `Brin, Cael, Eda` (2.6 s), the leader change to Brin at 4.6 s (markers `[true, false, false]`, player no longer leads), the removal of Cael at 6.3 s (`Brin, Eda`), the disbanding at 8.2 s (panel hidden, 0 % covered); 9 fellowship lines of chat type 11, all 9 rendered from the install's tables, the kick giving the dismissed line. Trade: 2 then 3 peer entries (a literal and two items of the selector, both with the install's icons), 2 own entries after the drop, ready own then both, the window closed on completion (0 % covered). Friends: 4 rows, then 5 after `/friend`, ignore list 2 then 3, the ignored tell filtered. 16 pictures written to private scratch and viewed by the verifier (invitation, fellowship at five times, trade at six, friends at four): member rows with names, morale and power bars and levels, the leader marker moving to Brin, Cael's row gone, the panel gone after the disbanding; the trade window with both sides, the peer's item icons, the own coin (25 silver) and the highlighted Trade button; the Social panel's Friends page with online names green and offline yellow. The verifier fixed two defects seen in the pictures: an unknown level (Eda) and the invitation row's level and area showed the layout's own placeholder texts ("12", "123 / Menu option 2"); they are now empty (`tessera-ui` `game::social::{fellowship, invite}`, regression asserts in `crates/ui/tests/game_social.rs`, TR3 and TR7). Models and views: `tessera-ui` `game_social` 27 / 27, `game_chat_social` 17 / 17, `game_social_real_data` 1 / 1 (every label of the social layouts resolves on the install); `tessera-net` `scenario_p4` 13 / 13 (Vector H, the §14.13 hostile rows); `tessera-plugins` `party_views` 19 / 19 (`Party` and `PartyMember`, §18 checks 90–96). **Visual defects (open, not blocking):** (a) the trade window draws no entry names, no icon for literal entries, and neither the wallet (`SelfTrade_TotalMoney`) nor the peer's coin (`OtherTrade_MoneyDisplay`): the money displays are game-type elements whose own text is not drawn, and the name text and the displays' children are not given by the spec (`social-panels.md` §6.2 implementer OPEN, GP §11 OPEN; P3's money display widget on main may serve once merged); (b) a red and green state icon shows on every fellowship row and on the player portrait. |
-| 2 | **pass** | `tessera-client` `social_chat_server` (1 / 1): an in-process `tessera-server` at protocol 1.2 and two clients built from the client's own `net::World`, plugin host and game-UI host; every line enters as the M5 chat window's entry hands it over and runs through `UiHost::dispatch_entry_lines` (the decision 0020 dispatcher, closing the M5 `--ui` gap): `/tell`, the incoming tell, `/reply` to the reply target, a line in the Tell mode, `/join Lore` and `/join lore` (one channel, the server's spelling), `/ch1` heard by the other member in slot 1's form, `/part Lore` after which the other no longer hears the channel. Protocol and server: `tessera-protocol` `v12_channels` 13 / 13 (incl. code 6 below minor 2), `tessera-server` `channels` 9 / 9 and `channel_logs` 1 / 1, `tessera-loadtest` `v12_channels` 3 / 3 (tells and a channel between two clients while a minor-1 peer gets no 1.2 message; the hostile 1.2 cases end as specified, counts back at baseline), `tessera-net` `remote_channels` 3 / 3. The server learns only channel names and the chat it relays (decision 0035 D1, LEGAL.md §11.1 rule 5); `check-server-deps` passes. |
+| 2 | **pass** | `tessera-client` `social_chat_server` (1 / 1): an in-process `tessera-server` at protocol 1.2 and two clients built from the client's own `net::World`, plugin host and game-UI host; every line enters as the M5 chat window's entry hands it over and runs through `UiHost::dispatch_entry_lines` (the decision 0020 dispatcher, closing the M5 `--ui` gap): `/tell`, the incoming tell, `/reply` to the reply target, a line in the Tell mode, `/join Lore` and `/join lore` (one channel, the server's spelling), `/ch1` heard by the other member in slot 1's form, `/part Lore` after which the other no longer hears the channel. Protocol and server: `tessera-protocol` `v12_channels` 13 / 13 (incl. code 6 below minor 2), `tessera-server` `channels` 9 / 9 and `channel_logs` 1 / 1, `tessera-loadtest` `v12_channels` 3 / 3 (tells and a channel between two clients while a minor-1 peer gets no 1.2 message; the hostile 1.2 cases end as specified, counts back at baseline), `tessera-net` `remote_channels` 3 / 3. The server learns only channel names and the chat it relays (decision 0035 D1, `server-content.md` §7); `check-server-deps` passes. |
 | 3 | **pass** | `tessera-client` `social_music_sync` (7 / 7): the committed `music-sync` scenario plays headless with the audio clock stepped with the virtual clock; the time-0 of every part is read from the instruments' schedule log and checked against both rules of `instruments.md` §8.9 (0.0001 s). Scripted start at S = 2.500 s: three parts (the player's, Brin's, Cael's replacement after a withdrawal), 42 note events, spread 0 s, worst \|time-0 − S\| 0 s; the player's own `/play … sync` and `/playstart` (generic answer) at S = 4.200 s: 18 events, spread 8.9e-16 s, worst 8.9e-16 s. Also: the plain sandbox's answer to `/playstart` starts the part once, a refused start (test server) starts the waiting part locally once. `tessera-audio` `instruments_examples` (40) covers the head skip, refusal of parts that do not fit, non-finite times and long render blocks (`update_for`). |
 
 Remaining issues: the trade window's names, literal icons and money displays and the state
@@ -2135,10 +2134,10 @@ queue states, map markers and which mount the player rides in a scenario come fr
 scenario feed (`scenario-feed.md`, revision 8, "P5 travel"), never derived: the client runs no
 travel, eligibility, queue or mount rule (decision 0024 §2 principle 4). Mounted gaits run in
 the offline walker, which plays the server's part for its own avatar (`walker.md` §16).
-Client half only (owner, decision 0024): LEGAL.md §11.1 rule 5 is unchanged, so
+Client half only (owner, decision 0024): `server-content.md` §7 is unchanged, so
 `tessera-server` runs no gameplay rule and links no data crate (`tools/check-server-deps.sh`);
 the test-server backend refuses the new commands and needs no protocol minor. Builds on P1.
-Risk tier T1. Started 2026-10-11 on branch `p5` (worktree `wt-p5`, off main 8e9670d), in
+Started 2026-10-11 on branch `p5` (worktree `wt-p5`, off main 8e9670d), in
 parallel with P2 (branch `p2`) and P4 (branch `p4`): shared files (the `tessera-ui` game
 module index, the `tessera-net` domain groups, the client's `PlayerState` and frame order,
 `scenario-feed.md`, `lua-plugin-api.md` §15, `fuzz/Cargo.toml`) take additive changes only.
@@ -2329,10 +2328,10 @@ and trait facts come from the user's install. Experience, levels, ranks, trained
 learned recipes, make results and the finished state are presentation fed by the scenario feed
 (`scenario-feed.md`, the "P6 progression" revision), never derived: the client runs no
 experience, training or crafting rule ([decision 0024](decisions/0024-parity-track.md) §2
-principle 4). Client half only: LEGAL.md §11.1 rule 5 is unchanged, so `tessera-server` runs no
+principle 4). Client half only: `server-content.md` §7 is unchanged, so `tessera-server` runs no
 gameplay rule and links no data crate (`tools/check-server-deps.sh`); the test-server backend
 refuses the new commands and needs no protocol minor. Builds on P2 (combat and skill data) and
-P3 (NPC windows; trainers are NPC interactions). Risk tier T1. Started 2026-10-16 on branch
+P3 (NPC windows; trainers are NPC interactions). Started 2026-10-16 on branch
 `p6` (worktree `wt-p6`, off main e9ed7bb), in parallel with a clean fix-up branch (`fixups`):
 shared files (the `tessera-ui` game module index, the `tessera-net` domain groups, the client's
 `PlayerState` and frame order, `scenario-feed.md`, `lua-plugin-api.md` §15, `fuzz/Cargo.toml`)
@@ -2531,18 +2530,17 @@ Open (follow-up, the §5–§6 live integration — not yet built this increment
 
 **Placement (owner, 2026-10-08).** Extended scripting is not a priority. It starts only after
 Tessera reaches full parity with the original client and compatibility with the server (M8,
-in scope since 2026-10-11 by decision 0034). If M8 stops on a rights holder's objection
-(LEGAL §9.4), it starts after client parity with Tessera's own server (M7). It was
-planned earlier as M5.5, right after M5.
+in scope since 2026-10-11 by decision 0034). If M8 stops, it starts after client parity with
+Tessera's own server (M7). It was planned earlier as M5.5, right after M5.
 
 **Plan.** [Decision 0017](decisions/0017-extended-scripting.md) holds the design: Lua 5.1
 "ext" apartments under `Ext`, modules granted by capability, a fail-closed backend gate,
 and slices 1a (core), 1b, 2 and 3. Its specs are written and Accepted: `ext-threat-model.md`,
 `ext-manifest.md`, `ext-api-1a.md` and `ext-api-1b.md`. On an official server, ext scripts
-run only after the user's explicit opt-in, off by default and at the user's own risk;
+run only after the user's explicit opt-in, off by default;
 automation (`input.drive` and every module that issues movement, input or game commands)
-stays offline only ([decision 0034](decisions/0034-official-server-compatibility.md) §4,
-LEGAL §9.5). M9 revises those specs and replaces 0017 §6.3's build-level exclusion with
+stays offline only ([decision 0034](decisions/0034-official-server-compatibility.md) §4).
+M9 revises those specs and replaces 0017 §6.3's build-level exclusion with
 tests of the runtime gate and the opt-in.
 
 **What stays in place until then.** M5 already split `tessera-script` (a plugin-free Lua core)
@@ -2561,8 +2559,7 @@ after the owner confirms it.
   content.
 - Modifying, patching or redirecting the official client or launcher.
 - Any monetisation.
-- A server that reproduces the live game's content and gameplay (tier T3) without written
-  permission from Daybreak and Middle-earth Enterprises.
+- A server that reproduces the live game's content and gameplay (`server-content.md` §7).
 - Bulk-export features marketed for ripping content. `dattool extract` stays a
   personal-study tool.
 

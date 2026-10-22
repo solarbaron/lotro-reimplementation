@@ -160,9 +160,9 @@ Names chosen by the implementation (part 1 left them open):
 - **Neutral module names (exit verification, 2026-10-08):** the module that builds the
   API's root namespace is `tessera_plugins::root_ns` (it was named after the namespace);
   its handle field and accessor are `Handles::ns_root` and `NativeApi::ns_root()`, and the
-  user-copy test is `PluginFileIndex::has_user_api_copy`. LEGAL §17.2 rule 1 keeps module,
-  type and binding names neutral outside the plugin subsystem's tests; the original names
-  stay as string data. `tools/content-allowlist.txt` allows them only in
+  user-copy test is `PluginFileIndex::has_user_api_copy`. Project naming rules (`CLAUDE.md`)
+  keep module, type and binding names neutral outside the plugin subsystem's tests; the
+  original names stay as string data. `tools/content-allowlist.txt` allows them only in
   `crates/plugins/tests/`.
 
 - **Core (`tessera-script`):** `Profile` (state name, `Limits`, `BaseFunctions`, chunk

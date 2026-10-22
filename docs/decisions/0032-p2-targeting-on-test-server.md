@@ -12,7 +12,7 @@ out-of-sequence range. It was planned as 0031; ROADMAP P2 and `docs/decisions/RE
 now name it 0032 (refreshed 2026-10-14; before, this paragraph said ROADMAP called it 0031).
 
 Tessera-own design. No client fact, research note, research clone or decompiler output was
-needed or used; the inputs are `docs/` only (decision 0024, decision 0025, LEGAL.md §11.1,
+needed or used; the inputs are `docs/` only (decision 0024, decision 0025,
 `scenario-feed.md`, `tessera-protocol.md`, `test-server.md`, `server-content.md`, and the
 event table of the Draft `combat-ui.md` §11, read only for what the client half does with
 the events named here).
@@ -23,7 +23,7 @@ P2 exit criterion 4 (decision 0024 §5, ROADMAP P2) reads: "M7's test actors can
 and show a target frame." On M7's server those actors are the other players' characters
 (kind `Player`) and the wanderers of `test-server.md` §5.4 (kind `NonPlayer`, a `Character`
 body, a project-made name such as a numbered template, no class, no properties). The server
-knows only accounts, presence, movement, chat and appearance (LEGAL.md §11.1 rule 5); it has
+knows only accounts, presence, movement, chat and appearance (`server-content.md` §7); it has
 no levels, vitals, effects or targets, and it must gain no combat state (ROADMAP P2 goal).
 
 Today:
@@ -39,7 +39,7 @@ Today:
   step, trigger or input form; nothing says whether that is deliberate for P2.
 
 Binding frame: decision 0024 §2 (client half only; the server stays data-free and feed-free;
-values scripted, never derived), LEGAL.md §11.1 rules 2 and 5, `server-content.md` §7, the
+values scripted, never derived), `server-content.md` §4 and §7, the
 server dependency guard (`scenario-feed.md` §3.1, `tools/check-server-deps.sh`), and
 `scenario-feed.md` §0 item 3 (the client half handles events without knowing which backend
 sent them).
@@ -84,16 +84,17 @@ The test-server (`remote`) backend accepts `SelectTarget` in `InWorld` and answe
 sets the selection itself:* the client half would have to know its backend (against
 `scenario-feed.md` §0 item 3), selection would have two paths (reported on the sandbox, local
 on the server) and the rule "shown only when reported" would break; an official-server
-backend after the M8 gate would need the command anyway. (b) *A wire message that tells the
+backend would need the command anyway. (b) *A wire message that tells the
 server the selection (and relays it to others for assist):* the server would hold who
-targets whom, which is combat state, needs a protocol minor, and is not on rule 5's list
-(accounts, presence, movement, chat, appearance as opaque references, simple test actors).
+targets whom, which is combat state, needs a protocol minor, and is not on `server-content.md`
+§7's list (accounts, presence, movement, chat, appearance as opaque references, simple test
+actors).
 (c) *The overlay feed answers `SelectTarget` with its generic answer:* selection would
 then need a scenario and `defaults on`, while a plain `--server` run without a scenario must
 select too; and test actors are not feed entities.
 
-**Rule 5.** The server receives nothing new and keeps nothing new: the selection never
-leaves the client's process. `tessera-server` is unchanged, links no data crate, no
+**Server content scope.** The server receives nothing new and keeps nothing new: the selection
+never leaves the client's process. `tessera-server` is unchanged, links no data crate, no
 `tessera-net` and no feed, and `tools/check-server-deps.sh` is unchanged.
 
 ### D2. What a target frame shows for a test actor, and what happens on despawn
@@ -145,9 +146,10 @@ Reasons:
 4. **Simple routing.** Combat-group commands keep one owner in an overlay run, the
    test-server backend.
 
-This is a P2 choice, not a rule-5 limit: scripting such events locally would send the server
-nothing. A later milestone may open part of the Combat group to overlay runs (for example
-values on the player only, or a reference to the current selection) by a decision of its own.
+This is a P2 choice, not a server-scope limit: scripting such events locally would send the
+server nothing. A later milestone may open part of the Combat group to overlay runs (for
+example values on the player only, or a reference to the current selection) by a decision of
+its own.
 
 ### D4. No protocol minor
 
@@ -156,7 +158,7 @@ values on the player only, or a reference to the current selection) by a decisio
 traffic. The cost is accepted: on M7's server no client learns another client's selection,
 so the "assist" targeting action and the selection's-own-target display have nothing to show
 there. Relaying selections would be a separate decision and an owner question first, because
-rule 5 does not list it.
+`server-content.md` §7 does not list it.
 
 ### Hostile-input limits (summary; the specs are normative)
 
@@ -200,8 +202,8 @@ and §14.11 (test-server selection cases R1–R10).
 
 1. **Quickslots on M7's server.** `SetQuickslot`, `UseSkill` and `CancelCast` stay refused
    there, so the quickslot bar cannot be edited or used in a `--server` run. A local answer
-   like D1's would be possible without rule-5 cost; it is not part of P2's criteria and is
-   left for a later decision.
+   like D1's would be possible without server-scope cost; it is not part of P2's criteria and
+   is left for a later decision.
 2. **Relaying selections** (D4) needs the owner before any design.
 
 ## Review
@@ -210,7 +212,7 @@ and §14.11 (test-server selection cases R1–R10).
 part of this decision, of `scenario-feed.md` revision 6, of the other P2 specs or of the P2
 code; text at commit 7b14f27).
 
-- **D1** agrees with LEGAL.md §11.1 rule 5 (the server receives, keeps and runs nothing new;
+- **D1** agrees with `server-content.md` §7 (the server receives, keeps and runs nothing new;
   a selection never leaves the client) and with decision 0024 §2.1–§2.3 (client half only;
   M7's server drives only what it carries; the server's dependency graph is unchanged: no
   change under `apps/server`, `apps/loadtest`, `crates/protocol` or
@@ -219,9 +221,9 @@ code; text at commit 7b14f27).
 - **D2** derives nothing for a test actor (decision 0024 §2.4): the frame shows only reported
   values; the despawn rule is client-local and sends no command.
 - **D3** only states the existing overlay subset; it is a P2 choice, correctly not presented
-  as a rule-5 limit.
-- **D4** adds no protocol minor, as decision 0024 §2.6 requires for anything rule 5 does not
-  allow; relaying selections stays an owner question.
+  as a server-scope limit.
+- **D4** adds no protocol minor, as decision 0024 §2.6 requires for anything `server-content.md`
+  §7 does not allow; relaying selections stays an owner question.
 - `scenario-feed.md` revision 6 carries D1–D4 faithfully; §14.9 O8, O10–O12 and §14.11 R1–R10
   were re-derived and invariant 11 checked (record: `scenario-feed.md` §18.4.1). No client
   fact, install probe or disassembly is involved.
@@ -239,6 +241,6 @@ true: `docs/decisions/README.md` lists 0032 as Accepted and ROADMAP P2 names dec
 changed; D1–D4, their consequences and the two owner questions are unchanged, so the status
 stays Accepted.
 
-Before this review: pending. The reviewer checks D1–D4 against LEGAL.md §11.1 rule 5, decision 0024 §2,
+Before this review: pending. The reviewer checks D1–D4 against `server-content.md` §7, decision 0024 §2,
 `scenario-feed.md` §0 item 3 and revision 6 (§18.4), and re-derives the cases of
 `scenario-feed.md` §14.9 (O8, O10–O12) and §14.11.

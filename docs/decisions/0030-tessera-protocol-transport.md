@@ -101,6 +101,5 @@ acks, and address migration.
 - Deterministic network-impairment tests at the transport level are harder than with TRD's
   in-memory pipe. They are replaced by codec-level fuzzing, loopback integration tests, and
   load and soak runs (`apps/loadtest`).
-- Internet play becomes possible later without a protocol redesign. It still stays T2
-  (`docs/LEGAL.md` §8): a project-owned server and protocol, with content limited by
-  `server-content.md`.
+- Internet play becomes possible later without a protocol redesign: a project-owned server
+  and protocol, with content limited by `server-content.md`.

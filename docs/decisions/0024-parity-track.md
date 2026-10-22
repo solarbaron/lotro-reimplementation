@@ -3,22 +3,20 @@
 # 0024 — Parity track, client half: milestones P0–P8 between M7 and M9
 
 **Status:** Accepted (owner, 2026-10-09). Amended 2026-10-11 by
-[decision 0034](0034-official-server-compatibility.md): M8 is in scope without a gate, so
-"if the M8 gate passes" below reads "with M8", "M8 Phase 1 (the legal gate)" no longer
-exists, and the fallback "if the gate fails" applies only if M8 stops under LEGAL §9.4 (an
-explicit objection from a rights holder). M8 may run beside the track; M9 still starts only
-after P8 and M8. The client half only, LEGAL §11.1 rule 5 and the data-free server are
-unchanged. Amended 2026-10-16 by the owner (answer to open item 1): **P7 (client-run game
-code) is dropped.** With server compatibility (M8) the official server runs that code, so
-Tessera does not build a client-side interpreter for it; the track is P0–P6 and P8, and P8
-depends on P1–P6.
+[decision 0034](0034-official-server-compatibility.md): M8 is in scope without a staging gate,
+so "if the M8 gate passes" below reads "with M8". M8 may run beside the track; M9 still
+starts only after P8 and M8. The client half only, `server-content.md` §7 and the data-free
+server are unchanged. Amended 2026-10-16 by the owner (answer to open item 1): **P7
+(client-run game code) is dropped.** With server compatibility (M8) the official server runs
+that code, so Tessera does not build a client-side interpreter for it; the track is P0–P6 and
+P8, and P8 depends on P1–P6.
 
-**Owner's choice: "Client half only."** LEGAL.md §11.1 rule 5 and `server-content.md` §7
-stay as they are. The track builds only what the original client shows and computes
-locally, from the user's install. It is driven by a local scenario feed in the sandbox and,
-if the M8 gate passes, by an official server (M8 Phase 2). Tessera's own server keeps M7's
-scope (accounts, presence, movement, chat, appearance as opaque references, simple
-project-made test actors) and gains nothing rule 5 does not allow.
+**Owner's choice: "Client half only."** `server-content.md` §7 stays as it is. The track
+builds only what the original client shows and computes locally, from the user's install. It
+is driven by a local scenario feed in the sandbox and, with M8, by an official server.
+Tessera's own server keeps M7's scope (accounts, presence, movement, chat, appearance as
+opaque references, simple project-made test actors) and gains nothing `server-content.md` §7
+excludes.
 
 ## Context
 The owner decided on 2026-10-08 that extended scripting (decision 0017) is the last
@@ -38,46 +36,43 @@ Parity has two halves. The **client half** (panels, tooltips, maps, quest log, c
 screen, target frames, cast bars, effects, the plugin `Turbine.Gameplay` views of
 `lua-plugin-api.md` §15, and game code the client runs locally) reads the user's install and
 is needed with every backend. The **server half** (the rules that decide damage, loot, quest
-state) is Daybreak's on an official server and is not built by Tessera (LEGAL.md §8 T3,
-§11.1 rule 5).
+state) runs on an official server and is not built by Tessera (`server-content.md` §7).
 
 ## Decision
 
 ### 1. Numbering
 The track is numbered **P0–P8** ("parity"), not M7.x: nine milestones of their own, mostly
-client work, each about the size of M4.5. M8 and M9 keep their numbers and meaning; M8
-Phase 1 (the legal gate, paperwork only) can run at any time beside the track. The milestone
-workflow (`.claude/workflows/tessera-milestone.js`) must accept `P0`–`P8`.
+client work, each about the size of M4.5. M8 and M9 keep their numbers and meaning; M8 can
+run beside the track. The milestone workflow (`.claude/workflows/tessera-milestone.js`) must
+accept `P0`–`P8`.
 
 ### 2. Principles
 1. **Client half only, from the install.** Each system's presentation reads the user's
    install through `tessera-gamedata` (§3) and is fed by `tessera-net` domain events. The
-   same code serves the sandbox, M7's server (within its scope) and, if the gate passes, M8
-   Phase 2.
+   same code serves the sandbox, M7's server (within its scope) and M8.
 2. **Two drivers.** (a) The **scenario feed** (§4), always available offline, for every
-   system. (b) An official server through M8 Phase 2, only if the gate passes. M7's server
-   drives only what it already carries: other players, their appearance, chat and test
-   actors.
-3. **The server stays data-free.** LEGAL.md §11.1 is unchanged. `tessera-server` never links
-   a crate that decodes game data, `tessera-gamedata` or the scenario feed; a CI check on
-   `cargo tree -p tessera-server` enforces it (the M7 verification ran it by hand).
-4. **The game's own rules stay T3.** Running the game's combat, quests, creature AI, loot
-   tables or server-side script code from install data is T3, offline in the sandbox
-   included, and is not part of this track. The scenario feed plays back scripted events; it
-   never computes outcomes. The "sandbox backend" consumers named in the headers of
-   `items.md`, `creatures.md`, `quests.md`, `economy.md`, `interaction.md`,
-   `player-character.md`, `map-data.md` and `instances.md` (and the "Tessera sandbox
-   server" decisions inside them) mean running those rules; they wait for T3 permission,
-   which would come with M8's G2. The scenario feed is not one of them.
+   system. (b) An official server through M8. M7's server drives only what it already
+   carries: other players, their appearance, chat and test actors.
+3. **The server stays data-free.** `server-content.md` is unchanged. `tessera-server` never
+   links a crate that decodes game data, `tessera-gamedata` or the scenario feed; a CI check
+   on `cargo tree -p tessera-server` enforces it (the M7 verification ran it by hand).
+4. **The game's own rules stay out of scope.** Running the game's combat, quests, creature AI,
+   loot tables or server-side script code from install data is out of scope, offline in the
+   sandbox included, and is not part of this track (`server-content.md` §7). The scenario
+   feed plays back scripted events; it never computes outcomes. The "sandbox backend"
+   consumers named in the headers of `items.md`, `creatures.md`, `quests.md`, `economy.md`,
+   `interaction.md`, `player-character.md`, `map-data.md` and `instances.md` (and the
+   "Tessera sandbox server" decisions inside them) mean running those rules and are not built.
+   The scenario feed is not one of them.
 5. **Client-side game code is in scope.** What the original client evaluates locally for
    records a server names (tooltip and description text, progression display, the
    class-library code the client itself runs) belongs to the client half. Server-side game
-   code stays T3.
+   code stays out of scope.
 6. **Per milestone:** a scenario per system, real-data tests that read `TESSERA_GAME_DIR`
    and skip when it is unset, a fuzz target per new parser, the matching `Turbine.Gameplay`
    views, and owner checklist rows for comparison with the original client. Owner rows go
    to `docs/checklists/owner-observations.md` and block nothing until P8. A protocol minor
-   is added only for something rule 5 allows.
+   is added only for something `server-content.md` §7 allows.
 
 ### 3. New crate
 
@@ -124,7 +119,7 @@ A feature of the sandbox backend in `tessera-net`, specified in a new spec,
 | ~~**P7**~~ | ~~Client-run game code~~: dropped by the owner 2026-10-16 (not needed with M8) | — |
 | **P8** | Parity audit | P1–P6 |
 
-Risk tier: T1 throughout (client only, offline). P3–P6 can run in parallel once P1 is in.
+Scope: client presentation only (offline). P3–P6 can run in parallel once P1 is in.
 Open M4.5 and M7 items continue beside the track and block nothing here. "Every record"
 below means every record of that kind in the install at `TESSERA_GAME_DIR`; a record that
 cannot be shown is listed with a reason (categorised), never a crash.
@@ -148,7 +143,7 @@ cannot be shown is listed with a reason (categorised), never a crash.
 - **Exit criteria:**
   1. The creation screen offers every race, class and body choice of the install; a made
      character enters the sandbox, and on M7's server other clients see its look
-     (appearance as opaque references, rule 2).
+     (appearance as opaque references, `server-content.md` §4).
   2. Every item record's tooltip renders (or is categorised) in a real-data test.
   3. Equipping an item from a scenario changes the worn look in the walker; observers on
      M7's server see it through `AppearanceChanged`.
@@ -187,7 +182,7 @@ cannot be shown is listed with a reason (categorised), never a crash.
 - **Exit criteria:**
   1. Fellowship, trade and friends scenarios render; leader change, removal and disbanding
      are shown.
-  2. Tells and channel join and leave work on M7's server (chat, rule 5).
+  2. Tells and channel join and leave work on M7's server (chat, `server-content.md` §7).
   3. A synchronised `/play` from a scenario starts within the tolerance of
      `instruments.md`.
 
@@ -235,17 +230,14 @@ cannot be shown is listed with a reason (categorised), never a crash.
      (`TESSERA_PERF=1`, decision 0010).
 
 ### 6. Place in the roadmap, and M9
-- Order: M7 → **P0–P8** → M9. M8 Phase 1 runs beside the track. If the gate passes, M8
-  Phase 2 plugs a compatibility backend into the client half built here.
-- **M9 starts only after P8 exits and after M8 or its fallback.** With the client-only
-  scope, "server compatibility" for M9 means M8 Phase 2's exit if the gate passes;
-  otherwise it means the client half on the scenario feed (P8) plus M7's own server.
+- Order: M7 → **P0–P8** → M9. M8 runs beside the track and plugs a compatibility backend
+  into the client half built here.
+- **M9 starts only after P8 exits and after M8.**
 
 ## Consequences
 - ROADMAP §1 gets a P-track row and a section pointing here; the workflow accepts P IDs;
   P0 starts. ARCHITECTURE §3 and §19 grow in P0.
-- LEGAL.md and `server-content.md` are not changed. Private or LAN use only (rule 6) and
-  the LEGAL.md banner still apply to M7's server.
+- `server-content.md` is not changed.
 - No playable loop on Tessera's server: outcomes exist only as scripted scenario events or
   from an official server.
 - Dirty-room work is limited to presentation behaviour (P2's combat UI spec; P7's

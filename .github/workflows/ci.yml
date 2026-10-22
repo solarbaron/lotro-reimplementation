@@ -150,7 +150,7 @@ jobs:
         working-directory: fuzz
         run: cargo clippy --bins --locked -- -D warnings
 
-  # LEGAL.md §11.1 rules 1 and 5, server-content.md §3.2 and §10 E1, scenario-feed.md
+  # server-content.md §3.2 and §10 E1, scenario-feed.md
   # §3.1, decision 0024 §2.3 (P0 exit criterion 4): tessera-server never links a
   # data-decoding crate, tessera-gamedata or the scenario feed (tessera-net). Allowlist: only
   # tessera-server, tessera-protocol and crates.io packages may appear in its graph (normal,

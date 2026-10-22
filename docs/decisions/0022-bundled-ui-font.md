@@ -24,8 +24,9 @@ Bundle Noto Sans Regular, unmodified, as the UI fallback font.
 - A REUSE annotation in `REUSE.toml` covers the font file: copyright "The Noto Project
   Authors", licence `OFL-1.1`.
 - `tools/content-allowlist.txt` allows exactly that path.
-- `docs/LEGAL.md` records the exception and the font's licence. It also states that game
-  fonts are still never committed; those are loaded from the user's install (`fonts.md`).
+- `CLAUDE.md` and `crates/ui/assets/fonts/README.md` record the exception and the font's
+  licence. Game fonts are still never committed; those are loaded from the user's install
+  (`fonts.md`).
 - The font is not renamed and not modified, so the OFL's Reserved Font Name rules do not
   apply.
 

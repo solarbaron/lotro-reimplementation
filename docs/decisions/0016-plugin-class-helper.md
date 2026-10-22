@@ -7,8 +7,8 @@
 ## Context
 `plugin-api-usage.md` found that 37 of 143 published plugin distributions import a `class`
 helper and some sample utilities from a package the original publisher released in 2010.
-Users normally install that package themselves under `Plugins/`. Its code is the publisher's
-copyrighted work, so Tessera cannot bundle it. Without some `class` helper, those plugins fail
+Users normally install that package themselves under `Plugins/`. Its code is third-party
+publisher material, so Tessera does not bundle it. Without some `class` helper, those plugins fail
 to load.
 
 The owner also wants scripting that goes well beyond the original plugin API in the future,
@@ -22,7 +22,8 @@ while standard plugins keep working.
      metatable behaviour. A clean-room implementer then writes the code from that spec. No
      line of the original package is copied.
    - **Interop names:** the helper is reachable under the import path plugins already use.
-     That path is an interop identifier only, under the rationale in `docs/LEGAL.md` §17.
+     That path is an interop identifier only (see `CLAUDE.md` Naming rules and
+     `tools/content-allowlist.txt`).
    - **Precedence:** if a user has installed the original package, the user's copy takes
      precedence, so plugins see exactly what they saw before.
 2. **Extended scripting.** Tessera will get its own extended scripting API in a separate
@@ -31,11 +32,11 @@ while standard plugins keep working.
    - Its architecture covers capabilities, the security model, the namespace, versioning,
      coexistence with standard plugins, and which milestone it lands in.
    - That architecture is a separate decision, proposed for the owner.
-   - Extended scripts must never work against official servers. They run offline and on
-     Tessera's own server, and the M8 gate of decision 0004 still applies. (Amended
+   - Extended scripts run offline and on
+     Tessera's own server (decision 0004). (Amended
      2026-10-11 by [decision 0034](0034-official-server-compatibility.md) §4: extended
      scripts may run on an official server after the user's explicit opt-in, off by
-     default; automation stays offline only; the M8 gate no longer exists.)
+     default; automation stays offline only.)
 
 ## Consequences
 - M5 gains the clean-room class helper as a deliverable. Its spec is part of the M5 spec set.

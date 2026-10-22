@@ -5,12 +5,12 @@
 **Status:** Accepted (independent review 2026-10-10, passed; see [Review](#review)). The three
 items under [Open for the owner](#open-for-the-owner) stay open: this acceptance decides none
 of them. `scenario-feed.md` revision 4, `tessera-protocol.md` v1.1 and `test-server.md` are
-Accepted; `server-content.md` passed the same review and stays Draft for the owner (LEGAL.md
-§11.1). Before: Proposed (spec writer, design, 2026-10-10).
+Accepted; `server-content.md` passed the same review and stays Draft for the owner. Before:
+Proposed (spec writer, design, 2026-10-10).
 
 Tessera-own design. No client fact, research note, research clone or decompiler output was
-needed or used; the inputs are `docs/` only (decision 0024, LEGAL.md §11.1, the specs named
-below).
+needed or used; the inputs are `docs/` only (decision 0024, `server-content.md`, the specs
+named below).
 
 ## Context
 
@@ -38,8 +38,8 @@ Further gaps the P1 specs raised as OPENs:
 - `CreateCharacter` carries only an appearance and a class (`scenario-feed.md` §16 OPEN 1).
 
 Binding frame: decision 0024 §2 (client half only; the server stays data-free and feed-free;
-values scripted, never derived), LEGAL.md §11.1 rules 1, 2 and 5, `server-content.md` §4 and
-§7, and the server dependency guard (`scenario-feed.md` §3.1, `tools/check-server-deps.sh`).
+values scripted, never derived), `server-content.md` §4 and §7, and the server dependency
+guard (`scenario-feed.md` §3.1, `tools/check-server-deps.sh`).
 
 ## Decision
 
@@ -82,16 +82,16 @@ world entry, movement, other players, chat) stays with the server.
   and still passes.
 
 **Alternatives rejected.** (a) A scenario run by the server: breaks decision 0024 §2.3 and
-LEGAL.md §11.1 rule 5 (the server would hold scripted inventory). (b) A second, local
+`server-content.md` §7 (the server would hold scripted inventory). (b) A second, local
 sandbox session beside the remote one, merged in the client: two sessions, two state
 machines and an event merge in the client half, for no gain over one composite backend.
 (c) Letting the walker send `AppearanceSet` itself on every `AppearanceChanged`: puts
 protocol traffic in the client half, which must not know its backend (`scenario-feed.md` §0
 item 3), and loses the coalescing bound.
 
-**Rule 5.** The server receives nothing it does not receive today: an `AppearanceSet` with a
-body, a scale, an idle and up to 32 opaque item DIDs, which LEGAL.md §11.1 rule 5 lists
-("appearance as opaque references") and rule 2 allows to be stored and relayed. Bags,
+**Server content scope.** The server receives nothing it does not receive today: an
+`AppearanceSet` with a body, a scale, an idle and up to 32 opaque item DIDs, which
+`server-content.md` §4 allows to be stored and relayed as opaque references. Bags,
 items, quantities, durability, wallet, levels and stats exist only in the client and are
 scripted (decision 0024 §4); the server never learns them, never checks that a worn item is
 "owned", and runs no rule. Items as gameplay (`server-content.md` §7) stay out of the
@@ -126,11 +126,11 @@ server.
   `look=` on the input form `create-character` (answers `scenario-feed.md` §16 OPEN 1).
   `CharacterInfo` gains `look`. Class and nationality never go on the wire.
 
-**Rule 5.** Property IDs are keys of the player's own install, the same kind of opaque
-number as the DIDs and enum keys LEGAL.md §11.1 rule 2 names; the values are the player's
-own choices on Tessera's creation screen, meaningless without the install. The server stores
-them per character (R3, now bounded: one body, 32 items, one look of at most 48 entries and
-768 bytes), relays them, and never interprets, completes, collects or pairs them with text
+**Server content scope.** Property IDs are keys of the player's own install, the same kind of
+opaque number as the DIDs and enum keys `server-content.md` §4 names; the values are the
+player's own choices on Tessera's creation screen, meaningless without the install. The server
+stores them per character (R3, now bounded: one body, 32 items, one look of at most 48 entries
+and 768 bytes), relays them, and never interprets, completes, collects or pairs them with text
 (R1, R2, R4, R6). Class and nationality are dropped because they have meaning only for the
 game's rules (`server-content.md` §7 "classes as gameplay").
 
@@ -143,7 +143,8 @@ it is announced by flag bit 3 of `Equipped.flags` and follows the dye fields as 
 1.0 peer never receives bit 3. The feed fills it from the equipment slot of each equipped
 item (`scenario-feed.md` §5.5). The walker uses it when present and falls back to the
 Tessera rule of `character-panels.md` §7 when absent (1.0 servers, other sources).
-**Rule 5:** a slot key is an enum key (rule 2), bounded by the 32 items.
+**Server content scope:** a slot key is an enum key (`server-content.md` §4), bounded by the
+32 items.
 
 ### D4. Creation on the test-server backend (Q11)
 
@@ -153,7 +154,7 @@ dropped; the look appended under 1.1), `CharacterList` → `CharacterInfo` or
 `CharacterRefused`, `CharacterCreateFailed` → `CharacterRefused`. In addition, after
 `Connected` the backend emits one `CharacterInfo { name, body, class: None, level: None,
 look }` per `LoginOk` entry, so the selection screen can show each character's figure.
-`DeleteCharacter` and every other new command stay refused on that backend. No rule-5
+`DeleteCharacter` and every other new command stay refused on that backend. No server-scope
 change: these are the account and character messages M7 already has.
 
 ### D5. Plain-sandbox creation and the new feed steps (decision 0024 §4: scripted, never derived)
@@ -178,8 +179,8 @@ change: these are the account and character messages M7 already has.
   ranges of their kind, at most 48 entries per look and 64 look bindings; the client keeps at
   most 1,024 properties per entity and per item and drops further ones with a warning
   (`scenario-feed.md` §9.5).
-- **Rule 5:** all of it runs only in the client's sandbox or overlay; the server gains no
-  message, state or rule.
+- **Server content scope:** all of it runs only in the client's sandbox or overlay; the server
+  gains no message, state or rule.
 
 ### Hostile-input limits (summary; the specs are normative)
 
@@ -236,9 +237,8 @@ looks, character removal, stats, item properties), §14.9 (overlay cases) and §
    the no-install CI replay cannot show `stat`, `item-property` or look entries with
    values (Vector G, which is spec text, uses property IDs outside the dictionary's two ID
    families, `property-system.md` MP4).
-2. **Counsel question.** `server-content.md` §4.2 OPEN (counsel) now also covers relayed look
-   values (property IDs with player-chosen values), not only DIDs and enum keys. LEGAL.md
-   §11.1 is unchanged; the owner's confirmation before any public test build still applies.
+2. **Relayed look values.** `server-content.md` §4 covers relayed look values (property IDs
+   with player-chosen values) as well as DIDs and enum keys.
 3. **Deletion on M7's server** (`character-screens.md` §7.2, Q9) is not part of this
    decision; the delete button stays ghosted on that backend.
 
@@ -247,12 +247,12 @@ looks, character removal, stats, item properties), §14.9 (overlay cases) and §
 **2026-10-10**, spec reviewer (Clean-Room-Role: review): a Claude review session that wrote no
 part of this decision, of the P1 revisions of `scenario-feed.md`, `tessera-protocol.md`,
 `test-server.md` and `server-content.md`, or of the code. Checked against `docs/CLEAN_ROOM.md`
-§5.3 and LEGAL.md §11.1 rule 5: consistency of D1–D5 with the specs, bounds and hostile-input
+§5.3 and `server-content.md` §7: consistency of D1–D5 with the specs, bounds and hostile-input
 limits of every new field, the conformance vectors, version negotiation, and the
 implementation on branch `p1` (read to compare only). Result: **passed**.
 
-- **Rule 5.** The server gains no message, state or rule. Looks and slots are stored and
-  relayed unjudged, class and nationality never travel, and the overlay sends only
+- **Server content scope.** The server gains no message, state or rule. Looks and slots are
+  stored and relayed unjudged, class and nationality never travel, and the overlay sends only
   `AppearanceSet`s, at most one in flight and 4 per second. Bags, items, wallet, levels, stats
   and item properties stay in the client. `tools/check-server-deps.sh` passed on `p1`.
 - **Bounds.** Every row of the hostile-input table above is in the specs with the same value
@@ -269,4 +269,4 @@ implementation on branch `p1` (read to compare only). Result: **passed**.
 - Non-blocking notes on the specs are in their review records: `tessera-protocol.md`
   (a)–(c), `test-server.md` (a)–(c), `scenario-feed.md` §18.3 (a)–(f), and the
   `server-content.md` Reviewer row (looks hold player-chosen values as well as record
-  numbers; the owner's confirmation and the counsel question should name them, owner item 2).
+  numbers, owner item 2).

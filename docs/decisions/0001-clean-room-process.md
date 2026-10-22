@@ -5,9 +5,8 @@
 **Status:** Accepted, 2026-10-03
 
 ## Context
-Almost all published LOTRO tooling is unlicensed (all rights reserved) or GPL/AGPL, and the
-game's EULA restricts reverse engineering. Facts about file formats are not copyrightable;
-code is.
+Almost all published LOTRO tooling is unlicensed (all rights reserved) or GPL/AGPL. Functional
+facts about file formats and protocols are distinct from source code implementation.
 
 ## Decision
 Two zones (details in `docs/CLEAN_ROOM.md` and `CLAUDE.md`):

@@ -43,8 +43,8 @@ The repo has two zones:
 ## Naming
 
 Identifiers, crate names, UI strings and docs must not use LOTRO/Tolkien/Daybreak/Turbine
-marks as product names (see `docs/LEGAL.md`). Referring to "LOTRO data files" for
-compatibility in plain prose is fine. Format-level terms like "DID" or "landblock" are fine.
+marks as product names. Referring to "LOTRO data files" for compatibility in plain prose is
+fine. Format-level terms like "DID" or "landblock" are fine.
 
 ## Engineering conventions
 
@@ -143,16 +143,15 @@ compatibility in plain prose is fine. Format-level terms like "DID" or "landbloc
   choices), owner item O15 (Dwarf brow colour).
 - **Parity track (decision 0024, owner 2026-10-09: "client half only"):** P0–P6 and P8 build the
   client-side gameplay presentation from the install, fed by a sandbox scenario feed (and,
-  with M8, by an official server; decision 0034); LEGAL.md §11.1 rule 5 is unchanged, so
-  Tessera's server never runs gameplay rules. P0 (scenario feed, `tessera-gamedata`,
+  with M8, by an official server; decision 0034); Tessera's test server never runs gameplay
+  rules (`docs/specs/server-content.md`). P0 (scenario feed, `tessera-gamedata`,
   `tessera-client --scenario`, server dependency check) is merged to main (2026-10-10; exit
   criteria 1–4 pass). P1–P5 are merged to main (2026-10-10 to 2026-10-13, below); P6 is in
   progress on branch `p6`. P7 (client-run game code) was dropped by the owner on 2026-10-16: with server
   compatibility (M8) the official server runs that code; the milestone workflow refuses P7.
 - **Priority (owner, 2026-10-08):** extended scripting (decision 0017, planned as M5.5) is
   now M9, the last milestone: it starts only after full client parity and server
-  compatibility (M8; or, if M8 stops on a rights holder's objection, LEGAL.md §9.4, client
-  parity on the own server). Its specs stay Accepted (with decision 0034's amendment note);
+  compatibility (M8). Its specs stay Accepted (with decision 0034's amendment note);
   do not start it earlier.
 - **M7 (merged to main 2026-10-08, verified 2026-10-07):** Tessera's own
   protocol and test server. `tessera-protocol.md` v1.0 Accepted after an independent review,
@@ -160,7 +159,7 @@ compatibility in plain prose is fine. Format-level terms like "DID" or "landbloc
   `apps/loadtest`, the `tessera-net` `remote` backend and `tessera-client --server`.
   Criteria 2–4 pass; criterion 1 passes on one machine (one-hour soaks in-process and across
   a container network: 0 desync, no leak). Open: a soak between two machines on a LAN, the
-  owner's confirmation of LEGAL.md §11.1 before any public test build, re-running the soaks
+  owner's confirmation of `docs/specs/server-content.md` before any public test build, re-running the soaks
   from the merge commit, and the review notes in `tessera-protocol.md` §17 and
   `test-server.md` §15. Evidence: ROADMAP M7 status and `docs/perf/m7-soak.md`.
 - **M5 (UI and plugins; merged to main 2026-10-09, exit verification 2026-10-08)**
@@ -363,21 +362,33 @@ compatibility in plain prose is fine. Format-level terms like "DID" or "landbloc
 - **Toolchain:** the laptop now has rustup (Gentoo `rustup-init-gentoo --symlink`; put
   `~/.cargo/bin` first in `PATH`); fmt, clippy and tests pass on the pinned 1.99.0.
 - **M8 (official-server compatibility) is in scope** by the owner's decision of 2026-10-11
-  (`docs/decisions/0034-official-server-compatibility.md`).
-  - **The decision.** No legal review and no permission from the rights holders exist. The
-    owner set those conditions (G1, G2) aside and accepts the residual risks of
-    `docs/LEGAL.md` §9.2. Decision 0034 supersedes the gate of decision 0004.
-  - **Still binding:**
-    - G4: a ban-risk warning that the user must accept in the client before any official
-      connection;
-    - G5: the forbidden list of LEGAL.md §8. No shipping, mirroring or linking to client
-      binaries, dat files, patches or old clients; no modified, patched, redirected or
-      injected official client; no Daybreak keys or other secrets in the repository,
-      releases or documentation (key material is loaded at runtime from the user's
-      install); no committed captures from official servers; no leaked, NDA-covered or
-      decompiled vendor source; no monetisation beyond donations for infrastructure costs;
-      no bypassing account authentication, subscription checks, anti-cheat or any other
-      access control.
+  (`docs/decisions/0034-official-server-compatibility.md`); **partly done and needs more
+  work** (`docs/ROADMAP.md` M8 status):
+  - **Specs (all Accepted, `0` open questions):** `official-login.md`,
+    `official-session.md`, `official-messages-world.md`, `official-messages-play.md`,
+    `official-messages-gameplay.md`, and `property-system.md` §10.
+  - **Partly built (`crates/compat`, `fuzz/`):**
+    `tessera-compat` (`backend` `CompatBackend` shell, `login` config/locale/version
+    discovery + GLS SOAP 1.1 + world status + queue + ticket refresh, `session` UDP
+    `CConnection` framing + `.dat`-backed bit-tree compression + `ProtoHeader` +
+    `CalcChecksum` + ISAAC PRNG + 3DES-CBC + `NetBlob` fragmentation/reassembly +
+    handshake/referral state machine + `NetMessage` envelope, and `world` compact wire value
+    encodings + dictionary-driven `WirePropertySet` + character screen + world entry + `0xCC`
+    portal placement + `SmoothedNetworkClock` + `GameTimeRecord` + object lifecycle/movement
+    codecs; 61 tests passing), and fuzz targets `compat_login_xml`, `compat_session_packet`,
+    `compat_world_message`.
+  - **Still needs more work:** implementing the `official-messages-play.md` (movement ring
+    buffer, WLib chat/emote/logout RPCs, secondary `ChatNet` UDP client) and
+    `official-messages-gameplay.md` (P1–P6 gameplay WLib RPCs and events) handlers in
+    `crates/compat`, wiring a live `Connector` and session driver into `tessera-client` to
+    replace `PlaceholderConnector`, and owner live verification (exit criterion 5).
+  - **Clean-room and content boundaries:** no shipping, mirroring or linking to client
+    binaries, dat files, patches or old clients; no modified, patched, redirected or
+    injected official client; no Daybreak keys or other secrets in the repository,
+    releases or documentation (key material is loaded at runtime from the user's
+    install); no committed captures from official servers; no leaked, NDA-covered or
+    decompiled vendor source; no bypassing account authentication, subscription checks,
+    anti-cheat or any other access control.
   - **Research.** M4 and passive observation of the owner's own sessions may cover the
     official protocol and login flow (the client binary, and the launcher binary for its
     part of the login flow), never anti-cheat, anti-tamper, code-signing checks or the
@@ -385,7 +396,6 @@ compatibility in plain prose is fine. Format-level terms like "DID" or "landbloc
   - **Extended scripts (M9).** They may run on an official server only after the user's
     explicit opt-in, which is off by default. Automation (`input.drive` and any module that
     issues movement, input or game commands) stays offline only, as maintainer policy.
-  - **Stop.** The project stops if Daybreak or MEE objects (LEGAL.md §9.4).
 
 ## Working across machines and sessions
 
@@ -425,6 +435,7 @@ compatibility in plain prose is fine. Format-level terms like "DID" or "landbloc
 - `crates/settings` — Tessera's own settings file
 - `crates/install` — locate installs (env var, Steam libraries, common Wine prefixes), identify versions
 - `crates/net` — transport-agnostic session layer, gameplay event and command groups (`domain`), a local sandbox backend with the scenario feed (`scenario`, P0) and the test-server backend (`remote`)
+- `crates/compat` — official-server compatibility crate (M8, decision 0034; partly done, needs more work): `CompatBackend` shell (`backend`), launcher/GLS SOAP login flow and queue (`login`), UDP `CConnection` session/transport layer (`session`), and compact wire value/property/world-session message codecs (`world`); play/gameplay message handlers and live client connector wiring still in progress; never linked by `tessera-server`
 - `crates/protocol` — Tessera's own network protocol: messages, framing, codec, session state machines, key pinning, QUIC setup
 - `crates/render` — wgpu renderer (mesh/material/terrain pipelines, GPU skinning, golden-image tests, the particle pipeline)
 - `crates/script` — plugin-free sandboxed Lua 5.1 core: apartment profiles, limits and budget, protected calls, pattern matcher, neutral Lua-table data reader (no plugin API namespace, `import` or chat state; decision 0023)
@@ -437,5 +448,5 @@ compatibility in plain prose is fine. Format-level terms like "DID" or "landbloc
 - `apps/loadtest` — `tessera-loadtest`, load, soak and hostile-input tests
 - `tools/` — repository checks (`check-content.sh`, `check-spdx.sh`, `check-dco.sh`, `check-server-deps.sh`: the server links no data crate), `ci-local.sh`, `fuzz-smoke.sh`, `dev-setup.sh`
 - `docs/specs` — clean-room specifications; `docs/decisions` — decision records;
-  `docs/checklists` — visual/owner checklists; `docs/` — legal, process, roadmap, tooling, development
+  `docs/checklists` — visual/owner checklists; `docs/` — process, roadmap, tooling, development
 - `research/` — dirty-room notes, the verified resource catalogue and `clones.txt`

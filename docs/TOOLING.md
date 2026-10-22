@@ -103,8 +103,8 @@ P19) describe that machine only; on another machine run `tools/dev-setup.sh` ins
 | P13 | x64dbg is unreliable under Wine; a Windows VM is the reliable route | `re-tooling.md` §3 (WineHQ reports) | Reported |
 | P14 | DXVK honours RenderDoc capture, shader-dump and HUD environment variables | `re-tooling.md` §4 (DXVK source reading) | Reported |
 | P15 | Frida works against Wine processes by running the Windows `frida-server.exe` inside the same prefix | `re-tooling.md` §3 (Freat project) | Reported |
-| P16 | Captures from official servers must stay private; no official login/GLS implementation; no captures in repos or issues | `legal.md` §7 Tier X, §8.C; `network.md` §3 | Reported |
-| P17 | Default dirty-room posture is black-box; binary disassembly only if explicitly authorized, by a lawful licensee, preferably in an EU/UK jurisdiction, confined to interoperability needs | `legal.md` §8.A | Reported |
+| P16 | Captures from official servers must stay private; no captures in repos or issues (earlier note against official login/GLS implementation superseded by [decision 0034](decisions/0034-official-server-compatibility.md)) | `network.md` §3; decision 0034 | Reported |
+| P17 | Default dirty-room posture is black-box; binary disassembly only when explicitly authorized and confined to interoperability needs | `CLEAN_ROOM.md` §4 | Reported |
 | P18 | Prior-art licenses and recommended uses (§9) | `research/resources.json` (all 98 entries `exists: true`, verified 2026-10-03) | Reported |
 | P19 | *Primary workstation only:* `/home` had ~20 GB free (96 % used) and a second disk (`~/nvme`, XFS with reflink) ~216 GB free. Other machines differ: put `$TESSERA_RE_DIR` (§11) and the build cache on whatever large private disk they have | `df -h`, observed 2026-10-03; reflink from `re-tooling.md` §0 | Confirmed (free space) / Reported (reflink) |
 | P20 | Analogue projects all ship per-format CLI tools early, use schema-driven codegen, gate real-data tests on an env var, and fuzz parsers | `analogues.md` §4 | Reported |
@@ -114,7 +114,7 @@ P19) describe that machine only; on another machine run `tools/dev-setup.sh` ins
 
 ## 2. Ground rules that constrain tool use
 
-These rules come from `CLAUDE.md` and the legal research. They decide which tools we use and how.
+These rules come from `CLAUDE.md` and `docs/CLEAN_ROOM.md`. They decide which tools we use and how.
 
 1. **The install is read-only.** No tool may write to, rename, lock or "repair" anything in the
    game directory. Read tools in place, or copy to `$TESSERA_RE_DIR/snapshots/` first (§11).
@@ -122,15 +122,14 @@ These rules come from `CLAUDE.md` and the legal research. They decide which tool
    databases, symbol or RVA lists, RenderDoc `.rdc` files, DXVK shader dumps, pcaps from official
    servers, extracted assets, and seed corpora built from real `.dat` files.
 3. **Black-box first.** Reading data files, observing our own traffic, frame captures and the
-   client's own logging switches are the default research methods. Each one is "observe, study and
-   test while lawfully running" (EU Software Directive Art. 5(3)).
+   client's own logging switches are the default research methods (`docs/CLEAN_ROOM.md` §4).
 4. **Disassembly and decompilation are gated.** Every tool in §5, and the invasive tools in §6
    (injection, debugger attach, memory reading), need a recorded project-lead authorization before
-   first use. Without it they stay installed and unused. The authorization should name the person,
-   their jurisdiction, the client build, and the interoperability question being answered.
+   first use ([decision 0011](decisions/0011-standing-m4-authorisation.md)). Without it they stay
+   installed and unused. The authorization names the client build and the interoperability question
+   being answered.
 5. **Never against live servers with a modified client.** No debugger, injector or memory tool may
-   touch a client connected to official servers. Doing so breaks the ToS and anti-cheat rules and
-   is Tier X in our legal policy.
+   touch a client connected to official servers.
    Decision 0034 (2026-10-11, M8 in scope) keeps this rule unchanged. Passive capture of the
    owner's own traffic with the unmodified client is allowed for M8 (§7).
 6. **Outputs are prose specs.** The only thing a dirty-room tool produces for the project is a
@@ -258,14 +257,11 @@ material.
 
 ## 5. (C) Static analysis of the client (dirty room, gated)
 
-> **Legal gate.** Everything in this section is **gated** (§2 rule 4). The project's default is
-> black-box research. US contributors who accepted the game's EULA are exposed in contract
-> (*Davidson v. Jung*). EU Software Directive Art. 6 permits decompilation only when it is
-> indispensable for interoperability and the information is not otherwise available, and Art. 8
-> makes contrary contract terms void. Use these tools only for a written, specific
-> interoperability question that data-file study (§4) and black-box observation (§6, §7) could not
-> answer. **Output is prose only.** Ghidra projects, BinExport files, BSim databases and
-> decompiler text never leave `$TESSERA_RE_DIR/`.
+> **Clean-room gate.** Everything in this section is **gated** (§2 rule 4,
+> `docs/CLEAN_ROOM.md` §4 method M4). The project's default is black-box research. Use these
+> tools only for a written, specific interoperability question that data-file study (§4) and
+> black-box observation (§6, §7) could not answer. **Output is prose only.** Ghidra projects,
+> BinExport files, BSim databases and decompiler text never leave `$TESSERA_RE_DIR/`.
 
 ### 5.1 Table {#c-table}
 
@@ -377,7 +373,7 @@ There are two kinds of tool here.
   official servers (§2 rule 5).
 
 > **OPEN:** the client needs a server connection to get past login. We have not yet established
-> how much useful, legal dynamic observation is possible without connecting (start-up, settings,
+> how much useful dynamic observation is possible without connecting (start-up, settings,
 > renderer selection, the login screen). Settle this before planning any invasive work.
 
 ### 6.1 Table {#d-table}
@@ -400,12 +396,12 @@ There are two kinds of tool here.
 | Frida | dynamic instrumentation by **code injection** | invasive | — | wxWindows Library Licence 3.1 | `dev-util/frida-tools` (pentoo) | **forbidden on the official client** (see the note below); allowed on Tessera's own binaries |
 | rr | record and replay of **Tessera's own** processes, for hard-to-reproduce bugs | — | both | MIT / BSD-2-Clause | `dev-debug/rr` | opt |
 
-> **Where LEGAL.md is stricter, it wins.** `docs/LEGAL.md` §8 permanently forbids
-> "modifying, patching, redirecting or injecting into the official client" at every risk tier.
-> So code-injection tools (Frida, DLL wrappers, hook libraries) must never be used on the
-> official client, gate or no gate. Debugger attach and memory reading count as method M4 in
-> `docs/CLEAN_ROOM.md` §4: they need a recorded decision naming the question, the analyst and the
-> client build, and they must never touch a client that is connected to official servers.
+> **Clean-room boundary.** `CLAUDE.md` and `docs/CLEAN_ROOM.md` §4 forbid modifying, patching,
+> redirecting or injecting into the official client. So code-injection tools (Frida, DLL
+> wrappers, hook libraries) must never be used on the official client, gate or no gate.
+> Debugger attach and memory reading count as method M4 in `docs/CLEAN_ROOM.md` §4: they need a
+> recorded decision naming the question and the client build, and they must never touch a
+> client that is connected to official servers.
 
 ### 6.2 Passive-observation workflow {#d-workflow}
 
@@ -425,11 +421,10 @@ There are two kinds of tool here.
 ## 7. (E) Network tooling
 
 Tessera speaks **its own** protocol (`docs/specs/transport-design.md`) to the in-process sandbox
-and, from M7, to a project-owned test server. That is risk tier T2 in `docs/LEGAL.md` §8. Network
-tools therefore look at **our own** traffic. Observing official login or session traffic is
-M8 work. Since 2026-10-11 it is in scope by the owner's decision
-([decision 0034](decisions/0034-official-server-compatibility.md) §2, `docs/LEGAL.md` §9.3)
-on these terms:
+and, from M7, to a project-owned test server. Network tools in M0–M7 therefore look at **our
+own** traffic. Observing official login or session traffic is M8 work. Since 2026-10-11 it is
+in scope by the owner's decision
+([decision 0034](decisions/0034-official-server-compatibility.md) §2) on these terms:
 
 - only passive captures of the owner's own sessions of the **unmodified** client, on the
   owner's machine;
@@ -515,7 +510,7 @@ the safe path the default one.
 
 ## 9. Verified prior art and how we use it
 
-`research/resources.json` lists 98 published sources (code, documentation, legal texts). Every
+`research/resources.json` lists published sources (code and documentation). Every
 entry was checked to exist on 2026-10-03, with its licence read from the source itself where
 possible (P18). The rule for all of them is the same: **facts only, never code**, whatever the
 licence (`CLAUDE.md`). A licence matters for what we may copy, and we copy nothing; it still
@@ -540,7 +535,6 @@ matters for how far a source may be relied on and quoted.
 | exyorha/hkxparse | MIT | Animation container structure facts (M4) |
 | digero/Maestro | MIT | Player-music text-notation behaviour (M6) |
 | Ghidra, Kaiju, Pharos/OOAnalyzer, BinDiff, BinExport, ghidriff, Ghidra MCP servers | Apache-2.0 / BSD (SEI) / GPL-3.0-only / MIT | Tools in §5; gated |
-| Court records and statutes (bnetd, THJ, Directive 2009/24/EC, 17 U.S.C. §1201, UK CDPA) | public law | Basis of `docs/LEGAL.md` |
 
 ### 9.2 Never use {#never-use}
 
@@ -549,8 +543,8 @@ matters for how far a source may be relied on and quoted.
 - Tools whose source appears decompiled from someone else's binary, or that ship tables dumped
   from the client binary. They are dirty material for facts at most, and their code is never
   read in a clean session.
-- Binary-only fan clients and private-server code for the game. They raise the T3/T4 questions
-  in `docs/LEGAL.md` and add nothing a data-file study cannot give.
+- Binary-only fan clients and private-server code for the game. They add nothing a data-file
+  study cannot give.
 
 ---
 

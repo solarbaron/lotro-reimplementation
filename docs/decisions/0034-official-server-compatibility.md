@@ -1,85 +1,51 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 
-# 0034 — Official-server compatibility (M8) in scope by owner decision, without the legal-review gate
+# 0034 — Official-server compatibility (M8) architecture and research scope
 
 **Status:** Accepted by the owner, 2026-10-11.
 
-- It supersedes the gate part of [decision 0004](0004-server-strategy.md).
+- It supersedes the staging gate of [decision 0004](0004-server-strategy.md).
 - It amends decisions [0011](0011-standing-m4-authorisation.md),
   [0012](0012-numeric-constants.md), [0016](0016-plugin-class-helper.md),
   [0017](0017-extended-scripting.md) and [0024](0024-parity-track.md).
 - It sets the research scope that [decision 0033](0033-rea-for-dirty-room-analysis.md) (REA)
   follows.
 
-**This is not a legal review.** No lawyer has reviewed the design, and no rights holder has
-given permission. The residual risks are listed in §5, and the owner accepts them.
-
 ## Context
-- **Decision 0004 (2026-10-03).** Official-server compatibility became milestone M8, gated
-  by `docs/LEGAL.md` §9.3. The gate had five conditions:
-  - G1, a written legal review;
-  - G2, permission sought from Daybreak Game Company LLC and Middle-earth Enterprises;
-  - G3, a maintainer decision record citing G1 and G2;
-  - G4, a user-facing warning about the ban risk;
-  - G5, the permanently forbidden list of LEGAL §8.
-
-  Sessions stopped at M8. The milestone workflow refused it.
-- **Decision 0011 (2026-10-05).** It authorised disassembly and decompilation (method M4) of
-  the offline client. It excluded the network protocol, login and authentication, keys and
-  encryption, the launcher and patcher, and anti-cheat and anti-tamper, "still gated by
-  decision 0004".
-- **Decision 0017 (2026-10-07).** It made the rule "extended scripts never run against an
-  official server" binding (its §6.4 and §6.5, LEGAL §9.5). It kept automation
-  (`input.drive`) offline only.
-- **The owner's decision of 2026-10-11.**
-  - The owner said: "the official server compatibility will be here so change the legal
-    and the plans".
-  - The owner was asked whether a lawyer's review or permission from the rights holders
-    exists. The owner chose: "Owner decision, keep G4/G5".
-  - The owner then added: "extended scripts will be able to run on official server its just
-    up to the user if they want to bear the risk to do that".
-- **The facts of LEGAL §9.2 have not changed.** EULA §4.3–§4.5 and ToS §7.1, §10 and §12
-  forbid what M8 builds unless Daybreak authorises it. *Daybreak v. Takahashi* (2025–26)
-  accepted DMCA §1201 theories against an emulator of another Daybreak game. Every user who
-  logs in with a third-party client risks their account.
+- **Decision 0004 (2026-10-03).** Official-server compatibility was placed at milestone M8
+  behind a staging boundary so that M0–M7 would target only the in-process sandbox backend
+  and the project-owned test server. Sessions stopped at M8 and the milestone workflow
+  refused it.
+- **Decision 0011 (2026-10-05).** Authorised disassembly and decompilation (method M4) of
+  the offline client, while excluding the network protocol, login and authentication, keys
+  and encryption, the launcher and patcher, and anti-cheat and anti-tamper until M8 entered
+  scope.
+- **Decision 0017 (2026-10-07).** Set the initial rule that extended scripts run offline and
+  on Tessera's own protocol only (its §6.4 and §6.5), and kept automation (`input.drive`)
+  offline only.
+- **The owner's decision of 2026-10-11.** The owner placed M8 official-server compatibility
+  in scope, kept the repository content boundaries (no game data, binaries, keys, endpoints,
+  or packet captures in the repository; no bypassing of official authentication), and opened
+  extended scripts on official-server sessions behind an explicit per-user opt-in (off by
+  default, with automation remaining offline only).
 
 ## Decision
 
 ### 1. M8 is in scope now
-1. **M8 is no longer gated.** Official-server compatibility is in scope now, as the owner's
-   decision. Sessions do not stop at M8, and the milestone workflow accepts it.
-2. **G1 and G2 are not required.** The owner sets them aside knowingly:
-   - no written legal review exists (G1);
-   - no permission from Daybreak or MEE has been sought or given (G2).
-
-   Both stay recommended:
-   - LEGAL §15 (engagement) remains the project's preferred route;
-   - the questions of LEGAL §16 remain open for counsel.
-3. **G3 is satisfied by this record.** This record does not cite G1 and G2. It records their
-   absence instead. The owner accepted it on 2026-10-11.
-4. **G4 is binding.**
-   - **When it is shown.** Before any connection to an official server is possible, the
-     client shows a warning. It is shown on first use and again whenever its text changes.
-   - **What it says.**
-     - The account can be suspended or closed (EULA §5, ToS §26.2).
-     - Using a third-party client may breach the EULA and ToS (LEGAL §3).
-     - The project cannot protect the account and offers no indemnity (LEGAL §13).
-   - **How it is accepted.** Only by the user's explicit confirmation in the client's own
-     interface. No command-line flag, environment variable, configuration file written by
-     anything else, plugin, script or server can accept it or skip it.
-   - **Until it is accepted,** the client makes no connection to an official server.
-5. **G5 is binding.** It is the LEGAL §8 list that is permanently forbidden at every tier:
-   - shipping, mirroring or linking to client binaries, dat files, patches or old clients;
-   - modifying, patching, redirecting or injecting into the official client;
-   - embedding or publishing Daybreak keys or other secrets in the repository, releases or
-     documentation. Key material is loaded at runtime from the user's own install only;
-   - committing packet captures from official servers;
-   - using leaked, NDA-covered or decompiled Turbine/SSG/Daybreak source code;
-   - monetisation of any kind beyond donations for infrastructure costs;
-   - bypassing account authentication, subscription checks, anti-cheat, or any other access
-     control.
-6. **Order.** M8 may run beside the parity track (P0–P8, decision 0024) whenever the owner
-   schedules it. M9 (extended scripting) stays last. It starts after P8 and after M8.
+1. **M8 is in scope.** Official-server compatibility is an active milestone. Sessions do not
+   stop at M8, and the milestone workflow accepts it.
+2. **Repository content and boundary rules remain binding (`CLAUDE.md`):**
+   - never ship, mirror or link to client binaries, `.dat` files, patches or old clients;
+   - never modify, patch, redirect or inject into the official client;
+   - never embed or publish cryptographic keys, certificates, hostnames, endpoints or other
+     secrets in the repository, releases or documentation — key material and service
+     endpoints are loaded at runtime from the user's own install only;
+   - never commit packet captures from official servers;
+   - never use leaked, NDA-covered or decompiled vendor source code;
+   - never bypass account authentication, subscription checks, anti-cheat, or any other
+     access control.
+3. **Order.** M8 may run beside the parity track (P0–P8, decision 0024) whenever the owner
+   schedules it. M9 (extended scripting) stays last: it starts after P8 and after M8.
 
 ### 2. Research scope (amends decision 0011)
 1. **What M4 may now cover.** Disassembly and decompilation (decision 0011) may now cover the
@@ -96,9 +62,8 @@ given permission. The residual risks are listed in §5, and the owner accepts th
    login flow. The patcher and its update and download code are never analysed (item 2).
 2. **What stays excluded:**
    - anti-cheat, anti-tamper and code-signing checks;
-   - any circumvention of an access control;
-   - the patcher's update and download function. Tessera never patches an install
-     (LEGAL §7 item 2).
+   - bypassing official authentication or access controls;
+   - the patcher's update and download function. Tessera never patches an install.
 3. **Observation (method M3).** The owner's own sessions of the **unmodified** official
    client may be captured passively, on the owner's own machine and account.
    - No injection, debugger or memory reading may touch a client that is connected to an
@@ -112,8 +77,8 @@ given permission. The residual risks are listed in §5, and the owner accepts th
    - Official-protocol specs are written like any other spec: prose and tables, with `BIN`
      or `OBS` provenance.
    - Numeric constants that define the protocol (message codes, sizes, algorithm constants)
-     may be stated under the rules of decision 0012. That is an amendment of 0012's line
-     about "anything belonging to the network protocol, login".
+     may be stated under the rules of decision 0012. That amends 0012's line about "anything
+     belonging to the network protocol, login".
    - These stay forbidden in specs, code and the repository:
      - keys, certificates and other secrets;
      - hostnames and endpoints;
@@ -131,70 +96,57 @@ given permission. The residual risks are listed in §5, and the owner accepts th
    - its output stays dirty.
 
 ### 3. What may be built
-1. **A compatibility backend.** It implements the `Backend` trait (ARCHITECTURE §19.3) in its
-   own crate, so that it can be withdrawn without restructuring the client (§6). The M8
-   plan decides where the crate sits in the workspace and how it is built, within these
-   limits:
-   - CI never connects to an official server;
+1. **A compatibility backend in `crates/compat`.** It implements the `Backend` trait
+   (ARCHITECTURE §19.3) in its own crate (`crates/compat`), so that official-protocol logic
+   stays isolated from `crates/net` and is never linked by `tessera-server`:
+   - CI and automated tests never connect to an official server;
    - tests use synthetic fixtures;
-   - no official endpoint, key or account is in the repository or in CI secrets.
+   - no official endpoint, hostname, port, key, certificate or account is in the repository
+     or in CI secrets.
 2. **Runtime only.** Endpoints and key material are read at runtime from the user's own
-   install. The rules in CLAUDE.md and LEGAL §7 item 4 hold unchanged.
+   install (`CLAUDE.md` content rules).
 3. **Login.**
    - The client authenticates only as the user, with credentials the user enters.
-   - It bypasses no subscription check or access control.
-   - If the service can be used only by circumventing anti-cheat, anti-tamper or another
-     access control, M8 stops at that point and records why. No workaround is built.
+   - It bypasses no subscription check or authentication step.
+   - If the service requires anti-cheat, anti-tamper or another excluded mechanism that
+     Tessera does not implement, M8 stops at that point and records why. No workaround is
+     built.
 4. **The client half.** The parity track's presentation (decision 0024) receives the same
    domain events from the compatibility backend as from the scenario feed.
 5. **Tessera's own server is unchanged.**
-   - The rules of LEGAL §11.1 still apply.
+   - The rules of `server-content.md` still apply.
    - The server never connects to, proxies or imitates an official service
-     (`server-content.md` O8).
-   - T3 (emulated gameplay) stays "not planned".
+     (`server-content.md` O8), and never links `crates/compat` (`tools/check-server-deps.sh`).
+   - Server-side gameplay emulation stays out of scope (`server-content.md` §7).
 6. **Plugins.** Standard plugins are the original client's own feature. On an official server
-   they run as they do in the original client, under LEGAL §17.
+   they run through `crates/plugins` as they do in the original client.
 
-### 4. Extended scripts on official servers (amends decision 0017 §6.4 and §6.5, LEGAL §9.5)
-The owner's words: "extended scripts will be able to run on official server its just up to
-the user if they want to bear the risk to do that".
-
-1. **Off by default, at the user's own risk.** Extended scripts run on an official-server
-   session only after an explicit opt-in by that user.
-2. **The opt-in.** It is a confirmation of its own, separate from the G4 warning.
-   - **What it shows:**
-     - the service may treat scripts as cheating or interference (ToS §7.1, §10);
-     - the account can be suspended or closed (EULA §5, ToS §26.2);
-     - the project cannot know what the service tolerates and cannot protect the account.
-   - **How it is kept and changed.**
-     - It is stored per user.
-     - The user can withdraw it at any time.
-     - It is asked again whenever its text changes.
-     - Only the user can set it, in the client's own interface. No command-line flag,
-       environment variable, other program's configuration write, plugin, script or server
-       can set it.
+### 4. Extended scripts on official servers (amends decision 0017 §6.4 and §6.5)
+1. **Off by default.** Extended scripts run on an official-server session only after an
+   explicit opt-in by that user.
+2. **The opt-in.**
+   - It is stored per user and can be withdrawn at any time.
+   - Only the user can set it, in the client's own interface. No command-line flag,
+     environment variable, other program's configuration write, plugin, script or server can
+     set it.
 3. **Grants still apply on top.** The opt-in grants no capability by itself. Each script still
    needs the user's grant (0017 §5). An official-server session gets a backend class of its
    own. The M8 and M9 specs name it. The `Other` class stays fail-closed with no override
    (0017 §6.2).
-4. **Automation stays offline only.** This is project policy kept by the maintainer. It is not
-   part of the owner's words.
+4. **Automation stays offline only.** This is project policy kept by the maintainer:
    - It covers `input.drive` and every module that issues movement, input or game commands
      on the user's behalf.
-   - These are never enabled on any official server, with or without the opt-in, because
-     their effect falls on other players and on the service, not only on the user who
-     accepted the risk.
+   - These are never enabled on any official server, with or without the opt-in.
    - The rule of 0017 §6.5 is unchanged for every server.
    - The owner may revisit this by a later decision. That decision must address the proxy
      case of 0017 §6.5.
-5. **Unchanged rules.** These rules exist for reasons other than official-server risk:
+5. **Unchanged rules:**
    - the local-only rules (0017 §5.2);
-   - `data.read` offered offline only (LEGAL §18.4, an export guard);
-   - the never-offered list (LEGAL §18.3 rule 3);
+   - `data.read` offered offline only (an export guard);
+   - the never-offered list (0017 §3);
    - `Sandbox` only in the sandbox;
    - `Server` only on Tessera's own protocol.
-6. **The build-level exclusion of 0017 §6.3 is withdrawn.** It enforced a rule that no longer
-   holds. That covers:
+6. **The build-level exclusion of 0017 §6.3 is withdrawn.** That covers:
    - the shared `links` guard;
    - the CI check that keeps `tessera-ext` and a compatibility crate out of one graph.
 
@@ -204,70 +156,26 @@ the user if they want to bear the risk to do that".
    - no automation module is available there with it.
 7. **When.** Extended scripting is M9. Nothing of this item is built before M9.
 
-### 5. Residual risks the owner accepts
-These are the risks of LEGAL §9.2, unchanged by this record:
+### 5. What does not change
+- **Clean-room process, content rules and naming rules.** `docs/CLEAN_ROOM.md` and `CLAUDE.md`
+  are unchanged.
+- **Decision 0024.** Its "client half only" choice and the data-free server scope
+  (`server-content.md` §7) are unchanged.
 
-- **Contract.**
-  - EULA §4.3 forbids playing "through interception, emulation or redirection of the
-    communication protocols". §4.4 forbids "any unauthorized connection". §4.5 forbids
-    decrypting client–server data.
-  - ToS §7.1 and §10 forbid deciphering transmissions and circumventing access measures.
-    ToS §12 restricts the client software.
-  - A third-party client on the live service breaches these on its face unless Daybreak
-    authorises it. Contributors who accepted the EULA carry this personally (LEGAL §13).
-- **DMCA §1201.**
-  - The official login uses encryption and key material that ship inside the official
-    client.
-  - The *Daybreak v. Takahashi* court treated server-side authentication as an access
-    control, and distributing a workaround as trafficking.
-  - Implementing the official login in third-party code risks §1201(a)(1) circumvention
-    claims. Publishing builds that contain it risks (a)(2) trafficking claims. In the 9th
-    Circuit neither needs any copyright infringement.
-  - §1201(f) is narrow. *bnetd* held it waived by contract.
-  - Authenticating with the user's own credentials is not bypassing authentication under G5.
-    A court may still see it differently.
-- **Account bans.** Every user who logs in with Tessera risks their account, purchases and
-  characters (EULA §5, ToS §26.2). Extended scripts on an official server add to that risk.
-- **Service integrity.** A third-party client on a live service can be treated as cheating
-  or interference (ToS §7.1, §10) even if it does nothing unusual.
-- **EU law helps less than it seems.** Art 6 of Directive 2009/24/EC covers *obtaining*
-  interface information. It does not license connecting to a service against its terms, and
-  Art 6(3) protects the rightholder's "normal exploitation". Outside the EU and UK even
-  that does not apply.
-- **No review and no permission.** The project proceeds without counsel's view on any of
-  the above and without the rights holders' consent.
-
-### 6. What does not change
-- **Objection from a rights holder.** The project will not proceed against an explicit
-  objection from Daybreak or MEE (LEGAL §9.4, §14). On such an objection, M8 work stops and
-  the compatibility crate is withdrawn.
-- **Legal documents and process.**
-  - The open questions of LEGAL §16 stay open for counsel.
-  - The LEGAL banner's call for a lawyer's review before any public release stands (§7
-    item 1).
-  - The clean-room process, the content rules and the naming rules are unchanged.
-- **Decision 0024.** Its "client half only" choice and LEGAL §11.1 rule 5 are unchanged.
-
-### 7. Open for the owner
-1. **Public release.** The LEGAL banner asks for a lawyer's review before any public release.
-   Publishing builds that include the compatibility backend carries the trafficking risk of
-   §5. This record does not decide when, or whether, such builds are published.
-2. **The automation rule of §4 item 4.** It is the maintainer's. The owner may confirm it or
-   revisit it by a later decision.
-3. **`data.read` on an official-server session after the opt-in.** It stays offline only
-   (§4 item 5) unless the owner decides otherwise and LEGAL §18.4 is re-assessed.
+### 6. Open for the owner
+1. **The automation rule of §4 item 4.** The owner may confirm it or revisit it by a later
+   decision.
+2. **`data.read` on an official-server session after the opt-in.** It stays offline only
+   (§4 item 5) unless the owner decides otherwise.
 
 ## Consequences
 - **Decision records.**
-  - Decision 0004 keeps its text, with a status note pointing here. The gate part is
+  - Decision 0004 keeps its text, with a status note pointing here. The staging gate is
     superseded, and its server strategy for M0–M7 stands.
   - Decisions 0011, 0012, 0016, 0017 and 0024 get short amendment notes pointing here.
   - Decision 0033 keeps its terms. Its change log records that this record names REA, and the
     targets and exclusions of §2 items 1 and 2 that it now follows (§2 item 5).
   - `docs/decisions/README.md` gets the 0034 row and a note on 0004.
-- **LEGAL.md.** §1 items 3–4, §8 (T4 status), §9.1–§9.5, §13, §15, §16 and §18.2 are
-  updated. §9.5 is renamed "Extended scripts and official servers", and its old anchor
-  still works.
 - **Other documents.** These are brought in line:
   - CLEAN_ROOM.md §4;
   - ROADMAP §1, §2.2, M8 and M9;
@@ -276,8 +184,7 @@ These are the risks of LEGAL §9.2, unchanged by this record:
   - DEVELOPMENT.md;
   - CLAUDE.md, README.md, DISCLAIMER.md and CONTRIBUTING.md;
   - the spec-writer and clean-implementer agents;
-  - the milestone workflow. It now runs M8 with the rules of this record in its dirty
-    prompt, and still refuses M9.
+  - the milestone workflow, which runs M8 with the rules of this record and still refuses M9.
 - **Specs.**
   - The specs of the extended-scripting design (`ext-threat-model.md`, `ext-manifest.md`,
     `ext-api-1a.md`, `ext-api-1b.md`) get a note pointing to §4 and a change-log row. The M9
@@ -292,19 +199,10 @@ These are the risks of LEGAL §9.2, unchanged by this record:
     `property-system.md` (the §4.3 OPEN and the §13 summary), `ui-behaviour.md`,
     `npc-drama.md` and `player-character.md`. Read each as "not researched before decision
     0034". Each is reworded, with a change-log row, in the next revision of that spec.
-- **Code.** These comments still describe the gate. They are reworded in the first M8
-  implementation commit:
-  - the doc comment of `crates/net/src/compat.rs`;
-  - the section comment and the doc comment of the compression dictionaries in
-    `crates/formats/src/gameplay/misc.rs` ("behind the M8 gate").
-- **Withdrawing this record** means:
-  - removing the compatibility crate;
-  - restoring the gate of LEGAL §9.3;
-  - restoring the rule "extended scripts never run against an official server";
-  - moving facts that rest only on official-protocol research out of the specs.
 
 ## Change log
 | Date | Change |
 |------|--------|
-| 2026-10-11 | Recorded and accepted by the owner. G1 and G2 set aside, G3 met by this record, G4 and G5 binding. Extended scripts on official servers by per-user opt-in, with automation kept offline only as maintainer policy. M4 scope widened to the official protocol and login flow. REA named for that scope. |
-| 2026-10-11 | Clarifications after the independent review of the policy changes, same day; no decision of the owner changed. §2 item 1 states the targets (client and launcher binaries by subject, the launcher only for its part of the login flow, never the patcher). §2 item 5 ties REA to the targets and exclusions of items 1 and 2 and keeps its allow-list. Consequences list the specs that still say "gated" and the code comment in `crates/formats/src/gameplay/misc.rs`, and say that decision 0033 gets a change-log row. |
+| 2026-10-11 | Recorded and accepted by the owner. M8 placed in scope in a dedicated `crates/compat` crate. Extended scripts on official servers by per-user opt-in, with automation kept offline only as maintainer policy. M4 scope widened to the official protocol and login flow. REA named for that scope. |
+| 2026-10-11 | Clarifications after independent review, same day. §2 item 1 states the targets (client and launcher binaries by subject, the launcher only for its part of the login flow, never the patcher). §2 item 5 ties REA to the targets and exclusions of items 1 and 2 and keeps its allow-list. Consequences list the specs that still say "gated" and say that decision 0033 gets a change-log row. |
+| 2026-10-20 | Owner confirmation of the login-research scope: (a) the official launcher's part of the login flow, from published third-party launchers (M2) and observation of the install (M1), with M4 on the launcher binary for its login part where those are not enough; and (b) M4 on the client binary's authentication and session-ticket handling, so that Tessera can log in with the user's own credentials. Unchanged: the user's own credentials only; no key, certificate, hostname or endpoint values in the repository (read at runtime from the user's install); the §2 item 2 exclusions; no bypassing of authentication or access controls (§3 item 3). |

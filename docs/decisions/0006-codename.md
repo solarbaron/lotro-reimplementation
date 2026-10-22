@@ -6,9 +6,9 @@
 
 ## Decision
 "Tessera" is a placeholder codename. Product, crate, repo and UI names must not use or allude
-to the game's, Tolkien's, or the rights holders' marks (full list in `docs/LEGAL.md`).
+to the game's, Tolkien's, or the rights holders' marks (see `CLAUDE.md` Naming rules).
 Plain-text compatibility statements ("reads data files from The Lord of the Rings Online™")
-are fine. A final name needs a trademark search before any public release.
+are fine.
 
 ## Consequences
 The repository directory name on the owner's machines is not a product name; do not reuse it

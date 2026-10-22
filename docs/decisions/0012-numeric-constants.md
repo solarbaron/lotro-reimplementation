@@ -35,8 +35,8 @@ when all of these hold:
     content rules already require.
 
 ## Consequences
-- CLAUDE.md, `docs/LEGAL.md` §7 and §11, `docs/CLEAN_ROOM.md` §5.1 and §9, and
-  `docs/ARCHITECTURE.md` §2 now say "bulk data tables" and point here.
+- `CLAUDE.md`, `docs/CLEAN_ROOM.md` §5.1 and §9, and `docs/ARCHITECTURE.md` §2 now say "bulk
+  data tables" and point here.
 - Implementers may reproduce the original's exact scenery placement, weather pick and
   collision limits.
 - If a client update changes a constant, the spec records the new value with the build it was

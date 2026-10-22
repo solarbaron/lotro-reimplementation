@@ -44,7 +44,7 @@ tools/dev-setup.sh            # reports what is present/missing; changes nothing
    location (on a fast disk) in `~/.config/sccache/config` (`[cache.disk]` `dir`, `size`).
    Dependencies and release builds are cached; incremental debug builds of the workspace's
    own crates are not. `sccache --show-stats` shows the hit rate.
-3. **Game install**: install the game (any legal source, e.g. Steam app 212500) and let it
+3. **Game install**: install the game (e.g. Steam app 212500) and let it
    finish patching. **Real-data tests and the smoke commands below read only
    `TESSERA_GAME_DIR`**; auto-detection serves the apps (`tessera-client`,
    `tessera-explorer`, `tessera-dattool`), not the tests. Use detection to find the path,
@@ -211,16 +211,15 @@ Each milestone in `docs/ROADMAP.md` runs as one workflow:
    `docs/checklists/owner-observations.md`. Fill them in when convenient; they do not block
    the next milestone.
 5. **M8 is in scope** by the owner's decision of 2026-10-11
-   ([decision 0034](decisions/0034-official-server-compatibility.md)), without a legal review.
+   ([decision 0034](decisions/0034-official-server-compatibility.md)).
    The workflow runs it and gives its spec writers the 0034 rules:
-   - G4: the ban-risk warning comes before any official connection;
-   - G5: the forbidden list of LEGAL.md §8;
+   - the repository content and boundary rules of `CLAUDE.md` and decision 0034 §1;
    - no key material, hostnames or account data in the repository or specs;
    - captures stay in the dirty room;
    - no anti-cheat or anti-tamper work.
 
-   Live logins happen only on the owner's own account, at the owner's own risk, and never
-   from CI. The workflow refuses `M9` until P8 and M8 are done.
+   Live logins happen only on the owner's own account and never from CI. The workflow
+   refuses `M9` until P8 and M8 are done.
 
 Without ultracode, do the same steps by hand: write the specs with the `spec-writer` agent,
 implement with `clean-implementer`, and audit with `clean-room-auditor` (`.claude/agents/`).

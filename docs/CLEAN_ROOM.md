@@ -3,21 +3,15 @@
 # Clean-room process
 
 Status: adopted 2026-10-03. This process is **binding** for every contributor, human or AI.
-It puts into practice the legal reasoning in [LEGAL.md](LEGAL.md); read that first.
+It puts into practice the clean-room rules in [`CLAUDE.md`](../CLAUDE.md); read that first.
 
 ---
 
 ## 1. Why we do this
 
-Copyright protects code and other expression, but not ideas, functional facts or file
-formats (17 U.S.C. §102(b); CJEU *SAS Institute v WPL*). A project stays on the right side of
-that line only if it can **show** that its code was written from functional facts and not
-copied from protected material.
-
-Projects that could not show this were hurt badly. Decompilation-derived *re3/reVC* was taken
-down and sued. *ReactOS* froze development for a full audit after one allegation of
-disassembly-derived code. The Heroes' Journey emulator pleaded "clean-room" without
-records to support it, and lost.
+A clean-room reimplementation must be able to **show** that its code was written from
+functional facts (field layouts, enums, state machines, algorithms in plain words) and not
+copied from third-party source code or decompiler output.
 
 So the project separates **finding facts** from **writing code**, and keeps a record linking
 every implemented behaviour to a written spec with stated sources.
@@ -31,7 +25,7 @@ every implemented behaviour to a written spec with stated sources.
 | **Dirty room** (research) | `research/`; any `clones/` directory of third-party code; game binaries and data files examined byte by byte; disassembly or decompiler output ([§4](#4-research-methods)); state and output of decompiler tools (Ghidra project copies, REA snapshots and Evidence bundles, `~/.rea`, REA temporary projects and `/tmp/rea-*`); private packet or frame captures | **Spec writers only** |
 | **Interface** | `docs/specs/*.md` | Everyone |
 | **Clean room** (implementation) | `crates/`, `apps/`, `fuzz/`, `tools/` | Implementers, working **only** from `docs/specs/` |
-| **Neutral** | `docs/` other than `docs/specs/` (this file, LEGAL.md, roadmap, tooling notes), root files such as `CLAUDE.md`, `Cargo.toml` | Everyone; must contain no format or protocol facts that are not also in a spec |
+| **Neutral** | `docs/` other than `docs/specs/` (this file, roadmap, tooling notes), root files such as `CLAUDE.md`, `Cargo.toml` | Everyone; must contain no format or protocol facts that are not also in a spec |
 
 Rules:
 
@@ -82,13 +76,13 @@ in `docs/specs/`.
 Ordered from most to least preferred. Spec writers use the first method that answers the
 question.
 
-| # | Method | Legal basis | Status |
-|---|---|---|---|
-| M1 | **Observe the data files** of your own legal install: hex dumps, small throwaway probes, statistics, validating a hypothesis across many records. Read-only, in place. | EU Art 5(3) / UK s.50BA; §102(b) | **Default. Allowed.** |
-| M2 | **Read published research and third-party tools** for facts (layouts, enums, behaviour). Record each source. Never copy code, comments or identifier names beyond those needed for interoperability. | Facts are not protected | **Allowed.** Licence does not matter for facts; it matters for code, which is never copied. |
-| M3 | **Black-box observation of the running official client** (your own account): its logs, files it writes, frame captures (e.g. RenderDoc), your own network traffic. | EU Art 5(3) / UK s.50BA | **Allowed** for rendering, file I/O and UI behaviour, and, by [decision 0034](decisions/0034-official-server-compatibility.md) §2 (2026-10-11), for passive capture of the owner's own sessions of the **unmodified** client with official servers, on the owner's own machine and account, to learn the official game protocol and login flow for interoperability ([LEGAL.md §9.3](LEGAL.md#93-the-gate)). No injection, debugger or memory reading on a client connected to official servers. Captures stay private in the dirty room, are never committed, and are reduced to field-level facts (no other player's names, chat or account data). |
-| M4 | **Disassembly or decompilation** of the official client. | EU Art 6 / UK s.50B, narrowly; contract and US exposure elsewhere | **Authorised for the offline client by [decision 0011](decisions/0011-standing-m4-authorisation.md)** (standing, from 2026-10-05). Use it after M1–M3, and log each use as a `BIN` provenance row in the spec: build, question, and why M1–M3 were not enough. Since [decision 0034](decisions/0034-official-server-compatibility.md) §2 (2026-10-11) it also covers the official game protocol and the login flow (the launcher's part included) as far as interoperability needs them, and where key material lies in the install, never its values. Targets are set by subject: read-only copies of the client binary and of the official launcher binary (the launcher only for its part of the login flow), and of a library either loads where in-scope code lies in it. Anti-cheat, anti-tamper, code-signing checks, any circumvention of an access control and the patcher with its update function stay excluded. Analyst must be a lawful licensee acting under EU/UK law, confined to interoperability. Output is prose facts only. Tools: Ghidra headless on a private copy of the shared project (default); REA only under [decision 0033](decisions/0033-rea-for-dirty-room-analysis.md). |
-| — | Leaked or NDA source; official server software; modifying or injecting into the official client; bypassing any access control | — | **Forbidden.** |
+| # | Method | Status |
+|---|---|---|
+| M1 | **Observe the data files** of your own install: hex dumps, small throwaway probes, statistics, validating a hypothesis across many records. Read-only, in place. | **Default. Allowed.** |
+| M2 | **Read published research and third-party tools** for facts (layouts, enums, behaviour). Record each source. Never copy code, comments or identifier names beyond those needed for interoperability. | **Allowed.** Licence does not matter for facts; it matters for code, which is never copied. |
+| M3 | **Black-box observation of the running official client** (your own account): its logs, files it writes, frame captures (e.g. RenderDoc), your own network traffic. | **Allowed** for rendering, file I/O and UI behaviour, and, by [decision 0034](decisions/0034-official-server-compatibility.md) §2 (2026-10-11), for passive capture of the owner's own sessions of the **unmodified** client with official servers, on the owner's own machine and account, to learn the official game protocol and login flow for interoperability. No injection, debugger or memory reading on a client connected to official servers. Captures stay private in the dirty room, are never committed, and are reduced to field-level facts (no other player's names, chat or account data). |
+| M4 | **Disassembly or decompilation** of the official client. | **Authorised for the offline client by [decision 0011](decisions/0011-standing-m4-authorisation.md)** (standing, from 2026-10-05). Use it after M1–M3, and log each use as a `BIN` provenance row in the spec: build, question, and why M1–M3 were not enough. Since [decision 0034](decisions/0034-official-server-compatibility.md) §2 (2026-10-11) it also covers the official game protocol and the login flow (the launcher's part included) as far as interoperability needs them, and where key material lies in the install, never its values. Targets are set by subject: read-only copies of the client binary and of the official launcher binary (the launcher only for its part of the login flow), and of a library either loads where in-scope code lies in it. Anti-cheat, anti-tamper, code-signing checks, any circumvention of an access control and the patcher with its update function stay excluded. Output is prose facts only. Tools: Ghidra headless on a private copy of the shared project (default); REA only under [decision 0033](decisions/0033-rea-for-dirty-room-analysis.md). |
+| — | Leaked or NDA source; official server software; modifying or injecting into the official client; bypassing any access control | **Forbidden.** |
 
 Spec writers never write to the install directory and never commit any data observed there
 except as **functional facts** (sizes, offsets, enum values, counts, magic numbers).
@@ -150,10 +144,10 @@ The review record (reviewer, date, result) goes in the spec header and the pull 
 - [ ] Byte layouts are complete (offset, size, type, meaning) and units are stated.
 - [ ] Invariants are concrete enough to test.
 - [ ] Unknowns are marked `> **OPEN:**`, not guessed.
-- [ ] Nothing in it falls outside the research scope of [LEGAL.md §9.3](LEGAL.md#93-the-gate)
-      (decision 0034): no anti-cheat, anti-tamper or code-signing facts, no key values,
-      certificates, hostnames, endpoints or account data, and no other player's data from a
-      capture.
+- [ ] Nothing in it falls outside the research scope of
+      [decision 0034](decisions/0034-official-server-compatibility.md) §2: no anti-cheat,
+      anti-tamper or code-signing facts, no key values, certificates, hostnames, endpoints or
+      account data, and no other player's data from a capture.
 
 ### 5.4 OPEN questions
 
@@ -240,7 +234,7 @@ the clean-room attestation in [§9](#9-clean-room-attestation).
 check; ScanCode licence and similarity scan; gitleaks/trufflehog secret scanning with rules
 for key blobs; a file-type allowlist and magic-number check rejecting archives, textures,
 audio, fonts and other binary blobs; a maximum blob size with Git LFS disabled; and a
-trademark word-list check on identifiers and UI strings ([LEGAL.md §10](LEGAL.md#10-naming-and-trademark-rules)).
+neutral-naming word-list check on identifiers and UI strings (`CLAUDE.md` Naming).
 
 ---
 
@@ -271,8 +265,6 @@ contributing.
 >    not consult dirty-room material for the subsystem concerned.
 > 5. I have disclosed any use of AI tools with an `Assisted-by:` trailer, and I take
 >    responsibility for the result as if I had written it myself.
-> 6. I have read the contributor-risk notice in `docs/LEGAL.md` §13 and understand that my
->    own agreements with Daybreak are my responsibility.
 
 Changes to this text get a new version number. Contributors are asked to re-confirm
 the new version on their next contribution.

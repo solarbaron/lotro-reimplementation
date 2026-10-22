@@ -2480,11 +2480,11 @@ role) for "ready" and "start".
 
 **Spec:** [decision 0024](../decisions/0024-parity-track.md) open item 2;
 [decision 0035](../decisions/0035-p4-social-on-test-server.md) D2, D3; `instruments.md` Q14;
-LEGAL.md §11.1 rule 5.
+[`server-content.md`](../specs/server-content.md) §7.
 
 **Question:** does relaying a synchronised `/play` start (a member's "ready" with a tune name
 and a common start time, `instruments.md` §8.8) through Tessera's own server count as chat
-under rule 5? Until answered, synchronised starts with other players exist only on the
+under [`server-content.md`](../specs/server-content.md) §7? Until answered, synchronised starts with other players exist only on the
 scenario feed; protocol v1.2 carries no message for them.
 
 **Record:** yes or no, with any condition (for example "only between members of one named

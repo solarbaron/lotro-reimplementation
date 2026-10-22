@@ -5,8 +5,7 @@
 ## Non-affiliation (mandatory text)
 
 This text must appear in the README, on any project website, in release notes, and in the
-application's About screen. Do not shorten or reword it. See
-[docs/LEGAL.md §10](docs/LEGAL.md#10-naming-and-trademark-rules).
+application's About screen. Do not shorten or reword it.
 
 > Tessera is an independent, unofficial project. It is not affiliated with, endorsed by, or
 > sponsored by Daybreak Game Company LLC, Standing Stone Games, Middle-earth Enterprises,
@@ -23,17 +22,11 @@ application's About screen. Do not shorten or reword it. See
 - It reads data files from **your own, legally obtained installation** of the game, in place
   and read-only. It does not copy, modify, repack or redistribute them. Obtain the game only
   from its official distribution channels.
-- It **does not connect to official game servers today**. Official-server compatibility is
-  planned ([docs/LEGAL.md §9](docs/LEGAL.md#9-gates-and-the-official-server-target)). It is
-  being pursued without a legal review and without permission from the rights holders.
-  Connecting a third-party client to the official service may breach Daybreak's End User
-  License Agreement and Terms of Service, and may result in your account being suspended or
-  closed. If you connect, you bear that risk yourself. The project cannot protect your
-  account. Before any connection is possible, the client will make you accept a warning
-  that says so.
-- Using game data with any software other than the official client may itself fall outside
-  the game's licence terms (Daybreak ToS §12). You are responsible for how you use this
-  software and for your own agreements with Daybreak.
+- Official-server compatibility (milestone M8,
+  [decision 0034](docs/decisions/0034-official-server-compatibility.md)) is **partly done and
+  needs more work**: the clean-room protocol specifications and foundational protocol modules
+  in `tessera-compat` are built, while end-to-end client wiring and full gameplay message
+  integration are still in progress.
 
 ## No warranty
 
@@ -41,13 +34,3 @@ This program is distributed under the GNU General Public License, version 3 or (
 option) any later version, **WITHOUT ANY WARRANTY**; without even the implied warranty of
 MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for
 details.
-
-## Not legal advice
-
-Nothing in this repository, including [docs/LEGAL.md](docs/LEGAL.md), is legal advice.
-
-## Rights holders
-
-If you represent Daybreak Game Company LLC, Standing Stone Games or Middle-earth
-Enterprises, LLC and have a concern about this project, please contact the maintainers.
-We will respond promptly and in good faith (see [docs/LEGAL.md §14](docs/LEGAL.md#14-incident-response)).

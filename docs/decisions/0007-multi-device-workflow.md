@@ -15,7 +15,7 @@ per-machine memory, session transcripts, scratch directories and build caches do
 - Third-party research clones are re-created on demand with `tools/fetch-research-clones.sh`
   into `${XDG_CACHE_HOME:-~/.cache}/tessera/clones` or `$TESSERA_CLONES_DIR` (never
   committed). Material that cannot be re-created that way (manually downloaded tarballs
-  and jars, legal source texts) is listed in `research/clones.txt` and `research/README.md`
+  and jars, reference texts) is listed in `research/clones.txt` and `research/README.md`
   with how to fetch it.
 - Machine-specific settings stay out of git: `.cargo/config.toml` (build cache location),
   `TESSERA_GAME_DIR`.

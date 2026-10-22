@@ -19,11 +19,11 @@ grafted in. Each graft is listed with where it lands in "Grafts and where they l
 
 **How it was written.** Clean-room architect work. Inputs: decisions 0004, 0011–0016;
 `lua-plugin-api.md`, `plugin-runtime.md`, `plugin-descriptor.md`, `plugin-api-usage.md`, the
-`ui-*.md` specs, `keymap.md`; ARCHITECTURE, ROADMAP, LEGAL; and the code of `crates/script`,
+`ui-*.md` specs, `keymap.md`; ARCHITECTURE, ROADMAP, `CLAUDE.md`; and the code of `crates/script`,
 `net`, `entity`, `world`, `input`, `render`. No dirty-room material was read. The extended
 API is Tessera's own design. Its spec (`ext-api.md`) must stay free of BIN facts: it may not
 adopt behaviour that the plugin specs or the UI specs record from disassembly as the ext
-contract (§12, LEGAL §17.2 rule 7). Under that rule it has no provenance problem. Timings
+contract (§12). Under that rule it has no provenance problem. Timings
 marked "measured 2026-10-06" were taken in this session on the reference machine
 (`docs/perf/reference-machine.md`, i9-10885H) with the operating system's stock Lua 5.1.5,
 not the project's patched build (§1.5). They are indicative, and slice 1a re-measures them
@@ -61,9 +61,9 @@ written for the original client's API.
    keyboard. A **panic chord** suspends every ext script.
 4. A **fail-closed backend gate** with no override: ext scripts run only on the sandbox
    and, from slice 3 (with M7), on the **project-owned** test server that speaks
-   Tessera's own protocol, as decision 0004 and LEGAL §8 limit the client. They run
-   **never against an official server**. Automation (`input.drive`) runs **offline
-   only**. LEGAL §9 records the rule, and the threat model's limit, as binding policy.
+   Tessera's own protocol, as decision 0004 limits the client. They run
+   **never against an official server** (later amended by decision 0034). Automation
+   (`input.drive`) runs **offline only**.
 5. The module registry is **language-neutral** (Rust port traits plus a binding
    description). Lua 5.1 is the first front end, so a later Luau or Wasm tier is a new
    binding, not a new API. The same registry generates the API reference, the editor
@@ -98,15 +98,13 @@ written for the original client's API.
 3. **Which servers.**
    - **Official servers.** Do you accept the gate with no setting, flag or variable to
      change it, and the rule "extended scripts never run against an official server" as
-     binding policy in LEGAL §9? Do you accept that this rule binds Tessera's own builds
-     only, and that LEGAL says so (§6.5)? Any M8 gate decision would have to address the
-     rule explicitly.
+     binding policy, with the threat-model limit stated in §6.5? Any M8 decision would have
+     to address the rule explicitly.
    - **Third-party Tessera-protocol servers.** 0016 says extended scripts run "offline and
-     on Tessera's own server", 0004 limits M0–M7 to the sandbox and a project-owned
-     server, and LEGAL §8 puts any publicly hosted shard in T3 ("Not planned"). This
-     record keeps that: ext support on `TesseraProtocol` targets the **project-owned**
-     test server only (§6.5). Do you accept that third-party servers need a separate
-     decision, with counsel's review, that amends 0004 and LEGAL §8 first?
+     on Tessera's own server", and 0004 limits M0–M7 to the sandbox and a project-owned
+     server. This record keeps that: ext support on `TesseraProtocol` targets the
+     **project-owned** test server only (§6.5). Do you accept that third-party servers need
+     a separate decision that amends 0004 first?
    - **Default server policy.** If the server states no policy, do you accept every
      group-O capability that a server session offers (all but `data.read`, which is
      offline only) plus `session.server` (itself group A, needed for the script's own
@@ -161,7 +159,7 @@ written for the original client's API.
      other: two scripts through shared engine state (for example the game clock), even
      across sessions through shared quotas (the total `Store` space answering "full"),
      and a script and a plugin through a bridged command whose arguments the plugin
-     keeps, or through layout and timing. §5.2 says so and LEGAL records it;
+     keeps, or through layout and timing. §5.2 says so;
    - a panic chord that only Tessera's own settings can rebind (proposed default
      Ctrl+Shift+F12), active only while an ext script is loaded, and checked against
      every key binding when it is set (§5.5);
@@ -176,7 +174,7 @@ written for the original client's API.
    lines that plugins receive; the one indirect route, a plugin that echoes a bridged
    command's arguments to chat, is listed in §7. This is the one exception to "no state
    of plugins" (§5.6). `bridge.plugins` is local-only: never held with `session.server`.
-   A two-way bridge would need its own decision amending LEGAL §17.2 rule 5.
+   A two-way bridge would need its own decision.
 6. **Automation.** Do you accept that `input.drive` (movement intents and pressing standard
    actions) works **in the sandbox only**? Allowing it on any server, even under an
    operator's policy, needs a separate decision (§6.5).
@@ -271,40 +269,36 @@ threat model and an escape test in `scripttool test` before the first slice ship
 [Decision 0034](0034-official-server-compatibility.md) §4 replaces the rule "extended
 scripts never run against an official server" wherever this record states it (owner summary
 item 4, owner question 3, Context, §6.2, §6.4, §6.5, §6.7, §12, and the scheduling decision
-below). The owner's words: "extended scripts will be able to run on official server its
-just up to the user if they want to bear the risk to do that". In short:
+below). In short:
 
 - Extended scripts may run on an official-server session only after the user's explicit
-  opt-in, which shows the risks (account bans, the terms) and is off by default; it is
-  stored per user, can be withdrawn, and no flag, variable, plugin, script or server can set
-  it. The opt-in grants nothing by itself: the user's per-script grants (§5) still apply.
+  opt-in, which is off by default; it is stored per user, can be withdrawn, and no flag,
+  variable, plugin, script or server can set it. The opt-in grants nothing by itself: the
+  user's per-script grants (§5) still apply.
 - Official-server sessions get a backend class of their own (named by the M8 and M9 specs);
   `Other` stays fail-closed with no override (§6.2).
 - **Automation stays offline only** (project policy kept by the maintainer): `input.drive`
   and every module that issues movement, input or game commands on the user's behalf are
-  never enabled on any official server, with or without the opt-in, because their effect
-  falls on other players and the service. §6.5's rule for every server is unchanged.
+  never enabled on any official server, with or without the opt-in. §6.5's rule for every
+  server is unchanged.
 - Unchanged: the local-only rules (§5.2), `data.read` offline only, the never-offered list,
   `Sandbox` sandbox-only, `Server` only on Tessera's own protocol.
 - §6.3's build-level exclusion (the `links` guard and the CI check that keep `tessera-ext`
   and a `gated-compat` crate apart) is withdrawn; the compatibility backend stays its own
   crate, and the M9 slice plan replaces the check with tests of the runtime gate and the
   opt-in.
-- "The M8 gate" and "if the M8 gate fails" in this record now read "M8 (decision 0034)" and
-  "if M8 stops (LEGAL §9.4)".
+- "The M8 gate" in this record now reads "M8 (decision 0034)".
 
 Plugins are unaffected (§6.7): on an official server they run as in the original client.
 
 ## Owner scheduling decision (2026-10-08)
 Extended scripting is not a priority. The milestone planned here as **M5.5** moves to the end
 of the roadmap as **M9**. It starts only after full parity with the original client and
-compatibility with the server (M8), or, if the M8 gate fails, after client parity with
-Tessera's own server.
+compatibility with the server (M8).
 
 What does not change:
 - The design and its slices, in their order (1a, 1b, 2, 3).
 - The Accepted specs.
-- The rule that ext scripts never run against an official server.
 - The core/plugins split M5 made for it (decision 0023).
 
 Where this record says "M5.5", read "M9 (slice 1a)". The external Lua fork is created only
@@ -319,10 +313,10 @@ when M9 starts, after the owner confirms it.
   - the M5 compatibility API unchanged;
   - extended scripts never against official servers;
   - a placement after M5.
-- **The plugin API cannot grow.** LEGAL §17.2 rule 5 lets plugins have only what existing
-  plugins call, with no capability the original API lacks. Rule 6 keeps the compatible
-  names separable, so the compatibility surface can be withdrawn without changing the rest
-  of the engine. Rule 7 limits BIN facts to making Tessera work with users' plugins.
+- **The plugin API cannot grow.** Plugins have only what existing plugins call, with no
+  capability the original API lacks. Compatible names stay separable in `tessera-plugins`,
+  so the compatibility surface is isolated from the rest of the engine, and BIN facts in
+  plugin specs are used only for compatibility with users' plugins.
   Extended features therefore cannot be added to `Turbine.*`, must not leak into plugin
   apartments by any route, and must not change what a plugin can observe.
 - **What exists in code (2026-10-06).**
@@ -413,8 +407,8 @@ when M9 starts, after the owner confirms it.
   - *Against:*
     - Slice 1 rests on a linking spike that the mlua facts above show will fail as stated.
     - Slice 1 is very large: nine modules, a console, hot reload, types and a modtool.
-    - Its two-way bridge gives plugins a capability the original lacks, which collides with
-      LEGAL §17.2 rules 5 and 6.
+    - Its two-way bridge gives plugins a capability the original lacks, which breaks
+      plugin-compatibility isolation.
     - Mods pushed by a server are drive-by remote code delivery.
     - The WGSL and asset-override tiers have no gate.
     - Dev mode skips every prompt.
@@ -449,7 +443,7 @@ when M9 starts, after the owner confirms it.
 | Option | Verdict |
 |---|---|
 | **Lua 5.1 ext apartments on the shared core** | **Chosen for slice 1.** No new VM. The sandbox, allocator cap, instruction hook, `__gc` handling and the M5 criterion-5 escape tests are reused, with three ext-only additions to the core: a wall-clock deadline in the hook, native-call charging, and an apartment profile without `load`, `loadstring`, `setfenv` and `getfenv` (§1.2), plus a small patch to Lua 5.1.5 whose keyed hashing and work counting are on in ext states only (§1.5). Plugin authors already write 5.1. Costs: no integers, no types, slower vector maths. That is acceptable for UI, overlay and tooling scripts. |
-| Share the plugins' VMs | Rejected. It breaks apartment isolation (PR §5.3) and reaches plugin globals, so plugins would gain capabilities indirectly (LEGAL §17.2 rule 5). |
+| Share the plugins' VMs | Rejected. It breaks apartment isolation (PR §5.3) and reaches plugin globals, so plugins would gain capabilities indirectly. |
 | Luau in the client process | Rejected for now. It needs symbol renaming or a hand-written binding (mlua constraint above), which means a second sandbox, second limits and second escape tests. |
 | Luau in a separate process (B) | The best route **if** a second language is wanted. It is kept as a later tier behind its own decision (§11). |
 | Wasm (wasmtime) | The strongest isolation and many languages, but a heavy toolchain for authors. Kept as a later tier, like Luau. |
@@ -486,7 +480,7 @@ when M9 starts, after the owner confirms it.
      (parsing and validation only), module registry and its Lua 5.1 front end,
      scheduling, limits, leases. It depends on `script` only, through a new sibling
      allowance `ext` → `script` with the same shape as `plugins` → `script`. It never
-     depends on `plugins`, so withdrawing the compatibility surface (LEGAL §17.2 rule 6)
+     depends on `plugins`, so building without the plugin compatibility surface
      leaves it intact. It does no file or settings I/O of its own: it takes bytes and
      returns values (a snapshot it is handed, a `Store` value's bytes, a log line to
      write), so it needs no `ext` → `settings` allowance.
@@ -506,7 +500,7 @@ when M9 starts, after the owner confirms it.
        `tessera-plugins` a dependency. The client turns it on when it links both. A build
        without `tessera-plugins` turns it off, and `Ext.Use("Plugins", 1)` then answers
        `nil, "unavailable on this backend"`. So `tessera-ext` and `tessera-ext-host` build
-       without the compatibility surface (LEGAL §17.2 rule 6, §7 "Withdrawal").
+       without the plugin compatibility surface (§7 "Independence").
    - **The client links ext behind a default-on feature `ext`** (optional dependencies on
      `tessera-ext` and `tessera-ext-host`). A build with the feature off has no ext code.
      This is what lets a gated compatibility build exclude ext without restructuring the
@@ -904,7 +898,7 @@ when M9 starts, after the owner confirms it.
   own grants and `Store`; the user's bindings for that id serve whichever copy is loaded,
   as they name an id, not a folder.
 - **Namespace.** The single global is `Ext`.
-  - It is neutral and does not use the codename, so a product rename (LEGAL §10 rule 2)
+  - It is neutral and does not use the codename, so a product rename
     breaks no script.
   - Module names are PascalCase, so authors who know other Lua APIs feel at home. This is
     a naming style, not an adoption of any plugin-API behaviour (§12).
@@ -948,7 +942,7 @@ in §8.
 | `Overlay` | World-space lines, boxes and screen quads, rebuilt every tick, handed to step 10 as `Pass` primitives. A frame in which the script is not ticked (throttled, or not reached under the cap) draws the list of its last tick, so overlays never flicker; suspension or the panic chord clears it. Depth-tested or on top. Drawn under the game UI (UR) | `overlay` | O | Off, T | this frame's step 10 | 1b |
 | `Sandbox` | Sandbox commands: `Teleport` and `QueryLocation` (`tessera-net` `Command`s), and setting the game clock through the **clock port**, which `tessera-ext-host` implements over `tessera-world`'s `GameClock` (`set_game_seconds`, `set_time_of_day`); the clock is not a `Command`. Rate-limited (§8). On any backend other than `Offline`, `Ext.Use` returns `nil, "unavailable on this backend"` | `session.sandbox` | A | Off | next frame's step 2 | 1b |
 | `Files` | `Pick()` opens an OS file dialog. The user's choice in that dialog is the grant, per call. The result is one file's bytes (at most 3 MiB) and its **basename** only, never its directory or full path (graft from A). The dialog is **asynchronous** (never a modal call that blocks the main thread), at most one is open for all scripts, and `Pick()` is honoured only in a 6b turn that delivers a user gesture to that script (§8). The result is delivered in the script's 6b turn, inside that metered call | `files.pick` | O | Off, T | delivered in 6b | 2 |
-| `Data` | Decoded records by DID: property values by name through the registry, string-table text, enum labels, icons. For the user's personal use (LEGAL §11): no raw bytes, no enumeration by DID range, no writes. Answers only from records already decoded and cached; otherwise `nil, "not loaded"` and a lowest-priority request (§8). Local-only (§5.2): offline only, never granted together with `session.server`, and a store it wrote is wiped before a `session.server` holder opens it | `data.read` | O | **Off only** | 6b | 2 |
+| `Data` | Decoded records by DID: property values by name through the registry, string-table text, enum labels, icons. For the user's local use: no raw bytes, no enumeration by DID range, no writes. Answers only from records already decoded and cached; otherwise `nil, "not loaded"` and a lowest-priority request (§8). Local-only (§5.2): offline only, never granted together with `session.server`, and a store it wrote is wiped before a `session.server` holder opens it | `data.read` | O | **Off only** | 6b | 2 |
 | `Audio` | Sounds by DID from the user's archives, 2D or at an entity; bus volumes, never louder than the user's bus volume, with voice, start-rate and summed-gain caps (§8). A sound not yet decoded answers `nil, "not loaded"` and is requested at the lowest priority | `audio` | O | Off, T | step 9 | 2 (after M6) |
 | `Input.Drive` | A movement **lease**: a movement intent latched per controller step like real input; press standard game-band actions at the controller level. These presses are action state, not key events: they carry no command name, are never offered to the UI and never reach a plugin `KeyDown` or `KeyUp` broadcast; plugins see only their effects (§7) | `input.drive` | A | **Off only** (§6.5) | next frame's step 3 (1/60 s step) | 2 |
 | `Entity.Local` | Spawn and move client-local entities from setup DIDs in the user's install. Only its own, at most 256. A setup not yet decoded answers `nil, "not loaded"` and is requested at the lowest priority. They are drawn only: never targetable or pickable (a click passes through them), never in a plugin-visible gameplay view or entity list, never in another script's `Entity` results | `entity.local` | A | Off, T | next frame's step 2 tail | 2 |
@@ -1373,7 +1367,7 @@ once a grant is revoked or the backend changes.
   `data.read` (decoded data of the user's install) and `bridge.plugins` (the user's
   plugins and their data) are **local-only**: what they return must not reach a server's
   operator. Decoded data sent there would be an export to a third party, contrary to
-  "no export" (§3 `Data`, §5.6) and LEGAL §11's personal-use rule. Four rules close every
+  "no export" (§3 `Data`, §5.6). Four rules close every
   route that one script could use:
   1. **Per script.** No grant holds a local-only capability together with
      `session.server` (§2, "Mutually exclusive capabilities").
@@ -1440,13 +1434,13 @@ once a grant is revoked or the backend changes.
     cooperating party all the same.
 
   That is a covert channel between programs the user chose to run, as between any two
-  programs on a computer; Tessera neither offers nor documents it, and the assessment in
-  this record's §12, carried into the new LEGAL "Extended scripting" section, records it.
+  programs on a computer; Tessera neither offers nor documents it, and
+  this record's §12 records it.
   The channel also **persists across sessions**: shared quotas that survive a restart
   (the 256 MiB and 16,384-key `Store` totals, orphans included) answer "full" to one
   script according to what another stored, so an offline `data.read` script could pass
   bits to a later `session.server` script days afterwards, and plugin data persists by
-  design. Rule 2 does not prevent this, and LEGAL says so in the same place.
+  design. Rule 2 does not prevent this.
 
 - **No other per-script state persists.** Apart from the grant record and the `Store`, the
   host keeps **nothing** for a script across loads that the script can influence: no
@@ -1760,7 +1754,7 @@ once a grant is revoked or the backend changes.
   off the user's machine, and no single script can on its own (the four local-only rules
   of §5.2); the only file output of it is the script's own capped `Store` and its capped
   script log, both in Tessera's directories. §5.2 states the one residual (cooperating
-  programs: other ext scripts, or plugins) and LEGAL records it. This is the personal-use reading of LEGAL §11, as for the explorer.
+  programs: other ext scripts, or plugins).
 - **Other software's state.** No state of other ext scripts: their `Store`, their
   apartments, their random generators (§1.2), their windows' content and their
   client-local entities (§3 `Entity.Local`) are out of reach. No state of plugins, **except**
@@ -1777,7 +1771,7 @@ once a grant is revoked or the backend changes.
     mouse-visible elements, at most once per frame, as coordinates inside that element;
     a window's transparent, non-mouse-visible background receives nothing. A script
     whose window covers the screen with a mouse-visible element still learns that
-    layout; this is stated here and in LEGAL, and it is a channel of layout only.
+    layout; this is stated here, and it is a channel of layout only.
 - **Input and the user.** No synthesised raw input. No clipboard **API**: no module reads
   or writes the clipboard. Native text editing in an ext text box keeps the usual
   Ctrl+C, Ctrl+X and Ctrl+V (and the platform's equivalents) as **user gestures**: a
@@ -1799,8 +1793,7 @@ once a grant is revoked or the backend changes.
   different script, with empty grants.
 - A signature proves authorship only. It **never** raises trust or skips a prompt.
 - Unsigned scripts work and are labelled "unsigned".
-- Tessera hosts, bundles and downloads no third-party scripts. The new LEGAL "Extended
-  scripting" section records this, as LEGAL §17.6 does for plugins.
+- Tessera hosts, bundles and downloads no third-party scripts.
 
 ### 6. The backend gate and the official-server rule (decision 0004)
 
@@ -1808,7 +1801,7 @@ once a grant is revoked or the backend changes.
    with:
    - `Offline`: the in-process sandbox;
    - `TesseraProtocol`: the backend that speaks Tessera's own protocol (M7). Under
-     decision 0004 and LEGAL §8 (T2: "sandbox and project-owned test server only") its
+     decision 0004 its
      target is the **project-owned** test server; the client cannot tell who runs the
      server behind it (§6.5);
    - `Other`: the default, and anything added later.
@@ -1845,7 +1838,7 @@ once a grant is revoked or the backend changes.
 3. **Build-level exclusion (graft from A and B).**
    - **The compatibility backend must be its own crate**, never a module of `tessera-net`.
      `crates/net/src/compat.rs` is reworded to say so (Consequences), and ARCH §19.3 says
-     that a compatibility backend, if the M8 gate ever passes, is a separate crate that
+     that a compatibility backend is a separate crate that
      depends on `tessera-net` and is **excluded from the workspace** (`[workspace]
      exclude`), like the binary that uses it (below). A workspace member could not hold it
      anyway: the `links` guard below makes the workspace's single resolve fail.
@@ -1857,7 +1850,7 @@ once a grant is revoked or the backend changes.
      `cargo build --workspace` unifies the features of `tessera-client` across members, so
      a member that depends on the client without `ext` would still get `ext` linked in
      whenever another member enables it, while a per-package check passed. A compatibility
-     binary, if the M8 gate ever passes, is therefore **its own package listed in the root
+     binary is therefore **its own package listed in the root
      manifest's `[workspace] exclude`**, built from its own directory with its own lock
      file, and depending on `tessera-client` with `default-features = false`.
    - **A hard guard in Cargo itself.** `tessera-ext` and every `gated-compat` crate declare
@@ -1895,15 +1888,14 @@ once a grant is revoked or the backend changes.
      feature (§1.1), a compatibility build turns that feature off. It changes no client
      code, as decision 0004's consequence requires. The runtime gate (§6.2) still holds in
      every build; the build-level layer is defence in depth.
-4. **LEGAL §9 policy (graft from B).** LEGAL §9 gains the binding rule "extended scripts never
-   run against an official server", so any M8 gate decision must address it explicitly. That
-   decision cannot set it aside silently.
+4. **Official-server boundary (graft from B).** Extended scripts never
+   run against an official server, so any M8 design must preserve that boundary explicitly.
 5. **Tessera-protocol servers (M7), and the limit of the gate.**
    - **What the gate can and cannot do.** The class is what a backend compiled into the
      build reports about itself. Tessera's own builds keep the rule. A modified build, or a
      proxy run by the user that translates Tessera's protocol to another service, defeats
      any client-side gate: the client cannot know what lies behind a `TesseraProtocol`
-     connection, and such a user is their own "operator". LEGAL records this limit of the
+     connection, and such a user is their own "operator". This is the limit of the
      threat model. The design answer is to keep automation out of reach of any server:
    - **Offline only, until a separate decision:** `input.drive`, and every later module
      that issues game-state commands or movement on the user's behalf (any `Command`
@@ -1946,16 +1938,14 @@ once a grant is revoked or the backend changes.
      about. `tessera-protocol.md` (slice 3, with M7) states this as a server
      requirement. The server stays authoritative and trusts no client.
    - **Which servers: the project-owned test server only.** Decision 0004 targets M0–M7
-     at "the in-process sandbox backend and a project-owned server", and LEGAL §8 limits
-     T2 to "sandbox and project-owned test server only" and puts "any publicly hosted
-     shard, free or not" in T3 ("Not planned"). This record stays inside both: ext support
+     at "the in-process sandbox backend and a project-owned server". This record stays inside that scope: ext support
      on `TesseraProtocol`, its script policy and its default exist for the project-owned
      test server, and the project neither designs for, documents nor tests third-party
      operators. The client cannot verify who runs a server (a user can point it at any
      address), which is the threat-model limit above, not a supported use. Supporting
      third-party Tessera-protocol servers, for ext scripts or for the client at all,
-     needs its own decision with an owner and counsel review that amends 0004 and LEGAL
-     §8 first (owner question 3). 0016 item 2 ("offline and on Tessera's own server")
+     needs its own decision that amends 0004
+     first (owner question 3). 0016 item 2 ("offline and on Tessera's own server")
      holds unchanged.
 6. **Tests.** Slice 1a runs the ones marked **1a**; the others come with the modules and
    the policy they test.
@@ -2151,15 +2141,14 @@ once a grant is revoked or the backend changes.
     flood the plugin queue or delay `LoadPlugin`, `PluginData` callbacks, game-raised
     events or the logout unload by more than two load items.
   - The bridge port lives in `tessera-ext-host` behind its optional feature `bridge`, the
-    only dependency of ext on `tessera-plugins` (§1.1). If the compatibility surface is
-    withdrawn, the feature is off and `Plugins` answers "unavailable on this backend".
+    only dependency of ext on `tessera-plugins` (§1.1). If the plugin compatibility surface is
+    disabled, the feature is off and `Plugins` answers "unavailable on this backend".
 - **Excluded.** Plugin-data writes and direct chat-line injection are excluded (the
   indirect line a plugin itself writes for a bridged command is listed above). They would let a
-  script forge plugin input and poison plugin data, and they would weaken LEGAL §17.2 rules
-  5 and 6. A two-way bridge needs its own decision amending rule 5. None is proposed.
+  script forge plugin input and poison plugin data. A two-way bridge needs its own decision. None is proposed.
 - **Script manager.** A Tessera window in the reserved layer (§5.3) lists scripts with their
   grants, leases, signature state and profiler line (§8), and resumes suspended ones.
-- **Withdrawal.** Withdrawing the compatibility surface (LEGAL §17.2 rule 6) leaves ext
+- **Independence.** Building without the plugin compatibility surface leaves ext
   scripting intact. `tessera-ext` never depends on `tessera-plugins`; `tessera-ext-host`
   depends on it only through the optional `bridge` feature, which a build without the
   plugin surface turns off (§1.1); no ext name or module uses the plugin names; and `Store`
@@ -2687,7 +2676,7 @@ walking run with the M5 plugin set (ROADMAP M5 exit criterion 4) open.
   | `check` | 1a | Lint the manifest, apply the folder rules (reserved device names included, §2), check capability and module names against the registry, syntax-check every file |
   | `test` | 1a | Run the script headless on a **synthetic world** with no install and no GPU, along a walk file, with the script's own assertions, in **deterministic mode** (§8): every apartment's generator (§1.2), hash secret and table and interning salts (§1.5) derived from the test's seed (so `pairs` order repeats too), the wall clock off, every per-frame slice counted in units, worker results delivered through the fixed-latency completion queue and streaming gated on residency, so which work runs in which frame, and every query's answer, repeat too; authors can test in CI (CLAUDE.md content rules) |
   | `init` | 1b | Create a script skeleton with a manifest |
-  | `pack` | 1b | Make a zip of exactly the files the loader would snapshot (the folder rules of §2). The **content guard**: it refuses any `.dat` or `.datx` file, any file that starts with the archive container's header as `tessera-dat` recognises it, and any file over the folder caps; it warns that extracted game assets must not be packed (LEGAL §11) |
+  | `pack` | 1b | Make a zip of exactly the files the loader would snapshot (the folder rules of §2). The **content guard**: it refuses any `.dat` or `.datx` file, any file that starts with the archive container's header as `tessera-dat` recognises it, and any file over the folder caps; it warns that extracted game assets must not be packed |
 
 - **The headless harness** (in `tessera-ext-host`, slice 1a). The pieces exist:
   `tessera-world::testkit::SyntheticWorld` builds a `MemoryWorldSource` that
@@ -2739,21 +2728,19 @@ before any code lands.
 - **Render hooks or custom shaders.** naga validation cannot prevent GPU hangs, and
   `PassHook` is crate-private. This needs its own decision.
 - **Asset overrides** (in-memory replacement of a DID's decoded content). This is a
-  content-substitution surface and needs its own decision under LEGAL §11.
-- **Two-way plugin bridge.** It needs its own decision amending LEGAL §17.2 rule 5. None is
+  content-substitution surface and needs its own decision.
+- **Two-way plugin bridge.** It needs its own decision. None is
   proposed.
 - **Network access** (HTTP to an allow-list). It is not proposed, and it stays on the "never
   offered" list until a decision moves it.
 
-### 12. Legal points
+### 12. Content and isolation rules
 
-- **Tiers.** Offline use is T1, and Tessera-protocol use is T2, whose status LEGAL §8
-  limits to the project-owned test server. Ext support targets nothing else (§6.5):
-  third-party servers are T3 territory ("any publicly hosted shard") and need their own
-  decision amending 0004 and LEGAL §8 with counsel's review. Ext scripts never run
-  against an official server in Tessera's builds (§6), so they cannot raise the
-  project's tier.
-- **No BIN facts in the ext contract (LEGAL §17.2 rule 7).** `ext-api.md` defines the ext
+- **Backend scope.** Ext support targets the offline sandbox and the project-owned
+  Tessera-protocol test server (§6.5): third-party servers need their own
+  decision amending 0004. Ext scripts never run
+  against an official server in Tessera's builds (§6).
+- **No BIN facts in the ext contract.** `ext-api.md` defines the ext
   widgets, their input behaviour, events and drawing in its own terms, from Tessera's
   design and general GUI conventions. It cites no BIN fact as part of the ext contract:
   neither LPA §13's plugin control behaviour nor the BIN rows of UB and UL. The
@@ -2761,12 +2748,11 @@ before any code lands.
   panels and plugin controls, but the ext contract promises only what `ext-api.md` states.
   Where the shared code's behaviour rests on a BIN fact that `ext-api.md` does not state,
   ext scripts may not rely on it, and a change to it is not an ext API change. A wish to
-  give ext widgets plugin-control parity would need a LEGAL §17.2 amendment reviewed by
-  counsel; none is proposed.
+  give ext widgets plugin-control parity would need its own decision;
+  none is proposed.
 - **No game content.** Scripts refer to DIDs that resolve in the user's install. `Data`
-  returns decoded values for the user's personal use, with no enumeration by DID range
-  (LEGAL §11). **LEGAL §11 assessment of `data.read`** (recorded in the new LEGAL
-  section): it is a viewer of the user's own install inside the user's own client, like
+  returns decoded values for the user's local use, with no enumeration by DID range.
+  **Assessment of `data.read`:** it is a viewer of the user's own install inside the user's own client, like
   the explorer, and is opt-in per script. Tessera offers **no export route**, and that is
   made true by design, not just stated: `data.read` is offered offline only; it is
   local-only and never held by one script with `session.server`; a store it wrote is
@@ -2787,27 +2773,18 @@ before any code lands.
   advertises scripts as extraction tools, and `pack` refuses archive files and warns
   about extracted assets (§10). Examples embed no extracted data, names or strings.
 - **Naming.** `Ext`, the module names, `tessera-ext`, `tessera-ext-host`,
-  `tessera-scripttool`, `scripts/`, `.store` and every UI string are neutral (LEGAL §10).
+  `tessera-scripttool`, `scripts/`, `.store` and every UI string are neutral (CLAUDE.md Naming).
   Ext UI classes never reuse the interop names. Those names stay inside the plugin
-  subsystem as string data (LEGAL §17.2 rules 1 and 6). The ext escape tests therefore
+  subsystem as string data. The ext escape tests therefore
   name no interop name: in `tessera-ext` they check that an ext apartment's globals are
   **exactly** the allow-list of §1.2 (which excludes every other name, the interop ones
   included, without spelling them), and the test that a plugin apartment has no `Ext`
-  lives in `tessera-plugins`' own tests, where rule 1 allows the interop names.
+  lives in `tessera-plugins`' own tests.
 - **Automation.**
   - LPA §3.5's anti-automation boundary stays for plugins.
   - `input.drive` exists only offline, where automation harms no one (§6.5).
 - **Third-party scripts** are their authors' works. Tessera does not host, bundle or download
   them.
-- **New LEGAL text.** LEGAL gains a short "Extended scripting" section, proposed as a new
-  **§18** placed before "Sources" (which becomes §19; nothing cites it by number today),
-  recording the gate, the threat-model limit of §6.5, the never-offered list with its
-  layout residual (§5.6), the one-way bridge, the no-BIN-facts rule, the `data.read`
-  assessment above with its stated limit (cooperating programs, ext scripts or plugins,
-  within a session and across sessions) and these content rules. In this record, "§12" always means this
-  record's §12, never LEGAL §12 ("Distribution and money"). The
-  binding rule goes into §9. LEGAL §8 is not changed: ext stays inside T2's stated
-  status.
 
 ## Roadmap placement proposal
 
@@ -2819,7 +2796,7 @@ owner accepts this record. It adds a milestone. M5–M8 keep their numbers.*
 
 Placed after M5. It needs M5's `tessera-ui`, IB D8's frame placement and M5's
 `script`/`plugins` split. It does not need M6 or M7, and it can run in parallel with M6.
-Risk tier T1 (sandbox only in this slice; the gate admits `Offline` alone until slice 3).
+Sandbox only in this slice; the gate admits `Offline` alone until slice 3.
 
 **Goal:** users and authors can write scripts in Tessera's own extended API, beside the
 unchanged standard plugins. Scripts draw their own windows, bind their own actions and
@@ -3068,7 +3045,7 @@ in place as usual.
 | 0014 D8, "Budget" | Two new time categories: ext time (6a–6c) and ext UI time (native ext UI work in steps 1, 7 and 8), both outside U1 and plugin time, inside the frame rule. D8's step 8 is unchanged: `UI.Native` applies in 6b and ext never hides windows in step 8, so step 8 still changes no box that a hit test reads | extends |
 | 0014 D8, client-exit unload | Ext apartments unload at the same point, after the plugins | extends |
 | 0014 D8, step 1 | Consent prompts raised outside step 1 are shown at the start of the next frame's redraw, immediately before `offer_pending`; ext windows' activation and focus follow §4's gesture-rooted rule, so no ext call runs plugin code | extends |
-| 0004 (scope of M0–M7), 0016 item 2 | **Unchanged.** Ext support on `TesseraProtocol` targets the project-owned test server only, as 0004 and LEGAL §8 say (§6.5); third-party servers need their own decision amending 0004 and LEGAL §8 | none |
+| 0004 (scope of M0–M7), 0016 item 2 | **Unchanged.** Ext support on `TesseraProtocol` targets the project-owned test server only, as 0004 says (§6.5); third-party servers need their own decision amending 0004 | none |
 | 0015 §7, surface and entry caps; §6 U5 | Ext has **separate pools on top of** UR's caps (512 surfaces, 1,024 entries, 32/64/64 MiB of UI memory); UR's caps stay whole for native panels and plugins, and the renderer's absolute limits become UR's plus ext's; ext entries checked at creation, at every show and at every visibility change; reserved-layer surfaces exempt from every cap and from U5 refusal | supersedes in part (the totals the renderer handles) |
 | 0015 §6, row U1 | U1 counts native panels and plugin UI only: Tessera's native work for ext windows in steps 1, 7 and 8 is ext UI time, measured as E8 (§4) | supersedes in part |
 | 0015 §6, rows U3 and U4 (b) | Ext paint jobs have their own 1 ms paint slice and 1 MiB upload share; they never use U4 (b)'s slice or U3's cap, so U4 (c) and (d) hold for native and plugin surfaces whatever ext windows do | extends |
@@ -3098,9 +3075,8 @@ in place as usual.
 | LPA §13.14 | A known difference: the reserved layer stays above every plugin window whatever its z-order or activation; the surfaces a script can cause there (lease indicator, notices) are hit- and hover-transparent (§5.3) | extends |
 | LPA §13.14, §15 | A note: the group-A `UI.Native` (slice 2) changes native panel positions and visibility as the user's own toggle or drag would, and `Input.Drive` (slice 2, Offline only) changes the player's state that the gameplay views report; neither produces key events (§7) | extends (note only) |
 | LPA §13.13, §13.14 | A note: ext windows lie below every plugin window and native panel and share the one active window and the one focus; a script's request never takes them from a plugin window or a native panel, and moves them only after the user's gesture (§4) | extends (note only) |
-| LEGAL §9, new §18 | The binding rule and the threat-model limit; a new §18 "Extended scripting" (before "Sources", which becomes §19), carrying this record's §12: the no-BIN-facts rule for `ext-api.md`, the layout residual of §5.6 and the LEGAL §11 assessment of `data.read` with its stated limit (cooperating programs, other ext scripts or plugins, within a session and across sessions). LEGAL §8 is unchanged | extends |
 | `REUSE.toml` (and, if the owner picks it, `LICENSES/MIT.txt`) | The home of the Lua patch (owner question 1): either nothing changes (a fork outside the repository) or one annotated MIT-licensed patch directory is excepted from "no third-party material" | owner's choice |
-| ROADMAP | §1 gains the M5.5 row (theme "Extended scripting, slice 1a", tier T1, new crates `ext`, `ext-host`, `scripttool`); the milestone section is copied from "Roadmap placement proposal"; M5 notes that its split must leave a plugin-free core, and that it measures the M5 plugin set's `Update`, handler and collector time against the 3 ms reserve and the non-paint UI work of event frames against the margin of §8 | extends |
+| ROADMAP | §1 gains the M5.5 row (theme "Extended scripting, slice 1a", new crates `ext`, `ext-host`, `scripttool`); the milestone section is copied from "Roadmap placement proposal"; M5 notes that its split must leave a plugin-free core, and that it measures the M5 plugin set's `Update`, handler and collector time against the 3 ms reserve and the non-paint UI work of event frames against the margin of §8 | extends |
 | `crates/net/src/compat.rs` (doc comment) | "one more `Backend`" becomes "a separate crate implementing `Backend`, tagged `gated-compat`" | implementation follow-up |
 
 0016 item 2 is fulfilled by this record once it is accepted. 0004 is unchanged: the
@@ -3172,25 +3148,14 @@ acceptance.
      loaded, and its collision check against every binding; the ext passes after both
      non-ext passes, with the `opaque` and `opaque_keys` stops; the same order for
      release-class resolution (§5.5; IB D4 and D6).
-5. **`docs/LEGAL.md`:** §9 gains the binding rule "extended scripts never run against an
-   official server" and the threat-model limit; a new **§18 "Extended scripting"**
-   (before "Sources", which becomes §19), carrying this record's §12: the no-BIN-facts
-   rule for `ext-api.md`, the statement that ext support on Tessera's protocol targets
-   the project-owned test server only (T2 as §8 states it), the layout residual of this
-   record's §5.6, and the LEGAL §11 assessment of `data.read` (personal use, offline
-   only, local-only and never held with `session.server`, local-only stores wiped
-   before a server holder opens them, no network route, `Store` and script log capped,
-   and the stated limit of cooperating programs, other ext scripts or plugins, within a
-   session and across sessions through shared quotas and plugin data). §8 is not
-   edited.
-6. **`docs/ROADMAP.md`:** §1 gains the M5.5 row (theme "Extended scripting, slice 1a", tier
-   T1, new crates `ext`, `ext-host`, `scripttool`); the milestone section is copied from
+5. **`docs/ROADMAP.md`:** §1 gains the M5.5 row (theme "Extended scripting, slice 1a",
+   new crates `ext`, `ext-host`, `scripttool`); the milestone section is copied from
    "Roadmap placement proposal"; M5 notes that its split must leave a plugin-free core,
    that its U1 criterion counts native panels and plugin UI only, and that it measures
    the M5 plugin set's (M5 exit criterion 4) plugin `Update`, handler and collector-step
    time against the 3 ms reserve, and the non-paint native and plugin UI work of event
    frames against the margin, of this record's §8 ("The frame budget").
-7. **Plugin specs (notes only, no rule changes):** PR §8.4 and LPA §3.3 (ext items after
+6. **Plugin specs (notes only, no rule changes):** PR §8.4 and LPA §3.3 (ext items after
    the plugin collector step, separate queue and slice); LPA §11.1 (`ext:` words, case,
    no echo, no chat line for an unknown id); LPA §6.6 and PR §11.6 (ext reports never in
    chat); LPA §13.13–§13.14 (the reserved layer and its hit-transparent surfaces, the
@@ -3199,25 +3164,25 @@ acceptance.
    stock in plugin states), PR §4.3–§4.4 (byte-wise string order in every state; the
    locale kept at "C" with no in-process component allowed to change it) and PR §4.5
    (the shared generator is the plugin profile's). PR §10.3 gets no edit.
-8. **`docs/specs/tessera-protocol.md` (written with M7; slice 3):** the script policy with
+7. **`docs/specs/tessera-protocol.md` (written with M7; slice 3):** the script policy with
    `allow` and `forbid`, the default policy (and that only leaving `entity.read` out of
    `allow` stops a client-side through-wall view, §6.5), the server's
    interest-management requirement, the `Server` message limits of §8, and that `/ext:`
    lines are never sent to the server (§3).
-9. **New specs, written in M5.5:** `ext-api.md` and `ext-manifest.md` (or a section of
+8. **New specs, written in M5.5:** `ext-api.md` and `ext-manifest.md` (or a section of
    `ext-api.md`), as listed under "Specs needed".
-10. **Implementation follow-up (a clean-room implementation session, not the accepting
+9. **Implementation follow-up (a clean-room implementation session, not the accepting
    session):** the doc comment of `crates/net/src/compat.rs`.
-11. **The Lua patch's home (owner question 1):** if the owner picks the in-repository
-   option, `REUSE.toml` gains one annotation for the MIT-licensed patch directory and its
-   comment's "no third-party material" sentence names that exception, and
-   `LICENSES/MIT.txt` is added; if the owner picks the external fork, nothing in this
-   repository changes beyond the pinned dependency that slice 1a adds.
-12. **`docs/specs/chat-window.md`:** §10 items 4 and 6 gain the Tessera rule for `ext:`
+10. **The Lua patch's home (owner question 1):** if the owner picks the in-repository
+    option, `REUSE.toml` gains one annotation for the MIT-licensed patch directory and its
+    comment's "no third-party material" sentence names that exception, and
+    `LICENSES/MIT.txt` is added; if the owner picks the external fork, nothing in this
+    repository changes beyond the pinned dependency that slice 1a adds.
+11. **`docs/specs/chat-window.md`:** §10 items 4 and 6 gain the Tessera rule for `ext:`
     words (intercepted before the lookup, no result 3, no unknown-command line, no echo,
     never sent to a backend), and §7.4 step 6 and §7.6 get a note pointing to it; the BIN
     descriptions of the original stay as they are.
-13. **`docs/specs/ui-behaviour.md`:** §4 gets a Tessera note: the reserved layer first,
+12. **`docs/specs/ui-behaviour.md`:** §4 gets a Tessera note: the reserved layer first,
     the ext range after plugin windows and native panels, the shared active window and
     focus under this record's §4, and pointer notifications to ext windows only over
     their own mouse-visible elements.
@@ -3325,7 +3290,7 @@ acceptance.
 | 4 | Grants pinned to the capability list, author and a canonical content hash, keyed by (kind, id); group A re-asked on change except in dev mode (B) | §5.2, criterion 5 |
 | 5 | One-way plugin bridge replayed as user actions; no plugin-data writes, no chat injection (B) | §7 |
 | 6 | Explicit "never offered" list, whole refusal of unknown capability or major (B, A) | §5.6, §2 |
-| 7 | Backend class plus CI dependency check on a tagged separate crate; the official-server rule in LEGAL §9 (A, B) | §6 |
+| 7 | Backend class plus CI dependency check on a tagged separate crate; the official-server boundary (A, B) | §6 |
 | 8 | Language-neutral registry (ports plus binding description, with costs); the mlua constraint recorded (A) | §1.3, §1.4, §11 |
 | 9 | Chunky API, one frame, clear errors on stale handles with `Exists()` (A) | §3 API rules |
 | 10 | Generated reference and annotations; headless check and test tool on a synthetic world (A, B) | §10 |
@@ -3437,8 +3402,8 @@ puts on a worker.
   32-node bound; its rehash is part of R (§1.5, §8).
 - **§5.2 rule 2** reworded: no apartment of a `TesseraProtocol` session holds
   `data.read`; the offline loopback case belongs to the residual.
-- **Plugins as cooperating parties.** Named in §5.2, §5.6, §12, owner question 4 and the
-  LEGAL follow-up; "no single script can" became "no single script can on its own".
+- **Plugins as cooperating parties.** Named in §5.2, §5.6, §12 and owner question 4;
+  "no single script can" became "no single script can on its own".
 - **Ext sequences.** §7 lists the press that a user-bound ext sequence takes in KM §7.2
   step 1 as a channel caused by the user's keymap edit; §5.5 points to it.
 - **Reserved-layer text.** Every string there that is not Tessera's (errors, log lines,
@@ -3602,7 +3567,7 @@ the one folder kind whose grants allow it.
 - **Layout channel.** Listed in §5.6 as layout, not content, and narrowed: ext windows
   hear pointer moves only over their own mouse-visible elements, once per frame.
 - **Persistent covert channels.** Named in §5.2 ("persists across sessions"), owner
-  question 4 and §12, and carried into LEGAL.
+  question 4 and §12.
 - **Patched-build hygiene.** `tostring` shows a per-apartment number, never an address
   (§1.2); the build carries every official lua.org fix for 5.1.5 in both profiles
   (§1.5); E6 covers deep C recursion through coroutines, `gsub`, `sort` and metamethods.
@@ -3640,8 +3605,7 @@ the one folder kind whose grants allow it.
   "extends" row.
 - **`tessera-ext` and settings.** Grant persistence and the settings page are in
   `tessera-ext-host`; `tessera-ext` only parses and validates (§1.1).
-- **"(§12)" references.** Now "this record's §12"; the new LEGAL section is proposed as
-  §18 (§12, follow-up 5).
+- **"(§12)" references.** Now "this record's §12" (§12).
 
 ## Revision 4: answers to the fourth review (2026-10-06)
 
@@ -3683,11 +3647,11 @@ of problems rather than the single case.
    contexts) is a full unload and load with no hand-off table (§10). (c) `bridge.plugins`
    joins `data.read` as **local-only**, exclusive with `session.server`, so plugin data
    can no longer launder decoded data to a server script. (d) `data.read` is offline
-   only, so no live session holds it beside a server channel. The LEGAL §11 assessment
+   only, so no live session holds it beside a server channel. The assessment
    (§12, §5.6, §3 `Data`) now says what is true: no module and no single script can send
    local-only output off the machine; two cooperating scripts the user installs could
    still use shared engine state as a covert channel, which Tessera neither offers nor
-   documents, and LEGAL records it. The default server policy no longer lists
+   documents. The default server policy no longer lists
    `data.read`, and its default `forbid` is empty (§6.5).
 5. **Random numbers were shared.** Fixed (§1.2): each ext apartment has its own generator
    (host natives, seeded from the OS at creation, reseeded only by its own
@@ -3744,7 +3708,7 @@ of problems rather than the single case.
   orphaned stores are listed with a Remove button and named when they block a write; the
   pre-signing limit is stated (§5.2).
 - **§12 file output** now names the script log.
-- **LEGAL §17.2 rule 1.** The ext escape test checks the exact global allow-list, which
+- **Global allow-list.** The ext escape test checks the exact global allow-list, which
   names no interop name; the "no `Ext` in a plugin apartment" test lives in
   `tessera-plugins` (§12, exit criterion 2).
 - **Lease margin.** 350 ms (100 ms over a half-rate tick at 8 fps); owner question 4,
@@ -3803,17 +3767,16 @@ of problems rather than the single case.
    §6.5 says plainly that no client-side rule can stop a script that reads positions and
    draws anything, that a per-module restriction would not help, and that the real
    defence is the server's interest management, which `tessera-protocol.md` must state as
-   a server requirement (follow-up 8).
+   a server requirement (follow-up 7).
 5. **`data.read` + `session.server` was an export.** Fixed by making them mutually
    exclusive (§2, §5.2): a manifest that requires both is refused, and a grant holds at
    most one. With no other network route, "no export" is now true and its meaning is
-   stated (§3 `Data`, §5.6). §12 records a LEGAL §11 assessment, which the new LEGAL
-   section carries (follow-up 5). The default server policy's `forbid` lists the pair too.
-6. **Third-party servers conflicted with 0004 and LEGAL §8.** Fixed by the second option:
+   stated (§3 `Data`, §5.6). §12 records the assessment. The default server policy's `forbid` lists the pair too.
+6. **Third-party servers conflicted with 0004.** Fixed by the second option:
    ext support on `TesseraProtocol` targets the project-owned test server only (§6.1,
-   §6.5, §12), inside 0004's scope and T2's stated status. Third-party servers need a
-   separate decision with owner and counsel review that amends 0004 and LEGAL §8 first.
-   The 0016 "supersedes" row and the LEGAL §8 sentence are removed; Consequences says
+   §6.5, §12), inside 0004's scope. Third-party servers need a
+   separate decision that amends 0004 first.
+   The 0016 "supersedes" row is removed; Consequences says
    0004 and 0016 are unchanged; owner question 3 asks the owner to confirm.
 7. **The deadline missed coroutines and raced across threads.** Fixed (§8, "Deadline at
    the next instruction"): the host tracks the running Lua thread through every ext entry
@@ -3935,7 +3898,7 @@ of problems rather than the single case.
   `default-features = false`. `tessera-ext` and every `gated-compat` crate share a `links`
   value, so Cargo refuses any graph with both. The check also resolves the unified graph
   of the whole workspace and rejects features that enable a `gated-compat` dependency.
-- **Withdrawal.** `tessera-ext-host`'s dependency on `tessera-plugins` is optional behind
+- **Independence.** `tessera-ext-host`'s dependency on `tessera-plugins` is optional behind
   its `bridge` feature (§1.1, §7).
 - **"Never a superseded line".** Reworded (§7): ext refuses while any teleport is pending,
   the user's included; a user teleport issued after an ext one still cancels it with the
@@ -4034,10 +3997,8 @@ of problems rather than the single case.
    (Consequences); this proposal edits neither.
 9. **"Never against an official server" only as strong as the class.** Fixed (§6.5, §12):
    `input.drive` and every later game-command or movement module are Offline only until a
-   separate decision that must answer the proxy case; LEGAL records the limit of the threat
-   model; the class is renamed `TesseraProtocol` because it covers any server speaking our
-   protocol, and LEGAL §8 gains a sentence separating the project-owned T2 server from
-   third-party hosts. Owner question 6 changed accordingly.
+   separate decision that must answer the proxy case; the class is renamed `TesseraProtocol` because it covers any server speaking our
+   protocol. Owner question 6 changed accordingly.
 10. **§5.6 contradicted the bridge.** Fixed: §5.6 states the bridge as the one group-A
     exception (list and read-only plugin data).
 11. **BIN facts in the ext contract.** Fixed by the first option: `ext-api.md` defines ext UI
@@ -4079,14 +4040,13 @@ of problems rather than the single case.
   are not applied.
 - **Dangerous combinations.** Added to the prompt (§5.2).
 - **Alias quickslots.** Added to §7's list of what a plugin can observe or cause.
-- **`Data` "never bulk".** Reworded as personal use under LEGAL §11, with enumeration by DID
-  range kept off; the 16-per-frame cap stays as a load limit, not as a legal claim (§3,
+- **`Data` "never bulk".** Reworded as local use, with enumeration by DID
+  range kept off; the 16-per-frame cap stays as a load limit (§3,
   §12).
 - **`Store` and `.plugindata`.** Fixed (§1.1, §2, §7): the core holds a neutral Lua-table
   data reader; `Store` files are `<key>.store` under `script-store/<kind>/<id>/`; the
   `.plugindata` naming, key grammar and comma rule stay in `tessera-plugins`.
-- **§5.7 citation and the content guard.** Fixed: the statement now points to the new
-  LEGAL section (as LEGAL §17.6 does for plugins); the content guard is defined (§10,
+- **§5.7 citation and the content guard.** Fixed: the content guard is defined (§10,
   `pack`).
 - **Step-1 intents and reads.** Answered by design: no ext Lua runs in step 1 any more; the
   script hears about its step-1 input in 6b of the same frame (§4).

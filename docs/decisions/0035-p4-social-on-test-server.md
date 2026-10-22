@@ -10,7 +10,7 @@ see [Review](#review)). Before: Proposed (spec writer, design, 2026-10-11). The 
 
 Tessera-own design. No client fact, research note, research clone or decompiler output was
 needed or used for the decision itself; its inputs are `docs/` only (decision 0024, decision
-0025, LEGAL.md §11.1, the specs named below).
+0025, `server-content.md`, the specs named below).
 
 ## Context
 
@@ -18,7 +18,7 @@ Decision 0024 P4 ("Social panels") has three exit criteria:
 
 1. "Fellowship, trade and friends scenarios render; leader change, removal and disbanding
    are shown."
-2. "Tells and channel join and leave work on M7's server (chat, rule 5)."
+2. "Tells and channel join and leave work on M7's server (chat, `server-content.md` §7)."
 3. "A synchronised `/play` from a scenario starts within the tolerance of `instruments.md`."
 
 What exists:
@@ -38,11 +38,11 @@ What exists:
   `EntityId`). In the original a member's row keeps its vitals while the member is out of
   view (`social-panels.md` §4.4).
 - Decision 0024 open item 2 asks the owner whether relaying a synchronised `/play` start
-  through M7's server counts as chat under rule 5. Until answered, P4 tests it on the
-  scenario feed only.
+  through M7's server counts as chat under `server-content.md` §7. Until answered, P4 tests
+  it on the scenario feed only.
 
 Binding frame: decision 0024 §2 (client half only; the server stays data-free and feed-free;
-values scripted, never derived), LEGAL.md §11.1 rules 2 and 5, `server-content.md` §7, the
+values scripted, never derived), `server-content.md` §4 and §7, the
 server dependency guard (`tools/check-server-deps.sh`, `scenario-feed.md` §3.1) and decision
 0025 D1 (the overlay run).
 
@@ -50,7 +50,7 @@ server dependency guard (`tools/check-server-deps.sh`, `scenario-feed.md` §3.1)
 
 ### D1. What M7's server gains: named chat channels (exit criterion 2)
 
-LEGAL.md §11.1 rule 5 lets Tessera's own server relay chat. P4 adds to it **only chat**:
+`server-content.md` §7 lets Tessera's own server relay chat. P4 adds to it **only chat**:
 
 - **Tells** stay as in v1.0 (`ChatSend` channel 4, `tessera-protocol.md` §10.3). No change.
 - **Named chat channels** with join, leave and relay, as protocol **minor version 2**
@@ -67,18 +67,19 @@ LEGAL.md §11.1 rule 5 lets Tessera's own server relay chat. P4 adds to it **onl
   and has no wire value: a fellowship exists only in the scenario feed, so the server has no
   members to relay to.
 
-**Rule 5.** A channel is a set of connections that asked to share chat lines, keyed by a
-player-chosen name. The server learns nothing beyond who joined which name and the chat
-text it already relays; it keeps no game state, judges nothing and links no data crate. The
-dependency graph of `tessera-server` does not change; `check-server-deps` stays as it is.
+**Server content scope.** A channel is a set of connections that asked to share chat lines,
+keyed by a player-chosen name. The server learns nothing beyond who joined which name and the
+chat text it already relays; it keeps no game state, judges nothing and links no data crate.
+The dependency graph of `tessera-server` does not change; `check-server-deps` stays as it is.
 
 **Alternatives rejected.** (a) Channels as a server-side configuration list only (no
 player-created channels): exit criterion 2 asks for join and leave of channels the player
 names, and the original's channel commands take a name. (b) Fellowship chat as a server
 "party" of connections: that would be a gameplay group on the server (who leads, who may
-invite), which rule 5 does not list; a channel any player can join covers chat among friends
-without it. (c) Channel membership persisted per character: adds a file format and a
-migration for no P4 criterion; the client can re-join from its own settings at world entry.
+invite), which `server-content.md` §7 does not list; a channel any player can join covers chat
+among friends without it. (c) Channel membership persisted per character: adds a file format
+and a migration for no P4 criterion; the client can re-join from its own settings at world
+entry.
 
 ### D2. What stays on the scenario feed
 
@@ -106,7 +107,7 @@ on the server without a scenario; (2) the overlay subset has no actors, so scrip
 fellows, trade peers and performers could have no entity, while the walker shows the
 server's real players, who would not be grouped, trading or performing on the server: the
 panels would contradict the world; (3) a scripted synchronised start next to real players
-would look like the relay that open item 2 has not allowed; (4) the rule-5 reading of
+would look like the relay that open item 2 has not allowed; (4) the server-scope reading of
 decision 0025 D1 stays unchanged (the server receives nothing new from an overlay run).
 This can be revisited when the owner answers open item 2.
 
@@ -179,27 +180,27 @@ view, synchronised start, player commands) and §14.13 (P4 hostile rows and remo
 ## Open for the owner
 
 1. **Decision 0024 open item 2** (unchanged): does relaying a synchronised `/play` start
-   through M7's server count as chat under rule 5? Until answered, synchronised starts with
-   other players exist only on the scenario feed (D2, D3). Owner row O137.
+   through M7's server count as chat under `server-content.md` §7? Until answered, synchronised
+   starts with other players exist only on the scenario feed (D2, D3). Owner row O137.
 
 ## Review
 
-2026-10-11, spec reviewer (Clean-Room-Role: review), against LEGAL.md §11.1 rule 5,
+2026-10-11, spec reviewer (Clean-Room-Role: review), against `server-content.md` §7,
 decision 0024 §2 and CLEAN_ROOM.md §5.3: **passed**.
 
-- **Rule 5.** D1 adds only chat to M7's server: tells unchanged, and named channels that are
-  sets of connections keyed by a player-chosen name. The server keeps no game state, judges
-  nothing, links no data crate (`tools/check-server-deps.sh` passes on branch `p4`) and
-  persists no channel. Fellowship chat, which would need a server-side group, stays off the
-  wire. Rules 1 and 2 are untouched: no game data and no new opaque reference travel.
+- **Server content scope.** D1 adds only chat to M7's server: tells unchanged, and named
+  channels that are sets of connections keyed by a player-chosen name. The server keeps no
+  game state, judges nothing, links no data crate (`tools/check-server-deps.sh` passes on
+  branch `p4`) and persists no channel. Fellowship chat, which would need a server-side group,
+  stays off the wire. No game data and no new opaque reference travel.
 - **Decision 0024 §2.** Principle 2 (M7's server drives only other players, appearance, chat
   and test actors), principle 3 (the server stays data-free and feed-free), principle 4 (the
   feed only plays back scripted values: `at_ms` is tick time plus a written lead) and
-  principle 6 (a protocol minor only for something rule 5 allows) all hold. Open item 2
-  (synchronised `/play` relay) is left to the owner: v1.2 has no message, property or
-  capability for it, and the test-server backend refuses `ReadyPerformance` and
+  principle 6 (a protocol minor only for something `server-content.md` §7 allows) all hold.
+  Open item 2 (synchronised `/play` relay) is left to the owner: v1.2 has no message, property
+  or capability for it, and the test-server backend refuses `ReadyPerformance` and
   `StartPerformance` (D2).
-- **D3.** The overlay subset is unchanged, so decision 0025 D1's rule-5 reading still
+- **D3.** The overlay subset is unchanged, so decision 0025 D1's server-scope reading still
   holds.
 - **Agreement with the specs.** D1–D4 and the hostile-input table agree with
   `tessera-protocol.md` v1.2 §3.1, §10.6, §13.1 and §14.8, `test-server.md` §4.6 and §9.1,

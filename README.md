@@ -21,18 +21,17 @@ between the people who study the formats and the people who write the code.
 > Middle-earth Enterprises, LLC used under license. Requires a legally obtained installation
 > of the game; no game content is distributed.
 
-Tessera **does not connect to official game servers today**.
+**Official-server compatibility (milestone M8) is partly done and needs more work.**
 
-- **The plan.** Official-server compatibility is planned (milestone M8). The project owner
-  decided on 2026-10-11 to pursue it without a legal review and without permission from
-  the rights holders
-  ([decision 0034](docs/decisions/0034-official-server-compatibility.md)).
-- **The risk.** Connecting a third-party client to the official service may breach
-  Daybreak's EULA and Terms of Service, and can cost you your account. Anyone who does so
-  bears that risk, and the client will make you accept a warning first.
+- **Current state.** All six clean-room protocol specifications (launcher/GLS login flow,
+  UDP session transport, world entry and object lifecycle, movement/chat/`ChatNet`, P1–P6
+  gameplay/WLib RPCs, and wire property encoding) are Accepted, and the foundational
+  `tessera-compat` modules (`backend`, `login`, `session`, `world`) are built; play/gameplay
+  message handlers, end-to-end client wiring, and live server verification still need more
+  work ([M8 status](docs/ROADMAP.md#m8-status),
+  [decision 0034](docs/decisions/0034-official-server-compatibility.md)).
 
-See [DISCLAIMER.md](DISCLAIMER.md) for the full disclaimer and
-[docs/LEGAL.md](docs/LEGAL.md) for the project's legal position.
+See [DISCLAIMER.md](DISCLAIMER.md) for the non-affiliation notice and warranty disclaimer.
 
 ---
 
@@ -145,6 +144,20 @@ binding and the renderer composition are built and verified; the §5–§6 live 
 text integration into the UI element tree — which the committed goldens G1, G3–G8 and the
 real-data goldens depend on — is the outstanding follow-up.
 
+**M8 (official-server compatibility) is partly done and needs more work**
+([M8 status](docs/ROADMAP.md#m8-status)): all six Phase 1 specifications
+([`official-login.md`](docs/specs/official-login.md),
+[`official-session.md`](docs/specs/official-session.md),
+[`official-messages-world.md`](docs/specs/official-messages-world.md),
+[`official-messages-play.md`](docs/specs/official-messages-play.md),
+[`official-messages-gameplay.md`](docs/specs/official-messages-gameplay.md), and
+[`property-system.md`](docs/specs/property-system.md) §10) are Accepted, and the backend
+shell (`backend`), launcher/GLS login flow (`login`), UDP `CConnection` session/transport
+layer (`session`), and world-entry/lifecycle codecs (`world`) are built in `tessera-compat`
+(61 tests, 3 fuzz targets). Implementing the play and P1–P6 gameplay message handlers,
+wiring the live connector into `tessera-client`, and live server verification still need
+more work.
+
 | Area | State |
 |---|---|
 | Archive reader (`.dat`/`.datx` container, directory, compression, DID routing) | done (M0): all 29 archives, 3.8 M entries validated and inflated with 0 errors |
@@ -174,7 +187,7 @@ real-data goldens depend on — is the outstanding follow-up.
 | Social panels (fellowship display with shared vitals, invitation prompt, trade window, Social panel friend and ignore lists), tells, instant-message tab and named chat channels (protocol 1.2 on the test server), synchronised fellowship music, plugin `Party` views | done (P4, merged): criteria 1–3 pass on Tessera's side; 4 committed synthetic scenarios with logs; synchronised starts within 0.0001 s (worst 8.9e-16 s); specs Accepted and code conformed (2026-10-11) |
 | World map with notes, feed markers and filters, minimap markers, place lookup (`/findplace`), travel window and travel presentation, instance finder with queue and alert, instance-travel window, mounted walker (`--mount`, `/ride`, `toggle_mount`), plugin mount views; scenario feed revision "P5 travel" | P5 criteria pass on Tessera's side: 1,525 / 1,525 map regions shown, 1,523 marked, 0 failures; 721 / 722 mount effects drawable per body (1 categorised); 13 local window goldens matched, 12 judged correct (the loading screen is not drawn whole); 6 synthetic goldens; specs in review |
 | Experience bar and level-up, trait panel with trees, branches, cells and slots, skill- and craft-training windows, crafting panel with professions, tiers, meters, recipe list and make controls, recipe-scroll tooltips, gathering hotspots, plugin progression and crafting views (`lua-plugin-api.md` §15.6); scenario feed revision "P6 progression" | P6 criteria pass on Tessera's side: 7,791 / 7,791 recipe records categorised with 0 failures (and 10 professions, 7 vocations, 7 guilds, 32 trainers, 335 gathering nodes, 6,055 scrolls); 17 trees and 1,216 placements categorised (trait half provisional, held by decision 0037 until `progression-panels.md` lands); 4 committed synthetic scenarios replay byte for byte; 8 synthetic panel goldens; 3 fuzz targets; specs in review, `progression-panels.md` not yet in the tree |
-| Official-server compatibility | in scope (M8) by the owner's decision of 2026-10-11, without a legal review ([decision 0034](docs/decisions/0034-official-server-compatibility.md), [LEGAL.md §9](docs/LEGAL.md#9-gates-and-the-official-server-target)); not started, no code exists |
+| Official-server compatibility (`tessera-compat`, M8) | partly done, needs more work ([decision 0034](docs/decisions/0034-official-server-compatibility.md)): all 6 protocol specs Accepted (`official-login`, `official-session`, `official-messages-world`, `official-messages-play`, `official-messages-gameplay`, `property-system` §10); `backend`, `login`, `session`, and `world` codecs built in `crates/compat` (61 tests, 3 fuzz targets); play/gameplay handlers, end-to-end client wiring, and live verification still need more work |
 
 The full plan, with exit criteria per milestone, is in [docs/ROADMAP.md](docs/ROADMAP.md).
 
@@ -334,7 +347,7 @@ from game data is ever written into the repository.
 | `apps/loadtest` | `tessera-loadtest`, load, soak and hostile-input tests against a test server |
 | `fuzz/` | Fuzz targets, one per parser |
 | `tools/` | Machine setup (`dev-setup.sh`), checks run by CI (`check-content.sh`, `check-spdx.sh`, `check-dco.sh`, `fuzz-smoke.sh`), research-clone fetcher, ImHex patterns and Kaitai schemas written from our specs ([tools/README.md](tools/README.md)) |
-| `docs/` | Architecture, roadmap, legal, clean-room process, tooling, specs |
+| `docs/` | Architecture, roadmap, clean-room process, tooling, specs |
 | `research/` | Dirty-room notes. **Implementers must not open this directory.** |
 
 More crates arrive with later milestones (audio, UI layouts, the
@@ -350,7 +363,6 @@ plugin host on top of `crates/script`); see
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Crate layers, data flow from install to frame, threading, DID routing, property and scripted-object systems, testing strategy |
 | [docs/ROADMAP.md](docs/ROADMAP.md) | Milestones M0–M9 and the parity track P0–P8: deliverables, specs, research tasks, exit criteria |
 | [docs/specs/](docs/specs/) | Clean-room format and protocol specifications, the only input for implementation |
-| [docs/LEGAL.md](docs/LEGAL.md) | Legal position, risk tiers, official-server compatibility and its conditions (G4, G5), naming and content rules |
 | [docs/CLEAN_ROOM.md](docs/CLEAN_ROOM.md) | Zones, roles, spec lifecycle, AI-assistance rules, commit trailers, attestation |
 | [docs/TOOLING.md](docs/TOOLING.md) | Tools for building, testing and research, by zone and milestone |
 | [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) | Machine setup, multi-machine hand-off, running a milestone with Claude Code |

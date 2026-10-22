@@ -179,7 +179,7 @@ chosen recipe names a facility (see Open).
   (decision 0031 tier 1, under 1 MiB each). The P6 tier-2 goldens live in the same local
   directory scheme as P2's, P3's and P5's; a patch of the install starts a new set.
 - `tessera-server` gains nothing: it runs no gameplay rules and links no data crate
-  (LEGAL.md §11.1 rule 5, `tools/check-server-deps.sh`); no protocol minor is needed.
+  (`server-content.md` §7, `tools/check-server-deps.sh`); no protocol minor is needed.
 - This record stands on decision 0031. If the owner changes 0031, the P6 panels follow the
   changed rules; if the owner rejects it, §2 and item 5 of §3 fall with it and §1 and items 1–4
   of §3 stand alone.

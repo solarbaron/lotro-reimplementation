@@ -2,20 +2,15 @@
 
 # Contributing to Tessera
 
-Thank you for helping. Tessera is a clean-room project with real legal exposure, so
-please read the required documents before your first contribution. Each takes about
-fifteen minutes.
+Thank you for helping. Please read the required documents before your first contribution.
 
 ## Required reading
 
-1. **[docs/LEGAL.md](docs/LEGAL.md)**: what the project may and may not do, the risk tiers, and
-   the **contributor-risk notice** (§13). If you have installed the game, your own
-   agreement with Daybreak applies to you personally.
-2. **[docs/CLEAN_ROOM.md](docs/CLEAN_ROOM.md)**: the dirty and clean zones, roles, the spec
+1. **[docs/CLEAN_ROOM.md](docs/CLEAN_ROOM.md)**: the dirty and clean zones, roles, the spec
    lifecycle, AI-assistance rules, commit trailers, and the **clean-room attestation**
    (§9) that you agree to by signing off.
-3. **[DISCLAIMER.md](DISCLAIMER.md)**: the non-affiliation statement.
-4. **[CLAUDE.md](CLAUDE.md)**: the short form of the rules, also used by AI agents.
+2. **[DISCLAIMER.md](DISCLAIMER.md)**: the non-affiliation statement.
+3. **[CLAUDE.md](CLAUDE.md)**: the short form of the rules, also used by AI agents.
 
 ## Pick your role
 
@@ -38,21 +33,16 @@ stop. Do not look the fact up elsewhere.
 - **No code from other LOTRO tools**, whatever their licence. Facts go into a spec;
   code is written fresh.
 - **No decompiler or disassembler output**, ever, in code or in a session that writes code.
-- **Official-server connectivity (M8) is in scope** by the owner's decision, without a legal
-  review ([LEGAL.md §9](docs/LEGAL.md#9-gates-and-the-official-server-target), decision
-  0034). Read the risks in [LEGAL.md §13](docs/LEGAL.md#13-contributor-risk-notice) before
-  working on it.
-  - G4: a ban-risk warning comes before any official connection.
-  - G5: the forbidden list of LEGAL.md §8 holds: no shipping, mirroring or linking to client
-    binaries, dat files, patches or old clients; no modified, patched, redirected or
-    injected official client; no Daybreak keys or other secrets in the repository, releases
-    or documentation; no committed captures from official servers; no leaked, NDA-covered or
-    decompiled vendor source; no monetisation beyond donations for infrastructure costs; no
-    bypassed authentication, subscription check, anti-cheat or other access control.
-  - Separately ([LEGAL.md §7](docs/LEGAL.md#7-what-these-facts-mean-for-project-design) item 4), no Daybreak hostnames
-    or endpoints in the repository: the client reads them at runtime from the user's install.
+- **Official-server connectivity (M8) rules** ([decision 0034](docs/decisions/0034-official-server-compatibility.md)):
+  - No shipping, mirroring or linking to client binaries, dat files, patches or old clients;
+    no modified, patched, redirected or injected official client; no Daybreak keys or other
+    secrets in the repository, releases or documentation; no committed captures from official
+    servers; no leaked, NDA-covered or decompiled vendor source; no bypassed authentication,
+    subscription check, anti-cheat or other access control.
+  - No Daybreak hostnames or endpoints in the repository: the client reads them at runtime
+    from the user's install.
   - Live logins never run from CI.
-- **No trademarks in names.** See [LEGAL.md §10](docs/LEGAL.md#10-naming-and-trademark-rules).
+- **No trademarks in names.** See [CLAUDE.md](CLAUDE.md#naming).
 
 ## Commits
 

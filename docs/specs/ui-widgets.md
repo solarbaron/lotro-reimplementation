@@ -4,11 +4,11 @@
 
 | | |
 |---|---|
-| **Status** | **Accepted** (2026-10-23, independent review by spec-review:spec-ui-r4:3 (independent session), which wrote no part of the round-4 revision: passed CLEAN_ROOM.md §5.3, every item; contamination screen clean; see the review record). Before: **Revised** (revision 4, 2026-10-23: the round-3 implementer OPENs of §12, §18 and §19 filed and answered; new §11.3 deactivation rule, new §12.5, provenance rows W33 and W34, BIN revision 4; review round 1 fixes of §2.4 and §11.3; awaiting independent review; see the change log). Before: **Accepted** (2026-10-23: revision 3 passed an independent review after round 5; see the review record). Revision 3 of 2026-10-23: §12 viewport and `TargetViewport` drawing (§12.1–§12.4), new §18 engine dialog boxes and §19 context menus, provenance rows W30–W32, BIN revision 3; round-4 wording fixes of §18.2, §19.3, §19.4 and W29; round-5 wording fixes of §19.2, §18.6, W30 and the BIN revision-3 cell. Before: **Accepted** (2026-10-14: revision 2 passed an independent review; see the review record). Revision 2 (2026-10-14): §6.4 implementer OPEN answered, new provenance row W29, §6.10 census row, §17 item 18; no behaviour already implemented changes. Before: Accepted (2026-10-06: accepted after revision for decisions 0014/0015) |
+| **Status** | **Accepted** (revision 5, 2026-10-23: independent review by spec-review:spec-ui-r5:1 (independent session), which wrote no part of it: passed; see the review record). Before: **Revised** (revision 5, 2026-10-23, spec writer: the round-4 implementer OPENs of §12.4 and §18.4 filed and answered as Tessera rules (holds from before a modal dialog, the plugin key broadcast, press and release pairing), §17 item 28; no new research, no fact about the original changed; awaiting an independent review; see the change log). Before: **Accepted** (2026-10-23, independent review by spec-review:spec-ui-r4:3 (independent session), which wrote no part of the round-4 revision: passed CLEAN_ROOM.md §5.3, every item; contamination screen clean; see the review record). Before: **Revised** (revision 4, 2026-10-23: the round-3 implementer OPENs of §12, §18 and §19 filed and answered; new §11.3 deactivation rule, new §12.5, provenance rows W33 and W34, BIN revision 4; review round 1 fixes of §2.4 and §11.3; awaiting independent review; see the change log). Before: **Accepted** (2026-10-23: revision 3 passed an independent review after round 5; see the review record). Revision 3 of 2026-10-23: §12 viewport and `TargetViewport` drawing (§12.1–§12.4), new §18 engine dialog boxes and §19 context menus, provenance rows W30–W32, BIN revision 3; round-4 wording fixes of §18.2, §19.3, §19.4 and W29; round-5 wording fixes of §19.2, §18.6, W30 and the BIN revision-3 cell. Before: **Accepted** (2026-10-14: revision 2 passed an independent review; see the review record). Revision 2 (2026-10-14): §6.4 implementer OPEN answered, new provenance row W29, §6.10 census row, §17 item 18; no behaviour already implemented changes. Before: Accepted (2026-10-06: accepted after revision for decisions 0014/0015) |
 | **Last updated** | 2026-10-23 |
 | **Author role** | Spec writer (dirty room), AI-assisted |
-| **Reviewer** | Claude review session (spec-writer agent); revision 4: spec-review:spec-ui-r4:3 (independent session), which wrote no part of it, 2026-10-23, after the round-2 fixes: passed, Accepted; spec-review:spec-ui-r4:2 (independent session), which wrote no part of it, 2026-10-23, after the round-1 fixes: changes requested (§18.2 cross-owner order; see the change log), status stays Revised; spec-review:spec-ui-r4:1 (independent session), which wrote no part of it, 2026-10-23: changes requested (§2.4 message table, §11.3 wording; see the change log), status stays Revised; revision 3: spec-review:spec-ui-input:2 (independent session), which wrote no part of it (2026-10-23); revision 2: an independent dirty-room review session that wrote no part of it (2026-10-14) |
-| **Review record** | **Review 2026-10-23 of the round-4 revision** (spec-review:spec-ui-r4:3 (independent session), which wrote no part of it): **passed**; status Revised → Accepted. Revision 4 with the round-1 and round-2 fixes: §2.4 keys, §11.3 deactivation OPEN and Tessera rules, §11.4, §12.1–§12.3 answers, new §12.5, §17 items 25–27, §18.2 client-wide order (round-2 fix reproduces steps 2–4), §18.4, §19.3, §19.4, W33, W34, BIN revision 4 (question (q) within decision 0011: build, SHA-256, tool, question and why M1–M3 were not enough stated; not re-traced). Non-blocking: (1) the parenthesis closing the §18.2 engineering-choices callout says item (c) is answered in §19.4; the answer is in §19.3; (2) the Status cell lists the round-1 fixes but not the round-2 fix of §18.2. CLEAN_ROOM.md §5.3 met on the changed text: functional facts and labelled Tessera rules only; no code or pseudo-code; no copied prose; no game text (strings cited by token only), keys, hostnames or traffic; no disassembly in prose; new facts carry provenance rows and marks; unknowns are OPEN callouts with Tessera rules; nothing outside decision 0034 §2; contamination screen clean. Relative links and anchors of the ten round-4 specs resolve. Spot checks (own read-only probes, 2026-10-23): `EnablePortraits=True` in `[Render]` of both preference files; `FilterMenu` based on `MapNoteFilterMenu` (based on `Menu_02` of 0x22000080, `auto_close_on_selection` false, `text_item` `ContextMenuBool` of 0x2200007B, `selection_display` 0); `MapMenu` based on `AvailableMapMenu`, based on `DropDownButton` of 0x22000004 with `boolean_button` true; `Menu_01` of 0x22000080 a Menu without `auto_close_on_selection`; the finder's `…_TierMenu` (popup `Menu_01_PopupField`, items `Menu_01_PopupItem`, own selection display, no `auto_close_on_selection`) and `…_SizeMenu` (based on `Menu_01`). Before: **Review of revision 3 after round 5, 2026-10-23** (spec-review:spec-ui-input:2 (independent session), which wrote no part of it): **passed**; status Revised → Accepted. CLEAN_ROOM.md §5.3 met on the changed text: functional facts and labelled Tessera rules only; no code or pseudo-code, no copied prose, no game text, keys or hostnames; no disassembly in prose (§18.2, §19.2–§19.4, W29 and §18.6 state observable results; the BIN revision-3 cell names questions (n)–(p) only); BIN (n)–(p) within decision 0011 (offline UI code, build, full SHA-256, tool, questions and why M1–M3 were not enough stated; scope confirmed by the orchestrator); decision-0012 constants listed in W30 and W31; every unknown is an OPEN with a Tessera rule (§17 items 19–24). Spot checks against the install: layouts 0x2200007C and 0x2200007B, scene 0x21000004 and texture lists 0x40000E4B, 0x40000E4C present; relative links and anchors resolve. Non-blocking: none. **Review of revision 3 after round 4, 2026-10-23** (spec-review:spec-ui-input:1 (independent session), which wrote no part of it): **changes requested**; status stays Revised. The round-4 fixes of §18.2, §19.3, §19.4 and W29 hold, and the layout IDs, boxes and mapper names of §18.1 and §19.1 agree with the install. Blocking: §19.2 still words an item of another kind as stopping "the build", which describes construction and leaves open whether the menu is shown in part or not at all; state the observable result. Non-blocking: cut the BIN revision-3 parenthetical list of code kinds that were read to "BIN (n)–(p)", as G42 now does. **Review of revision 3, 2026-10-23** (spec-review:spec-ui-input:2): **changes requested** (B1: the fixed 10 pixels of §19.3 missing from W31), answered by the review fixes; a later review asked that §18.2 and §19.3 state observable results only and that review-record text move to the review log; answered by round 4 (change log). Status stays Revised. **Review of revision 2, 2026-10-14** (commit 7c545cd on branch `specfix`): **passed, Accepted**; its spot checks of W29 agreed with the text. Earlier: Review of the decision-0014/0015 revision, 2026-10-06: **passed**, Accepted. Full records moved to the review log (decision 0018). |
+| **Reviewer** | Claude review session (spec-writer agent); revision 5: spec-review:spec-ui-r5:1 (independent session), which wrote no part of it, 2026-10-23: passed, Accepted; revision 4: spec-review:spec-ui-r4:3 (independent session), which wrote no part of it, 2026-10-23, after the round-2 fixes: passed, Accepted; spec-review:spec-ui-r4:2 (independent session), which wrote no part of it, 2026-10-23, after the round-1 fixes: changes requested (§18.2 cross-owner order; see the change log), status stays Revised; spec-review:spec-ui-r4:1 (independent session), which wrote no part of it, 2026-10-23: changes requested (§2.4 message table, §11.3 wording; see the change log), status stays Revised; revision 3: spec-review:spec-ui-input:2 (independent session), which wrote no part of it (2026-10-23); revision 2: an independent dirty-room review session that wrote no part of it (2026-10-14) |
+| **Review record** | **Review 2026-10-23 of revision 5** (spec-review:spec-ui-r5:1 (independent session), Clean-Room-Role: review; wrote no part of the revision or of the code): **passed**; status Revised → Accepted. Checked against CLEAN_ROOM.md §5.3, every item, on the uncommitted worktree diff against HEAD; contamination screen clean (no code, pseudo-code or listing-shaped text, no disassembly prose, no game text, keys, hostnames or traffic, nothing outside decision 0034 §2); every added statement is a labelled Tessera rule or a pointer to Accepted text, no new observation of the original claimed; every round-4 implementer OPEN of the package's report for this spec is filed and answered; relative links and anchors of the four package specs resolve (own check). Cross-checks: the §18.4 answers agree with the modal rule of W30, the revision-4 Tessera rule (§17 item 26), LPA P48 and §13.13 (broadcast only for key actions the focus control or active window did not consume), KM §3.3 "Release on the first `opaque_keys` entry" and KM §7.3 (256 holds; holds end at the physical release); the text-input `EscapeKey` precision agrees with UB §5.4 (`lose_focus_on_escape`) and states its override; "0 in layouts" for `UICore_Dialog_modal` is the UL §5.9 row; the §12.4 answer agrees with §12.1 step 1. The departure from the original's release consumption is labelled a Tessera rule and recorded as a known difference (§17 item 28). Non-blocking: (N1) §18.4 round-4 answer item 1 cites KM §7.3 for "game code ignores repeats for holds"; that rule is KM §7.2 ("Presses that are not resolved") and §7.8.6. (N2) item 3's "no release arrives without its press, in any receiver" holds only inside the 256 and 64 tracking bounds; the precisions bullet of the second answer already names the unpaired release when a bound forgets an entry, so the two read together. (N3) the §18.4 table row "release of `AcceptKey` or `EscapeKey` … consumed" and the revision-4 sentence on the `EscapeKey` release of a message carry no pointer to the pairing rule that replaces them for Tessera; a pointer would help readers who stop at the table. Earlier: **Review 2026-10-23 of the round-4 revision** (spec-review:spec-ui-r4:3 (independent session), which wrote no part of it): **passed**; status Revised → Accepted. Revision 4 with the round-1 and round-2 fixes: §2.4 keys, §11.3 deactivation OPEN and Tessera rules, §11.4, §12.1–§12.3 answers, new §12.5, §17 items 25–27, §18.2 client-wide order (round-2 fix reproduces steps 2–4), §18.4, §19.3, §19.4, W33, W34, BIN revision 4 (question (q) within decision 0011: build, SHA-256, tool, question and why M1–M3 were not enough stated; not re-traced). Non-blocking: (1) the parenthesis closing the §18.2 engineering-choices callout says item (c) is answered in §19.4; the answer is in §19.3; (2) the Status cell lists the round-1 fixes but not the round-2 fix of §18.2. CLEAN_ROOM.md §5.3 met on the changed text: functional facts and labelled Tessera rules only; no code or pseudo-code; no copied prose; no game text (strings cited by token only), keys, hostnames or traffic; no disassembly in prose; new facts carry provenance rows and marks; unknowns are OPEN callouts with Tessera rules; nothing outside decision 0034 §2; contamination screen clean. Relative links and anchors of the ten round-4 specs resolve. Spot checks (own read-only probes, 2026-10-23): `EnablePortraits=True` in `[Render]` of both preference files; `FilterMenu` based on `MapNoteFilterMenu` (based on `Menu_02` of 0x22000080, `auto_close_on_selection` false, `text_item` `ContextMenuBool` of 0x2200007B, `selection_display` 0); `MapMenu` based on `AvailableMapMenu`, based on `DropDownButton` of 0x22000004 with `boolean_button` true; `Menu_01` of 0x22000080 a Menu without `auto_close_on_selection`; the finder's `…_TierMenu` (popup `Menu_01_PopupField`, items `Menu_01_PopupItem`, own selection display, no `auto_close_on_selection`) and `…_SizeMenu` (based on `Menu_01`). Before: **Review of revision 3 after round 5, 2026-10-23** (spec-review:spec-ui-input:2 (independent session), which wrote no part of it): **passed**; status Revised → Accepted. CLEAN_ROOM.md §5.3 met on the changed text: functional facts and labelled Tessera rules only; no code or pseudo-code, no copied prose, no game text, keys or hostnames; no disassembly in prose (§18.2, §19.2–§19.4, W29 and §18.6 state observable results; the BIN revision-3 cell names questions (n)–(p) only); BIN (n)–(p) within decision 0011 (offline UI code, build, full SHA-256, tool, questions and why M1–M3 were not enough stated; scope confirmed by the orchestrator); decision-0012 constants listed in W30 and W31; every unknown is an OPEN with a Tessera rule (§17 items 19–24). Spot checks against the install: layouts 0x2200007C and 0x2200007B, scene 0x21000004 and texture lists 0x40000E4B, 0x40000E4C present; relative links and anchors resolve. Non-blocking: none. **Review of revision 3 after round 4, 2026-10-23** (spec-review:spec-ui-input:1 (independent session), which wrote no part of it): **changes requested**; status stays Revised. The round-4 fixes of §18.2, §19.3, §19.4 and W29 hold, and the layout IDs, boxes and mapper names of §18.1 and §19.1 agree with the install. Blocking: §19.2 still words an item of another kind as stopping "the build", which describes construction and leaves open whether the menu is shown in part or not at all; state the observable result. Non-blocking: cut the BIN revision-3 parenthetical list of code kinds that were read to "BIN (n)–(p)", as G42 now does. **Review of revision 3, 2026-10-23** (spec-review:spec-ui-input:2): **changes requested** (B1: the fixed 10 pixels of §19.3 missing from W31), answered by the review fixes; a later review asked that §18.2 and §19.3 state observable results only and that review-record text move to the review log; answered by round 4 (change log). Status stays Revised. **Review of revision 2, 2026-10-14** (commit 7c545cd on branch `specfix`): **passed, Accepted**; its spot checks of W29 agreed with the text. Earlier: Review of the decision-0014/0015 revision, 2026-10-06: **passed**, Accepted. Full records moved to the review log (decision 0018). |
 | **Implements into** | `crates/ui` (engine widget classes on top of the element tree of `ui-layout.md` §9), `apps/client` (native panels P3, P4, P5, P7, P8, P12 of `ui-layout.md` §17) |
 | **Companion specs** | [`ui-layout.md`](ui-layout.md) (UL: record grammar §4, properties §5.9, inheritance §7, layout §8, creation, states, drawing, Button states §9). [`ui-behaviour.md`](ui-behaviour.md) (UB: commands, capture, presses and releases, wheel delivery, messages). [`property-system.md`](property-system.md) (PS: dictionary defaults §2.2, value types §4). [`records.md`](records.md) (REC: enum mappers §7). [`fonts.md`](fonts.md) (FO: text in buttons and entries). [`keymap.md`](keymap.md) (KM §12: input-map keys such as `ScrollableControls_Mouse`). [`lua-plugin-api.md`](lua-plugin-api.md) (LPA: plugin controls that wrap these classes). Checklist [`m5-visual.md`](../checklists/m5-visual.md) rows P3-A, P4-A, P5-A, P7-A, P8-S, P12-A. |
 
@@ -1707,6 +1707,19 @@ or no 3-D scene drawing in the client yet), the element and its children (for P5
 reading, now a Tessera rule. The original's behaviour in that case (the masked black
 background, and the hidden `…_COVER_LOWRES` elements with their state lists) was not traced.
 
+> **OPEN (implementer, 2026-10-23), round 4:** (`apps/client`, portraits) the walker draws a
+> portrait for any entity that has a built character figure. An entity the walker draws only
+> through its object layer (no character figure) shows no portrait, which is treated as the
+> "nothing to draw" case of this section. §12.1 step 3 per-target framing is still not built
+> (the head-and-shoulders stand-in camera of §12.2).
+>
+> **Answered (spec writer, 2026-10-23, revision 5):** confirmed as a **Tessera rule** for now.
+> In the original any entity the client knows gets a figure (§12.1 step 1); Tessera's
+> object-layer-only entity counts as "a figure still loading" of this section until the
+> portrait can build its figure from the entity's own visual (the setup the object layer
+> draws), which is a gap of the build, not a rule. The step-3 framing gap and its order of
+> work stay as §12.1 says.
+
 <a id="s12-5"></a>
 ### 12.5 Animation and redraw (revision 4; Probable; Tessera rules)
 
@@ -2005,6 +2018,11 @@ numbering).
     them).
 27. Whether the original keeps a Menu's popup open on deactivation in some situation (§11.3;
     Tessera: it always closes).
+28. Whether the original's modal key consumption also keeps the plugin key broadcast from
+    running (§18.4; derived from LPA P48 and W30, not traced as one path; Tessera: no
+    broadcast for what the modal rule consumes), and what an earlier receiver of a key sees
+    when a confirmation consumes its release (§18.4; Tessera: presses and releases are
+    paired, a known difference).
 
 Outside this spec: the Text class's own scrolling (Text is a Scrollable, §3.2, but its line
 layout belongs to FO). Unused in data and so not pursued: any reader of
@@ -2199,6 +2217,108 @@ release of every key that was pressed while it was shown, so no key reaches game
 > the exceptions are the dialog's own commands of the table above and, for a text-input dialog,
 > the keys its entry takes (text, cursor, focus cycle). The rule is needed only once a request
 > sets `modal` (none does in the client today, so nothing changes until then).
+
+<a id="s18-4-pairs"></a>
+> **OPEN (implementer, 2026-10-23), round 4, three questions on the rules above:** (1) when a
+> modal dialog appears, do game-band key holds from before it end at once, with their End
+> reaching game code (as when a text entry takes the keyboard, KM §3.3), or do they stay held
+> until their own release? (2) While a modal dialog is the keyboard target, does a key press
+> the dialog does not consume still raise the UI's key broadcast, so plugins get `KeyDown`;
+> do plugin key events count as "game code below it"? (3) The table consumes the release of
+> `AcceptKey` on a shown confirmation with no condition, so a key pressed before the
+> confirmation appeared reaches its receiver as a press and never as a release (a stuck key).
+>
+> **Answered (spec writer, 2026-10-23, revision 5):**
+>
+> 1. **Holds from before stay held until their own release.** The modal rule above consumes
+>    only the releases of keys pressed *while* the dialog is shown (BIN, W30); the release of
+>    a key pressed before it is not consumed, so it reaches game code as in the original, and
+>    movement that key started stops at that release. Appearing does not end holds. The
+>    Tessera reading that the dialog ends game-band holds when it appears is **not** taken.
+>    Two things still end them by other rules: the dialog's entry taking the keyboard focus (a
+>    text-input dialog with `…textinput_activateandtakefocus`, or a click into its entry) ends
+>    game-band key holds as any focused text field does (KM §3.3, "Release on the first
+>    `opaque_keys` entry"), and focus loss of the window ends every hold (KM §7.3). OS repeats
+>    of such a key while the dialog is shown are presses and are consumed (game code ignores
+>    repeats for holds; KM §7.3).
+> 2. **No key broadcast for what the modal dialog consumes.** Plugin key events count as game
+>    code below the dialog. The plugin `KeyDown`/`KeyUp` broadcast runs only for a key action
+>    that the focus control or active window did not consume (LPA §13.13, P48, BIN), and a
+>    modal dialog consumes every key press while it is shown (W30), so no press made while a
+>    modal dialog is shown reaches the broadcast, the dialog's own commands and its entry's
+>    keys included (they are consumed by the dialog or the entry). This is derived from the
+>    two BIN facts, not traced as one path (§17 item 28). **Tessera rule:** the broadcast is
+>    skipped for every press and release the modal rule consumes, whether or not the dialog
+>    is the active panel (as item 26 of §17 already says for the consumption itself). A
+>    release that goes past the dialog (item 3) raises `KeyUp` as usual.
+> 3. **Presses and releases go to the same receiver (Tessera rule; a known difference).** The
+>    original consumes the release of `AcceptKey` or `EscapeKey` while a confirmation (and of
+>    `AcceptKey` while a message) is the active panel, whatever received the press (the table,
+>    BIN); with a key held across the dialog's appearance the earlier receiver then sees no
+>    release. Tessera pairs the two halves instead:
+>    - a release is consumed by a dialog exactly when the press of that key was consumed by a
+>      dialog: it gave a result, or the modal rule took it. That release is consumed even when
+>      the dialog is gone by then (the press closed it), so game code and the broadcast see
+>      neither half of the key;
+>    - a release whose press went past every dialog (it was made before the dialog appeared,
+>      or while the dialog did not react to keys) goes past the dialog too, even while a
+>      confirmation, message or modal dialog is shown: its receiver, the plugin `KeyUp`
+>      broadcast included, gets the release.
+>
+>    The pairing covers every key a dialog takes, `AcceptInput` and the `EscapeKey` of a
+>    message included, so it **replaces** the sentence of the revision-4 answer above that an
+>    `EscapeKey` release after a message closed reaches the next handler (that is the
+>    original's behaviour, BIN, and stays the fact; Tessera consumes that release too).
+>    The difference from the original shows only for a key held while a dialog appears or
+>    closes; no key is left pressed, and no release arrives without its press, in any
+>    receiver. Holds of the key map itself never stick:
+>    they end at the physical release whoever consumes it (KM §7.3 step 1).
+>
+> **Implemented behaviour changes:** a release of `AcceptKey` or `EscapeKey` whose press came
+> before the confirmation is no longer consumed (the regression test that checks the
+> release after the dialog has closed stays valid; a test that the release goes on while the
+> confirmation is still shown is now correct too).
+
+> **OPEN (implementer, 2026-10-23), round 4, Tessera rules as built (two code packages):**
+> (client host) (a) only key holds pressed while a modal dialog is shown are consumed: their
+> press, repeats and release, the release even after the dialog closed; at most 256 such holds
+> are tracked, the oldest forgotten; keys held from before keep reaching game code; (b) under a
+> modal dialog typed text goes only to the UI's focus, never to the chat window's entry or game
+> code; (c) the client's own raw keys wait too (the walker's world keys, the NPC windows'
+> Escape and Enter, the map and finder keys). (UI core) (a) the release of a key whose press gave
+> a confirmation or message result is consumed though the dialog is gone; (b) while a modal
+> dialog is shown, a press whose keyboard target lies outside it is not delivered to that
+> target, and a held release goes only to a target inside a modal dialog that is still shown;
+> (c) an OS repeat of a key that went down before the modal dialog appeared is consumed, its
+> release is not held back; (d) held releases are matched by command name, at most 64 at a
+> time, and a new press with no modal dialog shown forgets the held one; (e) a dialog whose
+> element lies in its modal container (UL §9.1) is modal for keys whatever its description
+> says, and a layout panel opened with `UICore_Dialog_modal` is a modal, confirmation-keyed
+> dialog; (f) `EscapeKey` in a text-input entry with the quit button hidden gives no result and
+> goes on as an ordinary key of the entry (lose focus on Escape applies).
+>
+> **Answered (spec writer, 2026-10-23, revision 5):** every item is an engineering choice
+> with no client fact behind it beyond the table, the modal rule (W30) and the answer above;
+> all are confirmed as **Tessera rules**, with these precisions:
+>
+> - Client host (a), UI core (a), (c) and (d) are the pairing rule of item 3 above, built in
+>   two places; both bounds are confirmed (256 matches the key map's hold limit, KM §7.3; 64
+>   is enough for the UI core's command names). When a bound forgets an entry, that key's
+>   later release goes past as an unpaired release; nothing else changes.
+> - Client host (b) and UI core (b): while a modal dialog is shown, key presses and typed
+>   characters reach only a keyboard target inside that dialog (its entry); a focus outside
+>   it, the chat window's entry included, gets nothing until the dialog closes. With no
+>   target inside the dialog, typed characters are dropped.
+> - Client host (c): confirmed; the client's raw keys are UI bindings or game code in the
+>   sense of the modal rule.
+> - UI core (e): confirmed. No layout in this install sets `UICore_Dialog_modal` (UL §5.9,
+>   "0 in layouts"), so the case has no install data; the element lying in a modal container
+>   is the stronger test and decides.
+> - UI core (f): confirmed, completing the revision-4 rule ("it is consumed"): the entry
+>   handles `EscapeKey` as its own key (it gives up the focus when its
+>   `UICore_Text_lose_focus_on_escape` is true, UB §5.4), and the key reaches nothing outside
+>   the dialog in either case (no game menu, no broadcast; this overrides the "not consumed"
+>   branch of UB §5.4 inside a text-input dialog); the dialog stays shown without a result.
 
 <a id="s18-5"></a>
 ### 18.5 Results and closing
@@ -2412,3 +2532,5 @@ they are Menu elements (§11) whose popups the map window and the finder fill (�
 | 2026-10-23 | Independent review of revision 4 after the round-1 fixes (spec-review:spec-ui-r4:2 (independent session), which wrote no part of it): **changes requested**; status stays Revised. The round-1 fixes hold (§2.4 keys 0x1C `Menu_new_selection` and 0x2F `Element_deactivated` agree with the install's `UIElementMessage` mapper; §11.3 is a behavioural OPEN with §17 item 27). Blocking: §18.2, answer to the cross-owner OPEN: the Tessera rule says steps 1–4 hold client-wide, but its order ("the request that has waited longest among all owners' queues", with a request put back by step 3 counting only as the oldest of its owner's) can show another owner's older request before a dialog that step 3 put back at the front of the queue, so it departs from step 3 when two or more owners wait; "waited longest" is also undefined for a put-back request. State an order that reproduces steps 3 and 4 client-wide (every request step 3 puts at the front is shown before any other waiting request, the latest put-back first), or mark the departure as a Tessera rule that replaces step 3 across owners. Spot checks passed (own read-only probes): layout 0x22000080 (`Menu_01`, `Menu_02` and their popups, lists and scroll bars), the finder's `…_SizeMenu` (based on `Menu_01`) and `…_TierMenu` (type `FellowshipMakerTierMenu`, popup `Menu_01_PopupField`, items `Menu_01_PopupItem`, its own selection display), scene 0x21000004 (`Camera_1` about 5.8 m from the origin and 1.9 m up, `CameraFOV` 60, `CameraFarDistance` 20, three Light elements), the mask lists 0x40000E4B and 0x40000E4C (five DXT3 levels, 64 × 64 to 4 × 4, the largest in the high-resolution archive), `EnablePortraits=True` in `[Render]` of both preference files, and 1,014 + 592 = 1,606 `Opponent` and `Self` descriptions. BIN (q) was not re-traced. No other text changed. |
 | 2026-10-23 | Revision 4, round-2 fixes (spec writer, dirty room; status stays Revised, awaiting independent review). Section numbers unchanged; no new facts. **§18.2**, answer to the cross-owner OPEN: the Tessera rule now states one client-wide order that reproduces steps 2–4: every request that step 3 put at the front is shown before any other waiting request, whatever its owner, the most recently put-back first; then the requests step 2 added at the end, earliest first. The undefined "waited longest" wording is gone. **Implemented behaviour changes** only with two or more owners waiting at once. |
 | 2026-10-23 | Independent review (spec-review:spec-ui-r4:3 (independent session)) of the round-4 revision: **passed**, CLEAN_ROOM.md §5.3 every item; contamination screen clean; status Revised → Accepted. Header status and review record only; no other text changed. |
+| 2026-10-23 | **Revision 5** (spec writer, dirty room; status Accepted → Revised, awaiting an independent review). No new research; no fact about the original changed; section numbers unchanged (new anchor `s18-4-pairs`). Round-4 implementer OPENs filed and answered: **§18.4** (1) game-band holds from before a modal dialog stay held until their own release (from the W30 modal rule; the dialog's entry taking the focus still ends them by KM §3.3); (2) no plugin key broadcast for what the modal rule consumes (derived from LPA P48 and W30; Tessera rule); (3) presses and releases of a key go to the same receiver (Tessera rule, a known difference from the original's unconditional release consumption: a release whose press went past every dialog goes past it too, a release whose press a dialog consumed is consumed even after the dialog closed, which replaces the revision-4 sentence on the `EscapeKey` release of a message); the two code packages' built choices (client host (a)–(c), UI core (a)–(f)) confirmed as Tessera rules with precisions (typed text only to a target inside the modal dialog; `EscapeKey` in a text-input entry without quit button consumed in every case). **§12.4:** an entity drawn only through the object layer shows no portrait for now (Tessera rule; a gap of the build). §17 item 28 added. **Implemented behaviour changes:** a release of `AcceptKey` or `EscapeKey` whose press came before a confirmation is no longer consumed. |
+| 2026-10-23 | Independent review (spec-review:spec-ui-r5:1 (independent session)) of revision 5: **passed**; status Revised → Accepted; three non-blocking notes in the review record. Header only (status, reviewer and review record); no fact, rule or section changed. |

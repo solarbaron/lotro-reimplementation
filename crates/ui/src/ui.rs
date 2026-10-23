@@ -152,6 +152,17 @@ pub struct Ui {
     /// re-layout puts it back into the frame first and never adds the offset twice). Empty at
     /// the identity; only safe-area panel roots get an entry.
     pub(crate) frame_offsets: std::collections::HashMap<ElementKey, (i32, i32)>,
+    /// The fit-to-screen factor *q* each root panel carries (`ui-scaling.md` §5.6), with the
+    /// node scale it multiplies and the scale it wrote, so that *q* is recomputed from the
+    /// root's own (per-window or plugin `SetScale`) scale and never compounds. Empty at the
+    /// identity; only roots with *q* < 1 get an entry.
+    pub(crate) fit_q: std::collections::HashMap<ElementKey, crate::scale::FitQ>,
+    /// The bare fit factor *f* of each fitted fit container (`ui-scaling.md` §5.4). Its node
+    /// scale holds *f* × *m*(parent) (§3.4 item 2), because the tree reads only the nearest
+    /// node scale; this keeps *f* for [`Ui::fit_factor`]. Only factors other than 1 are kept.
+    pub(crate) fit_f: std::collections::HashMap<ElementKey, f32>,
+    /// The layout path's cache of Type A fit groups (`ui-scaling.md` §5.4), checked on use.
+    pub(crate) fit_groups: crate::scale::GroupCache,
 }
 
 impl std::fmt::Debug for Ui {
@@ -230,6 +241,9 @@ impl Ui {
             ui_screen: None,
             safe_area: None,
             frame_offsets: std::collections::HashMap::new(),
+            fit_q: std::collections::HashMap::new(),
+            fit_f: std::collections::HashMap::new(),
+            fit_groups: crate::scale::GroupCache::default(),
         }
     }
 
@@ -694,6 +708,17 @@ impl Ui {
         let Some(parent) = self.el(k).and_then(|e| e.parent) else {
             return;
         };
+        // `ui-scaling.md` §5.4: a Type A fit group is formed from the members attached to the
+        // screen, so the members left behind are fitted again without this one.
+        let regroup =
+            if self.ui_screen.is_some() && (self.is_fit_root(k) || self.is_type_a_member(k)) {
+                self.type_a_group(k)
+                    .into_iter()
+                    .map(|(m, _)| m)
+                    .find(|m| *m != k)
+            } else {
+                None
+            };
         self.mark_dirty(k);
         let mut tree_fix = None;
         if let Some(p) = self.el_mut(parent) {
@@ -715,6 +740,9 @@ impl Ui {
         self.input.hover_dirty = true;
         if let Some(r) = tree_fix {
             self.tree_after_removal(parent, r);
+        }
+        if let Some(m) = regroup {
+            self.layout_element(m);
         }
     }
 
@@ -791,6 +819,10 @@ impl Ui {
             self.lists.remove(&k);
             self.frame_set.remove(&k);
             self.saved.registered.remove(&k);
+            self.frame_offsets.remove(&k);
+            self.fit_q.remove(&k);
+            self.fit_f.remove(&k);
+            self.fit_groups.forget(k);
         }
         self.focus_forget_set(doomed);
         self.subs.forget_set(doomed);
@@ -888,8 +920,13 @@ impl Ui {
             // Plugin controls follow `lua-plugin-api.md` §13.16, never §8.4.
             return;
         }
-        // Step 1 (Tessera choice: only under a root-panel parent, §8.4 scope OPEN).
-        if self.object_mode(k).is_none()
+        // Step 1 (Tessera choice: only under a root-panel parent, §8.4 scope OPEN). Under a
+        // UI screen (`ui-scaling.md` §5.2 "Stretch roots", §5.9) the step is not applied: the
+        // children of a Stretch root are laid out by steps 2–6 (those of a full-screen root by
+        // §5.3), because Tessera never stretches a root's picture to follow the screen. At the
+        // identity (no UI screen) the step stays, so existing behaviour is unchanged (I2).
+        if self.ui_screen.is_none()
+            && self.object_mode(k).is_none()
             && let Some(p) = e.parent
             && self.el(p).is_some_and(|pe| pe.root_panel)
             && self.object_mode(p).unwrap_or(object_mode::CANVAS_RESIZE) == object_mode::STRETCH
@@ -913,10 +950,14 @@ impl Ui {
     /// full-screen roots with edges (5, 5, 5, 5), `ui-scaling.md` §5.2).
     pub(crate) fn layout_default(&mut self, k: ElementKey) {
         let (old, new) = self.reference_boxes(k);
+        // An element last laid out in a layout frame (`ui-scaling.md` §5.2 "Layout frames")
+        // and now laid out against its parent's full box is taken back out of the frame first:
+        // the plain layout is a frame with offset 0, so the old offset is never kept twice.
+        let prev = self.frame_offsets.remove(&k).unwrap_or((0, 0));
         let Some(e) = self.el(k) else { return };
         let inp = RuntimeInput {
             design: e.design,
-            current: e.bx,
+            current: e.bx.offset(-prev.0, -prev.1),
             edges: e.edges,
             old,
             new,
@@ -951,6 +992,14 @@ impl Ui {
         if size_changed {
             self.relayout_children(k);
             self.class_resized(k);
+            // §5.6: a root panel's fit-to-screen factor follows its size.
+            self.refresh_fit_to_screen(k);
+        }
+        // `ui-scaling.md` §5.4: a Type A guard box is A taken into the parent's coordinates
+        // (§10.8 (b)), so the fit containers of a root panel that moved or changed size (a
+        // drag, keep-on-screen, a saved placement) are fitted again. Only under a UI screen.
+        if (moved || size_changed) && self.ui_screen.is_some() && self.is_screen_root(k) {
+            self.refit_descendants(k);
         }
         let is_plugin = self.el(k).is_some_and(|e| e.plugin.is_some());
         if is_plugin {
@@ -1094,6 +1143,10 @@ impl Ui {
                     if let Some(e) = self.el_mut(k) {
                         e.scale = Some(s.map(|v| if v.is_finite() { v } else { 1.0 }));
                     }
+                    // §5.6: the stretch is the root's own scale; q is applied on top of it.
+                    self.refresh_fit_to_screen(k);
+                    // §3.4 item 2: the fit containers inside follow the new stretch.
+                    self.refit_descendants(k);
                     // A new displayed box of a surface: composition input, not damage. The
                     // next paint with a change runs the full surface pass.
                     self.painter.note_structure();

@@ -411,6 +411,41 @@ pub fn degenerate_guard(computed: i32, design: i32, box_extent: i32) -> (i32, bo
     (e, e == 0)
 }
 
+/// Most rectangles one fit group's letterbox bars are split into (Tessera cap, hostile trees;
+/// a group whose members share one displayed box has at most 4).
+pub const MAX_BAR_RECTS: usize = 256;
+
+/// The letterbox bars of a fit group (`ui-scaling.md` §5.4 step 6), as disjoint half-open
+/// rectangles: the part of `outer` (the group's reference box *P* in physical pixels, already
+/// clipped to the window) that none of `holes` (the shown members' physical boxes) covers.
+/// Empty when the members cover `outer`. At most [`MAX_BAR_RECTS`] rectangles: past the cap
+/// the remaining holes are not cut out (the bars then overlap a member's picture, which is drawn
+/// above them, so nothing behind the group shows through).
+#[must_use]
+pub fn letterbox_rects(
+    outer: crate::paint::Rect,
+    holes: &[crate::paint::Rect],
+) -> Vec<crate::paint::Rect> {
+    if outer.is_empty() {
+        return Vec::new();
+    }
+    let mut pieces = vec![outer];
+    for h in holes {
+        if h.is_empty() {
+            continue;
+        }
+        let mut next = Vec::with_capacity(pieces.len() + 4);
+        for p in &pieces {
+            next.extend(p.subtract(h));
+        }
+        if next.len() > MAX_BAR_RECTS {
+            break;
+        }
+        pieces = next;
+    }
+    pieces
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

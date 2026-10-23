@@ -162,11 +162,25 @@ impl Ui {
         let b = self.displayed_rel(k);
         let (px, py) = (x.saturating_sub(b.l), y.saturating_sub(b.t));
         let kids = self.children(k);
+        // `ui-scaling.md` §5.4 step 6, invariant I3: the fit roots whose group's letterbox
+        // bars hold the point, worked out once for this hit test.
+        let bar_owners = if k == self.screen && self.ui_screen.is_some() {
+            self.fit_root_bar_owners(px, py)
+        } else {
+            Vec::new()
+        };
         for c in kids.iter().rev() {
             if self.point_in(*c, px, py)
                 && let Some(h) = self.hit_rec(*c, px, py, depth + 1)
             {
                 return Some(h);
+            }
+            // `ui-scaling.md` §5.4 step 6, invariant I3: the letterbox bars of a fit-root
+            // group are drawn directly below its lowest shown fit root and count as part of
+            // it, so a pointer in a bar hits that root (not its children) and never reaches
+            // anything behind the full-screen screen.
+            if bar_owners.contains(c) {
+                return Some(*c);
             }
         }
         let e = self.el(k)?;

@@ -9,10 +9,11 @@
 //! Scope: everything here is arithmetic over the spaces of §3–§6. The invariants that need the
 //! live element tree and painter — I2 (existing goldens byte-identical at `Se` = 1), I6 over
 //! native root panels, I9 (no blank surface during a change), I14 (re-layout determinism of the
-//! frame system) — belong to `tessera-ui`'s layout/paint integration of §5 and §6, which this
-//! file does not exercise (see the suite's findings). The pieces of those that the pure core
-//! can establish (keep-on-screen clamps a root inside `F`; a saved placement round-trips) are
-//! checked here.
+//! frame system) — belong to `tessera-ui`'s layout/paint integration of §5 and §6 and are tested
+//! on the live tree in `ui_scaling_live.rs` (with I1 part 2, I3 in the letterbox bars and I16)
+//! and by the stateful mode of the `ui_scale_config` fuzz target. The pieces of those that the
+//! pure core can establish (keep-on-screen clamps a root inside `F`; a saved placement
+//! round-trips) are checked here.
 
 use proptest::prelude::*;
 use tessera_ui::scaling::{

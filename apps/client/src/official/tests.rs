@@ -3084,25 +3084,85 @@ fn oe_t24_unrepaired_key_file() {
     ));
 }
 
-/// A partial withdrawal (§5.5, §5.6): the record is deleted but the key file is not (a
-/// directory with content in its place). The failure notice shows, the stored line goes, and
-/// the run's acceptance (if any) shows the run-only line. The work runs on the consent worker.
+// ----- revision 5: OE-T25 (failed or partial withdrawal) -----
+
+/// A flow on the start screen over `record` with its checks done.
+#[cfg(unix)]
+fn start_flow(record: &Path, settings: &Path, availability: Availability) -> Flow {
+    let mut flow = Flow::new(
+        config(record, settings, WarningText::shipped()),
+        Box::new(Doubles {
+            availability,
+            script: Arc::default(),
+            built: Arc::default(),
+        }),
+        Box::new(CountingHost::default()),
+    );
+    flow.wait_checks(Instant::now());
+    flow
+}
+
+/// Clicks Withdraw and waits for the consent worker's report.
+#[cfg(unix)]
+fn click_withdraw(flow: &mut Flow, t: Instant) {
+    for e in click_seq(0.0, t) {
+        flow.device_input(&e, &|_, _| Some(Control::StartWithdraw));
+    }
+    flow.wait_withdraw(t);
+}
+
+/// The texts the start screen draws.
+#[cfg(unix)]
+fn start_texts(flow: &Flow, t: Instant) -> String {
+    let fonts = super::view::Fonts::load(1.0).expect("bundled font");
+    super::view::build(flow, Some(&fonts), (1280, 720), t)
+        .draws
+        .iter()
+        .filter_map(|d| match d {
+            super::view::Draw::Text { text, .. } => Some(text.clone()),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// Puts a directory with content in the key file's place: Withdraw deletes the record but
+/// not the key (a partial withdrawal, for root too).
+#[cfg(unix)]
+fn undeletable_key(record: &Path) -> PathBuf {
+    let key = record.join(consent::test_support::KEY_FILE);
+    std::fs::remove_file(&key).expect("rm key");
+    std::fs::create_dir(&key).expect("key dir");
+    std::fs::write(key.join("content"), b"x").expect("content");
+    key
+}
+
+/// Makes `dir` read-only, so that neither file can be deleted and the record would still pass
+/// the check; `false` when the process writes there anyway (root).
+#[cfg(unix)]
+fn read_only(dir: &Path, on: bool) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    let mut p = std::fs::metadata(dir).expect("m").permissions();
+    p.set_mode(if on { 0o500 } else { 0o700 });
+    std::fs::set_permissions(dir, p).expect("perm");
+    !on || std::fs::write(dir.join("probe"), b"x").is_err()
+}
+
+/// OE-T25 (a): a failed or partial withdrawal shows `.withdraw_failed`, no acceptance line
+/// and Withdraw again, with an acceptance in the run and without; the run's acceptance is
+/// gone either way.
 #[cfg(unix)]
 #[test]
-fn a_partial_withdrawal_shows_the_failure_and_recomputes_the_line() {
-    for with_run_acceptance in [false, true] {
-        let mut f = fixture(Availability::Available);
+fn oe_t25a_failed_withdrawal_shows_the_notice_and_no_line() {
+    for (case, with_run_acceptance) in [
+        ("partial", false),
+        ("partial, run acceptance", true),
+        ("read-only", false),
+        ("read-only, run acceptance", true),
+    ] {
+        let f = fixture(Availability::Available);
         pre_accept(f.record.path(), &WarningText::shipped());
-        let mut flow = Flow::new(
-            config(f.record.path(), f.settings.path(), WarningText::shipped()),
-            Box::new(Doubles {
-                availability: Availability::Available,
-                script: Arc::default(),
-                built: Arc::default(),
-            }),
-            Box::new(CountingHost::default()),
-        );
-        flow.wait_checks(f.t0);
+        let mut flow = start_flow(f.record.path(), f.settings.path(), Availability::Available);
         assert!(matches!(
             flow.acceptance_line(),
             Some(AcceptanceLine::Stored(_))
@@ -3110,43 +3170,161 @@ fn a_partial_withdrawal_shows_the_failure_and_recomputes_the_line() {
         if with_run_acceptance {
             flow.choose_official();
             flow.wait_checks(f.t0);
-            assert_eq!(flow.screen(), Screen::Form);
+            assert_eq!(flow.screen(), Screen::Form, "{case}");
             flow.device_input(&press(Key::Escape, f.t0), &|_, _| None);
             flow.wait_checks(f.t0);
-            assert_eq!(flow.screen(), Screen::Start);
+            assert!(flow.has_acceptance(), "{case}");
         }
-        let key = f.record.path().join(consent::test_support::KEY_FILE);
-        let doc = f.record.path().join(consent::test_support::RECORD_FILE);
-        std::fs::remove_file(&key).expect("rm key");
-        std::fs::create_dir(&key).expect("key dir");
-        std::fs::write(key.join("content"), b"x").expect("content");
-        for e in click_seq(0.0, f.t0) {
-            flow.device_input(&e, &|_, _| Some(Control::StartWithdraw));
+        if case.starts_with("partial") {
+            undeletable_key(f.record.path());
+        } else if !read_only(f.record.path(), true) {
+            read_only(f.record.path(), false);
+            continue; // root deletes anyway
         }
-        assert!(flow.withdrawing() || !doc.exists());
-        flow.wait_withdraw(f.t0);
-        flow.wait_checks(f.t0);
-        assert!(!doc.exists(), "the record is deleted");
-        assert!(
-            key.join("content").exists(),
-            "a directory with content is left"
-        );
+        click_withdraw(&mut flow, f.t0);
+        read_only(f.record.path(), false);
+        assert_eq!(flow.screen(), Screen::Start, "{case}");
         assert_eq!(
-            flow.notice().map(|n| n.message.text.as_str()),
-            Some(consent::strings::text("official.consent.withdraw_failed"))
+            flow.acceptance_line(),
+            Some(AcceptanceLine::WithdrawFailed),
+            "{case}"
         );
-        if with_run_acceptance {
-            assert!(flow.has_acceptance());
-            assert_eq!(
-                flow.acceptance_line(),
-                Some(AcceptanceLine::RunOnly("official.consent.saved_failed"))
-            );
-        } else {
-            assert_eq!(flow.acceptance_line(), None, "no valid acceptance is left");
-        }
-        f.flow = flow;
-        std::fs::remove_dir_all(&key).expect("clean up");
+        assert!(
+            !flow.has_acceptance(),
+            "{case}: the run's acceptance is gone"
+        );
+        let drawn = start_texts(&flow, f.t0);
+        assert!(
+            drawn.contains("could not be withdrawn completely"),
+            "{case}: {drawn}"
+        );
+        assert!(drawn.contains("Withdraw acceptance"), "{case}: {drawn}");
+        assert!(!drawn.contains("You accepted"), "{case}: {drawn}");
+        let _ = std::fs::remove_dir_all(f.record.path().join(consent::test_support::KEY_FILE));
     }
+}
+
+/// OE-T25 (b): after a failed withdrawal official play shows the warning again, even with a
+/// record on disk that would still pass the check; accepting again writes a fresh record.
+#[cfg(unix)]
+#[test]
+fn oe_t25b_official_play_shows_the_warning_after_a_failed_withdrawal() {
+    let mut f = fixture(Availability::Available);
+    pre_accept(f.record.path(), &WarningText::shipped());
+    let mut flow = start_flow(f.record.path(), f.settings.path(), Availability::Available);
+    let surviving = read_only(f.record.path(), true);
+    if !surviving {
+        undeletable_key(f.record.path());
+    }
+    click_withdraw(&mut flow, f.t0);
+    read_only(f.record.path(), false);
+    assert_eq!(flow.acceptance_line(), Some(AcceptanceLine::WithdrawFailed));
+    if surviving {
+        assert!(
+            consent::check(f.record.path(), &WarningText::shipped()).is_accepted(),
+            "the record would still pass the check"
+        );
+    }
+    flow.choose_official();
+    flow.wait_checks(f.t0);
+    assert_eq!(flow.screen(), Screen::Warning, "the record is not counted");
+    assert_eq!(*f.built.lock().expect("built"), 0);
+    // Accepting again ends "Withdrawn for the run" and writes a fresh record.
+    let _ = std::fs::remove_dir_all(f.record.path().join(consent::test_support::KEY_FILE));
+    // The record file is replaced (a new file, its content may be equal within one second).
+    let inode = |p: &Path| {
+        use std::os::unix::fs::MetadataExt as _;
+        std::fs::metadata(p).ok().map(|m| m.ino())
+    };
+    let doc = f.record.path().join(consent::test_support::RECORD_FILE);
+    let before = inode(&doc);
+    f.flow = flow;
+    f.accept_warning();
+    f.flow.wait_write(f.t0);
+    assert_eq!(f.flow.screen(), Screen::Form);
+    let after = inode(&doc);
+    assert!(after.is_some(), "a fresh record");
+    assert_ne!(before, after, "rewritten");
+    assert!(consent::check(f.record.path(), &WarningText::shipped()).is_accepted());
+    assert_ne!(
+        f.flow.acceptance_line(),
+        Some(AcceptanceLine::WithdrawFailed)
+    );
+}
+
+/// OE-T25 (c): Withdraw again, once the file can be deleted, deletes both files and shows
+/// `.withdrawn`.
+#[cfg(unix)]
+#[test]
+fn oe_t25c_the_retry_deletes_both_files() {
+    let f = fixture(Availability::Available);
+    pre_accept(f.record.path(), &WarningText::shipped());
+    let mut flow = start_flow(f.record.path(), f.settings.path(), Availability::Available);
+    let key = undeletable_key(f.record.path());
+    click_withdraw(&mut flow, f.t0);
+    assert_eq!(flow.acceptance_line(), Some(AcceptanceLine::WithdrawFailed));
+    assert_eq!(
+        flow.notice().map(|n| n.message.text.as_str()),
+        None,
+        "the failure is the line, not a notice"
+    );
+    // The file can be deleted now (an empty directory in its place is removed).
+    std::fs::remove_file(key.join("content")).expect("rm content");
+    click_withdraw(&mut flow, f.t0);
+    assert!(snapshot(f.record.path()).is_empty() && !key.exists());
+    assert_eq!(
+        flow.notice().map(|n| n.message.text.as_str()),
+        Some(consent::strings::text("official.consent.withdrawn"))
+    );
+    assert_eq!(flow.acceptance_line(), None);
+}
+
+/// OE-T25 (d): in a new run a record that survived the failed withdrawal and passes the check
+/// counts again, with its stored line and Withdraw.
+#[cfg(unix)]
+#[test]
+fn oe_t25d_a_new_run_counts_a_surviving_valid_record() {
+    let f = fixture(Availability::Available);
+    pre_accept(f.record.path(), &WarningText::shipped());
+    let mut flow = start_flow(f.record.path(), f.settings.path(), Availability::Available);
+    if !read_only(f.record.path(), true) {
+        read_only(f.record.path(), false);
+        return; // root deletes anyway: no record survives
+    }
+    click_withdraw(&mut flow, f.t0);
+    read_only(f.record.path(), false);
+    assert_eq!(flow.acceptance_line(), Some(AcceptanceLine::WithdrawFailed));
+    // The next run.
+    let mut next = start_flow(f.record.path(), f.settings.path(), Availability::Available);
+    assert!(matches!(
+        next.acceptance_line(),
+        Some(AcceptanceLine::Stored(_))
+    ));
+    assert!(start_texts(&next, f.t0).contains("Withdraw acceptance"));
+    next.choose_official();
+    next.wait_checks(f.t0);
+    assert_eq!(next.screen(), Screen::Form, "the record counts again");
+}
+
+/// OE-T25 (e): a Withdraw right after an acceptance waits for the pending write, so the
+/// write cannot bring the record back; then official play shows the warning.
+#[cfg(unix)]
+#[test]
+fn oe_t25e_withdraw_waits_for_a_pending_write() {
+    let mut f = fixture(Availability::NotBuilt);
+    f.choose_official();
+    f.accept_warning();
+    // Not built: back on the start screen with the write possibly still running.
+    assert_eq!(f.flow.screen(), Screen::Start);
+    f.flow.device_input(&press(Key::Enter, f.t0), &|_, _| None);
+    click_withdraw(&mut f.flow, f.t0);
+    assert!(snapshot(f.record.path()).is_empty(), "nothing written back");
+    assert!(!f.flow.has_acceptance());
+    assert_eq!(f.flow.acceptance_line(), None);
+    f.flow.device_input(&press(Key::Enter, f.t0), &|_, _| None);
+    f.flow.choose_official();
+    f.flow.wait_checks(f.t0);
+    assert_eq!(f.flow.screen(), Screen::Warning);
 }
 
 /// OE-T17 on the client's side: on Windows the acceptance lasts for the run and

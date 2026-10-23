@@ -941,8 +941,8 @@ impl CollisionSetBuilder {
 
     /// [`CollisionSetBuilder::build`] with the hierarchy built on at most `threads` threads,
     /// the calling thread included ([`Bvh::build_with_threads`]; 1: the calling thread
-    /// only), for a caller that sizes the build from its own workers. The set is the same
-    /// whatever the count.
+    /// only, as for builds of jobs at `Prefetch` priority, `collision.md` §12.1); helpers
+    /// still come from the process-wide budget. The set is the same whatever the count.
     #[must_use]
     pub fn build_with_threads(self, threads: usize) -> CollisionSet {
         self.build_hierarchy(|boxes| Bvh::build_with_threads(boxes, threads))

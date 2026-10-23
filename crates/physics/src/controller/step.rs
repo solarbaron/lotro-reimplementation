@@ -43,7 +43,17 @@
 //!    keeps the motion up to the contact and removes the motion and velocity into every
 //!    contact plane so far (normals merged by §11.3's 0.035 tolerance; two planes slide
 //!    along their crease, more stop). Contacts are classified by §11.3 (the face normal
-//!    where it is steeper than walkable and less upward than the contact normal):
+//!    where it is steeper than walkable and less upward than the contact normal, §12.4
+//!    (x)). Where that face normal lowered the class of a hit on a triangle (a hit at an
+//!    edge or corner, such as a step's riser reported where its top face meets it), the
+//!    hit takes the best class (walkable, then steep, then wall, then overhang) among its
+//!    own and those of the triangle contacts within four skins (`EDGE_TIE_DISTANCE`) of
+//!    its point, found by a contact query at the stop position with the margin of the
+//!    hit's gap plus one [`SKIN`]; the hit's plane stays its contact normal, and the class
+//!    found decides which of the rules below applies and whether the hit blocks for the
+//!    step-up of step 6 (§12.4 (z), `Controller::hit_class`). The ground snap of step 7
+//!    classifies its hit the same way; the raised move of a step-up does not (its
+//!    contacts are vertical walls):
 //!    - on walkable support (states 1, 5), a walkable contact keeps its normal, so walkable
 //!      slopes are climbed by the slide itself; a hit whose contact normal does not oppose
 //!      the motion while its triangle's face does slides along the face (a crease, §12.4
@@ -65,9 +75,12 @@
 //!    walkable (a wall or a steep contact), the move is retried from the position raised
 //!    by the step-up height (less where a ceiling stops the rise), covering at least
 //!    [`STEP_OVER_FRACTION`] of the capsule radius, then swept down by up to the rise plus
-//!    [`SNAP_DISTANCE`]; when that sweep lands on something that is not walkable it is
-//!    retried once with the full radius (§12.4 (o); a sweep that finds nothing is not
-//!    retried). It is taken when it lands on walkable support (§11.3), climbs more than
+//!    [`SNAP_DISTANCE`]; when the support probe where that sweep lands is not walkable it
+//!    is retried once with the full radius (§12.4 (o); a sweep that finds nothing is not
+//!    retried). The landing is judged by the support probe alone, never by the single
+//!    contact the sweep stops on, so a landing on an edge shared by several triangles does
+//!    not depend on their order (§12.4 (k) as revised 2026-10-23, CO63). It is taken when
+//!    it lands on walkable support (§11.3), climbs more than
 //!    [`STEP_UP_MIN_RISE`] and gets further along the move than the blocked path. When the
 //!    raised move covered more than the move itself, the same climb with only the move's
 //!    length is preferred if it also lands walkable, passes the same test and climbs in
@@ -99,7 +112,8 @@
 //! most 4 in the slide, 1 for the step-up's rise, 15 for up to three raised moves (the
 //! first reach, the full-radius retry and the move's own length, each up to 4 slide sweeps
 //! and 1 down sweep) and 1 for the ground snap, 21 in all. Contact queries: at most 4
-//! push-out rounds, 1 support probe per raised move (3) and the support probe, 8 in all.
+//! push-out rounds, 1 support probe per raised move (3), 1 edge-tie query per slide sweep
+//! (4) and for the ground snap's hit (§12.4 (z)) and the support probe, 13 in all.
 //! Each query visits at most [`crate::geometry::MAX_QUERY_ITEMS`] items per set (a sweep
 //! in two passes). The step keeps no buffer larger than [`SCRATCH_KEEP`] entries.
 //! The arithmetic is plain IEEE without fused operations; the damper power is found by
@@ -108,7 +122,8 @@
 use std::sync::Arc;
 
 use crate::geometry::{
-    CellHit, CollisionQuery, CollisionView, Contact, LiquidFlags, MAX_COORDINATE, QueryFilter,
+    CellHit, CollisionQuery, CollisionView, Contact, FeatureKind, LiquidFlags, MAX_COORDINATE,
+    QueryFilter, SKIN, SweepHit,
 };
 
 use super::contact::{
@@ -171,6 +186,10 @@ pub const FLOAT_TOLERANCE: f32 = 0.001;
 pub const SCRATCH_KEEP: usize = 1024;
 /// Most contact planes one slide keeps.
 const MAX_PLANES: usize = 8;
+/// How far from a slide's or the ground snap's sweep hit point, m, a triangle contact's
+/// point may lie and still take part in the hit's class: four [`SKIN`]s
+/// (`collision.md` §12.4 (z) item 2; [`Controller::hit_class`]).
+const EDGE_TIE_DISTANCE: f32 = 4.0 * SKIN;
 /// Most contact planes one push-out considers (the deepest).
 const MAX_PUSH_PLANES: usize = 32;
 
@@ -990,12 +1009,11 @@ impl Controller {
                 };
             let cap = self.config.shape.capsule_at(feet);
             if let Some(h) = q.sweep_capsule(&cap, [0.0, 0.0, -reach], &self.config.filter) {
-                let class = classify(
-                    h.normal,
-                    h.face_normal,
-                    always_uncontrolled(q, h.set, h.body),
-                    cosw,
-                );
+                // Edge ties as for a slide's hit (§12.4 (z)): whether the hit is support
+                // that the snap moves onto does not depend on whether the sweep reports a
+                // step's riser or its top face.
+                let stop = [feet[0], feet[1], feet[2] - reach * h.fraction];
+                let class = self.hit_class(q, &h, stop, cosw);
                 if class.support() != Support::None && h.fraction > 0.0 {
                     feet[2] -= reach * h.fraction;
                     report.snapped = true;
@@ -1065,23 +1083,24 @@ impl Controller {
             self.scratch.clear();
             let cap = self.config.shape.capsule_at(feet);
             q.contacts(&cap, SUPPORT_MARGIN, &self.config.filter, &mut self.scratch);
-            if !self
-                .scratch
-                .iter()
-                .any(|c| c.separation < 0.0 && c.normal.iter().all(|v| v.is_finite()))
-            {
+            // Every contact closer than the target gap is a plane the push must clear
+            // (the deepest first, at most MAX_PUSH_PLANES of them). Only contacts with a
+            // finite separation and a unit normal (within 10⁻³) count, for the push and
+            // for the test whether anything penetrates; others are hostile values and are
+            // ignored (§12.4 (g)).
+            constraints.clear();
+            let mut penetrating = false;
+            constraints.extend(self.scratch.iter().filter_map(|c| {
+                if !sound_contact(c) {
+                    return None;
+                }
+                let sep = f64::from(c.separation);
+                penetrating |= sep < 0.0;
+                (sep < target).then_some((c.normal.map(f64::from), target - sep))
+            }));
+            if !penetrating {
                 break;
             }
-            // Every contact closer than the target gap is a plane the push must clear
-            // (the deepest first, at most MAX_PUSH_PLANES of them).
-            constraints.clear();
-            constraints.extend(self.scratch.iter().filter_map(|c| {
-                let n = c.normal.map(f64::from);
-                let len = (n[0] * n[0] + n[1] * n[1] + n[2] * n[2]).sqrt();
-                let sep = f64::from(c.separation);
-                (sep.is_finite() && sep < target && (len - 1.0).abs() < 1e-3)
-                    .then_some((n, target - sep))
-            }));
             if constraints.len() > MAX_PUSH_PLANES {
                 constraints.select_nth_unstable_by(MAX_PUSH_PLANES - 1, |a, b| b.1.total_cmp(&a.1));
                 constraints.truncate(MAX_PUSH_PLANES);
@@ -1111,7 +1130,7 @@ impl Controller {
 
     /// Sweeps and slides (module docs, step 5).
     fn slide<Q: CollisionQuery + ?Sized>(
-        &self,
+        &mut self,
         q: &Q,
         mut feet: [f32; 3],
         delta: [f32; 3],
@@ -1144,12 +1163,20 @@ impl Controller {
             };
             feet = add3(feet, scale3(remaining, f));
             remaining = scale3(remaining, 1.0 - f);
-            let class = classify(
-                h.normal,
-                h.face_normal,
-                always_uncontrolled(q, h.set, h.body),
-                cosw,
-            );
+            // The raised move of a step-up classifies its hits plainly (§12.4 (z) excludes
+            // it; every contact there is a vertical wall, (k)); every other slide sweep
+            // breaks edge ties by (z).
+            let class = if mode == Mode::Raised {
+                classify(
+                    h.normal,
+                    h.face_normal,
+                    always_uncontrolled(q, h.set, h.body),
+                    cosw,
+                )
+            } else {
+                self.hit_class(q, &h, feet, cosw)
+            };
+            // The plane is the contact normal, whatever class (z) gave the hit.
             let mut n = h.normal;
             if !n.iter().all(|c| c.is_finite()) || len3(n) < 0.5 {
                 // No usable normal: stop the motion.
@@ -1232,6 +1259,103 @@ impl Controller {
         }
     }
 
+    /// The class of a slide's or the ground snap's sweep hit `h`, the capsule stopped by
+    /// that sweep with its feet at `feet` (§11.3 with §12.4 (x) and (z); module docs
+    /// step 5).
+    ///
+    /// A sweep that stops at an edge or corner shared by several triangles (a step's riser
+    /// and its top face) reports one of them by the tie order of §12.4 (w). So that the
+    /// hit's class does not depend on which one, §12.4 (z) applies whenever the hit is on a
+    /// triangle and (x) item 4 has replaced its contact normal by a face normal whose class
+    /// is lower than the contact normal's:
+    /// 1. a contact query at `feet` with the margin of the hit's gap there plus one
+    ///    [`SKIN`];
+    /// 2. of its contacts, those with triangles (of any body, the hit's own included) whose
+    ///    point lies within `EDGE_TIE_DISTANCE` (four skins) of the hit's point are kept,
+    ///    the hit's point being the hit triangle's own contact in that query (same set,
+    ///    body, kind and feature), or the sweep's hit point when the query has none (an
+    ///    implementer reading of item 2: the sweep's point lies up to a few skins before
+    ///    the stop position, which is too far when the motion runs along the edge),
+    ///    leaving out objects with `Physics_AlwaysUncontrolledSurface` and the hostile
+    ///    contacts of §12.4 (g) ([`sound_contact`]);
+    /// 3. each kept contact is classified by §11.3 with (x), its face normal turned by the
+    ///    contact-query rule of (x) item 1 (as [`CollisionQuery::contacts`] reports it);
+    /// 4. the best class among the hit's own and the kept contacts' is returned, in the
+    ///    order walkable, steep, wall, overhang ([`tie_rank`]).
+    ///
+    /// The caller keeps the hit's contact normal as its plane (item 5); only the class
+    /// changes. The raised move of a step-up does not call this (its contacts are vertical
+    /// walls, §12.4 (k)). A hit away from any shared edge has no other triangle within four
+    /// skins and keeps its class. A hit whose point or gap is not finite keeps its class
+    /// (engineering choice: there is no position to query from).
+    fn hit_class<Q: CollisionQuery + ?Sized>(
+        &mut self,
+        q: &Q,
+        h: &SweepHit,
+        feet: [f32; 3],
+        cosw: f32,
+    ) -> ContactClass {
+        let uncontrolled = always_uncontrolled(q, h.set, h.body);
+        let class = classify(h.normal, h.face_normal, uncontrolled, cosw);
+        if h.kind != FeatureKind::Triangle
+            || tie_rank(class) >= tie_rank(classify(h.normal, None, uncontrolled, cosw))
+            || !h.point.iter().all(|c| c.is_finite())
+            || !h.gap.is_finite()
+        {
+            return class;
+        }
+        // Item 1. The query takes no negative margin; when the capsule penetrates the hit
+        // triangle (a negative gap), it is run with 0 and its contacts are then held to
+        // the margin below.
+        let margin = h.gap + SKIN;
+        let cap = self.config.shape.capsule_at(feet);
+        self.scratch.clear();
+        q.contacts(
+            &cap,
+            margin.max(0.0),
+            &self.config.filter,
+            &mut self.scratch,
+        );
+        // Item 2's reference point: the hit triangle's own contact in this query, at the
+        // stop position, falling back to the sweep's hit point. The sweep's point is where
+        // the gap reached the hit threshold, up to a few skins before the stop; when the
+        // motion runs partly along the edge, the edge point moves between the two by about
+        // three skins times the tangent of the angle, and measuring from it left the other
+        // triangle's contact outside the radius in one triangle order only (implementer
+        // reading, proposed for `collision.md` §12.4 (z) item 2).
+        let reference = self
+            .scratch
+            .iter()
+            .find(|c| {
+                c.set == h.set && c.body == h.body && c.kind == h.kind && c.feature == h.feature
+            })
+            .map(|c| c.point)
+            .filter(|p| p.iter().all(|v| v.is_finite()))
+            .unwrap_or(h.point);
+        let mut best = class;
+        for c in &self.scratch {
+            // Item 2.
+            let d = sub3(c.point, reference);
+            let d2 = dot3(d, d);
+            if c.kind != FeatureKind::Triangle
+                || !sound_contact(c)
+                || (margin < 0.0 && c.separation > margin)
+                || d2.is_nan()
+                || d2 > EDGE_TIE_DISTANCE * EDGE_TIE_DISTANCE
+                || always_uncontrolled(q, c.set, c.body)
+            {
+                continue;
+            }
+            // Items 3 and 4.
+            let other = classify(c.normal, c.face_normal, false, cosw);
+            if tie_rank(other) > tie_rank(best) {
+                best = other;
+            }
+        }
+        self.scratch.clear();
+        best
+    }
+
     /// The step-up of module docs step 6, or `None` when it is not taken.
     #[allow(clippy::too_many_arguments)]
     fn step_up<Q: CollisionQuery + ?Sized>(
@@ -1301,8 +1425,10 @@ impl Controller {
 
     /// The raised move of a step-up: from `feet` raised by `rise`, `reach` along `dir`
     /// (every contact a vertical wall), then down by up to `rise` + [`SNAP_DISTANCE`]: the
-    /// landing when it is walkable by the contact it lands on and by the support probe
-    /// (§12.4 (k), (s)), [`Raised::NotWalkable`] when it lands otherwise, and
+    /// landing when the support probe there is walkable (§12.4 (k), (s); the contact the
+    /// down sweep stops on only places the landing and is not classified, so the result
+    /// does not depend on which of several triangles touching at the landing point the
+    /// sweep reports, CO63), [`Raised::NotWalkable`] when it lands otherwise, and
     /// [`Raised::NoLanding`] when the down sweep finds nothing.
     #[allow(clippy::too_many_arguments)]
     fn raised_move<Q: CollisionQuery + ?Sized>(
@@ -1323,15 +1449,12 @@ impl Controller {
         let Some(hit) = q.sweep_capsule(&cap, [0.0, 0.0, -down], &filter) else {
             return Raised::NoLanding;
         };
-        let class = classify(
-            hit.normal,
-            hit.face_normal,
-            always_uncontrolled(q, hit.set, hit.body),
-            cosw,
-        );
-        if class != ContactClass::Walkable {
-            return Raised::NotWalkable;
-        }
+        // Only where the descent stops comes from its hit. Whether the landing is walkable
+        // is the support probe's alone (§12.4 (k), revised 2026-10-23; §11.5 step 5): the
+        // hit is one of possibly several triangles touching the capsule at the same point
+        // and distance (a step's top face and its riser at their shared edge), picked by
+        // the tie order of (w), and classifying it made the result depend on the order of
+        // a body's triangles (CO63). The probe, a contact query, sees all of them.
         let landed = [
             moved.feet[0],
             moved.feet[1],
@@ -1357,7 +1480,7 @@ impl Controller {
 enum Raised {
     /// It landed on walkable support.
     Landed(Slide),
-    /// It landed, but the contact or the support probe is not walkable (§12.4 (o)).
+    /// It landed, but the support probe there is not walkable (§12.4 (o)).
     NotWalkable,
     /// The down sweep found nothing to land on.
     NoLanding,
@@ -1738,6 +1861,30 @@ fn len3(a: [f32; 3]) -> f32 {
     dot3(a, a).sqrt()
 }
 
+/// Whether a contact is sound: its separation is finite and its normal has unit length
+/// within 10⁻³. Other contacts are hostile values; the push-out ignores them, also in the
+/// test whether anything penetrates (`collision.md` §12.4 (g)), and so do the edge ties
+/// of §12.4 (z) item 2.
+fn sound_contact(c: &Contact) -> bool {
+    let n = c.normal.map(f64::from);
+    let len = (n[0] * n[0] + n[1] * n[1] + n[2] * n[2]).sqrt();
+    c.separation.is_finite() && (len - 1.0).abs() < 1e-3
+}
+
+/// The rank of a class for the edge ties of `collision.md` §12.4 (z) item 4: walkable,
+/// then steep, then wall, then overhang (higher is better). An ignored contact
+/// (`Physics_AlwaysUncontrolledSurface`) ranks lowest; (z) never compares one, since an
+/// ignored hit keeps its class and ignored contacts are left out.
+fn tie_rank(class: ContactClass) -> u8 {
+    match class {
+        ContactClass::Walkable => 4,
+        ContactClass::Steep => 3,
+        ContactClass::Wall => 2,
+        ContactClass::Overhang => 1,
+        ContactClass::Ignored => 0,
+    }
+}
+
 fn normalize3(a: [f32; 3]) -> Option<[f32; 3]> {
     let l = len3(a);
     (l.is_finite() && l > 1e-12).then(|| scale3(a, 1.0 / l))
@@ -1747,7 +1894,6 @@ fn normalize3(a: [f32; 3]) -> Option<[f32; 3]> {
 mod tests {
     use super::super::params::{LayerKind, MovementLayer};
     use super::*;
-    use crate::geometry::SweepHit;
 
     #[test]
     fn step_factor_is_the_sixtieth_root() {
@@ -2000,6 +2146,437 @@ mod tests {
             // Nothing below: one raised move and the ground snap. A steep landing: the
             // raised move, its full-radius retry and the ground snap.
             assert_eq!(q.down_sweeps.get(), expected, "steep floor {steep_floor}");
+        }
+    }
+
+    /// A wall below 0.3 m in front of a grounded mover. The down sweep of a raised move
+    /// (bottom above 0.2 m) stops halfway on a hit with `landing` as its (contact normal,
+    /// face normal); the support probe above the floor sees one walkable contact when
+    /// `probe_walkable` and nothing otherwise.
+    struct EdgeMock {
+        landing: ([f32; 3], Option<[f32; 3]>),
+        probe_walkable: bool,
+    }
+
+    impl CollisionQuery for EdgeMock {
+        fn sweep_capsule(
+            &self,
+            capsule: &crate::geometry::Capsule,
+            delta: [f32; 3],
+            _filter: &QueryFilter,
+        ) -> Option<SweepHit> {
+            let bottom = capsule.a[2].min(capsule.b[2]) - capsule.radius;
+            if delta[0] != 0.0 || delta[1] != 0.0 {
+                return (bottom < 0.3).then(|| WallMock::hit([-1.0, 0.0, 0.0], 0.0));
+            }
+            if delta[2] < 0.0 && bottom > 0.2 {
+                let mut hit = WallMock::hit(self.landing.0, 0.5);
+                hit.face_normal = self.landing.1;
+                hit.kind = crate::geometry::FeatureKind::Triangle;
+                return Some(hit);
+            }
+            None
+        }
+
+        fn contacts(
+            &self,
+            capsule: &crate::geometry::Capsule,
+            _margin: f32,
+            _filter: &QueryFilter,
+            out: &mut Vec<Contact>,
+        ) {
+            let bottom = capsule.a[2].min(capsule.b[2]) - capsule.radius;
+            if bottom.abs() < 1e-3 || (bottom > 0.01 && self.probe_walkable) {
+                out.push(Contact {
+                    separation: 0.0,
+                    normal: [0.0, 0.0, 1.0],
+                    point: [0.0, 0.0, bottom],
+                    face_normal: Some([0.0, 0.0, 1.0]),
+                    set: 0,
+                    body: crate::geometry::BodyId(0),
+                    kind: crate::geometry::FeatureKind::Triangle,
+                    feature: 0,
+                });
+            }
+        }
+
+        fn cell_at(&self, _p: [f32; 3]) -> Option<CellHit> {
+            None
+        }
+
+        fn body(&self, _set: u32, _id: crate::geometry::BodyId) -> Option<&crate::geometry::Body> {
+            None
+        }
+    }
+
+    /// §12.4 (k) as revised 2026-10-23 (CO63): a step-up landing is judged by the support
+    /// probe alone. The contact the down sweep stops on (at a step's edge, the riser and
+    /// the top face tie and (w) reports one of them by triangle order) is not classified:
+    /// a riser reported there (its face normal replaces the contact normal, §12.4 (x)
+    /// item 4, a wall) does not refuse a landing the probe finds walkable, and a walkable
+    /// hit does not accept one the probe does not.
+    #[test]
+    fn step_up_landing_is_judged_by_the_support_probe_alone() {
+        let input = MoveInput {
+            forward: 1.0,
+            ..MoveInput::default()
+        };
+        let edge = [-0.5, 0.0, 0.75f32.sqrt()];
+        let riser = (edge, Some([-1.0, 0.0, 0.0]));
+        let top = (edge, Some([0.0, 0.0, 1.0]));
+        let cosw = walkable_cos(true);
+        assert_eq!(classify(riser.0, riser.1, false, cosw), ContactClass::Wall);
+        assert_eq!(classify(top.0, top.1, false, cosw), ContactClass::Walkable);
+        for landing in [riser, top] {
+            for probe_walkable in [true, false] {
+                let q = EdgeMock {
+                    landing,
+                    probe_walkable,
+                };
+                let mut c = grounded(PlayerMovementRecord::builtin(), [0.0; 3]);
+                let r = c.step(&input, &StepEnv::dry(&q, [0.0; 3]));
+                assert_eq!(r.outcome, StepOutcome::Stepped);
+                assert_eq!(
+                    r.stepped_up, probe_walkable,
+                    "landing {landing:?}, probe walkable {probe_walkable}"
+                );
+            }
+        }
+    }
+
+    /// Contacts for the push-out of §12.4 (g): a floor 1.5 mm below the capsule (closer
+    /// than two skins, not penetrating) and, when `hostile`, a "penetrating" contact whose
+    /// normal is not of unit length. No sweep hits anything.
+    struct PushMock {
+        hostile: bool,
+    }
+
+    impl CollisionQuery for PushMock {
+        fn sweep_capsule(
+            &self,
+            _capsule: &crate::geometry::Capsule,
+            _delta: [f32; 3],
+            _filter: &QueryFilter,
+        ) -> Option<SweepHit> {
+            None
+        }
+
+        fn contacts(
+            &self,
+            _capsule: &crate::geometry::Capsule,
+            _margin: f32,
+            _filter: &QueryFilter,
+            out: &mut Vec<Contact>,
+        ) {
+            let contact = |separation: f32, normal: [f32; 3]| Contact {
+                separation,
+                normal,
+                point: [0.0; 3],
+                face_normal: None,
+                set: 0,
+                body: crate::geometry::BodyId(0),
+                kind: crate::geometry::FeatureKind::Triangle,
+                feature: 0,
+            };
+            out.push(contact(0.0015, [0.0, 0.0, 1.0]));
+            if self.hostile {
+                out.push(contact(-0.2, [0.0, 2.0, 0.0]));
+            }
+        }
+
+        fn cell_at(&self, _p: [f32; 3]) -> Option<CellHit> {
+            None
+        }
+
+        fn body(&self, _set: u32, _id: crate::geometry::BodyId) -> Option<&crate::geometry::Body> {
+            None
+        }
+    }
+
+    /// Finding (§12.4 (g)): a contact whose normal is not of unit length is a hostile value
+    /// and is ignored, also in the test whether anything penetrates; it started a push-out
+    /// round that moved the mover off a floor that did not penetrate.
+    #[test]
+    fn hostile_contacts_do_not_start_a_push_out() {
+        for hostile in [false, true] {
+            let q = PushMock { hostile };
+            let mut c = grounded(PlayerMovementRecord::builtin(), [0.0; 3]);
+            let r = c.step(&MoveInput::default(), &StepEnv::dry(&q, [0.0; 3]));
+            assert_eq!(r.outcome, StepOutcome::Stepped);
+            assert_eq!(r.pushed_out, 0.0, "hostile {hostile}");
+            assert_eq!(c.state().position, [0.0; 3], "hostile {hostile}");
+        }
+    }
+
+    /// Contacts for the edge ties of §12.4 (z): a contact query returns `contacts` (when
+    /// its margin is at least the contact's separation, as a real query does) and records
+    /// the margins it was asked for. Body 1 has `Physics_AlwaysUncontrolledSurface`.
+    struct TieMock {
+        contacts: Vec<Contact>,
+        margins: std::cell::RefCell<Vec<f32>>,
+        uncontrolled: crate::geometry::Body,
+    }
+
+    impl TieMock {
+        fn new(contacts: Vec<Contact>) -> Self {
+            Self {
+                contacts,
+                margins: std::cell::RefCell::new(Vec::new()),
+                uncontrolled: crate::geometry::Body {
+                    source: crate::geometry::BodySource::Other { tag: 1 },
+                    flags: crate::geometry::CollisionFlags {
+                        always_uncontrolled_surface: Some(true),
+                        ..crate::geometry::CollisionFlags::default()
+                    },
+                    purpose: crate::geometry::BodyPurpose::Movement,
+                    first_triangle: 0,
+                    triangle_count: 0,
+                    round_count: 0,
+                },
+            }
+        }
+    }
+
+    impl CollisionQuery for TieMock {
+        fn sweep_capsule(
+            &self,
+            _capsule: &crate::geometry::Capsule,
+            _delta: [f32; 3],
+            _filter: &QueryFilter,
+        ) -> Option<SweepHit> {
+            None
+        }
+
+        fn contacts(
+            &self,
+            _capsule: &crate::geometry::Capsule,
+            margin: f32,
+            _filter: &QueryFilter,
+            out: &mut Vec<Contact>,
+        ) {
+            self.margins.borrow_mut().push(margin);
+            out.extend(self.contacts.iter().filter(|c| c.separation <= margin));
+        }
+
+        fn cell_at(&self, _p: [f32; 3]) -> Option<CellHit> {
+            None
+        }
+
+        fn body(&self, _set: u32, id: crate::geometry::BodyId) -> Option<&crate::geometry::Body> {
+            (id.0 == 1).then_some(&self.uncontrolled)
+        }
+    }
+
+    /// The unit normal of an edge contact 30° from up (walkable by its contact normal).
+    fn edge_normal() -> [f32; 3] {
+        [-0.5, 0.0, 0.75f32.sqrt()]
+    }
+
+    /// A sweep hit on a triangle at the origin with contact normal `normal`, face normal
+    /// `face` and gap `gap`.
+    fn tri_hit(normal: [f32; 3], face: Option<[f32; 3]>, gap: f32) -> SweepHit {
+        SweepHit {
+            fraction: 0.5,
+            gap,
+            normal,
+            point: [0.0; 3],
+            face_normal: face,
+            set: 0,
+            body: crate::geometry::BodyId(0),
+            kind: crate::geometry::FeatureKind::Triangle,
+            feature: 0,
+        }
+    }
+
+    /// A triangle contact at `point` with `separation`, contact normal `normal` and face
+    /// normal `face`, on body 0.
+    fn tri_contact(
+        point: [f32; 3],
+        separation: f32,
+        normal: [f32; 3],
+        face: Option<[f32; 3]>,
+    ) -> Contact {
+        Contact {
+            separation,
+            normal,
+            point,
+            face_normal: face,
+            set: 0,
+            body: crate::geometry::BodyId(0),
+            kind: crate::geometry::FeatureKind::Triangle,
+            feature: 1,
+        }
+    }
+
+    /// §12.4 (z): a hit on a step's riser at its edge with the top face (the riser's face
+    /// normal makes it a wall by (x) item 4, its contact normal alone is walkable) takes
+    /// the top face's walkable class when the top face's contact lies within four skins of
+    /// the hit point, from a contact query with the margin of the hit's gap plus one skin;
+    /// not when it lies further, is hostile by the (g) test (finite but not of unit
+    /// length), is on an object with `Physics_AlwaysUncontrolledSurface`, is not a
+    /// triangle, or lies beyond a negative margin.
+    #[test]
+    fn edge_ties_take_the_best_class_of_the_triangles_at_the_hit_point() {
+        let cosw = walkable_cos(true);
+        let n = edge_normal();
+        let riser = Some([-1.0, 0.0, 0.0]);
+        let top = Some([0.0, 0.0, 1.0]);
+        let gap = 2.0 * SKIN;
+        let hit = tri_hit(n, riser, gap);
+        assert_eq!(classify(n, riser, false, cosw), ContactClass::Wall);
+        let near = [0.0, 0.0, 3.9 * SKIN];
+        let cases: Vec<(&str, Contact, ContactClass)> = vec![
+            (
+                "top face near",
+                tri_contact(near, gap, n, top),
+                ContactClass::Walkable,
+            ),
+            (
+                "top face beyond four skins",
+                tri_contact([0.0, 0.0, 4.1 * SKIN], gap, n, top),
+                ContactClass::Wall,
+            ),
+            (
+                "hostile normal",
+                tri_contact(near, gap, n.map(|v| v * 1.002), top),
+                ContactClass::Wall,
+            ),
+            (
+                "hostile separation",
+                tri_contact(near, f32::NEG_INFINITY, n, top),
+                ContactClass::Wall,
+            ),
+            (
+                "always uncontrolled",
+                Contact {
+                    body: crate::geometry::BodyId(1),
+                    ..tri_contact(near, gap, n, top)
+                },
+                ContactClass::Wall,
+            ),
+            (
+                "round",
+                Contact {
+                    kind: crate::geometry::FeatureKind::Round,
+                    face_normal: None,
+                    ..tri_contact(near, gap, n, None)
+                },
+                ContactClass::Wall,
+            ),
+            (
+                "steep",
+                tri_contact(near, gap, [-0.8, 0.0, 0.6], None),
+                ContactClass::Steep,
+            ),
+        ];
+        for (what, contact, want) in cases {
+            let q = TieMock::new(vec![contact]);
+            let mut c = grounded(PlayerMovementRecord::builtin(), [0.0; 3]);
+            assert_eq!(c.hit_class(&q, &hit, [0.0; 3], cosw), want, "{what}");
+            assert_eq!(*q.margins.borrow(), vec![gap + SKIN], "{what}: margin");
+        }
+
+        // The radius is measured from the hit triangle's own contact in the query (same
+        // set, body, kind and feature as the hit), not from the sweep's hit point, which
+        // lies a few skins back along the motion: a top-face contact 10 skins from the
+        // sweep's point but next to the riser's own contact counts.
+        let moved = [10.0 * SKIN, 0.0, 0.0];
+        let own = Contact {
+            feature: 0,
+            ..tri_contact(moved, gap, n, riser)
+        };
+        let top_by_own = tri_contact([10.0 * SKIN, 0.0, 2.0 * SKIN], gap, n, top);
+        let q = TieMock::new(vec![own, top_by_own]);
+        let mut c = grounded(PlayerMovementRecord::builtin(), [0.0; 3]);
+        assert_eq!(
+            c.hit_class(&q, &hit, [0.0; 3], cosw),
+            ContactClass::Walkable,
+            "measured from the hit triangle's own contact"
+        );
+        let q = TieMock::new(vec![top_by_own]);
+        assert_eq!(
+            c.hit_class(&q, &hit, [0.0; 3], cosw),
+            ContactClass::Wall,
+            "no own contact: measured from the sweep's point"
+        );
+
+        // A negative gap (the capsule penetrates the hit triangle): the query runs with 0
+        // and only contacts within the margin gap + one skin count.
+        let gap = -0.01;
+        let hit = tri_hit(n, riser, gap);
+        for (sep, want) in [
+            (-0.005, ContactClass::Wall),
+            (-0.02, ContactClass::Walkable),
+        ] {
+            let q = TieMock::new(vec![tri_contact(near, sep, n, top)]);
+            let mut c = grounded(PlayerMovementRecord::builtin(), [0.0; 3]);
+            assert_eq!(
+                c.hit_class(&q, &hit, [0.0; 3], cosw),
+                want,
+                "separation {sep}"
+            );
+            assert_eq!(*q.margins.borrow(), vec![0.0], "separation {sep}: margin");
+        }
+    }
+
+    /// §12.4 (z) applies only where (x) item 4 lowered the hit's class: a hit whose face
+    /// normal does not replace its contact normal, a hit on a round primitive and a hit on
+    /// an always-uncontrolled object keep their class without a contact query. The best
+    /// class wins in the order walkable, steep, wall, overhang: a wall hit made an
+    /// overhang by its face normal takes a wall contact at the same point.
+    #[test]
+    fn edge_ties_apply_only_where_the_face_normal_lowered_the_class() {
+        let cosw = walkable_cos(true);
+        let n = edge_normal();
+        let gap = 2.0 * SKIN;
+        let top_contact = tri_contact([0.0; 3], gap, n, Some([0.0, 0.0, 1.0]));
+        let unchanged = [
+            (
+                "face not substituted",
+                tri_hit(n, Some([0.0, 0.0, 1.0]), gap),
+            ),
+            ("no face normal", tri_hit(n, None, gap)),
+            (
+                "round",
+                SweepHit {
+                    kind: crate::geometry::FeatureKind::Round,
+                    ..tri_hit(n, Some([-1.0, 0.0, 0.0]), gap)
+                },
+            ),
+            (
+                "always uncontrolled",
+                SweepHit {
+                    body: crate::geometry::BodyId(1),
+                    ..tri_hit(n, Some([-1.0, 0.0, 0.0]), gap)
+                },
+            ),
+        ];
+        for (what, hit) in unchanged {
+            let q = TieMock::new(vec![top_contact]);
+            let mut c = grounded(PlayerMovementRecord::builtin(), [0.0; 3]);
+            let own = classify(hit.normal, hit.face_normal, hit.body.0 == 1, cosw);
+            assert_eq!(c.hit_class(&q, &hit, [0.0; 3], cosw), own, "{what}");
+            assert!(q.margins.borrow().is_empty(), "{what}: no query");
+        }
+
+        // Wall over overhang: a near-vertical contact normal (a wall) whose face normal
+        // points down (an overhang by (x) item 4).
+        let wall_n = normalize3([-1.0, 0.0, 0.05]).unwrap();
+        let hit = tri_hit(wall_n, Some([0.0, 0.0, -1.0]), gap);
+        assert_eq!(
+            classify(wall_n, hit.face_normal, false, cosw),
+            ContactClass::Overhang
+        );
+        let overhang = tri_contact([0.0; 3], gap, [0.0, 0.0, -1.0], None);
+        let wall = tri_contact([0.0; 3], gap, wall_n, None);
+        for (contacts, want) in [
+            (vec![overhang], ContactClass::Overhang),
+            (vec![overhang, wall], ContactClass::Wall),
+            (vec![wall, overhang], ContactClass::Wall),
+        ] {
+            let q = TieMock::new(contacts);
+            let mut c = grounded(PlayerMovementRecord::builtin(), [0.0; 3]);
+            assert_eq!(c.hit_class(&q, &hit, [0.0; 3], cosw), want);
         }
     }
 

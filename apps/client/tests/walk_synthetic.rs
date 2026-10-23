@@ -317,8 +317,7 @@ fn turned_box(b: &mut CollisionSetBuilder, tag: u32, min: [f32; 3], max: [f32; 3
 }
 
 /// The box steps of [`reach_climbs_box_steps`] with the boxes' triangles in another order:
-/// the climb succeeds either way (`collision.md` §12.4 (k), (w); the edge-tie question is
-/// the implementer OPEN of §12.4).
+/// the climb succeeds either way (`collision.md` §12.4 (k), (w), (z); CO63).
 #[test]
 fn reach_climbs_box_steps_whatever_the_face_order() {
     let z = ground(100.0);

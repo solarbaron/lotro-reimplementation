@@ -911,8 +911,7 @@ fn steps_up_to_the_step_up_height_are_climbed() {
 
 /// Two steps (0.25 m, then 0.15 m higher) built of triangles, with the top faces listed
 /// before the risers or after them: both steps are climbed whatever the triangle order
-/// (`collision.md` §11.5, §12.4 (k); the edge-tie question is the implementer OPEN of
-/// §12.4).
+/// (`collision.md` §11.5, §12.4 (k), CO63).
 #[test]
 fn step_edges_climb_whatever_the_triangle_order() {
     // Quads as (corners, top face?) with corners counter-clockwise seen from their front.
@@ -2894,4 +2893,197 @@ fn war_steed_drive_moves_the_mover() {
     c.set_war_steed(None);
     run(&set, &mut c, MoveInput::default(), 120);
     assert!(hspeed(&c) < 0.01);
+}
+
+/// One way of building the CO63 step box.
+#[derive(Debug, Clone, Copy)]
+enum BoxBuild {
+    /// A solid box (§8.3).
+    Solid,
+    /// A triangle mesh of the box's faces, the top face's triangles first.
+    TopsFirst,
+    /// A triangle mesh of the box's faces, the side faces' (risers') triangles first.
+    RisersFirst,
+    /// As `RisersFirst`, with every triangle's corner order reversed.
+    RisersFirstReversed,
+    /// As `TopsFirst`, with every triangle's corner order reversed (beyond CO63's four).
+    TopsFirstReversed,
+}
+
+/// The CO63 step box from `min` to `max` built as `how`.
+fn add_step_box(s: &mut Scene, min: [f32; 3], max: [f32; 3], how: BoxBuild) {
+    if let BoxBuild::Solid = how {
+        s.solid_box(min, max);
+        return;
+    }
+    let c = |x: usize, y: usize, z: usize| {
+        [
+            if x == 0 { min[0] } else { max[0] },
+            if y == 0 { min[1] } else { max[1] },
+            if z == 0 { min[2] } else { max[2] },
+        ]
+    };
+    // Each face counter-clockwise seen from outside the box.
+    let top = [c(0, 0, 1), c(1, 0, 1), c(1, 1, 1), c(0, 1, 1)];
+    let bottom = [c(0, 0, 0), c(0, 1, 0), c(1, 1, 0), c(1, 0, 0)];
+    let riser = [c(0, 0, 0), c(0, 0, 1), c(0, 1, 1), c(0, 1, 0)];
+    let back = [c(1, 0, 0), c(1, 1, 0), c(1, 1, 1), c(1, 0, 1)];
+    let south = [c(0, 0, 0), c(1, 0, 0), c(1, 0, 1), c(0, 0, 1)];
+    let north = [c(0, 1, 0), c(0, 1, 1), c(1, 1, 1), c(1, 1, 0)];
+    let faces = match how {
+        BoxBuild::TopsFirst | BoxBuild::TopsFirstReversed => {
+            [top, bottom, riser, back, south, north]
+        }
+        _ => [riser, back, south, north, top, bottom],
+    };
+    let reversed = matches!(
+        how,
+        BoxBuild::RisersFirstReversed | BoxBuild::TopsFirstReversed
+    );
+    let mut positions = Vec::new();
+    let mut tris = Vec::new();
+    for f in faces {
+        let base = u16::try_from(positions.len()).unwrap();
+        positions.extend_from_slice(&f);
+        for t in [[base, base + 1, base + 2], [base, base + 2, base + 3]] {
+            tris.push(if reversed { [t[0], t[2], t[1]] } else { t });
+        }
+    }
+    s.tris(&positions, &tris);
+}
+
+/// CO63 (`collision.md` §12.4 (k), (z), §13): a player walker (capsule radius 0.35, the
+/// BasePlayer layers) walks straight at a box step lower than its step-up height, the box
+/// built as a solid box and as a triangle mesh with each face's triangles listed tops
+/// first, risers first, and with every triangle's corner order reversed. In every step of
+/// the walk (the settling steps at rest included) the runs give the same position (within
+/// 10⁻⁶ m), the same state and the same choice of whether a step-up is taken. With a
+/// 0.25 m step, the walker starting at rest 0.05 m short of the riser and full forward
+/// input, each run reaches the top face and ends on it in state 5, more than one capsule
+/// radius past the riser, within 120 steps.
+///
+/// From rest against the riser the raised move covers half the capsule radius and lands
+/// on the step's edge, where the top face and the riser touch the capsule at the same
+/// point and distance (the tie that (w) breaks by triangle order): the landing is judged
+/// by the support probe alone (k). On the edge the slide's and the ground snap's sweeps
+/// meet the same tie; their hits take the best class among the triangle contacts at the
+/// hit point (z), so a riser reported there neither stops the mover on the edge nor keeps
+/// it from snapping. Beyond the spec's case the test also walks at 0.3 of the input and in
+/// walk mode, over a 0.1 m step (low enough for its edge to be slid over without a
+/// step-up) and a 0.45 m step, obliquely at 30°–70° (and −45°) off head-on over the
+/// 0.25 m and 0.45 m steps, and with tops-first reversed triangles.
+#[test]
+fn co63_walk_over_a_box_step_does_not_depend_on_triangle_order() {
+    const RADIUS: f64 = 0.35;
+    const RISER: f32 = 3.0;
+    const SETTLE: usize = 10;
+    let builds = [
+        BoxBuild::Solid,
+        BoxBuild::TopsFirst,
+        BoxBuild::RisersFirst,
+        BoxBuild::RisersFirstReversed,
+        BoxBuild::TopsFirstReversed,
+    ];
+    // (height, walk mode, forward input, heading in degrees off head-on).
+    let mut cases = Vec::new();
+    for h in [0.1f32, 0.25, 0.45] {
+        for (walking, forward) in [(false, 1.0), (true, 0.3), (true, 1.0)] {
+            cases.push((h, walking, forward, 0.0f32));
+        }
+    }
+    // Oblique walks: the motion runs partly along the edge, so the sweep's hit point and
+    // the stop position lie apart along it (§12.4 (z) item 2).
+    for h in [0.25f32, 0.45] {
+        for angle in [30.0f32, 45.0, 60.0, 70.0, -45.0] {
+            cases.push((h, false, 1.0, angle));
+        }
+    }
+    for (h, walking, forward, angle) in cases {
+        // The spec's case: within 120 steps; the others get 4 s at full input and 10 s
+        // at 0.3 of it, short of the box's far end.
+        let spec_case = h == 0.25 && !walking && forward == 1.0 && angle == 0.0;
+        let steps = if spec_case {
+            120
+        } else if forward < 1.0 {
+            600
+        } else {
+            240
+        };
+        // Per build: position, state and step-up of every step.
+        type Track = Vec<([f64; 3], MovementState, bool)>;
+        let mut tracks: Vec<(BoxBuild, Track)> = Vec::new();
+        for how in builds {
+            let what = format!("h {h}, walking {walking}, forward {forward}, {angle}°, {how:?}");
+            let mut s = Scene::new();
+            s.floor(-60.0, -60.0, 60.0, 60.0, 0.0);
+            add_step_box(&mut s, [RISER, -40.0, -1.0], [45.0, 40.0, h], how);
+            let set = s.build();
+            // At rest, its capsule 0.05 m short of the riser.
+            let mut c = controller(
+                [f64::from(RISER) - RADIUS - 0.05, 0.0, 0.0],
+                angle.to_radians(),
+            );
+            assert!((f64::from(c.config().shape.radius()) - RADIUS).abs() < 1e-6);
+            c.set_conditions(LayerConditions {
+                walking,
+                ..LayerConditions::default()
+            });
+            let env = StepEnv::new(&set, [0.0; 3]);
+            let mut track = Vec::new();
+            for k in 0..SETTLE + steps {
+                let input = if k < SETTLE {
+                    MoveInput::default()
+                } else {
+                    MoveInput {
+                        forward,
+                        ..MoveInput::default()
+                    }
+                };
+                let r = c.step(&input, &env);
+                assert_eq!(r.outcome, StepOutcome::Stepped, "{what}: step {k}");
+                assert!(c.state().is_finite(), "{what}: step {k}");
+                assert!(penetration(&set, &c) >= -0.01, "{what}: step {k}");
+                track.push((c.state().position, c.state().element, r.stepped_up));
+                if k + 1 == SETTLE {
+                    assert!(hspeed(&c) < 1e-6, "{what}: at rest");
+                    assert_eq!(
+                        c.state().element,
+                        MovementState::EarthControlledSurface,
+                        "{what}: at rest"
+                    );
+                }
+            }
+            if h > 0.15 {
+                assert!(track.iter().any(|t| t.2), "{what}: stepped up");
+            }
+            let past = x(&c) - f64::from(RISER);
+            assert!(past > RADIUS, "{what}: on the step: x {}", x(&c));
+            if !spec_case {
+                assert!(past > 1.0, "{what}: x {}", x(&c));
+            }
+            assert!(
+                (z(&c) - f64::from(h)).abs() < 0.005,
+                "{what}: z {} at x {}",
+                z(&c),
+                x(&c)
+            );
+            assert_eq!(
+                c.state().element,
+                MovementState::EarthControlledSurface,
+                "{what}"
+            );
+            tracks.push((how, track));
+        }
+        let (_, first) = &tracks[0];
+        for (how, track) in &tracks[1..] {
+            let what = format!("h {h}, walking {walking}, forward {forward}, {angle}°, {how:?}");
+            assert_eq!(track.len(), first.len(), "{what}: steps");
+            for (k, (a, b)) in first.iter().zip(track).enumerate() {
+                let d = (0..3).map(|i| (a.0[i] - b.0[i]).abs()).fold(0.0, f64::max);
+                assert!(d <= 1e-6, "{what}: step {k}: {:?} vs {:?}", a.0, b.0);
+                assert_eq!(a.1, b.1, "{what}: step {k}: state");
+                assert_eq!(a.2, b.2, "{what}: step {k}: stepped up");
+            }
+        }
+    }
 }

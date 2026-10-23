@@ -1632,6 +1632,9 @@ any scale.
 > **OPEN (owner):** S1–S7 are proposed budgets for this work's exit, not M5 criteria. The
 > owner accepts or changes them with this spec's review. They are first measured indicatively
 > on the loaded reference machine and re-measured idle, as UR §6's are.
+>
+> **Answered (owner, 2026-10-23,** [decision 0040](../decisions/0040-ui-scaling.md) "Owner answers" item 1**):** S1–S7 are accepted as
+> written as the exit budgets of this work.
 
 ---
 
@@ -2131,6 +2134,8 @@ settings module's documentation lists the keys of §7.1.
 > **OPEN (owner):** the default safe aspect (21:9 as 2.4) and the auto-scale formula of §4.2
 > (one UI unit per pixel up to 1440 rows, then height ÷ 1440, at least the OS factor) are
 > design choices to confirm by use on the owner's screens.
+>
+> **Answered (owner, 2026-10-23,** [decision 0040](../decisions/0040-ui-scaling.md) item 2**):** both are accepted as written.
 
 > **OPEN (owner):** the magnification bound of §5.4, *ρ* = 4 ÷ 3. It keeps every 4:3 layout
 > covering screens up to 16:9 and stops sparse full-screen content from growing with the
@@ -2139,11 +2144,17 @@ settings module's documentation lists the keys of §7.1.
 > larger *ρ* fills more of a wide screen with more magnified content; *ρ* = 1 would never
 > crop the design height at all. The owner confirms the value by use on wide screens (goldens
 > G3, G8 and the C7, C8 captures).
+>
+> **Answered (owner, 2026-10-23,** [decision 0040](../decisions/0040-ui-scaling.md) item 3**):** *ρ* = 4 ÷ 3 is accepted, with the side
+> bars it gives on wider screens.
 
 > **OPEN (owner):** whether full-window screens should follow the slider at all. This spec
 > says no (§5.4: they follow the window; the text size reaches their reflowing text). A
 > "scale full-window screens" option could multiply *f* by *S* ÷ *S*auto, at the cost of
 > cropping their content on small windows.
+>
+> **Answered (owner, 2026-10-23,** [decision 0040](../decisions/0040-ui-scaling.md) item 4**):** full-window screens follow the window,
+> not the slider; there is no "scale full-window screens" option.
 
 > **OPEN:** derived glyphs above *k* = 2 (for example `Arial12` or `LucidaConsole12` at
 > *c* = 3) lose fine detail with the distance method. Whether such text should switch to the
@@ -2178,3 +2189,4 @@ settings module's documentation lists the keys of §7.1.
 | 2026-10-23 | **Revision 6** (spec writer, dirty room; status Accepted → Revised, awaiting an independent review). Answers the implementer OPENs of 2026-10-17 to 2026-10-23 as Tessera rules (SC15, Design); no observation of the original. **§3.5, §6.7:** the tooltip's cursor offset is the cursor's physical size ÷ *Ky* rounded to the nearest integer, both axes; the hot spot rounds halves up. **§5.2:** a modal dialog is laid out as a root panel of its own layout; the covering condition applies to both forms of a full-screen root. **§5.4:** fits are computed again on every change of *P*, the parent's displayed top-left or *m*, *F* or *A* (moves and node-scale changes included); limits 64 members, 4,096 scanned elements, 256 bar rectangles; the key form of the grouping relation; new paragraph "Fit containers that are safe-area panels" (anchor `s5-4-safe-roots`). **§5.5:** cover fit only off the design size, for base and overlay images, offset rounded to a canvas pixel (halves away from zero) with the run-time image offset, skipped for a mode-6 edge or a stretch vector, **not** for a uniform node scale (a behaviour change for code that skips it under any node scale). **§5.8:** `shown` applied only at attach (behaviour change of the text, matching what is built); "The store" paragraph; settings-layer migration without a screen. **§5.9:** all implementer notes closed (the letterbox bars may be drawn by a fill entry or a scaled 1 × 1 texture; the truncating displayed boxes remain an implementation gap, the §10 values are expected). **§6.1:** text takes the derived-glyph path (old OPEN closed); the stretched-canvas alternative form. **§6.3:** the filter columns are read row by row (`nearest` below 1, `smooth` bilinear at integer scales). **§6.4.5:** the divisor is *c* without *x*; integer tolerance; the line-break fallback without layout parameters. **§6.4.6:** the hit test for the alternative form; no hit before the first scaled draw. **§6.5:** the cache key is a face identity, never a lossy fold. **§7.5:** "inside a Scrollable" defined. **§9.3:** G2 is the CPU-painted paragraph over the synthetic ladder (OPEN closed). **§9.6:** fuzz notes closed. Section numbers unchanged. |
 | 2026-10-23 | **Revision 7** (spec writer, dirty room; status stays Revised, awaiting an independent re-review). **RV6-B1 (§7.5):** "inside a Scrollable" now means that the Text element itself or an ancestor has a linked **vertical** scroll bar (a non-zero vertical scroll-bar ID that the UW §5.1 nearest lookup with the mutual check resolves to a Scrollbar). Class alone never counts, so Button, Menu, Scrollbar, ListBox and Tree ancestors count only through such a bar. A horizontal bar alone does not count; a disabled or hidden bar does. The test is repeated on scroll-bar ID changes and re-parenting. This replaces the revision-6 reading "own linked bar or a Scrollable-class ancestor". It is a behaviour change for code that counts a ListBox, Tree or Text ancestor without a bar, or a horizontal bar. **RV6-N1 (§6.3):** the first filter row is per axis; an axis with *s* = 1 is copied texel for texel and the other axis uses its own row. Tessera rules (SC15, Design). Section numbers unchanged. |
 | 2026-10-23 | **Accepted** at revision 7 after review 2 by spec-review:spec-ui-scaling-p6:2 (independent session, wrote no part of revisions 6 or 7): RV6-B1 and RV6-N1 verified fixed, every §5.3 item holds, two non-blocking notes (N1 on §7.5, N2 on §6.3) recorded in the header. Header only; no fact, rule or section changed; status Revised → Accepted. |
+| 2026-10-23 | Owner answers recorded (orchestrator, from [decision 0040](../decisions/0040-ui-scaling.md) "Owner answers"): the four OPEN (owner) callouts of §8 (S1–S7) and §13 (safe aspect and auto-scale formula, *ρ* = 4 ÷ 3, full-window screens) are answered; the owner accepted each proposal as written. No fact, rule or section number changed; status stays Accepted. |

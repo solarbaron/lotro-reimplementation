@@ -1715,6 +1715,9 @@ Architecturally this means:
   [`property-system.md`](specs/property-system.md) §10 — and the `backend`,
   `login`, `session`, and `world` modules are built, while play/gameplay message handlers
   and live client connector wiring still need more work.
+- **Client entry points.** Choosing official play (start screen, `--official`), the ban-risk
+  consent gate of decision 0034 §1 item 4, the account form, the world list and the queue are
+  designed in [`official-entry.md`](specs/official-entry.md) (Accepted).
 - **CI.** CI never connects to an official server. The backend's tests use synthetic
   fixtures (`crates/compat/tests/`) and optional local read-only install checks gated on
   `TESSERA_GAME_DIR`.

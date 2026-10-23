@@ -1564,6 +1564,7 @@ fn leave_queue_body_encoding_and_hostile_xml_bounds() {
 // ============================================================================
 
 #[test]
+#[ignore = "M8 is paused by incident 0041 (docs/decisions/0041-incident-m8-spec-contamination.md): the partly built netver discovery fails on the current install; re-enable when official-login.md is re-accepted"]
 fn real_data_discover_launcher_config_and_language() {
     let Some(game_dir) = std::env::var_os("TESSERA_GAME_DIR") else {
         return;

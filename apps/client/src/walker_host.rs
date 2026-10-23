@@ -133,28 +133,39 @@ pub fn sandbox_config(args: &Args) -> anyhow::Result<SandboxConfig> {
     })
 }
 
+/// The highest stored level of `ModelDetail`, `ObjectDrawDistance` and
+/// `LandscapeDrawDistance` (`walker.md` §11.2 table: 0–4).
+const HIGHEST_DISTANCE_LEVEL: u8 = 4;
+/// The highest stored level of `FrillDistance` (`walker.md` §11.2 table: 5 `UltraHigh`).
+const HIGHEST_FRILL_LEVEL: u8 = 5;
+
 /// The distance preferences of the command line over the built-in defaults
 /// (`walker.md` §11.2, §11.8): the dedicated options first, then `--render-pref` for
-/// `LandscapeDrawDistance`, `ObjectDrawDistance` and `ModelDetail` (§14.10; a value the key
-/// does not accept counts as its built-in level, W26), then the built-in levels. That the
-/// dedicated option wins over a `--render-pref` of the same key is a **Tessera choice**
-/// (§14.10 only says the override wins over the file and the built-in values).
+/// `LandscapeDrawDistance`, `ObjectDrawDistance` and `ModelDetail`, then the built-in
+/// levels (§14.10, W28: the dedicated option is the last layer). A value is a level name
+/// in any case or a level number ([`crate::render_pref::capped_level_number`]: digits
+/// only, a number above level 4 counts as level 4); any other value, a signed number
+/// included, counts as the key's built-in level (W26, §14.10 answer item 2).
 #[must_use]
 pub fn distance_settings(args: &Args) -> DistanceSettings {
+    use crate::render_pref::capped_level_number;
     use tessera_world::DetailLevel;
     use tessera_world::draw_distance::LandscapeLevel;
     let d = DistanceSettings::default();
     let pref = |key: &str| render_pref(&args.render_prefs, key);
     let detail = |v: &str| {
-        DetailLevel::from_name(v)
-            .or_else(|| v.trim().parse().ok().and_then(DetailLevel::from_stored))
+        DetailLevel::from_name(v).or_else(|| {
+            capped_level_number(v, HIGHEST_DISTANCE_LEVEL).and_then(DetailLevel::from_stored)
+        })
     };
     DistanceSettings {
         landscape: args.landscape_distance.unwrap_or_else(|| {
             pref("LandscapeDrawDistance")
                 .and_then(|v| {
-                    LandscapeLevel::from_name(v)
-                        .or_else(|| v.trim().parse().ok().and_then(LandscapeLevel::from_stored))
+                    LandscapeLevel::from_name(v).or_else(|| {
+                        capped_level_number(v, HIGHEST_DISTANCE_LEVEL)
+                            .and_then(LandscapeLevel::from_stored)
+                    })
                 })
                 .unwrap_or(d.landscape)
         }),
@@ -174,9 +185,10 @@ pub fn distance_settings(args: &Args) -> DistanceSettings {
 
 /// The `FrillDistance` level (`scenery.md` §8.3: 0–5): `--frill-distance`, else a
 /// `--render-pref FrillDistance=VALUE` ([`frill_level`]: a level name of `walker.md` §11.2
-/// or a number 0–5; any other value counts as the built-in level, W26), else the built-in
-/// level. **Tessera choice** (no spec states it): the dedicated option wins over a
-/// `--render-pref` of the same key, as for the other distance keys ([`distance_settings`]).
+/// or a level number, a number above 5 counting as 5; any other value counts as the
+/// built-in level, W26), else the built-in level. The dedicated option wins over a
+/// `--render-pref` of the same key, as for the other distance keys (W28,
+/// [`distance_settings`]).
 #[must_use]
 pub fn frill_distance_level(args: &Args) -> i32 {
     let builtin = FrillSettings::default().distance_level;
@@ -192,7 +204,9 @@ pub fn frill_distance_level(args: &Args) -> i32 {
 
 /// The level of a `FrillDistance` value (`walker.md` §11.2: 0 `Disabled`, 1 `Low`,
 /// 2 `Medium`, 3 `High`, 4 `VeryHigh`, 5 `UltraHigh`): the name compared case-insensitively
-/// (W26) or a number 0–5, surrounding white space ignored; `None` for anything else.
+/// (W26) or a level number of digits only, a number above 5 counting as 5 (W26 item 1,
+/// §14.10 answer item 2), surrounding white space ignored; `None` for anything else, a
+/// signed number included (the built-in level then applies).
 #[must_use]
 pub fn frill_level(stored: &str) -> Option<i32> {
     const NAMES: [&str; 6] = ["disabled", "low", "medium", "high", "veryhigh", "ultrahigh"];
@@ -202,14 +216,15 @@ pub fn frill_level(stored: &str) -> Option<i32> {
         .iter()
         .position(|n| *n == lower)
         .and_then(|i| i32::try_from(i).ok())
-        .or_else(|| v.parse::<i32>().ok().filter(|n| (0..=5).contains(n)))
+        .or_else(|| crate::render_pref::capped_level_number(v, HIGHEST_FRILL_LEVEL).map(i32::from))
 }
 
 /// The level of a stored `[Render] LandscapeLightingQuality` value (`far-view.md` FD18,
 /// FV29): `Low` 0, `High` 1, `VeryHigh` 2, names compared case-insensitively (`walker.md`
-/// W26), or a number 0–2, surrounding white space ignored. Every other value, the names
-/// of other options' scales (`VeryLow`, `Medium`, `UltraHigh`, `Disabled`, …) and other
-/// numbers included, counts as the built-in level 0 (no seam overlay).
+/// W26), or a number 0–2 (digits only, as W26 item 1 writes a level number), surrounding
+/// white space ignored. Every other value, the names of other options' scales (`VeryLow`,
+/// `Medium`, `UltraHigh`, `Disabled`, …), other numbers and signed numbers included, counts
+/// as the built-in level 0 (no seam overlay).
 #[must_use]
 pub fn landscape_lighting_level(stored: &str) -> u32 {
     let v = stored.trim();
@@ -217,7 +232,10 @@ pub fn landscape_lighting_level(stored: &str) -> u32 {
         "low" => 0,
         "high" => 1,
         "veryhigh" => 2,
-        _ => v.parse::<u32>().ok().filter(|n| *n <= 2).unwrap_or(0),
+        _ => crate::render_pref::level_number(v)
+            .filter(|n| *n <= 2)
+            .and_then(|n| u32::try_from(n).ok())
+            .unwrap_or(0),
     }
 }
 
@@ -417,9 +435,11 @@ pub fn apply_effect_preferences(
 
 /// The level of a stored `[Render] AtmosphericsDetail` value (`particle-runtime.md` §11.2.6
 /// step 1: `Low` 0, `Medium` 1, `High` 2): the level name compared case-insensitively, or a
-/// level number (0 or more), surrounding white space ignored. `None` for anything else,
-/// which the drop counts read as the built-in `Medium` (`walker.md` W26, Tessera Decision:
-/// the client's parsing of the stored value was not traced).
+/// level number (digits only, 0 or more; a number too large for `i64` gives `i64::MAX`,
+/// which like every level from 2 up gives *q* = 1), surrounding white space ignored. `None`
+/// for anything else, a signed number included, which the drop counts read as the built-in
+/// `Medium` (`walker.md` W26 items 1 and 2, Tessera Decision: the client's parsing of the
+/// stored value was not traced).
 #[must_use]
 pub fn atmospherics_level(stored: &str) -> Option<i64> {
     let v = stored.trim();
@@ -427,7 +447,7 @@ pub fn atmospherics_level(stored: &str) -> Option<i64> {
         "low" => Some(0),
         "medium" => Some(1),
         "high" => Some(2),
-        _ => v.parse::<i64>().ok().filter(|n| *n >= 0),
+        _ => crate::render_pref::level_number(v).map(|n| i64::try_from(n).unwrap_or(i64::MAX)),
     }
 }
 
@@ -1049,6 +1069,13 @@ mod tests {
         assert_eq!(atmospherics_level("2"), Some(2));
         assert_eq!(atmospherics_level("7"), Some(7));
         assert_eq!(atmospherics_level("-1"), None);
+        assert_eq!(atmospherics_level("+2"), None, "a sign: the built-in level");
+        assert_eq!(atmospherics_level("002"), Some(2));
+        assert_eq!(
+            atmospherics_level("99999999999999999999999"),
+            Some(i64::MAX),
+            "any level from 2 up"
+        );
         assert_eq!(atmospherics_level("Ultra"), None);
         assert_eq!(atmospherics_level(""), None);
         let mut e = EffectConfig::default();
@@ -1281,8 +1308,47 @@ AtmosphericsDetail=Bogus
         let c = args(&["--render-pref", "FrillDistance=9"]);
         assert_eq!(
             frill_distance_level(&c),
-            FrillSettings::default().distance_level
+            5,
+            "above the highest: the highest"
         );
+        // §14.10 answer item 2 for the three distance keys: a number above level 4 is
+        // level 4, however large; a signed number is the built-in level.
+        let d = distance_settings(&args(&[
+            "--render-pref",
+            "LandscapeDrawDistance=9",
+            "--render-pref",
+            "ObjectDrawDistance=99999999999999999999999",
+            "--render-pref",
+            "ModelDetail=0001",
+        ]));
+        assert_eq!(d.landscape, LandscapeLevel::VeryHigh);
+        assert_eq!(d.object_draw_distance, DetailLevel::UltraHigh);
+        assert_eq!(d.model_detail, DetailLevel::Medium);
+        let builtin = DistanceSettings::default();
+        for v in ["+1", "-1", "+0", "-0", "1.5", "2e0", "0x1", ""] {
+            let d = distance_settings(&args(&[
+                "--render-pref",
+                &format!("LandscapeDrawDistance={v}"),
+                "--render-pref",
+                &format!("ObjectDrawDistance={v}"),
+                "--render-pref",
+                &format!("ModelDetail={v}"),
+            ]));
+            assert_eq!(d.landscape, builtin.landscape, "{v:?}");
+            assert_eq!(
+                d.object_draw_distance, builtin.object_draw_distance,
+                "{v:?}"
+            );
+            assert_eq!(d.model_detail, builtin.model_detail, "{v:?}");
+        }
+        // The signed or too-large value never beats a dedicated option (W28).
+        let e = args(&[
+            "--landscape-distance",
+            "Low",
+            "--render-pref",
+            "LandscapeDrawDistance=12",
+        ]);
+        assert_eq!(distance_settings(&e).landscape, LandscapeLevel::Low);
     }
 
     /// `far-view.md` FD18 (FV29): only `Low` 0, `High` 1, `VeryHigh` 2 and the numbers 0–2
@@ -1307,6 +1373,10 @@ AtmosphericsDetail=Bogus
             ("7", 0),
             ("-1", 0),
             ("", 0),
+            ("01", 1),
+            ("+1", 0),
+            ("+2", 0),
+            ("99999999999999999999999", 0),
         ] {
             assert_eq!(landscape_lighting_level(v), level, "{v:?}");
         }
@@ -1357,7 +1427,9 @@ AtmosphericsDetail=Bogus
     }
 
     /// `walker.md` §11.2 and §14.10: `FrillDistance` takes its six level names
-    /// (case-insensitive) or the numbers 0–5; anything else is the built-in level.
+    /// (case-insensitive) or a level number of digits only, a number above 5 counting as 5
+    /// (W26 item 1, §14.10 answer item 2); anything else, a signed number included, is the
+    /// built-in level.
     #[test]
     fn frill_distance_takes_names_and_numbers() {
         let level = |v: &str| {
@@ -1376,11 +1448,15 @@ AtmosphericsDetail=Bogus
             (" ultrahigh ", 5),
             ("0", 0),
             ("5", 5),
+            ("003", 3),
+            ("6", 5),
+            ("255", 5),
+            ("100000000000000000000000000", 5),
         ] {
             assert_eq!(level(v), n, "{v:?}");
         }
         let builtin = FrillSettings::default().distance_level;
-        for v in ["VeryLow", "Ultra", "6", "-1", ""] {
+        for v in ["VeryLow", "Ultra", "-1", "+3", "+0", "-0", "3.0", "1e1", ""] {
             assert_eq!(level(v), builtin, "{v:?}");
         }
         assert_eq!(frill_level("Disabled"), Some(0));

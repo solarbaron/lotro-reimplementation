@@ -6,9 +6,11 @@
 //! |---|---|
 //! | [`parse_render_pref`], [`RenderPref`], [`RenderPrefError`] | `walker.md` §14.10 (one `KEY=VALUE`, trimmed) |
 //! | [`render_pref`] | `walker.md` §14.10, W26 (case-insensitive key, the last use wins) |
+//! | [`level_number`], [`capped_level_number`] | `walker.md` §11.2 W26 item 1, §14.10 answer item 2 (the number form of a level value) |
 //!
 //! The value forms (`True`/`False`, level names, numbers) are read by each key's consumer
-//! (`walker.md` W26, `far-view.md` FD17, FD18), not here. The bounds on the key and the
+//! (`walker.md` W26, `far-view.md` FD17, FD18), not here, except the number form of a level
+//! value, which every level key shares ([`level_number`]). The bounds on the key and the
 //! value ([`MAX_RENDER_PREF_KEY`], [`MAX_RENDER_PREF_VALUE`]) are a **Tessera choice**: the
 //! install's `[Render]` keys and values are far shorter.
 //!
@@ -117,6 +119,31 @@ pub fn render_pref<'a>(prefs: &'a [RenderPref], key: &str) -> Option<&'a str> {
         .map(|p| p.value.as_str())
 }
 
+/// The level number a stored or `--render-pref` level value names (`walker.md` §11.2 W26
+/// item 1, §14.10 answer item 2): a decimal integer of 0 or above written as ASCII digits
+/// only (leading zeros allowed; surrounding white space ignored), with no sign, fraction,
+/// exponent or other text. A number too large for `u64` gives `u64::MAX` (every caller
+/// caps it to a highest level or treats it as "any other level"). `None` for anything
+/// else, an empty value and a number with a leading `+` or `-` included: the key's
+/// built-in level then applies (W26 item 2).
+#[must_use]
+pub fn level_number(text: &str) -> Option<u64> {
+    let v = text.trim();
+    if v.is_empty() || !v.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    Some(v.bytes().fold(0u64, |n, b| {
+        n.saturating_mul(10).saturating_add(u64::from(b - b'0'))
+    }))
+}
+
+/// [`level_number`] for a level key of `walker.md` §11.2 whose highest level is `highest`:
+/// a number above it counts as `highest`, however large (W26 item 1, §14.10 answer item 2).
+#[must_use]
+pub fn capped_level_number(text: &str, highest: u8) -> Option<u8> {
+    level_number(text).map(|n| u8::try_from(n.min(u64::from(highest))).unwrap_or(highest))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -199,6 +226,29 @@ mod tests {
         ] {
             assert!(!e.to_string().is_empty());
         }
+    }
+
+    /// The number form of a level value: digits only, leading zeros allowed, any size
+    /// (saturating); a sign, a fraction, an exponent, other text or nothing is no number.
+    #[test]
+    fn level_numbers_are_digits_only() {
+        assert_eq!(level_number("0"), Some(0));
+        assert_eq!(level_number(" 3 "), Some(3));
+        assert_eq!(level_number("0004"), Some(4));
+        assert_eq!(level_number("18446744073709551615"), Some(u64::MAX));
+        assert_eq!(level_number("99999999999999999999999999"), Some(u64::MAX));
+        for bad in [
+            "", " ", "+3", "-1", "-0", "+0", "1.0", "1e2", "0x2", "3a", "High", "１",
+        ] {
+            assert_eq!(level_number(bad), None, "{bad:?}");
+        }
+        assert_eq!(capped_level_number("4", 4), Some(4));
+        assert_eq!(capped_level_number("5", 4), Some(4));
+        assert_eq!(capped_level_number("255", 5), Some(5));
+        assert_eq!(capped_level_number("1000000000000000000000", 4), Some(4));
+        assert_eq!(capped_level_number("2", 5), Some(2));
+        assert_eq!(capped_level_number("+2", 5), None);
+        assert_eq!(capped_level_number("-9", 4), None);
     }
 
     /// `parse_render_pref` on arbitrary text (a deterministic sweep alongside the fuzz

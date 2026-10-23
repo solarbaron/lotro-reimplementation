@@ -94,13 +94,12 @@
 //! layer, or an object that can never be drawn) counts as 1 (`placed_parent_opacity`).
 //! Static objects apply their `Render_Opacity` (rule 15's owner property, dictionary
 //! default 1): the object layer multiplies each object's value into the opacity it draws
-//! with and reports (`walker::objects::ObjectList`). Today the block worker reads the value
-//! from the placed entity's own set, then its 0x47 chain (`walker::terrain::OwnerOpacity`);
-//! the instance sets are not seen in the walker, because its bundles drop the weenie list
-//! (`keep_weenies` off), so an entity whose `Render_Opacity` only its instance set holds
-//! draws and reports factor 1. That gap is open: the seam
-//! `walker::terrain::bundle_render_opacities` returns no values until `tessera-world`
-//! exposes the bundle builder's per-entity readings. Scripts that write `Render_Opacity` of
+//! with and reports (`walker::objects::ObjectList`). The value is the one the bundle
+//! builder read in E26's order (`tessera_world::LandblockBundle::render_opacity`: the
+//! landblock's instance set for the entity's IID when there is one, otherwise its own set,
+//! then its 0x47 chain), taken by `walker::terrain::block_objects`; the bundle reads it
+//! while the weenie list is still there, so the walker's bundles dropping that list
+//! (`keep_weenies` off) loses nothing. Scripts that write `Render_Opacity` of
 //! a static owner later are not followed (the value is the one read when the landblock's
 //! objects are built). The creation viewport's owners count as 1.
 //!

@@ -4,33 +4,32 @@
 use std::net::{Ipv4Addr, SocketAddrV4};
 
 use tessera_compat::session::{
-    AUTH_FLAG_ENCRYPTED, AUTH_FLAG_HAS_EXTRA_BLOB, AUTH_FLAG_HAS_SECOND_STRING, AdminMessage,
-    BLOB_FLAG_DEFAULT_RECIPIENT, BLOB_FLAG_HAS_ATTACHMENT, BitTreeCodec,
-    COMPRESSION_DICT_FORMAT_UUID, CompressionDictionary, ConnectRequestHeader,
-    ConnectResponseHeader, ConnectionState, DEFAULT_MAX_CONTAINER_DEPTH,
-    DEFAULT_MAX_DECOMPRESSED_MESSAGE_BYTES, DID_DICT_SERVER_TO_CLIENT,
-    ENVELOPE_FLAG_HAS_ROUTING_HEADER, ENVELOPE_FLAG_WAS_ENCRYPTED, ENVELOPE_FLAG_ZLIB_COMPRESSED,
-    FLAG_CICERO_CONTROL, FLAG_CONNECT_REQUEST, FLAG_DISCONNECT, FLAG_EMPTY_ACK,
-    FLAG_EMPTY_HEADER_10, FLAG_ENCRYPTED_CHECKSUM, FLAG_FLOW, FLAG_HAS_NET_BLOBS,
-    FLAG_LOGON_SERVER_ADDR, FLAG_NAK, FLAG_NET_ERROR, FLAG_PAK_ACK, FLAG_REFERRAL,
-    FLAG_RESERVED_23, FLAG_SERVER_SWITCH, FLAG_TIME_SYNC, FlowHeader, FragmentAttachment,
-    INVALID_PROTO_FLAGS_MASK, InMemoryUdpTransport, IsaacCipher, LoginAuthPayload,
-    LoginCredentials, LoginRequestHeader, LogonServerAddrHeader, LogonUpdateMessage,
-    MAX_BLOB_FRAG_PAYLOAD, MAX_FRAGS_PER_PACKET, MAX_NAK_ENTRIES, MAX_SEQ_LOOKAHEAD,
-    NetBlobFragment, NetBlobFragmentHeader, NetBlobReassembler, NetErrorHeader,
-    NetMessageRoutingHeader, OPCODE_ADMIN_MESSAGE, OPCODE_BATCH_CONTAINER, OPCODE_ENTER_AOI,
-    OPCODE_EVENT_BATCH, OPCODE_LOGON_UPDATE, OPCODE_REQ_VERSION_SEND, OPCODE_VERSION_RESULT,
-    OPCODE_VERSION_SEND, OptionalHeaders, ProtoHeader, ReferralHeader, RuntimeBitTreeTables,
-    ServerSwitchHeader, SessionConnection, SessionControlMessage, SessionError, SessionEvent,
-    SessionMultiplexer, StdUdpTransport, UdpDatagramTransport, VALID_PROTO_FLAGS_MASK,
-    VALID_PROTO_FLAGS_WITH_INTERNAL_MASK, VersionResultMessage, VersionSendMessage,
-    WorldEventBatch, WorldLoginRequestHeader, WorldSubEvent, calc_checksum, candidate_bind_ports,
-    compute_packet_checksum, compute_unique_port, decode_datagram, decode_net_message,
-    decode_packed_dword, decode_world_event_batch, des3_cbc_decrypt, des3_cbc_encrypt,
-    dispatch_net_message, encode_batch_container, encode_datagram, encode_net_message,
-    encode_net_message_with_routing, encode_packed_dword, encode_single_wrapper,
-    encode_world_event_batch, map_net_error_to_hresult, sndbuf_probe_midpoint, split_net_blob,
-    verify_packet_checksum,
+    AUTH_FLAG_ENCRYPTED, AUTH_FLAG_HAS_EXTRA_BLOB, AUTH_FLAG_HAS_SECOND_STRING,
+    AuthServerAddressHeader, BIT_TREE_TABLE_FORMAT_UUID, BLOB_FLAG_DEFAULT_RECIPIENT,
+    BLOB_FLAG_HAS_ATTACHMENT, BitTreeCodec, BlobFragment, BlobFragmentHeader, BlobReassembler,
+    ConnectAcceptHeader, ConnectChallengeHeader, ConnectionState, ControlMessage,
+    DEFAULT_MAX_CONTAINER_DEPTH, DEFAULT_MAX_DECOMPRESSED_MESSAGE_BYTES, DID_DICT_SERVER_TO_CLIENT,
+    DatBitTreeTable, DatagramHeader, ENVELOPE_FLAG_HAS_ROUTING_HEADER, ENVELOPE_FLAG_WAS_ENCRYPTED,
+    ENVELOPE_FLAG_ZLIB_COMPRESSED, EntityBatchMessage, EntityBatchSubEvent, FLAG_AUTH_SERVER_ADDR,
+    FLAG_CLIENT_CONTROL, FLAG_CLOCK_SYNC, FLAG_CONNECT_CHALLENGE, FLAG_CUMULATIVE_ACK,
+    FLAG_DISCONNECT, FLAG_EMPTY_HEADER_10, FLAG_FLOW_CONTROL, FLAG_HAS_FRAGMENTED_BLOBS,
+    FLAG_MASKED_CHECKSUM, FLAG_OUT_OF_ORDER_ACK, FLAG_RESERVED_23, FLAG_SEQUENCE_NAK,
+    FLAG_SERVER_REDIRECT, FLAG_TRANSPORT_ERROR, FLAG_WORLD_REFERRAL, FlowControlHeader,
+    FragmentAttachment, INVALID_DATAGRAM_FLAGS_MASK, InMemoryUdpTransport, IsaacCipher,
+    LoginQueueStatusMessage, MAX_BLOB_FRAG_PAYLOAD, MAX_FRAGS_PER_PACKET, MAX_NAK_ENTRIES,
+    MAX_SEQ_LOOKAHEAD, MessageRoutingHeader, OPCODE_BATCH_CONTAINER, OPCODE_ENTITY_BATCH_UPDATE,
+    OPCODE_ENTITY_ENTRY_BATCH, OPCODE_LOGIN_QUEUE_STATUS, OPCODE_SYSTEM_NOTIFICATION,
+    OPCODE_VERSION_CHALLENGE, OPCODE_VERSION_RESPONSE, OPCODE_VERSION_STATUS, OptionalHeaders,
+    ReferralAuthHeader, RuntimeBitTreeTables, ServerRedirectHeader, SessionAuthCredentials,
+    SessionAuthHeader, SessionAuthPayload, SessionConnection, SessionError, SessionEvent,
+    SessionMultiplexer, StdUdpTransport, SystemNotificationMessage, TransportErrorHeader,
+    UdpDatagramTransport, VALID_DATAGRAM_FLAGS_MASK, VALID_DATAGRAM_FLAGS_WITH_INTERNAL_MASK,
+    VersionResponseMessage, VersionStatusMessage, WorldReferralHeader, candidate_bind_ports,
+    compute_datagram_checksum, compute_packet_checksum, compute_unique_port, decode_datagram,
+    decode_entity_batch, decode_message, decode_variable_u32, des3_cbc_decrypt, des3_cbc_encrypt,
+    dispatch_message, encode_batch_container, encode_datagram, encode_entity_batch, encode_message,
+    encode_message_with_routing, encode_single_wrapper, encode_variable_u32,
+    map_transport_error_to_hresult, sndbuf_probe_midpoint, split_blob, verify_packet_checksum,
 };
 
 // ---------------------------------------------------------------------------
@@ -87,22 +86,22 @@ fn transport_and_port_selection() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn vector_1_calc_checksum_aligned_and_unaligned() {
+fn vector_1_datagram_checksum_aligned_and_unaligned() {
     // Vector 1A: 4-byte aligned buffer (len = 8)
     let buf_1a = [0x01u8, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08];
-    assert_eq!(calc_checksum(&buf_1a), 0x0C0A_0806);
+    assert_eq!(compute_datagram_checksum(&buf_1a), 0x0C0A_0806);
 
     // Vector 1B: Unaligned buffer with 2 trailing bytes (len = 6)
     let buf_1b = [0x01u8, 0x02, 0x03, 0x04, 0xAA, 0xBB];
-    assert_eq!(calc_checksum(&buf_1b), 0xAEC4_0201);
+    assert_eq!(compute_datagram_checksum(&buf_1b), 0xAEC4_0201);
 }
 
 #[test]
-fn vector_2_unencoded_pak_ack_datagram() {
-    let hdr = ProtoHeader {
+fn vector_2_unencoded_cumulative_ack_datagram() {
+    let hdr = DatagramHeader {
         rec_id: 0x0102,
         pak_size: 4,
-        flags: FLAG_PAK_ACK,
+        flags: FLAG_CUMULATIVE_ACK,
         seq_num: 5,
         checksum: 0,
         iteration: 0,
@@ -112,29 +111,29 @@ fn vector_2_unencoded_pak_ack_datagram() {
     assert_eq!(hdr.header_checksum(), 0xCEB3_DFBB);
 
     let opt = OptionalHeaders {
-        pak_ack: Some(0x0000_000A),
+        cumulative_ack: Some(0x0000_000A),
         ..OptionalHeaders::default()
     };
-    let dgram = encode_datagram(hdr, &opt, &[], None, None).expect("encode PakAck");
+    let dgram = encode_datagram(hdr, &opt, &[], None, None).expect("encode CumulativeAck");
     let expected: [u8; 26] = [
         0x00, 0x00, 0x01, 0x02, 0x00, 0x04, 0x00, 0x00, 0x40, 0x00, 0x00, 0x00, 0x00, 0x05, 0xD8,
         0xB3, 0xDF, 0xBB, 0x00, 0x00, 0x03, 0xE8, 0x00, 0x00, 0x00, 0x0A,
     ];
     assert_eq!(dgram, expected);
 
-    let decoded = decode_datagram(&dgram, true, None, true).expect("decode PakAck");
+    let decoded = decode_datagram(&dgram, true, None, true).expect("decode CumulativeAck");
     assert_eq!(decoded.wire_prefix, 0x0000);
     assert_eq!(decoded.header.rec_id, 0x0102);
     assert_eq!(decoded.header.pak_size, 4);
-    assert_eq!(decoded.header.flags, FLAG_PAK_ACK);
+    assert_eq!(decoded.header.flags, FLAG_CUMULATIVE_ACK);
     assert_eq!(decoded.header.seq_num, 5);
     assert_eq!(decoded.header.checksum, 0xD8B3_DFBB);
     assert_eq!(decoded.header.time, 0x03E8);
-    assert_eq!(decoded.opt_headers.pak_ack, Some(10));
+    assert_eq!(decoded.opt_headers.cumulative_ack, Some(10));
 }
 
 #[test]
-fn vector_3_packed_dword_round_trip() {
+fn vector_3_variable_u32_round_trip() {
     let cases: &[(u32, &[u8])] = &[
         (0x0000_0000, &[0x00]),
         (0x0000_007F, &[0x7F]),
@@ -149,19 +148,19 @@ fn vector_3_packed_dword_round_trip() {
 
     for &(val, expected_bytes) in cases {
         let mut buf = Vec::new();
-        let n = encode_packed_dword(val, &mut buf);
+        let n = encode_variable_u32(val, &mut buf);
         assert_eq!(n, expected_bytes.len());
         assert_eq!(buf.as_slice(), expected_bytes);
 
-        let (decoded, consumed) = decode_packed_dword(&buf).expect("decode_packed_dword");
+        let (decoded, consumed) = decode_variable_u32(&buf).expect("decode_variable_u32");
         assert_eq!(decoded, val);
         assert_eq!(consumed, expected_bytes.len());
     }
 }
 
 #[test]
-fn vector_4_compact_netblob_fragment_header() {
-    let hdr = NetBlobFragmentHeader {
+fn vector_4_compact_blob_fragment_header() {
+    let hdr = BlobFragmentHeader {
         queue_id: 2,
         ext_word: None,
         blob_flags: BLOB_FLAG_DEFAULT_RECIPIENT,
@@ -182,7 +181,7 @@ fn vector_4_compact_netblob_fragment_header() {
     assert_eq!(written, 10);
     assert_eq!(out, expected);
 
-    let (decoded, consumed) = NetBlobFragmentHeader::decode(&out).expect("decode fragment header");
+    let (decoded, consumed) = BlobFragmentHeader::decode(&out).expect("decode fragment header");
     assert_eq!(consumed, 10);
     assert_eq!(decoded, hdr);
 }
@@ -194,10 +193,10 @@ fn vector_4_compact_netblob_fragment_header() {
 #[test]
 fn bit_tree_wire_codec_round_trip() {
     let tables = RuntimeBitTreeTables::synthetic_canonical();
-    let hdr = ProtoHeader {
+    let hdr = DatagramHeader {
         rec_id: 0x0234,
         pak_size: 0,
-        flags: FLAG_PAK_ACK,
+        flags: FLAG_CUMULATIVE_ACK,
         seq_num: 9,
         checksum: 0,
         iteration: 1,
@@ -205,7 +204,7 @@ fn bit_tree_wire_codec_round_trip() {
         time: 500,
     };
     let opt = OptionalHeaders {
-        pak_ack: Some(9),
+        cumulative_ack: Some(9),
         ..OptionalHeaders::default()
     };
 
@@ -218,7 +217,7 @@ fn bit_tree_wire_codec_round_trip() {
         decode_datagram(&compressed_dgram, true, Some(&tables), true).expect("decode compressed");
     assert_eq!(decoded.wire_prefix, 0x0234);
     assert_eq!(decoded.header.rec_id, 0x0234);
-    assert_eq!(decoded.opt_headers.pak_ack, Some(9));
+    assert_eq!(decoded.opt_headers.cumulative_ack, Some(9));
 }
 
 #[test]
@@ -255,37 +254,37 @@ fn des3_cbc_and_isaac_prng_invariants() {
 }
 
 // ---------------------------------------------------------------------------
-// §4.3 Optional Headers & §6.2 LoginRequest (Case A & Case B)
+// §4.3 Optional Headers & §6.2 SessionAuth (Case A & Case B)
 // ---------------------------------------------------------------------------
 
 #[test]
-fn login_request_case_a_and_case_b_round_trip() {
+fn session_auth_case_a_and_case_b_round_trip() {
     // Case A: unencrypted credentials with second string and extra blob
-    let creds = LoginCredentials {
+    let creds = SessionAuthCredentials {
         account_or_ticket: "player_one".to_string(),
         second_string: Some("GLS_TICKET_SYNTHETIC".to_string()),
         extra_blob: Some(vec![0xAA, 0xBB, 0xCC]),
     };
-    let lr_a = LoginRequestHeader {
+    let lr_a = SessionAuthHeader {
         auth_type: 1,
         auth_flags: AUTH_FLAG_HAS_SECOND_STRING | AUTH_FLAG_HAS_EXTRA_BLOB,
         client_timestamp: 1_700_000_000,
-        payload: LoginAuthPayload::Unencrypted(creds.clone()),
+        payload: SessionAuthPayload::Unencrypted(creds.clone()),
     };
     let mut buf_a = Vec::new();
     let len_a = lr_a.encode(&mut buf_a).expect("encode Case A");
     assert_eq!(&buf_a[0..7], b"180804\0");
-    let (dec_a, consumed_a) = LoginRequestHeader::decode(&buf_a).expect("decode Case A");
+    let (dec_a, consumed_a) = SessionAuthHeader::decode(&buf_a).expect("decode Case A");
     assert_eq!(consumed_a, len_a);
     assert_eq!(dec_a, lr_a);
 
     // Case B: 3DES-CBC encrypted credentials with raw 24-byte key transport
     let des3_key = [0x42u8; 24];
-    let lr_b = LoginRequestHeader {
+    let lr_b = SessionAuthHeader {
         auth_type: 1,
         auth_flags: AUTH_FLAG_ENCRYPTED | AUTH_FLAG_HAS_SECOND_STRING | AUTH_FLAG_HAS_EXTRA_BLOB,
         client_timestamp: 1_700_000_123,
-        payload: LoginAuthPayload::Encrypted {
+        payload: SessionAuthPayload::Encrypted {
             encrypted_session_key: des3_key.to_vec(),
             des3_key,
             credentials: creds,
@@ -293,7 +292,7 @@ fn login_request_case_a_and_case_b_round_trip() {
     };
     let mut buf_b = Vec::new();
     let len_b = lr_b.encode(&mut buf_b).expect("encode Case B");
-    let (dec_b, consumed_b) = LoginRequestHeader::decode(&buf_b).expect("decode Case B");
+    let (dec_b, consumed_b) = SessionAuthHeader::decode(&buf_b).expect("decode Case B");
     assert_eq!(consumed_b, len_b);
     assert_eq!(dec_b, lr_b);
 }
@@ -301,28 +300,28 @@ fn login_request_case_a_and_case_b_round_trip() {
 #[test]
 fn all_optional_headers_ascending_bit_order_and_hresult_mapping() {
     let opt = OptionalHeaders {
-        server_switch: Some(ServerSwitchHeader {
-            switch_seq: 11,
-            switch_type: 2,
+        server_redirect: Some(ServerRedirectHeader {
+            redirect_seq: 11,
+            redirect_type: 2,
         }),
-        logon_server_addr: Some(LogonServerAddrHeader {
+        auth_server_address: Some(AuthServerAddressHeader {
             sin_family: 2,
             addr: SocketAddrV4::new(Ipv4Addr::new(192, 0, 2, 55), 2900),
         }),
         empty_header_10: false,
-        referral: Some(ReferralHeader {
+        world_referral: Some(WorldReferralHeader {
             referral_cookie: 0x0102_0304_0506_0708,
             sin_family: 2,
             target_addr: SocketAddrV4::new(Ipv4Addr::new(198, 51, 100, 99), 9050),
             world_server_id: 7,
         }),
-        nak: Some(vec![3, 4]),
-        empty_ack: Some(vec![2]),
-        pak_ack: Some(10),
+        sequence_nak: Some(vec![3, 4]),
+        out_of_order_ack: Some(vec![2]),
+        cumulative_ack: Some(10),
         disconnect: true,
-        login_request: None,
-        world_login_request: None,
-        connect_request: Some(ConnectRequestHeader {
+        session_auth: None,
+        referral_auth: None,
+        connect_challenge: Some(ConnectChallengeHeader {
             server_time: 1234.5,
             assigned_client_rec_id: 0x0150,
             server_rec_id: 0x0250,
@@ -333,17 +332,17 @@ fn all_optional_headers_ascending_bit_order_and_hresult_mapping() {
             unknown_1a: 0,
             codec_uuid: [0u8; 16],
         }),
-        connect_response: None,
-        net_error: Some(NetErrorHeader {
+        connect_accept: None,
+        transport_error: Some(TransportErrorHeader {
             error_code: 0x00A7_E948,
             error_subcode: 0,
         }),
-        net_error_disconnect: None,
-        cicero_control: None,
-        time_sync: Some(4567.89),
-        echo_request: None,
-        echo_response: None,
-        flow: Some(FlowHeader {
+        transport_fatal_error: None,
+        client_control: None,
+        clock_sync: Some(4567.89),
+        latency_probe: None,
+        latency_reply: None,
+        flow_control: Some(FlowControlHeader {
             bytes_received_delta: 2048,
             interval_ms: 500,
         }),
@@ -358,15 +357,15 @@ fn all_optional_headers_ascending_bit_order_and_hresult_mapping() {
     assert_eq!(consumed, payload.len());
     assert_eq!(decoded, opt);
 
-    // Client-originated ConnectResponse + Flow, and WorldLoginRequest + PakAck (each packet has at most one handshake header per §10.1 rule 8)
+    // Client-originated ConnectAccept + FlowControl, and ReferralAuth + CumulativeAck (each packet has at most one handshake header per §10.1 rule 8)
     let opt_resp = OptionalHeaders {
-        connect_response: Some(ConnectResponseHeader {
+        connect_accept: Some(ConnectAcceptHeader {
             check_value: 99,
             local_rec_id: 0x0150,
             client_conn_idx: 3,
             codec_uuid: [0u8; 16],
         }),
-        flow: Some(FlowHeader {
+        flow_control: Some(FlowControlHeader {
             bytes_received_delta: 1024,
             interval_ms: 250,
         }),
@@ -375,13 +374,13 @@ fn all_optional_headers_ascending_bit_order_and_hresult_mapping() {
     let mut resp_payload = Vec::new();
     opt_resp.encode(&mut resp_payload).expect("encode resp");
     let (dec_resp, c_resp) = OptionalHeaders::decode(opt_resp.flags_mask(), &resp_payload, false)
-        .expect("decode ConnectResponse");
+        .expect("decode ConnectAccept");
     assert_eq!(c_resp, resp_payload.len());
     assert_eq!(dec_resp, opt_resp);
 
     let opt_world = OptionalHeaders {
-        pak_ack: Some(10),
-        world_login_request: Some(WorldLoginRequestHeader {
+        cumulative_ack: Some(10),
+        referral_auth: Some(ReferralAuthHeader {
             referral_cookie: 0xCAFE_BABE_1234_5678,
         }),
         ..OptionalHeaders::default()
@@ -390,24 +389,24 @@ fn all_optional_headers_ascending_bit_order_and_hresult_mapping() {
     opt_world.encode(&mut world_payload).expect("encode world");
     let (dec_world, c_world) =
         OptionalHeaders::decode(opt_world.flags_mask(), &world_payload, false)
-            .expect("decode WorldLoginRequest");
+            .expect("decode ReferralAuth");
     assert_eq!(c_world, world_payload.len());
     assert_eq!(dec_world, opt_world);
 
     // §6.7 error code mapping
-    assert_eq!(map_net_error_to_hresult(0x0000_0000, 0), 0x0000_0000);
-    assert_eq!(map_net_error_to_hresult(0x00A7_E948, 0), 0x8004_1006);
-    assert_eq!(map_net_error_to_hresult(0x7DC4_1B4A, 0), 0x8004_1006);
-    assert_eq!(map_net_error_to_hresult(0x00CD_0B73, 0), 0x8004_100F);
-    assert_eq!(map_net_error_to_hresult(0x06F1_6F2E, 0), 0x8004_100F);
-    assert_eq!(map_net_error_to_hresult(0x0DFB_256E, 0), 0x8004_100F);
-    assert_eq!(map_net_error_to_hresult(0x00F9_982C, 0), 0x8004_1016);
-    assert_eq!(map_net_error_to_hresult(0x07CF_6BF2, 0), 0x8004_1012);
-    assert_eq!(map_net_error_to_hresult(0x0058_3B44, 0), 0x8004_100E);
+    assert_eq!(map_transport_error_to_hresult(0x0000_0000, 0), 0x0000_0000);
+    assert_eq!(map_transport_error_to_hresult(0x00A7_E948, 0), 0x8004_1006);
+    assert_eq!(map_transport_error_to_hresult(0x7DC4_1B4A, 0), 0x8004_1006);
+    assert_eq!(map_transport_error_to_hresult(0x00CD_0B73, 0), 0x8004_100F);
+    assert_eq!(map_transport_error_to_hresult(0x06F1_6F2E, 0), 0x8004_100F);
+    assert_eq!(map_transport_error_to_hresult(0x0DFB_256E, 0), 0x8004_100F);
+    assert_eq!(map_transport_error_to_hresult(0x00F9_982C, 0), 0x8004_1016);
+    assert_eq!(map_transport_error_to_hresult(0x07CF_6BF2, 0), 0x8004_1012);
+    assert_eq!(map_transport_error_to_hresult(0x0058_3B44, 0), 0x8004_100E);
 }
 
 // ---------------------------------------------------------------------------
-// §5.1–§5.6, §6.1–§6.5 Handshake, Out-of-Order NAK + Saved ISAAC Mask, and Referral
+// §5.1–§5.6, §6.1–§6.5 Handshake, Out-of-Order SequenceNak + Saved ISAAC Mask, and WorldReferral
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -418,14 +417,16 @@ fn handshake_out_of_order_isaac_recovery_and_referral_flow() {
 
     let mut transport = InMemoryUdpTransport::new(client_addr);
     let mut mux = SessionMultiplexer::new();
-    let login_id = mux.create_connection(login_server_addr, 0.0);
+    let login_id = mux
+        .create_connection(login_server_addr, 0.0)
+        .expect("free recipient ID");
 
-    // Step 1: Client starts login -> State 1 (LoginRequestSent)
-    let login_req = LoginRequestHeader {
+    // Step 1: Client starts login -> State 1 (SessionAuthSent)
+    let login_req = SessionAuthHeader {
         auth_type: 1,
         auth_flags: 0,
         client_timestamp: 1000,
-        payload: LoginAuthPayload::Unencrypted(LoginCredentials {
+        payload: SessionAuthPayload::Unencrypted(SessionAuthCredentials {
             account_or_ticket: "acct".to_string(),
             second_string: None,
             extra_blob: None,
@@ -437,20 +438,20 @@ fn handshake_out_of_order_isaac_recovery_and_referral_flow() {
         .expect("start_login");
     assert_eq!(
         mux.connection(login_id).expect("conn").state(),
-        ConnectionState::LoginRequestSent
+        ConnectionState::SessionAuthSent
     );
     assert_eq!(mux.flush_outbound(&mut transport).expect("flush"), 1);
-    let (sent_login_dgram, dst) = transport.pop_outbound().expect("outbound LoginRequest");
+    let (sent_login_dgram, dst) = transport.pop_outbound().expect("outbound SessionAuth");
     assert_eq!(dst, login_server_addr);
     let parsed_login =
-        decode_datagram(&sent_login_dgram, false, None, true).expect("parse LoginRequest");
-    assert!(parsed_login.opt_headers.login_request.is_some());
+        decode_datagram(&sent_login_dgram, false, None, true).expect("parse SessionAuth");
+    assert!(parsed_login.opt_headers.session_auth.is_some());
 
-    // Step 2: Server sends ConnectRequest (0x00040000) assigning recId = 0x0111
+    // Step 2: Server sends ConnectChallenge (0x00040000) assigning recId = 0x0111
     let outgoing_seed = 0xCAFE_1234u32;
     let incoming_seed = 0xBEEF_5678u32;
     let cr_opt = OptionalHeaders {
-        connect_request: Some(ConnectRequestHeader {
+        connect_challenge: Some(ConnectChallengeHeader {
             server_time: 500.0,
             assigned_client_rec_id: 0x0111,
             server_rec_id: 0x0222,
@@ -464,39 +465,39 @@ fn handshake_out_of_order_isaac_recovery_and_referral_flow() {
         ..OptionalHeaders::default()
     };
     let cr_dgram = encode_datagram(
-        ProtoHeader {
+        DatagramHeader {
             rec_id: 0x0111,
-            ..ProtoHeader::default()
+            ..DatagramHeader::default()
         },
         &cr_opt,
         &[],
         None,
         None,
     )
-    .expect("encode ConnectRequest");
+    .expect("encode ConnectChallenge");
 
     let (routed_id, _) = mux
         .receive_from_peer(&cr_dgram, login_server_addr, 0.1, None)
-        .expect("receive ConnectRequest");
+        .expect("receive ConnectChallenge");
     assert_eq!(routed_id, 0x0111);
     let conn = mux.connection(routed_id).expect("conn after rekey");
-    assert_eq!(conn.state(), ConnectionState::ConnectResponseSent);
+    assert_eq!(conn.state(), ConnectionState::ChallengeAcceptSent);
     assert_eq!(conn.server_rec_id(), 0x0222);
 
-    // Client queued ConnectResponse (0x00080000)
+    // Client queued ConnectAccept (0x00080000)
     assert_eq!(mux.flush_outbound(&mut transport).expect("flush"), 1);
-    let (resp_dgram, _) = transport.pop_outbound().expect("ConnectResponse");
+    let (resp_dgram, _) = transport.pop_outbound().expect("ConnectAccept");
     let parsed_resp = decode_datagram(&resp_dgram, false, None, true).expect("parse resp");
     assert_eq!(
         parsed_resp
             .opt_headers
-            .connect_response
+            .connect_accept
             .expect("resp")
             .local_rec_id,
         0x0111
     );
 
-    // Step 3: Server sends sequenced packets seq = 2, 3, 4 (multi-fragment NetBlob),
+    // Step 3: Server sends sequenced packets seq = 2, 3, 4 (multi-fragment fragmented blob),
     // but packet seq = 4 arrives BEFORE seq = 2 and seq = 3!
     let mut server_isaac = IsaacCipher::from_seed(incoming_seed);
     let mask_seq_2 = server_isaac.next_mask();
@@ -504,16 +505,16 @@ fn handshake_out_of_order_isaac_recovery_and_referral_flow() {
     let mask_seq_4 = server_isaac.next_mask();
 
     let large_payload: Vec<u8> = (0..1000usize).map(|i| (i & 0xFF) as u8).collect();
-    let frags = split_net_blob(2, 1, 42, 0, None, 0x0000_1234, &large_payload, false, None)
+    let frags = split_blob(2, 1, 42, 0, None, 0x0000_1234, &large_payload, false, None)
         .expect("split 3 frags");
     assert_eq!(frags.len(), 3);
 
-    let make_server_seq_pkt = |seq_num: u32, mask: u32, frag: NetBlobFragment| -> Vec<u8> {
+    let make_server_seq_pkt = |seq_num: u32, mask: u32, frag: BlobFragment| -> Vec<u8> {
         encode_datagram(
-            ProtoHeader {
+            DatagramHeader {
                 rec_id: 0x0111,
                 seq_num,
-                ..ProtoHeader::default()
+                ..DatagramHeader::default()
             },
             &OptionalHeaders::default(),
             &[frag],
@@ -532,21 +533,25 @@ fn handshake_out_of_order_isaac_recovery_and_referral_flow() {
         .expect("receive seq 4 out of order");
     {
         let conn = mux.connection_mut(routed_id).expect("conn");
-        // Connection transitioned State 2 -> State 5 and queued initial TimeSync
+        // Connection transitioned State 2 -> State 5 and queued initial ClockSync
         assert_eq!(conn.state(), ConnectionState::Connected);
         assert_eq!(conn.recv_seq_expected(), 4);
         assert_eq!(conn.missing_gap_count(), 2); // gaps for seq 2 and 3
 
-        // Tick at t = 0.9 s (>= 0.6 s) to trigger Nak for missing seqs [2, 3]
+        // Tick at t = 0.9 s (>= 0.6 s) to trigger SequenceNak for missing seqs [2, 3]
         conn.tick(0.9, None).expect("tick nak");
     }
-    // Drain initial TimeSync and Nak
+    // Drain initial ClockSync and SequenceNak
     let flushed = mux.flush_outbound(&mut transport).expect("flush");
     assert_eq!(flushed, 2);
-    let _initial_ts = transport.pop_outbound().expect("initial TimeSync");
-    let (nak_dgram, _) = transport.pop_outbound().expect("Nak datagram");
-    let parsed_nak = decode_datagram(&nak_dgram, false, None, true).expect("parse Nak");
-    assert_eq!(parsed_nak.opt_headers.nak, Some(vec![2, 3]));
+    let _initial_ts = transport.pop_outbound().expect("initial ClockSync");
+    let (sequence_nak_dgram, _) = transport.pop_outbound().expect("SequenceNak datagram");
+    let parsed_sequence_nak =
+        decode_datagram(&sequence_nak_dgram, false, None, true).expect("parse SequenceNak");
+    assert_eq!(
+        parsed_sequence_nak.opt_headers.sequence_nak,
+        Some(vec![2, 3])
+    );
 
     // Now deliver out-of-order seq = 2 and seq = 3; their checksums must verify against saved ISAAC masks!
     mux.receive_from_peer(&pkt_seq_2, login_server_addr, 1.0, None)
@@ -559,24 +564,24 @@ fn handshake_out_of_order_isaac_recovery_and_referral_flow() {
         assert_eq!(conn.missing_gap_count(), 0);
         let mut got_blob = None;
         while let Some(ev) = conn.pop_event() {
-            if let SessionEvent::NetBlobReceived(blob) = ev {
+            if let SessionEvent::BlobReceived(blob) = ev {
                 got_blob = Some(blob);
             }
         }
-        let blob = got_blob.expect("reassembled 3-fragment NetBlob");
+        let blob = got_blob.expect("reassembled 3-fragment fragmented blob");
         assert_eq!(blob.blob_header_word, 0x0000_1234);
         assert_eq!(blob.payload, large_payload);
     }
 
-    // Step 4: Server sends Referral (0x00000800) to world_server_addr
+    // Step 4: Server sends WorldReferral (0x00000800) to world_server_addr
     let ref_dgram = encode_datagram(
-        ProtoHeader {
+        DatagramHeader {
             rec_id: 0x0111,
             seq_num: 4,
-            ..ProtoHeader::default()
+            ..DatagramHeader::default()
         },
         &OptionalHeaders {
-            referral: Some(ReferralHeader {
+            world_referral: Some(WorldReferralHeader {
                 referral_cookie: 0xABCD_EF01_2345_6789,
                 sin_family: 2,
                 target_addr: world_server_addr,
@@ -588,13 +593,13 @@ fn handshake_out_of_order_isaac_recovery_and_referral_flow() {
         None,
         None,
     )
-    .expect("encode Referral");
+    .expect("encode WorldReferral");
     mux.receive_from_peer(&ref_dgram, login_server_addr, 1.2, None)
-        .expect("receive Referral");
+        .expect("receive WorldReferral");
 
     let mut referral_event = None;
     while let Some(ev) = mux.connection_mut(routed_id).expect("conn").pop_event() {
-        if let SessionEvent::ReferralReceived {
+        if let SessionEvent::WorldReferralReceived {
             referral_cookie,
             world_addr,
             world_server_id,
@@ -603,25 +608,28 @@ fn handshake_out_of_order_isaac_recovery_and_referral_flow() {
             referral_event = Some((referral_cookie, world_addr, world_server_id));
         }
     }
-    let (cookie, resolved_world_addr, world_id) = referral_event.expect("ReferralReceived event");
+    let (cookie, resolved_world_addr, world_id) =
+        referral_event.expect("WorldReferralReceived event");
     assert_eq!(cookie, 0xABCD_EF01_2345_6789);
     assert_eq!(resolved_world_addr, world_server_addr);
     assert_eq!(world_id, 9);
 
-    // Open new world connection on the same SessionMultiplexer and send WorldLoginRequest (0x00020000)
-    let world_conn_id = mux.create_connection(resolved_world_addr, 1.2);
+    // Open new world connection on the same SessionMultiplexer and send ReferralAuth (0x00020000)
+    let world_conn_id = mux
+        .create_connection(resolved_world_addr, 1.2)
+        .expect("free recipient ID");
     mux.connection_mut(world_conn_id)
         .expect("world conn")
         .start_world_login(cookie, 1.2)
         .expect("start_world_login");
     assert_eq!(mux.flush_outbound(&mut transport).expect("flush"), 1);
-    let (wlr_dgram, wlr_dst) = transport.pop_outbound().expect("WorldLoginRequest");
+    let (wlr_dgram, wlr_dst) = transport.pop_outbound().expect("ReferralAuth");
     assert_eq!(wlr_dst, world_server_addr);
     let parsed_wlr = decode_datagram(&wlr_dgram, false, None, true).expect("parse WLR");
     assert_eq!(
         parsed_wlr
             .opt_headers
-            .world_login_request
+            .referral_auth
             .expect("wlr")
             .referral_cookie,
         cookie
@@ -629,13 +637,13 @@ fn handshake_out_of_order_isaac_recovery_and_referral_flow() {
 }
 
 // ---------------------------------------------------------------------------
-// §9.1–§9.2 NetMessage Zlib Envelope & Recursive 0x00000186 Batch Container
+// §9.1–§9.2 MessageEnvelope Zlib Envelope & Recursive 0x00000186 Batch Container
 // ---------------------------------------------------------------------------
 
 #[test]
-fn net_message_zlib_and_recursive_batch_container_0x186() {
-    let sub1 = encode_net_message(0, &[0x10, 0x20, 0x30], false).expect("encode sub1");
-    let sub2 = encode_net_message(0, &[0x40; 200], true).expect("encode compressed sub2");
+fn message_envelope_zlib_and_recursive_batch_container_0x186() {
+    let sub1 = encode_message(0, &[0x10, 0x20, 0x30], false).expect("encode sub1");
+    let sub2 = encode_message(0, &[0x40; 200], true).expect("encode compressed sub2");
     let wrapped_sub2 =
         encode_single_wrapper(0x0000_0202, &sub2, false).expect("encode 0x179 wrapper");
 
@@ -648,14 +656,14 @@ fn net_message_zlib_and_recursive_batch_container_0x186() {
     )
     .expect("encode 0x186 batch container");
 
-    let dispatched = dispatch_net_message(
+    let dispatched = dispatch_message(
         OPCODE_BATCH_CONTAINER,
         &batch_payload,
         true,
         DEFAULT_MAX_DECOMPRESSED_MESSAGE_BYTES,
         DEFAULT_MAX_CONTAINER_DEPTH,
     )
-    .expect("dispatch_net_message");
+    .expect("dispatch_message");
 
     assert_eq!(dispatched.len(), 2);
     assert_eq!(dispatched[0].opcode, 0x0000_0201);
@@ -712,7 +720,7 @@ fn hostile_input_rejection_rules_1_to_8() {
         Err(SessionError::WireDecompressionFailed)
     ));
 
-    // Rule 3: Disallowed ProtoHeader.flags bits outside 0x0FFF7B00
+    // Rule 3: Disallowed DatagramHeader.flags bits outside 0x0FFF7B00
     let mut bad_flags = [0u8; 22];
     bad_flags[6..10].copy_from_slice(&0x0000_0001u32.to_be_bytes());
     assert!(matches!(
@@ -721,10 +729,10 @@ fn hostile_input_rejection_rules_1_to_8() {
     ));
 
     // Rule 7: Forbidden server flag 0x00000400 (EmptyHeader10) when from_server == true
-    let forbidden_hdr = ProtoHeader {
+    let forbidden_hdr = DatagramHeader {
         rec_id: 0x0100,
         flags: FLAG_EMPTY_HEADER_10,
-        ..ProtoHeader::default()
+        ..DatagramHeader::default()
     };
     let mut forbidden_dgram = vec![0x00, 0x00];
     let mut fh = forbidden_hdr;
@@ -738,9 +746,9 @@ fn hostile_input_rejection_rules_1_to_8() {
     // Rule 4, 5, 6: Source address binding, sequence lookahead > 0x7FFF, and checksum mismatch without mutating state
     let mut conn = SessionConnection::new(0x0100, peer, 0.0);
     let valid_empty = encode_datagram(
-        ProtoHeader {
+        DatagramHeader {
             rec_id: 0x0100,
-            ..ProtoHeader::default()
+            ..DatagramHeader::default()
         },
         &OptionalHeaders::default(),
         &[],
@@ -757,10 +765,10 @@ fn hostile_input_rejection_rules_1_to_8() {
 
     // Rule 5: sequence number > recvSeqExpected + 0x7FFF
     let out_of_window = encode_datagram(
-        ProtoHeader {
+        DatagramHeader {
             rec_id: 0x0100,
             seq_num: 1 + MAX_SEQ_LOOKAHEAD + 1,
-            ..ProtoHeader::default()
+            ..DatagramHeader::default()
         },
         &OptionalHeaders::default(),
         &[],
@@ -776,10 +784,10 @@ fn hostile_input_rejection_rules_1_to_8() {
 
     // Rule 6: bad checksum on sequenced packet must not advance recv_seq_expected or add gaps
     let mut bad_csum = encode_datagram(
-        ProtoHeader {
+        DatagramHeader {
             rec_id: 0x0100,
             seq_num: 5,
-            ..ProtoHeader::default()
+            ..DatagramHeader::default()
         },
         &OptionalHeaders::default(),
         &[],
@@ -795,18 +803,18 @@ fn hostile_input_rejection_rules_1_to_8() {
     assert_eq!(conn.recv_seq_expected(), 1);
     assert_eq!(conn.missing_gap_count(), 0);
 
-    // Rule 7: Nak count > 114
+    // Rule 7: SequenceNak count > 114
     let mut bad_nak_payload = Vec::new();
     bad_nak_payload.extend_from_slice(&((MAX_NAK_ENTRIES as u32) + 1).to_le_bytes());
     assert!(matches!(
-        OptionalHeaders::decode(FLAG_NAK, &bad_nak_payload, true),
-        Err(SessionError::InvalidNakCount { count: 115 })
+        OptionalHeaders::decode(FLAG_SEQUENCE_NAK, &bad_nak_payload, true),
+        Err(SessionError::InvalidSequenceNakCount { count: 115 })
     ));
 
-    // Rule 8: NetBlob fragment bounds (numFrags <= fragIndex, non-zero alignPad, fragDataLen >= 0x01D1, > 20 frags)
+    // Rule 8: blob fragment bounds (numFrags <= fragIndex, non-zero alignPad, fragDataLen >= 0x01D1, > 20 frags)
     let bad_bounds_bytes = [0x02u8, 0x50, 0x01, 0x00, 0x01, 0x00, 0x02, 0x02, 0x00, 0x00]; // fragIndex=2, numFrags=2
     assert!(matches!(
-        NetBlobFragmentHeader::decode(&bad_bounds_bytes),
+        BlobFragmentHeader::decode(&bad_bounds_bytes),
         Err(SessionError::InvalidFragmentBounds {
             frag_index: 2,
             num_frags: 2
@@ -816,12 +824,12 @@ fn hostile_input_rejection_rules_1_to_8() {
     // Non-zero alignPad (modify byte 9 of Vector 4 from 0x00 to 0x7F)
     let bad_pad_bytes = [0x02u8, 0x40, 0x07, 0x00, 0x2A, 0x00, 0x81, 0x86, 0x10, 0x7F];
     assert!(matches!(
-        NetBlobFragmentHeader::decode(&bad_pad_bytes),
+        BlobFragmentHeader::decode(&bad_pad_bytes),
         Err(SessionError::NonZeroAlignmentPad { pad: 0x7F })
     ));
 
     // fragDataLen >= 0x01D1 (465)
-    let mut bad_len_hdr = NetBlobFragmentHeader {
+    let mut bad_len_hdr = BlobFragmentHeader {
         queue_id: 2,
         ext_word: None,
         blob_flags: BLOB_FLAG_DEFAULT_RECIPIENT,
@@ -843,14 +851,14 @@ fn hostile_input_rejection_rules_1_to_8() {
 
     // More than 20 fragments in a packet
     bad_len_hdr.frag_data_len = 0;
-    let dummy_frag = NetBlobFragment {
+    let dummy_frag = BlobFragment {
         header: bad_len_hdr,
         payload: Vec::new(),
     };
     let too_many = vec![dummy_frag; MAX_FRAGS_PER_PACKET + 1];
     assert!(matches!(
         encode_datagram(
-            ProtoHeader::default(),
+            DatagramHeader::default(),
             &OptionalHeaders::default(),
             &too_many,
             None,
@@ -860,9 +868,9 @@ fn hostile_input_rejection_rules_1_to_8() {
     ));
 
     // Attachment round-trip check & defensive reassembly cap check
-    let mut reassembler = NetBlobReassembler::new(2, MAX_BLOB_FRAG_PAYLOAD * 2);
-    let oversized_frag = NetBlobFragment {
-        header: NetBlobFragmentHeader {
+    let mut reassembler = BlobReassembler::new(2, MAX_BLOB_FRAG_PAYLOAD * 2);
+    let oversized_frag = BlobFragment {
+        header: BlobFragmentHeader {
             queue_id: 2,
             ext_word: Some(0x1234),
             blob_flags: BLOB_FLAG_DEFAULT_RECIPIENT | BLOB_FLAG_HAS_ATTACHMENT,
@@ -887,21 +895,21 @@ fn hostile_input_rejection_rules_1_to_8() {
     ));
 
     // Verify verify_packet_checksum helper directly
-    let hdr_check = ProtoHeader {
+    let hdr_check = DatagramHeader {
         rec_id: 1,
         pak_size: 0,
-        flags: FLAG_TIME_SYNC
+        flags: FLAG_CLOCK_SYNC
             | FLAG_DISCONNECT
-            | FLAG_SERVER_SWITCH
-            | FLAG_LOGON_SERVER_ADDR
-            | FLAG_REFERRAL
-            | FLAG_NAK
-            | FLAG_EMPTY_ACK
-            | FLAG_CONNECT_REQUEST
-            | FLAG_NET_ERROR
-            | FLAG_FLOW
-            | FLAG_HAS_NET_BLOBS
-            | FLAG_ENCRYPTED_CHECKSUM,
+            | FLAG_SERVER_REDIRECT
+            | FLAG_AUTH_SERVER_ADDR
+            | FLAG_WORLD_REFERRAL
+            | FLAG_SEQUENCE_NAK
+            | FLAG_OUT_OF_ORDER_ACK
+            | FLAG_CONNECT_CHALLENGE
+            | FLAG_TRANSPORT_ERROR
+            | FLAG_FLOW_CONTROL
+            | FLAG_HAS_FRAGMENTED_BLOBS
+            | FLAG_MASKED_CHECKSUM,
         seq_num: 2,
         checksum: 0,
         iteration: 0,
@@ -910,11 +918,11 @@ fn hostile_input_rejection_rules_1_to_8() {
     };
     assert!(verify_packet_checksum(hdr_check, &[], Some(0)).is_err());
 
-    // Verify zlib bomb protection on decode_net_message
+    // Verify zlib bomb protection on decode_message
     let mut fake_bomb = vec![ENVELOPE_FLAG_ZLIB_COMPRESSED];
     fake_bomb.extend_from_slice(&(10_000_000u32).to_le_bytes());
     assert!(matches!(
-        decode_net_message(1, &fake_bomb, false, 1024),
+        decode_message(1, &fake_bomb, false, 1024),
         Err(SessionError::DecompressedMessageTooLarge {
             size: 10_000_000,
             limit: 1024
@@ -923,40 +931,40 @@ fn hostile_input_rejection_rules_1_to_8() {
 }
 
 // ---------------------------------------------------------------------------
-// §4.1.2–§4.1.3 .dat CompressionDictionary & 4-Bit wireBody[0] Header
+// §4.1.2–§4.1.3 .dat DatBitTreeTable & 4-Bit wireBody[0] Header
 // ---------------------------------------------------------------------------
 
 #[test]
-fn dat_compression_dictionary_and_4bit_wire_body_header() {
+fn dat_bit_tree_table_and_4bit_wire_body_header() {
     let codec_uuid = [
         0x10, 0x20, 0x30, 0x40, 0x50, 0x60, 0x70, 0x80, 0x90, 0xA0, 0xB0, 0xC0, 0xD0, 0xE0, 0xF0,
         0x01,
     ];
-    let dict = CompressionDictionary::synthetic_dictionary(codec_uuid);
+    let dict = DatBitTreeTable::synthetic_dictionary(codec_uuid);
     let dat_bytes = dict.to_dat_bytes();
 
     // Verify 44-byte header fields
-    assert_eq!(&dat_bytes[0..16], &COMPRESSION_DICT_FORMAT_UUID);
+    assert_eq!(&dat_bytes[0..16], &BIT_TREE_TABLE_FORMAT_UUID);
     assert_eq!(&dat_bytes[16..32], &codec_uuid);
     assert_eq!(
         u32::from_le_bytes([dat_bytes[36], dat_bytes[37], dat_bytes[38], dat_bytes[39]]),
         1
     );
 
-    let parsed = CompressionDictionary::from_dat_bytes(&dat_bytes).expect("parse .dat dictionary");
+    let parsed = DatBitTreeTable::from_dat_bytes(&dat_bytes).expect("parse .dat dictionary");
     assert_eq!(parsed, dict);
 
     // Also verify version = 0x00010001 is accepted
     let mut dat_v10001 = dat_bytes.clone();
     dat_v10001[36..40].copy_from_slice(&0x0001_0001u32.to_le_bytes());
-    assert!(CompressionDictionary::from_dat_bytes(&dat_v10001).is_ok());
+    assert!(DatBitTreeTable::from_dat_bytes(&dat_v10001).is_ok());
 
     // Redirect stub record (0x0E010002 -> 0x0E010001, version = 0, bodyLen = 0)
     let mut stub = vec![0u8; 44];
-    stub[0..16].copy_from_slice(&COMPRESSION_DICT_FORMAT_UUID);
+    stub[0..16].copy_from_slice(&BIT_TREE_TABLE_FORMAT_UUID);
     stub[32..36].copy_from_slice(&DID_DICT_SERVER_TO_CLIENT.to_le_bytes());
     assert_eq!(
-        CompressionDictionary::parse_redirect_did(&stub).expect("parse redirect stub"),
+        DatBitTreeTable::parse_redirect_did(&stub).expect("parse redirect stub"),
         Some(DID_DICT_SERVER_TO_CLIENT)
     );
 
@@ -994,14 +1002,14 @@ fn dat_compression_dictionary_and_4bit_wire_body_header() {
         .expect("decode literal fallback");
     assert_eq!(fallback_dec, incompressible_input);
 
-    // Full UDP datagram round-trip with wirePrefix != 0x0000 using CompressionDictionary
-    let hdr = ProtoHeader {
+    // Full UDP datagram round-trip with wirePrefix != 0x0000 using DatBitTreeTable
+    let hdr = DatagramHeader {
         rec_id: 0x0142,
         seq_num: 12,
-        ..ProtoHeader::default()
+        ..DatagramHeader::default()
     };
-    let frag = NetBlobFragment {
-        header: NetBlobFragmentHeader {
+    let frag = BlobFragment {
+        header: BlobFragmentHeader {
             queue_id: 2,
             ext_word: None,
             blob_flags: BLOB_FLAG_DEFAULT_RECIPIENT,
@@ -1036,20 +1044,20 @@ fn dat_compression_dictionary_and_4bit_wire_body_header() {
 }
 
 // ---------------------------------------------------------------------------
-// §4.3 & §10.1 Reconciled ProtoHeader.flags Mask (0x0F7FFB00 / 0x0F7FFB06)
+// §4.3 & §10.1 Reconciled DatagramHeader.flags Mask (0x0F7FFB00 / 0x0F7FFB06)
 // ---------------------------------------------------------------------------
 
 #[test]
-fn reconciled_proto_header_flags_mask_0x0f7ffb00() {
-    assert_eq!(VALID_PROTO_FLAGS_MASK, 0x0F7F_FB00);
-    assert_eq!(VALID_PROTO_FLAGS_WITH_INTERNAL_MASK, 0x0F7F_FB06);
-    assert_eq!(INVALID_PROTO_FLAGS_MASK, 0xF080_04FF);
+fn reconciled_datagram_header_flags_mask_0x0f7ffb00() {
+    assert_eq!(VALID_DATAGRAM_FLAGS_MASK, 0x0F7F_FB00);
+    assert_eq!(VALID_DATAGRAM_FLAGS_WITH_INTERNAL_MASK, 0x0F7F_FB06);
+    assert_eq!(INVALID_DATAGRAM_FLAGS_MASK, 0xF080_04FF);
 
     // 0x00008000 (Disconnect) IS valid on the wire
     let disc_dgram = encode_datagram(
-        ProtoHeader {
+        DatagramHeader {
             rec_id: 0x0100,
-            ..ProtoHeader::default()
+            ..DatagramHeader::default()
         },
         &OptionalHeaders {
             disconnect: true,
@@ -1068,32 +1076,32 @@ fn reconciled_proto_header_flags_mask_0x0f7ffb00() {
         let mut raw = [0u8; 20];
         raw[4..8].copy_from_slice(&bad_bit.to_be_bytes());
         assert!(matches!(
-            ProtoHeader::from_wire_bytes(&raw),
+            DatagramHeader::from_wire_bytes(&raw),
             Err(SessionError::InvalidHeaderFlags { flags }) if flags == bad_bit
         ));
     }
 
-    // 0x00400000 (CiceroControl, 4 B u32 LE) is valid Client -> Server (from_server == false),
+    // 0x00400000 (ClientControl, 4 B u32 LE) is valid Client -> Server (from_server == false),
     // but rejected when received from a server (from_server == true, Rule 7)
     let cc_opt = OptionalHeaders {
-        cicero_control: Some(0xCAFE_1234),
+        client_control: Some(0xCAFE_1234),
         ..OptionalHeaders::default()
     };
     let cc_dgram = encode_datagram(
-        ProtoHeader {
+        DatagramHeader {
             rec_id: 0x0100,
-            ..ProtoHeader::default()
+            ..DatagramHeader::default()
         },
         &cc_opt,
         &[],
         None,
         None,
     )
-    .expect("encode CiceroControl client->server");
+    .expect("encode ClientControl client->server");
     let dec_client =
-        decode_datagram(&cc_dgram, false, None, true).expect("decode client CiceroControl");
-    assert_ne!(dec_client.header.flags & FLAG_CICERO_CONTROL, 0);
-    assert_eq!(dec_client.opt_headers.cicero_control, Some(0xCAFE_1234));
+        decode_datagram(&cc_dgram, false, None, true).expect("decode client ClientControl");
+    assert_ne!(dec_client.header.flags & FLAG_CLIENT_CONTROL, 0);
+    assert_eq!(dec_client.opt_headers.client_control, Some(0xCAFE_1234));
     assert!(matches!(
         decode_datagram(&cc_dgram, true, None, true),
         Err(SessionError::InvalidHeaderFlags { .. })
@@ -1101,20 +1109,20 @@ fn reconciled_proto_header_flags_mask_0x0f7ffb00() {
 }
 
 // ---------------------------------------------------------------------------
-// §9.1–§9.4 NetMessage Routing Header, Post-Handshake Control Messages, and World Event Batches
+// §9.1–§9.4 MessageEnvelope Routing Header, Post-Handshake Control Messages, and World Event Batches
 // ---------------------------------------------------------------------------
 
 #[test]
-fn net_message_routing_header_and_post_handshake_control_messages() {
+fn message_routing_header_and_post_handshake_control_messages() {
     // 1. §9.1 envelopeFlags bit 1 (0x02 HasRoutingHeader) with u16 LE routingFlags + 2-byte alignment pad
-    let routing = NetMessageRoutingHeader {
+    let routing = MessageRoutingHeader {
         field0: Some(0x1122_3344),
         field1: None,
         field2: Some(0x0102_0304_0506_0708),
         field3: Some(0x99AA_BBCC),
     };
     let inner_body = vec![0xDE, 0xAD, 0xBE, 0xEF];
-    let env_uncompressed = encode_net_message_with_routing(
+    let env_uncompressed = encode_message_with_routing(
         ENVELOPE_FLAG_HAS_ROUTING_HEADER,
         Some(&routing),
         &inner_body,
@@ -1123,7 +1131,7 @@ fn net_message_routing_header_and_post_handshake_control_messages() {
     .expect("encode with routing uncompressed");
     // routing header size: 2 (flags) + 4 (f0) + 8 (f2) + 4 (f3) = 18 -> aligned to 20 bytes (+ 1 byte envelopeFlags + 4 bytes body = 25 bytes)
     assert_eq!(env_uncompressed.len(), 1 + 20 + 4);
-    let dec_uncomp = decode_net_message(
+    let dec_uncomp = decode_message(
         0x0000_1000,
         &env_uncompressed,
         false,
@@ -1134,7 +1142,7 @@ fn net_message_routing_header_and_post_handshake_control_messages() {
     assert_eq!(dec_uncomp.body, inner_body);
 
     // Zlib-compressed + routing header (envelopeFlags = 0x03)
-    let env_compressed = encode_net_message_with_routing(
+    let env_compressed = encode_message_with_routing(
         ENVELOPE_FLAG_HAS_ROUTING_HEADER,
         Some(&routing),
         &inner_body,
@@ -1145,7 +1153,7 @@ fn net_message_routing_header_and_post_handshake_control_messages() {
         env_compressed[0],
         ENVELOPE_FLAG_ZLIB_COMPRESSED | ENVELOPE_FLAG_HAS_ROUTING_HEADER
     );
-    let dec_comp = decode_net_message(
+    let dec_comp = decode_message(
         0x0000_1000,
         &env_compressed,
         false,
@@ -1157,7 +1165,7 @@ fn net_message_routing_header_and_post_handshake_control_messages() {
 
     // Reject reserved envelopeFlags bits (envelopeFlags & 0xFC != 0)
     assert!(matches!(
-        decode_net_message(
+        decode_message(
             1,
             &[0x04, 0x00],
             false,
@@ -1168,40 +1176,62 @@ fn net_message_routing_header_and_post_handshake_control_messages() {
 
     // 2. §9.3 Post-handshake session/version negotiation messages (0x0000012C..0x00000130)
     let controls = [
-        SessionControlMessage::ReqVersionSend,
-        SessionControlMessage::VersionSend(VersionSendMessage {
+        ControlMessage::VersionChallenge,
+        ControlMessage::VersionResponse(VersionResponseMessage {
             version_string: "netver:1; didver:00000000-0000-0000-0000000000000000".to_owned(),
         }),
-        SessionControlMessage::VersionResult(VersionResultMessage {
+        ControlMessage::VersionStatus(VersionStatusMessage {
             status: 1,
             server_version_info: "4906.0071.1794.4035".to_owned(),
         }),
-        SessionControlMessage::LogonUpdate(LogonUpdateMessage {
-            logon_result: 0,
+        ControlMessage::LoginQueueStatus(LoginQueueStatusMessage {
+            login_result: 0,
             detail_text: "Queueing".to_owned(),
             queue_position: 3,
             queue_total: 25,
         }),
-        SessionControlMessage::Admin(AdminMessage {
-            admin_text: "Server maintenance in 30 minutes".to_owned(),
+        ControlMessage::SystemNotification(SystemNotificationMessage {
+            text: "Server maintenance in 30 minutes".to_owned(),
         }),
     ];
     let expected_opcodes = [
-        OPCODE_REQ_VERSION_SEND,
-        OPCODE_VERSION_SEND,
-        OPCODE_VERSION_RESULT,
-        OPCODE_LOGON_UPDATE,
-        OPCODE_ADMIN_MESSAGE,
+        OPCODE_VERSION_CHALLENGE,
+        OPCODE_VERSION_RESPONSE,
+        OPCODE_VERSION_STATUS,
+        OPCODE_LOGIN_QUEUE_STATUS,
+        OPCODE_SYSTEM_NOTIFICATION,
     ];
     for (msg, &expected_op) in controls.iter().zip(expected_opcodes.iter()) {
-        let (op, bytes) = msg.encode();
+        if let ControlMessage::SystemNotification(_) = msg {
+            // Receive-only (decision 0042 item 2): never encoded. Build the
+            // server's body by hand (VariableU32 code-unit count + UTF-16LE).
+            assert_eq!(
+                msg.encode(),
+                Err(SessionError::ReceiveOnlyMessage {
+                    opcode: OPCODE_SYSTEM_NOTIFICATION
+                })
+            );
+            let text = "Server maintenance in 30 minutes";
+            let mut bytes = Vec::new();
+            encode_variable_u32(
+                u32::try_from(text.encode_utf16().count()).unwrap(),
+                &mut bytes,
+            );
+            for unit in text.encode_utf16() {
+                bytes.extend_from_slice(&unit.to_le_bytes());
+            }
+            let decoded = ControlMessage::decode(expected_op, &bytes).expect("decode notice");
+            assert_eq!(&decoded, msg);
+            continue;
+        }
+        let (op, bytes) = msg.encode().expect("sendable control message");
         assert_eq!(op, expected_op);
-        let decoded = SessionControlMessage::decode(op, &bytes).expect("decode control msg");
+        let decoded = ControlMessage::decode(op, &bytes).expect("decode control msg");
         assert_eq!(&decoded, msg);
     }
 
-    // VersionResult status == 0 -> VersionRejected (0x0DD6BAE1)
-    let rejected = VersionResultMessage {
+    // VersionStatus status == 0 -> VersionRejected (0x0DD6BAE1)
+    let rejected = VersionStatusMessage {
         status: 0,
         server_version_info: "mismatch".to_owned(),
     };
@@ -1210,49 +1240,49 @@ fn net_message_routing_header_and_post_handshake_control_messages() {
         Err(SessionError::VersionRejected { .. })
     ));
 
-    // 3. §9.4.1 World entity batches (0x0000000D EnterAOI with tail flag, 0x0000004C EventBatch without tail flag)
-    let enter_aoi = WorldEventBatch {
-        opcode: OPCODE_ENTER_AOI,
+    // 3. §9.4.1 World entity batches (0x0000000D EntityEntryBatch with tail flag, 0x0000004C EntityBatchUpdate without tail flag)
+    let entry_batch = EntityBatchMessage {
+        opcode: OPCODE_ENTITY_ENTRY_BATCH,
         base_flags: 0x00,
         sub_events: vec![
-            WorldSubEvent {
+            EntityBatchSubEvent {
                 sub_opcode: 0x0000_10B5,
                 sub_payload: vec![0x00, 0x01, 0x02, 0x03],
             },
-            WorldSubEvent {
+            EntityBatchSubEvent {
                 sub_opcode: 0x0000_0051,
                 sub_payload: vec![0x00, 0xAA, 0xBB],
             },
         ],
-        enter_aoi_tail_flag: Some(0x01),
+        entry_batch_tail_flag: Some(0x01),
     };
-    let encoded_aoi = encode_world_event_batch(&enter_aoi);
-    let decoded_aoi =
-        decode_world_event_batch(OPCODE_ENTER_AOI, &encoded_aoi).expect("decode EnterAOI");
-    assert_eq!(decoded_aoi, enter_aoi);
+    let encoded_entry_batch = encode_entity_batch(&entry_batch);
+    let decoded_entry_batch = decode_entity_batch(OPCODE_ENTITY_ENTRY_BATCH, &encoded_entry_batch)
+        .expect("decode EntityEntryBatch");
+    assert_eq!(decoded_entry_batch, entry_batch);
 
-    let event_batch = WorldEventBatch {
-        opcode: OPCODE_EVENT_BATCH,
+    let entity_batch_update = EntityBatchMessage {
+        opcode: OPCODE_ENTITY_BATCH_UPDATE,
         base_flags: 0x00,
-        sub_events: vec![WorldSubEvent {
+        sub_events: vec![EntityBatchSubEvent {
             sub_opcode: 0x0000_10BA,
             sub_payload: vec![0x00, 0x55],
         }],
-        enter_aoi_tail_flag: None,
+        entry_batch_tail_flag: None,
     };
-    let encoded_eb = encode_world_event_batch(&event_batch);
-    let decoded_eb =
-        decode_world_event_batch(OPCODE_EVENT_BATCH, &encoded_eb).expect("decode EventBatch");
-    assert_eq!(decoded_eb, event_batch);
+    let encoded_update = encode_entity_batch(&entity_batch_update);
+    let decoded_update = decode_entity_batch(OPCODE_ENTITY_BATCH_UPDATE, &encoded_update)
+        .expect("decode EntityBatchUpdate");
+    assert_eq!(decoded_update, entity_batch_update);
 }
 
 // ---------------------------------------------------------------------------
 // Hostile-input hardening regressions (§5.6.4, §7.1, §10.1 rules 6 and 8)
 // ---------------------------------------------------------------------------
 
-fn multi_frag(frag_index: u32, num_frags: u32, len: usize) -> NetBlobFragment {
-    NetBlobFragment {
-        header: NetBlobFragmentHeader {
+fn multi_frag(frag_index: u32, num_frags: u32, len: usize) -> BlobFragment {
+    BlobFragment {
+        header: BlobFragmentHeader {
             queue_id: 2,
             ext_word: None,
             blob_flags: BLOB_FLAG_DEFAULT_RECIPIENT,
@@ -1272,7 +1302,7 @@ fn multi_frag(frag_index: u32, num_frags: u32, len: usize) -> NetBlobFragment {
 
 #[test]
 fn reassembly_rejects_final_fragment_past_buffer_end() {
-    let mut reassembler = NetBlobReassembler::default();
+    let mut reassembler = BlobReassembler::default();
     // numFrags = 2, fragIndex = 1, fragDataLen = 464: 436 + 464 > 2 * 436.
     let err = reassembler
         .ingest(1, multi_frag(1, 2, 464), 0.0, None)
@@ -1306,12 +1336,12 @@ fn reassembly_rejects_final_fragment_past_buffer_end() {
 fn duplicate_sequenced_packet_is_dropped_before_headers_act() {
     let peer = SocketAddrV4::new(Ipv4Addr::new(198, 51, 100, 20), 9000);
     let mut conn = SessionConnection::new(0x0100, peer, 0.0);
-    // Without a ConnectRequest the incoming ISAAC stream is seeded with 0.
+    // Without a ConnectChallenge the incoming ISAAC stream is seeded with 0.
     let mask_seq_2 = IsaacCipher::from_seed(0).next_mask();
-    let seq_hdr = ProtoHeader {
+    let seq_hdr = DatagramHeader {
         rec_id: 0x0100,
         seq_num: 2,
-        ..ProtoHeader::default()
+        ..DatagramHeader::default()
     };
     let first = encode_datagram(
         seq_hdr,
@@ -1327,10 +1357,10 @@ fn duplicate_sequenced_packet_is_dropped_before_headers_act() {
     while conn.pop_event().is_some() {}
     let state_before = conn.state();
 
-    // A replay of seq 2 (and an older seq 1) carrying Disconnect and NetError must not act.
+    // A replay of seq 2 (and an older seq 1) carrying Disconnect and TransportError must not act.
     let hostile_opt = OptionalHeaders {
         disconnect: true,
-        net_error: Some(NetErrorHeader {
+        transport_error: Some(TransportErrorHeader {
             error_code: 0x1234_5678,
             error_subcode: 0,
         }),
@@ -1338,7 +1368,7 @@ fn duplicate_sequenced_packet_is_dropped_before_headers_act() {
     };
     for seq_num in [2u32, 1] {
         let replay = encode_datagram(
-            ProtoHeader { seq_num, ..seq_hdr },
+            DatagramHeader { seq_num, ..seq_hdr },
             &hostile_opt,
             &[],
             Some(mask_seq_2),

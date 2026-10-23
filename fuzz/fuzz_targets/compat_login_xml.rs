@@ -11,7 +11,7 @@ use tessera_compat::login::{
     LauncherConfig, LoginFailureClass, QueueResult, RemoteLauncherConfig, UserPreferences,
     WorldStatus, build_leave_queue_body, build_take_a_number_body, form_urlencode,
     parse_get_datacenters_response, parse_hex_u32, parse_login_account_response,
-    parse_refresh_ticket_response, rewrite_status_server_fallback_url, xml_escape, xml_unescape,
+    parse_refresh_ticket_response, xml_escape, xml_unescape,
 };
 
 fuzz_target!(|data: &[u8]| {
@@ -43,7 +43,8 @@ fuzz_target!(|data: &[u8]| {
         }
         let _ = form_urlencode(text);
         let _ = parse_hex_u32(text, LoginFailureClass::F08QueueError);
-        let _ = rewrite_status_server_fallback_url(text, text);
+        let _ = tessera_compat::login::is_valid_network_version(text);
+        let _ = tessera_compat::login::encode_version_response_payload(text);
         let _ = build_take_a_number_body(
             "command=TakeANumber&subscription={0}&ticket={1}&ticket_type=GLS&queue_url={2}",
             text,

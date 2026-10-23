@@ -2,14 +2,39 @@
 //! Official Global Login System (GLS), world-queue authentication, client
 //! hand-off, and in-game ticket refresh (`docs/specs/official-login.md` §2–§7).
 //!
+//! # Sources of runtime values
+//!
 //! All service URLs, hostnames, ports, and game identifiers are discovered at
 //! runtime from the user's local installation (`*.launcherconfig`,
 //! `client_local_<Lang>.dat`, optional `UserPreferences.ini`) and subsequent
-//! server responses.
+//! server responses. No service URL, host or path fragment is built in
+//! (decision 0042 item 3): when the install's configuration lacks a value, the
+//! functions here return an error that says so. The XML namespace and
+//! `SOAPAction` identifiers are protocol identifiers that are never contacted;
+//! they live only in [`soap_encoder`].
+//!
+//! The client network version string comes, in this order, from a value the
+//! user supplies, from the string the caller names in the client executable's
+//! version resource ([`crate::version_resource`]), or from the user when
+//! neither gives one ([`discover_network_version`], decision 0042 item 1). The
+//! executable's code is never scanned.
+//!
+//! # Hostile input
+//!
+//! Every XML, INI and `.dat` parser here is bounded: inputs are capped at
+//! [`MAX_XML_INPUT_BYTES`] (files larger than that are refused before they are
+//! read), element nesting at [`MAX_XML_DEPTH`] and element and attribute
+//! counts at [`MAX_XML_ITEMS`]; DTDs are rejected. Credentials and tickets are
+//! redacted in `Debug` and zeroed when dropped.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
+use std::io::Read;
 use std::path::{Path, PathBuf};
+
+use crate::version_resource::{
+    VersionResource, VersionResourceError, read_version_resource_from_file,
+};
 
 /// Maximum byte size accepted by any XML, INI, or configuration parser in this
 /// module (512 KiB).
@@ -51,7 +76,7 @@ pub const DID_MASTER_MAP_3_COMPRESSION: u32 = 0x2800_0010;
 
 /// 16-byte mixed-endian schema/type GUID (`E795878D-C633-471C-8315-C3DBBEAD2FAA`)
 /// at offset `+0x00..+0x0F` of every `0x0E01xxxx` compression dictionary record (§2.4.3, invariant `I16`).
-pub const COMPRESSION_DICT_SCHEMA_GUID: [u8; 16] = [
+pub const PREFIX_TREE_DICT_SCHEMA_GUID: [u8; 16] = [
     0x8D, 0x87, 0x95, 0xE7, 0x33, 0xC6, 0x1C, 0x47, 0x83, 0x15, 0xC3, 0xDB, 0xBE, 0xAD, 0x2F, 0xAA,
 ];
 
@@ -70,21 +95,6 @@ pub const DAT_DIDVER_DESCRIPTOR_LEN: usize = 20;
 /// Placeholder string returned in `Datacenter/Worlds/World/LoginServerUrl`
 /// that must never be used as a login server target (§3.1, invariant `I3`).
 pub const INVALID_LOGIN_SERVER_SENTINEL: &str = "(invalid service specified)";
-
-/// SOAP 1.1 envelope XML namespace URI (§3.1).
-pub const SOAP_ENVELOPE_NAMESPACE: &str = "http://schemas.xmlsoap.org/soap/envelope/";
-
-/// GLS service XML namespace URI (§3.1, §3.4, §4.3, §8).
-pub const GLS_NAMESPACE: &str = "http://www.turbine.com/SE/GLS";
-
-/// `SOAPAction` header value for Exchange 1 (`GetDatacenters`, §3.1).
-pub const SOAP_ACTION_GET_DATACENTERS: &str = "\"http://www.turbine.com/SE/GLS/GetDatacenters\"";
-
-/// `SOAPAction` header value for Exchange 4 (`LoginAccount`, §3.4).
-pub const SOAP_ACTION_LOGIN_ACCOUNT: &str = "\"http://www.turbine.com/SE/GLS/LoginAccount\"";
-
-/// `SOAPAction` header value for in-game ticket refresh (`RefreshTicket`, §4.3).
-pub const SOAP_ACTION_REFRESH_TICKET: &str = "\"http://www.turbine.com/SE/GLS/RefreshTicket\"";
 
 /// Redaction placeholder used whenever credentials, tickets, or subscription
 /// names are formatted for logs or diagnostics (§6.3, invariant `I12`).
@@ -262,6 +272,11 @@ pub enum LoginError {
     #[error("in-game GLS ticket refresh exhausted after {MAX_REFRESH_ATTEMPTS} attempts")]
     RefreshExhausted,
 
+    /// The client executable's version resource could not be read
+    /// (`F02_CONFIG_INVALID`).
+    #[error("client version resource unreadable: {0}")]
+    VersionResource(#[from] VersionResourceError),
+
     /// Invalid state machine transition requested by caller.
     #[error("invalid login state transition from {state}: {reason}")]
     InvalidState {
@@ -278,7 +293,9 @@ impl LoginError {
     pub const fn failure_class(&self) -> LoginFailureClass {
         match self {
             Self::InputTooLarge { class, .. } | Self::XmlMalformed { class, .. } => *class,
-            Self::ConfigInvalid { .. } => LoginFailureClass::F02ConfigInvalid,
+            Self::ConfigInvalid { .. } | Self::VersionResource(_) => {
+                LoginFailureClass::F02ConfigInvalid
+            }
             Self::ServiceUnavailable { .. } | Self::InvalidState { .. } => {
                 LoginFailureClass::F03ServiceUnavailable
             }
@@ -313,14 +330,15 @@ fn zeroize_bytes(buf: &mut [u8]) {
     std::hint::black_box(&buf);
 }
 
-/// Zeroes the backing UTF-8 buffer of a `String` and clears it (§6.3).
+/// Zeroes the whole backing buffer of a `String` (its capacity, not only its
+/// length) and leaves it empty (§6.3). The buffer is taken out of the string,
+/// so no copy is made and no reallocation can leave the old bytes behind.
 fn zeroize_string(s: &mut String) {
-    if !s.is_empty() {
-        let zeroed = "\0".repeat(s.len());
-        s.replace_range(.., &zeroed);
-        std::hint::black_box(s.as_bytes());
-        s.clear();
-    }
+    let mut bytes = std::mem::take(s).into_bytes();
+    // Growing to the existing capacity never reallocates.
+    bytes.resize(bytes.capacity(), 0);
+    bytes.fill(0);
+    std::hint::black_box(&bytes);
 }
 
 /// User-entered account credentials with automatic memory zeroization on drop
@@ -922,6 +940,27 @@ fn parse_opening_tag<'a>(
     }
 }
 
+/// Reads a local configuration file of at most [`MAX_XML_INPUT_BYTES`] bytes.
+/// A larger file is refused before it is read into memory.
+fn read_bounded_config_file(path: &Path) -> Result<Vec<u8>, LoginError> {
+    let file = std::fs::File::open(path).map_err(|e| LoginError::ConfigInvalid {
+        reason: format!("failed to open '{}': {e}", path.display()),
+    })?;
+    let mut bytes = Vec::new();
+    file.take(MAX_XML_INPUT_BYTES as u64 + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|e| LoginError::ConfigInvalid {
+            reason: format!("failed to read '{}': {e}", path.display()),
+        })?;
+    if bytes.len() > MAX_XML_INPUT_BYTES {
+        return Err(LoginError::InputTooLarge {
+            class: LoginFailureClass::F02ConfigInvalid,
+            detail: "configuration file exceeds MAX_XML_INPUT_BYTES",
+        });
+    }
+    Ok(bytes)
+}
+
 /// Parses `.NET` `<configuration>/<appSettings>/<add key="..." value="..." />`
 /// documents used by both local `*.launcherconfig` (§2.1) and remote
 /// `LauncherConfigurationServer` (§3.2).
@@ -1049,9 +1088,7 @@ impl LauncherConfig {
     /// if the file is missing, unreadable, malformed XML, or missing required keys.
     pub fn discover(install_root: &Path) -> Result<(PathBuf, Self), LoginError> {
         let path = Self::find_config_path(install_root)?;
-        let bytes = std::fs::read(&path).map_err(|e| LoginError::ConfigInvalid {
-            reason: format!("failed to read '{}': {e}", path.display()),
-        })?;
+        let bytes = read_bounded_config_file(&path)?;
         let config = Self::parse(&bytes)?;
         Ok((path, config))
     }
@@ -1285,9 +1322,7 @@ impl UserPreferences {
         let Some(path) = Self::find_preferences_path(settings_dir) else {
             return Ok(None);
         };
-        let bytes = std::fs::read(&path).map_err(|e| LoginError::ConfigInvalid {
-            reason: format!("failed to read '{}': {e}", path.display()),
-        })?;
+        let bytes = read_bounded_config_file(&path)?;
         let prefs = Self::parse(&bytes)?;
         Ok(Some((path, prefs)))
     }
@@ -1465,8 +1500,6 @@ pub fn extract_didver_from_dat_header(header_bytes: &[u8]) -> Result<(String, u3
 /// Returns [`LoginError::ConfigInvalid`] (`F02_CONFIG_INVALID`) if the file cannot
 /// be opened, is shorter than `0x1A8` bytes, or has an invalid superblock.
 pub fn extract_didver_from_dat_file(dat_path: &Path) -> Result<(String, u32), LoginError> {
-    use std::io::Read;
-
     let mut file = std::fs::File::open(dat_path).map_err(|e| LoginError::ConfigInvalid {
         reason: format!("failed to open '{}': {e}", dat_path.display()),
     })?;
@@ -1481,355 +1514,196 @@ pub fn extract_didver_from_dat_file(dat_path: &Path) -> Result<(String, u32), Lo
     extract_didver_from_dat_header(&header)
 }
 
-/// Validates whether `candidate` is a well-formed `<netver_string>` (`1..=64`
-/// printable ASCII characters in `0x21..=0x7E`, e.g. `"1701.0056.3422.4000"`, §2.4.1).
-fn is_valid_netver_ascii(candidate: &[u8]) -> bool {
-    (1..=64).contains(&candidate.len()) && candidate.iter().all(|&b| (0x21..=0x7E).contains(&b))
+// ============================================================================
+// §2.4.1 Client network version string (decision 0042 item 1)
+// ============================================================================
+
+/// Maximum byte length of a client network version string.
+pub const MAX_NETWORK_VERSION_LEN: usize = 64;
+
+/// Checks that `candidate` can serve as the client network version string:
+/// `1..=`[`MAX_NETWORK_VERSION_LEN`] printable ASCII characters (`0x21..=0x7E`)
+/// with no spaces, so it embeds safely in `"netver:<value>; didver:<GUID>"`.
+#[must_use]
+pub fn is_valid_network_version(candidate: &str) -> bool {
+    (1..=MAX_NETWORK_VERSION_LEN).contains(&candidate.len())
+        && candidate.bytes().all(|b| (0x21..=0x7E).contains(&b))
 }
 
-/// Reads a NUL-terminated ASCII string starting at `offset` in `bytes` (up to 65 bytes)
-/// and returns it if it satisfies [`is_valid_netver_ascii`].
-fn read_netver_cstr_at(bytes: &[u8], offset: usize) -> Option<String> {
-    let window = bytes.get(offset..offset.saturating_add(65).min(bytes.len()))?;
-    let nul_pos = window.iter().position(|&b| b == 0)?;
-    let slice = window.get(..nul_pos)?;
-    if is_valid_netver_ascii(slice) {
-        std::str::from_utf8(slice).ok().map(str::to_owned)
-    } else {
-        None
+/// Where a discovered client network version string came from.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum NetworkVersionSource {
+    /// The user supplied it (setting or command line).
+    UserSupplied,
+    /// It is the named string of the client executable's version resource.
+    VersionResource {
+        /// The string key the caller named.
+        key: String,
+    },
+}
+
+/// Why no client network version string was found; the client asks the user.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AskUserReason {
+    /// The user supplied a value that is not a valid network version string
+    /// (see [`is_valid_network_version`]). The version resource is not
+    /// consulted, so a bad override is never silently replaced. An empty or
+    /// whitespace-only value counts as not supplied.
+    UserValueInvalid,
+    /// No executable path was given, so the version resource was not read.
+    NoExecutable,
+    /// The caller named no version-resource string, so the version resource
+    /// was not consulted (no key name is built in).
+    NoResourceKey,
+    /// The executable's version resource could not be read.
+    ResourceUnreadable(VersionResourceError),
+    /// The version resource has no string with the named key.
+    ResourceEntryMissing {
+        /// The key the caller named.
+        key: String,
+    },
+    /// The named string exists but is not a valid network version string.
+    ResourceEntryInvalid {
+        /// The key the caller named.
+        key: String,
+    },
+}
+
+/// Result of [`discover_network_version`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum NetworkVersionDiscovery {
+    /// A valid network version string was found.
+    Found {
+        /// The version string, trimmed.
+        version: String,
+        /// Where it came from.
+        source: NetworkVersionSource,
+    },
+    /// Not found: the client must ask the user for the value.
+    AskUser(AskUserReason),
+}
+
+/// Inputs of [`discover_network_version`].
+#[derive(Debug, Clone, Copy, Default)]
+pub struct NetworkVersionQuery<'a> {
+    /// A value the user supplied (setting or command line); always wins.
+    /// Empty or whitespace-only counts as not supplied.
+    pub user_value: Option<&'a str>,
+    /// Path of the client executable whose version resource may be read.
+    pub client_executable: Option<&'a Path>,
+    /// Key of the version-resource string that holds the version. There is no
+    /// default: when `None`, the version resource is not consulted.
+    pub resource_key: Option<&'a str>,
+}
+
+/// Looks up the network version string under `key` in a parsed version
+/// resource (step 2 of [`discover_network_version`]).
+#[must_use]
+pub fn network_version_from_resource(
+    resource: &VersionResource,
+    key: &str,
+) -> NetworkVersionDiscovery {
+    match resource.lookup(key).map(str::trim) {
+        None => NetworkVersionDiscovery::AskUser(AskUserReason::ResourceEntryMissing {
+            key: key.to_owned(),
+        }),
+        Some(value) if is_valid_network_version(value) => NetworkVersionDiscovery::Found {
+            version: value.to_owned(),
+            source: NetworkVersionSource::VersionResource {
+                key: key.to_owned(),
+            },
+        },
+        Some(_) => NetworkVersionDiscovery::AskUser(AskUserReason::ResourceEntryInvalid {
+            key: key.to_owned(),
+        }),
     }
 }
 
-/// Extracts `<netver_string>` from a 64-bit PE-32+ client executable image
-/// (`x64/lotroclient64.exe`, `docs/specs/official-login.md` §2.4.1).
+/// Finds the client network version string in the order of decision 0042
+/// item 1:
 ///
-/// Implements both the primary `.text` cross-reference scan from the
-/// `"Cannot set version string twice\0"` `.rdata` anchor and the secondary
-/// `.rdata` layout fallback at `off_err + 0x20`.
+/// 1. the value the user supplied, when there is one;
+/// 2. the string the caller names in the string table of the client
+///    executable's version resource (a documented PE structure; no key name is
+///    built in);
+/// 3. otherwise [`NetworkVersionDiscovery::AskUser`].
 ///
-/// # Errors
-///
-/// Returns [`LoginError::ConfigInvalid`] (`F02_CONFIG_INVALID`) if `pe_bytes` is
-/// not a valid PE-32+ image or `<netver_string>` cannot be located.
-pub fn extract_netver_from_pe_bytes(pe_bytes: &[u8]) -> Result<String, LoginError> {
-    const ANCHOR: &[u8] = b"Cannot set version string twice\0";
-    const MAX_PE_SECTIONS: usize = 96;
-
-    #[derive(Clone, Copy)]
-    struct PeSection {
-        name: [u8; 8],
-        virtual_size: u32,
-        virtual_address: u32,
-        size_of_raw_data: u32,
-        pointer_to_raw_data: u32,
-    }
-
-    impl PeSection {
-        fn effective_span(self) -> u32 {
-            self.virtual_size.max(self.size_of_raw_data)
-        }
-
-        fn rva_to_file_offset(self, rva: u32) -> Option<usize> {
-            if rva >= self.virtual_address {
-                let delta = rva - self.virtual_address;
-                if delta < self.size_of_raw_data {
-                    return usize::try_from(self.pointer_to_raw_data.checked_add(delta)?).ok();
-                }
+/// The executable is only read (headers and version resource), never scanned.
+#[must_use]
+pub fn discover_network_version(query: &NetworkVersionQuery<'_>) -> NetworkVersionDiscovery {
+    // An empty or whitespace-only value counts as not supplied.
+    if let Some(user) = query.user_value.map(str::trim).filter(|v| !v.is_empty()) {
+        return if is_valid_network_version(user) {
+            NetworkVersionDiscovery::Found {
+                version: user.to_owned(),
+                source: NetworkVersionSource::UserSupplied,
             }
-            None
-        }
-
-        fn file_offset_to_rva(self, file_offset: usize) -> Option<u32> {
-            let offset_u32 = u32::try_from(file_offset).ok()?;
-            if offset_u32 >= self.pointer_to_raw_data {
-                let delta = offset_u32 - self.pointer_to_raw_data;
-                if delta < self.effective_span() {
-                    return self.virtual_address.checked_add(delta);
-                }
-            }
-            None
-        }
+        } else {
+            tracing::debug!("user-supplied network version string rejected");
+            NetworkVersionDiscovery::AskUser(AskUserReason::UserValueInvalid)
+        };
     }
-
-    if pe_bytes.get(0..2) != Some(b"MZ") {
-        return Err(LoginError::ConfigInvalid {
-            reason: "invalid PE DOS header (missing 'MZ' magic)".to_owned(),
-        });
-    }
-    let lfanew_slice = pe_bytes
-        .get(0x3C..0x40)
-        .ok_or_else(|| LoginError::ConfigInvalid {
-            reason: "PE image too short for e_lfanew at 0x3C".to_owned(),
-        })?;
-    let pe_off = usize::try_from(u32::from_le_bytes([
-        lfanew_slice[0],
-        lfanew_slice[1],
-        lfanew_slice[2],
-        lfanew_slice[3],
-    ]))
-    .map_err(|_| LoginError::ConfigInvalid {
-        reason: "invalid e_lfanew offset".to_owned(),
-    })?;
-
-    if pe_bytes.get(pe_off..pe_off.saturating_add(4)) != Some(b"PE\0\0") {
-        return Err(LoginError::ConfigInvalid {
-            reason: "invalid PE signature (expected 'PE\\0\\0')".to_owned(),
-        });
-    }
-
-    let coff_off = pe_off.saturating_add(4);
-    let coff_hdr = pe_bytes
-        .get(coff_off..coff_off.saturating_add(20))
-        .ok_or_else(|| LoginError::ConfigInvalid {
-            reason: "PE image truncated in COFF header".to_owned(),
-        })?;
-    let num_sections = usize::from(u16::from_le_bytes([coff_hdr[2], coff_hdr[3]]));
-    if num_sections == 0 || num_sections > MAX_PE_SECTIONS {
-        return Err(LoginError::ConfigInvalid {
-            reason: format!("unsupported PE section count: {num_sections}"),
-        });
-    }
-    let size_of_opt_hdr = usize::from(u16::from_le_bytes([coff_hdr[16], coff_hdr[17]]));
-    let opt_off = coff_off.saturating_add(20);
-    let opt_hdr = pe_bytes
-        .get(opt_off..opt_off.saturating_add(size_of_opt_hdr))
-        .ok_or_else(|| LoginError::ConfigInvalid {
-            reason: "PE image truncated in Optional Header".to_owned(),
-        })?;
-    let opt_magic = opt_hdr
-        .get(0..2)
-        .map(|s| u16::from_le_bytes([s[0], s[1]]))
-        .unwrap_or(0);
-    if opt_magic != 0x020B {
-        return Err(LoginError::ConfigInvalid {
-            reason: format!("expected PE-32+ Optional Header magic 0x020B, got 0x{opt_magic:04X}"),
-        });
-    }
-
-    let sec_table_off = opt_off.saturating_add(size_of_opt_hdr);
-    let mut sections = Vec::with_capacity(num_sections);
-    for idx in 0..num_sections {
-        let entry_off = sec_table_off.saturating_add(idx.saturating_mul(40));
-        let entry = pe_bytes
-            .get(entry_off..entry_off.saturating_add(40))
-            .ok_or_else(|| LoginError::ConfigInvalid {
-                reason: "PE image truncated in section table".to_owned(),
-            })?;
-        let mut name = [0u8; 8];
-        if let Some(n) = entry.get(0..8) {
-            name.copy_from_slice(n);
-        }
-        let virtual_size = u32::from_le_bytes([entry[8], entry[9], entry[10], entry[11]]);
-        let virtual_address = u32::from_le_bytes([entry[12], entry[13], entry[14], entry[15]]);
-        let size_of_raw_data = u32::from_le_bytes([entry[16], entry[17], entry[18], entry[19]]);
-        let pointer_to_raw_data = u32::from_le_bytes([entry[20], entry[21], entry[22], entry[23]]);
-        sections.push(PeSection {
-            name,
-            virtual_size,
-            virtual_address,
-            size_of_raw_data,
-            pointer_to_raw_data,
-        });
-    }
-
-    // Locate the 32-byte anchor "Cannot set version string twice\0" in .rdata first, or in full image.
-    let rdata_sec = sections.iter().copied().find(|s| &s.name[..6] == b".rdata");
-    let text_sec = sections.iter().copied().find(|s| &s.name[..5] == b".text");
-
-    let find_anchor = |range_start: usize, range_len: usize| -> Option<usize> {
-        let hay = pe_bytes.get(range_start..range_start.saturating_add(range_len))?;
-        hay.windows(ANCHOR.len())
-            .position(|w| w == ANCHOR)
-            .map(|pos| range_start.saturating_add(pos))
+    let Some(key) = query.resource_key else {
+        return NetworkVersionDiscovery::AskUser(AskUserReason::NoResourceKey);
     };
-
-    let err_file_off = rdata_sec
-        .and_then(|sec| {
-            let start = usize::try_from(sec.pointer_to_raw_data).ok()?;
-            let len = usize::try_from(sec.size_of_raw_data).ok()?;
-            find_anchor(start, len)
-        })
-        .or_else(|| find_anchor(0, pe_bytes.len()))
-        .ok_or_else(|| LoginError::ConfigInvalid {
-            reason: "anchor string 'Cannot set version string twice' not found in PE image"
-                .to_owned(),
-        })?;
-
-    // Primary method (§2.4.1 steps 2–3): resolve via .text LEA + CALL cross-reference.
-    let err_rva = sections
-        .iter()
-        .find_map(|sec| sec.file_offset_to_rva(err_file_off));
-
-    if let (Some(text), Some(target_err_rva)) = (text_sec, err_rva)
-        && let (Ok(text_raw_start), Ok(text_raw_len)) = (
-            usize::try_from(text.pointer_to_raw_data),
-            usize::try_from(text.size_of_raw_data),
-        )
-        && let Some(text_bytes) =
-            pe_bytes.get(text_raw_start..text_raw_start.saturating_add(text_raw_len))
-    {
-        // Step 3a: find a 7-byte RIP-relative LEA (48 8D <modrm> <disp32>) referencing target_err_rva.
-        let mut lea_err_pos = None;
-        if text_bytes.len() >= 7 {
-            for pos in 0..=text_bytes.len() - 7 {
-                let Some(insn) = text_bytes.get(pos..pos + 7) else {
-                    break;
-                };
-                if insn[0] == 0x48 && insn[1] == 0x8D && (insn[2] & 0xC7) == 0x05 {
-                    let disp = i32::from_le_bytes([insn[3], insn[4], insn[5], insn[6]]);
-                    let Ok(pos_u32) = u32::try_from(pos) else {
-                        continue;
-                    };
-                    let next_rva = text.virtual_address.wrapping_add(pos_u32).wrapping_add(7);
-                    let ref_rva = next_rva.wrapping_add(disp as u32);
-                    if ref_rva == target_err_rva {
-                        lea_err_pos = Some(pos);
-                        break;
-                    }
-                }
+    let Some(exe) = query.client_executable else {
+        return NetworkVersionDiscovery::AskUser(AskUserReason::NoExecutable);
+    };
+    match read_version_resource_from_file(exe) {
+        Ok(resource) => {
+            let outcome = network_version_from_resource(&resource, key);
+            if let NetworkVersionDiscovery::AskUser(reason) = &outcome {
+                tracing::debug!(?reason, "version resource gave no network version string");
             }
+            outcome
         }
-
-        // Step 3b: locate the enclosing 16-byte-aligned function entry V_fn.
-        if let Some(lea_pos) = lea_err_pos {
-            let aligned_pos = lea_pos & !0x0F;
-            let mut fn_pos = None;
-            let mut cur = aligned_pos;
-            for _ in 0..16 {
-                if cur == 0 {
-                    fn_pos = Some(0);
-                    break;
-                }
-                let prev_byte = text_bytes.get(cur - 1).copied().unwrap_or(0);
-                if prev_byte == 0xCC || prev_byte == 0xC3 {
-                    fn_pos = Some(cur);
-                    break;
-                }
-                if cur < 16 {
-                    break;
-                }
-                cur -= 16;
-            }
-
-            if let Some(fn_offset) = fn_pos
-                && let Ok(fn_offset_u32) = u32::try_from(fn_offset)
-            {
-                let fn_rva = text.virtual_address.wrapping_add(fn_offset_u32);
-                // Step 3c: scan .text for `48 8D 0D <disp32>` (LEA RCX, [RIP + disp32])
-                // followed by `E8 <rel32>` (CALL V_fn).
-                if text_bytes.len() >= 12 {
-                    for pos in 0..=text_bytes.len() - 12 {
-                        let Some(lea_rcx) = text_bytes.get(pos..pos + 7) else {
-                            break;
-                        };
-                        if lea_rcx[0] != 0x48 || lea_rcx[1] != 0x8D || lea_rcx[2] != 0x0D {
-                            continue;
-                        }
-                        let Some(call_insn) = text_bytes.get(pos + 7..pos + 12) else {
-                            continue;
-                        };
-                        if call_insn[0] != 0xE8 {
-                            continue;
-                        }
-                        let call_rel = i32::from_le_bytes([
-                            call_insn[1],
-                            call_insn[2],
-                            call_insn[3],
-                            call_insn[4],
-                        ]);
-                        let Ok(pos_u32) = u32::try_from(pos) else {
-                            continue;
-                        };
-                        let call_next_rva =
-                            text.virtual_address.wrapping_add(pos_u32).wrapping_add(12);
-                        let call_target_rva = call_next_rva.wrapping_add(call_rel as u32);
-                        if call_target_rva != fn_rva {
-                            continue;
-                        }
-                        let str_disp =
-                            i32::from_le_bytes([lea_rcx[3], lea_rcx[4], lea_rcx[5], lea_rcx[6]]);
-                        let lea_next_rva =
-                            text.virtual_address.wrapping_add(pos_u32).wrapping_add(7);
-                        let str_rva = lea_next_rva.wrapping_add(str_disp as u32);
-                        if let Some(str_file_off) = sections
-                            .iter()
-                            .find_map(|sec| sec.rva_to_file_offset(str_rva))
-                            && let Some(netver) = read_netver_cstr_at(pe_bytes, str_file_off)
-                        {
-                            return Ok(netver);
-                        }
-                    }
-                }
-            }
+        Err(err) => {
+            tracing::debug!(error = %err, "client version resource unreadable");
+            NetworkVersionDiscovery::AskUser(AskUserReason::ResourceUnreadable(err))
         }
     }
-
-    // Secondary layout fallback (§2.4.1 step 4): read NUL-terminated string at off_err + 0x20.
-    let fallback_off = err_file_off.saturating_add(0x20);
-    if let Some(netver) = read_netver_cstr_at(pe_bytes, fallback_off) {
-        return Ok(netver);
-    }
-
-    Err(LoginError::ConfigInvalid {
-        reason: "failed to resolve valid <netver_string> from PE image".to_owned(),
-    })
 }
 
-/// Reads a 64-bit client executable on disk (`x64/lotroclient64.exe`) and
-/// extracts `<netver_string>` (`docs/specs/official-login.md` §2.4.1).
+/// Largest version string length [`encode_version_response_payload`] accepts
+/// (`0x3FFF`, the two-byte form of the variable-length prefix).
+pub const MAX_VERSION_RESPONSE_STRING_LEN: usize = 0x3FFF;
+
+/// Encodes `version_str` (`"netver:<netver_string>; didver:<didver_string>"`)
+/// as the version response (`0x0000012C`) payload: a variable-length
+/// (`VariableU32`) byte-length prefix followed by the raw ASCII bytes of
+/// `version_str` without a trailing NUL (`docs/specs/official-login.md`
+/// §2.4.2, invariant `I11`, Vector `V7`).
+///
+/// Prefix encoding for byte length $L$:
+/// - $L \le 127$ (`0x7F`): 1 byte (`L as u8`)
+/// - $128 \le L \le 16383$ (`0x3FFF`): 2 bytes (`[((L >> 8) | 0x80) as u8, (L & 0xFF) as u8]`)
 ///
 /// # Errors
 ///
-/// Returns [`LoginError::ConfigInvalid`] (`F02_CONFIG_INVALID`) if the file cannot
-/// be read, exceeds 128 MiB, or does not contain a valid `<netver_string>`.
-pub fn extract_netver_from_executable(exe_path: &Path) -> Result<String, LoginError> {
-    const MAX_EXE_BYTES: u64 = 128 * 1024 * 1024;
-
-    let meta = std::fs::metadata(exe_path).map_err(|e| LoginError::ConfigInvalid {
-        reason: format!("failed to stat '{}': {e}", exe_path.display()),
-    })?;
-    if meta.len() > MAX_EXE_BYTES {
+/// Returns [`LoginError::ConfigInvalid`] when `version_str` is longer than
+/// [`MAX_VERSION_RESPONSE_STRING_LEN`] bytes. Longer strings would need the
+/// four-byte prefix form, whose byte order the login and session code do not
+/// agree on, so they are refused rather than guessed.
+pub fn encode_version_response_payload(version_str: &str) -> Result<Vec<u8>, LoginError> {
+    let raw = version_str.as_bytes();
+    let len = raw.len();
+    let mut out = Vec::with_capacity(len.saturating_add(2));
+    if let Ok(short) = u8::try_from(len)
+        && short <= 0x7F
+    {
+        out.push(short);
+    } else if len <= MAX_VERSION_RESPONSE_STRING_LEN {
+        out.push(0x80 | ((len >> 8) & 0x3F) as u8);
+        out.push((len & 0xFF) as u8);
+    } else {
         return Err(LoginError::ConfigInvalid {
             reason: format!(
-                "executable '{}' exceeds maximum supported size ({} bytes)",
-                exe_path.display(),
-                meta.len()
+                "version string of {len} bytes exceeds the {MAX_VERSION_RESPONSE_STRING_LEN}-byte limit"
             ),
         });
     }
-    let pe_bytes = std::fs::read(exe_path).map_err(|e| LoginError::ConfigInvalid {
-        reason: format!("failed to read '{}': {e}", exe_path.display()),
-    })?;
-    extract_netver_from_pe_bytes(&pe_bytes)
-}
-
-/// Encodes `version_str` (`"netver:<netver_string>; didver:<didver_string>"`)
-/// as the `VersionSend` (`0x0000012C`) payload: a `VLUInt` (`PackedDWORD`)
-/// byte-length prefix followed by the raw ASCII bytes of `version_str` without
-/// a trailing NUL (`docs/specs/official-login.md` §2.4.2, invariant `I11`, Vector `V7`).
-///
-/// `VLUInt` length prefix encoding for byte length $L$:
-/// - $L \le 127$ (`0x7F`): 1 byte (`L as u8`)
-/// - $128 \le L \le 16383$ (`0x3FFF`): 2 bytes (`[((L >> 8) | 0x80) as u8, (L & 0xFF) as u8]`)
-/// - $L > 16383$: 4 bytes (`[((L >> 24) | 0xC0) as u8, ((L >> 16) & 0xFF) as u8, ((L >> 8) & 0xFF) as u8, (L & 0xFF) as u8]`)
-#[must_use]
-pub fn encode_version_send_payload(version_str: &str) -> Vec<u8> {
-    let raw = version_str.as_bytes();
-    let len = raw.len();
-    let mut out = Vec::with_capacity(len.saturating_add(4));
-    if len <= 0x7F {
-        out.push(len as u8);
-    } else if len <= 0x3FFF {
-        out.push(((len >> 8) as u8) | 0x80);
-        out.push((len & 0xFF) as u8);
-    } else {
-        out.push(((len >> 24) as u8) | 0xC0);
-        out.push(((len >> 16) & 0xFF) as u8);
-        out.push(((len >> 8) & 0xFF) as u8);
-        out.push((len & 0xFF) as u8);
-    }
     out.extend_from_slice(raw);
-    out
+    Ok(out)
 }
 
 /// Client version and `.dat` verification metadata prepared for the UDP session
@@ -1865,9 +1739,10 @@ impl VersionInfo {
     ) -> Result<Self, LoginError> {
         let netver = netver.into();
         let didver_guid = didver_guid.into();
-        if netver.trim().is_empty() || didver_guid.trim().is_empty() {
+        if !is_valid_network_version(&netver) || didver_guid.trim().is_empty() {
             return Err(LoginError::ConfigInvalid {
-                reason: "netver and didver_guid must be non-empty".to_owned(),
+                reason: "netver must be a valid network version string and didver_guid non-empty"
+                    .to_owned(),
             });
         }
         let header_slice =
@@ -1909,14 +1784,14 @@ impl VersionInfo {
     }
 
     /// Returns `<didver_string>`, the 36-character uppercase ASCII GUID
-    /// `"XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX"` used in `VersionSend` (§2.4.1 & §2.4.2).
+    /// `"XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX"` used in `VersionResponse` (§2.4.1 & §2.4.2).
     #[must_use]
     pub fn didver_string(&self) -> &str {
         &self.didver_guid
     }
 
     /// Formats the `.dat` superblock helper's first out-parameter string
-    /// `"<guid_string> : <version_u32>"` (which is discarded by the `VersionSend`
+    /// `"<guid_string> : <version_u32>"` (which is discarded by the `VersionResponse`
     /// builder in favor of [`VersionInfo::didver_string`], §2.4.1).
     #[must_use]
     pub fn didver_with_version_string(&self) -> String {
@@ -1931,12 +1806,15 @@ impl VersionInfo {
         format!("netver:{}; didver:{}", self.netver, self.didver_guid)
     }
 
-    /// Encodes the `VersionSend` (`0x0000012C`) payload (`VLUInt` byte-length
-    /// prefix followed by raw ASCII bytes of [`VersionInfo::version_string`],
-    /// §2.4.2, invariant `I11`, Vector `V7`).
-    #[must_use]
-    pub fn encode_version_send_payload(&self) -> Vec<u8> {
-        encode_version_send_payload(&self.version_string())
+    /// Encodes the version response (`0x0000012C`) payload (`VariableU32`
+    /// byte-length prefix followed by raw ASCII bytes of
+    /// [`VersionInfo::version_string`], §2.4.2, invariant `I11`, Vector `V7`).
+    ///
+    /// # Errors
+    ///
+    /// See [`encode_version_response_payload`].
+    pub fn encode_version_response_payload(&self) -> Result<Vec<u8>, LoginError> {
+        encode_version_response_payload(&self.version_string())
     }
 }
 
@@ -2081,8 +1959,8 @@ impl DidMap3Table {
 /// Parsed 44-byte (`0x2C`) header of a `0x0E01xxxx` compression dictionary record
 /// (`docs/specs/official-login.md` §2.4.3, invariant `I16`, Vector `V7`).
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CompressionDictionaryHeader {
-    /// Schema/type GUID at `+0x00..+0x0F` (always [`COMPRESSION_DICT_SCHEMA_GUID`]).
+pub struct PrefixTreeDictionaryHeader {
+    /// Schema/type GUID at `+0x00..+0x0F` (always [`PREFIX_TREE_DICT_SCHEMA_GUID`]).
     pub schema_guid: [u8; 16],
     /// Dictionary identity GUID (`codecUuid`) at `+0x10..+0x1F`.
     pub dict_guid: [u8; 16],
@@ -2096,7 +1974,7 @@ pub struct CompressionDictionaryHeader {
     pub node_count: Option<u32>,
 }
 
-impl CompressionDictionaryHeader {
+impl PrefixTreeDictionaryHeader {
     /// Minimum byte length of a `0x0E01xxxx` compression dictionary record (`44` bytes = `0x2C`).
     pub const MIN_HEADER_LEN: usize = 0x2C;
 
@@ -2107,7 +1985,7 @@ impl CompressionDictionaryHeader {
     ///
     /// Returns [`LoginError::ConfigInvalid`] (`F02_CONFIG_INVALID`) if `bytes` is
     /// shorter than 44 bytes, the schema GUID at `+0x00..+0x10` does not match
-    /// [`COMPRESSION_DICT_SCHEMA_GUID`], or a concrete dictionary (`deferred_target_did == 0`)
+    /// [`PREFIX_TREE_DICT_SCHEMA_GUID`], or a concrete dictionary (`deferred_target_did == 0`)
     /// does not have `dict_format_version == 1`.
     pub fn parse(bytes: &[u8]) -> Result<Self, LoginError> {
         let hdr = bytes
@@ -2123,7 +2001,7 @@ impl CompressionDictionaryHeader {
         if let Some(s) = hdr.get(0..16) {
             schema_guid.copy_from_slice(s);
         }
-        if schema_guid != COMPRESSION_DICT_SCHEMA_GUID {
+        if schema_guid != PREFIX_TREE_DICT_SCHEMA_GUID {
             return Err(LoginError::ConfigInvalid {
                 reason: format!(
                     "invalid compression dictionary schema GUID {}",
@@ -2183,7 +2061,7 @@ impl CompressionDictionaryHeader {
 /// `0x10000001`) through `DIDMasterMap[3]` (`0x28000010`) and optional deferred
 /// `0x0E01xxxx` redirection (`docs/specs/official-login.md` §2.4.3, invariant `I16`).
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ResolvedCompressionDictionary {
+pub struct ResolvedPrefixTreeDictionary {
     /// Requested enumerator key (e.g. `0x10000002` or `0x10000001`).
     pub enum_key: u32,
     /// Initial `.dat` Data ID obtained from `0x28000010` (e.g. `0x0E010000` or `0x0E010002`).
@@ -2191,7 +2069,7 @@ pub struct ResolvedCompressionDictionary {
     /// Final concrete `.dat` Data ID after following any deferred redirect (e.g. `0x0E010000` or `0x0E010001`).
     pub resolved_did: u32,
     /// Parsed header of the final concrete `0x0E01xxxx` dictionary record.
-    pub header: CompressionDictionaryHeader,
+    pub header: PrefixTreeDictionaryHeader,
 }
 
 /// Resolves a compression dictionary enumerator key (`0x10000002` or `0x10000001`)
@@ -2202,13 +2080,13 @@ pub struct ResolvedCompressionDictionary {
 ///
 /// Returns [`LoginError::ConfigInvalid`] (`F02_CONFIG_INVALID`) if `enum_key` is
 /// absent from `map`, if a required `.dat` record is missing from `load_record`,
-/// if a record fails [`CompressionDictionaryHeader::parse`], or if the redirected
+/// if a record fails [`PrefixTreeDictionaryHeader::parse`], or if the redirected
 /// target record is still a deferred redirect (`deferred_target_did != 0`).
-pub fn resolve_compression_dictionary<'a, F>(
+pub fn resolve_prefix_tree_dictionary<'a, F>(
     map: &DidMap3Table,
     enum_key: u32,
     mut load_record: F,
-) -> Result<ResolvedCompressionDictionary, LoginError>
+) -> Result<ResolvedPrefixTreeDictionary, LoginError>
 where
     F: FnMut(u32) -> Option<&'a [u8]>,
 {
@@ -2220,10 +2098,10 @@ where
     let initial_bytes = load_record(initial_did).ok_or_else(|| LoginError::ConfigInvalid {
         reason: format!("missing compression dictionary record 0x{initial_did:08X}"),
     })?;
-    let initial_hdr = CompressionDictionaryHeader::parse(initial_bytes)?;
+    let initial_hdr = PrefixTreeDictionaryHeader::parse(initial_bytes)?;
 
     if initial_hdr.deferred_target_did == 0 {
-        return Ok(ResolvedCompressionDictionary {
+        return Ok(ResolvedPrefixTreeDictionary {
             enum_key,
             initial_did,
             resolved_did: initial_did,
@@ -2238,7 +2116,7 @@ where
                 "missing redirected compression dictionary record 0x{redirected_did:08X} (from 0x{initial_did:08X})"
             ),
         })?;
-    let redirected_hdr = CompressionDictionaryHeader::parse(redirected_bytes)?;
+    let redirected_hdr = PrefixTreeDictionaryHeader::parse(redirected_bytes)?;
     if redirected_hdr.deferred_target_did != 0 {
         return Err(LoginError::ConfigInvalid {
             reason: format!(
@@ -2248,7 +2126,7 @@ where
         });
     }
 
-    Ok(ResolvedCompressionDictionary {
+    Ok(ResolvedPrefixTreeDictionary {
         enum_key,
         initial_did,
         resolved_did: redirected_did,
@@ -2365,6 +2243,193 @@ pub trait HttpClient {
 }
 
 // ============================================================================
+// SOAP 1.1 message encoder
+// ============================================================================
+
+/// SOAP 1.1 message encoder for the GLS exchanges (§3.1, §3.4, §4.3).
+///
+/// The XML namespace and `SOAPAction` identifiers below are protocol
+/// identifiers that are written into messages and never contacted. They are
+/// defined here, in the encoder, and nowhere else (decision 0042 item 3).
+/// Every service URL a request goes to comes from the install's
+/// configuration or a server response at run time.
+pub mod soap_encoder {
+    use super::{DEFAULT_HTTP_TIMEOUT_SEC, HttpMethod, HttpRequest};
+
+    /// SOAP 1.1 envelope XML namespace URI (§3.1).
+    pub const SOAP_ENVELOPE_NAMESPACE: &str = "http://schemas.xmlsoap.org/soap/envelope/";
+
+    /// XML Schema instance namespace URI declared on the envelope.
+    pub const XSI_NAMESPACE: &str = "http://www.w3.org/2001/XMLSchema-instance";
+
+    /// XML Schema namespace URI declared on the envelope.
+    pub const XSD_NAMESPACE: &str = "http://www.w3.org/2001/XMLSchema";
+
+    /// GLS service XML namespace URI (§3.1, §3.4, §4.3, §8).
+    pub const GLS_NAMESPACE: &str = "http://www.turbine.com/SE/GLS";
+
+    /// `SOAPAction` header value for Exchange 1 (`GetDatacenters`, §3.1).
+    pub const SOAP_ACTION_GET_DATACENTERS: &str =
+        "\"http://www.turbine.com/SE/GLS/GetDatacenters\"";
+
+    /// `SOAPAction` header value for Exchange 4 (`LoginAccount`, §3.4).
+    pub const SOAP_ACTION_LOGIN_ACCOUNT: &str = "\"http://www.turbine.com/SE/GLS/LoginAccount\"";
+
+    /// `SOAPAction` header value for in-game ticket refresh (`RefreshTicket`, §4.3).
+    pub const SOAP_ACTION_REFRESH_TICKET: &str = "\"http://www.turbine.com/SE/GLS/RefreshTicket\"";
+
+    /// The GLS namespace, for the response parser's namespace check.
+    pub(crate) const fn gls_namespace() -> &'static str {
+        GLS_NAMESPACE
+    }
+
+    /// Longest expansion of one input byte by [`push_escaped`] (`"` -> `&quot;`).
+    const MAX_ESCAPE_EXPANSION: usize = 6;
+
+    /// Writes `text` XML-escaped into `out`, with no intermediate copy.
+    fn push_escaped(out: &mut String, text: &str) {
+        for ch in text.chars() {
+            match ch {
+                '&' => out.push_str("&amp;"),
+                '<' => out.push_str("&lt;"),
+                '>' => out.push_str("&gt;"),
+                '"' => out.push_str("&quot;"),
+                '\'' => out.push_str("&apos;"),
+                other => out.push(other),
+            }
+        }
+    }
+
+    /// One part of a GLS operation element.
+    enum Part<'a> {
+        /// Markup written as is.
+        Markup(&'a str),
+        /// Text written XML-escaped.
+        Text(&'a str),
+    }
+
+    /// Builds the whole SOAP 1.1 envelope around `parts` in one buffer whose
+    /// capacity is reserved up front, so it never reallocates and no copy of
+    /// an escaped secret is left behind; the request zeroes the buffer when
+    /// it is dropped (§6.3).
+    fn envelope(parts: &[Part<'_>]) -> String {
+        const HEAD: [&str; 7] = [
+            "<?xml version=\"1.0\" encoding=\"utf-8\"?><soap:Envelope xmlns:xsi=\"",
+            XSI_NAMESPACE,
+            "\" xmlns:xsd=\"",
+            XSD_NAMESPACE,
+            "\" xmlns:soap=\"",
+            SOAP_ENVELOPE_NAMESPACE,
+            "\"><soap:Body>",
+        ];
+        const TAIL: &str = "</soap:Body></soap:Envelope>";
+        let capacity = HEAD.iter().map(|p| p.len()).sum::<usize>()
+            + TAIL.len()
+            + parts
+                .iter()
+                .map(|p| match p {
+                    Part::Markup(m) => m.len(),
+                    Part::Text(t) => t.len().saturating_mul(MAX_ESCAPE_EXPANSION),
+                })
+                .sum::<usize>();
+        let mut out = String::with_capacity(capacity);
+        for piece in HEAD {
+            out.push_str(piece);
+        }
+        for part in parts {
+            match part {
+                Part::Markup(m) => out.push_str(m),
+                Part::Text(t) => push_escaped(&mut out, t),
+            }
+        }
+        out.push_str(TAIL);
+        out
+    }
+
+    /// Builds a SOAP 1.1 `POST` to `url` with the given `SOAPAction` and body.
+    fn post(url: &str, soap_action: &str, xml: String) -> HttpRequest {
+        HttpRequest {
+            method: HttpMethod::Post,
+            url: url.to_owned(),
+            headers: vec![
+                (
+                    "Content-Type".to_owned(),
+                    "text/xml; charset=utf-8".to_owned(),
+                ),
+                ("SOAPAction".to_owned(), soap_action.to_owned()),
+            ],
+            body: xml.into_bytes(),
+            timeout_sec: DEFAULT_HTTP_TIMEOUT_SEC,
+            require_tls_validation: true,
+        }
+    }
+
+    /// The opening tag of a GLS operation element, `<{name} xmlns="...">`.
+    fn open(name: &str) -> [Part<'_>; 4] {
+        [
+            Part::Markup("<"),
+            Part::Markup(name),
+            Part::Markup(" xmlns=\""),
+            Part::Markup(GLS_NAMESPACE),
+        ]
+    }
+
+    /// Builds the SOAP 1.1 `GetDatacenters` HTTP POST request (§3.1, Vector `V2`).
+    #[must_use]
+    pub fn build_get_datacenters_request(endpoint_url: &str, game_name: &str) -> HttpRequest {
+        let mut parts: Vec<Part<'_>> = open("GetDatacenters").into_iter().collect();
+        parts.extend([
+            Part::Markup("\"><game>"),
+            Part::Text(game_name),
+            Part::Markup("</game></GetDatacenters>"),
+        ]);
+        post(endpoint_url, SOAP_ACTION_GET_DATACENTERS, envelope(&parts))
+    }
+
+    /// Builds the SOAP 1.1 `LoginAccount` HTTP `POST` request with XML-escaped
+    /// `username` and `password` (`docs/specs/official-login.md` §3.4).
+    ///
+    /// The body is written once into a buffer that is never reallocated, and
+    /// [`HttpRequest`] zeroes it when dropped (§6.3).
+    #[must_use]
+    pub fn build_login_account_request(
+        auth_server_url: &str,
+        username: &str,
+        password: &str,
+    ) -> HttpRequest {
+        let mut parts: Vec<Part<'_>> = open("LoginAccount").into_iter().collect();
+        parts.extend([
+            Part::Markup("\"><username>"),
+            Part::Text(username),
+            Part::Markup("</username><password>"),
+            Part::Text(password),
+            Part::Markup("</password><additionalInfo></additionalInfo></LoginAccount>"),
+        ]);
+        post(auth_server_url, SOAP_ACTION_LOGIN_ACCOUNT, envelope(&parts))
+    }
+
+    /// Builds the SOAP 1.1 `RefreshTicket` HTTP `POST` request
+    /// (`docs/specs/official-login.md` §4.3, Vector `V6`).
+    #[must_use]
+    pub fn build_refresh_ticket_request(
+        auth_server_url: &str,
+        current_ticket: &str,
+    ) -> HttpRequest {
+        let mut parts: Vec<Part<'_>> = open("RefreshTicket").into_iter().collect();
+        parts.extend([
+            Part::Markup("\"><ticket>"),
+            Part::Text(current_ticket),
+            Part::Markup("</ticket></RefreshTicket>"),
+        ]);
+        post(
+            auth_server_url,
+            SOAP_ACTION_REFRESH_TICKET,
+            envelope(&parts),
+        )
+    }
+}
+
+// ============================================================================
 // §3.1 Exchange 1 — GetDatacenters SOAP 1.1
 // ============================================================================
 
@@ -2432,41 +2497,6 @@ pub struct DatacenterInfo {
     pub worlds: Vec<WorldDescriptor>,
 }
 
-/// Builds the SOAP 1.1 `GetDatacenters` HTTP POST request (§3.1, Vector `V2`).
-#[must_use]
-pub fn build_get_datacenters_request(endpoint_url: &str, game_name: &str) -> HttpRequest {
-    let escaped_game = xml_escape(game_name);
-    let xml = format!(
-        "<?xml version=\"1.0\" encoding=\"utf-8\"?>\
-<soap:Envelope xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\" \
-xmlns:xsd=\"http://www.w3.org/2001/XMLSchema\" \
-xmlns:soap=\"{SOAP_ENVELOPE_NAMESPACE}\">\
-<soap:Body>\
-<GetDatacenters xmlns=\"{GLS_NAMESPACE}\">\
-<game>{escaped_game}</game>\
-</GetDatacenters>\
-</soap:Body>\
-</soap:Envelope>"
-    );
-    HttpRequest {
-        method: HttpMethod::Post,
-        url: endpoint_url.to_owned(),
-        headers: vec![
-            (
-                "Content-Type".to_owned(),
-                "text/xml; charset=utf-8".to_owned(),
-            ),
-            (
-                "SOAPAction".to_owned(),
-                SOAP_ACTION_GET_DATACENTERS.to_owned(),
-            ),
-        ],
-        body: xml.into_bytes(),
-        timeout_sec: DEFAULT_HTTP_TIMEOUT_SEC,
-        require_tls_validation: true,
-    }
-}
-
 fn find_soap_body(root: &XmlNode, class: LoginFailureClass) -> Result<&XmlNode, LoginError> {
     if !root.local_name.eq_ignore_ascii_case("Envelope") {
         return Err(LoginError::XmlMalformed {
@@ -2483,7 +2513,7 @@ fn find_soap_body(root: &XmlNode, class: LoginFailureClass) -> Result<&XmlNode, 
 
 fn verify_gls_namespace(node: &XmlNode, class: LoginFailureClass) -> Result<(), LoginError> {
     if let Some(ns) = node.attr("xmlns")
-        && ns != GLS_NAMESPACE
+        && ns != soap_encoder::gls_namespace()
     {
         return Err(LoginError::XmlMalformed {
             class,
@@ -2813,8 +2843,12 @@ pub struct WorldStatus {
     /// Denied billing role tokens (`<deny_billing_role>`, split on `,`).
     pub deny_billing_role: BTreeSet<String>,
     /// Permitted admin role tokens (`<allow_admin_role>`, split on `,`).
+    /// Kept as received data only: Tessera never evaluates admin roles
+    /// (decision 0042 item 2).
     pub allow_admin_role: BTreeSet<String>,
     /// Denied admin role tokens (`<deny_admin_role>`, split on `,`).
+    /// Kept as received data only: Tessera never evaluates admin roles
+    /// (decision 0042 item 2).
     pub deny_admin_role: BTreeSet<String>,
     /// Whether the world is at capacity (`<world_full>`).
     pub world_full: Option<bool>,
@@ -3028,61 +3062,6 @@ pub fn check_billing_role(
     Ok(())
 }
 
-/// Rewrites `world_status_server_url` to the fallback URL derived from
-/// `gls_datacenter_service_url` when the primary `StatusServer.aspx` `GET`
-/// returns HTTP 404 or an empty body (`docs/specs/official-login.md` §3.3,
-/// invariant `I4`, Vector `V3`).
-///
-/// Specifically, removes the trailing `/GLS.DataCenterServer/Service.asmx`
-/// segments from `gls_datacenter_service_url`, appends `/StatusServer.aspx`,
-/// and preserves the query string (`?...`) from `world_status_server_url`.
-///
-/// # Errors
-///
-/// Returns [`LoginError::WorldClosed`] if `gls_datacenter_service_url` is empty.
-pub fn rewrite_status_server_fallback_url(
-    world_status_server_url: &str,
-    gls_datacenter_service_url: &str,
-) -> Result<String, LoginError> {
-    let gls_trimmed = gls_datacenter_service_url.trim();
-    if gls_trimmed.is_empty() {
-        return Err(LoginError::WorldClosed {
-            reason: "cannot construct fallback status URL: empty GLS DataCenterService URL"
-                .to_owned(),
-        });
-    }
-    let gls_no_query = gls_trimmed
-        .split_once('?')
-        .map_or(gls_trimmed, |(base, _)| base)
-        .trim_end_matches('/');
-
-    const SUFFIX: &str = "/GLS.DataCenterServer/Service.asmx";
-    let base_prefix = if gls_no_query
-        .get(gls_no_query.len().saturating_sub(SUFFIX.len())..)
-        .is_some_and(|tail| tail.eq_ignore_ascii_case(SUFFIX))
-    {
-        gls_no_query
-            .get(..gls_no_query.len().saturating_sub(SUFFIX.len()))
-            .unwrap_or_default()
-    } else if let Some((before_last, _)) = gls_no_query.rsplit_once('/') {
-        before_last
-    } else {
-        gls_no_query
-    };
-
-    let query_part = world_status_server_url
-        .trim()
-        .find('?')
-        .and_then(|idx| world_status_server_url.trim().get(idx..))
-        .unwrap_or_default();
-
-    Ok(format!(
-        "{}/StatusServer.aspx{}",
-        base_prefix.trim_end_matches('/'),
-        query_part
-    ))
-}
-
 /// Builds an HTTP `GET` request for `StatusServer.aspx` (§3.3).
 #[must_use]
 pub fn build_world_status_request(url: &str) -> HttpRequest {
@@ -3096,60 +3075,48 @@ pub fn build_world_status_request(url: &str) -> HttpRequest {
     }
 }
 
-/// Executes Exchange 3 (`StatusServer.aspx`) against `http`, retrying once with
-/// [`rewrite_status_server_fallback_url`] if the primary `GET` returns HTTP 404
-/// or an empty body (§3.3, invariant `I4`, Vector `V3`).
+/// Executes Exchange 3 (`StatusServer.aspx`) against `http` (§3.3).
+///
+/// The only status URL is the world's `StatusServerUrl` from the datacenter
+/// response. Tessera builds no fallback URL from built-in path fragments
+/// (decision 0042 item 3): when that URL answers HTTP 404 or an empty body,
+/// the world is reported closed with a reason that names the missing value.
 ///
 /// # Errors
 ///
 /// Returns [`LoginError`] with failure class [`LoginFailureClass::F06WorldClosed`]
-/// if both attempts fail or `<loginservers>` is empty.
+/// if the request fails, returns no usable status, or `<loginservers>` is empty.
 pub fn fetch_world_status(
     http: &mut dyn HttpClient,
     world_status_server_url: &str,
-    gls_datacenter_service_url: &str,
 ) -> Result<WorldStatus, LoginError> {
-    let primary_req = build_world_status_request(world_status_server_url);
-    let primary_resp = http
-        .execute(&primary_req)
-        .map_err(|e| LoginError::WorldClosed {
-            reason: e.to_string(),
-        })?;
-
-    let body_is_empty = primary_resp.body.iter().all(u8::is_ascii_whitespace);
-    if primary_resp.status_code == 404 || body_is_empty {
-        let fallback_url = rewrite_status_server_fallback_url(
-            world_status_server_url,
-            gls_datacenter_service_url,
-        )?;
-        let fallback_req = build_world_status_request(&fallback_url);
-        let fallback_resp = http
-            .execute(&fallback_req)
-            .map_err(|e| LoginError::WorldClosed {
-                reason: e.to_string(),
-            })?;
-        if fallback_resp.status_code != 200
-            || fallback_resp.body.iter().all(u8::is_ascii_whitespace)
-        {
-            return Err(LoginError::WorldClosed {
-                reason: format!(
-                    "fallback StatusServer.aspx returned HTTP {}",
-                    fallback_resp.status_code
-                ),
-            });
-        }
-        return WorldStatus::parse(&fallback_resp.body);
+    if world_status_server_url.trim().is_empty() {
+        return Err(LoginError::WorldClosed {
+            reason: "the datacenter response gives no StatusServerUrl for this world, and the \
+                     install's configuration provides no other status URL"
+                .to_owned(),
+        });
     }
+    let req = build_world_status_request(world_status_server_url);
+    let resp = http.execute(&req).map_err(|e| LoginError::WorldClosed {
+        reason: e.to_string(),
+    })?;
 
-    if primary_resp.status_code != 200 {
+    if resp.status_code == 404 || resp.body.iter().all(u8::is_ascii_whitespace) {
         return Err(LoginError::WorldClosed {
             reason: format!(
-                "primary StatusServer.aspx returned HTTP {}",
-                primary_resp.status_code
+                "StatusServer.aspx returned HTTP {} with no status, and the install's \
+                 configuration provides no fallback status URL",
+                resp.status_code
             ),
         });
     }
-    WorldStatus::parse(&primary_resp.body)
+    if resp.status_code != 200 {
+        return Err(LoginError::WorldClosed {
+            reason: format!("StatusServer.aspx returned HTTP {}", resp.status_code),
+        });
+    }
+    WorldStatus::parse(&resp.body)
 }
 
 // ============================================================================
@@ -3300,51 +3267,6 @@ impl fmt::Debug for LoginAccountResult {
             .field("subscriptions", &self.subscriptions)
             .field("ticket", &REDACTED_PLACEHOLDER)
             .finish()
-    }
-}
-
-/// Builds the SOAP 1.1 `LoginAccount` HTTP `POST` request with XML-escaped
-/// `username` and `password` (`docs/specs/official-login.md` §3.4).
-///
-/// Note that [`HttpRequest`] automatically zeroes its `body` buffer when dropped (§6.3).
-#[must_use]
-pub fn build_login_account_request(
-    auth_server_url: &str,
-    username: &str,
-    password: &str,
-) -> HttpRequest {
-    let escaped_user = xml_escape(username);
-    let escaped_pass = xml_escape(password);
-    let xml = format!(
-        "<?xml version=\"1.0\" encoding=\"utf-8\"?>\
-<soap:Envelope xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\" \
-xmlns:xsd=\"http://www.w3.org/2001/XMLSchema\" \
-xmlns:soap=\"{SOAP_ENVELOPE_NAMESPACE}\">\
-<soap:Body>\
-<LoginAccount xmlns=\"{GLS_NAMESPACE}\">\
-<username>{escaped_user}</username>\
-<password>{escaped_pass}</password>\
-<additionalInfo></additionalInfo>\
-</LoginAccount>\
-</soap:Body>\
-</soap:Envelope>"
-    );
-    HttpRequest {
-        method: HttpMethod::Post,
-        url: auth_server_url.to_owned(),
-        headers: vec![
-            (
-                "Content-Type".to_owned(),
-                "text/xml; charset=utf-8".to_owned(),
-            ),
-            (
-                "SOAPAction".to_owned(),
-                SOAP_ACTION_LOGIN_ACCOUNT.to_owned(),
-            ),
-        ],
-        body: xml.into_bytes(),
-        timeout_sec: DEFAULT_HTTP_TIMEOUT_SEC,
-        require_tls_validation: true,
     }
 }
 
@@ -4244,42 +4166,6 @@ impl fmt::Debug for SessionHandoff {
 // §4.3 In-Game GLS Ticket Refresh (RefreshTicket)
 // ============================================================================
 
-/// Builds the SOAP 1.1 `RefreshTicket` HTTP `POST` request (`docs/specs/official-login.md`
-/// §4.3, Vector `V6`).
-#[must_use]
-pub fn build_refresh_ticket_request(auth_server_url: &str, current_ticket: &str) -> HttpRequest {
-    let escaped_ticket = xml_escape(current_ticket);
-    let xml = format!(
-        "<?xml version=\"1.0\" encoding=\"utf-8\"?>\
-<soap:Envelope xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\" \
-xmlns:xsd=\"http://www.w3.org/2001/XMLSchema\" \
-xmlns:soap=\"{SOAP_ENVELOPE_NAMESPACE}\">\
-<soap:Body>\
-<RefreshTicket xmlns=\"{GLS_NAMESPACE}\">\
-<ticket>{escaped_ticket}</ticket>\
-</RefreshTicket>\
-</soap:Body>\
-</soap:Envelope>"
-    );
-    HttpRequest {
-        method: HttpMethod::Post,
-        url: auth_server_url.to_owned(),
-        headers: vec![
-            (
-                "Content-Type".to_owned(),
-                "text/xml; charset=utf-8".to_owned(),
-            ),
-            (
-                "SOAPAction".to_owned(),
-                SOAP_ACTION_REFRESH_TICKET.to_owned(),
-            ),
-        ],
-        body: xml.into_bytes(),
-        timeout_sec: DEFAULT_HTTP_TIMEOUT_SEC,
-        require_tls_validation: true,
-    }
-}
-
 /// Parses a `RefreshTicketResponse` SOAP 1.1 XML payload and returns the new
 /// ticket string inside `<RefreshTicketResult>` (§4.3, Vector `V6`).
 ///
@@ -4521,7 +4407,7 @@ impl TicketRefresher {
             );
         }
 
-        Some(build_refresh_ticket_request(
+        Some(soap_encoder::build_refresh_ticket_request(
             &self.auth_server_url,
             &self.ticket,
         ))
@@ -4606,7 +4492,7 @@ impl TicketRefresher {
         if self.attempt_count > 2 {
             self.support_warning_recorded = true;
         }
-        let req = build_refresh_ticket_request(&self.auth_server_url, &self.ticket);
+        let req = soap_encoder::build_refresh_ticket_request(&self.auth_server_url, &self.ticket);
         let resp = http.execute(&req);
         Some(self.handle_refresh_response(resp.as_ref(), now_sec))
     }
@@ -4922,8 +4808,10 @@ impl LoginDriver {
                 reason: "local config not loaded".to_owned(),
             }));
         };
-        let req =
-            build_get_datacenters_request(&cfg.gls_datacenter_service, &cfg.datacenter_game_name);
+        let req = soap_encoder::build_get_datacenters_request(
+            &cfg.gls_datacenter_service,
+            &cfg.datacenter_game_name,
+        );
         let resp = match http.execute(&req) {
             Ok(r) => r,
             Err(e) => return Err(self.fail(e)),
@@ -5092,8 +4980,11 @@ impl LoginDriver {
             }));
         };
 
-        let mut req =
-            build_login_account_request(&dc.auth_server, creds.username(), creds.password());
+        let mut req = soap_encoder::build_login_account_request(
+            &dc.auth_server,
+            creds.username(),
+            creds.password(),
+        );
         // Zero user password immediately after building request (§6.3).
         creds.zeroize_password();
 
@@ -5159,8 +5050,8 @@ impl LoginDriver {
         Ok(())
     }
 
-    /// `S7_QUERY_WORLD_STATUS`: Queries `World/StatusServerUrl` (with fallback
-    /// rewrite on HTTP 404 or empty body), verifies `<loginservers>` is
+    /// `S7_QUERY_WORLD_STATUS`: Queries `World/StatusServerUrl` (no fallback URL
+    /// is built, decision 0042 item 3), verifies `<loginservers>` is
     /// non-empty, and checks `allow_billing_role` / `deny_billing_role` (§3.3, §5.1).
     ///
     /// Transitions to:
@@ -5180,7 +5071,7 @@ impl LoginDriver {
                 reason: "expected S7_QUERY_WORLD_STATUS",
             });
         }
-        let (Some(world), Some(local_cfg), Some(sub)) = (
+        let (Some(world), Some(_), Some(sub)) = (
             self.selected_world.as_ref(),
             self.local_config.as_ref(),
             self.selected_subscription.as_ref(),
@@ -5190,11 +5081,7 @@ impl LoginDriver {
             }));
         };
 
-        let status = match fetch_world_status(
-            http,
-            &world.status_server_url,
-            &local_cfg.gls_datacenter_service,
-        ) {
+        let status = match fetch_world_status(http, &world.status_server_url) {
             Ok(s) => s,
             Err(e) => return Err(self.fail(e)),
         };

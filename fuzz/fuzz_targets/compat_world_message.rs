@@ -1,4 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+//! Fuzz target for `tessera_compat::world`: wire value encodings, encoded
+//! property tables and every world-session message decoder on arbitrary
+//! hostile bytes.
 #![no_main]
 
 use std::collections::BTreeMap;
@@ -8,18 +11,19 @@ use tessera_compat::world::{
     AccountBooted, ActionErrorResponse, ActionStatusResponse, CharacterCreateError,
     CharacterCreateSuccess, CharacterDeletedResult, CharacterError, CharacterSet,
     CheckCharacterName, ClientActionCommand, ClientMoveCommand, CreateCharacter, DeleteCharacter,
-    DeleteEntity, DisplayStringInfo, EntityActionEvent, EntityCreate, EntityInitialProperties,
-    EntityPositionUpdate, GameTimeRecord, PID_ADVANCEMENT_LEVEL, PID_AGENT_SPECIES,
-    PID_CHARGEN_CHARACTER_LEVEL, PID_NAME, PlayerSessionStart, PortalPlacement, PortalSpaceExit,
-    PortalSpaceReady, PortalSpaceState, PropertyRemove, PropertyType, QueryMissingEntity,
-    SelectCharacter, SendSteamId, ServerLastWords, SinglePropertyUpdate, SubEventBatch,
-    VisualDescUpdate, WirePosition, WirePropertySet, WireReader, WireStringInfo, WorldName,
-    decode_net_blob_payload, decode_vle3, decode_vle4, decode_vle16,
+    DeleteEntity, DisplayLocalizedText, EncodedPropertyTable, EntityActionEvent,
+    EntityAppearanceDescUpdate, EntityBatchSubEvents, EntityCreate, EntityInitialProperties,
+    EntityPositionUpdate, PID_ADVANCEMENT_LEVEL, PID_AGENT_SPECIES, PID_CHARGEN_CHARACTER_LEVEL,
+    PID_NAME, PlayerSessionStart, PortalPlacement, PortalSpaceExit, PortalSpaceReady,
+    PortalSpaceState, PropertyRemove, PropertyType, QueryMissingEntity, SelectCharacter,
+    SendSteamId, ServerLastWords, SinglePropertyUpdate, WireLocalizedText, WirePosition,
+    WireReader, WorldCalendarConfig, WorldName, decode_blob_payload, decode_vle3, decode_vle4,
+    decode_vle16,
 };
 
 fn fuzz_schema() -> BTreeMap<u32, PropertyType> {
     let mut map = BTreeMap::new();
-    map.insert(PID_NAME, PropertyType::StringInfo);
+    map.insert(PID_NAME, PropertyType::LocalizedText);
     map.insert(PID_ADVANCEMENT_LEVEL, PropertyType::Int);
     map.insert(PID_CHARGEN_CHARACTER_LEVEL, PropertyType::Int);
     map.insert(PID_AGENT_SPECIES, PropertyType::Enum);
@@ -35,7 +39,7 @@ fn fuzz_schema() -> BTreeMap<u32, PropertyType> {
     map.insert(0x0000_000A, PropertyType::PropertyId);
     map.insert(0x0000_000B, PropertyType::Struct);
     map.insert(0x0000_000C, PropertyType::Array);
-    map.insert(0x0000_000D, PropertyType::StringInfo);
+    map.insert(0x0000_000D, PropertyType::LocalizedText);
     map.insert(0x0000_000E, PropertyType::Bitfield64);
     map.insert(0x0000_000F, PropertyType::Int);
     map.insert(0x0000_0010, PropertyType::Color);
@@ -57,10 +61,10 @@ fuzz_target!(|data: &[u8]| {
     let _ = WirePosition::decode_wire(&mut WireReader::new(data));
     let _ = WirePosition::decode_base(&mut WireReader::new(data));
     let _ = WirePosition::decode_stored(&mut WireReader::new(data));
-    let _ = WireStringInfo::from_bytes(data);
-    let _ = WireStringInfo::decode_stored(&mut WireReader::new(data));
-    let _ = WirePropertySet::from_bytes(data, &schema);
-    let _ = decode_net_blob_payload(data, 0);
+    let _ = WireLocalizedText::from_bytes(data);
+    let _ = WireLocalizedText::decode_stored(&mut WireReader::new(data));
+    let _ = EncodedPropertyTable::from_bytes(data, &schema);
+    let _ = decode_blob_payload(data, 0);
 
     let _ = CharacterSet::from_bytes(data, &schema);
     let _ = CheckCharacterName::from_bytes(data);
@@ -76,19 +80,19 @@ fuzz_target!(|data: &[u8]| {
     let _ = SelectCharacter::from_bytes(data, &schema);
 
     let _ = WorldName::from_bytes(data);
-    let _ = DisplayStringInfo::from_bytes(data);
+    let _ = DisplayLocalizedText::from_bytes(data);
     let _ = ServerLastWords::from_bytes(data);
     let _ = PlayerSessionStart::from_bytes(data, &schema);
     let _ = PortalPlacement::from_bytes(data);
     let _ = PortalSpaceExit::from_bytes(data);
     let _ = PortalSpaceState::from_bytes(data);
     let _ = PortalSpaceReady::from_bytes(data);
-    let _ = GameTimeRecord::from_bytes(data);
+    let _ = WorldCalendarConfig::from_bytes(data);
 
-    let _ = SubEventBatch::from_bytes(data);
+    let _ = EntityBatchSubEvents::from_bytes(data);
     let _ = EntityCreate::from_bytes(data);
     let _ = EntityInitialProperties::from_bytes(data, &schema);
-    let _ = VisualDescUpdate::from_bytes(data, &schema);
+    let _ = EntityAppearanceDescUpdate::from_bytes(data, &schema);
     let _ = DeleteEntity::from_bytes(data);
     let _ = QueryMissingEntity::from_bytes(data);
     let _ = EntityPositionUpdate::from_bytes(data);

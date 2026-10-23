@@ -10,31 +10,32 @@ use flate2::write::ZlibEncoder;
 use tessera_compat::world::MAX_WORLD_COORDINATE_M;
 use tessera_compat::world::{
     AccountBooted, ActionErrorResponse, ActionPayload, ActionStatusResponse, ActionSubEntry,
-    CharDesc, CharacterCreateError, CharacterCreateSuccess, CharacterDeletedResult, CharacterError,
-    CharacterSet, CharacterSetExtraEntry, CheckCharacterName, ClientActionCommand,
+    AppearanceAuxEntry, AppearanceEquipmentEntry, AppearanceMorphEntry, CharacterCreateError,
+    CharacterCreateSuccess, CharacterDeletedResult, CharacterError, CharacterSet,
+    CharacterSetExtraEntry, CharacterSummaryEntry, CheckCharacterName, ClientActionCommand,
     ClientMoveCommand, CompactDid, CompactPid, CreateCharacter, DEFAULT_PORTAL_STATE_BOOL_PIDS,
     DEFAULT_PORTAL_STATE_ENUM_PIDS, DEFAULT_PORTAL_STATE_SCHEMA_ID, DeleteCharacter, DeleteEntity,
-    DisplayStringInfo, ENVELOPE_FLAG_HAS_ROUTING_HEADER, ENVELOPE_FLAG_ZLIB_COMPRESSED,
-    EntityActionEvent, EntityCreate, EntityInitialProperties, EntityPlacement,
-    EntityPositionUpdate, GAME_TIME_RECORD_DID, GameTimeRecord, MAX_RECURSION_DEPTH,
-    MOUNTED_PORTAL_STATE_SCHEMA_ID_1, MOUNTED_PORTAL_STATE_SCHEMA_ID_2, PID_ADVANCEMENT_LEVEL,
-    PID_AGENT_SPECIES, PID_CHARGEN_CHARACTER_LEVEL, PID_COMBAT_ANIMATION_SET, PID_NAME,
-    PID_WEENIE_TYPE, POS_FLAG_BLOCK, POS_FLAG_CELL, POS_FLAG_CELL_IS_ZERO, POS_FLAG_OFFSET,
-    POS_FLAG_ORIENTATION, POS_FLAG_REGION, POS_FLAG_REGION_IS_ONE, PlayerSessionStart,
-    PortalPlacement, PortalSpaceExit, PortalSpaceReady, PortalSpaceState, PropertyRemove,
-    PropertyType, QueryMissingEntity, RoutingDestinationEntry, RoutingHeader, SelectCharacter,
-    SendSteamId, ServerLastWords, SinglePropertyUpdate, SmoothedNetworkClock, SubEventBatch,
-    SubEventFrame, TIMESTAMP_NO_TIME, VisualAppearanceEntry, VisualBlock3Entry, VisualDesc,
-    VisualDescUpdate, VisualEquipmentItem, WirePosition, WirePropertyEntry, WirePropertySet,
-    WirePropertyValue, WireReader, WireStringArg, WireStringArgPayload, WireStringInfo,
-    WireWaveform, WireWriter, WorldError, WorldName, decode_heading_u8, decode_net_blob_payload,
+    DisplayLocalizedText, ENVELOPE_FLAG_HAS_ROUTING_HEADER, ENVELOPE_FLAG_ZLIB_COMPRESSED,
+    EncodedPropertyEntry, EncodedPropertyTable, EncodedPropertyValue, EntityActionEvent,
+    EntityAppearanceDesc, EntityAppearanceDescUpdate, EntityBatchSubEvents, EntityCreate,
+    EntityInitialProperties, EntityPlacement, EntityPositionUpdate, MAX_RECURSION_DEPTH,
+    MOUNTED_PORTAL_STATE_SCHEMA_ID_1, MOUNTED_PORTAL_STATE_SCHEMA_ID_2, NetworkClockSync,
+    PID_ADVANCEMENT_LEVEL, PID_AGENT_SPECIES, PID_CHARGEN_CHARACTER_LEVEL,
+    PID_COMBAT_ANIMATION_SET, PID_NAME, PID_WEENIE_TYPE, POS_FLAG_BLOCK, POS_FLAG_CELL,
+    POS_FLAG_CELL_IS_ZERO, POS_FLAG_OFFSET, POS_FLAG_ORIENTATION, POS_FLAG_REGION,
+    POS_FLAG_REGION_IS_ONE, PlayerSessionStart, PortalPlacement, PortalSpaceExit, PortalSpaceReady,
+    PortalSpaceState, PropertyRemove, PropertyType, QueryMissingEntity, RoutingDestinationEntry,
+    RoutingHeader, SelectCharacter, SendSteamId, ServerLastWords, SinglePropertyUpdate,
+    SubEventFrame, TIMESTAMP_NO_TIME, WORLD_CALENDAR_CONFIG_DID, WireLocalizedText,
+    WireLocalizedTextArg, WireLocalizedTextArgPayload, WirePosition, WireReader, WireWaveform,
+    WireWriter, WorldCalendarConfig, WorldError, WorldName, decode_blob_payload, decode_heading_u8,
     decode_vle3, decode_vle4, decode_vle16, encode_heading_u8, encode_vle3, encode_vle4,
     encode_vle16,
 };
 
 fn sample_schema() -> BTreeMap<u32, PropertyType> {
     let mut map = BTreeMap::new();
-    map.insert(PID_NAME, PropertyType::StringInfo);
+    map.insert(PID_NAME, PropertyType::LocalizedText);
     map.insert(PID_ADVANCEMENT_LEVEL, PropertyType::Int);
     map.insert(PID_CHARGEN_CHARACTER_LEVEL, PropertyType::Int);
     map.insert(PID_AGENT_SPECIES, PropertyType::Enum);
@@ -50,7 +51,7 @@ fn sample_schema() -> BTreeMap<u32, PropertyType> {
     map.insert(0x0000_000A, PropertyType::PropertyId);
     map.insert(0x0000_000B, PropertyType::Struct);
     map.insert(0x0000_000C, PropertyType::Array);
-    map.insert(0x0000_000D, PropertyType::StringInfo);
+    map.insert(0x0000_000D, PropertyType::LocalizedText);
     map.insert(0x0000_000E, PropertyType::Bitfield64);
     map.insert(0x0000_000F, PropertyType::Int);
     map.insert(0x0000_0010, PropertyType::Color);
@@ -244,22 +245,22 @@ fn vector_5_wire_position_vs_stored_position() {
 }
 
 #[test]
-fn vector_6_wire_property_set_vs_stored_property_set() {
+fn vector_6_encoded_property_table_wire_vs_stored() {
     let schema = sample_schema();
-    let mut props = WirePropertySet::new();
+    let mut props = EncodedPropertyTable::new();
     props.push(
         PID_NAME,
-        WirePropertyValue::StringInfo(WireStringInfo::literal("Name")),
+        EncodedPropertyValue::LocalizedText(WireLocalizedText::literal("Name")),
     );
-    props.push(PID_ADVANCEMENT_LEVEL, WirePropertyValue::Int(50));
-    props.push(PID_CHARGEN_CHARACTER_LEVEL, WirePropertyValue::Int(-1));
+    props.push(PID_ADVANCEMENT_LEVEL, EncodedPropertyValue::Int(50));
+    props.push(PID_CHARGEN_CHARACTER_LEVEL, EncodedPropertyValue::Int(-1));
 
     let wire_bytes = props.to_bytes().unwrap();
     let expected_wire: [u8; 28] = [
         0x03, // count = 3 (no TSize byte on wire)
         0x03, 0x54, // CompactPID(0x00000354)
         0x01, 0x04, 0x4E, 0x00, 0x61, 0x00, 0x6D, 0x00, 0x65, 0x00, 0x00,
-        0x00, // StringInfo("Name")
+        0x00, // LocalizedText("Name")
         0x50, 0x11, // CompactPID(0x10001011)
         0x32, // 4-tier VLE(50)
         0x80, 0x3B, 0x66, 0x00, 0x10, // CompactPID(0x1000663B)
@@ -267,11 +268,11 @@ fn vector_6_wire_property_set_vs_stored_property_set() {
     ];
     assert_eq!(wire_bytes, expected_wire);
 
-    let decoded = WirePropertySet::from_bytes(&expected_wire, &schema).unwrap();
+    let decoded = EncodedPropertyTable::from_bytes(&expected_wire, &schema).unwrap();
     assert_eq!(decoded, props);
 
-    // Also verify stored StringInfo (includes TSize=0x01 before arg_count, making StringInfo("Name") 14 bytes)
-    let si = WireStringInfo::literal("Name");
+    // Also verify stored LocalizedText (includes TSize=0x01 before arg_count, making LocalizedText("Name") 14 bytes)
+    let si = WireLocalizedText::literal("Name");
     let mut stored_si_w = WireWriter::new();
     si.encode_stored(&mut stored_si_w).unwrap();
     assert_eq!(
@@ -281,7 +282,10 @@ fn vector_6_wire_property_set_vs_stored_property_set() {
         ]
     );
     let mut stored_si_r = WireReader::new(stored_si_w.as_slice());
-    assert_eq!(WireStringInfo::decode_stored(&mut stored_si_r).unwrap(), si);
+    assert_eq!(
+        WireLocalizedText::decode_stored(&mut stored_si_r).unwrap(),
+        si
+    );
     stored_si_r.finish().unwrap();
 }
 
@@ -299,15 +303,15 @@ fn vector_7_select_character_and_portal_space_ready() {
     let decoded = SelectCharacter::from_bytes(&inner, &schema).unwrap();
     assert_eq!(decoded, select);
 
-    // Uncompressed NetBlob payload (11 bytes)
-    let blob = select.to_net_blob_bytes().unwrap();
+    // Uncompressed fragmented blob payload (11 bytes)
+    let blob = select.to_blob_bytes().unwrap();
     assert_eq!(
         blob,
         [
             0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0x00
         ]
     );
-    let unwrapped = decode_net_blob_payload(&blob, 0).unwrap();
+    let unwrapped = decode_blob_payload(&blob, 0).unwrap();
     assert_eq!(unwrapped.envelope_flags, 0x00);
     assert_eq!(unwrapped.inner_payload, inner);
 
@@ -411,7 +415,7 @@ fn vector_8_portal_placement_default_state_section_and_full_packet() {
 }
 
 // ---------------------------------------------------------------------------
-// Heading Quantization, All 22 Property Types, and NetBlob Envelope
+// Heading Quantization, All 22 Property Types, and fragmented blob Envelope
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -427,81 +431,84 @@ fn quantized_heading_round_trip() {
 #[test]
 fn all_22_wire_property_types_round_trip() {
     let schema = sample_schema();
-    let mut nested = WirePropertySet::new();
-    nested.push(0x0000_0001, WirePropertyValue::String("inner".to_string()));
+    let mut nested = EncodedPropertyTable::new();
+    nested.push(
+        0x0000_0001,
+        EncodedPropertyValue::String("inner".to_string()),
+    );
 
-    let mut rich_si = WireStringInfo::reference(0x0012_3456, 0x2500_0001);
+    let mut rich_si = WireLocalizedText::reference(0x0012_3456, 0x2500_0001);
     rich_si.authoring_strings = Some([
         "TOK_TEST".to_string(),
         "Hello {0}".to_string(),
         "comment".to_string(),
     ]);
     rich_si.arguments = vec![
-        WireStringArg {
+        WireLocalizedTextArg {
             key: 0x1111_2222,
             kind: 1,
             header_kind: 1,
             var_id: 10,
-            payload: Some(WireStringArgPayload::Nested(Box::new(
-                WireStringInfo::literal("Sub"),
+            payload: Some(WireLocalizedTextArgPayload::Nested(Box::new(
+                WireLocalizedText::literal("Sub"),
             ))),
         },
-        WireStringArg {
+        WireLocalizedTextArg {
             key: 0x2222_3333,
             kind: 2,
             header_kind: 2,
             var_id: 11,
-            payload: Some(WireStringArgPayload::Float {
+            payload: Some(WireLocalizedTextArgPayload::Float {
                 value: 3.5,
                 decimal_places: 2,
             }),
         },
-        WireStringArg {
+        WireLocalizedTextArg {
             key: 0x3333_4444,
             kind: 3,
             header_kind: 3,
             var_id: 12,
-            payload: Some(WireStringArgPayload::FloatFormatted {
+            payload: Some(WireLocalizedTextArgPayload::FloatFormatted {
                 value: 12.75,
                 decimal_places: 1,
                 format_flags: 0x03,
                 radix: 10,
             }),
         },
-        WireStringArg {
+        WireLocalizedTextArg {
             key: 0x4444_5555,
             kind: 4,
             header_kind: 4,
             var_id: 13,
-            payload: Some(WireStringArgPayload::FixedInt(-999)),
+            payload: Some(WireLocalizedTextArgPayload::FixedInt(-999)),
         },
-        WireStringArg {
+        WireLocalizedTextArg {
             key: 0x5555_6666,
             kind: 5,
             header_kind: 5,
             var_id: 14,
-            payload: Some(WireStringArgPayload::FixedIntFormatted {
+            payload: Some(WireLocalizedTextArgPayload::FixedIntFormatted {
                 value: 123_456,
                 format_flags: 1,
                 radix: 0xFFFF,
             }),
         },
-        WireStringArg {
+        WireLocalizedTextArg {
             key: 0x6666_7777,
             kind: 6,
             header_kind: 6,
             var_id: 15,
-            payload: Some(WireStringArgPayload::CompactInt {
+            payload: Some(WireLocalizedTextArgPayload::CompactInt {
                 is_32bit: true,
                 value: 42,
             }),
         },
-        WireStringArg {
+        WireLocalizedTextArg {
             key: 0x7777_8888,
             kind: 7,
             header_kind: 7,
             var_id: 16,
-            payload: Some(WireStringArgPayload::CompactIntFormatted {
+            payload: Some(WireLocalizedTextArgPayload::CompactIntFormatted {
                 is_32bit: false,
                 value: 0x0102_0304_0506_0708,
                 format_flags: 2,
@@ -510,61 +517,64 @@ fn all_22_wire_property_types_round_trip() {
         },
     ];
 
-    let mut ps = WirePropertySet::new();
+    let mut ps = EncodedPropertyTable::new();
     ps.push_null();
-    ps.push(0x0000_0001, WirePropertyValue::String("Latin1".to_string()));
-    ps.push(0x0000_0002, WirePropertyValue::StringToken(0x0546_5AB1));
+    ps.push(
+        0x0000_0001,
+        EncodedPropertyValue::String("Latin1".to_string()),
+    );
+    ps.push(0x0000_0002, EncodedPropertyValue::StringToken(0x0546_5AB1));
     ps.push(
         0x0000_0003,
-        WirePropertyValue::Waveform(WireWaveform::Constant(2.5)),
+        EncodedPropertyValue::Waveform(WireWaveform::Constant(2.5)),
     );
     ps.push(
         0x0000_0003,
-        WirePropertyValue::Waveform(WireWaveform::Standard {
+        EncodedPropertyValue::Waveform(WireWaveform::Standard {
             subtype: 2,
             coeffs: [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0],
         }),
     );
     ps.push(
         0x0000_0003,
-        WirePropertyValue::Waveform(WireWaveform::Keyframed {
+        EncodedPropertyValue::Waveform(WireWaveform::Keyframed {
             coeffs: [0.5; 10],
             period: 4.0,
             loop_flag: true,
             pairs: vec![(0.0, 1.0), (2.0, 3.0)],
         }),
     );
-    ps.push(0x0000_0004, WirePropertyValue::Timestamp(1234.5));
-    ps.push(0x0000_0005, WirePropertyValue::TriState(255));
-    ps.push(0x0000_0006, WirePropertyValue::Vector3([1.0, -2.0, 3.5]));
+    ps.push(0x0000_0004, EncodedPropertyValue::Timestamp(1234.5));
+    ps.push(0x0000_0005, EncodedPropertyValue::TriState(255));
+    ps.push(0x0000_0006, EncodedPropertyValue::Vector3([1.0, -2.0, 3.5]));
     ps.push(
         0x0000_0007,
-        WirePropertyValue::InstanceId(0x0200_0000_0000_0099),
+        EncodedPropertyValue::InstanceId(0x0200_0000_0000_0099),
     );
-    ps.push(0x0000_0008, WirePropertyValue::Enum(0x2300_018E));
-    ps.push(0x0000_0009, WirePropertyValue::Float(99.5));
-    ps.push(0x0000_000A, WirePropertyValue::PropertyId(0x1000_1011));
-    ps.push(0x0000_000B, WirePropertyValue::Struct(nested));
+    ps.push(0x0000_0008, EncodedPropertyValue::Enum(0x2300_018E));
+    ps.push(0x0000_0009, EncodedPropertyValue::Float(99.5));
+    ps.push(0x0000_000A, EncodedPropertyValue::PropertyId(0x1000_1011));
+    ps.push(0x0000_000B, EncodedPropertyValue::Struct(nested));
     ps.push(
         0x0000_000C,
-        WirePropertyValue::Array(vec![
-            WirePropertyEntry::new(0x0000_0009, WirePropertyValue::Float(1.25)),
-            WirePropertyEntry::new(0x0000_000F, WirePropertyValue::Int(-7)),
+        EncodedPropertyValue::Array(vec![
+            EncodedPropertyEntry::new(0x0000_0009, EncodedPropertyValue::Float(1.25)),
+            EncodedPropertyEntry::new(0x0000_000F, EncodedPropertyValue::Int(-7)),
         ]),
     );
-    ps.push(0x0000_000D, WirePropertyValue::StringInfo(rich_si));
+    ps.push(0x0000_000D, EncodedPropertyValue::LocalizedText(rich_si));
     ps.push(
         0x0000_000E,
-        WirePropertyValue::Bitfield64(0xCAFE_BABE_DEAD_BEEF),
+        EncodedPropertyValue::Bitfield64(0xCAFE_BABE_DEAD_BEEF),
     );
-    ps.push(0x0000_000F, WirePropertyValue::Int(-42));
+    ps.push(0x0000_000F, EncodedPropertyValue::Int(-42));
     ps.push(
         0x0000_0010,
-        WirePropertyValue::Color([0x10, 0x20, 0x30, 0xFF]),
+        EncodedPropertyValue::Color([0x10, 0x20, 0x30, 0xFF]),
     );
     ps.push(
         0x0000_0011,
-        WirePropertyValue::Position(WirePosition::from_components(
+        EncodedPropertyValue::Position(WirePosition::from_components(
             1,
             10,
             20,
@@ -574,25 +584,25 @@ fn all_22_wire_property_types_round_trip() {
             [1.0, 0.0, 0.0, 0.0],
         )),
     );
-    ps.push(0x0000_0012, WirePropertyValue::Bitfield32(0x1234_5678));
-    ps.push(0x0000_0013, WirePropertyValue::Int64(-123_456_789_012));
-    ps.push(0x0000_0014, WirePropertyValue::DidRef(0x7000_1234));
-    ps.push(0x0000_0015, WirePropertyValue::Boolean(true));
+    ps.push(0x0000_0012, EncodedPropertyValue::Bitfield32(0x1234_5678));
+    ps.push(0x0000_0013, EncodedPropertyValue::Int64(-123_456_789_012));
+    ps.push(0x0000_0014, EncodedPropertyValue::DidRef(0x7000_1234));
+    ps.push(0x0000_0015, EncodedPropertyValue::Boolean(true));
     ps.push(
         0x0000_0016,
-        WirePropertyValue::Bitfield {
+        EncodedPropertyValue::Bitfield {
             bit_count: 19,
             bytes: vec![0xAA, 0x55, 0x03],
         },
     );
 
     let encoded = ps.to_bytes().unwrap();
-    let decoded = WirePropertySet::from_bytes(&encoded, &schema).unwrap();
+    let decoded = EncodedPropertyTable::from_bytes(&encoded, &schema).unwrap();
     assert_eq!(decoded, ps);
 }
 
 #[test]
-fn net_blob_envelope_routing_header_and_zlib() {
+fn blob_envelope_routing_header_and_zlib() {
     let inner = EntityCreate {
         template_did: 0x7000_0001,
         entity_id: 0x0200_0000_0000_0042,
@@ -626,7 +636,7 @@ fn net_blob_envelope_routing_header_and_zlib() {
     blob.write_u32_le(uncompressed.len() as u32);
     blob.write_bytes(&compressed_bytes);
 
-    let decoded = decode_net_blob_payload(blob.as_slice(), 0x1111).unwrap();
+    let decoded = decode_blob_payload(blob.as_slice(), 0x1111).unwrap();
     assert_eq!(decoded.routing_header.as_ref(), Some(&rh));
     assert_eq!(decoded.target_entity_id, 0x0200_0000_0000_0077);
     assert_eq!(decoded.inner_payload, inner);
@@ -650,8 +660,8 @@ fn character_screen_messages_round_trip() {
     );
 
     // 0xDC CreateCharacter
-    let mut create_props = WirePropertySet::new();
-    create_props.push(PID_AGENT_SPECIES, WirePropertyValue::Enum(0x2300_0001));
+    let mut create_props = EncodedPropertyTable::new();
+    create_props.push(PID_AGENT_SPECIES, EncodedPropertyValue::Enum(0x2300_0001));
     let create = CreateCharacter {
         creation_props: create_props,
         name: "Aldarion".to_string(),
@@ -665,11 +675,11 @@ fn character_screen_messages_round_trip() {
         create
     );
 
-    // 0x13D CharacterSet & 0xDD CharacterCreateSuccess (with VisualDesc)
-    let mut extra_vprops = WirePropertySet::new();
-    extra_vprops.push(0x0000_0009, WirePropertyValue::Float(1.0));
-    let vdesc = VisualDesc {
-        equipment: vec![VisualEquipmentItem {
+    // 0x13D CharacterSet & 0xDD CharacterCreateSuccess (with EntityAppearanceDesc)
+    let mut extra_vprops = EncodedPropertyTable::new();
+    extra_vprops.push(0x0000_0009, EncodedPropertyValue::Float(1.0));
+    let vdesc = EntityAppearanceDesc {
+        equipment: vec![AppearanceEquipmentEntry {
             item_class_did: 0x7000_1111,
             slot_bitmask: 0x0000_0003,
             primary_color: 0x1122_3344,
@@ -678,12 +688,12 @@ fn character_screen_messages_round_trip() {
             item_flag_b: false,
             item_scalar: 1.5,
         }],
-        appearance_entries: vec![VisualAppearanceEntry {
+        appearance_entries: vec![AppearanceMorphEntry {
             appearance_key: 0x1000_0001,
             appearance_weight: 0.75,
         }],
         anim_set_did: 0x2300_0055,
-        block_3: vec![VisualBlock3Entry {
+        block_3: vec![AppearanceAuxEntry {
             field_0: 1,
             field_4: 2,
             field_8: 3.0,
@@ -696,19 +706,19 @@ fn character_screen_messages_round_trip() {
         extra_visual_props: Some(extra_vprops),
         visual_flag: true,
     };
-    let mut char_props = WirePropertySet::new();
-    char_props.push(PID_ADVANCEMENT_LEVEL, WirePropertyValue::Int(20));
-    let char_desc = CharDesc {
+    let mut char_props = EncodedPropertyTable::new();
+    char_props.push(PID_ADVANCEMENT_LEVEL, EncodedPropertyValue::Int(20));
+    let summary_entry = CharacterSummaryEntry {
         character_id: 0x0200_0000_0000_0001,
         name: "Aldarion".to_string(),
-        visual_desc: vdesc,
+        appearance_desc: vdesc,
         char_properties: char_props,
     };
 
     let cset = CharacterSet {
-        characters: vec![char_desc.clone()],
+        characters: vec![summary_entry.clone()],
         monster_characters: Vec::new(),
-        account_props: WirePropertySet::new(),
+        account_props: EncodedPropertyTable::new(),
         status_or_version: 1,
         extra_entries: vec![CharacterSetExtraEntry {
             key_id: 0x0200_0000_0000_0001,
@@ -722,7 +732,7 @@ fn character_screen_messages_round_trip() {
     );
 
     let csuccess = CharacterCreateSuccess {
-        character: char_desc,
+        character: summary_entry,
         is_monster_play: false,
     };
     assert_eq!(
@@ -774,7 +784,7 @@ fn character_screen_messages_round_trip() {
     // 0xB3 AccountBooted
     let booted = AccountBooted {
         boot_reason: 2,
-        reason_text: WireStringInfo::literal("Disconnected"),
+        reason_text: WireLocalizedText::literal("Disconnected"),
     };
     assert_eq!(
         AccountBooted::from_bytes(&booted.to_bytes().unwrap()).unwrap(),
@@ -792,26 +802,26 @@ fn character_screen_messages_round_trip() {
 fn world_entry_and_object_lifecycle_messages_round_trip() {
     let schema = sample_schema();
 
-    // 0x43 WorldName, 0xAA DisplayStringInfo, 0xFA ServerLastWords
+    // 0x43 WorldName, 0xAA DisplayLocalizedText, 0xFA ServerLastWords
     let wname = WorldName {
-        world_name: WireStringInfo::literal("Evernight"),
+        world_name: WireLocalizedText::literal("Evernight"),
     };
     assert_eq!(
         WorldName::from_bytes(&wname.to_bytes().unwrap()).unwrap(),
         wname
     );
 
-    let dsi = DisplayStringInfo {
+    let dsi = DisplayLocalizedText {
         target_id: 0x0200_0000_0000_0001,
-        message: WireStringInfo::reference(0x0001_0002, 0x2500_0001),
+        message: WireLocalizedText::reference(0x0001_0002, 0x2500_0001),
     };
     assert_eq!(
-        DisplayStringInfo::from_bytes(&dsi.to_bytes().unwrap()).unwrap(),
+        DisplayLocalizedText::from_bytes(&dsi.to_bytes().unwrap()).unwrap(),
         dsi
     );
 
     let last_words = ServerLastWords {
-        last_words: WireStringInfo::literal("Server restarting"),
+        last_words: WireLocalizedText::literal("Server restarting"),
     };
     assert_eq!(
         ServerLastWords::from_bytes(&last_words.to_bytes().unwrap()).unwrap(),
@@ -819,8 +829,8 @@ fn world_entry_and_object_lifecycle_messages_round_trip() {
     );
 
     // 0x90 PlayerSessionStart
-    let mut sprops = WirePropertySet::new();
-    sprops.push(PID_ADVANCEMENT_LEVEL, WirePropertyValue::Int(50));
+    let mut sprops = EncodedPropertyTable::new();
+    sprops.push(PID_ADVANCEMENT_LEVEL, EncodedPropertyValue::Int(50));
     let pstart = PlayerSessionStart {
         player_id: 0x0200_0000_0000_0001,
         session_props: sprops,
@@ -840,7 +850,7 @@ fn world_entry_and_object_lifecycle_messages_round_trip() {
         PortalSpaceState
     );
 
-    // 0x98 EntityCreate, 0x52 EntityInitialProperties, 0x89 VisualDescUpdate, 0x40 DeleteEntity, 0xD0 QueryMissingEntity
+    // 0x98 EntityCreate, 0x52 EntityInitialProperties, 0x89 EntityAppearanceDescUpdate, 0x40 DeleteEntity, 0xD0 QueryMissingEntity
     let ecreate = EntityCreate {
         template_did: 0x7000_1234,
         entity_id: 0x0200_0000_0000_0099,
@@ -850,10 +860,10 @@ fn world_entry_and_object_lifecycle_messages_round_trip() {
         ecreate
     );
 
-    let mut iprops = WirePropertySet::new();
+    let mut iprops = EncodedPropertyTable::new();
     iprops.push(
         PID_NAME,
-        WirePropertyValue::StringInfo(WireStringInfo::literal("Guard")),
+        EncodedPropertyValue::LocalizedText(WireLocalizedText::literal("Guard")),
     );
     let einit = EntityInitialProperties { properties: iprops };
     assert_eq!(
@@ -861,11 +871,11 @@ fn world_entry_and_object_lifecycle_messages_round_trip() {
         einit
     );
 
-    let vupd = VisualDescUpdate {
-        visual_desc: VisualDesc::default(),
+    let vupd = EntityAppearanceDescUpdate {
+        appearance_desc: EntityAppearanceDesc::default(),
     };
     assert_eq!(
-        VisualDescUpdate::from_bytes(&vupd.to_bytes().unwrap(), &schema).unwrap(),
+        EntityAppearanceDescUpdate::from_bytes(&vupd.to_bytes().unwrap(), &schema).unwrap(),
         vupd
     );
 
@@ -882,8 +892,8 @@ fn world_entry_and_object_lifecycle_messages_round_trip() {
         qmissing
     );
 
-    // 0x0D / 0x4C SubEventBatch
-    let batch = SubEventBatch {
+    // 0x0D / 0x4C EntityBatchSubEvents
+    let batch = EntityBatchSubEvents {
         sub_events: vec![
             SubEventFrame::Event {
                 sub_event_id: EntityCreate::EVENT_ID,
@@ -900,7 +910,7 @@ fn world_entry_and_object_lifecycle_messages_round_trip() {
         ],
     };
     assert_eq!(
-        SubEventBatch::from_bytes(&batch.to_bytes().unwrap()).unwrap(),
+        EntityBatchSubEvents::from_bytes(&batch.to_bytes().unwrap()).unwrap(),
         batch
     );
 }
@@ -994,8 +1004,8 @@ fn entity_position_update_and_movement_actions_round_trip() {
     );
 
     // 0x24 ClientMoveCommand with slot actions and slot properties
-    let mut act_props = WirePropertySet::new();
-    act_props.push(0x0000_0009, WirePropertyValue::Float(2.0));
+    let mut act_props = EncodedPropertyTable::new();
+    act_props.push(0x0000_0009, EncodedPropertyValue::Float(2.0));
     let apayload = ActionPayload {
         action_mode: 0x0A,
         flags: 0x0040 | 0x2000 | 0x0001 | 0x4000 | 0x0002 | 0x0008 | 0x0010 | 0x0020,
@@ -1063,7 +1073,7 @@ fn entity_position_update_and_movement_actions_round_trip() {
     );
 
     // 0x88/0x92/0xB0/0x147/0x149 SinglePropertyUpdate & 0xB7 PropertyRemove
-    let spu = SinglePropertyUpdate::new(PID_ADVANCEMENT_LEVEL, WirePropertyValue::Int(51));
+    let spu = SinglePropertyUpdate::new(PID_ADVANCEMENT_LEVEL, EncodedPropertyValue::Int(51));
     assert_eq!(
         SinglePropertyUpdate::from_bytes(&spu.to_bytes().unwrap(), &schema).unwrap(),
         spu
@@ -1076,30 +1086,30 @@ fn entity_position_update_and_movement_actions_round_trip() {
 }
 
 // ---------------------------------------------------------------------------
-// §4.4.1 SmoothedNetworkClock and §4.4.2 GameTimeRecord
+// §4.4.1 NetworkClockSync and §4.4.2 WorldCalendarConfig
 // ---------------------------------------------------------------------------
 
 #[test]
 fn smoothed_network_clock_forward_snap_and_five_tier_slew() {
-    let mut clock = SmoothedNetworkClock::new(1000.0, 10.0);
+    let mut clock = NetworkClockSync::new(1000.0, 10.0);
     assert!((clock.synced_time() - 1000.0).abs() < 1e-9);
 
     // 1. Client behind server -> immediate forward snap (with latency compensation)
-    clock.stage_time_sync(1002.0, 11.0, 11.05);
+    clock.stage_clock_sync(1002.0, 11.0, 11.05);
     let t = clock.update_frame(11.10);
     // target = (11.10 - 11.05) + ((11.05 - 11.0) + 1002.0) = 1002.10
     assert!((t - 1002.10).abs() < 1e-9);
     assert_eq!(clock.slew_debt(), 0.0);
 
     // 2. Client ahead of server by 0.010 s (< 0.015 s tolerance) -> ignored, no backward jump
-    clock.stage_time_sync(1003.09, 12.10, 12.10);
+    clock.stage_clock_sync(1003.09, 12.10, 12.10);
     let t2 = clock.update_frame(12.10);
     assert!((t2 - 1003.10).abs() < 1e-9);
     assert_eq!(clock.slew_rate(), 0.0);
 
     // 3. Client ahead of server by 0.100 s (in [0.060, 0.120) -> tier 0.01 s/s)
     // At t_now = 13.10, unslewed synced_time is 1004.10; server says 1004.00 -> excess = 0.100
-    clock.stage_time_sync(1004.00, 13.10, 13.10);
+    clock.stage_clock_sync(1004.00, 13.10, 13.10);
     let t3 = clock.update_frame(13.10);
     assert!((t3 - 1004.10).abs() < 1e-9); // monotonic: does not jump backward
     assert!((clock.slew_debt() - 0.100).abs() < 1e-9);
@@ -1120,12 +1130,12 @@ fn smoothed_network_clock_forward_snap_and_five_tier_slew() {
 }
 
 #[test]
-fn game_time_record_canonical_180_bytes_and_day_night_evaluation() {
-    let rec = GameTimeRecord::canonical();
-    assert_eq!(rec.did, GAME_TIME_RECORD_DID);
+fn world_calendar_config_canonical_180_bytes_and_day_night_evaluation() {
+    let rec = WorldCalendarConfig::canonical();
+    assert_eq!(rec.did, WORLD_CALENDAR_CONFIG_DID);
     let bytes = rec.to_bytes().unwrap();
     assert_eq!(bytes.len(), 180);
-    assert_eq!(GameTimeRecord::from_bytes(&bytes).unwrap(), rec);
+    assert_eq!(WorldCalendarConfig::from_bytes(&bytes).unwrap(), rec);
 
     // Evaluate at dawn (0.25 of day) -> daytime (is_night == false)
     // With calendar_epoch_offset = 3600.0 and day_length = 11160.0, day 0 starts at dilated_time = -3600.0
@@ -1154,11 +1164,11 @@ fn hostile_input_bounds_and_validation() {
     // 1. Oversized VLE count in a short buffer -> CountExceedsRemaining without OOM
     let oversized_ps = [0xFF, 0xFF, 0xFF, 0xFF]; // 3-tier VLE = 0x3FFF_FFFF entries, 0 bytes left
     assert!(matches!(
-        WirePropertySet::from_bytes(&oversized_ps, &schema),
+        EncodedPropertyTable::from_bytes(&oversized_ps, &schema),
         Err(WorldError::CountExceedsRemaining { .. })
     ));
 
-    // 2. Recursion depth > 16 rejected in nested Struct PropertySet
+    // 2. Recursion depth > 16 rejected in nested Struct EncodedPropertyTable
     let mut deep_w = WireWriter::new();
     for _ in 0..=MAX_RECURSION_DEPTH {
         deep_w.write_vle3(1).unwrap(); // 1 entry
@@ -1166,7 +1176,7 @@ fn hostile_input_bounds_and_validation() {
     }
     deep_w.write_vle3(0).unwrap();
     assert_eq!(
-        WirePropertySet::from_bytes(deep_w.as_slice(), &schema),
+        EncodedPropertyTable::from_bytes(deep_w.as_slice(), &schema),
         Err(WorldError::MaxRecursionDepthExceeded {
             max: MAX_RECURSION_DEPTH
         })
@@ -1175,14 +1185,14 @@ fn hostile_input_bounds_and_validation() {
     // 3. Invalid bool8 >= 2 rejected
     let bad_bool_ps = [0x01, 0x00, 0x15, 0x02]; // count=1, PID=0x0015 (Boolean), value=0x02
     assert_eq!(
-        WirePropertySet::from_bytes(&bad_bool_ps, &schema),
+        EncodedPropertyTable::from_bytes(&bad_bool_ps, &schema),
         Err(WorldError::InvalidBool8(0x02))
     );
 
     // 4. Unknown PID rejected with UnknownPropertyId
     let unknown_pid_ps = [0x01, 0x09, 0x99, 0x00]; // count=1, PID=0x0999 (not in schema)
     assert_eq!(
-        WirePropertySet::from_bytes(&unknown_pid_ps, &schema),
+        EncodedPropertyTable::from_bytes(&unknown_pid_ps, &schema),
         Err(WorldError::UnknownPropertyId(0x0000_0999))
     );
 

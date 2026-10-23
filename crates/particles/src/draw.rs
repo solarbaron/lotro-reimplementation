@@ -17,7 +17,9 @@
 
 use glam::{Mat3, Quat, Vec3};
 use tessera_formats::Did;
-use tessera_formats::gameplay::particles::{Emitter, Primitive, ScaleMode, TOLERANCE};
+use tessera_formats::gameplay::particles::{
+    Emitter, ParticleSystem, Primitive, ScaleMode, TOLERANCE,
+};
 
 use crate::curve::finite;
 use crate::rng::Ran2;
@@ -99,6 +101,16 @@ pub struct Vertex {
 pub struct InstanceDraw {
     /// The colour multiplier's alpha: instance opacity × distance fade (§8.13).
     pub opacity: f32,
+    /// The instance's culling box in the simulation's world frame (minimum, maximum), for a
+    /// record with `has_bounds` = 1 (`particles.md` §4.1): the eight corners of
+    /// `bounds_min`–`bounds_max` moved by the instance (position, rotation and the
+    /// effective scale *S* of §8.6.3), expanded on every axis by the largest distance of a
+    /// drawn vertex from its particle's centre. A world-space system's single draw holds the
+    /// particles of every instance at the positions they were emitted at: its box is the
+    /// union of every passing instance's box and of the vertices written. `None` with
+    /// `has_bounds` = 0 or non-finite values: the instance is never culled
+    /// (`particle-runtime.md` §9.3 Q-RT3 Decision).
+    pub bounds: Option<([f32; 3], [f32; 3])>,
     /// `Quad` vertices (four per particle) followed by `Triangle` vertices (three per
     /// particle).
     pub vertices: Vec<Vertex>,
@@ -192,7 +204,12 @@ struct Ctx {
     start: f64,
     fast_forward: f32,
     time_step: f64,
-    lit: Option<[f32; 4]>,
+    /// Lit systems (§8.14): the ambient colour and the owner's light list.
+    lit: Option<([f32; 4], crate::light::LightList)>,
+    /// The instance's position and rotation: a local-space particle at *p* (system frame)
+    /// lies at position + rotation × (*p* × *S*) in the world frame.
+    inst_pos: Vec3,
+    inst_rot: Quat,
 }
 
 impl SystemSim {
@@ -247,8 +264,10 @@ impl SystemSim {
             uses_video_post: desc.uses_video_post,
             instances: Vec::with_capacity(passing.len()),
         };
-        let lit = desc.use_lighting.then_some(self.env.ambient);
-        for (inst, opacity) in passing {
+        let lit = desc
+            .use_lighting
+            .then(|| (self.env.ambient, *self.lights()));
+        for &(inst, opacity) in &passing {
             let (s, first) = scale_vectors(desc.scale_mode, &inst);
             let (cam, m) = if desc.world_space {
                 (*camera, s.max_element())
@@ -268,12 +287,15 @@ impl SystemSim {
                 fast_forward: desc.fast_forward,
                 time_step: self.time_step,
                 lit,
+                inst_pos: inst.position,
+                inst_rot: inst.rotation,
             };
             let mut draw = InstanceDraw {
                 opacity,
                 ..InstanceDraw::default()
             };
             let mut full = false;
+            let mut extent = 0.0f32;
             for (i, e) in desc.draw_order() {
                 let Some(state) = self.emitters.get_mut(i) else {
                     continue;
@@ -282,7 +304,7 @@ impl SystemSim {
                     draw.quad_vertices = draw.vertices.len();
                 }
                 if !full {
-                    full = emitter_vertices(e, state, &ctx, &mut draw.vertices, rng);
+                    full = emitter_vertices(e, state, &ctx, &mut draw.vertices, &mut extent, rng);
                 }
                 if e.primitive_kind() == Some(Primitive::Quad) {
                     draw.quad_vertices = draw.vertices.len();
@@ -296,6 +318,27 @@ impl SystemSim {
                 };
                 draw.vertices.iter_mut().for_each(to_world);
             }
+            let grow = if desc.world_space {
+                extent
+            } else {
+                extent * s.abs().max_element()
+            };
+            draw.bounds = if desc.world_space {
+                // World-space particles keep the positions they were emitted at and the
+                // particles of every instance are drawn here: the box covers every passing
+                // instance's box and every vertex written (a trail left behind by a moving
+                // owner stays inside it).
+                world_space_bounds(&desc, &passing, grow, &draw.vertices)
+            } else {
+                culling_bounds(
+                    desc.has_bounds,
+                    desc.bounds_min,
+                    desc.bounds_max,
+                    &inst,
+                    s,
+                    grow,
+                )
+            };
             out.instances.push(draw);
             if desc.world_space {
                 // Particles keep world positions and are drawn once (§4.1).
@@ -306,13 +349,83 @@ impl SystemSim {
     }
 }
 
+/// The culling box of a world-space system's single draw: the union of the boxes of every
+/// passing instance (each by [`culling_bounds`], grown by `grow`) and of the vertices
+/// written; `None` without bounds or when any part is not finite (never culled).
+fn world_space_bounds(
+    desc: &ParticleSystem,
+    passing: &[(Placement, f32)],
+    grow: f32,
+    vertices: &[Vertex],
+) -> Option<([f32; 3], [f32; 3])> {
+    let mut lo = Vec3::splat(f32::INFINITY);
+    let mut hi = Vec3::splat(f32::NEG_INFINITY);
+    for (inst, _) in passing {
+        let (s, _) = scale_vectors(desc.scale_mode, inst);
+        let (a, b) = culling_bounds(
+            desc.has_bounds,
+            desc.bounds_min,
+            desc.bounds_max,
+            inst,
+            s,
+            grow,
+        )?;
+        lo = lo.min(Vec3::from_array(a));
+        hi = hi.max(Vec3::from_array(b));
+    }
+    for v in vertices {
+        let p = Vec3::from_array(v.position);
+        lo = lo.min(p);
+        hi = hi.max(p);
+    }
+    (lo.is_finite() && hi.is_finite()).then(|| (lo.to_array(), hi.to_array()))
+}
+
+/// The culling box of an instance (see [`InstanceDraw::bounds`]): the record box moved by
+/// `inst` with scale `s`, expanded by `grow` metres; `None` without bounds or for values
+/// that are not finite.
+fn culling_bounds(
+    has_bounds: bool,
+    min: [f32; 3],
+    max: [f32; 3],
+    inst: &Placement,
+    s: Vec3,
+    grow: f32,
+) -> Option<([f32; 3], [f32; 3])> {
+    if !has_bounds {
+        return None;
+    }
+    let (lo, hi) = (Vec3::from_array(min), Vec3::from_array(max));
+    if !(lo.is_finite() && hi.is_finite() && s.is_finite() && grow.is_finite()) {
+        return None;
+    }
+    let (lo, hi) = (lo.min(hi), lo.max(hi));
+    let mut out_lo = Vec3::splat(f32::INFINITY);
+    let mut out_hi = Vec3::splat(f32::NEG_INFINITY);
+    for i in 0..8u32 {
+        let c = Vec3::new(
+            if i & 1 == 0 { lo.x } else { hi.x },
+            if i & 2 == 0 { lo.y } else { hi.y },
+            if i & 4 == 0 { lo.z } else { hi.z },
+        );
+        let w = inst.position + inst.rotation * (c * s);
+        out_lo = out_lo.min(w);
+        out_hi = out_hi.max(w);
+    }
+    let g = Vec3::splat(grow.max(0.0));
+    let (out_lo, out_hi) = (out_lo - g, out_hi + g);
+    (out_lo.is_finite() && out_hi.is_finite()).then(|| (out_lo.to_array(), out_hi.to_array()))
+}
+
 /// Writes one emitter's vertices; `true` when the draw buffer is full (§8.11: the rest of
-/// this emitter and every later emitter are not drawn).
+/// this emitter and every later emitter are not drawn). `extent` grows to the largest
+/// distance of a written vertex from its particle's centre (frame of the vertices).
 fn emitter_vertices(
     e: &Emitter,
     state: &mut crate::sim::EmitterSim,
     ctx: &Ctx,
     out: &mut Vec<Vertex>,
+    extent: &mut f32,
     rng: &mut Ran2,
 ) -> bool {
     let per = e.primitive_vertices() as usize;
@@ -389,8 +502,15 @@ fn emitter_vertices(
         )
         .unwrap_or([1.0; 4]);
         colour[3] *= envelope;
-        if let Some(l) = ctx.lit {
-            for (c, k) in colour.iter_mut().zip(l) {
+        if let Some((ambient, lights)) = &ctx.lit {
+            // §8.14 and rule 13: the light sum at the particle's world position.
+            let at = if ctx.world_space {
+                pos
+            } else {
+                ctx.inst_pos + ctx.inst_rot * (pos * ctx.s)
+            };
+            let k = crate::light::light_sum(*ambient, lights, at);
+            for (c, k) in colour.iter_mut().zip(k) {
                 *c *= k;
             }
         }
@@ -464,6 +584,10 @@ fn emitter_vertices(
         for (i, v) in verts.iter().enumerate().take(per) {
             let (cu, cv) = CORNER_UV[i];
             let uv = e.atlas_uv(cu, cv, f64::from(age), p.random);
+            let reach = (*v + shift - pos).length();
+            if reach.is_finite() && reach > *extent {
+                *extent = reach;
+            }
             let pos = *v + shift;
             out.push(Vertex {
                 position: pos.to_array().map(finite),

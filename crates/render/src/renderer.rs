@@ -208,6 +208,11 @@ pub struct FrameStats {
     pub particle_draws: u32,
     /// Particle vertices drawn.
     pub particle_vertices: u32,
+    /// Decal batches drawn (one draw call each, counted in `draw_calls`;
+    /// `docs/specs/decals.md` §6.6).
+    pub decal_draws: u32,
+    /// Decal triangles drawn.
+    pub decal_triangles: u32,
     /// UI pass and UI texture statistics (render.md §6), kept apart from
     /// asset uploads.
     pub ui: crate::ui::UiStats,
@@ -403,6 +408,7 @@ pub struct Renderer<'w> {
     far_view_state: crate::far_view::FarViewState,
     sky_state: SkyState,
     particle_state: ParticleState,
+    decal_state: crate::decals::DecalState,
     instanced_state: InstancedState,
     /// Copy of the colour target for water refraction: texture, view, size, format.
     scene_copy: Option<SceneCopy>,
@@ -961,6 +967,7 @@ impl<'w> Renderer<'w> {
             far_view_state: crate::far_view::FarViewState::default(),
             sky_state: SkyState::default(),
             particle_state: ParticleState::default(),
+            decal_state: crate::decals::DecalState::default(),
             instanced_state: InstancedState::default(),
             scene_copy: None,
             clear_color: wgpu::Color { r, g, b, a },
@@ -1439,13 +1446,42 @@ impl<'w> Renderer<'w> {
             instanced,
             far_terrain,
             sprites,
+            decals,
         } = draws;
         let mut hooks: Vec<Arc<dyn PassHook>> = Vec::new();
         if let Some(h) = crate::terrain_layers::build_hook(&mut self.terrain_state, terrain, &ctx)?
         {
             hooks.push(h);
         }
+        // Water before the instanced hook (`docs/specs/render.md` §5.7 Decision): water
+        // records in the translucent stage only, so this puts it before the blended
+        // instanced surfaces there, which then draw over it with the depth test instead of
+        // being replaced by its ONE/ZERO write. The opaque and shadow stages keep their
+        // order (water draws nothing in them).
+        if let Some(h) = crate::water::build_hook(&mut self.water_state, water, liquid, &ctx)? {
+            hooks.push(h);
+        }
         if let Some(h) = crate::instanced::build_hook(&mut self.instanced_state, instanced, &ctx)? {
+            hooks.push(h);
+        }
+        // Placed decals (`decals.md` §6.6, Tessera rule): in the opaque stage after the
+        // receivers drawn there (opaque meshes before every hook, then terrain layers and
+        // opaque instanced scenery), before the sky and the far view.
+        let decal_ctx = crate::decals::DecalFrame {
+            device: ctx.device,
+            format: ctx.format,
+            view_proj: ctx.view_proj,
+            textures: &ctx.textures,
+            premultiplied: ctx.premultiplied,
+            fog: (frame.fog_color[3] != 0.0).then(|| crate::decals::DecalFog {
+                eye: [frame.eye[0], frame.eye[1], frame.eye[2]],
+                near: frame.fog[0],
+                inv_range: frame.fog[1],
+                color: [frame.fog_color[0], frame.fog_color[1], frame.fog_color[2]],
+            }),
+            bias_clamp: ctx.bias_clamp,
+        };
+        if let Some(h) = crate::decals::build_hook(&mut self.decal_state, decals, &decal_ctx)? {
             hooks.push(h);
         }
         if let Some(h) =
@@ -1459,9 +1495,6 @@ impl<'w> Renderer<'w> {
         if let Some(h) =
             crate::far_view::build_hook(&mut self.far_view_state, far_terrain, sprites, &ctx)?
         {
-            hooks.push(h);
-        }
-        if let Some(h) = crate::water::build_hook(&mut self.water_state, water, liquid, &ctx)? {
             hooks.push(h);
         }
         Ok(hooks)
@@ -2577,7 +2610,32 @@ impl<'w> Renderer<'w> {
                     serial,
                     &mut warnings,
                 )?);
-                let world = std::mem::take(&mut pass.world);
+                let mut world = std::mem::take(&mut pass.world);
+                if frame_uniform.is_none() && !world.decals.is_empty() {
+                    // Placed decals need no frame lighting (they are unlit, `decals.md` §6):
+                    // an unlit world pass draws them too, unfogged, with *L* = 1 from the
+                    // caller (§9.2).
+                    let textures = TextureResolver {
+                        store: &self.textures,
+                        white: (&self.white_view.0, &self.white_view.1),
+                        exclude: Some(&view),
+                    };
+                    let dctx = crate::decals::DecalFrame {
+                        device: &self.ctx.device,
+                        format,
+                        view_proj,
+                        textures: &textures,
+                        premultiplied: pass.premultiplied,
+                        fog: None,
+                        bias_clamp: self.bias_clamp,
+                    };
+                    let decals = std::mem::take(&mut world.decals);
+                    if let Some(h) =
+                        crate::decals::build_hook(&mut self.decal_state, decals, &dctx)?
+                    {
+                        pass.hooks.insert(0, h);
+                    }
+                }
                 if !world.is_empty() {
                     match frame_uniform.as_ref() {
                         Some(fu) => {

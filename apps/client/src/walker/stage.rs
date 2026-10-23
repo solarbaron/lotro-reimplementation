@@ -18,9 +18,16 @@
 //! hemispheric input zero, no sun and no fog (U3: off for every race scene of this
 //! install). The figure is lit by the same lights.
 //!
-//! **Not drawn yet** (`character-screens.md` §2.1.1 implementer OPEN): Decal elements (the
-//! walker has no placed-decal drawing), the effect entities' particle systems, and the
-//! viewport values other than the ambient (§2.1.1 OPEN).
+//! **Decals and effects** (§2.1.1 rules 1 and 3): the scene's Decal elements are placed
+//! decals built against its drawn Physics elements once every element is resolved
+//! ([`StageLayer::decal_scene`], drawn by the effect layer's
+//! [`crate::walker::effects::decals::DecalLayer::draw_stage`]); every Physics element is
+//! offered to the effect layer ([`StageLayer::effect_scene`]), whose start-up scripts start
+//! the effect entities' particle systems in the scene's frame
+//! ([`crate::walker::effects::EffectLayer::update_stage`]), drawn into the viewport pass.
+//!
+//! **Not drawn yet** (`character-screens.md` §2.1.1 OPEN): the viewport values other than
+//! the ambient.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -33,6 +40,8 @@ use tessera_render::{
 };
 use tessera_world::lighting::LightRecord;
 
+use super::effects::data::StageElement;
+use super::effects::decals::{StageDecals, StageReceiver};
 use super::env::{light_reach, material_curve};
 use super::objects::ObjectLayer;
 use super::resolver::Resolver;
@@ -203,6 +212,10 @@ pub struct StageLayer {
     lights: Vec<(Light, LightReach)>,
     curves: Vec<CurveState>,
     unusable: HashSet<u32>,
+    /// Every Physics element, for the effect layer (§2.1.1 rule 1).
+    elements: Option<Arc<[StageElement]>>,
+    /// The Decal elements with their receivers, once every element is resolved.
+    decals: Option<StageDecals>,
 }
 
 impl StageLayer {
@@ -241,7 +254,34 @@ impl StageLayer {
             })
             .collect();
         self.curves = vec![CurveState::new(); scene.lights.len().min(MAX_STAGE_LIGHTS)];
+        self.elements = Some(
+            scene
+                .objects
+                .iter()
+                .take(MAX_STAGE_OBJECTS)
+                .map(|o| StageElement {
+                    object: o.object,
+                    position: o.frame.position.to_array(),
+                    rotation: o.frame.rotation,
+                    scale: o.scale,
+                })
+                .collect(),
+        );
+        self.decals = None;
         self.scene = Some(scene);
+    }
+
+    /// The scene and its Physics elements for the effect layer (§2.1.1 rule 1).
+    #[must_use]
+    pub fn effect_scene(&self) -> Option<(Did, &Arc<[StageElement]>)> {
+        Some((self.scene.as_ref()?.did, self.elements.as_ref()?))
+    }
+
+    /// The scene's Decal elements and their receivers (§2.1.1 rule 3): available once every
+    /// Physics element is resolved, `None` before and for a scene without decals.
+    #[must_use]
+    pub fn decal_scene(&self) -> Option<&StageDecals> {
+        self.decals.as_ref()
     }
 
     /// Per frame: resolves the objects (through the walker's resolver thread) and
@@ -272,6 +312,43 @@ impl StageLayer {
         }
         if !new_parts.is_empty() {
             objects.acquire_model_parts(&new_parts);
+        }
+        // The decals once every element is resolved (their receivers are the drawn ones).
+        if self.decals.is_none()
+            && !scene.placed_decals.is_empty()
+            && self
+                .placed
+                .iter()
+                .all(|(_, s)| !matches!(s, Placed::Waiting))
+        {
+            let receivers = self
+                .placed
+                .iter()
+                .zip(&scene.objects)
+                .filter_map(|((_, state), o)| {
+                    let Placed::Drawn(parts, _) = state else {
+                        return None;
+                    };
+                    let scale = Vec3::from_array(o.scale);
+                    Some(StageReceiver {
+                        object: o.object,
+                        parts: Arc::clone(parts),
+                        position: o.frame.position,
+                        rotation: o.frame.rotation,
+                        scale: if scale.is_finite() && scale.min_element() > 0.0 {
+                            scale
+                        } else {
+                            Vec3::ONE
+                        },
+                        own: o.decal_flags,
+                    })
+                })
+                .collect();
+            self.decals = Some(StageDecals {
+                scene: scene.did,
+                decals: scene.placed_decals.clone(),
+                receivers,
+            });
         }
         self.lights.clear();
         for (l, st) in scene.lights.iter().zip(self.curves.iter_mut()) {
@@ -395,6 +472,8 @@ impl StageLayer {
         self.placed.clear();
         self.lights.clear();
         self.curves.clear();
+        self.elements = None;
+        self.decals = None;
         self.scene = None;
     }
 }

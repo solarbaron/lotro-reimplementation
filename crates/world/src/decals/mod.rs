@@ -9,6 +9,7 @@
 //! | [`builder`] ([`DecalBox`], [`build_mesh`], [`DecalMesh`]) | The box, receiving triangles, back-face test, clipping, texture coordinates, lift, mesh centre and mean normal | §4 |
 //! | [`entity_accepts_decals`], [`cell_accepts_decals`] | Receiving surfaces | §5 |
 //! | [`shading`] ([`shading::decal_colour`], [`shading::decal_light`], [`shading::DepthBiasTable`], [`shading::draw_range`]) | Colour, light colour, opacity, depth bias, draw distance | §6, §7 |
+//! | [`realise`] ([`realise::decal_seds`], [`realise::PlacedDecal`], [`realise::terrain_receivers`], [`realise::mesh_receivers`]) | Decal SEDs of a landblock, decal objects, receiving triangles of the terrain and of placed meshes | §2.3, §4.3, §7, §9.1 |
 //!
 //! Property names are looked up in the install's dictionary at run time. The numbers
 //! written here are the client's initial parameter values and the algorithm constants of
@@ -21,6 +22,7 @@
 //! bounded by seven triangles per input triangle; non-finite inputs are dropped.
 
 pub mod builder;
+pub mod realise;
 pub mod shading;
 
 use tessera_formats::gameplay::common::{Pid, PropertyAccess, ValueExt};

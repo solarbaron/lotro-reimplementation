@@ -1019,6 +1019,21 @@ implementer OPEN of 2026-10-08 as far as it can be).**
 > `has_bounds` = 1 and the bounds, transformed by the instance and expanded by the largest drawn
 > particle size, lie outside the frustum. With `has_bounds` = 0 an instance is never frustum-culled.
 
+> **OPEN (implementer, tessera-particles / tessera-client, 2026-10-23):** how the Q-RT3
+> Decision is applied, for review. The box is the axis-aligned box around the eight corners of
+> `bounds_min`–`bounds_max` after the instance's effective scale *S* (`particles.md` §8.6.3),
+> rotation and position, grown on every axis by the largest distance of a drawn vertex from
+> its particle's centre in that frame (so "the largest drawn particle size" is measured on the
+> vertices actually written, including streaks and pivots); a box with a non-finite value is no
+> box (never culled). A culled instance is still simulated **and its vertices are still
+> built** (the vertex step draws from the shared generator, rule 1, so skipping it would make
+> the simulation depend on the view); it is only not queued for the GPU. Culling uses the
+> walker's view frustum; the creation viewport does not cull. A **world-space** system draws
+> the particles of all its instances once, at the positions they were emitted at: its box is
+> the union of every passing instance's box (as above) and the axis-aligned box of the vertices
+> written, so a trail left behind by a moving owner, or a second instance in view, is never
+> culled with the first instance.
+
 ---
 
 <a id="s10"></a>
@@ -1391,6 +1406,27 @@ in 947, (0, 1, 0) in 426, (0, 0.35, 0.25) in 234, (0, 10, 0) in 123; (`HeadStart
     `Persistent` = 1 and its node is never stopped is removed with its node's run. A Beam node
     instance completes when its beam is removed (no beam: at once); `combat-visuals.md` relies
     on the port of step 7, not on completion.
+
+> **OPEN (implementer, tessera-particles / tessera-client, 2026-10-23), rule 13:** readings
+> and Tessera choices the code follows, for the spec writer to confirm or correct.
+> (a) **The global light.** The scene's main light (sun or moon) is directional and has no
+> position, so the point-light attenuation of rule 13 has no distance; Tessera counts it with
+> attenuation 1 (its colour added in full, no direction term, since particles have no normal).
+> Whether the client attenuates or angles it for particles is not stated.
+> (b) **Reach.** `lighting.md` §8.5 step 2 measures the squared distance from a light to the
+> object's world box; an effect owner here is tested with its **position** (its box is not
+> known to the effect layer). Key lights first, nearest first in each group, then the cut to 5
+> (the global light counts as one of the five).
+> (c) **Ambient.** *A₀* of `lighting.md` §5.3 is clamped to [0, 1] per channel, alpha 1. In
+> unlit frames (the walker's lighting switch off) lit systems keep the white ambient and no
+> lights. The creation viewport (`character-screens.md` §2.1.1) uses its own ambient input and
+> scene lights, no main light.
+> (d) **When.** The list is built once per frame for each drawn owner, before its placement.
+> A lingering system (released by its owner, §7.2) and a dropped system (§5.6 step 5, which
+> never had an owner) get the list built the same way at their fixed placement position, each
+> frame before they are placed; a beam's systems get the list at the beam's source. In unlit
+> frames all of them get the empty list. The day and night lamp lights of
+> `instance-scripts.md` §6 are not in the walker's light table yet, so they light no system.
 
 ---
 

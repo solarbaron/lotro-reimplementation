@@ -7,7 +7,10 @@
 //!   out toward the far distance, next to three instanced rocks casting the sun's shadow;
 //! - checks of group culling at the far distance, distance reduction, the per-instance
 //!   distance limit, frustum culling, one draw per batch and submesh, thousands of
-//!   instances per frame, and hostile input.
+//!   instances per frame, and hostile input;
+//! - `frill_over_water.png`: alpha-blended frill clumps standing in a water patch, drawn in
+//!   front of the water (`docs/specs/render.md` §5.7 Decision: water before the blended
+//!   instanced surfaces), their parts under the water surface hidden by its depth.
 //!
 //! Regenerate with `TESSERA_BLESS=1 cargo test -p tessera-render --test instanced_golden`.
 
@@ -24,8 +27,8 @@ use tessera_render::{
     AlphaMode, Camera, ColorSpace, Filter, Fog, FrameLighting, FrillParams, FrillReduction,
     Instance, InstanceBatch, LitSurface, MAX_INSTANCES_PER_PASS, Material, MeshData, MeshDraw,
     OffscreenFormat, Opacity, Perspective, RenderError, Renderer, RgbaImage, SkyDraw, SkyObject,
-    Submesh, SunLight, SunShadow, TextureId, TextureUpload, WorldModel, WorldSurface,
-    WorldSurfaceOptions, Wrap,
+    Submesh, SunLight, SunShadow, TextureId, TextureUpload, WaterDraw, WaterParams, WaterQuad,
+    WorldModel, WorldSurface, WorldSurfaceOptions, Wrap,
 };
 
 const WIDTH: u32 = 320;
@@ -1672,5 +1675,179 @@ fn instance_tint_tints_the_highlight() -> Result<(), RenderError> {
     for (c, want) in px[..3].iter().zip([128u8, 64, 255]) {
         assert!(c.abs_diff(want) <= 3, "{px:?}");
     }
+    Ok(())
+}
+
+// ---- blended frills in front of water (render.md §5.7 Decision) ---------------------------
+
+const WATER_HEIGHT: f32 = 0.35;
+
+fn water_camera() -> Camera {
+    Camera {
+        eye: Vec3::new(5.0, -3.0, 1.6),
+        target: Vec3::new(5.0, 5.0, 0.3),
+        up: Vec3::Z,
+        projection: Perspective {
+            fov_y: 50f32.to_radians(),
+            near: 0.1,
+            far: 100.0,
+        },
+    }
+}
+
+/// Five reed clumps along y = 1 (in front of the camera, standing in the water).
+fn reed_instances() -> Vec<Instance> {
+    (0..5)
+        .map(|i| {
+            Instance::new(Mat4::from_scale_rotation_translation(
+                Vec3::splat(1.0),
+                Quat::from_rotation_z(0.3 + 0.5 * i as f32),
+                Vec3::new(2.0 + 1.5 * i as f32, 1.0, 0.0),
+            ))
+        })
+        .collect()
+}
+
+/// A floor, a water patch over x, y in 0..10 at [`WATER_HEIGHT`], and (when `reeds`)
+/// alpha-blended frill clumps in it; the image and the frame's statistics.
+fn water_frill_scene(
+    r: &mut Renderer<'static>,
+    reeds: bool,
+) -> Result<(RgbaImage, tessera_render::FrameStats), RenderError> {
+    let s = scene_assets(r)?;
+    // Orange-red reeds, 70 % opaque in vertical stripes, clear between them.
+    let reed_tex = upload(
+        r,
+        32,
+        32,
+        &texels(32, 32, |x, y| {
+            let a = if x % 8 < 5 { 180 } else { 0 };
+            let top = 1.0 - y as f32 / 31.0;
+            [230, (90.0 + 60.0 * top) as u8, 40, a]
+        }),
+        Wrap::Clamp,
+    )?;
+    let model = r.upload_world_model(
+        &clump(),
+        &[WorldSurface {
+            alpha: AlphaMode::Blend,
+            two_sided: true,
+            ..WorldSurface::textured(reed_tex)
+        }],
+    )?;
+    let ripples = upload(
+        r,
+        16,
+        16,
+        &texels(16, 16, |x, y| {
+            let a = ((x * 29 + y * 53) % 64) as u8;
+            [128 + a / 4, 128 - a / 4, 255, 255]
+        }),
+        Wrap::Repeat,
+    )?;
+    let target = r.create_offscreen_target(WIDTH, HEIGHT, OffscreenFormat::Rgba8Srgb)?;
+    let mut frame = r.begin_offscreen_frame(&target)?;
+    let pass = frame
+        .world_pass("frill-over-water", &water_camera())
+        .clear(CLEAR)
+        .frame_lighting(FrameLighting {
+            shadow: None,
+            fog: None,
+            ..lighting()
+        })
+        .mesh(
+            MeshDraw::new(s.ground, Mat4::IDENTITY, Material::textured(s.ground_tex)).with_lit(
+                LitSurface {
+                    opacity: Opacity::One,
+                    ..LitSurface::default()
+                },
+            ),
+        )
+        .water(WaterDraw::new(
+            [WaterQuad {
+                origin: [0.0, 0.0],
+                size: [10.0, 10.0],
+                height: WATER_HEIGHT,
+                uv: [0.0, 0.0, 0.5, 0.5],
+            }],
+            Some(ripples),
+            WaterParams {
+                water_color: [0.10, 0.30, 0.42],
+                fog_color: [0.05, 0.22, 0.32],
+                fog_amount: 0.85,
+                ..WaterParams::default()
+            },
+        ));
+    if reeds {
+        pass.instanced(InstanceBatch::frills(
+            model,
+            reed_instances(),
+            FrillParams {
+                far_distance: 40.0,
+                fade_length: 5.0,
+                reduction: None,
+                animation_intensity: 0.0,
+                terrain_color_intensity: 0.0,
+                ..FrillParams::default()
+            },
+        ));
+    }
+    let stats = r.end_frame(frame)?;
+    Ok((r.read_pixels(&target)?, stats))
+}
+
+/// The pixel of world point `p` in [`water_camera`]'s image.
+fn water_pixel(img: &RgbaImage, p: Vec3) -> [u8; 4] {
+    let clip = water_camera().view_proj(WIDTH as f32 / HEIGHT as f32) * p.extend(1.0);
+    let ndc = clip.truncate() / clip.w;
+    let x = ((ndc.x * 0.5 + 0.5) * WIDTH as f32) as u32;
+    let y = ((0.5 - ndc.y * 0.5) * HEIGHT as f32) as u32;
+    img.pixel(x, y).unwrap_or_default()
+}
+
+/// `docs/specs/render.md` §5.7 (Tessera Decision): the water draws before the blended
+/// instanced surfaces of the translucent stage, so a Blend-mode frill in front of the water
+/// stays visible over it (drawn the other way round, the water's ONE / ZERO write replaced
+/// it); its part under the water surface fails the depth test against the water.
+#[test]
+fn frill_over_water_golden() -> Result<(), RenderError> {
+    let Some(mut r) = gpu::headless_renderer(CLEAR) else {
+        return Ok(());
+    };
+    let (img, stats) = water_frill_scene(&mut r, true)?;
+    assert_eq!(stats.water_quads, 1, "{stats:?}");
+    assert_eq!(stats.instances, 5, "{stats:?}");
+    let (again, _) = water_frill_scene(&mut r, true)?;
+    assert!(img.data == again.data, "render is not deterministic");
+    let (bare, _) = water_frill_scene(&mut r, false)?;
+    // The reeds' red lies over the water above its surface: many pixels redder than the
+    // same scene without them.
+    let redder = img
+        .data
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .zip(bare.data.as_chunks::<4>().0)
+        .filter(|(a, b)| i32::from(a[0]) > i32::from(b[0]) + 40)
+        .count();
+    assert!(
+        redder > 1500,
+        "{redder} pixels show the reeds over the water"
+    );
+    // Under the water surface the reed is hidden: the water's colour is kept.
+    let mut under_same = 0;
+    for x in [2.0f32, 3.5, 5.0, 6.5, 8.0] {
+        let under = Vec3::new(x, 1.0, 0.1);
+        let (with, without) = (water_pixel(&img, under), water_pixel(&bare, under));
+        if (0..3).all(|c| (i32::from(with[c]) - i32::from(without[c])).abs() <= 3) {
+            under_same += 1;
+        }
+    }
+    assert_eq!(under_same, 5, "the water hides the reeds' feet");
+    golden::check(
+        &Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/golden/frill_over_water.png"),
+        &img,
+        golden::Tolerance::default(),
+    );
     Ok(())
 }

@@ -787,6 +787,13 @@ pub struct Walker {
     /// The reach of each light of [`Self::lights`] for the renderer's selection
     /// (`lighting.md` §8.5).
     light_reach: Vec<tessera_render::LightReach>,
+    /// The frame time of the last update, seconds (the decals' 1.5 s fade, `decals.md` §7).
+    fx_dt: f32,
+    /// The eye of the previous decal draw (camera travel for the decals' fade).
+    decal_eye: Option<WorldPos>,
+    /// The creation viewport's ambient input of its last draw (rule 13 for the scene's lit
+    /// systems in the next update; `character-screens.md` §2.1.1 step 4).
+    stage_ambient: [f32; 3],
     /// Start of the material and light clock (`material.md` §5.3.1).
     clock_start: Instant,
     /// The eye of the previous frame (camera travel for fades).
@@ -1128,6 +1135,9 @@ impl Walker {
             frame_env: None,
             lights: Vec::new(),
             light_reach: Vec::new(),
+            fx_dt: 0.0,
+            decal_eye: None,
+            stage_ambient: [0.0; 3],
             clock_start: now,
             last_eye: None,
             env_ms: 0.0,
@@ -1622,6 +1632,7 @@ impl Walker {
             self.rolling.push(now, self.frame_ms);
         }
         self.frame_start = Some(now);
+        self.fx_dt = if dt.is_finite() { dt.max(0.0) } else { 0.0 };
         let mut events = WalkerEvents::default();
 
         // Spawn and teleports from the sandbox.
@@ -1941,12 +1952,37 @@ impl Walker {
             let time = self.material_time();
             self.stage
                 .update(&mut self.resolver, &mut self.objects, time);
+            // The scene's effect entities and decals (§2.1.1 rules 1 and 3).
+            let (fl, reach) = self.stage.lighting(self.stage_ambient, time as f32);
+            let lighting = effects::EffectLighting {
+                ambient: fl.ambient,
+                main: None,
+                lights: &fl.lights,
+                reach: &reach,
+                anchor: None,
+            };
+            self.effects.update_stage(
+                self.stage.effect_scene(),
+                f64::from(dt),
+                time,
+                Some(lighting),
+                &mut self.objects,
+            );
+            self.effects
+                .decals
+                .update_stage(self.stage.decal_scene(), &mut self.objects);
             let oframe = self.unviewed_frame(dt);
             self.objects
                 .update(renderer, [0.0; 3], &oframe, &mut budget);
         } else {
             // No viewer yet (the character screens before world entry): the textures of
             // the screens' figure still load.
+            if self.anchor.is_none() {
+                let time = self.material_time();
+                self.effects
+                    .update_stage(None, f64::from(dt), time, None, &mut self.objects);
+                self.effects.decals.update_stage(None, &mut self.objects);
+            }
             self.objects.update_textures(renderer, &mut budget);
         }
         // Characters: the avatar follows the walk controller; figures, animation.
@@ -1975,6 +2011,20 @@ impl Walker {
         // housekeeping.
         let fx_eye = self.controls.placed().then(|| self.view().0);
         let time = self.material_time();
+        // Lit systems (`particle-runtime.md` §12 rule 13): the frame's ambient term and its
+        // light table, in lit frames.
+        let lit_frame = self.systems.on(System::Lit);
+        let lighting =
+            self.frame_env
+                .as_ref()
+                .filter(|_| lit_frame)
+                .map(|f| effects::EffectLighting {
+                    ambient: f.lighting.ambient,
+                    main: f.lighting.sun.map(|s| (s.color, s.direction)),
+                    lights: &self.lights,
+                    reach: &self.light_reach,
+                    anchor: self.anchor,
+                });
         self.effects.update(
             effects::EffectInput {
                 dt: f64::from(dt),
@@ -1982,9 +2032,16 @@ impl Walker {
                 streamer: &self.streamer,
                 eye: fx_eye,
                 characters: &self.characters,
+                lighting,
             },
             &mut self.objects,
         );
+        // Placed decals of the resident landblocks (`decals.md` §2.3, §4).
+        if fx_eye.is_some() {
+            self.effects
+                .decals
+                .update(&self.streamer, &mut self.objects);
+        }
         // Beam head entities (`particle-runtime.md` §11.1 step 9) resolve and load.
         self.effects
             .update_heads(&mut self.resolver, &mut self.objects);
@@ -2536,6 +2593,9 @@ impl Walker {
             self.objects.remove(k);
         }
         self.characters.reset_gpu(renderer, &mut self.objects);
+        // Particle and decal textures are acquired again after the clear (their layers
+        // keep which ones they asked for).
+        self.effects.release_textures(&mut self.objects);
         self.objects.clear(renderer);
         self.minimap.clear(renderer);
         lock(&self.shared).areas.clear();
@@ -2963,13 +3023,15 @@ impl Walker {
 
     /// Whether the screens' figure and scene have loaded: every figure on the GPU and
     /// posed, every part and texture the object layer holds on the GPU (or failed for
-    /// good), every scene object resolved (tests and screenshots).
+    /// good), every scene object resolved, the scene's effect entities and decals started
+    /// and their textures loaded ([`effects::EffectLayer::settled`]; tests and screenshots).
     #[must_use]
     pub fn preview_settled(&self) -> bool {
         self.characters.settled()
             && self.objects.settled()
             && self.stage.settled(&self.objects)
             && self.resolver.pending() == 0
+            && self.effects.settled()
     }
 
     /// Draws the creation viewport (`character-screens.md` §2.1.1–§2.1.3) into `frame`:
@@ -2993,14 +3055,35 @@ impl Walker {
             &mut draws,
         );
         let time = self.material_time() as f32;
+        self.stage_ambient = view.ambient;
         let (lighting, reach) = self.stage.lighting(view.ambient, time);
+        let stage_lights = lighting.lights.clone();
+        let stage_ambient = lighting.ambient;
         let pass = frame.world_pass("chargen-viewport", &camera);
         pass.premultiplied_alpha();
         pass.clear([0.0, 0.0, 0.0, 1.0]);
         pass.frame_lighting(lighting);
-        pass.light_reach(reach);
+        pass.light_reach(reach.clone());
         if view.scene.is_some() {
             self.stage.draw(pass, &mut self.objects);
+            // The scene's decals and its effect entities' systems (§2.1.1 rules 1, 3).
+            let lit = effects::EffectLighting {
+                ambient: stage_ambient,
+                main: None,
+                lights: &stage_lights,
+                reach: &reach,
+                anchor: None,
+            };
+            let ctx = Arc::clone(self.streamer.context());
+            self.effects.decals.draw_stage(
+                pass,
+                Some(lit),
+                &self.objects,
+                ctx.systems().depth_bias.as_deref(),
+            );
+            let dir = (camera.target - camera.eye).normalize_or_zero();
+            self.effects
+                .draw_stage(pass, camera.eye, dir, &self.objects);
         }
         for d in draws {
             pass.mesh(d);
@@ -3279,7 +3362,41 @@ impl Walker {
             // Particle effects after the other translucent surfaces of the scene
             // (`particle-runtime.md` §9; their order is `particles.md` §8.15).
             self.effects.draw_heads(pass, &anchor, &mut self.objects);
-            self.effects.draw(pass, &anchor, eye, dir, &self.objects);
+            self.effects
+                .draw(pass, &anchor, eye, dir, &self.objects, Some(&frustum));
+            // Placed decals (`decals.md` §6–§7): queued here, drawn after the opaque
+            // receivers by the renderer's decal pass (§6.6 Tessera rule).
+            let moved = match self.decal_eye {
+                Some(p) if p.region == eye_w.region => {
+                    ((p.x - eye_w.x).powi(2) + (p.y - eye_w.y).powi(2) + (p.z - eye_w.z).powi(2))
+                        .sqrt() as f32
+                }
+                _ => f32::INFINITY,
+            };
+            self.decal_eye = Some(eye_w);
+            let decal_lighting = fe
+                .as_ref()
+                .filter(|_| lit)
+                .map(|f| effects::EffectLighting {
+                    ambient: f.lighting.ambient,
+                    main: f.lighting.sun.map(|s| (s.color, s.direction)),
+                    lights: &self.lights,
+                    reach: &self.light_reach,
+                    anchor: Some(anchor),
+                });
+            let ctx = Arc::clone(self.streamer.context());
+            let view = effects::decals::DecalView {
+                anchor: &anchor,
+                eye,
+                g: fe.as_ref().map_or(self.extent(), |f| f.g),
+                multiplier: self.config.distances.object_multiplier(),
+                dt: self.fx_dt,
+                camera_moved: moved,
+                inside,
+                lighting: decal_lighting,
+                depth_bias: ctx.systems().depth_bias.as_deref(),
+            };
+            self.effects.decals.draw(pass, &view, &self.objects);
             let ms = |a: Instant, b: Instant| b.saturating_duration_since(a).as_secs_f64() * 1e3;
             self.phase_ms[3] = ms(t0, t1);
             self.phase_ms[4] = ms(t1, t2);

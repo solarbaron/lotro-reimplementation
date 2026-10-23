@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! The race scenes of the creation viewport (`character-screens.md` §2.1.1–§2.1.3): what a
 //! race's `RaceTable_UIScene` holds for drawing (its Physics elements as static objects, its
-//! Light elements as point lights, its Decal elements counted), where the figure stands
+//! Light elements as point lights, its Decal elements as placed decals, `decals.md` §2.3,
+//! §3), where the figure stands
 //! (the first Physics element whose object's setup has the holding location
 //! `Holding_Loc_Entity_00`, §2.1.2), and the frames of its named elements, from which the
 //! camera's base and zoom frames are taken (§2.1.3).
@@ -20,6 +21,8 @@ use tessera_formats::{Did, PropertySet as RawSet, PropertyValue};
 use tessera_props::{EnumSource, GameData, PropertyRegistry, RecordSource};
 use tessera_render::glam::{Quat, Vec3};
 use tessera_world::LightParams;
+use tessera_world::decals::realise::PlacedDecal;
+use tessera_world::decals::{DEFAULT_MATERIAL_UNIQUEDB_KEY, DecalPids, marker_chain};
 use tessera_world::lighting::LightPids;
 use tessera_world::objects::DrawFlags;
 
@@ -96,6 +99,9 @@ pub struct SceneObject {
     pub colour: Option<[u8; 4]>,
     /// The element's own `Render_Opacity`; it wins over the object chain's.
     pub opacity: Option<f32>,
+    /// The element's own `Render_AllowDecals` and `Render_ForceDecals` (`decals.md` §5.1:
+    /// they win over the object chain's).
+    pub decal_flags: (Option<bool>, Option<bool>),
 }
 
 impl SceneObject {
@@ -139,8 +145,12 @@ pub struct StageScene {
     pub objects: Vec<SceneObject>,
     /// Light elements, stored order.
     pub lights: Vec<SceneLight>,
-    /// Decal elements (counted; not drawn, see `character-screens.md` §2.1.1 OPEN).
+    /// Decal elements (counted).
     pub decals: usize,
+    /// The Decal elements as decal objects in the scene's frame (`decals.md` §2.3 steps
+    /// 1–3, §3.2: the marker chain root first, then the element's own set; the scene has no
+    /// LOD-class table, so the LOD distance is the initial one), stored order.
+    pub placed_decals: Vec<PlacedDecal>,
     /// Every element with a `UISceneEntity` identifier, stored order (U4 rule 2).
     pub named: Vec<(u32, SceneFrame)>,
     /// Whether an element named `chargen_Camera` is a camera of the scene (§2.1.1).
@@ -262,11 +272,20 @@ pub fn load_scene<S: RecordSource>(
         reg.pid("Render_NeverAddToScene"),
     ];
     let light_pids = LightPids::from_names(|n| reg.pid(n));
+    let decal_pids = DecalPids::resolve(reg.dictionary());
+    let decal_flag_pids = (reg.pid("Render_AllowDecals"), reg.pid("Render_ForceDecals"));
+    let default_material = gd
+        .did_map_by_label(tessera_formats::gameplay::common::UNIQUEDB_LABEL)
+        .ok()
+        .flatten()
+        .and_then(|m| m.get(DEFAULT_MATERIAL_UNIQUEDB_KEY).map(|e| e.value))
+        .unwrap_or(Did(0));
     let mut out = StageScene {
         did,
         objects: Vec::new(),
         lights: Vec::new(),
         decals: 0,
+        placed_decals: Vec::new(),
         named: Vec::new(),
         has_chargen_camera: false,
         marker: None,
@@ -326,6 +345,7 @@ pub fn load_scene<S: RecordSource>(
                         .and_then(|(s, p)| s.get(p)?.as_f64())
                         .map(|v| v as f32)
                         .filter(|v| v.is_finite()),
+                    decal_flags: (flag(set, decal_flag_pids.0), flag(set, decal_flag_pids.1)),
                 });
             }
             Some(LIGHT_TYPE) => {
@@ -338,7 +358,40 @@ pub fn load_scene<S: RecordSource>(
                     ),
                 });
             }
-            Some(DECAL_TYPE) => out.decals += 1,
+            Some(DECAL_TYPE) => {
+                out.decals += 1;
+                let chain = e
+                    .object
+                    .filter(|o| !o.is_null())
+                    .map(|o| {
+                        marker_chain(o, |d| {
+                            let bytes = gd.read(d).ok().flatten()?;
+                            let ed =
+                                tessera_formats::EntityDescriptor::parse(&bytes, reg.dictionary())
+                                    .ok()?;
+                            Some((ed.properties, Some(ed.header.template)))
+                        })
+                    })
+                    .unwrap_or_default();
+                let refs: Vec<&RawSet> = chain.iter().collect();
+                let q = frame.rotation;
+                out.placed_decals.push(PlacedDecal::realise(
+                    &decal_pids,
+                    default_material,
+                    &refs,
+                    e.properties.as_ref(),
+                    frame.position.to_array(),
+                    tessera_formats::setup::Quaternion {
+                        w: q.w,
+                        x: q.x,
+                        y: q.y,
+                        z: q.z,
+                    },
+                    e.iid,
+                    false,
+                    None,
+                ));
+            }
             _ => {}
         }
     }
@@ -492,6 +545,7 @@ mod tests {
             draw: DrawFlags::default(),
             colour: None,
             opacity: None,
+            decal_flags: (None, None),
         };
         assert_eq!(o.tint(None, None), [1.0; 4], "white and opaque");
         // Stored B, G, R, A: red 255, green 0, blue 51; the alpha byte is ignored.
@@ -516,6 +570,7 @@ mod tests {
             objects: Vec::new(),
             lights: Vec::new(),
             decals: 0,
+            placed_decals: Vec::new(),
             named: vec![
                 (5, SceneFrame::ORIGIN),
                 (

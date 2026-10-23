@@ -126,6 +126,8 @@
 //! batches. [`Pass::far_terrain`] draws distant-landscape batches uploaded with
 //! [`Renderer::upload_far_terrain`] and [`Pass::distant_sprites`] the sector sprites
 //! uploaded with [`Renderer::upload_sprite_batch`] (`far-view.md` §6, §9).
+//! [`Pass::decal`] draws placed decal batches ([`DecalDraw`], `decals.md` §6) after the
+//! opaque receivers, with each batch's blend and depth bias.
 //!
 //! ```no_run
 //! # fn main() -> Result<(), tessera_render::RenderError> {
@@ -169,6 +171,7 @@
 mod arena;
 mod camera;
 mod context;
+mod decals;
 mod depth_bias;
 mod error;
 mod far_view;
@@ -197,6 +200,7 @@ pub use context::{
     ContextOptions, ENV_ADAPTER_NAME, ENV_BACKEND, ENV_POWER_PREF, GPU_WAIT_TIMEOUT, GpuContext,
     rank_adapter,
 };
+pub use decals::{DecalDraw, DecalVertex, MAX_DECAL_DRAWS_PER_PASS, MAX_DECAL_VERTICES_PER_PASS};
 pub use depth_bias::{DrawDepthBias, MAX_DEPTH_BIAS, MAX_DEPTH_BIAS_CLAMP};
 pub use error::{RenderError, Result};
 pub use far_view::{

@@ -11,9 +11,10 @@
 //! | [`rng`] | [`Ran2`], the shared random generator, and its range draws | runtime §3.3, §3.4 |
 //! | [`curve`] | curves evaluated over time; mode 3 draws from [`Ran2`] | `material.md` §5.3.1, runtime §3.3 |
 //! | [`sim`] | [`SystemSim`]: start, restart, update cadence, emission, caps, spawning, channels, controllers, forces | particles §8.1–§8.9, §8.16, §8.17; runtime §9.2 |
-//! | [`draw`] | distance fade, the not-drawn state, billboards, atlas frames, vertex order, system draw order | particles §8.10–§8.15; runtime §9 |
+//! | [`draw`] | distance fade, the not-drawn state, billboards, atlas frames, vertex order, system draw order, the instances' culling bounds | particles §8.10–§8.15; runtime §9, Q-RT3 |
 //! | [`wind`] | the eased global wind | particles §8.8 |
 //! | [`fork`] | fork effects: lifetime, fade, effect matrix, shader table (not simulated, rule §10.2) | particles §6.5; runtime §10 |
+//! | [`light`] | the light sum of lit systems: ambient, the owner's light list cut to five, per-vertex attenuation | particles §8.14; runtime rule 13 |
 //! | [`surface`] | what the programs of a particle surface compute: output alpha, alpha-test source, doubling, fog, layers | runtime §9.1.1 |
 //! | [`runtime`] | classification, node start gates, start gating, attachment frames, owner scale vectors, the effect manager with sharing, release, lingering and housekeeping | runtime §4–§7 |
 //!
@@ -53,6 +54,7 @@ pub mod curve;
 pub mod draw;
 mod error;
 pub mod fork;
+pub mod light;
 pub mod rng;
 pub mod runtime;
 pub mod sim;
@@ -65,6 +67,9 @@ pub use draw::{
 pub use error::{ParticleError, Result};
 pub use fork::{ForkEffect, ForkFade, fork_shader_key};
 pub use glam;
+pub use light::{
+    CandidateLight, LightList, MAX_PARTICLE_LIGHTS, ParticleLight, light_sum, owner_light_list,
+};
 pub use rng::Ran2;
 pub use runtime::{
     Classification, Effect, EffectHandle, EffectManager, ParticleNode, StartPath, SystemKey,

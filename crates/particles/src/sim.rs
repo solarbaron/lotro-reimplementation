@@ -154,7 +154,10 @@ impl Placement {
 pub struct Environment {
     /// The eased global wind vector, world frame (§8.8; [`crate::wind::Wind`]).
     pub wind: Vec3,
-    /// Ambient colour multiplied into lit systems (§8.14; the light list is OPEN, Q8).
+    /// Ambient colour of lit systems (§8.14): by `particle-runtime.md` §12 rule 13 the
+    /// frame's ambient term at the owner (`lighting.md` §5.3), with alpha 1. The default
+    /// (white) leaves lit systems as drawn unlit (previews and tests). The owner's light
+    /// list is given separately ([`SystemSim::set_lights`]).
     pub ambient: [f32; 4],
 }
 
@@ -374,6 +377,9 @@ pub struct SystemSim {
     pub(crate) emitters: Vec<EmitterSim>,
     pub(crate) time_step: f64,
     pub(crate) env: Environment,
+    /// The owner's light list of a lit system ([`SystemSim::set_lights`]); boxed so that a
+    /// system without lights stays small.
+    pub(crate) lights: Option<Box<crate::light::LightList>>,
     pub(crate) stats: SimStats,
 }
 
@@ -438,6 +444,7 @@ impl SystemSim {
             anchor: SimFrame::IDENTITY,
             emitters,
             env: Environment::default(),
+            lights: None,
             stats: SimStats::default(),
         }
     }
@@ -446,6 +453,29 @@ impl SystemSim {
     #[must_use]
     pub fn desc(&self) -> &Arc<ParticleSystem> {
         &self.desc
+    }
+
+    /// Sets the owner's light list that a lit system (`use_lighting` = 1) sums with the
+    /// ambient colour (`particles.md` §8.14, `particle-runtime.md` §12 rule 13), in the
+    /// simulation's world frame. It is kept until set again (lingering and dropped systems
+    /// get theirs from `EffectManager::set_lingering_lights`); a new system has none. Unlit
+    /// systems ignore it.
+    pub fn set_lights(&mut self, lights: crate::light::LightList) {
+        if lights.is_empty() {
+            self.lights = None;
+        } else if let Some(l) = self.lights.as_deref_mut() {
+            *l = lights;
+        } else {
+            self.lights = Some(Box::new(lights));
+        }
+    }
+
+    /// The light list set by [`SystemSim::set_lights`].
+    #[must_use]
+    pub fn lights(&self) -> &crate::light::LightList {
+        self.lights
+            .as_deref()
+            .unwrap_or(&crate::light::LightList::EMPTY)
     }
 
     /// The system start (first placement − `fast_forward`), once placed.

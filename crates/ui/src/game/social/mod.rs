@@ -294,9 +294,9 @@ pub(crate) fn row_of(ui: &Ui, rows: &[ElementKey], k: ElementKey) -> Option<usiz
 ///
 /// Existing rows are reused (callers only change their texts). Surplus rows are destroyed
 /// in one batch ([`Ui::destroy_many`], one pass over the UI) and the list is laid out once;
-/// missing rows of a list box are appended with one [`Ui::list_add_many`] (one layout). A
-/// Tree (`FriendListBox`, §3.2) takes its new rows one [`Ui::list_add`] at a time, since
-/// tree nodes are made per entry.
+/// missing rows of a list box are appended with one [`Ui::list_add_many`] and those of a
+/// Tree (`FriendListBox`, §3.2) with one [`Ui::tree_add_many`] (each a top-level node with
+/// the tree's `UICore_Tree_auto_expand` flag), so either list is laid out once.
 pub(crate) fn ensure_rows(
     ui: &mut Ui,
     list: ElementKey,
@@ -330,15 +330,18 @@ pub(crate) fn ensure_rows(
     }
     let is_tree = ui.el(list).is_some_and(|e| e.widget.tree.is_some());
     let added = if is_tree {
-        let mut added = 0;
-        for &k in &new {
-            if let Err(e) = ui.list_add(list, k, None) {
+        // Top-level nodes with the tree's own expanded flag, as `list_add` gives them
+        // (`ui-widgets.md` §9), added in one batch and laid out once.
+        let expanded = ui.prop(list, ui.vocab().pids.tree_auto_expand).bool();
+        let nodes: Vec<(ElementKey, Option<ElementKey>, bool)> =
+            new.iter().map(|&k| (k, None, expanded)).collect();
+        match ui.tree_add_many(list, &nodes) {
+            Ok(()) => new.len(),
+            Err((added, e)) => {
                 tracing::debug!("social row not added: {e}");
-                break;
+                added
             }
-            added += 1;
         }
-        added
     } else {
         match ui.list_add_many(list, &new) {
             Ok(()) => new.len(),

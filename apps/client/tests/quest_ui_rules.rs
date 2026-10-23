@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! The quest journal's client rules without an install (decision 0024 P3,
 //! `quest-journal.md` §3, §4.8, §5.4, §8.3): a new session forgets the previous one's
-//! entries, the abandon confirmation and the history order follow the selection, the log's
+//! entries, the abandon confirmation follows the selection, the history window keeps its
+//! quest until closed, the tracker menu is a popup that a click outside closes, the log's
 //! tracker check box shows the tracker's state on every open, a first `0/n` report redraws
 //! the tracker, the player's values redraw the log, lost notes rebuild the markers, and a
 //! burst of notes is read over several frames. Synthetic events only; no install file is
@@ -12,7 +13,7 @@ mod ui_common;
 
 use std::sync::Arc;
 
-use npc_windows_common::{button, left, part};
+use npc_windows_common::{button, left, part, right};
 use tessera_client::character::PlayerState;
 use tessera_client::character::state::NO_INSTALL_BAGS;
 use tessera_client::quests::present::LITERAL_KEY_BASE;
@@ -206,7 +207,7 @@ fn the_reopened_log_shows_the_trackers_state() {
 }
 
 #[test]
-fn history_order_survives_unrelated_changes() {
+fn the_history_window_keeps_its_quest_until_closed() {
     let mut j = Journal::new();
     j.apply(&active("Alpha"));
     j.apply(&active("Bravo"));
@@ -214,7 +215,15 @@ fn history_order_survives_unrelated_changes() {
     j.idle();
     let history = j.part(j.quests.refs().nv.ids.history_button);
     j.frame(|ui, _| vec![button(ui, history)]);
-    assert_eq!(j.quests.details_shown(), Some((LITERAL_KEY_BASE, true)));
+    // §4.9: the history window opens for the selected quest; the log's pane is unchanged.
+    let shown = |j: &Journal| j.quests.history().and_then(|w| w.quest());
+    assert_eq!(shown(&j), Some(LITERAL_KEY_BASE));
+    assert_eq!(j.quests.details_shown(), Some(LITERAL_KEY_BASE));
+    let root = j.quests.history().expect("history").root;
+    assert_eq!(
+        j.rig.host.ui().layout_box(root).map(|b| (b.w(), b.h())),
+        Some(tessera_ui::game::quest::history::HISTORY_SIZE)
+    );
     // Another quest's report, a marker and an NPC property change nothing of it.
     j.apply(&Event::Npc(NpcEvent::QuestObjective {
         quest: lit("Bravo"),
@@ -232,11 +241,73 @@ fn history_order_survives_unrelated_changes() {
         note_type: None,
     }));
     j.idle();
-    assert_eq!(j.quests.details_shown(), Some((LITERAL_KEY_BASE, true)));
-    // Selecting another quest ends it.
+    assert_eq!(shown(&j), Some(LITERAL_KEY_BASE));
+    // Selecting another quest shows it in the log; the history window keeps its quest
+    // until the button is used again.
     let bravo = LITERAL_KEY_BASE + 1;
     j.frame(|ui, q| vec![Journal::row_click(ui, q, bravo)]);
-    assert_eq!(j.quests.details_shown(), Some((bravo, false)));
+    assert_eq!(j.quests.details_shown(), Some(bravo));
+    assert_eq!(shown(&j), Some(LITERAL_KEY_BASE));
+    j.frame(|ui, _| vec![button(ui, history)]);
+    assert_eq!(shown(&j), Some(bravo));
+    assert_eq!(
+        j.quests.history().map(|w| w.root),
+        Some(root),
+        "the same window"
+    );
+    // Its close button closes it.
+    let close = j.quests.history().expect("history").closes[0];
+    j.frame(|ui, _| vec![button(ui, close)]);
+    assert!(j.quests.history().is_none());
+    assert!(!j.rig.host.ui().exists(root));
+}
+
+#[test]
+fn the_tracker_menu_is_a_popup_closed_by_a_click_outside() {
+    let mut j = Journal::new();
+    j.apply(&active("Alpha"));
+    j.apply(&Event::Npc(NpcEvent::QuestTracked {
+        quest: lit("Alpha"),
+        tracked: true,
+    }));
+    j.idle();
+    let entry_button = |j: &Journal| {
+        j.quests.tracker().expect("tracker").entries[0]
+            .1
+            .button
+            .expect("entry button")
+    };
+    let b = entry_button(&j);
+    let out = j.frame(|ui, _| vec![right(ui, b)]);
+    assert!(out.notices.is_empty(), "no notice-line stand-in");
+    let popup = j.quests.menu_popup().expect("popup");
+    let labels: Vec<String> = popup.items.iter().map(|i| i.text.clone()).collect();
+    assert_eq!(
+        labels.len(),
+        3,
+        "show in log, remove, remove all: {labels:?}"
+    );
+    assert_eq!(j.quests.menu(), Some(LITERAL_KEY_BASE));
+    // A click outside the popup closes it and does nothing else.
+    let catcher = popup.catcher.expect("catcher");
+    let root = popup.root;
+    let out = j.frame(|ui, _| vec![left(ui, catcher)]);
+    assert!(out.commands.is_empty());
+    assert!(j.quests.menu_popup().is_none() && j.quests.menu().is_none());
+    assert!(!j.rig.host.ui().exists(root) && !j.rig.host.ui().exists(catcher));
+    // "Remove" (the second item) untracks the quest and closes the popup.
+    let b = entry_button(&j);
+    j.frame(|ui, _| vec![right(ui, b)]);
+    let row = j.quests.menu_popup().expect("popup").rows[1];
+    let out = j.frame(|ui, _| vec![left(ui, row)]);
+    assert_eq!(
+        out.commands,
+        vec![Command::Npc(NpcCommand::TrackQuest {
+            quest: lit("Alpha"),
+            tracked: false,
+        })]
+    );
+    assert!(j.quests.menu_popup().is_none());
 }
 
 #[test]
@@ -362,4 +433,51 @@ fn a_burst_of_notes_is_read_over_several_frames() {
     assert_eq!(lines.len(), n);
     assert_eq!(lines[n - 1], format!("New quest: Quest {}", n - 1));
     assert_eq!(frames, 5);
+}
+
+/// `quest-journal.md` §4.8 Tessera rule (saved window choices): the saved tracker
+/// visibility and log font index are taken without counting as a change (a start does not
+/// rewrite the settings file), the open log shows them, and a click on the tracker check
+/// box reports one change to save, once.
+#[test]
+fn saved_window_choices_apply_quietly_and_a_toggle_is_saved_once() {
+    let mut j = Journal::new();
+    j.apply(&active("Alpha"));
+    let prefs = tessera_settings::WindowPrefs {
+        tracker_shown: Some(false),
+        quest_log_font: Some(4),
+        ..tessera_settings::WindowPrefs::default()
+    };
+    {
+        let mut ui = j.rig.host.ui_mut();
+        j.quests.apply_prefs(&mut ui, &prefs);
+    }
+    assert!(!j.quests.tracker_shown());
+    assert_eq!(j.quests.font_index(), Some(4));
+    assert_eq!(
+        j.quests.take_changed_prefs(),
+        None,
+        "applying is not a change"
+    );
+    j.open_log();
+    j.idle();
+    assert!(
+        !j.quests.log().expect("log").tracker_shown(),
+        "the box shows the saved hidden tracker"
+    );
+    assert_eq!(
+        j.quests.take_changed_prefs(),
+        None,
+        "opening is not a change"
+    );
+    let boxk = j.part(j.quests.refs().nv.ids.show_tracker);
+    j.frame(|ui, _| vec![button(ui, boxk)]);
+    assert!(j.quests.tracker_shown());
+    let saved = j.quests.take_changed_prefs().expect("the toggle is saved");
+    assert_eq!(saved.tracker_shown, Some(true));
+    assert_eq!(saved.quest_log_font, Some(4), "the font index rides along");
+    assert_eq!(saved.dialogue_font, None, "only the journal's keys are set");
+    assert_eq!(j.quests.take_changed_prefs(), None, "saved once");
+    j.idle();
+    assert_eq!(j.quests.take_changed_prefs(), None);
 }

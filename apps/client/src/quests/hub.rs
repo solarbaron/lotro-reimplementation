@@ -125,8 +125,11 @@ pub struct QuestHub {
     pending: Vec<JournalPanel>,
     toggle: bool,
     log_key: LogKey,
-    /// The overhead quest icons setting (§8.2, default on).
-    icons: bool,
+    /// The overhead quest icons switch given for the run (`--quest-icons`, §8.2); `None`:
+    /// Tessera's saved setting (default on).
+    icons: Option<bool>,
+    /// The saved window choices were applied to the journal windows.
+    prefs_applied: bool,
     /// The ringed entities and their keys (recomputed when the journal says rings changed).
     rings: Vec<(EntityId, &'static str)>,
     rings_stale: bool,
@@ -145,7 +148,8 @@ impl Default for QuestHub {
             pending: Vec::new(),
             toggle: false,
             log_key: LogKey::default(),
-            icons: true,
+            icons: None,
+            prefs_applied: false,
             rings: Vec::new(),
             rings_stale: true,
             shown: Vec::new(),
@@ -166,11 +170,23 @@ impl QuestHub {
         }
     }
 
-    /// With the overhead quest icons setting `on` (§8.2; default on).
+    /// With the overhead quest icons switch `on` (§8.2): a `bool` or `Some` sets it for the
+    /// run (the client's `--quest-icons` overrides the saved setting); `None` takes
+    /// Tessera's saved setting (`[GameWindows] quest_icons`, read with the NPC windows'
+    /// names, [`NpcHub::saved_prefs`]), default on.
     #[must_use]
-    pub fn with_icons(mut self, on: bool) -> Self {
-        self.icons = on;
+    pub fn with_icons(mut self, on: impl Into<Option<bool>>) -> Self {
+        self.icons = on.into();
         self
+    }
+
+    /// Whether the overhead quest icons are on: the run's switch, else the saved setting,
+    /// else on.
+    #[must_use]
+    pub fn icons_on(&self, npc: &NpcHub) -> bool {
+        self.icons
+            .or_else(|| npc.saved_prefs().and_then(|p| p.quest_icons))
+            .unwrap_or(true)
     }
 
     /// Takes one raw event for `ToggleQuestPanel` ([`LogKey`]); `true` when it triggers
@@ -267,6 +283,17 @@ impl QuestHub {
         let out = {
             let view = JournalView::new(world.player_state(), data.as_deref());
             let mut hui = host.ui_mut();
+            // The saved tracker visibility and log font index (§4.8), once, before the
+            // windows open (the names and the choices arrive together, NpcHub).
+            if !self.prefs_applied
+                && let Some(p) = npc.saved_prefs()
+            {
+                self.prefs_applied = true;
+                ui.apply_prefs(&mut hui, p);
+                if !ui.tracker_shown() {
+                    ui.close_tracker(&mut hui);
+                }
+            }
             for p in std::mem::take(&mut self.pending) {
                 let r = match p {
                     JournalPanel::Log => ui.open_log(&mut hui, &view).map(|_| ()),
@@ -284,6 +311,10 @@ impl QuestHub {
             ui.frame(&mut hui, &view, events)
         };
         self.rings_stale |= out.rings_changed;
+        // A changed tracker visibility or log font index is saved off the frame (§4.8).
+        if let Some(p) = ui.take_changed_prefs() {
+            npc.save_prefs(p);
+        }
         if ui.has_markers()
             && let (Some(panels), Some(input)) = (host.panels(), radar)
         {
@@ -323,7 +354,7 @@ impl QuestHub {
         npc: &NpcHub,
         position: &dyn Fn(EntityId) -> Option<Vec3>,
     ) {
-        if !self.icons || self.ui.is_none() || world.player().is_none() {
+        if !self.icons_on(npc) || self.ui.is_none() || world.player().is_none() {
             self.shown.clear();
             return;
         }

@@ -1,11 +1,13 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! The install's names of the journal windows (`quest-journal.md` §4.1, §4.7, §6.1, §8.3):
-//! the quest log (`quest` / `QuestPanel`) and the tracker box (`gameplayactivatables` /
-//! `GamePlay_QuestTrackerBox`) by `UILAYOUT` and `UIElementID` label, the row templates game
-//! code creates (`QuestTreeCategoryTitle`, `QuestTreeQuestTitle`, the `questdisplay` and
-//! `questobjectives` sections, the `questrewardslist` rows, `QuestTracker_QuestTemplate`),
-//! and the `Quest` note images of the radar's and the map window's icon tables
-//! (`map-data.md` §4.8.5). The P3 vocabulary is the NPC windows' ([`NpcRefs::nv`]).
+//! the quest log (`quest` / `QuestPanel`), the tracker box (`gameplayactivatables` /
+//! `GamePlay_QuestTrackerBox`) and the history window (`questhistory` /
+//! `QuestHistoryField` with its list `QuestHistory_ListBox`, §4.9) by `UILAYOUT` and
+//! `UIElementID` label, the row templates game code creates (`QuestTreeCategoryTitle`,
+//! `QuestTreeQuestTitle`, the `questdisplay` and `questobjectives` sections, the
+//! `questrewardslist` rows, `QuestTracker_QuestTemplate`), and the `Quest` note images of
+//! the radar's and the map window's icon tables (`map-data.md` §4.8.5). The P3 vocabulary
+//! is the NPC windows' ([`NpcRefs::nv`]).
 //!
 //! Without an install, or when a layout or root does not resolve (`LayoutMissing`), the
 //! windows are Tessera's fallback widgets (`tessera_ui::game::quest::fallback`, decision
@@ -19,6 +21,7 @@ use tessera_ui::game::NpcVocab;
 use tessera_ui::game::examine::ExamTemplate;
 use tessera_ui::game::npc::offer::RowTemplates;
 use tessera_ui::game::quest::details::DetailsTemplates;
+use tessera_ui::game::quest::history::HistoryIds;
 use tessera_ui::game::quest::log::LogTemplates;
 use tessera_ui::game::quest::markers::NoteImages;
 
@@ -28,6 +31,8 @@ use crate::npc::{NpcData, NpcRefs};
 pub const LOG_WINDOW: (&str, &str) = ("quest", "QuestPanel");
 /// `UILAYOUT` label and root of the tracker box (§6.1).
 pub const TRACKER_WINDOW: (&str, &str) = ("gameplayactivatables", "GamePlay_QuestTrackerBox");
+/// `UILAYOUT` label and root of the history window (§4.9).
+pub const HISTORY_WINDOW: (&str, &str) = ("questhistory", "QuestHistoryField");
 /// `UNIQUEDB` labels of the map window's and the radar's note icon tables
 /// (`map-data.md` §4.8.5).
 pub const ICON_TABLES: (&str, &str) = ("UI_MapNoteIcons_Map", "UI_RadarNoteIcons_Map");
@@ -45,6 +50,10 @@ pub struct QuestRefs {
     pub log: Option<(Did, u32)>,
     /// The tracker box's layout and root, when both resolve.
     pub tracker: Option<(Did, u32)>,
+    /// The history window's layout and root, when both resolve.
+    pub history: Option<(Did, u32)>,
+    /// The history window's element IDs (placeholders where a label does not resolve).
+    pub history_ids: HistoryIds,
     /// The log's and the details pane's row templates.
     pub log_templates: LogTemplates,
     /// `QuestTracker_QuestTemplate`.
@@ -80,6 +89,8 @@ impl QuestRefs {
         };
         let log = window(LOG_WINDOW);
         let tracker = window(TRACKER_WINDOW);
+        let history = window(HISTORY_WINDOW);
+        let history_ids = HistoryIds::resolved(&|l| ui_key(UiEnum::ElementId, l));
         let t = |l: &str, e: &str| -> Option<ExamTemplate> {
             Some(ExamTemplate {
                 layout: layout(l)?.0,
@@ -117,6 +128,8 @@ impl QuestRefs {
             nv,
             log,
             tracker,
+            history,
+            history_ids,
             log_templates,
             tracker_template: t("questtracker", "QuestTracker_QuestTemplate"),
             radar_images: NoteImages::default(),

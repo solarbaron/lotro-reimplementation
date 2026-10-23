@@ -52,6 +52,10 @@
 //! * [`MapPrefs`] reads and writes the `[Map]` section: the map window's presentation,
 //!   coordinate and discovery switches and its three note filters (`map-windows.md` §6.9,
 //!   §8); unset keys take the install's defaults.
+//! * [`WindowPrefs`] reads and writes the `[GameWindows]` section: Tessera's saved choices of
+//!   the NPC windows and the quest journal (dialogue font size, quest tracker visibility,
+//!   quest-log font index, overhead quest icons; `npc-windows.md` §5.2, `quest-journal.md`
+//!   §4.8, §8.2); unset or invalid keys take the defaults.
 //! * [`SCHEMA_VERSION`] and [`migrate()`] form the migration hook for future
 //!   incompatible changes. Unknown keys are preserved with their exact TOML
 //!   type at every level (the root, `[game]`, `[explorer]`, each bookmark
@@ -85,6 +89,7 @@ mod model;
 mod nesting;
 mod store;
 mod ui;
+mod windows;
 
 pub use audio::{
     AudioSettings, MAX_CHANNEL_LABEL_LEN, MAX_CHANNEL_VOLUMES, MAX_PLAYING_SOUNDS_LIMIT,
@@ -125,4 +130,8 @@ pub use ui::{
     MAX_UI_TEXT_BYTES, MinimapMode, PanelPlacement, PanelRef, SAFE_ASPECT_RANGE, SafeAspect,
     ScaleFilter, TEXT_SCALE_RANGE, TextSource, UI_SCALE_RANGE, UI_SCALE_STEP, UI_SECTION,
     USER_SKIN_KEY, UiPrefs, UiScale,
+};
+pub use windows::{
+    DIALOGUE_FONT_KEY, MAX_FONT_INDEX, QUEST_ICONS_KEY, QUEST_LOG_FONT_KEY, TRACKER_SHOWN_KEY,
+    WINDOWS_SECTION, WindowPrefs,
 };

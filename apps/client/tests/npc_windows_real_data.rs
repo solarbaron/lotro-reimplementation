@@ -584,3 +584,82 @@ fn wallet_on_the_install() {
     assert!(c.wallet_shown >= 1, "the token is listed");
     assert!(state.coin().is_some());
 }
+
+/// `interaction.md` §3.4.1 I6a on the install: the use-range cylinders of the entities a
+/// scenario creates (every NPC's body, and the player's when the session names one) and
+/// the player's own body model (the walker avatar's default body, which the client stands
+/// for when a feed session names no player body) are built from their setups by the
+/// worker's loader. Prints only counts; the player's cylinder and at least one NPC's come
+/// from a setup (not Decision D13's), and every cylinder is finite with at least D13's
+/// size.
+#[test]
+fn use_cylinders_on_the_install() {
+    use tessera_client::avatar::AvatarSpec;
+    use tessera_client::npc::commands::Cylinder;
+    use tessera_client::npc::shapes::load_cylinder;
+    use tessera_client::walker::characters::catalog::CharacterCatalog;
+    let Some(dir) = game_dir() else { return };
+    let data = Arc::new(CharacterData::open(&dir).expect("character data"));
+    let npc = NpcData::new(Arc::clone(&data)).expect("NPC data");
+    let (outcome, _, state) = play("vendor", Some(&dir), Some(data.bags()), |_| {});
+    assert_eq!(outcome.exit_code(), 0);
+    let windows = state.npc();
+    let mut bodies: Vec<tessera_net::Body> = windows
+        .entities()
+        .filter_map(|(id, e)| {
+            windows
+                .figure(id)
+                .or_else(|| e.body.map(tessera_net::Body::Object))
+        })
+        .collect();
+    let session_player = state
+        .player()
+        .and_then(|p| windows.figure(p))
+        .or_else(|| state.body());
+    bodies.extend(session_player);
+    bodies.sort_by_key(|b| format!("{b:?}"));
+    bodies.dedup();
+    assert!(!bodies.is_empty(), "the scenario names bodies");
+    let check = |c: &Cylinder| {
+        assert!(
+            c.radius.is_finite() && c.height.is_finite() && c.radius > 0.0 && c.height >= 0.1,
+            "{c:?}"
+        );
+    };
+    let (mut from_setup, mut d13) = (0usize, 0usize);
+    for b in &bodies {
+        let c = load_cylinder(&npc, *b);
+        check(&c);
+        if c == Cylinder::NO_SETUP {
+            d13 += 1;
+        } else {
+            from_setup += 1;
+        }
+    }
+    // The player's own body model: the walker avatar's default body (a playable species
+    // and sex, read through the race table).
+    let set = Arc::new(ArchiveSet::open(&dir, SetOptions::default()).expect("archives"));
+    let catalog = CharacterCatalog::build(set);
+    let avatar = tessera_client::walker_host::avatar_appearance(&AvatarSpec::default(), &catalog)
+        .expect("a default avatar body");
+    assert!(
+        matches!(avatar.body, tessera_net::Body::Character { .. }),
+        "{:?}",
+        avatar.body
+    );
+    let player = load_cylinder(&npc, avatar.body);
+    check(&player);
+    println!(
+        "use cylinders: {} bodies, {from_setup} from setups, {d13} D13; session player body: {}; \
+         avatar body from a setup: {}",
+        bodies.len(),
+        session_player.is_some(),
+        player != Cylinder::NO_SETUP
+    );
+    assert_ne!(
+        player,
+        Cylinder::NO_SETUP,
+        "the player's cylinder comes from its body's setup"
+    );
+    assert!(from_setup >= 1, "no cylinder came from a setup");
+}

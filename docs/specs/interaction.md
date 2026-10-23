@@ -474,6 +474,26 @@ body model, not from Tessera's movement capsule (`collision.md`).
 > collision (all eight `physics_bounds` floats 0), gets *r*₀ = *h*₀ = 0 and *o* = (0, 0, 0),
 > so its cylinder is radius 0.05 m and height 0.1 m before the override of step 3.
 
+> **OPEN:** (implementer, `apps/client`, 2026-10-23) readings taken for the client's I6a
+> cylinders, please confirm or correct: (a) the offset *o* is the centre of the setup's
+> stored `physics_bounds` box (its first six floats) for every setup, also those whose
+> collision is a 0x66 mesh, rather than a box recomputed from the volumes; (b) the four
+> properties are read from the entity's body record (the template with its inheritance)
+> and, where it stores none, from the 0x47 entity's own property set; a value of another
+> type counts as absent; (c) the network appearance's uniform `scale` (Tessera's own
+> protocol) is not part of *s*; (d) engineering guards: `physics_bounds` with a value that
+> is not finite counts as no setup (D13), and an override whose product with *k* is not
+> finite keeps the base radius.
+
+> **OPEN:** (implementer, `apps/client`, 2026-10-23) the local player's "own body model":
+> the client takes the body the session's latest appearance of the player names, else the
+> body of the player's `CharacterInfo`. A scenario-feed session whose player declares no
+> `species=`/`sex=` (`scenario-feed.md` §5.1) sends neither, so the player's cylinder is then
+> Decision D13's (radius 0.05 m, height 0.1 m), although the windowed client draws the
+> walker's avatar with a body of its own. Should the cylinder in that case come from the
+> body the client draws for the player (the walker avatar's), or is D13 right for a player
+> the session gave no body?
+
 **Property lookup (BIN o).** The client's entity property lookup routes each PID by the
 `field_b` byte of its dictionary definition (`property-system.md` §2.2, §2.3): values 3, 4, 7,
 8 and 9 select different property providers of the entity, and any other value finds nothing.

@@ -291,6 +291,57 @@ fn vendor_window_on_the_ui() {
             c.iter()
                 .all(|c| matches!(c, Command::Npc(NpcCommand::Sell { .. })))
         );
+        // §7.6 rule 4: a bag item dropped on the window (any page) sells it like the Sell
+        // button, once per drop. The drag source stands in for a bag slot: an element
+        // outside the window whose drag payload names the item.
+        let v = npc.vendor(1).expect("vendor");
+        let (item, quantity) = (v.sell[1].item, v.sell[1].quantity);
+        let slot = rig.host.ui().screen_root();
+        let payload = |item| tessera_ui::DragPayload { item, fits: 0 };
+        rig.host
+            .ui_mut()
+            .set_drag_payload(slot, Some(payload(item)));
+        let list = v.rows(VendorPage::Buy)[0];
+        let drop = |target, accepted| tessera_ui::UiEvent::DragEnded {
+            source: slot,
+            target: Some(target),
+            accepted,
+        };
+        let c = click(rig, npc, state, |_| drop(list, true));
+        assert_eq!(
+            c,
+            vec![Command::Npc(NpcCommand::Sell {
+                window: WindowId(1),
+                item: tessera_net::domain::ItemId(item),
+                quantity: u32::try_from(quantity).expect("quantity"),
+            })]
+        );
+        // A refused drop, a drop elsewhere and an item that is not for sale sell nothing.
+        assert!(click(rig, npc, state, |_| drop(list, false)).is_empty());
+        assert!(click(rig, npc, state, |ui| drop(ui.screen_root(), true)).is_empty());
+        rig.host
+            .ui_mut()
+            .set_drag_payload(slot, Some(payload(u64::MAX)));
+        assert!(click(rig, npc, state, |_| drop(root, true)).is_empty());
+        // The item the drag began with is sold, not what the slot holds at the drop: when
+        // the slot's contents changed during the drag nothing is sold.
+        let v = npc.vendor(1).expect("vendor");
+        let other = v.sell[0].item;
+        assert_ne!(other, item);
+        rig.host
+            .ui_mut()
+            .set_drag_payload(slot, Some(payload(other)));
+        let ev = drop(list, true);
+        assert_eq!(
+            v.handle_drop(&rig.host.ui(), &ev, Some(payload(item))),
+            None,
+            "the slot holds another item now"
+        );
+        assert!(
+            v.handle_drop(&rig.host.ui(), &ev, Some(payload(other)))
+                .is_some()
+        );
+        rig.host.ui_mut().set_drag_payload(slot, None);
     });
     assert!(
         done,
@@ -681,4 +732,42 @@ fn an_unreadable_golden_fails_instead_of_being_rewritten() {
         Ok(goldens::Outcome::Passed(_))
     ));
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// `npc-windows.md` §5.2 Tessera rule: the saved dialogue font index restored before a
+/// window opens stays the windows' choice when one opens (the window takes it when its font
+/// ladder is long enough, `fonts.md` §9.2: without an install the fallback window has no
+/// ladder and keeps index 0), and restoring it again while a conversation is open replaces
+/// the choice.
+#[test]
+fn the_restored_dialogue_font_stays_the_windows_choice() {
+    let mut restored = false;
+    let mut checked = false;
+    on_ui("dialogue", |_, rig, npc, _, _| {
+        if !restored {
+            restored = true;
+            npc.restore_font(&mut rig.host.ui_mut(), 1);
+            assert_eq!(npc.font_index(), Some(1));
+        }
+        if checked || npc.open_windows().next().is_none() {
+            return;
+        }
+        checked = true;
+        assert_eq!(
+            npc.font_index(),
+            Some(1),
+            "an opened window keeps the choice"
+        );
+        let w = npc
+            .open_windows()
+            .map(|(w, _, _)| w)
+            .next()
+            .expect("window");
+        let before = npc.dialogue(w).map(|d| d.font_index());
+        npc.restore_font(&mut rig.host.ui_mut(), 0);
+        assert_eq!(npc.font_index(), Some(0));
+        assert!(before.is_none_or(|i| i <= 1), "{before:?}");
+        assert_eq!(npc.dialogue(w).map(|d| d.font_index()), before.map(|_| 0));
+    });
+    assert!(checked, "a dialogue window opened");
 }

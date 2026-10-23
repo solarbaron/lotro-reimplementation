@@ -163,15 +163,28 @@ right button.
 > are traced (§14 Q1) Tessera posts its own short texts. `AutoLootAll` additionally marks the
 > next loot window from that entity for Loot All (§8.3).
 
-> **OPEN:** (implementer, `apps/client`, 2026-10-10) two client facts the section leaves to
-> P2 are implemented provisionally: (1) until P2's picking supplies setup-based cylinders
-> (§3.4.1 I6a), both cylinders of the range test are Decision D13's (radius 0.05 m, height
-> 0.1 m, no offset) and *R* comes from the body record's `Usage_MinUsageDist` (D14
-> otherwise); (2) without P2's selection the client offers a Tessera input action "use
-> nearest NPC in range" on keyboard U (the install's `USE` default, NW10): the nearest
-> entity that is not a player and whose gap distance is within its *R* (ties to the lower
-> entity ID) is used through the same entry point. Please confirm or replace when the
-> selection exists.
+> **OPEN:** (implementer, `apps/client`, 2026-10-23) the two provisional client facts of
+> 2026-10-10 are replaced: (1) both cylinders of the range test are now built from setups
+> by `interaction.md` §3.4.1 I6a (see the implementer OPEN there for the readings); a use
+> whose cylinders are still being read off the frame waits for them at most 0.5 s (Tessera
+> bound), then uses what has arrived (Decision D13 for the rest); likewise an open window's
+> walk-away close (§5.7) is not decided while its entity's or the player's cylinder is still
+> being read, for at most the same 0.5 s from when that was first seen; (2) keyboard U is `USE` on
+> the P2 selection (the stand-in "use nearest NPC in range" is gone): no selection posts the
+> no-selection line and sends nothing. Engineering choice: `USE` with the local player
+> selected goes through the same range test and sends `UseEntity` for the player (the
+> section names no exception for `USE`, only for `SelectDblLeft` and `SelectRight`). Please
+> confirm.
+
+> **OPEN:** (implementer, `apps/client`, 2026-10-23) the section contradicts itself on the
+> no-selection text: its first paragraph names the message (key 0x10000037 of `STRINGTABLE`,
+> the `Usage` table, token 0x0A34ED42), while Q1 (§14) and the Tessera rule above still list
+> it as untraced. The client now renders that token from the install (once, off the frame,
+> with no arguments) and posts it; when it does not render (no install, another language
+> without the token, or the entry needs arguments the client does not have) it posts
+> Tessera's own text. The out-of-range line stays Tessera's own (no token is named). Which
+> applies: is the no-selection token traced (then Q1 should drop it), and does its entry
+> take arguments?
 
 <a id="s3-2"></a>
 ### 3.2 What use needs from picking and selection (P2)
@@ -293,9 +306,11 @@ the client always replaces them.
 > `QuestDispenserIntroText`, `QuestDispenserMissionText` and the sample, and is kept in
 > Tessera's settings.
 
-> **OPEN:** (implementer, `apps/client`, 2026-10-11) `tessera-settings` has no key for this
-> choice yet, so the client keeps it for the session only (every dialogue window opened later
-> in the run uses it; a restart forgets it). Needs a settings key owned by `crates/settings`.
+> **OPEN:** (implementer, `tessera-settings`, 2026-10-23) the choice is saved as Tessera's
+> key `dialogue_font_index` (integer 0–6, the index in the seven-font list) of the
+> `[GameWindows]` section, read at start-up off the frame and written off the frame when the
+> arrows change it; a value of another type or outside 0–6 is ignored (the window's own
+> font), with no migration. Please confirm the key's range.
 
 <a id="s5-3"></a>
 ### 5.3 Choice window: text with options (NW3)
@@ -853,7 +868,7 @@ refreshes the list; a change of the filter menu refreshes the list. A sale names
 > record only: "the sale value is 0" is taken as `Item_Value` absent or 0, without an
 > instance's wear-state factor (§6.11), and `ItemAdvancement_Item` counts when present.
 > Without an install every backpack item is listed with worth 0 (no sale data to test).
-> Rule 4 (dropping a bag item on the window) is not wired yet. Please confirm.
+> Please confirm.
 
 > **OPEN:** (implementer, `tessera-ui`, 2026-10-11) rule 2 does not say what an entry's money
 > display shows for a worth of 0 (a literal item, which has no record, or an item without

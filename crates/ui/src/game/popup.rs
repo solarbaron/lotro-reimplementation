@@ -16,6 +16,14 @@
 //! `ui-layout.md` §9.3), so it is never hidden behind the full-screen map window (z −1,500).
 //! A popup taller than the screen is laid out in columns of as many rows as fit the screen
 //! height, so every row lies on the screen while the columns fit its width.
+//!
+//! **Tessera rules (pointer clicks).** Every part of a row carries the element ID
+//! [`ROW_ID`] and the popup registers its click messages on it, so a pointer click on any part
+//! of a row reaches game code (an element ID 0 is never registered). A context menu opened
+//! with [`Popup::open_menu`] (the quest tracker's menu, `quest-journal.md` §6.6) also puts a
+//! transparent full-screen catcher ([`CATCHER_ID`]) right behind the popup and in front of
+//! every other root panel: a click anywhere outside the popup lands on it, and
+//! [`Popup::dismissed`] reports it so the owner closes the menu; that click does nothing else.
 
 use crate::env::ImageRef;
 use crate::events::UiEvent;
@@ -34,6 +42,14 @@ pub const ROW_H: i32 = 20;
 
 /// Most rows a popup shows (Tessera bound).
 pub const MAX_ROWS: usize = 256;
+
+/// The element ID of every part of a popup row (a Tessera placeholder in the range of
+/// [`NpcVocab`]'s placeholders that no data uses), so the rows' click handlers can be
+/// registered.
+pub const ROW_ID: u32 = 0xFFFB_3E01;
+
+/// The element ID of a context menu's full-screen click catcher ([`Popup::open_menu`]).
+pub const CATCHER_ID: u32 = 0xFFFB_3E02;
 
 /// One item of a popup.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -72,6 +88,8 @@ pub struct Popup {
     checks: Vec<Option<ElementKey>>,
     /// The items.
     pub items: Vec<PopupItem>,
+    /// The full-screen click catcher of a context menu ([`Popup::open_menu`]).
+    pub catcher: Option<ElementKey>,
     listen: Listen,
 }
 
@@ -185,25 +203,27 @@ impl Popup {
             } else {
                 colours::WHITE
             };
-            let mut row = FNode::field(0, col.saturating_mul(w) + 2, y, w - 4, ROW_H);
+            // Header rows keep ID 0: they are not selectable and get no handler.
+            let id = if it.header { 0 } else { ROW_ID };
+            let mut row = FNode::field(id, col.saturating_mul(w) + 2, y, w - 4, ROW_H);
             if !it.header {
                 row = row.image(&art.row);
             }
             let mut tx = x;
             if it.check.is_some() {
-                let mut mark = FNode::field(0, 0, 0, 16, 16).image(&check_image.cloned());
+                let mut mark = FNode::field(id, 0, 0, 16, 16).image(&check_image.cloned());
                 if it.check != Some(true) {
                     mark = mark.hidden();
                 }
-                row = row.child(FNode::field(0, x, 2, 16, 16).image(&art.slot).child(mark));
+                row = row.child(FNode::field(id, x, 2, 16, 16).image(&art.slot).child(mark));
                 tx += 20;
             }
             if let Some(icon) = &it.icon {
-                row = row.child(FNode::field(0, tx, 2, 16, 16).image(&Some(icon.clone())));
+                row = row.child(FNode::field(id, tx, 2, 16, 16).image(&Some(icon.clone())));
                 tx += 20;
             }
             row = row.child(FNode::text(
-                0,
+                id,
                 tx,
                 2,
                 (w - tx - 6).max(1),
@@ -236,14 +256,71 @@ impl Popup {
             rows,
             checks,
             items,
+            catcher: None,
             listen: Listen::default(),
         };
-        for (r, it) in p.rows.clone().into_iter().zip(p.items.clone()) {
-            if !it.header {
-                p.listen.clicks(ui, Some(r));
-            }
+        // One registration per message for the shared row ID marks every live row part
+        // mouse-visible (`ui-behaviour.md` §4.3); header rows (ID 0) get none.
+        if let Some(r) = p
+            .rows
+            .iter()
+            .zip(&p.items)
+            .find(|(_, it)| !it.header)
+            .map(|(r, _)| *r)
+        {
+            p.listen.clicks(ui, Some(r));
         }
         Ok(p)
+    }
+
+    /// Opens a context menu: a popup as [`Popup::open_at`] does, with a transparent
+    /// full-screen click catcher right behind it (module docs); a click outside the popup
+    /// is reported by [`Popup::dismissed`].
+    ///
+    /// # Errors
+    /// The element cap or an attachment error.
+    #[allow(clippy::too_many_arguments)]
+    pub fn open_menu(
+        ui: &mut Ui,
+        nv: &NpcVocab,
+        art: &FallbackArt,
+        check_image: Option<&ImageRef>,
+        anchor: ElementKey,
+        place: Place,
+        width: i32,
+        items: Vec<PopupItem>,
+    ) -> Result<Self, GameError> {
+        let (sw, sh) = ui.screen_size();
+        // The catcher first, in front of every root panel; the popup then opens in front of
+        // the catcher.
+        let catcher = open_root(
+            ui,
+            &with_z(
+                FNode::field(CATCHER_ID, 0, 0, sw.max(1), sh.max(1)),
+                front_z(ui),
+            ),
+        )?;
+        let mut p = match Self::open_at(ui, nv, art, check_image, anchor, place, width, items) {
+            Ok(p) => p,
+            Err(e) => {
+                ui.destroy(catcher);
+                return Err(e);
+            }
+        };
+        p.listen.clicks(ui, Some(catcher));
+        ui.set_mouse_visible_flag(catcher, true);
+        p.catcher = Some(catcher);
+        Ok(p)
+    }
+
+    /// Whether a UI event is a click outside the popup: any click on its catcher (only a
+    /// popup opened with [`Popup::open_menu`] has one).
+    #[must_use]
+    pub fn dismissed(&self, ui: &Ui, ev: &UiEvent) -> bool {
+        let Some(c) = self.catcher else {
+            return false;
+        };
+        super::npc::kit::click_of(ui, ev).is_some_and(|(src, _)| src == c)
     }
 
     /// The item a UI event selects: a left click (or double-click) on a row that is not a
@@ -274,11 +351,16 @@ impl Popup {
         }
     }
 
-    /// Closes the popup (its root and handlers go).
+    /// Closes the popup (its root, its catcher and its handlers go).
     pub fn close(mut self, ui: &mut Ui) {
         self.listen.release(ui);
         if ui.exists(self.root) {
             ui.destroy(self.root);
+        }
+        if let Some(c) = self.catcher.take()
+            && ui.exists(c)
+        {
+            ui.destroy(c);
         }
     }
 }

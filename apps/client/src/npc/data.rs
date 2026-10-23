@@ -83,7 +83,15 @@ pub struct NpcData {
     /// `Usage_MinUsageDist` by record, including the records that have none or cannot be
     /// read (at most [`MAX_USAGE_RANGES`]).
     usage: std::sync::Mutex<std::collections::HashMap<u32, Option<f32>>>,
+    /// The no-selection line of `USE` rendered from the install (`npc-windows.md` §3.1),
+    /// when it renders.
+    no_selection: Option<String>,
 }
+
+/// The STRINGTABLE key of the `Usage` table (`npc-windows.md` §3.1).
+pub const USAGE_TABLE_KEY: u32 = 0x1000_0037;
+/// The `Usage` token of the message `USE` shows with no selection (`npc-windows.md` §3.1).
+pub const NO_SELECTION_TOKEN: u32 = 0x0A34_ED42;
 
 /// Most use ranges remembered by [`NpcData::min_usage_dist`] (Tessera bound; the map is
 /// emptied when full).
@@ -140,13 +148,39 @@ impl NpcData {
         let data: &'static InstallPresentationData<'static> = Box::leak(Box::new(data));
         let presenter = NpcPresenter::new(data);
         let pids = Pids::resolve(&|n| data.pid(n));
+        let no_selection = data
+            .render(
+                tessera_gamedata::tooltip::TextRef::Token {
+                    table_key: USAGE_TABLE_KEY,
+                    token: NO_SELECTION_TOKEN,
+                },
+                &Values::new(),
+            )
+            .ok()
+            .flatten()
+            .map(|t| t.plain_text())
+            .filter(|t| !t.trim().is_empty());
+        if no_selection.is_none() {
+            tracing::debug!("the Usage table's no-selection line does not render; own text");
+        }
         Ok(Self {
             character,
             data,
             presenter,
             pids,
             usage: std::sync::Mutex::new(std::collections::HashMap::new()),
+            no_selection,
         })
+    }
+
+    /// The line `USE` posts with no selection, from the install's `Usage` table
+    /// (`npc-windows.md` §3.1: key [`USAGE_TABLE_KEY`], token [`NO_SELECTION_TOKEN`]),
+    /// rendered once when the facts were built; `None` when it does not render (the
+    /// client then posts Tessera's own text,
+    /// [`NO_SELECTION_LINE`](super::commands::NO_SELECTION_LINE)).
+    #[must_use]
+    pub fn no_selection_line(&self) -> Option<&str> {
+        self.no_selection.as_deref()
     }
 
     /// The P1 facts (store, strings, tooltip engine, item facts).

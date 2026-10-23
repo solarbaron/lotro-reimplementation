@@ -349,6 +349,15 @@ impl VendorWindow {
         }
         show(ui, w.lists[2].tab, false);
         w.show_page(ui, VendorPage::Buy);
+        // §7.6 Tessera rule 4: the whole window (any page) is a drop target for bag items
+        // (`ui-behaviour.md` §7.3: a container accepts drops).
+        let container = ui.vocab().pids.container;
+        ui.set_property(
+            root,
+            container,
+            tessera_formats::property::PropertyValue::Bool(true),
+        );
+        ui.recompute_mouse_visible(root);
         w
     }
 
@@ -756,8 +765,9 @@ impl VendorWindow {
     }
 
     /// Selling an item dropped on the window (§7.6 Tessera rule 4): `Sell` with the
-    /// item's quantity. The client gets the drop from its item slots (the window is a drop
-    /// area, [`super::super::items::ItemSlots::attach_area`]).
+    /// item's quantity. The window's root is a drop target (a container, `ui-behaviour.md`
+    /// §7.3); the client takes the `DragEnded` of an item slot's drag that ended on it and
+    /// sells the dropped item through [`Self::sell_dropped_item`].
     #[must_use]
     pub fn sell_dropped(&self, item: u64, quantity: i64) -> NpcAction {
         NpcAction::Sell {
@@ -765,6 +775,59 @@ impl VendorWindow {
             item,
             quantity: u32::try_from(quantity.max(1)).unwrap_or(u32::MAX),
         }
+    }
+
+    /// Selling a backpack item dropped on the window (§7.6 Tessera rule 4: "like the Sell
+    /// button"): the `Sell` of the sell-list entry of `item` (its quantity), `None` when
+    /// the item is not in the sell list (not sellable, `items.md` §5.3, or not in the
+    /// backpack).
+    #[must_use]
+    pub fn sell_dropped_item(&self, item: u64) -> Option<NpcAction> {
+        self.sell
+            .iter()
+            .find(|s| s.item == item)
+            .map(|s| self.sell_dropped(s.item, s.quantity))
+    }
+
+    /// The `Sell` of a bag item dropped on the window (§7.6 Tessera rule 4): `ev` is the
+    /// `DragEnded` of a drag that started outside the window from an element whose drag
+    /// payload names an item (an item slot), was accepted, and ended on the window (any
+    /// page); the item must be in the sell list ([`Self::sell_dropped_item`]). `None` for
+    /// any other event.
+    ///
+    /// `began` is the payload the drag carried when it started (taken at its `DragBegan`,
+    /// [`Ui::drag_payload`]), when the caller saw that event: the item dragged is that
+    /// payload's, and the sale is refused (`None`) when the source slot no longer holds it
+    /// (its contents changed during the drag). Without it (the drag began and ended between
+    /// two event batches) the source's current payload names the item.
+    #[must_use]
+    pub fn handle_drop(
+        &self,
+        ui: &Ui,
+        ev: &UiEvent,
+        began: Option<crate::DragPayload>,
+    ) -> Option<NpcAction> {
+        let UiEvent::DragEnded {
+            source,
+            target: Some(target),
+            accepted: true,
+        } = ev
+        else {
+            return None;
+        };
+        if !ui.exists(self.root)
+            || !ui.is_ancestor_or_self(self.root, *target)
+            || ui.is_ancestor_or_self(self.root, *source)
+        {
+            return None;
+        }
+        let current = ui.el(*source)?.drag_payload?;
+        let item = match began {
+            Some(b) if b.item != current.item => return None,
+            Some(b) => b.item,
+            None => current.item,
+        };
+        self.sell_dropped_item(item)
     }
 
     /// The commands for a UI event (§7.4, §7.6, §7.8 command table).

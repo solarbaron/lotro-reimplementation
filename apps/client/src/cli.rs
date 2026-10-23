@@ -466,17 +466,17 @@ pub struct Args {
     pub open_panel: Vec<String>,
 
     /// Overhead quest icons (P3, `quest-journal.md` §8.2): the indicators over NPCs with a
-    /// quest ring (default on).
+    /// quest ring. Overrides Tessera's saved setting (`[GameWindows] quest_icons`) for this
+    /// run; without the flag the saved setting applies (default on).
     #[arg(
         long,
         value_name = "on|off",
-        default_value = "on",
         num_args = 0..=1,
         default_missing_value = "on",
         action = clap::ArgAction::Set,
         value_parser = parse_strict_on_off
     )]
-    pub quest_icons: bool,
+    pub quest_icons: Option<bool>,
 
     /// Do not open the HUD panels (P1–P5, P11, P14) at start.
     #[arg(long)]
@@ -1117,6 +1117,20 @@ mod tests {
     fn character_select_needs_an_install() {
         assert!(Args::try_parse_from(["t", "--character-select", "--no-data"]).is_err());
         assert!(Args::try_parse_from(["t", "--character-select"]).is_ok());
+    }
+
+    #[test]
+    fn quest_icons_override_only_when_given() {
+        let icons = |args: &[&str]| {
+            let mut v = vec!["t"];
+            v.extend_from_slice(args);
+            Args::try_parse_from(v).expect("valid args").quest_icons
+        };
+        assert_eq!(icons(&[]), None, "the saved setting applies");
+        assert_eq!(icons(&["--quest-icons"]), Some(true));
+        assert_eq!(icons(&["--quest-icons", "off"]), Some(false));
+        assert_eq!(icons(&["--quest-icons=on"]), Some(true));
+        assert!(Args::try_parse_from(["t", "--quest-icons", "maybe"]).is_err());
     }
 
     #[test]

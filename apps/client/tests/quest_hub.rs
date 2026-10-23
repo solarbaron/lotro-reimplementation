@@ -114,3 +114,105 @@ fn a_click_on_the_track_button_reaches_the_session() {
     c.frame();
     assert!(c.quests.sent().is_empty());
 }
+
+/// `quest-journal.md` §8 (`--quest-icons`): the run's switch beats Tessera's saved setting,
+/// which beats the default (on).
+#[test]
+fn quest_icons_take_the_run_switch_over_the_saved_setting() {
+    use tessera_settings::WindowPrefs;
+    let unread = NpcHub::new(Vec::new());
+    assert!(QuestHub::new(Vec::new()).icons_on(&unread), "default on");
+    assert!(
+        !QuestHub::new(Vec::new())
+            .with_icons(false)
+            .icons_on(&unread)
+    );
+    let mut saved = NpcHub::new(Vec::new());
+    saved.set_window_prefs(
+        WindowPrefs {
+            quest_icons: Some(false),
+            ..WindowPrefs::default()
+        },
+        |_| {},
+    );
+    assert!(
+        !QuestHub::new(Vec::new()).icons_on(&saved),
+        "the saved setting"
+    );
+    assert!(!QuestHub::new(Vec::new()).with_icons(None).icons_on(&saved));
+    assert!(
+        QuestHub::new(Vec::new()).with_icons(true).icons_on(&saved),
+        "--quest-icons overrides the saved setting"
+    );
+}
+
+/// The saved window choices through the hubs (`npc-windows.md` §5.2, `quest-journal.md`
+/// §4.8 Tessera rules): the saved dialogue font index is restored on the NPC windows and
+/// the saved hidden tracker on the journal without any save at start; a click on the log's
+/// tracker check box saves the new visibility once.
+#[test]
+fn saved_window_choices_restore_without_saving_and_a_toggle_saves_once() {
+    use std::sync::Mutex;
+    use tessera_settings::WindowPrefs;
+    let mut world = World::sandbox(Instant::now()).expect("sandbox");
+    for _ in 0..500 {
+        if world.player().is_some() {
+            break;
+        }
+        world.update(Instant::now());
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    assert!(world.player().is_some(), "the sandbox enters the world");
+    world.apply_polled(
+        Instant::now(),
+        &[Event::Npc(NpcEvent::QuestState {
+            quest: Ref::Literal("Alpha".into()),
+            state: QuestStatus::Active,
+        })],
+    );
+    let saves: Arc<Mutex<Vec<WindowPrefs>>> = Arc::new(Mutex::new(Vec::new()));
+    let rec = Arc::clone(&saves);
+    let mut npc = NpcHub::new(Vec::new());
+    npc.set_loaded(Arc::new(NpcRefs::fallback()), None);
+    npc.set_window_prefs(
+        WindowPrefs {
+            dialogue_font: Some(2),
+            tracker_shown: Some(false),
+            ..WindowPrefs::default()
+        },
+        move |p| rec.lock().expect("saves").push(p),
+    );
+    let mut c = Client {
+        rig: Rig::new(|_| {}),
+        world,
+        npc,
+        quests: QuestHub::new(vec![JournalPanel::Log]),
+    };
+    for _ in 0..3 {
+        c.frame();
+    }
+    assert_eq!(
+        c.npc.ui().and_then(tessera_client::npc::NpcUi::font_index),
+        Some(2),
+        "the saved dialogue font index is restored"
+    );
+    let ui = c.quests.ui().expect("journal windows");
+    assert!(!ui.tracker_shown(), "the saved hidden tracker");
+    assert!(ui.tracker().is_none());
+    assert!(
+        saves.lock().expect("saves").is_empty(),
+        "nothing saved at start"
+    );
+    let root = ui.log_root().expect("the log is open");
+    let ids = ui.refs().nv.ids;
+    let check = part(&c.rig.host.ui(), root, ids.show_tracker).expect("tracker check box");
+    let b = c.rig.host.ui().displayed_box(check);
+    c.rig
+        .click(f64::from(b.l + b.w() / 2), f64::from(b.t + b.h() / 2));
+    c.after_ui();
+    c.frame();
+    let got = saves.lock().expect("saves").clone();
+    assert_eq!(got.len(), 1, "one save: {got:?}");
+    assert_eq!(got[0].tracker_shown, Some(true));
+    assert_eq!(got[0].dialogue_font, None, "only the journal's keys");
+}

@@ -876,8 +876,9 @@ fn lit_scene(r: &mut Renderer<'static>) -> Result<RgbaImage, RenderError> {
 }
 
 /// `particle-runtime.md` §12 rule 13 (`particles.md` §8.14): a lit system next to a point
-/// light: the particles near the light take its warm colour, the far ones keep the
-/// ambient's; the ground is lit by the same light for comparison.
+/// light: the particles near the light take its warm colour, the far ones fade towards the
+/// ambient's with 1 / (1 + k·d²) and no cut-off at the range; the ground is lit by the same
+/// light (with the world lights' range cut-off of `lighting.md` §8.3) for comparison.
 #[test]
 fn particles_lit_golden() -> Result<(), RenderError> {
     // On the CPU: near the light the red channel is the ambient's plus most of the light's.
@@ -901,11 +902,41 @@ fn particles_lit_golden() -> Result<(), RenderError> {
         pick.iter().sum::<f32>() / pick.len() as f32
     };
     let grey = 176.0 / 255.0;
-    let far = red_at(false);
-    assert!(
-        (far - grey * LIT_AMBIENT[0]).abs() < 1e-3,
-        "beyond the range: {far}"
-    );
+    // Rule 13 has no range cut-off: a particle beyond the light's range still takes
+    // colour × 1 / (1 + k·d²) at its centre's distance d (the mean of its quad's corners).
+    let k = 10.0 / (LIT_RANGE * LIT_RANGE);
+    let quads = verts
+        .get(..sys.instances[0].quad_vertices)
+        .unwrap_or_default();
+    let mut beyond = 0usize;
+    for quad in quads.as_chunks::<4>().0 {
+        let centre = quad
+            .iter()
+            .map(|v| Vec3::from_array(v.position))
+            .sum::<Vec3>()
+            / 4.0;
+        let d = (centre - LIT_LIGHT).length();
+        if d <= LIT_RANGE + 0.3 {
+            continue;
+        }
+        beyond += 1;
+        let expected = (grey * (LIT_AMBIENT[0] + LIT_COLOUR[0] / (1.0 + k * d * d))).min(1.0);
+        for v in quad {
+            assert!(
+                (v.colour[0] - expected).abs() < 1e-3,
+                "beyond the range (d = {d}): {} vs {expected}",
+                v.colour[0]
+            );
+            assert!(
+                v.colour[0] > grey * LIT_AMBIENT[0] + 0.01,
+                "beyond the range (d = {d}) still lit: {}",
+                v.colour[0]
+            );
+        }
+    }
+    assert!(beyond > 0, "no particle beyond the range");
+    // The far vertices are lit less than the near ones.
+    assert!(red_at(false) < red_at(true), "{}", red_at(false));
     assert!(
         red_at(true) > grey * (LIT_AMBIENT[0] + 0.3),
         "{}",

@@ -175,6 +175,10 @@ pub(crate) enum KindState {
     /// (none when nothing started), its target, the `ImmediateDisposal` byte and the
     /// redirect PID it listens to (0 for none, §5.8).
     Particle(Box<ParticleState>),
+    /// A MeshFX node whose entity the sink attached (until stopped).
+    MeshFx {
+        handle: crate::sink::MeshFxHandle,
+    },
     /// A Beam node with a beam (`particle-runtime.md` §11.1): the sink's handle and whether
     /// its Default ports fired (once, step 7).
     Beam {

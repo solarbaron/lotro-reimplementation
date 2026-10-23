@@ -42,12 +42,30 @@
 //! Characters of a remote session (a Tessera test server) are instead placed every frame
 //! at their interpolated state ([`CharacterLayer::apply_samples`],
 //! `tessera-protocol.md` §8.6), still on the terrain and still animated by ground speed.
+//!
+//! # The camera's target fade
+//!
+//! The layer reads the walker's camera state on a worker at start-up
+//! ([`super::controls::load_camera_profile`], `walker.md` §11.6; until it arrives, or
+//! without one, [`CameraProfile::FALLBACK`]); [`CharacterLayer::camera_profile`] and
+//! [`CharacterLayer::player_look_at_height`] give it and the player's look-at height to
+//! the walk camera ([`super::controls::Controls::follow_characters`]), which gives back
+//! the profile it follows and its look-at point ([`CharacterLayer::set_camera_view`]). The
+//! player's own character is drawn at that profile's target fade opacity while the camera
+//! is closer than the fade distance to that look-at point (`walker.md` §11.7), the opacity
+//! moving towards its goal with the zoom smoothing time. So the fade and the camera use one
+//! profile and one point. Until the walk camera gives its view (or without a look-at point,
+//! outside walk mode) the fade uses the camera's own defaults: [`CameraProfile::FALLBACK`]
+//! and the feet raised by *f* × [`super::controls::DEFAULT_LOOK_AT_HEIGHT`] (the camera's
+//! view; outside walk mode the given profile and the figure's own look-at height).
 
 pub mod catalog;
 pub mod combat_anim;
 pub mod figure;
+pub mod live;
 pub mod motion;
 pub mod mounted;
+pub mod prefetch;
 
 use std::collections::{HashMap, HashSet};
 use std::sync::mpsc::{Receiver, Sender, channel};
@@ -71,6 +89,7 @@ use self::figure::{
 };
 use self::motion::{Locomotion, drive, make_animator_with_keys};
 use super::UploadBudget;
+use super::controls::{CameraProfile, CameraProfileError, load_camera_profile, smooth_towards};
 use super::geometry::{MaterialPlan, TexRequest};
 use super::objects::{ObjectLayer, TexLookup, surface_draw};
 use super::source::SourceShared;
@@ -331,6 +350,8 @@ struct GpuPart {
     plans: Vec<MaterialPlan>,
     skinned: bool,
     held: Option<u32>,
+    /// The appearance variants it is drawn in ([`figure::PartAsset::variants`]).
+    variants: u8,
     bytes: u64,
 }
 
@@ -519,13 +540,90 @@ pub struct CharacterLayer {
     /// The rider's shown mounted clip and its phase after the last frame (`mounts.md`
     /// §14.5 item 6).
     rider_phase: Option<(tessera_formats::Did, f32)>,
+    /// The walker's camera state (module docs, "The camera's target fade").
+    camera: CameraProfile,
+    /// The camera state's start-up job.
+    camera_rx: Option<Receiver<Result<CameraProfile, CameraProfileError>>>,
+    /// The player's target fade opacity (`walker.md` §11.7).
+    player_fade: f32,
+    /// The profile the walk camera follows and its look-at point
+    /// ([`CharacterLayer::set_camera_view`]; `None` until the camera gives them).
+    camera_view: Option<(CameraProfile, Option<WorldPos>)>,
+    /// Clips waiting to be decoded on the workers ([`CharacterLayer::prefetch_clips`]).
+    clip_queue: std::collections::VecDeque<u32>,
+    /// Clip-decoding jobs in flight.
+    clip_jobs: Arc<std::sync::atomic::AtomicUsize>,
+    /// Script-clip prefetch requests by figure scripts and request digest, with their
+    /// states ([`CharacterLayer::script_clips_ready`]).
+    script_prefetch: prefetch::PrefetchMemory,
+    /// The character screens' figure's live scripts and the slot they run for
+    /// ([`live`], `character-screens.md` §2.1.4).
+    live: Option<(u32, live::LiveFigure)>,
+    /// The `CharGen_Stage` and `CharGen_Action` keys the screens ask for.
+    preview_keys: (Option<u32>, Option<u32>),
+    /// A key change asked for while the figure was building: if the built figure cannot
+    /// run its scripts live, it is built again with this request.
+    preview_rebuild: Option<(FigureRequest, LookChoices)>,
 }
+
+/// The profile and look-at point (render frame) the player's target fade measures with
+/// (module docs): the walk camera's `view` (its look-at point turned into the render
+/// frame by `to_render`); without a point, the profile's look-at point of the figure at
+/// `pos` facing `heading` with its own look-at height × z scale `height` (no raise without
+/// one, the Tessera Decision of `walker.md` §11.7); without a view, the camera's defaults
+/// ([`CameraProfile::FALLBACK`], [`super::controls::DEFAULT_LOOK_AT_HEIGHT`]).
+fn player_fade_view(
+    view: Option<&(CameraProfile, Option<WorldPos>)>,
+    to_render: impl Fn(&WorldPos) -> Option<Vec3>,
+    pos: Vec3,
+    heading: f32,
+    height: Option<f32>,
+) -> (CameraProfile, Vec3) {
+    match view {
+        Some((profile, Some(target))) => {
+            let at = to_render(target).unwrap_or_else(|| {
+                profile.look_at_point(pos, heading, height.unwrap_or(0.0), [0.0; 2])
+            });
+            (*profile, at)
+        }
+        Some((profile, None)) => (
+            *profile,
+            profile.look_at_point(pos, heading, height.unwrap_or(0.0), [0.0; 2]),
+        ),
+        None => {
+            let p = CameraProfile::FALLBACK;
+            (
+                p,
+                p.look_at_point(
+                    pos,
+                    heading,
+                    super::controls::DEFAULT_LOOK_AT_HEIGHT,
+                    [0.0; 2],
+                ),
+            )
+        }
+    }
+}
+
+/// Clip-decoding jobs in flight at once ([`CharacterLayer::prefetch_clips`]).
+pub const MAX_CLIP_JOBS: usize = 4;
+/// Most clips waiting to be decoded; more are dropped (asked for again on their next use).
+pub const MAX_CLIP_QUEUE: usize = 4096;
 
 impl std::fmt::Debug for CharacterLayer {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("CharacterLayer")
             .field("stats", &self.stats)
             .finish_non_exhaustive()
+    }
+}
+
+/// Counts a clip-decoding job as finished when it is dropped (run or not).
+struct ClipJobGuard(Arc<std::sync::atomic::AtomicUsize>);
+
+impl Drop for ClipJobGuard {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
     }
 }
 
@@ -567,7 +665,9 @@ pub struct FigureStatus {
     /// The built figure's idle clips as (data layer, one-shot, partial), in animator order,
     /// partial meaning that the clip drives only part of the skeleton (`UseBoneOpacity`
     /// with a track weight below 1); empty before it is built (tests: the creation-stage
-    /// stance of `character-screens.md` CSI9).
+    /// stance of `character-screens.md` CSI9). For the screens' figure running its scripts
+    /// live, the clips its scripts play now, by layer ([`live::LiveFigure::running_clips`]),
+    /// and the request carries the stage and action keys the scripts run with.
     pub idle: Vec<(u32, bool, bool)>,
 }
 
@@ -612,8 +712,26 @@ impl CharacterLayer {
                 .collect()
         })
         .unwrap_or_default();
+        let mut request = s.request.clone()?;
+        // The screens' figure running its scripts live (`character-screens.md` §2.1.4): the
+        // keys it runs with and the clips its scripts play (its animator holds only the
+        // held proportion clips besides).
+        let live = self
+            .live
+            .as_ref()
+            .filter(|(live_slot, _)| *live_slot == slot && id == PREVIEW_ID)
+            .map(|(_, l)| l);
+        let idle = match live {
+            Some(l) => {
+                let (stage, action) = l.keys();
+                request.chargen_stage = stage.or(request.chargen_stage);
+                request.chargen_action = action.or(request.chargen_action);
+                l.running_clips()
+            }
+            None => idle,
+        };
         Some(FigureStatus {
-            request: s.request.clone()?,
+            request,
             look: s.look.clone(),
             state,
             face,
@@ -634,6 +752,26 @@ impl CharacterLayer {
     ) -> Self {
         let (tx, rx) = channel();
         let ctx_for_binder = ctx.clone();
+        // ARCHITECTURE §21: from now on clips are decoded on the workers only
+        // ([`figure::ClipStore`]); the layer is made on the walker's frame thread.
+        if let Some(c) = &ctx {
+            c.clips.mark_frame_thread();
+        }
+        // `walker.md` §11.6: the camera state, read on a worker.
+        let camera_rx = ctx.as_ref().and_then(|c| {
+            let (ctx_tx, ctx_rx) = channel();
+            let c = Arc::clone(c);
+            let job = move |_: &tessera_assets::JobContext<'_>| {
+                let _ = ctx_tx.send(load_camera_profile(&c.catalog.data));
+            };
+            match pool.spawn(Priority::Prefetch, CancelToken::new(), job) {
+                Ok(_) => Some(ctx_rx),
+                Err(e) => {
+                    tracing::warn!("camera state job: {e}; the walker's camera profile is used");
+                    None
+                }
+            }
+        });
         Self {
             config,
             ctx,
@@ -669,7 +807,222 @@ impl CharacterLayer {
             mount_view: None,
             mount_binder: mounted::ClipBinder::new(ctx_for_binder, pool),
             rider_phase: None,
+            camera: CameraProfile::FALLBACK,
+            camera_rx,
+            player_fade: 1.0,
+            camera_view: None,
+            clip_queue: std::collections::VecDeque::new(),
+            clip_jobs: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+            script_prefetch: prefetch::PrefetchMemory::default(),
+            live: None,
+            preview_keys: (None, None),
+            preview_rebuild: None,
         }
+    }
+
+    /// The walker's camera state (`walker.md` §11.6): the install's record once its
+    /// start-up job finished, else [`CameraProfile::FALLBACK`]. The walk camera follows it
+    /// with [`super::controls::Controls::set_camera_profile`].
+    #[must_use]
+    pub fn camera_profile(&self) -> &CameraProfile {
+        &self.camera
+    }
+
+    /// The profile the walk camera follows and its look-at point (`None` outside walk
+    /// mode), for the player's target fade (module docs; given by
+    /// [`super::controls::Controls::follow_characters`] every frame before the draws).
+    #[allow(
+        dead_code,
+        reason = "called by `Controls::follow_characters` once `walker/mod.rs` calls it"
+    )]
+    pub fn set_camera_view(&mut self, profile: CameraProfile, target: Option<WorldPos>) {
+        self.camera_view = Some((profile, target));
+    }
+
+    /// Whether the camera state's start-up job has finished (with the install's record or
+    /// the fallback).
+    #[must_use]
+    pub fn camera_profile_ready(&self) -> bool {
+        self.camera_rx.is_none()
+    }
+
+    /// Queues clips `dids` for decoding on the workers (those not decoded yet), so that
+    /// scripts started later find them without reading on the frame thread
+    /// ([`figure::ClipStore`]).
+    pub fn prefetch_clips(&mut self, dids: impl IntoIterator<Item = u32>) {
+        let Some(ctx) = &self.ctx else { return };
+        for d in dids {
+            if self.clip_queue.len() >= MAX_CLIP_QUEUE {
+                break;
+            }
+            if !ctx.clips.has(d) && !self.clip_queue.contains(&d) {
+                self.clip_queue.push_back(d);
+            }
+        }
+    }
+
+    /// Whether every clip of `dids` has been decoded (or failed for good).
+    #[must_use]
+    pub fn clips_decoded(&self, dids: &[u32]) -> bool {
+        self.ctx
+            .as_ref()
+            .is_none_or(|c| dids.iter().all(|d| c.clips.has(*d)))
+    }
+
+    /// Clips asked for on the frame thread before they were decoded (not read there;
+    /// [`figure::ClipStore::frame_thread_misses`]).
+    #[must_use]
+    pub fn clip_frame_misses(&self) -> u64 {
+        self.ctx
+            .as_ref()
+            .map_or(0, |c| c.clips.frame_thread_misses())
+    }
+
+    /// The first clip DIDs frame-thread lookups missed ([`figure::ClipStore::frame_thread_missed`];
+    /// diagnostics).
+    #[must_use]
+    pub fn clip_frame_missed(&self) -> Vec<u32> {
+        self.ctx
+            .as_ref()
+            .map_or_else(Vec::new, |c| c.clips.frame_thread_missed())
+    }
+
+    /// Whether the clips that `request`'s scripts start on entity `id`'s figure are decoded
+    /// ([`prefetch`]): `true` once a worker has evaluated the scripts and decoded their
+    /// clips, and also when there is nothing to wait for (no figure context, no figure yet,
+    /// a figure without scripts: its scripts do not run). The figure drawn now and the one
+    /// requested to replace it are both asked for. The first call queues the jobs.
+    /// A job the pool refuses is asked for again by the next call (never read as ready).
+    pub fn script_clips_ready(&mut self, id: EntityId, request: &prefetch::ClipPrefetch) -> bool {
+        let Some(ctx) = self.ctx.clone() else {
+            return true;
+        };
+        let Some(e) = self.store.entity_for(NetId(id.0)) else {
+            return true;
+        };
+        // The figure drawn now (the one the effects runtime runs scripts on) and the one
+        // requested (it replaces the drawn one once built), when they differ.
+        let drawn = self.store.render(e).map(|r| r.slot);
+        let wanted = self.actors.get(e).and_then(|a| a.slot);
+        let scripts_of = |slot: Option<u32>| match slot
+            .and_then(|s| self.slots.get(s as usize))
+            .map(|s| &s.state)
+        {
+            Some(SlotState::Ready(g)) => g.asset.scripts.clone(),
+            Some(SlotState::Waiting(a, _)) => a.scripts.clone(),
+            _ => None,
+        };
+        let mut figures: Vec<Arc<figure::FigureScripts>> = Vec::with_capacity(2);
+        for s in [scripts_of(drawn), scripts_of(wanted)]
+            .into_iter()
+            .flatten()
+        {
+            if !figures.iter().any(|f| Arc::ptr_eq(f, &s)) {
+                figures.push(s);
+            }
+        }
+        let digest = request.digest();
+        let mut ready = true;
+        for scripts in figures {
+            let job = match self.script_prefetch.ask(&scripts, digest) {
+                prefetch::PrefetchAsk::Ready => continue,
+                prefetch::PrefetchAsk::Waiting => {
+                    ready = false;
+                    continue;
+                }
+                prefetch::PrefetchAsk::Queue(job) => job,
+            };
+            ready = false;
+            let request = request.clone();
+            let ctx = Arc::clone(&ctx);
+            let work = move |_: &tessera_assets::JobContext<'_>| {
+                let _ = prefetch::run(&ctx, &scripts, &request);
+                job.finish();
+            };
+            if let Err(e) = self.pool.spawn(Priority::Visible, CancelToken::new(), work) {
+                // The job was dropped without running: asked for again by the next call.
+                tracing::debug!("script clips not queued: {e}");
+            }
+        }
+        ready
+    }
+
+    /// Starts clip-decoding jobs for the queue and the frame thread's misses.
+    fn start_clip_jobs(&mut self) {
+        let Some(ctx) = self.ctx.clone() else { return };
+        let missed = ctx.clips.take_pending();
+        self.prefetch_clips(missed);
+        use std::sync::atomic::Ordering;
+        while self.clip_jobs.load(Ordering::Relaxed) < MAX_CLIP_JOBS {
+            // A job decodes a batch, so that a long queue does not wait on one clip each.
+            let batch: Vec<u32> = (0..16)
+                .filter_map(|_| self.clip_queue.pop_front())
+                .collect();
+            if batch.is_empty() {
+                break;
+            }
+            let ctx = Arc::clone(&ctx);
+            let jobs = Arc::clone(&self.clip_jobs);
+            jobs.fetch_add(1, Ordering::Relaxed);
+            let guard = ClipJobGuard(Arc::clone(&jobs));
+            let retry = batch.clone();
+            let job = move |_: &tessera_assets::JobContext<'_>| {
+                let _guard = guard;
+                for d in batch {
+                    let _ = ctx.clips.prefetch(&ctx.set, d);
+                }
+            };
+            if let Err(e) = self.pool.spawn(Priority::Visible, CancelToken::new(), job) {
+                // Queued again, in order, for the next frame.
+                tracing::debug!("clip decoding not queued: {e}");
+                for d in retry.into_iter().rev() {
+                    self.clip_queue.push_front(d);
+                }
+                break;
+            }
+        }
+    }
+
+    fn poll_camera(&mut self) {
+        let Some(rx) = &self.camera_rx else { return };
+        let r = match rx.try_recv() {
+            Ok(r) => r,
+            Err(std::sync::mpsc::TryRecvError::Empty) => return,
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                self.camera_rx = None;
+                return;
+            }
+        };
+        self.camera_rx = None;
+        match r {
+            Ok(p) => {
+                tracing::info!(record = ?p.record, distance = p.initial_distance, "camera state");
+                self.camera = p;
+            }
+            Err(e) => tracing::warn!("{e}; the walker's camera profile is used"),
+        }
+    }
+
+    /// The player's look-at height times its z scale (*H* × *s_z*, step 1 of `walker.md`
+    /// §11.7) for the walk camera ([`super::controls::Controls::set_look_at_height`]):
+    /// `None` before the player's figure is built or when no level of it holds
+    /// `Entity_Camera_Lookat_Height`.
+    #[must_use]
+    pub fn player_look_at_height(&self) -> Option<f32> {
+        let e = self.store.entity_for(NetId(self.player?.0))?;
+        let render = self.store.render(e)?;
+        let SlotState::Ready(g) = &self.slots.get(render.slot as usize)?.state else {
+            return None;
+        };
+        let scale = self.store.transform(e).map_or(1.0, |t| t.scale[2]);
+        let h = g.asset.look_at_height? * g.asset.model_scale[2] * scale;
+        h.is_finite().then_some(h)
+    }
+
+    /// The player's current target fade opacity (`walker.md` §11.7; 1 when not faded).
+    #[must_use]
+    pub fn player_fade(&self) -> f32 {
+        self.player_fade
     }
 
     /// The install's creation controls the received looks are read with (decision 0025
@@ -1292,6 +1645,7 @@ impl CharacterLayer {
                         plans: p.plans.clone(),
                         skinned: p.skinned,
                         held: p.held,
+                        variants: p.variants,
                         bytes,
                     }),
                     Err(e) => {
@@ -1921,6 +2275,8 @@ impl CharacterLayer {
         dt: f32,
     ) {
         self.frame += 1;
+        self.poll_camera();
+        self.start_clip_jobs();
         self.start_jobs();
         self.poll_jobs();
         self.start_jobs();
@@ -1957,6 +2313,7 @@ impl CharacterLayer {
         }
 
         self.attach_ready(&|t| matches!(objects.texture(t), TexLookup::Pending));
+        self.update_live(dt);
         self.place_mount();
 
         // Animation (ARCHITECTURE §20.3 step 6): collect the previous frame's poses, then
@@ -2091,6 +2448,77 @@ impl CharacterLayer {
         self.refresh_stats();
     }
 
+    /// Starts the live scripts of the screens' figure built in `slot` ([`live`]); `None`
+    /// when the figure has no live package or the runtime refuses it.
+    fn start_live(&mut self, slot: u32, asset: &Arc<FigureAsset>) -> Option<live::LiveFigure> {
+        let package = asset.live.clone()?;
+        let (Some(ctx), Some(skeleton)) = (self.ctx.clone(), asset.skeleton.clone()) else {
+            return None;
+        };
+        let clips = Box::new(live::StoreClips { ctx, skeleton });
+        match live::LiveFigure::start(package, clips, PREVIEW_ID) {
+            Ok(mut l) => {
+                l.set_keys(self.preview_keys.0, self.preview_keys.1);
+                tracing::debug!(slot, keys = ?l.keys(), "screen figure runs its scripts live");
+                Some(l)
+            }
+            Err(e) => {
+                tracing::warn!("screen figure scripts not started: {e}; static clips shown");
+                None
+            }
+        }
+    }
+
+    /// The live scripts of the screens' figure, while they run.
+    #[must_use]
+    pub fn preview_live(&self) -> Option<&live::LiveFigure> {
+        self.live.as_ref().map(|(_, l)| l)
+    }
+
+    /// The slot of the screens' figure the render component draws (tests and
+    /// diagnostics: a slot that stays the same is the same figure).
+    #[must_use]
+    pub fn preview_slot(&self) -> Option<u32> {
+        self.store
+            .entity_for(NetId(PREVIEW_ID.0))
+            .and_then(|e| self.actors.get(e))
+            .and_then(|a| a.attached)
+    }
+
+    /// Advances the screens' figure's live scripts and plays their clips; builds the figure
+    /// again when a key change met a figure that cannot run live.
+    fn update_live(&mut self, dt: f32) {
+        let attached = self.preview_slot();
+        if let Some((slot, _)) = &self.live
+            && attached != Some(*slot)
+        {
+            self.live = None;
+        }
+        if self.preview_rebuild.is_some() {
+            let built = attached.and_then(|s| match self.slots.get(s as usize).map(|s| &s.state) {
+                Some(SlotState::Ready(g)) => Some(g.asset.live.is_some()),
+                _ => None,
+            });
+            match built {
+                Some(true) => self.preview_rebuild = None,
+                Some(false) => {
+                    if let Some((req, look)) = self.preview_rebuild.take() {
+                        self.replace_preview(req, look);
+                    }
+                }
+                None => {}
+            }
+        }
+        let Some((_, l)) = &mut self.live else {
+            return;
+        };
+        l.advance(f64::from(dt));
+        let commands = l.take_clip_commands();
+        if !commands.is_empty() {
+            self.apply_clip_commands(commands);
+        }
+    }
+
     /// Gives entities whose requested figure became ready their render (and animation)
     /// components; a failed figure removes them. The screens' figure is attached only once
     /// every texture of its surfaces is on the GPU (or failed for good): drawn earlier, its
@@ -2130,12 +2558,30 @@ impl CharacterLayer {
                 continue;
             }
             self.store.remove_anim(e);
+            // The screens' figure runs its scripts live (`character-screens.md` §2.1.4): its
+            // animator then holds only the held proportion clips; the scripts start the rest.
+            let live_figure = if preview {
+                self.start_live(slot, &asset)
+            } else {
+                None
+            };
+            let static_clips;
+            let clips = if live_figure.is_some() {
+                static_clips = figure::FigureClips {
+                    held: asset.clips.held.clone(),
+                    ..figure::FigureClips::default()
+                };
+                &static_clips
+            } else {
+                &asset.clips
+            };
+            if preview {
+                self.live = live_figure.map(|l| (slot, l));
+            }
             if let Some(skel) = &asset.skeleton {
                 let seed = self.actors.get(e).map_or(0, |a| a.seed);
                 let phase = (seed % 10_000) as f32 / 1000.0;
-                if let Some((animator, loco, keys)) =
-                    make_animator_with_keys(skel, &asset.clips, phase)
-                {
+                if let Some((animator, loco, keys)) = make_animator_with_keys(skel, clips, phase) {
                     match self.scheduler.add(Arc::clone(skel), asset.attach.clone()) {
                         Ok(instance) => {
                             if let Err(r) = self.store.set_anim(
@@ -2316,7 +2762,23 @@ impl CharacterLayer {
                 df.lod,
             );
             a.seen = true;
-            let opacity = opacity * a.alpha.clamp(0.0, 1.0);
+            let mut opacity = opacity * a.alpha.clamp(0.0, 1.0);
+            if is_player {
+                // `walker.md` §11.7 "Target fade": the camera's distance to the point it
+                // looks at, with the profile it follows (module docs).
+                let (profile, target) = player_fade_view(
+                    self.camera_view.as_ref(),
+                    |w| anchor.to_render(w),
+                    pos,
+                    a.heading,
+                    g.asset.look_at_height.map(|h| h * scale.z),
+                );
+                let goal = profile.fade_goal((camera - target).length());
+                self.player_fade =
+                    smooth_towards(self.player_fade, goal, df.dt, profile.zoom_smoothing)
+                        .clamp(0.0, 1.0);
+                opacity *= self.player_fade;
+            }
             if opacity <= 0.0 || !in_view {
                 continue;
             }
@@ -2433,13 +2895,77 @@ impl CharacterLayer {
         let Some(old) = self.actors.get(e).map(|a| a.slot) else {
             return;
         };
+        let keys = (req.chargen_stage, req.chargen_action);
+        self.preview_keys = keys;
         let same = old
             .and_then(|s| self.slots.get(s as usize))
             .and_then(|s| s.key.as_ref())
             .is_some_and(|k| *k == key);
         if same {
+            self.preview_rebuild = None;
+            if let Some((_, l)) = &mut self.live {
+                l.set_keys(keys.0, keys.1);
+            }
             return;
         }
+        // Only `CharGen_Stage` or `CharGen_Action` changed: the figure's running scripts
+        // take the new keys (`character-screens.md` §2.1.4); nothing is built again.
+        if let Some(old) = old
+            && self.keys_only_change(old, &req, &look)
+        {
+            if let Some((slot, l)) = self.live.as_mut()
+                && *slot == old
+            {
+                l.set_keys(keys.0, keys.1);
+                return;
+            }
+            let attached = self.actors.get(e).and_then(|a| a.attached);
+            let may_run_live = match self.slots.get(old as usize).map(|s| &s.state) {
+                Some(SlotState::Building(_) | SlotState::Queued) => true,
+                Some(SlotState::Waiting(a, _)) => a.live.is_some(),
+                // Ready but still waiting for its textures: attached later with these keys.
+                Some(SlotState::Ready(g)) => g.asset.live.is_some() && attached != Some(old),
+                _ => false,
+            };
+            if may_run_live {
+                self.preview_rebuild = Some((req, look));
+                return;
+            }
+        }
+        self.preview_rebuild = None;
+        self.replace_preview(req, look);
+    }
+
+    /// Whether `req` with `look` differs from the request of `slot` only in its
+    /// `CharGen_Stage` and `CharGen_Action` keys (both screen requests).
+    fn keys_only_change(&self, slot: u32, req: &FigureRequest, look: &LookChoices) -> bool {
+        let Some(s) = self.slots.get(slot as usize) else {
+            return false;
+        };
+        let Some(old) = &s.request else {
+            return false;
+        };
+        if old.chargen_stage.is_none() || req.chargen_stage.is_none() {
+            return false;
+        }
+        let strip = |r: &FigureRequest| {
+            let mut r = r.clone();
+            r.chargen_stage = Some(0);
+            r.chargen_action = None;
+            r
+        };
+        strip(old).key_with(&s.look) == strip(req).key_with(look)
+    }
+
+    /// Makes `req` the screens' figure's request (built on the workers; the previous
+    /// figure stays drawn until it is attached).
+    fn replace_preview(&mut self, req: FigureRequest, look: LookChoices) {
+        let Some(e) = self.store.entity_for(NetId(PREVIEW_ID.0)) else {
+            return;
+        };
+        let Some(old) = self.actors.get(e).map(|a| a.slot) else {
+            return;
+        };
         let slot = self.acquire(req, look);
         if let Some(old) = old {
             self.release(old);
@@ -2528,7 +3054,24 @@ impl CharacterLayer {
         let palette: Option<SkinPalette> = pose
             .filter(|(skin, _)| !skin.is_empty())
             .and_then(|(skin, _)| frame.skin_palette(skin).ok());
+        // The screens' figure's live scripts choose its appearance variant and props
+        // ([`live`]); without them the variant it was built with and no props.
+        let live = self
+            .live
+            .as_ref()
+            .filter(|(slot, _)| *slot == render.slot)
+            .map(|(_, l)| l);
+        let variant_bit = 1u8 << live.map_or(0, live::LiveFigure::variant).min(7);
         for part in &g.parts {
+            if part.variants & variant_bit == 0 {
+                continue;
+            }
+            if let Some(key) = part.held
+                && key >= live::PROP_KEY_BASE
+                && !live.is_some_and(|l| l.prop_shown(key))
+            {
+                continue;
+            }
             let transform = match part.held {
                 None => world,
                 Some(key) => {
@@ -2642,6 +3185,40 @@ mod tests {
     use tessera_net::{DataId, EntityKind, Location, RegionId, Transform as NetTransform};
 
     use super::*;
+
+    /// Review finding (`walker.md` §11.7): the player's target fade measures to the point
+    /// the walk camera looks at, with the profile it follows; until the camera gives its
+    /// view, with the camera's own defaults (not the install record and the figure height,
+    /// which the camera does not use then).
+    #[test]
+    fn the_target_fade_uses_the_cameras_view() {
+        let pos = Vec3::new(10.0, 20.0, 5.0);
+        let record = CameraProfile {
+            record: Some(tessera_formats::Did(0x0800_0001)),
+            fade_distance: 2.0,
+            height_factor: 0.5,
+            ..CameraProfile::FALLBACK
+        };
+        // No view yet: the fallback profile and the default height.
+        let (p, at) = player_fade_view(None, |_| None, pos, 0.0, Some(1.07));
+        assert_eq!(p, CameraProfile::FALLBACK);
+        let raise =
+            CameraProfile::FALLBACK.look_at_raise(super::super::controls::DEFAULT_LOOK_AT_HEIGHT);
+        assert!((at - (pos + Vec3::Z * raise)).length() < 1e-5, "{at:?}");
+        // The camera's view: its profile and its point (a mount's offset included).
+        let target = WorldPos::new(1, 0.0, 0.0, 0.0);
+        let point = Vec3::new(10.5, 20.0, 6.3);
+        let view = (record, Some(target));
+        let (p, at) = player_fade_view(Some(&view), |_| Some(point), pos, 0.0, Some(1.07));
+        assert_eq!(p, record);
+        assert_eq!(at, point);
+        // A view without a point (outside walk mode): the profile with the figure's height.
+        let view = (record, None);
+        let (_, at) = player_fade_view(Some(&view), |_| None, pos, 0.0, Some(1.07));
+        assert!((at.z - (pos.z + 0.5 * 1.07)).abs() < 1e-5, "{at:?}");
+        let (_, at) = player_fade_view(Some(&view), |_| None, pos, 0.0, None);
+        assert_eq!(at, pos, "no raise without a look-at height");
+    }
 
     fn layer() -> CharacterLayer {
         let pool = WorkerPool::new(PoolConfig {
@@ -2813,6 +3390,51 @@ mod tests {
         l.set_preview(None, Instant::now());
         assert!(l.preview().is_none());
         assert!(l.store().is_empty());
+    }
+
+    /// `character-screens.md` §2.1.4: a change of `CharGen_Stage` or `CharGen_Action`
+    /// keeps the screens' figure (its scripts take the keys, [`live`]); any other change
+    /// builds a new one.
+    #[test]
+    fn a_stage_key_change_keeps_the_screens_figure() {
+        let mut l = layer();
+        let req = |stage: u32, action: u32, height: Option<f32>| FigureRequest {
+            body: Body::Character {
+                species: 0x0A01,
+                sex: tessera_gamedata::GENDER_MALE,
+            },
+            equipment: Vec::new(),
+            instance: None,
+            instance_key: None,
+            static_only: false,
+            avatar_height: height,
+            bone_scale: None,
+            seed: None,
+            chargen_stage: Some(stage),
+            chargen_action: Some(action),
+            class: Some(3),
+            always_selectable: true,
+        };
+        let look = LookChoices::default();
+        l.set_preview(Some((req(1, 2, None), look.clone())), Instant::now());
+        assert_eq!(refs(&l), vec![1]);
+        // Race-and-class to appearance: the same figure, the new keys kept for its scripts.
+        l.set_preview(Some((req(6, 2, None), look.clone())), Instant::now());
+        assert_eq!(refs(&l), vec![1], "no new figure");
+        assert_eq!(
+            l.preview().unwrap().request.chargen_stage,
+            Some(1),
+            "built once"
+        );
+        assert_eq!(l.preview_keys, (Some(6), Some(2)));
+        // A hover key change too.
+        l.set_preview(Some((req(6, 3, None), look.clone())), Instant::now());
+        assert_eq!(refs(&l), vec![1]);
+        assert_eq!(l.preview_keys, (Some(6), Some(3)));
+        // Another choice builds a new figure.
+        l.set_preview(Some((req(6, 3, Some(0.5)), look)), Instant::now());
+        assert_eq!(refs(&l), vec![0, 1]);
+        assert!(l.preview_rebuild.is_none());
     }
 
     #[test]

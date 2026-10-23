@@ -28,7 +28,9 @@
 //!   follow `particle-runtime.md` §5.4–§5.8 (start gates, the never-ending instance with its
 //!   stop hook and redirect listener) and leave the effect to the sink; While runs its
 //!   branch while its property test holds and PhysicsImpulse sends its impulse to the sink
-//!   (§30); other effect kinds complete at once (§18).
+//!   (§30); a MeshFX node asks [`EffectSink::start_mesh_fx`] and, when the sink attached
+//!   its entity, runs until stopped ([`EffectSink::stop_mesh_fx`]); other effect kinds
+//!   complete at once (§18).
 //! - Combat (`combat-visuals.md`, `script-table.md` §9.1): [`Runtime::start_script_with`]
 //!   starts a run with a run-parameter set (`StorySystem_StoryID`,
 //!   `Combat_AnimationSpeedMultiplier`, the strike parameters) and returns a [`RunId`]
@@ -81,9 +83,9 @@ pub use runtime::{
 pub use sink::{
     AnimationHandle, AnimationOutcome, BeamHandle, BeamStart, EffectSink, EntityId,
     EnvironmentHandle, EnvironmentRequest, ExecuteReply, ExecuteRequest, ImpulseRequest,
-    JUMP_AIR_TIME_OFFSET, MAX_EXECUTE_OUTPUTS, NullSink, ParticleHandle, ParticleStart,
-    RecordingSink, SinkEvent, SoundHandle, SoundPositioner, SoundStart, SoundStartOutcome,
-    StoryHookEvent,
+    JUMP_AIR_TIME_OFFSET, MAX_EXECUTE_OUTPUTS, MeshFxHandle, MeshFxOutcome, MeshFxStart, NullSink,
+    ParticleHandle, ParticleStart, RecordingSink, SinkEvent, SoundHandle, SoundPositioner,
+    SoundStart, SoundStartOutcome, StoryHookEvent,
 };
 pub use source::{FetchSource, MemorySource, ScriptSource};
 pub use vocab::{

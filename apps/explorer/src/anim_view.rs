@@ -1516,6 +1516,13 @@ fn inspector(ui: &mut Ui, st: &mut CharacterState, did: u32, actions: &mut Vec<A
             egui::CollapsingHeader::new(format!("Parts ({})", p.scene.parts.len()))
                 .default_open(false)
                 .show(ui, |ui| parts_section(ui, &p, actions));
+            // The height controls of every playable body (`appearance.md` §6.2:
+            // `AC_BoneScale_Test` on all 14 avatar entities), with or without sliders.
+            if let Some(shape) = shape_controls(&p) {
+                egui::CollapsingHeader::new("Body shape (appearance.md §6.2)")
+                    .default_open(false)
+                    .show(ui, |ui| body_shape_section(ui, st, &shape));
+            }
             if !p.sliders.defs.is_empty() || p.sliders.record.is_some() {
                 egui::CollapsingHeader::new(format!("Sliders ({})", p.sliders.visible()))
                     .default_open(false)
@@ -2114,21 +2121,56 @@ fn sliders_section(ui: &mut Ui, st: &mut CharacterState, p: &CharacterProduct) {
     }
     if ui.button("Defaults").clicked() {
         st.sliders = None;
-        st.bone_scale = None;
-        st.avatar_height = None;
     }
     if changed {
         st.sliders = Some(bytes);
     }
-    ui.separator();
-    // The control's range per body (appearance.md §6.2 table).
-    let range = crate::character::bone_scale_range(
+}
+
+/// The height controls a figure offers (`appearance.md` §6.2): the body-shape control
+/// (`AC_BoneScale_Test`) with its range, and the height control (`AC_Avatar_Height`) when
+/// the figure has one.
+#[derive(Debug, Clone, PartialEq)]
+struct ShapeControls {
+    /// The range of `AC_BoneScale_Test`.
+    bone_scale: std::ops::RangeInclusive<f32>,
+    /// The range of `AC_Avatar_Height`, for a figure whose held clip it drives.
+    avatar_height: Option<std::ops::RangeInclusive<f32>>,
+}
+
+/// The height controls of `p`'s figure ([`shape_controls_of`]).
+fn shape_controls(p: &CharacterProduct) -> Option<ShapeControls> {
+    shape_controls_of(
         &p.request.figure,
         p.held_clips.iter().map(|h| h.held.driver),
-    );
+    )
+}
+
+/// The height controls of `figure` (`appearance.md` §6.2 table): every playable body has
+/// the body-shape control, whether or not it has slider definitions (Hobbit, Dwarf,
+/// DwarfStoutAxe and Beorning bodies have none, §6.3); the River-hobbit bodies (held clips
+/// driven by `AC_Avatar_Height`) also the height control. Other figures (entities, bare
+/// setups) have neither: the properties live on the avatar entities.
+fn shape_controls_of(
+    figure: &Figure,
+    drivers: impl IntoIterator<Item = Option<tessera_mesh::assembly::shape::ShapeDriver>> + Clone,
+) -> Option<ShapeControls> {
+    if !matches!(figure, Figure::Playable { .. }) {
+        return None;
+    }
+    Some(ShapeControls {
+        bone_scale: crate::character::bone_scale_range(figure, drivers.clone()),
+        avatar_height: crate::character::avatar_height_range(figure, drivers),
+    })
+}
+
+fn body_shape_section(ui: &mut Ui, st: &mut CharacterState, shape: &ShapeControls) {
     let mut h = st.bone_scale.unwrap_or(0.5);
     if ui
-        .add(egui::Slider::new(&mut h, range).text("body shape (AC_BoneScale_Test)"))
+        .add(
+            egui::Slider::new(&mut h, shape.bone_scale.clone())
+                .text("body shape (AC_BoneScale_Test)"),
+        )
         .on_hover_text("The body-shape deformer's fraction (appearance.md §6.2, §6.4)")
         .changed()
     {
@@ -2136,10 +2178,7 @@ fn sliders_section(ui: &mut Ui, st: &mut CharacterState, p: &CharacterProduct) {
     }
     // Only for a figure whose held clip is driven by AC_Avatar_Height, with its sex's range
     // (appearance.md §6.2).
-    if let Some(range) = crate::character::avatar_height_range(
-        &p.request.figure,
-        p.held_clips.iter().map(|h| h.held.driver),
-    ) {
+    if let Some(range) = shape.avatar_height.clone() {
         let mut a = st.avatar_height.unwrap_or(0.0);
         if ui
             .add(egui::Slider::new(&mut a, range).text("height (AC_Avatar_Height)"))
@@ -2150,6 +2189,10 @@ fn sliders_section(ui: &mut Ui, st: &mut CharacterState, p: &CharacterProduct) {
         {
             st.avatar_height = Some(a);
         }
+    }
+    if ui.button("Defaults").clicked() {
+        st.bone_scale = None;
+        st.avatar_height = None;
     }
 }
 
@@ -2356,6 +2399,38 @@ pub fn frame_sphere(scene: &crate::scene::SceneProduct, scale: [f32; 3]) -> ([f3
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `appearance.md` §6.2: the body-shape control is offered for every playable body,
+    /// also one without slider definitions (Hobbit, Dwarf, DwarfStoutAxe, Beorning); the
+    /// height control only where `AC_Avatar_Height` drives a held clip.
+    #[test]
+    fn every_playable_body_offers_the_body_shape_control() {
+        use tessera_mesh::assembly::shape::ShapeDriver;
+        let dwarf = Figure::Playable {
+            species: 0x0001,
+            sex: crate::charspec::SEX_MALE,
+        };
+        // No sliders and no held clip.
+        let c = shape_controls_of(&dwarf, std::iter::empty()).expect("controls");
+        assert_eq!(c.bone_scale, 0.0..=1.0);
+        assert_eq!(c.avatar_height, None);
+        // A body-shape-driven held clip (DwarfStoutAxe): still no height control.
+        let c = shape_controls_of(&dwarf, [Some(ShapeDriver::BoneScale)]).expect("controls");
+        assert_eq!(c.avatar_height, None);
+        // A River-hobbit male body: both, with the male ranges.
+        let c = shape_controls_of(&dwarf, [Some(ShapeDriver::AvatarHeight)]).expect("controls");
+        assert_eq!(c.bone_scale, 0.0..=0.6);
+        assert_eq!(c.avatar_height, Some(0.0..=0.95));
+        // Entities and setups carry no height controls.
+        assert_eq!(
+            shape_controls_of(&Figure::Object(Did(0x4700_0001)), std::iter::empty()),
+            None
+        );
+        assert_eq!(
+            shape_controls_of(&Figure::Setup(Did(0x0400_0001)), std::iter::empty()),
+            None
+        );
+    }
 
     #[test]
     fn seeds_by_record_type() {

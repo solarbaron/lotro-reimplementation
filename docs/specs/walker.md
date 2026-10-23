@@ -2297,8 +2297,54 @@ against the expected facts by `visual_rows_real_data.rs` (all 6 tests pass with
 > §14.12, with each choice labelled and the departures from `landblock.md` §4.12–§4.14
 > marked.
 
-> **OPEN (implementer, 2026-10-06):** the camera rows of §11.8 (camera-state record, login
-> placement, zoom range, look-at point, target fade) are not adopted yet.
+> **OPEN (implementer, 2026-10-06; updated 2026-10-23, `tessera-client`): built, not
+> wired.** The camera rows of §11.8 are built (`apps/client/src/walker/controls.rs`,
+> `CameraProfile`) but do not yet act in the running walker. Built: the in-world state is
+> the record that `UNIQUEDB` key 0x10000041 names, else key 0x0A (§11.6), read and decoded
+> on an asset worker by the character layer at start-up; until it arrives, or without one,
+> the §11.8 values (6 m, −15°, 1 to 20 m, 0.4 s, factor 0.925, fade below 0.7 m to 0.1).
+> At placement the walk camera stands behind the character at the initial distance and
+> pitch (§11.7 steps 2–4, the Tessera Decision on flag *P*); the wheel moves the distance
+> goal within [minimum, maximum] and the shown distance follows it with the zoom smoothing
+> time; it looks at the feet raised by *f* × *H* × *s_z* (*H* the figure's
+> `Entity_Camera_Lookat_Height`) plus the target block's offset; the camera kept above the
+> terrain (§5) turns towards that point; the player's figure is drawn at the fade opacity
+> while the camera is closer than the fade distance to the point the camera looks at, with
+> the profile the camera follows. The former 7 m zoom, 1.5–60 m range and head-relative eye
+> are gone. **Not wired** (the walker's frame loop, `walker/mod.rs`, belongs to another
+> change): (1) the frame loop must call `Controls::follow_characters(&mut characters)`
+> every frame after the character layer's update and before its draws; until then the walk
+> camera keeps the §11.8 values and a 1.7 m look-at height whatever the install's record
+> and the figure's height say, and the target fade uses the same values (so the two agree);
+> (2) the projection must take the profile's `fov` and `near` (it keeps the walker's fixed
+> 45° and 0.1 m, which equal the §11.8 values); (3) the terrain clamp should pass
+> `Controls::camera_target()` to `keep_above_terrain_towards` (until then it takes the
+> point of the view ray straight above the feet, which is the look-at point on foot
+> without a sideways or forward target offset). The §14.9 row "not adopted" is stale (for
+> the spec writer) once these are in.
+
+> **OPEN (implementer, `tessera-client`, 2026-10-23):** `--pitch DEG` (default −14°) now
+> sets the fly camera's pitch at the spawn only; the walk camera starts at the camera
+> state's initial pitch (§11.7 step 3, −15° with the §11.8 values). §11.8 lets command-line
+> options keep overriding the profile, but the option has a default, so the walker cannot
+> tell a given value from the default; making it an optional value that overrides the walk
+> camera's initial pitch when given (and its help text) is left to the owner of the
+> command line (`apps/client/src/cli.rs`).
+
+> **OPEN (implementer, `tessera-client`, 2026-10-23; engineering choices where §11.7 says
+> "moves towards its goal smoothly"):** the distance and the target fade follow their goals
+> by an exponential approach whose time constant is the smoothing time (zoom smoothing for
+> both; the curve is not stated); pitch and yaw follow the mouse at once (the angle
+> smoothing of 0.08 s is not applied); one wheel notch scales the goal by 0.85; until the
+> player's figure is built, and for a figure that holds no look-at height (instead of the
+> bounding-box Decision of §11.7; every playable body holds one), the walk camera takes
+> *H* × *s_z* as 1.7 m (the target fade measures to the camera's own look-at point, so it
+> uses the same height); the camera is still kept 0.8 m above the terrain (§5) and pulled
+> in by the collision world as before (the state's own collision fields are not used); a
+> profile that arrives after the user zoomed or turned
+> keeps the user's view within the new ranges; record values outside sane ranges (distances
+> above 1,000 m, smoothing above 10 s, a field of view outside 1° to 179°) make the record
+> unusable or are limited.
 
 > **OPEN (implementer, 2026-10-06):** characters' draw distance uses `d0` = 80 m (the
 > three character classes agree, §11.4.2) and their shadow distance the render

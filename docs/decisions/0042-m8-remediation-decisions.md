@@ -30,6 +30,11 @@ and sets what may be built until the specs pass.
 2. **Admin and GM message classes (N5).** These are out of scope. Tessera never sends them.
    Received ones are ignored and counted, never acted on. Script RPC signatures are read from
    the install at run time, never embedded as a table (decision 0012).
+
+   *Clarification (2026-10-23):* the session-level system notification (control opcode
+   0x12E, a server notice such as a shutdown warning, renamed from an admin-sounding name) is
+   not an admin class in this sense. Tessera decodes it and shows its text as a system line,
+   because that helps the user and acts on nothing. Tessera never encodes or sends it.
 3. **Service URLs and path fragments (N6).** Tessera hard-codes no service URL, host or path
    fragment. Every endpoint comes at run time from the user's install configuration files, as
    0034 §1 requires. If they do not give one, there is no fallback URL and the client

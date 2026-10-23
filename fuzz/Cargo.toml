@@ -1517,3 +1517,12 @@ path = "fuzz_targets/particles_weather.rs"
 test = false
 doc = false
 bench = false
+
+# --- tessera-client --render-pref KEY=VALUE (apps/client/src/render_pref.rs, included by path; walker.md §14.10, far-view.md FD22) ---
+
+[[bin]]
+name = "client_render_pref"
+path = "fuzz_targets/client_render_pref.rs"
+test = false
+doc = false
+bench = false

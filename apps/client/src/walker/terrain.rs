@@ -227,11 +227,17 @@ pub struct BlockInputs {
 /// (the landblock's instance property set for its IID when there is one, **otherwise** the
 /// entity's own set; never both), then its 0x47 chain through the world's shared property
 /// cache; a generated scenery object reads its chain only, a cell mesh none.
-/// **Not active in the walker:** the walker's bundles drop the landblock's weenie list
-/// before the block workers run (`BundleOptions::keep_weenies` is off), so the instance
-/// sets are never there and every placed entity reads its own set. Reading the value at
-/// bundle build, where the LOD class and depth-bias type read the weenie list, is left to
-/// `tessera-world`.
+///
+/// **Build state (gap open):** today the lookup above runs on the block worker, and there
+/// the instance sets are only seen when the weenies are kept. The walker's bundles drop the
+/// weenie list before the block workers run (`BundleOptions::keep_weenies` is off), so in
+/// the walker a placed entity reads its own set and then its chain only: an entity whose
+/// `Render_Opacity` is held only by its instance set gets factor 1, not that value. Rule 15
+/// counts the placement's property set, so this is a gap, not a conforming reading. The
+/// seam that closes it is [`bundle_render_opacities`]: the values the bundle builder reads
+/// (in the lookup order above, while the weenie list is still there) come first, for placed
+/// entities and generated objects alike, once `tessera-world` exposes them; until then the
+/// seam returns no list and nothing of it runs.
 ///
 /// The PID is looked up by name in the property dictionary on a block worker (never the
 /// frame thread). A definite answer (the dictionary's PID or its absence, a missing or
@@ -296,24 +302,39 @@ impl OwnerOpacity {
     }
 
     /// The factors of `bundle`'s objects in the order [`block_objects`] lists them
-    /// (`entities[i]` for each placed entity's object, `None` for the rest). Chain reads
-    /// that fail for a reason that is not the data's give that object no factor (1) and are
-    /// counted in one log line per block (the bundle builder's own chain reads report the
-    /// same objects as a transient problem of the bundle).
+    /// (`entities[i]` for each placed entity's object, `None` for the rest), the values the
+    /// bundle builder read first ([`bundle_render_opacities`]; today it provides none).
     fn factors(&self, bundle: &LandblockBundle) -> OwnerFactors {
-        let Some(pid) = self.pid() else {
+        self.factors_with(bundle, bundle_render_opacities(bundle))
+    }
+
+    /// [`Self::factors`] with `provided.entities[i]` as the value of placed entity `i` and
+    /// `provided.generated[i]` as that of generated object `i` (the bundle builder's
+    /// reading, `None` inside: the object has no `Render_Opacity`), clamped like
+    /// [`owner_opacity_of`]. An object past the end of its list, or every object of a list
+    /// that is `None`, takes the block worker's lookup (none without a PID: factor 1).
+    /// Chain reads that fail for a reason that is not the data's give that object no factor
+    /// (1) and are counted in one log line per block (the bundle builder's own chain reads
+    /// report the same objects as a transient problem of the bundle).
+    fn factors_with(
+        &self,
+        bundle: &LandblockBundle,
+        provided: BundleOpacities<'_>,
+    ) -> OwnerFactors {
+        let pid = self.pid();
+        if pid.is_none() && provided.entities.is_none() && provided.generated.is_none() {
             return OwnerFactors::default();
-        };
+        }
         let info = bundle.info.as_ref();
-        let instances: HashMap<u64, &tessera_formats::PropertySet> = info
-            .map(|i| {
-                i.weenies
-                    .items
-                    .iter()
-                    .map(|w| (w.iid.0, &w.properties))
-                    .collect()
-            })
-            .unwrap_or_default();
+        let instances: HashMap<u64, &tessera_formats::PropertySet> = match (pid, info) {
+            (Some(_), Some(i)) => i
+                .weenies
+                .items
+                .iter()
+                .map(|w| (w.iid.0, &w.properties))
+                .collect(),
+            _ => HashMap::new(),
+        };
         let transient = std::cell::Cell::new(0u32);
         let chain = |object: Option<Did>| {
             let ctx = self.ctx.as_ref()?;
@@ -334,7 +355,12 @@ impl OwnerOpacity {
         let entities = bundle
             .entities
             .iter()
-            .map(|e| {
+            .enumerate()
+            .map(|(i, e)| {
+                if let Some(v) = provided.entities.and_then(|p| p.get(i)) {
+                    return clamp_owner_opacity(*v);
+                }
+                let pid = pid?;
                 // E26: the instance set when the IID has one, otherwise the own set.
                 let per_instance = e
                     .iid
@@ -346,11 +372,21 @@ impl OwnerOpacity {
                 owner_opacity_of(pid, per_instance, chain(e.object).as_deref())
             })
             .collect();
-        let generated = bundle
-            .generated
-            .iter()
-            .map(|e| owner_opacity_of(pid, None, chain(e.object).as_deref()))
-            .collect();
+        let generated = if pid.is_none() && provided.generated.is_none() {
+            Vec::new()
+        } else {
+            bundle
+                .generated
+                .iter()
+                .enumerate()
+                .map(|(i, e)| {
+                    if let Some(v) = provided.generated.and_then(|p| p.get(i)) {
+                        return clamp_owner_opacity(*v);
+                    }
+                    owner_opacity_of(pid?, None, chain(e.object).as_deref())
+                })
+                .collect()
+        };
         if transient.get() > 0 {
             tracing::warn!(
                 block = %bundle.key,
@@ -412,9 +448,41 @@ pub fn owner_opacity_of(
         .and_then(|s| s.get(pid))
         .or_else(|| chain.and_then(|c| c.get(pid)))?;
     match v {
-        tessera_formats::PropertyValue::Float(f) if f.is_finite() => Some(f.clamp(0.0, 1.0)),
+        tessera_formats::PropertyValue::Float(f) => clamp_owner_opacity(Some(*f)),
         _ => None,
     }
+}
+
+/// An owner `Render_Opacity` as a factor: clamped to 0–1, `None` (the dictionary default 1)
+/// when absent or not finite ([`owner_opacity_of`]).
+fn clamp_owner_opacity(v: Option<f32>) -> Option<f32> {
+    v.filter(|f| f.is_finite()).map(|f| f.clamp(0.0, 1.0))
+}
+
+/// The `Render_Opacity` values a bundle builder read, per list ([`bundle_render_opacities`]):
+/// `entities` in the order of [`LandblockBundle::entities`] (each entity's instance set,
+/// own set, then 0x47 chain; E26), `generated` in the order of
+/// [`LandblockBundle::generated`] (the chain only). `None`: the bundle carries no such list
+/// and [`OwnerOpacity::factors`] looks that list's values up on the block worker.
+#[derive(Debug, Default, Clone, Copy)]
+struct BundleOpacities<'a> {
+    entities: Option<&'a [Option<f32>]>,
+    generated: Option<&'a [Option<f32>]>,
+}
+
+/// The `Render_Opacity` values the bundle builder read for `bundle`'s placed entities and
+/// generated objects (`particle-runtime.md` §12 rule 15, E26).
+///
+/// **Build state:** the `tessera-world` bundle this client builds against carries no such
+/// values yet (it reads the LOD class and depth-bias type at bundle build, not this one),
+/// so both lists are `None`, the block-worker lookup applies, and in the walker the
+/// instance sets are not seen ([`OwnerOpacity`], gap open). When the bundle exposes them,
+/// this function must return both lists, the entities' and the generated objects' (`None`
+/// for an empty list, the "property unknown or environment off" case of the bundle's other
+/// per-entity lists), and [`OwnerOpacity::factors_with`] then prefers them for both; the
+/// block worker's lookup stays the fallback for an object the bundle holds no value for.
+fn bundle_render_opacities(_bundle: &LandblockBundle) -> BundleOpacities<'_> {
+    BundleOpacities::default()
 }
 
 impl std::fmt::Debug for BlockInputs {
@@ -4461,6 +4529,59 @@ mod tests {
                 .factors(&bundle)
                 .entities
                 .is_empty()
+        );
+        // Values the bundle builder read come first, clamped like the lookup's; an entity
+        // past the end of the list takes the block worker's lookup (entity 3: its instance
+        // set's 7.0, clamped to 1).
+        let provided = [Some(0.2), None, Some(f32::NAN)];
+        let only_entities = BundleOpacities {
+            entities: Some(&provided),
+            generated: None,
+        };
+        let f = reader.factors_with(&bundle, only_entities);
+        assert_eq!(f.entities, vec![Some(0.2), None, None, Some(1.0)]);
+        assert_eq!(f.generated, vec![None]);
+        // They need no PID of the worker's own (a dictionary it could not read).
+        let f = OwnerOpacity::with_pid(None).factors_with(
+            &bundle,
+            BundleOpacities {
+                entities: Some(&[Some(-1.0), Some(0.6)]),
+                generated: None,
+            },
+        );
+        assert_eq!(f.entities, vec![Some(0.0), Some(0.6), None, None]);
+        assert!(f.generated.is_empty());
+        // Generated objects prefer the bundle's reading too, with or without a PID.
+        let both = BundleOpacities {
+            entities: None,
+            generated: Some(&[Some(0.4)]),
+        };
+        let f = OwnerOpacity::with_pid(None).factors_with(&bundle, both);
+        assert_eq!(f.generated, vec![Some(0.4)]);
+        assert_eq!(
+            f.entities,
+            vec![None; 4],
+            "no PID, no entity list: factor 1"
+        );
+        let f = reader.factors_with(&bundle, both);
+        assert_eq!(f.generated, vec![Some(0.4)]);
+        assert_eq!(f.entities, vec![None, Some(0.5), None, Some(1.0)]);
+        let f = reader.factors_with(
+            &bundle,
+            BundleOpacities {
+                entities: None,
+                generated: Some(&[Some(2.0)]),
+            },
+        );
+        assert_eq!(f.generated, vec![Some(1.0)], "clamped like the lookup's");
+        // This client's bundles carry no such lists yet: the worker's lookup applies.
+        let none = bundle_render_opacities(&bundle);
+        assert!(none.entities.is_none() && none.generated.is_none());
+        assert_eq!(
+            reader.factors(&bundle).entities,
+            reader
+                .factors_with(&bundle, BundleOpacities::default())
+                .entities
         );
         // Not a float, or not finite: the dictionary default (`None` here, 1 drawn).
         let set = |v: TestValue| {

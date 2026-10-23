@@ -1,14 +1,14 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 
-# UI engine widget classes: GroupBox, Meter, Scrollable, Scrollbar, ListBox, Tree, Panel, Menu and Viewport
+# UI engine widget classes: GroupBox, Meter, Scrollable, Scrollbar, ListBox, Tree, Panel, Menu and Viewport; engine dialog boxes and context menus
 
 | | |
 |---|---|
-| **Status** | **Accepted** (2026-10-14: revision 2 passed an independent review; see the review record). Revision 2 (2026-10-14): §6.4 implementer OPEN answered, new provenance row W29, §6.10 census row, §17 item 18; no behaviour already implemented changes. Before: Accepted (2026-10-06: accepted after revision for decisions 0014/0015) |
-| **Last updated** | 2026-10-14 |
+| **Status** | **Accepted** (2026-10-23: revision 3 passed an independent review after round 5; see the review record). Revision 3 of 2026-10-23: §12 viewport and `TargetViewport` drawing (§12.1–§12.4), new §18 engine dialog boxes and §19 context menus, provenance rows W30–W32, BIN revision 3; round-4 wording fixes of §18.2, §19.3, §19.4 and W29; round-5 wording fixes of §19.2, §18.6, W30 and the BIN revision-3 cell. Before: **Accepted** (2026-10-14: revision 2 passed an independent review; see the review record). Revision 2 (2026-10-14): §6.4 implementer OPEN answered, new provenance row W29, §6.10 census row, §17 item 18; no behaviour already implemented changes. Before: Accepted (2026-10-06: accepted after revision for decisions 0014/0015) |
+| **Last updated** | 2026-10-23 |
 | **Author role** | Spec writer (dirty room), AI-assisted |
-| **Reviewer** | Claude review session (spec-writer agent); revision 2: an independent dirty-room review session that wrote no part of it (2026-10-14) |
-| **Review record** | **Review of revision 2, 2026-10-14** (commit 7c545cd on branch `specfix`: §6.4, W29, §6.10 census row, §17 item 18, change log; independent session, Clean-Room-Role: review, that wrote no part of it): **passed, Accepted.** Checklist (CLEAN_ROOM.md §5.3): every new statement is a behaviour, order, count or a marked Tessera rule; no code or pseudo-code (no addresses, no listing-shaped steps); no copied prose; element and property names are data identifiers; no game text, keys, hostnames or traffic; BIN within decision 0011 (offline client UI; build, SHA-256 prefix, tool, question (m) and why M1–M3 were not enough stated in W29); the remaining unknown (layout during creation) is OPEN with a Tessera rule. The follow-up question is answered: step 6 does show a bar again that the layout hid with `UICore_Element_hide`, unless it is disabled with `hide_when_disabled`, which confirms what was built. **Spot checks** (read-only, 2026-10-14, own probes; a private read-only copy of the analysis project, Ghidra headless, deleted after use; build SHA-256 prefix d22363eb9aff0fb5 checked): BIN W29: the base element's handler for `UICore_Element_hide` calls the element's show/hide routine with the inverse of the value; the scroll bar's layout calls the same routine for itself (shown unless both the disabled and the hide-when-disabled flags are set) and for each fill part (shown unless disabled); the bar's handler for `UICore_Scrollbar_position` ends in the layout; the fellowship row sets the volume control's scroll position (conditionally) before it writes its visibility from the voice flag. OBS: the 4 layout-hidden Scrollbar instances are the two `FellowTemplateVolumeControl` and the two `Webstore_URL_Scrollbar`, each hidden in its own block (the volume control also in its default state), `hide_when_disabled` true, none disabled (my simplified resolver counts 775 Scrollbar instances against the 792 of §3.3, a difference of the probe, not of the 4 hidden ones). All agree. **Non-blocking note:** in the third consequence bullet "position" is `UICore_Scrollbar_position` (§6.5), not the placement in the row; name it at the next revision. Earlier: Review of the decision-0014/0015 revision, 2026-10-06: **passed**, Accepted. Full record moved to the review log (decision 0018). |
+| **Reviewer** | Claude review session (spec-writer agent); revision 3: spec-review:spec-ui-input:2 (independent session), which wrote no part of it (2026-10-23); revision 2: an independent dirty-room review session that wrote no part of it (2026-10-14) |
+| **Review record** | **Review of revision 3 after round 5, 2026-10-23** (spec-review:spec-ui-input:2 (independent session), which wrote no part of it): **passed**; status Revised → Accepted. CLEAN_ROOM.md §5.3 met on the changed text: functional facts and labelled Tessera rules only; no code or pseudo-code, no copied prose, no game text, keys or hostnames; no disassembly in prose (§18.2, §19.2–§19.4, W29 and §18.6 state observable results; the BIN revision-3 cell names questions (n)–(p) only); BIN (n)–(p) within decision 0011 (offline UI code, build, full SHA-256, tool, questions and why M1–M3 were not enough stated; scope confirmed by the orchestrator); decision-0012 constants listed in W30 and W31; every unknown is an OPEN with a Tessera rule (§17 items 19–24). Spot checks against the install: layouts 0x2200007C and 0x2200007B, scene 0x21000004 and texture lists 0x40000E4B, 0x40000E4C present; relative links and anchors resolve. Non-blocking: none. **Review of revision 3 after round 4, 2026-10-23** (spec-review:spec-ui-input:1 (independent session), which wrote no part of it): **changes requested**; status stays Revised. The round-4 fixes of §18.2, §19.3, §19.4 and W29 hold, and the layout IDs, boxes and mapper names of §18.1 and §19.1 agree with the install. Blocking: §19.2 still words an item of another kind as stopping "the build", which describes construction and leaves open whether the menu is shown in part or not at all; state the observable result. Non-blocking: cut the BIN revision-3 parenthetical list of code kinds that were read to "BIN (n)–(p)", as G42 now does. **Review of revision 3, 2026-10-23** (spec-review:spec-ui-input:2): **changes requested** (B1: the fixed 10 pixels of §19.3 missing from W31), answered by the review fixes; a later review asked that §18.2 and §19.3 state observable results only and that review-record text move to the review log; answered by round 4 (change log). Status stays Revised. **Review of revision 2, 2026-10-14** (commit 7c545cd on branch `specfix`): **passed, Accepted**; its spot checks of W29 agreed with the text. Earlier: Review of the decision-0014/0015 revision, 2026-10-06: **passed**, Accepted. Full records moved to the review log (decision 0018). |
 | **Implements into** | `crates/ui` (engine widget classes on top of the element tree of `ui-layout.md` §9), `apps/client` (native panels P3, P4, P5, P7, P8, P12 of `ui-layout.md` §17) |
 | **Companion specs** | [`ui-layout.md`](ui-layout.md) (UL: record grammar §4, properties §5.9, inheritance §7, layout §8, creation, states, drawing, Button states §9). [`ui-behaviour.md`](ui-behaviour.md) (UB: commands, capture, presses and releases, wheel delivery, messages). [`property-system.md`](property-system.md) (PS: dictionary defaults §2.2, value types §4). [`records.md`](records.md) (REC: enum mappers §7). [`fonts.md`](fonts.md) (FO: text in buttons and entries). [`keymap.md`](keymap.md) (KM §12: input-map keys such as `ScrollableControls_Mouse`). [`lua-plugin-api.md`](lua-plugin-api.md) (LPA: plugin controls that wrap these classes). Checklist [`m5-visual.md`](../checklists/m5-visual.md) rows P3-A, P4-A, P5-A, P7-A, P8-S, P12-A. |
 
@@ -40,7 +40,12 @@ closes that gap for the classes that the M5 native panels need:
 - **Tree** (§9): nodes, indentation, expand and collapse icons;
 - **Panel** (§10): pages and tabs;
 - **Menu** (§11): the drop-down button and its popup list;
-- **Viewport** (§12): the 3D portrait element (properties only; its drawing is OPEN).
+- **Viewport** (§12): the 3D portrait element: properties, what a `TargetViewport` shows, its
+  camera, its render target and opacity mask (§12.1–§12.4; parts of the drawing stay OPEN);
+- **Engine dialog boxes** (§18, revision 3): the wait, confirmation, message and text-input
+  dialogs, their layout, parts, keys, results, timeouts and queue;
+- **Context menus** (§19, revision 3): the `ContextMenu` layout, item kinds, submenus, sizing,
+  placement, hover delay, selection and closing.
 
 For each class it gives the properties the class reads (by PID and label), its parts (child
 elements it finds or creates by element ID), its state machine, how it lays out its parts and
@@ -58,7 +63,7 @@ the counts.
 | Tag | Source |
 |---|---|
 | OBS | The owner's Steam install, read in place and read-only on 2026-10-06 with throwaway probes in the dirty-room scratch area: all 302 UI layout records (prefix 0x22) decoded with the full property values by the grammar of UL §4; every element resolved by UL §7 and every top-level element instantiated with all inherited children (83,161 element instances, the same total as UL §7.3); the property dictionary 0x34000000 decoded with its default, minimum and maximum values (PS §2.2); the enum mappers `UIElementType` (base 0x230001BC), `UIElementID` (base 0x2300013B), `UIStateID` (base 0x2300017B), `UIElementMessage` (base 0x230001AC), the meter-direction mapper 0x2300017C and the camera mapper 0x230000B9; four arrow-button render surfaces and five meter images converted to images to check orientation and size. **Revision 1 (same day, same install):** the six native panels of §13 instantiated again and walked element by element (types, sizes, properties, states, page lists); censuses of every resolved GroupBox, ColorPicker, Browser and Menu instance, of every arrow button that is a direct child of a scroll bar, of every Panel page entry, and of the ListBox fill flags. |
-| BIN | Method M4 under [decision 0011](../decisions/0011-standing-m4-authorisation.md). Client `x64/lotroclient64.exe`, file version 4906.0071.1794.4035 (`lotro_live`), disassembled with capstone in the dirty room on 2026-10-06, address ranges only. **Questions:** (a) which widget class the factory creates for each engine element type, and how the classes derive from each other; (b) for Meter, Scrollable, Scrollbar, ListBox, Tree, Panel and Menu: which properties each class reads, what each one does, which parts it creates or finds by element ID, and how it lays them out (the classes' property-change handlers, post-creation routines, resize routines, frame-update routines and layout routines); (c) the scroll-bar value mapping, stops, dragging, paging and wheel handling, and how a scrollable widget keeps its scroll bars in step (the classes' message handlers); (d) the Button's auto-repeat ("hot button"), its click on release and its translation of state requests; (e) the ListBox grid layout, entry creation from templates and selection; (f) the Panel's page and tab switching. Numeric constants are functional facts under [decision 0012](../decisions/0012-numeric-constants.md). Diagnostic strings in the executable name the meter routines; they are not reproduced. **Why M1–M3 were not enough:** the layout data gives property values and labels but no behaviour; no published source describes the engine's widget classes (the plugin API documents only the plugin surface); the original client cannot be observed running in this session, and observation could not give the arithmetic, rounding or ordering rules anyway. Only offline UI code was read; nothing about network, login, keys, launcher, patcher or anti-tamper. No address, listing or symbol appears in this spec. **Revision 1 questions (same build, read 2026-10-06):** (g) what the GroupBox class does (its factory, constructor, the methods it replaces relative to the base element, its message handler, property-change handler and its step in the pass that runs after a tree is created) and which methods the ColorPicker class replaces; (h) the exact scope of the early stops in the Button's state-request translation (§7.3); (i) whether the tree placement adds the indent amount when the parent has no icon (§9.3), and which sizes the ListBox placement uses under `ignore_cell_alignment` (§8.3); (j) the order of the descendant lookup (§2.3); (k) what the pass that runs after a tree is created does for scrollables, Trees and Buttons (§5.2, §9.1); (l) how a scroll bar treats arrow buttons that are not its descendants (§6.2, re-read). |
+| BIN | Method M4 under [decision 0011](../decisions/0011-standing-m4-authorisation.md). Client `x64/lotroclient64.exe`, file version 4906.0071.1794.4035 (`lotro_live`), disassembled with capstone in the dirty room on 2026-10-06, address ranges only. **Questions:** (a) which widget class the factory creates for each engine element type, and how the classes derive from each other; (b) for Meter, Scrollable, Scrollbar, ListBox, Tree, Panel and Menu: which properties each class reads, what each one does, which parts it creates or finds by element ID, and how it lays them out (the classes' property-change handlers, post-creation routines, resize routines, frame-update routines and layout routines); (c) the scroll-bar value mapping, stops, dragging, paging and wheel handling, and how a scrollable widget keeps its scroll bars in step (the classes' message handlers); (d) the Button's auto-repeat ("hot button"), its click on release and its translation of state requests; (e) the ListBox grid layout, entry creation from templates and selection; (f) the Panel's page and tab switching. Numeric constants are functional facts under [decision 0012](../decisions/0012-numeric-constants.md). Diagnostic strings in the executable name the meter routines; they are not reproduced. **Why M1–M3 were not enough:** the layout data gives property values and labels but no behaviour; no published source describes the engine's widget classes (the plugin API documents only the plugin surface); the original client cannot be observed running in this session, and observation could not give the arithmetic, rounding or ordering rules anyway. Only offline UI code was read; nothing about network, login, keys, launcher, patcher or anti-tamper. No address, listing or symbol appears in this spec. **Revision 1 questions (same build, read 2026-10-06):** (g) what the GroupBox class does (its factory, constructor, the methods it replaces relative to the base element, its message handler, property-change handler and its step in the pass that runs after a tree is created) and which methods the ColorPicker class replaces; (h) the exact scope of the early stops in the Button's state-request translation (§7.3); (i) whether the tree placement adds the indent amount when the parent has no icon (§9.3), and which sizes the ListBox placement uses under `ignore_cell_alignment` (§8.3); (j) the order of the descendant lookup (§2.3); (k) what the pass that runs after a tree is created does for scrollables, Trees and Buttons (§5.2, §9.1); (l) how a scroll bar treats arrow buttons that are not its descendants (§6.2, re-read). **Revision 3 (2026-10-23):** method M4 under decision 0011, client `x64/lotroclient64.exe` 4906.0071.1794.4035, SHA-256 d22363eb9aff0fb599fd04b3efa9a1769d08da8af9d8f9b73121c12bfd7e21ee (hashed 2026-10-23), Ghidra 12.1.3 headless on a private read-only copy of the shared analysis project (deleted after use); functions found by instruction search for the property IDs and element IDs named below. **Questions:** (n) how the engine dialog framework chooses the element of each dialog type, which parts it fills from which description properties, which inputs close a dialog with which result, how timeouts, modality and several pending dialogs are handled (§18); (o) how a context menu is built from its items (templates, sizes, scale, placement), and how hovering, the open delay, clicks and deactivation act (§19); (p) which figure and camera a `TargetViewport` uses, what a target's viewport description changes, what the portrait preference gates, and which render-to-texture and opacity-mask properties affect the drawn portrait (§12.1–§12.4). **Why M1–M3 were not enough:** the layouts give the dialog, menu and portrait elements and their properties, and the dictionary names the description properties, but neither says which part receives which property, which input gives which result, how menus are sized and placed, or how a portrait finds its target and camera; no published source describes these engine parts; the original client cannot be observed running in this session, and observation could not show the queue, the timeout arithmetic or the result properties anyway. Only offline UI code was read: BIN (n)–(p); nothing about network, login, keys, launcher, patcher or anti-tamper. No address, listing or internal name appears in this spec. |
 | UL, UB, PS, REC, FO, LPA, KM | The companion specs named in the header; facts taken from them keep their marks. |
 | DEC | Accepted Tessera decisions [0014](../decisions/0014-ui-input-bridge.md) (UI input bridge, **IB**) and [0015](../decisions/0015-ui-rendering.md) (UI rendering, **UR**). They fix **Tessera's** behaviour, not facts about the original; statements taken from them are marked "Tessera rule" with the decision and its section. |
 
@@ -96,7 +101,10 @@ by BIN or data with one step not traced; **OPEN** = unknown, with a callout in t
 | W26 | Scope of the early stops of the state-request translation: a stop applies only when that step changed `highlighted` (§7.3, WI12) | BIN (state-request routine, re-traced branch by branch) | BIN |
 | W27 | Tree placement adds `indent_amount` in both branches; a top-level node's width reserves an indent that placement does not apply (§9.3). ListBox placement under `ignore_cell_alignment`: only the horizontal fill uses the entry's own size (§8.3). Descendant lookup order (§2.3) | BIN (tree position and width routines, list layout routine, lookup routine) | BIN |
 | W28 | Tree-completion pass: a scrollable attaches itself to its scroll bars as a listener, sets its mouse-visible flag and runs §5.2 for both axes; a Tree then sets `click_select` and `layout_only_visible` true; a Button chooses its state again (§5.1, §5.2, §7.3, §9.1). Re-read: a scroll bar adopts arrow buttons that are not its descendants on its next frame update, and the track counts a button only when the mutual nearest-lookup test holds (§6.2, §6.3); a menu with selection display 0 updates no display (§11.4) | BIN (the pass routine of the base element, the scrollable, the Tree and the Button; the top-level creation routine that runs the pass; the scroll bar's frame update, button attach and track routine; the menu's selection display update) | BIN |
-| W29 | Scroll-bar visibility: §6.4 step 6 (and the fill parts of step 5) set visibility through the element's one show/hide routine, the routine a change of `UICore_Element_hide` also calls; the bar keeps no separate shown flag, so its next layout overrides an earlier hide (§6.4). The fellowship member row's set-up writes `FellowTemplateVolumeControl`'s visibility after setting its position (§6.4). Census: 4 of the 792 resolved Scrollbar instances are hidden by the layout (own block or default state), all with `hide_when_disabled` true and none disabled (§6.10) | BIN, revision 2 (2026-10-14): method M4 under [decision 0011](../decisions/0011-standing-m4-authorisation.md), client `x64/lotroclient64.exe` 4906.0071.1794.4035, SHA-256 prefix d22363eb9aff0fb5 (verified 2026-10-14), Ghidra 12.1.3 headless on a private read-only copy of the shared project (deleted after use); **question (m):** does the bar's layout leave a bar hidden that the layout data or game code hid; read: the scroll bar's property-change handler and layout routine, the base element's handler for `UICore_Element_hide` and the show/hide routine both reach, the fellowship row's set-up for the volume control; **why M1–M3 were not enough:** the data say only which bars are hidden, not whether the class's layout overrides it, and the original client cannot be observed in this session. OBS (2026-10-14, read-only: the 302 layout records of the 2026-10-06 dump, the archives unchanged since 2026-10-04 and five records re-read from the install byte-identical; every top-level element instantiated, 83,161 instances as in UL §7.3) | BIN; census Confirmed 2026-10-14 |
+| W29 | Scroll-bar visibility: §6.4 step 6 (and the fill parts of step 5) set the same visibility that `UICore_Element_hide` sets; the bar has no separate shown state, so its next layout overrides an earlier hide (§6.4). The fellowship member row's set-up writes `FellowTemplateVolumeControl`'s visibility after setting its position (§6.4). Census: 4 of the 792 resolved Scrollbar instances are hidden by the layout (own block or default state), all with `hide_when_disabled` true and none disabled (§6.10) | BIN, revision 2 (2026-10-14): method M4 under [decision 0011](../decisions/0011-standing-m4-authorisation.md), client `x64/lotroclient64.exe` 4906.0071.1794.4035, SHA-256 prefix d22363eb9aff0fb5 (verified 2026-10-14), Ghidra 12.1.3 headless on a private read-only copy of the shared project (deleted after use); **question (m):** does the bar's layout leave a bar hidden that the layout data or game code hid; read: BIN (m); **why M1–M3 were not enough:** the data say only which bars are hidden, not whether the class's layout overrides it, and the original client cannot be observed in this session. OBS (2026-10-14, read-only: the 302 layout records of the 2026-10-06 dump, the archives unchanged since 2026-10-04 and five records re-read from the install byte-identical; every top-level element instantiated, 83,161 instances as in UL §7.3) | BIN; census Confirmed 2026-10-14 |
+| W30 | Engine dialog framework: the four engine dialog types and their elements in layout `Dialog`, the parts each type fills from which description property, the countdown and its pause rule (numeric constants recorded under decision 0012: the countdown's string variable ID 0x7B035 set to the remaining whole seconds; the 0.0002 s duration magnitude at or below which a confirmation gets no element; the 1.0 s gap between dialog updates beyond which the end time is moved later; the 2.0 s repeat of the range check), the result properties written for each input, keys while active, modal key swallowing, one dialog at a time with a queue, `topmost` and `cannotbeoverridden`, `StartInactive`, the range-check repeat (§18) | BIN (n); OBS (layout `Dialog` 0x2200007C resolved element by element, 2026-10-23; the dictionary's `UICore_Dialog_*` properties with their types and defaults; the `UICore_Dialog_type` mapper names); class library (record 0x56000000, read 2026-10-23 with the repository's `tessera-dattool bytecode`, M1): the quest log's abandon request and the description properties it sets (§18.6) | BIN; layout data Confirmed 2026-10-23 |
+| W31 | Context menus: the three menu elements and four item templates of layout `ContextMenu`, item kinds, item sizing, common width, the 0.8 × screen-height list cap (numeric constants recorded under decision 0012: the 0.8 factor of the list's maximum height, §19.3 "Common width"; the fixed 10 pixels added to an item's text width, §19.3 "Item size"), the scale-down to fit, placement of root menus and submenus, check marks, hover states, the open delay, the messages sent on selection, on close and on deactivation (§19) | BIN (o); OBS (layout `ContextMenu` 0x2200007B resolved, 2026-10-23; the UI-message and state mappers) | BIN; layout data Confirmed 2026-10-23 |
+| W32 | `TargetViewport`: the figure's entity, the portrait preference gate, the per-target `UIViewport_Array` description matched by `UIViewport_Type`, its image, scene-entity, lighting-scene and starting-idle members, the camera chosen from `UI_TargetViewport_CameraPropertyName` else `Camera_1`; which viewport properties (render-to-texture size, background, opacity mask, lighting values) affect the drawn portrait and take effect when changed, the mask applied to the rendered scene (§12.1–§12.4) | BIN (p); OBS (the two portrait elements, scene 0x21000004 element by element, and a census of `UIViewport_Array`, `UIViewport_Type`, `UIViewport_Image` and `Character_PortraitCameraName` over every 0x47, 0x78 and 0x79 record, 2026-10-23, 0 decode failures) | BIN; data Confirmed 2026-10-23 |
 
 ---
 
@@ -788,9 +796,9 @@ position is set, and when it is resized. Steps:
 Step 4 runs even when the bar is disabled; the thumb's size then follows `widget_size` 1.0 or
 whatever the scrollable last set.
 
-**Visibility is one flag (BIN, W29).** Step 6, and the showing of fill parts in step 5, go
-through the element's one show/hide routine (UB §11.2), the same routine a change of
-`UICore_Element_hide` reaches (true hides, false shows; UB §11.2 last paragraph). The bar keeps
+**Visibility is one flag (BIN, W29).** Step 6, and the showing of fill parts in step 5, set
+the element's one visibility (UB §11.2), the same visibility a change of
+`UICore_Element_hide` sets (true hides, false shows; UB §11.2 last paragraph). The bar keeps
 no shown flag of its own. Consequences:
 
 - A bar hidden by the layout data, by a state or by game code is shown again by its next
@@ -1436,6 +1444,14 @@ the same properties.
 > traced widget code. Tessera rule (UL §17.4): the portrait is optional for M5; draw the M4
 > figure into the element box if available, otherwise draw nothing there. The checklist judges
 > the panel frame around it.
+>
+> **Answered in part (spec writer, 2026-10-23, revision 3; W32):** what a `TargetViewport`
+> shows, which camera it uses and what a target's own viewport description changes are §12.1;
+> the portrait scene is §12.2; the render target, background and opacity mask are §12.3; what
+> Tessera draws while no figure is drawn is §12.4. Scene loading and camera selection by name
+> are `misc-records.md` §4.2 (U4). Still OPEN (§12.3): the arithmetic of the opacity-mask pass,
+> the meaning of `UICore_Viewport_RenderToTextureIndex`, and how the bloom, deshade,
+> rim-lighting and fake-shadow values act (the `character-screens.md` §2.1.1 OPEN).
 
 Tessera rule for composing a portrait (DEC: UR Decision 1.7, "External content"; it answers
 only Tessera's side of the OPEN above): the figure is rendered into an offscreen target of the
@@ -1467,6 +1483,102 @@ its own nested entry), with anything the element's surface itself draws after th
 its canvas above. For `PlayerPortrait` the canvas below is empty, so only the scene shows. A
 viewport element without a surface of its own keeps the rule above (its scene is a nested
 entry of the nearest surface above it, at the same place in that surface's drawing order).
+
+<a id="s12-1"></a>
+### 12.1 What a `TargetViewport` shows (BIN, W32; data OBS)
+
+The two M5 portraits (`PlayerPortrait` of P4, `OpponentPortrait` of P5) are `TargetViewport`
+elements whose data is (OBS, both portraits unless stated): `UICore_Viewport_uiscene` =
+0x21000004; `UICore_Viewport_camera` = the UISceneEntity key labelled `Camera_1`
+(0x1000001E here); `UICore_Viewport_RenderToTextureWidth` and `…Height` 62;
+`…RenderToTextureBackgroundColor` opaque black; `…RenderToTextureIndex` 0 (P4) and 1 (P5);
+`…RenderToTextureOpacityMask` a texture list (prefix 0x40, `texture-list.md`), 0x40000E4B (P4)
+and 0x40000E4C (P5); `UICore_Viewport_RenderInParent` true; `UICore_Element_KeepObjectWhenHidden`
+true; `UI_TargetViewport_CameraPropertyName` = the property `Character_PortraitCameraName`;
+`UI_TargetViewport_DisableObjectCreationFromPreference` true; `UIViewport_Type` `Self` (P4) and
+`Opponent` (P5) (mapper names: `Paperdoll`, `Opponent`, `Self`, `AppearanceMod`,
+`MountedPaperdoll`, `EmotesPaperdoll`); P4 alone has `UI_TargetViewport_UsePlayerAsTarget` true.
+
+1. **Which entity.** With `UI_TargetViewport_UsePlayerAsTarget` true the viewport shows the
+   player's own character; otherwise the entity its panel shows (for P5 the current selection,
+   `combat-ui.md` §5). When that entity changes, the old figure is removed and a new one is
+   built; with no entity, or one the client does not know, no figure is shown.
+2. **The portrait option.** When `UI_TargetViewport_DisableObjectCreationFromPreference` is
+   true, no figure is built while the client's portrait option (a user graphics preference) is
+   off; changing the option rebuilds or removes the figure.
+3. **The target's viewport description.** The entity's properties may hold `UIViewport_Array`,
+   a list of `UIViewport_Struct` values. The viewport uses the first struct whose
+   `UIViewport_Type` equals its own `UIViewport_Type`, and none when its own type is 0. From
+   that struct:
+   - `UIViewport_Image` (a DID), when set: the viewport is given that image in place of a 3-D
+     figure (how the image is drawn was not traced; OPEN, §12.3);
+   - `UIViewport_EntityArray`: each `UIViewport_EntityStruct` names a scene element by the text
+     of its `Name` (the element names of `misc-records.md` §4.2, descriptor bit 0x100); when the
+     scene has an element of that name, the struct's `UIViewport_EntityProperties` are applied to
+     it and `UIViewport_EntityPosition` replaces its placement. In data these entries are cameras
+     with `CameraFOV` and `CameraFarDistance` and a position: per-target framing;
+   - `UIViewport_LightingScene` (a DID): a record whose own `UIViewport_EntityArray` is applied
+     the same way;
+   - `UIViewport_StartingIdle` (an animation key): the figure starts with that animation;
+   - `UIViewport_UISceneOverride` (a DID; 14 values in data) is not read by this step (OPEN).
+4. **Camera.** On every update the viewport sets its own `UICore_Viewport_camera`: to the value
+   of the entity's property named by `UI_TargetViewport_CameraPropertyName` when the entity has
+   that property as an enumeration value, otherwise to the key labelled `Camera_1`. The camera
+   rule of `misc-records.md` §4.2 U4 then picks the scene element.
+
+Census (OBS, every 0x47, 0x78 and 0x79 record, 0 decode failures): 1,535 records hold
+`UIViewport_Array`; the `UIViewport_Type` values inside them occur 1,014 times as `Opponent`,
+592 `Self`, 54 `MountedPaperdoll`, 49 `Paperdoll`, 37 `AppearanceMod`, 23 `EmotesPaperdoll` and
+25 times as 0; 41 records hold a `UIViewport_Image`. No record stores
+`Character_PortraitCameraName`, so with install data alone both portraits use `Camera_1`.
+
+> **OPEN:** where the figure stands in the portrait scene (no marker element was traced for
+> `TargetViewport`). **Tessera rule:** the rule of `character-screens.md` §2.1.2 (the first
+> Physics element whose setup has the holding location `Holding_Loc_Entity_00`), else the
+> origin with identity rotation.
+
+<a id="s12-2"></a>
+### 12.2 The portrait scene (OBS)
+
+Scene 0x21000004 holds five elements (`misc-records.md` §4): one Physics element without a
+placement (it stands at the origin), one Camera
+element named `Camera_1` with `CameraFOV` 60 and `CameraFarDistance` 20, and three Light
+elements with `LightDiffuse` colours and constant `LightDiffuseIntensity` values (0.7, 0.7,
+0.8). Its fog trailer has the override off. The scene is drawn by the presentation rules of
+`character-screens.md` §2.1.1 (Tessera rule there), with the viewport's own ambient and fog
+values; values are read from the install at run time.
+
+<a id="s12-3"></a>
+### 12.3 Render target, background and opacity mask (BIN, W32; Tessera rules)
+
+The drawn portrait depends on these viewport properties: the render-to-texture width and
+height, background colour and index, the opacity mask, and the ambient, fake-shadow colour,
+bloom, deshade, rim-lighting, fog, sky-glow, shadow and particle values; a change to any of
+them takes effect on the next drawn frame (BIN). The opacity mask is a texture named by its DID
+and is applied to the rendered scene, after the scene is drawn (BIN). Tessera:
+
+1. The scene is rendered into a target of `RenderToTextureWidth` × `…Height` pixels (62 × 62
+   for both portraits; the layout box is also 62 × 62), cleared to
+   `RenderToTextureBackgroundColor` (opaque black for both).
+2. **Tessera rule (OPEN on the arithmetic):** with an opacity mask, every pixel of the target
+   (colour premultiplied) is multiplied by the mask texture's alpha at the same relative
+   position (the mask stretched over the target); a mask without an alpha channel uses its red
+   channel. So the black background shows only where the mask is opaque.
+3. The masked target is composed by the rules of §12 above (external content, nested entry of
+   the element's surface); `RenderInParent` true is that rule. The target is sampled with
+   linear filtering when its size differs from the displayed box.
+4. `RenderToTextureIndex` is recorded and not used: every Tessera viewport has its own target
+   (OPEN: the original's use of the index; in data the two portraits use different values).
+
+<a id="s12-4"></a>
+### 12.4 While no figure is drawn (Tessera rule)
+
+This answers the `combat-ui.md` §5.1 implementer OPEN of 2026-10-14 for Tessera's side: while
+a `TargetViewport` draws no figure (no entity, the portrait option off, a figure still loading,
+or no 3-D scene drawing in the client yet), the element and its children (for P5
+`Target_Image`) are hidden, so the frame art shows in their box. That is the implemented
+reading, now a Tessera rule. The original's behaviour in that case (the masked black
+background, and the hidden `…_COVER_LOWRES` elements with their state lists) was not traced.
 
 ---
 
@@ -1697,7 +1809,7 @@ numbering).
 4. The entry-under-pointer rule, drag selection, `drag_rollover` and the add and remove
    notifications of list boxes (§8.4).
 5. Menu text-entry creation and popup sizing (§11.4).
-6. Viewport and `TargetViewport` drawing (§12; Tessera's composition of a portrait from decision 0015).
+6. Viewport and `TargetViewport` drawing (§12; Tessera's composition of a portrait from decision 0015). *Answered in part in revision 3* (§12.1–§12.4); what remains is items 19–21 and 23.
 7. The plugin manager's initial info tab (§13).
 8. The lookup boundary of the nearest-element search (§2.3).
 9. The input-layer condition that suppresses line and page messages (§5.5).
@@ -1716,10 +1828,284 @@ numbering).
 18. Whether a scroll bar hidden only by the layout data is laid out again (and so shown) during
     creation, after its hide is reported (§6.4; added 2026-10-14 when the implementer OPEN of
     2026-10-11 on step 6 was answered; Tessera: no special case).
+19. The opacity-mask arithmetic and the meaning of `UICore_Viewport_RenderToTextureIndex`
+    (§12.3; Tessera: the mask's alpha multiplies the target, every viewport has its own target).
+20. Where the figure stands in the portrait scene, how a target's `UIViewport_Image` is drawn and
+    who reads `UIViewport_UISceneOverride` (§12.1; Tessera: the `character-screens.md` §2.1.2
+    marker rule, else the origin).
+21. How the bloom, deshade, rim-lighting and fake-shadow values act (§12, `character-screens.md`
+    §2.1.1 OPEN).
+22. What a confirmation that gets no element does, and what the dialog range check does
+    (§18.3; Tessera: an immediate timeout; no range check offline).
+23. What the original shows in a portrait while no figure is drawn (§12.4; Tessera: the element
+    and its children hidden).
+24. Whether the original shows part of a context menu whose item list holds an item of an
+    invalid kind, or none of it (§19.2; Tessera: the menu is not shown).
 
 Outside this spec: the Text class's own scrolling (Text is a Scrollable, §3.2, but its line
 layout belongs to FO). Unused in data and so not pursued: any reader of
 `UICore_Scrollbar_stop_locations` beyond recording it (§6.1).
+
+---
+
+<a id="s18"></a>
+## 18. Engine dialog boxes (revision 3; BIN, W30; layout data OBS)
+
+Game code asks the engine for a dialog by handing it a **description**: a property set that
+holds `UICore_Dialog_type` and the properties below. This section is what the engine does with
+it. `ui-behaviour.md` §5.5 (keys) and UL §9.1 (modal container, overrides) point here.
+
+<a id="s18-1"></a>
+### 18.1 Types and elements
+
+`UICore_Dialog_type` (enum; mapper names): `Wait` 1, `Confirmation` 2, `Message` 3, `TextInput` 4
+are built by the engine. The engine does not build the other values (`Awaken`,
+`AvailableCharSelectDialog`, `BuyNowMessageDialog`, `RenameChar`, `SuppressableConfirmation`,
+`ConversionConfirmation`, keys of 0x10000000 and above); this spec does not specify them.
+
+The engine type chooses a top-level element of the layout with `UILAYOUT` label `Dialog`
+(key 0x2, 0x2200007C here); `UICore_Dialog_UILayout_Override` and
+`UICore_Dialog_UIElement_Override` replace the layout and the element (UL §9.1):
+
+| Type | Element (ID here) | Root (design units) | Parts the engine uses (element ID here) |
+|---|---|---|---|
+| `Wait` | `DialogWaitField` (0x0C) | `UIScaler`, group 55, origin (256, 100), 512 × 200 | `DialogWaitText` (0x0A) |
+| `Confirmation` | `DialogConfirmationField` (0x17) | `UIScaler`, group 55, origin (256, 91), 512 × 183 | `DialogConfirmationQuestionText` (0x14), `DialogConfirmationYesButton` (0x0F), `DialogConfirmationNoButton` (0x21) |
+| `Message` | `DialogMessageField` (0x06) | `UIScaler`, group 55, origin (256, 100), 512 × 200 | `DialogMessageStatementText` (0x28), `DialogMessageOkButton` (0x27) |
+| `TextInput` | `DialogTextInputField` (0x25) | `UIScaler`, group 55, origin (256, 90), 512 × 180 | `DialogTitleText` (0x33), `DialogTextInputQuestionText` (0x07), `DialogIconField` (0x31), `DialogIconText` (0x32), `DialogTextInputTextEntry` (0x1C), `DialogTextInputDoneButton` (0x04), `DialogTextInputQuitButton` (0x0E) |
+
+Parts are found by element ID below the dialog element (§2.3); a part the element lacks is
+skipped. In `DialogTextInputField` the title and icon parts do not exist (they occur in the
+game variants `AbandonHouseDialogTextInputField` and `AbandonPremiumHouseDialogTextInputField`
+of the same layout).
+
+The confirmation element (OBS): a field `DialogConfirmationVisibleField` at (0, −45), 512 × 183,
+holding the frame `DialogConfirmationBoxField` (based on `Box_Silver_BlueGradient`), the question
+text (0, 7) 500 × 142 (markup parsed, centred both ways), and `DialogConfirmationButtonField`
+(0, 156) 508 × 20 with the yes button at (142, 0) and the no button at (261, 0), both
+106 × 20 and based on `TextButton`; only the yes button has `UICore_Element_activate_on_show`.
+The text-input element: the frame `DialogTextInputBoxField` 512 × 180 holding the question
+(13, 25) 489 × 68, an entry frame (10, 96) 492 × 24 (based on `Box_01`) with the entry
+(2, 2) 488 × 20 (editable, selectable, one line, `UICore_Text_max_chars` 100), and a button
+field (0, 151) 512 × 20 with the done button (184, 0) and the quit button (264, 0), both 64 × 20.
+The message element: the frame holds an outer text field (10, 22) 493 × 121 with the statement
+text, and the OK button (192, 170) 96 × 20. Button labels not set by the description are the
+layout's own (`UICore_Text_entry`). The same layout also holds the game variants
+`DialogConfirmationField_WithSuppressionCheckbox`, `DialogConfirmationYesNoReversedField` (no
+button left, yes button right), `SuperWarning_DialogConfirmationField`, `Awaken_DialogMessageField`,
+`BuyNowMessageDialogField` and `ChargenDialogWaitField`.
+
+<a id="s18-2"></a>
+### 18.2 One dialog at a time
+
+Exactly one engine dialog
+is shown at a time; the others wait in a first-in, first-out queue:
+
+1. With no dialog shown, the request is shown at once.
+2. Otherwise, a request whose description does not have `UICore_Dialog_topmost` true is added
+   at the end of the queue.
+3. A `topmost` request while a dialog is shown: if the shown dialog's description has
+   `UICore_Dialog_cannotbeoverridden` true, the request is put at the **front** of the queue (it
+   is shown next). Otherwise the shown dialog is taken down without a result, its description is
+   put back at the front of the queue, and the request is shown at once.
+4. When a dialog closes (§18.5), the request at the front of the queue is shown.
+
+What a shown dialog is: the dialog element of §18.1 for its type (or its override), with every
+part filled from the description by §18.3; a modal dialog lies inside its modal container
+(UL §9.1). From the moment it appears, the dialog is the active panel and lies in front of
+the other panels (UB §8), unless `UICore_Dialog_StartInactive` (default false) is true: then
+the element that was active before stays active and the dialog is not moved to the front.
+
+<a id="s18-3"></a>
+### 18.3 Filling the parts
+
+Each text below is a StringInfo of the description, rendered (`string-table.md`) and set as the
+part's text.
+
+| Type | Description property → part |
+|---|---|
+| `Wait` | `UICore_Dialog_wait_text` → wait text |
+| `Confirmation` | `…confirmation_questiontext` → question; `…confirmation_yesbuttontext` → yes button; `…confirmation_nobuttontext` → no button; `…confirmation_duration` (seconds) → countdown |
+| `Message` | `…message_statementtext` → statement; `…message_okbuttontext` → OK button; `…message_duration` (seconds) → countdown |
+| `TextInput` | `…title_text` → title; `…textinput_questiontext` → question; `…icon_field` (an image DID) → the icon field's image (draw mode 4); `…icon_text` → icon text; `…textinput_donebuttontext` → done button; `…textinput_cancelbuttontext` → quit button; `…textinput_displaycancelbutton` (default true) → quit button shown or hidden; `…textinput_response` → the entry's initial text; `…textinput_activateandtakefocus` true → the dialog is activated and the entry takes the keyboard focus; `…textinput_maxchars` > 0 → the entry's `UICore_Text_max_chars` |
+
+**Countdown.** A confirmation or message with a duration *d* closes by itself *d* seconds after
+it is shown (§18.5). While it counts, its question (statement) text is rendered again each time
+the whole number of remaining seconds changes, with the variable 0x7B035 set to the remaining
+seconds truncated toward zero, so a question that uses that variable shows a countdown. If more
+than 1.0 s passes between two updates of the dialog, the end time is moved later by that gap
+(the countdown does not run while the client stalls). A confirmation whose duration has a
+magnitude of at most 0.0002 s gets no element.
+
+> **OPEN:** what follows for a confirmation that gets no element (it is not shown; whether it
+> times out at once was not traced). **Tessera rule:** it closes at once with the timeout
+> result of §18.5.
+
+**Range check.** With `UICore_Dialog_Range_Check_Entity` (an instance ID) and
+`UICore_Dialog_Range_Check_Distance` > 0 the dialog registers a range check that repeats every
+2.0 s.
+
+> **OPEN:** what the range check does when the entity is out of range. **Tessera rule:** no
+> range check offline.
+
+<a id="s18-4"></a>
+### 18.4 Keys and clicks
+
+A confirmation or message dialog reacts to keys only while its element is the active panel and
+its description does not have `UICore_Dialog_ignorekeyboardinput` true (`ui-behaviour.md`
+§5.5); a text-input dialog reacts to the commands its entry reports. Commands are the key
+map's (KM §12): `AcceptKey`, `AcceptInput`, `EscapeKey`.
+
+| Type | Input | Result (§18.5) |
+|---|---|---|
+| `Confirmation` | click on the yes button, or `AcceptKey` or `AcceptInput` pressed | yes |
+| `Confirmation` | click on the no button, or `EscapeKey` pressed | no |
+| `Confirmation` | release of `AcceptKey` or `EscapeKey` | consumed, no result |
+| `Message` | click on the OK button, or `AcceptKey`, `AcceptInput` or `EscapeKey` pressed | OK |
+| `Message` | release of `AcceptKey` | consumed, no result |
+| `TextInput` | click on the done button, or `AcceptInput` pressed in the entry | done |
+| `TextInput` | click on the quit button, or `EscapeKey` pressed in the entry, while the quit button is shown | quit |
+| `Wait` | none | the dialog has no buttons and handles no keys; game code removes it |
+
+A **modal** dialog (`UICore_Dialog_modal` true) also consumes every other key press and the
+release of every key that was pressed while it was shown, so no key reaches game code below it.
+
+<a id="s18-5"></a>
+### 18.5 Results and closing
+
+On a result the dialog writes the result properties below into its description. When
+`UICore_Dialog_WSLCallback` is set, that class-library callback receives the description with
+the result properties already in it. After a result the dialog's element is gone, and the next
+queued request is shown (§18.2 step 4).
+
+| Result | Properties written |
+|---|---|
+| Confirmation yes / no | `UICore_Dialog_confirmation_response` = true / false |
+| Confirmation timeout | `…confirmation_response` = false and `…confirmation_timedout` = true |
+| Message OK | `UICore_Dialog_message_response` = true |
+| Message timeout | `…message_response` = false |
+| Text input done | `UICore_Dialog_textinput_response` = the entry's text |
+| Text input quit | `…textinput_response` = an empty text |
+
+A dialog taken down by a `topmost` request (§18.2 step 3) writes no result and is shown again
+later from the queue.
+
+<a id="s18-6"></a>
+### 18.6 Uses named by other specs
+
+- **Quest abandon** (`quest-journal.md` §4.8): the quest log's abandon request (class library,
+  M1) is a description with `UICore_Dialog_type` = `Confirmation`, the chosen question as
+  `UICore_Dialog_confirmation_questiontext`, a class-library callback of the quest log as
+  `UICore_Dialog_WSLCallback` and the quest's `Quest_DataID`, and no override: the dialog is `DialogConfirmationField` of layout
+  `Dialog`. The callback receives `…confirmation_response`; `quest-journal.md` §4.8 says what
+  confirming does.
+- **Friend and ignore add, note** (`social-panels.md` §3.5, §3.6): `TextInput` dialogs
+  (`DialogTextInputField`); the note's current text is `…textinput_response`; done gives the
+  entered text, quit gives an empty text, which adds or changes nothing.
+
+**Tessera rule** for the client: an engine dialog is shown for a request of the feed or of the
+client's own panels by the rules above, with `DialogBoxes` pushed while it is active (UL §9.1,
+IB D5); the description's result reaches the requesting panel instead of a class-library
+callback.
+
+<a id="s19"></a>
+## 19. Context menus (revision 3; BIN, W31; layout data OBS)
+
+A context menu is built by game code from a list of items and opened over the screen; the
+engine draws it from layout `ContextMenu` (0x2200007B here). `ui-behaviour.md` §4.6 (the
+`Element_open_context_menu` message on a right press) and the menus of `social-panels.md`,
+`map-windows.md` §4.5 and `travel-windows.md` use it.
+
+<a id="s19-1"></a>
+### 19.1 Layout
+
+| Element (ID here) | Use | Design box and parts |
+|---|---|---|
+| `ContextMenuElement` (0x12) | menu without a title | `UIScaler`, group 55, object mode 3, `UICore_ContextMenu_open_delay` 0.5; 30 × 30; `Background` (based on `Box_01`), `ContextMenuList` (0x11) a ListBox at (2, 2) 26 × 26 with one column and the vertical scroll bar `ContextMenuList_Scrollbar`, `NormalBackground` |
+| `ContextMenuWithTitleElement` (0x22) | menu with a title | as above, plus `ContextMenuTitle` (0x1A) at (0, 0) 30 × 16 holding `ContextMenuTitleText` (0x1F); the list at (2, 16) 28 × 14 |
+| `ContextMenuElement_MapMenu` | the map window's menus (`map-windows.md` §4.5) | as `ContextMenuElement` with a `Menu_Brown_Background` frame, origin (0, 0), no object mode |
+| `ContextMenuEntry` (0x0B) | plain item | 28 × 16; icon `ContextMenuEntryIcon` (0x10) (4, 0) 16 × 16; text `ContextMenuText` (0x19) (22, 2), font of `menu_font`, max 400 × 400; states `normal`, `normal_rollover`, `ghosted` |
+| `ContextMenuBool` (0x18) | check item | 44 × 18; icon and text as above; check mark `ContextMenuBoolFlag` (0x02) (26, 0) 16 × 16 at the right edge (edges 4, 0, 5, 0); same states |
+| `ContextMenuSub` (0x05) | submenu item | 44 × 18; icon and text as above; arrow `ContextMenuOpen` (0x08) (26, 0) 16 × 16 at the right edge; same states |
+
+<a id="s19-2"></a>
+### 19.2 The item list
+
+A menu is given an ordered list of items and optionally a title, a fixed position and an element
+ID that replaces the menu element. Each item has: a kind (1 check item, 2 submenu, 3 plain
+item), a label text, an optional icon (image DID), an enabled flag,
+for check items a checked flag and a flag whether the check mark shows, an item ID and value
+reported on selection, a flag that selection reports a close instead of a selection, and for
+submenus the submenu's own item list. Other kind values are not valid menu items.
+
+> **OPEN:** whether the original shows the items before an item of another kind or shows no
+> menu at all was not traced. **Tessera rule:** a menu (or submenu) whose list holds an item of
+> another kind is not shown, and the request has no other effect.
+
+<a id="s19-3"></a>
+### 19.3 What a menu looks like and where it opens
+
+A **menu tree** is a root menu together with all its submenus, at any depth.
+
+- **Menu element.** The given override, else `ContextMenuWithTitleElement` when the title is not
+  empty, else `ContextMenuElement`. A menu blocks clicks (`UICore_Element_blocks_clicks` true)
+  and lies in front of the item that opened it (a root menu in front of the screen's panels).
+  Its `UICore_ContextMenu_lvl` is its depth: 0 for a root menu, the parent menu's depth + 1 for
+  a submenu. With a title, the title text is shown and the title field is as wide as the text
+  plus the template's margins.
+- **Item templates.** Kind 1 uses `ContextMenuBool`, kind 2 `ContextMenuSub`, kind 3
+  `ContextMenuEntry`. An item shows its label in its text part and, when it has an icon, that
+  image in its icon part (draw mode 4). Its `UICore_ContextMenu_lvl` is its menu's depth and
+  its `UICore_ContextMenu_index` its position in the item list. An enabled item is in state
+  `normal`, a disabled one in `ghosted`.
+- **Item size.** Each item's width is its text width + 10 pixels + (the template's item width −
+  its text part width), and its height is the text height + (the template's item height − its
+  text part height) (W31).
+- **Common width.** Every item of a menu has the width of the menu's widest item, and at least
+  the title's width. The list is that wide and as high as the sum of its item heights, but no
+  higher than 0.8 × the screen height (W31; beyond that the list scrolls); the menu element is
+  the list's size plus the margins around the list in the template.
+- **Scale to fit.** A menu larger than the screen is scaled down uniformly by the smaller of
+  screen width ÷ menu width and screen height ÷ menu height; a menu is never scaled above its
+  own scale.
+- **Placement.** A given position is the menu's top-left corner (one variant gives its
+  bottom-left corner, so the menu opens upward). A submenu opens at the right edge of its parent
+  item with its top level with the item, or to the left of the parent item when it would leave
+  the screen on the right. Otherwise the menu's top-left corner is at the pointer. In every case
+  the menu is then moved the least distance that puts it wholly on the screen.
+- **Check marks.** A check item's mark is visible or hidden by the item's show flag, and is in
+  state `normal_activated` when the item is checked, else `ghosted`. The template defines no
+  `normal_activated` state, so a checked mark shows its own block (UL §9.4 step 1).
+- **Submenus.** A submenu is not visible until it is opened (§19.4).
+- **Closing.** The whole menu tree closes on a selection (§19.4 step 3) and on any activation
+  outside the menu tree (§19.4 step 4).
+
+<a id="s19-4"></a>
+### 19.4 Hover, selection and closing
+
+1. **Hover.** When the pointer enters an item (`Element_mouse_over_top`), an enabled item takes
+   `normal_rollover` (a disabled one `ghosted`), and the open delay of step 2 starts counting;
+   when it leaves, the item returns to `normal` (or `ghosted`).
+2. **Open delay.** When the pointer has rested on the same item for longer than the menu's
+   `UICore_ContextMenu_open_delay` (0.5 s), a submenu item opens its submenu; any other item
+   closes this menu's open submenu.
+3. **Click** (`Element_mouse_click`) on an enabled item: an open submenu of another item is
+   closed first; a submenu item opens its submenu, or closes it when it is open; any other item
+   is **selected**: for a menu that a UI element opened, its listener receives
+   `Element_select_context_menu` with the item's ID and the item (or
+   `Element_close_context_menu` with the ID and value for an item flagged to report a close);
+   a check item's mark flips between shown and hidden; for a menu opened on a game object the
+   item's command goes to game code. Then the whole menu tree closes. A click on a disabled item
+   does nothing.
+4. **Deactivation.** When the player activates any element outside the menu tree (for example
+   by clicking elsewhere), the whole menu tree closes and the listener receives
+   `Element_close_deactivated_context_menu`.
+
+**Tessera rule** for the client: the row menus of `social-panels.md` §3.5, §3.6 and §4.5, the
+map window's `MapMenu` (one submenu per region entry, `map-windows.md` §4.5) and `FilterMenu`
+(check items, MW13), and the finder's size and tier menus (`travel-windows.md` §6.8 (e)) are
+built by §19.2–§19.4 from their specs' item lists; the code-made popups they use today stand in
+until this widget exists.
 
 ---
 
@@ -1734,3 +2120,10 @@ layout belongs to FO). Unused in data and so not pursued: any reader of
 | 2026-10-06 | **Final-pass fixes** (status stays Revised, review pending). No fact about the original is changed. §4.5: one note that it is not known whether the meter's surface flag is the "flagged by code" of UL §8.3 and §8.4 step 1, pointing to the UL §8.4 scope OPEN and its Tessera choice (it is not; no M5 panel affected). §16 row on UL §6.6 extended to match. |
 | 2026-10-14 | **Revision 2** (spec writer, dirty room; status Accepted → Revised, awaiting independent review). Answers the §6.4 implementer OPEN of 2026-10-11 (from `social-panels.md` TR14): new provenance row W29 (BIN question (m) on build 4906.0071.1794.4035, Ghidra 12.1.3 headless on a private copy; OBS census); §6.4 states that step 6 and the fill parts of step 5 write the element's one visibility, the one `UICore_Element_hide` also writes, so a bar's next layout overrides an earlier hide unless it is disabled with `hide_when_disabled`; the original's fellowship row writes the volume control's visibility after its position. The OPEN is closed; a narrower OPEN (whether a layout runs during creation after the hide is reported) is added with a Tessera rule (no special case), §17 item 18. §6.10 gains the census row of layout-hidden bars (4 of 792). **Implemented behaviour:** unchanged (Tessera's step 6 already shows the bar; the fellowship rows' disabled-with-`hide_when_disabled` choice is confirmed). |
 | 2026-10-14 | **Review of revision 2** (spec reviewer, independent session): **passed; status Revised → Accepted.** Spot checks and one non-blocking note in the header's review record; no other text changed; implemented behaviour unchanged. |
+| 2026-10-23 | **Revision 3** (spec writer, dirty room; status Accepted → Revised, awaiting independent review). BIN revision 3 (questions (n)–(p), build 4906.0071.1794.4035, full SHA-256, Ghidra 12.1.3 headless on a private copy) and new rows W30–W32. **§12:** the drawing OPEN answered in part; new §12.1 (what a `TargetViewport` shows: entity, portrait option, the target's `UIViewport_Array` description, camera from `UI_TargetViewport_CameraPropertyName` else `Camera_1`, census), §12.2 (the portrait scene 0x21000004), §12.3 (render target, background, opacity mask as Tessera rules), §12.4 (Tessera rule while no figure is drawn, answering the `combat-ui.md` §5.1 implementer OPEN for Tessera's side). **New §18** (engine dialog boxes: types and elements of layout `Dialog`, parts, countdown, keys, results, queue, the quest-abandon and social uses) and **§19** (context menus: layout `ContextMenu`, item kinds, building, placement, hover, open delay, selection, deactivation). §0 and the title name the new sections; §17 item 6 updated, items 19–23 added. No section number reused. **Implemented behaviour:** none changes; §12.4 records the implemented portrait hiding as a Tessera rule; §18 and §19 describe widgets Tessera has not built yet. |
+| 2026-10-23 | **Revision 3, screen fixes** (spec writer, dirty room; status stays Revised, awaiting independent review). Wording only, no fact changes: §12.3 first paragraph states which viewport properties affect the drawn portrait and that the mask is applied to the rendered scene, instead of internal structure; §18.1 says only that the engine does not build the other `UICore_Dialog_type` values; §18.5 keeps only the observable order (result properties present when the class-library callback receives the description, element gone, next queued request shown) and drops the listener step; BIN question (p) and row W32 reworded to match. Row W30 now lists the decision-0012 numeric constants of §18.3 (string variable 0x7B035, 0.0002 s, 1.0 s, 2.0 s). For the reviewer: confirm that the M4 passes (n)–(p) are within this package's scope. |
+| 2026-10-23 | **Revision 3, review fixes** (spec writer, dirty room; status stays Revised, awaiting independent review). (B1) Row W31 now lists the decision-0012 numeric constants of §19.3: the 0.8 factor of the list's maximum height and the fixed 10 pixels of the item width (step 4 now names the unit). Non-blocking (a): the §18.2 dialog-number sentence is dropped, since nothing in this spec observes the number. No fact or behaviour changes. |
+| 2026-10-23 | **Revision 3, round 4** (spec writer, dirty room; status stays Revised, awaiting a new independent review). Wording only, no fact changes: §18.2's showing paragraph states what a shown dialog is and which element is active and in front; §19.3 is restated as observable results (renamed "What a menu looks like and where it opens": the menu tree, menu element, item templates and states, item size with the W31 constant, common width with the 0.8 cap, scale to fit, placement and clamping, check marks, submenu visibility, when the tree closes) and no longer lists build steps; §19.4 steps 1 and 4 no longer name internal bookkeeping (deactivation is any activation outside the menu tree); W31's references follow §19.3's new paragraph names; W29 and the §6.4 "Visibility is one flag" paragraph state the visibility fact without naming routines, W29 cites BIN (m); §18.6 states the quest-abandon description, not how it is built; the header's review records are reduced to summaries (decision 0018). |
+| 2026-10-23 | Independent review of revision 3 after round 4 (spec-review:spec-ui-input:1, independent session): changes requested (§19.2 wording; header review record). Status stays Revised. No content change. |
+| 2026-10-23 | **Revision 3, round 5** (spec writer, dirty room; status stays Revised, awaiting a new independent review). §19.2: an item of another kind is no longer worded as stopping a build; other kind values are not valid items, and a new OPEN records that whether the original shows part of such a menu or none was not traced, with the Tessera rule that such a menu is not shown (§17 item 24). §18.6 and W30: the quest abandon callback is named as a class-library callback of the quest log, not a routine or handler. BIN revision-3 cell: the list of code kinds read is cut to "BIN (n)–(p)". No other fact changes. |
+| 2026-10-23 | Independent review of revision 3 after round 5 (spec-review:spec-ui-input:2 (independent session)): passed; status Revised → Accepted. No content change (header only). |

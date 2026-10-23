@@ -4,11 +4,11 @@
 
 | | |
 |---|---|
-| **Status** | Accepted (P2 revision of 2026-10-10, targeting and quickslot actions: §1.2 K47–K49, §8.2, §12.11 rows 9 and 11, §12.14.2; passed review 2026-10-11). Before: Accepted (revision of 2026-10-06 applying [decision 0014](../decisions/0014-ui-input-bridge.md), reviewed the same day); the P1 implementer OPEN of §12.14.2 is not part of the P2 revision |
-| **Last updated** | 2026-10-11 |
+| **Status** | Accepted (revision of 2026-10-23, panel, use and UI-scale actions: §1.2 K50–K52, new §8.3, the §8.2 OPENs, §12.14.2 rows and its P1 OPEN; passed independent review 2026-10-23). Before: Accepted (P2 revision of 2026-10-10, targeting and quickslot actions: §1.2 K47–K49, §8.2, §12.11 rows 9 and 11, §12.14.2; passed review 2026-10-11; before that, revision of 2026-10-06 applying [decision 0014](../decisions/0014-ui-input-bridge.md), reviewed the same day) |
+| **Last updated** | 2026-10-23 |
 | **Author role** | §0–§11: Implementer (clean room) for Tessera's own design; everything there is a **Tessera design decision**, not a description of another program, **except** the compatibility parts listed in §0 (the command names and default bindings of `pointer` and the UI contexts in §2.2, §8 and §8.1, the activation timing of §7.7, the UI-band ordering rules of §3.2, the push rule of `ScrollableControls_Mouse` in §8.1, the repeat rule of §7.8.6 and "the same command goes on to game code" in §7.8.3), which are written by the spec writer (dirty room) with the provenance of §1.1. The Tessera design added on 2026-10-06 transcribes decision 0014 (IB) and is marked with its section. §12–§13, the 2026-10-05 revisions of §1 and §11, and the 2026-10-06 revision: Spec writer (dirty room); §12 describes the original client's key-mapping file and key-map data, with provenance (§1.2). |
-| **Reviewer** | Claude review session (spec-writer agent, independent session); P2 revision: spec reviewer, an independent session that wrote no part of it (2026-10-11, passed) |
-| **Review record** | **P2 revision, review 2026-10-11** (text of commit 7b14f27 on branch p2, together with `combat-ui.md` review 1): **passed**; status Revised → Accepted. Checked (CLEAN_ROOM.md §5.3): functional facts only; no code or pseudo-code; no copied prose; command and label names quoted for interoperability; no game text, keys, hostnames or traffic; K47–K49 carry OBS provenance with the re-read date; the context, action names and exact policy are marked Tessera's; the Shift and walker-key questions are OPEN; nothing under a closed gate. Spot checks, own read-only probes of the install (M1): every K47 binding (key codes, meta-key bits 1 Shift, 2 Ctrl, 3 Alt, activation 0x03) is in `Main` of 0x1D000000, and none of these commands is bound in 0x1D000001, 0x1D000004 or 0x1D000009; the fifteen command IDs of the §8.2 table; K48 (all `SELECTION_` commands of the record, `QUICKSLOT_1` … `QUICKSLOT_72` and the two page commands have type 2; `SELECTION_OFF`, `SELECTION_NEXT_FELLOW`, `SELECTION_PREVIOUS_FELLOW`, `AUTOATTACK` and `RESURRECT` are absent from table A); K49 (72 of 72 entries pair index *i* with `QUICKSLOT_`(*i* + 1)). **Non-blocking:** §8.2 opening sentence calls every action type 2, while `SELECTION_OFF` (`target_clear`) is not in the action map (K48 says so); the OBS re-read could also name 0x1D000004, which binds none of these commands. Full record in the review log (decision 0018). Revision 2026-10-06 (decision 0014): independent review session (spec-writer agent, separate session), 2026-10-06: **passed**, Accepted; its ten non-blocking notes were applied the same day. Earlier: re-review 2026-10-06 of the §12 importer text: **passed**, Accepted; first review and re-review 2026-10-05: changes requested (§14). Full records in the review log (decision 0018). |
+| **Reviewer** | Claude review session (spec-writer agent, independent session); 2026-10-23 revision: spec-review:spec-ui-input:2 (independent session, wrote no part of it); P2 revision: spec reviewer, an independent session that wrote no part of it (2026-10-11, passed) |
+| **Review record** | **Revision of 2026-10-23, review 2026-10-23** (reviewer spec-review:spec-ui-input:2, an independent session that wrote no part of the revision; text of the uncommitted worktree diff against main): **passed**; status Revised → Accepted. Checked (CLEAN_ROOM.md §5.3): functional facts and labelled Tessera **Decisions** only; no code or pseudo-code; no copied prose; command names and IDs quoted for interoperability, IDs marked as this install's; no game text, keys, hostnames or traffic; K50–K52 carry OBS provenance with the re-read date; the Shift OPEN stays open (owner); no M4 pass. Own read-only probes of the install (M1, a new throwaway parser of the §12.9 layout): the four 0x1D records give 178 + 77 + 0 + 1 = 256 bindings with no bytes left over; every K50 binding (key code, mask, activation 0x03, input map `Main`) is as stated and none of these commands is bound in another record; the three profession toggles are unbound; Shift + L, Shift + B, Shift + I, Shift + C, Ctrl + T, Ctrl + U, Ctrl + H, Ctrl + J, Ctrl + K carry other commands (K50); every K50 command is type 2 in table A of 0x51000000 (K51); the four wheel bindings all have mask 0 (K52). Against the code (read only to compare): every action name of §8.3 already registered matches `crates/input/src/defaults.rs` (`toggle_character`, `toggle_bags`, `toggle_bag_1` … `6`, `pin_tooltip`, `toggle_crafting`, `toggle_crafting_1` … `3`, `ui_scale_up`, `ui_scale_down`, `ui_scale_auto`, `ui_interface_window`); `toggle_wallet`, `toggle_quest_log`, `use_selection`, `toggle_traits`, `toggle_skills`, `ui_window_scale_up`/`_down` are new; no built-in default (including the §8.2 and P4 ones) uses a walker key of §8.3.1; `walker.md` §14.2–§14.3 lists the moved keys as the closed OPEN says. **Non-blocking:** the change-log row could list under "Implemented behaviour that changes" the three default moves (`toggle_bags` B → I, `toggle_bag_1` I → none, `pin_tooltip` Ctrl+T → H), which change `defaults.rs` and its P6 test comment. **P2 revision, review 2026-10-11** (text of commit 7b14f27 on branch p2, together with `combat-ui.md` review 1): **passed**; status Revised → Accepted. Checked (CLEAN_ROOM.md §5.3): functional facts only; no code or pseudo-code; no copied prose; command and label names quoted for interoperability; no game text, keys, hostnames or traffic; K47–K49 carry OBS provenance with the re-read date; the context, action names and exact policy are marked Tessera's; the Shift and walker-key questions are OPEN; nothing under a closed gate. Spot checks, own read-only probes of the install (M1): every K47 binding (key codes, meta-key bits 1 Shift, 2 Ctrl, 3 Alt, activation 0x03) is in `Main` of 0x1D000000, and none of these commands is bound in 0x1D000001, 0x1D000004 or 0x1D000009; the fifteen command IDs of the §8.2 table; K48 (all `SELECTION_` commands of the record, `QUICKSLOT_1` … `QUICKSLOT_72` and the two page commands have type 2; `SELECTION_OFF`, `SELECTION_NEXT_FELLOW`, `SELECTION_PREVIOUS_FELLOW`, `AUTOATTACK` and `RESURRECT` are absent from table A); K49 (72 of 72 entries pair index *i* with `QUICKSLOT_`(*i* + 1)). **Non-blocking:** §8.2 opening sentence calls every action type 2, while `SELECTION_OFF` (`target_clear`) is not in the action map (K48 says so); the OBS re-read could also name 0x1D000004, which binds none of these commands. Full record in the review log (decision 0018). Revision 2026-10-06 (decision 0014): independent review session (spec-writer agent, separate session), 2026-10-06: **passed**, Accepted; its ten non-blocking notes were applied the same day. Earlier: re-review 2026-10-06 of the §12 importer text: **passed**, Accepted; first review and re-review 2026-10-05: changes requested (§14). Full records in the review log (decision 0018). |
 | **Implements into** | `crates/input` (`tessera-input`); the importer of §12 also reads records through `crates/dat`/`crates/formats` |
 | **Companion docs** | `docs/ARCHITECTURE.md` §16 (input pipeline), §17 (settings directories), §20.3 (frame loop, 30 Hz fixed tick); `mesh.md` §11 (axes, units, handedness, model facing); `install-layout.md` §8.1 (settings folder), §10 (`--keymap`); `records.md` §1 (VLE, TSize, Pascal string), §7 (enum mappers), §8 (DID maps); `property-system.md` (DID-map groups).; for the UI bridge: [decision 0014](../decisions/0014-ui-input-bridge.md) (**IB**), `ui-behaviour.md` (**UB**), `ui-widgets.md` (**UW**), `lua-plugin-api.md` (**LPA**), `chat-window.md` (**CW**); for the P2 targeting and quickslot actions: [`combat-ui.md`](combat-ui.md) (§3.3, §9.2) |
 
@@ -98,6 +98,8 @@ the importer it specifies never writes the original's file or the install.
 | Built-in `repeat` flags (§8) | K43 | Confirmed (equal to the type-3 set) |
 | Modifier policies of the pointer and UI actions (§2.1, §8) | IB D2 | Decision (IB) |
 | InputMap → context table and push rules other than `ScrollableControls_Mouse` (§8.1) | IB D5 | Decision (IB) |
+| Panel, use and UI-scale action names, context, policy and the Tessera departures from the original's defaults (§8.3) | this revision; `ui-scaling.md` §7.3, §7.4; `walker.md` §14.2–§14.3 | Decision |
+| Default keys of the panel and use actions that follow the original (§8.3) | K50 | Confirmed 2026-10-23 |
 | Everything else in §2–§11 (syntax, limits, game-band defaults, algorithms, tuning numbers) | Tessera design, this document | Decision |
 
 <a id="s1-2"></a>
@@ -107,7 +109,7 @@ Sources:
 
 | Key | Source |
 |---|---|
-| **OBS** | The owner's install and settings folder, read **read-only** on 2026-10-05: the four key-map records (prefix 0x1D) and two action-map records (prefix 0x51) in full; the enum mappers 0x230000AF, 0x23000176, 0x230000B0, 0x2300019E, 0x230001C0, 0x230001C1, 0x230001C2; the DID maps 0x28000000, 0x28000001, 0x2800000A, 0x2800000C; the owner's own key-mapping file (written by the original client, 254 bindings) and the `[Input]` section of the owner's preferences file. Probes were throwaway scripts in the dirty scratch area. **Re-read 2026-10-06** (revision applying decision 0014): the four 0x1D records, both 0x51 records and the mappers 0x230000AF, 0x23000176 and 0x230000B0 were extracted again from the install and parsed with a new throwaway probe (every record parsed with no bytes left over), to confirm the default bindings and toggle types of the UI commands (K42–K46). **Re-read 2026-10-10** (P2 revision, spec writer, dirty room): the records 0x1D000000, 0x1D000001, 0x1D000009 and 0x51000000 were extracted again and parsed with a new throwaway probe (no bytes left over), the mapper chain 0x230000AF / 0x23000176 was dumped, and the property set that `UNIQUEDB` `UI_ShortcutActivationInputMap` names was read, for the targeting and quickslot commands (K47–K49). |
+| **OBS** | The owner's install and settings folder, read **read-only** on 2026-10-05: the four key-map records (prefix 0x1D) and two action-map records (prefix 0x51) in full; the enum mappers 0x230000AF, 0x23000176, 0x230000B0, 0x2300019E, 0x230001C0, 0x230001C1, 0x230001C2; the DID maps 0x28000000, 0x28000001, 0x2800000A, 0x2800000C; the owner's own key-mapping file (written by the original client, 254 bindings) and the `[Input]` section of the owner's preferences file. Probes were throwaway scripts in the dirty scratch area. **Re-read 2026-10-06** (revision applying decision 0014): the four 0x1D records, both 0x51 records and the mappers 0x230000AF, 0x23000176 and 0x230000B0 were extracted again from the install and parsed with a new throwaway probe (every record parsed with no bytes left over), to confirm the default bindings and toggle types of the UI commands (K42–K46). **Re-read 2026-10-10** (P2 revision, spec writer, dirty room): the records 0x1D000000, 0x1D000001, 0x1D000009 and 0x51000000 were extracted again and parsed with a new throwaway probe (no bytes left over), the mapper chain 0x230000AF / 0x23000176 was dumped, and the property set that `UNIQUEDB` `UI_ShortcutActivationInputMap` names was read, for the targeting and quickslot commands (K47–K49). **Re-read 2026-10-23** (panel and UI-scale revision, spec writer, dirty room): the four 0x1D records, both 0x51 records and the mappers 0x230000AF, 0x23000176, 0x230000B0 and 0x230001C1 were extracted again from the install and compared byte for byte with the copies of 2026-10-05 (all ten identical), then every binding of all four 0x1D records was listed with a new throwaway probe (256 record bindings, no bytes left over), for K50–K52. |
 | **BIN** | Method M4 under [decision 0011](../decisions/0011-standing-m4-authorisation.md): disassembly of the offline client `x64/lotroclient64.exe`, file version **4906.0071.1794.4035**, 2026-10-05, confined to its key-map reader, writer, merge and binding-selection code, the generic text-tree parser that reader uses, the device-name tables, the XInput translation and the registration of the `[Input]` preferences. **Questions:** (a) the lexical grammar of the key-mapping file; (b) how the four parts and each binding are interpreted, and which errors reject the whole file; (c) the start-up load-and-merge sequence and the conflict rule; (d) the accepted control-name vocabulary; (e) the format the client writes; (f) how one binding is chosen at run time; (g) how XInput pads are presented as controls; (h) the initial values of the `[Input]` preferences. **Why M1–M3 were not enough:** the format is undocumented (research notes: "not found"); the install holds only one file written by the client (M1), which cannot show error handling, case rules, the accepted vocabulary, defaults merging or rejection reasons; black-box tests (M3) would need many edited files fed to the running official client, rewriting the owner's settings each time, and still could not show merge order. The BIN model was then checked against M1 data: rebuilding the owner's file from its user entries and the install's records reproduced it **byte for byte** (§12.17, I1). **Revision session (same build, 2026-10-05)**, answering a review, confined to the same parser, reader and writer code plus the construction of the control-name tables, the string-to-number conversion of node texts, the splitting and writing of activation words, and the loading of the XInput state function. Questions, all within (a), (b), (e) and (g): what an opening bracket with no token before it produces; what bytes 0xFF and 0x00 do; what the original does with extra children of the name node and of device entries, and with empty tokens where numbers, activations and sub-controls are expected; which of the two spellings of each joystick code the writer emits; what the writer emits for a control code without a name and for activations without a word; which XInput state call supplies the pad buttons. Why M1–M3 were not enough: the owner's file uses none of these cases, and feeding hand-edited files to the official client (M3) would rewrite the owner's settings each time and would not show the writer's choice for controls nobody has bound. **Second revision session (same build, 2026-10-06)**, answering the re-review, confined to the same text-tree parser (its node-list loop, directive handler and the check made before parsing), the key-map reader's four part readers, its binding and control-specification readers, and the node accessors they call (child count, child by index, text, number). Questions, all within (a) and (b): what a top-level part without a child list gives; whether children of nodes read only for their text are looked at; how directives are recognised, matched and handled when unknown or without a child; what a device index that is not a number does. Why M1–M3 were not enough: as for the first revision (none of these cases occurs in the owner's file, and M3 would rewrite the owner's settings). Network, login and launcher code were not examined (decision 0004). |
 | **DX** | Public DirectInput 8 and XInput header constants (key, mouse and joystick offset names and values, the two DirectInput system-device GUIDs, XInput button bits). Public C runtime behaviour (text-mode reading, `strtoul`). General engineering knowledge, not dirty (CLEAN_ROOM.md §2). |
 | **PUB** | Public developer discussion of XInput (SDL project forum, "SDL Archaeology: Where does XINPUT_GAMEPAD_EX come from?", read 2026-10-05): the guide button is bit 0x0400, it is reported only by an undocumented extended state call (ordinal 100 of later XInput versions), not by the documented `XInputGetState`, and the oldest XInput version has no such call. Facts only. |
@@ -165,6 +167,9 @@ Sources:
 | K47 | Default bindings of the targeting and quickslot commands, all in `Main` of 0x1D000000 with activation 0x03 (no other record binds them): `SELECTION_NEAREST_FOE` Backspace; `SELECTION_NEXT_FOE` Tab; `SELECTION_PREVIOUS_FOE` Shift (bit 1) + Tab; `SELECTION_NEAREST_PC` Ctrl (bit 2) + Tab and F9; `SELECTION_NEXT_PC` Shift + F9; `SELECTION_PREVIOUS_PC` Ctrl + F9; `SELECTION_NEAREST_CREATURE` F10; `SELECTION_NEXT_CREATURE` Shift + F10; `SELECTION_PREVIOUS_CREATURE` Ctrl + F10; `SELECTION_SELF` Backslash; `SELECTION_ASSIST` F; `SELECTION_NEAREST_ITEM` Delete; `SELECTION_NEAREST_FELLOW` F8; `SelectFellowOne` … `Six` F1 … F6; `AssistFellowTwo` … `Six` Shift + F2 … F6. `QUICKSLOT_1` … `QUICKSLOT_12` on the keys 1 … 9, 0, Minus, Equals (codes 0x02 … 0x0D) with mask 0; `QUICKSLOT_13` … `24` the same keys with Ctrl (bit 2); `25` … `36` with Alt (bit 3); `37` … `48` with Shift (bit 1). `QUICKSLOT_49` … `72`, `SELECTION_OFF`, `SELECTION_LAST`, `SELECTION_LAST_ATTACKER`, `SELECTION_NEXT_ITEM`, `SELECTION_PREVIOUS_ITEM` and `AUTOATTACK` have no default binding (§8.2, §12.14.2) | OBS (records) | Confirmed 2026-10-10 |
 | K48 | Toggle types (table A of 0x51000000): every `SELECTION_` command above, `QUICKSLOT_1` … `QUICKSLOT_72` and `Quickslot_Page_Up`/`Down` are type 2 (Impulse); `SELECTION_OFF`, `SELECTION_NEXT_FELLOW`, `SELECTION_PREVIOUS_FELLOW`, `AUTOATTACK` and `RESURRECT` are not in the default action map (§8.2) | OBS | Confirmed 2026-10-10 |
 | K49 | `UNIQUEDB` label `UI_ShortcutActivationInputMap` (key 0x10000010 → property set 0x7800000D here) holds `UI_Shortcut_InputMap_Array` with 72 `UI_Shortcut_InputMap_Entry` structs: `UI_Shortcut_InputMap_ShortcutIndex` *i* and `UI_Shortcut_InputMap_InputAction` = `QUICKSLOT_`(*i* + 1), for *i* = 0 … 71 (§8.2; `combat-ui.md` §9.2) | OBS | Confirmed 2026-10-10 |
+| K50 | Default bindings of the panel and use commands, all in `Main` of 0x1D000000, mask 0 unless stated, activation 0x03 (no other record binds them): `ToggleJournalPanel` (0x10000049) C; `QUICKSLOT_BACKPACK` (0x10000094) I; `QUICKSLOT_BACKPACK1` … `6` (0x10000016, 0x1000001E, 0x10000025, 0x1000002D, 0x10000039, 0x1000022F) Ctrl (bit 2) + F1 … F6; `TOOLTIP_DETACH` (0x1000001A) H; `TogglePaperItemPanel` (0x100001CD) B; `ToggleQuestPanel` (0x1000004A) L; `USE` (0x10000085) U; `ToggleTraitPanel` (0x10000036) J; `ToggleSkillPanel` (0x1000001B) K; `ToggleCraftingPanel` (0x10000040) T; `ToggleSocialPanel` (0x10000035) O. `ToggleCraftingProf1Panel` (0x100001BF), `Prof2Panel` (0x100001BE) and `Prof3Panel` (0x100001C0) have no binding. The same keys with a modifier carry other commands that Tessera does not define (for example Shift + L, Shift + B, Shift + I, Shift + C, Ctrl + T, Ctrl + U, Ctrl + H, Ctrl + J, Ctrl + K), so the exact policy keeps them apart (§8.3) | OBS (records) | Confirmed 2026-10-23 |
+| K51 | Toggle types (table A of 0x51000000): every command of K50, the three profession toggles included, is type 2 (Impulse) (§8.3) | OBS | Confirmed 2026-10-23 |
+| K52 | Every default binding of the mouse wheel (code 0x08) has meta-key mask 0: `CameraInstantMoveToward`/`MoveAway` in `Main` and `ScrollUp`/`ScrollDown` in `ScrollableControls_Mouse` (0x1D000001); no record binds the wheel with Ctrl, Shift, Alt or Super (§8.3, `ui-scaling.md` §7.4) | OBS | Confirmed 2026-10-23 |
 | K46 | The four modifier-click commands are bound in `Main` (0x1D000000) with activation 0x06: `DressingRoom` Ctrl (bit 2) + button 0, `AutoLootAll` Shift (bit 1) + button 1, `ItemLinkToChat` Ctrl + button 1, `MultiUseItem` Alt (bit 3) + button 1; `VendorBuyUI` binds `SelectRight` to Shift + button 1 with 0x06 (§11) | OBS | Confirmed |
 
 ---
@@ -1555,16 +1560,109 @@ these actions are swallowed (`opaque_keys`, §3.3), and while `ui.dialog` is act
 > keep `Backslash`, `Minus`, `Equal`, `F9` and `F10`; the world walker's time-of-day and
 > switch keys on them get new default keys that no default binding of this spec uses, and
 > `walker.md` §14.2–§14.3 lists the new keys once they are moved.
+>
+> **Closed (spec writer, 2026-10-23):** `walker.md` §14.2–§14.3 now lists the moved keys:
+> scenery and frills on F2 and F4, the clock-stop and rate keys on `/`, `,` and `.` (the hour
+> keys stay `[` and `]`, the switches F5–F8 and F11). No default binding of §8, §8.2 or §8.3
+> uses one of these keys, alone or in a chord (§8.3 "Walker keys").
 
 > **OPEN:** (implementer, `crates/input`, 2026-10-16, P6) this spec has no rows yet for the P6
 > panel toggles: `crafting-panels.md` §12 asks for four (`ToggleCraftingPanel` on `T` in `Main`;
 > `ToggleCraftingProf1Panel` … `Prof3Panel` unbound) and `progression-panels.md` (trait and
-> skills panels) is not in the tree. Implemented conservatively from `crafting-panels.md` §12
+> skills panels) is not in the tree [corrected 2026-10-23: it is in the tree, Accepted 2026-10-16]. Implemented conservatively from `crafting-panels.md` §12
 > only: `global` actions `toggle_crafting` (`T`), `toggle_crafting_1` … `toggle_crafting_3`
 > (none), button, policy exact, no `R` flag, with the four commands paired in order in the
 > §12.14.2 import table; the action names are Tessera's and await this spec's rows. No trait or
 > skills-panel action is defined until their commands and defaults are specified. `T` clashes
 > with no default of §8 or §8.2 (`Ctrl+T` stays `pin_tooltip` under the exact policy).
+>
+> **Answered (spec writer, 2026-10-23):** the rows are §8.3. `progression-panels.md` is in the
+> tree (Accepted 2026-10-16; its §1.4 and PP15 name `ToggleTraitPanel` and `ToggleSkillPanel`),
+> so §8.3 adds `toggle_traits` (J) and `toggle_skills` (K) from the install's key-map data
+> (K50) next to the four crafting toggles as implemented (`toggle_crafting` on `T`,
+> `toggle_crafting_1` … `3` unbound; K50, K51). `pin_tooltip` moves to `H` (§8.3), so the
+> remark on `Ctrl+T` no longer applies.
+
+<a id="s8-3"></a>
+### 8.3 Panel, use and UI-scale actions (revision of 2026-10-23)
+
+Game-band button actions of the `global` context that open panels, use the selection or
+change the UI scale. What each one does is the cited spec's; this section gives names,
+commands, policies and defaults. Every action here has policy **exact** and no `R` flag (the
+original's commands are type 2, Impulse, K51; the UI-scale actions have no original command).
+The command is the one §2.2 reports; the ID is this install's (K50), for reference and tests
+only.
+
+| Context | Action | Command (ID) | Default bindings | Behaviour |
+|---|---|---|---|---|
+| global | `toggle_character` | `ToggleJournalPanel` (0x10000049) | `C` | `character-panels.md` §2 |
+| global | `toggle_bags` | `QUICKSLOT_BACKPACK` (0x10000094) | `I` | `character-panels.md` §4.1 (every bag) |
+| global | `toggle_bag_1` … `toggle_bag_6` | `QUICKSLOT_BACKPACK1` … `QUICKSLOT_BACKPACK6` (0x10000016, 0x1000001E, 0x10000025, 0x1000002D, 0x10000039, 0x1000022F) | none | `character-panels.md` §4.1 (one bag) |
+| global | `pin_tooltip` | `TOOLTIP_DETACH` (0x1000001A) | `H` | `item-tooltips.md` §10 |
+| global | `toggle_wallet` | `TogglePaperItemPanel` (0x100001CD) | `B` | `npc-windows.md` §9.4 (wallet) |
+| global | `toggle_quest_log` | `ToggleQuestPanel` (0x1000004A) | `L` | `quest-journal.md` §4.1 (quest log) |
+| global | `use_selection` | `USE` (0x10000085) | `U` | `npc-windows.md` §3.1 |
+| global | `toggle_traits` | `ToggleTraitPanel` (0x10000036) | `J` | `progression-panels.md` §1.4, §3 |
+| global | `toggle_skills` | `ToggleSkillPanel` (0x1000001B) | `K` | `progression-panels.md` §1.4, §4 |
+| global | `toggle_crafting` | `ToggleCraftingPanel` (0x10000040) | `T` | `crafting-panels.md` §4.1, §12 |
+| global | `toggle_crafting_1` … `toggle_crafting_3` | `ToggleCraftingProf1Panel` (0x100001BF), `ToggleCraftingProf2Panel` (0x100001BE), `ToggleCraftingProf3Panel` (0x100001C0) | none | `crafting-panels.md` §4.1 (open at tab 1, 2, 3) |
+| global | `ui_scale_up` / `ui_scale_down` | none (Tessera action) | none | `ui-scaling.md` §7.3 (+0.05 / −0.05) |
+| global | `ui_scale_auto` | none (Tessera action) | none | `ui-scaling.md` §7.3 |
+| global | `ui_interface_window` | none (Tessera action) | none | `ui-scaling.md` §7.2, §7.3 |
+| global | `ui_window_scale_up` / `ui_window_scale_down` | none (Tessera action) | none | `ui-scaling.md` §7.4 (per-window factor of the panel under the pointer) |
+
+The P4 social actions (`toggle_social` on `O`, the page, fellow-select and fellow-assist
+actions) are `social-panels.md` §7.2's and `toggle_mount` (`Ctrl+M`, `movement`) is
+`walker.md` §16.4's; they are not repeated here.
+
+**Where the defaults come from.** `C`, `I`, `H`, `B`, `L`, `U`, `J`, `K` and `T` are the
+original's defaults (K50). Tessera departs from the original in three places, each a Tessera
+**Decision**:
+
+1. `toggle_bag_1` … `toggle_bag_6` are unbound, while the original binds
+   `QUICKSLOT_BACKPACK1` … `6` to Ctrl + F1 … F6 (K50). Ctrl + F2, Ctrl + F4, Ctrl + F5 and
+   Ctrl + F6 would take the world walker's F2, F4, F5 and F6 (`walker.md` §14.2 leaves a key
+   to the keymap when any binding uses it, alone or in a chord), so all six stay unbound for
+   one rule. An import (§12.14) brings Ctrl + F1 … F6 back, and the walker then gives up
+   those keys by its own rule.
+2. The UI-scale actions have no counterpart in the original and are unbound (`ui-scaling.md`
+   §7.3 and its §13 OPEN on default keys). The suggested Ctrl + wheel for the per-window
+   scale is free in the original's data (K52), but not in Tessera's: `scroll_up` and
+   `scroll_down` have the subset policy (§8), so Ctrl + wheel over a scrollable already
+   gives them, and `zoom` and `fly_speed` read the wheel axis whatever the modifiers. A
+   binding there would need its own decision; until then the Interface window and the
+   `uiscale` command reach the same controls.
+3. `ui_window_scale_up` / `_down` act on the panel under the pointer; a press with no such
+   panel does nothing (Tessera rule).
+
+**Settled conflicts with the earlier Tessera defaults** (P1, §12.14.2 OPEN): `toggle_bags`
+moves from `B` to `I` and `toggle_bag_1` loses `I`, so that `B` is free for `toggle_wallet`,
+as in the original; `pin_tooltip` moves from `Ctrl+T` to `H`, the original's
+`TOOLTIP_DETACH` key (the original's Ctrl + T is a command Tessera does not define, K50).
+Saved keymap files are not migrated (§6.4 overrides are per action): a user file
+that binds `toggle_bags` to `B` keeps it, and `B` then gives both `toggle_bags` and
+`toggle_wallet` (§7.2 step 3, same context).
+
+**Modifiers.** The exact policy keeps every action here off the same letter with a modifier
+(Shift + L, Shift + B, Shift + I, Ctrl + T, Ctrl + U and others carry other commands in the
+original, K50). Shift is also `walk`'s modifier hold in `movement` (§7.4); these keys have no
+Shift form here, so the §8.2 Shift OPEN does not touch them.
+
+**Shadowing.** In fly mode `fly` (priority 30) binds `C` to `fly_vertical`, so `C` lowers the
+flight and does not reach `toggle_character` (§7.2); in walk mode `C` opens the panel. No other
+key of this section is bound in `camera`, `movement` or `fly`. In `text_entry` the keys are
+swallowed (`opaque_keys`, §3.3), so typing a `U` or an `L` never uses or opens anything.
+
+<a id="s8-3-1"></a>
+#### 8.3.1 Walker keys
+
+The world walker reads `[`, `]`, `/`, `,`, `.`, F2, F4, F5–F8 and F11 as raw keys
+(`walker.md` §14.2–§14.3) and gives a key up when any keymap binding uses it. Invariant: no
+default binding of §8, §8.2 or §8.3, in any context, uses one of these keys alone or in a
+chord. The defaults use F3 (`toggle_debug`), F9, F10 and F12 of the function keys, the letters,
+digits, `Minus`, `Equal`, `Backslash`, `Tab`, `Backspace`, `Delete` and the keys of §8, none of
+them a walker key. A test checks it by listing every stroke of the built-in defaults against
+the walker's set.
 
 ---
 
@@ -2783,6 +2881,16 @@ axis actions.
 | `Main` | `SELECTION_NEAREST_ITEM` | global | `target_nearest_object` | — |
 | `Main` | `SELECTION_LAST`, `SELECTION_LAST_ATTACKER`, `SELECTION_OFF` | global | `target_last`, `target_last_attacker`, `target_clear` | — |
 | `Main` | `QUICKSLOT_1` … `QUICKSLOT_72` | global | `quickslot_1` … `quickslot_72` | — |
+| `Main` | `ToggleJournalPanel` | global | `toggle_character` | — |
+| `Main` | `QUICKSLOT_BACKPACK` | global | `toggle_bags` | — |
+| `Main` | `QUICKSLOT_BACKPACK1` … `QUICKSLOT_BACKPACK6` | global | `toggle_bag_1` … `toggle_bag_6` | — |
+| `Main` | `TOOLTIP_DETACH` | global | `pin_tooltip` | — |
+| `Main` | `TogglePaperItemPanel` | global | `toggle_wallet` | — |
+| `Main` | `ToggleQuestPanel` | global | `toggle_quest_log` | — |
+| `Main` | `USE` | global | `use_selection` | — |
+| `Main` | `ToggleTraitPanel`, `ToggleSkillPanel` | global | `toggle_traits`, `toggle_skills` | — |
+| `Main` | `ToggleCraftingPanel` | global | `toggle_crafting` | — |
+| `Main` | `ToggleCraftingProf1Panel`, `ToggleCraftingProf2Panel`, `ToggleCraftingProf3Panel` | global | `toggle_crafting_1`, `toggle_crafting_2`, `toggle_crafting_3` | — |
 
 Rows with several commands and several actions pair them in order. The three
 `EditControls` rows for `AcceptInput`, `EscapeKey` and the two line moves were retargeted on
@@ -2835,6 +2943,16 @@ Not translated, with the reason:
 > action whose commands have no binding in the effective map, so an import from data whose
 > `Main` lacks them would leave the panels without keys. Confirm or give the rows, and
 > whether Tessera's defaults should stay in that case.
+>
+> **Answered (spec writer, 2026-10-23):** (1) all of them are in `Main` of 0x1D000000 and in no
+> other record (K50), so the five rows are right and are now in the table above, with the rows
+> of the other §8.3 actions. Their defaults are §8.3's: `toggle_character` C and `toggle_bags`
+> I (the original's), `toggle_bag_1` … `6` unbound (the original's Ctrl + F1 … F6 would take
+> walker keys, §8.3 item 1), `pin_tooltip` H (the original's; `Ctrl+T` retired). (2) Step 5
+> stays as written: an import from data whose effective `Main` does not bind a command gives
+> that action an empty list, as the original would leave the panel without a key. The
+> install-data-missing case is the separate OPEN of §12.14.1, whose implemented rule (empty
+> document, Tessera's defaults stay) also covers these actions.
 
 <a id="s12-14-3"></a>
 #### 12.14.3 Controls
@@ -3303,3 +3421,6 @@ These specs are owned elsewhere; the corrections are recorded here, not made the
 | 2026-10-06 | Spec writer (dirty room): revision applying the accepted [decision 0014](../decisions/0014-ui-input-bridge.md) (UI input bridge), its "Changes `keymap.md` must gain" items 1–21 and the open-review amendments that concern this spec; status Review, then Accepted after an independent review the same day (passed; its ten non-blocking notes applied: held-set definition, rescaled cursor position on every scale change, sequence drop on the first `opaque` entry, the marked right button after a drag, K1–K46, §13 item 8 additions). **§0, header, §1.1:** the compatibility exceptions and their provenance; author role extended. **§1.2:** OBS re-read; new rows K42–K46 (default bindings of the UI commands, toggle types, `Main`'s page and line commands, the activation of `CameraInstantMouseSteer` and the merge conflicts, the modifier-click defaults). **§2:** policies, `repeat` flag, optional command name; new §2.2 (command name and ID of an event). **§3:** rewritten as §3.1–§3.5: two bands, UI-band entries and their ordering (UB §5.2), limits, queued changes, pending-sequence rules, `pass_through`, `opaque_keys` with the band end, release and modifier-hold rules, code access, holds. **§5.3, §6.1, §6.3:** the `on` field (read-time and compile-time checks), schema example, migration of the retired `text_entry` names. **§7:** §7.1–§7.6 rewritten (sequence numbers, press-class resolution with pass-through and the band end, event order §7.2.1, the UI-owned **mark** §7.2.2 replacing "left out of the held set" (IB must-fix 3), release-class resolution §7.3.1, modifier holds, wheel-motion withholding per raw event, character routing keyed on `opaque_keys` too); new §7.7 (activation timing), §7.8 (UI offers, including the rescale of the frozen position on a scale change during the lock, a Tessera rule answering IB's open review), §7.9 (invariants (a)–(y), with (o) re-checked against the mark and new (h6), (o2)), §7.10 (worked example). **§8:** context table with bands; pointer and UI actions with commands, observed IDs, policies, repeat flags and defaults; retired actions; new §8.1 (InputMap → context). **§10, §11:** adapter rules; auto-repeat OPEN resolved, IME stays; eleven new OPENs. **§12.14.2:** retargeted rows, new rows, the `ui.chat_log` copy rule. **§12.14.5:** activation translation; the importer wheel rule for button actions. **§12.14.6:** IB differences 8, 9, 14, 19. **§12.15:** examples for the new rows. **§12.17:** I9, I10. **§13:** items 6–8. **Corrected against decision 0014** (data, K43): the built-in `repeat` flags follow the type-3 set (focus next/previous repeat; line and document start/end do not). **Confirmed** by the re-read: every default binding that decision 0014 attributes to the original (UB §3.2, §5.4, §5.6), the 16-command type-3 set, the command IDs of UB §3.1. **New facts:** the original's alternative clipboard keys are Super+C/X/V (K42); `Main` binds PageUp/PageDown/Home/End to the page and line commands (K44); the default `CameraInstantMouseSteer` activation is 0x03 in `Main` (K45). |
 | 2026-10-10 | Spec writer (dirty room), P2 revision for `combat-ui.md` (targeting and quickslot actions only); status Accepted → Revised, awaiting independent review. **§1.2:** OBS re-read of 2026-10-10; new rows K47 (default bindings of the targeting and quickslot commands), K48 (their toggle types), K49 (`UI_ShortcutActivationInputMap`: shortcut index *i* → `QUICKSLOT_`(*i*+1), 72 entries). **New §8.2:** 15 targeting actions and `quickslot_1` … `quickslot_72` in `global`, exact policy, the original's defaults, the interplay with Tessera's `walk`, `fly_slow` and `toggle_fly` defaults and the UI band, and an OPEN on Shift. **§12.11:** rows 9 and 11 name their Tessera use. **§12.14.2:** seven import rows for these commands; the not-translated list names the targeting and quickslot commands left out. No other section changed. |
 | 2026-10-11 | Independent review of the P2 revision: passed; status Revised → Accepted. No content change. |
+| 2026-10-23 | Spec writer (dirty room), panel, use and UI-scale revision; status Accepted → Revised, awaiting independent review. **§1.1:** two rows for §8.3. **§1.2:** OBS re-read of 2026-10-23 (records byte-identical to 2026-10-05); new rows K50 (default bindings of `ToggleJournalPanel`, `QUICKSLOT_BACKPACK`, `QUICKSLOT_BACKPACK1` … `6`, `TOOLTIP_DETACH`, `TogglePaperItemPanel`, `ToggleQuestPanel`, `USE`, `ToggleTraitPanel`, `ToggleSkillPanel`, `ToggleCraftingPanel` and the three profession toggles), K51 (all type 2), K52 (no default wheel binding has a modifier). **New §8.3:** the P1, P3, P6 panel actions, `use_selection` and the UI-scale actions of `ui-scaling.md` §7.3–§7.4 (`ui_scale_up`, `ui_scale_down`, `ui_scale_auto`, `ui_interface_window` as registered; `ui_window_scale_up`/`_down` new, unbound), with new Tessera actions `toggle_wallet`, `toggle_quest_log`, `use_selection`, `toggle_traits`, `toggle_skills`; the `B` conflict settled (`toggle_bags` B → I, `toggle_bag_1` I → none, `toggle_wallet` B), `pin_tooltip` Ctrl+T → H; new §8.3.1 walker-key invariant. **§8.2:** the walker-key OPEN closed (`walker.md` §14.2–§14.3); the P6 OPEN answered and its stale wording on `progression-panels.md` corrected; the Shift OPEN stays open (owner). **§12.14.2:** ten import rows; the P1 implementer OPEN answered. No other section changed. |
+| 2026-10-23 | Independent review of the 2026-10-23 revision (spec-review:spec-ui-input:2): passed; status Revised → Accepted. No content change (header only). |
+| 2026-10-23 | Note only (no fact or rule changed), round 4 of the review. **Implemented behaviour that changes** with the 2026-10-23 revision (§8.3): `crates/input` defaults still bind `toggle_bags` to `B`, `toggle_bag_1` to `I` and `pin_tooltip` to `Ctrl+T`; §8.3 moves them to `I`, none and `H`. The registry also lacks the new actions `toggle_wallet` (`B`), `toggle_quest_log` (`L`), `use_selection` (`U`), `toggle_traits` (`J`), `toggle_skills` (`K`) and `ui_window_scale_up` / `ui_window_scale_down` (unbound). `toggle_crafting` (`T`), `toggle_crafting_1` … `3` and the four UI-scale actions are registered as §8.3 states. Status unchanged. |

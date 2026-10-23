@@ -12,11 +12,11 @@ use libfuzzer_sys::fuzz_target;
 use tessera_formats::did::Did;
 use tessera_ui::events::{Message, MsgArg};
 use tessera_ui::game::chat::notice::{NoTables, TextRef};
-use tessera_ui::game::subtree;
-use tessera_ui::widgets::context_menu::{
+use tessera_ui::game::context_menu::{
     ContextMenu, ItemKind, MenuArt, MenuItem, MenuPosition, MenuRefs, MenuRequest,
 };
-use tessera_ui::widgets::dialog::{DialogBoxes, DialogKind, DialogRefs, DialogRequest, DialogText};
+use tessera_ui::game::dialog::{DialogBoxes, DialogKind, DialogRefs, DialogRequest, DialogText};
+use tessera_ui::game::subtree;
 use tessera_ui::{Command, ElementKey, MemoryEnv, Ui, UiEvent, Vocab};
 
 struct Bytes<'a> {

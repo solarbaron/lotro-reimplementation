@@ -7,19 +7,32 @@
 //! Scrollable, ListBox and Tree parts. The behaviour lives in the submodules as `impl Ui`
 //! blocks.
 //!
-//! [`dialog`] (engine dialog boxes, §18) and [`context_menu`] (context menus, §19) are
-//! built by game code on top of the classes: a controller per dialog owner or open menu
-//! tree that creates its elements from the install's `Dialog` and `ContextMenu` layouts.
+//! The engine dialog boxes (`ui-widgets.md` §18) and context menus (§19) are controllers
+//! built on top of these classes, from the install's `Dialog` and `ContextMenu` layouts and
+//! the game layer's code-made element kit; they live in [`crate::game::dialog`] and
+//! [`crate::game::context_menu`], so no widget code uses the game layer.
+//!
+//! **Temporary shim:** [`dialog`] and [`context_menu`] here re-export those two modules under
+//! their older paths, the only names this module takes from the game layer. They stay until
+//! the client's callers name `tessera_ui::game::{dialog, context_menu}`, then they are
+//! deleted. They are not `#[deprecated]`: those callers build with `-D warnings`. New code
+//! names the `game` paths.
 
 pub(crate) mod button;
-pub mod context_menu;
-pub mod dialog;
 pub mod groupbox;
 pub(crate) mod listbox;
 pub(crate) mod menu;
 pub mod meter;
 pub(crate) mod panel;
 pub mod scroll;
+
+/// The engine dialog boxes under their older path: [`crate::game::dialog`] (temporary shim,
+/// module docs).
+pub use crate::game::dialog;
+
+/// The context menus under their older path: [`crate::game::context_menu`] (temporary shim,
+/// module docs).
+pub use crate::game::context_menu;
 
 use crate::tree::ElementKey;
 

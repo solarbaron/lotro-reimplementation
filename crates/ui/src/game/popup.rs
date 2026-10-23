@@ -4,11 +4,11 @@
 //! Tessera's code-made popup list that the P3 tracker menu, the P5 map menus and the
 //! finder's menus used while `tessera-ui` had no context-menu widget is retired: those
 //! menus are context menus of `ui-widgets.md` §19 now
-//! ([`crate::widgets::context_menu`]). What stays here is shared by the windows' rows:
+//! ([`crate::game::context_menu`]). What stays here is shared by the windows' rows:
 //!
-//! - [`click`]: the click of a game-code message, a Button-class source's mouse click
+//! - `click`: the click of a game-code message, a Button-class source's mouse click
 //!   dropped in favour of its `Button_click`;
-//! - [`listen_row`]: the click registrations of a code-made row (and its mouse-visible
+//! - `listen_row`: the click registrations of a code-made row (and its mouse-visible
 //!   flag);
 //! - `front_z`: the z-level that puts a new root panel in front of every other (a lower
 //!   z is in front, `ui-layout.md` §9.3).

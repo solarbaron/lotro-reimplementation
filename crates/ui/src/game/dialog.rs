@@ -23,18 +23,20 @@
 //!   activated and brought to the front unless `StartInactive`.
 //! - **Parts** (§18.3), the **countdown** (variable [`COUNTDOWN_VARIABLE`], the stall rule
 //!   of [`STALL_GAP`]) and the **results** (§18.5).
-//! - **Keys** (§18.4, `ui-behaviour.md` §5.5): the UI core's dialog key handler
-//!   ([`Ui::mark_dialog`]: `AcceptKey`/`AcceptInput` give the yes result, `EscapeKey` the
-//!   no result, and their releases are consumed) while the dialog is the active panel and,
-//!   for a confirmation or message, its description does not ignore the keyboard
-//!   (`UICore_Dialog_ignorekeyboardinput` is read for those two kinds only: a text input
-//!   reacts to the commands its entry reports, a wait dialog handles no keys);
-//!   `DialogBoxes` is pushed while it is active (§18.6 Tessera rule).
-//!
-//! **Not built: the modal key rule of §18.4.** A modal description's dialog does not
-//! consume the other key presses and releases yet: the UI core's dialog key handler takes
-//! only the keys above, and no host checks [`modal_dialog_shown`] before handing a key to
-//! game code. No current request is modal.
+//! - **Keys** (§18.4, `ui-behaviour.md` §5.5): the UI core's dialog key handler, given the
+//!   dialog's kind with [`Ui::set_dialog_keys`] (`crate::DialogKeys`): a confirmation gives
+//!   yes on `AcceptKey` or `AcceptInput` and no on `EscapeKey` and consumes the releases of
+//!   `AcceptKey` and `EscapeKey`; a message gives OK on any of the three and consumes the
+//!   release of `AcceptKey`; both only while the dialog is the active panel and the
+//!   description does not ignore the keyboard (`UICore_Dialog_ignorekeyboardinput` is read
+//!   for those two kinds only). A text input gives done on `AcceptInput` in its entry and
+//!   quit on `EscapeKey` in its entry while the quit button is shown; a wait dialog handles
+//!   no keys. `DialogBoxes` is pushed while the dialog is active (§18.6 Tessera rule).
+//! - **Modal** (§18.4): a modal description's dialog is made modal in the core
+//!   ([`Ui::set_dialog_modal`]): while it is shown the core consumes every other key press
+//!   and the release of every key pressed meanwhile, so no key reaches the broadcast that
+//!   feeds game code ([`modal_dialog_shown`] tells a host the same). Not passing those keys
+//!   to the client's own game-key handling is the host's part.
 //!
 //! **Tessera rules.**
 //!
@@ -50,10 +52,8 @@
 //! - A description that is modal while its element is not (the element's own
 //!   `UICore_Dialog_modal` already gives the container of `ui-layout.md` §9.1) gets a
 //!   code-made screen-sized container behind it that blocks clicks.
-//! - The core's key handler closes a text-input dialog with "done" on `AcceptKey` too, and
-//!   consumes the release of `EscapeKey` for a message dialog (the spec names `AcceptInput`
-//!   in the entry, and the release of `AcceptKey` only); `EscapeKey` with the quit button
-//!   hidden gives no result and the dialog is shown again.
+//! - A dialog whose element lies in a modal container (its element is modal, `ui-layout.md`
+//!   §9.1) is modal for keys too, whatever the description says.
 //! - Without the install's `Dialog` layout (no install, or an element that does not
 //!   resolve) the dialog is a code-made element with the §18.1 boxes and Tessera's art
 //!   ([`DialogArt`]), centred on the screen. Its question, statement and wait texts are
@@ -572,20 +572,15 @@ pub fn engine_dialog_shown(ui: &Ui) -> bool {
     shown_elsewhere(ui, None).is_some()
 }
 
-/// Whether a shown engine dialog is modal (§18.4: no other key should reach game code
-/// below it). Nothing consults it yet (module docs, "Not built").
+/// Whether a shown engine dialog is modal (§18.4: no other key reaches game code below
+/// it; the core consumes those keys, [`Ui::modal_dialog`]).
 #[must_use]
 pub fn modal_dialog_shown(ui: &Ui) -> bool {
-    ui.focus.dialogs.iter().any(|k| {
-        ui.is_displayed(*k) && {
-            let m = ui.prop(*k, MARK_PID).int();
-            m & MARK_SHOWN != 0 && m & MARK_TAKEN_DOWN == 0 && ui.prop(*k, MODAL_PID).bool()
-        }
+    ui.modal_dialog().is_some_and(|k| {
+        let m = ui.prop(k, MARK_PID).int();
+        m & MARK_SHOWN != 0 && m & MARK_TAKEN_DOWN == 0
     })
 }
-
-/// Tessera's run-time property: the shown dialog's description is modal.
-const MODAL_PID: u32 = 0xFFFE_7D02;
 
 impl DialogBoxes {
     /// An owner's dialogs over `refs`.
@@ -831,7 +826,6 @@ impl DialogBoxes {
             mark |= MARK_CANNOT_OVERRIDE;
         }
         ui.set_property(root, MARK_PID, PropertyValue::Int(mark));
-        ui.set_property(root, MODAL_PID, PropertyValue::Bool(req.modal));
         // §18.4: the flag is read for confirmations and messages; a text input reacts to
         // its entry's commands; a wait dialog handles no keys.
         let ignore = match req.kind {
@@ -850,6 +844,18 @@ impl DialogBoxes {
             None
         };
         let parts = self.fill(ui, root, &req, src);
+        // §18.4: the core's key rules for this kind, and the modal key rule.
+        let keys = match req.kind {
+            DialogKind::Confirmation => crate::DialogKeys::Confirmation,
+            DialogKind::Message => crate::DialogKeys::Message,
+            DialogKind::TextInput => crate::DialogKeys::TextInput {
+                entry: parts.entry,
+                quit: parts.quit,
+            },
+            DialogKind::Wait => crate::DialogKeys::None,
+        };
+        ui.set_dialog_keys(root, keys);
+        ui.set_dialog_modal(root, req.modal || in_container(ui, root));
         if req.start_inactive {
             if let Some(b) = before.filter(|b| ui.exists(*b) && ui.is_displayed(*b))
                 && ui.active_panel() != Some(b)
@@ -1144,8 +1150,8 @@ impl DialogBoxes {
                 match outcome {
                     Some(o) => self.finish(ui, o, src),
                     None => {
-                        // No result (a wait dialog, or escape without the quit button):
-                        // the core hid the dialog; it is shown again.
+                        // No result (a wait dialog, or a quit result with the quit button
+                        // hidden, which the core does not give): it is shown again.
                         ui.set_shown(root, true);
                         ui.request_activation(root);
                         if let Some(e) = parts.entry {

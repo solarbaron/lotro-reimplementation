@@ -28,7 +28,7 @@ use super::npcvocab::NpcVocab;
 use super::p5vocab::P5Vocab;
 use super::popup::click;
 use super::{show, subtree};
-use crate::widgets::context_menu::{
+use crate::game::context_menu::{
     ContextMenu, MenuArt, MenuEvent, MenuItem, MenuPosition, MenuRefs, MenuReply, MenuRequest,
     REOPEN_GUARD,
 };

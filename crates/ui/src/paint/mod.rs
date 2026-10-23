@@ -42,7 +42,8 @@ pub use cache::{
 };
 pub use canvas::{Canvas, MAX_CANVAS_DIM, TILE};
 pub use caps::{
-    CanvasExtent, CapCounters, CapRefusal, MemoryUse, PaintLimits, SurfaceCounter, canvas_extent,
+    CanvasExtent, CapCounters, CapRefusal, MemoryUse, PaintLimits, SurfaceCounter, WORKER_MIN_PX,
+    canvas_extent,
 };
 pub use compose::{
     Addressing, Clip, CompNode, ComposeConfig, CompositionList, Entry, EntryTexture, Filter,
@@ -63,8 +64,8 @@ pub use job::{BAND_ROWS, BandBudget, PaintBudget, PaintJob, TimeSlice, Unlimited
 pub use ops::{CompositeOp, opacity_byte, pack_colour};
 pub use painter::{CanvasSet, Layer, paint_rect};
 pub use scheduler::{
-    FrameOutput, GpuOp, GroupId, PaintFrameStats, Scheduler, Slot, Snapshot, SnapshotSource,
-    SurfaceId, TexKey,
+    FrameOutput, GpuOp, GroupId, PaintFrameStats, PaintSpawner, Scheduler, Slot, Snapshot,
+    SnapshotSource, SurfaceId, TexKey,
 };
 
 /// Errors of the paint module.

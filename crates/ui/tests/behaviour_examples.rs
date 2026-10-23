@@ -617,7 +617,10 @@ fn dialog_keys_close_with_results() {
         yes: false
     }));
     assert!(!ui.is_visible(k));
-    // With no keyboard target the key goes on to game code.
+    // The release of the press that gave the result is consumed (`ui-widgets.md` §18.4).
+    assert!(ui.key_command(&cmd("EscapeKey"), false, 0.0));
+    // A new press with no keyboard target goes on to game code. (A second press without
+    // the release would be an OS repeat of the first, consumed with it.)
     assert!(!ui.key_command(&cmd("EscapeKey"), true, 1.0));
     assert!(
         ui.take_events()

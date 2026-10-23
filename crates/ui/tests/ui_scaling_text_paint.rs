@@ -483,3 +483,173 @@ fn tooltip_is_sized_from_its_scaled_text() {
     );
     assert!(tw2 >= ext(1.25), "the text box holds the text: {tw2}");
 }
+
+fn perf() -> bool {
+    std::env::var_os("TESSERA_PERF").is_some_and(|v| v == "1")
+}
+
+/// §8 S7: every frame reports the time of its glyph derivations on the frame thread (their sum
+/// and the longest one) next to their count, so a quiet-machine run can check "at most 20 µs per
+/// glyph". The bound itself is asserted only with `TESSERA_PERF=1` (`docs/DEVELOPMENT.md`).
+#[test]
+fn glyph_derivation_times_are_reported() {
+    let mut s = scene(true);
+    screen(&mut s.ui, 1.5);
+    let mut budget = Unlimited;
+    let (mut glyphs, mut ns, mut max) = (0u64, 0u64, 0u64);
+    for t in 0..8u64 {
+        let fr = s.ui.paint(Duration::from_millis(16 * t + 1), &mut budget);
+        let st = fr.stats;
+        assert!(st.glyph_derivation_max_ns <= st.glyph_derivation_ns);
+        if st.glyphs_derived == 0 {
+            assert_eq!(st.glyph_derivation_ns, 0, "no derivation, no time");
+        }
+        glyphs += u64::from(st.glyphs_derived);
+        ns += st.glyph_derivation_ns;
+        max = max.max(st.glyph_derivation_max_ns);
+        if s.ui.paint_settled() {
+            break;
+        }
+    }
+    assert!(glyphs > 0);
+    eprintln!(
+        "S7: {glyphs} glyphs derived on the frame thread, mean {} ns, longest {max} ns",
+        ns / glyphs
+    );
+    if perf() {
+        assert!(
+            ns / glyphs <= 20_000,
+            "S7: mean {} ns per glyph",
+            ns / glyphs
+        );
+    }
+}
+
+/// §6.5, §8 S7: a ladder step (the printable ASCII range of a ladder at one target height) is
+/// derived by a pure function meant for the workers, timed there; the UI takes its glyphs into
+/// the cache, reports the step's time in the next frame's figures, and the drawing path then
+/// finds those glyphs instead of deriving them again.
+#[test]
+fn a_ladder_step_is_derived_off_the_frame_thread_and_reported() {
+    use tessera_ui::text::{FontLadder, LADDER_STEP_UNITS, derive_ladder_step};
+    let face = data_face(12);
+    // c = 1.5: the label's target height, the distance method from the one record.
+    let t = scaling::target_height(face.line_height_i32(), 1.5, 1.0);
+    let ladder = FontLadder::new(vec![face]);
+    let step = std::thread::spawn(move || derive_ladder_step(&ladder, t))
+        .join()
+        .expect("worker");
+    let units = LADDER_STEP_UNITS.count();
+    assert!(!step.glyphs.is_empty() && step.glyphs.len() <= units);
+    let elapsed = step.elapsed;
+    let mut s = scene(true);
+    screen(&mut s.ui, 1.5);
+    s.ui.accept_ladder_step(step);
+    let (held, _, before) = s.ui.glyph_cache_stats();
+    assert!(held > 0);
+    let fr = s.ui.paint(Duration::from_millis(1), &mut Unlimited);
+    assert_eq!(fr.stats.ladder_steps, 1);
+    assert_eq!(
+        fr.stats.ladder_step_ns,
+        u64::try_from(elapsed.as_nanos()).unwrap()
+    );
+    assert_eq!(fr.stats.ladder_step_max_ns, fr.stats.ladder_step_ns);
+    let mut derived = fr.stats.glyphs_derived;
+    derived += settle(&mut s.ui);
+    assert_eq!(derived, 0, "the label's glyphs came from the step");
+    assert_eq!(s.ui.glyph_cache_stats().2, before, "nothing derived again");
+    let fr = s.ui.paint(Duration::from_millis(200), &mut Unlimited);
+    assert_eq!(fr.stats.ladder_steps, 0, "reported once");
+    eprintln!("S7: one ladder step of {} glyphs in {elapsed:?}", held);
+    if perf() {
+        assert!(
+            elapsed <= Duration::from_millis(5),
+            "S7: ladder step {elapsed:?}"
+        );
+    }
+    // A target the ladder holds exactly derives nothing.
+    let face = data_face(12);
+    let lh = face.line_height_i32();
+    let exact = derive_ladder_step(&FontLadder::new(vec![face]), lh);
+    assert!(exact.glyphs.is_empty());
+}
+
+/// §8 S6 (revision 8 answer): one total *T* = `image_lru_mib` × max(1, *Se*²), the glyph caches
+/// one eighth of it in whole MiB, the images the rest; set again with every change of *Se*, and
+/// the glyph cache evicts down to its share when *Se* falls.
+#[test]
+fn the_s6_total_is_split_and_followed_by_the_caches() {
+    use tessera_ui::scaling::glyph::{DerivedGlyph, GlyphKey, GlyphMetrics, SourceKind};
+    use tessera_ui::scaling::s6_budget;
+    use tessera_ui::text::LadderStep;
+    const MIB: u64 = 1 << 20;
+    let mut s = scene(true);
+    // Before the host sets `image_lru_mib` the glyph share is the host's own.
+    s.ui.set_glyph_cache_budget(3 << 20);
+    screen(&mut s.ui, 2.0);
+    assert_eq!(s.ui.glyph_memory().0, 3 << 20, "not overridden");
+    s.ui.set_image_memory(64);
+    let b = s.ui.s6_budget();
+    assert_eq!(
+        (b.total, b.glyphs, b.images),
+        (256 * MIB, 32 * MIB, 224 * MIB)
+    );
+    assert_eq!(b, s6_budget(64, 2.0));
+    assert_eq!(s.ui.glyph_memory().0 as u64, 32 * MIB);
+    // Fill the derived-glyph cache with about 20 MiB.
+    let glyph = |i: u32| {
+        (
+            GlyphKey {
+                face: FontId::Data(0x4200_0001),
+                target_height: 40,
+                source: SourceKind::Distance,
+                glyph: i,
+                outline: false,
+            },
+            DerivedGlyph {
+                metrics: GlyphMetrics::default(),
+                coverage: vec![0x80; 1 << 20],
+            },
+        )
+    };
+    s.ui.accept_ladder_step(LadderStep {
+        glyphs: (0..20).map(glyph).collect(),
+        elapsed: Duration::ZERO,
+    });
+    let held = s.ui.glyph_memory().1 as u64;
+    assert!(held > 19 * MIB && held <= 32 * MIB, "{held}");
+    // Se falls to 1: T = 64 MiB, glyphs 8 MiB; the cache evicts down to it.
+    screen(&mut s.ui, 1.0);
+    let b = s.ui.s6_budget();
+    assert_eq!((b.glyphs, b.images), (8 * MIB, 56 * MIB));
+    let (share, held, _faces) = s.ui.glyph_memory();
+    assert_eq!(share as u64, 8 * MIB);
+    assert!(held as u64 <= 8 * MIB, "evicted to its share: {held}");
+    // A user value replaces the 64 MiB.
+    s.ui.set_image_memory(128);
+    assert_eq!(s.ui.s6_budget().glyphs, 16 * MIB);
+    // The image share is for the host's decoded-image LRU: tessera-ui holds no image cache of
+    // its own and does not apply it (the host does). This only checks that an `ImageCache`
+    // given the share evicts down to it.
+    let mut cache = tessera_ui::paint::ImageCache::new(b.images, 512 * MIB);
+    let img = || {
+        UiImage::new(
+            1024,
+            1024,
+            1024,
+            1024,
+            PixelLayout::A8R8G8B8,
+            vec![0; 1 << 20],
+        )
+        .expect("image")
+    };
+    for i in 0..10 {
+        cache
+            .insert(tessera_ui::paint::ImageKey::Did(0x4100_0000 + i), img())
+            .expect("insert");
+    }
+    assert_eq!(cache.stats().unpinned_bytes, 40 * MIB);
+    cache.set_lru_budget(16 * MIB);
+    assert!(cache.stats().unpinned_bytes <= 16 * MIB);
+    assert_eq!(cache.lru_budget(), 16 * MIB);
+}

@@ -790,4 +790,46 @@ impl Ui {
     pub fn control_has_focus(&self, k: ElementKey) -> bool {
         self.focus.focus == Some(k)
     }
+
+    /// Carries the plugin-set element state of control `from` over to control `to`, for
+    /// the first-marking rebuild of a game-styled window (`lua-plugin-api.md` §14.2.1 step 3
+    /// with the Tessera rule of §14.2.6 gap (b)): back colour and its blend mode, opacity,
+    /// stretch mode (when the plugin set one), mouse visibility, drop target, rotation (when
+    /// set) and the remembered focus control, and the keyboard focus when `from` itself has
+    /// it. The caller keeps visibility, position, size, z-level, background and blend mode
+    /// (step 3's list) and the active-window state (`to` is activated once `from` is gone).
+    /// Does nothing when either is not a plugin control.
+    pub fn control_carry_state(&mut self, from: ElementKey, to: ElementKey) {
+        let (Some(p), Some(_)) = (self.pd(from).cloned(), self.pd(to)) else {
+            return;
+        };
+        let _ = self.control_set_back_colour_blend_mode(to, p.back_blend_mode);
+        if p.back_colour_set {
+            self.control_set_back_colour(to, Some(p.back_colour));
+        }
+        let opacity = self.control_opacity(from);
+        if (self.control_opacity(to) - opacity).abs() > f32::EPSILON || opacity.is_nan() {
+            self.control_set_opacity(to, opacity);
+        }
+        if p.stretch_set {
+            let n = self.control_stretch_mode(from);
+            self.control_set_stretch_mode(to, n);
+        }
+        let mouse = self.el(from).is_some_and(|e| e.mouse_visible);
+        self.control_set_mouse_visible(to, mouse);
+        if p.allow_drop {
+            self.control_set_allow_drop(to, true);
+        }
+        if p.rotation_set {
+            let _ = self.window_set_rotation(to, p.rotation);
+        }
+        if let Some(f) = p.focus_control.filter(|f| *f != from && self.exists(*f))
+            && let Some(q) = self.pd_mut(to)
+        {
+            q.focus_control = Some(f);
+        }
+        if self.focus.focus == Some(from) {
+            self.set_focus(Some(to));
+        }
+    }
 }

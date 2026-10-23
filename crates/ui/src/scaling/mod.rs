@@ -18,6 +18,7 @@
 //! | [`placement`] | §5.8 | keep-on-screen and anchored saved placements |
 //! | [`glyph`] | §6.4, §6.5, §6.7 | the target glyph height, font ladders, derived metrics, the glyph cache, the cursor size |
 //! | [`image`] | §6.1, §6.3 | canvas pixel sizes, per-axis image kind and scale, the sharp-bilinear and area filters |
+//! | [`memory`] | §8 S6 | the one memory total of the image and glyph caches and its split |
 //!
 //! At `Se` = 1 with every node scale 1 the mappings here are the identity on integers
 //! (`ui-scaling.md` invariants I2, I7): a displayed box equals its layout box made absolute,
@@ -28,6 +29,7 @@ pub mod dbox;
 pub mod fit;
 pub mod glyph;
 pub mod image;
+pub mod memory;
 pub mod placement;
 pub mod safe_area;
 pub mod screen;
@@ -44,6 +46,7 @@ pub use glyph::{
     downsample_coverage, target_height,
 };
 pub use image::{AxisKind, area_weights, axis_kind, axis_scale, canvas_px, sharp_bilinear};
+pub use memory::{S6Budget, s6_budget};
 pub use placement::{Anchor, RefBox, SavedPlacement, anchor_for, apply_anchor, keep_on_screen};
 pub use safe_area::safe_area;
 pub use screen::{UiScreen, edge_map, effective_scale, round_scale, s_auto};

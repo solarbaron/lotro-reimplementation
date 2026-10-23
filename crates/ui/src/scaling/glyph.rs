@@ -376,17 +376,19 @@ pub fn cursor_hotspot(coord: i32, se: f64, cursor_scale: f64) -> i32 {
     (f64::from(coord) * cursor_factor(se, cursor_scale) + 0.5).floor() as i32
 }
 
-/// The key of a cached derived glyph (`ui-scaling.md` §6.5): font DID, target height, source
-/// kind, glyph (codepoint or glyph index) and whether it is the outline or the fill.
+/// The key of a cached derived glyph (`ui-scaling.md` §6.5): face identity, target height,
+/// source kind, glyph (codepoint or glyph index) and whether it is the outline or the fill.
 ///
-/// `font_did` names the record the glyph is **derived from** (the ladder's source record of
+/// `face` names the face the glyph is **derived from** (the ladder's source record of
 /// §6.4.3), and `source` how it is derived from it, so a key names one derivation whatever
 /// ladders are registered: registering new ladders ([`crate::Ui::set_font_ladders`]) only
-/// changes which keys are looked up, and the glyphs already cached stay valid.
+/// changes which keys are looked up, and the glyphs already cached stay valid. The face is a
+/// font record's DID or, for one of Tessera's own faces, its whole identity (font file,
+/// code-point set and pixel size) compared in full, never folded into a DID (§6.5).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct GlyphKey {
-    /// The DID of the font record the glyph is derived from.
-    pub font_did: u32,
+    /// The face the glyph is derived from.
+    pub face: crate::text::FontId,
     /// The target height.
     pub target_height: u16,
     /// How the glyph is derived from that record (§6.4.3: downsampled or by the distance
@@ -428,6 +430,10 @@ pub struct GlyphCache {
     lru: BTreeMap<u64, GlyphKey>,
     /// Glyphs inserted since the cache was made (each one a derivation; budget S7 counts them).
     inserted: u64,
+    /// Frame-thread derivation time recorded since the last [`GlyphCache::take_derivation_times`]:
+    /// the sum and the longest single derivation, nanoseconds (S7).
+    derive_ns: u64,
+    derive_max_ns: u64,
 }
 
 impl GlyphCache {
@@ -441,7 +447,25 @@ impl GlyphCache {
             map: HashMap::new(),
             lru: BTreeMap::new(),
             inserted: 0,
+            derive_ns: 0,
+            derive_max_ns: 0,
         }
+    }
+
+    /// Records the time of one glyph derivation on the frame thread (`ui-scaling.md` §8 S7).
+    pub fn record_derivation(&mut self, elapsed: std::time::Duration) {
+        let ns = u64::try_from(elapsed.as_nanos()).unwrap_or(u64::MAX);
+        self.derive_ns = self.derive_ns.saturating_add(ns);
+        self.derive_max_ns = self.derive_max_ns.max(ns);
+    }
+
+    /// Takes the derivation times recorded since the last call: (sum, longest single one), in
+    /// nanoseconds (S7).
+    pub fn take_derivation_times(&mut self) -> (u64, u64) {
+        let t = (self.derive_ns, self.derive_max_ns);
+        self.derive_ns = 0;
+        self.derive_max_ns = 0;
+        t
     }
 
     /// The byte budget.
@@ -678,7 +702,7 @@ mod tests {
         let budget = one.bytes() * 2 + 1;
         let mut cache = GlyphCache::new(budget);
         let k = |g: u32| GlyphKey {
-            font_did: 1,
+            face: crate::text::FontId::Data(1),
             target_height: 16,
             source: SourceKind::Downsampled,
             glyph: g,
@@ -708,7 +732,7 @@ mod tests {
         };
         let mut cache = GlyphCache::new(1 << 20);
         let key = |source| GlyphKey {
-            font_did: 7,
+            face: crate::text::FontId::Data(7),
             target_height: 20,
             source,
             glyph: 65,
@@ -735,7 +759,7 @@ mod tests {
         let mut cache = GlyphCache::new(0);
         cache.insert(
             GlyphKey {
-                font_did: 1,
+                face: crate::text::FontId::Data(1),
                 target_height: 16,
                 source: SourceKind::Downsampled,
                 glyph: 1,

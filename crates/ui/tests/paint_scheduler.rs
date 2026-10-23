@@ -964,3 +964,218 @@ fn refused_first_paint_texture_is_counted_once() {
     );
     assert!(s.front_layers(SurfaceId(1)).is_empty());
 }
+
+// ----- paint on the workers (`ui-scaling.md` §8 S1) ---------------------------------------
+
+/// A worker pool for tests: each work item runs on a new thread. With `defer` the items
+/// wait until [`Pool::run_all`]; otherwise `spawn` joins the thread before it returns, so
+/// the result is waiting when the scheduler next looks (deterministic).
+#[derive(Default)]
+struct Pool {
+    defer: bool,
+    spawned: std::sync::atomic::AtomicUsize,
+    /// Whether every item ran on a thread other than the caller's.
+    off_thread: std::sync::Mutex<Vec<bool>>,
+    waiting: std::sync::Mutex<Vec<Box<dyn FnOnce() + Send>>>,
+}
+
+impl Pool {
+    fn run(&self, work: Box<dyn FnOnce() + Send>) {
+        let caller = std::thread::current().id();
+        let worker = std::thread::spawn(move || {
+            work();
+            std::thread::current().id()
+        })
+        .join()
+        .expect("worker");
+        self.off_thread.lock().unwrap().push(worker != caller);
+    }
+
+    fn run_all(&self) {
+        let items: Vec<_> = std::mem::take(&mut *self.waiting.lock().unwrap());
+        for w in items {
+            self.run(w);
+        }
+    }
+
+    fn spawned(&self) -> usize {
+        self.spawned.load(std::sync::atomic::Ordering::SeqCst)
+    }
+}
+
+impl tessera_ui::paint::PaintSpawner for Pool {
+    fn spawn(&self, work: Box<dyn FnOnce() + Send + 'static>) {
+        self.spawned
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        if self.defer {
+            self.waiting.lock().unwrap().push(work);
+        } else {
+            self.run(work);
+        }
+    }
+}
+
+/// S1: a content job whose damage exceeds the threshold is painted on a worker (off the
+/// frame thread) and lands in the front texture like any other job; one at or below it is
+/// painted on the frame thread. The threshold is lowered here to fit the 64 × 64 surface.
+#[test]
+fn a_large_damage_is_painted_on_a_worker_and_a_small_one_is_not() {
+    let lim = PaintLimits {
+        worker_min_px: 1_000,
+        ..limits()
+    };
+    let (mut s, mut src, mut gpu, mut t) = shown_surface(lim);
+    let pool = Arc::new(Pool::default());
+    s.set_spawner(Some(pool.clone()));
+    // Large: the whole canvas (4,096 pixels).
+    src.set(1, [64, 64], vec![fill(Rect::of_size(64, 64), 0xFF00_80FF)]);
+    s.damage_all(SurfaceId(1));
+    let out = s.frame(ms(t), &mut src, &mut Unlimited);
+    gpu.apply(&out.ops);
+    t += 16;
+    assert_eq!(pool.spawned(), 1, "handed to a worker");
+    assert_eq!(
+        *pool.off_thread.lock().unwrap(),
+        vec![true],
+        "off the frame thread"
+    );
+    assert_eq!(out.stats.worker_jobs_started, 1);
+    assert_eq!(out.stats.worker_pixels, 64 * 64);
+    assert_eq!(out.stats.worker_jobs_completed, 1, "back in the same frame");
+    assert_eq!(out.stats.bands, 0, "no band painted on the frame thread");
+    assert_eq!(gpu.front(1, Layer::Below, 10, 10), 0xFF00_80FF);
+    assert_front_is_canvas(&gpu, &s, 1);
+    // Small: 16 × 16 = 256 pixels, on the frame thread.
+    src.set(
+        1,
+        [64, 64],
+        vec![
+            fill(Rect::of_size(64, 64), 0xFF00_80FF),
+            fill(Rect::new(0, 0, 16, 16), 0xFFFF_0000),
+        ],
+    );
+    s.add_damage(SurfaceId(1), Rect::new(0, 0, 16, 16));
+    let out = s.frame(ms(t), &mut src, &mut Unlimited);
+    gpu.apply(&out.ops);
+    assert_eq!(pool.spawned(), 1, "not handed to a worker");
+    assert_eq!(out.stats.worker_jobs_started, 0);
+    assert!(out.stats.bands > 0, "painted on the frame thread");
+    assert_eq!(gpu.front(1, Layer::Below, 5, 5), 0xFFFF_0000);
+    assert_front_is_canvas(&gpu, &s, 1);
+}
+
+/// S1: while a job is on a worker the surface keeps its front texture (composition reads no
+/// canvas), no other job starts on it, and the scheduler is not idle; the job goes on when
+/// the worker hands it back. First paints never go to a worker, nor does anything without
+/// a pool.
+#[test]
+fn a_job_on_a_worker_keeps_the_front_until_it_comes_back() {
+    let lim = PaintLimits {
+        worker_min_px: 1_000,
+        ..limits()
+    };
+    let pool = Arc::new(Pool {
+        defer: true,
+        ..Pool::default()
+    });
+    // A first paint is never handed off.
+    let mut src = Source::default();
+    src.set(1, [64, 64], vec![fill(Rect::of_size(64, 64), 0xFF80_8080)]);
+    let mut s = Scheduler::<&'static str>::new(lim);
+    s.set_spawner(Some(pool.clone()));
+    s.create_surface(SurfaceId(1), GroupId(1), Duration::ZERO)
+        .unwrap();
+    s.layout_change(GroupId(1), "g1", &[SurfaceId(1)]);
+    let mut gpu = Gpu::default();
+    let mut t = 0;
+    while !s.is_drawn(SurfaceId(1)) || s.is_busy(SurfaceId(1)) {
+        let out = s.frame(ms(t), &mut src, &mut Unlimited);
+        gpu.apply(&out.ops);
+        t += 16;
+        assert!(t < 1000);
+    }
+    assert_eq!(
+        pool.spawned(),
+        0,
+        "the first paint stayed on the frame thread"
+    );
+    src.set(1, [64, 64], vec![fill(Rect::of_size(64, 64), 0xFF11_2233)]);
+    s.damage_all(SurfaceId(1));
+    let out = s.frame(ms(t), &mut src, &mut Unlimited);
+    gpu.apply(&out.ops);
+    t += 16;
+    assert_eq!(pool.spawned(), 1);
+    assert!(s.is_on_worker(SurfaceId(1)) && s.is_busy(SurfaceId(1)) && !s.is_idle());
+    assert!(
+        s.front_box(SurfaceId(1), Layer::Below).is_some(),
+        "front kept"
+    );
+    assert_eq!(
+        gpu.front(1, Layer::Below, 3, 3),
+        0xFF80_8080,
+        "old picture shown"
+    );
+    // More damage meanwhile waits; nothing else starts.
+    s.add_damage(SurfaceId(1), Rect::new(0, 0, 4, 4));
+    let out = s.frame(ms(t), &mut src, &mut Unlimited);
+    gpu.apply(&out.ops);
+    t += 16;
+    assert_eq!(out.stats.jobs_started, 0);
+    assert!(s.is_on_worker(SurfaceId(1)));
+    pool.run_all();
+    assert_eq!(*pool.off_thread.lock().unwrap(), vec![true]);
+    let out = s.frame(ms(t), &mut src, &mut Unlimited);
+    gpu.apply(&out.ops);
+    assert_eq!(out.stats.worker_jobs_completed, 1);
+    assert!(!s.is_on_worker(SurfaceId(1)));
+    assert_eq!(
+        gpu.front(1, Layer::Below, 3, 3),
+        0xFF11_2233,
+        "new picture shown"
+    );
+    // Without a pool the same damage paints on the frame thread.
+    s.set_spawner(None);
+    src.set(1, [64, 64], vec![fill(Rect::of_size(64, 64), 0xFF44_5566)]);
+    s.damage_all(SurfaceId(1));
+    let mut t = t + 16;
+    for _ in 0..8 {
+        let out = s.frame(ms(t), &mut src, &mut Unlimited);
+        gpu.apply(&out.ops);
+        t += 16;
+    }
+    assert_eq!(pool.spawned(), 1);
+    assert_eq!(gpu.front(1, Layer::Below, 3, 3), 0xFF44_5566);
+    assert_front_is_canvas(&gpu, &s, 1);
+}
+
+/// S1: a generation job (a layout change) over the threshold is painted on a worker too, and
+/// the generation swaps as usual once it is back.
+#[test]
+fn a_generation_job_on_a_worker_swaps_as_usual() {
+    let lim = PaintLimits {
+        worker_min_px: 1_000,
+        ..limits()
+    };
+    let (mut s, mut src, mut gpu, t) = shown_surface(lim);
+    let pool = Arc::new(Pool::default());
+    s.set_spawner(Some(pool.clone()));
+    src.set(1, [80, 64], vec![fill(Rect::of_size(80, 64), 0xFF22_4466)]);
+    s.damage_all(SurfaceId(1));
+    s.layout_change(GroupId(1), "g2", &[SurfaceId(1)]);
+    let mut t = t;
+    let mut swapped = false;
+    for _ in 0..16 {
+        let out = s.frame(ms(t), &mut src, &mut Unlimited);
+        gpu.apply(&out.ops);
+        swapped |= out.swapped.contains(&GroupId(1));
+        t += 16;
+        if swapped && !s.is_busy(SurfaceId(1)) {
+            break;
+        }
+    }
+    assert!(swapped);
+    assert_eq!(pool.spawned(), 1);
+    assert_eq!(s.shown(GroupId(1)), Some(&"g2"));
+    assert_eq!(gpu.front(1, Layer::Below, 70, 3), 0xFF22_4466);
+    assert_front_is_canvas(&gpu, &s, 1);
+}

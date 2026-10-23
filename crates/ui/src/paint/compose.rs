@@ -114,11 +114,6 @@ pub struct CompNode {
     /// Its displayed box in physical pixels (the root's unrotated space): the destination of
     /// its canvas.
     pub displayed: Rect,
-    /// Rows at the top of `displayed` that lie above the element's own box (a plugin window
-    /// whose canvas extends over layout parts placed above its top edge; 0 otherwise). The
-    /// own box, `displayed` without them ([`CompNode::own_box`]), is what its rotation turns
-    /// about and what it clips nested entries to (`render.md` §6.5, §6.8).
-    pub overhang: i32,
     /// Full canvas size (the layout box, or the base image's size for plugin mode 2).
     pub canvas: [u32; 2],
     /// Canvas origin offset of a canvas cropped by §7.
@@ -146,7 +141,6 @@ impl CompNode {
             content: NodeContent::Canvas,
             shown: true,
             displayed,
-            overhang: 0,
             canvas: [displayed.width(), displayed.height()],
             canvas_origin: [0, 0],
             addressing: Addressing::Fit,
@@ -156,27 +150,6 @@ impl CompNode {
             alpha_threshold: 0.0,
         }
     }
-
-    /// The element's own box: [`Self::displayed`] without the [`Self::overhang`] rows (never
-    /// below an empty box at the bottom edge).
-    #[must_use]
-    pub fn own_box(&self) -> Rect {
-        own_box(&self.displayed, self.overhang)
-    }
-}
-
-/// `displayed` without its top `overhang` rows (a negative overhang counts as 0).
-pub(crate) fn own_box(displayed: &Rect, overhang: i32) -> Rect {
-    let o = overhang.max(0);
-    if o == 0 {
-        return *displayed;
-    }
-    Rect::new(
-        displayed.x0,
-        displayed.y0.saturating_add(o).min(displayed.y1),
-        displayed.x1,
-        displayed.y1,
-    )
 }
 
 /// One rotation of a transform chain (`render.md` §6.6).
@@ -490,7 +463,7 @@ fn open(
     let r0 = out.rotations.len();
     for &s in &chain {
         out.rotations.push(Rotation {
-            centre: centre(&nodes[s].own_box()),
+            centre: centre(&nodes[s].displayed),
             angles: finite_angles(nodes[s].rotation),
         });
     }
@@ -512,7 +485,7 @@ fn open(
             };
             let drawer_rots = drawer.map_or(0, |d| info[d].rot_chain.len());
             let space = u32::try_from(chain.len().saturating_sub(drawer_rots)).unwrap_or(0);
-            let r = wn.own_box();
+            let r = wn.displayed;
             let item = Clip {
                 rect: [r.x0, r.y0, r.x1, r.y1],
                 space,

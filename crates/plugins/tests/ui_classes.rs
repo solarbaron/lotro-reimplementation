@@ -762,14 +762,15 @@ mod styled {
             .expect("an entry")
     }
 
-    /// §14.2.3 "the title bar rises 8 pixels above the window's rectangle", §14.2.6 (d): the
-    /// canvas of a game-styled window extends over its layout parts placed above its top edge,
-    /// so the title bar's rows above the window are drawn; a plugin child control placed there
-    /// stays clipped to the window (`ui-layout.md` §9.3, §13.12), and the window's own box
-    /// (hit testing, `GetSize`) does not change. At the identity and under a UI screen with
+    /// §14.2.3 step 3, §14.2.6 (d): the title bar's rectangle rises 8 pixels above the
+    /// window's, but the rows above the window's top edge are not drawn: every element is
+    /// clipped to its own box and its ancestors' boxes (`ui-layout.md` §9.3), so the window's
+    /// canvas covers the window's rectangle and nothing more. What shows is the title bar from
+    /// window row 0 down; a plugin child control placed above the top is cut at it too. The
+    /// window's own box (`GetSize`) is unchanged. At the identity and under a UI screen with
     /// `Se` = 2.
     #[test]
-    fn the_title_bar_rises_above_the_window() {
+    fn the_title_bar_is_cut_at_the_window_top() {
         for se in [None, Some(2.0)] {
             let fx = fx();
             fx.eval::<()>(
@@ -790,19 +791,20 @@ mod styled {
             let e = entry_of(&fx, &list, w);
             let ui = fx.pui.ui().borrow();
             let b = ui.physical_box(w);
-            assert_eq!(e.dest.y0, b.y0 - 8 * k, "{se:?}: the canvas starts 8 above");
-            assert_eq!(e.dest.y1, b.y1, "{se:?}: and ends at the window's bottom");
-            assert_eq!((e.dest.x0, e.dest.x1), (b.x0, b.x1), "{se:?}");
-            assert_eq!(e.canvas, [e.dest.width(), e.dest.height()], "{se:?}: 1 : 1");
-            // The title bar (left 100, width 200, top -8) in the rows above the window.
+            assert_eq!(e.dest, b, "{se:?}: the canvas is the window's box");
+            assert_eq!(e.canvas, [b.width(), b.height()], "{se:?}: 1 : 1");
+            // Canvas row 0 is window row 0: the title bar (left 100, width 200, rows -8 to 32)
+            // shows from there down.
             let px = |x: i32, y: i32| ui.surface_pixel(w, x * k, y * k).unwrap_or(0);
-            assert_eq!(px(150, 0), TITLE_COLOUR, "{se:?}: title bar above the top");
-            assert_eq!(px(150, 7), TITLE_COLOUR, "{se:?}");
-            assert_eq!(px(150, 20), TITLE_COLOUR, "{se:?}: and below it");
+            assert_eq!(px(150, 0), TITLE_COLOUR, "{se:?}: title bar from row 0");
+            assert_eq!(px(150, 20), TITLE_COLOUR, "{se:?}");
             assert_eq!(px(50, 0) >> 24, 0, "{se:?}: nothing beside the title bar");
-            // The plugin child at top -20 is cut at the window's top edge.
-            assert_eq!(px(20, 4) >> 24, 0, "{se:?}: plugin child not drawn above");
-            assert_eq!(px(20, 8 + 5), 0xFFFF_0000, "{se:?}: but drawn inside");
+            // The plugin child at top -20 shows from the window's top edge down.
+            assert_eq!(
+                px(20, 5),
+                0xFFFF_0000,
+                "{se:?}: plugin child inside the window"
+            );
             drop(ui);
             let size: (f64, f64) = fx.eval("Probe", "return w:GetSize()");
             assert_eq!(size, (400.0, 300.0));
@@ -812,8 +814,7 @@ mod styled {
 
     /// §13.12, `render.md` §6.8 (review finding): a nested surface below a game-styled window
     /// (a child `Window`, a root panel with its own surface) placed above the window's top
-    /// edge is clipped to the window's own box, not to the canvas that extends over the title
-    /// bar; the window turns about its own box's centre (P72, §6.5). At the identity and at
+    /// edge is clipped to the window's own box; the window turns about its own box's centre (P72, §6.5). At the identity and at
     /// `Se` = 2.
     #[test]
     fn a_nested_surface_stays_clipped_to_the_window() {
@@ -832,15 +833,10 @@ mod styled {
                 let a = tessera_ui::scaling::safe_area(&f, None);
                 fx.pui.ui().borrow_mut().set_ui_screen(f, a);
             }
-            let k = if se.is_some() { 2 } else { 1 };
             let list = painted(&fx);
             let b = fx.pui.ui().borrow().physical_box(w);
             let e = entry_of(&fx, &list, w);
-            assert_eq!(
-                e.dest.y0,
-                b.y0 - 8 * k,
-                "{se:?}: the window's canvas extends"
-            );
+            assert_eq!(e.dest, b, "{se:?}: the window's canvas is its box");
             let ce = entry_of(&fx, &list, c);
             let items = list.clips_of(&ce);
             assert!(!items.is_empty(), "{se:?}: the child is clipped");
@@ -868,12 +864,12 @@ mod styled {
         }
     }
 
-    /// §14.2.6 (d) (review finding): the title bar and drag bar rows drawn above the window's
-    /// top edge are hit there (a press on them reaches the frame's parts, so the window can be
-    /// dragged from the strip); a plugin child control placed there and the window itself are
-    /// not hit outside the window's own box.
+    /// §14.2.3 step 3, §14.2.6 (d): the hit test reaches children only inside their parent's
+    /// rectangle (§13.11, P49), so the title bar and drag bar rows above the window's top edge
+    /// are not hit; from the window's row 0 down the bars are hit, so only that part of the
+    /// drag bar moves the window. A plugin child placed above the top is not hit there either.
     #[test]
-    fn the_title_bar_rows_above_the_window_are_hit() {
+    fn the_rows_above_the_window_are_not_hit() {
         let fx = fx();
         fx.eval::<()>(
             "Probe",
@@ -888,32 +884,33 @@ mod styled {
             .into_iter()
             .filter_map(|id| ui.find_descendant(w, id))
             .collect();
-        // Title bar and drag bar span window x 100 ..= 299, rows -8 ..= 32.
-        for (x, y) in [(250, 96), (100 + 100, 92), (100 + 299, 99)] {
+        // Above the window (rows -8 to -1 of the bars, and the plugin child's rows there):
+        // neither the bars, the plugin child nor the window.
+        for (x, y) in [(210, 96), (100 + 100, 92), (100 + 299, 99), (100 + 20, 96)] {
+            let hit = ui.hit_test(x, y);
+            assert!(
+                hit.is_none_or(|h| !parts.contains(&h) && h != w && h != c),
+                "({x}, {y}): {hit:?} is hit above the window"
+            );
+        }
+        // From the window's row 0 down, beside the title text, the bars are hit.
+        for (x, y) in [(210, 100), (210, 102), (100 + 299, 130)] {
             let hit = ui.hit_test(x, y);
             assert!(
                 hit.is_some_and(|h| parts.contains(&h)),
                 "({x}, {y}): {hit:?} is not the title bar or drag bar"
             );
         }
-        // Beside the bars, above the window: neither the plugin child nor the window.
-        for (x, y) in [(100 + 20, 96), (100 + 99, 96), (100 + 300, 96)] {
-            let hit = ui.hit_test(x, y);
-            assert!(hit != Some(c) && hit != Some(w), "({x}, {y}): {hit:?}");
-        }
-        // Above the strip nothing of the window is hit.
-        let hit = ui.hit_test(250, 91);
-        assert!(hit.is_none_or(|h| !parts.contains(&h) && h != w), "{hit:?}");
         // Inside the window the plugin child is hit as before.
         assert_eq!(ui.hit_test(100 + 20, 100 + 5), Some(c));
         drop(ui);
         fx.assert_no_errors();
     }
 
-    /// A light frame that moves a part above the window (review finding): the canvas follows
-    /// the new overhang (the full surface pass runs), and shrinks back when the part returns.
+    /// A light frame that moves a part above the window (review finding of the earlier
+    /// extended canvas): the window's canvas stays its own box whatever the part's top.
     #[test]
-    fn moving_the_title_bar_updates_the_overhang() {
+    fn moving_the_title_bar_keeps_the_canvas_at_the_window() {
         let fx = fx();
         fx.eval::<()>(
             "Probe",
@@ -923,14 +920,14 @@ mod styled {
         let w = fx.control_key("Probe", "w");
         let list = painted(&fx);
         let b = fx.pui.ui().borrow().physical_box(w);
-        assert_eq!(entry_of(&fx, &list, w).dest.y0, b.y0 - 8);
+        assert_eq!(entry_of(&fx, &list, w).dest, b);
         let bar = fx
             .pui
             .ui()
             .borrow()
             .find_descendant(w, 0x1000_2296)
             .unwrap();
-        for (top, rise) in [(-16, 16), (-8, 8), (4, 8), (-100, 64)] {
+        for top in [-16, -8, 4, -100] {
             {
                 let mut ui = fx.pui.ui().borrow_mut();
                 let pb = ui.layout_box(bar).unwrap();
@@ -938,9 +935,8 @@ mod styled {
             }
             let list = painted(&fx);
             let e = entry_of(&fx, &list, w);
-            // The drag bar stays at -8; the cap is 64 units (Tessera bound).
-            assert_eq!(e.dest.y0, b.y0 - rise, "title bar at {top}");
-            assert_eq!(e.canvas[1], e.dest.height(), "title bar at {top}");
+            assert_eq!(e.dest, b, "title bar at {top}");
+            assert_eq!(e.canvas, [b.width(), b.height()], "title bar at {top}");
         }
         fx.assert_no_errors();
     }
@@ -1100,6 +1096,45 @@ mod styled {
         fx.eval::<()>("Probe", "w:SetSize(410, 300) w:SetPosition(121, 80)");
         fx.frame(0.016);
         assert_eq!(fx.eval::<(f64, f64)>("Probe", "return sz, pos"), (1.0, 1.0));
+        fx.assert_no_errors();
+    }
+
+    /// §14.2.6 gap (b) and its round-3 answer: the plugin-set element state survives the
+    /// first-marking rebuild: back colour, opacity, stretch mode, mouse visibility, drop
+    /// target and rotation are those the plugin set, on the new element too, and an active
+    /// window stays the active panel.
+    #[test]
+    fn the_rebuild_carries_the_plugin_state_over() {
+        let mut fx = fx();
+        fx.eval::<()>(
+            "Probe",
+            "w = Turbine.UI.Lotro.Window() w:SetPosition(120, 80) w:SetSize(400, 300) \
+             w:SetVisible(true) w:SetOpacity(0.5) \
+             w:SetBackColor(Turbine.UI.Color(1, 0.25, 0.5, 0.75)) \
+             w:SetMouseVisible(false) w:SetAllowDrop(true) \
+             w:SetRotation({ x = 0, y = 0, z = 30 }) w:Activate()",
+        );
+        fx.frame(0.016);
+        let old = fx.control_key("Probe", "w");
+        let before = {
+            let ui = fx.pui.ui().borrow();
+            (ui.control_back_colour(old), ui.window_rotation(old))
+        };
+        fx.eval::<()>("Probe", "w:SetScale(1.5)");
+        fx.frame(0.016);
+        let new = fx.control_key("Probe", "w");
+        assert_ne!(new, old, "a new element");
+        let ui = fx.pui.ui().borrow();
+        assert!((ui.control_opacity(new) - 0.5).abs() < 1e-6, "opacity");
+        assert_eq!(ui.control_back_colour(new), before.0, "back colour");
+        assert_eq!(ui.window_rotation(new), before.1, "rotation");
+        assert_eq!(ui.active_panel(), Some(new), "still the active window");
+        drop(ui);
+        let r: (f64, bool, bool) = fx.eval(
+            "Probe",
+            "return w:GetOpacity(), w:IsMouseVisible(), w:GetAllowDrop()",
+        );
+        assert_eq!(r, (0.5, false, true));
         fx.assert_no_errors();
     }
 

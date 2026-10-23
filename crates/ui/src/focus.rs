@@ -1,9 +1,52 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Activation and z-order (`ui-behaviour.md` §5.1), keyboard focus and the input-map stack
-//! (§5.2, decision 0014 D5), key routing (§5.3), text-entry keys (§5.4), dialog keys (§5.5)
-//! and keyboard navigation (§5.6, Tessera rule).
+//! (§5.2, decision 0014 D5), key routing (§5.3), text-entry keys (§5.4), dialog keys (§5.5,
+//! `ui-widgets.md` §18.4) and keyboard navigation (§5.6, Tessera rule).
+//!
+//! **Dialog keys** (`ui-widgets.md` §18.4). Each marked dialog ([`Ui::mark_dialog`]) has a
+//! [`DialogKeys`] kind ([`Ui::set_dialog_keys`]; a panel marked without one reacts as a
+//! confirmation, the rule of `ui-behaviour.md` §5.5):
+//!
+//! | Kind | Press | Result | Releases consumed |
+//! |---|---|---|---|
+//! | confirmation | `AcceptKey`, `AcceptInput` / `EscapeKey` | yes / no | `AcceptKey`, `EscapeKey` |
+//! | message | `AcceptKey`, `AcceptInput` or `EscapeKey` | OK (reported as yes) | `AcceptKey` |
+//! | text input | `AcceptInput` in its entry / `EscapeKey` in its entry while the quit button is shown | done (yes) / quit (no) | none |
+//! | wait | none | — | none |
+//!
+//! A confirmation or message reacts only while it is the active panel and its
+//! `UICore_Dialog_ignorekeyboardinput` is not true; a text input reacts to the commands its
+//! entry reports while the entry has the keyboard focus. `EscapeKey` in the entry with the
+//! quit button hidden gives no result and goes on as an ordinary key of the entry.
+//!
+//! **Modal dialogs** (§18.4 last paragraph, [`Ui::set_dialog_modal`]): while one is shown,
+//! every key press is consumed (none reaches the broadcast, so none reaches game code), and
+//! so is the release of every key pressed while it was shown.
+//!
+//! Tessera rules (`ui-widgets.md` §18.4 is silent on them):
+//!
+//! - A key press that a confirmation or message turned into a result has its release
+//!   consumed even though the dialog is gone by then, so game code sees neither half of it.
+//! - While a modal dialog is shown, a press whose keyboard target lies outside the dialog
+//!   is not delivered to that target either; a held release is delivered only to a target
+//!   inside a modal dialog still shown.
+//! - The held releases are matched by command name, at most [`MAX_HELD_RELEASES`] of them
+//!   (the oldest is forgotten first); a new press of the same command with no modal dialog
+//!   shown forgets it, so a lost release never swallows a later one. (On a loss of the
+//!   window focus the input layer ends every hold, so the held releases arrive.)
+//! - An OS repeat is told from a new press by the commands down ([`MAX_DOWN_KEYS`] of them).
+//!   A repeat never gives a dialog result and never starts a hold: it continues a press
+//!   that was already routed.
+//! - An OS repeat of a key that went down before a modal dialog appeared is consumed like
+//!   any press, but its release is not held back: game code saw that key go down.
+//! - An OS repeat of a key whose release is held is consumed and delivered to no target,
+//!   with or without a modal dialog: game code never saw that key go down.
+//! - While a modal dialog is shown, a typed character whose focused entry lies outside the
+//!   dialog is taken and inserted nowhere ([`Ui::text_input`]).
+//! - A release swallowed by an item drag ([`Ui::key_command`]) ends the key's hold too.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Arc;
 
 use crate::events::{Answer, Command, MsgArg, UiEvent};
 use crate::tree::ElementKey;
@@ -47,6 +90,47 @@ pub enum BandChange {
 /// Most entries the UI keeps in its band mirror (decision 0014 D5: the band holds 256).
 pub const MAX_BAND: usize = 256;
 
+/// Most key releases the dialog key rules hold back at once (Tessera bound; module docs).
+pub const MAX_HELD_RELEASES: usize = 64;
+
+/// Most commands remembered as down at once, to tell an OS repeat from a new press (Tessera
+/// bound; module docs). When it is full the oldest is forgotten: its next OS repeat then
+/// counts as a new press (under a modal dialog its release would be held back although game
+/// code saw the key go down). No keyboard holds this many keys down.
+pub const MAX_DOWN_KEYS: usize = 64;
+
+/// How an engine dialog reacts to keys (`ui-widgets.md` §18.4; module docs).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum DialogKeys {
+    /// A confirmation: `AcceptKey` or `AcceptInput` give yes, `EscapeKey` no; the releases
+    /// of `AcceptKey` and `EscapeKey` are consumed. The kind of a panel marked without one
+    /// (`ui-behaviour.md` §5.5).
+    #[default]
+    Confirmation,
+    /// A message: `AcceptKey`, `AcceptInput` or `EscapeKey` give OK (reported as yes); the
+    /// release of `AcceptKey` is consumed.
+    Message,
+    /// A text input: `AcceptInput` in `entry` gives done (yes), `EscapeKey` in `entry` while
+    /// `quit` is shown gives quit (no); no release is consumed.
+    TextInput {
+        /// The text entry (`DialogTextInputTextEntry`), when the dialog has one.
+        entry: Option<ElementKey>,
+        /// The quit button (`DialogTextInputQuitButton`), when the dialog has one.
+        quit: Option<ElementKey>,
+    },
+    /// A wait dialog, or any dialog that handles no keys.
+    None,
+}
+
+/// A key release the dialog key rules hold back (module docs).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct HeldRelease {
+    /// The command.
+    name: Arc<str>,
+    /// The modal dialog shown when the key was pressed (`None`: the press gave a result).
+    modal: Option<ElementKey>,
+}
+
 /// Focus and activation state.
 #[derive(Debug, Clone, Default)]
 pub(crate) struct FocusState {
@@ -60,6 +144,14 @@ pub(crate) struct FocusState {
     pub extra_maps: BTreeMap<ElementKey, Vec<String>>,
     /// Engine dialogs (§5.5).
     pub dialogs: Vec<ElementKey>,
+    /// How each marked dialog reacts to keys (absent: [`DialogKeys::Confirmation`]).
+    pub dialog_keys: BTreeMap<ElementKey, DialogKeys>,
+    /// The marked dialogs that are modal (`ui-widgets.md` §18.4).
+    pub modal: BTreeSet<ElementKey>,
+    /// Releases held back by the dialog key rules (module docs).
+    pub held: Vec<HeldRelease>,
+    /// Commands pressed and not released yet, so that an OS repeat is told from a new press.
+    pub down: Vec<Arc<str>>,
     /// Activation guard (`lua-plugin-api.md` §13.14).
     pub activating: Option<ElementKey>,
 }
@@ -215,7 +307,9 @@ impl Ui {
     }
 
     /// Marks a panel as an engine dialog (`ui-behaviour.md` §5.5): it pushes `DialogBoxes`
-    /// while it is the active panel (decision 0014 D5).
+    /// while it is the active panel (decision 0014 D5) and reacts to keys as its
+    /// [`DialogKeys`] kind says (a confirmation until [`Self::set_dialog_keys`] says
+    /// otherwise).
     pub fn mark_dialog(&mut self, k: ElementKey) {
         if !self.focus.dialogs.contains(&k) {
             self.focus.dialogs.push(k);
@@ -224,6 +318,47 @@ impl Ui {
         if !maps.iter().any(|m| m == input_maps::DIALOG) {
             maps.push(input_maps::DIALOG.to_string());
         }
+    }
+
+    /// Sets how the marked dialog `k` reacts to keys (`ui-widgets.md` §18.4). Does nothing
+    /// for a panel that is not marked ([`Self::mark_dialog`]).
+    pub fn set_dialog_keys(&mut self, k: ElementKey, keys: DialogKeys) {
+        if self.focus.dialogs.contains(&k) {
+            self.focus.dialog_keys.insert(k, keys);
+        }
+    }
+
+    /// How the marked dialog `k` reacts to keys, or `None` when `k` is not a marked dialog.
+    #[must_use]
+    pub fn dialog_keys(&self, k: ElementKey) -> Option<DialogKeys> {
+        self.focus
+            .dialogs
+            .contains(&k)
+            .then(|| self.focus.dialog_keys.get(&k).copied().unwrap_or_default())
+    }
+
+    /// Makes the marked dialog `k` modal or not (`ui-widgets.md` §18.4: while it is shown it
+    /// consumes every other key press and the release of every key pressed meanwhile). Does
+    /// nothing for a panel that is not marked.
+    pub fn set_dialog_modal(&mut self, k: ElementKey, modal: bool) {
+        if !self.focus.dialogs.contains(&k) {
+            return;
+        }
+        if modal {
+            self.focus.modal.insert(k);
+        } else {
+            self.focus.modal.remove(&k);
+        }
+    }
+
+    /// The shown modal dialog, if any: a marked, modal dialog that is displayed.
+    #[must_use]
+    pub fn modal_dialog(&self) -> Option<ElementKey> {
+        self.focus
+            .modal
+            .iter()
+            .copied()
+            .find(|k| self.exists(*k) && self.is_displayed(*k))
     }
 
     // ----- activation (§5.1) -------------------------------------------------------------
@@ -337,6 +472,8 @@ impl Ui {
         self.focus.activation_list.retain(|x| !doomed.contains(x));
         self.focus.extra_maps.retain(|x, _| !doomed.contains(x));
         self.focus.dialogs.retain(|x| !doomed.contains(x));
+        self.focus.dialog_keys.retain(|x, _| !doomed.contains(x));
+        self.focus.modal.retain(|x| !doomed.contains(x));
     }
 
     // ----- focus (§5.2) ------------------------------------------------------------------
@@ -396,15 +533,68 @@ impl Ui {
 
     /// Routes a key command (§5.3). `down` is a press (or an OS repeat), otherwise a
     /// release. Returns whether it is consumed; when it is not, a [`UiEvent::KeyBroadcast`]
-    /// goes to the outbox (the plugins' `KeyDown`/`KeyUp` broadcast and game code).
+    /// goes to the outbox (the plugins' `KeyDown`/`KeyUp` broadcast and game code). The
+    /// dialog key rules of the module docs (`ui-widgets.md` §18.4) apply first.
     pub fn key_command(&mut self, c: &Command, down: bool, value: f32) -> bool {
+        // An OS repeat of a key that is down already (its release is that press's). Kept up
+        // to date for the keys an item drag swallows too.
+        let repeat = down && self.focus.down.iter().any(|d| **d == *c.name);
+        if down && !repeat {
+            if self.focus.down.len() >= MAX_DOWN_KEYS {
+                self.focus.down.remove(0);
+            }
+            self.focus.down.push(Arc::clone(&c.name));
+        } else if !down {
+            self.focus.down.retain(|d| **d != *c.name);
+        }
         if self.drag.swallows_keys() && self.keyboard_target().is_some() {
+            if !down {
+                // The release is consumed here, so a hold of it ends too.
+                self.focus.held.retain(|h| *h.name != *c.name);
+            }
             return true;
         }
-        let mut consumed = false;
-        if let Some(t) = self.keyboard_target().filter(|t| self.exists(*t)) {
+        let modal = self.modal_dialog();
+        let target = self.keyboard_target().filter(|t| self.exists(*t));
+        // Whether the target lies inside the (modal) dialog `m`.
+        let inside = |ui: &Self, m: Option<ElementKey>| match (m, target) {
+            (Some(m), Some(t)) => ui.is_ancestor_or_self(m, t),
+            _ => false,
+        };
+        let is_held = |ui: &Self| ui.focus.held.iter().any(|h| *h.name == *c.name);
+        // Whether the key goes to the target, and whether the dialog rules consume it.
+        let (deliver, held) = if down {
+            match modal {
+                Some(m) => {
+                    // A repeat of a key held from before the dialog keeps its release.
+                    if !repeat {
+                        self.hold_release(&c.name, Some(m));
+                    }
+                    (inside(self, Some(m)), true)
+                }
+                // A repeat of a key whose release is held: game code never saw it go down.
+                None if repeat && is_held(self) => (false, true),
+                None if repeat => (true, false),
+                None => {
+                    // A new press starts a new hold: a stale held release is forgotten.
+                    self.focus.held.retain(|h| *h.name != *c.name);
+                    (true, false)
+                }
+            }
+        } else {
+            match self.focus.held.iter().position(|h| *h.name == *c.name) {
+                Some(i) => {
+                    let h = self.focus.held.remove(i);
+                    let m = h.modal.filter(|m| self.exists(*m) && self.is_displayed(*m));
+                    (inside(self, m), true)
+                }
+                None => (true, false),
+            }
+        };
+        let mut consumed = held;
+        if let Some(t) = target.filter(|_| deliver) {
             if down {
-                consumed = self.key_handler(t, c);
+                consumed |= self.key_handler(t, c, repeat);
                 let a = self.post(
                     t,
                     self.v.msgs.key_press,
@@ -416,7 +606,7 @@ impl Ui {
                 );
                 consumed |= a.is_some_and(|a| a >= Answer::Handled);
             } else {
-                consumed = self.key_release_handler(t, c);
+                consumed |= self.key_release_handler(t, c);
                 let a = self.post(
                     t,
                     self.v.msgs.key_release,
@@ -437,50 +627,125 @@ impl Ui {
         consumed
     }
 
-    /// The target's key handler on a press: text entry (§5.4), dialogs (§5.5), keyboard
-    /// navigation (§5.6 Tessera rule).
-    fn key_handler(&mut self, t: ElementKey, c: &Command) -> bool {
-        if self.focus.focus == Some(t) && self.is_editable(t) && self.text_key(t, c) {
-            return true;
+    /// Holds back the release of `name` (module docs), unless it is held already.
+    fn hold_release(&mut self, name: &Arc<str>, modal: Option<ElementKey>) {
+        if self.focus.held.iter().any(|h| *h.name == **name) {
+            return;
         }
-        let dialog = self
+        if self.focus.held.len() >= MAX_HELD_RELEASES {
+            self.focus.held.remove(0);
+        }
+        self.focus.held.push(HeldRelease {
+            name: Arc::clone(name),
+            modal,
+        });
+    }
+
+    /// The marked dialog whose keys a key of target `t` reaches: the dialog that is `t`'s
+    /// root panel, with its kind, when it is the active panel and does not ignore the
+    /// keyboard.
+    fn active_dialog_of(&self, t: ElementKey) -> Option<(ElementKey, DialogKeys)> {
+        let d = self
             .root_panel_of(t)
-            .filter(|d| self.focus.dialogs.contains(d));
-        if let Some(d) = dialog
-            && self.focus.active == Some(d)
-            && !self.prop(d, self.v.pids.dialog_ignore_keyboard).bool()
+            .filter(|d| self.focus.dialogs.contains(d))?;
+        if self.focus.active != Some(d) || self.prop(d, self.v.pids.dialog_ignore_keyboard).bool() {
+            return None;
+        }
+        Some((d, self.dialog_keys(d).unwrap_or_default()))
+    }
+
+    /// The text-input dialog whose entry is `t`, with its quit button.
+    fn text_input_of(&self, t: ElementKey) -> Option<(ElementKey, Option<ElementKey>)> {
+        self.focus
+            .dialogs
+            .iter()
+            .copied()
+            .find_map(|d| match self.focus.dialog_keys.get(&d) {
+                Some(DialogKeys::TextInput {
+                    entry: Some(e),
+                    quit,
+                }) if *e == t && self.is_displayed(d) => Some((d, *quit)),
+                _ => None,
+            })
+    }
+
+    /// The target's key handler on a press: text-input dialogs (`ui-widgets.md` §18.4), text
+    /// entry (§5.4), confirmation and message dialogs (§5.5, §18.4), keyboard navigation
+    /// (§5.6 Tessera rule). An OS repeat (`repeat`) gives no dialog result (module docs).
+    fn key_handler(&mut self, t: ElementKey, c: &Command, repeat: bool) -> bool {
+        // §18.4: a text input reacts to the commands its entry reports.
+        if !repeat
+            && self.focus.focus == Some(t)
+            && let Some((d, quit)) = self.text_input_of(t)
         {
             match &*c.name {
-                commands::ACCEPT_KEY | commands::ACCEPT_INPUT => {
+                commands::ACCEPT_INPUT => {
                     self.dialog_close(d, true);
                     return true;
                 }
-                commands::ESCAPE => {
+                commands::ESCAPE if quit.is_some_and(|q| self.is_displayed(q)) => {
                     self.dialog_close(d, false);
-                    return true;
-                }
-                commands::FOCUS_NEXT | commands::FOCUS_PREVIOUS => {
-                    self.focus_cycle(d, &*c.name == commands::FOCUS_NEXT);
                     return true;
                 }
                 _ => {}
             }
         }
-        false
+        if self.focus.focus == Some(t) && self.is_editable(t) && self.text_key(t, c) {
+            return true;
+        }
+        let Some((d, keys)) = self.active_dialog_of(t) else {
+            return false;
+        };
+        let name = &*c.name;
+        let result = match (keys, name) {
+            _ if repeat => None,
+            (DialogKeys::Confirmation, commands::ACCEPT_KEY | commands::ACCEPT_INPUT) => Some(true),
+            (DialogKeys::Confirmation, commands::ESCAPE) => Some(false),
+            (
+                DialogKeys::Message,
+                commands::ACCEPT_KEY | commands::ACCEPT_INPUT | commands::ESCAPE,
+            ) => Some(true),
+            _ => None,
+        };
+        if let Some(yes) = result {
+            // The releases §18.4 consumes outlive the dialog (module docs).
+            let release_consumed = match keys {
+                DialogKeys::Confirmation => {
+                    matches!(name, commands::ACCEPT_KEY | commands::ESCAPE)
+                }
+                DialogKeys::Message => name == commands::ACCEPT_KEY,
+                _ => false,
+            };
+            if release_consumed {
+                self.hold_release(&c.name, None);
+            }
+            self.dialog_close(d, yes);
+            return true;
+        }
+        match name {
+            commands::FOCUS_NEXT | commands::FOCUS_PREVIOUS if keys != DialogKeys::None => {
+                self.focus_cycle(d, name == commands::FOCUS_NEXT);
+                true
+            }
+            _ => false,
+        }
     }
 
+    /// The target's key handler on a release: the releases a shown confirmation or message
+    /// consumes (`ui-widgets.md` §18.4).
     fn key_release_handler(&mut self, t: ElementKey, c: &Command) -> bool {
-        let dialog = self
-            .root_panel_of(t)
-            .filter(|d| self.focus.dialogs.contains(d));
-        dialog.is_some()
-            && matches!(
-                &*c.name,
-                commands::ACCEPT_KEY | commands::ACCEPT_INPUT | commands::ESCAPE
-            )
+        match self.active_dialog_of(t) {
+            Some((_, DialogKeys::Confirmation)) => {
+                matches!(&*c.name, commands::ACCEPT_KEY | commands::ESCAPE)
+            }
+            Some((_, DialogKeys::Message)) => &*c.name == commands::ACCEPT_KEY,
+            _ => false,
+        }
     }
 
-    /// Closes an engine dialog with the result of its yes (`true`) or no button (§5.5).
+    /// Closes an engine dialog with the result of its yes (`true`) or no button (§5.5): a
+    /// [`UiEvent::DialogResult`] is posted and the dialog hidden. For a message `yes` is its
+    /// OK, for a text input done (`true`) or quit (`false`).
     pub fn dialog_close(&mut self, d: ElementKey, yes: bool) {
         self.emit(UiEvent::DialogResult { dialog: d, yes });
         self.set_shown(d, false);
@@ -659,9 +924,16 @@ impl Ui {
     }
 
     /// A typed character (decision 0014 D6–D7): inserted into the focused editable element.
-    /// Returns whether it was taken.
+    /// Returns whether it was taken. While a modal dialog is shown (`ui-widgets.md` §18.4) a
+    /// character whose focused entry lies outside it is taken and inserted nowhere.
     pub fn text_input(&mut self, ch: char) -> bool {
-        let Some(t) = self.focus.focus.filter(|t| self.is_editable(*t)) else {
+        let focused = self.focus.focus.filter(|t| self.is_editable(*t));
+        if let Some(m) = self.modal_dialog()
+            && !focused.is_some_and(|t| self.is_ancestor_or_self(m, t))
+        {
+            return true;
+        }
+        let Some(t) = focused else {
             return false;
         };
         if ch.is_control() {
@@ -718,5 +990,54 @@ fn char_right(text: &[u16], c: usize) -> usize {
         c + 2
     } else {
         c + 1
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::ControlKind;
+    use crate::env::NullEnv;
+    use crate::events::{Command, UiEvent};
+    use crate::ui::Ui;
+    use crate::vocab::Vocab;
+
+    fn broadcast(ui: &mut Ui) -> bool {
+        ui.take_events()
+            .iter()
+            .any(|e| matches!(e, UiEvent::KeyBroadcast { .. }))
+    }
+
+    /// Review finding: a key pressed before an item drag by a container and released during
+    /// it is no longer taken as down, so its next press under a modal dialog is a new press
+    /// whose release is held back (`ui-widgets.md` §18.4).
+    #[test]
+    fn a_release_swallowed_by_a_drag_ends_the_key() {
+        let mut ui = Ui::new(Box::new(NullEnv), Vocab::default(), (800, 600));
+        let w = ui.create_control(ControlKind::Window, 1).unwrap();
+        ui.control_set_visible(w, true);
+        ui.activate(w);
+        let fwd = Command::named("MoveForward");
+        assert!(!ui.key_command(&fwd, true, 1.0));
+        assert!(broadcast(&mut ui));
+        // An item drag by a container swallows keys (§5.3 step 4).
+        ui.drag.icon = Some(w);
+        ui.drag.by_container = true;
+        assert!(ui.key_command(&fwd, false, 0.0), "swallowed by the drag");
+        assert!(ui.focus.down.is_empty(), "no longer down");
+        ui.drag.icon = None;
+        ui.drag.by_container = false;
+        // A modal dialog appears.
+        let d = ui.create_control(ControlKind::Window, 1).unwrap();
+        ui.control_set_visible(d, true);
+        ui.mark_dialog(d);
+        ui.set_dialog_modal(d, true);
+        assert_eq!(ui.modal_dialog(), Some(d));
+        assert!(ui.key_command(&fwd, true, 1.0), "consumed");
+        assert!(!broadcast(&mut ui));
+        assert!(
+            ui.key_command(&fwd, false, 0.0),
+            "a new press: its release is held"
+        );
+        assert!(!broadcast(&mut ui));
     }
 }

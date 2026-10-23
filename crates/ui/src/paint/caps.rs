@@ -38,7 +38,14 @@ pub struct PaintLimits {
     pub paint_slice: Duration,
     /// Longest wait of a first paint (U4 (c)).
     pub first_paint_wait: Duration,
+    /// Damage of one job, in physical pixels, above which the job is painted on a worker
+    /// when the host gave a worker pool (`ui-scaling.md` §8 S1: 30,000).
+    pub worker_min_px: u64,
 }
+
+/// The S1 threshold of `ui-scaling.md` §8: a job whose damage exceeds this many physical
+/// pixels is painted on the workers.
+pub const WORKER_MIN_PX: u64 = 30_000;
 
 impl Default for PaintLimits {
     fn default() -> Self {
@@ -53,6 +60,7 @@ impl Default for PaintLimits {
             upload_cap_bytes: 8 * 1024 * 1024,
             paint_slice: Duration::from_millis(4),
             first_paint_wait: Duration::from_millis(100),
+            worker_min_px: WORKER_MIN_PX,
         }
     }
 }

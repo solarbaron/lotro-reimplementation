@@ -624,23 +624,12 @@ impl ContextMenu {
     /// activated; submenus are built when opened.
     ///
     /// # Errors
-    /// [`GameError::Malformed`] (the value is the item **kind**, not a property ID, although
-    /// the variant's message says "property"; `GameError` has no menu-kind variant) when
-    /// the root list holds an item of an invalid kind (§19.2 OPEN rule: no menu is shown,
-    /// nothing else happens),
+    /// [`GameError::InvalidMenuKind`] with the raw kind when the root list holds an item of
+    /// an invalid kind (§19.2 OPEN rule: no menu is shown, nothing else happens),
     /// [`GameError::TooLarge`] past the caps, or an element or creation error.
     pub fn open(ui: &mut Ui, refs: &MenuRefs, req: &MenuRequest) -> Result<Self, GameError> {
-        if let Some((n, i)) = req
-            .items
-            .iter()
-            .enumerate()
-            .find(|(_, i)| !i.kind.is_valid())
-        {
-            tracing::debug!(
-                "context menu not shown: item {n} has the invalid kind {}",
-                i.kind.raw()
-            );
-            return Err(GameError::Malformed(i.kind.raw()));
+        if let Some(i) = req.items.iter().find(|i| !i.kind.is_valid()) {
+            return Err(GameError::InvalidMenuKind(i.kind.raw()));
         }
         let mut total = 0usize;
         check_items(&req.items, 0, &mut total)?;

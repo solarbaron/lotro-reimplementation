@@ -632,7 +632,7 @@ fn click_view(ui: &mut Ui, v: &mut MapWindowView, k: ElementKey) -> Vec<MapActio
 }
 
 fn row_texts(ui: &mut Ui, rows: &[ElementKey]) -> Vec<String> {
-    let id = tessera_ui::widgets::context_menu::MenuIds::default().text;
+    let id = tessera_ui::game::context_menu::MenuIds::default().text;
     rows.iter()
         .map(|r| {
             let t = tessera_ui::game::find_below(ui, *r, id).unwrap();

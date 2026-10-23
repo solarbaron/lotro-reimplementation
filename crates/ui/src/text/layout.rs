@@ -363,6 +363,28 @@ impl Resolved {
     }
 }
 
+/// The derived metrics (`ui-scaling.md` §6.4.4) of glyph `g` of `source_face` at derivation
+/// scale `k` for target height `t`.
+pub(crate) fn derived_metrics_of(
+    source_face: &FontFace,
+    g: &Glyph,
+    k: f64,
+    t: i32,
+) -> GlyphMetrics {
+    let sm = GlyphMetrics {
+        a: i32::from(g.left_bearing),
+        w: i32::from(g.width),
+        b: i32::from(g.right_bearing),
+        t: i32::from(g.top),
+        h: i32::from(g.height),
+        advance: i32::from(g.left_bearing) + i32::from(g.width) + i32::from(g.right_bearing),
+        line_height: source_face.line_height_i32(),
+        baseline: i32::try_from(source_face.baseline()).unwrap_or(i32::MAX),
+        outline_border: i32::try_from(source_face.borders()[0]).unwrap_or(i32::MAX),
+    };
+    derive_metrics(sm, k, t)
+}
+
 /// Resolves one character for the scaled path (`ui-scaling.md` §6.4.1–§6.4.4): picks the target
 /// height, the ladder source and, for a derived glyph, the derived metrics. Pure (no cache, no
 /// allocation of coverage); [`super::draw_scaled`] derives and caches the coverage.
@@ -437,20 +459,7 @@ pub(crate) fn resolve_scaled(
             },
         },
         Some(g) => {
-            let sm = GlyphMetrics {
-                a: i32::from(g.left_bearing),
-                w: i32::from(g.width),
-                b: i32::from(g.right_bearing),
-                t: i32::from(g.top),
-                h: i32::from(g.height),
-                advance: i32::from(g.left_bearing)
-                    + i32::from(g.width)
-                    + i32::from(g.right_bearing),
-                line_height: source_face.line_height_i32(),
-                baseline: i32::try_from(source_face.baseline()).unwrap_or(i32::MAX),
-                outline_border: i32::try_from(source_face.borders()[0]).unwrap_or(i32::MAX),
-            };
-            let dm = derive_metrics(sm, src.k, t);
+            let dm = derived_metrics_of(&source_face, &g, src.k, t);
             Resolved {
                 a: i64::from(dm.a),
                 w: i64::from(dm.w),

@@ -46,13 +46,9 @@ struct CanvasMap {
     mx: f64,
     my: f64,
     /// The canvas's physical origin, subtracted so the canvas's top-left maps to (0, 0): the
-    /// owner's `(Ex(dl), Ey(dt))`, or for a canvas that extends above the owner's top edge
-    /// ([`Ui::canvas_overhang`]) `Ey` of the extended top.
+    /// owner's `(Ex(dl), Ey(dt))`.
     ox: i32,
     oy: i32,
-    /// At the identity: canvas rows above the owner's top edge (the owner's layout row 0 is
-    /// canvas row `shift`). Folded into `oy` when a UI screen is set.
-    shift: i32,
 }
 
 impl CanvasMap {
@@ -66,7 +62,6 @@ impl CanvasMap {
             my: 1.0,
             ox: 0,
             oy: 0,
-            shift: 0,
         }
     }
 
@@ -89,14 +84,8 @@ impl CanvasMap {
     fn cy(&self, y: i32) -> i32 {
         match self.screen {
             Some(f) => f.edge_y(self.dt + f64::from(y) * self.my) - self.oy,
-            None => y.saturating_add(self.shift),
+            None => y,
         }
-    }
-
-    /// The canvas rows above the owner's top edge at the identity (0 when a UI screen is set:
-    /// the mapped paths fold them into the origin).
-    fn identity_shift(&self) -> i32 {
-        if self.active() { 0 } else { self.shift }
     }
 
     /// Maps an owner-relative **layout** inclusive box to its canvas [`Rect`] (half-open, as
@@ -106,7 +95,7 @@ impl CanvasMap {
             return Rect::EMPTY;
         }
         if !self.active() {
-            return b.to_rect().translate(0, self.shift);
+            return b.to_rect();
         }
         let r = i64::from(b.r).saturating_add(1);
         let bot = i64::from(b.b).saturating_add(1);
@@ -133,10 +122,6 @@ impl CanvasMap {
         }
     }
 }
-
-/// Most layout units a plugin window's canvas extends above its top edge over the layout
-/// parts placed there (Tessera bound for hostile layouts; the install's title bar rises 8).
-const MAX_CANVAS_OVERHANG: i32 = 64;
 
 /// The colour of the letterbox bars (`ui-scaling.md` §5.4 step 6): opaque black, 0xAARRGGBB.
 pub(crate) const LETTERBOX_COLOUR: u32 = 0xFF00_0000;
@@ -221,9 +206,12 @@ pub(crate) struct Painter {
     always_full: bool,
     /// The crisp text path's state (`ui-scaling.md` §6.4, §6.5, §7.1, §7.5).
     pub text: crate::text_ui::TextScaling,
-    /// The surface owners whose canvas extends above their top edge, with the overhang in
-    /// layout units ([`Ui::canvas_overhang`]), from the last full surface pass.
-    overhangs: HashMap<ElementKey, i32>,
+    /// `image_lru_mib` of `ui-scaling.md` §8 S6 once the host set it ([`Ui::set_image_memory`];
+    /// until then the glyph share is the host's, [`Ui::set_glyph_cache_budget`]).
+    pub image_lru_mib: Option<u64>,
+    /// The S6 split last worked out from `image_lru_mib` and *Se* ([`Ui::s6_budget`]); the
+    /// default while `image_lru_mib` is unset.
+    pub s6: crate::scaling::S6Budget,
     /// The letterbox bars of the last frame that changed the tree, with the UI screen they
     /// were worked out for (`ui-scaling.md` §5.4 step 6): reused while nothing changes.
     letterbox: Option<(
@@ -364,7 +352,8 @@ impl Painter {
             plan: Vec::new(),
             always_full: false,
             text: crate::text_ui::TextScaling::default(),
-            overhangs: HashMap::new(),
+            image_lru_mib: None,
+            s6: crate::scaling::S6Budget::default(),
             letterbox: None,
         }
     }
@@ -426,8 +415,59 @@ impl Ui {
     /// dimension. Existing surfaces are kept.
     pub fn set_paint_limits(&mut self, limits: PaintLimits) {
         self.painter.config = ComposeConfig::from_limits(&limits);
+        self.painter.scheduler.set_limits(limits);
         self.painter.limits = limits;
         self.painter.note_structure();
+    }
+
+    /// Sets `image_lru_mib`, the S6 memory setting (`ui-scaling.md` §8 S6; default 64): the
+    /// total *T* = `image_lru_mib` × max(1, *Se*²) is split again ([`crate::scaling::s6_budget`])
+    /// and the glyph share applied to the derived-glyph cache, which evicts down to it. The split is
+    /// worked out again on every change of *Se* ([`Self::set_ui_screen`]); the host applies
+    /// [`Self::s6_budget`]'s image share to its decoded-image cache. Before the first call
+    /// the glyph share is whatever [`Self::set_glyph_cache_budget`] set (8 MiB by default).
+    pub fn set_image_memory(&mut self, image_lru_mib: u64) {
+        self.painter.image_lru_mib = Some(image_lru_mib);
+        self.apply_s6();
+    }
+
+    /// The S6 split in force (`ui-scaling.md` §8 S6): the total, the glyph caches' share and
+    /// the decoded and scaled images' share.
+    #[must_use]
+    pub fn s6_budget(&self) -> crate::scaling::S6Budget {
+        self.painter.s6
+    }
+
+    /// Works the S6 split out for the current *Se* (1 without a UI screen) and applies the
+    /// glyph share, once the host has set `image_lru_mib`.
+    pub(crate) fn apply_s6(&mut self) {
+        let Some(mib) = self.painter.image_lru_mib else {
+            return;
+        };
+        let se = self.ui_screen.map_or(1.0, |f| f.effective_scale());
+        let b = crate::scaling::s6_budget(mib, se);
+        self.painter.s6 = b;
+        self.painter
+            .text
+            .set_glyph_share(usize::try_from(b.glyphs).unwrap_or(usize::MAX));
+    }
+
+    /// Sets (or removes) the worker pool on which paint jobs with a damage above
+    /// [`PaintLimits::worker_min_px`] physical pixels run (`ui-scaling.md` §8 S1: the paint
+    /// leaves the frame thread so the UI's main-thread time stays within U1). Without one
+    /// every job paints on the frame thread in bands, as before. The pool lives on across
+    /// [`Self::set_paint_limits`].
+    pub fn set_paint_spawner(&mut self, spawner: Option<Arc<dyn crate::paint::PaintSpawner>>) {
+        self.painter.scheduler.set_spawner(spawner);
+    }
+
+    /// Whether the surface of `k` has its paint job on a worker now (S1).
+    #[must_use]
+    pub fn paint_on_worker(&self, k: ElementKey) -> bool {
+        self.painter
+            .recs
+            .get(&k)
+            .is_some_and(|r| self.painter.scheduler.is_on_worker(r.id))
     }
 
     /// Whether painting has settled: no tree change waits for the next paint step and the
@@ -658,150 +698,7 @@ impl Ui {
         let m = self.canvas_map(k);
         let r = m.rect(IBox::from_xywh(0, 0, b.w(), b.h()));
         let max = self.painter.limits.max_surface_dim.max(1);
-        // The canvas starts at row 0, which is above the owner's top edge when the canvas
-        // extends over parts placed there (`canvas_overhang`); without that `r.y0` is 0.
-        let h = if r.is_empty() {
-            0
-        } else {
-            u32::try_from(r.y1.max(0)).unwrap_or(0)
-        };
-        [r.width().min(max), h.min(max)]
-    }
-
-    /// The owner's physical canvas size without any overhang (the size of external content
-    /// drawn into the owner's own box).
-    fn own_canvas_size(&self, k: ElementKey) -> [u32; 2] {
-        let b = self.layout_box(k).unwrap_or_default();
-        let m = CanvasMap {
-            shift: 0,
-            ..self.canvas_map(k)
-        };
-        let r = m.rect(IBox::from_xywh(0, 0, b.w(), b.h()));
-        let max = self.painter.limits.max_surface_dim.max(1);
         [r.width().min(max), r.height().min(max)]
-    }
-
-    /// Whether `k` is an element whose canvas may extend above its top edge: a plugin window
-    /// (a root panel that is a plugin control).
-    fn may_overhang(&self, k: ElementKey) -> bool {
-        self.el(k).is_some_and(|e| e.root_panel) && self.is_control(k)
-    }
-
-    /// How far a direct child `c` of a plugin window reaches above the window's top edge, as
-    /// [`Self::scan_overhang`] counts it: 0 for a plugin child control.
-    fn overhang_of_child(&self, c: ElementKey) -> i32 {
-        if self.is_control(c) {
-            return 0;
-        }
-        self.el(c).map_or(0, |ce| {
-            ce.bx.t.saturating_neg().clamp(0, MAX_CANVAS_OVERHANG)
-        })
-    }
-
-    /// How many layout units the canvas of `k` extends above its top edge, worked out from the
-    /// tree: for a plugin window (a root panel that is a plugin control) built from the
-    /// install's layout, the largest distance by which one of its direct **layout** children
-    /// (not a plugin control) starts above its top, at most [`MAX_CANVAS_OVERHANG`]. So the
-    /// title bar and drag bar of a game-styled window, placed at top −8 by its layout
-    /// (`lua-plugin-api.md` §14.2.3 "the title bar rises 8 pixels above the window's
-    /// rectangle"), are drawn, not cut at the window's top edge (§14.2.6 implementer OPEN (d)).
-    /// Those layout children are clipped to the extended box and hit there
-    /// ([`Ui::hit_test`]); plugin child controls, and nested surfaces below the window, stay
-    /// clipped to the window's own box (`ui-layout.md` §9.3, `lua-plugin-api.md` §13.12). 0
-    /// for every other element. One pass over the children, run by the full surface pass
-    /// only ([`Self::canvas_overhang`] reads its result).
-    fn scan_overhang(&self, k: ElementKey) -> i32 {
-        let Some(e) = self.el(k) else { return 0 };
-        if !self.may_overhang(k) {
-            return 0;
-        }
-        let mut o = 0i32;
-        for c in &e.children {
-            o = o.max(self.overhang_of_child(*c));
-            if o >= MAX_CANVAS_OVERHANG {
-                break;
-            }
-        }
-        o
-    }
-
-    /// [`Self::scan_overhang`] of surface owner `k` as the last full surface pass found it (0
-    /// for an element that owns no surface): constant time, so the light pass and the
-    /// per-element walks stay linear.
-    fn canvas_overhang(&self, k: ElementKey) -> i32 {
-        self.painter.overhangs.get(&k).copied().unwrap_or(0)
-    }
-
-    /// Whether the recorded change of `k` may have changed the overhang of the plugin window
-    /// it is a direct layout child of (then the full surface pass runs: canvas sizes and
-    /// displayed boxes follow the overhang). A scan of the window's children runs only when a
-    /// child that may have set the overhang moved down.
-    fn overhang_changed_by(&self, k: ElementKey) -> bool {
-        let Some(p) = self.parent(k) else {
-            return false;
-        };
-        if self.is_control(k) || !self.may_overhang(p) {
-            return false;
-        }
-        let cached = self.canvas_overhang(p);
-        let own = self.overhang_of_child(k);
-        own > cached || (cached > 0 && own < cached && self.scan_overhang(p) != cached)
-    }
-
-    /// [`Self::canvas_overhang`] in the owner's displayed units (UI units): the overhang × the
-    /// owner's vertical node scale, rounded up, so the extended displayed box holds it.
-    pub(crate) fn displayed_overhang(&self, k: ElementKey) -> i32 {
-        self.displayed_overhang_of(k, self.canvas_overhang(k))
-    }
-
-    /// `o` layout units of overhang of `k` in its displayed units.
-    fn displayed_overhang_of(&self, k: ElementKey, o: i32) -> i32 {
-        if o == 0 {
-            return 0;
-        }
-        let (_, my, _) = self.node_scale_at_or_above(k);
-        let v = f64::from(o) * f64::from(my);
-        if v.is_finite() {
-            v.ceil().clamp(0.0, f64::from(i32::MAX)) as i32
-        } else {
-            o
-        }
-    }
-
-    /// The displayed box of the surface of `k` (UI units): the owner's displayed box, extended
-    /// upwards by [`Self::displayed_overhang`]. Its physical box is the canvas's destination;
-    /// rotation centres and the clip the owner gives nested entries stay the owner's own
-    /// displayed box ([`CompNode::overhang`]).
-    fn surface_displayed(&self, k: ElementKey) -> IBox {
-        let d = self.displayed_box(k);
-        let o = self.displayed_overhang(k);
-        if o == 0 {
-            return d;
-        }
-        IBox {
-            t: d.t.saturating_sub(o),
-            ..d
-        }
-    }
-
-    /// The clip a child of the surface owner `owner` gets when the owner's canvas extends above
-    /// its top edge: `clip` (the owner's box) extended upwards for its layout children, `None`
-    /// when the owner has no overhang.
-    fn overhang_clip(&self, owner: ElementKey, clip: IBox) -> Option<IBox> {
-        let o = self.canvas_overhang(owner);
-        (o > 0).then(|| IBox {
-            t: clip.t.saturating_sub(o),
-            ..clip
-        })
-    }
-
-    /// The clip child `c` of the surface owner gets: `ext` (the extended clip of
-    /// [`Self::overhang_clip`]) for a layout child, else `clip`.
-    fn owner_child_clip(&self, c: ElementKey, clip: IBox, ext: Option<IBox>) -> IBox {
-        match ext {
-            Some(x) if !self.is_control(c) => x,
-            _ => clip,
-        }
     }
 
     /// The owner→canvas mapping of a surface (`ui-scaling.md` §6.1, §6.2). It is the identity
@@ -810,16 +707,12 @@ impl Ui {
     /// maps to itself).
     fn canvas_map(&self, k: ElementKey) -> CanvasMap {
         let Some(screen) = self.ui_screen else {
-            return CanvasMap {
-                shift: self.canvas_overhang(k),
-                ..CanvasMap::identity()
-            };
+            return CanvasMap::identity();
         };
         // §3.4, §6.2: the owner's real displayed top-left (not rounded to whole UI units), so
         // the canvas origin is the column and row of its physical box (§3.6).
         let (d, _) = self.real_edges(k);
         let (mx, my, _) = self.node_scale_at_or_above(k);
-        let top = d.t - f64::from(self.displayed_overhang(k));
         CanvasMap {
             screen: Some(screen),
             dl: d.l,
@@ -827,21 +720,8 @@ impl Ui {
             mx: f64::from(mx),
             my: f64::from(my),
             ox: screen.edge_x(d.l),
-            oy: screen.edge_y(top),
-            shift: 0,
+            oy: screen.edge_y(d.t),
         }
-    }
-
-    /// The physical box of the surface of `k` (`ui-scaling.md` §3.6, §6.6): the owner's real
-    /// displayed box extended upwards by [`Self::displayed_overhang`], mapped edge by edge. At
-    /// the identity it is [`Self::surface_displayed`] as a rectangle.
-    fn surface_physical(&self, k: ElementKey) -> Rect {
-        if self.ui_screen.is_none() {
-            return self.surface_displayed(k).to_rect();
-        }
-        let (mut d, _) = self.real_edges(k);
-        d.t -= f64::from(self.displayed_overhang(k));
-        self.real_to_physical(&d)
     }
 
     fn to_paint_rect(b: &IBox) -> Rect {
@@ -915,38 +795,13 @@ impl Ui {
         }
         let after = e.draw_after_children;
         let children = e.children.clone();
-        let ext = if k == owner {
-            self.overhang_clip(owner, clip)
-        } else {
-            None
-        };
         if after {
-            self.emit_children(
-                owner,
-                &children,
-                bx,
-                (clip, ext),
-                recs,
-                list,
-                pending,
-                depth,
-                m,
-            );
+            self.emit_children(owner, &children, bx, clip, recs, list, pending, depth, m);
             self.emit_own(k, bx, clip, list, pending, m);
         } else {
             self.emit_own(k, bx, clip, list, pending, m);
             self.emit_external(k, bx, recs, owner, list, m);
-            self.emit_children(
-                owner,
-                &children,
-                bx,
-                (clip, ext),
-                recs,
-                list,
-                pending,
-                depth,
-                m,
-            );
+            self.emit_children(owner, &children, bx, clip, recs, list, pending, depth, m);
         }
         if after {
             self.emit_external(k, bx, recs, owner, list, m);
@@ -959,7 +814,7 @@ impl Ui {
         owner: ElementKey,
         children: &[ElementKey],
         bx: IBox,
-        (clip, ext): (IBox, Option<IBox>),
+        clip: IBox,
         recs: &BTreeMap<ElementKey, SurfaceRec>,
         list: &mut DisplayList,
         pending: &mut bool,
@@ -969,7 +824,6 @@ impl Ui {
         for c in children {
             if let Some(cb) = self.layout_box(*c) {
                 let child_box = cb.offset(bx.l, bx.t);
-                let clip = self.owner_child_clip(*c, clip, ext);
                 self.emit_rec(
                     owner,
                     *c,
@@ -1114,14 +968,8 @@ impl Ui {
                 .and_then(|e| e.widget.scroll.as_ref())
                 .map(|s| s.offset)
                 .unwrap_or((0, 0));
-            // At the identity a canvas that extends above its owner's top edge
-            // (`canvas_overhang`) starts `shift` rows higher.
-            let shift = m.identity_shift();
-            let origin = [
-                bx.l.saturating_sub(sx),
-                bx.t.saturating_sub(sy).saturating_add(shift),
-            ];
-            let cl_layout = Self::to_paint_rect(&clip).translate(0, shift);
+            let origin = [bx.l.saturating_sub(sx), bx.t.saturating_sub(sy)];
+            let cl_layout = Self::to_paint_rect(&clip);
             let cached = self.painter.text_runs.get(&k).filter(|c| {
                 !self.painter.always_full
                     && Arc::ptr_eq(&c.prepared, &pt)
@@ -1490,6 +1338,13 @@ impl Ui {
         stats.glyphs_derived =
             u32::try_from(std::mem::take(&mut self.painter.text.derived)).unwrap_or(u32::MAX);
         stats.glyph_derive_ns = std::mem::take(&mut self.painter.text.derive_ns);
+        // S7: the derivations alone on this thread, and the ladder steps of the workers.
+        let t = &mut self.painter.text;
+        (stats.glyph_derivation_ns, stats.glyph_derivation_max_ns) =
+            t.cache.take_derivation_times();
+        stats.ladder_steps = std::mem::take(&mut t.ladder_steps);
+        stats.ladder_step_ns = std::mem::take(&mut t.ladder_step_ns);
+        stats.ladder_step_max_ns = std::mem::take(&mut t.ladder_step_max_ns);
         UiFrame {
             ops: out.ops,
             composition,
@@ -1507,16 +1362,6 @@ impl Ui {
             plan,
         } = self.decide_surfaces();
         self.painter.plan = plan;
-        // The canvas overhangs (`scan_overhang`), worked out once per surface here: canvas
-        // sizes, displayed boxes and the walks below read them in constant time.
-        let mut overhangs: HashMap<ElementKey, i32> = HashMap::new();
-        for (k, _, _) in &decided {
-            let o = self.scan_overhang(*k);
-            if o > 0 {
-                overhangs.insert(*k, o);
-            }
-        }
-        self.painter.overhangs = overhangs;
         let mut new_recs: BTreeMap<ElementKey, SurfaceRec> = BTreeMap::new();
         let mut group_of: BTreeMap<ElementKey, GroupId> = BTreeMap::new();
         for (k, stand_in, tile) in &decided {
@@ -1550,7 +1395,7 @@ impl Ui {
                     id,
                     group,
                     canvas: self.canvas_size(*k),
-                    displayed: self.surface_displayed(*k).to_rect(),
+                    displayed: self.displayed_box(*k).to_rect(),
                     coverage: Vec::new(),
                     stand_in: *stand_in,
                     tile: *tile,
@@ -1697,8 +1542,7 @@ impl Ui {
         }
         let rot = self.el(n).map_or([0.0; 3], |e| e.rotation);
         FootprintNode {
-            displayed: self.surface_displayed(n).to_rect(),
-            overhang: self.displayed_overhang(n),
+            displayed: self.displayed_box(n).to_rect(),
             own_rotation: crate::paint::holds_rotation(rot),
             window: self.el(n).is_some_and(|e| e.root_panel),
             nested,
@@ -1739,7 +1583,7 @@ impl Ui {
         // state the full walk gives it, or `None` when it is not drawn.
         let mut starts: Vec<LightStart> = Vec::new();
         for &k in &recorded {
-            if self.is_structural(k) || self.overhang_changed_by(k) {
+            if self.is_structural(k) {
                 return false;
             }
             stack.clear();
@@ -1888,11 +1732,6 @@ impl Ui {
         if clip.is_empty() {
             return None;
         }
-        // The owner's direct layout children get the extended clip of a canvas that extends
-        // above its top edge (`canvas_overhang`), as in the display list and the full walk.
-        let ext = self.overhang_clip(owner, clip);
-        let first = path.last().copied().unwrap_or(k);
-        clip = self.owner_child_clip(first, clip, ext);
         let mut depth = 0usize;
         for &n in path.iter().rev() {
             let e = self.el(n)?;
@@ -1969,14 +1808,8 @@ impl Ui {
                 if dirty {
                     cleaned.push(k);
                 }
-                let ext = if k == *owner {
-                    self.overhang_clip(k, clip)
-                } else {
-                    None
-                };
                 for c in e.children.iter().rev() {
                     if let Some(cb) = self.arena.get(*c).map(|ce| ce.bx) {
-                        let clip = self.owner_child_clip(*c, clip, ext);
                         stack.push((*c, cb.offset(bx.l, bx.t), clip, depth + 1));
                     }
                 }
@@ -2055,11 +1888,9 @@ impl Ui {
             // The owner's physical box (`ui-scaling.md` §3.6), from its real displayed box.
             let physical_now = self.physical_box(k);
             if let Some(r) = rec {
-                // The canvas's destination: the surface's physical box, which extends above
-                // the owner's top edge over parts placed there (`canvas_overhang`). While a
-                // generation is shown, the swapped geometry (UI units) decides instead.
-                let surface_now = self.surface_physical(k);
-                let mut dest = surface_now;
+                // The canvas's destination: the owner's physical box. While a generation is
+                // shown, the swapped geometry (UI units) decides instead.
+                let mut dest = physical_now;
                 // While a generation runs, the picture drawn is the shown generation's, painted
                 // at its canvas size: that size is composed (resampled) onto the destination
                 // (`ui-scaling.md` §4.5 step 3), not the size the running job paints at.
@@ -2102,9 +1933,6 @@ impl Ui {
                 // the canvas (painted in UI units) is composed onto it, 1 : 1 at `Se` = 1
                 // (invariant I2) and GPU-scaled with `ui_scale_filter` at other scales.
                 let mut n = CompNode::new(r.id, parent_idx, dest);
-                // The rows of the destination above the owner's own box (`canvas_overhang`):
-                // rotation centres and the clip of nested entries use the own box.
-                n.overhang = physical_now.y0.saturating_sub(surface_now.y0).max(0);
                 n.window = e.root_panel;
                 n.content = NodeContent::Canvas;
                 n.shown = shown;
@@ -2131,7 +1959,7 @@ impl Ui {
                 let mut n = CompNode::new(SurfaceId(entry), own_idx, physical_now);
                 n.content = NodeContent::External(id);
                 n.shown = displayed_flag;
-                n.canvas = self.own_canvas_size(k);
+                n.canvas = self.canvas_size(k);
                 nodes.push(n);
             }
             own.push(own_idx);

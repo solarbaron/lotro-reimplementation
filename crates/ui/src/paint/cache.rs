@@ -111,6 +111,20 @@ impl ImageCache {
         }
     }
 
+    /// The unpinned budget, bytes.
+    #[must_use]
+    pub fn lru_budget(&self) -> u64 {
+        self.lru_budget
+    }
+
+    /// Changes the unpinned budget (the image share of `ui-scaling.md` §8 S6, set again on
+    /// every change of *Se*), evicting least-recently-used unpinned images until the cache fits
+    /// it. Pinned images stay.
+    pub fn set_lru_budget(&mut self, bytes: u64) {
+        self.lru_budget = bytes;
+        self.evict();
+    }
+
     /// Counters.
     #[must_use]
     pub fn stats(&self) -> CacheStats {

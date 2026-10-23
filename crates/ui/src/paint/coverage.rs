@@ -96,10 +96,6 @@ impl RectF {
 pub struct FootprintNode {
     /// The entry's displayed box, absolute (the root's unrotated space).
     pub displayed: Rect,
-    /// Rows at the top of `displayed` above the element's own box (a canvas that extends
-    /// above its owner, as [`super::CompNode::overhang`]): an own rotation turns about the
-    /// centre of the own box.
-    pub overhang: i32,
     /// Whether its surface holds an own rotation (an angle set while the surface exists,
     /// kept until the surface is released, Decision 1.7 step 1).
     pub own_rotation: bool,
@@ -118,8 +114,8 @@ pub fn footprint(n: &FootprintNode) -> RectF {
 }
 
 fn footprint_at(n: &FootprintNode, depth: usize) -> RectF {
-    let own = RectF::from_rect(&super::compose::own_box(&n.displayed, n.overhang));
-    let mut join = RectF::from_rect(&n.displayed);
+    let own = RectF::from_rect(&n.displayed);
+    let mut join = own;
     if depth < MAX_FOOTPRINT_DEPTH && !(n.own_rotation && n.window) {
         for c in &n.nested {
             join = join.union(&footprint_at(c, depth + 1));
@@ -128,8 +124,8 @@ fn footprint_at(n: &FootprintNode, depth: usize) -> RectF {
     if !n.own_rotation {
         return join;
     }
-    // Square around the circle centred on N's centre (the centre of its own box) through the
-    // farthest corner of the join (for a window, of its displayed box).
+    // Square around the circle centred on N's centre through the farthest corner of the
+    // join (for a window, of its own box).
     let cx = (own.x0 + own.x1) * 0.5;
     let cy = (own.y0 + own.y1) * 0.5;
     let dx = (join.x0 - cx).abs().max((join.x1 - cx).abs());

@@ -373,6 +373,10 @@ impl Ui {
         let f_changed = (wu, hu) != old_f;
         let a_changed = safe != old_a;
         let se_changed = old_screen != Some(screen);
+        if old_screen.map(|f| f.effective_scale()) != Some(screen.effective_scale()) {
+            // §8 S6: the memory split follows Se; the glyph caches evict when it falls.
+            self.apply_s6();
+        }
         if f_changed {
             self.resize_screen(wu, hu);
         }

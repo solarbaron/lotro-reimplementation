@@ -123,17 +123,28 @@ fn far_fade_is_fd1() {
 #[test]
 fn template_and_sprite_gates() {
     let mut s = FarViewSettings::default();
+    // FD16, FD17: core 5, seam switch on, built-in preference values.
+    assert_eq!(s.graphics_core, 5);
+    assert!(s.seam_blending && s.multi_pass_lighting);
+    assert_eq!(s.lighting_quality, 0);
     assert_eq!(s.template(), Template::Plain);
+    assert!(!s.seam_overlay(), "built-in values: no overlay");
     s.normal_maps = true;
+    assert_eq!(s.template(), Template::NormalMapped);
+    assert!(!s.seam_overlay(), "lighting quality level 0 (FD18)");
+    s.lighting_quality = 3;
+    assert!(s.seam_overlay());
+    s.multi_pass_lighting = false;
+    assert!(!s.seam_overlay(), "multi-pass lighting off");
+    s.multi_pass_lighting = true;
     s.graphics_core = 1;
     assert_eq!(s.template(), Template::Plain);
+    assert!(!s.seam_overlay());
     s.graphics_core = 5;
-    assert_eq!(s.template(), Template::NormalMapped);
-    s.seam_blending = true;
-    assert!(s.seam_overlay());
     assert!(s.sprites());
     s.device_class = 2;
     assert!(!s.sprites());
+    assert!(!s.seam_overlay(), "device class 2");
     assert!(FarViewSettings::default().validate().is_ok());
     s.far_radius = 0;
     assert!(s.validate().is_err());
@@ -1100,24 +1111,43 @@ fn distant_groups_create_and_remove() {
     assert_eq!(groups.landblocks().count(), 0);
 }
 
-/// §6.1, §6.5, §9.1: the `[Render]` booleans set the switches; unknown values keep them;
-/// the graphics core is never derived from the stored name (OPEN).
+/// FD16–FD18: the `[Render]` values set `FarLandscapeNormalMaps`, `MultiPassLighting`,
+/// `LandscapeLightingQuality` and `DistantImposters`; unknown values keep them;
+/// `NearFarSeamBlending` and `GraphicsCore` are never read.
 #[test]
 fn render_preferences() {
-    use super::settings::preference_bool;
+    use super::settings::{lighting_quality_level, preference_bool};
     let mut s = FarViewSettings::default();
     let prefs = [
         ("FarLandscapeNormalMaps", "True"),
-        ("NearFarSeamBlending", " 1 "),
+        ("NearFarSeamBlending", "False"),
+        ("MultiPassLighting", "True"),
+        ("LandscapeLightingQuality", "VeryHigh"),
         ("DistantImposters", "maybe"),
-        ("GraphicsCore", "D3D11"),
+        ("GraphicsCore", "D3D9"),
     ];
     s.apply_render_preferences(|k| prefs.iter().find(|(n, _)| *n == k).map(|(_, v)| *v));
-    assert!(s.normal_maps && s.seam_blending && s.imposters);
-    assert_eq!(s.graphics_core, 0);
-    assert_eq!(s.template(), Template::Plain, "graphics core unknown");
+    assert!(s.normal_maps && s.seam_blending && s.imposters && s.multi_pass_lighting);
+    assert_eq!(s.graphics_core, 5, "the stored core is not read");
+    assert_eq!(s.template(), Template::NormalMapped);
+    assert!(s.seam_overlay(), "the owner's file: template and overlay");
+    // The Steam-prefix file: the plain template.
+    s.apply_render_preferences(|k| (k == "FarLandscapeNormalMaps").then_some("False"));
+    assert_eq!(s.template(), Template::Plain);
+    assert!(!s.seam_overlay());
     s.apply_render_preferences(|k| (k == "DistantImposters").then_some("FALSE"));
-    assert!(!s.imposters && s.normal_maps);
+    assert!(!s.imposters);
     assert_eq!(preference_bool("off"), Some(false));
     assert_eq!(preference_bool(""), None);
+    assert_eq!(lighting_quality_level(" veryhigh "), Some(3));
+    assert_eq!(lighting_quality_level("Low"), Some(0));
+    assert_eq!(lighting_quality_level("2"), Some(2));
+    assert_eq!(lighting_quality_level("loud"), None);
+    let mut t = FarViewSettings::default();
+    t.apply_render_preferences(|k| (k == "LandscapeLightingQuality").then_some("??"));
+    assert_eq!(
+        t,
+        FarViewSettings::default(),
+        "unknown level keeps the built-in"
+    );
 }

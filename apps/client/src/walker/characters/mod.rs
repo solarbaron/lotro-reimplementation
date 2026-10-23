@@ -343,6 +343,21 @@ struct Actor {
     draw_scale: Option<[f32; 3]>,
     /// An opacity factor (the mount's fade, `mounts.md` §14.8 item 3).
     alpha: f32,
+    /// The opacity its fade gave it in the last draw pass, 0 and view- or cell-culled
+    /// figures included (`None`: the pass did not reach its fade: hidden, not shown, not on
+    /// the GPU), for the `inherit_opacity` of its effects (`particle-runtime.md` §12
+    /// rule 15; [`parent_opacity`]).
+    drawn_opacity: Option<f32>,
+}
+
+/// The parent opacity a figure hands the `inherit_opacity` systems it owns
+/// (`particle-runtime.md` §12 rule 15) from the opacity its last draw pass recorded: that
+/// opacity clamped to 0–1 (a fade of 0 gives 0), or 1 when the pass did not reach the
+/// figure's fade or recorded no finite value.
+fn parent_opacity(drawn: Option<f32>) -> f32 {
+    drawn
+        .filter(|o| o.is_finite())
+        .map_or(1.0, |o| o.clamp(0.0, 1.0))
 }
 
 struct GpuPart {
@@ -380,6 +395,11 @@ pub struct FigureEffectView {
     pub skeleton: Option<Arc<tessera_anim::Skeleton>>,
     /// The figure's script tables and stored values (`None` when not resolved).
     pub scripts: Option<Arc<figure::FigureScripts>>,
+    /// The opacity the figure was drawn with in this layer's last draw pass (its distance
+    /// fade, the mount's and the player's target fade multiplied together), 1 when it was
+    /// not drawn there: the parent opacity of its `inherit_opacity` systems
+    /// (`particle-runtime.md` §12 rule 15).
+    pub opacity: f32,
 }
 
 /// Margin around a figure's joints for its picking box and anchor, metres (Tessera choice:
@@ -1358,6 +1378,7 @@ impl CharacterLayer {
             points: g.asset.points.clone(),
             skeleton: g.asset.skeleton.clone(),
             scripts: g.asset.scripts.clone(),
+            opacity: parent_opacity(a.drawn_opacity),
         })
     }
 
@@ -1835,6 +1856,7 @@ impl CharacterLayer {
             kind: None,
             draw_scale: None,
             alpha: 1.0,
+            drawn_opacity: None,
         };
         if self.actors.insert(e, actor).is_err() {
             self.store.despawn(e);
@@ -2691,6 +2713,7 @@ impl CharacterLayer {
         for (_, a) in self.actors.iter_mut() {
             a.seen_before = a.seen;
             a.seen = false;
+            a.drawn_opacity = None;
         }
         for (e, render, tf) in self.store.renderables() {
             let Some(a) = self.actors.get(e) else {
@@ -2775,6 +2798,11 @@ impl CharacterLayer {
                         .clamp(0.0, 1.0);
                 opacity *= self.player_fade;
             }
+            // `particle-runtime.md` §12 rule 15: the parent opacity of its `inherit_opacity`
+            // systems is this fade, 0 included, also when the view or cell test below culls
+            // the figure (culling is no fade; a figure faded out must not hand its systems
+            // the factor 1 of an owner that is not drawn; Tessera reading, OPEN filed).
+            a.drawn_opacity = Some(opacity);
             if opacity <= 0.0 || !in_view {
                 continue;
             }
@@ -3181,6 +3209,20 @@ mod tests {
     use tessera_net::{DataId, EntityKind, Location, RegionId, Transform as NetTransform};
 
     use super::*;
+
+    /// Review finding (`particle-runtime.md` §12 rule 15): a figure whose fade reached 0
+    /// hands its `inherit_opacity` systems 0, not the factor 1 of an owner the draw pass did
+    /// not reach; fades in between pass through, hostile values are clamped.
+    #[test]
+    fn a_faded_out_figure_gives_its_systems_no_opacity() {
+        assert_eq!(parent_opacity(Some(0.0)), 0.0);
+        assert_eq!(parent_opacity(Some(0.01)), 0.01);
+        assert_eq!(parent_opacity(Some(0.5)), 0.5);
+        assert_eq!(parent_opacity(Some(-1.0)), 0.0);
+        assert_eq!(parent_opacity(Some(3.0)), 1.0);
+        assert_eq!(parent_opacity(Some(f32::NAN)), 1.0);
+        assert_eq!(parent_opacity(None), 1.0, "not reached by the draw pass");
+    }
 
     /// Review finding (`walker.md` §11.7): the player's target fade measures to the point
     /// the walk camera looks at, with the profile it follows; until the camera gives its

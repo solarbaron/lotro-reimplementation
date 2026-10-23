@@ -66,16 +66,29 @@
 //! [`decals`].
 //!
 //! Not done here (OPEN in the specs, or no data path in the walker): fork effects are not
-//! drawn (`particles.md` rule §10.2); systems with `uses_video_post` are drawn after the
-//! others in the same pass (the walker has no post-processing pass, `combat-visuals.md` §11
-//! rule 9); `inherit_opacity` (owners are drawn at opacity 1, walker rule (d) of runtime
-//! §5.4 and the Q-RT7 Decision); the frame-buffer distortion program and the soft-particle
-//! factor of runtime §9.1.1; weather systems and the global wind (Q13); the gameplay event
-//! handler (Q-RT5).
+//! drawn (`particles.md` rule §10.2); the frame-buffer distortion program and the soft-particle
+//! factor of runtime §9.1.1; the drop-driven weather spawns and the figure effects of
+//! §11.2.3 step 4 and §11.2.5 (Q-RT13, [`weather`]); the gameplay event handler (Q-RT5).
+//!
+//! **Weather** (runtime §11.2, rule 17, [`weather`]): the ten engine-run systems, the global
+//! wind from the environment state, the sky-exposure tests, the branch thresholds, the
+//! camera systems and the impact spawns.
+//!
+//! **Opacity** (rule 15): `inherit_opacity` systems of a figure owner take the opacity the
+//! character layer's fade gave the figure in its last draw pass (one frame late: placement
+//! runs before the draw pass; a Tessera reading); static owners count as 1 (the object
+//! layer keeps its per-object fade to itself, not given to this layer yet).
+//!
+//! **Systems of the pass after post-processing** (rule 16): systems with `uses_video_post`
+//! are queued apart ([`EffectLayer::take_post_draws`]) and the walker draws them in a world
+//! pass of their own after the world pass (so after the far view and the translucent stage)
+//! and before the UI; in the creation viewport they come after the others in its one pass.
+//! [`EffectConfig::video_post`] off skips them.
 
 pub mod data;
 pub mod decals;
 pub mod session;
+pub mod weather;
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -150,6 +163,12 @@ pub struct EffectConfig {
     /// Seed of the shared random generator (`particle-runtime.md` §12 rule 1: the
     /// wall-clock seconds at start-up; headless runs use a fixed one).
     pub seed: u32,
+    /// The `[Render]` option `PrecipitationEffects` (built-in on, RT55): off turns the
+    /// precipitation step of `particle-runtime.md` §11.2.2 step 2 off.
+    pub precipitation: bool,
+    /// The Tessera mirror of `[Render] VideoPostEffects` (built-in on): off skips the
+    /// systems with `uses_video_post` = 1 (`particle-runtime.md` §12 rule 16).
+    pub video_post: bool,
 }
 
 impl Default for EffectConfig {
@@ -158,6 +177,8 @@ impl Default for EffectConfig {
             enabled: true,
             interiors: false,
             seed: 1,
+            precipitation: true,
+            video_post: true,
         }
     }
 }
@@ -261,6 +282,10 @@ pub struct EffectStats {
     pub max_stage_drawn_vertices: usize,
     /// Placed decals ([`decals`]).
     pub decals: decals::DecalStats,
+    /// Weather and water systems running (`particle-runtime.md` §11.2; at most ten).
+    pub weather_systems: usize,
+    /// Weather and water systems placed in the last world frame.
+    pub weather_placed: usize,
 }
 
 /// Counts of one [`EffectLayer::draw_systems`].
@@ -278,6 +303,8 @@ struct DrawnSystems {
 struct Boot {
     data: Arc<EffectData>,
     vocab: RuntimeVocabulary,
+    /// The DIDs of the ten weather systems (`particles.md` §7.1.3).
+    weather: [Option<u32>; weather::WEATHER_SYSTEMS],
 }
 
 /// One owner while it is spawned.
@@ -319,6 +346,10 @@ struct OwnerFrame<'a> {
     model: &'a [Mat4],
     points: Option<&'a data::AttachPoints>,
     drawn: bool,
+    /// The opacity the owner is drawn with (`particle-runtime.md` §12 rule 15): a figure's
+    /// fade from the character layer's last draw; 1 for static owners (the object layer's
+    /// per-object fade is not given to this layer) and for owners not drawn.
+    opacity: f32,
 }
 
 /// Emitter attachment points (`particles.md` §8.5.5) of an owner, in its model space.
@@ -652,6 +683,10 @@ struct FxState {
     surface_states: HashMap<u32, tessera_material::CurveStates>,
     /// Session figures, their clips, hooks, Execute answers and beams ([`session`]).
     session: session::SessionState,
+    /// The weather and water systems and the global wind ([`weather`]).
+    weather: weather::Weather,
+    /// Systems with `uses_video_post` are drawn (rule 16, [`EffectConfig::video_post`]).
+    video_post: bool,
 }
 
 impl FxState {
@@ -687,6 +722,7 @@ impl FxState {
                         .map_or(&[], |p| p.reference.as_slice()),
                     points: owner.points.as_deref(),
                     drawn: true,
+                    opacity: 1.0,
                 })
             }
             OwnerKind::Figure { .. } | OwnerKind::Session { .. } => {
@@ -709,6 +745,7 @@ impl FxState {
                     model: &v.model,
                     points: v.points.as_deref(),
                     drawn: v.drawn,
+                    opacity: if v.drawn { v.opacity } else { 1.0 },
                 })
             }
         }
@@ -1128,6 +1165,9 @@ pub struct EffectInput<'a> {
     /// The frame's lighting for lit systems (`None`: unlit frame, lit systems drawn with
     /// a white ambient and no lights).
     pub lighting: Option<EffectLighting<'a>>,
+    /// The frame's weather inputs (`particle-runtime.md` §11.2; `None` before the
+    /// environment has a frame: no weather system is placed).
+    pub weather: Option<weather::WeatherInput>,
 }
 
 /// The frame lighting lit systems sum (`particles.md` §8.14, `particle-runtime.md` §12
@@ -1268,6 +1308,87 @@ pub struct EffectLayer {
     stage: Option<StageFx>,
     /// Placed decals ([`decals::DecalLayer`]).
     pub decals: decals::DecalLayer,
+    /// The draws of the systems of the pass after post-processing queued by the last
+    /// [`EffectLayer::draw`], for the walker's late particle stage
+    /// ([`EffectLayer::take_post_draws`], `particle-runtime.md` §12 rule 16).
+    post_draws: Vec<ParticleDraw>,
+}
+
+/// Where [`EffectLayer::draw_systems`] queues particle draws: a pass, or (in tests and for
+/// the late stage) a list.
+trait ParticleTarget {
+    fn queue(&mut self, draw: ParticleDraw);
+}
+
+impl ParticleTarget for Pass {
+    fn queue(&mut self, draw: ParticleDraw) {
+        self.particles(draw);
+    }
+}
+
+impl ParticleTarget for Vec<ParticleDraw> {
+    fn queue(&mut self, draw: ParticleDraw) {
+        self.push(draw);
+    }
+}
+
+/// The two particle stages of `particle-runtime.md` §12 rule 16: draws of systems with
+/// `uses_video_post` go to `late` when there is one (the walker's stage after every other
+/// draw of the world pass), else to `main` after the others (the creation viewport, which
+/// has one pass).
+struct ParticleSink<'a, M: ParticleTarget + ?Sized> {
+    main: &'a mut M,
+    late: Option<&'a mut Vec<ParticleDraw>>,
+}
+
+impl<M: ParticleTarget + ?Sized> ParticleSink<'_, M> {
+    fn queue(&mut self, post: bool, draw: ParticleDraw) {
+        match (post, self.late.as_deref_mut()) {
+            (true, Some(late)) => late.push(draw),
+            _ => self.main.queue(draw),
+        }
+    }
+}
+
+/// Queues `draws`, the systems of the pass after post-processing
+/// ([`EffectLayer::take_post_draws`]), on a world pass of their own appended to `frame`
+/// after the world pass (`particle-runtime.md` §12 rule 16: after every other draw of it,
+/// the far view and the translucent stage included, before the UI). It keeps the world
+/// pass's colour and depth (same `camera`, no clear) and, from a lit world pass's
+/// `lighting`, only the fog the particle program reads: no shadow map and no table lights.
+/// Nothing is appended without draws.
+pub fn post_stage(
+    frame: &mut tessera_render::Frame,
+    camera: &tessera_render::Camera,
+    lighting: Option<&tessera_render::FrameLighting>,
+    draws: Vec<ParticleDraw>,
+) {
+    if draws.is_empty() {
+        return;
+    }
+    let pass = frame.world_pass("walker-world-post", camera);
+    if let Some(l) = lighting {
+        pass.frame_lighting(post_stage_lighting(l));
+    }
+    for d in draws {
+        pass.particles(d);
+    }
+}
+
+/// The lighting of the late particle stage ([`post_stage`]): the world pass's, without its
+/// shadow map and table lights (its particles are lit on the CPU, rule 13; only the fog
+/// reaches their program).
+fn post_stage_lighting(l: &tessera_render::FrameLighting) -> tessera_render::FrameLighting {
+    tessera_render::FrameLighting {
+        up: l.up,
+        ambient: l.ambient,
+        hemispheric: l.hemispheric,
+        sun: l.sun,
+        fog: l.fog,
+        shadow: None,
+        lights: Vec::new(),
+        time: l.time,
+    }
 }
 
 /// The region value of the creation viewport's frame: no landblock has region 0, so a
@@ -1312,9 +1433,13 @@ impl EffectLayer {
                     let vocab = RuntimeVocabulary::from_data(&data.dict, |d| {
                         crate::audio::scripts::mapper(&data.set, d)
                     });
+                    let weather = weather::read_weather_dids(&tessera_props::GameData::new(
+                        Arc::clone(&data.set),
+                    ));
                     Boot {
                         data: Arc::new(data),
                         vocab,
+                        weather,
                     }
                 });
                 let _ = tx.send(r);
@@ -1350,7 +1475,16 @@ impl EffectLayer {
             head_parts: HashSet::new(),
             stage: None,
             decals,
+            post_draws: Vec::new(),
         }
+    }
+
+    /// Hands over the draws of the systems of the pass after post-processing queued by the
+    /// last [`EffectLayer::draw`] (`particle-runtime.md` §12 rule 16), for a world pass of
+    /// their own after every other draw of the world pass (the far view and the translucent
+    /// stage included) and before the UI. Empty when there are none (no stage is needed).
+    pub fn take_post_draws(&mut self) -> Vec<ParticleDraw> {
+        std::mem::take(&mut self.post_draws)
     }
 
     /// Records how many lamp lights the frame's light table holds (the walker adds them,
@@ -1454,6 +1588,8 @@ impl EffectLayer {
                     refused: 0,
                     surface_states: HashMap::new(),
                     session: session::SessionState::default(),
+                    weather: weather::Weather::new(b.weather),
+                    video_post: self.config.video_post,
                 });
                 self.stats.ready = true;
                 tracing::info!("particle effects ready");
@@ -1608,6 +1744,8 @@ impl EffectLayer {
         }
         if let Some(st) = self.st.as_mut() {
             st.manager = EffectManager::new();
+            // The weather systems belonged to the discarded manager; they are made again.
+            st.weather.forget_systems();
             st.waiting.clear();
             st.handles.clear();
             // Beams' system keys belong to the discarded manager (a new one hands out the
@@ -1830,6 +1968,11 @@ impl EffectLayer {
         }
         // The runtime's timers.
         let _ = Self::with_graph(&mut self.graph, &mut self.st, |g, sink| g.advance(sink, dt));
+        // The weather inputs of the frame (`particle-runtime.md` §11.2.1–§11.2.3).
+        let precipitation = self.config.precipitation;
+        if let Some(st) = self.st.as_mut() {
+            st.weather_prepare(input.weather.as_ref(), &eye, input.streamer, precipitation);
+        }
         // 2. Sweep, placement, housekeeping (§3.2, Q-RT1 Decision).
         self.place_all(input.lighting, objects);
         // Beam heads that arrived fire their node's port; removed beams end their node.
@@ -1942,6 +2085,8 @@ impl EffectLayer {
             st.now = now;
             st.frame = st.frame.wrapping_add(1);
             st.water.clear();
+            // The weather systems belong to the world view, not to the creation scene.
+            st.weather.frame = None;
         }
         let loaded: Vec<u32> = self
             .load_rx
@@ -1988,7 +2133,21 @@ impl EffectLayer {
             return 0;
         }
         let mut pending = 0usize;
-        let d = Self::draw_systems(st, pass, Vec3::ZERO, eye, dir, objects, None, &mut pending);
+        // One pass: the post-processing systems come after the others in it (rule 16).
+        let mut sink = ParticleSink {
+            main: pass,
+            late: None,
+        };
+        let d = Self::draw_systems(
+            st,
+            &mut sink,
+            Vec3::ZERO,
+            eye,
+            dir,
+            objects,
+            None,
+            &mut pending,
+        );
         self.stats.stage_drawn_systems = d.systems;
         self.stats.stage_drawn_vertices = d.vertices;
         self.stats.max_stage_drawn_vertices = self.stats.max_stage_drawn_vertices.max(d.vertices);
@@ -2004,9 +2163,16 @@ impl EffectLayer {
         let frame = st.frame;
         let now = st.now;
         st.manager.begin_frame(frame, now);
+        // The eased global wind (`particle-runtime.md` §11.2.1) in world frames; the
+        // creation viewport keeps a calm one.
+        let wind = if st.weather.frame.is_some() {
+            st.weather.wind.value(now)
+        } else {
+            Vec3::ZERO
+        };
         let env = Environment {
             ambient: lighting.map_or([1.0; 4], |l| lit_ambient(l.ambient)),
-            ..Environment::default()
+            wind,
         };
         // Render frame = sim + shift (see `draw`); lights from another region give none.
         let shift = match lighting.and_then(|l| l.anchor) {
@@ -2040,6 +2206,7 @@ impl EffectLayer {
             }
             let (scale_a, scale_b) = owner_scale_vectors(f.scale, Some(owner.particle_scale));
             let world = f.world;
+            let parent_opacity = f.opacity;
             let model: Vec<Mat4> = f.model.to_vec();
             let points = f.points.cloned();
             // Unlit frames: the white ambient and no lights (a list set in a lit frame is
@@ -2057,14 +2224,14 @@ impl EffectLayer {
             };
             let bone_model = |b: u32| model.get(b as usize).copied();
             let FxState { manager, rng, .. } = st;
-            manager.place_owner(
+            // Rule 15: `inherit_opacity` systems take the owner's drawn opacity.
+            manager.place_owner_inheriting(
                 id.0,
                 frame,
                 now,
                 world,
-                scale_a,
-                scale_b,
-                1.0,
+                (scale_a, scale_b),
+                (1.0, parent_opacity),
                 &bone_model,
                 &env,
                 rng,
@@ -2089,12 +2256,15 @@ impl EffectLayer {
         // Beams (`particle-runtime.md` §11.1): ends, head, systems; their systems get the
         // list at the beam's source.
         st.update_beams(frame, &env, &list_at);
+        // The weather and water systems (§11.2.2–§11.2.4), lit at the camera.
+        let weather_placed = st.place_weather(frame, &env, &list_at);
         // Textures of new systems.
         let new = std::mem::take(&mut st.new_textures);
         if !new.is_empty() {
             objects.acquire_textures(new);
         }
         self.stats.lit_owners = lit;
+        self.stats.weather_placed = weather_placed;
     }
 
     fn finish_beams(&mut self) {
@@ -2127,6 +2297,7 @@ impl EffectLayer {
             .sum();
         self.stats.owners_live = self.live.len();
         self.stats.systems = st.manager.running_count();
+        self.stats.weather_systems = st.weather.running();
         self.stats.lingering = st.manager.lingering().len();
         self.stats.requests = st.requests;
         self.stats.session_owners = st.session.by_net.len();
@@ -2163,6 +2334,7 @@ impl EffectLayer {
         frustum: Option<&Frustum>,
     ) {
         let t0 = Instant::now();
+        self.post_draws.clear();
         let Some(st) = self.st.as_mut() else {
             return;
         };
@@ -2179,9 +2351,14 @@ impl EffectLayer {
         let cam_eye = eye - shift;
         let mut pending = 0usize;
         let ribbons = draw_ribbons(st, pass, objects, cam_eye, shift, &mut pending);
+        // Rule 16: the post-processing systems go to the walker's late stage.
+        let mut sink = ParticleSink {
+            main: pass,
+            late: Some(&mut self.post_draws),
+        };
         let d = Self::draw_systems(
             st,
-            pass,
+            &mut sink,
             shift,
             cam_eye,
             dir,
@@ -2210,13 +2387,15 @@ impl EffectLayer {
         self.stats.update_ms += t0.elapsed().as_secs_f64() * 1e3;
     }
 
-    /// The systems placed this frame into `pass` (render frame = sim + `shift`), in the
+    /// The systems placed this frame into `sink` (render frame = sim + `shift`), in the
     /// §8.15 order, each instance through the distance fade with its surface's textures,
-    /// blend state and program; instances culled by [`instance_culled`] are left out.
+    /// blend state and program; instances culled by [`instance_culled`] are left out. The
+    /// systems with `uses_video_post` come after the others, in their own stage when the
+    /// sink has one (rule 16).
     #[allow(clippy::too_many_arguments)]
-    fn draw_systems(
+    fn draw_systems<M: ParticleTarget + ?Sized>(
         st: &mut FxState,
-        pass: &mut Pass,
+        sink: &mut ParticleSink<'_, M>,
         shift: Vec3,
         cam_eye: Vec3,
         dir: Vec3,
@@ -2233,6 +2412,7 @@ impl EffectLayer {
             rng,
             data,
             surface_states,
+            video_post,
             ..
         } = st;
         let mut drawn = Vec::new();
@@ -2246,9 +2426,14 @@ impl EffectLayer {
                 continue;
             }
             let desc: &Arc<ParticleSystem> = sim.desc();
-            // `combat-visuals.md` §11 rule 9: the walker has no pass after post-processing,
-            // so these systems are drawn after the others in the same pass (§8.15).
+            // `combat-visuals.md` §11 rule 9, `particle-runtime.md` rule 16: Tessera has no
+            // post-processing step, so these systems are drawn after every other draw of the
+            // world pass (the sink's late stage; in the §8.15 order among themselves), and
+            // not at all with the `VideoPostEffects` mirror off.
             let post = desc.uses_video_post;
+            if post && !*video_post {
+                continue;
+            }
             let Some(d) = sim.draw(now, &camera, rng) else {
                 continue;
             };
@@ -2263,7 +2448,7 @@ impl EffectLayer {
         // Stable: the post-pass systems keep their order after the others.
         order.sort_by_key(|&i| drawn.get(i).is_some_and(|d| d.3));
         for i in order {
-            let Some((key, d, surface, _)) = drawn.get(i) else {
+            let Some((key, d, surface, post)) = drawn.get(i) else {
                 continue;
             };
             let from_session = session_systems.contains(key);
@@ -2297,25 +2482,28 @@ impl EffectLayer {
                 if from_session {
                     out.session_vertices += inst.vertices.len();
                 }
-                pass.particles(ParticleDraw {
-                    vertices: inst
-                        .vertices
-                        .iter()
-                        .map(|v| ParticleVertex {
-                            position: (Vec3::from_array(v.position) + shift).to_array(),
-                            color: v.colour,
-                            uv: v.uv,
-                        })
-                        .collect(),
-                    quad_vertices: inst.quad_vertices,
-                    texture: tex,
-                    alpha,
-                    tint: [1.0, 1.0, 1.0, inst.opacity],
-                    material: look.material,
-                    shading: look.shading,
-                    second_texture: tex2,
-                    uv,
-                });
+                sink.queue(
+                    *post,
+                    ParticleDraw {
+                        vertices: inst
+                            .vertices
+                            .iter()
+                            .map(|v| ParticleVertex {
+                                position: (Vec3::from_array(v.position) + shift).to_array(),
+                                color: v.colour,
+                                uv: v.uv,
+                            })
+                            .collect(),
+                        quad_vertices: inst.quad_vertices,
+                        texture: tex,
+                        alpha,
+                        tint: [1.0, 1.0, 1.0, inst.opacity],
+                        material: look.material,
+                        shading: look.shading,
+                        second_texture: tex2,
+                        uv,
+                    },
+                );
             }
             if queued {
                 out.systems += 1;
@@ -2674,6 +2862,58 @@ impl EffectLayer {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Review finding, `particle-runtime.md` §12 rule 16: with a late stage the systems of
+    /// the pass after post-processing never reach the main pass's list; without one (the
+    /// creation viewport) they follow the others in it, in their own order.
+    #[test]
+    fn post_processing_systems_go_to_the_late_stage() {
+        let draw = |n: usize| ParticleDraw::new(Vec::new(), n);
+        let mut main: Vec<ParticleDraw> = Vec::new();
+        let mut late = Vec::new();
+        let mut sink = ParticleSink {
+            main: &mut main,
+            late: Some(&mut late),
+        };
+        sink.queue(false, draw(1));
+        sink.queue(true, draw(2));
+        sink.queue(false, draw(3));
+        sink.queue(true, draw(4));
+        let q = |v: &[ParticleDraw]| v.iter().map(|d| d.quad_vertices).collect::<Vec<_>>();
+        assert_eq!(q(&main), [1, 3]);
+        assert_eq!(q(&late), [2, 4]);
+
+        let mut one: Vec<ParticleDraw> = Vec::new();
+        let mut sink = ParticleSink {
+            main: &mut one,
+            late: None,
+        };
+        sink.queue(false, draw(1));
+        sink.queue(true, draw(2));
+        assert_eq!(q(&one), [1, 2]);
+    }
+
+    /// Rule 16: the late stage keeps the world pass's fog and sun but records no second
+    /// shadow map and carries no light table.
+    #[test]
+    fn the_late_stage_keeps_the_fog_only() {
+        let mut l = tessera_render::FrameLighting {
+            fog: Some(tessera_render::Fog {
+                near: 10.0,
+                far: 200.0,
+                color: [0.5, 0.6, 0.7],
+            }),
+            time: 12.5,
+            ..tessera_render::FrameLighting::default()
+        };
+        l.lights
+            .push(tessera_render::Light::point(Vec3::ZERO, 5.0, 0.4, [1.0; 3]));
+        let p = post_stage_lighting(&l);
+        assert_eq!(p.fog, l.fog);
+        assert_eq!(p.sun, l.sun);
+        assert_eq!(p.time, 12.5);
+        assert!(p.shadow.is_none() && p.lights.is_empty());
+    }
 
     /// `particle-runtime.md` §9.3, the Q-RT3 Decision: an instance whose record has no
     /// bounds is never culled; one whose box lies outside the frustum is; the shift moves

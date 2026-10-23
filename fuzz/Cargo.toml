@@ -1470,3 +1470,12 @@ path = "fuzz_targets/client_portrait_mask.rs"
 test = false
 doc = false
 bench = false
+
+# --- tessera-world far view: [Render] preferences (far-view.md FD16–FD18, install-layout.md §8.3) ---
+
+[[bin]]
+name = "world_far_view_prefs"
+path = "fuzz_targets/world_far_view_prefs.rs"
+test = false
+doc = false
+bench = false

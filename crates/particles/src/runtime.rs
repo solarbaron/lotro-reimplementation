@@ -406,6 +406,22 @@ pub fn placement_from(m: Mat4, scale_a: Vec3, scale_b: Vec3, opacity: f32) -> Pl
     }
 }
 
+/// The opacity of a draw instance (`particles.md` §8.15, `particle-runtime.md` §12 rule
+/// 15): the instance's own opacity `own`, × the parent object's current opacity `parent`
+/// when the system's `inherit_opacity` is set. Non-finite values count as 1; the result is
+/// clamped to [0, 1].
+#[must_use]
+pub fn inherited_opacity(own: f32, parent: f32, inherit: bool) -> f32 {
+    let f = |v: f32| {
+        if v.is_finite() {
+            v.clamp(0.0, 1.0)
+        } else {
+            1.0
+        }
+    };
+    if inherit { f(own) * f(parent) } else { f(own) }
+}
+
 // ---------------------------------------------------------------------------------------------
 // The effect manager
 // ---------------------------------------------------------------------------------------------
@@ -1009,17 +1025,53 @@ impl EffectManager {
         rng: &mut Ran2,
         attach: &dyn AttachmentSource,
     ) {
+        self.place_owner_inheriting(
+            owner,
+            frame,
+            now,
+            owner_world,
+            (scale_a, scale_b),
+            (opacity, 1.0),
+            bone_model,
+            env,
+            rng,
+            attach,
+        );
+    }
+
+    /// [`EffectManager::place_owner`] with the owner's drawn opacity (`particles.md`
+    /// §8.15, `particle-runtime.md` §12 rule 15): `opacity` is (the instances' own
+    /// opacity, the parent's current opacity); a system with `inherit_opacity` = 1 is
+    /// placed with own × parent, any other with own alone. `scales` are the owner's two
+    /// scale vectors (§6.4). Pass a parent opacity of 1 when the owner was not drawn in
+    /// the frame (rule 15). Non-finite opacities count as 1; the result is clamped to
+    /// [0, 1].
+    #[allow(clippy::too_many_arguments)]
+    pub fn place_owner_inheriting(
+        &mut self,
+        owner: OwnerId,
+        frame: u64,
+        now: f64,
+        owner_world: Mat4,
+        (scale_a, scale_b): (Vec3, Vec3),
+        (own, parent): (f32, f32),
+        bone_model: &dyn Fn(u32) -> Option<Mat4>,
+        env: &Environment,
+        rng: &mut Ran2,
+        attach: &dyn AttachmentSource,
+    ) {
         let Some(comp) = self.components.get(&owner) else {
             return;
         };
         let atts = comp.attachments.clone();
         for a in atts {
             let l = local_matrix(a.matrix, a.bone.and_then(bone_model), a.remove_rotation);
-            let p = placement_from(owner_world * l, scale_a, scale_b, opacity);
             if let Some(s) = self
                 .running_mut(a.system)
                 .and_then(|r| r.effect.particles_mut())
             {
+                let opacity = inherited_opacity(own, parent, s.desc().inherit_opacity);
+                let p = placement_from(owner_world * l, scale_a, scale_b, opacity);
                 s.place(frame, now, p, env, rng, attach);
             }
         }

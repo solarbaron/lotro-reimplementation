@@ -192,12 +192,15 @@ impl PropertyCatalog for RegistryCatalog {
 }
 
 /// A prop a MeshFX node of the figure's scripts attaches (`script-table.md` §5.2): its
-/// entity at a holding location, built as hidden held parts with the attach key
-/// [`PROP_KEY_BASE`] + its index.
+/// entity at the node's anchor (`figure::prop_anchor`), built as hidden held parts with the
+/// attach key [`PROP_KEY_BASE`] + its index.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ScreenProp {
     /// The attached entity.
     pub entity: Did,
+    /// `AttachToParent`: which of `HoldingLocation` and `BoneType` wins when both are set
+    /// (`script-table.md` §5.2).
+    pub attached: bool,
     /// The `HoldingLocation` key (0: none).
     pub location: u32,
     /// The `BoneType` key (0: none).
@@ -217,6 +220,7 @@ impl ScreenProp {
     pub fn of(n: &MeshFxNode) -> Self {
         Self {
             entity: n.entity,
+            attached: n.attach_to_parent,
             location: n.holding_location,
             bone_type: n.bone_type,
             offset: n.bone_offset,

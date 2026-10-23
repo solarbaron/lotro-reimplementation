@@ -174,16 +174,39 @@ pub fn graphics_prefs() -> tessera_settings::GraphicsPrefs {
 
 /// Applies the `[Render]` section of the user's `UserPreferences.ini` (`install-layout.md`
 /// §8.3, read case-insensitively by [`tessera_install::Ini::get`]) to the far-view
-/// settings: `FarLandscapeNormalMaps`, `NearFarSeamBlending` and `DistantImposters`
-/// (`far-view.md` §6.1, §6.5, §9.1, through
-/// [`tessera_world::far_view::FarViewSettings::apply_render_preferences`]). The graphics-core
-/// condition of §6.1 is not derived from the file (its mapping is OPEN, `far-view.md` §12),
-/// so the plain template stays active and there is no seam overlay whatever the file says.
+/// settings: `FarLandscapeNormalMaps`, `MultiPassLighting`, `LandscapeLightingQuality` and
+/// `DistantImposters` (`far-view.md` FD17, FD18, through
+/// [`tessera_world::far_view::FarViewSettings::apply_render_preferences`]). The graphics
+/// core stays 5 and `NearFarSeamBlending` on whatever the file says (FD16, FD17, FD21), so
+/// the file decides between the plain and the normal-mapped template and, with the
+/// lighting inputs, whether the seam overlay is drawn.
 pub fn apply_render_preferences(
     settings: &mut tessera_world::far_view::FarViewSettings,
     prefs: &tessera_install::Ini,
 ) {
     settings.apply_render_preferences(|key| prefs.get("Render", key));
+}
+
+/// Applies the `[Render]` options of the user's `UserPreferences.ini` that the particle
+/// effects read: `PrecipitationEffects` (`particle-runtime.md` §11.2.2, built-in on) and
+/// `VideoPostEffects` (rule 16: off skips the systems drawn after post-processing; built-in
+/// on). Unknown or missing values keep the current ones. Windowed runs only, like the far
+/// view's (`far-view.md` FD21).
+pub fn apply_effect_preferences(
+    effects: &mut crate::walker::effects::EffectConfig,
+    prefs: &tessera_install::Ini,
+) {
+    let flag = |key: &str| {
+        prefs
+            .get("Render", key)
+            .and_then(tessera_world::far_view::settings::preference_bool)
+    };
+    if let Some(b) = flag("PrecipitationEffects") {
+        effects.precipitation = b;
+    }
+    if let Some(b) = flag("VideoPostEffects") {
+        effects.video_post = b;
+    }
 }
 
 /// The user's `UserPreferences.ini` next to the install `root` (`install-layout.md` §8.1,
@@ -292,6 +315,10 @@ pub fn walker_config(args: &Args) -> WalkerConfig {
                         .map_or(1, |d| d.as_secs() as u32)
                 }
             }),
+            // Built-in values; windowed runs take the user's `[Render]` values
+            // ([`apply_effect_preferences`]).
+            precipitation: true,
+            video_post: true,
         },
         systems: systems(args),
         clock: ClockConfig {
@@ -462,10 +489,18 @@ impl WalkerHost {
         }
     }
 
-    /// Starts reading the user's preferences for the far view (`far-view.md` §6.1, §6.5,
-    /// §9.1) off the frame thread, when the far view is on and the run may read them.
+    /// Whether the user's preferences are read: the run may read them (windowed only,
+    /// `far-view.md` FD21) and something reads their `[Render]` section, the far view
+    /// (`far-view.md` §6.1, §6.5, §9.1) or the particle effects (`particle-runtime.md`
+    /// §11.2.2 and rule 16).
+    fn wants_preferences(&self) -> bool {
+        self.user_prefs && (self.config.far_view.enabled || self.config.effects.enabled)
+    }
+
+    /// Starts reading the user's preferences off the frame thread, for the far view and the
+    /// particle effects, when [`Self::wants_preferences`] holds.
     fn start_preferences(&mut self, root: &Path) {
-        if !(self.user_prefs && self.config.far_view.enabled) {
+        if !self.wants_preferences() {
             return;
         }
         let (tx, rx) = std::sync::mpsc::channel();
@@ -483,19 +518,27 @@ impl WalkerHost {
         }
     }
 
-    /// Applies the user's `[Render]` preferences to `config`'s far view, when they were read
-    /// ([`PendingPreferences::settled`] has returned `true`).
+    /// Applies the user's `[Render]` preferences to `config`'s far view and particle
+    /// effects, when they were read ([`PendingPreferences::settled`] has returned `true`).
     fn take_preferences(&mut self, config: &mut WalkerConfig) {
         let Some(ini) = self.prefs.ini.take() else {
             return;
         };
         apply_render_preferences(&mut config.far_view.settings, &ini);
+        apply_effect_preferences(&mut config.effects, &ini);
+        tracing::info!(
+            precipitation = config.effects.precipitation,
+            video_post = config.effects.video_post,
+            "particle effects: [Render] preferences applied"
+        );
         let s = &config.far_view.settings;
         tracing::info!(
             normal_maps = s.normal_maps,
-            seam_blending = s.seam_blending,
+            multi_pass_lighting = s.multi_pass_lighting,
+            lighting_quality = s.lighting_quality,
             imposters = s.imposters,
             template = ?s.template(),
+            seam_overlay = s.seam_overlay(),
             "far view: [Render] preferences applied"
         );
     }
@@ -672,22 +715,33 @@ mod tests {
         assert_eq!(walker_config(&a).characters.draw_distance, 50.0);
     }
 
-    /// `far-view.md` §6.1, §6.5, §9.1: the `[Render]` section reaches the far-view settings
-    /// (keys case-insensitive, other sections ignored); the graphics core stays 0, so the
-    /// plain template stays active and there is no seam overlay (the §6.1 OPEN).
+    /// `far-view.md` FD16–FD18: the `[Render]` section reaches the far-view settings (keys
+    /// case-insensitive, other sections ignored); the graphics core stays 5 and the seam
+    /// switch on whatever the file says, so a file like the owner's `lotro-launcher` one
+    /// gives the normal-mapped template and the seam overlay, one like the Steam-prefix
+    /// file the plain template.
     #[test]
     fn the_render_preferences_reach_the_far_view() {
         use tessera_world::far_view::{FarViewSettings, Template};
         let ini = tessera_install::Ini::parse(
-            "[Sound]\r\nDistantImposters=True\r\n[Render]\r\nfarlandscapenormalmaps=True\r\nNearFarSeamBlending=True\r\nDistantImposters=False\r\nGraphicsCore=D3D11\r\n",
+            "[Sound]\r\nDistantImposters=True\r\n[Render]\r\nfarlandscapenormalmaps=True\r\nNearFarSeamBlending=False\r\nMultiPassLighting=True\r\nLandscapeLightingQuality=VeryHigh\r\nDistantImposters=False\r\nGraphicsCore=D3D9\r\n",
         );
         let mut s = FarViewSettings::default();
         assert!(s.imposters);
+        assert_eq!(s.template(), Template::Plain, "built-in values");
+        assert!(!s.seam_overlay());
         apply_render_preferences(&mut s, &ini);
         assert!(s.normal_maps && s.seam_blending && !s.imposters);
-        assert_eq!(s.graphics_core, 0);
-        assert_eq!(s.template(), Template::Plain);
-        assert!(!s.seam_overlay());
+        assert_eq!(s.graphics_core, 5);
+        assert_eq!(s.template(), Template::NormalMapped);
+        assert!(s.seam_overlay());
+        let steam = tessera_install::Ini::parse(
+            "[Render]\nFarLandscapeNormalMaps=False\nMultiPassLighting=True\nLandscapeLightingQuality=VeryHigh\n",
+        );
+        let mut p = FarViewSettings::default();
+        apply_render_preferences(&mut p, &steam);
+        assert_eq!(p.template(), Template::Plain);
+        assert!(!p.seam_overlay());
         // A file without the keys keeps the settings.
         let mut t = FarViewSettings::default();
         apply_render_preferences(
@@ -695,6 +749,33 @@ mod tests {
             &tessera_install::Ini::parse("[Render]\nGamma=1.0\n"),
         );
         assert_eq!(t, FarViewSettings::default());
+    }
+
+    /// `particle-runtime.md` §11.2.2 and rule 16: `PrecipitationEffects` and
+    /// `VideoPostEffects` reach the effects layer's settings; missing keys keep them on.
+    #[test]
+    fn the_render_preferences_reach_the_effects() {
+        use crate::walker::effects::EffectConfig;
+        let mut e = EffectConfig::default();
+        assert!(e.precipitation && e.video_post);
+        apply_effect_preferences(
+            &mut e,
+            &tessera_install::Ini::parse("[Render]\nprecipitationeffects=False\n"),
+        );
+        assert!(!e.precipitation && e.video_post);
+        apply_effect_preferences(
+            &mut e,
+            &tessera_install::Ini::parse(
+                "[Render]\nPrecipitationEffects=True\nVideoPostEffects=False\n",
+            ),
+        );
+        assert!(e.precipitation && !e.video_post);
+        let a = Args::try_parse_from(["t"]).unwrap();
+        let w = walker_config(&a);
+        assert!(
+            w.effects.precipitation && w.effects.video_post,
+            "built-in values"
+        );
     }
 
     /// Headless and test runs never read the user's preferences file (CLAUDE.md: real-data
@@ -711,6 +792,35 @@ mod tests {
         .unwrap();
         let mut h = WalkerHost::new(&a, Arc::new(Mutex::new(SourceShared::default())));
         assert!(!h.user_prefs);
+        h.start_preferences(Path::new("/nonexistent"));
+        assert!(h.prefs.rx.is_none());
+    }
+
+    /// `particle-runtime.md` §11.2.2 and rule 16: with the far view off (its default) and
+    /// the effects on, a windowed run still reads the user's preferences and applies their
+    /// effect options. The root names no install, so the reader finds no file and reads
+    /// nothing of the user's; the read file is put in by hand.
+    #[test]
+    fn effects_alone_read_the_preferences() {
+        let a = Args::try_parse_from(["t"]).unwrap();
+        assert!(!a.far_view && !a.no_particles && !a.walker_headless());
+        let mut h = WalkerHost::new(&a, Arc::new(Mutex::new(SourceShared::default())));
+        assert!(h.wants_preferences());
+        h.start_preferences(Path::new("/nonexistent"));
+        assert!(h.prefs.rx.is_some(), "the read is started");
+        h.prefs.rx = None;
+        h.prefs.ini = Some(tessera_install::Ini::parse(
+            "[Render]\nPrecipitationEffects=False\nVideoPostEffects=False\n",
+        ));
+        let mut config = h.config.clone();
+        assert!(config.effects.precipitation && config.effects.video_post);
+        h.take_preferences(&mut config);
+        assert!(!config.effects.precipitation && !config.effects.video_post);
+
+        // Neither the far view nor the effects: nothing reads the file.
+        let a = Args::try_parse_from(["t", "--no-particles"]).unwrap();
+        let mut h = WalkerHost::new(&a, Arc::new(Mutex::new(SourceShared::default())));
+        assert!(!h.wants_preferences());
         h.start_preferences(Path::new("/nonexistent"));
         assert!(h.prefs.rx.is_none());
     }

@@ -537,7 +537,7 @@ fn lighting_and_fade_envelope() {
 
 /// `particle-runtime.md` §12 rule 13 (`particles.md` §8.14): a lit particle's colour is
 /// multiplied by the ambient colour plus each light's record colour × its attenuation at
-/// the particle (1 / (1 + k d²) inside the range, nothing beyond), alpha by the ambient's
+/// the particle (1 / (1 + k d²) at every distance, no cut-off at the range), alpha by the ambient's
 /// alpha; at most five lights count; a local-space particle is lit at its world position;
 /// the owner's lights reach its attached systems through the manager.
 #[test]
@@ -581,11 +581,17 @@ fn lit_systems_sum_the_owner_lights() {
     };
     let half = 128.0 / 255.0;
     let ambient = [0.2, 0.2, 0.2, 0.5];
-    // d = 2: a = 1 / (1 + 0.05 × 4) = 1 / 1.2; the second light is out of range.
+    // d = 2: a = 1 / (1 + 0.05 × 4) = 1 / 1.2; the second light lies beyond its range
+    // (d = 30 > R = 10) and still adds 1 / (1 + 0.05 × 900) = 1 / 46 (no cut-off).
     let lights = LightList::new([light(2.0, [1.0, 0.5, 0.0]), light(30.0, [1.0; 3])]);
     let a = 1.0 / 1.2;
+    let b = 1.0 / 46.0;
     let c = lit_colour(true, true, Vec3::ZERO, ambient, lights);
-    let expect = [half * (0.2 + a), half * (0.2 + 0.5 * a), half * 0.2];
+    let expect = [
+        half * (0.2 + a + b),
+        half * (0.2 + 0.5 * a + b),
+        half * (0.2 + b),
+    ];
     for i in 0..3 {
         assert!((c[i] - expect[i]).abs() < 1e-4, "{c:?} vs {expect:?}");
     }
@@ -1330,4 +1336,88 @@ fn beam_systems_are_not_shared() {
         third, shared,
         "a request shares the ordinary copy, not the beam's"
     );
+}
+
+/// `particles.md` §8.15 and `particle-runtime.md` §12 rule 15: an attached system with
+/// `inherit_opacity` = 1 is drawn with its owner's current opacity; any other with the
+/// instance's own opacity alone.
+#[test]
+fn inherit_opacity_takes_the_owner_opacity() {
+    use tessera_particles::runtime::inherited_opacity;
+    assert_eq!(inherited_opacity(1.0, 0.25, true), 0.25);
+    assert_eq!(inherited_opacity(1.0, 0.25, false), 1.0);
+    assert_eq!(inherited_opacity(0.5, 0.5, true), 0.25);
+    assert_eq!(inherited_opacity(f32::NAN, 0.5, true), 0.5);
+    assert_eq!(inherited_opacity(1.0, f32::INFINITY, true), 1.0);
+    assert_eq!(inherited_opacity(2.0, -1.0, true), 0.0);
+
+    let alpha_of = |inherit: bool| {
+        let mut ps = system(vec![emitter(30.0, 10.0)]);
+        ps.inherit_opacity = inherit;
+        let ps = Arc::new(ps);
+        let mut m = EffectManager::new();
+        let h = m.request(7, 0x3900_0001, 0.0);
+        m.serve(
+            7,
+            h,
+            || Some(Effect::Particles(SystemSim::new(Arc::clone(&ps), 0.0))),
+            AttachSpec::default(),
+        );
+        let mut rng = Ran2::new(3);
+        for k in 0..5u64 {
+            m.begin_frame(k, k as f64 / 30.0);
+            m.place_owner_inheriting(
+                7,
+                k,
+                k as f64 / 30.0,
+                Mat4::IDENTITY,
+                (Vec3::ONE, Vec3::ONE),
+                (1.0, 0.4),
+                &|_| None,
+                &Environment::default(),
+                &mut rng,
+                &NoAttachments,
+            );
+        }
+        let sim = m
+            .effects_mut()
+            .find_map(|(_, e)| e.particles_mut())
+            .expect("a running system");
+        let d = sim.draw(4.0 / 30.0, &camera(), &mut rng).expect("drawn");
+        d.instances[0].opacity
+    };
+    let plain = alpha_of(false);
+    let inherited = alpha_of(true);
+    assert!(plain > 0.0, "{plain}");
+    assert!(
+        (inherited - plain * 0.4).abs() < 1e-4,
+        "{inherited} vs {plain}"
+    );
+}
+
+/// `particle-runtime.md` §11.2: "one particle of emitter *k*" spawns on that emitter only;
+/// a missing emitter spawns nothing.
+#[test]
+fn single_spawns_reach_the_named_emitter() {
+    let mut quiet = emitter(30.0, 10.0);
+    quiet.emit_interval = 10_000.0;
+    let ps = system(vec![quiet.clone(), quiet]);
+    let mut sim = SystemSim::new(Arc::new(ps), 0.0);
+    let mut rng = Ran2::new(9);
+    sim.place(
+        0,
+        0.0,
+        Placement::at(Vec3::ZERO),
+        &Environment::default(),
+        &mut rng,
+        &NoAttachments,
+    );
+    let before = sim.live_particles();
+    assert!(sim.spawn_on(1, 0.1, 0.1, Vec3::ZERO, &mut rng));
+    assert_eq!(sim.live_particles(), before + 1);
+    assert!(
+        !sim.spawn_on(2, 0.1, 0.1, Vec3::ZERO, &mut rng),
+        "no third emitter"
+    );
+    assert_eq!(sim.live_particles(), before + 1);
 }

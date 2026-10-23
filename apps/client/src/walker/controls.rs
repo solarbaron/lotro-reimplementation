@@ -24,7 +24,7 @@
 //! one, [`CameraProfile::FALLBACK`] with the §11.8 values). At placement it stands behind
 //! the character at the state's initial distance and pitch (§11.7 steps 2–4); the wheel
 //! moves the distance goal within [minimum, maximum] and the shown distance follows it with
-//! the zoom smoothing time ([`smooth_towards`]); the camera looks at the feet raised by
+//! the zoom smoothing time, a half-life (§14.11, [`smooth_towards`]); the camera looks at the feet raised by
 //! *f* × *H* × *s_z* ([`CameraProfile::look_at_raise`], §11.7 step 1) plus the target
 //! block's offset in the character's frame. The target fade of §11.7 is drawn by the
 //! character layer ([`CameraProfile::fade_goal`]). The walker's frame loop calls
@@ -338,17 +338,25 @@ where
     )
 }
 
-/// One step of `current` towards `goal` over `dt` seconds with smoothing time `tau`
-/// (`walker.md` §11.7 "Every frame afterwards"; the curve is the implementer OPEN of
-/// §14.11: an exponential approach with time constant `tau`). `tau` at most 0, or a step
+/// Smoothing times at or below this (seconds) reach the goal at once (`walker.md` §14.11).
+pub const MIN_SMOOTHING: f32 = 0.0002;
+
+/// One step of `current` towards `goal` over `dt` seconds with smoothing time `half_life`
+/// (`walker.md` §11.7 "Every frame afterwards", §14.11, W27): the record's smoothing times
+/// are half-lives, so the remaining difference is multiplied by 0.5^(`dt` / `half_life`).
+/// A smoothing time of [`MIN_SMOOTHING`] or less, or not finite, a current value or a step
 /// that is not finite, reaches the goal at once.
 #[must_use]
-pub fn smooth_towards(current: f32, goal: f32, dt: f32, tau: f32) -> f32 {
-    if !current.is_finite() || tau.is_nan() || tau <= 0.0 || !dt.is_finite() {
+pub fn smooth_towards(current: f32, goal: f32, dt: f32, half_life: f32) -> f32 {
+    if !current.is_finite()
+        || !half_life.is_finite()
+        || half_life <= MIN_SMOOTHING
+        || !dt.is_finite()
+    {
         return goal;
     }
-    let k = 1.0 - (-dt.max(0.0) / tau).exp();
-    let next = current + (goal - current) * k;
+    let keep = (-dt.max(0.0) / half_life).exp2();
+    let next = goal + (current - goal) * keep;
     if next.is_finite() { next } else { goal }
 }
 
@@ -1400,6 +1408,29 @@ mod tests {
         );
     }
 
+    /// `walker.md` §14.11 (W27): smoothing times are half-lives. With the shipped zoom
+    /// smoothing of 0.4 s a zoom step is 90 % done after about 1.33 s, and the result does
+    /// not depend on how the time is cut into frames.
+    #[test]
+    fn smoothing_times_are_half_lives() {
+        let run = |frames: u32, total: f32| {
+            let dt = total / frames as f32;
+            (0..frames).fold(0.0f32, |v, _| smooth_towards(v, 1.0, dt, 0.4))
+        };
+        let at = |t: f32| run(1, t);
+        assert!((at(0.4) - 0.5).abs() < 1e-6);
+        assert!((at(0.8) - 0.75).abs() < 1e-6);
+        let ninety = 0.4 * 10.0f32.log2();
+        assert!((ninety - 1.33).abs() < 0.01, "{ninety}");
+        assert!((at(ninety) - 0.9).abs() < 1e-5, "{}", at(ninety));
+        for frames in [2, 30, 60, 144] {
+            assert!((run(frames, ninety) - 0.9).abs() < 1e-4, "{frames} frames");
+        }
+        // Downwards too, and a zero step stays.
+        assert!((smooth_towards(1.0, 0.0, 0.4, 0.4) - 0.5).abs() < 1e-6);
+        assert_eq!(smooth_towards(0.3, 1.0, 0.0, 0.4), 0.3);
+    }
+
     /// `walker.md` §11.7–§11.8: placed behind the character at 6 m and −15°, the wheel
     /// moves the goal within 1–20 m and the shown distance follows with the 0.4 s
     /// smoothing.
@@ -1409,13 +1440,12 @@ mod tests {
         assert_eq!(p.clamp_distance(0.2), 1.0);
         assert_eq!(p.clamp_distance(55.0), 20.0);
         assert_eq!(p.clamp_distance(f32::NAN), 6.0);
-        // The exponential approach: one time constant covers 1 − 1/e of the way.
+        // Half-lives (`walker.md` §14.11, W27): one smoothing time halves the difference.
         let d = smooth_towards(6.0, 16.0, 0.4, 0.4);
-        assert!(
-            (d - (6.0 + 10.0 * (1.0 - (-1.0f32).exp()))).abs() < 1e-4,
-            "{d}"
-        );
+        assert!((d - 11.0).abs() < 1e-4, "{d}");
         assert_eq!(smooth_towards(6.0, 16.0, 0.1, 0.0), 16.0, "no smoothing");
+        assert_eq!(smooth_towards(6.0, 16.0, 0.1, 0.0002), 16.0, "at the limit");
+        assert_eq!(smooth_towards(6.0, 16.0, 0.1, f32::INFINITY), 16.0);
         assert_eq!(smooth_towards(f32::NAN, 3.0, 0.1, 0.4), 3.0);
 
         let mut c = Controls::new(&default_keymap(), MoveMode::Walk, 40.0);

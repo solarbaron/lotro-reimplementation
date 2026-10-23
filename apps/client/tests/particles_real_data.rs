@@ -11,7 +11,8 @@
 //! scripts of those owners must have started effects that are drawn: particles in the
 //! last frame. Only counts are printed; the screenshot goes to a temporary directory.
 //!
-//! The same run reports the placed decals of the resident landblocks (`decals.md` §2.3,
+//! The same run reports the weather and water systems (`particle-runtime.md` §11.2) and the
+//! placed decals of the resident landblocks (`decals.md` §2.3,
 //! §9.1): Decal SEDs realised as decal objects and built; at M3-09 some are drawn. A
 //! further test walks the creation
 //! viewport's race scenes (`character-screens.md` §2.1.1, through the `--character-select`
@@ -124,6 +125,14 @@ fn an_effect_bearing_location_draws_particles_and_settles() {
         p.drawn_vertices > 0,
         "no particles drawn in the settled frame"
     );
+    // The weather and water systems of UNIQUEDB (`particle-runtime.md` §11.2): created
+    // from the install's records; the three water systems are placed in every world frame.
+    eprintln!(
+        "M3-03 weather: {} systems running, {} placed in the last frame",
+        p.weather_systems, p.weather_placed
+    );
+    assert!(p.weather_systems > 0, "no weather system was created");
+    assert!(p.weather_placed > 0, "no weather system was placed");
     // Placed decals around the location (`decals.md` §2.3, §4, §9.1).
     let d = p.decals;
     eprintln!(

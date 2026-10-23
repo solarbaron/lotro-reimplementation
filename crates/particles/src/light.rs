@@ -8,9 +8,11 @@
 //! light; alpha is the ambient colour's alpha.
 //!
 //! By rule 13 the ambient colour is the frame's ambient term at the owner (`lighting.md`
-//! §5.3) and the light list is the owner's light list (`lighting.md` §8.5), cut to five;
-//! the attenuation is the per-vertex form of `lighting.md` §8.3 (steps 1–2, no smooth
-//! fade): nothing at *d²* ≥ *R²*, otherwise 1 / (1 + *k* · *d²*).
+//! §5.3) and the light list is the owner's light list (`lighting.md` §8.5), cut to five
+//! (the global light counting as one); a point light's attenuation is 1 / (1 + *k* · *d²*)
+//! at every distance, **without** the range cut-off of `lighting.md` §8.3 step 1 and
+//! without its smooth fade (rule 13 as revised 2026-10-23, RT48); the global light and any
+//! other non-point light count with attenuation 1.
 //!
 //! [`owner_light_list`] builds an owner's list from the frame's candidate lights: the
 //! lights whose reach (the selection radius ρ of `lighting.md` §8.5 step 1) contains the
@@ -29,7 +31,8 @@ pub struct ParticleLight {
     pub position: Vec3,
     /// The light record's colour (`lighting.md` §8.3: Diffuse × the clamped intensity).
     pub colour: [f32; 3],
-    /// The record's range *R*, metres.
+    /// The record's range *R*, metres. Kept for information: rule 13 has no cut-off at
+    /// the range (the range enters only through [`ParticleLight::attenuation`]).
     pub range: f32,
     /// The record's attenuation factor *k* (10 × Falloff / *R²*).
     pub attenuation: f32,
@@ -39,9 +42,8 @@ impl ParticleLight {
     /// The scene's global light (the main directional light, sun or moon) as the first
     /// entry of a light list (`particles.md` §8.14: "the scene's global light, when there
     /// is one, followed by the lights that affect the owner"; rule 13). A directional light
-    /// has no position, so the point-light attenuation of rule 13 has no distance to use:
-    /// **Tessera choice** (`particle-runtime.md` §12 rule 13 implementer OPEN): it counts
-    /// with attenuation 1 everywhere (an infinite range, *k* = 0).
+    /// has no position: by rule 13 (BIN, RT48) every non-point light, the global one
+    /// included, counts with attenuation 1 everywhere (*k* = 0) and no direction term.
     #[must_use]
     pub fn global(colour: [f32; 3]) -> Self {
         Self {
@@ -65,13 +67,13 @@ impl ParticleLight {
         ok.then_some(self)
     }
 
-    /// The attenuation at `point` (`lighting.md` §8.3 steps 1–2, the per-vertex form):
-    /// 0 when the squared distance is at least *R²*, else 1 / (1 + *k* · *d²*).
+    /// The attenuation at `point` (rule 13): 1 / (1 + *k* · *d²*) at every distance, with
+    /// no cut-off at the range and no smooth fade; 0 when the result is not finite (a
+    /// non-finite point).
     #[must_use]
     pub fn attenuation_at(&self, point: Vec3) -> f32 {
         let d2 = (self.position - point).length_squared();
-        let r2 = self.range * self.range;
-        if !(d2 < r2) {
+        if !d2.is_finite() {
             return 0.0;
         }
         let a = 1.0 / (1.0 + self.attenuation * d2);
@@ -217,10 +219,10 @@ mod tests {
         }
     }
 
-    /// `lighting.md` §8.3 steps 1–2: 1 / (1 + k d²) inside the range, nothing at or beyond
-    /// it, and no smooth fade near the range (the per-vertex form).
+    /// Rule 13 (revised 2026-10-23): 1 / (1 + k d²) at every distance, with no cut-off at
+    /// the range and no smooth fade near it.
     #[test]
-    fn attenuation_is_the_per_vertex_form() {
+    fn attenuation_has_no_range_cut_off() {
         let l = light(0.0, [1.0; 3]);
         assert!((l.attenuation_at(Vec3::ZERO) - 1.0).abs() < 1e-6);
         // d = 4: 1 / (1 + 0.05 × 16) = 1 / 1.8.
@@ -229,8 +231,57 @@ mod tests {
         // d = 9.9 (d² > 0.75 R²): no fade, 1 / (1 + 0.05 × 98.01).
         let a = l.attenuation_at(Vec3::new(0.0, 9.9, 0.0));
         assert!((a - 1.0 / (1.0 + 0.05 * 98.01)).abs() < 1e-5, "{a}");
-        assert_eq!(l.attenuation_at(Vec3::new(10.0, 0.0, 0.0)), 0.0);
+        // At and beyond the range the light still adds: d = 10 gives 1 / 6, d = 20 1 / 21.
+        let a = l.attenuation_at(Vec3::new(10.0, 0.0, 0.0));
+        assert!((a - 1.0 / 6.0).abs() < 1e-6, "{a}");
+        let a = l.attenuation_at(Vec3::new(20.0, 0.0, 0.0));
+        assert!((a - 1.0 / 21.0).abs() < 1e-6, "{a}");
+        // The range field takes no part: a zero range gives the same attenuation.
+        let z = ParticleLight { range: 0.0, ..l };
+        let p = Vec3::new(3.0, 0.0, 0.0);
+        assert_eq!(z.attenuation_at(p), l.attenuation_at(p));
         assert_eq!(l.attenuation_at(Vec3::new(f32::NAN, 0.0, 0.0)), 0.0);
+    }
+
+    /// Review finding (hostile *k*): a light with an infinite or NaN *k* is left out of a
+    /// list; the largest finite *k* gives a finite attenuation at the light and beyond it,
+    /// as does an infinite *k* reaching `attenuation_at` directly (never NaN).
+    #[test]
+    fn hostile_attenuation_factors_give_finite_values() {
+        let inf = ParticleLight {
+            attenuation: f32::INFINITY,
+            ..light(0.0, [1.0; 3])
+        };
+        let nan = ParticleLight {
+            attenuation: f32::NAN,
+            ..light(0.0, [1.0; 3])
+        };
+        assert!(inf.sanitized().is_none() && nan.sanitized().is_none());
+        assert!(LightList::new([inf, nan]).is_empty());
+        let kept = LightList::new([inf, light(1.0, [0.5; 3])]);
+        assert_eq!(kept.len(), 1, "only the finite light");
+
+        let huge = ParticleLight {
+            attenuation: f32::MAX,
+            ..light(0.0, [1.0; 3])
+        };
+        assert!(huge.sanitized().is_some());
+        for p in [
+            Vec3::ZERO,
+            Vec3::new(1e-20, 0.0, 0.0),
+            Vec3::X,
+            Vec3::splat(1e19),
+        ] {
+            let a = huge.attenuation_at(p);
+            assert!(a.is_finite() && (0.0..=1.0).contains(&a), "{p:?}: {a}");
+        }
+        assert_eq!(huge.attenuation_at(Vec3::ZERO), 1.0);
+        for p in [Vec3::ZERO, Vec3::X] {
+            let a = inf.attenuation_at(p);
+            assert!(a.is_finite() && (0.0..=1.0).contains(&a), "{p:?}: {a}");
+        }
+        let s = light_sum([0.2; 4], &LightList::new([huge]), Vec3::X);
+        assert!(s.iter().all(|c| c.is_finite()), "{s:?}");
     }
 
     /// `particles.md` §8.14: ambient plus Σ colour × attenuation for RGB, the ambient's

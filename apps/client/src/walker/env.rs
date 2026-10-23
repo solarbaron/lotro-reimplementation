@@ -261,6 +261,107 @@ pub struct FrameEnv {
     /// Fog is on and the blended `fog_extra` exceeds [`SKY_FOG_EXTRA`]: the sky objects are
     /// not drawn (`environment.md` §11.7 step 10).
     pub sky_fogged: bool,
+    /// The precipitation values of the state in use (`environment.md` §11.7 step 6), for
+    /// the weather systems and the global wind (`particle-runtime.md` §11.2).
+    pub precipitation: Precipitation,
+}
+
+/// The precipitation values of an environment state (`environment.md` §11.7 step 6): rain
+/// (keyframe curve 1, clamped to [0, 1]), snow (curve 2, clamped to [0, 2]) and the two
+/// values of curves 3 and 4, unclamped, which make the wind vector *w* = (*c*₃, *c*₄, 0)
+/// (`particle-runtime.md` §11.2.1). All 0 without a day description (and so without a sky).
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct Precipitation {
+    /// Rain *r* ∈ [0, 1].
+    pub rain: f32,
+    /// Snow *s* ∈ [0, 2].
+    pub snow: f32,
+    /// (*c*₃, *c*₄).
+    pub wind: [f32; 2],
+}
+
+impl Precipitation {
+    /// The wind vector *w* = (*c*₃, *c*₄, 0) (`particle-runtime.md` §11.2.1 step 1).
+    #[must_use]
+    pub fn wind_vector(&self) -> Vec3 {
+        Vec3::new(self.wind[0], self.wind[1], 0.0)
+    }
+}
+
+/// The blend of one keyframe curve pair by factor `f` (`environment.md` §11.3 step 4a): the
+/// mode of `a`, except `b`'s when `a`'s mode is 1 or *f* > 0.5; each of the ten parameters
+/// `w[0..9]` blends linearly (a mode-1 curve gives its constant as `w[0]` and 0 for the
+/// others). A mode-10 curve keeps the period, loop flag and keys of the side whose mode is
+/// taken (**Tessera choice**: §11.3 blends only the ten parameters).
+#[must_use]
+pub fn blend_curve(a: &StoredCurve, b: &StoredCurve, f: f32) -> FloatCurve {
+    let ca = material_curve(a);
+    let cb = material_curve(b);
+    let f = if f.is_finite() {
+        f.clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
+    let take_b = ca.mode == 1 || f > 0.5;
+    let mut out = if take_b { cb.clone() } else { ca.clone() };
+    let w = |c: &FloatCurve, i: usize| -> f32 {
+        if c.mode == 1 && i > 0 {
+            0.0
+        } else {
+            c.params.get(i).copied().unwrap_or(0.0)
+        }
+    };
+    for i in 0..10 {
+        if let Some(p) = out.params.get_mut(i) {
+            *p = w(&ca, i) + f * (w(&cb, i) - w(&ca, i));
+        }
+    }
+    if out.mode == 1 {
+        out.param_count = 1;
+    }
+    out
+}
+
+/// The precipitation values of `day` at time of day `t` (`environment.md` §11.3 steps
+/// 1–4a, §11.7 step 6): the four curves of the keyframe pair at `t`, blended
+/// ([`blend_curve`]) and evaluated at the material clock `time` (phase offset 0) with the
+/// four `states`; rain clamped to [0, 1], snow to [0, 2]. All 0 for a description without
+/// keyframes. Keyframes with a non-finite time take no part.
+#[must_use]
+pub fn precipitation_at(
+    day: &tessera_formats::environment::DayDescription,
+    t: f32,
+    time: f64,
+    states: &mut [CurveState; 4],
+) -> Precipitation {
+    let idx: Vec<usize> = (0..day.keyframes.len())
+        .filter(|&i| day.keyframes.get(i).is_some_and(|k| k.time.is_finite()))
+        .collect();
+    let times: Vec<f32> = idx
+        .iter()
+        .filter_map(|&i| day.keyframes.get(i).map(|k| k.time))
+        .collect();
+    let Some(pair) = tessera_world::environment::keyframe_pair(&times, t) else {
+        return Precipitation::default();
+    };
+    let (Some(ka), Some(kb)) = (
+        idx.get(pair.a).and_then(|&i| day.keyframes.get(i)),
+        idx.get(pair.b).and_then(|&i| day.keyframes.get(i)),
+    ) else {
+        return Precipitation::default();
+    };
+    let f = if pair.f.is_finite() { pair.f } else { 0.0 };
+    let mut v = [0.0f32; 4];
+    for (i, (out, state)) in v.iter_mut().zip(states.iter_mut()).enumerate() {
+        if let (Some(a), Some(b)) = (ka.curves.get(i), kb.curves.get(i)) {
+            *out = blend_curve(a, b, f).evaluate_finite(time, state);
+        }
+    }
+    Precipitation {
+        rain: v[0].clamp(0.0, 1.0),
+        snow: v[1].clamp(0.0, 2.0),
+        wind: [v[2], v[3]],
+    }
 }
 
 /// The lighting of one frame composed from the record in use ([`compose`]).
@@ -655,6 +756,9 @@ pub struct WorldEnv {
     /// The rate before a pause, while paused.
     paused: Option<f64>,
     curves: HashMap<(LandblockKey, u32), (FloatCurve, CurveState)>,
+    /// The curve states of the precipitation curves (`environment.md` §5.3 field 17) and
+    /// the day description they belong to (states start afresh with another one).
+    precipitation_states: (Option<Did>, [CurveState; 4]),
     /// Sky-object parts referenced in the object layer.
     sky_parts: HashSet<u32>,
     sky_draw: Vec<SkyObject>,
@@ -691,6 +795,7 @@ impl WorldEnv {
             immediate: true,
             paused: stopped.then_some(0.0),
             curves: HashMap::new(),
+            precipitation_states: (None, std::array::from_fn(|_| CurveState::new())),
             sky_parts: HashSet::new(),
             sky_draw: Vec::new(),
         }
@@ -871,6 +976,7 @@ impl WorldEnv {
             NO_SKY
         };
         let reading = self.env.as_ref().map(|e| e.clock().read());
+        let precipitation = self.precipitation(frame.as_ref(), indoor.is_some(), time);
         let out = FrameEnv {
             lighting,
             clear,
@@ -885,9 +991,52 @@ impl WorldEnv {
                 .as_ref()
                 .map_or(0, |f| f.objects.iter().filter(|o| o.visible).count()),
             sky_fogged: composed.sky_fogged,
+            precipitation,
         };
         self.frame = frame;
         out
+    }
+
+    /// The precipitation values of the state in use (`environment.md` §11.7 step 6): those
+    /// of the day description of `frame` (the record in use: indoor when `indoor`) at its
+    /// time of day, on the material clock `time`. **Departure, not yet conforming:**
+    /// `environment.md` §11.6 step 4 blends every number of the two states during a sky-key
+    /// cross-fade and the sun-change fade, and `particle-runtime.md` §11.2.1 step 3 takes
+    /// the wind target from the state after them; here the values are the new
+    /// description's alone, because `tessera-world`'s fades blend the lighting values only
+    /// and its frame gives neither the old sky's day description nor the sun-change fade's
+    /// states (an OPEN is proposed for the spec writer; building it needs those fades to
+    /// carry the four precipitation values). No forced weather mode exists in Tessera
+    /// (§11.7 step 7). All 0 without a sky.
+    fn precipitation(
+        &mut self,
+        frame: Option<&EnvironmentFrame>,
+        indoor: bool,
+        time: f32,
+    ) -> Precipitation {
+        let Some(frame) = frame else {
+            return Precipitation::default();
+        };
+        let Some(did) = frame.choice.map(|c| c.day) else {
+            return Precipitation::default();
+        };
+        let env = if indoor { &self.indoor } else { &self.env };
+        let Some(day) = env
+            .as_ref()
+            .and_then(|e| e.library().cached_day(did))
+            .flatten()
+        else {
+            return Precipitation::default();
+        };
+        if self.precipitation_states.0 != Some(did) {
+            self.precipitation_states = (Some(did), std::array::from_fn(|_| CurveState::new()));
+        }
+        precipitation_at(
+            &day,
+            frame.reading.time_of_day as f32,
+            f64::from(time),
+            &mut self.precipitation_states.1,
+        )
     }
 
     /// The point lights of the Light entities within [`LIGHT_RADIUS`] of `eye` (at most
@@ -1010,6 +1159,65 @@ impl WorldEnv {
 mod tests {
     use super::*;
     use tessera_formats::terrain_type::{CURVE_PARAMS, CurveKey};
+
+    /// `environment.md` §11.3 step 4a: modes and parameters of a curve pair.
+    #[test]
+    fn keyframe_curves_blend_by_mode_and_parameters() {
+        let w: [f32; CURVE_PARAMS] = std::array::from_fn(|i| i as f32 + 1.0);
+        let wave = StoredCurve::waveform(4, w).expect("mode 4");
+        // a mode 1: b's mode; w[0] blends from the constant, the others from 0.
+        let c = blend_curve(&StoredCurve::Constant(0.5), &wave, 0.25);
+        assert_eq!(c.mode, 4);
+        assert!((c.params[0] - (0.5 + 0.25 * 0.5)).abs() < 1e-6);
+        assert!((c.params[1] - 0.25 * 2.0).abs() < 1e-6);
+        // a waveform, f ≤ 0.5: a's mode; f > 0.5: b's.
+        let c = blend_curve(&wave, &StoredCurve::Constant(3.0), 0.5);
+        assert_eq!(c.mode, 4);
+        assert!((c.params[0] - 2.0).abs() < 1e-6 && (c.params[2] - 1.5).abs() < 1e-6);
+        let c = blend_curve(&wave, &StoredCurve::Constant(3.0), 0.75);
+        assert_eq!((c.mode, c.param_count), (1, 1));
+        assert!((c.params[0] - 2.5).abs() < 1e-6);
+        // Two constants stay a constant.
+        let c = blend_curve(
+            &StoredCurve::Constant(1.0),
+            &StoredCurve::Constant(3.0),
+            f32::NAN,
+        );
+        assert_eq!(c.mode, 1);
+        assert!((c.params[0] - 1.0).abs() < 1e-6);
+    }
+
+    /// `environment.md` §11.7 step 6: rain and snow from curves 1 and 2, clamped; the wind
+    /// from curves 3 and 4, unclamped.
+    #[test]
+    fn precipitation_comes_from_the_keyframe_curves() {
+        use tessera_formats::environment::{DayDescription, Keyframe};
+        let key = |time: f32, v: [f32; 4]| Keyframe {
+            time,
+            curves: v.map(StoredCurve::Constant),
+            ..Keyframe::default()
+        };
+        let day = DayDescription {
+            keyframes: vec![
+                key(0.0, [0.0, 0.0, 0.0, 0.0]),
+                key(0.5, [2.0, 3.0, -4.0, 6.0]),
+            ],
+            ..DayDescription::default()
+        };
+        let mut st = std::array::from_fn(|_| CurveState::new());
+        let p = precipitation_at(&day, 0.25, 0.0, &mut st);
+        assert!((p.rain - 1.0).abs() < 1e-6, "{p:?}");
+        assert!((p.snow - 1.5).abs() < 1e-6, "{p:?}");
+        assert!((p.wind[0] + 2.0).abs() < 1e-6 && (p.wind[1] - 3.0).abs() < 1e-6);
+        assert_eq!(p.wind_vector(), Vec3::new(p.wind[0], p.wind[1], 0.0));
+        let p = precipitation_at(&day, 0.45, 0.0, &mut st);
+        assert_eq!((p.rain, p.snow), (1.0, 2.0), "clamped");
+        let empty = DayDescription::default();
+        assert_eq!(
+            precipitation_at(&empty, 0.3, 0.0, &mut st),
+            Precipitation::default()
+        );
+    }
 
     #[test]
     fn stored_curves_convert_to_the_evaluator() {

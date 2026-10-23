@@ -229,6 +229,16 @@ Each milestone in `docs/ROADMAP.md` runs as one workflow:
    Live logins happen only on the owner's own account and never from CI. The workflow
    refuses `M9` until P8 and M8 are done.
 
+Open items outside a milestone run go through the `tessera-followups` workflow
+(`.claude/workflows/tessera-followups.js`). Scan and group them into packages with
+non-overlapping paths, then give each package its own worktree and branch: a sparse checkout
+without `research/` (`git sparse-checkout set --no-cone '/*' '!/research/'`) for code
+packages, a full one for spec packages. Each worktree's git-ignored `.cargo/config.toml` sets
+a shared `target-dir` "lane", so packages in one lane share dependency builds and cargo's lock
+serialises their builds. Code packages are built, reviewed, fixed and audited, and spec
+packages are revised, screened and independently reviewed. Then review, commit and merge each
+branch and run the full gate once.
+
 Without ultracode, do the same steps by hand: write the specs with the `spec-writer` agent,
 implement with `clean-implementer`, and audit with `clean-room-auditor` (`.claude/agents/`).
 

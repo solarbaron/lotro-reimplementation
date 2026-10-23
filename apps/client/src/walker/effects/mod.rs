@@ -83,15 +83,17 @@
 //!
 //! **Opacity** (rule 15): `inherit_opacity` systems of a figure owner take the opacity the
 //! character layer's fade gave the figure in its last draw pass (0 and view- or cell-culled
-//! figures included), those of a static owner of a landblock the opacity the object layer
-//! drew its placed object with in its last draw (`ObjectLayer::placed_object_opacity`: the
-//! draw-distance fade or cross-fade); both one frame late, since placement runs before the
-//! draw pass (allowed by rule 15). A placed object the last draw pass culled keeps the
-//! opacity of its last drawn frame, one never drawn since its owner spawned counts as 0, and
-//! an owner with no drawn object (no parts, or its landblock's objects not in the object
-//! layer) as 1 (`parent_opacity_step`). **Build gap:** the object layer does not expose the
-//! current fade of a culled object, so a fade that changes while the object stays culled
-//! is not followed. The creation viewport's owners count as 1.
+//! figures included), those of a static owner of a landblock the opacity of its placed
+//! object after the object layer's last draw (`ObjectLayer::placed_entity_opacity`, the
+//! object found by the owner's entity index: the draw-distance fade or cross-fade); both one
+//! frame late, since placement runs before the draw pass (allowed by rule 15). A placed
+//! object the last draw pass culled (view, size, cell, draw cap, out of range) keeps its
+//! current fade as the factor, 0 included, so a fade that runs while the object stays culled
+//! is followed; an owner with no drawn object (no parts, its landblock's objects or its
+//! object not in the object layer, or an object that can never be drawn) counts as 1
+//! (`placed_parent_opacity`). The object layer
+//! applies no `Render_Opacity` to static objects, so that factor of rule 15 is missing for
+//! them (a build gap of the object layer). The creation viewport's owners count as 1.
 //!
 //! **Systems of the pass after post-processing** (rule 16): systems with `uses_video_post`
 //! are queued apart ([`EffectLayer::take_post_draws`]) and the walker queues them in the
@@ -184,6 +186,11 @@ pub struct EffectConfig {
     /// The Tessera mirror of `[Render] VideoPostEffects` (built-in on): off skips the
     /// systems with `uses_video_post` = 1 (`particle-runtime.md` §12 rule 16).
     pub video_post: bool,
+    /// The level of the `[Render]` option `AtmosphericsDetail` the drop counts read
+    /// (`particle-runtime.md` §11.2.6 step 1: 0 `Low`, 1 `Medium`, 2 `High`; `None`: the
+    /// built-in `Medium`): the level the layer starts with ([`EffectLayer::new`]);
+    /// [`EffectLayer::set_atmospherics_detail`] changes it later.
+    pub atmospherics: Option<i64>,
 }
 
 impl Default for EffectConfig {
@@ -194,6 +201,7 @@ impl Default for EffectConfig {
             seed: 1,
             precipitation: true,
             video_post: true,
+            atmospherics: None,
         }
     }
 }
@@ -371,7 +379,7 @@ struct OwnerFrame<'a> {
     /// The opacity the owner is drawn with (`particle-runtime.md` §12 rule 15): a figure's
     /// fade from the character layer's last draw pass (culled figures included); 1 for
     /// static owners here (their placed object's opacity comes from the object layer,
-    /// `remembered_parent_opacity`).
+    /// `placed_parent_opacity`).
     opacity: f32,
 }
 
@@ -793,9 +801,6 @@ struct FxState {
     weather: weather::Weather,
     /// Systems with `uses_video_post` are drawn (rule 16, [`EffectConfig::video_post`]).
     video_post: bool,
-    /// The parent opacity of each static owner at its last drawn frame (rule 15,
-    /// `parent_opacity_step`).
-    parent_opacity: HashMap<EntityId, f32>,
 }
 
 impl FxState {
@@ -1535,59 +1540,26 @@ fn post_stage_lighting(l: &tessera_render::FrameLighting) -> tessera_render::Fra
     }
 }
 
-/// The parent opacity of static owner `id` drawn as `placed` (rule 15), from the object
-/// layer ([`parent_opacity_step`]).
-fn remembered_parent_opacity(
-    memory: &mut HashMap<EntityId, f32>,
-    id: EntityId,
-    objects: &ObjectLayer,
-    placed: &data::PlacedObject,
-) -> f32 {
+/// Rule 15 for a static owner drawn as `placed`: the opacity of its placed object from the
+/// object layer after its last draw pass (`ObjectLayer::placed_entity_opacity`, found by the
+/// owner's entity index: the drawn opacity, or for an object the pass culled, out of range
+/// or past the draw cap its current fade, 0 included), clamped to [0, 1]
+/// ([`parent_factor`]), so a system follows its owner's fade while the owner is culled too.
+/// 1 when the owner has no drawn object: its entity has no parts, the object layer does not
+/// hold its landblock's objects, holds no object of the entity, or its object can never be
+/// drawn (every part failed for good).
+fn placed_parent_opacity(objects: &ObjectLayer, placed: &data::PlacedObject) -> f32 {
     let has_object = !placed.entity.parts.is_empty() && objects.holds(placed.key);
-    let drawn = if has_object {
-        objects.placed_object_opacity(placed.key, &placed.entity)
+    let current = if has_object {
+        objects.placed_entity_opacity(placed.key, placed.index, &placed.entity)
     } else {
         None
     };
-    parent_opacity_step(memory, id, has_object, drawn)
-}
-
-/// Rule 15 for a static owner, remembered in `memory`. `has_object`: the owner has a drawn
-/// object (its entity has parts and the object layer holds its landblock's objects);
-/// `drawn`: the opacity the object layer drew that object with in its last draw pass
-/// (`None`: the pass culled it).
-///
-/// - Drawn: that opacity (clamped to [0, 1]), stored.
-/// - Culled after it was drawn: the value stored at its last drawn frame (the rule's
-///   "previous drawn frame"; a fade that changes while it stays culled is not followed,
-///   because the object layer does not expose the fade of a culled object).
-/// - Culled and never drawn since the owner spawned: 0 (Tessera reading: the object layer
-///   does not expose its current fade; the usual reason a held object is not drawn is that
-///   its fade is at 0, beyond its draw distance, and a frustum-culled one is drawn in the
-///   next frame as soon as it comes into view).
-/// - No drawn object at all: 1, and the stored value is dropped.
-fn parent_opacity_step(
-    memory: &mut HashMap<EntityId, f32>,
-    id: EntityId,
-    has_object: bool,
-    drawn: Option<f32>,
-) -> f32 {
-    if !has_object {
-        memory.remove(&id);
-        return 1.0;
-    }
-    match drawn {
-        Some(o) => {
-            let v = parent_factor(Some(o));
-            memory.insert(id, v);
-            v
-        }
-        None => memory.get(&id).copied().unwrap_or(0.0),
-    }
+    parent_factor(current)
 }
 
 /// Rule 15's factor from the object layer's answer: the opacity clamped to [0, 1]; 1 for no
-/// answer (the owner was not drawn) or a non-finite one.
+/// answer (the owner has no drawn object) or a non-finite one.
 fn parent_factor(opacity: Option<f32>) -> f32 {
     opacity
         .filter(|o| o.is_finite())
@@ -1680,7 +1652,7 @@ impl EffectLayer {
             stage: None,
             decals,
             post_draws: Vec::new(),
-            atmospherics: None,
+            atmospherics: config.atmospherics,
             precipitation_colour: [1.0; 4],
         }
     }
@@ -1810,7 +1782,6 @@ impl EffectLayer {
                     session: session::SessionState::default(),
                     weather: weather::Weather::new(b.weather).with_materials(b.drop_materials),
                     video_post: self.config.video_post,
-                    parent_opacity: HashMap::new(),
                 });
                 self.stats.ready = true;
                 tracing::info!("particle effects ready");
@@ -1949,7 +1920,6 @@ impl EffectLayer {
             let now = st.now;
             st.manager.remove_owner(id.0, now);
             st.owners.remove(&id);
-            st.parent_opacity.remove(&id);
             st.handles.retain(|_, o| *o != id);
         }
     }
@@ -2441,12 +2411,12 @@ impl EffectLayer {
             let Some(owner) = st.owners.get(id).cloned() else {
                 continue;
             };
-            // Rule 15: a static owner's drawn opacity, kept while the draw pass culls it
-            // (`parent_opacity_step`).
+            // Rule 15: a static owner's opacity, its current fade while the draw pass culls
+            // it ([`placed_parent_opacity`]).
             let remembered = owner
                 .placed
                 .as_ref()
-                .map(|p| remembered_parent_opacity(&mut st.parent_opacity, *id, objects, p));
+                .map(|p| placed_parent_opacity(objects, p));
             let Some(f) = st.owner_frame(&owner) else {
                 continue;
             };
@@ -3130,35 +3100,15 @@ mod tests {
     }
 
     /// Rule 15 as revised (`particle-runtime.md` §12): a static owner the draw pass culls
-    /// keeps the opacity of its last drawn frame, one never drawn since it spawned counts
-    /// as 0, and only an owner with no drawn object counts as 1 (its stored value dropped).
+    /// takes the current fade the object layer answers for its object (0 included), and
+    /// only an owner with no drawn object counts as 1.
     #[test]
-    fn culled_static_owners_keep_their_fade() {
-        let mut memory = HashMap::new();
-        let id = EntityId(7);
-        // Never drawn yet (beyond its draw distance when its landblock streamed in).
-        assert_eq!(parent_opacity_step(&mut memory, id, true, None), 0.0);
-        assert!(memory.is_empty());
-        // Drawn at 0.4, then culled twice.
-        let seq: Vec<f32> = [Some(0.4), None, None]
+    fn culled_static_owners_follow_their_fade() {
+        let seq: Vec<f32> = [Some(0.0), Some(0.4), Some(1.0), Some(0.6), Some(0.0), None]
             .into_iter()
-            .map(|d| parent_opacity_step(&mut memory, id, true, d))
+            .map(parent_factor)
             .collect();
-        assert_eq!(seq, [0.4, 0.4, 0.4]);
-        // Faded to 0 and culled: 0 stays 0.
-        assert_eq!(parent_opacity_step(&mut memory, id, true, Some(0.0)), 0.0);
-        assert_eq!(parent_opacity_step(&mut memory, id, true, None), 0.0);
-        // Its landblock's objects leave the object layer: no drawn object, factor 1.
-        assert_eq!(parent_opacity_step(&mut memory, id, false, None), 1.0);
-        assert!(!memory.contains_key(&id));
-        // Back in the layer but not drawn yet: 0 again, not the old value.
-        assert_eq!(parent_opacity_step(&mut memory, id, true, None), 0.0);
-        // Another owner's value is its own.
-        assert_eq!(
-            parent_opacity_step(&mut memory, EntityId(8), true, Some(0.9)),
-            0.9
-        );
-        assert_eq!(parent_opacity_step(&mut memory, id, true, None), 0.0);
+        assert_eq!(seq, [0.0, 0.4, 1.0, 0.6, 0.0, 1.0]);
     }
 
     /// Review finding, `particle-runtime.md` §12 rule 16: with a late stage the systems of

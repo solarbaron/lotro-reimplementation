@@ -24,7 +24,8 @@ use tessera_render::{
 };
 use tessera_world::draw_distance::{FogClip, global_limit};
 use tessera_world::environment::{
-    EnvState, SkyValues, SunChangeFade, outdoor_sun_present, property_colour,
+    CROSSFADE_EPSILON, EnvState, MIN_SUN_CHANGE_SECONDS, SUN_CHANGE_SECONDS, SkyValues,
+    SunChangeFade, crossfade_factor, lerp, lerp_rgba, outdoor_sun_present, property_colour,
 };
 use tessera_world::lighting::LightRecord;
 use tessera_world::{
@@ -262,8 +263,13 @@ pub struct FrameEnv {
     /// not drawn (`environment.md` §11.7 step 10).
     pub sky_fogged: bool,
     /// The precipitation values of the state in use (`environment.md` §11.7 step 6), for
-    /// the weather systems and the global wind (`particle-runtime.md` §11.2).
+    /// the weather systems and the global wind (`particle-runtime.md` §11.2), blended by the
+    /// sky-key cross-fade and the sun-change fade (§11.6, E43, RT64).
     pub precipitation: Precipitation,
+    /// The state's `colour_4` (RGBA), blended by both fades like the precipitation values
+    /// (E43): it multiplies the drop streaks' colours (`particle-runtime.md` §11.2.6
+    /// step 7). Opaque white without a sky.
+    pub colour_4: [f32; 4],
 }
 
 /// The precipitation values of an environment state (`environment.md` §11.7 step 6): rain
@@ -285,6 +291,191 @@ impl Precipitation {
     #[must_use]
     pub fn wind_vector(&self) -> Vec3 {
         Vec3::new(self.wind[0], self.wind[1], 0.0)
+    }
+
+    /// The blend of two states' values by weight `w` (`environment.md` §11.6 step 4, E43,
+    /// `particle-runtime.md` RT64): below 0.0002 `old`, above 0.9998 `new`, otherwise
+    /// (1 − *w*) · old + *w* · new for rain, snow and both wind components (a weight that
+    /// is not a number gives `old`).
+    #[must_use]
+    pub fn blend(old: &Self, new: &Self, w: f32) -> Self {
+        if w.is_nan() || w < CROSSFADE_EPSILON {
+            return *old;
+        }
+        if w > 1.0 - CROSSFADE_EPSILON {
+            return *new;
+        }
+        Self {
+            rain: lerp(old.rain, new.rain, w),
+            snow: lerp(old.snow, new.snow, w),
+            wind: [
+                lerp(old.wind[0], new.wind[0], w),
+                lerp(old.wind[1], new.wind[1], w),
+            ],
+        }
+    }
+}
+
+/// The weather values of an environment state that the walker's fades blend besides the
+/// lighting (`environment.md` §11.6 step 4 and the sun-change fade, E43): the precipitation
+/// values and `colour_4`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct WeatherState {
+    /// Rain, snow and the wind curves.
+    pub precipitation: Precipitation,
+    /// `colour_4` (RGBA).
+    pub colour_4: [f32; 4],
+}
+
+impl Default for WeatherState {
+    /// No rain, snow or wind; `colour_4` opaque white (the value without a day
+    /// description, [`SkyValues::defaults`]).
+    fn default() -> Self {
+        Self {
+            precipitation: Precipitation::default(),
+            colour_4: [1.0; 4],
+        }
+    }
+}
+
+impl WeatherState {
+    /// The blend by weight `w` ([`Precipitation::blend`], `colour_4` channel by channel).
+    #[must_use]
+    pub fn blend(old: &Self, new: &Self, w: f32) -> Self {
+        if w.is_nan() || w < CROSSFADE_EPSILON {
+            return *old;
+        }
+        if w > 1.0 - CROSSFADE_EPSILON {
+            return *new;
+        }
+        Self {
+            precipitation: Precipitation::blend(&old.precipitation, &new.precipitation, w),
+            colour_4: lerp_rgba(old.colour_4, new.colour_4, w),
+        }
+    }
+}
+
+/// The sun-change fade of `environment.md` §11.6 (E34, E37) applied to the weather values
+/// ([`WeatherState`], E43): the same timing as `tessera-world`'s [`SunChangeFade`], which
+/// blends the lighting values only. When the "sun present" flag of the state in use differs
+/// from the previous update's and the update is not immediate, the shown values fade from
+/// those shown at that moment (held fixed) to the values in use over
+/// [`SUN_CHANGE_SECONDS`] of the raw timer; a change during a running fade starts a new
+/// fade from the values then shown, over the smaller of the running fade's duration and the
+/// time since the previous change, at least [`MIN_SUN_CHANGE_SECONDS`]. An immediate update
+/// stops a running fade. Fed the same flag, time and immediacy as the lighting's fade, the
+/// two run in step.
+///
+/// This is a copy of the timing rule of `SunChangeFade::apply`
+/// (`crates/world/src/environment/fade.rs`) with only the blended type changed; a change to
+/// that rule must be made here too (a unit test runs both on one sequence). The copy goes
+/// once `tessera-world`'s fade can carry the weather values.
+#[derive(Debug, Clone, Default)]
+pub struct WeatherFade {
+    previous: Option<bool>,
+    last_change: f64,
+    /// The running fade: its start values, start time and duration.
+    fade: Option<(WeatherState, f64, f64)>,
+    shown: Option<WeatherState>,
+}
+
+impl WeatherFade {
+    /// The values to show for `state`, the values of the state in use whose "sun present"
+    /// flag is `sun_present`, at raw time `now` (a time that is not finite counts as an
+    /// immediate update).
+    pub fn apply(
+        &mut self,
+        state: WeatherState,
+        sun_present: bool,
+        now: f64,
+        immediate: bool,
+    ) -> WeatherState {
+        let changed = self.previous.is_some_and(|p| p != sun_present);
+        self.previous = Some(sun_present);
+        let Some(shown) = self.shown.filter(|_| !immediate && now.is_finite()) else {
+            self.fade = None;
+            self.shown = Some(state);
+            return state;
+        };
+        if changed {
+            let duration = match self.fade {
+                Some((_, _, d)) => d.min(now - self.last_change).max(MIN_SUN_CHANGE_SECONDS),
+                None => SUN_CHANGE_SECONDS,
+            };
+            self.fade = Some((shown, now, duration));
+            self.last_change = now;
+        }
+        let out = match self.fade {
+            Some((from, start, duration)) => {
+                let elapsed = now - start;
+                #[allow(clippy::cast_possible_truncation)]
+                let w = crossfade_factor(elapsed as f32, duration as f32);
+                if elapsed >= duration {
+                    self.fade = None;
+                }
+                WeatherState::blend(&from, &state, w)
+            }
+            None => state,
+        };
+        self.shown = Some(out);
+        out
+    }
+}
+
+/// The precipitation curves of one track's skies (`environment.md` §11.6): the day
+/// description in use with its curve states and, while the track's sky-key cross-fade
+/// runs, the old sky's description with its states, so that the values blend by the
+/// cross-fade weight (E43, RT64). `tessera-world`'s frame names only the description in use;
+/// the old one is the description the track used before it changed.
+///
+/// **Known gap:** `tessera-world` may choose the old sky's description again while the
+/// fade runs (a new game day, the sky interval), and its frame does not report that choice.
+/// The old side here then keeps the description it had when the fade started, while the
+/// frame's old lighting and `colour_4` follow the new choice, so for the rest of that fade
+/// rain, snow and wind blend from the stale description. A full fix needs the old sky's
+/// choice in `EnvironmentFrame`.
+#[derive(Debug, Clone)]
+struct PrecipitationTrack {
+    /// The description in use and its curve states (states start afresh with another one).
+    day: Option<Did>,
+    states: [CurveState; 4],
+    /// The old sky's description (`None`: it had none) and states, while a cross-fade runs.
+    old: Option<(Option<Did>, [CurveState; 4])>,
+}
+
+fn fresh_states() -> [CurveState; 4] {
+    std::array::from_fn(|_| CurveState::new())
+}
+
+impl PrecipitationTrack {
+    fn new() -> Self {
+        Self {
+            day: None,
+            states: fresh_states(),
+            old: None,
+        }
+    }
+
+    /// Follows the track's `frame` of this update: a change of the description in use while
+    /// the cross-fade runs keeps the previous description as the old sky (the first change
+    /// of a fade; the old sky stays while it runs); with no fade running there is no old
+    /// sky.
+    fn observe(&mut self, frame: Option<&EnvironmentFrame>) {
+        let day = frame.and_then(|f| f.choice.map(|c| c.day));
+        let fading = frame.is_some_and(|f| f.crossfade < 1.0 - CROSSFADE_EPSILON);
+        if day != self.day {
+            let previous = (
+                self.day,
+                std::mem::replace(&mut self.states, fresh_states()),
+            );
+            if fading && self.old.is_none() {
+                self.old = Some(previous);
+            }
+            self.day = day;
+        }
+        if !fading {
+            self.old = None;
+        }
     }
 }
 
@@ -756,9 +947,11 @@ pub struct WorldEnv {
     /// The rate before a pause, while paused.
     paused: Option<f64>,
     curves: HashMap<(LandblockKey, u32), (FloatCurve, CurveState)>,
-    /// The curve states of the precipitation curves (`environment.md` §5.3 field 17) and
-    /// the day description they belong to (states start afresh with another one).
-    precipitation_states: (Option<Did>, [CurveState; 4]),
+    /// The precipitation curves of the outdoor and the indoor track (`environment.md` §5.3
+    /// field 17), with the old sky of a running cross-fade ([`PrecipitationTrack`]).
+    precipitation_tracks: [PrecipitationTrack; 2],
+    /// The sun-change fade of the weather values ([`WeatherFade`]).
+    weather_fade: WeatherFade,
     /// Sky-object parts referenced in the object layer.
     sky_parts: HashSet<u32>,
     sky_draw: Vec<SkyObject>,
@@ -795,7 +988,8 @@ impl WorldEnv {
             immediate: true,
             paused: stopped.then_some(0.0),
             curves: HashMap::new(),
-            precipitation_states: (None, std::array::from_fn(|_| CurveState::new())),
+            precipitation_tracks: [PrecipitationTrack::new(), PrecipitationTrack::new()],
+            weather_fade: WeatherFade::default(),
             sky_parts: HashSet::new(),
             sky_draw: Vec::new(),
         }
@@ -952,12 +1146,18 @@ impl WorldEnv {
         };
         let outdoor = step(&mut self.env, sky_key);
         let inside = step(&mut self.indoor, Some(key_b));
+        // Both tracks' precipitation curves follow their skies every frame.
+        let [out_track, in_track] = &mut self.precipitation_tracks;
+        out_track.observe(outdoor.as_ref());
+        in_track.observe(inside.as_ref());
         let frame = if indoor.is_some() { inside } else { outdoor };
         if dt.is_finite() && dt > 0.0 {
             self.raw += dt;
         }
         let state = compose_state(frame.as_ref().map(|f| &f.values), indoor, systems);
-        let shown = self.fade.apply(state, self.raw, self.immediate);
+        let sun_present = state.sun_present;
+        let immediate = self.immediate;
+        let shown = self.fade.apply(state, self.raw, immediate);
         self.immediate = false;
         let composed = frame_lighting(&shown, systems, eye, forward, time);
         let lighting = composed.lighting;
@@ -976,7 +1176,15 @@ impl WorldEnv {
             NO_SKY
         };
         let reading = self.env.as_ref().map(|e| e.clock().read());
-        let precipitation = self.precipitation(frame.as_ref(), indoor.is_some(), time);
+        let weather = WeatherState {
+            precipitation: self.precipitation(frame.as_ref(), indoor.is_some(), time),
+            colour_4: frame
+                .as_ref()
+                .map_or(WeatherState::default().colour_4, |f| f.values.colour_4),
+        };
+        let weather = self
+            .weather_fade
+            .apply(weather, sun_present, self.raw, immediate);
         let out = FrameEnv {
             lighting,
             clear,
@@ -991,23 +1199,20 @@ impl WorldEnv {
                 .as_ref()
                 .map_or(0, |f| f.objects.iter().filter(|o| o.visible).count()),
             sky_fogged: composed.sky_fogged,
-            precipitation,
+            precipitation: weather.precipitation,
+            colour_4: weather.colour_4,
         };
         self.frame = frame;
         out
     }
 
-    /// The precipitation values of the state in use (`environment.md` §11.7 step 6): those
-    /// of the day description of `frame` (the record in use: indoor when `indoor`) at its
-    /// time of day, on the material clock `time`. **Departure, not yet conforming:**
-    /// `environment.md` §11.6 step 4 blends every number of the two states during a sky-key
-    /// cross-fade and the sun-change fade, and `particle-runtime.md` §11.2.1 step 3 takes
-    /// the wind target from the state after them; here the values are the new
-    /// description's alone, because `tessera-world`'s fades blend the lighting values only
-    /// and its frame gives neither the old sky's day description nor the sun-change fade's
-    /// states (an OPEN is proposed for the spec writer; building it needs those fades to
-    /// carry the four precipitation values). No forced weather mode exists in Tessera
-    /// (§11.7 step 7). All 0 without a sky.
+    /// The precipitation values of the state in use (`environment.md` §11.7 step 6) before
+    /// the sun-change fade: those of the day description of `frame` (the track in use:
+    /// indoor when `indoor`) at its time of day, on the material clock `time`, blended
+    /// during the track's sky-key cross-fade with the old sky's by the cross-fade weight
+    /// (§11.6 step 4, E43, `particle-runtime.md` RT64). The track's `colour_4` comes
+    /// cross-faded in the frame's values. No forced weather mode exists in Tessera (§11.7
+    /// step 7). All 0 without a sky.
     fn precipitation(
         &mut self,
         frame: Option<&EnvironmentFrame>,
@@ -1017,26 +1222,29 @@ impl WorldEnv {
         let Some(frame) = frame else {
             return Precipitation::default();
         };
-        let Some(did) = frame.choice.map(|c| c.day) else {
+        let (env, track) = if indoor {
+            (&self.indoor, &mut self.precipitation_tracks[1])
+        } else {
+            (&self.env, &mut self.precipitation_tracks[0])
+        };
+        let Some(env) = env.as_ref() else {
             return Precipitation::default();
         };
-        let env = if indoor { &self.indoor } else { &self.env };
-        let Some(day) = env
-            .as_ref()
-            .and_then(|e| e.library().cached_day(did))
-            .flatten()
-        else {
-            return Precipitation::default();
+        let t = frame.reading.time_of_day as f32;
+        let values = |did: Option<Did>, states: &mut [CurveState; 4]| {
+            did.and_then(|d| env.library().cached_day(d).flatten())
+                .map_or_else(Precipitation::default, |day| {
+                    precipitation_at(&day, t, f64::from(time), states)
+                })
         };
-        if self.precipitation_states.0 != Some(did) {
-            self.precipitation_states = (Some(did), std::array::from_fn(|_| CurveState::new()));
+        let new = values(track.day, &mut track.states);
+        match &mut track.old {
+            Some((did, states)) => {
+                let old = values(*did, states);
+                Precipitation::blend(&old, &new, frame.crossfade)
+            }
+            None => new,
         }
-        precipitation_at(
-            &day,
-            frame.reading.time_of_day as f32,
-            f64::from(time),
-            &mut self.precipitation_states.1,
-        )
     }
 
     /// The point lights of the Light entities within [`LIGHT_RADIUS`] of `eye` (at most
@@ -1433,6 +1641,138 @@ mod tests {
         env.mark_immediate();
         let f = step(&mut env, 0.016, None);
         assert_eq!(f.lighting.sun, Some(day_sun));
+    }
+
+    /// `environment.md` §11.6 step 4 and E43 (`particle-runtime.md` RT64): rain, snow, the
+    /// wind and `colour_4` blend linearly by the weight, with the 0.0002 snaps.
+    #[test]
+    fn weather_values_blend_by_the_weight() {
+        let a = WeatherState {
+            precipitation: Precipitation {
+                rain: 1.0,
+                snow: 0.0,
+                wind: [4.0, -2.0],
+            },
+            colour_4: [1.0, 1.0, 1.0, 1.0],
+        };
+        let b = WeatherState {
+            precipitation: Precipitation {
+                rain: 0.0,
+                snow: 2.0,
+                wind: [0.0, 2.0],
+            },
+            colour_4: [0.0, 0.5, 1.0, 0.0],
+        };
+        let m = WeatherState::blend(&a, &b, 0.25);
+        assert!((m.precipitation.rain - 0.75).abs() < 1e-6);
+        assert!((m.precipitation.snow - 0.5).abs() < 1e-6);
+        assert!((m.precipitation.wind[0] - 3.0).abs() < 1e-6);
+        assert!((m.precipitation.wind[1] + 1.0).abs() < 1e-6);
+        assert!((m.colour_4[1] - 0.875).abs() < 1e-6 && (m.colour_4[3] - 0.75).abs() < 1e-6);
+        assert_eq!(WeatherState::blend(&a, &b, 0.0001), a);
+        assert_eq!(WeatherState::blend(&a, &b, 0.99995), b);
+        assert_eq!(WeatherState::blend(&a, &b, f32::NAN), a);
+        assert_eq!(
+            Precipitation::blend(&a.precipitation, &b.precipitation, 0.5).rain,
+            0.5
+        );
+    }
+
+    /// The sun-change fade of the weather values follows the lighting's timing (§11.6, E34,
+    /// E43): a flag change fades over 5 s from the values then shown; an immediate update
+    /// shows the values in use at once.
+    #[test]
+    fn the_weather_follows_the_sun_change_fade() {
+        let wet = WeatherState {
+            precipitation: Precipitation {
+                rain: 1.0,
+                ..Precipitation::default()
+            },
+            colour_4: [0.5; 4],
+        };
+        let dry = WeatherState::default();
+        let mut f = WeatherFade::default();
+        // The first update shows its values; no change of flag: shown as they are.
+        assert_eq!(f.apply(wet, true, 0.0, false), wet);
+        assert_eq!(f.apply(wet, true, 1.0, false), wet);
+        // The flag changes at 1.0: the fade starts from the shown values.
+        assert_eq!(f.apply(dry, false, 1.0, false), wet);
+        let mid = f.apply(dry, false, 3.5, false);
+        assert!((mid.precipitation.rain - 0.5).abs() < 1e-4, "{mid:?}");
+        assert!(f.apply(dry, false, 5.0, false).precipitation.rain < 0.5);
+        assert_eq!(f.apply(dry, false, 6.0, false), dry, "5 s after the change");
+        assert_eq!(f.apply(dry, false, 7.0, false), dry);
+        // The lighting's fade with the same inputs runs in step.
+        let mut light = SunChangeFade::new();
+        let sun = |present| EnvState {
+            sun_present: present,
+            ..compose_state(None, None, &Systems::all())
+        };
+        let _ = light.apply(sun(true), 0.0, false);
+        let _ = light.apply(sun(false), 1.0, false);
+        let mut g = WeatherFade::default();
+        let _ = g.apply(wet, true, 0.0, false);
+        let _ = g.apply(dry, false, 1.0, false);
+        let _ = light.apply(sun(false), 6.0, false);
+        let _ = g.apply(dry, false, 6.0, false);
+        assert_eq!(light.running(), g.fade.is_some(), "both ended together");
+        // A change and an immediate update: the values in use at once.
+        let _ = f.apply(wet, true, 8.0, false);
+        assert_eq!(f.apply(wet, true, 8.5, true), wet);
+        assert!(f.fade.is_none());
+    }
+
+    fn frame_with(day: Option<u32>, crossfade: f32) -> EnvironmentFrame {
+        let values = SkyValues::defaults();
+        EnvironmentFrame {
+            reading: tessera_world::environment::ClockReading {
+                game_seconds: 0.0,
+                year: 0,
+                day_of_year: 0,
+                time_of_day: 0.5,
+                day_number: 0,
+                month: None,
+            },
+            sky_key: Some(1),
+            choice: day.map(|d| tessera_world::environment::DayChoice {
+                day: Did(d),
+                source: tessera_world::environment::ChoiceSource::DayGroup,
+            }),
+            lighting: values.lighting(),
+            values,
+            objects: Vec::new(),
+            crossfade,
+            is_night: false,
+        }
+    }
+
+    /// `environment.md` §11.6 steps 1–6, E43: a change of the description in use during a
+    /// running sky-key cross-fade keeps the previous one as the old sky until the fade ends;
+    /// a change with no fade (an immediate update) keeps none.
+    #[test]
+    fn the_old_sky_is_kept_while_the_cross_fade_runs() {
+        const A: u32 = 0x1A00_0001;
+        const B: u32 = 0x1A00_0002;
+        const C: u32 = 0x1A00_0003;
+        let mut t = PrecipitationTrack::new();
+        t.observe(Some(&frame_with(Some(A), 1.0)));
+        assert_eq!((t.day, t.old.is_some()), (Some(Did(A)), false));
+        // A key change starts a cross-fade (weight 0 in its first update).
+        t.observe(Some(&frame_with(Some(B), 0.0)));
+        assert_eq!(t.day, Some(Did(B)));
+        assert_eq!(t.old.as_ref().map(|o| o.0), Some(Some(Did(A))));
+        t.observe(Some(&frame_with(Some(B), 0.5)));
+        assert_eq!(t.old.as_ref().map(|o| o.0), Some(Some(Did(A))), "kept");
+        // The fade ends: no old sky.
+        t.observe(Some(&frame_with(Some(B), 1.0)));
+        assert!(t.old.is_none());
+        // An immediate switch has no fade and so no old sky.
+        t.observe(Some(&frame_with(Some(C), 1.0)));
+        assert_eq!((t.day, t.old.is_some()), (Some(Did(C)), false));
+        // A sky with no description fades from "no rain".
+        t.observe(Some(&frame_with(None, 1.0)));
+        t.observe(Some(&frame_with(Some(A), 0.2)));
+        assert_eq!(t.old.as_ref().map(|o| o.0), Some(None));
     }
 
     /// A sky library with only a calendar (no day descriptions): the environment then

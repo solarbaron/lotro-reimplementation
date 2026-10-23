@@ -73,6 +73,10 @@ pub struct HeadlessReport {
     /// Particle effects at the end (`particle-runtime.md`): owners, systems, drawn
     /// vertices of the last frame and the most of any frame.
     pub particles: crate::walker::effects::EffectStats,
+    /// The precipitation values of the environment state in use in the last frame
+    /// (`environment.md` §11.7 step 6, after both fades of §11.6); `None` before the
+    /// environment had a frame.
+    pub precipitation: Option<crate::walker::env::Precipitation>,
     /// The fallback diagnostic of the last frame: object submesh draws without their
     /// base-colour texture by reason and surface, the draws of water, mirror and
     /// liquid-distortion records through the generic path, and the draws without their
@@ -84,6 +88,17 @@ pub struct HeadlessReport {
     /// The material clock against real time over the frames drawn (`None` before the
     /// first frame): whether the clock runs in real seconds (`material.md` §5.3.1).
     pub clock: Option<ClockSpan>,
+}
+
+impl HeadlessReport {
+    /// The drops of the weather code at the end (`particle-runtime.md` §11.2.6, rule 17):
+    /// rain and snow drops in use, drops placed and particles spawned from them in the last
+    /// frame, streak vertices of the last frame and the most of any frame (the `weather`
+    /// counters of [`HeadlessReport::particles`]).
+    #[must_use]
+    pub fn weather(&self) -> &crate::walker::effects::weather::WeatherStats {
+        &self.particles.weather
+    }
 }
 
 /// The material clock read at the first and the last frame drawn, with the real time of
@@ -371,6 +386,21 @@ fn finish(
         tracing::info!(?f, "far view at the end");
     }
     report.particles = walker.effects().stats();
+    report.precipitation = walker.frame_env().map(|f| f.precipitation);
+    {
+        let w = report.weather();
+        tracing::info!(
+            rain_drops = w.rain_drops,
+            snow_drops = w.snow_drops,
+            drops_placed = w.drops_placed,
+            drop_spawns = w.drop_spawns,
+            figure_spawns = w.figure_spawns,
+            streak_vertices = w.streak_vertices,
+            max_streak_vertices = w.max_streak_vertices,
+            precipitation = ?report.precipitation,
+            "weather drops at the end"
+        );
+    }
     report.fallback = walker.fallback_stats();
     report.water = walker.water_drawings().to_vec();
     tracing::info!("{}", report.fallback.hud_line());

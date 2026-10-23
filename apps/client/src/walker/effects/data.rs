@@ -217,16 +217,46 @@ pub enum OwnerKind {
     },
 }
 
-/// The placed object a static owner of a landblock is drawn as: its landblock and the
-/// entity's identity in the object layer's block list (`ObjectLayer::placed_object_opacity`,
-/// `particle-runtime.md` §12 rule 15). An owner that has no drawn object of its own (no
-/// visual, or not drawn) carries no parts, so the lookup answers `None` (factor 1).
+/// The placed object a static owner of a landblock is drawn as: its landblock, its entity
+/// index and the entity's identity in the object layer's block list
+/// (`ObjectLayer::placed_entity_opacity`, `particle-runtime.md` §12 rule 15). An owner that
+/// has no drawn object of its own (no visual, or not drawn) carries no parts, so it counts
+/// as having no drawn object (factor 1).
 #[derive(Debug, Clone, PartialEq)]
 pub struct PlacedObject {
     /// The landblock.
     pub key: LandblockKey,
+    /// The entity's index in its landblock's info record (`tessera_world::PlacedEntity::index`),
+    /// the [`ObjectInfo::entity`](crate::walker::objects::ObjectInfo::entity) of its object:
+    /// the object layer finds the owner's own object by it, even when another entity is
+    /// placed at the same position with the same parts. `None` falls back to [`Self::entity`].
+    pub index: Option<u32>,
     /// The entity: placement position, parts and rank ([`PlacedObjectRef`]).
     pub entity: PlacedObjectRef,
+}
+
+impl PlacedObject {
+    /// The placed object of static owner `e` of landblock `key` with its drawn `parts` and
+    /// `rank` ([`EffectData::scan_block`]): its index is the entity's own
+    /// (`PlacedEntity::index`, the value the object layer's block list gives the object of a
+    /// placed, not generated, entity as [`ObjectInfo::entity`](crate::walker::objects::ObjectInfo::entity)).
+    #[must_use]
+    pub fn of_entity(
+        key: LandblockKey,
+        e: &tessera_world::PlacedEntity,
+        parts: Arc<[u32]>,
+        rank: u32,
+    ) -> Self {
+        Self {
+            key,
+            index: Some(e.index),
+            entity: PlacedObjectRef {
+                position: e.placement.position,
+                parts,
+                rank,
+            },
+        }
+    }
 }
 
 /// The part list of an entity as the object layer draws it: its visual's parts when it is
@@ -890,7 +920,8 @@ impl EffectData {
             })
             .collect();
         // Rule 15: the rank of each drawn entity among the earlier ones with the same
-        // position and parts (`ObjectLayer::placed_object_opacity`), counted over every
+        // position and parts (`ObjectLayer::placed_entity_opacity`'s fallback when the
+        // object layer's objects carry no entity index), counted over every
         // entity, owner or not.
         let mut seen: HashMap<([u32; 3], Arc<[u32]>), u32> = HashMap::new();
         for (ei, e) in bundle.entities.iter().enumerate() {
@@ -979,14 +1010,7 @@ impl EffectData {
                             scale,
                         },
                         points,
-                        Some(PlacedObject {
-                            key,
-                            entity: PlacedObjectRef {
-                                position: pl.position,
-                                parts,
-                                rank,
-                            },
-                        }),
+                        Some(PlacedObject::of_entity(key, e, parts, rank)),
                     )
                 }
             };
@@ -1699,5 +1723,37 @@ mod tests {
             reference(written, 0.5),
             Some((0.25_f32 * 255.0).floor() / 255.0)
         );
+    }
+
+    /// Review finding (`particle-runtime.md` §12 rule 15): a static owner's placed object
+    /// carries the entity's own index, the value the object layer's block list gives the
+    /// object of a placed entity (`ObjectInfo::entity`), so the lookup by index finds it.
+    #[test]
+    fn a_static_owner_names_its_object_by_the_entity_index() {
+        let key = LandblockKey::new(1, 10, 20).expect("key");
+        let e = tessera_world::PlacedEntity {
+            index: 42,
+            iid: None,
+            kind: None,
+            object: Some(Did(0x4700_0001)),
+            placement: tessera_formats::landblock::Placement::new(
+                [12.5, 30.0, 4.0],
+                tessera_formats::setup::Quaternion::IDENTITY,
+            )
+            .expect("placement"),
+            scale: [1.0; 3],
+            interior: false,
+            content_layers: None,
+            own_draw: tessera_world::DrawFlags::default(),
+            visual: None,
+            draw: true,
+            figure: None,
+        };
+        let placed = PlacedObject::of_entity(key, &e, vec![7, 8].into(), 2);
+        assert_eq!(placed.key, key);
+        assert_eq!(placed.index, Some(42), "the entity's own index");
+        assert_eq!(placed.entity.position, [12.5, 30.0, 4.0]);
+        assert_eq!(&*placed.entity.parts, &[7, 8]);
+        assert_eq!(placed.entity.rank, 2);
     }
 }

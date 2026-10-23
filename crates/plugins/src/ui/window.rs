@@ -147,6 +147,17 @@ fn mark(cx: &Cx<'_>) -> bool {
         if rebuilt {
             refresh_pin(cx.lua, cx.sh, cx.id);
         }
+    } else if first && styled == Styled::Plain {
+        // §13.21 rule 1, §14.2.1 table (last row): a plain window becomes a bare `UIScaler`
+        // element (no layout properties, no size limits). Like every rebuild (§14.2.1 step 3)
+        // it passes the old base-layer operation number to `SetBlendMode`; operation numbers
+        // are 0–7, so this never raises the "above 8" error.
+        with_ui(cx.sh, |u| {
+            if u.control_rebuild_as_scaler(key, super::styled::SCALER_TYPE) {
+                let op = super::styled::operation_number(u.control_blend_mode(key));
+                let _ = u.control_set_blend_mode(key, op);
+            }
+        });
     }
     true
 }

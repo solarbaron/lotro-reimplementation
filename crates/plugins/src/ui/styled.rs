@@ -44,6 +44,10 @@ pub(crate) const SCALED_WINDOW: u32 = 0x1000_4D37;
 /// `Window` in the same state would use its scaled variant, §14.2.1 step 2 OPEN).
 pub(crate) const SCALED_GOLD_WINDOW: u32 = 0x1000_4D38;
 
+/// The `UIScaler` game type (§14.2.1 table, last row; P65): the type a plain
+/// `Turbine.UI.Window` is re-described with when it is first marked as scaled (§13.21 rule 1).
+pub(crate) const SCALER_TYPE: u32 = 0x1000_00E8;
+
 /// `LotroCheckBox_CheckBox`: the check mark (§14.2.2).
 pub(crate) const CHECK_MARK: u32 = 0x1000_25B0;
 /// `LotroCheckBox_Text`: the check box's text element (§14.2.2).

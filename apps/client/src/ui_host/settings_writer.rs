@@ -2,7 +2,8 @@
 //! The game UI's one settings writer (ARCHITECTURE §21: no blocking I/O on the main thread):
 //! every write the frame loop asks for — the settled UI scale and safe aspect
 //! (`ui-scaling.md` §4.4, §4.5 step 5), the Interface window's optional rows (§7.1), the saved
-//! panel placements of `[UI.panels]` (§5.8) and the bag windows' column settings
+//! panel placements of `[UI.panels]` (§5.8), the per-window factors of `[UI.group_scale]`
+//! (§7.4) and the bag windows' column settings
 //! (`character-panels.md` §4.1) — is a [`SettingsJob`] handed to one long-lived worker thread.
 //!
 //! The worker applies the jobs it finds waiting, in order, in **one** locked
@@ -36,6 +37,9 @@ pub enum SettingsJob {
     Panels(BTreeMap<String, PanelPlacement>),
     /// Bag-window column settings (`character-panels.md` §4.1), by setting name.
     Columns(Vec<(String, i32)>),
+    /// Every per-window factor (`ui-scaling.md` §7.4): `[UI.group_scale]` becomes exactly this
+    /// map.
+    GroupScales(BTreeMap<u32, f32>),
 }
 
 /// Applies one job to `s` (the settings as the file holds them now).
@@ -62,6 +66,11 @@ fn apply(s: &mut Settings, job: &SettingsJob) {
         SettingsJob::Panels(panels) => {
             let (mut prefs, _) = UiPrefs::from_settings(s);
             prefs.panels.clone_from(panels);
+            prefs.store(s);
+        }
+        SettingsJob::GroupScales(groups) => {
+            let (mut prefs, _) = UiPrefs::from_settings(s);
+            prefs.group_scale.clone_from(groups);
             prefs.store(s);
         }
         SettingsJob::Columns(changes) => {
@@ -271,6 +280,32 @@ mod tests {
         assert!(prefs.panels.is_empty(), "the later reset wins");
         let cols = crate::character::settings::P1Settings::from_settings(&s);
         assert_eq!(cols.columns("UI.Bag2Columns"), Some(9));
+    }
+
+    /// `[UI.group_scale]` (`ui-scaling.md` §7.4) is replaced by the job's map, and the
+    /// Interface window's "Reset window scales" clears it again.
+    #[test]
+    fn group_scales_are_written_and_reset() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("tessera.toml");
+        let mut w = SettingsWriter::new(Some(SettingsStore::new(path.clone())));
+        w.submit(SettingsJob::GroupScales([(7, 1.25), (12, 0.75)].into()));
+        w.flush();
+        let s = SettingsStore::new(path.clone())
+            .update(|_| {})
+            .expect("read");
+        let (prefs, _) = UiPrefs::from_settings(&s);
+        assert_eq!(prefs.group_scale, [(7, 1.25), (12, 0.75)].into());
+        w.submit(SettingsJob::UiExtra(ExtraPersist {
+            art: ArtFilter::Sharp,
+            text_scale: 1.0,
+            clear_panels: false,
+            clear_groups: true,
+        }));
+        w.flush();
+        let s = SettingsStore::new(path).update(|_| {}).expect("read");
+        let (prefs, _) = UiPrefs::from_settings(&s);
+        assert!(prefs.group_scale.is_empty());
     }
 
     #[test]

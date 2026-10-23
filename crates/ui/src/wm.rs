@@ -245,6 +245,14 @@ impl Ui {
         self.apply_saved_with(k, false)
     }
 
+    /// Applies the saved placement of a root panel again, position and size only (the
+    /// visibility is left alone), then keep-on-screen (`ui-scaling.md` §5.8 "Applying"). The UI
+    /// host calls it when a panel that was just opened gets its per-window factor (§7.4), so the
+    /// placement is computed from the panel's real displayed size. Returns whether one applied.
+    pub fn reapply_saved_placement(&mut self, k: ElementKey) -> bool {
+        self.reapply_saved(k)
+    }
+
     fn apply_saved_with(&mut self, k: ElementKey, visibility: bool) -> bool {
         let p = self.v.pids;
         let (sl, ss, sv) = (

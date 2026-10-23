@@ -125,7 +125,9 @@ impl Ui {
         }
         self.move_to(k, left, top);
         if let Some(e) = self.el_mut(k) {
-            e.scaler = Some(((cw, ch), s));
+            // Back at scale 1 the rule no longer owns the node scale: the panel may take a
+            // per-window factor again (`ui-scaling.md` §7.4, [`Ui::accepts_window_scale`]).
+            e.scaler = ((s - 1.0).abs() > f32::EPSILON).then_some(((cw, ch), s));
         }
         // `ui-scaling.md` §5.6 and §5.8 item 3: a per-window scale change recomputes the
         // fit-to-screen factor and keeps the panel on screen (under a UI screen only).
@@ -134,6 +136,133 @@ impl Ui {
         self.refit_descendants(k);
         self.input.hover_dirty = true;
         self.mark_dirty(k);
+    }
+
+    /// Sets the **per-window scale** *p* of a native root panel (`ui-scaling.md` §7.4): a
+    /// uniform node scale (§3.4), so the panel's layout box keeps its size and its children are
+    /// not laid out again, and its content is painted at *Se* × *p*. *p* multiplies the
+    /// panel's other node scales (§3.4: *m* is their product): a Stretch root keeps its stretch
+    /// vector under *p*, and §5.6's *q* multiplies both.
+    ///
+    /// The scaling origin (`UIComponent_UIScaler_Origin_X`/`_Y`, unscaled panel pixels,
+    /// `ui-behaviour.md` §9.2 step 4) stays in place in UI units. The origin's position is kept
+    /// unrounded from the moment *p* leaves 1 (and taken again from the panel's current
+    /// position after anything else moved it), and the layout position is that point minus
+    /// origin × *p*, rounded once (halves up); so steps do not add up rounding errors and a
+    /// round trip returns the panel to where it started. Then §5.6 (*q* multiplies *p*) and
+    /// keep-on-screen run (§5.8 item 3), and the fit containers inside are fitted again.
+    ///
+    /// The caller clamps *p* to the group's range (§7.4). Returns `false` and changes nothing
+    /// for a non-positive or non-finite *p* and for an element that
+    /// [`Ui::accepts_window_scale`] refuses.
+    pub fn set_window_scale(&mut self, k: ElementKey, p: f32) -> bool {
+        if !p.is_finite() || p <= 0.0 || !self.accepts_window_scale(k) {
+            return false;
+        }
+        let p0 = self.window_scale(k);
+        if (p - p0).abs() <= f32::EPSILON {
+            return true;
+        }
+        let was_inside = self.root_inside_screen(k);
+        let pids = self.v.pids;
+        let ox = f64::from(self.prop(k, pids.scaler_origin_x).int());
+        let oy = f64::from(self.prop(k, pids.scaler_origin_y).int());
+        let Some((b, cur)) = self.el(k).map(|e| (e.bx, e.scale)) else {
+            return false;
+        };
+        // The panel's own scale without q (§5.6 keeps the scale it multiplied) and without the
+        // old p: a stretch vector, or 1.
+        let base = match self.fit_q.get(&k) {
+            Some(r) if r.written == cur => r.base,
+            _ => cur,
+        };
+        let own = base.map_or([1.0, 1.0, 1.0], |s| [s[0] / p0, s[1] / p0, s[2]]);
+        let new = [own[0] * p, own[1] * p, own[2]];
+        let identity = new.iter().all(|v| (v - 1.0).abs() <= f32::EPSILON);
+        let (pf, p0f) = (f64::from(p), f64::from(p0));
+        let (ax, ay) = match self.window_anchor.get(&k) {
+            Some(a) if a.at == (b.l, b.t) => (a.x, a.y),
+            _ => (f64::from(b.l) + ox * p0f, f64::from(b.t) + oy * p0f),
+        };
+        let left = round_i32(ax - ox * pf);
+        let top = round_i32(ay - oy * pf);
+        let unit = (p - 1.0).abs() <= f32::EPSILON;
+        if unit {
+            self.window_p.remove(&k);
+        } else {
+            self.window_p.insert(k, p);
+        }
+        if let Some(e) = self.el_mut(k) {
+            e.scale = (!identity).then_some(new);
+        }
+        self.painter.note_structure();
+        self.move_to(k, left, top);
+        self.after_scale_change(k, was_inside);
+        self.refit_descendants(k);
+        self.input.hover_dirty = true;
+        self.mark_dirty(k);
+        // Keep the origin's real position for the next step, unless keep-on-screen moved the
+        // panel (then the new position is the start of the next step).
+        if unit {
+            self.window_anchor.remove(&k);
+        } else if let Some(now) = self.el(k).map(|e| (e.bx.l, e.bx.t)) {
+            let a = if now == (left, top) {
+                WindowAnchor {
+                    x: ax,
+                    y: ay,
+                    at: now,
+                }
+            } else {
+                WindowAnchor {
+                    x: f64::from(now.0) + ox * pf,
+                    y: f64::from(now.1) + oy * pf,
+                    at: now,
+                }
+            };
+            self.window_anchor.insert(k, a);
+        }
+        true
+    }
+
+    /// The per-window scale *p* of a root panel (`ui-scaling.md` §7.4): 1 when none was set.
+    /// It excludes the fit-to-screen factor *q* that may multiply it (§5.6).
+    #[must_use]
+    pub fn window_scale(&self, k: ElementKey) -> f32 {
+        self.window_p.get(&k).copied().unwrap_or(1.0)
+    }
+
+    /// Whether [`Ui::set_window_scale`] applies to `k`: a native (not plugin) root panel laid
+    /// out against the screen, which is no fit container or fit root (their node scale is
+    /// their fit factor) and is not scaled by the panel-scale rule of `ui-behaviour.md` §9.2
+    /// ([`Ui::scale_panel`] at a scale other than 1), whose node scale that rule owns. The UI
+    /// host asks this before it changes a group's factor for the panel under the pointer.
+    #[must_use]
+    pub fn accepts_window_scale(&self, k: ElementKey) -> bool {
+        self.el(k)
+            .is_some_and(|e| e.plugin.is_none() && e.scaler.is_none())
+            && self.is_screen_root(k)
+            && !self.is_fit_root(k)
+            && self.fit_kind(k).is_none()
+    }
+
+    /// The root panel laid out against the screen (`ui-scaling.md` §5.2) that holds `k`, or
+    /// `k` itself when it is one; `None` for the screen root and detached elements. The UI
+    /// host finds the panel under the pointer with it (the per-window scale gesture, §7.4).
+    #[must_use]
+    pub fn screen_root_of(&self, k: ElementKey) -> Option<ElementKey> {
+        let mut cur = Some(k);
+        let mut n = 0;
+        while let Some(c) = cur {
+            if self.is_screen_root(c) {
+                return Some(c);
+            }
+            cur = self.parent(c);
+            n += 1;
+            if n > crate::ui::MAX_TREE_DEPTH * 4 {
+                break;
+            }
+        }
+        None
     }
 
     /// The scale of a scaled panel (1 when unscaled).
@@ -293,14 +422,35 @@ impl Ui {
         }
     }
 
-    /// The physical box of an element (`ui-scaling.md` §3.6): its displayed box (UI units)
-    /// mapped to the window's pixels by [`Ui::to_physical_rect`]. At the identity this equals
-    /// the displayed box made a rectangle. Drawing and hit testing agree on it (invariants
-    /// I3, I4): a physical pixel lies in this box exactly when a pointer at its centre hits the
-    /// displayed box.
+    /// The physical box of an element (`ui-scaling.md` §3.6 "Box → physical"): its **real**
+    /// displayed box [*L*, *R*) × [*T*, *B*) (§3.4, [`Ui::displayed_real`]) mapped edge by edge,
+    /// columns `Ex(L) … Ex(R) − 1` and rows `Ey(T) … Ey(B) − 1`, with no rounding to whole UI
+    /// units first. At the identity this equals the displayed box made a rectangle. Drawing and
+    /// hit testing agree on it (invariants I3, I4): a physical pixel lies in this box exactly
+    /// when a pointer at its centre hits the real displayed box ([`Ui::hit_test_real`]).
     #[must_use]
     pub fn physical_box(&self, k: ElementKey) -> crate::paint::Rect {
-        self.to_physical_rect(self.displayed_box(k).to_rect())
+        match self.ui_screen {
+            Some(_) => self.real_to_physical(&self.real_edges(k).0),
+            None => self.displayed_box(k).to_rect(),
+        }
+    }
+
+    /// Maps real displayed edges (UI units) to physical pixels by §3.6 "Box → physical" (an
+    /// extent that maps to no pixel gives an empty rectangle). At the identity the edges are
+    /// truncated (they are whole numbers there).
+    pub(crate) fn real_to_physical(&self, b: &crate::ui::RealBox) -> crate::paint::Rect {
+        match self.ui_screen {
+            Some(f) => {
+                crate::paint::Rect::new(f.edge_x(b.l), f.edge_y(b.t), f.edge_x(b.r), f.edge_y(b.b))
+            }
+            None => crate::paint::Rect::new(
+                crate::geom::trunc_f64(b.l),
+                crate::geom::trunc_f64(b.t),
+                crate::geom::trunc_f64(b.r),
+                crate::geom::trunc_f64(b.b),
+            ),
+        }
     }
 
     // ----- the live fit rules (`ui-scaling.md` §5.2–§5.8) --------------------------------
@@ -390,6 +540,15 @@ impl Ui {
                 .is_some_and(|c| c.dialog_container && c.parent == Some(self.screen)),
             None => false,
         }
+    }
+
+    /// The root panels laid out against the screen (`ui-scaling.md` §5.2), in drawing order:
+    /// the screen root's root children and the modal dialogs inside its dialog containers.
+    /// The UI host gives every one of them with a scaling group its group's per-window factor
+    /// (§7.4).
+    #[must_use]
+    pub fn screen_roots(&self) -> Vec<ElementKey> {
+        self.layout_roots()
     }
 
     /// The root panels laid out against the screen, in drawing order: the screen root's root
@@ -642,10 +801,17 @@ impl Ui {
         let scale_changed = self.set_fit_scale(k, fit.f, m);
         let b = IBox::from_xywh(round_i32(fit.x), round_i32(fit.y), dw, dh).clamped();
         let box_changed = self.el(k).is_some_and(|e| e.bx != b);
+        // §3.4 item 2: the displayed box starts from the real fitted position, not the
+        // rounded layout position (`Ui::displayed_real`).
+        let old_pos = self.fit_pos.insert(k, (fit.x, fit.y));
+        let pos_changed = old_pos != Some((fit.x, fit.y));
+        if pos_changed {
+            self.painter.note_structure();
+        }
         self.set_layout_box(k, b);
         self.mark_dirty(k);
         self.input.hover_dirty = true;
-        if scale_changed || box_changed {
+        if scale_changed || box_changed || pos_changed {
             self.refit_descendants(k);
         }
     }
@@ -680,12 +846,10 @@ impl Ui {
     fn parent_frame(&self, parent: Option<ElementKey>) -> ((f64, f64), (f64, f64)) {
         match parent {
             Some(p) if p != self.screen => {
-                let d = self.displayed_box(p);
+                // The real displayed top-left of §3.4, not its rounded integer form.
+                let d = self.displayed_real(p);
                 let s = self.node_scale_at_or_above(p);
-                (
-                    (f64::from(d.l), f64::from(d.t)),
-                    (f64::from(s.0), f64::from(s.1)),
-                )
+                ((d.l, d.t), (f64::from(s.0), f64::from(s.1)))
             }
             _ => ((0.0, 0.0), (1.0, 1.0)),
         }
@@ -1430,9 +1594,11 @@ impl Ui {
     /// (one set of bars, every shown member cut out). Empty at the identity (no UI screen).
     /// One pass per scope.
     ///
-    /// The composition list has no entry kind for an untextured fill yet, so the UI host (or
-    /// a CPU compositor) draws these itself; pointer hits in the bars of a fit-root group already
-    /// go to the group's lowest shown fit root ([`Ui::hit_test`]).
+    /// The paint pass puts these bars into the composition list as opaque black
+    /// [`EntryTexture::Fill`](crate::paint::EntryTexture::Fill) entries, each group's bars
+    /// directly below the entry of its lowest shown member, so the UI host draws them with the
+    /// rest of the list; a CPU compositor or test may also read them here. Pointer hits in the
+    /// bars of a fit-root group go to the group's lowest shown fit root ([`Ui::hit_test`]).
     #[must_use]
     pub fn letterbox_bars(&self) -> Vec<scaling::LetterboxBars> {
         let mut out = Vec::new();
@@ -1490,18 +1656,18 @@ impl Ui {
         }
     }
 
-    /// The fit roots whose group's letterbox bars contain the screen position (`x`, `y`) (UI
-    /// units), each being its group's **lowest shown** member (`ui-scaling.md` §5.4 step 6,
+    /// The fit roots whose group's letterbox bars contain the screen position (`x`, `y`) (real
+    /// UI units), each being its group's **lowest shown** member (`ui-scaling.md` §5.4 step 6,
     /// invariant I3): the bars of a fit-root group count as part of that root for hit testing,
     /// so the pointer hits it and never reaches anything behind a full-screen screen. Worked
     /// out once per hit test, in one pass over the screen's fit roots.
-    pub(crate) fn fit_root_bar_owners(&self, x: i32, y: i32) -> Vec<ElementKey> {
+    pub(crate) fn fit_root_bar_owners(&self, x: f64, y: f64) -> Vec<ElementKey> {
         let mut out = Vec::new();
         if self.ui_screen.is_none() {
             return out;
         }
         let (wu, hu) = self.screen_size;
-        if x < 0 || y < 0 || x >= wu || y >= hu {
+        if !(x >= 0.0 && y >= 0.0 && x < f64::from(wu) && y < f64::from(hu)) {
             return out;
         }
         for (_, members) in self.scan_partition(self.screen).buckets {
@@ -1518,7 +1684,8 @@ impl Ui {
             {
                 continue;
             }
-            if !shown.iter().any(|m| self.displayed_box(*m).contains(x, y)) {
+            // The real displayed boxes (§3.4), as the drawn member pictures are (§3.6).
+            if !shown.iter().any(|m| self.real_edges(*m).0.contains(x, y)) {
                 out.push(lowest);
             }
         }
@@ -1544,6 +1711,19 @@ struct Frame {
     old: IBox,
     new: IBox,
     offset: (i32, i32),
+}
+
+/// The unrounded scaling-origin point of a root panel with a per-window factor
+/// (`ui-scaling.md` §7.4, [`Ui::set_window_scale`]).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct WindowAnchor {
+    /// The scaling origin's position in the parent's layout coordinates (UI units for a root
+    /// panel), unrounded.
+    pub(crate) x: f64,
+    pub(crate) y: f64,
+    /// The layout top-left the panel had when this was recorded; another position means the
+    /// panel was moved since, and the anchor is taken again from where it is.
+    pub(crate) at: (i32, i32),
 }
 
 /// The fit-to-screen record of a root panel (`ui-scaling.md` §5.6): the node scale *q*
@@ -1667,10 +1847,5 @@ fn sanitize_safe(a: DBox, wu: i32, hu: i32) -> DBox {
 /// Rounds a real UI coordinate to the nearest integer layout unit, halves up (`ui-scaling.md`
 /// §3.5 "Moves and resizes"). A non-finite value becomes 0; the result is clamped into `i32`.
 fn round_i32(v: f64) -> i32 {
-    if !v.is_finite() {
-        return 0;
-    }
-    (v + 0.5)
-        .floor()
-        .clamp(f64::from(i32::MIN), f64::from(i32::MAX)) as i32
+    crate::geom::round_half_up(v)
 }

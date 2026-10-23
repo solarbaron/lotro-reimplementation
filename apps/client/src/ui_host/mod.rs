@@ -41,7 +41,7 @@ pub mod stats;
 pub mod text;
 
 use std::cell::{Ref, RefCell, RefMut};
-use std::collections::{BTreeSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::rc::Rc;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -87,6 +87,15 @@ pub const MAX_ENTRY_LINES: usize = 64;
 /// first job within 40 frames, plus the trigger frame).
 pub const MAX_EVENT_WINDOW_FRAMES: u32 = 41;
 
+/// The step of the per-window scale (`ui-scaling.md` §7.4: steps of 0.05).
+pub const GROUP_SCALE_STEP: f32 = 0.05;
+
+/// The Tessera limits of every per-window factor (`ui-scaling.md` §7.4: the group's data range
+/// intersected with 0.5–2.0). The client does not read the data ranges yet
+/// (`UIScaleDefinition_Array`, `ui-behaviour.md` §9.1), so only these limits apply unless a
+/// caller hands ranges to [`UiHost::set_group_scale_ranges`].
+pub const GROUP_SCALE_LIMITS: (f32, f32) = (0.5, 2.0);
+
 /// Construction options of the host.
 #[derive(Debug, Clone)]
 pub struct UiOptions {
@@ -126,6 +135,10 @@ struct BridgeIds {
     ui_scale_down: Option<tessera_input::ActionId>,
     ui_scale_auto: Option<tessera_input::ActionId>,
     ui_interface_window: Option<tessera_input::ActionId>,
+    /// The per-window scale gesture (`ui-scaling.md` §7.4): unbound by default, polled each
+    /// frame ([`UiHost::poll_scale_actions`]); it scales the panel under the pointer.
+    ui_window_scale_up: Option<tessera_input::ActionId>,
+    ui_window_scale_down: Option<tessera_input::ActionId>,
     /// The crafting-panel toggles (`crafting-panels.md` §12): `toggle_crafting` (T) and
     /// `toggle_crafting_1` … `3`, polled each frame ([`UiHost::poll_p6_actions`]).
     toggle_crafting: Option<tessera_input::ActionId>,
@@ -217,6 +230,22 @@ pub struct UiHost {
     ladders: Option<fonts::LadderLoader>,
     frames: u64,
     command_ids: Vec<(String, u32)>,
+    /// The command IDs of toggle type 3 (AutoRepeat) in table A of the default action map
+    /// (`keymap.md` §7.8.6, §12.10), handed to the mapper in [`Self::attach_mapper`] so key
+    /// repeat follows the install's action map. `None` without action-map data (an empty
+    /// table A from boot): the actions' own `repeat` flags decide then.
+    repeat_commands: Option<Vec<u32>>,
+    /// The scale definitions' ranges by scaling group (`ui-scaling.md` §7.4,
+    /// [`Self::set_group_scale_ranges`]); empty = 0.5–2.0 for every group.
+    group_ranges: BTreeMap<u32, (f32, f32)>,
+    /// Whether `[UI.group_scale]` changed since [`Self::take_group_scale_persist`].
+    group_scales_dirty: bool,
+    /// The root panels [`Self::apply_group_scales`] has seen; a root not in it was opened since
+    /// and gets its saved placement again once its factor is set (`ui-scaling.md` §5.8).
+    group_seen: BTreeSet<ElementKey>,
+    /// Group values not yet told to the plugin layer (`ui-scaling.md` §7.7 "Group values",
+    /// `lua-plugin-api.md` §13.21 rule 8), sent at the next delivery.
+    plugin_group_scales: Vec<(u32, f32)>,
     /// The character panel and bag windows (decision 0024 P1), with the install.
     character: Option<crate::character::panel::CharacterUi>,
     /// UI events for [`Self::character`], handled in [`Self::character_frame`] (they need
@@ -436,6 +465,11 @@ impl UiHost {
             ladders,
             frames: 0,
             command_ids: Vec::new(),
+            repeat_commands: None,
+            group_ranges: BTreeMap::new(),
+            group_scales_dirty: false,
+            group_seen: BTreeSet::new(),
+            plugin_group_scales: Vec::new(),
             character: None,
             character_events: Vec::new(),
             character_commands: Vec::new(),
@@ -541,6 +575,10 @@ impl UiHost {
             )
         });
         host.command_ids = b.command_ids;
+        // `keymap.md` §7.8.6: with action-map data a hold repeats exactly when its command has
+        // toggle type 3 in table A. Boot leaves the table empty when the record is missing or
+        // does not decode; then no set is handed over and the actions' flags decide.
+        host.set_toggle_types(&b.toggle_types);
         if let Some(s) = b.skins {
             let mut sel = SkinSelection::new(s.skins, s.tables, s.env);
             let name = host.prefs.user_skin.clone();
@@ -692,6 +730,12 @@ impl UiHost {
     /// the party views' actor source) in the windowed client.
     pub fn attach_plugins(&mut self, plugins: &mut Plugins, load: &[String]) {
         plugins.set_ui_binding(Some(self.plugin_ui.binding()));
+        // `ui-scaling.md` §7.7: the plugin layer starts with every saved group value.
+        let groups: Vec<u32> = self.prefs.group_scale.keys().copied().collect();
+        for g in groups {
+            let p = self.group_scale_of(g);
+            self.queue_plugin_group_scale(g, p);
+        }
         plugins.set_ui_driven(true);
         if let Some(h) = &self.env {
             h.borrow_mut()
@@ -730,9 +774,25 @@ impl UiHost {
         }
     }
 
+    /// Takes table A of the default action map (command ID → toggle type, `keymap.md`
+    /// §12.10) for the mapper's repeat rule (§7.8.6): the command IDs of type 3 (AutoRepeat)
+    /// are handed to the mapper at the next [`Self::attach_mapper`]. An empty table means no
+    /// action-map data, and no set is handed over (the actions' `repeat` flags decide).
+    pub fn set_toggle_types(&mut self, types: &BTreeMap<u32, u8>) {
+        self.repeat_commands = (!types.is_empty()).then(|| {
+            types
+                .iter()
+                .filter(|(_, t)| **t == 3)
+                .map(|(c, _)| *c)
+                .collect()
+        });
+    }
+
     /// Attaches the input mapper (decision 0014): the `pointer` context goes on, the
     /// command IDs from the install are handed over, and the UI band's contexts are
-    /// looked up.
+    /// looked up. With action-map data and command IDs the type-3 command set of
+    /// [`Self::set_toggle_types`] goes to [`InputMapper::set_repeat_commands`] (`keymap.md`
+    /// §7.8.6); otherwise the mapper gets no set.
     pub fn attach_mapper(&mut self, mapper: &mut InputMapper) {
         let reg = mapper.registry();
         let mut ids = BridgeIds::default();
@@ -757,6 +817,9 @@ impl UiHost {
         ids.ui_scale_down = reg.action("ui_scale_down");
         ids.ui_scale_auto = reg.action("ui_scale_auto");
         ids.ui_interface_window = reg.action("ui_interface_window");
+        // The per-window scale actions (`ui-scaling.md` §7.4), registered unbound too.
+        ids.ui_window_scale_up = reg.action("ui_window_scale_up");
+        ids.ui_window_scale_down = reg.action("ui_window_scale_down");
         ids.toggle_crafting = reg.action("toggle_crafting");
         ids.toggle_crafting_tabs = [
             reg.action("toggle_crafting_1"),
@@ -769,6 +832,23 @@ impl UiHost {
         }
         if !self.command_ids.is_empty() {
             mapper.set_command_ids(self.command_ids.iter().map(|(n, i)| (n.as_str(), *i)));
+        }
+        // `keymap.md` §7.8.6: the type-3 set of the action map decides repeat per hold. It
+        // names commands by their IDs, so it is handed over only together with the command-ID
+        // table; without either, the actions' `repeat` flags decide (and a set an earlier
+        // attach handed over is withdrawn).
+        match &self.repeat_commands {
+            Some(ids) if !self.command_ids.is_empty() => {
+                mapper.set_repeat_commands(Some(ids.iter().copied()));
+            }
+            other => {
+                if other.is_some() {
+                    tracing::info!(
+                        "action map has repeat data but no command IDs; key repeat follows the actions' flags"
+                    );
+                }
+                mapper.set_repeat_commands(None::<Vec<u32>>);
+            }
         }
         self.ids = ids;
     }
@@ -1348,7 +1428,13 @@ impl UiHost {
                 InterfaceApplied::Other
             }
             A::ResetWindowScales => {
+                let cleared: Vec<u32> = self.prefs.group_scale.keys().copied().collect();
+                for g in cleared {
+                    self.queue_plugin_group_scale(g, 1.0);
+                }
                 self.prefs.group_scale.clear();
+                // Every panel of a group goes back to 1.0 at once (§7.2 row 10, §7.4).
+                self.apply_group_scales();
                 let p = self.note_interface_persist();
                 p.clear_groups = true;
                 InterfaceApplied::Other
@@ -1402,6 +1488,182 @@ impl UiHost {
         if pressed(self.ids.ui_interface_window) {
             self.want_interface = true;
         }
+        if pressed(self.ids.ui_window_scale_up) {
+            self.step_window_scale(GROUP_SCALE_STEP);
+        }
+        if pressed(self.ids.ui_window_scale_down) {
+            self.step_window_scale(-GROUP_SCALE_STEP);
+        }
+    }
+
+    /// The per-window scale gesture (`ui-scaling.md` §7.4) over the panel under the pointer:
+    /// the panel's scaling group *g* (`UIComponent_UIScaler_Group`) takes the factor *p* ±
+    /// 0.05, on the 0.05 grid, within the group's range; every open panel of the group follows
+    /// ([`Self::apply_group_scales`]) and `[UI.group_scale]` is written off the frame thread
+    /// ([`Self::take_group_scale_persist`]), and the plugin layer is told the group's new value
+    /// at the next delivery (§7.7). Nothing happens, and nothing is saved, over a panel without
+    /// a group, a plugin window, a panel that takes no per-window factor
+    /// ([`tessera_ui::Ui::accepts_window_scale`]) or no panel at all. Returns whether a factor
+    /// changed.
+    pub fn step_window_scale(&mut self, delta: f32) -> bool {
+        let root = {
+            let ui = self.ui.borrow();
+            ui.hovered().and_then(|h| ui.screen_root_of(h))
+        };
+        root.is_some_and(|r| self.step_panel_scale(r, delta))
+    }
+
+    /// The step of [`Self::step_window_scale`] for the root panel `root` (`ui-scaling.md`
+    /// §7.4): its group's factor changes by `delta` on the 0.05 grid. Returns whether it
+    /// changed.
+    pub fn step_panel_scale(&mut self, root: ElementKey, delta: f32) -> bool {
+        let group = {
+            let ui = self.ui.borrow();
+            // A panel that takes no per-window factor (a plugin window, a fit root, one the
+            // panel-scale rule owns) is not scaled, and nothing is saved for it.
+            if ui.is_control(root) || !ui.accepts_window_scale(root) {
+                return false;
+            }
+            let g = ui.prop(root, ui.vocab().pids.scaler_group);
+            if !g.is_set() {
+                return false;
+            }
+            u32::try_from(g.int()).ok()
+        };
+        let Some(g) = group else { return false };
+        let cur = self.group_scale_of(g);
+        let (lo, hi) = self.group_scale_range(g);
+        let p = (((cur + delta) / GROUP_SCALE_STEP).round() * GROUP_SCALE_STEP).clamp(lo, hi);
+        if (p - cur).abs() <= f32::EPSILON {
+            return false;
+        }
+        if (p - 1.0).abs() <= f32::EPSILON {
+            self.prefs.group_scale.remove(&g);
+        } else {
+            self.prefs.group_scale.insert(g, p);
+        }
+        self.group_scales_dirty = true;
+        self.frame.event = true;
+        self.queue_plugin_group_scale(g, p);
+        self.apply_group_scales();
+        true
+    }
+
+    /// Notes a changed group value for the plugin layer (`ui-scaling.md` §7.7 "Group values"):
+    /// sent at the next delivery, where marked plugin windows of the group take it and get
+    /// `UIScaleChanged` (`lua-plugin-api.md` §13.21 rule 8). A later value of the same group
+    /// replaces a pending one.
+    fn queue_plugin_group_scale(&mut self, g: u32, p: f32) {
+        self.plugin_group_scales.retain(|(q, _)| *q != g);
+        self.plugin_group_scales.push((g, p));
+    }
+
+    /// Sends the pending group values to the plugin layer and handles the delivery's events.
+    fn flush_plugin_group_scales(&mut self, plugins: &mut Plugins) {
+        let pending = std::mem::take(&mut self.plugin_group_scales);
+        for (g, p) in pending {
+            let events = self.plugin_ui.scale_changed(plugins.manager(), g, p);
+            self.handle_client_events(plugins, events);
+        }
+    }
+
+    /// The factor of scaling group `g` (`ui-scaling.md` §7.4): its `[UI.group_scale]` entry,
+    /// 1.0 when absent, held to the group's range.
+    #[must_use]
+    pub fn group_scale_of(&self, g: u32) -> f32 {
+        let (lo, hi) = self.group_scale_range(g);
+        self.prefs
+            .group_scale
+            .get(&g)
+            .copied()
+            .filter(|v| v.is_finite())
+            .unwrap_or(1.0)
+            .clamp(lo, hi)
+    }
+
+    /// The range of scaling group `g` (§7.4): the group's `UIScaleDefinition_Min`/`Max` handed
+    /// to [`Self::set_group_scale_ranges`] intersected with 0.5–2.0, or 0.5–2.0 when the host
+    /// has no range for the group. The client does not read `UIScaleDefinition_Array` yet, so
+    /// in the client every group has 0.5–2.0 today. A range that does not meet 0.5–2.0 (or is
+    /// not finite) leaves only 1.0: the group is not scaled (a Tessera choice; the spec does
+    /// not say, proposed as an OPEN).
+    #[must_use]
+    pub fn group_scale_range(&self, g: u32) -> (f32, f32) {
+        let (min, max) = GROUP_SCALE_LIMITS;
+        match self.group_ranges.get(&g) {
+            Some(&(lo, hi)) if lo.is_finite() && hi.is_finite() && lo.max(min) <= hi.min(max) => {
+                (lo.max(min), hi.min(max))
+            }
+            Some(_) => (1.0, 1.0),
+            None => (min, max),
+        }
+    }
+
+    /// The scale definitions' ranges by group (`ui-behaviour.md` §9.1: `UIScaleDefinition_Min`
+    /// and `_Max` of each `UIScaleDefinition_Array` entry), for [`Self::group_scale_range`].
+    /// Nothing in the client calls this yet (the array is not read at UI boot).
+    pub fn set_group_scale_ranges(&mut self, ranges: BTreeMap<u32, (f32, f32)>) {
+        self.group_ranges = ranges;
+        self.apply_group_scales();
+    }
+
+    /// Gives every native root panel with a scaling group its group's factor (`ui-scaling.md`
+    /// §7.4): the root panels of the screen and the modal dialogs ([`Ui::screen_roots`]), the
+    /// panels opened since included. A panel whose factor is already right, or that takes no
+    /// factor ([`Ui::accepts_window_scale`]), is left alone. A panel opened since the last call
+    /// that gets a factor other than 1 has its saved placement applied again afterwards, so the
+    /// placement uses its real displayed size (§5.8 "Applying"). Runs after panel calls and
+    /// deliveries, like [`Self::apply_native_scale`].
+    fn apply_group_scales(&mut self) {
+        let (todo, roots): (Vec<(ElementKey, f32, bool)>, Vec<ElementKey>) = {
+            let ui = self.ui.borrow();
+            let pid = ui.vocab().pids.scaler_group;
+            let roots: Vec<ElementKey> = ui
+                .screen_roots()
+                .into_iter()
+                .filter(|k| !ui.is_control(*k))
+                .collect();
+            let todo = roots
+                .iter()
+                .copied()
+                .filter(|k| ui.accepts_window_scale(*k))
+                .filter_map(|k| {
+                    let g = ui.prop(k, pid);
+                    if !g.is_set() {
+                        return None;
+                    }
+                    let g = u32::try_from(g.int()).ok()?;
+                    let want = self.group_scale_of(g);
+                    ((ui.window_scale(k) - want).abs() > f32::EPSILON).then_some((
+                        k,
+                        want,
+                        !self.group_seen.contains(&k),
+                    ))
+                })
+                .collect();
+            (todo, roots)
+        };
+        self.group_seen.retain(|k| roots.contains(k));
+        self.group_seen.extend(roots.iter().copied());
+        if todo.is_empty() {
+            return;
+        }
+        let mut ui = self.ui.borrow_mut();
+        for (k, p, new) in todo {
+            if ui.set_window_scale(k, p) && new {
+                ui.reapply_saved_placement(k);
+            }
+        }
+    }
+
+    /// `[UI.group_scale]`, once after a gesture changed it (the frame loop hands it to the
+    /// settings writer, off the frame thread; `ui-scaling.md` §4.4, §7.4). Not saved in
+    /// scripted runs, like the placements ([`Self::set_persist_placements`]).
+    pub fn take_group_scale_persist(&mut self) -> Option<BTreeMap<u32, f32>> {
+        if !std::mem::take(&mut self.group_scales_dirty) || !self.persist_placements {
+            return None;
+        }
+        Some(self.prefs.group_scale.clone())
     }
 
     /// The crafting-panel toggles pressed this frame (`crafting-panels.md` §4.1, §12):
@@ -1484,6 +1746,7 @@ impl UiHost {
         self.run_deferred(plugins);
         self.deliver(plugins);
         self.apply_native_scale();
+        self.apply_group_scales();
     }
 
     /// Keeps the OS cursor hidden over the window while the software cursor is in use
@@ -1547,6 +1810,7 @@ impl UiHost {
     /// Delivers plugin notifications and routes the client events to the panels, until
     /// nothing is left (at most [`MAX_DELIVERY_ROUNDS`] rounds).
     fn deliver(&mut self, plugins: &mut Plugins) {
+        self.flush_plugin_group_scales(plugins);
         for _ in 0..MAX_DELIVERY_ROUNDS {
             let events = self.plugin_ui.deliver(plugins.manager());
             if events.is_empty() && self.deferred.borrow().is_empty() {
@@ -1556,6 +1820,7 @@ impl UiHost {
             self.run_deferred(plugins);
         }
         self.apply_native_scale();
+        self.apply_group_scales();
     }
 
     fn handle_client_events(&mut self, plugins: &mut Plugins, events: Vec<UiEvent>) {
@@ -2733,6 +2998,319 @@ mod tests {
             rescaled_cursor(Some((10.0, 4.0)), f64::NAN),
             Some((10.0, 4.0))
         );
+    }
+
+    /// `keymap.md` §7.8.6: the mapper gets the action map's type-3 command set at attach only
+    /// with both action-map data and command IDs; a later attach without them withdraws it from
+    /// the same mapper.
+    #[test]
+    fn attach_hands_over_the_repeat_set() {
+        use tessera_input::{InputMapper, default_keymap, default_registry};
+        let options = UiOptions::default();
+        let mut host = UiHost::new(
+            Box::new(tessera_ui::NullEnv),
+            None,
+            Vocab::default(),
+            &options,
+        );
+        let (mut mapper, _) = InputMapper::new(default_registry(), &default_keymap());
+        host.attach_mapper(&mut mapper);
+        assert!(mapper.repeat_commands().is_none(), "no action map, no set");
+        let types: BTreeMap<u32, u8> = [(10, 3), (11, 2), (12, 3), (13, 1)].into();
+        host.set_toggle_types(&types);
+        // Table A without command IDs: no hold carries an ID, so no set (the flags decide).
+        host.attach_mapper(&mut mapper);
+        assert!(mapper.repeat_commands().is_none(), "no command IDs, no set");
+        host.command_ids = vec![("backspace".to_owned(), 10)];
+        host.attach_mapper(&mut mapper);
+        let got: BTreeSet<u32> = mapper
+            .repeat_commands()
+            .expect("set handed over")
+            .iter()
+            .copied()
+            .collect();
+        assert_eq!(got, [10, 12].into());
+        // An empty table A is no action-map data: the same mapper loses the old set.
+        host.set_toggle_types(&BTreeMap::new());
+        host.attach_mapper(&mut mapper);
+        assert!(mapper.repeat_commands().is_none(), "withdrawn on re-attach");
+    }
+
+    /// One layout with three 400 × 300 root panels of scaling group 9 that save their location
+    /// (`ROOT`, `SECOND`, and the modal dialog `DIALOG`) and one without a group (`PLAIN`).
+    fn group_host() -> UiHost {
+        use tessera_formats::Did;
+        use tessera_formats::property::{PropertyEntry, PropertyValue};
+        use tessera_formats::ui_layout::{ElementDesc, UiLayout};
+        let v = Vocab::default();
+        let el = |id: u32, x: i32, y: i32, props: Vec<(u32, PropertyValue)>| {
+            let mut d = ElementDesc {
+                element_id: id,
+                element_type: v.types.field,
+                ..ElementDesc::default()
+            };
+            d.block.rect.x = x;
+            d.block.rect.y = y;
+            d.block.rect.width = 400;
+            d.block.rect.height = 300;
+            d.block.has_position = true;
+            for (pid, value) in props {
+                d.block
+                    .properties
+                    .entries
+                    .push(PropertyEntry { pid, value });
+            }
+            d.block.properties.size.count = d.block.properties.entries.len() as u32;
+            d
+        };
+        let g = |extra: Vec<(u32, PropertyValue)>| {
+            let mut p = vec![
+                (v.pids.scaler_group, PropertyValue::Int(9)),
+                (v.pids.save_loc, PropertyValue::Bool(true)),
+            ];
+            p.extend(extra);
+            p
+        };
+        let mut l = UiLayout {
+            did: Did(GROUP_LAYOUT),
+            design_width: 1920,
+            design_height: 1080,
+            ..UiLayout::default()
+        };
+        l.elements = vec![
+            el(GROUP_ROOT, 300, 200, g(vec![])),
+            el(GROUP_SECOND, 900, 200, g(vec![])),
+            el(
+                GROUP_DIALOG,
+                700,
+                600,
+                g(vec![(v.pids.dialog_modal, PropertyValue::Bool(true))]),
+            ),
+            el(GROUP_PLAIN, 100, 700, vec![]),
+        ];
+        l.elements_size.count = l.elements.len() as u32;
+        let mut env = tessera_ui::MemoryEnv::default();
+        env.add_layout(l);
+        let options = UiOptions {
+            screen: (1920, 1080),
+            hud: false,
+            ..UiOptions::default()
+        };
+        let mut host = UiHost::new(Box::new(env), None, v, &options);
+        host.set_persist_placements(true);
+        host
+    }
+
+    const GROUP_LAYOUT: u32 = 0x22FF_6100;
+    const GROUP_ROOT: u32 = 0x1000_6101;
+    const GROUP_SECOND: u32 = 0x1000_6102;
+    const GROUP_DIALOG: u32 = 0x1000_6103;
+    const GROUP_PLAIN: u32 = 0x1000_6104;
+
+    fn open_group(host: &mut UiHost, id: u32) -> ElementKey {
+        let k = host
+            .ui_mut()
+            .open_panel(tessera_formats::Did(GROUP_LAYOUT), id)
+            .expect("panel");
+        // As the native panels do when a panel opens (`panels/mod.rs`): the saved placement.
+        host.ui_mut().apply_saved(k);
+        host.apply_group_scales();
+        k
+    }
+
+    /// `ui-scaling.md` §7.4: the gesture steps the panel's group by 0.05 within 0.5–2.0, the
+    /// panel takes it as a uniform node scale, a panel of the group opened afterwards takes it
+    /// too, the change is persisted once and queued for the plugin layer, and "Reset window
+    /// scales" puts every panel back to 1.
+    #[test]
+    fn per_window_scale_follows_the_group() {
+        let mut host = group_host();
+        let k = open_group(&mut host, GROUP_ROOT);
+        assert_eq!(host.group_scale_range(9), GROUP_SCALE_LIMITS);
+        assert!(host.step_panel_scale(k, GROUP_SCALE_STEP));
+        assert!(host.step_panel_scale(k, GROUP_SCALE_STEP));
+        assert!((host.group_scale_of(9) - 1.1).abs() < 1e-6);
+        assert!((host.ui().window_scale(k) - 1.1).abs() < 1e-6);
+        let persisted = host.take_group_scale_persist().expect("persisted");
+        assert!((persisted[&9] - 1.1).abs() < 1e-6);
+        assert!(host.take_group_scale_persist().is_none(), "once");
+        assert_eq!(
+            host.plugin_group_scales.len(),
+            1,
+            "one pending value per group"
+        );
+        assert!((host.plugin_group_scales[0].1 - 1.1).abs() < 1e-6);
+        // A panel of the group opened after the step takes the factor.
+        let second = open_group(&mut host, GROUP_SECOND);
+        assert!((host.ui().window_scale(second) - 1.1).abs() < 1e-6);
+        // Held to the range: 2.0 at most.
+        for _ in 0..40 {
+            host.step_panel_scale(k, GROUP_SCALE_STEP);
+        }
+        assert_eq!(host.group_scale_of(9), 2.0);
+        assert!(
+            !host.step_panel_scale(k, GROUP_SCALE_STEP),
+            "no change past the top"
+        );
+        // A data range narrows it (intersected with 0.5–2.0) ...
+        host.set_group_scale_ranges([(9, (0.4, 1.5))].into());
+        assert_eq!(host.group_scale_range(9), (0.5, 1.5));
+        assert_eq!(
+            host.ui().window_scale(k),
+            1.5,
+            "re-applied within the range"
+        );
+        // ... and one that does not meet 0.5–2.0 leaves only 1.0.
+        host.set_group_scale_ranges([(9, (2.5, 3.0))].into());
+        assert_eq!(host.group_scale_range(9), (1.0, 1.0));
+        assert_eq!(host.ui().window_scale(k), 1.0);
+        host.set_group_scale_ranges(BTreeMap::new());
+        // Reset window scales: every panel of the group back to 1, and the plugins told.
+        let _ = host.apply_interface_action(
+            tessera_ui::game::interface::InterfaceAction::ResetWindowScales,
+            std::time::Instant::now(),
+        );
+        assert_eq!(host.ui().window_scale(k), 1.0);
+        assert_eq!(host.ui().window_scale(second), 1.0);
+        assert_eq!(host.plugin_group_scales.last(), Some(&(9, 1.0)));
+        // An element without a group is not scaled.
+        let plain = open_group(&mut host, GROUP_PLAIN);
+        assert!(!host.step_panel_scale(plain, GROUP_SCALE_STEP));
+        let screen = host.ui().screen_root();
+        assert!(!host.step_panel_scale(screen, GROUP_SCALE_STEP));
+    }
+
+    /// §7.4 and §5.8: a panel whose placement was saved centred at p = 1.5 comes back at the
+    /// same displayed box when it is opened again (the placement is applied with its scaled
+    /// size), and stays there after a change of F.
+    #[test]
+    fn a_reopened_scaled_panel_keeps_its_saved_box() {
+        let mut host = group_host();
+        host.prefs.group_scale.insert(9, 1.5);
+        let k = open_group(&mut host, GROUP_ROOT);
+        assert_eq!(host.ui().window_scale(k), 1.5);
+        // The user leaves it centred: displayed 660, 315, 600 × 450 at C2.
+        let d = host.ui().displayed_box(k);
+        let b = host.ui().layout_box(k).expect("box");
+        host.ui_mut()
+            .move_to(k, b.l + (660 - d.l), b.t + (315 - d.t));
+        host.ui_mut().record_saved(k);
+        let saved = host.ui().displayed_box(k);
+        assert_eq!(
+            (saved.l, saved.t, saved.w(), saved.h()),
+            (660, 315, 600, 450)
+        );
+        host.ui_mut().destroy(k);
+        host.apply_group_scales();
+        let k = open_group(&mut host, GROUP_ROOT);
+        assert_eq!(
+            host.ui().displayed_box(k),
+            saved,
+            "same box after reopening"
+        );
+    }
+
+    /// §7.4: a modal dialog of the group follows the gesture too (it is a screen root in the
+    /// dialog container), and the gesture over it scales the group.
+    #[test]
+    fn a_modal_dialog_follows_its_group() {
+        let mut host = group_host();
+        let k = open_group(&mut host, GROUP_ROOT);
+        let dlg = open_group(&mut host, GROUP_DIALOG);
+        assert_ne!(
+            host.ui().parent(dlg),
+            Some(host.ui().screen_root()),
+            "modal"
+        );
+        assert_eq!(host.ui().screen_root_of(dlg), Some(dlg));
+        assert!(host.step_panel_scale(dlg, GROUP_SCALE_STEP));
+        assert!((host.ui().window_scale(dlg) - 1.05).abs() < 1e-6);
+        assert!((host.ui().window_scale(k) - 1.05).abs() < 1e-6);
+    }
+
+    /// §7.4: over a panel the panel-scale rule owns (`Ui::scale_panel` at 1.5) the gesture
+    /// changes and saves nothing; once that rule is back at 1 the panel follows the group.
+    #[test]
+    fn the_gesture_skips_a_panel_it_cannot_scale() {
+        let mut host = group_host();
+        let k = open_group(&mut host, GROUP_ROOT);
+        host.ui_mut().scale_panel(k, 1.5, true);
+        assert!(!host.step_panel_scale(k, GROUP_SCALE_STEP));
+        assert!(host.take_group_scale_persist().is_none(), "nothing saved");
+        assert!(host.prefs.group_scale.is_empty());
+        host.ui_mut().scale_panel(k, 1.0, true);
+        assert!(host.step_panel_scale(k, GROUP_SCALE_STEP));
+        assert!((host.ui().window_scale(k) - 1.05).abs() < 1e-6);
+    }
+
+    /// `ui-scaling.md` §7.7 "Group values": a marked plugin window of group 9 takes the group's
+    /// new value after a gesture on a native panel of the group, `GetUIGroupScale(9)` returns
+    /// it and `UIScaleChanged` fires once.
+    #[test]
+    fn plugin_windows_follow_the_group_gesture() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let plugins_dir = dir.path().join("Plugins");
+        let pkg = plugins_dir.join("T");
+        std::fs::create_dir_all(&pkg).expect("mkdir");
+        std::fs::write(
+            pkg.join("Gs.plugin"),
+            "<Plugin><Information><Name>Gs</Name><Author>Tessera</Author>\
+             <Version>1</Version></Information><Package>T.Gs</Package>\
+             <Configuration Apartment=\"Default\"/></Plugin>",
+        )
+        .expect("descriptor");
+        std::fs::write(
+            pkg.join("Gs.lua"),
+            "W = Turbine.UI.Window()\n\
+             W:SetSize(100, 50)\n\
+             W:SetUIScalingGroup(9)\n\
+             W:SetVisible(true)\n\
+             Changes = {}\n\
+             W.UIScaleChanged = function(_, a) Changes[#Changes + 1] = a.Index .. '=' .. string.format('%.2f', a.Value) end\n",
+        )
+        .expect("plugin");
+        let mut plugins = Plugins::start(&plugins_dir, dir.path().join("data"), &[]);
+        plugins.data_unavailable();
+        let mut host = group_host();
+        host.attach_plugins(&mut plugins, &["Gs".to_owned()]);
+        let start = std::time::Instant::now();
+        while plugins.manager().loaded_plugins().is_empty() {
+            plugins.pump();
+            plugins.pump_step7();
+            host.deliver(&mut plugins);
+            assert!(start.elapsed() < Duration::from_secs(30), "plugin load");
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        host.deliver(&mut plugins);
+        let eval = |plugins: &Plugins, src: &str| -> String {
+            plugins
+                .manager()
+                .with_lua("Default", |lua| lua.load(src).eval::<String>())
+                .expect("apartment")
+                .expect("evaluates")
+        };
+        let k = open_group(&mut host, GROUP_ROOT);
+        assert!(host.step_panel_scale(k, GROUP_SCALE_STEP));
+        host.deliver(&mut plugins);
+        assert_eq!(
+            eval(
+                &plugins,
+                "return tostring(#T.Changes) .. ' ' .. tostring(T.Changes[1])"
+            ),
+            "1 9=1.05",
+            "UIScaleChanged once"
+        );
+        let got: f64 = eval(
+            &plugins,
+            "return string.format('%.4f', Turbine.UI.Display.GetUIGroupScale(9))",
+        )
+        .parse()
+        .expect("number");
+        assert!((got - 1.05).abs() < 1e-4, "GetUIGroupScale(9) = {got}");
+        let w = host.plugin_ui().windows("Default");
+        assert_eq!(w.len(), 1, "one window");
+        let s = host.ui().node_scale_at_or_above(w[0]).0;
+        assert!((s - 1.05).abs() < 1e-4, "the window's node scale {s}");
     }
 
     #[test]

@@ -8,7 +8,7 @@ use std::sync::Arc;
 use crate::env::ImageState;
 use crate::events::{Answer, Command, MsgArg, UiEvent};
 use crate::tree::ElementKey;
-use crate::ui::{MAX_TREE_DEPTH, Ui};
+use crate::ui::{MAX_TREE_DEPTH, RealBox, Ui};
 use crate::vocab::{commands, input_maps};
 
 /// A capture (`ui-behaviour.md` §4.5).
@@ -24,6 +24,10 @@ pub(crate) struct Capture {
 #[derive(Debug, Clone, Default)]
 pub(crate) struct InputState {
     pub pointer: Option<(i32, i32)>,
+    /// The pointer as real UI coordinates (`ui-scaling.md` §3.6 "Pointer → UI units"), when the
+    /// last move came with them ([`Ui::pointer_moved_real`]); [`Self::pointer`] is its floor.
+    /// Under a UI screen the hit test compares this with the real displayed boxes (§3.5).
+    pub pointer_real: Option<(f64, f64)>,
     /// The pointer left the window; no hit testing until a position inside arrives.
     pub outside: bool,
     /// The pointer lock with its frozen position (decision 0014 D7).
@@ -107,6 +111,36 @@ impl Ui {
         if !b.contains(x, y) {
             return false;
         }
+        let (rx, ry) = (x.saturating_sub(b.l), y.saturating_sub(b.t));
+        self.passes_masks(k, rx, ry, None)
+    }
+
+    /// The point-in-element test (§4.1) under a UI screen (`ui-scaling.md` §3.5, §3.6): the
+    /// real pointer (`x`, `y`) against `k`'s real displayed box `b` (half-open), whose nearest
+    /// node scale at or above is `m`. The alpha test converts the point to `k`'s own unscaled
+    /// pixels as ⌊(*ux* − displayed left) ÷ *mx*⌋ (§3.6 "Inside an element").
+    fn point_in_real(&mut self, k: ElementKey, x: f64, y: f64, b: &RealBox, m: (f64, f64)) -> bool {
+        if !b.contains(x, y) {
+            return false;
+        }
+        let floor = |v: f64| crate::geom::trunc_f64(v.floor());
+        let (dx, dy) = (x - b.l, y - b.t);
+        let div = |v: f64, s: f64| if s > 0.0 && s.is_finite() { v / s } else { v };
+        let unscaled = (floor(div(dx, m.0)), floor(div(dy, m.1)));
+        self.passes_masks(k, floor(dx), floor(dy), Some(unscaled))
+    }
+
+    /// The hit-mask and alpha-threshold part of the point-in-element test (§4.1 step 3), at
+    /// (`rx`, `ry`) relative to `k`'s displayed top-left. `unscaled` is the point in `k`'s own
+    /// unscaled pixels when the caller worked it out (the real path); otherwise it is derived
+    /// from the node scale as UB46 says.
+    fn passes_masks(
+        &mut self,
+        k: ElementKey,
+        rx: i32,
+        ry: i32,
+        unscaled: Option<(i32, i32)>,
+    ) -> bool {
         // Hit masks: none occurs in the data; their pass rule is OPEN (§4.1). Tessera
         // ignores a mask whose image is not loaded and otherwise tests alpha > 0.
         let (mask, thr, base) = match self.el(k) {
@@ -117,7 +151,6 @@ impl Ui {
             ),
             None => return false,
         };
-        let (rx, ry) = (x.saturating_sub(b.l), y.saturating_sub(b.t));
         if mask != 0
             && let ImageState::Ready(img) = self.env.image(&crate::env::ImageRef::Did(mask))
             && let Some(px) = img.pixel(
@@ -130,13 +163,19 @@ impl Ui {
         }
         if let (Some(t), Some(base)) = (thr, base) {
             let threshold = crate::props::as_int(&t);
-            let (ex, ey, ez) = self.node_scale_at_or_above(k);
-            let differs = |v: f32| (v - 1.0).abs() > 0.0002;
-            let (mut px, mut py) = (rx, ry);
-            if differs(ex) || differs(ey) || differs(ez) {
-                px = crate::geom::trunc_f32(px as f32 / if ex == 0.0 { 1.0 } else { ex });
-                py = crate::geom::trunc_f32(py as f32 / if ey == 0.0 { 1.0 } else { ey });
-            }
+            let (px, py) = match unscaled {
+                Some(u) => u,
+                None => {
+                    let (ex, ey, ez) = self.node_scale_at_or_above(k);
+                    let differs = |v: f32| (v - 1.0).abs() > 0.0002;
+                    let (mut px, mut py) = (rx, ry);
+                    if differs(ex) || differs(ey) || differs(ez) {
+                        px = crate::geom::trunc_f32(px as f32 / if ex == 0.0 { 1.0 } else { ex });
+                        py = crate::geom::trunc_f32(py as f32 / if ey == 0.0 { 1.0 } else { ey });
+                    }
+                    (px, py)
+                }
+            };
             if let ImageState::Ready(img) = self.env.image(&base.image) {
                 let (ox, oy) = self.el(k).map(|e| e.image_offset).unwrap_or((0, 0));
                 let ix = px.saturating_sub(ox).rem_euclid(img.width().max(1) as i32) as u32;
@@ -165,7 +204,7 @@ impl Ui {
         // `ui-scaling.md` §5.4 step 6, invariant I3: the fit roots whose group's letterbox
         // bars hold the point, worked out once for this hit test.
         let bar_owners = if k == self.screen && self.ui_screen.is_some() {
-            self.fit_root_bar_owners(px, py)
+            self.fit_root_bar_owners(f64::from(px), f64::from(py))
         } else {
             Vec::new()
         };
@@ -228,8 +267,12 @@ impl Ui {
     }
 
     /// The hit test (§4.2) at a screen position, against the current geometry (decision
-    /// 0014 D8: pending list layouts are completed first).
+    /// 0014 D8: pending list layouts are completed first). Under a UI screen it is
+    /// [`Self::hit_test_real`] at (`x`, `y`).
     pub fn hit_test(&mut self, x: i32, y: i32) -> Option<ElementKey> {
+        if self.ui_screen.is_some() {
+            return self.hit_test_real(f64::from(x), f64::from(y));
+        }
         self.flush_list_layouts();
         let root = self.screen;
         let rb = self.displayed_rel(root);
@@ -238,6 +281,108 @@ impl Ui {
         }
         // The fade test of §4.2 step 1 runs in `hit_rec`, the root included.
         self.hit_rec(root, x, y, 0)
+    }
+
+    /// The hit test (§4.2) at a real position in UI units (`ui-scaling.md` §3.5, §3.6: the
+    /// pointer's pixel centre mapped to UI units), against the **real** displayed boxes of
+    /// §3.4, half-open. A physical pixel lies in an element's physical box
+    /// ([`Ui::physical_box`]) exactly when this test at its centre hits the element (I3). The
+    /// parent's real box is carried down the tree, so each tested element costs O(1) and the
+    /// test allocates nothing per element. At the identity (no UI screen) this is the integer
+    /// test of [`Self::hit_test`] at ⌊`x`⌋, ⌊`y`⌋.
+    pub fn hit_test_real(&mut self, x: f64, y: f64) -> Option<ElementKey> {
+        if !x.is_finite() || !y.is_finite() {
+            return None;
+        }
+        if self.ui_screen.is_none() {
+            let c = |v: f64| crate::geom::clamp_coord(crate::geom::trunc_f64(v.floor()));
+            return self.hit_test(c(x), c(y));
+        }
+        self.flush_list_layouts();
+        let root = self.screen;
+        let (rb, rm) = self.real_edges(root);
+        if !rb.contains(x, y) {
+            return None;
+        }
+        self.hit_rec_real(root, x, y, &rb, rm, 0)
+    }
+
+    /// [`Self::hit_rec`] on the real geometry: `kb` and `km` are `k`'s real displayed box and
+    /// its *m*.
+    fn hit_rec_real(
+        &mut self,
+        k: ElementKey,
+        x: f64,
+        y: f64,
+        kb: &RealBox,
+        km: (f64, f64),
+        depth: usize,
+    ) -> Option<ElementKey> {
+        if depth > MAX_TREE_DEPTH + 2 {
+            return None;
+        }
+        let e = self.el(k)?;
+        if !e.visible || e.fade.is_some() || e.drag_icon {
+            return None;
+        }
+        let kids = self.children(k);
+        let bar_owners = if k == self.screen {
+            self.fit_root_bar_owners(x, y)
+        } else {
+            Vec::new()
+        };
+        for c in kids.iter().rev() {
+            let (cb, cm) = self.real_step(*c, kb, km);
+            if self.point_in_real(*c, x, y, &cb, cm)
+                && let Some(h) = self.hit_rec_real(*c, x, y, &cb, cm, depth + 1)
+            {
+                return Some(h);
+            }
+            if let Some(h) = self.hit_overhang_real(*c, x, y, &cb, cm, depth + 1) {
+                return Some(h);
+            }
+            if bar_owners.contains(c) {
+                return Some(*c);
+            }
+        }
+        let e = self.el(k)?;
+        (e.mouse_visible || e.blocks_clicks).then_some(k)
+    }
+
+    /// [`Self::hit_overhang`] on the real geometry (`wb`, `wm`: `w`'s real box and *m*).
+    fn hit_overhang_real(
+        &mut self,
+        w: ElementKey,
+        x: f64,
+        y: f64,
+        wb: &RealBox,
+        wm: (f64, f64),
+        depth: usize,
+    ) -> Option<ElementKey> {
+        let rise = self.displayed_overhang(w);
+        if rise == 0 || depth > MAX_TREE_DEPTH + 2 {
+            return None;
+        }
+        let e = self.el(w)?;
+        if !e.visible || e.fade.is_some() || e.drag_icon {
+            return None;
+        }
+        let strip = wb.t - f64::from(rise);
+        if wb.contains(x, y) || x < wb.l || x >= wb.r || y < strip || y >= wb.t {
+            return None;
+        }
+        for c in self.children(w).iter().rev() {
+            if self.is_control(*c) {
+                continue;
+            }
+            let (cb, cm) = self.real_step(*c, wb, wm);
+            if self.point_in_real(*c, x, y, &cb, cm)
+                && let Some(h) = self.hit_rec_real(*c, x, y, &cb, cm, depth + 1)
+            {
+                return Some(h);
+            }
+        }
+        None
     }
 
     // ----- hover (§4.4) ------------------------------------------------------------------
@@ -259,7 +404,11 @@ impl Ui {
     pub(crate) fn update_hover(&mut self) {
         self.input.hover_dirty = false;
         let hit = match (self.input.pointer, self.input.lock, self.input.outside) {
-            (Some((x, y)), None, false) => self.hit_test(x, y),
+            (Some((x, y)), None, false) => match self.input.pointer_real {
+                // `ui-scaling.md` §3.5: the real pointer against the real boxes.
+                Some((rx, ry)) if self.ui_screen.is_some() => self.hit_test_real(rx, ry),
+                _ => self.hit_test(x, y),
+            },
             _ => None,
         };
         self.input.hit = hit;
@@ -333,11 +482,41 @@ impl Ui {
     // ----- pointer input -----------------------------------------------------------------
 
     /// A pointer move to (`x`, `y`) in screen pixels (§4.4, §4.6 "Pointer moves", §6.2
-    /// step 1, §7.1 step 2).
+    /// step 1, §7.1 step 2). Under a UI screen the hit test takes (`x`, `y`) as real UI
+    /// coordinates; [`Self::pointer_moved_real`] passes the pointer's exact position.
     pub fn pointer_moved(&mut self, x: i32, y: i32) {
         if self.input.lock.is_some() {
             return;
         }
+        self.input.pointer_real = None;
+        self.pointer_moved_int(x, y);
+    }
+
+    /// A pointer move to the real UI position (`x`, `y`) (`ui-scaling.md` §3.6 "Pointer → UI
+    /// units"): the hit test compares it with the real displayed boxes (§3.5); everything that
+    /// needs integers (messages, drags, moves, the plugin API) gets ⌊`x`⌋, ⌊`y`⌋. A value that
+    /// is not finite counts as 0.
+    pub fn pointer_moved_real(&mut self, x: f64, y: f64) {
+        if self.input.lock.is_some() {
+            return;
+        }
+        let lim = f64::from(crate::geom::COORD_LIMIT);
+        let c = |v: f64| {
+            if v.is_finite() {
+                v.clamp(-lim, lim)
+            } else {
+                0.0
+            }
+        };
+        let (x, y) = (c(x), c(y));
+        self.input.pointer_real = Some((x, y));
+        self.pointer_moved_int(
+            crate::geom::trunc_f64(x.floor()),
+            crate::geom::trunc_f64(y.floor()),
+        );
+    }
+
+    fn pointer_moved_int(&mut self, x: i32, y: i32) {
         let (x, y) = (crate::geom::clamp_coord(x), crate::geom::clamp_coord(y));
         self.input.pointer = Some((x, y));
         let (sw, sh) = self.screen_size;
@@ -391,6 +570,7 @@ impl Ui {
         self.input.lock = frozen;
         if let Some(f) = frozen {
             self.input.pointer = Some(f);
+            self.input.pointer_real = None;
         }
         self.update_hover();
     }

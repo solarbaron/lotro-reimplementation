@@ -20,7 +20,7 @@ mod ui_common;
 use std::time::Duration;
 
 use tessera_formats::did::Did;
-use tessera_ui::paint::{Rect, Unlimited};
+use tessera_ui::paint::{BandBudget, Rect, Unlimited};
 use tessera_ui::scaling::{self, DBox, UiScreen};
 use tessera_ui::{Ui, UiFrame};
 use ui_common::*;
@@ -829,6 +829,16 @@ fn loading_screen_matches_10_1() {
         near(f64::from(d.t), t, 1.5, &format!("{} top", c.name));
         near(f64::from(d.w()), w, 1.5, &format!("{} width", c.name));
         near(f64::from(d.h()), h, 1.5, &format!("{} height", c.name));
+        // §3.4: the real-valued displayed box is §10.1's to the table's two decimals.
+        let real = ui.displayed_real(img);
+        for (got, want, what) in [
+            (real.l, l, "left"),
+            (real.t, t, "top"),
+            (real.w, w, "width"),
+            (real.h, h, "height"),
+        ] {
+            near(got, want, 0.01, &format!("{} real {what}", c.name));
+        }
         let bars = ui.letterbox_bars();
         assert!(bars.len() <= 1, "{}: at most one group's bars", c.name);
         let member = ui.physical_box(img).intersect(&Rect::new(0, 0, c.wp, c.hp));
@@ -856,16 +866,10 @@ fn loading_screen_matches_10_1() {
                 .sum();
             near(side as f64, 2.0 * l, 3.0, &format!("{} side bars", c.name));
         } else {
-            // The image covers F; only a rounding sliver of at most one physical pixel can be
-            // left uncovered, because the live displayed box still truncates to integers (UB
-            // §9.2.1, see the report) where §3.4 asks for real numbers.
-            for b in bars.iter().flat_map(|g| g.rects.iter()) {
-                assert!(
-                    b.width() <= 1 || b.height() <= 1,
-                    "{}: only a sliver, got {b:?}",
-                    c.name
-                );
-            }
+            // The image covers F: the displayed box follows the real-valued rule of §3.4
+            // (§10.1 at C1: 768 units high), so no bar row or column is left (§5.9 answer).
+            let left: Vec<_> = bars.iter().flat_map(|g| g.rects.iter()).collect();
+            assert!(left.is_empty(), "{}: no bars, got {left:?}", c.name);
         }
     }
 }
@@ -1142,9 +1146,9 @@ fn open_10_8_b(ui: &mut Ui) -> [tessera_ui::ElementKey; 3] {
 }
 
 /// Asserts the §10.8 (b) outcome at C8 with *m*(*R*) = 2: *X* displayed at 232 (fitted
-/// position −100 × 2 from *R*'s 432), 2400 wide (the UB §9.2.1 truncating rule adds at most
-/// *m* − 1 units, `ui-scaling.md` §5.9 OPEN), *f* = 1.5, and its child at 832, the safe area's
-/// left end.
+/// position −100 × 2 from *R*'s 432), 2400 × 1200 (the real-valued displayed box of §3.4; the
+/// truncating rule of UB §9.2.1 gave 2402, `ui-scaling.md` §5.9 answer), *f* = 1.5, and its
+/// child at 832, the safe area's left end.
 fn assert_10_8_b(ui: &Ui, [r, x, k]: [tessera_ui::ElementKey; 3], what: &str) {
     let rd = ui.displayed_box(r);
     assert_eq!((rd.l, rd.t), (432, 100), "{what}: R displayed top-left");
@@ -1152,8 +1156,8 @@ fn assert_10_8_b(ui: &Ui, [r, x, k]: [tessera_ui::ElementKey; 3], what: &str) {
     let xd = ui.displayed_box(x);
     assert_eq!(xd.l, 232, "{what}: X displayed left (§10.8 (b) step 4)");
     assert_eq!(xd.t, 100, "{what}: X displayed top");
-    assert!((xd.w() - 2400).abs() <= 2, "{what}: X width {}", xd.w());
-    assert!((xd.h() - 1200).abs() <= 2, "{what}: X height {}", xd.h());
+    assert_eq!(xd.w(), 2400, "{what}: X width");
+    assert_eq!(xd.h(), 1200, "{what}: X height");
     assert_eq!(
         ui.node_scale_at_or_above(x).0,
         3.0,
@@ -1483,4 +1487,389 @@ fn hidden_saved_panel_stays_hidden_on_resize() {
     assert!(!ui.is_visible(k), "still hidden after a resize");
     assert!(ui.apply_saved(k), "applied when opened");
     assert!(ui.is_visible(k), "the open-time application shows it");
+}
+
+// ----- §7.4: the per-window scale --------------------------------------------------------------
+
+/// §7.4: a per-window factor is a uniform node scale. The layout box keeps its size, the
+/// children keep their layout boxes, the scaling origin stays in place in UI units, the
+/// displayed box is the layout box × *p* (§3.4), and §5.6 / keep-on-screen run after it.
+#[test]
+fn per_window_scale_is_a_uniform_node_scale() {
+    let kid = edges(field(CHILD_A, 20, 30, 100, 40), [0, 0, 0, 0]);
+    let win = child(
+        prop(
+            prop(
+                prop(
+                    edges(field(ROOT, 600, 100, 400, 300), [0, 0, 0, 0]),
+                    v().pids.scaler_group,
+                    int(7),
+                ),
+                v().pids.scaler_origin_x,
+                int(400),
+            ),
+            v().pids.scaler_origin_y,
+            int(0),
+        ),
+        kid,
+    );
+    let env = env_with(vec![layout(LAYOUT, 1024, 768, vec![win])]);
+    let mut ui = ui_with(env, 1024, 768);
+    let k = ui.open_panel(Did(LAYOUT), ROOT).unwrap();
+    let c = ui.find_child(k, CHILD_A).unwrap();
+    apply(&mut ui, &C2);
+    let before = ui.displayed_box(k);
+    assert_eq!(ui.window_scale(k), 1.0);
+    assert!(ui.set_window_scale(k, 1.5));
+    assert_eq!(ui.window_scale(k), 1.5);
+    assert_eq!(ui.layout_box(k).unwrap().w(), 400, "layout size kept");
+    assert_eq!(
+        ui.layout_box(c).unwrap().w(),
+        100,
+        "children not laid out again"
+    );
+    let d = ui.displayed_box(k);
+    assert_eq!((d.w(), d.h()), (600, 450), "displayed 400 × 300 × 1.5");
+    // The origin (400, 0) is the panel's top-right corner: it stays where it was.
+    assert_eq!(d.r, before.r, "the origin's x stays in place");
+    assert_eq!(d.t, before.t, "the origin's y stays in place");
+    let cd = ui.displayed_box(c);
+    assert_eq!(
+        (cd.l - d.l, cd.t - d.t, cd.w()),
+        (30, 45, 150),
+        "child scales with it"
+    );
+    // Back to 1: the original box again.
+    assert!(ui.set_window_scale(k, 1.0));
+    assert_eq!(ui.displayed_box(k), before);
+    assert_eq!(ui.node_scale_at_or_above(k).0, 1.0);
+    // §5.6 multiplies p on a screen it does not fit (C1: 768 units high, 300 × 3 = 900).
+    assert!(ui.set_window_scale(k, 3.0));
+    apply(&mut ui, &C1);
+    near(
+        f64::from(ui.fit_to_screen_factor(k)),
+        768.0 / 900.0,
+        1e-4,
+        "q over p",
+    );
+    assert_eq!(ui.window_scale(k), 3.0, "p is kept apart from q");
+    let d = ui.displayed_box(k);
+    assert!(
+        d.l >= 0 && d.t >= 0 && d.r < 1365 && d.b < 768,
+        "kept on screen: {d:?}"
+    );
+    // Not a window scale target: bad factors and elements that are no root panel.
+    assert!(!ui.set_window_scale(k, 0.0));
+    assert!(!ui.set_window_scale(k, f32::NAN));
+    assert!(!ui.set_window_scale(c, 1.5));
+    assert_eq!(ui.screen_root_of(c), Some(k));
+    assert_eq!(ui.screen_root_of(k), Some(k));
+}
+
+// ----- §3.4 / §3.6: physical boxes and hits from the real displayed boxes (review) -----------
+
+const C3: Config = Config {
+    name: "C3",
+    wp: 1920,
+    hp: 1080,
+    s: 1.25,
+    aspect: A21,
+    wu: 1536,
+    hu: 864,
+};
+const C11: Config = Config {
+    name: "C11",
+    wp: 7680,
+    hp: 4320,
+    s: 3.0,
+    aspect: A21,
+    wu: 2560,
+    hu: 1440,
+};
+
+/// §3.6 "Box → physical" on the real box: `Ex(L) … Ex(R) − 1`, `Ey(T) … Ey(B) − 1`.
+fn physical_of_real(f: &UiScreen, d: &DBox) -> Rect {
+    Rect::new(
+        f.edge_x(d.l),
+        f.edge_y(d.t),
+        f.edge_x(d.l + d.w),
+        f.edge_y(d.t + d.h),
+    )
+}
+
+/// §3.4, §3.6: at C1 the theatre group (f = 1, §10.6) is centred at a real left of 170.5, so
+/// its progress child starts at 581.5 UI units. The physical boxes map those real edges, not
+/// edges first rounded to whole units (581.5 would round to 582 and start one column late), and
+/// the hit test at a pixel centre agrees with them exactly (I3).
+#[test]
+fn physical_boxes_and_hits_use_the_real_edges_c1() {
+    let mut ui = build_theatre();
+    let [s, _, k] = open_theatre(&mut ui);
+    ui.set_property(k, v().pids.blocks_clicks, b(true));
+    let f = apply(&mut ui, &C1);
+    let sd = ui.displayed_real(s);
+    near(sd.l, 170.5, 1e-9, "story real left");
+    let kd = ui.displayed_real(k);
+    near(kd.l, 581.5, 1e-9, "progress child real left");
+    for e in [s, k] {
+        assert_eq!(
+            ui.physical_box(e),
+            physical_of_real(&f, &ui.displayed_real(e)),
+            "physical box from the real box"
+        );
+    }
+    let x0 = ui.physical_box(k).x0;
+    assert_eq!(x0, f.edge_x(581.5));
+    assert_ne!(x0, f.edge_x(582.0), "not the rounded edge");
+    // I3: the pixel centres on either side of the edge, through the pointer path.
+    let row = ui.physical_box(k).y0 + 2;
+    let at = |ui: &mut Ui, col: i32| {
+        ui.offer(&tessera_ui::UiInput::PointerMoved {
+            x: f.pointer_x(col),
+            y: f.pointer_y(row),
+        });
+        ui.hover_refresh();
+        ui.hit_element()
+    };
+    let inside = at(&mut ui, x0);
+    let outside = at(&mut ui, x0 - 1);
+    assert_eq!(inside, Some(k), "the edge column hits the child");
+    assert_ne!(outside, Some(k), "the column before it does not");
+    assert_eq!(
+        ui.hit_test_real(f.pointer_x(x0), f.pointer_y(row)),
+        inside,
+        "hit_test_real agrees with the pointer path"
+    );
+}
+
+/// §3.4 / §3.6 at C3 (K = 1.25) and C11 (K = 3) with a per-window factor of 1.05, whose
+/// children and inner fit container have fractional edges: every physical box is the §3.6
+/// mapping of the real displayed box, and hits at pixel centres agree with the physical boxes.
+#[test]
+fn physical_boxes_follow_fractional_edges_c3_c11() {
+    for c in [&C3, &C11] {
+        let kid = prop(
+            edges(field(CHILD_A, 21, 33, 101, 41), [0, 0, 0, 0]),
+            v().pids.blocks_clicks,
+            b(true),
+        );
+        let inner = child(
+            edges(field(CHILD_B, 0, 0, 300, 150), [6, 5, 6, 5]),
+            edges(field(0x1000_5106, 0, 0, 300, 150), [0, 0, 0, 0]),
+        );
+        let win = child(
+            child(
+                prop(
+                    edges(field(ROOT, 100, 100, 400, 300), [0, 0, 0, 0]),
+                    v().pids.scaler_group,
+                    int(7),
+                ),
+                kid,
+            ),
+            child(
+                edges(field(0x1000_5105, 10, 90, 380, 200), [0, 0, 0, 0]),
+                inner,
+            ),
+        );
+        let env = env_with(vec![layout(LAYOUT, 1024, 768, vec![win])]);
+        let mut ui = ui_with(env, 1024, 768);
+        let k = ui.open_panel(Did(LAYOUT), ROOT).unwrap();
+        let a = ui.find_child(k, CHILD_A).unwrap();
+        let f = apply(&mut ui, c);
+        assert!(ui.set_window_scale(k, 1.05));
+        let holder = ui.find_child(k, 0x1000_5105).unwrap();
+        let inner = ui.find_child(holder, CHILD_B).unwrap();
+        let mut fractional = 0;
+        for e in [k, a, holder, inner] {
+            let d = ui.displayed_real(e);
+            if d.l.fract() != 0.0 || (d.l + d.w).fract() != 0.0 {
+                fractional += 1;
+            }
+            let p = ui.physical_box(e);
+            assert_eq!(p, physical_of_real(&f, &d), "{} physical box", c.name);
+        }
+        assert!(fractional > 0, "{}: some edge is fractional", c.name);
+        // §3.4 item 2: the inner fit container is fitted again under p (m = f × p).
+        let fi = f64::from(ui.fit_factor(inner));
+        near(
+            f64::from(ui.node_scale_at_or_above(inner).0),
+            fi * 1.05,
+            1e-4,
+            "m(inner) = f × p",
+        );
+        let id = ui.displayed_real(inner);
+        let hd = ui.displayed_real(holder);
+        near(id.w, 300.0 * fi * 1.05, 1e-3, "inner displayed width");
+        assert!(
+            id.l >= hd.l - 1e-9 && id.l + id.w <= hd.l + hd.w + 1e-6 || id.w >= hd.w - 1e-6,
+            "{}: inner within or covering its parent",
+            c.name
+        );
+        // The child's physical box holds exactly the pixel centres that hit it (I3).
+        let p = ui.physical_box(a);
+        let row = (p.y0 + p.y1) / 2;
+        for col in [p.x0 - 1, p.x0, p.x1 - 1, p.x1] {
+            let ux = f.pointer_x(col);
+            let d = ui.displayed_real(a);
+            let in_real = ux >= d.l && ux < d.l + d.w;
+            let in_phys = col >= p.x0 && col < p.x1;
+            assert_eq!(in_real, in_phys, "{} column {col}", c.name);
+            let hit = ui.hit_test_real(ux, f.pointer_y(row)) == Some(a);
+            assert_eq!(hit, in_phys, "{} hit at column {col}", c.name);
+        }
+    }
+}
+
+/// §7.4 origin rule without drift: with origin x = 30 and a left of 300, twenty steps of 0.05
+/// up and twenty down return the panel to 300, and at p = 2 the origin is still at 330.
+#[test]
+fn per_window_scale_round_trip_does_not_creep() {
+    let win = prop(
+        prop(
+            edges(field(ROOT, 300, 200, 200, 100), [0, 0, 0, 0]),
+            v().pids.scaler_group,
+            int(7),
+        ),
+        v().pids.scaler_origin_x,
+        int(30),
+    );
+    let env = env_with(vec![layout(LAYOUT, 1024, 768, vec![win])]);
+    let mut ui = ui_with(env, 1024, 768);
+    let k = ui.open_panel(Did(LAYOUT), ROOT).unwrap();
+    apply(&mut ui, &C2);
+    let start = ui.layout_box(k).unwrap();
+    assert_eq!(start.l, 300);
+    for cycle in 0..3 {
+        for i in 1..=20 {
+            assert!(ui.set_window_scale(k, 1.0 + 0.05 * i as f32));
+        }
+        let l = ui.layout_box(k).unwrap().l;
+        assert_eq!(l, 270, "cycle {cycle}: origin 330 − 30 × 2");
+        for i in (0..20).rev() {
+            assert!(ui.set_window_scale(k, 1.0 + 0.05 * i as f32));
+        }
+        assert_eq!(ui.layout_box(k).unwrap(), start, "cycle {cycle}: back home");
+    }
+}
+
+/// §3.4: a per-window factor multiplies a Stretch root's stretch vector, in both orders, and a
+/// panel scaled by the panel-scale rule takes a per-window factor again once it is back at 1.
+#[test]
+fn per_window_scale_composes_with_stretch_and_panel_scale() {
+    let win = prop(
+        stretch(edges(field(ROOT, 100, 100, 200, 100), [0, 0, 0, 0])),
+        v().pids.scaler_group,
+        int(29),
+    );
+    let env = env_with(vec![layout(LAYOUT, 1024, 768, vec![win])]);
+    let mut ui = ui_with(env, 1024, 768);
+    let k = ui.open_panel(Did(LAYOUT), ROOT).unwrap();
+    apply(&mut ui, &C2);
+    // Stretch first (300 × 100 shown for a 200 × 100 box), then p = 1.5.
+    ui.resize(k, 300, 100);
+    near(
+        f64::from(ui.node_scale_at_or_above(k).0),
+        1.5,
+        1e-6,
+        "stretch",
+    );
+    assert!(ui.set_window_scale(k, 1.5));
+    let s = ui.node_scale_at_or_above(k);
+    near(f64::from(s.0), 2.25, 1e-5, "stretch × p, x");
+    near(f64::from(s.1), 1.5, 1e-5, "stretch × p, y");
+    // A user resize changes only the stretch; p stays applied.
+    ui.resize(k, 200, 200);
+    let s = ui.node_scale_at_or_above(k);
+    near(f64::from(s.0), 1.5, 1e-5, "new stretch 1 × p");
+    near(f64::from(s.1), 3.0, 1e-5, "new stretch 2 × p");
+    assert_eq!(ui.window_scale(k), 1.5);
+    // Back to p = 1: the stretch alone remains.
+    assert!(ui.set_window_scale(k, 1.0));
+    let s = ui.node_scale_at_or_above(k);
+    near(f64::from(s.0), 1.0, 1e-5, "stretch x");
+    near(f64::from(s.1), 2.0, 1e-5, "stretch y");
+
+    // The panel-scale rule owns the node scale while it is not 1.
+    let plain = edges(field(ROOT, 100, 100, 200, 100), [0, 0, 0, 0]);
+    let env = env_with(vec![layout(LAYOUT, 1024, 768, vec![plain])]);
+    let mut ui = ui_with(env, 1024, 768);
+    let k = ui.open_panel(Did(LAYOUT), ROOT).unwrap();
+    apply(&mut ui, &C2);
+    ui.scale_panel(k, 1.5, true);
+    assert!(!ui.accepts_window_scale(k));
+    assert!(!ui.set_window_scale(k, 1.25));
+    ui.scale_panel(k, 1.0, true);
+    assert!(
+        ui.accepts_window_scale(k),
+        "back at 1 the panel is free again"
+    );
+    assert!(ui.set_window_scale(k, 1.25));
+    assert_eq!(ui.window_scale(k), 1.25);
+}
+
+/// §3.4 item 2 under a per-window factor: the §10.8 (b) fit container inside a root with
+/// p = 2 (set through §7.4, not a raw node scale) has the §10.8 (b) displayed box.
+#[test]
+fn fit_container_under_a_per_window_factor_10_8_b() {
+    let mut ui = build_10_8_b();
+    let keys = open_10_8_b(&mut ui);
+    apply(&mut ui, &C8);
+    assert!(ui.set_window_scale(keys[0], 2.0));
+    assert_10_8_b(&ui, keys, "p = 2 after C8");
+}
+
+/// §4.5 step 3 on the tessera-ui side (the part the G7 render golden cannot see, since
+/// `tessera-render` does not depend on `tessera-ui`): in the frames right after C2 → C3, while
+/// the new paint generation is still being painted band by band, the composition list composes
+/// the panel's **old** canvas (painted at C2) onto its **new** §3.6 physical box, never a blank
+/// or a stale destination (I9); once the generation is swapped in, the canvas is the new
+/// physical size, 1 : 1 on that box.
+#[test]
+fn scale_change_previews_the_old_canvas_on_the_new_box() {
+    let win = media(
+        edges(field(ROOT, 760, 390, 400, 300), [0, 0, 0, 0]),
+        image_item(0x4100_5101, 2),
+    );
+    let mut env = env_with(vec![layout(LAYOUT, 1920, 1080, vec![win])]);
+    add_image(&mut env, 0x4100_5101, solid(8, 8, 0xFF20_3040));
+    let mut ui = ui_with(env, 1920, 1080);
+    let k = ui.open_panel(Did(LAYOUT), ROOT).unwrap();
+    apply(&mut ui, &C2);
+    let mut t = 1u64;
+    let mut fr = UiFrame::default();
+    for _ in 0..6 {
+        t += 16;
+        fr = ui.paint(Duration::from_millis(t), &mut Unlimited);
+    }
+    let old = fr.composition.entries.last().cloned().expect("panel entry");
+    assert_eq!(old.canvas, [400, 300], "painted at c = 1");
+    assert_eq!(old.dest, ui.physical_box(k));
+    apply(&mut ui, &C3);
+    let new_box = ui.physical_box(k);
+    assert_eq!(
+        (new_box.width(), new_box.height()),
+        (500, 375),
+        "C3 physical size"
+    );
+    // One band per frame: the 375-row canvas takes many frames to repaint.
+    let mut previews = 0;
+    let mut settled = false;
+    for _ in 0..200 {
+        t += 16;
+        let fr = ui.paint(Duration::from_millis(t), &mut BandBudget(1));
+        let e = fr.composition.entries.last().expect("always composed (I9)");
+        assert_eq!(e.dest, new_box, "the new physical box from the first frame");
+        if e.canvas == [400, 300] {
+            assert!(!settled, "no return to the old picture");
+            previews += 1;
+        } else {
+            assert_eq!(e.canvas, [500, 375], "repainted 1 : 1 on the new box");
+            settled = true;
+        }
+    }
+    assert!(
+        previews > 0,
+        "the old picture is shown while the new one is painted"
+    );
+    assert!(settled, "the new generation is swapped in");
 }

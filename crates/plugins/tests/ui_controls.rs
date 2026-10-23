@@ -563,6 +563,45 @@ fn window_scaling_and_rotation() {
     );
 }
 
+/// §13.21 rule 1, §14.2.1 table (last row): the first marking of a plain window re-describes
+/// it as a bare `UIScaler` element (type 0x100000E8): no size limits, the blend-mode mapping
+/// of a rebuild (§14.2.1 step 3), and the window keeps its element, position, size and
+/// children. A second marking changes nothing more.
+#[test]
+fn marked_plain_window_becomes_a_bare_scaler() {
+    let fx = fx_with(
+        "w = Turbine.UI.Window() w:SetSize(300, 200) w:SetPosition(100, 100) \
+         w:SetMinimumSize(250, 150) w:SetBlendMode(Turbine.UI.BlendMode.AlphaBlend) \
+         c = Turbine.UI.Control() c:SetParent(w) c:SetPosition(10, 20)",
+    );
+    let before = fx.control_key("Probe", "w");
+    let ty = fx.pui.ui().borrow().element_type(before);
+    assert_ne!(ty, Some(0x1000_00E8), "an unmarked window is no scaler");
+    let r: (f64, f64, f64) = eval(
+        &fx,
+        "w:SetScale(1) local mw, mh = w:GetMinimumSize() return mw, mh, w:GetBlendMode()",
+    );
+    assert_eq!(
+        r,
+        (0.0, 0.0, 2.0),
+        "no size limits; AlphaBlend (4) → operation 2"
+    );
+    let after = fx.control_key("Probe", "w");
+    assert_eq!(after, before, "the element is kept");
+    assert_eq!(fx.pui.ui().borrow().element_type(after), Some(0x1000_00E8));
+    let r: (f64, f64, f64, f64, f64, f64) = eval(
+        &fx,
+        "local x, y = w:GetPosition() local cx, cy = c:GetPosition() \
+         return x, y, w:GetWidth(), w:GetHeight(), cx, cy",
+    );
+    assert_eq!(r, (100.0, 100.0, 300.0, 200.0, 10.0, 20.0));
+    let parent: bool = eval(&fx, "return c:GetParent() == w");
+    assert!(parent, "the child stays the window's");
+    // Marking again does not rebuild again (the mapping would turn 2 into 0).
+    let m: f64 = eval(&fx, "w:SetScale(1.5) return w:GetBlendMode()");
+    assert_eq!(m, 2.0);
+}
+
 /// §13.21 rule 2: `SetUIScalingGroup` keeps the window's own scale; only `SetScale` sets
 /// the group back to 72.
 #[test]

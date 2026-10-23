@@ -983,6 +983,10 @@ impl ClientUi {
                 self.settings
                     .submit(super::settings_writer::SettingsJob::Panels(map));
             }
+            if let Some(map) = host.take_group_scale_persist() {
+                self.settings
+                    .submit(super::settings_writer::SettingsJob::GroupScales(map));
+            }
             host.shutdown(&mut rt.plugins, renderer);
             host.release_cursor(window);
         }
@@ -1329,6 +1333,10 @@ fn apply_uiscale(
     }
     if let Some(map) = host.take_placement_persist() {
         settings.submit(SettingsJob::Panels(map));
+    }
+    // `[UI.group_scale]` with the placements (`ui-scaling.md` §7.4).
+    if let Some(map) = host.take_group_scale_persist() {
+        settings.submit(SettingsJob::GroupScales(map));
     }
 }
 

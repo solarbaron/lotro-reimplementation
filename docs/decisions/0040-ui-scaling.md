@@ -51,3 +51,22 @@ takes the numbers from 0037.
   stays until the new design is built.
 - `tessera-ui`, the client's UI host, `tessera-settings` and the plugin API's display
   views change when it is built.
+
+## Owner answers (2026-10-23)
+
+The owner accepted the proposals that `ui-scaling.md` left to them ("yes, I agree with the UI
+scaling proposals"):
+
+1. The scale-dependent budgets S1–S7 of `ui-scaling.md` §8, as written, are the exit budgets
+   of this work. They are measured indicatively on the loaded reference machine first and
+   re-measured idle, as UR §6's are.
+2. The default safe aspect of 21:9 (2.4) and the auto-scale formula of §4.2 (one UI unit per
+   pixel up to 1440 rows, then height ÷ 1440, at least the operating system's factor).
+3. The magnification bound *ρ* = 4 ÷ 3 of §5.4, with the side bars it gives on wider screens.
+4. Full-window screens follow the window, not the scale slider (§5.4); there is no "scale
+   full-window screens" option.
+
+Still open: whether derived glyphs above *k* = 2 switch to the bundled font (judged from
+goldens G2 and the C11 captures), and default key bindings for the scale actions (§13).
+The owner OPEN callouts in `ui-scaling.md` §8 and §13 are marked answered once the spec
+revision now in progress is merged.

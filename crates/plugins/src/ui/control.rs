@@ -151,26 +151,51 @@ pub(crate) fn after_geometry(sh: &Shared, id: u64) {
     }
 }
 
+/// The element a control's `Focus`/`HasFocus` act on when it is not the control's own:
+/// a game-styled text box's text element (§14.2.2).
+fn focus_part(c: &super::model::Ctl) -> Option<tessera_ui::ElementKey> {
+    c.text_part.filter(|_| c.kind == Kind::TextBox)
+}
+
 /// Work after creating control `id` (the class's initial element state).
 pub(crate) fn init(lua: &Lua, sh: &Rc<Shared>, id: u64) {
     let Some((key, kind, styled)) = ctl_get(sh, id, |c| (c.key, c.kind, c.styled)) else {
         return;
     };
+    let based = ctl_get(sh, id, |c| c.based).unwrap_or(false);
+    if based {
+        if let Ok(mut ui) = sh.ui.try_borrow_mut() {
+            let mut st = sh.st.borrow_mut();
+            super::styled::init_based(&mut ui, &mut st, id);
+        }
+    } else if kind == Kind::Window && styled != Styled::Plain {
+        super::window::build_frame(lua, sh, id);
+    }
     if kind == Kind::TextBox {
+        // The element that edits: a game-styled box's text element (§14.2.2).
+        let text = ctl_get(sh, id, |c| c.text_key()).unwrap_or(key);
         with_ui(sh, |u| {
             let pid = u.vocab().pids.text_editable;
             u.set_property(
-                key,
+                text,
                 pid,
                 tessera_formats::property::PropertyValue::Bool(true),
             );
         });
     }
-    if kind == Kind::Window && styled != Styled::Plain {
-        super::window::build_frame(lua, sh, id);
-    }
     if kind == Kind::ScrollBar && styled != Styled::Plain {
-        super::scroll::build_neutral_thumb(lua, sh, id);
+        // The layout's scroll bar (§14.2.1, §14.2.2), else the neutral thumb (step 5).
+        let built = match sh.ui.try_borrow_mut() {
+            Ok(mut ui) => {
+                let mut st = sh.st.borrow_mut();
+                super::styled::build_scroll_part(&mut ui, &mut st, id)
+            }
+            Err(_) => Err(tessera_ui::UiError::NoSuchElement),
+        };
+        if let Err(e) = built {
+            super::styled::fallback_once("ScrollBar", &e);
+            super::scroll::build_neutral_thumb(lua, sh, id);
+        }
     }
 }
 
@@ -619,11 +644,14 @@ pub(crate) fn install(
         let v = truthy(args.front());
         ui_do(cx, |u, k| u.control_set_allow_drop(k, v))
     })?;
+    // A game-styled text box takes the focus in its text element (§14.2.2).
     def(api, sh, &c, "Focus", a, |cx, _| {
-        ui_do(cx, |u, k| u.control_focus(k))
+        let text = ctl_get(cx.sh, cx.id, focus_part).flatten();
+        ui_do(cx, |u, k| u.control_focus(text.unwrap_or(k)))
     })?;
     def(api, sh, &c, "HasFocus", a, |cx, _| {
-        ui_do(cx, |u, k| u.control_has_focus(k))
+        let text = ctl_get(cx.sh, cx.id, focus_part).flatten();
+        ui_do(cx, |u, k| u.control_has_focus(text.unwrap_or(k)))
     })?;
 
     // Look (§13.17–§13.19).

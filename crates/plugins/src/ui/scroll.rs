@@ -300,8 +300,12 @@ pub(crate) fn geometry(
     Some((vertical, len, thick, track_start, track, thumb, thumb_start))
 }
 
-/// [`layout_parts`] with the UI and state borrowed.
+/// [`layout_parts`] with the UI and state borrowed. A game-styled bar shows its numbers
+/// on its layout widget; parts the plugin set are placed by the layer in both cases.
 pub(crate) fn layout_parts_with(ui: &mut Ui, st: &State, id: u64) {
+    if let Some(ObjData::Ctl(c)) = st.objs.get(&id).map(|o| &o.data) {
+        super::styled::sync_scroll_part(ui, c);
+    }
     let Some((vertical, len, thick, _ts, _track, thumb, thumb_start)) = geometry(ui, st, id) else {
         return;
     };
@@ -564,6 +568,27 @@ pub(crate) fn install(
                 .is_some_and(|s| std::mem::replace(&mut s.orientation, o) != o)
         })
         .unwrap_or(false);
+        if changed {
+            // §14.2.1 step 3: a game-styled bar is rebuilt for the new orientation.
+            let widget = ctl_get(cx.sh, cx.id, |c| {
+                c.scroll.as_deref().is_some_and(|s| s.widget.is_some())
+            })
+            .unwrap_or(false);
+            if widget {
+                if let Ok(mut ui) = cx.sh.ui.try_borrow_mut() {
+                    let mut st = cx.sh.st.borrow_mut();
+                    super::styled::rebuild_scroll_part(&mut ui, &mut st, cx.id);
+                }
+                let lost = ctl_get(cx.sh, cx.id, |c| {
+                    c.scroll.as_deref().is_some_and(|s| s.widget.is_none())
+                })
+                .unwrap_or(false);
+                if lost {
+                    // The layout could not build the new orientation: neutral art (step 5).
+                    build_neutral_thumb(cx.lua, cx.sh, cx.id);
+                }
+            }
+        }
         layout_parts(cx.sh, cx.id);
         if changed {
             cx.sh.push(Pending::Fire {

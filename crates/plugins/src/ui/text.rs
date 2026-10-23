@@ -72,7 +72,7 @@ fn ts<R>(sh: &Shared, id: u64, f: impl FnOnce(&mut TextState) -> R) -> Option<R>
 /// The current text: for a text box, the element's text (user edits; the layer's copy and
 /// the caret estimate follow it, see `events::text_edited`).
 pub(crate) fn current_text(sh: &Shared, id: u64) -> String {
-    let Some((key, kind)) = ctl_get(sh, id, |c| (c.key, c.kind)) else {
+    let Some((key, kind)) = ctl_get(sh, id, |c| (c.text_key(), c.kind)) else {
         return String::new();
     };
     if kind == Kind::TextBox
@@ -135,7 +135,7 @@ pub(crate) fn bound_title(text: String) -> String {
 /// A script error when the apartment's text would exceed
 /// [`MAX_TEXT_BYTES_PER_APARTMENT`].
 pub(crate) fn store_text(sh: &Shared, id: u64, text: String) -> mlua::Result<()> {
-    let Some((key, kind)) = ctl_get(sh, id, |c| (c.key, c.kind)) else {
+    let Some((key, kind)) = ctl_get(sh, id, |c| (c.text_key(), c.kind)) else {
         return Ok(());
     };
     let text = bound_text(text);
@@ -181,7 +181,7 @@ pub(crate) fn store_text(sh: &Shared, id: u64, text: String) -> mlua::Result<()>
 }
 
 fn set_prop(cx: &Cx<'_>, pid: u32, v: PropertyValue) {
-    if let Some(k) = cx.sh.key_of(cx.id) {
+    if let Some(k) = ctl_get(cx.sh, cx.id, |c| c.text_key()) {
         with_ui(cx.sh, |u| u.set_property(k, pid, v));
     }
 }
@@ -424,7 +424,7 @@ pub(crate) fn install(
     def(api, sh, &label, "SetSelectable", t, |cx, args| {
         let v = truthy(args.front());
         ts(cx.sh, cx.id, |t| t.selectable = v);
-        if let Some(k) = cx.sh.key_of(cx.id) {
+        if let Some(k) = ctl_get(cx.sh, cx.id, |c| c.text_key()) {
             with_ui(cx.sh, |u| {
                 let pid = u.vocab().pids.text_selectable;
                 u.set_property(k, pid, PropertyValue::Bool(v));
@@ -525,7 +525,7 @@ pub(crate) fn install(
             // `tessera-ui` treats every plugin text box as editable whatever this
             // property says, so the layer also takes user edits back itself
             // (`events::text_edited`).
-            if let Some(k) = cx.sh.key_of(cx.id) {
+            if let Some(k) = ctl_get(cx.sh, cx.id, |c| c.text_key()) {
                 with_ui(cx.sh, |u| {
                     let pid = u.vocab().pids.text_editable;
                     u.set_property(k, pid, PropertyValue::Bool(!v));
@@ -583,6 +583,9 @@ fn select(cx: &Cx<'_>, n: usize, start: i32, length: i32) {
 pub(crate) fn set_checked(sh: &Shared, id: u64, v: bool) {
     let changed = with_ctl(sh, id, |c| std::mem::replace(&mut c.checked, v) != v).unwrap_or(false);
     if changed {
+        if let Some(mark) = ctl_get(sh, id, |c| c.mark_part).flatten() {
+            with_ui(sh, |u| super::styled::set_mark(u, Some(mark), v));
+        }
         sh.push(Pending::Fire {
             target: id,
             name: "CheckedChanged",

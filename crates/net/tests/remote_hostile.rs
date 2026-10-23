@@ -12,8 +12,8 @@ use std::future::Future;
 use std::pin::Pin;
 
 use remote_support::*;
-use tessera_net::remote::{AppErrorCode, EnterWorldFailedCode, RemoteFailure};
-use tessera_net::{ChatChannel, Command, DisconnectReason, Event};
+use tessera_net::remote::{AppErrorCode, EnterWorldFailedCode};
+use tessera_net::{Command, DisconnectReason, Event};
 use tessera_protocol::codes::EnterWorldFailedCode as WireEwf;
 use tessera_protocol::frame::{StreamKind, encode_datagram, frame_to_vec};
 use tessera_protocol::message::{
@@ -199,8 +199,11 @@ fn server_close_is_reported() {
     );
 }
 
+/// `EnterWorldFailed` puts the client back in CharacterSelect (`tessera-protocol.md`
+/// §6.2.11): the session surfaces `Event::EnterWorldFailed`, stays connected, and a second
+/// `EnterWorld` enters the world (`WorldEnter.instance` then known).
 #[test]
-fn enter_world_failure_disconnects_cleanly() {
+fn enter_world_failure_returns_to_character_selection() {
     let peer = spawn(PeerOptions::default(), |mut p| async move {
         p.login(&["Aldith"]).await;
         p.expect(MessageType::EnterWorld).await;
@@ -209,31 +212,49 @@ fn enter_world_failure_disconnects_cleanly() {
             text: "full".into(),
         }))
         .await;
+        p.enter_world().await;
         p.expect(MessageType::Disconnect).await
     });
     let mut s = connect(peer.config());
     pump(&mut s, |e| matches!(e, Event::Connected { .. }));
-    s.send(
-        std::time::Instant::now(),
-        Command::EnterWorld {
-            character: "Aldith".into(),
-        },
-    )
-    .unwrap();
-    let events = pump(&mut s, |e| matches!(e, Event::Disconnected { .. }));
-    let n = events.len();
+    let enter = || Command::EnterWorld {
+        character: "Aldith".into(),
+    };
+    s.send(std::time::Instant::now(), enter()).unwrap();
+    let events = pump(&mut s, |e| matches!(e, Event::EnterWorldFailed { .. }));
     assert!(
-        matches!(&events[n - 2], Event::ChatMessage { channel: ChatChannel::System, text, .. } if text == "cannot enter the world: NO_INSTANCE: full")
+        matches!(events.last(), Some(Event::EnterWorldFailed { character, reason })
+            if character == "Aldith" && reason == "cannot enter the world: NO_INSTANCE: full"),
+        "{events:?}"
     );
     assert!(
-        matches!(&events[n - 1], Event::Disconnected { reason: DisconnectReason::ServerClosed(t) } if t.contains("NO_INSTANCE"))
+        !events
+            .iter()
+            .any(|e| matches!(e, Event::ChatMessage { .. } | Event::Disconnected { .. })),
+        "{events:?}"
     );
+    assert_eq!(s.state(), tessera_net::SessionState::Connected);
     assert_eq!(
-        backend(&s).failure(),
-        Some(&RemoteFailure::EnterWorld {
-            code: EnterWorldFailedCode::NoInstance
-        })
+        backend(&s).enter_world_refusal(),
+        Some(EnterWorldFailedCode::NoInstance)
     );
+    assert_eq!(backend(&s).failure(), None);
+    assert_eq!(backend(&s).instance(), None);
+    s.send(std::time::Instant::now(), enter()).unwrap();
+    let events = pump(&mut s, |e| matches!(e, Event::WorldClock { .. }));
+    assert!(
+        events
+            .iter()
+            .any(|e| matches!(e, Event::WorldEntered { .. }))
+    );
+    assert!(matches!(
+        events.last(),
+        Some(Event::WorldClock { game_clock, rate, .. }) if *game_clock == 43_200.0 && *rate == 1.0
+    ));
+    assert_eq!(backend(&s).instance(), Some(1));
+    s.send(std::time::Instant::now(), Command::Disconnect)
+        .unwrap();
+    pump(&mut s, |e| matches!(e, Event::Disconnected { .. }));
     assert!(matches!(peer.join(), Message::Disconnect(_)));
 }
 
@@ -326,4 +347,55 @@ fn chat_frames_carry_whole_messages_only() {
     drop(s);
     peer.join();
     let _ = StreamKind::Chat;
+}
+
+/// `RemoteBackend::drop_connection` ends the connection abruptly (`test-server.md` §15.3):
+/// the peer sees the connection close without a `Disconnect`, and the session ends with
+/// one `Disconnected`. Before it, a time sample is surfaced as `Event::TimeSynced`.
+#[test]
+fn drop_connection_sends_no_disconnect() {
+    let peer = spawn(PeerOptions::default(), |mut p| async move {
+        p.login(&["Aldith"]).await;
+        p.enter_world().await;
+        let mut seen = Vec::new();
+        while let Some(m) = p.recv().await {
+            seen.push(m.message_type());
+        }
+        let closed = p.closed().await;
+        (seen, closed)
+    });
+    let mut s = connect(peer.config());
+    pump(&mut s, |e| matches!(e, Event::Connected { .. }));
+    s.send(
+        std::time::Instant::now(),
+        Command::EnterWorld {
+            character: "Aldith".into(),
+        },
+    )
+    .unwrap();
+    let mut events = pump(&mut s, |e| matches!(e, Event::WorldEntered { .. }));
+    if !events.iter().any(|e| matches!(e, Event::TimeSynced { .. })) {
+        events.extend(pump(&mut s, |e| matches!(e, Event::TimeSynced { .. })));
+    }
+    assert!(
+        events
+            .iter()
+            .any(|e| matches!(e, Event::TimeSynced { delay_us, .. } if *delay_us >= 0))
+    );
+    assert_eq!(backend(&s).instance(), Some(1));
+    backend(&s).drop_connection();
+    let events = pump(&mut s, |e| matches!(e, Event::Disconnected { .. }));
+    assert_eq!(
+        events
+            .iter()
+            .filter(|e| matches!(e, Event::Disconnected { .. }))
+            .count(),
+        1
+    );
+    let (seen, closed) = peer.join();
+    assert!(!seen.contains(&MessageType::Disconnect), "{seen:?}");
+    assert!(
+        !matches!(closed, quinn::ConnectionError::TimedOut),
+        "{closed:?}"
+    );
 }

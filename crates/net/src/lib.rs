@@ -91,8 +91,9 @@ pub use domain::{
 };
 pub use error::NetError;
 pub use model::{
-    Anchor, Appearance, Body, CharacterSummary, ChatChannel, DataId, Destination, DisconnectReason,
-    EntityId, EntityKind, Equipped, Landblock, Location, LocationCause, Look, LookEntry, Placement,
-    PropertyKind, PropertyValue, RegionId, Rotation, Transform, Vec3,
+    Anchor, Appearance, Body, CharacterSummary, ChatChannel, ChatRejection, DataId, Destination,
+    DisconnectReason, Emote, EntityId, EntityKind, EntityState, Equipped, Landblock, Location,
+    LocationCause, Look, LookEntry, NoticeLevel, Placement, PropertyKind, PropertyValue, RegionId,
+    Rotation, Stance, TeleportRefusal, Transform, Vec3,
 };
 pub use session::{Backend, Command, Event, Session, SessionState};

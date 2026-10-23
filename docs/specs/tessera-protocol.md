@@ -2758,6 +2758,30 @@ them.
 > only switches `Login` to `Register`). ARCH §19.1 "property changed" and "time sync" events
 > stay open.
 
+> **OPEN:** (implementer, `tessera-net`, 2026-10-23; the API change the Appendix A OPEN asks
+> for, no wire change) the previous note is addressed in code; a spec writer should update
+> Appendix A and retire it. New `Event`s: `EntityStateChanged { id, state }` (the whole
+> §7.3 state after an `EntityUpdate` that changed it, and after an `EntityCreate` whose
+> properties differ from the defaults), `WorldClock { server_time_us, game_clock, rate }`,
+> `TimeSynced { offset_us, delay_us }` (after every time sample), `TeleportRefused`,
+> `ChatRejected` and `ServerNotice` (typed, each with a neutral reason and Tessera's line;
+> no longer System chat lines) and `EnterWorldFailed { character, reason }`. New
+> `Command`s: `Register` (as `Connect`, sending `Register`), `Emote`, `Stance` and
+> `SetAppearance` (refused with `NetError::InvalidCommand` when the server did not
+> advertise `APPEARANCE_CHANGE`). `RemoteHandle`, `entity_state` and `world_clock` stay as
+> thin wrappers. Choices to confirm: (1) **`EnterWorldFailed` no longer ends the session**:
+> the backend follows §6.2.11 (back in CharacterSelect), `Session` returns from
+> EnteringWorld to Connected, and the client may send another `EnterWorld`; the Appendix A
+> row ("then `Disconnect(NO_ERROR)`") is obsolete; `RemoteFailure::EnterWorld` is no longer
+> produced (`RemoteBackend::enter_world_refusal` has the code). Tessera's client still ends
+> the session on it (with the character screens too) until those screens take
+> `EnterWorldFailed` back to the selection. (2) The sandbox backend
+> answers `Stance`/`Emote` with `EntityStateChanged` for the player and `SetAppearance` with
+> `AppearanceChanged`; an emote's `started` is the time since world entry. (3)
+> `RemoteBackend::instance()` gives `WorldEnter.instance` (an accessor, so `WorldEntered`
+> keeps its fields), and `RemoteBackend::drop_connection()` closes the connection without
+> `Disconnect` (load tests).
+
 > **OPEN:** (implementer note, from review) §8.2 "while the avatar moves or turns": the
 > backend counts the avatar as moving when its 3-D speed (vertical included) is at least
 > 0.15 m/s (`STANDING_SPEED`) or its heading changed since the last `MoveInput`, so a jump

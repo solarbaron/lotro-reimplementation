@@ -6,11 +6,15 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use tessera_formats::did::Did;
+use tessera_formats::property::PropertyValue;
 use tessera_formats::ui_layout::{ElementDesc, UiLayout};
 
 use crate::UiError;
+use crate::control::{ControlKind, INITIAL_SIZE, PLUGIN_ELEMENT_ID_BASE};
+use crate::env::TextRequest;
+use crate::geom::IBox;
 use crate::resolve::resolve;
-use crate::tree::{Element, ElementKey};
+use crate::tree::{Element, ElementKey, PluginData};
 use crate::ui::{
     MAX_BUILD_ELEMENTS, MAX_CREATE_NESTING, MAX_ELEMENTS, MAX_TREE_DEPTH, Ui, object_mode,
 };
@@ -363,7 +367,7 @@ impl Ui {
                 self.set_property(
                     k,
                     self.v.pids.object_mode,
-                    tessera_formats::property::PropertyValue::Enum(object_mode::CANVAS_RESIZE),
+                    PropertyValue::Enum(object_mode::CANVAS_RESIZE),
                 );
             }
             c
@@ -446,6 +450,214 @@ impl Ui {
             self.completion_depth(c, depth + 1);
         }
         self.class_completion(k);
+    }
+
+    /// Creates a game-styled plugin control from a **based** element descriptor
+    /// (`lua-plugin-api.md` §14.2.1 steps 1–2): the descriptor has no type of its own, its
+    /// base is the top-level element `base_element` of the layout that the `UILAYOUT` map
+    /// gives for `layout_key`, its rectangle is 0, 0, 50 × 50 and its element ID is the
+    /// plugin layer's next run-time ID. The tree is built like any based descriptor
+    /// (`ui-layout.md` §7, §9.2: the 50 × 50 rectangle replaces the base's and the
+    /// inherited children are re-laid out to it by the design-time rule), the top element
+    /// becomes a plugin control of `kind` for `apartment` (hidden, at (0, 0), as
+    /// [`Ui::create_control`] makes one), and a window is attached to the screen root as a
+    /// root panel (`ui-layout.md` §9.1 steps 2–5). The inherited descendants keep their
+    /// layout IDs ([`Ui::find_descendant`] finds them).
+    ///
+    /// Plugin controls never take a top-level skin override: the top element carries the
+    /// run-time ID, so no override path matches it (§14.2.1 step 4).
+    ///
+    /// # Errors
+    /// [`UiError::NoLayoutKey`] when the map has no entry, [`UiError::NoLayout`] or
+    /// [`UiError::NoElement`] when the layout or the base element is missing,
+    /// [`UiError::NotCreated`] when the base does not resolve or has no factory (the
+    /// caller then builds a plain control, §14.2.1 step 5), [`UiError::TooManyElements`]
+    /// past the element cap, or an attachment error.
+    pub fn create_based_control(
+        &mut self,
+        kind: ControlKind,
+        apartment: u32,
+        layout_key: u32,
+        base_element: u32,
+    ) -> Result<ElementKey, UiError> {
+        let (did, size) = self.based_layout(layout_key, base_element)?;
+        self.enter_creation(did, base_element)?;
+        let r = self.create_based_inner(kind, apartment, did, size, base_element);
+        self.leave_creation();
+        r
+    }
+
+    /// Builds the based descriptor of §14.2.1 step 2 (no type of its own, base `base_element`
+    /// of layout `did`, rectangle 0, 0, 50 × 50, the plugin layer's next run-time ID) by
+    /// `ui-layout.md` §9.2, without post-creation of the top element. The counter advances
+    /// only when the element was created.
+    fn build_based(&mut self, did: Did, size: (i32, i32), base_element: u32) -> Option<ElementKey> {
+        let order = self.next_plugin_order;
+        let element_id = PLUGIN_ELEMENT_ID_BASE.wrapping_add(order);
+        let mut desc = ElementDesc {
+            element_id,
+            element_type: 0,
+            base_element,
+            base_layout: did,
+            read_order: order,
+            ..ElementDesc::default()
+        };
+        desc.block.rect.width = INITIAL_SIZE;
+        desc.block.rect.height = INITIAL_SIZE;
+        desc.block.has_position = true;
+        let mut path = Vec::new();
+        let k = self.build_element(&desc, (did, size), &mut path)?;
+        self.next_plugin_order = self.next_plugin_order.wrapping_add(1);
+        Some(k)
+    }
+
+    /// The layout and its design size for a based plugin element (§14.2.1 step 1).
+    fn based_layout(
+        &mut self,
+        layout_key: u32,
+        base_element: u32,
+    ) -> Result<(Did, (i32, i32)), UiError> {
+        if self.arena.len() >= MAX_ELEMENTS {
+            return Err(UiError::TooManyElements);
+        }
+        let did = self
+            .env
+            .layout_by_key(layout_key)
+            .ok_or(UiError::NoLayoutKey(layout_key))?;
+        let (l, _) = self.top_level(did, base_element)?;
+        let size = (
+            l.design_width.min(i32::MAX as u32) as i32,
+            l.design_height.min(i32::MAX as u32) as i32,
+        );
+        Ok((did, size))
+    }
+
+    /// Creates a layout-built **part** of plugin control `parent` from a based descriptor,
+    /// as [`Ui::create_based_control`] builds a control (base `base_element` of the layout
+    /// that the `UILAYOUT` map gives for `layout_key`, rectangle 0, 0, 50 × 50, the plugin
+    /// layer's next run-time ID, which the part keeps as its element ID), but as an ordinary
+    /// element with no plugin data: its own widget runs it (a game-styled scroll bar's
+    /// layout widget, `lua-plugin-api.md` §14.2.2). It is attached below `parent` with edge
+    /// modes that make it fill the parent (left and top kept, right and bottom following),
+    /// so it follows every size of the control. Its notifications reach game code through
+    /// the listener registry ([`Ui::register_handler`] with its element ID).
+    ///
+    /// # Errors
+    /// [`UiError::NoSuchElement`] when `parent` is not a plugin control, else as
+    /// [`Ui::create_based_control`].
+    pub fn create_based_part(
+        &mut self,
+        parent: ElementKey,
+        layout_key: u32,
+        base_element: u32,
+    ) -> Result<ElementKey, UiError> {
+        if !self.is_control(parent) {
+            return Err(UiError::NoSuchElement);
+        }
+        let (did, size) = self.based_layout(layout_key, base_element)?;
+        self.enter_creation(did, base_element)?;
+        let r = self.create_based_part_inner(parent, did, size, base_element);
+        self.leave_creation();
+        r
+    }
+
+    fn create_based_part_inner(
+        &mut self,
+        parent: ElementKey,
+        did: Did,
+        size: (i32, i32),
+        base_element: u32,
+    ) -> Result<ElementKey, UiError> {
+        use crate::layout::edge;
+        let k = self
+            .build_based(did, size, base_element)
+            .ok_or(UiError::NotCreated(base_element))?;
+        if let Some(e) = self.el_mut(k) {
+            e.edges = [edge::KEEP, edge::KEEP, edge::SAME, edge::SAME];
+        }
+        self.post_create(k);
+        if let Err(err) = self.attach_raw(k, parent) {
+            self.destroy(k);
+            return Err(err);
+        }
+        self.completion_pass(k);
+        Ok(k)
+    }
+
+    fn create_based_inner(
+        &mut self,
+        kind: ControlKind,
+        apartment: u32,
+        did: Did,
+        size: (i32, i32),
+        base_element: u32,
+    ) -> Result<ElementKey, UiError> {
+        let k = self
+            .build_based(did, size, base_element)
+            .ok_or(UiError::NotCreated(base_element))?;
+        if let Some(e) = self.el_mut(k) {
+            e.visible = false;
+            e.accepts_double_click = true;
+            e.mouse_visible = true;
+            e.root_panel = kind == ControlKind::Window;
+            e.plugin = Some(Box::new(PluginData {
+                kind,
+                apartment,
+                mouse_visible: true,
+                enabled: true,
+                blend_mode: 2,
+                back_blend_mode: 2,
+                ref_r: IBox::from_xywh(0, 0, INITIAL_SIZE, INITIAL_SIZE),
+                ..PluginData::default()
+            }));
+        }
+        // Step 8 for the top element (the children ran theirs before being attached).
+        self.post_create(k);
+        if kind == ControlKind::Window {
+            self.set_property(k, self.v.pids.activatable, PropertyValue::Bool(true));
+            if let Err(err) = self.attach_raw(k, self.screen) {
+                self.destroy(k);
+                return Err(err);
+            }
+        }
+        self.completion_pass(k);
+        Ok(k)
+    }
+
+    /// Sets the layout box of any element by code (position relative to its parent and
+    /// size; a negative size is clamped to empty), as client code positions the parts of a
+    /// game-styled window (`lua-plugin-api.md` §14.2.3 "by code"). When the size changed
+    /// its children are laid out again (`ui-layout.md` §8.4). Plugin controls should use
+    /// [`Ui::control_set_position`] and [`Ui::control_set_size`] instead.
+    pub fn set_element_box(&mut self, k: ElementKey, x: i32, y: i32, w: i32, h: i32) {
+        if self.el(k).is_none() {
+            return;
+        }
+        self.set_layout_box(k, IBox::from_xywh(x, y, w.max(0), h.max(0)));
+    }
+
+    /// The width in pixels of `k`'s text laid out on one line, without wrapping
+    /// (`fonts.md` §7: the widest line plus the element's text margins), or `None` when
+    /// the element has no text or its fonts are not loaded yet. Used for the caption width
+    /// *m* of the game-styled window title (`lua-plugin-api.md` §14.2.3).
+    pub fn measure_text_width(&mut self, k: ElementKey) -> Option<i32> {
+        /// A wrap width no caption reaches (Tessera bound; the text itself is capped).
+        const UNWRAPPED: i32 = 1 << 20;
+        let text = self.text_of(k);
+        if text.is_empty() {
+            return None;
+        }
+        let props = self.properties(k);
+        let h = self.layout_box(k).map_or(0, |b| b.h());
+        let req = TextRequest {
+            text: &text,
+            props: &props,
+            size: (UNWRAPPED, h),
+            wrap_width: Some(UNWRAPPED),
+        };
+        self.env
+            .shape_text(&req)
+            .map(|p| p.layout.content_width.max(0))
     }
 
     /// Activatables loop (`ui-layout.md` §9.1, U32): opens as root panels the top-level

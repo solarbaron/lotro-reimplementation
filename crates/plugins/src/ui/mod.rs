@@ -70,6 +70,7 @@ mod reg;
 mod scroll;
 mod shortcut;
 mod state;
+mod styled;
 mod text;
 mod window;
 
@@ -275,6 +276,7 @@ impl PluginUi {
     pub fn update_tick(&self, manager: &PluginManager) {
         let sh = &self.shared;
         sh.reap_all(manager);
+        window::retry_titles(sh);
         lists::flush(sh);
         let sink = state::ManagerSink { manager };
         sh.broadcast_updates(&sink);

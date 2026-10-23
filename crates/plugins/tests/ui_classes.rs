@@ -303,3 +303,640 @@ fn statics() {
     );
     assert_eq!(keys, (false, false, false));
 }
+
+// ----- game-styled controls built from a layout (§14.2.1–§14.2.3) ------------------------
+
+mod styled {
+    use std::sync::Arc;
+
+    use super::harness::Fx;
+    use tessera_formats::did::Did;
+    use tessera_formats::property::PropertyValue;
+    use tessera_formats::ui_layout::{EdgeMode, ElementDesc, UiLayout};
+    use tessera_ui::text::TextLayout;
+    use tessera_ui::{ElementKey, MemoryEnv, PreparedText, Vocab};
+
+    /// Invented DID of the synthetic `luaplugins` layout.
+    const LAYOUT: u32 = 0x2200_0001;
+    /// The `UILAYOUT` entry key of §14.2.1 step 1.
+    const KEY: u32 = 0x1000_00C8;
+
+    fn typed(id: u32, ty: u32, (x, y, w, h): (i32, i32, i32, i32), e: [u32; 4]) -> ElementDesc {
+        let mut d = ElementDesc {
+            element_id: id,
+            element_type: ty,
+            ..ElementDesc::default()
+        };
+        d.block.rect.x = x;
+        d.block.rect.y = y;
+        d.block.rect.width = w;
+        d.block.rect.height = h;
+        d.block.has_position = true;
+        d.edges.left = EdgeMode(e[0]);
+        d.edges.top = EdgeMode(e[1]);
+        d.edges.right = EdgeMode(e[2]);
+        d.edges.bottom = EdgeMode(e[3]);
+        d
+    }
+
+    fn z(mut d: ElementDesc, z: i32, read_order: u32) -> ElementDesc {
+        d.block.z_level = z;
+        d.read_order = read_order;
+        d
+    }
+
+    fn with_children(mut d: ElementDesc, children: Vec<ElementDesc>) -> ElementDesc {
+        d.children_size.count = children.len() as u32;
+        d.children = children;
+        d
+    }
+
+    /// A window container of 300 × 300 with the parts of §14.2.3; their design rectangles
+    /// and edge modes give the table's rectangles through the 50 × 50 creation size.
+    fn window(id: u32) -> ElementDesc {
+        let t = Vocab::default().types;
+        let (field, text, button, drag, resize) =
+            (t.field, t.text, t.button, t.dragbar, t.resize_bar);
+        let parts = vec![
+            z(
+                typed(0x1000_2295, field, (0, 16, 300, 282), [0, 0, 5, 5]),
+                100,
+                1,
+            ),
+            z(typed(0x1000_2296, field, (50, -8, 200, 41), [0; 4]), 90, 2),
+            z(typed(0x1000_2297, text, (90, 5, 120, 24), [0; 4]), 80, 3),
+            z(typed(0x1000_2DFC, resize, (0, 16, 20, 20), [0; 4]), 10, 4),
+            z(
+                typed(0x1000_2DFD, resize, (20, 16, 260, 10), [0, 0, 5, 0]),
+                10,
+                5,
+            ),
+            z(
+                typed(0x1000_2DFE, resize, (280, 16, 20, 20), [4, 0, 5, 0]),
+                10,
+                6,
+            ),
+            z(
+                typed(0x1000_2DFF, resize, (0, 36, 10, 244), [0, 0, 0, 5]),
+                10,
+                7,
+            ),
+            z(
+                typed(0x1000_2E00, resize, (290, 36, 10, 244), [4, 0, 5, 5]),
+                10,
+                8,
+            ),
+            z(
+                typed(0x1000_2E01, resize, (0, 280, 20, 20), [0, 4, 0, 5]),
+                10,
+                9,
+            ),
+            z(
+                typed(0x1000_2E02, resize, (20, 290, 260, 10), [0, 4, 5, 5]),
+                10,
+                10,
+            ),
+            z(
+                typed(0x1000_2E03, resize, (280, 280, 20, 20), [4, 4, 5, 5]),
+                10,
+                11,
+            ),
+            z(
+                typed(0x1000_2298, button, (279, 21, 16, 16), [4, 0, 5, 0]),
+                5,
+                12,
+            ),
+            z(typed(0x1000_2DFB, drag, (50, -8, 200, 41), [0; 4]), 0, 13),
+        ];
+        with_children(typed(id, field, (0, 0, 300, 300), [0; 4]), parts)
+    }
+
+    /// Arrow buttons and thumb of the synthetic scroll bars.
+    const DEC: u32 = 0x1000_3001;
+    const INC: u32 = 0x1000_3002;
+
+    fn prop(mut d: ElementDesc, pid: u32, value: PropertyValue) -> ElementDesc {
+        d.block
+            .properties
+            .entries
+            .push(tessera_formats::property::PropertyEntry { pid, value });
+        d.block.properties.size.count = d.block.properties.entries.len() as u32;
+        d
+    }
+
+    /// A scroll bar of 200 × 16 (horizontal) or 16 × 200 with its arrow buttons and thumb.
+    fn scroll_bar(id: u32, vertical: bool) -> ElementDesc {
+        let v = Vocab::default();
+        let (t, p) = (v.types, v.pids);
+        let (rect, dec, inc, thumb, inc_edges) = if vertical {
+            (
+                (0, 0, 16, 200),
+                (0, 0, 16, 16),
+                (0, 184, 16, 16),
+                (0, 16, 16, 16),
+                [0, 4, 0, 5],
+            )
+        } else {
+            (
+                (0, 0, 200, 16),
+                (0, 0, 16, 16),
+                (184, 0, 16, 16),
+                (16, 0, 16, 16),
+                [4, 0, 5, 0],
+            )
+        };
+        let mut bar = typed(id, t.scrollbar, rect, [0; 4]);
+        bar = prop(bar, p.sb_horizontal, PropertyValue::Bool(!vertical));
+        bar = prop(bar, p.sb_dec_button, PropertyValue::Enum(DEC));
+        bar = prop(bar, p.sb_inc_button, PropertyValue::Enum(INC));
+        with_children(
+            bar,
+            vec![
+                z(typed(DEC, t.button, dec, [0; 4]), 0, 1),
+                z(typed(INC, t.button, inc, inc_edges), 0, 2),
+                z(typed(v.ids.widget, t.button, thumb, [0; 4]), 0, 3),
+            ],
+        )
+    }
+
+    fn layout() -> UiLayout {
+        let t = Vocab::default().types;
+        let text_box = with_children(
+            typed(0x1000_22A9, t.field, (0, 0, 200, 24), [0; 4]),
+            vec![typed(0x1000_22AA, t.text, (4, 4, 192, 16), [0, 0, 5, 5])],
+        );
+        let check = with_children(
+            typed(0x1000_25AF, t.button, (0, 0, 120, 20), [0; 4]),
+            vec![
+                typed(0x1000_25B0, t.button, (0, 2, 16, 16), [0; 4]),
+                typed(0x1000_25B1, t.text, (20, 0, 100, 20), [0, 0, 5, 5]),
+            ],
+        );
+        let elements = vec![
+            window(0x1000_2294),
+            window(0x1000_2299),
+            typed(0x1000_22A7, t.button, (0, 0, 100, 24), [0; 4]),
+            typed(0x1000_22A8, t.button, (0, 0, 100, 24), [0; 4]),
+            check,
+            text_box,
+            scroll_bar(0x1000_239E, false),
+            scroll_bar(0x1000_239F, true),
+        ];
+        let mut l = UiLayout {
+            did: Did(LAYOUT),
+            design_width: 1024,
+            design_height: 768,
+            ..UiLayout::default()
+        };
+        l.elements_size.count = elements.len() as u32;
+        l.elements = elements;
+        l
+    }
+
+    fn env() -> MemoryEnv {
+        let mut env = MemoryEnv::default();
+        env.add_layout(layout());
+        env.keys.insert(KEY, LAYOUT);
+        // The caption of the worked example measures 96 pixels.
+        let p = PreparedText {
+            layout: TextLayout {
+                content_width: 96,
+                ..TextLayout::default()
+            },
+            ..PreparedText::default()
+        };
+        env.texts.insert("Caption".into(), Arc::new(p));
+        env
+    }
+
+    fn fx() -> Fx {
+        let mut fx = Fx::with_env(env());
+        fx.plugin("Test", "Probe", Some("Probe"), "");
+        fx.refresh();
+        fx.load("Probe");
+        fx
+    }
+
+    /// The rectangle (left, top, width, height) of descendant `id` of `k`.
+    fn part(fx: &Fx, k: ElementKey, id: u32) -> (i32, i32, i32, i32) {
+        let ui = fx.pui.ui().borrow();
+        let p = ui
+            .find_descendant(k, id)
+            .unwrap_or_else(|| panic!("part {id:#x}"));
+        let b = ui.layout_box(p).unwrap();
+        (b.l, b.t, b.w(), b.h())
+    }
+
+    fn hidden(fx: &Fx, k: ElementKey, id: u32) -> bool {
+        let ui = fx.pui.ui().borrow();
+        let p = ui.find_descendant(k, id).unwrap();
+        let pid = ui.vocab().pids.hide;
+        ui.prop(p, pid).bool()
+    }
+
+    /// The §14.2.3 part rectangles of a window built from the layout, at 400 × 300 with a
+    /// caption of width 96 and after `SetSize(200, 300)` (the worked example), the
+    /// resize bars hidden until `SetResizable(true)`, and a `GoldWindow` built from its
+    /// own container.
+    #[test]
+    fn window_parts_follow_the_layout() {
+        let fx = fx();
+        let r: (f64, f64) = fx.eval(
+            "Probe",
+            "w = Turbine.UI.Lotro.Window() w:SetSize(400, 300) w:SetText('Caption') \
+             g = Turbine.UI.Lotro.GoldWindow() \
+             local cw, ch = w:GetSize() return cw, ch",
+        );
+        assert_eq!(r, (400.0, 300.0));
+        let w = fx.control_key("Probe", "w");
+        // The top element carries the run-time ID; the parts keep their layout IDs.
+        assert!(fx.pui.ui().borrow().element_id(w).unwrap() >= 0x7000_0000);
+        assert_eq!(part(&fx, w, 0x1000_2295), (0, 16, 400, 282));
+        assert_eq!(part(&fx, w, 0x1000_2297), (140, 5, 120, 24));
+        assert_eq!(part(&fx, w, 0x1000_2296), (100, -8, 200, 41));
+        assert_eq!(part(&fx, w, 0x1000_2DFB), (100, -8, 200, 41));
+        assert_eq!(part(&fx, w, 0x1000_2298), (379, 21, 16, 16));
+        let bars = [
+            (0x1000_2DFC, (0, 16, 20, 20)),
+            (0x1000_2DFD, (20, 16, 360, 10)),
+            (0x1000_2DFE, (380, 16, 20, 20)),
+            (0x1000_2DFF, (0, 36, 10, 244)),
+            (0x1000_2E00, (390, 36, 10, 244)),
+            (0x1000_2E01, (0, 280, 20, 20)),
+            (0x1000_2E02, (20, 290, 360, 10)),
+            (0x1000_2E03, (380, 280, 20, 20)),
+        ];
+        for (id, rect) in bars {
+            assert_eq!(part(&fx, w, id), rect, "resize bar {id:#x}");
+            assert!(hidden(&fx, w, id), "resize bar {id:#x} hidden");
+        }
+        {
+            let ui = fx.pui.ui().borrow();
+            let t = ui.find_descendant(w, 0x1000_2297).unwrap();
+            drop(ui);
+            assert_eq!(fx.pui.ui().borrow_mut().text_of(t), "Caption");
+        }
+        fx.eval::<()>("Probe", "w:SetSize(200, 300)");
+        assert_eq!(part(&fx, w, 0x1000_2297), (70, 5, 60, 24));
+        assert_eq!(part(&fx, w, 0x1000_2296), (30, -8, 140, 41));
+        assert_eq!(part(&fx, w, 0x1000_2298), (179, 21, 16, 16));
+        assert_eq!(part(&fx, w, 0x1000_2295), (0, 16, 200, 282));
+        let r: bool = fx.eval("Probe", "w:SetResizable(true) return w:IsResizable()");
+        assert!(r);
+        assert!(!hidden(&fx, w, 0x1000_2E03));
+        fx.eval::<()>("Probe", "w:SetResizable(false)");
+        assert!(hidden(&fx, w, 0x1000_2E03));
+        // A new window lays its title out with m = 0 at 50 × 50: t = min(-90, 120).
+        let g = fx.control_key("Probe", "g");
+        assert_eq!(part(&fx, g, 0x1000_2297), (70, 5, 0, 24));
+        // Plugin children are not mixed with the frame: `GetControls` stays empty.
+        let n: f64 = fx.eval("Probe", "return w:GetControls():GetCount()");
+        assert_eq!(n, 0.0);
+        fx.assert_no_errors();
+    }
+
+    /// The synthetic layout and texts, with text shaping held back until `ready` is set
+    /// (the client's fonts still loading).
+    struct LateFonts {
+        inner: MemoryEnv,
+        ready: Arc<std::sync::atomic::AtomicBool>,
+    }
+
+    impl tessera_ui::UiEnv for LateFonts {
+        fn layout(&mut self, did: Did) -> Option<Arc<UiLayout>> {
+            self.inner.layout(did)
+        }
+        fn layout_by_key(&mut self, key: u32) -> Option<Did> {
+            self.inner.layout_by_key(key)
+        }
+        fn image(&mut self, image: &tessera_ui::ImageRef) -> tessera_ui::ImageState {
+            self.inner.image(image)
+        }
+        fn shape_text(
+            &mut self,
+            request: &tessera_ui::TextRequest<'_>,
+        ) -> Option<Arc<PreparedText>> {
+            if self.ready.load(std::sync::atomic::Ordering::Relaxed) {
+                self.inner.shape_text(request)
+            } else {
+                None
+            }
+        }
+        fn resolve_string(
+            &mut self,
+            info: &tessera_formats::string_info::StringInfo,
+        ) -> Option<String> {
+            self.inner.resolve_string(info)
+        }
+        fn random(&mut self) -> f32 {
+            self.inner.random()
+        }
+    }
+
+    /// Regression: a caption set while its fonts are still loading could not be measured
+    /// and stayed laid out with *m* = 0 (cut to 120 px) until the next `SetText` or resize.
+    /// The title is laid out again on a later frame once the caption measures (§14.2.3).
+    #[test]
+    fn a_caption_set_before_its_fonts_load_is_measured_later() {
+        let ready = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let mut inner = env();
+        let wide = PreparedText {
+            layout: TextLayout {
+                content_width: 200,
+                ..TextLayout::default()
+            },
+            ..PreparedText::default()
+        };
+        inner
+            .texts
+            .insert("Long plugin caption".into(), Arc::new(wide));
+        let env = LateFonts {
+            inner,
+            ready: Arc::clone(&ready),
+        };
+        let mut fx = Fx::with_ui_env(Box::new(env), Vocab::default());
+        fx.plugin("Test", "Probe", Some("Probe"), "");
+        fx.refresh();
+        fx.load("Probe");
+        fx.eval::<()>(
+            "Probe",
+            "w = Turbine.UI.Lotro.Window() w:SetSize(400, 300) \
+             w:SetText('Long plugin caption')",
+        );
+        let w = fx.control_key("Probe", "w");
+        // Not measured: t = min(400 - 140, 120).
+        assert_eq!(part(&fx, w, 0x1000_2297), (140, 5, 120, 24));
+        fx.frame(0.016);
+        assert_eq!(part(&fx, w, 0x1000_2297), (140, 5, 120, 24));
+        ready.store(true, std::sync::atomic::Ordering::Relaxed);
+        fx.frame(0.016);
+        // Measured: m = 200, t = min(260, 200) = 200, bars t + 80 = 280.
+        assert_eq!(part(&fx, w, 0x1000_2297), (100, 5, 200, 24));
+        assert_eq!(part(&fx, w, 0x1000_2296), (60, -8, 280, 41));
+        assert_eq!(part(&fx, w, 0x1000_2DFB), (60, -8, 280, 41));
+        fx.assert_no_errors();
+    }
+
+    /// The close button's `Button_click` runs the window's native `Close()` (§14.2.3):
+    /// `Closing`, then hidden and `Closed`.
+    #[test]
+    fn close_button_closes_the_window() {
+        let mut fx = fx();
+        fx.eval::<()>(
+            "Probe",
+            "closed = 0 w = Turbine.UI.Lotro.Window() w:SetPosition(100, 100) \
+             w:SetSize(400, 300) w:SetVisible(true) \
+             w.Closed = function() closed = closed + 1 end",
+        );
+        fx.frame(0.016);
+        // The close button sits at (379, 21) inside the window: its centre on the screen.
+        let (x, y) = (100 + 379 + 8, 100 + 21 + 8);
+        fx.move_to(x, y);
+        fx.frame(0.016);
+        let hold = fx.press(x, y);
+        fx.release(hold, x, y);
+        fx.frame(0.016);
+        let r: (f64, bool) = fx.eval("Probe", "return closed, w:IsVisible()");
+        assert_eq!(r, (1.0, false));
+        fx.assert_no_errors();
+    }
+
+    /// A game-styled check box writes its text to `LotroCheckBox_Text` and shows its state
+    /// with the check mark `LotroCheckBox_CheckBox` (§14.2.2).
+    #[test]
+    fn check_box_text_and_mark() {
+        let fx = fx();
+        fx.eval::<()>(
+            "Probe",
+            "c = Turbine.UI.Lotro.CheckBox() c:SetText('Option') c:SetChecked(true)",
+        );
+        let c = fx.control_key("Probe", "c");
+        let mut ui = fx.pui.ui().borrow_mut();
+        let text = ui.find_descendant(c, 0x1000_25B1).unwrap();
+        let mark = ui.find_descendant(c, 0x1000_25B0).unwrap();
+        assert_eq!(ui.text_of(text), "Option");
+        assert_eq!(ui.text_of(c), "");
+        let pid = ui.vocab().pids.button_highlighted;
+        assert!(ui.prop(mark, pid).bool());
+        drop(ui);
+        fx.eval::<()>("Probe", "c:SetChecked(false)");
+        let ui = fx.pui.ui().borrow();
+        assert!(!ui.prop(mark, pid).bool());
+        drop(ui);
+        let r: (bool, String) = fx.eval("Probe", "return c:IsChecked(), c:GetText()");
+        assert_eq!(r, (false, "Option".into()));
+        fx.assert_no_errors();
+    }
+
+    /// Buttons are built from their base elements; without the layout every class falls
+    /// back to Tessera's neutral art (§14.2.1 step 5) and still works.
+    #[test]
+    fn buttons_and_the_fallback() {
+        let fx = fx();
+        fx.eval::<()>(
+            "Probe",
+            "b = Turbine.UI.Lotro.Button() b:SetText('Go') \
+             gb = Turbine.UI.Lotro.GoldButton()",
+        );
+        let b = fx.control_key("Probe", "b");
+        {
+            let mut ui = fx.pui.ui().borrow_mut();
+            assert_eq!(ui.text_of(b), "Go");
+            assert_eq!(ui.layout_box(b).map(|x| (x.w(), x.h())), Some((50, 50)));
+        }
+        let plain = Fx::new();
+        plain.plugin("Test", "Probe", Some("Probe"), "");
+        let mut plain = plain;
+        plain.refresh();
+        plain.load("Probe");
+        let r: (f64, f64, bool) = plain.eval(
+            "Probe",
+            "w = Turbine.UI.Lotro.Window() w:SetSize(400, 300) \
+             c = Turbine.UI.Lotro.CheckBox() c:SetChecked(true) \
+             t = Turbine.UI.Lotro.TextBox() t:SetText('x') \
+             sb = Turbine.UI.Lotro.ScrollBar() sb:SetOrientation(Turbine.UI.Orientation.Vertical) \
+             local x, y = w:GetSize() return x, y, c:IsChecked()",
+        );
+        assert_eq!(r, (400.0, 300.0, true));
+        let t = plain.control_key("Probe", "t");
+        assert_eq!(plain.pui.ui().borrow_mut().text_of(t), "x");
+        let w = plain.control_key("Probe", "w");
+        assert!(
+            plain
+                .pui
+                .ui()
+                .borrow()
+                .find_descendant(w, 0x1000_2297)
+                .is_none()
+        );
+        fx.assert_no_errors();
+        plain.assert_no_errors();
+    }
+
+    /// A plain window at (100, 100), 400 × 300, shown, for the controls below.
+    const WINDOW: &str = "w = Turbine.UI.Window() w:SetPosition(100, 100) w:SetSize(400, 300) \
+                          w:SetVisible(true) ";
+
+    /// A game-styled text box edits in `LotroTextBox_Text` (§14.2.2): its members act on
+    /// that element, its notifications (focus, keys, text changes, mouse) become the box's
+    /// events, and a read-only box takes no typing.
+    #[test]
+    fn text_box_edits_in_its_text_element() {
+        let mut fx = fx();
+        fx.eval::<()>(
+            "Probe",
+            &format!(
+                "{WINDOW} t = Turbine.UI.Lotro.TextBox() t:SetParent(w) t:SetPosition(10, 10) \
+                 t:SetSize(200, 24) t:SetVisible(true) t:SetText('ab') \
+                 changes = 0 t.TextChanged = function() changes = changes + 1 end \
+                 focus = '' t.FocusGained = function() focus = focus .. '+' end \
+                 t.FocusLost = function() focus = focus .. '-' end \
+                 keys = 0 t.KeyDown = function() keys = keys + 1 end \
+                 clicks = {{}} t.MouseClick = function(s, a) clicks[#clicks + 1] = a.X .. ',' .. a.Y end"
+            ),
+        );
+        fx.frame(0.016);
+        let t = fx.control_key("Probe", "t");
+        assert_eq!(part(&fx, t, 0x1000_22AA), (4, 4, 192, 16));
+        {
+            let mut ui = fx.pui.ui().borrow_mut();
+            let text = ui.find_descendant(t, 0x1000_22AA).unwrap();
+            assert_eq!(ui.text_of(text), "ab");
+            assert_eq!(ui.text_of(t), "");
+        }
+        // A click on the text element focuses it and is the box's click, at box coordinates.
+        fx.click(100 + 10 + 50, 100 + 10 + 12, 1);
+        fx.type_char('c');
+        fx.frame(0.016);
+        let r: (bool, String, f64, String) =
+            fx.eval("Probe", "return t:HasFocus(), t:GetText(), changes, focus");
+        assert!(r.0, "focused");
+        // `SetText` leaves the caret at 0, as in a plain text box.
+        assert_eq!(r.1, "cab");
+        assert!(r.2 >= 1.0, "TextChanged after the edit, got {}", r.2);
+        assert!(r.3.starts_with('+'), "{}", r.3);
+        let c: String = fx.eval("Probe", "return table.concat(clicks, ';')");
+        assert_eq!(c, "50,12");
+        // Keys reach the box; Escape keeps the focus (as a plain text box does).
+        fx.key("Escape", 0x2C);
+        let r: (f64, bool) = fx.eval("Probe", "return keys, t:HasFocus()");
+        assert!(r.0 >= 1.0, "KeyDown, got {}", r.0);
+        assert!(r.1, "Escape keeps the focus");
+        // Read-only: typing changes nothing.
+        fx.eval::<()>("Probe", "t:SetReadOnly(true) changes = 0");
+        fx.type_char('x');
+        fx.frame(0.016);
+        let r: (String, f64) = fx.eval("Probe", "return t:GetText(), changes");
+        assert_eq!(r, ("cab".into(), 0.0));
+        fx.assert_no_errors();
+    }
+
+    /// The layout widget of a game-styled scroll bar (§14.2.2) fills the control, shows the
+    /// value, and moves it: the arrow buttons step by the small change. The control keeps
+    /// its own visibility.
+    #[test]
+    fn scroll_bar_widget_drives_the_value() {
+        let mut fx = fx();
+        fx.eval::<()>(
+            "Probe",
+            &format!(
+                "{WINDOW} sb = Turbine.UI.Lotro.ScrollBar() sb:SetParent(w) sb:SetPosition(10, 10) \
+                 sb:SetSize(200, 16) sb:SetVisible(true) sb:SetValue(50) sb:SetSmallChange(3) \
+                 vals = {{}} sb.ValueChanged = function() vals[#vals + 1] = sb:GetValue() end"
+            ),
+        );
+        fx.frame(0.016);
+        let sb = fx.control_key("Probe", "sb");
+        let pid = Vocab::default().pids.sb_position;
+        let widget = |fx: &Fx| {
+            let ui = fx.pui.ui().borrow();
+            let w = ui.children(sb).into_iter().find(|c| {
+                ui.element_id(*c).is_some_and(|id| id >= 0x7000_0000)
+                    && ui.find_child(*c, INC).is_some()
+            });
+            w.expect("the layout widget below the control")
+        };
+        let w = widget(&fx);
+        {
+            let ui = fx.pui.ui().borrow();
+            let b = ui.layout_box(w).unwrap();
+            assert_eq!((b.l, b.t, b.w(), b.h()), (0, 0, 200, 16));
+            assert!((ui.prop(w, pid).float() - 0.5).abs() < 1e-6);
+        }
+        // The increment button at the bar's right end.
+        let (x, y) = (100 + 10 + 192, 100 + 10 + 8);
+        let hold = fx.press(x, y);
+        fx.release(hold, x, y);
+        fx.frame(0.016);
+        let r: (f64, String) = fx.eval("Probe", "return sb:GetValue(), table.concat(vals, ',')");
+        assert_eq!(r, (53.0, "53".into()));
+        {
+            let ui = fx.pui.ui().borrow();
+            assert!((ui.prop(w, pid).float() - 0.53).abs() < 1e-6);
+        }
+        // Code changes show on the widget, and the bar stays hidden when hidden.
+        fx.eval::<()>("Probe", "sb:SetVisible(false) sb:SetValue(20)");
+        fx.frame(0.016);
+        let r: bool = fx.eval("Probe", "return sb:IsVisible()");
+        assert!(!r);
+        {
+            let ui = fx.pui.ui().borrow();
+            assert!(!ui.is_visible(sb));
+            assert!((ui.prop(w, pid).float() - 0.2).abs() < 1e-6);
+        }
+        fx.assert_no_errors();
+    }
+
+    /// §14.2.1 step 3: an orientation change rebuilds the game-styled bar from the other
+    /// base element, fires `OrientationChanged`, keeps the value, and passes the old
+    /// operation number to `SetBlendMode` (`AlphaBlend` 4 → 2; never set → 0).
+    #[test]
+    fn scroll_bar_orientation_rebuilds() {
+        let fx = fx();
+        fx.eval::<()>(
+            "Probe",
+            "sb = Turbine.UI.Lotro.ScrollBar() sb:SetSize(16, 200) sb:SetValue(40) \
+             n = 0 sb.OrientationChanged = function() n = n + 1 end \
+             b = Turbine.UI.Lotro.ScrollBar()",
+        );
+        let sb = fx.control_key("Probe", "sb");
+        let hp = Vocab::default().pids.sb_horizontal;
+        let horizontal = |fx: &Fx| {
+            let ui = fx.pui.ui().borrow();
+            let w = ui
+                .children(sb)
+                .into_iter()
+                .find(|c| ui.find_child(*c, INC).is_some())
+                .expect("widget");
+            (ui.element_id(w).unwrap(), ui.prop(w, hp).bool())
+        };
+        let (first, h) = horizontal(&fx);
+        assert!(h, "a new bar is horizontal");
+        let r: (f64, f64, f64) = fx.eval(
+            "Probe",
+            "sb:SetBlendMode(Turbine.UI.BlendMode.AlphaBlend) \
+             sb:SetOrientation(Turbine.UI.Orientation.Vertical) \
+             b:SetOrientation(Turbine.UI.Orientation.Vertical) \
+             return sb:GetBlendMode(), b:GetBlendMode(), sb:GetValue()",
+        );
+        assert_eq!(r, (2.0, 0.0, 40.0));
+        let (second, h) = horizontal(&fx);
+        assert!(!h, "rebuilt from LotroScrollBar_Vertical");
+        assert_ne!(first, second, "a new element");
+        {
+            let ui = fx.pui.ui().borrow();
+            let w = ui
+                .children(sb)
+                .into_iter()
+                .find(|c| ui.find_child(*c, INC).is_some())
+                .unwrap();
+            let b = ui.layout_box(w).unwrap();
+            assert_eq!((b.w(), b.h()), (16, 200));
+            let q = ui.prop(w, Vocab::default().pids.sb_position).float();
+            assert!((q - 0.4).abs() < 1e-6, "{q}");
+        }
+        let n: f64 = fx.eval("Probe", "return n");
+        assert_eq!(n, 1.0);
+        fx.assert_no_errors();
+    }
+}

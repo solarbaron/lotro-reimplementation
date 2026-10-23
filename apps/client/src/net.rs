@@ -34,7 +34,7 @@ use tessera_net::sandbox::world::WorldSource;
 use tessera_net::sandbox::{SandboxBackend, SandboxConfig};
 use tessera_net::{
     ChatChannel, Command, Destination, EntityId, EntityKind, Event, Location, LocationCause,
-    NetError, Session, SessionState, Transform, Vec3,
+    NetError, NoticeLevel, Session, SessionState, Transform, Vec3,
 };
 
 /// How long [`World::shutdown`] waits for the backend to confirm the disconnect.
@@ -1497,10 +1497,18 @@ impl World {
             let on = self.offers_user_chat();
             self.social.set_user_chat(on);
         }
+        // Refusals and operator notices are typed events now; the chat shows them as the
+        // system lines they were before.
+        let line = system_line(ev).map(|text| Event::ChatMessage {
+            channel: ChatChannel::System,
+            sender: None,
+            text,
+        });
         let lines = {
             let entities = &self.entities;
-            self.social
-                .apply(ev, &|id| entities.get(&id).map(|e| e.name.clone()))
+            self.social.apply(line.as_ref().unwrap_or(ev), &|id| {
+                entities.get(&id).map(|e| e.name.clone())
+            })
         };
         if let Some(coin) = self.p1.coin() {
             self.social.set_wallet(coin);
@@ -1714,6 +1722,18 @@ impl World {
                     self.entities.remove(&id);
                 }
             }
+            Event::EnterWorldFailed { character, reason } => {
+                tracing::warn!(%character, "net: {reason}");
+                // The session is back at character selection (`tessera-protocol.md`
+                // §6.2.11). A walker that entered by itself has nothing else to enter, so
+                // it leaves. The character screens leave too for now: they wait in their
+                // entering state until `WorldEntered` or `Disconnected` and do not yet
+                // take `EnterWorldFailed` back to the selection, so the session ends as
+                // before and the screens show the reason.
+                if let Err(e) = self.send(now, Command::Disconnect) {
+                    tracing::debug!("net: disconnect not sent: {e}");
+                }
+            }
             Event::Disconnected { reason } => {
                 tracing::info!(?reason, "net: disconnected");
                 let pinned = self.pinned;
@@ -1806,6 +1826,27 @@ pub fn motd_lines(name: &str, motd: &str) -> Vec<String> {
             .map(str::to_owned),
     );
     out
+}
+
+/// The system chat line of a typed refusal or notice (the text the backend used to send as
+/// a system line), or `None` for every other event.
+fn system_line(ev: &Event) -> Option<String> {
+    match ev {
+        Event::TeleportRefused { text, .. } | Event::ChatRejected { text, .. } => {
+            Some(text.clone())
+        }
+        Event::EnterWorldFailed { reason, .. } => Some(reason.clone()),
+        Event::ServerNotice {
+            level,
+            seconds,
+            text,
+        } => Some(match level {
+            NoticeLevel::Warning => format!("warning: {text}"),
+            NoticeLevel::Shutdown => format!("server stopping in {seconds} s: {text}"),
+            _ => text.clone(),
+        }),
+        _ => None,
+    }
 }
 
 /// A user-facing explanation of why a remote session failed (fingerprints are public; the

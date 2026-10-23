@@ -440,6 +440,20 @@ pub fn interest_block(x: f64, y: f64) -> (u8, u8) {
     (idx(x), idx(y))
 }
 
+/// Where a bot in the world is, for the pairing of [`DesyncTracker`]: region, interest
+/// block and world instance (when known).
+type BotPlace = (u16, (u8, u8), Option<u32>);
+
+/// Whether two bots may share a world instance: the same instance, or either not known
+/// (a server that sent no `WorldEnter` yet counts as one instance).
+#[must_use]
+pub fn same_instance(a: Option<u32>, b: Option<u32>) -> bool {
+    match (a, b) {
+        (Some(x), Some(y)) => x == y,
+        _ => true,
+    }
+}
+
 /// Chebyshev distance between two blocks.
 #[must_use]
 pub fn chebyshev(a: (u8, u8), b: (u8, u8)) -> u32 {
@@ -716,16 +730,23 @@ impl DesyncTracker {
         }
         let n = self.n.min(bots.len());
         let r = self.cfg.radius;
-        let info: Vec<Option<(u16, (u8, u8))>> = bots
+        // Region, interest block and world instance (`WorldEnter.instance`; bots in
+        // different instances never see each other, `tessera-protocol.md` §9.2).
+        let info: Vec<Option<BotPlace>> = bots
             .iter()
             .take(n)
             .map(|b| {
-                b.in_world()
-                    .then(|| (b.pos.region.0, interest_block(b.pos.x, b.pos.y)))
+                b.in_world().then(|| {
+                    (
+                        b.pos.region.0,
+                        interest_block(b.pos.x, b.pos.y),
+                        b.instance(),
+                    )
+                })
             })
             .collect();
         for (o, ob) in bots.iter().enumerate().take(n) {
-            let Some((o_region, o_block)) = info[o] else {
+            let Some((o_region, o_block, o_instance)) = info[o] else {
                 if !self.pairs.is_empty() {
                     for e in 0..n {
                         self.pairs.remove(&(o * self.n + e));
@@ -747,8 +768,9 @@ impl DesyncTracker {
             let mut cands: Vec<(f64, usize)> = Vec::new();
             for (e, i) in info.iter().enumerate() {
                 if e != o
-                    && let Some((reg, blk)) = i
+                    && let Some((reg, blk, inst)) = i
                     && *reg == o_region
+                    && same_instance(*inst, o_instance)
                     && chebyshev(o_block, *blk) <= r
                 {
                     cands.push((bots[e].pos.distance_xy(&ob.pos), e));
@@ -764,8 +786,8 @@ impl DesyncTracker {
                 }
                 let k = o * self.n + e;
                 let distance = info[e]
-                    .filter(|(reg, _)| *reg == o_region)
-                    .map(|(_, blk)| chebyshev(o_block, blk));
+                    .filter(|(reg, _, inst)| *reg == o_region && same_instance(*inst, o_instance))
+                    .map(|(_, blk, _)| chebyshev(o_block, blk));
                 let created = ob.view_bot.get(&e).copied();
                 let duplicated = self.scratch_dups.get(e).is_some_and(|c| *c > 1);
                 if created.is_some() {

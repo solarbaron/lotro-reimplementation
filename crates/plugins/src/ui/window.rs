@@ -244,11 +244,52 @@ pub(crate) fn layout_frame(sh: &Shared, id: u64) {
     layout_frame_with(&mut ui, &st, id);
 }
 
+/// Retries of one window's title layout while its caption cannot be measured (about 30 s
+/// at 60 frames a second; Tessera bound, `lua-plugin-api.md` §14.2.6 implementer OPEN).
+const MAX_TITLE_RETRIES: u32 = 1_800;
+
+/// Lays out again the titles of game-styled windows whose caption could not be measured
+/// when it was set (its fonts were still loading, §14.2.3 *m*), once a frame, until the
+/// measurement succeeds, the window is gone or [`MAX_TITLE_RETRIES`] is reached.
+pub(crate) fn retry_titles(sh: &Shared) {
+    let pending: Vec<(u64, u32)> = {
+        let st = sh.st.borrow();
+        let mut p = st.title_pending.borrow_mut();
+        if p.is_empty() {
+            return;
+        }
+        std::mem::take(&mut *p).into_iter().collect()
+    };
+    let Ok(mut ui) = sh.ui.try_borrow_mut() else {
+        sh.st.borrow().title_pending.borrow_mut().extend(pending);
+        return;
+    };
+    let st = sh.st.borrow();
+    for (id, tries) in pending {
+        if tries >= MAX_TITLE_RETRIES {
+            tracing::debug!(
+                window = id,
+                "plugin window caption never measured; title kept"
+            );
+            continue;
+        }
+        layout_frame_with(&mut ui, &st, id);
+        if let Some(n) = st.title_pending.borrow_mut().get_mut(&id) {
+            *n = tries.saturating_add(1);
+        }
+    }
+}
+
 /// [`layout_frame`] with the UI and state already borrowed.
 pub(crate) fn layout_frame_with(ui: &mut Ui, st: &State, id: u64) {
     let Some(ObjData::Ctl(c)) = st.objs.get(&id).map(|o| &o.data) else {
         return;
     };
+    if c.based {
+        let measured = super::styled::title_layout(ui, c);
+        super::styled::note_title(st, id, measured);
+        return;
+    }
     let (w, h) = ui.control_size(c.key);
     let t = (w.saturating_sub(140)).min(120);
     let resizable = c.window.as_deref().is_some_and(|w| w.resizable);
@@ -479,8 +520,19 @@ pub(crate) fn install(
     })?;
     def(api, sh, &lwin, "SetResizable", styled_window, |cx, args| {
         let v = truthy(args.front());
-        ws(cx.sh, cx.id, |w| w.resizable = v);
-        layout_frame(cx.sh, cx.id);
+        // §14.2.3: nothing happens when the value is the stored one.
+        let changed = ws(cx.sh, cx.id, |w| {
+            std::mem::replace(&mut w.resizable, v) != v
+        })
+        .unwrap_or(false);
+        let based = ctl_get(cx.sh, cx.id, |c| c.based.then_some(c.key)).flatten();
+        match based {
+            Some(key) if changed => {
+                with_ui(cx.sh, |u| super::styled::set_resize_bars(u, key, v));
+            }
+            Some(_) => {}
+            None => layout_frame(cx.sh, cx.id),
+        }
         Ok(())
     })?;
     Ok(())

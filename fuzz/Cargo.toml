@@ -1433,3 +1433,12 @@ path = "fuzz_targets/settings_window_prefs.rs"
 test = false
 doc = false
 bench = false
+
+# --- tessera-ui: game-styled plugin controls built from a layout (lua-plugin-api.md §14.2.1-§14.2.3) ---
+
+[[bin]]
+name = "ui_based_controls"
+path = "fuzz_targets/ui_based_controls.rs"
+test = false
+doc = false
+bench = false

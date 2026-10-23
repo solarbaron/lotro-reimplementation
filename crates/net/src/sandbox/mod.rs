@@ -27,6 +27,10 @@
 //!   ([`CrowdConfig`]): standing, walking or running in circles, with varied
 //!   appearances and phases (a load test for the client's animation),
 //! - echoes chat back (tells get a system notice instead),
+//! - answers [`Command::Stance`] and [`Command::Emote`] with an
+//!   [`Event::EntityStateChanged`] for the player (when the state changed) and
+//!   [`Command::SetAppearance`] with an [`Event::AppearanceChanged`] for the player, and
+//!   takes [`Command::Register`] as `Connect` (it has no accounts),
 //! - accepts player movement, correcting it back (an [`Event::EntityMoved`]
 //!   and a precise [`Event::LocationReport`]) if it moves implausibly fast or
 //!   into another region (a stand-in for server-side validation),
@@ -88,8 +92,8 @@ use crate::domain::{
     CharacterCommand, CharacterEvent, DEFAULT_PERFORMANCE_LEAD_MS, SocialCommand, SocialEvent, Text,
 };
 use crate::model::{
-    Anchor, Appearance, CharacterSummary, ChatChannel, Destination, DisconnectReason, EntityId,
-    EntityKind, Location, LocationCause, RegionId, Transform, Vec3,
+    Anchor, Appearance, CharacterSummary, ChatChannel, Destination, DisconnectReason, Emote,
+    EntityId, EntityKind, EntityState, Location, LocationCause, RegionId, Transform, Vec3,
 };
 #[cfg(feature = "scenario")]
 use crate::scenario::{ResolvedScenario, ScenarioCounters, ScenarioStatus, feed::Feed};
@@ -387,6 +391,8 @@ struct Player {
     /// submitted meanwhile were sent from the old place and are ignored.
     unseen_teleports: u32,
     last_move: Instant,
+    /// Stance and emote set by [`Command::Stance`] and [`Command::Emote`].
+    state: EntityState,
 }
 
 /// A resolved place to put the player.
@@ -687,6 +693,20 @@ impl SandboxBackend {
         self.pending.push_back((due, event));
     }
 
+    /// Applies `change` to the player's replicated state and reports the result
+    /// ([`Event::EntityStateChanged`]), when it changed.
+    fn set_player_state(&mut self, now: Instant, change: impl FnOnce(&mut EntityState)) {
+        let Some(player) = self.player.as_mut() else {
+            return;
+        };
+        let before = player.state;
+        change(&mut player.state);
+        if player.state != before {
+            let (id, state) = (player.id, player.state);
+            self.emit(now, Event::EntityStateChanged { id, state });
+        }
+    }
+
     fn system(&mut self, now: Instant, text: impl Into<String>) {
         self.emit(
             now,
@@ -897,6 +917,7 @@ impl SandboxBackend {
             anchor,
             unseen_teleports: 0,
             last_move: now,
+            state: EntityState::default(),
         });
         self.emit(
             now,
@@ -1349,7 +1370,8 @@ impl Backend for SandboxBackend {
 
     fn submit(&mut self, now: Instant, command: Command) -> Result<(), NetError> {
         match (self.phase, command) {
-            (Phase::Idle, Command::Connect) => {
+            // The sandbox has no accounts: registering is connecting.
+            (Phase::Idle, Command::Connect | Command::Register) => {
                 let characters = self
                     .characters()
                     .into_iter()
@@ -1405,6 +1427,26 @@ impl Backend for SandboxBackend {
                 }
             }
             (Phase::InWorld, Command::QueryLocation) => self.report_location(now),
+            (Phase::InWorld, Command::Stance { stance }) => {
+                self.set_player_state(now, |s| s.stance = stance);
+            }
+            (Phase::InWorld, Command::Emote { anim, looping }) => {
+                // `started` is the time since world entry, the sandbox's server clock.
+                let started = self.world_start.map_or(0, |t| {
+                    u64::try_from(now.saturating_duration_since(t).as_micros()).unwrap_or(u64::MAX)
+                });
+                let emote = (anim != 0).then_some(Emote {
+                    anim,
+                    started,
+                    looping,
+                });
+                self.set_player_state(now, |s| s.emote = emote);
+            }
+            (Phase::InWorld, Command::SetAppearance { appearance }) => {
+                if let Some(id) = self.player.as_ref().map(|p| p.id) {
+                    self.emit(now, Event::AppearanceChanged { id, appearance });
+                }
+            }
             #[cfg(feature = "scenario")]
             (
                 Phase::InWorld,

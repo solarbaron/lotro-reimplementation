@@ -8,7 +8,7 @@
 //! thread-local table, so they stay `Send` although [`tessera_ui::Ui`] is not.
 
 use std::cell::RefCell;
-use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 use std::rc::{Rc, Weak};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
@@ -88,6 +88,9 @@ pub(crate) enum Pending {
     Close(u64),
     /// The `KeyDown`/`KeyUp` broadcast to every key subscriber (§13.13 step 3).
     Keys { down: bool, action: u32 },
+    /// The title layout of a game-styled window (`lua-plugin-api.md` §14.2.3), after the
+    /// `SizeChanged` handlers queued before it ran.
+    TitleLayout(u64),
 }
 
 /// Mutable binding state.
@@ -112,6 +115,20 @@ pub(crate) struct State {
     pub game_drag: Option<super::shortcut::ShortcutData>,
     pub modifiers: super::Modifiers,
     pub text_pids: super::TextPids,
+    /// The close buttons of game-styled windows report `Button_click` to the layer (the
+    /// listener registry entry is made once, `lua-plugin-api.md` §14.2.3).
+    pub close_handler: bool,
+    /// The text elements of game-styled text boxes report their notifications to the
+    /// layer (one set of listener-registry entries for `LotroTextBox_Text`, §14.2.2).
+    pub text_box_handlers: bool,
+    /// Element IDs of game-styled scroll-bar widgets whose control record is gone: their
+    /// listener-registry entries are removed at the next [`Shared::collect`].
+    pub forget_parts: Vec<u32>,
+    /// Game-styled windows whose caption could not be measured yet (its fonts were still
+    /// loading), with the retries made: their title layout (§14.2.3) runs again each frame
+    /// ([`super::window::retry_titles`]). Interior mutability: the title layout runs with
+    /// the state borrowed shared.
+    pub title_pending: RefCell<BTreeMap<u64, u32>>,
     /// The native-panel switches of §14.3, by `LotroUIElement` value (known values only).
     pub panel_switches: HashMap<u32, bool>,
     pub group_scales: HashMap<u32, f32>,
@@ -563,6 +580,9 @@ impl Shared {
                     && let ObjData::Ctl(c) = o.data
                 {
                     st.by_key.remove(&c.key);
+                    if let Some((_, element_id)) = c.scroll.as_deref().and_then(|s| s.widget) {
+                        st.forget_parts.push(element_id);
+                    }
                 }
             }
             st.per_apartment.remove(apartment);
@@ -594,10 +614,13 @@ impl Shared {
             return;
         };
         let events = ui.take_events();
+        let mut st = self.st.borrow_mut();
         if events.is_empty() {
+            for element_id in std::mem::take(&mut st.forget_parts) {
+                super::styled::forget_scroll_part(&mut ui, element_id);
+            }
             return;
         }
-        let mut st = self.st.borrow_mut();
         for e in events {
             match e {
                 UiEvent::Control { control, event } => {
@@ -622,10 +645,22 @@ impl Shared {
                     st.game_drag = None;
                     st.client.push(e);
                 }
+                UiEvent::Game { ref message } => {
+                    if super::styled::part_message(&mut ui, &mut st, message) {
+                        continue;
+                    }
+                    match super::styled::closed_window(&ui, &st, message) {
+                        Some(win) => push(&mut st, Pending::Close(win)),
+                        None => st.client.push(e),
+                    }
+                }
                 other => st.client.push(other),
             }
         }
         st.quiet_visible.clear();
+        for element_id in std::mem::take(&mut st.forget_parts) {
+            super::styled::forget_scroll_part(&mut ui, element_id);
+        }
     }
 
     /// Deliver the queue through `sink` (§9.7 step 3: in queue order, including events
@@ -685,6 +720,7 @@ impl Shared {
                 }
                 super::window::close(self, sink, &ap, win);
             }
+            Pending::TitleLayout(win) => super::window::layout_frame(self, win),
             Pending::Keys { down, action } => {
                 // A broadcast is not a notification: calls made by its handlers deliver
                 // synchronously (§9.7), so the queue is set aside while it runs.
@@ -897,6 +933,9 @@ fn drop_record(st: &mut State, id: u64) -> Option<Obj> {
         if st.by_key.get(&c.key) == Some(&id) {
             st.by_key.remove(&c.key);
         }
+        if let Some((_, element_id)) = c.scroll.as_deref().and_then(|s| s.widget) {
+            st.forget_parts.push(element_id);
+        }
         if let Some(t) = c.text.as_deref()
             && let Some(n) = st.text_bytes.get_mut(&obj.apartment)
         {
@@ -1014,7 +1053,9 @@ fn lua_alive(st: &State, id: u64, batch: &HashSet<u64>) -> bool {
 
 fn pending_for(objs: &HashMap<u64, Obj>, p: &Pending) -> bool {
     match p {
-        Pending::Fire { target, .. } | Pending::Close(target) => !objs.contains_key(target),
+        Pending::Fire { target, .. } | Pending::Close(target) | Pending::TitleLayout(target) => {
+            !objs.contains_key(target)
+        }
         Pending::Keys { .. } => false,
     }
 }

@@ -56,6 +56,9 @@ pub(crate) struct LinkParams {
     pub events: mpsc::Sender<Inbound>,
     pub moves: watch::Receiver<Option<MoveSlot>>,
     pub shutdown: watch::Receiver<bool>,
+    /// Set by [`RemoteBackend::drop_connection`](super::RemoteBackend::drop_connection):
+    /// close at once, without `Disconnect`.
+    pub abort: watch::Receiver<bool>,
     pub stats: Arc<Mutex<RemoteStats>>,
 }
 
@@ -167,6 +170,8 @@ struct Link {
     moves: watch::Receiver<Option<MoveSlot>>,
     shutdown: watch::Receiver<bool>,
     shutdown_seen: bool,
+    abort: watch::Receiver<bool>,
+    abort_seen: bool,
     stats: Arc<Mutex<RemoteStats>>,
 }
 
@@ -184,6 +189,8 @@ impl Link {
             moves: p.moves,
             shutdown: p.shutdown,
             shutdown_seen: false,
+            abort: p.abort,
+            abort_seen: false,
             stats: p.stats,
         }
     }
@@ -225,6 +232,10 @@ impl Link {
             }
             _ = self.shutdown.changed() => {
                 self.driver.disconnect(self.now());
+                return None;
+            }
+            _ = self.abort.changed() => {
+                self.driver.connection_closed(ConnectionEnd::Local);
                 return None;
             }
         };
@@ -297,6 +308,10 @@ impl Link {
             () = tokio::time::sleep_until(deadline) => None,
             _ = self.shutdown.changed() => {
                 self.driver.disconnect(self.now());
+                return None;
+            }
+            _ = self.abort.changed() => {
+                self.driver.connection_closed(ConnectionEnd::Local);
                 return None;
             }
         };
@@ -474,6 +489,16 @@ impl Link {
                     let _ = r;
                     self.shutdown_seen = true;
                     self.driver.disconnect(self.now());
+                }
+                r = self.abort.changed(), if !self.abort_seen => {
+                    self.abort_seen = true;
+                    if r.is_ok() && *self.abort.borrow() {
+                        // Abrupt loss (test-server.md §13.1): no `Disconnect`, no wait for
+                        // the streams; the peer sees a bare CONNECTION_CLOSE.
+                        conn.close(u32::from(AppErrorCode::NoError.to_u16()).into(), b"");
+                        self.driver.connection_closed(ConnectionEnd::Local);
+                        return;
+                    }
                 }
                 e = conn.closed() => {
                     self.driver.connection_closed(connection_end(&e));

@@ -1167,6 +1167,163 @@ impl Appearance {
     }
 }
 
+/// A character's stance and a playing emote: the replicated-property vocabulary of
+/// Tessera's own protocol (`tessera-protocol.md` §7.3), which is small and semantic enough
+/// to serve every backend. Re-exported here so that [`EntityState`] and the
+/// [`Command::Stance`](crate::Command::Stance) command need no protocol module.
+pub use tessera_protocol::types::{Gait, Motion};
+pub use tessera_protocol::value::{Emote, Stance};
+
+/// Default walk speed in m/s of an entity whose world source sent none
+/// (`tessera-protocol.md` §7.3 `WALK_SPEED`).
+pub const DEFAULT_WALK_SPEED: f32 = tessera_protocol::limits::DEFAULT_WALK_SPEED;
+/// Default run speed in m/s (`RUN_SPEED`).
+pub const DEFAULT_RUN_SPEED: f32 = tessera_protocol::limits::DEFAULT_RUN_SPEED;
+
+/// The replicated state of an entity or the player (`docs/ARCHITECTURE.md` §19.1
+/// "property changed"): stance, the playing emote, the owner's movement speeds and the
+/// newest motion byte. Carried by [`Event::EntityStateChanged`](crate::Event::EntityStateChanged)
+/// after every change; the test-server backend also keeps it per entity
+/// (`RemoteBackend::entity_state`).
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[non_exhaustive]
+pub struct EntityState {
+    /// `STANCE` (default Relaxed).
+    pub stance: Stance,
+    /// `EMOTE`, when one is playing. When the struct has no `started` field, §7.3 says it
+    /// defaults to the message's `server_time`; `EntityUpdate` has none, so the test-server
+    /// backend uses the newest server time it has seen in any message (world, chat or
+    /// `MotionBatch`) at that point (an open spec question, `tessera-protocol.md` §17.2).
+    pub emote: Option<Emote>,
+    /// `WALK_SPEED` in m/s (owner only; default [`DEFAULT_WALK_SPEED`]).
+    pub walk_speed: f32,
+    /// `RUN_SPEED` in m/s (owner only; default [`DEFAULT_RUN_SPEED`]).
+    pub run_speed: f32,
+    /// Motion byte of the newest movement state (`tessera-protocol.md` §8.1).
+    pub motion: Motion,
+}
+
+impl Default for EntityState {
+    fn default() -> Self {
+        Self {
+            stance: Stance::Relaxed,
+            emote: None,
+            walk_speed: DEFAULT_WALK_SPEED,
+            run_speed: DEFAULT_RUN_SPEED,
+            motion: Motion::STANDING,
+        }
+    }
+}
+
+impl EntityState {
+    /// The default state with `stance` and `emote` (speeds and motion at their defaults).
+    #[must_use]
+    pub fn with(stance: Stance, emote: Option<Emote>) -> Self {
+        Self {
+            stance,
+            emote,
+            ..Self::default()
+        }
+    }
+
+    /// True when both speeds are finite and in (0, 100] m/s.
+    #[must_use]
+    pub fn is_valid(&self) -> bool {
+        let ok = |v: f32| v.is_finite() && v > 0.0 && v <= 100.0;
+        ok(self.walk_speed) && ok(self.run_speed)
+    }
+}
+
+/// Why a teleport request was refused (`tessera-protocol.md` §14.6, as Tessera's own
+/// vocabulary).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum TeleportRefusal {
+    /// The named place is unknown.
+    UnknownPlace,
+    /// Not allowed (policy, or a region the world source does not serve).
+    NotAllowed,
+    /// Superseded by a newer request.
+    Cancelled,
+    /// The destination is invalid.
+    InvalidDestination,
+    /// Any other reason (the world source's own error, or a code this version does not
+    /// know).
+    Other,
+}
+
+impl TeleportRefusal {
+    /// A short stable name (`UNKNOWN_PLACE`, `NOT_ALLOWED`, `CANCELLED`,
+    /// `INVALID_DESTINATION`, `SERVER_ERROR`).
+    #[must_use]
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::UnknownPlace => "UNKNOWN_PLACE",
+            Self::NotAllowed => "NOT_ALLOWED",
+            Self::Cancelled => "CANCELLED",
+            Self::InvalidDestination => "INVALID_DESTINATION",
+            Self::Other => "SERVER_ERROR",
+        }
+    }
+}
+
+/// Why a chat line was not delivered (`tessera-protocol.md` §14.7, as Tessera's own
+/// vocabulary).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum ChatRejection {
+    /// Too many lines; slow down.
+    RateLimited,
+    /// The tell's recipient is not online.
+    UnknownRecipient,
+    /// The text was refused (length or content).
+    InvalidText,
+    /// The player is muted.
+    Muted,
+    /// The sender is not in the world (between places).
+    NotInWorld,
+    /// A line for a named channel the sender is not a member of.
+    NotJoined,
+    /// Any other reason, or a code this version does not know.
+    Other,
+}
+
+impl ChatRejection {
+    /// Whether the rejection is expected in normal play (a recipient that went offline, a
+    /// sender between places) rather than a sign of a misbehaving client.
+    #[must_use]
+    pub fn is_benign(self) -> bool {
+        matches!(self, Self::UnknownRecipient | Self::NotInWorld)
+    }
+
+    /// A short stable name (`RATE_LIMITED`, `UNKNOWN_RECIPIENT`, `INVALID_TEXT`, `MUTED`,
+    /// `NOT_IN_WORLD`, `NOT_JOINED`, `OTHER`).
+    #[must_use]
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::RateLimited => "RATE_LIMITED",
+            Self::UnknownRecipient => "UNKNOWN_RECIPIENT",
+            Self::InvalidText => "INVALID_TEXT",
+            Self::Muted => "MUTED",
+            Self::NotInWorld => "NOT_IN_WORLD",
+            Self::NotJoined => "NOT_JOINED",
+            Self::Other => "OTHER",
+        }
+    }
+}
+
+/// How urgent a world-source notice is (`tessera-protocol.md` §6.4.2).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum NoticeLevel {
+    /// Information.
+    Info,
+    /// A warning.
+    Warning,
+    /// The world source stops after the notice's `seconds`.
+    Shutdown,
+}
+
 #[cfg(test)]
 mod look_tests {
     use super::*;

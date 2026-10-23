@@ -7,6 +7,7 @@
 //! |---|---|---|
 //! | [`CollisionSystem`] | Shared by every worker: the §9.1 property IDs, the object-collision cache (0x47 → setup → 0x66 mesh and volumes), the cell-geometry cache (0x01), limits and the content-layer options | §8, §9.1, §12.1 |
 //! | [`CollisionInput`], [`CollisionSystem::build`], [`CollisionSystem::build_at`] | One landblock's set, in the order of §9.4: terrain and ceiling meshes, blocking statics (§9.3), blocking generated objects (§9.4), cells with their physics meshes and lookup (§5.3, §5.8.1), water plane and liquid boxes (`water.md` §6–§7) | §12.1 |
+//! | [`PrioritySource`] | Where a build reads its job's priority, once, when the hierarchy build starts | §12.1 |
 //! | [`HierarchyThreads`], [`HierarchyBuildCounts`] | Threads of one set's hierarchy build by job priority: `Prefetch` builds stay on their worker, `Visible` and higher draw helpers from the shared budget; counts per rule | §12.1 |
 //! | [`BlockCollision`], [`CellPortals`], [`Portal`] | The built set, the cells of landblock info with their portal links and portal polygons in the landblock frame, and the residency charge | §5.5, §5.8 |
 //!
@@ -31,18 +32,22 @@
 //! never takes helpers from a landblock that is needed now; `Visible` and `Immediate` jobs
 //! use the shared budget. The tree, and so every query, does not depend on the rule.
 //!
-//! The contract of [`CollisionSystem::build_at`] is that the caller passes the priority its
-//! job holds when the build starts, so that a job raised from `Prefetch` to `Visible` while
-//! it waited in the queue builds under `Visible`'s rule. The landblock-bundle decoder does
-//! not know its job's priority yet (the asset pool's job context carries cancellation
-//! only) and calls [`CollisionSystem::build`], which applies `Visible`'s rule.
+//! The rule reads the job's priority once, when the hierarchy build itself starts (§12.1),
+//! after the terrain, statics, generated objects, cells and water have been added: the
+//! caller of [`CollisionSystem::build_at`] passes a [`PrioritySource`] (a fixed
+//! [`Priority`], a closure such as `|| ctx.current_priority()`, or the asset pool's
+//! [`JobContext`] itself), which is asked exactly once, right before the hierarchy build,
+//! so that a job raised from `Prefetch` to `Visible` while it waited in the queue or while
+//! the earlier stages of its set ran builds under `Visible`'s rule. A change after that
+//! point does not change the build's threads (the tree is the same either way). A build
+//! with no job priority ([`CollisionSystem::build`]) counts as `Visible`.
 
 use std::cell::Cell;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 
-use tessera_assets::Priority;
+use tessera_assets::{JobContext, Priority};
 
 use tessera_formats::collision::{CELL_GEOMETRY_PREFIX, CellGeometry};
 use tessera_formats::{Did, LandblockData, LandblockId, LandblockInfo, PropertySchema};
@@ -165,6 +170,49 @@ impl ObjectCache {
         let mut inner = self.lock();
         inner.map.clear();
         inner.bytes = 0;
+    }
+}
+
+/// Where a collision build reads its job's priority (module docs, "Hierarchy build
+/// threads"; `collision.md` §12.1). [`CollisionSystem::build_at`] asks it exactly once,
+/// right before the set's hierarchy build starts, after the terrain, statics, generated
+/// objects, cells and water have been added.
+///
+/// Implemented for a fixed [`Priority`], for closures returning one (`&dyn Fn() ->
+/// Priority` included), and for the asset pool's [`JobContext`] (by value or by
+/// reference), which reports [`JobContext::current_priority`].
+pub trait PrioritySource {
+    /// The job's priority now.
+    fn current_priority(&self) -> Priority;
+}
+
+impl PrioritySource for Priority {
+    fn current_priority(&self) -> Priority {
+        *self
+    }
+}
+
+impl<F: Fn() -> Priority> PrioritySource for F {
+    fn current_priority(&self) -> Priority {
+        self()
+    }
+}
+
+/// Reads [`JobContext::current_priority`], the job's live priority, never
+/// [`JobContext::priority`] (the priority the worker took the job out of the queue at): the
+/// thread rule counts the priority the job holds when its hierarchy build starts
+/// (`collision.md` §12.1), and an asset-store request may raise or lower it after the job
+/// has started (`tests/collision_live_priority.rs` checks the two apart).
+impl PrioritySource for JobContext<'_> {
+    fn current_priority(&self) -> Priority {
+        JobContext::current_priority(self)
+    }
+}
+
+/// As for [`JobContext`]: the live priority, [`JobContext::current_priority`].
+impl PrioritySource for &JobContext<'_> {
+    fn current_priority(&self) -> Priority {
+        JobContext::current_priority(self)
     }
 }
 
@@ -430,16 +478,22 @@ impl CollisionSystem {
         self.build_at(input, Priority::Visible)
     }
 
-    /// [`CollisionSystem::build`] for a job at `priority`. The caller passes the priority its
-    /// job holds when the build starts, so that a job raised from `Prefetch` to `Visible`
-    /// while it waited builds with `Visible`'s rule: a `Prefetch` build stays on the calling
-    /// worker (one thread), `Visible`
-    /// and `Immediate` builds may draw helpers from the shared budget
-    /// ([`HierarchyThreads::for_priority`], `collision.md` §12.1). The set does not depend
-    /// on the priority.
+    /// [`CollisionSystem::build`] for a job whose priority `priority` reports. It is asked
+    /// exactly once, right before the hierarchy build starts (after the terrain, statics,
+    /// generated objects, cells and water have been added), so that a job raised from
+    /// `Prefetch` to `Visible` while it waited or while those stages ran builds with
+    /// `Visible`'s rule: a `Prefetch` build stays on the calling worker (one thread),
+    /// `Visible` and `Immediate` builds may draw helpers from the shared budget
+    /// ([`HierarchyThreads::for_priority`], `collision.md` §12.1). A fixed [`Priority`],
+    /// a closure or a [`JobContext`] may be passed ([`PrioritySource`]). The set does not
+    /// depend on the priority.
     #[must_use]
-    pub fn build_at(&self, input: &CollisionInput<'_>, priority: Priority) -> BlockCollision {
-        self.build_with(input, HierarchyThreads::for_priority(priority))
+    pub fn build_at(
+        &self,
+        input: &CollisionInput<'_>,
+        priority: impl PrioritySource,
+    ) -> BlockCollision {
+        self.build_with(input, &priority)
     }
 
     /// Builds `b`'s hierarchy on at most `cap` threads, the calling worker included, and
@@ -457,8 +511,13 @@ impl CollisionSystem {
         }
     }
 
-    /// [`CollisionSystem::build`] with the hierarchy built under `threads`.
-    fn build_with(&self, input: &CollisionInput<'_>, threads: HierarchyThreads) -> BlockCollision {
+    /// [`CollisionSystem::build`] with the hierarchy built under the rule of the priority
+    /// `priority` reports when the hierarchy build starts.
+    fn build_with(
+        &self,
+        input: &CollisionInput<'_>,
+        priority: &dyn PrioritySource,
+    ) -> BlockCollision {
         let mut b = CollisionSetBuilder::new(self.limits);
         if let Some(id) = LandblockId::from_did(input.key.data_did()) {
             b.set_landblock(id);
@@ -503,11 +562,15 @@ impl CollisionSystem {
         {
             tracing::warn!(landblock = %input.key, error = %e, "liquid boxes left out of the collision set");
         }
+        // The job's priority is read once, here, as the hierarchy build starts (§12.1): a
+        // raise while the stages above ran counts, a change after this point does not.
+        let at = priority.current_priority();
+        let threads = HierarchyThreads::for_priority(at);
         // One cap decides both the call and the count (the test hook), so the count says
         // which cap the hierarchy build was given.
         let cap = threads.max_threads();
+        tracing::trace!(landblock = %input.key, priority = %at, ?threads, cap, "collision hierarchy build starts");
         let set = self.build_hierarchy(b, cap);
-        tracing::trace!(landblock = %input.key, ?threads, cap, "collision hierarchy built");
         // Portals of the cells the set accepted (bounded by its cell limit and the per-set
         // portal budgets).
         let (portals, portals_left_out) = match input.info {

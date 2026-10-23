@@ -11,6 +11,8 @@
 //! `MAX_RENDER_PREF_KEY` ASCII letters, digits and `_`, a value of at most
 //! `MAX_RENDER_PREF_VALUE` characters without control characters, both trimmed, and parses
 //! back to itself from `KEY=VALUE`; the look-up returns the value of the last use of a key.
+//! The level-number reading of each accepted value ([`render_pref::capped_level_number`])
+//! gives a number only for a value of ASCII digits, never above the cap.
 
 #![no_main]
 
@@ -20,7 +22,8 @@ mod render_pref;
 
 use libfuzzer_sys::fuzz_target;
 use render_pref::{
-    MAX_RENDER_PREF_KEY, MAX_RENDER_PREF_VALUE, RenderPref, parse_render_pref, render_pref,
+    MAX_RENDER_PREF_KEY, MAX_RENDER_PREF_VALUE, RenderPref, capped_level_number, parse_render_pref,
+    render_pref,
 };
 
 fn check(p: &RenderPref) {
@@ -36,6 +39,10 @@ fn check(p: &RenderPref) {
     assert_eq!(p.value.trim(), p.value);
     let again = parse_render_pref(&format!("{}={}", p.key, p.value));
     assert_eq!(again.as_ref(), Ok(p), "round trip");
+    if let Some(n) = capped_level_number(&p.value, 4) {
+        assert!(n <= 4);
+        assert!(!p.value.is_empty() && p.value.bytes().all(|b| b.is_ascii_digit()));
+    }
 }
 
 fuzz_target!(|data: &[u8]| {

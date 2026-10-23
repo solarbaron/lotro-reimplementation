@@ -878,8 +878,8 @@ pub struct ObjectInfo {
 /// ([`ObjectLayer::insert`]): `owner_opacity[i]` is object `i`'s `Render_Opacity`, the owner
 /// property `particle-runtime.md` §12 rule 15 counts in a static owner's opacity (Tessera
 /// reading; `mesh.md` §8.8: one factor of the render component's opacity, dictionary
-/// default 1), read by [`super::terrain::OwnerOpacity`] (the bundle builder's value first,
-/// else the block worker's lookup). The object layer multiplies it into the opacity it draws
+/// default 1), the value the bundle builder read ([`super::terrain::block_objects`],
+/// `tessera_world::LandblockBundle::render_opacity`). The object layer multiplies it into the opacity it draws
 /// the object with and reports ([`ObjectLayer::placed_entity_opacity`]); an object past the end of the
 /// list, or with a value that is not finite, has factor 1, and values are clamped to 0–1.
 #[derive(Debug, Clone)]

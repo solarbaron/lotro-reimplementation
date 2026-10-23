@@ -136,6 +136,13 @@ pub(crate) struct State {
     /// Controls whose visibility the layer changed itself (tree nodes): their next
     /// `VisibleChanged` notification is not a plugin event.
     pub quiet_visible: HashSet<ElementKey>,
+    /// Controls whose size the layer set itself (a rebuilt window keeping its size,
+    /// §14.2.1 step 3): their next `SizeChanged` fires no plugin event (the layer's own
+    /// follow-up work still runs).
+    pub quiet_size: HashSet<ElementKey>,
+    /// Controls whose position the layer set itself (as `quiet_size`): their next
+    /// `PositionChanged` is not a plugin event.
+    pub quiet_position: HashSet<ElementKey>,
     /// Open context-menu popups, outermost first: (menu object, popup window, rows).
     pub menus: Vec<super::menu::OpenMenu>,
     pub dropped_events: u64,
@@ -658,6 +665,8 @@ impl Shared {
             }
         }
         st.quiet_visible.clear();
+        st.quiet_size.clear();
+        st.quiet_position.clear();
         for element_id in std::mem::take(&mut st.forget_parts) {
             super::styled::forget_scroll_part(&mut ui, element_id);
         }

@@ -1,7 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! The GPU side of the game UI (decision 0015 §1, `render.md` §6): `tessera-ui`'s
 //! [`GpuOp`]s applied to `tessera-render`'s UI textures in order, and its
-//! [`CompositionList`] turned into the entries of the frame's UI pass.
+//! [`CompositionList`] turned into the entries of the frame's UI pass. Untextured fill
+//! entries (the letterbox bars of `ui-scaling.md` §5.4 step 6) become the UI pass's
+//! [`UiFill`]s in their place, so the host draws exactly the bars `Ui::letterbox_bars`
+//! reports, below the picture of each group's lowest shown member.
 //!
 //! A UI texture covers a tile box of its canvas (`render.md` §6.2), so canvas coordinates
 //! are shifted by the box's top-left corner before every write. A texture the renderer
@@ -11,8 +14,8 @@
 use std::collections::BTreeMap;
 
 use tessera_render::{
-    Frame, Renderer, TextureId, UiAddressing, UiCapCounters, UiClip, UiEntry, UiFilter, UiRect,
-    UiRotation, UiSource,
+    Frame, Renderer, TextureId, UiAddressing, UiCapCounters, UiClip, UiEntry, UiFill, UiFilter,
+    UiRect, UiRotation, UiSource,
 };
 use tessera_ui::paint::{
     Addressing, CapCounters, CompositionList, EntryTexture, Filter, GpuOp, Rect, Slot, Source,
@@ -262,8 +265,9 @@ impl UiTextures {
 
     /// Records the composition list as the frame's UI pass (`render.md` §6.5, §6.9). An
     /// entry of external content draws from the texture [`Self::set_external`] gave its id
-    /// (the paperdoll's portrait, decision 0024 P1), and is left out without one.
-    /// Returns the number of entries recorded.
+    /// (the paperdoll's portrait, decision 0024 P1), and is left out without one. A fill
+    /// entry ([`EntryTexture::Fill`], the letterbox bars) is recorded as a [`UiFill`] of its
+    /// colour in its place. Returns the number of entries recorded.
     pub fn record(
         &mut self,
         frame: &mut Frame,
@@ -295,6 +299,12 @@ impl UiTextures {
                     Some(t) => *t,
                     None => continue,
                 },
+                // `ui-scaling.md` §5.4 step 6: an untextured fill (screen space, unclipped).
+                EntryTexture::Fill { colour } => {
+                    pass.fill(&UiFill::new(ui_rect(&e.dest), fill_colour(colour)));
+                    n += 1;
+                    continue;
+                }
             };
             rotations.clear();
             rotations.extend(list.rotations_of(e).iter().map(|r| UiRotation {
@@ -326,6 +336,13 @@ impl UiTextures {
         }
         n
     }
+}
+
+/// A straight-alpha 0xAARRGGBB colour as the renderer's straight RGBA in 0–1.
+#[must_use]
+pub fn fill_colour(c: u32) -> [f32; 4] {
+    let ch = |shift: u32| f32::from(((c >> shift) & 0xFF) as u8) / 255.0;
+    [ch(16), ch(8), ch(0), ch(24)]
 }
 
 /// `x − origin` as a texture coordinate, or `None` when negative.
@@ -378,6 +395,13 @@ mod tests {
         assert_eq!(offset(i32::MIN, i32::MAX), None);
         let r = Rect::from_xywh(-4, 7, 10, 3);
         assert_eq!(ui_rect(&r), UiRect::new(-4, 7, 10, 3));
+    }
+
+    #[test]
+    fn fill_colours_are_straight_rgba() {
+        assert_eq!(fill_colour(0xFF00_0000), [0.0, 0.0, 0.0, 1.0]);
+        assert_eq!(fill_colour(0x80FF_0000), [1.0, 0.0, 0.0, 128.0 / 255.0]);
+        assert_eq!(fill_colour(0x0000_FF00), [0.0, 1.0, 0.0, 0.0]);
     }
 
     #[test]

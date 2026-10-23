@@ -38,6 +38,11 @@ pub(crate) const SCROLL_BAR_V: u32 = 0x1000_239F;
 pub(crate) const WINDOW: u32 = 0x1000_2294;
 /// `LotroWindowGold_Container`.
 pub(crate) const GOLD_WINDOW: u32 = 0x1000_2299;
+/// `LotroScalerWindow_Container`: a `Window` marked as scaled (§14.2.1 table, §13.21 rule 1).
+pub(crate) const SCALED_WINDOW: u32 = 0x1000_4D37;
+/// `LotroScalerWindowGold_Container`: a `GoldWindow` marked as scaled (Tessera: exactly when a
+/// `Window` in the same state would use its scaled variant, §14.2.1 step 2 OPEN).
+pub(crate) const SCALED_GOLD_WINDOW: u32 = 0x1000_4D38;
 
 /// `LotroCheckBox_CheckBox`: the check mark (§14.2.2).
 pub(crate) const CHECK_MARK: u32 = 0x1000_25B0;
@@ -69,8 +74,8 @@ const TITLE_BAR_EXTRA: i32 = 80;
 ///
 /// A game-styled `ScrollBar` keeps the layer's own control element and gets the layout's
 /// scroll bar as a part below it ([`build_scroll_part`]), so its numbers, visibility and
-/// rebuilds stay the layer's. Windows marked as scaled keep the element they were built
-/// with (no rebuild, §14.2.1 step 3; `lua-plugin-api.md` §14.2 implementer OPEN).
+/// rebuilds stay the layer's. A window first marked as scaled is rebuilt from its scaled
+/// base element ([`rebuild_scaled_window`], §14.2.1 step 3).
 pub(crate) fn base_element(kind: Kind, styled: Styled) -> Option<(&'static str, u32)> {
     match (kind, styled) {
         (_, Styled::Plain) => None,
@@ -280,6 +285,122 @@ pub(crate) fn rebuild_scroll_part(ui: &mut Ui, st: &mut State, id: u64) {
     let op = operation_number(ui.control_blend_mode(key));
     // Operation numbers are 0–7, so this never raises the "above 8" error (§14.2.1 step 3).
     let _ = ui.control_set_blend_mode(key, op);
+}
+
+/// The scaled base element of a game-styled window of look `styled` (§14.2.1 table).
+#[must_use]
+pub(crate) fn scaled_base(styled: Styled) -> Option<u32> {
+    match styled {
+        Styled::Silver => Some(SCALED_WINDOW),
+        Styled::Gold => Some(SCALED_GOLD_WINDOW),
+        Styled::Plain => None,
+    }
+}
+
+/// The rebuild of §14.2.1 step 3 for a game-styled window first marked as scaled (§13.21
+/// rule 1): a new element is built from the window's scaled base element
+/// (`LotroScalerWindow_Container` or `LotroScalerWindowGold_Container`), the old element's
+/// visibility, position, size, z-level and background image (`background`, the stored
+/// `SetBackground` value checked again) are kept, the old element's base-layer operation
+/// number is passed to `SetBlendMode` as a blend-mode value, the title text is set again
+/// (the title layout of §14.2.3) and the old element is destroyed.
+///
+/// Tessera choices (`lua-plugin-api.md` §14.2.6 implementer OPEN): the plugin's child
+/// controls (and the layer's parts) move to the new element with their own state, so the
+/// window keeps its content; the flags the layer keeps for the control (enabled, wants
+/// updates, wants key events) are applied to the new element so its getters and the element
+/// agree; every other element state the old element held (opacity, mouse visibility, back
+/// colour, stretch mode, rotation, drop target) starts again from the new element's. When
+/// the layout cannot build the scaled element (a modified install) the window keeps its
+/// element (logged at debug level). Returns whether the window was rebuilt.
+pub(crate) fn rebuild_scaled_window(
+    ui: &mut Ui,
+    st: &mut State,
+    id: u64,
+    background: tessera_ui::Background,
+) -> bool {
+    let Some(o) = st.objs.get(&id) else {
+        return false;
+    };
+    let ObjData::Ctl(c) = &o.data else {
+        return false;
+    };
+    if !c.based || c.kind != Kind::Window || c.internal.is_some() {
+        return false;
+    }
+    let Some(base) = scaled_base(c.styled) else {
+        return false;
+    };
+    let ap = o.apartment.clone();
+    let old = c.key;
+    let (enabled, updates, keys) = (c.enabled, c.wants_updates, c.wants_keys);
+    let shown = c.visible && !c.layer_hidden;
+    let aid = super::state::apartment_id_with(st, &ap);
+    let new = match ui.create_based_control(
+        tessera_ui::ControlKind::Window,
+        aid,
+        PLUGIN_LAYOUT_KEY,
+        base,
+    ) {
+        Ok(k) => k,
+        Err(e) => {
+            tracing::debug!(error = %e, "scaled plugin window not rebuilt from the layout");
+            return false;
+        }
+    };
+    // What the rebuild keeps (§14.2.1 step 3).
+    let (x, y) = ui.control_position(old);
+    let (w, h) = ui.control_size(old);
+    let z = ui.control_z_order(old);
+    let op = operation_number(ui.control_blend_mode(old));
+    let children = ui.control_children(old);
+    // Size and position are kept, not changed (§14.2.1 step 3): the notifications the new
+    // element posts for them are not plugin events (only those really posted are marked,
+    // so no mark is left over to swallow a later real event).
+    let (pos0, size0) = (ui.control_position(new), ui.control_size(new));
+    ui.control_set_position(new, x, y);
+    ui.control_set_size(new, w, h);
+    if ui.control_position(new) != pos0 {
+        st.quiet_position.insert(new);
+    }
+    if ui.control_size(new) != size0 {
+        st.quiet_size.insert(new);
+    }
+    ui.control_set_z_order(new, z);
+    ui.control_set_background(new, background);
+    // Operation numbers are 0–7, so this never raises the "above 8" error (§14.2.1 step 3).
+    let _ = ui.control_set_blend_mode(new, op);
+    ui.control_set_enabled(new, enabled);
+    if updates {
+        ui.control_set_wants_updates(new, true);
+    }
+    if keys {
+        ui.control_set_wants_keys(new, true);
+    }
+    for k in children {
+        if ui.control_set_parent(k, Some(new)).is_err() {
+            tracing::debug!("a child control could not move to the rebuilt window");
+        }
+    }
+    let was_shown = ui.is_visible(old);
+    let before = ui.is_visible(new);
+    ui.control_set_visible(new, shown);
+    if was_shown == shown && before != ui.is_visible(new) {
+        // The visibility is kept, not changed: no `VisibleChanged` for the new element.
+        // Marked only when the call posted one (the new element starts hidden, so a hidden
+        // window posts none), as `apply_visibility` does.
+        st.quiet_visible.insert(new);
+    }
+    st.by_key.remove(&old);
+    st.by_key.insert(new, id);
+    st.quiet_visible.remove(&old);
+    if let Some(ObjData::Ctl(c)) = st.objs.get_mut(&id).map(|o| &mut o.data) {
+        c.key = new;
+    }
+    ui.destroy_control(old);
+    // The parts of the new element and the title text, set again (§13.21 rule 1).
+    init_based(ui, st, id);
+    true
 }
 
 /// Shows the numbers of a game-styled scroll bar on its layout widget: the thumb position
@@ -495,6 +616,18 @@ pub(crate) fn title_layout(ui: &mut Ui, c: &Ctl) -> bool {
     let mut measured = true;
     let m = match text {
         Some(t) => {
+            // Step 2: the title text's four text margins are 0 (the layout's own margins do
+            // not apply), set before the caption is measured. Properties by dictionary name
+            // (`fonts.md` §7, `ui-layout.md` §5.9; resolved at run time like every UI PID).
+            let p = ui.vocab().pids;
+            for pid in [
+                p.text_left_margin,
+                p.text_right_margin,
+                p.text_top_margin,
+                p.text_bottom_margin,
+            ] {
+                ui.set_property(t, pid, PropertyValue::Int(0));
+            }
             let empty = caption.is_empty();
             ui.set_text(t, Some(caption));
             let width = ui.measure_text_width(t);

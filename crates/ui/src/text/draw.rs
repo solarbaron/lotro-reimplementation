@@ -464,6 +464,7 @@ fn derived_cover(
     let key = GlyphKey {
         font_did: face.cache_did(),
         target_height: target,
+        source: kind,
         glyph: u32::from(unit),
         outline,
     };

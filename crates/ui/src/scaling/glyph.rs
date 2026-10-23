@@ -37,7 +37,7 @@ pub fn target_height(line_height: i32, c: f64, x: f64) -> i32 {
 }
 
 /// Which record of a font ladder a target height is served from (`ui-scaling.md` §6.4.3).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum SourceKind {
     /// A record of the ladder has exactly the target line height: use it unchanged.
     Exact,
@@ -376,16 +376,22 @@ pub fn cursor_hotspot(coord: i32, se: f64, cursor_scale: f64) -> i32 {
     (f64::from(coord) * cursor_factor(se, cursor_scale) + 0.5).floor() as i32
 }
 
-/// The key of a cached derived glyph (`ui-scaling.md` §6.5): font DID, target height, glyph
-/// (codepoint or glyph index) and whether it is the outline or the fill. The source kind
-/// (§6.4.3) is a function of the font DID and target height through the ladder choice, so it is
-/// not part of the key.
+/// The key of a cached derived glyph (`ui-scaling.md` §6.5): font DID, target height, source
+/// kind, glyph (codepoint or glyph index) and whether it is the outline or the fill.
+///
+/// `font_did` names the record the glyph is **derived from** (the ladder's source record of
+/// §6.4.3), and `source` how it is derived from it, so a key names one derivation whatever
+/// ladders are registered: registering new ladders ([`crate::Ui::set_font_ladders`]) only
+/// changes which keys are looked up, and the glyphs already cached stay valid.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct GlyphKey {
-    /// The font record's DID.
+    /// The DID of the font record the glyph is derived from.
     pub font_did: u32,
     /// The target height.
     pub target_height: u16,
+    /// How the glyph is derived from that record (§6.4.3: downsampled or by the distance
+    /// method; exact records are drawn from their atlas and never cached).
+    pub source: SourceKind,
     /// Which codepoint (or glyph index) this is.
     pub glyph: u32,
     /// `true` for the outline coverage, `false` for the fill.
@@ -674,6 +680,7 @@ mod tests {
         let k = |g: u32| GlyphKey {
             font_did: 1,
             target_height: 16,
+            source: SourceKind::Downsampled,
             glyph: g,
             outline: false,
         };
@@ -691,6 +698,38 @@ mod tests {
         assert!(cache.get(&k(3)).is_some());
     }
 
+    /// `ui-scaling.md` §6.5: the source kind is part of the key, so one record's glyph at one
+    /// height derived two ways is held twice and never served for the other.
+    #[test]
+    fn glyph_cache_keys_hold_the_source_kind() {
+        let g = |n: u8| DerivedGlyph {
+            metrics: GlyphMetrics::default(),
+            coverage: vec![n; 4],
+        };
+        let mut cache = GlyphCache::new(1 << 20);
+        let key = |source| GlyphKey {
+            font_did: 7,
+            target_height: 20,
+            source,
+            glyph: 65,
+            outline: false,
+        };
+        cache.insert(key(SourceKind::Downsampled), g(1));
+        assert!(cache.get(&key(SourceKind::Distance)).is_none());
+        cache.insert(key(SourceKind::Distance), g(2));
+        assert_eq!(cache.len(), 2);
+        assert_eq!(
+            cache
+                .get(&key(SourceKind::Downsampled))
+                .map(|d| d.coverage[0]),
+            Some(1)
+        );
+        assert_eq!(
+            cache.get(&key(SourceKind::Distance)).map(|d| d.coverage[0]),
+            Some(2)
+        );
+    }
+
     #[test]
     fn glyph_cache_zero_budget() {
         let mut cache = GlyphCache::new(0);
@@ -698,6 +737,7 @@ mod tests {
             GlyphKey {
                 font_did: 1,
                 target_height: 16,
+                source: SourceKind::Downsampled,
                 glyph: 1,
                 outline: false,
             },

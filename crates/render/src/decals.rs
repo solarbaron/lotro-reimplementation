@@ -23,9 +23,12 @@
 //! the [`AlphaMode`] has one, compares the texture's alpha with the per-draw reference of
 //! `material.md` §11.2 (*A* = *M*.alpha, [`crate::draw_reference`]); a source-alpha blend
 //! without a test discards texels of opacity 0. The lighting of a decal is in its vertex
-//! colour (§6.2–§6.3, the caller's): decals are drawn unlit. Like the other world
-//! queues they draw only in passes with [`Pass::frame_lighting`] (skipped with one warning
-//! per frame in others); screen passes ignore them.
+//! colour (§6.2–§6.3, the caller's): decals are drawn unlit. Because they need no frame
+//! lighting they are drawn in every world pass: in a pass with [`Pass::frame_lighting`] in
+//! the stage above, fogged as just described, and in a world pass without it too (in the
+//! opaque stage after the opaque and alpha-tested meshes, before the pass's other world
+//! drawings), unfogged, with the caller's vertex colour (*L* = 1, `decals.md` §9.1 (d),
+//! §9.2). Screen passes ignore them.
 
 use std::fmt;
 use std::sync::Arc;

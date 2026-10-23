@@ -175,6 +175,11 @@ impl Ui {
             {
                 return Some(h);
             }
+            // The rows a plugin window's canvas draws above its top edge (its title bar and
+            // drag bar, `lua-plugin-api.md` §14.2.6 (d)) are hit as drawn.
+            if let Some(h) = self.hit_overhang(*c, px, py, depth + 1) {
+                return Some(h);
+            }
             // `ui-scaling.md` §5.4 step 6, invariant I3: the letterbox bars of a fit-root
             // group are drawn directly below its lowest shown fit root and count as part of
             // it, so a pointer in a bar hits that root (not its children) and never reaches
@@ -185,6 +190,41 @@ impl Ui {
         }
         let e = self.el(k)?;
         (e.mouse_visible || e.blocks_clicks).then_some(k)
+    }
+
+    /// The hit test in the strip a plugin window's canvas draws above its top edge
+    /// (`Ui::canvas_overhang`): a point there (relative to `w`'s parent) that lies outside the
+    /// window's own box reaches only the window's direct **layout** children (the parts the
+    /// strip draws, tested as usual), never the window itself or a plugin child control, which
+    /// stay clipped to the window's box. `None` outside the strip, for an element without one
+    /// or a window that is hidden, fading or a drag icon.
+    fn hit_overhang(&mut self, w: ElementKey, x: i32, y: i32, depth: usize) -> Option<ElementKey> {
+        let rise = self.displayed_overhang(w);
+        if rise == 0 || depth > MAX_TREE_DEPTH + 2 {
+            return None;
+        }
+        let e = self.el(w)?;
+        if !e.visible || e.fade.is_some() || e.drag_icon {
+            return None;
+        }
+        let b = self.displayed_rel(w);
+        let strip = b.t.saturating_sub(rise);
+        // Inside the window's own box the ordinary test ran; above the strip nothing is drawn.
+        if b.contains(x, y) || x < b.l || x > b.r || y < strip || y >= b.t {
+            return None;
+        }
+        let (px, py) = (x.saturating_sub(b.l), y.saturating_sub(b.t));
+        for c in self.children(w).iter().rev() {
+            if self.is_control(*c) {
+                continue;
+            }
+            if self.point_in(*c, px, py)
+                && let Some(h) = self.hit_rec(*c, px, py, depth + 1)
+            {
+                return Some(h);
+            }
+        }
+        None
     }
 
     /// The hit test (§4.2) at a screen position, against the current geometry (decision

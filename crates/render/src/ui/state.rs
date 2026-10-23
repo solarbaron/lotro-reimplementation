@@ -30,6 +30,8 @@ const FLAG_PREMULTIPLIED: i32 = 4;
 const FLAG_ONE_TO_ONE: i32 = 8;
 const FLAG_LINEARIZE: i32 = 16;
 const FLAG_UNROTATED: i32 = 32;
+/// An untextured fill ([`super::UiFill`]): the premultiplied colour is in `tile_scale`.
+const FLAG_FILL: i32 = 64;
 
 /// Per-entry uniform block; must match `Entry` in `ui.wgsl`.
 #[repr(C)]
@@ -118,7 +120,8 @@ pub(crate) fn ui_view(
 #[derive(Debug, Clone, Copy)]
 struct UiDraw {
     offset: u32,
-    texture: TextureId,
+    /// The texture read, or `None` for an untextured fill (the placeholder is bound).
+    texture: Option<TextureId>,
     scissor: [u32; 4],
 }
 
@@ -147,6 +150,10 @@ pub(crate) struct UiState {
     uniform_bg: wgpu::BindGroup,
     stride: u64,
     bind_groups: HashMap<TextureId, wgpu::BindGroup>,
+    /// A 1 × 1 UI texture bound for untextured fills, which the pipeline layout still needs
+    /// a texture for (the fill branch of the shader never reads it).
+    _fill_texture: wgpu::Texture,
+    fill_bind_group: wgpu::BindGroup,
     /// Live UI textures and their bytes.
     pub(crate) textures: HashMap<TextureId, u64>,
     pub(crate) texture_bytes: u64,
@@ -205,6 +212,29 @@ impl UiState {
         let clear_pipeline = build_clear_pipeline(device);
         let uniforms = alloc_uniforms(device, stride * 64);
         let uniform_bg = make_uniform_bg(device, &uniform_bgl, &uniforms);
+        let fill_texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("tessera-ui-fill-placeholder"),
+            size: wgpu::Extent3d {
+                width: 1,
+                height: 1,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: UI_TEXTURE_FORMAT,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        });
+        let fill_view = fill_texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let fill_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("tessera-ui-fill-placeholder"),
+            layout: &texture_bgl,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::TextureView(&fill_view),
+            }],
+        });
         Self {
             uniform_bgl,
             texture_bgl,
@@ -216,6 +246,8 @@ impl UiState {
             uniform_bg,
             stride,
             bind_groups: HashMap::new(),
+            _fill_texture: fill_texture,
+            fill_bind_group,
             textures: HashMap::new(),
             texture_bytes: 0,
             ops: PendingOps::default(),
@@ -339,7 +371,9 @@ impl UiState {
         for (position, pass) in &frame_ui.passes {
             let start = plan.draws.len();
             for i in 0..pass.len() {
-                let Some(entry) = pass.get(i) else { continue };
+                let Some((entry, fill, fill_sanitised)) = pass.get(i) else {
+                    continue;
+                };
                 if count >= MAX_UI_ENTRIES {
                     refused.add(UiRefusal::EntryCap);
                     continue;
@@ -347,6 +381,7 @@ impl UiState {
                 count += 1;
                 match self.plan_entry(
                     &entry,
+                    fill,
                     textures,
                     frame_view,
                     (width, height),
@@ -354,13 +389,15 @@ impl UiState {
                     &mut data,
                 ) {
                     Ok((draw, sanitised)) => {
-                        if sanitised {
+                        if sanitised || fill_sanitised {
                             plan.stats.entries_sanitised =
                                 plan.stats.entries_sanitised.saturating_add(1);
                         }
                         if let Some(draw) = draw {
-                            if surfaces.insert(draw.texture) {
-                                used.push(draw.texture);
+                            if let Some(t) = draw.texture
+                                && surfaces.insert(t)
+                            {
+                                used.push(t);
                             }
                             plan.draws.push(draw);
                         }
@@ -381,6 +418,7 @@ impl UiState {
                     let c = UiEntry::new(tex, [w, h], UiRect::new(x, y, w, h));
                     self.plan_entry(
                         &c,
+                        None,
                         textures,
                         frame_view,
                         (width, height),
@@ -391,8 +429,10 @@ impl UiState {
             };
             match planned {
                 Ok((Some(draw), _)) => {
-                    if !used.contains(&draw.texture) {
-                        used.push(draw.texture);
+                    if let Some(t) = draw.texture
+                        && !used.contains(&t)
+                    {
+                        used.push(t);
                     }
                     plan.cursor = Some(draw);
                     plan.stats.cursor_drawn = true;
@@ -470,21 +510,26 @@ impl UiState {
     }
 
     /// Check one entry against the renderer and write its uniform block.
-    /// `Ok((None, _))` = valid but draws nothing; the flag says whether a
-    /// value was sanitised.
+    /// `fill` is the premultiplied colour of an untextured fill, whose
+    /// texture is not resolved. `Ok((None, _))` = valid but draws nothing;
+    /// the flag says whether a value was sanitised.
+    #[allow(clippy::too_many_arguments)]
     fn plan_entry(
         &self,
         entry: &UiEntry<'_>,
+        fill: Option<[f32; 4]>,
         textures: &TextureStore,
         frame_view: &wgpu::TextureView,
         (width, height): (u32, u32),
         linearize: bool,
         data: &mut Vec<u8>,
     ) -> std::result::Result<(Option<UiDraw>, bool), UiRefusal> {
-        let tex = textures
-            .get(entry.texture)
-            .ok_or(UiRefusal::UnknownTexture)?;
-        classify(tex, frame_view)?;
+        if fill.is_none() {
+            let tex = textures
+                .get(entry.texture)
+                .ok_or(UiRefusal::UnknownTexture)?;
+            classify(tex, frame_view)?;
+        }
         let g = entry.geometry()?;
         if !g.drawable {
             return Ok((None, g.sanitised));
@@ -563,6 +608,10 @@ impl UiState {
             // exact pixel centre instead of the interpolated position.
             flags |= FLAG_UNROTATED;
         }
+        if let Some(colour) = fill {
+            flags |= FLAG_FILL;
+            tile_scale = colour;
+        }
         let mut u = EntryUniform::zeroed();
         u.ndc01 = [ndc[0][0], ndc[0][1], ndc[1][0], ndc[1][1]];
         u.ndc23 = [ndc[2][0], ndc[2][1], ndc[3][0], ndc[3][1]];
@@ -599,7 +648,7 @@ impl UiState {
         Ok((
             Some(UiDraw {
                 offset: offset32,
-                texture: entry.texture,
+                texture: fill.is_none().then_some(entry.texture),
                 scissor,
             }),
             g.sanitised,
@@ -665,10 +714,15 @@ impl UiState {
             multiview_mask: None,
         });
         rp.set_pipeline(pipeline);
-        let mut bound: Option<TextureId> = None;
+        // `Some(None)`: the fill placeholder is bound.
+        let mut bound: Option<Option<TextureId>> = None;
         for d in draws {
-            let Some(bg) = self.bind_groups.get(&d.texture) else {
-                continue;
+            let bg = match d.texture {
+                Some(t) => match self.bind_groups.get(&t) {
+                    Some(bg) => bg,
+                    None => continue,
+                },
+                None => &self.fill_bind_group,
             };
             if bound != Some(d.texture) {
                 rp.set_bind_group(1, bg, &[]);

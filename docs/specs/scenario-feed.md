@@ -4,11 +4,11 @@
 
 | | |
 |---|---|
-| **Status** | **Accepted** for the parts labelled "P6 progression" (independent review 2026-10-16, CLEAN_ROOM.md §5.3 passed, every item; P6-D1–P6-D11 agree with decision 0024 §2 and §4 (client half only, values scripted and never derived) and `server-content.md` §7; Vectors P6-V1, P6-V2 and resolver case P6-V3 and the 18 hostile rows re-derived, the M1 counts spot-checked against the owner's install; the review session wrote no part of the P6 revision or the P6 code; written as the unnumbered "P6 progression" revision, numbered at the merge; record in §18.P6); e**Accepted** for the parts changed by revision 9 (independent review 2026-10-14 of commit bf41c0b: CLEAN_ROOM.md §5.3 passed, every item; §9.7 items 1 and 7, the §14.9 preamble and invariant 11 agree with follow-ups (a)–(c) of §18.4.1 and with the `crates/net` remote backend on main; non-blocking notes (a)–(b) in the header review record). Before: Revised for the parts changed by revision 9 (2026-10-14, spec writer, design: §9.7 items 1 and 7 and the answered §9.7 implementer OPEN, the §14.9 preamble for O8, §15 invariant 11 wording; follow-ups (a)–(c) of the review in §18.4.1; no implemented behaviour changes; awaiting review, see §17). Every other part keeps the status that follows. **Accepted** for the parts labelled "P5 travel" (revision 8: independent review 2026-10-11, CLEAN_ROOM.md §5.3 passed, every item; record in §18.P5); every other part keeps the status that follows. **Accepted** (revision 7, the P4 social parts of §18.5: independent review 2026-10-11, CLEAN_ROOM.md §5.3 passed, every item; H1–H6 agree with decision 0035 D2–D4, `tessera-protocol.md` v1.2 §10.6 and Appendix A, and the code on branch `p4`; Vector H re-derived line by line, the 8 hostile rows checked; non-blocking notes (a)–(c) in §18.5; written as the unnumbered "P4 social" revision and numbered 7 at the merge with P2 and P3, 2026-10-11). **Accepted** (revision 6, the P2 parts of §18.4: independent review 2026-10-11 of commit 7b14f27, CLEAN_ROOM.md §5.3 passed, every item; D1–D4 agree with decision 0032, `server-content.md` §7 and decision 0024 §2; record in §18.4.1). **Accepted** (revision 5, the P3 parts of §18.P3: independent review 2026-10-11, CLEAN_ROOM.md §5.3 passed, every item; record in §18.P3). Before: Review (revision 7, "P4 social", 2026-10-11, spec writer, design, [decision 0035](../decisions/0035-p4-social-on-test-server.md) D2–D4, additive, §18.5: synchronised performances (`perform … sync`, `perform-start`, `perform-withdraw`), fellow vitals (`fellow-vital`), the commands `ReadyPerformance`, `StartPerformance`, `DisbandFellowship`, the remote backend at protocol minor 2 (§9.8), the plain sandbox's start answer, Vector H, P4 hostile and backend cases; no section renumbered, no earlier rule changed; an independent review must follow). Before: **Review** (revision 6, the P2 parts of §18.4, 2026-10-10, spec writer, design: [decision 0032](../decisions/0032-p2-targeting-on-test-server.md) D1–D4: local selection on the test-server backend, §9.5, §9.7, §12.5.1, §12.5.2, §14.9, §14.11, §15; an independent review by a session that wrote no part of revision 6 or of decision 0032 must check the changes listed in §18.4 and the cases of §14.9 and §14.11; P2's revision was written as revision 5 and renumbered 6 at the merge with P3, 2026-10-11). Before: **Accepted** (revision 4, independent review 2026-10-10: CLEAN_ROOM.md §5.3 passed, every item; D1–D5 agree with decision 0025, `tessera-protocol.md` v1.1 §6.2.17 and Appendix A, and the code on branch `p1`; Vector G and Vector F's changed lines re-derived, the 15 new hostile rows checked; non-blocking notes (a)–(f) in §18.3). Before: Review (revision 4, 2026-10-10, spec writer, design: [decision 0025](../decisions/0025-p1-character-look-on-test-server.md) D1–D5, §18.3; an independent review by a session that wrote no part of revision 4 must check the changes listed there, Vectors F and G and the new hostile rows). Before: Accepted (revision 3, 2026-10-09). An independent review by a session that wrote none of revisions 1–3 re-checked R1–R31, S1–S31, Vectors A–F and the hostile table and passed (P0 exit criterion 1); no blocking OPEN. The non-blocking OPENs of §3.1, §8.3, §11.1, §12.4, §13 and §16 stay open for the spec owner; the reviewer's rulings on them are review notes in the review record and change no fact |
-| **Last updated** | 2026-10-16
+| **Status** | **Accepted** for the parts changed by revision 10 (2026-10-23, independent review 2026-10-23 by spec-review:spec-gameplay:2 (independent session), a session that wrote no part of the 2026-10-23 revision: passed CLEAN_ROOM.md §5.3, every item; contamination screen clean; see the review record). Before: Revised for the parts changed by revision 10 (2026-10-23, spec writer: §3.1 "What counts as a server build", §6.3 buy-back and number errors, §6.7 "The player's commands", §9.5 P4 tune cut, §9.8 plain sandbox, §12.2 "With an install", "With the game UI attached", "Client chat and notice lines" and the exit-code table, §12.4.1, §12.5.4 rules 2 and 4–7, §14.9 O3 and O7, and the answered callouts of §3.1, §6.3, §12.2, §12.4, §12.5.4, §14.9 and §16; the review rulings already recorded in §18 and the header, and the owner's answer of 2026-10-16, written into the text; no committed scenario, vector or log changes meaning and no implemented behaviour changes; awaiting independent review, see §17). Every other part keeps the status that follows. **Accepted** for the parts labelled "P6 progression" (independent review 2026-10-16, CLEAN_ROOM.md §5.3 passed, every item; P6-D1–P6-D11 agree with decision 0024 §2 and §4 (client half only, values scripted and never derived) and `server-content.md` §7; Vectors P6-V1, P6-V2 and resolver case P6-V3 and the 18 hostile rows re-derived, the M1 counts spot-checked against the owner's install; the review session wrote no part of the P6 revision or the P6 code; written as the unnumbered "P6 progression" revision, numbered at the merge; record in §18.P6). **Accepted** for the parts changed by revision 9 (independent review 2026-10-14 of commit bf41c0b: CLEAN_ROOM.md §5.3 passed, every item; §9.7 items 1 and 7, the §14.9 preamble and invariant 11 agree with follow-ups (a)–(c) of §18.4.1 and with the `crates/net` remote backend on main; non-blocking notes (a)–(b) in the header review record). Before: Revised for the parts changed by revision 9 (2026-10-14, spec writer, design: §9.7 items 1 and 7 and the answered §9.7 implementer OPEN, the §14.9 preamble for O8, §15 invariant 11 wording; follow-ups (a)–(c) of the review in §18.4.1; no implemented behaviour changes; awaiting review, see §17). Every other part keeps the status that follows. **Accepted** for the parts labelled "P5 travel" (revision 8: independent review 2026-10-11, CLEAN_ROOM.md §5.3 passed, every item; record in §18.P5); every other part keeps the status that follows. **Accepted** (revision 7, the P4 social parts of §18.5: independent review 2026-10-11, CLEAN_ROOM.md §5.3 passed, every item; H1–H6 agree with decision 0035 D2–D4, `tessera-protocol.md` v1.2 §10.6 and Appendix A, and the code on branch `p4`; Vector H re-derived line by line, the 8 hostile rows checked; non-blocking notes (a)–(c) in §18.5; written as the unnumbered "P4 social" revision and numbered 7 at the merge with P2 and P3, 2026-10-11). **Accepted** (revision 6, the P2 parts of §18.4: independent review 2026-10-11 of commit 7b14f27, CLEAN_ROOM.md §5.3 passed, every item; D1–D4 agree with decision 0032, `server-content.md` §7 and decision 0024 §2; record in §18.4.1). **Accepted** (revision 5, the P3 parts of §18.P3: independent review 2026-10-11, CLEAN_ROOM.md §5.3 passed, every item; record in §18.P3). Before: Review (revision 7, "P4 social", 2026-10-11, spec writer, design, [decision 0035](../decisions/0035-p4-social-on-test-server.md) D2–D4, additive, §18.5: synchronised performances (`perform … sync`, `perform-start`, `perform-withdraw`), fellow vitals (`fellow-vital`), the commands `ReadyPerformance`, `StartPerformance`, `DisbandFellowship`, the remote backend at protocol minor 2 (§9.8), the plain sandbox's start answer, Vector H, P4 hostile and backend cases; no section renumbered, no earlier rule changed; an independent review must follow). Before: **Review** (revision 6, the P2 parts of §18.4, 2026-10-10, spec writer, design: [decision 0032](../decisions/0032-p2-targeting-on-test-server.md) D1–D4: local selection on the test-server backend, §9.5, §9.7, §12.5.1, §12.5.2, §14.9, §14.11, §15; an independent review by a session that wrote no part of revision 6 or of decision 0032 must check the changes listed in §18.4 and the cases of §14.9 and §14.11; P2's revision was written as revision 5 and renumbered 6 at the merge with P3, 2026-10-11). Before: **Accepted** (revision 4, independent review 2026-10-10: CLEAN_ROOM.md §5.3 passed, every item; D1–D5 agree with decision 0025, `tessera-protocol.md` v1.1 §6.2.17 and Appendix A, and the code on branch `p1`; Vector G and Vector F's changed lines re-derived, the 15 new hostile rows checked; non-blocking notes (a)–(f) in §18.3). Before: Review (revision 4, 2026-10-10, spec writer, design: [decision 0025](../decisions/0025-p1-character-look-on-test-server.md) D1–D5, §18.3; an independent review by a session that wrote no part of revision 4 must check the changes listed there, Vectors F and G and the new hostile rows). Before: Accepted (revision 3, 2026-10-09). An independent review by a session that wrote none of revisions 1–3 re-checked R1–R31, S1–S31, Vectors A–F and the hostile table and passed (P0 exit criterion 1); no blocking OPEN. The non-blocking OPENs of §3.1, §8.3, §11.1, §12.4, §13 and §16 stay open for the spec owner; the reviewer's rulings on them are review notes in the review record and change no fact |
+| **Last updated** | 2026-10-23
 | **Author role** | Spec writer (design) |
 | **Reviewer** | Revision 2: spec reviewer (Clean-Room-Role: review), a session separate from the first-draft author, 2026-10-09; it also wrote R1–R31, so those fixes are unreviewed. Revision 3: pending (an independent session). Revision 4: a Claude review session in the spec-reviewer role (Clean-Room-Role: review) that wrote no part of decision 0025, of the P1 revisions of `scenario-feed.md`, `tessera-protocol.md`, `test-server.md` and `server-content.md`, or of the code, 2026-10-10 (passed, §18.3). Revision 5 (P3 parts): a Claude review session in the spec-reviewer role (Clean-Room-Role: review) that wrote no part of the P3 revision, of `npc-windows.md` or of the P3 code, 2026-10-11 (passed, §18.P3). Revision 6 (P2 parts): a Claude review session in the spec-reviewer role (Clean-Room-Role: review) that wrote no part of revision 6, of decision 0032, of the other P2 specs or of the P2 code, 2026-10-11 (passed, §18.4.1). Revision 7 ("P4 social" parts): a Claude review session in the spec-reviewer role (Clean-Room-Role: review) that wrote no part of decision 0035, of the P4 revisions of `tessera-protocol.md`, `test-server.md` or `scenario-feed.md`, or of the code, 2026-10-11 (passed, §18.5) Revision 8 (P5 travel parts): a Claude review session in the spec-reviewer role (Clean-Room-Role: review) that wrote no part of the P5 revision or the P5 code, 2026-10-11 (passed, §18.P5). Revision 9: a Claude review session in the spec-reviewer role (Clean-Room-Role: review) that wrote no part of revision 9 or of the code, 2026-10-14 (passed, header review record). |
-| **Review record** | 2026-10-16 ("P6 progression" parts, P6-D1 … P6-D11): independent review by a session that wrote no part of the P6 revision or the P6 code, against CLEAN_ROOM.md §5.3, decision 0024 §2 and §4 (client half only; values scripted, never derived) and `server-content.md` §7: **passed, every item**; the record is in §18.P6.2026-10-14 (revision 9 parts: §9.7 items 1 and 7 and the Answered callout, the §14.9 preamble, §15 invariant 11; commit bf41c0b, `git show bf41c0b` of this file): independent review by a Claude session in the spec-reviewer role (Clean-Room-Role: review) that wrote no part of revision 9 or of the code, against CLEAN_ROOM.md §5.3 and follow-ups (a)–(c) of §18.4.1: **passed, every item**. Every new statement is a functional fact of Tessera's own backend and test design (which stream item 1 and invariant 11 are read on, what happens to a pending answer at the end of the session, which double each overlay case runs on); no code or pseudo-code; no copied prose; no game text, keys, hostnames or captures; no Confirmed or BIN fact, so no install probe or decompiler session was needed; no protocol or server change; nothing under a closed gate. Checked, reading `crates/net` on main (e9ed7bb) only to compare: (1) item 1 and the Answered callout restate ruling (b) of §18.4.1 (the backend does not repeat `Session`'s checks; "static 900" a label; R8 through `InterestReset`). (2) Item 7: the remote mapper's end of session clears the pending selection answer with every other entity state and refuses a later `SelectTarget`; each poll moves the pending answer out before it maps anything received, so an answer pending at the start of the poll that maps the end precedes `Disconnected`; nothing is delivered after the backend is dropped. This is note (c), stated as the code behaves. (3) The §14.9 preamble now names the double for each case: O1–O7 and O10–O12 the backend double, O8's `SelectTarget` part the real backend over a server double (the conformance test `o8_overlay_routes_selection_to_the_local_answer` in `remote_selection` is built that way), O9 `tessera-server` in process, as its row says; note (a) is done. (4) Invariant 11's new wording matches items 1 and 7. Non-blocking, for a later revision: (a) item 7 has no conformance row of its own in §14.11; a case R11 (select a known target, then map the end in the same poll, and select again after it) would make "dropped" and "accepts no `SelectTarget`" testable. (b) Item 7 says the backend "accepts no `SelectTarget`" after the end; `Session` refuses it first with `InvalidState` (item 6), and a backend driven directly refuses it with `InvalidCommand`; naming the error would settle the direct case. Earlier: 2026-10-11 (P5 travel parts, T-D1 … T-D10): independent review by a session that wrote no part of the P5 revision or the P5 code, against CLEAN_ROOM.md §5.3, decision 0024 §2 and §4 (client half only; values scripted, never derived) and `server-content.md` §7: **passed, every item**. Every P5 statement is a functional fact of Tessera's own feed format (step keywords, options, event fields with types and ranges, log forms, limits) or an install-derived reference marked for its source; no code or pseudo-code (the scenario and log blocks are Tessera's own text format, the braces name event fields as §9 does); API, event, property and label names are interoperability identifiers; all vector text is invented (§14.T3 notes this), no game strings, assets, keys, hostnames or captures; nothing runs in or is linked by `tessera-server` (no protocol minor); no gate touched. Provenance "Design" is this own-format spec's convention (as in revisions 4 and 5); the one install-derived claim (the four dictionary names `MapNote_Type`, `FellowshipMakerUI_GroupSize`, `FellowshipMakerUI_DifficultyTier`, `Mount_Type` with their kinds) carries an inline M1 mark. Spot-checks (read-only, 2026-10-13): the four dictionary names and the enum mappers are used by `crates/gamedata` and `crates/net` selector resolution over the install (passing P5 real-data tests), and `MapNote_Type`/`Mount_Type` are decoded as bitfields in `crates/formats`, corroborating the M1 claim; the cross-referenced mount facts (status mapper 0x230002C9, war-steed bit 0x38, vital mapper 0x23000003) were confirmed against the `lua-plugin-api.md` §15.5 BIN pass reviewed in parallel. Vectors T1–T3 and the ranges of the hostile rows are internally consistent with the §6.5, §9, §10.3, §11.1 and §13 rules. **Rulings on the P5 OPENs** (review notes, not facts): the numeric-enum-key question (§16) is the same owner policy already open for P1–P3, non-blocking; `MountChanged.combat` as a Tessera field (§16) and the implementer's seven conservative-implementation points are endorsed as implemented and left for the spec owner. **Dependency note (non-blocking):** the `map-region` family (§8.3) and the `MapNoteType`/`GroupSize`/`DifficultyTier` contexts (§8.6) reference `map-windows.md` §5/§6.7/§7.2 and `travel-windows.md` §6.4, both still in Review under other reviewers; acceptance here follows the P3 precedent (revision 5 accepted while `npc-windows.md` was in Review) and the §8.3 note that the row "stands until that spec is Accepted"; if a sibling review changes those definitions, §8.3/§8.6 must be re-checked. 2026-10-11 (revision 7, "P4 social" parts): independent review against CLEAN_ROOM.md §5.3, decision 0035 D1–D4, decision 0024 §2 and `server-content.md` §7: **passed**; the record is in §18.5. 2026-10-11 (revision 6, P2 parts D1–D4, commit 7b14f27): independent review against CLEAN_ROOM.md §5.3, decision 0032 D1–D4, `server-content.md` §7, decision 0024 §2 and §0 item 3: **passed**; §14.9 O8, O10–O12 and §14.11 R1–R10 re-derived, invariant 11 checked; non-blocking notes (a)–(e); the record is in §18.4.1. 2026-10-11 (revision 5, P3 parts N-D1 … N-D4): independent review against CLEAN_ROOM.md §5.3 and `npc-windows.md` §5.3, §6.3, §7.8, §10: **passed**; the record is in §18.P3. 2026-10-10 (revision 4): independent review against CLEAN_ROOM.md §5.3, decision 0025 D1–D5, decision 0024 §2 and §4 and `server-content.md` §7: **passed**; the record is in §18.3. Earlier: 2026-10-09 (revision 2), review against decision 0024 §2 and §4, `server-content.md` §7, the CLAUDE.md content rules, ARCHITECTURE §19.1, the `tessera-net` API (`session.rs`, `model.rs`, `sandbox/mod.rs`) and every spec and decoder view cited in §8.3. 31 findings (R1–R31), all design defects fixed in this revision by the reviewer (allowed: the spec holds design facts only); no client fact was added. Every selector attribute was confirmed against an Accepted spec and, where named, its decoder view. Findings, fixes and the remaining non-blocking OPENs: §18.1. Revision 3 (spec owner, design role, 2026-10-09): 31 implementation-phase findings verified against this text and the `tessera-net` and client sources (§18.2: S1–S31): all real, 29 fixed, S12 accepted as a stated gap, the policy part of S24 recorded as an OPEN. Revision 3 independent review (spec reviewer, Clean-Room-Role: review, 2026-10-09; a session that wrote none of revisions 1–3 and no code): checked against `docs/CLEAN_ROOM.md` §5.3, decision 0024 §2 (client half only, data-free server, game rules stay out of scope) and §4 (values scripted, never derived), `server-content.md` §7, the CLAUDE.md content rules, ARCHITECTURE §19.1 (every §9 variant listed; groups, session rules and the test-server refusals match) and the cited specs (all Accepted except `server-content.md`, Draft, from which the feed takes nothing decision 0024 §2 does not state itself). Every §8.3 family and attribute was traced to its Accepted spec section and property name and to the named decoder view in `crates/formats` and `crates/wstate` (`ItemKind`'s 15 variants are the 15 keywords; `EffectRole`, `TemplateKind`, `MapKind`, `Role` variants exist as cited). R1–R31 and S1–S31: each fix is present and consistent with the rest of the text. Vectors: the SplitMix64 outputs, the seven samples and the trace of §14.3 were recomputed with a throwaway script and agree; Vectors A, B, D, E and F were re-derived line by line (times, event order, field order and formats, window and item ids, skips, drops, end times; facing 359.999 round-trips to 359.99899, written `0.00`) and agree; all 45 hostile rows agree with the grammar, the error order and the position rules; the implementation's vector tests agree (supporting evidence only). Result: **pass**. Rulings on the implementer OPENs (review notes, not facts; the spec owner writes them into the text at the next revision): §3.1 guard (1) agreed: the exception "`tessera-net` without `scenario`" cannot hold under cargo feature unification, drop it from the allow list; (2) and (3) confirmed (dev-dependencies are server builds; in-process server hosts such as `tessera-loadtest` are server builds and may link `tessera-net` only because `tessera-server` itself does not). §3.1 module naming: the `selector` module named in the placement table is placement, not an interface; `tessera-gamedata` exposing its selector types at the crate root conforms. §11.1 log size: non-blocking; a bound is recommended (for example 256 MiB with a run-time `LogOverflow`, exit 5), because a hostile local file within every limit can still write a very large log; until then the USER_GUIDE warning suffices. §12.4 (1) the unplayed windowed input script is an accepted P0 gap (windowed logs are not normative), refusing a windowed run whose `enter` needs an `accept-character` name (exit 2) is acceptable, and the proposed public input player in `tessera_net::scenario` is endorsed; (2) driver-only headless runs with an install, an exact or default spawn and no `--screenshot` are acceptable; (3) "the client's configured `avatar`" means the avatar the client actually configures for the sandbox: none in a driver-only run, which need not load the catalog for it; (4) exit 2 for a missing or non-regular `--scenario` path and 1 for an unreadable file are consistent with the exit table and should be added to it; (5) an install the user named that cannot be used exits 4 with `InstallUnreadable`: agreed (§8.7 covers only "no install found"). §13 (a) align rule 1 with `apps/client/tests/scenarios/`, where the replay test reads them; (b) keep "(or CC0-1.0)" (the CLAUDE.md fixture rule allows CC0) and widen the content test; a GPL-only test is stricter than the spec, not a violation. §16 `tessera-net` points: (1) `shared` in both `ItemPlace` and `ContainerSize` (the §10.3 example and the file keyword win over the general enum rule); (2)–(18) confirmed as implemented. §16 `tessera-gamedata` points (1)–(10) confirmed; for (5), keys 1–64 map to bits 0–63 (`property-system.md` §7.3), so a key above 64 matching nothing is right; for (7), `appearance.md` §2.1 (Accepted) states the two gender values, so using them with the per-install presence check is allowed. The owner-policy OPEN on numeric enum keys (§16) and the later-milestone OPENs (§8.3, §16) stay non-blocking. |
+| **Review record** | **Review 2026-10-23** of the 2026-10-23 revision (spec-review:spec-gameplay:2 (independent session)): **passed**, CLEAN_ROOM.md §5.3 every item; contamination screen clean; §3.1.1 agrees with `tools/check-server-deps.sh`; §12.2 "With an install", the UI run (triggers, end conditions, deadline, exit codes) and the exit-code rows agree with `apps/client` (`scenario::run`, `run_headless`, `run_headless_ui`, `ui_host::run`, the `--character-select` conflict); §14.9 O3 and O7 agree with the `crates/net` overlay tests; §9.5 1,024-byte cut agrees with `tessera-net`; only docs changed, so no committed scenario, vector or log changes meaning. Editorial: a stray letter before the revision-9 "Accepted" in this cell removed. Earlier: 2026-10-16 ("P6 progression" parts, P6-D1 … P6-D11): independent review by a session that wrote no part of the P6 revision or the P6 code, against CLEAN_ROOM.md §5.3, decision 0024 §2 and §4 (client half only; values scripted, never derived) and `server-content.md` §7: **passed, every item**; the record is in §18.P6.2026-10-14 (revision 9 parts: §9.7 items 1 and 7 and the Answered callout, the §14.9 preamble, §15 invariant 11; commit bf41c0b, `git show bf41c0b` of this file): independent review by a Claude session in the spec-reviewer role (Clean-Room-Role: review) that wrote no part of revision 9 or of the code, against CLEAN_ROOM.md §5.3 and follow-ups (a)–(c) of §18.4.1: **passed, every item**. Every new statement is a functional fact of Tessera's own backend and test design (which stream item 1 and invariant 11 are read on, what happens to a pending answer at the end of the session, which double each overlay case runs on); no code or pseudo-code; no copied prose; no game text, keys, hostnames or captures; no Confirmed or BIN fact, so no install probe or decompiler session was needed; no protocol or server change; nothing under a closed gate. Checked, reading `crates/net` on main (e9ed7bb) only to compare: (1) item 1 and the Answered callout restate ruling (b) of §18.4.1 (the backend does not repeat `Session`'s checks; "static 900" a label; R8 through `InterestReset`). (2) Item 7: the remote mapper's end of session clears the pending selection answer with every other entity state and refuses a later `SelectTarget`; each poll moves the pending answer out before it maps anything received, so an answer pending at the start of the poll that maps the end precedes `Disconnected`; nothing is delivered after the backend is dropped. This is note (c), stated as the code behaves. (3) The §14.9 preamble now names the double for each case: O1–O7 and O10–O12 the backend double, O8's `SelectTarget` part the real backend over a server double (the conformance test `o8_overlay_routes_selection_to_the_local_answer` in `remote_selection` is built that way), O9 `tessera-server` in process, as its row says; note (a) is done. (4) Invariant 11's new wording matches items 1 and 7. Non-blocking, for a later revision: (a) item 7 has no conformance row of its own in §14.11; a case R11 (select a known target, then map the end in the same poll, and select again after it) would make "dropped" and "accepts no `SelectTarget`" testable. (b) Item 7 says the backend "accepts no `SelectTarget`" after the end; `Session` refuses it first with `InvalidState` (item 6), and a backend driven directly refuses it with `InvalidCommand`; naming the error would settle the direct case. Earlier: 2026-10-11 (P5 travel parts, T-D1 … T-D10): independent review by a session that wrote no part of the P5 revision or the P5 code, against CLEAN_ROOM.md §5.3, decision 0024 §2 and §4 (client half only; values scripted, never derived) and `server-content.md` §7: **passed, every item**. Every P5 statement is a functional fact of Tessera's own feed format (step keywords, options, event fields with types and ranges, log forms, limits) or an install-derived reference marked for its source; no code or pseudo-code (the scenario and log blocks are Tessera's own text format, the braces name event fields as §9 does); API, event, property and label names are interoperability identifiers; all vector text is invented (§14.T3 notes this), no game strings, assets, keys, hostnames or captures; nothing runs in or is linked by `tessera-server` (no protocol minor); no gate touched. Provenance "Design" is this own-format spec's convention (as in revisions 4 and 5); the one install-derived claim (the four dictionary names `MapNote_Type`, `FellowshipMakerUI_GroupSize`, `FellowshipMakerUI_DifficultyTier`, `Mount_Type` with their kinds) carries an inline M1 mark. Spot-checks (read-only, 2026-10-13): the four dictionary names and the enum mappers are used by `crates/gamedata` and `crates/net` selector resolution over the install (passing P5 real-data tests), and `MapNote_Type`/`Mount_Type` are decoded as bitfields in `crates/formats`, corroborating the M1 claim; the cross-referenced mount facts (status mapper 0x230002C9, war-steed bit 0x38, vital mapper 0x23000003) were confirmed against the `lua-plugin-api.md` §15.5 BIN pass reviewed in parallel. Vectors T1–T3 and the ranges of the hostile rows are internally consistent with the §6.5, §9, §10.3, §11.1 and §13 rules. **Rulings on the P5 OPENs** (review notes, not facts): the numeric-enum-key question (§16) is the same owner policy already open for P1–P3, non-blocking; `MountChanged.combat` as a Tessera field (§16) and the implementer's seven conservative-implementation points are endorsed as implemented and left for the spec owner. **Dependency note (non-blocking):** the `map-region` family (§8.3) and the `MapNoteType`/`GroupSize`/`DifficultyTier` contexts (§8.6) reference `map-windows.md` §5/§6.7/§7.2 and `travel-windows.md` §6.4, both still in Review under other reviewers; acceptance here follows the P3 precedent (revision 5 accepted while `npc-windows.md` was in Review) and the §8.3 note that the row "stands until that spec is Accepted"; if a sibling review changes those definitions, §8.3/§8.6 must be re-checked. 2026-10-11 (revision 7, "P4 social" parts): independent review against CLEAN_ROOM.md §5.3, decision 0035 D1–D4, decision 0024 §2 and `server-content.md` §7: **passed**; the record is in §18.5. 2026-10-11 (revision 6, P2 parts D1–D4, commit 7b14f27): independent review against CLEAN_ROOM.md §5.3, decision 0032 D1–D4, `server-content.md` §7, decision 0024 §2 and §0 item 3: **passed**; §14.9 O8, O10–O12 and §14.11 R1–R10 re-derived, invariant 11 checked; non-blocking notes (a)–(e); the record is in §18.4.1. 2026-10-11 (revision 5, P3 parts N-D1 … N-D4): independent review against CLEAN_ROOM.md §5.3 and `npc-windows.md` §5.3, §6.3, §7.8, §10: **passed**; the record is in §18.P3. 2026-10-10 (revision 4): independent review against CLEAN_ROOM.md §5.3, decision 0025 D1–D5, decision 0024 §2 and §4 and `server-content.md` §7: **passed**; the record is in §18.3. Earlier: 2026-10-09 (revision 2), review against decision 0024 §2 and §4, `server-content.md` §7, the CLAUDE.md content rules, ARCHITECTURE §19.1, the `tessera-net` API (`session.rs`, `model.rs`, `sandbox/mod.rs`) and every spec and decoder view cited in §8.3. 31 findings (R1–R31), all design defects fixed in this revision by the reviewer (allowed: the spec holds design facts only); no client fact was added. Every selector attribute was confirmed against an Accepted spec and, where named, its decoder view. Findings, fixes and the remaining non-blocking OPENs: §18.1. Revision 3 (spec owner, design role, 2026-10-09): 31 implementation-phase findings verified against this text and the `tessera-net` and client sources (§18.2: S1–S31): all real, 29 fixed, S12 accepted as a stated gap, the policy part of S24 recorded as an OPEN. Revision 3 independent review (spec reviewer, Clean-Room-Role: review, 2026-10-09; a session that wrote none of revisions 1–3 and no code): checked against `docs/CLEAN_ROOM.md` §5.3, decision 0024 §2 (client half only, data-free server, game rules stay out of scope) and §4 (values scripted, never derived), `server-content.md` §7, the CLAUDE.md content rules, ARCHITECTURE §19.1 (every §9 variant listed; groups, session rules and the test-server refusals match) and the cited specs (all Accepted except `server-content.md`, Draft, from which the feed takes nothing decision 0024 §2 does not state itself). Every §8.3 family and attribute was traced to its Accepted spec section and property name and to the named decoder view in `crates/formats` and `crates/wstate` (`ItemKind`'s 15 variants are the 15 keywords; `EffectRole`, `TemplateKind`, `MapKind`, `Role` variants exist as cited). R1–R31 and S1–S31: each fix is present and consistent with the rest of the text. Vectors: the SplitMix64 outputs, the seven samples and the trace of §14.3 were recomputed with a throwaway script and agree; Vectors A, B, D, E and F were re-derived line by line (times, event order, field order and formats, window and item ids, skips, drops, end times; facing 359.999 round-trips to 359.99899, written `0.00`) and agree; all 45 hostile rows agree with the grammar, the error order and the position rules; the implementation's vector tests agree (supporting evidence only). Result: **pass**. Rulings on the implementer OPENs (review notes, not facts; the spec owner writes them into the text at the next revision): §3.1 guard (1) agreed: the exception "`tessera-net` without `scenario`" cannot hold under cargo feature unification, drop it from the allow list; (2) and (3) confirmed (dev-dependencies are server builds; in-process server hosts such as `tessera-loadtest` are server builds and may link `tessera-net` only because `tessera-server` itself does not). §3.1 module naming: the `selector` module named in the placement table is placement, not an interface; `tessera-gamedata` exposing its selector types at the crate root conforms. §11.1 log size: non-blocking; a bound is recommended (for example 256 MiB with a run-time `LogOverflow`, exit 5), because a hostile local file within every limit can still write a very large log; until then the USER_GUIDE warning suffices. §12.4 (1) the unplayed windowed input script is an accepted P0 gap (windowed logs are not normative), refusing a windowed run whose `enter` needs an `accept-character` name (exit 2) is acceptable, and the proposed public input player in `tessera_net::scenario` is endorsed; (2) driver-only headless runs with an install, an exact or default spawn and no `--screenshot` are acceptable; (3) "the client's configured `avatar`" means the avatar the client actually configures for the sandbox: none in a driver-only run, which need not load the catalog for it; (4) exit 2 for a missing or non-regular `--scenario` path and 1 for an unreadable file are consistent with the exit table and should be added to it; (5) an install the user named that cannot be used exits 4 with `InstallUnreadable`: agreed (§8.7 covers only "no install found"). §13 (a) align rule 1 with `apps/client/tests/scenarios/`, where the replay test reads them; (b) keep "(or CC0-1.0)" (the CLAUDE.md fixture rule allows CC0) and widen the content test; a GPL-only test is stricter than the spec, not a violation. §16 `tessera-net` points: (1) `shared` in both `ItemPlace` and `ContainerSize` (the §10.3 example and the file keyword win over the general enum rule); (2)–(18) confirmed as implemented. §16 `tessera-gamedata` points (1)–(10) confirmed; for (5), keys 1–64 map to bits 0–63 (`property-system.md` §7.3), so a key above 64 matching nothing is right; for (7), `appearance.md` §2.1 (Accepted) states the two gender values, so using them with the per-install presence check is allowed. The owner-policy OPEN on numeric enum keys (§16) and the later-milestone OPENs (§8.3, §16) stay non-blocking. |
 | **Implements into** | `crates/net` (`tessera_net::scenario`: parser, static checks, resolved scenario, run-time feed, headless driver, canonical log; the sandbox backend runs it; the overlay backend over the test-server backend, §12.5; plain-sandbox creation, §9.6), `crates/gamedata` (selector resolution against the user's install, §8; property labels and kinds, §5.8, §8.6), `apps/client` (`--scenario`, `--scenario-log`, `--scenario-input`, overlay runs, §12), `fuzz/` (§11.4) |
 | **Companion documents** | [Decision 0024](../decisions/0024-parity-track.md) §2, §4, §5 (the feed's mandate); `server-content.md` §3 and §7; `docs/ARCHITECTURE.md` §19 (domain events; it lists the variants of §9 by group); the gameplay specs cited in §8.3 (`items.md`, `combat-data.md`, `creatures.md`, `quests.md`, `economy.md`, `map-data.md`, `interaction.md`, `player-character.md`, `instances.md`), `appearance.md` §2 and §7, `coordinates.md` §4 and §7, `property-system.md` §7, `records.md` §7 |
 
@@ -130,20 +130,53 @@ on the date given), **Standard** (a published algorithm or standard).
 | Adapter `SelectorResolver` → `tessera-gamedata` | `apps/client` | Thin mapping between the two query types. |
 
 The module is compiled under the cargo feature **`scenario`** of `tessera-net` (default on).
-The CI check of decision 0024 §2.3 runs `cargo tree -p tessera-server -e normal,build -f
-"{p} {f}"` and fails when the output names `tessera-gamedata`, any crate that decodes or reads
+The CI check of decision 0024 §2.3 runs `cargo tree -p tessera-server -e normal,build,dev -f
+"{p} {f}"` (and the views of item 2 below) and fails when the output names `tessera-gamedata`, any crate that decodes or reads
 game data (at least `tessera-dat`, `tessera-formats`, `tessera-props`, `tessera-text`,
 `tessera-wstate`, `tessera-wvm`, `tessera-material`, `tessera-mesh`, `tessera-havok`,
 `tessera-terrain`, `tessera-world`, `tessera-physics`, `tessera-assets`, `tessera-audio`,
 `tessera-scriptgraph`, and `tessera-install`, which reads installs, `server-content.md` §3.1), or
-`tessera-net` with the feature `scenario` enabled. Because a deny list misses crates added
+`tessera-net` in any form. Because a deny list misses crates added
 later, the check SHOULD also fail on any workspace crate outside an allow list kept beside it
-(today: `tessera-server`, `tessera-protocol`, and `tessera-net` without `scenario`), so a new
+(today: `tessera-server` and `tessera-protocol`), so a new
 crate enters the server's graph only by a reviewed change to that list. Today `tessera-server`
 depends on `tessera-protocol` only (not on `tessera-net`), which passes.
 
-> **OPEN:** (non-blocking; for the spec owner, raised by the implementer of
-> `tools/check-server-deps.sh`, 2026-10-09) Three points where the guard is stricter than or
+<a id="s3-1-1"></a>
+**What counts as a server build** (revision 10; the rulings of the revision-3 review, header
+record, written into the text):
+
+1. **`tessera-net` is refused in any form.** An exception for `tessera-net` without the
+   feature `scenario` cannot hold: `tessera-client` turns on the default features of
+   `tessera-net` (`scenario` included), and cargo's feature unification gives them to every
+   member of a workspace build. So the allow list has no `tessera-net` entry, and the deny
+   list above names it without a feature condition.
+2. **Dev-dependencies are checked.** The server's examples and tests are server builds, so
+   the check covers `tessera-server`'s normal, build and dev dependencies, and the features a
+   workspace build turns on in `tessera-protocol` (or any other dependency) through other
+   members.
+3. **In-process server hosts.** A workspace crate whose normal or build graph contains
+   `tessera-server` runs a server in its own process (today `tessera-loadtest`) and is a
+   server build in the sense of `server-content.md`'s scope. Its check uses the allow list
+   `tessera-server`, `tessera-protocol`, `tessera-net` and the host itself. Such a host
+   **need not be feed-free**: it may link `tessera-net`, and a workspace build gives it the
+   feature `scenario` anyway, because the server it runs links none of `tessera-net` and the
+   feed never runs inside the server. It must not link `tessera-gamedata`, any crate of the
+   deny list above, or anything else outside its allow list, and it hands the in-process
+   server nothing but protocol messages (no feed state, no install data). A crate that has
+   `tessera-server` only as a dev-dependency (the client's tests) is not a host.
+
+> **Answered (spec writer, 2026-10-23; revision 10):** all three points are now the rules of
+> "What counts as a server build" above: (1) the `tessera-net` exception is dropped, (2) the
+> dev-dependencies and the features of a workspace build are checked, (3) in-process hosts are
+> server builds with their own allow list and need not be feed-free. The module name
+> `selector` in the placement table is placement, not an interface: `tessera-gamedata`
+> exposing its selector types at the crate root conforms. Nothing changes in
+> `tools/check-server-deps.sh`, which already applies these rules. The implementer's text is
+> kept below as the record.
+>
+> (Was **OPEN:** non-blocking; for the spec owner, raised by the implementer of
+> `tools/check-server-deps.sh`, 2026-10-09.) Three points where the guard is stricter than or
 > goes beyond this section, pending a decision here: (1) the exception "`tessera-net` without
 > `scenario`" does not survive cargo feature unification: `tessera-client` turns on the default
 > features of `tessera-net` (`scenario` included), so in a workspace build (`cargo build
@@ -810,7 +843,28 @@ faction (an element, for example of a `faction` selector, or a literal) and `wal
 item. The amounts are scripted: the feed computes none from reward tables (`quests.md` §9 is
 server data). `buyback` takes its entries like `vendor` (REFLIST or binding, at most 1,024).
 
-> **OPEN:** (implementer, P3 revision, 2026-10-10; non-blocking) Facts the revision leaves
+**Buy-back page and number errors** (revision 10; the P3 review's rulings (a)–(c), §18.P3):
+
+- The buy-back page belongs to the vendor window that received the `BuybackShown`. A later
+  `vendor` step on that still-open window replaces only the vendor entries and keeps the page
+  (§5.6: a step on an open kind replaces that kind's content only); a later `buyback` step
+  replaces the page; closing the window drops it. A `buy-back` pattern matches only a
+  `BuyBack` for that window whose entry lies in its last buy-back list (§7.6 "unknown entry").
+- Error precedence in `rewards`: the 17-token limit is checked before the 17th token's form;
+  a repeated single kind is reported after that token's own form and range checks
+  (`coin:1 coin:-5` gives `OutOfRange` at the second token). An amount that is not a number
+  (`coin:1.5`, `coin:0x10`) is `BadNumber` (§4.2: a numeric position given a token that is not
+  a number); a missing amount (`coin:`) is `UnexpectedToken`.
+- A non-numeric entry of the `buy-back` input form (`buy-back x`, `buy-back entry=1`) or of
+  its pattern (`entry=x`) is `BadNumber`, as for `buy`.
+
+> **Answered (spec writer, 2026-10-23; revision 10):** (a)–(c) are the rules just above, as
+> implemented in `tessera-net` and confirmed by the P3 review (§18.P3 (a)–(c)); no behaviour
+> changes. (d) is a reference defect of `npc-windows.md` §7.8 (and its §5.3 rule 3), left to
+> that spec's writer; this spec's event list is §9.1 and its log section §10. The
+> implementer's text is kept below as the record.
+>
+> (Was **OPEN:** implementer, P3 revision, 2026-10-10; non-blocking.) Facts the revision leaves
 > open, implemented conservatively in `tessera-net`: (a) the buy-back page belongs to the
 > vendor window that got the `BuybackShown`; a later `vendor` step on the still-open window
 > keeps it, a later `buyback` step replaces it, and closing the window drops it. A
@@ -1013,10 +1067,12 @@ entity reports its vitals through `vital` of that entity (§6.2).
   + delay) and never starts a waiting part.
 
 **The player's commands** (§9.4): the client sends `ReadyPerformance { tune }` once it has
-accepted the player's `/play … sync` locally, and `StartPerformance` for `/playstart`. The feed
-records the player's part as waiting on `ReadyPerformance` (no event) and answers
-`StartPerformance`, under `defaults on`, with one `PerformanceSyncStart` by the player's
-character name with the default lead (§7.6). With a backend that accepts `StartPerformance`
+accepted the player's `/play … sync` locally, and `StartPerformance` for `/playstart`. Under
+`defaults on` (both are generic answers, §7.6) the feed records the player's part as waiting on
+`ReadyPerformance` (no event) and answers `StartPerformance` with one `PerformanceSyncStart` by
+the player's character name with the default lead. Under `defaults off` neither happens (§5.7:
+a command the feed does not answer changes nothing), so a later `perform-withdraw player` then
+skips (revision 10; P4 review ruling (b)(1), §18.5). With a backend that accepts `StartPerformance`
 (the feed and the plain sandbox, §9.8) the client starts waiting parts **only** on the
 `PerformanceSyncStart` that comes back, never also locally, so a `/playstart` gives exactly
 one start; with a backend that refuses it (the test-server backend) the client keeps its
@@ -1874,8 +1930,10 @@ skill.
 - **P4 social** (decision 0035). The events of §6.7 follow the entity rule (surfaced
   `InWorld`); `ReadyPerformance`, `StartPerformance` and `DisbandFellowship` are allowed
   `InWorld`. Validation: `ReadyPerformance.tune` 1–256 bytes without control characters;
-  inbound `member` and `by` are names (cut and cleaned to `MAX_NAME_LEN`), `tune` 256 bytes;
-  a non-finite `FellowVitalChanged` value makes the event invalid. On the test-server backend
+  inbound `member` and `by` are names (cut and cleaned to `MAX_NAME_LEN`), `tune` 256 bytes
+  for the P4 events; an inbound `PerformanceStarted.tune` keeps its earlier cut to the chat
+  length, 1,024 bytes (revision 10, a decision of the spec owner on P4 review ruling (b)(5):
+  unchanged, so no implemented behaviour changes); a non-finite `FellowVitalChanged` value makes the event invalid. On the test-server backend
   at protocol minor 2, `JoinChannel`, `LeaveChannel` and `Chat` on `Named` are accepted
   (§9.8); the sentence above about `Named` applies below minor 2. The plain sandbox answers
   `StartPerformance` (§9.8).
@@ -2016,7 +2074,9 @@ addition:
   statements stay `NotAllowedInOverlay`, and Social commands of an overlay run, chat and
   channel commands included, go to the test-server backend under these rules.
 
-**Plain sandbox** (no scenario): `StartPerformance` is answered in `submit` with
+**Plain sandbox** (no scenario, or a scenario whose feed has ended and so no longer answers
+commands, §7.3; revision 10, P4 review ruling (b)(3)): `StartPerformance` is answered in
+`submit` with
 `PerformanceSyncStart { by: Some(the entered character's name), at_ms, lead_ms: 700 }`,
 where `at_ms` is the milliseconds since world entry by the `now` of that `submit`, rounded
 down, plus 700. It keeps no waiting parts; `ReadyPerformance`, `DisbandFellowship`,
@@ -2430,13 +2490,87 @@ location report depends on frame timing.
   is refused: with `--no-data` as a clap conflict (exit 2); when no install is found at run
   time, the client prints the usage message and exits 2 before parsing the scenario. This is
   the mode of every vector (§14) and of the CI replay (§10.5).
-- **With an install**: the walker runs offscreen and renders from the events the driver
-  receives; the driver owns the clock and the session. `--screenshot PNG` changes meaning
+- **With an install**: without `--screenshot` and with an exact or the default spawn (§3.2),
+  only `HeadlessDriver` runs, as without an install (the log is the same, no GPU is needed;
+  revision 10, §12.4 ruling (2)); when the spawn needs a lookup (`--place`, or `--spawn`
+  without a height) or `--screenshot` is given, the walker runs offscreen and renders from the
+  events the driver receives (one frame per 100 ms of virtual time, every frame while
+  settling); the driver owns the clock and the session in both cases. The player's appearance
+  is the avatar the client configures for the sandbox: none in a driver-only run, which does
+  not load the character catalog for it (so it logs no `AppearanceChanged` for a client
+  avatar), the walker's avatar (`--avatar`, else its default) when the walker runs (§12.4
+  ruling (3)). `--screenshot PNG` changes meaning
   under `--scenario`: it captures the frame after the last tick (after `Finished`), once the
   area around the player has loaded or `--settle-timeout` has passed, instead of the spawn point
   once loaded.
 
-> **OPEN:** The spec defines only driver-only and walker-only headless runs; it does not
+<a id="s12-2-1"></a>
+**With the game UI attached** (revision 10; answers the OPEN of 2026-10-11 below).
+`tessera-client --scenario FILE --headless` with any of `--ui`, `--open-panel`, `--skin`,
+`--ui-script` or `--ui-report` (`--character-select` cannot be combined with `--scenario`: a
+usage error, exit 2), **with an install and without `--screenshot`** (and without `--server`), is a
+third headless form, the **UI run**: it exists so that a headless run can exercise the window
+frames that only the game UI draws (NPC, quest, social, travel, finder, map and progression
+windows).
+
+1. Parse and resolve as steps 1–2 above (exit 3 or 4).
+2. The walker runs offscreen with the game UI attached: the ordinary runtime of a windowed run
+   (§12.4), not `HeadlessDriver`. The world session plays the feed on the **wall clock**, the
+   client half receives every event and the game UI drives its windows from them, and
+   `--scenario-log` is written by the world session as in a windowed run (wall-clock times,
+   **not normative**; §10.1's byte-for-byte guarantee does not cover it). The client may
+   send `Move` and `QueryLocation` as in a windowed run.
+3. The run ends at the first of these, checked once per frame in this order:
+   - the feed's status is `Finished`;
+   - with `--ui-script`: the UI script has played to its end (`--fly-path` and `--duration`
+     then end nothing);
+   - otherwise with `--fly-path`: the flight has reached the path's end (`--duration` then ends
+     nothing);
+   - otherwise with `--duration` (seconds): that many seconds have passed since the walker's
+     timing run started, which is once the player is placed and the area has settled or the
+     settle time-out has passed;
+   - the run deadline: the UI run's settle time-out plus 180 s plus `--duration` (0 when
+     absent) plus the length of a `--ui-script` (its frames at 30 per second plus its settle
+     frames) plus, with `--fly-path`, three times the path's length divided by the flight
+     speed, measured on the wall clock from the start of the run.
+
+   `Finished` and each of the three flag ends are a normal end: exit 0 when the log, if any,
+   was written, 5 when it could not be. Reaching the deadline first is a client failure
+   (exit 1). A flag end can come **before** `Finished`: the run then exits 0 although the
+   scenario did not finish, and the log has no `Finished` end line (what it ends with is not
+   specified; the log is not normative, step 2). A test that needs the scenario's end runs
+   without `--ui-script`, `--fly-path` and `--duration`, so that only `Finished` or the
+   deadline ends the run; a scenario whose wall-clock length exceeds the settle time-out plus
+   180 s cannot reach `Finished` in a UI run, because `--duration`, the only flag that adds to
+   the deadline without a script or a path, also ends the run when it runs out.
+4. Exit codes before the world (2, 3, 4) are those of the table below.
+
+`--screenshot`, `--server` (overlay, §12.5) and runs without an install keep the paths
+above. The UI run never replaces the driver-only run for conformance: every vector (§14), the
+CI replay (§10.5) and every committed log are driver-only runs.
+
+<a id="s12-2-2"></a>
+**Client chat and notice lines.** A driver-only run (no install, or an install without
+`--screenshot` and with an exact or default spawn, §12.4 ruling (2)) has **no client half**:
+the client's own chat-window and notice lines (the results of dispatcher built-in commands,
+the lines a client spec says the client posts, such as the ready notices of
+`instruments.md` §8.8.6, travel and finder error lines, command hints) are **not produced**,
+and neither is any other output of the client's presentation. This is intended: the
+canonical log holds the feed's events and the client's commands (§10), which a driver-only
+run produces in full, and chat lines the feed itself emits (`ChatMessage` events) are among
+those events. A test of client-made lines runs the client half (a UI run, a windowed run, or
+the client's own tests over the client half); it does not compare them with a committed log.
+
+> **Answered (spec writer, 2026-10-23; revision 10):** the UI run is specified above as built
+> in `apps/client` (`run_headless_ui`). (1) The wall-clock feed is accepted: such a run's log
+> is not normative, as for windowed runs (§12.4). (2) The end conditions and the deadline are
+> those stated in step 3, as built (revision 10a, after the independent screen: the
+> `--ui-script`, `--fly-path` and `--duration` ends and the `--ui-report` trigger added; the
+> first text omitted them). A driver-only run makes no client chat or notice lines (P4 client review F3;
+> "Client chat and notice lines" above). No implemented behaviour changes. The implementer's
+> text is kept below as the record.
+>
+> (Was **OPEN:**) The spec defines only driver-only and walker-only headless runs; it does not
 > say what a headless run with the game UI attached (`--ui`, `--open-panel`, `--skin`,
 > `--ui-script`) does with a scenario. The client needs such a path so a headless run can
 > exercise the P3/P5 window frames (the NPC, quest, social, travel, finder and map windows),
@@ -2453,11 +2587,11 @@ location report depends on frame timing.
 
 | Exit code | Meaning |
 |---|---|
-| 0 | Finished (`complete` or `horizon`) |
-| 1 | Other client failure (existing behaviour) |
-| 2 | Command-line usage error (clap) |
+| 0 | Finished (`complete` or `horizon`); a UI run that ends at its `--ui-script`, `--fly-path` or `--duration` end, `Finished` or not (§12.2 "With the game UI attached" step 3) |
+| 1 | Other client failure (existing behaviour); a `--scenario` file that exists but cannot be read; a UI run that reaches its deadline (§12.2 "With the game UI attached") |
+| 2 | Command-line usage error (clap), including a `--scenario` path that does not exist or is not a regular file |
 | 3 | Parse error |
-| 4 | Resolve error |
+| 4 | Resolve error, including an install the user named (`--game-dir`, `TESSERA_GAME_DIR`) that cannot be used: after a successful parse the run ends with `InstallUnreadable`, whether or not the file has a selector, instead of becoming a no-install run (§8.7 covers only "no install found") |
 | 5 | Run-time error (feed failure, log write failure, unexpected disconnect) |
 
 A windowed run reports parse and resolve errors the same way and exits with the same codes
@@ -2483,8 +2617,42 @@ and the player may continue to look around. The feed processes at most 8 ticks p
 (§7.1); when it lags behind the frame time, the HUD line shows the lag. `--scenario-log` works
 but its times follow the wall clock and are not normative.
 
-> **OPEN:** (non-blocking; for the spec owner, raised by the implementer of `apps/client`,
-> 2026-10-09, revised after review the same day) Five client points this section and
+<a id="s12-4-1"></a>
+**Input script and log in a windowed run** (revision 10; the review rulings on the first
+OPEN below and the confirmation of the second):
+
+1. The input script is played by `tessera_net::scenario::InputPlayer`, the public input
+   player that `HeadlessDriver` uses too. With `--scenario-input` the client sends the
+   `at pre` lines after `Connected`, in file order and in the same frame, and sends
+   `EnterWorld` (the `enter` character, else the first of `Connected`) after the next poll,
+   so a character that an `accept-character` step adds can be entered. Without
+   `--scenario-input`, a file whose `enter` names such a character is refused as a usage
+   error (exit 2) with a hint in Tessera's own words.
+2. While the feed runs, before each poll the client sends the timed lines due by tick
+   *k* + 1, *k* being the feed's last processed tick (`time_ms` ÷ tick of the scenario
+   status): no line reaches the feed before its tick, and a lagging feed receives lines late,
+   never early. Lines that send nothing count as `input-skipped`, which the windowed end
+   line carries.
+3. The windowed `--scenario-log` is written by the client's world session from the commands it
+   sends and the events it receives; its times are milliseconds of wall-clock time since the
+   frame that delivered `WorldEntered`; the end line carries the feed's virtual time; the log
+   ends at the end line, or with `reason=error error=Disconnected` when the session ends first
+   (closing the window included). Lines are formatted on the frame thread and written by a
+   writer thread behind a bounded channel (256 chunks; a chunk the full channel refuses stays
+   with the frame thread and is offered again with the next one). When 16 MiB (16,777,216
+   bytes) are formatted but not yet written, the log drops the lines from there on and ends
+   with `reason=error … error=LogWrite line=0` (exit 5) instead of blocking the frame; a log
+   that cannot be drained within 5 s of the session's end is incomplete (exit 5); a write
+   failure exits 5.
+
+> **Answered (spec writer, 2026-10-23; revision 10):** (1) is §12.4.1 items 1–2 (the review
+> endorsed the public input player, and the refusal stays only without `--scenario-input`);
+> (2) and (3) are the "With an install" bullet of §12.2 "What runs"; (4) and (5) are rows 2,
+> 1 and 4 of the exit-code table of §12.2; the log paragraph is §12.4.1 item 3. No
+> implemented behaviour changes. The implementer's text is kept below as the record.
+>
+> (Was **OPEN:** non-blocking; for the spec owner, raised by the implementer of `apps/client`,
+> 2026-10-09, revised after review the same day.) Five client points this section and
 > §12.1–§12.2 leave open, implemented conservatively for now: (1) `--scenario-input` in a
 > windowed run: the only public player of the input script is `HeadlessDriver` (§12.3),
 > which owns the session and the clock, so the windowed client cannot send the input lines;
@@ -2520,8 +2688,11 @@ but its times follow the wall clock and are not normative.
 > the end line (or `reason=error error=Disconnected` when the session ends first, including
 > closing the window), its counters have `input-skipped=0`, and a write failure exits 5.
 
-> **OPEN:** (non-blocking; for the spec owner, raised by the implementer of `apps/client`,
-> 2026-10-09, after the review's rulings on the OPEN above) Point (1) is now implemented
+> **Answered (spec writer, 2026-10-23; revision 10):** (a)–(c) and the `LogWrite` ending are
+> confirmed as written; they are §12.4.1 items 1–3. No implemented behaviour changes.
+>
+> (Was **OPEN:** non-blocking; for the spec owner, raised by the implementer of `apps/client`,
+> 2026-10-09, after the review's rulings on the OPEN above.) Point (1) is now implemented
 > with the public input player the review endorsed, `tessera_net::scenario::InputPlayer`,
 > which the headless driver uses too (the headless log is unchanged). A windowed run with
 > `--scenario-input`: (a) sends the `at pre` lines after `Connected`, in file order and in
@@ -2621,7 +2792,9 @@ With `APPEARANCE_CHANGE` advertised:
 1. The feed emits no `AppearanceChanged` for the player.
 2. The overlay marks the appearance **dirty** when *E* changes, and once when the first *B*
    arrives if *B*'s equipment differs from *E* (so equipment stored on the server from an
-   earlier session is replaced by the scenario's). Nothing else marks it dirty.
+   earlier session is replaced by the scenario's). Nothing else marks it dirty. "Differs"
+   compares the item DIDs and slots in order; dyes and the stowed flag are not compared (the
+   feed's list carries neither).
 3. At the end of each poll (after the feed's ticks) it sends `AppearanceSet` with the
    desired appearance (the backend leaves the look off the wire and sends slots only at
    minor ≥ 1, §9.7) when the appearance is dirty, *B* is known, no `AppearanceSet` is in
@@ -2631,11 +2804,20 @@ With `APPEARANCE_CHANGE` advertised:
 4. The next `AppearanceChanged` for the player from the server clears the in-flight mark
    (the server answers every `AppearanceSet` with `EntityAppearance`,
    `tessera-protocol.md` §6.2.17) and becomes the new *B*; it passes to the client half
-   unchanged, so the walker shows what the server holds. Without it within 10 s the mark is
-   cleared with a warning.
+   unchanged, so the walker shows what the server holds. Any server `AppearanceChanged` for
+   the player clears the mark, not only the answer to the overlay's own `AppearanceSet`
+   (safe, because the server answers in order). Without one within 10 s the mark is cleared
+   with a warning, and nothing is sent again until *E* changes.
 5. A refused `AppearanceSet` (the server answers with the old appearance and a system line)
-   changes nothing in the feed and is not retried until *E* changes again. The inventory
-   panels show the feed's state; the worn look shows the server's.
+   changes nothing in the feed and is not retried until *E* changes again. An
+   `AppearanceSet` the backend cannot queue (a closed session, a full queue) is treated the
+   same way: the dirty mark is cleared with a warning and nothing is retried until *E*
+   changes. The inventory panels show the feed's state; the worn look shows the server's.
+6. A run-time error of the feed stops the feed without the `Disconnected` the sandbox would
+   emit: the session with the server goes on (§12.5.3).
+7. The overlay always gives the backend the desired appearance with its slots; the
+   test-server backend's encoder leaves the slots off at minor 0 (§9.7), so the overlay never
+   looks at the minor.
 
 Without `APPEARANCE_CHANGE`: the feed emits `AppearanceChanged` for the player with the
 desired appearance whenever *E* changes and *B* is known, as the sandbox does (§5.5), and the
@@ -2657,7 +2839,14 @@ criterion 3 (decision 0024).
   invariant 1), and the server dependency check is unchanged.
 - Conformance: §14.9.
 
-> **OPEN:** (implementer of `crates/net`, clean room, 2026-10-10; non-blocking) Readings the
+> **Answered (spec writer, 2026-10-23; revision 10):** (a)–(d) are adopted as written, as the
+> revision-4 review recommended (§18.3 (c)): (a) is rule 2, (b) rule 5, (c) rule 6, (d)
+> rule 7 of §12.5.4. The review's notes (d) and (e) are rule 4 (any server
+> `AppearanceChanged` clears the in-flight mark; no re-send after the time-out until *E*
+> changes). No implemented behaviour changes. The implementer's text is kept below as the
+> record.
+>
+> (Was **OPEN:** implementer of `crates/net`, clean room, 2026-10-10; non-blocking.) Readings the
 > implementation took where §12.5.4 is silent, for the spec owner to confirm or change:
 > (a) "*B*'s equipment differs from *E*" compares the item DIDs and slots in order, not the
 > dyes or the stowed flag (the feed's list carries none); (b) an `AppearanceSet` the server
@@ -3280,18 +3469,23 @@ at 0.2s equip $shield slot=18
 |---|---|---|
 | O1 | `APPEARANCE_CHANGE`, minor 1 | At tick 0: the feed's `ItemAdded` and `ItemMoved` events, no `AppearanceChanged` from the feed, and one `AppearanceSet` with *B*₀'s body and scale and the items 0x70001234 slot 17, 0x70005678 slot 18 (both equips of the tick coalesced). At 0.05 s the double's answer surfaces as the player's `AppearanceChanged` with those items. |
 | O2 | as O1 | The unequip at 0.1 s and the equip at 0.2 s change *E* twice; no `AppearanceSet` before 0.25 s of wall-clock time after the first; one `AppearanceSet` in the first poll at or after 0.25 s, with both items again. Two sends in all. |
-| O3 | no `APPEARANCE_CHANGE`, minor 1 | No `AppearanceSet`. At tick 0 the feed emits the player's `AppearanceChanged` with both items and slots; at 0.1 s with the sword only; at 0.2 s with both. One info log line that observers will not see the change. |
+| O3 | no `APPEARANCE_CHANGE`, minor 1 | No `AppearanceSet`. At tick 0 the feed emits two `AppearanceChanged` for the player (§5.5: every change of the list emits), first with the sword alone and then with both items and slots; at 0.1 s with the sword only; at 0.2 s with both. One info log line that observers will not see the change. |
 | O4 | `APPEARANCE_CHANGE`, minor 0 | As O1, but the `AppearanceSet`'s items carry no slot (flag bit 3 clear, `tessera-protocol.md` §5.3) and the answer's items have none. |
 | O5 | as O1, but *B*₀ holds the item 0x70009999 | *B*₀ marks the appearance dirty (its equipment differs from the empty *E*); the send at the end of the tick-0 poll carries both items, so the stored 0x70009999 is replaced. One send at tick 0, as in O1. (With no equip step in the file, that send would carry no items.) |
 | O6 | as O1, but the double refuses every `AppearanceSet` (answers *B*₀) | After the tick-0 send and its answer, no further `AppearanceSet` until *E* changes at 0.1 s; never more than one in flight. |
-| O7 | any | A file with `at 0s say "x"` is refused with `NotAllowedInOverlay` before anything connects (exit 3). |
+| O7 | any | The file `tessera-scenario 1` / `at 0s say player "x"` is refused with `NotAllowedInOverlay` 2:1 before anything connects (exit 3). (Revision 10: `say` needs a sender, §6.4; the earlier `at 0s say "x"` gave `MissingArgument` before the overlay check.) |
 | O8 | as O1 | A `Chat` and a `Teleport` go to the double; an `EquipItem` goes to the feed; a `SelectTarget { target: None }` after world entry is answered by the test-server backend with `TargetChanged { entity: player, target: None }`, first in the next poll, the double receives no message for it, and no trigger of the feed sees it (revision 6, §9.7; before: refused). A `UseSkill` is refused with `NetError::InvalidCommand`. |
 | O9 | `tessera-server` in process, `appearance_change` true, two clients at minor 1 | The observer sees an `AppearanceChanged` for the overlay player's entity with the items 0x70001234 slot 17 and 0x70005678 slot 18 (P1 exit criterion 3). |
 | O10 | any | (Revision 6.) The file `tessera-scenario 1` / `at 0s target player none` is refused with `NotAllowedInOverlay` 2:1 before anything connects (exit 3). So is `at 0s vital player health 5/10`. |
 | O11 | any | (Revision 6.) The file `tessera-scenario 1` / `on target any` / `end` is refused with `NotAllowedInOverlay` 2:1 (exit 3). |
 | O12 | any | (Revision 6.) The file `tessera-scenario 1` / `input` / `at 1s target none` / `end` is refused with `NotAllowedInOverlay` 3:1 (exit 3). |
 
-> **OPEN:** (implementer of `crates/net`, clean room, 2026-10-10; non-blocking) O7's file
+> **Answered (spec writer, 2026-10-23; revision 10):** O7 and O3 are corrected in the table
+> as the revision-4 review ruled (§18.3 (a), (b)); the conformance test already uses the
+> corrected file and asserts both tick-0 events, so no implemented behaviour changes. The
+> implementer's text is kept below as the record.
+>
+> (Was **OPEN:** implementer of `crates/net`, clean room, 2026-10-10; non-blocking.) O7's file
 > `at 0s say "x"` does not parse (`say` needs a sender before its text, §6.4), so it is
 > refused with `MissingArgument` (also exit 3) before the overlay check runs. The
 > conformance test uses `at 0s say player "x"`, which parses and gives
@@ -4126,7 +4320,16 @@ are invented.
 > `CraftRecipe_TierArray` (`economy.md` §5.1 rule 1; §8.2 "for a list, one of its
 > elements").
 
-> **OPEN:** (implementer note, "P4 social", `tessera-net`, 2026-10-11; non-blocking)
+> **Answered (spec writer, 2026-10-23; revision 10):** the P4 review ruled on all five points
+> (§18.5 (b)): (1) confirmed and now stated in §6.7 "The player's commands" (both generic
+> answers run only under `defaults on`); (2) confirmed as implemented (`by=` and
+> `perform-withdraw` take names and never skip for an actor that is not spawned); (3)
+> confirmed and stated in §9.8 "Plain sandbox" (one `/playstart` still gets exactly one
+> answer); (4) agrees with `tessera-protocol.md` Appendix A; (5) decided by the spec owner:
+> an inbound `PerformanceStarted.tune` keeps its 1,024-byte cut (§9.5), so nothing changes.
+> No implemented behaviour changes. The implementer's text is kept below as the record.
+>
+> (Was **OPEN:** implementer note, "P4 social", `tessera-net`, 2026-10-11; non-blocking.)
 > Readings the implementation of the "P4 social" revision had to choose; a reviewer should
 > confirm or correct them. (1) **`ReadyPerformance` under `defaults off`.** §6.7 says the feed
 > records the player's part on `ReadyPerformance` and puts "under `defaults on`" only on the
@@ -4148,7 +4351,16 @@ are invented.
 > bytes) as before this revision; the new events cut `tune` to 256 bytes (§9.5). §9.5 could
 > state the 256-byte cut for `PerformanceStarted` too.
 
-> **OPEN:** (non-blocking; P5 travel, for the spec owner) (1) The owner question on numeric
+> **Answered in part (spec writer, 2026-10-23; revision 10):** (1) is settled by the owner's
+> answer of 2026-10-16 to the numeric-enum-key question above, option (b): committed scenarios
+> write `note-type=`, `size=` and `tier=` (and every other enum position of §13 rule 6) as
+> **labels** (for example `note-type=@Waypoint`), resolved against the user's install at run
+> time, never as numeric keys. A label resolves only with an install (§8.7), so the
+> no-install CI replay (§10.5) shows no map-note icon choice, group size or tier; local
+> real-data runs cover them, a consequence the owner accepted. §13 rule 6 is unchanged.
+> Points (2) and (3) stay open for the spec owner.
+>
+> (Was **OPEN:** non-blocking; P5 travel, for the spec owner.) (1) The owner question on numeric
 > enum keys above now also covers `note-type=`, `size=` and `tier=` (§13 rule 6): until it is
 > decided, committed scenarios cannot show a map-note icon choice, a group size or a tier
 > without an install. (2) `MountChanged.combat` is a Tessera field: the original decides the
@@ -4246,6 +4458,9 @@ are invented.
 | 2026-10-14 | Independent review of revision 9 (spec reviewer, Clean-Room-Role: review; a session that wrote no part of revision 9 or of the code): passed, every item of CLEAN_ROOM.md §5.3; the revision 9 parts move Revised → Accepted. §9.7 items 1 and 7, the §14.9 preamble and invariant 11 agree with §18.4.1 (a)–(c) and the `crates/net` remote backend on main. Non-blocking notes (a)–(b) in the header review record (a conformance row for item 7, the refusal error after the end). No other text changed |
 | 2026-10-16 | "P6 progression" revision (spec writer, for decision 0024 P6; additive only, written unnumbered on branch `p6`, number given at the merge; nothing renumbered): text function `action(VALUE,REF)` (§4.2, §5.2, §8.6, §9.1), window kind `craft-trainer` (§5.6), steps `untrained`, `trait-rank`, `trait-tree`, `forget-recipe`, `vocation`, `craft-trainer` and the options of `level`, `trainer`, `trait-points`, `profession`, `recipe`, `craft-result` (§6.6), patterns `train-craft`, `trait-rank`, `trait-branch` (§7.5), input forms `craft …` options, `train-craft`, `trait-rank`, `trait-branch` (§7.7), attributes marked "P6 progression" and families `vocation`, `craft-guild` (§8.3), contexts `TraitBranch`, `RecipeCategory` (§8.6), types, fields, events `UntrainedSkills`, `TraitRank`, `TraitTreeChanged`, `RecipeForgotten`, `VocationChanged`, `CraftTrainerShown`, commands `TrainCraft`, `SetTraitRank`, `ChooseTraitBranch` (§9.1, §9.2, §9.4, §9.5), log forms with added fields written only off their default (§10.3), limits (§11.1), fuzz note (§11.4), rule 7 (§13), hostile rows P6-H1 … P6-H18 (§14.5), Vectors P6-V1, P6-V2 and resolver case P6-V3 (§14.P6a–§14.P6c), invariant 15 (§15), one OPEN (§16), §18.P6. The P6 parts are in Review; every other part keeps its status. |
 | 2026-10-16 | Independent review of the "P6 progression" revision (spec reviewer, Clean-Room-Role: review; a session that wrote no part of the P6 revision or the P6 code): passed, every item of CLEAN_ROOM.md §5.3; the P6 parts move Review → Accepted. Non-blocking notes in §18.P6; no text other than the status lines, review record and this row changed |
+| 2026-10-23 | Revision 10 (spec writer; bookkeeping, no install probe and no decompiler session: the rulings are those already recorded): the review rulings on implementer OPENs written into the text and the callouts marked Answered. §3.1: the `tessera-net` exception dropped from the allow list, dev-dependencies and workspace-build features checked, new paragraph "What counts as a server build" (in-process hosts are server builds and need not be feed-free; revision-3 rulings). §6.3: buy-back page and number-error rules (§18.P3 (a)–(c)). §6.7 and §9.8: `ReadyPerformance` recorded only under `defaults on`; the plain sandbox answers `StartPerformance` also after a scenario's feed has ended (§18.5 (b)(1), (3)). §9.5: `PerformanceStarted.tune` keeps its 1,024-byte cut (spec-owner decision on (b)(5)). §12.2: driver-only runs with an install, the player's appearance, the UI run with the game UI attached (as built), client chat and notice lines (none in a driver-only run; P4 client review F3), exit-code rows for scenario paths and an unusable named install (revision-3 rulings (2)–(5)). §12.4.1: the windowed input player and log (confirmed). §12.5.4: rules 2 and 4–7 (§18.3 (c)–(e)). §14.9: O3 two tick-0 events, O7's file `at 0s say player "x"` (§18.3 (a), (b)). §16: the numeric-enum-key consequence for `note-type=`, `size=`, `tier=` updated to the owner's answer (b) of 2026-10-16. Nothing renumbered; new anchors `s3-1-1`, `s12-2-1`, `s12-2-2`, `s12-4-1`. **No committed scenario, vector or log changes meaning, and no implemented behaviour changes** (every rule written in is what `tessera-net`, `apps/client` and `tools/check-server-deps.sh` already do). Status of these parts: Accepted → Revised, awaiting independent review. |
+| 2026-10-23 | Revision 10, correction after the independent screen (spec writer): §12.2 "With the game UI attached" did not match `apps/client`. The trigger list now includes `--ui-report` (and says `--character-select` cannot be combined with `--scenario`); step 3 now lists the run's other end conditions (`--ui-script` played to its end, else the `--fly-path` flight done, else `--duration` seconds after the timing run starts), each exit 0 even before `Finished`; the wrong sentence saying a long scenario "needs `--duration` to lengthen the deadline" is replaced; exit-code row 0 extended. The text now states what the client already does, so the claims that no implemented behaviour changes stay true. Status: Revised, awaiting independent review. |
+| 2026-10-23 | Independent review (spec-review:spec-gameplay:2 (independent session)) of the 2026-10-23 revision: **passed**, CLEAN_ROOM.md §5.3 every item; status Revised → Accepted. Header status and review record only (and the stray letter in the status cell); no other text changed; no implemented behaviour changes beyond those the revision row states. |
 
 ---
 

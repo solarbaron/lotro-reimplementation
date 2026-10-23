@@ -4,11 +4,11 @@
 
 | | |
 |---|---|
-| **Status** | Accepted (2026-10-14, re-review of revision 1 after acceptance passed; see the review record). Before: Revised (2026-10-14, revision 1 after acceptance: non-blocking notes (1)–(3) of the 2026-10-11 review). Before: Accepted (2026-10-11; independent review of commit 7b14f27 passed, see the review record); Draft before that |
-| **Last updated** | 2026-10-14 |
+| **Status** | **Accepted** (2026-10-23, independent review 2026-10-23 by spec-review:spec-gameplay:2 (independent session), a session that wrote no part of the 2026-10-23 revision: passed CLEAN_ROOM.md §5.3, every item; contamination screen clean; see the review record). Before: **Revised** (2026-10-23, revision 2 after acceptance: the eight implementer OPENs of §2.1, §4.6, §4.7, §9, §9.3, §10.5 and §11 rule 6 answered with rows CV23–CV27; one census row corrected (ten channelling FX properties, not eight); no implemented behaviour changes; awaiting independent review). Before: Accepted (2026-10-14, re-review of revision 1 after acceptance passed; see the review record). Before: Revised (2026-10-14, revision 1 after acceptance: non-blocking notes (1)–(3) of the 2026-10-11 review). Before: Accepted (2026-10-11; independent review of commit 7b14f27 passed, see the review record); Draft before that |
+| **Last updated** | 2026-10-23 |
 | **Author role** | Spec writer (dirty room) |
 | **Reviewer** | Spec reviewer (separate dirty-room session, AI-assisted, neither the author nor an implementer), 2026-10-11; re-review of revision 1 by another such session, 2026-10-14 |
-| **Review record** | Independent review 2026-10-11 of the first version (commit 7b14f27 on branch p2), together with the P2 revisions of `script-table.md`, `particles.md` and `particle-runtime.md`, by a separate dirty-room session (AI-assisted; it wrote no part of these specs or of the P2 code), checked against CLEAN_ROOM.md §5.3: **passed**, Accepted. Every statement is a functional fact, a census, a Tessera rule (§9, §11) or an OPEN with its Decision (Q-CV1–Q-CV7); no code or pseudo-code (the §7 description of the death script follows the data's node structure, not a source listing); script-key labels, property names, callback labels and enum labels are data identifiers quoted for interoperability; no game text, assets, keys or hostnames; the BC and BIN tags name build, questions and why M1–M3 were not enough, and exclude the network decoder (decision 0004); every CV row has its mark; nothing falls under a closed gate. Spot-checks, own read-only probe with the p2 decoders on 2026-10-11, all exact: 13,247 skills; Self lists 1/2/3 non-zero keys in 13,221/3/23 skills, Other 1/3 in 13,228/19; lists equal in stored order in 13,024, different in 223; mounted lists 1,137/1,139 of one entry; `Skill_WarmUpBehavior` in 19 skills, 62 values, all 0; `Skill_AnimationMode`, `Skill_AnimationMayFail` and the duration-override histograms of §2.2; 13,733 hook infos, 4 skills without hooks, the six hook-index sequences of §2.3, 72 cosmetic hooks; every row of the §2.1 table (values, non-zero, keys); dictionary `field_b` 6 for `Combat_AnimationSpeedMultiplier` (default 1.0), the seven `CombatStrikeData_*`, both `ScriptSystem_Snd_*` and `SCP_Output_GetUpcomingTargets_TargetArray`, `field_b` 4 and the PIDs of `Entity_Mode`, `Combat_Violent`, `LifeState`, `Death_DeadScript`, `Death_DiedWhileKnockedDown`, `Mount_Is_Mounted`, `GOP_*` defaults true; mappers 0x23000123, 0x2300002A, 0x23000003, 0x23000092 (all §6.1 values), 0x2300013D and the categories of rule 6 in 0x2300004C; `Death@Agent::*Die` defined in 41 tables, `*Revive` in 5; Beam census of §4.7 and `particle-runtime.md` §11.1 (2,740 nodes; persistent 769; head entity 1,050; beam and head systems 571 and 45, 2 head-only; the ramp, head, rate, scale-source, detach, radius, port-children and target counts; hooks Attack only 945, both 2, Defend only 33); Execute callbacks and result ports of §4.6 and `script-table.md` §9.1; StoryHook 4,130 / 2,480; FireMissile 183; §10.1 categories of all 11,155 0x39 records. BIN spot-check (own headless decompilation, Ghidra 12.1.3, private project copy, deleted afterwards; constants read read-only from the client file): the beam draw step computes the head and tail fractions as `particle-runtime.md` §11.1 step 5 states, arrives at speed > 0.0002 and fraction > 0.9998, uses length 0.01 at or below 0.0002 and skips beams longer than 1,000 m (step 4), and detaches ends by the > 0.0002 / ≥ rule of step 3. The strike component (CV8–CV11, `script-table.md` T44) and the BC behaviour choice were not re-derived. **Non-blocking (wording; none changes implemented behaviour):** (1) §3.2 lists `StorySystem_StoryID` among the script-parameter properties (CV7), but its dictionary `field_b` is 4; say that the client keeps the story ID with the run (as a run parameter in Tessera) although its definition is not a script-parameter one; the implementation's run-parameter storage stays as is. (2) §6.3: the induced state bits listed sum to 209 of the 239 class-769 effects; 0x4000000 (23 effects), 0x2000 (5) and 0x8 (2) are missing. (3) §4.7 and the `particle-runtime.md` census say 4 hook-carrying Beam nodes have head speed 0: 2 have 0 and 2 have −25; all four never arrive (speed not above 0.0002). (4) The implementer OPENs of §2.1, §4.6, §4.7, §9, §9.3, §10.5 and rule 6 (two) record the readings the code follows; the spec writer should answer them as Decisions at the next revision. **Re-review, 2026-10-14** (revision 1 after acceptance, commit 99366d0 on branch specfix: header, CV7, §3.2, §4.7, §6.3, change log; a session that wrote no part of this spec and did not perform the 2026-10-11 review): **passed**, status Accepted. Checked against CLEAN_ROOM.md §5.3: counts, property names, enum bits and dictionary fields only; no code, copied prose or game text; CV7 keeps its source and mark; the §3.2 row says what was not traced (Q-CV1) and keeps Tessera's run-parameter storage as a Decision (§9.2 step 4). Notes (1)–(3) of the 2026-10-11 review are resolved. Spot checks, own read-only probes with the repository decoders: dictionary 0x34000000 gives `StorySystem_StoryID` (0x48E) `field_b` 4 (`Combat_AnimationSpeedMultiplier` 6, `Entity_Mode` 4); `Effect_InduceCombatState_StateToInduce` is stored by 239 object records, one bit each, with exactly the twelve counts of §6.3; over all script tables and scriptlets (36,518 records, 2 not decodable, as before) 2,740 Beam nodes, 980 with a StoryHook under a port, and of these 4 with a head speed not above 0.0002: 2 at 0 and 2 at −25, all with head start 1. **Non-blocking:** note (4) of the 2026-10-11 review (the implementer OPENs of §2.1, §4.6, §4.7, §9, §9.3, §10.5 and rule 6) was not part of this revision and still stands. |
+| **Review record** | **Review 2026-10-23** of the 2026-10-23 revision (spec-review:spec-gameplay:2 (independent session)): **passed**, CLEAN_ROOM.md §5.3 every item; contamination screen clean; CV23 reproduced by an own M1 probe (the property dictionary 0x34000000 holds exactly the ten `Channeling_…_FXID` names, five per side); CV24–CV27 and the Tessera-rule confirmations consistent with the cited sections. Earlier: Independent review 2026-10-11 of the first version (commit 7b14f27 on branch p2), together with the P2 revisions of `script-table.md`, `particles.md` and `particle-runtime.md`, by a separate dirty-room session (AI-assisted; it wrote no part of these specs or of the P2 code), checked against CLEAN_ROOM.md §5.3: **passed**, Accepted. Every statement is a functional fact, a census, a Tessera rule (§9, §11) or an OPEN with its Decision (Q-CV1–Q-CV7); no code or pseudo-code (the §7 description of the death script follows the data's node structure, not a source listing); script-key labels, property names, callback labels and enum labels are data identifiers quoted for interoperability; no game text, assets, keys or hostnames; the BC and BIN tags name build, questions and why M1–M3 were not enough, and exclude the network decoder (decision 0004); every CV row has its mark; nothing falls under a closed gate. Spot-checks, own read-only probe with the p2 decoders on 2026-10-11, all exact: 13,247 skills; Self lists 1/2/3 non-zero keys in 13,221/3/23 skills, Other 1/3 in 13,228/19; lists equal in stored order in 13,024, different in 223; mounted lists 1,137/1,139 of one entry; `Skill_WarmUpBehavior` in 19 skills, 62 values, all 0; `Skill_AnimationMode`, `Skill_AnimationMayFail` and the duration-override histograms of §2.2; 13,733 hook infos, 4 skills without hooks, the six hook-index sequences of §2.3, 72 cosmetic hooks; every row of the §2.1 table (values, non-zero, keys); dictionary `field_b` 6 for `Combat_AnimationSpeedMultiplier` (default 1.0), the seven `CombatStrikeData_*`, both `ScriptSystem_Snd_*` and `SCP_Output_GetUpcomingTargets_TargetArray`, `field_b` 4 and the PIDs of `Entity_Mode`, `Combat_Violent`, `LifeState`, `Death_DeadScript`, `Death_DiedWhileKnockedDown`, `Mount_Is_Mounted`, `GOP_*` defaults true; mappers 0x23000123, 0x2300002A, 0x23000003, 0x23000092 (all §6.1 values), 0x2300013D and the categories of rule 6 in 0x2300004C; `Death@Agent::*Die` defined in 41 tables, `*Revive` in 5; Beam census of §4.7 and `particle-runtime.md` §11.1 (2,740 nodes; persistent 769; head entity 1,050; beam and head systems 571 and 45, 2 head-only; the ramp, head, rate, scale-source, detach, radius, port-children and target counts; hooks Attack only 945, both 2, Defend only 33); Execute callbacks and result ports of §4.6 and `script-table.md` §9.1; StoryHook 4,130 / 2,480; FireMissile 183; §10.1 categories of all 11,155 0x39 records. BIN spot-check (own headless decompilation, Ghidra 12.1.3, private project copy, deleted afterwards; constants read read-only from the client file): the beam draw step computes the head and tail fractions as `particle-runtime.md` §11.1 step 5 states, arrives at speed > 0.0002 and fraction > 0.9998, uses length 0.01 at or below 0.0002 and skips beams longer than 1,000 m (step 4), and detaches ends by the > 0.0002 / ≥ rule of step 3. The strike component (CV8–CV11, `script-table.md` T44) and the BC behaviour choice were not re-derived. **Non-blocking (wording; none changes implemented behaviour):** (1) §3.2 lists `StorySystem_StoryID` among the script-parameter properties (CV7), but its dictionary `field_b` is 4; say that the client keeps the story ID with the run (as a run parameter in Tessera) although its definition is not a script-parameter one; the implementation's run-parameter storage stays as is. (2) §6.3: the induced state bits listed sum to 209 of the 239 class-769 effects; 0x4000000 (23 effects), 0x2000 (5) and 0x8 (2) are missing. (3) §4.7 and the `particle-runtime.md` census say 4 hook-carrying Beam nodes have head speed 0: 2 have 0 and 2 have −25; all four never arrive (speed not above 0.0002). (4) The implementer OPENs of §2.1, §4.6, §4.7, §9, §9.3, §10.5 and rule 6 (two) record the readings the code follows; the spec writer should answer them as Decisions at the next revision. **Re-review, 2026-10-14** (revision 1 after acceptance, commit 99366d0 on branch specfix: header, CV7, §3.2, §4.7, §6.3, change log; a session that wrote no part of this spec and did not perform the 2026-10-11 review): **passed**, status Accepted. Checked against CLEAN_ROOM.md §5.3: counts, property names, enum bits and dictionary fields only; no code, copied prose or game text; CV7 keeps its source and mark; the §3.2 row says what was not traced (Q-CV1) and keeps Tessera's run-parameter storage as a Decision (§9.2 step 4). Notes (1)–(3) of the 2026-10-11 review are resolved. Spot checks, own read-only probes with the repository decoders: dictionary 0x34000000 gives `StorySystem_StoryID` (0x48E) `field_b` 4 (`Combat_AnimationSpeedMultiplier` 6, `Entity_Mode` 4); `Effect_InduceCombatState_StateToInduce` is stored by 239 object records, one bit each, with exactly the twelve counts of §6.3; over all script tables and scriptlets (36,518 records, 2 not decodable, as before) 2,740 Beam nodes, 980 with a StoryHook under a port, and of these 4 with a head speed not above 0.0002: 2 at 0 and 2 at −25, all with head start 1. **Non-blocking:** note (4) of the 2026-10-11 review (the implementer OPENs of §2.1, §4.6, §4.7, §9, §9.3, §10.5 and rule 6) was not part of this revision and still stands. |
 | **Implements into** | `crates/gamedata` (the skill, effect, induction, channelling and combat-state script references of §2, the census of §10), `crates/particles` (beam-driven particle systems, `particle-runtime.md` §11.1; lit systems, its rule 13), `crates/scriptgraph` (running a script key on a figure with a run-parameter set; StoryHook and Execute callbacks of §4; Beam nodes), `crates/anim` (no new rule: layers, ramps and track opacity as specified), `apps/client` walker (stories, strikes and hooks, the mapping of session events of §9, stance and defeat properties) |
 | **Companion specs** | [`combat-data.md`](combat-data.md) (skill, effect, induction records; §7.7 attack hooks; §10.2 weapon timing), [`script-table.md`](script-table.md) (tables, nodes, lookup §8.2, animation node §6, StoryHook §9), [`script-runtime.md`](script-runtime.md) (runs, run parameters §5.1, starts §12), [`particles.md`](particles.md), [`particle-runtime.md`](particle-runtime.md) (effects; beams §11.1), [`skeleton-anim.md`](skeleton-anim.md) (layers, track opacity §6.6, holding locations §8), [`game-controls.md`](game-controls.md) §5.5 (default attacks), §5.8 (combat states), [`interaction.md`](interaction.md) §3.8–§3.9 (induction and channelling records), §8 (defeat records), [`scenario-feed.md`](scenario-feed.md) §9 (session events), [`combat-ui.md`](combat-ui.md) (panels, floating text) |
 
@@ -87,6 +87,11 @@ Tessera rule (§11); **Reported** = published sources only (none used).
 | CV20 | The locomotion templates (avatar 0x0C000FFE and creature 0x0C0000B9) and the weapon-style templates switch on `Entity_Mode` combat values; the avatar idle-emote switch is on `Combat_Violent` (§6.1) | OBS; ST §8.3–§8.4 | Confirmed |
 | CV21 | Census of particle descriptors and of the Particle, Beam and FireMissile nodes that combat records reach (§10) | OBS | Confirmed |
 | CV22 | Tessera rules (§11) | This spec | Decision |
+| CV23 | The channelling object has ten FX properties, five per side: `Channeling_StartScript_FXID`, `…AnimationScript_FXID`, `…SuccessScript_FXID`, `…FailureScript_FXID`, `…AbandonedScript_FXID` and the five `Channeling_Target…Script_FXID` counterparts; each is stored on all 401 channelling objects, non-zero on 3–10, with 1–4 distinct keys; no other dictionary property starts with `Channeling_` and ends with `_FXID` (§2.1) | OBS (property dictionary and every object record, 2026-10-23) | Confirmed 2026-10-23 |
+| CV24 | Random targets in all script tables and scriptlets: 1,236, every one with `RandomTarget_Cap` ≥ 1 (1 in 1,232; 12 in 3 and 5 in 1, all four on Beam nodes); no Particle node (0 of 41,354) has a target of its own (§4.6) | OBS (every node of every decodable table and scriptlet, 2026-10-23) | Confirmed 2026-10-23 |
+| CV25 | The one Beam node with `BeamScript_UseTargetPosition` = 1 stores an all-zero position (no landblock, cell, offset or orientation) and has no target (§4.7) | OBS (same walk, 2026-10-23) | Confirmed 2026-10-23 |
+| CV26 | The five skills with repeated hook numbers ((1, 1) three times, (1, 1, 1) twice): in each, the repeated entries carry the same six hook script fields and the same cosmetic flag (§9.3) | OBS (every skill's `Skill_AttackHookList`, 2026-10-23) | Confirmed 2026-10-23 |
+| CV27 | Items compatible with `Weapon_Secondary` by category: shields (`Shield`, `HeavyShield`, `MediumShield`, secondary only), the six one-handed weapon categories `1HSword`, `1HAxe`, `1HClub`, `1HMace`, `1HHammer`, `Dagger` (both weapon slots), `Cosmetic` (50 items, both), `Implement1H` (12, both) and one `Bauble` (secondary only) (§11 rule 6) | OBS (every item record's `Inventory_CompatibleSlot` and `Item_EquipmentCategory`, 2026-10-23) | Confirmed 2026-10-23 |
 
 ---
 
@@ -141,14 +146,24 @@ plays nothing, `script-runtime.md` §12.1).
 | channelling object | `Channeling_StartScriptID`, `Channeling_AnimationScriptID` | 401, 401 | 290, 401 | 64, 46 | 0, 0 |
 | channelling object | `Channeling_Success_Script`, `Channeling_Failure_Script`, `Channeling_Abandoned_Script` | 401 each | 338, 348, 351 | 65, 60, 59 | 1, 1, 1 |
 | channelling object | `Channeling_Target_Start_Script`, `…_Animation_Script`, `…_Success_Script`, `…_Failure_Script`, `…_Abandoned_Script` | 401 each | 7, 15, 9, 6, 8 | 4, 10, 5, 4, 5 | 0 |
-| channelling object | the eight `Channeling_…Script_FXID` and `Channeling_Target…Script_FXID` properties | 401 each | 3–10 each | 1–4 each | 0 |
+| channelling object | the ten `Channeling_…Script_FXID` and `Channeling_Target…Script_FXID` properties (CV23; corrected 2026-10-23 from "eight") | 401 each | 3–10 each | 1–4 each | 0 |
 | combat-state control | `CombatState_StateData_ScriptID` | 13 | 13 | 10 | 0 |
 
 Undefined keys are data facts, not errors to repair: 469 effects name one undefined key
 (`Effect_FX`), which therefore shows nothing in the original either.
 
-> **OPEN:** (implementer, 2026-10-10) the exact labels of the eight channelling FX properties
-> are not given (§3.5 names `Channeling_StartScript_FXID`, `Channeling_AnimationScript_FXID`
+> **Answered (spec writer, 2026-10-23; revision 2; CV23):** there are ten, five per side:
+> `Channeling_StartScript_FXID`, `Channeling_AnimationScript_FXID`,
+> `Channeling_SuccessScript_FXID`, `Channeling_FailureScript_FXID`,
+> `Channeling_AbandonedScript_FXID`, and `Channeling_TargetStartScript_FXID`,
+> `…TargetAnimationScript_FXID`, `…TargetSuccessScript_FXID`, `…TargetFailureScript_FXID`,
+> `…TargetAbandonedScript_FXID` (names needed for interoperability, read from the dictionary
+> at run time). The implementer's by-name rule finds exactly these ten and gives each its side
+> and moment, so it is confirmed. No implemented behaviour changes. The implementer's text is
+> kept as the record.
+>
+> (Was **OPEN:** implementer, 2026-10-10.) The exact labels of the eight channelling FX
+> properties are not given (§3.5 names `Channeling_StartScript_FXID`, `Channeling_AnimationScript_FXID`
 > and their target counterparts; the success, failure and abandoned ones only as "their
 > `…_FXID`"). `crates/gamedata` finds them by name: dictionary properties starting with
 > `Channeling_` and ending with `_FXID`, target side when the name contains `Target`, the
@@ -455,7 +470,18 @@ targets of the story's strikes not yet shown whose attack result passes the filt
 `GetUpcomingHitResult` (with `SCP_GetUpcomingHitResult_AnimHookType`) answers the attack
 result of the next strike for a hook type in `SCP_GetUpcomingHitResult_Result`.
 
-> **OPEN:** (implementer, 2026-10-11) two target rules the walker needs are not stated. (1) A
+> **Answered (spec writer, 2026-10-23; revision 2; CV24):** both are Tessera rules and stand.
+> (1) Every Random target of the archives has a cap of at least 1 (1 in 1,232 of 1,236; 12 in
+> three and 5 in one, all four on Beam nodes), so max(*c*, 1) only guards hostile data; drawing
+> min(*c*, *n*) distinct entities uniformly from the *n* the sub-targets resolve to is the
+> rule. (2) No Particle node of the archives has a target of its own (0 of 41,354): Particle
+> nodes reach an upcoming target only through `ParticleScript_RedirectProperty` or through the
+> node that runs them (`particle-runtime.md` §5.5 step 1). The first-entity and none-starts
+> readings therefore apply only to hostile or later data and stay as written; the open part of
+> `particle-runtime.md` §5.5 is that spec's. No implemented behaviour changes. The
+> implementer's text is kept as the record.
+>
+> (Was **OPEN:** implementer, 2026-10-11.) Two target rules the walker needs are not stated. (1) A
 > Random target (type 6, `RandomTarget_Cap` *c*) over Property sub-targets: `tessera-scriptgraph`
 > draws max(*c*, 1) distinct entities uniformly (the runtime's generator) from what the
 > sub-targets resolve to. (2) A Particle node whose targets resolve to several entities:
@@ -477,10 +503,16 @@ full length from their start (rays, chains). The beam renderer itself (envelope,
 head and tail motion, ribbon, particle systems, head entity) is specified in
 `particle-runtime.md` §11.1.
 
-> **OPEN:** (implementer, 2026-10-11) the frame of `BeamScript_TargetPosition` (a Position
-> with optional landblock, cell and offset) is not stated for `UseTargetPosition` = 1 (one node
-> in the data). The walker treats such a beam without a target entity as untargeted (source
-> point + forward × `UntargetedBeamLength`).
+> **Answered (spec writer, 2026-10-23; revision 2; CV25):** the one such node stores an
+> all-zero position and has no target, so no frame can be read from the data; the frame was
+> not traced. **Tessera rule** (confirmed): a beam with `UseTargetPosition` = 1 and no target
+> entity is drawn as untargeted (source point + forward × `UntargetedBeamLength`). No
+> implemented behaviour changes. The implementer's text is kept as the record.
+>
+> (Was **OPEN:** implementer, 2026-10-11.) The frame of `BeamScript_TargetPosition` (a
+> Position with optional landblock, cell and offset) is not stated for `UseTargetPosition` = 1
+> (one node in the data). The walker treats such a beam without a target entity as untargeted
+> (source point + forward × `UntargetedBeamLength`).
 
 Beam census (all 2,740 nodes; 1,496 reachable from skill and effect keys, §10.2):
 
@@ -641,8 +673,17 @@ The session events are those of `scenario-feed.md` §9.2 (fields in parentheses)
 *K* is 0 or *E* is not drawn as a figure; "stop" stops every run of that start. Each row is a
 Tessera rule; the facts it rests on are cited.
 
-> **OPEN:** (implementer, 2026-10-11) when a figure becomes available after the events that
-> concern it (its figure still building when a scenario's first steps run), the walker shows
+> **Answered (spec writer, 2026-10-23; revision 2):** confirmed as Tessera rules (the
+> original builds figures from its session state, which was not traced for this case): a
+> figure that becomes available late shows the persistent state at once (stance,
+> `Combat_Violent`, the runs of applied effects, `LifeState` and the death script of a
+> defeated entity) and drops one-shot visuals that passed (casts, strikes); session entities
+> run no start-up scripts in the effects runtime because the character layer animates them
+> (`walker.md` §10). No implemented behaviour changes. The implementer's text is kept as the
+> record.
+>
+> (Was **OPEN:** implementer, 2026-10-11.) When a figure becomes available after the events
+> that concern it (its figure still building when a scenario's first steps run), the walker shows
 > the persistent state on it at once (stance and `Combat_Violent`, applied effects' runs,
 > `LifeState` and the death script of a defeated entity) and drops the one-shot visuals that
 > passed (casts, strikes). The figures of session entities run no start-up scripts in the
@@ -708,7 +749,14 @@ skill *S* and `source` *P*:
    `Effect_VitalOverTime_IntervalFX` on `target` at once (no story).
 6. `VitalDelta` with no `what`, or with `what` naming something else, shows no strike visual.
 
-> **OPEN:** (implementer, 2026-10-11) step 2's "fewer than *i* hooks" is read against the
+> **Answered (spec writer, 2026-10-23; revision 2; CV26):** the largest-hook-number reading
+> is the Tessera rule for step 2. In each of the five skills with repeated numbers the
+> repeated entries carry the same hook scripts and cosmetic flag, so whichever entry a
+> repeated number uses, the visuals are the same, and an implementation may use any of them.
+> Which reading the original follows was not traced. No implemented behaviour
+> changes. The implementer's text is kept as the record.
+>
+> (Was **OPEN:** implementer, 2026-10-11.) Step 2's "fewer than *i* hooks" is read against the
 > skill's **largest hook number**, not its number of hooks. The two differ only for the
 > skills whose hook numbers repeat ((1, 1) or (1, 1, 1), §2.3): with the count, a second
 > strike on a target would wait for hook number 2, which those skills do not have, so §4.4
@@ -836,7 +884,14 @@ every effect DID named by a Particle node reachable from skill and effect record
 counts of §10.2 first row; every Beam node's tail decodes to the fields of
 `particle-runtime.md` §11.1.
 
-> **OPEN:** (implementer, 2026-10-11) the walker's census test
+> **Answered (spec writer, 2026-10-23; revision 2):** confirmed. The first row of §10.2 counts
+> what every skill and effect property of §2.1 reaches; the walker shows only the subset of
+> rule 10, so its test checks that subset with lower bounds of 95 % of the §10.2 figures, and
+> its own counts on this install are those given below. `crates/gamedata`'s census is the
+> place for the exact §10.2 figures. No implemented behaviour changes. The implementer's text
+> is kept as the record.
+>
+> (Was **OPEN:** implementer, 2026-10-11.) The walker's census test
 > (`apps/client/tests/combat_visuals_real_data.rs`) reaches from the skill keys it shows
 > (behaviours, the five hook scripts) and the effects' `Effect_FX`, interval and threat
 > interval FX, not from every skill and effect property of §2.1 (failure, conjunction,
@@ -873,12 +928,26 @@ counts of §10.2 first row; every Beam node's tail decodes to the fields of
    `combat_throw`; BattleGauntlets → `combat_gauntlets`; any other main-hand item →
    `combat_1h`. Figures that are not player characters → `combat_monster`.
 
-   > **OPEN:** (implementer, 2026-10-10) "an off-hand weapon" is not defined. `crates/gamedata`
-   > (`stance_for`) reads it as an off-hand item of one of the one-handed categories of this
-   > rule (1HSword, 1HAxe, 1HClub, 1HMace, 1HHammer, Dagger).
+   > **Answered (spec writer, 2026-10-23; revision 2; CV27):** confirmed. The items that may
+   > be worn in `Weapon_Secondary` are shields, the six one-handed weapon categories of this
+   > rule, `Cosmetic`, `Implement1H` and one `Bauble`; "an off-hand weapon" is an off-hand
+   > item of the six one-handed weapon categories (1HSword, 1HAxe, 1HClub, 1HMace, 1HHammer,
+   > Dagger). An off-hand `Cosmetic`, `Implement1H` or `Bauble` is neither shield nor weapon,
+   > so the main hand's stance applies. No implemented behaviour changes. The implementer's
+   > text is kept as the record.
+   >
+   > (Was **OPEN:** implementer, 2026-10-10.) "An off-hand weapon" is not defined.
+   > `crates/gamedata` (`stance_for`) reads it as an off-hand item of one of the one-handed
+   > categories of this rule (1HSword, 1HAxe, 1HClub, 1HMace, 1HHammer, Dagger).
 
-   > **OPEN:** (implementer, 2026-10-11) which worn item is the main hand and which the off
-   > hand is not stated. The walker takes the items that are not stowed: an item with the
+   > **Answered (spec writer, 2026-10-23; revision 2):** confirmed as the Tessera rule: the
+   > hand of a worn item is its feed slot (`Weapon_Primary` main, `Weapon_Secondary` off, other
+   > slots none), else the hand rule of `character-panels.md` §7; the fallback for data
+   > without the two slot labels stands. No implemented behaviour changes. The implementer's
+   > text is kept as the record.
+   >
+   > (Was **OPEN:** implementer, 2026-10-11.) Which worn item is the main hand and which the
+   > off hand is not stated. The walker takes the items that are not stowed: an item with the
    > feed's `Equipped.slot` is in the hand of that slot (`Weapon_Primary`: main,
    > `Weapon_Secondary`: off; other slots, the ranged one included, hold no hand); an item
    > without it follows the hand rule of `character-panels.md` §7 (its `Inventory_DefaultSlot`
@@ -1050,4 +1119,6 @@ recovery.
 | 2026-10-10 | all | First version, status Draft, awaiting independent review. Census of the script keys of skills, hooks, effects, inductions, channels and combat states over all records (OBS); behaviour choice from the class library (BC); strikes, hook counting, story end and strike display from the client (BIN); hit, reaction and projectile scripts, stance, defeat and revive from the data; Tessera mapping of the session events; census for P2 exit criterion 3; Q-CV1–Q-CV7. Companion revisions: `particle-runtime.md` §11.1 (beams, answers Q-RT4) and rule 13 (lit systems), `particles.md` Q8 note, `script-table.md` §9.1. |
 | 2026-10-10 | §2.1, §11 | Implementer OPENs from `crates/gamedata` (no fact changed): channelling FX labels found by name, "off-hand weapon" of rule 6. |
 | 2026-10-14 | header, §1 (CV7), §3.2, §4.7, §6.3 | Revision 1 after acceptance (spec writer, dirty room): non-blocking notes (1)–(3) of the independent review of 2026-10-11; status Accepted → Revised, awaiting independent review. Own read-only probes of the install (M1, 2026-10-14). (1) §3.2 and CV7: `StorySystem_StoryID` has dictionary `field_b` 4 (entity-property kind), not 6; the first version listed it among the script-parameter properties. The client keeps the story ID with the run (how is Q-CV1); Tessera passes it as a run parameter (§9.2 step 4, unchanged). (2) §6.3: the induced state bits now list all 239 class-769 effects; 0x4000000 (23), 0x2000 (5) and 0x8 (2) were missing. (3) §4.7: of the 980 hook-carrying Beam nodes, 2 have head speed 0 and 2 have −25 (the first version said 4 at 0); none arrives. **No implemented behaviour changes:** the run-parameter storage of the story ID stays; the census corrections change no rule (a head speed not above 0.0002 never arrives, `particle-runtime.md` §11.1 step 5, which the walker already applies). |
+| 2026-10-23 | header, §1 (CV23–CV27), §2.1, §4.6, §4.7, §9, §9.3, §10.5, §11 rule 6 | Revision 2 after acceptance (spec writer, dirty room; own probes of the install, M1): the eight implementer OPENs answered (channelling FX labels, ten not eight, census row corrected; Random caps and target-less Particle nodes; the one target-position beam; late figures; repeated hook numbers; the walker's census subset; off-hand weapon categories; main and off hand). Every implementer reading is confirmed as a Tessera rule or by data. Status Accepted → Revised, awaiting independent review. **No implemented behaviour changes.** |
+| 2026-10-23 | header | Independent review (spec-review:spec-gameplay:2 (independent session)) of the 2026-10-23 revision: **passed**, CLEAN_ROOM.md §5.3 every item; status Revised → Accepted. Header status and review record only; no other text changed; no implemented behaviour changes beyond those the revision row states. |
 | 2026-10-14 | header | Re-review of revision 1 (independent spec reviewer): passed, status Accepted. CV7, §6.3 and §4.7 reproduced by own probes. No content change (header review record and status only); no implemented behaviour changes. |

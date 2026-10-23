@@ -4,10 +4,10 @@
 
 | | |
 |---|---|
-| **Status** | **Accepted** (revision 8, 2026-10-23: independent review by spec-review:spec-ui-r3:1 (independent session): passed; see the review record. Revision 8: the implementer readings of round 2 in §5.9, §6.1, §6.4.2, §6.4.6, §6.5, §6.7 and §8 answered as Tessera rules; the owner-answered callouts of §8 and §13 unchanged; see the change log). Before: **Accepted** (revision 7, 2026-10-23: review 2 of the 2026-10-23 revisions by spec-review:spec-ui-scaling-p6:2 (independent session), 2026-10-23: passed. Revision 7 answers the review item RV6-B1 in §7.5 and the note RV6-N1 in §6.3; revision 6 answers the implementer OPENs of 2026-10-17 to 2026-10-23 in §5.4, §5.5, §5.8, §5.9, §6.1, §6.3, §6.4.5, §6.4.6, §6.5, §6.7, §7.5, §9.3 and §9.6 as Tessera rules). Revision 5 was Accepted on 2026-10-16 (an independent re-review by a session that wrote no part of it passed with no blocking item; RV4-B1 and RV4-N1 verified against the install). The `ui-layout.md` §8.4 stop-gap is retired (§5.9) |
+| **Status** | **Accepted** (revisions 9 and 10, 2026-10-23: independent review by spec-review:spec-uis-r4:2 (independent session): passed; see the review record). Before: **Revised** (revisions 9 and 10, 2026-10-23, spec writer: the round-3 implementer OPENs answered as Tessera rules in §3.4, §3.5, §3.6, §5.5, §5.8, §5.9, §6.1, §7.4, §7.7 and §9.3, and the locator of the scale definitions confirmed in the install (SC16); the owner-answered callouts of §8 and §13 unchanged; revision 10 answers the review item RV9-B1 in §3.4 and the notes N1 (§7.4) and N2 (this line); awaiting an independent review; see the change log). Before: **Accepted** (revision 8, 2026-10-23: independent review by spec-review:spec-ui-r3:1 (independent session): passed; see the review record. Revision 8: the implementer readings of round 2 in §5.9, §6.1, §6.4.2, §6.4.6, §6.5, §6.7 and §8 answered as Tessera rules; the owner-answered callouts of §8 and §13 unchanged; see the change log). Before: **Accepted** (revision 7, 2026-10-23: review 2 of the 2026-10-23 revisions by spec-review:spec-ui-scaling-p6:2 (independent session), 2026-10-23: passed. Revision 7 answers the review item RV6-B1 in §7.5 and the note RV6-N1 in §6.3; revision 6 answers the implementer OPENs of 2026-10-17 to 2026-10-23 in §5.4, §5.5, §5.8, §5.9, §6.1, §6.3, §6.4.5, §6.4.6, §6.5, §6.7, §7.5, §9.3 and §9.6 as Tessera rules). Revision 5 was Accepted on 2026-10-16 (an independent re-review by a session that wrote no part of it passed with no blocking item; RV4-B1 and RV4-N1 verified against the install). The `ui-layout.md` §8.4 stop-gap is retired (§5.9) |
 | **Last updated** | 2026-10-23 |
 | **Author role** | Spec writer (dirty room). A Tessera **design** spec for [decision 0040](../decisions/0040-ui-scaling.md), like `tessera-protocol.md`; the only install input is a read-only census of the layout records (§1, rows SC1–SC6, SC13, SC14) |
-| **Reviewer** | **Review 2026-10-23 of the revision 8 (§5.9, §6.1, §6.4.2, §6.4.6, §6.5, §6.7, §8 answers)** (spec-review:spec-ui-r3:1 (independent session), Clean-Room-Role: review; wrote no part of the revision or of the code): **passed**; status Revised → Accepted. Checked: checked against CLEAN_ROOM.md §5.3, every item, on the uncommitted worktree diff against main; contamination screen clean (no code, pseudo-code or listing-shaped text; no disassembly prose; no game text, keys, hostnames or traffic; hex values are data IDs read from the install; nothing outside decision 0034 §2); answers are functional facts with provenance or labelled Tessera rules, unknowns are OPEN; relative links and anchors of the six package specs resolve (own check). Every added statement is a Tessera rule under SC15 (Design), no observation of the original claimed; arithmetic in prose only. Cross-checks: the S6 division agrees with the owner-answered S6 row (64 MiB × max(1, *Se*²) total; 8 + 56 MiB at the defaults, 32 + 224 MiB at *Se* = 2); the §6.4.6 hit test ⌊(*v* + ½) ÷ *σ*⌋ agrees with §3.6 and the §6.1 alternative form; the owner-answered callouts of §8 and §13 are unchanged. Non-blocking: none. Earlier: **Review 2 of revisions 6 and 7, 2026-10-23** (spec-review:spec-ui-scaling-p6:2 (independent session), wrote no part of either revision; uncommitted worktree diff against main): **passed**; status Revised → Accepted. Checked against CLEAN_ROOM.md §5.3, every item, with the contamination screen clean: every added statement is a functional Tessera rule marked Design under SC15 (no observation of the original claimed), a closed implementer note, or an OPEN; no code, pseudo-code or listing-shaped text (arithmetic in prose only); no copied prose and no non-interoperability identifiers (the property label of §7.5 is UW §5.1's); no game text, assets, keys, hostnames or traffic; no byte layout added; the answered rules are testable; nothing outside decision 0034 §2. **RV6-B1 fixed:** §7.5 now counts only a linked vertical scroll bar on the element or an ancestor, never a class by itself; the class facts it cites agree with UW §3.2 (Text, ListBox from Scrollable; Button from Text; Menu, Scrollbar from Button; Tree from ListBox), and the lookup, completion pass, disabled and hidden bars agree with UW §5.1, §5.2 step 2 and §6.4 step 6. **RV6-N1 fixed:** §6.3's first row and the following paragraph choose the row per axis. Cross-checks: §5.9's answer agrees with the `ui-layout.md` §8.4 step 6 retirement note of 2026-10-23; §5.4 step 6 (opaque black bars below the group) agrees with the limits and the 1 × 1 texture alternative; the §6.7 example (32 × 1.5 = 48 px, 48 ÷ *Ky* 1.5 = 32 units) holds. Relative links and anchors of the six package specs resolve (own check). Non-blocking notes: (N1) §7.5 could say outright that only a Scrollable-derived element can have a linked bar (the completion pass of UW §5.1 links bars only for scrollables), so a plain element that happens to carry the vertical scroll-bar property never counts; (N2) §6.3's integer row still reads "an *s* × *s* block", which under the per-axis choice means *sx* × *sy*. Also re-checked for the package, without changing their status: the 2026-10-23 revisions of `crafting-panels.md`, `progression-panels.md`, `interaction.md`, `npc-windows.md` and `quest-journal.md` hold every §5.3 item, and NW25 was reproduced read-only on the install (the entry exists in the English archive, one piece, no argument; text not printed). Earlier: Review of revision 6, 2026-10-23 (spec-review:spec-ui-scaling-p6:1 (independent session), wrote no part of it; uncommitted worktree diff against main): **changes requested**, one blocking item, status stays Revised. **RV6-B1 (§7.5):** the new definition of "inside a Scrollable" lists the Scrollable classes as ListBox, Tree or Text, but by UW §3.2 Button, Menu and Scrollbar derive from Text and are therefore of a Scrollable class too; and the stated reason (a label that cannot show text outgrowing its box keeps *x* = 1) contradicts counting an ancestor that has no scroll bar of its own. Say exactly which ancestors count (for example: an ancestor that is a ListBox or Tree, or any Scrollable-derived element with a linked scroll bar on the vertical axis), so two implementations agree. Non-blocking note RV6-N1: §6.3's first filter row reads "exactly 1 on both axes" while the new sentence chooses the row per axis; say which applies to an image with *s* = 1 on one axis only. Everything else of revision 6 passed the §5.3 items (functional Tessera rules marked Design under SC15, no observation claimed, prose arithmetic only; the §6.7 example 32 × 1.5 = 48 px and 48 ÷ 1.5 = 32 units checks; the §5.2 and §5.4 "none occurs in this install" claims agree with SC2 and SC3; `ui-layout.md` §8.4 carries the retirement note; links and anchors resolve). First review 2026-10-16, independent review session: changes requested (B1–B6, answered in revision 2). Second review 2026-10-16: changes requested (R2-B1, R2-B2, answered in revision 3). Third review 2026-10-16: changes requested (RV3-B1–RV3-B3, answered in revision 4). Fourth review 2026-10-16: changes requested (RV4-B1 blocking, RV4-N1 non-blocking, answered in revision 5). Independent re-review 2026-10-16 (a session that wrote no part of the spec): **passed**, no blocking item. RV4-B1 verified with a read-only `tessera-formats` probe: `MPMissionController_MainWindow` is 1440 × 900 at (1, 0) in a 1440 × 900 design area, edges (5, 5, 5, 5), object mode None, no dialog-framework PID in the record → safe-area panel; the §10.8(a) C8 arithmetic, I18 and the §9.4 C8 golden are mutually consistent and C1/C2/C5 are unaffected (*A* = *F*). RV4-N1 verified: the theatre progress fit root's single child is 247 × 49 at (411, 735), its §10.6 X extent (247 at 411) unchanged. Accepted |
+| **Reviewer** | **Review 2026-10-23 of revisions 9 and 10** (spec-review:spec-uis-r4:2 (independent session), Clean-Room-Role: review; wrote no part of either revision or of the code): **passed**; status Revised → Accepted. Checked against CLEAN_ROOM.md §5.3, every item, on the uncommitted worktree diff against main; contamination screen clean (no code, pseudo-code or listing-shaped text; no disassembly prose; no game text, keys, hostnames or traffic; the install facts of SC16 are data identifiers, record prefixes, counts and ranges; nothing outside decision 0034 §2). Every added rule is a Tessera rule under SC17 (Design) or the install fact SC16 (Confirmed with date); no observation of the original claimed (the §7.4 answer and UB §9.1 say the original's lookup was not traced); arithmetic in prose only. **RV9-B1 fixed:** §3.4 "Integer displayed boxes" item 1 now gives the one-unit threshold; checked: with each edge rounded on its own, halves up, a box of width one unit or more keeps a rounded width of at least one, and the example 0.5 to 1.4 rounds to 1 to 1. **N1 fixed** (§7.4: comparison in whole hundredths, ends included) and **N2 fixed** (the status line lists §5.5). Cross-checks: item 2's derivation refers to items 2 and 3 of the displayed-box list, and the half-unit bound per edge follows from it; the §3.6 claim that testing *ux* and ⌊*ux*⌋ against whole-unit half-open edges gives the same answer holds; the §10.1, G4 and §10.8 (b) values agree with the earlier §5.9 answer; I8, I16 and I18 carry the 0.01 and 10⁻⁶ tolerances named in §3.4; the §7.4 range rules give the full 0.5–2.0 range for every entry of this install. SC16 spot-checked with an own read-only probe of the DID maps: the root map's key 0xF is labelled `UNIQUEDB`; its first group holds the entry labelled `UIScaleSettings`, whose target is a 0x78 record that exists and holds one top-level property; no other entry of any DID map names that target. Relative links and anchors of the six package specs resolve (own check). The owner-answered callouts of §8 and §13 are unchanged. Non-blocking: none. Earlier: **Review 2026-10-23 of the revision 9** (spec-review:spec-uis-r4:1 (independent session), Clean-Room-Role: review; wrote no part of the revision or of the code): **changes requested**, one blocking item; status stays Revised. **RV9-B1 (§3.4 "Integer displayed boxes" item 1):** "a box narrower than half a unit may become empty" states the wrong threshold. With each edge rounded on its own (halves up), any box narrower than one unit may become empty (a real box from 0.5 to 1.4 rounds to the empty box from 1 to 1), and no box of width one unit or more becomes empty. State the threshold as one unit so that a test written from the sentence holds. Everything else of revision 9 holds every CLEAN_ROOM.md §5.3 item; contamination screen clean. SC16 reproduced with an own read-only probe of the install (one 0x78 set holds the array, as its only top-level property; it is the target of the `UNIQUEDB` entry labelled `UIScaleSettings`, the root key 0xF, and of no other DID map entry; 56 entries with 56 distinct groups, none for 50, 59 or 72). Links and anchors resolve (own check). Non-blocking: (N1) §7.4 "multiples of 0.05 inside the intersection" could say how the comparison is made (for example in hundredths), so that the end points 0.5 and 2.0 are not lost to float rounding; (N2) the header status line does not list §5.5 among the changed sections, the change-log row does. Earlier: **Review 2026-10-23 of the revision 8 (§5.9, §6.1, §6.4.2, §6.4.6, §6.5, §6.7, §8 answers)** (spec-review:spec-ui-r3:1 (independent session), Clean-Room-Role: review; wrote no part of the revision or of the code): **passed**; status Revised → Accepted. Checked: checked against CLEAN_ROOM.md §5.3, every item, on the uncommitted worktree diff against main; contamination screen clean (no code, pseudo-code or listing-shaped text; no disassembly prose; no game text, keys, hostnames or traffic; hex values are data IDs read from the install; nothing outside decision 0034 §2); answers are functional facts with provenance or labelled Tessera rules, unknowns are OPEN; relative links and anchors of the six package specs resolve (own check). Every added statement is a Tessera rule under SC15 (Design), no observation of the original claimed; arithmetic in prose only. Cross-checks: the S6 division agrees with the owner-answered S6 row (64 MiB × max(1, *Se*²) total; 8 + 56 MiB at the defaults, 32 + 224 MiB at *Se* = 2); the §6.4.6 hit test ⌊(*v* + ½) ÷ *σ*⌋ agrees with §3.6 and the §6.1 alternative form; the owner-answered callouts of §8 and §13 are unchanged. Non-blocking: none. Earlier: **Review 2 of revisions 6 and 7, 2026-10-23** (spec-review:spec-ui-scaling-p6:2 (independent session), wrote no part of either revision; uncommitted worktree diff against main): **passed**; status Revised → Accepted. Checked against CLEAN_ROOM.md §5.3, every item, with the contamination screen clean: every added statement is a functional Tessera rule marked Design under SC15 (no observation of the original claimed), a closed implementer note, or an OPEN; no code, pseudo-code or listing-shaped text (arithmetic in prose only); no copied prose and no non-interoperability identifiers (the property label of §7.5 is UW §5.1's); no game text, assets, keys, hostnames or traffic; no byte layout added; the answered rules are testable; nothing outside decision 0034 §2. **RV6-B1 fixed:** §7.5 now counts only a linked vertical scroll bar on the element or an ancestor, never a class by itself; the class facts it cites agree with UW §3.2 (Text, ListBox from Scrollable; Button from Text; Menu, Scrollbar from Button; Tree from ListBox), and the lookup, completion pass, disabled and hidden bars agree with UW §5.1, §5.2 step 2 and §6.4 step 6. **RV6-N1 fixed:** §6.3's first row and the following paragraph choose the row per axis. Cross-checks: §5.9's answer agrees with the `ui-layout.md` §8.4 step 6 retirement note of 2026-10-23; §5.4 step 6 (opaque black bars below the group) agrees with the limits and the 1 × 1 texture alternative; the §6.7 example (32 × 1.5 = 48 px, 48 ÷ *Ky* 1.5 = 32 units) holds. Relative links and anchors of the six package specs resolve (own check). Non-blocking notes: (N1) §7.5 could say outright that only a Scrollable-derived element can have a linked bar (the completion pass of UW §5.1 links bars only for scrollables), so a plain element that happens to carry the vertical scroll-bar property never counts; (N2) §6.3's integer row still reads "an *s* × *s* block", which under the per-axis choice means *sx* × *sy*. Also re-checked for the package, without changing their status: the 2026-10-23 revisions of `crafting-panels.md`, `progression-panels.md`, `interaction.md`, `npc-windows.md` and `quest-journal.md` hold every §5.3 item, and NW25 was reproduced read-only on the install (the entry exists in the English archive, one piece, no argument; text not printed). Earlier: Review of revision 6, 2026-10-23 (spec-review:spec-ui-scaling-p6:1 (independent session), wrote no part of it; uncommitted worktree diff against main): **changes requested**, one blocking item, status stays Revised. **RV6-B1 (§7.5):** the new definition of "inside a Scrollable" lists the Scrollable classes as ListBox, Tree or Text, but by UW §3.2 Button, Menu and Scrollbar derive from Text and are therefore of a Scrollable class too; and the stated reason (a label that cannot show text outgrowing its box keeps *x* = 1) contradicts counting an ancestor that has no scroll bar of its own. Say exactly which ancestors count (for example: an ancestor that is a ListBox or Tree, or any Scrollable-derived element with a linked scroll bar on the vertical axis), so two implementations agree. Non-blocking note RV6-N1: §6.3's first filter row reads "exactly 1 on both axes" while the new sentence chooses the row per axis; say which applies to an image with *s* = 1 on one axis only. Everything else of revision 6 passed the §5.3 items (functional Tessera rules marked Design under SC15, no observation claimed, prose arithmetic only; the §6.7 example 32 × 1.5 = 48 px and 48 ÷ 1.5 = 32 units checks; the §5.2 and §5.4 "none occurs in this install" claims agree with SC2 and SC3; `ui-layout.md` §8.4 carries the retirement note; links and anchors resolve). First review 2026-10-16, independent review session: changes requested (B1–B6, answered in revision 2). Second review 2026-10-16: changes requested (R2-B1, R2-B2, answered in revision 3). Third review 2026-10-16: changes requested (RV3-B1–RV3-B3, answered in revision 4). Fourth review 2026-10-16: changes requested (RV4-B1 blocking, RV4-N1 non-blocking, answered in revision 5). Independent re-review 2026-10-16 (a session that wrote no part of the spec): **passed**, no blocking item. RV4-B1 verified with a read-only `tessera-formats` probe: `MPMissionController_MainWindow` is 1440 × 900 at (1, 0) in a 1440 × 900 design area, edges (5, 5, 5, 5), object mode None, no dialog-framework PID in the record → safe-area panel; the §10.8(a) C8 arithmetic, I18 and the §9.4 C8 golden are mutually consistent and C1/C2/C5 are unaffected (*A* = *F*). RV4-N1 verified: the theatre progress fit root's single child is 247 × 49 at (411, 735), its §10.6 X extent (247 at 411) unchanged. Accepted |
 | **Implements into** | `crates/ui` (`tessera-ui`: UI screen, displayed boxes, fit rules, keep-on-screen, saved placements, painter at the content scale, derived glyphs, scaled images), `crates/settings` (the `[UI]` keys of §4.4 and §7), `crates/render` (no contract change; §6.6), `crates/plugins` (Display and scaling views, §7.7), `crates/input` (four Tessera actions, §7.3), `apps/client` (`ui_host`: pointer conversion, live change, the Interface window, the `/uiscale` command, `--ui-scale` and `--ui-safe-aspect`), `apps/explorer` (optional preview control), `fuzz/` (settings keys, configurations) |
 | **Companion specs** | [`ui-layout.md`](ui-layout.md) (**UL**: design size §5.1, edge modes §5.8, run-time layout §8, image drawing §9.6, saved locations §9.9, panel catalogue §17). [`ui-behaviour.md`](ui-behaviour.md) (**UB**: hit test §4, tooltips §6, drag and drop §7, window manager §8, the original's UI scale §9). [`ui-widgets.md`](ui-widgets.md) (**UW**: the slider-mode scroll bar §6). [`fonts.md`](fonts.md) (**FO**: font records §3, placement §6, layout §7, drawing §8, census §10, fallback font §11). [`render.md`](render.md) §6 (**RD**: UI pass). [`lua-plugin-api.md`](lua-plugin-api.md) (**LPA**: coordinates §13.1, `Display` §13.10, scale §13.21, game-styled controls §14.2, font enum A.2, scaling groups A.7). [`keymap.md`](keymap.md) (**KM**). [`character-screens.md`](character-screens.md) (**CS**) §2.2. [`travel-windows.md`](travel-windows.md) (**TW**) §5.2. Decisions [0014](../decisions/0014-ui-input-bridge.md) (**IB**), [0015](../decisions/0015-ui-rendering.md) (**UR**), [0020](../decisions/0020-chat-command-routing.md), [0031](../decisions/0031-parity-panel-goldens.md), [0040](../decisions/0040-ui-scaling.md) |
 
@@ -65,6 +65,8 @@ behind it). **Project** = a fact or rule of another Tessera spec or decision, re
 | SC13 | Type A fit containers (both horizontal edges 6): 17, all (6, 5, 6, 5) Stretch. Under the grouping rule of §5.4 they form 14 fit groups: three of two members (the theatre layout's two fit roots `StoryField` and `Theater_LoadingProgress_Parent`, both 1024 × 768 at (0, 0); the map layout's `MapDecoration`, 1168 × 768 at (−73, 0) in the root `MapWindow`, with `MapBackground`, 1024 × 768 at (0, 0) in `MapField`, which fills `MapWindow` with edges (5, 5, 5, 5); the mission-controller layout's two scale parents, one inside a naming field that fills their common parent with edges (5, 5, 5, 5)) and 11 of one. No Type A container lies inside another. Content boxes used in §10: `StoryField` covers its whole design area; `Theater_LoadingProgress_Parent` has one child, 247 × 49 at (411, 735); the third fit root, `BaseTutorialChooserField` (layout 1440 × 900), has one child, 735 × 231 at (224, 0). **One fit container lies inside another** (the only one): the Type C `MPMissionController_NamingWindow` (1, 1, 1, 6), Stretch, 411 × 488 at (516, 206), is a direct child of the Type A `MPMissionController_NamingScaleParent`. Mission-controller layout (1440 × 900): root `MPMissionController_MainWindow` (5, 5, 5, 5), object mode None, 1440 × 900 at (1, 0) (so it does **not** cover its design area, §5.2; a safe-area panel, not a full-screen root, and the record holds none of the dialog-framework properties, so not modal either) → `MPMissionController_Window` (5, 5, 5, 5), 1440 × 900 at (0, 0), holding `MPMissionController_NamingField` (5, 5, 5, 5), 1440 × 900 at (0, 0) → `MPMissionController_NamingScaleParent`, and `MPMissionController_ScaleParent`; both scale parents 1440 × 900 at (0, 0). Their direct children (content of §10.8): the naming window and a 265 × 86 field at (610, 0); in `ScaleParent` 100 × 100 at (671, 780) and 257 × 80 at (590, 700) | Probe of SC1 (every Type A container and every pair in one layout checked against the grouping rule; ancestor chains of all 26 mode-6 elements listed; the mission-controller root's rectangle, and the whole mission-controller record scanned for the dialog-framework PIDs, re-probed 2026-10-16) | Confirmed 2026-10-16 |
 | SC14 | Drag bars and resize bars (UB §8.1, §8.2): 134 and 49 in the 301 decoded records; none has a fit container as its target (UB §8.1 step 1, §8.2 step 2) or lies inside a fit container. The 302nd record holds no element with an edge in mode 6 (SC2), hence no fit container, so this holds for the whole install | Probe of SC1, 2026-10-16 (the UB census counts 135 and 52 over all records) | Confirmed 2026-10-16 |
 | SC15 | Revision 6 and 7 rules that settle implementer readings: refits after moves and node-scale changes, modal dialogs and fit containers that are safe-area roots (§5.2, §5.4), the live-layout limits (§5.4), backdrop cover details (§5.5), when `shown` is applied (§5.8), the stretched-canvas alternative and text path (§6.1, §6.4.6), filter columns (§6.3), measuring (§6.4.5), the glyph-cache key (§6.5), rounding of the cursor offset and hot spot (§3.5, §6.7), "inside a Scrollable" (§7.5, revision 7: a linked vertical scroll bar on the element or an ancestor), the per-axis exact-copy row (§6.3, revision 7), the G2 form (§9.3) | This spec, 2026-10-23, from the implementer notes of 2026-10-17 to 2026-10-23; no observation of the original | Design |
+| SC16 | The scale definitions of UB §9.1: exactly one stand-alone property set of the install holds `UIScaleDefinition_Array` (its only top-level property; it decodes to its last byte). It is the target of the `UNIQUEDB` DID map entry labelled `UIScaleSettings` (first group; `UNIQUEDB` is the root DID map's label of key 0xF), and no other DID map entry names it. It has 56 entries with 56 distinct groups, every one with Min 0.4, Max 4.0 and 73 stops. Of the `UIComponent_UIScaler_Group` values that the layout records set, three (50, 59 and 72) have no entry | Throwaway read-only probe over every 0x78 record, every DID map and every layout record of the install | Confirmed 2026-10-23 |
+| SC17 | Revision 9 rules that settle round-3 implementer readings: the integer form of the displayed box and the one integer rule (§3.4, §3.5, §3.6, §7.7), recording placements after a per-window scale change (§5.8), an equal-factor node scale counts as uniform (§3.4, §6.1), the per-window scale's range, targets and storage (§7.4), the G7 test's own edge mapping (§9.3) | This spec, 2026-10-23, from the implementer notes of round 3; no observation of the original | Design |
 
 ---
 
@@ -179,6 +181,16 @@ Text and art inside *e* are rasterised at *c* (§6). A stretch vector is not par
 applied when the surface is composed (§6.6), because a stretch was asked for by data or a
 plugin as a picture stretch.
 
+**Equal factors count as uniform (Tessera rule, revision 9, SC17).** The kind of a node scale
+is decided by its value, not by what set it: a node scale whose two factors are equal (as
+stored) is uniform, whatever set it, and only one with different factors is a stretch vector.
+This holds for every rule of this spec that tells the kinds apart: *u* and *c* above, the
+backdrop exception of §5.5, the canvas and canvas-box rules of §6.1 and §6.2, and the image
+rules of §6.3. So the tree needs to record only one node scale per element, not its kind. A
+node scale whose factors become equal or unequal (for example during a plugin's stretch
+animation) changes its kind from that frame on; the picture may then move by up to one
+physical pixel at a layer edge (the two forms of §6.1 differ by that much).
+
 **Displayed box.** Each element has a layout box (UL §8, integers, relative to its parent's
 layout box) and a **displayed box** in UI units relative to the screen, as real numbers:
 
@@ -208,6 +220,41 @@ Displayed boxes are half-open: [left, left + width) × [top, top + height). They
 truncating derivation of UB §9.2.1 for Tessera; with every node scale 1 they equal the layout
 boxes made absolute, so all integer rules of UL and UB hold unchanged there.
 
+<a id="s3-4-integer"></a>
+**Integer displayed boxes (Tessera rule, revision 9, SC17).** An implementation may give its
+consumers an **integer form** of each displayed box instead of the real one. Then:
+
+1. Each of the four edges of the real box (left, right end, top, bottom end) is rounded on
+   its own to the nearest whole UI unit, halves up (toward +∞). The width is the rounded
+   right end minus the rounded left, never a rounded width; the height likewise. Two boxes
+   that share a real edge therefore share the rounded edge (§3.6 consequence 2). A box
+   narrower than one UI unit may become empty (for example, the real box from 0.5 to 1.4
+   rounds to the empty box from 1 to 1; §3.6 consequence 3 then applies in UI units); a box
+   one unit wide or wider never becomes empty.
+2. The real boxes stay the basis of the derivation: a child's real box is computed from its
+   parent's **real** box by items 2 and 3 above, never from a rounded box, so the difference
+   between a real and a rounded edge is at most half a unit at any depth.
+3. **Every** consumer uses the same rounded box: the hit test and every other row of §3.5,
+   the alpha test and the text hit test (§3.6 "Inside an element", §6.4.6), the physical box
+   of §3.6, canvas sizes and canvas boxes (§6.1, §6.2), clip rectangles, composition (§6.6),
+   keep-on-screen and saved placements (§5.8), moves and resizes (§3.5) and the plugin API
+   (§7.7). No consumer mixes the real and the rounded form of one box.
+4. Node scales may be stored as 32-bit floats (a fit container may store *f* × *m*(*P*) as
+   its one node scale and keep *f* apart, §5.4); the real boxes are computed in 64-bit floats
+   from the stored values.
+
+At *Se* = 1 with every node scale 1 every displayed box is already an integer, so the integer
+form changes nothing (I2). Under a node scale, a sub-unit edge moves by up to half a unit (up
+to half a unit × *Kx* or *Ky* physical pixels), so content painted at *c* inside such a box
+may be clipped by, or leave a gap of, that much at an edge; the drawing and the hit test still
+agree exactly (I3, I4). The values of §10 hold for the real boxes; where they are whole
+units (the §10.1 image at C1 is 768 units high, G4's Type B panel ends on its parent's edge,
+the §10.8 (b) container is 2400 units wide) the rounded boxes have them exactly. Invariants that compare displayed boxes within
+10⁻⁶ or 0.01 UI units (I8, I16, I18) are checked on the real boxes, computed from the stored
+node scales; checked on the rounded boxes they hold within half a unit per edge. The real form
+(physical boxes from the real edges, with real pointer coordinates throughout) remains
+conforming; the two forms may differ by one physical pixel at an edge.
+
 <a id="s3-5"></a>
 ### 3.5 The one space
 
@@ -227,12 +274,23 @@ of §3.4:
 | World-anchored UI (floating names, floating text, combat cues) | the projected point in physical pixels divided by (*Kx*, *Ky*), drawn at *c* = *Se* |
 | Layout (UL §8), screen root (UL §8.5), screen-size changes (UB §9.4) | UI units; *F* is the screen |
 
+Where a rule of this table compares or returns whole numbers, it uses **one integer rule**
+(revision 9, SC17): a point is the floor of its real UI coordinates (§3.6, first bullet), and
+a box is the integer form of §3.4 when an implementation uses that form, else the real box.
+Every consumer of the table follows the same choice.
+
 <a id="s3-6"></a>
 ### 3.6 Mapping between UI units and physical pixels (the pixel-centre rule)
 
 - **Pointer → UI units.** A pointer in physical pixel column *X* has UI coordinate
   *ux* = (*X* + ½) ÷ *Kx*; likewise *uy* = (*Y* + ½) ÷ *Ky*. Where an integer is needed (the
-  plugin API, integer comparisons of UB), it is ⌊*ux*⌋, ⌊*uy*⌋.
+  plugin API, integer comparisons of UB), it is ⌊*ux*⌋, ⌊*uy*⌋. This is the only integer
+  rule for points (revision 9): wherever the hit test, the click and drag thresholds,
+  tooltip and drag-icon placement or the plugin API need a whole number, they take the floor
+  of the same real coordinate, never a rounded one. Move and resize offsets stay differences
+  of the real coordinates (§3.5). Against a box with whole-unit edges (the integer form of §3.4, or any
+  box at *Se* = 1 with node scales 1), testing *ux* and testing ⌊*ux*⌋ give the same answer,
+  so a host may hand the UI the floored pointer for the hit test of such boxes.
 - **Edge → physical.** A UI coordinate *L* on the *x* axis maps to the physical column
   **E*x*(*L*)** = the smallest integer *X* with (*X* + ½) ÷ *Kx* ≥ *L*. In closed form this is
   ⌈*L* × *Kx* − ½⌉; an implementation computes the closed form and corrects it by one where
@@ -800,12 +858,14 @@ Details (Tessera rules, revision 6):
   (§6.3, clamp addressing).
 - It is **not** applied to an element with an edge in mode 6 (a fit container keeps its design
   size, §5.4) or with a stretch vector of its own (σ ≠ (1, 1), §3.4: that stretch is a
-  picture stretch, which the composition applies). A uniform node scale of its own (a
+  picture stretch, which the composition applies; a node scale with equal factors is
+  uniform, revision 9). A uniform node scale of its own (a
   per-window factor, a plugin `SetScale` factor, *q*) does not prevent it: it only changes
   *c*.
 
 An **element resize** of a Stretch surface by code, a resize bar or a plugin (UB §9.2.1) still
-sets a stretch vector (§3.4): that stretch was asked for as a picture stretch.
+sets a stretch vector (§3.4): that stretch was asked for as a picture stretch. When the
+resize gives both axes the same factor, the node scale is uniform (§3.4, revision 9).
 
 <a id="s5-6"></a>
 ### 5.6 Panels larger than the screen
@@ -910,7 +970,12 @@ normalized corners). Key: the root's layout DID and element ID, written
 - **The store** (revision 6). The UI keeps the anchored placements in memory and records one
   at the release that ends a user move or resize of an element with the save properties (the
   release that raises UB §8.4 step 2's notification), so the placement applied again later is
-  always the user's last one. The UI host copies the store to and from `[UI.panels]`: it
+  always the user's last one. A change of a per-window scale by the user (a step of the
+  §7.4 gesture, or "Reset window scales") is recorded the same way (revision 9): after the
+  new factor, the origin rule and keep-on-screen are applied, the placement of every attached
+  root panel whose factor changed and that has the save properties is recorded from its new
+  displayed box. A gesture has no release, so each step records; the host may write the
+  table once after a run of steps. The UI host copies the store to and from `[UI.panels]`: it
   fills the store when the UI is made, writes the whole table off the frame thread after each
   recorded placement, and empties both on "Reset panel positions" (§7.1). A key that does not
   read back as `"0xLLLLLLLL/0xEEEEEEEE"` is skipped.
@@ -922,6 +987,21 @@ normalized corners). Key: the root's layout DID and element ID, written
   needs no screen size), the visibility and the laid-out size, with offsets 0, so the panel is
   docked to its anchor until the user moves it again (Tessera rule, revision 6; no released
   settings schema wrote the old form).
+
+> **OPEN (implementer, 2026-10-23):** (tessera-ui, review round of the remaining UI-scaling
+> work) a reviewer found that a relayout or a saved placement applied again "drops the origin
+> offset" of a per-window scale change. The implementer's reading: the run-time layout of
+> UL §8.4 works from the element's current box, so a relayout keeps the offset that the
+> origin rule set; applying a saved placement again places the box from its anchor and its
+> current displayed size, as "Applying" says. Does a per-window scale gesture record the
+> placement, so that the placement applied later is the one the user saw after the gesture?
+>
+> **Answered (spec writer, 2026-10-23), revision 9, Tessera rule (SC17, Design):** both
+> readings are confirmed, and the gesture records the placement ("The store" above). Without
+> it, the next change of *F* or *A*, or the next start, would put a panel whose origin rule
+> moved it back at the anchor saved before the gesture, a visible jump. With it, the placement
+> applied again reproduces the position after the gesture, because "Applying" uses the
+> panel's current displayed size, which already includes the factor.
 
 <a id="s5-9"></a>
 ### 5.9 What happens to UL §8.4 step 6's OPEN
@@ -1145,6 +1225,26 @@ The stop-gap stayed in force until this spec was Accepted and built; it is now r
 >    while a member's new picture is not swapped in yet (§4.5 step 3). During that short
 >    window a bar may meet the old picture at an edge; no stale world shows through.
 
+> **OPEN (implementer, 2026-10-23):** (tessera-ui; §3.4, §5.9) the live tree now computes the
+> §3.4 displayed box in 64-bit floats but hands its consumers an integer box whose edges are
+> the real edges rounded to the nearest whole UI unit (halves up). The hit test, the painter,
+> the composition and the physical boxes all use that one integer geometry, so I3 and I4 hold
+> exactly with the host's integer pointer, and the §10.1, G4 and §10.8 (b) values hold
+> exactly; sub-unit edges are snapped by at most half a unit per edge. *m*(*e*) is the nearest
+> stored node scale (UB46), and a fit container stores *f* × *m*(*P*) as a 32-bit float.
+> Confirm this as a Tessera rule, or require sub-unit physical boxes (which would need real
+> pointer coordinates through the host and the paint scheduler's geometry).
+>
+> **Answered (spec writer, 2026-10-23), revision 9, Tessera rule (SC17, Design):** confirmed,
+> with the conditions of §3.4 "Integer displayed boxes": each edge rounded on its own (halves
+> up) and widths taken as differences of rounded edges; children derived from their parent's
+> real box; one rounded box for every consumer; node scales stored as 32-bit floats and the
+> boxes computed from them in 64-bit floats. The earlier answer above ("§3.4's real-valued
+> displayed boxes are the rule") is refined, not withdrawn: the truncating derivation stays
+> excluded, the real form stays conforming, and the integer form is the second conforming
+> form. The one integer rule for points that goes with it is in §3.5 and §3.6, and §7.7
+> applies it to the plugin API.
+
 ---
 
 <a id="s6"></a>
@@ -1225,6 +1325,16 @@ conversion for each form.
 > scale so that every element resize of a Stretch surface is painted unstretched? If the
 > latter, should the map window's full-screen fit use a uniform kind of §3.4 instead of an
 > element resize?
+>
+> **Answered (spec writer, 2026-10-23), revision 9, Tessera rule (SC17, Design):** an
+> equal-factor stretch vector counts as uniform for §6.1, §6.2 and *c*, and for every other
+> rule that tells the kinds apart (§3.4 "Equal factors count as uniform"). The tree need not
+> record the kind of a node scale. The map window's equal-factor fit is therefore painted at
+> its physical box and composed 1 : 1, as built, and that conforms; no change of how the map
+> window is fitted is needed. Only a node scale with different factors is painted at the
+> unstretched box (or by the alternative form above) and stretched once. The reason given in
+> §3.4 for keeping stretches out of *c* (a picture stretch asked for by data or a plugin) only
+> matters when the stretch distorts the picture, which equal factors do not.
 
 <a id="s6-2"></a>
 ### 6.2 Element boxes inside a canvas
@@ -1636,13 +1746,74 @@ The original lets a player scale panel groups (UB §9.1, §9.2). Tessera's optio
 - A native root panel with `UIComponent_UIScaler_Group` *g* (LPA Appendix A.7) takes the
   per-window factor *p* = `[UI.group_scale]` entry *g* (a table from group number to factor),
   1.0 when absent. Range: the group's `UIScaleDefinition_Min`/`Max` from the data (UB §9.1),
-  intersected with 0.5–2.0; steps of 0.05.
+  intersected with 0.5–2.0; steps of 0.05. The definitions are read once at UI start, from
+  the set that UB §9.1 says how to find (the `UNIQUEDB` entry labelled `UIScaleSettings`,
+  SC16). Tessera rules (revision 9, SC17) for data that do not give a usable range:
+  - a group with **no entry** in the array (three of the group values the layouts use have
+    none, SC16), an entry whose Min or Max is missing, not finite or not above 0, or one with
+    Min > Max, is **not scalable**: *p* = 1.0, the gesture does nothing over its panels, and a
+    stored value for it is ignored but kept;
+  - an entry whose range does not meet 0.5–2.0 at all (Max < 0.5 or Min > 2.0) is not
+    scalable either, in the same way;
+  - otherwise the allowed values are the multiples of 0.05 inside the intersection; when no
+    multiple lies inside it, the group is not scalable. The comparison is made in whole
+    hundredths: each bound of the intersection is rounded to the nearest hundredth first, and
+    a multiple *k* × 5 hundredths is allowed when it lies between the rounded bounds, ends
+    included, so the end points 0.5 and 2.0 are never lost to float rounding. A stored value outside the allowed
+    values is clamped to the nearest allowed value when it is applied.
+  - When the set is not found (no label and no set holding the array, a modified install), no
+    group is scalable.
+
+  In this install every entry gives 0.4–4.0 (SC16), so every group with an entry has the full
+  0.5–2.0 range.
 - *p* is a uniform node scale (§3.4): the panel's layout box keeps its size, its children are
   not laid out again, its content is rasterised at *Se* × *p* (crisp), and the origin rule
   (UB §9.2 step 4, origin from `UIComponent_UIScaler_Origin_X/_Y`) keeps the origin point in
   place in UI units; then §5.6 and keep-on-screen.
 - Gesture: the action `ui_window_scale_up` / `_down` over a panel (unbound; a suggested binding
   is Ctrl + wheel, subject to KM, §13), and row 10 of the Interface window to reset.
+
+> **OPEN (implementer, 2026-10-23):** (tessera-ui, `apps/client` UI host) choices of the
+> per-window scale as built: (a) the `UIScaleDefinition_Array` ranges (UB §9.1) are not read
+> at UI start; every group uses 0.5–2.0, the intersection for every observed entry
+> (0.4–4.0), and the host has a hook to set the ranges later. Finding the set by searching
+> every stand-alone property set at start is a new data-side feature; a cheaper rule is
+> asked for. (b) The factor applies only to native root panels laid out against the screen;
+> fit roots, fit containers and panels scaled by the panel-scale rule of UB §9.2 are skipped.
+> (c) The gesture scales the root panel of the hovered element and does nothing over plugin
+> windows or over panels without `UIComponent_UIScaler_Group`. (d) A factor of exactly 1.0
+> removes the `[UI.group_scale]` entry. (e) The table is written by its own settings job next
+> to the placements, and not in scripted runs. (f) The `UIComponent_UIScaler_Group` property
+> ID defaults to a Tessera placeholder until it is resolved by name.
+>
+> **Answered (spec writer, 2026-10-23), revision 9, Tessera rules (SC17, Design) and one
+> install fact (SC16):**
+>
+> - **(a)** The cheaper locator exists: the set is the target of the `UNIQUEDB` DID map entry
+>   labelled `UIScaleSettings` (SC16; UB §9.1 now says so), one DID map lookup by label, no
+>   search. The ranges must be read: the constant 0.5–2.0 gives this install's values only for
+>   groups that have an entry, and it scales groups that have none, which the range rules
+>   above make not scalable. Until the read is wired this is a conformance gap.
+> - **(b)** Confirmed, stated precisely: the factor applies to native root panels that are
+>   safe-area panels (§5.2) and not fit containers. Full-screen roots and fit roots follow the
+>   window (§5.2, §5.4; owner answer of §13), and a root panel that is itself a fit container
+>   keeps its fit factor and *q* only. Tessera applies no other group scale to native panels:
+>   UB §9.2's panel-scale rule is the original's, and a root that some other code path scales
+>   by that rule takes no §7.4 factor on top of it (one scale rule per root).
+> - **(c)** Confirmed. The gesture changes the value of the group *g* of the root panel under
+>   the pointer, so every attached panel of group *g* changes, and so does every marked plugin
+>   window of group *g* (§7.7 "Group values", with its `UIScaleChanged`). Over a plugin
+>   window, or a panel without the group property, or a group that is not scalable, it does
+>   nothing.
+> - **(d)** Confirmed: a factor of exactly 1.0 is stored as no entry.
+> - **(e)** Confirmed: the table is written off the frame thread, like the placements; runs
+>   with a scripted input or a scenario never write it (as `--ui-scale` never saves, §7.3).
+>   The placements that a scale change records (§5.8 "The store") follow the same rule as
+>   other placements.
+> - **(f)** Confirmed with a condition: the property is resolved by its name in the property
+>   dictionary when the UI starts, and the placeholder must match no real property, so that
+>   no native panel takes a group factor before the name is resolved or when it does not
+>   resolve.
 
 <a id="s7-5"></a>
 ### 7.5 Text size (optional)
@@ -1691,7 +1862,11 @@ to GPU-scaled composition (§6.6).
 - **Under a node scale** (a window's `SetScale`, a per-window or fit-to-screen factor):
   `PointToScreen` returns ⌊displayed position⌋ of the point (§3.4); `PointToClient` and
   control-relative `GetMousePosition` return ⌊(*u* − displayed left) ÷ *m*⌋ per axis. With
-  every node scale 1 these are the integer results of today.
+  every node scale 1 these are the integer results of today. "Displayed" means the box every
+  other consumer uses: the integer form of §3.4 when the implementation uses it, else the
+  real box, so a point that a plugin converts lands on the element that the hit test finds
+  there (§3.5 "one integer rule", revision 9). *u* is the pointer's real coordinate of §3.6
+  for the mouse queries, and the given screen point for `PointToClient`.
 - **The global factor is 1 for plugins.** Tessera's UI scale is applied below the UI-unit
   space, so plugins never see it except as the `Display` size. In LPA §13.21 rules 3, 4 and 6
   and in UB §9.2 step 1, `UIScale_Global` is 1.0; `GetUIGroupScale` for the `Global` group
@@ -1846,6 +2021,17 @@ channel) and, where composition is under test, by the headless renderer:
 > byte-identical to the picture without a UI screen (I2). The headless renderer is not needed,
 > because no composition is under test in G2. The derivation golden stays as a second,
 > narrower check (table row above).
+
+> **OPEN (implementer, 2026-10-23):** (tessera-render) the G7 test has its own copy of the
+> §3.6 edge mapping and lays out the C3 panel itself, because the renderer crate has no
+> development dependency on the UI crate (and its manifest was outside the package).
+>
+> **Answered (spec writer, 2026-10-23), revision 9 (SC17, Design):** conforms. How a test
+> obtains its geometry is not part of the rule. G7 checks the composition of old canvases
+> during a scale change, and a local copy of the mapping is acceptable when it is exactly
+> §3.6's (the closed form with the correction by one) and the panel's boxes are those §3.4
+> gives at C3. A later change may replace the copy by the UI crate's own mapping; the golden
+> must not change when it does.
 
 <a id="s9-4"></a>
 ### 9.4 Local real-data goldens (decision 0031 tier 2)
@@ -2325,3 +2511,6 @@ settings module's documentation lists the keys of §7.1.
 | 2026-10-23 | Owner answers recorded (orchestrator, from [decision 0040](../decisions/0040-ui-scaling.md) "Owner answers"): the four OPEN (owner) callouts of §8 (S1–S7) and §13 (safe aspect and auto-scale formula, *ρ* = 4 ÷ 3, full-window screens) are answered; the owner accepted each proposal as written. No fact, rule or section number changed; status stays Accepted. |
 | 2026-10-23 | **Revision 8** (spec writer, dirty room; status Accepted → Revised, awaiting an independent review). Answers the implementer readings of round 2 as Tessera rules (SC15, Design); no observation of the original; the owner-answered callouts of §8 and §13 are unchanged. **§5.9:** the built letterbox fills confirmed (opaque black fill entries directly before the lowest shown member's first entry, counted toward the entry cap, none for a member without an entry of its own, current geometry during a picture swap). **§6.1, §6.4.6:** the built stretched-surface model is the alternative form; text layers are resampled about their drawn origin; the hit test takes the pixel centre, ⌊(*v* + ½) ÷ *σ*⌋. **§6.4.2:** eager font loading confirmed, a lazy start allowed if each ladder is registered before its text is drawn at another height; registration once (no record pending or the 3,600-poll bound); text drawn before it is drawn again. **§6.5:** the source-record glyph key confirmed; the no-fold rule for DID-less faces stands. **§6.7:** the directly drawn fallback arrow, its (0, 0) hot spot and the 8–512 px clamp confirmed. **§8:** S6 divided: glyphs *T* ÷ 8 (1–512 MiB), images the rest, *T* = `image_lru_mib` × max(1, *Se*²) (a behaviour change: the image LRU shrinks by the glyph share and grows with *Se*²). Section numbers unchanged. |
 | 2026-10-23 | Independent review (spec-review:spec-ui-r3:1 (independent session)) of the revision 8 (§5.9, §6.1, §6.4.2, §6.4.6, §6.5, §6.7, §8 answers): **passed**; status Revised → Accepted. Header only (status and review record); no fact, rule or section changed. |
+| 2026-10-23 | **Revision 9** (spec writer, dirty room; status Accepted → Revised, awaiting an independent review). Answers the round-3 implementer OPENs as Tessera rules (SC17, Design) and records one install fact (SC16, Confirmed: a read-only probe of the 0x78 records, the DID maps and the layout records). **§3.4:** new paragraph "Equal factors count as uniform" (a node scale's kind follows from its value) and new paragraph "Integer displayed boxes" (anchor `s3-4-integer`: each real edge rounded on its own, halves up; children from the real box; one rounded box for every consumer; 32-bit stored node scales; tolerances of I8, I16, I18). **§3.5, §3.6, §7.7:** one integer rule for points (the floor of the real coordinate) and boxes (the form the implementation uses), applied to the plugin queries. **§5.5:** the equal-factor case named in the backdrop exception and in the element-resize paragraph. **§5.8:** a per-window scale change by the user records the placements of the changed roots (new OPEN answered). **§5.9:** the integer-box OPEN answered. **§6.1:** the equal-factor OPEN answered (the map window's fit conforms as built). **§7.4:** the definitions are found by the `UNIQUEDB` label `UIScaleSettings`; groups without an entry, invalid entries, ranges that miss 0.5–2.0 and a missing set make a group not scalable; the implementer's (a)–(f) answered. **§9.3:** the G7 test's own copy of the mapping conforms. **Implemented behaviour that changes:** groups without a definition entry (three group values in this install) are no longer scaled by the gesture; the ranges are read from the data; each gesture step records the placements of the changed roots. Section numbers unchanged; the owner-answered callouts of §8 and §13 unchanged. |
+| 2026-10-23 | **Revision 10** (spec writer, dirty room; status stays Revised, awaiting an independent review). Answers the review of revision 9. **RV9-B1, §3.4 "Integer displayed boxes" item 1:** the emptiness threshold is one UI unit, not half a unit (each edge rounded on its own, halves up: a box narrower than one unit may become empty, with the example 0.5 to 1.4 → 1 to 1; a box one unit wide or wider never does). **N1, §7.4:** the allowed multiples of 0.05 are compared in whole hundredths, bounds rounded to the nearest hundredth, ends included. **N2:** the header status line lists §5.5. Tessera rules (SC17, Design); no install fact added; section numbers unchanged. |
+| 2026-10-23 | Independent review (spec-review:spec-uis-r4:2 (independent session)) of revisions 9 and 10: **passed**; RV9-B1, N1 and N2 verified fixed; status Revised → Accepted. Header only (status and review record); no fact, rule or section changed. |

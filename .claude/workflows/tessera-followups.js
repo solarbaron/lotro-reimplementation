@@ -7,17 +7,19 @@
 //                       (CLAUDE.md, CLEAN_ROOM.md §5.3), revised by fresh sessions, <= 3 rounds
 // The orchestrating session prepares the worktrees BEFORE the run (one branch each; a clean
 // package's worktree has a sparse checkout without research/), gives
-// each a .cargo/config.toml target-dir "lane" (packages sharing a lane share dependency builds,
-// and cargo's lock serialises their builds), and afterwards reviews, commits and merges,
-// running the full gate once. The workflow never commits.
+// each its own .cargo/config.toml target-dir on the main drive, and afterwards reviews,
+// commits and merges, running the full gate once. The workflow never commits.
 //
 //   Workflow({ name: "tessera-followups", args: {
 //     repo: "/abs/repo", game: "/abs/install or omitted", cache: "/home/<user>/.cache/tessera",
 //     max_parallel: 6,              // optional: packages in flight at once (default: all)
 //     packages: [{ key, kind: "clean-impl" | "spec-work", wt: "/abs/worktree", owns, specs,
 //                  task }] } })
-// Disk: every clean worktree should point at ONE shared target dir (with incremental = false);
-// each extra target dir of this workspace takes 50–100 GB.
+// Disk: one target dir PER clean worktree (never shared: cargo names workspace artifacts
+// relative to the workspace root and judges freshness by mtime, so worktrees sharing a dir link
+// each other's code). incremental = false (sccache shares dependency builds) and debug = 0 keep
+// each dir near 20 GB; size max_parallel so that 25 GB per clean package in flight still leaves
+// 40 GB free, and delete each dir after its branch is merged.
 // Never use it for M8 / official-protocol work (incident 0041) or M9.
 
 export const meta = {
@@ -47,7 +49,7 @@ for (const p of args.packages) {
   keys.add(p.key)
 }
 
-const CTX = p => `Repo: ${REPO} (Rust workspace "Tessera": clean-room client compatible with LOTRO data files); CLAUDE.md is binding. YOUR WORKING TREE IS ${p.wt} (its own branch; start every shell command with cd ${p.wt}); never edit ${REPO} itself or another worktree. You own ${p.owns}; edit nothing else, except: a spec's OPEN notes, and fuzz/Cargo.toml [[bin]] entries you append. Do not edit docs/ROADMAP.md, README.md or CLAUDE.md (the orchestrator updates status at merge); report status changes in your answer instead. Never git commit, reset, stash, clean or checkout. The cargo target dir comes from ${p.wt}/.cargo/config.toml and is shared with other packages: if cargo prints "Blocking waiting for file lock", wait (use long Bash timeouts), never delete or change the target dir, never set CARGO_TARGET_DIR or --target-dir, and never create a build directory anywhere else (a second target dir costs tens of GB). Before each build check df -h /: with less than 25 GB free, stop and report instead of building. Test only the crates you changed (cargo test -p <crate>; --release for real-data tests); read test output through its summary lines. ${GAME ? `The game install is READ-ONLY at "${GAME}": set TESSERA_GAME_DIR to it for real-data tests; never write there.` : 'No game install: real-data tests skip; say so.'} Scratch dir: ${args.cache}/scratch/followups/${p.key}/clean (dirty roles: .../dirty).`
+const CTX = p => `Repo: ${REPO} (Rust workspace "Tessera": clean-room client compatible with LOTRO data files); CLAUDE.md is binding. YOUR WORKING TREE IS ${p.wt} (its own branch; start every shell command with cd ${p.wt}); never edit ${REPO} itself or another worktree. You own ${p.owns}; edit nothing else, except: a spec's OPEN notes, and fuzz/Cargo.toml [[bin]] entries you append. Do not edit docs/ROADMAP.md, README.md or CLAUDE.md (the orchestrator updates status at merge); report status changes in your answer instead. Never git commit, reset, stash, clean or checkout. The cargo target dir comes from ${p.wt}/.cargo/config.toml and belongs to this package only: never change it, never set CARGO_TARGET_DIR or --target-dir, and never create a build directory anywhere else (each one costs about 20 GB). If cargo prints "Blocking waiting for file lock", another agent of this package is building: wait (use long Bash timeouts). Before each build check df -h /: with less than 25 GB free, stop and report instead of building. Test only the crates you changed (cargo test -p <crate>; --release for real-data tests); read test output through its summary lines. ${GAME ? `The game install is READ-ONLY at "${GAME}": set TESSERA_GAME_DIR to it for real-data tests; never write there.` : 'No game install: real-data tests skip; say so.'} Scratch dir: ${args.cache}/scratch/followups/${p.key}/clean (dirty roles: .../dirty).`
 
 const CLEAN_READ = `CLEAN-ROOM RULES (CLAUDE.md): do NOT open ${REPO}/research/, ${args.cache}/clones, any */dirty scratch dir, ~/tessera-re, ~/.rea, decompiler output or third-party game-tool source; do not look formats up online; run no disassembler or decompiler. Work only from docs/ and crates/ apps/ fuzz/ tools/. Build only from specs whose status is Accepted (with an independent review record); if a fact is missing or a spec looks wrong, add a "> **OPEN:**" note to the spec and implement conservatively, never correct a spec's facts.`
 

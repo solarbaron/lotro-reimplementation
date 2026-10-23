@@ -233,12 +233,16 @@ Open items outside a milestone run go through the `tessera-followups` workflow
 (`.claude/workflows/tessera-followups.js`). Scan and group them into packages with
 non-overlapping paths, then give each package its own worktree and branch: a sparse checkout
 without `research/` (`git sparse-checkout set --no-cone '/*' '!/research/'`) for code
-packages, a full one for spec packages. Each worktree's git-ignored `.cargo/config.toml` points at
-one shared `target-dir` with `incremental = false` and `debug = 0` for `[profile.dev]` and
-`[profile.dev.package."*"]`. Each worktree builds its own copy of the workspace crates, so
-with full debug info the shared debug dir grew by 84 GB in half an hour. The packages then share dependency builds,
-and cargo's lock serialises their builds. Every extra target dir of this workspace takes
-50–100 GB, so don't create one per package, and cap packages in flight with `max_parallel`. Code packages are built, reviewed, fixed and audited, and spec
+packages, a full one for spec packages. Each code worktree's git-ignored `.cargo/config.toml`
+points at a `target-dir` of its own on the main drive (`~/tessera-targets/<key>`), with
+`incremental = false` and `debug = 0` for `[profile.dev]` and `[profile.dev.package."*"]`.
+Never let worktrees share a target dir: cargo names workspace artifacts relative to the
+workspace root and judges freshness by modification time, so a build in one worktree can be
+taken as fresh by another and link the other worktree's code (seen on 2026-10-23). With
+sccache (`incremental = false` is what lets it cache) the dependencies are not rebuilt per
+worktree, and `debug = 0` keeps each dir near 20 GB; with full debug info a debug dir grew by
+84 GB in half an hour. Set `max_parallel` so that 25 GB per code package in flight still
+leaves 40 GB free on `/`, and delete each dir after its branch is merged. Code packages are built, reviewed, fixed and audited, and spec
 packages are revised, screened and independently reviewed. Then review, commit and merge each
 branch and run the full gate once.
 

@@ -6,11 +6,13 @@
 //!
 //! After each driver poll the events go to the player's state ([`PlayerState`]), the
 //! plugin inventory views' mirror and events ([`CharacterHub`]), and the plugin host's
-//! step-7 work runs once ([`Plugins::pump`]), so each poll's events are delivered before
-//! the next poll, as one frame would deliver them. The plugins load when the player enters
-//! the world (plugins read `LocalPlayer.GetInstance()` at load time, `lua-plugin-api.md`
-//! §15), before that poll's events are queued, so they see every inventory event; the
-//! plugins' chat output is logged and kept ([`ScenarioPlugins::lines`]).
+//! step-7 work runs ([`Plugins::pump`]) until its deferred-work queue is empty (bounded),
+//! so each poll's events are delivered before the next poll, as one frame would deliver
+//! them on an idle machine, whatever the wall clock's 2 ms slice leaves queued. The
+//! plugins load when the player enters the world (plugins read
+//! `LocalPlayer.GetInstance()` at load time, `lua-plugin-api.md` §15), before that poll's
+//! events are queued, so they see every inventory event; the plugins' chat output is
+//! logged and kept ([`ScenarioPlugins::lines`]).
 //!
 //! The combat views of §15.2 (decision 0024 P2) are fed the same way
 //! ([`crate::combat::PluginCombat`]), with `Turbine.Engine.GetGameTime` on the scenario's
@@ -39,6 +41,10 @@ use crate::ui_host::services::WalkerPlayer;
 
 /// How long the plugin loads at world entry may take.
 pub const PLUGIN_LOAD_WAIT: Duration = Duration::from_secs(30);
+
+/// Most rounds of the plugin host's step-7 work per driver poll
+/// ([`ScenarioPlugins::observe_at`]): each round runs at least one queued item.
+pub const MAX_SETTLE_PUMPS: usize = 1024;
 
 /// The plugin host of a headless scenario run (module docs).
 #[derive(Debug)]
@@ -241,11 +247,36 @@ impl ScenarioPlugins {
             install.as_deref(),
             self.plugins.manager_mut(),
         );
-        self.plugins.pump();
+        self.settle();
         let _ = self.hub.take_ui_changes();
         for line in self.plugins.host().take_fresh() {
             tracing::info!(chat_type = line.0, "plugin: {}", line.1);
         }
+    }
+
+    /// The plugin host's step-7 work for one poll, repeated until the deferred-work queue
+    /// is empty (at most [`MAX_SETTLE_PUMPS`] rounds), so every event of the poll reaches
+    /// the plugins before the next poll whatever the machine's load.
+    ///
+    /// One round runs whole items until the 2 ms slice is used (`lua-plugin-api.md` P79),
+    /// so on a loaded machine one round can leave events queued; a frame loop would deliver
+    /// them in the next frames, but a headless run on its virtual clock has no next frame
+    /// after its last poll, and what the plugins saw would depend on the wall clock. The
+    /// bound keeps a plugin that queues new work from every item (an echoing `Received`
+    /// handler) from holding the poll: what is left then waits for the next poll, as in a
+    /// frame loop.
+    fn settle(&mut self) {
+        for _ in 0..MAX_SETTLE_PUMPS {
+            self.plugins.pump();
+            let m = self.plugins.manager();
+            if m.deferred_len() == 0 || !m.index_ready() {
+                return;
+            }
+        }
+        tracing::debug!(
+            left = self.plugins.manager().deferred_len(),
+            "plugin deferred work still queued after {MAX_SETTLE_PUMPS} rounds"
+        );
     }
 
     /// The player's state as the plugins see it.

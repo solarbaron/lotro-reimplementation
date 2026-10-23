@@ -1181,6 +1181,20 @@ at layer edges. The text hit test of §6.4.6 names the conversion for each form.
 > non-integer scales moves no glyph off its pixel grid; it can only change where a line breaks
 > or ends by a pixel, which §6.4.5 accepts.
 
+> **OPEN (implementer, 2026-10-23):** the element tree keeps one node scale per element and
+> does not record its kind (§3.4), so `crates/ui` treats a node scale with equal factors on
+> both axes as uniform and only one with different factors as a stretch vector *σ*. The
+> full-screen map window (`map-windows.md` §3.1 Tessera rule: "scaled uniformly by the largest
+> factor that fits") is fitted by an element resize of its Stretch surface, which by §5.5 (last
+> paragraph) sets a stretch vector; with equal factors (1.171875 × 1.171875 at 1600 × 900) its
+> map canvas is therefore painted at the physical box (1200 × 900, crisp, composed 1 : 1)
+> rather than at its unstretched box (1024 × 768, stretched at composition) as the
+> "stretched surface" rule above says. Question: does an equal-factor stretch vector count as
+> uniform for §6.1 and §6.2 (and so for *c*), or must the tree record the kind of each node
+> scale so that every element resize of a Stretch surface is painted unstretched? If the
+> latter, should the map window's full-screen fit use a uniform kind of §3.4 instead of an
+> element resize?
+
 <a id="s6-2"></a>
 ### 6.2 Element boxes inside a canvas
 

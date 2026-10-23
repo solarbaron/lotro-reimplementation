@@ -497,8 +497,58 @@ pub(crate) fn write_record(
     Ok(())
 }
 
-/// Deletes both files of the record in `dir` (§5.5 "Withdrawing"); files that do not exist
-/// are not an error.
+/// What [`withdraw_report`] did with each file of the record.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WithdrawReport {
+    /// The record document is gone (deleted now, or it did not exist).
+    pub record_removed: bool,
+    /// The key file is gone (deleted now, or it did not exist).
+    pub key_removed: bool,
+}
+
+impl WithdrawReport {
+    /// Both files are gone.
+    #[must_use]
+    pub fn complete(&self) -> bool {
+        self.record_removed && self.key_removed
+    }
+}
+
+/// [`withdraw`], reporting each file instead of the first error (the flow recomputes the
+/// start screen's line after a partial deletion).
+#[must_use]
+pub fn withdraw_report(dir: &Path) -> WithdrawReport {
+    WithdrawReport {
+        record_removed: remove_entry(&dir.join(RECORD_FILE)).is_ok(),
+        key_removed: remove_entry(&dir.join(KEY_FILE)).is_ok(),
+    }
+}
+
+/// Removes one directory entry of the record (module docs of [`withdraw`]); "not found" is
+/// success; a failure is logged with the file's name.
+fn remove_entry(path: &Path) -> io::Result<()> {
+    let removed = match std::fs::symlink_metadata(path) {
+        Ok(m) if m.is_dir() => std::fs::remove_dir(path),
+        Ok(_) => std::fs::remove_file(path),
+        Err(e) => Err(e),
+    };
+    match removed {
+        Err(e) if e.kind() != io::ErrorKind::NotFound => {
+            tracing::warn!(
+                file = %path.display(),
+                "official-server warning: withdrawing could not delete the file ({e})"
+            );
+            Err(e)
+        }
+        _ => Ok(()),
+    }
+}
+
+/// Deletes both files of the record in `dir` (§5.5 "Withdrawing"), whatever their state (an
+/// invalid key file included, §5.6 "Key" step 1): the directory entries themselves are removed,
+/// never the target of a link; an empty directory in a file's place is removed too, a directory
+/// with content is left alone. Files that do not exist are not an error. A file that cannot be
+/// deleted (another owner, a read-only directory) is named in the log.
 ///
 /// # Errors
 ///
@@ -506,12 +556,8 @@ pub(crate) fn write_record(
 pub fn withdraw(dir: &Path) -> io::Result<()> {
     let mut first = None;
     for name in [RECORD_FILE, KEY_FILE] {
-        match std::fs::remove_file(dir.join(name)) {
-            Ok(()) => {}
-            Err(e) if e.kind() == io::ErrorKind::NotFound => {}
-            Err(e) => {
-                first.get_or_insert(e);
-            }
+        if let Err(e) = remove_entry(&dir.join(name)) {
+            first.get_or_insert(e);
         }
     }
     match first {

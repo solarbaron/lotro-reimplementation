@@ -18,7 +18,7 @@ use std::time::Instant;
 use tessera_compat::consent::strings::{fill, text};
 use tessera_ui::text::{DEFAULT_RANGES, FontFace, TesseraFont};
 
-use super::flow::{Control, Flow, Screen};
+use super::flow::{AcceptanceLine, Control, Flow, Screen};
 use super::form::FormControl;
 use super::login::LoginScreen;
 use super::warning::WarningControl;
@@ -389,12 +389,16 @@ fn start(b: &mut B<'_>, flow: &Flow) {
     let bw = 340.min(b.w - 40).max(80);
     let bh = 46;
     let x = (b.w - bw) / 2;
-    let accepted = flow.accepted_date().map(str::to_owned);
-    let extra = if accepted.is_some() {
-        3 * b.line(Face::Small) + 8
-    } else {
-        0
-    };
+    // The line and its paragraph's line budget: the run-only texts are longer.
+    let accepted = flow.acceptance_line().map(|l| match l {
+        AcceptanceLine::Stored(date) => {
+            (fill(text("official.start.accepted"), &[("date", date)]), 3)
+        }
+        AcceptanceLine::RunOnly(id) => (text(id).to_owned(), 4),
+    });
+    let extra = accepted
+        .as_ref()
+        .map_or(0, |(_, lines)| lines * b.line(Face::Small) + 8);
     let total = 3 * bh + 2 * 16 + extra + 16;
     let mut y = (b.h - total) / 2;
     b.button(
@@ -413,8 +417,7 @@ fn start(b: &mut B<'_>, flow: &Flow) {
         Control::StartOfficial,
     );
     y += bh + 8;
-    if let Some(date) = accepted {
-        let line = fill(text("official.start.accepted"), &[("date", &date)]);
+    if let Some((line, _)) = accepted {
         y = b.para(x - 60, y, bw + 120, Face::Small, &line, DIM_TEXT);
         let label = text("official.consent.withdraw");
         let lw = b.width(Face::Small, label);

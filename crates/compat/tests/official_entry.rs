@@ -178,61 +178,6 @@ fn strip(src: &str) -> Stripped {
     }
 }
 
-/// The lines of `s` outside `#[cfg(test)]` items, as (function, code, text): the attributed
-/// item is skipped by brace depth from the attribute's own line on (further attributes
-/// included), or up to its `;`.
-fn live_lines(s: &Stripped) -> Vec<(String, String, String)> {
-    const QUALIFIERS: &[&str] = &[
-        "pub",
-        "pub(crate)",
-        "pub(super)",
-        "const",
-        "async",
-        "unsafe",
-    ];
-    let mut out = Vec::new();
-    let mut current = String::new();
-    let mut i = 0;
-    while let Some(code) = s.code.get(i) {
-        let t = code.trim_start();
-        if let Some(rest) = t.strip_prefix("#[cfg(test)]") {
-            let mut depth: i32 = 0;
-            let mut opened = false;
-            let mut item = rest.to_owned();
-            loop {
-                depth += item.matches('{').count() as i32 - item.matches('}').count() as i32;
-                opened |= item.contains('{');
-                if (opened && depth <= 0) || (!opened && item.trim_end().ends_with(';')) {
-                    break;
-                }
-                i += 1;
-                match s.code.get(i) {
-                    Some(l) => item = l.clone(),
-                    None => break,
-                }
-            }
-            i += 1;
-            continue;
-        }
-        if !t.is_empty() {
-            if let Some(k) = t.find("fn ") {
-                let mut before = t[..k].split_whitespace();
-                if before.all(|w| QUALIFIERS.contains(&w)) {
-                    current = t[k + 3..]
-                        .split(|c: char| !(c.is_alphanumeric() || c == '_'))
-                        .next()
-                        .unwrap_or("")
-                        .to_owned();
-                }
-            }
-            let text = s.text.get(i).cloned().unwrap_or_default();
-            out.push((current.clone(), code.clone(), text));
-        }
-        i += 1;
-    }
-    out
-}
-
 /// Every path the `use` declarations (and `extern crate`) of `code` bring in, grouped trees
 /// expanded: (path, alias). `use a::{b, c::{d as e}}` gives `a::b` and `a::c::d` as `e`.
 fn use_paths(code: &str) -> Vec<(String, Option<String>)> {
@@ -298,43 +243,6 @@ fn use_paths(code: &str) -> Vec<(String, Option<String>)> {
 /// Whether `path` is `prefix` or below it, segment-wise.
 fn under(path: &str, prefix: &str) -> bool {
     path == prefix || path.starts_with(&format!("{prefix}::"))
-}
-
-/// The files `#[cfg(test)] mod name;` declarations of `files` point at (test code).
-fn test_module_files(files: &[PathBuf]) -> Vec<PathBuf> {
-    let mut out = Vec::new();
-    for f in files {
-        let src = std::fs::read_to_string(f).unwrap_or_default();
-        let lines: Vec<&str> = src.lines().map(str::trim).collect();
-        for w in lines.windows(2) {
-            let (Some(a), Some(b)) = (w.first(), w.get(1)) else {
-                continue;
-            };
-            let decl = if let Some(r) = a.strip_prefix("#[cfg(test)]") {
-                if r.trim().is_empty() { *b } else { r.trim() }
-            } else {
-                continue;
-            };
-            let Some(name) = decl
-                .trim_start_matches("pub(crate) ")
-                .trim_start_matches("pub ")
-                .strip_prefix("mod ")
-                .and_then(|r| r.strip_suffix(';'))
-            else {
-                continue;
-            };
-            let Some(dir) = f.parent() else { continue };
-            let stem = f.file_stem().and_then(|s| s.to_str()).unwrap_or("");
-            let base = if matches!(stem, "mod" | "lib" | "main") {
-                dir.to_path_buf()
-            } else {
-                dir.join(stem)
-            };
-            out.push(base.join(format!("{name}.rs")));
-            out.push(base.join(name).join("mod.rs"));
-        }
-    }
-    out
 }
 
 /// Whether `src` names `name` as a whole identifier path (`mio` is not `semiotic`).
@@ -422,16 +330,18 @@ fn oe_t8b_network_names_only_in_the_network_access_file() {
     let mut files = Vec::new();
     rust_files(&crate_dir().join("src"), &mut files);
     assert!(files.len() >= 8, "{files:?}");
-    let tests = test_module_files(&files);
+    // Every line is scanned, test code included (unit-test modules and `#[cfg(test)]` items
+    // alike): "nowhere in the crate" has no exemption. The unit tests make their FIFO
+    // in-process and start no program.
     assert!(
-        tests.iter().any(|t| t.ends_with("consent/tests.rs")),
-        "{tests:?}"
+        files.iter().any(|t| t.ends_with("consent/tests.rs")),
+        "{files:?}"
     );
     let allowed = crate_dir().join("src").join("net_access.rs");
-    for f in files.iter().filter(|f| !tests.contains(f)) {
-        let live = live_lines(&strip(&std::fs::read_to_string(f).expect("source")));
-        let text: String = live.iter().map(|(_, _, t)| format!("{t}\n")).collect();
-        let code: String = live.iter().map(|(_, c, _)| format!("{c}\n")).collect();
+    for f in &files {
+        let s = strip(&std::fs::read_to_string(f).expect("source"));
+        let text = s.text.join("\n");
+        let code = s.code.join("\n");
         for name in NEVER {
             assert!(!names(&text, name), "{} names {name}", f.display());
         }
@@ -446,30 +356,52 @@ fn oe_t8b_network_names_only_in_the_network_access_file() {
     }
     let allowed_src = std::fs::read_to_string(&allowed).expect("source");
     assert!(allowed_src.contains("UdpSocket"));
+    // The integration tests (`crates/compat/tests/`) start no process, open no socket and
+    // reach no network through `tessera-net` either: every name list applies. Their code is
+    // scanned with literals blanked: this scan's own name lists are strings, not uses.
+    let mut tests = Vec::new();
+    rust_files(&crate_dir().join("tests"), &mut tests);
+    assert!(
+        tests.iter().any(|t| t.ends_with("official_entry.rs")),
+        "{tests:?}"
+    );
+    for f in &tests {
+        let code = strip(&std::fs::read_to_string(f).expect("source"))
+            .code
+            .join("\n");
+        for name in NEVER.iter().chain(SOCKETS) {
+            assert!(!names(&code, name), "{} names {name}", f.display());
+        }
+        let bad = use_violations(&code);
+        assert!(bad.is_empty(), "{}: {bad:?}", f.display());
+    }
 }
 
 #[test]
 fn the_scan_is_not_blinded() {
-    // cfg(test) items: one-line ones, attributes after it, braces in literals, a multi-line
-    // string and a raw string with braces.
-    let src = "fn a() {}\n#[cfg(test)] fn t() { let x = '{'; }\nfn after() { UdpSocket }\n\
-               #[cfg(test)]\n#[allow(x)]\nmod m {\n  fn y() { \"}\n}\" }\n  fn z() { r#\"}}\"# }\n}\n\
-               fn tail() { /* } */ }\n#[cfg(test)] mod tests;\nfn last() {}\n";
-    let live = live_lines(&strip(src));
-    let code: Vec<&str> = live.iter().map(|(_, c, _)| c.as_str()).collect();
-    let joined = code.join("\n");
+    // cfg(test) items stay in the scan; comments are removed (also one closing a brace in a
+    // block comment), literals are blanked in the code view and kept in the text view,
+    // multi-line and raw strings included.
+    let src = "fn a() {}\n#[cfg(test)] fn t() { let x = '{'; UdpSocket }\n\
+               #[cfg(test)]\n#[allow(x)]\nmod m {\n  fn y() { \"}\n}\" }\n  fn z() { r#\"std::process\"# }\n}\n\
+               fn tail() { /* TcpStream } */ }\n// mio\n#[cfg(test)] mod tests;\nfn last() {}\n";
+    let s = strip(src);
+    let code = s.code.join("\n");
+    let text = s.text.join("\n");
     assert!(
-        joined.contains("fn after()") && joined.contains("UdpSocket"),
-        "{joined}"
+        code.contains("fn t()") && names(&code, "UdpSocket"),
+        "{code}"
     );
     assert!(
-        joined.contains("fn tail()") && joined.contains("fn last()"),
-        "{joined}"
+        code.contains("fn y()") && code.contains("fn z()") && code.contains("fn last()"),
+        "{code}"
     );
     assert!(
-        !joined.contains("fn t()") && !joined.contains("fn y()") && !joined.contains("fn z()"),
-        "{joined}"
+        !names(&code, "std::process") && names(&text, "std::process"),
+        "{text}"
     );
+    assert!(!names(&text, "TcpStream") && !names(&text, "mio"), "{text}");
+    assert_eq!(s.code.len(), s.text.len());
     // Grouped and renamed imports.
     for bad in [
         "use std::{io, process::{Command as C}};",

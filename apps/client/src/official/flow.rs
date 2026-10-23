@@ -22,8 +22,8 @@ use std::sync::{Arc, mpsc};
 use std::time::Instant;
 
 use tessera_compat::consent::{
-    self, Acceptance, CheckOutcome, NotAcceptedReason, PendingCheck, PendingWrite, WarningText,
-    WriteError, strings::text,
+    self, Acceptance, CheckOutcome, NotAcceptedReason, PendingCheck, PendingWithdraw, PendingWrite,
+    WarningText, WithdrawReport, WriteError, strings::text,
 };
 use tessera_compat::{Availability, CompatConfig, CompatError};
 use tessera_net::{Backend, Command, Event, Session};
@@ -121,6 +121,17 @@ pub enum FlowRequest {
     Quit,
 }
 
+/// The start screen's acceptance line (§4.1).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AcceptanceLine<'a> {
+    /// A stored record (or the run's acceptance while its write runs): "You accepted … on
+    /// ⟨date⟩."
+    Stored(&'a str),
+    /// An acceptance for this run only: the text ID (`official.consent.saved_failed` or
+    /// `official.consent.not_stored`).
+    RunOnly(&'static str),
+}
+
 /// A message panel over the current screen, with OK (§8.6).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Notice {
@@ -155,11 +166,17 @@ pub struct Flow {
     notice: Option<Notice>,
     /// The start screen's line: the date of a valid acceptance (§4.1).
     accepted_date: Option<String>,
+    /// The text ID of the start screen's line while the run's acceptance is not stored: the
+    /// record write failed (`.saved_failed`, an invalid key file included, §5.6) or no record
+    /// is stored on this system (`.not_stored`, Windows).
+    run_only: Option<&'static str>,
     start_check: Option<PendingCheck>,
     pending_check: Option<PendingCheck>,
     warning: Option<WarningScreen>,
     acceptance: Option<Acceptance>,
     pending_write: Option<PendingWrite>,
+    /// A withdrawal running on the consent worker (§5.5; ARCH §21).
+    pending_withdraw: Option<PendingWithdraw>,
     form: Option<AccountForm>,
     login: Option<(Session, LoginPresenter)>,
     /// The account name of the running login, only for `BadCredentials` (§8.6).
@@ -196,11 +213,13 @@ impl Flow {
             screen: Screen::Start,
             notice: None,
             accepted_date: None,
+            run_only: None,
             start_check: None,
             pending_check: None,
             warning: None,
             acceptance: None,
             pending_write: None,
+            pending_withdraw: None,
             form: None,
             login: None,
             kept_account: None,
@@ -239,6 +258,22 @@ impl Flow {
         self.accepted_date
             .as_deref()
             .or_else(|| self.acceptance.as_ref().map(Acceptance::accepted_date))
+    }
+
+    /// The start screen's acceptance line (§4.1), while a valid acceptance exists: the date of
+    /// a stored record, else the text of an acceptance that holds for this run only.
+    #[must_use]
+    pub fn acceptance_line(&self) -> Option<AcceptanceLine<'_>> {
+        if let Some(d) = self.accepted_date.as_deref() {
+            return Some(AcceptanceLine::Stored(d));
+        }
+        let acc = self.acceptance.as_ref()?;
+        Some(match self.run_only {
+            Some(id) => AcceptanceLine::RunOnly(id),
+            // The write still runs: the run's acceptance date until the check of the start
+            // screen sees the record.
+            None => AcceptanceLine::Stored(acc.accepted_date()),
+        })
     }
 
     /// The account-name copy of the running attempt, every byte (tests: OE-T19).
@@ -318,6 +353,9 @@ impl Flow {
     /// Ends the writer thread after its queued writes (after the event loop, never in a
     /// frame).
     pub fn finish_writes(&mut self) {
+        if let Some(w) = self.pending_withdraw.take() {
+            let _ = w.wait();
+        }
         if let Some(w) = self.writer.take() {
             drop(w.tx);
             let _ = w.handle.join();
@@ -332,6 +370,7 @@ impl Flow {
         } else {
             "official.consent.saved_failed"
         };
+        self.run_only = Some(id);
         self.show(Message {
             text: text(id).to_owned(),
             detail: None,
@@ -366,6 +405,10 @@ impl Flow {
     /// Step 1: the user chose "Official servers" (or `--official` chose it).
     pub fn choose_official(&mut self) {
         if self.screen != Screen::Start {
+            return;
+        }
+        if self.pending_withdraw.is_some() {
+            // A withdrawal still runs: its result decides whether an acceptance holds.
             return;
         }
         if self.config.queued_plugin_loads > 0 && !self.plugin_loads_dropped {
@@ -555,24 +598,76 @@ impl Flow {
         self.request = Some(FlowRequest::Quit);
     }
 
-    /// Withdraws the acceptance (§5.5): both files and the run's acceptance. A record write
-    /// still running finishes first, so it cannot bring the record back afterwards.
+    /// Withdraws the acceptance (§5.5): both files and the run's acceptance. The work runs on
+    /// the consent worker (ARCH §21): a record write still running finishes there first, so it
+    /// cannot bring the record back afterwards; [`Self::withdrawn`] applies the report.
     fn withdraw(&mut self) {
-        if let Some(w) = self.pending_write.take() {
-            let _ = w.wait();
+        if self.pending_withdraw.is_some() {
+            return;
         }
-        if let Some(dir) = self.config.record_dir.as_deref()
-            && let Err(e) = consent::withdraw(dir)
-        {
-            tracing::warn!("official-server warning: withdrawing failed: {e}");
-        }
-        self.acceptance = None;
-        self.accepted_date = None;
         self.start_check = None;
+        self.pending_withdraw = Some(consent::spawn_withdraw(
+            self.config.record_dir.clone(),
+            self.pending_write.take(),
+        ));
+    }
+
+    /// The withdrawal finished. Both files gone: the run's acceptance is dropped too and the
+    /// line disappears. A file left (§5.6: the log names it): a failure notice shows, and the
+    /// line is recomputed: a removed record no longer gives the stored line, the run's
+    /// acceptance (kept, as the withdrawal did not complete) shows the run-only line, and a
+    /// new check of what is left on disk restores the stored line only if the record still
+    /// validates.
+    fn withdrawn(&mut self, report: WithdrawReport) {
+        if report.complete() {
+            tracing::info!("official-server warning: acceptance withdrawn");
+            self.acceptance = None;
+            self.accepted_date = None;
+            self.run_only = None;
+            self.start_check = None;
+            self.show(Message {
+                text: text("official.consent.withdrawn").to_owned(),
+                detail: None,
+            });
+            return;
+        }
+        tracing::warn!(
+            record_removed = report.record_removed,
+            key_removed = report.key_removed,
+            "official-server warning: withdrawing did not complete"
+        );
+        self.accepted_date = None;
+        if self.acceptance.is_some() && self.run_only.is_none() {
+            self.run_only = Some(if consent::STORES_RECORDS {
+                "official.consent.saved_failed"
+            } else {
+                "official.consent.not_stored"
+            });
+        }
+        self.start_check = self
+            .config
+            .record_dir
+            .clone()
+            .map(|d| consent::spawn_check(d, Arc::clone(&self.config.text)));
         self.show(Message {
-            text: text("official.consent.withdrawn").to_owned(),
+            text: text("official.consent.withdraw_failed").to_owned(),
             detail: None,
         });
+    }
+
+    /// Whether a withdrawal runs.
+    #[must_use]
+    pub fn withdrawing(&self) -> bool {
+        self.pending_withdraw.is_some()
+    }
+
+    /// Blocks until the withdrawal finished (tests), then ticks.
+    pub fn wait_withdraw(&mut self, now: Instant) {
+        if let Some(w) = self.pending_withdraw.take() {
+            let report = w.wait();
+            self.withdrawn(report);
+        }
+        self.tick(now);
     }
 
     /// Advances the flow to `now`: the record check and write, the login session.
@@ -600,6 +695,12 @@ impl Flow {
             if let Err(e) = result {
                 self.write_failed(&e);
             }
+        }
+        if let Some(w) = self.pending_withdraw.as_mut()
+            && let Some(report) = w.poll()
+        {
+            self.pending_withdraw = None;
+            self.withdrawn(report);
         }
         self.tick_login(now);
     }
@@ -683,16 +784,7 @@ impl Flow {
             _ => {}
         }
         if matches!(ev.kind(), DeviceInputKind::CloseRequested) {
-            if self.screen == Screen::Characters {
-                // §8.7: closing the window on the placeholder is its Back.
-                self.notice = None;
-                self.leave_characters();
-                return;
-            }
-            // Closing the window during the warning is Decline (nothing written); then the
-            // client ends.
-            self.warning = None;
-            self.quit();
+            self.close_requested(ev);
             return;
         }
         if self.screen == Screen::Warning {
@@ -709,6 +801,51 @@ impl Flow {
                 self.buttons_input(ev, hit);
             }
             Screen::Warning => {}
+        }
+    }
+
+    /// Closing the window (§4.6 "Closing the window"): only on the start screen does it end
+    /// the client; on every other official screen it is that screen's way back, one step
+    /// towards the start screen. A message panel (the not-available message of §4.4 and the
+    /// other notices, a login screen's message) is its OK; the warning declines; the account
+    /// form is its Back; the progress, world-list and queue screens are Cancel (`Disconnect`,
+    /// the account form); the character placeholder is its Back (§8.7). The "Checking…" screen
+    /// of step 2 goes back to the start screen without an acceptance.
+    fn close_requested(&mut self, ev: &DeviceInput) {
+        let now = ev.at();
+        self.pressed_on = None;
+        match self.screen {
+            Screen::Characters => {
+                self.notice = None;
+                self.leave_characters();
+            }
+            Screen::Warning => {
+                tracing::info!("official-server warning declined (window closed)");
+                self.go_start();
+            }
+            _ if self.notice.is_some() => self.notice = None,
+            Screen::Start => {
+                self.quit();
+            }
+            Screen::Checking => {
+                self.pending_check = None;
+                self.go_start();
+            }
+            Screen::Form => {
+                // The form zeroes both fields on its Back.
+                self.form_input(ev, &|_, _| None);
+            }
+            Screen::Login => {
+                if let Some((_, p)) = self.login.as_mut() {
+                    if p.message().is_some() {
+                        p.dismiss_message();
+                        return;
+                    }
+                    p.cancel();
+                }
+                // Send the `Disconnect` and show the account form now, not at the next frame.
+                self.tick_login(now);
+            }
         }
     }
 

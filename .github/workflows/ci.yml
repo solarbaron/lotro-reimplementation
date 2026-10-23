@@ -10,6 +10,7 @@
 #   tools/check-content.sh                   forbidden content and trademark words
 #   tools/check-spdx.sh                      SPDX headers
 #   tools/check-server-deps.sh               tessera-server and its hosts link no data crate (--self-test too)
+#   tools/check-release-features.sh          no tessera-compat test-support in the client binary (--self-test too)
 #   tools/check-dco.sh origin/main           Signed-off-by and clean-room trailers (unpushed
 #                                            commits; --all checks the whole history)
 #   (cd fuzz && cargo fmt --all -- --check && cargo clippy --bins --locked -- -D warnings)
@@ -174,6 +175,25 @@ jobs:
         run: tools/check-server-deps.sh --self-test
       - name: Check tessera-server and its hosts
         run: tools/check-server-deps.sh
+
+  # Release feature guard (official-entry.md §6.3 "Release builds", OE-T22): tessera-client's
+  # normal-edge feature graph never enables tessera-compat's test-support. Needs no build.
+  release-features:
+    name: release feature guard
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+      - name: Read the pinned toolchain
+        id: toolchain
+        run: echo "version=$(sed -n 's/^channel *= *"\(.*\)"/\1/p' rust-toolchain.toml)" >> "$GITHUB_OUTPUT"
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ steps.toolchain.outputs.version }}
+      - name: Self-test the guard (official-entry.md OE-T22)
+        run: tools/check-release-features.sh --self-test
+      - name: Check tessera-client's normal feature graph
+        run: tools/check-release-features.sh
 
   test:
     name: test (${{ matrix.os }})

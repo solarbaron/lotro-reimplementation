@@ -23,7 +23,8 @@ use tessera_net::{Backend, CharacterSummary, Command, DisconnectReason, Event, N
 use winit::keyboard::{KeyCode, PhysicalKey};
 
 use super::flow::{
-    BackendFactory, Control, Flow, FlowConfig, FlowRequest, PluginHostControl, Screen,
+    AcceptanceLine, BackendFactory, Control, Flow, FlowConfig, FlowRequest, PluginHostControl,
+    Screen,
 };
 use super::form::{AccountForm, BULLET, FormAction, FormControl, FormField};
 use super::input::{DeviceInput, DeviceInputKind, Key, Modifiers};
@@ -1399,6 +1400,7 @@ fn oe_t8a_no_connection_attempt_before_acceptance() {
     for e in click_seq(0.0, t0) {
         flow.device_input(&e, &|_, _| Some(Control::StartWithdraw));
     }
+    flow.wait_withdraw(t0);
     assert!(flow.accepted_date().is_none());
     pre_accept(dir.path(), &WarningText::shipped());
     let doc = dir.path().join(consent::test_support::RECORD_FILE);
@@ -1847,9 +1849,14 @@ fn wl(x: f64, _y: f64) -> Option<WarningControl> {
 
 #[test]
 fn oe_t11_input_rules() {
+    // The nine cases of OE-T11: none of the first eight accepts (4, 5, 7 and 8 decline at
+    // once); only the ninth, the keyboard path after the box is ticked and the delay has
+    // passed, accepts. Every case's record directory is kept to check that nothing was written.
     let early = Duration::from_millis(500);
+    let mut dirs = Vec::new();
     // 1. Press before 1,000 ms, release after: no click.
-    let (mut w, _d, t0) = screen();
+    let (mut w, d, t0) = screen();
+    dirs.push(d);
     w.input(
         &dev(DeviceInputKind::PointerMoved { x: 0.0, y: 0.0 }, t0),
         &wl,
@@ -1879,33 +1886,38 @@ fn oe_t11_input_rules() {
     w.input(&press(Key::Space, t), &wl);
     assert!(w.ticked(), "Space after its release counts");
     // 3. Tab during the delay is ignored.
-    let (mut w, _d, t0) = screen();
+    let (mut w, d, t0) = screen();
+    dirs.push(d);
     w.input(&press(Key::Tab, t0 + early), &wl);
     assert_eq!(w.focus(), WarningControl::Decline);
     // A key pressed during the delay stays ignored after it until released.
     w.input(&press(Key::Tab, t0 + INPUT_DELAY), &wl);
     assert_eq!(w.focus(), WarningControl::Decline);
     // 4. Enter with focus on Decline during the delay declines at once (rule 2).
-    let (mut w, _d, t0) = screen();
+    let (mut w, d, t0) = screen();
+    dirs.push(d);
     assert!(matches!(
         w.input(&press(Key::Enter, t0 + early), &wl),
         Some(WarningOutcome::Declined)
     ));
-    // A click on Decline at 0 ms declines (rule 2).
-    let (mut w, _d, t0) = screen();
+    // 5. A click on Decline at 0 ms declines at once (rule 2).
+    let (mut w, d, t0) = screen();
+    dirs.push(d);
     let mut declined = None;
     for e in click_seq(1.0, t0) {
         declined = declined.or(w.input(&e, &wl));
     }
     assert!(matches!(declined, Some(WarningOutcome::Declined)));
     // A press on the check box during the delay still does nothing.
-    let (mut w, _d, t0) = screen();
+    let (mut w, d, t0) = screen();
+    dirs.push(d);
     for e in click_seq(0.0, t0 + early) {
         assert!(w.input(&e, &wl).is_none());
     }
     assert!(!w.ticked());
-    // 5. Continue before the box is ticked: disabled, takes no click and no focus.
-    let (mut w, _d, t0) = screen();
+    // 6. Continue before the box is ticked: disabled, takes no click and no focus.
+    let (mut w, d, t0) = screen();
+    dirs.push(d);
     let t = t0 + INPUT_DELAY;
     for e in click_seq(2.0, t) {
         assert!(w.input(&e, &wl).is_none());
@@ -1916,13 +1928,15 @@ fn oe_t11_input_rules() {
         w.input(&release(Key::Tab, t), &wl);
         assert_ne!(w.focus(), WarningControl::Continue);
     }
-    // 6. Escape at 0 ms, and with focus on Continue: Decline.
-    let (mut w, _d, t0) = screen();
+    // 7. Escape at 0 ms, and with focus on Continue: Decline at once.
+    let (mut w, d, t0) = screen();
+    dirs.push(d);
     assert!(matches!(
         w.input(&press(Key::Escape, t0), &wl),
         Some(WarningOutcome::Declined)
     ));
-    let (mut w, _d, t0) = screen();
+    let (mut w, d, t0) = screen();
+    dirs.push(d);
     let t = t0 + INPUT_DELAY;
     for e in click_seq(0.0, t) {
         w.input(&e, &wl);
@@ -1952,16 +1966,19 @@ fn oe_t11_input_rules() {
         w.input(&press(Key::Escape, t), &wl),
         Some(WarningOutcome::Declined)
     ));
-    // 7. Window close: Decline.
-    let (mut w, dir, t0) = screen();
+    // 8. Window close: Decline at once.
+    let (mut w, d, t0) = screen();
+    dirs.push(d);
     assert!(matches!(
         w.input(&dev(DeviceInputKind::CloseRequested, t0), &wl),
         Some(WarningOutcome::Declined)
     ));
-    assert!(
-        snapshot(dir.path()).is_empty(),
-        "nothing written by the first seven"
-    );
+    for d in &dirs {
+        assert!(
+            snapshot(d.path()).is_empty(),
+            "nothing written by the first eight"
+        );
+    }
     // Before the text is laid out nothing counts (rule 7).
     let dir2 = tempfile::tempdir().expect("temp dir");
     let mut w = WarningScreen::new(
@@ -1993,7 +2010,7 @@ fn oe_t11_input_rules() {
         Some(WarningOutcome::Declined)
     ));
     assert!(snapshot(dir4.path()).is_empty());
-    // The keyboard path: Tab to the box, Space, Tab to Continue, Enter.
+    // 9. The keyboard path after the delay: Tab to the box, Space, Tab to Continue, Enter.
     let dir3 = tempfile::tempdir().expect("temp dir");
     let mut w = WarningScreen::new(
         Some(dir3.path().to_path_buf()),
@@ -2073,6 +2090,7 @@ fn oe_t12_decline_changes_nothing_and_withdraw_removes_both_files() {
     for e in click_seq(0.0, f.t0) {
         flow.device_input(&e, &|_, _| Some(Control::StartWithdraw));
     }
+    flow.wait_withdraw(f.t0);
     assert!(snapshot(f.record.path()).is_empty());
     assert_eq!(
         flow.notice().map(|n| n.message.text.as_str()),
@@ -2808,6 +2826,7 @@ fn withdraw_is_offered_for_the_runs_in_memory_acceptance() {
     for e in click_seq(0.0, t) {
         flow.device_input(&e, &|_, _| Some(Control::StartWithdraw));
     }
+    flow.wait_withdraw(t);
     assert!(!flow.has_acceptance());
     assert!(flow.accepted_date().is_none());
     flow.device_input(&press(Key::Enter, t), &|_, _| None);
@@ -2839,6 +2858,295 @@ fn oe_t15_bad_key_file_shows_saved_failed_and_stays() {
     );
     assert_eq!(std::fs::read(&key).expect("key"), vec![5u8; 31]);
     assert!(!consent::check(f.record.path(), &WarningText::shipped()).is_accepted());
+}
+
+// ----- revision 4: OE-T23, OE-T24 -----
+
+/// OE-T23: closing the window on each official screen of §4.6 gives the table's result; only
+/// the start screen ends the client. Needs a persisted record (Unix-like systems; on Windows
+/// a `.not_stored` message follows every acceptance).
+#[cfg(unix)]
+#[test]
+fn oe_t23_window_close_on_every_official_screen() {
+    let close = |f: &mut Fixture| {
+        f.flow
+            .device_input(&dev(DeviceInputKind::CloseRequested, f.t0), &|_, _| None);
+    };
+    // Start screen: ends the client (exit code 0, like Quit).
+    let mut f = fixture(Availability::Available);
+    f.flow.wait_checks(f.t0);
+    assert_eq!(f.flow.screen(), Screen::Start);
+    close(&mut f);
+    assert_eq!(f.flow.take_request(), Some(FlowRequest::Quit));
+    // Warning: Decline, back to the start screen, nothing written.
+    let mut f = fixture(Availability::Available);
+    f.choose_official();
+    assert_eq!(f.flow.screen(), Screen::Warning);
+    f.show_warning();
+    close(&mut f);
+    assert_eq!(f.flow.screen(), Screen::Start);
+    assert_eq!(f.flow.take_request(), None);
+    assert!(!f.flow.has_acceptance());
+    assert!(snapshot(f.record.path()).is_empty());
+    // "Checking…" (step 2): back to the start screen, no acceptance.
+    let mut f = fixture(Availability::Available);
+    f.flow.wait_checks(f.t0);
+    f.flow.choose_official();
+    assert_eq!(f.flow.screen(), Screen::Checking);
+    close(&mut f);
+    assert_eq!(f.flow.screen(), Screen::Start);
+    assert_eq!(f.flow.take_request(), None);
+    f.flow.wait_checks(f.t0);
+    assert_eq!(
+        f.flow.screen(),
+        Screen::Start,
+        "the dropped check shows nothing"
+    );
+    assert!(!f.flow.has_acceptance());
+    // Not-available message: OK, the start screen; a second close ends the client.
+    let mut f = fixture(Availability::NotBuilt);
+    f.choose_official();
+    f.accept_warning();
+    f.flow.wait_write(f.t0);
+    while f
+        .flow
+        .notice()
+        .is_some_and(|n| n.message.text != consent::strings::text("official.not_available"))
+    {
+        f.flow.device_input(&press(Key::Enter, f.t0), &|_, _| None);
+    }
+    assert_eq!(f.flow.screen(), Screen::Start);
+    assert_eq!(
+        f.flow.notice().map(|n| n.message.text.as_str()),
+        Some(consent::strings::text("official.not_available"))
+    );
+    close(&mut f);
+    assert!(f.flow.notice().is_none());
+    assert_eq!(f.flow.screen(), Screen::Start);
+    assert_eq!(f.flow.take_request(), None);
+    close(&mut f);
+    assert_eq!(f.flow.take_request(), Some(FlowRequest::Quit));
+    // Account form: Back, both fields zeroed, the start screen.
+    let mut f = fixture(Availability::Available);
+    f.choose_official();
+    f.accept_warning();
+    f.settle_write();
+    assert_eq!(f.flow.screen(), Screen::Form);
+    f.type_form("name", "secret", f.t0 + INPUT_DELAY);
+    close(&mut f);
+    assert_eq!(f.flow.screen(), Screen::Start);
+    assert!(f.flow.form().is_none());
+    assert_eq!(f.flow.take_request(), None);
+    // The login screens: Cancel, `Disconnect`, the account form with empty fields.
+    let worlds = Event::Account(AccountEvent::WorldList {
+        worlds: vec![world(1, "Alpha", WorldStatus::Open)],
+    });
+    let queue = Event::Account(AccountEvent::LoginQueueChanged {
+        position: Some(3),
+        length: None,
+        wait_seconds: None,
+    });
+    for (name, events) in [
+        ("progress", vec![]),
+        ("world list", vec![worlds]),
+        ("queue", vec![queue]),
+    ] {
+        let mut f = fixture(Availability::Available);
+        f.reach_login("name", "secret");
+        for e in events {
+            f.push(e);
+        }
+        f.flow.tick(f.t0);
+        match (name, f.flow.login_screen()) {
+            ("progress", Some(LoginScreen::Progress { .. }))
+            | ("world list", Some(LoginScreen::Worlds))
+            | ("queue", Some(LoginScreen::Queue { .. })) => {}
+            (_, other) => panic!("{name}: {other:?}"),
+        }
+        close(&mut f);
+        assert_eq!(f.flow.screen(), Screen::Form, "{name}");
+        assert_eq!(
+            f.flow.form().map(AccountForm::account_text),
+            Some(""),
+            "{name}"
+        );
+        assert!(f.commands().contains(&Command::Disconnect), "{name}");
+        assert_eq!(f.flow.take_request(), None, "{name}");
+    }
+    // The character placeholder: Back, `Disconnect`, the account form with empty fields.
+    let mut f = fixture(Availability::Available);
+    f.reach_login("name", "secret");
+    f.push(Event::Connected { characters: vec![] });
+    f.flow.tick(f.t0);
+    assert_eq!(f.flow.screen(), Screen::Characters);
+    close(&mut f);
+    assert_eq!(f.flow.screen(), Screen::Form);
+    assert_eq!(f.flow.form().map(AccountForm::account_text), Some(""));
+    assert!(f.commands().contains(&Command::Disconnect));
+    assert_eq!(f.flow.take_request(), None);
+}
+
+/// OE-T24: an invalid key file is never repaired; two acceptances in two runs last for their
+/// run and the start screen shows the `.saved_failed` line; Withdraw deletes both files; the
+/// next acceptance writes a fresh key and record.
+#[cfg(unix)]
+#[test]
+fn oe_t24_unrepaired_key_file() {
+    let record = tempfile::tempdir().expect("temp dir");
+    let settings = tempfile::tempdir().expect("temp dir");
+    let key = record.path().join(consent::test_support::KEY_FILE);
+    let doc = record.path().join(consent::test_support::RECORD_FILE);
+    std::fs::write(&key, [5u8; 31]).expect("key");
+    let run = || {
+        let mut f = fixture(Availability::NotBuilt);
+        f.flow = Flow::new(
+            config(record.path(), settings.path(), WarningText::shipped()),
+            Box::new(Doubles {
+                availability: Availability::NotBuilt,
+                script: Arc::default(),
+                built: Arc::default(),
+            }),
+            Box::new(CountingHost::default()),
+        );
+        f
+    };
+    let saved_failed = consent::strings::text("official.consent.saved_failed");
+    for n in 0..2 {
+        let mut f = run();
+        f.choose_official();
+        assert_eq!(
+            f.flow.screen(),
+            Screen::Warning,
+            "run {n}: no stored acceptance"
+        );
+        f.accept_warning();
+        f.flow.wait_write(f.t0);
+        assert!(f.flow.has_acceptance(), "run {n}: the acceptance counts");
+        while f.flow.notice().is_some() {
+            f.flow.device_input(&press(Key::Enter, f.t0), &|_, _| None);
+        }
+        assert_eq!(f.flow.screen(), Screen::Start);
+        assert_eq!(
+            f.flow.acceptance_line(),
+            Some(AcceptanceLine::RunOnly("official.consent.saved_failed")),
+            "run {n}"
+        );
+        let fonts = super::view::Fonts::load(1.0).expect("bundled font");
+        let drawn = super::view::build(&f.flow, Some(&fonts), (1280, 720), f.t0)
+            .draws
+            .iter()
+            .filter_map(|d| match d {
+                super::view::Draw::Text { text, .. } => Some(text.clone()),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .join(" ");
+        let first_words: String = saved_failed
+            .split(' ')
+            .take(4)
+            .collect::<Vec<_>>()
+            .join(" ");
+        assert!(drawn.contains(&first_words), "run {n}: {drawn}");
+        assert!(drawn.contains("Withdraw acceptance"), "run {n}: {drawn}");
+        assert_eq!(
+            std::fs::read(&key).expect("key"),
+            vec![5u8; 31],
+            "run {n}: never repaired"
+        );
+        assert!(!doc.exists(), "run {n}: no record without a key");
+        if n == 1 {
+            // Withdraw: both files deleted, the line gone.
+            for e in click_seq(0.0, f.t0) {
+                f.flow
+                    .device_input(&e, &|_, _| Some(Control::StartWithdraw));
+            }
+            f.flow.wait_withdraw(f.t0);
+            assert!(!key.exists() && !doc.exists());
+            assert!(f.flow.acceptance_line().is_none());
+            assert!(!f.flow.has_acceptance());
+        }
+    }
+    // The next acceptance writes a fresh key and record.
+    let mut f = run();
+    f.choose_official();
+    assert_eq!(f.flow.screen(), Screen::Warning);
+    f.accept_warning();
+    f.flow.wait_write(f.t0);
+    let fresh = std::fs::read(&key).expect("key");
+    assert_eq!(fresh.len(), 32);
+    assert!(doc.exists());
+    assert!(consent::check(record.path(), &WarningText::shipped()).is_accepted());
+    let mut f = run();
+    f.flow.wait_checks(f.t0);
+    assert!(matches!(
+        f.flow.acceptance_line(),
+        Some(AcceptanceLine::Stored(_))
+    ));
+}
+
+/// A partial withdrawal (§5.5, §5.6): the record is deleted but the key file is not (a
+/// directory with content in its place). The failure notice shows, the stored line goes, and
+/// the run's acceptance (if any) shows the run-only line. The work runs on the consent worker.
+#[cfg(unix)]
+#[test]
+fn a_partial_withdrawal_shows_the_failure_and_recomputes_the_line() {
+    for with_run_acceptance in [false, true] {
+        let mut f = fixture(Availability::Available);
+        pre_accept(f.record.path(), &WarningText::shipped());
+        let mut flow = Flow::new(
+            config(f.record.path(), f.settings.path(), WarningText::shipped()),
+            Box::new(Doubles {
+                availability: Availability::Available,
+                script: Arc::default(),
+                built: Arc::default(),
+            }),
+            Box::new(CountingHost::default()),
+        );
+        flow.wait_checks(f.t0);
+        assert!(matches!(
+            flow.acceptance_line(),
+            Some(AcceptanceLine::Stored(_))
+        ));
+        if with_run_acceptance {
+            flow.choose_official();
+            flow.wait_checks(f.t0);
+            assert_eq!(flow.screen(), Screen::Form);
+            flow.device_input(&press(Key::Escape, f.t0), &|_, _| None);
+            flow.wait_checks(f.t0);
+            assert_eq!(flow.screen(), Screen::Start);
+        }
+        let key = f.record.path().join(consent::test_support::KEY_FILE);
+        let doc = f.record.path().join(consent::test_support::RECORD_FILE);
+        std::fs::remove_file(&key).expect("rm key");
+        std::fs::create_dir(&key).expect("key dir");
+        std::fs::write(key.join("content"), b"x").expect("content");
+        for e in click_seq(0.0, f.t0) {
+            flow.device_input(&e, &|_, _| Some(Control::StartWithdraw));
+        }
+        assert!(flow.withdrawing() || !doc.exists());
+        flow.wait_withdraw(f.t0);
+        flow.wait_checks(f.t0);
+        assert!(!doc.exists(), "the record is deleted");
+        assert!(
+            key.join("content").exists(),
+            "a directory with content is left"
+        );
+        assert_eq!(
+            flow.notice().map(|n| n.message.text.as_str()),
+            Some(consent::strings::text("official.consent.withdraw_failed"))
+        );
+        if with_run_acceptance {
+            assert!(flow.has_acceptance());
+            assert_eq!(
+                flow.acceptance_line(),
+                Some(AcceptanceLine::RunOnly("official.consent.saved_failed"))
+            );
+        } else {
+            assert_eq!(flow.acceptance_line(), None, "no valid acceptance is left");
+        }
+        f.flow = flow;
+        std::fs::remove_dir_all(&key).expect("clean up");
+    }
 }
 
 /// OE-T17 on the client's side: on Windows the acceptance lasts for the run and

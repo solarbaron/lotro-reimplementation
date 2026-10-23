@@ -4,11 +4,11 @@
 
 | | |
 |---|---|
-| **Status** | Accepted (2026-10-09, after review of the 2026-10-09 revision: the implementer notes of §12 answered; Tessera Decisions FD10–FD15 and two data facts FV23–FV24 added). Before: Revised (2026-10-09), Accepted (2026-10-08) |
-| **Last updated** | 2026-10-09 |
+| **Status** | **Accepted** (2026-10-23, independent review by spec-review:spec-world-render:1 (independent session): passed CLEAN_ROOM.md §5.3, every item; contamination screen clean; see the review record). Before: Revised (2026-10-23, spec writer: the five implementer OPENs of §12 dated 2026-10-23 answered; new BIN pass BIN-F2 and rows FV25–FV28; Tessera Decisions FD16–FD20; FD14 brought in line with `render.md` §5.1; awaiting independent review). Before: Accepted (2026-10-09, after review of the 2026-10-09 revision: the implementer notes of §12 answered; Tessera Decisions FD10–FD15 and two data facts FV23–FV24 added), Revised (2026-10-09), Accepted (2026-10-08) |
+| **Last updated** | 2026-10-23 |
 | **Author role** | Spec writer (dirty room) |
 | **Reviewer** | Spec reviewer (separate session, not the author) |
-| **Review record** | 2026-10-08, spec reviewer: passed (CLEAN_ROOM.md §5.3), Accepted. Details in the dirty-room review log (decision 0018). 2026-10-09, spec reviewer (separate session, not the author): the 2026-10-09 revision (§5.2, §6.3, §9.3, §12, §16, provenance OBS-F2, FV23, FV24, FD10–FD15) passed CLEAN_ROOM.md §5.3, Accepted. FV23 and FV24 spot-checked read-only with an independent parser on 2026-10-09 against all five named shader records (all 5 + 11 + 3 + 3 + 4 render-state blocks): declarations, defaults, cull, alpha test, reference 0.1 and blend reproduced. Non-blocking notes: (1) two of the 5 and two of the 11 far-terrain blocks are ONE / ZERO, not SRCALPHA / INVSRCALPHA, which the unchanged §6.3 render-state sentence does not mention (FV23 claims only cull, which holds in all); (2) the sliver corner order that FD10 makes moot is still given only as "oriented like the mesh" (`distant-landscape.md` §5.3). |
+| **Review record** | **Review 2026-10-23** of the 2026-10-23 revision (spec-review:spec-world-render:1 (independent session), a session that wrote no part of it): **passed** CLEAN_ROOM.md §5.3, every item; contamination screen clean. BIN facts were checked for consistency with the cited sections and install artefacts, not re-traced. Spot checks (install, read-only): OBS-F3 reproduced in both preferences files (`FarLandscapeNormalMaps` False and True, `MultiPassLighting` True, `LandscapeLightingQuality` VeryHigh, no `NearFarSeamBlending` key); the executable's SHA-256 of BIN-F2; the install ships back-end libraries for Direct3D 10, Direct3D 11 and OpenGL only, consistent with FV25. FD18's rationale matches `terrain-texturing.md` §6.2 and §12. Non-blocking: FV26's unmapped presets are stated in prose, not as an OPEN callout. Before: 2026-10-08, spec reviewer: passed (CLEAN_ROOM.md §5.3), Accepted. Details in the dirty-room review log (decision 0018). 2026-10-09, spec reviewer (separate session, not the author): the 2026-10-09 revision (§5.2, §6.3, §9.3, §12, §16, provenance OBS-F2, FV23, FV24, FD10–FD15) passed CLEAN_ROOM.md §5.3, Accepted. FV23 and FV24 spot-checked read-only with an independent parser on 2026-10-09 against all five named shader records (all 5 + 11 + 3 + 3 + 4 render-state blocks): declarations, defaults, cull, alpha test, reference 0.1 and blend reproduced. Non-blocking notes: (1) two of the 5 and two of the 11 far-terrain blocks are ONE / ZERO, not SRCALPHA / INVSRCALPHA, which the unchanged §6.3 render-state sentence does not mention (FV23 claims only cull, which holds in all); (2) the sliver corner order that FD10 makes moot is still given only as "oriented like the mesh" (`distant-landscape.md` §5.3). |
 | **Implements into** | `crates/world` (radii, sector set, per-landblock grid, far-entity list), `crates/terrain` or `crates/render` (far-terrain batches, stitching, seam overlay, horizon fill), `crates/render` (far-terrain and sprite programs), `apps/client` (walker horizon, settings) |
 | **Companion specs** | [`distant-landscape.md`](distant-landscape.md) (record layout §3, meaning §4, mesh and index construction §5.3, material §5.4, water §5.5, sprite list §5.6; this spec answers several of its §10 OPENs). [`walker.md`](walker.md) §11.2 (graphics preferences, *M_d*), §11.3 (extent *E*, global limit *G*), §11.4 (object draw distances), §14.4 (Tessera's own far band). [`entity-descriptor.md`](entity-descriptor.md) §9.3 (entity streaming manager, long-range set, factor *s*). [`misc-records.md`](misc-records.md) §5 (imposter tables, sprite quad, atlases, mirrored sprites). [`terrain-texturing.md`](terrain-texturing.md) §12 (sector overlay on near terrain). [`water.md`](water.md) §8.1 (landscape water geometry). [`lighting.md`](lighting.md) §2–§4, §10 (passes, engine inputs, fog). [`material.md`](material.md) §7.6 (render-state block), §8.4 (texture transforms). [`property-system.md`](property-system.md) §8 and [`records.md`](records.md) §8 (DID maps). [`mesh.md`](mesh.md) (render meshes). [`coordinates.md`](coordinates.md) (frames, units). |
 
@@ -50,6 +50,8 @@ disassembled with a generic DXBC disassembler; these are data, not the executabl
 | BIN-F | **M4 under [decision 0011](../decisions/0011-standing-m4-authorisation.md).** Client `x64/lotroclient64.exe`, file version 4906.0071.1794.4035 (SHA-256 prefix d22363eb9aff0fb5, the build of `distant-landscape.md`'s BIN row), read on 2026-10-08 with a headless Ghidra session on an own copy of the shared analysis project (deleted afterwards), plus the listings the `distant-landscape.md` session left in the dirty scratch area. **Questions:** (a) the values of the near radius and the far radius of the sector manager and how the graphics preferences set them; (b) which landblocks are drawn at full detail and which from the sectors; what the near-field batch flag does; (c) when sectors are loaded, kept and discarded; (d) the far-terrain material: which material records, which textures (parameter 3001, normal maps) and under which options; (e) how the landscape extent, fog and draw distances interact, and what is drawn beyond the last sector; (f) when distant sprites are drawn, their fade distances, the per-sprite byte and flag; (g) what the client does with the sectors' entity lists. **Why M1–M3 were not enough:** the radii, the batch rules, the material choice, the fade rules and the entity handling are code with no trace in the records; the shader records hold the per-pixel arithmetic but not the inputs the client feeds them; no published source describes the far view; no running client or frame capture is available (M3). **Read:** the landscape manager's update, sector-list, option, radius and per-frame functions; the sector mesh draw and readiness functions; the near-landscape block builder's option path; the preference registration table and the reader of `LandscapeDrawDistance`; the scene-description builder and its initialiser; the frame state copy (draw-distance scale); the sprite batch builder and sprite painter; the entity streaming manager's distant set; the sky-gradient placement. Nothing about network, login, keys, launcher, patcher or anti-tamper (decision 0004). Output is prose facts only; listings and addresses stay in the dirty scratch area and the review log. |
 | OBS-F | **M1**, user install (Steam), 2026-10-08, read-only: the DID map 0x28000002 (UNIQUEDB, `property-system.md` §8) decoded for keys 0x39, 0xB6, 0x7A and 0x95; the shader records 0x2B0005ED and 0x2B000461 decoded with the layout of `material.md` §7 (parameter declarations and defaults, permutations, render-state blocks) and their DXBC programs disassembled; the texture lists 0x40000002, 0x40000007 and 0x40017690 and the surfaces they name (headers); the render mesh 0x06000000 (presence); **all 33,159** sector records streamed and parsed (sprite `distance` per imposter key; entity view distances). Repository tools (`tessera-dattool`) and throwaway probes were used. |
 | OBS-F2 | **M1**, user install (Steam), 2026-10-09, read-only, with throwaway probes in the dirty-room scratch area and the layout of `material.md` §7: the parameter declarations, defaults and every render-state block of the two far-terrain templates 0x2B0005ED and 0x2B000461 and of the three sprite shader records 0x2B00000E, 0x2B0003B9 and 0x2B0006E5 (`misc-records.md` §5). |
+| BIN-F2 | **M4 under [decision 0011](../decisions/0011-standing-m4-authorisation.md)**, 2026-10-23. Client `x64/lotroclient64.exe`, file version 4906.0071.1794.4035, SHA-256 d22363eb9aff0fb599fd04b3efa9a1769d08da8af9d8f9b73121c12bfd7e21ee, Ghidra 12.1.3 headless on an own read-only copy of the shared analysis project (deleted afterwards), plus reads of the initial values in the executable's data section. **Questions:** (a) which graphics back ends the graphics-core values 2 and 5 of §6.1 name; (b) the built-in initial values of `FarLandscapeNormalMaps`, `NearFarSeamBlending`, `MultiPassLighting` and `LandscapeLightingQuality`, and whether the client changes them itself. **Why M1–M3 were not enough:** the preference registration and the back-end start are code; the preferences file holds only what the client chose to write (one of the two preferences is never written, OBS-F3); no running client or frame capture is available. Nothing about network, login, launcher, patcher or anti-tamper code was read. |
+| OBS-F3 | **M1/M3**, 2026-10-23, read-only: the two `UserPreferences.ini` files on the machine (the Steam prefix and the `lotro-launcher` prefix, `install-layout.md` §8), `[Render]` section. |
 | SPEC | `distant-landscape.md` (DL rows), `walker.md` (W rows), `entity-descriptor.md` §9.3, `misc-records.md` §5, `terrain-texturing.md` §12, `water.md` §8.1, `lighting.md`, `material.md`. |
 
 | # | Fact | Sources | Mark |
@@ -78,6 +80,10 @@ disassembled with a generic DXBC disassembler; these are data, not the executabl
 | FV22 | Detail texture: a nine-level texture list, top level 1,024 × 1,024 DXT1; template defaults of the texture transforms (§6.2, §6.3) | OBS-F | Confirmed 2026-10-08 |
 | FV23 | Both far-terrain templates declare material colour 2000 with default (1, 1, 1, 1) and declare neither 4003 nor 4004; every render-state block of both has cull mode 2 (back faces culled); the per-sector copy sets only 3000, 3001, 4005 and 4006 (FV10), so far terrain, stitching triangles included, is drawn with back-face culling and *M* = the template's 2000 (§5.2, §6.3, §12) | OBS-F2; BIN-F (d) via FV10 | Confirmed 2026-10-09 |
 | FV24 | The three sprite shader records declare only textures (3000; 3011 in two of them) and 4007 = 0, no 1043, 4004, 4002, 4003 or 2000; every render-state block of all three is SRCALPHA / INVSRCALPHA, ADD, depth comparison "nearer or equal", depth write on, cull none (two-sided), alpha test on with reference 0.1, material colour white (§9.3, §12) | OBS-F2 | Confirmed 2026-10-09 |
+| FV25 | Graphics-core values: 2 starts the Direct3D 10 back end, 5 the Direct3D 11 back end, 6 the OpenGL back end; 1 is the client's built-in Direct3D 9 path (no back-end library is loaded for it). After a start the client writes the stored level of the started core back to `GraphicsCore`: core 1 → level 0, 2 → 1, 5 → 2. So the condition "2 or 5" of §6.1 holds for the Direct3D 10 and Direct3D 11 back ends only (§6.1) | BIN-F2 (a); `install-layout.md` §8.3 (the stored names) | BIN; level names in level order (D3D9, D3D10, D3D11, OpenGL) Inferred |
+| FV26 | `FarLandscapeNormalMaps`: built-in initial value off; the client saves it in the preferences file (the Steam-prefix file holds `False`, the `lotro-launcher` file `True`); the quality presets of `walker.md` §11.2.2 compare it (on in two of the presets that read it, off in three; which presets those are was not mapped) (§6.1) | BIN-F2 (b); OBS-F3 | BIN; file values Confirmed 2026-10-23 |
+| FV27 | `NearFarSeamBlending`: built-in initial value off and never written to the preferences file (neither file holds the key); the game client sets it **on** itself each time it starts its graphics back end; only a client mode other than normal play leaves it off (§6.5) | BIN-F2 (b); OBS-F3 (absent from both files) | BIN; absence Confirmed 2026-10-23 |
+| FV28 | Built-in initial values of the other overlay inputs: `MultiPassLighting` on, `LandscapeLightingQuality` level 0 (the lowest), `DistantImposters` on (as `walker.md` W1); both files hold `MultiPassLighting=True` and `LandscapeLightingQuality=VeryHigh` (§6.5, §12) | BIN-F2 (b); OBS-F3 | BIN; file values Confirmed 2026-10-23 |
 
 ---
 
@@ -309,9 +315,11 @@ interoperability):
 | 0x7A | `Render_DistantLandscapeDetailTexture` | texture | 0x40000002 | detail texture (parameter 3001) |
 
 The **active template** is the normal-mapped one when the preference
-`FarLandscapeNormalMaps` is on **and** the effective graphics-core setting is 2 or 5
-(meaning of those values not traced); otherwise the plain one. A change of the active
-template discards every sector and rebuilds them (§3.4). Read the DIDs at run time.
+`FarLandscapeNormalMaps` is on **and** the effective graphics-core setting is 2 or 5, that
+is when the client draws with its Direct3D 10 or Direct3D 11 back end (FV25); otherwise the
+plain one. The preference starts off and is saved in the preferences file (FV26). A change
+of the active template discards every sector and rebuilds them (§3.4). Read the DIDs at run
+time. Tessera's renderer and its preference sources: Decisions FD16 and FD17 (§12).
 
 <a id="s6-2"></a>
 ### 6.2 Per-sector material (BIN, FV10, FV22)
@@ -407,7 +415,12 @@ In passes 0x3E and 0x40 the light is computed per vertex as in §6.3 (no normal 
 a copy of the sector's material ("sector overlay"). The landscape manager hands the sector
 material to the near-terrain builder only while the preference `NearFarSeamBlending` is on
 **and** the active template is the normal-mapped one (§6.1); `terrain-texturing.md` §12 adds
-the lighting conditions. Toggling the preference rebuilds the near terrain.
+the lighting conditions (multi-pass lighting on, landscape lighting quality above 0, device
+class above 2). Toggling the preference rebuilds the near terrain. The game client turns
+`NearFarSeamBlending` on itself whenever its graphics back end starts, and never saves it
+(FV27), so in normal play the overlay follows the template and the lighting conditions;
+`LandscapeLightingQuality` starts at level 0, so at the built-in values there is no overlay
+(FV28). Tessera's equivalents: Decisions FD16–FD18 (§12).
 
 Because the overlay draws near-field geometry (*m* = 0), its coverage is
 *w* = sat((*h* − 80) / 80) × min(1, *n*_up²): invisible within 80 units horizontally, then
@@ -655,8 +668,13 @@ within its view distance and within its LOD-class draw distance.
 | FD11 | With a full-detail ring larger than *N* = 1 (FD9 enhancement): the far mesh treats a near neighbour as LOD 0 and fans each 2-sample segment over every neighbour edge sample inside it (the client's single triangle when the neighbour is one LOD finer); the walker meshes every full-detail landblock that borders a far landblock, or one about to become far, at its finest level and leaves the far neighbour out of its own seam matching, so the edge carries every sample the fan joins | One triangle per segment would leave T-junctions against a coarser full-detail edge; the case cannot arise with *N* = 1 (§4) |
 | FD12 | With an explicit near set (the walker's), the landblocks of the set count as near inside the grid's rectangle even when their sector has no record, and their far neighbours stitch toward them; the radius form (tools, tests) keeps the §4 rule | §4 calls a landblock near only when a listed, readable sector covers it; the walker's full-detail terrain exists without a sector record, and an open edge there would show a crack |
 | FD13 | Hand-off per landblock: the full-detail terrain (and ceiling) and the landblock water skip exactly the landblocks that the far batches on the GPU cover, and only those landblocks get sector water (§8) from the far view; a near-field landblock whose full-detail mesh is not on the GPU yet is left out of the near set, so the far batch draws it until the mesh arrives; a sector's terrain batch is drawn only once its colour list is loaded or has failed | FD3 swaps work per sector; this keeps every landblock drawn exactly once while the near field changes |
-| FD14 | Draw order in the world pass: terrain layers, instanced scenery, sky, far view, water. The far view comes after the sky so that the far-draw fade (§6.3 step 3, §7.2) and the far edge blend with the sky, not with the clear colour | The client's order was not traced; `render.md` §5.1 does not list the far view yet (note for its owner) |
+| FD14 | Draw order in the world pass: the far view comes after the sky, so that the far-draw fade (§6.3 step 3, §7.2) and the far edge blend with the sky, not with the clear colour. The whole world order (hook order terrain layers, water, instanced scenery, placed decals, sky, far view; water records in the translucent stage) is `render.md` §5.1 (revised 2026-10-23) | The client's order was not traced |
 | FD15 | Walker with `--far-view on`: without `--view-blocks` the full-detail terrain, landblock water and static objects are streamed within 2 landblocks (320 units, which holds the 3 × 3 from any position in the viewer's landblock) and the terrain is drawn for the 3 × 3 near field only; `--view-blocks` keeps a larger ring (FD9, FD11). The landscape extent for the global object limit and the fog (§7.1) is *E* either way, and the far clip plane covers *E*. The walker's viewer instance is always 0, so the instance rules of §3.4 and §10 step 2 never fire | Walker settings, not client facts |
+| FD16 | Tessera's renderer counts as graphics core 5 (the Direct3D 11 back end, FV25) for §6.1 and as a device class above 2 for §6.5 and §9.1, whatever the stored `[Render] GraphicsCore` says; that key is not read for the far view | Tessera has one renderer, which draws both templates; the client's own condition excludes only its Direct3D 9 path and OpenGL back end, which Tessera does not have |
+| FD17 | Preference sources: `FarLandscapeNormalMaps`, `MultiPassLighting`, `LandscapeLightingQuality` and `DistantImposters` are read from `[Render]` of the user's `UserPreferences.ini` when the walker reads that file (`walker.md` §11.8; a command-line override may replace them); without the file, or for a key the file lacks, the client's built-in values apply (FV26, FV28: off, on, level 0, on). `NearFarSeamBlending` is **on**, as the game client sets it (FV27), and is not read from the file. So the built-in values give the plain template and no seam overlay; the owner's `lotro-launcher` file gives the normal-mapped template and the overlay | Matches what the original shows with the same file; the walker host owns the file reading |
+| FD18 | Seam-overlay inputs: multi-pass lighting = the `MultiPassLighting` value of FD17, landscape lighting quality = the stored `LandscapeLightingQuality` level of FD17 (above level 0 enables), device class as FD16. The overlay's colour-list coordinates on near vertices are (*x*_s / 480, 1 − *y*_s / 480) of the vertex's place in its sector (*x*_s, *y*_s in 0–480), sampled with clamping, with no per-block offset at all | The two values the client subtracts (`terrain-texturing.md` §12) cancel the per-block offset its vertex builder adds to texture set 0 (`terrain-texturing.md` §6.2; Inferred), so coordinates built from the sector position alone give the same image; clamping and the client's wrap on V agree inside the sector |
+| FD19 | Far entities and the landblocks' own objects (§10 step 3): the rule is by **instance ID**: a far entry whose instance ID belongs to a placement the object layer holds is not drawn as a far entity (that placement draws it by its own draw distance); every other entry inside its view distance is. Until the object layer carries instance IDs, the distance hand-over of the implementer note below is allowed: inside the cap of the landblock's own objects the far entity is not drawn, beyond it it is, with the two cross-fading over the 1.5 s object fade. Entries of type 6 (Weenie, objects of prefix 0x70) and entries whose setup is a skinned rig are created in the distant set like the others and should be drawn like any entity of that kind; leaving them undrawn until the character layer takes far entities is an allowed interim departure, not a rule of the original | The client's own test is by instance ID (§10 step 3); whether every sector entry matches a stored placement field by field is unchecked (`distant-landscape.md` §4.9 OPEN), and the distance hand-over relies on it |
+| FD20 | Draw distance of far entities with `--far-view on`: FD15's 2-landblock streaming ring (320 units) caps only the landblocks' own static objects. A far entity is drawn by the normal path of §10, min(*G*, `d0` × *M_d*), scaled by the object layer's shrink under GPU-budget pressure (*G* × the cap in force / the configured cap) | FD15 sets a streaming ring, not a draw distance for long-range objects; without this reading every far entity would be hidden |
 
 **Implementer notes of 2026-10-08, answered 2026-10-09 (spec writer).**
 
@@ -746,6 +764,15 @@ below):
 > on real data (a debug switch or a Tessera Decision would make them reachable; the walker
 > host and its flags are outside the far-view code).
 
+> **Answered (spec writer, 2026-10-23):** the values 2 and 5 are the client's Direct3D 10 and
+> Direct3D 11 back ends (FV25, BIN-F2); `FarLandscapeNormalMaps` starts off and is saved in
+> the file, `NearFarSeamBlending` starts off but the game client turns it on itself at every
+> graphics start and never saves it (FV26, FV27). Tessera's renderer meets the condition
+> (Decision FD16); the preference sources are Decision FD17. The walker therefore needs the
+> `[Render]` section passed to `FarViewSettings::apply_render_preferences` (the walker host's
+> part, FD17), not a separate switch; with the built-in values the plain template stays
+> active, which is the original's look at those values.
+
 > **OPEN:** (implementer, tessera-client, 2026-10-23) §6.5 and `terrain-texturing.md` §12
 > add conditions for the overlay (multi-pass lighting on, landscape lighting quality above 0,
 > device class above 2) whose Tessera equivalents are not defined; the walker does not test
@@ -754,6 +781,12 @@ below):
 > mesh's convention (`distant-landscape.md` §5.3), sampled with clamping; `terrain-texturing.md`
 > §12's −1/480 on *v* with wrap V gives the same image inside the sector. The two offset
 > values that the block build subtracts (Inferred: §6.2 per-block offsets) are taken as 0.
+
+> **Answered (spec writer, 2026-10-23):** Decision FD18. The three conditions map to the
+> stored `MultiPassLighting` and `LandscapeLightingQuality` (built-in on and level 0, FV28)
+> and to FD16's device class. The coordinates and the zero offsets are confirmed as Tessera's
+> rule: the subtracted values cancel the per-block offset (Inferred), so leaving out both
+> gives the client's image.
 
 > **OPEN:** (implementer, tessera-client, 2026-10-23, revised the same day) §10 step 3 says an
 > entry is created only if no entity with its instance ID exists through the main or
@@ -772,6 +805,12 @@ below):
 > hand-over acceptable, or should far entities carry their instance IDs into the object
 > layer?
 
+> **Answered (spec writer, 2026-10-23):** Decision FD19. The test by instance ID is the rule
+> and the object layer should carry the instance IDs of its placements; the distance
+> hand-over is allowed until then, with the stated assumption (unchecked,
+> `distant-landscape.md` §4.9 OPEN). Weenie entries and skinned rigs not being drawn is an
+> allowed interim departure, recorded in FD19.
+
 > **OPEN:** (implementer, tessera-client, 2026-10-23) The draw distance of far entities
 > under the walker's object cap. §10 draws them by the normal path, min(*G*, `d0` × *M_d*),
 > but with `--far-view on` the walker caps every static object at 320 units (FD15's streaming
@@ -780,6 +819,10 @@ below):
 > configured cap), not by the 320 units (`apps/client/src/walker/objects.rs`
 > `far_entity_cap`). Question: is that the intended reading of FD15 (streaming ring for the
 > landblocks' own objects only)?
+
+> **Answered (spec writer, 2026-10-23):** yes, that is the intended reading (Decision FD20):
+> FD15's 320 units cap the landblocks' own objects only; far entities keep min(*G*, `d0` ×
+> *M_d*) under the layer's GPU-budget shrink.
 
 > **OPEN:** whether the ceiling mesh uses the terrain descriptors' stitch flags (neighbours
 > without a ceiling included) or flags of its own. Not traced. **Tessera Decision:** the same
@@ -908,7 +951,7 @@ corner: (200 − 160) × 1 + (40 − 160) × 0 = 40 > 0, mirrored. Byte 0: *θ* 
 
 > **OPEN:** The identity of `c_NearViewOrigin` (Inferred: the viewer landblock's south-west
 > corner), of *P* and *φ* in §9.3 (Inferred: render-target height and vertical field of
-> view), and of graphics-core values 2 and 5 (§6.1).
+> view). (The graphics-core values 2 and 5 of §6.1 are answered by FV25, 2026-10-23.)
 
 > **OPEN:** Whether any renderer other than the world view (for example reflections or a map
 > view) turns on the near-batch switch (§5.1).
@@ -951,3 +994,4 @@ This spec edits no other spec except one cross-reference line in `distant-landsc
 |---|---|
 | 2026-10-08 | First version (Review): radii and settings, near field, sector list and its rebuild rules, per-landblock grid, far batches and the near-batch rule, stitching against the near field, far-terrain materials (templates, detail texture, normal maps, shading, fade, near-view mask), seam overlay, extent and horizon fill, sector water at every distance, distant sprites (gates, fade-in distances, cross-fade, heading and mirror), far entities, transitions, Tessera Decisions, invariants, worked examples, OPENs (BIN-F, OBS-F). |
 | 2026-10-09 | Spec writer (dirty room); status Accepted → Revised, awaiting review. §12: the implementer notes of 2026-10-08 answered; new Tessera Decisions FD10 (two-sided stitching triangles), FD11 (stitching to a larger full-detail ring), FD12 (explicit near set), FD13 (hand-off per landblock), FD14 (far view after the sky), FD15 (walker settings); the gaps recorded as an implementation status; three notes stay OPEN with Decisions (ceiling stitch flags, fake light default direction, horizon mesh height and depth). New data facts (OBS-F2): FV23 (templates: 2000 = (1, 1, 1, 1), back-face culling, no 4003 or 4004), FV24 (sprite records: alpha test on, reference 0.1, alpha blend, depth write, two-sided). §5.2, §6.3 and §9.3 cite them; §16 gains a row for `render.md` §5.1. |
+| 2026-10-23 | Spec writer (dirty room); status Accepted → Revised, awaiting independent review. Answers the five implementer OPENs of §12 dated 2026-10-23. New sources BIN-F2 (Ghidra 12.1.3 and data-section reads: graphics-core values and preference initial values) and OBS-F3 (the two preferences files); new rows FV25 (core values 2 and 5 are the Direct3D 10 and 11 back ends), FV26 (`FarLandscapeNormalMaps` off by default, saved), FV27 (`NearFarSeamBlending` set on by the game client at every graphics start, never saved), FV28 (built-in `MultiPassLighting` on, `LandscapeLightingQuality` level 0). §6.1 and §6.5 cite them. New Tessera Decisions FD16 (Tessera counts as core 5 and device class above 2), FD17 (preference sources), FD18 (overlay inputs, coordinates, no per-block offset), FD19 (far entities by instance ID; distance hand-over and undrawn Weenie and skinned entries allowed as interim), FD20 (far-entity draw distance under FD15). FD14 points to the decided order of `render.md` §5.1. The §15 OPEN on the identity of the core values is closed. |

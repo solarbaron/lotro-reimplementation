@@ -287,3 +287,66 @@ re-runs this audit.
 URL built from path fragments (§2.4.1 then names only the user value and the version
 resource); admin/GM classes are out of scope; namespace and SOAPAction identifiers may stay as
 interoperability names; reviewers never edit what they review.
+
+## 8. Audit of the second remediation pass (2026-10-24, commit 6c71fe66): BLOCK
+
+A default-mode clean-room audit of `m8-remediation` at `6c71fe66` found that most of §7 is
+fixed (B2, N1, N3 for the cited items, N4–N7, N9, N10), and the guard scripts pass. It still
+blocks the merge; M8 stays paused (decision 0042 item 4). Line numbers refer to `6c71fe66`.
+
+**Blocking**
+
+- **B4 remains, with new contradictions.** Not settled from §7: fragment header field 8b
+  (`fragDataLen` in session 399/408 vs `blobChannel` in world 106, and world 199 lists fields
+  the session spec lacks); the 5-byte `0xE0` integer form (world 106/199 vs session 379,
+  400–408); the routing header (world 114 vs session §9.1 747–752); 0x179/0x186 as chat-server
+  events (play 749/762) vs envelope containers (session §9.4.2 786–802), with no statement
+  that the chat connection has its own opcode space. New: the `base_flags` byte (session
+  761 vs session 28, world 436/690/701/1359, play 297); opcode reuse in the world §4.4.3
+  table (922–947: 0x15, 0x63, 0x76, 0xC7, 0xDC, 0xFE with other layouts than §3.3, §4.3.1,
+  §5.6.1, §5.8.1, and framed against E0/E2; 0xFE has three meanings, world 946/1209, play
+  554); the RPC envelopes (play §5.2 319–368 vs gameplay §2.4 135–146 for 0x28, 0x5F, 0xC9,
+  0x30); `ActionPayload` (play 122/131 vs world 1147/1158; world 1186 vs 1143); 0xCE with mode
+  bit 0x10 (world 293/1096 vs play 209/213); 0x24 offset 9 (world 1110 vs play 103); the
+  in-game ticket refresh and launch arguments (login §4.3 596–657, 538/542/543/572 vs play
+  §6.1.2 444–461); the chat-server connection state (play 618/658/938 vs session 462–463; play
+  606 old name and wrong section); the gameplay opcode census (394 for 0xCC, 404–408 for
+  0x3000001B–1F vs world and play); handshake header names differ between session, world
+  (96, 133–135, 721, 841, 854) and login. Settle each against the install or the binary and
+  record it once (transport in the session spec, world events in the world spec, RPC
+  envelopes in one spec); say explicitly where opcode spaces are separate. The world,
+  session and play specs go back to Review.
+- **Client-internal residue:** world 764 (`flag_60`, reads like a structure offset); play
+  600–602 (an in-memory flag word `0x00300400`, a source ID and priority that are not wire
+  fields); session 632 (an in-memory "arrived encrypted" bit); session 923 (`ListenEndpoint`,
+  "6-byte" for an 8-byte range); play 496 (`InterfaceId`, `ServiceType`), play 606
+  (`Credentials`), gameplay 3988 (`BoS`) not marked as invented; registration and pipeline
+  prose at world 692, 742, 956, 968, 1204, play 270, 599, 651, 716, world 758 and play 236–238
+  ("world-view controller"). Reduce to wire behaviour, mark invented names, or state the
+  interoperability source.
+- **Process evidence (decision 0042 item 7, CLEAN_ROOM.md §8):** writer and reviewer work
+  are in one commit with an invalid `Clean-Room-Role`, so "reviewers made no body edits"
+  cannot be checked. Commit each pass in two steps: a writer commit (`Clean-Room-Role: spec`,
+  specs in Review), then a reviewer commit (`Clean-Room-Role: review`) touching only headers
+  and review records. `Assisted-by:` uses the `TOOL:MODEL` form (`19acce5` has none;
+  `6c71fe66` has a free-text value).
+
+**Notes**
+
+- **N2 residue:** C-style expressions at session 73, 79, 96; play 257–259, 688; gameplay 61, 96.
+- **Unknown meanings without OPEN:** play 106 (`slot_flags` 0x6E), 112 (`trailing_seq`),
+  129 (`aux_word_a`), 227 (`set_pos_flags`), 144 (a heading variant with no condition), the
+  chat-server `status_a`/`status_b`/`meta_*` fields; gameplay 3864–3866 ("status callback
+  1/2/3"); session 225 ("if tolerated" is a guess).
+- **Content:** the login test vectors (774–847, 273, 513, 604) put the real service path
+  fragments and ports on `.example.invalid` hosts; use neutral paths and ports. Game-string
+  enum tables (world 664–670, play 833–834): keep only values the logic needs, say the rest
+  is read from the `0x23xxxxxx` records at run time.
+- **Decision 0042 item 2:** play 753 (`chat_admin_move_room_req` 0x017D) and play 524 (an
+  administrative tell 0x84EC002C) need the never-send / ignore-and-count rule.
+- **Headers:** say in each spec's status that acceptance is gated by decision 0042 item 4.
+- Minor: `HashTable<…>` notation (gameplay 156–167), the anchor `netblob-event-census`
+  (gameplay 178), `0x0465AB10..12` in world 897 breaking the month pattern.
+
+**Next step:** a third pass on `m8-remediation`, with the process of the "Blocking: process"
+item, then this audit again.

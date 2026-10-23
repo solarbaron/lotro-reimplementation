@@ -90,6 +90,12 @@ fn anim(id: u32, clip: u32, layer: u32, looping: bool) -> Node {
 }
 
 fn prop(id: u32) -> Node {
+    timed_prop(id, [0.0; 4], true)
+}
+
+/// A prop node with (`FadeInTime`, `LifeTime`, `FadeOutTime`, `DestroyTime`) and
+/// `Persistent`.
+fn timed_prop(id: u32, times: [f32; 4], persistent: bool) -> Node {
     node(
         id,
         NodeKind::MESH_FX,
@@ -97,10 +103,10 @@ fn prop(id: u32) -> Node {
             entity: PROP,
             attach_to_parent: true,
             allow_physics: false,
-            fade_in_time: 0.0,
-            life_time: 0.0,
-            fade_out_time: 0.0,
-            destroy_time: 0.0,
+            fade_in_time: times[0],
+            life_time: times[1],
+            fade_out_time: times[2],
+            destroy_time: times[3],
             holding_location: LOCATION,
             bone_offset: [0.0; 3],
             offset_rotation_yaw: 0.0,
@@ -109,7 +115,7 @@ fn prop(id: u32) -> Node {
             remove_rotation: false,
             bone_type: 0,
             behavior: 0,
-            persistent: true,
+            persistent,
             on_water: false,
             use_parent_scale: true,
             use_particle_scale: false,
@@ -192,6 +198,11 @@ fn gestures() -> Node {
 }
 
 fn table() -> ScriptTable {
+    table_with(prop(22))
+}
+
+/// The table with `prop_node` as the stage-1 branch's prop.
+fn table_with(prop_node: Node) -> ScriptTable {
     let switch = node(
         20,
         NodeKind::SWITCH,
@@ -202,7 +213,7 @@ fn table() -> ScriptTable {
             synchronized: false,
         }),
         vec![
-            case(1, vec![anim(21, STANCE_1, 80, true), prop(22), gestures()]),
+            case(1, vec![anim(21, STANCE_1, 80, true), prop_node, gestures()]),
             case(6, vec![anim(23, STANCE_6, 80, true)]),
             transition(1, 6, vec![anim(24, TRANSITION, 85, false)]),
         ],
@@ -271,6 +282,10 @@ impl LiveClips for Clips {
 }
 
 fn package(stage: i32) -> Arc<LivePackage> {
+    package_with(stage, table())
+}
+
+fn package_with(stage: i32, table: ScriptTable) -> Arc<LivePackage> {
     let names: HashMap<String, u32> = HashMap::new();
     let mut vocab = RuntimeVocabulary::from_names(&names);
     vocab.startup_key = Some(STARTUP);
@@ -283,7 +298,7 @@ fn package(stage: i32) -> Arc<LivePackage> {
     };
     init.properties.set(STAGE, PropertyValue::Int(stage));
     Arc::new(LivePackage {
-        records: Arc::new(LiveRecords::from_parts([(TABLE, table())], [])),
+        records: Arc::new(LiveRecords::from_parts([(TABLE, table)], [])),
         vocab,
         catalog: Arc::new(catalog),
         init,
@@ -305,6 +320,7 @@ fn package(stage: i32) -> Arc<LivePackage> {
         props_reached: 1,
         prop_notes: Vec::new(),
         mesh_fx_pids: MeshFxFieldPids::default(),
+        prop_full_opacity: 1.0,
     })
 }
 
@@ -625,4 +641,97 @@ fn a_deferred_clip_waits_for_room_in_the_command_list() {
     let (plays, _) = split(&f.take_clip_commands());
     assert!(plays.iter().any(|p| p.0 == STANCE_1), "{plays:x?}");
     assert!(f.running_clips().contains(&(80, false, false)));
+}
+
+fn start_with(prop_node: Node) -> LiveFigure {
+    LiveFigure::start(
+        package_with(1, table_with(prop_node)),
+        Box::new(Clips::new()),
+        tessera_net::EntityId(9),
+    )
+    .expect("the figure's scripts start")
+}
+
+/// Advances `f` to live time `t` in steps of 0.05 s.
+fn advance_to(f: &mut LiveFigure, from: &mut f64, t: f64) {
+    while *from + 1e-9 < t {
+        let step = (t - *from).min(0.05);
+        f.advance(step);
+        *from += step;
+    }
+}
+
+fn opacity_near(f: &LiveFigure, want: Option<f32>) -> bool {
+    match (f.prop_opacity(PROP_KEY_BASE), want) {
+        (Some(a), Some(b)) => (a - b).abs() < 1e-3,
+        (None, None) => true,
+        _ => false,
+    }
+}
+
+/// `appearance.md` §5.7 step 4, the worked example on the screen figure: a `Persistent` 0
+/// node (fade-in 0.25, life 0.5, fade-out 0.25, destroy 0.25) whose prop is placed when the
+/// node starts (*t*ₚ = *t*₀ = 0): full at 0.25, fading from 0.75, 0 at 1.0, gone at 1.35.
+/// Its node completed at once, so a stage change does not touch the prop.
+#[test]
+fn a_non_persistent_prop_lives_by_its_times() {
+    let mut f = start_with(timed_prop(22, [0.25, 0.5, 0.25, 0.25], false));
+    let mut t = 0.0;
+    assert!(
+        opacity_near(&f, Some(0.0)),
+        "{:?}",
+        f.prop_opacity(PROP_KEY_BASE)
+    );
+    assert!(!f.prop_shown(PROP_KEY_BASE), "opacity 0 at placement");
+    advance_to(&mut f, &mut t, 0.1);
+    assert!(opacity_near(&f, Some(0.4)));
+    assert!(f.prop_translucent(PROP_KEY_BASE), "below 1 while fading in");
+    advance_to(&mut f, &mut t, 0.5);
+    assert!(opacity_near(&f, Some(1.0)));
+    assert!(!f.prop_translucent(PROP_KEY_BASE));
+    // The node completed at once: the stage change leaves its prop alone.
+    f.set_keys(Some(6), None);
+    advance_to(&mut f, &mut t, 0.875);
+    assert!(opacity_near(&f, Some(0.5)));
+    assert!(f.prop_translucent(PROP_KEY_BASE));
+    advance_to(&mut f, &mut t, 1.2);
+    assert!(opacity_near(&f, Some(0.0)), "DestroyTime at opacity 0");
+    assert_eq!(f.props_alive(), 1);
+    advance_to(&mut f, &mut t, 1.4);
+    assert!(opacity_near(&f, None), "removed at 1.35");
+    assert_eq!(f.props_alive(), 0);
+    assert_eq!(f.stats().props_removed, 1);
+}
+
+/// A `Persistent` 1 node's prop fades in, stays while its node runs and fades out from the
+/// stop (the stage change stops the stage-1 branch): from the value reached, at
+/// 1 ÷ `FadeOutTime` per second, then `DestroyTime` + 0.1 s before the removal.
+#[test]
+fn a_persistent_prop_fades_out_when_its_node_stops() {
+    let mut f = start_with(timed_prop(22, [1.0, 0.1, 1.0, 0.5], true));
+    let mut t = 0.0;
+    advance_to(&mut f, &mut t, 0.5);
+    assert!(opacity_near(&f, Some(0.5)));
+    advance_to(&mut f, &mut t, 0.6);
+    // Not faded by its `LifeTime` (0.1).
+    assert!(opacity_near(&f, Some(0.6)));
+    f.set_keys(Some(6), None);
+    assert!(
+        f.prop_translucent(PROP_KEY_BASE),
+        "Translucent from the stop"
+    );
+    advance_to(&mut f, &mut t, 0.9);
+    assert!(
+        opacity_near(&f, Some(0.3)),
+        "{:?}",
+        f.prop_opacity(PROP_KEY_BASE)
+    );
+    advance_to(&mut f, &mut t, 1.5);
+    assert!(opacity_near(&f, Some(0.0)));
+    assert!(!f.prop_shown(PROP_KEY_BASE));
+    // Removed at 0.6 + 1.0 + 0.5 + 0.1 = 2.2.
+    advance_to(&mut f, &mut t, 2.15);
+    assert_eq!(f.props_alive(), 1);
+    advance_to(&mut f, &mut t, 2.25);
+    assert_eq!(f.props_alive(), 0);
 }

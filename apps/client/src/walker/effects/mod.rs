@@ -67,20 +67,31 @@
 //!
 //! Not done here (OPEN in the specs, or no data path in the walker): fork effects are not
 //! drawn (`particles.md` rule §10.2); the frame-buffer distortion program and the soft-particle
-//! factor of runtime §9.1.1; the drop-driven weather spawns and the figure effects of
-//! §11.2.3 step 4 and §11.2.5 (Q-RT13, [`weather`]); the gameplay event handler (Q-RT5).
+//! factor of runtime §9.1.1; the snow flakes' own motion and geometry (Q-RT13: Tessera
+//! draws one flake per drop as a short streak, rule 17); the gameplay event handler (Q-RT5);
+//! the props of MeshFX nodes in the start-up scripts of static entities and placed figures
+//! (the layer's sink keeps the runtime's default: the node shows nothing and completes at
+//! once, so the prop times of `appearance.md` §5.7 apply only to the creation figure's
+//! props, [`super::characters::live`]).
 //!
 //! **Weather** (runtime §11.2, rule 17, [`weather`]): the ten engine-run systems, the global
-//! wind from the environment state, the sky-exposure tests, the branch thresholds, the
-//! camera systems and the impact spawns.
+//! wind from the environment state, the drop sets of the weather code with their count gate
+//! (§11.2.6), the sky-exposure tests, the branch thresholds, the camera systems, the impact
+//! spawns, the spawns from the drops (§11.2.3 step 4), the figure effects of the player's
+//! avatar (§11.2.5) and the rain and snow streaks ([`EffectLayer::draw`], translucent stage
+//! of the world pass).
 //!
 //! **Opacity** (rule 15): `inherit_opacity` systems of a figure owner take the opacity the
-//! character layer's fade gave the figure in its last draw pass, those of a static owner of
-//! a landblock the opacity the object layer drew its placed object with in its last draw
-//! (`ObjectLayer::placed_object_opacity`: the draw-distance fade or cross-fade; 1 when the
-//! object was not drawn then, [`static_parent_opacity`]); both one frame late, since
-//! placement runs before the draw pass (a Tessera reading). The creation viewport's owners
-//! count as 1.
+//! character layer's fade gave the figure in its last draw pass (0 and view- or cell-culled
+//! figures included), those of a static owner of a landblock the opacity the object layer
+//! drew its placed object with in its last draw (`ObjectLayer::placed_object_opacity`: the
+//! draw-distance fade or cross-fade); both one frame late, since placement runs before the
+//! draw pass (allowed by rule 15). A placed object the last draw pass culled keeps the
+//! opacity of its last drawn frame, one never drawn since its owner spawned counts as 0, and
+//! an owner with no drawn object (no parts, or its landblock's objects not in the object
+//! layer) as 1 (`parent_opacity_step`). **Build gap:** the object layer does not expose the
+//! current fade of a culled object, so a fade that changes while the object stays culled
+//! is not followed. The creation viewport's owners count as 1.
 //!
 //! **Systems of the pass after post-processing** (rule 16): systems with `uses_video_post`
 //! are queued apart ([`EffectLayer::take_post_draws`]) and the walker queues them in the
@@ -290,6 +301,9 @@ pub struct EffectStats {
     pub weather_systems: usize,
     /// Weather and water systems placed in the last world frame.
     pub weather_placed: usize,
+    /// The drops of the weather code and the figure effects (`particle-runtime.md` §11.2.5,
+    /// §11.2.6).
+    pub weather: weather::WeatherStats,
 }
 
 /// Counts of one [`EffectLayer::draw_systems`].
@@ -309,6 +323,8 @@ struct Boot {
     vocab: RuntimeVocabulary,
     /// The DIDs of the ten weather systems (`particles.md` §7.1.3).
     weather: [Option<u32>; weather::WEATHER_SYSTEMS],
+    /// The surface records of the rain and snow drops (`particle-runtime.md` §11.2.6).
+    drop_materials: [Option<u32>; 2],
 }
 
 /// One owner while it is spawned.
@@ -353,9 +369,9 @@ struct OwnerFrame<'a> {
     points: Option<&'a data::AttachPoints>,
     drawn: bool,
     /// The opacity the owner is drawn with (`particle-runtime.md` §12 rule 15): a figure's
-    /// fade from the character layer's last draw; 1 for owners not drawn and for static
-    /// owners here (their placed object's opacity comes from the object layer,
-    /// [`static_parent_opacity`]).
+    /// fade from the character layer's last draw pass (culled figures included); 1 for
+    /// static owners here (their placed object's opacity comes from the object layer,
+    /// `remembered_parent_opacity`).
     opacity: f32,
 }
 
@@ -539,6 +555,89 @@ fn look_textures(
     Some((tex, tex2))
 }
 
+/// Queues the streaks of the two drop sets of this frame (`particle-runtime.md` §11.2.6
+/// step 7, rule 17): one quad per drop in use, built with the camera's right axis (the
+/// camera looking along `dir`) and coloured by the set's head and tail colours times the
+/// environment's `colour_4`, drawn through the particle pipeline with the look of the set's
+/// surface record (UNIQUEDB key 0x2B for rain, 0x3B for snow) in the translucent stage of
+/// the world pass. Nothing is drawn for a set whose record has not loaded, is not a
+/// drawable surface, or whose textures are still loading. Returns the vertices queued.
+fn draw_drops(
+    st: &mut FxState,
+    pass: &mut Pass,
+    objects: &ObjectLayer,
+    dir: Vec3,
+    shift: Vec3,
+    pending: &mut usize,
+) -> usize {
+    let Some(right) = weather::camera_rotation(dir).map(|q| q * Vec3::X) else {
+        return 0;
+    };
+    let FxState {
+        data,
+        weather,
+        surface_states,
+        rng,
+        now,
+        ..
+    } = st;
+    let mut vertices = 0usize;
+    for (set, material) in weather.drop_sets() {
+        let Some(material) = material else { continue };
+        if set.streaks().is_empty() {
+            continue;
+        }
+        let Some(Some(record)) = data.cached_record(material) else {
+            continue;
+        };
+        let EffectRecord::Surface(look) = &*record else {
+            continue;
+        };
+        if !look.drawable {
+            continue;
+        }
+        let (alpha, uv) = look_at(look, material, *now, surface_states, rng);
+        let Some((tex, tex2)) = look_textures(look, objects, pending) else {
+            continue;
+        };
+        let params = set.params();
+        let mut quads: Vec<ParticleVertex> = Vec::with_capacity(set.streaks().len() * 4);
+        for s in set.streaks() {
+            if s.head == s.tail {
+                // A drop without a fall direction yet is drawn with no length.
+                continue;
+            }
+            if quads.len() + 4 > tessera_render::MAX_PARTICLE_DRAW_VERTICES {
+                break;
+            }
+            if let Some(q) = tessera_particles::weather::streak_quad(s, right, params, weather.tint)
+            {
+                quads.extend(q.iter().map(|v| ParticleVertex {
+                    position: (v.position + shift).to_array(),
+                    color: v.colour.map(|c| c.clamp(0.0, 1.0)),
+                    uv: v.uv,
+                }));
+            }
+        }
+        if quads.is_empty() {
+            continue;
+        }
+        vertices += quads.len();
+        pass.particles(ParticleDraw {
+            quad_vertices: quads.len(),
+            vertices: quads,
+            texture: tex,
+            alpha,
+            tint: [1.0; 4],
+            material: look.material,
+            shading: look.shading,
+            second_texture: tex2,
+            uv,
+        });
+    }
+    vertices
+}
+
 /// Queues the ribbons of the beams drawn this frame (`particle-runtime.md` §11.1 step 6 and
 /// the ribbon vertices, RT45): camera-facing quads seen from `eye` (sim frame) with one side
 /// vector per beam, coloured by `ColorAndOpacity` with its alpha × the envelope, tail, body
@@ -694,6 +793,9 @@ struct FxState {
     weather: weather::Weather,
     /// Systems with `uses_video_post` are drawn (rule 16, [`EffectConfig::video_post`]).
     video_post: bool,
+    /// The parent opacity of each static owner at its last drawn frame (rule 15,
+    /// `parent_opacity_step`).
+    parent_opacity: HashMap<EntityId, f32>,
 }
 
 impl FxState {
@@ -752,7 +854,10 @@ impl FxState {
                     model: &v.model,
                     points: v.points.as_deref(),
                     drawn: v.drawn,
-                    opacity: if v.drawn { v.opacity } else { 1.0 },
+                    // The character layer records the fade of a figure its draw pass culls
+                    // (view, cell, fade 0) too; a figure it does not draw at all places
+                    // nothing (Q-RT1), so its value is not used.
+                    opacity: v.opacity,
                 })
             }
         }
@@ -1319,6 +1424,12 @@ pub struct EffectLayer {
     /// [`EffectLayer::draw`], for the walker's late particle stage
     /// ([`EffectLayer::take_post_draws`], `particle-runtime.md` §12 rule 16).
     post_draws: Vec<ParticleDraw>,
+    /// The `[Render]` level of `AtmosphericsDetail` (`None`: the built-in `Medium`;
+    /// [`EffectLayer::set_atmospherics_detail`]).
+    atmospherics: Option<i64>,
+    /// The environment state's `colour_4` for the drop streaks
+    /// ([`EffectLayer::set_precipitation_colour`]).
+    precipitation_colour: [f32; 4],
 }
 
 /// Where [`EffectLayer::draw_systems`] queues particle draws: a pass, or (in tests and for
@@ -1424,11 +1535,55 @@ fn post_stage_lighting(l: &tessera_render::FrameLighting) -> tessera_render::Fra
     }
 }
 
-/// The parent opacity of a static owner drawn as `placed` (`particle-runtime.md` §12 rule 15):
-/// the opacity the object layer drew that object with in its last draw, clamped to [0, 1];
-/// 1 when it was not drawn then (or the layer does not hold it), as for an owner not drawn.
-fn static_parent_opacity(objects: &ObjectLayer, placed: &data::PlacedObject) -> f32 {
-    parent_factor(objects.placed_object_opacity(placed.key, &placed.entity))
+/// The parent opacity of static owner `id` drawn as `placed` (rule 15), from the object
+/// layer ([`parent_opacity_step`]).
+fn remembered_parent_opacity(
+    memory: &mut HashMap<EntityId, f32>,
+    id: EntityId,
+    objects: &ObjectLayer,
+    placed: &data::PlacedObject,
+) -> f32 {
+    let has_object = !placed.entity.parts.is_empty() && objects.holds(placed.key);
+    let drawn = if has_object {
+        objects.placed_object_opacity(placed.key, &placed.entity)
+    } else {
+        None
+    };
+    parent_opacity_step(memory, id, has_object, drawn)
+}
+
+/// Rule 15 for a static owner, remembered in `memory`. `has_object`: the owner has a drawn
+/// object (its entity has parts and the object layer holds its landblock's objects);
+/// `drawn`: the opacity the object layer drew that object with in its last draw pass
+/// (`None`: the pass culled it).
+///
+/// - Drawn: that opacity (clamped to [0, 1]), stored.
+/// - Culled after it was drawn: the value stored at its last drawn frame (the rule's
+///   "previous drawn frame"; a fade that changes while it stays culled is not followed,
+///   because the object layer does not expose the fade of a culled object).
+/// - Culled and never drawn since the owner spawned: 0 (Tessera reading: the object layer
+///   does not expose its current fade; the usual reason a held object is not drawn is that
+///   its fade is at 0, beyond its draw distance, and a frustum-culled one is drawn in the
+///   next frame as soon as it comes into view).
+/// - No drawn object at all: 1, and the stored value is dropped.
+fn parent_opacity_step(
+    memory: &mut HashMap<EntityId, f32>,
+    id: EntityId,
+    has_object: bool,
+    drawn: Option<f32>,
+) -> f32 {
+    if !has_object {
+        memory.remove(&id);
+        return 1.0;
+    }
+    match drawn {
+        Some(o) => {
+            let v = parent_factor(Some(o));
+            memory.insert(id, v);
+            v
+        }
+        None => memory.get(&id).copied().unwrap_or(0.0),
+    }
 }
 
 /// Rule 15's factor from the object layer's answer: the opacity clamped to [0, 1]; 1 for no
@@ -1481,13 +1636,14 @@ impl EffectLayer {
                     let vocab = RuntimeVocabulary::from_data(&data.dict, |d| {
                         crate::audio::scripts::mapper(&data.set, d)
                     });
-                    let weather = weather::read_weather_dids(&tessera_props::GameData::new(
-                        Arc::clone(&data.set),
-                    ));
+                    let game = tessera_props::GameData::new(Arc::clone(&data.set));
+                    let weather = weather::read_weather_dids(&game);
+                    let drop_materials = weather::read_drop_materials(&game);
                     Boot {
                         data: Arc::new(data),
                         vocab,
                         weather,
+                        drop_materials,
                     }
                 });
                 let _ = tx.send(r);
@@ -1524,7 +1680,23 @@ impl EffectLayer {
             stage: None,
             decals,
             post_draws: Vec::new(),
+            atmospherics: None,
+            precipitation_colour: [1.0; 4],
         }
+    }
+
+    /// Sets the `[Render]` option `AtmosphericsDetail` the drop counts read
+    /// (`particle-runtime.md` §11.2.6 step 1: level 0 `Low`, 1 `Medium`, others `High`;
+    /// `None`: the built-in `Medium`).
+    pub fn set_atmospherics_detail(&mut self, level: Option<i64>) {
+        self.atmospherics = level;
+    }
+
+    /// Sets the environment state's `colour_4` (`environment.md` E43) that multiplies the
+    /// vertex colours of the drop streaks (§11.2.6 step 7); values that are not finite count
+    /// as 1. White until set.
+    pub fn set_precipitation_colour(&mut self, colour: [f32; 4]) {
+        self.precipitation_colour = colour.map(|c| if c.is_finite() { c } else { 1.0 });
     }
 
     /// Hands over the draws of the systems of the pass after post-processing queued by the
@@ -1636,8 +1808,9 @@ impl EffectLayer {
                     refused: 0,
                     surface_states: HashMap::new(),
                     session: session::SessionState::default(),
-                    weather: weather::Weather::new(b.weather),
+                    weather: weather::Weather::new(b.weather).with_materials(b.drop_materials),
                     video_post: self.config.video_post,
+                    parent_opacity: HashMap::new(),
                 });
                 self.stats.ready = true;
                 tracing::info!("particle effects ready");
@@ -1776,6 +1949,7 @@ impl EffectLayer {
             let now = st.now;
             st.manager.remove_owner(id.0, now);
             st.owners.remove(&id);
+            st.parent_opacity.remove(&id);
             st.handles.retain(|_, o| *o != id);
         }
     }
@@ -2019,8 +2193,28 @@ impl EffectLayer {
         let _ = Self::with_graph(&mut self.graph, &mut self.st, |g, sink| g.advance(sink, dt));
         // The weather inputs of the frame (`particle-runtime.md` §11.2.1–§11.2.3).
         let precipitation = self.config.precipitation;
+        let quality = tessera_particles::weather::quality_factor(self.atmospherics);
         if let Some(st) = self.st.as_mut() {
-            st.weather_prepare(input.weather.as_ref(), &eye, input.streamer, precipitation);
+            // §11.2.5: the player's figure, every bone with a parent counted as marked.
+            let figure = input
+                .weather
+                .as_ref()
+                .and_then(|w| w.avatar.as_ref())
+                .and(input.characters.player_id())
+                .and_then(|id| input.characters.entity_effect_view(id))
+                .filter(|v| v.region == st.region)
+                .map(|v| weather::PlayerFigure {
+                    segments: weather::figure_segments(&v, |p| st.to_sim(p)),
+                });
+            st.weather.tint = self.precipitation_colour;
+            st.weather_prepare(
+                input.weather.as_ref(),
+                &eye,
+                input.streamer,
+                precipitation,
+                quality,
+                figure.as_ref(),
+            );
         }
         // 2. Sweep, placement, housekeeping (§3.2, Q-RT1 Decision).
         self.place_all(input.lighting, objects);
@@ -2247,6 +2441,12 @@ impl EffectLayer {
             let Some(owner) = st.owners.get(id).cloned() else {
                 continue;
             };
+            // Rule 15: a static owner's drawn opacity, kept while the draw pass culls it
+            // (`parent_opacity_step`).
+            let remembered = owner
+                .placed
+                .as_ref()
+                .map(|p| remembered_parent_opacity(&mut st.parent_opacity, *id, objects, p));
             let Some(f) = st.owner_frame(&owner) else {
                 continue;
             };
@@ -2255,10 +2455,7 @@ impl EffectLayer {
             }
             let (scale_a, scale_b) = owner_scale_vectors(f.scale, Some(owner.particle_scale));
             let world = f.world;
-            let parent_opacity = match &owner.placed {
-                Some(p) => static_parent_opacity(objects, p),
-                None => f.opacity,
-            };
+            let parent_opacity = remembered.unwrap_or(f.opacity);
             let model: Vec<Mat4> = f.model.to_vec();
             let points = f.points.cloned();
             // Unlit frames: the white ambient and no lights (a list set in a lit frame is
@@ -2403,6 +2600,11 @@ impl EffectLayer {
         let cam_eye = eye - shift;
         let mut pending = 0usize;
         let ribbons = draw_ribbons(st, pass, objects, cam_eye, shift, &mut pending);
+        // §11.2.6 step 7: the rain streaks and snow flakes of the weather code.
+        let streaks = draw_drops(st, pass, objects, dir, shift, &mut pending);
+        st.weather.stats.streak_vertices = streaks;
+        st.weather.stats.max_streak_vertices = st.weather.stats.max_streak_vertices.max(streaks);
+        self.stats.weather = st.weather.stats;
         // Rule 16: the post-processing systems go to the walker's late stage.
         let mut sink = ParticleSink {
             main: pass,
@@ -2925,6 +3127,38 @@ mod tests {
         assert_eq!(parent_factor(Some(1.5)), 1.0);
         assert_eq!(parent_factor(Some(-0.5)), 0.0);
         assert_eq!(parent_factor(Some(0.25)), 0.25);
+    }
+
+    /// Rule 15 as revised (`particle-runtime.md` §12): a static owner the draw pass culls
+    /// keeps the opacity of its last drawn frame, one never drawn since it spawned counts
+    /// as 0, and only an owner with no drawn object counts as 1 (its stored value dropped).
+    #[test]
+    fn culled_static_owners_keep_their_fade() {
+        let mut memory = HashMap::new();
+        let id = EntityId(7);
+        // Never drawn yet (beyond its draw distance when its landblock streamed in).
+        assert_eq!(parent_opacity_step(&mut memory, id, true, None), 0.0);
+        assert!(memory.is_empty());
+        // Drawn at 0.4, then culled twice.
+        let seq: Vec<f32> = [Some(0.4), None, None]
+            .into_iter()
+            .map(|d| parent_opacity_step(&mut memory, id, true, d))
+            .collect();
+        assert_eq!(seq, [0.4, 0.4, 0.4]);
+        // Faded to 0 and culled: 0 stays 0.
+        assert_eq!(parent_opacity_step(&mut memory, id, true, Some(0.0)), 0.0);
+        assert_eq!(parent_opacity_step(&mut memory, id, true, None), 0.0);
+        // Its landblock's objects leave the object layer: no drawn object, factor 1.
+        assert_eq!(parent_opacity_step(&mut memory, id, false, None), 1.0);
+        assert!(!memory.contains_key(&id));
+        // Back in the layer but not drawn yet: 0 again, not the old value.
+        assert_eq!(parent_opacity_step(&mut memory, id, true, None), 0.0);
+        // Another owner's value is its own.
+        assert_eq!(
+            parent_opacity_step(&mut memory, EntityId(8), true, Some(0.9)),
+            0.9
+        );
+        assert_eq!(parent_opacity_step(&mut memory, id, true, None), 0.0);
     }
 
     /// Review finding, `particle-runtime.md` §12 rule 16: with a late stage the systems of

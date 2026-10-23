@@ -1508,3 +1508,12 @@ path = "fuzz_targets/client_official_entry.rs"
 test = false
 doc = false
 bench = false
+
+# --- Weather drops, figure effects and MeshFX prop life (particle-runtime.md §11.2.5–§11.2.6, appearance.md §5.7) ---
+
+[[bin]]
+name = "particles_weather"
+path = "fuzz_targets/particles_weather.rs"
+test = false
+doc = false
+bench = false

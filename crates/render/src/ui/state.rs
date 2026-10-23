@@ -9,6 +9,7 @@ use std::ops::Range;
 use bytemuck::{Pod, Zeroable};
 
 use super::ops::PendingOps;
+use super::timing::UiGpuTimer;
 use super::{
     MAX_UI_CLIPS, MAX_UI_ENTRIES, RefusalCounts, UI_BLEND_ALPHA, UI_BLEND_COLOR, UiAddressing,
     UiEntry, UiFilter, UiPass, UiRect, UiRefusal, UiSource, UiStats, UiViewMode,
@@ -155,6 +156,10 @@ pub(crate) struct UiState {
     warned: [bool; UiRefusal::ALL.len()],
     pub(crate) force_fallback: bool,
     logged_fallback: bool,
+    /// The UI pass timer (`UiStats::gpu_ns`); `None` without timestamp queries. Made at
+    /// the first `prepare`, which has the queue (the timestamp period).
+    timer: Option<UiGpuTimer>,
+    timer_checked: bool,
 }
 
 impl UiState {
@@ -218,6 +223,8 @@ impl UiState {
             warned: [false; UiRefusal::ALL.len()],
             force_fallback: false,
             logged_fallback: false,
+            timer: None,
+            timer_checked: false,
         }
     }
 
@@ -290,6 +297,14 @@ impl UiState {
             ..UiPlan::default()
         };
         plan.stats.texture_bytes = self.texture_bytes;
+        if !self.timer_checked {
+            self.timer = UiGpuTimer::new(&ctx.device, &ctx.queue);
+            self.timer_checked = true;
+        }
+        plan.stats.gpu_ns = self
+            .timer
+            .as_ref()
+            .and_then(|t| t.begin_frame(&ctx.device, self.ops.failed_flushes()));
         let mut refused = RefusalCounts::default();
         for (_, pass) in &frame_ui.passes {
             refused.merge(&pass.refused);
@@ -609,10 +624,14 @@ impl UiState {
         }
     }
 
-    /// Record the software cursor (the last draw of the frame).
+    /// Record the software cursor (the last draw of the frame), then resolve the frame's
+    /// UI timestamp queries when the device has them (`timing.rs`).
     pub(crate) fn record_cursor(&self, plan: &UiPlan, encoder: &mut wgpu::CommandEncoder) {
         if let Some(draw) = plan.cursor {
             self.record_draws(plan, &[draw], "tessera-ui-cursor", encoder);
+        }
+        if let Some(t) = &self.timer {
+            t.finish_frame(encoder, self.ops.failed_flushes());
         }
     }
 
@@ -641,7 +660,7 @@ impl UiState {
                 },
             })],
             depth_stencil_attachment: None,
-            timestamp_writes: None,
+            timestamp_writes: self.timer.as_ref().and_then(UiGpuTimer::pass_writes),
             occlusion_query_set: None,
             multiview_mask: None,
         });

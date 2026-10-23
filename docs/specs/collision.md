@@ -2142,6 +2142,20 @@ a Tessera Decision unless it cites a BIN or OBS fact; it must be revised when an
   vertices and 4,096 liquid boxes; one query visits at most 2¹⁵ items per set. Objects beyond a
   limit are refused and counted.
 
+> **OPEN:** (implementer, tessera-physics, 2026-10-23) Engineering choice, not a fact of the
+> format: how many threads build one set's hierarchy. "Built off the main thread" does not
+> say whether one build may use more than the asset worker it runs on. `tessera-physics`
+> builds a set of at least 16,384 items with helper threads (`tessera-bvh`,
+> `tessera-bvh-scan`, at most 8 threads a build) taken from one process-wide budget: at most
+> the available parallelism less 2 threads work on hierarchy builds at once, callers
+> included, so a streamed ring of large landblocks built together on many workers gets no
+> helpers, and a build running alone gets them. `CollisionSetBuilder::build_with_threads`
+> lets the caller choose the count instead (1: the worker alone), for example from the
+> asset pool's idle workers or the job's priority; `tessera-world` does not use it yet. The
+> tree, and so every query's contents and order, does not depend on the threads. Question:
+> should hierarchy builds of Prefetch jobs (`walker.md` §14.11) stay on their worker, and
+> should the walker's M3-b frame-time run check builds under the shared budget?
+
 <a id="s12-2"></a>
 ### 12.2 Mover
 
@@ -2383,6 +2397,25 @@ rule where that is now known (§11.6, §11.7; see §12.5) or owner measurements 
 - **(y) Speed after the slide.** After the slide and the step-up the velocity's length is
   limited again to the terminal velocity and 120 m/s, as (p) does after buoyancy, because (v)
   can lengthen it; the displacement already taken is not changed.
+
+> **OPEN:** (implementer, tessera-physics, 2026-10-23) Ties at an edge. A sweep that meets
+> the edge between two triangles (a box's top face and its riser, for example) touches both
+> at the same point and distance, and (w) reports one of them by body and feature order.
+> With the riser reported, (x) item 4 puts the riser's face normal in place of the contact
+> normal and the hit is a wall; with the top face reported, the contact normal stays and can
+> be walkable. So (k)'s "walkable by the contact it lands on" can depend on the triangle
+> order of a box, while the support probe of (s) (a contact query, which sees both
+> triangles) does not. §11.3–§11.7 do not settle this: §11.5 step 5 judges the original's
+> landing by the support search alone (§11.3.1, which counts every contact), and (k) adds
+> the landing contact as a Tessera Decision without a rule for ties. Question: should the
+> landing contact (and any other single sweep hit that §11.3 classifies) count as the best
+> class among the triangles sharing the hit point, should (k) drop the landing-contact test
+> and rely on the probe as §11.5 does, or is the order-dependent result intended?
+> `tessera-physics` keeps (k) and (w) as written. The walker's box-step walks
+> (`apps/client/tests/walk_synthetic.rs` `reach_climbs_box_steps`, earlier ignored for this
+> reason) now pass with the boxes' triangles in either order, as do the controller tests
+> with steps built of triangles listed tops-first or risers-first, so no current test
+> reaches the tie band.
 
 The solver details in (g), (k), (u), (v), (w) and (y) answer the implementer OPEN of
 2026-10-07 (items 1–5); they are the released choices, confirmed as Tessera Decisions. None of

@@ -8,10 +8,14 @@
 //! environment (layouts, images, text) and the input bridge, and mounts [`NativePanels`] on
 //! it.
 //!
-//! **Not wired yet:** no client host constructs [`NativePanels`] so far (the walker host
-//! does not mount the UI); only the library and its tests exist. ROADMAP M5 exit criterion 2
-//! (panels in the walker) therefore cannot be judged on the client until the walker host
-//! opens P1–P15 with [`WorldMaps`] and the plugin host as [`PluginControl`].
+//! **Where it is mounted:** the client's UI host (`ui_host`, used with `--ui` and by the
+//! headless combat screens) constructs [`NativePanels`] only when it is built from the
+//! install (`UiHost::from_boot`); the host built without an install
+//! (`UiHost::without_install`) has no panels. Most panel calls get [`Services`] made for
+//! that call: [`WorldMaps`] over the install on a one-worker pool when map data is
+//! available ([`NoMaps`] otherwise), and a view of the plugin host's manager as
+//! [`PluginControl`]. Opening the combat HUD's panels (`ui_host` `open_combat_panels`)
+//! passes [`NoMaps`] and [`NoPlugins`] instead.
 //!
 //! **Gaps recorded as implementation OPENs** (`ui-layout.md` §17.5, items (d) and (e)): P7's
 //! option pages stay empty (the specs do not name the slider and check-box templates or the

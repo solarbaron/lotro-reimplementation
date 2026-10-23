@@ -249,7 +249,6 @@ fn reach_up_a_walkable_ramp_and_release_at_the_waypoint() {
 }
 
 #[test]
-#[ignore = "tessera-physics: after the second step-up the capsule rests on the top edge of the upper box and every later step is refused (the edge contact is classified by the box's vertical face, an order-dependent tie; reported to the physics owner)"]
 fn reach_climbs_box_steps() {
     let z = ground(100.0);
     #[allow(clippy::cast_possible_truncation)]
@@ -279,6 +278,78 @@ fn reach_climbs_box_steps() {
             .filter(|r| r.t >= 0.0)
             .all(|r| r.record.walking)
     );
+}
+
+/// A solid box covering `min`..`max` in the world, built as a local box turned by ±90°
+/// about x, so that its triangles come in another order than an unturned box's: the riser
+/// a walker heading north meets is listed before the top face.
+fn turned_box(b: &mut CollisionSetBuilder, tag: u32, min: [f32; 3], max: [f32; 3], sign: f32) {
+    let s = std::f32::consts::FRAC_1_SQRT_2;
+    // +90°: world (x, y, z) = (lx, −lz, ly); −90°: world (lx, lz, −ly).
+    let (lmin, lmax) = if sign > 0.0 {
+        ([min[0], min[2], -max[1]], [max[0], max[2], -min[1]])
+    } else {
+        ([min[0], -max[2], min[1]], [max[0], -min[2], max[1]])
+    };
+    let mut t = ShapeTemplate::default();
+    t.push_box(&CollisionBox {
+        min: lmin,
+        max: lmax,
+        frame: Frame {
+            position: [0.0; 3],
+            scale: [1.0; 3],
+            rotation: Quaternion {
+                w: s,
+                x: sign * s,
+                y: 0.0,
+                z: 0.0,
+            },
+        },
+    })
+    .unwrap();
+    b.add_shape(
+        BodySource::Other { tag },
+        CollisionFlags::default(),
+        BodyPurpose::Movement,
+        &t,
+    )
+    .unwrap();
+}
+
+/// The box steps of [`reach_climbs_box_steps`] with the boxes' triangles in another order:
+/// the climb succeeds either way (`collision.md` §12.4 (k), (w); the edge-tie question is
+/// the implementer OPEN of §12.4).
+#[test]
+fn reach_climbs_box_steps_whatever_the_face_order() {
+    let z = ground(100.0);
+    #[allow(clippy::cast_possible_truncation)]
+    let zf = z as f32;
+    for sign in [1.0f32, -1.0] {
+        for mode in ["walk", "run"] {
+            let mut world = flat_world(100.0, |b| {
+                turned_box(b, 1, [70.0, 80.0, zf - 2.0], [90.0, 95.0, zf + 0.25], sign);
+                turned_box(b, 2, [70.0, 82.0, zf - 2.0], [90.0, 95.0, zf + 0.40], sign);
+            });
+            let e = [80.0, 86.0, z + 0.40];
+            let text = walk_text(
+                &format!("reach E={},{},{} d=0.15 risers=0.25/0.15", e[0], e[1], e[2]),
+                &format!("wp={},{}", e[0], e[1]),
+                [80.0, 76.0, z],
+                0.0,
+                mode,
+                6.0,
+            );
+            let walk = parse_walk_file(&text).unwrap();
+            let out = run_walk(&walk, &mut world, &setup(), SYNTH_WAIT).unwrap();
+            assert!(out.verdict.passed, "sign {sign}, {mode}: {:?}", out.verdict);
+            let ups = out
+                .rows
+                .iter()
+                .filter(|r| r.record.report.stepped_up)
+                .count();
+            assert!(ups >= 2, "sign {sign}, {mode}: {ups} step-ups");
+        }
+    }
 }
 
 #[test]

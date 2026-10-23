@@ -38,6 +38,7 @@ tessera-anim = { path = "../crates/anim" }
 tessera-ui = { path = "../crates/ui" }
 tessera-physics = { path = "../crates/physics" }
 tessera-protocol = { path = "../crates/protocol" }
+tessera-gamedata = { path = "../crates/gamedata" }
 tessera-server = { path = "../apps/server" }
 tessera-wvm = { path = "../crates/wvm" }
 tessera-audio = { path = "../crates/audio" }
@@ -1412,6 +1413,15 @@ bench = false
 [[bin]]
 name = "compat_world_message"
 path = "fuzz_targets/compat_world_message.rs"
+test = false
+doc = false
+bench = false
+
+# --- tessera-gamedata presenters over hostile property data (item-tooltips.md, quest-journal.md, crafting-panels.md, progression-panels.md, map-windows.md) ---
+
+[[bin]]
+name = "gamedata_presenters"
+path = "fuzz_targets/gamedata_presenters.rs"
 test = false
 doc = false
 bench = false

@@ -59,6 +59,9 @@ pub(crate) struct PendingOps {
     ops: Vec<Op>,
     staging: Vec<u8>,
     gpu_staging: Option<wgpu::Buffer>,
+    /// Flushes that failed so far (the UI pass timer uses it to drop the figure of a frame
+    /// whose commands may not have been submitted, `timing.rs`).
+    failed_flushes: u64,
 }
 
 impl PendingOps {
@@ -158,12 +161,25 @@ impl PendingOps {
         });
     }
 
+    /// Number of [`PendingOps::flush`] calls that failed so far.
+    pub(crate) fn failed_flushes(&self) -> u64 {
+        self.failed_flushes
+    }
+
     /// Submit every pending operation in call order.
     pub(crate) fn flush(
         &mut self,
         ctx: &GpuContext,
         clear_pipeline: &wgpu::RenderPipeline,
     ) -> Result<()> {
+        let r = self.flush_ops(ctx, clear_pipeline);
+        if r.is_err() {
+            self.failed_flushes = self.failed_flushes.wrapping_add(1);
+        }
+        r
+    }
+
+    fn flush_ops(&mut self, ctx: &GpuContext, clear_pipeline: &wgpu::RenderPipeline) -> Result<()> {
         if self.ops.is_empty() {
             return Ok(());
         }

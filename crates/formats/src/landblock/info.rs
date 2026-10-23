@@ -155,7 +155,8 @@ pub struct Cell {
     pub position: Position,
     /// Cell flags (bits 2–5 only; meaning of 3, 4, 5 OPEN).
     pub flags: u32,
-    /// The cell geometry, a 0x01 record (format not yet specified).
+    /// The cell geometry, a 0x01 record (`collision.md` §5.1; decoded by
+    /// [`CellGeometry::parse`](crate::collision::CellGeometry::parse)).
     pub geometry: Did,
     /// Neighbour cells.
     pub neighbours: Vec<CellNeighbour>,

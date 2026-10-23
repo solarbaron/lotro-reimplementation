@@ -45,6 +45,7 @@ mod api;
 mod geometry;
 mod ops;
 mod state;
+mod timing;
 
 pub(crate) use api::UiParts;
 pub use geometry::{UiClipMap, UiGeometry};
@@ -496,9 +497,13 @@ pub struct UiStats {
     pub texture_bytes: u64,
     /// The cap counters the client handed over.
     pub caps: UiCapCounters,
-    /// GPU time of the UI passes in nanoseconds, when the device has
-    /// timestamp queries (render.md §6.16; currently always `None`, see the
-    /// OPEN there).
+    /// GPU time of the UI passes in nanoseconds (every UI pass and the
+    /// software cursor, summed), from timestamp queries (render.md §6.16 U2).
+    /// It is the figure of the most recent frame whose queries have resolved,
+    /// so it lags by a few frames and is `None` until the first has. Always
+    /// `None` when the device lacks [`wgpu::Features::TIMESTAMP_QUERY`]
+    /// (the renderer requests the feature when the adapter offers it, see
+    /// [`crate::ContextOptions::timestamp_queries`]).
     pub gpu_ns: Option<u64>,
     /// Whether the software cursor was drawn.
     pub cursor_drawn: bool,

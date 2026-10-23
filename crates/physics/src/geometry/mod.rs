@@ -31,7 +31,10 @@ mod set;
 mod shape;
 mod terrain;
 
-pub use bvh::{Bvh, MAX_DEPTH, MAX_LEAF_ITEMS};
+pub use bvh::{
+    Bvh, MAX_BUILD_THREADS, MAX_DEPTH, MAX_LEAF_ITEMS, PARALLEL_MIN_ITEMS, RESERVED_CORES,
+    build_thread_budget,
+};
 pub use cell::{
     CELL_BROAD_PHASE_HALF, CELL_LOOKUP_MAX_DISTANCE_SQ, CELL_PLANE_TOLERANCE, CellPlacement,
     CellSet, CellVolume, MAX_CELL_HULL, MAX_CELL_PLANES, MAX_SET_CELL_HULL, MAX_SET_CELL_PLANES,

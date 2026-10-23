@@ -1512,6 +1512,16 @@ implementing; they add no facts about the game.
 > `TIMESTAMP_QUERY` is never enabled even where the adapter has it. Requesting it when the
 > adapter offers it, and resolving one query pair around the UI passes, is a small
 > follow-up in `context.rs` (not owned by the UI implementation).
+>
+> **Implemented (implementer, tessera-render, 2026-10-23):** `context.rs` now requests
+> `TIMESTAMP_QUERY` when the adapter offers it (`ContextOptions::timestamp_queries`, default
+> on). Every UI render pass and the software cursor write a begin/end timestamp pair (at most
+> 64 passes a frame; a frame with more is not timed); the pairs are resolved after the last UI
+> draw into one of four read-back buffers, mapped at a later frame's preparation and read
+> without blocking. `UiStats::gpu_ns` is the summed end − begin of the most recent frame
+> whose queries resolved (so it lags a few frames, as §6.16 allows), 0 for a frame without UI
+> passes, and `None` without the feature (`ui/timing.rs`; tests in `tests/ui_pass.rs`). The
+> pass cap and the buffer count are engineering choices.
 
 > **OPEN:** §6.5 does not say what a non-finite or out-of-range **rotation centre** does.
 > Tessera refuses the entry (`UiRefusal::Rotations`); a spec rule (for example "treated as

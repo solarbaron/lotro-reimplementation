@@ -2115,6 +2115,7 @@ dependencies = [
  "tessera-dat",
  "tessera-dattool",
  "tessera-formats",
+ "tessera-gamedata",
  "tessera-havok",
  "tessera-input",
  "tessera-install",
@@ -2137,6 +2138,18 @@ dependencies = [
  "tessera-world",
  "tessera-wstate",
  "tessera-wvm",
+]
+
+[[package]]
+name = "tessera-gamedata"
+version = "0.1.0"
+dependencies = [
+ "tessera-formats",
+ "tessera-props",
+ "tessera-text",
+ "tessera-wstate",
+ "thiserror",
+ "tracing",
 ]
 
 [[package]]

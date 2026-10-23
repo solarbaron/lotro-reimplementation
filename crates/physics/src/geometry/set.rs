@@ -929,28 +929,28 @@ impl CollisionSetBuilder {
     }
 
     /// Builds the hierarchy and the cell lookup and returns the immutable set.
+    ///
+    /// The hierarchy of a large set can use helper threads from the process-wide budget
+    /// shared by all concurrent builds ([`Bvh::build`]: none while that many threads are
+    /// already building); the tree is the one a single-threaded build gives, so every query
+    /// returns the same items in the same order (§12.1).
     #[must_use]
-    pub fn build(mut self) -> CollisionSet {
-        let mut boxes: Vec<Aabb> =
-            Vec::with_capacity(self.tris.len() + self.rounds.len() + self.solids.len());
-        for t in &self.tris {
-            boxes.push(Aabb::from_points(t.v.iter().copied()).unwrap_or(Aabb::EMPTY));
-        }
-        for r in &self.rounds {
-            boxes.push(
-                Capsule {
-                    a: r.a,
-                    b: r.b,
-                    radius: r.radius,
-                }
-                .aabb()
-                .unwrap_or(Aabb::EMPTY),
-            );
-        }
-        for s in &self.solids {
-            boxes.push(s.bounds);
-        }
-        let bvh = Bvh::build(&boxes);
+    pub fn build(self) -> CollisionSet {
+        self.build_hierarchy(Bvh::build)
+    }
+
+    /// [`CollisionSetBuilder::build`] with the hierarchy built on at most `threads` threads,
+    /// the calling thread included ([`Bvh::build_with_threads`]; 1: the calling thread
+    /// only), for a caller that sizes the build from its own workers. The set is the same
+    /// whatever the count.
+    #[must_use]
+    pub fn build_with_threads(self, threads: usize) -> CollisionSet {
+        self.build_hierarchy(|boxes| Bvh::build_with_threads(boxes, threads))
+    }
+
+    fn build_hierarchy(mut self, build: impl FnOnce(&[Aabb]) -> Bvh) -> CollisionSet {
+        let boxes = item_boxes(&self.tris, &self.rounds, &self.solids);
+        let bvh = build(&boxes);
         self.cells.finish();
         CollisionSet {
             bodies: self.bodies,
@@ -1013,6 +1013,30 @@ impl CollisionSetBuilder {
         });
         Ok(id)
     }
+}
+
+/// The box of every hierarchy item, in item order: triangles, then round primitives, then
+/// solid boxes ([`CollisionSet::item`]).
+fn item_boxes(tris: &[Tri], rounds: &[Round], solids: &[Solid]) -> Vec<Aabb> {
+    let mut boxes: Vec<Aabb> = Vec::with_capacity(tris.len() + rounds.len() + solids.len());
+    for t in tris {
+        boxes.push(Aabb::from_points(t.v.iter().copied()).unwrap_or(Aabb::EMPTY));
+    }
+    for r in rounds {
+        boxes.push(
+            Capsule {
+                a: r.a,
+                b: r.b,
+                radius: r.radius,
+            }
+            .aabb()
+            .unwrap_or(Aabb::EMPTY),
+        );
+    }
+    for s in solids {
+        boxes.push(s.bounds);
+    }
+    boxes
 }
 
 /// A cell geometry's volume, physics mesh, record and flags, shared by the cells placing
@@ -1202,6 +1226,14 @@ impl CollisionSet {
             + self.bvh.heap_size()
             + self.cells.heap_size()
             + 2 * (1089 * 12 + 2048 * 6)
+    }
+
+    /// The box of every item its hierarchy indexes, in item order (triangles, then round
+    /// primitives, then solid boxes): the input of [`Bvh::build`] for this set, so a caller
+    /// can rebuild the hierarchy and compare it with [`CollisionSet::bvh`].
+    #[must_use]
+    pub fn item_boxes(&self) -> Vec<Aabb> {
+        item_boxes(&self.tris, &self.rounds, &self.solids)
     }
 
     fn item(&self, item: u32) -> Option<Item<'_>> {

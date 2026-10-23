@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! `tessera-input` runtime (docs/specs/keymap.md §7, §9): an arbitrary stream of raw events,
-//! context changes, UI-band pushes and pops and frame updates through `InputMapper` with the
+//! context changes, UI-band pushes (ordinary and hold-keeping, §3.3) and pops and frame
+//! updates through `InputMapper` with the
 //! built-in registry and keymap plus fuzzed contexts and bindings (fuzzed `on` values,
 //! several bindings of one button in one UI-band context), feeding the fly and walk
 //! controllers over a hostile height field. Events go through `handle` and through
@@ -354,8 +355,9 @@ fuzz_target!(|data: &[u8]| {
                 None
             }
             12 => {
-                // A direct band push or pop: any context (game-band ones are refused),
-                // any owner (0 included), any priority.
+                // A direct band push (ordinary, or keeping the game band's holds, §3.3) or
+                // pop: any context (game-band ones are refused), any owner (0 included),
+                // any priority.
                 let (Some(x), Some(o), Some(p)) = (b.u8(), b.u8(), b.u8()) else {
                     break;
                 };
@@ -366,18 +368,27 @@ fuzz_target!(|data: &[u8]| {
                     u64::from(o & 3)
                 };
                 if op & 0x40 != 0 {
-                    m.band_push(c, owner, i32::from(p as i8));
+                    if op & 0x80 != 0 {
+                        m.band_push_keeping_holds(c, owner, i32::from(p as i8));
+                    } else {
+                        m.band_push(c, owner, i32::from(p as i8));
+                    }
                 } else {
                     m.band_pop(c, owner);
                 }
                 None
             }
             13 => {
-                // Up to and past the 256-entry limit.
+                // Up to and past the 256-entry limit, with ordinary and hold-keeping
+                // entries mixed.
                 let Some(x) = b.u8() else { break };
                 let c = all_contexts[usize::from(x) % all_contexts.len()];
                 for owner in 0..300u64 {
-                    m.band_push(c, owner, i32::from(x as i8));
+                    if op & 0x40 != 0 && owner % 2 == 1 {
+                        m.band_push_keeping_holds(c, owner, i32::from(x as i8));
+                    } else {
+                        m.band_push(c, owner, i32::from(x as i8));
+                    }
                 }
                 assert!(m.band().len() <= tessera_input::MAX_BAND_ENTRIES);
                 None

@@ -579,3 +579,134 @@ fn prefetch_builds_stay_on_the_worker_and_give_the_same_set() {
         assert_eq!(prefetch.cell_bounds, other.cell_bounds);
     }
 }
+
+/// A source that raises `raised` on every read: the cells of the set read their geometry
+/// through it before the hierarchy build starts.
+struct RaisingSource {
+    inner: MemoryWorldSource,
+    raised: Arc<AtomicBool>,
+}
+
+impl WorldSource for RaisingSource {
+    fn read_stamped(&self, did: Did) -> Result<Option<StampedRecord>, AssetError> {
+        self.raised.store(true, Ordering::SeqCst);
+        self.inner.read_stamped(did)
+    }
+}
+
+/// Builds one cell whose geometry is read through a [`RaisingSource`], with the priority
+/// `before` until the read and `after` from it on. Returns the set and, for each time the
+/// priority was asked, whether the read had happened by then.
+fn build_with_raise(
+    sys: &CollisionSystem,
+    before: Priority,
+    after: Priority,
+) -> (BlockCollision, Vec<bool>) {
+    let raised = Arc::new(AtomicBool::new(false));
+    let src = RaisingSource {
+        inner: MemoryWorldSource::new(),
+        raised: Arc::clone(&raised),
+    };
+    let info = info(vec![cell(
+        0x100,
+        0x0100_0002,
+        Some([50.0, 60.0, 10.0]),
+        None,
+    )]);
+    let schema: HashMap<u32, tessera_formats::PropertyType> = HashMap::new();
+    let data = LandblockData::from_heights(
+        key().data_did(),
+        tessera_formats::landblock::HeightGrid::flat(0),
+    );
+    let input = CollisionInput {
+        key: key(),
+        data: &data,
+        terrain: None,
+        info: Some(&info),
+        generated: &[],
+        water: None,
+        source: &src,
+        schema: &schema,
+    };
+    let asks = std::sync::Mutex::new(Vec::new());
+    let priority = || {
+        let r = raised.load(Ordering::SeqCst);
+        asks.lock().expect("asks").push(r);
+        if r { after } else { before }
+    };
+    let built = sys.build_at(&input, &priority as &dyn Fn() -> Priority);
+    (built, asks.into_inner().expect("asks"))
+}
+
+#[test]
+fn priority_is_read_when_the_hierarchy_build_starts() {
+    // `collision.md` §12.1: a job raised from Prefetch to Visible after `build_at` was
+    // entered but before its hierarchy build starts builds with the shared budget.
+    let sys = system();
+    let (raised, asks) = build_with_raise(&sys, Priority::Prefetch, Priority::Visible);
+    assert_eq!(asks, vec![true], "asked once, after the cell reads");
+    assert_eq!(
+        sys.hierarchy_builds(),
+        HierarchyBuildCounts {
+            worker: 0,
+            shared: 1,
+            last_max_threads: Some(MAX_BUILD_THREADS),
+        }
+    );
+    // Lowered to Prefetch in the same window: the build stays on the worker.
+    let sys = system();
+    let (lowered, asks) = build_with_raise(&sys, Priority::Visible, Priority::Prefetch);
+    assert_eq!(asks, vec![true]);
+    assert_eq!(
+        sys.hierarchy_builds(),
+        HierarchyBuildCounts {
+            worker: 1,
+            shared: 0,
+            last_max_threads: Some(1),
+        }
+    );
+    // The set does not depend on the rule.
+    assert_eq!(raised.set.triangle_count(), lowered.set.triangle_count());
+    assert_eq!(raised.cells, lowered.cells);
+    assert_eq!(raised.heap_bytes, lowered.heap_bytes);
+}
+
+#[test]
+fn priority_sources_of_every_kind_choose_the_rule() {
+    let sys = system();
+    let info = info(Vec::new());
+    let src = MemoryWorldSource::new();
+    let schema: HashMap<u32, tessera_formats::PropertyType> = HashMap::new();
+    let data = LandblockData::from_heights(
+        key().data_did(),
+        tessera_formats::landblock::HeightGrid::flat(0),
+    );
+    let input = CollisionInput {
+        key: key(),
+        data: &data,
+        terrain: None,
+        info: Some(&info),
+        generated: &[],
+        water: None,
+        source: &src,
+        schema: &schema,
+    };
+    let prefetch = tessera_assets::JobContext::detached_at(Priority::Prefetch);
+    let _ = sys.build_at(&input, &prefetch);
+    let _ = sys.build_at(
+        &input,
+        tessera_assets::JobContext::detached_at(Priority::Visible),
+    );
+    let _ = sys.build_at(&input, || Priority::Prefetch);
+    let _ = sys.build_at(&input, Priority::Immediate);
+    // No job priority counts as Visible.
+    let _ = sys.build(&input);
+    assert_eq!(
+        sys.hierarchy_builds(),
+        HierarchyBuildCounts {
+            worker: 2,
+            shared: 3,
+            last_max_threads: Some(MAX_BUILD_THREADS),
+        }
+    );
+}

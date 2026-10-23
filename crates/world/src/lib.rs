@@ -8,14 +8,14 @@
 //! | [`MapConstants`], [`MapCoords`], [`LocReport`] | Map coordinates ("12.3S, 45.6W") and `/loc` tokens, formatting and parsing; minimap pixels | §8–§10 |
 //! | [`RingTracker`], [`RingConfig`], [`Ring`] | Desired landblock set around a focus, rings with hysteresis | ARCH §9.2 |
 //! | [`WorldContext`] | Per-install data: property schema and PIDs, region descriptors, map constants, block-map descriptors, object resolver, area names | `landblock.md` §5.1, `environment.md` §3 |
-//! | [`LandblockBundle`], [`build_bundle`], [`BundleDecoder`] | One landblock: data, info, resolved block map ([`BlockProps`]), properties (minimap, light maps), [`PlacedEntity`] list with objects resolved, figures ([`PlacedFigure`]: NPC-like entities and weenie placements with their instance property sets) | `landblock.md` §8, `entity-descriptor.md` §9, `appearance.md` §7.2, `walker.md` §10 |
+//! | [`LandblockBundle`], [`build_bundle`], [`build_bundle_with`] (with the job's priority for the collision hierarchy's thread rule), [`BundleDecoder`] | One landblock: data, info, resolved block map ([`BlockProps`]), properties (minimap, light maps), [`PlacedEntity`] list with objects resolved, figures ([`PlacedFigure`]: NPC-like entities and weenie placements with their instance property sets) | `landblock.md` §8, `entity-descriptor.md` §9, `appearance.md` §7.2, `walker.md` §10 |
 //! | [`ObjectResolver`], [`ResolvedObject`] | 0x47 / 0x70 → setup → parts, draw-suppression flags, cached | `setup.md` §3.1 |
 //! | [`WorldStreamer`] | Per-frame streaming on `tessera-assets` workers: priorities by ring and distance, cancellation, residency budget with eviction (world systems included), lookahead along the focus's path, lookups over the resident ring members (area, music, ambient, sky, height, minimap, water, lights, draw distances, collision, cells), the frill ring ([`WorldStreamer::update_frills`]) | ARCH §9.2, §20.3, `scenery.md` §8.2 |
 //! | [`WorldSystems`], [`SystemPids`] | The M4.5 systems' shared state: region tables of the descriptor's eight slots, scene library, object properties, water, collision, sky, LOD classes | `environment.md` §3 |
 //! | [`scenery`] ([`SceneryTables`], [`generate_landblock`], [`SceneryObject`]); [`BlockScenery`], [`LandblockBundle::generated`] | Procedural scenery per landblock, generated on the workers with the bundle; generated objects placed like statics | `scenery.md` §6–§7 |
 //! | [`frills`] ([`FrillRing`], [`FrillSector`], [`FrillSettings`]); [`build_frill_sector`] | Grass and ground cover in 10 × 10-unit sectors around the camera | `scenery.md` §8 |
 //! | [`water`] ([`BlockWater`], [`WaterMap`], [`WaterSystem`]) | Landblock water, liquid volumes, "under water" | `water.md` §6–§7, §10 |
-//! | [`collision`] ([`CollisionSystem`], [`BlockCollision`], [`CellPortals`]) | Collision residency: per-landblock collision sets of terrain, statics, generated objects and cells, cells and portals of landblock info | `collision.md` §5.8, §9.3, §9.4, §12.1 |
+//! | [`collision`] ([`CollisionSystem`], [`BlockCollision`], [`CellPortals`], [`PrioritySource`]) | Collision residency: per-landblock collision sets of terrain, statics, generated objects and cells, cells and portals of landblock info; the hierarchy's thread rule reads the job's priority when the hierarchy build starts | `collision.md` §5.8, §9.3, §9.4, §12.1 |
 //! | [`environment`] ([`SkyLibrary`], [`Environment`], [`GameClock`]) | Game clock, day descriptions, keyframe blending, sky objects | `environment.md` §11 |
 //! | [`lighting`] ([`LightEntity`], [`select_lights`]) | Light entities and per-object light selection | `lighting.md` §8.3–§8.5 |
 //! | [`far_view`] ([`far_view::FarViewState`], [`far_view::LandblockGrid`], [`far_view::build_batch`]) | Distant-landscape sectors around the viewer: sector list and residency, per-landblock LOD grid, far-terrain batches with stitching, distant sprites, far entities, horizon fill placement | `far-view.md`, `distant-landscape.md` §5 |
@@ -88,10 +88,11 @@ pub mod water;
 pub use areas::{AreaName, AreaNameSource, FixedAreaNames, WStateAreaNames};
 pub use bundle::{
     BlockProps, BlockScenery, BlockValue, BundleDecoder, BundleOptions, BundleProblem, EntityRef,
-    FigureKind, LandblockBundle, PlacedEntity, PlacedFigure, build_bundle,
+    FigureKind, LandblockBundle, PlacedEntity, PlacedFigure, build_bundle, build_bundle_with,
 };
 pub use collision::{
     BlockCollision, CellPortals, CollisionInput, CollisionSystem, ObjectCache, Portal,
+    PrioritySource,
 };
 pub use context::{RegionInfo, SystemPids, WorldContext, WorldSystems};
 pub use coords::{

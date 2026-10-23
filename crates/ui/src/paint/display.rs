@@ -249,6 +249,21 @@ impl PaintOp {
     }
 }
 
+/// A **cover fit** of an image layer (`ui-scaling.md` §5.5 "Backdrop images"): the image was
+/// made for its Stretch element at the element's design size, and the run-time layout resized
+/// the element, so the image is drawn as one copy scaled uniformly to cover the current box,
+/// centred and clipped (never tiled). Attached to an [`PaintOp::Image`] or an image
+/// [`PaintOp::Overlay`] with [`DisplayList::push_cover`].
+///
+/// The layer's anchor is the canvas position of image texel (0, 0) of the centred copy; `scale`
+/// is the resample scale per axis in canvas pixels per texel (the cover factor times the
+/// surface's content scale). Addressing clamps; the filter is the painter's art filter (§6.3).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct CoverFit {
+    /// Canvas pixels per image texel, `[x, y]`.
+    pub scale: [f64; 2],
+}
+
 /// The paint operations of one surface in drawing order.
 #[derive(Debug, Clone, Default)]
 pub struct DisplayList {
@@ -257,6 +272,9 @@ pub struct DisplayList {
     /// reads it for every band). For a nested marker, its coverage region.
     areas: Vec<Rect>,
     nested: usize,
+    /// Cover fits of image layers ([`DisplayList::push_cover`]), by operation index,
+    /// ascending (pushes are in order).
+    covers: Vec<(u32, CoverFit)>,
 }
 
 impl DisplayList {
@@ -294,6 +312,38 @@ impl DisplayList {
         self.ops.push(op);
         self.areas.push(area);
         Ok(())
+    }
+
+    /// Appends an image layer drawn as a backdrop **cover fit** (`ui-scaling.md` §5.5,
+    /// [`CoverFit`]). Any other operation is appended as by [`DisplayList::push`], without the
+    /// fit. A non-finite or non-positive scale component makes the fit be ignored.
+    ///
+    /// # Errors
+    /// As [`DisplayList::push`].
+    pub fn push_cover(&mut self, op: PaintOp, fit: CoverFit) -> Result<(), PaintError> {
+        let takes = matches!(
+            &op,
+            PaintOp::Image(_) | PaintOp::Overlay(OverlayLayer { image: Some(_), .. })
+        ) && fit.scale.iter().all(|v| v.is_finite() && *v > 0.0);
+        let index = u32::try_from(self.ops.len()).ok();
+        self.push(op)?;
+        if takes && let Some(i) = index {
+            self.covers.push((i, fit));
+        }
+        Ok(())
+    }
+
+    /// The cover fit of operation `index`, if it was pushed with one.
+    #[must_use]
+    pub fn cover_of(&self, index: u32) -> Option<CoverFit> {
+        if self.covers.is_empty() {
+            return None;
+        }
+        self.covers
+            .binary_search_by_key(&index, |(i, _)| *i)
+            .ok()
+            .and_then(|at| self.covers.get(at))
+            .map(|(_, f)| *f)
     }
 
     /// For each operation, the canvas area it may change ([`PaintOp::area`]); for a nested

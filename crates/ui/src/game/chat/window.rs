@@ -344,6 +344,10 @@ impl Chat {
         } else {
             None
         };
+        // `ui-scaling.md` §7.5: the entry line takes the text factor.
+        if let Some(e) = entry {
+            ui.set_text_reflow(e, true);
+        }
         let w = ChatWindow {
             id,
             root,
@@ -616,6 +620,8 @@ impl Chat {
         // Step 8.
         self.apply_style(ui, line, style.colour, self.styles.font(style.size_step));
         ui.set_text(line, Some(text.to_string()));
+        // `ui-scaling.md` §7.5: the log's lines take the text factor.
+        ui.set_text_reflow(line, true);
         // Step 10.
         if was_bottom {
             ui.scroll_to(list, offset.0, i32::MAX, false);

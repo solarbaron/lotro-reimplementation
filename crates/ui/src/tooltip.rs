@@ -22,6 +22,9 @@ pub(crate) struct TooltipState {
     /// Further panels shown with it (the comparison tooltips of an examination tooltip,
     /// `item-tooltips.md` §8), hidden and destroyed with it.
     pub extra: Vec<ElementKey>,
+    /// The text element of the plain tooltip [`Ui::show_tooltip`] built, which is sized from
+    /// its scaled text and so takes the text factor (`ui-scaling.md` §7.5).
+    pub text: Option<ElementKey>,
 }
 
 impl Ui {
@@ -163,6 +166,7 @@ impl Ui {
     pub fn hide_tooltip(&mut self) {
         // The panels go in one batch: one pass over the UI however many there are.
         let mut doomed = std::mem::take(&mut self.tooltip.extra);
+        self.tooltip.text = None;
         if let Some(p) = self.tooltip.panel.take()
             && self.exists(p)
         {
@@ -177,6 +181,9 @@ impl Ui {
     pub(crate) fn tooltip_forget(&mut self, k: ElementKey) {
         if self.tooltip.panel == Some(k) {
             self.tooltip.panel = None;
+        }
+        if self.tooltip.text == Some(k) {
+            self.tooltip.text = None;
         }
         self.tooltip.extra.retain(|x| *x != k);
     }
@@ -300,6 +307,7 @@ impl Ui {
             return;
         };
         self.set_text(te, Some(text.clone()));
+        self.tooltip.text = Some(te);
         // Size (§6.4).
         let max_w = self.prop(te, p.max_width);
         let wrap = if max_w.is_set() {
@@ -307,17 +315,14 @@ impl Ui {
         } else {
             self.screen_size.0
         };
-        let props = self.properties(te);
         let tb = self.layout_box(te).unwrap_or_default();
-        let req = crate::env::TextRequest {
-            text: &text,
-            props: &props,
-            size: (tb.w(), tb.h()),
-            wrap_width: Some(wrap),
-        };
-        let extent = self.env.shape_text(&req).map(|t| t.extent);
+        // `ui-scaling.md` §6.4.5, §7.5: the tooltip is sized from its text laid out at the
+        // panel's content scale (`Se`, a root panel has no node scale) with the text factor;
+        // the physical extent ÷ c, rounded up. At the identity this is the shaped extent.
+        let extent = self.measure_text_scaled(te, &text, (tb.w(), tb.h()), Some(wrap));
         if self.attach_raw(panel, self.screen).is_err() {
             self.tooltip.panel = None;
+            self.tooltip.text = None;
             self.destroy(panel);
             return;
         }
@@ -336,7 +341,7 @@ impl Ui {
         self.set_layout_box(panel, crate::geom::IBox::from_xywh(b.l, b.t, w, h));
         // Placement (§6.5).
         let (px, py) = self.input.pointer.unwrap_or((0, 0));
-        let cs = self.cursor_size();
+        let cs = self.cursor_offset();
         let (sw, sh) = self.screen_size;
         let mut x = px.saturating_add(cs);
         let mut y = py.saturating_add(cs);
@@ -347,7 +352,26 @@ impl Ui {
         self.move_to(panel, x, y);
     }
 
-    /// The displayed cursor size (§9.3): trunc(32 × `UIScale_Cursor`).
+    /// The cursor scale preference with the range rule of `ui-behaviour.md` §9.3 (1.0 when
+    /// ≤ 0, above 4 or NaN).
+    fn cursor_scale(&self) -> f64 {
+        let s = self.settings.scale_cursor;
+        if s <= 0.0 || s > 4.0 || s.is_nan() {
+            1.0
+        } else {
+            f64::from(s)
+        }
+    }
+
+    /// The effective scale *Se* of the UI screen (1 at the identity).
+    fn cursor_se(&self) -> f64 {
+        self.ui_screen.map_or(1.0, |f| f.effective_scale())
+    }
+
+    /// The displayed cursor size in UI units (§9.3): trunc(32 × `UIScale_Cursor`). This is
+    /// the cursor offset of tooltip placement (§6.5) for callers that place panels in UI
+    /// units; it equals [`Ui::cursor_offset`] up to rounding. The cursor **image** size in
+    /// physical pixels is [`Ui::cursor_physical_size`] (`ui-scaling.md` §6.7).
     #[must_use]
     pub fn cursor_size(&self) -> i32 {
         let s = self.settings.scale_cursor;
@@ -359,6 +383,46 @@ impl Ui {
         trunc_f32(32.0 * s)
     }
 
+    /// The cursor image size in **physical** pixels (`ui-scaling.md` §6.7, replacing
+    /// `ui-behaviour.md` §9.3 for Tessera): trunc(32 × *Se* × `ui_scale_cursor`), with the
+    /// §9.3 range rule for the cursor scale. At the identity (no UI screen, or *Se* = 1) it
+    /// is [`Ui::cursor_size`].
+    #[must_use]
+    pub fn cursor_physical_size(&self) -> i32 {
+        if self.ui_screen.is_none() {
+            // The identity keeps the single-precision arithmetic of §9.3 bit for bit.
+            return self.cursor_size();
+        }
+        crate::scaling::cursor_size(self.cursor_se(), self.cursor_scale())
+    }
+
+    /// A cursor image hot spot scaled by the cursor's factor *Se* × `ui_scale_cursor` and
+    /// rounded (`ui-scaling.md` §6.7), in physical pixels of the cursor image of
+    /// [`Ui::cursor_physical_size`]. `(x, y)` is the hot spot in the cursor's native image pixels.
+    #[must_use]
+    pub fn cursor_hotspot(&self, x: i32, y: i32) -> (i32, i32) {
+        let (se, cs) = (self.cursor_se(), self.cursor_scale());
+        (
+            crate::scaling::cursor_hotspot(x, se, cs),
+            crate::scaling::cursor_hotspot(y, se, cs),
+        )
+    }
+
+    /// The cursor's size in UI units, the tooltip's offset from the pointer
+    /// (`ui-scaling.md` §3.5: the cursor's physical size ÷ *Ky*, rounded). Equal to
+    /// [`Ui::cursor_size`] at the identity.
+    #[must_use]
+    pub fn cursor_offset(&self) -> i32 {
+        let cs = self.cursor_physical_size();
+        match self.ui_screen {
+            Some(f) if f.ky() > 0.0 && f.ky().is_finite() => (f64::from(cs) / f.ky())
+                .round()
+                .clamp(f64::from(i32::MIN), f64::from(i32::MAX))
+                as i32,
+            _ => cs,
+        }
+    }
+
     /// Sets the cursor scale preference (`UIScale_Cursor`, §9.3).
     pub fn set_cursor_scale(&mut self, s: f32) {
         self.settings.scale_cursor = if s <= 0.0 || s > 4.0 || s.is_nan() {
@@ -366,5 +430,39 @@ impl Ui {
         } else {
             s
         };
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::env::NullEnv;
+    use crate::scaling::{UiScreen, safe_area};
+    use crate::ui::Ui;
+    use crate::vocab::Vocab;
+
+    /// `ui-scaling.md` §6.7: the cursor is trunc(32 × Se × `ui_scale_cursor`) physical pixels
+    /// with its hot spot scaled by the same factor; the tooltip offset is that ÷ Ky.
+    #[test]
+    fn cursor_size_follows_the_effective_scale() {
+        let mut ui = Ui::new(Box::new(NullEnv), Vocab::default(), (1024, 768));
+        assert_eq!(ui.cursor_size(), 32, "identity");
+        assert_eq!(ui.cursor_physical_size(), 32, "identity");
+        let f = UiScreen::new(3840, 2160, 1.5).unwrap();
+        ui.set_ui_screen(f, safe_area(&f, None));
+        assert_eq!(ui.cursor_physical_size(), 48, "48 at Se 1.5");
+        assert_eq!(ui.cursor_hotspot(5, 10), (8, 15));
+        assert_eq!(ui.cursor_offset(), 32, "48 physical pixels are 32 UI units");
+        // The UI-unit size game code places tooltips with keeps its meaning (§3.5, §6.5): it
+        // agrees with the tooltip offset, not with the physical image size.
+        assert_eq!(ui.cursor_size(), 32, "UI units at Se 1.5");
+        assert_eq!(ui.cursor_size(), ui.cursor_offset());
+        ui.set_cursor_scale(1.25);
+        assert_eq!(ui.cursor_physical_size(), 60);
+        assert_eq!(ui.cursor_size(), 40);
+        assert_eq!(ui.cursor_offset(), 40);
+        // The §9.3 range rule still resets a hostile cursor scale.
+        ui.set_cursor_scale(9.0);
+        assert_eq!(ui.cursor_physical_size(), 48);
+        assert_eq!(ui.cursor_size(), 32);
     }
 }

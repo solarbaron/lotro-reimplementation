@@ -35,6 +35,7 @@ pub mod ops;
 mod painter;
 mod scheduler;
 
+pub use crate::scaling::image::ArtFilter;
 pub use cache::{
     CacheError, CacheStats, DEFAULT_LRU_BYTES, DEFAULT_PINNED_CAP_BYTES, ImageCache, ImageKey,
     MAX_PATH_KEY,
@@ -54,7 +55,7 @@ pub use coverage::{
 };
 pub use damage::{DamageList, MAX_MERGED, MAX_PENDING, merge};
 pub use display::{
-    CoverageMap, DisplayList, FillRect, GlyphBox, GlyphRun, ImageLayer, MAX_COVERAGE_DIM,
+    CoverFit, CoverageMap, DisplayList, FillRect, GlyphBox, GlyphRun, ImageLayer, MAX_COVERAGE_DIM,
     MAX_GLYPHS_PER_RUN, MAX_NESTED, MAX_OPS, OverlayLayer, PaintOp,
 };
 pub use geom::Rect;

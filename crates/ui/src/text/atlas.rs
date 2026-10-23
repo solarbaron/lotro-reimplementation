@@ -442,6 +442,9 @@ impl FontFace {
 #[derive(Clone, Default)]
 pub struct FontLadder {
     faces: Vec<Arc<FontFace>>,
+    /// A face that serves one target height directly, whatever its own line height (Tessera's
+    /// font rasterised at that height, `ui-scaling.md` §6.4.3 item 4 and its last paragraph).
+    direct: Option<(i32, Arc<FontFace>)>,
 }
 
 impl std::fmt::Debug for FontLadder {
@@ -458,13 +461,38 @@ impl FontLadder {
     #[must_use]
     pub fn new(mut faces: Vec<Arc<FontFace>>) -> Self {
         faces.sort_by_key(|f| f.line_height());
-        Self { faces }
+        Self {
+            faces,
+            direct: None,
+        }
     }
 
     /// A one-face ladder (a font that stands alone, §6.4.3).
     #[must_use]
     pub fn single(face: Arc<FontFace>) -> Self {
-        Self { faces: vec![face] }
+        Self {
+            faces: vec![face],
+            direct: None,
+        }
+    }
+
+    /// A one-face ladder whose face serves target height `target` as an exact record, used as
+    /// it is with its own metrics (`ui-scaling.md` §6.4.3 item 4: Tessera's font rasterised
+    /// directly at the target height, whose line height need not equal it). Any other target
+    /// height is chosen from the face by the usual rules (§6.4.3 items 1–3).
+    pub(crate) fn direct(target: i32, face: Arc<FontFace>) -> Self {
+        Self {
+            faces: vec![Arc::clone(&face)],
+            direct: Some((target, face)),
+        }
+    }
+
+    /// The face that serves `target` directly ([`FontLadder::direct`]), if any.
+    pub(crate) fn direct_face(&self, target: i32) -> Option<&Arc<FontFace>> {
+        self.direct
+            .as_ref()
+            .filter(|(t, _)| *t == target)
+            .map(|(_, f)| f)
     }
 
     /// Whether the ladder holds no face.

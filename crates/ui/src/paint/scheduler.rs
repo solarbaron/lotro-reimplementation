@@ -182,6 +182,12 @@ pub struct PaintFrameStats {
     pub canvas_bytes: u64,
     /// Bytes of UI textures after the frame (U5).
     pub texture_bytes: u64,
+    /// Glyphs derived for the content scale in this frame (`ui-scaling.md` §6.5, budget S7):
+    /// their time is spent inside the paint slice, while display lists are built.
+    pub glyphs_derived: u32,
+    /// Nanoseconds spent laying out and deriving scaled text in this frame (§6.5, S7), part of
+    /// the paint slice.
+    pub glyph_derive_ns: u64,
 }
 
 /// What a frame produced.
@@ -286,6 +292,9 @@ pub struct Scheduler<G> {
     /// Per-surface content scale `c` (`ui-scaling.md` §6.1), applied to the surface's
     /// [`super::CanvasSet`] when a job starts. Absent means `(1.0, 1.0)` (the crisp identity).
     surface_scale: BTreeMap<SurfaceId, [f64; 2]>,
+    /// The art filter (`ui-scaling.md` §6.3, §7.6) applied to every surface's
+    /// [`super::CanvasSet`] when a job starts.
+    art_filter: super::ArtFilter,
     pending_ops: Vec<GpuOp>,
     next_order: u64,
     next_gen: u64,
@@ -318,6 +327,7 @@ impl<G> Scheduler<G> {
             limits,
             surfaces: BTreeMap::new(),
             surface_scale: BTreeMap::new(),
+            art_filter: super::ArtFilter::Sharp,
             groups: BTreeMap::new(),
             pending_ops: Vec::new(),
             next_order: 0,
@@ -432,6 +442,21 @@ impl<G> Scheduler<G> {
         } else {
             self.surface_scale.insert(id, scale);
         }
+    }
+
+    /// Sets the art filter images are resampled with (`ui-scaling.md` §6.3, §7.6), applied to
+    /// each surface's canvases when its next paint job starts. Returns whether it changed; the
+    /// caller damages the surfaces that should repaint with it.
+    pub fn set_art_filter(&mut self, filter: super::ArtFilter) -> bool {
+        let changed = self.art_filter != filter;
+        self.art_filter = filter;
+        changed
+    }
+
+    /// The art filter of [`Scheduler::set_art_filter`].
+    #[must_use]
+    pub fn art_filter(&self) -> super::ArtFilter {
+        self.art_filter
     }
 
     /// Removes a group and every surface in it.
@@ -792,6 +817,7 @@ impl<G> Scheduler<G> {
             };
             if let Some(c) = &mut s.canvases {
                 c.set_scale(surface_scale);
+                c.set_art_filter(self.art_filter);
                 c.retain_nested(&snap.list);
             }
             s.coverage = snap.list.nested().collect();

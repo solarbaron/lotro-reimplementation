@@ -394,11 +394,26 @@ pub(crate) fn resolve_scaled(
     };
     let base_lh = slot_face.line_height_i32();
     let t = target_height(base_lh, ctx.c, ctx.x);
-    let src = choose_glyph_source(&ladder.heights(), t);
-    let source_face = ladder
-        .face_at(src.source_height)
-        .cloned()
-        .unwrap_or_else(|| Arc::clone(slot_face));
+    let (src, source_face) = match ladder.direct_face(t) {
+        // A face made for this height (§6.4.3 item 4): used as it is, like an exact record.
+        Some(f) => (
+            crate::scaling::GlyphSource {
+                kind: SourceKind::Exact,
+                source_height: f.line_height_i32(),
+                target: t,
+                k: 1.0,
+            },
+            Arc::clone(f),
+        ),
+        None => {
+            let src = choose_glyph_source(&ladder.heights(), t);
+            let face = ladder
+                .face_at(src.source_height)
+                .cloned()
+                .unwrap_or_else(|| Arc::clone(slot_face));
+            (src, face)
+        }
+    };
     let line_height = i64::from(source_face.line_height().min(255));
     let baseline_face = i64::from(source_face.baseline().min(65_535));
     match source_face.lookup(c.unit).glyph {

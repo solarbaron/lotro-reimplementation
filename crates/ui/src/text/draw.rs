@@ -955,6 +955,194 @@ mod scaled_tests {
         assert_eq!(run.glyphs[0].src, [0, 0]);
     }
 
+    /// A face whose glyph `A` is a solid `w × h` rectangle of full coverage at (0, 0) of an
+    /// atlas just large enough, for the T1–T3 checks on the wired path.
+    fn solid_face(did: u32, line_height: u32, w: u8, h: u8) -> Arc<FontFace> {
+        pattern_face(did, line_height, w, h, |_, _| 255)
+    }
+
+    /// As [`solid_face`] with the coverage of texel (x, y) given by `cov`.
+    fn pattern_face(
+        did: u32,
+        line_height: u32,
+        w: u8,
+        h: u8,
+        cov: impl Fn(u32, u32) -> u8,
+    ) -> Arc<FontFace> {
+        let (aw, ah) = (u32::from(w), u32::from(h));
+        let data = (0..ah)
+            .flat_map(|y| (0..aw).map(move |x| (x, y)))
+            .map(|(x, y)| cov(x, y))
+            .collect();
+        let fg = Arc::new(CoverageMap::new(aw, ah, data).unwrap());
+        let g = Glyph {
+            width: w,
+            height: h,
+            left_bearing: 0,
+            right_bearing: 0,
+            top: 0,
+            code: 0x41,
+            x: 0,
+            y: 0,
+        };
+        Arc::new(
+            FontFace::from_parts(
+                FontId::Data(did),
+                line_height,
+                line_height.saturating_sub(1),
+                [0, 0],
+                vec![g],
+                fg,
+                None,
+            )
+            .unwrap(),
+        )
+    }
+
+    /// The fill coverage `draw_scaled` produces for one `A` at content scale `c`.
+    fn derived_fill(f: &Arc<FontFace>, c: f64) -> (Vec<u8>, usize, usize) {
+        let fonts = vec![Some(Arc::clone(f))];
+        let ladders = [FontLadder::single(Arc::clone(f))];
+        let ctx = ScaleCtx {
+            c,
+            x: 1.0,
+            ladders: &ladders,
+        };
+        let cs = text(0x41);
+        let (lp, dp) = params();
+        let lay = layout_scaled(&cs, &fonts, &lp, None, &ctx).unwrap();
+        let mut cache = GlyphCache::new(1 << 20);
+        let tp = draw_scaled(&lay, &cs, &fonts, &dp, &ctx, &mut cache);
+        let run = fill_run(&tp).expect("a fill run");
+        let cov = &run.coverage;
+        (
+            cov.data().to_vec(),
+            cov.width() as usize,
+            cov.height() as usize,
+        )
+    }
+
+    /// Invariant I7 on the wired path: at `c × x = 1` every glyph comes from the font's own
+    /// record (its own atlas, nothing derived); at a height with an exact ladder record, from
+    /// that record's atlas.
+    #[test]
+    fn i7_glyphs_come_from_the_records() {
+        let small = face(1, 10, 8, glyph(0x41, 0, 0, 4, 6));
+        let big = face(2, 15, 16, glyph(0x41, 1, 1, 6, 9));
+        let fonts = vec![Some(Arc::clone(&small))];
+        let ladders = [FontLadder::new(vec![Arc::clone(&small), Arc::clone(&big)])];
+        let cs = text(0x41);
+        let (lp, dp) = params();
+        for (c, x, want) in [(1.0, 1.0, &small), (0.8, 1.25, &small), (1.5, 1.0, &big)] {
+            let ctx = ScaleCtx {
+                c,
+                x,
+                ladders: &ladders,
+            };
+            let lay = layout_scaled(&cs, &fonts, &lp, None, &ctx).unwrap();
+            let mut cache = GlyphCache::new(1 << 20);
+            let tp = draw_scaled(&lay, &cs, &fonts, &dp, &ctx, &mut cache);
+            let run = fill_run(&tp).expect("a fill run");
+            assert!(
+                Arc::ptr_eq(&run.coverage, want.foreground()),
+                "c {c} x {x}: the glyph is not the record's own"
+            );
+            assert!(cache.is_empty(), "c {c} x {x}: nothing is derived");
+        }
+    }
+
+    /// Ink box of a coverage bitmap: (left, top, right, bottom), exclusive ends.
+    fn ink(cov: &[u8], w: usize, h: usize) -> Option<(usize, usize, usize, usize)> {
+        let mut b: Option<(usize, usize, usize, usize)> = None;
+        for y in 0..h {
+            for x in 0..w {
+                if cov[y * w + x] > 0 {
+                    b = Some(match b {
+                        None => (x, y, x + 1, y + 1),
+                        Some((l, t, r, bt)) => (l.min(x), t.min(y), r.max(x + 1), bt.max(y + 1)),
+                    });
+                }
+            }
+        }
+        b
+    }
+
+    /// T1: a solid source rectangle stays a solid rectangle with at most one partial row or
+    /// column per edge, downsampled and distance-derived, through `draw_scaled`.
+    #[test]
+    fn t1_solid_rectangles_stay_solid() {
+        let f = solid_face(1, 20, 9, 13);
+        for c in [0.55, 0.75, 1.3, 1.75, 2.5] {
+            let (cov, w, h) = derived_fill(&f, c);
+            let (l, t, r, b) = ink(&cov, w, h).expect("some ink");
+            for y in t..b {
+                for x in l..r {
+                    let edge = x == l || x + 1 == r || y == t || y + 1 == b;
+                    if !edge {
+                        assert_eq!(cov[y * w + x], 255, "c {c}: interior ({x}, {y}) not full");
+                    }
+                }
+            }
+            // At most one partial column on the left and right, one partial row top and bottom.
+            // A column is partial when one of its pixels between the edge rows is; a row
+            // when one of its pixels between the edge columns is.
+            let inner_rows = (t + 1)..b.saturating_sub(1);
+            let inner_cols = (l + 1)..r.saturating_sub(1);
+            let partial_col = |x: usize| inner_rows.clone().any(|y| cov[y * w + x] < 255);
+            let partial_row = |y: usize| inner_cols.clone().any(|x| cov[y * w + x] < 255);
+            let cols = (l..r).filter(|&x| partial_col(x)).count();
+            let rows = (t..b).filter(|&y| partial_row(y)).count();
+            assert!(
+                cols <= 2 && rows <= 2,
+                "c {c}: {cols} partial columns, {rows} rows"
+            );
+        }
+    }
+
+    /// T2: the derived ink box is within one pixel of the source ink box scaled by `k`.
+    #[test]
+    fn t2_ink_box_follows_k() {
+        let f = solid_face(1, 20, 9, 13);
+        for c in [0.55, 0.75, 1.3, 1.75, 2.5] {
+            let (cov, w, h) = derived_fill(&f, c);
+            let (l, t, r, b) = ink(&cov, w, h).expect("some ink");
+            let k = f64::from(crate::scaling::target_height(20, c, 1.0)) / 20.0;
+            let (iw, ih) = ((r - l) as f64, (b - t) as f64);
+            assert!(
+                (iw - 9.0 * k).abs() <= 1.0 + 1e-9,
+                "c {c}: width {iw} vs {}",
+                9.0 * k
+            );
+            assert!(
+                (ih - 13.0 * k).abs() <= 1.0 + 1e-9,
+                "c {c}: height {ih} vs {}",
+                13.0 * k
+            );
+        }
+    }
+
+    /// T3: a downsampled glyph's coverage sum is the source sum times the box ratio, within
+    /// half an 8-bit step per derived pixel plus 1 %.
+    #[test]
+    fn t3_downsampled_coverage_sum() {
+        let pat = |x: u32, y: u32| ((x * 29 + y * 53 + x * y * 7) % 256) as u8;
+        let f = pattern_face(1, 20, 9, 13, pat);
+        let src: f64 = (0..13u32)
+            .flat_map(|y| (0..9u32).map(move |x| (x, y)))
+            .map(|(x, y)| f64::from(pat(x, y)) / 255.0)
+            .sum();
+        for c in [0.5, 0.55, 0.75, 0.9] {
+            let (cov, w, h) = derived_fill(&f, c);
+            let sum: f64 = cov.iter().map(|&v| f64::from(v) / 255.0).sum();
+            let reference = src * (w * h) as f64 / (9.0 * 13.0);
+            let tol = (w * h) as f64 / 510.0 + 0.01 * reference;
+            assert!(
+                (sum - reference).abs() <= tol,
+                "c {c}: sum {sum} vs {reference} (tolerance {tol})"
+            );
+        }
+    }
+
     /// A hostile content scale cannot panic or allocate unboundedly: a target above the coverage
     /// limits simply draws nothing.
     #[test]

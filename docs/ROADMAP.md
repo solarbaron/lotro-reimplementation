@@ -588,8 +588,8 @@ NPCs and `--crowd`, and decision [0008](decisions/0008-entity-storage.md) (own e
 `setup.md` (parts 1 and 2), `script-table.md`, plus `mesh.md` §6.2, `render.md` §2.4 and
 `walker.md` §10. No `> **OPEN:**` item blocks a criterion; each carries a Tessera
 Decision or waits on owner observations O8–O17 in [owner-observations.md](checklists/owner-observations.md). The four new M4 specs
-(`havok-data.md`, `skeleton-anim.md`, `appearance.md`, `script-table.md`) are still in
-Review: no spec review is recorded for them yet. `script-table.md`'s `BIN` facts come from a
+(`havok-data.md`, `skeleton-anim.md`, `appearance.md`, `script-table.md`) have since been
+reviewed and are Accepted (2026-10-07 to 2026-10-14, see their headers). `script-table.md`'s `BIN` facts come from a
 disassembly of the client's script-table node classes, which the owner authorised
 retroactively in decision [0009](decisions/0009-script-table-disassembly.md) (an incident
 under `docs/CLEAN_ROOM.md` §10, limited to that question and client build).
@@ -988,8 +988,8 @@ self-test and `tools/check-spdx.sh` pass. `cargo test --workspace --release --no
 with `TESSERA_GAME_DIR` set: **2,613 passed, 1 failed, 5 ignored**; the failure is the
 load-sensitive `flight_across_a_region` (1 frame over 50 ms, longest 58.4 ms, load average
 about 25 from other milestone builds); run alone right after (load average about 8) it
-passes (longest 46.5 ms, 0 over 50 ms). Four libFuzzer `slow-unit-*` files lie untracked in
-the repository root and should be removed. `cargo doc` and `cargo deny` were not re-run.
+passes (longest 46.5 ms, 0 over 50 ms). Four libFuzzer `slow-unit-*` files that lay untracked in
+the repository root have since been removed. `cargo doc` and `cargo deny` were not re-run.
 
 Repository checks on 2026-10-06: `cargo fmt --check` (workspace and `fuzz/`), `cargo clippy
 --workspace --all-targets --all-features --locked -D warnings` and on `fuzz/`, `cargo doc
@@ -1022,8 +1022,8 @@ the reviews of `walker.md` §13–§14 and `render.md` §4–§5, the ten Revise
 resolved.
 
 <a id="m4-5-particles"></a>
-**Particle effects (outside the deliverables above; branch `particles-runtime`,
-2026-10-09).** `particles.md` (Accepted) §8 and `particle-runtime.md` (Accepted) are
+**Particle effects (outside the deliverables above; branch `particles-runtime`, merged to
+main 2026-10-09).** `particles.md` (Accepted) §8 and `particle-runtime.md` (Accepted) are
 implemented in `tessera-particles` (simulation and run-time rules), the renderer's particle
 pipeline, the explorer's preview and, in the walker, for the Particle nodes of the start-up
 scripts of static entities and placed figures (started by `tessera-scriptgraph`; attached
@@ -1031,9 +1031,9 @@ and dropped paths, attachment frames, lingering, housekeeping, draw order, dista
 `apps/client/tests/particles_real_data.rs` draws particles at M3-03 and settles). The specs
 are **not implemented end to end**: fork effects (0x44) are not drawn (`particles.md` rule
 §10.2, Q1); systems of the post-processing pass are not drawn (the walker has none); weather
-systems and the global wind (Q13), beams (Q-RT4), the gameplay event handler (Q-RT5), the
+systems and the global wind (Q13), the gameplay event handler (Q-RT5), the
 lights of lit systems (Q8 (b)), `inherit_opacity`, driven node fields and bounds culling
-(Q-RT3) remain; the walker's own choices are recorded as implementer OPENs in
+(Q-RT3) remain (beams, Q-RT4, are drawn since P2: `particle-runtime.md` §11.1); the walker's own choices are recorded as implementer OPENs in
 `particle-runtime.md` §3.2, §5.4, §9.2 and §12.
 
 ---
@@ -1112,10 +1112,9 @@ read-only importer of the original keymap file in `tessera-input`, the 0023 spli
 `tessera-plugins` with the host, the plugin API's UI classes and the clean-room class helper
 of decision 0016), and in `tessera-client` the native panels P1–P15, the chat window, the
 plugin manager window, `/plugins` commands, the UI host and the U1–U5 scripted run.
-Specs used: those listed above, plus decisions 0014–0016 and 0023. **Two specs the
-implementation follows are not Accepted:** `plugin-class-helper.md` (status Review; its third
-review is outstanding) and `render.md` §6 (status Review; no review recorded). Both need their
-review before the code that rests on them is committed.
+Specs used: those listed above, plus decisions 0014–0016 and 0023. `plugin-class-helper.md`
+and `render.md` §6, in Review at this verification, were Accepted after their reviews
+(2026-10-08 and 2026-10-09).
 
 | # | | Evidence |
 |---|---|---|
@@ -1125,7 +1124,7 @@ review before the code that rests on them is committed.
 | 4 | ⏳ owner install pending | No `Plugins` folder exists on the owner's machine (`compat_real_plugins` reports it and passes as a skip). Tessera's synthetic plugin suite passes: `tessera-plugins` `compat_plugins` 12 / 12 (plugins load, create windows, respond to clicks, hover, typing, keys, timers and shell commands), `ui_classes`, `ui_controls`, `ui_input`, `ui_lifetime`, `class_helper` 37 / 37, and `tessera-client` `plugins_suite` 3 / 3. The current incompatibility table (18 rows) is in the module docs of `crates/plugins/tests/compat_plugins.rs`; the visible ones: game-styled windows use a neutral frame (no call yet to build a plugin control from a based layout element), check boxes draw no mark, quickslots draw no icon, `ControlList:Insert`/`Set` append. The 14 plugins of `plugin-api-usage.md` §9: owner observation O40. |
 | 5 | ✅ | `cargo test --release -p tessera-plugins --test escape`: 6 / 6 (path traversal, absolute paths, symlinks, `import` tricks, image paths and plugin-data keys refused; C modules and bytecode refused; memory limits against string, table, `gsub` and format growth; instruction limits against loops, `pcall`/`xpcall` handlers, coroutines, patterns, metamethods and finalizers, per tick and at close); `ui_escape` 7 / 7 (UI-layer paths, refused image formats, hostile numbers, object caps); `sandbox` 6 / 6. |
 | 6 | ✅ | [Decision 0022](decisions/0022-plugin-runtime.md) and `CLAUDE.md` Naming record the plugin-namespace interoperability rules. This verification enforced the naming rule in the code: the namespace module of `tessera-plugins` and its bindings got neutral names (`root_ns`, `ns_root`); `tools/content-allowlist.txt` now allows the original names only in `crates/plugins/tests/` (the stale `crates/script/*` entry is gone, so the plugin-free core is checked). |
-| 7 | ❌ not met (indicative) | [docs/perf/m5-ui-budgets.md](perf/m5-ui-budgets.md), three runs of the scripted run at 3840 × 2160 and 1920 × 1080 offscreen on the loaded reference laptop. Third run (this verification, 3840 × 2160, load 8–13): U1 walking mean 0.89 ms, p99 8.4 ms (budget 0.3 / 1.0 ms) **fails**; U4 (b) 12.8 ms and U4 (f) 6.1 ms (4 ms) **fail**; U4 (a) 33.5 ms passes here but was 54.0 ms on the second run; U3 (steady mean 72 KiB) and U5 (canvases 45 MiB, textures 90 MiB, images 11 MiB) **pass**; U2 is a proxy only (no timestamp queries in `tessera-render`, `render.md` §6.16 OPEN); U4 (c)–(e) are not measured. The time is in `tessera-ui`'s step 8 (`Ui::paint`). The painter probe (`crates/ui/benches/paint_probe.rs`) has measured Mix colour (1.4 ns/pixel) and the erase. Idle re-measurement and the compositor-window run: O49. |
+| 7 | ❌ not met (indicative) | [docs/perf/m5-ui-budgets.md](perf/m5-ui-budgets.md), three runs of the scripted run at 3840 × 2160 and 1920 × 1080 offscreen on the loaded reference laptop. Third run (this verification, 3840 × 2160, load 8–13): U1 walking mean 0.89 ms, p99 8.4 ms (budget 0.3 / 1.0 ms) **fails**; U4 (b) 12.8 ms and U4 (f) 6.1 ms (4 ms) **fail**; U4 (a) 33.5 ms passes here but was 54.0 ms on the second run; U3 (steady mean 72 KiB) and U5 (canvases 45 MiB, textures 90 MiB, images 11 MiB) **pass**; U2 is a proxy only (no timestamp queries in `tessera-render`, `render.md` §6.16 OPEN); U4 (c)–(e) are not measured. The time is in `tessera-ui`'s step 8 (`Ui::paint`). The painter probe (`crates/ui/benches/paint_probe.rs`) has measured Mix colour (1.4 ns/pixel) and the erase. After the step-8 optimisation (2026-10-09, indicative, loaded machine) every U1 mean and p99 was inside the budget in three of five runs ([m5-ui-budgets.md](perf/m5-ui-budgets.md) "Step-8 optimisation"). Idle re-measurement and the compositor-window run: O49. |
 
 Repository checks in this verification: `cargo fmt --check` (workspace and `fuzz/`), `cargo
 clippy --workspace --all-targets --all-features --locked -D warnings` and `cargo clippy
@@ -1156,13 +1155,12 @@ fuzz targets, rustfmt on six fuzz targets, eight missing `fuzz/README.md` rows, 
 O39–O49.
 
 Remaining for M5 to close: owner observations O39 (criterion 2) and O40 (criterion 4); the
-U1/U4 work in `tessera-ui` step 8, U4 (c)–(e) figures, timestamp queries for U2 and the idle
-re-measurement O49 (criterion 7); the reviews of `plugin-class-helper.md` and `render.md` §6;
-the P15 rows of `m5-visual.md`. Open review items the implementers
+U4 work in `tessera-ui` step 8, U4 (c)–(e) figures, timestamp queries for U2 and the idle
+re-measurement O49 (criterion 7); the P15 rows of `m5-visual.md`. Open review items the implementers
 could not fix in their own files: the class helper's `Turbine.Log` clock defaults to UTC
 (`crates/plugins/src/host.rs`, client `LogHost`); plugin TextBox read-only flag, caret and
 selection API, child insert position and title bars above a window's top edge need
-`tessera-ui` calls; `ImageRef::File` needs an origin; a `UIScale_Global` setter; the
+`tessera-ui` calls; `ImageRef::File` needs an origin; the
 `PluginData.Load` main-thread read waits on the `lua-plugin-api.md` §10.1 OPEN (ARCHITECTURE
 §21).
 
@@ -1240,10 +1238,11 @@ owner observations in [owner-observations.md](checklists/owner-observations.md#o
 (O28.1 is criterion 2's listening comparison, m6-audio.md row O1; the others check
 `sound.md` §16, `script-runtime.md` §26, the ABC checks OC1–OC10 of `abc-dialect.md` §17 and
 Q1, Q2, Q4–Q6 of `instruments.md` §16), and a listening check of `/play` with device output;
-`script-runtime.md` is still in Review status (its OPEN items carry Tessera Decisions). The client has no chat input yet, so the
-player-music commands reach it through `--music-command "<line>"` (repeatable, run in order
-once the archives are open; replies go to the chat log), for example `tessera-client
---audio device --music-command "/play <name>"` (built with `--features audio-device`) with the song in the settings folder's
+`script-runtime.md` is Accepted (2026-10-10). The player-music commands are built-ins of the
+one command dispatcher (decision 0020): typed in the walker's chat line or given as
+`--command "<line>"` (old name `--music-command`; repeatable, run in order once the archives
+are open; replies go to the chat log), for example `tessera-client
+--audio device --command "/play <name>"` (built with `--features audio-device`) with the song in the settings folder's
 `Music` or `<data dir>/Music`. Commands are processed strictly in order (a `/playstop` or
 `/playstart` given during a `/play`'s read acts after it; `abc-dialect.md` §11 OPEN
 (implementation) (g)); unit tests with a synthetic instrument table cover solo and synced
@@ -1303,14 +1302,15 @@ quinn and rustls on ring), `tessera-protocol` (`crates/protocol`), `tessera-serv
 (`apps/server`, built-in original default world), the `tessera-net` test-server backend
 (`remote`, with snapshot interpolation) wired into the client (`--server`), and
 `tessera-loadtest` (`apps/loadtest`). Specs: `tessera-protocol.md` (Accepted),
-`server-content.md` and `test-server.md` (Draft). No `> **OPEN:**` item blocks
-a criterion; the ones to settle before someone writes a second implementation from the spec
-are the four round-2 review notes at `tessera-protocol.md` §4.5, §8.3, §8.7 and §13.3.
+`test-server.md` (Accepted since this verification) and `server-content.md` (Draft). No
+`> **OPEN:**` item blocks a criterion; the ones to settle before someone writes a second
+implementation from the spec are the three round-2 review notes at `tessera-protocol.md`
+§4.5, §8.7 and §13.3 (the §8.3 note was answered on 2026-10-09).
 
 | # | | Evidence |
 |---|---|---|
-| 1 | ✅ one machine; LAN between two machines pending | One-hour soaks with `tessera-loadtest` (16 clients, each a `tessera_net::Session` over the test-server backend, walking and running across landblocks, teleporting, changing appearance and stance, chatting and reconnecting; [m7-soak.md](perf/m7-soak.md), third series): **S60d** (in-process, loopback) and **L60d** (server on the host's Docker bridge address, clients in a container with their own network stack) both PASS: 0 desync episodes of every kind over 5,185,495 and 4,272,246 position comparisons (240 observer–entity pairs, 236–240 of them left interest range and came back), 13,649 / 13,649 and 13,434 / 13,434 chat deliveries, 0 unexpected disconnects, 22 reconnections each; no memory growth after warm-up (S60d max 68.6 MiB; L60d server process 47.6 MiB, client process 10.7 MiB), every count back to its baseline. This verification found and fixed the client-side growth that failed the earlier hours (a thread, runtime and 2.9 MiB quinn endpoint per session; now one network thread and one shared endpoint, `tessera-net`), the tool's provisioning against a LAN address, and a drift of the server's tick schedule. Two release clients against a test server on the install, screenshots viewed: each sees the other's character and the default world's wanderers drawn and animated, network HUD (`interp 167 ms`, `4 remote`), message of the day in the chat overlay; `apps/client/tests/net_server.rs` (5 tests): both clients see each other move with smooth interpolation and receive each other's chat. Animation is compared as heading, gait and stance (0 episodes); `test-server.md` §13.2 has no animation rule yet (§15.2 OPEN). |
-| 2 | ✅ | `tessera-protocol.md` reviewed in two rounds by a reviewer who did not write the code (its Review section, R.1–R.7): Status Accepted, no blocking finding. The reviewer wrote a second codec from the spec text alone (`crates/protocol/tests/spec_conformance.rs`, 15 tests): it and the crate agree byte for byte on all 42 message vectors of §16.2–§16.5, the 16 tagged values of §16.6 and the handshake vectors of §16.1, both reject the 124 malformed inputs (every §16.7 negative vector) and accept the 23 boundary inputs. Every message type round-trips over 2,048 property-test cases (`proptests.rs`). Non-blocking OPEN notes remain (70 in the spec, most implementer notes); the four round-2 notes named above should be settled before a third party implements it. |
+| 1 | ✅ one machine; LAN between two machines pending | One-hour soaks with `tessera-loadtest` (16 clients, each a `tessera_net::Session` over the test-server backend, walking and running across landblocks, teleporting, changing appearance and stance, chatting and reconnecting; [m7-soak.md](perf/m7-soak.md), third series): **S60d** (in-process, loopback) and **L60d** (server on the host's Docker bridge address, clients in a container with their own network stack) both PASS: 0 desync episodes of every kind over 5,185,495 and 4,272,246 position comparisons (240 observer–entity pairs, 236–240 of them left interest range and came back), 13,649 / 13,649 and 13,434 / 13,434 chat deliveries, 0 unexpected disconnects, 22 reconnections each; no memory growth after warm-up (S60d max 68.6 MiB; L60d server process 47.6 MiB, client process 10.7 MiB), every count back to its baseline. This verification found and fixed the client-side growth that failed the earlier hours (a thread, runtime and 2.9 MiB quinn endpoint per session; now one network thread and one shared endpoint, `tessera-net`), the tool's provisioning against a LAN address, and a drift of the server's tick schedule. Two release clients against a test server on the install, screenshots viewed: each sees the other's character and the default world's wanderers drawn and animated, network HUD (`interp 167 ms`, `4 remote`), message of the day in the chat overlay; `apps/client/tests/net_server.rs` (5 tests): both clients see each other move with smooth interpolation and receive each other's chat. Animation is compared as heading, gait and stance (0 episodes); `test-server.md` §13.2 has since gained the Motion kind for it (§15.2 answered 2026-10-09; `apps/loadtest/src/desync.rs`). |
+| 2 | ✅ | `tessera-protocol.md` reviewed in two rounds by a reviewer who did not write the code (its Review section, R.1–R.7): Status Accepted, no blocking finding. The reviewer wrote a second codec from the spec text alone (`crates/protocol/tests/spec_conformance.rs`, 15 tests): it and the crate agree byte for byte on all 42 message vectors of §16.2–§16.5, the 16 tagged values of §16.6 and the handshake vectors of §16.1, both reject the 124 malformed inputs (every §16.7 negative vector) and accept the 23 boundary inputs. Every message type round-trips over 2,048 property-test cases (`proptests.rs`). Non-blocking OPEN notes remain (70 in the spec, most implementer notes); the round-2 notes named above should be settled before a third party implements it. |
 | 3 | ✅ | Ten fuzz targets cover every parser of the protocol, the client backend and the server: `protocol_frame`, `protocol_message`, `protocol_datagram`, `protocol_handshake`, `protocol_fingerprint`, `net_remote_inbound`, `net_remote_world`, `server_connection`, `server_world`, `server_files`. `tools/fuzz-smoke.sh -t 60` (stable libFuzzer): no crash, 0.11 M (`server_world`) to 26.8 M (`protocol_message`) executions each; the two `net_remote` targets re-run after the endpoint change (0.47 M and 0.06 M, no crash). Hostile soaks: H5d (final build, 1,924 attacks of ten kinds, 12,480 raw datagrams) and the earlier H5-16, H15-16, H5b, HR15: 0 panics, honest clients unaffected (0 desync, 0 unexpected disconnects), every count back to baseline, server process memory flat (HR15). Plus `apps/server/tests/hostile.rs`, `crates/net/tests/remote_hostile.rs` and the protocol state-machine tests. |
 | 4 | ✅ rules written; owner confirmation pending | [`server-content.md`](specs/server-content.md) states the seven server rules (no game data on a server, opaque references relayed but never collected, at most 16 bare positions per content file, an original default world, no gameplay reproduction, private or LAN use only, licensed committed content), and says that the owner's dated confirmation is needed before any public test build (none exists). `tessera-server` links no data-decoding crate (`cargo tree -p tessera-server`), its built-in world has no opaque references, `check-content` enforces the automatic rules, and registration refuses non-private listen addresses. Open for the owner: confirm the rules and the coordinate rule (`server-content.md` §12). |
 
@@ -1515,9 +1515,10 @@ specs.
    graph holds a data-decoding crate, `tessera-gamedata` or the feed.
 
 <a id="p0-status"></a>
-**Status:** in progress (started 2026-10-09; exit verification 2026-10-09). Criteria 2, 3
-and 4 pass; criterion 1 is not met: `scenario-feed.md` is in Review (revision 3) and waits
-for an independent re-review. No criterion needs an owner observation in the original client.
+**Status:** merged to main (2026-10-10; started 2026-10-09; exit verification 2026-10-09).
+Criteria 2, 3 and 4 pass; criterion 1 was not met at the exit verification
+(`scenario-feed.md` in Review, revision 3) and passed with the spec's independent review the
+same day (Accepted; see Follow-ups below). No criterion needs an owner observation in the original client.
 Checks on branch `p0` (uncommitted tree, 2026-10-09): `cargo fmt --check` (workspace and
 `fuzz/`), clippy `-D warnings` (workspace `--all-targets`, also `--all-features`; `fuzz/`
 `--bins`), rustdoc `-D warnings` on `tessera-net`, `tessera-gamedata`, `tessera-client`;
@@ -1535,11 +1536,11 @@ refused, both exit 2): `cargo test --release -p tessera-client` with the install
 | 3 | **pass** | Fuzz targets `net_scenario_parse` (parse, then 200 ticks of playback; parse peak allocation bounded) and `net_scenario_run` (synthetic resolver from the input, headless driver, per-poll event and weight bounds). `tools/fuzz-smoke.sh -t 60`: 733,053 and 88,851 executions, no crash. Hostile files given to the release client (random bytes, an unterminated string, a 2 MB file, an over-long integer, unknown keywords): exit 3 with `FILE:LINE:COLUMN` and the error kind, no panic; `scenario_hostile.rs` (the 44 rows of §14.5 and 31 further static errors), `scenario_props.rs` (proptests over random lines and bytes) and the 11 hostile files of `tests/scenarios.rs` pass. |
 | 4 | **pass** | ARCHITECTURE §3 (layer diagram, dependency rule) and §3.1 list `tessera-gamedata` (L3, client and tools only). CI job `server-deps` (`.github/workflows/ci.yml`) runs `tools/check-server-deps.sh --self-test` (14 fixture cases incl. feature unification, dev, build and target-specific edges, path and git packages, in-process hosts, `#[path]`/`include!`; all caught) and the real check: `tessera-server` links nothing outside crates.io but `tessera-protocol`; its host `tessera-loadtest` links no data crate or `tessera-gamedata` (exit 0). Also in `tools/ci-local.sh`. |
 
-Remaining issues: criterion 1 (independent re-review of `scenario-feed.md`); open review items
-for owners: the windowed scenario log is written on the main thread (ARCH §21 exception (d)),
-no test yet checks that event and command `name()` strings are unique (ARCH §19.1), the
-windowed input script is not played (§12.4 OPEN), and whether in-process server hosts must
-stay feed-free (§3.1 OPEN item 3).
+Remaining issues at the exit verification (all but the last settled since, see Follow-ups):
+criterion 1 (independent re-review of `scenario-feed.md`); the windowed scenario log written
+on the main thread (ARCH §21 exception (d)), no uniqueness test for event and command
+`name()` strings (ARCH §19.1), the windowed input script not played (§12.4 OPEN); still open:
+whether in-process server hosts must stay feed-free (§3.1 OPEN item 3).
 
 Follow-ups (2026-10-09, after the spec's independent review passed, Accepted): the windowed
 log is written by a writer thread behind a bounded channel (ARCH §21, exception (d) gone);
@@ -1548,7 +1549,9 @@ log is written by a writer thread behind a bounded channel (ARCH §21, exception
 public `tessera_net::scenario::InputPlayer` (§12.4 OPEN (1); the refusal of an `enter`
 character that only the input script creates now applies only without the option); logs
 stop at 256 MiB with `error=LogOverflow`, exit 5 (§11.1 OPEN, the review's recommended
-bound); the content test accepts CC0-1.0 headers (§13 OPEN). The review's rulings on §3.1
+bound); the content test accepts CC0-1.0 headers (§13 OPEN). Numeric enum keys in committed
+scenarios: answered by the owner on 2026-10-16, option (b) (names only, resolved against the
+install; `scenario-feed.md` §16). The review's rulings on §3.1
 guard item 1 (refuse `tessera-net` in any form) and module naming match the code as it was.
 
 ---
@@ -1677,7 +1680,7 @@ then passed three runs in a row (2 / 2 each). `tools/fuzz-smoke.sh -t 60` on
 | # | Status | Evidence |
 |---|---|---|
 | 1 | **pass** (re-check 2026-10-10) | Lists: `character_screens_real_data` step 1 drives the screen model through 8 races, 15 (race, gender) entries and 130 (race, gender, class) choices, every one offered and valid (equal to `offered()`, 0 `problems()`); `chargen_real_data`: 69 (race, class) entries, 12 classes, 29 nationalities, 486 (race, gender, nationality, class) choices accepted, 15 default figures assembled with 0 diagnostics, 51 random names generated and accepted. Body choices: step 2 opens the appearance screen for all 15 bodies (10–20 controls each, 8–17 written properties), randomised looks are valid, and the 15 default figures and 15 race-select entities build through the walker's figure path (0 failed). Entering: step 4 creates and enters one character per body through the scenario feed (15 / 15, 5–13 look entries each); `pre_world_real_data` enters the world from the screens with the selected character. Test server: step 5 creates one character per race on an in-process `tessera-server` at protocol 1.1, refuses a taken name, and a second client receives the look (5 entries); with creation off New is greyed and nothing is sent; `apps/loadtest/tests/v11_looks.rs` (3 / 3): looks stored, relayed to minor-1 peers and kept from minor-0 peers, hostile 1.1 vectors are protocol violations. **Re-check on 93b3dfd (pass):** the viewport's figure is built through the shared figure path with every creation control applied and the stage's `CharGen_Stage` key, and drawn alone into `chargen_viewport`: step 2 of `character_screens_real_data` gives all 15 creation figures a composed face from their stage, and a colour control changes the look of 15 / 15; `chargen_viewport_real_data` (the `--character-select` start-up, headless, `--no-hud --no-ui-hud`) draws the race-select and appearance figures of the first, a middle and the last race (4,342–6,739 covered pixels in the preview pass), each with a composed face, each following a colour control, the turntable turning and zooming. A received look now carries colours and face layers: step 5's second client receives 6 entries and draws a figure with a composed face (10 edits). Pictures viewed (13 creation-screen frames and one second-client frame, private scratch, not committed): hobbit, Beorning and River-hobbit females on the race-and-class and appearance stages; the recoloured figures show the chosen blue (hobbit eyes, River-hobbit skin); the second client sees the created character with its received colours among the server's default wanderers. **Visual defects (open, not blocking the criterion):** (a) the appearance stage's default figure of the Beorning female (the avatar's own values, no style set) is drawn without a head (eyes only); its randomised looks have one; whether the creation defaults should choose styles beyond the avatar's own values is a question for `character-screens.md` §6 / `appearance.md` §3.4 (not filed: this re-check edits no spec); (b) the River-hobbit female on the appearance stage stands low in the viewport, its legs cut off at the viewport's lower edge, and faces away from the camera (framing and stage clip: `character-screens.md` §2.1 implementer OPEN); (c) the test captures a frame as soon as the figure is built and covers pixels, so under load parts whose textures are still loading can be missing from a picture (one Beorning race-select frame lacked torso and arms; the earlier run's frame of the same figure was complete); (d) the gender buttons show no selected state (in the race-and-class pictures the Male button is drawn in its gold art while a female body is shown; the spec states no selected state). The screens' figure is lit by the portrait's fixed light; the UI scene's objects, lights and cameras are not drawn (§2.1 OPEN). |
-| 2 | **pass** | `tessera-client` `item_tooltips_real_data`: all 151,230 item records categorised, 149,695 Rendered, modelled, converted and laid out in the examination tooltip panel (0 not laid out, 0 template failures, largest 314 × 1,101 px), 1,535 NoTooltip, 0 errors escaping the categories; `tessera-gamedata` `tooltip_real_data`: the same counts, 0 LayoutUnreadable, 0 ElementMissing, 0 RowFailure; IV2 31 / 31 elements, IV3 784 / 784 templates, IV4 7 / 7. 61 Rendered tooltips have no name row or an empty name (51 world-event layouts, 10 empty names; `item-tooltips.md` §12 OPEN). Panel picture (`character_panels_real_data` with `TESSERA_SHEET_DIR`, viewed): Journal_Window with 23 paperdoll slots, the equipped chest icon after the drag, bag 1 (15 slots) and the pinned tooltip; the pinned tooltip shows a dictionary name for a stat line (§6.16 OPEN) and the worth without coin images (§11 OPEN). |
+| 2 | **pass** | `tessera-client` `item_tooltips_real_data`: all 151,230 item records categorised, 149,695 Rendered, modelled, converted and laid out in the examination tooltip panel (0 not laid out, 0 template failures, largest 314 × 1,101 px), 1,535 NoTooltip, 0 errors escaping the categories; `tessera-gamedata` `tooltip_real_data`: the same counts, 0 LayoutUnreadable, 0 ElementMissing, 0 RowFailure; IV2 31 / 31 elements, IV3 784 / 784 templates, IV4 7 / 7. 61 Rendered tooltips have no name row or an empty name (51 world-event layouts, 10 empty names; `item-tooltips.md` §12 OPEN). Panel picture (`character_panels_real_data` with `TESSERA_SHEET_DIR`, viewed): Journal_Window with 23 paperdoll slots, the equipped chest icon after the drag, bag 1 (15 slots) and the pinned tooltip; the pinned tooltip shows a dictionary name for a stat line (§6.16 OPEN, since answered in the P2 revision and built: the stat-line name is the property's `PropertyMetaData_Name`, `crates/gamedata/src/tooltip/effects.rs`) and the worth without coin images (§11 OPEN). |
 | 3 | **pass** | `worn_look_real_data` (2 / 2, three runs): a headless scenario gives and equips a chest piece and a primary weapon; the avatar's figure request then holds both records with slots 3 and 17, and the figure goes from 7 parts with 0 held to 7 parts with 1 held. Screenshots (verifier, `--scenario … --screenshot` at region 1, block (126, 140), heading 180, viewed): before the equip the figure wears its default clothes, after it a different chest piece and trousers, with the weapon as a held part. Server: client A runs the equips as an overlay run on an in-process `tessera-server`, observer B receives `AppearanceChanged` with the chest record in slot 3; `v11_looks.rs` `o9_observers_see_the_overlay_players_equipment` passes. |
 | 4 | **pass** | `plugin_inventory_checks` (8 / 8) runs `lua-plugin-api.md` §18 checks 66–69 through the client's plugin host on scenarios (`ScenarioPlugins`, the path of `--scenario --headless --load-plugin`): `GetBackpack` size and growth, backpack events, `GetEquipment` with the install's chest records, item details of 64 install items compared with the raw property sets, and the literal Lua string for a quality-4, max-quantity-50 record; `tessera-plugins` `inventory_views` 15 / 15 (identity across prunes, queued delivery, getters agree with `ItemInfo`); `inventory_real_data`: 23 paperdoll slots, CPI1–CPI3, 20 slots visible to plugins. |
 
@@ -1830,21 +1833,26 @@ as written; whether the walker keys should move is the §8.2 implementer OPEN, o
 
 | # | Status | Evidence |
 |---|---|---|
-| 1 | **pass** | Synthetic (`combat_ui_golden`, 2 / 2): the §17.1 scenario plays headless with `--no-data` on its virtual clock; at the 11 checkpoints every §14 element is shown (read from the UI tree), the 5 committed goldens match (0 outliers of 786,432 pixels each), the canonical log equals the committed one byte for byte, and two runs give the same element states (CUI9). Install (`combat_ui_real_data`): 79 / 79 element labels resolve, 6 / 6 avoidance tokens, the floating-text settings read; 20 elements shown, 0 missing, at the 11 checkpoints; the 11 local goldens (never committed) compare with 0 outliers on the second run. `tessera-ui` `game_p2_real_data`: 11 / 11 widgets take their install look, 79 IDs, 39 states, 14 properties resolve; widget update 0.019 ms per frame (indicative). Pictures viewed (5 synthetic, 11 install): every element visible in the fallback look; in the install look the remaining defects are (a) the install frames draw no name or level text (E5, E6), (b) the defeat panel shows a third, unlabelled button and the divider, and its revive button looks no different when ghosted (E18; TR38), (c) with the synthetic camera the creature's critical text sits under the target frame and is hidden by it (TR40 puts texts behind panels), (d) the §13.4 bar overlaps the toolbar art. Rows of [`p2-visual.md`](checklists/p2-visual.md) §1 hold the per-element results. |
+| 1 | **pass** | Synthetic (`combat_ui_golden`, 2 / 2): the §17.1 scenario plays headless with `--no-data` on its virtual clock; at the 11 checkpoints every §14 element is shown (read from the UI tree), the 5 committed goldens match (0 outliers of 786,432 pixels each), the canonical log equals the committed one byte for byte, and two runs give the same element states (CUI9). Install (`combat_ui_real_data`): 79 / 79 element labels resolve, 6 / 6 avoidance tokens, the floating-text settings read; 20 elements shown, 0 missing, at the 11 checkpoints; the 11 local goldens (never committed) compare with 0 outliers on the second run. `tessera-ui` `game_p2_real_data`: 11 / 11 widgets take their install look, 79 IDs, 39 states, 14 properties resolve; widget update 0.019 ms per frame (indicative). Pictures viewed (5 synthetic, 11 install): every element visible in the fallback look; in the install look the remaining defects are (a) the install frames draw no name or level text (E5, E6; fixed in 86e7210, re-run pending), (b) the defeat panel shows a third, unlabelled button and the divider (fixed in 86e7210, re-run pending), and its revive button looks no different when ghosted (E18; TR38; owner O103), (c) with the synthetic camera the creature's critical text sits under the target frame and is hidden by it (TR40 puts texts behind panels), (d) the §13.4 bar overlaps the toolbar art. Rows of [`p2-visual.md`](checklists/p2-visual.md) §1 hold the per-element results. |
 | 2 | **pass** | `tessera-gamedata` `skill_tooltips_real_data`: 13,247 skills (5,201 Rendered, 8,046 NoTooltip) and 32,971 effects (27,150 Rendered, 1,250 RenderedNoName: 1,215 missing and 35 empty names, 4,571 NoTooltip), as `skill-tooltips.md` §14; icons: 13,247 skill and quickslot icons, 22,804 effect icons Rendered, 10,167 Absent; 0 row failures, 0 escaped. `tessera-client` `combat_tooltips_real_data`: 33,601 tooltips modelled and laid out in the examination panel (24,812 with an icon), 0 not laid out, 0 template failures; 12,617 NoTooltip. |
-| 3 | **pass** | `tessera-particles` `real_data`: 11,155 0x39 descriptors, each in one §10.1 category (9,829 plain, 1,061 lit, 134 post-pass, 128 `inherit_opacity`, 2 without a surface, 1 without an emitter), 254 0x44 fork records (lifetime only); 2,740 Beam nodes typed (0 untyped, 0 systems missing); 41,354 Particle nodes over every script table and scriptlet, 0 naming a missing record, 0 mismatches (2 script records do not decode and are counted). `combat_visuals_real_data` 2 / 2: 20,552 Particle nodes reachable from skill and effect records, 6,580 effect DIDs (6,438 0x39, 142 0x44), 0 missing; a headless walker scenario (`--scenario … --screenshot` path) brings 158 combat events to the combat layer, 2 session figures run their scripts, 130 effects asked for, 18 clips, up to 43 systems and 6,102 particle vertices drawn in a frame. `particles_real_data` (M3-03) passes in the suite. Beam ribbons and head entities are not drawn yet. |
+| 3 | **pass** | `tessera-particles` `real_data`: 11,155 0x39 descriptors, each in one §10.1 category (9,829 plain, 1,061 lit, 134 post-pass, 128 `inherit_opacity`, 2 without a surface, 1 without an emitter), 254 0x44 fork records (lifetime only); 2,740 Beam nodes typed (0 untyped, 0 systems missing); 41,354 Particle nodes over every script table and scriptlet, 0 naming a missing record, 0 mismatches (2 script records do not decode and are counted). `combat_visuals_real_data` 2 / 2: 20,552 Particle nodes reachable from skill and effect records, 6,580 effect DIDs (6,438 0x39, 142 0x44), 0 missing; a headless walker scenario (`--scenario … --screenshot` path) brings 158 combat events to the combat layer, 2 session figures run their scripts, 130 effects asked for, 18 clips, up to 43 systems and 6,102 particle vertices drawn in a frame. `particles_real_data` (M3-03) passes in the suite. Beam ribbons and head entities were not drawn at this verification (drawn since 322c9e3). |
 | 4 | **pass** | `combat_server` 2 / 2 (no install, loopback): an in-process `tessera-server`, two clients through the client's `net::World`; A selects a wanderer and then B's character, each answered locally by the test-server backend (decision 0032 D1), and the target frame shows the name, no level and the no-vitals form (D2); B leaving clears A's selection locally with no command; the same selection works in an overlay run. `tessera-net` `remote_selection` 13 / 13 (R1–R10 of `scenario-feed.md` §14.11), `remote_selection_backend` 1 / 1 over QUIC (nothing but pings on the wire), `scenario_p1` 14 / 14 (O8, O10–O12). The windowed check with the mouse (C8, rows S1–S3) was not run. |
 
-Remaining issues: the spec and decision reviews above; `keymap.md` §8.2 OPEN (defaults take
-five walker keys; owner); the install-look defects (a)–(d) of criterion 1; beam ribbons and head
-entities are not drawn; combat cues still read clip bindings, skill and effect lookups, stance
+Remaining issues: the install-look defects (c) and (d) of criterion 1 ((a) and (b) fixed in
+86e7210, re-run pending); combat cues still read clip bindings, skill and effect lookups, stance
 item records and body records on the main thread (ARCH §21; only beam records moved to a
 worker); every session figure is spawned (no crowd measurement yet); plugin check 76's
 Quickslot click is not driven from the client (only its command mapping is tested); with
-`--ui` the walker's chat overlay is hidden (M5 open item, unchanged); the implementer OPENs of
+`--ui` the walker's chat overlay is hidden (M5 open item; closed in P4); the implementer OPENs of
 `combat-ui.md`, `skill-tooltips.md`, `combat-visuals.md`, `particle-runtime.md`, `keymap.md`,
 `scenario-feed.md` §9.7 and `lua-plugin-api.md` §15.2 wait for the spec review
 (`lua-plugin-api.md` §19 does not list the §15.2 implementer OPEN).
+
+Since this verification: the walker keys moved off the `keymap.md` §8.2 defaults (owner,
+2026-10-16; walker test `keys_the_keymap_binds_are_left_to_it`); the voice-chat icons over the
+player name are hidden (`combat-ui.md` §4.1, TR14); the portrait stays empty without a scene
+(no white disc; portraits are not drawn yet); beam ribbons and heads are drawn (322c9e3);
+`combat-ui.md` revision 3 is Accepted and conformed (89d5ca0).
 
 <a id="p3"></a>
 ### P3: NPC windows: dialogue, quests, vendors and loot
@@ -1922,7 +1930,7 @@ Owner observations in the original client: rows from O110
 exit verification 2026-10-11); merged to main on 2026-10-11. `npc-windows.md`,
 `quest-journal.md`, the revision-5 parts of `scenario-feed.md` (§18.P3) and
 `lua-plugin-api.md` §15.3 are **Accepted** after independent reviews. Decision 0031 is
-Proposed (the owner accepts it). No criterion needs an observation in the original client;
+Accepted (owner, 2026-10-16). No criterion needs an observation in the original client;
 owner rows O110–O125 ([owner-observations.md](checklists/owner-observations.md#p3-items))
 block nothing until P8.
 
@@ -1963,7 +1971,7 @@ item reward rows show only `QuestReward_Item`, barter reputation fields hidden.
 | # | Status | Evidence |
 |---|---|---|
 | 1 | **pass** | `tessera-client` `quest_journal_real_data::every_quest_record_in_the_log_and_the_tracker` (release, install): a scenario selects every quest record (`quest all`) and makes it active; 20,807 records: Shown 15,400 (15,400 log rows laid out, 15,400 details panes), Deed 5,407 (tracker only, `quest-journal.md` §4.2), NoName 0, Unreadable 0; every record tracked once in batches of 10 (20,807 tracker entries laid out); 20,258 quest chat lines; `JournalCensus` entries_failed 0, details_failed 0, tracker_failed 0. Flags as `tessera-gamedata` `quest_real_data`: CategoryFallback 2, LevelHidden 164, LevelFromPlayer 2,168, NoLevel 440, NoDescription 340, ObjectiveWithoutText 327, ObjectiveWithoutLines 1,238. Goldens of the log and tracker on a seeded sample (`log_and_tracker_goldens_on_a_seeded_sample`, 01-quest-log, 02-tracker) blessed, judged and matched as for criterion 2. Defect left (not a failure of the criterion): a long background or objective text is drawn on one line cut at the pane width (`quest-journal.md` §4.7 OPEN; owner row O119). |
-| 2 | **pass** (with visual defects listed) | Decision 0031 §3, install version `3905db5e60168527`: (1) tier 1: `tessera-ui` `p3_goldens` 12 / 12 committed synthetic goldens pass in the workspace run; (2) `npc_windows_real_data` and `quest_journal_real_data` blessed 19 images in a fresh `TESSERA_GOLDEN_DIR` of this verification alone (`~/.cache/tessera/scratch/P3/clean/verify3/goldens`); (3) each viewed and judged: dialogue 01 choice (action option with its template icon), 02 conversation, 03 and 04 NPC comment, 05 quest offer (install title, level, offer line, objective, coin and item-experience amounts, two install item rewards with icons and quantities), 06 choice with a quest-role line and an objective option; loot 01–05 (coins row, stacked entries, Loot All, then the chest's install items with icons and quality colours); vendor 01 buy (six install items, icons, prices in coins, stack overlays), 02 sell, 03 buy-back, 04 quantity dialog, 05 barter (token costs, coin cost); wallet 01 (coins row, currencies with totals); quest log 01 and tracker 02: correct install text and icons; (4) the same tests with the same directory and `TESSERA_GOLDEN_REQUIRE=1`: 19 / 19 passed. Census: dialogue lines Shown 12; vendor entries Shown 13, Literal 1, RecordUnreadable 0; loot Shown 10, Literal 9; wallet shown 4; 0 window failures. Visual defects left: a long option row wraps and is clipped instead of one truncated line (`npc-windows.md` §5.3 template), the offer's objective text is cut at the pane's right edge, long loot names wrap to two lines, a wallet currency that is not a wallet item sits under a category without a title (§9.4 OPEN), literal sell entries have no worth (§7.6 OPEN), and the barter window's root lands at x = −107 on a 1,600 px screen (§4 OPEN). |
+| 2 | **pass** (with visual defects listed) | Decision 0031 §3, install version `3905db5e60168527`: (1) tier 1: `tessera-ui` `p3_goldens` 12 / 12 committed synthetic goldens pass in the workspace run; (2) `npc_windows_real_data` and `quest_journal_real_data` blessed 19 images in a fresh `TESSERA_GOLDEN_DIR` of this verification alone (`~/.cache/tessera/scratch/P3/clean/verify3/goldens`); (3) each viewed and judged: dialogue 01 choice (action option with its template icon), 02 conversation, 03 and 04 NPC comment, 05 quest offer (install title, level, offer line, objective, coin and item-experience amounts, two install item rewards with icons and quantities), 06 choice with a quest-role line and an objective option; loot 01–05 (coins row, stacked entries, Loot All, then the chest's install items with icons and quality colours); vendor 01 buy (six install items, icons, prices in coins, stack overlays), 02 sell, 03 buy-back, 04 quantity dialog, 05 barter (token costs, coin cost); wallet 01 (coins row, currencies with totals); quest log 01 and tracker 02: correct install text and icons; (4) the same tests with the same directory and `TESSERA_GOLDEN_REQUIRE=1`: 19 / 19 passed. Census: dialogue lines Shown 12; vendor entries Shown 13, Literal 1, RecordUnreadable 0; loot Shown 10, Literal 9; wallet shown 4; 0 window failures. Visual defects left: a long option row wraps and is clipped instead of one truncated line (`npc-windows.md` §5.3 template), the offer's objective text is cut at the pane's right edge, long loot names wrap to two lines, a wallet currency that is not a wallet item sits under a category without a title (§9.4 OPEN), literal sell entries have no worth (§7.6 OPEN), and the barter window's root lands at x = −107 on a 1,600 px screen (§4 OPEN). Fixed since by Tessera rules (pictures not yet re-judged): option rows and loot names are one line, cut with the truncation suffix (`crates/ui/src/game/npc/dialogue.rs`, `loot.rs`); the objective and quest-detail texts wrap at the pane's width (`offer.rs`, `game/quest/details.rs`); such a currency goes under `Misc` (`tessera-gamedata` `npc/money.rs`); a worth of 0 shows the copper coin with 0 (`game/npc/vendor.rs`); NPC windows are kept on the screen (`apps/client/src/npc/ui.rs`). |
 
 <a id="p4"></a>
 ### P4: Social panels
@@ -2099,7 +2107,8 @@ included) replay their logs byte for byte.
 | 2 | **pass** | `tessera-client` `social_chat_server` (1 / 1): an in-process `tessera-server` at protocol 1.2 and two clients built from the client's own `net::World`, plugin host and game-UI host; every line enters as the M5 chat window's entry hands it over and runs through `UiHost::dispatch_entry_lines` (the decision 0020 dispatcher, closing the M5 `--ui` gap): `/tell`, the incoming tell, `/reply` to the reply target, a line in the Tell mode, `/join Lore` and `/join lore` (one channel, the server's spelling), `/ch1` heard by the other member in slot 1's form, `/part Lore` after which the other no longer hears the channel. Protocol and server: `tessera-protocol` `v12_channels` 13 / 13 (incl. code 6 below minor 2), `tessera-server` `channels` 9 / 9 and `channel_logs` 1 / 1, `tessera-loadtest` `v12_channels` 3 / 3 (tells and a channel between two clients while a minor-1 peer gets no 1.2 message; the hostile 1.2 cases end as specified, counts back at baseline), `tessera-net` `remote_channels` 3 / 3. The server learns only channel names and the chat it relays (decision 0035 D1, `server-content.md` §7); `check-server-deps` passes. |
 | 3 | **pass** | `tessera-client` `social_music_sync` (7 / 7): the committed `music-sync` scenario plays headless with the audio clock stepped with the virtual clock; the time-0 of every part is read from the instruments' schedule log and checked against both rules of `instruments.md` §8.9 (0.0001 s). Scripted start at S = 2.500 s: three parts (the player's, Brin's, Cael's replacement after a withdrawal), 42 note events, spread 0 s, worst \|time-0 − S\| 0 s; the player's own `/play … sync` and `/playstart` (generic answer) at S = 4.200 s: 18 events, spread 8.9e-16 s, worst 8.9e-16 s. Also: the plain sandbox's answer to `/playstart` starts the part once, a refused start (test server) starts the waiting part locally once. `tessera-audio` `instruments_examples` (40) covers the head skip, refusal of parts that do not fit, non-finite times and long render blocks (`update_for`). |
 
-Remaining issues: the trade window's names, literal icons and money displays and the state
+Remaining issues at the exit verification (several settled since, see the next paragraph):
+the trade window's names, literal icons and money displays and the state
 icon of criterion 1's defects (a) and (b); `tessera-loadtest`'s `chat` bots do not join
 channels yet (`test-server.md` §13.1 and the §15.4 implementer OPEN; `tessera-net` now sends
 the channel commands, so this is unblocked), and its hostile mode still sends the 1.2
@@ -2114,7 +2123,18 @@ dialog or context menu (add dialogs post a command hint, `social-panels.md` impl
 before §10); `select_fellow_1..6` and `assist_fellow_2..6` are unbound in the default key
 map (TR12 OPEN); the production headless run (`--headless --scenario`) makes no chat lines,
 since the driver's commands are in `tessera-net` (client review F3); the implementer OPENs
-of every P4 spec await the spec writer and the independent reviews. Merge seams with P2 and
+of every P4 spec await the spec writer and the independent reviews.
+
+Settled since (2026-10-14 revisions of `tessera-protocol.md` and `test-server.md`, both
+Accepted): the Leave `NOT_IN_WORLD` code is specified (§10.6) and built
+(`apps/server/src/sim.rs`); `test-server.md` §13.1 "Minors" is revised and the `chat` bots
+join shared named channels (`apps/loadtest/src/bot.rs`); the hostile 1.2 cases are sent after
+login (`apps/loadtest/src/hostile.rs`); each `PartyMember` follows an entity and receives its
+§15.2 effect-list events (§15.4 further rules 7–8, `crates/plugins/src/party.rs`); the
+member-row effect icons are built (TR16, `crates/ui/src/game/combat/mod.rs`); synthetic P4
+goldens are committed (`crates/ui/tests/p4_goldens.rs`).
+
+Merge seams with P2 and
 P3 (both changed the same shared files additively; merged with main 2026-10-11): the `tessera-ui` game module index, the
 `tessera-net` domain groups, the client's `PlayerState`, UI host and runtime frame order,
 `ARCHITECTURE.md` §19 and §20, `scenario-feed.md` and the fuzz `Cargo.toml` and README.
@@ -2261,11 +2281,11 @@ until P8.
 
 <a id="p5-status"></a>
 **Status:** exit criteria 1–3 pass on Tessera's side (started 2026-10-11, branch `p5`; exit
-verification 2026-10-12 on the uncommitted `p5` tree, install `3905db5e60168527`); to be
-committed and merged. The P5 specs (`map-windows.md`, `travel-windows.md`, `mounts.md` §14,
+verification 2026-10-12 on the uncommitted `p5` tree, install `3905db5e60168527`); merged to
+main 2026-10-13. The P5 specs (`map-windows.md`, `travel-windows.md`, `mounts.md` §14,
 `walker.md` §16, `scenario-feed.md` revision 8 and `lua-plugin-api.md` §15.5) are **Accepted**
 after independent reviews (2026-10-13); the code was conformed to them and P5 is merged to main.
-Decisions 0031 and 0036 are Proposed (the owner accepts them). No criterion needs an observation in the original client; owner rows O140–O155
+Decisions 0031 and 0036 are Accepted (owner, 2026-10-16). No criterion needs an observation in the original client; owner rows O140–O155
 ([owner-observations.md](checklists/owner-observations.md#p5-items)) block nothing until P8.
 
 | # | Status | Evidence |
@@ -2315,6 +2335,14 @@ after its first line; the travel window shows its no-selection text twice, label
 owner row O147); the walker's `--place` keeps a std-only copy of the name matching for its fuzz
 target (pinned by a test).
 
+Settled since: headless `--ui` runs drive the P3/P5 and social window frames (3952b85,
+`apps/client/src/ui_host/run.rs`); the loading-screen tier-2 golden composes the nested
+surfaces, so it shows the meter and label (d8698bc, `travel_windows_real_data.rs`); the
+finder's join label is fitted to its text (`crates/ui/src/game/finder.rs`); `walker.md` §16
+was reconciled and its §16.12 implementer OPENs closed (2026-10-14); the `travel-windows.md`
+§8.1 count is reconciled (2026-10-13); `ui-layout.md` §8.4 step 6 is answered by
+`ui-scaling.md` §5.9.
+
 <a id="p6"></a>
 ### P6: Progression and crafting panels
 
@@ -2356,14 +2384,15 @@ take additive changes only.
   Accepted `combat-data.md` §8.5.
 - [Decision 0037](decisions/0037-p6-trait-tree-and-recipe-census.md): what "every trait tree
   and recipe record" means for criterion 1, and decision 0031's golden tiers applied to the P6
-  panels. Per §1.1 the trait half of criterion 1 is **held** until `progression-panels.md` is
-  committed; the trait-tree census runs provisionally from `combat-data.md` §8.5.
+  panels. Per §1.1 the trait half of criterion 1 was **held** until `progression-panels.md` was
+  committed; it is now in the tree and Accepted (2026-10-16), and the trait panel and census
+  were conformed to it (fb83a61).
 - `tessera-gamedata`: two presentation models, each a module: **`crafting`** (professions,
   learned recipes, vocation and slots; the profession page with tier and category rows, recipe
   rows with counts and active states, search; the recipe page with tool and facility lines,
   ingredients, packs, optional and critical ingredients, quantity rules and the craft request;
   the bar and result lines; the three trainer windows; gathering nodes and facility hotspots;
-  and `craft_census`) and **`progression`** (provisional: the experience bar, trait points,
+  and `craft_census`) and **`progression`** (the experience bar, trait points,
   ranks, active tree and branch, slotted and learned and untrained skills; trait-tree pages with
   cells, branches and branch-scoped prerequisites; trait tooltips; trainer rows; and
   `trait_tree_census`). Also the recipe-scroll tooltip rows (`ExaminationRecipeOneShot`,
@@ -2382,8 +2411,8 @@ take additive changes only.
 - `tessera-ui`: the P6 game widgets (`game::crafting` — `CraftPanel`, `CraftTrainerWindow`,
   fallbacks; `game::progression` — `ExperienceBar`, `LevelUpBanner`, `TraitPanel`,
   `SkillTrainerWindow`; `game::p6vocab`), each with a Tessera fallback, and committed synthetic
-  goldens (decision 0031 tier 1). The progression half is fallback-only and provisional
-  (`progression-panels.md` missing).
+  goldens (decision 0031 tier 1). The progression half was built fallback-only while
+  `progression-panels.md` was missing; the spec is now Accepted and the code conformed (fb83a61).
 - `tessera-plugins`: the progression and crafting views of `lua-plugin-api.md` §15.6 (module
   `progression`; `ProgressionSource`, `ProgressionModel`, `GameplayEvent::Progression`) over a
   source the client implements.
@@ -2434,9 +2463,10 @@ stray `git reset` in the milestone worktree and was rewritten from independent d
 observation; it is now in the tree and Accepted, so the trait half of criterion 1 is no longer
 provisional and the trait panel and census were conformed to it (commit fb83a61).
 [Decision 0037](decisions/0037-p6-trait-tree-and-recipe-census.md) stays Proposed (owner
-acceptance pending), as do the golden tiers of
-[decision 0031](decisions/0031-parity-panel-goldens.md) that it reuses
-([decision 0036](decisions/0036-p5-map-census-and-panel-goldens.md) was accepted 2026-10-16). The
+acceptance pending); the golden tiers of
+[decision 0031](decisions/0031-parity-panel-goldens.md) that it reuses and
+[decision 0036](decisions/0036-p5-map-census-and-panel-goldens.md) were Accepted by the owner
+on 2026-10-16. The
 full merge-check on main passed (fmt, clippy workspace `--all-targets --all-features` and fuzz,
 release tests with the install 6,962 passed / 0 failed, content, SPDX, server deps and DCO
 clean). No criterion needs an observation in the original client to pass on Tessera's side; owner
@@ -2459,8 +2489,9 @@ design spec [`ui-scaling.md`](specs/ui-scaling.md), Accepted): any resolution an
 ultrawide, and crisp text and art at the scaled size, instead of copying the original's
 interface scaling. The **geometry foundation and the settings/input/host/plugin/renderer
 wiring are implemented** (branch `uiscale`, exit-verified 2026-10-17, install
-`3905db5e60168527`); the §5–§6 **live layout/paint/text integration into the `tessera-ui`
-element tree is the outstanding follow-up** (see below).
+`3905db5e60168527`), and the §5–§6 **live layout/paint integration** is merged too (merge
+6015d0e, 2026-10-17: live fit rules, crisp canvases, saved placements, the Interface window,
+goldens G1 and G3–G8); what remains is listed below.
 
 Built:
 
@@ -2501,27 +2532,27 @@ settles. Golden coverage (decision 0031 tier 1): the committed **G2 glyph-deriva
 judged correct) exercises the §6.4.4 derivation at an exact, two downsampled and two
 distance-derived heights.
 
-Open (follow-up, the §5–§6 live integration — not yet built this increment):
+Built in the §5–§6 integration (merge 6015d0e, 2026-10-17): the live §5.2–§5.6 fit rules in
+the `tessera-ui` element tree, canvases painted at the content scale with §6.3 per-axis image
+resampling, the §5.8 anchored saved-placement store (with a `[UI.panels]` settings mirror), the
+§7.2 Interface window wired to the client scale state, and the §9.3 synthetic tier-1 goldens
+G1 and G3–G8 (`crates/ui/tests/ui_scaling_goldens.rs`). The `ui-layout.md` §8.4 step-6
+stop-gap is retired in the code (§5.9 degenerate-box guard); a spec writer still updates
+`ui-layout.md` §8.4 to say so.
 
-- the pure geometry core is **not yet wired into the live `tessera-ui` layout, paint and text
-  paths**, which still use the pre-spec truncating displayed-box/screen-size model. This blocks
-  the committed goldens **G1, G3–G8** (§9.3) and **all tier-2 real-data goldens** (§9.4, loading
-  screen, theatre, character screen, HUD set, world map, Interface window, mission controller),
-  which are therefore not produced yet;
-- the **Interface window** (§7.2) is requested (`/uiscale` with no argument, the
-  `ui_interface_window` action) but the game-styled control window (slider, Automatic check,
-  aspect choice group, Reset) is not built;
+Open (follow-up):
+
+- the §6.4 **derived-glyph** path is not wired into the draw loop, so scaled text is sized
+  right but soft (the `layout_scaled`/`draw_scaled`/`FontLadder` entry points and the §6.5
+  glyph cache exist);
+- multi-member fit groups, the §5.3 per-child safe boxes and the §5.4 letterbox-bar fills;
+- the bridge between the in-memory placement store and the settings file in the client host;
 - the per-window scale, text-size and art-filter options (§7.4–§7.6) are stored and exposed in
   the settings/plugin/explorer APIs but not yet wired through the live layout/paint;
-- the §8 scale-dependent paint budgets (S4/S5 scale-change and per-pixel work) are owner-measured
-  perf items (§8 OPEN) and are measurable only once the live paint integration lands; at
-  *Se* = 1 the geometry is the identity (I2), so the existing goldens and ~6.9 k tests are
-  unchanged;
-- **UL §8.4 step 6's stop-gap** (`ui-layout.md` §8.4) can be **retired once this integration
-  lands** — §5.9 answers the OPEN by decision 0040 and its generalised degenerate-box guard
-  (§5.7) is built in the core, but §5.9 keeps the stop-gap in force "until built", i.e. until the
-  live layout applies it. (Do not edit `ui-layout.md` facts; retire the stop-gap in that spec as a
-  follow-up when the integration is built.)
+- the §8 scale-dependent paint budgets (S4/S5 scale-change and per-pixel work; owner-measured,
+  §8 OPEN);
+- the §9.4 tier-2 real-data goldens and the G7 mid-scale-change golden (needs a
+  `tessera-render` test).
 
 ---
 

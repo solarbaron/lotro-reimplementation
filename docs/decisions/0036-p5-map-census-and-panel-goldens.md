@@ -151,7 +151,8 @@ image is part of criterion 2; the look of the mounted figure is an owner row.
   rows from O140) and is not part of any P5 criterion.
 
 ## Open
-- The owner accepts this record or asks for changes.
+- ~~The owner accepts this record or asks for changes.~~ Done: Accepted by the owner on
+  2026-10-16.
 - `map-windows.md` has no fallback map window for runs without an install (its §8 OPEN); the
   tier-1 world-map golden of §2 waits for that rule.
 - `map-windows.md` and `travel-windows.md` are now both **Accepted** (independent reviews

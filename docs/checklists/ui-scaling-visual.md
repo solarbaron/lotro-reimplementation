@@ -136,7 +136,8 @@ names, art or strings are recorded. Descriptions are our own words.
 
 Record the data date, the client/explorer commit, and the pass/fail tally here when the checks
 are run. Owner rows feed [`owner-observations.md`](owner-observations.md) (the UI-scaling items
-are O-numbers assigned when the owner runs this checklist). Until the `tessera-ui` live
-layout/paint integration of §5 and §6 lands, the fit, safe-area and content-scale rows above
-cannot be exercised in the running client (only the pure geometry and the explorer preview are
-built); see the suite's findings.
+are O-numbers assigned when the owner runs this checklist). The `tessera-ui` live
+layout/paint integration of §5 and §6 is merged (6015d0e, 2026-10-17), so the fit, safe-area
+and content-scale rows above can now be run in the client. Not built yet: the §6.4
+derived-glyph path (scaled text is soft until it lands, which affects X2 and the text rows),
+multi-member fit groups, the §5.3 per-child safe boxes and the §5.4 letterbox-bar fills.

@@ -104,15 +104,15 @@ fine. Format-level terms like "DID" or "landblock" are fine.
   game-controls) are implemented on main; the eight gameplay decoders (items, combat,
   creatures, quests, economy, map, particles, misc records) and explorer gameplay cards
   are on branch `gameplay-formats`, to be merged.
-- **Particle effects (branch `particles-runtime`, 2026-10-09):** `particles.md` §8 and
+- **Particle effects (merged to main from `particles-runtime`, 2026-10-09):** `particles.md` §8 and
   `particle-runtime.md` are implemented in `tessera-particles`, the render pipeline, the
   explorer preview and, in the walker, for the effect nodes of the start-up scripts of
   static entities and placed figures (`tessera-scriptgraph` runs the nodes; real-data test
   `apps/client/tests/particles_real_data.rs` at M3-03). **Not end to end:** fork effects are
   not drawn (`particles.md` rule §10.2), nor systems of the post-processing pass; weather
-  systems and wind, beams, the gameplay event handler, lit systems' lights, `inherit_opacity`
+  systems and wind, the gameplay event handler, lit systems' lights, `inherit_opacity`
   and bounds culling wait for their specs (OPENs of `particle-runtime.md` §3.2, §5.4, §9.2,
-  §11, §12). To be reviewed and merged.
+  §12). Beams (§11.1) are drawn (P2).
 - **M6 audio and player music (merged to main 2026-10-08, verified 2026-10-07):** done on Tessera's side.
   Criteria 1 (44,329 / 44,329 payloads decode) and 3 pass, 2 passes data-side (owner's
   listening comparison pending), 4 passes indicatively (re-measure on the idle laptop,
@@ -135,8 +135,8 @@ fine. Format-level terms like "DID" or "landblock" are fine.
   waterfalls, liquid distortion and lava draw with their own programs (`water.md` §8.5–§8.7,
   `material.md` §10.3, §11.6); second colour layers and animated texture matrices are drawn;
   flow-map water no longer uses the plain-water scroll (it drifted up to 22.6 m/s). Diagnostic:
-  `tessera-dattool fallback`, walker HUD/headless fallback counts. Open: puddle quads cut by the
-  terrain (row W13, `water.md` §8.5.4 OPEN), owner comparison O87.
+  `tessera-dattool fallback`, walker HUD/headless fallback counts. Open: owner comparisons O87
+  and O24 (the W13 puddle cut by the terrain is the expected look, `water.md` §8.5.4).
 - **Faces and colour tints (merged 2026-10-10):** `appearance.md` §3.5 in the shared figure
   path (`tessera-mesh` `assembly::look`, client and explorer): composited faces (all 14
   playable bodies in the real-data look test) and hair, skin and eye tints, with a shared composition cache. Open: §15 OPENs (option-off order, engineering
@@ -166,23 +166,21 @@ fine. Format-level terms like "DID" or "landblock" are fine.
   (`docs/ROADMAP.md` M5 status): criteria 1, 3, 5, 6 pass; 2 done on Tessera's side (owner
   screenshots O39); 4 waits for the owner's plugin install (O40; synthetic plugins pass);
   7 not met (indicative, loaded machine: U1 walk mean 0.89 ms vs 0.3, U4 (b)/(f) over the
-  4 ms slice, all in `tessera-ui` step 8; U4 (c)–(e) not measured; idle re-run O49).
+  4 ms slice, all in `tessera-ui` step 8; after the step-8 optimisation U1 was within budget
+  in 3 of 5 runs, `docs/perf/m5-ui-budgets.md`; U4 (c)–(e) not measured; idle re-run O49).
   `plugin-class-helper.md` and `render.md` §6 are Accepted; the bundled Noto Sans font is
   covered by decision 0022; the plugin-host split is decision 0023. The M5 exit verifier's
   exposure is incident 0021 (audited clean: mechanical changes only). Checks on the m5
   branch after merging main (777ccec): fmt, clippy (workspace `--all-features`, fuzz),
   release tests with the install 4,877 passed, 0 failed; content and SPDX pass.
   `apps/client/src/plugins.rs` holds both the M5 UI host hooks and the decision-0020
-  dispatcher; plugin shell commands are registered in the dispatcher's registry. Open: with
-  `--ui` the walker's chat overlay is hidden and the M5 chat window keeps its own command
-  registry, so player-music commands and `--server` chat are not yet reachable from the chat
-  window (only from `--command` and, without `--ui`, the overlay); `render.md` §6.10 OPEN on
-  fixed-blend alpha in premultiplied passes.
-- **P0 (parity track foundations, decision 0024 §5; branch `p0` in worktree `wt-p0`, exit
-  verification 2026-10-09)** (`docs/ROADMAP.md` P0 status): criteria 2, 3, 4 pass; 1 not met.
-  `docs/specs/scenario-feed.md` is in Review (revision 3): revision 2 was accepted by the
-  session that wrote its fixes, so a session that wrote none of revisions 1–3 must re-check
-  R1–R31, S1–S31 and every vector before it is Accepted. Built: the scenario feed
+  dispatcher; plugin shell commands are registered in the dispatcher's registry. The `--ui`
+  chat-window gap is closed (P4: the chat window's lines go through the dispatcher), and the
+  `render.md` §6.10 fixed-blend question is answered (R12, 2026-10-09).
+- **P0 (parity track foundations, decision 0024 §5; merged to main 2026-10-10 (a1fb29f), exit
+  verification 2026-10-09)** (`docs/ROADMAP.md` P0 status): criteria 2, 3, 4 pass; 1 passed
+  after the exit verification, when `docs/specs/scenario-feed.md` revision 3 was Accepted by
+  an independent review (2026-10-09). Built: the scenario feed
   (`tessera_net::scenario`, feature `scenario`; gameplay event/command groups in
   `tessera_net::domain`), `crates/gamedata` (record-family index, selector resolution),
   `tessera-client --scenario/--scenario-log/--scenario-input` (headless on a virtual clock,
@@ -190,10 +188,11 @@ fine. Format-level terms like "DID" or "landblock" are fine.
   `apps/client/tests/scenarios/`, fuzz targets `net_scenario_parse`/`net_scenario_run`, and
   `tools/check-server-deps.sh` (CI job `server-deps`). Checks on the `p0` tree: fmt, clippy
   `-D warnings` (workspace, `--all-features`, fuzz), release tests with the install 5,103
-  passed, 0 failed; 60 s fuzz smoke clean; content, SPDX, doc links clean. Open (non-blocking):
-  windowed input script not played (§12.4), windowed log written on the main thread (ARCH §21
-  (d)), no uniqueness test for event/command names, whether in-process server hosts must stay
-  feed-free (§3.1), numeric enum keys in committed scenarios (owner, before P1, §16).
+  passed, 0 failed; 60 s fuzz smoke clean; content, SPDX, doc links clean. Built since: the
+  windowed input script (`InputPlayer`), the windowed log writer thread, the event/command
+  name uniqueness test, `LogOverflow`; numeric enum keys answered by the owner (option (b),
+  names only, `scenario-feed.md` §16). Open (non-blocking): whether in-process server hosts
+  must stay feed-free (§3.1).
 - **P1 (characters, inventory and equipment; merged to main 2026-10-10 (ad01231), exit
   verification 2026-10-10, criterion 1 re-checked the same day on 93b3dfd)**
   (`docs/ROADMAP.md` P1 status): criteria 1–4 pass. Checks on the merge commit: fmt, clippy
@@ -208,10 +207,10 @@ fine. Format-level terms like "DID" or "landblock" are fine.
   stands on the scene marker with the scene's objects, lights and tints around it, camera
   base/zoom frames and turntable, controls named from the data, gender selection shown.
   Open: figure scripts are evaluated once, not run live (no gestures, class props, transition
-  ports; `character-screens.md` §2.1.4 OPEN), decals and effect particles not drawn, side
-  panels overflow at 1280×720 (`ui-layout.md` §8.4 OPEN), face-layer value 0 to be
-  offered once the doubled decode budget lands (owner, 2026-10-16: raise `tessera-mesh`
-  `LookLimits` to 128/256 MiB and offer value 0). Built: decision 0025 (Accepted) with
+  ports; `character-screens.md` §2.1.4 OPEN), decals and effect particles not drawn. Since
+  done: `LookLimits` raised to 128/256 MiB and face-layer value 0 offered (owner, 2026-10-16);
+  the side-panel overflow at 1280×720 is answered by `ui-scaling.md` §5.3–§5.4 (Type B fit
+  containers, built in 6015d0e; not yet re-checked on the screen). Built: decision 0025 (Accepted) with
   `scenario-feed.md` rev 4, `tessera-protocol.md` v1.1 and `test-server.md` (Accepted) and
   `server-content.md` (Draft, owner); `tessera-gamedata` `tooltip`, `chargen`, `inventory`;
   protocol minor 1 (looks, `Equipped.slot`) in `tessera-protocol`, `tessera-net` (overlay
@@ -225,8 +224,8 @@ fine. Format-level terms like "DID" or "landblock" are fine.
   Checks on 93b3dfd: fmt, clippy `-D warnings` (workspace `--all-targets --all-features`,
   fuzz), server deps, content, SPDX clean; release tests with the install 5,813 passed, 0
   failed, 10 ignored. Open: empty stat rows on this install (`character-panels.md` §3.4),
-  bag columns saved on the main thread (ARCH §21), `lua-plugin-api.md` §19 summary lacks the
-  new §15.1 OPENs, walker and game HUDs over the screens in a normal run.
+  bag columns saved on the main thread (ARCH §21), walker and game HUDs over the screens in a
+  normal run.
 - **P3 (NPC windows: dialogue, quests, vendors and loot; merged to main 2026-10-11, exit
   verification 2026-10-11)** (`docs/ROADMAP.md` P3 status): criteria 1 and 2 pass, its specs
   (`npc-windows.md`, `quest-journal.md`, `scenario-feed.md` rev 5, `lua-plugin-api.md` §15.3)
@@ -234,8 +233,8 @@ fine. Format-level terms like "DID" or "landblock" are fine.
   rewards, buyback); `tessera-ui` `game::{npcvocab, npc, quest}`; `tessera-plugins` `wallet`;
   `tessera-client` `npc` and `quests`; scenarios `dialogue`, `vendor`, `loot`, `quest-log`.
   Real data: 20,807 quest records, 15,400 log rows, 0 failures; 19 local goldens matched.
-  Open: text-fitting defects (`quest-journal.md` §4.7 OPEN), barter window off screen, no
-  dialog-box or popup-menu widget, U and L are raw keys.
+  The text-fitting defects and the off-screen barter window are fixed (Tessera rules; pictures
+  not yet re-judged). Open: no dialog-box or popup-menu widget, U and L are raw keys.
 - **P2 (targeting, skills and combat presentation; merged to main 2026-10-11, exit
   verification 2026-10-11)** (`docs/ROADMAP.md` P2 status): criteria 1-4 pass on Tessera's
   side. Accepted after independent review: `combat-ui.md` (rev 2), `skill-tooltips.md`,
@@ -248,10 +247,12 @@ fine. Format-level terms like "DID" or "landblock" are fine.
   `combat` module and goldens. Merged with P3: quest state is a `PlayerState` field, one
   per-frame list of in-world UI events feeds the NPC hub, quest hub and combat UI, selection
   use goes through `npc::use_entity`. Real data: 13,247 skills and 32,971 effects
-  categorised (33,601 tooltips, 0 failures). Open: `keymap.md` §8.2 defaults take five walker
-  keys (owner); target portrait drawn as a white disc (E6); the voice-chat icon over the
-  player name (§4.1 OPEN); main-thread record reads in combat cues (ARCH §21); U uses the
-  nearest NPC, not the selection.
+  categorised (33,601 tooltips, 0 failures). Since done: the walker keys moved off the
+  `keymap.md` §8.2 defaults (owner, 2026-10-16), voice-chat icons over the player name hidden,
+  the portrait left empty without a scene (portraits are not drawn yet), beam ribbons and
+  heads drawn (322c9e3), install frame name/level text and defeat-panel parts (86e7210),
+  `combat-ui.md` rev 3 conformed (89d5ca0). Open: main-thread record reads in combat cues
+  (ARCH §21); U uses the nearest NPC, not the selection.
 - **P4 (social panels: fellowship, trade, friends and ignore lists, tells, named chat channels,
   synchronised music; merged to main 2026-10-11, exit verification 2026-10-11)**
   (`docs/ROADMAP.md` P4 status): criteria 1-3 pass on Tessera's side. Accepted after
@@ -266,9 +267,10 @@ fine. Format-level terms like "DID" or "landblock" are fine.
   notice}`; `tessera-plugins` `party`; `tessera-audio` `instruments::sync`; `tessera-client`
   `social`, the P4 dispatcher built-ins and `/play ... sync`; scenarios `fellowship`,
   `trade`, `friends`, `music-sync`. The M5 `--ui` gap is closed (chat window, overlay and
-  `--command` share the dispatcher). Open: member-row effect icons (TR16), no committed
-  synthetic P4 goldens, no text-input dialog or context menu, the Leave error code
-  (`tessera-protocol.md` §10.6 OPEN). Owner rows O130-O137.
+  `--command` share the dispatcher). Since done: member-row effect icons (TR16), committed
+  synthetic P4 goldens (`crates/ui/tests/p4_goldens.rs`), the Leave `NOT_IN_WORLD` code
+  (`tessera-protocol.md` §10.6). Open: no text-input dialog or context menu. Owner rows
+  O130-O137.
 - **P5 (map, travel, mounts and instances; merged to main 2026-10-13, exit verification
   2026-10-12)** (`docs/ROADMAP.md` P5 status): criteria 1-3 pass on Tessera's side. Its specs
   (`map-windows.md`, `travel-windows.md`, `mounts.md` §14, `walker.md` §16,
@@ -282,17 +284,17 @@ fine. Format-level terms like "DID" or "landblock" are fine.
   `mount` views; `tessera-settings` `MapPrefs`; `tessera-input` `toggle_mount`;
   `tessera-client` `map`, `travel`, walker mounts (`--mount`, `/ride`, Ctrl+M); scenarios
   `map`, `travel`, `instances`, `mount`. Real data: 1,525 / 1,525 map regions shown, 13 local
-  goldens matched. Open: the loading-screen tier-2 golden captures a blank root surface so
-  it does not yet protect the meter/label (unit-test covered; strengthen the capture),
-  `ui-layout.md` §8.4 step 6 OPEN (owner), `walker.md` §16.12 spec-writer reconciliations,
-  finder join-label text cut. Owner rows O140-O155.
+  goldens matched. Since done: the loading-screen tier-2 golden composes the nested surfaces
+  (d8698bc); the finder's join label is fitted to its text; `walker.md` §16.12 reconciled
+  (2026-10-14); `ui-layout.md` §8.4 step 6 answered by `ui-scaling.md` §5.9. Owner rows
+  O140-O155.
 - **P6 (progression and crafting panels; merged to main 2026-10-17, exit verification
   2026-10-16)** (`docs/ROADMAP.md` P6 status): criteria 1 and 2 pass on Tessera's side. Its
   specs are Accepted after independent review (2026-10-16): `progression-panels.md`,
   `crafting-panels.md`, the `scenario-feed.md` "P6 progression" revision and `lua-plugin-api.md`
-  §15.6; decision 0037 (trait-tree and recipe census, P6 panel goldens) is Proposed (owner,
-  like 0031/0036). `progression-panels.md` was lost to a stray `git reset` in the milestone
-  worktree and rewritten from independent dirty-room observation. Built: `tessera-gamedata`
+  §15.6; decision 0037 (trait-tree and recipe census, P6 panel goldens) is Proposed (waits
+  for the owner; 0031 and 0036 are Accepted). `progression-panels.md` was lost to a stray
+  `git reset` in the milestone worktree and rewritten from independent dirty-room observation. Built: `tessera-gamedata`
   `crafting` and `progression` presenters plus recipe-scroll tooltip rows and the
   `vocation`/`craft-guild` selector families; `tessera-net` "P6 progression" forms
   (`scenario::progression`); `tessera-ui` `game::crafting`, `game::progression`, `game::p6vocab`;

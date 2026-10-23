@@ -158,4 +158,5 @@ and is not part of this criterion.
   rule that refuses PNG files outside the committed golden directories (`*/tests/golden/`,
   today in `crates/render`, `crates/terrain` and `apps/client`) or under any path segment
   named `goldens`.
-- The owner accepts this record or asks for changes.
+- ~~The owner accepts this record or asks for changes.~~ Done: Accepted by the owner on
+  2026-10-16.

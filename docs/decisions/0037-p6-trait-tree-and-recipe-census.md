@@ -189,16 +189,13 @@ chosen recipe names a facility (see Open).
 
 ## Open
 - The owner accepts this record or asks for changes.
-- **`progression-panels.md` is not yet in the tree.** Until it is committed, the trait half of
-  criterion 1 (item 1 of §1: the trait-tree census categories, what "rendered" means per cell,
-  rank and prerequisite, and the expected counts) is held, and so are the parts of §2 and §3
-  that rest on it: the fallback experience bar, trait panel and skill-training window of the
-  tier-1 goldens, the install layouts of their tier-2 goldens, the level-up presentation and
-  the trait-cell controls of §3 item 4. When it is committed, this record cites its census
-  section and category names explicitly (as it does for `crafting-panels.md` §10.1) and its
-  fallback and layout sections, and the owner rows O160–O165 and O175 get its section numbers.
-- `crafting-panels.md` and the "P6 progression" revision of `scenario-feed.md` are in Review;
-  a review that changes a census definition or category changes item 2 or 3 of §1 with it.
+- `progression-panels.md` is now in the tree and Accepted (2026-10-16), and the trait panel and
+  census were conformed to it (fb83a61), so the trait half of criterion 1 is no longer held.
+  Still to do: this record cites its census section and category names explicitly (as it does
+  for `crafting-panels.md` §10.1) and its fallback and layout sections, and the owner rows
+  O160–O165 and O175 get its section numbers.
+- `crafting-panels.md` and the "P6 progression" revision of `scenario-feed.md` are Accepted
+  (independent review, 2026-10-16).
 - No committed golden shows the chat window, so the craft result lines and the level-up chat
   lines are protected only by the scenario log and unit tests; a chat-window golden (P6 or a
   later milestone) would cover them. The crafting bar and the gathering bar likewise have no P6

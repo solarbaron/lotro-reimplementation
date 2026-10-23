@@ -1820,3 +1820,63 @@ fn grouped_sort_with_many_fellows() {
     m.click_header(FriendColumn::Grouped);
     assert_eq!(order(&m), s(&["bo", "Di", "cy", "Al"]));
 }
+
+/// `FriendListBox` (a Tree, §3.2) with the bound of 1,024 friends: after one refresh the
+/// list holds the rows in sorted order, each row has its tree node, and the rows lie one
+/// below the other. The page adds the rows in one batch (`Ui::tree_add_many`, one layout
+/// at the end); this test checks the result only: `tessera-ui` exposes no count of layout
+/// passes, so it does not tell the batch from one `list_add` per row.
+#[test]
+fn friends_tree_takes_1024_rows_in_one_batch() {
+    let mut ui = ui_social(social_layout());
+    let vocab = sv();
+    let i = vocab.ids;
+    let panel = SocialPanel::open(&mut ui, &vocab).unwrap();
+    let mut page = FriendsPage::bind(&mut ui, &vocab, panel.root).unwrap();
+    let list = page.list.unwrap();
+    let n = tessera_ui::game::social::friends::MAX_FRIENDS;
+    assert_eq!(n, 1024);
+    // Names in reverse so that the sort has work to do.
+    let names: Vec<String> = (0..n).rev().map(|k| format!("Friend{k:04}")).collect();
+    let entries: Vec<FriendEntry> = names
+        .iter()
+        .map(|nm| FriendEntry {
+            name: nm.clone(),
+            online: true,
+        })
+        .collect();
+    let mut m = FriendsModel::default();
+    m.set_list(&entries);
+    page.refresh(&mut ui, &m, &mut NoTables);
+    assert_eq!(page.rows.len(), n);
+    assert_eq!(ui.list_entries(list), page.rows, "list order is row order");
+    let row_name = |ui: &mut Ui, r: ElementKey| {
+        let k = tessera_ui::game::find_below(ui, r, i.friend_row_name).unwrap();
+        ui.text_of(k)
+    };
+    let mut want: Vec<String> = names.clone();
+    want.sort();
+    for (idx, r) in page.rows.clone().into_iter().enumerate() {
+        assert_eq!(row_name(&mut ui, r), want[idx], "row {idx}");
+        assert!(ui.tree_expanded(list, r).is_some(), "row {idx} has a node");
+    }
+    let tops: Vec<i32> = page
+        .rows
+        .iter()
+        .map(|r| ui.layout_box(*r).unwrap().t)
+        .collect();
+    assert!(
+        tops.windows(2).all(|w| w[1] > w[0]),
+        "laid out one below the other"
+    );
+    // Shrinking to one row and growing back reuses the first row and adds the rest again.
+    let first = page.rows[0];
+    m.set_list(&entries[..1]);
+    page.refresh(&mut ui, &m, &mut NoTables);
+    assert_eq!(page.rows, vec![first]);
+    m.set_list(&entries);
+    page.refresh(&mut ui, &m, &mut NoTables);
+    assert_eq!(page.rows.len(), n);
+    assert_eq!(page.rows[0], first);
+    assert_eq!(ui.list_entries(list), page.rows);
+}

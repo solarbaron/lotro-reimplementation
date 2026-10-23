@@ -1424,3 +1424,12 @@ path = "fuzz_targets/client_tzif.rs"
 test = false
 doc = false
 bench = false
+
+# --- tessera-settings: the [GameWindows] section (npc-windows.md §5.2, quest-journal.md §4.8, §8.2) ---
+
+[[bin]]
+name = "settings_window_prefs"
+path = "fuzz_targets/settings_window_prefs.rs"
+test = false
+doc = false
+bench = false

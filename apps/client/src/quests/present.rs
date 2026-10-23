@@ -780,6 +780,8 @@ impl<'a> JournalTexts<'a> {
 /// `UI` table tokens of the titles and the ellipsis (§4.1, §6.1).
 const LOG_TITLE: u32 = 0x048A_C0CC;
 const TRACKER_TITLE: u32 = 0x0CFB_777C;
+/// The history window's title (`UI` token, `quest-journal.md` §4.9).
+const HISTORY_TITLE: u32 = 0x06C3_490C;
 const ELLIPSIS: u32 = 0x037D_DBC3;
 
 impl NpcTexts for JournalTexts<'_> {
@@ -807,6 +809,7 @@ impl QuestTexts for JournalTexts<'_> {
             QuestLabel::RemoveAll => (tokens::PLAYER_ACTION_TABLE, tokens::MENU_REMOVE_ALL),
             QuestLabel::LogTitle => (UI_TABLE, LOG_TITLE),
             QuestLabel::TrackerTitle => (UI_TABLE, TRACKER_TITLE),
+            QuestLabel::HistoryTitle => (UI_TABLE, HISTORY_TITLE),
             QuestLabel::Ellipsis => (UI_TABLE, ELLIPSIS),
             _ => return None,
         };

@@ -475,16 +475,16 @@ track button's label is replaced by code as above.
 > yet, so the client confirms an abandon by a second click on `QuestAbandonButton` for the
 > same quest: the first click posts the confirmation text of the token choice above as a
 > notice line, the second sends `AbandonQuest` (cancel = selecting another quest or closing
-> the log). The history button (§4.9) shows the selected quest in the details pane in history
-> order instead of opening `QuestHistoryField`. Both are stand-ins until the widgets exist;
-> please confirm or name the dialog box layout the confirmation should use.
+> the log). This is a stand-in until the widget exists; please confirm or name the dialog
+> box layout the confirmation should use. (2026-10-23: the history button now opens
+> `QuestHistoryField`, §4.9.)
 
-> **OPEN:** (implementer, `apps/client`, 2026-10-11) `Quest_ShowTrackerCheckBox`'s Tessera
-> setting is not saved yet: the client keeps the tracker's visibility while it runs (on at
-> start, restored on the check box whenever the log opens) but `tessera-settings` has no
-> entry for it, so every start shows the tracker again. The font index of the font-size
-> arrows (§4.7) is likewise not saved. Both need a settings entry (owner of
-> `tessera-settings`), saved off the main thread (ARCH §21).
+> **OPEN:** (implementer, `tessera-settings`, 2026-10-23) the tracker's visibility and the
+> font index of the font-size arrows (§4.7) are saved as Tessera's keys `quest_tracker_shown`
+> (boolean, default on) and `quest_log_font_index` (integer 0–6) of the `[GameWindows]`
+> section, read at start-up off the frame and written off the frame when they change; a
+> value of another type or out of range is ignored (the default), with no migration. Please
+> confirm.
 
 <a id="s4-9"></a>
 ### 4.9 History window (Confirmed, QJ25)
@@ -495,6 +495,13 @@ display type 2 `PastObjectives`, `UI_QuestDisplay_ShowBestowalDialog` true,
 `UI_QuestDisplay_ShowRewards` false), scroll bar, close buttons and title (`UI` token
 0x06C3490C). It shows the selected quest per §4.7 (history order). **Tessera rule:** the
 objectives listed are 1 … current objective (§5.1).
+
+> **OPEN:** (implementer, `tessera-ui`, 2026-10-23) the section does not name the close
+> buttons. Engineering choice: every Button-class element below `QuestHistoryField` that is
+> neither inside `QuestHistory_ListBox` nor inside a scroll bar is taken as a close button
+> (at most 8); the fallback window has one. The window keeps its quest until the history
+> button is used for another quest or a close button is clicked; a new session closes it.
+> Please name the close buttons.
 
 ---
 
@@ -734,11 +741,12 @@ arrived, earliest at the top.
 order. Show in log opens the quest log with the quest selected (switching to the mode of its
 feed state); for a deed it does nothing (no deed log in P3).
 
-> **OPEN:** (implementer, `apps/client`, 2026-10-11) `tessera-ui` has no popup menu widget
-> yet: a right click on `QuestTracker_Button` opens the menu state for the quest and posts the
-> three item labels as a notice line; the choice is carried out through the client's menu
-> entry point (tests drive it). The popup's layout (which element or template shows the
-> items) is not named here; please name it when the menu widget is specified.
+> **OPEN:** (implementer, `apps/client`, 2026-10-11; revised 2026-10-23) a right click on
+> `QuestTracker_Button` now opens Tessera's code-made popup (the P5 popup rule of
+> `map-windows.md` §4.5) below the button with the three items; a choice carries it out, a
+> click anywhere outside the popup closes it (that click does nothing else). The install's
+> popup layout (which element or template shows the items) is still not named here; please
+> name it when the menu widget is specified.
 
 ---
 
@@ -881,8 +889,9 @@ is on (default on).
 > ring script with a small world-anchored glyph above the NPC (2.4 m above its position;
 > available, advance, in progress, other). The anchor height and the glyphs are Tessera
 > choices until the script's own nodes run on the figure (`particle-runtime.md`). The
-> overhead quest icons setting is the client's `--quest-icons on|off` (default on) for
-> now: `tessera-settings` has no entry for it yet, so it is not saved between runs.
+> overhead quest icons setting is Tessera's key `quest_icons` (boolean, default on) of the
+> `[GameWindows]` section (2026-10-23); the client's `--quest-icons on|off` overrides it
+> for one run.
 
 > **OPEN:** (Q6, feed gap) the feed has no form that names a ring **kind**: below-level,
 > future, timed, session, comment and the expansion and store rings cannot be scripted. An

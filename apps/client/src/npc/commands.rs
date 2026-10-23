@@ -10,14 +10,14 @@
 //! cylinders against *R*) and, in range, sends `Command::Npc(UseEntity { entity })`; out of
 //! range it sends nothing and returns the system line the client posts. The callers:
 //!
-//! - the Tessera input action **use nearest NPC in range** ([`USE_KEY`], keyboard U as the
-//!   install's `USE` default, NW10): [`nearest_npc`] picks the closest non-player entity
-//!   whose gap distance is within its own *R*, then [`use_entity`];
+//! - the input action **`USE`** ([`USE_KEY`], keyboard U, the install's default binding,
+//!   NW10) uses the **selection** (`npc-windows.md` §3.1: the player's `Entity_Selection`,
+//!   the P2 selection the session keeps, [`crate::combat::CombatState::selection`]): with
+//!   no selection the client posts the no-selection line (the install's, else
+//!   [`NO_SELECTION_LINE`]) and sends nothing ([`crate::npc::NpcHub::request_use`]);
 //! - P2's world clicks: a left double-click and a right click on a non-player entity
 //!   select the entity under the pointer and then use it through
-//!   [`crate::npc::NpcHub::use_selection`] (`npc-windows.md` §3.1 rules 4 and 5). The key
-//!   `USE` stays the input action above; [`NO_SELECTION_LINE`] is for a selection-based
-//!   `USE`;
+//!   [`crate::npc::NpcHub::use_selection`] (`npc-windows.md` §3.1 rules 4 and 5);
 //! - the scenario input script's `use ENTITY` (`scenario-feed.md` §7.7) is sent by the
 //!   input player itself (headless driver or `--scenario-input`), which owns the clock; it
 //!   names the entity exactly and sends `UseEntity` directly, without the range test.
@@ -27,20 +27,23 @@
 //!
 //! # Cylinders
 //!
-//! P3 reads no setups, so every cylinder is Decision D13's (no setup: radius 0.05 m,
-//! height 0.1 m, no offset) unless the caller gives one ([`UseGeometry`]); P2's picking
-//! supplies the setup-based cylinders of §3.4.1 I6a at merge.
+//! Each side of the range test is a cylinder of `interaction.md` §3.4.1 I6a, built by
+//! [`Cylinder::build`] from the setup the entity's model is built from (its
+//! `physics_bounds`, [`SetupShape`]), its physics scale, `Physics_GameRadiusOverride` and
+//! `Render_AdjustableScale` ([`ShapeProperties`]). The client reads those records on a
+//! worker ([`crate::npc::shapes`]); until an entity's cylinder has arrived, and for an
+//! entity whose model names no usable setup, the cylinder is Decision D13's
+//! ([`Cylinder::NO_SETUP`]: radius 0.05 m, height 0.1 m, no offset).
 
 use tessera_net::domain::{ItemId, NpcCommand, WindowId};
 use tessera_net::{Command, EntityId, EntityKind, Vec3};
 use tessera_ui::game::npc::NpcAction;
 
-/// The key of the Tessera input action "use nearest NPC in range" (the install's `USE`
-/// default binding is keyboard U, `npc-windows.md` NW10).
+/// The key of the input action `USE` (the install's default binding is keyboard U,
+/// `npc-windows.md` NW10).
 pub const USE_KEY: tessera_input::KeyCode = tessera_input::KeyCode::U;
 
-/// Whether `ev` triggers the input action "use nearest NPC in range": [`USE_KEY`] pressed
-/// (not a repeat).
+/// Whether `ev` triggers the input action `USE`: [`USE_KEY`] pressed (not a repeat).
 #[must_use]
 pub fn is_use_key(ev: &tessera_input::RawEvent) -> bool {
     matches!(
@@ -60,10 +63,10 @@ pub const DEFAULT_RANGE: f32 = 6.0;
 /// The line posted when a use is out of range (Tessera's own short text until the
 /// `Usage` table's token is traced, `npc-windows.md` §3.1 Tessera rule, §14 Q1).
 pub const OUT_OF_RANGE_LINE: &str = "You are too far away to use that.";
-/// The line posted when `USE` finds no selection (Tessera's own, §14 Q1).
+/// The line posted when `USE` finds no selection without the install's `Usage` entry
+/// (`npc-windows.md` §3.1 names its token; the client posts the install's text when it
+/// renders, [`crate::npc::NpcData::no_selection_line`]): Tessera's own text.
 pub const NO_SELECTION_LINE: &str = "You have nothing selected.";
-/// The line posted when the input action finds no NPC in range (Tessera's own).
-pub const NOTHING_NEAR_LINE: &str = "There is no one in range to use.";
 
 /// The session command of a window action; `None` for [`NpcAction::FontSize`], a local
 /// setting.
@@ -132,6 +135,123 @@ impl Cylinder {
         radius: 0.05,
         height: 0.1,
     };
+
+    /// The cylinder of `interaction.md` §3.4.1 I6a (with I6c):
+    ///
+    /// 1. *s* = z of `Physics_AdjustableScale` × z of `Model_Scale` (each taken as 1 when
+    ///    absent); 1 when the product is not finite or below [`MIN_PHYSICS_SCALE`];
+    /// 2. radius *r*₀ × *s* + 0.05 m, height *h*₀ × *s* + 0.1 m, offset the centre of the
+    ///    collision box (neither scaled nor rotated); without a setup, or with all eight
+    ///    `physics_bounds` values 0, *r*₀ = *h*₀ = 0 and no offset (Decision D13);
+    /// 3. a `Physics_GameRadiusOverride` above 0 replaces the radius by itself times the x
+    ///    component of `Render_AdjustableScale` (1 without that vector); height and offset
+    ///    stay.
+    ///
+    /// Tessera's guards for hostile values (no spec fact): a setup shape with a value that
+    /// is not finite counts as no setup (D13), and an override whose product is not finite
+    /// keeps the base radius.
+    #[must_use]
+    pub fn build(setup: Option<&SetupShape>, props: &ShapeProperties) -> Self {
+        let z = |v: Option<[f32; 3]>| v.map_or(1.0, |v| v[2]);
+        let s = z(props.physics_scale) * z(props.model_scale);
+        let s = if s.is_finite() && s >= MIN_PHYSICS_SCALE {
+            s
+        } else {
+            1.0
+        };
+        let shape = setup.copied().filter(SetupShape::is_usable);
+        let (r0, h0, offset) = shape.map_or((0.0, 0.0, Vec3::ZERO), |b| {
+            (
+                b.radius,
+                b.height,
+                Vec3 {
+                    x: b.centre[0],
+                    y: b.centre[1],
+                    z: b.centre[2],
+                },
+            )
+        });
+        let mut radius = r0 * s + BASE_RADIUS;
+        let height = h0 * s + BASE_HEIGHT;
+        if let Some(g) = props.radius_override.filter(|g| *g > 0.0) {
+            let k = props.render_scale.map_or(1.0, |v| v[0]);
+            let r = g * k;
+            if r.is_finite() {
+                radius = r;
+            }
+        }
+        if !(radius.is_finite() && height.is_finite()) {
+            return Self::NO_SETUP;
+        }
+        Self {
+            offset,
+            radius,
+            height,
+        }
+    }
+}
+
+/// The 0.05 m added to the scaled base radius (`interaction.md` §3.4.1 I6a step 1).
+pub const BASE_RADIUS: f32 = 0.05;
+/// The 0.1 m added to the scaled base height (`interaction.md` §3.4.1 I6a step 1).
+pub const BASE_HEIGHT: f32 = 0.1;
+/// Below this the physics scale *s* is taken as 1 (`interaction.md` §3.4.1 I6c).
+pub const MIN_PHYSICS_SCALE: f32 = 0.0002;
+
+/// What a cylinder needs of a setup (`setup.md` §6.5 `physics_bounds`): the horizontal
+/// radius *r*₀ (the eighth float), the height *h*₀ (the seventh) and the centre of the
+/// collision box (half the sum of its minimum and maximum, per axis).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SetupShape {
+    /// *r*₀.
+    pub radius: f32,
+    /// *h*₀.
+    pub height: f32,
+    /// The centre of the collision box in the entity's own frame.
+    pub centre: [f32; 3],
+}
+
+impl SetupShape {
+    /// The shape of a setup's `physics_bounds` (`None` without collision: all eight
+    /// values 0, Decision D13).
+    #[must_use]
+    pub fn of_bounds(b: &tessera_formats::setup::PhysicsBounds) -> Option<Self> {
+        if b.is_zero() {
+            return None;
+        }
+        let (min, max) = (b.aabb.min, b.aabb.max);
+        Some(Self {
+            radius: b.radius,
+            height: b.height,
+            centre: [
+                (min[0] + max[0]) * 0.5,
+                (min[1] + max[1]) * 0.5,
+                (min[2] + max[2]) * 0.5,
+            ],
+        })
+    }
+
+    /// Every value finite (a hostile record's shape counts as no setup otherwise).
+    #[must_use]
+    pub fn is_usable(&self) -> bool {
+        self.radius.is_finite()
+            && self.height.is_finite()
+            && self.centre.iter().all(|v| v.is_finite())
+    }
+}
+
+/// The entity properties a cylinder reads (`interaction.md` §3.4.1 I6a, I6c), each `None`
+/// when the entity does not store it with the expected type.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct ShapeProperties {
+    /// `Physics_AdjustableScale` (vector).
+    pub physics_scale: Option<[f32; 3]>,
+    /// `Model_Scale` (vector).
+    pub model_scale: Option<[f32; 3]>,
+    /// `Physics_GameRadiusOverride` (float).
+    pub radius_override: Option<f32>,
+    /// `Render_AdjustableScale` (vector).
+    pub render_scale: Option<[f32; 3]>,
 }
 
 /// The gap distance *d* of `interaction.md` §3.4.1 between the player's cylinder at `a`
@@ -194,6 +314,12 @@ pub trait UseGeometry {
         let _ = id;
         None
     }
+    /// Whether the cylinders of a test of `id` are final: `false` while the entity's or the
+    /// player's is still being read (a window's walk-away close then waits, §5.7).
+    fn cylinders_known(&self, id: EntityId) -> bool {
+        let _ = id;
+        true
+    }
 }
 
 /// Where a use goes: the world session (or a test's recorder).
@@ -219,6 +345,11 @@ pub enum UseOutcome {
     },
     /// The entity is unknown or the player is not in the world: nothing was sent.
     Unknown,
+    /// `USE` found no selection: nothing was sent; the caller posts [`NO_SELECTION_LINE`].
+    NoSelection,
+    /// The player's or the target's cylinder is still being read: the use runs in a later
+    /// frame ([`crate::npc::NpcHub::use_selection`]).
+    Waiting,
     /// The session refused the command.
     Refused(String),
 }
@@ -229,6 +360,7 @@ impl UseOutcome {
     pub fn line(&self) -> Option<&'static str> {
         match self {
             Self::OutOfRange { .. } => Some(OUT_OF_RANGE_LINE),
+            Self::NoSelection => Some(NO_SELECTION_LINE),
             _ => None,
         }
     }
@@ -263,39 +395,9 @@ pub fn use_entity<W: UseGeometry + UseSink + ?Sized>(
     }
 }
 
-/// The nearest non-player entity (kind `NonPlayer`, `Creature` or `Object`) whose gap
-/// distance is within its range; ties go to the lower entity ID. Tessera rule for the
-/// input action "use nearest NPC in range".
-#[must_use]
-pub fn nearest_npc<G: UseGeometry + ?Sized>(geo: &G) -> Option<EntityId> {
-    let (player, _, _) = geo.player()?;
-    let mut best: Option<(f32, EntityId)> = None;
-    for id in geo.entities() {
-        if id == player {
-            continue;
-        }
-        let Some((kind, _, _)) = geo.entity(id) else {
-            continue;
-        };
-        if kind == EntityKind::Player {
-            continue;
-        }
-        let Some((true, gap, _)) = in_range(geo, id) else {
-            continue;
-        };
-        let better = match best {
-            None => true,
-            Some((g, b)) => gap < g || (gap == g && id < b),
-        };
-        if better {
-            best = Some((gap, id));
-        }
-    }
-    best.map(|(_, id)| id)
-}
-
 /// [`UseGeometry`] over the client's world view: positions from the session's entities,
-/// D13 cylinders, `Usage_MinUsageDist` from `ranges` (the body records' values).
+/// cylinders from `cylinders` ([`Self::with_cylinders`]; D13 for an entity it does not
+/// know), `Usage_MinUsageDist` from `ranges` (the body records' values).
 ///
 /// The player's position is the avatar's ([`Self::with_avatar`]: where the walker last
 /// placed it, the position its `Move` reports carry). The session's entity view of the
@@ -304,7 +406,14 @@ pub fn nearest_npc<G: UseGeometry + ?Sized>(geo: &G) -> Option<EntityId> {
 pub struct WorldGeometry<'a> {
     world: &'a crate::net::World,
     ranges: &'a dyn Fn(EntityId) -> Option<f32>,
+    cylinders: Option<&'a dyn Fn(EntityId) -> Option<Cylinder>>,
+    known: Option<&'a dyn Fn(EntityId) -> bool>,
     avatar: Option<Vec3>,
+}
+
+/// The cylinder `cylinders` gives for `id`, else Decision D13's.
+fn cylinder_of(cylinders: Option<&dyn Fn(EntityId) -> Option<Cylinder>>, id: EntityId) -> Cylinder {
+    cylinders.and_then(|f| f(id)).unwrap_or(Cylinder::NO_SETUP)
 }
 
 impl std::fmt::Debug for WorldGeometry<'_> {
@@ -320,8 +429,18 @@ impl<'a> WorldGeometry<'a> {
         Self {
             world,
             ranges,
+            cylinders: None,
+            known: None,
             avatar: None,
         }
+    }
+
+    /// Whether a test's cylinders are final comes from `known`
+    /// ([`UseGeometry::cylinders_known`]; all final without it).
+    #[must_use]
+    pub fn with_known(mut self, known: &'a dyn Fn(EntityId) -> bool) -> Self {
+        self.known = Some(known);
+        self
     }
 
     /// The player stands at `avatar` (the walker's avatar position in the session's frame;
@@ -329,6 +448,14 @@ impl<'a> WorldGeometry<'a> {
     #[must_use]
     pub fn with_avatar(mut self, avatar: Option<Vec3>) -> Self {
         self.avatar = avatar;
+        self
+    }
+
+    /// The entities' cylinders (`interaction.md` §3.4.1 I6a) come from `cylinders`; an
+    /// entity it gives none for has Decision D13's.
+    #[must_use]
+    pub fn with_cylinders(mut self, cylinders: &'a dyn Fn(EntityId) -> Option<Cylinder>) -> Self {
+        self.cylinders = Some(cylinders);
         self
     }
 }
@@ -340,12 +467,16 @@ impl UseGeometry for WorldGeometry<'_> {
             Some(p) => p,
             None => self.world.entities().get(&id)?.transform.position,
         };
-        Some((id, at, Cylinder::NO_SETUP))
+        Some((id, at, cylinder_of(self.cylinders, id)))
     }
 
     fn entity(&self, id: EntityId) -> Option<(EntityKind, Vec3, Cylinder)> {
         let e = self.world.entities().get(&id)?;
-        Some((e.kind, e.transform.position, Cylinder::NO_SETUP))
+        Some((
+            e.kind,
+            e.transform.position,
+            cylinder_of(self.cylinders, id),
+        ))
     }
 
     fn entities(&self) -> Vec<EntityId> {
@@ -355,6 +486,10 @@ impl UseGeometry for WorldGeometry<'_> {
     fn min_usage_dist(&self, id: EntityId) -> Option<f32> {
         (self.ranges)(id)
     }
+
+    fn cylinders_known(&self, id: EntityId) -> bool {
+        self.known.is_none_or(|f| f(id))
+    }
 }
 
 /// [`UseGeometry`] and [`UseSink`] over the client's world session: what
@@ -363,6 +498,7 @@ pub struct WorldUse<'a> {
     world: &'a mut crate::net::World,
     now: std::time::Instant,
     ranges: &'a dyn Fn(EntityId) -> Option<f32>,
+    cylinders: Option<&'a dyn Fn(EntityId) -> Option<Cylinder>>,
     avatar: Option<Vec3>,
 }
 
@@ -383,6 +519,7 @@ impl<'a> WorldUse<'a> {
             world,
             now,
             ranges,
+            cylinders: None,
             avatar: None,
         }
     }
@@ -393,17 +530,32 @@ impl<'a> WorldUse<'a> {
         self.avatar = avatar;
         self
     }
+
+    /// The entities' cylinders ([`WorldGeometry::with_cylinders`]).
+    #[must_use]
+    pub fn with_cylinders(mut self, cylinders: &'a dyn Fn(EntityId) -> Option<Cylinder>) -> Self {
+        self.cylinders = Some(cylinders);
+        self
+    }
+
+    fn geometry(&self) -> WorldGeometry<'_> {
+        WorldGeometry {
+            world: self.world,
+            ranges: self.ranges,
+            cylinders: self.cylinders,
+            known: None,
+            avatar: self.avatar,
+        }
+    }
 }
 
 impl UseGeometry for WorldUse<'_> {
     fn player(&self) -> Option<(EntityId, Vec3, Cylinder)> {
-        WorldGeometry::new(self.world, self.ranges)
-            .with_avatar(self.avatar)
-            .player()
+        self.geometry().player()
     }
 
     fn entity(&self, id: EntityId) -> Option<(EntityKind, Vec3, Cylinder)> {
-        WorldGeometry::new(self.world, self.ranges).entity(id)
+        self.geometry().entity(id)
     }
 
     fn entities(&self) -> Vec<EntityId> {
@@ -431,6 +583,7 @@ mod tests {
     struct Geo {
         player: Vec3,
         others: BTreeMap<EntityId, (EntityKind, Vec3, Option<f32>)>,
+        cylinders: BTreeMap<EntityId, Cylinder>,
         sent: Vec<Command>,
     }
 
@@ -439,9 +592,12 @@ mod tests {
             Some((EntityId(1), self.player, Cylinder::NO_SETUP))
         }
         fn entity(&self, id: EntityId) -> Option<(EntityKind, Vec3, Cylinder)> {
-            self.others
+            let c = self
+                .cylinders
                 .get(&id)
-                .map(|(k, p, _)| (*k, *p, Cylinder::NO_SETUP))
+                .copied()
+                .unwrap_or(Cylinder::NO_SETUP);
+            self.others.get(&id).map(|(k, p, _)| (*k, *p, c))
         }
         fn entities(&self) -> Vec<EntityId> {
             self.others.keys().copied().collect()
@@ -498,10 +654,11 @@ mod tests {
     }
 
     #[test]
-    fn use_sends_in_range_only_and_nearest_skips_players() {
+    fn use_sends_in_range_only() {
         let mut geo = Geo {
             player: v(0.0, 0.0, 0.0),
             others: BTreeMap::new(),
+            cylinders: BTreeMap::new(),
             sent: Vec::new(),
         };
         geo.others.insert(
@@ -525,13 +682,135 @@ mod tests {
                 entity: EntityId(2)
             })]
         );
-        assert_eq!(
-            nearest_npc(&geo),
-            Some(EntityId(2)),
-            "the player at 1 m is skipped"
+        assert_eq!(UseOutcome::NoSelection.line(), Some(NO_SELECTION_LINE));
+        assert_eq!(UseOutcome::Waiting.line(), None);
+    }
+
+    fn props() -> ShapeProperties {
+        ShapeProperties::default()
+    }
+
+    fn shape(radius: f32, height: f32, centre: [f32; 3]) -> SetupShape {
+        SetupShape {
+            radius,
+            height,
+            centre,
+        }
+    }
+
+    fn close(a: f32, b: f32) -> bool {
+        (a - b).abs() < 1e-5
+    }
+
+    #[test]
+    fn cylinder_follows_i6a_base_scale_and_offset() {
+        // D13: no setup.
+        assert_eq!(Cylinder::build(None, &props()), Cylinder::NO_SETUP);
+        // Base: r0 + 0.05, h0 + 0.1, the box centre unscaled.
+        let s = shape(0.5, 1.8, [0.0, 0.1, 0.9]);
+        let c = Cylinder::build(Some(&s), &props());
+        assert!(close(c.radius, 0.55) && close(c.height, 1.9), "{c:?}");
+        assert_eq!((c.offset.x, c.offset.y, c.offset.z), (0.0, 0.1, 0.9));
+        // s = z of Physics_AdjustableScale × z of Model_Scale; x and y are not used.
+        let p = ShapeProperties {
+            physics_scale: Some([9.0, 9.0, 2.0]),
+            model_scale: Some([1.0, 1.0, 1.5]),
+            ..props()
+        };
+        let c = Cylinder::build(Some(&s), &p);
+        assert!(close(c.radius, 0.5 * 3.0 + 0.05), "{c:?}");
+        assert!(close(c.height, 1.8 * 3.0 + 0.1), "{c:?}");
+        assert_eq!(c.offset.z, 0.9, "the offset is not scaled");
+        // A scale below 0.0002 or not finite is 1.
+        for z in [0.0001, f32::NAN, f32::INFINITY, -2.0] {
+            let p = ShapeProperties {
+                physics_scale: Some([1.0, 1.0, z]),
+                ..props()
+            };
+            let c = Cylinder::build(Some(&s), &p);
+            assert!(close(c.radius, 0.55), "{z}: {c:?}");
+        }
+    }
+
+    #[test]
+    fn cylinder_radius_override_replaces_the_whole_radius() {
+        let s = shape(0.5, 1.8, [0.0, 0.0, 0.9]);
+        // Override × x of Render_AdjustableScale, no 0.05 added; height stays.
+        let p = ShapeProperties {
+            radius_override: Some(4.0),
+            render_scale: Some([2.0, 3.0, 5.0]),
+            physics_scale: Some([1.0, 1.0, 2.0]),
+            ..props()
+        };
+        let c = Cylinder::build(Some(&s), &p);
+        assert!(close(c.radius, 8.0), "{c:?}");
+        assert!(close(c.height, 1.8 * 2.0 + 0.1), "{c:?}");
+        // Without the vector, k = 1; also for an entity without a setup.
+        let p = ShapeProperties {
+            radius_override: Some(13.0),
+            ..props()
+        };
+        assert!(close(Cylinder::build(None, &p).radius, 13.0));
+        assert!(close(Cylinder::build(None, &p).height, 0.1));
+        // Not above 0 (the dictionary default −1): the base radius stays.
+        for g in [0.0, -1.0, f32::NAN] {
+            let p = ShapeProperties {
+                radius_override: Some(g),
+                ..props()
+            };
+            assert!(close(Cylinder::build(Some(&s), &p).radius, 0.55), "{g}");
+        }
+        // A product that is not finite keeps the base radius (Tessera guard).
+        let p = ShapeProperties {
+            radius_override: Some(f32::MAX),
+            render_scale: Some([4.0, 1.0, 1.0]),
+            ..props()
+        };
+        assert!(close(Cylinder::build(Some(&s), &p).radius, 0.55));
+    }
+
+    #[test]
+    fn setup_shape_reads_physics_bounds() {
+        use tessera_formats::setup::{Aabb, PhysicsBounds};
+        let zero = PhysicsBounds::default();
+        assert_eq!(SetupShape::of_bounds(&zero), None, "D13: no collision");
+        let b = PhysicsBounds {
+            aabb: Aabb {
+                min: [-1.0, -2.0, 0.0],
+                max: [1.0, 4.0, 3.0],
+            },
+            height: 3.0,
+            radius: 2.5,
+        };
+        let s = SetupShape::of_bounds(&b).expect("collision");
+        assert_eq!(s, shape(2.5, 3.0, [0.0, 1.0, 1.5]));
+        // Hostile values count as no setup.
+        let bad = shape(f32::NAN, 1.0, [0.0; 3]);
+        assert!(!bad.is_usable());
+        assert_eq!(Cylinder::build(Some(&bad), &props()), Cylinder::NO_SETUP);
+    }
+
+    #[test]
+    fn a_large_npc_is_used_from_its_edge() {
+        // A creature of radius 6 m (r0 = 5.95) at 10 m: out of reach as a D13 cylinder
+        // (gap 9.9 > 7), in reach with its own cylinder (gap 10 − 0.05 − 6 = 3.95).
+        let mut geo = Geo {
+            player: v(0.0, 0.0, 0.0),
+            others: BTreeMap::new(),
+            cylinders: BTreeMap::new(),
+            sent: Vec::new(),
+        };
+        geo.others.insert(
+            EntityId(5),
+            (EntityKind::Creature, v(10.0, 0.0, 0.0), Some(4.0)),
         );
-        geo.others.remove(&EntityId(2));
-        assert_eq!(nearest_npc(&geo), None);
+        assert!(matches!(
+            use_entity(&mut geo, EntityId(5)),
+            UseOutcome::OutOfRange { .. }
+        ));
+        let big = Cylinder::build(Some(&shape(5.95, 4.0, [0.0, 0.0, 2.0])), &props());
+        geo.cylinders.insert(EntityId(5), big);
+        assert_eq!(use_entity(&mut geo, EntityId(5)), UseOutcome::Sent);
     }
 
     #[test]

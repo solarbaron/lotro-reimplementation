@@ -555,3 +555,54 @@ fn quest_tracker() {
     assert!(t.entries[2].1.cut, "six lines exceed the 72-pixel budget");
     golden("tracker", &capture(&mut ui, root));
 }
+
+/// The history window (`quest-journal.md` §4.9): `QuestHistoryField` at 448 × 475 with the
+/// history-order sections of a quest at its second objective (objectives 1 and 2 listed);
+/// the reward section the caller passes is left out (`UI_QuestDisplay_ShowRewards` false).
+#[test]
+fn quest_history_window() {
+    use tessera_ui::game::quest::details::{DetailsSection, completed_sections};
+    use tessera_ui::game::quest::history::{self, HISTORY_SIZE, HistoryIds, HistoryWindow};
+    let mut ui = ui(1280, 960);
+    let nv = nv();
+    let a = art();
+    let ids = HistoryIds::default();
+    let root = history::fallback(&mut ui, &nv, ids, &a, &T).unwrap();
+    let b = ui.layout_box(root).unwrap();
+    assert_eq!((b.w(), b.h()), HISTORY_SIZE);
+    let mut w =
+        HistoryWindow::attach(&mut ui, &nv, ids, root, Default::default(), &a).expect("list");
+    assert_eq!(w.closes.len(), 1, "the fallback window's close button");
+    let header = DetailsSection::Header {
+        title: "[12] Wolves".into(),
+        arc: None,
+        category: "Beta".into(),
+        group: GroupType::Solo,
+    };
+    let sections = completed_sections(
+        header,
+        Some((
+            "Bestowal".into(),
+            "Orla asks you to drive the wolves from the mill.".into(),
+        )),
+        Some((
+            "Background".into(),
+            "The miller fears for her flock.".into(),
+        )),
+        &[
+            ("Objective 1".into(), "Talk to Orla at the mill.".into()),
+            (
+                "Objective 2".into(),
+                "Defeat wolves near the sluice gate.".into(),
+            ),
+        ],
+        &[RewardRow::Header],
+    );
+    w.show(&mut ui, 1, Some(&QuestDetails { sections }), &T);
+    assert_eq!(w.quest(), Some(1));
+    assert!(
+        w.pane.rewards.is_none(),
+        "no reward rows in the history window"
+    );
+    golden("quest_history", &capture(&mut ui, root));
+}

@@ -12,7 +12,9 @@
 //! | Module | What | Spec |
 //! |---|---|---|
 //! | [`state`] | [`state::NpcWindows`]: the open feed windows and their content from the session's events (in the player state) | NW §10.1 |
-//! | [`commands`] | window actions → session commands; the one entry point for using an entity ([`use_entity`]) with the use range, the input action "use nearest NPC in range" | NW §3, §10.1; `interaction.md` §3.4.1 |
+//! | [`commands`] | window actions → session commands; the one entry point for using an entity ([`use_entity`]) with the use range and its cylinders, `USE` on the selection | NW §3, §10.1; `interaction.md` §3.4.1 |
+//! | [`prefs`] | Tessera's saved game-window choices (`[GameWindows]`): read off the frame, written by one writer thread | NW §5.2; `quest-journal.md` §4.8, §8 |
+//! | [`shapes`] | [`shapes::UseShapes`]: the entities' use-range cylinders, read from their setups on a worker | `interaction.md` §3.4.1 I6a |
 //! | [`data`] | [`NpcData`]: `tessera-gamedata`'s NPC model over the P1 facts, wallet item values, use ranges, sale flags | NW §5–§9, §11 |
 //! | [`refs`] | [`NpcRefs`]: layouts, roots and row templates by label, the P3 vocabulary | NW §4 |
 //! | [`present`] | the windows' views from the state (install texts and icons, or literal refs) | NW §5–§9 |
@@ -24,17 +26,18 @@
 //! # Using an NPC
 //!
 //! [`use_entity`] is the client's one entry point: it checks the use range and sends
-//! `UseEntity`. Its callers are the input action "use nearest NPC in range"
+//! `UseEntity`. Its callers are the input action `USE` on the selection
 //! ([`commands::USE_KEY`], keyboard U) and P2's world clicks, a left double-click and a
 //! right click ([`NpcHub::use_selection`], `npc-windows.md` §3.1). The scenario input
-//! script's `use`
-//! is sent by the input player itself.
+//! script's `use` is sent by the input player itself.
 
 pub mod commands;
 pub mod data;
 pub mod hub;
+pub mod prefs;
 pub mod present;
 pub mod refs;
+pub mod shapes;
 pub mod state;
 pub mod texts;
 pub mod ui;

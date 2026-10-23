@@ -231,6 +231,10 @@ pub struct NpcWindows {
     /// The remembered entities created with a tag (placed by the world data): a
     /// `StaticsCleared` removes them (`Event::StaticsCleared`).
     tagged: BTreeSet<EntityId>,
+    /// The bodies the entities' appearances name (`EntityCreated`, `AppearanceChanged`; the
+    /// player's arrives with an `AppearanceChanged` after `WorldEntered`): what their
+    /// use-range cylinders are built from (`interaction.md` §3.4.1 I6a).
+    figures: BTreeMap<EntityId, tessera_net::Body>,
     player: Option<EntityId>,
     revision: u64,
     opened: u64,
@@ -290,6 +294,12 @@ impl NpcWindows {
         self.entities.get(&id)
     }
 
+    /// The body `id`'s appearance names (the player's included), when the session told it.
+    #[must_use]
+    pub fn figure(&self, id: EntityId) -> Option<tessera_net::Body> {
+        self.figures.get(&id).copied()
+    }
+
     /// The entities the session told about.
     pub fn entities(&self) -> impl Iterator<Item = (EntityId, &EntityInfo)> {
         self.entities.iter().map(|(k, v)| (*k, v))
@@ -310,6 +320,7 @@ impl NpcWindows {
     pub fn clear(&mut self, out: &mut Vec<NpcChange>) {
         self.entities.clear();
         self.tagged.clear();
+        self.figures.clear();
         if !self.windows.is_empty() {
             self.windows.clear();
             self.bump();
@@ -387,11 +398,23 @@ impl NpcWindows {
         }
     }
 
+    /// Remembers `id`'s body (at most [`MAX_ENTITIES`] entities besides the player).
+    fn remember_figure(&mut self, id: EntityId, body: tessera_net::Body) {
+        if !self.figures.contains_key(&id)
+            && self.figures.len() >= MAX_ENTITIES
+            && self.player != Some(id)
+        {
+            return;
+        }
+        self.figures.insert(id, body);
+    }
+
     /// `id` is gone (`EntityDespawned`, or a tagged entity at `StaticsCleared`): its
     /// windows are marked for the one `CloseWindow` of §5.7's Tessera rule.
     fn despawn(&mut self, id: EntityId, out: &mut Vec<NpcChange>) {
         self.entities.remove(&id);
         self.tagged.remove(&id);
+        self.figures.remove(&id);
         let gone: Vec<WindowId> = self
             .windows
             .values()
@@ -436,16 +459,23 @@ impl NpcWindows {
                 name,
                 class,
                 tag,
+                appearance,
                 ..
-            } => self.remember(
-                *id,
-                EntityInfo {
-                    kind: *kind,
-                    name: name.clone(),
-                    body: *class,
-                },
-                tag.is_some(),
-            ),
+            } => {
+                self.remember(
+                    *id,
+                    EntityInfo {
+                        kind: *kind,
+                        name: name.clone(),
+                        body: *class,
+                    },
+                    tag.is_some(),
+                );
+                self.remember_figure(*id, appearance.body);
+            }
+            Event::AppearanceChanged { id, appearance } => {
+                self.remember_figure(*id, appearance.body);
+            }
             Event::EntityDespawned { id } => self.despawn(*id, out),
             // Every tagged entity is gone, as if each had been despawned (session.rs).
             Event::StaticsCleared => {

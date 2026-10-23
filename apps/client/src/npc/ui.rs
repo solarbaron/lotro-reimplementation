@@ -163,6 +163,9 @@ pub struct NpcUi {
     action_icons: BTreeMap<u32, Option<tessera_ui::ImageRef>>,
     /// The quantity dialog's last purchase (§7.5 rule 8; for the client session).
     quantity_memory: QuantityMemory,
+    /// The drag in progress: its source and the payload it carried when it began (§7.6
+    /// rule 4 sells that item, not what the slot holds at the drop).
+    drag_began: Option<(ElementKey, tessera_ui::DragPayload)>,
 }
 
 impl std::fmt::Debug for NpcUi {
@@ -217,6 +220,7 @@ impl NpcUi {
             had_data: false,
             action_icons: BTreeMap::new(),
             quantity_memory: QuantityMemory::default(),
+            drag_began: None,
         }
     }
 
@@ -592,10 +596,35 @@ impl NpcUi {
         sends
     }
 
+    /// Whether the client sent its one `CloseWindow` for feed window `window` (§5.7: the
+    /// entity is gone or the player walked out of range).
+    #[must_use]
+    pub fn close_sent(&self, window: u32) -> bool {
+        self.closes_sent.contains(&window)
+    }
+
     /// The font index the font-size arrows chose last (kept in Tessera's settings).
     #[must_use]
     pub fn font_index(&self) -> Option<u32> {
         self.font
+    }
+
+    /// Restores the dialogue font index saved in Tessera's settings (`npc-windows.md` §5.2
+    /// Tessera rule): the open dialogue and offer windows take it now, later ones when they
+    /// open.
+    pub fn restore_font(&mut self, ui: &mut Ui, index: u32) {
+        self.font = Some(index);
+        for o in self.windows.values_mut() {
+            match o.win.as_mut() {
+                Win::Dialogue(d) => {
+                    d.set_font_index(ui, index);
+                }
+                Win::Offer { win, .. } => {
+                    win.set_font_index(ui, index);
+                }
+                _ => {}
+            }
+        }
     }
 
     fn destroy(&mut self, ui: &mut Ui, window: u32) {
@@ -935,8 +964,25 @@ impl NpcUi {
             self.hover(ui, *element, *pointer, state, data);
             return;
         }
+        if let UiEvent::DragBegan { source } = ev {
+            self.drag_began = ui
+                .drag_payload()
+                .filter(|_| ui.drag_source() == Some(*source))
+                .map(|p| (*source, p));
+            return;
+        }
         if let UiEvent::DragEnded { source, target, .. } = ev {
+            let began = self
+                .drag_began
+                .take()
+                .filter(|(s, _)| s == source)
+                .map(|(_, p)| p);
             out.extend(self.dragged(ui, *source, *target));
+            // §7.6 rule 4: an item slot's drag dropped on a vendor window.
+            out.extend(self.windows.values().find_map(|o| match o.win.as_ref() {
+                Win::Vendor { win, .. } => win.handle_drop(ui, ev, began),
+                _ => None,
+            }));
             return;
         }
         if self.windows.is_empty() && self.panels.is_empty() {
@@ -1118,8 +1164,12 @@ impl NpcUi {
             let gone = npc
                 .window(tessera_net::domain::WindowId(*id))
                 .is_some_and(|w| w.entity_gone);
+            // Not while the cylinders are still being read (`interaction.md` §3.4.1 I6a): a
+            // large entity measured with Decision D13's would look far.
             let far = match (geometry, o.entity) {
-                (Some(g), Some(e)) => super::commands::in_range(g, e).is_some_and(|(ok, _, _)| !ok),
+                (Some(g), Some(e)) if g.cylinders_known(e) => {
+                    super::commands::in_range(g, e).is_some_and(|(ok, _, _)| !ok)
+                }
                 _ => false,
             };
             if gone || far {

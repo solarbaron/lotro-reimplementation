@@ -14,12 +14,14 @@
 //! |---|---|---|
 //! | [`log`] | which quests are listed, grouping and order, filters, counts, selection, buttons; the log window | QJ §4.1–§4.6, §4.8 |
 //! | [`details`] | the details pane's sections | QJ §4.7, §4.9 |
+//! | [`history`] | the history window `QuestHistoryField` | QJ §4.9 |
 //! | [`tracker`] | tracked entries, the height budget, the entry button and menu | QJ §6 |
 //! | [`markers`] | quest markers on the radar and the world map | QJ §8.3, GP §8.8, §9.3 |
 //! | [`fallback`] | fallback log and tracker windows | decision 0031 |
 
 pub mod details;
 pub mod fallback;
+pub mod history;
 pub mod log;
 pub mod markers;
 pub mod tracker;
@@ -125,6 +127,8 @@ pub enum QuestLabel {
     /// The tracker check box (`Quest_ShowTrackerCheckBox`, §4.8; the fallback window's
     /// label).
     ShowTracker,
+    /// The history window's title (`UI` token 0x06C3490C, §4.9).
+    HistoryTitle,
 }
 
 impl QuestLabel {
@@ -150,6 +154,7 @@ impl QuestLabel {
             Self::ExpandAll => "+",
             Self::CollapseAll => "-",
             Self::ShowTracker => "Tracker",
+            Self::HistoryTitle => "Quest history",
         }
     }
 }

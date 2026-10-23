@@ -24,16 +24,23 @@
 //!   confirmation text (`Quest` table token choice of §4.8) as a notice line; a second
 //!   click on the button for the same quest confirms ([`QuestUi::answer_abandon`] is the
 //!   dialog's entry point once a dialog box widget exists).
-//! - **Tracker menu** (§6.6): a right click on an entry's button opens the menu state for
-//!   that quest and posts its three items as a notice; [`QuestUi::menu_choice`] carries out
-//!   the choice (the popup is the merge-time replacement).
+//! - **Tracker menu** (§6.6): a right click on an entry's button opens Tessera's code-made
+//!   popup ([`tessera_ui::game::popup::Popup::open_menu`], the P5 popup rule) below the
+//!   button with the three items of §6.6; choosing one runs [`QuestUi::menu_choice`], a
+//!   click anywhere else closes it, and closing the tracker or a new session closes it too.
 //! - **Abandon cancel** (§4.8 OPEN): selecting another quest, closing the log or a new
 //!   session cancels a pending confirmation.
-//! - **History** (§4.9): the history button shows the selected quest in the details pane in
-//!   history order until another quest is selected (refreshes keep the order).
-//! - **Tracker visibility** (§4.8 `Quest_ShowTrackerCheckBox`): on at start, kept while the
-//!   client runs (not yet saved, §4.8 OPEN); the log's check box shows it whenever the log
-//!   opens; the tracker opens when a quest is tracked while it is on.
+//! - **History** (§4.9): the history button opens the history window `QuestHistoryField`
+//!   (the install's `questhistory` layout, else the fallback window) for the selected quest,
+//!   listing objectives 1 … current in history order without rewards; the window keeps
+//!   that quest (refreshes redraw it) until the button is used for another quest or one of
+//!   its close buttons is clicked.
+//! - **Tracker visibility** (§4.8 `Quest_ShowTrackerCheckBox`) and the **font index** of the
+//!   log's font-size arrows (§4.7): the saved values of `tessera-settings`' `[GameWindows]`
+//!   section when the client gives them ([`QuestUi::apply_prefs`]; tracker on and the
+//!   layout's font otherwise); the log's check box shows the tracker's state whenever the
+//!   log opens; the tracker opens when a quest is tracked while it is on. A change is
+//!   reported once by [`QuestUi::take_changed_prefs`] for the client to save off the frame.
 //!
 //! # Bounds
 //!
@@ -48,8 +55,10 @@ use std::sync::Arc;
 use tessera_net::Command;
 use tessera_ui::game::GamePanels;
 use tessera_ui::game::npc::kit::FallbackArt;
+use tessera_ui::game::popup::{Place, Popup, PopupItem};
 use tessera_ui::game::quest::details::QuestDetails;
 use tessera_ui::game::quest::fallback;
+use tessera_ui::game::quest::history::{self, HistoryWindow};
 use tessera_ui::game::quest::log::{LogEntry, MAX_QUESTS, QuestLogWindow};
 use tessera_ui::game::quest::markers::{QuestMarker, QuestMarkers};
 use tessera_ui::game::quest::tracker::{MENU, MenuItem, TrackerWindow};
@@ -161,10 +170,21 @@ pub struct QuestUi {
     stale: bool,
     cache_context: Option<PlayerContext>,
     seen: u64,
-    details_for: Option<(QuestKey, bool)>,
+    /// The quest the log's details pane shows (never in history order: the history has
+    /// its own window, §4.9).
+    details_for: Option<QuestKey>,
     tracker_on: bool,
+    /// The log's font index (§4.7), when chosen or restored.
+    font: Option<u32>,
+    /// The tracker visibility or the font index changed since the last
+    /// [`QuestUi::take_changed_prefs`].
+    prefs_changed: bool,
     pending_abandon: Option<QuestKey>,
     menu: Option<QuestKey>,
+    /// The tracker menu's popup while it is open (§6.6 Tessera rule).
+    popup: Option<Popup>,
+    /// The history window (§4.9) while it is open.
+    history: Option<HistoryWindow>,
     registered: bool,
     census: JournalCensus,
     failures: Vec<String>,
@@ -204,8 +224,12 @@ impl QuestUi {
             seen: 0,
             details_for: None,
             tracker_on: true,
+            font: None,
+            prefs_changed: false,
             pending_abandon: None,
             menu: None,
+            popup: None,
+            history: None,
             registered: false,
             census: JournalCensus::default(),
             failures: Vec::new(),
@@ -266,9 +290,10 @@ impl QuestUi {
         !self.all_markers.is_empty() || !self.markers.markers().is_empty()
     }
 
-    /// The quest the details pane shows, and whether in history order (§4.9).
+    /// The quest the log's details pane shows (the pane is never in history order: the
+    /// history has its own window, [`Self::history`], §4.9).
     #[must_use]
-    pub fn details_shown(&self) -> Option<(QuestKey, bool)> {
+    pub fn details_shown(&self) -> Option<QuestKey> {
         self.details_for
     }
 
@@ -276,6 +301,55 @@ impl QuestUi {
     #[must_use]
     pub fn menu(&self) -> Option<QuestKey> {
         self.menu
+    }
+
+    /// The tracker menu's popup, while it is open.
+    #[must_use]
+    pub fn menu_popup(&self) -> Option<&Popup> {
+        self.popup.as_ref()
+    }
+
+    /// The history window, while it is open (§4.9).
+    #[must_use]
+    pub fn history(&self) -> Option<&HistoryWindow> {
+        self.history.as_ref()
+    }
+
+    /// Takes the saved window preferences (`tessera-settings` `[GameWindows]`): the tracker's
+    /// visibility (on when unset) and the log's font index (applied to the log when it
+    /// opens, and now when it is open). Call before the first frame; the tracker is not
+    /// opened or closed by this call.
+    pub fn apply_prefs(&mut self, ui: &mut Ui, prefs: &tessera_settings::WindowPrefs) {
+        self.tracker_on = prefs.tracker_shown_or_default();
+        self.font = prefs.quest_log_font;
+        if let Some((_, w)) = self.log.as_mut() {
+            w.set_tracker_shown(ui, self.tracker_on);
+            if let Some(f) = self.font {
+                w.set_font_index(ui, f);
+            }
+        }
+    }
+
+    /// Whether the tracker is to be shown (the check box's Tessera setting, §4.8).
+    #[must_use]
+    pub fn tracker_shown(&self) -> bool {
+        self.tracker_on
+    }
+
+    /// The log's font index, when chosen or restored (§4.7).
+    #[must_use]
+    pub fn font_index(&self) -> Option<u32> {
+        self.font
+    }
+
+    /// The preferences to save when the tracker's visibility or the log's font index
+    /// changed since the last call (only those two keys are set), else `None`.
+    pub fn take_changed_prefs(&mut self) -> Option<tessera_settings::WindowPrefs> {
+        std::mem::take(&mut self.prefs_changed).then(|| tessera_settings::WindowPrefs {
+            tracker_shown: Some(self.tracker_on),
+            quest_log_font: self.font,
+            ..tessera_settings::WindowPrefs::default()
+        })
     }
 
     fn fail(&mut self, why: String) {
@@ -316,6 +390,9 @@ impl QuestUi {
             QuestLogWindow::attach(ui, &self.refs.nv, root, self.refs.log_templates, &self.art);
         // The check box shows the tracker's visibility as the client keeps it (§4.8).
         w.set_tracker_shown(ui, self.tracker_on);
+        if let Some(f) = self.font {
+            w.set_font_index(ui, f);
+        }
         self.log = Some((root, w));
         self.details_for = None;
         self.refresh_log(ui, view);
@@ -384,7 +461,7 @@ impl QuestUi {
         Ok(root)
     }
 
-    /// Closes the tracker box.
+    /// Closes the tracker box (and its menu).
     pub fn close_tracker(&mut self, ui: &mut Ui) {
         if let Some((k, mut w)) = self.tracker.take() {
             w.detach(ui);
@@ -392,7 +469,80 @@ impl QuestUi {
                 ui.destroy(k);
             }
         }
+        self.close_menu(ui);
+    }
+
+    /// Closes the tracker menu's popup and forgets the menu's quest.
+    pub fn close_menu(&mut self, ui: &mut Ui) {
         self.menu = None;
+        if let Some(p) = self.popup.take() {
+            p.close(ui);
+        }
+    }
+
+    /// Opens the history window (§4.9) for `quest`, or shows `quest` in it when it is open.
+    ///
+    /// # Errors
+    /// When neither the layout nor the fallback window can be built, or it has no list.
+    pub fn open_history(
+        &mut self,
+        ui: &mut Ui,
+        view: &JournalView<'_>,
+        quest: QuestKey,
+    ) -> Result<ElementKey, String> {
+        self.register(ui);
+        if self.history.is_none() {
+            let texts = view.texts();
+            let ids = self.refs.history_ids;
+            let nv = self.refs.nv.clone();
+            let root = match self.refs.history.map(|(l, r)| ui.open_panel(l, r)) {
+                Some(Ok(k)) => k,
+                other => {
+                    if let Some(Err(e)) = other {
+                        self.fail(format!(
+                            "quest-history: LayoutMissing ({e}); fallback window"
+                        ));
+                    }
+                    history::fallback(ui, &nv, ids, &self.art, &texts)
+                        .map_err(|e| format!("quest-history: {e}"))?
+                }
+            };
+            let Some(w) = HistoryWindow::attach(
+                ui,
+                &nv,
+                ids,
+                root,
+                self.refs.log_templates.details,
+                &self.art,
+            ) else {
+                ui.destroy(root);
+                return Err("quest-history: ElementMissing: QuestHistory_ListBox".into());
+            };
+            self.history = Some(w);
+        }
+        self.show_history(ui, view, quest);
+        self.history
+            .as_ref()
+            .map(|w| w.root)
+            .ok_or_else(|| "quest-history: not open".to_string())
+    }
+
+    /// Lays out the history window's list for `quest` (history order, §4.9).
+    fn show_history(&mut self, ui: &mut Ui, view: &JournalView<'_>, quest: QuestKey) {
+        let d = self.details_of(view, quest, true);
+        if let Some(w) = self.history.as_mut() {
+            w.show(ui, quest, d.as_ref(), &view.texts());
+        }
+    }
+
+    /// Closes the history window.
+    pub fn close_history(&mut self, ui: &mut Ui) {
+        if let Some(mut w) = self.history.take() {
+            w.detach(ui);
+            if ui.exists(w.root) {
+                ui.destroy(w.root);
+            }
+        }
     }
 
     /// Notes that the player's values changed when the view's context differs from the one
@@ -413,6 +563,13 @@ impl QuestUi {
         self.details_for = None;
         self.menu = None;
         self.cancel_abandon();
+    }
+
+    /// Closes what a new session or lost notes invalidate: the tracker menu and the
+    /// history window.
+    fn reset_windows(&mut self, ui: &mut Ui) {
+        self.close_menu(ui);
+        self.close_history(ui);
     }
 
     fn cancel_abandon(&mut self) {
@@ -510,20 +667,17 @@ impl QuestUi {
         self.refresh_details(ui, view, true);
     }
 
-    /// Lays out the details pane of the selected quest (in history order while the history
-    /// button's quest stays selected), when the selection changed or `force`.
+    /// Lays out the details pane of the selected quest, when the selection changed or
+    /// `force`.
     fn refresh_details(&mut self, ui: &mut Ui, view: &JournalView<'_>, force: bool) {
         let Some((_, w)) = self.log.as_ref() else {
             return;
         };
-        let want = w.selected().map(|k| {
-            let history = self.details_for.is_some_and(|(q, h)| q == k && h);
-            (k, history)
-        });
+        let want = w.selected();
         if !force && want == self.details_for {
             return;
         }
-        let details = want.and_then(|(k, h)| self.details_of(view, k, h));
+        let details = want.and_then(|k| self.details_of(view, k, false));
         if let Some((_, w)) = self.log.as_mut() {
             w.show_details(ui, details.as_ref(), &view.texts());
         }
@@ -557,7 +711,7 @@ impl QuestUi {
         if let Some((_, w)) = self.log.as_mut() {
             w.show_details(ui, d.as_ref(), &view.texts());
         }
-        self.details_for = Some((key, false));
+        self.details_for = Some(key);
         ok
     }
 
@@ -601,6 +755,7 @@ impl QuestUi {
             );
             self.rebuild_markers(ui, view);
             self.reset_session();
+            self.reset_windows(ui);
             out.rings_changed = true;
             self.seen = session
                 .notes_since(0)
@@ -638,6 +793,7 @@ impl QuestUi {
                         self.markers.remove(ui, id);
                     }
                     self.reset_session();
+                    self.reset_windows(ui);
                     out.rings_changed = true;
                 }
                 QuestNote::Entity(_) => out.rings_changed = true,
@@ -666,9 +822,44 @@ impl QuestUi {
         if std::mem::take(&mut self.stale) {
             self.refresh_log(ui, view);
             self.refresh_tracker(ui, view);
+            if let Some(q) = self.history.as_ref().and_then(HistoryWindow::quest) {
+                self.show_history(ui, view, q);
+            }
         }
         let texts = view.texts();
         for ev in one_click_each(ui, events) {
+            // The tracker menu's popup takes its clicks first (§6.6 Tessera rule): a row
+            // runs its item, a click outside closes it.
+            let popup = self
+                .popup
+                .as_mut()
+                .map(|p| (p.handle_event(ui, ev), p.dismissed(ui, ev)));
+            match popup {
+                Some((Some(i), _)) => {
+                    match MENU.get(i) {
+                        Some((item, _)) => {
+                            let o = self.menu_choice(ui, view, *item);
+                            out.commands.extend(o.commands);
+                            out.notices.extend(o.notices);
+                        }
+                        None => self.close_menu(ui),
+                    }
+                    continue;
+                }
+                Some((None, true)) => {
+                    self.close_menu(ui);
+                    continue;
+                }
+                _ => {}
+            }
+            if self
+                .history
+                .as_ref()
+                .is_some_and(|w| w.handle_event(ui, ev))
+            {
+                self.close_history(ui);
+                continue;
+            }
             let mut actions = Vec::new();
             if let Some((_, w)) = self.log.as_mut() {
                 actions.extend(w.handle_event(ui, ev, &texts));
@@ -687,13 +878,16 @@ impl QuestUi {
             if self.pending_abandon.is_some() && self.pending_abandon != selected {
                 self.cancel_abandon();
             }
-            if selected != self.details_for.map(|(k, _)| k) {
+            if selected != self.details_for {
                 self.refresh_details(ui, view, false);
             }
         }
         // Texts fitted while their fonts were loading are fitted again once they arrive.
         if let Some((_, w)) = self.log.as_mut() {
             w.refit_details(ui);
+        }
+        if let Some(w) = self.history.as_mut() {
+            w.refit(ui);
         }
         out
     }
@@ -723,11 +917,9 @@ impl QuestUi {
                 }
             }
             QuestAction::ShowHistory { quest } => {
-                let d = self.details_of(view, quest, true);
-                if let Some((_, w)) = self.log.as_mut() {
-                    w.show_details(ui, d.as_ref(), &view.texts());
+                if let Err(e) = self.open_history(ui, view, quest) {
+                    self.fail(e);
                 }
-                self.details_for = Some((quest, true));
             }
             QuestAction::ShowInLog { quest } => {
                 if let Err(e) = self.open_log(ui, view) {
@@ -739,17 +931,10 @@ impl QuestUi {
                 }
                 self.refresh_details(ui, view, false);
             }
-            QuestAction::OpenTrackerMenu { quest } => {
-                self.menu = Some(quest);
-                let texts = view.texts();
-                let items: Vec<String> = MENU
-                    .iter()
-                    .map(|(_, l)| quest_label_text(&texts, *l))
-                    .collect();
-                out.notices.push(items.join(" | "));
-            }
+            QuestAction::OpenTrackerMenu { quest } => self.open_menu_popup(ui, view, quest),
             QuestAction::CloseLog => self.close_log(ui),
             QuestAction::SetTrackerShown { shown } => {
+                self.prefs_changed |= self.tracker_on != shown;
                 self.tracker_on = shown;
                 if shown {
                     if let Err(e) = self.open_tracker(ui, view) {
@@ -760,7 +945,8 @@ impl QuestUi {
                 }
             }
             QuestAction::FontSize { index } => {
-                tracing::debug!(index, "quest log font index (not saved yet)");
+                self.prefs_changed |= self.font != Some(index);
+                self.font = Some(index);
             }
         }
     }
@@ -781,7 +967,11 @@ impl QuestUi {
         item: MenuItem,
     ) -> QuestFrame {
         let mut out = QuestFrame::default();
-        let Some(quest) = self.menu.take() else {
+        let quest = self.menu.take();
+        if let Some(p) = self.popup.take() {
+            p.close(ui);
+        }
+        let Some(quest) = quest else {
             return out;
         };
         let actions = self
@@ -795,9 +985,49 @@ impl QuestUi {
         out
     }
 
-    /// Opens the tracker menu for `quest` (as a right click on its entry does).
+    /// Opens the tracker menu's state for `quest` without its popup (tests and tools drive
+    /// [`QuestUi::menu_choice`] this way).
     pub fn open_menu(&mut self, quest: QuestKey) {
         self.menu = Some(quest);
+    }
+
+    /// Width of the tracker menu's popup (Tessera choice).
+    pub const MENU_WIDTH: i32 = 160;
+
+    /// Opens the tracker menu for `quest` as a right click on its entry does (§6.6 Tessera
+    /// rule): the popup below the entry's button (the tracker list without one) with the
+    /// three items; a menu already open is closed first.
+    pub fn open_menu_popup(&mut self, ui: &mut Ui, view: &JournalView<'_>, quest: QuestKey) {
+        self.close_menu(ui);
+        let Some((_, t)) = self.tracker.as_ref() else {
+            return;
+        };
+        let anchor = t
+            .entries
+            .iter()
+            .find(|(e, _)| e.quest == quest)
+            .map_or(t.list, |(_, p)| p.button.unwrap_or(p.entry));
+        let texts = view.texts();
+        let items: Vec<PopupItem> = MENU
+            .iter()
+            .map(|(_, l)| PopupItem::command(&quest_label_text(&texts, *l)))
+            .collect();
+        match Popup::open_menu(
+            ui,
+            &self.refs.nv,
+            &self.art,
+            None,
+            anchor,
+            Place::Below,
+            Self::MENU_WIDTH,
+            items,
+        ) {
+            Ok(p) => {
+                self.popup = Some(p);
+                self.menu = Some(quest);
+            }
+            Err(e) => self.fail(format!("tracker menu: {e}")),
+        }
     }
 
     /// Places the quest markers on every radar and the world map of `panels` for the
@@ -833,10 +1063,12 @@ impl QuestUi {
         }
     }
 
-    /// Closes both windows and forgets the markers' elements.
+    /// Closes every window (log, tracker and its menu, history) and forgets the markers'
+    /// elements.
     pub fn close_all(&mut self, ui: &mut Ui) {
         self.close_log(ui);
         self.close_tracker(ui);
+        self.close_history(ui);
         self.markers.prune(ui);
     }
 }

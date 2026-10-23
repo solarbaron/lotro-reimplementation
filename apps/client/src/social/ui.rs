@@ -34,6 +34,12 @@ use tessera_gamedata::tooltip::TooltipData;
 use tessera_net::Command;
 use tessera_ui::game::CharVocab;
 use tessera_ui::game::chat::notice::Notice;
+use tessera_ui::game::context_menu::{
+    ContextMenu as MenuTree, MenuArt, MenuEvent, MenuItem, MenuRefs, MenuReply, MenuRequest,
+};
+use tessera_ui::game::dialog::{
+    DialogArt, DialogBoxes, DialogOutcome, DialogRefs, DialogRequest, DialogText,
+};
 use tessera_ui::game::examine::ExamTooltips;
 use tessera_ui::game::items::SlotPlace;
 use tessera_ui::game::npc::kit::FallbackArt;
@@ -45,12 +51,6 @@ use tessera_ui::game::social::panel::{SocialPage, SocialPanel};
 use tessera_ui::game::social::trade::{OWN_CONTAINER, PEER_CONTAINER, TradeWindow};
 use tessera_ui::game::social::{
     ContextMenu, DialogPurpose, SocialAction, SocialIntent, SocialVocab, TextDialog,
-};
-use tessera_ui::widgets::context_menu::{
-    ContextMenu as MenuTree, MenuArt, MenuEvent, MenuItem, MenuRefs, MenuReply, MenuRequest,
-};
-use tessera_ui::widgets::dialog::{
-    DialogArt, DialogBoxes, DialogOutcome, DialogRefs, DialogRequest, DialogText,
 };
 use tessera_ui::{ElementKey, Ui, UiEvent};
 
@@ -271,7 +271,7 @@ impl SocialUi {
         req.response = d.default;
         req.max_chars = i32::try_from(d.max_len).unwrap_or(i32::MAX);
         req.activate_and_take_focus = true;
-        if self.purposes.len() >= tessera_ui::widgets::dialog::MAX_QUEUED * 2 {
+        if self.purposes.len() >= tessera_ui::game::dialog::MAX_QUEUED * 2 {
             self.purposes.remove(0);
         }
         self.purposes.push((tag, d.purpose));
@@ -1028,7 +1028,7 @@ mod tests {
         // Its done button still answers it.
         let done = s
             .dialogs()
-            .button(tessera_ui::widgets::dialog::DialogOutcome::Done)
+            .button(tessera_ui::game::dialog::DialogOutcome::Done)
             .expect("done button");
         let mut ev = click_event(&ui, done);
         if let UiEvent::Game { message } = &mut ev {

@@ -13,8 +13,13 @@
 //! ([`crate::Ui::set_image_memory`] applies the glyph share; the host applies the image share
 //! to its decoded-image LRU, [`crate::paint::ImageCache::set_lru_budget`] for the UI's own).
 //!
+//! The glyph floor of 1 MiB comes out of the images' part (revision 11 answer, SC18): for
+//! every *T* of 1 MiB or more glyphs plus images equal *T* exactly (at *T* = 4 MiB, 1 MiB of
+//! glyphs and 3 MiB of images). Only a *T* below 1 MiB (an `image_lru_mib` of 0) leaves the
+//! images 0 MiB and the glyphs at the floor, the one accepted excess.
+//!
 //! Tessera bounds: *T* is at most [`MAX_TOTAL_BYTES`]; a non-finite or non-positive *Se*
-//! counts as 1. A total under 1 MiB still gives the glyph floor of 1 MiB (and no images).
+//! counts as 1.
 
 /// The default of `image_lru_mib` (`ui-scaling.md` §8 S6: 64 MiB).
 pub const DEFAULT_IMAGE_LRU_MIB: u64 = 64;
@@ -111,6 +116,24 @@ mod tests {
             }
         );
         assert_eq!(s6_budget(8192, 1.0).glyphs, MAX_GLYPH_MIB * MIB);
+    }
+
+    /// Revision 11 answer: for *T* between 1 and 8 MiB the 1 MiB glyph floor is taken from
+    /// the images' part, so the parts still add up to *T*.
+    #[test]
+    fn the_glyph_floor_comes_out_of_the_images_part() {
+        for mib in 1..=8 {
+            let b = s6_budget(mib, 1.0);
+            assert_eq!(b.glyphs, MIB, "{mib} MiB: the floor");
+            assert_eq!(b.images, (mib - 1) * MIB, "{mib} MiB: images reduced by it");
+            assert_eq!(b.glyphs + b.images, b.total, "{mib} MiB");
+        }
+        let b = s6_budget(4, 1.0);
+        assert_eq!((b.glyphs, b.images), (MIB, 3 * MIB), "the answer's example");
+        // T = 6 MiB at Se = 1.5 from 3 MiB × 2.25 (6.75 MiB): still 1 + the rest.
+        let b = s6_budget(3, 1.5);
+        assert_eq!(b.glyphs, MIB);
+        assert_eq!(b.glyphs + b.images, b.total);
     }
 
     #[test]

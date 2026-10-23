@@ -314,9 +314,14 @@ pub(crate) fn scaled_base(styled: Styled) -> Option<u32> {
 /// state, so the window keeps its content; the flags the layer keeps for the control
 /// (enabled, wants updates, wants key events) are applied to the new element so its getters
 /// and the element agree; the other plugin-set element state (back colour, opacity, stretch
-/// mode, mouse visibility, drop target, rotation, focus) is carried over
-/// ([`Ui::control_carry_state`]), and a window that was the active panel is activated again.
-/// The rebuild fires no `VisibleChanged` (visibility is kept). When the layout cannot build
+/// mode, mouse visibility, drop target, rotation) is carried over
+/// ([`Ui::control_carry_state`]; a hidden rotated window keeps its rotation too, round-5
+/// answer 1). The new element takes the old one's place ([`Ui::control_take_place`],
+/// round-5 answer 2): an active window stays the active window, its focus control and the
+/// keyboard focus stay, and it keeps its place in the activation history and among its
+/// siblings. The rebuild fires no `VisibleChanged` (visibility is kept), and no
+/// `Activated`, `Deactivated`, `FocusGained` or `FocusLost`; what the old element's
+/// destruction posts is not delivered (it no longer maps to the plugin object). When the layout cannot build
 /// the scaled element (a modified install) the window keeps its element (logged at debug
 /// level) and counts as built: a later marking does not try again. Returns whether the
 /// window was rebuilt.
@@ -389,7 +394,6 @@ pub(crate) fn rebuild_scaled_window(
             tracing::debug!("a child control could not move to the rebuilt window");
         }
     }
-    let was_active = ui.active_panel() == Some(old);
     let was_shown = ui.is_visible(old);
     let before = ui.is_visible(new);
     ui.control_set_visible(new, shown);
@@ -402,6 +406,7 @@ pub(crate) fn rebuild_scaled_window(
     // The rest of the plugin-set state survives the rebuild (§14.2.6 (b) answer); after the
     // visibility, so that a rotation finds the window's surface.
     ui.control_carry_state(old, new);
+    ui.control_take_place(old, new);
     st.by_key.remove(&old);
     st.by_key.insert(new, id);
     st.quiet_visible.remove(&old);
@@ -411,9 +416,6 @@ pub(crate) fn rebuild_scaled_window(
     ui.destroy_control(old);
     // The parts of the new element and the title text, set again (§13.21 rule 1).
     init_based(ui, st, id);
-    if was_active {
-        ui.activate(new);
-    }
     true
 }
 

@@ -18,14 +18,14 @@ use tessera_formats::ui_layout::UiEnum;
 use tessera_props::{PropertySet, Value};
 use tessera_ui::ImageRef;
 use tessera_ui::game::NpcVocab;
+use tessera_ui::game::context_menu::{MenuArt, MenuRefs};
+use tessera_ui::game::dialog::{DialogArt, DialogRefs};
 use tessera_ui::game::examine::ExamTemplate;
 use tessera_ui::game::npc::offer::RowTemplates;
 use tessera_ui::game::quest::details::DetailsTemplates;
 use tessera_ui::game::quest::history::HistoryIds;
 use tessera_ui::game::quest::log::LogTemplates;
 use tessera_ui::game::quest::markers::NoteImages;
-use tessera_ui::widgets::context_menu::{MenuArt, MenuRefs};
-use tessera_ui::widgets::dialog::{DialogArt, DialogRefs};
 
 use crate::npc::{NpcData, NpcRefs};
 

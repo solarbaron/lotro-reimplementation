@@ -628,6 +628,13 @@ fn the_s6_total_is_split_and_followed_by_the_caches() {
     // A user value replaces the 64 MiB.
     s.ui.set_image_memory(128);
     assert_eq!(s.ui.s6_budget().glyphs, 16 * MIB);
+    // Revision 11: a small total keeps the 1 MiB glyph floor, taken from the images.
+    screen(&mut s.ui, 1.0);
+    s.ui.set_image_memory(4);
+    let small = s.ui.s6_budget();
+    assert_eq!((small.glyphs, small.images), (MIB, 3 * MIB));
+    assert_eq!(s.ui.glyph_memory().0 as u64, MIB);
+    s.ui.set_image_memory(128);
     // The image share is for the host's decoded-image LRU: tessera-ui holds no image cache of
     // its own and does not apply it (the host does). This only checks that an `ImageCache`
     // given the share evicts down to it.

@@ -795,10 +795,16 @@ impl Ui {
     /// the first-marking rebuild of a game-styled window (`lua-plugin-api.md` §14.2.1 step 3
     /// with the Tessera rule of §14.2.6 gap (b)): back colour and its blend mode, opacity,
     /// stretch mode (when the plugin set one), mouse visibility, drop target, rotation (when
-    /// set) and the remembered focus control, and the keyboard focus when `from` itself has
-    /// it. The caller keeps visibility, position, size, z-level, background and blend mode
-    /// (step 3's list) and the active-window state (`to` is activated once `from` is gone).
-    /// Does nothing when either is not a plugin control.
+    /// set) and the remembered focus control. The caller keeps visibility, position, size,
+    /// z-level, background and blend mode (step 3's list); the active-window state and the
+    /// keyboard focus move with [`Ui::control_take_place`]. Call after `to`'s visibility is
+    /// set. Does nothing when either is not a plugin control.
+    ///
+    /// Rotation (§14.2.6 round-5 answer 1, Tessera rule): `GetRotation` returns the same
+    /// angles before and after; a shown window's new surface gets the old surface's rotation
+    /// at once, and a hidden window carries what its old element remembered from its own
+    /// surface, so it is restored when the window is next shown. No `SetRotation` call is
+    /// made (its hidden-window rule does not apply).
     pub fn control_carry_state(&mut self, from: ElementKey, to: ElementKey) {
         let (Some(p), Some(_)) = (self.pd(from).cloned(), self.pd(to)) else {
             return;
@@ -821,15 +827,60 @@ impl Ui {
             self.control_set_allow_drop(to, true);
         }
         if p.rotation_set {
-            let _ = self.window_set_rotation(to, p.rotation);
+            self.carry_rotation(from, to, &p);
         }
         if let Some(f) = p.focus_control.filter(|f| *f != from && self.exists(*f))
             && let Some(q) = self.pd_mut(to)
         {
             q.focus_control = Some(f);
         }
-        if self.focus.focus == Some(from) {
-            self.set_focus(Some(to));
+    }
+
+    /// The rotation part of [`Self::control_carry_state`].
+    fn carry_rotation(&mut self, from: ElementKey, to: ElementKey, p: &PluginData) {
+        if let Some(q) = self.pd_mut(to) {
+            q.rotation = p.rotation;
+            q.rotation_set = true;
+            q.remembered_rotation = p.remembered_rotation;
         }
+        if !self.is_visible(to) {
+            // Hidden: the remembered angles come back when the window is shown
+            // (`control_set_visible`).
+            return;
+        }
+        // The old surface's rotation (none when the old element had no surface: its angles
+        // then went to an ancestor's surface, which the rebuild keeps).
+        let angles = if self.owns_surface(from) {
+            self.el(from).map_or([0.0; 3], |e| e.rotation)
+        } else {
+            [0.0; 3]
+        };
+        let held = self.el(to).map_or([0.0; 3], |e| e.rotation);
+        if held == angles {
+            return;
+        }
+        if !self.owns_surface(to) {
+            // The new element has no surface of its own yet: as §13.20 `SetRotation` step 2
+            // gave the old one, it gets the Stretch object mode (unless the plugin set a
+            // non-zero stretch mode), so its surface exists and takes the angles at once.
+            let nonzero_set = self.pd(to).is_some_and(|p| p.stretch_set)
+                && self.object_mode(to).is_some_and(|m| m != 0);
+            if !nonzero_set {
+                self.set_property(
+                    to,
+                    self.v.pids.object_mode,
+                    PropertyValue::Enum(object_mode::STRETCH),
+                );
+            }
+            if !self.owns_surface(to) {
+                return;
+            }
+        }
+        if let Some(e) = self.el_mut(to) {
+            e.rotation = angles;
+        }
+        let first = crate::paint::holds_rotation(held) != crate::paint::holds_rotation(angles);
+        self.painter.rotation_changed(to, first);
+        self.painter.touched = true;
     }
 }

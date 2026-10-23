@@ -211,6 +211,17 @@ pub struct UiHost {
     /// Whether the host's modal entry of the `text_entry` context is in the mapper's band
     /// ([`Self::sync_modal_band`]).
     modal_band: bool,
+    /// The game holds of keys and pad buttons: offered holds whose Start the host did not
+    /// consume, until their End (at most [`MAX_MODAL_HOLDS`]). While one is live the modal
+    /// band entry waits ([`Self::sync_modal_band`]), so a hold from before a modal dialog
+    /// stays held until its own release (`ui-widgets.md` §18.4, revision 5).
+    game_key_holds: BTreeSet<u64>,
+    /// Keys and pad buttons down (raw), until their raw release (at most
+    /// [`MAX_MODAL_HOLDS`]). Those not in [`Self::modal_keys`] were pressed before the
+    /// modal dialog: while one is down the modal band entry waits too, so holds the mapper
+    /// never offers (bindings without a command name, modifier holds such as `walk`) stay
+    /// held across the dialog's appearance (§18.4, revision 5 answer 1).
+    raw_keys: Vec<Button>,
     player: Arc<WalkerPlayer>,
     /// The wallet views the plugins' local player carries (P3, [`Self::set_plugin_wallet`]).
     plugin_wallet: Option<Arc<crate::npc::SessionWallet>>,
@@ -480,6 +491,8 @@ impl UiHost {
             modal_holds: BTreeMap::new(),
             modal_keys: Vec::new(),
             modal_band: false,
+            game_key_holds: BTreeSet::new(),
+            raw_keys: Vec::new(),
             player: WalkerPlayer::new(),
             plugin_wallet: None,
             plugin_party: None,
@@ -2021,10 +2034,30 @@ impl UiHost {
     /// priority. Its `opaque_keys` keeps keys and pad buttons from the game band (§3.3),
     /// while its bindings still give the dialog `AcceptInput` (Enter) and `EscapeKey`
     /// (Escape), and the UI band's other contexts (the dialog's own map) come first.
-    /// Tessera reading: as when a text entry takes the keyboard, the game-band key holds
-    /// held from before the dialog end when it appears (their Ends reach game code).
-    fn sync_modal_band(&mut self, mapper: &mut InputMapper) {
-        let want = self.modal_dialog_shown() || !self.modal_keys.is_empty();
+    ///
+    /// Holds from before the dialog stay held until their own release (§18.4, revision 5
+    /// answer 1: appearing ends no hold). Pushing the first `opaque_keys` entry would end
+    /// every game-band key hold and stop the game band's modifier holds (`keymap.md` §3.3,
+    /// §7.4), so the push waits while a key or pad button pressed before the dialog is down
+    /// ([`Self::raw_keys`]) or an offered game hold of one is live
+    /// ([`Self::game_key_holds`]); it is made at the raw event that ends the last of them.
+    /// Meanwhile the host consumes every offered press under the dialog
+    /// ([`Self::offer_action`]). A press that the mapper would give to game code without
+    /// offering it (a game-band binding without a command name, such as `toggle_mount`, or
+    /// a game-band modifier hold, [`Self::reaches_game_unoffered`]) makes the push at once
+    /// (`force`), before the mapper sees the press, so it does not reach game code under
+    /// the dialog either. **Tessera limit:** that early push ends the holds from before the
+    /// dialog before their own release (the mapper has no band push that keeps live game
+    /// holds; proposed OPEN for §18.4 / KM §3.3). Once made, the push stays until it is no
+    /// longer wanted.
+    fn sync_modal_band(&mut self, mapper: &mut InputMapper, force: bool) {
+        // The mapper's held set guards against a release the host never saw.
+        let before_dialog = self
+            .raw_keys
+            .iter()
+            .any(|k| !self.modal_keys.contains(k) && mapper.is_held(*k));
+        let want = (self.modal_dialog_shown() || !self.modal_keys.is_empty())
+            && (self.modal_band || force || (self.game_key_holds.is_empty() && !before_dialog));
         if want == self.modal_band {
             return;
         }
@@ -2045,6 +2078,49 @@ impl UiHost {
         self.modal_band = want;
     }
 
+    /// Whether a press of `b` could fire a game-band binding that the mapper never offers to
+    /// the UI (`keymap.md` §7.8: a binding without a command name is the game's at once;
+    /// §7.4: a modifier hold is evaluated from the held modifiers at every update). It
+    /// reads the mapper's key map with its command rules (§2.2: the entry's command, the
+    /// command rows, the action's command) for the active game-band contexts and errs
+    /// towards `true`: any such binding whose last stroke has `b` counts, whatever its
+    /// modifiers, and any modifier hold of a modifier `b` contributes.
+    fn reaches_game_unoffered(mapper: &InputMapper, b: Button) -> bool {
+        let registry = mapper.registry();
+        let keymap = mapper.keymap();
+        let modifier = b.modifier();
+        keymap.iter().any(|(c, a, list)| {
+            let Some(ctx) = registry.context(c) else {
+                return false;
+            };
+            if !registry
+                .context_def(ctx)
+                .is_some_and(|d| d.band == tessera_input::Band::Game)
+                || !mapper.is_active(ctx)
+            {
+                return false;
+            }
+            let Some(def) = registry.action(a).and_then(|id| registry.action_def(id)) else {
+                return false;
+            };
+            list.iter().enumerate().any(|(i, spec)| {
+                let tessera_input::BindingSpec::Digital { chord, .. } = spec else {
+                    return false;
+                };
+                if chord.strokes().iter().any(|s| s.is_modifier_hold()) {
+                    return chord
+                        .strokes()
+                        .iter()
+                        .any(|s| s.is_modifier_hold() && s.mods().intersects(modifier));
+                }
+                chord.last().buttons().contains(&b)
+                    && keymap.entry_command(c, a, i).is_none()
+                    && tessera_input::commands::command_for_entry(c, a, def.kind, spec).is_none()
+                    && def.command.is_none()
+            })
+        })
+    }
+
     /// The raw keys of §18.4: a key or pad button pressed while a modal dialog is shown is
     /// remembered until its release (`pressed` = the press side of the event).
     fn modal_key_of(event: &RawEvent) -> Option<(Button, bool)> {
@@ -2056,6 +2132,27 @@ impl UiHost {
             } => Some((Button::Key(key), pressed)),
             RawEvent::PadButton { button, pressed } => Some((Button::Pad(button), pressed)),
             _ => None,
+        }
+    }
+
+    /// Keeps [`Self::game_key_holds`]: an offered Start of a key or pad button that the host
+    /// did not consume makes a game hold, which lasts until its End.
+    fn track_game_key_hold(&mut self, a: &tessera_input::ActionOffer, consumed: bool) {
+        let hold = a.hold.0;
+        match a.phase {
+            OfferPhase::Start
+                if !consumed && matches!(a.source, Button::Key(_) | Button::Pad(_)) =>
+            {
+                if self.game_key_holds.len() >= MAX_MODAL_HOLDS {
+                    // Tessera bound (the mapper's hold limit): forget the oldest.
+                    let _ = self.game_key_holds.pop_first();
+                }
+                self.game_key_holds.insert(hold);
+            }
+            OfferPhase::End => {
+                self.game_key_holds.remove(&hold);
+            }
+            _ => {}
         }
     }
 
@@ -2081,14 +2178,23 @@ impl UiHost {
         // §18.4: remember the keys pressed under a modal dialog, and keep the game band
         // from keys while one is shown (`sync_modal_band`).
         let modal_key = Self::modal_key_of(event);
-        if let Some((b, true)) = modal_key
-            && self.modal_dialog_shown()
-            && !self.modal_keys.contains(&b)
-            && self.modal_keys.len() < MAX_MODAL_KEYS
-        {
-            self.modal_keys.push(b);
+        let mut force = false;
+        if let Some((b, true)) = modal_key {
+            if !self.raw_keys.contains(&b) {
+                if self.raw_keys.len() >= MAX_MODAL_HOLDS {
+                    // Tessera bound (the mapper's hold limit): forget the oldest.
+                    self.raw_keys.remove(0);
+                }
+                self.raw_keys.push(b);
+            }
+            if self.modal_dialog_shown() {
+                if !self.modal_keys.contains(&b) && self.modal_keys.len() < MAX_MODAL_KEYS {
+                    self.modal_keys.push(b);
+                }
+                force = !self.modal_band && Self::reaches_game_unoffered(mapper, b);
+            }
         }
-        self.sync_modal_band(mapper);
+        self.sync_modal_band(mapper, force);
         {
             let mut sink = Step1 {
                 host: self,
@@ -2098,11 +2204,18 @@ impl UiHost {
             mapper.handle_with(event, now, &mut sink);
         }
         match (modal_key, event) {
-            (Some((b, false)), _) => self.modal_keys.retain(|k| *k != b),
-            (_, RawEvent::FocusLost) => self.modal_keys.clear(),
+            (Some((b, false)), _) => {
+                self.modal_keys.retain(|k| *k != b);
+                self.raw_keys.retain(|k| *k != b);
+            }
+            (_, RawEvent::FocusLost) => {
+                self.modal_keys.clear();
+                self.game_key_holds.clear();
+                self.raw_keys.clear();
+            }
             _ => {}
         }
-        self.sync_modal_band(mapper);
+        self.sync_modal_band(mapper, false);
         if self.lock.take_withheld_left() {
             let mut sink = Step1 {
                 host: self,
@@ -2125,7 +2238,7 @@ impl UiHost {
         window: &mut dyn CursorWindow,
     ) {
         let t = Instant::now();
-        self.sync_modal_band(mapper);
+        self.sync_modal_band(mapper, false);
         {
             let mut sink = Step1 {
                 host: self,
@@ -2149,7 +2262,9 @@ impl UiHost {
         let consumed = match event {
             OfferedEvent::Action(a) => {
                 self.plugin_ui.set_modifiers(modifiers_of(a.modifiers));
-                self.offer_action(a, plugins, window)
+                let consumed = self.offer_action(a, plugins, window);
+                self.track_game_key_hold(a, consumed);
+                consumed
             }
             OfferedEvent::Text { ch, .. } => self.offer_text(*ch, plugins),
             OfferedEvent::PointerMoved { x, y, .. } => {
@@ -2224,8 +2339,9 @@ impl UiHost {
         // the release of each key pressed while it was shown, are consumed. The UI sees
         // them only while its keyboard target lies in the shown dialog (its own keys);
         // otherwise (a `StartInactive` dialog left the keyboard in the chat entry) nobody
-        // does. Keys held from before the dialog are not consumed, so their releases are
-        // not lost (game-band key holds end when the dialog appears, `sync_modal_band`).
+        // does. Keys held from before the dialog stay held (revision 5): their repeats are
+        // presses and are consumed, their releases go past the dialog to their receiver
+        // (the UI's key broadcast included), so no release is lost.
         if !is_pointer_cmd {
             let under_modal = match phase {
                 Phase::Start if modal => {
@@ -2241,10 +2357,15 @@ impl UiHost {
                 Phase::Start => None,
                 // Offered on only while the keyboard is still in the dialog: the release of
                 // the key that closed it goes nowhere (no key broadcast either).
-                Phase::Repeat => self
-                    .modal_holds
-                    .get(&hold)
-                    .map(|o| *o && self.keyboard_in_dialog()),
+                Phase::Repeat => match self.modal_holds.get(&hold) {
+                    Some(o) => Some(*o && self.keyboard_in_dialog()),
+                    // A hold from before the shown dialog: its OS repeats are presses
+                    // made while the dialog is shown, so they are consumed (§18.4
+                    // revision 5 answer 1); the UI sees them only with its keyboard
+                    // target in the dialog.
+                    None if self.modal_dialog_shown() => Some(self.keyboard_in_dialog()),
+                    None => None,
+                },
                 Phase::End => self
                     .modal_holds
                     .remove(&hold)
@@ -3377,6 +3498,279 @@ mod tests {
         host.set_toggle_types(&BTreeMap::new());
         host.attach_mapper(&mut mapper);
         assert!(mapper.repeat_commands().is_none(), "withdrawn on re-attach");
+    }
+
+    /// The host, the walker's mapper and a plugin host over an empty `Plugins/` folder,
+    /// driven through step 1, the snapshot, step 7 and step 8 as the client drives them.
+    struct KeyRig {
+        host: UiHost,
+        mapper: tessera_input::InputMapper,
+        plugins: Plugins,
+        start: Instant,
+        _dir: tempfile::TempDir,
+    }
+
+    impl KeyRig {
+        fn new() -> Self {
+            use tessera_input::{InputMapper, StandardActions, default_keymap, default_registry};
+            let dir = tempfile::tempdir().expect("tempdir");
+            let pdir = dir.path().join("Plugins");
+            std::fs::create_dir_all(&pdir).expect("Plugins folder");
+            let mut plugins = Plugins::start(&pdir, dir.path().join("data"), &[]);
+            plugins.data_unavailable();
+            let options = UiOptions {
+                screen: (1600, 900),
+                record: true,
+                ..UiOptions::default()
+            };
+            let mut host = UiHost::without_install(&options);
+            let (mut mapper, _) = InputMapper::new(default_registry(), &default_keymap());
+            StandardActions::new(mapper.registry())
+                .expect("built-in actions")
+                .enter_walk_mode(&mut mapper);
+            host.attach_mapper(&mut mapper);
+            Self {
+                host,
+                mapper,
+                plugins,
+                start: Instant::now(),
+                _dir: dir,
+            }
+        }
+
+        fn key(&mut self, key: tessera_input::KeyCode, pressed: bool, repeat: bool) {
+            let now = self.start.elapsed();
+            let ev = tessera_input::RawEvent::Key {
+                key,
+                pressed,
+                repeat,
+            };
+            self.host.handle_raw(
+                &mut self.mapper,
+                &ev,
+                now,
+                &mut self.plugins,
+                &mut cursor::NoWindow,
+            );
+        }
+
+        fn frame(&mut self) {
+            let now = self.start.elapsed();
+            self.host
+                .offer_pending(&mut self.mapper, &mut self.plugins, &mut cursor::NoWindow);
+            self.mapper.update(now);
+            self.host.step7(&mut self.plugins, Some(&mut self.mapper));
+            self.host.step8(None, &mut self.plugins);
+            self.host.apply_band_changes(&mut self.mapper);
+            self.host.end_frame(&self.plugins, 0.0);
+        }
+
+        fn action(&self, name: &str) -> tessera_input::ActionId {
+            self.mapper.registry().action(name).expect("action")
+        }
+
+        fn key_ups(&mut self) -> usize {
+            self.host
+                .take_game_events()
+                .iter()
+                .filter(|e| matches!(e, UiEvent::KeyBroadcast { down: false, .. }))
+                .count()
+        }
+    }
+
+    /// `ui-widgets.md` §18.4 revision 5 answer 1: a key held from before a modal dialog stays
+    /// held while the dialog is shown (its movement goes on; its OS repeats are consumed),
+    /// and its own release ends it and reaches the key broadcast (answer 3: it goes past the
+    /// dialog). Then the host's modal band entry is made, so a binding without a command name
+    /// (`toggle_mount`, Ctrl+M) does not fire under the dialog.
+    #[test]
+    fn a_key_held_from_before_a_modal_dialog_stays_held() {
+        use tessera_input::KeyCode;
+        use tessera_ui::game::chat::notice::NoTables;
+        use tessera_ui::game::dialog::{
+            DialogArt, DialogBoxes, DialogRefs, DialogRequest, DialogText,
+        };
+        let mut rig = KeyRig::new();
+        let forward = rig.action("move_forward");
+        let mount = rig.action("toggle_mount");
+        rig.key(KeyCode::W, true, false);
+        rig.frame();
+        assert!(rig.mapper.pressed(forward), "W moves");
+        let mut boxes = DialogBoxes::new(DialogRefs::fallback(DialogArt::default()));
+        let mut req = DialogRequest::confirmation(3, DialogText::plain("Sure?"));
+        req.modal = true;
+        boxes.request(&mut rig.host.ui_mut(), req, &mut NoTables);
+        rig.frame();
+        assert!(rig.host.modal_dialog_shown());
+        for _ in 0..3 {
+            rig.frame();
+            assert!(
+                rig.mapper.pressed(forward),
+                "held from before: still moving"
+            );
+        }
+        assert!(
+            !rig.host.modal_band,
+            "the band entry waits for the held key"
+        );
+        // OS repeats of it are presses under the dialog: consumed, not broadcast.
+        let _ = rig.host.take_game_events();
+        rig.key(KeyCode::W, true, true);
+        rig.frame();
+        assert!(
+            !rig.host
+                .take_game_events()
+                .iter()
+                .any(|e| matches!(e, UiEvent::KeyBroadcast { .. })),
+            "a repeat under the dialog is consumed"
+        );
+        assert!(rig.mapper.pressed(forward));
+        // Its own release ends it and goes past the dialog.
+        rig.key(KeyCode::W, false, false);
+        rig.frame();
+        assert!(
+            !rig.mapper.pressed(forward),
+            "the release ends the movement"
+        );
+        assert_eq!(rig.key_ups(), 1, "the release reaches the key broadcast");
+        assert!(rig.host.modal_band, "the band entry follows the release");
+        // A key pressed now does not reach game code, nor does a binding without a command.
+        rig.key(KeyCode::W, true, false);
+        rig.frame();
+        assert!(!rig.mapper.pressed(forward), "W under the dialog");
+        rig.key(KeyCode::W, false, false);
+        rig.key(KeyCode::ControlLeft, true, false);
+        rig.key(KeyCode::M, true, false);
+        rig.frame();
+        assert_eq!(
+            rig.mapper.state(mount).presses,
+            0,
+            "Ctrl+M under the dialog"
+        );
+        rig.key(KeyCode::M, false, false);
+        rig.key(KeyCode::ControlLeft, false, false);
+        rig.frame();
+        boxes.close_all(&mut rig.host.ui_mut());
+        rig.frame();
+        assert!(!rig.host.modal_dialog_shown());
+        rig.frame();
+        rig.key(KeyCode::W, true, false);
+        rig.frame();
+        assert!(rig.mapper.pressed(forward), "W moves again");
+    }
+
+    /// Shows a modal confirmation in `rig` and returns its boxes (to close it).
+    fn show_modal(rig: &mut KeyRig) -> tessera_ui::game::dialog::DialogBoxes {
+        use tessera_ui::game::chat::notice::NoTables;
+        use tessera_ui::game::dialog::{
+            DialogArt, DialogBoxes, DialogRefs, DialogRequest, DialogText,
+        };
+        let mut boxes = DialogBoxes::new(DialogRefs::fallback(DialogArt::default()));
+        let mut req = DialogRequest::confirmation(3, DialogText::plain("Sure?"));
+        req.modal = true;
+        boxes.request(&mut rig.host.ui_mut(), req, &mut NoTables);
+        rig.frame();
+        assert!(rig.host.modal_dialog_shown());
+        boxes
+    }
+
+    /// `ui-widgets.md` §18.4 (W30, revision-4 Tessera rule): a binding without a command name
+    /// (`toggle_mount`, Ctrl+M) pressed under a modal dialog does not reach game code, also
+    /// while a key from before the dialog is still held and the band entry waits for it.
+    /// The press makes the band entry at once; that ends the held key's movement before its
+    /// own release (Tessera limit, `sync_modal_band`).
+    #[test]
+    fn a_commandless_press_under_a_modal_dialog_waits_for_no_held_key() {
+        use tessera_input::KeyCode;
+        let mut rig = KeyRig::new();
+        let forward = rig.action("move_forward");
+        let mount = rig.action("toggle_mount");
+        rig.key(KeyCode::W, true, false);
+        rig.frame();
+        let mut boxes = show_modal(&mut rig);
+        rig.frame();
+        assert!(
+            rig.mapper.pressed(forward),
+            "held from before: still moving"
+        );
+        assert!(
+            !rig.host.modal_band,
+            "the band entry waits for the held key"
+        );
+        rig.key(KeyCode::ControlLeft, true, false);
+        rig.key(KeyCode::M, true, false);
+        rig.frame();
+        assert_eq!(
+            rig.mapper.state(mount).presses,
+            0,
+            "Ctrl+M under the dialog while W is held"
+        );
+        assert!(!rig.mapper.pressed(mount));
+        assert!(rig.host.modal_band, "the press made the band entry");
+        rig.key(KeyCode::M, false, false);
+        rig.key(KeyCode::ControlLeft, false, false);
+        rig.frame();
+        assert_eq!(rig.mapper.state(mount).presses, 0);
+        rig.key(KeyCode::W, false, false);
+        rig.frame();
+        boxes.close_all(&mut rig.host.ui_mut());
+        rig.frame();
+        rig.frame();
+        assert!(!rig.host.modal_band);
+        rig.key(KeyCode::ControlLeft, true, false);
+        rig.key(KeyCode::M, true, false);
+        rig.frame();
+        assert!(rig.mapper.just_pressed(mount), "Ctrl+M works again");
+    }
+
+    /// §18.4 revision 5 answer 1 for a hold the mapper never offers: the `walk` modifier
+    /// hold (Shift) from before a modal dialog stays held until Shift's own release; a
+    /// Shift pressed under the dialog does not walk.
+    #[test]
+    fn a_modifier_hold_from_before_a_modal_dialog_stays_held() {
+        use tessera_input::KeyCode;
+        let mut rig = KeyRig::new();
+        let walk = rig.action("walk");
+        let forward = rig.action("move_forward");
+        rig.key(KeyCode::ShiftLeft, true, false);
+        rig.frame();
+        assert!(rig.mapper.pressed(walk), "Shift walks");
+        let mut boxes = show_modal(&mut rig);
+        for _ in 0..3 {
+            rig.frame();
+            assert!(rig.mapper.pressed(walk), "held from before: still walking");
+        }
+        assert!(!rig.host.modal_band, "the band entry waits for Shift");
+        rig.key(KeyCode::ShiftLeft, false, false);
+        rig.frame();
+        assert!(!rig.mapper.pressed(walk), "its own release ends it");
+        assert!(rig.host.modal_band, "the band entry follows the release");
+        rig.key(KeyCode::ShiftLeft, true, false);
+        rig.frame();
+        assert!(!rig.mapper.pressed(walk), "Shift under the dialog");
+        rig.key(KeyCode::ShiftLeft, false, false);
+        rig.frame();
+        // A modifier hold pressed under the dialog while W from before waits.
+        boxes.close_all(&mut rig.host.ui_mut());
+        rig.frame();
+        rig.frame();
+        rig.key(KeyCode::W, true, false);
+        rig.frame();
+        let mut boxes = show_modal(&mut rig);
+        rig.frame();
+        assert!(rig.mapper.pressed(forward));
+        assert!(!rig.host.modal_band);
+        rig.key(KeyCode::ShiftLeft, true, false);
+        rig.frame();
+        assert!(
+            !rig.mapper.pressed(walk),
+            "Shift under the dialog while W is held"
+        );
+        rig.key(KeyCode::ShiftLeft, false, false);
+        rig.key(KeyCode::W, false, false);
+        rig.frame();
+        boxes.close_all(&mut rig.host.ui_mut());
+        rig.frame();
     }
 
     /// One layout with three 400 × 300 root panels of scaling group 9 that save their location

@@ -189,7 +189,7 @@ fn the_abandon_dialog_answers_for_the_quest_it_asked_about() {
     let yes = j
         .quests
         .dialogs()
-        .button(tessera_ui::widgets::dialog::DialogOutcome::Yes)
+        .button(tessera_ui::game::dialog::DialogOutcome::Yes)
         .expect("yes");
     let out = j.frame(|ui, _| vec![button(ui, yes)]);
     assert_eq!(
@@ -206,7 +206,7 @@ fn the_abandon_dialog_answers_for_the_quest_it_asked_about() {
     let no = j
         .quests
         .dialogs()
-        .button(tessera_ui::widgets::dialog::DialogOutcome::No)
+        .button(tessera_ui::game::dialog::DialogOutcome::No)
         .expect("no");
     let out = j.frame(|ui, _| vec![button(ui, no)]);
     assert!(out.commands.is_empty());

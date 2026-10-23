@@ -14,7 +14,9 @@ use std::time::Instant;
 use tessera_assets::JobContext;
 use tessera_explorer::ExplorerError;
 use tessera_explorer::data::DataContext;
-use tessera_explorer::scene::{SceneProduct, SceneRequest, SceneSource, build_scene};
+use tessera_explorer::scene::{
+    STUB_LEFT_OUT, SceneProduct, SceneRequest, SceneSource, build_scene,
+};
 
 fn game_dir() -> Option<PathBuf> {
     let dir = std::env::var_os("TESSERA_GAME_DIR").map(PathBuf::from);
@@ -51,6 +53,9 @@ struct Tally {
     failed: BTreeMap<String, usize>,
     parts: usize,
     part_errors: usize,
+    /// One-triangle placeholder parts of models with several parts, left out by rule
+    /// (`setup.md` §8.5 steps 2–3, [`STUB_LEFT_OUT`]): not errors.
+    stubs_left_out: usize,
     draws: usize,
     materials: usize,
     material_errors: usize,
@@ -82,7 +87,14 @@ fn record(t: &mut Tally, r: &Result<SceneProduct, ExplorerError>) {
             t.built += 1;
             t.drawable += usize::from(p.drawable());
             t.parts += p.parts.len();
-            t.part_errors += p.parts.iter().filter(|x| x.error.is_some()).count();
+            let left_out =
+                |x: &&tessera_explorer::scene::ScenePart| x.error.as_deref() == Some(STUB_LEFT_OUT);
+            t.stubs_left_out += p.parts.iter().filter(left_out).count();
+            t.part_errors += p
+                .parts
+                .iter()
+                .filter(|x| x.error.is_some() && !left_out(x))
+                .count();
             t.draws += p.parts.iter().map(|x| x.submeshes.len()).sum::<usize>();
             t.materials += p.materials.len();
             t.material_errors += p.materials.iter().filter(|m| m.error.is_some()).count();
@@ -209,7 +221,8 @@ fn scenes_over_the_real_install() {
 
     for (name, t) in &tallies {
         eprintln!(
-            "{name:>14}: built {} (drawable {}), failed {:?}; parts {} ({} failed), draws {}, \
+            "{name:>14}: built {} (drawable {}), failed {:?}; parts {} ({} failed, {} \
+             placeholders left out), draws {}, \
              materials {} ({} failed, {} dyeable, {} specular of which {} with power 0), \
              textures {}, triangles {}, build mean {} ms, worst {} ms",
             t.built,
@@ -217,6 +230,7 @@ fn scenes_over_the_real_install() {
             t.failed,
             t.parts,
             t.part_errors,
+            t.stubs_left_out,
             t.draws,
             t.materials,
             t.material_errors,
@@ -245,6 +259,7 @@ fn scenes_over_the_real_install() {
     assert!(surface.failed.is_empty(), "{:?}", surface.failed);
     assert_eq!(surface.material_errors, 0);
     // Setups, templates and entities resolve (setup.md §3.1; two setups have no parts).
+    // Placeholder parts left out by setup.md §8.5 are not part errors.
     for name in ["setup", "template", "entity"] {
         let t = &tallies[name];
         assert!(t.failed.is_empty(), "{name}: {:?}", t.failed);

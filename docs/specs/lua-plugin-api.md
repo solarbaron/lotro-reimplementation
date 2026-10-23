@@ -4987,6 +4987,17 @@ trained-skill placeholder, quickslot commands). Each is a headless run of `tesse
 --scenario` with a synthetic plugin that records its handler calls; records are chosen by
 selectors at run time. Invariant 77 checks P92 against the user install.
 
+> **OPEN (implementer, 2026-10-23, engineering choice):** P79 slices the deferred work at
+> 2 ms of wall-clock time per frame (at least one item). A headless scenario run has no
+> frames after its last poll, so on a loaded machine the events of one poll could stay queued
+> and a check's result would depend on the machine's speed (check 66 lost its second and
+> later `ItemAdded` this way). Tessera's headless scenario runs (`--scenario … --headless
+> --load-plugin`, `apps/client` `scenario::plugins`) therefore run the step-7 work after each
+> poll until the deferred queue is empty, at most 1,024 rounds per poll (each round runs at
+> least one item, so a plugin that queues new work from every item cannot hold the poll);
+> windowed runs keep the 2 ms slice per frame. Confirm that headless runs may drain the queue
+> this way, or name the rule they should follow instead.
+
 70. **Vitals and level (§15.2):** `vital player health 500/1000` gives, in this order,
     `MaxMoraleChanged`, `BaseMaxMoraleChanged`, `MoraleChanged`; then `GetMorale() == 500`,
     `GetMaxMorale() == 1000`, `GetBaseMaxMorale() == 1000`, `GetTemporaryMorale() == 0`,

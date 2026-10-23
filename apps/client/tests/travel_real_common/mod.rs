@@ -18,7 +18,7 @@ use tessera_client::ui_host::UiHost;
 use tessera_client::ui_host::boot::UiBoot;
 use tessera_client::ui_host::env::ClientEnv;
 use tessera_dat::{ArchiveSet, SetOptions};
-use tessera_ui::paint::{Addressing, EntryTexture, Rect, SurfaceId};
+use tessera_ui::paint::{Addressing, EntryTexture, Layer, Rect, SurfaceId};
 use tessera_ui::{ElementKey, ImageRef, ImageState, UiEnv};
 
 use crate::goldens;
@@ -294,8 +294,15 @@ impl Pictures {
         }
     }
 
-    /// Settles the UI, captures the own canvas of `k` (an element with an object mode, in
-    /// its layout size: the map's canvas in map pixels) and checks it as `what`.
+    /// Settles the UI, captures the whole own canvas of `k` (an element with an object
+    /// mode: the map's canvas) and checks it as `what`.
+    ///
+    /// The canvas size is the one the composition list gives the surface's canvas below:
+    /// under a UI screen a canvas is painted at the surface's physical box (`ui-scaling.md`
+    /// §6.1), which is larger than the layout box when a node scale lies on or above the
+    /// element (the full-screen map window's fit, `map-windows.md` §3.1), so reading only
+    /// the layout box's size of pixels would cut the picture. Without a composition entry
+    /// (not drawn) the layout size is used.
     pub fn take_canvas(&mut self, rig: &mut Rig, k: ElementKey, what: &str) {
         wait_settled(rig);
         self.seq += 1;
@@ -305,7 +312,26 @@ impl Pictures {
             let b = ui
                 .layout_box(k)
                 .unwrap_or_else(|| panic!("{name}: no layout box"));
-            let (w, h) = (b.w().max(1), b.h().max(1));
+            let canvas = ui.surface_of(k).and_then(|id| {
+                rig.host
+                    .composition()
+                    .entries
+                    .iter()
+                    .find_map(|e| match e.texture {
+                        EntryTexture::Surface {
+                            surface,
+                            layer: Layer::Below,
+                        } if surface == id => Some(e.canvas),
+                        _ => None,
+                    })
+            });
+            let (w, h) = match canvas {
+                Some([cw, ch]) if cw > 0 && ch > 0 => (
+                    i32::try_from(cw).expect("canvas width"),
+                    i32::try_from(ch).expect("canvas height"),
+                ),
+                _ => (b.w().max(1), b.h().max(1)),
+            };
             let mut data = Vec::with_capacity((w * h * 4) as usize);
             for y in 0..h {
                 for x in 0..w {

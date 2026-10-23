@@ -87,6 +87,11 @@ impl Run {
 
 /// A temporary folder with the logger plugin in its `Plugins` folder.
 fn logger_dir() -> (tempfile::TempDir, PathBuf) {
+    plugin_dir(LOGGER)
+}
+
+/// A temporary folder with plugin `Logger` of source `src` in its `Plugins` folder.
+fn plugin_dir(src: &str) -> (tempfile::TempDir, PathBuf) {
     let dir = tempfile::tempdir().expect("tempdir");
     let plugins = dir.path().join("Plugins");
     std::fs::create_dir_all(plugins.join("T")).expect("plugins dir");
@@ -96,14 +101,24 @@ fn logger_dir() -> (tempfile::TempDir, PathBuf) {
          <Version>1</Version></Information><Package>T.Logger</Package></Plugin>",
     )
     .expect("descriptor");
-    std::fs::write(plugins.join("T/Logger.lua"), LOGGER).expect("plugin");
+    std::fs::write(plugins.join("T/Logger.lua"), src).expect("plugin");
     (dir, plugins)
 }
 
 /// Plays `scenario` headless with the logger plugin loaded (and `data` when the run has
 /// an install) and returns the plugin host after the run.
 fn run(scenario: &str, install: Option<&Path>, data: Option<Arc<CharacterData>>) -> Run {
-    let (dir, plugins) = logger_dir();
+    run_plugin(LOGGER, scenario, install, data)
+}
+
+/// [`run`] with plugin source `src` in place of [`LOGGER`].
+fn run_plugin(
+    src: &str,
+    scenario: &str,
+    install: Option<&Path>,
+    data: Option<Arc<CharacterData>>,
+) -> Run {
+    let (dir, plugins) = plugin_dir(src);
     let file = dir.path().join("check.scenario");
     std::fs::write(&file, scenario).expect("write scenario");
 
@@ -168,6 +183,53 @@ at 0s bag 30
             tostring(b:GetItem(31)), tostring(b:GetItem(1.5)) }, ' ')",
     );
     assert_eq!(s, "30 Alpha Beta Gamma nil nil nil nil");
+}
+
+/// Check 66 with handlers slower than the plugin host's 2 ms slice of deferred work
+/// (`lua-plugin-api.md` P79): one round of step 7 then runs one event only, yet a headless
+/// scenario run delivers every event of a poll before the next poll (and after the last
+/// one), whatever the machine's load (`scenario::plugins` module docs).
+#[test]
+fn check_66_events_of_one_poll_all_arrive_with_slow_handlers() {
+    let slow = format!(
+        "{LOGGER}
+local added = BP.ItemAdded
+BP.ItemAdded = function(sender, args)
+    local x = 0
+    for i = 1, 3000000 do x = x + i end
+    added(sender, args)
+end
+"
+    );
+    let r = run_plugin(
+        &slow,
+        r#"tessera-scenario 1
+title "Check 66 slow"
+tick 50ms
+player "Tamsin"
+item $a "Alpha"
+item $b "Beta"
+item $c "Gamma"
+item $d "Delta"
+at 0s bag 30
++0s give $a slot=0
++0s give $b slot=4
++0s give $c slot=29
++0s give $d slot=7
+"#,
+        None,
+        None,
+    );
+    assert_eq!(
+        r.log(),
+        [
+            "size 30 true",
+            "added 1 Alpha true",
+            "added 5 Beta true",
+            "added 30 Gamma true",
+            "added 8 Delta true",
+        ]
+    );
 }
 
 /// Check 66, second part: without a `bag` step an item at slot *B* + 5 raises the size to

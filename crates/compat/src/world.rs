@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Official world-session message layer: compact wire value encodings,
-//! dictionary-driven property sets, character selection, world entry,
-//! network clock, game-time calendar, and object lifecycle codecs
+//! schema-driven encoded property tables, character selection, world entry,
+//! network clock, world calendar, and object lifecycle codecs
 //! (`docs/specs/official-messages-world.md` §1–§7).
 //!
 //! All parsers treat network input as untrusted: counts are bounded against
 //! remaining bytes before allocating, `bool8` values strictly require `0` or
-//! `1`, and recursive structures (`WirePropertySet` and `WireStringInfo`)
+//! `1`, and recursive structures (`EncodedPropertyTable` and `WireLocalizedText`)
 //! enforce a maximum nesting depth of [`MAX_RECURSION_DEPTH`] (`16`).
 
 use std::collections::{BTreeMap, HashMap};
@@ -14,12 +14,12 @@ use std::io::Read;
 
 use flate2::read::ZlibDecoder;
 
-/// Maximum nesting depth for recursive `WirePropertySet` (Type 11 `Struct`
-/// and Type 12 `Array`) and `WireStringInfo` (argument Kind 1) structures
+/// Maximum nesting depth for recursive `EncodedPropertyTable` (Type 11 `Struct`
+/// and Type 12 `Array`) and `WireLocalizedText` (argument Kind 1) structures
 /// (`docs/specs/official-messages-world.md` §7.1 item 2).
 pub const MAX_RECURSION_DEPTH: usize = 16;
 
-/// Maximum uncompressed payload length accepted in a `NetBlob` zlib envelope
+/// Maximum uncompressed payload length accepted in a fragmented blob zlib envelope
 /// (`0x0200_0000` = 32 MiB, `docs/specs/official-messages-world.md` §1.1.2).
 pub const MAX_ENVELOPE_UNCOMPRESSED_LEN: u32 = 0x0200_0000;
 
@@ -35,11 +35,11 @@ pub const ARCHIVE_FLAG_COMPACT_WIRE: u32 = 0x0800;
 /// (`docs/specs/official-messages-world.md` §1.2).
 pub const ARCHIVE_FLAG_CHECKPOINTED: u32 = 0x4000;
 
-/// `NetBlob` envelope flag bit 0 (`0x01`): payload is zlib-compressed
+/// Fragmented blob envelope flag bit 0 (`0x01`): payload is zlib-compressed
 /// (`docs/specs/official-messages-world.md` §1.1.2).
 pub const ENVELOPE_FLAG_ZLIB_COMPRESSED: u8 = 0x01;
 
-/// `NetBlob` envelope flag bit 1 (`0x02`): routing header is present
+/// Fragmented blob envelope flag bit 1 (`0x02`): routing header is present
 /// (`docs/specs/official-messages-world.md` §1.1.2).
 pub const ENVELOPE_FLAG_HAS_ROUTING_HEADER: u8 = 0x02;
 
@@ -47,9 +47,9 @@ pub const ENVELOPE_FLAG_HAS_ROUTING_HEADER: u8 = 0x02;
 /// in Type 4 (`Timestamp`) properties (`docs/specs/official-messages-world.md` §2.7.1, §4.4.1).
 pub const TIMESTAMP_NO_TIME: f64 = 3.402_823_466_385_288_6e38;
 
-/// Expected record DID for the `GameTime` calendar record in `client_general.dat`
+/// Expected record DID for the `WorldCalendarConfig` calendar record in `client_general.dat`
 /// (`docs/specs/official-messages-world.md` §4.4.2).
-pub const GAME_TIME_RECORD_DID: u32 = 0x3500_0000;
+pub const WORLD_CALENDAR_CONFIG_DID: u32 = 0x3500_0000;
 
 /// Fallback default in-game day length in seconds before `0x35000000` is loaded
 /// (`docs/specs/official-messages-world.md` §4.4.2).
@@ -79,7 +79,7 @@ pub const PID_NATIONALITY: u32 = 0x1000_1190;
 pub const PID_ADVANCEMENT_LEVEL: u32 = 0x1000_1011;
 /// `CharGen_Character_Level` (`0x1000663B`, Type 15 `Int`, §3.1.3).
 pub const PID_CHARGEN_CHARACTER_LEVEL: u32 = 0x1000_663B;
-/// `CharGen_Character_Class` (`0x10006647`, Type 13 `StringInfo`, §3.1.3).
+/// `CharGen_Character_Class` (`0x10006647`, Type 13 `LocalizedText`, §3.1.3).
 pub const PID_CHARGEN_CHARACTER_CLASS: u32 = 0x1000_6647;
 /// `CharGen_Character_LastUpdateTime` (`0x1000664B`, Type 4 `Timestamp`, §3.1.3).
 pub const PID_CHARGEN_CHARACTER_LAST_UPDATE_TIME: u32 = 0x1000_664B;
@@ -95,7 +95,7 @@ pub const PID_AREA_TERRITORY: u32 = 0x1000_11A1;
 pub const PID_AREA_REGION: u32 = 0x1000_1494;
 /// `Area_RegionID` (`0x100003FE`, Type 8 `Enum`, §3.1.3).
 pub const PID_AREA_REGION_ID: u32 = 0x1000_03FE;
-/// `Area_Name` (`0x00000198`, Type 13 `StringInfo`, §3.1.3).
+/// `Area_Name` (`0x00000198`, Type 13 `LocalizedText`, §3.1.3).
 pub const PID_AREA_NAME: u32 = 0x0000_0198;
 /// `Physics_CurrentPosition` (`0x0000001B`, Type 17 `Position`, §3.1.3).
 pub const PID_PHYSICS_CURRENT_POSITION: u32 = 0x0000_001B;
@@ -103,11 +103,11 @@ pub const PID_PHYSICS_CURRENT_POSITION: u32 = 0x0000_001B;
 pub const PID_PHYSICS_LAST_VALID_POSITION: u32 = 0x0000_05A3;
 /// `BlockX` (`0x00000090`, Type 15 `Int`, §3.1.3).
 pub const PID_BLOCK_X: u32 = 0x0000_0090;
-/// `Surname` (`0x100010F8`, Type 13 `StringInfo`, §3.1.3 / §5.2.4).
+/// `Surname` (`0x100010F8`, Type 13 `LocalizedText`, §3.1.3 / §5.2.4).
 pub const PID_SURNAME: u32 = 0x1000_10F8;
 /// `Title_ActiveTitleDID` (`0x1000088B`, Type 20 `DidRef`, §3.1.3 / §5.2.4).
 pub const PID_TITLE_ACTIVE_TITLE_DID: u32 = 0x1000_088B;
-/// `Title_ActiveTitleString` (`0x1000119C`, Type 13 `StringInfo`, §3.1.3 / §5.2.4).
+/// `Title_ActiveTitleString` (`0x1000119C`, Type 13 `LocalizedText`, §3.1.3 / §5.2.4).
 pub const PID_TITLE_ACTIVE_TITLE_STRING: u32 = 0x1000_119C;
 /// `PhysObj` (`0x0000047F`, Type 20 `DidRef`, §3.1.3 / §3.2.5 / §5.2.4).
 pub const PID_PHYS_OBJ: u32 = 0x0000_047F;
@@ -115,9 +115,9 @@ pub const PID_PHYS_OBJ: u32 = 0x0000_047F;
 pub const PID_APPEARANCE_INSTANCE_LIST: u32 = 0x0000_054F;
 /// `Appearance_ClassList` (`0x000006C3`, Type 12 `Array`, §5.2.4).
 pub const PID_APPEARANCE_CLASS_LIST: u32 = 0x0000_06C3;
-/// `Account_GameAccountName` (`0x00000747`, Type 13 `StringInfo`, §3.1.3).
+/// `Account_GameAccountName` (`0x00000747`, Type 13 `LocalizedText`, §3.1.3).
 pub const PID_ACCOUNT_GAME_ACCOUNT_NAME: u32 = 0x0000_0747;
-/// `Account_BillingName` (`0x000003F7`, Type 13 `StringInfo`, §3.1.3).
+/// `Account_BillingName` (`0x000003F7`, Type 13 `LocalizedText`, §3.1.3).
 pub const PID_ACCOUNT_BILLING_NAME: u32 = 0x0000_03F7;
 /// `Account_AuthTicket` (`0x0000018A`, Type 1 `String`, §3.1.3).
 pub const PID_ACCOUNT_AUTH_TICKET: u32 = 0x0000_018A;
@@ -165,7 +165,7 @@ pub const PID_WORLD_IS_NIGHT: u32 = 0x0000_01F0;
 /// `World_DayType` (`0x00000235`, Type 8 `Enum`, §4.4.2).
 pub const PID_WORLD_DAY_TYPE: u32 = 0x0000_0235;
 
-/// `Name` (`0x00000354`, Type 13 `StringInfo`, §5.2.4).
+/// `Name` (`0x00000354`, Type 13 `LocalizedText`, §5.2.4).
 pub const PID_NAME: u32 = 0x0000_0354;
 /// `WeenieType` (`0x00000126`, Type 8 `Enum`, §4.3.1 / §5.2.4).
 pub const PID_WEENIE_TYPE: u32 = 0x0000_0126;
@@ -248,7 +248,7 @@ pub enum WorldError {
     /// The leading `base_flags` byte of an inner event payload was not `0x00` (§1.3).
     #[error("invalid event base_flags byte 0x{0:02X}: expected 0x00")]
     InvalidBaseFlags(u8),
-    /// A nested `WirePropertySet` or `WireStringInfo` exceeded [`MAX_RECURSION_DEPTH`] (§7.1 item 2).
+    /// A nested `EncodedPropertyTable` or `WireLocalizedText` exceeded [`MAX_RECURSION_DEPTH`] (§7.1 item 2).
     #[error("maximum recursion depth ({max}) exceeded")]
     MaxRecursionDepthExceeded {
         /// Maximum allowed depth.
@@ -275,7 +275,7 @@ pub enum WorldError {
     /// A character above U+00FF was passed to a Latin-1 8-bit Pascal string writer.
     #[error("character U+{0:04X} cannot be encoded in an 8-bit Latin-1 string")]
     InvalidLatin1Char(u32),
-    /// A property ID in a wire `PropertySet` was not found in the property schema (§7.1 item 4).
+    /// A property ID in a wire `EncodedPropertyTable` was not found in the property schema (§7.1 item 4).
     #[error("unknown property ID 0x{0:08X} in wire property set")]
     UnknownPropertyId(u32),
     /// A property type code outside `1..=22` was encountered (§2.7.1).
@@ -312,28 +312,28 @@ pub enum WorldError {
     /// A routing header's 2-byte alignment pad byte was non-zero (§1.1.2).
     #[error("routing header alignment pad byte 0x{0:02X} must be 0x00")]
     InvalidRoutingAlignmentPad(u8),
-    /// A `NetBlob` zlib header declared `uncompressedLen` above 32 MiB (§1.1.2).
-    #[error("NetBlob uncompressed length {0} exceeds 32 MiB limit")]
+    /// A fragmented blob zlib header declared `uncompressedLen` above 32 MiB (§1.1.2).
+    #[error("Fragmented blob uncompressed length {0} exceeds 32 MiB limit")]
     EnvelopeUncompressedLengthTooLarge(u32),
-    /// Decompressing a zlib-compressed `NetBlob` body failed.
-    #[error("NetBlob zlib decompression failed: {0}")]
+    /// Decompressing a zlib-compressed fragmented blob body failed.
+    #[error("Fragmented blob zlib decompression failed: {0}")]
     ZlibDecompressError(String),
-    /// The decompressed `NetBlob` body length did not match `uncompressedLen`.
-    #[error("NetBlob decompressed length mismatch: expected {expected}, got {actual}")]
+    /// The decompressed fragmented blob body length did not match `uncompressedLen`.
+    #[error("Fragmented blob decompressed length mismatch: expected {expected}, got {actual}")]
     ZlibLengthMismatch {
         /// Declared `uncompressedLen`.
         expected: usize,
         /// Actual inflated byte count.
         actual: usize,
     },
-    /// A `GameTime` record did not start with `DID 0x35000000` (§4.4.2).
-    #[error("invalid GameTime record DID 0x{0:08X}: expected 0x35000000")]
-    InvalidGameTimeDid(u32),
+    /// A `WorldCalendarConfig` record did not start with `DID 0x35000000` (§4.4.2).
+    #[error("invalid WorldCalendarConfig record DID 0x{0:08X}: expected 0x35000000")]
+    InvalidWorldCalendarDid(u32),
     /// Trailing unread bytes remained after decoding a fixed-framing payload.
     #[error("{0} trailing byte(s) remained after decoding payload")]
     TrailingBytes(usize),
-    /// A wire `StringInfo` argument kind outside `1..=7` reached a payload decoder (§2.6).
-    #[error("invalid wire StringInfo argument kind {0}")]
+    /// A wire `LocalizedText` argument kind outside `1..=7` reached a payload decoder (§2.6).
+    #[error("invalid wire LocalizedText argument kind {0}")]
     InvalidStringArgKind(u16),
     /// A decoded `f32` position or velocity component was NaN or infinite
     /// (`official-messages-play.md` §9.1 rule 4).
@@ -1332,12 +1332,12 @@ pub fn decode_heading_u8(raw_angle: u8) -> f32 {
 }
 
 // ---------------------------------------------------------------------------
-// WireStringInfo (§2.6)
+// WireLocalizedText (§2.6)
 // ---------------------------------------------------------------------------
 
-/// Mode payload of a [`WireStringInfo`] (§2.6).
+/// Mode payload of a [`WireLocalizedText`] (§2.6).
 #[derive(Debug, Clone, PartialEq)]
-pub enum WireStringContent {
+pub enum WireLocalizedTextContent {
     /// Mode `1`: literal UTF-16LE string.
     Literal(String),
     /// Any mode byte other than `1` (`0`, `2`, `3..=255`): string-table reference.
@@ -1351,11 +1351,11 @@ pub enum WireStringContent {
     },
 }
 
-/// Argument value payload inside a [`WireStringInfo`] argument table (§2.6).
+/// Argument value payload inside a [`WireLocalizedText`] argument table (§2.6).
 #[derive(Debug, Clone, PartialEq)]
-pub enum WireStringArgPayload {
-    /// Kind `1`: recursive `WireStringInfo`.
-    Nested(Box<WireStringInfo>),
+pub enum WireLocalizedTextArgPayload {
+    /// Kind `1`: recursive `WireLocalizedText`.
+    Nested(Box<WireLocalizedText>),
     /// Kind `2`: `f64` value with decimal places.
     Float {
         /// Floating-point value.
@@ -1407,9 +1407,9 @@ pub enum WireStringArgPayload {
     },
 }
 
-/// A single entry in a [`WireStringInfo`] argument table (§2.6).
+/// A single entry in a [`WireLocalizedText`] argument table (§2.6).
 #[derive(Debug, Clone, PartialEq)]
-pub struct WireStringArg {
+pub struct WireLocalizedTextArg {
     /// Variable name-hash key (`u32 LE`).
     pub key: u32,
     /// Entry kind selector (`u16 LE`).
@@ -1419,27 +1419,27 @@ pub struct WireStringArg {
     /// Common 6-byte value header variable ID (`u32 LE`), present when `kind` is in `1..=7`.
     pub var_id: u32,
     /// Kind-specific payload (`Some` for `kind` in `1..=7`, `None` for `0` or `>= 8`).
-    pub payload: Option<WireStringArgPayload>,
+    pub payload: Option<WireLocalizedTextArgPayload>,
 }
 
-/// Localized or literal string descriptor (`StringInfo`, `docs/specs/official-messages-world.md` §2.6).
+/// Localized or literal string descriptor (`LocalizedText`, `docs/specs/official-messages-world.md` §2.6).
 #[derive(Debug, Clone, PartialEq)]
-pub struct WireStringInfo {
+pub struct WireLocalizedText {
     /// Literal text or `(mode, token_id, table_did)` reference.
-    pub content: WireStringContent,
+    pub content: WireLocalizedTextContent,
     /// Optional three Pascal authoring strings (`[token_name, source_text, comment]`)
     /// when `has_authoring_strings` is `true` (`0x01`).
     pub authoring_strings: Option<[String; 3]>,
     /// Substitution argument entries.
-    pub arguments: Vec<WireStringArg>,
+    pub arguments: Vec<WireLocalizedTextArg>,
 }
 
-impl WireStringInfo {
-    /// Creates a literal UTF-16LE `WireStringInfo` with no authoring strings and no arguments.
+impl WireLocalizedText {
+    /// Creates a literal UTF-16LE `WireLocalizedText` with no authoring strings and no arguments.
     #[must_use]
     pub fn literal(text: impl Into<String>) -> Self {
         Self {
-            content: WireStringContent::Literal(text.into()),
+            content: WireLocalizedTextContent::Literal(text.into()),
             authoring_strings: None,
             arguments: Vec::new(),
         }
@@ -1449,7 +1449,7 @@ impl WireStringInfo {
     #[must_use]
     pub fn reference(token_id: u32, table_did: u32) -> Self {
         Self {
-            content: WireStringContent::Reference {
+            content: WireLocalizedTextContent::Reference {
                 mode: 0,
                 token_id,
                 table_did,
@@ -1459,37 +1459,37 @@ impl WireStringInfo {
         }
     }
 
-    /// Encodes this `WireStringInfo` in wire mode (bit 11 `0x800` set: no TSize
+    /// Encodes this `WireLocalizedText` in wire mode (bit 11 `0x800` set: no TSize
     /// hint byte before `arg_count`, and Kind 6/7 compact integers; §2.6).
     pub fn encode(&self, writer: &mut WireWriter) -> Result<(), WorldError> {
         self.encode_inner(writer, true, 1)
     }
 
-    /// Decodes a `WireStringInfo` in wire mode (bit 11 `0x800` set; §2.6).
+    /// Decodes a `WireLocalizedText` in wire mode (bit 11 `0x800` set; §2.6).
     pub fn decode(reader: &mut WireReader<'_>) -> Result<Self, WorldError> {
         Self::decode_inner(reader, true)
     }
 
-    /// Encodes this `WireStringInfo` in stored `.dat` mode (bit 11 `0x800` clear:
+    /// Encodes this `WireLocalizedText` in stored `.dat` mode (bit 11 `0x800` clear:
     /// writes a `u8` TSize hint byte `0x01` before `arg_count` and 8-byte `u64 LE`
     /// for Kind 6/7; §2.6, Vector 6).
     pub fn encode_stored(&self, writer: &mut WireWriter) -> Result<(), WorldError> {
         self.encode_inner(writer, false, 1)
     }
 
-    /// Decodes a `WireStringInfo` in stored `.dat` mode (bit 11 `0x800` clear; §2.6, Vector 6).
+    /// Decodes a `WireLocalizedText` in stored `.dat` mode (bit 11 `0x800` clear; §2.6, Vector 6).
     pub fn decode_stored(reader: &mut WireReader<'_>) -> Result<Self, WorldError> {
         Self::decode_inner(reader, false)
     }
 
-    /// Encodes this `WireStringInfo` in wire mode to a standalone byte vector.
+    /// Encodes this `WireLocalizedText` in wire mode to a standalone byte vector.
     pub fn to_bytes(&self) -> Result<Vec<u8>, WorldError> {
         let mut w = WireWriter::new();
         self.encode(&mut w)?;
         Ok(w.into_vec())
     }
 
-    /// Decodes a `WireStringInfo` in wire mode from a standalone byte slice.
+    /// Decodes a `WireLocalizedText` in wire mode from a standalone byte slice.
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, WorldError> {
         let mut r = WireReader::new(bytes);
         let val = Self::decode(&mut r)?;
@@ -1509,11 +1509,11 @@ impl WireStringInfo {
             });
         }
         match &self.content {
-            WireStringContent::Literal(s) => {
+            WireLocalizedTextContent::Literal(s) => {
                 writer.write_u8(1);
                 writer.write_utf16le_string(s)?;
             }
-            WireStringContent::Reference {
+            WireLocalizedTextContent::Reference {
                 mode,
                 token_id,
                 table_did,
@@ -1549,17 +1549,17 @@ impl WireStringInfo {
                 writer.write_u32_le(arg.var_id);
                 if let Some(payload) = &arg.payload {
                     match payload {
-                        WireStringArgPayload::Nested(nested) => {
+                        WireLocalizedTextArgPayload::Nested(nested) => {
                             nested.encode_inner(writer, wire_mode, depth + 1)?;
                         }
-                        WireStringArgPayload::Float {
+                        WireLocalizedTextArgPayload::Float {
                             value,
                             decimal_places,
                         } => {
                             writer.write_f64_le(*value);
                             writer.write_u16_le(*decimal_places);
                         }
-                        WireStringArgPayload::FloatFormatted {
+                        WireLocalizedTextArgPayload::FloatFormatted {
                             value,
                             decimal_places,
                             format_flags,
@@ -1570,10 +1570,10 @@ impl WireStringInfo {
                             writer.write_u8(*format_flags);
                             writer.write_u16_le(*radix);
                         }
-                        WireStringArgPayload::FixedInt(val) => {
+                        WireLocalizedTextArgPayload::FixedInt(val) => {
                             writer.write_i64_le(*val);
                         }
-                        WireStringArgPayload::FixedIntFormatted {
+                        WireLocalizedTextArgPayload::FixedIntFormatted {
                             value,
                             format_flags,
                             radix,
@@ -1582,7 +1582,7 @@ impl WireStringInfo {
                             writer.write_u8(*format_flags);
                             writer.write_u16_le(*radix);
                         }
-                        WireStringArgPayload::CompactInt { is_32bit, value } => {
+                        WireLocalizedTextArgPayload::CompactInt { is_32bit, value } => {
                             if wire_mode {
                                 writer.write_bool8(*is_32bit);
                                 if *is_32bit {
@@ -1594,7 +1594,7 @@ impl WireStringInfo {
                                 writer.write_u64_le(*value);
                             }
                         }
-                        WireStringArgPayload::CompactIntFormatted {
+                        WireLocalizedTextArgPayload::CompactIntFormatted {
                             is_32bit,
                             value,
                             format_flags,
@@ -1623,11 +1623,11 @@ impl WireStringInfo {
     fn decode_inner(reader: &mut WireReader<'_>, wire_mode: bool) -> Result<Self, WorldError> {
         let mode = reader.read_u8()?;
         let content = if mode == 1 {
-            WireStringContent::Literal(reader.read_utf16le_string()?)
+            WireLocalizedTextContent::Literal(reader.read_utf16le_string()?)
         } else {
             let token_id = reader.read_u32_le()?;
             let table_did = reader.read_u32_le()?;
-            WireStringContent::Reference {
+            WireLocalizedTextContent::Reference {
                 mode,
                 token_id,
                 table_did,
@@ -1661,12 +1661,12 @@ impl WireStringInfo {
                 let payload = match kind {
                     1 => {
                         let nested = reader.with_recursion(|r| Self::decode_inner(r, wire_mode))?;
-                        WireStringArgPayload::Nested(Box::new(nested))
+                        WireLocalizedTextArgPayload::Nested(Box::new(nested))
                     }
                     2 => {
                         let value = reader.read_f64_le()?;
                         let decimal_places = reader.read_u16_le()?;
-                        WireStringArgPayload::Float {
+                        WireLocalizedTextArgPayload::Float {
                             value,
                             decimal_places,
                         }
@@ -1676,19 +1676,19 @@ impl WireStringInfo {
                         let decimal_places = reader.read_u16_le()?;
                         let format_flags = reader.read_u8()?;
                         let radix = reader.read_u16_le()?;
-                        WireStringArgPayload::FloatFormatted {
+                        WireLocalizedTextArgPayload::FloatFormatted {
                             value,
                             decimal_places,
                             format_flags,
                             radix,
                         }
                     }
-                    4 => WireStringArgPayload::FixedInt(reader.read_i64_le()?),
+                    4 => WireLocalizedTextArgPayload::FixedInt(reader.read_i64_le()?),
                     5 => {
                         let value = reader.read_i64_le()?;
                         let format_flags = reader.read_u8()?;
                         let radix = reader.read_u16_le()?;
-                        WireStringArgPayload::FixedIntFormatted {
+                        WireLocalizedTextArgPayload::FixedIntFormatted {
                             value,
                             format_flags,
                             radix,
@@ -1702,10 +1702,10 @@ impl WireStringInfo {
                             } else {
                                 reader.read_u64_le()?
                             };
-                            WireStringArgPayload::CompactInt { is_32bit, value }
+                            WireLocalizedTextArgPayload::CompactInt { is_32bit, value }
                         } else {
                             let value = reader.read_u64_le()?;
-                            WireStringArgPayload::CompactInt {
+                            WireLocalizedTextArgPayload::CompactInt {
                                 is_32bit: false,
                                 value,
                             }
@@ -1725,7 +1725,7 @@ impl WireStringInfo {
                         };
                         let format_flags = reader.read_u8()?;
                         let radix = reader.read_u16_le()?;
-                        WireStringArgPayload::CompactIntFormatted {
+                        WireLocalizedTextArgPayload::CompactIntFormatted {
                             is_32bit,
                             value,
                             format_flags,
@@ -1734,7 +1734,7 @@ impl WireStringInfo {
                     }
                     other => return Err(WorldError::InvalidStringArgKind(other)),
                 };
-                arguments.push(WireStringArg {
+                arguments.push(WireLocalizedTextArg {
                     key,
                     kind,
                     header_kind,
@@ -1742,7 +1742,7 @@ impl WireStringInfo {
                     payload: Some(payload),
                 });
             } else {
-                arguments.push(WireStringArg {
+                arguments.push(WireLocalizedTextArg {
                     key,
                     kind,
                     header_kind: 0,
@@ -1760,7 +1760,7 @@ impl WireStringInfo {
 }
 
 // ---------------------------------------------------------------------------
-// Dictionary-Driven Wire PropertyValue & PropertySet (§2.7)
+// Dictionary-Driven Wire PropertyValue & EncodedPropertyTable (§2.7)
 // ---------------------------------------------------------------------------
 
 /// The 22 property value type codes in the master property dictionary (`0x34000000`;
@@ -1788,12 +1788,12 @@ pub enum PropertyType {
     Float = 9,
     /// Code `10`: `PropertyId` (`CompactDid` on wire, `u32 LE` stored).
     PropertyId = 10,
-    /// Code `11`: nested `PropertySet` (`Struct`).
+    /// Code `11`: nested `EncodedPropertyTable` (`Struct`).
     Struct = 11,
     /// Code `12`: `u32 LE` count + `(CompactPid, PropertyValue)` list (`Array`).
     Array = 12,
-    /// Code `13`: `StringInfo`.
-    StringInfo = 13,
+    /// Code `13`: `LocalizedText`.
+    LocalizedText = 13,
     /// Code `14`: `u64 LE` 64-bit bitfield.
     Bitfield64 = 14,
     /// Code `15`: signed 32-bit integer (4-tier VLE on wire, `i32 LE` stored).
@@ -1834,7 +1834,7 @@ impl PropertyType {
             10 => Ok(Self::PropertyId),
             11 => Ok(Self::Struct),
             12 => Ok(Self::Array),
-            13 => Ok(Self::StringInfo),
+            13 => Ok(Self::LocalizedText),
             14 => Ok(Self::Bitfield64),
             15 => Ok(Self::Int),
             16 => Ok(Self::Color),
@@ -1980,7 +1980,7 @@ impl WireWaveform {
 
 /// Decoded property value across all 22 property types (`docs/specs/official-messages-world.md` §2.7.1).
 #[derive(Debug, Clone, PartialEq)]
-pub enum WirePropertyValue {
+pub enum EncodedPropertyValue {
     /// Type `1`: 8-bit Pascal string.
     String(String),
     /// Type `2`: `u32 LE` string token.
@@ -2001,12 +2001,12 @@ pub enum WirePropertyValue {
     Float(f32),
     /// Type `10`: `PropertyId` (`CompactDid` on wire, `u32 LE` stored).
     PropertyId(u32),
-    /// Type `11`: nested `WirePropertySet` (`Struct`).
-    Struct(WirePropertySet),
-    /// Type `12`: array of `WirePropertyEntry` (`u32 LE` count + `(CompactPid, WirePropertyValue)` on wire).
-    Array(Vec<WirePropertyEntry>),
-    /// Type `13`: `WireStringInfo`.
-    StringInfo(WireStringInfo),
+    /// Type `11`: nested `EncodedPropertyTable` (`Struct`).
+    Struct(EncodedPropertyTable),
+    /// Type `12`: array of `EncodedPropertyEntry` (`u32 LE` count + `(CompactPid, EncodedPropertyValue)` on wire).
+    Array(Vec<EncodedPropertyEntry>),
+    /// Type `13`: `WireLocalizedText`.
+    LocalizedText(WireLocalizedText),
     /// Type `14`: `u64 LE` 64-bit bitfield.
     Bitfield64(u64),
     /// Type `15`: signed 32-bit integer (4-tier VLE on wire, `i32 LE` stored).
@@ -2032,7 +2032,7 @@ pub enum WirePropertyValue {
     },
 }
 
-impl WirePropertyValue {
+impl EncodedPropertyValue {
     /// Returns the [`PropertyType`] corresponding to this value variant.
     #[must_use]
     pub const fn property_type(&self) -> PropertyType {
@@ -2049,7 +2049,7 @@ impl WirePropertyValue {
             Self::PropertyId(_) => PropertyType::PropertyId,
             Self::Struct(_) => PropertyType::Struct,
             Self::Array(_) => PropertyType::Array,
-            Self::StringInfo(_) => PropertyType::StringInfo,
+            Self::LocalizedText(_) => PropertyType::LocalizedText,
             Self::Bitfield64(_) => PropertyType::Bitfield64,
             Self::Int(_) => PropertyType::Int,
             Self::Color(_) => PropertyType::Color,
@@ -2100,7 +2100,7 @@ impl WirePropertyValue {
                     entry.encode_with_depth(writer, depth + 1)?;
                 }
             }
-            Self::StringInfo(si) => si.encode(writer)?,
+            Self::LocalizedText(si) => si.encode(writer)?,
             Self::Bitfield64(v) => writer.write_u64_le(*v),
             Self::Int(v) => writer.write_vle4(*v as u32),
             Self::Color(bgra) => writer.write_bytes(bgra),
@@ -2147,7 +2147,7 @@ impl WirePropertyValue {
             PropertyType::Float => Ok(Self::Float(reader.read_f32_le()?)),
             PropertyType::PropertyId => Ok(Self::PropertyId(CompactDid::decode(reader)?.0)),
             PropertyType::Struct => {
-                let ps = reader.with_recursion(|r| WirePropertySet::decode(r, schema))?;
+                let ps = reader.with_recursion(|r| EncodedPropertyTable::decode(r, schema))?;
                 Ok(Self::Struct(ps))
             }
             PropertyType::Array => reader.with_recursion(|r| {
@@ -2155,11 +2155,13 @@ impl WirePropertyValue {
                 r.ensure_count(count, 2)?;
                 let mut entries = Vec::with_capacity(count);
                 for _ in 0..count {
-                    entries.push(WirePropertyEntry::decode(r, schema)?);
+                    entries.push(EncodedPropertyEntry::decode(r, schema)?);
                 }
                 Ok(Self::Array(entries))
             }),
-            PropertyType::StringInfo => Ok(Self::StringInfo(WireStringInfo::decode(reader)?)),
+            PropertyType::LocalizedText => {
+                Ok(Self::LocalizedText(WireLocalizedText::decode(reader)?))
+            }
             PropertyType::Bitfield64 => Ok(Self::Bitfield64(reader.read_u64_le()?)),
             PropertyType::Int => Ok(Self::Int(reader.read_vle4()? as i32)),
             PropertyType::Color => {
@@ -2185,21 +2187,21 @@ impl WirePropertyValue {
     }
 }
 
-/// A single `(CompactPID, PropertyValue)` entry in a [`WirePropertySet`], a
+/// A single `(CompactPID, PropertyValue)` entry in a [`EncodedPropertyTable`], a
 /// Type 12 `Array`, or a single-property network event (`0x88`, `0x92`, `0xB0`,
 /// `0x147`, `0x149`; `docs/specs/official-messages-world.md` §2.7.2).
 #[derive(Debug, Clone, PartialEq)]
-pub struct WirePropertyEntry {
+pub struct EncodedPropertyEntry {
     /// Property ID (`0` for a 2-byte `00 00` null entry with no value).
     pub pid: u32,
     /// Property value (`None` when `pid == 0`, `Some` when `pid != 0`).
-    pub value: Option<WirePropertyValue>,
+    pub value: Option<EncodedPropertyValue>,
 }
 
-impl WirePropertyEntry {
+impl EncodedPropertyEntry {
     /// Creates a non-null property entry.
     #[must_use]
-    pub fn new(pid: u32, value: WirePropertyValue) -> Self {
+    pub fn new(pid: u32, value: EncodedPropertyValue) -> Self {
         Self {
             pid,
             value: Some(value),
@@ -2245,7 +2247,7 @@ impl WirePropertyEntry {
         let prop_type = schema
             .property_type(pid)
             .ok_or(WorldError::UnknownPropertyId(pid))?;
-        let val = WirePropertyValue::decode(reader, prop_type, schema)?;
+        let val = EncodedPropertyValue::decode(reader, prop_type, schema)?;
         Ok(Self {
             pid,
             value: Some(val),
@@ -2253,17 +2255,17 @@ impl WirePropertyEntry {
     }
 }
 
-/// Wire-mode `PropertySet` (bit 11 `0x800` set, bit 14 `0x4000` clear:
+/// Wire-mode `EncodedPropertyTable` (bit 11 `0x800` set, bit 14 `0x4000` clear:
 /// 3-tier VLE count + `(CompactPID, PropertyValue)` entries, no TSize hint byte,
 /// no duplicate `u32` key; `docs/specs/official-messages-world.md` §2.7.2).
 #[derive(Debug, Clone, PartialEq, Default)]
-pub struct WirePropertySet {
+pub struct EncodedPropertyTable {
     /// Ordered entries in the property set.
-    pub entries: Vec<WirePropertyEntry>,
+    pub entries: Vec<EncodedPropertyEntry>,
 }
 
-impl WirePropertySet {
-    /// Creates an empty `WirePropertySet` (encodes as the single byte `0x00`).
+impl EncodedPropertyTable {
+    /// Creates an empty `EncodedPropertyTable` (encodes as the single byte `0x00`).
     #[must_use]
     pub fn new() -> Self {
         Self {
@@ -2284,25 +2286,25 @@ impl WirePropertySet {
     }
 
     /// Appends a `(pid, value)` property to the set.
-    pub fn push(&mut self, pid: u32, value: WirePropertyValue) {
-        self.entries.push(WirePropertyEntry::new(pid, value));
+    pub fn push(&mut self, pid: u32, value: EncodedPropertyValue) {
+        self.entries.push(EncodedPropertyEntry::new(pid, value));
     }
 
     /// Appends a 2-byte null entry (`pid = 0`) to the set.
     pub fn push_null(&mut self) {
-        self.entries.push(WirePropertyEntry::null());
+        self.entries.push(EncodedPropertyEntry::null());
     }
 
     /// Returns the first value matching `pid` (`property-system.md` S4).
     #[must_use]
-    pub fn get(&self, pid: u32) -> Option<&WirePropertyValue> {
+    pub fn get(&self, pid: u32) -> Option<&EncodedPropertyValue> {
         self.entries
             .iter()
             .find(|e| e.pid == pid)
             .and_then(|e| e.value.as_ref())
     }
 
-    /// Encodes this `WirePropertySet` to `writer` (§2.7.2).
+    /// Encodes this `EncodedPropertyTable` to `writer` (§2.7.2).
     pub fn encode(&self, writer: &mut WireWriter) -> Result<(), WorldError> {
         self.encode_with_depth(writer, 1)
     }
@@ -2322,7 +2324,7 @@ impl WirePropertySet {
         Ok(())
     }
 
-    /// Decodes a `WirePropertySet` from `reader` using `schema` (§2.7.2, §7.1).
+    /// Decodes a `EncodedPropertyTable` from `reader` using `schema` (§2.7.2, §7.1).
     pub fn decode(
         reader: &mut WireReader<'_>,
         schema: &dyn PropertySchemaLookup,
@@ -2331,19 +2333,19 @@ impl WirePropertySet {
         reader.ensure_count(count, 2)?;
         let mut entries = Vec::with_capacity(count);
         for _ in 0..count {
-            entries.push(WirePropertyEntry::decode(reader, schema)?);
+            entries.push(EncodedPropertyEntry::decode(reader, schema)?);
         }
         Ok(Self { entries })
     }
 
-    /// Encodes this `WirePropertySet` into a standalone byte vector.
+    /// Encodes this `EncodedPropertyTable` into a standalone byte vector.
     pub fn to_bytes(&self) -> Result<Vec<u8>, WorldError> {
         let mut w = WireWriter::new();
         self.encode(&mut w)?;
         Ok(w.into_vec())
     }
 
-    /// Decodes a `WirePropertySet` from a standalone byte slice.
+    /// Decodes a `EncodedPropertyTable` from a standalone byte slice.
     pub fn from_bytes(bytes: &[u8], schema: &dyn PropertySchemaLookup) -> Result<Self, WorldError> {
         let mut r = WireReader::new(bytes);
         let ps = Self::decode(&mut r, schema)?;
@@ -2353,7 +2355,7 @@ impl WirePropertySet {
 }
 
 // ---------------------------------------------------------------------------
-// NetBlob Envelope & Optional Routing Header (§1.1.1–§1.1.2)
+// Fragmented blob Envelope & Optional Routing Header (§1.1.1–§1.1.2)
 // ---------------------------------------------------------------------------
 
 /// Multi-destination routing table entry when bit 0 (`0x01`) of `routingFlags` is set (§1.1.2).
@@ -2368,7 +2370,7 @@ pub struct RoutingDestinationEntry {
 }
 
 /// Optional variable-length routing header at the start of an uncompressed
-/// `NetBlob` body when `envelopeFlags` bit 1 (`0x02` `HasRoutingHeader`) is set (§1.1.2).
+/// Fragmented blob body when `envelopeFlags` bit 1 (`0x02` `HasRoutingHeader`) is set (§1.1.2).
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct RoutingHeader {
     /// Bitmask of present optional routing sections (`0x01`, `0x02`, `0x04`, `0x08`).
@@ -2490,9 +2492,9 @@ impl RoutingHeader {
     }
 }
 
-/// Decoded reassembled `NetBlob` payload envelope (`docs/specs/official-messages-world.md` §1.1.2).
+/// Decoded reassembled fragmented blob payload envelope (`docs/specs/official-messages-world.md` §1.1.2).
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct DecodedNetBlobPayload {
+pub struct DecodedBlobPayload {
     /// Leading `envelopeFlags` byte (`0x01` = zlib, `0x02` = routing header).
     pub envelope_flags: u8,
     /// Optional routing header when bit 1 (`0x02`) of `envelope_flags` is set.
@@ -2504,22 +2506,22 @@ pub struct DecodedNetBlobPayload {
 }
 
 /// Wraps an inner event payload (already beginning with `u8 base_flags = 0x00`)
-/// into a standard uncompressed `NetBlob` payload (`envelopeFlags = 0x00` + `inner_payload`; §1.1.2).
+/// into a standard uncompressed fragmented blob payload (`envelopeFlags = 0x00` + `inner_payload`; §1.1.2).
 #[must_use]
-pub fn encode_net_blob_payload(inner_payload: &[u8]) -> Vec<u8> {
+pub fn encode_blob_payload(inner_payload: &[u8]) -> Vec<u8> {
     let mut out = Vec::with_capacity(1 + inner_payload.len());
     out.push(0x00);
     out.extend_from_slice(inner_payload);
     out
 }
 
-/// Unwraps a reassembled `NetBlob` payload (handling optional zlib decompression
+/// Unwraps a reassembled fragmented blob payload (handling optional zlib decompression
 /// and optional routing header) to yield the inner event payload starting at
 /// offset 0 (`u8 base_flags = 0x00`; §1.1.2).
-pub fn decode_net_blob_payload(
+pub fn decode_blob_payload(
     blob_bytes: &[u8],
     default_recipient_id: u64,
-) -> Result<DecodedNetBlobPayload, WorldError> {
+) -> Result<DecodedBlobPayload, WorldError> {
     let mut outer = WireReader::new(blob_bytes);
     let envelope_flags = outer.read_u8()?;
     let uncompressed_cow: std::borrow::Cow<'_, [u8]> =
@@ -2570,7 +2572,7 @@ pub fn decode_net_blob_payload(
             remaining: 0,
         });
     }
-    Ok(DecodedNetBlobPayload {
+    Ok(DecodedBlobPayload {
         envelope_flags,
         routing_header,
         target_entity_id,
@@ -2582,9 +2584,9 @@ pub fn decode_net_blob_payload(
 // Character Screen Messages (§3.1–§3.5)
 // ---------------------------------------------------------------------------
 
-/// Equipped item visual override entry inside [`VisualDesc`] (`22` bytes; §3.1.2).
+/// Equipped item visual override entry inside [`EntityAppearanceDesc`] (`22` bytes; §3.1.2).
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct VisualEquipmentItem {
+pub struct AppearanceEquipmentEntry {
     /// Item class/visual DID (`u32 LE`).
     pub item_class_did: u32,
     /// Equipment slot bitmask (`u32 LE`).
@@ -2601,7 +2603,7 @@ pub struct VisualEquipmentItem {
     pub item_scalar: f32,
 }
 
-impl VisualEquipmentItem {
+impl AppearanceEquipmentEntry {
     /// Encodes this 22-byte equipped item visual entry.
     pub fn encode(&self, writer: &mut WireWriter) {
         writer.write_u32_le(self.item_class_did);
@@ -2627,16 +2629,16 @@ impl VisualEquipmentItem {
     }
 }
 
-/// Appearance/morph key-float pair inside [`VisualDesc`] (`8` bytes; §3.1.2).
+/// Appearance/morph key-float pair inside [`EntityAppearanceDesc`] (`8` bytes; §3.1.2).
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct VisualAppearanceEntry {
+pub struct AppearanceMorphEntry {
     /// Appearance parameter key / DID (`u32 LE`).
     pub appearance_key: u32,
     /// Morph weight or scalar value (`f32 LE`).
     pub appearance_weight: f32,
 }
 
-impl VisualAppearanceEntry {
+impl AppearanceMorphEntry {
     /// Encodes this 8-byte appearance entry.
     pub fn encode(&self, writer: &mut WireWriter) {
         writer.write_u32_le(self.appearance_key);
@@ -2652,9 +2654,9 @@ impl VisualAppearanceEntry {
     }
 }
 
-/// Auxiliary visual/effect descriptor entry inside [`VisualDesc`] (`26` bytes; §3.1.2).
+/// Auxiliary visual/effect descriptor entry inside [`EntityAppearanceDesc`] (`26` bytes; §3.1.2).
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct VisualBlock3Entry {
+pub struct AppearanceAuxEntry {
     /// First 32-bit visual identifier (`u32 LE`).
     pub field_0: u32,
     /// Second 32-bit visual identifier (`u32 LE`).
@@ -2673,7 +2675,7 @@ pub struct VisualBlock3Entry {
     pub field_18: f32,
 }
 
-impl VisualBlock3Entry {
+impl AppearanceAuxEntry {
     /// Encodes this 26-byte block-3 visual entry.
     pub fn encode(&self, writer: &mut WireWriter) {
         writer.write_u32_le(self.field_0);
@@ -2701,26 +2703,26 @@ impl VisualBlock3Entry {
     }
 }
 
-/// Entity/character visual appearance and equipment descriptor (`VisualDesc`,
-/// used in `CharDesc` and `0x89` `VisualDescUpdate`; `docs/specs/official-messages-world.md` §3.1.2).
+/// Entity/character visual appearance and equipment descriptor (`EntityAppearanceDesc`,
+/// used in `CharacterSummaryEntry` and `0x89` `EntityAppearanceDescUpdate`; `docs/specs/official-messages-world.md` §3.1.2).
 #[derive(Debug, Clone, PartialEq, Default)]
-pub struct VisualDesc {
+pub struct EntityAppearanceDesc {
     /// Equipped item visual overrides (gated by `bool8 has_equipment_array`).
-    pub equipment: Vec<VisualEquipmentItem>,
+    pub equipment: Vec<AppearanceEquipmentEntry>,
     /// Appearance/morph key-float pairs (gated by `bool8 has_appearance_entries`).
-    pub appearance_entries: Vec<VisualAppearanceEntry>,
+    pub appearance_entries: Vec<AppearanceMorphEntry>,
     /// Unconditional 32-bit animation/visual set DID (`u32 LE`).
     pub anim_set_did: u32,
     /// Auxiliary 26-byte visual/effect entries (gated by `bool8 has_block_3`).
-    pub block_3: Vec<VisualBlock3Entry>,
-    /// Optional visual override `WirePropertySet` (gated by `bool8 has_extra_visual_props`).
-    pub extra_visual_props: Option<WirePropertySet>,
+    pub block_3: Vec<AppearanceAuxEntry>,
+    /// Optional visual override `EncodedPropertyTable` (gated by `bool8 has_extra_visual_props`).
+    pub extra_visual_props: Option<EncodedPropertyTable>,
     /// Trailing boolean visual flag (`bool8`).
     pub visual_flag: bool,
 }
 
-impl VisualDesc {
-    /// Encodes this `VisualDesc` in wire mode (§3.1.2).
+impl EntityAppearanceDesc {
+    /// Encodes this `EntityAppearanceDesc` in wire mode (§3.1.2).
     pub fn encode(&self, writer: &mut WireWriter) -> Result<(), WorldError> {
         if self.equipment.is_empty() {
             writer.write_bool8(false);
@@ -2766,7 +2768,7 @@ impl VisualDesc {
         Ok(())
     }
 
-    /// Decodes a `VisualDesc` in wire mode using `schema` (§3.1.2).
+    /// Decodes a `EntityAppearanceDesc` in wire mode using `schema` (§3.1.2).
     pub fn decode(
         reader: &mut WireReader<'_>,
         schema: &dyn PropertySchemaLookup,
@@ -2778,7 +2780,7 @@ impl VisualDesc {
             reader.ensure_count(count, 22)?;
             equipment.reserve(count);
             for _ in 0..count {
-                equipment.push(VisualEquipmentItem::decode(reader)?);
+                equipment.push(AppearanceEquipmentEntry::decode(reader)?);
             }
         }
         let has_appearance = reader.read_bool8()?;
@@ -2788,7 +2790,7 @@ impl VisualDesc {
             reader.ensure_count(count, 8)?;
             appearance_entries.reserve(count);
             for _ in 0..count {
-                appearance_entries.push(VisualAppearanceEntry::decode(reader)?);
+                appearance_entries.push(AppearanceMorphEntry::decode(reader)?);
             }
         }
         let anim_set_did = reader.read_u32_le()?;
@@ -2799,12 +2801,12 @@ impl VisualDesc {
             reader.ensure_count(count, 26)?;
             block_3.reserve(count);
             for _ in 0..count {
-                block_3.push(VisualBlock3Entry::decode(reader)?);
+                block_3.push(AppearanceAuxEntry::decode(reader)?);
             }
         }
         let has_extra = reader.read_bool8()?;
         let extra_visual_props = if has_extra {
-            Some(WirePropertySet::decode(reader, schema)?)
+            Some(EncodedPropertyTable::decode(reader, schema)?)
         } else {
             None
         };
@@ -2820,42 +2822,42 @@ impl VisualDesc {
     }
 }
 
-/// Per-character summary descriptor (`CharDesc`, used in `0x13D` `CharacterSet`
+/// Per-character summary descriptor (`CharacterSummaryEntry`, used in `0x13D` `CharacterSet`
 /// and `0xDD` `CharacterCreateSuccess`; `docs/specs/official-messages-world.md` §3.1.1).
 #[derive(Debug, Clone, PartialEq)]
-pub struct CharDesc {
+pub struct CharacterSummaryEntry {
     /// Persistent 64-bit character `InstanceID` (`u64 LE`).
     pub character_id: u64,
     /// Character display name (Prefixed UTF-16LE string).
     pub name: String,
-    /// Character visual appearance and equipment descriptor (`VisualDesc`, §3.1.2).
-    pub visual_desc: VisualDesc,
-    /// Character summary `WirePropertySet` (§3.1.3).
-    pub char_properties: WirePropertySet,
+    /// Character visual appearance and equipment descriptor (`EntityAppearanceDesc`, §3.1.2).
+    pub appearance_desc: EntityAppearanceDesc,
+    /// Character summary `EncodedPropertyTable` (§3.1.3).
+    pub char_properties: EncodedPropertyTable,
 }
 
-impl CharDesc {
-    /// Encodes this `CharDesc` in wire mode (§3.1.1).
+impl CharacterSummaryEntry {
+    /// Encodes this `CharacterSummaryEntry` in wire mode (§3.1.1).
     pub fn encode(&self, writer: &mut WireWriter) -> Result<(), WorldError> {
         writer.write_u64_le(self.character_id);
         writer.write_utf16le_string(&self.name)?;
-        self.visual_desc.encode(writer)?;
+        self.appearance_desc.encode(writer)?;
         self.char_properties.encode(writer)
     }
 
-    /// Decodes a `CharDesc` in wire mode using `schema` (§3.1.1).
+    /// Decodes a `CharacterSummaryEntry` in wire mode using `schema` (§3.1.1).
     pub fn decode(
         reader: &mut WireReader<'_>,
         schema: &dyn PropertySchemaLookup,
     ) -> Result<Self, WorldError> {
         let character_id = reader.read_u64_le()?;
         let name = reader.read_utf16le_string()?;
-        let visual_desc = VisualDesc::decode(reader, schema)?;
-        let char_properties = WirePropertySet::decode(reader, schema)?;
+        let appearance_desc = EntityAppearanceDesc::decode(reader, schema)?;
+        let char_properties = EncodedPropertyTable::decode(reader, schema)?;
         Ok(Self {
             character_id,
             name,
-            visual_desc,
+            appearance_desc,
             char_properties,
         })
     }
@@ -2876,11 +2878,11 @@ pub struct CharacterSetExtraEntry {
 #[derive(Debug, Clone, PartialEq)]
 pub struct CharacterSet {
     /// Free Peoples character entries (`u16 LE char_count`).
-    pub characters: Vec<CharDesc>,
+    pub characters: Vec<CharacterSummaryEntry>,
     /// Monster Play character entries (`u16 LE monster_count`).
-    pub monster_characters: Vec<CharDesc>,
-    /// Account-level `WirePropertySet` (§3.1.3).
-    pub account_props: WirePropertySet,
+    pub monster_characters: Vec<CharacterSummaryEntry>,
+    /// Account-level `EncodedPropertyTable` (§3.1.3).
+    pub account_props: EncodedPropertyTable,
     /// Account character-set status or version integer (`i32 LE`).
     pub status_or_version: i32,
     /// Trailing 16-byte account metadata tuples (`i32 LE extra_count`).
@@ -2926,19 +2928,19 @@ impl CharacterSet {
     ) -> Result<Self, WorldError> {
         reader.read_base_flags()?;
         let char_count = reader.read_u16_le()? as usize;
-        // Minimum CharDesc wire length: 8 (id) + 1 (empty name) + 9 (empty VisualDesc) + 1 (empty props) = 19 bytes.
+        // Minimum CharacterSummaryEntry wire length: 8 (id) + 1 (empty name) + 9 (empty EntityAppearanceDesc) + 1 (empty props) = 19 bytes.
         reader.ensure_count(char_count, 19)?;
         let mut characters = Vec::with_capacity(char_count);
         for _ in 0..char_count {
-            characters.push(CharDesc::decode(reader, schema)?);
+            characters.push(CharacterSummaryEntry::decode(reader, schema)?);
         }
         let monster_count = reader.read_u16_le()? as usize;
         reader.ensure_count(monster_count, 19)?;
         let mut monster_characters = Vec::with_capacity(monster_count);
         for _ in 0..monster_count {
-            monster_characters.push(CharDesc::decode(reader, schema)?);
+            monster_characters.push(CharacterSummaryEntry::decode(reader, schema)?);
         }
-        let account_props = WirePropertySet::decode(reader, schema)?;
+        let account_props = EncodedPropertyTable::decode(reader, schema)?;
         let status_or_version = reader.read_i32_le()?;
         let extra_count_i32 = reader.read_i32_le()?;
         let extra_count = usize::try_from(extra_count_i32).unwrap_or(usize::MAX / 16);
@@ -2979,8 +2981,8 @@ impl CharacterSet {
 /// Event `0xDD` (`CharacterCreateSuccess`, S→C): newly created character descriptor (§3.2.3).
 #[derive(Debug, Clone, PartialEq)]
 pub struct CharacterCreateSuccess {
-    /// Complete descriptor of the newly created character (`CharDesc`, §3.1.1).
-    pub character: CharDesc,
+    /// Complete descriptor of the newly created character (`CharacterSummaryEntry`, §3.1.1).
+    pub character: CharacterSummaryEntry,
     /// `false` (`0x00`) for Free Peoples, `true` (`0x01`) for Monster Play (`bool8`).
     pub is_monster_play: bool,
 }
@@ -3003,7 +3005,7 @@ impl CharacterCreateSuccess {
         schema: &dyn PropertySchemaLookup,
     ) -> Result<Self, WorldError> {
         reader.read_base_flags()?;
-        let character = CharDesc::decode(reader, schema)?;
+        let character = CharacterSummaryEntry::decode(reader, schema)?;
         let is_monster_play = reader.read_bool8()?;
         Ok(Self {
             character,
@@ -3071,7 +3073,7 @@ impl CheckCharacterName {
 #[derive(Debug, Clone, PartialEq)]
 pub struct CreateCharacter {
     /// Character-generation properties (§3.2.5).
-    pub creation_props: WirePropertySet,
+    pub creation_props: EncodedPropertyTable,
     /// Requested character name (Prefixed UTF-16LE string).
     pub name: String,
     /// Character-generation type (`1` = `FreePeoples`, `2` = `MonsterPlayer`, `4` = `SessionPlayer`).
@@ -3106,7 +3108,7 @@ impl CreateCharacter {
         schema: &dyn PropertySchemaLookup,
     ) -> Result<Self, WorldError> {
         reader.read_base_flags()?;
-        let creation_props = WirePropertySet::decode(reader, schema)?;
+        let creation_props = EncodedPropertyTable::decode(reader, schema)?;
         let name = reader.read_utf16le_string()?;
         let char_gen_type = reader.read_u8()?;
         let flag_a = reader.read_bool8()?;
@@ -3356,8 +3358,8 @@ impl CharacterError {
 pub struct AccountBooted {
     /// Reason code (`u32 LE`).
     pub boot_reason: u32,
-    /// Localized disconnect reason (`WireStringInfo`, §2.6).
-    pub reason_text: WireStringInfo,
+    /// Localized disconnect reason (`WireLocalizedText`, §2.6).
+    pub reason_text: WireLocalizedText,
 }
 
 impl AccountBooted {
@@ -3375,7 +3377,7 @@ impl AccountBooted {
     pub fn decode(reader: &mut WireReader<'_>) -> Result<Self, WorldError> {
         reader.read_base_flags()?;
         let boot_reason = reader.read_u32_le()?;
-        let reason_text = WireStringInfo::decode(reader)?;
+        let reason_text = WireLocalizedText::decode(reader)?;
         Ok(Self {
             boot_reason,
             reason_text,
@@ -3445,7 +3447,7 @@ pub struct SelectCharacter {
     /// Selected 64-bit `character_id` (`u64 LE`).
     pub character_id: u64,
     /// Client session/entry property set (empty `0x00` unless entry properties are attached).
-    pub client_props: WirePropertySet,
+    pub client_props: EncodedPropertyTable,
 }
 
 impl SelectCharacter {
@@ -3457,11 +3459,11 @@ impl SelectCharacter {
     pub fn new(character_id: u64) -> Self {
         Self {
             character_id,
-            client_props: WirePropertySet::new(),
+            client_props: EncodedPropertyTable::new(),
         }
     }
 
-    /// Encodes the inner event payload (`u8 0x00` + `u64 LE character_id` + `WirePropertySet`).
+    /// Encodes the inner event payload (`u8 0x00` + `u64 LE character_id` + `EncodedPropertyTable`).
     pub fn encode(&self, writer: &mut WireWriter) -> Result<(), WorldError> {
         writer.write_base_flags();
         writer.write_u64_le(self.character_id);
@@ -3475,7 +3477,7 @@ impl SelectCharacter {
     ) -> Result<Self, WorldError> {
         reader.read_base_flags()?;
         let character_id = reader.read_u64_le()?;
-        let client_props = WirePropertySet::decode(reader, schema)?;
+        let client_props = EncodedPropertyTable::decode(reader, schema)?;
         Ok(Self {
             character_id,
             client_props,
@@ -3489,11 +3491,11 @@ impl SelectCharacter {
         Ok(w.into_vec())
     }
 
-    /// Encodes this event wrapped in an uncompressed `NetBlob` payload
+    /// Encodes this event wrapped in an uncompressed fragmented blob payload
     /// (`envelopeFlags = 0x00` + inner payload; §1.1.2, Vector 7).
-    pub fn to_net_blob_bytes(&self) -> Result<Vec<u8>, WorldError> {
+    pub fn to_blob_bytes(&self) -> Result<Vec<u8>, WorldError> {
         let inner = self.to_bytes()?;
-        Ok(encode_net_blob_payload(&inner))
+        Ok(encode_blob_payload(&inner))
     }
 
     /// Decodes from a standalone inner event byte slice.
@@ -3512,8 +3514,8 @@ impl SelectCharacter {
 /// Event `0x43` (`WorldName`, S→C): world name announcement (§4.1).
 #[derive(Debug, Clone, PartialEq)]
 pub struct WorldName {
-    /// Localized world name (`WireStringInfo`, §2.6).
-    pub world_name: WireStringInfo,
+    /// Localized world name (`WireLocalizedText`, §2.6).
+    pub world_name: WireLocalizedText,
 }
 
 impl WorldName {
@@ -3529,7 +3531,7 @@ impl WorldName {
     /// Decodes the inner event payload.
     pub fn decode(reader: &mut WireReader<'_>) -> Result<Self, WorldError> {
         reader.read_base_flags()?;
-        let world_name = WireStringInfo::decode(reader)?;
+        let world_name = WireLocalizedText::decode(reader)?;
         Ok(Self { world_name })
     }
 
@@ -3549,16 +3551,16 @@ impl WorldName {
     }
 }
 
-/// Event `0xAA` (`DisplayStringInfo`, S→C): localized system/gameplay text message (§4.1).
+/// Event `0xAA` (`DisplayLocalizedText`, S→C): localized system/gameplay text message (§4.1).
 #[derive(Debug, Clone, PartialEq)]
-pub struct DisplayStringInfo {
+pub struct DisplayLocalizedText {
     /// Associated target entity `InstanceID` (`u64 LE`).
     pub target_id: u64,
-    /// Localized message (`WireStringInfo`, §2.6).
-    pub message: WireStringInfo,
+    /// Localized message (`WireLocalizedText`, §2.6).
+    pub message: WireLocalizedText,
 }
 
-impl DisplayStringInfo {
+impl DisplayLocalizedText {
     /// Numeric event ID (`0x000000AA`).
     pub const EVENT_ID: u32 = 0x0000_00AA;
 
@@ -3573,7 +3575,7 @@ impl DisplayStringInfo {
     pub fn decode(reader: &mut WireReader<'_>) -> Result<Self, WorldError> {
         reader.read_base_flags()?;
         let target_id = reader.read_u64_le()?;
-        let message = WireStringInfo::decode(reader)?;
+        let message = WireLocalizedText::decode(reader)?;
         Ok(Self { target_id, message })
     }
 
@@ -3596,8 +3598,8 @@ impl DisplayStringInfo {
 /// Event `0xFA` (`ServerLastWords`, S→C): final server shutdown/restart broadcast (§4.1).
 #[derive(Debug, Clone, PartialEq)]
 pub struct ServerLastWords {
-    /// Localized shutdown message (`WireStringInfo`, §2.6).
-    pub last_words: WireStringInfo,
+    /// Localized shutdown message (`WireLocalizedText`, §2.6).
+    pub last_words: WireLocalizedText,
 }
 
 impl ServerLastWords {
@@ -3613,7 +3615,7 @@ impl ServerLastWords {
     /// Decodes the inner event payload.
     pub fn decode(reader: &mut WireReader<'_>) -> Result<Self, WorldError> {
         reader.read_base_flags()?;
-        let last_words = WireStringInfo::decode(reader)?;
+        let last_words = WireLocalizedText::decode(reader)?;
         Ok(Self { last_words })
     }
 
@@ -3638,8 +3640,8 @@ impl ServerLastWords {
 pub struct PlayerSessionStart {
     /// Active player avatar's 64-bit `InstanceID` (`u64 LE`).
     pub player_id: u64,
-    /// Session-start property set (`WirePropertySet`, §2.7.2).
-    pub session_props: WirePropertySet,
+    /// Session-start property set (`EncodedPropertyTable`, §2.7.2).
+    pub session_props: EncodedPropertyTable,
 }
 
 impl PlayerSessionStart {
@@ -3660,7 +3662,7 @@ impl PlayerSessionStart {
     ) -> Result<Self, WorldError> {
         reader.read_base_flags()?;
         let player_id = reader.read_u64_le()?;
-        let session_props = WirePropertySet::decode(reader, schema)?;
+        let session_props = EncodedPropertyTable::decode(reader, schema)?;
         Ok(Self {
             player_id,
             session_props,
@@ -4018,11 +4020,11 @@ impl PortalSpaceReady {
 }
 
 // ---------------------------------------------------------------------------
-// Network Clock & GameTime (§4.4.1–§4.4.2)
+// Network Clock & WorldCalendarConfig (§4.4.1–§4.4.2)
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone, Copy, PartialEq)]
-struct PendingTimeSync {
+struct PendingClockSync {
     pending_server_time: f64,
     pending_receipt_raw: f64,
     forced: bool,
@@ -4032,17 +4034,17 @@ struct PendingTimeSync {
 /// seeding, forward snap, and 5-tier downward slew algorithm
 /// (`docs/specs/official-messages-world.md` §4.4.1).
 #[derive(Debug, Clone, PartialEq, Default)]
-pub struct SmoothedNetworkClock {
+pub struct NetworkClockSync {
     synced_time: f64,
     raw_elapsed: f64,
     clock_offset: f64,
     slew_rate: f64,
     slew_debt: f64,
     prev_server_time: f64,
-    pending: Option<PendingTimeSync>,
+    pending: Option<PendingClockSync>,
 }
 
-impl SmoothedNetworkClock {
+impl NetworkClockSync {
     /// Creates a new network clock seeded at `initial_server_time` and `initial_raw_time`.
     #[must_use]
     pub fn new(initial_server_time: f64, initial_raw_time: f64) -> Self {
@@ -4111,18 +4113,18 @@ impl SmoothedNetworkClock {
         }
     }
 
-    /// Stage 1 & Stage 2 (§4.4.1): stages a `TimeSync` (`0x01000000`) sample
+    /// Stage 1 & Stage 2 (§4.4.1): stages a `ClockSync` (`0x01000000`) sample
     /// received at UDP socket time `t_recv` and dequeued at control-queue time `t_dispatch`.
-    pub fn stage_time_sync(&mut self, server_time: f64, t_recv: f64, t_dispatch: f64) {
-        self.stage_time_sync_inner(server_time, t_recv, t_dispatch, false);
+    pub fn stage_clock_sync(&mut self, server_time: f64, t_recv: f64, t_dispatch: f64) {
+        self.stage_clock_sync_inner(server_time, t_recv, t_dispatch, false);
     }
 
-    /// Stages a forced `TimeSync` sample (e.g. initial `ConnectRequest` seed).
-    pub fn stage_forced_time_sync(&mut self, server_time: f64, t_recv: f64, t_dispatch: f64) {
-        self.stage_time_sync_inner(server_time, t_recv, t_dispatch, true);
+    /// Stages a forced `ClockSync` sample (e.g. initial `ConnectChallenge` seed).
+    pub fn stage_forced_clock_sync(&mut self, server_time: f64, t_recv: f64, t_dispatch: f64) {
+        self.stage_clock_sync_inner(server_time, t_recv, t_dispatch, true);
     }
 
-    fn stage_time_sync_inner(
+    fn stage_clock_sync_inner(
         &mut self,
         server_time: f64,
         t_recv: f64,
@@ -4130,7 +4132,7 @@ impl SmoothedNetworkClock {
         forced: bool,
     ) {
         let pending_server_time = (t_dispatch - t_recv) + server_time;
-        self.pending = Some(PendingTimeSync {
+        self.pending = Some(PendingClockSync {
             pending_server_time,
             pending_receipt_raw: t_dispatch,
             forced,
@@ -4138,7 +4140,7 @@ impl SmoothedNetworkClock {
     }
 
     /// Stage 3 (§4.4.1): advances the smoothed clock to local hardware time `t_now`,
-    /// applying any staged `TimeSync` sample and bleeding off `slew_debt`.
+    /// applying any staged `ClockSync` sample and bleeding off `slew_debt`.
     pub fn update_frame(&mut self, t_now: f64) -> f64 {
         let dt = (t_now - self.raw_elapsed).max(0.0);
         self.raw_elapsed = t_now;
@@ -4205,10 +4207,10 @@ impl SmoothedNetworkClock {
     }
 }
 
-/// Decoded `0x35000000` (`GameTime`) calendar record from `client_general.dat`
+/// Decoded `0x35000000` (`WorldCalendarConfig`) calendar record from `client_general.dat`
 /// (`180` bytes in the standard archive; `docs/specs/official-messages-world.md` §4.4.2).
 #[derive(Debug, Clone, PartialEq)]
-pub struct GameTimeRecord {
+pub struct WorldCalendarConfig {
     /// Record DID (`0x35000000`).
     pub did: u32,
     /// Duration of one in-game day in seconds (`11160.0` in `client_general.dat`).
@@ -4233,9 +4235,9 @@ pub struct GameTimeRecord {
     pub era_string_token: u32,
 }
 
-/// Computed time-of-day, day/night flag, and calendar date from [`GameTimeRecord`] (§4.4.2).
+/// Computed time-of-day, day/night flag, and calendar date from [`WorldCalendarConfig`] (§4.4.2).
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct GameTimeSnapshot {
+pub struct WorldCalendarSnapshot {
     /// Normalized fraction `[0.0, 1.0]` of the current in-game day (`0x00000682` `World_PresentTimeOfDay`).
     pub present_time_of_day: f32,
     /// `true` when `present_time_of_day < dawn_threshold` or `>= dusk_threshold` (`0x000001F0` `World_IsNight`).
@@ -4248,12 +4250,12 @@ pub struct GameTimeSnapshot {
     pub day_start_time: f64,
 }
 
-impl GameTimeRecord {
+impl WorldCalendarConfig {
     /// Constructs the canonical `0x35000000` record matching `client_general.dat` (§4.4.2).
     #[must_use]
     pub fn canonical() -> Self {
         Self {
-            did: GAME_TIME_RECORD_DID,
+            did: WORLD_CALENDAR_CONFIG_DID,
             day_length_seconds: 11_160.0,
             days_per_year: 360,
             calendar_epoch_offset: 3_600.0,
@@ -4318,11 +4320,11 @@ impl GameTimeRecord {
         Ok(())
     }
 
-    /// Decodes a `0x35000000` `GameTimeRecord` from `reader` (§4.4.2).
+    /// Decodes a `0x35000000` `WorldCalendarConfig` from `reader` (§4.4.2).
     pub fn decode(reader: &mut WireReader<'_>) -> Result<Self, WorldError> {
         let did = reader.read_u32_le()?;
-        if did != GAME_TIME_RECORD_DID {
-            return Err(WorldError::InvalidGameTimeDid(did));
+        if did != WORLD_CALENDAR_CONFIG_DID {
+            return Err(WorldError::InvalidWorldCalendarDid(did));
         }
         let day_length_seconds = reader.read_f32_le()?;
         let days_per_year = reader.read_i32_le()?;
@@ -4389,7 +4391,7 @@ impl GameTimeRecord {
     /// Evaluates the calendar year, day of year, time-of-day fraction `[0.0, 1.0)`,
     /// and `is_night` flag at `dilated_time` (§4.4.2 steps 3–4).
     #[must_use]
-    pub fn evaluate(&self, dilated_time: f64) -> GameTimeSnapshot {
+    pub fn evaluate(&self, dilated_time: f64) -> WorldCalendarSnapshot {
         let day_len = if self.day_length_seconds > 0.0 {
             f64::from(self.day_length_seconds)
         } else {
@@ -4407,7 +4409,7 @@ impl GameTimeRecord {
         let present_time_of_day = ((dilated_time - day_start_time) / day_len) as f32;
         let is_night = self.is_night(present_time_of_day);
 
-        GameTimeSnapshot {
+        WorldCalendarSnapshot {
             present_time_of_day,
             is_night,
             calendar_year,
@@ -4421,7 +4423,7 @@ impl GameTimeRecord {
 // Object Lifecycle & Movement (§5.1–§5.6)
 // ---------------------------------------------------------------------------
 
-/// A single framed sub-event inside a `0x0D` (`EnterAOI`) or `0x4C` (`EventBatch`)
+/// A single framed sub-event inside a `0x0D` (`EntityEntryBatch`) or `0x4C` (`EntityBatchUpdate`)
 /// compound batch event (`docs/specs/official-messages-world.md` §5.1).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SubEventFrame {
@@ -4483,18 +4485,18 @@ impl SubEventFrame {
     }
 }
 
-/// Compound sub-event batch (`0x0D` `EnterAOI` or `0x4C` `EventBatch`, S→C; §5.1).
+/// Compound sub-event batch (`0x0D` `EntityEntryBatch` or `0x4C` `EntityBatchUpdate`, S→C; §5.1).
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SubEventBatch {
+pub struct EntityBatchSubEvents {
     /// Ordered framed sub-events.
     pub sub_events: Vec<SubEventFrame>,
 }
 
-impl SubEventBatch {
-    /// Event ID for `EnterAOI` (`0x0000000D`).
-    pub const EVENT_ID_ENTER_AOI: u32 = 0x0000_000D;
-    /// Event ID for `EventBatch` (`0x0000004C`).
-    pub const EVENT_ID_EVENT_BATCH: u32 = 0x0000_004C;
+impl EntityBatchSubEvents {
+    /// Event ID for `EntityEntryBatch` (`0x0000000D`).
+    pub const EVENT_ID_ENTITY_ENTRY_BATCH: u32 = 0x0000_000D;
+    /// Event ID for `EntityBatchUpdate` (`0x0000004C`).
+    pub const EVENT_ID_ENTITY_BATCH_UPDATE: u32 = 0x0000_004C;
 
     /// Encodes the compound batch inner payload (§5.1).
     pub fn encode(&self, writer: &mut WireWriter) -> Result<(), WorldError> {
@@ -4584,11 +4586,11 @@ impl EntityCreate {
     }
 }
 
-/// Event `0x52` (`EntityInitialProperties`, S→C): delivers a wire `PropertySet` for an entity (§5.2.2).
+/// Event `0x52` (`EntityInitialProperties`, S→C): delivers a wire `EncodedPropertyTable` for an entity (§5.2.2).
 #[derive(Debug, Clone, PartialEq)]
 pub struct EntityInitialProperties {
-    /// Dynamic property overrides (`WirePropertySet`, §2.7.2).
-    pub properties: WirePropertySet,
+    /// Dynamic property overrides (`EncodedPropertyTable`, §2.7.2).
+    pub properties: EncodedPropertyTable,
 }
 
 impl EntityInitialProperties {
@@ -4607,7 +4609,7 @@ impl EntityInitialProperties {
         schema: &dyn PropertySchemaLookup,
     ) -> Result<Self, WorldError> {
         reader.read_base_flags()?;
-        let properties = WirePropertySet::decode(reader, schema)?;
+        let properties = EncodedPropertyTable::decode(reader, schema)?;
         Ok(Self { properties })
     }
 
@@ -4627,8 +4629,8 @@ impl EntityInitialProperties {
     }
 }
 
-/// Event `0x40` (`DeleteEntity`, S→C): 1-byte entity deletion / leave-AOI event
-/// (target `InstanceID` is carried in the enclosing `NetBlob`'s `recipientId`; §5.3).
+/// Event `0x40` (`DeleteEntity`, S→C): 1-byte entity deletion / entity exit event
+/// (target `InstanceID` is carried in the enclosing fragmented blob's `recipientId`; §5.3).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct DeleteEntity;
 
@@ -4948,8 +4950,8 @@ pub struct ActionPayload {
     pub target_id_a: u64,
     /// Bit 14 (`0x4000`): secondary / item / source `InstanceID` (`u64 LE`, defaults to `0`).
     pub target_id_b: u64,
-    /// Bit 1 (`0x0002`): optional per-action `WirePropertySet`.
-    pub action_props: Option<WirePropertySet>,
+    /// Bit 1 (`0x0002`): optional per-action `EncodedPropertyTable`.
+    pub action_props: Option<EncodedPropertyTable>,
     /// Bit 3 (`0x0008`): action state code (4-tier VLE, defaults to `3`).
     pub state_code: u32,
     /// Bit 4 (`0x0010`): animation speed / time-scale multiplier (`f32 LE`, defaults to `1.0`).
@@ -5055,7 +5057,7 @@ impl ActionPayload {
             0
         };
         let action_props = if (flags & 0x0002) != 0 {
-            Some(WirePropertySet::decode(reader, schema)?)
+            Some(EncodedPropertyTable::decode(reader, schema)?)
         } else {
             None
         };
@@ -5103,7 +5105,7 @@ pub struct ClientMoveCommand {
     pub sequence: u32,
     /// Movement state byte for each of the 4 history slots (`0..=3`).
     pub move_state: [u8; 4],
-    /// Per-slot content bitmask (`bit 0 = queued actions`, `bit 4 = PropertySet`).
+    /// Per-slot content bitmask (`bit 0 = queued actions`, `bit 4 = EncodedPropertyTable`).
     pub slot_flags: [u8; 4],
     /// Quantized movement/turn axis A for slots `0..=3`.
     pub axis_a: [u8; 4],
@@ -5113,8 +5115,8 @@ pub struct ClientMoveCommand {
     pub axis_c: [u8; 4],
     /// Queued `(CompactDid, ActionPayload)` lists for slots `0..=3` (serialized for all 4 slots if any slot has bit `0x01` set).
     pub slot_actions: [Vec<(CompactDid, ActionPayload)>; 4],
-    /// Optional per-slot `WirePropertySet` for slots whose `slot_flags[i]` has bit `0x10` set.
-    pub slot_props: [Option<WirePropertySet>; 4],
+    /// Optional per-slot `EncodedPropertyTable` for slots whose `slot_flags[i]` has bit `0x10` set.
+    pub slot_props: [Option<EncodedPropertyTable>; 4],
     /// 32-bit movement trailer word (`u32 LE`).
     pub trailer_u32: u32,
 }
@@ -5193,7 +5195,7 @@ impl ClientMoveCommand {
                 if let Some(props) = &self.slot_props[i] {
                     props.encode(writer)?;
                 } else {
-                    WirePropertySet::new().encode(writer)?;
+                    EncodedPropertyTable::new().encode(writer)?;
                 }
             }
         }
@@ -5239,10 +5241,10 @@ impl ClientMoveCommand {
             }
         }
 
-        let mut slot_props: [Option<WirePropertySet>; 4] = [None, None, None, None];
+        let mut slot_props: [Option<EncodedPropertyTable>; 4] = [None, None, None, None];
         for (slot_prop, &flag) in slot_props.iter_mut().zip(slot_flags.iter()) {
             if (flag & 0x10) != 0 {
-                *slot_prop = Some(WirePropertySet::decode(reader, schema)?);
+                *slot_prop = Some(EncodedPropertyTable::decode(reader, schema)?);
             }
         }
 
@@ -5278,21 +5280,21 @@ impl ClientMoveCommand {
     }
 }
 
-/// Event `0x89` (`VisualDescUpdate`, S→C): entity visual appearance and equipment descriptor update (§5.2.3).
+/// Event `0x89` (`EntityAppearanceDescUpdate`, S→C): entity visual appearance and equipment descriptor update (§5.2.3).
 #[derive(Debug, Clone, PartialEq, Default)]
-pub struct VisualDescUpdate {
-    /// Complete [`VisualDesc`] for the target entity (§3.1.2).
-    pub visual_desc: VisualDesc,
+pub struct EntityAppearanceDescUpdate {
+    /// Complete [`EntityAppearanceDesc`] for the target entity (§3.1.2).
+    pub appearance_desc: EntityAppearanceDesc,
 }
 
-impl VisualDescUpdate {
+impl EntityAppearanceDescUpdate {
     /// Numeric event ID (`0x00000089`).
     pub const EVENT_ID: u32 = 0x0000_0089;
 
     /// Encodes the inner event payload.
     pub fn encode(&self, writer: &mut WireWriter) -> Result<(), WorldError> {
         writer.write_base_flags();
-        self.visual_desc.encode(writer)
+        self.appearance_desc.encode(writer)
     }
 
     /// Decodes the inner event payload using `schema`.
@@ -5301,8 +5303,8 @@ impl VisualDescUpdate {
         schema: &dyn PropertySchemaLookup,
     ) -> Result<Self, WorldError> {
         reader.read_base_flags()?;
-        let visual_desc = VisualDesc::decode(reader, schema)?;
-        Ok(Self { visual_desc })
+        let appearance_desc = EntityAppearanceDesc::decode(reader, schema)?;
+        Ok(Self { appearance_desc })
     }
 
     /// Encodes to a standalone byte vector.
@@ -5536,8 +5538,8 @@ impl ActionStatusResponse {
 /// `0x147` `PropertyInsertElement`, `0x149` `PropertyRemoveElement`, S→C; §5.7).
 #[derive(Debug, Clone, PartialEq)]
 pub struct SinglePropertyUpdate {
-    /// Single `(CompactPid, WirePropertyValue)` entry (§2.7.2).
-    pub entry: WirePropertyEntry,
+    /// Single `(CompactPid, EncodedPropertyValue)` entry (§2.7.2).
+    pub entry: EncodedPropertyEntry,
 }
 
 impl SinglePropertyUpdate {
@@ -5554,9 +5556,9 @@ impl SinglePropertyUpdate {
 
     /// Creates a `SinglePropertyUpdate` for `(pid, value)`.
     #[must_use]
-    pub fn new(pid: u32, value: WirePropertyValue) -> Self {
+    pub fn new(pid: u32, value: EncodedPropertyValue) -> Self {
         Self {
-            entry: WirePropertyEntry::new(pid, value),
+            entry: EncodedPropertyEntry::new(pid, value),
         }
     }
 
@@ -5572,7 +5574,7 @@ impl SinglePropertyUpdate {
         schema: &dyn PropertySchemaLookup,
     ) -> Result<Self, WorldError> {
         reader.read_base_flags()?;
-        let entry = WirePropertyEntry::decode(reader, schema)?;
+        let entry = EncodedPropertyEntry::decode(reader, schema)?;
         Ok(Self { entry })
     }
 

@@ -1417,6 +1417,15 @@ test = false
 doc = false
 bench = false
 
+# --- M8 cleanup: tessera-compat PE version-resource reader (decision 0042 item 1) ---
+
+[[bin]]
+name = "compat_version_resource"
+path = "fuzz_targets/compat_version_resource.rs"
+test = false
+doc = false
+bench = false
+
 # --- tessera-client local time for Turbine.Engine.GetDate (apps/client/src/plugins/localtime.rs, included by path; lua-plugin-api.md §12) ---
 
 [[bin]]

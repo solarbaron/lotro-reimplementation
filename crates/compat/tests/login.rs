@@ -7,25 +7,27 @@
 use std::collections::VecDeque;
 use std::path::Path;
 
-use tessera_compat::login::{
-    ArgTemplateParams, COMPRESSION_DICT_SCHEMA_GUID, CompressionDictionaryHeader, Credentials,
-    DAT_DIDVER_DESCRIPTOR_OFFSET, DAT_SUPERBLOCK_MAGIC, DAT_SUPERBLOCK_OFFSET,
-    DEFAULT_TICKET_LIFETIME_SEC, DID_MASTER_MAP_3_COMPRESSION, DID_VERSION_PRIMARY,
-    DID_VERSION_SECONDARY, DidMap3Table, GameSubscription, HttpClient, HttpMethod, HttpRequest,
-    HttpResponse, INVALID_LOGIN_SERVER_SENTINEL, LauncherConfig, LoginDriver, LoginError,
-    LoginFailureClass, LoginStateId, MAX_XML_DEPTH, MAX_XML_INPUT_BYTES, MAX_XML_ITEMS,
-    QueueEvaluation, QueueResult, RefreshOutcome, RegistryTicketReader, RemoteLauncherConfig,
-    SOAP_ACTION_GET_DATACENTERS, SOAP_ACTION_REFRESH_TICKET, SessionHandoff, TicketIntakeArgs,
-    TicketRefresher, UserPreferences, VersionInfo, WorldStatus, build_get_datacenters_request,
-    build_launch_argv, build_leave_queue_body, build_login_account_request,
-    build_take_a_number_body, check_billing_role, encode_version_send_payload,
-    extract_didver_from_dat_file, extract_didver_from_dat_header, extract_netver_from_executable,
-    extract_netver_from_pe_bytes, fetch_world_status, is_rfc1918_queue_url, language_to_feed_code,
-    parse_dat_superblock_didver_descriptor, parse_get_datacenters_response,
-    parse_login_account_response, resolve_compression_dictionary, resolve_install_language,
-    resolve_ticket_intake, rewrite_status_server_fallback_url, split_arg_template_argv,
-    substitute_arg_template,
+use tessera_compat::login::soap_encoder::{
+    SOAP_ACTION_GET_DATACENTERS, SOAP_ACTION_REFRESH_TICKET, build_get_datacenters_request,
+    build_login_account_request,
 };
+use tessera_compat::login::{
+    ArgTemplateParams, Credentials, DAT_DIDVER_DESCRIPTOR_OFFSET, DAT_SUPERBLOCK_MAGIC,
+    DAT_SUPERBLOCK_OFFSET, DEFAULT_TICKET_LIFETIME_SEC, DID_MASTER_MAP_3_COMPRESSION,
+    DID_VERSION_PRIMARY, DID_VERSION_SECONDARY, DidMap3Table, GameSubscription, HttpClient,
+    HttpMethod, HttpRequest, HttpResponse, INVALID_LOGIN_SERVER_SENTINEL, LauncherConfig,
+    LoginDriver, LoginError, LoginFailureClass, LoginStateId, MAX_XML_DEPTH, MAX_XML_INPUT_BYTES,
+    MAX_XML_ITEMS, PREFIX_TREE_DICT_SCHEMA_GUID, PrefixTreeDictionaryHeader, QueueEvaluation,
+    QueueResult, RefreshOutcome, RegistryTicketReader, RemoteLauncherConfig, SessionHandoff,
+    TicketIntakeArgs, TicketRefresher, UserPreferences, VersionInfo, WorldStatus,
+    build_launch_argv, build_leave_queue_body, build_take_a_number_body, check_billing_role,
+    encode_version_response_payload, extract_didver_from_dat_file, extract_didver_from_dat_header,
+    fetch_world_status, is_rfc1918_queue_url, language_to_feed_code,
+    parse_dat_superblock_didver_descriptor, parse_get_datacenters_response,
+    parse_login_account_response, resolve_install_language, resolve_prefix_tree_dictionary,
+    resolve_ticket_intake, split_arg_template_argv, substitute_arg_template,
+};
+use tessera_compat::version_resource::read_version_resource_from_file;
 
 type RecordedRequest = (String, HttpMethod, Vec<(String, String)>, Vec<u8>);
 
@@ -285,30 +287,19 @@ fn v2_get_datacenters_soap_request_and_response() {
     );
 }
 
-/// Vector `V3` — `StatusServer.aspx` fallback URL rewrite and `<Status>` parsing.
+/// Vector `V3` — `StatusServer.aspx` `<Status>` parsing; no fallback URL is
+/// built from built-in fragments (decision 0042 item 3).
 #[test]
-fn v3_status_server_fallback_url_rewrite_and_status_parsing() {
-    let gls_service = "https://gls.example.invalid/GLS.DataCenterServer/Service.asmx";
+fn v3_status_server_query_and_status_parsing() {
     let primary_status_url =
         "http://legacy-status.example.invalid/GLS.DataCenterServer/StatusServer.aspx?s=shard-alpha";
 
-    let fallback_url = rewrite_status_server_fallback_url(primary_status_url, gls_service).unwrap();
-    assert_eq!(
-        fallback_url,
-        "https://gls.example.invalid/StatusServer.aspx?s=shard-alpha"
-    );
-
     let mut http = MockHttpClient::default();
-    http.push_ok(404, b"Not Found".to_vec());
     http.push_ok(200, V3_STATUS_XML.as_bytes().to_vec());
 
-    let status = fetch_world_status(&mut http, primary_status_url, gls_service).unwrap();
-    assert_eq!(http.requests.len(), 2);
+    let status = fetch_world_status(&mut http, primary_status_url).unwrap();
+    assert_eq!(http.requests.len(), 1);
     assert_eq!(http.requests[0].0, primary_status_url);
-    assert_eq!(
-        http.requests[1].0,
-        "https://gls.example.invalid/StatusServer.aspx?s=shard-alpha"
-    );
 
     assert_eq!(status.login_server(), "login-a.example.invalid:9001");
     assert_eq!(
@@ -450,10 +441,10 @@ fn v6_refresh_ticket_soap_exchange_and_backoff_arithmetic() {
     assert!(refresher.parsed_result_flag());
 }
 
-/// Vector `V7` — `netver`/`didver` serialization in `VersionSend` (`0x0000012C`)
+/// Vector `V7` — `netver`/`didver` serialization in `VersionResponse` (`0x0000012C`)
 /// and `0x10000002`/`0x10000001` dictionary resolution (§2.4, invariants `I11` & `I16`, §7.2).
 #[test]
-fn v7_version_send_and_compression_dictionary_resolution() {
+fn v7_version_response_and_prefix_tree_dictionary_resolution() {
     // 1. Synthetic 20-byte .dat superblock descriptor at file offset 0x17C..0x18F:
     let descriptor_20: [u8; 20] = [
         0x04, 0x03, 0x02, 0x01, 0x06, 0x05, 0x08, 0x07, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F,
@@ -470,8 +461,8 @@ fn v7_version_send_and_compression_dictionary_resolution() {
         0xAA, 0xAA, 0xBB, 0xCC, 0xDD, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0x00,
         0xAB, 0xCD, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x09, 0x00, 0x00, 0x00,
     ];
-    let hdr_0e010000 = CompressionDictionaryHeader::parse(&dict_0e010000).unwrap();
-    assert_eq!(hdr_0e010000.schema_guid, COMPRESSION_DICT_SCHEMA_GUID);
+    let hdr_0e010000 = PrefixTreeDictionaryHeader::parse(&dict_0e010000).unwrap();
+    assert_eq!(hdr_0e010000.schema_guid, PREFIX_TREE_DICT_SCHEMA_GUID);
     assert_eq!(
         hdr_0e010000.dict_guid,
         [
@@ -489,11 +480,11 @@ fn v7_version_send_and_compression_dictionary_resolution() {
         0xAA, 0x10, 0x20, 0x30, 0x40, 0x50, 0x60, 0x70, 0x80, 0x90, 0xA0, 0xB0, 0xC0, 0xD0, 0xE0,
         0xF0, 0x01, 0x01, 0x00, 0x01, 0x0E, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
     ];
-    let hdr_0e010002 = CompressionDictionaryHeader::parse(&dict_0e010002_stub).unwrap();
+    let hdr_0e010002 = PrefixTreeDictionaryHeader::parse(&dict_0e010002_stub).unwrap();
     assert!(hdr_0e010002.is_deferred_redirect());
     assert_eq!(hdr_0e010002.deferred_target_did, 0x0E01_0001);
 
-    // 4. Construct VersionInfo with netver = "1234" and verify 56-byte versionString and 57-byte VersionSend payload:
+    // 4. Construct VersionInfo with netver = "1234" and verify 56-byte versionString and 57-byte VersionResponse payload:
     let info = VersionInfo::from_dat_superblock_descriptor(
         "1234",
         &descriptor_20,
@@ -511,7 +502,7 @@ fn v7_version_send_and_compression_dictionary_resolution() {
     );
     assert_eq!(info.version_string().len(), 56);
 
-    let encoded = info.encode_version_send_payload();
+    let encoded = info.encode_version_response_payload().unwrap();
     assert_eq!(encoded.len(), 57);
     assert_eq!(encoded[0], 0x38);
     assert_eq!(
@@ -622,26 +613,31 @@ fn i3_login_server_url_placeholder_rejection() {
     assert_eq!(err.failure_class(), LoginFailureClass::F06_WORLD_CLOSED);
 }
 
-/// Invariant `I4` (`StatusServer.aspx` fallback rewrite): On HTTP 404 or empty
-/// body, retries once against the rewritten fallback URL.
+/// Invariant `I4` as changed by decision 0042 item 3: on HTTP 404 or an
+/// empty body the status query fails with `F06_WORLD_CLOSED` and a reason
+/// naming the missing configuration value. No second request is made to a URL
+/// built from built-in path fragments.
 #[test]
-fn i4_status_server_fallback_rewrite() {
-    let gls_url = "https://gls.example.invalid/GLS.DataCenterServer/Service.asmx";
+fn i4_status_server_failure_builds_no_fallback_url() {
     let world_status_url =
         "http://unreachable.example.invalid/GLS.DataCenterServer/StatusServer.aspx?s=world-1";
 
-    // Case 1: Empty body on primary GET triggers fallback once.
-    let mut http = MockHttpClient::default();
-    http.push_ok(200, Vec::new());
-    http.push_ok(200, V3_STATUS_XML.as_bytes().to_vec());
+    for (code, body) in [(200u16, Vec::new()), (404, b"Not Found".to_vec())] {
+        let mut http = MockHttpClient::default();
+        http.push_ok(code, body);
+        http.push_ok(200, V3_STATUS_XML.as_bytes().to_vec());
 
-    let status = fetch_world_status(&mut http, world_status_url, gls_url).unwrap();
-    assert_eq!(http.requests.len(), 2);
-    assert_eq!(
-        http.requests[1].0,
-        "https://gls.example.invalid/StatusServer.aspx?s=world-1"
-    );
-    assert_eq!(status.login_server(), "login-a.example.invalid:9001");
+        let err = fetch_world_status(&mut http, world_status_url).unwrap_err();
+        assert_eq!(err.failure_class(), LoginFailureClass::F06_WORLD_CLOSED);
+        assert!(err.to_string().contains("configuration"), "{err}");
+        assert_eq!(http.requests.len(), 1, "no fallback request may be sent");
+    }
+
+    // An empty StatusServerUrl is refused before any request.
+    let mut http = MockHttpClient::default();
+    let err = fetch_world_status(&mut http, "  ").unwrap_err();
+    assert_eq!(err.failure_class(), LoginFailureClass::F06_WORLD_CLOSED);
+    assert!(http.requests.is_empty());
 }
 
 /// Invariant `I5` (Subscription `Name` vs `username`): `GameSubscription/Name`
@@ -954,13 +950,13 @@ fn i10_refresh_ticket_reset_on_success() {
     );
 }
 
-/// Invariant `I11` (`VersionSend` string format): Given a 20-byte `.dat`
+/// Invariant `I11` (`VersionResponse` string format): Given a 20-byte `.dat`
 /// superblock descriptor (`[guid_16, version_u32_le]`) at `0x17C..0x18F` and a
-/// `<netver_string>`, the combined version string serialized into `VersionSend`
+/// `<netver_string>`, the combined version string serialized into `VersionResponse`
 /// (`0x0000012C`) matches the exact 56-byte ASCII pattern
 /// `netver:<netver>; didver:<XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX>` (omitting
 /// the `u32` archive version integer from `0x18C`) and is prefixed on the wire
-/// by its `VLUInt` byte length (`0x38` for a 56-byte string).
+/// by its `VariableU32` byte length (`0x38` for a 56-byte string).
 #[test]
 fn i11_version_string_format() {
     let payload = [
@@ -984,7 +980,7 @@ fn i11_version_string_format() {
         "netver:1234; didver:A1B2C3D4-E5F6-7890-ABCD-EF0123456789"
     );
     assert_eq!(info.version_string().len(), 56);
-    let encoded = info.encode_version_send_payload();
+    let encoded = info.encode_version_response_payload().unwrap();
     assert_eq!(encoded.len(), 57);
     assert_eq!(encoded[0], 0x38);
     assert_eq!(&encoded[1..], info.version_string().as_bytes());
@@ -994,12 +990,22 @@ fn i11_version_string_format() {
         [DID_VERSION_PRIMARY, DID_VERSION_SECONDARY]
     );
 
-    // Also test 2-byte VLUInt length prefix (128 <= L <= 16383)
+    // Also test 2-byte VariableU32 length prefix (128 <= L <= 16383)
     let long_str = "a".repeat(200);
-    let long_encoded = encode_version_send_payload(&long_str);
+    let long_encoded = encode_version_response_payload(&long_str).unwrap();
     assert_eq!(long_encoded.len(), 202);
     assert_eq!(long_encoded[0], 0x80);
     assert_eq!(long_encoded[1], 200);
+
+    // The largest two-byte prefix is accepted; anything longer is refused
+    // instead of guessing the four-byte form.
+    let max_str = "b".repeat(0x3FFF);
+    let max_encoded = encode_version_response_payload(&max_str).unwrap();
+    assert_eq!(&max_encoded[..2], &[0xBF, 0xFF]);
+    assert_eq!(max_encoded.len(), 0x3FFF + 2);
+    let too_long = "c".repeat(0x4000);
+    let err = encode_version_response_payload(&too_long).unwrap_err();
+    assert_eq!(err.failure_class(), LoginFailureClass::F02_CONFIG_INVALID);
 }
 
 /// Invariant `I12` (Credential & ticket redaction): Formatting any error, debug,
@@ -1184,11 +1190,9 @@ fn i15_arg_template_legacy_aliases_and_argv_filtering() {
 ///   and `0x10000001` -> `0x0E010002`.
 /// - When `0x0E010002` has a non-zero `deferred_target_did` (`0x0E010001`) at
 ///   `+0x20..+0x23`, the resolver follows the redirect and loads `0x0E010001`.
-/// - Also tests `.dat` superblock `extract_didver_from_dat_header` and synthetic
-///   PE-32+ `extract_netver_from_pe_bytes` (primary `.text` `LEA` + `CALL` scan
-///   and secondary `.rdata` `off_err + 0x20` fallback).
+/// - Also tests `.dat` superblock `extract_didver_from_dat_header`.
 #[test]
-fn i16_compression_dictionary_did_map_and_deferred_redirection() {
+fn i16_prefix_tree_dictionary_did_map_and_deferred_redirection() {
     // 1. Build DID Map 3 (0x28000010) record with optional trailing name table:
     let mut map_bytes = Vec::new();
     map_bytes.extend_from_slice(&0x2800_0010u32.to_le_bytes()); // self_did
@@ -1258,7 +1262,7 @@ fn i16_compression_dictionary_did_map_and_deferred_redirection() {
     };
 
     // Resolve outgoing (0x10000002 -> 0x0E010000 directly)
-    let out_dict = resolve_compression_dictionary(&map, DID_VERSION_PRIMARY, lookup).unwrap();
+    let out_dict = resolve_prefix_tree_dictionary(&map, DID_VERSION_PRIMARY, lookup).unwrap();
     assert_eq!(out_dict.initial_did, 0x0E01_0000);
     assert_eq!(out_dict.resolved_did, 0x0E01_0000);
     assert_eq!(
@@ -1269,7 +1273,7 @@ fn i16_compression_dictionary_did_map_and_deferred_redirection() {
     assert_eq!(out_dict.header.node_count, Some(1386));
 
     // Resolve incoming (0x10000001 -> 0x0E010002 redirect -> 0x0E010001 concrete)
-    let in_dict = resolve_compression_dictionary(&map, DID_VERSION_SECONDARY, lookup).unwrap();
+    let in_dict = resolve_prefix_tree_dictionary(&map, DID_VERSION_SECONDARY, lookup).unwrap();
     assert_eq!(in_dict.initial_did, 0x0E01_0002);
     assert_eq!(in_dict.resolved_did, 0x0E01_0001);
     assert_eq!(
@@ -1294,63 +1298,6 @@ fn i16_compression_dictionary_did_map_and_deferred_redirection() {
     let (guid, ver) = extract_didver_from_dat_header(&dat_hdr).unwrap();
     assert_eq!(guid, "AC322905-A93D-48FB-9902-7D32EEAC1C4E");
     assert_eq!(ver, 1100);
-
-    // 6. Verify synthetic PE-32+ netver extraction (both primary .text LEA+CALL and secondary .rdata fallback):
-    let build_synthetic_pe = |use_text_xref: bool| -> Vec<u8> {
-        let mut pe = vec![0u8; 0x600];
-        pe[0..2].copy_from_slice(b"MZ");
-        pe[0x3C..0x40].copy_from_slice(&0x80u32.to_le_bytes()); // e_lfanew = 0x80
-        pe[0x80..0x84].copy_from_slice(b"PE\0\0");
-        // COFF header at 0x84..0x98: NumberOfSections = 2, SizeOfOptionalHeader = 0xF0
-        pe[0x86..0x88].copy_from_slice(&2u16.to_le_bytes());
-        pe[0x94..0x96].copy_from_slice(&0xF0u16.to_le_bytes());
-        // Optional header at 0x98..0x188: magic = 0x020B (PE-32+)
-        pe[0x98..0x9A].copy_from_slice(&0x020Bu16.to_le_bytes());
-        // Section 0 (.text) at 0x188..0x1B0: RVA = 0x1000, raw = 0x200..0x400
-        pe[0x188..0x18E].copy_from_slice(b".text\0");
-        pe[0x190..0x194].copy_from_slice(&0x200u32.to_le_bytes());
-        pe[0x194..0x198].copy_from_slice(&0x1000u32.to_le_bytes());
-        pe[0x198..0x19C].copy_from_slice(&0x200u32.to_le_bytes());
-        pe[0x19C..0x1A0].copy_from_slice(&0x200u32.to_le_bytes());
-        // Section 1 (.rdata) at 0x1B0..0x1D8: RVA = 0x2000, raw = 0x400..0x600
-        pe[0x1B0..0x1B6].copy_from_slice(b".rdata");
-        pe[0x1B8..0x1BC].copy_from_slice(&0x200u32.to_le_bytes());
-        pe[0x1BC..0x1C0].copy_from_slice(&0x2000u32.to_le_bytes());
-        pe[0x1C0..0x1C4].copy_from_slice(&0x200u32.to_le_bytes());
-        pe[0x1C4..0x1C8].copy_from_slice(&0x400u32.to_le_bytes());
-
-        // Place anchor at .rdata + 0x10 (file 0x410, RVA 0x2010):
-        pe[0x410..0x430].copy_from_slice(b"Cannot set version string twice\0");
-        if use_text_xref {
-            // Place primary netver at .rdata + 0x80 (file 0x480, RVA 0x2080):
-            pe[0x480..0x494].copy_from_slice(b"1701.0056.3422.4000\0");
-            // Function at .text + 0x00 (file 0x200, RVA 0x1000):
-            // LEA RDX, [RIP + disp] targeting RVA 0x2010 from next RVA 0x1007 -> disp = 0x1009
-            pe[0x200..0x203].copy_from_slice(&[0x48, 0x8D, 0x15]);
-            pe[0x203..0x207].copy_from_slice(&0x1009i32.to_le_bytes());
-            pe[0x207] = 0xC3;
-            // Caller at .text + 0x20 (file 0x220, RVA 0x1020):
-            // LEA RCX, [RIP + disp] targeting RVA 0x2080 from next RVA 0x1027 -> disp = 0x1059
-            pe[0x220..0x223].copy_from_slice(&[0x48, 0x8D, 0x0D]);
-            pe[0x223..0x227].copy_from_slice(&0x1059i32.to_le_bytes());
-            // CALL rel32 targeting RVA 0x1000 from next RVA 0x102C -> rel32 = -0x2C
-            pe[0x227] = 0xE8;
-            pe[0x228..0x22C].copy_from_slice(&(-0x2Ci32).to_le_bytes());
-        } else {
-            // Secondary layout fallback at off_err + 0x20 (file 0x430):
-            pe[0x430..0x444].copy_from_slice(b"1701.0056.3422.4000\0");
-        }
-        pe
-    };
-
-    assert_eq!(
-        extract_netver_from_pe_bytes(&build_synthetic_pe(true)).unwrap(),
-        "1701.0056.3422.4000"
-    );
-    assert_eq!(
-        extract_netver_from_pe_bytes(&build_synthetic_pe(false)).unwrap(),
-        "1701.0056.3422.4000"
-    );
 }
 
 // ============================================================================
@@ -1564,7 +1511,6 @@ fn leave_queue_body_encoding_and_hostile_xml_bounds() {
 // ============================================================================
 
 #[test]
-#[ignore = "M8 is paused by incident 0041 (docs/decisions/0041-incident-m8-spec-contamination.md): the partly built netver discovery fails on the current install; re-enable when official-login.md is re-accepted"]
 fn real_data_discover_launcher_config_and_language() {
     let Some(game_dir) = std::env::var_os("TESSERA_GAME_DIR") else {
         return;
@@ -1594,10 +1540,19 @@ fn real_data_discover_launcher_config_and_language() {
         assert!(archive_ver > 0);
     }
 
+    // Decision 0042 item 1: the version resource of the client executable is
+    // read (never scanned). The test asserts only what the reader guarantees:
+    // the resource parses and its string table is not empty. Contents are not
+    // printed.
     let exe_64 = root.join("x64").join("lotroclient64.exe");
     if exe_64.is_file() {
-        let netver = extract_netver_from_executable(&exe_64)
-            .expect("x64/lotroclient64.exe must contain a valid <netver_string>");
-        assert!((1..=64).contains(&netver.len()));
+        let resource = read_version_resource_from_file(&exe_64)
+            .expect("the version resource of x64/lotroclient64.exe must parse");
+        let pairs = resource.string_pairs().count();
+        assert!(
+            pairs > 0,
+            "the version resource string table must not be empty"
+        );
+        eprintln!("x64/lotroclient64.exe version resource: {pairs} string(s)");
     }
 }

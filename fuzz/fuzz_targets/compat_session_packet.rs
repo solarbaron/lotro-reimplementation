@@ -1,26 +1,29 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+//! Fuzz target for `tessera_compat::session`: datagram framing, optional
+//! headers, blob fragments and reassembly, 3DES, the connection state machine,
+//! the multiplexer and message-envelope unpacking on arbitrary hostile bytes.
 #![no_main]
 
 use std::net::{Ipv4Addr, SocketAddrV4};
 
 use libfuzzer_sys::fuzz_target;
 use tessera_compat::session::{
-    ConnectRequestHeader, ConnectResponseHeader, LoginRequestHeader, NetBlobFragment,
-    NetBlobFragmentHeader, NetBlobReassembler, OPCODE_BATCH_CONTAINER, OPCODE_SINGLE_WRAPPER,
-    OptionalHeaders, ProtoHeader, ReferralHeader, RuntimeBitTreeTables, SessionConnection,
-    calc_checksum, decode_datagram, decode_net_message, decode_packed_dword, des3_cbc_decrypt,
-    dispatch_net_message,
+    BlobFragment, BlobFragmentHeader, BlobReassembler, ConnectAcceptHeader, ConnectChallengeHeader,
+    DatagramHeader, OPCODE_BATCH_CONTAINER, OPCODE_SINGLE_WRAPPER, OptionalHeaders,
+    RuntimeBitTreeTables, SessionAuthHeader, SessionConnection, SessionMultiplexer,
+    WorldReferralHeader, compute_datagram_checksum, decode_datagram, decode_message,
+    decode_variable_u32, des3_cbc_decrypt, dispatch_message,
 };
 
 fuzz_target!(|data: &[u8]| {
-    let _ = calc_checksum(data);
-    let _ = decode_packed_dword(data);
-    let _ = ProtoHeader::from_wire_bytes(data);
-    let _ = LoginRequestHeader::decode(data);
-    let _ = ConnectRequestHeader::decode(data);
-    let _ = ConnectResponseHeader::decode(data);
-    let _ = ReferralHeader::decode(data);
-    let _ = NetBlobFragmentHeader::decode(data);
+    let _ = compute_datagram_checksum(data);
+    let _ = decode_variable_u32(data);
+    let _ = DatagramHeader::from_wire_bytes(data);
+    let _ = SessionAuthHeader::decode(data);
+    let _ = ConnectChallengeHeader::decode(data);
+    let _ = ConnectAcceptHeader::decode(data);
+    let _ = WorldReferralHeader::decode(data);
+    let _ = BlobFragmentHeader::decode(data);
 
     let tables = RuntimeBitTreeTables::synthetic_canonical();
     let _ = decode_datagram(data, true, None, true);
@@ -32,8 +35,8 @@ fuzz_target!(|data: &[u8]| {
         let _ = OptionalHeaders::decode(flags, &data[4..], false);
     }
 
-    if let Ok((frag, _)) = NetBlobFragment::decode(data) {
-        let mut reassembler = NetBlobReassembler::new(8, 65_536);
+    if let Ok((frag, _)) = BlobFragment::decode(data) {
+        let mut reassembler = BlobReassembler::new(8, 65_536);
         let key = [0x5Au8; 24];
         let _ = reassembler.ingest(0x0100, frag, 1.0, Some(&key));
     }
@@ -46,7 +49,13 @@ fuzz_target!(|data: &[u8]| {
     conn.set_des3_key(key);
     let _ = conn.receive_datagram(data, peer, 0.5, Some(&tables));
 
-    let _ = decode_net_message(1, data, false, 65_536);
-    let _ = dispatch_net_message(OPCODE_BATCH_CONTAINER, data, false, 65_536, 4);
-    let _ = dispatch_net_message(OPCODE_SINGLE_WRAPPER, data, true, 65_536, 4);
+    let _ = decode_message(1, data, false, 65_536);
+    let _ = dispatch_message(OPCODE_BATCH_CONTAINER, data, false, 65_536, 4);
+    let _ = dispatch_message(OPCODE_SINGLE_WRAPPER, data, true, 65_536, 4);
+
+    let mut mux = SessionMultiplexer::new();
+    if mux.create_connection(peer, 0.0).is_ok() {
+        let _ = mux.receive_from_peer(data, peer, 0.5, None);
+        let _ = mux.receive_from_peer(data, peer, 0.6, Some(&tables));
+    }
 });

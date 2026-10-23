@@ -645,6 +645,9 @@ fn log_text(world: tessera_client::net::World, log: &SharedLog) -> String {
 fn check_76_a_plugin_quickslot_click_reaches_the_feed_log() {
     let dir = tempfile::tempdir().expect("tempdir");
     let (mut world, mut rig, log) = rig_76(dir.path());
+    // The client's UI boot gives the UI the install's action map; this run has none, so
+    // the rig gets the synthetic one.
+    mouse_action_map(&mut rig);
     let selection = world.combat_state().selection();
     assert!(selection.is_some());
     // The malformed slot: nothing, in its frame or the next.
@@ -657,16 +660,9 @@ fn check_76_a_plugin_quickslot_click_reaches_the_feed_log() {
         what: tessera_net::domain::Ref::Record(tessera_net::DataId(0x7000_ABCD)),
         target: selection,
     });
-    // At least one: without action-map data (this rig) every toggle type is 0, so the
-    // `TapLeft` pulse clicks too and one click sends two (decision 0014 Known difference
-    // 12); with the action map's types it is exactly one
-    // ([`a_plugin_quickslot_click_activates_once`]).
-    assert!(!sent.is_empty(), "the click sends the skill");
-    assert!(
-        sent.len() <= 2,
-        "at most the no-data double activation: {sent:?}"
-    );
-    assert!(sent.iter().all(|c| *c == want), "{sent:?}");
+    // Exactly one: with the action map's toggle types the `TapLeft` pulse is Impulse, so one
+    // click is one activation ([`a_plugin_quickslot_click_activates_once`]).
+    assert_eq!(sent, vec![want], "one click, one UseSkill");
     let text = log_text(world, &log);
     let lines: Vec<&str> = text.lines().filter(|l| l.contains("UseSkill")).collect();
     assert_eq!(
@@ -683,15 +679,12 @@ fn check_76_a_plugin_quickslot_click_reaches_the_feed_log() {
     rig.shutdown();
 }
 
-/// One click on a plugin quickslot activates it once (`lua-plugin-api.md` §14.6): one
-/// `MouseClick` for the plugin, one `UseSkill`. The click is raw step-1 events with exactly
-/// one UI frame ([`click_76`], [`frame_76`]). A left click starts two holds, `SelectLeft` and
-/// the `TapLeft` pulse; the action map's toggle types decide that `TapLeft` is Impulse
-/// (§13.12.1, decision 0014 D9), so only `SelectLeft` gives button events. This run has no
-/// install, so the rig gets a synthetic action map with the §13.12.1 keys and types
-/// (without one every type is 0 and the pulse clicks too, Known difference 12).
-#[test]
-fn a_plugin_quickslot_click_activates_once() {
+/// Gives the rig the mouse actions of a synthetic action map: the §13.12.1 keys with their
+/// command IDs on the mapper and their toggle types on the UI (`TapLeft`, `TapRight`,
+/// `TapMid` Impulse), as the client's UI boot does from the install's default action map
+/// (`keymap.md` §12.10). Without them every toggle type is 0 and the `TapLeft` pulse gives a
+/// second click (decision 0014 Known difference 12).
+fn mouse_action_map(rig: &mut ui_common::Rig) {
     const MOUSE_ACTIONS: [(&str, u32, u8); 9] = [
         ("SelectLeft", 0x56, 1),
         ("SelectRight", 0x4C, 1),
@@ -703,13 +696,26 @@ fn a_plugin_quickslot_click_activates_once() {
         ("TapRight", 0x73, 2),
         ("TapMid", 0x6E, 2),
     ];
-    let dir = tempfile::tempdir().expect("tempdir");
-    let (mut world, mut rig, _log) = rig_76(dir.path());
     rig.mapper
         .set_command_ids(MOUSE_ACTIONS.iter().map(|(n, id, _)| (*n, *id)));
     rig.host
         .ui_mut()
         .set_toggle_types(MOUSE_ACTIONS.iter().map(|(_, id, t)| (*id, *t)).collect());
+}
+
+/// One click on a plugin quickslot activates it once (`lua-plugin-api.md` §14.6): one
+/// `MouseClick` for the plugin, one `UseSkill`. The click is raw step-1 events with exactly
+/// one UI frame ([`click_76`], [`frame_76`]). A left click starts two holds, `SelectLeft` and
+/// the `TapLeft` pulse; the action map's toggle types decide that `TapLeft` is Impulse
+/// (§13.12.1, decision 0014 D9), so only `SelectLeft` gives button events. This run has no
+/// install, so the rig gets a synthetic action map with the §13.12.1 keys and types
+/// ([`mouse_action_map`]; without one every type is 0 and the pulse clicks too, Known
+/// difference 12).
+#[test]
+fn a_plugin_quickslot_click_activates_once() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let (mut world, mut rig, _log) = rig_76(dir.path());
+    mouse_action_map(&mut rig);
     let sent = frame_76(&mut world, &mut rig, |r| click_76(r, 110.0, 110.0));
     assert_eq!(sent.len(), 1, "one click, one UseSkill: {sent:?}");
     rig.shutdown();

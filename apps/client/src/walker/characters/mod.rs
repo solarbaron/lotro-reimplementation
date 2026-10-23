@@ -831,10 +831,6 @@ impl CharacterLayer {
     /// The profile the walk camera follows and its look-at point (`None` outside walk
     /// mode), for the player's target fade (module docs; given by
     /// [`super::controls::Controls::follow_characters`] every frame before the draws).
-    #[allow(
-        dead_code,
-        reason = "called by `Controls::follow_characters` once `walker/mod.rs` calls it"
-    )]
     pub fn set_camera_view(&mut self, profile: CameraProfile, target: Option<WorldPos>) {
         self.camera_view = Some((profile, target));
     }

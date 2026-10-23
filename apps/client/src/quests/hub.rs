@@ -20,7 +20,6 @@
 use std::sync::Arc;
 use std::time::Instant;
 
-use tessera_input::RawEvent;
 use tessera_net::{ChatChannel, Command, EntityId};
 use tessera_render::glam::{Mat4, Vec3};
 use tessera_render::{Frame, PassSpace, Renderer};
@@ -130,17 +129,6 @@ impl QuestHub {
             .or_else(|| npc.saved_prefs().and_then(|p| p.quest_icons))
             .unwrap_or(true)
     }
-
-    /// Retired raw-key test of `ToggleQuestPanel`: always `false`. The toggle is the keymap
-    /// action `toggle_quest_log` (module docs); kept only until the windowed client's
-    /// raw-key call goes.
-    pub fn log_key(&mut self, _ev: &RawEvent) -> bool {
-        false
-    }
-
-    /// The window lost the focus. Nothing to forget: the keymap's mapper tracks the
-    /// modifiers of `toggle_quest_log` (kept for the windowed client's call).
-    pub fn release_keys(&mut self) {}
 
     /// Applies routed input commands ([`crate::character::routed`]): every `QuestLog`
     /// requests one toggle of the log ([`Self::request_toggle`]); other kinds are not this
@@ -376,17 +364,11 @@ mod tests {
     }
 
     /// `toggle_quest_log` reaches the hub as a routed `QuestLog` (`keymap.md` §8.3); other
-    /// routed kinds and raw L presses toggle nothing.
+    /// routed kinds toggle nothing.
     #[test]
     fn the_log_toggles_from_the_routed_command_only() {
         let mut h = QuestHub::default();
         h.apply_routed(&[RoutedCommand::Use, RoutedCommand::Traits]);
-        assert!(!h.toggle);
-        assert!(!h.log_key(&RawEvent::Key {
-            key: tessera_input::KeyCode::L,
-            pressed: true,
-            repeat: false,
-        }));
         assert!(!h.toggle);
         h.apply_routed(&[RoutedCommand::QuestLog]);
         assert!(h.toggle);

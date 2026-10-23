@@ -132,7 +132,16 @@ impl CombatHud {
         Self {
             widgets,
             slots,
-            tips: setup.char_vocab.map(ExamTooltips::new),
+            // Only `PinnedTooltipCloseButton` closes a pinned window (`item-tooltips.md`
+            // §10 answer (2), IT28); unresolved, the tooltips keep their fallback close rule.
+            tips: setup.char_vocab.map(|v| {
+                let close = v.ids.resolved_pinned_close_button();
+                let mut tips = ExamTooltips::new(v);
+                if let Some(id) = close {
+                    tips.set_close_button_id(id);
+                }
+                tips
+            }),
             live: None,
             install_bars: false,
             cooldown_keys: std::collections::BTreeSet::new(),

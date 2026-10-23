@@ -251,8 +251,9 @@ fine. Format-level terms like "DID" or "landblock" are fine.
   2026-10-23: the panel keys follow `keymap.md` §8.3: C (character), I (every bag), H (pin
   tooltip), B (wallet); bags 1–6 have no default key (an import of the install's key map
   gives the original's Ctrl+F1–F6). Item tooltips wrap the name at 180 and cascade pinned
-  windows (`item-tooltips.md`); only `PinnedTooltipCloseButton` closes a pinned window once
-  a caller sets its ID, but no client caller does yet (`CharVocab` has no such entry).
+  windows (`item-tooltips.md`); the character panel, combat HUD and NPC windows set the
+  `PinnedTooltipCloseButton` ID (`CharIds`), so only that button closes their pinned
+  windows; the social windows' tooltips do not set it yet.
 - **P3 (NPC windows: dialogue, quests, vendors and loot; merged to main 2026-10-11, exit
   verification 2026-10-11)** (`docs/ROADMAP.md` P3 status): criteria 1 and 2 pass, its specs
   (`npc-windows.md`, `quest-journal.md`, `scenario-feed.md` rev 5, `lua-plugin-api.md` §15.3)
@@ -261,18 +262,18 @@ fine. Format-level terms like "DID" or "landblock" are fine.
   `tessera-client` `npc` and `quests`; scenarios `dialogue`, `vendor`, `loot`, `quest-log`.
   Real data: 20,807 quest records, 15,400 log rows, 0 failures; 19 local goldens matched.
   The text-fitting defects and the off-screen barter window are fixed (Tessera rules; pictures
-  not yet re-judged). Since 2026-10-23: the quest tracker menu uses Tessera's code-made popup
-  (`quest-journal.md` §6.6), the quest history
+  not yet re-judged). Since 2026-10-23: the quest history
   window (`QuestHistoryField`, tier-1 golden `p3_quest_history`) is built, items dropped on a
   vendor window are sold, and the dialogue font, tracker visibility, quest-log font and
   overhead quest icons are saved in `[GameWindows]` of `tessera-settings`.
   2026-10-23: U (`use_selection`), L (`toggle_quest_log`) and B (`toggle_wallet`) are keymap
-  actions (the retired raw-key checks in `app.rs` always return false and wait to be
-  deleted). `npc-windows.md` rev 3 and `quest-journal.md` rev 2 are Accepted; the latter
-  makes the tracker menu a context menu of layout `ContextMenu` (`ui-widgets.md` §19), which
-  the code does not use yet. Open: no dialog-box widget; the local tier-2 goldens of the
-  vendor, wallet and quest log drift by 4–15 px since 2026-10-13 and wait for a re-bless
-  after the owner's look (decision 0031).
+  actions (the raw-key paths of U and L are deleted). `npc-windows.md` rev 3 and
+  `quest-journal.md` rev 2 are Accepted. The engine dialog boxes and context menus of
+  `ui-widgets.md` §18–§19 are built (`tessera-ui` `widgets::dialog`, `widgets::context_menu`):
+  quest abandon is a confirmation dialog, the tracker menu a context menu at the pointer.
+  Open: the client host does not yet drop game keys while a modal dialog shows (§18.4,
+  `modal_dialog_shown`); the local tier-2 goldens of the vendor, wallet and quest log drift
+  by 4–15 px since 2026-10-13 and wait for a re-bless after the owner's look (decision 0031).
 - **P2 (targeting, skills and combat presentation; merged to main 2026-10-11, exit
   verification 2026-10-11)** (`docs/ROADMAP.md` P2 status): criteria 1-4 pass on Tessera's
   side. Accepted after independent review: `combat-ui.md` (rev 2), `skill-tooltips.md`,
@@ -287,17 +288,24 @@ fine. Format-level terms like "DID" or "landblock" are fine.
   use goes through `npc::use_entity`. Real data: 13,247 skills and 32,971 effects
   categorised (33,601 tooltips, 0 failures). Since done: the walker keys moved off the
   `keymap.md` §8.2 defaults (owner, 2026-10-16), voice-chat icons over the player name hidden,
-  the portrait left empty without a scene (portraits are not drawn yet), beam ribbons and
+  the portrait left empty without a scene, beam ribbons and
   heads drawn (322c9e3), install frame name/level text and defeat-panel parts (86e7210),
   `combat-ui.md` rev 3 conformed (89d5ca0); since 2026-10-23 the combat layer's records are
   read on the asset workers and clips never on the frame thread (ARCH §21), U, left
   double-click and right click use the selection with use-range cylinders from the setups
   (`interaction.md` I6a), and plugin check 76's quickslot click runs end to end.
   2026-10-23: one left click through the client's UI host reaches a plugin quickslot once
-  (the UI gets the action map's toggle types; `a_plugin_quickslot_click_activates_once` runs
-  again and passes); `skill-tooltips.md` rev 2 is conformed (passive-skill trait rows empty,
-  44 trait rows shown; sub-second recovery rows shown, 3,394 rows); `interaction.md`
-  (Accepted) answers the §3.4.1 OPENs (I6d, I6e).
+  when the UI gets the action map's toggle types (`a_plugin_quickslot_click_activates_once`
+  passes, check 76 requires exactly one `UseSkill`; without the action map the double click
+  stays); a session figure spawns without waiting for start-up clips, only for those of the
+  scripts `entity_ready` runs (`CombatState::ready_keys`). The P4/P5 portraits are built
+  (`tessera-render` `ViewportTarget` with background and opacity mask, `tessera-ui`
+  `combat::portrait`, `apps/client/src/portrait/`, test `combat_portraits_real_data`) and
+  draw the local player's head and shoulders, but the frame loop does not call
+  `portrait::render_combat_portraits` yet, so the client keeps them hidden; other entities'
+  figures and the UI scene's `Camera_1` and lights are open. `skill-tooltips.md` rev 2 is
+  conformed (passive-skill trait rows empty, 44 trait rows shown; sub-second recovery rows
+  shown, 3,394 rows); `interaction.md` (Accepted) answers the §3.4.1 OPENs (I6d, I6e).
 - **P4 (social panels: fellowship, trade, friends and ignore lists, tells, named chat channels,
   synchronised music; merged to main 2026-10-11, exit verification 2026-10-11)**
   (`docs/ROADMAP.md` P4 status): criteria 1-3 pass on Tessera's side. Accepted after
@@ -314,7 +322,9 @@ fine. Format-level terms like "DID" or "landblock" are fine.
   `trade`, `friends`, `music-sync`. The M5 `--ui` gap is closed (chat window, overlay and
   `--command` share the dispatcher). Since done: member-row effect icons (TR16), committed
   synthetic P4 goldens (`crates/ui/tests/p4_goldens.rs`), the Leave `NOT_IN_WORLD` code
-  (`tessera-protocol.md` §10.6). Open: no text-input dialog or context menu. Owner rows
+  (`tessera-protocol.md` §10.6); 2026-10-23: the friends and ignore add dialogs (and the
+  note dialog) are engine text-input dialogs and the row menus of `social-panels.md` §3.5,
+  §3.6 and §4.5 are context menus (the fellowship menu as one group submenu). Owner rows
   O130-O137.
 - **P5 (map, travel, mounts and instances; merged to main 2026-10-13, exit verification
   2026-10-12)** (`docs/ROADMAP.md` P5 status): criteria 1-3 pass on Tessera's side. Its specs
@@ -335,9 +345,11 @@ fine. Format-level terms like "DID" or "landblock" are fine.
   O140-O155.
   2026-10-23: conformed to `map-windows.md` rev 1: indoors the player's map follows the
   interior cell's `Dungeon_DID` (§4.6, read on a worker, `apps/client/src/map/dungeon.rs`),
-  and the note tooltips and `CoordinateDisplay` use the install's texts (§6.3). The local
-  tier-2 golden of `map_census_real_data` (01-root) drifted in size and waits for the
-  owner's re-bless (decision 0031).
+  and the note tooltips and `CoordinateDisplay` use the install's texts (§6.3). MapMenu,
+  FilterMenu and the finder's size and tier menus are `ui-widgets.md` §19 context menus (the
+  finder's stay code-made until `apps/client/src/travel` passes the install's menu refs).
+  The local tier-2 goldens of `map_census_real_data` (01-root), the finder and the travel
+  windows drift and wait for the owner's re-bless (decision 0031).
 - **P6 (progression and crafting panels; merged to main 2026-10-17, exit verification
   2026-10-16)** (`docs/ROADMAP.md` P6 status): criteria 1 and 2 pass on Tessera's side. Its
   specs are Accepted after independent review (2026-10-16): `progression-panels.md`,
@@ -418,19 +430,26 @@ fine. Format-level terms like "DID" or "landblock" are fine.
   `ui-scaling.md` rev 7 is Accepted, and the owner accepted its proposals (decision 0040
   "Owner answers": budgets S1–S7, the 21:9 safe aspect and auto-scale formula, *ρ* = 4 ÷ 3,
   full-window screens follow the window; the §8 and §13 callouts are marked answered).
-  `ui-layout.md` §8.4 records the stop-gap's retirement. **Still deferred:** real-valued §3.4
-  displayed boxes in the live tree (one-pixel effects at C1; §5.9 says tests must not be
-  re-blessed to the truncated values), the per-window scale (§7.4; `ui_window_scale_up`/`_down`
-  are bound to nothing and not read), measuring the S1–S7 budgets, the §9.4 tier-2 real-data
-  goldens and the G7 mid-scale-change golden (needs a `tessera-render` test). The
-  `Ui::letterbox_bars` doc in `crates/ui/src/scale.rs` still says there is no fill entry.
+  `ui-layout.md` §8.4 records the stop-gap's retirement. **Built 2026-10-23 (round 3):** the
+  real-valued §3.4 displayed boxes (`Ui::displayed_real`; under a UI screen each integer edge
+  rounds to the nearest unit, the identity keeps the old rule; six tier-1 goldens re-blessed
+  and viewed), the per-window scale (§7.4: `Ui::set_window_scale`, the
+  `ui_window_scale_up`/`_down` actions step the panel group under the pointer by 0.05 within
+  0.5–2.0, saved in `[UI.group_scale]`, "Reset window scales"), the G7 golden
+  (`crates/render/tests/ui_scaling_g7.rs`) and key repeat from the action map's type-3 set
+  (`keymap.md` §7.8.6). `ui-scaling.md` rev 8 is Accepted. The local combat golden
+  (checkpoint-03800ms, 1.7× floaty text) drifts with the §3.4 rounding and waits for the
+  owner's look (decision 0031). **Still deferred:** measuring the S1–S7 budgets and the §9.4
+  tier-2 real-data goldens.
 - **Follow-up packages (merged to main 2026-10-23, 02f2214..9620856):** ten packages; the
   UI-scaling, P1, P2, P3, P5, P6, particle and far-view items are in their bullets above.
   2026-10-23: a second round of eight packages was merged (7e7d18c..3f0d57f): code
   `ui-surface`, `walker-wiring`, `conform-gameplay`, `ui-host-wiring`, `conform-keymap`;
-  specs `spec-ui-scaling-p6`, `spec-world-render`, `spec-plugins-protocol`. Round 3 (client
-  glue, dialogs and context menus, portraits, remaining UI scaling, two spec packages) is in
-  progress. Also:
+  specs `spec-ui-scaling-p6`, `spec-world-render`, `spec-plugins-protocol`. Round 3 was
+  merged (d465e32..ba2ef9a): code `client-glue`, `ui-dialogs-menus`, `portraits`,
+  `uis-remaining`; specs `spec-world-r3`, `spec-ui-r3`. Round 4 is in progress (code
+  `client-wiring`, `ui-core`, `world-conform`, `physics-conform`; specs `spec-ui-r4`,
+  `spec-uis-r4`); it takes most of the open items in the bullets above. Also:
   - **Specs.** Package `spec-gameplay` revised 12 specs and they are Accepted after an
     independent review (2026-10-23): `appearance.md`, `combat-ui.md`, `combat-visuals.md`,
     `instruments.md`, `map-windows.md`, `mounts.md`, `scenario-feed.md` (revision 10),
@@ -439,15 +458,20 @@ fine. Format-level terms like "DID" or "landblock" are fine.
     `ui-widgets.md`, `ui-behaviour.md`, `game-panels.md`, `item-tooltips.md` and
     `character-panels.md` (plus the `m5-visual.md` P15 rows); all are Accepted after four
     review rounds (2026-10-23).
-    2026-10-23: the code follows `keymap.md` §8.3, except that `ui_window_scale_up`/`_down`
-    do nothing yet (per-window scale §7.4 not built), and the `item-tooltips.md` name wrap and
-    pinned cascade (close button: see P1). Second-round specs, all Accepted after independent
+    2026-10-23: the code follows `keymap.md` §8.3 (with `ui_window_scale_up`/`_down` since
+    round 3) and the `item-tooltips.md` name wrap, pinned cascade and close button (except
+    the social windows, see P1). Second-round specs, all Accepted after independent
     review: `ui-scaling.md` rev 7, `crafting-panels.md`, `progression-panels.md`,
     `interaction.md`, `npc-windows.md`, `quest-journal.md`; `far-view.md`,
     `particle-runtime.md`, `decals.md`, `character-screens.md`, `script-table.md`,
     `collision.md`, `render.md` §5 and §6.16, `walker.md` §14.11; `lua-plugin-api.md`,
     `tessera-protocol.md`, `test-server.md`. They answer the implementer OPENs of the first
     round; where an answer changes a rule, the bullets above say whether the code follows.
+    Round-3 specs, Accepted after independent review (2026-10-23): `particle-runtime.md`,
+    `particles.md`, `render.md` §6.5, §6.16, §6.17, `walker.md` §14.9 and §14.11,
+    `far-view.md`, `instance-scripts.md`, `script-table.md`, `character-screens.md`;
+    `item-tooltips.md`, `keymap.md`, `lua-plugin-api.md` (round-3 parts), `map-windows.md`,
+    `progression-panels.md`, `ui-scaling.md` rev 8.
   - **Walker camera.** 2026-10-23: `walker/mod.rs` calls `Controls::follow_characters`, so
     the walk camera follows the install's camera record (`walker.md` §11.6–§11.8: distance,
     pitch, height factor, offsets, fade) and the figure's look-at height; the walk projection
@@ -459,10 +483,11 @@ fine. Format-level terms like "DID" or "landblock" are fine.
     with the neutral art as fallback; 20,000 live controls in one apartment raise no error.
     2026-10-23: the title and drag bars at top −8 are drawn (the window canvas reaches up to
     64 units above it), and a game-styled window marked as scaled is rebuilt from its scaled
-    layout element. Open: title margins not set (`lua-plugin-api.md` §14.2.3 step 2 and P115,
-    Accepted 2026-10-23, now name the margin properties); a plain `Turbine.UI.Window` marked
-    as scaled is not rebuilt (§13.21 rule 1). `tessera-net` has the Appendix A events and
-    commands; `EnterWorldFailed` keeps the session, as the Accepted `tessera-protocol.md`
+    layout element. Round 3: the four text-margin properties default to the P115 values, and
+    a plain `Turbine.UI.Window` marked as scaled is rebuilt in place as a bare `UIScaler`.
+    Open: the title-bar cut follows `lua-plugin-api.md` §14.2.6 (d), but `tessera-ui` still
+    draws and hit-tests the overhang, which that rule contradicts. `tessera-net` has the
+    Appendix A events and commands; `EnterWorldFailed` keeps the session, as the Accepted `tessera-protocol.md`
     Appendix A now says, but the client still disconnects on it because its character
     screens do not go back to the selection (`apps/client/src/net.rs`). `test-server.md`
     §15.3 settles the epoch of moves and the 30 Hz poll as accepted limits; `ChannelRefused`
@@ -472,9 +497,9 @@ fine. Format-level terms like "DID" or "landblock" are fine.
     the box-step walk test runs again. 2026-10-23: `collision.md` §12.4 (Accepted) answers
     the edge-tie question ((k) drops the landing-contact test and relies on the support
     probe); `tessera-physics` does not follow it yet. `UiStats::gpu_ns` is filled where the
-    adapter has timestamp queries; the client's U1–U5 report has a U2 row (`ui_gpu_ms`) in
-    headless and scripted runs, but the windowed path does not feed it yet (`app.rs` does
-    not call the UI's `record_render_stats`).
+    adapter has timestamp queries, and the client's U1–U5 report has a U2 row (`ui_gpu_ms`)
+    in headless, scripted and (since round 3) windowed runs (`app.rs` calls the UI's
+    `record_render_stats`).
   - **Checks.** `check-content.sh` has the PNG location rule (decision 0031 Open item 1);
     `tessera-gamedata`'s presenters have the fuzz target `gamedata_presenters`.
   - **Build hazard.** A cargo target dir shared by several worktrees can link another

@@ -1168,13 +1168,13 @@ fuzz targets, rustfmt on six fuzz targets, eight missing `fuzz/README.md` rows, 
 O39–O49.
 
 Remaining for M5 to close: owner observations O39 (criterion 2) and O40 (criterion 4); the
-U4 work in `tessera-ui` step 8, U4 (c)–(e) figures, the windowed U2 feed and the idle
+U4 work in `tessera-ui` step 8, U4 (c)–(e) figures and the idle
 re-measurement O49 (criterion 7; since 2026-10-23 `tessera-render` fills `UiStats::gpu_ns`
 where the adapter has timestamp queries, `render.md` §6.16); the P15 rows of `m5-visual.md`.
 2026-10-23 (second round): the U1–U5 report has a U2 row (per-frame `ui_gpu_ms`) in headless
-and scripted runs; windowed runs do not feed it yet (`apps/client/src/app.rs` does not call
-the UI's `record_render_stats`). Open review items the implementers
-could not fix in their own files: plugin TextBox read-only flag, caret and
+and scripted runs; since round 3 (package `client-glue`) windowed runs feed it too
+(`apps/client/src/app.rs` calls the UI's `record_render_stats` after `end_frame`). Open
+review items the implementers could not fix in their own files: plugin TextBox read-only flag, caret and
 selection API and child insert position need `tessera-ui` calls; `ImageRef::File` needs an
 origin; the
 `PluginData.Load` main-thread read waits on the `lua-plugin-api.md` §10.1 OPEN (ARCHITECTURE
@@ -1185,9 +1185,11 @@ UTC only when no zone is found), no longer UTC by default.
 plugin window at top −8 are drawn (its canvas reaches up to 64 units above the window), and
 a game-styled window marked as scaled is rebuilt from its scaled layout element
 (`crates/plugins/src/ui/styled.rs` `rebuild_scaled_window`). `lua-plugin-api.md` is
-Accepted (re-review 2026-10-23). Open: the title text margins (§14.2.3 step 2 and P115 now
-name the margin properties; not built) and the rebuild of a plain `Turbine.UI.Window`
-marked as scaled (§13.21 rule 1).
+Accepted (re-review 2026-10-23). 2026-10-23 (round 3, package `uis-remaining`): the four
+text-margin properties default to the values P115 gives, and a plain `Turbine.UI.Window`
+marked as scaled is rebuilt in place as a bare `UIScaler` (no size limits, blend mode
+remapped as on every rebuild; §13.21 rule 1). Open: the title-bar cut follows §14.2.6 (d),
+but the overhang drawing and hit test in `tessera-ui` contradict it (round 4, `ui-core`).
 
 ---
 
@@ -1731,9 +1733,11 @@ particles are drawn in the creation viewport.
 `conform-keymap`): C character, I every bag, H pin tooltip, B wallet; bags 1–6 have no
 default key, and an import of the install's key map gives the original's Ctrl+F1–F6. Item
 tooltips wrap the name at its own layout width (180) and cascade pinned windows by
-(18, 18) modulo 20 (package `conform-gameplay`, `crates/ui/src/game/examine/panel.rs`); only
-`PinnedTooltipCloseButton` closes a pinned window once a caller sets its ID, but no client
-caller does yet (`CharVocab` has no such entry). `character-screens.md` and `script-table.md`
+(18, 18) modulo 20 (package `conform-gameplay`, `crates/ui/src/game/examine/panel.rs`).
+Since round 3 (package `client-glue`) `CharIds` has `pinned_tooltip_close_button` and the
+tooltip controllers of `character/panel.rs`, `combat/hud.rs` and `npc/ui.rs` set it, so only
+`PinnedTooltipCloseButton` closes their pinned windows; `social/ui.rs` does not set it yet
+(any button outside the tooltip closes its pinned windows). `character-screens.md` and `script-table.md`
 are Accepted: they settle the `RampIn` question as Tessera reads it and give the MeshFX
 attach rule (`script-table.md` §5.2: for attached nodes the holding location wins over the
 bone type; `apps/client/src/walker/characters/figure.rs` still tries the bone type first)
@@ -1893,7 +1897,7 @@ Quickslot click is not driven from the client (only its command mapping is teste
 Since this verification: the walker keys moved off the `keymap.md` §8.2 defaults (owner,
 2026-10-16; walker test `keys_the_keymap_binds_are_left_to_it`); the voice-chat icons over the
 player name are hidden (`combat-ui.md` §4.1, TR14); the portrait stays empty without a scene
-(no white disc; portraits are not drawn yet); beam ribbons and heads are drawn (322c9e3);
+(no white disc; for the portraits built since, see round 3 below); beam ribbons and heads are drawn (322c9e3);
 `combat-ui.md` revision 3 is Accepted and conformed (89d5ca0).
 
 Since the follow-ups merged 2026-10-23: combat cues no longer read records on the main thread
@@ -1902,7 +1906,8 @@ Since the follow-ups merged 2026-10-23: combat cues no longer read records on th
 frame thread; ARCH §21); U, left double-click and right click use the selection with
 use-range cylinders from the setups (`interaction.md` I6a), no longer the nearest NPC; plugin
 check 76's quickslot click runs end to end (`apps/client/tests/plugin_combat_checks.rs`); the
-combat layer waits until a session figure's start-up clips are decoded before spawning it.
+combat layer waited until a session figure's start-up clips were decoded before spawning it
+(changed in round 3, below).
 The 2026-10-23 revisions of `combat-ui.md`, `skill-tooltips.md` and `combat-visuals.md` are
 Accepted: they answer every implementer OPEN of `combat-visuals.md` and some of the other two;
 the `scenario-feed.md` §9.7 OPEN was answered in revision 9 (2026-10-14). The implementer
@@ -1912,13 +1917,33 @@ revision is Accepted (2026-10-23, package `spec-ui-input`).
 2026-10-23 (second round): one left click through the client's UI host reaches a plugin
 quickslot once (package `ui-host-wiring`: UI boot reads table A of the action map and the host
 passes its toggle types to the UI, so `TapLeft` no longer clicks a second time);
-`a_plugin_quickslot_click_activates_once` runs again and passes, and check 76 still allows up
-to two sends. `skill-tooltips.md` rev 2 is conformed (package `conform-gameplay`):
+`a_plugin_quickslot_click_activates_once` runs again and passes (check 76 then still
+allowed up to two sends). `skill-tooltips.md` rev 2 is conformed (package `conform-gameplay`):
 passive-skill trait rows are empty and dropped (44 trait rows shown), sub-second recovery rows
 are shown (3,394 rows). The `keymap.md` §8.3 actions are built (U `use_selection` among
-them). `interaction.md` is Accepted with the §3.4.1 answers (I6d, I6e). The client does not
-yet call `InputMapper::set_repeat_commands` with the action map's type-3 set (`keymap.md`
-§7.8.6), so key repeat follows the built-in flags.
+them). `interaction.md` is Accepted with the §3.4.1 answers (I6d, I6e).
+
+2026-10-23 (round 3): check 76 requires exactly one `UseSkill`; the rig gets the synthetic
+action map through a shared helper (`mouse_action_map`), and without the action map's toggle
+types one click still sends two (Known difference 12) (package `client-glue`). A session
+figure no longer waits for start-up-script clips (session figures run no start-up scripts);
+only the clips of the scripts `entity_ready` runs at once are waited for
+(`CombatState::ready_keys`, test `ready_keys_are_the_scripts_entity_ready_runs`). The host
+hands the action map's type-3 commands to `InputMapper::set_repeat_commands`, so key repeat
+follows the install (`keymap.md` §7.8.6; package `uis-remaining`). The P4 and P5 portraits
+are built (package `portraits`): `tessera-render` `ViewportTarget` (create, destroy,
+`begin_viewport_frame`, `end_viewport_frame` with the background colour under the scene and
+the opacity mask multiplied in, `read_viewport_pixels`), `tessera-ui` `PortraitSpec` and
+`CombatUi::portraits` (the player for P4, the selection for P5), and the client module
+`apps/client/src/portrait/` (mask loader on a worker; a target is redrawn only when its
+entity, figure, camera, size, background or mask changes). The golden `viewport_portrait.png`
+and the real-data test `combat_portraits_real_data` were viewed: both portraits show the
+player's head and shoulders inside the round mask. Open: the frame loop does not call
+`portrait::render_combat_portraits` yet, so the normal client keeps the portraits hidden
+(§12.4); the walker can draw no entity but the local player into a portrait, so another
+selected target hides P5's portrait; the UI scene's `Camera_1`, lights, ambient and fog
+(§12.2), the per-target viewport description and the portrait preference (§12.1) are not
+applied.
 
 <a id="p3"></a>
 ### P3: NPC windows: dialogue, quests, vendors and loot
@@ -2041,12 +2066,25 @@ item reward rows show only `QuestReward_Item`, barter reputation fields hidden.
 
 2026-10-23 (second round): U (`use_selection`), L (`toggle_quest_log`) and B
 (`toggle_wallet`) are `keymap.md` §8.3 actions routed to the NPC and quest hubs
-(`apps/client/src/character/routed.rs`); the old raw-key checks always return false, and
-their calls in `apps/client/src/app.rs` wait to be deleted. `npc-windows.md` revision 3 and
+(`apps/client/src/character/routed.rs`). `npc-windows.md` revision 3 and
 `quest-journal.md` revision 2 are Accepted; the latter makes the tracker menu a context menu
-of layout `ContextMenu` (`ui-widgets.md` §19), while the client still opens Tessera's
-code-made popup. Open: no dialog-box widget; the local tier-2 goldens of the vendor, wallet
-and quest log wait for a re-bless after the owner's look (decision 0031).
+of layout `ContextMenu` (`ui-widgets.md` §19).
+
+2026-10-23 (round 3): the raw-key blocks of U and L in `window_event` are deleted, with
+`npc::commands::is_use_key`, `QuestHub::log_key` and `QuestHub::release_keys` (package
+`client-glue`). The engine dialog boxes and context menus of `ui-widgets.md` §18 and §19 are
+built in `tessera-ui` (`widgets::dialog`, `widgets::context_menu`; package
+`ui-dialogs-menus`): the four dialog types from the install's `Dialog` layout or a code-made
+fallback, one dialog at a time with a queue, countdowns and results written back; menus with
+submenus at any depth, the W31 sizing, placement, check marks and the layout's open delay.
+Quest abandon is a confirmation dialog for the quest it asked about (the two-click stand-in
+is retired), and the tracker menu is a context menu at the pointer; the code-made `Popup` is
+removed. Tier-1 goldens `widgets_confirmation` and `widgets_nested_menu` are committed and
+viewed. Open: the client host does not drop game keys while a modal dialog shows (§18.4;
+`widgets::dialog::modal_dialog_shown` exists); AcceptKey closes a text input with done and a
+message dialog consumes the EscapeKey release (`crates/ui/src/focus.rs`); no range check
+runs (§18.3 OPEN); the local tier-2 goldens of the vendor, wallet and quest log wait for a
+re-bless after the owner's look (decision 0031).
 
 <a id="p4"></a>
 ### P4: Social panels
@@ -2209,7 +2247,12 @@ login (`apps/loadtest/src/hostile.rs`); each `PartyMember` follows an entity and
 member-row effect icons are built (TR16, `crates/ui/src/game/combat/mod.rs`); synthetic P4
 goldens are committed (`crates/ui/tests/p4_goldens.rs`). 2026-10-23: the Friends page adds
 its new tree rows in one batch (`Ui::tree_add_many`, one layout; `crates/ui/src/game/social/mod.rs`);
-`social-panels.md` revision 3 (TR16a–TR16d) is Accepted.
+`social-panels.md` revision 3 (TR16a–TR16d) is Accepted. 2026-10-23 (round 3, package
+`ui-dialogs-menus`): the friends and ignore add dialogs (and the unreachable note dialog) are
+`TextInput` engine dialogs (`ui-widgets.md` §18), and the row menus of `social-panels.md`
+§3.5, §3.6 and §4.5 are §19 context menus, the fellowship menu shown as one group submenu
+(§4.5); this closes the text-input dialog and context-menu item above. Open: the social
+windows' pinned tooltips do not set the `PinnedTooltipCloseButton` ID yet (see P1).
 
 Merge seams with P2 and
 P3 (both changed the same shared files additively; merged with main 2026-10-11): the `tessera-ui` game module index, the
@@ -2430,6 +2473,15 @@ and the `mounts.md` §14.3/§14.7 revision (both Accepted) confirm what was buil
 install's texts, with Tessera's wording as the fallback (`apps/client/src/map/texts.rs`). The
 local tier-2 golden of `map_census_real_data` (01-root, 1024 × 768 against the blessed
 1200 × 900) drifted and waits for the owner's re-bless (decision 0031).
+
+2026-10-23 (round 3, package `ui-dialogs-menus`): MapMenu and FilterMenu are
+`ui-widgets.md` §19 context menus from the install's `ContextMenu` layout, read through
+`MapFacts`, with an open delay for the region submenus; the tier-1 golden
+`p5_map_filter_menu` was re-blessed for the §19 menu and viewed. The finder's size and tier
+menus are §19 menus too, but code-made until `apps/client/src/travel` passes the install's
+menu refs to `FinderWindow::set_menu_refs`. The local tier-2 finder and travel-window goldens
+fail as well, also with the old box rule (so not because of the round-3 §3.4 change), and
+wait with the map census for the owner's re-bless.
 
 <a id="p6"></a>
 ### P6: Progression and crafting panels
@@ -2673,21 +2725,36 @@ aspect and the auto-scale formula, *ρ* = 4 ÷ 3, full-window screens following 
 §8 and §13 owner callouts are marked answered). Still open there: derived glyphs above *k* = 2
 and the default keys of the scale actions.
 
+Built in the third round of follow-ups (merged 2026-10-23, package `uis-remaining`):
+
+- the real-valued §3.4 displayed boxes: `Ui::displayed_real` computes them in 64-bit floats
+  and keeps a fit container's real fitted position; under a UI screen the integer boxes
+  round each edge to the nearest unit, and at the identity the old truncating rule is
+  unchanged. The C1 bar row, the G4 short panel and the 2402-wide §10.8 (b) container are
+  gone, and the tests assert the exact values; six tier-1 goldens were re-blessed and viewed
+  (g3_fita c1, c7, c8, c9, g4_fitb_c1, g6_toolarge_c1);
+- the per-window scale (§7.4): `Ui::set_window_scale`, `Ui::window_scale` and
+  `Ui::screen_root_of`, a uniform node scale about a fixed origin followed by §5.6,
+  keep-on-screen and a re-fit of inner fit containers; the host polls
+  `ui_window_scale_up`/`_down` and steps the group of the panel under the pointer by 0.05
+  within 0.5–2.0 (panels opened later follow); `SettingsJob::GroupScales` writes
+  `[UI.group_scale]`, and "Reset window scales" sets the panels back to 1;
+- the G7 golden (`crates/render/tests/ui_scaling_g7.rs`: a C2 to C3 preview with the old
+  canvases composed scaled), blessed and viewed;
+- key repeat follows the action map's type-3 commands (`keymap.md` §7.8.6);
+- the `Ui::letterbox_bars` doc names the `EntryTexture::Fill` entries.
+
+`ui-scaling.md` revision 8 is Accepted (2026-10-23, package `spec-ui-r3`). The local tier-2
+golden `combat_ui_real_data` checkpoint-03800ms drifts in the 1.7× floaty-text region because
+of the §3.4 rounding and waits for the owner's look (decision 0031).
+
 Open (follow-up):
 
-- real-valued §3.4 displayed boxes in the live tree (the truncating integer rule leaves a
-  one-pixel bar row at C1 and a Type B panel one unit short in G4 at C1); §5.9 now says the
-  §3.4 values are the rule and tests must not be re-blessed to the truncated ones;
-- the per-window scale (§7.4) is stored and can be reset but is not applied in the live
-  layout; `ui_window_scale_up`/`_down` exist in `tessera-input` but are bound to nothing and
-  not read by the UI host;
-- measuring the S1–S7 budgets of §8 (indicatively on the loaded reference machine, then idle);
-- the §9.4 tier-2 real-data goldens and the G7 mid-scale-change golden (needs a
-  `tessera-render` test);
+- measuring the S1–S7 budgets of §8 (indicatively on the loaded reference machine, then idle;
+  S1 worker paint, S6 caches and S7 measurement are in round 4, package `ui-core`);
+- the §9.4 tier-2 real-data goldens;
 - no integration test drives the Interface window's text-size or art actions (the setters
-  are covered by unit tests and the start-up test);
-- the `Ui::letterbox_bars` doc in `crates/ui/src/scale.rs` still says the composition list has
-  no fill entry.
+  are covered by unit tests and the start-up test).
 
 ---
 

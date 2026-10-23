@@ -36,7 +36,14 @@
 //!      (`collision.md` §9.3), blocking generated objects (§9.4), cells and their portals
 //!      (§5.8), water (ARCHITECTURE §10.3: the set carries the water whenever it is built,
 //!      so with a collision set the water of step 3 is built even without
-//!      [`BundleOptions::build_water`]);
+//!      [`BundleOptions::build_water`]). Its hierarchy's thread rule follows the job's
+//!      priority, read once when the set's build starts (`collision.md` §12.1,
+//!      [`CollisionSystem::build_at`](crate::CollisionSystem::build_at)): a job still at
+//!      `Prefetch` builds on its worker alone, a job at `Visible` or higher (raised while it
+//!      waited or while its earlier stages ran included) draws helpers from the shared
+//!      budget. [`BundleDecoder`] passes its job's
+//!      [`JobContext::current_priority`]; [`build_bundle_with`] takes the priority from
+//!      the caller, [`build_bundle`] builds at `Visible`;
 //!   5. the Light entities (`lighting.md` §8.3);
 //!   6. the LOD class of every placed and generated entity (`walker.md` §11.4.3).
 //!
@@ -74,7 +81,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use tessera_assets::{AssetKey, Decoder, JobContext};
+use tessera_assets::{AssetKey, Decoder, JobContext, Priority};
 use tessera_formats::landblock::{
     FailureCategory, InstanceId, MinimapTile, Placement, StaticEntityType,
 };
@@ -793,11 +800,34 @@ impl Stages {
 /// [`WorldError::Format`] when the landblock-data record is absent or does not decode,
 /// [`WorldError::Cancelled`] when `cancelled` returned true. Unreadable optional records
 /// (failure entries of the frame) become [`BundleProblem`]s.
+///
+/// The collision set is built with the thread rule of a job at `Visible` priority (helpers
+/// from the shared budget, `collision.md` §12.1); a caller that knows its job's priority
+/// calls [`build_bundle_with`].
 pub fn build_bundle(
     ctx: &WorldContext,
     did: Did,
     frame: &[u8],
     cancelled: &dyn Fn() -> bool,
+) -> Result<LandblockBundle> {
+    build_bundle_with(ctx, did, frame, cancelled, &|| Priority::Visible)
+}
+
+/// [`build_bundle`] for a job whose priority `priority` reports. It is called once, when
+/// the collision set's build starts (module docs, item 4; `collision.md` §12.1): at
+/// [`Priority::Prefetch`] the set's hierarchy is built on the calling thread alone, at
+/// `Visible` or higher with helpers from the shared budget. The bundle does not depend on
+/// the priority. [`BundleDecoder`] passes its job's [`JobContext::current_priority`].
+///
+/// # Errors
+///
+/// As [`build_bundle`].
+pub fn build_bundle_with(
+    ctx: &WorldContext,
+    did: Did,
+    frame: &[u8],
+    cancelled: &dyn Fn() -> bool,
+    priority: &dyn Fn() -> Priority,
 ) -> Result<LandblockBundle> {
     let mut stages = Stages::new();
     let key = LandblockKey::from_did(did)
@@ -1090,6 +1120,7 @@ pub fn build_bundle(
         block_map.as_ref(),
         &entities,
         cancelled,
+        priority,
         &mut problems,
         &mut stages,
     )?;
@@ -1320,6 +1351,7 @@ fn build_world_parts(
     block_map: Option<&BlockMap>,
     entities: &[PlacedEntity],
     cancelled: &dyn Fn() -> bool,
+    priority: &dyn Fn() -> Priority,
     problems: &mut Vec<BundleProblem>,
     stages: &mut Stages,
 ) -> Result<WorldParts> {
@@ -1524,20 +1556,31 @@ fn build_world_parts(
         return Err(WorldError::Cancelled);
     }
 
-    // (4) Collision: statics, generated objects, cells, water (collision.md §12.1).
+    // (4) Collision: statics, generated objects, cells, water (collision.md §12.1). The
+    // job's priority is read once, here, as `build_at` is entered: it chooses the
+    // hierarchy's thread rule (Prefetch: this worker alone; Visible and higher: the shared
+    // budget). §12.1 names the start of the hierarchy build as the reading point; that
+    // comes later, after `build_at` has resolved the statics, objects and cells, so a job
+    // raised in between keeps the rule read here (same tree, only latency differs). Moving
+    // the read needs `build_at` to take the priority source (collision module; reported).
     if let Some(cs) = collision {
         let generated: Vec<GeneratedObject> =
             objects.iter().map(SceneryObject::to_generated).collect();
-        let built = cs.build(&CollisionInput {
-            key,
-            data,
-            terrain: terrain.as_ref(),
-            info,
-            generated: &generated,
-            water: out.water.as_deref(),
-            source,
-            schema,
-        });
+        let at = priority();
+        tracing::trace!(landblock = %key, priority = %at, "collision set build starts");
+        let built = cs.build_at(
+            &CollisionInput {
+                key,
+                data,
+                terrain: terrain.as_ref(),
+                info,
+                generated: &generated,
+                water: out.water.as_deref(),
+                source,
+                schema,
+            },
+            at,
+        );
         let r = built.report();
         if r.over_limit > 0 || r.cells_refused > 0 || r.unresolved > 0 {
             tracing::debug!(
@@ -1784,7 +1827,13 @@ impl Decoder for BundleDecoder {
         bytes: Vec<u8>,
         ctx: &JobContext<'_>,
     ) -> Result<LandblockBundle> {
-        build_bundle(&self.ctx, Did(key.did), &bytes, &|| ctx.is_cancelled())
+        build_bundle_with(
+            &self.ctx,
+            Did(key.did),
+            &bytes,
+            &|| ctx.is_cancelled(),
+            &|| ctx.current_priority(),
+        )
     }
 
     fn size_of(&self, value: &LandblockBundle) -> usize {
@@ -1905,6 +1954,159 @@ mod stage_tests {
         assert!(
             s.line()
                 .ends_with(&format!("lights {:.1}", s.times[3].1.as_secs_f64() * 1e3))
+        );
+    }
+}
+
+/// The collision set's thread rule follows the job's priority (`collision.md` §12.1).
+#[cfg(test)]
+mod priority_tests {
+    use std::cell::Cell;
+    use std::sync::Arc;
+    use std::sync::mpsc;
+    use std::time::Duration;
+
+    use tessera_assets::{
+        AssetState, AssetStore, CancelToken, PoolConfig, Priority, RecordSource, StoreConfig,
+        WorkerPool,
+    };
+
+    use super::{BundleDecoder, build_bundle, build_bundle_with};
+    use crate::collision::{CollisionSystem, HierarchyBuildCounts};
+    use crate::testkit::SyntheticWorld;
+    use crate::{BundleOptions, BundleSource, LandblockKey, WorldContext};
+
+    const T: Duration = Duration::from_secs(30);
+
+    fn key(x: u8, y: u8) -> LandblockKey {
+        LandblockKey::new(1, x, y).unwrap()
+    }
+
+    /// A small world with every world system on (collision sets included).
+    fn context() -> Arc<WorldContext> {
+        Arc::new(
+            WorldContext::load(
+                Arc::new(SyntheticWorld::rectangle(1, 10..=12, 20..=21).build()),
+                BundleOptions::default(),
+            )
+            .expect("synthetic context"),
+        )
+    }
+
+    fn collision(ctx: &WorldContext) -> &CollisionSystem {
+        ctx.systems().collision.as_deref().expect("collision on")
+    }
+
+    fn frame(ctx: &WorldContext, k: LandblockKey) -> Vec<u8> {
+        BundleSource::new(Arc::clone(ctx.source()))
+            .read_record(k.data_did().0)
+            .expect("frame")
+    }
+
+    #[test]
+    fn the_priority_is_read_once_and_chooses_the_thread_rule() {
+        let ctx = context();
+        let k = key(10, 20);
+        let f = frame(&ctx, k);
+        let calls = Cell::new(0u32);
+        let prefetch = build_bundle_with(&ctx, k.data_did(), &f, &|| false, &|| {
+            calls.set(calls.get() + 1);
+            Priority::Prefetch
+        })
+        .expect("bundle");
+        assert_eq!(
+            calls.get(),
+            1,
+            "read once, when the collision set's build starts"
+        );
+        assert_eq!(
+            collision(&ctx).hierarchy_builds(),
+            HierarchyBuildCounts {
+                worker: 1,
+                shared: 0,
+                last_max_threads: Some(1),
+            }
+        );
+        let immediate =
+            build_bundle_with(&ctx, k.data_did(), &f, &|| false, &|| Priority::Immediate)
+                .expect("bundle");
+        let plain = build_bundle(&ctx, k.data_did(), &f, &|| false).expect("bundle");
+        let counts = collision(&ctx).hierarchy_builds();
+        assert_eq!((counts.worker, counts.shared), (1, 2), "{counts:?}");
+        assert!(counts.last_max_threads.is_some_and(|n| n > 1), "{counts:?}");
+        // The bundle does not depend on the priority.
+        for b in [&immediate, &plain] {
+            assert_eq!(b.heap_bytes, prefetch.heap_bytes);
+            let (a, b) = (
+                prefetch.collision.as_ref().unwrap(),
+                b.collision.as_ref().unwrap(),
+            );
+            assert_eq!(a.heap_bytes, b.heap_bytes);
+        }
+        // Without a collision set nothing asks for the priority.
+        let off = Arc::new(
+            WorldContext::load(
+                Arc::clone(ctx.source()),
+                BundleOptions::default().without_world_systems(),
+            )
+            .expect("synthetic context"),
+        );
+        let asked = Cell::new(false);
+        build_bundle_with(&off, k.data_did(), &f, &|| false, &|| {
+            asked.set(true);
+            Priority::Visible
+        })
+        .expect("bundle");
+        assert!(!asked.get());
+    }
+
+    /// End to end through the bundle store: a job still at `Prefetch` when a worker takes
+    /// it builds its collision hierarchy on one thread; one raised to `Visible` while it
+    /// waited, and one requested at `Immediate`, draw on the shared budget.
+    #[test]
+    fn bundle_jobs_build_with_the_rule_of_their_priority() {
+        let ctx = context();
+        let pool = WorkerPool::new(PoolConfig {
+            workers: 1,
+            ..PoolConfig::default()
+        });
+        let store = AssetStore::new(
+            &pool,
+            BundleSource::new(Arc::clone(ctx.source())),
+            BundleDecoder::new(Arc::clone(&ctx)),
+            StoreConfig::default(),
+        );
+        // Hold the only worker so that the requests below wait in the queue.
+        let (started_tx, started_rx) = mpsc::channel::<()>();
+        let (release_tx, release_rx) = mpsc::channel::<()>();
+        let blocker = pool
+            .spawn(Priority::Immediate, CancelToken::new(), move |_| {
+                let _ = started_tx.send(());
+                let _ = release_rx.recv_timeout(T);
+            })
+            .expect("spawn");
+        started_rx.recv_timeout(T).expect("blocker started");
+        let prefetch = store.request(key(10, 20).data_did().0, Priority::Prefetch);
+        let raised = store.request(key(11, 20).data_did().0, Priority::Prefetch);
+        raised.set_priority(Priority::Visible);
+        let immediate = store.request(key(12, 20).data_did().0, Priority::Immediate);
+        assert_eq!(
+            collision(&ctx).hierarchy_builds(),
+            HierarchyBuildCounts::default()
+        );
+        release_tx.send(()).expect("release");
+        assert!(blocker.wait(T).is_done());
+        // The pool runs the highest priority first, so the Prefetch job is the last build.
+        for h in [&immediate, &raised, &prefetch] {
+            assert!(matches!(h.wait(T), AssetState::Ready(_)));
+        }
+        assert_eq!(
+            collision(&ctx).hierarchy_builds(),
+            HierarchyBuildCounts {
+                worker: 1,
+                shared: 2,
+                last_max_threads: Some(1),
+            }
         );
     }
 }

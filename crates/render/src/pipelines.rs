@@ -140,7 +140,23 @@ impl SharedLayouts {
 pub(crate) struct PipelineSet {
     pub quad: wgpu::RenderPipeline,
     pub line: wgpu::RenderPipeline,
+    /// The quad that multiplies the target by its texel alpha (`Pass::opacity_mask`).
+    pub mask: wgpu::RenderPipeline,
 }
+
+/// `Pass::opacity_mask`: the destination times the source alpha, on all four channels.
+pub(crate) const MASK_BLEND: wgpu::BlendState = wgpu::BlendState {
+    color: wgpu::BlendComponent {
+        src_factor: wgpu::BlendFactor::Zero,
+        dst_factor: wgpu::BlendFactor::SrcAlpha,
+        operation: wgpu::BlendOperation::Add,
+    },
+    alpha: wgpu::BlendComponent {
+        src_factor: wgpu::BlendFactor::Zero,
+        dst_factor: wgpu::BlendFactor::SrcAlpha,
+        operation: wgpu::BlendOperation::Add,
+    },
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct Key {
@@ -190,15 +206,28 @@ fn depth_state(depth: bool) -> Option<wgpu::DepthStencilState> {
     })
 }
 
-fn build_set(device: &wgpu::Device, shared: &SharedLayouts, key: Key) -> PipelineSet {
+fn quad_pipeline(
+    device: &wgpu::Device,
+    shared: &SharedLayouts,
+    key: Key,
+    label: &str,
+    blend: wgpu::BlendState,
+    depth_write: bool,
+) -> wgpu::RenderPipeline {
     let target = [Some(wgpu::ColorTargetState {
         format: key.format,
-        blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+        blend: Some(blend),
         write_mask: wgpu::ColorWrites::ALL,
     })];
-
-    let quad = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-        label: Some("tessera-quad"),
+    let depth_stencil = depth_state(key.depth).map(|mut d| {
+        if !depth_write {
+            d.depth_write_enabled = Some(false);
+            d.depth_compare = Some(wgpu::CompareFunction::Always);
+        }
+        d
+    });
+    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some(label),
         layout: Some(&shared.quad_layout),
         vertex: wgpu::VertexState {
             module: &shared.quad_shader,
@@ -215,7 +244,7 @@ fn build_set(device: &wgpu::Device, shared: &SharedLayouts, key: Key) -> Pipelin
             cull_mode: None,
             ..Default::default()
         },
-        depth_stencil: depth_state(key.depth),
+        depth_stencil,
         multisample: wgpu::MultisampleState::default(),
         fragment: Some(wgpu::FragmentState {
             module: &shared.quad_shader,
@@ -225,7 +254,25 @@ fn build_set(device: &wgpu::Device, shared: &SharedLayouts, key: Key) -> Pipelin
         }),
         multiview_mask: None,
         cache: None,
-    });
+    })
+}
+
+fn build_set(device: &wgpu::Device, shared: &SharedLayouts, key: Key) -> PipelineSet {
+    let target = [Some(wgpu::ColorTargetState {
+        format: key.format,
+        blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+        write_mask: wgpu::ColorWrites::ALL,
+    })];
+
+    let quad = quad_pipeline(
+        device,
+        shared,
+        key,
+        "tessera-quad",
+        wgpu::BlendState::ALPHA_BLENDING,
+        true,
+    );
+    let mask = quad_pipeline(device, shared, key, "tessera-mask", MASK_BLEND, false);
 
     let line = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
         label: Some("tessera-line"),
@@ -257,7 +304,7 @@ fn build_set(device: &wgpu::Device, shared: &SharedLayouts, key: Key) -> Pipelin
         cache: None,
     });
 
-    PipelineSet { quad, line }
+    PipelineSet { quad, line, mask }
 }
 
 #[cfg(test)]

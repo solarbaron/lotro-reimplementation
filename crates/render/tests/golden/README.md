@@ -37,6 +37,7 @@ Tessera's own code from a procedural scene; none contains or is derived from gam
 | `ui_round_minimap.png` | same | a disc-alpha radar canvas over an opaque background (T11, P1 check 1) |
 | `ui_p1.png` | same | a P1-shaped radar: root, radar, rim cut only by the root, marker at heading 45 (render.md §6.14) |
 | `ui_filters.png` | same | scaled linear and nearest, alpha threshold at opacity 1 and 0.5, z, x and y rotations, opacity |
+| `viewport_portrait.png` | `crates/render/tests/viewport_golden.rs` | a UI viewport target (`ui-widgets.md` §12.3): a synthetic three-part figure drawn into a 62 × 62 target in a premultiplied pass onto the opaque black background and a soft disc opacity mask applied, composed as external content over panel art at 1 : 1 and stretched to 62 × 78 (linear); third, the same target without background and mask; fourth, a half-transparent orange background with an asymmetric mask (disc and top-left quadrant) |
 | `../../../../apps/client/tests/golden/test_scene.png` | `apps/client/tests/scene_golden.rs` | the client's M0 test scene without game data |
 | `../../../../apps/client/tests/golden/test_scene_surface.png` | same | the same scene with a synthetic stand-in for a decoded surface |
 

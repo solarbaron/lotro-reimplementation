@@ -163,6 +163,10 @@
 //! [`Renderer::update_texture_rect`] hold panel canvases, and
 //! [`Frame::ui_pass`] composes them with transform and clip chains; see the
 //! `ui` types ([`UiEntry`], [`UiPass`]) and `docs/specs/render.md` §6.
+//! A UI viewport element's scene is drawn into a [`ViewportTarget`]
+//! ([`Renderer::begin_viewport_frame`], [`Renderer::end_viewport_frame`] with a
+//! [`ViewportFinish`]: background under the scene, opacity mask) and composed as the
+//! element's external content (`docs/specs/ui-widgets.md` §12.3).
 //!
 //! Adapter selection honours `WGPU_BACKEND`, `WGPU_ADAPTER_NAME` and
 //! `WGPU_POWER_PREF` (see [`ContextOptions`]); asynchronous GPU errors are
@@ -192,6 +196,7 @@ mod sky;
 mod terrain_layers;
 mod texture;
 mod ui;
+mod viewport;
 mod water;
 
 pub use arena::{ArenaStats, MeshConfig, MeshId, RangeAllocator};
@@ -253,6 +258,7 @@ pub use ui::{
     UiCapCounters, UiClip, UiClipMap, UiEntry, UiFill, UiFilter, UiGeometry, UiPass, UiRect,
     UiRefusal, UiRotation, UiSource, UiStats, UiViewMode,
 };
+pub use viewport::{MAX_VIEWPORT_SIDE, ViewportFinish, ViewportTarget};
 pub use water::{
     DistortionParams, FresnelForm as WaterFresnelForm, LiquidMeshDraw, LiquidShading,
     MAX_LIQUID_MESH_DRAWS, MAX_WATER_QUADS, MAX_WATER_SUBDIVISIONS, MAX_WATER_VERTICES,

@@ -578,6 +578,8 @@ struct FrameWarnings {
     palette: bool,
     world_unlit: bool,
     scene_copy: bool,
+    world_finish: bool,
+    mask_missing: bool,
 }
 
 /// The colour-buffer copy that water samples as its refraction source
@@ -2740,6 +2742,28 @@ impl<'w> Renderer<'w> {
                 color: q.color,
                 uv_rect: q.uv_rect,
             }));
+            // The finishing step of a UI viewport target (`Pass::opacity_mask`): a
+            // full-target quad right after the pass's own.
+            if pass.has_finish() {
+                if is_world {
+                    if !warnings.world_finish {
+                        tracing::warn!(
+                            pass = %pass.label,
+                            "background and opacity mask in a world pass are ignored"
+                        );
+                        warnings.world_finish = true;
+                    }
+                    pass.opacity_mask = None;
+                } else {
+                    let full =
+                        crate::frame::Quad::screen_rect(0.0, 0.0, width as f32, height as f32);
+                    instance_data.push(QuadInstance {
+                        model: full.transform.to_cols_array_2d(),
+                        color: [1.0; 4],
+                        uv_rect: full.uv_rect,
+                    });
+                }
+            }
             line_base.push(line_data.len());
             // A dangling odd vertex is ignored (line list needs pairs).
             let even = pass.lines.len() & !1;
@@ -2929,7 +2953,12 @@ impl<'w> Renderer<'w> {
             let meshes = pass_meshes.get(i);
             let has_meshes = meshes.is_some_and(|m| !m.is_empty());
             let has_hooks = is_world && !pass.hooks.is_empty();
-            if pass.quads.is_empty() && pass.lines.len() < 2 && !has_meshes && !has_hooks {
+            if pass.quads.is_empty()
+                && pass.lines.len() < 2
+                && !has_meshes
+                && !has_hooks
+                && !pass.has_finish()
+            {
                 continue;
             }
             let uniform_offset = u32::try_from(i as u64 * stride).unwrap_or(0);
@@ -3015,6 +3044,13 @@ impl<'w> Renderer<'w> {
                 rp.draw(0..n, 0..1);
                 stats.draw_calls = stats.draw_calls.saturating_add(1);
                 stats.lines = stats.lines.saturating_add(n / 2);
+            }
+
+            if let Some(set) = set
+                && pass.has_finish()
+            {
+                let base = instance_base.get(i).copied().unwrap_or(0) + pass.quads.len();
+                self.record_finish(&mut rp, set, pass, base, &view, &mut warnings, &mut stats);
             }
 
             if let Some(m) = meshes {
@@ -3259,6 +3295,48 @@ impl<'w> Renderer<'w> {
             rp.draw_indexed(item.indices.clone(), 0, 0..1);
             stats.draw_calls = stats.draw_calls.saturating_add(1);
             stats.shadow_draws = stats.shadow_draws.saturating_add(1);
+        }
+    }
+
+    /// The finishing step of a screen pass (`Pass::opacity_mask`), drawn from the
+    /// full-target quad queued at `base`.
+    #[allow(clippy::too_many_arguments)]
+    fn record_finish(
+        &self,
+        rp: &mut wgpu::RenderPass<'_>,
+        set: &crate::pipelines::PipelineSet,
+        pass: &Pass,
+        base: usize,
+        view: &wgpu::TextureView,
+        warnings: &mut FrameWarnings,
+        stats: &mut FrameStats,
+    ) {
+        let qsize = size_of::<QuadInstance>() as u64;
+        let at = base as u64;
+        if let Some(mask) = pass.opacity_mask {
+            match self.textures.get(mask) {
+                Some(t) if t.target_view.as_ref() != Some(view) => {
+                    rp.set_pipeline(&set.mask);
+                    rp.set_bind_group(1, &t.bind_group, &[]);
+                    rp.set_vertex_buffer(
+                        0,
+                        self.instances.buffer.slice(at * qsize..(at + 1) * qsize),
+                    );
+                    rp.draw(0..4, 0..1);
+                    stats.draw_calls = stats.draw_calls.saturating_add(1);
+                }
+                found => {
+                    if !warnings.mask_missing {
+                        let reason = if found.is_some() {
+                            "texture is this frame's own render target"
+                        } else {
+                            "unknown texture"
+                        };
+                        tracing::warn!(?mask, reason, "opacity mask skipped");
+                        warnings.mask_missing = true;
+                    }
+                }
+            }
         }
     }
 

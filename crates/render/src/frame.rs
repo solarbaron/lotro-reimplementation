@@ -132,6 +132,9 @@ pub struct Pass {
     /// Set by `Pass::premultiplied_alpha`: fixed blend states write alpha by
     /// `docs/specs/render.md` §6.10 "Fixed blends" (R12).
     pub(crate) premultiplied: bool,
+    /// The opacity mask applied after the pass's draws ([`Pass::opacity_mask`]);
+    /// screen passes only.
+    pub(crate) opacity_mask: Option<TextureId>,
 }
 
 /// The render-world draws queued on one pass (`docs/specs/render.md` §5).
@@ -179,7 +182,14 @@ impl Pass {
             world: WorldDraws::default(),
             particles: Vec::new(),
             premultiplied: false,
+            opacity_mask: None,
         }
+    }
+
+    /// Whether the pass has the finishing step of a UI viewport target
+    /// ([`Pass::opacity_mask`]).
+    pub(crate) fn has_finish(&self) -> bool {
+        self.opacity_mask.is_some()
     }
 
     /// Add a draw recorder (render-world modules, [`crate::pass_hook`]). Hooks run in
@@ -187,6 +197,18 @@ impl Pass {
     #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn hook(&mut self, hook: Arc<dyn PassHook>) -> &mut Self {
         self.hooks.push(hook);
+        self
+    }
+
+    /// Replaces a world pass's camera: its view-projection for a target of `aspect`
+    /// (width / height) and its eye ([`Pass::eye`]). A screen pass is left as it is.
+    pub fn set_camera(&mut self, camera: &crate::Camera, aspect: f32) -> &mut Self {
+        if matches!(self.space, PassSpace::World { .. }) {
+            self.space = PassSpace::World {
+                view_proj: camera.view_proj(aspect),
+            };
+            self.eye = Some(camera.eye);
+        }
         self
     }
 
@@ -221,6 +243,20 @@ impl Pass {
     /// depth).
     pub fn clear_depth(&mut self) -> &mut Self {
         self.clear_depth = true;
+        self
+    }
+
+    /// Multiplies every pixel of the target, all four channels (premultiplied colour and
+    /// alpha), by the alpha of `mask` sampled at the same relative position (the mask is
+    /// stretched over the whole target and sampled with the texture's own filter). The
+    /// opacity mask of a UI viewport target (`ui-widgets.md` §12.3 step 2); a caller whose
+    /// mask has no alpha channel uploads its red channel as the alpha.
+    ///
+    /// Screen passes only (a world pass ignores it, with a warning). It runs after the
+    /// pass's quads and lines. A mask that names an unknown texture
+    /// or the frame's own target is skipped with a warning (the target stays unmasked).
+    pub fn opacity_mask(&mut self, mask: TextureId) -> &mut Self {
+        self.opacity_mask = Some(mask);
         self
     }
 
@@ -521,6 +557,12 @@ impl Frame {
     #[must_use]
     pub fn passes(&self) -> &[Pass] {
         &self.passes
+    }
+
+    /// Pass `index` of the frame, to change it after the code that added it (for example
+    /// the camera of a figure pass drawn into a UI viewport target, [`Pass::set_camera`]).
+    pub fn pass_mut(&mut self, index: usize) -> Option<&mut Pass> {
+        self.passes.get_mut(index)
     }
 }
 

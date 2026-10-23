@@ -1704,7 +1704,9 @@ Architecturally this means:
   designed so that another backend can be added without changes above `tessera-net`.
 - The compatibility backend (M8) lives in **its own crate**, `tessera-compat` (`crates/compat`),
   so it stays isolated from the rest of the client. It is **partly done and needs more work**:
-  all six protocol specifications are Accepted (`0` open questions) —
+  none of its six protocol specifications is Accepted since incident 0041
+  ([0041](decisions/0041-incident-m8-spec-contamination.md); remediation brief
+  [`m8-remediation.md`](m8-remediation.md)) —
   [`official-login.md`](specs/official-login.md),
   [`official-session.md`](specs/official-session.md),
   [`official-messages-world.md`](specs/official-messages-world.md),

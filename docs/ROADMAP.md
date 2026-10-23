@@ -37,11 +37,15 @@
 > mounts and instances) started on 2026-10-11 beside them: its exit criteria pass on Tessera's
 > side (exit verification 2026-10-12, [P5 status](#p5-status)), its specs are Accepted after
 > independent review (2026-10-13); the code was conformed to them and P5 merged to main.
+> [P6](#p6) (progression and crafting panels) merged to main on 2026-10-17
+> ([P6 status](#p6-status)); P8 has started.
 > [M8](#m8) (official-server compatibility, [decision 0034](decisions/0034-official-server-compatibility.md))
-> is partly done and needs more work ([M8 status](#m8-status)): all six Phase 1 protocol
-> specs are Accepted and the foundational `backend`, `login`, `session`, and `world` modules in
-> `tessera-compat` are built, while play/gameplay message integration, end-to-end client
-> wiring, and live verification still need more work.
+> is partly done and paused ([M8 status](#m8-status)): since incident
+> [0041](decisions/0041-incident-m8-spec-contamination.md) none of its six Phase 1 protocol
+> specs is Accepted, and by [decision 0042](decisions/0042-m8-remediation-decisions.md) the
+> incident stays open and no official-protocol handler is built until the specs pass a
+> clean-room audit. The foundational `backend`, `login`, `session` and `world` modules in
+> `tessera-compat` are built and were cleaned up under decision 0042 (2026-10-23).
 > Milestones are ordered by dependency: each one builds on the previous one.
 
 <a id="purpose"></a>
@@ -1030,9 +1034,9 @@ scripts of static entities and placed figures (started by `tessera-scriptgraph`;
 and dropped paths, attachment frames, lingering, housekeeping, draw order, distance fade;
 `apps/client/tests/particles_real_data.rs` draws particles at M3-03 and settles). The specs
 are **not implemented end to end**: fork effects (0x44) are not drawn (`particles.md` rule
-§10.2, Q1); systems of the post-processing pass are not drawn (the walker has none); weather
-systems and the global wind (Q13), the gameplay event handler (Q-RT5), `inherit_opacity`
-and driven node fields remain (beams, Q-RT4, are drawn since P2: `particle-runtime.md` §11.1); the walker's own choices are recorded as implementer OPENs in
+§10.2, Q1); the gameplay event handler (Q-RT5) and driven node fields remain (beams,
+Q-RT4, are drawn since P2: `particle-runtime.md` §11.1; post-pass systems, weather,
+the global wind and `inherit_opacity` since rounds 4 and 5, below); the walker's own choices are recorded as implementer OPENs in
 `particle-runtime.md` §3.2, §5.4, §9.2 and §12. Since 2026-10-23 (follow-up
 `particles-decals`): the lights of lit systems (Q8 (b), rule 13: the ambient term and the
 owner's light list cut to five, `crates/particles/src/light.rs`) and bounds culling (Q-RT3,
@@ -1045,9 +1049,31 @@ draws before the blended instanced surfaces (`render.md` §5.7 Decision, golden
 `instance-scripts.md` §6 (`tessera_world::lighting::lamps`) are in the walker's light table,
 nearest first and capped at 255, so they light objects, lit systems and decals. The revised
 `particle-runtime.md`, `decals.md` and `render.md` §5 and §6.16 are Accepted: they answer
-the §9.3 and §12 readings (rule 13 now gives point lights no range cut-off, which `crates/particles/src/light.rs` still applies), allow interior
+the §9.3 and §12 readings (rule 13 now gives point lights no range cut-off), allow interior
 cells to stay non-receivers until the walker keeps CPU cell meshes (`decals.md` §9.1 answer
 (b)), and give the new world order in `render.md` §5.1 and R-D8.
+2026-10-23 (round 4, package `world-conform`, a8ce82f; 913e1c9): `crates/particles/src/light.rs`
+follows rule 13 at every distance (1/(1+k·d²); `particles_lit_golden` checks it and its
+synthetic golden was re-blessed and viewed); rule 15 (`EffectManager::place_owner_inheriting`,
+`runtime::inherited_opacity`) for figure owners; the ten weather systems of §11.2 and rule 17
+(`apps/client/src/walker/effects/weather.rs`: created at start-up from the install, global
+wind target from curves 3 and 4, sky-exposure tests every 0.5 s through the collision world,
+branch thresholds, camera systems, impact draws, gusts and water systems;
+`PrecipitationEffects` and `VideoPostEffects` read from `[Render]` in windowed runs). The far
+view counts as graphics core 5 with `NearFarSeamBlending` always on (`far-view.md`
+FD16–FD18); `MultiPassLighting` and `LandscapeLightingQuality` gate the seam overlay. Attached
+MeshFX nodes take the holding location first (`script-table.md` §5.2, `prop_anchor_rule` in
+the shared figure path), and the walk camera's smoothing times are half-lives (`walker.md`
+§14.11, `smooth_towards`). 2026-10-23 (round 5, package `client-host-r5`, 3b6d4a2): rule 16
+is a `tessera-render` stage (`HookStage::Post`, `Pass::post_particles`, the last stage of a
+world pass, after the blended meshes), used by the walker and the creation viewport; effects
+of static owners inherit the object's drawn fade (`ObjectLayer::placed_object_opacity`,
+matched by placement position); mount props carry the §5.2 anchor rule (`MeshChoice::anchor`).
+Open: no rain streaks or snow flakes (the §11.2.3 drop spawns and §11.2.5 figure effects;
+`particle-runtime.md` round 5 adds the §11.2.6 rain and snow parameters); the §11.3 effect
+preview of the options window; the FD17 command-line override; unattached MeshFX anchors are
+not yet read once at placement; the mount draw path uses only the holding location; the prop
+fade, life and destroy times (`appearance.md` §5.7, revised in round 5) are not built.
 
 ---
 
@@ -1182,14 +1208,17 @@ origin; the
 operating system's time zone (`apps/client/src/plugins/localtime.rs`, read once at start-up;
 UTC only when no zone is found), no longer UTC by default.
 2026-10-23 (second round, package `ui-surface`): the title and drag bars of a game-styled
-plugin window at top −8 are drawn (its canvas reaches up to 64 units above the window), and
+plugin window at top −8 were drawn (its canvas reached up to 64 units above the window;
+removed in round 4, below), and
 a game-styled window marked as scaled is rebuilt from its scaled layout element
 (`crates/plugins/src/ui/styled.rs` `rebuild_scaled_window`). `lua-plugin-api.md` is
 Accepted (re-review 2026-10-23). 2026-10-23 (round 3, package `uis-remaining`): the four
 text-margin properties default to the values P115 gives, and a plain `Turbine.UI.Window`
 marked as scaled is rebuilt in place as a bare `UIScaler` (no size limits, blend mode
-remapped as on every rebuild; §13.21 rule 1). Open: the title-bar cut follows §14.2.6 (d),
-but the overhang drawing and hit test in `tessera-ui` contradict it (round 4, `ui-core`).
+remapped as on every rebuild; §13.21 rule 1). 2026-10-23 (round 4, package `ui-core`): the
+title-bar overhang is removed from canvases, nested-entry clips and hit tests, so the 8 rows
+above a game-styled window are neither drawn nor hit (§14.2.6 (d)), and the first-marking
+rebuild keeps the plugin-set state (§14.2.6 (b)).
 
 ---
 
@@ -1442,27 +1471,29 @@ builds ([decision 0034](decisions/0034-official-server-compatibility.md)).
    events. The owner records the result.
 
 <a id="m8-status"></a>
-**Status (2026-10-22): Partly done; building paused by incident [0041](decisions/0041-incident-m8-spec-contamination.md). No Phase 1 specification is Accepted: the gameplay spec is held for disassembly prose, the world, play and `property-system.md` §10 specs are back in Review, and the login and session specs are Revised. Before the incident, the 4 foundational Phase 2 modules (`backend`, `login`, `session`, `world` in `crates/compat`) are built and pass synthetic tests (61 tests, 3 fuzz targets `compat_login_xml`, `compat_session_packet`, `compat_world_message`); play/gameplay message handlers, live client connector wiring, and live verification still need more work.**
+**Status (2026-10-23): Partly done; building paused by incident [0041](decisions/0041-incident-m8-spec-contamination.md), which stays open by [decision 0042](decisions/0042-m8-remediation-decisions.md). No Phase 1 specification is Accepted: the gameplay spec is held for disassembly prose, the world, play and `property-system.md` §10 specs are back in Review, and the login and session specs are Revised. The first remediation pass (branch `m8-remediation`, 19acce5) failed its default-mode clean-room audit ([`m8-remediation.md`](m8-remediation.md) §7: B1–B4, N1–N10), so `M8_PAUSED` stays `true` and no official-protocol message handler is built until a pass passes the audit. [`official-entry.md`](specs/official-entry.md) (the Tessera-side entry points: start screen, consent gate, account form, world list, queue) is Accepted. The 4 foundational Phase 2 modules (`backend`, `login`, `session`, `world` in `crates/compat`) were built before the incident and cleaned up under decision 0042 items 1–3 and 5 (2026-10-23); play/gameplay message handlers, live client connector wiring, and live verification still need more work.**
 
 - **Specs (written 2026-10-20 to 2026-10-22; none is Accepted since incident 0041, see the status line above; `official-messages-gameplay.md` is held in `research/held/incident-0041/`, so links to it dangle). What they cover:**
-  - [`official-login.md`](specs/official-login.md): runtime launcher config and `UserPreferences64.ini`/`UserPreferences.ini` discovery, language discovery, runtime `<netver>`/`.dat` `<didver>` extraction and DID `0x10000001`/`0x10000002` dictionary resolution, GLS SOAP 1.1 `GetDatacenters` and `LoginAccount`, remote configuration, `<Status>` world status and RFC 1918 queue URL fallback, mandatory `TakeANumber`/`LeaveQueue` queue protocol, `ArgTemplate` hand-off, and in-game `RefreshTicket` backoff schedule.
-  - [`official-session.md`](specs/official-session.md): UDP `CConnection` transport, deterministic local port selection, `.dat`-backed `CompressionDictionary` (`0x0E010000`–`0x0E010002`) LSB-first bit-tree compression/decompression, 20-byte big-endian `ProtoHeader` (`0x0F7FFB00` wire flag mask), `CalcChecksum`, ISAAC PRNG, 3DES-CBC, all 18 optional headers, `PackedDWORD`, `NetBlob` fragmentation/reassembly, session handshake (`0x00010000`/`0x00040000`/`0x00080000`), post-handshake version negotiation (`0x0000012C`–`0x00000130`), server switch/referral (`0x00000800`/`0x00020000`), and `NetMessage` envelope (`0x00000186`/`0x00000179`).
-  - [`official-messages-world.md`](specs/official-messages-world.md) & [`property-system.md`](specs/property-system.md) §10: compact wire value encodings (3-tier/4-tier/16-bit VLEs, `CompactPID`, `CompactDID`, wire `Position` elision, wire `StringInfo`, all 22 `PropertyValue` types in `WirePropertySet`), character screen protocol (`0x13D`, `0x154`, `0xDC`, `0xDD`, `0x79`, `0x7A`, `0xD1`, `0x15`, `0x6D`, `0xB3`, `0x19E`, `0x6F`), world entry and `0xCC` portal placement (including the complete `0x07000029` `PlayerPhysics` boolean and enum state schemas), `SmoothedNetworkClock` (forward snap + 5-tier downward slew), 180-byte `0x35000000` `GameTime` calendar, and object lifecycle (`0x0D`/`0x4C`, `0x98`, `0x52`, `0x89`, `0x40`, `0xD0`, `0xCE`, `0x24`, `0x75`, `0x5A`, `0xA8`, `0x63`, `0x22`, `0x16C`, `0x88`–`0x149`, `0xB7`).
-  - [`official-messages-play.md`](specs/official-messages-play.md): player 30-slot movement ring buffer and 4-step `0x24` transmission, `0xCC` server reconciliation, `0xCE`/`0xBF` forced position/teleport and modulo-256 stamp sync, remote entity path/motion/animation updates (`0x59`, `0xED`, `0xBD`, `0x6F`), WLib RPC envelopes (`0x30`, `0x5F`, `0xC0`, `0xC9`, `0x50`, `0x28`) for chat (`0x04EC`), emotes (`0x04F9`), and timed logout (`0x051E`), world-server system/broadcast chat events, and the secondary `--chatserver` / `ChatNet` UDP protocol (`0x40000002` ticket auth, `0x00000165` login status, `0x0000017E`/`0x00000174` heartbeat, `ChatDescriptor`/`ChatObj`, and all 59 `ChatNet` opcodes `0x0000015C`–`0x00000195` & `0x000001A2`).
-  - [`official-messages-gameplay.md`](specs/official-messages-gameplay.md): complete census of all 120 WLib RPC proxy classes (`1,168` RPC methods: `619` C→S pack stubs and `549` S→C unpack stubs in `0x56000000` `wlib.bin`), 458 native packages (`3,997` functions), 198 top-level `NetBlobEvent` factory IDs, `WState` object-graph (`0x008E0001`/`0x008E0006`) serializers, and full P1–P6 + extended gameplay wire protocols (P1 inventory/containers/equipment/character properties, P2 targeting/skills/quickslots/inductions/cooldowns/effects/vitals/combat deltas, P3 NPC dialogue/quests/deeds/vendors/barter/buyback/repair/loot/wallet, P4 fellowships/raids/trade/friends/ignore/kinship/player music, P5 map markers/fog-of-war/travel/mounts/war-steeds/instance finder, P6 XP/reputation/titles/trainers/trait trees/professions/recipes/crafting, plus Mail, Auction House, Housing, Cosmetics, Wardrobe, Barber, Vault/Shared Storage, Carry-Alls, Inspection, and Hobbies) mapped 1-to-1 to `tessera_net::domain`.
+  - [`official-login.md`](specs/official-login.md): launcher configuration and user preference discovery, language discovery, network-version and archive-version discovery, the SOAP datacenter and account exchanges, remote configuration, world status, the login queue, the launch hand-off and in-game ticket refresh. By decision 0042 the version comes from a user value, then the executable's version resource, otherwise the user is asked (no scan, signature or anchor), and no fallback URL is built.
+  - [`official-session.md`](specs/official-session.md): UDP transport, local port selection, bit-tree compression with dictionaries from the archives (`0x0E010000`–`0x0E010002`), the 20-byte datagram header, checksums, ISAAC masks, 3DES-CBC, optional headers, variable-length integers, blob fragmentation and reassembly, the session handshake, version negotiation, server switch and referral, and message envelopes.
+  - [`official-messages-world.md`](specs/official-messages-world.md) & [`property-system.md`](specs/property-system.md) §10: compact wire value encodings, encoded property tables, the character screen messages, world entry and portal placement, the network clock, the world calendar, and object lifecycle and movement.
+  - [`official-messages-play.md`](specs/official-messages-play.md): player movement and server reconciliation, forced positions and teleports, remote entity motion and animation, script RPC envelopes for chat, emotes and timed logout, world-server chat events, and the secondary chat-server protocol.
+  - [`official-messages-gameplay.md`](specs/official-messages-gameplay.md) (held): the script RPC census and the P1–P6 and further gameplay messages, mapped to `tessera_net::domain`. By decision 0042 admin and GM classes are out of scope, and RPC signatures are read from the install at run time, never embedded.
 - **Partly built (`crates/compat`, `fuzz/`):**
-  - `crates/compat/src/{lib,backend,login,session,world}.rs`: 4 modules (`backend`, `login`, `session`, `world`) covering the compatibility backend wrapper, login exchanges and state machine, UDP session/transport layer, and world-session message & property codecs (61 unit and synthetic integration tests passing across `tests/{login,session,world}.rs`).
-  - `fuzz/fuzz_targets/{compat_login_xml,compat_session_packet,compat_world_message}.rs` (3 fuzz targets).
-- **Still needs more work:**
-  - Implementing the `official-messages-play.md` (movement ring buffer, WLib chat/emote/logout RPCs, secondary `ChatNet` UDP client) and `official-messages-gameplay.md` (P1–P6 gameplay WLib RPCs and events) handlers in `crates/compat` and mapping them into `CompatBackend`.
-  - Live client connector wiring in `tessera-client`.
-  - Live server verification with the owner's account.
+  - `crates/compat/src/{lib,backend,login,version_resource,session,world}.rs`: the compatibility backend shell, login exchanges and state machine with version discovery, a hostile-input reader of the PE version resource, the UDP session and transport layer, and the world-session message and property codecs; synthetic tests in `tests/{login,session,world,hardening,version_resource}.rs`.
+  - `fuzz/fuzz_targets/{compat_login_xml,compat_session_packet,compat_world_message,compat_version_resource}.rs` (4 fuzz targets).
+  - 2026-10-23 (package `compat-cleanup`, 84b7981, decision 0042 items 1–3 and 5, built without reading the M8 specs): the machine-code version scan, its error-string anchor and the fixed-offset fallback are removed (`version_resource.rs`, public PE layout only; the real-data launcher test runs again); about 205 client-internal identifiers are renamed to neutral names (names only); the status-URL fallback built from path fragments is removed, and the SOAP namespace and action identifiers live only in the encoder; the session notice 0x12E is receive-only (decoded and shown, never sent); hardening with a regression test each (bit-tree `i16::MIN`, sequence group range, out-of-order-ack cap, recipient-ID collisions refused before any state change, out-of-range and exhausted IDs, container depth clamped to 32, one decompression budget per container tree, size checks before reading files, credentials and request bodies wiped). Independent code review and default-mode clean-room audit: pass with notes, findings fixed.
+- **In progress:** the consent gate of `official-entry.md` (decision 0042 item 5).
+- **Still needs more work (waits for Accepted specs, decision 0042 item 4):**
+  - the play messages (movement, chat, emotes, logout, the chat-server client) and the P1–P6 gameplay messages in `crates/compat`, mapped into `CompatBackend`;
+  - live client connector wiring in `tessera-client` (in place of `PlaceholderConnector`);
+  - live server verification with the owner's account.
 
 | # | Status | Evidence |
 |---|---|---|
-| 1 | **not met** (incident 0041) | The 2026-10-22 clean-room audit found disassembly prose in the gameplay spec (held) and no independent review of the world, play and `property-system.md` §10 specs; login and session were revised after review. Earlier claim: all 6 Phase 1 specifications (`official-login.md`, `official-session.md`, `official-messages-world.md`, `official-messages-play.md`, `official-messages-gameplay.md`, `property-system.md` §10) are **Accepted** after `CLEAN_ROOM.md` §5.3 review with `0` open questions, `0` Ghidra addresses/symbols, complete provenance tables (`DAT`, `CFG`, `LL`, `DOC`, `BIN`), and synthetic `example.invalid` test vectors only. |
+| 1 | **not met** (incident 0041) | The 2026-10-22 clean-room audit found disassembly prose in the gameplay spec (held) and no independent review of the world, play and `property-system.md` §10 specs; login and session were revised after review. The first remediation pass failed its audit on 2026-10-23 (`m8-remediation.md` §7); decision 0042 keeps the incident open. Earlier claim: all 6 Phase 1 specifications (`official-login.md`, `official-session.md`, `official-messages-world.md`, `official-messages-play.md`, `official-messages-gameplay.md`, `property-system.md` §10) are **Accepted** after `CLEAN_ROOM.md` §5.3 review with `0` open questions, `0` Ghidra addresses/symbols, complete provenance tables (`DAT`, `CFG`, `LL`, `DOC`, `BIN`), and synthetic `example.invalid` test vectors only. |
 | 2 | **pass** | `tools/check-content.sh`, `tools/check-spdx.sh`, and `tools/check-server-deps.sh` pass with 0 errors and 0 warnings; no official URLs, hostnames, ports, keys, certificates, or packet captures exist anywhere in the repository. |
-| 3 | **pass** | Fuzz targets `compat_login_xml`, `compat_session_packet`, and `compat_world_message` compile cleanly in `fuzz/` (`cargo clippy --manifest-path fuzz/Cargo.toml --bins -- -D warnings`) and cover all login XML/SOAP/status/queue parsers, UDP datagram/header/fragment/envelope decoders, and compact wire value/property/world-message decoders. |
+| 3 | **pass** | Fuzz targets `compat_login_xml`, `compat_session_packet`, `compat_world_message` and (since 2026-10-23) `compat_version_resource` compile cleanly in `fuzz/` (`cargo clippy --manifest-path fuzz/Cargo.toml --bins -- -D warnings`) and cover all login XML/SOAP/status/queue parsers, UDP datagram/header/fragment/envelope decoders, and compact wire value/property/world-message decoders. |
 | 4 | **pending (owner)** | Live login, world entry, movement, and chat against an official server with the owner's account. |
 
 ---
@@ -1736,12 +1767,16 @@ tooltips wrap the name at its own layout width (180) and cascade pinned windows 
 (18, 18) modulo 20 (package `conform-gameplay`, `crates/ui/src/game/examine/panel.rs`).
 Since round 3 (package `client-glue`) `CharIds` has `pinned_tooltip_close_button` and the
 tooltip controllers of `character/panel.rs`, `combat/hud.rs` and `npc/ui.rs` set it, so only
-`PinnedTooltipCloseButton` closes their pinned windows; `social/ui.rs` does not set it yet
-(any button outside the tooltip closes its pinned windows). `character-screens.md` and `script-table.md`
+`PinnedTooltipCloseButton` closes their pinned windows; since round 4 (package
+`client-wiring`) the social windows' tooltips set it too. `character-screens.md` and `script-table.md`
 are Accepted: they settle the `RampIn` question as Tessera reads it and give the MeshFX
 attach rule (`script-table.md` §5.2: for attached nodes the holding location wins over the
-bone type; `apps/client/src/walker/characters/figure.rs` still tries the bone type first)
-and the prop fade and life rules (`appearance.md` §5.7), not built yet.
+bone type; built in round 4 in the shared figure path, `prop_anchor_rule`, and for mount
+props in round 5, see the M4.5 particle notes) and the prop fade and life rules
+(`appearance.md` §5.7, revised in round 5), not built yet. 2026-10-23 (round 4, package
+`client-wiring`): a refused manual world entry (`EnterWorldFailed`) keeps the session, and
+the character screens go back to the selection with the reason and Enter enabled
+(`tessera-protocol.md` Appendix A); a fixed-character run still disconnects.
 
 Open going in (before the re-check; since then decision 0025, `scenario-feed.md` revision 4,
 `tessera-protocol.md` v1.1 and `test-server.md` are Accepted and commit 93b3dfd draws the
@@ -1938,10 +1973,14 @@ the opacity mask multiplied in, `read_viewport_pixels`), `tessera-ui` `PortraitS
 `apps/client/src/portrait/` (mask loader on a worker; a target is redrawn only when its
 entity, figure, camera, size, background or mask changes). The golden `viewport_portrait.png`
 and the real-data test `combat_portraits_real_data` were viewed: both portraits show the
-player's head and shoulders inside the round mask. Open: the frame loop does not call
-`portrait::render_combat_portraits` yet, so the normal client keeps the portraits hidden
-(§12.4); the walker can draw no entity but the local player into a portrait, so another
-selected target hides P5's portrait; the UI scene's `Camera_1`, lights, ambient and fog
+player's head and shoulders inside the round mask.
+
+2026-10-23 (round 4, package `client-wiring`): the client UI keeps one `CombatPortraits` and
+draws it between the window frames and step 8, windowed and in headless `--ui` runs
+(`ClientUi::render_combat_portraits`); `Walker::draw_entity_portrait` draws any entity whose
+character figure is built, so P5 shows NPCs and other players. `combat_portraits_real_data`
+now uses the client's own portraits and selects the sandbox crowd member (`--crowd 1`; a
+placed NPC when one is built). Open: the UI scene's `Camera_1`, lights, ambient and fog
 (§12.2), the per-target viewport description and the portrait preference (§12.1) are not
 applied.
 
@@ -2080,11 +2119,21 @@ submenus at any depth, the W31 sizing, placement, check marks and the layout's o
 Quest abandon is a confirmation dialog for the quest it asked about (the two-click stand-in
 is retired), and the tracker menu is a context menu at the pointer; the code-made `Popup` is
 removed. Tier-1 goldens `widgets_confirmation` and `widgets_nested_menu` are committed and
-viewed. Open: the client host does not drop game keys while a modal dialog shows (§18.4;
-`widgets::dialog::modal_dialog_shown` exists); AcceptKey closes a text input with done and a
-message dialog consumes the EscapeKey release (`crates/ui/src/focus.rs`); no range check
-runs (§18.3 OPEN); the local tier-2 goldens of the vendor, wallet and quest log wait for a
-re-bless after the owner's look (decision 0031).
+viewed. The local tier-2 goldens of the vendor, wallet and quest log were re-blessed with
+the owner's approval (2026-10-23, decision 0031).
+
+2026-10-23 (round 4, packages `ui-core` and `client-wiring`): dialog keys follow
+`ui-widgets.md` §18.4 per dialog kind (`crates/ui/src/focus.rs`: a text input gives done
+only on AcceptInput in its entry, a message consumes only the AcceptKey release, EscapeKey
+with the quit button hidden gives nothing); while a modal dialog shows, every other key
+press and the release of each key pressed under it are consumed, and in the client no
+action or typed text reaches game code or the chat entry (`UiHost::modal_dialog_shown`; the
+walker's world keys, NPC Escape/Enter and the map and finder keys wait too). The dialog and
+context-menu controllers moved to `tessera_ui::game::{dialog, context_menu}`; the client's
+UI host uses them there since round 5. Open: no range check runs (§18.3 OPEN); the social,
+map, quest and travel modules and two quest tests still use the `widgets::` re-export
+paths; the module doc of `crates/ui/src/game/dialog.rs` still calls the host's part
+unbuilt.
 
 <a id="p4"></a>
 ### P4: Social panels
@@ -2251,8 +2300,9 @@ its new tree rows in one batch (`Ui::tree_add_many`, one layout; `crates/ui/src/
 `ui-dialogs-menus`): the friends and ignore add dialogs (and the unreachable note dialog) are
 `TextInput` engine dialogs (`ui-widgets.md` §18), and the row menus of `social-panels.md`
 §3.5, §3.6 and §4.5 are §19 context menus, the fellowship menu shown as one group submenu
-(§4.5); this closes the text-input dialog and context-menu item above. Open: the social
-windows' pinned tooltips do not set the `PinnedTooltipCloseButton` ID yet (see P1).
+(§4.5); this closes the text-input dialog and context-menu item above. 2026-10-23 (round 4,
+package `client-wiring`): `UiHost::social_frame` passes dialog results to the social panels,
+and the social windows' pinned tooltips set the `PinnedTooltipCloseButton` ID (see P1).
 
 Merge seams with P2 and
 P3 (both changed the same shared files additively; merged with main 2026-10-11): the `tessera-ui` game module index, the
@@ -2472,16 +2522,25 @@ and the `mounts.md` §14.3/§14.7 revision (both Accepted) confirm what was buil
 (`apps/client/src/map/dungeon.rs`), and `CoordinateDisplay` and the note tooltips use the
 install's texts, with Tessera's wording as the fallback (`apps/client/src/map/texts.rs`). The
 local tier-2 golden of `map_census_real_data` (01-root, 1024 × 768 against the blessed
-1200 × 900) drifted and waits for the owner's re-bless (decision 0031).
+1200 × 900) drifted; it was re-blessed with the owner's approval on 2026-10-23, after the
+census fix of round 4, together with the loading-screen golden (decision 0031).
 
 2026-10-23 (round 3, package `ui-dialogs-menus`): MapMenu and FilterMenu are
 `ui-widgets.md` §19 context menus from the install's `ContextMenu` layout, read through
 `MapFacts`, with an open delay for the region submenus; the tier-1 golden
 `p5_map_filter_menu` was re-blessed for the §19 menu and viewed. The finder's size and tier
-menus are §19 menus too, but code-made until `apps/client/src/travel` passes the install's
-menu refs to `FinderWindow::set_menu_refs`. The local tier-2 finder and travel-window goldens
-fail as well, also with the old box rule (so not because of the round-3 §3.4 change), and
-wait with the map census for the owner's re-bless.
+menus are §19 menus too. The local tier-2 finder and travel-window goldens were re-blessed
+with the owner's approval (2026-10-23).
+
+2026-10-23 (round 4, package `client-wiring`): the finder's size and tier menus use the
+install's `ContextMenu` layout (`travel-windows.md` §6.8; shared helper
+`map::ui::p5_menu_refs`). `map_census_real_data` passes again: a 4096 × 4096 dungeon image
+(0x78005EC9, 64 MiB, the whole default LRU budget) was evicted in the poll it arrived and
+reloaded for ever; arrived images are now kept until first asked for (at most 120 polls).
+Census: 1,525 visited, drawn 1,525, marked 1,523, C5 2, 0 failures (`map-windows.md` §5.4).
+A UI frame clock (`FrameClock`: wall, stepped, held) lets the travel test step the UI with
+the scenario and hold it for the loading-screen capture, stable in 3 of 3 runs; that local
+golden needs one re-bless (delete only its PNG and rerun).
 
 <a id="p6"></a>
 ### P6: Progression and crafting panels
@@ -2745,13 +2804,36 @@ Built in the third round of follow-ups (merged 2026-10-23, package `uis-remainin
 - the `Ui::letterbox_bars` doc names the `EntryTexture::Fill` entries.
 
 `ui-scaling.md` revision 8 is Accepted (2026-10-23, package `spec-ui-r3`). The local tier-2
-golden `combat_ui_real_data` checkpoint-03800ms drifts in the 1.7× floaty-text region because
-of the §3.4 rounding and waits for the owner's look (decision 0031).
+golden `combat_ui_real_data` checkpoint-03800ms drifted in the 1.7× floaty-text region because
+of the §3.4 rounding and was re-blessed with the owner's approval (2026-10-23, decision 0031).
+
+Built in the fourth and fifth rounds of follow-ups (merged 2026-10-23, packages `ui-core`,
+31053bd, and `client-host-r5`, 3b6d4a2):
+
+- S1: a content or generation job whose damage is over 30,000 px is painted whole on the
+  host's paint spawner (`Ui::set_paint_spawner`); the client hands it the UI asset worker
+  pool (`apps/client/src/ui_host/workers.rs` `PoolSpawner`, windowed and headless).
+  `Ui::set_paint_limits` now reaches the paint scheduler (before, the host's canvas, texture
+  and upload limits were never applied);
+- S6: one budget split between images, scaled images and glyphs (`scaling::s6_budget`), each
+  cache evicting to its share (`ImageCache::set_lru_budget`); the host calls
+  `Ui::set_image_memory` and gives the image share to the image LRU at start and after every
+  `set_ui_screen` (the client's `prefs::s6_split` is removed); glyph keys use the full font
+  identity (`FontId`). `ScaleState::rebuild` now notices an *Se* change at the same UI
+  screen size;
+- S7: `PaintFrameStats` carries glyph-derivation and ladder-step times (sum and longest);
+  frame samples carry the paint step's worker, glyph and ladder figures, the U-report gains
+  one S1 and two S7 rows, and the U2 row says it counts per frame (`render.md` §6.16);
+  `LadderPrefetch` runs `derive_ladder_step` on the workers after each *Se* change and hands
+  the results to `Ui::accept_ladder_step` (results of an older scale are dropped).
+
+`ui-scaling.md` was revised in rounds 4 (revisions 9 and 10) and 5 (§8 S1 and S6 floor,
+§6.5, SC18); both are Accepted after independent review.
 
 Open (follow-up):
 
 - measuring the S1–S7 budgets of §8 (indicatively on the loaded reference machine, then idle;
-  S1 worker paint, S6 caches and S7 measurement are in round 4, package `ui-core`);
+  the S7 limits are asserted only under `TESSERA_PERF=1` on a quiet machine, not run yet);
 - the §9.4 tier-2 real-data goldens;
 - no integration test drives the Interface window's text-size or art actions (the setters
   are covered by unit tests and the start-up test).

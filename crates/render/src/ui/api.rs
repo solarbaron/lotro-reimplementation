@@ -494,15 +494,32 @@ mod tests {
     /// alpha blended with `One`/`OneMinusSrcAlpha`.
     const PREMULTIPLYING: [&str; 2] = ["ALPHA_BLENDING", "PREMULTIPLIED_ALPHA_BLENDING"];
 
-    /// The fixed-blend pipeline builder, whose every output is checked against
-    /// render.md §6.10 "Fixed blends" (R12) by [`fixed_blends_follow_r12`], and the type
-    /// it returns: (file name, first line, last line) of each block.
-    const CHECKED_BUILDERS: [(&str, &str, &str); 2] = [
+    /// Blocks of the render sources that name blend states other than the premultiplying
+    /// ones and are covered by a test of their own instead: (file name, first line, last
+    /// line) of each block.
+    /// - the fixed-blend pipeline builder and the type it returns: every output is checked
+    ///   against render.md §6.10 "Fixed blends" (R12) by [`fixed_blends_follow_r12`];
+    /// - `MASK_BLEND` (`Pass::opacity_mask`): evaluated by
+    ///   [`opacity_mask_blend_keeps_premultiplied`];
+    /// - the signature of the quad pipeline builder (it takes a blend state): its callers
+    ///   pass only `ALPHA_BLENDING` and `MASK_BLEND`, which this scan and the test above
+    ///   cover.
+    const CHECKED_BUILDERS: [(&str, &str, &str); 4] = [
         ("material.rs", "pub(crate) struct FixedPipeline {", "}"),
         (
             "material.rs",
             "pub(crate) fn pipeline(self, alpha: FixedAlpha) -> FixedPipeline {",
             "    }",
+        ),
+        (
+            "pipelines.rs",
+            "pub(crate) const MASK_BLEND: wgpu::BlendState = wgpu::BlendState {",
+            "};",
+        ),
+        (
+            "pipelines.rs",
+            "fn quad_pipeline(",
+            ") -> wgpu::RenderPipeline {",
         ),
     ];
 
@@ -676,21 +693,11 @@ mod tests {
             return (c.clamp(0.0, 1.0), a.clamp(0.0, 1.0));
         };
         // The blend unit clamps the source before it applies the factors.
-        let q = unit_source(Px { c, a, ..p });
-        let component = |k: wgpu::BlendComponent, alpha: bool| {
-            let (src, dst) = if alpha { (q.a, q.d) } else { (q.c, q.dc) };
-            let s = src * wgpu_factor(k.src_factor, q, alpha);
-            let t = dst * wgpu_factor(k.dst_factor, q, alpha);
-            let v = match k.operation {
-                wgpu::BlendOperation::Add => s + t,
-                wgpu::BlendOperation::Subtract => s - t,
-                wgpu::BlendOperation::ReverseSubtract => t - s,
-                wgpu::BlendOperation::Min => src.min(dst),
-                wgpu::BlendOperation::Max => src.max(dst),
-            };
-            v.clamp(0.0, 1.0)
-        };
-        (component(state.color, false), component(state.alpha, true))
+        let q = Px { c, a, ..p };
+        (
+            blend_component(state.color, q, false),
+            blend_component(state.alpha, q, true),
+        )
     }
 
     /// render.md §6.10 "Fixed blends" (R12), for every fixed blend in passes with and
@@ -763,6 +770,56 @@ mod tests {
         // SRCALPHA / INVSRCALPHA, ADD (both depth writes, with and without the alpha
         // test); four source factors with destination ZERO, ADD (the same four variants).
         assert_eq!((over, opaque), (4, 16));
+    }
+
+    /// One blend component evaluated for one channel of `p` (source clamped first, as the
+    /// blend unit of a `Unorm` target does).
+    fn blend_component(k: wgpu::BlendComponent, p: Px, alpha: bool) -> f64 {
+        let q = unit_source(p);
+        let (src, dst) = if alpha { (q.a, q.d) } else { (q.c, q.dc) };
+        let s = src * wgpu_factor(k.src_factor, q, alpha);
+        let t = dst * wgpu_factor(k.dst_factor, q, alpha);
+        let v = match k.operation {
+            wgpu::BlendOperation::Add => s + t,
+            wgpu::BlendOperation::Subtract => s - t,
+            wgpu::BlendOperation::ReverseSubtract => t - s,
+            wgpu::BlendOperation::Min => src.min(dst),
+            wgpu::BlendOperation::Max => src.max(dst),
+        };
+        v.clamp(0.0, 1.0)
+    }
+
+    /// `Pass::opacity_mask` (`ui-widgets.md` §12.3 step 2, Tessera rule): the mask quad's
+    /// fragment carries the mask value *m* as its alpha (any colour); `MASK_BLEND`, evaluated
+    /// factor by factor, leaves (*C* · *m*, *A* · *m*) for every premultiplied destination
+    /// (*C*, *A*), so the target stays premultiplied.
+    #[test]
+    fn opacity_mask_blend_keeps_premultiplied() {
+        use crate::pipelines::MASK_BLEND;
+        let steps = [0.0, 0.2, 0.5, 0.75, 1.0];
+        let mut checked = 0;
+        for d in steps {
+            for k in steps {
+                let dc = d * k;
+                for m in steps {
+                    for c in [0.0, 0.3, 1.0, 2.0] {
+                        let p = Px { c, a: m, dc, d };
+                        let got = (
+                            blend_component(MASK_BLEND.color, p, false),
+                            blend_component(MASK_BLEND.alpha, p, true),
+                        );
+                        let want = (dc * m, d * m);
+                        assert!(
+                            (got.0 - want.0).abs() < 1e-9 && (got.1 - want.1).abs() < 1e-9,
+                            "{p:?}: drawn {got:?}, the mask rule wants {want:?}"
+                        );
+                        assert!(got.0 <= got.1 + 1e-9, "premultiplied: {p:?}");
+                        checked += 1;
+                    }
+                }
+            }
+        }
+        assert_eq!(checked, 500);
     }
 
     fn rust_files(dir: &Path, out: &mut Vec<std::path::PathBuf>) {

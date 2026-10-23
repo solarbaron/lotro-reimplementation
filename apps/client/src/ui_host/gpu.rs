@@ -10,8 +10,20 @@
 //! are shifted by the box's top-left corner before every write. A texture the renderer
 //! refuses (device limit, allocation failure) is left out: its writes are skipped and its
 //! entries not drawn; each refusal is counted and logged once per kind.
+//!
+//! External content (the portraits of `ui-widgets.md` §12, `render.md` §6.10) draws from
+//! the textures registered in the [`ExternalTextures`] table, by the content id the UI
+//! composes. The table is shared ([`UiTextures::external_textures`]), so `crate::portrait`
+//! registers its targets without holding the host (the character panel and the character
+//! screens register theirs through [`UiTextures::set_external`]). A texture registered with
+//! its size is sampled whole: the entry's canvas is the target's size, so a 62 × 62 portrait
+//! target fills its element's displayed box at any UI scale, and when the target's size
+//! differs from the displayed box it is sampled with linear filtering, whatever the list's
+//! filter and the `ui_scale_filter` override say (`ui-widgets.md` §12.3 step 3).
 
+use std::cell::RefCell;
 use std::collections::BTreeMap;
+use std::rc::Rc;
 
 use tessera_render::{
     Frame, Renderer, TextureId, UiAddressing, UiCapCounters, UiClip, UiEntry, UiFill, UiFilter,
@@ -35,6 +47,59 @@ pub struct GpuOpStats {
     pub missing_textures: u64,
 }
 
+/// One external-content texture ([`ExternalTextures`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ExternalTexture {
+    /// The registered render target.
+    pub texture: TextureId,
+    /// The target's size in pixels: the entry samples the whole target into its displayed
+    /// box. `None` keeps the composition list's canvas (a target of the layout-box size).
+    pub size: Option<(u32, u32)>,
+}
+
+/// The external-content textures by content id, shared between [`UiTextures`] and the code
+/// that renders the targets (module docs). Cloning shares the table.
+#[derive(Debug, Clone, Default)]
+pub struct ExternalTextures(Rc<RefCell<BTreeMap<u64, ExternalTexture>>>);
+
+impl ExternalTextures {
+    /// Registers the texture content `id` draws from, or removes it (`None`: its entries
+    /// are then not drawn).
+    pub fn set(&self, id: u64, texture: Option<ExternalTexture>) {
+        let mut m = self.0.borrow_mut();
+        match texture {
+            Some(t) => {
+                m.insert(id, t);
+            }
+            None => {
+                m.remove(&id);
+            }
+        }
+    }
+
+    /// The texture of content `id`.
+    #[must_use]
+    pub fn get(&self, id: u64) -> Option<ExternalTexture> {
+        self.0.borrow().get(&id).copied()
+    }
+
+    /// Registered contents.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.0.borrow().len()
+    }
+
+    /// Whether nothing is registered.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.0.borrow().is_empty()
+    }
+
+    fn clear(&self) {
+        self.0.borrow_mut().clear();
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 struct Tex {
     id: TextureId,
@@ -49,8 +114,8 @@ pub struct UiTextures {
     warned: [bool; 4],
     filter_override: Option<Filter>,
     /// Textures of external content (portrait viewports, `render.md` §6.10) by the
-    /// content id the UI composes: render targets the client draws each frame.
-    external: BTreeMap<u64, TextureId>,
+    /// content id the UI composes: render targets the client draws (module docs).
+    external: ExternalTextures,
 }
 
 fn dims(r: &Rect) -> (u32, u32) {
@@ -250,17 +315,22 @@ impl UiTextures {
         self.external.clear();
     }
 
-    /// The texture that external content `id` draws from (a registered render target), or
-    /// none: its entries are then not drawn.
+    /// The texture that external content `id` draws from (a registered render target of
+    /// the layout-box size), or none: its entries are then not drawn.
     pub fn set_external(&mut self, id: u64, texture: Option<TextureId>) {
-        match texture {
-            Some(t) => {
-                self.external.insert(id, t);
-            }
-            None => {
-                self.external.remove(&id);
-            }
-        }
+        self.external.set(
+            id,
+            texture.map(|texture| ExternalTexture {
+                texture,
+                size: None,
+            }),
+        );
+    }
+
+    /// The shared table of external-content textures (module docs).
+    #[must_use]
+    pub fn external_textures(&self) -> ExternalTextures {
+        self.external.clone()
     }
 
     /// Records the composition list as the frame's UI pass (`render.md` §6.5, §6.9). An
@@ -281,6 +351,7 @@ impl UiTextures {
         let mut rotations: Vec<UiRotation> = Vec::new();
         let mut clips: Vec<UiClip> = Vec::new();
         for e in &list.entries {
+            let mut external_size: Option<(u32, u32)> = None;
             let texture = match e.texture {
                 EntryTexture::Surface { surface, layer } => {
                     let key = TexKey {
@@ -294,9 +365,12 @@ impl UiTextures {
                     };
                     t.id
                 }
-                // A portrait the client rendered this frame (`render.md` §6.10).
-                EntryTexture::External(id) => match self.external.get(&id) {
-                    Some(t) => *t,
+                // A portrait the client rendered (`render.md` §6.10).
+                EntryTexture::External(id) => match self.external.get(id) {
+                    Some(t) => {
+                        external_size = t.size;
+                        t.texture
+                    }
                     None => continue,
                 },
                 // `ui-scaling.md` §5.4 step 6: an untextured fill (screen space, unclipped).
@@ -316,17 +390,27 @@ impl UiTextures {
                 rect: c.rect,
                 space: c.space,
             }));
-            let entry = UiEntry::new(texture, e.canvas, ui_rect(&e.dest))
+            // A sized external target is sampled whole, linearly when it is scaled
+            // (module docs).
+            let (canvas, tex_offset, filter) = match external_size {
+                Some((w, h)) if w > 0 && h > 0 => (
+                    [w, h],
+                    [0, 0],
+                    external_filter((w, h), &e.dest, self.entry_filter(e.filter)),
+                ),
+                _ => (e.canvas, e.tex_offset, self.entry_filter(e.filter)),
+            };
+            let entry = UiEntry::new(texture, canvas, ui_rect(&e.dest))
                 .with_source(match e.source {
                     Source::Straight => UiSource::Straight,
                     Source::Premultiplied => UiSource::Premultiplied,
                 })
-                .with_tex_offset(e.tex_offset)
+                .with_tex_offset(tex_offset)
                 .with_addressing(match e.addressing {
                     Addressing::Fit => UiAddressing::Fit,
                     Addressing::Tile { node_scale } => UiAddressing::Tile { node_scale },
                 })
-                .with_filter(self.entry_filter(e.filter))
+                .with_filter(filter)
                 .with_opacity(e.opacity)
                 .with_alpha_threshold(e.alpha_threshold)
                 .with_rotations(&rotations)
@@ -335,6 +419,18 @@ impl UiTextures {
             n += 1;
         }
         n
+    }
+}
+
+/// The filter of a sized external target of `size` pixels drawn into `dest`: linear when
+/// the sizes differ (`ui-widgets.md` §12.3 step 3), otherwise `listed` (the list's filter
+/// with the scale-filter override; at 1 : 1 the filters agree).
+#[must_use]
+pub fn external_filter(size: (u32, u32), dest: &Rect, listed: UiFilter) -> UiFilter {
+    if (dest.width(), dest.height()) == size {
+        listed
+    } else {
+        UiFilter::Linear
     }
 }
 
@@ -386,6 +482,24 @@ mod tests {
         t.set_filter_override(Some(Filter::Nearest));
         assert_eq!(t.entry_filter(Filter::Linear), UiFilter::Nearest);
         assert_eq!(t.filter_override(), Some(Filter::Nearest));
+    }
+
+    #[test]
+    fn a_scaled_external_target_is_sampled_linearly() {
+        let at_size = Rect::from_xywh(10, 10, 62, 62);
+        let scaled = Rect::from_xywh(10, 10, 93, 93);
+        assert_eq!(
+            external_filter((62, 62), &at_size, UiFilter::Nearest),
+            UiFilter::Nearest
+        );
+        assert_eq!(
+            external_filter((62, 62), &scaled, UiFilter::Nearest),
+            UiFilter::Linear
+        );
+        assert_eq!(
+            external_filter((62, 62), &Rect::from_xywh(0, 0, 62, 61), UiFilter::Nearest),
+            UiFilter::Linear
+        );
     }
 
     #[test]

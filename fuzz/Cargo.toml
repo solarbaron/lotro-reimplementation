@@ -1452,3 +1452,12 @@ path = "fuzz_targets/gamedata_presenters.rs"
 test = false
 doc = false
 bench = false
+
+# --- tessera-client portrait opacity masks (apps/client/src/portrait/mask.rs, included by path; ui-widgets.md §12.3) ---
+
+[[bin]]
+name = "client_portrait_mask"
+path = "fuzz_targets/client_portrait_mask.rs"
+test = false
+doc = false
+bench = false

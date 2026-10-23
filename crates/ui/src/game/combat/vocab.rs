@@ -349,6 +349,29 @@ combat_table! {
         /// `UI_PaperItem_PaperItemService` (the defeat panel's paper-item balance, §10.2;
         /// hidden by TR38).
         paper_item_service = ("UI_PaperItem_PaperItemService", 0xFFFD_200F),
+        /// `UICore_Viewport_uiscene` (the portraits' UI scene, `ui-widgets.md` §12.1).
+        viewport_scene = ("UICore_Viewport_uiscene", 0xFFFD_2010),
+        /// `UICore_Viewport_camera` (`UISceneEntity` key, §12.1 step 4).
+        viewport_camera = ("UICore_Viewport_camera", 0xFFFD_2011),
+        /// `UICore_Viewport_AmbientLight` (§12.2).
+        viewport_ambient = ("UICore_Viewport_AmbientLight", 0xFFFD_2012),
+        /// `UICore_Viewport_RenderToTextureWidth` (§12.3 step 1).
+        viewport_width = ("UICore_Viewport_RenderToTextureWidth", 0xFFFD_2013),
+        /// `UICore_Viewport_RenderToTextureHeight` (§12.3 step 1).
+        viewport_height = ("UICore_Viewport_RenderToTextureHeight", 0xFFFD_2014),
+        /// `UICore_Viewport_RenderToTextureBackgroundColor` (§12.3 step 1).
+        viewport_background = ("UICore_Viewport_RenderToTextureBackgroundColor", 0xFFFD_2015),
+        /// `UICore_Viewport_RenderToTextureOpacityMask` (a texture list, §12.3 step 2).
+        viewport_mask = ("UICore_Viewport_RenderToTextureOpacityMask", 0xFFFD_2016),
+        /// `UI_TargetViewport_UsePlayerAsTarget` (§12.1 step 1).
+        viewport_use_player = ("UI_TargetViewport_UsePlayerAsTarget", 0xFFFD_2017),
+        /// `UI_TargetViewport_DisableObjectCreationFromPreference` (§12.1 step 2).
+        viewport_from_preference = (
+            "UI_TargetViewport_DisableObjectCreationFromPreference",
+            0xFFFD_2018
+        ),
+        /// `UIViewport_Type` (§12.1 step 3).
+        viewport_type = ("UIViewport_Type", 0xFFFD_2019),
     }
 }
 

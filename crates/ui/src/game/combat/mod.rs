@@ -26,6 +26,10 @@
 //! - the effect lists of fellowship member rows (`social-panels.md` TR16), whenever the
 //!   rows or their members change: [`CombatUi::set_member_lists`]; their effects then
 //!   follow the `effect_*` methods with [`EffectOwner::Member`];
+//! - the portraits (P4, P5): [`CombatUi::portraits`] says what each should show; the
+//!   client draws it into a viewport target and gives the target's content id with
+//!   [`CombatUi::set_portrait_content`], or `None` while it draws none (`ui-widgets.md`
+//!   §12.4);
 //! - a screen size change: [`CombatUi::relayout`];
 //! - before rebuilding the widgets (world entry again, reconnect, skin switch) or dropping
 //!   them: [`CombatUi::detach`], which removes the layers, the fallback root, the
@@ -37,6 +41,7 @@
 //! | [`data`] | the neutral input and the actions | §11 |
 //! | [`look`] | fallback primitives, the scaled HUD root, procedural images | §13 |
 //! | [`frames`] | player frame, target frame, selection's target, pip displays | §4, §5, §13.1–§13.2, §13.4 |
+//! | [`portrait`] | the portraits' viewport properties, entity and external content | §5.1, CU32; `ui-widgets.md` §12 |
 //! | [`cast`] | cast, induction and channel bars | §7, §13.3 |
 //! | [`effects`] | effect rows and icons (also on fellowship member rows, `social-panels.md` TR16) | §8, §13.5 |
 //! | [`floaty`] | floating-text layer | §6, §13.6 |
@@ -49,6 +54,7 @@ pub mod effects;
 pub mod floaty;
 pub mod frames;
 pub mod look;
+pub mod portrait;
 pub mod selection;
 pub mod state;
 pub mod vocab;
@@ -61,6 +67,7 @@ pub use data::{
 pub use effects::{EffectBar, EffectOwner, EffectRows, MEMBER_MAX_COLUMNS};
 pub use floaty::{FloatingTexts, FloatySettings, FloatyText};
 pub use frames::{FrameKind, UnitFrame};
+pub use portrait::{PortraitSpec, PortraitView};
 pub use selection::{SelectionMarker, SelectionView};
 pub use state::{CombatStateDisplay, DefeatPanel};
 pub use vocab::CombatVocab;

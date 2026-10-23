@@ -148,6 +148,9 @@ pub struct UnitFrame {
     cv: CombatVocab,
     look: FrameLook,
     shown: Option<FrameView>,
+    /// The external content last given to the portrait
+    /// ([`UnitFrame::set_portrait_content`]); `None` before the first call.
+    pub(super) portrait_content: std::cell::Cell<Option<Option<u64>>>,
 }
 
 fn first_meter_below(ui: &Ui, k: Option<ElementKey>) -> Option<ElementKey> {
@@ -287,10 +290,11 @@ impl UnitFrame {
         for k in hidden {
             ui.set_shown(k, false);
         }
-        // `ui-widgets.md` §12, `ui-layout.md` §17.4: the portrait shows the figure when the
-        // client draws a scene into it, otherwise nothing; the client draws no portrait
-        // scene yet, so the element (with its own image and `Target_Image`) stays hidden
-        // until [`UnitFrame::set_portrait_scene`] says a scene is drawn.
+        // `ui-widgets.md` §12.4, `ui-layout.md` §17.4: the portrait shows the figure when the
+        // client draws a scene into it, otherwise nothing; so the element (with its own
+        // image and `Target_Image`) starts hidden until the client gives it the scene as
+        // external content ([`UnitFrame::set_portrait_content`], driven from
+        // [`super::CombatUi::portraits`]).
         if let Some(k) = p.portrait {
             ui.set_shown(k, false);
         }
@@ -304,6 +308,7 @@ impl UnitFrame {
             cv: *cv,
             look: FrameLook::Install(Box::new(p)),
             shown: None,
+            portrait_content: std::cell::Cell::new(None),
         })
     }
 
@@ -474,6 +479,7 @@ impl UnitFrame {
             cv: *cv,
             look: FrameLook::Fallback(Box::new(p)),
             shown: None,
+            portrait_content: std::cell::Cell::new(None),
         })
     }
 
@@ -508,13 +514,22 @@ impl UnitFrame {
         }
     }
 
-    /// Whether the client draws a portrait scene into the portrait (external content,
-    /// `ui-widgets.md` §12): the portrait is shown only while one is drawn; without a scene
-    /// it draws nothing, so the frame art shows there (§12 Tessera rule, `ui-layout.md`
-    /// §17.4).
+    /// Whether the client draws a portrait scene into the portrait (`ui-widgets.md` §12.4).
+    /// Superseded by [`UnitFrame::set_portrait_content`], which gives the element its scene
+    /// as external content; this one sets no content. `false` is
+    /// `set_portrait_content(None)` (hidden with its media and children). `true` keeps the
+    /// content last given and shows the element; called before any content was given it
+    /// still shows the element (kept for the widget tests), which composes the element's own
+    /// media without a scene (`combat-ui.md` §5.1), so the client never calls it.
     pub fn set_portrait_scene(&self, ui: &mut Ui, drawn: bool) {
-        if let Some(k) = self.portrait() {
-            ui.set_shown(k, drawn);
+        match (drawn, self.portrait_content.get()) {
+            (false, _) => self.set_portrait_content(ui, None),
+            (true, Some(Some(id))) => self.set_portrait_content(ui, Some(id)),
+            (true, _) => {
+                if let Some(k) = self.portrait() {
+                    ui.set_shown(k, true);
+                }
+            }
         }
     }
 

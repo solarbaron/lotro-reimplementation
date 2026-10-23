@@ -815,19 +815,33 @@ impl Ui {
                 ..CanvasMap::identity()
             };
         };
-        let d = self.displayed_box(k);
+        // §3.4, §6.2: the owner's real displayed top-left (not rounded to whole UI units), so
+        // the canvas origin is the column and row of its physical box (§3.6).
+        let (d, _) = self.real_edges(k);
         let (mx, my, _) = self.node_scale_at_or_above(k);
-        let top = d.t.saturating_sub(self.displayed_overhang(k));
+        let top = d.t - f64::from(self.displayed_overhang(k));
         CanvasMap {
             screen: Some(screen),
-            dl: f64::from(d.l),
-            dt: f64::from(d.t),
+            dl: d.l,
+            dt: d.t,
             mx: f64::from(mx),
             my: f64::from(my),
-            ox: screen.edge_x(f64::from(d.l)),
-            oy: screen.edge_y(f64::from(top)),
+            ox: screen.edge_x(d.l),
+            oy: screen.edge_y(top),
             shift: 0,
         }
+    }
+
+    /// The physical box of the surface of `k` (`ui-scaling.md` §3.6, §6.6): the owner's real
+    /// displayed box extended upwards by [`Self::displayed_overhang`], mapped edge by edge. At
+    /// the identity it is [`Self::surface_displayed`] as a rectangle.
+    fn surface_physical(&self, k: ElementKey) -> Rect {
+        if self.ui_screen.is_none() {
+            return self.surface_displayed(k).to_rect();
+        }
+        let (mut d, _) = self.real_edges(k);
+        d.t -= f64::from(self.displayed_overhang(k));
+        self.real_to_physical(&d)
     }
 
     fn to_paint_rect(b: &IBox) -> Rect {
@@ -2038,17 +2052,25 @@ impl Ui {
                 own.push(own_idx);
                 continue;
             }
-            let displayed_now = self.displayed_box(k).to_rect();
+            // The owner's physical box (`ui-scaling.md` §3.6), from its real displayed box.
+            let physical_now = self.physical_box(k);
             if let Some(r) = rec {
-                // The canvas's destination: the surface's displayed box, which extends above
-                // the owner's top edge over parts placed there (`canvas_overhang`).
-                let mut displayed = self.surface_displayed(k).to_rect();
+                // The canvas's destination: the surface's physical box, which extends above
+                // the owner's top edge over parts placed there (`canvas_overhang`). While a
+                // generation is shown, the swapped geometry (UI units) decides instead.
+                let surface_now = self.surface_physical(k);
+                let mut dest = surface_now;
+                // While a generation runs, the picture drawn is the shown generation's, painted
+                // at its canvas size: that size is composed (resampled) onto the destination
+                // (`ui-scaling.md` §4.5 step 3), not the size the running job paints at.
+                let mut shown_canvas = None;
                 let mut shown = displayed_flag;
                 if self.painter.scheduler.generation_running(r.group)
                     && let Some(geo) = self.painter.scheduler.shown(r.group)
                 {
                     match geo.entries.get(&r.id.0) {
-                        Some((rel, _)) => {
+                        Some((rel, canvas)) => {
+                            shown_canvas = Some(*canvas);
                             let root_now = self
                                 .painter
                                 .recs
@@ -2062,7 +2084,7 @@ impl Ui {
                             } else {
                                 (geo.root.x0, geo.root.y0)
                             };
-                            displayed = rel.translate(origin.0, origin.1);
+                            dest = self.to_physical_rect(rel.translate(origin.0, origin.1));
                         }
                         None => shown = false,
                     }
@@ -2079,21 +2101,14 @@ impl Ui {
                 // The destination is the surface's physical box (`ui-scaling.md` §3.6, §6.6):
                 // the canvas (painted in UI units) is composed onto it, 1 : 1 at `Se` = 1
                 // (invariant I2) and GPU-scaled with `ui_scale_filter` at other scales.
-                let mut n = CompNode::new(r.id, parent_idx, self.to_physical_rect(displayed));
+                let mut n = CompNode::new(r.id, parent_idx, dest);
                 // The rows of the destination above the owner's own box (`canvas_overhang`):
                 // rotation centres and the clip of nested entries use the own box.
-                n.overhang = self
-                    .to_physical_rect(displayed_now)
-                    .y0
-                    .saturating_sub(
-                        self.to_physical_rect(self.surface_displayed(k).to_rect())
-                            .y0,
-                    )
-                    .max(0);
+                n.overhang = physical_now.y0.saturating_sub(surface_now.y0).max(0);
                 n.window = e.root_panel;
                 n.content = NodeContent::Canvas;
                 n.shown = shown;
-                n.canvas = r.canvas;
+                n.canvas = shown_canvas.unwrap_or(r.canvas);
                 n.addressing = addressing;
                 n.opacity = self.prop(k, self.v.pids.object_opacity).float();
                 n.stand_in = r.stand_in;
@@ -2103,11 +2118,7 @@ impl Ui {
                 index.insert(k, nodes.len());
                 nodes.push(n);
             } else if window_without {
-                let mut n = CompNode::new(
-                    SurfaceId(0),
-                    parent_idx,
-                    self.to_physical_rect(displayed_now),
-                );
+                let mut n = CompNode::new(SurfaceId(0), parent_idx, physical_now);
                 n.window = true;
                 n.content = NodeContent::None;
                 n.shown = displayed_flag;
@@ -2117,11 +2128,7 @@ impl Ui {
             }
             if let Some(id) = ext {
                 let entry = (id & 0xFFFF_FFFF) as u32 | 0x8000_0000;
-                let mut n = CompNode::new(
-                    SurfaceId(entry),
-                    own_idx,
-                    self.to_physical_rect(displayed_now),
-                );
+                let mut n = CompNode::new(SurfaceId(entry), own_idx, physical_now);
                 n.content = NodeContent::External(id);
                 n.shown = displayed_flag;
                 n.canvas = self.own_canvas_size(k);

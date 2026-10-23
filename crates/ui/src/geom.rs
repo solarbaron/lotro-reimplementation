@@ -185,3 +185,15 @@ impl IBox {
         )
     }
 }
+
+/// Rounds a real coordinate to the nearest integer, halves up (`ui-scaling.md` §3.4–§3.5). A
+/// value that is not finite becomes 0; the result is clamped into `i32`.
+#[must_use]
+pub fn round_half_up(v: f64) -> i32 {
+    if !v.is_finite() {
+        return 0;
+    }
+    (v + 0.5)
+        .floor()
+        .clamp(f64::from(i32::MIN), f64::from(i32::MAX)) as i32
+}

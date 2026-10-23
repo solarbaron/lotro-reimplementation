@@ -142,8 +142,8 @@ impl Ui {
     pub fn offer(&mut self, input: &UiInput) -> bool {
         match input {
             UiInput::PointerMoved { x, y } => {
-                let (x, y) = pos_i32((*x, *y));
-                self.pointer_moved(x, y);
+                // `ui-scaling.md` §3.5, §3.6: the hit test keeps the real position.
+                self.pointer_moved_real(*x, *y);
                 false
             }
             UiInput::PointerLeft => {

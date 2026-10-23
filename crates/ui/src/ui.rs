@@ -161,6 +161,16 @@ pub struct Ui {
     /// scale holds *f* × *m*(parent) (§3.4 item 2), because the tree reads only the nearest
     /// node scale; this keeps *f* for [`Ui::fit_factor`]. Only factors other than 1 are kept.
     pub(crate) fit_f: std::collections::HashMap<ElementKey, f32>,
+    /// The real fitted position (*x*, *y*) of each fitted fit container, in its parent's
+    /// layout coordinates (`ui-scaling.md` §3.4 item 2, §5.4), before it was rounded into the
+    /// layout box. The real-valued displayed box ([`Ui::displayed_real`]) starts from it.
+    pub(crate) fit_pos: std::collections::HashMap<ElementKey, (f64, f64)>,
+    /// The per-window factor *p* of each native root panel that has one other than 1
+    /// (`ui-scaling.md` §7.4, [`Ui::set_window_scale`]).
+    pub(crate) window_p: std::collections::HashMap<ElementKey, f32>,
+    /// The unrounded scaling-origin point of each root panel with a per-window factor
+    /// (`ui-scaling.md` §7.4), so steps do not add up rounding errors.
+    pub(crate) window_anchor: std::collections::HashMap<ElementKey, crate::scale::WindowAnchor>,
     /// The layout path's cache of Type A fit groups (`ui-scaling.md` §5.4), checked on use.
     pub(crate) fit_groups: crate::scale::GroupCache,
 }
@@ -243,6 +253,9 @@ impl Ui {
             frame_offsets: std::collections::HashMap::new(),
             fit_q: std::collections::HashMap::new(),
             fit_f: std::collections::HashMap::new(),
+            fit_pos: std::collections::HashMap::new(),
+            window_p: std::collections::HashMap::new(),
+            window_anchor: std::collections::HashMap::new(),
             fit_groups: crate::scale::GroupCache::default(),
         }
     }
@@ -822,6 +835,9 @@ impl Ui {
             self.frame_offsets.remove(&k);
             self.fit_q.remove(&k);
             self.fit_f.remove(&k);
+            self.fit_pos.remove(&k);
+            self.window_p.remove(&k);
+            self.window_anchor.remove(&k);
             self.fit_groups.forget(k);
         }
         self.focus_forget_set(doomed);
@@ -1139,7 +1155,10 @@ impl Ui {
             match self.surface_mode(k) {
                 object_mode::STRETCH => {
                     let (cw, ch) = (b.w().max(1) as f32, b.h().max(1) as f32);
-                    let s = [w as f32 / cw, h as f32 / ch, 1.0];
+                    // `ui-scaling.md` §3.4: a per-window factor p multiplies the stretch vector
+                    // (`Ui::set_window_scale`); the resize changes only the stretch.
+                    let p = self.window_scale(k);
+                    let s = [w as f32 / cw * p, h as f32 / ch * p, 1.0];
                     if let Some(e) = self.el_mut(k) {
                         e.scale = Some(s.map(|v| if v.is_finite() { v } else { 1.0 }));
                     }
@@ -1184,12 +1203,27 @@ impl Ui {
     }
 
     /// The displayed box of `k` relative to its parent's displayed box
-    /// (`ui-behaviour.md` §9.2.1).
+    /// (`ui-behaviour.md` §9.2.1). Under a UI screen it is [`Ui::displayed_box`] of `k` less
+    /// its parent's top-left, both from the real-valued rule of `ui-scaling.md` §3.4 (one walk
+    /// up the tree, no allocation).
     #[must_use]
     pub fn displayed_rel(&self, k: ElementKey) -> IBox {
         let Some(e) = self.el(k) else {
             return IBox::default();
         };
+        if self.ui_screen.is_some() {
+            let (pb, pm) = match e.parent.filter(|p| self.exists(*p)) {
+                Some(p) => self.real_edges(p),
+                None => (RealBox::ZERO, (1.0, 1.0)),
+            };
+            let (b, _) = self.real_step(k, &pb, pm);
+            let (b, p) = (snap_box(&b), snap_box(&pb));
+            return if e.parent.is_some_and(|p| self.exists(p)) {
+                b.offset(p.l.saturating_neg(), p.t.saturating_neg())
+            } else {
+                b
+            };
+        }
         let (px, py) = match e.parent {
             Some(p) => {
                 let s = self.node_scale_at_or_above(p);
@@ -1202,9 +1236,22 @@ impl Ui {
     }
 
     /// The displayed box of `k` in screen pixels (made absolute through its ancestors'
-    /// displayed boxes).
+    /// displayed boxes), as **integers**.
+    ///
+    /// Under a UI screen ([`Ui::set_ui_screen`]) this is the real-valued displayed box of
+    /// `ui-scaling.md` §3.4 ([`Ui::displayed_real`]) with each edge rounded to the nearest
+    /// whole UI unit (halves up). It serves only the consumers that work in integer UI units
+    /// (moves and resizes, keep-on-screen, saved placements, tooltips, message positions, the
+    /// plugin API). Geometry that §3.4–§3.6 defines on the real box does **not** use it: the
+    /// physical boxes ([`Ui::physical_box`]), the canvas mapping and composition destinations
+    /// (§6.2, §6.6), the letterbox bars and the pointer hit test (§3.5, against the real
+    /// pointer coordinate) all take the real edges. At the identity it is the truncating
+    /// derivation of `ui-behaviour.md` §9.2.1, unchanged.
     #[must_use]
     pub fn displayed_box(&self, k: ElementKey) -> IBox {
+        if self.ui_screen.is_some() {
+            return snap_box(&self.real_edges(k).0);
+        }
         let mut b = self.displayed_rel(k);
         let mut cur = self.parent(k);
         let mut n = 0;
@@ -1218,6 +1265,95 @@ impl Ui {
             }
         }
         b
+    }
+
+    /// The displayed box of `k` as real numbers, in UI units relative to the screen
+    /// (`ui-scaling.md` §3.4 "Displayed box", 64-bit floats). Top-down from the element without
+    /// a parent, with *P* = the parent's displayed box and *m*(*P*) the nearest node scale at or
+    /// above *P* (UB46; a fit container's node scale carries *f* × *m*(*P*)):
+    ///
+    /// - displayed left = *P*.left + *l* × *mx*(*P*), with *l* the layout box's left, or for a
+    ///   fitted fit container its real fitted *x* (§3.4 item 2); top likewise with *my*;
+    /// - an element without a node scale of its own ends at *P*.left + (*l* + *w*) ×
+    ///   *mx*(*P*), one with a node scale at displayed left + *w* × *mx*(*e*).
+    ///
+    /// With every node scale 1 this is the layout box made absolute. Bounded by the tree
+    /// depth cap; a node scale that is not finite counts as 1. (The box's width is right −
+    /// left; the physical mapping uses the right and bottom edges themselves.)
+    #[must_use]
+    pub fn displayed_real(&self, k: ElementKey) -> crate::scaling::DBox {
+        let b = self.real_edges(k).0;
+        crate::scaling::DBox::new(b.l, b.t, b.r - b.l, b.b - b.t)
+    }
+
+    /// The real displayed edges of `k` (§3.4) and *m*(`k`), the nearest node scale at or above
+    /// it: one recursive walk up to the element without a parent (bounded by the depth cap),
+    /// with no allocation.
+    pub(crate) fn real_edges(&self, k: ElementKey) -> (RealBox, (f64, f64)) {
+        self.real_edges_depth(k, 0)
+    }
+
+    fn real_edges_depth(&self, k: ElementKey, depth: usize) -> (RealBox, (f64, f64)) {
+        let Some(e) = self.el(k) else {
+            return (RealBox::ZERO, (1.0, 1.0));
+        };
+        let (pb, pm) = match e.parent.filter(|p| self.exists(*p)) {
+            Some(p) if depth < MAX_TREE_DEPTH * 4 => self.real_edges_depth(p, depth + 1),
+            _ => (RealBox::ZERO, (1.0, 1.0)),
+        };
+        self.real_step(k, &pb, pm)
+    }
+
+    /// One step of the §3.4 derivation: the real displayed edges and *m* of `c` from its
+    /// parent's real displayed edges `pb` and *m*(parent) `pm`. The hit test walks the tree
+    /// with it, so each tested element costs O(1).
+    pub(crate) fn real_step(
+        &self,
+        c: ElementKey,
+        pb: &RealBox,
+        pm: (f64, f64),
+    ) -> (RealBox, (f64, f64)) {
+        let Some(e) = self.el(c) else {
+            return (*pb, pm);
+        };
+        let b = e.bx;
+        let (lx, ty) = match self.fit_pos.get(&c) {
+            Some(&(x, y))
+                if self.ui_screen.is_some()
+                    && crate::geom::round_half_up(x) == b.l
+                    && crate::geom::round_half_up(y) == b.t =>
+            {
+                (x, y)
+            }
+            _ => (f64::from(b.l), f64::from(b.t)),
+        };
+        let (w, h) = (f64::from(b.w().max(0)), f64::from(b.h().max(0)));
+        let own = e.scale.map(|s| {
+            let f = |v: f32| if v.is_finite() { f64::from(v) } else { 1.0 };
+            (f(s[0]), f(s[1]))
+        });
+        let left = pb.l + lx * pm.0;
+        let top = pb.t + ty * pm.1;
+        match own {
+            Some(m) => (
+                RealBox {
+                    l: left,
+                    t: top,
+                    r: left + w * m.0,
+                    b: top + h * m.1,
+                },
+                m,
+            ),
+            None => (
+                RealBox {
+                    l: left,
+                    t: top,
+                    r: pb.l + (lx + w) * pm.0,
+                    b: pb.t + (ty + h) * pm.1,
+                },
+                pm,
+            ),
+        }
     }
 
     /// The layout box made absolute through the ancestors' layout boxes (screen pixels when
@@ -1286,6 +1422,42 @@ impl Ui {
             trunc_f32(y as f32 / if ey == 0.0 { 1.0 } else { ey }),
         )
     }
+}
+
+/// A real displayed box (`ui-scaling.md` §3.4) by its four edges, in UI units relative to the
+/// screen. The right and bottom edges are kept as computed (not as left + width), so two
+/// abutting boxes share their edge bit for bit (§3.6 consequence 2).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct RealBox {
+    pub l: f64,
+    pub t: f64,
+    pub r: f64,
+    pub b: f64,
+}
+
+impl RealBox {
+    pub(crate) const ZERO: Self = Self {
+        l: 0.0,
+        t: 0.0,
+        r: 0.0,
+        b: 0.0,
+    };
+
+    /// Whether the half-open box [l, r) × [t, b) holds the point.
+    pub(crate) fn contains(&self, x: f64, y: f64) -> bool {
+        self.l <= x && x < self.r && self.t <= y && y < self.b
+    }
+}
+
+/// A real displayed box (`ui-scaling.md` §3.4) as an integer box for the integer consumers:
+/// each edge rounded to the nearest whole UI unit, halves up ([`crate::geom::round_half_up`]);
+/// a negative extent is empty.
+fn snap_box(d: &RealBox) -> IBox {
+    let l = crate::geom::round_half_up(d.l);
+    let t = crate::geom::round_half_up(d.t);
+    let r = crate::geom::round_half_up(d.r).max(l);
+    let b = crate::geom::round_half_up(d.b).max(t);
+    IBox::from_xywh(l, t, r.saturating_sub(l), b.saturating_sub(t))
 }
 
 /// The displayed box of a layout box `b` under the parent scale (`px`, `py`) and the

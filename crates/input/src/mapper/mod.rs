@@ -488,6 +488,13 @@ impl InputMapper {
         self.repeat_ids = ids.map(|i| i.into_iter().collect());
     }
 
+    /// The command IDs of toggle type 3 handed over by [`Self::set_repeat_commands`]
+    /// (§7.8.6), or `None` while each action's `repeat` flag decides.
+    #[must_use]
+    pub fn repeat_commands(&self) -> Option<&HashSet<u32>> {
+        self.repeat_ids.as_ref()
+    }
+
     /// The activation timing in use (§7.7).
     #[must_use]
     pub fn timing(&self) -> ActivationTiming {

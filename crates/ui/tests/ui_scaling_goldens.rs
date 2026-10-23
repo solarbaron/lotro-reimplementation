@@ -21,8 +21,8 @@
 //! pass — the GPU up-scales the *stale* canvas of the previous content scale onto the new
 //! physical box for the frames before the surface repaints (§6.5, §6.6). `surface_pixel`
 //! returns the freshly repainted canvas, not that stale-scaled composite, so G7 needs the
-//! headless renderer (`tessera-render`, not linked here) and is left for a later tier-2 task;
-//! this file notes it in its summary rather than forcing a CPU stand-in.
+//! headless renderer (`tessera-render`, not linked here): it is the render test
+//! `crates/render/tests/ui_scaling_g7.rs` (C2 → C3), not a CPU stand-in here.
 
 mod ui_common;
 
@@ -317,8 +317,7 @@ fn compose_list(ui: &mut Ui, wp: i32, hp: i32) -> Img {
             EntryTexture::Surface { surface, layer } => {
                 assert_eq!(layer, Layer::Below, "no nested entries in these scenes");
                 // Read 1 : 1 from the canvas's top-left, as `compose_phys` reads a root's
-                // canvas at its physical box (a box may be one pixel off its canvas, the
-                // `ui-scaling.md` §5.9 OPEN on truncated displayed boxes).
+                // canvas at its physical box.
                 for cy in 0..d.height() as i32 {
                     for cx in 0..d.width() as i32 {
                         let (wx, wy) = (d.x0 + cx, d.y0 + cy);
@@ -643,6 +642,21 @@ fn g4(c: &Config) {
     let left = ui.find_child(r, 0x1000_0402).unwrap();
     let right = ui.find_child(r, 0x1000_0403).unwrap();
     apply(&mut ui, c);
+    // §3.4, §5.9 answer: the right panel, whose design right edge meets its fit-root parent's,
+    // ends on the parent's displayed edge (the truncating rule left it one unit short at C1),
+    // and both panels span the parent's height.
+    let (rd, ld, pd) = (
+        ui.displayed_box(right),
+        ui.displayed_box(left),
+        ui.displayed_box(r),
+    );
+    assert_eq!(
+        rd.r, pd.r,
+        "{}: right panel ends on the root's edge",
+        c.name
+    );
+    assert_eq!((ld.t, ld.b), (pd.t, pd.b), "{}: left panel height", c.name);
+    assert_eq!((rd.t, rd.b), (pd.t, pd.b), "{}: right panel height", c.name);
     let img = compose_phys(&mut ui, &[r, left, right], c.wp, c.hp);
     assert_has(&img, PALETTE[PANEL_L as usize], "left panel");
     assert_has(&img, PALETTE[PANEL_R as usize], "right panel");

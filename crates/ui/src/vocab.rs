@@ -183,6 +183,9 @@ vocab_table! {
         scaler_origin_x = ("UIComponent_UIScaler_Origin_X", 0xFFFE_0027),
         /// `UIComponent_UIScaler_Origin_Y`.
         scaler_origin_y = ("UIComponent_UIScaler_Origin_Y", 0xFFFE_0028),
+        /// `UIComponent_UIScaler_Group`: a scalable root panel's scaling group
+        /// (`ui-behaviour.md` §9.2, `ui-scaling.md` §7.4).
+        scaler_group = ("UIComponent_UIScaler_Group", 0xFFFE_0033),
         /// `UICore_Text_editable`.
         text_editable = ("UICore_Text_editable", 0xFFFE_0029),
         /// `UICore_Text_selectable`.
@@ -195,14 +198,15 @@ vocab_table! {
         text_lose_focus_on_accept = ("UICore_Text_lose_focus_on_acceptinput", 0xFFFE_002D),
         /// `UICore_Text_max_chars`.
         text_max_chars = ("UICore_Text_max_chars", 0xFFFE_0100),
-        /// `UICore_Text_left_margin` (`fonts.md` §7, `ui-layout.md` §5.9).
-        text_left_margin = ("UICore_Text_left_margin", 0xFFFE_002F),
-        /// `UICore_Text_right_margin`.
-        text_right_margin = ("UICore_Text_right_margin", 0xFFFE_0030),
-        /// `UICore_Text_top_margin`.
-        text_top_margin = ("UICore_Text_top_margin", 0xFFFE_0031),
-        /// `UICore_Text_bottom_margin`.
-        text_bottom_margin = ("UICore_Text_bottom_margin", 0xFFFE_0032),
+        /// `UICore_Text_left_margin` (`fonts.md` §7, `ui-layout.md` §5.9); the value is the
+        /// one `lua-plugin-api.md` P115 lists for the install's dictionary (Int, no default).
+        text_left_margin = ("UICore_Text_left_margin", 0x051E),
+        /// `UICore_Text_right_margin` (P115).
+        text_right_margin = ("UICore_Text_right_margin", 0x0174),
+        /// `UICore_Text_top_margin` (P115).
+        text_top_margin = ("UICore_Text_top_margin", 0x0478),
+        /// `UICore_Text_bottom_margin` (P115).
+        text_bottom_margin = ("UICore_Text_bottom_margin", 0x034A),
         /// `UICore_Dialog_ignorekeyboardinput`.
         dialog_ignore_keyboard = ("UICore_Dialog_ignorekeyboardinput", 0xFFFE_002E),
         /// `UICore_Meter_child_meter`.

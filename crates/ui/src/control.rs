@@ -716,6 +716,41 @@ impl Ui {
         Ok(())
     }
 
+    /// Re-describes a parentless **plain** plugin window as a bare scaler element when it is
+    /// first marked as scaled (`lua-plugin-api.md` §13.21 rule 1, §14.2.1 table, last row): the
+    /// descriptor then has the type `element_type` (the `UIScaler` game type), which wins over
+    /// any base reference (`ui-layout.md` §7.1 step 1), so no layout property is inherited.
+    /// The element keeps what a rebuild keeps (visibility, position, size, z-level and the
+    /// background, §14.2.1 step 3) and, by the Tessera rule of §14.2.6 gap (b), every other
+    /// state the plugin set, its child controls included; it has **no size limits** (the
+    /// stored limits and any limit properties are cleared). Returns `false` (and changes
+    /// nothing) for an element that is not a plugin window or has a parent.
+    pub fn control_rebuild_as_scaler(&mut self, k: ElementKey, element_type: u32) -> bool {
+        let is_window = self.pd(k).is_some_and(|p| p.kind == ControlKind::Window);
+        if !is_window || self.control_parent(k).is_some() {
+            return false;
+        }
+        if let Some(e) = self.el_mut(k) {
+            e.element_type = element_type;
+        }
+        if let Some(p) = self.pd_mut(k) {
+            p.limits = [None; 4];
+        }
+        let pids = self.v.pids;
+        for pid in [
+            pids.min_width,
+            pids.min_height,
+            pids.max_width,
+            pids.max_height,
+        ] {
+            if self.prop(k, pid).is_set() {
+                self.clear_property(k, pid);
+            }
+        }
+        self.mark_dirty(k);
+        true
+    }
+
     /// `PointToScreen`.
     #[must_use]
     pub fn point_to_screen(&self, k: ElementKey, x: i32, y: i32) -> (i32, i32) {

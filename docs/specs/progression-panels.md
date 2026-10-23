@@ -260,6 +260,14 @@ its chat line) lives in client code and was not read under M4 in this pass.
 > describe the original's on-screen presentation (if any) and either adopt or drop the banner. Its
 > appearance at a time is a pure function of the start time, so a golden freezes it deterministically.
 
+> **OPEN:** (implementer, `tessera-client`, 2026-10-23) item 1 is built: the notice line is
+> posted as a derived chat line with the `Standard` mask (0x8, type 4), the mask of the P4 friend
+> and channel notices of `chat-window.md` (CW53, CW55), since "the P4 `notice` channel" names no
+> mask of its own; confirm the mask. Item 2 is **not built**: Tessera has no bundled or synthesised
+> level-up cue yet, and the P6 glue has no path to the client's audio engine. The level-up runs
+> silently until a cue (decision 0022 for a bundled asset, or a synthesised one) and its
+> playback from the P6 glue are chosen.
+
 ---
 
 <a id="s3"></a>
@@ -480,6 +488,14 @@ The skill-training window opens from an **NPC trainer action**: the NPC action p
 draws: `skills`, `traits` or `recipes`; for `skills` and `traits` the skill-training window of
 §4.2 opens, for `recipes` the crafting trainer of `crafting-panels.md` §8.3 opens.
 
+> **OPEN:** (implementer, `tessera-client`, 2026-10-23) a `TrainerShown` with `offers=recipes`
+> carries rows (entries with a cost, level and `TrainSkill` answers), while the crafting-trainer
+> windows of `crafting-panels.md` §8.3 have no rows: they show one profession, vocation or guild
+> and answer with `TrainCraft` (and are opened by `CraftTrainerShown`). The client therefore shows
+> a `recipes` offer in the skill-training window of §4.2 (rows of recipes, Train sends
+> `TrainSkill { window, entry }`, as the committed `crafting` scenario expects). Which window the
+> original shows for a recipe trainer, and whether §4.1 meant this, is for the spec writer.
+
 <a id="s4-2"></a>
 ### 4.2 Layout (OBS, PP12)
 
@@ -637,6 +653,11 @@ with the same information, as the other P-track panels do (`game-panels.md` §11
 - **Experience bar fallback:** a horizontal bar filled to `current ÷ needed` with the level and
   ratio as text, in Tessera's own frame (no toolbar art). Used when `toolbar` or `LevelMeter`
   is missing.
+
+  > **OPEN:** (implementer, `tessera-client`, 2026-10-23) "missing" read as: the HUD's toolbar is
+  > open but has no `LevelProgressMeter` element; with the HUD off (`--no-ui-hud`) no bar is
+  > shown unless asked for by name (`--open-panel experience`). Confirm or say whether the
+  > fallback bar should show whenever the toolbar is not open.
 - **Trait panel fallback:** tabs for the trees the feed names; each tree a simple grid of cells
   placed by the location key of §3.2 (row × column, floaters in a top row), each cell an icon
   with a rank number and a state border (green available, grey locked, blue slotted); a points

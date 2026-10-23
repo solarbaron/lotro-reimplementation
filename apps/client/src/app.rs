@@ -410,48 +410,13 @@ impl App {
             crate::travel::hub::run_p5_requests(rt, walker, now);
             if let Some(ui) = self.ui.as_mut() {
                 ui.after_update(walker, rt, &ev);
-                // The NPC windows (decision 0024 P3): after the frame's UI events.
-                let screens = ui.screens_open();
-                // The frame's UI events, taken once every frame: the NPC windows, the
-                // quest journal and the social panels read the same list (the combat
-                // widgets have their own queue); the character screens own them while they
-                // are open.
-                let taken = ui
-                    .host_mut()
-                    .map(crate::ui_host::UiHost::take_game_events)
-                    .unwrap_or_default();
-                let events: &[tessera_ui::UiEvent] = if screens { &[] } else { &taken };
-                // The Interface window (decision 0040, `ui-scaling.md` §7.2) reads the same
-                // per-frame event list and works in any mode (before the attached gate).
-                if let Some(host) = ui.host_mut() {
-                    host.interface_frame(events, now);
-                }
-                if ui.attached()
-                    && let (Some(host), Some(world)) = (ui.host_mut(), rt.world.as_mut())
-                {
-                    // The use range measures from the avatar (session frame, as `Move`).
-                    #[allow(clippy::cast_possible_truncation)]
-                    let avatar = walker
-                        .focus()
-                        .map(|p| tessera_net::Vec3::new(p.x as f32, p.y as f32, p.z as f32));
-                    rt.npc.frame(host, world, events, screens, avatar, now);
-                    // The quest journal (P3), after the NPC windows.
-                    let radar = walker.radar_input();
-                    rt.quests
-                        .frame(host, world, &rt.npc, events, radar.as_ref(), now);
-                    // The social panels (P4) read the same list.
-                    let data = rt.p1.data().cloned();
-                    crate::ui_host::client::social_frame(host, world, data.as_deref(), events);
-                    // Travel and the instance finder (P5), then the map window, read the
-                    // same list.
-                    rt.p5.frame(host, world, &rt.npc, events, now);
-                    rt.map
-                        .frame(host, world, rt.p5.refs(), &rt.npc, events, radar.as_ref());
-                    // The indicators over ringed NPCs (§8.2), at the walker's positions.
-                    let position = |id| walker.entity_render_pos(id);
-                    rt.quests
-                        .update_indicators(Some(&mut gfx.renderer), world, &rt.npc, &position);
-                }
+                // The per-frame window pass (decision 0024 P3–P6, decision 0040): the
+                // Interface window, the NPC windows, the quest journal and its indicators,
+                // the social panels, the P5 travel, finder and map windows and the P6
+                // progression and crafting windows, all reading the frame's one list of UI
+                // events (the character screens own it while they are open). The headless
+                // `--ui` runs call the same function.
+                crate::ui_host::client::window_frames(ui, rt, walker, &mut gfx.renderer, now);
                 ui.step8(walker, &mut gfx.renderer, rt);
             }
         } else {

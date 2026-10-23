@@ -127,7 +127,9 @@ pub fn full_name(name: &str) -> String {
 }
 
 /// Writes column setting `name` = `columns` into `settings` (clamped to 1 …
-/// [`MAX_BAG_COLUMNS`]); other keys are kept.
+/// [`MAX_BAG_COLUMNS`]); other keys are kept. The game UI's settings writer
+/// (`ui_host::settings_writer`) calls it inside its locked read-modify-write, on its own
+/// thread, never the frame thread (ARCHITECTURE §21).
 pub fn store_columns(settings: &mut Settings, name: &str, columns: i32) {
     let (s, k) = split(name);
     let entry = settings
@@ -142,27 +144,6 @@ pub fn store_columns(settings: &mut Settings, name: &str, columns: i32) {
             k.to_owned(),
             toml::Value::Integer(i64::from(columns.clamp(1, MAX_BAG_COLUMNS))),
         );
-    }
-}
-
-/// Saves column settings to the user's settings file (logged when it cannot be written).
-pub fn save_columns(changes: &[(String, i32)]) {
-    if changes.is_empty() {
-        return;
-    }
-    let store = match tessera_settings::SettingsStore::open_default() {
-        Ok(s) => s,
-        Err(e) => {
-            tracing::info!("bag columns not saved: {e}");
-            return;
-        }
-    };
-    if let Err(e) = store.update(|s| {
-        for (name, c) in changes {
-            store_columns(s, name, *c);
-        }
-    }) {
-        tracing::info!("bag columns not saved: {e}");
     }
 }
 

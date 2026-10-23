@@ -156,12 +156,13 @@ profession page and a recipe selected), `vocation-trainer`, `profession-trainer`
 `craftguild-trainer` open the windows above empty or with the fixed synthetic content of §15.4,
 for golden images and inspection.
 
-> **OPEN:** (implementer, `apps/client`, 2026-10-16) the client parses these names
-> (`progression::commands::parse_p6_panel`) but does not yet route them to open a window: the
-> runtime frame glue that attaches the live P6 windows is still OPEN (`apps/client`
-> `progression` module docs), so `--open-panel crafting` currently opens nothing and logs an
-> unknown-panel warning. No P6 exit criterion depends on it: decision 0037 §2 captures the P6
-> goldens in-process on `HeadlessDriver`, and these names serve inspection once the glue lands.
+> **OPEN:** (implementer, `tessera-client`, 2026-10-23) the names are routed now
+> (`progression::hub::P6Hub`): each opens its window once the player is in the world, filled
+> from the session's current state, not from the fixed content of §15.4 (a literal recipe has
+> no definition outside the in-process fixture, §15.4 OPEN), so with no feed state the windows
+> are empty; `crafting-recipe` selects the first recipe row of the first tab when there is one.
+> A trainer opened by name has no feed window: its train and cancel buttons send nothing and
+> cancel only closes it. The spec could say whether the names should show §15.4's content.
 
 ---
 

@@ -27,10 +27,12 @@ pub mod cursor;
 pub mod env;
 pub mod gpu;
 pub mod interface;
+pub mod placements;
 pub mod run;
 pub mod scaling;
 pub mod script;
 pub mod services;
+pub mod settings_writer;
 pub mod stats;
 pub mod text;
 
@@ -120,6 +122,10 @@ struct BridgeIds {
     ui_scale_down: Option<tessera_input::ActionId>,
     ui_scale_auto: Option<tessera_input::ActionId>,
     ui_interface_window: Option<tessera_input::ActionId>,
+    /// The crafting-panel toggles (`crafting-panels.md` §12): `toggle_crafting` (T) and
+    /// `toggle_crafting_1` … `3`, polled each frame ([`UiHost::poll_p6_actions`]).
+    toggle_crafting: Option<tessera_input::ActionId>,
+    toggle_crafting_tabs: [Option<tessera_input::ActionId>; 3],
 }
 
 impl BridgeIds {
@@ -242,6 +248,19 @@ pub struct UiHost {
     /// (`ui-scaling.md` §4.4, §7.1): art filter, text size and the two resets. `None` when
     /// nothing is pending. Scale and safe aspect persist through [`Self::take_scale_persist`].
     interface_persist: Option<interface::ExtraPersist>,
+    /// The progression views the plugins' local player carries (P6,
+    /// [`Self::set_plugin_progression`]).
+    plugin_progression: Option<Arc<dyn tessera_plugins::ProgressionSource>>,
+    /// A user move or resize changed the saved placements since the last
+    /// [`Self::take_placement_persist`] (`ui-scaling.md` §5.8 "Saving").
+    placements_dirty: bool,
+    /// Whether saved placements are handed to the settings writer (off in scripted runs,
+    /// whose drags are not the user's).
+    persist_placements: bool,
+    /// The saved roots whose placement was applied since they were attached
+    /// (`ui-scaling.md` §5.8 "Applying": when the panel is attached), by the host or by the
+    /// code that opened them.
+    placed: std::collections::HashSet<ElementKey>,
 }
 
 /// Most UI events and panel commands queued for the character panels in one frame.
@@ -323,6 +342,9 @@ impl UiHost {
         // (given to [`Ui::new`] above), so this stores *F*/*A* without changing its size. At
         // *Se* = 1 with *A* = *F* every mapping is the identity, so nothing changes (I2).
         ui.set_ui_screen(*scale.screen(), scale.safe_area());
+        // The saved placements of `[UI.panels]` (`ui-scaling.md` §5.8): every panel opened
+        // from now on is placed by them ([`placements`]).
+        ui.set_saved_store(placements::store_from_prefs(&options.prefs.panels));
         let ui = Rc::new(RefCell::new(ui));
         let plugin_ui = PluginUi::new(Rc::clone(&ui));
         if let Some(h) = &handle {
@@ -388,6 +410,10 @@ impl UiHost {
             want_interface: false,
             interface: None,
             interface_persist: None,
+            plugin_progression: None,
+            placements_dirty: false,
+            persist_placements: true,
+            placed: std::collections::HashSet::new(),
         }
     }
 
@@ -634,6 +660,13 @@ impl UiHost {
                 as Arc<dyn tessera_plugins::LocalPlayerSource>,
             None => src,
         };
+        // The progression views (P6) wrap that source in turn, keeping its other views
+        // ([`crate::progression::plugin::ProgressionPlayer`]).
+        let src = match &self.plugin_progression {
+            Some(p) => crate::progression::plugin::ProgressionPlayer::new(src, Arc::clone(p))
+                as Arc<dyn tessera_plugins::LocalPlayerSource>,
+            None => src,
+        };
         plugins.manager_mut().set_local_player_source(Some(src));
         if let Some(p) = &self.plugin_party {
             plugins
@@ -676,6 +709,12 @@ impl UiHost {
         ids.ui_scale_down = reg.action("ui_scale_down");
         ids.ui_scale_auto = reg.action("ui_scale_auto");
         ids.ui_interface_window = reg.action("ui_interface_window");
+        ids.toggle_crafting = reg.action("toggle_crafting");
+        ids.toggle_crafting_tabs = [
+            reg.action("toggle_crafting_1"),
+            reg.action("toggle_crafting_2"),
+            reg.action("toggle_crafting_3"),
+        ];
         let pointer = reg.context(contexts::POINTER);
         if let Some(p) = pointer {
             mapper.activate(p);
@@ -763,6 +802,8 @@ impl UiHost {
     /// Hides a panel.
     pub fn hide_panel(&mut self, plugins: &mut Plugins, id: PanelId) {
         self.frame.event = true;
+        // No placement is recorded at a close: `ui-scaling.md` §5.8 saves at the end of a
+        // user move or resize only.
         if let Some(p) = self.panels.as_mut() {
             p.hide(&mut self.ui.borrow_mut(), id);
         }
@@ -778,11 +819,15 @@ impl UiHost {
         repeat: bool,
     ) -> Option<EscapeOutcome> {
         self.frame.event = true;
-        if press
-            && !repeat
-            && let Some(s) = self.social.as_mut()
-            && let Some(root) = s.escape(&mut self.ui.borrow_mut())
-        {
+        let social = if press && !repeat {
+            match self.social.as_mut() {
+                Some(s) => s.escape(&mut self.ui.borrow_mut()),
+                None => None,
+            }
+        } else {
+            None
+        };
+        if let Some(root) = social {
             return Some(EscapeOutcome::HidActive(root));
         }
         let r = self.services_run(plugins, |p, ui, sv| p.escape(ui, press, repeat, sv));
@@ -853,6 +898,74 @@ impl UiHost {
         self.plugin_mount = Some(source);
     }
 
+    /// The source of the progression and crafting views (`lua-plugin-api.md` §15.6) the
+    /// plugins' local player carries from the next [`Self::attach_plugins`] on: the P6
+    /// hub's session model (P6, [`crate::progression::P6Hub::plugin_source`]).
+    pub fn set_plugin_progression(&mut self, source: Arc<dyn tessera_plugins::ProgressionSource>) {
+        self.plugin_progression = Some(source);
+    }
+
+    // ----- saved placements (`ui-scaling.md` §5.8) -------------------------------------
+
+    /// Records the saved placement of `element` after a user move or resize
+    /// (`ui-scaling.md` §5.8 "Saving"; the host calls it on `UiEvent::LayoutChanged`, never
+    /// at a close). An element without save properties is ignored.
+    pub fn record_placement(&mut self, element: ElementKey) {
+        let mut ui = self.ui.borrow_mut();
+        if !ui.is_saved_element(element) {
+            return;
+        }
+        ui.record_saved(element);
+        self.placements_dirty = true;
+    }
+
+    /// Whether user moves are saved (off for scripted runs).
+    pub fn set_persist_placements(&mut self, on: bool) {
+        self.persist_placements = on;
+    }
+
+    /// The saved placements as `[UI.panels]`, once after they changed (the frame loop hands
+    /// them to the settings writer, off the frame thread).
+    pub fn take_placement_persist(
+        &mut self,
+    ) -> Option<std::collections::BTreeMap<String, tessera_settings::PanelPlacement>> {
+        if !std::mem::take(&mut self.placements_dirty) || !self.persist_placements {
+            return None;
+        }
+        let map = placements::prefs_from_store(self.ui.borrow().saved_store());
+        self.prefs.panels.clone_from(&map);
+        Some(map)
+    }
+
+    /// "Reset panel positions" (`ui-scaling.md` §7.1, §7.2 row 7): every saved placement
+    /// goes, from the in-memory store as well as `[UI.panels]` (written by the next
+    /// [`Self::take_interface_persist`]), and the roots are laid out again.
+    pub fn reset_panel_positions(&mut self) {
+        self.prefs.panels.clear();
+        {
+            let mut ui = self.ui.borrow_mut();
+            ui.set_saved_store(tessera_ui::SavedStore::default());
+            // "Lays the roots out again" (§7.1): every saved root goes back to the position
+            // its layout gives it at the current screen (its design position, then the
+            // ordinary run-time layout against the screen, `ui-layout.md` §8.4).
+            let roots = ui.children(ui.screen_root());
+            for k in roots {
+                if !ui.is_saved_element(k) {
+                    continue;
+                }
+                if let Some(d) = ui.design_box(k) {
+                    ui.move_to(k, d.l, d.t);
+                }
+                ui.set_reference_box(k, None);
+            }
+        }
+        self.placements_dirty = false;
+        let p = self.note_interface_persist();
+        p.clear_panels = true;
+        self.frame.event = true;
+        self.feed_screen();
+    }
+
     /// The character the plugins see (the walker's avatar). A change raises `NameChanged`
     /// for step 7.
     pub fn set_character(&mut self, plugins: &mut Plugins, name: Option<&str>) {
@@ -920,9 +1033,68 @@ impl UiHost {
     fn feed_screen(&mut self) {
         let screen = *self.scale.screen();
         let safe = self.scale.safe_area();
+        {
+            let mut ui = self.ui.borrow_mut();
+            ui.set_ui_screen(screen, safe);
+            ui.invalidate_paint();
+        }
+        // §5.8 "Applying": again after every change of F or A.
+        self.apply_saved_placements(true);
+    }
+
+    /// Applies the saved placements of `[UI.panels]` (`ui-scaling.md` §5.8 "Applying") to
+    /// the screen's saved roots: those attached since the last call (`all` false), or every
+    /// one (`all` true, after a change of *F* or *A*). `tessera-ui` applies none on its own
+    /// (no caller of `Ui::apply_saved` in the crate), so the host does it once per frame and
+    /// after each screen change. Cheap: the roots are the screen root's children.
+    ///
+    /// Roots whose opener already applied their placement when it created them (the native
+    /// panels, the combat roots, the character panel and bag windows) are not applied again
+    /// on attachment, so each attachment posts UI message 0x2E once. The re-application
+    /// after a change of *F* or *A* keeps each root's current visibility (Tessera reading:
+    /// the user's open or closed panel stays so; only the position and size follow the
+    /// saved placement).
+    pub fn apply_saved_placements(&mut self, all: bool) {
+        let self_placed = self.self_placed_roots();
         let mut ui = self.ui.borrow_mut();
-        ui.set_ui_screen(screen, safe);
-        ui.invalidate_paint();
+        let roots = ui.children(ui.screen_root());
+        self.placed.retain(|k| ui.exists(*k));
+        for k in roots {
+            if !ui.is_saved_element(k) {
+                continue;
+            }
+            if !all {
+                if self.placed.contains(&k) {
+                    continue;
+                }
+                self.placed.insert(k);
+                if !self_placed.contains(&k) {
+                    ui.apply_saved(k);
+                }
+                continue;
+            }
+            let shown = ui.is_visible(k);
+            ui.apply_saved(k);
+            if ui.is_visible(k) != shown {
+                ui.set_shown(k, shown);
+            }
+            self.placed.insert(k);
+        }
+    }
+
+    /// The roots whose opener applies the saved placement itself when it creates them
+    /// (`Ui::apply_saved` right after `Ui::open_panel`): the native panels' roots and the
+    /// character panel and bag windows. (The combat roots are marked placed when the host
+    /// opens them, `open_combat_panels`.)
+    fn self_placed_roots(&self) -> std::collections::HashSet<ElementKey> {
+        let mut out = std::collections::HashSet::new();
+        if let Some(p) = self.panels.as_ref() {
+            out.extend(PanelId::ALL.iter().filter_map(|id| p.root(*id)));
+        }
+        if let Some(c) = self.character.as_ref() {
+            out.extend(c.placed_roots());
+        }
+        out
     }
 
     /// The UI-scaling state (decision 0040, `ui-scaling.md` §4): the effective scale, the UI
@@ -1055,10 +1227,7 @@ impl UiHost {
                     self.ui.borrow_mut().invalidate_paint();
                 }
                 A::ResetPanels => {
-                    self.prefs.panels.clear();
-                    let p = self.note_interface_persist();
-                    p.clear_panels = true;
-                    touched_scale = true;
+                    self.reset_panel_positions();
                 }
                 A::ResetWindowScales => {
                     self.prefs.group_scale.clear();
@@ -1132,6 +1301,28 @@ impl UiHost {
         if pressed(self.ids.ui_interface_window) {
             self.want_interface = true;
         }
+    }
+
+    /// The crafting-panel toggles pressed this frame (`crafting-panels.md` §4.1, §12):
+    /// `None` for `toggle_crafting`, `Some(i)` (0-based tab) for `toggle_crafting_<i + 1>`.
+    /// Nothing while a UI element has the keyboard focus (a key typed into an entry is text).
+    #[must_use]
+    pub fn poll_p6_actions(&self, mapper: &InputMapper) -> Vec<Option<usize>> {
+        if self.keyboard_focused() {
+            return Vec::new();
+        }
+        let pressed =
+            |id: Option<tessera_input::ActionId>| id.is_some_and(|i| mapper.just_pressed(i));
+        let mut out = Vec::new();
+        if pressed(self.ids.toggle_crafting) {
+            out.push(None);
+        }
+        for (i, id) in self.ids.toggle_crafting_tabs.iter().enumerate() {
+            if pressed(*id) {
+                out.push(Some(i));
+            }
+        }
+        out
     }
 
     /// Scales every open native panel, and every panel opened later (the scale-change
@@ -1267,6 +1458,13 @@ impl UiHost {
     }
 
     fn handle_client_events(&mut self, plugins: &mut Plugins, events: Vec<UiEvent>) {
+        // The end of a user move or resize of a saved element (`ui-behaviour.md` §8.4 step
+        // 2): its placement is recorded for `[UI.panels]` (`ui-scaling.md` §5.8).
+        for ev in &events {
+            if let UiEvent::LayoutChanged { element } = ev {
+                self.record_placement(*element);
+            }
+        }
         if let Some(q) = self.screen_events.as_mut() {
             let room = MAX_CHARACTER_QUEUE.saturating_sub(q.len());
             q.extend(events.iter().take(room).cloned());
@@ -2094,6 +2292,8 @@ impl UiHost {
     /// Step 8: layout and paint within the paint slice, the frame's GPU operations
     /// (applied to `renderer` when given) and the composition list.
     pub fn step8(&mut self, renderer: Option<&mut Renderer<'_>>, plugins: &mut Plugins) {
+        // Panels attached this frame take their saved placements before they are painted.
+        self.apply_saved_placements(false);
         let t = Instant::now();
         let now = Duration::from_secs_f64(self.clock.max(0.0));
         let frame = self

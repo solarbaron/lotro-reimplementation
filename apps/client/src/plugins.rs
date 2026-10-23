@@ -46,6 +46,8 @@ use crate::panels::chat::{CHAT_ERROR, CHAT_LOG};
 
 use crate::walker::WalkerSession;
 
+pub mod localtime;
+
 /// Account name used for plugin-data folders until real accounts exist.
 pub const LOCAL_ACCOUNT: &str = "local";
 /// Server name used for plugin-data folders with the sandbox backend.
@@ -74,6 +76,9 @@ pub struct LogHost {
     /// The dispatcher's registry: the plugins' shell commands go here (decision 0020
     /// item 6, `chat-window.md` §10 item 3).
     registry: SharedRegistry,
+    /// The local time zone of `Turbine.Engine.GetDate` (`lua-plugin-api.md` §12, P35),
+    /// read once when the host is made (start-up, never in a frame).
+    zone: localtime::TimeZone,
 }
 
 /// Most chat lines queued for the chat window between two frames.
@@ -105,7 +110,21 @@ impl LogHost {
             manager_request: AtomicBool::new(false),
             game_time: Mutex::new(None),
             registry,
+            zone: match localtime::system_zone() {
+                Ok(z) => z,
+                Err(e) => {
+                    tracing::info!("local time zone unavailable ({e}); GetDate uses UTC");
+                    localtime::TimeZone::utc()
+                }
+            },
         }
+    }
+
+    /// Uses `zone` for `Turbine.Engine.GetDate` instead of the operating system's (tests).
+    #[must_use]
+    pub fn with_zone(mut self, zone: localtime::TimeZone) -> Self {
+        self.zone = zone;
+        self
     }
 
     fn ui_attached(&self) -> bool {
@@ -201,6 +220,14 @@ impl HostApi for LogHost {
     fn write_chat(&self, chat_type: u32, text: &str) {
         tracing::info!(target: "tessera_client::chat", chat_type, "{text}");
         self.record(chat_type, text);
+    }
+
+    /// Local time (`lua-plugin-api.md` §12, P35), from the zone read at start-up.
+    fn engine_date(&self) -> tessera_plugins::EngineDate {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| i64::try_from(d.as_secs()).unwrap_or(i64::MAX));
+        engine_date_in(&self.zone, now)
     }
 
     fn game_time(&self) -> f64 {
@@ -824,9 +851,56 @@ impl CommandSink for Plugins {
     }
 }
 
+/// `Turbine.Engine.GetDate()` at `unix` seconds in `zone` (`lua-plugin-api.md` §12, P35):
+/// `DayOfWeek` 1 = Sunday, `DayOfYear` 1-based, `IsDST` from the zone.
+#[must_use]
+pub fn engine_date_in(zone: &localtime::TimeZone, unix: i64) -> tessera_plugins::EngineDate {
+    let d = zone.local_date(unix);
+    tessera_plugins::EngineDate {
+        year: i32::try_from(d.year).unwrap_or(if d.year < 0 { i32::MIN } else { i32::MAX }),
+        month: d.month,
+        day: d.day,
+        hour: d.hour,
+        minute: d.minute,
+        second: d.second,
+        day_of_week: d.day_of_week,
+        day_of_year: d.day_of_year,
+        is_dst: d.is_dst,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn get_date_is_local_time_in_a_fixed_zone() {
+        // A fixed zone (Central European rules), independent of the machine's TZ.
+        let zone = localtime::TimeZone::from_rule(
+            localtime::PosixRule::parse("CET-1CEST,M3.5.0,M10.5.0/3").expect("rule"),
+        );
+        let host = LogHost::new(PathBuf::from("/x")).with_zone(zone.clone());
+        // 2026-01-04 (a Sunday) 23:30 UTC is Monday 00:30 local, day 5 of the year.
+        let d = engine_date_in(&zone, 1_767_569_400);
+        assert_eq!(
+            (d.year, d.month, d.day, d.hour, d.minute),
+            (2026, 1, 5, 0, 30)
+        );
+        assert_eq!(d.day_of_week, 2, "Monday (1 = Sunday)");
+        assert_eq!(d.day_of_year, 5, "1-based");
+        assert!(!d.is_dst);
+        // 2026-01-03 23:30 UTC is Sunday 00:30 local.
+        assert_eq!(engine_date_in(&zone, 1_767_483_000).day_of_week, 1);
+        // 2025-12-31 23:30 UTC is 1 January 00:30 local: day 1.
+        let d = engine_date_in(&zone, 1_767_223_800);
+        assert_eq!((d.year, d.month, d.day, d.day_of_year), (2026, 1, 1, 1));
+        // Summer: 2026-07-01 12:00 UTC is 14:00 CEST.
+        let d = engine_date_in(&zone, 1_782_907_200);
+        assert_eq!((d.hour, d.is_dst), (14, true));
+        // The host answers from its zone (a sane date now).
+        let now = HostApi::engine_date(&host);
+        assert!((1..=7).contains(&now.day_of_week) && (1..=366).contains(&now.day_of_year));
+    }
 
     const DESCRIPTOR: &str = r#"<?xml version="1.0"?>
 <Plugin>

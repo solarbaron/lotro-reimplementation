@@ -236,6 +236,8 @@ impl UiHost {
             .flatten()
             {
                 panels.attach_game_widgets(&mut ui, k);
+                // `CombatRefs::open_activatables` applied its saved placement already.
+                self.placed.insert(k);
             }
         }
         roots

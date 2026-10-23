@@ -30,20 +30,21 @@ Category descriptions below are our own words.
 
 ## Result
 
-**74 checks on 72 objects (the two dye previews re-use an armour object), 73 pass, 1 fail.**
+**74 checks on 72 objects (the two dye previews re-use an armour object), 74 pass, 0 fail** (row C6 re-checked 2026-10-23 in the mesh view; the character view of the same setup is still open, see the row).
 
 | Category | Checks | Pass | Fail |
 |---|---|---|---|
 | Weapons and shields | 15 | 15 | 0 |
 | Armour (worn, skinned, bind pose), incl. 2 dye previews | 13 | 13 | 0 |
-| Creatures and NPCs (skinned, bind pose) | 15 | 14 | 1 |
+| Creatures and NPCs (skinned, bind pose) | 15 | 15 | 0 |
 | Vegetation | 9 | 9 | 0 |
 | Buildings and large structures | 9 | 9 | 0 |
 | Props and furniture | 13 | 13 | 0 |
 
-The one failure is not a decoding error: the mesh decodes and draws as stored. It is a
-display-policy question about one-triangle placeholder parts, recorded as an OPEN item in
-[`setup.md` §8.5](../specs/setup.md#s8-5).
+The one earlier failure (row C6) was not a decoding error: the mesh decoded and drew as
+stored. [`setup.md` §8.5](../specs/setup.md#s8-5) now gives the rule (one-triangle parts are
+left out of models with several parts), and the mesh view applies it since 2026-10-23. The
+explorer's character view does not apply it yet (row C6).
 
 ## Weapons and shields
 
@@ -92,7 +93,7 @@ display-policy question about one-triangle placeholder parts, recorded as an OPE
 | C3 | 0x79030469 | | large wolf-like beast | pass | |
 | C4 | 0x79038EA0 | (also `--mesh-angle 30,60`) | giant spider | pass | legs straight out sideways in bind pose; has a one-triangle stub part too small to see |
 | C5 | 0x79018631 | | troll with bark-like limbs | pass | |
-| C6 | 0x79018D38 | (also `--mesh-angle 20,10`, `--mesh-select 2,0`) | goblin | **fail** | body correct; part 2 (mesh 0x060068B9, one triangle, surface 0x310000E5, plain white texture) draws as a white triangle at the feet. OPEN in `setup.md` §8.5 |
+| C6 | 0x79018D38 | (also `--mesh-angle 20,10`, `--mesh-select 2,0`) | goblin | pass (2026-10-23, mesh view) | was **fail**: part 2 (mesh 0x060068B9, one triangle, surface 0x310000E5) drew as a white triangle at the feet. Now the mesh view leaves one-triangle parts out of models with several parts (`setup.md` §8.5 steps 1–3, S14). Re-checked 2026-10-23 by a `--view mesh --mesh-angle 20,10 --screenshot` render on the reference laptop (window 1421 × 781, viewed in full): body drawn, no triangle at the feet, parts 1 and 2 (one triangle each) listed as "not drawn: a one-triangle placeholder part". The real-data test `checklist_row_c6_draws_no_placeholder_part` (`apps/explorer/src/scene.rs`) counts the same: 3 parts, 1 drawn, 2 left out. **Not covered:** the character view's bare-setup path (`--character 0x04000110`) does not apply the rule yet and still draws the triangle (follow-up in `apps/explorer/src/character.rs`, through `tessera_world::objects::drawn_parts`) |
 | C7 | 0x790273B0 | | tree creature | pass | alpha-tested leaf cards with clean edges |
 | C8 | 0x7904E65C | | salamander | pass | |
 | C9 | 0x7900C0B8 | | large bird | pass | alpha-tested feather cards |

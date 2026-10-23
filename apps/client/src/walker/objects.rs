@@ -45,7 +45,7 @@ use tessera_formats::collision::{CELL_GEOMETRY_PREFIX, CellGeometry};
 use tessera_formats::{Did, PropertySchema, RgbaImage};
 use tessera_material::diagnose::{reason_of_resolve_error, reason_of_texture_error};
 use tessera_material::{FallbackReason, LibraryConfig, MaterialLibrary};
-use tessera_mesh::{DecodeOptions, GeometryLimits, Mesh, StampedSource};
+use tessera_mesh::{DecodeOptions, GeometryLimits, Mesh, MeshSummary, StampedSource};
 use tessera_render::glam::{Mat4, Vec3};
 use tessera_render::{
     AlphaMode, AlphaThreshold, DrawDepthBias, Dye, DyeMask, FixedBlend, Gloss,
@@ -55,6 +55,7 @@ use tessera_render::{
     WorldSurface, Wrap,
 };
 use tessera_world::draw_distance::{DistanceSmoother, DrawFade, aabb_distance, detail_level};
+use tessera_world::objects::stub_part_drawn;
 use tessera_world::{DistanceSettings, LANDBLOCK_SIZE, LandblockKey, LodValues};
 
 use super::UploadBudget;
@@ -194,6 +195,16 @@ pub struct LevelAsset {
 pub struct PartAsset {
     levels: Vec<LevelAsset>,
     gpu_bytes: u64,
+    /// The mesh's detail levels hold exactly one triangle in total (`mesh.md` §8.10,
+    /// [`MeshSummary::is_stub`]): left out of models with several parts (`setup.md` §8.5).
+    pub stub: bool,
+}
+
+/// Whether the mesh record `bytes` is a one-triangle stub (`mesh.md` §8.10, MI14;
+/// [`MeshSummary::is_stub`]). A record whose summary does not parse is not a stub.
+#[must_use]
+pub fn part_is_stub(bytes: &[u8]) -> bool {
+    MeshSummary::parse(bytes).is_ok_and(|s| s.is_stub())
 }
 
 /// The detail levels of `mesh` the walker draws: the kind-1 levels in stored order
@@ -298,6 +309,9 @@ impl Decoder for PartDecoder {
         let look = (key.variant != 0)
             .then(|| self.looks.as_ref()?.look(key.variant))
             .flatten();
+        // `mesh.md` §8.10: the flag is a property of the mesh record (cells are never
+        // stubs: a cell is the only part of its object).
+        let stub = did.prefix() != CELL_GEOMETRY_PREFIX && part_is_stub(&bytes);
         let mesh = if did.prefix() == CELL_GEOMETRY_PREFIX {
             let schema = self
                 .cell_schema
@@ -362,6 +376,7 @@ impl Decoder for PartDecoder {
         Ok(PartAsset {
             levels: out,
             gpu_bytes: total,
+            stub,
         })
     }
 
@@ -659,6 +674,8 @@ struct GpuLevel {
 
 struct GpuPart {
     levels: Vec<GpuLevel>,
+    /// A one-triangle mesh (`mesh.md` §8.10): not drawn as one of several parts.
+    stub: bool,
     /// Bounding sphere of level 0 (object space).
     center: Vec3,
     radius: f32,
@@ -715,9 +732,83 @@ pub fn texture_failure_reason(err: &AssetError) -> FallbackReason {
     }
 }
 
-/// The key of an instanced batch of [`ObjectLayer`]: landblock, part, detail level, casts
+/// Which set of a landblock's objects a block of the layer holds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum BlockSet {
+    /// The landblock's own objects (its bundle's entities, scenery and cells), inserted by
+    /// the terrain layer ([`ObjectLayer::insert`]).
+    Main,
+    /// Far entities of the landblock created from the distant-landscape sectors' entity
+    /// lists (`far-view.md` §10), inserted by the far view ([`ObjectLayer::insert_far`]).
+    Far,
+}
+
+/// A block of the layer: a landblock and which of its object sets.
+type BlockId = (LandblockKey, BlockSet);
+
+/// The distance cap in force for each block set.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct BlockCaps {
+    main: f32,
+    far: f32,
+}
+
+impl BlockCaps {
+    fn of(self, set: BlockSet) -> f32 {
+        match set {
+            BlockSet::Main => self.main,
+            BlockSet::Far => self.far,
+        }
+    }
+}
+
+/// The distance cap of far entities (`far-view.md` §10): they are drawn by the normal path,
+/// to min(*G*, `d0` × *M_d*) (`walker.md` §11.4), so the configured object cap (with the far
+/// view on, the 320-unit streaming ring of the landblocks' own objects, Tessera Decision
+/// FD15) does not bound them; only its shrink under GPU-budget pressure does, in proportion
+/// (*G* × `cap` / `configured`, at most *G*). A non-finite `cap`, or a non-finite or
+/// non-positive `configured`, keeps *G* (no shrink is known); a `cap` ≤ 0 gives 0 (the
+/// layer draws nothing); a non-finite or non-positive *G* is returned as it is.
+#[must_use]
+pub fn far_entity_cap(g: f32, cap: f64, configured: f64) -> f32 {
+    let ratio = if cap.is_finite() && configured.is_finite() && configured > 0.0 {
+        (cap / configured).clamp(0.0, 1.0)
+    } else {
+        1.0
+    };
+    #[allow(clippy::cast_possible_truncation)]
+    let r = ratio as f32;
+    if g.is_finite() && g > 0.0 { g * r } else { g }
+}
+
+/// Whether a far entity at distance `d` from the camera is left to its landblock's own
+/// objects (`far-view.md` §10 step 3 "if no entity with that instance ID exists through the
+/// main set"; Tessera choice under the §12 OPEN on the main-set test): `floor` is the
+/// distance cap of those objects when the layer holds them, and within it they draw the
+/// placement, so the far copy is not drawn there. Beyond it (and with `floor` `None`, the
+/// landblock's own objects not in the layer) the far entity is drawn by its own draw
+/// distance, so a long-range landmark is drawn by exactly one of the two sets at every
+/// distance up to min(*G*, `d0` × *M_d*).
+#[must_use]
+pub fn handed_to_main(d: f32, floor: Option<f32>) -> bool {
+    floor.is_some_and(|f| d <= f)
+}
+
+/// The draw distance of an object of a block with hand-over floor `floor` at distance `d`
+/// ([`handed_to_main`]): `draw_d` as it is, or −∞ (out of range, so its fade runs out)
+/// while the object is handed to the landblock's own objects.
+#[must_use]
+pub fn handed_draw_distance(d: f32, draw_d: f32, floor: Option<f32>) -> f32 {
+    if handed_to_main(d, floor) {
+        f32::NEG_INFINITY
+    } else {
+        draw_d
+    }
+}
+
+/// The key of an instanced batch of [`ObjectLayer`]: block, part, detail level, casts
 /// shadows, depth bias ([`DrawDepthBias::key_bits`]).
-type BatchKey = (LandblockKey, u32, u8, bool, [u32; 2]);
+type BatchKey = (BlockId, u32, u8, bool, [u32; 2]);
 
 /// The bias whose [`DrawDepthBias::key_bits`] are `bits`.
 fn bias_of_bits(bits: [u32; 2]) -> DrawDepthBias {
@@ -828,6 +919,10 @@ struct BlockObjects {
     /// The depth bias of each placed figure of the block (the [`ObjectInfo::depth_bias`] of
     /// the same object as [`Self::figure_cells`]), for the character layer's draws.
     figure_bias: HashMap<u32, DrawDepthBias>,
+    /// For a block of far entities whose landblock's own objects are in the layer too: the
+    /// distance cap of those objects, within which the far entities are left to them
+    /// ([`handed_to_main`]); set by the draw loop each frame, `None` otherwise.
+    hand_over: Option<f32>,
 }
 
 impl BlockObjects {
@@ -841,7 +936,7 @@ impl BlockObjects {
     /// (`mesh.md` §8.6–§8.7; `walker.md` §14.5 row W-O3), so an object culled while the
     /// camera travels comes back with a current distance and fade. `local_cam` is the eye in
     /// the block's frame, `draw_frame` the frame number ([`fade_resets`]), `cap` the
-    /// distance cap.
+    /// distance cap; the block's [`Self::hand_over`] floor applies as in the draw loop.
     fn follow_distances(
         &mut self,
         key: LandblockKey,
@@ -865,7 +960,11 @@ impl BlockObjects {
                 st.faded_at = draw_frame;
                 st.fade.update(
                     d,
-                    object_draw_distance(&obj.lod, frame, cap),
+                    handed_draw_distance(
+                        d,
+                        object_draw_distance(&obj.lod, frame, cap),
+                        self.hand_over,
+                    ),
                     frame.dt,
                     frame.camera_moved,
                     reset,
@@ -924,6 +1023,7 @@ impl BlockObjects {
             active_instances: 0,
             figure_cells,
             figure_bias,
+            hand_over: None,
         }
     }
 }
@@ -1331,6 +1431,12 @@ pub struct ObjectStats {
     pub draws: usize,
     /// Objects drawn last frame.
     pub objects_drawn: usize,
+    /// Of those, far entities (`far-view.md` §10, [`ObjectLayer::insert_far`]).
+    pub far_objects_drawn: usize,
+    /// Landblocks with far entities in the layer.
+    pub far_blocks: usize,
+    /// Far entities in the layer.
+    pub far_objects: usize,
     /// Objects drawn while fading in or out last frame.
     pub fading: usize,
     /// Part instances drawn instanced last frame.
@@ -1366,7 +1472,7 @@ pub struct ObjectLayer {
     /// through [`ObjectLayer::part_key`].
     looks: Option<Arc<super::looks::CellLooks>>,
     textures: AssetStore<NoRecord, TexDecoder>,
-    blocks: HashMap<LandblockKey, BlockObjects>,
+    blocks: HashMap<BlockId, BlockObjects>,
     gpu_parts: HashMap<u32, PartEntry>,
     gpu_tex: HashMap<TexRequest, TexEntry>,
     mesh_bytes: u64,
@@ -1377,7 +1483,7 @@ pub struct ObjectLayer {
     distance: f64,
     /// When the cap was last adjusted.
     adjusted: Option<Instant>,
-    order: Vec<(f64, LandblockKey)>,
+    order: Vec<(f64, BlockId)>,
     /// Arena bytes part meshes may fill together (the arena cap less the terrain's share).
     arena_limit: u64,
     /// When a part last had to wait for arena space.
@@ -1651,7 +1757,11 @@ impl ObjectLayer {
     #[must_use]
     pub fn figure_cell(&self, tag: u64) -> Option<(LandblockKey, u16)> {
         let (key, index) = super::figures::tag_parts(tag)?;
-        let cell = *self.blocks.get(&key)?.figure_cells.get(&index)?;
+        let cell = *self
+            .blocks
+            .get(&(key, BlockSet::Main))?
+            .figure_cells
+            .get(&index)?;
         Some((key, cell))
     }
 
@@ -1661,7 +1771,13 @@ impl ObjectLayer {
     #[must_use]
     pub fn figure_depth_bias(&self, tag: u64) -> DrawDepthBias {
         super::figures::tag_parts(tag)
-            .and_then(|(key, index)| self.blocks.get(&key)?.figure_bias.get(&index).copied())
+            .and_then(|(key, index)| {
+                self.blocks
+                    .get(&(key, BlockSet::Main))?
+                    .figure_bias
+                    .get(&index)
+                    .copied()
+            })
             .unwrap_or(DrawDepthBias::NONE)
     }
 
@@ -1730,14 +1846,54 @@ impl ObjectLayer {
         instances: Arc<[Instance]>,
         objects: Arc<[ObjectInfo]>,
     ) {
-        self.remove(key);
+        self.insert_set((key, BlockSet::Main), instances, objects);
+    }
+
+    /// Sets the far entities of landblock `key` (`far-view.md` §10; replacing earlier
+    /// ones). They are activated, faded, drawn and released like the landblock's own
+    /// objects, by their draw distances; the landblock's own objects ([`Self::insert`]) are
+    /// kept apart.
+    pub fn insert_far(
+        &mut self,
+        key: LandblockKey,
+        instances: Arc<[Instance]>,
+        objects: Arc<[ObjectInfo]>,
+    ) {
+        self.insert_set((key, BlockSet::Far), instances, objects);
+    }
+
+    fn insert_set(&mut self, id: BlockId, instances: Arc<[Instance]>, objects: Arc<[ObjectInfo]>) {
+        self.remove_set(id);
         self.blocks
-            .insert(key, BlockObjects::new(instances, objects));
+            .insert(id, BlockObjects::new(instances, objects));
     }
 
     /// Forgets `key`'s objects (their parts lose a reference).
     pub fn remove(&mut self, key: LandblockKey) {
-        if let Some(b) = self.blocks.remove(&key) {
+        self.remove_set((key, BlockSet::Main));
+    }
+
+    /// Forgets the far entities of landblock `key` ([`Self::insert_far`]).
+    pub fn remove_far(&mut self, key: LandblockKey) {
+        self.remove_set((key, BlockSet::Far));
+    }
+
+    /// Landblocks with far entities in the layer.
+    pub fn far_keys(&self) -> impl Iterator<Item = LandblockKey> + '_ {
+        self.blocks
+            .keys()
+            .filter(|(_, set)| *set == BlockSet::Far)
+            .map(|(k, _)| *k)
+    }
+
+    /// Whether the landblock's own objects are in the layer ([`Self::insert`]).
+    #[must_use]
+    pub fn holds(&self, key: LandblockKey) -> bool {
+        self.blocks.contains_key(&(key, BlockSet::Main))
+    }
+
+    fn remove_set(&mut self, id: BlockId) {
+        if let Some(b) = self.blocks.remove(&id) {
             let mut parts = Vec::new();
             for (i, o) in b.objects.iter().enumerate() {
                 if b.state.get(i).is_some_and(|s| s.active) {
@@ -1748,9 +1904,13 @@ impl ObjectLayer {
         }
     }
 
-    /// Keys tracked.
+    /// Keys tracked (landblocks whose own objects are in the layer; far entities are
+    /// listed by [`Self::far_keys`]).
     pub fn keys(&self) -> impl Iterator<Item = LandblockKey> + '_ {
-        self.blocks.keys().copied()
+        self.blocks
+            .keys()
+            .filter(|(_, set)| *set == BlockSet::Main)
+            .map(|(k, _)| *k)
     }
 
     fn release_parts(&mut self, parts: &[u32]) {
@@ -1873,19 +2033,28 @@ impl ObjectLayer {
     /// The activation pass (module docs, [`activate_blocks`]), then the references it
     /// takes and drops.
     fn activate(&mut self, camera: [f64; 3], frame: &ObjectFrame) {
-        let cap = self.distance as f32;
+        let caps = self.caps(frame);
         let (acquire, release) = activate_blocks(
             &mut self.blocks,
             &mut self.order,
             camera,
             frame,
-            cap,
+            caps,
             self.config.near,
         );
         for (p, prio, model) in acquire {
             self.acquire_parts(&[p], prio, model);
         }
         self.release_parts(&release);
+    }
+
+    /// The distance caps of the two block sets: the layer's cap in force for the
+    /// landblocks' own objects, [`far_entity_cap`] for far entities.
+    fn caps(&self, frame: &ObjectFrame) -> BlockCaps {
+        BlockCaps {
+            main: self.distance as f32,
+            far: far_entity_cap(frame.g, self.distance, self.config.distance),
+        }
     }
 
     /// Whether part meshes had to wait for arena space within [`ARENA_PRESSURE`].
@@ -1900,6 +2069,13 @@ impl ObjectLayer {
         let parts = &self.gpu_parts;
         let sphere = |p: u32| match parts.get(&p).map(|e| &e.state) {
             Some(PartState::Ready(g)) => Some((g.center, g.radius)),
+            _ => None,
+        };
+        // A stub part that is not drawn (`setup.md` §8.5) does not widen its object.
+        let drawn_sphere = |p: u32, count: u32| match parts.get(&p).map(|e| &e.state) {
+            Some(PartState::Ready(g)) if stub_part_drawn(count as usize, g.stub) => {
+                Some((g.center, g.radius))
+            }
             _ => None,
         };
         for b in self.blocks.values_mut() {
@@ -1920,7 +2096,7 @@ impl ObjectLayer {
                     continue;
                 };
                 let s = enclosing_sphere(insts.iter().filter_map(|inst| {
-                    let (c, r) = sphere(inst.part)?;
+                    let (c, r) = drawn_sphere(inst.part, obj.count)?;
                     Some((inst.model.transform_point3(c), r * inst.scale))
                 }));
                 if let Some(st) = b.state.get_mut(i) {
@@ -2135,6 +2311,7 @@ impl ObjectLayer {
                     self.mesh_bytes += bytes;
                     let part = GpuPart {
                         levels,
+                        stub: asset.stub,
                         center,
                         radius,
                         bytes,
@@ -2502,6 +2679,7 @@ impl ObjectLayer {
             blocks: self.blocks.len(),
             draws: self.stats.draws,
             objects_drawn: self.stats.objects_drawn,
+            far_objects_drawn: self.stats.far_objects_drawn,
             fading: self.stats.fading,
             instanced: self.stats.instanced,
             batches: self.stats.batches,
@@ -2512,7 +2690,11 @@ impl ObjectLayer {
             distance: self.distance,
             ..ObjectStats::default()
         };
-        for b in self.blocks.values() {
+        for (id, b) in &self.blocks {
+            if id.1 == BlockSet::Far {
+                s.far_blocks += 1;
+                s.far_objects += b.objects.len();
+            }
             s.objects += b.objects.len();
             if b.active > 0 {
                 s.active_blocks += 1;
@@ -2558,7 +2740,7 @@ impl ObjectLayer {
         let frame = self.frame;
         self.draw_frame = self.draw_frame.saturating_add(1);
         let draw_frame = self.draw_frame;
-        let cap = self.distance as f32;
+        let caps = self.caps(&frame);
         let mut draws = 0usize;
         let mut objects_drawn = 0usize;
         let mut fading = 0usize;
@@ -2589,13 +2771,22 @@ impl ObjectLayer {
             [-(o[0] as f32), -(o[1] as f32)]
         };
         let order = std::mem::take(&mut self.order);
-        for &(_, key) in &order {
-            let Some(b) = self.blocks.get_mut(&key) else {
+        let mut far_drawn = 0usize;
+        for &(_, id) in &order {
+            let key = id.0;
+            // Far entities whose landblock's own objects are in the layer are left to them
+            // within those objects' cap ([`handed_to_main`]).
+            let hand_over = (id.1 == BlockSet::Far
+                && self.blocks.contains_key(&(key, BlockSet::Main)))
+            .then_some(caps.main);
+            let Some(b) = self.blocks.get_mut(&id) else {
                 continue;
             };
+            b.hand_over = hand_over;
             if b.active == 0 {
                 continue;
             }
+            let cap = caps.of(id.1);
             let Some(off) = anchor.offset_of(key) else {
                 continue;
             };
@@ -2629,7 +2820,9 @@ impl ObjectLayer {
                     (c - Vec3::splat(r)).to_array(),
                     (c + Vec3::splat(r)).to_array(),
                 );
-                let draw_d = object_draw_distance(&obj.lod, &frame, cap);
+                let handed = handed_to_main(d, hand_over);
+                let draw_d =
+                    handed_draw_distance(d, object_draw_distance(&obj.lod, &frame, cap), hand_over);
                 let reset = fade_resets(st.faded_at, draw_frame);
                 st.faded_at = draw_frame;
                 let opacity =
@@ -2637,7 +2830,8 @@ impl ObjectLayer {
                         .update(d, draw_d, frame.dt, frame.camera_moved, reset, frame.lod);
                 // Before the culls: see the culled-block branch above.
                 let ds = st.smooth.update(d, frame.fps, false);
-                if opacity <= 0.0 {
+                // With distance levels off the fade is always 1: the hand-over is a cut.
+                if opacity <= 0.0 || (handed && !frame.lod) {
                     continue;
                 }
                 let center = off + c;
@@ -2652,6 +2846,9 @@ impl ObjectLayer {
                 let casts = frame.shadows
                     && (!frame.lod || d < obj.lod.shadow_distance(frame.g, &frame.settings));
                 objects_drawn += 1;
+                if id.1 == BlockSet::Far {
+                    far_drawn += 1;
+                }
                 if opacity < 1.0 {
                     fading += 1;
                 }
@@ -2668,6 +2865,11 @@ impl ObjectLayer {
                     else {
                         continue;
                     };
+                    // `setup.md` §8.5 steps 2–3: a one-triangle part of a model with
+                    // several parts is not drawn.
+                    if !stub_part_drawn(obj.count as usize, g.stub) {
+                        continue;
+                    }
                     let n = g.levels.len();
                     let k = if frame.lod {
                         detail_level(n, detail, ds, true)
@@ -2687,7 +2889,7 @@ impl ObjectLayer {
                     {
                         self.batches
                             .entry((
-                                key,
+                                id,
                                 inst.part,
                                 u8::try_from(k).unwrap_or(u8::MAX),
                                 casts,
@@ -2827,6 +3029,7 @@ impl ObjectLayer {
         self.fallback_stats = self.fallback.stats();
         self.stats.draws = draws;
         self.stats.objects_drawn = objects_drawn;
+        self.stats.far_objects_drawn = far_drawn;
         self.stats.fading = fading;
         self.stats.instanced = instanced;
         self.stats.batches = batches;
@@ -2880,24 +3083,26 @@ impl ObjectLayer {
 /// with the blocks nearest first and returns the part references to take (part,
 /// priority: `Visible` within `near`, else `Prefetch`; models wanted) and to drop.
 fn activate_blocks(
-    blocks: &mut HashMap<LandblockKey, BlockObjects>,
-    order: &mut Vec<(f64, LandblockKey)>,
+    blocks: &mut HashMap<BlockId, BlockObjects>,
+    order: &mut Vec<(f64, BlockId)>,
     camera: [f64; 3],
     frame: &ObjectFrame,
-    cap: f32,
+    caps: BlockCaps,
     near: f64,
 ) -> (Vec<(u32, Priority, bool)>, Vec<u32>) {
-    let akey = ActivationKey::new(frame, cap);
-    let keys: Vec<LandblockKey> = blocks.keys().copied().collect();
+    let ids: Vec<BlockId> = blocks.keys().copied().collect();
     order.clear();
     let mut acquire: Vec<(u32, Priority, bool)> = Vec::new();
     let mut release: Vec<u32> = Vec::new();
-    for key in keys {
+    for id in ids {
+        let key = id.0;
         let d_block = key.distance_to([camera[0], camera[1]]);
-        order.push((d_block, key));
-        let Some(b) = blocks.get_mut(&key) else {
+        order.push((d_block, id));
+        let Some(b) = blocks.get_mut(&id) else {
             continue;
         };
+        let cap = caps.of(id.1);
+        let akey = ActivationKey::new(frame, cap);
         if !activation_stale(b.eval_at, camera, &akey) {
             continue;
         }
@@ -3343,6 +3548,34 @@ mod tests {
         assert!(!l.cast_shadow);
     }
 
+    /// `setup.md` §8.5 steps 1–3 (S14, `mesh.md` MI14): a synthetic two-part setup whose
+    /// second part has 3 vertices draws only its first part; the stub alone is drawn.
+    #[test]
+    fn stub_parts_of_multi_part_objects_are_left_out() {
+        use tessera_mesh::synth::MeshSpec;
+        let body = MeshSpec::single(0x0000_0112, 40).build().unwrap();
+        let stub = MeshSpec::single(0x0000_0112, 3).build().unwrap();
+        let body = body.to_bytes().unwrap();
+        let stub = stub.to_bytes().unwrap();
+        assert!(!part_is_stub(&body));
+        assert!(part_is_stub(&stub));
+        assert!(
+            !part_is_stub(&stub[..stub.len() / 3]),
+            "unreadable: not a stub"
+        );
+        // The draw loop's test per instance of an object with `count` parts.
+        let flags = [part_is_stub(&body), part_is_stub(&stub)];
+        let drawn: Vec<bool> = flags.iter().map(|&f| stub_part_drawn(2, f)).collect();
+        assert_eq!(drawn, vec![true, false]);
+        assert!(stub_part_drawn(1, true), "the only part is drawn");
+        assert_eq!(
+            tessera_world::objects::drawn_parts(&[Did(1), Did(2)], |d| Some(
+                flags[d.0 as usize - 1]
+            )),
+            vec![Did(1)]
+        );
+    }
+
     #[test]
     fn mean_colour_of_images() {
         let img = RgbaImage {
@@ -3390,7 +3623,7 @@ mod tests {
 
     /// One landblock (region 1, block 10, 10) with a static object (part 1) and a generated
     /// one (part 2), both 100 m east of the block's south-west corner, `d0` 300.
-    fn one_block() -> HashMap<LandblockKey, BlockObjects> {
+    fn one_block() -> HashMap<BlockId, BlockObjects> {
         let instances: Arc<[Instance]> = vec![
             inst(1, Vec3::new(100.0, 0.0, 0.0), 1.0),
             inst(2, Vec3::new(100.0, 0.0, 0.0), 1.0),
@@ -3408,18 +3641,143 @@ mod tests {
         };
         let objects: Arc<[ObjectInfo]> = vec![o(0, false), o(1, true)].into();
         let key = LandblockKey::new(1, 10, 10).unwrap();
-        HashMap::from([(key, BlockObjects::new(instances, objects))])
+        HashMap::from([((key, BlockSet::Main), BlockObjects::new(instances, objects))])
     }
 
     fn pass(
-        blocks: &mut HashMap<LandblockKey, BlockObjects>,
+        blocks: &mut HashMap<BlockId, BlockObjects>,
         camera: [f64; 3],
         frame: &ObjectFrame,
         cap: f32,
     ) -> (Vec<u32>, Vec<u32>) {
+        pass_caps(
+            blocks,
+            camera,
+            frame,
+            BlockCaps {
+                main: cap,
+                far: cap,
+            },
+        )
+    }
+
+    fn pass_caps(
+        blocks: &mut HashMap<BlockId, BlockObjects>,
+        camera: [f64; 3],
+        frame: &ObjectFrame,
+        caps: BlockCaps,
+    ) -> (Vec<u32>, Vec<u32>) {
         let mut order = Vec::new();
-        let (a, r) = activate_blocks(blocks, &mut order, camera, frame, cap, 200.0);
+        let (a, r) = activate_blocks(blocks, &mut order, camera, frame, caps, 200.0);
         (a.into_iter().map(|x| x.0).collect(), r)
+    }
+
+    /// `far-view.md` §10: far entities are drawn to their own draw distances under *G*,
+    /// not under the 320-unit cap of the landblocks' own objects (FD15); a shrink of the
+    /// cap under GPU pressure scales them in proportion.
+    #[test]
+    fn far_entities_have_their_own_cap() {
+        assert_eq!(far_entity_cap(2_080.0, 320.0, 320.0), 2_080.0);
+        assert_eq!(far_entity_cap(2_080.0, 160.0, 320.0), 1_040.0);
+        assert_eq!(far_entity_cap(2_080.0, 500.0, 320.0), 2_080.0);
+        assert_eq!(far_entity_cap(2_080.0, 320.0, 0.0), 2_080.0);
+        assert_eq!(far_entity_cap(2_080.0, f64::NAN, 320.0), 2_080.0);
+        assert_eq!(far_entity_cap(2_080.0, 320.0, f64::INFINITY), 2_080.0);
+        assert_eq!(far_entity_cap(2_080.0, 0.0, 320.0), 0.0);
+        assert_eq!(far_entity_cap(2_080.0, -5.0, 320.0), 0.0);
+        // The same object as a landblock's own object and as a far entity, 1,000 m away
+        // with `d0` 1,500: only the far one is activated under a 320-unit main cap.
+        let lod = LodValues([1500.0, 100.0, 16.0, 80.0, 1000.0, 1000.0, 1100.0, -1.0]);
+        let key = LandblockKey::new(1, 10, 10).unwrap();
+        let block = || {
+            let instances: Arc<[Instance]> = vec![inst(7, Vec3::new(100.0, 0.0, 0.0), 1.0)].into();
+            let objects: Arc<[ObjectInfo]> = vec![ObjectInfo {
+                position: Vec3::new(100.0, 0.0, 0.0),
+                lod,
+                generated: false,
+                first: 0,
+                count: 1,
+                cell: OUTDOORS,
+                depth_bias: DrawDepthBias::NONE,
+            }]
+            .into();
+            BlockObjects::new(instances, objects)
+        };
+        let o = key.origin();
+        let camera = [o[0] + 1_100.0, o[1], 0.0];
+        let frame = ObjectFrame::default();
+        let caps = BlockCaps {
+            main: 320.0,
+            far: far_entity_cap(frame.g, 320.0, 320.0),
+        };
+        let mut main = HashMap::from([((key, BlockSet::Main), block())]);
+        assert!(pass_caps(&mut main, camera, &frame, caps).0.is_empty());
+        let mut far = HashMap::from([((key, BlockSet::Far), block())]);
+        assert_eq!(pass_caps(&mut far, camera, &frame, caps).0, vec![7]);
+    }
+
+    /// `far-view.md` §10 with the landblock's own objects in the layer (held): a landmark
+    /// (`d0` 2,000) 400 units away lies beyond the 320-unit cap of the landblock's own
+    /// objects, so the far block activates and draws it; within the cap the far copy is
+    /// handed to the landblock's own objects. At no distance up to its draw distance is
+    /// it drawn by neither set.
+    #[test]
+    fn far_entities_of_held_landblocks_are_drawn_beyond_the_main_cap() {
+        let lod = LodValues([2000.0, 100.0, 16.0, 80.0, 1000.0, 1000.0, 1100.0, -1.0]);
+        let key = LandblockKey::new(1, 10, 10).unwrap();
+        let block = || {
+            let instances: Arc<[Instance]> = vec![inst(9, Vec3::new(100.0, 0.0, 0.0), 1.0)].into();
+            let objects: Arc<[ObjectInfo]> = vec![ObjectInfo {
+                position: Vec3::new(100.0, 0.0, 0.0),
+                lod,
+                generated: false,
+                first: 0,
+                count: 1,
+                cell: OUTDOORS,
+                depth_bias: DrawDepthBias::NONE,
+            }]
+            .into();
+            BlockObjects::new(instances, objects)
+        };
+        let frame = ObjectFrame::default();
+        let caps = BlockCaps {
+            main: 320.0,
+            far: far_entity_cap(frame.g, 320.0, 320.0),
+        };
+        let o = key.origin();
+        // The viewer 400 units east of the object, its landblock held.
+        let camera = [o[0] + 500.0, o[1], 0.0];
+        let mut blocks = HashMap::from([
+            ((key, BlockSet::Main), block()),
+            ((key, BlockSet::Far), block()),
+        ]);
+        let mut order = Vec::new();
+        let (acquire, _) = activate_blocks(&mut blocks, &mut order, camera, &frame, caps, 200.0);
+        assert_eq!(acquire.len(), 1, "only the far copy is activated");
+        assert!(blocks[&(key, BlockSet::Far)].state[0].active);
+        assert!(!blocks[&(key, BlockSet::Main)].state[0].active);
+        let floor = Some(caps.main);
+        assert!(!handed_to_main(400.0, floor), "drawn by the far block");
+        let draw_d = object_draw_distance(&lod, &frame, caps.far);
+        assert!(400.0 <= handed_draw_distance(400.0, draw_d, floor));
+        // Within the cap the landblock's own object draws it; the far copy fades out.
+        assert!(handed_to_main(300.0, floor));
+        assert_eq!(
+            handed_draw_distance(300.0, draw_d, floor),
+            f32::NEG_INFINITY
+        );
+        let main_d = object_draw_distance(&lod, &frame, caps.main);
+        assert!(300.0 <= main_d);
+        // Exactly one set draws it at every distance within its draw distance.
+        for d in (0..2_100).step_by(10).map(|d| d as f32) {
+            let main = d <= main_d;
+            let far = d <= handed_draw_distance(d, draw_d, floor);
+            assert!(!(main && far), "both at {d}");
+            assert_eq!(main || far, d <= draw_d, "at {d}");
+        }
+        // Not held: no hand-over.
+        assert!(!handed_to_main(10.0, None));
+        assert_eq!(handed_draw_distance(10.0, draw_d, None), draw_d);
     }
 
     #[test]
@@ -3493,7 +3851,7 @@ mod tests {
     fn culled_objects_keep_their_smoothed_distance_current() {
         let mut blocks = one_block();
         let key = LandblockKey::new(1, 10, 10).unwrap();
-        let b = blocks.get_mut(&key).unwrap();
+        let b = blocks.get_mut(&(key, BlockSet::Main)).unwrap();
         for st in &mut b.state {
             st.active = true;
             st.sphere = Some((Vec3::new(100.0, 0.0, 0.0), 1.0));
@@ -3553,7 +3911,7 @@ mod tests {
     fn objects_after_the_draw_cap_keep_their_smoothed_distance_current() {
         let mut blocks = one_block();
         let key = LandblockKey::new(1, 10, 10).unwrap();
-        let b = blocks.get_mut(&key).unwrap();
+        let b = blocks.get_mut(&(key, BlockSet::Main)).unwrap();
         for st in &mut b.state {
             st.active = true;
             st.sphere = Some((Vec3::new(100.0, 0.0, 0.0), 1.0));
@@ -3598,7 +3956,7 @@ mod tests {
     fn fades_advance_for_objects_out_of_view() {
         let mut blocks = one_block();
         let key = LandblockKey::new(1, 10, 10).unwrap();
-        let b = blocks.get_mut(&key).unwrap();
+        let b = blocks.get_mut(&(key, BlockSet::Main)).unwrap();
         for st in &mut b.state {
             st.active = true;
             st.sphere = Some((Vec3::new(100.0, 0.0, 0.0), 1.0));
@@ -3662,8 +4020,9 @@ mod tests {
         ]
         .into();
         let key = LandblockKey::new(1, 10, 10).unwrap();
-        let mut blocks = HashMap::from([(key, BlockObjects::new(instances, objects))]);
-        let b = blocks.get(&key).unwrap();
+        let mut blocks =
+            HashMap::from([((key, BlockSet::Main), BlockObjects::new(instances, objects))]);
+        let b = blocks.get(&(key, BlockSet::Main)).unwrap();
         assert_eq!(b.rect, ([100.0, 0.0], [100.0, 0.0]), "outdoor objects only");
         let o = key.origin();
         let camera = [o[0] - 300.0, o[1], -198.0];

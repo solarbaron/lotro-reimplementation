@@ -59,11 +59,11 @@ use tessera_formats::{Did, Record, RgbaImage, Surface};
 use tessera_material::{CurveState, FloatCurve};
 use tessera_render::glam::{Mat4, Quat, Vec3};
 use tessera_render::{
-    DrawDepthBias, Indices, LightSelection, LitSurface, Material, MeshConfig, MeshData, MeshDraw,
-    MeshId, Pass, PreparedMesh, Renderer, Submesh, TerrainChunk, TerrainChunkData, TerrainDraw,
-    TerrainGloss, TerrainLayer as GpuLayer, TerrainLayerTextures, TerrainOpacity,
-    TerrainProjection, TerrainSpecular, TerrainTransform, TerrainVertices, TextureId,
-    TextureUpload, Wrap,
+    DrawDepthBias, FarTerrainData, FarTerrainDraw, FarTerrainMesh, Indices, LightSelection,
+    LitSurface, Material, MeshConfig, MeshData, MeshDraw, MeshId, Pass, PreparedMesh, Renderer,
+    Submesh, TerrainChunk, TerrainChunkData, TerrainDraw, TerrainGloss, TerrainLayer as GpuLayer,
+    TerrainLayerTextures, TerrainOpacity, TerrainProjection, TerrainSpecular, TerrainTransform,
+    TerrainVertices, TextureId, TextureUpload, Wrap,
 };
 use tessera_terrain::{
     AlphaMask, ChunkLayers, CoordinateSet, EdgeLods, HeightSlopeShading, LayerVertices, Lod,
@@ -78,7 +78,7 @@ use tessera_world::{
 use super::UploadBudget;
 use super::env::material_curve;
 use super::farband::{BAKE_SIZE, LIGHT_GLOW, SmallChain, bake, mip_chain, reduce_mask};
-use super::farview::FarHandOff;
+use super::farview::{FarHandOff, SeamMaterial};
 use super::geometry::{TexRequest, VARIANT_OWN_ALPHA, image_ok};
 use super::interiors;
 use super::jobs::JobRunner;
@@ -507,6 +507,8 @@ struct MeshSig {
     layered: bool,
     /// The far band: one baked layer (`walker.md` §14.4).
     far: bool,
+    /// With the seam overlay's geometry (`far-view.md` §6.5).
+    seam: bool,
 }
 
 /// A layered chunk built on a worker: its vertices and every drawn layer's triangles.
@@ -520,12 +522,81 @@ pub struct ChunkPrep {
     pub surface: GridSurface,
     /// A far-band chunk: one layer of every covered triangle.
     pub far: bool,
+    /// The seam overlay's geometry (`far-view.md` §6.5), when asked for.
+    pub seam: Option<SeamPrep>,
+}
+
+/// The near terrain's triangles again, for the seam overlay (`far-view.md` §6.5,
+/// `terrain-texturing.md` §12): the chunk's vertex positions and normals as drawn, its
+/// full triangulation at the drawn level, and per vertex the colour-list coordinates of
+/// its place in its 3 × 3 sector, (*x*_s / 480, 1 − *y*_s / 480) as on the far terrain
+/// (`distant-landscape.md` §5.3; Tessera choice under the §6.5 OPEN on the overlay's
+/// texture transform).
+#[derive(Debug, Clone, PartialEq)]
+pub struct SeamPrep {
+    /// Block-local positions (those of the layered chunk).
+    pub positions: Vec<[f32; 3]>,
+    /// Normals (those of the layered chunk).
+    pub normals: Vec<[f32; 3]>,
+    /// Sector texture coordinates.
+    pub uvs: Vec<[f32; 2]>,
+    /// The triangle list.
+    pub indices: Vec<u32>,
+}
+
+/// Units per sector edge (3 landblocks, `distant-landscape.md` §5.3).
+const SECTOR_UNITS: f32 = 480.0;
+
+/// The seam overlay's geometry for a chunk of block `key` with `vertices` and the
+/// triangulation `triangles` (indices into `vertices`; out-of-range ones are dropped).
+#[must_use]
+pub fn seam_prep(key: LandblockKey, vertices: &LayerVertices, triangles: &[u16]) -> SeamPrep {
+    // The block's place in its sector (landblocks 3 × sx ... 3 × sx + 2).
+    let bx = f32::from(key.x() % 3) * LANDBLOCK_SIZE as f32;
+    let by = f32::from(key.y() % 3) * LANDBLOCK_SIZE as f32;
+    let uvs = vertices
+        .positions
+        .iter()
+        .map(|p| seam_uv(p[0] + bx, p[1] + by))
+        .collect();
+    let n = vertices.positions.len();
+    let indices = triangles
+        .as_chunks::<3>()
+        .0
+        .iter()
+        .filter(|t| t.iter().all(|&i| usize::from(i) < n))
+        .flatten()
+        .map(|&i| u32::from(i))
+        .collect();
+    SeamPrep {
+        positions: vertices.positions.clone(),
+        normals: vertices.normals.clone(),
+        uvs,
+        indices,
+    }
+}
+
+/// The colour-list coordinates of sector-local (`x`, `y`): (*x* / 480, 1 − *y* / 480)
+/// (`distant-landscape.md` §5.3).
+#[must_use]
+pub fn seam_uv(x: f32, y: f32) -> [f32; 2] {
+    [x / SECTOR_UNITS, 1.0 - y / SECTOR_UNITS]
 }
 
 impl ChunkPrep {
+    /// GPU bytes of the chunk and of its seam overlay's mesh ([`SeamPrep::bytes`]).
     fn bytes(&self) -> u64 {
         let tris: usize = self.triangles.iter().map(Vec::len).sum();
         (self.vertices.positions.len() * 80 + tris * 6) as u64
+            + self.seam.as_ref().map_or(0, SeamPrep::bytes)
+    }
+}
+
+impl SeamPrep {
+    /// GPU bytes of the overlay's mesh: 32 per far-terrain vertex, 4 per index.
+    #[must_use]
+    pub fn bytes(&self) -> u64 {
+        (self.positions.len() * 32 + self.indices.len() * 4) as u64
     }
 }
 
@@ -673,6 +744,8 @@ enum GpuKind {
 
 struct GpuTerrain {
     kind: GpuKind,
+    /// The seam overlay's mesh (`far-view.md` §6.5), drawn with the far-terrain program.
+    seam: Option<FarTerrainMesh>,
     sig: MeshSig,
     min_h: f32,
     max_h: f32,
@@ -1016,6 +1089,8 @@ pub struct TerrainStats {
     pub drawn: usize,
     /// Ceiling chunks drawn last frame.
     pub ceilings: usize,
+    /// Seam-overlay draws last frame (`far-view.md` §6.5).
+    pub seams: usize,
     /// Blocks drawn in the far band (baked).
     pub far: usize,
     /// Far-band bakes on the GPU.
@@ -1867,6 +1942,7 @@ impl TerrainLayer {
                                 slot,
                                 GpuTerrain {
                                     kind: GpuKind::Mesh(id),
+                                    seam: None,
                                     sig,
                                     min_h,
                                     max_h,
@@ -1911,6 +1987,7 @@ impl TerrainLayer {
                                 slot,
                                 GpuTerrain {
                                     kind: GpuKind::Chunk { chunk, prep: None },
+                                    seam: None,
                                     sig,
                                     min_h,
                                     max_h,
@@ -1941,6 +2018,21 @@ impl TerrainLayer {
                         slot.ready = Some((sig, Built::Chunk(prep), min_h, max_h));
                         break;
                     }
+                    // The seam overlay's mesh first: a chunk whose overlay cannot be uploaded
+                    // is retried like a failed chunk, never staged without it.
+                    let seam = match prep.seam.as_ref().map(|s| upload_seam(renderer, key, s)) {
+                        None | Some(Ok(None)) => None,
+                        Some(Ok(Some(m))) => Some(m),
+                        Some(Err(e)) => {
+                            let attempt = slot.fail(sig, now);
+                            if attempt == 1 {
+                                tracing::warn!(%key, "seam overlay upload failed (retrying later): {e}");
+                            } else {
+                                tracing::debug!(%key, attempt, "seam overlay upload failed again: {e}");
+                            }
+                            continue;
+                        }
+                    };
                     match upload_chunk(renderer, key, &prep, &layers.terrain, &tex, lm) {
                         Ok(chunk) => {
                             slot.failed = None;
@@ -1952,6 +2044,7 @@ impl TerrainLayer {
                                         chunk,
                                         prep: (!complete).then_some(prep),
                                     },
+                                    seam,
                                     sig,
                                     min_h,
                                     max_h,
@@ -2061,12 +2154,20 @@ impl TerrainLayer {
                 .mesh
                 .as_ref()
                 .is_some_and(|m| m.sig.layered && !m.sig.far);
+        let far = layered && slot.far && baked;
+        // `far-view.md` §6.5: the near chunks carry the overlay's geometry while the far view
+        // hands over sector materials (`NearFarSeamBlending` and the normal-mapped template).
+        let seam = layered
+            && !placeholder
+            && !far
+            && self.far_view.as_ref().is_some_and(|h| h.seam.is_some());
         Some(MeshSig {
             lod,
             edges: edges.effective(lod),
             present,
             layered: layered && !placeholder,
-            far: layered && slot.far && baked,
+            far,
+            seam,
         })
     }
 
@@ -2247,6 +2348,7 @@ impl TerrainLayer {
             panics: self.panics,
             drawn: self.stats.drawn,
             ceilings: self.stats.ceilings,
+            seams: self.stats.seams,
             triangles: self.stats.triangles,
             ..TerrainStats::default()
         };
@@ -2301,6 +2403,7 @@ impl TerrainLayer {
         let frame = self.frame;
         let mut drawn = 0usize;
         let mut ceilings = 0usize;
+        let mut seams = 0usize;
         let mut triangles = 0u64;
         let material = Material::color([1.0, 1.0, 1.0, 1.0]);
         let size = LANDBLOCK_SIZE as f32;
@@ -2372,6 +2475,17 @@ impl TerrainLayer {
                         pass.terrain(d);
                         drawn += usize::from(visible);
                         triangles += u64::from(chunk.info().triangles);
+                        // `far-view.md` §6.5: the sector overlay over the layered chunk.
+                        if visible
+                            && let Some(d) = self
+                                .far_view
+                                .as_ref()
+                                .and_then(|h| h.seam.as_deref())
+                                .and_then(|mat| seam_draw(m.seam.as_ref()?, mat, key, tf, anchor))
+                        {
+                            pass.far_terrain(d);
+                            seams += 1;
+                        }
                     }
                     GpuKind::Mesh(id) if visible => {
                         let lit = LitSurface {
@@ -2425,6 +2539,7 @@ impl TerrainLayer {
         }
         self.stats.drawn = drawn;
         self.stats.ceilings = ceilings;
+        self.stats.seams = seams;
         self.stats.triangles = triangles;
     }
 
@@ -2560,6 +2675,69 @@ fn own_waiting(layers: &ChunkLayers, slot: &Slot) -> bool {
     })
 }
 
+/// What the seam overlay of block `key` is drawn with (`far-view.md` §6.5): the sector's
+/// colour list and `c_NearViewOrigin`, the viewer landblock's south-west corner in the
+/// render frame of `anchor` (§6.4, Inferred). `None` until the sector's colour list is on
+/// the GPU.
+#[must_use]
+pub fn seam_inputs(
+    mat: &SeamMaterial,
+    key: LandblockKey,
+    anchor: &Anchor,
+) -> Option<(TextureId, Option<[f32; 2]>)> {
+    let colour = mat.colour_of(key)?;
+    let origin = mat
+        .viewer
+        .and_then(|v| anchor.offset_of(v))
+        .map(|o| [o.x, o.y]);
+    Some((colour, origin))
+}
+
+/// The seam overlay's draw of block `key` (`far-view.md` §6.5): its overlay mesh at the
+/// chunk's transform `tf` with a copy of the sector's normal-mapped material (`mat`;
+/// [`seam_inputs`]). `None` until the sector's colour list is on the GPU.
+#[must_use]
+pub fn seam_draw(
+    mesh: &FarTerrainMesh,
+    mat: &SeamMaterial,
+    key: LandblockKey,
+    tf: Mat4,
+    anchor: &Anchor,
+) -> Option<FarTerrainDraw> {
+    let (colour, origin) = seam_inputs(mat, key, anchor)?;
+    let mut d = FarTerrainDraw::new(mesh.clone(), tf);
+    d.colour = Some(colour);
+    d.detail = mat.detail;
+    d.normal_map = mat.normal;
+    d.colour_repeats = mat.colour_repeats;
+    d.detail_repeats = mat.detail_repeats;
+    d.fade = mat.fade;
+    d.near_view_origin = origin;
+    Some(d)
+}
+
+/// Uploads the seam overlay's mesh of a chunk (`Ok(None)`: no triangle to draw).
+fn upload_seam(
+    renderer: &mut Renderer<'_>,
+    key: LandblockKey,
+    seam: &SeamPrep,
+) -> Result<Option<FarTerrainMesh>, tessera_render::RenderError> {
+    if seam.indices.is_empty() {
+        return Ok(None);
+    }
+    let label = format!("seam overlay {key}");
+    renderer
+        .upload_far_terrain(&FarTerrainData {
+            label: &label,
+            positions: &seam.positions,
+            normals: &seam.normals,
+            uvs: &seam.uvs,
+            indices: &seam.indices,
+            stitch_start: seam.indices.len(),
+        })
+        .map(Some)
+}
+
 /// Uploads a layered chunk.
 fn upload_chunk(
     renderer: &mut Renderer<'_>,
@@ -2617,6 +2795,7 @@ fn chunk_prep(
         triangles,
         surface: layers.surface(),
         far: false,
+        seam: None,
     }
 }
 
@@ -2650,6 +2829,7 @@ fn far_prep(
         triangles: vec![tris],
         surface: GridSurface::Terrain,
         far: true,
+        seam: None,
     }
 }
 
@@ -2781,7 +2961,10 @@ fn run_job(job: Job) -> Output {
                 }
                 if let Some(layers) = layers {
                     let tri = triangulate(&block, sig.lod, edges);
-                    let prep = chunk_prep(&block, &normals, key, &layers, Some(&tri));
+                    let mut prep = chunk_prep(&block, &normals, key, &layers, Some(&tri));
+                    if sig.seam {
+                        prep.seam = Some(seam_prep(key, &prep.vertices, &tri));
+                    }
                     let (lo, hi) = height_range(&block);
                     return Ok((Built::Chunk(Arc::new(prep)), lo, hi));
                 }
@@ -3395,6 +3578,93 @@ mod tests {
     use super::*;
     use tessera_formats::landblock::{HeightGrid, VertexFlags};
 
+    /// `far-view.md` §6.5 with `distant-landscape.md` §5.3: the overlay's colour-list
+    /// coordinates are (x / 480, 1 − y / 480) of the vertex's place in its 3 × 3 sector.
+    #[test]
+    fn seam_uv_is_the_sector_coordinate() {
+        assert_eq!(seam_uv(0.0, 0.0), [0.0, 1.0]);
+        assert_eq!(seam_uv(480.0, 480.0), [1.0, 0.0]);
+        assert_eq!(seam_uv(240.0, 120.0), [0.5, 0.75]);
+    }
+
+    fn seam_vertices(positions: Vec<[f32; 3]>) -> LayerVertices {
+        let n = positions.len();
+        LayerVertices {
+            offset: [0.0, 0.0],
+            normals: vec![[0.0, 0.0, 1.0]; n],
+            tangents: vec![[1.0, 0.0, 0.0]; n],
+            binormals: vec![[0.0, 1.0, 0.0]; n],
+            sets: std::array::from_fn(|_| vec![[0.0, 0.0]; n]),
+            positions,
+        }
+    }
+
+    /// The overlay's geometry: a block at x % 3 == 2 (y % 3 == 0) takes the last third of
+    /// the sector in u and the first in y; positions and normals are the chunk's own;
+    /// triangles with an index past the vertices are dropped, a trailing partial one too.
+    #[test]
+    fn seam_prep_places_the_block_in_its_sector() {
+        let key = LandblockKey::new(1, 101, 51).unwrap();
+        assert_eq!((key.x() % 3, key.y() % 3), (2, 0));
+        let v = seam_vertices(vec![
+            [0.0, 0.0, 10.0],
+            [160.0, 0.0, 11.0],
+            [160.0, 160.0, 12.0],
+            [0.0, 160.0, 13.0],
+        ]);
+        let tris = [0u16, 1, 2, 0, 2, 3, 0, 2, 9, 1, 2];
+        let p = seam_prep(key, &v, &tris);
+        assert_eq!(p.positions, v.positions);
+        assert_eq!(p.normals, v.normals);
+        assert_eq!(p.indices, vec![0, 1, 2, 0, 2, 3]);
+        assert_eq!(p.uvs.len(), 4);
+        for uv in &p.uvs {
+            assert!((2.0 / 3.0 - 1e-6..=1.0 + 1e-6).contains(&uv[0]), "{uv:?}");
+            assert!((2.0 / 3.0 - 1e-6..=1.0 + 1e-6).contains(&uv[1]), "{uv:?}");
+        }
+        assert!((p.uvs[0][0] - 2.0 / 3.0).abs() < 1e-6 && (p.uvs[0][1] - 1.0).abs() < 1e-6);
+        assert!((p.uvs[2][0] - 1.0).abs() < 1e-6 && (p.uvs[2][1] - 2.0 / 3.0).abs() < 1e-6);
+        assert_eq!(p.bytes(), 4 * 32 + 6 * 4);
+        // An empty or hostile list gives no triangle.
+        assert!(seam_prep(key, &v, &[7, 8, 9]).indices.is_empty());
+        assert!(
+            seam_prep(key, &seam_vertices(Vec::new()), &tris)
+                .indices
+                .is_empty()
+        );
+    }
+
+    /// The overlay's draw inputs: none without the sector's colour list on the GPU; the
+    /// near-view origin is the viewer landblock's corner in the anchor's frame.
+    #[test]
+    fn seam_inputs_need_the_colour_list_and_take_the_viewer_corner() {
+        use tessera_world::far_view::SectorKey;
+        let key = LandblockKey::new(1, 101, 51).unwrap();
+        let viewer = LandblockKey::new(1, 100, 50).unwrap();
+        let anchor = Anchor {
+            region: 1,
+            x: 99,
+            y: 52,
+        };
+        let mut mat = SeamMaterial {
+            viewer: Some(viewer),
+            ..SeamMaterial::default()
+        };
+        assert!(seam_inputs(&mat, key, &anchor).is_none(), "no colour list");
+        mat.colours
+            .insert(SectorKey::of_landblock(key), TextureId::placeholder());
+        let (colour, origin) = seam_inputs(&mat, key, &anchor).unwrap();
+        assert_eq!(colour, TextureId::placeholder());
+        assert_eq!(origin, Some([160.0, -320.0]));
+        // Another sector's list does not serve this block.
+        let other = LandblockKey::new(1, 102, 51).unwrap();
+        assert_ne!(SectorKey::of_landblock(other), SectorKey::of_landblock(key));
+        assert!(seam_inputs(&mat, other, &anchor).is_none());
+        // No viewer: drawn without a near-view origin.
+        mat.viewer = None;
+        assert_eq!(seam_inputs(&mat, key, &anchor).unwrap().1, None);
+    }
+
     /// `decals.md` §6.5: an entity's draws take the slope-scale value and maximum of its
     /// `Render_DepthBias_Type` entry (W51), entry 0 when no source holds the property (the
     /// Tessera Decision) or the index is out of range; no table, no bias.
@@ -3529,6 +3799,7 @@ mod tests {
             present: 0,
             layered: false,
             far: false,
+            seam: false,
         };
         let now = Instant::now();
         assert!(slot.wants_mesh(sig, now));
@@ -4160,9 +4431,11 @@ mod tests {
             present: 0,
             layered: true,
             far,
+            seam: false,
         };
         slot.mesh = Some(GpuTerrain {
             kind: GpuKind::Mesh(mesh),
+            seam: None,
             sig: sig(true),
             min_h: 0.0,
             max_h: 0.0,

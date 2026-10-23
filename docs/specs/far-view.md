@@ -688,14 +688,98 @@ within its view distance and within its LOD-class draw distance.
 > INVSRCALPHA, depth write on, two-sided. Tessera's threshold 0.5 departs from it and is
 > replaced by 0.1; batches stay far to near (FD4).
 
-**Implementation status (2026-10-09; gaps, not questions).** Not implemented yet, recorded so
-that they stay visible: the normal-mapped template (§6.4; the walker always uses the plain one
-and does not read `FarLandscapeNormalMaps` or the graphics core); the seam overlay (§6.5, which
-needs that template); the flow-map material copy of the sector water (`distant-landscape.md`
-§5.5, parameter 3075; the far water uses the water type's surface as it is); drawing the far
-entities of §10 (the distant set is kept and walked, nothing is created). The plain template's
-detail repeats are read from its declared defaults of 1001 and 1002 (§6.2), 4 × 4 when the
-record is missing.
+**Implementation status (2026-10-23, implementer; replaces the list of gaps of
+2026-10-09).** The plain template's detail repeats are read from its declared defaults of
+1001 and 1002 (§6.2), 4 × 4 when the record is missing. Built and reachable from the walker:
+
+- **Flow-map copy of the sector water (`distant-landscape.md` §5.5).** A sector whose
+  `flow_map` is not 0 draws its water with a copy of the water material whose slot 3075 is
+  that map. A copy that is not drawn for 300 frames (its sector left the list) gives its
+  textures back.
+- **Far entities (§10).** The distant set is walked each frame; created entries are resolved
+  on the workers (an object that cannot be read now is tried five times, then left
+  undrawn) and handed to the walker's object layer per landblock once none of the
+  landblock's entries is still being resolved; the layer fades and draws them by their own
+  draw distances; removed entries leave it; an instance change removes all of them. Where
+  the layer also holds the landblock's own objects, a far entity is left to them within
+  their distance cap and drawn as a far entity beyond it (see the implementer OPEN below).
+  Real data (2026-10-23, default spawn, built-in settings): 756 entries created, all 756
+  drawable, 28 long-range landmarks beyond the 3 × 3 near field and the 320-unit cap inside
+  their draw distance (`apps/client/src/walker/farview.rs`
+  `far_entities_at_the_default_spawn_real_data`); a headless `--far-view on` run of the
+  earlier build drew up to 25 far entities in one frame depending on the heading.
+
+Built but **not reachable from the walker** (the walker host passes the built-in settings,
+whose graphics core is 0, so the plain template is always active; see the implementer OPENs
+below):
+
+- **Normal-mapped template (§6.1, §6.2, §6.4).** `FarViewSettings::template` chooses it
+  (`FarLandscapeNormalMaps` on and graphics core 2 or 5); the walker would then read the
+  record of UNIQUEDB key 0xB6 for its defaults (colour list at transform set 0, detail and
+  normal texture at set 1, the normal texture 3011) and draw the far batches with the
+  normal texture. The far-terrain program computes *h*, *t*, *m* and *w* per vertex and the
+  sun per pixel through the normal map (pass 0x3F, FD5). Synthetic golden and pixel checks:
+  `crates/render/tests/far_view_golden.rs` (§14.4 values).
+- **Seam overlay (§6.5).** While `FarViewSettings::seam_overlay` holds and the normal-mapped
+  template was read, the far view would hand the sector materials to the walker's terrain
+  layer, which builds each layered near chunk's triangles once more (positions and normals
+  as drawn, colour-list coordinates of the block's place in its sector) and draws them after
+  the layers with the sector's normal-mapped material copy, `c_NearViewOrigin` = the viewer
+  landblock's south-west corner. The overlay has the same depth as the layer pipeline (both
+  programs mark the position invariant; checked by
+  `seam_overlay_has_the_layer_pipelines_depth`). No real-data run has drawn it.
+- **`[Render]` preferences.** `FarViewSettings::apply_render_preferences` reads
+  `FarLandscapeNormalMaps`, `NearFarSeamBlending` and `DistantImposters` through a
+  caller-supplied lookup, but nothing calls it yet: the walker host, where
+  `UserPreferences.ini` is read, does not pass the `[Render]` section to it.
+
+> **OPEN:** (implementer, tessera-client, 2026-10-23) The graphics-core condition of §6.1
+> (values 2 or 5) cannot be evaluated: the mapping from the stored `[Render] GraphicsCore`
+> names (`install-layout.md` §8.3: `D3D9`, `D3D10`, `D3D11`, `OpenGL`) to those values is
+> OPEN (§15), and Tessera has one renderer of its own. Implemented conservatively: the
+> graphics core stays 0, so with the built-in settings the plain template is active and
+> there is no seam overlay; the walker has no setting or flag to change that. Question for
+> the spec writer or owner: should Tessera's renderer count as meeting the condition (a
+> Tessera Decision), and what is the built-in default of `FarLandscapeNormalMaps` and
+> `NearFarSeamBlending` when `UserPreferences.ini` does not set them?
+> Until it is answered, the normal-mapped template and the seam overlay cannot be checked
+> on real data (a debug switch or a Tessera Decision would make them reachable; the walker
+> host and its flags are outside the far-view code).
+
+> **OPEN:** (implementer, tessera-client, 2026-10-23) §6.5 and `terrain-texturing.md` §12
+> add conditions for the overlay (multi-pass lighting on, landscape lighting quality above 0,
+> device class above 2) whose Tessera equivalents are not defined; the walker does not test
+> them. The overlay's colour-list coordinates on near vertices are (*x*_s / 480,
+> 1 − *y*_s / 480) of the vertex's place in its sector (*x*_s, *y*_s in 0–480), the far
+> mesh's convention (`distant-landscape.md` §5.3), sampled with clamping; `terrain-texturing.md`
+> §12's −1/480 on *v* with wrap V gives the same image inside the sector. The two offset
+> values that the block build subtracts (Inferred: §6.2 per-block offsets) are taken as 0.
+
+> **OPEN:** (implementer, tessera-client, 2026-10-23, revised the same day) §10 step 3 says an
+> entry is created only if no entity with its instance ID exists through the main or
+> long-range sets. The walker's object layer does not key its static objects by instance ID,
+> so Tessera decides by distance instead: every entry inside its view distance is created,
+> and where the object layer holds the entry's landblock's own objects, the far entity is
+> not drawn within the distance cap of those objects (320 units with `--far-view on`, FD15),
+> where the landblock's own placement draws it, and is drawn as a far entity beyond it (the
+> two cross-fade over the 1.5 s object fade at the cap). A first version skipped entries of
+> held landblocks altogether, which left long-range landmarks undrawn between 320 units and
+> the moment the ring dropped their landblock (up to about 700 units away). This assumes
+> that the landblock's own objects include the placement the sector entry copies
+> (`distant-landscape.md` §4.9). Entries whose `entity_type` is 6 (Weenie) and setups that
+> are skinned rigs are created in the distant set but not drawn (the walker draws figures
+> through its character layer, which takes no far entities). Question: is the distance
+> hand-over acceptable, or should far entities carry their instance IDs into the object
+> layer?
+
+> **OPEN:** (implementer, tessera-client, 2026-10-23) The draw distance of far entities
+> under the walker's object cap. §10 draws them by the normal path, min(*G*, `d0` × *M_d*),
+> but with `--far-view on` the walker caps every static object at 320 units (FD15's streaming
+> ring), which would hide every far entity. Tessera choice until a Decision: far entities are
+> capped at *G* scaled by the layer's shrink under GPU-budget pressure (*G* × cap in force /
+> configured cap), not by the 320 units (`apps/client/src/walker/objects.rs`
+> `far_entity_cap`). Question: is that the intended reading of FD15 (streaming ring for the
+> landblocks' own objects only)?
 
 > **OPEN:** whether the ceiling mesh uses the terrain descriptors' stitch flags (neighbours
 > without a ceiling included) or flags of its own. Not traced. **Tessera Decision:** the same

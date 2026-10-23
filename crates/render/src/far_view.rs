@@ -227,8 +227,12 @@ pub struct FarTerrainDraw {
     pub colour: Option<TextureId>,
     /// The detail texture (parameter 3001); `None` or unknown: mid grey (no change).
     pub detail: Option<TextureId>,
-    /// Detail (and normal) repeats per unit of (*u*, *v*): 4 × 4 (§6.2).
+    /// Detail (and normal) repeats per unit of (*u*, *v*): 4 × 4 (§6.2; transform set 0 of
+    /// the plain template, set 1 of the normal-mapped one).
     pub detail_repeats: [f32; 2],
+    /// Colour-list repeats per unit of (*u*, *v*): 1 × 1 (§6.2: the plain template samples
+    /// the colour list at (*u*, *v*), the normal-mapped one at transform set 0, scale 1).
+    pub colour_repeats: [f32; 2],
     /// The far-draw fade.
     pub fade: FarFadeParams,
     /// The normal-mapped template's normal texture (3011); `None`: the plain template.
@@ -248,6 +252,7 @@ impl FarTerrainDraw {
             colour: None,
             detail: None,
             detail_repeats: [4.0, 4.0],
+            colour_repeats: [1.0, 1.0],
             fade: FarFadeParams::default(),
             normal_map: None,
             near_view_origin: None,
@@ -558,6 +563,7 @@ struct FarDrawUniform {
     model: [[f32; 4]; 4],
     fade: [f32; 4],
     params: [f32; 4],
+    colour: [f32; 4],
 }
 
 #[repr(C)]
@@ -962,6 +968,12 @@ pub(crate) fn build_hook(
                     flags as f32,
                     srgb as f32,
                 ],
+                colour: [
+                    finite_or(d.colour_repeats[0], 1.0),
+                    finite_or(d.colour_repeats[1], 1.0),
+                    0.0,
+                    0.0,
+                ],
             };
             let offset = u32::try_from(data.len()).unwrap_or(u32::MAX);
             data.extend_from_slice(bytemuck::bytes_of(&u));
@@ -1222,7 +1234,7 @@ mod tests {
 
     #[test]
     fn uniforms_match_the_shader_sizes() {
-        assert_eq!(size_of::<FarDrawUniform>(), 96);
+        assert_eq!(size_of::<FarDrawUniform>(), 112);
         assert_eq!(size_of::<SpriteDrawUniform>(), 96);
         assert_eq!(size_of::<FarVertexGpu>(), 32);
         assert_eq!(size_of::<SpriteGpu>(), 48);

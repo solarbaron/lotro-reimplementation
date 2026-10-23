@@ -42,7 +42,7 @@ pub mod state;
 #[cfg(test)]
 mod tests;
 
-pub use entities::{DistantChanges, DistantEntry, DistantSet};
+pub use entities::{DistantChanges, DistantEntry, DistantGroups, DistantSet};
 pub use grid::{
     Cell, Edge, LandblockDescriptor, LandblockGrid, NearField, SectorKey, lod_of, sector_list,
 };

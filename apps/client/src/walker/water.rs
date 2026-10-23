@@ -52,6 +52,8 @@ struct SurfaceEntry {
     /// The textures its drawing samples, referenced in the store.
     textures: [Option<TexRequest>; OWN_TEXTURES],
     resolved: bool,
+    /// The frame ([`WaterSurfaces::begin`]) it was last asked for.
+    used: u64,
 }
 
 /// Where a surface stands ([`WaterSurfaces::surface`]).
@@ -83,14 +85,18 @@ pub enum SurfaceState {
 /// view's sector water.
 #[derive(Debug, Default)]
 pub struct WaterSurfaces {
-    entries: HashMap<Did, SurfaceEntry>,
+    /// By surface record and flow-map override (0: the material as it is).
+    entries: HashMap<(Did, Did), SurfaceEntry>,
     clock: AnimClock,
+    /// Frames begun.
+    frame: u64,
 }
 
 impl WaterSurfaces {
     /// Starts a frame at material clock `t` seconds.
     pub fn begin(&mut self, t: f64) {
         self.clock.begin(t);
+        self.frame = self.frame.wrapping_add(1);
     }
 
     /// Where surface `surface` stands this frame: its material is asked of `resolver` on
@@ -102,11 +108,28 @@ impl WaterSurfaces {
         resolver: &mut Resolver,
         store: &mut dyn TextureStore,
     ) -> SurfaceState {
-        let e = self.entries.entry(surface).or_insert(SurfaceEntry {
+        self.surface_with_flow(surface, Did(0), resolver, store)
+    }
+
+    /// [`WaterSurfaces::surface`] for a copy of the material whose parameter 3075 (the flow
+    /// map) is `flow` (`distant-landscape.md` §5.5: a distant-landscape sector's
+    /// `flow_map`, DL22); `Did(0)` keeps the material as it is. The copy takes the map only
+    /// when the material's shader declares the flow slot (a program without one reads no
+    /// flow map); every other parameter and texture is the material's.
+    pub fn surface_with_flow(
+        &mut self,
+        surface: Did,
+        flow: Did,
+        resolver: &mut Resolver,
+        store: &mut dyn TextureStore,
+    ) -> SurfaceState {
+        let e = self.entries.entry((surface, flow)).or_insert(SurfaceEntry {
             source: None,
             textures: [None; OWN_TEXTURES],
             resolved: false,
+            used: self.frame,
         });
+        e.used = self.frame;
         if !e.resolved {
             let Some(m) = resolver.water(surface) else {
                 return SurfaceState::Resolving;
@@ -117,6 +140,12 @@ impl WaterSurfaces {
                 if let Some(l) = src.liquid(0.0, &mut states) {
                     e.textures = own_textures(&l);
                 }
+                let declares = src
+                    .material
+                    .shader
+                    .slot(tessera_material::vocab::ids::FLOW)
+                    .is_some();
+                e.textures = with_flow_map(e.textures, flow, declares);
             }
             e.source = m;
             let reqs: Vec<TexRequest> = e.textures.iter().flatten().copied().collect();
@@ -153,6 +182,30 @@ impl WaterSurfaces {
         }
     }
 
+    /// Releases and forgets the flow-map copies ([`WaterSurfaces::surface_with_flow`] with a
+    /// flow map not 0) that were not asked for in the last `grace` frames, so the textures
+    /// of the sectors' flow maps (one per sector, `distant-landscape.md` §5.5) are held
+    /// only while a listed sector draws with them, not for every sector met on a journey.
+    /// Returns how many copies were dropped.
+    pub fn release_unused_flows(&mut self, store: &mut dyn TextureStore, grace: u64) -> usize {
+        let frame = self.frame;
+        let stale: Vec<(Did, Did)> = self
+            .entries
+            .iter()
+            .filter(|((_, flow), e)| flow.0 != 0 && frame.wrapping_sub(e.used) > grace)
+            .map(|(k, _)| *k)
+            .collect();
+        for k in &stale {
+            if let Some(e) = self.entries.remove(k) {
+                let reqs: Vec<TexRequest> = e.textures.iter().flatten().copied().collect();
+                if !reqs.is_empty() {
+                    store.release(&reqs);
+                }
+            }
+        }
+        stale.len()
+    }
+
     /// Releases the textures referenced in `store` and forgets every surface (shutdown,
     /// and before the object layer is cleared: the next frame resolves and references them
     /// again).
@@ -164,6 +217,27 @@ impl WaterSurfaces {
             }
         }
     }
+}
+
+/// Index of the flow map in the [`OWN_TEXTURES`] list of [`own_textures`].
+pub const FLOW_TEXTURE: usize = 1;
+
+/// The textures of a material copy whose slot 3075 is `flow` (`distant-landscape.md`
+/// §5.5): `textures` with the flow map replaced when `flow` is not 0 (nor a DID that would
+/// collide with the variant codes) and the shader `declares` the slot; unchanged otherwise.
+#[must_use]
+pub fn with_flow_map(
+    mut textures: [Option<TexRequest>; OWN_TEXTURES],
+    flow: Did,
+    declares: bool,
+) -> [Option<TexRequest>; OWN_TEXTURES] {
+    if declares
+        && flow.0 > super::geometry::VARIANT_DYE_MASK
+        && let Some(slot) = textures.get_mut(FLOW_TEXTURE)
+    {
+        *slot = Some(TexRequest::new(flow.0, super::geometry::VARIANT_OWN_ALPHA));
+    }
+    textures
 }
 
 /// Counters of the last frame.
@@ -331,7 +405,7 @@ mod tests {
     use crate::walker::resolver::{Lookups, ObjectAnswer};
     use std::time::{Duration, Instant};
     use tessera_formats::RgbaImage;
-    use tessera_render::WaterFamily;
+    use tessera_render::{TextureId, WaterFamily};
 
     /// Counts references; every texture stays loading.
     #[derive(Default)]
@@ -416,6 +490,140 @@ mod tests {
         fn water(&self, _did: Did) -> Option<SurfaceAnim> {
             Some(water_anim(Some(0x4100_0001), true))
         }
+    }
+
+    /// Ready only for the texture of one DID (a placeholder handle), pending otherwise.
+    struct OneReady(u32, Vec<TexRequest>);
+
+    impl TextureStore for OneReady {
+        fn acquire(&mut self, reqs: &[TexRequest]) {
+            self.1.extend_from_slice(reqs);
+        }
+        fn release(&mut self, _reqs: &[TexRequest]) {}
+        fn lookup(&self, t: TexRequest) -> TexLookup {
+            if t.did == self.0 {
+                TexLookup::Ready(TextureId::placeholder())
+            } else {
+                TexLookup::Pending
+            }
+        }
+        fn mean(&self, _t: TexRequest) -> Option<[f32; 3]> {
+            None
+        }
+        fn small(&self, _t: TexRequest) -> Option<Arc<[RgbaImage]>> {
+            None
+        }
+    }
+
+    /// `distant-landscape.md` §5.5 (DL22): a sector whose `flow_map` is not 0 draws its
+    /// water with a copy of the material whose slot 3075 is that map; 0 keeps the
+    /// material's own map; a shader without the slot takes none.
+    #[test]
+    fn sector_flow_map_replaces_slot_3075() {
+        let mut resolver = Resolver::with_lookups(FlowSurfaces).unwrap();
+        let mut water = WaterSurfaces::default();
+        water.begin(0.0);
+        let sector_flow = Did(0x4100_0777);
+        let mut store = OneReady(sector_flow.0, Vec::new());
+        let s = Did(0x0800_0003);
+        let _ = water.surface_with_flow(s, sector_flow, &mut resolver, &mut store);
+        settle(&mut resolver);
+        let SurfaceState::Ready { textures, .. } =
+            water.surface_with_flow(s, sector_flow, &mut resolver, &mut store)
+        else {
+            panic!("ready expected");
+        };
+        assert_eq!(
+            textures.flow,
+            Some(TextureId::placeholder()),
+            "slot 3075 is the sector's map"
+        );
+        assert!(store.1.iter().any(|t| t.did == sector_flow.0));
+        assert!(
+            !store.1.iter().any(|t| t.did == 0x4100_0002),
+            "the material's own map is replaced"
+        );
+        // The material as it is: its own map (pending in this store).
+        let _ = water.surface(s, &mut resolver, &mut store);
+        settle(&mut resolver);
+        let SurfaceState::Ready { textures, .. } = water.surface(s, &mut resolver, &mut store)
+        else {
+            panic!("ready expected");
+        };
+        assert_eq!(textures.flow, None);
+        assert!(store.1.iter().any(|t| t.did == 0x4100_0002));
+        // The pure rule.
+        let none = [None; OWN_TEXTURES];
+        let t = with_flow_map(none, sector_flow, true);
+        assert_eq!(t[FLOW_TEXTURE].map(|r| r.did), Some(sector_flow.0));
+        assert_eq!(with_flow_map(none, sector_flow, false), none);
+        assert_eq!(with_flow_map(none, Did(0), true), none);
+    }
+
+    /// Counts references per DID.
+    #[derive(Default)]
+    struct PerDid(HashMap<u32, i64>);
+
+    impl TextureStore for PerDid {
+        fn acquire(&mut self, reqs: &[TexRequest]) {
+            for r in reqs {
+                *self.0.entry(r.did).or_default() += 1;
+            }
+        }
+        fn release(&mut self, reqs: &[TexRequest]) {
+            for r in reqs {
+                *self.0.entry(r.did).or_default() -= 1;
+            }
+        }
+        fn lookup(&self, _t: TexRequest) -> TexLookup {
+            TexLookup::Pending
+        }
+        fn mean(&self, _t: TexRequest) -> Option<[f32; 3]> {
+            None
+        }
+        fn small(&self, _t: TexRequest) -> Option<Arc<[RgbaImage]>> {
+            None
+        }
+    }
+
+    /// The flow-map copies follow the sectors that draw with them: a copy no longer asked
+    /// for is released after the grace frames (its flow map loses its reference), one still
+    /// asked for and the material as it is are kept.
+    #[test]
+    fn unused_flow_map_copies_are_released() {
+        let mut resolver = Resolver::with_lookups(FlowSurfaces).unwrap();
+        let mut water = WaterSurfaces::default();
+        let mut store = PerDid::default();
+        let s = Did(0x0800_0003);
+        let (f1, f2) = (Did(0x4100_0771), Did(0x4100_0772));
+        water.begin(0.0);
+        let _ = water.surface_with_flow(s, f1, &mut resolver, &mut store);
+        let _ = water.surface_with_flow(s, f2, &mut resolver, &mut store);
+        let _ = water.surface(s, &mut resolver, &mut store);
+        settle(&mut resolver);
+        for frame in 0..5 {
+            water.begin(f64::from(frame));
+            let _ = water.surface_with_flow(s, f1, &mut resolver, &mut store);
+            let _ = water.surface_with_flow(s, f2, &mut resolver, &mut store);
+            let _ = water.surface(s, &mut resolver, &mut store);
+            assert_eq!(water.release_unused_flows(&mut store, 2), 0);
+        }
+        assert_eq!(store.0.get(&f1.0), Some(&1));
+        assert_eq!(store.0.get(&f2.0), Some(&1));
+        // The sector with f1 leaves: only (s, f2) is asked for from now on.
+        let mut dropped = 0;
+        for frame in 5..9 {
+            water.begin(f64::from(frame));
+            let _ = water.surface_with_flow(s, f2, &mut resolver, &mut store);
+            dropped += water.release_unused_flows(&mut store, 2);
+        }
+        assert_eq!(dropped, 1);
+        assert_eq!(store.0.get(&f1.0), Some(&0), "f1 is released");
+        assert_eq!(store.0.get(&f2.0), Some(&1), "f2 is kept");
+        // The material as it is (no flow override) is never dropped by this.
+        assert!(water.entries.contains_key(&(s, Did(0))));
+        assert!(!water.entries.contains_key(&(s, f1)));
+        assert!(store.0.values().all(|&n| n >= 0));
     }
 
     #[test]

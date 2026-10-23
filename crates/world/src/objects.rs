@@ -13,6 +13,12 @@
 //! - A 0x70 game object's `WeenieType` (enum key) is kept from the same property set as
 //!   its `PhysObj` (`appearance.md` §7.1), so a walker can tell NPC-like weenies from
 //!   markers.
+//! - One-triangle placeholder parts (`setup.md` §8.5 steps 1–3, S14; `mesh.md` §8.10):
+//!   [`stub_part_drawn`] (and [`drawn_parts`] over a part list) hold the rule that leaves a
+//!   flagged mesh out of a model with several parts and still draws it as the only part.
+//!   The resolver lists every part of the setup; whether a mesh is flagged is known only to the code that reads the
+//!   mesh records (`tessera-mesh`'s summary), which applies the rule when it builds the draw
+//!   list.
 //! - The bone count of the setup's skeleton (the tagfile embedded in the setup,
 //!   `skeleton-anim.md` §2.1, decoded by `tessera-havok`), so a walker can tell animated
 //!   rigs from static props (§2.4: every setup of 30 bones or more is skinned).
@@ -173,6 +179,28 @@ pub struct ResolvedObject {
     /// Resolution stopped because a record could not be read now, for a reason that is
     /// not the data's: the result is not the data's and was not cached.
     pub transient: bool,
+}
+
+/// Whether a part flagged `stub` (a one-triangle mesh, `mesh.md` §8.10) of a model with
+/// `part_count` parts is drawn (`setup.md` §8.5 steps 2–3, S14): a flagged part is left out
+/// when the model has **more than one part**; the only part of a model is drawn whether
+/// flagged or not.
+#[must_use]
+pub fn stub_part_drawn(part_count: usize, stub: bool) -> bool {
+    !stub || part_count <= 1
+}
+
+/// The parts of `parts` that are drawn, by [`stub_part_drawn`] with `is_stub` telling
+/// whether a part mesh is flagged (`None`: not known, counted as not flagged, so an
+/// unreadable part is never hidden by this rule). Order is kept; a part listed twice is
+/// judged twice.
+#[must_use]
+pub fn drawn_parts(parts: &[Did], is_stub: impl Fn(Did) -> Option<bool>) -> Vec<Did> {
+    parts
+        .iter()
+        .copied()
+        .filter(|&p| stub_part_drawn(parts.len(), is_stub(p).unwrap_or(false)))
+        .collect()
 }
 
 impl ResolvedObject {
@@ -422,5 +450,32 @@ impl ObjectResolver {
             .and_then(value_as_did)
             .map(|d| (d, weenie_type))
             .ok_or_else(|| "the object has no PhysObj".to_owned())
+    }
+}
+
+#[cfg(test)]
+mod stub_tests {
+    use super::*;
+
+    /// `setup.md` §8.5 steps 2–3 (S14): a one-triangle part is left out of a model with
+    /// several parts and drawn as the only part.
+    #[test]
+    fn stub_parts_are_left_out_of_multi_part_models() {
+        // A synthetic two-part setup whose second part is a stub.
+        let body = Did(0x0600_0001);
+        let stub = Did(0x0600_0002);
+        let is_stub = |d: Did| Some(d == stub);
+        assert_eq!(drawn_parts(&[body, stub], is_stub), vec![body]);
+        assert!(!stub_part_drawn(2, true));
+        assert!(stub_part_drawn(2, false));
+        // The only part of a model is drawn even when flagged (step 3).
+        assert_eq!(drawn_parts(&[stub], is_stub), vec![stub]);
+        assert!(stub_part_drawn(1, true));
+        assert!(stub_part_drawn(0, true));
+        // Two stubs: neither is the only part, both are left out.
+        assert!(drawn_parts(&[stub, stub], is_stub).is_empty());
+        // Unknown flags never hide a part.
+        assert_eq!(drawn_parts(&[body, stub], |_| None), vec![body, stub]);
+        assert!(drawn_parts(&[], is_stub).is_empty());
     }
 }

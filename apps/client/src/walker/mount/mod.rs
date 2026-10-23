@@ -149,9 +149,9 @@ impl<'s> RiderEvaluator<'s> {
             entries,
         )
         .ok_or(MountRefusal::NoMesh { effect, category })?;
-        // `script-table.md` §5.2: a rider without the anchor the node names shows nothing,
-        // and the walker places a mount at a holding location only (see
-        // [`eval::placeable_anchor`]), so the check and the placement agree.
+        // `script-table.md` §5.2: a rider without the anchor the node names shows nothing;
+        // the walker places the mount by the same rule ([`eval::placeable_anchor`],
+        // [`eval::anchor_matrix`]), so the check and the placement agree.
         let has = self
             .rider
             .points
@@ -556,7 +556,8 @@ impl Drop for MountService {
 
 /// The mount's model transform (`mounts.md` §14.8 item 1, the Decision of §4.4): with
 /// `rider_world` the rider's model transform (feet, heading, final model scale) and
-/// `location` the rider's posed bone × location frame ([`eval::location_matrix`]), the
+/// `location` the rider's posed anchor of the node ([`eval::anchor_matrix`]: for a holding
+/// location its bone × its frame, `script-table.md` §5.2), the
 /// attachment point is *P* = `rider_world` × `location` × T(`BoneOffset`); the mount is drawn
 /// at *P*'s position and rotation with the scale [`tessera_formats::gameplay::mounts::MountMesh::draw_scale`].
 #[must_use]

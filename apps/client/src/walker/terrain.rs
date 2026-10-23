@@ -3356,7 +3356,9 @@ pub fn build_block(
 /// and drawn is the object layer's decision ([`ObjectFrame::interior`]). Each object
 /// carries the `Render_DepthBias_Type` entry of `depth_bias` that [`entity_depth_bias`]
 /// gives (`decals.md` §6.5), which every draw of the object applies (§6.5 OPEN (c), Tessera
-/// default; `water.md` §14).
+/// default; `water.md` §14). A placed entity's object carries the entity's index
+/// ([`ObjectInfo::entity`], the owner lookup of `particle-runtime.md` §12 rule 15); generated
+/// objects and cell meshes carry none.
 ///
 /// [`ObjectFrame::interior`]: super::objects::ObjectFrame::interior
 #[must_use]
@@ -3430,6 +3432,7 @@ pub fn block_objects(
             position: pos,
             lod: classes.values(class, false),
             generated,
+            entity: (!generated).then_some(e.index),
             first,
             count: u32::try_from(visual.parts.len()).unwrap_or(u32::MAX),
             cell,
@@ -3539,6 +3542,7 @@ fn cell_objects(
             position: pos,
             lod,
             generated: false,
+            entity: None,
             first,
             count: 1,
             cell: c.index,

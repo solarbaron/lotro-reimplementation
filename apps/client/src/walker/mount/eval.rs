@@ -664,9 +664,15 @@ pub struct MeshChoice {
     /// node attaches its entity", through the shared figure path's [`prop_anchor_rule`]):
     /// for the attached nodes of this install's mount effects (`mounts.md` §4.4: every node
     /// is attached, `HoldingLocation` driven to `Mount_Connection`, `BoneType` 0) the
-    /// holding location. The walker's placement does not read it yet (it anchors at
-    /// `mesh.holding_location`), so [`placeable_anchor`] refuses every other rule.
+    /// holding location. The walker's placement follows it
+    /// ([`crate::walker::characters::mounted::mount_model`], [`anchor_matrix`]), and
+    /// [`placeable_anchor`] checks the same rule.
     pub anchor: PropAnchorRule,
+    /// The node's `AttachToParent` (`script-table.md` §5.2; a node not found again counts as
+    /// attached): an attached node's mount follows the anchor every frame, an unattached
+    /// one's keeps the world frame of its placement
+    /// ([`crate::walker::characters::mounted::HeldPlacement`]).
+    pub attached: bool,
     /// `FadeInTime` (driven by `Mount_FadeIn_Override` where the node drives it).
     pub fade_in: f32,
     /// `FadeOutTime`.
@@ -707,8 +713,9 @@ pub fn choose_mesh(
     // `script-table.md` §5.2: the node's own `AttachToParent` and `BoneType` with the
     // (driven) holding location the mesh carries; a node not found again counts as attached
     // with no bone type, the case of every mount node of this install.
+    let attached = node.is_none_or(|n| n.attach_to_parent);
     let anchor = prop_anchor_rule(
-        node.is_none_or(|n| n.attach_to_parent),
+        attached,
         mesh.holding_location,
         node.map_or(0, |n| n.bone_type),
     );
@@ -716,6 +723,7 @@ pub fn choose_mesh(
         fade_in: fade(node.map(|n| n.fade_in_time)),
         fade_out: fade(node.map(|n| n.fade_out_time)),
         anchor,
+        attached,
         mesh,
     })
 }
@@ -981,20 +989,14 @@ pub fn location_matrix(points: &AttachPoints, location: u32, model: &[Mat4]) -> 
 }
 
 /// Whether the walker can place the mount of a node with anchor `rule` on a rider with
-/// `points`: the walker's placement (`walker/characters`, the mounted figure's frame update)
-/// anchors a mount at a holding location only ([`location_matrix`] on the mesh's holding
-/// location), so a node whose `script-table.md` §5.2 anchor is a bone type, key 6 or the
-/// model origin is refused, as a node whose holding location the rider lacks is. Every mount
-/// node of this install is attached with its holding location driven to
-/// `Mount_Connection` (`mounts.md` §4.4), so no node of it is refused for its rule. Once the
-/// placement follows [`anchor_matrix`] with [`MeshChoice::anchor`], this is
-/// `anchor_matrix(points, rule, &[]).is_some()`.
+/// `points`: the rider has the anchor `script-table.md` §5.2 names for the rule (the holding
+/// location or the bone; key 6 and the model origin always), the same rule the walker's
+/// placement follows ([`anchor_matrix`], [`crate::walker::characters::mounted::mount_model`]),
+/// so the refusal check and the draw agree. A node whose holding location or bone the rider
+/// lacks is refused.
 #[must_use]
 pub fn placeable_anchor(points: &AttachPoints, rule: PropAnchorRule) -> bool {
-    match rule {
-        PropAnchorRule::Location(l) => points.holding(l).is_some(),
-        PropAnchorRule::Bone(_) | PropAnchorRule::OriginKey | PropAnchorRule::Origin => false,
-    }
+    anchor_matrix(points, rule, &[]).is_some()
 }
 
 /// The rider's anchor of a mount node by its rule (`script-table.md` §5.2, [`MeshChoice::anchor`])
@@ -1152,11 +1154,12 @@ mod tests {
         );
     }
 
-    /// The refusal check agrees with the walker's placement (a holding location only): an
-    /// attached node with no holding location (key 6, or a bone type) is refused even though
-    /// §5.2 finds an anchor for it, and so is a location the rider lacks.
+    /// The refusal check agrees with the walker's placement (`script-table.md` §5.2 through
+    /// [`anchor_matrix`]): every rule the rider has an anchor for is placeable (a holding
+    /// location, a bone type, key 6 with or without a key-6 element, the model origin), and a
+    /// location or bone the rider lacks is refused.
     #[test]
-    fn only_holding_location_anchors_are_placeable() {
+    fn placeable_anchors_follow_the_anchor_table() {
         use tessera_render::glam::Vec3;
         let t = |x: f32| Mat4::from_translation(Vec3::new(x, 0.0, 0.0));
         let points = AttachPoints {
@@ -1164,18 +1167,34 @@ mod tests {
             bones: vec![(3, 1)],
             reference: vec![Mat4::IDENTITY, t(2.0)],
         };
-        let rule = prop_anchor_rule(true, 0x1000_0027, 0);
-        assert!(placeable_anchor(&points, rule));
-        assert!(location_matrix(&points, 0x1000_0027, &[]).is_some());
-        // Location 0 with bone type 0 (key 6) and with bone type 3: §5.2 anchors them, the
-        // placement cannot, so both are refused.
-        for rule in [prop_anchor_rule(true, 0, 0), prop_anchor_rule(true, 0, 3)] {
-            assert!(anchor_matrix(&points, rule, &[]).is_some(), "{rule:?}");
-            assert!(!placeable_anchor(&points, rule), "{rule:?}");
-            assert!(location_matrix(&points, 0, &[]).is_none());
+        let rules = [
+            prop_anchor_rule(true, 0x1000_0027, 0),
+            prop_anchor_rule(true, 0, 0),
+            prop_anchor_rule(true, 0, 3),
+            prop_anchor_rule(false, 0, 3),
+            prop_anchor_rule(false, 0x1000_0027, 0),
+            prop_anchor_rule(false, 0, 0),
+        ];
+        for rule in rules {
+            assert!(placeable_anchor(&points, rule), "{rule:?}");
+            assert_eq!(
+                placeable_anchor(&points, rule),
+                anchor_matrix(&points, rule, &[]).is_some()
+            );
         }
-        assert!(!placeable_anchor(&points, prop_anchor_rule(false, 0, 0)));
-        assert!(!placeable_anchor(&points, PropAnchorRule::Location(77)));
+        assert!(location_matrix(&points, 0x1000_0027, &[]).is_some());
+        for rule in [
+            PropAnchorRule::Location(77),
+            PropAnchorRule::Bone(77),
+            prop_anchor_rule(true, 77, 3),
+        ] {
+            assert!(!placeable_anchor(&points, rule), "{rule:?}");
+        }
+        // A rider with no points at all still has key 6 (the model origin) and the origin.
+        let none = AttachPoints::default();
+        assert!(placeable_anchor(&none, PropAnchorRule::OriginKey));
+        assert!(placeable_anchor(&none, PropAnchorRule::Origin));
+        assert!(!placeable_anchor(&none, PropAnchorRule::Bone(3)));
     }
 
     #[test]

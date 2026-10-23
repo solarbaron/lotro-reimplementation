@@ -99,9 +99,8 @@ pub enum MountRefusal {
         category: MountCategory,
     },
     /// The rider cannot anchor the node's mount (`script-table.md` §5.2,
-    /// `skeleton-anim.md` §8.4): its setup lacks the holding location the node names, or the
-    /// node anchors by a bone type or key 6, which the walker's placement does not follow yet
-    /// ([`super::eval::placeable_anchor`]).
+    /// `skeleton-anim.md` §8.4): its setup lacks the holding location or the bone the node
+    /// names ([`super::eval::placeable_anchor`]).
     #[error("{effect}: this body has no anchor for the mount: {} ({})", anchor_text(.anchor), category_text(.category))]
     NoLocation {
         /// The effect.
@@ -140,13 +139,9 @@ pub enum MountRefusal {
 fn anchor_text(a: &PropAnchorRule) -> String {
     match a {
         PropAnchorRule::Location(l) => format!("holding location {l:#x}"),
-        PropAnchorRule::Bone(b) => {
-            format!("bone type {b} (the walker places mounts at holding locations only)")
-        }
-        PropAnchorRule::OriginKey => {
-            "holding location 6 or the model origin (not followed by the walker)".to_owned()
-        }
-        PropAnchorRule::Origin => "the model origin (not followed by the walker)".to_owned(),
+        PropAnchorRule::Bone(b) => format!("bone type {b}"),
+        PropAnchorRule::OriginKey => "holding location 6 or the model origin".to_owned(),
+        PropAnchorRule::Origin => "the model origin".to_owned(),
     }
 }
 

@@ -555,6 +555,9 @@ pub struct CharacterLayer {
     clip_owners: HashMap<u64, (EntityId, f32)>,
     /// The mounted player's view (`walker.md` §16.7), while a mount is involved.
     mount_view: Option<mounted::PlayerMountView>,
+    /// The world placement (region, position, rotation, scale) of the mount of an unattached
+    /// node, held from its placement (`script-table.md` §5.2; [`Self::place_mount`]).
+    mount_hold: mounted::HeldPlacement<(u8, [f64; 3], Quat, Vec3)>,
     /// Binds the mounted clips on the workers (`walker.md` §16.7).
     mount_binder: mounted::ClipBinder,
     /// The rider's shown mounted clip and its phase after the last frame (`mounts.md`
@@ -825,6 +828,7 @@ impl CharacterLayer {
             look_ignored: 0,
             clip_owners: HashMap::new(),
             mount_view: None,
+            mount_hold: mounted::HeldPlacement::default(),
             mount_binder: mounted::ClipBinder::new(ctx_for_binder, pool),
             rider_phase: None,
             camera: CameraProfile::FALLBACK,
@@ -2179,12 +2183,17 @@ impl CharacterLayer {
         }
     }
 
-    /// Puts the mount figure at the rider's holding location (`mounts.md` §14.8 item 1)
-    /// with the rider's current pose; hides it when no mount is drawn.
+    /// Puts the mount figure at the rider's anchor of the node (`script-table.md` §5.2,
+    /// `mounts.md` §14.8 item 1; [`mounted::mount_model`]) with the rider's current pose;
+    /// hides it when no mount is drawn or the rider lacks the anchor. The mount of an
+    /// unattached node keeps the world frame of its placement (§5.2 answer,
+    /// [`mounted::HeldPlacement`]); an attached node's follows the rider every frame.
     fn place_mount(&mut self) {
         let Some(me) = self.store.entity_for(NetId(MOUNT_ID.0)) else {
+            self.mount_hold.clear();
             return;
         };
+        let mut hold = std::mem::take(&mut self.mount_hold);
         let placed = (|| {
             let view = self.mount_view.as_ref()?;
             let pe = self
@@ -2194,48 +2203,15 @@ impl CharacterLayer {
             if pa.hidden || !view.drawn {
                 return None;
             }
-            let ptf = *self.store.transform(pe)?;
-            let render = self.store.render(pe)?;
-            let Some(SlotState::Ready(g)) = self.slots.get(render.slot as usize).map(|s| &s.state)
-            else {
-                return None;
-            };
-            let points = g.asset.points.as_ref()?;
-            let model: Vec<Mat4> = match self.store.anim(pe) {
-                Some(anim) => self
-                    .scheduler
-                    .pose(anim.instance)
-                    .map(|p| p.model.clone())
-                    .unwrap_or_default(),
-                None => Vec::new(),
-            };
-            let location = crate::walker::mount::eval::location_matrix(
-                points,
-                view.mesh.holding_location,
-                &model,
-            )?;
-            let scale = Vec3::from_array(g.asset.model_scale) * ptf.scale[0];
-            let rot = Quat::from_array(ptf.rotation);
-            let rot = if rot.is_finite() && rot.length_squared() > 0.0 {
-                rot.normalize()
-            } else {
-                Quat::IDENTITY
-            };
-            let rider = Mat4::from_scale_rotation_translation(scale, rot, Vec3::ZERO);
-            let m = crate::walker::mount::mount_transform(
-                rider,
-                location,
-                &view.mesh,
-                view.rider_model_scale,
-            );
-            let (s, r, t) = m.to_scale_rotation_translation();
-            let pos = [
-                ptf.position[0] + f64::from(t.x),
-                ptf.position[1] + f64::from(t.y),
-                ptf.position[2] + f64::from(t.z),
-            ];
-            Some((pa.region, pos, r, s, view.alpha))
+            let region = pa.region;
+            let (region, pos, r, s) =
+                hold.place(view, || self.mount_placement(pe, region, view))?;
+            Some((region, pos, r, s, view.alpha))
         })();
+        if placed.is_none() {
+            hold.clear();
+        }
+        self.mount_hold = hold;
         let Some(a) = self.actors.get_mut(me) else {
             return;
         };
@@ -2260,6 +2236,43 @@ impl CharacterLayer {
             }
             None => a.hidden = true,
         }
+    }
+
+    /// The mount's world placement (region, position, rotation, scale) from the rider `pe`'s
+    /// current anchor and pose ([`mounted::mount_model`]); `None` while the rider's figure is
+    /// not ready or it lacks the anchor.
+    fn mount_placement(
+        &self,
+        pe: Entity,
+        region: u8,
+        view: &mounted::PlayerMountView,
+    ) -> Option<(u8, [f64; 3], Quat, Vec3)> {
+        let ptf = *self.store.transform(pe)?;
+        let render = self.store.render(pe)?;
+        let Some(SlotState::Ready(g)) = self.slots.get(render.slot as usize).map(|s| &s.state)
+        else {
+            return None;
+        };
+        let points = g.asset.points.as_ref()?;
+        let model: Vec<Mat4> = match self.store.anim(pe) {
+            Some(anim) => self
+                .scheduler
+                .pose(anim.instance)
+                .map(|p| p.model.clone())
+                .unwrap_or_default(),
+            None => Vec::new(),
+        };
+        // `script-table.md` §5.2: the node's anchor rule, as the refusal check uses it.
+        let scale = Vec3::from_array(g.asset.model_scale) * ptf.scale[0];
+        let rider = mounted::rider_frame(scale, ptf.rotation);
+        let m = mounted::mount_model(points, view, &model, rider)?;
+        let (s, r, t) = m.to_scale_rotation_translation();
+        let pos = [
+            ptf.position[0] + f64::from(t.x),
+            ptf.position[1] + f64::from(t.y),
+            ptf.position[2] + f64::from(t.z),
+        ];
+        Some((region, pos, r, s))
     }
 
     /// Whether the avatar is on the GPU (the walker draws a stand-in until it is).

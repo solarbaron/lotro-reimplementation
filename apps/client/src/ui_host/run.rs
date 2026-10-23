@@ -85,12 +85,16 @@ fn render_frame(
     }
     let mut frame = renderer.begin_offscreen_frame(target)?;
     walker.draw(renderer, &mut frame);
-    if let Some(ui) = ui {
+    if let Some(ui) = ui.as_deref_mut() {
         ui.draw(&mut frame, false);
     }
     let t_end = std::time::Instant::now();
     let stats = renderer.end_frame(frame)?;
     walker.record_render_stats(&stats);
+    if let Some(ui) = ui {
+        // U2 (render.md §6.16): the UI pass's GPU time into the frame's sample.
+        ui.record_render_stats(&stats);
+    }
     let t_wait = std::time::Instant::now();
     renderer
         .context()
@@ -388,7 +392,7 @@ fn finish(
                     vec![(
                         "U2 proxy: median frame submit+GPU-wait time with / without the UI pass".to_owned(),
                         format!(
-                            "{with:.3} ms / {without:.3} ms (difference {:.3} ms; no timestamp queries)",
+                            "{with:.3} ms / {without:.3} ms (difference {:.3} ms; the U2 row above is the timestamp-query figure when the adapter has them)",
                             with - without
                         ),
                     )]

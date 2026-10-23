@@ -29,7 +29,7 @@
 //! the host drains worker results once per frame and tells the UI what arrived.
 
 use std::cell::RefCell;
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::mpsc::{Receiver, Sender, channel};
@@ -217,6 +217,10 @@ pub struct EnvState {
     ledger: SkinFileLedger,
     plugins_dir: Option<PathBuf>,
     fonts: HashMap<u32, FontSlot>,
+    /// Font records still loading that only the ladder loader asked for
+    /// ([`Self::prefetch_font`]): their arrival re-shapes no text. A UI request for one
+    /// ([`Self::font`]) takes it out, so its arrival then does.
+    prefetch: HashSet<u32>,
     fallback_font: Option<Arc<FontFace>>,
     /// The fallback font at other pixel sizes, by size ([`MAX_FALLBACK_SIZES`]).
     fallback_sizes: HashMap<u32, Option<Arc<FontFace>>>,
@@ -288,6 +292,7 @@ impl EnvState {
             ledger: SkinFileLedger::new(),
             plugins_dir: None,
             fonts: HashMap::new(),
+            prefetch: HashSet::new(),
             fallback_font: None,
             fallback_sizes: HashMap::new(),
             shaper: TextShaper::new(pids),
@@ -380,6 +385,19 @@ impl EnvState {
     #[must_use]
     pub fn font_entries(&self) -> usize {
         self.fonts.len()
+    }
+
+    /// Sets the unpinned decoded-image LRU budget in bytes (the image share of the
+    /// `ui-scaling.md` §8 S6 pool, set again on every change of *Se*). A lower budget evicts
+    /// at the next [`Self::poll`].
+    pub fn set_lru_budget(&mut self, bytes: u64) {
+        self.lru_budget = bytes;
+    }
+
+    /// The unpinned decoded-image LRU budget in bytes.
+    #[must_use]
+    pub fn lru_budget(&self) -> u64 {
+        self.lru_budget
     }
 
     /// Recomputes the byte total and samples the pinned bytes; returns the unpinned bytes.
@@ -493,7 +511,10 @@ impl EnvState {
                         }
                     };
                     self.fonts.insert(did, f);
-                    self.fonts_arrived = true;
+                    // A record only the ladder loader asked for: no text waits for it.
+                    if !self.prefetch.remove(&did) {
+                        self.fonts_arrived = true;
+                    }
                 }
             }
         }
@@ -708,6 +729,24 @@ impl EnvState {
 
     /// A font by DID: loaded, or `None` (and a load is started when it is new).
     pub(crate) fn font(&mut self, did: u32) -> Option<Arc<FontFace>> {
+        // A UI request: a record the ladder loader started is now awaited by text too.
+        self.prefetch.remove(&did);
+        self.request_font(did)
+    }
+
+    /// [`Self::font`] for the font ladders' loader (`ui-scaling.md` §6.4.2): a record this
+    /// starts loading is marked as a prefetch, so its arrival does not set
+    /// [`Arrivals::fonts`] (no text re-shaped for a record no element asked for).
+    pub(crate) fn prefetch_font(&mut self, did: u32) -> Option<Arc<FontFace>> {
+        let new = !self.fonts.contains_key(&did);
+        let f = self.request_font(did);
+        if new && matches!(self.fonts.get(&did), Some(FontSlot::Pending)) {
+            self.prefetch.insert(did);
+        }
+        f
+    }
+
+    fn request_font(&mut self, did: u32) -> Option<Arc<FontFace>> {
         match self.fonts.get(&did) {
             Some(FontSlot::Ready(f)) => return Some(Arc::clone(f)),
             Some(FontSlot::Pending | FontSlot::Failed) => return None,
@@ -943,6 +982,43 @@ impl UiEnv for ClientEnv {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A font record only the ladder loader asked for re-shapes no text when it arrives; one
+    /// a UI element asked for as well does.
+    #[test]
+    fn prefetched_fonts_do_not_re_shape_text() {
+        let mut st = EnvState::new(None, 1, 1 << 20, 1 << 20);
+        for did in [7u32, 8] {
+            st.fonts.insert(did, FontSlot::Pending);
+            st.prefetch.insert(did);
+        }
+        st.tx
+            .send(Done::Font(7, Err("synthetic".to_owned())))
+            .expect("send");
+        assert!(!st.poll().fonts, "prefetch only");
+        assert!(!st.prefetch.contains(&7));
+        // A UI request while it loads: its arrival re-shapes.
+        assert!(st.font(8).is_none());
+        st.tx
+            .send(Done::Font(8, Err("synthetic".to_owned())))
+            .expect("send");
+        assert!(st.poll().fonts, "awaited by text");
+        // An ordinary UI request is never a prefetch.
+        st.fonts.insert(9, FontSlot::Pending);
+        st.tx
+            .send(Done::Font(9, Err("synthetic".to_owned())))
+            .expect("send");
+        assert!(st.poll().fonts);
+    }
+
+    /// The image LRU budget is set live (the S6 split, `ui-scaling.md` §8).
+    #[test]
+    fn lru_budget_is_live() {
+        let mut st = EnvState::new(None, 1, 64 << 20, 1 << 20);
+        assert_eq!(st.lru_budget(), 64 << 20);
+        st.set_lru_budget(56 << 20);
+        assert_eq!(st.lru_budget(), 56 << 20);
+    }
 
     #[test]
     fn relative_paths_are_confined() {

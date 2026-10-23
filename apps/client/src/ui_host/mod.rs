@@ -16,7 +16,9 @@
 //! `menu` press that the UI declined and the host runs [`UiHost::escape`].
 //!
 //! Modules: [`boot`] (UI data off the main thread), [`env`](mod@env) (the [`tessera_ui::UiEnv`]
-//! over the asset workers), [`text`] (shaping), [`gpu`] (UI textures and the UI pass),
+//! over the asset workers), [`text`] (shaping), [`prefs`] (the `[UI]` keys of
+//! `ui-scaling.md` §7.1 applied to `tessera-ui`), [`fonts`] (the §6.4.2 font ladders),
+//! [`gpu`] (UI textures and the UI pass),
 //! [`cursor`] (pointer lock), [`services`] (plugin adapters for the panels), [`stats`]
 //! (U1–U5), [`script`] (the scripted run of 0015 §6).
 
@@ -25,9 +27,11 @@ pub mod client;
 pub mod combat;
 pub mod cursor;
 pub mod env;
+pub mod fonts;
 pub mod gpu;
 pub mod interface;
 pub mod placements;
+pub mod prefs;
 pub mod run;
 pub mod scaling;
 pub mod script;
@@ -199,6 +203,18 @@ pub struct UiHost {
     recorder: Option<Recorder>,
     phase: &'static str,
     cursor_tex: Option<TextureId>,
+    /// The side of [`Self::cursor_tex`] in physical pixels (`ui-scaling.md` §6.7): the
+    /// texture is built again when `Ui::cursor_physical_size` no longer matches it (a change
+    /// of *Se* or of `ui_scale_cursor`).
+    cursor_side: u32,
+    /// The hot spot of [`Self::cursor_tex`], physical pixels (§6.7).
+    cursor_hotspot: (i32, i32),
+    /// The pointer's last physical position offered to the UI (`None` after it left), where
+    /// the software cursor is drawn (render.md §6.11).
+    pointer_physical: Option<(f64, f64)>,
+    /// Builds the font ladders of `ui-scaling.md` §6.4.2 once the enum's records have loaded
+    /// on the asset workers ([`fonts`]); `None` without an install or once registered.
+    ladders: Option<fonts::LadderLoader>,
     frames: u64,
     command_ids: Vec<(String, u32)>,
     /// The character panel and bag windows (decision 0024 P1), with the install.
@@ -336,6 +352,23 @@ impl UiHost {
         ui.set_paint_limits(limits);
         ui.set_tooltip_preferences(options.prefs.tooltip_enable, options.prefs.tooltip_delay);
         ui.set_cursor_scale(options.prefs.scale_cursor);
+        // `ui-scaling.md` §7.1: the art filter, text factor and text source of `[UI]`, the
+        // derived-glyph cache's S6 share, and the shaper's layout parameters for the crisp
+        // text path (§6.4.5; without them the §7.5 text factor is not applied). At *Se* = 1
+        // with the defaults nothing is laid out or drawn differently (invariant I7).
+        prefs::apply_text_and_art(&mut ui, &options.prefs);
+        // §8 S6: one unpinned pool for the decoded-image LRU and the glyph cache.
+        let s6 = prefs::s6_split(
+            options.prefs.image_lru_mib.saturating_mul(1 << 20),
+            scale.effective_scale(),
+        );
+        ui.set_glyph_cache_budget(s6.glyph);
+        if let Some(h) = &handle {
+            h.borrow_mut().set_lru_budget(s6.image_lru);
+            let st = h.borrow();
+            let leading = st.data().map_or(0.0, |d| d.locale_leading);
+            ui.set_text_layout_params(Some(prefs::text_params_reader(st.text_pids(), leading)));
+        }
         // Decision 0040 (`ui-scaling.md` §3.2, §4.5 step 1): make the UI screen *F* and the
         // safe area *A* live from the first frame, so surfaces map to their physical box
         // (§3.6, §6.6) and roots fit by the §5 rules. The screen root is already *F*-sized
@@ -346,6 +379,11 @@ impl UiHost {
         // from now on is placed by them ([`placements`]).
         ui.set_saved_store(placements::store_from_prefs(&options.prefs.panels));
         let ui = Rc::new(RefCell::new(ui));
+        // §6.4.2 ladders need the install's font records.
+        let ladders = handle
+            .as_ref()
+            .filter(|h| h.borrow().data().is_some())
+            .map(|_| fonts::LadderLoader::default());
         let plugin_ui = PluginUi::new(Rc::clone(&ui));
         if let Some(h) = &handle {
             plugin_ui.set_text_pids(h.borrow().text_pids().for_plugins());
@@ -392,6 +430,10 @@ impl UiHost {
             recorder: options.record.then(Recorder::default),
             phase: "run",
             cursor_tex: None,
+            cursor_side: 0,
+            cursor_hotspot: cursor::ARROW_HOTSPOT,
+            pointer_physical: None,
+            ladders,
             frames: 0,
             command_ids: Vec::new(),
             character: None,
@@ -454,6 +496,12 @@ impl UiHost {
             options,
         );
         boot::register(&mut host.ui.borrow_mut(), &b.game_vocab);
+        // The UI's Impulse test reads the action map's toggle types by command ID
+        // (`lua-plugin-api.md` §13.12.1, decision 0014 D9). Without that table every type
+        // is 0, so the tap pulses then give plugin button events (D9, Known difference 12).
+        host.ui
+            .borrow_mut()
+            .set_toggle_types(b.toggle_types.clone());
         b.char_vocab.register_classes(&mut host.ui.borrow_mut());
         // The frames' name and level displays (P4, P5) draw text (`combat-ui.md` §4.1, §5.1).
         b.combat.vocab.register_classes(&mut host.ui.borrow_mut());
@@ -866,11 +914,26 @@ impl UiHost {
                     .scale
                     .pointer_to_ui(f.0.floor() as i32, f.1.floor() as i32);
                 self.ui.borrow_mut().set_pointer_lock(Some((ux, uy)));
+                if self.pointer_physical.is_some() {
+                    self.pointer_physical = Some(f);
+                }
                 Some(f)
             }
-            None => rescaled_cursor(mapper.cursor(), ratio),
+            None => {
+                // The software cursor is drawn at the physical pointer (render.md §6.11): it
+                // moves with the mapper's cursor, not only at the next pointer move.
+                self.pointer_physical = rescaled_cursor(self.pointer_physical, ratio);
+                rescaled_cursor(mapper.cursor(), ratio)
+            }
         };
         mapper.rescale(timing, cursor);
+    }
+
+    /// The pointer's last physical position offered to the UI, rescaled by
+    /// [`Self::rescale`] (`None` after it left): where the software cursor is drawn.
+    #[must_use]
+    pub fn pointer_physical(&self) -> Option<(f64, f64)> {
+        self.pointer_physical
     }
 
     /// A position update from game code; applied in step 7 (decision 0014 D8).
@@ -1036,6 +1099,15 @@ impl UiHost {
         {
             let mut ui = self.ui.borrow_mut();
             ui.set_ui_screen(screen, safe);
+            // §8 S6: the pool of the image LRU and the glyph cache grows with Se².
+            let s6 = prefs::s6_split(
+                self.prefs.image_lru_mib.saturating_mul(1 << 20),
+                self.scale.effective_scale(),
+            );
+            ui.set_glyph_cache_budget(s6.glyph);
+            if let Some(h) = &self.env {
+                h.borrow_mut().set_lru_budget(s6.image_lru);
+            }
             ui.invalidate_paint();
         }
         // §5.8 "Applying": again after every change of F or A.
@@ -1177,6 +1249,12 @@ impl UiHost {
         self.interface.is_some()
     }
 
+    /// The open Interface window's controller (tests drive its sliders).
+    #[must_use]
+    pub fn interface_window(&self) -> Option<&InterfaceController> {
+        self.interface.as_ref()
+    }
+
     /// Feeds this frame's UI events to the open Interface window and applies its actions live
     /// (`ui-scaling.md` §4.5, §7.1-§7.6): the scale slider and Auto set *S*, the safe-aspect
     /// buttons set `ui_safe_aspect`, the optional controls set the art filter and text size
@@ -1184,8 +1262,6 @@ impl UiHost {
     /// events are the one per-frame list the in-world windows also read; the window owns only
     /// its own elements' events, so the others ignore them.
     pub fn interface_frame(&mut self, events: &[UiEvent], now: Instant) {
-        use interface::{choice_to_art, choice_to_aspect, scale_of_stop, text_of_stop};
-        use tessera_ui::game::interface::InterfaceAction as A;
         let Some(mut w) = self.interface.take() else {
             return;
         };
@@ -1197,47 +1273,13 @@ impl UiHost {
                 w.handle_event(&ui, ev)
             };
             let Some(action) = action else { continue };
-            match action {
-                A::SetScaleStop(i) => {
-                    self.scale.set_scale(scale_of_stop(i), now);
-                    touched_scale = true;
-                }
-                A::SetAuto(true) => {
-                    self.scale.set_auto(now);
-                    touched_scale = true;
-                }
-                A::SetAuto(false) => {
-                    // Leave auto for the value the slider currently shows (§7.2 row 3).
-                    let s = self.scale.resolved_scale() as f32;
-                    self.scale.set_scale(s, now);
-                    touched_scale = true;
-                }
-                A::SetAspect(c) => {
-                    self.scale.set_safe_aspect(choice_to_aspect(c), now);
-                    touched_scale = true;
-                }
-                A::SetTextStop(i) => {
-                    self.prefs.text_scale = text_of_stop(i);
-                    self.note_interface_persist();
-                    self.ui.borrow_mut().invalidate_paint();
-                }
-                A::SetArt(c) => {
-                    self.prefs.art_filter = choice_to_art(c);
-                    self.note_interface_persist();
-                    self.ui.borrow_mut().invalidate_paint();
-                }
-                A::ResetPanels => {
-                    self.reset_panel_positions();
-                }
-                A::ResetWindowScales => {
-                    self.prefs.group_scale.clear();
-                    let p = self.note_interface_persist();
-                    p.clear_groups = true;
-                }
-                A::Close => {
+            match self.apply_interface_action(action, now) {
+                InterfaceApplied::Close => {
                     closed = true;
                     break;
                 }
+                InterfaceApplied::Scale => touched_scale = true,
+                InterfaceApplied::Other => {}
             }
         }
         if touched_scale {
@@ -1254,6 +1296,65 @@ impl UiHost {
             w.refresh(&mut ui, &self.scale, &self.prefs);
         }
         self.interface = Some(w);
+    }
+
+    /// Applies one Interface-window action live (`ui-scaling.md` §7.1–§7.6), as
+    /// [`Self::interface_frame`] does for the window's events: a scale or safe-aspect change
+    /// is stored in the scaling state (the caller feeds the new screen), the text factor and
+    /// art filter reach the UI at once, the resets clear what they name. Public for tests that
+    /// drive an action without the window's widgets.
+    pub fn apply_interface_action(
+        &mut self,
+        action: tessera_ui::game::interface::InterfaceAction,
+        now: Instant,
+    ) -> InterfaceApplied {
+        use interface::{choice_to_art, choice_to_aspect, scale_of_stop, text_of_stop};
+        use tessera_ui::game::interface::InterfaceAction as A;
+        match action {
+            A::SetScaleStop(i) => {
+                self.scale.set_scale(scale_of_stop(i), now);
+                InterfaceApplied::Scale
+            }
+            A::SetAuto(true) => {
+                self.scale.set_auto(now);
+                InterfaceApplied::Scale
+            }
+            A::SetAuto(false) => {
+                // Leave auto for the value the slider currently shows (§7.2 row 3).
+                let s = self.scale.resolved_scale() as f32;
+                self.scale.set_scale(s, now);
+                InterfaceApplied::Scale
+            }
+            A::SetAspect(c) => {
+                self.scale.set_safe_aspect(choice_to_aspect(c), now);
+                InterfaceApplied::Scale
+            }
+            A::SetTextStop(i) => {
+                self.prefs.text_scale = text_of_stop(i);
+                self.note_interface_persist();
+                // §7.5 live: the text factor lays the reflowing texts out again.
+                prefs::apply_text_and_art(&mut self.ui.borrow_mut(), &self.prefs);
+                InterfaceApplied::Other
+            }
+            A::SetArt(c) => {
+                self.prefs.art_filter = choice_to_art(c);
+                self.note_interface_persist();
+                // §7.6 live: every surface repaints with the new filter.
+                prefs::apply_text_and_art(&mut self.ui.borrow_mut(), &self.prefs);
+                InterfaceApplied::Other
+            }
+            A::ResetPanels => {
+                self.reset_panel_positions();
+                InterfaceApplied::Other
+            }
+            A::ResetWindowScales => {
+                self.prefs.group_scale.clear();
+                let p = self.note_interface_persist();
+                p.clear_groups = true;
+                InterfaceApplied::Other
+            }
+            A::Close => InterfaceApplied::Close,
+        }
     }
 
     /// Seeds (if needed) and returns the pending optional-row persist snapshot from the
@@ -1587,11 +1688,15 @@ impl UiHost {
                 // The mapper reports the pointer as a continuous physical position; the UI
                 // works in UI units (`ui-scaling.md` §3.6). At Se = 1 this is the identity.
                 let (ux, uy) = self.scale.physical_to_ui(*x, *y);
+                self.pointer_physical = Some((*x, *y));
                 self.ui
                     .borrow_mut()
                     .offer(&UiInput::PointerMoved { x: ux, y: uy })
             }
-            OfferedEvent::PointerLeft { .. } => self.ui.borrow_mut().offer(&UiInput::PointerLeft),
+            OfferedEvent::PointerLeft { .. } => {
+                self.pointer_physical = None;
+                self.ui.borrow_mut().offer(&UiInput::PointerLeft)
+            }
             OfferedEvent::FocusLost { .. } => {
                 let r = self.ui.borrow_mut().offer(&UiInput::FocusLost);
                 self.lock.reset(window, self.prefs.cursor == CursorMode::Os);
@@ -1639,6 +1744,9 @@ impl UiHost {
             }
         }
         let name = Arc::clone(&command.name);
+        // Every command goes through `Ui::offer`: the UI decides Impulse from the action
+        // map's toggle types by command ID (`lua-plugin-api.md` §13.12.1, decision 0014 D9);
+        // the host hard-codes none.
         let consumed = self.ui.borrow_mut().offer(&UiInput::Command(CommandOffer {
             phase,
             hold,
@@ -1855,6 +1963,7 @@ impl UiHost {
                 ui.invalidate_text();
             }
         }
+        self.poll_ladders();
         self.ui.borrow_mut().tick_hover();
         self.deliver(plugins);
         self.plugin_ui.update_tick(plugins.manager());
@@ -2303,13 +2412,8 @@ impl UiHost {
         let paint = t.elapsed();
         if let Some(r) = renderer {
             self.textures.apply(r, &frame.ops);
-            if self.prefs.cursor == CursorMode::Software && self.cursor_tex.is_none() {
-                let s = u32::try_from(self.ui.borrow().cursor_size().max(8)).unwrap_or(32);
-                if let Ok(tex) = r.create_ui_texture(s, s, Some("ui-cursor")) {
-                    let px = cursor::arrow_bgra(s);
-                    let _ = r.update_texture_rect(tex, 0, 0, s, s, &px, s as usize * 4);
-                    self.cursor_tex = Some(tex);
-                }
+            if self.prefs.cursor == CursorMode::Software {
+                self.sync_cursor_texture(r);
             }
         }
         self.composition = frame.composition;
@@ -2358,7 +2462,82 @@ impl UiHost {
             pointer_events: self.frame.pointer_events,
             entries: u32::try_from(self.composition.entries.len()).unwrap_or(u32::MAX),
             bands: frame.stats.bands,
+            ui_gpu_ms: None,
         };
+    }
+
+    /// The software cursor's texture at the size of `ui-scaling.md` §6.7: built at
+    /// `Ui::cursor_physical_size` (trunc(32 × *Se* × `ui_scale_cursor`)) with the hot spot
+    /// scaled by the same factor, and built again whenever that size changes (a change of
+    /// *Se* or of the cursor scale). Tessera's arrow is drawn at the size directly; it has no
+    /// native image to resample. The tooltip offset keeps the UI-unit `Ui::cursor_size`.
+    fn sync_cursor_texture(&mut self, r: &mut Renderer<'_>) {
+        let (side, hotspot) = {
+            let ui = self.ui.borrow();
+            let side = cursor::cursor_image_side(ui.cursor_physical_size());
+            let (hx, hy) = cursor::ARROW_HOTSPOT;
+            (side, ui.cursor_hotspot(hx, hy))
+        };
+        if self.cursor_tex.is_some() && self.cursor_side == side {
+            return;
+        }
+        if let Some(old) = self.cursor_tex.take() {
+            r.destroy_texture(old);
+        }
+        match r.create_ui_texture(side, side, Some("ui-cursor")) {
+            Ok(tex) => {
+                let px = cursor::arrow_bgra(side);
+                let _ = r.update_texture_rect(tex, 0, 0, side, side, &px, side as usize * 4);
+                self.cursor_tex = Some(tex);
+                self.cursor_side = side;
+                self.cursor_hotspot = hotspot;
+            }
+            Err(e) => {
+                // Tried again next frame; the OS cursor stays hidden meanwhile.
+                tracing::debug!("software cursor texture: {e}");
+                self.cursor_side = 0;
+            }
+        }
+    }
+
+    /// The software cursor's image side and hot spot in physical pixels (`ui-scaling.md`
+    /// §6.7), as last built; (0, …) before the first build.
+    #[must_use]
+    pub fn cursor_image(&self) -> (u32, (i32, i32)) {
+        (self.cursor_side, self.cursor_hotspot)
+    }
+
+    /// Takes the renderer's figures of the frame just submitted (call after
+    /// `Renderer::end_frame`, before [`Self::end_frame`]): the UI pass's GPU time
+    /// (`UiStats::gpu_ns`, render.md §6.16 U2) goes into the frame's sample. It is the most
+    /// recent resolved figure, so it lags by a few frames, and `None` without
+    /// `TIMESTAMP_QUERY` (U2 is then not a gate).
+    pub fn record_render_stats(&mut self, stats: &tessera_render::FrameStats) {
+        self.last.ui_gpu_ms = stats.ui.gpu_ns.map(|ns| ns as f64 / 1e6);
+        if let Some(r) = self.recorder.as_mut() {
+            r.render_stats_fed = true;
+        }
+    }
+
+    /// Step 7: once the enum's fonts have loaded, registers the font ladders
+    /// (`ui-scaling.md` §6.4.2, [`fonts`]). The loads start only when no other UI asset job is
+    /// in flight, so they never hold back the first visible panels.
+    fn poll_ladders(&mut self) {
+        let (Some(loader), Some(h)) = (self.ladders.as_mut(), self.env.as_ref()) else {
+            return;
+        };
+        let ladders = {
+            let mut st = h.borrow_mut();
+            if !loader.started() && st.busy() {
+                return;
+            }
+            loader.poll_env(&mut st)
+        };
+        if let Some(ladders) = ladders {
+            tracing::debug!(ladders = ladders.len(), "font ladders registered");
+            self.ui.borrow_mut().set_font_ladders(ladders);
+            self.ladders = None;
+        }
     }
 
     /// Step 10: the UI pass (after everything recorded so far, so after the walker's
@@ -2370,9 +2549,15 @@ impl UiHost {
         if cursor
             && self.prefs.cursor == CursorMode::Software
             && !self.lock.software_hidden()
-            && let (Some(tex), Some((x, y))) = (self.cursor_tex, self.ui.borrow().pointer())
+            && let (Some(tex), Some(ui_pointer)) = (self.cursor_tex, self.ui.borrow().pointer())
         {
-            frame.software_cursor(tex, [x, y]);
+            let at = cursor::cursor_position(
+                self.pointer_physical,
+                ui_pointer,
+                self.scale.screen(),
+                self.cursor_hotspot,
+            );
+            frame.software_cursor(tex, at);
         }
     }
 
@@ -2433,6 +2618,17 @@ impl UiSink for Step1<'_> {
     fn offer(&mut self, event: &OfferedEvent, requests: &mut BandRequests) -> Verdict {
         self.host.offer(event, requests, self.plugins, self.window)
     }
+}
+
+/// What [`UiHost::apply_interface_action`] did.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InterfaceApplied {
+    /// The UI scale or safe aspect changed: the screen is fed again.
+    Scale,
+    /// The window is to close.
+    Close,
+    /// Anything else (applied in place).
+    Other,
 }
 
 /// Whether an offered command is a wheel scroll step (`ScrollUp`, `ScrollDown` or the

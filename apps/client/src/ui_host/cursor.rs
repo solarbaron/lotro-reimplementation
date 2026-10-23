@@ -246,11 +246,57 @@ pub fn activation_timing(
     )
 }
 
+/// Smallest software-cursor image side, physical pixels.
+pub const MIN_CURSOR_PX: u32 = 8;
+
+/// Largest software-cursor image side, physical pixels (Tessera bound: 32 × the largest
+/// *Se* of 4 × the largest `ui_scale_cursor` of 4, `ui-scaling.md` §4.1, §6.7).
+pub const MAX_CURSOR_PX: u32 = 512;
+
+/// The hot spot of Tessera's arrow ([`arrow_bgra`]) in its native 32-pixel image: the tip.
+pub const ARROW_HOTSPOT: (i32, i32) = (0, 0);
+
+/// The software cursor's image side for `physical` (`Ui::cursor_physical_size`,
+/// `ui-scaling.md` §6.7), within [`MIN_CURSOR_PX`]–[`MAX_CURSOR_PX`].
+#[must_use]
+pub fn cursor_image_side(physical: i32) -> u32 {
+    u32::try_from(physical)
+        .unwrap_or(MIN_CURSOR_PX)
+        .clamp(MIN_CURSOR_PX, MAX_CURSOR_PX)
+}
+
+/// Where the software cursor image goes, in physical pixels (render.md §6.11,
+/// `ui-scaling.md` §6.7): the pointer's physical position, when the host knows it, else the
+/// UI pointer `ui` mapped by the UI screen's edge mapping (`ui-scaling.md` §3.6; the identity
+/// at *Se* = 1), minus the scaled hot spot. Saturating, so a hostile position cannot wrap.
+#[must_use]
+pub fn cursor_position(
+    physical: Option<(f64, f64)>,
+    ui: (i32, i32),
+    screen: &tessera_ui::scaling::UiScreen,
+    hotspot: (i32, i32),
+) -> [i32; 2] {
+    let lim = f64::from(i32::MAX);
+    let (x, y) = match physical.filter(|(x, y)| x.is_finite() && y.is_finite()) {
+        Some((x, y)) => (
+            x.floor().clamp(-lim, lim) as i32,
+            y.floor().clamp(-lim, lim) as i32,
+        ),
+        None => (
+            screen.edge_x(f64::from(ui.0)),
+            screen.edge_y(f64::from(ui.1)),
+        ),
+    };
+    [x.saturating_sub(hotspot.0), y.saturating_sub(hotspot.1)]
+}
+
 /// Builds a software-cursor image: a simple arrow of `size` × `size` pixels as tight
-/// B, G, R, A rows (Tessera's own image, used when no cursor media is known).
+/// B, G, R, A rows (Tessera's own image, used when no cursor media is known). The side is
+/// kept within [`MIN_CURSOR_PX`]–[`MAX_CURSOR_PX`]; the hot spot is the top-left pixel at
+/// every size ([`ARROW_HOTSPOT`]).
 #[must_use]
 pub fn arrow_bgra(size: u32) -> Vec<u8> {
-    let s = size.clamp(8, 128);
+    let s = size.clamp(MIN_CURSOR_PX, MAX_CURSOR_PX);
     let mut px = vec![0u8; (s * s * 4) as usize];
     for y in 0..s {
         // A right triangle with its corner at the hot spot (0, 0), cut at 3/4 of the size.
@@ -379,5 +425,38 @@ mod tests {
         assert_eq!(a.len(), 32 * 32 * 4);
         assert_eq!(a[3], 0xFF, "hot spot pixel is opaque");
         assert_eq!(arrow_bgra(0).len(), 8 * 8 * 4);
+        assert_eq!(arrow_bgra(4096).len(), 512 * 512 * 4, "bounded");
+    }
+
+    #[test]
+    fn cursor_side_is_bounded() {
+        assert_eq!(cursor_image_side(32), 32);
+        assert_eq!(cursor_image_side(48), 48);
+        assert_eq!(cursor_image_side(-1), MIN_CURSOR_PX);
+        assert_eq!(cursor_image_side(i32::MAX), MAX_CURSOR_PX);
+    }
+
+    #[test]
+    fn cursor_position_uses_the_physical_pointer_and_hot_spot() {
+        let screen = tessera_ui::scaling::UiScreen::new(1920, 1080, 1.5).unwrap();
+        // The physical position wins: the UI pointer is a whole UI unit, which would move the
+        // image in steps of Se pixels.
+        assert_eq!(
+            cursor_position(Some((301.7, 99.2)), (201, 66), &screen, (3, 2)),
+            [298, 97]
+        );
+        // Without one, the UI pointer's left/top edge (§3.6).
+        let p = cursor_position(None, (200, 100), &screen, (0, 0));
+        assert_eq!(p, [screen.edge_x(200.0), screen.edge_y(100.0)]);
+        let id = tessera_ui::scaling::UiScreen::new(1024, 768, 1.0).unwrap();
+        assert_eq!(cursor_position(None, (10, 20), &id, (0, 0)), [10, 20]);
+        assert_eq!(
+            cursor_position(Some((f64::NAN, 1.0)), (5, 6), &id, (0, 0)),
+            [5, 6]
+        );
+        assert_eq!(
+            cursor_position(Some((-1e300, 1e300)), (0, 0), &id, (1, 1)),
+            [i32::MIN, i32::MAX - 1]
+        );
     }
 }

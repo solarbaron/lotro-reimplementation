@@ -13,8 +13,11 @@
 //
 //   Workflow({ name: "tessera-followups", args: {
 //     repo: "/abs/repo", game: "/abs/install or omitted", cache: "/home/<user>/.cache/tessera",
+//     max_parallel: 6,              // optional: packages in flight at once (default: all)
 //     packages: [{ key, kind: "clean-impl" | "spec-work", wt: "/abs/worktree", owns, specs,
 //                  task }] } })
+// Disk: every clean worktree should point at ONE shared target dir (with incremental = false);
+// each extra target dir of this workspace takes 50–100 GB.
 // Never use it for M8 / official-protocol work (incident 0041) or M9.
 
 export const meta = {
@@ -44,7 +47,7 @@ for (const p of args.packages) {
   keys.add(p.key)
 }
 
-const CTX = p => `Repo: ${REPO} (Rust workspace "Tessera": clean-room client compatible with LOTRO data files); CLAUDE.md is binding. YOUR WORKING TREE IS ${p.wt} (its own branch; start every shell command with cd ${p.wt}); never edit ${REPO} itself or another worktree. You own ${p.owns}; edit nothing else, except: a spec's OPEN notes, and fuzz/Cargo.toml [[bin]] entries you append. Do not edit docs/ROADMAP.md, README.md or CLAUDE.md (the orchestrator updates status at merge); report status changes in your answer instead. Never git commit, reset, stash, clean or checkout. The cargo target dir comes from ${p.wt}/.cargo/config.toml and is shared with other packages: if cargo prints "Blocking waiting for file lock", wait (use long Bash timeouts), never delete or change the target dir. Test only the crates you changed (cargo test -p <crate>; --release for real-data tests); read test output through its summary lines. ${GAME ? `The game install is READ-ONLY at "${GAME}": set TESSERA_GAME_DIR to it for real-data tests; never write there.` : 'No game install: real-data tests skip; say so.'} Scratch dir: ${args.cache}/scratch/followups/${p.key}/clean (dirty roles: .../dirty).`
+const CTX = p => `Repo: ${REPO} (Rust workspace "Tessera": clean-room client compatible with LOTRO data files); CLAUDE.md is binding. YOUR WORKING TREE IS ${p.wt} (its own branch; start every shell command with cd ${p.wt}); never edit ${REPO} itself or another worktree. You own ${p.owns}; edit nothing else, except: a spec's OPEN notes, and fuzz/Cargo.toml [[bin]] entries you append. Do not edit docs/ROADMAP.md, README.md or CLAUDE.md (the orchestrator updates status at merge); report status changes in your answer instead. Never git commit, reset, stash, clean or checkout. The cargo target dir comes from ${p.wt}/.cargo/config.toml and is shared with other packages: if cargo prints "Blocking waiting for file lock", wait (use long Bash timeouts), never delete or change the target dir, never set CARGO_TARGET_DIR or --target-dir, and never create a build directory anywhere else (a second target dir costs tens of GB). Before each build check df -h /: with less than 25 GB free, stop and report instead of building. Test only the crates you changed (cargo test -p <crate>; --release for real-data tests); read test output through its summary lines. ${GAME ? `The game install is READ-ONLY at "${GAME}": set TESSERA_GAME_DIR to it for real-data tests; never write there.` : 'No game install: real-data tests skip; say so.'} Scratch dir: ${args.cache}/scratch/followups/${p.key}/clean (dirty roles: .../dirty).`
 
 const CLEAN_READ = `CLEAN-ROOM RULES (CLAUDE.md): do NOT open ${REPO}/research/, ${args.cache}/clones, any */dirty scratch dir, ~/tessera-re, ~/.rea, decompiler output or third-party game-tool source; do not look formats up online; run no disassembler or decompiler. Work only from docs/ and crates/ apps/ fuzz/ tools/. Build only from specs whose status is Accepted (with an independent review record); if a fact is missing or a spec looks wrong, add a "> **OPEN:**" note to the spec and implement conservatively, never correct a spec's facts.`
 
@@ -126,7 +129,16 @@ async function specPackage(p) {
   return { key: p.key, kind: p.kind, accepted: false, issues_count: issues ? issues.length : 0, provenance: prov }
 }
 
-const results = await pipeline(args.packages, p => (p.kind === 'spec-work' ? specPackage(p) : cleanPackage(p)).catch(e => ({ key: p.key, error: String(e) })))
+// Caps packages in flight (args.max_parallel); queued packages start as others finish.
+const MAX_PAR = Math.max(1, Number(args.max_parallel) || args.packages.length)
+let active = 0
+const waiting = []
+const slot = async fn => {
+  if (active >= MAX_PAR) await new Promise(r => waiting.push(r))
+  active++
+  try { return await fn() } finally { active--; const next = waiting.shift(); if (next) next() }
+}
+const results = await pipeline(args.packages, p => slot(() => (p.kind === 'spec-work' ? specPackage(p) : cleanPackage(p))).catch(e => ({ key: p.key, error: String(e) })))
 const bad = results.filter(r => !r || r.error || (r.audit && !r.audit.pass) || r.accepted === false)
 if (bad.length) log(`attention: ${bad.map(r => r ? r.key : '?').join(', ')}`)
 return { results }

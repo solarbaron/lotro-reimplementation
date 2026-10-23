@@ -26,8 +26,12 @@ use super::npc::kit::{
 use super::npc::{NpcTexts, WindowId};
 use super::npcvocab::NpcVocab;
 use super::p5vocab::P5Vocab;
-use super::popup::{Popup, PopupItem, click};
+use super::popup::click;
 use super::{show, subtree};
+use crate::widgets::context_menu::{
+    ContextMenu, MenuArt, MenuEvent, MenuItem, MenuPosition, MenuRefs, MenuReply, MenuRequest,
+    REOPEN_GUARD,
+};
 
 /// Most finder entries listed (Tessera bound; the feed sends at most 1,024).
 pub const MAX_ENTRIES: usize = 1024;
@@ -566,7 +570,7 @@ pub struct FinderParts {
     pub leave_queue: Option<ElementKey>,
 }
 
-/// Which menu popup is open.
+/// Which menu is open.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum MenuKind {
     Size,
@@ -601,7 +605,12 @@ pub struct FinderWindow {
     pub rows: Vec<(ElementKey, usize)>,
     /// The header elements.
     pub headers: Vec<ElementKey>,
-    popup: Option<(MenuKind, Popup)>,
+    /// The open size or tier menu (`ui-widgets.md` §19, `travel-windows.md` §6.8 (e)).
+    popup: Option<(MenuKind, ContextMenu)>,
+    /// The menu last closed and when (the reopen guard of [`REOPEN_GUARD`]).
+    closed: Option<(MenuKind, f64)>,
+    /// The context menus' names (the install's `ContextMenu` layout, or code-made).
+    menu_refs: MenuRefs,
     templates: FinderTemplates,
     art: P5Art,
     nv: NpcVocab,
@@ -697,6 +706,12 @@ impl FinderWindow {
             rows: Vec::new(),
             headers: Vec::new(),
             popup: None,
+            closed: None,
+            menu_refs: MenuRefs::fallback(MenuArt {
+                background: art.base.panel.clone(),
+                rollover: art.base.row_highlight.clone(),
+                ..MenuArt::default()
+            }),
             templates,
             art: art.clone(),
             nv: nv.clone(),
@@ -999,8 +1014,9 @@ impl FinderWindow {
     }
 
     fn close_popup(&mut self, ui: &mut Ui) {
-        if let Some((_, p)) = self.popup.take() {
-            p.close(ui);
+        if let Some((kind, mut m)) = self.popup.take() {
+            m.close(ui);
+            self.closed = Some((kind, ui.time()));
         }
     }
 
@@ -1008,6 +1024,12 @@ impl FinderWindow {
         let open = self.popup.as_ref().map(|(k, _)| *k);
         self.close_popup(ui);
         if open == Some(kind) {
+            return;
+        }
+        if self
+            .closed
+            .is_some_and(|(k, t)| k == kind && (ui.time() - t).abs() <= REOPEN_GUARD)
+        {
             return;
         }
         let (anchor, items) = match kind {
@@ -1025,10 +1047,20 @@ impl FinderWindow {
         };
         let items = items
             .into_iter()
-            .map(|(_, t)| PopupItem::command(&t))
+            .enumerate()
+            .map(|(i, (_, t))| MenuItem::plain(u32::try_from(i).unwrap_or(u32::MAX), &t))
             .collect();
-        match Popup::open(ui, &self.nv, &self.art.base, None, anchor, 120, items) {
-            Ok(p) => self.popup = Some((kind, p)),
+        let b = ui.displayed_box(anchor);
+        let req = MenuRequest {
+            items,
+            // Tessera choice, recorded in no spec yet: below the menu's button
+            // (`ui-widgets.md` §19.3's default would be the pointer; the answer to
+            // `travel-windows.md` §6.8 rule 7 (e) still names the retired code-made popup).
+            position: Some(MenuPosition::TopLeft(b.l, b.t.saturating_add(b.h()))),
+            ..MenuRequest::default()
+        };
+        match ContextMenu::open(ui, &self.menu_refs, &req) {
+            Ok(m) => self.popup = Some((kind, m)),
             Err(e) => tracing::debug!("finder: menu not opened: {e}"),
         }
     }
@@ -1110,19 +1142,27 @@ impl FinderWindow {
         ev: &UiEvent,
         texts: &dyn FinderTexts,
     ) -> Option<FinderAction> {
-        if let Some(i) = self
+        let reply = self
             .popup
             .as_mut()
-            .and_then(|(_, p)| p.handle_event(ui, ev))
-        {
-            let kind = self.popup.as_ref().map(|(k, _)| *k);
-            self.close_popup(ui);
-            match kind {
-                Some(MenuKind::Size) => self.choose_size(ui, i, texts),
-                Some(MenuKind::Tier) => self.choose_tier(ui, i, texts),
-                None => {}
+            .map(|(k, m)| (*k, m.handle_event(ui, ev)));
+        match reply {
+            Some((kind, MenuReply::Event(MenuEvent::Selected { path, .. }))) => {
+                self.close_popup(ui);
+                if let Some(&i) = path.first() {
+                    match kind {
+                        MenuKind::Size => self.choose_size(ui, i, texts),
+                        MenuKind::Tier => self.choose_tier(ui, i, texts),
+                    }
+                }
+                return None;
             }
-            return None;
+            Some((_, MenuReply::Event(_))) => {
+                self.close_popup(ui);
+                return None;
+            }
+            Some((_, MenuReply::Consumed)) => return None,
+            _ => {}
         }
         if let UiEvent::Game { message } = ev
             && self.parts.search.is_some_and(|s| s == message.source)
@@ -1193,10 +1233,24 @@ impl FinderWindow {
         }
     }
 
-    /// Whether a menu popup is open.
+    /// The open menu's root, when one is open.
     #[must_use]
     pub fn popup_root(&self) -> Option<ElementKey> {
-        self.popup.as_ref().map(|(_, p)| p.root)
+        self.popup.as_ref().and_then(|(_, m)| m.root())
+    }
+
+    /// The open menu, when one is open.
+    #[must_use]
+    pub fn menu(&self) -> Option<&ContextMenu> {
+        self.popup.as_ref().map(|(_, m)| m)
+    }
+
+    /// Replaces the context menus' names (the install's `ContextMenu` layout, or the
+    /// code-made menus with Tessera's art). Until a caller sets them the size and tier
+    /// menus are the code-made ones ([`MenuRefs::fallback`]); the client does not call this
+    /// yet, so its finder menus are code-made even with an install.
+    pub fn set_menu_refs(&mut self, refs: MenuRefs) {
+        self.menu_refs = refs;
     }
 
     /// Removes the game-code handlers and an open popup.

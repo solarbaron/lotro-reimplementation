@@ -223,9 +223,9 @@ fn map_window_from_the_install() {
     let Some(mut ins) = install() else { return };
     let t = DefaultMapTexts;
     let layout = ins.layout("map");
-    let (gv, pv, nv) = (ins.gv.clone(), ins.pv.clone(), ins.nv.clone());
+    let (gv, pv) = (ins.gv.clone(), ins.pv.clone());
     let ui = &mut ins.ui;
-    let mut v = MapWindowView::open_layout(ui, &gv, &pv, &nv, layout, &art()).expect("map window");
+    let mut v = MapWindowView::open_layout(ui, &gv, &pv, layout, &art()).expect("map window");
     v.set_icons(icons());
     v.set_filter_value(pv.pids.gop_map_filter, u64::MAX);
     v.set_filter_value(pv.pids.gop_distant_filter, u64::MAX);

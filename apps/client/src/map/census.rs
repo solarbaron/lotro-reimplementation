@@ -103,13 +103,13 @@ impl CensusRun {
     }
 
     /// Gives up on the region waiting for its image (counted as a failure) and moves on.
+    /// The region was counted as visited when [`Self::step`] first reached it.
     pub fn give_up(&mut self, regions: &MapRegions) {
         if self.pending {
             self.pending = false;
             if let Some(r) = regions.regions.get(self.next) {
                 self.report
                     .fail(region_id(r.kind), "image size never known");
-                self.report.visited += 1;
             }
             self.next += 1;
         }
@@ -258,5 +258,52 @@ impl CensusRun {
             "marker not drawn at {want:?} (shown {:?})",
             view.shown.unwrap_or(Shown::Element(0))
         ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tessera_formats::did::Did;
+    use tessera_gamedata::map::MapRegion;
+
+    /// A region given up on while its image loads is a failure, visited once (MWI10).
+    #[test]
+    fn giving_up_counts_the_region_once() {
+        let regions = MapRegions {
+            regions: vec![MapRegion {
+                kind: RegionKind::Dungeon {
+                    map_data: Did(0x7800_0001),
+                },
+                name: None,
+                image: None,
+                georef: None,
+                frame: None,
+                class: RegionClass::Inside,
+                location: None,
+                region: None,
+                dungeons: Vec::new(),
+                detail: None,
+                marker_in_frame: None,
+            }],
+            ..MapRegions::default()
+        };
+        // As `step` leaves it when the dungeon image's size is not known yet.
+        let mut run = CensusRun {
+            next: 0,
+            pending: true,
+            report: CensusReport {
+                visited: 1,
+                dungeons: 1,
+                ..CensusReport::default()
+            },
+        };
+        run.give_up(&regions);
+        assert_eq!(run.report().visited, 1);
+        assert_eq!(run.report().failed, 1);
+        assert_eq!(run.next, 1);
+        // A second call does nothing.
+        run.give_up(&regions);
+        assert_eq!((run.report().visited, run.report().failed), (1, 1));
     }
 }

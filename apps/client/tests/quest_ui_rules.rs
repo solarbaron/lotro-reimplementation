@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! The quest journal's client rules without an install (decision 0024 P3,
 //! `quest-journal.md` §3, §4.8, §5.4, §8.3): a new session forgets the previous one's
-//! entries, the abandon confirmation follows the selection, the history window keeps its
-//! quest until closed, the tracker menu is a popup that a click outside closes, the log's
+//! entries, the abandon confirmation is an engine dialog that answers for the quest it asked
+//! about, the history window keeps its quest until closed, the tracker menu is a context
+//! menu that an activation outside closes, the log's
 //! tracker check box shows the tracker's state on every open, a first `0/n` report redraws
 //! the tracker, the player's values redraw the log, lost notes rebuild the markers, and a
 //! burst of notes is read over several frames. Synthetic events only; no install file is
@@ -99,6 +100,17 @@ impl Journal {
             .collect()
     }
 
+    /// The shown engine dialog's question text.
+    fn question(&self) -> Option<String> {
+        let (root, _) = self.quests.dialogs().shown()?;
+        let id = self.quests.dialogs().refs().ids.question;
+        let ui = self.rig.host.ui();
+        let q = tessera_ui::game::find_below(&ui, root, id)?;
+        drop(ui);
+        let mut ui = self.rig.host.ui_mut();
+        Some(ui.text_of(q))
+    }
+
     fn part(&self, id: u32) -> tessera_ui::ElementKey {
         let root = self.quests.log_root().expect("log root");
         part(&self.rig.host.ui(), root, id).expect("part")
@@ -126,12 +138,17 @@ fn a_new_session_forgets_the_previous_literal_entries() {
     // An abandon asked for in the old session must not survive it.
     let abandon = j.part(j.quests.refs().nv.ids.abandon_button);
     let out = j.frame(|ui, _| vec![button(ui, abandon)]);
-    assert_eq!(out.notices, vec!["Abandon Alpha?".to_string()]);
+    assert!(out.notices.is_empty(), "no notice-line stand-in");
+    assert_eq!(j.question().as_deref(), Some("Abandon Alpha?"));
     // The same character enters again: the journal starts over and the first literal
     // quest reuses the first literal key.
     j.apply(&entered());
     j.apply(&active("Bravo"));
     j.idle();
+    assert!(
+        j.quests.dialogs().shown().is_none(),
+        "the old dialog is gone"
+    );
     assert_eq!(j.names(), vec!["Bravo".to_string()]);
     assert_eq!(
         j.quests.log().and_then(|l| l.selected()),
@@ -140,7 +157,7 @@ fn a_new_session_forgets_the_previous_literal_entries() {
     // The first abandon click of the new session asks again (no confirmation carried over).
     let out = j.frame(|ui, _| vec![button(ui, abandon)]);
     assert!(out.commands.is_empty(), "{:?}", out.commands);
-    assert_eq!(out.notices, vec!["Abandon Bravo?".to_string()]);
+    assert_eq!(j.question().as_deref(), Some("Abandon Bravo?"));
     // A disconnect clears it too.
     j.apply(&Event::Disconnected {
         reason: tessera_net::DisconnectReason::ClientRequested,
@@ -152,7 +169,7 @@ fn a_new_session_forgets_the_previous_literal_entries() {
 }
 
 #[test]
-fn selecting_another_quest_cancels_the_abandon_confirmation() {
+fn the_abandon_dialog_answers_for_the_quest_it_asked_about() {
     let mut j = Journal::new();
     j.apply(&active("Alpha"));
     j.apply(&active("Bravo"));
@@ -161,23 +178,39 @@ fn selecting_another_quest_cancels_the_abandon_confirmation() {
     let (alpha, bravo) = (LITERAL_KEY_BASE, LITERAL_KEY_BASE + 1);
     assert_eq!(j.quests.log().and_then(|l| l.selected()), Some(alpha));
     let abandon = j.part(j.quests.refs().nv.ids.abandon_button);
-    let out = j.frame(|ui, _| vec![button(ui, abandon)]);
-    assert_eq!(out.notices, vec!["Abandon Alpha?".to_string()]);
-    // Bravo, then Alpha again: one abandon click only asks.
+    // Two clicks ask once; the dialog is the confirmation element.
+    let out = j.frame(|ui, _| vec![button(ui, abandon), button(ui, abandon)]);
+    assert!(out.commands.is_empty(), "abandoned without confirmation");
+    assert_eq!(j.question().as_deref(), Some("Abandon Alpha?"));
+    assert!(j.quests.dialogs().queued().is_empty());
+    // Selecting Bravo does not change what the dialog asks about.
     j.frame(|ui, q| vec![Journal::row_click(ui, q, bravo)]);
     assert_eq!(j.quests.log().and_then(|l| l.selected()), Some(bravo));
-    j.frame(|ui, q| vec![Journal::row_click(ui, q, alpha)]);
-    let out = j.frame(|ui, _| vec![button(ui, abandon)]);
-    assert!(out.commands.is_empty(), "abandoned without confirmation");
-    assert_eq!(out.notices, vec!["Abandon Alpha?".to_string()]);
-    // The second click confirms.
-    let out = j.frame(|ui, _| vec![button(ui, abandon)]);
+    let yes = j
+        .quests
+        .dialogs()
+        .button(tessera_ui::widgets::dialog::DialogOutcome::Yes)
+        .expect("yes");
+    let out = j.frame(|ui, _| vec![button(ui, yes)]);
     assert_eq!(
         out.commands,
         vec![Command::Npc(NpcCommand::AbandonQuest {
             quest: lit("Alpha")
         })]
     );
+    assert!(j.quests.dialogs().shown().is_none());
+    // No sends nothing.
+    let out = j.frame(|ui, _| vec![button(ui, abandon)]);
+    assert!(out.commands.is_empty());
+    assert_eq!(j.question().as_deref(), Some("Abandon Bravo?"));
+    let no = j
+        .quests
+        .dialogs()
+        .button(tessera_ui::widgets::dialog::DialogOutcome::No)
+        .expect("no");
+    let out = j.frame(|ui, _| vec![button(ui, no)]);
+    assert!(out.commands.is_empty());
+    assert!(j.quests.dialogs().shown().is_none());
 }
 
 #[test]
@@ -263,7 +296,7 @@ fn the_history_window_keeps_its_quest_until_closed() {
 }
 
 #[test]
-fn the_tracker_menu_is_a_popup_closed_by_a_click_outside() {
+fn the_tracker_menu_is_a_context_menu_closed_by_an_activation_outside() {
     let mut j = Journal::new();
     j.apply(&active("Alpha"));
     j.apply(&Event::Npc(NpcEvent::QuestTracked {
@@ -280,25 +313,35 @@ fn the_tracker_menu_is_a_popup_closed_by_a_click_outside() {
     let b = entry_button(&j);
     let out = j.frame(|ui, _| vec![right(ui, b)]);
     assert!(out.notices.is_empty(), "no notice-line stand-in");
-    let popup = j.quests.menu_popup().expect("popup");
-    let labels: Vec<String> = popup.items.iter().map(|i| i.text.clone()).collect();
+    let menu = j.quests.menu_tree().expect("menu");
     assert_eq!(
-        labels.len(),
+        menu.items(0).len(),
         3,
-        "show in log, remove, remove all: {labels:?}"
+        "show in log, remove, remove all: {:?}",
+        menu.items(0)
     );
     assert_eq!(j.quests.menu(), Some(LITERAL_KEY_BASE));
-    // A click outside the popup closes it and does nothing else.
-    let catcher = popup.catcher.expect("catcher");
-    let root = popup.root;
-    let out = j.frame(|ui, _| vec![left(ui, catcher)]);
+    let root = menu.root().expect("root");
+    assert_eq!(j.rig.host.ui().active_panel(), Some(root));
+    // A press outside the menu deactivates it: the menu closes and nothing else happens.
+    let events = {
+        let mut ui = j.rig.host.ui_mut();
+        let _ = ui.take_events();
+        let (w, h) = ui.screen_size();
+        ui.pointer_moved(w - 2, h - 2);
+        let c = tessera_ui::Command::named("SelectLeft");
+        ui.mouse_press(&c);
+        ui.mouse_release(&c);
+        ui.take_events()
+    };
+    let out = j.frame(move |_, _| events.clone());
     assert!(out.commands.is_empty());
-    assert!(j.quests.menu_popup().is_none() && j.quests.menu().is_none());
-    assert!(!j.rig.host.ui().exists(root) && !j.rig.host.ui().exists(catcher));
-    // "Remove" (the second item) untracks the quest and closes the popup.
+    assert!(j.quests.menu_tree().is_none() && j.quests.menu().is_none());
+    assert!(!j.rig.host.ui().exists(root));
+    // "Remove" (the second item) untracks the quest and closes the menu.
     let b = entry_button(&j);
     j.frame(|ui, _| vec![right(ui, b)]);
-    let row = j.quests.menu_popup().expect("popup").rows[1];
+    let row = j.quests.menu_tree().expect("menu").item_elements(0)[1];
     let out = j.frame(|ui, _| vec![left(ui, row)]);
     assert_eq!(
         out.commands,
@@ -307,7 +350,7 @@ fn the_tracker_menu_is_a_popup_closed_by_a_click_outside() {
             tracked: false,
         })]
     );
-    assert!(j.quests.menu_popup().is_none());
+    assert!(j.quests.menu_tree().is_none());
 }
 
 #[test]

@@ -131,13 +131,20 @@ pub enum SocialIntent {
     },
 }
 
-/// Why a text-input dialog was asked for (`ui-behaviour.md` §5.5).
+/// Why a text-input dialog was asked for (an engine `TextInput` dialog, `ui-widgets.md`
+/// §18, §18.6).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DialogPurpose {
     /// The friends page's add dialog (`social-panels.md` §3.5).
     AddFriend,
     /// The ignore page's add dialog (§3.6).
     AddIgnore,
+    /// The friends page's note dialog for a friend (§3.5). TR5: no feed field carries
+    /// notes (Q10), so the answer changes nothing.
+    FriendNote {
+        /// The friend.
+        name: String,
+    },
 }
 
 impl DialogPurpose {
@@ -154,6 +161,8 @@ impl DialogPurpose {
         let intent = match self {
             Self::AddFriend => friends::FriendsModel::answer_add(name),
             Self::AddIgnore => ignore::IgnoreModel::answer_add(name),
+            // TR5 (Q10): a note has no command; the answer changes nothing.
+            Self::FriendNote { .. } => return None,
         };
         Some(match intent {
             Some(i) => SocialAction::Intent(i),
@@ -180,7 +189,7 @@ pub struct TextDialog {
     /// The longest answer, in bytes of UTF-8 (the session layer's name bound,
     /// [`super::chat::notice::MAX_NAME_BYTES`]); a client dialog that counts characters
     /// keeps the answer within it, and a longer answer is refused by
-    /// [`DialogPurpose::answer`] with a line.
+    /// [`DialogPurpose::answer`] with a line. 0: no bound (a note).
     pub max_len: usize,
     /// The default answer.
     pub default: String,
@@ -197,13 +206,18 @@ pub struct MenuEntry {
     pub intent: Option<SocialIntent>,
 }
 
-/// A context menu (a row menu of §3.5, §3.6 or the player menu's group submenu of §4.5).
+/// A context menu (a row menu of §3.5, §3.6 or the player menu's group submenu of §4.5),
+/// shown by the client as an engine context menu (`ui-widgets.md` §19).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ContextMenu {
-    /// The heading, if any.
+    /// The heading, if any: the menu's title (§3.5, §3.6), or with `submenu` the label of
+    /// the submenu item that holds the entries (§4.5's group submenu).
     pub heading: Option<TextRef>,
     /// The entries, in order.
     pub entries: Vec<MenuEntry>,
+    /// The entries form a submenu headed by `heading` (the player menu's group submenu,
+    /// §4.5), not a titled menu of their own.
+    pub submenu: bool,
 }
 
 /// What a social widget asks of the client after a UI event.

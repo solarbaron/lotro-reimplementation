@@ -185,12 +185,24 @@ fn log_tracker_and_lines_on_the_ui() {
     let tb = part(&rig.host.ui(), root, ids.track_button).expect("track button");
     let (c, _) = click(&mut rig, &mut quests, &end, |ui| button(ui, tb));
     assert_eq!(c, vec![track("Flour delivery", false)]);
-    // Abandon asks first, then sends AbandonQuest (§4.8 Tessera rule of this client).
+    // Abandon asks first with a confirmation dialog, then its yes button sends
+    // AbandonQuest (§4.8, `ui-widgets.md` §18.6).
     let ab = part(&rig.host.ui(), root, ids.abandon_button).expect("abandon button");
     let (c, notices) = click(&mut rig, &mut quests, &end, |ui| button(ui, ab));
-    assert!(c.is_empty());
-    assert_eq!(notices, vec!["Abandon Flour delivery?".to_string()]);
-    let (c, _) = click(&mut rig, &mut quests, &end, |ui| button(ui, ab));
+    assert!(c.is_empty() && notices.is_empty());
+    let (dialog, req) = quests.dialogs().shown().expect("confirmation shown");
+    assert_eq!(
+        req.question,
+        Some(tessera_ui::widgets::dialog::DialogText::Plain(
+            "Abandon Flour delivery?".into()
+        ))
+    );
+    assert!(rig.host.ui().exists(dialog));
+    let yes = quests
+        .dialogs()
+        .button(tessera_ui::widgets::dialog::DialogOutcome::Yes)
+        .expect("yes");
+    let (c, _) = click(&mut rig, &mut quests, &end, |ui| button(ui, yes));
     assert_eq!(
         c,
         vec![Command::Npc(NpcCommand::AbandonQuest {

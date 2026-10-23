@@ -34,11 +34,15 @@ use super::mapmarks::{
 use super::npc::kit::{ClickKind, put_text};
 use super::npcvocab::NpcVocab;
 use super::p5vocab::P5Vocab;
-use super::popup::{Place, Popup, PopupItem, click};
+use super::popup::click;
 use super::radar::Radar;
 use super::vocab::GameVocab;
 use super::worldmap::{DungeonView, MapTree, NodeOptions, WorldMapPanel};
 use super::{GameError, find_below, set_image, show, subtree};
+use crate::widgets::context_menu::{
+    ContextMenu, MenuArt, MenuEvent, MenuItem, MenuPosition, MenuRefs, MenuReply, MenuRequest,
+    REOPEN_GUARD,
+};
 
 /// Draw mode of a node's image (`map-windows.md` MW4: always 2) and of a dungeon map's.
 pub const NODE_IMAGE_MODE: u32 = 2;
@@ -123,7 +127,7 @@ pub enum LookupTarget {
     Area(Option<u32>),
 }
 
-/// Which popup is open.
+/// Which menu is open.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum PopupKind {
     Filter,
@@ -211,16 +215,16 @@ pub struct MapWindowView {
     node_names: Vec<Option<String>>,
     recorded_dungeon: Option<u32>,
     player: Option<PlayerMap>,
-    popup: Option<(PopupKind, Popup)>,
-    /// The map menu's open region submenu: (region entry, popup).
-    sub: Option<(usize, Popup)>,
-    /// The nodes of the open submenu's items, in item order.
-    menu_targets: Vec<usize>,
+    /// The open filter or map menu (`ui-widgets.md` §19).
+    popup: Option<(PopupKind, ContextMenu)>,
+    /// The menu last closed and when (the §4.5 reopen guard).
+    closed: Option<(PopupKind, f64)>,
+    /// The context menus' names (the install's `ContextMenu` layout, or code-made).
+    menu_refs: MenuRefs,
     layout: Option<Did>,
     art: P5Art,
     gv: GameVocab,
     pv: P5Vocab,
-    nv: NpcVocab,
     handlers: Vec<(u32, u32)>,
     node_handlers: Vec<(u32, u32)>,
 }
@@ -263,7 +267,6 @@ impl MapWindowView {
         ui: &mut Ui,
         gv: &GameVocab,
         pv: &P5Vocab,
-        nv: &NpcVocab,
         layout: Did,
         art: &P5Art,
     ) -> Result<Self, GameError> {
@@ -295,7 +298,6 @@ impl MapWindowView {
             ui,
             gv,
             pv,
-            nv,
             window,
             panel,
             tree,
@@ -323,7 +325,6 @@ impl MapWindowView {
             ui,
             gv,
             pv,
-            nv,
             window,
             Some(panel),
             tree,
@@ -343,7 +344,6 @@ impl MapWindowView {
         ui: &mut Ui,
         gv: &GameVocab,
         pv: &P5Vocab,
-        nv: &NpcVocab,
         window: ElementKey,
         windowed_root: Option<ElementKey>,
         tree: MapTree,
@@ -406,13 +406,18 @@ impl MapWindowView {
             recorded_dungeon: None,
             player: None,
             popup: None,
-            sub: None,
-            menu_targets: Vec::new(),
+            closed: None,
+            menu_refs: MenuRefs::fallback(MenuArt {
+                background: art.base.panel.clone(),
+                rollover: art.base.row_highlight.clone(),
+                check: art.check.clone(),
+                unchecked: art.base.slot.clone(),
+                arrow: None,
+            }),
             layout,
             art: art.clone(),
             gv: gv.clone(),
             pv: pv.clone(),
-            nv: nv.clone(),
             handlers: Vec::new(),
             node_handlers: Vec::new(),
         };
@@ -1206,25 +1211,21 @@ impl MapWindowView {
         texts: &dyn MapTexts,
     ) -> Vec<MapAction> {
         let mut out = Vec::new();
-        if let Some(i) = self.sub.as_mut().and_then(|(_, p)| p.handle_event(ui, ev)) {
-            let target = self.menu_targets.get(i).copied();
-            self.close_popup(ui);
-            if let Some(n) = target {
-                match self.show_node(ui, n, texts) {
-                    Ok(Some(a)) => out.push(a),
-                    Ok(None) => {}
-                    Err(e) => tracing::debug!("map window: {e}"),
-                }
-            }
-            return out;
-        }
-        if let Some(i) = self
+        let reply = self
             .popup
             .as_mut()
-            .and_then(|(_, p)| p.handle_event(ui, ev))
-        {
-            self.popup_selected(ui, i, &mut out);
-            return out;
+            .map(|(k, m)| (*k, m.handle_event(ui, ev)));
+        match reply {
+            Some((kind, MenuReply::Event(MenuEvent::Selected { id, path, .. }))) => {
+                self.menu_selected(ui, kind, id, &path, texts, &mut out);
+                return out;
+            }
+            Some((kind, MenuReply::Event(_))) => {
+                self.forget_menu(ui, kind);
+                return out;
+            }
+            Some((_, MenuReply::Consumed)) => return out,
+            _ => {}
         }
         let Some((src, kind)) = click(ui, ev) else {
             return out;
@@ -1323,84 +1324,140 @@ impl MapWindowView {
     }
 
     fn close_popup(&mut self, ui: &mut Ui) {
-        self.close_sub(ui);
-        if let Some((_, p)) = self.popup.take() {
-            p.close(ui);
+        if let Some((kind, mut m)) = self.popup.take() {
+            m.close(ui);
+            self.closed = Some((kind, ui.time()));
         }
     }
 
-    fn close_sub(&mut self, ui: &mut Ui) {
-        self.menu_targets.clear();
-        if let Some((_, p)) = self.sub.take() {
-            p.close(ui);
+    /// A menu that closed itself (a selection or a deactivation): forgotten, its close
+    /// time kept for the reopen guard.
+    fn forget_menu(&mut self, ui: &mut Ui, kind: PopupKind) {
+        if let Some((_, mut m)) = self.popup.take() {
+            m.close(ui);
+        }
+        self.closed = Some((kind, ui.time()));
+    }
+
+    /// Replaces the context menus' names (the install's `ContextMenu` layout, or the
+    /// code-made menus with Tessera's art).
+    pub fn set_menu_refs(&mut self, refs: MenuRefs) {
+        self.menu_refs = refs;
+    }
+
+    /// The per-frame work of the open menu (`ui-widgets.md` §19.4 step 2: the open delay of
+    /// the map menu's region submenus).
+    pub fn update_menus(&mut self, ui: &mut Ui) {
+        let closed = match self.popup.as_mut() {
+            Some((kind, m)) => {
+                m.update(ui);
+                (!m.is_open()).then_some(*kind)
+            }
+            None => None,
+        };
+        if let Some(kind) = closed {
+            self.forget_menu(ui, kind);
         }
     }
 
+    /// Opens the filter or the map menu below its button, or closes it when open (§4.5,
+    /// §6.9). A click within [`REOPEN_GUARD`] seconds after the menu closed does not open
+    /// it again.
     fn toggle_popup(&mut self, ui: &mut Ui, kind: PopupKind, texts: &dyn MapTexts) {
         let open = self.popup.as_ref().map(|(k, _)| *k);
         self.close_popup(ui);
         if open == Some(kind) {
             return;
         }
-        let (anchor, items) = match kind {
-            PopupKind::Filter => (self.parts.filter_menu, self.filter_items(texts)),
-            PopupKind::Maps => (self.parts.map_menu, self.map_items()),
+        if self
+            .closed
+            .is_some_and(|(k, t)| k == kind && (ui.time() - t).abs() <= REOPEN_GUARD)
+        {
+            return;
+        }
+        let anchor = match kind {
+            PopupKind::Filter => self.parts.filter_menu,
+            PopupKind::Maps => self.parts.map_menu,
         };
         let Some(anchor) = anchor else { return };
-        let width = if kind == PopupKind::Maps { 260 } else { 220 };
-        let check = self.art.check.clone();
-        match Popup::open(
-            ui,
-            &self.nv,
-            &self.art.base,
-            check.as_ref(),
-            anchor,
-            width,
+        let items = match kind {
+            PopupKind::Filter => self.filter_items(texts),
+            PopupKind::Maps => self.map_items(),
+        };
+        let b = ui.displayed_box(anchor);
+        let req = MenuRequest {
             items,
-        ) {
-            Ok(p) => self.popup = Some((kind, p)),
-            Err(e) => tracing::debug!("map window: popup not opened: {e}"),
+            // Tessera choice, recorded in no spec yet: the menu opens below its button
+            // (`ui-widgets.md` §19.3's default would be the pointer; `map-windows.md` §4.5
+            // still describes the retired code-made popup).
+            position: Some(MenuPosition::TopLeft(b.l, b.t.saturating_add(b.h()))),
+            // §4.5: the map window's menus are `ContextMenuElement_MapMenu`.
+            element: self
+                .menu_refs
+                .layout
+                .is_some()
+                .then_some(self.menu_refs.ids.map_menu),
+            // §6.9: the filter menu stays open after a selection.
+            keep_open: kind == PopupKind::Filter,
+            ..MenuRequest::default()
+        };
+        match ContextMenu::open(ui, &self.menu_refs, &req) {
+            Ok(m) => self.popup = Some((kind, m)),
+            Err(e) => tracing::debug!("map window: menu not opened: {e}"),
         }
     }
 
-    fn filter_items(&self, texts: &dyn MapTexts) -> Vec<PopupItem> {
+    fn filter_items(&self, texts: &dyn MapTexts) -> Vec<MenuItem> {
         self.filter_menu
             .items
             .iter()
-            .map(|it| match it {
-                FilterItem::All => {
-                    PopupItem::command(&map_label(texts, super::mapmarks::MapLabel::FilterAll))
+            .enumerate()
+            .map(|(i, it)| {
+                let id = u32::try_from(i).unwrap_or(u32::MAX);
+                match it {
+                    FilterItem::All => {
+                        MenuItem::plain(id, &map_label(texts, super::mapmarks::MapLabel::FilterAll))
+                    }
+                    FilterItem::None => MenuItem::plain(
+                        id,
+                        &map_label(texts, super::mapmarks::MapLabel::FilterNone),
+                    ),
+                    FilterItem::Type {
+                        label,
+                        icon,
+                        checked,
+                        ..
+                    } => MenuItem::check(id, label, *checked).with_icon(icon.clone()),
                 }
-                FilterItem::None => {
-                    PopupItem::command(&map_label(texts, super::mapmarks::MapLabel::FilterNone))
-                }
-                FilterItem::Type {
-                    label,
-                    icon,
-                    checked,
-                    ..
-                } => PopupItem {
-                    text: label.clone(),
-                    check: Some(*checked),
-                    icon: icon.clone(),
-                    ..PopupItem::default()
-                },
             })
             .collect()
     }
 
-    /// The map menu's items (§4.5): one item per entry of `Region_Map_List` in stored
-    /// order; choosing one opens its submenu ([`Self::region_items`]).
-    fn map_items(&self) -> Vec<PopupItem> {
-        self.regions
-            .iter()
-            .map(|(_, name)| PopupItem::command(name))
+    /// The map menu's items (§4.5): one submenu item per entry of `Region_Map_List` in
+    /// stored order, each holding the region's named nodes sorted by label (item ID = the
+    /// node). Tessera: a region without named nodes has a disabled item.
+    fn map_items(&self) -> Vec<MenuItem> {
+        (0..self.regions.len())
+            .filter_map(|r| {
+                let (_, name) = self.regions.get(r)?;
+                let (labels, targets) = self.region_items(r);
+                let sub: Vec<MenuItem> = labels
+                    .iter()
+                    .zip(&targets)
+                    .map(|(l, n)| MenuItem::plain(u32::try_from(*n).unwrap_or(u32::MAX), l))
+                    .collect();
+                let enabled = !sub.is_empty();
+                Some(
+                    MenuItem::submenu(u32::try_from(r).unwrap_or(u32::MAX), name, sub)
+                        .enabled(enabled),
+                )
+            })
             .collect()
     }
 
     /// The submenu of region entry `r` (§4.5 and its Tessera rule): the region's named
-    /// nodes sorted by label (ties by tree order), with the nodes they show.
-    fn region_items(&self, r: usize) -> (Vec<PopupItem>, Vec<usize>) {
+    /// nodes' labels sorted by label (ties by tree order), with the nodes they show.
+    fn region_items(&self, r: usize) -> (Vec<String>, Vec<usize>) {
         let (Some(t), Some((region, _))) = (self.panel.tree.as_ref(), self.regions.get(r)) else {
             return (Vec::new(), Vec::new());
         };
@@ -1415,56 +1472,22 @@ impl MapWindowView {
             })
             .collect();
         nodes.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)));
-        nodes.truncate(super::popup::MAX_ROWS);
-        nodes
-            .into_iter()
-            .map(|(_, i, label)| (PopupItem::command(&label), i))
-            .unzip()
+        nodes.truncate(crate::widgets::context_menu::MAX_ITEMS);
+        nodes.into_iter().map(|(_, i, label)| (label, i)).unzip()
     }
 
-    /// Opens the submenu of region entry `r` beside its row of the map menu (a second
-    /// choice of the same region closes it).
-    fn open_sub(&mut self, ui: &mut Ui, r: usize) {
-        let open = self.sub.as_ref().map(|(i, _)| *i);
-        self.close_sub(ui);
-        if open == Some(r) {
-            return;
-        }
-        let Some(row) = self
-            .popup
-            .as_ref()
-            .and_then(|(_, p)| p.rows.get(r).copied())
-        else {
-            return;
-        };
-        let (items, targets) = self.region_items(r);
-        if items.is_empty() {
-            return;
-        }
-        match Popup::open_at(
-            ui,
-            &self.nv,
-            &self.art.base,
-            None,
-            row,
-            Place::Beside,
-            260,
-            items,
-        ) {
-            Ok(p) => {
-                self.sub = Some((r, p));
-                self.menu_targets = targets;
-            }
-            Err(e) => tracing::debug!("map window: submenu not opened: {e}"),
-        }
-    }
-
-    fn popup_selected(&mut self, ui: &mut Ui, i: usize, out: &mut Vec<MapAction>) {
-        let Some(kind) = self.popup.as_ref().map(|(k, _)| *k) else {
-            return;
-        };
+    fn menu_selected(
+        &mut self,
+        ui: &mut Ui,
+        kind: PopupKind,
+        id: u32,
+        path: &[usize],
+        texts: &dyn MapTexts,
+        out: &mut Vec<MapAction>,
+    ) {
         match kind {
             PopupKind::Filter => {
+                let Some(&i) = path.first() else { return };
                 let new = self.filter_menu.select(i, self.filter);
                 if new != self.filter {
                     self.filter = new;
@@ -1478,15 +1501,25 @@ impl MapWindowView {
                         value,
                     });
                 }
-                if let Some((_, p)) = self.popup.as_mut() {
+                if let Some((_, m)) = self.popup.as_mut() {
                     for (j, it) in self.filter_menu.items.iter().enumerate() {
                         if let FilterItem::Type { checked, .. } = it {
-                            p.set_checked(ui, j, *checked);
+                            m.set_check(ui, 0, j, *checked);
                         }
                     }
                 }
             }
-            PopupKind::Maps => self.open_sub(ui, i),
+            PopupKind::Maps => {
+                // A selection closed the tree; the item's ID is its node (§4.5 step 3).
+                self.forget_menu(ui, kind);
+                if path.len() == 2 {
+                    match self.show_node(ui, id as usize, texts) {
+                        Ok(Some(a)) => out.push(a),
+                        Ok(None) => {}
+                        Err(e) => tracing::debug!("map window: {e}"),
+                    }
+                }
+            }
         }
     }
 
@@ -1496,16 +1529,24 @@ impl MapWindowView {
         self.popup.is_some()
     }
 
-    /// The open popup's root, when one is open.
+    /// The open menu's root, when one is open.
     #[must_use]
     pub fn popup_root(&self) -> Option<ElementKey> {
-        self.popup.as_ref().map(|(_, p)| p.root)
+        self.popup.as_ref().and_then(|(_, m)| m.root())
     }
 
     /// The open submenu's root (the map menu's region submenu), when one is open.
     #[must_use]
     pub fn submenu_root(&self) -> Option<ElementKey> {
-        self.sub.as_ref().map(|(_, p)| p.root)
+        self.popup
+            .as_ref()
+            .and_then(|(_, m)| m.menus().get(1).copied())
+    }
+
+    /// The open menu tree, when one is open.
+    #[must_use]
+    pub fn menu(&self) -> Option<&ContextMenu> {
+        self.popup.as_ref().map(|(_, m)| m)
     }
 
     /// Removes everything the view created and its handlers (the roots stay; the client

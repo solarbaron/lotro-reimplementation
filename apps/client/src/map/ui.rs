@@ -45,6 +45,7 @@ use tessera_ui::game::mapwindow::{
 };
 use tessera_ui::game::radar::{Radar, RadarInput};
 use tessera_ui::game::worldmap::MapTree;
+use tessera_ui::widgets::context_menu::{MenuArt, MenuRefs};
 use tessera_ui::{ElementKey, ImageRef, Ui, UiEvent};
 
 use super::data::{MapFacts, MapSettings};
@@ -87,6 +88,33 @@ fn label_of(t: &Text, facts: Option<&MapFacts>) -> String {
             .and_then(|f| f.character.store().display_name(Did(d.0), None))
             .unwrap_or_default(),
         _ => String::new(),
+    }
+}
+
+/// The context menus' names of the map window's `MapMenu` and `FilterMenu`
+/// (`map-windows.md` §4.5, `ui-widgets.md` §19): the install's `ContextMenu` layout and
+/// labels through the facts' presentation data, else the code-made menus with the P5 art.
+#[must_use]
+pub fn menu_refs(facts: Option<&MapFacts>, art: &P5Art) -> MenuRefs {
+    use tessera_gamedata::tooltip::TooltipData;
+    let art = MenuArt {
+        background: art.base.panel.clone(),
+        rollover: art.base.row_highlight.clone(),
+        check: art.check.clone(),
+        unchecked: art.base.slot.clone(),
+        arrow: None,
+    };
+    match facts {
+        Some(f) => {
+            let t = f.character.engine().data();
+            MenuRefs::resolve(
+                &|l| t.layout_by_label(l),
+                &|n| t.ui_key(tessera_formats::ui_layout::UiEnum::ElementId, n),
+                &|n| t.pid(n),
+                art,
+            )
+        }
+        None => MenuRefs::fallback(art),
     }
 }
 
@@ -393,8 +421,9 @@ impl MapUi {
         nv.register_classes(ui);
         pv.register_classes(ui);
         let view = match self.refs.map {
-            Some(layout) => MapWindowView::open_layout(ui, gv, pv, nv, layout, &self.art)
-                .map_err(|e| e.to_string()),
+            Some(layout) => {
+                MapWindowView::open_layout(ui, gv, pv, layout, &self.art).map_err(|e| e.to_string())
+            }
             None => Err("no install layout".to_owned()),
         };
         let mut view = match view {
@@ -427,6 +456,7 @@ impl MapUi {
 
     fn configure(&self, ui: &mut Ui, view: &mut MapWindowView, facts: Option<&MapFacts>) {
         view.set_icons(facts.map_or_else(IconTable::default, |f| f.map_icons.clone()));
+        view.set_menu_refs(menu_refs(facts, &self.art));
         let pv = &self.refs.pv;
         let (near, distant) =
             facts.map_or((pv.pids.gop_map_filter, pv.pids.gop_distant_filter), |f| {
@@ -593,6 +623,8 @@ impl MapUi {
         for ev in events {
             actions.extend(view.handle_event(ui, ev, texts));
         }
+        // The open menu's open delay (`ui-widgets.md` §19.4 step 2).
+        view.update_menus(ui);
         for a in actions {
             match a {
                 MapAction::Shown(s) => self.give_notes(ui, s, facts, texts),

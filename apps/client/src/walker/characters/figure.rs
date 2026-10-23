@@ -1210,12 +1210,48 @@ pub fn build_figure_with_look(
     })
 }
 
-/// Where a screen figure's prop is attached (Tessera rule of the `character-screens.md`
-/// §2.1.4 implementer OPEN, taken from the attachment rule of `particle-runtime.md` §6.1
-/// because `script-table.md` §5.2 gives none for MeshFX): a `BoneType` other than 0 names
-/// the bone of that type (`setup.md` §6.2) at an identity frame; else a `HoldingLocation`
-/// other than 0 its holding location's frame; both 0 the holder's model origin. `None`
-/// when the setup has no such bone or location.
+/// The holding-location key an attached MeshFX node with neither `HoldingLocation` nor
+/// `BoneType` uses (`script-table.md` §5.2: key 6, `origin` in the base mapper).
+pub const ORIGIN_LOCATION_KEY: u32 = 6;
+
+/// How a prop's anchor is chosen (`script-table.md` §5.2 "Where a MeshFX node attaches its
+/// entity", T47).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PropAnchorRule {
+    /// That holding location of the holder (list A).
+    Location(u32),
+    /// The holder's bone of that bone type.
+    Bone(u32),
+    /// The holding location with key [`ORIGIN_LOCATION_KEY`]; the model origin when list A
+    /// has none (the Tessera rule of the §5.2 OPEN).
+    OriginKey,
+    /// The holder's model origin.
+    Origin,
+}
+
+/// The anchor rule of a MeshFX node (`script-table.md` §5.2): an attached node
+/// (`AttachToParent` 1) takes its `HoldingLocation` when not 0, else its `BoneType` when not
+/// 0, else the location with key 6; an unattached one its `BoneType` when not 0, else its
+/// `HoldingLocation` when not 0, else the model origin.
+#[must_use]
+pub fn prop_anchor_rule(attached: bool, location: u32, bone_type: u32) -> PropAnchorRule {
+    match (attached, location, bone_type) {
+        (true, l, _) if l != 0 => PropAnchorRule::Location(l),
+        (true, 0, b) if b != 0 => PropAnchorRule::Bone(b),
+        (true, _, _) => PropAnchorRule::OriginKey,
+        (false, _, b) if b != 0 => PropAnchorRule::Bone(b),
+        (false, l, _) if l != 0 => PropAnchorRule::Location(l),
+        (false, _, _) => PropAnchorRule::Origin,
+    }
+}
+
+/// Where a screen figure's prop is attached ([`prop_anchor_rule`], `script-table.md` §5.2,
+/// `character-screens.md` §2.1.4 answer): a bone at an identity frame, a holding location
+/// at its frame, or the holder's model origin. `None` when the setup lacks the named
+/// location or bone (the node shows nothing). The placement frame and scale are applied by
+/// the caller (`appearance.md` §5.7). An unattached node's anchor is read once at placement
+/// in the client; here every prop follows its anchor (the screen figures' props are held
+/// parts of the figure).
 fn prop_anchor(
     setup: &tessera_formats::setup::Setup,
     prop: &super::live::ScreenProp,
@@ -1231,24 +1267,29 @@ fn prop_anchor(
             z: 0.0,
         },
     };
-    if prop.bone_type != 0 {
-        let a = setup
-            .attachments()
-            .find(|a| a.bone_type == prop.bone_type)?;
-        return Some(HoldingLocation {
-            key: prop.location,
-            anchor: SetupAnchor::Bone(a.bone),
-            frame: identity,
-        });
-    }
-    if prop.location != 0 {
-        return setup.holding_locations().find(|h| h.key == prop.location);
-    }
-    Some(HoldingLocation {
-        key: 0,
+    let origin = |key: u32| HoldingLocation {
+        key,
         anchor: SetupAnchor::Origin,
         frame: identity,
-    })
+    };
+    match prop_anchor_rule(prop.attached, prop.location, prop.bone_type) {
+        PropAnchorRule::Location(l) => setup.holding_locations().find(|h| h.key == l),
+        PropAnchorRule::Bone(b) => {
+            let a = setup.attachments().find(|a| a.bone_type == b)?;
+            Some(HoldingLocation {
+                key: prop.location,
+                anchor: SetupAnchor::Bone(a.bone),
+                frame: identity,
+            })
+        }
+        PropAnchorRule::OriginKey => Some(
+            setup
+                .holding_locations()
+                .find(|h| h.key == ORIGIN_LOCATION_KEY)
+                .unwrap_or_else(|| origin(ORIGIN_LOCATION_KEY)),
+        ),
+        PropAnchorRule::Origin => Some(origin(0)),
+    }
 }
 
 /// Most 0x47 levels of a figure's entity chain read for one of its properties.
@@ -1866,6 +1907,22 @@ fn select_clips(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `script-table.md` §5.2 (T47): for attached nodes the holding location wins over the
+    /// bone type, for unattached nodes the bone type wins; both 0 give key 6 (attached) or
+    /// the model origin (unattached).
+    #[test]
+    fn prop_anchors_follow_the_attachment_table() {
+        use PropAnchorRule::{Bone, Location, Origin, OriginKey};
+        assert_eq!(prop_anchor_rule(true, 12, 3), Location(12));
+        assert_eq!(prop_anchor_rule(true, 12, 0), Location(12));
+        assert_eq!(prop_anchor_rule(true, 0, 3), Bone(3));
+        assert_eq!(prop_anchor_rule(true, 0, 0), OriginKey);
+        assert_eq!(prop_anchor_rule(false, 12, 3), Bone(3));
+        assert_eq!(prop_anchor_rule(false, 12, 0), Location(12));
+        assert_eq!(prop_anchor_rule(false, 0, 3), Bone(3));
+        assert_eq!(prop_anchor_rule(false, 0, 0), Origin);
+    }
 
     /// `script-table.md` §6.10 steps 3–5: start time, end and the cases without one.
     #[test]

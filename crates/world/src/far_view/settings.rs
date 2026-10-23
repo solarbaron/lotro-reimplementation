@@ -90,7 +90,14 @@ pub enum Template {
     NormalMapped,
 }
 
-/// The far-view settings (`far-view.md` §3.1, §6.1, §9.1; Tessera's budgets).
+/// Tessera's graphics core for the far view (`far-view.md` Decision FD16): the client's
+/// Direct3D 11 back end (FV25), whatever the stored `[Render] GraphicsCore` says.
+pub const TESSERA_GRAPHICS_CORE: u32 = 5;
+
+/// Tessera's device class (`far-view.md` FD16: a class above 2 for §6.5 and §9.1).
+pub const TESSERA_DEVICE_CLASS: u32 = 3;
+
+/// The far-view settings (`far-view.md` §3.1, §6.1, §6.5, §9.1; Tessera's budgets).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct FarViewSettings {
     /// Far radius *F* in sectors (1–[`MAX_FAR_RADIUS`]).
@@ -98,41 +105,53 @@ pub struct FarViewSettings {
     /// Near radius *N* in landblocks ([`NEAR_RADIUS`] in the original; FD9 lets the
     /// walker keep a larger full-detail ring, see [`super::NearField`]).
     pub near_radius: u32,
-    /// `FarLandscapeNormalMaps`.
+    /// `FarLandscapeNormalMaps` (built-in off, FV26).
     pub normal_maps: bool,
-    /// The effective graphics-core setting (§6.1: the normal-mapped template needs 2 or 5;
-    /// the meaning of the values is OPEN, §15).
+    /// The effective graphics-core setting (§6.1: the normal-mapped template needs 2 or 5).
+    /// Tessera counts as [`TESSERA_GRAPHICS_CORE`] (FD16); the stored `GraphicsCore` is
+    /// never read.
     pub graphics_core: u32,
-    /// `NearFarSeamBlending` (§6.5).
+    /// `NearFarSeamBlending` (§6.5): on, as the game client sets it at every graphics
+    /// start (FV27, FD17); never read from the preferences file.
     pub seam_blending: bool,
+    /// `MultiPassLighting` (built-in on, FV28; a seam-overlay input, FD18).
+    pub multi_pass_lighting: bool,
+    /// The stored `LandscapeLightingQuality` level (built-in 0, FV28; the seam overlay
+    /// needs a level above 0, FD18; [`lighting_quality_level`]).
+    pub lighting_quality: u32,
     /// `DistantImposters` (§9.1; built-in default on).
     pub imposters: bool,
-    /// The graphics device's class (§9.1: sprites need 3 or more).
+    /// The graphics device's class (§9.1: sprites need 3 or more; §6.5: the overlay needs
+    /// more than 2). Tessera's is [`TESSERA_DEVICE_CLASS`] (FD16).
     pub device_class: u32,
     /// Build the near batches too (tools only; the world view never draws them, FD8).
     pub near_batches: bool,
 }
 
 impl Default for FarViewSettings {
-    /// `LandscapeDrawDistance` High (*R* = 9, *F* = 4), *N* = 1, plain template, imposters
-    /// on, device class 3.
+    /// `LandscapeDrawDistance` High (*R* = 9, *F* = 4), *N* = 1, the built-in preference
+    /// values of FD17 (plain template, no seam overlay, imposters on), graphics core 5 and
+    /// device class 3 (FD16).
     fn default() -> Self {
         Self::from_level(3)
     }
 }
 
 impl FarViewSettings {
-    /// The settings of a stored `LandscapeDrawDistance` level (§3.1).
+    /// The settings of a stored `LandscapeDrawDistance` level (§3.1), with the built-in
+    /// preference values of FD17 and Tessera's core and device class (FD16).
     #[must_use]
     pub fn from_level(stored: u32) -> Self {
         Self {
             far_radius: far_radius(landscape_radius(stored)),
             near_radius: NEAR_RADIUS,
             normal_maps: false,
-            graphics_core: 0,
-            seam_blending: false,
+            graphics_core: TESSERA_GRAPHICS_CORE,
+            seam_blending: true,
+            multi_pass_lighting: true,
+            lighting_quality: 0,
             imposters: true,
-            device_class: 3,
+            device_class: TESSERA_DEVICE_CLASS,
             near_batches: false,
         }
     }
@@ -180,10 +199,16 @@ impl FarViewSettings {
     }
 
     /// Whether the near-terrain builder gets the sector material for the seam overlay
-    /// (§6.5): `NearFarSeamBlending` on and the normal-mapped template active.
+    /// (§6.5, FD18): `NearFarSeamBlending` on, the normal-mapped template active,
+    /// multi-pass lighting on, the landscape lighting quality above level 0 and a device
+    /// class above 2.
     #[must_use]
     pub fn seam_overlay(&self) -> bool {
-        self.seam_blending && self.template() == Template::NormalMapped
+        self.seam_blending
+            && self.template() == Template::NormalMapped
+            && self.multi_pass_lighting
+            && self.lighting_quality > 0
+            && self.device_class > 2
     }
 
     /// Whether distant sprites exist (§9.1): `DistantImposters` on and device class ≥ 3.
@@ -193,20 +218,24 @@ impl FarViewSettings {
     }
 
     /// Applies the `[Render]` preferences of `UserPreferences.ini` that the far view reads
-    /// (`install-layout.md` §8.3; an unknown or missing value keeps the current one): the
-    /// booleans `FarLandscapeNormalMaps` (§6.1), `NearFarSeamBlending` (§6.5) and
-    /// `DistantImposters` (§9.1). `get(key)` returns the stored text of a key of that
-    /// section; it is called with those names spelt as here, so a case-insensitive lookup
-    /// (`walker.md` §11.2) is the caller's to make. The graphics-core condition of §6.1 (values 2 or 5) is not derived from the
-    /// stored `GraphicsCore` name: the mapping from names to those values is OPEN
-    /// (`far-view.md` §15), so [`FarViewSettings::graphics_core`] is left as it is.
+    /// (`install-layout.md` §8.3, `far-view.md` FD17; an unknown or missing value keeps the
+    /// current one): the booleans `FarLandscapeNormalMaps` (§6.1), `MultiPassLighting`
+    /// (§6.5) and `DistantImposters` (§9.1), and the level `LandscapeLightingQuality`
+    /// (§6.5, [`lighting_quality_level`]). `get(key)` returns the stored text of a key of
+    /// that section; it is called with those names spelt as here, so a case-insensitive
+    /// lookup (`walker.md` §11.2) is the caller's to make. `NearFarSeamBlending` and
+    /// `GraphicsCore` are **not** read (FD16, FD17, FD21): the seam switch stays on and the
+    /// core stays [`TESSERA_GRAPHICS_CORE`].
     pub fn apply_render_preferences<'a>(&mut self, get: impl Fn(&str) -> Option<&'a str>) {
         let flag = |key: &str| get(key).and_then(preference_bool);
         if let Some(b) = flag("FarLandscapeNormalMaps") {
             self.normal_maps = b;
         }
-        if let Some(b) = flag("NearFarSeamBlending") {
-            self.seam_blending = b;
+        if let Some(b) = flag("MultiPassLighting") {
+            self.multi_pass_lighting = b;
+        }
+        if let Some(l) = get("LandscapeLightingQuality").and_then(lighting_quality_level) {
+            self.lighting_quality = l;
         }
         if let Some(b) = flag("DistantImposters") {
             self.imposters = b;
@@ -229,6 +258,33 @@ pub fn preference_bool(text: &str) -> Option<bool> {
     match text.trim().to_ascii_lowercase().as_str() {
         "true" | "1" | "on" | "yes" => Some(true),
         "false" | "0" | "off" | "no" => Some(false),
+        _ => None,
+    }
+}
+
+/// The level of a stored `LandscapeLightingQuality` value (`far-view.md` FD18: only "above
+/// level 0" matters). A number is its own level; a level name is read case-insensitively,
+/// surrounding blanks ignored: `VeryLow`, `Low`, `Off`, `Disabled`, `None` → 0, `Medium` → 1,
+/// `High` → 2, `VeryHigh` → 3, `UltraHigh` → 4; anything else is `None` (the built-in level
+/// stays, `walker.md` W26). **Tessera reading, conservative:** no Accepted spec gives the
+/// stored names or level order of this key (`far-view.md` FD18 says only "above level 0";
+/// an OPEN is proposed for its spec writer, not yet in the spec). Names below `Medium`
+/// count as the lowest level, so the overlay stays off for them, and the owner's
+/// `VeryHigh` enables it, as FD17's outcome states. If the key used the `VeryLow`–`VeryHigh`
+/// scale of `LandscapeDrawDistance` (`walker.md` §11.2), `Low` would be level 1 and turn
+/// the overlay on; that is left to the answer.
+#[must_use]
+pub fn lighting_quality_level(text: &str) -> Option<u32> {
+    let t = text.trim();
+    if let Ok(n) = t.parse::<u32>() {
+        return Some(n);
+    }
+    match t.to_ascii_lowercase().as_str() {
+        "verylow" | "low" | "off" | "disabled" | "none" => Some(0),
+        "medium" => Some(1),
+        "high" => Some(2),
+        "veryhigh" => Some(3),
+        "ultrahigh" => Some(4),
         _ => None,
     }
 }

@@ -1170,6 +1170,7 @@ mod tests {
             model: &model,
             points: Some(&points),
             drawn: true,
+            opacity: 1.0,
         };
         let off = [1.0, 0.0, 0.0];
         // Bone type: the offset turns with the bone.
@@ -1416,6 +1417,7 @@ mod tests {
                 points: None,
                 skeleton: Some(Arc::clone(skel)),
                 scripts: None,
+                opacity: 1.0,
             },
         );
         (st, id)

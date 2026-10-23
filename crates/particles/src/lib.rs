@@ -14,7 +14,7 @@
 //! | [`draw`] | distance fade, the not-drawn state, billboards, atlas frames, vertex order, system draw order, the instances' culling bounds | particles §8.10–§8.15; runtime §9, Q-RT3 |
 //! | [`wind`] | the eased global wind | particles §8.8 |
 //! | [`fork`] | fork effects: lifetime, fade, effect matrix, shader table (not simulated, rule §10.2) | particles §6.5; runtime §10 |
-//! | [`light`] | the light sum of lit systems: ambient, the owner's light list cut to five, per-vertex attenuation | particles §8.14; runtime rule 13 |
+//! | [`light`] | the light sum of lit systems: ambient, the owner's light list cut to five, attenuation without a range cut-off | particles §8.14; runtime rule 13 |
 //! | [`surface`] | what the programs of a particle surface compute: output alpha, alpha-test source, doubling, fog, layers | runtime §9.1.1 |
 //! | [`runtime`] | classification, node start gates, start gating, attachment frames, owner scale vectors, the effect manager with sharing, release, lingering and housekeeping | runtime §4–§7 |
 //!

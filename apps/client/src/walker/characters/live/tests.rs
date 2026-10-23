@@ -293,6 +293,7 @@ fn package(stage: i32) -> Arc<LivePackage> {
         built_keys: (u32::try_from(stage).ok(), None),
         props: vec![ScreenProp {
             entity: PROP,
+            attached: true,
             location: LOCATION,
             bone_type: 0,
             offset: [0.0; 3],

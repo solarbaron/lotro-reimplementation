@@ -2292,6 +2292,17 @@ impl Walker {
                 eye: fx_eye,
                 characters: &self.characters,
                 lighting,
+                // Weather (`particle-runtime.md` §11.2): the state in use, the camera.
+                weather: self
+                    .frame_env
+                    .as_ref()
+                    .map(|f| effects::weather::WeatherInput {
+                        precipitation: f.precipitation,
+                        landscape_visible: self.scene.outdoor_visible,
+                        inside: self.camera_cell.is_some(),
+                        camera_dir: self.view().1,
+                        avatar: self.controls.avatar().map(|(p, _)| p),
+                    }),
             },
             &mut self.objects,
         );
@@ -3667,6 +3678,14 @@ impl Walker {
                 depth_bias: ctx.systems().depth_bias.as_deref(),
             };
             self.effects.decals.draw(pass, &view, &self.objects);
+            // `particle-runtime.md` §12 rule 16: the systems of the pass after
+            // post-processing in a stage after every other draw of the world pass.
+            effects::post_stage(
+                frame,
+                &camera,
+                fe.as_ref().filter(|_| lit).map(|f| &f.lighting),
+                self.effects.take_post_draws(),
+            );
             let ms = |a: Instant, b: Instant| b.saturating_duration_since(a).as_secs_f64() * 1e3;
             self.phase_ms[3] = ms(t0, t1);
             self.phase_ms[4] = ms(t1, t2);

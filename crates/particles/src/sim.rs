@@ -683,6 +683,20 @@ impl SystemSim {
     /// been placed (started) first; a spawn whose particle would be dead by `now`, beyond
     /// the caps or not finite is skipped. Returns whether a particle was added.
     pub fn spawn_at(&mut self, now: f64, t: f64, offset: Vec3, rng: &mut Ran2) -> bool {
+        self.spawn_on(0, now, t, offset, rng)
+    }
+
+    /// [`SystemSim::spawn_at`] on the emitter with index `emitter` (0 = the first; the
+    /// "one particle of emitter *k*" of `particle-runtime.md` §11.2, *k* = index + 1).
+    /// `false` when the system has no such emitter.
+    pub fn spawn_on(
+        &mut self,
+        emitter: usize,
+        now: f64,
+        t: f64,
+        offset: Vec3,
+        rng: &mut Ran2,
+    ) -> bool {
         let Some(start) = self.start else {
             return false;
         };
@@ -690,10 +704,10 @@ impl SystemSim {
             return false;
         }
         let desc = Arc::clone(&self.desc);
-        let (Some(e), Some(_)) = (desc.emitters.first(), self.emitters.first()) else {
+        let (Some(e), Some(own)) = (desc.emitters.get(emitter), self.emitters.get(emitter)) else {
             return false;
         };
-        let live_other = self.live_particles() - self.emitters[0].particles.len();
+        let live_other = self.live_particles().saturating_sub(own.particles.len());
         let room_left = self.config.max_live_particles.saturating_sub(live_other);
         let mut ctx = SpawnCtx {
             desc: &desc,
@@ -706,7 +720,9 @@ impl SystemSim {
             config: self.config,
             stats: &mut self.stats,
         };
-        let s = &mut self.emitters[0];
+        let Some(s) = self.emitters.get_mut(emitter) else {
+            return false;
+        };
         let before = s.particles.len();
         spawn(&mut ctx, s, t, offset, None, rng);
         s.particles.len() > before

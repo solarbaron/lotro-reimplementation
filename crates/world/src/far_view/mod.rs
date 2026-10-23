@@ -50,7 +50,10 @@ pub use horizon::{HorizonPlacement, MeshBounds};
 pub use load::{FarViewRecords, read_imposter_table, read_sector};
 pub use mesh::{Batch, FarMesh, MeshKind, build_batch, generated_index_list};
 pub use residency::{Change, Residency, ResidencyUpdate, Viewer, classify};
-pub use settings::{FarFade, FarViewSettings, Template};
+pub use settings::{
+    FarFade, FarViewSettings, TESSERA_DEVICE_CLASS, TESSERA_GRAPHICS_CORE, Template,
+    lighting_quality_level,
+};
 pub use sprites::{FarSprite, SpriteView, place_sprites};
 pub use state::{
     BuildJob, FarViewState, FarViewWork, SectorMeshes, SectorRecordState, SectorSlot, SpriteJob,

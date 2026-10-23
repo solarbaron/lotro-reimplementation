@@ -444,8 +444,8 @@ fn template_defaults_of(
 }
 
 /// Whether the far view hands the sector materials to the near terrain for the seam
-/// overlay (§6.5): `NearFarSeamBlending` on and the normal-mapped template wanted
-/// ([`FarViewSettings::seam_overlay`]) **and** the template that was read is the
+/// overlay (§6.5, FD18): the switch, the normal-mapped template wanted and the lighting
+/// inputs ([`FarViewSettings::seam_overlay`]) **and** the template that was read is the
 /// normal-mapped one (UNIQUEDB may name only the plain one, [`active_template`]).
 #[must_use]
 pub fn seam_enabled(settings: &FarViewSettings, template: &TemplateDefaults) -> bool {
@@ -2070,8 +2070,9 @@ mod tests {
         assert_eq!(far.pending(), 0);
     }
 
-    /// §6.5: the seam overlay needs `NearFarSeamBlending`, the normal-mapped template wanted
-    /// (`FarLandscapeNormalMaps` and graphics core 2 or 5) and read.
+    /// §6.5, FD16–FD18: the seam overlay needs `NearFarSeamBlending` (on), the
+    /// normal-mapped template wanted (`FarLandscapeNormalMaps`; the core is 5) and read, and
+    /// the lighting inputs (multi-pass lighting, lighting quality above 0).
     #[test]
     fn seam_overlay_gate() {
         let normal = TemplateDefaults::fallback(Template::NormalMapped);
@@ -2079,20 +2080,22 @@ mod tests {
         let mut s = FarViewSettings::default();
         assert!(!seam_enabled(&s, &normal), "built-in settings: off");
         s.normal_maps = true;
-        s.seam_blending = true;
+        assert!(!seam_enabled(&s, &normal), "lighting quality at level 0");
+        s.lighting_quality = 3;
+        assert!(seam_enabled(&s, &normal));
+        assert!(
+            !seam_enabled(&s, &plain),
+            "only the plain template was read"
+        );
         s.graphics_core = 0;
         assert!(!seam_enabled(&s, &normal), "graphics core not 2 or 5");
-        for core in [2, 5] {
-            s.graphics_core = core;
-            assert!(seam_enabled(&s, &normal));
-            assert!(
-                !seam_enabled(&s, &plain),
-                "only the plain template was read"
-            );
-        }
+        s.graphics_core = 5;
         s.seam_blending = false;
         assert!(!seam_enabled(&s, &normal), "the switch off");
         s.seam_blending = true;
+        s.multi_pass_lighting = false;
+        assert!(!seam_enabled(&s, &normal), "multi-pass lighting off");
+        s.multi_pass_lighting = true;
         s.normal_maps = false;
         assert!(!seam_enabled(&s, &normal), "the plain template wanted");
     }

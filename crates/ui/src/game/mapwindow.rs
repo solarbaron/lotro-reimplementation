@@ -1011,6 +1011,22 @@ impl MapWindowView {
 
     // ----- navigation -------------------------------------------------------------------
 
+    /// The player's dungeon recorded by the last [`MapWindowView::show_player_map`]
+    /// (§4.6 step 1) or [`MapWindowView::set_recorded_dungeon`]; `None` when the player was
+    /// in none. A caller compares it with the
+    /// player's current dungeon to run the selection when the dungeon changes.
+    #[must_use]
+    pub fn recorded_dungeon(&self) -> Option<u32> {
+        self.recorded_dungeon
+    }
+
+    /// Records the player's dungeon without showing anything (§4.6 "When": the dungeon is
+    /// recorded whenever it changes, whether or not a window exists; a window opened
+    /// without the player's map, by place lookup for instance, starts from that record).
+    pub fn set_recorded_dungeon(&mut self, dungeon: Option<u32>) {
+        self.recorded_dungeon = dungeon;
+    }
+
     /// The player's map (§4.6, MW9): the player's dungeon is recorded when it changes; with
     /// a recorded dungeon whose map is not shown, its dungeon map; else, with a valid
     /// position, the node of the area (`WorldMap` for an area listed by no node).

@@ -1628,13 +1628,14 @@ fn override_line_suppressed_chance_and_durations_9_4_9_5() {
 }
 
 #[test]
-fn short_recoveries_carry_no_timer_7_15() {
+fn short_recoveries_show_the_wrap_string_7_15() {
     let mut m = install();
     let recovery = m.p("Skill_SkillRecoveryTime", T::Float);
     let skill_name = m.p("Skill_Name", T::StringInfo);
     let hover_l = m.p("UI_Examination_Tooltip_0Click_Layout", T::DidRef);
     let hover_e = m.p("UI_Examination_Tooltip_0Click_Element", T::Enum);
     let quick = Did(0x7000_0170);
+    let none = Did(0x7000_0171);
     m.record(
         quick,
         vec![
@@ -1644,8 +1645,144 @@ fn short_recoveries_carry_no_timer_7_15() {
             (recovery, V::Float(0.5)),
         ],
     );
+    m.record(
+        none,
+        vec![
+            (hover_l, V::DidRef(L_EXAM)),
+            (hover_e, V::Enum(E_SKILL_TT)),
+            (skill_name, info(literal("Poke"))),
+            (recovery, V::Float(0.0)),
+        ],
+    );
     let e = TooltipEngine::new(m);
+    // 0 < T < 1: the wrap string with an empty timer text (revision 2, "Below one second").
     let t = tooltip_of(&e, quick, &SkillViewer::default());
+    assert_eq!(
+        row(&t, "Skill_RecoveryTime_Base").plain_text().trim_end(),
+        "Cooldown:"
+    );
+    assert_eq!(t.timers.len(), 1, "{:?}", t.timers);
+    assert!(!t.timers[0].counting);
+    // T ≤ 0 still empties the row.
+    let t = tooltip_of(&e, none, &SkillViewer::default());
     assert!(row(&t, "Skill_RecoveryTime_Base").is_empty());
     assert!(t.timers.is_empty(), "{:?}", t.timers);
+}
+
+#[test]
+fn a_counting_recovery_keeps_its_wrap_string_below_one_second_7_15() {
+    let viewer = SkillViewer {
+        cooldowns: vec![(SKILL, 12.5)],
+        ..SkillViewer::default()
+    };
+    let e = engine();
+    let m = e
+        .build_combat(&CombatRequest::hover(CombatSubject::Skill(SKILL)), &viewer)
+        .expect("tooltip");
+    let t = &m.timers[0];
+    assert_eq!(
+        e.timer_text(t, 12.0)
+            .map(|x| x.plain_text().trim_end().to_owned())
+            .as_deref(),
+        Some("Ready in")
+    );
+}
+
+/// A skill requiring a trait of the given nature (`None`: no nature).
+fn trait_skill(m: &mut Mem, skill: Did, tr: Did, nature: Option<u32>) {
+    let skill_name = m.p("Skill_Name", T::StringInfo);
+    let hover_l = m.p("UI_Examination_Tooltip_0Click_Layout", T::DidRef);
+    let hover_e = m.p("UI_Examination_Tooltip_0Click_Element", T::Enum);
+    let required = m.p("Skill_RequiredTrait", T::DidRef);
+    let trait_name = m.p("Trait_Name", T::StringInfo);
+    let trait_nature = m.p("Trait_Nature", T::Enum);
+    m.record(
+        skill,
+        vec![
+            (hover_l, V::DidRef(L_EXAM)),
+            (hover_e, V::Enum(E_SKILL_TT)),
+            (skill_name, info(literal("Stance"))),
+            (required, V::DidRef(tr)),
+        ],
+    );
+    let mut props = vec![(trait_name, info(literal("Mastery")))];
+    if let Some(n) = nature {
+        props.push((trait_nature, V::Enum(n)));
+    }
+    m.record(tr, props);
+}
+
+#[test]
+fn passive_skill_traits_use_their_token_7_13() {
+    // Natures by the spec's keys (the synthetic mapper names none of them).
+    let cases = [
+        (Some(1), true),   // Characteristic
+        (Some(13), true),  // PvMP
+        (Some(14), true),  // MountedCombat
+        (Some(19), true),  // Class_Burglar
+        (Some(28), true),  // Class_Specialization
+        (Some(33), true),  // Class_Corsair
+        (Some(2), false),  // a nature outside the rule
+        (Some(18), false), // just below the range
+        (Some(34), false), // just above it
+        (Some(39), false),
+        (None, false), // a trait without a nature
+    ];
+    for (i, (nature, passive)) in cases.into_iter().enumerate() {
+        let mut m = install();
+        let skill = Did(0x7000_0180 + i as u32);
+        let tr = Did(0x7000_0190 + i as u32);
+        trait_skill(&mut m, skill, tr, nature);
+        let e = TooltipEngine::new(m);
+        let t = tooltip_of(&e, skill, &SkillViewer::default());
+        let r = row(&t, "Skill_Trait_Base");
+        assert_eq!(r.state.as_deref(), Some("cantuse"), "{nature:?}");
+        if passive {
+            // Token 0x0E102ECC is absent here (an empty piece in the English table): the
+            // row is empty and left out.
+            assert!(r.is_empty(), "{nature:?}: {:?}", r.content);
+        } else {
+            assert_eq!(r.plain_text(), "Requires Mastery", "{nature:?}");
+        }
+    }
+}
+
+#[test]
+fn passive_skill_trait_token_text_and_viewer_trait_7_13() {
+    let mut m = install();
+    m.text(tokens::EXAMINATION_TABLE_KEY, st::PASSIVE_TRAIT, "Passive");
+    let skill = Did(0x7000_01A0);
+    let tr = Did(0x7000_01A1);
+    trait_skill(&mut m, skill, tr, Some(1));
+    let e = TooltipEngine::new(m);
+    let t = tooltip_of(&e, skill, &SkillViewer::default());
+    let r = row(&t, "Skill_Trait_Base");
+    assert_eq!(r.plain_text(), "Passive");
+    assert_eq!(r.state.as_deref(), Some("cantuse"));
+    // A viewer who has the trait: not `cantuse`, so the row's format.
+    let viewer = SkillViewer {
+        traits: vec![tr],
+        ..SkillViewer::default()
+    };
+    let t = tooltip_of(&e, skill, &viewer);
+    let r = row(&t, "Skill_Trait_Base");
+    assert_eq!(r.plain_text(), "Requires Mastery");
+    assert_eq!(r.state, None);
+}
+
+#[test]
+fn passive_natures_are_read_from_the_mapper_by_label_7_13() {
+    let mut m = install();
+    let trait_nature = m.p("Trait_Nature", T::Enum);
+    m.enum_keys
+        .insert((trait_nature, "Characteristic".to_owned()), 100);
+    let passive = Did(0x7000_01B0);
+    let moved = Did(0x7000_01B2);
+    trait_skill(&mut m, passive, Did(0x7000_01B1), Some(100));
+    trait_skill(&mut m, moved, Did(0x7000_01B3), Some(1));
+    let e = TooltipEngine::new(m);
+    let t = tooltip_of(&e, passive, &SkillViewer::default());
+    assert!(row(&t, "Skill_Trait_Base").is_empty());
+    let t = tooltip_of(&e, moved, &SkillViewer::default());
+    assert_eq!(row(&t, "Skill_Trait_Base").plain_text(), "Requires Mastery");
 }

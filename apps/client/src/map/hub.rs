@@ -26,6 +26,7 @@ use tessera_ui::game::mapfallback::P5Art;
 use tessera_ui::game::radar::RadarInput;
 
 use super::data::{MapFacts, MapSettings};
+use super::dungeon::{PlayerDungeon, reported_dungeon};
 use super::lookup::find_place;
 use super::texts::InstallMapTexts;
 use super::ui::{MapUi, player_map};
@@ -135,6 +136,9 @@ pub struct MapHub {
     /// Changes of the window's settings are written to Tessera's settings file
     /// ([`Self::with_saved_prefs`]).
     persist: bool,
+    /// The player's dungeon (`map-windows.md` §4.6 revision 1: the session's
+    /// `Dungeon_CurrentDungeon`, else the interior cell's `Dungeon_DID`, read off the frame).
+    dungeon: PlayerDungeon,
 }
 
 impl std::fmt::Debug for MapHub {
@@ -383,7 +387,15 @@ impl MapHub {
         });
         let data = npc.data().cloned();
         let texts = InstallMapTexts::new(facts.as_ref().map(|f| &f.constants), data.as_deref());
-        let player = radar.map(|r| player_map(r, facts.as_deref()));
+        // §4.6 revision 1: the session's `Dungeon_CurrentDungeon` first, else the interior
+        // cell's `Dungeon_DID`.
+        let reader = facts.as_ref().and_then(|f| f.cell_reader.as_ref());
+        let reported = reported_dungeon(
+            world.player_state(),
+            facts.as_ref().and_then(|f| f.current_dungeon_pid),
+        );
+        let dungeon = radar.and_then(|r| self.dungeon.update(r, reported, reader));
+        let player = radar.map(|r| player_map(r, facts.as_deref(), dungeon));
         let mut lines = Vec::new();
         {
             let mut hui = host.ui_mut();

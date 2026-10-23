@@ -37,6 +37,7 @@ const CURRENT: u32 = 0x1000_0018;
 const BIND_L: u32 = 0x1000_0021;
 const BIND_R: u32 = 0x1000_0022;
 const CLOSE: u32 = 0x1000_0030;
+const DRAG: u32 = 0x1000_0032;
 const PIN_LIST: u32 = 0x1000_0031;
 const HOST_LAYOUT: u32 = 0x22FF_5001;
 const SLOT: u32 = 0x1000_0040;
@@ -109,8 +110,9 @@ fn exam_layout() -> UiLayout {
             args: None,
         })),
     );
-    // The pinned window: a ListBox for the tooltip and a close button.
-    let mut pinned = field(c.ids.pinned_tooltip, 0, 0, 250, 140);
+    // The pinned window at (300, 200): a ListBox for the tooltip, a drag bar (a Button)
+    // and a close button.
+    let mut pinned = field(c.ids.pinned_tooltip, 300, 200, 250, 140);
     pinned = prop(pinned, c.pids.pinned_offset_x, int(18));
     pinned = prop(pinned, c.pids.pinned_offset_y, int(18));
     pinned = child(pinned, typed(PIN_LIST, vv.types.list_box, 5, 25, 229, 100));
@@ -118,6 +120,7 @@ fn exam_layout() -> UiLayout {
         pinned,
         z(typed(CLOSE, vv.types.button, 230, 2, 16, 16), 0, 9),
     );
+    pinned = child(pinned, z(typed(DRAG, vv.types.button, 0, 0, 220, 20), 0, 8));
     // The name-and-icon row (§4.3): a horizontal list of the icon field and the name.
     let mut nameicon = typed(NAMEICON, t.auto_resize_list_box, 0, 0, 229, 48);
     nameicon = prop(nameicon, vv.pids.lb_horizontal, b(true));
@@ -625,31 +628,36 @@ fn item_slot_hover_requests_the_examination_tooltip() {
 #[test]
 fn pin_toggle_window_offset_limit_and_close() {
     let mut ui = ui();
-    let mut tips = ExamTooltips::new(cv());
+    let mut tips = ExamTooltips::new(cv()).with_close_button_id(CLOSE);
     let input = input_14_1();
-    let shown = tips.show(&mut ui, &input, (100, 100)).unwrap();
-    let at = shown.positions[0];
+    tips.show(&mut ui, &input, (100, 100)).unwrap();
     assert_eq!(
         tips.pin(&mut ui, &input, (100, 100)).unwrap(),
         PinOutcome::Pinned
     );
     let (_, w) = tips.pinned().next().unwrap().clone();
     let wb = ui.layout_box(w.window).unwrap();
-    assert_eq!((wb.l, wb.t), (at.0 + 18, at.1 + 18));
+    // §10 answer (1), IT28: the first window opens at the window's own design position
+    // (k = 0), not next to the hover tooltip.
+    assert_eq!((wb.l, wb.t), (300, 200));
     // The window grew by what the tooltip needs beyond its list box (180 × 122 vs 229 × 100).
     assert_eq!((wb.w(), wb.h()), (250, 162));
     assert_eq!(
         ui.list_entries(ui.find_descendant(w.window, PIN_LIST).unwrap()),
         vec![w.tooltip.frame]
     );
+    // §10 answer (2): only `PinnedTooltipCloseButton` closes, not the drag bar.
     assert_eq!(w.close_buttons.len(), 1);
+    assert_eq!(ui.element_id(w.close_buttons[0]), Some(CLOSE));
     // The same item again: the toggle closes it.
     assert_eq!(
         tips.pin(&mut ui, &input, (100, 100)).unwrap(),
         PinOutcome::Unpinned
     );
     assert!(!ui.exists(w.window));
-    // 20 at most.
+    // 20 at most; each new window cascades by k × (18, 18), k counting the windows opened
+    // so far (one before these) modulo 20.
+    assert_eq!(tips.pin_counter(), 1);
     for i in 0..MAX_PINNED as u64 {
         let mut it = input.clone();
         it.key.instance = i + 1;
@@ -657,7 +665,12 @@ fn pin_toggle_window_offset_limit_and_close() {
             tips.pin(&mut ui, &it, (100, 100)).unwrap(),
             PinOutcome::Pinned
         );
+        let (_, w) = tips.pinned().last().unwrap().clone();
+        let wb = ui.layout_box(w.window).unwrap();
+        let k = i32::try_from((i + 1) % 20).unwrap();
+        assert_eq!((wb.l, wb.t), (300 + 18 * k, 200 + 18 * k), "window {i}");
     }
+    assert_eq!(tips.pin_counter(), 1);
     let mut extra = input.clone();
     extra.key.instance = 999;
     assert_eq!(
@@ -666,6 +679,19 @@ fn pin_toggle_window_offset_limit_and_close() {
     );
     // The close button's click closes its window.
     let (key, w) = tips.pinned().next().unwrap().clone();
+    // The drag bar's click does not close it.
+    let drag = ui.find_descendant(w.window, DRAG).unwrap();
+    let drag_click = UiEvent::Game {
+        message: Message {
+            seq: 0,
+            source: drag,
+            source_id: DRAG,
+            msg: ui.vocab().msgs.button_click,
+            arg: MsgArg::default(),
+        },
+    };
+    assert!(!tips.handle_event(&mut ui, &drag_click));
+    assert!(ui.exists(w.window));
     let click = UiEvent::Game {
         message: Message {
             seq: 0,
@@ -679,6 +705,23 @@ fn pin_toggle_window_offset_limit_and_close() {
     assert!(!ui.exists(w.window));
     assert!(!tips.pinned().any(|(k, _)| *k == key));
     assert_eq!(tips.pinned().count(), MAX_PINNED - 1);
+}
+
+#[test]
+fn without_the_close_button_id_every_window_button_closes() {
+    // The fallback while `PinnedTooltipCloseButton` is unresolved: every Button of the
+    // window outside the tooltip.
+    let mut ui = ui();
+    let mut tips = ExamTooltips::new(cv());
+    tips.pin(&mut ui, &input_14_1(), (100, 100)).unwrap();
+    let (_, w) = tips.pinned().next().unwrap().clone();
+    let mut ids: Vec<u32> = w
+        .close_buttons
+        .iter()
+        .map(|k| ui.element_id(*k).unwrap())
+        .collect();
+    ids.sort_unstable();
+    assert_eq!(ids, vec![CLOSE, DRAG]);
 }
 
 // ----- §6.2 step 3: the name row's font fit ----------------------------------------------
@@ -850,8 +893,9 @@ fn prune_unregisters_the_close_buttons_of_windows_closed_elsewhere() {
 
 #[test]
 fn long_name_keeps_the_name_and_icon_row_within_the_list() {
-    // §4.3, §5 step 3, §7: the name after the 40-pixel icon wraps within what is left of
-    // the list's 229 pixels, so the row never runs past the list box.
+    // §4.3, §5 step 3, §7 (answer, IT25): the name after the 40-pixel icon wraps within
+    // its own layout width (180, `Desc` mode, Tessera rule of Q22), not within what is left
+    // of the list's 229 pixels; the row grows to fit both and stays within the list box.
     let mut ui = ui();
     let tips = ExamTooltips::new(cv());
     let mut input = input_14_1();
@@ -879,8 +923,50 @@ fn long_name_keeps_the_name_and_icon_row_within_the_list() {
     assert!(rb.w() <= 229, "row {rb:?} wider than the list's max_width");
     let name = ui.find_descendant(row, NAME).unwrap();
     let nb = ui.layout_box(name).unwrap();
-    assert_eq!((nb.l, nb.w()), (40, 189));
-    assert_eq!(built.size.0, 239);
+    assert_eq!((nb.l, nb.w()), (40, 180));
+    assert_eq!(rb.w(), 220);
+    assert_eq!(built.size.0, 230);
+}
+
+#[test]
+fn long_name_in_a_vertical_list_wraps_at_its_own_width() {
+    // §5 and §7 answers (IT25, Tessera rule of Q22): the name (`Desc` mode) wraps within its
+    // own layout width (180) wherever it sits, here directly in a vertical list whose limit
+    // is 229 (the kinship layout's list).
+    let mut ui = ui();
+    let tips = ExamTooltips::new(cv());
+    let mut input = input_14_1();
+    input.frame = ExamTemplate {
+        layout: KIN_LAYOUT,
+        element: KFRAME,
+    };
+    input.templates = None;
+    input.rows = vec![ExamRow::text(LONG_NAME)];
+    let built = tips.build(&mut ui, &input).unwrap();
+    assert_eq!(built.rows.len(), 1);
+    let nb = ui.layout_box(built.rows[0]).unwrap();
+    assert_eq!(
+        nb.w(),
+        180,
+        "{nb:?}: the name's own width, not the list's 229"
+    );
+    // Another text of the same list still wraps at the list's limit.
+    let mut other = input.clone();
+    other.frame = ExamTemplate {
+        layout: EXAM,
+        element: FRAME,
+    };
+    other.templates = Some(vec![ExamTemplate {
+        layout: EXAM,
+        element: DESC,
+    }]);
+    let built = tips.build(&mut ui, &other).unwrap();
+    let db = ui.layout_box(built.rows[0]).unwrap();
+    assert_eq!(
+        db.w(),
+        229,
+        "{db:?}: a generic row wraps at the list's limit"
+    );
 }
 
 #[test]

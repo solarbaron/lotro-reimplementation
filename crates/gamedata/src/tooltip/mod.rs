@@ -750,6 +750,7 @@ pids! {
         vital_consumes_all = "Skill_Vital_Consumes_All",
         skill_required_trait = "Skill_RequiredTrait",
         trait_name = "Trait_Name",
+        trait_nature = "Trait_Nature",
         skill_recovery = "Skill_SkillRecoveryTime",
         skill_user_effects = "Skill_UserEffectList",
         skill_critical_effects = "Skill_CriticalEffectList",
@@ -810,6 +811,7 @@ pub struct TooltipEngine<D: TooltipData> {
     cooldowns: OnceLock<Option<DurationMap>>,
     decays: OnceLock<Option<DurationMap>>,
     slot_exclusions: OnceLock<Vec<u32>>,
+    passive_natures: OnceLock<skill::PassiveNatures>,
 }
 
 impl<D: TooltipData> std::fmt::Debug for TooltipEngine<D> {
@@ -891,6 +893,7 @@ impl<D: TooltipData> TooltipEngine<D> {
             cooldowns: OnceLock::new(),
             decays: OnceLock::new(),
             slot_exclusions: OnceLock::new(),
+            passive_natures: OnceLock::new(),
         }
     }
 

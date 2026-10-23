@@ -4,11 +4,11 @@
 
 | | |
 |---|---|
-| **Status** | Accepted (revision of 2026-10-23, panel, use and UI-scale actions: §1.2 K50–K52, new §8.3, the §8.2 OPENs, §12.14.2 rows and its P1 OPEN; passed independent review 2026-10-23). Before: Accepted (P2 revision of 2026-10-10, targeting and quickslot actions: §1.2 K47–K49, §8.2, §12.11 rows 9 and 11, §12.14.2; passed review 2026-10-11; before that, revision of 2026-10-06 applying [decision 0014](../decisions/0014-ui-input-bridge.md), reviewed the same day) |
+| **Status** | **Accepted** (round-3 revision of 2026-10-23: independent review 2026-10-23 by spec-review:spec-ui-r3:1 (independent session): passed; see the review record. The revision: §1.2 K50 wording and new K53, §8.3 rows `toggle_map` and `toggle_finder`, the `toggle_skills` behaviour, three implementer notes answered in §8.3, §7.8.6 and §12.10, §12.14.2 rows; see the change log). Before: Accepted (revision of 2026-10-23, panel, use and UI-scale actions: §1.2 K50–K52, new §8.3, the §8.2 OPENs, §12.14.2 rows and its P1 OPEN; passed independent review 2026-10-23). Before: Accepted (P2 revision of 2026-10-10, targeting and quickslot actions: §1.2 K47–K49, §8.2, §12.11 rows 9 and 11, §12.14.2; passed review 2026-10-11; before that, revision of 2026-10-06 applying [decision 0014](../decisions/0014-ui-input-bridge.md), reviewed the same day) |
 | **Last updated** | 2026-10-23 |
 | **Author role** | §0–§11: Implementer (clean room) for Tessera's own design; everything there is a **Tessera design decision**, not a description of another program, **except** the compatibility parts listed in §0 (the command names and default bindings of `pointer` and the UI contexts in §2.2, §8 and §8.1, the activation timing of §7.7, the UI-band ordering rules of §3.2, the push rule of `ScrollableControls_Mouse` in §8.1, the repeat rule of §7.8.6 and "the same command goes on to game code" in §7.8.3), which are written by the spec writer (dirty room) with the provenance of §1.1. The Tessera design added on 2026-10-06 transcribes decision 0014 (IB) and is marked with its section. §12–§13, the 2026-10-05 revisions of §1 and §11, and the 2026-10-06 revision: Spec writer (dirty room); §12 describes the original client's key-mapping file and key-map data, with provenance (§1.2). |
 | **Reviewer** | Claude review session (spec-writer agent, independent session); 2026-10-23 revision: spec-review:spec-ui-input:2 (independent session, wrote no part of it); P2 revision: spec reviewer, an independent session that wrote no part of it (2026-10-11, passed) |
-| **Review record** | **Revision of 2026-10-23, review 2026-10-23** (reviewer spec-review:spec-ui-input:2, an independent session that wrote no part of the revision; text of the uncommitted worktree diff against main): **passed**; status Revised → Accepted. Checked (CLEAN_ROOM.md §5.3): functional facts and labelled Tessera **Decisions** only; no code or pseudo-code; no copied prose; command names and IDs quoted for interoperability, IDs marked as this install's; no game text, keys, hostnames or traffic; K50–K52 carry OBS provenance with the re-read date; the Shift OPEN stays open (owner); no M4 pass. Own read-only probes of the install (M1, a new throwaway parser of the §12.9 layout): the four 0x1D records give 178 + 77 + 0 + 1 = 256 bindings with no bytes left over; every K50 binding (key code, mask, activation 0x03, input map `Main`) is as stated and none of these commands is bound in another record; the three profession toggles are unbound; Shift + L, Shift + B, Shift + I, Shift + C, Ctrl + T, Ctrl + U, Ctrl + H, Ctrl + J, Ctrl + K carry other commands (K50); every K50 command is type 2 in table A of 0x51000000 (K51); the four wheel bindings all have mask 0 (K52). Against the code (read only to compare): every action name of §8.3 already registered matches `crates/input/src/defaults.rs` (`toggle_character`, `toggle_bags`, `toggle_bag_1` … `6`, `pin_tooltip`, `toggle_crafting`, `toggle_crafting_1` … `3`, `ui_scale_up`, `ui_scale_down`, `ui_scale_auto`, `ui_interface_window`); `toggle_wallet`, `toggle_quest_log`, `use_selection`, `toggle_traits`, `toggle_skills`, `ui_window_scale_up`/`_down` are new; no built-in default (including the §8.2 and P4 ones) uses a walker key of §8.3.1; `walker.md` §14.2–§14.3 lists the moved keys as the closed OPEN says. **Non-blocking:** the change-log row could list under "Implemented behaviour that changes" the three default moves (`toggle_bags` B → I, `toggle_bag_1` I → none, `pin_tooltip` Ctrl+T → H), which change `defaults.rs` and its P6 test comment. **P2 revision, review 2026-10-11** (text of commit 7b14f27 on branch p2, together with `combat-ui.md` review 1): **passed**; status Revised → Accepted. Checked (CLEAN_ROOM.md §5.3): functional facts only; no code or pseudo-code; no copied prose; command and label names quoted for interoperability; no game text, keys, hostnames or traffic; K47–K49 carry OBS provenance with the re-read date; the context, action names and exact policy are marked Tessera's; the Shift and walker-key questions are OPEN; nothing under a closed gate. Spot checks, own read-only probes of the install (M1): every K47 binding (key codes, meta-key bits 1 Shift, 2 Ctrl, 3 Alt, activation 0x03) is in `Main` of 0x1D000000, and none of these commands is bound in 0x1D000001, 0x1D000004 or 0x1D000009; the fifteen command IDs of the §8.2 table; K48 (all `SELECTION_` commands of the record, `QUICKSLOT_1` … `QUICKSLOT_72` and the two page commands have type 2; `SELECTION_OFF`, `SELECTION_NEXT_FELLOW`, `SELECTION_PREVIOUS_FELLOW`, `AUTOATTACK` and `RESURRECT` are absent from table A); K49 (72 of 72 entries pair index *i* with `QUICKSLOT_`(*i* + 1)). **Non-blocking:** §8.2 opening sentence calls every action type 2, while `SELECTION_OFF` (`target_clear`) is not in the action map (K48 says so); the OBS re-read could also name 0x1D000004, which binds none of these commands. Full record in the review log (decision 0018). Revision 2026-10-06 (decision 0014): independent review session (spec-writer agent, separate session), 2026-10-06: **passed**, Accepted; its ten non-blocking notes were applied the same day. Earlier: re-review 2026-10-06 of the §12 importer text: **passed**, Accepted; first review and re-review 2026-10-05: changes requested (§14). Full records in the review log (decision 0018). |
+| **Review record** | **Review 2026-10-23 of the round-3 revision (K53, `toggle_map`, `toggle_finder`, the `toggle_skills` behaviour, the §8.3, §7.8.6 and §12.10 answers, §12.14.2 rows)** (spec-review:spec-ui-r3:1 (independent session), Clean-Room-Role: review; wrote no part of the revision or of the code): **passed**; status Revised → Accepted. Checked: checked against CLEAN_ROOM.md §5.3, every item, on the uncommitted worktree diff against main; contamination screen clean (no code, pseudo-code or listing-shaped text; no disassembly prose; no game text, keys, hostnames or traffic; hex values are data IDs read from the install; nothing outside decision 0034 §2); answers are functional facts with provenance or labelled Tessera rules, unknowns are OPEN; relative links and anchors of the six package specs resolve (own check). Spot checks (own read-only M1 probes): in 0x1D000000 `Main` binds 0x10000041 to M with mask 0, 0x100001B0 to Ctrl + J and 0x10000230 to Shift + M, all with activation 0x03, and none of the three is bound in 0x1D000001, 0x1D000004 or 0x1D000009; the `InputActions` mapper names them `ToggleMapPanel`, `ToggleWorldJoin`, `ToggleMountedCombatUI`; both toggles are type 2 in table A of 0x51000000 (K53). The §8.3 and §12.10 answers agree with decision 0014 D7 and D9 and with `progression-panels.md` §1.4. Non-blocking: none. Earlier: **Revision of 2026-10-23, review 2026-10-23** (reviewer spec-review:spec-ui-input:2, an independent session that wrote no part of the revision; text of the uncommitted worktree diff against main): **passed**; status Revised → Accepted. Checked (CLEAN_ROOM.md §5.3): functional facts and labelled Tessera **Decisions** only; no code or pseudo-code; no copied prose; command names and IDs quoted for interoperability, IDs marked as this install's; no game text, keys, hostnames or traffic; K50–K52 carry OBS provenance with the re-read date; the Shift OPEN stays open (owner); no M4 pass. Own read-only probes of the install (M1, a new throwaway parser of the §12.9 layout): the four 0x1D records give 178 + 77 + 0 + 1 = 256 bindings with no bytes left over; every K50 binding (key code, mask, activation 0x03, input map `Main`) is as stated and none of these commands is bound in another record; the three profession toggles are unbound; Shift + L, Shift + B, Shift + I, Shift + C, Ctrl + T, Ctrl + U, Ctrl + H, Ctrl + J, Ctrl + K carry other commands (K50); every K50 command is type 2 in table A of 0x51000000 (K51); the four wheel bindings all have mask 0 (K52). Against the code (read only to compare): every action name of §8.3 already registered matches `crates/input/src/defaults.rs` (`toggle_character`, `toggle_bags`, `toggle_bag_1` … `6`, `pin_tooltip`, `toggle_crafting`, `toggle_crafting_1` … `3`, `ui_scale_up`, `ui_scale_down`, `ui_scale_auto`, `ui_interface_window`); `toggle_wallet`, `toggle_quest_log`, `use_selection`, `toggle_traits`, `toggle_skills`, `ui_window_scale_up`/`_down` are new; no built-in default (including the §8.2 and P4 ones) uses a walker key of §8.3.1; `walker.md` §14.2–§14.3 lists the moved keys as the closed OPEN says. **Non-blocking:** the change-log row could list under "Implemented behaviour that changes" the three default moves (`toggle_bags` B → I, `toggle_bag_1` I → none, `pin_tooltip` Ctrl+T → H), which change `defaults.rs` and its P6 test comment. **P2 revision, review 2026-10-11** (text of commit 7b14f27 on branch p2, together with `combat-ui.md` review 1): **passed**; status Revised → Accepted. Checked (CLEAN_ROOM.md §5.3): functional facts only; no code or pseudo-code; no copied prose; command and label names quoted for interoperability; no game text, keys, hostnames or traffic; K47–K49 carry OBS provenance with the re-read date; the context, action names and exact policy are marked Tessera's; the Shift and walker-key questions are OPEN; nothing under a closed gate. Spot checks, own read-only probes of the install (M1): every K47 binding (key codes, meta-key bits 1 Shift, 2 Ctrl, 3 Alt, activation 0x03) is in `Main` of 0x1D000000, and none of these commands is bound in 0x1D000001, 0x1D000004 or 0x1D000009; the fifteen command IDs of the §8.2 table; K48 (all `SELECTION_` commands of the record, `QUICKSLOT_1` … `QUICKSLOT_72` and the two page commands have type 2; `SELECTION_OFF`, `SELECTION_NEXT_FELLOW`, `SELECTION_PREVIOUS_FELLOW`, `AUTOATTACK` and `RESURRECT` are absent from table A); K49 (72 of 72 entries pair index *i* with `QUICKSLOT_`(*i* + 1)). **Non-blocking:** §8.2 opening sentence calls every action type 2, while `SELECTION_OFF` (`target_clear`) is not in the action map (K48 says so); the OBS re-read could also name 0x1D000004, which binds none of these commands. Full record in the review log (decision 0018). Revision 2026-10-06 (decision 0014): independent review session (spec-writer agent, separate session), 2026-10-06: **passed**, Accepted; its ten non-blocking notes were applied the same day. Earlier: re-review 2026-10-06 of the §12 importer text: **passed**, Accepted; first review and re-review 2026-10-05: changes requested (§14). Full records in the review log (decision 0018). |
 | **Implements into** | `crates/input` (`tessera-input`); the importer of §12 also reads records through `crates/dat`/`crates/formats` |
 | **Companion docs** | `docs/ARCHITECTURE.md` §16 (input pipeline), §17 (settings directories), §20.3 (frame loop, 30 Hz fixed tick); `mesh.md` §11 (axes, units, handedness, model facing); `install-layout.md` §8.1 (settings folder), §10 (`--keymap`); `records.md` §1 (VLE, TSize, Pascal string), §7 (enum mappers), §8 (DID maps); `property-system.md` (DID-map groups).; for the UI bridge: [decision 0014](../decisions/0014-ui-input-bridge.md) (**IB**), `ui-behaviour.md` (**UB**), `ui-widgets.md` (**UW**), `lua-plugin-api.md` (**LPA**), `chat-window.md` (**CW**); for the P2 targeting and quickslot actions: [`combat-ui.md`](combat-ui.md) (§3.3, §9.2) |
 
@@ -99,7 +99,9 @@ the importer it specifies never writes the original's file or the install.
 | Modifier policies of the pointer and UI actions (§2.1, §8) | IB D2 | Decision (IB) |
 | InputMap → context table and push rules other than `ScrollableControls_Mouse` (§8.1) | IB D5 | Decision (IB) |
 | Panel, use and UI-scale action names, context, policy and the Tessera departures from the original's defaults (§8.3) | this revision; `ui-scaling.md` §7.3, §7.4; `walker.md` §14.2–§14.3 | Decision |
-| Default keys of the panel and use actions that follow the original (§8.3) | K50 | Confirmed 2026-10-23 |
+| Default keys of the panel and use actions that follow the original (§8.3) | K50, K53 | Confirmed 2026-10-23 |
+| What `ToggleSkillPanel` and `ToggleTraitPanel` open in the original (§8.3 behaviour column) | `progression-panels.md` §1.4 (BIN there) | BIN (via PP) |
+| Where declined panel commands go, and the no-data rules of §7.8.6 and §12.10 (§8.3 notes) | this revision; IB D7, D9 | Decision |
 | Everything else in §2–§11 (syntax, limits, game-band defaults, algorithms, tuning numbers) | Tessera design, this document | Decision |
 
 <a id="s1-2"></a>
@@ -167,8 +169,9 @@ Sources:
 | K47 | Default bindings of the targeting and quickslot commands, all in `Main` of 0x1D000000 with activation 0x03 (no other record binds them): `SELECTION_NEAREST_FOE` Backspace; `SELECTION_NEXT_FOE` Tab; `SELECTION_PREVIOUS_FOE` Shift (bit 1) + Tab; `SELECTION_NEAREST_PC` Ctrl (bit 2) + Tab and F9; `SELECTION_NEXT_PC` Shift + F9; `SELECTION_PREVIOUS_PC` Ctrl + F9; `SELECTION_NEAREST_CREATURE` F10; `SELECTION_NEXT_CREATURE` Shift + F10; `SELECTION_PREVIOUS_CREATURE` Ctrl + F10; `SELECTION_SELF` Backslash; `SELECTION_ASSIST` F; `SELECTION_NEAREST_ITEM` Delete; `SELECTION_NEAREST_FELLOW` F8; `SelectFellowOne` … `Six` F1 … F6; `AssistFellowTwo` … `Six` Shift + F2 … F6. `QUICKSLOT_1` … `QUICKSLOT_12` on the keys 1 … 9, 0, Minus, Equals (codes 0x02 … 0x0D) with mask 0; `QUICKSLOT_13` … `24` the same keys with Ctrl (bit 2); `25` … `36` with Alt (bit 3); `37` … `48` with Shift (bit 1). `QUICKSLOT_49` … `72`, `SELECTION_OFF`, `SELECTION_LAST`, `SELECTION_LAST_ATTACKER`, `SELECTION_NEXT_ITEM`, `SELECTION_PREVIOUS_ITEM` and `AUTOATTACK` have no default binding (§8.2, §12.14.2) | OBS (records) | Confirmed 2026-10-10 |
 | K48 | Toggle types (table A of 0x51000000): every `SELECTION_` command above, `QUICKSLOT_1` … `QUICKSLOT_72` and `Quickslot_Page_Up`/`Down` are type 2 (Impulse); `SELECTION_OFF`, `SELECTION_NEXT_FELLOW`, `SELECTION_PREVIOUS_FELLOW`, `AUTOATTACK` and `RESURRECT` are not in the default action map (§8.2) | OBS | Confirmed 2026-10-10 |
 | K49 | `UNIQUEDB` label `UI_ShortcutActivationInputMap` (key 0x10000010 → property set 0x7800000D here) holds `UI_Shortcut_InputMap_Array` with 72 `UI_Shortcut_InputMap_Entry` structs: `UI_Shortcut_InputMap_ShortcutIndex` *i* and `UI_Shortcut_InputMap_InputAction` = `QUICKSLOT_`(*i* + 1), for *i* = 0 … 71 (§8.2; `combat-ui.md` §9.2) | OBS | Confirmed 2026-10-10 |
-| K50 | Default bindings of the panel and use commands, all in `Main` of 0x1D000000, mask 0 unless stated, activation 0x03 (no other record binds them): `ToggleJournalPanel` (0x10000049) C; `QUICKSLOT_BACKPACK` (0x10000094) I; `QUICKSLOT_BACKPACK1` … `6` (0x10000016, 0x1000001E, 0x10000025, 0x1000002D, 0x10000039, 0x1000022F) Ctrl (bit 2) + F1 … F6; `TOOLTIP_DETACH` (0x1000001A) H; `TogglePaperItemPanel` (0x100001CD) B; `ToggleQuestPanel` (0x1000004A) L; `USE` (0x10000085) U; `ToggleTraitPanel` (0x10000036) J; `ToggleSkillPanel` (0x1000001B) K; `ToggleCraftingPanel` (0x10000040) T; `ToggleSocialPanel` (0x10000035) O. `ToggleCraftingProf1Panel` (0x100001BF), `Prof2Panel` (0x100001BE) and `Prof3Panel` (0x100001C0) have no binding. The same keys with a modifier carry other commands that Tessera does not define (for example Shift + L, Shift + B, Shift + I, Shift + C, Ctrl + T, Ctrl + U, Ctrl + H, Ctrl + J, Ctrl + K), so the exact policy keeps them apart (§8.3) | OBS (records) | Confirmed 2026-10-23 |
+| K50 | Default bindings of the panel and use commands, all in `Main` of 0x1D000000, mask 0 unless stated, activation 0x03 (no other record binds them): `ToggleJournalPanel` (0x10000049) C; `QUICKSLOT_BACKPACK` (0x10000094) I; `QUICKSLOT_BACKPACK1` … `6` (0x10000016, 0x1000001E, 0x10000025, 0x1000002D, 0x10000039, 0x1000022F) Ctrl (bit 2) + F1 … F6; `TOOLTIP_DETACH` (0x1000001A) H; `TogglePaperItemPanel` (0x100001CD) B; `ToggleQuestPanel` (0x1000004A) L; `USE` (0x10000085) U; `ToggleTraitPanel` (0x10000036) J; `ToggleSkillPanel` (0x1000001B) K; `ToggleCraftingPanel` (0x10000040) T; `ToggleSocialPanel` (0x10000035) O. `ToggleCraftingProf1Panel` (0x100001BF), `Prof2Panel` (0x100001BE) and `Prof3Panel` (0x100001C0) have no binding. The same keys with a modifier carry other commands that Tessera does not define (for example Shift + L, Shift + B, Shift + I, Shift + C, Ctrl + T, Ctrl + U, Ctrl + H, Ctrl + K; Ctrl + J carries `ToggleWorldJoin`, which §8.3 defines since the round-3 revision, K53), so the exact policy keeps them apart (§8.3) | OBS (records) | Confirmed 2026-10-23 |
 | K51 | Toggle types (table A of 0x51000000): every command of K50, the three profession toggles included, is type 2 (Impulse) (§8.3) | OBS | Confirmed 2026-10-23 |
+| K53 | Default bindings of the map and finder commands, in `Main` of 0x1D000000 with activation 0x03 (no other record binds them): `ToggleMapPanel` (0x10000041) M, mask 0; `ToggleWorldJoin` (0x100001B0) Ctrl (bit 2) + J. Both are type 2 (Impulse) in table A of 0x51000000. Shift (bit 1) + M carries `ToggleMountedCombatUI`, which Tessera does not define (§8.3) | OBS (records 0x1D000000, 0x1D000001, 0x1D000004, 0x1D000009 and 0x51000000 read again on 2026-10-23, byte-identical to the earlier reads) | Confirmed 2026-10-23 |
 | K52 | Every default binding of the mouse wheel (code 0x08) has meta-key mask 0: `CameraInstantMoveToward`/`MoveAway` in `Main` and `ScrollUp`/`ScrollDown` in `ScrollableControls_Mouse` (0x1D000001); no record binds the wheel with Ctrl, Shift, Alt or Super (§8.3, `ui-scaling.md` §7.4) | OBS | Confirmed 2026-10-23 |
 | K46 | The four modifier-click commands are bound in `Main` (0x1D000000) with activation 0x06: `DressingRoom` Ctrl (bit 2) + button 0, `AutoLootAll` Shift (bit 1) + button 1, `ItemLinkToChat` Ctrl + button 1, `MultiUseItem` Alt (bit 3) + button 1; `VendorBuyUI` binds `SelectRight` to Shift + button 1 with 0x06 (§11) | OBS | Confirmed |
 
@@ -1074,6 +1077,19 @@ Holds and pulses without a command name are not offered either (§2.2).
 - The UI routes a Repeat like a Start (`Element_key_press` again and, if not consumed,
   `KeyDown` again; LPA §13.12.2 already expects a repeated start).
 
+> **OPEN (implementer, 2026-10-23):** (`apps/client`, follow-up) the UI host now reads table A
+> of the default action map at start-up for the UI's toggle types (LPA §13.12.1), but the
+> client does not yet hand the mapper the set of type-3 command IDs, so key repeat still
+> follows the built-in `repeat` flags.
+>
+> **Answered (spec writer, 2026-10-23):** the rule above stands and is complete; this is a
+> conformance gap. Tessera rules for where the set comes from and when: the set is taken from
+> the same read of table A that gives the UI its toggle types (IB D9), so the two never
+> disagree; it is handed to the mapper as soon as that read completes, before the first offer
+> that follows it. Until then (and for good when the read fails or the record is missing),
+> the actions' built-in `repeat` flags decide, as without action-map data (IB D7). A hold that
+> began before the set arrived keeps the repeat decision made at its Start.
+
 <a id="s7-8-7"></a>
 #### 7.8.7 Pointer moves are coalesced
 
@@ -1589,7 +1605,7 @@ these actions are swallowed (`opaque_keys`, §3.3), and while `ui.dialog` is act
 Game-band button actions of the `global` context that open panels, use the selection or
 change the UI scale. What each one does is the cited spec's; this section gives names,
 commands, policies and defaults. Every action here has policy **exact** and no `R` flag (the
-original's commands are type 2, Impulse, K51; the UI-scale actions have no original command).
+original's commands are type 2, Impulse, K51, K53; the UI-scale actions have no original command).
 The command is the one §2.2 reports; the ID is this install's (K50), for reference and tests
 only.
 
@@ -1601,9 +1617,11 @@ only.
 | global | `pin_tooltip` | `TOOLTIP_DETACH` (0x1000001A) | `H` | `item-tooltips.md` §10 |
 | global | `toggle_wallet` | `TogglePaperItemPanel` (0x100001CD) | `B` | `npc-windows.md` §9.4 (wallet) |
 | global | `toggle_quest_log` | `ToggleQuestPanel` (0x1000004A) | `L` | `quest-journal.md` §4.1 (quest log) |
+| global | `toggle_map` | `ToggleMapPanel` (0x10000041) | `M` | `map-windows.md` §3.1, §4.6 (shows or hides the map window; the shown map is kept) |
+| global | `toggle_finder` | `ToggleWorldJoin` (0x100001B0) | `Ctrl+J` | `travel-windows.md` §6.1 (the fellowship maker at its instance-finder page) |
 | global | `use_selection` | `USE` (0x10000085) | `U` | `npc-windows.md` §3.1 |
 | global | `toggle_traits` | `ToggleTraitPanel` (0x10000036) | `J` | `progression-panels.md` §1.4, §3 |
-| global | `toggle_skills` | `ToggleSkillPanel` (0x1000001B) | `K` | `progression-panels.md` §1.4, §4 |
+| global | `toggle_skills` | `ToggleSkillPanel` (0x1000001B) | `K` | `progression-panels.md` §1.4 (the player's skill panel, **not** the skill-training window of its §4) |
 | global | `toggle_crafting` | `ToggleCraftingPanel` (0x10000040) | `T` | `crafting-panels.md` §4.1, §12 |
 | global | `toggle_crafting_1` … `toggle_crafting_3` | `ToggleCraftingProf1Panel` (0x100001BF), `ToggleCraftingProf2Panel` (0x100001BE), `ToggleCraftingProf3Panel` (0x100001C0) | none | `crafting-panels.md` §4.1 (open at tab 1, 2, 3) |
 | global | `ui_scale_up` / `ui_scale_down` | none (Tessera action) | none | `ui-scaling.md` §7.3 (+0.05 / −0.05) |
@@ -1616,7 +1634,7 @@ actions) are `social-panels.md` §7.2's and `toggle_mount` (`Ctrl+M`, `movement`
 `walker.md` §16.4's; they are not repeated here.
 
 **Where the defaults come from.** `C`, `I`, `H`, `B`, `L`, `U`, `J`, `K` and `T` are the
-original's defaults (K50). Tessera departs from the original in three places, each a Tessera
+original's defaults (K50), and so are `M` and `Ctrl+J` (K53). Tessera departs from the original in three places, each a Tessera
 **Decision**:
 
 1. `toggle_bag_1` … `toggle_bag_6` are unbound, while the original binds
@@ -1652,6 +1670,59 @@ Shift form here, so the §8.2 Shift OPEN does not touch them.
 flight and does not reach `toggle_character` (§7.2); in walk mode `C` opens the panel. No other
 key of this section is bound in `camera`, `movement` or `fly`. In `text_entry` the keys are
 swallowed (`opaque_keys`, §3.3), so typing a `U` or an `L` never uses or opens anything.
+
+`M` and `Ctrl+J` (round-3 revision): no other default of §8, §8.2 or §8.3 uses `M` or `J` with
+Ctrl, and neither is a walker key (§8.3.1). Under the exact policy `Ctrl+M` (`toggle_mount`,
+`movement`, `walker.md` §16.4) does not fire `toggle_map`, `Shift+M` fires neither, and
+`Ctrl+J` does not fire `toggle_traits` (`J`).
+
+> **OPEN (implementer, 2026-10-23):** (`apps/client`, P5 map hub) `M` (map) and `Ctrl+J`
+> (finder) are still read as raw keys by the client's map hub and have no rows in this
+> section; the exact policy keeps `toggle_traits` (`J`) apart from `Ctrl+J` in the mapper,
+> but the hub still reads `Ctrl+J` itself (observation, no change asked).
+>
+> **Answered (spec writer, 2026-10-23):** the rows are now in the table above (`toggle_map`
+> on `M`, `toggle_finder` on `Ctrl+J`, both the original's defaults, K53), with their import
+> rows in §12.14.2. The map and finder windows are opened through these actions like every
+> other panel of this section; a raw-key read of `M` or `Ctrl+J` is no longer allowed,
+> because it ignores user bindings, imports and the band rules of §7.2. **Implemented
+> behaviour changes:** a user who rebinds `toggle_map` or `toggle_finder` moves the key.
+
+> **OPEN (implementer, 2026-10-23):** (`apps/client`; engineering choice) when the game UI
+> declines `USE`, `TogglePaperItemPanel`, `ToggleQuestPanel`, `ToggleTraitPanel` or
+> `ToggleSkillPanel`, the command takes the same path as the P1 bag and pin commands and
+> waits in a queue of the character panels (Tessera bound: 16 per frame). The NPC, quest and
+> P6 hubs each take their own commands every frame. A command is dropped when its hub cannot
+> act that frame: names not loaded yet, out of the world, or the character screens open (NPC
+> hub only). Without a UI host booted from the install, the five commands do nothing. Should
+> the spec say where declined panel commands go?
+>
+> **Answered (spec writer, 2026-10-23), Tessera rules** (the original's routing of these
+> commands is internal and was not traced; only the panel each one opens is a fact, the
+> behaviour column):
+>
+> 1. A command of this section that the UI declines (§7.8.3) goes to the owner of the panel
+>    named in the behaviour column, in the order the commands were offered. The owner acts on
+>    it in the same frame, or not at all: a command whose owner cannot act that frame (its
+>    names or records not loaded yet, the player out of the world, the character screens
+>    open) is **dropped**, never kept for a later frame. A late panel toggle would open a
+>    window the user no longer expects.
+> 2. At most 16 declined commands of this section are taken per frame (a Tessera bound);
+>    further ones in the same frame are dropped and counted once in the log.
+> 3. Without a UI host built from the install there are no panels to open, and the commands
+>    do nothing.
+>
+> How the commands travel inside the client (one queue or one per owner) is not part of the
+> rule. The implementation conforms.
+
+> **OPEN (implementer, 2026-10-23):** (`crates/input`, observation) `ui_window_scale_up` and
+> `ui_window_scale_down` are registered unbound in `global`. Nothing acts on them yet,
+> because the per-window scale of `ui-scaling.md` §7.4 is not built. They report their own
+> action names as command names (§2.2 rule 3).
+>
+> **Answered (spec writer, 2026-10-23):** no change; that is the rule (this section's table,
+> item 3 above and `ui-scaling.md` §7.4). Until the per-window scale exists, a press does
+> nothing, as a press with no panel under the pointer does.
 
 <a id="s8-3-1"></a>
 #### 8.3.1 Walker keys
@@ -2674,6 +2745,23 @@ walk-mode command targets it), 15 strafe right, 16 flip left, 17 turn right.
 the 93 first tokens exist in that table in this install; the role of table C is OPEN. The
 importer does not use it.
 
+> **OPEN (implementer, 2026-10-23):** (`apps/client` UI host; also LPA §13.12.1) without
+> action-map data (no install, or the default action map missing or not decoding), or for a
+> tap command offered without an InputActions ID, the client routes `TapLeft`, `TapRight` and
+> `TapMid` as Impulse (toggle type 2, the K43 values), and every other command follows the
+> Momentary rules. LPA §13.12.1 says not to hard-code which actions are Impulse; confirm this
+> no-data fallback or state the no-data rule.
+>
+> **Answered (spec writer, 2026-10-23): not confirmed.** The no-data rule is stated by the
+> Accepted [decision 0014](../decisions/0014-ui-input-bridge.md) D9 and LPA §13.12.1: an ID
+> not in table A, or a command without an ID, has type 0, and without action-map data every
+> type is 0, so a `tap_*` pulse then gives plugin button events (IB Known difference 12; such
+> runs load no plugins). A built-in Impulse list, even of three names taken from K43, is a
+> change of that decision, which only the owner can make (a decision amendment, then a
+> revision of this section and LPA §13.12.1). Until then the client must not route the taps
+> as Impulse without the table, and with the table a tap command that resolves to no ID is
+> type 0 as well.
+
 <a id="s12-11"></a>
 ### 12.11 Command names and meaning classes
 
@@ -2891,6 +2979,7 @@ axis actions.
 | `Main` | `ToggleTraitPanel`, `ToggleSkillPanel` | global | `toggle_traits`, `toggle_skills` | — |
 | `Main` | `ToggleCraftingPanel` | global | `toggle_crafting` | — |
 | `Main` | `ToggleCraftingProf1Panel`, `ToggleCraftingProf2Panel`, `ToggleCraftingProf3Panel` | global | `toggle_crafting_1`, `toggle_crafting_2`, `toggle_crafting_3` | — |
+| `Main` | `ToggleMapPanel`, `ToggleWorldJoin` | global | `toggle_map`, `toggle_finder` | — |
 
 Rows with several commands and several actions pair them in order. The three
 `EditControls` rows for `AcceptInput`, `EscapeKey` and the two line moves were retargeted on
@@ -3424,3 +3513,5 @@ These specs are owned elsewhere; the corrections are recorded here, not made the
 | 2026-10-23 | Spec writer (dirty room), panel, use and UI-scale revision; status Accepted → Revised, awaiting independent review. **§1.1:** two rows for §8.3. **§1.2:** OBS re-read of 2026-10-23 (records byte-identical to 2026-10-05); new rows K50 (default bindings of `ToggleJournalPanel`, `QUICKSLOT_BACKPACK`, `QUICKSLOT_BACKPACK1` … `6`, `TOOLTIP_DETACH`, `TogglePaperItemPanel`, `ToggleQuestPanel`, `USE`, `ToggleTraitPanel`, `ToggleSkillPanel`, `ToggleCraftingPanel` and the three profession toggles), K51 (all type 2), K52 (no default wheel binding has a modifier). **New §8.3:** the P1, P3, P6 panel actions, `use_selection` and the UI-scale actions of `ui-scaling.md` §7.3–§7.4 (`ui_scale_up`, `ui_scale_down`, `ui_scale_auto`, `ui_interface_window` as registered; `ui_window_scale_up`/`_down` new, unbound), with new Tessera actions `toggle_wallet`, `toggle_quest_log`, `use_selection`, `toggle_traits`, `toggle_skills`; the `B` conflict settled (`toggle_bags` B → I, `toggle_bag_1` I → none, `toggle_wallet` B), `pin_tooltip` Ctrl+T → H; new §8.3.1 walker-key invariant. **§8.2:** the walker-key OPEN closed (`walker.md` §14.2–§14.3); the P6 OPEN answered and its stale wording on `progression-panels.md` corrected; the Shift OPEN stays open (owner). **§12.14.2:** ten import rows; the P1 implementer OPEN answered. No other section changed. |
 | 2026-10-23 | Independent review of the 2026-10-23 revision (spec-review:spec-ui-input:2): passed; status Revised → Accepted. No content change (header only). |
 | 2026-10-23 | Note only (no fact or rule changed), round 4 of the review. **Implemented behaviour that changes** with the 2026-10-23 revision (§8.3): `crates/input` defaults still bind `toggle_bags` to `B`, `toggle_bag_1` to `I` and `pin_tooltip` to `Ctrl+T`; §8.3 moves them to `I`, none and `H`. The registry also lacks the new actions `toggle_wallet` (`B`), `toggle_quest_log` (`L`), `use_selection` (`U`), `toggle_traits` (`J`), `toggle_skills` (`K`) and `ui_window_scale_up` / `ui_window_scale_down` (unbound). `toggle_crafting` (`T`), `toggle_crafting_1` … `3` and the four UI-scale actions are registered as §8.3 states. Status unchanged. |
+| 2026-10-23 | Spec writer (dirty room), round-3 revision; status Accepted → Revised, awaiting independent review. Section numbers unchanged. **§1.1:** two rows (the panels `ToggleSkillPanel` and `ToggleTraitPanel` open, via `progression-panels.md` §1.4 BIN; the declined-command and no-data rules, Decision). **§1.2:** new row K53 (default bindings of `ToggleMapPanel` M and `ToggleWorldJoin` Ctrl + J, both Impulse; Shift + M carries a command Tessera does not define), OBS re-read of 2026-10-23; K50's list of undefined modifier commands no longer names Ctrl + J. **§8.3:** new actions `toggle_map` (`M`) and `toggle_finder` (`Ctrl+J`); `toggle_skills` opens the player's skill panel, not the skill-training window (`progression-panels.md` §1.4); paragraph on `M`/`Ctrl+J` under the exact policy; three implementer OPENs answered (raw `M`/`Ctrl+J` reads retired; declined panel commands go to their panel's owner in the same frame or are dropped, at most 16 per frame; the per-window scale actions do nothing until `ui-scaling.md` §7.4 is built). **§7.8.6:** implementer OPEN answered (the type-3 set comes from the same table-A read as the UI's toggle types, handed as soon as it completes; built-in flags until then). **§12.10:** implementer OPEN answered: the proposed no-data Impulse fallback for the three tap commands is **not** confirmed; decision 0014 D9 (every type 0 without action-map data) governs. **§12.14.2:** import rows for `ToggleMapPanel` and `ToggleWorldJoin`. **Implemented behaviour changes:** `M` and `Ctrl+J` become keymap actions; `K` no longer opens the skill-training window; the no-data tap fallback goes. |
+| 2026-10-23 | Independent review (spec-review:spec-ui-r3:1 (independent session)) of the round-3 revision (K53, `toggle_map`, `toggle_finder`, the `toggle_skills` behaviour, the §8.3, §7.8.6 and §12.10 answers, §12.14.2 rows): **passed**; status Revised → Accepted. Header only (status and review record); no fact, rule or section changed. |

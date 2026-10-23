@@ -292,9 +292,17 @@ pub struct PartAsset {
     /// Drawn with the figure's skinning palette.
     pub skinned: bool,
     /// The attach-table key of a held item's part (`None`: a body part): the index of its
-    /// held part, one attach point per placement (`appearance.md` §5.6).
+    /// held part, one attach point per placement (`appearance.md` §5.6); a screen figure's
+    /// prop parts have keys from [`super::live::PROP_KEY_BASE`].
     pub held: Option<u32>,
+    /// The appearance variants the part belongs to (bit *i*: variant *i*,
+    /// [`super::live`]); [`ALL_VARIANTS`] for every figure but a live screen figure's
+    /// stage pieces.
+    pub variants: u8,
 }
+
+/// The variant mask of a part drawn in every variant.
+pub const ALL_VARIANTS: u8 = u8::MAX;
 
 /// One clip a figure plays.
 #[derive(Debug, Clone)]
@@ -443,9 +451,17 @@ pub struct FigureAsset {
     /// placement's instance set, then along the 0x47 entity chain from the figure's entity;
     /// `None` when no level holds it (the component's initial values apply, `mesh.md` §8.5).
     pub lod_class: Option<u32>,
+    /// The figure's `Entity_Camera_Lookat_Height` *H* in metres, before any scale
+    /// (`walker.md` §11.7 step 1): the first value found in the placement's instance set,
+    /// then along the 0x47 entity chain; `None` when no level holds it.
+    pub look_at_height: Option<f32>,
     /// What the species tables' look gave the figure (`appearance.md` §3.5): composed
     /// faces and material edits, for tests and diagnostics.
     pub face: FaceSummary,
+    /// A character-screen figure's live scripts (`character-screens.md` §2.1.4,
+    /// [`super::live`]); `None` for every other figure, and when the install lacks what
+    /// the runtime needs (the static resolution then applies).
+    pub live: Option<Arc<super::live::LivePackage>>,
     /// The figure's script tables and stored values, as its clips were chosen with
     /// (`script-table.md` §8.1): what the combat scripts of `combat-visuals.md` run on.
     pub scripts: Option<Arc<FigureScripts>>,
@@ -463,6 +479,9 @@ pub struct FigureScripts {
     pub tables: Vec<Did>,
     /// The stored values.
     pub properties: tessera_formats::script_table::resolve::PropertyState,
+    /// The start-up script keys after `Startup` (`ScriptTable_StartupScriptNames`, with
+    /// `Chargen` on a character-screen figure; `script-table.md` §8.1).
+    pub startup_scripts: Vec<u32>,
 }
 
 /// The figure's look in numbers (`appearance.md` §3.5): which compositors were attached,
@@ -525,25 +544,137 @@ impl FigureAsset {
     }
 }
 
+/// Most clip DIDs a frame-thread miss queues for the workers at once ([`ClipStore::take_pending`]).
+pub const MAX_PENDING_CLIPS: usize = 256;
+
 /// Decoded clips by DID, shared by every figure job, with their baked frames.
+///
+/// **Frame thread** (ARCHITECTURE §21: no blocking I/O on the main thread). Once
+/// [`ClipStore::mark_frame_thread`] has named the walker's frame thread, a clip that is not
+/// decoded yet is never read there: [`ClipStore::bind`] fails for that call (the asking
+/// node plays nothing, a placeholder for the frame), the miss is counted
+/// ([`ClipStore::frame_thread_misses`]) and the DID queued for the workers
+/// ([`ClipStore::take_pending`], [`ClipStore::prefetch`]). Worker threads read and decode
+/// as before.
 #[derive(Debug)]
 pub struct ClipStore {
     clips: Mutex<HashMap<u32, Option<Arc<Clip>>>>,
     bake: BakeCache,
+    frame_thread: std::sync::OnceLock<std::thread::ThreadId>,
+    misses: std::sync::atomic::AtomicU64,
+    pending: Mutex<Vec<u32>>,
+    /// The first clip DIDs frame-thread lookups missed (diagnostics, at most
+    /// [`MAX_MISSED_CLIPS`]).
+    missed: Mutex<Vec<u32>>,
 }
+
+/// Most missed clip DIDs remembered ([`ClipStore::frame_thread_missed`]).
+pub const MAX_MISSED_CLIPS: usize = 32;
 
 impl Default for ClipStore {
     fn default() -> Self {
         Self {
             clips: Mutex::new(HashMap::new()),
             bake: BakeCache::new(BAKE_BUDGET, MAX_BAKED_CLIP),
+            frame_thread: std::sync::OnceLock::new(),
+            misses: std::sync::atomic::AtomicU64::new(0),
+            pending: Mutex::new(Vec::new()),
+            missed: Mutex::new(Vec::new()),
         }
     }
 }
 
 impl ClipStore {
-    /// The decoded clip `did` (read and decoded once; failures remembered).
+    /// Names the calling thread the frame thread (once; later calls change nothing): clips
+    /// are no longer read there (type docs).
+    pub fn mark_frame_thread(&self) {
+        let _ = self.frame_thread.set(std::thread::current().id());
+    }
+
+    /// Whether the calling thread is the frame thread named by [`Self::mark_frame_thread`].
+    #[must_use]
+    pub fn on_frame_thread(&self) -> bool {
+        self.frame_thread
+            .get()
+            .is_some_and(|t| *t == std::thread::current().id())
+    }
+
+    /// Clips asked for on the frame thread before they were decoded (each was then not read
+    /// there, type docs).
+    #[must_use]
+    pub fn frame_thread_misses(&self) -> u64 {
+        self.misses.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// The first distinct clip DIDs frame-thread lookups missed (at most
+    /// [`MAX_MISSED_CLIPS`]; diagnostics).
+    #[must_use]
+    pub fn frame_thread_missed(&self) -> Vec<u32> {
+        self.missed
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+    }
+
+    /// The clip DIDs frame-thread misses queued since the last call (for
+    /// [`Self::prefetch`] on the workers).
+    pub fn take_pending(&self) -> Vec<u32> {
+        std::mem::take(&mut *self.pending.lock().unwrap_or_else(PoisonError::into_inner))
+    }
+
+    /// Whether clip `did` has been decoded (or failed for good) already.
+    #[must_use]
+    pub fn has(&self, did: u32) -> bool {
+        self.clips
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .contains_key(&did)
+    }
+
+    /// Reads, decodes and bakes clip `did` when it is not in the store yet (blocking: a
+    /// worker's job). Returns whether the clip decoded.
+    pub fn prefetch(&self, set: &ArchiveSet, did: u32) -> bool {
+        let Some(clip) = self.read_clip(set, did) else {
+            return false;
+        };
+        let _ = self.bake.get_or_bake(u64::from(did), &clip);
+        true
+    }
+
+    /// The decoded clip `did` (read and decoded once; failures remembered). On the frame
+    /// thread a clip not decoded yet is not read (type docs).
     fn clip(&self, set: &ArchiveSet, did: u32) -> Option<Arc<Clip>> {
+        if let Some(c) = self
+            .clips
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get(&did)
+        {
+            return c.clone();
+        }
+        if self.on_frame_thread() {
+            self.misses
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            let mut p = self.pending.lock().unwrap_or_else(PoisonError::into_inner);
+            if p.len() < MAX_PENDING_CLIPS && !p.contains(&did) {
+                p.push(did);
+            }
+            drop(p);
+            let mut m = self.missed.lock().unwrap_or_else(PoisonError::into_inner);
+            if m.len() < MAX_MISSED_CLIPS && !m.contains(&did) {
+                m.push(did);
+            }
+            tracing::debug!(
+                clip = format_args!("{did:#010x}"),
+                "clip not decoded yet; not read on the frame thread"
+            );
+            return None;
+        }
+        self.read_clip(set, did)
+    }
+
+    /// Reads and decodes `did` into the store (any thread).
+    fn read_clip(&self, set: &ArchiveSet, did: u32) -> Option<Arc<Clip>> {
         if let Some(c) = self
             .clips
             .lock()
@@ -574,7 +705,7 @@ impl ClipStore {
     ) -> Result<Arc<BoundClip>, String> {
         let clip = self
             .clip(set, did)
-            .ok_or_else(|| format!("clip {did:#010x} missing or undecodable"))?;
+            .ok_or_else(|| format!("clip {did:#010x} missing, undecodable or not loaded yet"))?;
         let bound = BoundClip::bind(Arc::clone(&clip), Arc::clone(skeleton))
             .map_err(|e| format!("clip {did:#010x}: {e}"))?;
         let bound = match self.bake.get_or_bake(u64::from(did), &clip) {
@@ -755,13 +886,14 @@ pub fn build_figure_with_look(
         }
     };
     let bones = skeleton.as_ref().map(|s| s.bone_count());
-    let (clips, shape, scripts, look, figure_scripts) = match &skeleton {
+    let (clips, shape, scripts, look, figure_scripts, live) = match &skeleton {
         Some(s) => select_clips(ctx, &c, s, req, &mut notes),
         None => (
             FigureClips::default(),
             FigureShape::default(),
             Vec::new(),
             FigureLook::default(),
+            None,
             None,
         ),
     };
@@ -801,27 +933,84 @@ pub fn build_figure_with_look(
             .collect();
     }
 
-    let mut parts = Vec::new();
-    for p in c.parts.iter().filter(|p| !p.hidden) {
-        if parts.len() >= MAX_FIGURE_PARTS {
-            notes.push(format!("more than {MAX_FIGURE_PARTS} parts"));
-            break;
+    // A live screen figure's appearance variants (`super::live`): variant 0 holds the
+    // pieces of the stage it is built with; every other stage value whose pieces differ
+    // gets its own variant, and each part is tagged with the variants it belongs to.
+    let mut variant_sets: Vec<Vec<ScriptAppearance>> = vec![scripts.clone()];
+    let mut stage_variants: Vec<(u32, u8)> = Vec::new();
+    if let Some(cap) = &live {
+        for (stage, set) in &cap.stage_pieces {
+            let index = match variant_sets.iter().position(|v| v == set) {
+                Some(i) => i,
+                None if variant_sets.len() < super::live::MAX_VARIANTS => {
+                    variant_sets.push(set.clone());
+                    variant_sets.len() - 1
+                }
+                None => {
+                    notes.push(format!(
+                        "stage {stage}: more than {} piece sets",
+                        super::live::MAX_VARIANTS
+                    ));
+                    0
+                }
+            };
+            stage_variants.push((*stage, u8::try_from(index).unwrap_or(0)));
         }
+    }
+    let first_mask = if live.is_some() { 1 } else { ALL_VARIANTS };
+    let mut parts = Vec::new();
+    // (mesh, slot, materials) of the body parts built, for the variants' sharing.
+    let mut built: Vec<(Did, u32, Vec<MaterialLayer>)> = Vec::new();
+    let mut variant_parts: Vec<(u8, Vec<tessera_mesh::assembly::AssembledPart>)> =
+        vec![(0, c.parts.clone())];
+    for (i, set) in variant_sets.iter().enumerate().skip(1) {
         if cancelled() {
             return Err(FigureError::Cancelled);
         }
-        match build_part(
-            ctx,
-            p.mesh,
-            bones.filter(|_| p.skinned),
-            (&p.materials, Some((p.slot, &look))),
-            deformation.as_ref(),
-        ) {
-            Ok(mut part) => {
-                part.held = None;
-                parts.push(part);
+        match assemble(set) {
+            Ok(v) => variant_parts.push((u8::try_from(i).unwrap_or(0), v.parts)),
+            Err(e) => notes.push(format!("variant {i}: {e}")),
+        }
+    }
+    for (variant, list) in &variant_parts {
+        let bit = if live.is_some() {
+            1u8 << (*variant).min(7)
+        } else {
+            ALL_VARIANTS
+        };
+        for p in list.iter().filter(|p| !p.hidden) {
+            if let Some(j) = built
+                .iter()
+                .position(|(m, slot, mats)| *m == p.mesh && *slot == p.slot && *mats == p.materials)
+            {
+                if let Some(part) = parts.get_mut(j) {
+                    let part: &mut PartAsset = part;
+                    part.variants |= bit;
+                }
+                continue;
             }
-            Err(e) => notes.push(format!("part {}: {e}", p.mesh)),
+            if parts.len() >= MAX_FIGURE_PARTS {
+                notes.push(format!("more than {MAX_FIGURE_PARTS} parts"));
+                break;
+            }
+            if cancelled() {
+                return Err(FigureError::Cancelled);
+            }
+            match build_part(
+                ctx,
+                p.mesh,
+                bones.filter(|_| p.skinned),
+                (&p.materials, Some((p.slot, &look))),
+                deformation.as_ref(),
+            ) {
+                Ok(mut part) => {
+                    part.held = None;
+                    part.variants = if *variant == 0 { first_mask } else { bit };
+                    built.push((p.mesh, p.slot, p.materials.clone()));
+                    parts.push(part);
+                }
+                Err(e) => notes.push(format!("part {}: {e}", p.mesh)),
+            }
         }
     }
     // Held items: rigid parts at the wearer's holding locations (skeleton-anim.md §8.4),
@@ -876,6 +1065,102 @@ pub fn build_figure_with_look(
     } else if !c.held.is_empty() {
         notes.push("held items need an animated wearer; not drawn".into());
     }
+    // The setup: the figure's attachment points, and the holding locations of a screen
+    // figure's props.
+    let setup_record = crate::audio::loader::fetch(&ctx.set, c.skeleton.setup.0)
+        .ok()
+        .flatten();
+    let setup = setup_record.as_ref().and_then(|b| {
+        <tessera_formats::setup::Setup as tessera_formats::Record>::parse_expecting(
+            b,
+            c.skeleton.setup,
+        )
+        .ok()
+    });
+    let points = setup
+        .as_ref()
+        .zip(setup_record.as_ref())
+        .map(|(s, b)| Arc::new(crate::walker::effects::data::AttachPoints::from_setup(s, b)));
+    // A live screen figure's props (`super::live`): each prop entity's parts at its holding
+    // location, hidden until its MeshFX node runs.
+    let mut props = Vec::new();
+    let mut prop_notes: Vec<String> = Vec::new();
+    if let (Some(cap), Some(setup), Some(_)) = (&live, &setup, &skeleton) {
+        for prop in &cap.props {
+            if parts.len() >= MAX_FIGURE_PARTS {
+                prop_notes.push("no room for the props".into());
+                break;
+            }
+            if cancelled() {
+                return Err(FigureError::Cancelled);
+            }
+            let Some(h) = prop_anchor(setup, prop) else {
+                prop_notes.push(format!(
+                    "prop {}: no holding location {} or bone type {}",
+                    prop.entity, prop.location, prop.bone_type
+                ));
+                continue;
+            };
+            let held = match asm.assemble_object_with(prop.entity, None, &[]) {
+                Ok(p) => p,
+                Err(e) => {
+                    prop_notes.push(format!("prop {}: {e}", prop.entity));
+                    continue;
+                }
+            };
+            let key = super::live::PROP_KEY_BASE + u32::try_from(props.len()).unwrap_or(0);
+            let mut any = false;
+            for p in held.parts.iter().filter(|p| !p.hidden) {
+                if parts.len() >= MAX_FIGURE_PARTS {
+                    break;
+                }
+                match build_part(ctx, p.mesh, None, (&p.materials, None), None) {
+                    Ok(mut part) => {
+                        part.held = Some(key);
+                        parts.push(part);
+                        any = true;
+                    }
+                    Err(e) => prop_notes.push(format!("prop part {}: {e}", p.mesh)),
+                }
+            }
+            if !any {
+                prop_notes.push(format!("prop {}: no part built", prop.entity));
+                continue;
+            }
+            let placement = tessera_mesh::assembly::HeldPlacement {
+                offset: prop.offset,
+                rotation: prop.rotation,
+                scale: prop.scale,
+            };
+            let mut frame = placement.applied_to(&h.frame);
+            // The prop's own model scale relative to the holder's (`appearance.md` §6.1).
+            let (own, holder) = (held.model_scale(), c.model_scale());
+            for ((s, o), w) in frame.scale.iter_mut().zip(own).zip(holder) {
+                let r = o / w;
+                if r.is_finite() && r > 0.0 {
+                    *s *= r;
+                }
+            }
+            attach_points.push(AttachPointDesc {
+                key,
+                bone: match h.anchor {
+                    Anchor::Bone(b) => i32::try_from(b).unwrap_or(-1),
+                    Anchor::Origin => -1,
+                },
+                frame: AttachFrame {
+                    position: frame.position,
+                    scale: frame.scale,
+                    rotation_wxyz: [
+                        frame.rotation.w,
+                        frame.rotation.x,
+                        frame.rotation.y,
+                        frame.rotation.z,
+                    ],
+                },
+            });
+            props.push(*prop);
+        }
+    }
     let attach = match &skeleton {
         Some(s) if !attach_points.is_empty() => {
             let (t, errors) = AttachTable::new_skipping_invalid(&attach_points, s.bone_count());
@@ -886,19 +1171,6 @@ pub fn build_figure_with_look(
         }
         _ => None,
     };
-    let points = crate::audio::loader::fetch(&ctx.set, c.skeleton.setup.0)
-        .ok()
-        .flatten()
-        .and_then(|b| {
-            let s = <tessera_formats::setup::Setup as tessera_formats::Record>::parse_expecting(
-                &b,
-                c.skeleton.setup,
-            )
-            .ok()?;
-            Some(Arc::new(
-                crate::walker::effects::data::AttachPoints::from_setup(&s, &b),
-            ))
-        });
     // `model_scale` applies the client's limit (§6.1); also refuse absurdly large scales.
     let model_scale = c.model_scale();
     let model_scale = if model_scale.iter().all(|s| *s < 100.0) {
@@ -908,6 +1180,17 @@ pub fn build_figure_with_look(
         [1.0; 3]
     };
     let lod_class = figure_lod_class(ctx, req.instance.as_deref(), &c.chain);
+    let look_at_height = figure_look_at_height(ctx, req.instance.as_deref(), &c.chain);
+    let live = live.map(|cap| {
+        let mut package = cap.package;
+        package.props = props;
+        package.stage_variants = stage_variants;
+        package.held_clips = clips.held.iter().map(|h| h.did).collect();
+        prop_notes.truncate(super::live::MAX_PROPS);
+        notes.extend(prop_notes.iter().take(4).cloned());
+        package.prop_notes = prop_notes;
+        Arc::new(package)
+    });
     Ok(FigureAsset {
         skeleton,
         parts,
@@ -918,34 +1201,73 @@ pub fn build_figure_with_look(
         model_scale,
         points,
         lod_class,
+        look_at_height,
         face,
         scripts: figure_scripts,
+        live,
         notes,
         build_ms: started.elapsed().as_secs_f64() * 1e3,
     })
 }
 
-/// Most 0x47 levels of a figure's entity chain read for its `Render_LODClass`.
+/// Where a screen figure's prop is attached (Tessera rule of the `character-screens.md`
+/// §2.1.4 implementer OPEN, taken from the attachment rule of `particle-runtime.md` §6.1
+/// because `script-table.md` §5.2 gives none for MeshFX): a `BoneType` other than 0 names
+/// the bone of that type (`setup.md` §6.2) at an identity frame; else a `HoldingLocation`
+/// other than 0 its holding location's frame; both 0 the holder's model origin. `None`
+/// when the setup has no such bone or location.
+fn prop_anchor(
+    setup: &tessera_formats::setup::Setup,
+    prop: &super::live::ScreenProp,
+) -> Option<tessera_formats::setup::HoldingLocation> {
+    use tessera_formats::setup::{Anchor as SetupAnchor, Frame, HoldingLocation, Quaternion};
+    let identity = Frame {
+        position: [0.0; 3],
+        scale: [1.0; 3],
+        rotation: Quaternion {
+            w: 1.0,
+            x: 0.0,
+            y: 0.0,
+            z: 0.0,
+        },
+    };
+    if prop.bone_type != 0 {
+        let a = setup
+            .attachments()
+            .find(|a| a.bone_type == prop.bone_type)?;
+        return Some(HoldingLocation {
+            key: prop.location,
+            anchor: SetupAnchor::Bone(a.bone),
+            frame: identity,
+        });
+    }
+    if prop.location != 0 {
+        return setup.holding_locations().find(|h| h.key == prop.location);
+    }
+    Some(HoldingLocation {
+        key: 0,
+        anchor: SetupAnchor::Origin,
+        frame: identity,
+    })
+}
+
+/// Most 0x47 levels of a figure's entity chain read for one of its properties.
 const MAX_LOD_CLASS_LEVELS: usize = 16;
 
-/// The `Render_LODClass` of a figure (`walker.md` §11.4.3, the Tessera Decision W22 there):
-/// the first value found in the placement's instance set, then in the property sets of the
-/// 0x47 levels of `chain` (nearest first). An enum value gives its key, a bit-like value its
-/// low 32 bits; anything else, or nothing found, gives `None`.
-fn figure_lod_class(
+/// The value of property `name` for a figure: the first value found in the placement's
+/// instance set, then in the property sets of the 0x47 levels of `chain` (nearest first);
+/// `None` when the dictionary lacks the name or no level holds it.
+fn figure_property(
     ctx: &FigureContext,
     instance: Option<&PropertySet>,
     chain: &[Did],
-) -> Option<u32> {
+    name: &str,
+) -> Option<PropertyValue> {
     let data = &ctx.catalog.data;
     let registry = data.registry().ok()?;
-    let pid = registry.pid("Render_LODClass")?;
-    let class_of = |v: &tessera_formats::PropertyValue| match v {
-        tessera_formats::PropertyValue::Enum(k) => Some(*k),
-        other => other.as_bits().and_then(|b| u32::try_from(b).ok()),
-    };
+    let pid = registry.pid(name)?;
     if let Some(v) = instance.and_then(|s| s.get(pid)) {
-        return class_of(v);
+        return Some(v.clone());
     }
     for did in chain
         .iter()
@@ -960,10 +1282,38 @@ fn figure_lod_class(
             continue;
         };
         if let Some(v) = e.properties.get(pid) {
-            return class_of(v);
+            return Some(v.clone());
         }
     }
     None
+}
+
+/// The `Render_LODClass` of a figure (`walker.md` §11.4.3, the Tessera Decision W22 there):
+/// the first value found in the placement's instance set, then in the property sets of the
+/// 0x47 levels of `chain` (nearest first). An enum value gives its key, a bit-like value its
+/// low 32 bits; anything else, or nothing found, gives `None`.
+fn figure_lod_class(
+    ctx: &FigureContext,
+    instance: Option<&PropertySet>,
+    chain: &[Did],
+) -> Option<u32> {
+    match figure_property(ctx, instance, chain, "Render_LODClass")? {
+        PropertyValue::Enum(k) => Some(k),
+        other => other.as_bits().and_then(|b| u32::try_from(b).ok()),
+    }
+}
+
+/// The `Entity_Camera_Lookat_Height` of a figure (`walker.md` §11.7 step 1), found like
+/// [`figure_lod_class`]; a value that is not a finite number of at least 0 gives `None`.
+fn figure_look_at_height(
+    ctx: &FigureContext,
+    instance: Option<&PropertySet>,
+    chain: &[Did],
+) -> Option<f32> {
+    let v = figure_property(ctx, instance, chain, "Entity_Camera_Lookat_Height")?;
+    #[allow(clippy::cast_possible_truncation)]
+    let h = v.as_f64()? as f32;
+    (h.is_finite() && h >= 0.0).then_some(h.min(1_000.0))
 }
 
 /// Decodes, flattens and prepares one part mesh; skinned when `bones` is given, its
@@ -1040,6 +1390,7 @@ fn build_part(
         plans,
         skinned,
         held: None,
+        variants: ALL_VARIANTS,
     })
 }
 
@@ -1123,7 +1474,7 @@ fn look_inputs<S: tessera_material::RecordSource>(
 /// `character-screens.md` §2.1.4) as a value of the property's dictionary type: an enum
 /// key, or an integer for an integer property; `None` when the dictionary lacks the name
 /// or types it otherwise.
-fn screen_property(
+pub(crate) fn screen_property(
     registry: &tessera_props::PropertyRegistry,
     name: &str,
     key: u32,
@@ -1274,6 +1625,17 @@ pub(crate) fn prepare_figure_scripts(
     Some((vocab, scripts, after_startup))
 }
 
+/// What [`select_clips`] gives a figure: its clips, shape inputs, script appearances, look,
+/// script state and (a character-screen figure) its live-script capture.
+type SelectedClips = (
+    FigureClips,
+    FigureShape,
+    Vec<ScriptAppearance>,
+    FigureLook,
+    Option<Arc<FigureScripts>>,
+    Option<super::live::Capture>,
+);
+
 /// Chooses idle, walk and run (`script-table.md` §11.3). Idle: every looping candidate,
 /// the most likely per data layer (the original layers them, §6.2; a figure whose base
 /// idle is a reference stance shows its stance from a higher layer); without a looping one
@@ -1289,13 +1651,7 @@ fn select_clips(
     skeleton: &Arc<AnimSkeleton>,
     req: &FigureRequest,
     notes: &mut Vec<String>,
-) -> (
-    FigureClips,
-    FigureShape,
-    Vec<ScriptAppearance>,
-    FigureLook,
-    Option<Arc<FigureScripts>>,
-) {
+) -> SelectedClips {
     let seed = req.seed;
     let cat = &ctx.catalog;
     let data = &cat.data;
@@ -1306,11 +1662,13 @@ fn select_clips(
     let Some((vocab, scripts, after_startup)) =
         prepare_figure_scripts(cat, ctx.assembly, c, req, notes)
     else {
-        return (out, shape, appearances, look, None);
+        return (out, shape, appearances, look, None, None);
     };
     let Ok(registry) = data.registry() else {
-        return (out, shape, appearances, look, None);
+        return (out, shape, appearances, look, None, None);
     };
+    // A character-screen figure runs its scripts live (`character-screens.md` §2.1.4).
+    let live_vocab = req.chargen_stage.is_some().then(|| vocab.clone());
     let dict = registry.dictionary();
     let figure_scripts = {
         let mut properties = scripts.properties.clone();
@@ -1320,6 +1678,7 @@ fn select_clips(
         Arc::new(FigureScripts {
             tables: scripts.tables(),
             properties,
+            startup_scripts: scripts.startup_scripts.clone(),
         })
     };
     let mut resolver = ClipResolver::new(dict, vocab, |d: Did| data.read(d))
@@ -1491,7 +1850,17 @@ fn select_clips(
     {
         out.run = None;
     }
-    (out, shape, appearances, look, Some(figure_scripts))
+    let live = live_vocab.and_then(|v| {
+        super::live::capture(
+            ctx,
+            v,
+            &scripts,
+            req.chargen_stage,
+            req.chargen_action,
+            seed.unwrap_or(0),
+        )
+    });
+    (out, shape, appearances, look, Some(figure_scripts), live)
 }
 
 #[cfg(test)]

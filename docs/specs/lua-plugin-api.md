@@ -5038,6 +5038,18 @@ selectors at run time. Invariant 77 checks P92 against the user install.
     current selection on a left click injected by the test harness; with data `0xZZ` it sends
     nothing. `forget $s` gives `SkillRemoved` with `Index` 1 and `SkillAdded` with `Index` 1
     (the placeholder again).
+
+    > **OPEN:** (implementer, tessera-client, 2026-10-23) Not a spec question: a defect of
+    > the client recorded against this check. Through the client's UI host, one left click
+    > (one pointer move, one press, one release, exactly one UI frame) on a plugin quickslot
+    > reaches the plugin as two `MouseClick` events and sends two `UseSkill` commands; the
+    > plugin host's own harness sees one. The end-to-end test
+    > (`apps/client/tests/plugin_combat_checks.rs`
+    > `check_76_a_plugin_quickslot_click_reaches_the_feed_log`) therefore asserts at least
+    > one command, each the expected one; `a_plugin_quickslot_click_activates_once`
+    > (ignored until the host is fixed) asserts exactly one. The double delivery lies in the
+    > UI host's step-1 and event path (`apps/client/src/ui_host`, `crates/ui`,
+    > `crates/plugins`), not in the test's frames.
 77. **Effect categories against the install (P92):** for each `EffectCategory` name other
     than `Undefined` and `Dispellable`, the resist-category mapper (read by its EMAPPER label)
     has a key with that label and the API value is 2^(key − 1); `Dispellable` equals the

@@ -16,8 +16,8 @@ use super::{DeferredRun, Event, INTENSITY_EPSILON, InstanceId, KindState, RunCtx
 use crate::graph::{NodeRef, Unit};
 use crate::sink::{
     AnimationOutcome, BeamStart, EffectSink, EntityId, EnvironmentRequest, ExecuteRequest,
-    MAX_EXECUTE_OUTPUTS, ParticleStart, SoundPositioner, SoundStart, SoundStartOutcome,
-    StoryHookEvent,
+    MAX_EXECUTE_OUTPUTS, MeshFxOutcome, MeshFxStart, ParticleStart, SoundPositioner, SoundStart,
+    SoundStartOutcome, StoryHookEvent,
 };
 use crate::values::{as_bool, as_f32, as_i32, as_u32, as_vec3};
 
@@ -123,6 +123,7 @@ impl Runtime<'_> {
                 false
             }
             NodeKind::BEAM => self.beam_start(sink, id, unit, nref),
+            NodeKind::MESH_FX => self.mesh_fx_start(sink, id, unit, nref),
             other => {
                 self.report_unimplemented(other);
                 false
@@ -145,6 +146,7 @@ impl Runtime<'_> {
             KindState::Animation { handle, event } => Hook::Animation(handle.take(), event.take()),
             KindState::Particle(p) => Hook::Particle(p.handle.take(), p.immediate),
             KindState::Beam { handle, .. } => Hook::Beam(*handle),
+            KindState::MeshFx { handle } => Hook::MeshFx(*handle),
             KindState::Run(r) if !r.unbind => Hook::Run(std::mem::take(&mut r.started)),
             KindState::OnStop if reason != 2 => Hook::OnStop,
             _ => Hook::None,
@@ -180,6 +182,7 @@ impl Runtime<'_> {
                 self.beams.remove(&h);
                 sink.stop_beam(h);
             }
+            Hook::MeshFx(h) => sink.stop_mesh_fx(h),
             Hook::Run(started) => {
                 for root in started {
                     self.stop(sink, root, reason);
@@ -1221,6 +1224,51 @@ impl Runtime<'_> {
         }
     }
 
+    // ----- MeshFX (`script-table.md` §5.2, `script-runtime.md` §18) -----
+
+    /// A MeshFX node: the sink attaches its entity (the node then runs until stopped) or
+    /// not (it completes at once, reported as unimplemented as before the sink hook).
+    fn mesh_fx_start(
+        &mut self,
+        sink: &mut dyn EffectSink,
+        id: InstanceId,
+        unit: &Arc<Unit>,
+        nref: NodeRef,
+    ) -> bool {
+        let Some(n) = unit.node(nref.node) else {
+            return false;
+        };
+        let NodeData::MeshFx(m) = &n.data else {
+            return false;
+        };
+        let Some((entity, intensity, driven)) = self
+            .insts
+            .get(id)
+            .map(|i| (i.entity, i.intensity, i.overrides.clone()))
+        else {
+            return false;
+        };
+        let request = MeshFxStart {
+            entity,
+            node: m,
+            intensity,
+            node_id: n.base.node_id,
+            driven: &driven,
+        };
+        match sink.start_mesh_fx(&request) {
+            MeshFxOutcome::CompleteAtOnce => {
+                self.report_unimplemented(NodeKind::MESH_FX);
+                false
+            }
+            MeshFxOutcome::RunUntilStopped(handle) => {
+                if let Some(i) = self.insts.get_mut(id) {
+                    i.kind = KindState::MeshFx { handle };
+                }
+                true
+            }
+        }
+    }
+
     // ----- Particle (`particle-runtime.md` §5.4–§5.8) -----
 
     /// The Animation node's fields with the driven values of instance `id` applied
@@ -1851,6 +1899,7 @@ enum Hook {
     ),
     Particle(Option<crate::sink::ParticleHandle>, bool),
     Beam(crate::sink::BeamHandle),
+    MeshFx(crate::sink::MeshFxHandle),
     Run(Vec<InstanceId>),
     OnStop,
 }

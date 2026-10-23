@@ -390,6 +390,8 @@ fn a_scenario_cast_and_effect_play_particles_on_the_figures() {
     let mut waits = 0u32;
     let mut best = tessera_client::walker::effects::EffectStats::default();
     let mut combat = tessera_client::walker::combat::CombatLayerStats::default();
+    let mut clip_misses = 0u64;
+    let mut missed_clips: Vec<u32> = Vec::new();
     let result = tessera_client::scenario::screenshot::run_observed(
         &args,
         Arc::clone(&resolved),
@@ -414,6 +416,8 @@ fn a_scenario_cast_and_effect_play_particles_on_the_figures() {
             best.beams_started = best.beams_started.max(p.beams_started);
             best.beam_arrivals = best.beam_arrivals.max(p.beam_arrivals);
             best.story_hooks = p.story_hooks;
+            clip_misses = walker.characters().clip_frame_misses();
+            missed_clips = walker.characters().clip_frame_missed();
             combat = c;
         },
     );
@@ -442,7 +446,49 @@ fn a_scenario_cast_and_effect_play_particles_on_the_figures() {
         p.beam_arrivals
     );
     eprintln!("story hooks (all, with a story): {:?}", p.story_hooks);
+    eprintln!(
+        "clips asked for on the frame thread before they were decoded: {clip_misses} \
+         ({} distinct)",
+        missed_clips.len()
+    );
     assert_eq!(code, 0, "the scenario finishes");
+    // ARCHITECTURE §21: the combat layer read every record on the workers; no cue found a
+    // record unanswered on the frame thread, and no cue was handled without its records.
+    assert!(
+        combat.record_reads > 0,
+        "the combat records were read on the workers"
+    );
+    assert_eq!(
+        combat.record_misses, 0,
+        "no combat record looked up unanswered"
+    );
+    assert_eq!(
+        combat.cues_unready, 0,
+        "every cue waited for its records and clips"
+    );
+    assert_eq!(combat.dropped, 0, "no cue dropped");
+    // Every clip a combat script started was decoded on the workers before its cue was
+    // handled (the cue waits for it; the frame thread reads none, and a clip missing there
+    // would complete its node at once).
+    assert_eq!(
+        clip_misses, 0,
+        "no clip asked for on the frame thread before it was decoded: {missed_clips:x?}"
+    );
+    // The scenario's own cues were all handled, with both figures: per entity a combat
+    // state and an applied effect per effect line, and per cast its start, its end and its
+    // strike (the session may report more, such as vital changes); every strike shown.
+    assert_eq!(combat.figures, 2, "the player and the dummy");
+    let casts = 6 * sk.len();
+    let least = 2 + 2 * fx.len() + 3 * casts;
+    assert!(
+        combat.events >= least as u64,
+        "{} cues handled, at least {least} expected",
+        combat.events
+    );
+    assert_eq!(
+        combat.state.strikes_shown, casts as u64,
+        "every strike shown"
+    );
     assert!(p.session_owners > 0, "the session figures run scripts");
     assert!(
         p.session_requests > 0,

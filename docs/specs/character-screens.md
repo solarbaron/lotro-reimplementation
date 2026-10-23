@@ -342,23 +342,54 @@ is her in-world idle (0x05008EE7 here) and the Stout-axe body's is its in-world 
 > **OPEN:** what `RaceTable_RaceSelect_Entity` (§4.1) is used for; it is not the figure of any
 > stage traced here. **Tessera rule:** not used by the screens.
 
-> **OPEN:** (implementer, `apps/client/src/walker/characters/figure.rs`, 2026-10-10; an
-> implementation gap recorded so that the rules above are not claimed complete, not a spec
-> gap) The walker's figure path evaluates a figure's scripts once for a fixed property state
-> (the static clip resolution of `script-table.md` §11.3), not with the running graph of
-> `script-runtime.md`. As implemented for the screens' figures: the key labelled `Chargen` is
-> appended to the figure's start-up names (after `Startup` and the class table's names), and
-> `Render_AlwaysSelectable` is set on the race-and-class figure; the figure loops its
-> `LoopForever` clips (the most likely one per layer) and plays once, from the start, the
-> one-shot clips of §6.10 that are started for certain (no Random share below 0.999), the
-> first per layer, with the start time, end, `RampOut` fade and removal of §6.10 steps 3–5
-> and 8 (`RandomizeStartTime` draws from the figure's seed). Not played: gestures that a
-> Random node chooses, and later steps of Sequences and Timers (they need the running
-> graph); MeshFX props of the class branches are not attached. A change of the stage key
-> (race-and-class to appearance) or of `CharGen_Action` builds the figure again with the new
-> value from its start instead of switching the running script, so transition ports do not
-> run and the idle restarts. Real data (2026-10-10): the stance check of CSI9 on Tessera's
-> side passes for every body on both creation stages (`chargen_bodies_real_data`).
+> **OPEN:** (implementer, `apps/client/src/walker/characters/live.rs`, 2026-10-23; an
+> implementation note so that the rules above are not claimed complete, not a spec gap; it
+> replaces the note of 2026-10-10) The screens' figure now runs its scripts live with
+> `tessera-scriptgraph` (`script-runtime.md`): `Chargen` is appended to its start-up names
+> (after `Startup` and the class table's names) and `Render_AlwaysSelectable` is set on
+> the race-and-class figure as before; once the figure is on the GPU its `Startup`,
+> start-up names and `Chargen` run over time, so Random nodes play their gestures, later
+> Sequence and Timer steps run, and Switch transition ports run. Animation nodes play on
+> the figure's animator by `script-table.md` §6.10 (the held layer-110 proportion clips
+> stay with the shape path and are not played twice); a looping clip that is still being
+> decoded on the workers when its node starts begins once it is decoded (the frame thread
+> reads no clip), a one-shot one is skipped that time. Clips started while the figure's
+> start-up scripts are being started take `RampIn` 0 (`script-table.md` §6.10 step 1);
+> **question:** §6.10 says "while the entity is running one of its start-up scripts", and
+> a start-up script keeps running (its Random gestures, later Sequence steps); Tessera
+> reads it as the start of those scripts only (the clips started when the figure is
+> spawned), so later gestures ramp in by their own `RampIn`, until the spec says which.
+> MeshFX nodes of the class branches show their props, with their driven fields applied
+> (each prop entity is built with the figure, hidden while its node does not run; the
+> Tessera rule above); a node finds its prop by entity, holding location, bone type,
+> offset, rotation and scale, so two nodes that attach the same entity at different
+> anchors show two props. A change of
+> `CharGen_Stage` or `CharGen_Action` is a property change of the running figure: nothing
+> is built again and the clips that keep running (the idle) are not restarted; the
+> figure's status then reports the keys the scripts run with and the clips they play (what
+> the CSI9 stance check reads). The figure job evaluates the scripts with every branch and
+> resolves each stage value with the figure's class on a worker, keeps the script records
+> they reach for the runtime and decodes the clips they reach. Pieces of Appearance nodes:
+> the job resolves the start-up for each case value of the `CharGen_Stage` Switch of
+> `Chargen`, assembles each distinct piece set once and draws the set of the current stage
+> key (the Tessera rule above, for stage changes). Not done: pieces of Appearance nodes
+> and colours of EditMaterial nodes that change with anything but the stage key (they keep
+> the build's resolution; a class change builds the figure again, as before); a prop's
+> fade, life and destroy times and `AttachToParent` false (a prop is shown while its node
+> runs, attached); sounds and particle nodes of the screens' figure (the viewport draws
+> neither). Without the install's script vocabulary the figure keeps the static resolution
+> of `script-table.md` §11.3 and is built again on a key change. Real data: the stance
+> check of CSI9 on Tessera's side passes on all 15 bodies on both stages, and the class
+> props attach (`chargen_bodies_real_data`).
+
+> **OPEN:** (implementer, `apps/client/src/walker/characters/figure.rs`, 2026-10-23) Where a
+> MeshFX node attaches its entity: `script-table.md` §5.2 lists `HoldingLocation`,
+> `BoneType` and `BoneOffset` but no rule, and several MeshFX nodes the screens' figures
+> reach have `HoldingLocation` 0. **Tessera rule** (taken from the particle
+> attachment of `particle-runtime.md` §6.1, not stated for MeshFX): `BoneType` ≠ 0 attaches
+> to the bone of that bone type (`setup.md` §6.2) at an identity frame; else `HoldingLocation`
+> ≠ 0 attaches at that holding location's frame; both 0 attach at the holder's model origin;
+> in each case `BoneOffset`, the offset rotation and `Scale` are applied as for held items.
 
 > **Answered (2026-10-10, BIN2, OBS3, CS28–CS30):** the stance comes from the start-up script
 > `Chargen`, which the screens add to every stage figure (above); a one-shot stage clip plays

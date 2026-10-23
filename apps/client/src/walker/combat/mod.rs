@@ -31,14 +31,30 @@
 //!
 //! Data come from `tessera-gamedata`'s combat visuals over the install (opened on a worker
 //! at start-up); without an install nothing plays and events are dropped.
+//!
+//! # No record reads on the frame thread (ARCHITECTURE §21)
+//!
+//! The skill, induction, channel and effect records a cue names, the worn items of the
+//! stance (§11 rule 6) and the body records of picking are answered on the asset workers
+//! ([`records`]). Before a cue is handled, its records must be answered and the clips its
+//! scripts start on the figures decoded ([`super::characters::CharacterLayer::script_clips_ready`]);
+//! until then the cue, and every cue behind it (§9.6 order), waits (each cue at most
+//! [`MAX_CUE_WAIT`] from when it was queued, or from when the layer became ready, after
+//! which it is handled with what is there; a run of such cues is handled together). A session figure is
+//! spawned in the runtime only once its worn items are answered and the clips of its
+//! start-up scripts are decoded. The frame thread's lookups
+//! read only answers ([`records::RecordCache::frame_thread_misses`] counts those that found
+//! none; [`CombatLayerStats::record_misses`]).
 
 pub mod pick;
+pub mod records;
 pub mod state;
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex, OnceLock, PoisonError};
+use std::time::{Duration, Instant};
 
 use tessera_assets::{CancelToken, Priority, WorkerPool};
 use tessera_formats::gameplay::items::equipment_category_keys;
@@ -54,8 +70,10 @@ use tessera_net::{Body, EntityId as NetId, EntityKind};
 use tessera_render::glam::Vec3;
 use tessera_scriptgraph::{EntityId, RunId, StoryHookEvent};
 
+use self::records::{ItemFacts, Need, RecordCache, RecordReader};
 use self::state::{CombatState, CombatStats, CombatVocab, ScriptHost, UpcomingView, VisualData};
 use super::characters::CharacterLayer;
+use super::characters::prefetch::ClipPrefetch;
 use super::effects::EffectLayer;
 use super::effects::session::ExecuteVocab;
 
@@ -68,6 +86,37 @@ pub const REFUSAL_RETRY: f64 = 1.0;
 /// Seconds an entity with combat state may be missing from the session before its state
 /// is dropped.
 pub const ABSENT_GRACE: f64 = 5.0;
+/// Longest (wall-clock) wait of a cue for its records and clips (module docs).
+pub const MAX_CUE_WAIT: Duration = Duration::from_secs(10);
+
+/// A queued cue and when it was queued.
+#[derive(Debug, Clone)]
+struct Queued {
+    cue: CombatCue,
+    at: Instant,
+}
+
+/// How many cues at the head of the queue are handled now, and how many of them without
+/// all their records or clips: `cues` gives each cue's readiness and the time its wait
+/// started, in queue order (evaluated lazily: the first cue that is neither ready nor
+/// [`MAX_CUE_WAIT`] old stops the count, and the ones behind it are not asked). Every cue
+/// waits at most [`MAX_CUE_WAIT`] from its own start, so a run of cues that never become
+/// ready stalls the queue for one wait, not one wait each.
+fn handled_cues(cues: impl Iterator<Item = (bool, Instant)>, now: Instant) -> (usize, u64) {
+    let mut handled = 0usize;
+    let mut unready = 0u64;
+    for (ready, since) in cues {
+        if ready {
+            handled += 1;
+        } else if now.saturating_duration_since(since) >= MAX_CUE_WAIT {
+            handled += 1;
+            unready += 1;
+        } else {
+            break;
+        }
+    }
+    (handled, unready)
+}
 
 /// One session report, by network ID (the neutral API's input).
 #[derive(Debug, Clone, PartialEq)]
@@ -298,7 +347,8 @@ struct Boot {
     selectable: [Option<u32>; 2],
 }
 
-impl VisualData for Boot {
+/// The install's answers; read only on the asset workers ([`records::RecordCache`]).
+impl RecordReader for Boot {
     fn skill(&self, did: Did) -> Option<Arc<SkillVisuals>> {
         self.data.skill_visuals(did)
     }
@@ -313,6 +363,22 @@ impl VisualData for Boot {
     }
     fn induced_state_script(&self, did: Did) -> Option<ScriptKey> {
         self.data.induced_state_script(did)
+    }
+    fn item(&self, did: Did) -> Option<ItemFacts> {
+        let record = self.data.data().record(did).ok().flatten()?;
+        let bits = |pid: Option<u32>| pid.and_then(|p| record.get(p)?.as_bits()).unwrap_or(0);
+        // `Item_EquipmentCategory` is a bit field: key *k* is bit *k* − 1.
+        let category = equipment_category_keys(bits(self.category_pid))
+            .find_map(|k| self.categories.get(&k).cloned())
+            .unwrap_or_default();
+        Some(ItemFacts {
+            category,
+            default_bits: bits(self.slot_pids[0]),
+            compatible_bits: bits(self.slot_pids[1]),
+        })
+    }
+    fn body_selectable(&self, did: Did) -> Option<bool> {
+        body_selectable(self, did)
     }
 }
 
@@ -530,6 +596,7 @@ struct Host<'a> {
     fx: &'a mut EffectLayer,
     chars: &'a CharacterLayer,
     boot: &'a Boot,
+    records: &'a RecordCache<Boot>,
 }
 
 impl Host<'_> {
@@ -628,35 +695,211 @@ fn hand_categories(
 
 /// The stance of a figure by rule 6 (`combat-visuals.md` §11): players by the categories of
 /// their main- and off-hand items ([`hand_categories`]), other figures `combat_monster`.
-fn stance_of(boot: &Boot, chars: &CharacterLayer, e: NetId) -> Option<u32> {
-    let player = matches!(chars.entity_kind(e), Some(EntityKind::Player))
-        || matches!(
-            chars.figure_of(e).map(|f| f.request.body),
-            Some(Body::Character { .. })
-        );
+fn stance_of(
+    boot: &Boot,
+    records: &RecordCache<Boot>,
+    chars: &CharacterLayer,
+    e: NetId,
+) -> Option<u32> {
+    let player = is_player_figure(chars, e);
     let mut items = Vec::new();
     if player && let Some(f) = chars.figure_of(e) {
-        for eq in f.request.equipment.iter().filter(|q| !q.stowed).take(64) {
-            let record = boot.data.data().record(Did(eq.item.0)).ok().flatten();
-            let bits = |pid: Option<u32>| {
-                pid.and_then(|p| record.as_ref()?.get(p)?.as_bits())
-                    .unwrap_or(0)
-            };
-            // `Item_EquipmentCategory` is a bit field: key *k* is bit *k* − 1.
-            let category = equipment_category_keys(bits(boot.category_pid))
-                .find_map(|k| boot.categories.get(&k).cloned())
-                .unwrap_or_default();
+        for eq in f
+            .request
+            .equipment
+            .iter()
+            .filter(|q| !q.stowed)
+            .take(MAX_STANCE_ITEMS)
+        {
+            // Answered on the workers before the cue or the figure's spawn (module docs); a
+            // record that does not read counts as an item of no category in no slot.
+            let facts = records.item(Did(eq.item.0)).flatten().unwrap_or_default();
             items.push(HeldItem {
                 slot: eq.slot.map(u32::from),
-                default_bits: bits(boot.slot_pids[0]),
-                compatible_bits: bits(boot.slot_pids[1]),
-                category,
+                default_bits: facts.default_bits,
+                compatible_bits: facts.compatible_bits,
+                category: facts.category,
             });
         }
     }
     let (main, off) = hand_categories(&items, boot.hand_keys);
     let label = stance_for(main.as_deref(), off.as_deref(), player);
     boot.stances.get(label).copied()
+}
+
+/// Most worn items the stance rule reads per figure.
+const MAX_STANCE_ITEMS: usize = 64;
+
+/// Whether `e`'s figure is a player's (§11 rule 6).
+fn is_player_figure(chars: &CharacterLayer, e: NetId) -> bool {
+    matches!(chars.entity_kind(e), Some(EntityKind::Player))
+        || matches!(
+            chars.figure_of(e).map(|f| f.request.body),
+            Some(Body::Character { .. })
+        )
+}
+
+/// The worn-item records the stance of `e` reads (§11 rule 6).
+fn item_needs(chars: &CharacterLayer, e: NetId) -> Vec<Need> {
+    if !is_player_figure(chars, e) {
+        return Vec::new();
+    }
+    chars.figure_of(e).map_or_else(Vec::new, |f| {
+        f.request
+            .equipment
+            .iter()
+            .filter(|q| !q.stowed)
+            .take(MAX_STANCE_ITEMS)
+            .map(|q| Need::Item(Did(q.item.0)))
+            .collect()
+    })
+}
+
+/// The records cue `cue` reads (module docs).
+fn cue_needs(cue: &CombatCue, chars: &CharacterLayer) -> Vec<Need> {
+    match cue {
+        CombatCue::CastStarted { what, .. }
+        | CombatCue::Strike { what, .. }
+        | CombatCue::EffectApplied { what, .. } => what.map(Need::What).into_iter().collect(),
+        CombatCue::CombatState { entity, .. } => item_needs(chars, *entity),
+        _ => Vec::new(),
+    }
+}
+
+/// Pushes the non-zero keys of `keys` into `out` without duplicates.
+fn push_keys(out: &mut Vec<u32>, keys: impl IntoIterator<Item = ScriptKey>) {
+    for k in keys {
+        if k != 0 && !out.contains(&k) {
+            out.push(k);
+        }
+    }
+}
+
+/// The scripts a skill, induction, channel or effect record may run (`combat-visuals.md`
+/// §3, §5, §9).
+fn record_keys(data: &dyn VisualData, what: Did) -> Vec<u32> {
+    let mut keys = Vec::new();
+    if let Some(s) = data.skill(what) {
+        push_keys(&mut keys, s.self_list.iter().copied());
+        push_keys(&mut keys, s.other_list.iter().copied());
+        push_keys(&mut keys, s.mounted_self_list.iter().copied());
+        push_keys(&mut keys, s.mounted_other_list.iter().copied());
+        push_keys(&mut keys, [s.execution_failure, s.conjunction_windup]);
+        for h in &s.hooks {
+            push_keys(
+                &mut keys,
+                [
+                    h.behaviour_target_hit,
+                    h.fx_target_hit,
+                    h.fx_attacker_hit,
+                    h.fx_weapon_hit,
+                    h.behaviour_weapon_hit,
+                ],
+            );
+        }
+        if let Some(i) = s.induction.and_then(|d| data.induction(d)) {
+            push_keys(
+                &mut keys,
+                [
+                    i.animation,
+                    i.mounted_animation,
+                    i.fx,
+                    i.failure_fx,
+                    i.target_animation,
+                    i.target_fx,
+                    i.target_failure_fx,
+                ],
+            );
+        }
+        if let Some(c) = s.channelling.and_then(|d| data.channel(d)) {
+            for m in [&c.start, &c.running, &c.success, &c.failure, &c.abandoned] {
+                push_keys(&mut keys, [m.caster, m.caster_fx, m.target, m.target_fx]);
+            }
+        }
+    }
+    if let Some(e) = data.effect(what) {
+        push_keys(&mut keys, [e.fx, e.interval_fx, e.threat_interval_fx]);
+    }
+    push_keys(&mut keys, data.induced_state_script(what));
+    keys
+}
+
+/// The clips cue `cue` needs decoded, by figure (module docs): the scripts its records name
+/// on the entities it involves; the stance's start-up scripts for a combat-state change;
+/// the death and revive scripts.
+fn cue_clips(
+    cue: &CombatCue,
+    boot: &Boot,
+    records: &RecordCache<Boot>,
+    chars: &CharacterLayer,
+) -> Vec<(NetId, ClipPrefetch)> {
+    let on = |entities: &[Option<NetId>], keys: Vec<u32>| -> Vec<(NetId, ClipPrefetch)> {
+        if keys.is_empty() {
+            return Vec::new();
+        }
+        let mut out: Vec<(NetId, ClipPrefetch)> = Vec::new();
+        for e in entities.iter().flatten() {
+            if !out.iter().any(|(o, _)| o == e) {
+                out.push((
+                    *e,
+                    ClipPrefetch {
+                        keys: keys.clone(),
+                        overrides: Vec::new(),
+                    },
+                ));
+            }
+        }
+        out
+    };
+    match cue {
+        CombatCue::CastStarted {
+            entity,
+            what: Some(w),
+            target,
+            ..
+        } => on(&[Some(*entity), *target], record_keys(records, *w)),
+        CombatCue::Strike {
+            source,
+            target,
+            what: Some(w),
+            ..
+        } => on(&[Some(*target), *source], record_keys(records, *w)),
+        CombatCue::EffectApplied {
+            entity,
+            what: Some(w),
+            ..
+        } => on(&[Some(*entity)], record_keys(records, *w)),
+        CombatCue::CombatState {
+            entity,
+            in_combat: true,
+        } => {
+            let mut overrides = Vec::new();
+            if let Some(p) = boot.vocab.combat_violent {
+                overrides.push((p, PropertyValue::Bool(true)));
+            }
+            if let (Some(p), Some(k)) = (
+                boot.vocab.entity_mode,
+                stance_of(boot, records, chars, *entity),
+            ) {
+                overrides.push((p, boot.vocab.value(p, f64::from(k))));
+            }
+            vec![(
+                *entity,
+                ClipPrefetch {
+                    keys: Vec::new(),
+                    overrides,
+                },
+            )]
+        }
+        CombatCue::Defeated { entity } => {
+            on(&[Some(*entity)], boot.vocab.die_key.into_iter().collect())
+        }
+        CombatCue::Revived { entity } => on(
+            &[Some(*entity)],
+            boot.vocab.revive_key.into_iter().collect(),
+        ),
+        _ => Vec::new(),
+    }
 }
 
 impl ScriptHost for Host<'_> {
@@ -704,7 +947,7 @@ impl ScriptHost for Host<'_> {
         Some(([pos.x, pos.y, pos.z], [heading.cos(), heading.sin()]))
     }
     fn stance(&mut self, e: EntityId) -> Option<u32> {
-        stance_of(self.boot, self.chars, NetId(e.0))
+        stance_of(self.boot, self.records, self.chars, NetId(e.0))
     }
     fn set_upcoming(&mut self, view: UpcomingView) {
         // Runtime IDs for the Execute callbacks' arrays.
@@ -760,15 +1003,29 @@ pub struct CombatLayerStats {
     pub figures: usize,
     /// The state machine's counters.
     pub state: CombatStats,
+    /// Frame-thread record lookups that found no answer (no record is read there; module
+    /// docs).
+    pub record_misses: u64,
+    /// Records read on the asset workers.
+    pub record_reads: u64,
+    /// Cues handled after [`MAX_CUE_WAIT`] without all their records or clips.
+    pub cues_unready: u64,
 }
 
 /// The combat layer (module docs).
 pub struct CombatLayer {
     boot_rx: Option<mpsc::Receiver<Result<Boot, String>>>,
     boot: Option<Arc<Boot>>,
+    /// The record answers (module docs); made with the boot.
+    records: Option<Arc<RecordCache<Boot>>>,
+    /// The workers the records are read on.
+    pool: WorkerPool,
+    /// Since when the layer's data and the runtime are ready (a cue queued earlier waits
+    /// from then on, [`MAX_CUE_WAIT`]).
+    ready_since: Option<Instant>,
     state: Option<CombatState>,
     seed: u32,
-    queue: VecDeque<CombatCue>,
+    queue: VecDeque<Queued>,
     inbox: CombatInbox,
     ready: HashSet<u64>,
     moving: HashMap<u64, bool>,
@@ -814,6 +1071,9 @@ impl CombatLayer {
         Self {
             boot_rx,
             boot: None,
+            records: None,
+            pool: pool.clone(),
+            ready_since: None,
             state: None,
             seed,
             queue: VecDeque::new(),
@@ -835,6 +1095,10 @@ impl CombatLayer {
         let mut s = self.stats;
         if let Some(st) = &self.state {
             s.state = st.stats();
+        }
+        if let Some(r) = &self.records {
+            s.record_misses = r.frame_thread_misses();
+            s.record_reads = r.worker_reads();
         }
         s.figures = self.ready.len();
         s
@@ -874,7 +1138,10 @@ impl CombatLayer {
             self.queue.pop_front();
             self.stats.dropped += 1;
         }
-        self.queue.push_back(cue);
+        self.queue.push_back(Queued {
+            cue,
+            at: Instant::now(),
+        });
     }
 
     /// The layer's shared inbox ([`CombatInbox`]).
@@ -986,10 +1253,16 @@ impl CombatLayer {
     pub fn selectable(&self, characters: &CharacterLayer, entity: NetId) -> bool {
         let kind = characters.entity_kind(entity);
         let body_selectable = match (kind, characters.figure_of(entity).map(|f| f.request.body)) {
-            (Some(EntityKind::Object), Some(Body::Object(did))) => self
-                .boot
-                .as_ref()
-                .and_then(|b| body_selectable(b, Did(did.0))),
+            // Answered on the workers (module docs); while the answer is coming the object
+            // is not offered (the lookup queues it).
+            (Some(EntityKind::Object), Some(Body::Object(did))) => {
+                self.records
+                    .as_ref()
+                    .and_then(|r| match r.body(Did(did.0)) {
+                        Some(answer) => answer,
+                        None => Some(false),
+                    })
+            }
             _ => None,
         };
         pick::eligible(pick::Eligibility {
@@ -1044,7 +1317,12 @@ impl CombatLayer {
         match r {
             Ok(b) => {
                 self.state = Some(CombatState::new(b.vocab.clone(), self.seed));
-                self.boot = Some(Arc::new(b));
+                let b = Arc::new(b);
+                let records = Arc::new(RecordCache::new(Arc::clone(&b)));
+                // The layer is updated on the walker's frame thread.
+                records.mark_frame_thread();
+                self.records = Some(records);
+                self.boot = Some(b);
                 self.stats.ready = true;
             }
             Err(e) => {
@@ -1067,7 +1345,9 @@ impl CombatLayer {
             effects,
         } = input;
         characters.apply_clip_commands(effects.take_clip_commands());
-        let (Some(boot), Some(state)) = (self.boot.clone(), self.state.as_mut()) else {
+        let (Some(boot), Some(records), Some(state)) =
+            (self.boot.clone(), self.records.clone(), self.state.as_mut())
+        else {
             if self.problem.is_some() || (self.boot_rx.is_none() && self.boot.is_none()) {
                 // No data: nothing will ever play.
                 self.stats.dropped += self.queue.len() as u64;
@@ -1078,6 +1358,7 @@ impl CombatLayer {
         if !effects.runtime_ready() {
             return;
         }
+        let ready_since = *self.ready_since.get_or_insert_with(Instant::now);
         effects.set_execute_vocab(boot.exec);
         let extra: Vec<Did> = boot.selection_table.into_iter().collect();
         // 2. Session figures.
@@ -1117,6 +1398,7 @@ impl CombatLayer {
                 fx: effects,
                 chars: characters,
                 boot: &boot,
+                records: &records,
             };
             state.entity_removed(&mut host, EntityId(n));
             effects.remove_session_entity(NetId(n));
@@ -1145,6 +1427,7 @@ impl CombatLayer {
                 fx: effects,
                 chars: characters,
                 boot: &boot,
+                records: &records,
             };
             for e in expired {
                 self.absent.remove(&e.0);
@@ -1165,6 +1448,18 @@ impl CombatLayer {
                 .get(&n)
                 .is_some_and(|at| now - *at < REFUSAL_RETRY && now >= *at)
             {
+                continue;
+            }
+            // The stance of a figure that is in combat reads its worn items as soon as it
+            // runs (`entity_ready`): they are answered on the workers first.
+            if !records.ensure(&self.pool, &item_needs(characters, NetId(n))) {
+                self.waiting += 1;
+                continue;
+            }
+            // Its start-up scripts start clips as soon as it runs: decoded on the workers
+            // first (the frame thread reads no clip, module docs).
+            if !characters.script_clips_ready(NetId(n), &ClipPrefetch::default()) {
+                self.waiting += 1;
                 continue;
             }
             match effects.session_entity(NetId(n), characters, &extra) {
@@ -1188,6 +1483,41 @@ impl CombatLayer {
                 }
             }
         }
+        // Picking's body records asked for on this thread.
+        records.flush(&self.pool);
+        // 3a. How many cues at the head of the queue have their records answered and their
+        // clips decoded (module docs), or have waited [`MAX_CUE_WAIT`] since they were
+        // queued (or since the layer became ready); the first other one stops the count.
+        let wall = Instant::now();
+        let mut overdue = Vec::new();
+        let (ready_cues, unready) = handled_cues(
+            self.queue.iter().take(MAX_EVENTS_PER_FRAME).map(|q| {
+                let answered = records.ensure(&self.pool, &cue_needs(&q.cue, characters));
+                let decoded = answered
+                    && cue_clips(&q.cue, &boot, &records, characters)
+                        .into_iter()
+                        .fold(true, |all, (e, r)| {
+                            characters.script_clips_ready(e, &r) && all
+                        });
+                let since = q.at.max(ready_since);
+                if !decoded
+                    && wall.saturating_duration_since(since) >= MAX_CUE_WAIT
+                    && overdue.len() < 8
+                {
+                    overdue.push((q.cue.clone(), answered));
+                }
+                (decoded, since)
+            }),
+            wall,
+        );
+        for (cue, answered) in overdue {
+            tracing::warn!(
+                ?cue,
+                answered,
+                "combat cue handled without all its records or clips"
+            );
+        }
+        self.stats.cues_unready += unready;
         let runtime_player = player.and_then(|p| effects.session_id(p));
         effects.set_runtime_player(runtime_player);
         state.set_player(player.map(|p| EntityId(p.0)));
@@ -1210,6 +1540,7 @@ impl CombatLayer {
             fx: effects,
             chars: characters,
             boot: &boot,
+            records: &records,
         };
         for &n in &fresh {
             state.entity_ready(&mut host, EntityId(n));
@@ -1223,15 +1554,13 @@ impl CombatLayer {
             *run = start_selection(&mut host, &boot, *t);
         }
         // 3. Events, hooks, story ends.
-        let mut handled = 0usize;
-        while handled < MAX_EVENTS_PER_FRAME {
-            let Some(cue) = self.queue.pop_front() else {
+        for _ in 0..ready_cues {
+            let Some(Queued { cue, .. }) = self.queue.pop_front() else {
                 break;
             };
-            handled += 1;
             self.stats.events += 1;
             tracing::debug!(?cue, "combat: cue");
-            Self::apply(state, &mut host, &boot, &mut self.selection, cue);
+            Self::apply(state, &mut host, &boot, &records, &mut self.selection, cue);
         }
         state.update(&mut host, now);
         characters.apply_clip_commands(effects.take_clip_commands());
@@ -1241,6 +1570,7 @@ impl CombatLayer {
         state: &mut CombatState,
         host: &mut Host<'_>,
         boot: &Boot,
+        data: &RecordCache<Boot>,
         selection: &mut Option<(NetId, Option<RunId>)>,
         cue: CombatCue,
     ) {
@@ -1251,7 +1581,7 @@ impl CombatLayer {
                 cast,
                 what,
                 target,
-            } => state.cast_started(host, boot, id(entity), cast, what, target.map(id)),
+            } => state.cast_started(host, data, id(entity), cast, what, target.map(id)),
             CombatCue::CastEnded { entity, outcome } => state.cast_ended(host, id(entity), outcome),
             CombatCue::Strike {
                 source,
@@ -1263,7 +1593,7 @@ impl CombatLayer {
                 damage_type,
             } => state.vital_delta(
                 host,
-                boot,
+                data,
                 source.map(id),
                 id(target),
                 &vital,
@@ -1279,7 +1609,7 @@ impl CombatLayer {
                 entity,
                 instance,
                 what,
-            } => state.effect_applied(host, boot, id(entity), instance, what),
+            } => state.effect_applied(host, data, id(entity), instance, what),
             CombatCue::EffectRemoved { entity, instance } => {
                 state.effect_removed(host, id(entity), instance);
             }
@@ -1341,6 +1671,28 @@ fn body_selectable(boot: &Boot, did: Did) -> Option<bool> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A cue waits for its records and clips at most [`MAX_CUE_WAIT`] from its own start:
+    /// a run of cues that never become ready is handled together once they are overdue,
+    /// not one wait after another; a ready cue behind a waiting one still waits (§9.6
+    /// order).
+    #[test]
+    fn overdue_cues_are_handled_together() {
+        let now = Instant::now() + MAX_CUE_WAIT * 4;
+        let old = now - MAX_CUE_WAIT - Duration::from_millis(1);
+        let fresh = now - Duration::from_millis(5);
+        // Three cues that never got ready, all queued long ago, then a ready one.
+        let cues = [(false, old), (false, old), (false, old), (true, fresh)];
+        assert_eq!(handled_cues(cues.into_iter(), now), (4, 3));
+        // A cue that is still within its wait stops the count; the ready one behind it
+        // waits too, and the ones behind are not asked.
+        let mut asked = 0;
+        let cues = [(true, fresh), (false, fresh), (true, fresh), (true, fresh)];
+        let got = handled_cues(cues.into_iter().inspect(|_| asked += 1), now);
+        assert_eq!(got, (1, 0));
+        assert_eq!(asked, 2, "evaluated up to the first waiting cue");
+        assert_eq!(handled_cues(std::iter::empty(), now), (0, 0));
+    }
 
     fn item(slot: Option<u32>, default: u32, compatible: &[u32], category: &str) -> HeldItem {
         HeldItem {

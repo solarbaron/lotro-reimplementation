@@ -78,6 +78,20 @@ fn every_body_stands_in_the_creation_viewport() {
                 let stance = idle
                     .iter()
                     .any(|(layer, once, weights)| *layer < 110 && !once && !weights);
+                if let Some(l) = c
+                    .host
+                    .walker
+                    .as_ref()
+                    .and_then(|w| w.characters().preview_live())
+                {
+                    eprintln!(
+                        "body {species:#x}/{sex:#x} {stage}: live keys {:?}, {} props, variants {:?}, {:?}",
+                        l.keys(),
+                        l.props().len(),
+                        l.stage_variants(),
+                        l.stats()
+                    );
+                }
                 // The whole figure in the window-sized viewport, standing on the marker.
                 let f = c.framing(SIZE);
                 eprintln!(
@@ -116,6 +130,87 @@ fn every_body_stands_in_the_creation_viewport() {
     );
     assert!(bodies > 0);
     assert!(failures.is_empty(), "{failures:#?}");
+    c.act(Action::Back);
+    c.act(Action::Back);
+    c.act(Action::Quit);
+    c.until("the screens close", |c| c.ui.pre_world().is_none());
+    c.shutdown();
+}
+
+/// `character-screens.md` §2.1.4 (CS29: the class cases of `Chargen` hold MeshFX props):
+/// the race-and-class figure of the first race and gender runs its scripts live for each
+/// of its classes, and the MeshFX nodes of the class branches show their props on at least
+/// one class. Prints counts only.
+#[test]
+fn class_branch_props_attach_on_the_race_and_class_figure() {
+    let Some(game) = game_dir() else { return };
+    let dir = tempfile::tempdir().expect("tempdir");
+    let Some(mut c) = Client::start(game, dir.path()) else {
+        return;
+    };
+    c.until("the character screens open", |c| {
+        c.ui.pre_world().is_some_and(|p| {
+            p.screens().model().stage() == Stage::Select && !p.screens().model().rows().is_empty()
+        })
+    });
+    let data =
+        c.ui.pre_world()
+            .expect("screens")
+            .screens()
+            .model()
+            .data()
+            .clone();
+    let race = data.chargen.races.first().expect("a race");
+    let species = race.species();
+    let sex = race.genders.first().expect("a gender").sex;
+    c.act(Action::New);
+    c.act(Action::Race(species));
+    c.act(Action::Gender(sex));
+    assert_eq!(c.stage(), Some(Stage::RaceClass));
+    let classes = data.chargen.class_order(species);
+    assert!(!classes.is_empty(), "the race offers classes");
+    let (mut live, mut with_props, mut unmatched) = (0usize, 0usize, 0u64);
+    for &class in &classes {
+        c.act(Action::Class(class));
+        c.until("the class figure", |c| {
+            c.figure_shown() && c.preview_pixels().0
+        });
+        c.run_for(std::time::Duration::from_millis(700));
+        let stats = c
+            .host
+            .walker
+            .as_ref()
+            .and_then(|w| w.characters().preview_live())
+            .map(|l| {
+                (
+                    l.props().len(),
+                    l.stats(),
+                    l.prop_report().0,
+                    l.prop_report().1.len(),
+                )
+            });
+        if let Some((props, s, reached, failed)) = stats {
+            live += 1;
+            with_props += usize::from(s.props_shown > 0);
+            // A MeshFX node that runs without a built prop is a gap of the figure job.
+            unmatched += s.props_unbuilt;
+            eprintln!(
+                "class {class}: {reached} props reached, {props} built ({failed} not), {} shown, {} ran without a prop, {} clips started",
+                s.props_shown, s.props_unbuilt, s.clips_started
+            );
+        }
+    }
+    eprintln!(
+        "{species:#x}/{sex:#x}: {} classes, {live} run live, {with_props} show a prop",
+        classes.len()
+    );
+    assert_eq!(
+        live,
+        classes.len(),
+        "every class figure runs its scripts live"
+    );
+    assert!(with_props > 0, "the class branches' props attach");
+    assert_eq!(unmatched, 0, "every MeshFX node that ran found its prop");
     c.act(Action::Back);
     c.act(Action::Back);
     c.act(Action::Quit);

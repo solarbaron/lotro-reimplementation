@@ -9,7 +9,7 @@
 use std::collections::BTreeMap;
 
 use tessera_formats::script_table::{
-    AnimationNode, BeamNode, ParticleScriptNode, PhysicsImpulseNode,
+    AnimationNode, BeamNode, MeshFxNode, ParticleScriptNode, PhysicsImpulseNode,
 };
 use tessera_formats::{Did, PropertyEntry, PropertySet, PropertyValue};
 
@@ -52,6 +52,41 @@ pub struct ParticleStart {
     pub never_ending: bool,
     /// The node's editor ID (for logs).
     pub node_id: u32,
+}
+
+/// A started MeshFX attachment, numbered by the sink.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct MeshFxHandle(pub u64);
+
+/// A MeshFX node (kind 41, `script-table.md` §5.2) asking for its entity to be attached
+/// (`script-runtime.md` §18: an effect kind): the node's stored fields with the instance's
+/// driven values ([`Self::driven`]), which the sink applies to them.
+#[derive(Debug, Clone, Copy)]
+pub struct MeshFxStart<'a> {
+    /// The entity whose script runs the node (the holder).
+    pub entity: EntityId,
+    /// The node's stored fields (before the driven values of [`Self::driven`]).
+    pub node: &'a MeshFxNode,
+    /// The node's intensity.
+    pub intensity: f32,
+    /// The node's editor ID (for logs).
+    pub node_id: u32,
+    /// The instance's driven values (field PID, value; `script-table.md` §4.2: driven
+    /// properties and scriptlet parameters), for the sink to apply to the node's fields
+    /// (the `MeshFXScript_` field names).
+    pub driven: &'a [(u32, PropertyValue)],
+}
+
+/// What the sink did with a MeshFX node.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MeshFxOutcome {
+    /// Nothing attached: the node completes at once (`script-runtime.md` §18 Decision; the
+    /// default, as before the hook existed).
+    CompleteAtOnce,
+    /// Attached: the node runs until it is stopped, and then
+    /// [`EffectSink::stop_mesh_fx`] takes the attachment off (`character-screens.md` §2.1.4
+    /// Tessera rule).
+    RunUntilStopped(MeshFxHandle),
 }
 
 /// A started beam, numbered by the sink (`particle-runtime.md` §11.1).
@@ -334,6 +369,16 @@ pub trait EffectSink {
     /// A Beam node with a beam stopped (§11.1 step 2: the node's stop stops its beam).
     /// Default: ignored.
     fn stop_beam(&mut self, handle: BeamHandle) {
+        let _ = handle;
+    }
+    /// A MeshFX node starts (`script-table.md` §5.2). Default: nothing is attached and the
+    /// node completes at once, reported as an unimplemented kind (`script-runtime.md` §18).
+    fn start_mesh_fx(&mut self, request: &MeshFxStart<'_>) -> MeshFxOutcome {
+        let _ = request;
+        MeshFxOutcome::CompleteAtOnce
+    }
+    /// A running MeshFX node stopped: take its attachment off. Default: ignored.
+    fn stop_mesh_fx(&mut self, handle: MeshFxHandle) {
         let _ = handle;
     }
 }

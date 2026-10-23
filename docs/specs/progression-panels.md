@@ -4,11 +4,11 @@
 
 | | |
 |---|---|
-| **Status** | Accepted |
-| **Last updated** | 2026-10-16 |
+| **Status** | **Accepted** (review of the 2026-10-23 revision (§1.4, §2.3, §4.1, §6; PP17, PP18) by spec-review:spec-ui-scaling-p6:1 (independent session), 2026-10-23: passed). It was revised (2026-10-23: OPENs of §1.4, §2.3, §4.1 and §6 answered, row PP17 added; independent review passed). Accepted at the independent review of 2026-10-16 |
+| **Last updated** | 2026-10-23 |
 | **Author role** | Spec writer (dirty room) |
 | **Reviewer** | Spec reviewer (separate dirty-room session, AI-assisted, Clean-Room-Role: review; wrote no part of this spec or the P6 code) |
-| **Review record** | First version, 2026-10-16, for [decision 0024](../decisions/0024-parity-track.md) P6 (client half only) and [decision 0037](../decisions/0037-p6-trait-tree-and-recipe-census.md). **Independent review 2026-10-16 (spec reviewer, a session that wrote no part of it): passed; status Review → Accepted.** Checked against CLEAN_ROOM.md §5.3, decision 0024 §2 and §4 (client half only; values scripted, never derived; server data-free) and `server-content.md` §2: every statement is a functional fact (layout element roles and rects, enum/key forms, feed shapes, census rules) or a marked Tessera **Decision** (level-up presentation, fallbacks, gestures); no code or pseudo-code; element, property and enum-mapper names are interoperability identifiers (numeric IDs in the data, as in `combat-data.md`/`ui-layout.md`); no game text, assets, keys, hostnames or traffic (§2.3, §3.5 state so); provenance PP1–PP16 marked Confirmed/Reported/Decision; invariants PPI1–PPI11 are concrete; unknowns are `> **OPEN:**`, not guessed; no M4 pass; the progression model lives in `tessera-gamedata` (client/tools only, never linked by `tessera-server`) and the client derives no level, spends no point and decides no training (§1.2, §1.3, §2.2, §3.7, §4.4, PPI8, PPI9). **Own read-only probes of the install (M1, 2026-10-16):** a dat-only scan of every object record of `client_gamelogic.dat` (383,332 records) by root class at payload offset 4 — the census method of §5.1, no hard-coded DID — found **exactly 17** class-3486 records, confirming "17 trees" and the "every trait tree" definition; the layout records 0x22000033, 0x22000091, 0x22000030, 0x22000003 and 0x220008A4 exist and are UI layouts. The sub-counts of §5.3 (1,216 placements, 914 traits, 55 branch keys, 511 dependencies, 97 shared cell keys in 4 trees) are identical to the Accepted `combat-data.md` §8.5 (17 records, 1,216 placements, 511 dependencies) and its 2026-10-16 P6 implementer census, and were not re-derived here to avoid duplicating reviewed work. The feed events, commands and `TrainerFlags` bits cited (§2.2, §3.7, §4.3, §4.4) match `scenario-feed.md` §6.6/§9.1/§9.2/§9.4 (P6 progression). **Non-blocking review notes:** (a) the human-readable element names are symbolic renderings of numeric element IDs (the layout payloads carry no name strings — verified); the structure, rects and four-state lists (PPI5, PPI6) are OBS from the data, the names are interoperability identifiers, as the provenance note intends; (b) the available `dattool` layout decoder is incomplete for these records, so PPI5/PPI6 and the location-key row/column orientation of §3.2 (answering `combat-data.md` §8.5 Q11) were corroborated by record existence and internal consistency with the enum-label two-number form, but not re-decoded independently. **Scope note (keymap):** on branch p6 `keymap.md` was given only an implementer `> **OPEN:**` (no `ToggleTraitPanel`/`ToggleSkillPanel` rows; status stays Accepted P2), consistent with §1.4 here; a genuine keymap spec-writer revision adding those two actions (read from the install's key-map data) is still owed and is a keymap fact, not a progression fact — `keymap.md`'s status is unchanged by this review. |
+| **Review record** | **Review 2026-10-23 of the 2026-10-23 revision (§1.4, §2.3, §4.1, §6; PP17, PP18)** (spec-review:spec-ui-scaling-p6:1 (independent session), wrote no part of it): **passed**; status Revised → Accepted. Checked: checked against CLEAN_ROOM.md §5.3, every item, on the uncommitted worktree diff against main, with the contamination screen clean: every added statement is a functional fact, a marked Tessera rule or Decision, or an OPEN; no code, pseudo-code or listing-shaped text; no copied prose or non-interoperability identifiers; no game text, assets, keys, hostnames or traffic; provenance rows present and marked; no byte layout added; the answered behaviour is testable; unknowns stay OPEN or owner observations; nothing outside decision 0034 §2. Relative links and anchors resolve. Spot checks: `keymap.md` §8.3 binds `toggle_traits` to J and `toggle_skills` to K; `chat-window.md` CW55 gives mask 0x8, type 4 `Standard`; §4.1 leaves the original's recipe-trainer window to the owner (§10). First version, 2026-10-16, for [decision 0024](../decisions/0024-parity-track.md) P6 (client half only) and [decision 0037](../decisions/0037-p6-trait-tree-and-recipe-census.md). **Independent review 2026-10-16 (spec reviewer, a session that wrote no part of it): passed; status Review → Accepted.** Checked against CLEAN_ROOM.md §5.3, decision 0024 §2 and §4 (client half only; values scripted, never derived; server data-free) and `server-content.md` §2: every statement is a functional fact (layout element roles and rects, enum/key forms, feed shapes, census rules) or a marked Tessera **Decision** (level-up presentation, fallbacks, gestures); no code or pseudo-code; element, property and enum-mapper names are interoperability identifiers (numeric IDs in the data, as in `combat-data.md`/`ui-layout.md`); no game text, assets, keys, hostnames or traffic (§2.3, §3.5 state so); provenance PP1–PP16 marked Confirmed/Reported/Decision; invariants PPI1–PPI11 are concrete; unknowns are `> **OPEN:**`, not guessed; no M4 pass; the progression model lives in `tessera-gamedata` (client/tools only, never linked by `tessera-server`) and the client derives no level, spends no point and decides no training (§1.2, §1.3, §2.2, §3.7, §4.4, PPI8, PPI9). **Own read-only probes of the install (M1, 2026-10-16):** a dat-only scan of every object record of `client_gamelogic.dat` (383,332 records) by root class at payload offset 4 — the census method of §5.1, no hard-coded DID — found **exactly 17** class-3486 records, confirming "17 trees" and the "every trait tree" definition; the layout records 0x22000033, 0x22000091, 0x22000030, 0x22000003 and 0x220008A4 exist and are UI layouts. The sub-counts of §5.3 (1,216 placements, 914 traits, 55 branch keys, 511 dependencies, 97 shared cell keys in 4 trees) are identical to the Accepted `combat-data.md` §8.5 (17 records, 1,216 placements, 511 dependencies) and its 2026-10-16 P6 implementer census, and were not re-derived here to avoid duplicating reviewed work. The feed events, commands and `TrainerFlags` bits cited (§2.2, §3.7, §4.3, §4.4) match `scenario-feed.md` §6.6/§9.1/§9.2/§9.4 (P6 progression). **Non-blocking review notes:** (a) the human-readable element names are symbolic renderings of numeric element IDs (the layout payloads carry no name strings — verified); the structure, rects and four-state lists (PPI5, PPI6) are OBS from the data, the names are interoperability identifiers, as the provenance note intends; (b) the available `dattool` layout decoder is incomplete for these records, so PPI5/PPI6 and the location-key row/column orientation of §3.2 (answering `combat-data.md` §8.5 Q11) were corroborated by record existence and internal consistency with the enum-label two-number form, but not re-decoded independently. **Scope note (keymap):** on branch p6 `keymap.md` was given only an implementer `> **OPEN:**` (no `ToggleTraitPanel`/`ToggleSkillPanel` rows; status stays Accepted P2), consistent with §1.4 here; a genuine keymap spec-writer revision adding those two actions (read from the install's key-map data) is still owed and is a keymap fact, not a progression fact — `keymap.md`'s status is unchanged by this review. |
 | **Implements into** | `crates/gamedata` (`progression` module: the level/experience model, the trait-tree model with its cell placement and census, the skill-training offer model); `crates/ui` (`game::progression`: the experience bar, the trait panel and the skill-training window game widgets, and their fallback widgets); `apps/client` (`progression` module: opening the panels, their commands to the session, the level-up presentation, `--open-panel` names); `crates/plugins` (the progression plugin views only, through `lua-plugin-api.md` §15.6) |
 | **Companion specs** | [`combat-data.md`](combat-data.md) §8 (trait classes, trait trees class 3486, trait control), §7 (skills); [`player-character.md`](player-character.md) §9 (experience tables and level controls), §13 (trait configuration, class-to-nature, group-to-nature); [`game-panels.md`](game-panels.md) §11, P3 toolbar (`LevelProgressMeter`); [`npc-windows.md`](npc-windows.md) §5.3 (NPC action picker), §9.2 (money display and coin split); [`interaction.md`](interaction.md) §10.2 (level-up actions), §12 (player trigger responses); [`icon-layers.md`](icon-layers.md) (composed trait and skill icons); [`skill-tooltips.md`](skill-tooltips.md) (skill tooltips); [`item-tooltips.md`](item-tooltips.md) §6.11 (worth); [`ui-layout.md`](ui-layout.md) (`UILAYOUT`, §9 building panels, §17 opening), [`ui-behaviour.md`](ui-behaviour.md) (window manager, tooltips, input routing), [`ui-widgets.md`](ui-widgets.md) (list boxes, trees, scroll bars, meters), [`string-table.md`](string-table.md) (rendering, markup, variables); [`keymap.md`](keymap.md) §8, §12.14.2 (panel-toggle actions); [`scenario-feed.md`](scenario-feed.md) §6.6, §9.2, §9.4 (the "P6 progression" revision); [`lua-plugin-api.md`](lua-plugin-api.md) §15.6; [`crafting-panels.md`](crafting-panels.md) (the sibling P6 spec: crafting panel, crafting trainers, recipe census) |
 
@@ -77,6 +77,8 @@ Marks: **Confirmed** = observed over every record of the kind named, on 2026-10-
 | PP14 | `TrainerShown` (with `offers`, entry `coin`/`level`/`rank`/`flags`), `UntrainedSkills`, `SkillLearned`/`SkillForgotten`, and the `TrainSkill` command (§4.3, §4.4) | Reported (`scenario-feed.md` §6.6, §9.1, §9.2, §9.4) | Reported |
 | PP15 | Panel-toggle actions for the trait and skill panels are the keymap's (`keymap.md` §8, §12.14.2); the install's toolbar names the actions `ToggleTraitPanel` and `ToggleSkillPanel` (§1.4) | OBS (layout 0x22000033 tutorial action map); Reported (`keymap.md`) | Confirmed 2026-10-16 (the names) + Reported (bindings) |
 | PP16 | Plugin progression views (`LocalPlayer:GetTrainedSkills()`, `GetUntrainedSkills()`, and the trait/skill views of §15.6) (§7) | Reported (`lua-plugin-api.md` §15.6, §16) | Reported |
+| PP17 | Default keys of the trait and skill panels: `keymap.md` §8.3 binds `toggle_traits` (`ToggleTraitPanel`) to J and `toggle_skills` (`ToggleSkillPanel`) to K from the install's key-map data (§1.4) | Reported (`keymap.md` §8.3, Accepted 2026-10-23) | Reported |
+| PP18 | Tessera rules of 2026-10-23: the window for a `recipes` offer (§4.1), when the experience-bar fallback is drawn (§6), the chat mask of the level-up notice (§2.3) | This spec, answering implementer OPENs | Decision |
 
 Spot checks against the install, 2026-10-16 (OBS): the trait-tree census numbers of PP9 were
 re-derived from every class-3486 record; the trait-family counts of `combat-data.md` §8.1 (1,773
@@ -140,13 +142,18 @@ tutorial action map that names the toggle actions `ToggleTraitPanel` and `Toggle
 **J** for traits and **K** for skills. `apps/client` also opens each by an `--open-panel` name
 (`traits`, `skill-trainer`; the exact names are the implementer's, like the other panels).
 
-> **OPEN:** (P6) `keymap.md` does not yet carry rows for `ToggleTraitPanel` and
+> **Was OPEN:** (P6) `keymap.md` does not yet carry rows for `ToggleTraitPanel` and
 > `ToggleSkillPanel` (its §8.2 P6 note defines only the crafting toggles and says the trait and
 > skill-panel actions "await this spec's rows"). keymap.md is the authority for action names and
 > default bindings; a keymap revision should add these two actions (buttons, `global` context,
 > exact policy) and their default keys, read from the install's key-map data, and this spec will
 > cite the row. Until then `apps/client` may bind them provisionally; this is a keymap fact, not
 > a progression fact.
+>
+> **Answered (spec writer, 2026-10-23):** `keymap.md` §8.3 (revision of 2026-10-23,
+> Accepted) carries the rows: `toggle_traits` is `ToggleTraitPanel`, default J, and
+> `toggle_skills` is `ToggleSkillPanel`, default K, both in the `global` context (PP17). The
+> panels open and close with these actions; the provisional bindings are retired.
 
 ---
 
@@ -260,13 +267,19 @@ its chat line) lives in client code and was not read under M4 in this pass.
 > describe the original's on-screen presentation (if any) and either adopt or drop the banner. Its
 > appearance at a time is a pure function of the start time, so a golden freezes it deterministically.
 
-> **OPEN:** (implementer, `tessera-client`, 2026-10-23) item 1 is built: the notice line is
+> **Was OPEN:** (implementer, `tessera-client`, 2026-10-23) item 1 is built: the notice line is
 > posted as a derived chat line with the `Standard` mask (0x8, type 4), the mask of the P4 friend
 > and channel notices of `chat-window.md` (CW53, CW55), since "the P4 `notice` channel" names no
 > mask of its own; confirm the mask. Item 2 is **not built**: Tessera has no bundled or synthesised
 > level-up cue yet, and the P6 glue has no path to the client's audio engine. The level-up runs
 > silently until a cue (decision 0022 for a bundled asset, or a synthesised one) and its
 > playback from the P6 glue are chosen.
+>
+> **Answered (spec writer, 2026-10-23), Decision (PP18):** the mask is confirmed: the
+> level-up notice is a derived chat line with the `Standard` mask (0x8, chat type 4), like the
+> P4 friend and channel notices (`chat-window.md` CW53, CW55). Item 2 stays part of the
+> Decision; no spec fact is missing for it. Until a cue exists the level-up is silent, which
+> is the expected interim behaviour, not a defect of item 1.
 
 ---
 
@@ -486,15 +499,25 @@ The skill-training window opens from an **NPC trainer action**: the NPC action p
 `NPCActionPickerType` mapper, e.g. a trainer action), and choosing it makes the feed send
 `TrainerShown` (`scenario-feed.md` §6.6). `TrainerShown.offers` tells which rows the window
 draws: `skills`, `traits` or `recipes`; for `skills` and `traits` the skill-training window of
-§4.2 opens, for `recipes` the crafting trainer of `crafting-panels.md` §8.3 opens.
+§4.2 opens. **Tessera rule (revision of 2026-10-23, PP18):** for `recipes` the skill-training
+window of §4.2 opens too, with one row per offered recipe (icon, name, level and coin cost
+from the entry), and Train answers with `TrainSkill { window, entry }` as for skills. The
+crafting trainers of `crafting-panels.md` §8.3 are reached only by `CraftTrainerShown`: they
+show one profession, vocation or guild, have no rows and answer with `TrainCraft`.
 
-> **OPEN:** (implementer, `tessera-client`, 2026-10-23) a `TrainerShown` with `offers=recipes`
+> **Was OPEN:** (implementer, `tessera-client`, 2026-10-23) a `TrainerShown` with `offers=recipes`
 > carries rows (entries with a cost, level and `TrainSkill` answers), while the crafting-trainer
 > windows of `crafting-panels.md` §8.3 have no rows: they show one profession, vocation or guild
 > and answer with `TrainCraft` (and are opened by `CraftTrainerShown`). The client therefore shows
 > a `recipes` offer in the skill-training window of §4.2 (rows of recipes, Train sends
 > `TrainSkill { window, entry }`, as the committed `crafting` scenario expects). Which window the
 > original shows for a recipe trainer, and whether §4.1 meant this, is for the spec writer.
+>
+> **Answered (spec writer, 2026-10-23):** the client's reading is the rule now (above). The
+> earlier sentence that sent a `recipes` offer to the crafting trainer could not work: those
+> windows have no rows and the offer's entries answer with `TrainSkill`. Which window the
+> original uses for an NPC that teaches recipes was not observed; that stays an owner
+> observation (§10).
 
 <a id="s4-2"></a>
 ### 4.2 Layout (OBS, PP12)
@@ -654,10 +677,17 @@ with the same information, as the other P-track panels do (`game-panels.md` §11
   ratio as text, in Tessera's own frame (no toolbar art). Used when `toolbar` or `LevelMeter`
   is missing.
 
-  > **OPEN:** (implementer, `tessera-client`, 2026-10-23) "missing" read as: the HUD's toolbar is
+  > **Was OPEN:** (implementer, `tessera-client`, 2026-10-23) "missing" read as: the HUD's toolbar is
   > open but has no `LevelProgressMeter` element; with the HUD off (`--no-ui-hud`) no bar is
   > shown unless asked for by name (`--open-panel experience`). Confirm or say whether the
   > fallback bar should show whenever the toolbar is not open.
+  >
+  > **Answered (spec writer, 2026-10-23), Decision (PP18):** confirmed. "Missing" means
+  > missing from the install: the toolbar layout or its `LevelProgressMeter` element is absent
+  > or does not decode while the HUD's toolbar is open; then the fallback bar takes its place.
+  > A toolbar that is closed, or a HUD turned off (`--no-ui-hud`), is the user's choice and
+  > shows no bar; `--open-panel experience` opens the bar (the install's, or the fallback when
+  > the install lacks it) on its own.
 - **Trait panel fallback:** tabs for the trees the feed names; each tree a simple grid of cells
   placed by the location key of §3.2 (row × column, floaters in a top row), each cell an icon
   with a rank number and a state border (green available, grey locked, blue slotted); a points
@@ -780,7 +810,8 @@ Each asks the owner to compare Tessera with the original client on the owner's i
   slot categories shown for the class (§3.6, §3.7).
 - **O166** The skill-training window: reaching it from the NPC action, the tab set, row content
   (icon, name, level, cost), the ghosting of trained and unmet rows, the "trainable only"
-  checkbox, and the Train button (§4).
+  checkbox, and the Train button (§4); and which window an NPC that teaches recipes opens
+  (§4.1, Tessera rule of 2026-10-23: the skill-training window with recipe rows).
 - **O167** The coin cost split and the player-money display in the trainer window, and whether
   Tessera correctly hides the mithril buy-now path (§4.5, §6).
 
@@ -793,8 +824,8 @@ Each asks the owner to compare Tessera with the original client on the owner's i
   what the 0x10000000 group is) is **answered** by §3.2 / PP6: *a* = row, *b* = column, 0x10000000
   + *n* = floater *n*, read from the trait panel's `UI_TraitTree_TraitBaseLocationArray`. A later
   `combat-data.md` revision may cite this section; this spec does not edit it.
-- `keymap.md` needs rows for `ToggleTraitPanel` and `ToggleSkillPanel` (§1.4 OPEN); the install
-  names the actions and the research-reported default keys are J and K.
+- `keymap.md` §8.3 now carries the rows for `ToggleTraitPanel` (`toggle_traits`, J) and
+  `ToggleSkillPanel` (`toggle_skills`, K); the §1.4 OPEN is answered (2026-10-23).
 - `scenario-feed.md` §6.6: this spec's OPENs ask for feed forms for rested/bonus/suppressed
   experience (§2.2), a trainer-entry currency (§4.5) and, optionally, a trait-slot category
   (§3.6). They do not block P6; they would let the panels show more from data than from Tessera
@@ -809,3 +840,5 @@ Each asks the owner to compare Tessera with the original client on the owner's i
 |---|---|
 | 2026-10-16 | Independent review (spec reviewer, Clean-Room-Role: review; wrote no part of the spec or the P6 code): passed against CLEAN_ROOM.md §5.3, decision 0024 §2/§4 and `server-content.md` §2; status Review → Accepted. Own M1 probe confirmed the "every trait tree" census (17 class-3486 records, found by root class over all 383,332 object records) and the existence of the five UI-layout records; sub-counts match the Accepted `combat-data.md` §8.5; feed shapes match `scenario-feed.md` P6. Two non-blocking notes (element names are symbolic IDs; layout-internal invariants not re-decoded) and a keymap scope note recorded in the header review record. No text changed besides the header and this row. |
 | 2026-10-16 | First version (Review). Rewritten from dirty-room observation after the original P6 spec was lost. Covers the toolbar experience bar and level readout with the local level-up presentation (§2); the trait panel — trees-to-tabs, the cell grid with branches, location keys (row × column, floaters), ranks, points, the trait tooltip, cell states, equipped-trait slots and the `SlotTrait`/`SetTraitRank`/`ChooseTraitBranch` commands (§3); the skill-training window reached from an NPC action, its rows, states, cost and the `TrainSkill` command (§4); the trait-tree census for decision 0037 criterion 1 with counts on this install (§5); the fallback windows (§6); plugin views (§7); invariants (§8); worked examples (§9); owner comparison points for O160+ (§10). Facts are OBS (install layouts 0x22000033, 0x22000091, 0x22000030 and the class-3486 census, all re-observed read-only 2026-10-16) and Reported (companion specs), with Tessera Decisions for the level-up presentation and fallbacks; no M4 pass this session. Answers `combat-data.md` §8.5 OPEN Q11 (§3.2, §11). |
+| 2026-10-23 | Spec writer (dirty room); status Accepted → Revised, awaiting an independent review. New rows PP17 (keymap §8.3 default keys J and K, Reported) and PP18 (Decision). **§1.4:** the keymap OPEN is answered by `keymap.md` §8.3. **§2.3:** the notice mask `Standard` confirmed; the missing cue is interim. **§4.1:** a `recipes` offer opens the skill-training window with recipe rows answered by `TrainSkill` (behaviour as built; the earlier sentence naming the crafting trainer is replaced). **§6:** the experience-bar fallback is drawn only when the install lacks the meter, not when the toolbar or HUD is off. |
+| 2026-10-23 | Header only: independent review by spec-review:spec-ui-scaling-p6:1 (independent session) of the 2026-10-23 revision (§1.4, §2.3, §4.1, §6; PP17, PP18): passed; status Revised → Accepted (record in the header). No fact or rule changed. |

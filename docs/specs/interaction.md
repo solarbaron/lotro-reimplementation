@@ -4,11 +4,11 @@
 
 | | |
 |---|---|
-| **Status** | Accepted |
-| **Last updated** | 2026-10-08 |
+| **Status** | **Accepted** (review of the 2026-10-23 revision (§3.4.1 answers; I6d, I6e) by spec-review:spec-ui-scaling-p6:1 (independent session), 2026-10-23: passed). It was revised (2026-10-23: the two implementer OPENs of §3.4.1 answered, row I6d added; independent review passed). Accepted at review 4, 2026-10-08 |
+| **Last updated** | 2026-10-23 |
 | **Author role** | Spec writer (dirty room) |
 | **Reviewer** | Spec reviewer (separate session, not the author) |
-| **Review record** | Review 1, 2026-10-07: changes requested. Review 2, 2026-10-07: changes requested. Review 3, 2026-10-08 (separate dirty-room review session, not the author): **passed**, status Accepted (four minor notes). Revision 4, 2026-10-08 (spec writer): Accepted text changed (§21), status Revised. Review 4, 2026-10-08 (separate dirty-room review session, not the author): **passed**, status Accepted (minor notes only). Details in the review log (decision 0018). |
+| **Review record** | **Review 2026-10-23 of the 2026-10-23 revision (§3.4.1 answers; I6d, I6e)** (spec-review:spec-ui-scaling-p6:1 (independent session), wrote no part of it): **passed**; status Revised → Accepted. Checked: checked against CLEAN_ROOM.md §5.3, every item, on the uncommitted worktree diff against main, with the contamination screen clean: every added statement is a functional fact, a marked Tessera rule or Decision, or an OPEN; no code, pseudo-code or listing-shaped text; no copied prose or non-interoperability identifiers; no game text, assets, keys, hostnames or traffic; provenance rows present and marked; no byte layout added; the answered behaviour is testable; unknowns stay OPEN or owner observations; nothing outside decision 0034 §2. Relative links and anchors resolve. Spot checks: I6d reproduced read-only on the install (28,555 setups; 20,438 with collision, per-kind counts as stated, largest difference 0.00051 m); D13, E24, E26, `scenario-feed.md` §5.1 and `tessera-protocol.md` §7.4 agree with the answers. Review 1, 2026-10-07: changes requested. Review 2, 2026-10-07: changes requested. Review 3, 2026-10-08 (separate dirty-room review session, not the author): **passed**, status Accepted (four minor notes). Revision 4, 2026-10-08 (spec writer): Accepted text changed (§21), status Revised. Review 4, 2026-10-08 (separate dirty-room review session, not the author): **passed**, status Accepted (minor notes only). Details in the review log (decision 0018). |
 | **Implements into** | A gameplay-data layer on `crates/props` and `crates/wstate` (decoders and stores for the record kinds of §4–§12; crate placement is the implementer's choice); the client (cursor, use-range test and cast bar of §3.4 and §3.8.4, cosmetic-pet following of §7.4); `crates/net` sandbox backend (use, channel and defeat flows, §16); `apps/explorer` (hotspot and channelling cards, hotspot overlay, §17); `apps/dattool` (census commands) |
 | **Companion specs** | [`wstate.md`](wstate.md) (object records, bundles, links, available-property lists); [`wlib.md`](wlib.md) (class library, method tables §6.4, bytecode chunk §4.1); [`property-system.md`](property-system.md) (property sets, labels, DID maps §8); [`items.md`](items.md) §5.10 (usage behaviour objects and requirements on items); [`creatures.md`](creatures.md) (templates, generator chain §6); [`combat-data.md`](combat-data.md) (effects, progressions §4, induction and channelling durations §7.9); [`quests.md`](quests.md) §6.3 (effect-application objects, class 700); [`map-data.md`](map-data.md) (map-note and quest-marker tables §4–§5, place keys §3 and §10); [`entity-descriptor.md`](entity-descriptor.md) §4.9 (`Entity_CreationType`); [`collision.md`](collision.md) (ethereality §9.2, entity cylinders); [`appearance.md`](appearance.md) §5.5 (held props) |
 
@@ -77,6 +77,8 @@ Marks:
 | I6a | Cylinder of an entity: base radius = *r*₀ × scale + 0.05 m, base height = *h*₀ × scale + 0.1 m, offset = centre of the collision shape's bounding box in the entity's own frame; radius replaced by `Physics_GameRadiusOverride` × the first component of `Render_AdjustableScale` when the override is a float above 0 (§3.4.1) | BIN (g) | BIN only |
 | I6c | *r*₀ and *h*₀ are the horizontal radius and the height of `physics_bounds` of the setup that the entity's model is built from; *s* = z of `Physics_AdjustableScale` × z of `Model_Scale` (each (1, 1, 1) when absent), replaced by 1 when not finite or below 0.0002; the offset is not scaled; with the outermost-parent flag every input comes from the outermost ancestor (§3.4.1, §3.4.2) | BIN (j), (m) | BIN only |
 | I6b | `Physics_GameRadiusOverride` (float, default −1) is stored in 54 top-level 0x79 sets, all of mob templates (class 1723 here), values 0.5–13, all above 0; never nested; 52 of them store `Render_AdjustableScale` with three equal components (0.65–8), 2 do not; 3 landblock instance sets also store it (2, 3, 10) (§3.4.1) | OBS (all 383,332 0x79 sets; all instance sets of all landblock-info records) | Confirmed 2026-10-07 |
+| I6d | For every one of the 20,438 setups with collision (mesh only 16,812, sphere only 1,910, box only 990, capsule only 715, and all 11 mixtures: box + mesh 6, capsule + mesh 4, box + sphere 1), the stored `physics_bounds` box (its first six floats) equals the union of the boxes' rotated corners, the spheres, the capsules and the 0x66 mesh's vertex bounds within 6 × 10⁻⁴ m; so the I6a offset may be taken from the stored box (§3.4.1) | OBS (all 28,555 setups, read-only probe in the dirty scratch area; agrees with `setup.md` §6.4 and `collision.md` §4.3 for the single-kind setups) | Confirmed 2026-10-23 |
+| I6e | Inputs of the I6a cylinders for session entities (lookup order, types, the Tessera protocol's appearance scale, guards for values that are not finite) and the local player's cylinder when the session names no body (§3.4.1) | This spec, 2026-10-23, answering implementer OPENs | Decision |
 | I7 | Out-of-range cursor: shown when the local player's `Mouseover_Range` is positive and the gap distance to the hovered entity is at least that value (§3.4.2) | BIN (b), (p); OBS (`Mouseover_Range` is never stored) | BIN only |
 | I7a | Cursor distance: both cylinders built with the outermost-parent rule; distance 0 when the hovered entity is the local player; no distance when the hovered entity cannot be found (§3.4.2) | BIN (b), (m) | BIN only |
 | I7b | Hover hand-off to class code; mouse-over eligibility (override, visibility, phase, quest item, selectability), activity-collection type, usage-action type rule (pending targeted item, drama, plain) and its overrides (§3.4.4); every world-entity class shares the selectability and usage-action functions (§3.4.4) | BIN (k) for the hand-off; BC for the rules | BC (rules); BIN only (hand-off) |
@@ -474,7 +476,7 @@ body model, not from Tessera's movement capsule (`collision.md`).
 > collision (all eight `physics_bounds` floats 0), gets *r*₀ = *h*₀ = 0 and *o* = (0, 0, 0),
 > so its cylinder is radius 0.05 m and height 0.1 m before the override of step 3.
 
-> **OPEN:** (implementer, `apps/client`, 2026-10-23) readings taken for the client's I6a
+> **Was OPEN:** (implementer, `apps/client`, 2026-10-23) readings taken for the client's I6a
 > cylinders, please confirm or correct: (a) the offset *o* is the centre of the setup's
 > stored `physics_bounds` box (its first six floats) for every setup, also those whose
 > collision is a 0x66 mesh, rather than a box recomputed from the volumes; (b) the four
@@ -484,8 +486,24 @@ body model, not from Tessera's movement capsule (`collision.md`).
 > protocol) is not part of *s*; (d) engineering guards: `physics_bounds` with a value that
 > is not finite counts as no setup (D13), and an override whose product with *k* is not
 > finite keeps the base radius.
+>
+> **Answered (spec writer, 2026-10-23):** (a) **confirmed by observation** (I6d): for every
+> setup with collision in this install, mixtures included, the stored `physics_bounds` box is
+> the bounding box of the collision shape within 6 × 10⁻⁴ m, so taking *o* as the centre of
+> the stored box (half the sum of its first and second triples) is the step-2 rule; a setup
+> whose eight values are all 0 is Decision D13's. (b) **Tessera rule** (I6e), in line with
+> `entity-descriptor.md` E24 and E26 ("instance set over template"): a value the session set
+> for the entity (a `PropertyChanged`) is read first, then the entity's body record with its
+> inheritance, then the property sets of its 0x47 chain (first value found wins); a value of
+> another type than the rule reads (a float for `Physics_GameRadiusOverride`, a vector for the
+> three scales) counts as absent. (c) **Tessera rule**: confirmed; *s* is built from the two
+> properties only, and the uniform appearance scale of Tessera's own protocol (a factor on the
+> drawn figure, `tessera-protocol.md` §7.4) is not part of it. (d) **Tessera rules**: confirmed;
+> a `physics_bounds` value that is not finite makes the setup count as having no collision
+> (D13), and an override whose product with *k* is not finite or not above 0 keeps the base
+> radius.
 
-> **OPEN:** (implementer, `apps/client`, 2026-10-23) the local player's "own body model":
+> **Was OPEN:** (implementer, `apps/client`, 2026-10-23) the local player's "own body model":
 > the client takes the body the session's latest appearance of the player names, else the
 > body of the player's `CharacterInfo`. A scenario-feed session whose player declares no
 > `species=`/`sex=` (`scenario-feed.md` §5.1) sends neither, so the player's cylinder is then
@@ -493,6 +511,15 @@ body model, not from Tessera's movement capsule (`collision.md`).
 > walker's avatar with a body of its own. Should the cylinder in that case come from the
 > body the client draws for the player (the walker avatar's), or is D13 right for a player
 > the session gave no body?
+>
+> **Answered (spec writer, 2026-10-23), Decision (I6e):** D13 is right. The local
+> player's body model is the one the session names: its latest appearance of the player,
+> else the body of the player's `CharacterInfo`. When the session names none, the player's
+> cylinder is D13's (radius 0.05 m, height 0.1 m) even though the windowed client draws an
+> avatar of its own: that avatar is a presentation choice of the window, which a headless run
+> does not make, and a use's range result must not depend on whether the client has a window
+> (scenario runs replay identically headless and windowed). A scenario that needs a realistic
+> player cylinder declares the player's `species=` and `sex=` (`scenario-feed.md` §5.1).
 
 **Property lookup (BIN o).** The client's entity property lookup routes each PID by the
 `field_b` byte of its dictionary definition (`property-system.md` §2.2, §2.3): values 3, 4, 7,
@@ -2251,3 +2278,5 @@ recorded. In the follow step, two points with equal scores resolve to the newer 
 | 2026-10-08 | header, §1, §3.4.1, §3.4.2, §3.4.4, §3.4.5 (new), §3.4.6 (new), §3.5, §7.4, §16.3, §18, §19.5 (new), §19.6 (new), §20 | Revision 4 (spec writer). No implementer OPEN notes had been filed against this spec; this revision closes or narrows the writer's own OPENs and the four minor notes of review 3. **Corrected (behaviour change for implementers):** `Mouseover_Range` is not server-supplied: the class code writes it onto the local player from the hovered entity (`Usage_MinUsageDist_ClientOverride`, else `Usage_MinUsageDist`, else 2.0; I7d, §3.4.2); the pet trail is kept newest first and recorded per owner position change of more than 0.01 m, filtered by element (I20b, §7.4), which replaces the old Decision D7 rule; `CSM_DisplayInactiveOptions` is read from the clicked object, not the handler (§3.5). **Closed:** the cursor and effect step (§3.4.6, I7f); the seven overriding usage-action classes, with the NPC service rule (§3.4.5, I7e); selectability and usage-action lookup are shared by all world-entity classes (§3.4.4); trail recording (§7.4); hover-target choice and flag recomputation (§3.4.2, I7c). **Narrowed:** §3.4.1 (lookup routes by `field_b`; Decision D14), §3.4.2 entity tree (Decision D15, review note m4), §3.4.5 tests of other systems (Decisions D16, D17), §3.5 menu assembly, §7.4. **Review 3 notes:** m1 (§3.4.1 warning), m2 (§3.4.4 no default), m3 (BC named in rows I9, I13a, I17, I21, I22 and in the BC read list), m4 (D15). New provenance rows I7c–I7f, I20b; new BIN questions (o)–(s); new invariants IN23–IN27. Status Accepted → Revised. |
 | 2026-10-10 | §3.4 | Note only (no fact changed), for P3: the input that uses an entity is `npc-windows.md` §3.1. Status unchanged. |
 | 2026-10-16 | §2.1, §3.9.3, §4.6 | Notes only (no fact changed), for P6 (`crafting-panels.md`): gathering nodes among class 794, the panel's read of the `Crafting` barred-action bit, facility hotspots. Status unchanged. |
+| 2026-10-23 | header, §1 (I6d, I6e), §3.4.1 | Spec writer (dirty room); status Accepted → Revised, awaiting an independent review. Answers the two implementer OPENs of 2026-10-23 on the I6a cylinders: (a) the offset from the stored `physics_bounds` box is confirmed by a census of all 28,555 setups (I6d, the 11 mixtures included); (b) lookup order session value → body record with inheritance → 0x47 chain, other types absent; (c) the Tessera protocol's appearance scale is not part of *s*; (d) guards for values that are not finite; the local player without a session body keeps Decision D13. No rule of the original changed; the Tessera rules are I6e. |
+| 2026-10-23 | header | Header only: independent review by spec-review:spec-ui-scaling-p6:1 (independent session) of the 2026-10-23 revision (§3.4.1 answers; I6d, I6e): passed; status Revised → Accepted (record in the header). No fact or rule changed. |

@@ -133,6 +133,12 @@ impl PaintJob {
         self.rects.iter().fold(Rect::EMPTY, |b, r| b.union(r))
     }
 
+    /// Whether no band is painted yet.
+    #[must_use]
+    pub fn is_fresh(&self) -> bool {
+        self.next == 0 && self.rects.first().is_none_or(|r| self.next_y == r.y0)
+    }
+
     /// Whether every band is painted.
     #[must_use]
     pub fn is_complete(&self) -> bool {

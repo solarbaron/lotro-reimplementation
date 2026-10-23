@@ -81,7 +81,7 @@ pub use control::{Background, ControlKind};
 pub use drag::DragPayload;
 pub use env::{ImageRef, ImageState, MemoryEnv, NullEnv, PreparedText, TextRequest, UiEnv};
 pub use events::{Answer, Command, ControlEvent, Message, MsgArg, UiEvent};
-pub use focus::{BandChange, BandEntry};
+pub use focus::{BandChange, BandEntry, DialogKeys, MAX_HELD_RELEASES};
 pub use geom::IBox;
 pub use surface::{GroupGeometry, UiFrame};
 pub use tree::ElementKey;

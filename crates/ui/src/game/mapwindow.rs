@@ -39,7 +39,7 @@ use super::radar::Radar;
 use super::vocab::GameVocab;
 use super::worldmap::{DungeonView, MapTree, NodeOptions, WorldMapPanel};
 use super::{GameError, find_below, set_image, show, subtree};
-use crate::widgets::context_menu::{
+use crate::game::context_menu::{
     ContextMenu, MenuArt, MenuEvent, MenuItem, MenuPosition, MenuRefs, MenuReply, MenuRequest,
     REOPEN_GUARD,
 };
@@ -1472,7 +1472,7 @@ impl MapWindowView {
             })
             .collect();
         nodes.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)));
-        nodes.truncate(crate::widgets::context_menu::MAX_ITEMS);
+        nodes.truncate(crate::game::context_menu::MAX_ITEMS);
         nodes.into_iter().map(|(_, i, label)| (label, i)).unzip()
     }
 

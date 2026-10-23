@@ -18,10 +18,10 @@ use tessera_formats::ui_layout::{UiEnum, UiLabels};
 use tessera_formats::{DataIdMap, Did, EnumMapper, PropertyDictionary, Record, UiLayout};
 use tessera_props::PropertyRegistry;
 use tessera_ui::game::chat::notice::NoTables;
-use tessera_ui::widgets::context_menu::{
+use tessera_ui::game::context_menu::{
     ContextMenu, MenuArt, MenuEvent, MenuItem, MenuPosition, MenuRefs, MenuReply, MenuRequest,
 };
-use tessera_ui::widgets::dialog::{
+use tessera_ui::game::dialog::{
     DialogArt, DialogBoxes, DialogKind, DialogOutcome, DialogRefs, DialogRequest, DialogText,
 };
 use tessera_ui::{Ui, UiEnv, UiEvent, Vocab};

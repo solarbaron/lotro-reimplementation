@@ -358,28 +358,6 @@ impl FontFace {
         i32::try_from(self.line_height).unwrap_or(i32::MAX)
     }
 
-    /// A 32-bit key identifying this face for the derived-glyph cache (`ui-scaling.md` §6.5
-    /// [`crate::scaling::GlyphKey`]). A data record returns its own DID; a Tessera face folds
-    /// its (file, code-set, pixel-size) triple into 32 bits.
-    ///
-    /// > **OPEN (implementer):** `ui-scaling.md` §6.5 keys the derived-glyph cache on the
-    /// > "font DID", but Tessera's own fallback faces (`fonts.md` §11 item 2) have no DID. This
-    /// > folds their identity into a `u32`, so two distinct Tessera faces could in principle
-    /// > collide and serve one another's derived glyph. Data records (the common case) never
-    /// > collide. Confirm the intended key for DID-less faces, or key the cache on a wider id.
-    #[must_use]
-    pub(crate) fn cache_did(&self) -> u32 {
-        match self.id {
-            FontId::Data(did) => did,
-            FontId::Tessera { font, ranges, px } => {
-                let h = font ^ ranges ^ u64::from(px);
-                // Fold to 32 bits; set the top bit so a Tessera face cannot alias a real DID
-                // (data DIDs have prefix 0x42.. and never set bit 31 of the low word here).
-                ((h as u32) ^ ((h >> 32) as u32)) | 0x8000_0000
-            }
-        }
-    }
-
     /// Copies a glyph's source coverage box out of an atlas, for derivation (`ui-scaling.md`
     /// §6.4.4). With `outline` false it is the fill box `W × H` at the glyph's `(X, Y)` in the
     /// foreground atlas; with `outline` true it is the bordered box `(W + 2·bx) × (H + 2·by)` at

@@ -50,7 +50,10 @@ mod select;
 
 pub use atlas::{FontFace, FontId, FontLadder, GlyphLookup};
 pub use chars::{CharListBuilder, SLOT_NORMAL, SLOT_TAG, TextChar};
-pub use draw::{BulletArt, DrawParams, TextOp, TextPaint, draw, draw_scaled};
+pub use draw::{
+    BulletArt, DrawParams, LADDER_STEP_UNITS, LadderStep, TextOp, TextPaint, derive_ladder_step,
+    draw, draw_scaled,
+};
 pub use fallback::{
     DEFAULT_RANGES, MAX_FALLBACK_PX, MIN_FALLBACK_PX, TesseraFont, bundled_font_bytes,
 };

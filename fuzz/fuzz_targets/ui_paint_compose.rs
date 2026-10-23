@@ -112,7 +112,6 @@ fuzz_target!(|data: &[u8]| {
             content,
             shown: !b.byte().is_multiple_of(7),
             displayed,
-            overhang: i32::from(b.byte() % 4) * 8 - 8,
             canvas: [u32::from(b.byte()) + 1, u32::from(b.byte()) + 1],
             canvas_origin: [b.coord(), b.coord()],
             addressing: if b.byte().is_multiple_of(9) {
@@ -180,7 +179,6 @@ fuzz_target!(|data: &[u8]| {
     // Coverage regions of an arbitrary small footprint tree.
     let leaf = |b: &mut Bytes<'_>| FootprintNode {
         displayed: b.rect(),
-        overhang: i32::from(b.byte() % 4) * 8 - 8,
         own_rotation: b.byte().is_multiple_of(2),
         window: b.byte().is_multiple_of(2),
         nested: Vec::new(),

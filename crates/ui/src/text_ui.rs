@@ -26,7 +26,10 @@ use crate::vocab::tessera_msg;
 const MAX_TESSERA_FACES: usize = (MAX_FALLBACK_PX - MIN_FALLBACK_PX + 1) as usize;
 
 /// Most bytes of rasterised Tessera-font faces kept at once; past it the least recently used
-/// face is dropped, one at a time (Tessera bound).
+/// face is dropped, one at a time (Tessera bound). The faces are not counted in the glyph share
+/// of `ui-scaling.md` §8 S6, which goes to the derived-glyph cache alone (an implementer reading
+/// until the spec says whether these faces count as a glyph cache; see
+/// [`TextScaling::set_glyph_share`]).
 const MAX_TESSERA_FACE_BYTES: usize = 48 << 20;
 
 /// The text-scaling state of the painter (`ui-scaling.md` §6.4, §6.5, §7.1, §7.5): the
@@ -35,6 +38,9 @@ const MAX_TESSERA_FACE_BYTES: usize = 48 << 20;
 /// the physical text drawn for each element.
 pub(crate) struct TextScaling {
     pub cache: GlyphCache,
+    /// The glyph caches' share of the S6 total (`ui-scaling.md` §8): the derived-glyph cache's
+    /// budget ([`TextScaling::set_glyph_share`]).
+    glyph_share: usize,
     /// Ladder of each registered face, by face id (§6.4.2).
     pub ladders: HashMap<FontId, FontLadder>,
     pub params: Option<TextParamsReader>,
@@ -61,6 +67,11 @@ pub(crate) struct TextScaling {
     /// Glyphs derived and time spent on scaled text since the last frame's figures (S7).
     pub derived: u64,
     pub derive_ns: u64,
+    /// Ladder steps accepted since the last frame's figures: count, worker time and the
+    /// longest step, nanoseconds (S7).
+    pub ladder_steps: u32,
+    pub ladder_step_ns: u64,
+    pub ladder_step_max_ns: u64,
 }
 
 impl std::fmt::Debug for TextScaling {
@@ -82,6 +93,7 @@ impl Default for TextScaling {
     fn default() -> Self {
         Self {
             cache: GlyphCache::new(DEFAULT_GLYPH_CACHE_BYTES),
+            glyph_share: DEFAULT_GLYPH_CACHE_BYTES,
             ladders: HashMap::new(),
             params: None,
             factor: 1.0,
@@ -96,6 +108,9 @@ impl Default for TextScaling {
             epoch: 0,
             derived: 0,
             derive_ns: 0,
+            ladder_steps: 0,
+            ladder_step_ns: 0,
+            ladder_step_max_ns: 0,
         }
     }
 }
@@ -175,8 +190,9 @@ impl ResolvedFonts {
 
 impl TextScaling {
     /// Tessera's bundled font rasterised at `px` (clamped to the supported sizes), cached. The
-    /// cache holds every supported size within [`MAX_TESSERA_FACE_BYTES`]; past that the least
-    /// recently used face is dropped, one at a time, so sizes in use are rasterised once.
+    /// cache holds faces up to [`MAX_TESSERA_FACE_BYTES`], its own bound outside the S6 glyph
+    /// share; past that the least recently used face is dropped, one at a time. The sizes one
+    /// screen uses at once fit far within the bound, so they are rasterised once.
     fn tessera_face(&mut self, px: i32) -> Option<Arc<FontFace>> {
         let px = u32::try_from(px.clamp(MIN_FALLBACK_PX as i32, MAX_FALLBACK_PX as i32)).ok()?;
         self.tessera_tick = self.tessera_tick.wrapping_add(1);
@@ -223,6 +239,24 @@ impl TextScaling {
         self.tessera_bytes = self.tessera_bytes.saturating_add(bytes);
         self.tessera_faces.insert(px, (Arc::clone(&face), tick));
         Some(face)
+    }
+
+    /// Sets the glyph caches' share of the S6 total (`ui-scaling.md` §8 S6): the derived-glyph
+    /// cache's budget, which evicts down to it. Tessera's rasterised faces keep their own
+    /// bound ([`MAX_TESSERA_FACE_BYTES`]) and take nothing from the share.
+    pub(crate) fn set_glyph_share(&mut self, bytes: usize) {
+        self.glyph_share = bytes;
+        self.cache.set_budget(bytes);
+    }
+
+    /// The glyph share of [`Self::set_glyph_share`].
+    pub(crate) fn glyph_share(&self) -> usize {
+        self.glyph_share
+    }
+
+    /// Bytes of Tessera's rasterised faces held.
+    pub(crate) fn tessera_bytes(&self) -> usize {
+        self.tessera_bytes
     }
 
     /// The number of Tessera-font faces held and the number rasterised so far (tests).
@@ -540,9 +574,34 @@ impl Ui {
     }
 
     /// Sets the byte budget of the derived-glyph cache (`ui-scaling.md` §6.5; its share of the
-    /// decoded-image budget, §8 S6).
+    /// S6 total, §8). The cache evicts down to it. Tessera's rasterised faces are not counted
+    /// in it (they keep their own bound). [`Self::set_image_memory`] sets it from the S6 rule;
+    /// this sets it directly.
     pub fn set_glyph_cache_budget(&mut self, bytes: usize) {
-        self.painter.text.cache.set_budget(bytes);
+        self.painter.text.set_glyph_share(bytes);
+    }
+
+    /// The glyph caches' share in bytes, and the bytes they hold now: (share, derived glyphs,
+    /// Tessera's faces).
+    #[must_use]
+    pub fn glyph_memory(&self) -> (usize, usize, usize) {
+        let t = &self.painter.text;
+        (t.glyph_share(), t.cache.bytes(), t.tessera_bytes())
+    }
+
+    /// Takes the glyphs of a ladder step derived on a worker ([`crate::text::derive_ladder_step`],
+    /// `ui-scaling.md` §6.5) into the derived-glyph cache, and records its worker time for the
+    /// next frame's figures (`PaintFrameStats::ladder_step_ns`, budget S7). The glyphs count
+    /// toward the cache's budget like any other; text already drawn is not repainted.
+    pub fn accept_ladder_step(&mut self, step: crate::text::LadderStep) {
+        let t = &mut self.painter.text;
+        for (k, g) in step.glyphs {
+            t.cache.insert(k, g);
+        }
+        let ns = u64::try_from(step.elapsed.as_nanos()).unwrap_or(u64::MAX);
+        t.ladder_steps = t.ladder_steps.saturating_add(1);
+        t.ladder_step_ns = t.ladder_step_ns.saturating_add(ns);
+        t.ladder_step_max_ns = t.ladder_step_max_ns.max(ns);
     }
 
     /// The derived-glyph cache's figures: (glyphs held, bytes held, glyphs derived so far).
@@ -969,6 +1028,37 @@ mod tests {
             }
         }
         assert_eq!(t.tessera_face_counts(), (18, 18), "every lookup is a hit");
+    }
+
+    /// Review finding: Tessera's faces keep their own bound, outside the S6 glyph share, so
+    /// sizes whose faces together exceed half the default share are still rasterised once
+    /// when elements alternate between them, and the derived-glyph cache keeps the whole share.
+    #[test]
+    fn tessera_faces_do_not_thrash_within_the_default_glyph_share() {
+        let mut t = TextScaling::default();
+        let sizes: Vec<i32> = (30..=64).collect();
+        for &px in &sizes {
+            assert!(t.tessera_face(px).is_some());
+        }
+        assert!(
+            t.tessera_bytes() > crate::text::DEFAULT_GLYPH_CACHE_BYTES / 2,
+            "the faces exceed half the share: {}",
+            t.tessera_bytes()
+        );
+        for _ in 0..4 {
+            for &px in &sizes {
+                let _ = t.tessera_face(px);
+            }
+        }
+        assert_eq!(t.tessera_face_counts(), (35, 35), "every lookup is a hit");
+        assert_eq!(t.cache.budget(), crate::text::DEFAULT_GLYPH_CACHE_BYTES);
+        t.set_glyph_share(3 << 20);
+        assert_eq!(t.cache.budget(), 3 << 20);
+        assert_eq!(
+            t.tessera_face_counts().0,
+            35,
+            "the share does not evict faces"
+        );
     }
 
     /// §6.4.3 item 4 and §6.4.4: a target height above the rasteriser's bound is derived from

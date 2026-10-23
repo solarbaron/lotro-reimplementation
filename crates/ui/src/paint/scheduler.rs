@@ -55,9 +55,26 @@
 //!   (counted). A back texture that could never fit, even with every other texture
 //!   released, is refused: the surface's textures are dropped (it draws nothing, counted)
 //!   and a generation does not wait for it.
+//! - **Paint on the workers** (`ui-scaling.md` §8 S1, UR §6 "Workers if needed"): with a
+//!   [`PaintSpawner`] set ([`Scheduler::set_spawner`]), a content or generation job whose
+//!   damage exceeds [`PaintLimits::worker_min_px`] physical pixels (30,000 by default; the
+//!   minimap while walking at a content scale above 1) is painted whole on a worker instead
+//!   of in bands within the frame's slice: its canvases and job move to the worker and come
+//!   back complete, and the job then goes on exactly as a job painted on the frame thread
+//!   (uploads, back textures, holding, swaps). Composition never reads canvases, so the
+//!   surface keeps drawing its front textures meanwhile. While the canvases are away their
+//!   memory counts as their allocated bytes plus the tiles the job may add (the worker's
+//!   canvas limit). First paints stay on the frame thread (their bands reach the textures as
+//!   they are painted), and so does every job without a spawner. Tessera rules: the
+//!   threshold applies to one job's merged damage, not to the sum over the frame's jobs; a
+//!   worker that panics loses the canvases, and the surface is repainted in full by a later
+//!   job (counted in [`PaintFrameStats::worker_failures`]); so does work the pool drops
+//!   without running it (a shutdown or a cancellation), which reports back as a failure
+//!   when it is dropped.
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::sync::Arc;
+use std::sync::mpsc::{Receiver, Sender, channel};
 use std::time::Duration;
 
 use super::PaintError;
@@ -156,6 +173,67 @@ pub struct Snapshot {
     pub size: [u32; 2],
 }
 
+/// Runs paint work off the frame thread: the host's handle on its worker pool (the asset
+/// workers, `ui-scaling.md` §8 S1). `spawn` must run `work` soon on some other thread and
+/// must not run it on the calling thread; the scheduler collects the result at a later
+/// frame (or the same one, when the work finished meanwhile).
+pub trait PaintSpawner: Send + Sync {
+    /// Runs `work` on a worker.
+    fn spawn(&self, work: Box<dyn FnOnce() + Send + 'static>);
+}
+
+/// The spawner, with a `Debug` that names it only.
+#[derive(Clone)]
+struct Spawner(Arc<dyn PaintSpawner>);
+
+impl std::fmt::Debug for Spawner {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("PaintSpawner")
+    }
+}
+
+/// A job painted on a worker, handed back.
+struct WorkerDone {
+    id: SurfaceId,
+    order: u64,
+    /// The job and its canvases, or `None` when the worker panicked.
+    result: Option<(PaintJob, CanvasSet)>,
+}
+
+/// Sends a worker's [`WorkerDone`] once: the result when the work ran, `None` when the work
+/// is dropped without running or unwinds (a pool shut down or cancelled, or a worker thread
+/// that panicked), so the surface never waits for a job that is gone (module docs).
+struct WorkerReply {
+    tx: Sender<WorkerDone>,
+    id: SurfaceId,
+    order: u64,
+    sent: bool,
+}
+
+impl WorkerReply {
+    fn send(mut self, result: Option<(PaintJob, CanvasSet)>) {
+        self.sent = true;
+        // The receiver is gone only when the scheduler is; then nothing waits.
+        let _ = self.tx.send(WorkerDone {
+            id: self.id,
+            order: self.order,
+            result,
+        });
+    }
+}
+
+impl Drop for WorkerReply {
+    fn drop(&mut self) {
+        if !self.sent {
+            let _ = self.tx.send(WorkerDone {
+                id: self.id,
+                order: self.order,
+                result: None,
+            });
+        }
+    }
+}
+
 /// Gives the scheduler a surface's current snapshot when a job starts.
 pub trait SnapshotSource {
     /// The snapshot of `surface` now, or `None` when it has nothing to paint (an empty
@@ -188,6 +266,29 @@ pub struct PaintFrameStats {
     /// Nanoseconds spent laying out and deriving scaled text in this frame (§6.5, S7), part of
     /// the paint slice.
     pub glyph_derive_ns: u64,
+    /// Nanoseconds spent deriving glyphs on the frame thread in this frame, the derivations
+    /// alone (S7: at most 20 µs per glyph, so this ÷ [`Self::glyphs_derived`] is the figure).
+    pub glyph_derivation_ns: u64,
+    /// The longest single glyph derivation of this frame on the frame thread, nanoseconds
+    /// (S7).
+    pub glyph_derivation_max_ns: u64,
+    /// Ladder steps derived on the workers whose glyphs were accepted in this frame
+    /// (`crate::Ui::accept_ladder_step`, S7).
+    pub ladder_steps: u32,
+    /// The worker time of those ladder steps, nanoseconds (S7: at most 5 ms per step for the
+    /// printable ASCII range).
+    pub ladder_step_ns: u64,
+    /// The longest of those ladder steps, nanoseconds (S7).
+    pub ladder_step_max_ns: u64,
+    /// Jobs handed to the workers in this frame (S1).
+    pub worker_jobs_started: u32,
+    /// Jobs painted on the workers that came back in this frame (S1); also counted in
+    /// [`Self::jobs_completed`].
+    pub worker_jobs_completed: u32,
+    /// Damage pixels of the jobs handed to the workers in this frame (S1).
+    pub worker_pixels: u64,
+    /// Worker jobs that failed (the worker panicked) in this frame; their surfaces repaint.
+    pub worker_failures: u32,
 }
 
 /// What a frame produced.
@@ -265,6 +366,8 @@ struct SurfaceState {
     refused_layers: BTreeSet<Layer>,
     /// Whether the current job's canvas-memory refusal is counted.
     mem_counted: bool,
+    /// The job and its canvases are on a worker (S1): the bytes they may hold meanwhile.
+    on_worker: Option<usize>,
 }
 
 #[derive(Debug)]
@@ -302,6 +405,11 @@ pub struct Scheduler<G> {
     counters: CapCounters,
     warned_memory: bool,
     warned_snapshot: bool,
+    /// The worker pool for large jobs (S1), when the host gave one.
+    spawner: Option<Spawner>,
+    /// Finished worker jobs (made with the first spawner, so a scheduler without one
+    /// allocates nothing for them).
+    workers: Option<(Sender<WorkerDone>, Receiver<WorkerDone>)>,
 }
 
 /// What [`Scheduler::go_back`] did.
@@ -336,13 +444,44 @@ impl<G> Scheduler<G> {
             counters: CapCounters::default(),
             warned_memory: false,
             warned_snapshot: false,
+            spawner: None,
+            workers: None,
         }
+    }
+
+    /// Sets (or removes) the worker pool large jobs are painted on (`ui-scaling.md` §8 S1;
+    /// module docs). Jobs already on a worker come back as usual.
+    pub fn set_spawner(&mut self, spawner: Option<Arc<dyn PaintSpawner>>) {
+        if spawner.is_some() && self.workers.is_none() {
+            self.workers = Some(channel());
+        }
+        self.spawner = spawner.map(Spawner);
+    }
+
+    /// Whether a worker pool is set.
+    #[must_use]
+    pub fn has_spawner(&self) -> bool {
+        self.spawner.is_some()
+    }
+
+    /// Whether the surface's job is on a worker now.
+    #[must_use]
+    pub fn is_on_worker(&self, id: SurfaceId) -> bool {
+        self.surfaces
+            .get(&id)
+            .is_some_and(|s| s.on_worker.is_some())
     }
 
     /// The limits.
     #[must_use]
     pub fn limits(&self) -> &PaintLimits {
         &self.limits
+    }
+
+    /// Replaces the limits; they apply from the next frame (budgets and caps are read every
+    /// frame; a lower canvas or texture budget refuses new allocations, it frees nothing).
+    pub fn set_limits(&mut self, limits: PaintLimits) {
+        self.limits = limits;
     }
 
     /// Fallback counters (memory waits and refusals).
@@ -397,6 +536,7 @@ impl<G> Scheduler<G> {
                 images_pending: false,
                 refused_layers: BTreeSet::new(),
                 mem_counted: false,
+                on_worker: None,
             },
         );
         Ok(())
@@ -594,8 +734,12 @@ impl<G> Scheduler<G> {
     pub fn canvas_bytes(&self) -> u64 {
         self.surfaces
             .values()
-            .filter_map(|s| s.canvases.as_ref())
-            .map(|c| c.allocated_bytes() as u64)
+            .map(|s| match (&s.canvases, s.on_worker) {
+                (Some(c), _) => c.allocated_bytes() as u64,
+                // On a worker: the bytes its canvases may hold (module docs).
+                (None, Some(b)) => b as u64,
+                (None, None) => 0,
+            })
             .sum()
     }
 
@@ -619,9 +763,12 @@ impl<G> Scheduler<G> {
             ..FrameOutput::default()
         };
         let mut left = self.limits.upload_cap_bytes;
+        self.collect_workers(&mut out);
         self.start_generations(source);
         self.start_jobs(source, &mut out);
         self.paint(budget, &mut out);
+        // Jobs that finished on a worker meanwhile go on in this frame.
+        self.collect_workers(&mut out);
         // First paints and generation work take the cap before content jobs.
         self.upload_priority(&mut left, &mut out);
         self.release_first_paints(now, &mut out);
@@ -852,6 +999,9 @@ impl<G> Scheduler<G> {
         let mut total = usize::try_from(self.canvas_bytes()).unwrap_or(usize::MAX);
         let mut painted_any = false;
         'jobs: for id in ids {
+            if self.hand_off(id, limit, &mut total, out) {
+                continue 'jobs;
+            }
             loop {
                 if painted_any && budget.exhausted() {
                     break 'jobs;
@@ -892,6 +1042,128 @@ impl<G> Scheduler<G> {
                     out.stats.jobs_completed += 1;
                     self.complete(id, out);
                     continue 'jobs;
+                }
+            }
+        }
+    }
+
+    /// Hands the job of `id` to a worker when the module docs' rule says so (a spawner is
+    /// set, the job is a content or generation job not started yet, its damage exceeds
+    /// [`PaintLimits::worker_min_px`]). Returns whether it did; `total` (the canvas bytes of
+    /// every surface) then counts the bytes the job's canvases may hold on the worker.
+    fn hand_off(
+        &mut self,
+        id: SurfaceId,
+        limit: usize,
+        total: &mut usize,
+        out: &mut FrameOutput,
+    ) -> bool {
+        let (Some(spawner), Some((tx, _))) = (self.spawner.clone(), &self.workers) else {
+            return false;
+        };
+        let tx = tx.clone();
+        let min_px = self.limits.worker_min_px;
+        let Some(s) = self.surfaces.get_mut(&id) else {
+            return false;
+        };
+        if s.kind == Kind::FirstPaint || s.on_worker.is_some() {
+            return false;
+        }
+        let (Some(job), Some(set)) = (&s.job, &s.canvases) else {
+            return false;
+        };
+        if !job.is_fresh() {
+            return false;
+        }
+        let px: u64 = job.rects().iter().map(Rect::area).sum();
+        if px <= min_px {
+            return false;
+        }
+        // The tiles the job may allocate, in every layer, within what the other surfaces
+        // leave of the canvas budget (U5).
+        let tiles: u64 = job
+            .rects()
+            .iter()
+            .map(|r| r.align_out(TILE).area().saturating_mul(4))
+            .fold(0u64, u64::saturating_add);
+        let layers = set.layers().count() as u64;
+        let held = set.allocated_bytes();
+        let others = total.saturating_sub(held);
+        let may_add = usize::try_from(tiles.saturating_mul(layers)).unwrap_or(usize::MAX);
+        let reserve = held
+            .saturating_add(may_add)
+            .min(limit.saturating_sub(others).max(held));
+        let (Some(job), Some(mut set)) = (s.job.take(), s.canvases.take()) else {
+            return false;
+        };
+        set.set_byte_limit(reserve);
+        s.on_worker = Some(reserve);
+        *total = others.saturating_add(reserve);
+        let order = s.order;
+        out.stats.worker_jobs_started += 1;
+        out.stats.worker_pixels = out.stats.worker_pixels.saturating_add(px);
+        let reply = WorkerReply {
+            tx,
+            id,
+            order,
+            sent: false,
+        };
+        spawner.0.spawn(Box::new(move || {
+            let painted = std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || {
+                let mut job = job;
+                let mut set = set;
+                while job.paint_band(&mut set).is_some() {}
+                (job, set)
+            }));
+            reply.send(painted.ok());
+        }));
+        true
+    }
+
+    /// Takes the jobs the workers finished: each goes on as a job completed on the frame
+    /// thread ([`Self::complete`]); a failed one leaves its surface to be repainted in full.
+    fn collect_workers(&mut self, out: &mut FrameOutput) {
+        while let Some(done) = self.workers.as_ref().and_then(|(_, rx)| rx.try_recv().ok()) {
+            let Some(s) = self.surfaces.get_mut(&done.id) else {
+                continue;
+            };
+            if s.on_worker.is_none() || s.order != done.order {
+                // A released surface's id was used again meanwhile.
+                continue;
+            }
+            s.on_worker = None;
+            match done.result {
+                Some((job, mut set)) => {
+                    if set.take_refused_tiles() > 0 && !s.mem_counted {
+                        s.mem_counted = true;
+                        self.counters.memory += 1;
+                        if !self.warned_memory {
+                            self.warned_memory = true;
+                            tracing::warn!(
+                                surface = done.id.0,
+                                "UI canvas memory budget reached: pixels past it are not painted"
+                            );
+                        }
+                    }
+                    s.job = Some(job);
+                    s.canvases = Some(set);
+                    out.stats.jobs_completed += 1;
+                    out.stats.worker_jobs_completed += 1;
+                    self.complete(done.id, out);
+                }
+                None => {
+                    tracing::warn!(surface = done.id.0, "UI paint worker failed: repainting");
+                    out.stats.worker_failures += 1;
+                    s.job = None;
+                    s.canvases = None;
+                    s.damage.add_full();
+                    // The next job starts afresh at the snapshot's size (a full repaint);
+                    // a generation member's job is started again from a new snapshot.
+                    s.stage = Stage::Idle;
+                    if s.kind == Kind::Generation {
+                        s.gen_job_started = false;
+                        s.gen_capture = None;
+                    }
                 }
             }
         }

@@ -259,7 +259,8 @@ fn styled_controls_from_the_install_layout() {
         }
     }
     eprintln!("both windows rebuilt from their scaled containers");
-    // §14.2.3, §14.2.6 (d): the window's canvas reaches over the title bar's rows above its top.
+    // §14.2.3 step 3, §14.2.6 (d): the title bar rises above the window, but its rows above
+    // the window's top edge are cut: the window's canvas is the window's box and no more.
     let w = fx.control_key("Probe", "w");
     let rise = {
         let ui = fx.pui.ui().borrow();
@@ -301,13 +302,12 @@ fn styled_controls_from_the_install_layout() {
                     }
             })
             .expect("the window is composed");
-        let rise_shown = (f64::from(rise) * 1.25).ceil() as i32;
         assert_eq!(
-            e.dest.y0,
-            ui.physical_box(w).y0 - rise_shown,
-            "the canvas starts at the title bar's top"
+            e.dest,
+            ui.physical_box(w),
+            "the canvas is the window's box: the title bar's rows above it are cut"
         );
-        eprintln!("title bar rows above the window drawn: {rise_shown}");
+        eprintln!("title bar rows above the window cut: {rise}");
     }
     fx.frame(0.016);
     fx.assert_no_errors();

@@ -379,7 +379,9 @@ impl Ui {
             e.root_panel = true;
         }
         if modal {
+            // A modal dialog consumes the other keys while shown (`ui-widgets.md` §18.4).
             self.mark_dialog(k);
+            self.set_dialog_modal(k, true);
         }
         if let Err(e) = self.attach_raw(k, parent) {
             self.destroy(k);

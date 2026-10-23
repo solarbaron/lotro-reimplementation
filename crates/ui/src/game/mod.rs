@@ -53,7 +53,9 @@
 //! | [`mapmarks`] | note types, masks, filters and their menu, icon tables, notes, feed markers, minimap blips | `map-windows.md` §6; `map-data.md` §4.8 |
 //! | [`mapwindow`] | the map window: presentations, navigation, dungeon maps, controls, player marker, place lookup | `map-windows.md` §3–§5, §7 |
 //! | [`mapfallback`] | the fallback map window, its elements and a fallback minimap | decision 0031; `map-windows.md` §8 OPEN |
-//! | [`popup`] | Tessera's popup list for the P5 menus | `map-windows.md` §4.5, §6.9; `travel-windows.md` §6.4 |
+//! | [`popup`] | click helpers shared by the windows' rows (a button's mouse click dropped for its `Button_click`, row click registrations) and the front z-level of new root panels | `ui-behaviour.md` §4.3, §4.6; `ui-layout.md` §9.3 |
+//! | [`dialog`] | the engine dialog boxes: wait, confirmation, message and text input, one at a time with a queue | `ui-widgets.md` §18, `ui-behaviour.md` §5.5 |
+//! | [`context_menu`] | context menus: item lists, menu trees, placement, hover, open delay, selection | `ui-widgets.md` §19 |
 //! | [`travel`] | the travel window, the end-travel box, the travel presentation | `travel-windows.md` §4, §5 |
 //! | [`finder`] | the instance finder, its queue page and alert, the instance-travel window | `travel-windows.md` §4.11, §6, §7.2 |
 //! | [`travelfallback`] | fallback travel, finder and instance-travel windows | decision 0031 |
@@ -66,9 +68,11 @@ pub mod avatar;
 pub mod charvocab;
 pub mod chat;
 pub mod combat;
+pub mod context_menu;
 pub mod crafting;
 pub mod creation;
 pub mod data;
+pub mod dialog;
 pub mod dragbox;
 pub mod escape;
 pub mod examine;
@@ -139,6 +143,10 @@ pub enum GameError {
     /// A property value has the wrong shape.
     #[error("malformed property {0:#010x}")]
     Malformed(u32),
+    /// A context-menu item list holds an item whose kind is not 1, 2 or 3
+    /// (`ui-widgets.md` §19.2; the value is the raw kind).
+    #[error("invalid context-menu item kind {0}")]
+    InvalidMenuKind(u32),
     /// A tree or list exceeds Tessera's cap.
     #[error("{what} exceeds the cap of {cap}")]
     TooLarge {

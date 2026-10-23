@@ -462,7 +462,7 @@ fn derived_cover(
 ) -> Option<Arc<CoverageMap>> {
     let target = u16::try_from(dm.line_height).unwrap_or(u16::MAX);
     let key = GlyphKey {
-        font_did: face.cache_did(),
+        face: face.id(),
         target_height: target,
         source: kind,
         glyph: u32::from(unit),
@@ -477,40 +477,12 @@ fn derived_cover(
     let dg = match cached {
         Some(d) => d,
         None => {
-            let (src_cov, sw, sh) = face.cover_box(g, outline)?;
-            let (dbw, dbh) = derived_box(dm, outline);
-            let dbw = usize::try_from(dbw).ok()?;
-            let dbh = usize::try_from(dbh).ok()?;
-            // The area filter needs `dst ≤ src`; the distance method needs `dst ≥ src` (its
-            // guards reject otherwise). Clamp the derived box to that side of the source box so a
-            // rounding wobble never loses the glyph.
-            let (dw, dh, cov) = match kind {
-                SourceKind::Downsampled => {
-                    let dw = dbw.min(sw).max(1);
-                    let dh = dbh.min(sh).max(1);
-                    (dw, dh, downsample_coverage(&src_cov, sw, sh, dw, dh))
-                }
-                SourceKind::Distance => {
-                    let dw = dbw.max(sw);
-                    let dh = dbh.max(sh);
-                    (dw, dh, distance_coverage(&src_cov, sw, sh, dw, dh))
-                }
-                // An exact hit never derives coverage (it draws from the atlas).
-                SourceKind::Exact => return None,
-            };
-            if cov.len() != dw.checked_mul(dh)? {
-                return None;
-            }
-            let metrics = GlyphMetrics {
-                w: i32::try_from(dw).unwrap_or(i32::MAX),
-                h: i32::try_from(dh).unwrap_or(i32::MAX),
-                ..*dm
-            };
-            let d = DerivedGlyph {
-                metrics,
-                coverage: cov,
-            };
-            sd.cache.borrow_mut().insert(key, d.clone());
+            // S7: the derivation alone is timed (it counts toward the paint slice).
+            let t0 = std::time::Instant::now();
+            let d = derive_glyph(face, g, kind, dm, outline)?;
+            let mut cache = sd.cache.borrow_mut();
+            cache.insert(key, d.clone());
+            cache.record_derivation(t0.elapsed());
             d
         }
     };
@@ -519,6 +491,122 @@ fn derived_cover(
     let arc = Arc::new(CoverageMap::new(w, h, dg.coverage).ok()?);
     sd.arcs.borrow_mut().insert(key, Arc::clone(&arc));
     Some(arc)
+}
+
+/// Derives one glyph's coverage box (`ui-scaling.md` §6.4.4): the fill (`outline` false) or the
+/// outline coverage of `g` of `face`, downsampled or by the distance method (`kind`), with the
+/// derived metrics `dm`. `None` when the source has no such coverage, the derivation is
+/// degenerate or the box is outside the coverage limits; an exact source derives nothing.
+pub(crate) fn derive_glyph(
+    face: &FontFace,
+    g: &Glyph,
+    kind: SourceKind,
+    dm: &GlyphMetrics,
+    outline: bool,
+) -> Option<DerivedGlyph> {
+    let (src_cov, sw, sh) = face.cover_box(g, outline)?;
+    let (dbw, dbh) = derived_box(dm, outline);
+    let dbw = usize::try_from(dbw).ok()?;
+    let dbh = usize::try_from(dbh).ok()?;
+    // The area filter needs `dst ≤ src`; the distance method needs `dst ≥ src` (its guards
+    // reject otherwise). Clamp the derived box to that side of the source box so a rounding
+    // wobble never loses the glyph.
+    let (dw, dh, cov) = match kind {
+        SourceKind::Downsampled => {
+            let dw = dbw.min(sw).max(1);
+            let dh = dbh.min(sh).max(1);
+            (dw, dh, downsample_coverage(&src_cov, sw, sh, dw, dh))
+        }
+        SourceKind::Distance => {
+            let dw = dbw.max(sw);
+            let dh = dbh.max(sh);
+            (dw, dh, distance_coverage(&src_cov, sw, sh, dw, dh))
+        }
+        // An exact hit never derives coverage (it draws from the atlas).
+        SourceKind::Exact => return None,
+    };
+    if cov.len() != dw.checked_mul(dh)? {
+        return None;
+    }
+    let metrics = GlyphMetrics {
+        w: i32::try_from(dw).unwrap_or(i32::MAX),
+        h: i32::try_from(dh).unwrap_or(i32::MAX),
+        ..*dm
+    };
+    Some(DerivedGlyph {
+        metrics,
+        coverage: cov,
+    })
+}
+
+/// The printable ASCII range a ladder step covers (`ui-scaling.md` §6.5 last sentence, S7).
+pub const LADDER_STEP_UNITS: std::ops::RangeInclusive<u16> = 0x20..=0x7E;
+
+/// The glyphs of one ladder step derived ahead of drawing (`ui-scaling.md` §6.5: "a client may
+/// derive the printable ASCII range of the fonts on screen on the asset workers ahead of a
+/// settle"), with the worker time it took (budget S7: at most 5 ms). Made by
+/// [`derive_ladder_step`] on a worker, handed to `Ui::accept_ladder_step` on the frame thread.
+#[derive(Debug, Clone, Default)]
+pub struct LadderStep {
+    /// The derived glyphs with their cache keys.
+    pub glyphs: Vec<(GlyphKey, DerivedGlyph)>,
+    /// How long the derivation took on the worker.
+    pub elapsed: std::time::Duration,
+}
+
+/// Derives the printable ASCII range ([`LADDER_STEP_UNITS`]) of `ladder` at target height
+/// `target` (`ui-scaling.md` §6.4.3, §6.4.4), fill and, for a face with an outline atlas,
+/// outline, keyed as the drawing path keys them; times the whole step (S7). A pure function of
+/// its inputs, meant for the asset workers. A target the ladder serves exactly (or directly)
+/// derives nothing.
+#[must_use]
+pub fn derive_ladder_step(ladder: &super::FontLadder, target: i32) -> LadderStep {
+    let t0 = std::time::Instant::now();
+    let mut glyphs = Vec::new();
+    let target = target.max(crate::scaling::glyph::MIN_TARGET_HEIGHT);
+    if ladder.is_empty() || ladder.direct_face(target).is_some() {
+        return LadderStep {
+            glyphs,
+            elapsed: t0.elapsed(),
+        };
+    }
+    let src = crate::scaling::choose_glyph_source(&ladder.heights(), target);
+    let Some(face) = ladder.face_at(src.source_height) else {
+        return LadderStep {
+            glyphs,
+            elapsed: t0.elapsed(),
+        };
+    };
+    if src.kind != SourceKind::Exact {
+        let Ok(th) = u16::try_from(target) else {
+            return LadderStep::default();
+        };
+        for unit in LADDER_STEP_UNITS {
+            let Some(g) = face.lookup(unit).glyph else {
+                continue;
+            };
+            let dm = super::layout::derived_metrics_of(face, &g, src.k, target);
+            for outline in [false, true] {
+                if outline && face.background().is_none() {
+                    continue;
+                }
+                if let Some(d) = derive_glyph(face, &g, src.kind, &dm, outline) {
+                    let key = GlyphKey {
+                        face: face.id(),
+                        target_height: th,
+                        source: src.kind,
+                        glyph: u32::from(unit),
+                        outline,
+                    };
+                    glyphs.push((key, d));
+                }
+            }
+        }
+    }
+    LadderStep {
+        glyphs,
+        elapsed: t0.elapsed(),
+    }
 }
 
 /// Draws one character on the crisp scaled path (`ui-scaling.md` §6.4). Returns the drawing pen

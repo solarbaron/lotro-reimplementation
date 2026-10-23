@@ -17,15 +17,15 @@ use p5_common::{ART, Rgba, TestEnv, button, capture, golden_file, real_click, se
 use tessera_formats::did::Did;
 use tessera_formats::ui_layout::ElementDesc;
 use tessera_ui::game::chat::notice::{NoTables, TextRef, TextSource};
-use tessera_ui::widgets::context_menu::{
+use tessera_ui::game::context_menu::{
     ContextMenu, ItemKind, MenuArt, MenuEvent, MenuItem, MenuPosition, MenuRefs, MenuReply,
     MenuRequest, TEXT_PAD,
 };
-use tessera_ui::widgets::dialog::{
+use tessera_ui::game::dialog::{
     COUNTDOWN_VARIABLE, DialogBoxes, DialogKind, DialogOutcome, DialogPids, DialogRefs,
     DialogRequest, DialogText, MAX_QUEUED, engine_dialog_shown,
 };
-use tessera_ui::{Command, ElementKey, ImageRef, Ui, UiEvent, Vocab};
+use tessera_ui::{Command, ControlKind, ElementKey, ImageRef, Ui, UiEvent, Vocab};
 
 /// The synthetic `ContextMenu` layout.
 const MENU_LAYOUT: u32 = 0x22FF_7000;
@@ -370,7 +370,11 @@ fn an_item_of_an_invalid_kind_shows_no_menu() {
         &menu_refs(),
         &MenuRequest::new(vec![MenuItem::plain(1, "ok"), bad]),
     );
-    assert!(r.is_err());
+    assert_eq!(
+        r.err(),
+        Some(tessera_ui::game::GameError::InvalidMenuKind(7)),
+        "the raw kind is reported"
+    );
     assert_eq!(
         ui.children(ui.screen_root()).len(),
         before,
@@ -1032,7 +1036,7 @@ fn start_inactive_keeps_the_active_panel_and_modal_blocks_clicks_behind() {
         hit.is_some_and(|h| !ui.is_ancestor_or_self(panel, h)),
         "the panel behind is covered: {hit:?}"
     );
-    assert!(tessera_ui::widgets::dialog::modal_dialog_shown(&ui));
+    assert!(tessera_ui::game::dialog::modal_dialog_shown(&ui));
 }
 
 #[test]
@@ -1108,6 +1112,8 @@ fn a_dialog_hidden_without_a_result_is_shown_again() {
     let (root, _) = d.shown().unwrap();
     assert!(key(&mut ui, "AcceptInput"));
     assert!(!ui.is_visible(root), "the core hid it");
+    // Released before the next press (two presses without one are an OS repeat).
+    let _ = release(&mut ui, "AcceptInput");
     let _lost = ui.take_events();
     d.update(&mut ui, &mut NoTables);
     assert_eq!(d.shown().map(|s| s.0), Some(root));
@@ -1120,6 +1126,320 @@ fn a_dialog_hidden_without_a_result_is_shown_again() {
     assert_eq!(out[0].outcome, Some(DialogOutcome::Done));
     d.request(&mut ui, req, &mut NoTables);
     assert!(d.shown().is_some_and(|(k, _)| ui.is_visible(k)));
+}
+
+fn release(ui: &mut Ui, name: &str) -> bool {
+    ui.key_command(&Command::named(name), false, 0.0)
+}
+
+/// Whether the UI broadcast a key since the last call (it reaches plugins and game code).
+fn broadcast(ui: &mut Ui) -> bool {
+    ui.take_events()
+        .iter()
+        .any(|e| matches!(e, UiEvent::KeyBroadcast { .. }))
+}
+
+/// Shows `req` and returns the shown dialog's element; the events so far are dropped.
+fn show(ui: &mut Ui, d: &mut DialogBoxes, req: DialogRequest) -> ElementKey {
+    d.request(ui, req, &mut NoTables);
+    let _ = ui.take_events();
+    d.shown().expect("shown").0
+}
+
+/// §18.4: a confirmation gives yes on `AcceptKey` and `AcceptInput` and no on `EscapeKey`,
+/// and consumes the releases of `AcceptKey` and `EscapeKey`, not that of `AcceptInput`; the
+/// release of a key whose press gave the result is consumed after the dialog is gone too.
+#[test]
+fn confirmation_keys_and_releases_follow_18_4() {
+    let mut ui = ui(1024, 768);
+    let mut d = DialogBoxes::new(dialog_refs());
+    let req = || DialogRequest::confirmation(1, DialogText::plain("Sure?"));
+    for (name, want, release_consumed) in [
+        ("AcceptKey", DialogOutcome::Yes, true),
+        ("AcceptInput", DialogOutcome::Yes, false),
+        ("EscapeKey", DialogOutcome::No, true),
+    ] {
+        let root = show(&mut ui, &mut d, req());
+        assert!(key(&mut ui, name), "{name} taken");
+        let out = pump(&mut ui, &mut d);
+        assert_eq!(out[0].outcome, Some(want), "{name}");
+        assert!(!ui.exists(root), "{name}: closed");
+        assert_eq!(release(&mut ui, name), release_consumed, "{name} release");
+        assert_eq!(
+            broadcast(&mut ui),
+            !release_consumed,
+            "{name} release broadcast"
+        );
+    }
+    // A release while the confirmation is shown (the key went down before it appeared).
+    let _ = show(&mut ui, &mut d, req());
+    assert!(release(&mut ui, "AcceptKey"));
+    assert!(release(&mut ui, "EscapeKey"));
+    assert!(!release(&mut ui, "AcceptInput"));
+    assert!(pump(&mut ui, &mut d).is_empty(), "releases give no result");
+    d.close_all(&mut ui);
+}
+
+/// §18.4: a message gives OK on `AcceptKey`, `AcceptInput` and `EscapeKey`; only the release
+/// of `AcceptKey` is consumed.
+#[test]
+fn message_keys_and_releases_follow_18_4() {
+    let mut ui = ui(1024, 768);
+    let mut d = DialogBoxes::new(dialog_refs());
+    let req = || DialogRequest::message(1, DialogText::plain("Done."));
+    for (name, release_consumed) in [
+        ("AcceptKey", true),
+        ("AcceptInput", false),
+        ("EscapeKey", false),
+    ] {
+        let _ = show(&mut ui, &mut d, req());
+        assert!(key(&mut ui, name), "{name} taken");
+        let out = pump(&mut ui, &mut d);
+        assert_eq!(out[0].outcome, Some(DialogOutcome::Ok), "{name}");
+        assert_eq!(release(&mut ui, name), release_consumed, "{name} release");
+    }
+    let _ = show(&mut ui, &mut d, req());
+    assert!(
+        release(&mut ui, "AcceptKey"),
+        "shown: AcceptKey release consumed"
+    );
+    assert!(
+        !release(&mut ui, "EscapeKey"),
+        "shown: EscapeKey release not consumed"
+    );
+    d.close_all(&mut ui);
+}
+
+/// §18.4: a text input gives done only on `AcceptInput` in its entry (not on `AcceptKey`),
+/// and quit on `EscapeKey` in its entry only while the quit button is shown; it consumes no
+/// release.
+#[test]
+fn text_input_keys_follow_18_4() {
+    let mut ui = ui(1024, 768);
+    let mut d = DialogBoxes::new(dialog_refs());
+    let mut req = DialogRequest::text_input(1, DialogText::plain("Name?"));
+    req.activate_and_take_focus = true;
+    let root = show(&mut ui, &mut d, req.clone());
+    key(&mut ui, "AcceptKey");
+    assert!(pump(&mut ui, &mut d).is_empty(), "AcceptKey gives no done");
+    assert!(ui.is_visible(root));
+    assert!(!release(&mut ui, "AcceptKey"));
+    // Not in the entry: the entry without the focus reports nothing.
+    ui.set_focus(None);
+    key(&mut ui, "AcceptInput");
+    assert!(
+        pump(&mut ui, &mut d).is_empty(),
+        "not reported by the entry"
+    );
+    let _ = release(&mut ui, "AcceptInput");
+    ui.set_focus(d.entry());
+    assert!(key(&mut ui, "AcceptInput"));
+    assert_eq!(pump(&mut ui, &mut d)[0].outcome, Some(DialogOutcome::Done));
+    assert!(!release(&mut ui, "AcceptInput"), "no release consumed");
+    // The quit button hidden: EscapeKey gives no result and the dialog stays shown.
+    req.display_cancel = false;
+    let root = show(&mut ui, &mut d, req.clone());
+    key(&mut ui, "EscapeKey");
+    assert!(
+        !ui.take_events()
+            .iter()
+            .any(|e| matches!(e, UiEvent::DialogResult { .. })),
+        "no result from the core"
+    );
+    assert!(pump(&mut ui, &mut d).is_empty());
+    assert!(ui.is_visible(root), "never hidden");
+    let _ = release(&mut ui, "EscapeKey");
+    d.close_all(&mut ui);
+    let _ = d.take_results();
+    // Shown: EscapeKey quits.
+    req.display_cancel = true;
+    let _ = show(&mut ui, &mut d, req);
+    assert!(key(&mut ui, "EscapeKey"));
+    assert_eq!(pump(&mut ui, &mut d)[0].outcome, Some(DialogOutcome::Quit));
+    assert!(!release(&mut ui, "EscapeKey"));
+}
+
+/// §18.4: a modal dialog consumes every other key press and the release of every key
+/// pressed while it was shown (none reaches the broadcast); a key held from before it
+/// appeared is released as usual, and after it closes keys go on as before. A press whose
+/// target lies outside the modal dialog is not delivered to it (Tessera rule).
+#[test]
+fn a_modal_dialog_consumes_every_other_key() {
+    let mut ui = ui(1024, 768);
+    let panel = ui.open_panel(Did(PANEL_LAYOUT), PANEL).unwrap();
+    ui.activate(panel);
+    let kp = ui.vocab().msgs.key_press;
+    ui.register_handler(PANEL, kp);
+    // Held from before the dialog.
+    assert!(!key(&mut ui, "MoveLeft"));
+    assert!(broadcast(&mut ui));
+    let mut d = DialogBoxes::new(dialog_refs());
+    let mut req = DialogRequest::confirmation(1, DialogText::plain("Sure?"));
+    req.modal = true;
+    req.start_inactive = true;
+    let root = show(&mut ui, &mut d, req);
+    assert_eq!(ui.modal_dialog(), Some(root));
+    assert_eq!(ui.active_panel(), Some(panel), "started inactive");
+    assert!(key(&mut ui, "MoveForward"), "consumed");
+    let ev = ui.take_events();
+    assert!(
+        !ev.iter().any(|e| matches!(e, UiEvent::KeyBroadcast { .. })),
+        "no broadcast"
+    );
+    assert!(
+        !ev.iter()
+            .any(|e| matches!(e, UiEvent::Game { message } if message.msg == kp)),
+        "not delivered to the panel below"
+    );
+    assert!(release(&mut ui, "MoveForward"), "its release too");
+    assert!(!broadcast(&mut ui));
+    // Its OS repeats are presses (consumed), but its release stays game code's.
+    assert!(key(&mut ui, "MoveLeft"), "a repeat is consumed");
+    assert!(!broadcast(&mut ui));
+    assert!(
+        !release(&mut ui, "MoveLeft"),
+        "held from before: released as usual"
+    );
+    assert!(broadcast(&mut ui));
+    // Pressed while shown, released after the dialog closed: still consumed.
+    assert!(key(&mut ui, "Jump"));
+    ui.activate(root);
+    assert!(key(&mut ui, "AcceptKey"));
+    assert_eq!(pump(&mut ui, &mut d)[0].outcome, Some(DialogOutcome::Yes));
+    assert_eq!(ui.modal_dialog(), None);
+    assert!(release(&mut ui, "Jump"));
+    assert!(!broadcast(&mut ui));
+    // After it: keys go on as before.
+    assert!(!key(&mut ui, "Jump"));
+    assert!(broadcast(&mut ui));
+    assert!(!release(&mut ui, "Jump"));
+}
+
+/// Review finding: an OS repeat of `AcceptKey` after its press gave a confirmation's yes is
+/// consumed and delivered nowhere (game code never saw the key go down): it neither drops the
+/// held release nor answers the next confirmation, and the release is consumed (§18.4).
+#[test]
+fn a_repeat_after_a_dialog_result_keeps_its_release_consumed() {
+    let mut ui = ui(1024, 768);
+    let mut d = DialogBoxes::new(dialog_refs());
+    let req = || DialogRequest::confirmation(1, DialogText::plain("Sure?"));
+    let _ = show(&mut ui, &mut d, req());
+    assert!(key(&mut ui, "AcceptKey"));
+    assert_eq!(pump(&mut ui, &mut d)[0].outcome, Some(DialogOutcome::Yes));
+    assert!(key(&mut ui, "AcceptKey"), "the repeat is consumed");
+    assert!(!broadcast(&mut ui), "the repeat is not broadcast");
+    // The next confirmation shown while the key is still down is not answered by a repeat.
+    let next = show(&mut ui, &mut d, req());
+    assert!(key(&mut ui, "AcceptKey"), "a second repeat is consumed");
+    assert!(pump(&mut ui, &mut d).is_empty(), "no result from a repeat");
+    assert!(ui.is_visible(next));
+    assert!(release(&mut ui, "AcceptKey"), "the release is consumed");
+    assert!(!broadcast(&mut ui));
+    d.close_all(&mut ui);
+}
+
+/// Review finding: a key pressed while a modal dialog was shown keeps its release consumed
+/// after the dialog closed even when OS repeats arrive in between, and the repeats are
+/// consumed too (§18.4).
+#[test]
+fn a_repeat_after_a_modal_dialog_closed_keeps_its_release_consumed() {
+    let mut ui = ui(1024, 768);
+    let mut d = DialogBoxes::new(dialog_refs());
+    let mut req = DialogRequest::confirmation(1, DialogText::plain("Sure?"));
+    req.modal = true;
+    let root = show(&mut ui, &mut d, req);
+    assert!(key(&mut ui, "Jump"));
+    ui.activate(root);
+    assert!(key(&mut ui, "AcceptKey"));
+    assert_eq!(pump(&mut ui, &mut d)[0].outcome, Some(DialogOutcome::Yes));
+    assert_eq!(ui.modal_dialog(), None);
+    assert!(key(&mut ui, "Jump"), "the repeat is consumed");
+    assert!(!broadcast(&mut ui));
+    assert!(release(&mut ui, "Jump"), "the release is consumed");
+    assert!(!broadcast(&mut ui));
+    assert!(release(&mut ui, "AcceptKey"));
+    assert!(!broadcast(&mut ui));
+    // After both: keys go on as before.
+    assert!(!key(&mut ui, "Jump"));
+    assert!(broadcast(&mut ui));
+    assert!(!release(&mut ui, "Jump"));
+}
+
+/// Review finding: an OS repeat of a key that went down before a dialog was shown gives no
+/// result and holds no release: game code saw the press, so it sees the release once the
+/// dialog is gone.
+#[test]
+fn a_repeat_of_a_key_down_before_the_dialog_gives_no_result() {
+    let mut ui = ui(1024, 768);
+    let mut d = DialogBoxes::new(dialog_refs());
+    assert!(!key(&mut ui, "AcceptKey"), "no dialog: not consumed");
+    assert!(broadcast(&mut ui));
+    let root = show(
+        &mut ui,
+        &mut d,
+        DialogRequest::confirmation(1, DialogText::plain("Sure?")),
+    );
+    assert_eq!(ui.active_panel(), Some(root));
+    assert!(!key(&mut ui, "AcceptKey"), "the repeat is not the dialog's");
+    assert!(broadcast(&mut ui));
+    assert!(pump(&mut ui, &mut d).is_empty(), "no result from a repeat");
+    assert!(ui.is_visible(root));
+    d.close_all(&mut ui);
+    let _ = d.take_results();
+    let _ = ui.take_events();
+    assert!(!release(&mut ui, "AcceptKey"), "the release is not held");
+    assert!(broadcast(&mut ui));
+}
+
+/// Review finding: while a modal dialog is shown, a typed character whose focused entry lies
+/// outside it is taken and inserted nowhere (§18.4: no key reaches anything below it).
+#[test]
+fn a_modal_dialog_takes_characters_typed_outside_it() {
+    let mut ui = ui(1024, 768);
+    let w = ui.create_control(ControlKind::Window, 1).unwrap();
+    let t = ui.create_control(ControlKind::TextBox, 1).unwrap();
+    ui.control_set_parent(t, Some(w)).unwrap();
+    ui.activate(w);
+    ui.control_focus(t);
+    assert!(ui.text_input('a'));
+    assert_eq!(ui.text_of(t), "a");
+    let mut d = DialogBoxes::new(dialog_refs());
+    let mut req = DialogRequest::confirmation(1, DialogText::plain("Sure?"));
+    req.modal = true;
+    req.start_inactive = true;
+    let _ = show(&mut ui, &mut d, req);
+    assert!(ui.modal_dialog().is_some());
+    assert!(ui.text_input('b'), "taken");
+    assert_eq!(ui.text_of(t), "a", "not inserted below the modal dialog");
+    let ci = ui.vocab().msgs.character_input;
+    assert!(
+        !ui.take_events()
+            .iter()
+            .any(|e| matches!(e, UiEvent::Game { message } if message.msg == ci)),
+        "no character input posted"
+    );
+    d.close_all(&mut ui);
+    ui.activate(w);
+    ui.control_focus(t);
+    assert!(ui.text_input('c'));
+    assert_eq!(ui.text_of(t), "ac");
+}
+
+/// A non-modal dialog consumes only its own keys (§18.4).
+#[test]
+fn a_dialog_that_is_not_modal_lets_other_keys_through() {
+    let mut ui = ui(1024, 768);
+    let mut d = DialogBoxes::new(dialog_refs());
+    let _ = show(
+        &mut ui,
+        &mut d,
+        DialogRequest::confirmation(1, DialogText::plain("Sure?")),
+    );
+    assert_eq!(ui.modal_dialog(), None);
+    assert!(!key(&mut ui, "MoveForward"));
+    assert!(broadcast(&mut ui));
+    assert!(!release(&mut ui, "MoveForward"));
+    d.close_all(&mut ui);
 }
 
 /// §18.4: `UICore_Dialog_ignorekeyboardinput` concerns confirmations and messages; a text

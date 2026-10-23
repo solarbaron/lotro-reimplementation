@@ -32,11 +32,12 @@
 //! prop fades out at *t*₀ + `FadeInTime` + `LifeTime`; a `Persistent` 1 node's prop fades
 //! out when the node stops; the prop is gone the sum of `FadeOutTime`, `DestroyTime` and
 //! 0.1 s after its fade-out starts. The opacity and the translucent flag are computed
-//! ([`LiveFigure::prop_opacity`], [`LiveFigure::prop_translucent`]), but the viewport's draw
-//! does not use them yet: it draws a prop part at full opacity in the opaque stage while
-//! its opacity is above 0 ([`LiveFigure::prop_shown`]), so a fade shows as a pop. Nor does
-//! the draw keep the transform of an unattached node's prop fixed at its placement
-//! (`script-table.md` §5.2 answer); it follows the anchor every frame. A change of
+//! ([`LiveFigure::prop_opacity`], [`LiveFigure::prop_translucent`]), and the viewport's draw
+//! draws a prop part with them (`super::prop_draw_fade`). An attached node's prop follows
+//! its anchor every frame; an unattached node's prop keeps the anchor of its placement
+//! (`script-table.md` §5.2 answer), per instance: each MeshFX start places an instance of
+//! its own ([`LiveFigure::prop_instances`]), so a second instance of the same prop placed
+//! while the first lives is drawn at its own placement, with its own opacity. A change of
 //! `CharGen_Stage` or `CharGen_Action` is a property change of the running entity
 //! ([`LiveFigure::set_keys`]): its Switches change branch, the transition ports run, and
 //! the clips that keep running (the idle) are not restarted.
@@ -727,11 +728,53 @@ pub struct LiveFigure {
     time: f64,
 }
 
-/// One prop instance a MeshFX node started: the prop's attach key and its life.
+/// One prop instance a MeshFX node started: the prop's attach key, the live time it was
+/// placed and its life.
 #[derive(Debug, Clone, Copy, PartialEq)]
 struct LiveProp {
     key: u32,
+    placed: f64,
     life: PropLife,
+}
+
+/// One live instance of a prop part ([`LiveFigure::prop_instances`]): each MeshFX start
+/// places an instance of its own, so two instances of the same prop (attach key) may live
+/// at once, each with its own placement (`script-table.md` §5.2: an unattached node's
+/// entity keeps the anchor of **its** placement) and its own life (`appearance.md` §5.7
+/// step 4).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PropInstance {
+    /// The instance's ID: unique among the figure's prop instances for the figure's life
+    /// (never reused), so a placement recorded for it is never taken by a later instance.
+    pub id: u64,
+    /// The live time it was placed (seconds since the figure's scripts started).
+    pub placed: f64,
+    /// Its `Render_Opacity` now (fade-in, fade-out, 0 during `DestroyTime`).
+    pub opacity: f32,
+    /// Whether it is drawn in the translucent stage now (the Tessera drawing rule of
+    /// `appearance.md` §5.7: `Translucent` set by its fade-out, or the opacity below 1).
+    pub translucent: bool,
+}
+
+/// The instances of attach key `key` alive at live time `now` among `props` (by
+/// instance ID), oldest placement first (ties by ID).
+fn instances_of(props: &HashMap<u64, LiveProp>, key: u32, now: f64) -> Vec<PropInstance> {
+    let mut v: Vec<PropInstance> = props
+        .iter()
+        .filter(|(_, p)| p.key == key)
+        .filter_map(|(id, p)| {
+            #[allow(clippy::cast_possible_truncation)]
+            let opacity = p.life.opacity(now)? as f32;
+            Some(PropInstance {
+                id: *id,
+                placed: p.placed,
+                opacity,
+                translucent: p.life.translucent(now) || opacity < 1.0,
+            })
+        })
+        .collect();
+    v.sort_by(|a, b| a.placed.total_cmp(&b.placed).then(a.id.cmp(&b.id)));
+    v
 }
 
 /// Most MeshFX (entity, holding location) pairs remembered whose prop was not built
@@ -990,7 +1033,14 @@ impl EffectSink for LiveSink<'_> {
         );
         life.place(now);
         let h = self.handle();
-        self.props.insert(h, LiveProp { key, life });
+        self.props.insert(
+            h,
+            LiveProp {
+                key,
+                placed: now,
+                life,
+            },
+        );
         self.stats.props_shown += 1;
         match rule {
             PropStart::RunUntilStopped => MeshFxOutcome::RunUntilStopped(MeshFxHandle(h)),
@@ -1187,6 +1237,16 @@ impl LiveFigure {
         })
     }
 
+    /// The instances of the prop part with attach key `key` alive now, each with its own
+    /// ID, placement time, opacity and stage ([`PropInstance`]), oldest placement first:
+    /// the per-instance placement accessor the draw of unattached props keys their fixed
+    /// anchors by (`script-table.md` §5.2), so a second instance placed while the first
+    /// lives takes the anchor of its own placement. Empty when none is alive.
+    #[must_use]
+    pub fn prop_instances(&self, key: u32) -> Vec<PropInstance> {
+        instances_of(&self.props, key, self.time)
+    }
+
     /// Prop instances alive now (placed and not removed).
     #[must_use]
     pub fn props_alive(&self) -> usize {
@@ -1261,3 +1321,45 @@ impl LiveFigure {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod instance_tests {
+    use super::*;
+
+    fn prop(key: u32, placed: f64) -> LiveProp {
+        let times = PropTimes {
+            fade_in: 0.5,
+            life: 1.0,
+            fade_out: 0.5,
+            destroy: 0.25,
+            persistent: false,
+        };
+        let mut life = PropLife::start(times, placed, 1.0);
+        life.place(placed);
+        LiveProp { key, placed, life }
+    }
+
+    /// `script-table.md` §5.2 with `appearance.md` §5.7 step 4: two instances of the same
+    /// prop placed at different times are listed apart, each with its own ID, placement
+    /// time and opacity; another key's instance is not listed, and a removed instance
+    /// drops out while the later one lives on.
+    #[test]
+    fn each_instance_of_a_prop_is_listed_apart() {
+        let key = PROP_KEY_BASE + 2;
+        let mut props = HashMap::new();
+        props.insert(LIVE_HANDLE_BASE + 7, prop(key, 1.0));
+        props.insert(LIVE_HANDLE_BASE + 3, prop(key, 0.0));
+        props.insert(LIVE_HANDLE_BASE + 9, prop(key + 1, 0.0));
+        let v = instances_of(&props, key, 1.25);
+        assert_eq!(v.len(), 2, "{v:?}");
+        assert_eq!((v[0].id, v[0].placed), (LIVE_HANDLE_BASE + 3, 0.0));
+        assert_eq!((v[1].id, v[1].placed), (LIVE_HANDLE_BASE + 7, 1.0));
+        assert!((v[0].opacity - 1.0).abs() < 1e-6 && !v[0].translucent);
+        assert!((v[1].opacity - 0.5).abs() < 1e-6 && v[1].translucent);
+        // The first is removed at 0 + 1.5 + 0.5 + 0.25 + 0.1 = 2.35; the second lives on.
+        let v = instances_of(&props, key, 2.4);
+        assert_eq!(v.len(), 1);
+        assert_eq!(v[0].id, LIVE_HANDLE_BASE + 7);
+        assert!(instances_of(&props, key + 5, 0.5).is_empty());
+    }
+}

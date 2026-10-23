@@ -246,6 +246,23 @@ pub struct Args {
     #[arg(long)]
     pub no_hud: bool,
 
+    /// Set one key of the `[Render]` section of `UserPreferences.ini` for this run
+    /// (`walker.md` §14.10, `far-view.md` FD22): `KEY=VALUE`, repeatable, the key compared
+    /// case-insensitively, the last use of a key winning. Windowed and headless runs alike;
+    /// applied after the user's file (windowed) or the built-in values (headless), so it wins
+    /// over both. A value the key does not accept counts as the key's built-in value;
+    /// `GraphicsCore` and `NearFarSeamBlending` stay fixed (FD16, FD17), and an unknown key
+    /// is reported once and ignored. The dedicated options (`--landscape-distance`,
+    /// `--object-draw-distance`, `--model-detail`, `--frill-distance`) win over it for
+    /// their keys.
+    #[arg(
+        long = "render-pref",
+        value_name = "KEY=VALUE",
+        value_parser = parse_render_pref,
+        action = clap::ArgAction::Append
+    )]
+    pub render_prefs: Vec<RenderPref>,
+
     /// `--camera-loop` speed in m/s.
     #[arg(long, default_value_t = 6.5, value_parser = parse_positive_f64)]
     pub loop_speed: f64,
@@ -585,6 +602,72 @@ pub struct Args {
     /// runtime creates (`scenario-feed.md` §12.4; not a command-line option).
     #[arg(skip)]
     pub scenario_log_slot: Option<crate::scenario::live_log::LiveLogSlot>,
+}
+
+/// Longest key name of a `--render-pref` (the install's `[Render]` keys are far shorter).
+pub const MAX_RENDER_PREF_KEY: usize = 64;
+/// Longest value of a `--render-pref`.
+pub const MAX_RENDER_PREF_VALUE: usize = 64;
+
+/// One `--render-pref KEY=VALUE` (`walker.md` §14.10): a `[Render]` key and its stored
+/// value form for this run, both trimmed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RenderPref {
+    /// The key name as given (compared case-insensitively).
+    pub key: String,
+    /// The value as given (`True`/`False`, a level name or a number; read by the key's
+    /// consumer).
+    pub value: String,
+}
+
+/// Parses `KEY=VALUE` (split at the first `=`): a key of ASCII letters, digits and `_` (1 to
+/// [`MAX_RENDER_PREF_KEY`] characters) and a value of at most [`MAX_RENDER_PREF_VALUE`]
+/// characters without control characters (it may be empty: the key's built-in value then
+/// applies, as for any value the key does not accept).
+///
+/// # Errors
+///
+/// A message for clap when the text has no `=`, the key is empty, too long or holds other
+/// characters, or the value is too long or holds a control character.
+pub fn parse_render_pref(s: &str) -> Result<RenderPref, String> {
+    let (key, value) = s
+        .split_once('=')
+        .ok_or_else(|| "expected KEY=VALUE".to_owned())?;
+    let (key, value) = (key.trim(), value.trim());
+    if key.is_empty() {
+        return Err("the key is empty".into());
+    }
+    if key.len() > MAX_RENDER_PREF_KEY {
+        return Err(format!(
+            "the key is longer than {MAX_RENDER_PREF_KEY} characters"
+        ));
+    }
+    if !key.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_') {
+        return Err("the key may hold only letters, digits and `_`".into());
+    }
+    if value.chars().count() > MAX_RENDER_PREF_VALUE {
+        return Err(format!(
+            "the value is longer than {MAX_RENDER_PREF_VALUE} characters"
+        ));
+    }
+    if value.chars().any(char::is_control) {
+        return Err("the value holds a control character".into());
+    }
+    Ok(RenderPref {
+        key: key.to_owned(),
+        value: value.to_owned(),
+    })
+}
+
+/// The value `--render-pref` gives `key` (case-insensitive): that of its last use, `None`
+/// when no use names it.
+#[must_use]
+pub fn render_pref<'a>(prefs: &'a [RenderPref], key: &str) -> Option<&'a str> {
+    prefs
+        .iter()
+        .rev()
+        .find(|p| p.key.eq_ignore_ascii_case(key))
+        .map(|p| p.value.as_str())
 }
 
 /// Checks a `--scenario` path: an existing file (it is read and parsed later, §12.2).
@@ -1144,6 +1227,113 @@ pub fn parse_size(s: &str) -> Result<(u32, u32), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `walker.md` §14.10: `--render-pref KEY=VALUE` is repeatable, trims both sides, keeps
+    /// the given spelling, and the last use of a key (case-insensitive) wins.
+    #[test]
+    fn render_prefs_parse_and_repeat() {
+        let a = Args::try_parse_from([
+            "t",
+            "--render-pref",
+            "FarLandscapeNormalMaps=True",
+            "--render-pref",
+            " MultiPassLighting = False ",
+            "--render-pref",
+            "multipasslighting=True",
+            "--render-pref",
+            "AtmosphericsDetail=",
+        ])
+        .expect("valid args");
+        assert_eq!(a.render_prefs.len(), 4);
+        assert_eq!(
+            a.render_prefs[1],
+            RenderPref {
+                key: "MultiPassLighting".into(),
+                value: "False".into()
+            }
+        );
+        assert_eq!(
+            render_pref(&a.render_prefs, "FARLANDSCAPENORMALMAPS"),
+            Some("True")
+        );
+        assert_eq!(
+            render_pref(&a.render_prefs, "MultiPassLighting"),
+            Some("True"),
+            "the last use wins"
+        );
+        assert_eq!(render_pref(&a.render_prefs, "AtmosphericsDetail"), Some(""));
+        assert_eq!(render_pref(&a.render_prefs, "Gamma"), None);
+        assert!(
+            Args::try_parse_from(["t"])
+                .expect("valid args")
+                .render_prefs
+                .is_empty()
+        );
+    }
+
+    /// `parse_render_pref` on arbitrary text (a deterministic sweep standing in for a fuzz
+    /// target, which cannot include `cli.rs` by path): it never panics, and what it accepts
+    /// has a bounded key of letters, digits and `_` and a bounded value without control
+    /// characters, both trimmed.
+    #[test]
+    fn render_pref_parser_takes_arbitrary_text() {
+        const ALPHABET: &[char] = &[
+            'a', 'Z', '0', '_', '=', ' ', '\t', '\n', '-', '.', '\u{0}', 'é', '\u{7f}', '=',
+        ];
+        let mut state: u64 = 0x9E37_79B9_7F4A_7C15;
+        for _ in 0..20_000 {
+            state = state
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1_442_695_040_888_963_407);
+            let len = (state >> 58) as usize * 3;
+            let mut text = String::new();
+            let mut x = state;
+            for _ in 0..len {
+                x = x
+                    .wrapping_mul(6_364_136_223_846_793_005)
+                    .wrapping_add(1_442_695_040_888_963_407);
+                text.push(ALPHABET[((x >> 33) % ALPHABET.len() as u64) as usize]);
+            }
+            if let Ok(p) = parse_render_pref(&text) {
+                assert!(!p.key.is_empty() && p.key.len() <= MAX_RENDER_PREF_KEY);
+                assert!(
+                    p.key
+                        .bytes()
+                        .all(|b| b.is_ascii_alphanumeric() || b == b'_')
+                );
+                assert!(p.value.chars().count() <= MAX_RENDER_PREF_VALUE);
+                assert!(!p.value.chars().any(char::is_control));
+                assert_eq!(p.value.trim(), p.value);
+            }
+        }
+    }
+
+    /// Malformed `--render-pref` texts are refused by the parser (bounded key and value).
+    #[test]
+    fn malformed_render_prefs_are_refused() {
+        for bad in [
+            "NoEquals",
+            "=True",
+            " =True",
+            "Bad Key=1",
+            "Bad-Key=1",
+            "Key=line\nbreak",
+        ] {
+            assert!(parse_render_pref(bad).is_err(), "{bad:?}");
+        }
+        let long_key = format!("{}=1", "K".repeat(MAX_RENDER_PREF_KEY + 1));
+        assert!(parse_render_pref(&long_key).is_err());
+        let ok_key = format!("{}=1", "K".repeat(MAX_RENDER_PREF_KEY));
+        assert!(parse_render_pref(&ok_key).is_ok());
+        let long_value = format!("Key={}", "v".repeat(MAX_RENDER_PREF_VALUE + 1));
+        assert!(parse_render_pref(&long_value).is_err());
+        // Only the first `=` splits.
+        assert_eq!(
+            parse_render_pref("Key=a=b").map(|p| p.value),
+            Ok("a=b".to_owned())
+        );
+        assert!(Args::try_parse_from(["t", "--render-pref", "NoEquals"]).is_err());
+    }
 
     #[test]
     fn character_select_needs_an_install() {

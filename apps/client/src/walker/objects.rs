@@ -26,7 +26,11 @@
 //!   in range fits.
 //! - **Drawing** (`mesh.md` §8.4–§8.7): per object the distance *d* to the nearest point of
 //!   its box, the 1.5 s fade when *d* crosses *D* ([`DrawFade`]), the detail level from the
-//!   smoothed distance and *R_d* = `d1` × *M* ([`detail_level`]). Fully faded-in generated
+//!   smoothed distance and *R_d* = `d1` × *M* ([`detail_level`]). The opacity an object is
+//!   drawn with is that fade times its owner property `Render_Opacity` ([`ObjectList`],
+//!   `particle-runtime.md` §12 rule 15, `mesh.md` §8.8); the far entities of the far view
+//!   ([`ObjectLayer::insert_far`]) carry no factors yet and are drawn with factor 1.
+//!   Fully faded-in generated
 //!   objects are drawn instanced, one batch per landblock, part and level; everything else
 //!   (statics, fading objects, surfaces with emissive, glow or dye) as single mesh draws,
 //!   through the lit pipeline when the pass is lit. Landblocks are culled by a box around
@@ -870,6 +874,69 @@ pub struct ObjectInfo {
     pub depth_bias: DrawDepthBias,
 }
 
+/// A landblock's drawable objects with their owner opacity factors
+/// ([`ObjectLayer::insert`]): `owner_opacity[i]` is object `i`'s `Render_Opacity`, the owner
+/// property `particle-runtime.md` §12 rule 15 counts in a static owner's opacity (Tessera
+/// reading; `mesh.md` §8.8: one factor of the render component's opacity, dictionary
+/// default 1). The object layer multiplies it into the opacity it draws the object with
+/// and reports ([`ObjectLayer::placed_entity_opacity`]); an object past the end of the
+/// list, or with a value that is not finite, has factor 1, and values are clamped to 0–1.
+#[derive(Debug, Clone)]
+pub struct ObjectList {
+    /// The objects.
+    pub objects: Arc<[ObjectInfo]>,
+    /// Their factors, same order (may be shorter: the rest are 1).
+    pub owner_opacity: Arc<[f32]>,
+}
+
+impl ObjectList {
+    /// `objects` with the factors `owner_opacity`.
+    #[must_use]
+    pub fn new(objects: Arc<[ObjectInfo]>, owner_opacity: Arc<[f32]>) -> Self {
+        Self {
+            objects,
+            owner_opacity,
+        }
+    }
+
+    /// The factor of object `i` (module docs of [`ObjectList`]).
+    #[must_use]
+    pub fn owner_opacity(&self, i: usize) -> f32 {
+        owner_factor(&self.owner_opacity, i)
+    }
+}
+
+impl From<Arc<[ObjectInfo]>> for ObjectList {
+    /// Every object with factor 1.
+    fn from(objects: Arc<[ObjectInfo]>) -> Self {
+        Self::new(objects, Arc::from(Vec::new()))
+    }
+}
+
+impl From<Vec<ObjectInfo>> for ObjectList {
+    /// Every object with factor 1.
+    fn from(objects: Vec<ObjectInfo>) -> Self {
+        Self::from(Arc::<[ObjectInfo]>::from(objects))
+    }
+}
+
+impl std::ops::Deref for ObjectList {
+    type Target = [ObjectInfo];
+    fn deref(&self) -> &[ObjectInfo] {
+        &self.objects
+    }
+}
+
+/// Factor `i` of `factors` ([`ObjectList`]): 1 past the end or when not finite, else
+/// clamped to 0–1.
+fn owner_factor(factors: &[f32], i: usize) -> f32 {
+    factors
+        .get(i)
+        .copied()
+        .filter(|f| f.is_finite())
+        .map_or(1.0, |f| f.clamp(0.0, 1.0))
+}
+
 /// Per-object state of the layer.
 #[derive(Debug, Clone, Copy, Default)]
 struct ObjState {
@@ -941,6 +1008,8 @@ struct BlockObjects {
     /// The placed objects by their entity index ([`ObjectInfo::entity`]; the first object
     /// of an index when several name it), for [`ObjectLayer::placed_entity_opacity`].
     by_entity: HashMap<u32, u32>,
+    /// The objects' owner opacity factors (`Render_Opacity`, [`ObjectList`]; empty: all 1).
+    owner_opacity: Arc<[f32]>,
 }
 
 /// The [`BlockObjects::by_position`] key of a block-local position.
@@ -1013,10 +1082,11 @@ impl BlockObjects {
                 return None;
             }
         }
+        // The opacity drawn with already holds the owner factor (`Render_Opacity`).
         Some(if draw_frame != 0 && st.drawn_at == draw_frame {
             st.drawn_opacity
         } else {
-            st.fade.opacity()
+            st.fade.opacity() * self.owner(i)
         })
     }
 
@@ -1180,7 +1250,20 @@ impl BlockObjects {
             hand_over: None,
             by_position,
             by_entity,
+            owner_opacity: Arc::from(Vec::new()),
         }
+    }
+
+    /// The objects of `list` ([`Self::new`]) with its owner opacity factors.
+    fn from_list(instances: Arc<[Instance]>, list: ObjectList) -> Self {
+        let mut b = Self::new(instances, list.objects);
+        b.owner_opacity = list.owner_opacity;
+        b
+    }
+
+    /// Object `i`'s owner opacity factor (`Render_Opacity`, [`ObjectList`]).
+    fn owner(&self, i: usize) -> f32 {
+        owner_factor(&self.owner_opacity, i)
     }
 }
 
@@ -1924,10 +2007,11 @@ impl ObjectLayer {
     }
 
     /// The opacity of the object of a placed entity of landblock `key` after the last
-    /// [`Self::draw`]: its draw-distance fade or cross-fade (`mesh.md` §8.7; the layer
-    /// applies no other per-object factor), the one it was drawn with when that draw drew
-    /// it, else its current fade (an object the draw culled, out of range or past the draw
-    /// cap keeps its fade, 0 included: `particle-runtime.md` §12 rule 15, culled owners).
+    /// [`Self::draw`]: its draw-distance fade or cross-fade (`mesh.md` §8.7) times its owner
+    /// property `Render_Opacity` ([`ObjectList`]; rule 15's Tessera reading), the one it was
+    /// drawn with when that draw drew it, else its current fade times that factor (an
+    /// object the draw culled, out of range or past the draw cap keeps its fade, 0
+    /// included: `particle-runtime.md` §12 rule 15, culled owners).
     /// `None` when the layer holds no object of that entity, or its object can never be
     /// drawn (no bounding sphere and every part failed for good or a stub part that is not
     /// drawn; an object whose parts still load answers its fade).
@@ -1936,8 +2020,9 @@ impl ObjectLayer {
     /// object's opacity; the caller counts `None` as 1, an owner with no drawn object). The
     /// entity is named by `index`, its index in the landblock's info record
     /// (`tessera_world::PlacedEntity::index`, the [`ObjectInfo::entity`] of its object), so
-    /// two entities placed at the same position each find their own object. Without an index (`None`, or a block whose objects carry
-    /// none) it is named by its identity as the block list records it ([`PlacedObjectRef`]):
+    /// two entities placed at the same position each find their own object. Without an
+    /// index (`None`, or a block whose objects carry none) it is named by its identity as
+    /// the block list records it ([`PlacedObjectRef`]):
     /// its block-local placement position bit for bit, its visual's part list in order, and
     /// its rank among the earlier entities of the landblock with that same position and part
     /// list; an entity with no part then names no object, so a pure emitter placed at another
@@ -2053,20 +2138,25 @@ impl ObjectLayer {
                 .all(|e| matches!(e.state, TexState::Ready(..) | TexState::Failed(_)))
     }
 
-    /// Sets the objects of `key` (replacing earlier ones).
+    /// Sets the objects of `key` (replacing earlier ones), with their owner opacity
+    /// factors when `objects` is an [`ObjectList`] that carries them (a plain object list
+    /// has factor 1 everywhere).
     pub fn insert(
         &mut self,
         key: LandblockKey,
         instances: Arc<[Instance]>,
-        objects: Arc<[ObjectInfo]>,
+        objects: impl Into<ObjectList>,
     ) {
-        self.insert_set((key, BlockSet::Main), instances, objects);
+        self.insert_list((key, BlockSet::Main), instances, objects.into());
     }
 
     /// Sets the far entities of landblock `key` (`far-view.md` §10; replacing earlier
     /// ones). They are activated, faded, drawn and released like the landblock's own
     /// objects, by their draw distances; the landblock's own objects ([`Self::insert`]) are
-    /// kept apart.
+    /// kept apart. **Gap:** far entities carry no owner opacity factors yet (every factor
+    /// is 1, [`ObjectList`]), so an object with `Render_Opacity` below 1 is drawn opaque in
+    /// the far set and changes opacity when its landblock's own objects take over; the far
+    /// view (`super::farview`) does not read the property yet.
     pub fn insert_far(
         &mut self,
         key: LandblockKey,
@@ -2077,9 +2167,13 @@ impl ObjectLayer {
     }
 
     fn insert_set(&mut self, id: BlockId, instances: Arc<[Instance]>, objects: Arc<[ObjectInfo]>) {
+        self.insert_list(id, instances, ObjectList::from(objects));
+    }
+
+    fn insert_list(&mut self, id: BlockId, instances: Arc<[Instance]>, objects: ObjectList) {
         self.remove_set(id);
         self.blocks
-            .insert(id, BlockObjects::new(instances, objects));
+            .insert(id, BlockObjects::from_list(instances, objects));
     }
 
     /// Forgets `key`'s objects (their parts lose a reference).
@@ -3039,9 +3133,13 @@ impl ObjectLayer {
                     handed_draw_distance(d, object_draw_distance(&obj.lod, &frame, cap), hand_over);
                 let reset = fade_resets(st.faded_at, draw_frame);
                 st.faded_at = draw_frame;
-                let opacity =
+                let fade =
                     st.fade
                         .update(d, draw_d, frame.dt, frame.camera_moved, reset, frame.lod);
+                // `particle-runtime.md` §12 rule 15 and `mesh.md` §8.8: the object is drawn
+                // with its fade times its owner property `Render_Opacity` ([`ObjectList`]),
+                // which decides its stage, its alpha and whether it casts shadows.
+                let opacity = fade * owner_factor(&b.owner_opacity, oi);
                 // Before the culls: see the culled-block branch above.
                 let ds = st.smooth.update(d, frame.fps, false);
                 // With distance levels off the fade is always 1: the hand-over is a cut.
@@ -3064,7 +3162,7 @@ impl ObjectLayer {
                 if id.1 == BlockSet::Far {
                     far_drawn += 1;
                 }
-                if opacity < 1.0 {
+                if fade < 1.0 {
                     fading += 1;
                 }
                 let range = obj.first as usize..(obj.first as usize + obj.count as usize);
@@ -3496,6 +3594,61 @@ mod tests {
         assert_eq!(b.drawn_opacity(None, &at(p, &[7], 0), 3), Some(0.0));
         // Before any draw an object answers its fade (0 before its first update).
         assert_eq!(b.drawn_opacity(None, &at(p, &[9], 0), 0), Some(0.0));
+    }
+
+    /// `particle-runtime.md` §12 rule 15 (Tessera reading, round 6): a static owner's
+    /// opacity holds its owner property `Render_Opacity` as well as its fade, whether the
+    /// last draw drew it (the drawn opacity is the product) or not (its fade times the
+    /// factor, 0 included); an object without a factor counts 1; factors are clamped and
+    /// non-finite ones count 1.
+    #[test]
+    fn owner_render_opacity_scales_the_reported_opacity() {
+        let lod = LodValues([300.0, 100.0, 16.0, 80.0, 1000.0, 1000.0, 1100.0, -1.0]);
+        let p = Vec3::new(10.0, 20.0, 3.0);
+        let o = |first, entity| ObjectInfo {
+            position: p,
+            lod,
+            generated: false,
+            entity: Some(entity),
+            first,
+            count: 1,
+            cell: OUTDOORS,
+            depth_bias: DrawDepthBias::NONE,
+        };
+        let instances: Arc<[Instance]> =
+            vec![inst(7, p, 1.0), inst(8, p, 1.0), inst(9, p, 1.0)].into();
+        let objects: Arc<[ObjectInfo]> = vec![o(0, 1), o(1, 2), o(2, 3)].into();
+        // Object 0: Render_Opacity 0.5; object 1: none listed past the end (1); object 2
+        // beyond the list too.
+        let list = ObjectList::new(objects, vec![0.5].into());
+        assert_eq!(list.owner_opacity(0), 0.5);
+        assert_eq!(list.owner_opacity(1), 1.0);
+        let mut b = BlockObjects::from_list(instances, list);
+        let none = PlacedObjectRef {
+            position: p.to_array(),
+            parts: Arc::from(Vec::new()),
+            rank: 0,
+        };
+        // Culled with its fade at 1: the factor alone.
+        b.state[0].fade.update(1.0, 100.0, 0.016, 0.0, true, true);
+        b.state[1].fade.update(1.0, 100.0, 0.016, 0.0, true, true);
+        assert_eq!(b.drawn_opacity(Some(1), &none, 1), Some(0.5));
+        assert_eq!(b.drawn_opacity(Some(2), &none, 1), Some(1.0));
+        // Drawn: the opacity drawn with (the draw multiplies the factor in) is reported.
+        mark_drawn(&mut b.state[0], 2, 0.5 * 0.4);
+        assert_eq!(b.drawn_opacity(Some(1), &none, 2), Some(0.5 * 0.4));
+        // Faded out while culled: 0 whatever the factor.
+        b.state[0].fade.update(200.0, 100.0, 10.0, 0.0, false, true);
+        assert_eq!(b.drawn_opacity(Some(1), &none, 3), Some(0.0));
+        // Factors are clamped; non-finite ones count 1.
+        assert_eq!(owner_factor(&[2.0, -1.0, f32::NAN, f32::INFINITY], 0), 1.0);
+        assert_eq!(owner_factor(&[2.0, -1.0, f32::NAN, f32::INFINITY], 1), 0.0);
+        assert_eq!(owner_factor(&[2.0, -1.0, f32::NAN, f32::INFINITY], 2), 1.0);
+        assert_eq!(owner_factor(&[2.0, -1.0, f32::NAN, f32::INFINITY], 3), 1.0);
+        // A plain object list has factor 1 everywhere.
+        let plain: ObjectList = vec![o(0, 1)].into();
+        assert_eq!(plain.owner_opacity(0), 1.0);
+        assert_eq!(plain.len(), 1);
     }
 
     /// `particle-runtime.md` §12 rule 15 for static owners, by the entity index: two placed

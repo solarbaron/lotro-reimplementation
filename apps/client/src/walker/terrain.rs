@@ -82,7 +82,7 @@ use super::farview::{FarHandOff, SeamMaterial};
 use super::geometry::{TexRequest, VARIANT_OWN_ALPHA, image_ok};
 use super::interiors;
 use super::jobs::JobRunner;
-use super::objects::{Instance, ObjectInfo, ObjectLayer, TexLookup};
+use super::objects::{Instance, ObjectInfo, ObjectLayer, ObjectList, TexLookup};
 use super::view::{Anchor, Frustum};
 use crate::smoke::linear_to_srgb8;
 
@@ -212,6 +212,209 @@ pub struct BlockInputs {
     /// The looks of interior cells (`landblock.md` §4.14; `None`: cells keep their default
     /// look).
     pub looks: Option<Arc<super::looks::CellLooks>>,
+    /// Where the placed objects' owner property `Render_Opacity` is read (`None`: every
+    /// object's factor is 1; [`OwnerOpacity`]).
+    pub owner_opacity: Option<Arc<OwnerOpacity>>,
+}
+
+/// Reads the owner property `Render_Opacity` of a landblock's placed objects on the block
+/// workers (`particle-runtime.md` §12 rule 15, Tessera reading: the one owner property
+/// counted in a static owner's opacity; `mesh.md` §8.8: one factor of the render
+/// component's opacity, dictionary default 1), which the object layer multiplies into the
+/// opacity it draws with and reports ([`super::objects::ObjectList`]).
+///
+/// The lookup follows `entity-descriptor.md` §9.2 and E26: the entity's per-instance set
+/// (the landblock's instance property set for its IID when there is one, **otherwise** the
+/// entity's own set; never both), then its 0x47 chain through the world's shared property
+/// cache; a generated scenery object reads its chain only, a cell mesh none.
+/// **Not active in the walker:** the walker's bundles drop the landblock's weenie list
+/// before the block workers run (`BundleOptions::keep_weenies` is off), so the instance
+/// sets are never there and every placed entity reads its own set. Reading the value at
+/// bundle build, where the LOD class and depth-bias type read the weenie list, is left to
+/// `tessera-world`.
+///
+/// The PID is looked up by name in the property dictionary on a block worker (never the
+/// frame thread). A definite answer (the dictionary's PID or its absence, a missing or
+/// broken dictionary) is kept for the session; a read failure that is not the data's
+/// (full queue, shutdown, panic: `AssetError::is_data_error` false) is not, and the next
+/// block tries again.
+pub struct OwnerOpacity {
+    ctx: Option<Arc<WorldContext>>,
+    pid: std::sync::OnceLock<Option<u32>>,
+}
+
+impl std::fmt::Debug for OwnerOpacity {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("OwnerOpacity")
+            .field("pid", &self.pid.get())
+            .finish_non_exhaustive()
+    }
+}
+
+/// The outcome of one look-up of the `Render_Opacity` PID ([`OwnerOpacity::pid`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PidLookup {
+    /// A definite answer, kept for the session.
+    Known(Option<u32>),
+    /// A failure that is not the data's: no factors for this block, try again later.
+    Transient,
+}
+
+impl OwnerOpacity {
+    /// The reader of `ctx`'s records; the PID is found on first use.
+    #[must_use]
+    pub fn new(ctx: Arc<WorldContext>) -> Self {
+        Self {
+            ctx: Some(ctx),
+            pid: std::sync::OnceLock::new(),
+        }
+    }
+
+    /// A reader with a known `pid` and no record source: it reads the bundle's own and
+    /// instance sets only (synthetic worlds and tests).
+    #[must_use]
+    pub fn with_pid(pid: Option<u32>) -> Self {
+        let cell = std::sync::OnceLock::new();
+        let _ = cell.set(pid);
+        Self {
+            ctx: None,
+            pid: cell,
+        }
+    }
+
+    /// The PID of `Render_Opacity` (`None`: the dictionary has none, it cannot be read, or
+    /// a transient failure this time; then every factor is 1).
+    fn pid(&self) -> Option<u32> {
+        if let Some(known) = self.pid.get() {
+            return *known;
+        }
+        let ctx = self.ctx.as_ref()?;
+        match pid_lookup(&**ctx.source()) {
+            PidLookup::Known(p) => *self.pid.get_or_init(|| p),
+            PidLookup::Transient => None,
+        }
+    }
+
+    /// The factors of `bundle`'s objects in the order [`block_objects`] lists them
+    /// (`entities[i]` for each placed entity's object, `None` for the rest). Chain reads
+    /// that fail for a reason that is not the data's give that object no factor (1) and are
+    /// counted in one log line per block (the bundle builder's own chain reads report the
+    /// same objects as a transient problem of the bundle).
+    fn factors(&self, bundle: &LandblockBundle) -> OwnerFactors {
+        let Some(pid) = self.pid() else {
+            return OwnerFactors::default();
+        };
+        let info = bundle.info.as_ref();
+        let instances: HashMap<u64, &tessera_formats::PropertySet> = info
+            .map(|i| {
+                i.weenies
+                    .items
+                    .iter()
+                    .map(|w| (w.iid.0, &w.properties))
+                    .collect()
+            })
+            .unwrap_or_default();
+        let transient = std::cell::Cell::new(0u32);
+        let chain = |object: Option<Did>| {
+            let ctx = self.ctx.as_ref()?;
+            match ctx
+                .systems()
+                .object_properties
+                .get(&**ctx.source(), ctx.schema(), object?)
+            {
+                Ok(p) => p,
+                Err(e) => {
+                    if !e.is_data_error() {
+                        transient.set(transient.get().saturating_add(1));
+                    }
+                    None
+                }
+            }
+        };
+        let entities = bundle
+            .entities
+            .iter()
+            .map(|e| {
+                // E26: the instance set when the IID has one, otherwise the own set.
+                let per_instance = e
+                    .iid
+                    .and_then(|iid| instances.get(&iid.0).copied())
+                    .or_else(|| {
+                        info.and_then(|i| i.entities.get(e.index as usize))
+                            .and_then(|s| s.properties.as_ref())
+                    });
+                owner_opacity_of(pid, per_instance, chain(e.object).as_deref())
+            })
+            .collect();
+        let generated = bundle
+            .generated
+            .iter()
+            .map(|e| owner_opacity_of(pid, None, chain(e.object).as_deref()))
+            .collect();
+        if transient.get() > 0 {
+            tracing::warn!(
+                block = %bundle.key,
+                reads = transient.get(),
+                "object property chains unavailable; those objects keep owner opacity 1"
+            );
+        }
+        OwnerFactors {
+            entities,
+            generated,
+        }
+    }
+}
+
+/// One look-up of the `Render_Opacity` PID in `source`'s property dictionary.
+fn pid_lookup(source: &dyn tessera_world::WorldSource) -> PidLookup {
+    let did = tessera_props::PROPERTY_DICTIONARY_DID;
+    let bytes = match source.read(did) {
+        Ok(Some(b)) => b,
+        Ok(None) => return PidLookup::Known(None),
+        Err(e) if e.is_data_error() => {
+            tracing::warn!("property dictionary unreadable: {e}; objects keep opacity 1");
+            return PidLookup::Known(None);
+        }
+        Err(e) => {
+            tracing::warn!("property dictionary not available yet: {e}; retried on the next block");
+            return PidLookup::Transient;
+        }
+    };
+    match tessera_formats::PropertyDictionary::parse_expecting(&bytes, did) {
+        Ok(d) => PidLookup::Known(d.pid("Render_Opacity")),
+        Err(e) => {
+            tracing::warn!("property dictionary: {e}; objects keep opacity 1");
+            PidLookup::Known(None)
+        }
+    }
+}
+
+/// The owner-opacity factors of a bundle's placed entities and generated objects, in list
+/// order ([`OwnerOpacity::factors`]; empty: all 1).
+#[derive(Debug, Default)]
+struct OwnerFactors {
+    entities: Vec<Option<f32>>,
+    generated: Vec<Option<f32>>,
+}
+
+/// The owner property `Render_Opacity` (`pid`) of a placed object: the float value of its
+/// per-instance set (the instance set of its IID, otherwise its own set; E26), else of its
+/// 0x47 chain ([`OwnerOpacity`]), clamped to 0–1 (Tessera choice: the factor multiplies an
+/// opacity in 0–1); `None` when neither holds it, its value is not a float, or it is not
+/// finite (the dictionary default 1 then applies).
+#[must_use]
+pub fn owner_opacity_of(
+    pid: u32,
+    per_instance: Option<&tessera_formats::PropertySet>,
+    chain: Option<&tessera_world::scenery::ObjectProperties>,
+) -> Option<f32> {
+    let v = per_instance
+        .and_then(|s| s.get(pid))
+        .or_else(|| chain.and_then(|c| c.get(pid)))?;
+    match v {
+        tessera_formats::PropertyValue::Float(f) if f.is_finite() => Some(f.clamp(0.0, 1.0)),
+        _ => None,
+    }
 }
 
 impl std::fmt::Debug for BlockInputs {
@@ -228,7 +431,7 @@ impl BlockInputs {
     /// region descriptors (`environment.md` §3, slot 8); the LOD-class table of its world
     /// systems.
     #[must_use]
-    pub fn from_context(ctx: &WorldContext) -> Self {
+    pub fn from_context(ctx: &Arc<WorldContext>) -> Self {
         let mut tables = HashMap::new();
         for (r, info) in ctx.regions() {
             if let Some(t) = info.scenery.as_ref().and_then(|s| s.terrain_types.clone()) {
@@ -260,6 +463,7 @@ impl BlockInputs {
             lod_classes,
             depth_bias: ctx.systems().depth_bias.clone(),
             looks: None,
+            owner_opacity: Some(Arc::new(OwnerOpacity::new(Arc::clone(ctx)))),
         }
     }
 }
@@ -484,8 +688,9 @@ pub struct BlockProduct {
     pub overview: Vec<u8>,
     /// Part instances of the drawable, outdoor objects.
     pub instances: Arc<[Instance]>,
-    /// The drawable, outdoor objects (statics and generated scenery).
-    pub objects: Arc<[ObjectInfo]>,
+    /// The drawable, outdoor objects (statics and generated scenery), with their owner
+    /// opacity factors ([`OwnerOpacity`]).
+    pub objects: ObjectList,
     /// The texture layers, when the region's table resolves them.
     pub layers: Option<BlockLayers>,
     /// The block's masks (kept A8) and light maps, decoded.
@@ -3313,11 +3518,12 @@ pub fn build_block(
     let block = TerrainBlock::from_landblock(&bundle.data);
     let _ = block.lod_errors();
     let overview = overview_tile(&block, shading);
-    let (instances, objects) = block_objects(
+    let (instances, objects, owner) = block_objects(
         bundle,
         inputs.lod_classes.as_deref(),
         inputs.depth_bias.as_deref(),
         inputs.looks.as_deref(),
+        inputs.owner_opacity.as_deref(),
     );
     let (layers, images, bake_masks) = build_layers(bundle, inputs);
     // The terrain chunk's light map for the far-band bake (its decoded copy in `images`).
@@ -3339,7 +3545,7 @@ pub fn build_block(
         block: Arc::new(block),
         overview,
         instances: instances.into(),
-        objects: objects.into(),
+        objects: ObjectList::new(objects.into(), owner.into()),
         layers,
         images,
         bake_masks,
@@ -3358,7 +3564,10 @@ pub fn build_block(
 /// gives (`decals.md` §6.5), which every draw of the object applies (§6.5 OPEN (c), Tessera
 /// default; `water.md` §14). A placed entity's object carries the entity's index
 /// ([`ObjectInfo::entity`], the owner lookup of `particle-runtime.md` §12 rule 15); generated
-/// objects and cell meshes carry none.
+/// objects and cell meshes carry none. Each object's owner opacity factor, its
+/// `Render_Opacity` read by `opacity` ([`OwnerOpacity`], `particle-runtime.md` §12 rule 15;
+/// 1 for an object no level gives it, for cell meshes and without a reader), is returned
+/// in the objects' order.
 ///
 /// [`ObjectFrame::interior`]: super::objects::ObjectFrame::interior
 #[must_use]
@@ -3367,9 +3576,12 @@ pub fn block_objects(
     classes: Option<&LodClasses>,
     depth_bias: Option<&DepthBiasTable>,
     looks: Option<&super::looks::CellLooks>,
-) -> (Vec<Instance>, Vec<ObjectInfo>) {
+    opacity: Option<&OwnerOpacity>,
+) -> (Vec<Instance>, Vec<ObjectInfo>, Vec<f32>) {
+    let factors = opacity.map(|o| o.factors(bundle)).unwrap_or_default();
     let mut instances = Vec::new();
     let mut objects = Vec::new();
+    let mut owner = Vec::new();
     let generated_start = bundle.entities.len();
     let lists = bundle
         .entities
@@ -3385,7 +3597,7 @@ pub fn block_objects(
         );
     let default = LodClasses::default();
     let classes = classes.unwrap_or(&default);
-    for (_, e, generated) in lists {
+    for (list_index, e, generated) in lists {
         if !e.draw {
             continue;
         }
@@ -3438,9 +3650,18 @@ pub fn block_objects(
             cell,
             depth_bias,
         });
+        let factor = if generated {
+            factors
+                .generated
+                .get(list_index.saturating_sub(generated_start))
+        } else {
+            factors.entities.get(list_index)
+        };
+        owner.push(factor.copied().flatten().unwrap_or(1.0));
     }
     cell_objects(bundle, looks, &mut instances, &mut objects);
-    (instances, objects)
+    owner.resize(objects.len(), 1.0);
+    (instances, objects, owner)
 }
 
 /// The depth bias of a placed entity whose lookup order (`decals.md` §6.5 "Objects",
@@ -4159,6 +4380,209 @@ mod tests {
         assert_eq!(ceiling.triangles[0].len(), 2048);
     }
 
+    /// `particle-runtime.md` §12 rule 15 (Tessera reading, round 6): a placed object's
+    /// owner factor is its `Render_Opacity`, from its per-instance set (the instance set of
+    /// its IID when there is one, otherwise its own set, E26; the 0x47 chain needs a record
+    /// source), clamped to 0–1; objects without it, and generated objects and cell meshes
+    /// here, get 1; the factors follow the objects' order, and no reader (or no PID) gives
+    /// no factors at all. The bundle here is built by hand with its weenies, which the
+    /// walker's bundles never keep (see
+    /// [`owner_render_opacity_through_build_bundle`]).
+    #[test]
+    fn owner_render_opacity_follows_the_lookup_order() {
+        use std::sync::Arc;
+        use tessera_formats::landblock::{InstanceId, LandblockInfo, Placement};
+        use tessera_world::testkit::{
+            TestEntity, TestValue, entity_iid, landblock_info_with_weenies, schema,
+        };
+        const OPACITY: u32 = 0x1000_0F01;
+        let mut schema = schema();
+        schema.insert(OPACITY, tessera_formats::PropertyType::from_code(9));
+        let k = LandblockKey::new(1, 10, 20).expect("key");
+        let with = |v: f32| vec![(OPACITY, TestValue::Float(v))];
+        let entities = [
+            TestEntity::physics(1, 0x4700_0001, [1.0, 1.0, 0.0], with(0.25)),
+            TestEntity::physics(2, 0x4700_0001, [2.0, 1.0, 0.0], with(0.75)),
+            TestEntity::physics(3, 0x4700_0001, [3.0, 1.0, 0.0], vec![]),
+            TestEntity::physics(4, 0x4700_0001, [4.0, 1.0, 0.0], with(7.0)),
+        ];
+        // Entity 2's instance set wins over its own set; entity 1's instance set has no
+        // `Render_Opacity`, so its own set is not consulted (E26).
+        let bytes = landblock_info_with_weenies(
+            k,
+            &entities,
+            &[(entity_iid(k, 2), with(0.5)), (entity_iid(k, 1), vec![])],
+        );
+        let info = LandblockInfo::parse(&bytes, Some(39), &schema).expect("info");
+        let mut bundle = bundle_at(k, 100);
+        bundle.info = Some(info);
+        let visual = Arc::new(tessera_world::ResolvedObject {
+            object: Did(0x4700_0001),
+            physics: None,
+            chain: Vec::new(),
+            setup: None,
+            parts: Arc::from(vec![Did(0x0100_0001)]),
+            draw: tessera_world::DrawFlags::default(),
+            weenie_type: None,
+            bones: None,
+            error: None,
+            transient: false,
+        });
+        let placed = |index: u32, iid: Option<u64>, x: f32| tessera_world::PlacedEntity {
+            index,
+            iid: iid.map(InstanceId),
+            kind: None,
+            object: Some(Did(0x4700_0001)),
+            placement: Placement::new([x, 1.0, 0.0], tessera_formats::setup::Quaternion::IDENTITY)
+                .expect("placement"),
+            scale: [1.0; 3],
+            interior: false,
+            content_layers: None,
+            own_draw: tessera_world::DrawFlags::default(),
+            visual: Some(Arc::clone(&visual)),
+            draw: true,
+            figure: None,
+        };
+        bundle.entities = (0..4u32)
+            .map(|i| placed(i, Some(entity_iid(k, i + 1)), 1.0 + i as f32))
+            .collect();
+        bundle.generated = vec![placed(0, None, 9.0)];
+        let reader = OwnerOpacity::with_pid(Some(OPACITY));
+        let f = reader.factors(&bundle);
+        assert_eq!(f.entities, vec![None, Some(0.5), None, Some(1.0)]);
+        assert_eq!(f.generated, vec![None], "no chain without a record source");
+        let (_, objects, owner) = block_objects(&bundle, None, None, None, Some(&reader));
+        assert_eq!(objects.len(), 5);
+        assert_eq!(owner, vec![1.0, 0.5, 1.0, 1.0, 1.0]);
+        let (_, _, plain) = block_objects(&bundle, None, None, None, None);
+        assert_eq!(plain, vec![1.0; 5]);
+        assert!(
+            OwnerOpacity::with_pid(None)
+                .factors(&bundle)
+                .entities
+                .is_empty()
+        );
+        // Not a float, or not finite: the dictionary default (`None` here, 1 drawn).
+        let set = |v: TestValue| {
+            tessera_formats::PropertySet::parse(
+                &tessera_world::testkit::property_set(&[(OPACITY, v)]),
+                &schema,
+            )
+            .expect("set")
+        };
+        assert_eq!(
+            owner_opacity_of(OPACITY, Some(&set(TestValue::Float(f32::NAN))), None),
+            None
+        );
+        assert_eq!(
+            owner_opacity_of(OPACITY, Some(&set(TestValue::Float(-2.0))), None),
+            Some(0.0)
+        );
+        assert_eq!(owner_opacity_of(OPACITY, None, None), None);
+    }
+
+    /// Rule 15 through the bundle builder (`build_bundle`) of a synthetic install whose
+    /// dictionary has `Render_Opacity`: with the walker's default `BundleOptions` the
+    /// weenie list is gone before the block workers run, so the instance level is not
+    /// reached and each entity reads its own set (entity 1: own 0.8 although its instance
+    /// set says 0.0; entity 2: own 0.6 although its instance set has no value). Keeping
+    /// the weenies gives E26's order (0.0, then the chain: none, 1).
+    #[test]
+    fn owner_render_opacity_through_build_bundle() {
+        use std::sync::Arc;
+        use tessera_world::testkit::{
+            SyntheticWorld, TestEntity, TestValue, definitions, dictionary, entity_iid,
+            landblock_info_with_weenies, obj,
+        };
+        use tessera_world::{BundleOptions, BundleSource, build_bundle};
+        const OPACITY: u32 = 0x1000_0F01;
+        let k = LandblockKey::new(1, 3, 4).expect("key");
+        let mut m = SyntheticWorld::rectangle(1, 3..=3, 4..=4).build();
+        let mut defs = definitions();
+        defs.push((OPACITY, "Render_Opacity", 9));
+        m.insert(0x3400_0000u32, dictionary(&defs), Some(1));
+        let with = |v: f32| vec![(OPACITY, TestValue::Float(v))];
+        let entities = [
+            TestEntity::physics(1, obj::TREE, [10.0, 10.0, 100.0], with(0.8)),
+            TestEntity::physics(2, obj::TREE, [20.0, 20.0, 100.0], with(0.6)),
+        ];
+        let weenies = [(entity_iid(k, 1), with(0.0)), (entity_iid(k, 2), vec![])];
+        m.insert(
+            k.info_did(),
+            landblock_info_with_weenies(k, &entities, &weenies),
+            Some(39),
+        );
+        let source: Arc<dyn WorldSource> = Arc::new(m);
+        let factors = |options: BundleOptions| {
+            let ctx = Arc::new(WorldContext::load(Arc::clone(&source), options).expect("ctx"));
+            let src = BundleSource::new(Arc::clone(ctx.source()));
+            let frame =
+                tessera_assets::RecordSource::read_record(&src, k.data_did().0).expect("frame");
+            let bundle = build_bundle(&ctx, k.data_did(), &frame, &|| false).expect("bundle");
+            let weenies = bundle.info.as_ref().map_or(0, |i| i.weenies.items.len());
+            let reader = OwnerOpacity::new(Arc::clone(&ctx));
+            assert_eq!(reader.pid(), Some(OPACITY));
+            let (_, _, owner) = block_objects(&bundle, None, None, None, Some(&reader));
+            (weenies, reader.factors(&bundle).entities, owner)
+        };
+        let (weenies, entities, owner) = factors(BundleOptions::default());
+        assert_eq!(weenies, 0, "the walker's bundles drop the weenie list");
+        assert_eq!(entities, vec![Some(0.8), Some(0.6)], "own sets only");
+        assert_eq!(owner, vec![0.8, 0.6]);
+        let (weenies, entities, _) = factors(BundleOptions {
+            keep_weenies: true,
+            ..BundleOptions::default()
+        });
+        assert_eq!(weenies, 2);
+        assert_eq!(
+            entities,
+            vec![Some(0.0), None],
+            "E26 with the instance sets"
+        );
+    }
+
+    /// A dictionary read that fails for a reason that is not the data's is not kept: the
+    /// next block reads the dictionary again and finds the PID.
+    #[test]
+    fn a_transient_dictionary_failure_is_retried() {
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use tessera_assets::AssetError;
+        use tessera_world::testkit::{SyntheticWorld, definitions, dictionary};
+        use tessera_world::{BundleOptions, MemoryWorldSource, StampedRecord};
+        const OPACITY: u32 = 0x1000_0F01;
+        struct Flaky {
+            inner: MemoryWorldSource,
+            fail: AtomicBool,
+        }
+        impl WorldSource for Flaky {
+            fn read_stamped(&self, did: Did) -> Result<Option<StampedRecord>, AssetError> {
+                if did == tessera_props::PROPERTY_DICTIONARY_DID && self.fail.load(Ordering::SeqCst)
+                {
+                    return Err(AssetError::Shutdown);
+                }
+                self.inner.read_stamped(did)
+            }
+        }
+        let mut m = SyntheticWorld::rectangle(1, 3..=3, 4..=4).build();
+        let mut defs = definitions();
+        defs.push((OPACITY, "Render_Opacity", 9));
+        m.insert(0x3400_0000u32, dictionary(&defs), Some(1));
+        let flaky = Arc::new(Flaky {
+            inner: m,
+            fail: AtomicBool::new(false),
+        });
+        let source: Arc<dyn WorldSource> = flaky.clone();
+        let ctx = Arc::new(WorldContext::load(source, BundleOptions::default()).expect("ctx"));
+        flaky.fail.store(true, Ordering::SeqCst);
+        let reader = OwnerOpacity::new(ctx);
+        assert_eq!(reader.pid(), None, "transient: no factors this time");
+        assert!(reader.pid.get().is_none(), "not kept");
+        flaky.fail.store(false, Ordering::SeqCst);
+        assert_eq!(reader.pid(), Some(OPACITY), "the next block finds it");
+        assert_eq!(reader.pid.get(), Some(&Some(OPACITY)));
+    }
+
     fn bundle_at(key: LandblockKey, base: u16) -> LandblockBundle {
         LandblockBundle::from_data(
             key,
@@ -4186,6 +4610,7 @@ mod tests {
             lod_classes: None,
             depth_bias: None,
             looks: None,
+            owner_opacity: None,
         })
     }
 
@@ -4282,6 +4707,7 @@ mod tests {
             lod_classes: None,
             depth_bias: None,
             looks: None,
+            owner_opacity: None,
         }
     }
 

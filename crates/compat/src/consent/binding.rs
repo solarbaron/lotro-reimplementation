@@ -6,8 +6,9 @@
 //! - **OS account.** The numeric user ID, as decimal text (Unix-like systems). Windows stores
 //!   no record at all (§5.6 "Windows", see the consent module), so no binding is made there.
 //! - **Machine.** Linux: the content of `/etc/machine-id` and of no other file, with one line
-//!   feed at its end removed, when it holds 1–128 bytes; when that file cannot be read or is
-//!   empty, and on other Unix-like systems, the host name from `uname`.
+//!   feed at its end removed, when the file holds at most 128 bytes (read up to 128 bytes plus
+//!   one) and is not empty without that line feed; when that file cannot be read, is empty or
+//!   is longer, and on other Unix-like systems, the host name from `uname`.
 //! - **Directory.** `std::fs::canonicalize` of the record directory, as the platform's
 //!   encoded path bytes.
 //!
@@ -121,8 +122,8 @@ fn current_user() -> Result<Vec<u8>, BindingError> {
 
 /// The machine identifier of the system whose root directory is `root` (`/` in the client;
 /// tests inject another root, OE-T18): the content of `etc/machine-id` with one line feed at
-/// its end removed, and of no other file; `None` when it cannot be read, is empty or is longer
-/// than [`MAX_MACHINE_ID`] bytes.
+/// its end removed, and of no other file; `None` when it cannot be read, is empty or the file
+/// is longer than [`MAX_MACHINE_ID`] bytes (its line feed counted).
 #[cfg(target_os = "linux")]
 fn machine_id_in(root: &Path) -> Option<Vec<u8>> {
     use std::io::Read as _;
@@ -130,14 +131,19 @@ fn machine_id_in(root: &Path) -> Option<Vec<u8>> {
     if !file.metadata().ok()?.is_file() {
         return None;
     }
+    // Up to the bound plus one byte: a file longer than the bound (its line feed counted)
+    // falls back to the host name (§5.6, OE-T18).
     let mut buf = Vec::new();
-    file.take(MAX_MACHINE_ID as u64 + 2)
+    file.take(MAX_MACHINE_ID as u64 + 1)
         .read_to_end(&mut buf)
         .ok()?;
+    if buf.len() > MAX_MACHINE_ID {
+        return None;
+    }
     if buf.last() == Some(&b'\n') {
         buf.pop();
     }
-    (!buf.is_empty() && buf.len() <= MAX_MACHINE_ID).then_some(buf)
+    (!buf.is_empty()).then_some(buf)
 }
 
 #[cfg(target_os = "linux")]
@@ -218,6 +224,29 @@ mod tests {
         assert_eq!(machine_for_root(root.path()), Some(b"0123abcd".to_vec()));
         std::fs::write(root.path().join("etc/machine-id"), b" id \n\n").expect("write");
         assert_eq!(machine_for_root(root.path()), Some(b" id \n".to_vec()));
+        // A file of 128 bytes is used, one of 129 bytes is not (its line feed counted).
+        let id = |n: usize, lf: bool| {
+            let mut v = vec![b'a'; n];
+            if lf {
+                v.push(b'\n');
+            }
+            v
+        };
+        let p = root.path().join("etc/machine-id");
+        std::fs::write(&p, id(128, false)).expect("write");
+        assert_eq!(machine_for_root(root.path()), Some(id(128, false)));
+        std::fs::write(&p, id(127, true)).expect("write");
+        assert_eq!(machine_for_root(root.path()), Some(id(127, false)));
+        std::fs::write(&p, id(129, false)).expect("write");
+        assert_eq!(
+            machine_for_root(root.path()),
+            Some(host_name().expect("host"))
+        );
+        std::fs::write(&p, id(128, true)).expect("write");
+        assert_eq!(
+            machine_for_root(root.path()),
+            Some(host_name().expect("host"))
+        );
     }
 
     #[test]

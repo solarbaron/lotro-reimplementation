@@ -26,6 +26,7 @@
 #   test             cargo build --all-targets --release, cargo test --release --no-fail-fast
 #   doc              cargo doc --workspace --no-deps with RUSTDOCFLAGS=-D warnings
 #   server-deps      tools/check-server-deps.sh --self-test, then tessera-server and its hosts
+#   release-features tools/check-release-features.sh --self-test, then the workspace
 #   msrv             cargo check on rust-version from Cargo.toml (if that toolchain is installed)
 #   msrv-explorer    cargo check -p tessera-explorer on its own rust-version (likewise)
 #   deny             cargo deny check bans licenses sources, Cargo.toml and fuzz/Cargo.toml
@@ -51,7 +52,7 @@ set -uo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$root" || exit 2
 
-all_jobs=(content spdx reuse dco fmt clippy test doc server-deps msrv msrv-explorer deny advisories fuzz)
+all_jobs=(content spdx reuse dco fmt clippy test doc server-deps release-features msrv msrv-explorer deny advisories fuzz)
 quick_jobs=(fmt clippy test)
 
 quick=0
@@ -225,6 +226,11 @@ job_server_deps() {
     run tools/check-server-deps.sh
 }
 
+job_release_features() {
+    run tools/check-release-features.sh --self-test || return 1
+    run tools/check-release-features.sh
+}
+
 job_msrv() {
     local v tc
     v="$(rust_version_of Cargo.toml)"
@@ -342,7 +348,7 @@ done
 
 echo
 echo "${c_bold}Summary${c_off} ($((SECONDS - run_start))s)"
-printf '  %-14s %-6s %7s  %s\n' JOB RESULT TIME NOTE
+printf '  %-16s %-6s %7s  %s\n' JOB RESULT TIME NOTE
 for i in "${!jobs[@]}"; do
     r="${results[$i]}"
     case "$r" in
@@ -350,7 +356,7 @@ for i in "${!jobs[@]}"; do
         fail) c="$c_red" ;;
         *) c="$c_yellow" ;;
     esac
-    printf '  %-14s %s%-6s%s %7s  %s\n' "${jobs[$i]}" "$c" "$r" "$c_off" "${times[$i]}" "${notes[$i]}"
+    printf '  %-16s %s%-6s%s %7s  %s\n' "${jobs[$i]}" "$c" "$r" "$c_off" "${times[$i]}" "${notes[$i]}"
 done
 
 exit "$failed"

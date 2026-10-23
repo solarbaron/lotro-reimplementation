@@ -102,6 +102,25 @@ device on your driver, run `cargo test -p tessera-render -- --test-threads=1` an
 it. `TESSERA_REQUIRE_GPU=1` makes a missing adapter a failure (CI); a machine that has an
 adapter but cannot create a device fails the GPU tests unless `TESSERA_REQUIRE_GPU=0`.
 
+### Release builds
+
+Release artefacts of the client are built with a plain
+
+```sh
+cargo build --release -p tessera-client
+```
+
+never with `--all-targets`, `--tests`, `--benches`, `--examples`, `--workspace`,
+`--all-features` or a `--features` list, and never through `cargo test`
+(`docs/specs/official-entry.md` §6.3 "Release builds"). With resolver 3 a build that includes
+the client's test targets turns on the features of its dev-dependencies in the binary as
+well, and the client's tests enable `tessera-compat`'s `test-support` feature, which a release
+build must never contain (§6.1). `tools/check-release-features.sh` checks the normal
+dependency graph (`cargo tree -p tessera-client -e features,normal -i tessera-compat`, default
+and all features) and fails if the feature is in it; `--self-test` checks that it catches the
+feature on fixture workspaces (OE-T22). CI and `tools/ci-local.sh` run both as the job
+`release-features`.
+
 ### Running the CI checks locally
 
 `tools/ci-local.sh` runs the jobs of `.github/workflows/ci.yml` on this machine and ends

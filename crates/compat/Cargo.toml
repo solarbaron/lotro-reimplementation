@@ -47,5 +47,9 @@ test-support = []
 [dev-dependencies]
 tempfile = "3"
 
+[target.'cfg(unix)'.dev-dependencies]
+# `mknodat` makes the FIFO of the record tests in-process (no program is started, OE-T8 (b)).
+rustix = { workspace = true, features = ["fs"] }
+
 [lints]
 workspace = true

@@ -7,6 +7,13 @@
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
+// The two civil-date conversions below follow Howard Hinnant's published date algorithms
+// (`days_from_civil` and `civil_from_days` of "chrono-Compatible Low-Level Date Algorithms",
+// https://howardhinnant.github.io/date_algorithms.html), which their author has placed in the
+// public domain. They are general calendar arithmetic (eras of 400 years, years counted from
+// March), not facts about any game format; the names `era`, `yoe`, `doe`, `doy` and `mp` are
+// the source's.
+
 /// Days from 1970-01-01 to the civil date (`y`, `m`, `d`) of the proleptic Gregorian calendar.
 fn days_from_civil(y: i64, m: u32, d: u32) -> i64 {
     let y = if m <= 2 { y - 1 } else { y };

@@ -46,7 +46,8 @@ use binding::Binding;
 pub use binding::BindingError;
 use record::RecordValues;
 pub use record::{
-    KEY_BYTES, MAX_RECORD_BYTES, MAX_REVISION, SCHEMA, WriteError, is_valid_language, withdraw,
+    KEY_BYTES, MAX_RECORD_BYTES, MAX_REVISION, SCHEMA, WithdrawReport, WriteError,
+    is_valid_language, withdraw, withdraw_report,
 };
 
 /// The ASCII text that starts the digest's byte string (§5.3 item 1).
@@ -469,6 +470,68 @@ impl PendingWrite {
         match self.rx.take() {
             Some(rx) => rx.recv().unwrap_or(Err(WriteError::Worker)),
             None => Err(WriteError::Worker),
+        }
+    }
+}
+
+/// A withdrawal (§5.5 "Withdrawing") running on a consent worker thread, so the frame thread
+/// neither waits for a record write nor deletes files (ARCH §21).
+#[derive(Debug)]
+pub struct PendingWithdraw {
+    rx: Option<mpsc::Receiver<WithdrawReport>>,
+}
+
+/// Nothing removed: the worker could not start or ended without a report.
+const NOTHING_REMOVED: WithdrawReport = WithdrawReport {
+    record_removed: false,
+    key_removed: false,
+};
+
+/// Starts a withdrawal of the record in `dir` on a worker thread. A record write still
+/// running (`write`) finishes there first, so it cannot bring the record back afterwards.
+/// Without a record directory nothing is stored and the report is complete.
+#[must_use]
+pub fn spawn_withdraw(dir: Option<PathBuf>, write: Option<PendingWrite>) -> PendingWithdraw {
+    let (tx, rx) = mpsc::sync_channel(1);
+    let spawned = std::thread::Builder::new()
+        .name("tessera-consent-withdraw".into())
+        .spawn(move || {
+            if let Some(w) = write {
+                let _ = w.wait();
+            }
+            let report = match dir {
+                Some(d) => withdraw_report(&d),
+                None => WithdrawReport {
+                    record_removed: true,
+                    key_removed: true,
+                },
+            };
+            let _ = tx.send(report);
+        });
+    PendingWithdraw {
+        rx: spawned.is_ok().then_some(rx),
+    }
+}
+
+impl PendingWithdraw {
+    /// The report once the withdrawal has finished; `None` while it runs.
+    pub fn poll(&mut self) -> Option<WithdrawReport> {
+        let Some(rx) = self.rx.as_ref() else {
+            return Some(NOTHING_REMOVED);
+        };
+        match rx.try_recv() {
+            Ok(r) => Some(r),
+            Err(mpsc::TryRecvError::Disconnected) => Some(NOTHING_REMOVED),
+            Err(mpsc::TryRecvError::Empty) => None,
+        }
+    }
+
+    /// Waits for the report (tests, and the end of the run).
+    #[must_use]
+    pub fn wait(mut self) -> WithdrawReport {
+        match self.rx.take() {
+            Some(rx) => rx.recv().unwrap_or(NOTHING_REMOVED),
+            None => NOTHING_REMOVED,
         }
     }
 }

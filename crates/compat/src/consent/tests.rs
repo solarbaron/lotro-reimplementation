@@ -333,15 +333,19 @@ fn oe_t5_rejected_records() {
     );
     let d = fresh();
     std::fs::remove_file(rec(d.path())).expect("rm");
-    let status = std::process::Command::new("mkfifo")
-        .arg(rec(d.path()))
-        .status();
-    if status.is_ok_and(|s| s.success()) {
-        assert_eq!(
-            assert_rejected(d.path(), &text),
-            NotAcceptedReason::Unreadable
-        );
-    }
+    // The FIFO is made in-process (no other program is started, OE-T8 (b)).
+    rustix::fs::mknodat(
+        rustix::fs::CWD,
+        rec(d.path()),
+        rustix::fs::FileType::Fifo,
+        rustix::fs::Mode::from_raw_mode(0o600),
+        0,
+    )
+    .expect("fifo");
+    assert_eq!(
+        assert_rejected(d.path(), &text),
+        NotAcceptedReason::Unreadable
+    );
     // A device in its place (a link to /dev/null is refused as a link; the check never
     // follows it).
     let d = fresh();

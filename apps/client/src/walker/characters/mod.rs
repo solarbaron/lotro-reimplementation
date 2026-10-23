@@ -589,14 +589,14 @@ pub struct CharacterLayer {
     preview_rebuild: Option<(FigureRequest, LookChoices)>,
     /// The anchors the live figure's props of unattached MeshFX nodes were placed with
     /// (`script-table.md` §5.2: the anchor is read once at placement), by the live figure's
-    /// slot and the prop's attach key ([`unattached_prop_transform`]): the holding
-    /// location's transform in the figure's model frame, taken from the pose of the frame
-    /// in which an instance of the key was first seen alive
-    /// ([`CharacterLayer::record_unattached_props`]). Kept in the figure's frame, not the
-    /// world's, so that each framing of the figure (the creation scene, the portrait) puts
-    /// the prop where its own figure frame is. An entry lives while an instance of its key
-    /// is alive.
-    unattached_props: Mutex<HashMap<(u32, u32), Mat4>>,
+    /// slot, the prop's attach key and the instance's ID ([`unattached_prop_transform`],
+    /// [`live::LiveFigure::prop_instances`]): the holding location's transform in the
+    /// figure's model frame, taken from the pose of the frame in which the instance was
+    /// first seen alive ([`CharacterLayer::record_unattached_props`]), so each instance of
+    /// the same prop keeps its own placement. Kept in the figure's frame, not the world's,
+    /// so that each framing of the figure (the creation scene, the portrait) puts the prop
+    /// where its own figure frame is. An entry lives while its instance is alive.
+    unattached_props: Mutex<HashMap<(u32, u32, u64), Mat4>>,
 }
 
 /// How a prop part of the screens' live figure is drawn now (the Tessera drawing rule of
@@ -624,20 +624,21 @@ pub struct PropDraw {
     pub translucent: bool,
 }
 
-/// The world transform of a prop part of the live figure in `slot` with attach key `key`
-/// (`script-table.md` §5.2, `appearance.md` §5.7 step 2), for the figure drawn at `world`
-/// (the framing's figure transform) with its holding location at `anchor` now (model
-/// frame). An attached node's prop follows the anchor every frame: `world` × `anchor`. An
-/// unattached node's prop keeps the anchor of its placement, kept in `fixed` while an
-/// instance of it lives (taken here when nothing recorded it at placement): `world` × that
-/// anchor. Tessera rule of §5.2 for the screens' figure: its prop follows neither the
+/// The world transform of instance `instance` of a prop part of the live figure in `slot`
+/// with attach key `key` (`script-table.md` §5.2, `appearance.md` §5.7 step 2), for the
+/// figure drawn at `world` (the framing's figure transform) with its holding location at
+/// `anchor` now (model frame). An attached node's prop follows the anchor every frame:
+/// `world` × `anchor`. An unattached node's prop instance keeps the anchor of its own
+/// placement, kept in `fixed` while it lives (taken here when nothing recorded it at
+/// placement): `world` × that anchor; another instance of the same prop has its own
+/// entry. Tessera rule of §5.2 for the screens' figure: its prop follows neither the
 /// figure's animation nor the screens' turntable (which moves the camera, not the figure);
 /// it is kept in the figure's frame, so another framing of the figure (the portrait, a
 /// stage with another figure frame) draws it beside its figure.
 #[must_use]
 pub fn unattached_prop_transform(
-    fixed: &mut HashMap<(u32, u32), Mat4>,
-    (slot, key): (u32, u32),
+    fixed: &mut HashMap<(u32, u32, u64), Mat4>,
+    (slot, key, instance): (u32, u32, u64),
     attached: bool,
     world: Mat4,
     anchor: Mat4,
@@ -645,42 +646,47 @@ pub fn unattached_prop_transform(
     if attached {
         return world * anchor;
     }
-    world * *fixed.entry((slot, key)).or_insert(anchor)
+    world * *fixed.entry((slot, key, instance)).or_insert(anchor)
 }
 
-/// The attach keys of the live figure's props of unattached MeshFX nodes with an instance
-/// alive now ([`ScreenProp::attached`](live::ScreenProp::attached); attach key
-/// [`live::PROP_KEY_BASE`] + the prop's index).
-fn unattached_alive_keys(l: &live::LiveFigure) -> Vec<u32> {
+/// The live instances of the live figure's props of unattached MeshFX nodes, as (attach
+/// key, instance ID) ([`ScreenProp::attached`](live::ScreenProp::attached); attach key
+/// [`live::PROP_KEY_BASE`] + the prop's index; [`live::LiveFigure::prop_instances`]).
+fn unattached_alive_instances(l: &live::LiveFigure) -> Vec<(u32, u64)> {
     l.props()
         .iter()
         .enumerate()
         .filter(|(_, p)| !p.attached)
         .filter_map(|(i, _)| live::PROP_KEY_BASE.checked_add(u32::try_from(i).ok()?))
-        .filter(|k| l.prop_opacity(*k).is_some())
+        .flat_map(|k| l.prop_instances(k).into_iter().map(move |p| (k, p.id)))
         .collect()
 }
 
-/// The live figure's slot and its unattached prop keys alive now, each with its holding
-/// location's transform in this frame's pose ([`keep_unattached_anchors`]).
-type AliveProps<'a> = (u32, &'a [(u32, Option<Mat4>)]);
+/// The live figure's slot and the live instances of its unattached props, each as (attach
+/// key, instance ID, its holding location's transform in this frame's pose)
+/// ([`keep_unattached_anchors`]).
+type AliveProps<'a> = (u32, &'a [(u32, u64, Option<Mat4>)]);
 
-/// Keeps `fixed` ([`CharacterLayer::unattached_props`]) in step with the props alive now:
-/// `alive` holds, for the live figure in `slot`, each unattached prop key with an instance
-/// alive and its holding location's transform in this frame's pose (`None`: no pose yet).
-/// A key seen alive for the first time takes that anchor (its placement, `script-table.md`
-/// §5.2); a key already kept keeps its anchor; keys of another slot or with no instance
-/// left are dropped, so a prop placed again after all its instances were removed is placed
-/// anew. `None` for `alive` (no live figure) clears everything.
-fn keep_unattached_anchors(fixed: &mut HashMap<(u32, u32), Mat4>, alive: Option<AliveProps<'_>>) {
+/// Keeps `fixed` ([`CharacterLayer::unattached_props`]) in step with the prop instances
+/// alive now: `alive` holds, for the live figure in `slot`, each live instance of an
+/// unattached prop with its holding location's transform in this frame's pose (`None`: no
+/// pose yet). An instance seen alive for the first time takes that anchor (its placement,
+/// `script-table.md` §5.2); an instance already kept keeps its anchor, so a second instance
+/// of the same prop placed while the first lives takes the pose of its own placement;
+/// instances of another slot or no longer alive are dropped. `None` for `alive` (no live
+/// figure) clears everything.
+fn keep_unattached_anchors(
+    fixed: &mut HashMap<(u32, u32, u64), Mat4>,
+    alive: Option<AliveProps<'_>>,
+) {
     let Some((slot, alive)) = alive else {
         fixed.clear();
         return;
     };
-    fixed.retain(|(s, k), _| *s == slot && alive.iter().any(|(a, _)| a == k));
-    for (k, m) in alive {
+    fixed.retain(|(s, k, i), _| *s == slot && alive.iter().any(|(a, b, _)| a == k && b == i));
+    for (k, i, m) in alive {
         if let Some(m) = m {
-            fixed.entry((slot, *k)).or_insert(*m);
+            fixed.entry((slot, *k, *i)).or_insert(*m);
         }
     }
 }
@@ -2169,8 +2175,9 @@ impl CharacterLayer {
     /// knows at its interpolated state (`tessera-protocol.md` §8.6): position, heading and
     /// the velocity that drives its locomotion (zero ground speed and velocity when the
     /// motion byte says Standing, or when the sample is `SampleKind::Held`: updates late
-    /// past the extrapolation limit stand the character still). Characters `sample` does not know keep the extrapolation of their
-    /// last move. Positions are in `region`, the player's current region (as for moves).
+    /// past the extrapolation limit stand the character still). Characters `sample` does
+    /// not know keep the extrapolation of their last move. Positions are in `region`, the
+    /// player's current region (as for moves).
     pub fn apply_samples(
         &mut self,
         sample: &dyn Fn(EntityId) -> Option<tessera_net::interp::Sample>,
@@ -2657,13 +2664,13 @@ impl CharacterLayer {
     /// prop's first draw.
     fn record_unattached_props(&mut self) {
         let alive = self.live.as_ref().map(|(slot, l)| {
-            let keys = unattached_alive_keys(l);
+            let instances = unattached_alive_instances(l);
             let attach = self.preview_attach(*slot);
-            let anchors: Vec<(u32, Option<Mat4>)> = keys
+            let anchors: Vec<(u32, u64, Option<Mat4>)> = instances
                 .into_iter()
-                .map(|k| {
+                .map(|(k, i)| {
                     let m = attach.and_then(|a| a.iter().find(|(x, _)| *x == k).map(|(_, m)| *m));
-                    (k, m)
+                    (k, i, m)
                 })
                 .collect();
             (*slot, anchors)
@@ -3249,87 +3256,97 @@ impl CharacterLayer {
             .unattached_props
             .lock()
             .unwrap_or_else(PoisonError::into_inner);
+        // The placements of one part this frame: (transform, how it is drawn).
+        let mut placements: Vec<(Mat4, PropDraw)> = Vec::new();
         for part in &g.parts {
-            // `appearance.md` §5.7 drawing rule: a prop part is drawn with its
-            // `Render_Opacity`, in the translucent stage while `Translucent` holds or the
-            // opacity is below 1; not drawn while no instance of it lives or at opacity 0.
+            placements.clear();
             let prop = part.held.filter(|k| *k >= live::PROP_KEY_BASE);
-            let opacity = match prop {
+            // The holding location's transform in this pose (model frame); a held part
+            // whose location the pose does not give is not drawn.
+            let anchor = match part.held {
                 None => None,
-                Some(key) => {
-                    let Some(o) = live.and_then(|l| l.prop_opacity(key)) else {
-                        continue;
-                    };
-                    Some(o)
-                }
-            };
-            // The transform first: an unattached prop alive now keeps the anchor of its
-            // placement even while its variant or its opacity 0 leaves it undrawn
-            // (`script-table.md` §5.2; [`Self::record_unattached_props`] records it).
-            let transform = match part.held {
-                None => world,
                 Some(key) => {
                     let Some(m) = pose.and_then(|(_, attach)| {
                         attach.iter().find(|(k, _)| *k == key).map(|(_, m)| *m)
                     }) else {
                         continue;
                     };
-                    match (prop, live) {
-                        (Some(key), Some(l)) => {
-                            // `ScreenProp::attached` of the prop the key was built for
-                            // (attach key `PROP_KEY_BASE` + its index); unknown: attached.
-                            let attached = usize::try_from(key - live::PROP_KEY_BASE)
-                                .ok()
-                                .and_then(|i| l.props().get(i))
-                                .is_none_or(|p| p.attached);
-                            unattached_prop_transform(
-                                &mut fixed,
-                                (render.slot, key),
-                                attached,
-                                world,
-                                m,
-                            )
-                        }
-                        _ => world * m,
-                    }
+                    Some(m)
                 }
             };
+            match (prop, live, anchor) {
+                (None, _, a) => placements.push((
+                    a.map_or(world, |m| world * m),
+                    PropDraw {
+                        fade: 1.0,
+                        translucent: false,
+                    },
+                )),
+                (Some(_), None, _) | (Some(_), _, None) => continue,
+                (Some(key), Some(l), Some(m)) => {
+                    // `ScreenProp::attached` of the prop the key was built for (attach key
+                    // `PROP_KEY_BASE` + its index); unknown: attached.
+                    let attached = usize::try_from(key - live::PROP_KEY_BASE)
+                        .ok()
+                        .and_then(|i| l.props().get(i))
+                        .is_none_or(|p| p.attached);
+                    if attached {
+                        // `appearance.md` §5.7 drawing rule: drawn with its
+                        // `Render_Opacity` (the largest of its live instances, which all
+                        // follow the same anchor), in the translucent stage while
+                        // `Translucent` holds or the opacity is below 1; not drawn while no
+                        // instance lives or at opacity 0.
+                        let Some(o) = l.prop_opacity(key) else {
+                            continue;
+                        };
+                        if let Some(d) = prop_draw_fade(Some(o), l.prop_translucent(key)) {
+                            placements.push((world * m, d));
+                        }
+                    } else {
+                        // `script-table.md` §5.2: each live instance keeps the anchor of
+                        // its own placement, taken even while its variant or its opacity 0
+                        // leaves it undrawn ([`Self::record_unattached_props`] records
+                        // it), and is drawn with its own opacity.
+                        for inst in l.prop_instances(key) {
+                            let tf = unattached_prop_transform(
+                                &mut fixed,
+                                (render.slot, key, inst.id),
+                                false,
+                                world,
+                                m,
+                            );
+                            if let Some(d) = prop_draw_fade(Some(inst.opacity), inst.translucent) {
+                                placements.push((tf, d));
+                            }
+                        }
+                    }
+                }
+            }
             if part.variants & variant_bit == 0 {
                 continue;
             }
-            let draw = match (prop, live) {
-                (None, _) => PropDraw {
-                    fade: 1.0,
-                    translucent: false,
-                },
-                (Some(key), Some(l)) => {
-                    let Some(d) = prop_draw_fade(opacity, l.prop_translucent(key)) else {
+            for &(transform, draw) in &placements {
+                for (i, plan) in part.plans.iter().enumerate() {
+                    let Some((material, surface)) = surface_draw_in(
+                        plan,
+                        &|t| objects.texture(t),
+                        lit,
+                        draw.fade,
+                        draw.translucent,
+                        false,
+                    ) else {
                         continue;
                     };
-                    d
+                    let mut d = MeshDraw::new(part.mesh, transform, material)
+                        .with_submesh(u32::try_from(i).unwrap_or(u32::MAX))
+                        .with_lit(surface);
+                    if part.skinned
+                        && let Some(p) = palette
+                    {
+                        d = d.with_skin(p);
+                    }
+                    out.push(d);
                 }
-                (Some(_), None) => continue,
-            };
-            for (i, plan) in part.plans.iter().enumerate() {
-                let Some((material, surface)) = surface_draw_in(
-                    plan,
-                    &|t| objects.texture(t),
-                    lit,
-                    draw.fade,
-                    draw.translucent,
-                    false,
-                ) else {
-                    continue;
-                };
-                let mut d = MeshDraw::new(part.mesh, transform, material)
-                    .with_submesh(u32::try_from(i).unwrap_or(u32::MAX))
-                    .with_lit(surface);
-                if part.skinned
-                    && let Some(p) = palette
-                {
-                    d = d.with_skin(p);
-                }
-                out.push(d);
             }
         }
         let centre = world.transform_point3(g.center);
@@ -3489,39 +3506,39 @@ mod tests {
         let up = |z: f32| Mat4::from_translation(Vec3::new(0.0, 0.0, z));
         let place = Mat4::IDENTITY;
         assert_eq!(
-            unattached_prop_transform(&mut fixed, (1, 7), true, place, at(1.0)),
+            unattached_prop_transform(&mut fixed, (1, 7, 1), true, place, at(1.0)),
             at(1.0)
         );
         assert_eq!(
-            unattached_prop_transform(&mut fixed, (1, 7), true, place, at(2.0)),
+            unattached_prop_transform(&mut fixed, (1, 7, 1), true, place, at(2.0)),
             at(2.0)
         );
         assert!(fixed.is_empty(), "attached props keep nothing");
         assert_eq!(
-            unattached_prop_transform(&mut fixed, (1, 8), false, place, at(3.0)),
+            unattached_prop_transform(&mut fixed, (1, 8, 1), false, place, at(3.0)),
             at(3.0)
         );
         assert_eq!(
-            unattached_prop_transform(&mut fixed, (1, 8), false, place, at(4.0)),
+            unattached_prop_transform(&mut fixed, (1, 8, 1), false, place, at(4.0)),
             at(3.0),
             "the holder's anchor moved; the prop did not"
         );
         // Another framing (the portrait at the origin, then the scene at another figure
         // frame) puts the kept anchor in its own frame, not the first framing's.
         assert_eq!(
-            unattached_prop_transform(&mut fixed, (1, 8), false, up(10.0), at(5.0)),
+            unattached_prop_transform(&mut fixed, (1, 8, 1), false, up(10.0), at(5.0)),
             up(10.0) * at(3.0),
             "the viewport does not reuse the portrait's matrix"
         );
         // Another slot's prop of the same key is its own.
         assert_eq!(
-            unattached_prop_transform(&mut fixed, (2, 8), false, place, at(5.0)),
+            unattached_prop_transform(&mut fixed, (2, 8, 1), false, place, at(5.0)),
             at(5.0)
         );
         // Once its instances are gone (the entry is dropped) it is placed anew.
-        fixed.remove(&(1, 8));
+        fixed.remove(&(1, 8, 1));
         assert_eq!(
-            unattached_prop_transform(&mut fixed, (1, 8), false, place, at(6.0)),
+            unattached_prop_transform(&mut fixed, (1, 8, 1), false, place, at(6.0)),
             at(6.0)
         );
     }
@@ -3537,29 +3554,70 @@ mod tests {
         let k = live::PROP_KEY_BASE;
         let mut fixed = HashMap::new();
         // Placed this update (opacity 0, not drawn): its anchor is this pose's.
-        keep_unattached_anchors(&mut fixed, Some((3, &[(k, Some(at(1.0)))])));
-        assert_eq!(fixed.get(&(3, k)), Some(&at(1.0)));
+        keep_unattached_anchors(&mut fixed, Some((3, &[(k, 1, Some(at(1.0)))])));
+        assert_eq!(fixed.get(&(3, k, 1)), Some(&at(1.0)));
         // Next update the figure moved; the kept anchor stays, and the first draw uses it.
-        keep_unattached_anchors(&mut fixed, Some((3, &[(k, Some(at(2.0)))])));
+        keep_unattached_anchors(&mut fixed, Some((3, &[(k, 1, Some(at(2.0)))])));
         assert_eq!(
-            unattached_prop_transform(&mut fixed, (3, k), false, Mat4::IDENTITY, at(2.5)),
+            unattached_prop_transform(&mut fixed, (3, k, 1), false, Mat4::IDENTITY, at(2.5)),
             at(1.0),
             "the anchor of placement, not of the first draw"
         );
         // A prop with no pose yet is left for the draw's fallback.
-        keep_unattached_anchors(&mut fixed, Some((3, &[(k, Some(at(2.0))), (k + 1, None)])));
-        assert!(!fixed.contains_key(&(3, k + 1)));
+        keep_unattached_anchors(
+            &mut fixed,
+            Some((3, &[(k, 1, Some(at(2.0))), (k + 1, 2, None)])),
+        );
+        assert!(!fixed.contains_key(&(3, k + 1, 2)));
         // Its instances are gone: dropped; placed again: the new pose.
         keep_unattached_anchors(&mut fixed, Some((3, &[])));
         assert!(fixed.is_empty());
-        keep_unattached_anchors(&mut fixed, Some((3, &[(k, Some(at(4.0)))])));
-        assert_eq!(fixed.get(&(3, k)), Some(&at(4.0)));
+        keep_unattached_anchors(&mut fixed, Some((3, &[(k, 3, Some(at(4.0)))])));
+        assert_eq!(fixed.get(&(3, k, 3)), Some(&at(4.0)));
         // Another slot (a rebuilt figure) starts afresh; no live figure clears all.
-        keep_unattached_anchors(&mut fixed, Some((4, &[(k, Some(at(5.0)))])));
-        assert_eq!(fixed.get(&(3, k)), None);
-        assert_eq!(fixed.get(&(4, k)), Some(&at(5.0)));
+        keep_unattached_anchors(&mut fixed, Some((4, &[(k, 3, Some(at(5.0)))])));
+        assert_eq!(fixed.get(&(3, k, 3)), None);
+        assert_eq!(fixed.get(&(4, k, 3)), Some(&at(5.0)));
         keep_unattached_anchors(&mut fixed, None);
         assert!(fixed.is_empty());
+    }
+
+    /// Follow-up of the §5.2 answer (`script-table.md`): two live instances of the same
+    /// unattached prop each keep the anchor of their own placement. The second, placed
+    /// while the first lives, is not drawn at the first one's transform; the first's
+    /// removal leaves the second's anchor alone.
+    #[test]
+    fn each_unattached_instance_keeps_its_own_placement() {
+        let at = |x: f32| Mat4::from_translation(Vec3::new(x, 0.0, 0.0));
+        let k = live::PROP_KEY_BASE;
+        let mut fixed = HashMap::new();
+        // Instance 10 placed with the figure's holding location at x = 1.
+        keep_unattached_anchors(&mut fixed, Some((3, &[(k, 10, Some(at(1.0)))])));
+        // The figure moved; instance 11 of the same prop is placed now, at x = 2.
+        keep_unattached_anchors(
+            &mut fixed,
+            Some((3, &[(k, 10, Some(at(2.0))), (k, 11, Some(at(2.0)))])),
+        );
+        let first =
+            unattached_prop_transform(&mut fixed, (3, k, 10), false, Mat4::IDENTITY, at(3.0));
+        let second =
+            unattached_prop_transform(&mut fixed, (3, k, 11), false, Mat4::IDENTITY, at(3.0));
+        assert_eq!(first, at(1.0));
+        assert_eq!(second, at(2.0), "not the first instance's transform");
+        // The first is removed; the second keeps its own anchor.
+        keep_unattached_anchors(&mut fixed, Some((3, &[(k, 11, Some(at(5.0)))])));
+        assert!(!fixed.contains_key(&(3, k, 10)));
+        assert_eq!(
+            unattached_prop_transform(&mut fixed, (3, k, 11), false, Mat4::IDENTITY, at(6.0)),
+            at(2.0)
+        );
+        // A third instance placed later takes the pose of its own placement.
+        keep_unattached_anchors(
+            &mut fixed,
+            Some((3, &[(k, 11, Some(at(7.0))), (k, 12, Some(at(7.0)))])),
+        );
+        assert_eq!(fixed.get(&(3, k, 12)), Some(&at(7.0)));
+        assert_eq!(fixed.get(&(3, k, 11)), Some(&at(2.0)));
     }
 
     /// Review finding (`particle-runtime.md` §12 rule 15): a figure whose fade reached 0

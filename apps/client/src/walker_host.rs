@@ -17,7 +17,7 @@ use tessera_world::frills::FrillSettings;
 use tessera_world::{BundleOptions, DistanceSettings, LANDBLOCK_SIZE, RingConfig, StreamConfig};
 
 use crate::avatar::AvatarSpec;
-use crate::cli::Args;
+use crate::cli::{Args, RenderPref, render_pref};
 use crate::runtime::{DataStatus, Runtime};
 use crate::walker::boot::WorldBoot;
 use crate::walker::characters::CharacterConfig;
@@ -134,15 +134,203 @@ pub fn sandbox_config(args: &Args) -> anyhow::Result<SandboxConfig> {
 }
 
 /// The distance preferences of the command line over the built-in defaults
-/// (`walker.md` §11.2, §11.8).
+/// (`walker.md` §11.2, §11.8): the dedicated options first, then `--render-pref` for
+/// `LandscapeDrawDistance`, `ObjectDrawDistance` and `ModelDetail` (§14.10; a value the key
+/// does not accept counts as its built-in level, W26), then the built-in levels. That the
+/// dedicated option wins over a `--render-pref` of the same key is a **Tessera choice**
+/// (§14.10 only says the override wins over the file and the built-in values).
 #[must_use]
 pub fn distance_settings(args: &Args) -> DistanceSettings {
+    use tessera_world::DetailLevel;
+    use tessera_world::draw_distance::LandscapeLevel;
     let d = DistanceSettings::default();
+    let pref = |key: &str| render_pref(&args.render_prefs, key);
+    let detail = |v: &str| {
+        DetailLevel::from_name(v)
+            .or_else(|| v.trim().parse().ok().and_then(DetailLevel::from_stored))
+    };
     DistanceSettings {
-        landscape: args.landscape_distance.unwrap_or(d.landscape),
-        object_draw_distance: args.object_draw_distance.unwrap_or(d.object_draw_distance),
-        model_detail: args.model_detail.unwrap_or(d.model_detail),
+        landscape: args.landscape_distance.unwrap_or_else(|| {
+            pref("LandscapeDrawDistance")
+                .and_then(|v| {
+                    LandscapeLevel::from_name(v)
+                        .or_else(|| v.trim().parse().ok().and_then(LandscapeLevel::from_stored))
+                })
+                .unwrap_or(d.landscape)
+        }),
+        object_draw_distance: args.object_draw_distance.unwrap_or_else(|| {
+            pref("ObjectDrawDistance")
+                .and_then(detail)
+                .unwrap_or(d.object_draw_distance)
+        }),
+        model_detail: args.model_detail.unwrap_or_else(|| {
+            pref("ModelDetail")
+                .and_then(detail)
+                .unwrap_or(d.model_detail)
+        }),
         ..d
+    }
+}
+
+/// The `FrillDistance` level (`scenery.md` §8.3: 0–5): `--frill-distance`, else a
+/// `--render-pref FrillDistance=VALUE` ([`frill_level`]: a level name of `walker.md` §11.2
+/// or a number 0–5; any other value counts as the built-in level, W26), else the built-in
+/// level. **Tessera choice** (no spec states it): the dedicated option wins over a
+/// `--render-pref` of the same key, as for the other distance keys ([`distance_settings`]).
+#[must_use]
+pub fn frill_distance_level(args: &Args) -> i32 {
+    let builtin = FrillSettings::default().distance_level;
+    args.frill_distance.map_or_else(
+        || {
+            render_pref(&args.render_prefs, "FrillDistance")
+                .and_then(frill_level)
+                .unwrap_or(builtin)
+        },
+        i32::from,
+    )
+}
+
+/// The level of a `FrillDistance` value (`walker.md` §11.2: 0 `Disabled`, 1 `Low`,
+/// 2 `Medium`, 3 `High`, 4 `VeryHigh`, 5 `UltraHigh`): the name compared case-insensitively
+/// (W26) or a number 0–5, surrounding white space ignored; `None` for anything else.
+#[must_use]
+pub fn frill_level(stored: &str) -> Option<i32> {
+    const NAMES: [&str; 6] = ["disabled", "low", "medium", "high", "veryhigh", "ultrahigh"];
+    let v = stored.trim();
+    let lower = v.to_ascii_lowercase();
+    NAMES
+        .iter()
+        .position(|n| *n == lower)
+        .and_then(|i| i32::try_from(i).ok())
+        .or_else(|| v.parse::<i32>().ok().filter(|n| (0..=5).contains(n)))
+}
+
+/// The level of a stored `[Render] LandscapeLightingQuality` value (`far-view.md` FD18,
+/// FV29): `Low` 0, `High` 1, `VeryHigh` 2, names compared case-insensitively (`walker.md`
+/// W26), or a number 0–2, surrounding white space ignored. Every other value, the names
+/// of other options' scales (`VeryLow`, `Medium`, `UltraHigh`, `Disabled`, …) and other
+/// numbers included, counts as the built-in level 0 (no seam overlay).
+#[must_use]
+pub fn landscape_lighting_level(stored: &str) -> u32 {
+    let v = stored.trim();
+    match v.to_ascii_lowercase().as_str() {
+        "low" => 0,
+        "high" => 1,
+        "veryhigh" => 2,
+        _ => v.parse::<u32>().ok().filter(|n| *n <= 2).unwrap_or(0),
+    }
+}
+
+/// The built-in `[Render] PrecipitationEffects` of the effects (`particle-runtime.md`
+/// §11.2.2): on.
+const BUILTIN_PRECIPITATION: bool = true;
+/// The built-in `[Render] VideoPostEffects` of the effects (`particle-runtime.md` rule 16):
+/// on.
+const BUILTIN_VIDEO_POST: bool = true;
+
+/// The `[Render]` keys the walker reads, by consumer (`walker.md` §14.10): the distance
+/// settings (§11.2, through [`distance_settings`] and [`frill_distance_level`]), the far
+/// view (`far-view.md` FD17) and the particle effects (`particle-runtime.md` §11.2.2,
+/// §11.2.6 step 1, rule 16).
+pub const RENDER_PREF_KEYS: [&str; 11] = [
+    "LandscapeDrawDistance",
+    "ObjectDrawDistance",
+    "ModelDetail",
+    "FrillDistance",
+    "FarLandscapeNormalMaps",
+    "MultiPassLighting",
+    "LandscapeLightingQuality",
+    "DistantImposters",
+    "PrecipitationEffects",
+    "VideoPostEffects",
+    "AtmosphericsDetail",
+];
+
+/// The `[Render]` keys the walker fixes itself and never takes from a preference
+/// (`far-view.md` FD16, FD17, FD22).
+pub const FIXED_RENDER_PREF_KEYS: [&str; 2] = ["GraphicsCore", "NearFarSeamBlending"];
+
+/// A `--render-pref` key the walker ignores ([`ignored_render_prefs`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IgnoredRenderPref {
+    /// The key as first given.
+    pub key: String,
+    /// One of [`FIXED_RENDER_PREF_KEYS`] (else no consumer reads it).
+    pub fixed: bool,
+}
+
+/// The keys of `prefs` that the walker ignores, each once (case-insensitive, in order of
+/// first use): keys it fixes itself and keys no consumer reads (`walker.md` §14.10: "an
+/// unknown key is reported once and ignored").
+#[must_use]
+pub fn ignored_render_prefs(prefs: &[RenderPref]) -> Vec<IgnoredRenderPref> {
+    let mut out: Vec<IgnoredRenderPref> = Vec::new();
+    for p in prefs {
+        let known = |list: &[&str]| list.iter().any(|k| k.eq_ignore_ascii_case(&p.key));
+        if known(&RENDER_PREF_KEYS) || out.iter().any(|o| o.key.eq_ignore_ascii_case(&p.key)) {
+            continue;
+        }
+        out.push(IgnoredRenderPref {
+            key: p.key.clone(),
+            fixed: known(&FIXED_RENDER_PREF_KEYS),
+        });
+    }
+    out
+}
+
+/// Applies the `--render-pref` overrides (`walker.md` §14.10, `far-view.md` FD22) to the
+/// far-view settings and the effects' settings, after the user's file (windowed) or on the
+/// built-in values (headless): `FarLandscapeNormalMaps`, `MultiPassLighting`,
+/// `LandscapeLightingQuality` and `DistantImposters` (with the value forms of
+/// [`tessera_world::far_view::settings::preference_bool`] and FD18's level table,
+/// [`landscape_lighting_level`]), `PrecipitationEffects`,
+/// `VideoPostEffects` and `AtmosphericsDetail` ([`atmospherics_level`]). A key given with a
+/// value it does not accept takes its built-in value (W26), whatever the file said; a key
+/// not given keeps the current value. The graphics core and the seam switch are never
+/// touched (FD16, FD17).
+pub fn apply_render_overrides(
+    far: &mut tessera_world::far_view::FarViewSettings,
+    effects: &mut crate::walker::effects::EffectConfig,
+    prefs: &[RenderPref],
+) {
+    use tessera_world::far_view::settings::preference_bool;
+    if prefs.is_empty() {
+        return;
+    }
+    let get = |key: &str| render_pref(prefs, key);
+    let builtin = tessera_world::far_view::FarViewSettings::default();
+    let flag = |key: &str, current: &mut bool, builtin: bool| {
+        if let Some(v) = get(key) {
+            *current = preference_bool(v).unwrap_or(builtin);
+        }
+    };
+    flag(
+        "FarLandscapeNormalMaps",
+        &mut far.normal_maps,
+        builtin.normal_maps,
+    );
+    flag(
+        "MultiPassLighting",
+        &mut far.multi_pass_lighting,
+        builtin.multi_pass_lighting,
+    );
+    flag("DistantImposters", &mut far.imposters, builtin.imposters);
+    if let Some(v) = get("LandscapeLightingQuality") {
+        // FD18: an unaccepted value is level 0, the built-in level (FV28, FV29).
+        far.lighting_quality = landscape_lighting_level(v);
+    }
+    flag(
+        "PrecipitationEffects",
+        &mut effects.precipitation,
+        BUILTIN_PRECIPITATION,
+    );
+    flag(
+        "VideoPostEffects",
+        &mut effects.video_post,
+        BUILTIN_VIDEO_POST,
+    );
+    if let Some(v) = get("AtmosphericsDetail") {
+        effects.atmospherics = atmospherics_level(v);
     }
 }
 
@@ -184,7 +372,20 @@ pub fn apply_render_preferences(
     settings: &mut tessera_world::far_view::FarViewSettings,
     prefs: &tessera_install::Ini,
 ) {
-    settings.apply_render_preferences(|key| prefs.get("Render", key));
+    // `LandscapeLightingQuality` goes through FD18's table ([`landscape_lighting_level`]):
+    // the world reader also takes other scales' names and numbers above 2 as levels.
+    settings.apply_render_preferences(|key| {
+        let v = prefs.get("Render", key)?;
+        if key.eq_ignore_ascii_case("LandscapeLightingQuality") {
+            Some(match landscape_lighting_level(v) {
+                0 => "0",
+                1 => "1",
+                _ => "2",
+            })
+        } else {
+            Some(v)
+        }
+    });
 }
 
 /// Applies the `[Render]` options of the user's `UserPreferences.ini` that the particle
@@ -245,9 +446,22 @@ pub fn read_user_preferences(root: &Path) -> Option<tessera_install::Ini> {
     }
 }
 
-/// Walker settings from the command line (and the `[Graphics]` settings).
+/// Walker settings from the command line (and the `[Graphics]` settings), with the
+/// `--render-pref` overrides applied over the built-in values ([`apply_render_overrides`];
+/// a windowed run applies them again after the user's file, [`WalkerHost`]).
 #[must_use]
 pub fn walker_config(args: &Args) -> WalkerConfig {
+    let mut config = walker_config_base(args);
+    apply_render_overrides(
+        &mut config.far_view.settings,
+        &mut config.effects,
+        &args.render_prefs,
+    );
+    config
+}
+
+/// [`walker_config`] before the `--render-pref` overrides of the far view and the effects.
+fn walker_config_base(args: &Args) -> WalkerConfig {
     let distances = distance_settings(args);
     // The far ring is the landscape extent E (`walker.md` §11.3, §11.8) unless
     // `--view-blocks` sets it. With the far view on, full-detail terrain covers the
@@ -287,7 +501,7 @@ pub fn walker_config(args: &Args) -> WalkerConfig {
             rings,
             residency_budget: usize::try_from(args.residency_mib << 20).unwrap_or(usize::MAX),
             frills: FrillSettings {
-                distance_level: args.frill_distance.map_or(2, i32::from),
+                distance_level: frill_distance_level(args),
                 draw_frills: systems(args).on(System::Frills),
                 ..FrillSettings::default()
             },
@@ -338,8 +552,8 @@ pub fn walker_config(args: &Args) -> WalkerConfig {
             }),
             // Built-in values; windowed runs take the user's `[Render]` values
             // ([`apply_effect_preferences`]).
-            precipitation: true,
-            video_post: true,
+            precipitation: BUILTIN_PRECIPITATION,
+            video_post: BUILTIN_VIDEO_POST,
             atmospherics: None,
         },
         systems: systems(args),
@@ -440,6 +654,9 @@ pub struct WalkerHost {
     user_prefs: bool,
     /// The user's preferences, read on a thread of their own while the world starts up.
     prefs: PendingPreferences,
+    /// The `--render-pref` overrides, applied again after the user's file (`walker.md`
+    /// §14.10: they win over it).
+    render_prefs: Vec<RenderPref>,
 }
 
 /// Longest the walker's creation waits for the user's preferences after the world
@@ -497,6 +714,16 @@ impl WalkerHost {
     /// A host for `args` (nothing starts until the archives are open).
     #[must_use]
     pub fn new(args: &Args, shared: Arc<Mutex<SourceShared>>) -> Self {
+        for p in ignored_render_prefs(&args.render_prefs) {
+            if p.fixed {
+                tracing::warn!(
+                    key = %p.key,
+                    "--render-pref: the walker fixes this key itself; ignored"
+                );
+            } else {
+                tracing::warn!(key = %p.key, "--render-pref: no walker setting reads this key; ignored");
+            }
+        }
         Self {
             shared,
             config: walker_config(args),
@@ -508,6 +735,7 @@ impl WalkerHost {
             failed: None,
             user_prefs: !args.walker_headless(),
             prefs: PendingPreferences::default(),
+            render_prefs: args.render_prefs.clone(),
         }
     }
 
@@ -548,6 +776,12 @@ impl WalkerHost {
         };
         apply_render_preferences(&mut config.far_view.settings, &ini);
         apply_effect_preferences(&mut config.effects, &ini);
+        // `--render-pref` wins over the file (`walker.md` §14.10, `far-view.md` FD22).
+        apply_render_overrides(
+            &mut config.far_view.settings,
+            &mut config.effects,
+            &self.render_prefs,
+        );
         tracing::info!(
             precipitation = config.effects.precipitation,
             video_post = config.effects.video_post,
@@ -896,6 +1130,261 @@ AtmosphericsDetail=Bogus
         assert!(!h.wants_preferences());
         h.start_preferences(Path::new("/nonexistent"));
         assert!(h.prefs.rx.is_none());
+    }
+
+    /// `far-view.md` FD22, `walker.md` §14.10: a headless run with the three overrides of
+    /// the far view's real-data check gets the normal-mapped template and the seam overlay
+    /// over the built-in values; the fixed keys stay fixed and, like unknown keys, are
+    /// reported once.
+    #[test]
+    fn render_prefs_override_the_built_in_values_headless() {
+        use tessera_world::far_view::Template;
+        let a = Args::try_parse_from([
+            "t",
+            "--far-view",
+            "on",
+            "--screenshot",
+            "/nonexistent/x.png",
+            "--render-pref",
+            "FarLandscapeNormalMaps=True",
+            "--render-pref",
+            "MultiPassLighting=True",
+            "--render-pref",
+            "LandscapeLightingQuality=High",
+            "--render-pref",
+            "GraphicsCore=2",
+            "--render-pref",
+            "nearfarseamblending=False",
+            "--render-pref",
+            "Bogus=1",
+            "--render-pref",
+            "BOGUS=2",
+            "--render-pref",
+            "AtmosphericsDetail=Low",
+        ])
+        .unwrap();
+        assert!(a.walker_headless());
+        let w = walker_config(&a);
+        let s = &w.far_view.settings;
+        assert_eq!(s.template(), Template::NormalMapped);
+        assert!(s.seam_overlay());
+        assert_eq!(s.graphics_core, 5, "GraphicsCore is fixed (FD16)");
+        assert!(s.seam_blending, "NearFarSeamBlending is fixed (FD17)");
+        assert_eq!(w.effects.atmospherics, Some(0));
+        assert_eq!(
+            ignored_render_prefs(&a.render_prefs),
+            vec![
+                IgnoredRenderPref {
+                    key: "GraphicsCore".into(),
+                    fixed: true
+                },
+                IgnoredRenderPref {
+                    key: "nearfarseamblending".into(),
+                    fixed: true
+                },
+                IgnoredRenderPref {
+                    key: "Bogus".into(),
+                    fixed: false
+                },
+            ],
+            "each ignored key once"
+        );
+        // Without overrides the built-in values stay (FD17, FD21).
+        let plain = walker_config(&Args::try_parse_from(["t", "--far-view", "on"]).unwrap());
+        assert_eq!(plain.far_view.settings.template(), Template::Plain);
+        assert!(!plain.far_view.settings.seam_overlay());
+    }
+
+    /// `walker.md` §14.10: in a windowed run the overrides are applied after the user's
+    /// file, so they win over it; a value the key does not accept counts as the built-in
+    /// value, not as the file's; keys the overrides do not name keep the file's value.
+    #[test]
+    fn render_prefs_win_over_the_users_file() {
+        let a = Args::try_parse_from([
+            "t",
+            "--far-view",
+            "on",
+            "--render-pref",
+            "FarLandscapeNormalMaps=False",
+            "--render-pref",
+            "DistantImposters=maybe",
+            "--render-pref",
+            "atmosphericsdetail=High",
+            "--render-pref",
+            "VideoPostEffects=nonsense",
+        ])
+        .unwrap();
+        assert!(!a.walker_headless());
+        let mut h = WalkerHost::new(&a, Arc::new(Mutex::new(SourceShared::default())));
+        h.prefs.ini = Some(tessera_install::Ini::parse(
+            "[Render]\nFarLandscapeNormalMaps=True\nMultiPassLighting=False\nDistantImposters=False\nAtmosphericsDetail=Low\nVideoPostEffects=False\nPrecipitationEffects=False\n",
+        ));
+        let mut config = h.config.clone();
+        h.take_preferences(&mut config);
+        let s = &config.far_view.settings;
+        assert!(!s.normal_maps, "the override wins over the file");
+        assert!(
+            s.imposters,
+            "an unaccepted override value is the built-in on, not the file's off"
+        );
+        assert!(!s.multi_pass_lighting, "not overridden: the file's value");
+        assert_eq!(config.effects.atmospherics, Some(2));
+        assert!(config.effects.video_post, "unaccepted: built-in on");
+        assert!(
+            !config.effects.precipitation,
+            "not overridden: the file's value"
+        );
+    }
+
+    /// `walker.md` §14.10 and §11.2: the distance keys reach the distance settings (names
+    /// case-insensitive or stored numbers; an unaccepted value is the built-in level), and
+    /// the far view's radius follows; the dedicated options win over them.
+    #[test]
+    fn render_prefs_reach_the_distance_settings() {
+        use tessera_world::DetailLevel;
+        use tessera_world::draw_distance::LandscapeLevel;
+        let args = |extra: &[&str]| {
+            let mut v = vec!["t"];
+            v.extend_from_slice(extra);
+            Args::try_parse_from(v).unwrap()
+        };
+        let a = args(&[
+            "--render-pref",
+            "LandscapeDrawDistance=low",
+            "--render-pref",
+            "ObjectDrawDistance=4",
+            "--render-pref",
+            "ModelDetail=Weird",
+            "--render-pref",
+            "FrillDistance=5",
+        ]);
+        let d = distance_settings(&a);
+        assert_eq!(d.landscape, LandscapeLevel::Low);
+        assert_eq!(d.object_draw_distance, DetailLevel::UltraHigh);
+        assert_eq!(d.model_detail, DistanceSettings::default().model_detail);
+        assert_eq!(frill_distance_level(&a), 5);
+        let w = walker_config(&a);
+        assert_eq!(w.far_view.settings.far_radius, LandscapeLevel::Low.groups());
+        assert_eq!(w.stream.frills.distance_level, 5);
+        let b = args(&[
+            "--landscape-distance",
+            "VeryHigh",
+            "--frill-distance",
+            "1",
+            "--render-pref",
+            "LandscapeDrawDistance=Low",
+            "--render-pref",
+            "FrillDistance=9",
+        ]);
+        assert_eq!(distance_settings(&b).landscape, LandscapeLevel::VeryHigh);
+        assert_eq!(frill_distance_level(&b), 1);
+        let c = args(&["--render-pref", "FrillDistance=9"]);
+        assert_eq!(
+            frill_distance_level(&c),
+            FrillSettings::default().distance_level
+        );
+    }
+
+    /// `far-view.md` FD18 (FV29): only `Low` 0, `High` 1, `VeryHigh` 2 and the numbers 0–2
+    /// are levels of `LandscapeLightingQuality`; every other value, other scales' names
+    /// included, is the built-in level 0, so no seam overlay, both from `--render-pref`
+    /// (FD22) and from the user's file (FD17).
+    #[test]
+    fn landscape_lighting_quality_follows_fd18() {
+        use tessera_world::far_view::FarViewSettings;
+        for (v, level) in [
+            ("Low", 0),
+            ("high", 1),
+            (" VERYHIGH ", 2),
+            ("0", 0),
+            ("1", 1),
+            ("2", 2),
+            ("Medium", 0),
+            ("UltraHigh", 0),
+            ("VeryLow", 0),
+            ("Disabled", 0),
+            ("3", 0),
+            ("7", 0),
+            ("-1", 0),
+            ("", 0),
+        ] {
+            assert_eq!(landscape_lighting_level(v), level, "{v:?}");
+        }
+        let overlay = |value: &str| {
+            let quality = format!("LandscapeLightingQuality={value}");
+            let a = Args::try_parse_from([
+                "t",
+                "--far-view",
+                "on",
+                "--screenshot",
+                "/nonexistent/x.png",
+                "--render-pref",
+                "FarLandscapeNormalMaps=True",
+                "--render-pref",
+                "MultiPassLighting=True",
+                "--render-pref",
+                quality.as_str(),
+            ])
+            .unwrap();
+            walker_config(&a).far_view.settings.seam_overlay()
+        };
+        let file = |value: &str| {
+            let ini = tessera_install::Ini::parse(&format!(
+                "[Render]\nFarLandscapeNormalMaps=True\nMultiPassLighting=True\nLandscapeLightingQuality={value}\n"
+            ));
+            let mut s = FarViewSettings::default();
+            apply_render_preferences(&mut s, &ini);
+            s.seam_overlay()
+        };
+        for v in ["Medium", "UltraHigh", "3", "7", "Low", "0"] {
+            assert!(!overlay(v), "override {v}");
+            assert!(!file(v), "file {v}");
+        }
+        for v in ["High", "VeryHigh", "1", "2"] {
+            assert!(overlay(v), "override {v}");
+            assert!(file(v), "file {v}");
+        }
+        // A file value FD18 does not accept is level 0 even over a higher current level.
+        let mut s = FarViewSettings {
+            lighting_quality: 2,
+            ..FarViewSettings::default()
+        };
+        apply_render_preferences(
+            &mut s,
+            &tessera_install::Ini::parse("[Render]\nLandscapeLightingQuality=Medium\n"),
+        );
+        assert_eq!(s.lighting_quality, 0);
+    }
+
+    /// `walker.md` §11.2 and §14.10: `FrillDistance` takes its six level names
+    /// (case-insensitive) or the numbers 0–5; anything else is the built-in level.
+    #[test]
+    fn frill_distance_takes_names_and_numbers() {
+        let level = |v: &str| {
+            let pref = format!("FrillDistance={v}");
+            frill_distance_level(
+                &Args::try_parse_from(["t", "--render-pref", pref.as_str()]).unwrap(),
+            )
+        };
+        for (v, n) in [
+            ("Disabled", 0),
+            ("low", 1),
+            ("MEDIUM", 2),
+            ("High", 3),
+            ("veryhigh", 4),
+            ("UltraHigh", 5),
+            (" ultrahigh ", 5),
+            ("0", 0),
+            ("5", 5),
+        ] {
+            assert_eq!(level(v), n, "{v:?}");
+        }
+        let builtin = FrillSettings::default().distance_level;
+        for v in ["VeryLow", "Ultra", "6", "-1", ""] {
+            assert_eq!(level(v), builtin, "{v:?}");
+        }
+        assert_eq!(frill_level("Disabled"), Some(0));
+        assert_eq!(frill_level("Off"), None);
     }
 
     /// The walker waits (over frames, never blocking) for preferences still being read,

@@ -621,7 +621,14 @@ impl FxState {
     }
 
     /// One frame of every beam (§11.1 steps 2–10): ends, envelope, head, arrival, systems.
-    pub(super) fn update_beams(&mut self, frame: u64, env: &Environment) {
+    /// `lights` gives the light list of a point (simulation frame, rule 13): each beam's
+    /// systems get the list at its source.
+    pub(super) fn update_beams(
+        &mut self,
+        frame: u64,
+        env: &Environment,
+        lights: &dyn Fn(Vec3) -> tessera_particles::LightList,
+    ) {
         let now = self.now;
         let handles: Vec<u64> = self.session.beams.keys().copied().collect();
         for h in handles {
@@ -663,6 +670,9 @@ impl FxState {
             let Some(b) = session.beams.get_mut(&h) else {
                 continue;
             };
+            if let Some(at) = ends.source.or(b.frame.map(|f| f.1)) {
+                manager.set_owner_lights(b.owner, &lights(at));
+            }
             let step = step_beam(manager, rng, b, ends, now, frame, env);
             let drawn = b.ribbon.is_some();
             if step.arrived_now {

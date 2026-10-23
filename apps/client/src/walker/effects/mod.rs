@@ -45,16 +45,36 @@
 //! systems ([`EffectLayer::draw`]), and the head entity drawn through the object layer's
 //! instanced models ([`EffectLayer::update_heads`], [`EffectLayer::draw_heads`])).
 //!
+//! **Lit systems** (`particles.md` §8.14, runtime §12 rule 13): the walker gives the layer
+//! the frame's ambient term *A₀* (`lighting.md` §5.3) and its light table
+//! ([`EffectLighting`]); each drawn owner gets its light list before placement
+//! ([`owner_light_list_for`]): the main light first (the scene's global light, a Tessera
+//! choice for its attenuation, runtime rule 13 implementer OPEN), then the table's point
+//! lights whose selection radius ρ reaches the owner (`lighting.md` §8.5: key lights first,
+//! nearest first in each group; lights with `Light_OnlyInfluenceParent` reach no owner),
+//! cut to five. The day and night lamp lights of `instance-scripts.md` §6 are not in the
+//! walker's light table, so they light no system.
+//!
+//! **Culling** (runtime §9.3, the Q-RT3 Decision): an instance of a record with
+//! `has_bounds` = 1 whose box ([`tessera_particles::InstanceDraw::bounds`]) lies outside
+//! the view frustum is simulated and drawn into the CPU buffer as usual but not queued;
+//! `has_bounds` = 0 is never culled ([`instance_culled`]).
+//!
+//! **The creation viewport** (`character-screens.md` §2.1.1 rule 1): the Physics elements
+//! of a race scene are owners too ([`EffectLayer::update_stage`]), simulated in the scene's
+//! frame and drawn into the viewport pass ([`EffectLayer::draw_stage`]); placed decals are
+//! [`decals`].
+//!
 //! Not done here (OPEN in the specs, or no data path in the walker): fork effects are not
 //! drawn (`particles.md` rule §10.2); systems with `uses_video_post` are drawn after the
 //! others in the same pass (the walker has no post-processing pass, `combat-visuals.md` §11
 //! rule 9); `inherit_opacity` (owners are drawn at opacity 1, walker rule (d) of runtime
 //! §5.4 and the Q-RT7 Decision); the frame-buffer distortion program and the soft-particle
-//! factor of runtime §9.1.1; point lights and the ambient colour of lit systems (rule 13);
-//! weather systems and the global wind (Q13); the gameplay event handler (Q-RT5); frustum
-//! culling by record bounds (Q-RT3, optional).
+//! factor of runtime §9.1.1; weather systems and the global wind (Q13); the gameplay event
+//! handler (Q-RT5).
 
 pub mod data;
+pub mod decals;
 pub mod session;
 
 use std::collections::{HashMap, HashSet};
@@ -95,7 +115,7 @@ use super::characters::{CharacterLayer, FigureEffectView};
 use super::geometry::TexRequest;
 use super::objects::{ObjectLayer, TexLookup};
 use super::resolver::{ObjectAnswer, Resolver};
-use super::view::Anchor;
+use super::view::{Anchor, Frustum};
 
 /// Landblocks scanned around the viewer (Chebyshev radius).
 pub const SCAN_BLOCKS: u32 = 2;
@@ -217,6 +237,32 @@ pub struct EffectStats {
     pub max_beam_heads_drawn: usize,
     /// StoryHook nodes that ran on any owner, and those of them whose run had a story.
     pub story_hooks: [u64; 2],
+    /// Instances of the last frame left out by the frustum test of their record bounds
+    /// (`particle-runtime.md` §9.3, Q-RT3 Decision; still simulated).
+    pub culled_instances: usize,
+    /// Owners of the last frame that were given a light list (rule 13).
+    pub lit_owners: usize,
+    /// Owners of the creation viewport's scene spawned in the runtime.
+    pub stage_owners: usize,
+    /// Systems drawn into the creation viewport in its last pass.
+    pub stage_drawn_systems: usize,
+    /// Their vertices.
+    pub stage_drawn_vertices: usize,
+    /// The largest vertex count of one viewport pass so far.
+    pub max_stage_drawn_vertices: usize,
+    /// Placed decals ([`decals`]).
+    pub decals: decals::DecalStats,
+}
+
+/// Counts of one [`EffectLayer::draw_systems`].
+#[derive(Debug, Clone, Copy, Default)]
+struct DrawnSystems {
+    live: usize,
+    systems: usize,
+    vertices: usize,
+    culled: usize,
+    session_systems: usize,
+    session_vertices: usize,
 }
 
 /// What start-up delivers.
@@ -1070,6 +1116,121 @@ pub struct EffectInput<'a> {
     pub eye: Option<WorldPos>,
     /// The character layer (placed figures).
     pub characters: &'a CharacterLayer,
+    /// The frame's lighting for lit systems (`None`: unlit frame, lit systems drawn with
+    /// a white ambient and no lights).
+    pub lighting: Option<EffectLighting<'a>>,
+}
+
+/// The frame lighting lit systems sum (`particles.md` §8.14, `particle-runtime.md` §12
+/// rule 13).
+#[derive(Debug, Clone, Copy)]
+pub struct EffectLighting<'a> {
+    /// The frame's ambient term *A₀* (`lighting.md` §5.3: the mean of the up- and
+    /// down-facing ambient), stored-value RGB.
+    pub ambient: [f32; 3],
+    /// The frame's main light (sun or moon), when it has one: its colour and the unit
+    /// vector towards it.
+    pub main: Option<([f32; 3], Vec3)>,
+    /// The frame's light table (render frame of `anchor`).
+    pub lights: &'a [tessera_render::Light],
+    /// Each table light's selection data, same order (`lighting.md` §8.5).
+    pub reach: &'a [tessera_render::LightReach],
+    /// The frame the light positions are in (the walker's render anchor); `None`: the
+    /// simulation's own frame (the creation viewport).
+    pub anchor: Option<Anchor>,
+}
+
+/// The ambient colour of lit systems (rule 13): *A₀* clamped to [0, 1] with alpha 1;
+/// non-finite channels are 0.
+#[must_use]
+pub fn lit_ambient(a: [f32; 3]) -> [f32; 4] {
+    let c = |v: f32| {
+        if v.is_finite() {
+            v.clamp(0.0, 1.0)
+        } else {
+            0.0
+        }
+    };
+    [c(a[0]), c(a[1]), c(a[2]), 1.0]
+}
+
+/// The table's point lights as candidates of an owner's light list, moved by `-shift`
+/// into the simulation's frame (`lighting.md` §8.5 steps 1, 3): ρ from the reach (the
+/// light's range when none is given), key lights marked; lights with
+/// `Light_OnlyInfluenceParent` reach no owner (an effect owner is never a light's parent
+/// here) and directional table lights take no part (no position for rule 13).
+#[must_use]
+pub fn light_candidates(
+    lights: &[tessera_render::Light],
+    reach: &[tessera_render::LightReach],
+    shift: Vec3,
+) -> Vec<tessera_particles::CandidateLight> {
+    lights
+        .iter()
+        .enumerate()
+        .filter_map(|(i, l)| {
+            let tessera_render::LightKind::Point {
+                position,
+                range,
+                attenuation,
+            } = l.kind
+            else {
+                return None;
+            };
+            let r = reach.get(i);
+            if r.is_some_and(|r| r.only_influence_parent) {
+                return None;
+            }
+            let rho = r
+                .and_then(|r| r.radius)
+                .filter(|v| v.is_finite() && *v >= 0.0)
+                .unwrap_or(range);
+            Some(tessera_particles::CandidateLight {
+                light: tessera_particles::ParticleLight {
+                    position: position - shift,
+                    colour: l.color,
+                    range,
+                    attenuation,
+                },
+                reach: rho,
+                key: r.is_some_and(|r| r.key_light),
+            })
+        })
+        .collect()
+}
+
+/// The light list of an owner at `owner` (simulation frame; rule 13): the main light
+/// first ([`tessera_particles::ParticleLight::global`]), then the reached candidates by
+/// `lighting.md` §8.5 ([`tessera_particles::owner_light_list`]), cut to five.
+#[must_use]
+pub fn owner_light_list_for(
+    main: Option<[f32; 3]>,
+    owner: Vec3,
+    candidates: &[tessera_particles::CandidateLight],
+) -> tessera_particles::LightList {
+    let rest = tessera_particles::owner_light_list(owner, candidates);
+    tessera_particles::LightList::new(
+        main.map(tessera_particles::ParticleLight::global)
+            .into_iter()
+            .chain(rest.iter().copied()),
+    )
+}
+
+/// Whether an instance with culling box `bounds` (simulation frame) is left out of the
+/// draw (`particle-runtime.md` §9.3, Q-RT3 Decision): only with a box (`has_bounds` = 1)
+/// that, moved by `shift` into the render frame, lies wholly outside `frustum`.
+#[must_use]
+pub fn instance_culled(
+    bounds: Option<([f32; 3], [f32; 3])>,
+    shift: Vec3,
+    frustum: Option<&Frustum>,
+) -> bool {
+    match (bounds, frustum) {
+        (Some((lo, hi)), Some(f)) => {
+            !f.aabb_visible(Vec3::from_array(lo) + shift, Vec3::from_array(hi) + shift)
+        }
+        _ => false,
+    }
 }
 
 /// The effects layer (module docs).
@@ -1094,6 +1255,21 @@ pub struct EffectLayer {
     heads: HashMap<Did, HeadModel>,
     /// Parts referenced in the object layer for head entities.
     head_parts: HashSet<u32>,
+    /// The creation viewport's scene ([`EffectLayer::update_stage`]).
+    stage: Option<StageFx>,
+    /// Placed decals ([`decals::DecalLayer`]).
+    pub decals: decals::DecalLayer,
+}
+
+/// The region value of the creation viewport's frame: no landblock has region 0, so a
+/// world viewer always counts as a change of region and clears the stage's systems.
+pub const STAGE_REGION: u8 = 0;
+
+/// The creation scene whose owners run ([`EffectLayer::update_stage`]).
+struct StageFx {
+    scene: Did,
+    scan: Option<mpsc::Receiver<Vec<EffectOwner>>>,
+    owners: Vec<EntityId>,
 }
 
 impl std::fmt::Debug for EffectLayer {
@@ -1117,6 +1293,8 @@ impl EffectLayer {
     ) -> Self {
         let (scan_tx, scan_rx) = mpsc::channel();
         let mut problem = None;
+        let decals =
+            decals::DecalLayer::new(Arc::clone(&set), Arc::clone(&materials), pool.clone());
         let boot = if config.enabled {
             let (tx, rx) = mpsc::sync_channel(1);
             let interiors = config.interiors;
@@ -1161,28 +1339,35 @@ impl EffectLayer {
             stats: EffectStats::default(),
             heads: HashMap::new(),
             head_parts: HashSet::new(),
+            stage: None,
+            decals,
         }
     }
 
     /// Counters of the last frame.
     #[must_use]
     pub fn stats(&self) -> EffectStats {
-        self.stats
+        EffectStats {
+            decals: self.decals.stats(),
+            ..self.stats
+        }
     }
 
     /// Whether nothing the viewer should see is still loading: start-up done (or off),
-    /// no landblock scan or record load in flight, no owner in range waiting to spawn and
-    /// no drawn system waiting for its texture.
+    /// no landblock scan or record load in flight, no owner in range waiting to spawn, no
+    /// drawn system waiting for its texture, no creation-scene scan running, and no placed
+    /// decal building or waiting for its texture ([`decals::DecalLayer::settled`]).
     #[must_use]
     pub fn settled(&self) -> bool {
-        if !self.config.enabled || self.problem.is_some() {
-            return true;
-        }
-        self.boot.is_none()
-            && self.scans_in_flight == 0
-            && self.pending_spawns == 0
-            && self.stats.loading == 0
-            && self.stats.textures_pending == 0
+        let effects = !self.config.enabled
+            || self.problem.is_some()
+            || (self.boot.is_none()
+                && self.scans_in_flight == 0
+                && self.pending_spawns == 0
+                && self.stage.as_ref().is_none_or(|s| s.scan.is_none())
+                && self.stats.loading == 0
+                && self.stats.textures_pending == 0);
+        effects && self.decals.settled()
     }
 
     /// One HUD line.
@@ -1401,6 +1586,7 @@ impl EffectLayer {
         for id in ids {
             self.despawn(id);
         }
+        self.clear_stage();
         for net in self.session_entities() {
             self.remove_session_entity(net);
         }
@@ -1475,7 +1661,16 @@ impl EffectLayer {
     }
 
     fn spawn(&mut self, key: LandblockKey, o: &EffectOwner) {
-        let Some(st) = self.st.as_mut() else { return };
+        if self.spawn_owner(o) {
+            self.live.insert(o.id, key);
+        }
+    }
+
+    /// Spawns `o` in the runtime; `true` when it runs.
+    fn spawn_owner(&mut self, o: &EffectOwner) -> bool {
+        let Some(st) = self.st.as_mut() else {
+            return false;
+        };
         st.owners.insert(
             o.id,
             LiveOwner {
@@ -1498,16 +1693,15 @@ impl EffectLayer {
         match Self::with_graph(&mut self.graph, &mut self.st, |g, sink| {
             g.spawn_entity(sink, o.id, init)
         }) {
-            Some(Ok(())) => {
-                self.live.insert(o.id, key);
-            }
+            Some(Ok(())) => true,
             Some(Err(e)) => {
                 tracing::debug!(id = o.id.0, "effects: owner not spawned: {e}");
                 if let Some(st) = self.st.as_mut() {
                     st.owners.remove(&o.id);
                 }
+                false
             }
-            None => {}
+            None => false,
         }
     }
 
@@ -1608,62 +1802,270 @@ impl EffectLayer {
         // The runtime's timers.
         let _ = Self::with_graph(&mut self.graph, &mut self.st, |g, sink| g.advance(sink, dt));
         // 2. Sweep, placement, housekeeping (§3.2, Q-RT1 Decision).
-        if let Some(st) = self.st.as_mut() {
-            let frame = st.frame;
-            st.manager.begin_frame(frame, now);
-            let env = Environment::default();
-            let ids: Vec<EntityId> = st.owners.keys().copied().collect();
-            for id in &ids {
-                let Some(owner) = st.owners.get(id).cloned() else {
-                    continue;
-                };
-                let Some(f) = st.owner_frame(&owner) else {
-                    continue;
-                };
-                if !f.drawn {
-                    continue;
-                }
-                let (scale_a, scale_b) = owner_scale_vectors(f.scale, Some(owner.particle_scale));
-                let world = f.world;
-                let model: Vec<Mat4> = f.model.to_vec();
-                let points = f.points.cloned();
-                let attach = OwnerAttach {
-                    points: points.as_ref(),
-                    model: &model,
-                };
-                let bone_model = |b: u32| model.get(b as usize).copied();
-                let FxState { manager, rng, .. } = st;
-                manager.place_owner(
-                    id.0,
-                    frame,
-                    now,
-                    world,
-                    scale_a,
-                    scale_b,
-                    1.0,
-                    &bone_model,
-                    &env,
-                    rng,
-                    &attach,
-                );
-            }
-            let FxState { manager, rng, .. } = st;
-            manager.place_lingering(frame, now, &env, rng, &tessera_particles::NoAttachments);
-            for id in &ids {
-                st.manager.housekeep(id.0, now);
-            }
-            // Beams (`particle-runtime.md` §11.1): ends, head, systems.
-            st.update_beams(frame, &env);
-            // Textures of new systems.
-            let new = std::mem::take(&mut st.new_textures);
-            if !new.is_empty() {
-                objects.acquire_textures(new);
-            }
-        }
+        self.place_all(input.lighting, objects);
         // Beam heads that arrived fire their node's port; removed beams end their node.
         self.finish_beams();
         self.refresh_stats();
         self.stats.update_ms = t0.elapsed().as_secs_f64() * 1e3;
+    }
+
+    /// Despawns the creation viewport's owners (their systems stop as any owner's).
+    fn clear_stage(&mut self) {
+        let Some(stage) = self.stage.take() else {
+            return;
+        };
+        for id in stage.owners {
+            self.despawn(id);
+        }
+    }
+
+    /// One frame of the creation viewport (`character-screens.md` §2.1.1 rule 1): the
+    /// effect owners among `scene`'s Physics elements (scanned once on the workers,
+    /// [`EffectData::scan_stage`]) run their start-up scripts in the scene's frame, and
+    /// their systems are placed with `lighting` (the scene's lights and the viewport's
+    /// ambient, rule 13) as in [`EffectLayer::update`]. `None`, or another scene, removes
+    /// the owners of the previous one. A world viewer ([`EffectLayer::update`] with an
+    /// eye) clears the stage too. `dt` and `now` as in [`EffectInput`].
+    pub fn update_stage(
+        &mut self,
+        scene: Option<(Did, &Arc<[data::StageElement]>)>,
+        dt: f64,
+        now: f64,
+        lighting: Option<EffectLighting<'_>>,
+        objects: &mut ObjectLayer,
+    ) {
+        let t0 = Instant::now();
+        // The layer's own clock advances in [`EffectLayer::update`], which runs every frame.
+        let dt = if dt.is_finite() { dt.max(0.0) } else { 0.0 };
+        self.poll_boot();
+        let Some(data) = self.st.as_ref().map(|s| Arc::clone(&s.data)) else {
+            return;
+        };
+        let want = scene.map(|(d, _)| d);
+        if self.stage.as_ref().map(|s| s.scene) != want {
+            // Every scene uses the same frame: a new scene (or none) is a new frame, not an
+            // entity removal, so the previous scene's lingering systems go at once instead of
+            // being drawn inside the next scene. A world frame is replaced once the new
+            // scene's scan arrives (below).
+            if self.st.as_ref().is_some_and(|s| s.region == STAGE_REGION) {
+                self.clear();
+            } else {
+                self.clear_stage();
+            }
+            if let Some((did, elements)) = scene {
+                let (tx, rx) = mpsc::sync_channel(1);
+                let elements = Arc::clone(elements);
+                let job = move |ctx: &tessera_assets::JobContext<'_>| {
+                    if ctx.is_cancelled() {
+                        return;
+                    }
+                    let _ = tx.send(data.scan_stage(&elements));
+                };
+                let scan = match self.pool.spawn(Priority::Visible, CancelToken::new(), job) {
+                    Ok(_) => Some(rx),
+                    Err(e) => {
+                        tracing::debug!("effects: creation-scene scan not queued: {e}");
+                        None
+                    }
+                };
+                self.stage = Some(StageFx {
+                    scene: did,
+                    scan,
+                    owners: Vec::new(),
+                });
+            }
+        }
+        let Some(stage) = self.stage.as_mut() else {
+            return;
+        };
+        let found = match stage.scan.as_ref().map(mpsc::Receiver::try_recv) {
+            Some(Ok(owners)) => Some(owners),
+            Some(Err(mpsc::TryRecvError::Disconnected)) => Some(Vec::new()),
+            _ => None,
+        };
+        if let Some(owners) = found {
+            stage.scan = None;
+            // The scene's frame replaces any world frame.
+            if self.st.as_ref().is_some_and(|s| s.region != STAGE_REGION) {
+                let keep = self.stage.take();
+                self.clear();
+                self.stage = keep;
+                if let Some(st) = self.st.as_mut() {
+                    st.region = STAGE_REGION;
+                    st.base = [0.0; 2];
+                }
+            }
+            let mut spawned = Vec::new();
+            for o in owners.iter().take(MAX_LIVE_OWNERS) {
+                if self.spawn_owner(o) {
+                    spawned.push(o.id);
+                }
+            }
+            if let Some(stage) = self.stage.as_mut() {
+                stage.owners = spawned;
+            }
+        }
+        let now = if now.is_finite() { now } else { 0.0 };
+        if let Some(st) = self.st.as_mut() {
+            if st.region != STAGE_REGION {
+                return;
+            }
+            st.now = now;
+            st.frame = st.frame.wrapping_add(1);
+            st.water.clear();
+        }
+        let loaded: Vec<u32> = self
+            .load_rx
+            .as_ref()
+            .map(|rx| rx.try_iter().collect())
+            .unwrap_or_default();
+        if let Some(st) = self.st.as_mut() {
+            for did in loaded {
+                st.loaded(did);
+            }
+            st.retry_loads();
+        }
+        let _ = Self::with_graph(&mut self.graph, &mut self.st, |g, sink| g.advance(sink, dt));
+        self.place_all(lighting, objects);
+        self.finish_beams();
+        self.refresh_stats();
+        self.stats.stage_owners = self.stage.as_ref().map_or(0, |s| s.owners.len());
+        self.stats.update_ms = t0.elapsed().as_secs_f64() * 1e3;
+    }
+
+    /// Whether the creation viewport's scene has been scanned and its owners spawned.
+    #[must_use]
+    pub fn stage_ready(&self) -> bool {
+        self.stage.as_ref().is_some_and(|s| s.scan.is_none())
+    }
+
+    /// Queues the systems of the creation viewport's owners placed this frame into the
+    /// viewport's `pass` (the scene's frame is the render frame), for a camera at `eye`
+    /// looking along `dir` (module docs, step 3). Returns the vertices queued.
+    pub fn draw_stage(
+        &mut self,
+        pass: &mut Pass,
+        eye: Vec3,
+        dir: Vec3,
+        objects: &ObjectLayer,
+    ) -> usize {
+        if self.stage.is_none() {
+            return 0;
+        }
+        let Some(st) = self.st.as_mut() else {
+            return 0;
+        };
+        if st.region != STAGE_REGION {
+            return 0;
+        }
+        let mut pending = 0usize;
+        let d = Self::draw_systems(st, pass, Vec3::ZERO, eye, dir, objects, None, &mut pending);
+        self.stats.stage_drawn_systems = d.systems;
+        self.stats.stage_drawn_vertices = d.vertices;
+        self.stats.max_stage_drawn_vertices = self.stats.max_stage_drawn_vertices.max(d.vertices);
+        self.stats.textures_pending = pending;
+        d.vertices
+    }
+
+    /// Step 2 of the frame (module docs): the sweep, the placement of every drawn owner's
+    /// systems with its light list (rule 13), the lingering and dropped systems, the
+    /// housekeeping, the beams and the textures of new systems.
+    fn place_all(&mut self, lighting: Option<EffectLighting<'_>>, objects: &mut ObjectLayer) {
+        let Some(st) = self.st.as_mut() else { return };
+        let frame = st.frame;
+        let now = st.now;
+        st.manager.begin_frame(frame, now);
+        let env = Environment {
+            ambient: lighting.map_or([1.0; 4], |l| lit_ambient(l.ambient)),
+            ..Environment::default()
+        };
+        // Render frame = sim + shift (see `draw`); lights from another region give none.
+        let shift = match lighting.and_then(|l| l.anchor) {
+            Some(a) if a.region == st.region => {
+                let o = a.origin();
+                Some(Vec3::new(
+                    (st.base[0] - o[0]) as f32,
+                    (st.base[1] - o[1]) as f32,
+                    0.0,
+                ))
+            }
+            Some(_) => None,
+            None => Some(Vec3::ZERO),
+        };
+        let candidates = match (lighting, shift) {
+            (Some(l), Some(shift)) => light_candidates(l.lights, l.reach, shift),
+            _ => Vec::new(),
+        };
+        let main = lighting.and_then(|l| l.main).map(|(c, _)| c);
+        let mut lit = 0usize;
+        let ids: Vec<EntityId> = st.owners.keys().copied().collect();
+        for id in &ids {
+            let Some(owner) = st.owners.get(id).cloned() else {
+                continue;
+            };
+            let Some(f) = st.owner_frame(&owner) else {
+                continue;
+            };
+            if !f.drawn {
+                continue;
+            }
+            let (scale_a, scale_b) = owner_scale_vectors(f.scale, Some(owner.particle_scale));
+            let world = f.world;
+            let model: Vec<Mat4> = f.model.to_vec();
+            let points = f.points.cloned();
+            // Unlit frames: the white ambient and no lights (a list set in a lit frame is
+            // dropped, so the two always go together).
+            let list = if lighting.is_some() {
+                lit += 1;
+                owner_light_list_for(main, world.w_axis.truncate(), &candidates)
+            } else {
+                tessera_particles::LightList::EMPTY
+            };
+            st.manager.set_owner_lights(id.0, &list);
+            let attach = OwnerAttach {
+                points: points.as_ref(),
+                model: &model,
+            };
+            let bone_model = |b: u32| model.get(b as usize).copied();
+            let FxState { manager, rng, .. } = st;
+            manager.place_owner(
+                id.0,
+                frame,
+                now,
+                world,
+                scale_a,
+                scale_b,
+                1.0,
+                &bone_model,
+                &env,
+                rng,
+                &attach,
+            );
+        }
+        // Lingering and dropped systems (§5.6 step 5: a dropped system never had an owner)
+        // get the list at their fixed placement; unlit frames clear it (rule 13 OPEN (d)).
+        let list_at = |p: Vec3| {
+            if lighting.is_some() {
+                owner_light_list_for(main, p, &candidates)
+            } else {
+                tessera_particles::LightList::EMPTY
+            }
+        };
+        let FxState { manager, rng, .. } = st;
+        manager.set_lingering_lights(list_at);
+        manager.place_lingering(frame, now, &env, rng, &tessera_particles::NoAttachments);
+        for id in &ids {
+            st.manager.housekeep(id.0, now);
+        }
+        // Beams (`particle-runtime.md` §11.1): ends, head, systems; their systems get the
+        // list at the beam's source.
+        st.update_beams(frame, &env, &list_at);
+        // Textures of new systems.
+        let new = std::mem::take(&mut st.new_textures);
+        if !new.is_empty() {
+            objects.acquire_textures(new);
+        }
+        self.stats.lit_owners = lit;
     }
 
     fn finish_beams(&mut self) {
@@ -1718,7 +2120,9 @@ impl EffectLayer {
 
     /// Queues the particle draws of the systems placed this frame into `pass` (module docs,
     /// step 3), for a camera at `eye` (render frame) looking along `dir`; the ribbons of the
-    /// beams drawn this frame (`particle-runtime.md` §11.1 step 6) come first.
+    /// beams drawn this frame (`particle-runtime.md` §11.1 step 6) come first. With a
+    /// `frustum` (render frame), instances of records with bounds that lie outside it are
+    /// not queued (§9.3, Q-RT3 Decision).
     pub fn draw(
         &mut self,
         pass: &mut Pass,
@@ -1726,6 +2130,7 @@ impl EffectLayer {
         eye: Vec3,
         dir: Vec3,
         objects: &ObjectLayer,
+        frustum: Option<&Frustum>,
     ) {
         let t0 = Instant::now();
         let Some(st) = self.st.as_mut() else {
@@ -1742,12 +2147,57 @@ impl EffectLayer {
             0.0,
         );
         let cam_eye = eye - shift;
+        let mut pending = 0usize;
+        let ribbons = draw_ribbons(st, pass, objects, cam_eye, shift, &mut pending);
+        let d = Self::draw_systems(
+            st,
+            pass,
+            shift,
+            cam_eye,
+            dir,
+            objects,
+            frustum,
+            &mut pending,
+        );
+        self.stats.live_particles = d.live;
+        self.stats.drawn_systems = d.systems;
+        self.stats.drawn_vertices = d.vertices + ribbons.1;
+        self.stats.max_drawn_vertices = self.stats.max_drawn_vertices.max(d.vertices + ribbons.1);
+        if d.vertices + ribbons.1 > 0 {
+            self.stats.frames_with_particles += 1;
+        }
+        self.stats.culled_instances = d.culled;
+        self.stats.textures_pending = pending;
+        self.stats.session_drawn_systems = d.session_systems;
+        self.stats.session_drawn_vertices = d.session_vertices;
+        self.stats.max_session_drawn_vertices = self
+            .stats
+            .max_session_drawn_vertices
+            .max(d.session_vertices);
+        self.stats.beam_ribbons_drawn = ribbons.0;
+        self.stats.max_beam_ribbons_drawn = self.stats.max_beam_ribbons_drawn.max(ribbons.0);
+        self.stats.beam_ribbon_vertices = ribbons.1;
+        self.stats.update_ms += t0.elapsed().as_secs_f64() * 1e3;
+    }
+
+    /// The systems placed this frame into `pass` (render frame = sim + `shift`), in the
+    /// §8.15 order, each instance through the distance fade with its surface's textures,
+    /// blend state and program; instances culled by [`instance_culled`] are left out.
+    #[allow(clippy::too_many_arguments)]
+    fn draw_systems(
+        st: &mut FxState,
+        pass: &mut Pass,
+        shift: Vec3,
+        cam_eye: Vec3,
+        dir: Vec3,
+        objects: &ObjectLayer,
+        frustum: Option<&Frustum>,
+        pending: &mut usize,
+    ) -> DrawnSystems {
         let camera = CameraView::look_at(cam_eye, cam_eye + dir);
         let now = st.now;
         let frame = st.frame;
         let session_systems = st.session_systems();
-        let mut pending = 0usize;
-        let ribbons = draw_ribbons(st, pass, objects, cam_eye, shift, &mut pending);
         let FxState {
             manager,
             rng,
@@ -1756,12 +2206,12 @@ impl EffectLayer {
             ..
         } = st;
         let mut drawn = Vec::new();
-        let mut live = 0usize;
+        let mut out = DrawnSystems::default();
         for (key, effect) in manager.effects_mut() {
             let Some(sim) = effect.particles_mut() else {
                 continue;
             };
-            live += sim.live_particles();
+            out.live += sim.live_particles();
             if sim.instance_frame() != Some(frame) {
                 continue;
             }
@@ -1782,10 +2232,6 @@ impl EffectLayer {
         let mut order = draw_order(&ranks);
         // Stable: the post-pass systems keep their order after the others.
         order.sort_by_key(|&i| drawn.get(i).is_some_and(|d| d.3));
-        let mut systems = 0usize;
-        let mut vertices = 0usize;
-        let mut session_drawn = 0usize;
-        let mut session_vertices = 0usize;
         for i in order {
             let Some((key, d, surface, _)) = drawn.get(i) else {
                 continue;
@@ -1804,18 +2250,22 @@ impl EffectLayer {
                 continue;
             }
             let (alpha, uv) = look_at(look, *surface, now, surface_states, rng);
-            let Some((tex, tex2)) = look_textures(look, objects, &mut pending) else {
+            let Some((tex, tex2)) = look_textures(look, objects, pending) else {
                 continue;
             };
-            systems += 1;
-            session_drawn += usize::from(from_session);
+            let mut queued = false;
             for inst in &d.instances {
                 if inst.vertices.is_empty() {
                     continue;
                 }
-                vertices += inst.vertices.len();
+                if instance_culled(inst.bounds, shift, frustum) {
+                    out.culled += 1;
+                    continue;
+                }
+                queued = true;
+                out.vertices += inst.vertices.len();
                 if from_session {
-                    session_vertices += inst.vertices.len();
+                    out.session_vertices += inst.vertices.len();
                 }
                 pass.particles(ParticleDraw {
                     vertices: inst
@@ -1837,23 +2287,12 @@ impl EffectLayer {
                     uv,
                 });
             }
+            if queued {
+                out.systems += 1;
+                out.session_systems += usize::from(from_session);
+            }
         }
-        self.stats.live_particles = live;
-        self.stats.drawn_systems = systems;
-        self.stats.drawn_vertices = vertices + ribbons.1;
-        self.stats.max_drawn_vertices = self.stats.max_drawn_vertices.max(vertices + ribbons.1);
-        if vertices + ribbons.1 > 0 {
-            self.stats.frames_with_particles += 1;
-        }
-        self.stats.textures_pending = pending;
-        self.stats.session_drawn_systems = session_drawn;
-        self.stats.session_drawn_vertices = session_vertices;
-        self.stats.max_session_drawn_vertices =
-            self.stats.max_session_drawn_vertices.max(session_vertices);
-        self.stats.beam_ribbons_drawn = ribbons.0;
-        self.stats.max_beam_ribbons_drawn = self.stats.max_beam_ribbons_drawn.max(ribbons.0);
-        self.stats.beam_ribbon_vertices = ribbons.1;
-        self.stats.update_ms += t0.elapsed().as_secs_f64() * 1e3;
+        out
     }
 
     /// Resolves the head entities of the live beams (`particle-runtime.md` §11.1 step 1)
@@ -2177,6 +2616,21 @@ impl EffectLayer {
             .unwrap_or_default()
     }
 
+    /// The object layer is about to be cleared (a region change, `Walker::clear_all`):
+    /// releases the particle and decal textures the layer acquired there and forgets them,
+    /// so that the next systems and decals acquire them again instead of waiting for a
+    /// texture the cleared layer no longer loads.
+    pub fn release_textures(&mut self, objects: &mut ObjectLayer) {
+        if let Some(st) = self.st.as_mut() {
+            let held: Vec<TexRequest> = st.textures.drain().collect();
+            st.new_textures.clear();
+            if !held.is_empty() {
+                objects.release_textures(held);
+            }
+        }
+        self.decals.release(objects);
+    }
+
     /// Stops everything: every owner is despawned.
     pub fn shutdown(&mut self) {
         self.clear();
@@ -2190,6 +2644,82 @@ impl EffectLayer {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `particle-runtime.md` §9.3, the Q-RT3 Decision: an instance whose record has no
+    /// bounds is never culled; one whose box lies outside the frustum is; the shift moves
+    /// the simulation-frame box into the render frame first.
+    #[test]
+    fn instances_are_culled_by_their_record_bounds() {
+        let cam = tessera_render::Camera {
+            eye: Vec3::ZERO,
+            target: Vec3::Y,
+            up: Vec3::Z,
+            projection: tessera_render::Perspective {
+                fov_y: 1.0,
+                near: 0.1,
+                far: 100.0,
+            },
+        };
+        let f = Frustum::from_view_proj(cam.view_proj(1.0));
+        let ahead = Some(([-1.0, 9.0, -1.0], [1.0, 11.0, 1.0]));
+        let behind = Some(([-1.0, -11.0, -1.0], [1.0, -9.0, 1.0]));
+        assert!(!instance_culled(ahead, Vec3::ZERO, Some(&f)));
+        assert!(instance_culled(behind, Vec3::ZERO, Some(&f)));
+        assert!(!instance_culled(None, Vec3::ZERO, Some(&f)), "has_bounds 0");
+        assert!(!instance_culled(behind, Vec3::ZERO, None), "no frustum");
+        assert!(!instance_culled(
+            behind,
+            Vec3::new(0.0, 20.0, 0.0),
+            Some(&f)
+        ));
+        // A box straddling the side plane is kept (conservative).
+        let edge = Some(([-30.0, 9.0, -1.0], [-4.0, 11.0, 1.0]));
+        assert!(!instance_culled(edge, Vec3::ZERO, Some(&f)));
+    }
+
+    /// Rule 13 on the walker's side: the main light first, then the table's point lights
+    /// whose selection radius reaches the owner (key lights first, nearest first), lights
+    /// with `Light_OnlyInfluenceParent` left out, five in all; positions moved into the
+    /// simulation frame; the ambient clamped with alpha 1.
+    #[test]
+    fn owner_light_lists_follow_rule_13() {
+        let lights: Vec<tessera_render::Light> = (1..=7)
+            .map(|i| {
+                tessera_render::Light::point(
+                    Vec3::new(10.0 + i as f32, 0.0, 0.0),
+                    10.0,
+                    0.05,
+                    [i as f32, 0.0, 0.0],
+                )
+            })
+            .collect();
+        let mut reach = vec![tessera_render::LightReach::default(); 7];
+        reach[5].key_light = true; // light 6
+        reach[1].only_influence_parent = true; // light 2
+        reach[0].radius = Some(0.5); // light 1 does not reach an owner 1 m away
+        let shift = Vec3::new(10.0, 0.0, 0.0);
+        let c = light_candidates(&lights, &reach, shift);
+        assert_eq!(c.len(), 6);
+        assert!(
+            (c[0].light.position.x - 1.0).abs() < 1e-6,
+            "moved by -shift"
+        );
+        let l = owner_light_list_for(Some([0.3; 3]), Vec3::ZERO, &c);
+        assert_eq!(l.len(), tessera_particles::MAX_PARTICLE_LIGHTS);
+        let reds: Vec<f32> = l.iter().map(|l| l.colour[0]).collect();
+        assert_eq!(reds, vec![0.3, 6.0, 3.0, 4.0, 5.0]);
+        // Without a main light the reached lights start the list.
+        let l = owner_light_list_for(None, Vec3::ZERO, &c);
+        assert_eq!(l.iter().next().map(|l| l.colour[0]), Some(6.0));
+        // A directional table light takes no part.
+        let d = [tessera_render::Light {
+            kind: tessera_render::LightKind::Directional { direction: Vec3::Z },
+            color: [1.0; 3],
+            specular: [1.0; 3],
+        }];
+        assert!(light_candidates(&d, &[], Vec3::ZERO).is_empty());
+        assert_eq!(lit_ambient([2.0, f32::NAN, 0.25]), [1.0, 0.0, 0.25, 1.0]);
+    }
 
     /// `particle-runtime.md` §11.1 steps 1 and 9: the head entity's own scale, tint and
     /// suppression.

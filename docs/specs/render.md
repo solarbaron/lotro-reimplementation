@@ -790,6 +790,31 @@ and on lavapipe):
 > water's ONE/ZERO write (§5.1 Stages). Either order is a Tessera choice; the original's is
 > not specified.
 
+> **Decision (implementer, tessera-render, 2026-10-23; answers the OPEN above):** water draws
+> **before** the blended instanced surfaces. `Renderer::end_frame` now builds the hooks in the
+> order terrain layers, water, instanced scenery, placed decals, sky, far view; since water
+> records only in the translucent stage, the translucent stage is now **water, then blended
+> instanced surfaces**, then the sorted blended meshes. A `Blend`-mode instance in front of the
+> water stays visible (it blends over the water's colour; its part below the water surface
+> fails the depth test against the water's depth write); as before, neither is in the
+> refraction. The opaque and shadow stages are unchanged, so the committed `water.png` and
+> `frill_sector.png` goldens are unchanged; the new tier-1 golden `frill_over_water.png`
+> protects the order. The §5.1 "Hooks" and "Stages" rows and R-D8 still give the former order;
+> the spec writer should update them.
+
+> **OPEN (implementer, tessera-render, 2026-10-23):** a fifth world queue,
+> `Pass::decal(DecalDraw)` (placed decals, `decals.md` §6), held in `WorldDraws` like the
+> others. Its hook records in the **opaque stage** after the terrain layers and the opaque
+> instanced scenery (the receivers) and before the sky (`decals.md` §6.6 Tessera rule); each
+> batch is one draw call with the surface's blend, depth write and alpha test, its depth-bias
+> entry (reversed like entity biases), unlit, fogged when its program fogs, both faces drawn.
+> Unlike the other world queues it does not need `Pass::frame_lighting`: in a world pass
+> without it the hook is built too, unfogged (the decals' light *L* is the caller's, 1 there,
+> `decals.md` §9.2). More than 65,536 batches in a pass never fail the frame; the rest is
+> skipped with a warning, as for the vertex bound. Counted in
+> `FrameStats::decal_draws`, `decal_triangles` and `draw_calls`. For the §5.1 table at the
+> next revision.
+
 > **OPEN (for the implementer and the callers):** `WorldSurface` has no explicit opacity
 > source (§5.5 Models Decision); add one, together with the callers' values, when the callers
 > can supply it.

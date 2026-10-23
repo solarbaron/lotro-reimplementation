@@ -144,6 +144,7 @@ pub(crate) struct WorldDraws {
     pub instanced: Vec<InstanceBatch>,
     pub far_terrain: Vec<FarTerrainDraw>,
     pub sprites: Vec<SpriteDraw>,
+    pub decals: Vec<crate::decals::DecalDraw>,
 }
 
 impl WorldDraws {
@@ -155,6 +156,7 @@ impl WorldDraws {
             && self.instanced.is_empty()
             && self.far_terrain.is_empty()
             && self.sprites.is_empty()
+            && self.decals.is_empty()
     }
 }
 

@@ -25,6 +25,13 @@
 //! to front. Every time-dependent value reads the frame's time input *T* (`water.md` §8.7);
 //! curve-valued parameters are evaluated by the caller at the clock each frame (§8.7.1).
 //!
+//! Order in the translucent stage (`docs/specs/render.md` §5.7 Decision): the water hook
+//! records before the instanced hook, so blended instanced surfaces (frills over a shore,
+//! scenery with blended parts) draw after the water, over it where they are in front (the
+//! depth test against the water's depth write), instead of being replaced by its
+//! ONE / ZERO write. Neither is in the water's refraction (the scene copy is made before
+//! the stage).
+//!
 //! A draw may carry the far view's far-draw fade (`far-view.md` §7.2, FD1; the far view
 //! applies it to the sector water as a Tessera choice, `far-view.md` §8 OPEN): the fragment
 //! is blended toward the undistorted scene copy by *a* = 1 − sat((*d* − *s*) × *r*), *d* the

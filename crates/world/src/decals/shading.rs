@@ -21,6 +21,18 @@ pub const FADE_SECONDS: f32 = 1.5;
 
 type V3 = [f32; 3];
 
+/// The shader records whose programs show no colour input (§6.1, Inferred from the
+/// program signatures): for their surface records the decal's vertex colour has no
+/// effect. Every other shader record of a decal multiplies its output by it.
+pub const NO_COLOUR_INPUT_SHADERS: [u32; 2] = [0x2B00_0755, 0x2B00_07A6];
+
+/// Whether the vertex colour of §6.2 reaches the output of a decal drawn with shader
+/// record `shader` (§6.1).
+#[must_use]
+pub fn vertex_colour_applies(shader: u32) -> bool {
+    !NO_COLOUR_INPUT_SHADERS.contains(&shader)
+}
+
 fn dot(a: V3, b: V3) -> f32 {
     a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
 }

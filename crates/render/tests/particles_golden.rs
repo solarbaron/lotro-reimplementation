@@ -740,3 +740,187 @@ fn the_pass_vertex_budget_skips_whole_draws() -> Result<(), RenderError> {
     assert!(stats.particle_vertices as usize <= MAX_PARTICLE_VERTICES_PER_PASS);
     Ok(())
 }
+
+/// A soft white disc, 32 × 32, for the lit sheet.
+fn disc() -> Vec<u8> {
+    let size = 32u32;
+    let mut out = Vec::with_capacity((size * size * 4) as usize);
+    for y in 0..size {
+        for x in 0..size {
+            let u = x as f32 / 31.0 * 2.0 - 1.0;
+            let v = y as f32 / 31.0 * 2.0 - 1.0;
+            let a = (1.0 - (u * u + v * v).sqrt()).clamp(0.0, 1.0);
+            out.extend_from_slice(&[255, 255, 255, (a * 255.0) as u8]);
+        }
+    }
+    out
+}
+
+/// A lit system (`use_lighting` = 1): a 4 m square sheet of still, grey quads one metre
+/// above the ground.
+fn lit_sheet() -> ParticleSystem {
+    let key = |time: f32, flags: u32| Keyframe {
+        time,
+        flags,
+        scale_x: 0.22,
+        scale_y: 0.22,
+        colour: Argb(0xFFB0_B0B0),
+        mass: 0.0,
+        controller: 2,
+        physics_flags: 0,
+        ..Keyframe::default()
+    };
+    let sheet = Emitter {
+        shape: 5,
+        primitive: 2,
+        emit_interval: 0.01,
+        burst_count: 2,
+        max_particles: 400,
+        speed: Curve::constant(0.0),
+        direction: CurveVec::constant([0.0, 0.0, 1.0]),
+        lifespan: Curve::constant(100.0),
+        shape_size: Curve::constant(4.0),
+        inclusive: true,
+        origin: CurveVec::constant([0.0, 0.0, 1.0]),
+        keyframes: vec![key(0.0, 0x770), key(100.0, 0x4)],
+        ..Emitter::default()
+    };
+    ParticleSystem {
+        use_lighting: true,
+        emitters: vec![sheet],
+        ..fountain()
+    }
+}
+
+/// The point light of the lit scene: warm, 3 m range, Falloff 1 (*k* = 10 / *R²*).
+const LIT_LIGHT: Vec3 = Vec3::new(1.2, 0.0, 1.3);
+const LIT_COLOUR: [f32; 3] = [1.0, 0.6, 0.2];
+const LIT_RANGE: f32 = 3.0;
+const LIT_AMBIENT: [f32; 3] = [0.2, 0.2, 0.25];
+
+fn lit_camera() -> Camera {
+    Camera {
+        eye: Vec3::new(0.0, -5.0, 3.5),
+        target: Vec3::new(0.0, 0.0, 0.9),
+        ..Camera::default()
+    }
+}
+
+/// The lit sheet simulated for 2 s at 30 frames per second (seed 77) with the frame
+/// ambient and the point light (`particle-runtime.md` §12 rule 13).
+fn lit_simulated() -> SystemDraw {
+    use tessera_particles::{LightList, ParticleLight};
+    let mut sim = SystemSim::new(Arc::new(lit_sheet()), 0.0);
+    sim.set_lights(LightList::new([ParticleLight {
+        position: LIT_LIGHT,
+        colour: LIT_COLOUR,
+        range: LIT_RANGE,
+        attenuation: 10.0 / (LIT_RANGE * LIT_RANGE),
+    }]));
+    let env = Environment {
+        ambient: [LIT_AMBIENT[0], LIT_AMBIENT[1], LIT_AMBIENT[2], 1.0],
+        ..Environment::default()
+    };
+    let mut rng = Ran2::new(77);
+    let cam = lit_camera();
+    let view = CameraView::look_at(cam.eye, cam.target);
+    let mut last = None;
+    for k in 0..=60u64 {
+        let now = k as f64 / 30.0;
+        sim.place(
+            k,
+            now,
+            Placement::default(),
+            &env,
+            &mut rng,
+            &OriginAttachments,
+        );
+        last = sim.draw(now, &view, &mut rng);
+    }
+    last.expect("the sheet is drawn")
+}
+
+fn lit_scene(r: &mut Renderer<'static>) -> Result<RgbaImage, RenderError> {
+    let texture = r.upload_texture(&TextureUpload {
+        color_space: ColorSpace::Srgb,
+        filter: Filter::Linear,
+        wrap: Wrap::Clamp,
+        ..TextureUpload::rgba8(32, 32, &disc())
+    })?;
+    let ground = r.upload_mesh(&MeshData::plane(12.0, 12.0, 8, 8))?;
+    let sys = lit_simulated();
+    let target = r.create_offscreen_target(WIDTH, HEIGHT, OffscreenFormat::Rgba8Srgb)?;
+    let mut frame = r.begin_offscreen_frame(&target)?;
+    let pass = frame.world_pass("world", &lit_camera());
+    pass.clear(CLEAR).frame_lighting(FrameLighting {
+        ambient: LIT_AMBIENT,
+        lights: vec![tessera_render::Light::point(
+            LIT_LIGHT,
+            LIT_RANGE,
+            10.0 / (LIT_RANGE * LIT_RANGE),
+            LIT_COLOUR,
+        )],
+        ..FrameLighting::default()
+    });
+    pass.mesh(MeshDraw::new(
+        ground,
+        Mat4::IDENTITY,
+        Material::color([0.5, 0.5, 0.5, 1.0]),
+    ));
+    for d in draws(&sys, Some(texture), AlphaMode::Blend) {
+        pass.particles(d);
+    }
+    let stats = r.end_frame(frame)?;
+    assert_eq!(stats.particle_draws, 1, "{stats:?}");
+    r.read_pixels(&target)
+}
+
+/// `particle-runtime.md` §12 rule 13 (`particles.md` §8.14): a lit system next to a point
+/// light: the particles near the light take its warm colour, the far ones keep the
+/// ambient's; the ground is lit by the same light for comparison.
+#[test]
+fn particles_lit_golden() -> Result<(), RenderError> {
+    // On the CPU: near the light the red channel is the ambient's plus most of the light's.
+    let sys = lit_simulated();
+    let verts = &sys.instances[0].vertices;
+    assert!(
+        sys.instances[0].quads() > 100,
+        "{}",
+        sys.instances[0].quads()
+    );
+    let red_at = |near: bool| {
+        let pick: Vec<f32> = verts
+            .iter()
+            .filter(|v| {
+                let d = (Vec3::from_array(v.position) - LIT_LIGHT).length();
+                if near { d < 0.8 } else { d > LIT_RANGE + 0.3 }
+            })
+            .map(|v| v.colour[0])
+            .collect();
+        assert!(!pick.is_empty(), "near {near}");
+        pick.iter().sum::<f32>() / pick.len() as f32
+    };
+    let grey = 176.0 / 255.0;
+    let far = red_at(false);
+    assert!(
+        (far - grey * LIT_AMBIENT[0]).abs() < 1e-3,
+        "beyond the range: {far}"
+    );
+    assert!(
+        red_at(true) > grey * (LIT_AMBIENT[0] + 0.3),
+        "{}",
+        red_at(true)
+    );
+    let Some(mut r) = gpu::headless_renderer(CLEAR) else {
+        return Ok(());
+    };
+    let img = lit_scene(&mut r)?;
+    let again = lit_scene(&mut r)?;
+    assert!(img.data == again.data, "render is not deterministic");
+    golden::check(
+        &Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/golden/particles_lit.png"),
+        &img,
+        golden::Tolerance::default(),
+    );
+    Ok(())
+}

@@ -1025,6 +1025,39 @@ impl EffectManager {
         }
     }
 
+    /// Gives `owner`'s attached 0x39 systems the owner's light list (`particles.md` §8.14,
+    /// §12 rule 13; [`SystemSim::set_lights`]); unlit systems ignore it. Call it before
+    /// [`EffectManager::place_owner`] in each frame the list is known.
+    pub fn set_owner_lights(&mut self, owner: OwnerId, lights: &crate::light::LightList) {
+        let Some(comp) = self.components.get(&owner) else {
+            return;
+        };
+        let systems: Vec<_> = comp.attachments.iter().map(|a| a.system).collect();
+        for k in systems {
+            if let Some(s) = self.running_mut(k).and_then(|r| r.effect.particles_mut()) {
+                s.set_lights(*lights);
+            }
+        }
+    }
+
+    /// Gives every lingering 0x39 system (released by its owner or dropped, §5.6 step 5)
+    /// the light list `lights` returns for its fixed placement position (simulation frame;
+    /// §12 rule 13): a dropped system never had an owner, and a released one no longer
+    /// follows its owner's. Call it before [`EffectManager::place_lingering`] in each frame;
+    /// an empty list (unlit frames) removes the lights.
+    pub fn set_lingering_lights(&mut self, lights: impl Fn(Vec3) -> crate::light::LightList) {
+        let entries: Vec<(SystemKey, Vec3)> = self
+            .lingering
+            .iter()
+            .map(|l| (l.system, l.placement.position))
+            .collect();
+        for (k, at) in entries {
+            if let Some(s) = self.running_mut(k).and_then(|r| r.effect.particles_mut()) {
+                s.set_lights(lights(at));
+            }
+        }
+    }
+
     /// Places every lingering 0x39 system with its fixed placement (§3.2 step 2).
     pub fn place_lingering(
         &mut self,

@@ -535,6 +535,292 @@ fn lighting_and_fade_envelope() {
     assert!((c[3] - 14.0 / 30.0).abs() < 1e-3, "{}", c[3]);
 }
 
+/// `particle-runtime.md` §12 rule 13 (`particles.md` §8.14): a lit particle's colour is
+/// multiplied by the ambient colour plus each light's record colour × its attenuation at
+/// the particle (1 / (1 + k d²) inside the range, nothing beyond), alpha by the ambient's
+/// alpha; at most five lights count; a local-space particle is lit at its world position;
+/// the owner's lights reach its attached systems through the manager.
+#[test]
+fn lit_systems_sum_the_owner_lights() {
+    use tessera_particles::{LightList, ParticleLight};
+    let grey = |ps: &mut ParticleSystem| {
+        ps.use_lighting = true;
+        ps.emitters[0].keyframes[0].colour =
+            tessera_formats::gameplay::particles::Argb(0xFF80_8080);
+    };
+    let light = |x: f32, colour: [f32; 3]| ParticleLight {
+        position: Vec3::new(x, 0.0, 0.0),
+        colour,
+        range: 10.0,
+        attenuation: 0.05,
+    };
+    let lit_colour = |lit: bool, world_space: bool, at: Vec3, ambient: [f32; 4], l: LightList| {
+        let mut ps = system(vec![emitter(30.0, 10.0)]);
+        grey(&mut ps);
+        ps.use_lighting = lit;
+        ps.world_space = world_space;
+        let mut sim = SystemSim::new(Arc::new(ps), 0.0);
+        sim.set_lights(l);
+        let env = Environment {
+            ambient,
+            ..Environment::default()
+        };
+        let mut rng = Ran2::new(3);
+        for k in 0..5u64 {
+            sim.place(
+                k,
+                k as f64 / 30.0,
+                Placement::at(at),
+                &env,
+                &mut rng,
+                &NoAttachments,
+            );
+        }
+        let d = sim.draw(4.0 / 30.0, &camera(), &mut rng).expect("drawn");
+        d.instances[0].vertices[0].colour
+    };
+    let half = 128.0 / 255.0;
+    let ambient = [0.2, 0.2, 0.2, 0.5];
+    // d = 2: a = 1 / (1 + 0.05 × 4) = 1 / 1.2; the second light is out of range.
+    let lights = LightList::new([light(2.0, [1.0, 0.5, 0.0]), light(30.0, [1.0; 3])]);
+    let a = 1.0 / 1.2;
+    let c = lit_colour(true, true, Vec3::ZERO, ambient, lights);
+    let expect = [half * (0.2 + a), half * (0.2 + 0.5 * a), half * 0.2];
+    for i in 0..3 {
+        assert!((c[i] - expect[i]).abs() < 1e-4, "{c:?} vs {expect:?}");
+    }
+    assert!(
+        (c[3] - 0.5).abs() < 1e-4,
+        "alpha × the ambient's alpha: {c:?}"
+    );
+    // A local-space system at (10, 0, 0) with its light moved along: the same colour.
+    let at = Vec3::new(10.0, 0.0, 0.0);
+    let c2 = lit_colour(true, false, at, ambient, lights.translated(at));
+    for i in 0..4 {
+        assert!((c2[i] - c[i]).abs() < 1e-4, "{c2:?} vs {c:?}");
+    }
+    // The 5-light cut: six lights at the particle add five, not six.
+    let six = LightList::new((0..6).map(|_| light(0.0, [0.05; 3])));
+    let c = lit_colour(true, true, Vec3::ZERO, [0.0, 0.0, 0.0, 1.0], six);
+    assert!((c[0] - half * 0.25).abs() < 1e-4, "{c:?}");
+    // An unlit system ignores ambient and lights.
+    let c = lit_colour(false, true, Vec3::ZERO, ambient, lights);
+    assert!(
+        (c[0] - half).abs() < 1e-4 && (c[3] - 1.0).abs() < 1e-4,
+        "{c:?}"
+    );
+
+    // Through the manager: the owner's list reaches its attached system.
+    let mut ps = system(vec![emitter(30.0, 10.0)]);
+    grey(&mut ps);
+    let ps = Arc::new(ps);
+    let mut m = EffectManager::new();
+    let h = m.request(7, 0x3900_0001, 0.0);
+    m.serve(
+        7,
+        h,
+        || Some(Effect::Particles(SystemSim::new(Arc::clone(&ps), 0.0))),
+        AttachSpec::default(),
+    );
+    m.set_owner_lights(7, &lights);
+    let mut rng = Ran2::new(3);
+    let env = Environment {
+        ambient,
+        ..Environment::default()
+    };
+    for k in 0..5u64 {
+        m.begin_frame(k, k as f64 / 30.0);
+        m.place_owner(
+            7,
+            k,
+            k as f64 / 30.0,
+            Mat4::IDENTITY,
+            Vec3::ONE,
+            Vec3::ONE,
+            1.0,
+            &|_| None,
+            &env,
+            &mut rng,
+            &NoAttachments,
+        );
+    }
+    let sim = m
+        .effects_mut()
+        .find_map(|(_, e)| e.particles_mut())
+        .expect("a running system");
+    assert_eq!(
+        sim.lights().len(),
+        2,
+        "both lights are kept; the range is per particle"
+    );
+    let d = sim.draw(4.0 / 30.0, &camera(), &mut rng).expect("drawn");
+    let c3 = d.instances[0].vertices[0].colour;
+    assert!((c3[0] - expect[0]).abs() < 1e-4, "{c3:?}");
+}
+
+/// Rule 13 on the dropped path (§5.6 step 5): a dropped lit system has no owner, so the
+/// manager gives every lingering system the list built at its fixed placement; an unlit
+/// frame's empty list removes it again.
+#[test]
+fn dropped_lit_systems_get_a_light_list_at_their_placement() {
+    use tessera_particles::{LightList, ParticleLight};
+    let mut ps = system(vec![emitter(30.0, 10.0)]);
+    ps.use_lighting = true;
+    ps.emitters[0].keyframes[0].colour = tessera_formats::gameplay::particles::Argb(0xFF80_8080);
+    let mut m = EffectManager::new();
+    let at = Vec3::new(3.0, 4.0, 0.0);
+    let key = m.drop_effect(
+        0x3900_0001,
+        Effect::Particles(SystemSim::new(Arc::new(ps), 0.0)),
+        Placement::at(at),
+        Classification::Finite,
+        0.0,
+    );
+    let sun = [0.5, 0.5, 0.5];
+    m.set_lingering_lights(|p| {
+        assert_eq!(p, at, "the list is built at the placement");
+        LightList::new([ParticleLight::global(sun)])
+    });
+    let env = Environment {
+        ambient: [0.25, 0.25, 0.25, 1.0],
+        ..Environment::default()
+    };
+    let mut rng = Ran2::new(3);
+    for k in 0..5u64 {
+        m.begin_frame(k, k as f64 / 30.0);
+        m.place_lingering(k, k as f64 / 30.0, &env, &mut rng, &NoAttachments);
+    }
+    let sim = m
+        .effect_mut(key)
+        .and_then(|e| e.particles_mut())
+        .expect("the dropped system runs");
+    assert_eq!(sim.lights().len(), 1);
+    let d = sim.draw(4.0 / 30.0, &camera(), &mut rng).expect("drawn");
+    let c = d.instances[0].vertices[0].colour;
+    let half = 128.0 / 255.0;
+    assert!((c[0] - half * 0.75).abs() < 1e-4, "ambient + sun: {c:?}");
+    m.set_lingering_lights(|_| LightList::EMPTY);
+    let sim = m
+        .effect_mut(key)
+        .and_then(|e| e.particles_mut())
+        .expect("running");
+    assert!(sim.lights().is_empty(), "unlit frames clear the list");
+}
+
+/// The culling box of `particle-runtime.md` §9.3 (Q-RT3 Decision): the record's bounds
+/// moved by the instance and grown by the largest drawn particle; none without bounds.
+#[test]
+fn instances_carry_their_culling_box() {
+    let mut ps = system(vec![emitter(30.0, 10.0)]);
+    ps.emitters[0].keyframes[0].scale_x = 0.5;
+    ps.emitters[0].keyframes[0].scale_y = 0.5;
+    let run_with = |ps: ParticleSystem, p: Placement| {
+        let mut sim = SystemSim::new(Arc::new(ps), 0.0);
+        let mut rng = Ran2::new(3);
+        for k in 0..5u64 {
+            sim.place(
+                k,
+                k as f64 / 30.0,
+                p,
+                &Environment::default(),
+                &mut rng,
+                &NoAttachments,
+            );
+        }
+        sim.draw(4.0 / 30.0, &camera(), &mut rng).expect("drawn")
+    };
+    assert_eq!(
+        run_with(ps.clone(), Placement::default()).instances[0].bounds,
+        None
+    );
+    ps.has_bounds = true;
+    ps.bounds_min = [-1.0, -2.0, 0.0];
+    ps.bounds_max = [1.0, 2.0, 3.0];
+    let place = Placement {
+        rotation: Quat::from_rotation_z(std::f32::consts::FRAC_PI_2),
+        ..Placement::at(Vec3::new(5.0, 0.0, 0.0))
+    };
+    let d = run_with(ps.clone(), place);
+    let (lo, hi) = d.instances[0].bounds.expect("bounds");
+    // A 0.5 m square billboard reaches √0.125 ≈ 0.3536 m from its centre.
+    let g = 0.125f32.sqrt();
+    let want_lo = [5.0 - 2.0 - g, -1.0 - g, 0.0 - g];
+    let want_hi = [5.0 + 2.0 + g, 1.0 + g, 3.0 + g];
+    for i in 0..3 {
+        assert!((lo[i] - want_lo[i]).abs() < 1e-3, "{lo:?} vs {want_lo:?}");
+        assert!((hi[i] - want_hi[i]).abs() < 1e-3, "{hi:?} vs {want_hi:?}");
+    }
+    // Hostile bounds give no box (never culled).
+    ps.bounds_max = [f32::NAN, 0.0, 0.0];
+    assert_eq!(run_with(ps, Placement::default()).instances[0].bounds, None);
+}
+
+/// The Q-RT3 culling box of a world-space system covers every particle drawn: a trail
+/// left behind by a moving owner and the instances of every placement in the frame, so
+/// that a visible part is never culled with an instance that left the view.
+#[test]
+fn world_space_culling_box_covers_trails_and_every_instance() {
+    let mut ps = system(vec![emitter(30.0, 10.0)]);
+    ps.world_space = true;
+    ps.has_bounds = true;
+    ps.bounds_min = [-1.0; 3];
+    ps.bounds_max = [1.0; 3];
+    let mut sim = SystemSim::new(Arc::new(ps), 0.0);
+    let mut rng = Ran2::new(3);
+    let env = Environment::default();
+    // Five frames at the origin leave particles there, then the owner moves 8 m away.
+    for k in 0..10u64 {
+        let at = if k < 5 {
+            Vec3::ZERO
+        } else {
+            Vec3::new(8.0, 0.0, 0.0)
+        };
+        sim.place(
+            k,
+            k as f64 / 30.0,
+            Placement::at(at),
+            &env,
+            &mut rng,
+            &NoAttachments,
+        );
+    }
+    let d = sim.draw(9.0 / 30.0, &camera(), &mut rng).expect("drawn");
+    let (lo, hi) = d.instances[0].bounds.expect("bounds");
+    for v in &d.instances[0].vertices {
+        for a in 0..3 {
+            assert!(
+                v.position[a] >= lo[a] - 1e-4 && v.position[a] <= hi[a] + 1e-4,
+                "{:?} outside {lo:?}..{hi:?}",
+                v.position
+            );
+        }
+    }
+    assert!(lo[0] <= 0.0 && hi[0] >= 8.0, "{lo:?}..{hi:?}");
+    // Two instances in one frame: the single draw's box covers both placements.
+    let mut ps = system(vec![emitter(30.0, 10.0)]);
+    ps.world_space = true;
+    ps.has_bounds = true;
+    ps.bounds_min = [-1.0; 3];
+    ps.bounds_max = [1.0; 3];
+    let mut sim = SystemSim::new(Arc::new(ps), 0.0);
+    for k in 0..5u64 {
+        for at in [Vec3::new(-5.0, 0.0, 0.0), Vec3::new(5.0, 0.0, 0.0)] {
+            sim.place(
+                k,
+                k as f64 / 30.0,
+                Placement::at(at),
+                &env,
+                &mut rng,
+                &NoAttachments,
+            );
+        }
+    }
+    let d = sim.draw(4.0 / 30.0, &camera(), &mut rng).expect("drawn");
+    assert_eq!(d.instances.len(), 1);
+    let (lo, hi) = d.instances[0].bounds.expect("bounds");
+    assert!(lo[0] <= -6.0 && hi[0] >= 6.0, "{lo:?}..{hi:?}");
+}
+
 #[test]
 fn local_space_systems_follow_their_instance() {
     let mut ps = system(vec![emitter(30.0, 10.0)]);

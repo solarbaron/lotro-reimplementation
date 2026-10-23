@@ -955,6 +955,90 @@ impl EffectData {
     }
 }
 
+/// First runtime ID of the creation viewport's owners ([`EffectData::scan_stage`]): above
+/// the session and beam owners, below every landblock DID in the upper half.
+pub const STAGE_OWNER_BASE: u64 = 3 << 32;
+/// Most creation-scene elements scanned for effect owners.
+pub const MAX_STAGE_ELEMENTS: usize = 4096;
+
+/// One Physics element of a creation scene offered to the effect layer
+/// (`character-screens.md` §2.1.1 rule 1: its start-up scripts run, so effect entities
+/// start their particle systems).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct StageElement {
+    /// The object it places (0x47).
+    pub object: Did,
+    /// Where it stands (the scene's frame, metres).
+    pub position: [f32; 3],
+    /// Its rotation.
+    pub rotation: Quat,
+    /// `Render_AdjustableScale` per axis.
+    pub scale: [f32; 3],
+}
+
+impl EffectData {
+    /// The effect owners among a creation scene's Physics elements (`character-screens.md`
+    /// §2.1.1 rule 1), as static owners in the scene's frame: the elements whose object's
+    /// start-up scripts reach Particle nodes, each with its setup's attachment points and
+    /// the template scales of its chain (`setup.md` §5.2). At most
+    /// [`MAX_STAGE_ELEMENTS`] elements; IDs from [`STAGE_OWNER_BASE`] by element index.
+    #[must_use]
+    pub fn scan_stage(&self, elements: &[StageElement]) -> Vec<EffectOwner> {
+        let mut owners = Vec::new();
+        for (i, e) in elements.iter().enumerate().take(MAX_STAGE_ELEMENTS) {
+            if owners.len() >= MAX_OWNERS_PER_BLOCK {
+                break;
+            }
+            if e.object.prefix() != ENTITY_PREFIX {
+                continue;
+            }
+            let Some(scripts) = self.object_scripts(e.object) else {
+                continue;
+            };
+            let chain =
+                tessera_formats::setup::resolve_setup_did(e.object, |d| fetch(&self.set, d.0))
+                    .unwrap_or_default();
+            let scales = self.model_scales(e.object, &chain);
+            let points = if scripts.attaches {
+                chain
+                    .last()
+                    .copied()
+                    .filter(|d| d.prefix() != ENTITY_PREFIX && d.prefix() != TEMPLATE_PREFIX)
+                    .and_then(|s| self.setup_points(s))
+            } else {
+                None
+            };
+            let mut scale = e.scale.map(|c| if c.is_finite() { c } else { 1.0 });
+            for (a, b) in scale.iter_mut().zip(scales.model) {
+                *a *= b;
+            }
+            let rotation = if e.rotation.is_finite() && e.rotation.length_squared() > 1e-12 {
+                e.rotation.normalize()
+            } else {
+                Quat::IDENTITY
+            };
+            let position = e
+                .position
+                .map(|c| if c.is_finite() { f64::from(c) } else { 0.0 });
+            let id = EntityId(STAGE_OWNER_BASE + u64::try_from(i).unwrap_or(u64::MAX >> 33));
+            owners.push(EffectOwner {
+                id,
+                kind: OwnerKind::Static {
+                    position,
+                    rotation,
+                    scale,
+                },
+                iid: None,
+                scripts,
+                points,
+                scales,
+                position,
+            });
+        }
+        owners
+    }
+}
+
 /// Most DID-valued parameters remembered per scriptlet for the effect scan's file pairs.
 pub const MAX_SCAN_PARAMETERS: usize = 64;
 

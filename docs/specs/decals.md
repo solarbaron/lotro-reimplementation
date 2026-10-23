@@ -899,6 +899,45 @@ Realise a decal for every Decal node that `entity-descriptor.md` §9.3 creates (
 interior viewer rule), with the parameters of §3 and the mesh of §4. Remove it when the node's
 entity is removed. Draw it per §6–§7. The SED's marker object is never drawn.
 
+> **OPEN (implementer, tessera-world / tessera-render / tessera-client, 2026-10-23):** the
+> walker and creation-viewport decals follow these Tessera engineering choices where the spec
+> leaves room; for the spec writer to confirm, or to record as Decisions.
+> (a) **Receivers.** Placed objects of the decal's landblock and its eight neighbours that are
+> drawn, not figures, and accept decals (§5.1) are collected when one of their part meshes
+> (level 0, Q2 default) can reach the box: the distance from the object's position to *c* is at
+> most |*e*| + 4 m + the part's radius × its largest scale. Before that test (and before the
+> object's meshes are decoded) objects whose position lies farther than |*e*| + 4 m + 200 m from
+> *c* are skipped, so a part whose radius × scale exceeds 200 m and whose origin lies that far
+> away is missed. At most 1,024 such objects and 2¹⁸ receiving triangles per decal; beyond that
+> the rest is left out (logged). The "drawn in the current view" condition of §4.3 step 1 is
+> replaced by residency (the §4.8 Decision).
+> Hostile-input bounds (engineering, not data facts): a decal whose |*e*| exceeds 160 m (or is not
+> finite) is realised but not built (no mesh; the data's boxes reach about 35 m); all decals of
+> one landblock build share 2²⁰ receiving triangles and keep at most 2²⁰ output vertices, and
+> the layer keeps at most 2²² decal vertices for all resident landblocks (a decal beyond either
+> keeps no mesh). A frame queues at most 65,536 batches; a decal that would open one more is
+> left out of that frame (logged once).
+> (b) **Cells.** Interior cell geometry is not collected yet (the walker keeps no CPU cell
+> meshes), so interior decals (`StickToCells`) land on placed objects only.
+> (c) **Rebuild.** A landblock's decals are rebuilt when it or one of its eight neighbours
+> enters or leaves residency (the §4.8 Decision); the previous meshes are drawn until the new
+> build is ready.
+> (d) **Lights.** §6.3 step 2's "decal's light list" is built like `lighting.md` §8.5 from the
+> frame's light table at the mesh centre (key lights first, nearest first, lights with
+> `Light_OnlyInfluenceParent` left out, at most 8 point lights after the main light), with
+> *A* = *A₀* and *T* = 1 (Q5 defaults). In frames drawn without lighting *L* = (1, 1, 1, 1)
+> (§9.2): the renderer draws decals in a world pass without frame lighting too, unfogged.
+> (e) **Drawing.** Decal triangles are drawn without back-face culling (the back-face test of
+> §4.4 already chose them), unlit, in the opaque stage after terrain and opaque scenery, with
+> the surface's blend, depth write and alpha test (§6.1) and the batch's depth-bias entry.
+> (f) **Creation scenes** (`character-screens.md` §2.1.1): a scene's Decal elements are built
+> once every Physics element of the scene is resolved, against those elements only (no
+> terrain), with the initial LOD distance and no draw-distance fade (the viewport has no
+> global limit). Each element's `Render_AllowDecals` and `Render_ForceDecals` are looked up on
+> their own (the element's value, then its 0x47 chain), as for placed objects (§5.1). Batches
+> draw with the depth-bias entry their `DecalVolume_DepthBias` selects (§6.5), from the same
+> table as the world.
+
 <a id="s9-2"></a>
 ### 9.2 Order of work (Tessera Decision)
 

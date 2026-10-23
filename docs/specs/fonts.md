@@ -4,11 +4,11 @@
 
 | | |
 |---|---|
-| **Status** | Accepted (revision 7, 2026-10-06: accepted after revision for decisions 0014/0015). Revision 6 was Accepted on 2026-10-06 |
-| **Last updated** | 2026-10-06 |
+| **Status** | **Accepted** (revision 8, 2026-10-23: independent review by spec-review:spec-ui-r5:1 (independent session): passed; see the review record). Before: **Revised** (revision 8, 2026-10-23, spec writer: one round-4 implementer OPEN filed under §11 item 4 and answered by a pointer to `ui-scaling.md` §8; no fact changed; awaiting an independent review). Before: Accepted (revision 7, 2026-10-06: accepted after revision for decisions 0014/0015). Revision 6 was Accepted on 2026-10-06 |
+| **Last updated** | 2026-10-23 |
 | **Author role** | Spec writer (dirty room) |
-| **Reviewer** | Claude review session (spec-writer agent) |
-| **Review record** | Revision 7 review, 2026-10-06: **passed**, Accepted (after revision for decisions 0014/0015). Full record moved to the review log (decision 0018). |
+| **Reviewer** | Claude review session (spec-writer agent); revision 8: spec-review:spec-ui-r5:1 (independent session), which wrote no part of it (2026-10-23) |
+| **Review record** | **Review 2026-10-23 of revision 8** (spec-review:spec-ui-r5:1 (independent session), Clean-Room-Role: review; wrote no part of the revision or of the code): **passed**; status Revised → Accepted. Checked against CLEAN_ROOM.md §5.3, every item, on the uncommitted worktree diff against HEAD; contamination screen clean (no code, pseudo-code or listing-shaped text, no disassembly prose, no game text, keys, hostnames or traffic, nothing outside decision 0034 §2); every added statement is a labelled Tessera rule or a pointer to Accepted text, no new observation of the original claimed; every round-4 implementer OPEN of the package's report for this spec is filed and answered; relative links and anchors of the four package specs resolve (own check). Cross-check: the §11 item 4 pointer resolves to `ui-scaling.md` anchor `s8-s6-faces`, whose answer states the split. Non-blocking: none. Earlier: Revision 7 review, 2026-10-06: **passed**, Accepted (after revision for decisions 0014/0015). Full record moved to the review log (decision 0018). |
 | **Implements into** | `crates/formats` (font-record decoder, §3; fuzz target), `crates/material` or a new text/UI crate (glyph-atlas loading, §4; glyph lookup, §5; placement, line layout and outline rendering, §6–§8), the M5 UI crate (`tessera-ui` in the roadmap: font selection for layout elements, §9.1–§9.2), the chat panel of `apps/client` (§9.3), `crates/script` (plugin `Font` values, §9.4), `apps/explorer` (a font view: atlas with glyph boxes, metrics table), `apps/dattool` (optional font summary), `fuzz/` |
 | **Companion specs** | [`records.md`](records.md) §1 (VLE, TSize, strings), §5 (render surfaces 0x41), §8 (DID maps). [`dat-container.md`](dat-container.md) §8 (routing of prefix 0x42: local, then general). [`property-system.md`](property-system.md) §4 (value encodings), §5 (property sets), §7.3 / V7 (bit *i* of a bitfield = enum key *i* + 1), §8 (root DID map), §9 (DB-object code 0x4C = font). [`texture-list.md`](texture-list.md) §6.2 (font atlases; **completed** here). [`lua-plugin-api.md`](lua-plugin-api.md) §14.1 and Appendix A.2 (plugin `Font` values; **corrected** here). [`string-table.md`](string-table.md) §4 (UTF-16 text, markup syntax). `ui-layout.md` (UI layout records, element inheritance and states; written in parallel). Tessera decision record (Accepted 2026-10-06): [`0015-ui-rendering.md`](../decisions/0015-ui-rendering.md) (UI paint and composition; **UR**), cited by §4.1, §6.3, §8.4 and §11 (revision 7). |
 
@@ -1261,6 +1261,16 @@ of every record equals the number at the end of its plugin enum label.
    *(Note 2026-10-16, decision 0040: with [`ui-scaling.md`](ui-scaling.md) §6.4 built,
    Tessera's own fonts are rasterised directly at the scaled size, which is again the one
    text path.)*
+
+   > **OPEN (implementer, 2026-10-23), round 4 (filed here and under `ui-scaling.md` §8
+   > S6):** within the glyph share of the UI memory budget, Tessera's rasterised faces take at
+   > most half and the derived-glyph cache the rest; the face in use is always kept, even when
+   > it alone is larger than its part.
+   >
+   > **Answered (spec writer, 2026-10-23, revision 8):** confirmed as a Tessera rule; the
+   > budget and its split belong to [`ui-scaling.md`](ui-scaling.md#s8-s6-faces) §8, where
+   > the full answer is (including the correction of the 1 MiB floor). This spec adds no
+   > rule of its own: how a face is rasterised is item 4 above.
 5. **Licence rule:** any font Tessera ships must be original or under a licence compatible
    with the project (for example the SIL Open Font License). Game fonts and atlases are read
    from the user's install at run time and are never shipped or extracted
@@ -1637,3 +1647,5 @@ checklist O1–O17; none of O1–O17 concerns fonts):
 | 2026-10-06 | Revision 6 (BIN question 25; answers the revision-5 review, one blocking item; status stays Review). §6.3 item 1 corrected: an element's scale is the scale vector of the nearest display node at or above it (own node, else the nearest ancestor's by following parents), (1, 1, 1) only when none exists; it is the (*ex*, *ey*) of `ui-behaviour.md` §9.2.1. §6.3 item 3: the text hit tests convert through one step that always divides *x* and *y* by that scale (no 0.0002 tolerance, *z* unused), truncates and adds the scroll offsets. F35 updated; new FN26 and §13.12; §14 row for the revision-5 wording. Section numbers unchanged. |
 | 2026-10-06 | Revision 7 (status Accepted → Revised, awaiting review; applies the accepted decision record [0015](../decisions/0015-ui-rendering.md) (**UR**); no new research; no fact about the original changed; section numbers unchanged). **Reworded Tessera Decisions:** §6.3 (text painted at 1 : 1 into the CPU canvas of its surface, the surface composed scaled by the GPU; no re-rasterising), §8.4 (exact CPU compositing for all text; the allowance of a GPU text path is withdrawn), §11 item 4 (Tessera's own fonts are rasterised at 1 : 1 into the same coverage form and take the §8.4 path; rasterising them at the scaled size is no longer allowed). **Tessera rules added next to OPENs:** Q3 (whole-surface premultiplied bilinear resampling, exact copy at scale 1, no mips, setting `ui_scale_filter`; UR §2.2), Q6 (32-bit 0xAARRGGBB straight-alpha canvases shared by text and art; UR Decision 1.1, 1.6); both §15 rows updated, and the owner screenshot now also asks for scale 0.5. **Cross-references added:** §4.1 (atlases decoded on the workers into CPU coverage buffers, never uploaded; UR §3), §8.4 "Not covered here" (caret and selection drawn as rectangle fills; UR §3). §1: provenance tag UR; header companion entry. |
 | 2026-10-16 | Notes only (no fact changed), decision 0040: §6.3 Tessera Decision and §11 item 4 point to `ui-scaling.md` §6.4 (text at the scaled size). Status unchanged. |
+| 2026-10-23 | **Revision 8** (spec writer, dirty room; status Accepted → Revised, awaiting an independent review). No new research; no fact changed; section numbers unchanged. §11 item 4: the round-4 implementer OPEN on the glyph-share split between Tessera's rasterised faces and derived glyphs filed and answered by a pointer to `ui-scaling.md` §8 (anchor `s8-s6-faces`), where the Tessera rule is stated. |
+| 2026-10-23 | Independent review (spec-review:spec-ui-r5:1 (independent session)) of revision 8: **passed**; status Revised → Accepted. Header only (status, reviewer and review record); no fact, rule or section changed. |

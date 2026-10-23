@@ -26,6 +26,10 @@ Tessera's own code from a procedural scene; none contains or is derived from gam
 | `sky_morning.png`, `sky_evening.png` | `crates/render/tests/sky_golden.rs` | the sky (M4.5) at two times of day: a vertex-coloured dome, an additive sun disc and a blended cloud layer placed by their angles and tinted, over fogged ground |
 | `frill_sector.png` | `crates/render/tests/instanced_golden.rs` | instanced scenery and frills (M4.5): a 10 × 10-unit frill sector of 625 alpha-tested clumps (sway, terrain colour, distance scale) beside three instanced rocks casting the sun's shadow |
 | `particles_fountain.png` | `crates/render/tests/particles_golden.rs` | the particle pipeline: one synthetic particle system simulated by `tessera-particles` for 2 s (seed 1234): a fountain of textured quads under gravity with scale and colour keys, a 2 × 2 atlas with random start frames and a fade-in, and rising spinning triangles, alpha-blended and depth-tested against an opaque ground and pillar |
+| `particles_lit.png` | same | a lit particle system (`particle-runtime.md` §12 rule 13, `particles.md` §8.14) beside a point light: the particles near the light take its warm colour, the far ones keep the ambient's; the ground is lit by the same light for comparison |
+| `frill_over_water.png` | `crates/render/tests/instanced_golden.rs` | alpha-blended frill clumps standing in a water patch, drawn in front of the water (`render.md` §5.7 Decision: water before the blended instanced surfaces), their parts under the water surface hidden by its depth |
+| `far_view_seam.png` | `crates/render/tests/far_view_golden.rs` | the normal-mapped far-terrain template and the near/far seam overlay (`far-view.md` §6.4, §6.5, example §14.4): a 600 × 600-unit patch from straight above, the overlay invisible within 80 units of the eye and fading in to full at 160 units on level ground (left) and to 0.81 on slope normals (right), full outside the near-view square; the tiled normal map's relief fading in from 80 to 240 units |
+| `decal_ground.png` | `crates/render/tests/decal_golden.rs` | the placed-decal pass (`decals.md` §6; §11 examples 1 and 3): a 4 m × 6 m ground decal with the colour of example 3 in mode 0 and *L* = (1, 1, 1, 1), alpha-blended with a synthetic arrow texture, beside an additive decal partly hidden by a pillar, with a slope-scale depth bias |
 | `ui_tile.png` | `crates/render/tests/ui_golden.rs` | UI pass: a 32 × 32 canvas tiled 1 : 1 and at node scale 1.5 (render.md §6.13 T7) |
 | `ui_clip.png` | same | a nested entry cut at its root's edge, unrotated and with the root at z = 30 (T8) |
 | `ui_clip_chain.png` | same | clip chains: own-surface child turned by 30, mode-0 child with the parent turned, mode-0 and own-surface children past the parent (T9) |
@@ -57,6 +61,8 @@ TESSERA_BLESS=1 cargo test -p tessera-render --test water_golden
 TESSERA_BLESS=1 cargo test -p tessera-render --test sky_golden
 TESSERA_BLESS=1 cargo test -p tessera-render --test instanced_golden
 TESSERA_BLESS=1 cargo test -p tessera-render --test particles_golden
+TESSERA_BLESS=1 cargo test -p tessera-render --test far_view_golden
+TESSERA_BLESS=1 cargo test -p tessera-render --test decal_golden
 TESSERA_BLESS=1 cargo test -p tessera-render --test ui_golden
 TESSERA_BLESS=1 cargo test -p tessera-client --test scene_golden
 ```

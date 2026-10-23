@@ -172,6 +172,35 @@ pub fn graphics_prefs() -> tessera_settings::GraphicsPrefs {
     p
 }
 
+/// Applies the `[Render]` section of the user's `UserPreferences.ini` (`install-layout.md`
+/// §8.3, read case-insensitively by [`tessera_install::Ini::get`]) to the far-view
+/// settings: `FarLandscapeNormalMaps`, `NearFarSeamBlending` and `DistantImposters`
+/// (`far-view.md` §6.1, §6.5, §9.1, through
+/// [`tessera_world::far_view::FarViewSettings::apply_render_preferences`]). The graphics-core
+/// condition of §6.1 is not derived from the file (its mapping is OPEN, `far-view.md` §12),
+/// so the plain template stays active and there is no seam overlay whatever the file says.
+pub fn apply_render_preferences(
+    settings: &mut tessera_world::far_view::FarViewSettings,
+    prefs: &tessera_install::Ini,
+) {
+    settings.apply_render_preferences(|key| prefs.get("Render", key));
+}
+
+/// The user's `UserPreferences.ini` next to the install `root` (`install-layout.md` §8.1,
+/// §8.3), read only (capped at [`tessera_install::MAX_INI_SIZE`]); `None` when there is
+/// none or it cannot be read (logged). Blocking: call it off the frame thread.
+#[must_use]
+pub fn read_user_preferences(root: &Path) -> Option<tessera_install::Ini> {
+    let path = crate::audio::backend::find_preferences(root)?;
+    match tessera_install::Ini::read(&path) {
+        Ok(ini) => Some(ini),
+        Err(e) => {
+            tracing::warn!("preferences {}: {e}", path.display());
+            None
+        }
+    }
+}
+
 /// Walker settings from the command line (and the `[Graphics]` settings).
 #[must_use]
 pub fn walker_config(args: &Args) -> WalkerConfig {
@@ -357,6 +386,62 @@ pub struct WalkerHost {
     pub walker: Option<Walker>,
     /// Why the walker could not start.
     pub failed: Option<String>,
+    /// Whether the user's `UserPreferences.ini` may be read (windowed runs only: headless
+    /// and test runs keep the built-in settings, like the audio import).
+    user_prefs: bool,
+    /// The user's preferences, read on a thread of their own while the world starts up.
+    prefs: PendingPreferences,
+}
+
+/// Longest the walker's creation waits for the user's preferences after the world
+/// start-up has finished, from the start of the read (Tessera choice; the wait is spread
+/// over frames, the frame thread never blocks on it).
+pub const PREFERENCES_WAIT: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// The user's preferences being read on a thread of their own ([`WalkerHost`]).
+#[derive(Debug, Default)]
+struct PendingPreferences {
+    rx: Option<std::sync::mpsc::Receiver<Option<tessera_install::Ini>>>,
+    /// When the wait for them ends.
+    deadline: Option<std::time::Instant>,
+    /// The preferences read (`None`: none, or not read in time).
+    ini: Option<tessera_install::Ini>,
+}
+
+impl PendingPreferences {
+    /// Waits for the reader of `rx` until `deadline`.
+    fn new(
+        rx: std::sync::mpsc::Receiver<Option<tessera_install::Ini>>,
+        deadline: std::time::Instant,
+    ) -> Self {
+        Self {
+            rx: Some(rx),
+            deadline: Some(deadline),
+            ini: None,
+        }
+    }
+
+    /// Whether the read is over at `now` (the reader sent, it is gone, or the deadline
+    /// passed; then the preferences are kept, or given up with a warning). Never blocks.
+    fn settled(&mut self, now: std::time::Instant) -> bool {
+        let Some(rx) = &self.rx else {
+            return true;
+        };
+        match rx.try_recv() {
+            Ok(ini) => self.ini = ini,
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {}
+            Err(std::sync::mpsc::TryRecvError::Empty) => {
+                if self.deadline.is_some_and(|d| now < d) {
+                    return false;
+                }
+                tracing::warn!(
+                    "the user's preferences were not read in time; built-in far-view settings"
+                );
+            }
+        }
+        self.rx = None;
+        true
+    }
 }
 
 impl WalkerHost {
@@ -372,7 +457,47 @@ impl WalkerHost {
             started: false,
             walker: None,
             failed: None,
+            user_prefs: !args.walker_headless(),
+            prefs: PendingPreferences::default(),
         }
+    }
+
+    /// Starts reading the user's preferences for the far view (`far-view.md` §6.1, §6.5,
+    /// §9.1) off the frame thread, when the far view is on and the run may read them.
+    fn start_preferences(&mut self, root: &Path) {
+        if !(self.user_prefs && self.config.far_view.enabled) {
+            return;
+        }
+        let (tx, rx) = std::sync::mpsc::channel();
+        let root = root.to_path_buf();
+        match std::thread::Builder::new()
+            .name("user-preferences".into())
+            .spawn(move || {
+                let _ = tx.send(read_user_preferences(&root));
+            }) {
+            Ok(_) => {
+                self.prefs =
+                    PendingPreferences::new(rx, std::time::Instant::now() + PREFERENCES_WAIT);
+            }
+            Err(e) => tracing::warn!("preferences thread: {e}; built-in far-view settings"),
+        }
+    }
+
+    /// Applies the user's `[Render]` preferences to `config`'s far view, when they were read
+    /// ([`PendingPreferences::settled`] has returned `true`).
+    fn take_preferences(&mut self, config: &mut WalkerConfig) {
+        let Some(ini) = self.prefs.ini.take() else {
+            return;
+        };
+        apply_render_preferences(&mut config.far_view.settings, &ini);
+        let s = &config.far_view.settings;
+        tracing::info!(
+            normal_maps = s.normal_maps,
+            seam_blending = s.seam_blending,
+            imposters = s.imposters,
+            template = ?s.template(),
+            "far view: [Render] preferences applied"
+        );
     }
 
     /// Starts the world start-up when the archives are open and creates the walker when
@@ -393,6 +518,8 @@ impl WalkerHost {
                         return;
                     };
                     self.started = true;
+                    let root = root.clone();
+                    self.start_preferences(&root);
                     match WorldBoot::spawn(set, root.clone(), self.bundles.clone()) {
                         Ok(b) => self.boot = Some(b),
                         Err(e) => self.failed = Some(format!("world start-up thread: {e}")),
@@ -401,6 +528,11 @@ impl WalkerHost {
             }
         }
         let Some(boot) = &mut self.boot else { return };
+        // The walker is built with the user's preferences: wait for their reader (bounded
+        // by [`PREFERENCES_WAIT`], over frames) before taking the start-up result.
+        if !self.prefs.settled(std::time::Instant::now()) {
+            return;
+        }
         let Some(result) = boot.try_take() else {
             return;
         };
@@ -426,6 +558,7 @@ impl WalkerHost {
         if let DataStatus::Ready { root, .. } = &rt.status {
             config.audio.game_dir = Some(root.clone());
         }
+        self.take_preferences(&mut config);
         match Walker::new(
             config,
             set,
@@ -537,5 +670,84 @@ mod tests {
         );
         let a = Args::try_parse_from(["t", "--character-distance", "50"]).unwrap();
         assert_eq!(walker_config(&a).characters.draw_distance, 50.0);
+    }
+
+    /// `far-view.md` §6.1, §6.5, §9.1: the `[Render]` section reaches the far-view settings
+    /// (keys case-insensitive, other sections ignored); the graphics core stays 0, so the
+    /// plain template stays active and there is no seam overlay (the §6.1 OPEN).
+    #[test]
+    fn the_render_preferences_reach_the_far_view() {
+        use tessera_world::far_view::{FarViewSettings, Template};
+        let ini = tessera_install::Ini::parse(
+            "[Sound]\r\nDistantImposters=True\r\n[Render]\r\nfarlandscapenormalmaps=True\r\nNearFarSeamBlending=True\r\nDistantImposters=False\r\nGraphicsCore=D3D11\r\n",
+        );
+        let mut s = FarViewSettings::default();
+        assert!(s.imposters);
+        apply_render_preferences(&mut s, &ini);
+        assert!(s.normal_maps && s.seam_blending && !s.imposters);
+        assert_eq!(s.graphics_core, 0);
+        assert_eq!(s.template(), Template::Plain);
+        assert!(!s.seam_overlay());
+        // A file without the keys keeps the settings.
+        let mut t = FarViewSettings::default();
+        apply_render_preferences(
+            &mut t,
+            &tessera_install::Ini::parse("[Render]\nGamma=1.0\n"),
+        );
+        assert_eq!(t, FarViewSettings::default());
+    }
+
+    /// Headless and test runs never read the user's preferences file (CLAUDE.md: real-data
+    /// tests read only the install).
+    #[test]
+    fn headless_runs_keep_the_built_in_far_view_settings() {
+        let a = Args::try_parse_from([
+            "t",
+            "--far-view",
+            "on",
+            "--screenshot",
+            "/nonexistent/x.png",
+        ])
+        .unwrap();
+        let mut h = WalkerHost::new(&a, Arc::new(Mutex::new(SourceShared::default())));
+        assert!(!h.user_prefs);
+        h.start_preferences(Path::new("/nonexistent"));
+        assert!(h.prefs.rx.is_none());
+    }
+
+    /// The walker waits (over frames, never blocking) for preferences still being read,
+    /// until they arrive or the deadline passes; a reader that is gone settles at once.
+    #[test]
+    fn the_walker_waits_for_preferences_still_being_read() {
+        use std::time::{Duration, Instant};
+        let now = Instant::now();
+        let (tx, rx) = std::sync::mpsc::channel();
+        let mut p = PendingPreferences::new(rx, now + Duration::from_secs(5));
+        assert!(!p.settled(now), "still being read");
+        assert!(!p.settled(now + Duration::from_secs(4)));
+        tx.send(Some(tessera_install::Ini::parse(
+            "[Render]\nDistantImposters=False\n",
+        )))
+        .unwrap();
+        assert!(p.settled(now + Duration::from_secs(4)));
+        assert!(p.ini.is_some(), "arrived late but in time: kept");
+        assert!(p.settled(now), "settled stays settled");
+
+        let (_tx, rx) = std::sync::mpsc::channel::<Option<tessera_install::Ini>>();
+        let mut late = PendingPreferences::new(rx, now + Duration::from_secs(5));
+        assert!(
+            late.settled(now + Duration::from_secs(5)),
+            "deadline passed"
+        );
+        assert!(late.ini.is_none());
+
+        let (tx, rx) = std::sync::mpsc::channel::<Option<tessera_install::Ini>>();
+        drop(tx);
+        let mut gone = PendingPreferences::new(rx, now + Duration::from_secs(5));
+        assert!(gone.settled(now));
+        assert!(
+            PendingPreferences::default().settled(now),
+            "nothing to wait for"
+        );
     }
 }

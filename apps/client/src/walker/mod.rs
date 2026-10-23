@@ -95,6 +95,9 @@ use tessera_render::{
     PassSpace, Perspective, Renderer, Rgba,
 };
 use tessera_terrain::LodSelector;
+use tessera_world::lighting::LightRecord;
+use tessera_world::lighting::glow::Variant;
+use tessera_world::lighting::lamps::{LampLayer, LampSource};
 use tessera_world::{
     DistanceSettings, LANDBLOCK_SIZE, LandblockBundle, LandblockKey, StreamConfig, WorldContext,
     WorldPos, WorldStreamer,
@@ -103,7 +106,7 @@ use tessera_world::{
 use self::characters::catalog::CharacterCatalog;
 use self::characters::figure::{ClipStore, FigureContext};
 use self::characters::{CharacterConfig, CharacterLayer};
-use self::controls::{Controls, MoveMode};
+use self::controls::{CameraProfile, Controls, MoveMode};
 use self::env::{ClockConfig, FrameEnv, IndoorInputs, IndoorPids, WorldEnv};
 use self::framelog::{FrameLog, FrameRow, Rolling, rss_bytes};
 use self::frills::FrillLayer;
@@ -287,6 +290,50 @@ pub fn far_plane(ring_far: f64) -> f32 {
     } else {
         MIN_FAR
     }
+}
+
+/// The world camera's vertical field of view (radians) and near plane (metres) in `mode`
+/// with camera state `profile` (`walker.md` §11.7–§11.8): the state's in walk mode, the
+/// walker's [`FOV_Y`] and [`NEAR`] otherwise. The profile's values are already checked
+/// ([`CameraProfile::from_state`]: FOV inside 1°–179°, near above 0 and at most 10 m).
+#[must_use]
+pub fn lens_of(mode: MoveMode, profile: &CameraProfile) -> (f32, f32) {
+    match mode {
+        MoveMode::Walk => (profile.fov.to_radians(), profile.near),
+        MoveMode::Fly => (FOV_Y, NEAR),
+    }
+}
+
+/// The HUD's walk-camera line (`walker.md` §11.6–§11.8): the camera state followed (the
+/// install's record or the built-in §11.8 values), the shown and asked-for distance, the
+/// pitch and the field of view.
+fn camera_hud_line(controls: &Controls) -> String {
+    let p = controls.camera_profile();
+    let state = p
+        .record
+        .map_or_else(|| "built-in".to_owned(), |d| format!("{d}"));
+    let (zoom, goal) = controls.zoom();
+    format!(
+        "Camera: state {state}, distance {zoom:.1} m (goal {goal:.1}, {:.0} to {:.0}), pitch {:.0} deg, FOV {:.0} deg",
+        p.min_distance,
+        p.max_distance,
+        controls.camera_pitch().to_degrees(),
+        p.fov,
+    )
+}
+
+/// Orders a light table nearest first by the distance of each point light to `eye` (render
+/// frame; lights without a position first, in their order) and keeps at most `max`.
+fn merge_nearest<T>(table: &mut Vec<(Light, T)>, eye: Vec3, max: usize) {
+    let d2 = |l: &Light| match l.kind {
+        tessera_render::LightKind::Point { position, .. } => {
+            let d = position.distance_squared(eye);
+            if d.is_finite() { d } else { f32::MAX }
+        }
+        _ => -1.0,
+    };
+    table.sort_by(|a, b| d2(&a.0).total_cmp(&d2(&b.0)));
+    table.truncate(max);
 }
 
 /// What a location report of the session does to the viewer.
@@ -625,6 +672,19 @@ pub const WORLD_KEYS: [tessera_input::KeyCode; 12] = {
     ]
 };
 
+/// Trims the curve states `states` when they hold more than `cap` entries: only the
+/// states used this frame (`seen`) are kept, as `FrameEnv::lights` does, so that no lamp
+/// in view restarts its intensity curve.
+fn trim_curve_states<K: Eq + std::hash::Hash, V>(
+    states: &mut HashMap<K, V>,
+    seen: &HashSet<K>,
+    cap: usize,
+) {
+    if states.len() > cap {
+        states.retain(|k, _| seen.contains(k));
+    }
+}
+
 /// The [`WORLD_KEYS`] that some binding of `keymap` uses (any context, alone or in a
 /// chord): the walker leaves them to the keymap, so a user's binding never fires twice.
 #[must_use]
@@ -750,6 +810,9 @@ pub struct Walker {
     avatar: Option<MeshId>,
     move_sent: Option<Instant>,
     viewport: (u32, u32),
+    /// The projection's vertical field of view (radians) and near plane (metres) the level
+    /// selection was last set for ([`Self::lens`]).
+    lens: (f32, f32),
     last_report: tessera_world::FrameReport,
     notice: Option<(String, Instant)>,
     characters: CharacterLayer,
@@ -796,6 +859,18 @@ pub struct Walker {
     stage_ambient: [f32; 3],
     /// Start of the material and light clock (`material.md` §5.3.1).
     clock_start: Instant,
+    /// The day and night lamp lights of placed light-glow objects (`instance-scripts.md`
+    /// §6, §9.4), once their source is read on a worker.
+    lamps: Option<LampLayer<LampSource<Arc<ArchiveSet>>>>,
+    /// The lamp source being read on a worker.
+    lamp_rx: Option<std::sync::mpsc::Receiver<Option<LampSource<Arc<ArchiveSet>>>>>,
+    /// Lamp lights in the frame's light table after its cut (this frame).
+    lamp_lights: usize,
+    /// Intensity curve states of lamp lights, per (landblock, SED index, night variant).
+    lamp_curves: HashMap<
+        (LandblockKey, u32, bool),
+        (tessera_material::FloatCurve, tessera_material::CurveState),
+    >,
     /// The eye of the previous frame (camera travel for fades).
     last_eye: Option<WorldPos>,
     /// Main-thread time of the environment and lights this frame.
@@ -1031,6 +1106,26 @@ impl Walker {
             pool.clone(),
             ctx.options().active_content_layers.clone(),
         );
+        // The lamp lights' source (`instance-scripts.md` §6): the time-override mapper is read
+        // on a worker (ARCHITECTURE §21).
+        let lamp_rx = catalog.scripts.clone().and_then(|vocab| {
+            let (tx, rx) = std::sync::mpsc::channel();
+            let data = Arc::clone(&catalog.data);
+            let job = move |_: &tessera_assets::JobContext<'_>| {
+                let _ = tx.send(LampSource::new(data, vocab));
+            };
+            match pool.spawn(
+                tessera_assets::Priority::Prefetch,
+                tessera_assets::CancelToken::new(),
+                job,
+            ) {
+                Ok(_) => Some(rx),
+                Err(e) => {
+                    tracing::warn!("lamp source job: {e}; no lamp lights");
+                    None
+                }
+            }
+        });
         // Mounts (`walker.md` §16): resolved against the install when requested.
         let mut mount = mount::session::WalkerMount::new(config.mount, set.dir().to_path_buf());
         mount.set_rider(catalog.appearance(&config.avatar).ok().map(|a| a.body));
@@ -1108,6 +1203,7 @@ impl Walker {
             avatar,
             move_sent: None,
             viewport: (1280, 720),
+            lens: (FOV_Y, NEAR),
             last_report: tessera_world::FrameReport::default(),
             notice: None,
             characters,
@@ -1140,6 +1236,10 @@ impl Walker {
             stage_ambient: [0.0; 3],
             clock_start: now,
             last_eye: None,
+            lamps: None,
+            lamp_rx,
+            lamp_curves: HashMap::new(),
+            lamp_lights: 0,
             env_ms: 0.0,
             frills_ms: 0.0,
             render_stats: FrameStats::default(),
@@ -1443,10 +1543,133 @@ impl Walker {
     pub fn set_viewport(&mut self, width: u32, height: u32) {
         self.viewport = (width.max(1), height.max(1));
         let h = self.viewport.1 as f32;
+        let (fov, _) = self.lens;
         self.terrain
-            .set_selector(LodSelector::from_fov(h, FOV_Y, self.config.pixel_tolerance));
+            .set_selector(LodSelector::from_fov(h, fov, self.config.pixel_tolerance));
         self.objects
-            .set_projection_scale(h / (2.0 * (FOV_Y / 2.0).tan()));
+            .set_projection_scale(h / (2.0 * (fov / 2.0).tan()));
+    }
+
+    /// The world camera's vertical field of view (radians) and near plane (metres): in walk
+    /// mode the camera state's (`walker.md` §11.7–§11.8: the record's FOV, vertical by the
+    /// §11.7 Decision, and near clip; [`CameraProfile::FALLBACK`] gives 45° and 0.1 m until
+    /// the record is read), else the walker's [`FOV_Y`] and [`NEAR`] (free fly and scripted
+    /// flights are Tessera's own cameras).
+    #[must_use]
+    pub fn lens(&self) -> (f32, f32) {
+        lens_of(self.controls.mode(), self.controls.camera_profile())
+    }
+
+    /// Adds the day and night lamp lights of placed light-glow objects to the frame's light
+    /// table (`instance-scripts.md` §6, §9.4; `lighting.md` §8.3 records with *σ* = 1, the
+    /// intensity curves on the material clock `time`): the lamps of the resident landblocks
+    /// within [`env::LIGHT_RADIUS`] of `eye`, lit by the day fraction `day_fraction`, outdoor
+    /// ones only with `outdoor` and interior ones only with `interior` (as the Light
+    /// entities). The table stays nearest first and at most [`env::MAX_TABLE_LIGHTS`]; lit
+    /// particle systems (`particle-runtime.md` §12 rule 13), decals (`decals.md` §9.1 (d))
+    /// and the world's objects take their lights from it.
+    fn add_lamp_lights(
+        &mut self,
+        anchor: &Anchor,
+        eye: &WorldPos,
+        day_fraction: f64,
+        time: f64,
+        (outdoor, interior): (bool, bool),
+    ) {
+        self.lamp_lights = 0;
+        if let Some(rx) = &self.lamp_rx {
+            match rx.try_recv() {
+                Ok(source) => {
+                    self.lamp_rx = None;
+                    self.lamps = source.map(|s| {
+                        LampLayer::new(Arc::new(s), self.pool.clone(), self.ctx_active_layers())
+                    });
+                    if self.lamps.is_none() {
+                        tracing::warn!("lamp source unavailable; no lamp lights");
+                    }
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => {}
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => self.lamp_rx = None,
+            }
+        }
+        let Some(lamps) = self.lamps.as_mut() else {
+            return;
+        };
+        lamps.sync(self.streamer.resident().map(|(k, _, b)| (k, b)));
+        let Some(eye_r) = anchor.to_render(eye) else {
+            return;
+        };
+        #[allow(clippy::cast_possible_truncation)]
+        let t = day_fraction as f32;
+        let rules = lamps.rules().clone();
+        let mut added: Vec<(Light, tessera_render::LightReach)> = Vec::new();
+        // The curve states used this frame (kept when the map is trimmed).
+        let mut seen: HashSet<(LandblockKey, u32, bool)> = HashSet::new();
+        for near in lamps.lamps_near(eye, env::LIGHT_RADIUS, env::MAX_TABLE_LIGHTS) {
+            if added.len() >= env::MAX_TABLE_LIGHTS {
+                break;
+            }
+            let l = near.lamp;
+            if (l.interior && !interior) || (!l.interior && !outdoor) {
+                continue;
+            }
+            let Some(p) = anchor.to_render(&near.position) else {
+                continue;
+            };
+            for (variant, glow) in l.lights_at(&rules, t) {
+                let params = &glow.params;
+                let intensity = match params.constant_intensity() {
+                    Some(v) => v,
+                    None => {
+                        let id = (near.key, l.index, variant == Variant::Night);
+                        seen.insert(id);
+                        let (curve, state) = self.lamp_curves.entry(id).or_insert_with(|| {
+                            (
+                                env::material_curve(&params.intensity),
+                                tessera_material::CurveState::new(),
+                            )
+                        });
+                        curve.evaluate_finite(time, state)
+                    }
+                };
+                let rec = LightRecord::point(params, p.to_array(), params.range, intensity, 1.0);
+                added.push((
+                    Light {
+                        kind: tessera_render::LightKind::Point {
+                            position: p,
+                            range: rec.range,
+                            attenuation: rec.k,
+                        },
+                        color: rec.colour,
+                        specular: rec.specular,
+                    },
+                    env::light_reach(params, params.range),
+                ));
+            }
+        }
+        trim_curve_states(&mut self.lamp_curves, &seen, 4 * env::MAX_TABLE_LIGHTS);
+        if added.is_empty() {
+            return;
+        }
+        // Each entry carries whether it is a lamp light, to count those the cut keeps.
+        let mut table: Vec<(Light, (tessera_render::LightReach, bool))> = self
+            .lights
+            .drain(..)
+            .zip(self.light_reach.drain(..).map(|r| (r, false)))
+            .chain(added.into_iter().map(|(l, r)| (l, (r, true))))
+            .collect();
+        merge_nearest(&mut table, eye_r, env::MAX_TABLE_LIGHTS);
+        self.lamp_lights = table.iter().filter(|(_, (_, lamp))| *lamp).count();
+        (self.lights, self.light_reach) = table.into_iter().map(|(l, (r, _))| (l, r)).unzip();
+    }
+
+    /// The content layers the world treats as active.
+    fn ctx_active_layers(&self) -> Vec<u32> {
+        self.streamer
+            .context()
+            .options()
+            .active_content_layers
+            .clone()
     }
 
     /// Shows `text` on the HUD for a few seconds.
@@ -1483,6 +1706,14 @@ impl Walker {
             && self.far_view_settled()
             && self.effects.settled()
             && self.combat.settled()
+            && self.lamps_settled()
+    }
+
+    /// Whether the lamp lights are built for every resident landblock (or not drawn: the
+    /// lights switched off, no source).
+    fn lamps_settled(&self) -> bool {
+        !self.systems.on(System::Lights)
+            || (self.lamp_rx.is_none() && self.lamps.as_ref().is_none_or(LampLayer::settled))
     }
 
     /// Whether landscape water is drawn: switched on and outdoor-visible (§4.12).
@@ -1548,6 +1779,9 @@ impl Walker {
         }
         if !self.combat.settled() {
             out.push("combat visuals");
+        }
+        if !self.lamps_settled() {
+            out.push("lamp lights");
         }
         out
     }
@@ -1876,9 +2110,21 @@ impl Walker {
                 );
                 self.lights = lights;
                 self.light_reach = reach;
+                self.add_lamp_lights(
+                    &anchor,
+                    &eye_w,
+                    fe.time_of_day,
+                    time,
+                    if self.camera_cell.is_some() {
+                        (false, true)
+                    } else {
+                        (true, self.config.interiors)
+                    },
+                );
             } else {
                 self.lights.clear();
                 self.light_reach.clear();
+                self.lamp_lights = 0;
             }
             self.frame_env = Some(fe);
         }
@@ -1931,7 +2177,8 @@ impl Walker {
                     ring,
                     fv.near_radius(),
                 );
-                let view = farview::sprite_view(self.viewport.1, FOV_Y, &self.config.distances);
+                let view =
+                    farview::sprite_view(self.viewport.1, self.lens.0, &self.config.distances);
                 fv.update(renderer, &mut self.objects, Some(&eye), near, view);
                 // The terrain draws this frame and meshes next frame by the new hand-off.
                 self.terrain.set_far_view(Some(fv.hand_off()));
@@ -2003,6 +2250,17 @@ impl Walker {
             now,
             dt,
         );
+        // The walk camera follows the install's camera state and the player's look-at
+        // height, and gives the layer the point it looks at for the target fade
+        // (`walker.md` §11.6–§11.8); before the draws.
+        self.controls.follow_characters(&mut self.characters);
+        let lens = self.lens();
+        if lens != self.lens {
+            // Level selection and the projected-size cull follow the field of view drawn.
+            self.lens = lens;
+            let (w, h) = self.viewport;
+            self.set_viewport(w, h);
+        }
         chars_ms += t_chars.elapsed().as_secs_f64() * 1e3;
         self.chars_ms = chars_ms;
         self.uploaded = budget.taken;
@@ -2025,6 +2283,7 @@ impl Walker {
                     reach: &self.light_reach,
                     anchor: self.anchor,
                 });
+        self.effects.note_lamp_lights(self.lamp_lights);
         self.effects.update(
             effects::EffectInput {
                 dt: f64::from(dt),
@@ -2060,6 +2319,13 @@ impl Walker {
             characters: &mut self.characters,
             effects: &mut self.effects,
         });
+        // Clips of session figures' looping nodes that wait for their clip (started by the
+        // effects or the combat layer this frame) are decoded on the character layer's
+        // workers; its next update starts the jobs (ARCHITECTURE §21).
+        let deferred_clips = self.effects.take_session_clip_prefetch();
+        if !deferred_clips.is_empty() {
+            self.characters.prefetch_clips(deferred_clips);
+        }
 
         // World audio: listener at the camera, the avatar at the player (ROADMAP M6).
         if self.audio.is_some() {
@@ -2764,6 +3030,9 @@ impl Walker {
                 GREY,
             ));
         }
+        if self.controls.mode() == MoveMode::Walk && self.flight.is_none() {
+            out.push((camera_hud_line(&self.controls), GREY));
+        }
         // `walker.md` §16.9: the mount line below the movement-state line.
         if let Some(line) = self.mount.hud_line(self.controls.physics(), now) {
             out.push((line, GOLD));
@@ -3169,13 +3438,14 @@ impl Walker {
         if let (Some(anchor), true) = (self.anchor, self.controls.placed()) {
             let (eye_w, dir) = self.view();
             let eye = anchor.to_render(&eye_w).unwrap_or(Vec3::ZERO);
+            let (fov_y, near) = self.lens();
             let camera = Camera {
                 eye,
                 target: eye + dir,
                 up: Vec3::Z,
                 projection: Perspective {
-                    fov_y: FOV_Y,
-                    near: NEAR,
+                    fov_y,
+                    near,
                     far: self.far,
                 },
             };
@@ -3539,13 +3809,14 @@ impl Walker {
         }
         let (eye_w, dir) = self.view();
         let eye = anchor.to_render(&eye_w)?;
+        let (fov_y, near) = self.lens();
         let camera = Camera {
             eye,
             target: eye + dir,
             up: Vec3::Z,
             projection: Perspective {
-                fov_y: FOV_Y,
-                near: NEAR,
+                fov_y,
+                near,
                 far: self.far,
             },
         };
@@ -3597,8 +3868,8 @@ impl Walker {
             return (eye, dir);
         }
         let ground = self.terrain.tiles().height_at(eye.x, eye.y);
-        let feet = self.controls.avatar().map(|(feet, _)| feet);
-        controls::keep_above_terrain(eye, dir, ground, feet)
+        // The camera turns towards the point it looks at (`walker.md` §11.7 step 1).
+        controls::keep_above_terrain_towards(eye, dir, ground, self.controls.camera_target())
     }
 
     /// Whether the scripted flight has finished (always false without one).
@@ -3841,5 +4112,80 @@ mod tests {
         assert!((190 << 20..=210 << 20).contains(&far), "{far}");
         assert!(terrain_arena_reserve(f64::NAN) >= MIN_TERRAIN_ARENA);
         assert!(terrain_arena_reserve(f64::INFINITY) < u64::MAX);
+    }
+
+    /// `walker.md` §11.7–§11.8: the walk camera's projection takes the camera state's FOV
+    /// (vertical) and near plane; the fallback profile gives the §11.8 values; fly mode
+    /// keeps the walker's own.
+    #[test]
+    fn the_walk_projection_follows_the_camera_state() {
+        let (fov, near) = lens_of(MoveMode::Walk, &CameraProfile::FALLBACK);
+        assert!((fov - FOV_Y).abs() < 1e-6);
+        assert!((near - NEAR).abs() < 1e-6);
+        let wide = CameraProfile {
+            fov: 60.0,
+            near: 0.25,
+            ..CameraProfile::FALLBACK
+        };
+        let (fov, near) = lens_of(MoveMode::Walk, &wide);
+        assert!((fov - 60f32.to_radians()).abs() < 1e-6);
+        assert!((near - 0.25).abs() < 1e-6);
+        assert_eq!(lens_of(MoveMode::Fly, &wide), (FOV_Y, NEAR));
+    }
+
+    /// The lamp lights join the light table nearest first, and the table keeps its cap.
+    /// Over the cap, the lamp curve states keep those used this frame (a lamp in view
+    /// does not restart its curve); under it, all are kept.
+    #[test]
+    fn lamp_curve_states_keep_the_lamps_in_view() {
+        let mut states: HashMap<u32, u32> = (0..10).map(|i| (i, i * 10)).collect();
+        let seen: HashSet<u32> = [2, 7].into_iter().collect();
+        trim_curve_states(&mut states, &seen, 10);
+        assert_eq!(states.len(), 10, "at the cap: kept");
+        trim_curve_states(&mut states, &seen, 9);
+        let mut kept: Vec<_> = states.into_iter().collect();
+        kept.sort_unstable();
+        assert_eq!(
+            kept,
+            vec![(2, 20), (7, 70)],
+            "the states in use keep their values"
+        );
+    }
+
+    #[test]
+    fn lamp_lights_merge_nearest_first() {
+        let point = |x: f32| {
+            (
+                Light {
+                    kind: tessera_render::LightKind::Point {
+                        position: Vec3::new(x, 0.0, 0.0),
+                        range: 10.0,
+                        attenuation: 0.1,
+                    },
+                    color: [1.0; 3],
+                    specular: [1.0; 3],
+                },
+                tessera_render::LightReach::default(),
+            )
+        };
+        let x = |t: &[(Light, tessera_render::LightReach)]| -> Vec<f32> {
+            t.iter()
+                .map(|(l, _)| match l.kind {
+                    tessera_render::LightKind::Point { position, .. } => position.x,
+                    _ => f32::NAN,
+                })
+                .collect()
+        };
+        // The table's lights (nearest first), then the lamps.
+        let mut t = vec![point(1.0), point(5.0), point(9.0), point(3.0), point(-2.0)];
+        merge_nearest(&mut t, Vec3::ZERO, 4);
+        assert_eq!(x(&t), vec![1.0, -2.0, 3.0, 5.0]);
+        let mut nan = vec![point(f32::NAN), point(2.0)];
+        merge_nearest(&mut nan, Vec3::ZERO, 8);
+        assert_eq!(
+            x(&nan)[0],
+            2.0,
+            "a light without a finite distance goes last"
+        );
     }
 }

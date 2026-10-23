@@ -728,6 +728,27 @@ impl SystemSim {
         s.particles.len() > before
     }
 
+    /// [`SystemSim::spawn_on`] with the particle's base point at `point` in the simulation
+    /// frame instead of the system's origin: the offset is `point` − the system's current
+    /// frame position (`particle-runtime.md` §11.2.4 step 6, the spawn positions of the
+    /// weather code handed to a system relative to its placement, so that the particle
+    /// appears at `point` wherever the system was placed last). The emitter's own shape point
+    /// and origin are added as for any spawn. `false` when `point` is not finite or the spawn
+    /// is skipped.
+    pub fn spawn_on_point(
+        &mut self,
+        emitter: usize,
+        now: f64,
+        point: Vec3,
+        rng: &mut Ran2,
+    ) -> bool {
+        let offset = point - self.frame.position;
+        if !offset.is_finite() {
+            return false;
+        }
+        self.spawn_on(emitter, now, now, offset, rng)
+    }
+
     /// Recomputes every emitter's gravity and wind from `wind` (the eased global wind) in
     /// the system's current frame (§8.8 "Recomputation"; only the weather code calls it).
     pub fn recompute_forces(&mut self, wind: Vec3) {

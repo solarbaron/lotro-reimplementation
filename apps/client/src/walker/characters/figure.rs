@@ -1250,8 +1250,11 @@ pub fn prop_anchor_rule(attached: bool, location: u32, bone_type: u32) -> PropAn
 /// at its frame, or the holder's model origin. `None` when the setup lacks the named
 /// location or bone (the node shows nothing). The placement frame and scale are applied by
 /// the caller (`appearance.md` §5.7). An unattached node's anchor is read once at placement
-/// in the client; here every prop follows its anchor (the screen figures' props are held
-/// parts of the figure).
+/// (`script-table.md` §5.2 answer: its prop's world transform is the one at placement and
+/// stays fixed; the Tessera rule lets it be a part of the figure on that condition). The
+/// prop parts built here are attach-table entries, so they follow the anchor every frame;
+/// freezing the transform of an unattached prop at its placement is the draw path's part
+/// ([`super::live::ScreenProp::attached`] tells the two apart) and is not done yet.
 fn prop_anchor(
     setup: &tessera_formats::setup::Setup,
     prop: &super::live::ScreenProp,

@@ -25,10 +25,21 @@
 //! frame: Random nodes pick their gestures over time, Sequences and Timers run their later
 //! steps, Switch transition ports run. Animation nodes become script clips on the figure's
 //! animator ([`super::combat_anim`], `script-table.md` §6.10) except the held proportion
-//! clips the figure's shape path already holds (§6.7, §6.8); MeshFX nodes show and hide the
-//! prop parts. A change of `CharGen_Stage` or `CharGen_Action` is a property change of the
-//! running entity ([`LiveFigure::set_keys`]): its Switches change branch, the transition
-//! ports run, and the clips that keep running (the idle) are not restarted.
+//! clips the figure's shape path already holds (§6.7, §6.8); MeshFX nodes give the prop
+//! parts the life of `appearance.md` §5.7 step 4 ([`tessera_mesh::assembly::prop_life`]):
+//! the prop is placed when its node starts (its parts are built with the figure); its
+//! `Render_Opacity` rises over `FadeInTime`; a `Persistent` 0 node completes at once and its
+//! prop fades out at *t*₀ + `FadeInTime` + `LifeTime`; a `Persistent` 1 node's prop fades
+//! out when the node stops; the prop is gone the sum of `FadeOutTime`, `DestroyTime` and
+//! 0.1 s after its fade-out starts. The opacity and the translucent flag are computed
+//! ([`LiveFigure::prop_opacity`], [`LiveFigure::prop_translucent`]), but the viewport's draw
+//! does not use them yet: it draws a prop part at full opacity in the opaque stage while
+//! its opacity is above 0 ([`LiveFigure::prop_shown`]), so a fade shows as a pop. Nor does
+//! the draw keep the transform of an unattached node's prop fixed at its placement
+//! (`script-table.md` §5.2 answer); it follows the anchor every frame. A change of
+//! `CharGen_Stage` or `CharGen_Action` is a property change of the running entity
+//! ([`LiveFigure::set_keys`]): its Switches change branch, the transition ports run, and
+//! the clips that keep running (the idle) are not restarted.
 //!
 //! Clips that animation nodes start while the figure's start-up scripts are being started
 //! ([`LiveFigure::start`]) take `RampIn` 0, so they appear at full weight at once
@@ -41,7 +52,7 @@
 //! the build's resolution), sounds and particle nodes of the screen figure (the viewport
 //! draws neither).
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use tessera_anim::BoundClip;
@@ -53,6 +64,7 @@ use tessera_formats::script_table::{
 };
 use tessera_formats::{Did, PropertyValue, ScriptTable, Scriptlet};
 use tessera_mesh::assembly::ScriptAppearance;
+use tessera_mesh::assembly::prop_life::{PropLife, PropStart, PropTimes, start_rule};
 use tessera_props::PropertyRegistry;
 use tessera_scriptgraph::{
     AnimationHandle, AnimationOutcome, EffectSink, EntityId as GraphEntity, EntityInit,
@@ -74,6 +86,9 @@ pub const MAX_LIVE_BYTES: usize = 32 << 20;
 pub const MAX_LIVE_CLIPS: usize = 256;
 /// Most props a figure carries.
 pub const MAX_PROPS: usize = 16;
+/// Most prop instances alive at once on one figure (MeshFX starts beyond it show nothing;
+/// a hostile graph that starts props in a loop stays bounded).
+pub const MAX_PROP_INSTANCES: usize = 64;
 /// Most appearance variants (distinct stage piece sets) a figure is built with.
 pub const MAX_VARIANTS: usize = 4;
 /// Most `CharGen_Stage` case values resolved for their pieces.
@@ -291,6 +306,9 @@ pub struct LivePackage {
     pub prop_notes: Vec<String>,
     /// The PIDs of the MeshFX fields driven values may set (`script-table.md` §4.2).
     pub mesh_fx_pids: MeshFxFieldPids,
+    /// The dictionary default of `Render_Opacity`, the opacity a prop's fade-in reaches
+    /// (`appearance.md` §5.7 step 4: 1 in this install, 1 when the dictionary has none).
+    pub prop_full_opacity: f32,
 }
 
 impl std::fmt::Debug for LivePackage {
@@ -526,6 +544,12 @@ pub fn capture(
         records
     };
     let mesh_fx_pids = MeshFxFieldPids::from_names(dict);
+    let prop_full_opacity = registry
+        .pid("Render_Opacity")
+        .and_then(|p| dict.default_value(p))
+        .and_then(|v| v.as_f64())
+        .filter(|v| v.is_finite())
+        .map_or(1.0, |v| v.clamp(0.0, 1.0) as f32);
     tracing::debug!(
         records = records.len(),
         clips = clips_decoded,
@@ -549,6 +573,7 @@ pub fn capture(
             props_reached,
             prop_notes: Vec::new(),
             mesh_fx_pids,
+            prop_full_opacity,
         },
         props,
         stage_pieces,
@@ -676,6 +701,8 @@ pub struct LiveStats {
     pub held_skipped: u64,
     /// Props shown by MeshFX nodes.
     pub props_shown: u64,
+    /// Prop instances removed after their fade-out (`appearance.md` §5.7 step 4).
+    pub props_removed: u64,
     /// MeshFX nodes whose prop was not built with the figure (nothing shown).
     pub props_unbuilt: u64,
     /// Key changes passed to the running scripts.
@@ -691,14 +718,20 @@ pub struct LiveFigure {
     keys: (Option<u32>, Option<u32>),
     next: u64,
     commands: Vec<ClipCommand>,
-    shown: HashSet<u32>,
-    mesh: HashMap<u64, u32>,
+    props: HashMap<u64, LiveProp>,
     rng: u64,
     stats: LiveStats,
     running: HashMap<u64, RunningClip>,
     deferred: HashMap<u64, (AnimationNode, f32)>,
     unmatched: Vec<(Did, u32)>,
     time: f64,
+}
+
+/// One prop instance a MeshFX node started: the prop's attach key and its life.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct LiveProp {
+    key: u32,
+    life: PropLife,
 }
 
 /// Most MeshFX (entity, holding location) pairs remembered whose prop was not built
@@ -737,8 +770,7 @@ struct LiveSink<'a> {
     net: tessera_net::EntityId,
     next: &'a mut u64,
     commands: &'a mut Vec<ClipCommand>,
-    shown: &'a mut HashSet<u32>,
-    mesh: &'a mut HashMap<u64, u32>,
+    props: &'a mut HashMap<u64, LiveProp>,
     rng: &'a mut u64,
     stats: &'a mut LiveStats,
     running: &'a mut HashMap<u64, RunningClip>,
@@ -925,8 +957,17 @@ impl EffectSink for LiveSink<'_> {
         }
     }
 
+    /// `appearance.md` §5.7 step 4 sub-step 1: nothing for `Entity` 0; otherwise the prop
+    /// is placed at once (its parts are built with the figure) and fades in; a `Persistent`
+    /// 1 node runs until it is stopped, a `Persistent` 0 node completes at once and leaves
+    /// its prop to its times. Bit 6 of the starting context's flags is clear in Tessera's
+    /// runtime (`particle-runtime.md` Q-RT2).
     fn start_mesh_fx(&mut self, request: &MeshFxStart<'_>) -> MeshFxOutcome {
         let n = &effective_mesh_fx(request.node, request.driven, &self.package.mesh_fx_pids);
+        let rule = start_rule(n.entity.is_null(), n.persistent, false);
+        if rule == PropStart::Nothing {
+            return MeshFxOutcome::CompleteAtOnce;
+        }
         let Some(i) = ScreenProp::find(&self.package.props, n) else {
             self.stats.props_unbuilt += 1;
             if self.unmatched.len() < MAX_UNMATCHED
@@ -936,19 +977,32 @@ impl EffectSink for LiveSink<'_> {
             }
             return MeshFxOutcome::CompleteAtOnce;
         };
+        if self.props.len() >= MAX_PROP_INSTANCES {
+            tracing::debug!("live figure: too many props alive; MeshFX node shows nothing");
+            return MeshFxOutcome::CompleteAtOnce;
+        }
         let key = PROP_KEY_BASE + u32::try_from(i).unwrap_or(0);
+        let now = *self.time;
+        let mut life = PropLife::start(
+            PropTimes::of(n),
+            now,
+            f64::from(self.package.prop_full_opacity),
+        );
+        life.place(now);
         let h = self.handle();
-        self.mesh.insert(h, key);
-        self.shown.insert(key);
+        self.props.insert(h, LiveProp { key, life });
         self.stats.props_shown += 1;
-        MeshFxOutcome::RunUntilStopped(MeshFxHandle(h))
+        match rule {
+            PropStart::RunUntilStopped => MeshFxOutcome::RunUntilStopped(MeshFxHandle(h)),
+            PropStart::CompleteAtOnce | PropStart::Nothing => MeshFxOutcome::CompleteAtOnce,
+        }
     }
 
+    /// Sub-step 5: the prop of a stopped `Persistent` 1 node fades out from the stop time.
     fn stop_mesh_fx(&mut self, handle: MeshFxHandle) {
-        if let Some(key) = self.mesh.remove(&handle.0)
-            && !self.mesh.values().any(|k| *k == key)
-        {
-            self.shown.remove(&key);
+        let now = *self.time;
+        if let Some(p) = self.props.get_mut(&handle.0) {
+            p.life.stop(now);
         }
     }
 }
@@ -964,8 +1018,7 @@ impl LiveFigure {
             net,
             next,
             commands,
-            shown,
-            mesh,
+            props,
             rng,
             stats,
             running,
@@ -980,8 +1033,7 @@ impl LiveFigure {
             net: *net,
             next,
             commands,
-            shown,
-            mesh,
+            props,
             rng,
             stats,
             running,
@@ -1019,8 +1071,7 @@ impl LiveFigure {
             net,
             next: LIVE_HANDLE_BASE,
             commands: Vec::new(),
-            shown: HashSet::new(),
-            mesh: HashMap::new(),
+            props: HashMap::new(),
             stats: LiveStats::default(),
             running: HashMap::new(),
             deferred: HashMap::new(),
@@ -1092,6 +1143,10 @@ impl LiveFigure {
         }
         let now = self.time;
         self.running.retain(|_, c| c.until.is_none_or(|u| u > now));
+        // `appearance.md` §5.7 step 4 sub-step 4: props past their removal time are gone.
+        let before = self.props.len();
+        self.props.retain(|_, p| !p.life.removed(now));
+        self.stats.props_removed += (before - self.props.len()) as u64;
     }
 
     /// The clip commands since the last call, for the figure's animator.
@@ -1099,10 +1154,43 @@ impl LiveFigure {
         std::mem::take(&mut self.commands)
     }
 
-    /// Whether the prop part with attach key `key` is shown (its MeshFX node runs).
+    /// Whether the prop part with attach key `key` is shown: a prop instance of it is
+    /// placed, not yet removed, and its `Render_Opacity` is above 0 now
+    /// (`appearance.md` §5.7 step 4).
     #[must_use]
     pub fn prop_shown(&self, key: u32) -> bool {
-        self.shown.contains(&key)
+        self.prop_opacity(key).is_some_and(|o| o > 0.0)
+    }
+
+    /// The `Render_Opacity` of the prop part with attach key `key` now: the largest of its
+    /// live instances (`appearance.md` §5.7 step 4: fade-in, fade-out, 0 during
+    /// `DestroyTime`); `None` when no instance of it is alive. The Tessera drawing rule of
+    /// §5.7 multiplies the part's drawn opacity by it.
+    #[must_use]
+    pub fn prop_opacity(&self, key: u32) -> Option<f32> {
+        #[allow(clippy::cast_possible_truncation)]
+        self.props
+            .values()
+            .filter(|p| p.key == key)
+            .filter_map(|p| p.life.opacity(self.time))
+            .map(|o| o as f32)
+            .reduce(f32::max)
+    }
+
+    /// Whether the prop part with attach key `key` is drawn in the translucent stage now
+    /// (the Tessera drawing rule of `appearance.md` §5.7: `Translucent` set by its fade-out,
+    /// or `Render_Opacity` below 1).
+    #[must_use]
+    pub fn prop_translucent(&self, key: u32) -> bool {
+        self.props.values().filter(|p| p.key == key).any(|p| {
+            p.life.translucent(self.time) || p.life.opacity(self.time).is_some_and(|o| o < 1.0)
+        })
+    }
+
+    /// Prop instances alive now (placed and not removed).
+    #[must_use]
+    pub fn props_alive(&self) -> usize {
+        self.props.len()
     }
 
     /// The props the figure was built with ([`ScreenProp`], shown while their MeshFX node

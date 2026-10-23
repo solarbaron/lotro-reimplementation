@@ -59,6 +59,7 @@
 //! [`AssemblyLimits::max_total_layers`] groups.
 
 pub mod look;
+pub mod prop_life;
 mod resolve;
 pub mod shape;
 mod source;

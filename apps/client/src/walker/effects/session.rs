@@ -15,6 +15,11 @@
 //! animates them by the walker's own rule, `walker.md` §10), with their figure's tables and
 //! stored values, and seeded from their network ID.
 //!
+//! A looping animation node whose clip is still being decoded on the workers (the frame
+//! thread reads no clip, ARCHITECTURE §21) runs until stopped and its clip starts once
+//! decoded ([`DeferredClips`]), as on the character layer's live figures; a one-shot node,
+//! or one whose clip failed, completes at once.
+//!
 //! A beam's ribbon (§11.1 step 6) is drawn by [`super::EffectLayer::draw`] with the surfaces
 //! of its three materials, its head entity (step 9) by [`super::EffectLayer::draw_heads`]
 //! through the object layer's instanced models.
@@ -55,6 +60,9 @@ pub const MAX_BEAMS: usize = 256;
 pub const MAX_PENDING_HOOKS: usize = 4096;
 /// Most clip Play commands queued between two drains.
 pub const MAX_CLIP_COMMANDS: usize = 4096;
+/// Most looping animation nodes of session figures waiting for their clip to be decoded
+/// (further ones complete at once without a clip).
+pub const MAX_DEFERRED_CLIPS: usize = 1024;
 /// Most entries of an Execute target array.
 pub const MAX_UPCOMING_TARGETS: usize = 256;
 /// Height above an owner's origin used as its box centre when it has no skeleton point
@@ -116,6 +124,9 @@ pub(super) struct SessionState {
     pub next: u64,
     pub clips: Vec<ClipCommand>,
     pub next_clip: u64,
+    /// Looping animation nodes whose clip was still being decoded when they started (their
+    /// clip starts once decoded, [`FxState::retry_session_clips`]).
+    pub deferred: DeferredClips,
     pub clip_ctx: Option<Arc<FigureContext>>,
     pub hooks: Vec<StoryHookEvent>,
     pub upcoming: UpcomingView,
@@ -130,6 +141,297 @@ pub(super) struct SessionState {
     pub clips_started: u64,
     pub story_hooks: u64,
     pub story_hooks_with_story: u64,
+}
+
+/// What a deferred node's clip is now ([`retry_deferred`]).
+#[derive(Debug, Clone)]
+pub(super) enum ClipLookup<C> {
+    /// Decoded and bound to the figure's skeleton.
+    Ready(C),
+    /// Still being decoded on the workers.
+    Decoding,
+    /// Failed for good, does not fit the skeleton, or the figure is gone.
+    Gone,
+}
+
+/// Looping animation nodes of session figures whose clip was still being decoded when the
+/// node started, by sink handle (the way the character layer's live figures wait for
+/// theirs): the node runs until stopped, and its clip starts under the same handle once
+/// decoded. Bounded by [`MAX_DEFERRED_CLIPS`].
+#[derive(Debug, Default)]
+pub(super) struct DeferredClips {
+    waiting: HashMap<u64, (u64, AnimationNode, f32)>,
+    /// Clip DIDs of nodes deferred since the last [`Self::take_prefetch`], each once (at most
+    /// [`MAX_DEFERRED_CLIPS`]): the walker asks the character layer to decode them, so a
+    /// waiting node does not depend on a frame-thread miss having queued its clip.
+    prefetch: Vec<u32>,
+    /// Nodes deferred so far.
+    pub deferred: u64,
+}
+
+impl DeferredClips {
+    /// Defers `node` (intensity `intensity`) of session figure `net` under `handle`; `false`
+    /// when [`MAX_DEFERRED_CLIPS`] are waiting already (the node then completes at once).
+    pub fn defer(&mut self, handle: u64, net: u64, node: &AnimationNode, intensity: f32) -> bool {
+        if self.waiting.len() >= MAX_DEFERRED_CLIPS {
+            return false;
+        }
+        self.waiting.insert(handle, (net, *node, intensity));
+        self.deferred += 1;
+        let did = node.asset.0;
+        if self.prefetch.len() < MAX_DEFERRED_CLIPS && !self.prefetch.contains(&did) {
+            self.prefetch.push(did);
+        }
+        true
+    }
+
+    /// The clip DIDs to decode for the nodes deferred since the last call (each once).
+    pub fn take_prefetch(&mut self) -> Vec<u32> {
+        std::mem::take(&mut self.prefetch)
+    }
+
+    /// The node of `handle` stopped: `true` when it was still waiting (its clip never
+    /// started, so there is nothing to stop).
+    pub fn stop(&mut self, handle: u64) -> bool {
+        self.waiting.remove(&handle).is_some()
+    }
+
+    /// A driven field of a waiting node changed (§6.10 step 7): its clip will start with
+    /// the new values (the clip asset kept). `true` when `handle` was waiting.
+    pub fn update(&mut self, handle: u64, node: &AnimationNode) -> bool {
+        let Some(w) = self.waiting.get_mut(&handle) else {
+            return false;
+        };
+        w.1 = AnimationNode {
+            asset: w.1.asset,
+            ..*node
+        };
+        true
+    }
+
+    /// Session figure `net` left: its waiting nodes are dropped.
+    pub fn forget(&mut self, net: u64) {
+        self.waiting.retain(|_, w| w.0 != net);
+    }
+
+    /// Nodes waiting.
+    pub fn len(&self) -> usize {
+        self.waiting.len()
+    }
+
+    /// Whether no node waits.
+    pub fn is_empty(&self) -> bool {
+        self.waiting.is_empty()
+    }
+}
+
+/// One pass over the waiting nodes of `deferred`, in start order (handles grow): `lookup`
+/// tells what a node's clip is now (by figure and clip DID); a ready clip is handed to `play`
+/// with the node's handle, figure, node and intensity, and the node stops waiting when
+/// `play` queued it (`false`: the command list is full, tried again next pass); a clip that
+/// is gone drops the node (it keeps running without a clip); a decoding one keeps it.
+pub(super) fn retry_deferred<C>(
+    deferred: &mut DeferredClips,
+    mut lookup: impl FnMut(u64, u32) -> ClipLookup<C>,
+    mut play: impl FnMut(u64, u64, &AnimationNode, f32, C) -> bool,
+) {
+    let mut waiting: Vec<(u64, (u64, AnimationNode, f32))> =
+        deferred.waiting.iter().map(|(h, w)| (*h, *w)).collect();
+    waiting.sort_unstable_by_key(|(h, _)| *h);
+    for (handle, (net, node, intensity)) in waiting {
+        match lookup(net, node.asset.0) {
+            ClipLookup::Ready(clip) => {
+                if play(handle, net, &node, intensity, clip) {
+                    deferred.waiting.remove(&handle);
+                }
+            }
+            ClipLookup::Gone => {
+                deferred.waiting.remove(&handle);
+            }
+            ClipLookup::Decoding => {}
+        }
+    }
+}
+
+/// The decoded clips session figures bind their animation nodes' clips from (the character
+/// layer's [`FigureContext`] clip store; a stand-in in tests).
+pub(super) trait SessionClipSource {
+    /// Whether clip `did` is in the store (decoded, or failed for good): binding it then
+    /// reads nothing on the frame thread.
+    fn decoded(&self, did: u32) -> bool;
+    /// Clip `did` bound to `skeleton`. On the frame thread a clip not decoded yet is not
+    /// read: the call fails, counts a frame-thread miss and queues the clip for the workers.
+    fn bind(
+        &self,
+        did: u32,
+        skeleton: &Arc<tessera_anim::Skeleton>,
+    ) -> Result<Arc<tessera_anim::BoundClip>, String>;
+}
+
+impl SessionClipSource for FigureContext {
+    fn decoded(&self, did: u32) -> bool {
+        self.clips.has(did)
+    }
+
+    fn bind(
+        &self,
+        did: u32,
+        skeleton: &Arc<tessera_anim::Skeleton>,
+    ) -> Result<Arc<tessera_anim::BoundClip>, String> {
+        self.clips.bind(&self.set, did, skeleton)
+    }
+}
+
+/// Binds clip `did` to `skeleton`: [`ClipLookup::Ready`] when it binds,
+/// [`ClipLookup::Gone`] when it is in the store and still does not bind (failed for good,
+/// or does not fit the skeleton), [`ClipLookup::Decoding`] when it is not in the store. A
+/// failed bind followed by a clip found in the store is bound once more: a worker may have
+/// stored the clip between the two calls (it then binds without a read).
+fn bind_clip<S: SessionClipSource + ?Sized>(
+    src: &S,
+    did: u32,
+    skeleton: &Arc<tessera_anim::Skeleton>,
+) -> ClipLookup<Arc<tessera_anim::BoundClip>> {
+    match src.bind(did, skeleton) {
+        Ok(c) => ClipLookup::Ready(c),
+        Err(_) if src.decoded(did) => match src.bind(did, skeleton) {
+            Ok(c) => ClipLookup::Ready(c),
+            Err(_) => ClipLookup::Gone,
+        },
+        Err(_) => ClipLookup::Decoding,
+    }
+}
+
+impl SessionState {
+    /// An animation node on a session figure (`script-table.md` §6.10): the clip bound to the
+    /// figure's skeleton and its Play command queued for the character layer. A looping
+    /// node whose clip is not in the store yet is deferred without binding (no read and no
+    /// frame-thread miss): it runs until stopped, its clip is asked for once
+    /// ([`DeferredClips::take_prefetch`]) and starts once decoded ([`Self::retry_clips`]).
+    /// A one-shot node whose clip is not decoded, or a clip that failed, completes at once.
+    pub(super) fn start_animation<S: SessionClipSource + ?Sized>(
+        &mut self,
+        rng: &mut Ran2,
+        src: &S,
+        entity: EntityId,
+        node: &AnimationNode,
+        intensity: f32,
+    ) -> AnimationOutcome {
+        let Some(&net) = self.by_runtime.get(&entity) else {
+            return AnimationOutcome::CompleteAtOnce;
+        };
+        let Some(skel) = self.views.get(&net).and_then(|v| v.skeleton.clone()) else {
+            return AnimationOutcome::CompleteAtOnce;
+        };
+        if node.asset.is_null() || self.clips.len() >= MAX_CLIP_COMMANDS {
+            return AnimationOutcome::CompleteAtOnce;
+        }
+        let did = node.asset.0;
+        if node.loop_forever && !src.decoded(did) && self.deferred.len() < MAX_DEFERRED_CLIPS {
+            let handle = self.next_session_clip();
+            if self.deferred.defer(handle, net, node, intensity) {
+                return AnimationOutcome::RunUntilStopped(AnimationHandle(handle));
+            }
+        }
+        let ClipLookup::Ready(clip) = bind_clip(src, did, &skel) else {
+            return AnimationOutcome::CompleteAtOnce;
+        };
+        let handle = self.next_session_clip();
+        match self.play_clip(rng, net, handle, node, intensity, clip) {
+            Some(ClipRun::For(t)) => AnimationOutcome::RunFor(AnimationHandle(handle), t),
+            Some(ClipRun::UntilStopped) => {
+                AnimationOutcome::RunUntilStopped(AnimationHandle(handle))
+            }
+            Some(ClipRun::Refused) | None => AnimationOutcome::CompleteAtOnce,
+        }
+    }
+
+    /// A new clip handle of the session sink.
+    fn next_session_clip(&mut self) -> u64 {
+        let handle = self.next_clip;
+        self.next_clip = self.next_clip.wrapping_add(1);
+        handle
+    }
+
+    /// Queues the Play command of `node`'s bound `clip` on session figure `net` under
+    /// `handle` (`script-table.md` §6.10 step 1: the start fraction, drawn from `rng` when
+    /// the node asks for a random one). `None` when the command list is full (nothing
+    /// queued).
+    fn play_clip(
+        &mut self,
+        rng: &mut Ran2,
+        net: u64,
+        handle: u64,
+        node: &AnimationNode,
+        intensity: f32,
+        clip: Arc<tessera_anim::BoundClip>,
+    ) -> Option<ClipRun> {
+        if self.clips.len() >= MAX_CLIP_COMMANDS {
+            return None;
+        }
+        let start = if node.randomize_start_time {
+            rng.range(node.start_time, node.end_time)
+        } else {
+            node.start_time
+        };
+        let request = ClipRequest {
+            handle,
+            clip,
+            node: *node,
+            intensity,
+            start: if start.is_finite() { start } else { 0.0 },
+        };
+        let run = request.run();
+        if run == ClipRun::Refused {
+            return Some(run);
+        }
+        self.clips_started += 1;
+        self.clips.push(ClipCommand::Play {
+            entity: tessera_net::EntityId(net),
+            request,
+        });
+        Some(run)
+    }
+
+    /// Starts the deferred looping clips whose clip has entered the store since; drops
+    /// those whose clip failed for good or whose figure left (their nodes keep running
+    /// without a clip). A clip not in the store yet is not bound (no frame-thread miss per
+    /// frame while it decodes).
+    pub(super) fn retry_clips<S: SessionClipSource + ?Sized>(&mut self, rng: &mut Ran2, src: &S) {
+        if self.deferred.is_empty() {
+            return;
+        }
+        let mut deferred = std::mem::take(&mut self.deferred);
+        // The skeletons of the figures with waiting nodes (the play step below changes
+        // the state, so the lookup reads its own copy).
+        let skeletons: HashMap<u64, _> = deferred
+            .waiting
+            .values()
+            .filter(|w| self.by_net.contains_key(&w.0))
+            .filter_map(|w| {
+                let s = self.views.get(&w.0)?.skeleton.clone()?;
+                Some((w.0, s))
+            })
+            .collect();
+        retry_deferred(
+            &mut deferred,
+            |net, did| {
+                // The figure left (or lost its skeleton): nothing to play on.
+                let Some(skel) = skeletons.get(&net) else {
+                    return ClipLookup::Gone;
+                };
+                if !src.decoded(did) {
+                    return ClipLookup::Decoding;
+                }
+                bind_clip(src, did, skel)
+            },
+            |handle, net, node, intensity, clip| {
+                self.play_clip(rng, net, handle, node, intensity, clip)
+                    .is_some()
+            },
+        );
+        self.deferred = deferred;
+    }
 }
 
 impl SessionState {
@@ -343,59 +645,40 @@ impl FxState {
     // ----- sink parts -----
 
     /// An animation node on a session figure (`script-table.md` §6.10): the clip bound to the
-    /// figure's skeleton, queued for the character layer.
+    /// figure's skeleton, queued for the character layer ([`SessionState::start_animation`]).
     pub(super) fn session_animation(
         &mut self,
         entity: EntityId,
         node: &AnimationNode,
         intensity: f32,
     ) -> AnimationOutcome {
-        let Some(&net) = self.session.by_runtime.get(&entity) else {
+        let Some(ctx) = self.session.clip_ctx.clone() else {
             return AnimationOutcome::CompleteAtOnce;
         };
-        let (Some(view), Some(ctx)) = (self.session.views.get(&net), &self.session.clip_ctx) else {
-            return AnimationOutcome::CompleteAtOnce;
-        };
-        let Some(skel) = view.skeleton.as_ref() else {
-            return AnimationOutcome::CompleteAtOnce;
-        };
-        if node.asset.is_null() || self.session.clips.len() >= MAX_CLIP_COMMANDS {
-            return AnimationOutcome::CompleteAtOnce;
+        self.session
+            .start_animation(&mut self.rng, &*ctx, entity, node, intensity)
+    }
+
+    /// Starts the deferred looping clips of session figures whose clip has been decoded
+    /// since ([`SessionState::retry_clips`]). Once per frame, before the runtime steps.
+    pub(super) fn retry_session_clips(&mut self) {
+        if self.session.deferred.is_empty() {
+            return;
         }
-        let Ok(clip) = ctx.clips.bind(&ctx.set, node.asset.0, skel) else {
-            return AnimationOutcome::CompleteAtOnce;
+        let Some(ctx) = self.session.clip_ctx.clone() else {
+            return;
         };
-        let start = if node.randomize_start_time {
-            self.rng.range(node.start_time, node.end_time)
-        } else {
-            node.start_time
-        };
-        let handle = self.session.next_clip;
-        self.session.next_clip = self.session.next_clip.wrapping_add(1);
-        let request = ClipRequest {
-            handle,
-            clip,
-            node: *node,
-            intensity,
-            start: if start.is_finite() { start } else { 0.0 },
-        };
-        let outcome = match request.run() {
-            ClipRun::Refused => return AnimationOutcome::CompleteAtOnce,
-            ClipRun::For(t) => AnimationOutcome::RunFor(AnimationHandle(handle), t),
-            ClipRun::UntilStopped => AnimationOutcome::RunUntilStopped(AnimationHandle(handle)),
-        };
-        self.session.clips_started += 1;
-        self.session.clips.push(ClipCommand::Play {
-            entity: tessera_net::EntityId(net),
-            request,
-        });
-        outcome
+        self.session.retry_clips(&mut self.rng, &*ctx);
     }
 
     /// A stopped animation node (§6.10 step 8). Stops are never dropped (a lost stop would
     /// leave its clip playing); there is at most one per started clip, and Play commands are
     /// bounded by [`MAX_CLIP_COMMANDS`].
     pub(super) fn session_animation_stop(&mut self, handle: AnimationHandle) {
+        if self.session.deferred.stop(handle.0) {
+            // Its clip never started: nothing to stop.
+            return;
+        }
         self.session
             .clips
             .push(ClipCommand::Stop { handle: handle.0 });
@@ -409,6 +692,10 @@ impl FxState {
         handle: AnimationHandle,
         node: &AnimationNode,
     ) {
+        if self.session.deferred.update(handle.0, node) {
+            // Not playing yet: the clip starts with the current driven values.
+            return;
+        }
         self.session.clips.push(ClipCommand::Update {
             handle: handle.0,
             node: *node,
@@ -728,6 +1015,7 @@ impl FxState {
         let id = self.session.by_net.remove(&net)?;
         self.session.by_runtime.remove(&id);
         self.session.views.remove(&net);
+        self.session.deferred.forget(net);
         self.owners.remove(&id);
         let now = self.now;
         self.manager.remove_owner(id.0, now);
@@ -966,5 +1254,270 @@ mod tests {
         }
         assert!(removed, "the beam ends");
         assert!(b.ribbon.is_none() && b.head.is_none());
+    }
+
+    fn looping(clip: u32) -> AnimationNode {
+        AnimationNode {
+            asset: Did(clip),
+            loop_forever: true,
+            speed: 1.0,
+            speed_multiplier: 1.0,
+            end_time: 1.0,
+            ..AnimationNode::default()
+        }
+    }
+
+    /// A looping node whose clip is still decoding waits under its handle and starts, in
+    /// start order and with the node's latest driven values, once the clip is ready; a full
+    /// command list keeps it waiting; a stop, a failed clip or a departed figure drops it.
+    #[test]
+    fn deferred_session_clips_start_once_decoded() {
+        let mut d = DeferredClips::default();
+        assert!(d.defer(7, 100, &looping(0x0500_0001), 1.0));
+        assert!(d.defer(3, 100, &looping(0x0500_0002), 0.5));
+        assert!(d.defer(9, 200, &looping(0x0500_0003), 1.0));
+        assert!(d.defer(11, 200, &looping(0x0500_0004), 1.0));
+        assert_eq!((d.len(), d.deferred), (4, 4));
+        // A driven change while waiting: the clip asset is kept.
+        let mut driven = looping(0x0500_9999);
+        driven.speed = 2.0;
+        assert!(d.update(7, &driven));
+        assert!(!d.update(42, &driven));
+
+        // Nothing decoded yet: all keep waiting.
+        let mut played = Vec::new();
+        retry_deferred(
+            &mut d,
+            |_, _| ClipLookup::<()>::Decoding,
+            |h, _, _, _, ()| {
+                played.push(h);
+                true
+            },
+        );
+        assert!(played.is_empty());
+        assert_eq!(d.len(), 4);
+
+        // Clips 1 and 2 decode; the command list takes only one this pass.
+        let ready = |_: u64, did: u32| match did {
+            0x0500_0001 | 0x0500_0002 => ClipLookup::Ready(did),
+            0x0500_0003 => ClipLookup::Gone,
+            _ => ClipLookup::Decoding,
+        };
+        let mut room = 1;
+        let mut got = Vec::new();
+        retry_deferred(&mut d, ready, |h, net, node, _, clip| {
+            if room == 0 {
+                return false;
+            }
+            room -= 1;
+            got.push((h, net, node.asset.0, node.speed, clip));
+            true
+        });
+        // Handle 3 first (start order); 9's clip failed: dropped; 7 waits for room.
+        assert_eq!(got, vec![(3, 100, 0x0500_0002, 1.0, 0x0500_0002)]);
+        assert_eq!(d.len(), 2);
+        got.clear();
+        retry_deferred(&mut d, ready, |h, net, node, _, clip| {
+            got.push((h, net, node.asset.0, node.speed, clip));
+            true
+        });
+        assert_eq!(got, vec![(7, 100, 0x0500_0001, 2.0, 0x0500_0001)]);
+        // Handle 11 still decoding; its node stops: nothing to stop on the figure.
+        assert!(d.stop(11));
+        assert!(!d.stop(7));
+        assert!(d.is_empty());
+
+        // A departed figure's waiting nodes are dropped.
+        assert!(d.defer(20, 300, &looping(0x0500_0005), 1.0));
+        assert!(d.defer(21, 301, &looping(0x0500_0005), 1.0));
+        d.forget(300);
+        assert_eq!(d.len(), 1);
+    }
+
+    #[test]
+    fn deferred_session_clips_are_bounded() {
+        let mut d = DeferredClips::default();
+        for h in 0..MAX_DEFERRED_CLIPS as u64 {
+            assert!(d.defer(h, 1, &looping(0x0500_0001), 1.0));
+        }
+        assert!(!d.defer(u64::MAX, 1, &looping(0x0500_0001), 1.0));
+        assert_eq!(d.len(), MAX_DEFERRED_CLIPS);
+    }
+
+    /// A stand-in clip store: clips in `decoded` bind; a bind of any other counts a
+    /// frame-thread miss, and `arrive_on_miss` stores that clip right after the miss (a
+    /// worker finishing between the miss and the store check).
+    struct FakeClips {
+        decoded: std::cell::RefCell<HashMap<u32, Option<Arc<tessera_anim::BoundClip>>>>,
+        misses: std::cell::Cell<u32>,
+        arrive_on_miss: Option<(u32, Arc<tessera_anim::BoundClip>)>,
+    }
+
+    impl SessionClipSource for FakeClips {
+        fn decoded(&self, did: u32) -> bool {
+            self.decoded.borrow().contains_key(&did)
+        }
+
+        fn bind(
+            &self,
+            did: u32,
+            _: &Arc<tessera_anim::Skeleton>,
+        ) -> Result<Arc<tessera_anim::BoundClip>, String> {
+            if let Some(c) = self.decoded.borrow().get(&did) {
+                return c.clone().ok_or_else(|| "failed".to_string());
+            }
+            self.misses.set(self.misses.get() + 1);
+            if let Some((d, c)) = &self.arrive_on_miss
+                && *d == did
+            {
+                self.decoded.borrow_mut().insert(did, Some(Arc::clone(c)));
+            }
+            Err("not decoded yet".into())
+        }
+    }
+
+    fn test_skeleton() -> Arc<tessera_anim::Skeleton> {
+        Arc::new(
+            tessera_anim::Skeleton::from_parts(&[-1], &[tessera_havok::Transform::IDENTITY])
+                .unwrap(),
+        )
+    }
+
+    fn test_clip(s: &Arc<tessera_anim::Skeleton>) -> Arc<tessera_anim::BoundClip> {
+        use tessera_havok::testkit::{
+            AnimationKindSpec, AnimationSpec, ClipRecordSpec, InterleavedClipSpec,
+        };
+        let spec = InterleavedClipSpec {
+            duration: 1.0,
+            tracks: 1,
+            transforms: vec![tessera_havok::Transform::IDENTITY; 2],
+        };
+        let rec = ClipRecordSpec::new(AnimationSpec::new(AnimationKindSpec::Interleaved(spec)))
+            .to_bytes();
+        let c = tessera_havok::Clip::parse(&rec).unwrap();
+        Arc::new(tessera_anim::BoundClip::bind(Arc::new(c), Arc::clone(s)).unwrap())
+    }
+
+    /// A session state with one session figure (network ID 100) with a skeleton.
+    fn session_with_figure(skel: &Arc<tessera_anim::Skeleton>) -> (SessionState, EntityId) {
+        let mut st = SessionState::default();
+        let id = EntityId(SESSION_OWNER_BASE);
+        st.by_net.insert(100, id);
+        st.by_runtime.insert(id, 100);
+        st.views.insert(
+            100,
+            FigureEffectView {
+                region: 1,
+                position: [0.0; 3],
+                rotation: Quat::IDENTITY,
+                scale: Vec3::ONE,
+                drawn: true,
+                model: vec![Mat4::IDENTITY],
+                points: None,
+                skeleton: Some(Arc::clone(skel)),
+                scripts: None,
+            },
+        );
+        (st, id)
+    }
+
+    fn plays(st: &SessionState) -> Vec<u64> {
+        st.clips
+            .iter()
+            .filter_map(|c| match c {
+                ClipCommand::Play { request, .. } => Some(request.handle),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// A looping node on a session figure whose clip is not decoded yet runs until stopped
+    /// without binding (no frame-thread miss, however many frames it waits), asks for its
+    /// clip once, and its Play command is queued under the node's handle once the clip
+    /// enters the store.
+    #[test]
+    fn a_waiting_looping_node_plays_once_its_clip_is_stored() {
+        let skel = test_skeleton();
+        let clip = test_clip(&skel);
+        let (mut st, id) = session_with_figure(&skel);
+        let src = FakeClips {
+            decoded: std::cell::RefCell::new(HashMap::new()),
+            misses: std::cell::Cell::new(0),
+            arrive_on_miss: None,
+        };
+        let mut rng = Ran2::new(1);
+        let did = 0x0500_0001;
+        let AnimationOutcome::RunUntilStopped(handle) =
+            st.start_animation(&mut rng, &src, id, &looping(did), 1.0)
+        else {
+            panic!("a waiting looping node runs until stopped");
+        };
+        assert_eq!(st.deferred.len(), 1);
+        assert_eq!(
+            st.deferred.take_prefetch(),
+            vec![did],
+            "its clip is asked for once"
+        );
+        assert!(st.deferred.take_prefetch().is_empty());
+        for _ in 0..30 {
+            st.retry_clips(&mut rng, &src);
+        }
+        assert_eq!(src.misses.get(), 0, "no frame-thread miss while it waits");
+        assert!(st.clips.is_empty());
+        // The workers store the clip: the next pass queues its Play command.
+        src.decoded
+            .borrow_mut()
+            .insert(did, Some(Arc::clone(&clip)));
+        st.retry_clips(&mut rng, &src);
+        assert_eq!(plays(&st), vec![handle.0]);
+        assert!(st.deferred.is_empty());
+        assert_eq!(st.clips_started, 1);
+        assert_eq!(src.misses.get(), 0);
+
+        // A clip that failed for good drops the waiting node (it plays nothing).
+        let bad = 0x0500_0002;
+        assert!(matches!(
+            st.start_animation(&mut rng, &src, id, &looping(bad), 1.0),
+            AnimationOutcome::RunUntilStopped(_)
+        ));
+        src.decoded.borrow_mut().insert(bad, None);
+        st.retry_clips(&mut rng, &src);
+        assert!(st.deferred.is_empty());
+        assert_eq!(plays(&st), vec![handle.0]);
+    }
+
+    /// A clip a worker stores between the miss and the store check binds on the second
+    /// try: a one-shot node plays instead of completing at once.
+    #[test]
+    fn a_clip_stored_during_the_miss_still_plays() {
+        let skel = test_skeleton();
+        let clip = test_clip(&skel);
+        let (mut st, id) = session_with_figure(&skel);
+        let did = 0x0500_0003;
+        let src = FakeClips {
+            decoded: std::cell::RefCell::new(HashMap::new()),
+            misses: std::cell::Cell::new(0),
+            arrive_on_miss: Some((did, Arc::clone(&clip))),
+        };
+        let one_shot = AnimationNode {
+            loop_forever: false,
+            loop_count: 1,
+            ..looping(did)
+        };
+        let mut rng = Ran2::new(1);
+        let out = st.start_animation(&mut rng, &src, id, &one_shot, 1.0);
+        assert!(matches!(out, AnimationOutcome::RunFor(..)), "{out:?}");
+        assert_eq!(plays(&st).len(), 1);
+        assert_eq!(src.misses.get(), 1);
+        // A one-shot whose clip is not decoded completes at once (and was asked for).
+        let other = AnimationNode {
+            asset: Did(0x0500_0004),
+            ..one_shot
+        };
+        assert!(matches!(
+            st.start_animation(&mut rng, &src, id, &other, 1.0),
+            AnimationOutcome::CompleteAtOnce
+        ));
+        assert!(st.deferred.is_empty());
     }
 }

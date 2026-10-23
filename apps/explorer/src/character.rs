@@ -893,6 +893,39 @@ fn skeleton_of(tagfile: &[u8]) -> Result<Arc<Skeleton>, String> {
         .map_err(|e| e.to_string())
 }
 
+/// The parts of a bare setup's part list `parts` that are drawn, with their index in the
+/// list (only the first [`MAX_FIGURE_PARTS`]): one-triangle placeholder meshes (`mesh.md`
+/// §8.10) are left out of a setup with several parts and kept as its only part
+/// (`setup.md` §8.5 steps 1–3, S14), by [`tessera_world::objects::stub_part_drawn`] — the
+/// rule [`tessera_world::objects::drawn_parts`] applies to a part list. A mesh that cannot
+/// be read or summarised counts as not flagged (it is never hidden by this rule). The
+/// scan stops with [`ExplorerError::Cancelled`] when `job` is cancelled.
+fn drawn_setup_parts(
+    ctx: &DataContext,
+    parts: &[Did],
+    job: &JobContext<'_>,
+) -> Result<Vec<(usize, Did)>, ExplorerError> {
+    let count = parts.len();
+    let mut drawn = Vec::new();
+    for (i, mesh) in parts.iter().copied().enumerate().take(MAX_FIGURE_PARTS) {
+        cancelled(job)?;
+        if tessera_world::objects::stub_part_drawn(count, mesh_is_stub(ctx, mesh)) {
+            drawn.push((i, mesh));
+        }
+    }
+    Ok(drawn)
+}
+
+/// Whether mesh record `did` is a one-triangle mesh ([`tessera_mesh::MeshSummary::is_stub`]);
+/// a record that is missing, cannot be read or cannot be summarised is not.
+fn mesh_is_stub(ctx: &DataContext, did: Did) -> bool {
+    let bytes = match ctx.set.locate(did.0) {
+        Ok(Some(l)) => ctx.set.read_located(&l).ok(),
+        _ => None,
+    };
+    bytes.is_some_and(|b| tessera_mesh::MeshSummary::parse(&b).is_ok_and(|s| s.is_stub()))
+}
+
 /// Builds the figure of `req` (see the module documentation).
 ///
 /// # Errors
@@ -1258,7 +1291,17 @@ pub fn build_character(
         }
     } else {
         facts.push(("setup".into(), scene_did.to_string()));
-        for (i, &mesh) in setup_parts.iter().enumerate().take(MAX_FIGURE_PARTS) {
+        // One-triangle placeholder parts are left out of a setup with several parts
+        // (`setup.md` §8.5 steps 1–3, S14; `m2-visual.md` C6), the rule of the scene view
+        // and the walker (`tessera_world::objects::drawn_parts`).
+        let drawn = drawn_setup_parts(ctx, &setup_parts, job)?;
+        let left_out = setup_parts.len().min(MAX_FIGURE_PARTS) - drawn.len();
+        if left_out > 0 {
+            notes.push(format!(
+                "{left_out} one-triangle placeholder part(s) of the setup left out (setup.md §8.5)"
+            ));
+        }
+        for (i, mesh) in drawn {
             cancelled(job)?;
             let mut part = build(&mut mats, mesh, bones > 0, (&[], None), &mut budget);
             part.caption = format!("part {i} · {mesh}");

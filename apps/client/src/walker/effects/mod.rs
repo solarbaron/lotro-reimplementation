@@ -52,8 +52,8 @@
 //! choice for its attenuation, runtime rule 13 implementer OPEN), then the table's point
 //! lights whose selection radius ρ reaches the owner (`lighting.md` §8.5: key lights first,
 //! nearest first in each group; lights with `Light_OnlyInfluenceParent` reach no owner),
-//! cut to five. The day and night lamp lights of `instance-scripts.md` §6 are not in the
-//! walker's light table, so they light no system.
+//! cut to five. The table holds the day and night lamp lights of `instance-scripts.md` §6
+//! too (`tessera_world::lighting::lamps`, added by the walker), so lamps light lit systems.
 //!
 //! **Culling** (runtime §9.3, the Q-RT3 Decision): an instance of a record with
 //! `has_bounds` = 1 whose box ([`tessera_particles::InstanceDraw::bounds`]) lies outside
@@ -219,6 +219,9 @@ pub struct EffectStats {
     pub max_session_drawn_vertices: usize,
     /// Clips the scripts started on session figures.
     pub session_clips: u64,
+    /// Looping animation nodes of session figures whose clip was still being decoded when
+    /// they started (their clip starts once decoded).
+    pub session_clips_deferred: u64,
     /// Beams alive.
     pub beams: usize,
     /// Beams started.
@@ -242,6 +245,12 @@ pub struct EffectStats {
     pub culled_instances: usize,
     /// Owners of the last frame that were given a light list (rule 13).
     pub lit_owners: usize,
+    /// Day and night lamp lights (`instance-scripts.md` §6) in the light table of the last
+    /// frame, the table lit systems and decals take their lights from (set by the walker,
+    /// [`EffectLayer::note_lamp_lights`]).
+    pub table_lamp_lights: usize,
+    /// The most lamp lights in any frame's light table so far.
+    pub max_table_lamp_lights: usize,
     /// Owners of the creation viewport's scene spawned in the runtime.
     pub stage_owners: usize,
     /// Systems drawn into the creation viewport in its last pass.
@@ -1344,6 +1353,13 @@ impl EffectLayer {
         }
     }
 
+    /// Records how many lamp lights the frame's light table holds (the walker adds them,
+    /// [`EffectStats::table_lamp_lights`]).
+    pub fn note_lamp_lights(&mut self, n: usize) {
+        self.stats.table_lamp_lights = n;
+        self.stats.max_table_lamp_lights = self.stats.max_table_lamp_lights.max(n);
+    }
+
     /// Counters of the last frame.
     #[must_use]
     pub fn stats(&self) -> EffectStats {
@@ -1705,6 +1721,16 @@ impl EffectLayer {
         }
     }
 
+    /// The clip DIDs of session figures' looping nodes deferred since the last call
+    /// (`session::DeferredClips`), each once: the walker hands them to the character layer's
+    /// clip prefetch, so they are decoded on the workers whether or not a frame-thread miss
+    /// queued them.
+    pub fn take_session_clip_prefetch(&mut self) -> Vec<u32> {
+        self.st
+            .as_mut()
+            .map_or_else(Vec::new, |st| st.session.deferred.take_prefetch())
+    }
+
     /// One frame (module docs).
     pub fn update(&mut self, input: EffectInput<'_>, objects: &mut ObjectLayer) {
         let t0 = Instant::now();
@@ -1778,6 +1804,9 @@ impl EffectLayer {
             if st.session.clip_ctx.is_none() {
                 st.session.clip_ctx = input.characters.figure_context();
             }
+            // Looping clips of session figures that were still decoding when their node
+            // started (`session::FxState::retry_session_clips`).
+            st.retry_session_clips();
         }
         // Records that loaded.
         let loaded: Vec<u32> = self
@@ -2103,6 +2132,7 @@ impl EffectLayer {
         self.stats.session_owners = st.session.by_net.len();
         self.stats.session_requests = st.session.requests;
         self.stats.session_clips = st.session.clips_started;
+        self.stats.session_clips_deferred = st.session.deferred.deferred;
         self.stats.beams = st.session.beams.len();
         self.stats.beams_started = st.session.beams_started;
         self.stats.beam_arrivals = st.session.beam_arrivals;

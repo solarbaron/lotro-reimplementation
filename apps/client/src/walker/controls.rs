@@ -27,7 +27,11 @@
 //! the zoom smoothing time ([`smooth_towards`]); the camera looks at the feet raised by
 //! *f* × *H* × *s_z* ([`CameraProfile::look_at_raise`], §11.7 step 1) plus the target
 //! block's offset in the character's frame. The target fade of §11.7 is drawn by the
-//! character layer ([`CameraProfile::fade_goal`]).
+//! character layer ([`CameraProfile::fade_goal`]). The walker's frame loop calls
+//! [`Controls::follow_characters`] every frame after the character layer's update and before
+//! its draws; the walk projection takes the profile's field of view and near plane
+//! ([`super::lens_of`]), and the terrain clamp turns the raised camera towards
+//! [`Controls::camera_target`] ([`keep_above_terrain_towards`]).
 
 use std::path::Path;
 use std::time::{Duration, Instant};
@@ -351,30 +355,10 @@ pub fn smooth_towards(current: f32, goal: f32, dt: f32, tau: f32) -> f32 {
 /// The walk-mode third-person camera kept above the terrain (`walker.md` §5: "kept 0.8 m
 /// above the terrain"; §11.7: the camera looks at the look-at point): an `eye` less than
 /// [`EYE_ABOVE_TERRAIN`] above `ground` (the terrain height under it) is raised to it and
-/// turned towards the look-at point. Only the walk-mode camera is kept: callers pass
-/// `feet` (the avatar's) only in walk mode with the camera outside every cell (`walker.md`
-/// §14.12 (a)); without `feet` (free-fly, scripted cameras) the eye and direction are
-/// returned unchanged.
-///
-/// The look-at point is taken on the unraised view ray `eye` + *t* × `dir` (the walk camera
-/// stands on that ray, [`Controls::eye`]): the point of it straight above or below `feet`
-/// (nearest to the vertical through them). That is the camera's look-at point whenever the
-/// point is straight above the feet (the on-foot camera without a sideways or forward
-/// target offset); [`keep_above_terrain_towards`] with [`Controls::camera_target`] takes the
-/// exact point in every case.
-#[must_use]
-pub fn keep_above_terrain(
-    eye: WorldPos,
-    dir: Vec3,
-    ground: Option<f32>,
-    feet: Option<WorldPos>,
-) -> (WorldPos, Vec3) {
-    let target = feet.map(|f| target_on_ray(&eye, dir, &f));
-    keep_above_terrain_towards(eye, dir, ground, target)
-}
-
-/// [`keep_above_terrain`] towards the look-at point `target` (walk mode only; `None`: the
-/// eye and direction unchanged).
+/// turned towards `target`, the look-at point ([`Controls::camera_target`]). Only the walk
+/// camera is kept: callers pass `target` only in walk mode with the camera outside every
+/// cell (`walker.md` §14.12 (a)); without it (free-fly, scripted cameras) the eye and
+/// direction are returned unchanged.
 #[must_use]
 pub fn keep_above_terrain_towards(
     eye: WorldPos,
@@ -397,26 +381,6 @@ pub fn keep_above_terrain_towards(
         (target.z - eye.z) as f32,
     );
     (eye, to.try_normalize().unwrap_or(dir))
-}
-
-/// The point of the ray `eye` + *t* × `dir` (*t* ≥ 0) nearest to the vertical line through
-/// `feet` ([`keep_above_terrain`]); a ray that is (nearly) vertical gives the feet raised
-/// by the fallback profile's look-at raise.
-fn target_on_ray(eye: &WorldPos, dir: Vec3, feet: &WorldPos) -> WorldPos {
-    let (hx, hy) = (f64::from(dir.x), f64::from(dir.y));
-    let len2 = hx * hx + hy * hy;
-    let t = ((feet.x - eye.x) * hx + (feet.y - eye.y) * hy) / len2;
-    if len2 < 1e-8 || !t.is_finite() {
-        let raise = CameraProfile::FALLBACK.look_at_raise(DEFAULT_LOOK_AT_HEIGHT);
-        return WorldPos::new(feet.region, feet.x, feet.y, feet.z + f64::from(raise));
-    }
-    let t = t.max(0.0);
-    WorldPos::new(
-        eye.region,
-        eye.x + hx * t,
-        eye.y + hy * t,
-        eye.z + f64::from(dir.z) * t,
-    )
 }
 
 /// How the viewer moves.
@@ -697,10 +661,6 @@ impl Controls {
     /// the camera (since the last placement or reset) it takes the profile's initial
     /// distance and pitch; afterwards the user's view is kept within the new ranges. The
     /// same profile again changes nothing.
-    #[allow(
-        dead_code,
-        reason = "called by the walker's frame loop once `walker/mod.rs` calls `follow_characters`"
-    )]
     pub fn set_camera_profile(&mut self, profile: CameraProfile) {
         if profile == self.profile {
             return;
@@ -717,10 +677,6 @@ impl Controls {
 
     /// The camera state followed.
     #[must_use]
-    #[allow(
-        dead_code,
-        reason = "called by the walker's frame loop once `walker/mod.rs` calls `follow_characters`"
-    )]
     pub fn camera_profile(&self) -> &CameraProfile {
         &self.profile
     }
@@ -728,10 +684,6 @@ impl Controls {
     /// The character's `Entity_Camera_Lookat_Height` times its z scale (*H* × *s_z*,
     /// `walker.md` §11.7 step 1), or `None` to go back to [`DEFAULT_LOOK_AT_HEIGHT`].
     /// Values that are not finite or negative count as `None`.
-    #[allow(
-        dead_code,
-        reason = "called by the walker's frame loop once `walker/mod.rs` calls `follow_characters`"
-    )]
     pub fn set_look_at_height(&mut self, height_times_scale: Option<f32>) {
         self.look_at_height = height_times_scale
             .filter(|h| h.is_finite() && *h >= 0.0)
@@ -740,20 +692,12 @@ impl Controls {
 
     /// The walk camera's distance: (shown, goal), metres.
     #[must_use]
-    #[allow(
-        dead_code,
-        reason = "called by the walker's frame loop once `walker/mod.rs` calls `follow_characters`"
-    )]
     pub fn zoom(&self) -> (f32, f32) {
         (self.zoom, self.zoom_goal)
     }
 
     /// The walk camera's pitch, radians.
     #[must_use]
-    #[allow(
-        dead_code,
-        reason = "called by the walker's frame loop once `walker/mod.rs` calls `follow_characters`"
-    )]
     pub fn camera_pitch(&self) -> f32 {
         self.cam_pitch
     }
@@ -766,10 +710,6 @@ impl Controls {
     /// fade measures to the point the camera looks at. Cheap; the walker's frame loop calls
     /// it every frame after the character layer's update and before its draws (nothing is
     /// read here).
-    #[allow(
-        dead_code,
-        reason = "called by the walker's frame loop once `walker/mod.rs` calls `follow_characters`"
-    )]
     pub fn follow_characters(&mut self, characters: &mut CharacterLayer) {
         self.set_camera_profile(*characters.camera_profile());
         self.set_look_at_height(characters.player_look_at_height());
@@ -810,10 +750,6 @@ impl Controls {
     /// The walk camera's look-at point (`walker.md` §11.7 step 1; the point the camera
     /// orbits and the target fade measures to), in walk mode.
     #[must_use]
-    #[allow(
-        dead_code,
-        reason = "called by `follow_characters`, and by the walker's terrain clamp once `walker/mod.rs` passes it to `keep_above_terrain_towards`"
-    )]
     pub fn camera_target(&self) -> Option<WorldPos> {
         (self.mode == MoveMode::Walk).then(|| {
             let (feet, yaw) = self.walk_pose();
@@ -1258,17 +1194,20 @@ mod tests {
         let eye = WorldPos::new(1, 100.0, 100.0, 49.5);
         let dir = Vec3::X;
         assert_eq!(
-            keep_above_terrain(eye, dir, Some(50.0), None),
+            keep_above_terrain_towards(eye, dir, Some(50.0), None),
             (eye, dir),
             "free-fly"
         );
-        assert_eq!(keep_above_terrain(eye, dir, None, Some(eye)), (eye, dir));
-        let feet = WorldPos::new(1, 107.0, 100.0, 50.0);
-        let (e, _) = keep_above_terrain(eye, dir, Some(50.0), Some(feet));
+        assert_eq!(
+            keep_above_terrain_towards(eye, dir, None, Some(eye)),
+            (eye, dir)
+        );
+        let target = WorldPos::new(1, 107.0, 100.0, 51.6);
+        let (e, _) = keep_above_terrain_towards(eye, dir, Some(50.0), Some(target));
         assert!((e.z - 50.8).abs() < 1e-9);
         let high = WorldPos::new(1, 100.0, 100.0, 60.0);
         assert_eq!(
-            keep_above_terrain(high, dir, Some(50.0), Some(feet)),
+            keep_above_terrain_towards(high, dir, Some(50.0), Some(target)),
             (high, dir)
         );
     }
@@ -1299,12 +1238,9 @@ mod tests {
             )
             .normalize()
         };
-        let (e, d) = keep_above_terrain(eye, dir, Some(50.0), Some(feet));
+        let (e, d) = keep_above_terrain_towards(eye, dir, Some(50.0), Some(target));
         assert!((e.z - 50.8).abs() < 1e-9);
         assert!(d.distance(aim(e)) < 1e-4, "{d:?} vs {:?}", aim(e));
-        let (e2, d2) = keep_above_terrain_towards(eye, dir, Some(50.0), Some(target));
-        assert_eq!(e2, e);
-        assert!(d2.distance(d) < 1e-4);
         // A look-at point off the vertical of the feet (a sideways target offset): the exact
         // point given.
         let side = WorldPos::new(1, target.x + 0.4, target.y - 0.2, target.z);
@@ -1316,10 +1252,10 @@ mod tests {
         )
         .normalize();
         assert!(d3.distance(want) < 1e-5);
-        // Looking straight down: the feet raised by the fallback look-at height.
+        // Looking straight down from under the look-at point: turned up towards it.
         let down = Vec3::new(0.0, 0.0, -1.0);
         let low = WorldPos::new(1, 100.0, 100.0, 50.2);
-        let (_, d4) = keep_above_terrain(low, down, Some(50.0), Some(feet));
+        let (_, d4) = keep_above_terrain_towards(low, down, Some(50.0), Some(target));
         assert!(d4.z > 0.9, "{d4:?}");
     }
 
@@ -1553,6 +1489,41 @@ mod tests {
         c.set_look_at_height(None);
         let (eye2, _) = c.eye();
         assert!((eye2.z - eye.z - f64::from(0.8 * (DEFAULT_LOOK_AT_HEIGHT - 1.5))).abs() < 1e-3);
+    }
+
+    /// `walker.md` §11.7–§11.8 (wired in the frame loop): the walk camera follows the
+    /// record's profile and the figure's look-at height, and the terrain clamp turns the
+    /// raised camera towards [`Controls::camera_target`], also with a sideways target
+    /// offset (the point is off the vertical through the feet).
+    #[test]
+    fn the_terrain_clamp_aims_at_the_camera_target() {
+        let mut c = Controls::new(&default_keymap(), MoveMode::Walk, 40.0);
+        let mut profile = CameraProfile::from_state(Did(7), &third_person(4.0, 1.0, 10.0)).unwrap();
+        profile.target_offset[0] = 0.6;
+        c.set_camera_profile(profile);
+        c.set_look_at_height(Some(1.5));
+        assert_eq!(c.camera_profile(), &profile);
+        assert_eq!(c.zoom(), (4.0, 4.0));
+        let start = WorldPos::new(1, 20_000.0, 20_000.0, 100.0);
+        c.place(&start, 0.0, 30.0, -0.25);
+        let target = c.camera_target().expect("walk mode");
+        // Facing east: the offset's x (right) is south.
+        assert!((target.y - (start.y - 0.6)).abs() < 1e-3, "{target:?}");
+        assert!(
+            (target.z - (100.0 + 0.8 * 1.5 + 0.25)).abs() < 1e-3,
+            "{target:?}"
+        );
+        let (eye, dir) = c.eye();
+        let ground = (eye.z - 0.5) as f32;
+        let (e, d) = keep_above_terrain_towards(eye, dir, Some(ground), Some(target));
+        assert!((e.z - (f64::from(ground) + EYE_ABOVE_TERRAIN)).abs() < 1e-3);
+        let want = Vec3::new(
+            (target.x - e.x) as f32,
+            (target.y - e.y) as f32,
+            (target.z - e.z) as f32,
+        )
+        .normalize();
+        assert!(d.distance(want) < 1e-4, "{d:?} vs {want:?}");
     }
 
     /// `walker.md` §11.7 "Target fade": closer than the fade distance the character is

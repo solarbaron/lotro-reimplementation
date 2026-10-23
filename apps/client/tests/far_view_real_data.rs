@@ -7,8 +7,9 @@
 //! original's near field (no `--view-blocks`) at the default spawn and at a placed map
 //! position. The area, the far view included, must settle; at the end the far view must
 //! list sectors, have them all in, draw far terrain batches over landblocks outside the
-//! near field, and have no job left. Only counts are printed; images go to a temporary
-//! directory and are not compared.
+//! near field, and have no job left; where the listed sectors hold far entities
+//! (`far-view.md` §10: the distant set is not empty), some of them must reach the object
+//! layer. Only counts are printed; images go to a temporary directory and are not compared.
 
 use clap::Parser as _;
 use tessera_client::Args;
@@ -90,7 +91,7 @@ fn check(what: &str, report: &HeadlessReport) {
         .far_view
         .expect("far view counters with --far-view on");
     eprintln!(
-        "{what}: {} frames, settled {}, at {:?}; far view {} / {} sectors, {} terrain batches over {} landblocks, {} sprites in {} batches, {} water quads, {} jobs",
+        "{what}: {} frames, settled {}, at {:?}; far view {} / {} sectors, {} terrain batches over {} landblocks, {} sprites in {} batches, {} water quads, far entities {} live / {} handed over / {} drawn, {} jobs",
         report.frames,
         report.settled,
         report.description,
@@ -101,6 +102,9 @@ fn check(what: &str, report: &HeadlessReport) {
         f.sprites,
         f.sprite_batches,
         f.water_quads,
+        f.distant_live,
+        f.far_entities,
+        f.far_drawn,
         f.pending
     );
     assert!(
@@ -119,6 +123,15 @@ fn check(what: &str, report: &HeadlessReport) {
         f.covered
     );
     assert_eq!(f.pending, 0, "{what}: far-view jobs left after settling");
+    // `far-view.md` §10: the sector entity lists give far entities; once settled (no job
+    // left), resolved ones are handed to the object layer.
+    if f.distant_live > 0 {
+        assert!(
+            f.far_entities > 0,
+            "{what}: {} far entities live but none handed to the object layer",
+            f.distant_live
+        );
+    }
 }
 
 #[test]

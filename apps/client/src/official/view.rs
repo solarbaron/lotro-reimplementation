@@ -395,6 +395,7 @@ fn start(b: &mut B<'_>, flow: &Flow) {
             (fill(text("official.start.accepted"), &[("date", date)]), 3)
         }
         AcceptanceLine::RunOnly(id) => (text(id).to_owned(), 4),
+        AcceptanceLine::WithdrawFailed => (text("official.consent.withdraw_failed").to_owned(), 4),
     });
     let extra = accepted
         .as_ref()

@@ -68,8 +68,8 @@ pub const TABLE: &[(&str, &str)] = &[
         "On this system Tessera does not save your acceptance. It counts for this run only, \
          and the warning is shown every time you start Tessera.",
     ),
-    // Tessera's own text, not in the spec's table yet (proposed for §4.1 and §5.5): Withdraw
-    // could not delete a file of the record (the log names it).
+    // §5.5 "Failed or partial withdrawal": Withdraw could not delete a file of the record (the
+    // log names it); shown on the start screen in place of the acceptance line (§4.1).
     (
         "official.consent.withdraw_failed",
         "Your acceptance could not be withdrawn completely: Tessera could not delete a file of \

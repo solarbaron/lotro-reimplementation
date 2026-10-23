@@ -487,9 +487,15 @@ const NOTHING_REMOVED: WithdrawReport = WithdrawReport {
     key_removed: false,
 };
 
-/// Starts a withdrawal of the record in `dir` on a worker thread. A record write still
-/// running (`write`) finishes there first, so it cannot bring the record back afterwards.
-/// Without a record directory nothing is stored and the report is complete.
+/// Starts a withdrawal of the record in `dir` on a worker thread (§5.5 "Withdrawing"). A
+/// record write still running (`write`) finishes there first, so it cannot bring the record
+/// back afterwards. Without a record directory nothing is stored and the report is complete.
+///
+/// The caller ends the run's acceptance when it starts the withdrawal, whatever the report
+/// says, and counts no record for the rest of the run until the user accepts again (§5.5
+/// "Withdraw always ends the run's acceptance", "Withdrawn for the run"). A report that is not
+/// [`WithdrawReport::complete`] is a failed or partial withdrawal; calling this again retries
+/// the deletion.
 #[must_use]
 pub fn spawn_withdraw(dir: Option<PathBuf>, write: Option<PendingWrite>) -> PendingWithdraw {
     let (tx, rx) = mpsc::sync_channel(1);

@@ -130,6 +130,9 @@ pub enum AcceptanceLine<'a> {
     /// An acceptance for this run only: the text ID (`official.consent.saved_failed` or
     /// `official.consent.not_stored`).
     RunOnly(&'static str),
+    /// A withdrawal of this run could not delete a file: no acceptance line, the
+    /// `official.consent.withdraw_failed` text, and Withdraw again (§4.1, §5.5).
+    WithdrawFailed,
 }
 
 /// A message panel over the current screen, with OK (§8.6).
@@ -177,6 +180,13 @@ pub struct Flow {
     pending_write: Option<PendingWrite>,
     /// A withdrawal running on the consent worker (§5.5; ARCH §21).
     pending_withdraw: Option<PendingWithdraw>,
+    /// The user withdrew in this run (§5.5 "Withdrawn for the run"): until they accept again
+    /// on the warning screen, every check gives not accepted without counting the record
+    /// (§5.1, §9 step 2), whatever is left on disk.
+    withdrawn_this_run: bool,
+    /// The last withdrawal could not delete a file (§5.5 "Failed or partial withdrawal"): the
+    /// start screen shows `.withdraw_failed` and Withdraw again, no acceptance line.
+    withdraw_failed: bool,
     form: Option<AccountForm>,
     login: Option<(Session, LoginPresenter)>,
     /// The account name of the running login, only for `BadCredentials` (§8.6).
@@ -220,6 +230,8 @@ impl Flow {
             acceptance: None,
             pending_write: None,
             pending_withdraw: None,
+            withdrawn_this_run: false,
+            withdraw_failed: false,
             form: None,
             login: None,
             kept_account: None,
@@ -264,6 +276,9 @@ impl Flow {
     /// a stored record, else the text of an acceptance that holds for this run only.
     #[must_use]
     pub fn acceptance_line(&self) -> Option<AcceptanceLine<'_>> {
+        if self.withdraw_failed {
+            return Some(AcceptanceLine::WithdrawFailed);
+        }
         if let Some(d) = self.accepted_date.as_deref() {
             return Some(AcceptanceLine::Stored(d));
         }
@@ -395,11 +410,15 @@ impl Flow {
         self.end_login(false);
         self.screen = Screen::Start;
         self.accepted_date = None;
-        self.start_check = self
-            .config
-            .record_dir
-            .clone()
-            .map(|d| consent::spawn_check(d, Arc::clone(&self.config.text)));
+        // After a Withdraw in this run the record is not counted, so it gives no line (§5.5).
+        self.start_check = if self.withdrawn_this_run {
+            None
+        } else {
+            self.config
+                .record_dir
+                .clone()
+                .map(|d| consent::spawn_check(d, Arc::clone(&self.config.text)))
+        };
     }
 
     /// Step 1: the user chose "Official servers" (or `--official` chose it).
@@ -422,6 +441,12 @@ impl Flow {
         self.notice = None;
         self.start_check = None;
         self.screen = Screen::Checking;
+        if self.withdrawn_this_run {
+            // §9 step 2 after a Withdraw in this run: not accepted, the record is not counted.
+            self.pending_check = None;
+            self.checked(CheckOutcome::NotAccepted(NotAcceptedReason::Missing));
+            return;
+        }
         self.pending_check = self
             .config
             .record_dir
@@ -598,33 +623,34 @@ impl Flow {
         self.request = Some(FlowRequest::Quit);
     }
 
-    /// Withdraws the acceptance (§5.5): both files and the run's acceptance. The work runs on
-    /// the consent worker (ARCH §21): a record write still running finishes there first, so it
-    /// cannot bring the record back afterwards; [`Self::withdrawn`] applies the report.
+    /// Withdraws the acceptance (§5.5): both files and the run's acceptance. Withdraw always
+    /// ends the run's acceptance, at once and whether or not the files can be deleted; for the
+    /// rest of the run the record is not counted ("Withdrawn for the run"). The deletion runs
+    /// on the consent worker (ARCH §21): a record write still running finishes there first, so
+    /// it cannot bring the record back afterwards; [`Self::withdrawn`] applies the report. A
+    /// Withdraw after a failed one retries the deletion.
     fn withdraw(&mut self) {
         if self.pending_withdraw.is_some() {
             return;
         }
+        self.acceptance = None;
+        self.accepted_date = None;
+        self.run_only = None;
         self.start_check = None;
+        self.withdrawn_this_run = true;
         self.pending_withdraw = Some(consent::spawn_withdraw(
             self.config.record_dir.clone(),
             self.pending_write.take(),
         ));
     }
 
-    /// The withdrawal finished. Both files gone: the run's acceptance is dropped too and the
-    /// line disappears. A file left (§5.6: the log names it): a failure notice shows, and the
-    /// line is recomputed: a removed record no longer gives the stored line, the run's
-    /// acceptance (kept, as the withdrawal did not complete) shows the run-only line, and a
-    /// new check of what is left on disk restores the stored line only if the record still
-    /// validates.
+    /// The withdrawal finished. Both files gone: `.withdrawn`. A file left (§5.5 "Failed or
+    /// partial withdrawal"; the log names it): the start screen shows `.withdraw_failed` with
+    /// Withdraw again and no acceptance line; the record stays uncounted for the run.
     fn withdrawn(&mut self, report: WithdrawReport) {
         if report.complete() {
             tracing::info!("official-server warning: acceptance withdrawn");
-            self.acceptance = None;
-            self.accepted_date = None;
-            self.run_only = None;
-            self.start_check = None;
+            self.withdraw_failed = false;
             self.show(Message {
                 text: text("official.consent.withdrawn").to_owned(),
                 detail: None,
@@ -636,23 +662,7 @@ impl Flow {
             key_removed = report.key_removed,
             "official-server warning: withdrawing did not complete"
         );
-        self.accepted_date = None;
-        if self.acceptance.is_some() && self.run_only.is_none() {
-            self.run_only = Some(if consent::STORES_RECORDS {
-                "official.consent.saved_failed"
-            } else {
-                "official.consent.not_stored"
-            });
-        }
-        self.start_check = self
-            .config
-            .record_dir
-            .clone()
-            .map(|d| consent::spawn_check(d, Arc::clone(&self.config.text)));
-        self.show(Message {
-            text: text("official.consent.withdraw_failed").to_owned(),
-            detail: None,
-        });
+        self.withdraw_failed = true;
     }
 
     /// Whether a withdrawal runs.
@@ -676,7 +686,9 @@ impl Flow {
             && let Some(outcome) = c.poll()
         {
             self.start_check = None;
-            if let CheckOutcome::Accepted(acc) = &outcome {
+            if let CheckOutcome::Accepted(acc) = &outcome
+                && !self.withdrawn_this_run
+            {
                 self.accepted_date = Some(acc.accepted_date().to_owned());
             }
         }
@@ -859,6 +871,10 @@ impl Flow {
         };
         match w.input(ev, &warning_hit) {
             Some(WarningOutcome::Accepted { acceptance, write }) => {
+                // Accepting again ends "Withdrawn for the run" (§5.5); the fresh record is
+                // written by `write`.
+                self.withdrawn_this_run = false;
+                self.withdraw_failed = false;
                 self.acceptance = Some(acceptance);
                 self.pending_write = Some(write);
                 self.step4();
@@ -981,7 +997,9 @@ impl Flow {
                 self.request = Some(FlowRequest::ExploreOffline);
             }
             (Screen::Start, Control::StartOfficial) => self.choose_official(),
-            (Screen::Start, Control::StartWithdraw) if self.accepted_date().is_some() => {
+            (Screen::Start, Control::StartWithdraw)
+                if self.accepted_date().is_some() || self.withdraw_failed =>
+            {
                 self.withdraw();
             }
             (Screen::Start, Control::StartQuit) => self.quit(),
@@ -1020,6 +1038,7 @@ impl Flow {
     pub fn wait_checks(&mut self, now: Instant) {
         if let Some(c) = self.start_check.take()
             && let CheckOutcome::Accepted(acc) = c.wait()
+            && !self.withdrawn_this_run
         {
             self.accepted_date = Some(acc.accepted_date().to_owned());
         }

@@ -6,7 +6,9 @@
 //! - **Opening** ([`MapUi::open`], [`MapUi::toggle`]): the icon table, the filter values
 //!   and switches (Tessera's settings, initialised from `GameplayOptionDefaults`, §6.9,
 //!   §8), the map menu's regions and node names (§4.5), the presentation (§3.1) and, the
-//!   first time in a session, the player's map (§4.6 Tessera rules).
+//!   first time in a session, the player's map (§4.6 Tessera rules). The player's map is
+//!   chosen again whenever the player's dungeon changes (§4.6 "When"; the dungeon comes
+//!   from the interior cell's `Dungeon_DID`, revision 1, [`super::dungeon`]).
 //! - **Notes** (§6.3): on every shown map, the notes `tessera-gamedata` selects for it
 //!   (`map-data.md` §4.8: queries, discovery, content layer, creation by the display mask
 //!   and the area's node), with the filter applied by the view.
@@ -135,10 +137,12 @@ fn cached_marker(
 }
 
 /// The player's state for the map window from the walker's minimap input (`map-windows.md`
-/// §4.6, §6.6): position, heading, the area of the player's block. The player's dungeon
-/// is not known to the client half yet (`None`: outdoor maps only).
+/// §4.6, §6.6): position, heading, the area of the player's block, and the player's
+/// dungeon `dungeon` (the client half's sources of §4.6 revision 1, MW34: the interior
+/// cell's `Dungeon_DID`, [`super::dungeon::PlayerDungeon`]) with its map data's map
+/// ([`player_dungeon_map`]).
 #[must_use]
-pub fn player_map(input: &RadarInput, facts: Option<&MapFacts>) -> PlayerMap {
+pub fn player_map(input: &RadarInput, facts: Option<&MapFacts>, dungeon: Option<Did>) -> PlayerMap {
     let valid = input.has_player && input.region != 0 && input.x != 0xFF && input.y != 0xFF;
     PlayerMap {
         point: MapPoint {
@@ -149,8 +153,20 @@ pub fn player_map(input: &RadarInput, facts: Option<&MapFacts>) -> PlayerMap {
         heading: input.heading,
         valid,
         area: facts.and_then(|f| f.area_at(input.region, input.x, input.y)),
-        dungeon: None,
+        dungeon: dungeon.and_then(|d| facts.and_then(|f| player_dungeon_map(f, d))),
     }
+}
+
+/// The player's dungeon `dungeon` (a `Dungeon_DID`) with the map of its `Dungeon_MapData`
+/// (§4.6 Tessera rules, MW34; the map as §4.7 draws it). `None` when the dungeon is not
+/// among the install's dungeon records, has no map data, or its map data names no map
+/// region: the player's map is then the outdoor one (§4.6 step 3, Tessera rule).
+#[must_use]
+pub fn player_dungeon_map(facts: &MapFacts, dungeon: Did) -> Option<(u32, GameMap)> {
+    let regions = facts.regions.as_ref()?;
+    let d = regions.dungeons.iter().find(|d| d.did == dungeon)?;
+    let map = super::lookup::dungeon_game_map(facts, d.map_data?)?;
+    Some((dungeon.0, map))
 }
 
 /// The map window and the minimap's markers (module docs).
@@ -181,6 +197,12 @@ pub struct MapUi {
     names: HashMap<u32, String>,
     /// The dungeon whose map is shown (the zone of its note query).
     dungeon_zone: Option<Did>,
+    /// The player's dungeon as last recorded this session (§4.6 "When"), followed every
+    /// frame whether or not a window exists; a window opened without the player's map
+    /// starts from it.
+    player_dungeon: Option<u32>,
+    /// The tree of Tessera's fallback window (empty unless set, [`MapUi::set_fallback_tree`]).
+    fallback_tree: MapTree,
     /// A dungeon map was shown before its image size was known: its notes are given once
     /// the size is known ([`MapUi::refresh`]).
     dungeon_notes_pending: bool,
@@ -218,6 +240,8 @@ impl MapUi {
             radar_rev: None,
             names: HashMap::new(),
             dungeon_zone: None,
+            player_dungeon: None,
+            fallback_tree: MapTree::default(),
             dungeon_notes_pending: false,
             layer: tessera_gamedata::map::LAYER_INSTANCE_ZERO,
             failures: Vec::new(),
@@ -228,6 +252,18 @@ impl MapUi {
     /// `--content-layers` value; default 1).
     pub fn set_content_layer(&mut self, layer: u32) {
         self.layer = layer;
+    }
+
+    /// The tree Tessera's fallback window navigates (used when the install's `map` layout
+    /// is missing; synthetic trees in tests). Takes effect at the next new window.
+    pub fn set_fallback_tree(&mut self, tree: MapTree) {
+        self.fallback_tree = tree;
+    }
+
+    /// The player's dungeon as last recorded this session (§4.6 "When").
+    #[must_use]
+    pub fn player_dungeon(&self) -> Option<u32> {
+        self.player_dungeon
     }
 
     /// The user's saved map settings (`[Map]`, §6.9): laid over the settings in use now and
@@ -367,11 +403,16 @@ impl MapUi {
                 if self.refs.map.is_some() {
                     self.fail(format!("LayoutMissing ({e}); fallback window"));
                 }
-                MapWindowView::open_fallback(ui, gv, pv, nv, MapTree::default(), &self.art, texts)
+                let tree = self.fallback_tree.clone();
+                MapWindowView::open_fallback(ui, gv, pv, nv, tree, &self.art, texts)
                     .map_err(|e| e.to_string())?
             }
         };
         self.configure(ui, &mut view, facts);
+        // §4.6 "When": the dungeon recorded this session, so that only a later change of
+        // the player's dungeon runs the selection (a window opened by place lookup keeps
+        // the place it shows).
+        view.set_recorded_dungeon(self.player_dungeon);
         let root = view.root();
         self.view = Some(view);
         if let Some(p) = player {
@@ -465,6 +506,10 @@ impl MapUi {
         let Some(view) = self.view.as_mut() else {
             return;
         };
+        if let Some((id, _)) = &player.dungeon {
+            // The player's dungeon map shows the notes of that dungeon (§4.2 step 5, MW11).
+            self.dungeon_zone = Some(Did(*id));
+        }
         let r = view.show_player_map(ui, player, texts);
         self.after(ui, r, facts, texts);
     }
@@ -481,6 +526,13 @@ impl MapUi {
         texts: &dyn MapTexts,
     ) -> Vec<MapChange> {
         let mut out = Vec::new();
+        // §4.6 "When": the player's dungeon is recorded whenever it changes, with or without
+        // a window; with a window the change runs the selection below.
+        let now = player.map(|p| p.dungeon.as_ref().map(|(id, _)| *id));
+        let dungeon_changed = now.is_some_and(|d| d != self.player_dungeon);
+        if let Some(d) = now {
+            self.player_dungeon = d;
+        }
         let Some(view) = self.view.as_mut() else {
             return out;
         };
@@ -491,9 +543,6 @@ impl MapUi {
             return out;
         }
         view.refresh(ui, texts);
-        let notes_due = self.dungeon_notes_pending
-            && view.shown == Some(Shown::Dungeon)
-            && view.dungeon.as_ref().is_some_and(|d| d.size.is_some());
         // Feed markers (§6.7 item 7), only when the state's markers changed: the removed
         // ones go, the new and replaced ones are converted and given.
         let markers = state.markers();
@@ -522,6 +571,18 @@ impl MapUi {
         {
             view.update_player(ui, p);
         }
+        // §4.6 "When": the selection runs when the player's dungeon changes (entering one,
+        // leaving it, or another one); navigation and lookup never change the record.
+        if dungeon_changed && let Some(p) = player {
+            self.show_player_map(ui, p, facts, texts);
+        }
+        let Some(view) = self.view.as_mut() else {
+            return out;
+        };
+        // A dungeon map shown before its image size was known: its notes, once it is.
+        let notes_due = self.dungeon_notes_pending
+            && view.shown == Some(Shown::Dungeon)
+            && view.dungeon.as_ref().is_some_and(|d| d.size.is_some());
         if notes_due {
             self.give_notes(ui, Shown::Dungeon, facts, texts);
         }
@@ -857,14 +918,19 @@ fn notes_for(
             instance: 0,
         };
         let text = n.text.clone().unwrap_or_default();
-        let tooltip = marker_tooltip(
-            texts,
-            &UiMarker {
-                point,
-                label: text.clone(),
-                ..UiMarker::default()
-            },
-        );
+        // MW15 from the install (§6.3 revision 1), Tessera's wording when it is missing.
+        let tooltip = texts
+            .note_tooltip(&text, n.type_bits, &point)
+            .unwrap_or_else(|| {
+                marker_tooltip(
+                    texts,
+                    &UiMarker {
+                        point,
+                        label: text.clone(),
+                        ..UiMarker::default()
+                    },
+                )
+            });
         Some(MapNote {
             id: u64::try_from(n.row).unwrap_or(u64::MAX),
             note_type: n.type_bits,
@@ -915,8 +981,8 @@ mod tests {
             has_player: true,
             ..RadarInput::default()
         };
-        assert!(player_map(&input, None).valid);
+        assert!(player_map(&input, None, None).valid);
         let bad = RadarInput { x: 0xFF, ..input };
-        assert!(!player_map(&bad, None).valid);
+        assert!(!player_map(&bad, None, None).valid);
     }
 }

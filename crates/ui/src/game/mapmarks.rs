@@ -318,6 +318,15 @@ pub trait MapTexts {
         None
     }
 
+    /// The world-map tooltip of a table note (MW15, §6.3 revision 1: the `UI_Maps` entry
+    /// with the note's text and the latitude and longitude texts of `point`); `None` (the
+    /// default) when the entry cannot be rendered, and the caller uses Tessera's wording
+    /// ([`marker_tooltip`]).
+    fn note_tooltip(&self, text: &str, note_type: u64, point: &MapPoint) -> Option<String> {
+        let _ = (text, note_type, point);
+        None
+    }
+
     /// The radar tooltip of a note (MW22: the `UI_Maps` entry with the note's text and the
     /// horizontal distance); default Tessera's own "*text* (*distance*)".
     fn radar_tooltip(&self, text: &str, distance: f32) -> String {

@@ -48,6 +48,81 @@ fn map_defaults_sizes_targets_and_dungeon_lookup() {
     );
     let texts = InstallMapTexts::new(Some(&facts.constants), Some(&i.npc));
 
+    // §6.3 revision 1 (MW15, MW19, MW30): the install's entries render with the latitude
+    // and longitude texts in their places.
+    {
+        use tessera_client::map::texts::coordinate_pair;
+        use tessera_ui::game::map::MapPoint;
+        use tessera_ui::game::mapmarks::MapTexts;
+        let region = *facts.constants.keys().next().expect("a region");
+        let point = MapPoint {
+            global: (16_000.0, 16_000.0),
+            region,
+            instance: 0,
+        };
+        let (lat, lon) = coordinate_pair(&facts.constants, &point).expect("pair");
+        let display = texts
+            .coordinate_display(&point)
+            .expect("CoordinateDisplay text");
+        let (la, lo) = (display.find(&lat), display.find(&lon));
+        assert!(la.is_some() && lo.is_some() && la < lo, "MW19 order");
+        let tip = texts
+            .note_tooltip("Note", 0, &point)
+            .expect("the MW15 entry renders");
+        assert!(tip.contains("Note") && tip.contains(&lat) && tip.contains(&lon));
+        // MW15's stable-master composite: built with an entity text, the plain note text
+        // without one (the client half's case).
+        let stable = 1u64 << 22;
+        let plain = texts
+            .note_tooltip("Note", stable, &point)
+            .expect("the MW15 entry renders");
+        assert_eq!(plain, tip, "no entity text: the plain note text");
+        let composite = texts
+            .note_tooltip_with("Note", stable, Some("Keeper"), &point)
+            .expect("the MW15 entry renders");
+        assert!(composite.contains(&lat) && composite.contains(&lon));
+        assert_ne!(composite, tip, "the composite entry renders");
+        assert!(
+            composite.contains("Note") || composite.contains("Keeper"),
+            "the composite carries its texts"
+        );
+        let other = texts
+            .note_tooltip_with("Note", 1 << 20, Some("Keeper"), &point)
+            .expect("the MW15 entry renders");
+        assert_eq!(other, tip, "not a stable-master type: the plain note text");
+    }
+
+    // §4.6 revision 1 (MW34): the cell reader exists and every dungeon with map data gives
+    // the player's dungeon map.
+    assert!(facts.cell_reader.is_some(), "the cell reader");
+    let regions = facts.regions.as_ref().expect("map regions");
+    let with_map = regions
+        .dungeons
+        .iter()
+        .filter(|d| d.map_data.is_some())
+        .count();
+    let shown = regions
+        .dungeons
+        .iter()
+        .filter(|d| tessera_client::map::player_dungeon_map(&facts, d.did).is_some())
+        .count();
+    let missing: Vec<String> = regions
+        .dungeons
+        .iter()
+        .filter(|d| d.map_data.is_some())
+        .filter(|d| tessera_client::map::player_dungeon_map(&facts, d.did).is_none())
+        .map(|d| format!("{:#010x}", d.did.0))
+        .collect();
+    println!(
+        "dungeons {}, with map data {with_map}, player map {shown}",
+        regions.dungeons.len()
+    );
+    assert!(
+        missing.is_empty(),
+        "dungeons with map data but no player map: {missing:?}"
+    );
+    assert_eq!(shown, with_map);
+
     // A window opened before the facts takes the install's defaults when they arrive.
     let mut early = MapUi::new(
         Arc::clone(&i.refs),
@@ -192,4 +267,133 @@ fn map_defaults_sizes_targets_and_dungeon_lookup() {
     );
     println!("dungeon {id:#010x}: {direct} notes through findplace");
     assert!(map.failures().is_empty(), "{:?}", map.failures());
+
+    // §4.6 "When": a player inside another dungeon before any window exists; `findplace`
+    // opens the window on the looked-up dungeon, and the next frame keeps it.
+    let looked_up = map
+        .view()
+        .and_then(|v| v.dungeon.as_ref())
+        .map(|d| d.map.clone())
+        .expect("the looked-up dungeon map");
+    let other = regions
+        .dungeons
+        .iter()
+        .filter(|d| d.did.0 != id)
+        .find_map(|d| {
+            tessera_client::map::player_dungeon_map(&facts, d.did)
+                .filter(|(_, m)| !m.same_as(&looked_up))
+        })
+        .expect("another dungeon with a map");
+    let inside = tessera_ui::game::mapwindow::PlayerMap {
+        point: tessera_ui::game::map::MapPoint {
+            global: (16_000.0, 16_000.0),
+            region: 1,
+            instance: 0,
+        },
+        heading: 0.0,
+        valid: true,
+        area: None,
+        dungeon: Some(other),
+    };
+    let p5 = tessera_client::travel::P5State::default();
+    let mut fresh = MapUi::new(Arc::clone(&i.refs), P5Art::default(), facts.defaults);
+    {
+        let mut ui = i.rig.host.ui_mut();
+        fresh.frame(&mut ui, &p5, Some(&facts), Some(&inside), &[], &texts);
+        assert!(fresh.view().is_none());
+        let lines = fresh.lookup(&mut ui, Some(&facts), &name, Some(&inside), &texts);
+        assert!(!lines.is_empty());
+        fresh.frame(&mut ui, &p5, Some(&facts), Some(&inside), &[], &texts);
+    }
+    let view = fresh.view().expect("view");
+    assert!(
+        view.dungeon
+            .as_ref()
+            .is_some_and(|d| d.map.same_as(&looked_up)),
+        "the looked-up dungeon stays while the player is inside another one"
+    );
+    {
+        let mut ui = i.rig.host.ui_mut();
+        fresh.close(&mut ui);
+    }
+}
+
+/// §4.6 revision 1, source 2 on the pool: the player's dungeon follows interior cells
+/// through [`PlayerDungeon`]'s lookups (asked, answered off the frame, cached), and a move to
+/// another cell asks again.
+#[test]
+fn player_dungeon_lookups_answer_on_the_pool() {
+    use tessera_client::map::PlayerDungeon;
+    use tessera_ui::game::radar::RadarInput;
+    use tessera_world::LandblockKey;
+
+    let Some(dir) = game_dir() else { return };
+    let i = install(dir.clone());
+    let facts = Arc::new(MapFacts::load(Arc::clone(&i.data), &i.set, Some(&dir)));
+    let reader = facts.cell_reader.as_ref().expect("the cell reader");
+    let mut keys = Vec::new();
+    for m in i.set.members() {
+        for e in m
+            .archive
+            .entries_range(0x8000_0000u32..0x8100_0000)
+            .flatten()
+        {
+            if let Some(k) = LandblockKey::from_did(e.did)
+                && k.info_did().0 == e.did
+            {
+                keys.push(k);
+            }
+        }
+    }
+    keys.sort_by_key(|k| k.info_did().0);
+    keys.dedup();
+    // Two interior cells that name dungeons.
+    let probe = Arc::clone(reader);
+    let mut cells: Vec<(LandblockKey, u16, tessera_formats::Did)> = Vec::new();
+    for key in keys {
+        let table = probe
+            .lock()
+            .expect("probe")
+            .block_dungeons(key)
+            .unwrap_or_default();
+        for (cell, d) in table.iter() {
+            cells.push((key, *cell, *d));
+            if cells.len() >= 2 {
+                break;
+            }
+        }
+        if cells.len() >= 2 {
+            break;
+        }
+    }
+    assert!(cells.len() >= 2, "two interior cells naming a dungeon");
+    let mut dungeon = PlayerDungeon::default();
+    let input = |key: LandblockKey, cell: u16| RadarInput {
+        region: key.region(),
+        x: key.x(),
+        y: key.y(),
+        cell,
+        has_player: true,
+        ..RadarInput::default()
+    };
+    for (key, cell, want) in &cells[..2] {
+        let r = input(*key, *cell);
+        dungeon.update(&r, None, Some(reader));
+        assert!(dungeon.is_pending(), "a lookup is asked");
+        let start = Instant::now();
+        let got = loop {
+            let d = dungeon.update(&r, None, Some(reader));
+            if !dungeon.is_pending() {
+                break d;
+            }
+            assert!(start.elapsed() < IMAGE_WAIT, "the lookup answers");
+            std::thread::sleep(Duration::from_millis(5));
+        };
+        assert_eq!(got, Some(*want), "cell {cell:#06x} of {key:?}");
+        // Cached: no lookup is asked again.
+        assert_eq!(dungeon.update(&r, None, Some(reader)), Some(*want));
+        assert!(!dungeon.is_pending());
+    }
+    assert_eq!(dungeon.errors(), 0);
+    println!("two interior cells answered on the pool");
 }

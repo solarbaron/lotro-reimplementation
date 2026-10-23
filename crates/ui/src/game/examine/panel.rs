@@ -32,6 +32,11 @@ use super::place::{place, place_group};
 /// `item-tooltips.md` §10: (18, 18)).
 const DEFAULT_PIN_OFFSET: i32 = 18;
 
+/// The modulus of the pinned-window counter *k* (`item-tooltips.md` §10 answer (1), IT28;
+/// a decision-0012 numeric constant): the *k*-th window opens at the `PinnedTooltip`
+/// design position plus *k* × the offset, *k* counting the windows opened so far modulo 20.
+pub const PIN_CASCADE_MODULUS: u32 = 20;
+
 /// Size of a coin icon whose image is not loaded yet (Tessera rule).
 const COIN_ICON: i32 = 16;
 
@@ -78,7 +83,7 @@ pub struct PinnedWindow {
     pub window: ElementKey,
     /// The tooltip inside it.
     pub tooltip: BuiltTooltip,
-    /// The buttons that close it (Tessera rule, see [`ExamTooltips::pin`]).
+    /// The buttons that close it (`PinnedTooltipCloseButton`, see [`ExamTooltips::pin`]).
     pub close_buttons: Vec<ElementKey>,
     /// The element IDs whose `Button_click` game-code handler the pin registered (one
     /// registration each), so that they are undone even after the buttons are gone.
@@ -112,6 +117,10 @@ pub struct ExamTooltips {
     vocab: CharVocab,
     pins: PinRegistry<PinnedWindow>,
     pin_layout: Option<u32>,
+    /// The element ID of `PinnedTooltipCloseButton` (resolved by the client).
+    close_button: Option<u32>,
+    /// Pinned windows opened so far, modulo [`PIN_CASCADE_MODULUS`] (§10 answer (1)).
+    opened: u32,
 }
 
 impl ExamTooltips {
@@ -122,7 +131,30 @@ impl ExamTooltips {
             vocab,
             pins: PinRegistry::new(),
             pin_layout: None,
+            close_button: None,
+            opened: 0,
         }
+    }
+
+    /// Sets the element ID of `PinnedTooltipCloseButton` (the `UIElementID` key of that
+    /// label, `item-tooltips.md` §10 answer (2)): only a click on that button closes the
+    /// pinned window it is in. Without it (the label unresolved) every Button of the window
+    /// outside the tooltip closes it (Tessera's earlier rule, kept as the fallback).
+    pub fn set_close_button_id(&mut self, id: u32) {
+        self.close_button = (id != 0).then_some(id);
+    }
+
+    /// [`ExamTooltips::set_close_button_id`] by value.
+    #[must_use]
+    pub fn with_close_button_id(mut self, id: u32) -> Self {
+        self.set_close_button_id(id);
+        self
+    }
+
+    /// The pinned-window counter *k* the next pin uses (§10 answer (1)).
+    #[must_use]
+    pub fn pin_counter(&self) -> u32 {
+        self.opened
     }
 
     /// Sets the examination layout whose `PinnedTooltip` element pinned tooltips open
@@ -271,13 +303,15 @@ impl ExamTooltips {
     /// examination layout's `PinnedTooltip` element (from the layout of
     /// [`ExamTooltips::set_pin_layout`], else from `input.frame`'s layout) opens as a
     /// window holding a copy of the tooltip, its list box grown to the tooltip's size and
-    /// the window by the same amount, offset by
-    /// (`UI_Examination_Tooltip_PinnedOffset_X`, `…_Y`) from the showing tooltip (from
-    /// the pointer's tooltip position when none shows).
+    /// the window by the same amount (§10 answers (3), (5)). The *k*-th window opened
+    /// opens at the `PinnedTooltip` root's design position plus *k* ×
+    /// (`UI_Examination_Tooltip_PinnedOffset_X`, `…_Y`), *k* counting the windows opened
+    /// so far modulo [`PIN_CASCADE_MODULUS`] (0 for the first; §10 answer (1), IT28); it does
+    /// not follow the hover tooltip, and `_pointer` is not used.
     ///
-    /// Tessera rule (the close button is not named in the data this spec read): every
-    /// Button of the window outside the tooltip closes it; their `Button_click` reaches
-    /// [`ExamTooltips::handle_event`] through game-code handlers.
+    /// Only a click on the window's `PinnedTooltipCloseButton`
+    /// ([`ExamTooltips::set_close_button_id`]) closes it (§10 answer (2)); its
+    /// `Button_click` reaches [`ExamTooltips::handle_event`] through a game-code handler.
     ///
     /// # Errors
     /// [`ExamError::Ui`] when the window or the tooltip cannot be created,
@@ -286,7 +320,7 @@ impl ExamTooltips {
         &mut self,
         ui: &mut Ui,
         input: &ExamTooltip,
-        pointer: (i32, i32),
+        _pointer: (i32, i32),
     ) -> Result<PinOutcome, ExamError> {
         self.prune(ui);
         match self.pins.decide(input.key) {
@@ -297,20 +331,15 @@ impl ExamTooltips {
             PinOutcome::Refused => return Ok(PinOutcome::Refused),
             PinOutcome::Pinned => {}
         }
-        let anchor = match ui.tooltip_panel() {
-            Some(p) => {
-                let b = ui.displayed_box(p);
-                (b.l, b.t)
-            }
-            None => {
-                let cs = ui.cursor_size();
-                place(pointer, (cs, cs), (0, 0), ui.screen_size())
-            }
-        };
         let window = match self.pin_layout {
             Some(l) => ui.open_panel(Did(l), self.vocab.ids.pinned_tooltip)?,
             None => ui.open_panel(Did(input.frame.layout), self.vocab.ids.pinned_tooltip)?,
         };
+        // §10 answer (1): the window's own design position.
+        let anchor = ui
+            .design_box(window)
+            .or_else(|| ui.layout_box(window))
+            .map_or((0, 0), |b| (b.l, b.t));
         let host = match subtree(ui, window)
             .into_iter()
             .skip(1)
@@ -383,15 +412,21 @@ impl ExamTooltips {
         } else {
             DEFAULT_PIN_OFFSET
         };
+        let k = i32::try_from(self.opened % PIN_CASCADE_MODULUS).unwrap_or(0);
         ui.move_to(
             window,
-            anchor.0.saturating_add(ox),
-            anchor.1.saturating_add(oy),
+            anchor.0.saturating_add(ox.saturating_mul(k)),
+            anchor.1.saturating_add(oy.saturating_mul(k)),
         );
         let in_tooltip = subtree(ui, tooltip.frame);
+        let close_button = self.close_button;
         let close_buttons: Vec<ElementKey> = subtree(ui, window)
             .into_iter()
-            .filter(|k| ui.class(*k) == Some(WidgetClass::Button) && !in_tooltip.contains(k))
+            .filter(|k| !in_tooltip.contains(k))
+            .filter(|k| match close_button {
+                Some(id) => ui.element_id(*k) == Some(id),
+                None => ui.class(*k) == Some(WidgetClass::Button),
+            })
             .collect();
         let click = ui.vocab().msgs.button_click;
         let mut registered_ids = Vec::with_capacity(close_buttons.len());
@@ -410,6 +445,7 @@ impl ExamTooltips {
                 registered_ids,
             },
         );
+        self.opened = (self.opened + 1) % PIN_CASCADE_MODULUS;
         Ok(PinOutcome::Pinned)
     }
 
@@ -751,12 +787,14 @@ impl ExamTooltips {
         self.set_colour(ui, t, colour);
         ui.set_text(t, Some(text.to_string()));
         let fit = ui.element_type(t) == Some(self.vocab.types.exam_name);
-        // A text below the row wraps within what is left of the limit after its offset.
         let b = ui.layout_box(t).unwrap_or_default();
-        let wrap = if t != k {
-            wrap.saturating_sub(b.l.max(0)).max(1)
-        } else {
-            wrap
+        // The name (`Name_Base`, fit mode `Desc`) wraps within its own layout width wherever
+        // it sits (§5 and §7 answers, IT25; Tessera rule of Q22). Another text below the row
+        // wraps within what is left of the limit after its offset.
+        let wrap = match fit.then(|| Self::layout_width(ui, t)).flatten() {
+            Some(own) => own,
+            None if t != k => wrap.saturating_sub(b.l.max(0)).max(1),
+            None => wrap,
         };
         let (w, h) = if fit {
             self.fit_fonts(ui, t, text, wrap)
@@ -1012,10 +1050,11 @@ impl ExamTooltips {
         let templates = Self::templates_of(ui, k);
         let empty = ExamRow::default();
         if horizontal {
-            // The list grows sideways to fit its non-empty entries (§4.3). Each entry
-            // wraps within what is left of the width limit after the entries before it
-            // (§7, item-tooltips.md §7 OPEN, Tessera rule), so the row never grows past
-            // the list's limit.
+            // The list grows sideways to fit its non-empty entries (§4.3). Each entry wraps
+            // by its own fit mode (§7 answer, IT25): the name (`Name_Base`, mode `Desc`)
+            // within its own layout width (Tessera rule of Q22: 180 here, less its
+            // margins), whatever the entries before it; any other entry within what is left
+            // of the width limit after the entries before it.
             let mut x = 0i32;
             let mut h = 0i32;
             let mut gone = Vec::new();
@@ -1025,7 +1064,8 @@ impl ExamTooltips {
                     continue;
                 };
                 let row = rows.get(i).unwrap_or(&empty);
-                let left = wrap.saturating_sub(x).max(1);
+                let own = self.own_wrap(ui, c);
+                let left = own.unwrap_or_else(|| wrap.saturating_sub(x).max(1));
                 let f = self.fill_row(ui, c, row, left, depth + 1);
                 if f.asm.width <= 0 || f.asm.height <= 0 {
                     gone.push(c);
@@ -1054,6 +1094,34 @@ impl ExamTooltips {
         f.asm.list = Some(children.iter().map(|(_, c)| c.asm.clone()).collect());
         f.children = children;
         f
+    }
+}
+
+impl ExamTooltips {
+    /// The wrap width of an entry of a horizontal list that wraps by its own width (§7
+    /// answer, IT25): the name entry (an `ExaminationName` text, `Name_Base`, whose fit mode
+    /// is `Desc`) wraps within its layout width (Tessera rule of `item-tooltips.md` Q22);
+    /// `None` for any other entry, or a name without a positive width.
+    ///
+    /// The element's `UICore_Text_fit_to_text` mode is not read (the vocabularies carry no
+    /// PID for it): the `Desc` rule is applied to `ExaminationName` texts, every other text
+    /// keeps the list's limit (the `Parent` reading; implementer OPEN).
+    fn own_wrap(&self, ui: &Ui, entry: ElementKey) -> Option<i32> {
+        let name = self.vocab.types.exam_name;
+        let t = Self::text_target(ui, entry)?;
+        if ui.element_type(t) != Some(name) && ui.element_type(entry) != Some(name) {
+            return None;
+        }
+        Self::layout_width(ui, entry)
+    }
+
+    /// `k`'s layout width (its design width before layout); `None` when not positive.
+    fn layout_width(ui: &Ui, k: ElementKey) -> Option<i32> {
+        let w = ui
+            .layout_box(k)
+            .or_else(|| ui.design_box(k))
+            .map_or(0, |b| b.w());
+        (w > 0).then_some(w)
     }
 }
 

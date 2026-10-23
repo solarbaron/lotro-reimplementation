@@ -19,7 +19,7 @@
 //!   `--place` reads (`map-windows.md` §7.3 OPEN on per-record targets).
 
 use std::collections::{BTreeMap, HashMap};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use tessera_dat::{ArchiveKind, ArchiveSet};
 use tessera_formats::gameplay::map::{MapNoteIndex, MapNotesTable, PlacesTable};
@@ -32,6 +32,7 @@ use tessera_gamedata::map::{
 use tessera_ui::ImageRef;
 use tessera_ui::game::mapmarks::{IconEntry, IconTable, NoteIcons as UiIcons, read_filter};
 use tessera_ui::game::worldmap::as_u64;
+use tessera_world::ui_maps::UiMapReader;
 use tessera_world::{BundleOptions, LandblockKey, MapConstants, WorldContext};
 
 use crate::character::CharacterData;
@@ -50,6 +51,9 @@ pub const GOP_RADAR: &str = "GOP_Radar_MapNoteFilter";
 pub const GOP_COORDINATES: &str = "GOP_DisplayCoordinatesOnMap";
 /// The presentation switch.
 pub const GOP_FULLSCREEN: &str = "GOP_MapInFullscreenMode";
+/// The player property naming the player's dungeon (`map-windows.md` §4.6 revision 1,
+/// source 1).
+pub const CURRENT_DUNGEON: &str = "Dungeon_CurrentDungeon";
 
 /// The map windows' Tessera settings (`map-windows.md` §8): the three filter values, the
 /// presentation and coordinate switches and the discovery rule.
@@ -135,6 +139,13 @@ pub struct MapFacts {
     pub place_targets: HashMap<u32, (u8, [f64; 2])>,
     /// The property IDs of the map data (`None` without a dictionary).
     pub pids: Option<MapPids>,
+    /// The record reader of the player's dungeon (`map-windows.md` §4.6 revision 1, MW34:
+    /// an interior cell's `Dungeon_DID` from its block's landblock-info record), shared with
+    /// [`super::dungeon::PlayerDungeon`]'s worker; `None` without the install's world data.
+    pub cell_reader: Option<Arc<Mutex<UiMapReader>>>,
+    /// The property ID of `Dungeon_CurrentDungeon` (§4.6 revision 1, source 1: the player's
+    /// dungeon the session reports); `None` without a dictionary.
+    pub current_dungeon_pid: Option<u32>,
 }
 
 impl std::fmt::Debug for MapFacts {
@@ -262,7 +273,10 @@ impl MapFacts {
             Err(e) => tracing::warn!("map data unavailable: {e}"),
         }
         let filter_pids = (pid(GOP_NEAR).unwrap_or(0), pid(GOP_DISTANT).unwrap_or(0));
-        let (constants, areas) = world_facts(set);
+        let current_dungeon_pid = pid(CURRENT_DUNGEON);
+        let (constants, areas, world) = world_facts(set);
+        let cell_reader =
+            world.map(|ctx| Arc::new(Mutex::new(UiMapReader::from_context(ctx, |n: &str| pid(n)))));
         let mut place_index = place_index;
         let place_targets = regions
             .as_deref()
@@ -284,6 +298,8 @@ impl MapFacts {
             place_index,
             place_targets,
             pids,
+            cell_reader,
+            current_dungeon_pid,
         }
     }
 }
@@ -376,8 +392,12 @@ fn place_sizes(
 }
 
 /// What [`world_facts`] reads: each region's map constants and each landblock's
-/// `Area_DID`.
-type WorldFacts = (BTreeMap<u8, MapConstants>, HashMap<(u8, u8, u8), u32>);
+/// `Area_DID`, and the world context they were read with.
+type WorldFacts = (
+    BTreeMap<u8, MapConstants>,
+    HashMap<(u8, u8, u8), u32>,
+    Option<Arc<WorldContext>>,
+);
 
 /// The map constants of each region and each landblock's `Area_DID`, from the install's
 /// region descriptors and block maps.
@@ -386,7 +406,7 @@ fn world_facts(set: &Arc<ArchiveSet>) -> WorldFacts {
         Ok(c) => c,
         Err(e) => {
             tracing::warn!("map coordinates unavailable: {e}");
-            return (BTreeMap::new(), HashMap::new());
+            return (BTreeMap::new(), HashMap::new(), None);
         }
     };
     let constants: BTreeMap<u8, MapConstants> = ctx
@@ -430,7 +450,7 @@ fn world_facts(set: &Arc<ArchiveSet>) -> WorldFacts {
             }
         }
     }
-    (constants, areas)
+    (constants, areas, Some(Arc::new(ctx)))
 }
 
 #[cfg(test)]

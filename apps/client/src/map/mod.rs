@@ -5,7 +5,7 @@
 //! (`findplace`) and the census of every map region.
 //!
 //! The client runs no map rule of the game (discovery, world events, the player's
-//! dungeon are Tessera rules of `map-windows.md` §8); the markers come from the scenario
+//! dungeon are Tessera rules of `map-windows.md` §4.6 and §8); the markers come from the scenario
 //! feed (`MarkerAdded`, `MarkerRemoved`), the maps, notes, names and icons from the
 //! install.
 //!
@@ -13,6 +13,7 @@
 //! |---|---|---|
 //! | [`data`] | [`MapFacts`]: the install's map regions, notes, icon tables, region menu, option defaults, map constants, landblock areas, place indexes | MW §4–§8 |
 //! | [`texts`] | [`InstallMapTexts`]: coordinates, note-type labels, filter-menu items | MW §3.4, §6.9 |
+//! | [`dungeon`] | [`PlayerDungeon`]: the player's dungeon from the session's `Dungeon_CurrentDungeon`, else the interior cell's `Dungeon_DID` (read off the frame) | MW §4.6 |
 //! | [`ui`] | [`MapUi`]: the map window (`tessera-ui`'s view) with notes and feed markers, the minimap's feed markers | MW §3–§6 |
 //! | [`lookup`] | `findplace`: coordinates, `/loc` lines, place keys, names | MW §7.3 |
 //! | [`census`] | the map-region census of P5 exit criterion 1 | MW §5.4; decision 0036 §1 |
@@ -23,6 +24,7 @@
 
 pub mod census;
 pub mod data;
+pub mod dungeon;
 pub mod hub;
 pub mod lookup;
 pub mod texts;
@@ -30,7 +32,8 @@ pub mod ui;
 
 pub use census::{CensusReport, CensusRun, CensusStep};
 pub use data::{MapFacts, MapSettings};
+pub use dungeon::{PlayerDungeon, reported_dungeon};
 pub use hub::{MapHub, P5Key, P5Keys, parse_map_panel};
 pub use lookup::{LookupOutcome, PlaceTarget, find_place};
 pub use texts::InstallMapTexts;
-pub use ui::{MapChange, MapUi, player_map, ui_marker};
+pub use ui::{MapChange, MapUi, player_dungeon_map, player_map, ui_marker};

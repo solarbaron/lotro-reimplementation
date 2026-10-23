@@ -79,6 +79,8 @@ pub mod skill_tokens {
     pub const VAR_SPECIAL: u32 = 0x0048_0683;
     /// §7.13: the row-format variable.
     pub const VAR_TRAIT: u32 = 0x0059_65E4;
+    /// §7.13: the text of a passive-skill trait in state `cantuse`.
+    pub const PASSIVE_TRAIT: u32 = 0x0E10_2ECC;
     /// §7.15: wrap string of a static recovery time.
     pub const RECOVERY_TOTAL: u32 = 0x0EDB_B215;
     /// §7.15: wrap string of a counting recovery time.
@@ -272,10 +274,11 @@ pub enum TimerKind {
 
 /// A timer row of a built tooltip (§7.15, §8.4, §10.2): the text changes while shown;
 /// [`TooltipEngine::timer_text`] gives it for a later moment. A tooltip lists a timer only
-/// when its row had text at build time. A counting timer's text becomes `None` once less than
-/// a second is left (the default format has no unit for it, §7.15 OPEN); the UI then shows
-/// the row without text (as a row built at that moment would be empty) until the tooltip
-/// closes or is rebuilt.
+/// when its row had text at build time. Under one second the default format shows no unit
+/// (§10.1 step 3): a wrapped timer (the recovery row) then shows its wrap string with an empty
+/// timer text (§7.15 "Below one second"), and an unwrapped one (the effect time, §8.4) has no
+/// text (`None`); the UI then shows that row without text (as a row built at that moment
+/// would be empty) until the tooltip closes or is rebuilt.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TimerRow {
     /// Index of the (top-level) row in [`TooltipModel::rows`].
@@ -551,6 +554,42 @@ fn values(pairs: impl IntoIterator<Item = (u32, Value)>) -> Values {
     v
 }
 
+/// The `Trait_Nature` keys whose traits count as passive skills (`skill-tooltips.md` §7.13,
+/// ST30): the single labels `Characteristic`, `PvMP`, `MountedCombat` and the range
+/// `Class_Burglar` … `Class_Corsair`. Keys are read from the nature mapper by label; the
+/// spec's keys (1, 13, 14, 19–33) stand in for a label the mapper lacks.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct PassiveNatures {
+    single: [u32; 3],
+    range: (u32, u32),
+}
+
+impl PassiveNatures {
+    /// The labels and their spec keys of the single natures.
+    const SINGLE: [(&'static str, u32); 3] =
+        [("Characteristic", 1), ("PvMP", 13), ("MountedCombat", 14)];
+    /// The labels and spec keys of the range's ends.
+    const RANGE: [(&'static str, u32); 2] = [("Class_Burglar", 19), ("Class_Corsair", 33)];
+
+    fn read(data: &dyn super::TooltipData, pid: Option<u32>) -> Self {
+        let key = |(label, fallback): (&str, u32)| {
+            pid.and_then(|p| data.enum_key(p, label))
+                .unwrap_or(fallback)
+        };
+        let [a, b, c] = Self::SINGLE;
+        let [lo, hi] = Self::RANGE;
+        Self {
+            single: [key(a), key(b), key(c)],
+            range: (key(lo), key(hi)),
+        }
+    }
+
+    /// Whether a trait of nature `key` is a passive skill.
+    pub(crate) fn contains(&self, key: u32) -> bool {
+        self.single.contains(&key) || (self.range.0..=self.range.1).contains(&key)
+    }
+}
+
 fn text(t: &RichText) -> Value {
     Value::Text(t.plain_text())
 }
@@ -642,9 +681,11 @@ impl<D: TooltipData> TooltipEngine<D> {
     }
 
     /// The text of a timer row `elapsed` seconds after its tooltip was built (§10.2): the
-    /// duration text, wrapped in the row's wrap string. `None` when the duration has no text
-    /// at that moment (under one second with the default format, §7.15 OPEN): the row is then
-    /// shown without text, see [`TimerRow`].
+    /// duration text, wrapped in the row's wrap string. A wrapped timer whose duration has no
+    /// text at that moment (under one second with the default format) renders its wrap string
+    /// with an empty timer text (§7.15 "Below one second"). `None` when an unwrapped timer's
+    /// duration has no text, or the wrap string renders empty: the row is then shown without
+    /// text, see [`TimerRow`].
     #[must_use]
     pub fn timer_text(&self, timer: &TimerRow, elapsed: f32) -> Option<RichText> {
         let s = f64::from(timer.seconds_after(elapsed));
@@ -659,11 +700,14 @@ impl<D: TooltipData> TooltipEngine<D> {
         } else {
             timer.timer.options()
         };
-        let d = self.duration_text(s, opts, format)?;
+        let d = self.duration_text(s, opts, format);
         match timer.wrap {
-            None => Some(d),
+            None => d,
             Some(token) => {
-                let v = values([(WRAP_VARIABLE, text(&d))]);
+                // §7.15 "Below one second": with no unit shown the wrap string is rendered
+                // with an empty timer text.
+                let inner = d.as_ref().map_or(Value::Text(String::new()), text);
+                let v = values([(WRAP_VARIABLE, inner)]);
                 match self.data.render(
                     TextRef::Token {
                         table_key: tokens::EXAMINATION_TABLE_KEY,
@@ -671,8 +715,8 @@ impl<D: TooltipData> TooltipEngine<D> {
                     },
                     &v,
                 ) {
-                    Ok(Some(t)) => Some(t),
-                    _ => Some(d),
+                    Ok(Some(t)) if !t.plain_text().trim().is_empty() => Some(t),
+                    _ => d,
                 }
             }
         }
@@ -1204,18 +1248,7 @@ impl<D: TooltipData> TooltipEngine<D> {
         let Some(tr) = as_did(Self::get(f.ex, self.c.skill_required_trait)) else {
             return self.empty_row(f.t);
         };
-        let name = self.data.record(tr).ok().flatten().and_then(|set| {
-            match self.c.trait_name.and_then(|p| set.get(p)) {
-                Some(PropertyValue::StringInfo(i)) => {
-                    let mut misses = 0;
-                    let t = self.info_text(i, &mut misses);
-                    f.ex.ctx.miss(misses);
-                    t
-                }
-                _ => None,
-            }
-        });
-        let text = name.and_then(|n| self.format_row(f, &values([(st::VAR_TRAIT, text(&n))])));
+        let record = self.data.record(tr).ok().flatten();
         let has =
             f.ex.ctx
                 .viewer
@@ -1223,8 +1256,39 @@ impl<D: TooltipData> TooltipEngine<D> {
                 .iter()
                 .take(MAX_VIEWER_ENTRIES)
                 .any(|d| *d == tr);
+        // §7.13 passive-skill traits (ST30): `Examination_TraitIsPassiveSkill` by the trait's
+        // nature; in state `cantuse` such a row shows token 0x0E102ECC instead of its format
+        // (an empty piece in the English table, so the row is left out, §5).
+        let passive = record
+            .as_deref()
+            .is_some_and(|set| self.trait_is_passive(set));
+        if passive && !has {
+            let text = self.exam(f, st::PASSIVE_TRAIT, &Values::new());
+            return self.text_row_of(f.t, text, Some("cantuse"));
+        }
+        let name = record.and_then(|set| match self.c.trait_name.and_then(|p| set.get(p)) {
+            Some(PropertyValue::StringInfo(i)) => {
+                let mut misses = 0;
+                let t = self.info_text(i, &mut misses);
+                f.ex.ctx.miss(misses);
+                t
+            }
+            _ => None,
+        });
+        let text = name.and_then(|n| self.format_row(f, &values([(st::VAR_TRAIT, text(&n))])));
         let state = (!has).then_some("cantuse");
         self.text_row_of(f.t, text, state)
+    }
+
+    /// Whether a trait record is a passive skill (§7.13, ST30): its `Trait_Nature` is one of
+    /// [`PassiveNatures`]; a trait without a nature is not.
+    pub(crate) fn trait_is_passive(&self, set: &PropertySet) -> bool {
+        let Some(nature) = as_key(self.c.trait_nature.and_then(|p| set.get(p))) else {
+            return false;
+        };
+        self.passive_natures
+            .get_or_init(|| PassiveNatures::read(&self.data, self.c.trait_nature))
+            .contains(nature)
     }
 
     pub(crate) fn recovery(&self, f: &mut Fill<'_, '_>) -> Row {
@@ -1245,8 +1309,9 @@ impl<D: TooltipData> TooltipEngine<D> {
                 st::RECOVERY_TOTAL
             }),
         };
+        // 0 < T < 1 gives the wrap string with an empty timer text (§7.15 "Below one
+        // second"); an empty row carries no timer.
         let text = self.timer_text(&timer, 0.0);
-        // An empty row (for example under one second, §7.15 OPEN) carries no timer.
         if text.is_some() {
             *f.ex.ctx.timer.borrow_mut() = Some(timer);
         }
@@ -1352,7 +1417,8 @@ impl<D: TooltipData> TooltipEngine<D> {
             wrap: None,
         };
         let text = self.timer_text(&timer, 0.0);
-        // An empty row (for example under one second, §7.15 OPEN) carries no timer.
+        // An empty row (under one second the unwrapped default format shows no unit,
+        // §10.1 step 3) carries no timer.
         if text.is_some() {
             *f.ex.ctx.timer.borrow_mut() = Some(timer);
         }

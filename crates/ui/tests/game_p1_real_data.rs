@@ -172,7 +172,12 @@ fn p1_widgets_on_the_install() {
     let exam = uilayout
         .by_label("examination")
         .expect("examination layout");
+    // §10 answer (2): only `PinnedTooltipCloseButton` closes a pinned window.
+    let close_id = labels.key(UiEnum::ElementId, "PinnedTooltipCloseButton");
     let mut tips = ExamTooltips::new(cv.clone()).with_pin_layout(exam.0);
+    if let Some(id) = close_id {
+        tips.set_close_button_id(id);
+    }
     let mut built = 0;
     for label in HOVER_ELEMENTS {
         let id = labels
@@ -259,10 +264,15 @@ fn p1_widgets_on_the_install() {
             w.tooltip.size
         );
         println!(
-            "pinned {label}: tooltip {:?}, close buttons {}",
+            "pinned {label}: tooltip {:?}, close buttons {}, close-button label resolved {}",
             w.tooltip.size,
-            w.close_buttons.len()
+            w.close_buttons.len(),
+            close_id.is_some()
         );
+        if let Some(id) = close_id {
+            assert_eq!(w.close_buttons.len(), 1, "{label}: one close button");
+            assert_eq!(ui.element_id(w.close_buttons[0]), Some(id), "{label}");
+        }
     };
     pin(&mut ui, exam.0, "Armor_ExamineLayout", 1);
     if let Some(kin) = uilayout.by_label("examination_item_kinshipcharter") {

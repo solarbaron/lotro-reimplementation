@@ -250,8 +250,8 @@ pub use texture::{ColorSpace, Filter, MipChainUpload, MipLevel, TextureId, Textu
 pub use ui::{
     MAX_UI_CLIPS, MAX_UI_COORD, MAX_UI_ENTRIES, MAX_UI_ROTATIONS, MAX_UI_TEXTURE_DIM,
     UI_ANGLE_EPSILON, UI_BLEND_ALPHA, UI_BLEND_COLOR, UI_NODE_SCALE_RANGE, UiAddressing,
-    UiCapCounters, UiClip, UiClipMap, UiEntry, UiFilter, UiGeometry, UiPass, UiRect, UiRefusal,
-    UiRotation, UiSource, UiStats, UiViewMode,
+    UiCapCounters, UiClip, UiClipMap, UiEntry, UiFill, UiFilter, UiGeometry, UiPass, UiRect,
+    UiRefusal, UiRotation, UiSource, UiStats, UiViewMode,
 };
 pub use water::{
     DistortionParams, FresnelForm as WaterFresnelForm, LiquidMeshDraw, LiquidShading,

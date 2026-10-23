@@ -63,6 +63,23 @@ impl UiEnv for InstallEnv {
     fn layout_by_key(&mut self, key: u32) -> Option<Did> {
         self.layouts.get(&key).copied()
     }
+
+    /// No art is decoded here: every image is a synthetic opaque 4 × 4 square, so the
+    /// windows' parts paint something and their canvases are composed.
+    fn image(&mut self, _image: &tessera_ui::ImageRef) -> tessera_ui::ImageState {
+        let img = tessera_material::ui_image::UiImage::new(
+            4,
+            4,
+            4,
+            4,
+            tessera_material::ui_image::PixelLayout::A8R8G8B8,
+            vec![0xFF80_8080; 16],
+        );
+        match img {
+            Some(i) => tessera_ui::ImageState::Ready(Arc::new(i)),
+            None => tessera_ui::ImageState::Failed,
+        }
+    }
 }
 
 /// Whether `id` is among `children` or their descendants (bounded depth).
@@ -222,6 +239,75 @@ fn styled_controls_from_the_install_layout() {
                 "{name} part {id:#x}"
             );
         }
+    }
+    // §13.21 rule 1, §14.2.1 step 3: the first marking rebuilds both windows from their
+    // scaled containers; the frame's parts are there again.
+    let before = [fx.control_key("Probe", "w"), fx.control_key("Probe", "g")];
+    fx.eval::<()>(
+        "Probe",
+        "w:SetScale(1.25) g:SetUIScalingGroup(5) w:SetVisible(true)",
+    );
+    for (name, old) in ["w", "g"].into_iter().zip(before) {
+        let k = fx.control_key("Probe", name);
+        assert_ne!(k, old, "{name} is rebuilt when first marked");
+        let ui = fx.pui.ui().borrow();
+        for id in [0x1000_2296, 0x1000_2297, 0x1000_2298, 0x1000_2DFB] {
+            assert!(
+                ui.find_descendant(k, id).is_some(),
+                "{name}: scaled container lacks part {id:#x}"
+            );
+        }
+    }
+    eprintln!("both windows rebuilt from their scaled containers");
+    // §14.2.3, §14.2.6 (d): the window's canvas reaches over the title bar's rows above its top.
+    let w = fx.control_key("Probe", "w");
+    let rise = {
+        let ui = fx.pui.ui().borrow();
+        let t = ui
+            .find_descendant(w, 0x1000_2296)
+            .and_then(|p| ui.layout_box(p))
+            .unwrap()
+            .t;
+        (-t).max(0)
+    };
+    // The install's title bar rises above the window (§14.2.3: top −8); without that the
+    // check below would test nothing.
+    assert!(rise > 0, "the title bar starts above the window's top edge");
+    let list = {
+        let mut ui = fx.pui.ui().borrow_mut();
+        let mut budget = tessera_ui::paint::Unlimited;
+        let mut list = tessera_ui::paint::CompositionList::default();
+        for t in 0..60u64 {
+            list = ui
+                .paint(std::time::Duration::from_millis(16 * t + 1), &mut budget)
+                .composition;
+            if !list.entries.is_empty() && ui.paint_settled() {
+                break;
+            }
+        }
+        list
+    };
+    {
+        let ui = fx.pui.ui().borrow();
+        let id = ui.surface_of(w).expect("the window has a surface");
+        let e = list
+            .entries
+            .iter()
+            .find(|e| {
+                e.texture
+                    == tessera_ui::paint::EntryTexture::Surface {
+                        surface: id,
+                        layer: tessera_ui::paint::Layer::Below,
+                    }
+            })
+            .expect("the window is composed");
+        let rise_shown = (f64::from(rise) * 1.25).ceil() as i32;
+        assert_eq!(
+            e.dest.y0,
+            ui.physical_box(w).y0 - rise_shown,
+            "the canvas starts at the title bar's top"
+        );
+        eprintln!("title bar rows above the window drawn: {rise_shown}");
     }
     fx.frame(0.016);
     fx.assert_no_errors();

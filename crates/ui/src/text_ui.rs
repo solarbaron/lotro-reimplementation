@@ -492,8 +492,9 @@ impl Ui {
             }
         }
         self.painter.text.ladders = map;
-        // A key's source record can change with the ladders (§6.5 keys omit the source kind).
-        self.painter.text.cache.clear();
+        // The glyph cache is kept: its keys name the record a glyph is derived from and the
+        // source kind (`ui-scaling.md` §6.5), so new ladders only change which keys are looked
+        // up. The texts are drawn again with the new ladders.
         self.text_scaling_changed();
     }
 
@@ -765,8 +766,10 @@ impl Ui {
     /// The character of a text element under a pointer at window-physical pixel
     /// (`px`, `py`) (`ui-scaling.md` §6.4.6): the pointer minus the element's physical origin
     /// plus its scroll offsets in physical pixels, looked up in the physical layout the element
-    /// was last drawn with ([`TextLayout::hit`]). In a stretched surface (§6.1) the point is
-    /// first divided by the stretch vector, since the text was laid out unstretched. Without a
+    /// was last drawn with ([`TextLayout::hit`]). In a stretched surface (§6.1) the pointer is
+    /// first taken into the unstretched text ([`unstretch_point`]): the centre of its pixel
+    /// relative to the text origin, divided by the stretch vector *σ*, since the text was laid
+    /// out unstretched at the screen's factor and stretched by *σ* when drawn. Without a
     /// UI screen and before the element was drawn on the scaled path, the shaper's layout is
     /// used (layout units are physical pixels then). `None` when the element has no text, the
     /// point is on no character, or a UI screen is set and the element was not drawn yet.
@@ -779,18 +782,10 @@ impl Ui {
                 b.y0.saturating_add(r.text_offset[1]),
             ];
             let [x, y] = crate::text::mouse_to_text_physical([px, py], origin, [0, 0]);
-            let unstretch = |v: i32, s: f64| -> i32 {
-                if (s - 1.0).abs() < 1e-12 || !s.is_finite() || s <= 0.0 {
-                    v
-                } else {
-                    (f64::from(v) / s)
-                        .floor()
-                        .clamp(f64::from(i32::MIN), f64::from(i32::MAX)) as i32
-                }
-            };
-            return r
-                .layout
-                .hit(unstretch(x, r.sigma[0]), unstretch(y, r.sigma[1]));
+            return r.layout.hit(
+                unstretch_point(x, r.sigma[0]),
+                unstretch_point(y, r.sigma[1]),
+            );
         }
         if self.ui_screen.is_some() {
             // The shaper's layout is in layout units, not physical pixels.
@@ -803,6 +798,23 @@ impl Ui {
         let [x, y] = crate::text::mouse_to_text_physical([px, py], [b.x0, b.y0], [sx, sy]);
         pt.layout.hit(x, y)
     }
+}
+
+/// The stretched-surface step of the text hit test (`ui-scaling.md` §6.4.6) on one axis: `v`
+/// is the pointer's physical pixel relative to the drawn text origin (in the stretched
+/// picture), `s` the stretch vector's component *σ*. The pointer's position is the centre of
+/// its pixel (§3.6), so the point in the unstretched text is ⌊(*v* + ½) ÷ *σ*⌋; the factor
+/// *Se* of §6.4.6 is already in `v` and in the layout, both in physical pixels at the screen's
+/// factor. At *σ* = 1 (and for a non-finite or non-positive *σ*) this is `v` itself, the
+/// unstretched rule.
+#[must_use]
+pub(crate) fn unstretch_point(v: i32, s: f64) -> i32 {
+    if (s - 1.0).abs() < 1e-12 || !s.is_finite() || s <= 0.0 {
+        return v;
+    }
+    ((f64::from(v) + 0.5) / s)
+        .floor()
+        .clamp(f64::from(i32::MIN), f64::from(i32::MAX)) as i32
 }
 
 #[cfg(test)]
@@ -847,6 +859,38 @@ mod tests {
             )
             .expect("face"),
         )
+    }
+
+    /// `ui-scaling.md` §6.4.6, §3.6: in a stretched surface the pointer's pixel centre is taken
+    /// back by σ; at σ = 1 the pixel itself is looked up. At σ = 1.5 pixel 1 (centre 1.5) lies
+    /// in unstretched column 1, which its left edge alone (1 ÷ 1.5) would put in column 0.
+    #[test]
+    fn stretched_hit_test_uses_the_pixel_centre() {
+        use super::unstretch_point;
+        for v in [-3, 0, 1, 7, 100] {
+            assert_eq!(unstretch_point(v, 1.0), v);
+            assert_eq!(unstretch_point(v, f64::NAN), v);
+            assert_eq!(unstretch_point(v, 0.0), v);
+        }
+        assert_eq!(unstretch_point(1, 1.5), 1);
+        assert_eq!(unstretch_point(0, 1.5), 0);
+        assert_eq!(unstretch_point(2, 1.5), 1);
+        assert_eq!(unstretch_point(3, 1.5), 2);
+        assert_eq!(unstretch_point(3, 2.0), 1);
+        assert_eq!(unstretch_point(-1, 2.0), -1);
+        assert_eq!(unstretch_point(i32::MAX, 0.5), i32::MAX);
+        // Every pixel the stretched picture of unstretched column n covers maps back to n.
+        for s in [1.5f64, 2.0, 2.5, 0.75] {
+            for n in 0..20i32 {
+                let (lo, hi) = (f64::from(n) * s, f64::from(n + 1) * s);
+                for px in (lo.ceil() as i32 - 1)..(hi.ceil() as i32 + 1) {
+                    let centre = f64::from(px) + 0.5;
+                    if centre >= lo && centre < hi {
+                        assert_eq!(unstretch_point(px, s), n, "σ {s}, pixel {px}");
+                    }
+                }
+            }
+        }
     }
 
     /// `ui-scaling.md` §7.5: the text factor reaches multi-line Text inside a Scrollable and

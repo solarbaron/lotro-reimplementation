@@ -111,23 +111,43 @@ fn apply_scale(cx: &Cx<'_>) -> mlua::Result<()> {
     }
 }
 
-/// Mark a parentless window (§13.21 "marked"); `false` for a window with a parent.
+/// Mark a parentless window (§13.21 "marked"); `false` for a window with a parent. The first
+/// marking of a game-styled window built from the layout rebuilds its element from the
+/// scaled base element (§13.21 rule 1, §14.2.1 step 3, [`super::styled::rebuild_scaled_window`]).
 fn mark(cx: &Cx<'_>) -> bool {
-    let Some((key, styled)) = ctl_get(cx.sh, cx.id, |c| (c.key, c.styled)) else {
+    let Some((key, styled, based, background)) = ctl_get(cx.sh, cx.id, |c| {
+        (c.key, c.styled, c.based, c.background.clone())
+    }) else {
         return false;
     };
     if with_ui(cx.sh, |u| u.control_parent(key).is_some()).unwrap_or(true) {
         return false;
     }
-    ws(cx.sh, cx.id, |w| {
-        if !w.marked {
+    let first = ws(cx.sh, cx.id, |w| {
+        let first = !w.marked;
+        if first {
             w.marked = true;
             w.group = SCALE_GROUP;
             if styled != Styled::Plain {
                 w.global = true;
             }
         }
-    });
+        first
+    })
+    .unwrap_or(false);
+    if first && based && styled != Styled::Plain {
+        let bg = super::control::ui_background_of(cx.lua, cx.sh, &background);
+        let rebuilt = match cx.sh.ui.try_borrow_mut() {
+            Ok(mut ui) => {
+                let mut st = cx.sh.st.borrow_mut();
+                super::styled::rebuild_scaled_window(&mut ui, &mut st, cx.id, bg)
+            }
+            Err(_) => false,
+        };
+        if rebuilt {
+            refresh_pin(cx.lua, cx.sh, cx.id);
+        }
+    }
     true
 }
 

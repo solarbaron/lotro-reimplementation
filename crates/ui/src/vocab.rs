@@ -195,6 +195,14 @@ vocab_table! {
         text_lose_focus_on_accept = ("UICore_Text_lose_focus_on_acceptinput", 0xFFFE_002D),
         /// `UICore_Text_max_chars`.
         text_max_chars = ("UICore_Text_max_chars", 0xFFFE_0100),
+        /// `UICore_Text_left_margin` (`fonts.md` §7, `ui-layout.md` §5.9).
+        text_left_margin = ("UICore_Text_left_margin", 0xFFFE_002F),
+        /// `UICore_Text_right_margin`.
+        text_right_margin = ("UICore_Text_right_margin", 0xFFFE_0030),
+        /// `UICore_Text_top_margin`.
+        text_top_margin = ("UICore_Text_top_margin", 0xFFFE_0031),
+        /// `UICore_Text_bottom_margin`.
+        text_bottom_margin = ("UICore_Text_bottom_margin", 0xFFFE_0032),
         /// `UICore_Dialog_ignorekeyboardinput`.
         dialog_ignore_keyboard = ("UICore_Dialog_ignorekeyboardinput", 0xFFFE_002E),
         /// `UICore_Meter_child_meter`.

@@ -14,6 +14,8 @@
 //!   [`UiEntry`]s (one quad each, with a transform chain of
 //!   [`UiRotation`]s and a clip chain of [`UiClip`]s) that the client fills
 //!   from `tessera-ui`'s composition list.
+//!   [`UiPass::fill`] adds an untextured solid fill ([`UiFill`]) in the same order
+//!   (the letterbox bars of `ui-scaling.md` §5.4 step 6).
 //! - [`crate::Frame::software_cursor`] draws one more quad after every pass.
 //!
 //! The UI pass draws into a **non-sRGB view** of the frame's target, so the
@@ -335,6 +337,67 @@ impl<'a> UiEntry<'a> {
     }
 }
 
+/// An **untextured fill** of the UI pass: a rectangle of one solid colour, drawn in its place
+/// in the entry order like any [`UiEntry`] (the same clip test, blend and entry cap). It reads no
+/// texture, has no transform chain, and its clip items are screen rectangles (space 0).
+///
+/// This is a Tessera addition to the entry kinds of render.md §6.5, made for the opaque black
+/// letterbox bars of `ui-scaling.md` §5.4 step 6, which the client records directly below the
+/// picture of a fit group's lowest shown member. It counts in [`UiStats::quads`] when drawn but
+/// not in [`UiStats::surfaces`].
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct UiFill<'a> {
+    /// The filled rectangle in physical pixels (*w*, *h* ≥ 1).
+    pub dest: UiRect,
+    /// Straight-alpha colour (R, G, B, A), each 0–1; NaN counts as 0 and other values are
+    /// clamped. The renderer premultiplies it.
+    pub colour: [f32; 4],
+    /// Clip chain: at most [`MAX_UI_CLIPS`] screen rectangles (space index 0).
+    pub clips: &'a [UiClip],
+}
+
+impl<'a> UiFill<'a> {
+    /// Opaque black (the letterbox bars).
+    pub const BLACK: [f32; 4] = [0.0, 0.0, 0.0, 1.0];
+
+    /// An unclipped fill of `dest` with the straight-alpha `colour`.
+    #[must_use]
+    pub const fn new(dest: UiRect, colour: [f32; 4]) -> Self {
+        Self {
+            dest,
+            colour,
+            clips: &[],
+        }
+    }
+
+    /// Set the clip chain (screen rectangles, space index 0).
+    #[must_use]
+    pub fn with_clips(mut self, clips: &'a [UiClip]) -> Self {
+        self.clips = clips;
+        self
+    }
+
+    /// The colour after sanitising, premultiplied, and whether a NaN was replaced.
+    pub(crate) fn premultiplied(&self) -> ([f32; 4], bool) {
+        let mut sanitised = false;
+        let c = self.colour.map(|v| {
+            if v.is_nan() {
+                sanitised = true;
+                0.0
+            } else {
+                v.clamp(0.0, 1.0)
+            }
+        });
+        ([c[0] * c[3], c[1] * c[3], c[2] * c[3], c[3]], sanitised)
+    }
+
+    /// The fill as an entry for the structural checks and the geometry of render.md §6.5,
+    /// §6.8 (no texture is resolved for it).
+    pub(crate) fn as_entry(&self) -> UiEntry<'a> {
+        UiEntry::new(TextureId::placeholder(), [1, 1], self.dest).with_clips(self.clips)
+    }
+}
+
 /// Why an entry was refused (render.md §6.5). Each refusal adds 1 to
 /// [`UiStats::entries_refused`] and gives one `tracing` warning per kind and
 /// renderer.
@@ -488,8 +551,9 @@ pub struct UiStats {
     pub surfaces: u32,
     /// Entries refused (see [`UiRefusal`]).
     pub entries_refused: u32,
-    /// Entries accepted after sanitising a NaN opacity or threshold or a
-    /// non-finite angle, drawn or not: a NaN opacity becomes 0, so such an
+    /// Entries accepted after sanitising a NaN opacity or threshold, a
+    /// non-finite angle or a NaN fill colour channel ([`UiFill`], drawn as
+    /// 0), drawn or not: a NaN opacity becomes 0, so such an
     /// entry is counted here but draws nothing (T15 "sanitised … and
     /// counted").
     pub entries_sanitised: u32,
@@ -539,6 +603,11 @@ pub(crate) struct StoredEntry {
     pub alpha_threshold: f32,
     pub rotations: (u32, u32),
     pub clips: (u32, u32),
+    /// `Some(premultiplied colour)` for an untextured fill ([`UiFill`]).
+    pub fill: Option<[f32; 4]>,
+    /// Whether the fill's colour held a NaN that was replaced (counted in
+    /// [`UiStats::entries_sanitised`], T15).
+    pub fill_sanitised: bool,
 }
 
 impl UiPass {
@@ -573,6 +642,45 @@ impl UiPass {
             alpha_threshold: entry.alpha_threshold,
             rotations: (r0, r1),
             clips: (c0, c1),
+            fill: None,
+            fill_sanitised: false,
+        });
+        self
+    }
+
+    /// Append an untextured fill ([`UiFill`]), drawn in its place among the entries. A fill
+    /// that fails a structural check (an empty or out-of-range rectangle, more than
+    /// [`MAX_UI_CLIPS`] clip items, a clip space other than 0) or is past [`MAX_UI_ENTRIES`] is
+    /// refused here, never stored, and counted like an entry.
+    pub fn fill(&mut self, fill: &UiFill<'_>) -> &mut Self {
+        if self.earlier.saturating_add(self.entries.len()) >= MAX_UI_ENTRIES {
+            self.refused.add(UiRefusal::EntryCap);
+            return self;
+        }
+        let entry = fill.as_entry();
+        if let Err(kind) = geometry::check_structure(&entry) {
+            self.refused.add(kind);
+            return self;
+        }
+        let (colour, colour_sanitised) = fill.premultiplied();
+        let r0 = u32::try_from(self.rotations.len()).unwrap_or(u32::MAX);
+        let c0 = u32::try_from(self.clips.len()).unwrap_or(u32::MAX);
+        self.clips.extend_from_slice(fill.clips);
+        let c1 = u32::try_from(self.clips.len()).unwrap_or(u32::MAX);
+        self.entries.push(StoredEntry {
+            texture: entry.texture,
+            source: entry.source,
+            canvas: entry.canvas,
+            tex_offset: entry.tex_offset,
+            dest: entry.dest,
+            addressing: entry.addressing,
+            filter: entry.filter,
+            opacity: entry.opacity,
+            alpha_threshold: entry.alpha_threshold,
+            rotations: (r0, r0),
+            clips: (c0, c1),
+            fill: Some(colour),
+            fill_sanitised: colour_sanitised,
         });
         self
     }
@@ -602,14 +710,15 @@ impl UiPass {
         self.refused.total()
     }
 
-    /// The stored entry `i` with its slices restored.
-    pub(crate) fn get(&self, i: usize) -> Option<UiEntry<'_>> {
+    /// The stored entry `i` with its slices restored, and the premultiplied colour of an
+    /// untextured fill.
+    pub(crate) fn get(&self, i: usize) -> Option<(UiEntry<'_>, Option<[f32; 4]>, bool)> {
         let e = self.entries.get(i)?;
         let rot = self
             .rotations
             .get(e.rotations.0 as usize..e.rotations.1 as usize)?;
         let clips = self.clips.get(e.clips.0 as usize..e.clips.1 as usize)?;
-        Some(UiEntry {
+        let entry = UiEntry {
             texture: e.texture,
             source: e.source,
             canvas: e.canvas,
@@ -621,6 +730,7 @@ impl UiPass {
             alpha_threshold: e.alpha_threshold,
             rotations: rot,
             clips,
-        })
+        };
+        Some((entry, e.fill, e.fill_sanitised))
     }
 }

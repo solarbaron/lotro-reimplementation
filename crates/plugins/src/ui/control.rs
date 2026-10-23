@@ -211,6 +211,39 @@ fn relative_image_path(requested: &str, found: &std::path::Path) -> String {
     comps[start..].join("/")
 }
 
+/// The background image DID of a `SetBackground` number (§13.8): its integer part when it
+/// lies in 0 ..= 2³² − 1, else 0.
+fn background_did(n: f64) -> u32 {
+    if (0.0..4_294_967_296.0).contains(&n) {
+        n.trunc() as u32
+    } else {
+        0
+    }
+}
+
+/// The element background of image path `p`, checked now (decision 0015 §4.4).
+fn background_file(lua: &Lua, p: &str) -> Result<UiBackground, crate::vfs::ImageCheckError> {
+    let img = check_image(lua, p)?;
+    Ok(UiBackground::File(relative_image_path(p, &img.path)))
+}
+
+/// The element background a `Graphic`'s stored value gives (`None` when it holds none).
+fn graphic_background(
+    lua: &Lua,
+    sh: &Shared,
+    g: u64,
+) -> Option<Result<UiBackground, crate::vfs::ImageCheckError>> {
+    let bg = match sh.st.borrow().objs.get(&g).map(|o| &o.data) {
+        Some(ObjData::Graphic(b)) => Some(b.clone()),
+        _ => None,
+    }?;
+    Some(match bg {
+        Background::Did(n) => Ok(UiBackground::Did(background_did(n))),
+        Background::Path(p) => background_file(lua, &p),
+        _ => Ok(UiBackground::None),
+    })
+}
+
 /// `SetBackground(v)` (§13.8): checks a path at call time (decision 0015 §4.4).
 pub(crate) fn set_background(
     lua: &Lua,
@@ -221,55 +254,50 @@ pub(crate) fn set_background(
     let key = sh
         .key_of(id)
         .ok_or_else(|| script_error("the control no longer exists"))?;
+    let raise = |e: crate::vfs::ImageCheckError| script_error(e.to_string());
     let (stored, ui_bg) = match v {
         Some(Value::Number(_) | Value::Integer(_)) => {
             let n = num(v).unwrap_or(0.0);
-            let did = if (0.0..4_294_967_296.0).contains(&n) {
-                n.trunc() as u32
-            } else {
-                0
-            };
-            (Background::Did(n), UiBackground::Did(did))
+            (Background::Did(n), UiBackground::Did(background_did(n)))
         }
         Some(Value::String(s)) => {
             let path = s.to_str().map(|s| s.to_owned()).unwrap_or_default();
             if path.is_empty() {
                 (Background::None, UiBackground::None)
             } else {
-                let img = check_image(lua, &path).map_err(|e| script_error(e.to_string()))?;
-                let rel = relative_image_path(&path, &img.path);
-                (Background::Path(path), UiBackground::File(rel))
+                let bg = background_file(lua, &path).map_err(raise)?;
+                (Background::Path(path), bg)
             }
         }
-        Some(Value::Table(t)) => {
-            let gid = obj_id(lua, t);
-            let bg = gid.and_then(|g| match sh.st.borrow().objs.get(&g).map(|o| &o.data) {
-                Some(ObjData::Graphic(b)) => Some(b.clone()),
-                _ => None,
-            });
-            match (gid, bg) {
-                (Some(g), Some(Background::Did(n))) => (
-                    Background::Graphic(g),
-                    UiBackground::Did(if (0.0..4_294_967_296.0).contains(&n) {
-                        n.trunc() as u32
-                    } else {
-                        0
-                    }),
-                ),
-                (Some(g), Some(Background::Path(p))) => {
-                    let img = check_image(lua, &p).map_err(|e| script_error(e.to_string()))?;
-                    let rel = relative_image_path(&p, &img.path);
-                    (Background::Graphic(g), UiBackground::File(rel))
-                }
-                (Some(g), Some(_)) => (Background::Graphic(g), UiBackground::None),
-                _ => (Background::None, UiBackground::None),
-            }
-        }
+        Some(Value::Table(t)) => match obj_id(lua, t) {
+            Some(g) => match graphic_background(lua, sh, g) {
+                Some(bg) => (Background::Graphic(g), bg.map_err(raise)?),
+                None => (Background::None, UiBackground::None),
+            },
+            None => (Background::None, UiBackground::None),
+        },
         _ => (Background::None, UiBackground::None),
     };
     with_ui(sh, |u| u.control_set_background(key, ui_bg));
     with_ctl(sh, id, |c| c.background = stored);
     Ok(())
+}
+
+/// The element background of a stored `SetBackground` value (§13.8), checked again with the
+/// rules `set_background` uses: the rebuild of §14.2.1 step 3 keeps the background image on
+/// the new element. A path that no longer checks gives no background (logged at debug level)
+/// where `SetBackground` would raise.
+pub(crate) fn ui_background_of(lua: &Lua, sh: &Shared, stored: &Background) -> UiBackground {
+    let checked = match stored {
+        Background::None => Ok(UiBackground::None),
+        Background::Did(n) => Ok(UiBackground::Did(background_did(*n))),
+        Background::Path(p) => background_file(lua, p),
+        Background::Graphic(g) => graphic_background(lua, sh, *g).unwrap_or(Ok(UiBackground::None)),
+    };
+    checked.unwrap_or_else(|e| {
+        tracing::debug!(error = %e, "kept background image no longer checks");
+        UiBackground::None
+    })
 }
 
 fn limit_get(cx: &Cx<'_>, i: usize) -> f64 {

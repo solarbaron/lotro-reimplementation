@@ -16,6 +16,8 @@ const FLAG_PREMULTIPLIED: u32 = 4u;
 const FLAG_ONE_TO_ONE: u32 = 8u;
 const FLAG_LINEARIZE: u32 = 16u;
 const FLAG_UNROTATED: u32 = 32u;
+// An untextured fill (UiFill): the premultiplied colour is in tile_scale.
+const FLAG_FILL: u32 = 64u;
 
 // Must match `EntryUniform` in ui/state.rs (496 bytes).
 struct Entry {
@@ -31,7 +33,7 @@ struct Entry {
     misc: vec4<i32>,
     // Canvas texels per box pixel (x, y), opacity, alpha threshold.
     params: vec4<f32>,
-    // Tile node scale (sx, sy), unused (Fit: zero).
+    // Tile node scale (sx, sy), unused (Fit: zero); for a fill, its premultiplied colour.
     tile_scale: vec4<f32>,
     // Clip rectangles (x0, y0, x1, y1), half-open.
     clip_rects: array<vec4<f32>, 8>,
@@ -156,7 +158,9 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     }
     let flags = u32(e.misc.z);
     var s: vec4<f32>;
-    if (flags & FLAG_ONE_TO_ONE) != 0u {
+    if (flags & FLAG_FILL) != 0u {
+        s = e.tile_scale;
+    } else if (flags & FLAG_ONE_TO_ONE) != 0u {
         let pix = vec2<i32>(floor(in.position.xy));
         s = fetch(address(pix - e.idest.xy));
     } else if (flags & (FLAG_UNROTATED | FLAG_NEAREST)) == (FLAG_UNROTATED | FLAG_NEAREST) {

@@ -382,7 +382,9 @@ pub(crate) fn translate(ui: &mut Ui, st: &mut State, id: u64, ev: ControlEvent) 
         ControlEvent::FocusGained => fire(st, id, "FocusGained", Args::Empty),
         ControlEvent::FocusLost => fire(st, id, "FocusLost", Args::Empty),
         ControlEvent::SizeChanged => {
-            fire(st, id, "SizeChanged", Args::Empty);
+            if !st.quiet_size.remove(&key) {
+                fire(st, id, "SizeChanged", Args::Empty);
+            }
             match kind {
                 Kind::ListBox | Kind::TreeView => super::lists::mark(st, id),
                 Kind::ScrollBar => super::scroll::layout_parts_with(ui, st, id),
@@ -394,7 +396,11 @@ pub(crate) fn translate(ui: &mut Ui, st: &mut State, id: u64, ev: ControlEvent) 
                 super::lists::mark(st, o);
             }
         }
-        ControlEvent::PositionChanged => fire(st, id, "PositionChanged", Args::Empty),
+        ControlEvent::PositionChanged => {
+            if !st.quiet_position.remove(&key) {
+                fire(st, id, "PositionChanged", Args::Empty);
+            }
+        }
         ControlEvent::VisibleChanged => fire(st, id, "VisibleChanged", Args::Empty),
         ControlEvent::Activated => fire(st, id, "Activated", Args::Empty),
         ControlEvent::Deactivated => fire(st, id, "Deactivated", Args::Empty),

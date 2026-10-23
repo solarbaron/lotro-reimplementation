@@ -247,6 +247,108 @@ fn compose_phys(ui: &mut Ui, roots: &[ElementKey], wp: i32, hp: i32) -> Img {
     Img { w, h, data }
 }
 
+/// Composes the **composition list** of one more paint onto the physical window `wp × hp` on the
+/// CPU, the way the UI pass draws it (`render.md` §6.5–§6.7): entries in order, a surface entry
+/// from its canvas read 1 : 1 (§6.6), an untextured fill entry (the letterbox bars of §5.4 step 6) as
+/// its colour, straight-alpha "over" with the arithmetic of [`compose_phys`]. Also checks that
+/// the list's fills are exactly the bars [`Ui::letterbox_bars`] reports, each group's directly
+/// before the first entry of its lowest shown member.
+fn compose_list(ui: &mut Ui, wp: i32, hp: i32) -> Img {
+    use tessera_ui::paint::{EntryTexture, Layer, Rect};
+    settle(ui);
+    let frame = ui.paint(Duration::from_millis(1_000), &mut Unlimited);
+    let list = frame.composition;
+    // The fills are the bars, in a group's order, before its member's first entry.
+    let bars = ui.letterbox_bars();
+    let mut fills: Vec<Rect> = Vec::new();
+    for (i, e) in list.entries.iter().enumerate() {
+        let EntryTexture::Fill { colour } = e.texture else {
+            continue;
+        };
+        assert_eq!(colour, 0xFF00_0000, "letterbox fills are opaque black");
+        fills.push(e.dest);
+        // The next entry that is not a fill is the picture the bars go below.
+        let next = list.entries[i..]
+            .iter()
+            .find(|n| !matches!(n.texture, EntryTexture::Fill { .. }));
+        if let Some(n) = next
+            && let EntryTexture::Surface { surface, .. } = n.texture
+        {
+            let g = bars
+                .iter()
+                .find(|g| g.rects.contains(&e.dest))
+                .expect("a fill is a reported bar");
+            assert_eq!(
+                ui.surface_of(g.below),
+                Some(surface),
+                "bars directly below their lowest shown member"
+            );
+        }
+    }
+    let mut want: Vec<Rect> = bars
+        .iter()
+        .flat_map(|g| g.rects.iter().copied())
+        .filter(|r| !r.is_empty())
+        .collect();
+    let key = |r: &Rect| (r.x0, r.y0, r.x1, r.y1);
+    fills.sort_by_key(key);
+    want.sort_by_key(key);
+    assert_eq!(fills, want, "the list draws exactly the reported bars");
+    let (w, h) = (wp.max(1) as u32, hp.max(1) as u32);
+    let mut data = vec![0u8; (w * h * 4) as usize];
+    for e in &list.entries {
+        let d = e.dest;
+        match e.texture {
+            EntryTexture::Fill { colour } => {
+                let a = colour >> 24;
+                assert_eq!(a, 0xFF, "opaque fills only in these scenes");
+                for y in d.y0.max(0)..d.y1.min(hp) {
+                    for x in d.x0.max(0)..d.x1.min(wp) {
+                        let i = ((y as u32 * w + x as u32) * 4) as usize;
+                        data[i..i + 4].copy_from_slice(&[
+                            (colour >> 16) as u8,
+                            (colour >> 8) as u8,
+                            colour as u8,
+                            0xFF,
+                        ]);
+                    }
+                }
+            }
+            EntryTexture::Surface { surface, layer } => {
+                assert_eq!(layer, Layer::Below, "no nested entries in these scenes");
+                // Read 1 : 1 from the canvas's top-left, as `compose_phys` reads a root's
+                // canvas at its physical box (a box may be one pixel off its canvas, the
+                // `ui-scaling.md` §5.9 OPEN on truncated displayed boxes).
+                for cy in 0..d.height() as i32 {
+                    for cx in 0..d.width() as i32 {
+                        let (wx, wy) = (d.x0 + cx, d.y0 + cy);
+                        if wx < 0 || wy < 0 || wx >= wp || wy >= hp {
+                            continue;
+                        }
+                        let Some(px) = ui.surface_layer_pixel(surface, layer, cx, cy) else {
+                            continue;
+                        };
+                        let a = (px >> 24) & 0xFF;
+                        if a == 0 {
+                            continue;
+                        }
+                        let i = ((wy as u32 * w + wx as u32) * 4) as usize;
+                        let src = [(px >> 16) & 0xFF, (px >> 8) & 0xFF, px & 0xFF];
+                        for (j, sv) in src.iter().enumerate() {
+                            let dv = u32::from(data[i + j]);
+                            data[i + j] = ((sv * a + dv * (255 - a)) / 255) as u8;
+                        }
+                        let da = u32::from(data[i + 3]);
+                        data[i + 3] = (a + da * (255 - a) / 255) as u8;
+                    }
+                }
+            }
+            EntryTexture::External(_) => panic!("no external content in these scenes"),
+        }
+    }
+    Img { w, h, data }
+}
+
 /// Asserts the image holds at least one pixel of the opaque palette colour `c` (a cheap guard
 /// that the region actually painted, so a blank capture is never blessed).
 fn assert_has(img: &Img, c: u32, what: &str) {
@@ -758,7 +860,32 @@ fn g8(c: &Config) {
     let img = compose_phys(&mut ui, &[lo, up, sp], c.wp, c.hp);
     assert_has(&img, PALETTE[SPARSE as usize], "sparse content");
     assert_has(&img, PALETTE[LAYER_0 as usize], "lower layer");
+    // The composition list itself draws the same picture: its fill entries are the bars.
+    let listed = compose_list(&mut ui, c.wp, c.hp);
+    assert!(
+        listed.data == img.data,
+        "{}: the composition list's picture differs from the reference composition",
+        c.name
+    );
     golden(&format!("uiscale_g8_fitgroup_{}", c.name), &img);
+    // The bars are kept between frames that change nothing and follow every change: with the
+    // lowest member hidden they go below the next shown one, and come back with it.
+    let _ = compose_list(&mut ui, c.wp, c.hp);
+    ui.set_shown(lo, false);
+    let _ = compose_list(&mut ui, c.wp, c.hp);
+    let below: Vec<ElementKey> = ui.letterbox_bars().iter().map(|g| g.below).collect();
+    assert!(
+        !below.contains(&lo),
+        "{}: a hidden member draws no bars",
+        c.name
+    );
+    ui.set_shown(lo, true);
+    let again = compose_list(&mut ui, c.wp, c.hp);
+    assert!(
+        again.data == img.data,
+        "{}: the picture is back once the member shows again",
+        c.name
+    );
 }
 
 #[test]

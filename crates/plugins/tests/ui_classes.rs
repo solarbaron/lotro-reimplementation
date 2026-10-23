@@ -351,6 +351,15 @@ mod styled {
         d
     }
 
+    /// Invented DID of the title-bar art: a solid colour, so the part's pixels can be found
+    /// in the window's canvas.
+    const TITLE_ART: u32 = 0x41FF_0001;
+    /// The title-bar art's colour.
+    const TITLE_COLOUR: u32 = 0xFFC0_8040;
+    /// A marker property the synthetic scaled containers carry (a Tessera placeholder PID no
+    /// dictionary uses), so a test can tell which container a window was built from.
+    const SCALED_MARK: u32 = 0xFFFD_0001;
+
     /// A window container of 300 × 300 with the parts of §14.2.3; their design rectangles
     /// and edge modes give the table's rectangles through the 50 × 50 creation size.
     fn window(id: u32) -> ElementDesc {
@@ -363,8 +372,36 @@ mod styled {
                 100,
                 1,
             ),
-            z(typed(0x1000_2296, field, (50, -8, 200, 41), [0; 4]), 90, 2),
-            z(typed(0x1000_2297, text, (90, 5, 120, 24), [0; 4]), 80, 3),
+            z(
+                {
+                    let mut d = typed(0x1000_2296, field, (50, -8, 200, 41), [0; 4]);
+                    d.block
+                        .media
+                        .push(tessera_formats::ui_layout::MediaItem::Image {
+                            did: Did(TITLE_ART),
+                            draw_mode: tessera_formats::ui_layout::DrawMode(2),
+                            path: String::new(),
+                        });
+                    d
+                },
+                90,
+                2,
+            ),
+            // The layout gives the title text margins; the title layout sets them to 0
+            // (§14.2.3 step 2).
+            z(
+                prop(
+                    prop(
+                        typed(0x1000_2297, text, (90, 5, 120, 24), [0; 4]),
+                        Vocab::default().pids.text_left_margin,
+                        PropertyValue::Int(10),
+                    ),
+                    Vocab::default().pids.text_right_margin,
+                    PropertyValue::Int(10),
+                ),
+                80,
+                3,
+            ),
             z(typed(0x1000_2DFC, resize, (0, 16, 20, 20), [0; 4]), 10, 4),
             z(
                 typed(0x1000_2DFD, resize, (20, 16, 260, 10), [0, 0, 5, 0]),
@@ -472,9 +509,12 @@ mod styled {
                 typed(0x1000_25B1, t.text, (20, 0, 100, 20), [0, 0, 5, 5]),
             ],
         );
+        let scaled = |id: u32| prop(window(id), SCALED_MARK, PropertyValue::Int(id as i32));
         let elements = vec![
             window(0x1000_2294),
             window(0x1000_2299),
+            scaled(0x1000_4D37),
+            scaled(0x1000_4D38),
             typed(0x1000_22A7, t.button, (0, 0, 100, 24), [0; 4]),
             typed(0x1000_22A8, t.button, (0, 0, 100, 24), [0; 4]),
             check,
@@ -497,6 +537,20 @@ mod styled {
         let mut env = MemoryEnv::default();
         env.add_layout(layout());
         env.keys.insert(KEY, LAYOUT);
+        env.images.insert(
+            tessera_ui::ImageRef::Did(TITLE_ART),
+            Arc::new(
+                tessera_material::ui_image::UiImage::new(
+                    4,
+                    4,
+                    4,
+                    4,
+                    tessera_material::ui_image::PixelLayout::A8R8G8B8,
+                    vec![TITLE_COLOUR; 16],
+                )
+                .expect("solid image"),
+            ),
+        );
         // The caption of the worked example measures 96 pixels.
         let p = PreparedText {
             layout: TextLayout {
@@ -674,6 +728,405 @@ mod styled {
         assert_eq!(part(&fx, w, 0x1000_2297), (100, 5, 200, 24));
         assert_eq!(part(&fx, w, 0x1000_2296), (60, -8, 280, 41));
         assert_eq!(part(&fx, w, 0x1000_2DFB), (60, -8, 280, 41));
+        fx.assert_no_errors();
+    }
+
+    /// Paints the UI until it settles and returns the last frame's composition list.
+    fn painted(fx: &Fx) -> tessera_ui::paint::CompositionList {
+        let mut ui = fx.pui.ui().borrow_mut();
+        let mut budget = tessera_ui::paint::Unlimited;
+        for t in 0..6u64 {
+            ui.paint(std::time::Duration::from_millis(16 * t + 1), &mut budget);
+        }
+        ui.paint(std::time::Duration::from_millis(200), &mut budget)
+            .composition
+    }
+
+    /// The composition entry of the canvas of `k`.
+    fn entry_of(
+        fx: &Fx,
+        list: &tessera_ui::paint::CompositionList,
+        k: ElementKey,
+    ) -> tessera_ui::paint::Entry {
+        let id = fx.pui.ui().borrow().surface_of(k).expect("a surface");
+        list.entries
+            .iter()
+            .find(|e| {
+                e.texture
+                    == tessera_ui::paint::EntryTexture::Surface {
+                        surface: id,
+                        layer: tessera_ui::paint::Layer::Below,
+                    }
+            })
+            .cloned()
+            .expect("an entry")
+    }
+
+    /// §14.2.3 "the title bar rises 8 pixels above the window's rectangle", §14.2.6 (d): the
+    /// canvas of a game-styled window extends over its layout parts placed above its top edge,
+    /// so the title bar's rows above the window are drawn; a plugin child control placed there
+    /// stays clipped to the window (`ui-layout.md` §9.3, §13.12), and the window's own box
+    /// (hit testing, `GetSize`) does not change. At the identity and under a UI screen with
+    /// `Se` = 2.
+    #[test]
+    fn the_title_bar_rises_above_the_window() {
+        for se in [None, Some(2.0)] {
+            let fx = fx();
+            fx.eval::<()>(
+                "Probe",
+                "w = Turbine.UI.Lotro.Window() w:SetPosition(100, 100) w:SetSize(400, 300) \
+                 w:SetVisible(true) c = Turbine.UI.Control() c:SetParent(w) \
+                 c:SetPosition(10, -20) c:SetSize(40, 60) \
+                 c:SetBackColor(Turbine.UI.Color(1, 1, 0, 0)) c:SetVisible(true)",
+            );
+            let w = fx.control_key("Probe", "w");
+            if let Some(se) = se {
+                let f = tessera_ui::scaling::UiScreen::new(2048, 1536, se).expect("screen");
+                let a = tessera_ui::scaling::safe_area(&f, None);
+                fx.pui.ui().borrow_mut().set_ui_screen(f, a);
+            }
+            let k = if se.is_some() { 2 } else { 1 };
+            let list = painted(&fx);
+            let e = entry_of(&fx, &list, w);
+            let ui = fx.pui.ui().borrow();
+            let b = ui.physical_box(w);
+            assert_eq!(e.dest.y0, b.y0 - 8 * k, "{se:?}: the canvas starts 8 above");
+            assert_eq!(e.dest.y1, b.y1, "{se:?}: and ends at the window's bottom");
+            assert_eq!((e.dest.x0, e.dest.x1), (b.x0, b.x1), "{se:?}");
+            assert_eq!(e.canvas, [e.dest.width(), e.dest.height()], "{se:?}: 1 : 1");
+            // The title bar (left 100, width 200, top -8) in the rows above the window.
+            let px = |x: i32, y: i32| ui.surface_pixel(w, x * k, y * k).unwrap_or(0);
+            assert_eq!(px(150, 0), TITLE_COLOUR, "{se:?}: title bar above the top");
+            assert_eq!(px(150, 7), TITLE_COLOUR, "{se:?}");
+            assert_eq!(px(150, 20), TITLE_COLOUR, "{se:?}: and below it");
+            assert_eq!(px(50, 0) >> 24, 0, "{se:?}: nothing beside the title bar");
+            // The plugin child at top -20 is cut at the window's top edge.
+            assert_eq!(px(20, 4) >> 24, 0, "{se:?}: plugin child not drawn above");
+            assert_eq!(px(20, 8 + 5), 0xFFFF_0000, "{se:?}: but drawn inside");
+            drop(ui);
+            let size: (f64, f64) = fx.eval("Probe", "return w:GetSize()");
+            assert_eq!(size, (400.0, 300.0));
+            fx.assert_no_errors();
+        }
+    }
+
+    /// §13.12, `render.md` §6.8 (review finding): a nested surface below a game-styled window
+    /// (a child `Window`, a root panel with its own surface) placed above the window's top
+    /// edge is clipped to the window's own box, not to the canvas that extends over the title
+    /// bar; the window turns about its own box's centre (P72, §6.5). At the identity and at
+    /// `Se` = 2.
+    #[test]
+    fn a_nested_surface_stays_clipped_to_the_window() {
+        for se in [None, Some(2.0)] {
+            let fx = fx();
+            fx.eval::<()>(
+                "Probe",
+                "w = Turbine.UI.Lotro.Window() w:SetPosition(100, 100) w:SetSize(400, 300) \
+                 w:SetVisible(true) c = Turbine.UI.Window() c:SetParent(w) \
+                 c:SetPosition(10, -20) c:SetSize(40, 60) \
+                 c:SetBackColor(Turbine.UI.Color(1, 1, 0, 0)) c:SetVisible(true)",
+            );
+            let (w, c) = (fx.control_key("Probe", "w"), fx.control_key("Probe", "c"));
+            if let Some(se) = se {
+                let f = tessera_ui::scaling::UiScreen::new(2048, 1536, se).expect("screen");
+                let a = tessera_ui::scaling::safe_area(&f, None);
+                fx.pui.ui().borrow_mut().set_ui_screen(f, a);
+            }
+            let k = if se.is_some() { 2 } else { 1 };
+            let list = painted(&fx);
+            let b = fx.pui.ui().borrow().physical_box(w);
+            let e = entry_of(&fx, &list, w);
+            assert_eq!(
+                e.dest.y0,
+                b.y0 - 8 * k,
+                "{se:?}: the window's canvas extends"
+            );
+            let ce = entry_of(&fx, &list, c);
+            let items = list.clips_of(&ce);
+            assert!(!items.is_empty(), "{se:?}: the child is clipped");
+            for it in items {
+                assert!(
+                    it.rect[1] >= b.y0,
+                    "{se:?}: clip {:?} reaches above the window's top {}",
+                    it.rect,
+                    b.y0
+                );
+            }
+            // Rotated, the window and its child turn about the window's own centre.
+            fx.eval::<()>("Probe", "w:SetRotation({ x = 0, y = 0, z = 90 })");
+            let list = painted(&fx);
+            let e = entry_of(&fx, &list, w);
+            let r = list.rotations_of(&e);
+            assert_eq!(r.len(), 1, "{se:?}");
+            let want = [(b.x0 + b.x1) as f32 / 2.0, (b.y0 + b.y1) as f32 / 2.0];
+            assert!(
+                (r[0].centre[0] - want[0]).abs() < 1e-3 && (r[0].centre[1] - want[1]).abs() < 1e-3,
+                "{se:?}: centre {:?} vs {want:?}",
+                r[0].centre
+            );
+            fx.assert_no_errors();
+        }
+    }
+
+    /// §14.2.6 (d) (review finding): the title bar and drag bar rows drawn above the window's
+    /// top edge are hit there (a press on them reaches the frame's parts, so the window can be
+    /// dragged from the strip); a plugin child control placed there and the window itself are
+    /// not hit outside the window's own box.
+    #[test]
+    fn the_title_bar_rows_above_the_window_are_hit() {
+        let fx = fx();
+        fx.eval::<()>(
+            "Probe",
+            "w = Turbine.UI.Lotro.Window() w:SetPosition(100, 100) w:SetSize(400, 300) \
+             w:SetVisible(true) c = Turbine.UI.Control() c:SetParent(w) \
+             c:SetPosition(10, -20) c:SetSize(40, 60) c:SetMouseVisible(true) c:SetVisible(true)",
+        );
+        let (w, c) = (fx.control_key("Probe", "w"), fx.control_key("Probe", "c"));
+        let _ = painted(&fx);
+        let mut ui = fx.pui.ui().borrow_mut();
+        let parts: Vec<ElementKey> = [0x1000_2296, 0x1000_2DFB]
+            .into_iter()
+            .filter_map(|id| ui.find_descendant(w, id))
+            .collect();
+        // Title bar and drag bar span window x 100 ..= 299, rows -8 ..= 32.
+        for (x, y) in [(250, 96), (100 + 100, 92), (100 + 299, 99)] {
+            let hit = ui.hit_test(x, y);
+            assert!(
+                hit.is_some_and(|h| parts.contains(&h)),
+                "({x}, {y}): {hit:?} is not the title bar or drag bar"
+            );
+        }
+        // Beside the bars, above the window: neither the plugin child nor the window.
+        for (x, y) in [(100 + 20, 96), (100 + 99, 96), (100 + 300, 96)] {
+            let hit = ui.hit_test(x, y);
+            assert!(hit != Some(c) && hit != Some(w), "({x}, {y}): {hit:?}");
+        }
+        // Above the strip nothing of the window is hit.
+        let hit = ui.hit_test(250, 91);
+        assert!(hit.is_none_or(|h| !parts.contains(&h) && h != w), "{hit:?}");
+        // Inside the window the plugin child is hit as before.
+        assert_eq!(ui.hit_test(100 + 20, 100 + 5), Some(c));
+        drop(ui);
+        fx.assert_no_errors();
+    }
+
+    /// A light frame that moves a part above the window (review finding): the canvas follows
+    /// the new overhang (the full surface pass runs), and shrinks back when the part returns.
+    #[test]
+    fn moving_the_title_bar_updates_the_overhang() {
+        let fx = fx();
+        fx.eval::<()>(
+            "Probe",
+            "w = Turbine.UI.Lotro.Window() w:SetPosition(100, 100) w:SetSize(400, 300) \
+             w:SetVisible(true)",
+        );
+        let w = fx.control_key("Probe", "w");
+        let list = painted(&fx);
+        let b = fx.pui.ui().borrow().physical_box(w);
+        assert_eq!(entry_of(&fx, &list, w).dest.y0, b.y0 - 8);
+        let bar = fx
+            .pui
+            .ui()
+            .borrow()
+            .find_descendant(w, 0x1000_2296)
+            .unwrap();
+        for (top, rise) in [(-16, 16), (-8, 8), (4, 8), (-100, 64)] {
+            {
+                let mut ui = fx.pui.ui().borrow_mut();
+                let pb = ui.layout_box(bar).unwrap();
+                ui.set_element_box(bar, pb.l, top, pb.w(), pb.h());
+            }
+            let list = painted(&fx);
+            let e = entry_of(&fx, &list, w);
+            // The drag bar stays at -8; the cap is 64 units (Tessera bound).
+            assert_eq!(e.dest.y0, b.y0 - rise, "title bar at {top}");
+            assert_eq!(e.canvas[1], e.dest.height(), "title bar at {top}");
+        }
+        fx.assert_no_errors();
+    }
+
+    /// §14.2.3 step 2 (review finding): the title layout sets the title text's four text
+    /// margins to 0 before measuring, so the layout's own margins (10 and 10 here) do not
+    /// widen the measured caption.
+    #[test]
+    fn the_title_text_margins_are_zero() {
+        let mut fx = Fx::with_ui_env(Box::new(MarginFonts { inner: env() }), Vocab::default());
+        fx.plugin("Test", "Probe", Some("Probe"), "");
+        fx.refresh();
+        fx.load("Probe");
+        fx.eval::<()>(
+            "Probe",
+            "w = Turbine.UI.Lotro.Window() w:SetSize(400, 300) w:SetText('Caption')",
+        );
+        let w = fx.control_key("Probe", "w");
+        let p = Vocab::default().pids;
+        {
+            let ui = fx.pui.ui().borrow();
+            let t = ui.find_descendant(w, 0x1000_2297).unwrap();
+            for pid in [
+                p.text_left_margin,
+                p.text_right_margin,
+                p.text_top_margin,
+                p.text_bottom_margin,
+            ] {
+                assert_eq!(ui.prop(t, pid).int(), 0, "margin {pid:#x}");
+            }
+        }
+        // m = 160 (not 180 with the layout's margins): t = min(260, 160), left 120.
+        assert_eq!(part(&fx, w, 0x1000_2297), (120, 5, 160, 24));
+        fx.assert_no_errors();
+    }
+
+    /// Text shaping whose measured width is 160 plus the element's left and right margins
+    /// (`fonts.md` §7: the content width includes them).
+    struct MarginFonts {
+        inner: MemoryEnv,
+    }
+
+    impl tessera_ui::UiEnv for MarginFonts {
+        fn layout(&mut self, did: Did) -> Option<Arc<UiLayout>> {
+            self.inner.layout(did)
+        }
+        fn layout_by_key(&mut self, key: u32) -> Option<Did> {
+            self.inner.layout_by_key(key)
+        }
+        fn image(&mut self, image: &tessera_ui::ImageRef) -> tessera_ui::ImageState {
+            self.inner.image(image)
+        }
+        fn shape_text(
+            &mut self,
+            request: &tessera_ui::TextRequest<'_>,
+        ) -> Option<Arc<PreparedText>> {
+            let p = Vocab::default().pids;
+            let margin = |pid: u32| {
+                request
+                    .props
+                    .iter()
+                    .find(|(k, _)| *k == pid)
+                    .map_or(0, |(_, v)| match v {
+                        PropertyValue::Int(i) => *i,
+                        _ => 0,
+                    })
+            };
+            let w = 160 + margin(p.text_left_margin) + margin(p.text_right_margin);
+            Some(Arc::new(PreparedText {
+                layout: TextLayout {
+                    content_width: w,
+                    ..TextLayout::default()
+                },
+                ..PreparedText::default()
+            }))
+        }
+        fn resolve_string(
+            &mut self,
+            info: &tessera_formats::string_info::StringInfo,
+        ) -> Option<String> {
+            self.inner.resolve_string(info)
+        }
+        fn random(&mut self) -> f32 {
+            self.inner.random()
+        }
+    }
+
+    /// §13.21 rule 1, §14.2.1 step 3: the first `SetScale` of a game-styled window rebuilds
+    /// it from `LotroScalerWindow_Container` (a `GoldWindow` from its scaled variant): a new
+    /// element keeping visibility, position, size, z-level and background, the old element's
+    /// operation number passed to `SetBlendMode` (4 `AlphaBlend` → 2), the title set again and
+    /// the plugin's child controls kept; a second marking call rebuilds nothing.
+    #[test]
+    fn marking_a_game_styled_window_rebuilds_it() {
+        let mut fx = fx();
+        fx.eval::<()>(
+            "Probe",
+            "vis = 0 w = Turbine.UI.Lotro.Window() w:SetPosition(120, 80) w:SetSize(400, 300) \
+             w:SetZOrder(3) w:SetText('Caption') w:SetBlendMode(Turbine.UI.BlendMode.AlphaBlend) \
+             w:SetVisible(true) w.VisibleChanged = function() vis = vis + 1 end \
+             sz = 0 pos = 0 w.SizeChanged = function() sz = sz + 1 end \
+             w.PositionChanged = function() pos = pos + 1 end \
+             c = Turbine.UI.Control() c:SetParent(w) c:SetPosition(5, 40) c:SetSize(10, 10) \
+             g = Turbine.UI.Lotro.GoldWindow()",
+        );
+        fx.frame(0.016);
+        let old = fx.control_key("Probe", "w");
+        let mark = |fx: &Fx, k: ElementKey| fx.pui.ui().borrow().prop(k, SCALED_MARK).int() as u32;
+        assert_eq!(mark(&fx, old), 0, "built from the plain container");
+        assert_eq!(fx.eval::<f64>("Probe", "return w:GetBlendMode()"), 4.0);
+        fx.eval::<()>("Probe", "w:SetScale(1.5)");
+        let new = fx.control_key("Probe", "w");
+        assert_ne!(new, old, "a new element");
+        assert!(!fx.pui.ui().borrow().exists(old), "the old element is gone");
+        assert_eq!(mark(&fx, new), 0x1000_4D37);
+        let r: (f64, f64, f64, f64, f64, bool, f64) = fx.eval(
+            "Probe",
+            "local x, y = w:GetPosition() local cw, ch = w:GetSize() \
+             return x, y, cw, ch, w:GetZOrder(), w:IsVisible(), w:GetBlendMode()",
+        );
+        assert_eq!(r, (120.0, 80.0, 400.0, 300.0, 3.0, true, 2.0));
+        // The child control moved with it; the frame's parts are the scaled container's.
+        let r: (f64, bool) = fx.eval(
+            "Probe",
+            "return w:GetControls():GetCount(), c:GetParent() == w",
+        );
+        assert_eq!(r, (1.0, true));
+        assert_eq!(
+            part(&fx, new, 0x1000_2297),
+            (140, 5, 120, 24),
+            "title set again"
+        );
+        assert!(
+            hidden(&fx, new, 0x1000_2E03),
+            "resize bars follow IsResizable"
+        );
+        assert_eq!(fx.eval::<f64>("Probe", "return w:GetScale()"), 1.5);
+        // Marked once: further calls keep the element.
+        fx.eval::<()>(
+            "Probe",
+            "w:SetScale(2) w:RegisterForGlobalScaling() w:SetUIScalingGroup(5)",
+        );
+        assert_eq!(fx.control_key("Probe", "w"), new);
+        // A GoldWindow uses its scaled variant.
+        fx.eval::<()>("Probe", "g:SetUIScalingGroup(5)");
+        let g = fx.control_key("Probe", "g");
+        assert_eq!(mark(&fx, g), 0x1000_4D38);
+        fx.frame(0.016);
+        assert_eq!(
+            fx.eval::<f64>("Probe", "return vis"),
+            0.0,
+            "visibility kept, no event"
+        );
+        // Size and position are kept too: no `SizeChanged` or `PositionChanged` (review
+        // finding), while a real change afterwards still fires.
+        assert_eq!(fx.eval::<(f64, f64)>("Probe", "return sz, pos"), (0.0, 0.0));
+        fx.eval::<()>("Probe", "w:SetSize(410, 300) w:SetPosition(121, 80)");
+        fx.frame(0.016);
+        assert_eq!(fx.eval::<(f64, f64)>("Probe", "return sz, pos"), (1.0, 1.0));
+        fx.assert_no_errors();
+    }
+
+    /// Review finding: a hidden game-styled window first marked as scaled and then shown in
+    /// the same chunk fires its `VisibleChanged` (the rebuild of a hidden window changes no
+    /// visibility, so it must leave no quiet mark that swallows the real event); the same
+    /// across frames.
+    #[test]
+    fn a_hidden_rebuilt_window_reports_being_shown() {
+        let mut fx = fx();
+        fx.eval::<()>(
+            "Probe",
+            "vis = 0 w = Turbine.UI.Lotro.Window() w:SetSize(400, 300) \
+             w.VisibleChanged = function() vis = vis + 1 end \
+             w:SetScale(1.5) w:SetVisible(true)",
+        );
+        fx.frame(0.016);
+        assert_eq!(fx.eval::<f64>("Probe", "return vis"), 1.0, "same chunk");
+        fx.eval::<()>(
+            "Probe",
+            "vis = 0 h = Turbine.UI.Lotro.GoldWindow() \
+             h.VisibleChanged = function() vis = vis + 1 end h:SetUIScalingGroup(5)",
+        );
+        fx.frame(0.016);
+        fx.eval::<()>("Probe", "h:SetVisible(true)");
+        fx.frame(0.016);
+        assert_eq!(fx.eval::<f64>("Probe", "return vis"), 1.0, "a later frame");
         fx.assert_no_errors();
     }
 

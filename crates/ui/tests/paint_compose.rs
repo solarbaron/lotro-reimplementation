@@ -53,6 +53,7 @@ fn textures(l: &CompositionList) -> Vec<(u32, Layer)> {
         .map(|e| match e.texture {
             EntryTexture::Surface { surface, layer } => (surface.0, layer),
             EntryTexture::External(t) => (t as u32 + 1000, Layer::Below),
+            EntryTexture::Fill { .. } => (u32::MAX, Layer::Below),
         })
         .collect()
 }
@@ -94,6 +95,77 @@ fn order_with_canvases_above() {
     let (r, a) = (&l.entries[0], &l.entries[4]);
     assert_eq!((r.dest, r.canvas, r.opacity), (a.dest, a.canvas, a.opacity));
     assert!(l.clips_of(r).is_empty(), "a root entry has no clip");
+}
+
+/// A window whose canvas extends above its own box (a game-styled window's title bar,
+/// `lua-plugin-api.md` §14.2.6 (d)): its entry is drawn over the extended box, but a nested
+/// entry is clipped to the window's own box (§13.12, `render.md` §6.8) and the window turns
+/// about its own box's centre (P72, §6.5).
+#[test]
+fn an_overhanging_window_clips_and_turns_by_its_own_box() {
+    let ext = Rect::new(100, 92, 500, 400);
+    let mut nodes = vec![
+        CompNode {
+            overhang: 8,
+            ..window(1, None, ext)
+        },
+        // A child window at top -20 of its parent: past the overhang too.
+        window(2, Some(0), Rect::from_xywh(110, 80, 40, 60)),
+    ];
+    assert_eq!(nodes[0].own_box(), Rect::new(100, 100, 500, 400));
+    let lookup = Lookup::default();
+    let l = build(&nodes, &lookup, &ComposeConfig::default()).unwrap();
+    assert_eq!(
+        l.entries[0].dest, ext,
+        "the canvas is drawn over the extended box"
+    );
+    assert_eq!(
+        clips(&l, 1),
+        vec![([100, 100, 500, 400], 0)],
+        "own box clips"
+    );
+    nodes[0].rotation = [0.0, 0.0, 90.0];
+    let l = build(&nodes, &lookup, &ComposeConfig::default()).unwrap();
+    let rots = l.rotations_of(&l.entries[0]);
+    assert_eq!(
+        rots[0].centre,
+        [300.0, 250.0],
+        "turns about its own box's centre"
+    );
+    assert_eq!(l.rotations_of(&l.entries[1])[0].centre, [300.0, 250.0]);
+    // Hostile overhangs: negative counts as none, more than the box leaves it empty.
+    for (o, own) in [(-5, ext), (i32::MAX, Rect::new(100, 400, 500, 400))] {
+        let n = CompNode {
+            overhang: o,
+            ..window(1, None, ext)
+        };
+        assert_eq!(n.own_box(), own, "overhang {o}");
+    }
+    // The footprint of an overhanging rotated window covers its whole canvas, turned about
+    // its own box's centre.
+    let fp = FootprintNode {
+        displayed: Rect::new(0, 0, 40, 48),
+        overhang: 8,
+        own_rotation: true,
+        window: true,
+        nested: Vec::new(),
+    };
+    let parent = ParentCanvas {
+        displayed: Rect::from_xywh(-200, -200, 400, 400),
+        canvas: [400, 400],
+        canvas_origin: [0, 0],
+        stored: [400, 400],
+    };
+    let region = coverage_region(&fp, &parent).unwrap();
+    let c = [20.0, 28.0];
+    for deg in 0..360 {
+        for corner in [[0.0, 0.0], [40.0, 0.0], [0.0, 48.0], [40.0, 48.0]] {
+            let p = rot(corner, c, f64::from(deg));
+            let q = [p[0] + 200.0, p[1] + 200.0];
+            assert!(f64::from(region.x0) <= q[0] && q[0] <= f64::from(region.x1));
+            assert!(f64::from(region.y0) <= q[1] && q[1] <= f64::from(region.y1));
+        }
+    }
 }
 
 #[test]
@@ -377,6 +449,7 @@ fn rotated_non_window_parent_covers_its_turning_child_m5_2() {
     let m_box = Rect::from_xywh(130, 90, 60, 15);
     let n = FootprintNode {
         displayed: n_box,
+        overhang: 0,
         own_rotation: true,
         window: false,
         nested: vec![FootprintNode {

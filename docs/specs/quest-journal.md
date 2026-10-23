@@ -4,11 +4,11 @@
 
 | | |
 |---|---|
-| **Status** | Accepted (review 2, 2026-10-11, of revision 1) |
-| **Last updated** | 2026-10-11 |
+| **Status** | **Accepted** (review of revision 2 (§4.8, §4.9, §6.6, §8.2; QJ26) by spec-review:spec-ui-scaling-p6:1 (independent session), 2026-10-23: passed). It was revised (revision 2 of 2026-10-23: implementer OPENs of §4.8, §4.9, §6.6 and §8.2 answered, row QJ26 added; independent review passed). Revision 1 was Accepted at review 2, 2026-10-11 |
+| **Last updated** | 2026-10-23 |
 | **Author role** | Spec writer (dirty room) |
 | **Reviewer** | Review 1 (2026-10-11): a Claude session in the spec-reviewer role (Clean-Room-Role: review) that wrote no part of this spec, of `npc-windows.md`, of the P3 notes in other specs or of the P3 code. Review 2 (2026-10-11): a separate Claude session in the spec-reviewer role (Clean-Room-Role: review) that wrote no part of this spec, of revision 1, of review 1, of the companion notes or of the P3 code. |
-| **Review record** | **2026-10-11, review 1** of the text committed in b62d0ae (with the companion notes `quests.md` §18, `game-panels.md` §8.8 and §9.3, `chat-window.md` §4.7) against CLEAN_ROOM.md §5.3: **changes requested** (3 blocking findings, B1–B3; status stays Review). Record: [Review record](#review-2026-10-11). **2026-10-11, revision 1** (spec writer, own read-only probes): B1–B3 answered (§9 census restated under §5.2 step 2.2 and its implementer OPEN answered; §7.2 billboard count scoped; new OBS row QJ25 for the §4.7 and §4.9 layout facts); review notes 3 and 4 applied. Status Revised. **2026-10-11, review 2** of revision 1 (e752dc2): **passed**, status Accepted. Record: [Review record, review 2](#review-2026-10-11-2). First version of 2026-10-10 for decision 0024 P3 (client half only), ROADMAP P3 exit criterion 1. |
+| **Review record** | **Review 2026-10-23 of revision 2 (§4.8, §4.9, §6.6, §8.2; QJ26)** (spec-review:spec-ui-scaling-p6:1 (independent session), wrote no part of it): **passed**; status Revised → Accepted. Checked: checked against CLEAN_ROOM.md §5.3, every item, on the uncommitted worktree diff against main, with the contamination screen clean: every added statement is a functional fact, a marked Tessera rule or Decision, or an OPEN; no code, pseudo-code or listing-shaped text; no copied prose or non-interoperability identifiers; no game text, assets, keys, hostnames or traffic; provenance rows present and marked; no byte layout added; the answered behaviour is testable; unknowns stay OPEN or owner observations; nothing outside decision 0034 §2. Relative links and anchors resolve. Spot checks: QJ26 confirmed read-only on layout `questhistory` (0x22000044): the two close buttons, their bases, sizes and positions as stated, and no other button-based child outside the list and scroll bar; `ui-widgets.md` §18.6 names the quest-abandon use and §19 gives `ContextMenuElement` and the kind-3 `ContextMenuEntry`. **2026-10-11, review 1** of the text committed in b62d0ae (with the companion notes `quests.md` §18, `game-panels.md` §8.8 and §9.3, `chat-window.md` §4.7) against CLEAN_ROOM.md §5.3: **changes requested** (3 blocking findings, B1–B3; status stays Review). Record: [Review record](#review-2026-10-11). **2026-10-11, revision 1** (spec writer, own read-only probes): B1–B3 answered (§9 census restated under §5.2 step 2.2 and its implementer OPEN answered; §7.2 billboard count scoped; new OBS row QJ25 for the §4.7 and §4.9 layout facts); review notes 3 and 4 applied. Status Revised. **2026-10-11, review 2** of revision 1 (e752dc2): **passed**, status Accepted. Record: [Review record, review 2](#review-2026-10-11-2). First version of 2026-10-10 for decision 0024 P3 (client half only), ROADMAP P3 exit criterion 1. |
 | **Implements into** | `crates/gamedata` (`quest` module: log entries, categories and order, title and level, display texts, objective text and counter values, reward rows shown, tracker entries, ring and marker choices, the per-record census of §9), `crates/ui` (game widgets and fallback widgets of the types named here: quest tree, quest display, quest objectives list, quest tracker, history window, map and radar quest notes), `apps/client` (the quest log and tracker panels, their commands to the session, `--open-panel` names, quest lines in chat, rings over NPCs in the walker, quest markers on the minimap and the world map) |
 | **Companion specs** | [`quests.md`](quests.md) (§2–§7 records, objectives, roles; §4.3 effective level; §9 rewards; §10 deeds; §11 arcs), [`npc-windows.md`](npc-windows.md) (§5.5 player variables, §6.2–§6.3 objective and reward blocks), [`scenario-feed.md`](scenario-feed.md) (revision 4 Accepted, revision 5 by the P3 NPC-window writer: §5.2, §6.3, §6.5, §7.6, §9.2, §9.4), [`string-table.md`](string-table.md) (§3.2 argument IDs, §7 rendering, §8.3 substitution, §9 StringInfo), [`ui-layout.md`](ui-layout.md) (§17 panels P9 and P11), [`game-panels.md`](game-panels.md) (§4 drag boxes, §6 `HideWhenField`, §8 radar, §9 world map), [`map-data.md`](map-data.md) (§4.8 note icon tables), [`chat-window.md`](chat-window.md) (§4.3, §5.1 chat types and lines), [`game-controls.md`](game-controls.md) (§7.5 consideration tables), [`script-table.md`](script-table.md) (§8.2 script-key lookup), [`particle-runtime.md`](particle-runtime.md) (effects started by script keys), [`property-system.md`](property-system.md) (§7 enum display texts) |
 
@@ -93,6 +93,7 @@ by label, and read every value at run time.
 | QJ23 | Difficulty state of a quest title from the quest level and the player's level through the consideration control's quest tables (§4.4) | BC (class 260 function 2, class 1695 slots 85–86); `game-controls.md` §7.5 | Confirmed (bytecode, partial) 2026-10-10 |
 | QJ24 | Every rule marked **Tessera rule** | Design | Decision |
 | QJ25 | Layout facts of the details pane and the history window: `UILAYOUT` keys and layout DIDs of `questdisplay`, `questobjectives` and `questhistory`; the `questdisplay` template names, bases, rects, header-icon states, text colours, markup flags and font lists named in §4.7; `QuestObjectives_Root`, `QuestObjectives_Objective` (bullet image, markup, multi-line), `QuestObjectives_TokenDisplay` (medium item display); the `questhistory` root, widget and size, `QuestHistory_ListBox` widget, display type 2, `UI_QuestDisplay_ShowBestowalDialog` true and `UI_QuestDisplay_ShowRewards` false, and the title token (§4.7, §4.9) | OBS (the three layout records and the `UILAYOUT` map of the install) | Confirmed 2026-10-11 |
+| QJ26 | History window close buttons: `QuestHistoryField` has exactly two Button-based children outside its list and scroll bar, `QuestHistory_CloseButton` (based on `Button_X`, 16 × 16 at (420, 21)) and `QuestHistory_CloseButton_Big` (based on `TextButton`, 120 × 20 at (171, 445), with its own text entry); the abandon confirmation is the engine `Confirmation` dialog of `ui-widgets.md` §18.6; the tracker menu is a context menu of `ui-widgets.md` §19 (§4.8, §4.9, §6.6) | OBS (layout `questhistory`, read-only, 2026-10-23); `ui-widgets.md` W30, W31 (Accepted 2026-10-23) | Confirmed 2026-10-23 (layout); Project (dialog and menu) |
 
 ---
 
@@ -471,20 +472,35 @@ The labels of the five buttons come from their bases' `UICore_Text_entry` in the
 (`RealQuestShareButton` and `RealQuestAbandonButton` carry table 0x25000023 tokens); the
 track button's label is replaced by code as above.
 
-> **OPEN:** (implementer, `apps/client`, 2026-10-11) `tessera-ui` has no dialog box widget
+> **Was OPEN:** (implementer, `apps/client`, 2026-10-11) `tessera-ui` has no dialog box widget
 > yet, so the client confirms an abandon by a second click on `QuestAbandonButton` for the
 > same quest: the first click posts the confirmation text of the token choice above as a
 > notice line, the second sends `AbandonQuest` (cancel = selecting another quest or closing
 > the log). This is a stand-in until the widget exists; please confirm or name the dialog
 > box layout the confirmation should use. (2026-10-23: the history button now opens
 > `QuestHistoryField`, §4.9.)
+>
+> **Answered (spec writer, 2026-10-23):** `ui-widgets.md` §18 now specifies the engine
+> dialog boxes, and §18.6 names this use (QJ26): the abandon request is a `Confirmation`
+> dialog with the chosen question as its question text and no layout or element override, so
+> it is `DialogConfirmationField` of layout `Dialog`. Yes sends `AbandonQuest { quest }`; no
+> (and a dialog taken down without a result) sends nothing. The two-click stand-in is
+> retired once the client shows engine dialogs; until then it remains the Tessera stand-in.
 
-> **OPEN:** (implementer, `tessera-settings`, 2026-10-23) the tracker's visibility and the
+> **Was OPEN:** (implementer, `tessera-settings`, 2026-10-23) the tracker's visibility and the
 > font index of the font-size arrows (§4.7) are saved as Tessera's keys `quest_tracker_shown`
 > (boolean, default on) and `quest_log_font_index` (integer 0–6) of the `[GameWindows]`
 > section, read at start-up off the frame and written off the frame when they change; a
 > value of another type or out of range is ignored (the default), with no migration. Please
 > confirm.
+>
+> **Answered (spec writer, 2026-10-23), Tessera rules confirmed:** `quest_tracker_shown`
+> (boolean, default on) is what `Quest_ShowTrackerCheckBox` shows and sets, in place of the
+> original's `GOP_ShowQuestTracker`; `quest_log_font_index` is the index into the seven fonts
+> listed on `Quest_FontExample` (§4.1), valid from 0 to (length of that list − 1) as read from
+> the install, so 0–6 on this install. A value of another type or outside the list is
+> ignored (the default); no migration. Both keys live in `[GameWindows]` and are read and
+> written off the frame.
 
 <a id="s4-9"></a>
 ### 4.9 History window (Confirmed, QJ25)
@@ -492,16 +508,27 @@ track button's label is replaced by code as above.
 Layout `questhistory` (key 0x1000006C → 0x22000044 here), root `QuestHistoryField`
 (widget `QuestHistory`, 448 × 475) with a `QuestDisplay` list (`QuestHistory_ListBox`,
 display type 2 `PastObjectives`, `UI_QuestDisplay_ShowBestowalDialog` true,
-`UI_QuestDisplay_ShowRewards` false), scroll bar, close buttons and title (`UI` token
-0x06C3490C). It shows the selected quest per §4.7 (history order). **Tessera rule:** the
+`UI_QuestDisplay_ShowRewards` false), scroll bar, two close buttons and title (`UI` token
+0x06C3490C). The close buttons (QJ26) are `QuestHistory_CloseButton` (a `Button_X`, 16 × 16
+at (420, 21)) and `QuestHistory_CloseButton_Big` (a `TextButton`, 120 × 20 at (171, 445),
+labelled by its own text entry). **Tessera rule** (their handler was not traced): a click on
+either closes the window. It shows the selected quest per §4.7 (history order). **Tessera rule:** the
 objectives listed are 1 … current objective (§5.1).
 
-> **OPEN:** (implementer, `tessera-ui`, 2026-10-23) the section does not name the close
+> **Was OPEN:** (implementer, `tessera-ui`, 2026-10-23) the section does not name the close
 > buttons. Engineering choice: every Button-class element below `QuestHistoryField` that is
 > neither inside `QuestHistory_ListBox` nor inside a scroll bar is taken as a close button
 > (at most 8); the fallback window has one. The window keeps its quest until the history
 > button is used for another quest or a close button is clicked; a new session closes it.
 > Please name the close buttons.
+>
+> **Answered (spec writer, 2026-10-23):** named above (QJ26, Confirmed 2026-10-23): the two
+> elements `QuestHistory_CloseButton` and `QuestHistory_CloseButton_Big`; they are the only
+> Button-based children outside the list and the scroll bar, so the implementer's rule finds
+> exactly these on this install, but the close buttons are found by these element labels
+> (read at run time), not by class. The rest is confirmed as Tessera rules: the window keeps
+> its quest until the history button is used for another quest or a close button is clicked,
+> a new session closes it, and the fallback window has one close button.
 
 ---
 
@@ -741,12 +768,22 @@ arrived, earliest at the top.
 order. Show in log opens the quest log with the quest selected (switching to the mode of its
 feed state); for a deed it does nothing (no deed log in P3).
 
-> **OPEN:** (implementer, `apps/client`, 2026-10-11; revised 2026-10-23) a right click on
+> **Was OPEN:** (implementer, `apps/client`, 2026-10-11; revised 2026-10-23) a right click on
 > `QuestTracker_Button` now opens Tessera's code-made popup (the P5 popup rule of
 > `map-windows.md` §4.5) below the button with the three items; a choice carries it out, a
 > click anywhere outside the popup closes it (that click does nothing else). The install's
 > popup layout (which element or template shows the items) is still not named here; please
 > name it when the menu widget is specified.
+>
+> **Answered (spec writer, 2026-10-23):** the menu widget is now `ui-widgets.md` §19 (QJ26):
+> the right-click menu is a context menu of layout `ContextMenu`. Whether the class library
+> gives it a title, a fixed position or an element override was not traced; **Tessera rule:**
+> none of the three, so the menu element is `ContextMenuElement`, its three items are plain
+> items (kind 3, template `ContextMenuEntry`, labels from the `PlayerActionHandler` tokens
+> above, all enabled), and it opens with its top-left corner at the pointer and is moved onto
+> the screen (§19.3). A choice carries the item out and closes the menu; any activation
+> outside it closes it (§19.4). This replaces the code-made popup below the button once the
+> client draws §19 menus.
 
 ---
 
@@ -884,7 +921,7 @@ Whenever the property or the quest's state changes, the previous ring script is 
 while the entity is spawned. Rings are shown when the Tessera setting for overhead quest icons
 is on (default on).
 
-> **OPEN:** (implementer, `apps/client`, 2026-10-11) the walker does not yet start script
+> **Was OPEN:** (implementer, `apps/client`, 2026-10-11) the walker does not yet start script
 > keys on entities, so the client computes the ring key of rules 1–4 and stands in for the
 > ring script with a small world-anchored glyph above the NPC (2.4 m above its position;
 > available, advance, in progress, other). The anchor height and the glyphs are Tessera
@@ -892,6 +929,13 @@ is on (default on).
 > overhead quest icons setting is Tessera's key `quest_icons` (boolean, default on) of the
 > `[GameWindows]` section (2026-10-23); the client's `--quest-icons on|off` overrides it
 > for one run.
+>
+> **Answered (spec writer, 2026-10-23), Tessera rules confirmed:** the key `quest_icons`
+> (boolean, default on) of `[GameWindows]` is the overhead quest icons setting of this
+> section, and `--quest-icons on|off` overrides it for one run without saving. The glyph
+> 2.4 m above the NPC stands in for the ring script until the walker starts script keys on
+> session entities (`particle-runtime.md`); then the ring key of rules 1–4 starts that
+> script and the glyph is retired. The glyph's look stays a Tessera choice.
 
 > **OPEN:** (Q6, feed gap) the feed has no form that names a ring **kind**: below-level,
 > future, timed, session, comment and the expansion and store rings cannot be scripted. An
@@ -1267,3 +1311,5 @@ naming note covers the install's labels); no game text (tokens, argument IDs, sy
 examples); every fact has a provenance row with a mark (QJ1–QJ25); layout tables give rects in
 pixels; invariants QI1–QI7 are testable; unknowns are OPEN (§14 Q1–Q11 and the implementer
 OPENs); nothing falls under a closed gate (decision 0004, no network or login code read).
+| 2026-10-23 | **Revision 2** (spec writer, dirty room; status Accepted → Revised, awaiting an independent review). New row QJ26 (Confirmed 2026-10-23 for the history layout; Project for the dialog and menu of `ui-widgets.md` §18–§19). **§4.8:** the abandon confirmation is the engine `Confirmation` dialog (`ui-widgets.md` §18.6), the two-click stand-in is retired once engine dialogs are shown; `quest_tracker_shown` and `quest_log_font_index` confirmed (index range from the install's font list). **§4.9:** the two close buttons named; both close the window (Tessera rule); the found-by-class reading replaced by the labels. **§6.6:** the tracker menu is a `ui-widgets.md` §19 context menu (`ContextMenuElement`, plain items, at the pointer; Tessera rule for the untraced title, position and override). **§8.2:** `quest_icons` and the glyph stand-in confirmed. Behaviour changes for the implementation: the dialog (§4.8), the close buttons by label (§4.9), the menu at the pointer (§6.6). |
+| 2026-10-23 | Header only: independent review by spec-review:spec-ui-scaling-p6:1 (independent session) of revision 2 (§4.8, §4.9, §6.6, §8.2; QJ26): passed; status Revised → Accepted (record in the header). No fact or rule changed. |

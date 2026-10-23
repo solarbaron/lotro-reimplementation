@@ -39,6 +39,15 @@
 //! Draws are recorded in a world pass's translucent stage, after the opaque surfaces and
 //! the render-world hooks, before the sorted blended meshes. They work in lit and unlit
 //! world passes and are ignored by screen passes.
+//!
+//! **The stage after post-processing** (`particle-runtime.md` §12 rule 16): the draws of
+//! systems with `uses_video_post` = 1 are queued with [`Pass::post_particles`] instead. Tessera
+//! has no post-processing step (`render.md` §5), so they are drawn in a stage of their own,
+//! the pass's last: after every other draw of the world pass (the opaque stage with the far
+//! view, the translucent stage with the other particle systems, and the sorted blended
+//! meshes), in the caller's order among themselves, with the same depth test, pipelines and
+//! §9 drawing as the draws of [`Pass::particles`]. A pass with only such draws still keeps
+//! its order with the passes around it.
 
 use std::fmt;
 use std::sync::Arc;
@@ -61,9 +70,11 @@ const PARTICLES_WGSL: &str = include_str!("shaders/particles.wgsl");
 /// Vertices one particle draw may hold: the original's draw buffer of 32,768 vertices
 /// (8,192 quads, `particles.md` §8.11). Longer draws are cut.
 pub const MAX_PARTICLE_DRAW_VERTICES: usize = 32_768;
-/// Particle draws per pass and frame.
+/// Particle draws per pass, frame and queue ([`Pass::particles`] and
+/// [`Pass::post_particles`] each have this cap).
 pub const MAX_PARTICLE_DRAWS_PER_PASS: usize = 65_536;
-/// Particle vertices per pass and frame (all draws together, 36 MiB of vertex data; the
+/// Particle vertices per pass, frame and queue (all draws of the queue together, 36 MiB of
+/// vertex data; the
 /// device's `max_buffer_size` lowers it further). Draws that would pass it are skipped
 /// whole, with a warning: the data stays far below it (the largest live count of one system
 /// is about 1,300 particles), so only hostile input meets it.
@@ -198,6 +209,23 @@ impl Pass {
     pub fn particles(&mut self, draw: ParticleDraw) -> &mut Self {
         self.particles.push(draw);
         self
+    }
+
+    /// Queue a particle draw of a system of the pass after post-processing
+    /// (`uses_video_post` = 1, `particle-runtime.md` §12 rule 16): drawn in the pass's last
+    /// stage, after every other draw of the pass (module docs). Ignored by screen passes.
+    /// Each of the two queues has its own per-pass caps ([`MAX_PARTICLE_DRAWS_PER_PASS`]
+    /// draws and [`MAX_PARTICLE_VERTICES_PER_PASS`] vertices, applied to that queue alone),
+    /// so a pass holds at most twice each cap in total.
+    pub fn post_particles(&mut self, draw: ParticleDraw) -> &mut Self {
+        self.post_particles.push(draw);
+        self
+    }
+
+    /// Draws queued with [`Self::post_particles`] so far.
+    #[must_use]
+    pub fn post_particle_count(&self) -> usize {
+        self.post_particles.len()
     }
 }
 
@@ -543,6 +571,9 @@ struct ParticleItem {
 }
 
 struct ParticleHook {
+    /// The stage the hook draws in: [`HookStage::Translucent`] for [`Pass::particles`],
+    /// [`HookStage::Post`] for [`Pass::post_particles`].
+    stage: HookStage,
     items: Vec<ParticleItem>,
     vertices: wgpu::Buffer,
     indices: wgpu::Buffer,
@@ -568,11 +599,13 @@ fn finite_vertex(v: &ParticleVertex) -> ParticleVertex {
     }
 }
 
-/// Builds the hook of one world pass's particle draws.
+/// Builds the hook of one world pass's particle draws, drawn in `stage`
+/// ([`HookStage::Translucent`] or [`HookStage::Post`]).
 pub(crate) fn build_hook(
     state: &mut ParticleState,
     draws: Vec<ParticleDraw>,
     ctx: &ParticleFrame<'_>,
+    stage: HookStage,
 ) -> Result<Option<Arc<dyn PassHook>>> {
     if draws.is_empty() {
         return Ok(None);
@@ -783,6 +816,7 @@ pub(crate) fn build_hook(
         usage: wgpu::BufferUsages::VERTEX,
     });
     Ok(Some(Arc::new(ParticleHook {
+        stage,
         items,
         vertices: vertex_buffer,
         indices,
@@ -793,7 +827,7 @@ pub(crate) fn build_hook(
 
 impl PassHook for ParticleHook {
     fn record(&self, rp: &mut wgpu::RenderPass<'_>, ctx: &HookRecord<'_>, stats: &mut FrameStats) {
-        if ctx.stage != HookStage::Translucent {
+        if ctx.stage != self.stage {
             return;
         }
         let vsize = size_of::<ParticleVertex>() as u64;

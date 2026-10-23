@@ -1874,6 +1874,9 @@ impl PassHook for InstancedHook {
         if !self.counted.swap(true, Ordering::Relaxed) {
             stats.instances_culled = stats.instances_culled.saturating_add(self.culled);
         }
+        if ctx.stage == HookStage::Post {
+            return;
+        }
         let shadow = ctx.stage == HookStage::Shadow;
         let want_translucent = ctx.stage == HookStage::Translucent;
         let mut bound = false;

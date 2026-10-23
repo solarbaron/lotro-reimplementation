@@ -64,8 +64,12 @@ fn env() -> MemoryEnv {
 }
 
 fn host(prefs: UiPrefs) -> (UiHost, ElementKey) {
+    host_at(prefs, (1920, 1080))
+}
+
+fn host_at(prefs: UiPrefs, screen: (u32, u32)) -> (UiHost, ElementKey) {
     let options = UiOptions {
-        screen: (1920, 1080),
+        screen,
         prefs,
         hud: false,
         panels: Vec::new(),
@@ -170,4 +174,62 @@ fn scripted_runs_do_not_persist_moves() {
     h.ui_mut().move_to(k, 600, 300);
     h.record_placement(k);
     assert!(h.take_placement_persist().is_none());
+}
+
+/// `ui-scaling.md` §5.8 "Applying": saved placements are applied again after a change of *F*
+/// or *A* only. A change of *Se* (and the physical size) that keeps *F* leaves a panel where
+/// code put it since (keep-on-screen only); a change of *F* puts it back at its anchor.
+#[test]
+fn placements_are_applied_again_only_when_f_or_a_changes() {
+    // The saved placement: 20 units from the right edge, 40 from the top, at F 1024 × 768.
+    let floor = UiPrefs {
+        ui_scale: UiScale::Fixed(2.0),
+        ..prefs()
+    };
+    let (mut h, k) = host_at(floor.clone(), (1024, 768));
+    h.ui_mut().move_to(k, 804, 40);
+    h.record_placement(k);
+    let panels = h.take_placement_persist().expect("a placement to persist");
+    let mut p2 = floor;
+    p2.panels = panels;
+    // S 2 in a 1024 × 768 window: Se 1 (the design floor), F 1024 × 768.
+    let (mut h2, k2) = host_at(p2, (1024, 768));
+    assert_eq!(
+        h2.ui().displayed_box(k2).l,
+        804,
+        "placed by the saved entry"
+    );
+    // Code moves the panel (not a user move: nothing recorded).
+    h2.ui_mut().move_to(k2, 300, 200);
+    // Twice the window: Se 2, F unchanged.
+    h2.resize(2048, 1536);
+    assert_eq!(h2.ui().screen_size(), (1024, 768), "F unchanged");
+    assert!((h2.scale().effective_scale() - 2.0).abs() < 1e-9);
+    let d = h2.ui().displayed_box(k2);
+    assert_eq!(
+        (d.l, d.t),
+        (300, 200),
+        "not re-applied after a change of Se alone"
+    );
+    // A wider window: F 1280 × 768 at Se 1.6 (held by the height): applied again.
+    h2.resize(2048, 1229);
+    assert_ne!(h2.ui().screen_size(), (1024, 768), "F changed");
+    let (dx, dy) = offsets(&h2, k2);
+    assert!(
+        (dx - 20.0).abs() <= 1.0 && (dy - 40.0).abs() <= 1.0,
+        "back at the anchor: {dx} {dy}"
+    );
+}
+
+/// `/uiscale aspect` at an unchanged *F* reaches `tessera-ui`: the safe area narrows at once
+/// (`ui-scaling.md` §4.5 step 1, §5.1, §7.3).
+#[test]
+fn a_safe_aspect_command_feeds_the_new_safe_area() {
+    let (mut h, _) = host_at(prefs(), (5120, 1440));
+    let before = h.ui().safe_area_box();
+    assert!(before.w > 3000.0, "the 21:9 safe area of 1440: {before:?}");
+    h.apply_uiscale_request(&UiScaleRequest::Aspect(SafeAspect::R16_9), Instant::now());
+    assert_eq!(h.ui().screen_size(), (5120, 1440), "F unchanged");
+    let after = h.ui().safe_area_box();
+    assert!((after.w - 2560.0).abs() < 1.0, "16:9 of 1440: {after:?}");
 }

@@ -27,6 +27,7 @@ use tessera_props::{EnumSource, GameData};
 use tessera_text::Strings;
 
 use super::spec::{MountSource, SteedTree};
+use crate::walker::characters::figure::PropAnchorRule;
 
 tessera_formats::property_ids! {
     /// Properties the walker reads besides `MountLabels` (`mounts.md` §2.6, §14.7, §14.9).
@@ -97,13 +98,16 @@ pub enum MountRefusal {
         /// Its census category.
         category: MountCategory,
     },
-    /// The rider's setup lacks the node's holding location (`skeleton-anim.md` §8.4).
-    #[error("{effect}: this body has no holding location {location:#x} ({})", category_text(.category))]
+    /// The rider cannot anchor the node's mount (`script-table.md` §5.2,
+    /// `skeleton-anim.md` §8.4): its setup lacks the holding location the node names, or the
+    /// node anchors by a bone type or key 6, which the walker's placement does not follow yet
+    /// ([`super::eval::placeable_anchor`]).
+    #[error("{effect}: this body has no anchor for the mount: {} ({})", anchor_text(.anchor), category_text(.category))]
     NoLocation {
         /// The effect.
         effect: Did,
-        /// The holding-location key.
-        location: u32,
+        /// The anchor rule of the node that failed.
+        anchor: PropAnchorRule,
         /// Its census category.
         category: MountCategory,
     },
@@ -131,6 +135,19 @@ pub enum MountRefusal {
     /// A scenario session: the feed owns the mount state (`walker.md` §16.1).
     #[error("The scenario controls mounts in this session.")]
     Scenario,
+}
+
+fn anchor_text(a: &PropAnchorRule) -> String {
+    match a {
+        PropAnchorRule::Location(l) => format!("holding location {l:#x}"),
+        PropAnchorRule::Bone(b) => {
+            format!("bone type {b} (the walker places mounts at holding locations only)")
+        }
+        PropAnchorRule::OriginKey => {
+            "holding location 6 or the model origin (not followed by the walker)".to_owned()
+        }
+        PropAnchorRule::Origin => "the model origin (not followed by the walker)".to_owned(),
+    }
 }
 
 fn category_text(c: &MountCategory) -> &'static str {

@@ -12,8 +12,9 @@
 //!    data), and
 //! 2. calls [`PassHook::record`] in each [`HookStage`] of the pass: in the sun's
 //!    shadow-map pass ([`HookStage::Shadow`], only for lit passes with a shadow), after
-//!    the opaque and alpha-tested mesh surfaces ([`HookStage::Opaque`]), and after the
-//!    overlays, before the back-to-front blended mesh draws ([`HookStage::Translucent`]).
+//!    the opaque and alpha-tested mesh surfaces ([`HookStage::Opaque`]), after the
+//!    overlays, before the back-to-front blended mesh draws ([`HookStage::Translucent`]),
+//!    and after those blended draws ([`HookStage::Post`], the pass's last stage).
 //!
 //! A hook sets its own pipeline and every bind group it uses, group 0 included: the
 //! context hands it the pass's group 0 for the stage with its dynamic offset. The renderer
@@ -38,6 +39,11 @@ pub(crate) enum HookStage {
     Opaque,
     /// After the overlays, before the sorted blended mesh draws.
     Translucent,
+    /// After the sorted blended mesh draws: the last stage of a world pass, after every
+    /// other draw of it (the far view and the translucent stage included). Only the
+    /// particle systems of the pass after post-processing record here
+    /// (`particle-runtime.md` §12 rule 16, [`crate::Pass::post_particles`]).
+    Post,
 }
 
 /// Inputs of [`PassHook::prepare`].
@@ -238,7 +244,7 @@ fn vs_shadow(@builtin(vertex_index) i: u32) -> @builtin(position) vec4<f32> {
             match ctx.stage {
                 HookStage::Opaque => rp.set_pipeline(colour),
                 HookStage::Shadow => rp.set_pipeline(shadow),
-                HookStage::Translucent => return,
+                HookStage::Translucent | HookStage::Post => return,
             }
             rp.set_bind_group(0, bg, &[offset]);
             rp.draw(0..3, 0..1);
@@ -308,10 +314,13 @@ fn vs_shadow(@builtin(vertex_index) i: u32) -> @builtin(position) vec4<f32> {
                 (HookStage::Shadow, true),
                 (HookStage::Opaque, true),
                 (HookStage::Translucent, true),
+                (HookStage::Post, true),
                 (HookStage::Opaque, true),
                 (HookStage::Translucent, true),
+                (HookStage::Post, true),
                 (HookStage::Opaque, false),
                 (HookStage::Translucent, false),
+                (HookStage::Post, false),
             ]
         );
 
@@ -331,7 +340,11 @@ fn vs_shadow(@builtin(vertex_index) i: u32) -> @builtin(position) vec4<f32> {
         let calls = std::mem::take(&mut *hook.calls.lock().unwrap_or_else(PoisonError::into_inner));
         assert_eq!(
             calls,
-            vec![(HookStage::Opaque, true), (HookStage::Translucent, true)]
+            vec![
+                (HookStage::Opaque, true),
+                (HookStage::Translucent, true),
+                (HookStage::Post, true)
+            ]
         );
         Ok(())
     }

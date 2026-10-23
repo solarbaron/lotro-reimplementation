@@ -149,15 +149,18 @@ impl<'s> RiderEvaluator<'s> {
             entries,
         )
         .ok_or(MountRefusal::NoMesh { effect, category })?;
+        // `script-table.md` §5.2: a rider without the anchor the node names shows nothing,
+        // and the walker places a mount at a holding location only (see
+        // [`eval::placeable_anchor`]), so the check and the placement agree.
         let has = self
             .rider
             .points
             .as_ref()
-            .is_some_and(|p| p.holding(m.mesh.holding_location).is_some());
+            .is_some_and(|p| eval::placeable_anchor(p, m.anchor));
         if !has {
             return Err(MountRefusal::NoLocation {
                 effect,
-                location: m.mesh.holding_location,
+                anchor: m.anchor,
                 category,
             });
         }

@@ -14,8 +14,104 @@
 //! (the U4 (e) bound). Steady state (U1, U3's mean) excludes every frame of a window;
 //! U4 (a) and (b) are judged over all of them. U4 (c)–(e) (show-to-first-draw and job
 //! latencies) are not measured yet and are reported as such.
+//!
+//! Each frame also carries the paint step's `ui-scaling.md` §8 figures: the paint jobs on the
+//! asset workers (S1, [`WorkerSample`]) and the glyph derivation on the frame thread and the
+//! ladder steps from the workers (S7, [`GlyphSample`]), copied from
+//! `tessera_ui::paint::PaintFrameStats`.
 
 use std::time::Duration;
+
+use tessera_ui::paint::PaintFrameStats;
+
+/// One frame's paint jobs on the asset workers (`ui-scaling.md` §8 S1).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct WorkerSample {
+    /// Jobs handed to the workers.
+    pub jobs_started: u32,
+    /// Worker jobs that came back.
+    pub jobs_completed: u32,
+    /// Damage pixels of the jobs handed over.
+    pub pixels: u64,
+    /// Worker jobs that failed (repainted on the frame thread).
+    pub failures: u32,
+}
+
+impl WorkerSample {
+    /// The figures of a frame's paint step.
+    #[must_use]
+    pub fn of(s: &PaintFrameStats) -> Self {
+        Self {
+            jobs_started: s.worker_jobs_started,
+            jobs_completed: s.worker_jobs_completed,
+            pixels: s.worker_pixels,
+            failures: s.worker_failures,
+        }
+    }
+}
+
+/// One frame's glyph derivation (`ui-scaling.md` §6.5, §8 S7).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct GlyphSample {
+    /// Glyphs derived on the frame thread.
+    pub derived: u32,
+    /// Nanoseconds laying out and deriving scaled text (part of the paint slice).
+    pub derive_ns: u64,
+    /// Nanoseconds of the derivations alone on the frame thread.
+    pub derivation_ns: u64,
+    /// The longest single derivation on the frame thread, nanoseconds.
+    pub derivation_max_ns: u64,
+    /// Ladder steps from the workers accepted in the frame.
+    pub ladder_steps: u32,
+    /// Their worker time, nanoseconds.
+    pub ladder_step_ns: u64,
+    /// The longest of them, nanoseconds.
+    pub ladder_step_max_ns: u64,
+}
+
+impl GlyphSample {
+    /// The figures of a frame's paint step.
+    #[must_use]
+    pub fn of(s: &PaintFrameStats) -> Self {
+        Self {
+            derived: s.glyphs_derived,
+            derive_ns: s.glyph_derive_ns,
+            derivation_ns: s.glyph_derivation_ns,
+            derivation_max_ns: s.glyph_derivation_max_ns,
+            ladder_steps: s.ladder_steps,
+            ladder_step_ns: s.ladder_step_ns,
+            ladder_step_max_ns: s.ladder_step_max_ns,
+        }
+    }
+}
+
+/// S1 over a run: (jobs handed to the workers, their damage pixels, failures).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct S1Summary {
+    /// Jobs handed to the workers.
+    pub jobs: u64,
+    /// Their damage pixels.
+    pub pixels: u64,
+    /// Failed worker jobs.
+    pub failures: u64,
+}
+
+/// S7 over a run.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct S7Summary {
+    /// Glyphs derived on the frame thread.
+    pub glyphs: u64,
+    /// Mean derivation time per glyph on the frame thread, microseconds (0 without glyphs).
+    pub mean_us: f64,
+    /// The longest single derivation, microseconds.
+    pub max_us: f64,
+    /// Ladder steps accepted from the workers.
+    pub steps: u64,
+    /// Mean worker time per step, milliseconds (0 without steps).
+    pub step_mean_ms: f64,
+    /// The longest step, milliseconds.
+    pub step_max_ms: f64,
+}
 
 /// One frame's figures.
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
@@ -59,6 +155,10 @@ pub struct FrameSample {
     /// the most recent resolved figure when the frame was submitted; `None` without
     /// `TIMESTAMP_QUERY` or before the first query resolved.
     pub ui_gpu_ms: Option<f64>,
+    /// Paint jobs on the asset workers (S1).
+    pub worker: WorkerSample,
+    /// Glyph derivation and ladder steps (S7).
+    pub glyphs: GlyphSample,
 }
 
 /// Percentile of sorted values (nearest rank); 0 for none.
@@ -194,6 +294,51 @@ impl Recorder {
         m
     }
 
+    /// S1 over every frame: the paint jobs handed to the asset workers.
+    #[must_use]
+    pub fn s1(&self) -> S1Summary {
+        let mut out = S1Summary::default();
+        for f in self.phase(None) {
+            out.jobs += u64::from(f.worker.jobs_started);
+            out.pixels = out.pixels.saturating_add(f.worker.pixels);
+            out.failures += u64::from(f.worker.failures);
+        }
+        out
+    }
+
+    /// S7 over every frame: the glyph derivations on the frame thread and the ladder steps
+    /// from the workers.
+    #[must_use]
+    pub fn s7(&self) -> S7Summary {
+        let (mut glyphs, mut ns, mut max_ns) = (0u64, 0u64, 0u64);
+        let (mut steps, mut step_ns, mut step_max) = (0u64, 0u64, 0u64);
+        for f in self.phase(None) {
+            let g = &f.glyphs;
+            glyphs += u64::from(g.derived);
+            ns = ns.saturating_add(g.derivation_ns);
+            max_ns = max_ns.max(g.derivation_max_ns);
+            steps += u64::from(g.ladder_steps);
+            step_ns = step_ns.saturating_add(g.ladder_step_ns);
+            step_max = step_max.max(g.ladder_step_max_ns);
+        }
+        S7Summary {
+            glyphs,
+            mean_us: if glyphs > 0 {
+                ns as f64 / glyphs as f64 / 1e3
+            } else {
+                0.0
+            },
+            max_us: max_ns as f64 / 1e3,
+            steps,
+            step_mean_ms: if steps > 0 {
+                step_ns as f64 / steps as f64 / 1e6
+            } else {
+                0.0
+            },
+            step_max_ms: step_max as f64 / 1e6,
+        }
+    }
+
     /// Plugin time summary.
     #[must_use]
     pub fn plugins(&self) -> Summary {
@@ -253,7 +398,7 @@ pub fn report_markdown(rec: &Recorder, title: &str, notes: &[(String, String)]) 
     if u2.n > 0 {
         let _ = writeln!(
             s,
-            "| U2 UI pass GPU time (timestamp queries, steady) | all | mean {:.3} ms, p99 {:.3} ms, max {:.3} ms ({} frames) | ≤ 0.3 ms at 3840 × 2160 |",
+            "| U2 UI pass GPU time (timestamp queries, steady) | all | mean {:.3} ms, p99 {:.3} ms, max {:.3} ms ({} frames; counted per frame: a frame that repeats the last resolved figure counts again) | ≤ 0.3 ms at 3840 × 2160 |",
             u2.mean, u2.p99, u2.max, u2.n
         );
     } else {
@@ -310,6 +455,25 @@ pub fn report_markdown(rec: &Recorder, title: &str, notes: &[(String, String)]) 
         mib(tex),
         mib(img),
         mib(pinned)
+    );
+    let s1 = rec.s1();
+    let _ = writeln!(
+        s,
+        "| S1 paint jobs on the asset workers | all | {} jobs, {:.1} kpx, {} failed | damage over 30,000 physical px off the frame thread |",
+        s1.jobs,
+        s1.pixels as f64 / 1e3,
+        s1.failures
+    );
+    let s7 = rec.s7();
+    let _ = writeln!(
+        s,
+        "| S7 glyph derivation on the frame thread | all | {} glyphs, mean {:.1} µs, max {:.1} µs | ≤ 20 µs per glyph |",
+        s7.glyphs, s7.mean_us, s7.max_us
+    );
+    let _ = writeln!(
+        s,
+        "| S7 ladder steps on the asset workers | all | {} steps, mean {:.2} ms, max {:.2} ms | ≤ 5 ms per step |",
+        s7.steps, s7.step_mean_ms, s7.step_max_ms
     );
     let overall = Summary::of(rec.phase(None).map(|f| f.frame_ms));
     let _ = writeln!(
@@ -460,6 +624,71 @@ mod tests {
             md.contains("| U2 UI pass GPU time (timestamp queries, steady) | all | mean 0.200 ms"),
             "{md}"
         );
+    }
+
+    /// `ui-scaling.md` §8 S1 and S7: the paint step's worker and glyph figures are summed
+    /// over the run and reported.
+    #[test]
+    fn s1_and_s7_rows() {
+        let mut r = Recorder::default();
+        for (jobs, px, glyphs, ns, max, steps, sns, smax) in [
+            (
+                1u32,
+                60_000u64,
+                4u32,
+                40_000u64,
+                15_000u64,
+                2u32,
+                6_000_000u64,
+                4_000_000u64,
+            ),
+            (0, 0, 0, 0, 0, 1, 1_000_000, 1_000_000),
+        ] {
+            r.push(
+                "walk",
+                FrameSample {
+                    worker: WorkerSample {
+                        jobs_started: jobs,
+                        pixels: px,
+                        ..WorkerSample::default()
+                    },
+                    glyphs: GlyphSample {
+                        derived: glyphs,
+                        derivation_ns: ns,
+                        derivation_max_ns: max,
+                        ladder_steps: steps,
+                        ladder_step_ns: sns,
+                        ladder_step_max_ns: smax,
+                        ..GlyphSample::default()
+                    },
+                    ..FrameSample::default()
+                },
+            );
+        }
+        assert_eq!(
+            r.s1(),
+            S1Summary {
+                jobs: 1,
+                pixels: 60_000,
+                failures: 0
+            }
+        );
+        let s7 = r.s7();
+        assert_eq!((s7.glyphs, s7.steps), (4, 3));
+        assert!((s7.mean_us - 10.0).abs() < 1e-9);
+        assert!((s7.max_us - 15.0).abs() < 1e-9);
+        assert!((s7.step_mean_ms - 7.0 / 3.0).abs() < 1e-9);
+        assert!((s7.step_max_ms - 4.0).abs() < 1e-9);
+        let md = report_markdown(&r, "t", &[]);
+        assert!(
+            md.contains("| S1 paint jobs on the asset workers | all | 1 jobs, 60.0 kpx, 0 failed"),
+            "{md}"
+        );
+        assert!(md.contains("4 glyphs, mean 10.0 µs, max 15.0 µs"), "{md}");
+        assert!(md.contains("3 steps, mean 2.33 ms, max 4.00 ms"), "{md}");
+        // Nothing derived: zero means, no division by zero.
+        let empty = Recorder::default().s7();
+        assert_eq!((empty.mean_us, empty.step_mean_ms), (0.0, 0.0));
     }
 
     /// A run that fed the renderer's figures but got no GPU time names the adapter (or an

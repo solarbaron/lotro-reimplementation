@@ -41,7 +41,9 @@ use tessera_net::Body;
 use tessera_render::glam::Mat4;
 
 use super::super::characters::catalog::CharacterCatalog;
-use super::super::characters::figure::{FigureRequest, prepare_figure_scripts};
+use super::super::characters::figure::{
+    FigureRequest, ORIGIN_LOCATION_KEY, PropAnchorRule, prepare_figure_scripts, prop_anchor_rule,
+};
 use super::super::effects::data::AttachPoints;
 use super::ride::{JUMP_LIFT_GAITS, MountedJump};
 
@@ -658,6 +660,13 @@ pub fn choose(
 pub struct MeshChoice {
     /// The node's values.
     pub mesh: MountMesh,
+    /// Where the node anchors the mount on the rider (`script-table.md` §5.2 "Where a MeshFX
+    /// node attaches its entity", through the shared figure path's [`prop_anchor_rule`]):
+    /// for the attached nodes of this install's mount effects (`mounts.md` §4.4: every node
+    /// is attached, `HoldingLocation` driven to `Mount_Connection`, `BoneType` 0) the
+    /// holding location. The walker's placement does not read it yet (it anchors at
+    /// `mesh.holding_location`), so [`placeable_anchor`] refuses every other rule.
+    pub anchor: PropAnchorRule,
     /// `FadeInTime` (driven by `Mount_FadeIn_Override` where the node drives it).
     pub fade_in: f32,
     /// `FadeOutTime`.
@@ -695,9 +704,18 @@ pub fn choose_mesh(
         v.filter(|f| f.is_finite())
             .map_or(0.0, |f| f.clamp(0.0, 10.0))
     };
+    // `script-table.md` §5.2: the node's own `AttachToParent` and `BoneType` with the
+    // (driven) holding location the mesh carries; a node not found again counts as attached
+    // with no bone type, the case of every mount node of this install.
+    let anchor = prop_anchor_rule(
+        node.is_none_or(|n| n.attach_to_parent),
+        mesh.holding_location,
+        node.map_or(0, |n| n.bone_type),
+    );
     Some(MeshChoice {
         fade_in: fade(node.map(|n| n.fade_in_time)),
         fade_out: fade(node.map(|n| n.fade_out_time)),
+        anchor,
         mesh,
     })
 }
@@ -959,16 +977,59 @@ pub fn script_stops(
 /// matrix *B* × *H* of `mounts.md` §14.8 item 1. `None` when the setup has no such location.
 #[must_use]
 pub fn location_matrix(points: &AttachPoints, location: u32, model: &[Mat4]) -> Option<Mat4> {
-    let (bone, frame) = points.holding(location)?;
-    let b = match bone {
-        Some(i) => model
+    anchor_matrix(points, PropAnchorRule::Location(location), model)
+}
+
+/// Whether the walker can place the mount of a node with anchor `rule` on a rider with
+/// `points`: the walker's placement (`walker/characters`, the mounted figure's frame update)
+/// anchors a mount at a holding location only ([`location_matrix`] on the mesh's holding
+/// location), so a node whose `script-table.md` §5.2 anchor is a bone type, key 6 or the
+/// model origin is refused, as a node whose holding location the rider lacks is. Every mount
+/// node of this install is attached with its holding location driven to
+/// `Mount_Connection` (`mounts.md` §4.4), so no node of it is refused for its rule. Once the
+/// placement follows [`anchor_matrix`] with [`MeshChoice::anchor`], this is
+/// `anchor_matrix(points, rule, &[]).is_some()`.
+#[must_use]
+pub fn placeable_anchor(points: &AttachPoints, rule: PropAnchorRule) -> bool {
+    match rule {
+        PropAnchorRule::Location(l) => points.holding(l).is_some(),
+        PropAnchorRule::Bone(_) | PropAnchorRule::OriginKey | PropAnchorRule::Origin => false,
+    }
+}
+
+/// The rider's anchor of a mount node by its rule (`script-table.md` §5.2, [`MeshChoice::anchor`])
+/// with the posed model matrices of its bones (a bone not posed takes its reference pose,
+/// one the skeleton lacks the identity):
+///
+/// - a holding location: its bone × its frame ([`location_matrix`]; the setup origin when the
+///   location has no bone);
+/// - a bone type: that bone of the rider's `attach_map`, at an identity frame;
+/// - key 6 ([`ORIGIN_LOCATION_KEY`]): that holding location when list A holds one, else the
+///   model origin (the Tessera rule of the §5.2 OPEN);
+/// - the model origin: the identity.
+///
+/// `None` when the rider lacks the named holding location or bone (the node shows nothing).
+/// The placement frame (`BoneOffset`) and the scale are [`super::mount_transform`]'s.
+#[must_use]
+pub fn anchor_matrix(points: &AttachPoints, rule: PropAnchorRule, model: &[Mat4]) -> Option<Mat4> {
+    let posed = |i: usize| {
+        model
             .get(i)
             .or_else(|| points.reference.get(i))
             .copied()
-            .unwrap_or(Mat4::IDENTITY),
-        None => Mat4::IDENTITY,
+            .unwrap_or(Mat4::IDENTITY)
     };
-    Some(b * frame)
+    let located = |(bone, frame): (Option<usize>, Mat4)| bone.map_or(Mat4::IDENTITY, posed) * frame;
+    match rule {
+        PropAnchorRule::Location(l) => points.holding(l).map(located),
+        PropAnchorRule::Bone(b) => points.bone(b).map(posed),
+        PropAnchorRule::OriginKey => Some(
+            points
+                .holding(ORIGIN_LOCATION_KEY)
+                .map_or(Mat4::IDENTITY, located),
+        ),
+        PropAnchorRule::Origin => Some(Mat4::IDENTITY),
+    }
 }
 
 /// The cache of evaluated keys, least recently used out (`walker.md` §16.7: at most
@@ -1025,6 +1086,97 @@ impl KeyCache {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `script-table.md` §5.2 for mount nodes: the anchor follows the attachment table
+    /// (attached: holding location, then bone type, then key 6; unattached: bone type, then
+    /// holding location, then the model origin), and a rider without the named anchor shows
+    /// nothing.
+    #[test]
+    fn mount_anchor_follows_the_attachment_table() {
+        use tessera_render::glam::Vec3;
+        let t = |x: f32| Mat4::from_translation(Vec3::new(x, 0.0, 0.0));
+        let points = AttachPoints {
+            holding: vec![(0x1000_0027, Some(1), t(0.5)), (9, None, t(7.0))],
+            bones: vec![(3, 1)],
+            reference: vec![Mat4::IDENTITY, t(2.0)],
+        };
+        let posed = [Mat4::IDENTITY, t(10.0)];
+        let x = |m: Option<Mat4>| m.map(|m| m.w_axis.x);
+        // Attached, location set: the location on its posed bone (both fields set: the
+        // location wins).
+        let rule = prop_anchor_rule(true, 0x1000_0027, 3);
+        assert_eq!(rule, PropAnchorRule::Location(0x1000_0027));
+        assert_eq!(x(anchor_matrix(&points, rule, &posed)), Some(10.5));
+        // Not posed: the reference pose.
+        assert_eq!(x(anchor_matrix(&points, rule, &[])), Some(2.5));
+        assert_eq!(
+            anchor_matrix(&points, rule, &posed),
+            location_matrix(&points, 0x1000_0027, &posed)
+        );
+        // Attached, bone type only: that bone.
+        let rule = prop_anchor_rule(true, 0, 3);
+        assert_eq!(x(anchor_matrix(&points, rule, &posed)), Some(10.0));
+        // Attached, neither: key 6, the model origin without a key-6 element.
+        let rule = prop_anchor_rule(true, 0, 0);
+        assert_eq!(rule, PropAnchorRule::OriginKey);
+        assert_eq!(x(anchor_matrix(&points, rule, &posed)), Some(0.0));
+        let with6 = AttachPoints {
+            holding: vec![(ORIGIN_LOCATION_KEY, None, t(4.0))],
+            ..points.clone()
+        };
+        assert_eq!(x(anchor_matrix(&with6, rule, &posed)), Some(4.0));
+        // Unattached with both: the bone wins; neither: the model origin.
+        let rule = prop_anchor_rule(false, 9, 3);
+        assert_eq!(rule, PropAnchorRule::Bone(3));
+        assert_eq!(x(anchor_matrix(&points, rule, &posed)), Some(10.0));
+        assert_eq!(
+            x(anchor_matrix(
+                &points,
+                prop_anchor_rule(false, 9, 0),
+                &posed
+            )),
+            Some(7.0)
+        );
+        assert_eq!(
+            anchor_matrix(&points, prop_anchor_rule(false, 0, 0), &posed),
+            Some(Mat4::IDENTITY)
+        );
+        // A missing location or bone: nothing.
+        assert_eq!(
+            anchor_matrix(&points, PropAnchorRule::Location(77), &posed),
+            None
+        );
+        assert_eq!(
+            anchor_matrix(&points, PropAnchorRule::Bone(77), &posed),
+            None
+        );
+    }
+
+    /// The refusal check agrees with the walker's placement (a holding location only): an
+    /// attached node with no holding location (key 6, or a bone type) is refused even though
+    /// §5.2 finds an anchor for it, and so is a location the rider lacks.
+    #[test]
+    fn only_holding_location_anchors_are_placeable() {
+        use tessera_render::glam::Vec3;
+        let t = |x: f32| Mat4::from_translation(Vec3::new(x, 0.0, 0.0));
+        let points = AttachPoints {
+            holding: vec![(0x1000_0027, Some(1), t(0.5))],
+            bones: vec![(3, 1)],
+            reference: vec![Mat4::IDENTITY, t(2.0)],
+        };
+        let rule = prop_anchor_rule(true, 0x1000_0027, 0);
+        assert!(placeable_anchor(&points, rule));
+        assert!(location_matrix(&points, 0x1000_0027, &[]).is_some());
+        // Location 0 with bone type 0 (key 6) and with bone type 3: §5.2 anchors them, the
+        // placement cannot, so both are refused.
+        for rule in [prop_anchor_rule(true, 0, 0), prop_anchor_rule(true, 0, 3)] {
+            assert!(anchor_matrix(&points, rule, &[]).is_some(), "{rule:?}");
+            assert!(!placeable_anchor(&points, rule), "{rule:?}");
+            assert!(location_matrix(&points, 0, &[]).is_none());
+        }
+        assert!(!placeable_anchor(&points, prop_anchor_rule(false, 0, 0)));
+        assert!(!placeable_anchor(&points, PropAnchorRule::Location(77)));
+    }
 
     #[test]
     fn signs_and_element_classes() {

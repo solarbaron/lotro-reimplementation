@@ -85,15 +85,24 @@
 //! character layer's fade gave the figure in its last draw pass (0 and view- or cell-culled
 //! figures included), those of a static owner of a landblock the opacity of its placed
 //! object after the object layer's last draw (`ObjectLayer::placed_entity_opacity`, the
-//! object found by the owner's entity index: the draw-distance fade or cross-fade); both one
-//! frame late, since placement runs before the draw pass (allowed by rule 15). A placed
-//! object the last draw pass culled (view, size, cell, draw cap, out of range) keeps its
-//! current fade as the factor, 0 included, so a fade that runs while the object stays culled
-//! is followed; an owner with no drawn object (no parts, its landblock's objects or its
-//! object not in the object layer, or an object that can never be drawn) counts as 1
-//! (`placed_parent_opacity`). The object layer
-//! applies no `Render_Opacity` to static objects, so that factor of rule 15 is missing for
-//! them (a build gap of the object layer). The creation viewport's owners count as 1.
+//! object found by the owner's entity index: the draw-distance fade or cross-fade times the
+//! object's `Render_Opacity`); both one frame late, since placement runs before the draw
+//! pass (allowed by rule 15). A placed object the last draw pass culled (view, size, cell,
+//! draw cap, out of range) keeps its current fade times its `Render_Opacity` as the factor,
+//! 0 included, so a fade that runs while the object stays culled is followed; an owner with
+//! no drawn object (no parts, its landblock's objects or its object not in the object
+//! layer, or an object that can never be drawn) counts as 1 (`placed_parent_opacity`).
+//! Static objects apply their `Render_Opacity` (rule 15's owner property, dictionary
+//! default 1): the object layer multiplies each object's value into the opacity it draws
+//! with and reports (`walker::objects::ObjectList`). Today the block worker reads the value
+//! from the placed entity's own set, then its 0x47 chain (`walker::terrain::OwnerOpacity`);
+//! the instance sets are not seen in the walker, because its bundles drop the weenie list
+//! (`keep_weenies` off), so an entity whose `Render_Opacity` only its instance set holds
+//! draws and reports factor 1. That gap is open: the seam
+//! `walker::terrain::bundle_render_opacities` returns no values until `tessera-world`
+//! exposes the bundle builder's per-entity readings. Scripts that write `Render_Opacity` of
+//! a static owner later are not followed (the value is the one read when the landblock's
+//! objects are built). The creation viewport's owners count as 1.
 //!
 //! **Systems of the pass after post-processing** (rule 16): systems with `uses_video_post`
 //! are queued apart ([`EffectLayer::take_post_draws`]) and the walker queues them in the
@@ -378,8 +387,8 @@ struct OwnerFrame<'a> {
     drawn: bool,
     /// The opacity the owner is drawn with (`particle-runtime.md` §12 rule 15): a figure's
     /// fade from the character layer's last draw pass (culled figures included); 1 for
-    /// static owners here (their placed object's opacity comes from the object layer,
-    /// `placed_parent_opacity`).
+    /// static owners here (their placed object's opacity, fade times `Render_Opacity`,
+    /// comes from the object layer, `placed_parent_opacity`).
     opacity: f32,
 }
 

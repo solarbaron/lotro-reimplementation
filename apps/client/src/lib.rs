@@ -66,6 +66,7 @@ pub mod portrait;
 pub mod pre_world;
 pub mod progression;
 pub mod quests;
+pub mod render_pref;
 pub mod runtime;
 pub mod scenario;
 pub mod scene;

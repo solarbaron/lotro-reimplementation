@@ -91,7 +91,7 @@ use self::motion::{Locomotion, drive, make_animator_with_keys};
 use super::UploadBudget;
 use super::controls::{CameraProfile, CameraProfileError, load_camera_profile, smooth_towards};
 use super::geometry::{MaterialPlan, TexRequest};
-use super::objects::{ObjectLayer, TexLookup, surface_draw};
+use super::objects::{ObjectLayer, TexLookup, surface_draw, surface_draw_in};
 use super::source::SourceShared;
 use super::view::{Anchor, Frustum};
 
@@ -587,6 +587,102 @@ pub struct CharacterLayer {
     /// A key change asked for while the figure was building: if the built figure cannot
     /// run its scripts live, it is built again with this request.
     preview_rebuild: Option<(FigureRequest, LookChoices)>,
+    /// The anchors the live figure's props of unattached MeshFX nodes were placed with
+    /// (`script-table.md` §5.2: the anchor is read once at placement), by the live figure's
+    /// slot and the prop's attach key ([`unattached_prop_transform`]): the holding
+    /// location's transform in the figure's model frame, taken from the pose of the frame
+    /// in which an instance of the key was first seen alive
+    /// ([`CharacterLayer::record_unattached_props`]). Kept in the figure's frame, not the
+    /// world's, so that each framing of the figure (the creation scene, the portrait) puts
+    /// the prop where its own figure frame is. An entry lives while an instance of its key
+    /// is alive.
+    unattached_props: Mutex<HashMap<(u32, u32), Mat4>>,
+}
+
+/// How a prop part of the screens' live figure is drawn now (the Tessera drawing rule of
+/// `appearance.md` §5.7): its `Render_Opacity` `opacity` (`None`: no instance alive, not
+/// drawn) as the fade, and whether it is drawn in the translucent stage: while
+/// `translucent` holds (the start of a fade-out sets `Translucent` before the opacity
+/// drops) or the opacity is below 1. A translucent prop at opacity 1 keeps its opacity, so
+/// its colour and alpha-test reference are those of the opaque draw ([`surface_draw_in`]).
+/// `None` when the part is not drawn now (opacity 0 or below, or not finite).
+#[must_use]
+pub fn prop_draw_fade(opacity: Option<f32>, translucent: bool) -> Option<PropDraw> {
+    let o = opacity.filter(|o| o.is_finite() && *o > 0.0)?.min(1.0);
+    Some(PropDraw {
+        fade: o,
+        translucent: translucent || o < 1.0,
+    })
+}
+
+/// How a prop part is drawn ([`prop_draw_fade`]).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PropDraw {
+    /// The fade (`Render_Opacity`, in (0, 1]).
+    pub fade: f32,
+    /// Drawn in the translucent stage.
+    pub translucent: bool,
+}
+
+/// The world transform of a prop part of the live figure in `slot` with attach key `key`
+/// (`script-table.md` §5.2, `appearance.md` §5.7 step 2), for the figure drawn at `world`
+/// (the framing's figure transform) with its holding location at `anchor` now (model
+/// frame). An attached node's prop follows the anchor every frame: `world` × `anchor`. An
+/// unattached node's prop keeps the anchor of its placement, kept in `fixed` while an
+/// instance of it lives (taken here when nothing recorded it at placement): `world` × that
+/// anchor. Tessera rule of §5.2 for the screens' figure: its prop follows neither the
+/// figure's animation nor the screens' turntable (which moves the camera, not the figure);
+/// it is kept in the figure's frame, so another framing of the figure (the portrait, a
+/// stage with another figure frame) draws it beside its figure.
+#[must_use]
+pub fn unattached_prop_transform(
+    fixed: &mut HashMap<(u32, u32), Mat4>,
+    (slot, key): (u32, u32),
+    attached: bool,
+    world: Mat4,
+    anchor: Mat4,
+) -> Mat4 {
+    if attached {
+        return world * anchor;
+    }
+    world * *fixed.entry((slot, key)).or_insert(anchor)
+}
+
+/// The attach keys of the live figure's props of unattached MeshFX nodes with an instance
+/// alive now ([`ScreenProp::attached`](live::ScreenProp::attached); attach key
+/// [`live::PROP_KEY_BASE`] + the prop's index).
+fn unattached_alive_keys(l: &live::LiveFigure) -> Vec<u32> {
+    l.props()
+        .iter()
+        .enumerate()
+        .filter(|(_, p)| !p.attached)
+        .filter_map(|(i, _)| live::PROP_KEY_BASE.checked_add(u32::try_from(i).ok()?))
+        .filter(|k| l.prop_opacity(*k).is_some())
+        .collect()
+}
+
+/// The live figure's slot and its unattached prop keys alive now, each with its holding
+/// location's transform in this frame's pose ([`keep_unattached_anchors`]).
+type AliveProps<'a> = (u32, &'a [(u32, Option<Mat4>)]);
+
+/// Keeps `fixed` ([`CharacterLayer::unattached_props`]) in step with the props alive now:
+/// `alive` holds, for the live figure in `slot`, each unattached prop key with an instance
+/// alive and its holding location's transform in this frame's pose (`None`: no pose yet).
+/// A key seen alive for the first time takes that anchor (its placement, `script-table.md`
+/// §5.2); a key already kept keeps its anchor; keys of another slot or with no instance
+/// left are dropped, so a prop placed again after all its instances were removed is placed
+/// anew. `None` for `alive` (no live figure) clears everything.
+fn keep_unattached_anchors(fixed: &mut HashMap<(u32, u32), Mat4>, alive: Option<AliveProps<'_>>) {
+    let Some((slot, alive)) = alive else {
+        fixed.clear();
+        return;
+    };
+    fixed.retain(|(s, k), _| *s == slot && alive.iter().any(|(a, _)| a == k));
+    for (k, m) in alive {
+        if let Some(m) = m {
+            fixed.entry((slot, *k)).or_insert(*m);
+        }
+    }
 }
 
 /// The profile and look-at point (render frame) the player's target fade measures with
@@ -841,6 +937,7 @@ impl CharacterLayer {
             live: None,
             preview_keys: (None, None),
             preview_rebuild: None,
+            unattached_props: Mutex::new(HashMap::new()),
         }
     }
 
@@ -2351,6 +2448,9 @@ impl CharacterLayer {
         // advance and submit.
         let t = Instant::now();
         let collected = self.scheduler.collect();
+        // The props the live scripts placed in this frame take their anchors from the pose
+        // this frame draws (`script-table.md` §5.2: read once at placement).
+        self.record_unattached_props();
         self.stats.collect_ms = t.elapsed().as_secs_f64() * 1e3;
         self.stats.worker_ms = collected.worker_time.as_secs_f64() * 1e3;
         let t = Instant::now();
@@ -2547,6 +2647,61 @@ impl CharacterLayer {
         let commands = l.take_clip_commands();
         if !commands.is_empty() {
             self.apply_clip_commands(commands);
+        }
+    }
+
+    /// Records the anchors of the live figure's props of unattached MeshFX nodes placed
+    /// since the last call, from the screens' figure's current pose, and drops those whose
+    /// instances are all gone ([`keep_unattached_anchors`]). Runs every update, whether the
+    /// screens draw the figure or not, so the anchor is the one at placement, not at the
+    /// prop's first draw.
+    fn record_unattached_props(&mut self) {
+        let alive = self.live.as_ref().map(|(slot, l)| {
+            let keys = unattached_alive_keys(l);
+            let attach = self.preview_attach(*slot);
+            let anchors: Vec<(u32, Option<Mat4>)> = keys
+                .into_iter()
+                .map(|k| {
+                    let m = attach.and_then(|a| a.iter().find(|(x, _)| *x == k).map(|(_, m)| *m));
+                    (k, m)
+                })
+                .collect();
+            (*slot, anchors)
+        });
+        keep_unattached_anchors(
+            self.unattached_props
+                .get_mut()
+                .unwrap_or_else(PoisonError::into_inner),
+            alive.as_ref().map(|(s, a)| (*s, a.as_slice())),
+        );
+    }
+
+    /// The holding-location transforms (model frame) of the screens' figure's current pose
+    /// when it is drawn from `slot`; `None` while it has no pose.
+    fn preview_attach(&self, slot: u32) -> Option<&[(u32, Mat4)]> {
+        let e = self.store.entity_for(NetId(PREVIEW_ID.0))?;
+        let render = self.store.render(e)?;
+        if render.slot != slot {
+            return None;
+        }
+        let Some(SlotState::Ready(g)) = self.slots.get(slot as usize).map(|s| &s.state) else {
+            return None;
+        };
+        self.pose_view(e, g).map(|(_, attach)| attach)
+    }
+
+    /// The pose entity `e` drawn as `g` has now: its animator's last pose, else the
+    /// figure's reference pose.
+    fn pose_view<'a>(&'a self, e: Entity, g: &'a GpuFigure) -> Option<PoseView<'a>> {
+        match self.store.anim(e) {
+            Some(anim) => self
+                .scheduler
+                .pose(anim.instance)
+                .map(|p| (p.skin.as_slice(), p.attach.as_slice())),
+            None => g
+                .rest
+                .as_ref()
+                .map(|r| (r.skin.as_slice(), r.attach.as_slice())),
         }
     }
 
@@ -3078,16 +3233,7 @@ impl CharacterLayer {
             Vec3::ONE
         };
         let world = place(scale);
-        let pose: Option<PoseView<'_>> = match self.store.anim(e) {
-            Some(anim) => self
-                .scheduler
-                .pose(anim.instance)
-                .map(|p| (p.skin.as_slice(), p.attach.as_slice())),
-            None => g
-                .rest
-                .as_ref()
-                .map(|r| (r.skin.as_slice(), r.attach.as_slice())),
-        };
+        let pose: Option<PoseView<'_>> = self.pose_view(e, g);
         let palette: Option<SkinPalette> = pose
             .filter(|(skin, _)| !skin.is_empty())
             .and_then(|(skin, _)| frame.skin_palette(skin).ok());
@@ -3099,16 +3245,27 @@ impl CharacterLayer {
             .filter(|(slot, _)| *slot == render.slot)
             .map(|(_, l)| l);
         let variant_bit = 1u8 << live.map_or(0, live::LiveFigure::variant).min(7);
+        let mut fixed = self
+            .unattached_props
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
         for part in &g.parts {
-            if part.variants & variant_bit == 0 {
-                continue;
-            }
-            if let Some(key) = part.held
-                && key >= live::PROP_KEY_BASE
-                && !live.is_some_and(|l| l.prop_shown(key))
-            {
-                continue;
-            }
+            // `appearance.md` §5.7 drawing rule: a prop part is drawn with its
+            // `Render_Opacity`, in the translucent stage while `Translucent` holds or the
+            // opacity is below 1; not drawn while no instance of it lives or at opacity 0.
+            let prop = part.held.filter(|k| *k >= live::PROP_KEY_BASE);
+            let opacity = match prop {
+                None => None,
+                Some(key) => {
+                    let Some(o) = live.and_then(|l| l.prop_opacity(key)) else {
+                        continue;
+                    };
+                    Some(o)
+                }
+            };
+            // The transform first: an unattached prop alive now keeps the anchor of its
+            // placement even while its variant or its opacity 0 leaves it undrawn
+            // (`script-table.md` §5.2; [`Self::record_unattached_props`] records it).
             let transform = match part.held {
                 None => world,
                 Some(key) => {
@@ -3117,13 +3274,51 @@ impl CharacterLayer {
                     }) else {
                         continue;
                     };
-                    world * m
+                    match (prop, live) {
+                        (Some(key), Some(l)) => {
+                            // `ScreenProp::attached` of the prop the key was built for
+                            // (attach key `PROP_KEY_BASE` + its index); unknown: attached.
+                            let attached = usize::try_from(key - live::PROP_KEY_BASE)
+                                .ok()
+                                .and_then(|i| l.props().get(i))
+                                .is_none_or(|p| p.attached);
+                            unattached_prop_transform(
+                                &mut fixed,
+                                (render.slot, key),
+                                attached,
+                                world,
+                                m,
+                            )
+                        }
+                        _ => world * m,
+                    }
                 }
             };
+            if part.variants & variant_bit == 0 {
+                continue;
+            }
+            let draw = match (prop, live) {
+                (None, _) => PropDraw {
+                    fade: 1.0,
+                    translucent: false,
+                },
+                (Some(key), Some(l)) => {
+                    let Some(d) = prop_draw_fade(opacity, l.prop_translucent(key)) else {
+                        continue;
+                    };
+                    d
+                }
+                (Some(_), None) => continue,
+            };
             for (i, plan) in part.plans.iter().enumerate() {
-                let Some((material, surface)) =
-                    surface_draw(plan, &|t| objects.texture(t), lit, 1.0, false)
-                else {
+                let Some((material, surface)) = surface_draw_in(
+                    plan,
+                    &|t| objects.texture(t),
+                    lit,
+                    draw.fade,
+                    draw.translucent,
+                    false,
+                ) else {
                     continue;
                 };
                 let mut d = MeshDraw::new(part.mesh, transform, material)
@@ -3222,6 +3417,150 @@ mod tests {
     use tessera_net::{DataId, EntityKind, Location, RegionId, Transform as NetTransform};
 
     use super::*;
+
+    /// `appearance.md` §5.7 drawing rule: a prop part is drawn with its `Render_Opacity`,
+    /// blended while `Translucent` holds even at opacity 1 (keeping opacity 1, so its colour
+    /// and alpha-test reference are the opaque draw's), and not at all with no live instance
+    /// or at opacity 0.
+    #[test]
+    fn props_draw_with_their_opacity() {
+        let d = |fade, translucent| Some(PropDraw { fade, translucent });
+        assert_eq!(prop_draw_fade(None, false), None);
+        assert_eq!(
+            prop_draw_fade(Some(0.0), true),
+            None,
+            "DestroyTime: nothing drawn"
+        );
+        assert_eq!(prop_draw_fade(Some(f32::NAN), false), None);
+        assert_eq!(prop_draw_fade(Some(0.4), false), d(0.4, true));
+        assert_eq!(prop_draw_fade(Some(0.4), true), d(0.4, true));
+        assert_eq!(prop_draw_fade(Some(1.0), false), d(1.0, false), "opaque");
+        assert_eq!(
+            prop_draw_fade(Some(1.0), true),
+            d(1.0, true),
+            "translucent at full opacity, opacity kept"
+        );
+        assert_eq!(prop_draw_fade(Some(1.5), false), d(1.0, false));
+    }
+
+    /// Review finding (`appearance.md` §5.7 drawing rule): a masked prop part drawn
+    /// translucent at opacity 1 is blended but tests against the same reference as at
+    /// opacity 1 without `Translucent`, and an opaque one is blended at full colour.
+    #[test]
+    fn a_translucent_prop_at_full_opacity_keeps_its_reference() {
+        use crate::walker::geometry::AlphaKind;
+        let mut plan = MaterialPlan::FALLBACK;
+        plan.alpha = AlphaKind::Mask(0.6);
+        plan.lit.alpha = tessera_render::AlphaMode::Mask { cutoff: 0.6 };
+        plan.lit.opacity_from_base = true;
+        plan.lit.reference = tessera_material::AlphaReference::tested(0.6, 1.0, true);
+        let none = |_| TexLookup::Failed;
+        let (opaque, _) = surface_draw_in(&plan, &none, true, 1.0, false, false).expect("draw");
+        let (staged, _) = surface_draw_in(&plan, &none, true, 1.0, true, false).expect("draw");
+        assert_eq!(
+            opaque.alpha, plan.lit.alpha,
+            "not translucent: the plan's mode"
+        );
+        let tessera_render::AlphaMode::TestBlend { cutoff } = staged.alpha else {
+            panic!("translucent: a tested blend, got {:?}", staged.alpha);
+        };
+        assert_eq!(
+            cutoff,
+            plan.lit.reference_at(1.0),
+            "the reference of opacity 1"
+        );
+        assert_eq!(staged.base_color, opaque.base_color, "colour unchanged");
+        // An opaque surface in the unlit path is blended at full colour.
+        let plain = MaterialPlan::FALLBACK;
+        let (m, _) = surface_draw_in(&plain, &none, false, 1.0, true, false).expect("draw");
+        assert_eq!(m.alpha, tessera_render::AlphaMode::Blend);
+        assert_eq!(m.base_color[3], plain.base_color[3]);
+        let (m, _) = surface_draw_in(&plain, &none, false, 1.0, false, false).expect("draw");
+        assert_eq!(m.alpha, tessera_render::AlphaMode::Opaque);
+    }
+
+    /// `script-table.md` §5.2: an attached node's prop follows its anchor every frame; an
+    /// unattached node's prop keeps the anchor of its placement while it lives, per slot and
+    /// key, in the figure's frame: each framing (`world`) draws it beside its own figure.
+    #[test]
+    fn unattached_props_keep_their_placement() {
+        let mut fixed = HashMap::new();
+        let at = |x: f32| Mat4::from_translation(Vec3::new(x, 0.0, 0.0));
+        let up = |z: f32| Mat4::from_translation(Vec3::new(0.0, 0.0, z));
+        let place = Mat4::IDENTITY;
+        assert_eq!(
+            unattached_prop_transform(&mut fixed, (1, 7), true, place, at(1.0)),
+            at(1.0)
+        );
+        assert_eq!(
+            unattached_prop_transform(&mut fixed, (1, 7), true, place, at(2.0)),
+            at(2.0)
+        );
+        assert!(fixed.is_empty(), "attached props keep nothing");
+        assert_eq!(
+            unattached_prop_transform(&mut fixed, (1, 8), false, place, at(3.0)),
+            at(3.0)
+        );
+        assert_eq!(
+            unattached_prop_transform(&mut fixed, (1, 8), false, place, at(4.0)),
+            at(3.0),
+            "the holder's anchor moved; the prop did not"
+        );
+        // Another framing (the portrait at the origin, then the scene at another figure
+        // frame) puts the kept anchor in its own frame, not the first framing's.
+        assert_eq!(
+            unattached_prop_transform(&mut fixed, (1, 8), false, up(10.0), at(5.0)),
+            up(10.0) * at(3.0),
+            "the viewport does not reuse the portrait's matrix"
+        );
+        // Another slot's prop of the same key is its own.
+        assert_eq!(
+            unattached_prop_transform(&mut fixed, (2, 8), false, place, at(5.0)),
+            at(5.0)
+        );
+        // Once its instances are gone (the entry is dropped) it is placed anew.
+        fixed.remove(&(1, 8));
+        assert_eq!(
+            unattached_prop_transform(&mut fixed, (1, 8), false, place, at(6.0)),
+            at(6.0)
+        );
+    }
+
+    /// Review finding (`script-table.md` §5.2: the anchor is read once at placement): the
+    /// anchor is recorded from the pose of the update in which the prop is first seen alive,
+    /// whether or not it is drawn then (fade-in at opacity 0, a stage variant without it),
+    /// and a later draw uses that anchor, not the pose of its first draw; keys with no
+    /// instance left, or of another slot, are dropped, and no live figure clears all.
+    #[test]
+    fn unattached_anchors_are_recorded_at_placement() {
+        let at = |x: f32| Mat4::from_translation(Vec3::new(x, 0.0, 0.0));
+        let k = live::PROP_KEY_BASE;
+        let mut fixed = HashMap::new();
+        // Placed this update (opacity 0, not drawn): its anchor is this pose's.
+        keep_unattached_anchors(&mut fixed, Some((3, &[(k, Some(at(1.0)))])));
+        assert_eq!(fixed.get(&(3, k)), Some(&at(1.0)));
+        // Next update the figure moved; the kept anchor stays, and the first draw uses it.
+        keep_unattached_anchors(&mut fixed, Some((3, &[(k, Some(at(2.0)))])));
+        assert_eq!(
+            unattached_prop_transform(&mut fixed, (3, k), false, Mat4::IDENTITY, at(2.5)),
+            at(1.0),
+            "the anchor of placement, not of the first draw"
+        );
+        // A prop with no pose yet is left for the draw's fallback.
+        keep_unattached_anchors(&mut fixed, Some((3, &[(k, Some(at(2.0))), (k + 1, None)])));
+        assert!(!fixed.contains_key(&(3, k + 1)));
+        // Its instances are gone: dropped; placed again: the new pose.
+        keep_unattached_anchors(&mut fixed, Some((3, &[])));
+        assert!(fixed.is_empty());
+        keep_unattached_anchors(&mut fixed, Some((3, &[(k, Some(at(4.0)))])));
+        assert_eq!(fixed.get(&(3, k)), Some(&at(4.0)));
+        // Another slot (a rebuilt figure) starts afresh; no live figure clears all.
+        keep_unattached_anchors(&mut fixed, Some((4, &[(k, Some(at(5.0)))])));
+        assert_eq!(fixed.get(&(3, k)), None);
+        assert_eq!(fixed.get(&(4, k)), Some(&at(5.0)));
+        keep_unattached_anchors(&mut fixed, None);
+        assert!(fixed.is_empty());
+    }
 
     /// Review finding (`particle-runtime.md` §12 rule 15): a figure whose fade reached 0
     /// hands its `inherit_opacity` systems 0, not the factor 1 of an owner the draw pass did

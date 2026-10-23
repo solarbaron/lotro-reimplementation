@@ -971,33 +971,68 @@ fn mark_drawn(st: &mut ObjState, draw_frame: u64, opacity: f32) {
 }
 
 impl BlockObjects {
-    /// The opacity the object of placed entity `entity` was drawn with in draw frame
-    /// `draw_frame` ([`ObjectLayer::placed_entity_opacity`]); `None` when the block holds no
-    /// object of that entity or it was not drawn in that frame.
+    /// The current opacity of the object of placed entity `entity` after draw frame
+    /// `draw_frame` ([`ObjectLayer::placed_entity_opacity`]): the opacity it was drawn with in
+    /// that frame, or, when that frame did not draw it (culled by the view or its size,
+    /// its fade at 0, past the draw cap, its cell not seen, inactive beyond its draw
+    /// distance), its current draw-distance fade (`particle-runtime.md` §12 rule 15, culled
+    /// owners: 0 included; an object whose fade never ran, or that left its activation
+    /// range, is at 0; one whose fade did not run in this frame keeps the value of its last
+    /// update). `None` when the block holds no object of that entity, or when its object
+    /// can never be drawn: it has no bounding sphere (its fade does not run without one) and
+    /// every one of its parts is in a final state that draws nothing (`never_drawn` of the
+    /// part and the object's part count: its load failed for good, or it is a stub part that
+    /// is not drawn); rule 15 counts such an owner as having no drawn object (factor 1),
+    /// while an object whose parts still load answers its fade (0).
     ///
     /// With the entity's index `index` the object is the one carrying that index
     /// ([`ObjectInfo::entity`]), whatever its position; an index no object carries names
     /// none. Only when `index` is `None`, or the block's objects carry no index at all, is the
     /// object found by its position, parts and rank ([`PlacedObjectRef`]).
+    fn opacity_of(
+        &self,
+        index: Option<u32>,
+        entity: &PlacedObjectRef,
+        draw_frame: u64,
+        never_drawn: &dyn Fn(u32, u32) -> bool,
+    ) -> Option<f32> {
+        let i = match index {
+            Some(e) if !self.by_entity.is_empty() => *self.by_entity.get(&e)?,
+            _ => self.object_at(entity)?,
+        };
+        let i = usize::try_from(i).ok()?;
+        let st = self.state.get(i)?;
+        if st.sphere.is_none() {
+            let obj = self.objects.get(i)?;
+            let first = obj.first as usize;
+            let insts = self
+                .instances
+                .get(first..first.saturating_add(obj.count as usize))
+                .unwrap_or(&[]);
+            if insts.iter().all(|inst| never_drawn(inst.part, obj.count)) {
+                return None;
+            }
+        }
+        Some(if draw_frame != 0 && st.drawn_at == draw_frame {
+            st.drawn_opacity
+        } else {
+            st.fade.opacity()
+        })
+    }
+
+    /// [`Self::opacity_of`] with every part still able to be drawn (tests).
+    #[cfg(test)]
     fn drawn_opacity(
         &self,
         index: Option<u32>,
         entity: &PlacedObjectRef,
         draw_frame: u64,
     ) -> Option<f32> {
-        if draw_frame == 0 {
-            return None;
-        }
-        let i = match index {
-            Some(e) if !self.by_entity.is_empty() => *self.by_entity.get(&e)?,
-            _ => self.object_at(entity)?,
-        };
-        let st = self.state.get(usize::try_from(i).ok()?)?;
-        (st.drawn_at == draw_frame).then_some(st.drawn_opacity)
+        self.opacity_of(index, entity, draw_frame, &|_, _| false)
     }
 
     /// The object of placed entity `entity` found by its block-local position bit for bit,
-    /// its parts and its rank (the fallback of [`Self::drawn_opacity`]); `None` for an entity
+    /// its parts and its rank (the fallback of [`Self::opacity_of`]); `None` for an entity
     /// with no part.
     fn object_at(&self, entity: &PlacedObjectRef) -> Option<u32> {
         if entity.parts.is_empty() {
@@ -1290,6 +1325,23 @@ pub fn surface_draw(
     fade: f32,
     shadow: bool,
 ) -> Option<(Material, LitSurface)> {
+    surface_draw_in(plan, texture, lit, fade, false, shadow)
+}
+
+/// [`surface_draw`] with the stage chosen apart from the fade: `translucent` puts the
+/// surface in the translucent stage (the alpha mode of a fade below 1) even at `fade` 1,
+/// while its colour and its alpha-test reference stay those of `fade` (the Tessera drawing
+/// rule of `appearance.md` §5.7: a prop whose `Translucent` flag is set at opacity 1 is
+/// drawn blended with the reference of opacity 1).
+#[must_use]
+pub fn surface_draw_in(
+    plan: &MaterialPlan,
+    texture: &impl Fn(TexRequest) -> TexLookup,
+    lit: bool,
+    fade: f32,
+    translucent: bool,
+    shadow: bool,
+) -> Option<(Material, LitSurface)> {
     let base = match plan.texture {
         None => None,
         Some(t) => match texture(t) {
@@ -1324,6 +1376,7 @@ pub fn surface_draw(
     } else {
         1.0
     };
+    let blended = translucent || fade < 1.0;
     if !lit {
         let dye = plan.dye.and_then(|(mask, color)| {
             ready(Some(mask)).map(|id| Dye {
@@ -1334,7 +1387,7 @@ pub fn surface_draw(
         let mut color = plan.base_color;
         color[3] *= fade;
         let alpha = match plan.alpha {
-            AlphaKind::Opaque if fade < 1.0 => AlphaMode::Blend,
+            AlphaKind::Opaque if blended => AlphaMode::Blend,
             AlphaKind::Opaque => AlphaMode::Opaque,
             // §11.2: R with the fade's material alpha (r × A in a depth-writing pass).
             AlphaKind::Mask(_) if fade < 1.0 => AlphaMode::Mask {
@@ -1364,7 +1417,7 @@ pub fn surface_draw(
     let mut color = l.color;
     color[3] *= fade;
     let normal = ready(l.normal);
-    let alpha = if fade < 1.0 {
+    let alpha = if blended {
         faded_alpha_at(l, fade)
     } else {
         l.alpha
@@ -1870,31 +1923,20 @@ impl ObjectLayer {
         }
     }
 
-    /// The opacity the object of a placed entity of landblock `key` was drawn with in the
-    /// last [`Self::draw`], the entity named by its identity in the block list alone
-    /// ([`PlacedObjectRef`]): [`Self::placed_entity_opacity`] without an entity index. The
-    /// walker's effects of static owners still call this one (their placed-object records
-    /// carry no entity index yet), so the index lookup is not used by them.
-    #[must_use]
-    pub fn placed_object_opacity(
-        &self,
-        key: LandblockKey,
-        entity: &PlacedObjectRef,
-    ) -> Option<f32> {
-        self.placed_entity_opacity(key, None, entity)
-    }
-
-    /// The opacity the object of a placed entity of landblock `key` was drawn with in the
-    /// last [`Self::draw`]: its draw-distance fade or cross-fade (`mesh.md` §8.7; the layer
-    /// applies no other per-object factor). `None` when the layer holds no object of that
-    /// entity, or the object was not drawn in that frame (inactive, out of range, culled,
-    /// past the draw cap).
+    /// The opacity of the object of a placed entity of landblock `key` after the last
+    /// [`Self::draw`]: its draw-distance fade or cross-fade (`mesh.md` §8.7; the layer
+    /// applies no other per-object factor), the one it was drawn with when that draw drew
+    /// it, else its current fade (an object the draw culled, out of range or past the draw
+    /// cap keeps its fade, 0 included: `particle-runtime.md` §12 rule 15, culled owners).
+    /// `None` when the layer holds no object of that entity, or its object can never be
+    /// drawn (no bounding sphere and every part failed for good or a stub part that is not
+    /// drawn; an object whose parts still load answers its fade).
     ///
     /// For the effects of static owners (`particle-runtime.md` §12 rule 15: the parent
-    /// object's opacity; the caller counts `None` as 1). The entity is named by `index`, its
-    /// index in the landblock's info record (`tessera_world::PlacedEntity::index`, the
-    /// [`ObjectInfo::entity`] of its object), so two entities placed at the same position
-    /// each find their own object. Without an index (`None`, or a block whose objects carry
+    /// object's opacity; the caller counts `None` as 1, an owner with no drawn object). The
+    /// entity is named by `index`, its index in the landblock's info record
+    /// (`tessera_world::PlacedEntity::index`, the [`ObjectInfo::entity`] of its object), so
+    /// two entities placed at the same position each find their own object. Without an index (`None`, or a block whose objects carry
     /// none) it is named by its identity as the block list records it ([`PlacedObjectRef`]):
     /// its block-local placement position bit for bit, its visual's part list in order, and
     /// its rank among the earlier entities of the landblock with that same position and part
@@ -1907,9 +1949,18 @@ impl ObjectLayer {
         index: Option<u32>,
         entity: &PlacedObjectRef,
     ) -> Option<f32> {
-        self.blocks
-            .get(&(key, BlockSet::Main))?
-            .drawn_opacity(index, entity, self.draw_frame)
+        let parts = &self.gpu_parts;
+        let never_drawn = |p: u32, count: u32| match parts.get(&p).map(|e| &e.state) {
+            Some(PartState::Failed) => true,
+            Some(PartState::Ready(g)) => !stub_part_drawn(count as usize, g.stub),
+            _ => false,
+        };
+        self.blocks.get(&(key, BlockSet::Main))?.opacity_of(
+            index,
+            entity,
+            self.draw_frame,
+            &never_drawn,
+        )
     }
 
     /// The cell the placed figure `tag` ([`figure_tag`]) is drawn through as a static
@@ -3372,9 +3423,9 @@ mod tests {
     use tessera_render::{Camera, Perspective};
 
     /// `particle-runtime.md` §12 rule 15 for static owners: the object of an entity is found
-    /// by its identity (position, parts, rank), not by its position alone; an undrawn,
-    /// generated or part-less match answers `None`, and an object drawn in an older frame
-    /// answers `None` too.
+    /// by its identity (position, parts, rank), not by its position alone; a generated or
+    /// part-less match answers `None`, while an object the frame did not draw (culled, out
+    /// of range, never faded in) answers its current fade, 0 included.
     #[test]
     fn placed_object_opacity_is_found_by_the_entity() {
         let lod = LodValues([300.0, 100.0, 16.0, 80.0, 1000.0, 1000.0, 1100.0, -1.0]);
@@ -3425,26 +3476,34 @@ mod tests {
             Some(0.7),
             "its own fade"
         );
-        // The second copy (rank 1) is object 3, not drawn; the generated one never answers.
-        assert_eq!(b.drawn_opacity(None, &at(p, &[7], 1), 1), None);
+        // The second copy (rank 1) is object 3, not drawn: its fade never ran, so 0; the
+        // generated one never answers.
+        assert_eq!(b.drawn_opacity(None, &at(p, &[7], 1), 1), Some(0.0));
         assert_eq!(b.drawn_opacity(None, &at(p, &[7], 2), 1), None);
-        // Not drawn (past its draw distance); a pure emitter at P (no parts); other parts.
-        assert_eq!(b.drawn_opacity(None, &at(q, &[8], 0), 1), None);
+        // Not drawn (past its draw distance): its fade, 0; a pure emitter at P (no parts)
+        // and other parts name no object.
+        assert_eq!(b.drawn_opacity(None, &at(q, &[8], 0), 1), Some(0.0));
         assert_eq!(b.drawn_opacity(None, &at(p, &[], 0), 1), None);
         assert_eq!(b.drawn_opacity(None, &at(p, &[8], 0), 1), None);
-        // One draw later object 0 left its range (not marked again): no answer.
+        // One draw later object 0 was culled with its fade at 1 (it ran, not marked drawn
+        // again): the culled object answers its current fade.
+        b.state[0].fade.update(1.0, 100.0, 0.016, 0.0, true, true);
         mark_drawn(&mut b.state[4], 2, 0.75);
-        assert_eq!(b.drawn_opacity(None, &at(p, &[7], 0), 2), None);
+        assert_eq!(b.drawn_opacity(None, &at(p, &[7], 0), 2), Some(1.0));
         assert_eq!(b.drawn_opacity(None, &at(p, &[9], 0), 2), Some(0.75));
-        // Before any draw nothing answers.
-        assert_eq!(b.drawn_opacity(None, &at(p, &[9], 0), 0), None);
+        // It fades out while culled: the factor follows, down to 0.
+        b.state[0].fade.update(200.0, 100.0, 10.0, 0.0, false, true);
+        assert_eq!(b.drawn_opacity(None, &at(p, &[7], 0), 3), Some(0.0));
+        // Before any draw an object answers its fade (0 before its first update).
+        assert_eq!(b.drawn_opacity(None, &at(p, &[9], 0), 0), Some(0.0));
     }
 
     /// `particle-runtime.md` §12 rule 15 for static owners, by the entity index: two placed
     /// entities at the same position with the same parts each find their own object and
     /// opacity, whatever rank the reference carries; an index no object carries answers
-    /// `None` (no position fallback), generated objects never answer, and without an index
-    /// (or in a block whose objects carry none) the position match applies.
+    /// `None` (no position fallback), generated objects never answer, an object the frame
+    /// did not draw answers its current fade, and without an index (or in a block whose
+    /// objects carry none) the position match applies.
     #[test]
     fn placed_entity_opacity_is_found_by_the_entity_index() {
         let lod = LodValues([300.0, 100.0, 16.0, 80.0, 1000.0, 1000.0, 1100.0, -1.0]);
@@ -3492,9 +3551,9 @@ mod tests {
             rank: 0,
         };
         assert_eq!(b.drawn_opacity(Some(5), &bare, 1), Some(0.8));
-        // Not drawn in this frame: no answer.
+        // Not drawn in this frame: its current fade (it never ran here, so 0).
         mark_drawn(&mut b.state[0], 2, 0.35);
-        assert_eq!(b.drawn_opacity(Some(5), &at(1), 2), None);
+        assert_eq!(b.drawn_opacity(Some(5), &at(1), 2), Some(0.0));
         assert_eq!(b.drawn_opacity(Some(9), &at(0), 2), Some(0.35));
         // No index: the position match (rank 1 is the second placed object).
         assert_eq!(b.drawn_opacity(None, &at(1), 1), Some(0.8));
@@ -3506,6 +3565,54 @@ mod tests {
         mark_drawn(&mut c.state[1], 1, 0.6);
         assert_eq!(c.drawn_opacity(Some(5), &at(0), 1), Some(0.2));
         assert_eq!(c.drawn_opacity(Some(5), &at(1), 1), Some(0.6));
+    }
+
+    /// Review finding (`particle-runtime.md` §12 rule 15): an object that can never be drawn
+    /// (no bounding sphere, every part failed for good or an undrawn stub) counts as no drawn
+    /// object (`None`, factor 1), not as an object at fade 0; one whose parts still load,
+    /// or that has a sphere, answers its fade.
+    #[test]
+    fn an_object_whose_parts_all_failed_counts_as_not_drawn() {
+        let lod = LodValues([300.0, 100.0, 16.0, 80.0, 1000.0, 1000.0, 1100.0, -1.0]);
+        let p = Vec3::new(4.0, 5.0, 6.0);
+        let instances: Arc<[Instance]> = vec![inst(7, p, 1.0), inst(8, p, 1.0)].into();
+        let objects: Arc<[ObjectInfo]> = vec![ObjectInfo {
+            position: p,
+            lod,
+            generated: false,
+            entity: Some(3),
+            first: 0,
+            count: 2,
+            cell: OUTDOORS,
+            depth_bias: DrawDepthBias::NONE,
+        }]
+        .into();
+        let mut b = BlockObjects::new(instances, objects);
+        b.state[0].active = true;
+        let at = PlacedObjectRef {
+            position: p.to_array(),
+            parts: vec![7, 8].into(),
+            rank: 0,
+        };
+        let failed = |part: u32, _: u32| part == 7 || part == 8;
+        let one_loading = |part: u32, _: u32| part == 7;
+        assert_eq!(b.state[0].sphere, None);
+        assert_eq!(
+            b.opacity_of(Some(3), &at, 1, &failed),
+            None,
+            "never drawable"
+        );
+        assert_eq!(b.opacity_of(None, &at, 1, &failed), None, "by position too");
+        assert_eq!(
+            b.opacity_of(Some(3), &at, 1, &one_loading),
+            Some(0.0),
+            "a part still loads: its fade"
+        );
+        // With a sphere (a part is on the GPU) the fade answers whatever the others did.
+        b.state[0].sphere = Some((p, 1.0));
+        assert_eq!(b.opacity_of(Some(3), &at, 1, &failed), Some(0.0));
+        mark_drawn(&mut b.state[0], 1, 0.5);
+        assert_eq!(b.opacity_of(Some(3), &at, 1, &failed), Some(0.5));
     }
 
     fn inst(part: u32, at: Vec3, scale: f32) -> Instance {

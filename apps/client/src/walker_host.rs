@@ -188,10 +188,12 @@ pub fn apply_render_preferences(
 }
 
 /// Applies the `[Render]` options of the user's `UserPreferences.ini` that the particle
-/// effects read: `PrecipitationEffects` (`particle-runtime.md` §11.2.2, built-in on) and
+/// effects read: `PrecipitationEffects` (`particle-runtime.md` §11.2.2, built-in on),
 /// `VideoPostEffects` (rule 16: off skips the systems drawn after post-processing; built-in
-/// on). Unknown or missing values keep the current ones. Windowed runs only, like the far
-/// view's (`far-view.md` FD21).
+/// on) and `AtmosphericsDetail` (§11.2.6 step 1, [`atmospherics_level`]: the drop counts).
+/// Unknown or missing flag values keep the current ones; a present `AtmosphericsDetail` the
+/// reader does not accept counts as the built-in `Medium` (`walker.md` W26). Windowed runs
+/// only, like the far view's (`far-view.md` FD21).
 pub fn apply_effect_preferences(
     effects: &mut crate::walker::effects::EffectConfig,
     prefs: &tessera_install::Ini,
@@ -206,6 +208,25 @@ pub fn apply_effect_preferences(
     }
     if let Some(b) = flag("VideoPostEffects") {
         effects.video_post = b;
+    }
+    if let Some(v) = prefs.get("Render", "AtmosphericsDetail") {
+        effects.atmospherics = atmospherics_level(v);
+    }
+}
+
+/// The level of a stored `[Render] AtmosphericsDetail` value (`particle-runtime.md` §11.2.6
+/// step 1: `Low` 0, `Medium` 1, `High` 2): the level name compared case-insensitively, or a
+/// level number (0 or more), surrounding white space ignored. `None` for anything else,
+/// which the drop counts read as the built-in `Medium` (`walker.md` W26, Tessera Decision:
+/// the client's parsing of the stored value was not traced).
+#[must_use]
+pub fn atmospherics_level(stored: &str) -> Option<i64> {
+    let v = stored.trim();
+    match v.to_ascii_lowercase().as_str() {
+        "low" => Some(0),
+        "medium" => Some(1),
+        "high" => Some(2),
+        _ => v.parse::<i64>().ok().filter(|n| *n >= 0),
     }
 }
 
@@ -319,6 +340,7 @@ pub fn walker_config(args: &Args) -> WalkerConfig {
             // ([`apply_effect_preferences`]).
             precipitation: true,
             video_post: true,
+            atmospherics: None,
         },
         systems: systems(args),
         clock: ClockConfig {
@@ -529,6 +551,7 @@ impl WalkerHost {
         tracing::info!(
             precipitation = config.effects.precipitation,
             video_post = config.effects.video_post,
+            atmospherics = ?config.effects.atmospherics,
             "particle effects: [Render] preferences applied"
         );
         let s = &config.far_view.settings;
@@ -776,6 +799,55 @@ mod tests {
             w.effects.precipitation && w.effects.video_post,
             "built-in values"
         );
+        assert_eq!(w.effects.atmospherics, None, "built-in Medium");
+    }
+
+    /// `particle-runtime.md` §11.2.6 step 1: `AtmosphericsDetail` reaches the effects
+    /// layer's settings as a level (names case-insensitive, or a number); a value the
+    /// reader does not accept is the built-in `Medium` (`None`), a missing key keeps the
+    /// current level.
+    #[test]
+    fn atmospherics_detail_reaches_the_effects() {
+        use crate::walker::effects::EffectConfig;
+        assert_eq!(atmospherics_level("Low"), Some(0));
+        assert_eq!(atmospherics_level(" medium "), Some(1));
+        assert_eq!(atmospherics_level("HIGH"), Some(2));
+        assert_eq!(atmospherics_level("2"), Some(2));
+        assert_eq!(atmospherics_level("7"), Some(7));
+        assert_eq!(atmospherics_level("-1"), None);
+        assert_eq!(atmospherics_level("Ultra"), None);
+        assert_eq!(atmospherics_level(""), None);
+        let mut e = EffectConfig::default();
+        apply_effect_preferences(
+            &mut e,
+            &tessera_install::Ini::parse(
+                "[Render]
+atmosphericsdetail=High
+",
+            ),
+        );
+        assert_eq!(e.atmospherics, Some(2));
+        apply_effect_preferences(
+            &mut e,
+            &tessera_install::Ini::parse(
+                "[Render]
+Gamma=1.0
+",
+            ),
+        );
+        assert_eq!(e.atmospherics, Some(2), "a missing key keeps the level");
+        apply_effect_preferences(
+            &mut e,
+            &tessera_install::Ini::parse(
+                "[Render]
+AtmosphericsDetail=Bogus
+",
+            ),
+        );
+        assert_eq!(
+            e.atmospherics, None,
+            "an unknown value is the built-in level"
+        );
     }
 
     /// Headless and test runs never read the user's preferences file (CLAUDE.md: real-data
@@ -810,12 +882,13 @@ mod tests {
         assert!(h.prefs.rx.is_some(), "the read is started");
         h.prefs.rx = None;
         h.prefs.ini = Some(tessera_install::Ini::parse(
-            "[Render]\nPrecipitationEffects=False\nVideoPostEffects=False\n",
+            "[Render]\nPrecipitationEffects=False\nVideoPostEffects=False\nAtmosphericsDetail=Low\n",
         ));
         let mut config = h.config.clone();
         assert!(config.effects.precipitation && config.effects.video_post);
         h.take_preferences(&mut config);
         assert!(!config.effects.precipitation && !config.effects.video_post);
+        assert_eq!(config.effects.atmospherics, Some(0));
 
         // Neither the far view nor the effects: nothing reads the file.
         let a = Args::try_parse_from(["t", "--no-particles"]).unwrap();

@@ -6,10 +6,12 @@
 //! - A social panel's text-input dialog answered by Enter: the core's `DialogResult` reaches
 //!   the social panels through `UiHost::social_frame`, so the entered name becomes the
 //!   panel's command (§18.5, §18.6 Tessera rule).
-//! - A modal dialog (§18.4): while it is shown no key reaches game code (a movement key is
-//!   not pressed in the mapper's snapshot), its own keys still answer it, the release of
-//!   the key that closed it is consumed too, and once it is gone keys reach game code
-//!   again.
+//! - A modal dialog (§18.4): while it is shown no key pressed under it reaches game code (a
+//!   movement key is not pressed in the mapper's snapshot), its own keys still answer it,
+//!   the release of the key that closed it is consumed too, and once it is gone keys reach
+//!   game code again. Holds from before the dialog stay held until their own release
+//!   (§18.4 revision 5, answer 1: the dialog consumes only the releases of keys pressed
+//!   while it is shown), and that release reaches game code.
 //! - Bindings that are never offered to the UI (no command name: `toggle_mount` on Ctrl+M)
 //!   do not fire under a modal dialog either, and a release-class binding of a key pressed
 //!   under the dialog does not fire when the key is released after the dialog closed.
@@ -180,10 +182,11 @@ fn a_modal_dialog_keeps_keys_from_game_code() {
     rig.frame();
 }
 
-/// A key held from before a modal dialog is not left pressed (§18.4 consumes only the keys
-/// pressed while the dialog is shown): the movement it started stops. Tessera reading: as
-/// when a text entry takes the keyboard, its game-band hold ends when the dialog appears
-/// (the End reaches game code), so its later release has nothing left to end.
+/// A key held from before a modal dialog is not left pressed (`ui-widgets.md` §18.4,
+/// revision 5, answer 1): the dialog consumes only the releases of keys pressed while it is
+/// shown, so a hold from before it stays held until its own release, which is not consumed
+/// and reaches game code, and the movement it started stops at that release. The dialog's
+/// appearing does not end the hold.
 #[test]
 fn a_key_held_from_before_a_modal_dialog_is_released() {
     let mut rig = Rig::new(|_| {});

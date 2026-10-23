@@ -1099,6 +1099,9 @@ impl Walker {
             &pool,
             config.effects.seed,
         );
+        // `particle-runtime.md` §11.2.6 step 1: the drop counts read `[Render]
+        // AtmosphericsDetail` (windowed runs, `far-view.md` FD21; built-in `Medium`), handed
+        // over in the effects configuration.
         let effects = effects::EffectLayer::new(
             config.effects,
             Arc::clone(&set),
@@ -2284,6 +2287,11 @@ impl Walker {
                     anchor: self.anchor,
                 });
         self.effects.note_lamp_lights(self.lamp_lights);
+        // `particle-runtime.md` §11.2.6 step 7, `environment.md` E43: the drop streaks take
+        // the `colour_4` of the state in use, blended by both fades like the rain and snow.
+        if let Some(f) = self.frame_env.as_ref() {
+            self.effects.set_precipitation_colour(f.colour_4);
+        }
         self.effects.update(
             effects::EffectInput {
                 dt: f64::from(dt),
@@ -3922,6 +3930,14 @@ impl Walker {
     pub fn describe(&self) -> Option<String> {
         let pos = self.focus()?;
         Some(describe(&lock(&self.shared), &pos, self.controls.heading()))
+    }
+
+    /// The environment of the last frame (`walker.md` §14.3: lighting, fog, clock and the
+    /// precipitation values of the state in use); `None` before the first frame with a
+    /// viewer.
+    #[must_use]
+    pub fn frame_env(&self) -> Option<&env::FrameEnv> {
+        self.frame_env.as_ref()
     }
 
     /// Particle effects (counters for tests and reports).

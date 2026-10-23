@@ -4,10 +4,10 @@
 
 | | |
 |---|---|
-| **Status** | **Accepted** (revision 7, 2026-10-23: review 2 of the 2026-10-23 revisions by spec-review:spec-ui-scaling-p6:2 (independent session), 2026-10-23: passed. Revision 7 answers the review item RV6-B1 in §7.5 and the note RV6-N1 in §6.3; revision 6 answers the implementer OPENs of 2026-10-17 to 2026-10-23 in §5.4, §5.5, §5.8, §5.9, §6.1, §6.3, §6.4.5, §6.4.6, §6.5, §6.7, §7.5, §9.3 and §9.6 as Tessera rules). Revision 5 was Accepted on 2026-10-16 (an independent re-review by a session that wrote no part of it passed with no blocking item; RV4-B1 and RV4-N1 verified against the install). The `ui-layout.md` §8.4 stop-gap is retired (§5.9) |
+| **Status** | **Accepted** (revision 8, 2026-10-23: independent review by spec-review:spec-ui-r3:1 (independent session): passed; see the review record. Revision 8: the implementer readings of round 2 in §5.9, §6.1, §6.4.2, §6.4.6, §6.5, §6.7 and §8 answered as Tessera rules; the owner-answered callouts of §8 and §13 unchanged; see the change log). Before: **Accepted** (revision 7, 2026-10-23: review 2 of the 2026-10-23 revisions by spec-review:spec-ui-scaling-p6:2 (independent session), 2026-10-23: passed. Revision 7 answers the review item RV6-B1 in §7.5 and the note RV6-N1 in §6.3; revision 6 answers the implementer OPENs of 2026-10-17 to 2026-10-23 in §5.4, §5.5, §5.8, §5.9, §6.1, §6.3, §6.4.5, §6.4.6, §6.5, §6.7, §7.5, §9.3 and §9.6 as Tessera rules). Revision 5 was Accepted on 2026-10-16 (an independent re-review by a session that wrote no part of it passed with no blocking item; RV4-B1 and RV4-N1 verified against the install). The `ui-layout.md` §8.4 stop-gap is retired (§5.9) |
 | **Last updated** | 2026-10-23 |
 | **Author role** | Spec writer (dirty room). A Tessera **design** spec for [decision 0040](../decisions/0040-ui-scaling.md), like `tessera-protocol.md`; the only install input is a read-only census of the layout records (§1, rows SC1–SC6, SC13, SC14) |
-| **Reviewer** | **Review 2 of revisions 6 and 7, 2026-10-23** (spec-review:spec-ui-scaling-p6:2 (independent session), wrote no part of either revision; uncommitted worktree diff against main): **passed**; status Revised → Accepted. Checked against CLEAN_ROOM.md §5.3, every item, with the contamination screen clean: every added statement is a functional Tessera rule marked Design under SC15 (no observation of the original claimed), a closed implementer note, or an OPEN; no code, pseudo-code or listing-shaped text (arithmetic in prose only); no copied prose and no non-interoperability identifiers (the property label of §7.5 is UW §5.1's); no game text, assets, keys, hostnames or traffic; no byte layout added; the answered rules are testable; nothing outside decision 0034 §2. **RV6-B1 fixed:** §7.5 now counts only a linked vertical scroll bar on the element or an ancestor, never a class by itself; the class facts it cites agree with UW §3.2 (Text, ListBox from Scrollable; Button from Text; Menu, Scrollbar from Button; Tree from ListBox), and the lookup, completion pass, disabled and hidden bars agree with UW §5.1, §5.2 step 2 and §6.4 step 6. **RV6-N1 fixed:** §6.3's first row and the following paragraph choose the row per axis. Cross-checks: §5.9's answer agrees with the `ui-layout.md` §8.4 step 6 retirement note of 2026-10-23; §5.4 step 6 (opaque black bars below the group) agrees with the limits and the 1 × 1 texture alternative; the §6.7 example (32 × 1.5 = 48 px, 48 ÷ *Ky* 1.5 = 32 units) holds. Relative links and anchors of the six package specs resolve (own check). Non-blocking notes: (N1) §7.5 could say outright that only a Scrollable-derived element can have a linked bar (the completion pass of UW §5.1 links bars only for scrollables), so a plain element that happens to carry the vertical scroll-bar property never counts; (N2) §6.3's integer row still reads "an *s* × *s* block", which under the per-axis choice means *sx* × *sy*. Also re-checked for the package, without changing their status: the 2026-10-23 revisions of `crafting-panels.md`, `progression-panels.md`, `interaction.md`, `npc-windows.md` and `quest-journal.md` hold every §5.3 item, and NW25 was reproduced read-only on the install (the entry exists in the English archive, one piece, no argument; text not printed). Earlier: Review of revision 6, 2026-10-23 (spec-review:spec-ui-scaling-p6:1 (independent session), wrote no part of it; uncommitted worktree diff against main): **changes requested**, one blocking item, status stays Revised. **RV6-B1 (§7.5):** the new definition of "inside a Scrollable" lists the Scrollable classes as ListBox, Tree or Text, but by UW §3.2 Button, Menu and Scrollbar derive from Text and are therefore of a Scrollable class too; and the stated reason (a label that cannot show text outgrowing its box keeps *x* = 1) contradicts counting an ancestor that has no scroll bar of its own. Say exactly which ancestors count (for example: an ancestor that is a ListBox or Tree, or any Scrollable-derived element with a linked scroll bar on the vertical axis), so two implementations agree. Non-blocking note RV6-N1: §6.3's first filter row reads "exactly 1 on both axes" while the new sentence chooses the row per axis; say which applies to an image with *s* = 1 on one axis only. Everything else of revision 6 passed the §5.3 items (functional Tessera rules marked Design under SC15, no observation claimed, prose arithmetic only; the §6.7 example 32 × 1.5 = 48 px and 48 ÷ 1.5 = 32 units checks; the §5.2 and §5.4 "none occurs in this install" claims agree with SC2 and SC3; `ui-layout.md` §8.4 carries the retirement note; links and anchors resolve). First review 2026-10-16, independent review session: changes requested (B1–B6, answered in revision 2). Second review 2026-10-16: changes requested (R2-B1, R2-B2, answered in revision 3). Third review 2026-10-16: changes requested (RV3-B1–RV3-B3, answered in revision 4). Fourth review 2026-10-16: changes requested (RV4-B1 blocking, RV4-N1 non-blocking, answered in revision 5). Independent re-review 2026-10-16 (a session that wrote no part of the spec): **passed**, no blocking item. RV4-B1 verified with a read-only `tessera-formats` probe: `MPMissionController_MainWindow` is 1440 × 900 at (1, 0) in a 1440 × 900 design area, edges (5, 5, 5, 5), object mode None, no dialog-framework PID in the record → safe-area panel; the §10.8(a) C8 arithmetic, I18 and the §9.4 C8 golden are mutually consistent and C1/C2/C5 are unaffected (*A* = *F*). RV4-N1 verified: the theatre progress fit root's single child is 247 × 49 at (411, 735), its §10.6 X extent (247 at 411) unchanged. Accepted |
+| **Reviewer** | **Review 2026-10-23 of the revision 8 (§5.9, §6.1, §6.4.2, §6.4.6, §6.5, §6.7, §8 answers)** (spec-review:spec-ui-r3:1 (independent session), Clean-Room-Role: review; wrote no part of the revision or of the code): **passed**; status Revised → Accepted. Checked: checked against CLEAN_ROOM.md §5.3, every item, on the uncommitted worktree diff against main; contamination screen clean (no code, pseudo-code or listing-shaped text; no disassembly prose; no game text, keys, hostnames or traffic; hex values are data IDs read from the install; nothing outside decision 0034 §2); answers are functional facts with provenance or labelled Tessera rules, unknowns are OPEN; relative links and anchors of the six package specs resolve (own check). Every added statement is a Tessera rule under SC15 (Design), no observation of the original claimed; arithmetic in prose only. Cross-checks: the S6 division agrees with the owner-answered S6 row (64 MiB × max(1, *Se*²) total; 8 + 56 MiB at the defaults, 32 + 224 MiB at *Se* = 2); the §6.4.6 hit test ⌊(*v* + ½) ÷ *σ*⌋ agrees with §3.6 and the §6.1 alternative form; the owner-answered callouts of §8 and §13 are unchanged. Non-blocking: none. Earlier: **Review 2 of revisions 6 and 7, 2026-10-23** (spec-review:spec-ui-scaling-p6:2 (independent session), wrote no part of either revision; uncommitted worktree diff against main): **passed**; status Revised → Accepted. Checked against CLEAN_ROOM.md §5.3, every item, with the contamination screen clean: every added statement is a functional Tessera rule marked Design under SC15 (no observation of the original claimed), a closed implementer note, or an OPEN; no code, pseudo-code or listing-shaped text (arithmetic in prose only); no copied prose and no non-interoperability identifiers (the property label of §7.5 is UW §5.1's); no game text, assets, keys, hostnames or traffic; no byte layout added; the answered rules are testable; nothing outside decision 0034 §2. **RV6-B1 fixed:** §7.5 now counts only a linked vertical scroll bar on the element or an ancestor, never a class by itself; the class facts it cites agree with UW §3.2 (Text, ListBox from Scrollable; Button from Text; Menu, Scrollbar from Button; Tree from ListBox), and the lookup, completion pass, disabled and hidden bars agree with UW §5.1, §5.2 step 2 and §6.4 step 6. **RV6-N1 fixed:** §6.3's first row and the following paragraph choose the row per axis. Cross-checks: §5.9's answer agrees with the `ui-layout.md` §8.4 step 6 retirement note of 2026-10-23; §5.4 step 6 (opaque black bars below the group) agrees with the limits and the 1 × 1 texture alternative; the §6.7 example (32 × 1.5 = 48 px, 48 ÷ *Ky* 1.5 = 32 units) holds. Relative links and anchors of the six package specs resolve (own check). Non-blocking notes: (N1) §7.5 could say outright that only a Scrollable-derived element can have a linked bar (the completion pass of UW §5.1 links bars only for scrollables), so a plain element that happens to carry the vertical scroll-bar property never counts; (N2) §6.3's integer row still reads "an *s* × *s* block", which under the per-axis choice means *sx* × *sy*. Also re-checked for the package, without changing their status: the 2026-10-23 revisions of `crafting-panels.md`, `progression-panels.md`, `interaction.md`, `npc-windows.md` and `quest-journal.md` hold every §5.3 item, and NW25 was reproduced read-only on the install (the entry exists in the English archive, one piece, no argument; text not printed). Earlier: Review of revision 6, 2026-10-23 (spec-review:spec-ui-scaling-p6:1 (independent session), wrote no part of it; uncommitted worktree diff against main): **changes requested**, one blocking item, status stays Revised. **RV6-B1 (§7.5):** the new definition of "inside a Scrollable" lists the Scrollable classes as ListBox, Tree or Text, but by UW §3.2 Button, Menu and Scrollbar derive from Text and are therefore of a Scrollable class too; and the stated reason (a label that cannot show text outgrowing its box keeps *x* = 1) contradicts counting an ancestor that has no scroll bar of its own. Say exactly which ancestors count (for example: an ancestor that is a ListBox or Tree, or any Scrollable-derived element with a linked scroll bar on the vertical axis), so two implementations agree. Non-blocking note RV6-N1: §6.3's first filter row reads "exactly 1 on both axes" while the new sentence chooses the row per axis; say which applies to an image with *s* = 1 on one axis only. Everything else of revision 6 passed the §5.3 items (functional Tessera rules marked Design under SC15, no observation claimed, prose arithmetic only; the §6.7 example 32 × 1.5 = 48 px and 48 ÷ 1.5 = 32 units checks; the §5.2 and §5.4 "none occurs in this install" claims agree with SC2 and SC3; `ui-layout.md` §8.4 carries the retirement note; links and anchors resolve). First review 2026-10-16, independent review session: changes requested (B1–B6, answered in revision 2). Second review 2026-10-16: changes requested (R2-B1, R2-B2, answered in revision 3). Third review 2026-10-16: changes requested (RV3-B1–RV3-B3, answered in revision 4). Fourth review 2026-10-16: changes requested (RV4-B1 blocking, RV4-N1 non-blocking, answered in revision 5). Independent re-review 2026-10-16 (a session that wrote no part of the spec): **passed**, no blocking item. RV4-B1 verified with a read-only `tessera-formats` probe: `MPMissionController_MainWindow` is 1440 × 900 at (1, 0) in a 1440 × 900 design area, edges (5, 5, 5, 5), object mode None, no dialog-framework PID in the record → safe-area panel; the §10.8(a) C8 arithmetic, I18 and the §9.4 C8 golden are mutually consistent and C1/C2/C5 are unaffected (*A* = *F*). RV4-N1 verified: the theatre progress fit root's single child is 247 × 49 at (411, 735), its §10.6 X extent (247 at 411) unchanged. Accepted |
 | **Implements into** | `crates/ui` (`tessera-ui`: UI screen, displayed boxes, fit rules, keep-on-screen, saved placements, painter at the content scale, derived glyphs, scaled images), `crates/settings` (the `[UI]` keys of §4.4 and §7), `crates/render` (no contract change; §6.6), `crates/plugins` (Display and scaling views, §7.7), `crates/input` (four Tessera actions, §7.3), `apps/client` (`ui_host`: pointer conversion, live change, the Interface window, the `/uiscale` command, `--ui-scale` and `--ui-safe-aspect`), `apps/explorer` (optional preview control), `fuzz/` (settings keys, configurations) |
 | **Companion specs** | [`ui-layout.md`](ui-layout.md) (**UL**: design size §5.1, edge modes §5.8, run-time layout §8, image drawing §9.6, saved locations §9.9, panel catalogue §17). [`ui-behaviour.md`](ui-behaviour.md) (**UB**: hit test §4, tooltips §6, drag and drop §7, window manager §8, the original's UI scale §9). [`ui-widgets.md`](ui-widgets.md) (**UW**: the slider-mode scroll bar §6). [`fonts.md`](fonts.md) (**FO**: font records §3, placement §6, layout §7, drawing §8, census §10, fallback font §11). [`render.md`](render.md) §6 (**RD**: UI pass). [`lua-plugin-api.md`](lua-plugin-api.md) (**LPA**: coordinates §13.1, `Display` §13.10, scale §13.21, game-styled controls §14.2, font enum A.2, scaling groups A.7). [`keymap.md`](keymap.md) (**KM**). [`character-screens.md`](character-screens.md) (**CS**) §2.2. [`travel-windows.md`](travel-windows.md) (**TW**) §5.2. Decisions [0014](../decisions/0014-ui-input-bridge.md) (**IB**), [0015](../decisions/0015-ui-rendering.md) (**UR**), [0020](../decisions/0020-chat-command-routing.md), [0031](../decisions/0031-parity-panel-goldens.md), [0040](../decisions/0040-ui-scaling.md) |
 
@@ -1117,6 +1117,34 @@ The stop-gap stayed in force until this spec was Accepted and built; it is now r
 > change of *F* or *A* (§5.8 "Applying", changed in revision 6); (e) saving at the release that
 > ends the user's move or resize (§5.8 "The store").
 
+> **OPEN (implementer, 2026-10-23):** (tessera-ui) the drawing half of §5.4 step 6, listed as
+> "not built" above, is now built. The composition list gains an opaque black fill entry. Each
+> group's bars go directly before the first composition entry of its lowest shown member's
+> subtree, ranked in pre-order with canvases above after their subtree, so a member whose
+> first paint is not released yet still gets its bars. Fills count toward the entry cap; fills
+> past it are dropped and counted. A member with no composition node (past the depth cap, under
+> a Tile surface) draws no bars. During a group's generation transition the bars use the
+> current geometry, not the last swapped one. For a spec writer to confirm.
+>
+> **Answered (spec writer, 2026-10-23), revision 8, all confirmed as Tessera rules (SC15,
+> Design):**
+>
+> 1. The fill entry is one of the two means the answer above allows; its colour is opaque
+>    black.
+> 2. Placing a group's bars directly before the first entry of its lowest shown member's
+>    subtree, in the order described, is "directly below the picture of the group's lowest
+>    shown member" (§5.4 step 6). It holds whether or not that member's first picture has been
+>    released.
+> 3. Fills are composition entries: they count toward the entry cap (`render.md` §6), and a
+>    fill past the cap is dropped and counted like any other entry. The 256-rectangle limit of
+>    §5.4 "Limits" bounds how many fills one group adds.
+> 4. A member that has no composition entry of its own (below the depth cap, or inside a Tile
+>    surface) gives its group no bars. Bars are drawn only where the picture they lie under
+>    is drawn.
+> 5. The bars always follow the current geometry, as the hit test does (§5.4 step 6), also
+>    while a member's new picture is not swapped in yet (§4.5 step 3). During that short
+>    window a bar may meet the old picture at an edge; no stale world shows through.
+
 ---
 
 <a id="s6"></a>
@@ -1151,8 +1179,11 @@ instead give a stretched surface a canvas of its physical box (like an unstretch
 and apply *σ*(*s*) while painting: every layer is first rendered at the uniform content scale
 *c* by §6.3 and §6.4 (text laid out and drawn unstretched) and then resampled once per axis
 by *σ* (bilinear, clamped to the layer's own box) into the canvas, which is composed 1 : 1.
-Both forms resample each layer once after rendering it at *c*; they may differ by one pixel
-at layer edges. The text hit test of §6.4.6 names the conversion for each form.
+A text layer is resampled about its **drawn origin** (the element's physical box origin,
+moved by the scroll offsets of the unstretched layout; revision 8), so its first glyph stays
+where the unstretched layout starts it. Both forms resample each layer once after rendering
+it at *c*; they may differ by one pixel at layer edges. The text hit test of §6.4.6 names the
+conversion for each form.
 
 > **Was OPEN (implementer):** `crates/ui` now allocates each surface's canvas at its physical box
 > and composes it 1 : 1 onto that box (§6.6), with the display list and damage mapped to canvas
@@ -1291,6 +1322,31 @@ The ladder is built at run time from the enum and the records present (a record'
 is read from the record, FO §3.2, not from its name). A font DID that the enum does not name
 is a ladder of its own.
 
+> **OPEN (implementer, 2026-10-23):** (`apps/client` UI host) the client keeps its own copy of
+> the LPA Appendix A.2 `Font` enum (the plugin host keeps its copy private), and a test checks
+> that the two agree. It loads all 48 records on the UI workers once the first asset wave is
+> done and registers the ladders once, when no record is pending or after 3,600 polls. A stem
+> with only one loaded record is not registered (it is a ladder of its own). Loading every
+> enum font costs worker time and memory even at *c* = 1; a lazy start (only when *Se*, the
+> text factor or a node scale moves away from 1) is the alternative.
+>
+> **Answered (spec writer, 2026-10-23), revision 8, Tessera rules (SC15, Design):**
+>
+> 1. Where the enum's names live in the code is not part of the rule. One shared table is
+>    the obvious form; two copies kept equal by a test conform.
+> 2. **Eager loading, as built, conforms**, and so does the lazy start, under one condition:
+>    a ladder must be registered before any text of that ladder is drawn at a target height
+>    other than its own line height. With the lazy start, the first change of *Se*, the text
+>    factor or a node scale away from 1 starts the loading, and text keeps its 1 : 1 glyphs
+>    until the ladders are registered.
+> 3. Ladders are registered once: when no record is pending, or after the 3,600-poll bound (a
+>    Tessera bound), with the records loaded by then. A record that fails or is still pending
+>    at that point is left out of its ladder for the session. A stem with one loaded record
+>    is a ladder of its own, which gives the same glyph sources as registering it.
+> 4. Text drawn at *c* × *x* ≠ 1 before the registration uses each font as a ladder of its
+>    own (§6.4.3 on that one record) and is drawn again once the ladders are registered; its
+>    line breaks may then change (§6.4.5 accepts this).
+
 <a id="s6-4-3"></a>
 #### 6.4.3 Glyph source for a target height
 
@@ -1383,13 +1439,29 @@ its UI coordinate (§3.6) minus the surface's displayed left, divided by *σx*(*
 *Se* (likewise *y*); that point minus the element's canvas box origin is looked up.
 
 With the alternative form of §6.1 (a stretched surface's canvas is its physical box and the
-stretch is applied while painting; revision 6): take the pointer's physical pixel minus the
-text's drawn origin (the element's physical box origin, moved by the scroll offsets in
-physical pixels of the unstretched layout), divide each axis by *σx*(*s*) or *σy*(*s*), round
-down, and look that point up in the unstretched physical layout. Both forms find the same
+stretch is applied while painting; revision 6): take the **centre** of the pointer's physical
+pixel (*v* + ½ on each axis, §3.6; revision 8) minus the text's drawn origin (§6.1: the
+element's physical box origin, moved by the scroll offsets in physical pixels of the
+unstretched layout), divide each axis by *σx*(*s*) or *σy*(*s*), round down, and look that
+point up in the unstretched physical layout: on each axis ⌊(*v* + ½) ÷ *σ*⌋, with *v* the
+pointer's pixel relative to the drawn origin. Both forms find the same
 character up to one physical pixel at a glyph's edge. A text element that has not been drawn
 on the scaled path yet under a UI screen has no physical layout, and its hit test finds no
 character until it is drawn (it is not looked up in the UI-unit layout).
+
+> **OPEN (implementer, 2026-10-23):** (tessera-ui; §6.4.6, §6.1) the code still paints a
+> stretched surface's canvas at its physical box and stretches text about its origin, not at
+> the unstretched size of §6.1's first form. The hit test therefore takes the pointer's pixel
+> centre (§3.6) relative to the drawn text origin and divides by *σ*: ⌊(*v* + ½) ÷ *σ*⌋. In
+> this canvas model that is the spec's "÷ *σ* × *Se*" step, and it agrees with the drawing at
+> non-integer *σ*. A spec writer should reconcile the §6.1 and §6.4.6 wording with this model,
+> or the code should move to the unstretched canvas.
+>
+> **Answered (spec writer, 2026-10-23), revision 8:** the model is §6.1's **alternative
+> form** (revision 6), which conforms; the code need not move to the unstretched canvas. The
+> wording is reconciled: §6.1 now says that a text layer is resampled about its drawn origin,
+> and the second paragraph above now names the pixel centre and gives ⌊(*v* + ½) ÷ *σ*⌋. The
+> first paragraph's division by *σ* and multiplication by *Se* belong to the first form only.
 
 <a id="s6-5"></a>
 ### 6.5 Glyph cache
@@ -1417,6 +1489,20 @@ asset workers ahead of a settle (§4.5 step 4).
 > the implementation keeps their rasterised glyphs in the same cache; a separate cache keyed by
 > the triple is equally conforming. The cache's bound and eviction (above) apply to all entries.
 
+> **OPEN (implementer, 2026-10-23), update:** the glyph key is now (DID of the record the
+> glyph is derived from, target height, source kind, glyph, outline or fill), so registering
+> the font ladders keeps the cache. The earlier question about DID-less Tessera faces folded
+> into the DID field remains.
+>
+> **Answered (spec writer, 2026-10-23), revision 8:** the new key conforms: keying derived
+> glyphs by their **source** record (with the target height and source kind) identifies the
+> face fully, lets two records of one ladder that derive from the same source share entries,
+> and survives a re-registration of the ladders. The glyph itself in the key is the natural
+> form of a per-glyph cache. For DID-less faces the answer above stands unchanged: no lossy
+> fold into the DID field; either the whole (font file, code-point set, pixel size) triple is
+> part of the key, or those faces keep their glyphs in a separate cache. Until then the fold
+> is a conformance gap.
+
 <a id="s6-6"></a>
 ### 6.6 Composition (RD §6)
 
@@ -1443,6 +1529,19 @@ integer UI unit (halves up), on both axes (§3.5; revision 6). Example: *Se* = 1
 3840 × 2160 gives a 48-pixel cursor and an offset of 32 UI units. Game code that places
 panels by the cursor size in UI units uses the same offset. At the identity (no UI screen)
 both are UB §9.3's trunc(32 × `ui_scale_cursor`).
+
+> **OPEN (implementer, 2026-10-23):** (`apps/client` UI host) Tessera's fallback arrow has no
+> native image, so it is drawn directly at trunc(32 × *Se* × `ui_scale_cursor`), clamped to
+> 8–512 pixels, instead of being resampled by §6.3. Its hot spot is the tip (0, 0) at every
+> size. It is drawn at the pointer's physical position minus the scaled hot spot. Cursor
+> images from the install are not used yet.
+>
+> **Answered (spec writer, 2026-10-23), revision 8, Tessera rules (SC15, Design):**
+> confirmed. A cursor that Tessera draws itself (no native image) is drawn directly at the
+> size above; there is nothing to resample, and a hot spot at (0, 0) scales to (0, 0). The
+> clamp to 8 … 512 pixels is a Tessera bound applied after the size rule. Once cursor images
+> from the install are used, they take the rule above unchanged (resampled by §6.3, hot spot
+> scaled and rounded halves up).
 
 ---
 
@@ -1635,6 +1734,26 @@ any scale.
 >
 > **Answered (owner, 2026-10-23,** [decision 0040](../decisions/0040-ui-scaling.md) "Owner answers" item 1**):** S1–S7 are accepted as
 > written as the exit budgets of this work.
+
+> **OPEN (implementer, 2026-10-23):** (`apps/client` UI host; S6) the client gives the
+> derived-glyph cache 1/8 of the unpinned decoded-image budget (`image_lru_mib`) ×
+> max(1, *Se*²), clamped to 1–512 MiB (8 MiB at the defaults, the tessera-ui default). The
+> image LRU is not reduced by that share and is not scaled by *Se*², so images plus glyphs can
+> exceed S6 by up to 1/8. Confirm the share, or say how S6 is split between images, scaled
+> images and glyphs.
+>
+> **Answered (spec writer, 2026-10-23), revision 8, Tessera rule (SC15, Design):** the share
+> is confirmed; the arithmetic around it is not. S6 is one total, and the parts must add up
+> to it:
+>
+> 1. The total is *T* = `image_lru_mib` (default 64 MiB; a value the user sets replaces the 64) × max(1, *Se*²), recomputed on
+>    every change of *Se*.
+> 2. The glyph cache gets *T* ÷ 8, rounded down to whole MiB and clamped to 1 … 512 MiB.
+> 3. Decoded images and scaled images together get the rest, *T* minus the glyph share.
+>
+> At the defaults and *Se* ≤ 1 that is 8 MiB of glyphs and 56 MiB of images; at *Se* = 2,
+> 32 and 224 MiB. When *Se* falls, each cache evicts down to its new share. The owner-answered
+> budget above is unchanged; this answer only divides it.
 
 ---
 
@@ -2190,3 +2309,5 @@ settings module's documentation lists the keys of §7.1.
 | 2026-10-23 | **Revision 7** (spec writer, dirty room; status stays Revised, awaiting an independent re-review). **RV6-B1 (§7.5):** "inside a Scrollable" now means that the Text element itself or an ancestor has a linked **vertical** scroll bar (a non-zero vertical scroll-bar ID that the UW §5.1 nearest lookup with the mutual check resolves to a Scrollbar). Class alone never counts, so Button, Menu, Scrollbar, ListBox and Tree ancestors count only through such a bar. A horizontal bar alone does not count; a disabled or hidden bar does. The test is repeated on scroll-bar ID changes and re-parenting. This replaces the revision-6 reading "own linked bar or a Scrollable-class ancestor". It is a behaviour change for code that counts a ListBox, Tree or Text ancestor without a bar, or a horizontal bar. **RV6-N1 (§6.3):** the first filter row is per axis; an axis with *s* = 1 is copied texel for texel and the other axis uses its own row. Tessera rules (SC15, Design). Section numbers unchanged. |
 | 2026-10-23 | **Accepted** at revision 7 after review 2 by spec-review:spec-ui-scaling-p6:2 (independent session, wrote no part of revisions 6 or 7): RV6-B1 and RV6-N1 verified fixed, every §5.3 item holds, two non-blocking notes (N1 on §7.5, N2 on §6.3) recorded in the header. Header only; no fact, rule or section changed; status Revised → Accepted. |
 | 2026-10-23 | Owner answers recorded (orchestrator, from [decision 0040](../decisions/0040-ui-scaling.md) "Owner answers"): the four OPEN (owner) callouts of §8 (S1–S7) and §13 (safe aspect and auto-scale formula, *ρ* = 4 ÷ 3, full-window screens) are answered; the owner accepted each proposal as written. No fact, rule or section number changed; status stays Accepted. |
+| 2026-10-23 | **Revision 8** (spec writer, dirty room; status Accepted → Revised, awaiting an independent review). Answers the implementer readings of round 2 as Tessera rules (SC15, Design); no observation of the original; the owner-answered callouts of §8 and §13 are unchanged. **§5.9:** the built letterbox fills confirmed (opaque black fill entries directly before the lowest shown member's first entry, counted toward the entry cap, none for a member without an entry of its own, current geometry during a picture swap). **§6.1, §6.4.6:** the built stretched-surface model is the alternative form; text layers are resampled about their drawn origin; the hit test takes the pixel centre, ⌊(*v* + ½) ÷ *σ*⌋. **§6.4.2:** eager font loading confirmed, a lazy start allowed if each ladder is registered before its text is drawn at another height; registration once (no record pending or the 3,600-poll bound); text drawn before it is drawn again. **§6.5:** the source-record glyph key confirmed; the no-fold rule for DID-less faces stands. **§6.7:** the directly drawn fallback arrow, its (0, 0) hot spot and the 8–512 px clamp confirmed. **§8:** S6 divided: glyphs *T* ÷ 8 (1–512 MiB), images the rest, *T* = `image_lru_mib` × max(1, *Se*²) (a behaviour change: the image LRU shrinks by the glyph share and grows with *Se*²). Section numbers unchanged. |
+| 2026-10-23 | Independent review (spec-review:spec-ui-r3:1 (independent session)) of the revision 8 (§5.9, §6.1, §6.4.2, §6.4.6, §6.5, §6.7, §8 answers): **passed**; status Revised → Accepted. Header only (status and review record); no fact, rule or section changed. |

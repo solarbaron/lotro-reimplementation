@@ -124,6 +124,9 @@ pub struct Runtime {
     pub p5: crate::travel::TravelHub,
     /// The map windows (decision 0024 P5): the install's map facts and the map window.
     pub map: crate::map::MapHub,
+    /// Progression and crafting (decision 0024 P6): the windows' install names, the
+    /// plugins' progression model, the P6 windows on the game UI.
+    pub p6: crate::progression::P6Hub,
 }
 
 /// The P4 social work of a frame (decision 0024 P4): the dispatcher's channel-command
@@ -412,6 +415,12 @@ impl Runtime {
             .with_ui(args.ui && !args.headless)
             .with_content_layer(args.content_layers.first().copied())
             .with_saved_prefs(),
+            p6: crate::progression::P6Hub::new(
+                args.open_panel
+                    .iter()
+                    .filter_map(|n| crate::progression::parse_p6_panel(n))
+                    .collect(),
+            ),
         })
     }
 
@@ -648,6 +657,24 @@ impl Runtime {
         // P5 (map, travel, mounts): the install names and the map facts load off the frame.
         self.p5.poll();
         self.map.poll();
+        // P6 (progression and crafting): the windows' install names and the plugin keys load
+        // off the frame once the P3 facts exist; without an install (or when its facts fail)
+        // the windows are Tessera's fallbacks.
+        self.p6.poll();
+        if !self.p6.ready() {
+            match (&self.status, &self.archives, self.npc.data()) {
+                (DataStatus::NoData(_), _, _) => self.p6.use_fallback(),
+                (DataStatus::Ready { .. }, Some(set), Some(npc)) => self.p6.start(set, npc),
+                (DataStatus::Ready { .. }, _, None)
+                    if !self.load_p1
+                        || self.p1.failure().is_some()
+                        || self.npc.failure().is_some() =>
+                {
+                    self.p6.use_fallback();
+                }
+                _ => {}
+            }
+        }
         if self.load_p1
             && let (Some(c), Some(set), DataStatus::Ready { root, .. }) =
                 (self.p1.data(), &self.archives, &self.status)
@@ -667,6 +694,30 @@ impl Runtime {
                     self.plugins.manager_mut(),
                 );
             }
+            // The P6 changes: the plugins' progression views (`lua-plugin-api.md` §15.6), the
+            // level-up notice (`progression-panels.md` §2.3) and the P6 windows' queue.
+            let p6 = world.take_p6_changes();
+            let install = self.p2.install().cloned();
+            if !p6.is_empty() {
+                let notices = self.p6.after_events(
+                    &p6,
+                    world.p6(),
+                    install.as_deref(),
+                    self.plugins.manager_mut(),
+                );
+                // `progression-panels.md` §2.3 item 1: on the P4 notice channel of
+                // `chat-window.md` (the derived notices' `Standard` mask, as friend and
+                // channel notices).
+                for n in notices {
+                    world.push_local_chat(crate::net::ChatLine::shown(
+                        tessera_ui::game::chat::notice::STANDARD,
+                        n,
+                    ));
+                }
+            }
+            // Reports that arrived before the install's plugin keys reach the views now.
+            self.p6
+                .sync_model(world.p6(), install.as_deref(), self.plugins.manager_mut());
             let changes = world.take_player_changes();
             self.npc.after_events(
                 &changes,
@@ -874,6 +925,40 @@ mod tests {
         assert!(rt.take_ui_chat().is_empty());
         rt.hold_chat_for_ui(false);
         assert!(!rt.holds_chat_for_ui());
+        rt.shutdown();
+    }
+
+    /// The P6 `--open-panel` names reach the P6 hub (opened at the first frame in the
+    /// world); other names do not.
+    #[test]
+    fn p6_open_panel_names_route_to_the_p6_hub() {
+        use crate::progression::P6Panel;
+        let dir = tempfile::tempdir().expect("tempdir");
+        let args = Args::try_parse_from([
+            "t",
+            "--no-data",
+            "--data-dir",
+            dir.path().to_str().expect("utf-8"),
+            "--open-panel",
+            "crafting",
+            "--open-panel",
+            "quest-log",
+            "--open-panel",
+            "craftguild-trainer",
+            "--open-panel",
+            "experience",
+        ])
+        .expect("args");
+        let mut rt = Runtime::start(&args, Instant::now()).expect("runtime");
+        assert_eq!(
+            rt.p6.pending_panels(),
+            [
+                P6Panel::Crafting,
+                P6Panel::GuildTrainer,
+                P6Panel::Experience
+            ]
+            .as_slice()
+        );
         rt.shutdown();
     }
 

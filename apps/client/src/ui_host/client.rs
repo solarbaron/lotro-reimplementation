@@ -87,6 +87,64 @@ pub struct ClientUi {
     server_key: Option<String>,
     /// The P1 panels' settings (comparison switch, bag columns), read once.
     p1_settings: crate::character::settings::P1Settings,
+    /// The game UI's one settings writer (ARCHITECTURE §21): the settled UI scale, the
+    /// Interface window's rows, the saved panel placements and the bag columns are written
+    /// on its thread, never on the frame thread.
+    settings: super::settings_writer::SettingsWriter,
+    /// Whether user moves of saved panels are written to `[UI.panels]` (off in headless and
+    /// scripted runs, whose moves are not the user's). Those runs also start without the
+    /// user's saved placements, so their captures (local goldens, decision 0031) never
+    /// depend on where an earlier windowed session put a panel.
+    persist_placements: bool,
+    /// The walker HUD and the game HUD wait for the character screens to close
+    /// (`character-screens.md` §2: the screens own the display while open).
+    hud: HudGate,
+}
+
+/// Whether the HUDs (the walker's overlays and the game HUD panels) are held back while the
+/// character screens are open, and when they come back (`--character-select`).
+///
+/// The screens are "active" from the start of a `--character-select` run until they are
+/// abandoned, the player enters the world or quits. The HUDs open at attachment when no
+/// screens are active, else once they stop being active.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct HudGate {
+    /// The HUDs are held back (attached while the screens were active).
+    held: bool,
+    /// The HUDs have been shown.
+    shown: bool,
+}
+
+impl HudGate {
+    /// At attachment: whether the HUDs show now (`false` while `screens_active`).
+    pub fn attach(&mut self, screens_active: bool) -> bool {
+        self.held = screens_active;
+        self.shown = !screens_active;
+        self.shown
+    }
+
+    /// Each frame after attachment: `true` once, in the frame the held HUDs are to show
+    /// (the screens are no longer active).
+    pub fn release(&mut self, screens_active: bool) -> bool {
+        if self.held && !screens_active {
+            self.held = false;
+            self.shown = true;
+            return true;
+        }
+        false
+    }
+
+    /// Whether the HUDs are held back now.
+    #[must_use]
+    pub fn held(&self) -> bool {
+        self.held
+    }
+
+    /// Whether the HUDs have been shown.
+    #[must_use]
+    pub fn shown(&self) -> bool {
+        self.shown
+    }
 }
 
 /// Frames the script waits for the walker to settle before it starts anyway (60 s).
@@ -136,6 +194,16 @@ pub fn prefs_from(args: &Args) -> UiPrefs {
     prefs
 }
 
+/// Whether a run's user moves of saved panels are written to `[UI.panels]`: not in
+/// headless, scripted, screenshot or scenario runs.
+#[must_use]
+pub fn persists_placements(args: &Args) -> bool {
+    !(args.headless
+        || args.ui_script
+        || args.screenshot.is_some()
+        || args.scenario_prepared.is_some())
+}
+
 impl ClientUi {
     /// The UI of a run configured by `args` (nothing starts until the archives are open).
     #[must_use]
@@ -153,7 +221,11 @@ impl ClientUi {
         let panels: Vec<PanelId> = args
             .open_panel
             .iter()
-            .filter(|n| parse_p1_panel(n).is_none() && crate::social::ui::parse_open(n).is_none())
+            .filter(|n| {
+                parse_p1_panel(n).is_none()
+                    && crate::social::ui::parse_open(n).is_none()
+                    && crate::progression::parse_p6_panel(n).is_none()
+            })
             .filter_map(|n| {
                 let p = super::parse_panel(n);
                 if p.is_none() {
@@ -162,11 +234,16 @@ impl ClientUi {
                 p
             })
             .collect();
+        let persist_placements = persists_placements(args);
+        let mut prefs = prefs_from(args);
+        if !persist_placements {
+            prefs.panels.clear();
+        }
         Self {
             state: State::Idle,
             options: UiOptions {
                 screen: args.size,
-                prefs: prefs_from(args),
+                prefs,
                 hud: !args.no_ui_hud,
                 panels,
                 record: args.ui_script || args.ui_report.is_some(),
@@ -189,7 +266,27 @@ impl ClientUi {
                 .as_ref()
                 .map(|s| format!("{s}#{}", args.account.as_deref().unwrap_or(""))),
             p1_settings: crate::character::settings::P1Settings::load_default(),
+            settings: super::settings_writer::SettingsWriter::open_default(),
+            persist_placements,
+            hud: HudGate::default(),
         }
+    }
+
+    /// The HUD gate (tests and tools).
+    #[must_use]
+    pub fn hud_gate(&self) -> HudGate {
+        self.hud
+    }
+
+    /// The options the game UI starts with (tests and tools).
+    #[must_use]
+    pub fn options(&self) -> &UiOptions {
+        &self.options
+    }
+
+    /// Whether the character screens are active: wanted and not yet opened, or open.
+    fn screens_active(&self) -> bool {
+        self.want_screens || self.pre_world.is_some()
     }
 
     /// Whether the client should end (the player quit on the character screens).
@@ -425,6 +522,7 @@ impl ClientUi {
             self.state = match r {
                 Ok(booted) => {
                     let mut host = UiHost::from_boot(booted, &self.options);
+                    host.set_persist_placements(self.persist_placements);
                     if let Some(c) = host.character_mut() {
                         c.apply_settings(&self.p1_settings);
                     }
@@ -449,7 +547,16 @@ impl ClientUi {
             return;
         };
         let prefs = host.prefs().clone();
-        walker.set_ui_attached(true, prefs.walker_hud, prefs.walker_minimap.shown(true));
+        // While the character screens are active the walker's HUD and minimap and the game
+        // HUD stay hidden; they come with the world ([`HudGate`]).
+        let show_hud = self
+            .hud
+            .attach(self.want_screens || self.pre_world.is_some());
+        walker.set_ui_attached(
+            true,
+            prefs.walker_hud && show_hud,
+            prefs.walker_minimap.shown(true) && show_hud,
+        );
         let (mapper, _) = walker.mapper_mut();
         host.attach_mapper(mapper);
         // The plugins' local player carries the NPC windows' wallet views (P3).
@@ -459,8 +566,11 @@ impl ClientUi {
         host.set_plugin_party(rt.party_actor_source());
         // The plugins' local player carries the travel hub's mount views (P5).
         host.set_plugin_mount(rt.p5.mount().source());
+        // The plugins' local player carries the P6 hub's progression views (P6,
+        // `lua-plugin-api.md` §15.6).
+        host.set_plugin_progression(rt.p6.plugin_source());
         host.attach_plugins(&mut rt.plugins, &self.load);
-        if self.options.hud {
+        if self.options.hud && show_hud {
             for (id, e) in host.open_hud(&mut rt.plugins) {
                 tracing::warn!("{id} did not open: {e}");
             }
@@ -678,9 +788,20 @@ impl ClientUi {
         }
         self.open_screens(rt);
         let screens = self.pre_world.is_some();
+        // The HUDs held back for the character screens show once they closed.
+        let release = self.hud.release(self.screens_active());
         let State::Ready(host) = &mut self.state else {
             return;
         };
+        if release {
+            let prefs = host.prefs().clone();
+            walker.set_ui_attached(true, prefs.walker_hud, prefs.walker_minimap.shown(true));
+            if self.options.hud {
+                for (id, e) in host.open_hud(&mut rt.plugins) {
+                    tracing::warn!("{id} did not open: {e}");
+                }
+            }
+        }
         if events.menu && !screens {
             // TR5: a cancellable cast or a selection before the main menu.
             match host.combat_escape() {
@@ -707,16 +828,24 @@ impl ClientUi {
         // The four UI-scaling actions pressed this frame (`ui-scaling.md` §7.3; unbound by
         // default, so a no-op in normal runs).
         host.poll_scale_actions(mapper, Instant::now());
+        // The crafting-panel toggles (`crafting-panels.md` §4.1, §12: T and the three
+        // profession toggles), acted on in the P6 window pass, never while the character
+        // screens are open.
+        if !screens {
+            for t in host.poll_p6_actions(mapper) {
+                rt.p6.request_toggle(t);
+            }
+        }
         host.step7(&mut rt.plugins, Some(mapper));
         // The character panels (decision 0024 P1): panels asked for on the command line,
         // the player-state changes of this frame, item interactions as session commands.
-        character_frame(host, rt, &mut self.p1_open, shift);
+        character_frame(host, rt, &mut self.p1_open, shift, &mut self.settings);
         // The combat widgets (decision 0024 P2): changes, clicks, keys, anchors.
         combat_frame(host, rt, walker);
         // Chat commands that quickslot aliases ran in step 7.
         dispatch_lines(host, rt);
         // The UI-scaling requests and per-frame tick (decision 0040, `ui-scaling.md` §4).
-        apply_uiscale(host, rt, Instant::now());
+        apply_uiscale(host, rt, Instant::now(), &mut self.settings);
         // The character screens before world entry (`--character-select`).
         self.screens_frame(walker, rt, events.menu && screens);
     }
@@ -840,9 +969,15 @@ impl ClientUi {
         window: &mut dyn CursorWindow,
     ) {
         if let State::Ready(host) = &mut self.state {
+            // The last user move of a saved panel is written before the exit.
+            if let Some(map) = host.take_placement_persist() {
+                self.settings
+                    .submit(super::settings_writer::SettingsJob::Panels(map));
+            }
             host.shutdown(&mut rt.plugins, renderer);
             host.release_cursor(window);
         }
+        self.settings.flush();
         rt.hold_chat_for_ui(false);
         self.fell_back = true;
         self.attached_walker = false;
@@ -912,7 +1047,13 @@ pub fn parse_p1_panel(name: &str) -> Option<P1Panel> {
 
 /// The character panels' frame (after step 7): panels still to open once the player is in
 /// the world, the player-state changes, and the item commands sent to the world session.
-fn character_frame(host: &mut UiHost, rt: &mut Runtime, pending: &mut Vec<P1Panel>, shift: bool) {
+fn character_frame(
+    host: &mut UiHost,
+    rt: &mut Runtime,
+    pending: &mut Vec<P1Panel>,
+    shift: bool,
+    settings: &mut super::settings_writer::SettingsWriter,
+) {
     let changes = rt.p1.take_ui_changes();
     let data = rt.p1.data().cloned();
     let Some(world) = rt.world.as_mut() else {
@@ -933,8 +1074,13 @@ fn character_frame(host: &mut UiHost, rt: &mut Runtime, pending: &mut Vec<P1Pane
     }
     let commands =
         host.character_frame(world.player_state(), data.as_deref(), &changes, shift, now);
+    // The bag windows' column settings (`character-panels.md` §4.1) are written by the
+    // settings writer's thread (ARCHITECTURE §21), never here.
     if let Some(c) = host.character_mut() {
-        crate::character::settings::save_columns(&c.take_column_changes());
+        let changes = c.take_column_changes();
+        if !changes.is_empty() {
+            settings.submit(super::settings_writer::SettingsJob::Columns(changes));
+        }
     }
     for c in commands {
         if let Err(e) = world.send_command(now, c) {
@@ -960,13 +1106,12 @@ pub(crate) fn social_frame(
 }
 
 /// The per-frame window updates shared by the windowed client (`crate::app`) and the
-/// headless UI runs (`super::run`): the NPC windows (decision 0024 P3), the quest journal
-/// and its indicators (P3), the social panels (P4) and the P5 travel, instance-finder and
-/// map windows, all reading one list of in-world UI events taken once (the combat widgets
-/// keep their own queue, handled in [`ClientUi::after_update`]). Call after
-/// [`ClientUi::after_update`] and before [`ClientUi::step8`], as the windowed path does;
-/// the windowed path keeps its own inline copy of this block, which this function must stay
-/// in step with.
+/// headless UI runs (`super::run`): the Interface window, the NPC windows (decision 0024 P3),
+/// the quest journal and its indicators (P3), the social panels (P4), the P5 travel,
+/// instance-finder and map windows and the P6 progression and crafting windows, all reading
+/// one list of in-world UI events taken once (the combat widgets keep their own queue,
+/// handled in [`ClientUi::after_update`]). Call after [`ClientUi::after_update`] and before
+/// [`ClientUi::step8`]; both paths call this one function.
 pub(crate) fn window_frames(
     ui: &mut ClientUi,
     rt: &mut Runtime,
@@ -1011,6 +1156,8 @@ pub(crate) fn window_frames(
     rt.p5.frame(host, world, &rt.npc, events, now);
     rt.map
         .frame(host, world, rt.p5.refs(), &rt.npc, events, radar.as_ref());
+    // The P6 windows (progression and crafting) read the same list.
+    rt.p6.frame(host, world, events, now);
     // The indicators over ringed NPCs (§8.2), at the walker's positions.
     let position = |id| walker.entity_render_pos(id);
     rt.quests
@@ -1145,8 +1292,17 @@ fn send_combat(
 /// Applies the UI-scaling work of a frame (decision 0040, `ui-scaling.md` §4, §7.3): the
 /// `/uiscale` requests and the `ui_interface_window` action open the Interface window or
 /// change the scale live; the per-frame tick applies the automatic default once the window
-/// size settles; a settled change is written to the settings file.
-fn apply_uiscale(host: &mut UiHost, rt: &mut Runtime, now: Instant) {
+/// size settles. A settled scale change, the Interface window's optional rows and the saved
+/// panel placements of the user's moves (§5.8 "Saving") go to the settings writer, which
+/// writes them off the frame thread in order (§4.4: "through the settings writer off the
+/// main thread").
+fn apply_uiscale(
+    host: &mut UiHost,
+    rt: &mut Runtime,
+    now: Instant,
+    settings: &mut super::settings_writer::SettingsWriter,
+) {
+    use super::settings_writer::SettingsJob;
     for req in rt.plugins.take_uiscale_requests() {
         host.apply_uiscale_request(&req, now);
     }
@@ -1157,131 +1313,13 @@ fn apply_uiscale(host: &mut UiHost, rt: &mut Runtime, now: Instant) {
         host.open_interface();
     }
     if let Some((scale, aspect)) = host.take_scale_persist(now) {
-        persist_ui_scale(scale, aspect);
+        settings.submit(SettingsJob::UiScale { scale, aspect });
     }
     if let Some(extra) = host.take_interface_persist() {
-        persist_ui_extra(extra);
+        settings.submit(SettingsJob::UiExtra(extra));
     }
-}
-
-/// Hands the settled UI scale and safe aspect to the settings writer **off the main thread**
-/// (`ui-scaling.md` §4.4, §4.5 step 5). The spec requires the settled write to go "through the
-/// settings writer off the main thread"; this is called from the frame loop
-/// ([`ClientUi::after_update`]), so it must not touch the disk or the advisory settings lock
-/// inline. It only opens the store and hands the values to a short-lived background thread (as
-/// the character screens' saver does, `screens::save_settings`), then returns. Best-effort: a
-/// failure is logged, not fatal, and the join handle is dropped so the write runs detached.
-fn persist_ui_scale(scale: tessera_settings::UiScale, aspect: tessera_settings::SafeAspect) {
-    let store = match tessera_settings::SettingsStore::open_default() {
-        Ok(s) => s,
-        Err(e) => {
-            tracing::debug!("settings unavailable ({e}); UI scale not saved");
-            return;
-        }
-    };
-    // Detached: the frame loop never waits for the write (§4.4). The tests keep the handle to
-    // join on it.
-    drop(spawn_ui_scale_write(store, scale, aspect));
-}
-
-/// Spawns the settled UI-scale write on a short-lived background thread so the frame loop
-/// never blocks on the settings file lock or the disk (`ui-scaling.md` §4.4 "off the main
-/// thread"). Returns the join handle for a caller that wants to wait for the write (the
-/// tests); the frame loop drops it. When a thread cannot be spawned the write falls back to
-/// the calling thread, as the character screens' saver does.
-fn spawn_ui_scale_write(
-    store: tessera_settings::SettingsStore,
-    scale: tessera_settings::UiScale,
-    aspect: tessera_settings::SafeAspect,
-) -> Option<std::thread::JoinHandle<()>> {
-    // A cheap clone (the store is only a file path) for the fallback, so a failed spawn can
-    // still write without the moved value.
-    let fallback = store.clone();
-    match std::thread::Builder::new()
-        .name("ui-scale-settings".to_owned())
-        .spawn(move || write_ui_scale(&store, scale, aspect))
-    {
-        Ok(h) => Some(h),
-        Err(e) => {
-            tracing::debug!("no settings thread ({e}); writing UI scale on this thread");
-            write_ui_scale(&fallback, scale, aspect);
-            None
-        }
-    }
-}
-
-/// The settled write itself: merges `ui_scale` and `ui_safe_aspect` into the settings file
-/// under its advisory lock (`ui-scaling.md` §4.4). A failure is logged, not fatal.
-fn write_ui_scale(
-    store: &tessera_settings::SettingsStore,
-    scale: tessera_settings::UiScale,
-    aspect: tessera_settings::SafeAspect,
-) {
-    let r = store.update(|s| {
-        let (mut prefs, _) = tessera_settings::UiPrefs::from_settings(s);
-        prefs.ui_scale = scale;
-        prefs.safe_aspect = aspect;
-        prefs.store(s);
-    });
-    if let Err(e) = r {
-        tracing::warn!("UI scale not saved: {e}");
-    }
-}
-
-/// Hands the Interface window's optional-row changes (art filter, text size, panel and
-/// window-scale resets) to the settings writer off the main thread (`ui-scaling.md` §4.4,
-/// §7.1), like [`persist_ui_scale`].
-fn persist_ui_extra(extra: crate::ui_host::interface::ExtraPersist) {
-    let store = match tessera_settings::SettingsStore::open_default() {
-        Ok(s) => s,
-        Err(e) => {
-            tracing::debug!("settings unavailable ({e}); UI options not saved");
-            return;
-        }
-    };
-    drop(spawn_ui_extra_write(store, extra));
-}
-
-/// Spawns the optional-row write off the frame thread; falls back to this thread when no
-/// thread can be spawned. Returns the join handle (the frame loop drops it; tests keep it).
-fn spawn_ui_extra_write(
-    store: tessera_settings::SettingsStore,
-    extra: crate::ui_host::interface::ExtraPersist,
-) -> Option<std::thread::JoinHandle<()>> {
-    let fallback = store.clone();
-    match std::thread::Builder::new()
-        .name("ui-options-settings".to_owned())
-        .spawn(move || write_ui_extra(&store, extra))
-    {
-        Ok(h) => Some(h),
-        Err(e) => {
-            tracing::debug!("no settings thread ({e}); writing UI options on this thread");
-            write_ui_extra(&fallback, extra);
-            None
-        }
-    }
-}
-
-/// Merges the optional-row keys into the settings file under its advisory lock
-/// (`ui-scaling.md` §4.4). A failure is logged, not fatal.
-fn write_ui_extra(
-    store: &tessera_settings::SettingsStore,
-    extra: crate::ui_host::interface::ExtraPersist,
-) {
-    let r = store.update(|s| {
-        let (mut prefs, _) = tessera_settings::UiPrefs::from_settings(s);
-        prefs.art_filter = extra.art;
-        prefs.text_scale = extra.text_scale;
-        if extra.clear_panels {
-            prefs.panels.clear();
-        }
-        if extra.clear_groups {
-            prefs.group_scale.clear();
-        }
-        prefs.store(s);
-    });
-    if let Err(e) = r {
-        tracing::warn!("UI options not saved: {e}");
+    if let Some(map) = host.take_placement_persist() {
+        settings.submit(SettingsJob::Panels(map));
     }
 }
 
@@ -1316,26 +1354,46 @@ mod tests {
         .expect("args")
     }
 
-    /// The settled UI-scale write goes to a background thread and round-trips through the
-    /// settings file (`ui-scaling.md` §4.4 "off the main thread"). The test joins the spawned
-    /// writer (which the frame loop drops) and reads the values back.
+    /// The HUDs wait for the character screens: held at attachment while they are active,
+    /// shown once (and only once) when they close; without screens they show at once.
     #[test]
-    fn ui_scale_persists_off_thread() {
-        use tessera_settings::{SafeAspect, SettingsStore, UiPrefs, UiScale};
+    fn huds_wait_for_the_character_screens() {
+        let mut g = HudGate::default();
+        assert!(!g.attach(true), "screens active: no HUD at attachment");
+        assert!(g.held() && !g.shown());
+        assert!(!g.release(true), "still on the screens");
+        assert!(g.release(false), "the screens closed: the HUDs show");
+        assert!(g.shown() && !g.held());
+        assert!(!g.release(false), "only once");
+        let mut g = HudGate::default();
+        assert!(g.attach(false), "no screens: the HUDs show at attachment");
+        assert!(!g.release(false), "nothing held");
+        assert!(g.shown());
+    }
+
+    #[test]
+    fn a_character_select_run_holds_the_huds() {
         let dir = tempfile::tempdir().expect("tempdir");
-        let store = SettingsStore::new(dir.path().join("tessera.toml"));
-        let main = std::thread::current().id();
-        let handle = spawn_ui_scale_write(store, UiScale::Fixed(1.5), SafeAspect::R16_9)
-            .expect("the writer thread spawns");
-        // The write runs on another thread, never the frame loop's.
-        assert_ne!(handle.thread().id(), main, "write is off the main thread");
-        handle.join().expect("writer thread");
-        // The file now holds the written values.
-        let store = SettingsStore::new(dir.path().join("tessera.toml"));
-        let settings = store.update(|_| {}).expect("read back");
-        let (prefs, _) = UiPrefs::from_settings(&settings);
-        assert_eq!(prefs.ui_scale, UiScale::Fixed(1.5));
-        assert_eq!(prefs.safe_aspect, SafeAspect::R16_9);
+        let args = select_args(dir.path());
+        let ui = ClientUi::new(&args);
+        assert!(ui.screens_active(), "--character-select: screens wanted");
+        let args = Args::try_parse_from(["t", "--ui"]).expect("args");
+        let ui = ClientUi::new(&args);
+        assert!(!ui.screens_active());
+        assert!(!ui.hud_gate().held());
+    }
+
+    /// Headless and scripted runs neither write nor read the user's `[UI.panels]`.
+    #[test]
+    fn scripted_runs_start_without_the_users_saved_placements() {
+        let args =
+            Args::try_parse_from(["t", "--ui", "--headless", "--duration", "1"]).expect("args");
+        assert!(!persists_placements(&args));
+        let ui = ClientUi::new(&args);
+        assert!(ui.options().prefs.panels.is_empty());
+        assert!(!ui.persist_placements);
+        let args = Args::try_parse_from(["t", "--ui"]).expect("args");
+        assert!(persists_placements(&args));
     }
 
     #[test]

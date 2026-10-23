@@ -432,6 +432,15 @@ impl CharacterUi {
         self.journal
     }
 
+    /// The roots this panel applied the saved placement to when it created them
+    /// (`ui-scaling.md` §5.8 "Applying"): the character panel and the open bag windows. The
+    /// UI host does not apply them a second time.
+    pub fn placed_roots(&self) -> impl Iterator<Item = ElementKey> + '_ {
+        self.journal
+            .into_iter()
+            .chain(self.bags.iter().flatten().map(|b| b.window))
+    }
+
     /// The stat rows found on the equipment page (`character-panels.md` §3.4).
     #[must_use]
     pub fn stat_row_count(&self) -> usize {

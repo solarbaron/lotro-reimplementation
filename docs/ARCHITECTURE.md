@@ -2046,6 +2046,7 @@ subtracts its camera anchor in `f64` and narrows to `f32` (the §9.1 render posi
 | **Index builder** (tools only) | Full DID index build | Result handed to the UI thread |
 | **Character facts loader** (client, P1; once per run, when the walker runs) | Builds the character facts and, with `--character-select`, the screens' data from the archive set (`character::CharacterHub`) | Join handle polled by the main thread each frame (§20.1 step 6) |
 | **Creation-choices writer** (client, P1; one per save) | A locked read-modify-write of Tessera's settings file with the creation choices the session cannot carry (`screens`) | Join handle; `CharacterScreens::wait_saved` waits for it |
+| **UI settings writer** (client, game UI; one per run, started by its first job) | Locked read-modify-writes of Tessera's settings file for the game UI: the settled UI scale and safe aspect, the Interface window's rows, the saved panel placements of `[UI.panels]` and the bag windows' column settings (`ui_host::settings_writer`); the jobs waiting are applied in order in one write | Job channel from main (never waits); a flush at the end of the run |
 
 Rules:
 
@@ -2078,14 +2079,24 @@ Rules:
     one). The frame never waits: when 16 MiB are formatted but not yet written (a
     standard-output reader that stopped reading), the log drops the lines from there on and
     ends with `reason=error error=LogWrite` (exit 5). The headless driver draws no frames,
-    so its writes delay no frame.
+    so its writes delay no frame;
+  - the bag windows' column settings (`character-panels.md` §4.1) are not an exception:
+    the character panels' frame hands a resize's changes to the UI settings writer
+    (table above), which writes them on its own thread.
 
-  > **OPEN (P1, client):** the bag windows' column settings (`character-panels.md` §4.1)
-  > are saved on the main thread, in the character panels' frame after step 7, when a
-  > resize changed them (`character::settings::save_columns`: a synchronous
-  > read-modify-write of Tessera's settings file). It is rare, user-triggered I/O, but it is
-  > neither listed as an exception above nor moved to a worker like the creation choices;
-  > either move it to a worker or list it as exception (d).
+  > **OPEN (implementer, `tessera-client`, 2026-10-23):** the P6 plugin progression views
+  > (`apps/client/src/progression/plugin.rs`, `lua-plugin-api.md` §15.6) read records on the
+  > main thread when the feed reports a profession, a learned recipe or an untrained-skill
+  > list: the profession's name and tier titles, the recipe's `CraftRecipe_*` values and its
+  > items' P1 facts, and each untrained skill's `SkillInfo` values (through the P2 combat
+  > plugin views, which read the same way). The reads go through the `tessera-gamedata`
+  > record caches, are bounded by the feed's events (one batch at most
+  > `MAX_P6_CHANGES` changes, each profession read once and the untrained list built once
+  > per batch), and run once more when the install's plugin keys arrive (the model is
+  > rebuilt from the held state). A record the cache does not hold is a synchronous archive
+  > read on the main thread, which is none of the exceptions above (the P2 combat cues'
+  > record reads have the same open question). Either list it as an exception, or move the
+  > value resolution to a worker and raise the view events when it completes.
 - Worker pool: a dedicated pool with a priority queue (Decision), not a general
   work-stealing pool, because priority and cancellation matter more than throughput.
 

@@ -1415,3 +1415,12 @@ path = "fuzz_targets/compat_world_message.rs"
 test = false
 doc = false
 bench = false
+
+# --- tessera-client local time for Turbine.Engine.GetDate (apps/client/src/plugins/localtime.rs, included by path; lua-plugin-api.md §12) ---
+
+[[bin]]
+name = "client_tzif"
+path = "fuzz_targets/client_tzif.rs"
+test = false
+doc = false
+bench = false

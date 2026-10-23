@@ -39,10 +39,12 @@ pub struct UiRunReport {
     pub panels: usize,
     /// Plugins loaded at the end.
     pub plugins: Vec<String>,
-    /// Short names of the game windows (`npc`, `quest`, `travel`, `finder`) seen open at any
-    /// frame of the run: the per-frame window updates of [`super::client::window_frames`]
-    /// drive them from the session's events (P3/P5), so a headless scenario run can check
-    /// that they opened.
+    /// Short names of the game windows (`npc`, `quest`, `travel`, `finder`, and the P6
+    /// `crafting`, `profession-trainer`, `vocation-trainer`, `craftguild-trainer`,
+    /// `training`, `traits`, `experience`) seen open at any frame of the run: the per-frame
+    /// window updates of [`super::client::window_frames`] drive them from the session's
+    /// events (P3/P5/P6) and `--open-panel`, so a headless scenario run can check that they
+    /// opened. The run logs them at its end (`game windows seen`).
     pub game_windows: std::collections::BTreeSet<&'static str>,
 }
 
@@ -428,6 +430,7 @@ fn finish(
         .into_iter()
         .map(|p| p.name)
         .collect();
+    tracing::info!(windows = ?report.game_windows, "game windows seen");
     ui.shutdown(rt, Some(renderer), &mut NoWindow);
     if let Some(walker) = host.walker.as_mut() {
         walker.shutdown(renderer);
@@ -506,6 +509,10 @@ fn record_game_windows(ui: &ClientUi, rt: &Runtime, report: &mut UiRunReport) {
         if u.finder().is_some() {
             report.game_windows.insert("finder");
         }
+    }
+    if let (Some(u), Some(host)) = (rt.p6.ui(), ui.host()) {
+        let names = u.open_windows(&host.ui());
+        report.game_windows.extend(names);
     }
 }
 

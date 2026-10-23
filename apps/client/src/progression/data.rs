@@ -174,6 +174,14 @@ impl P6Data {
         }
     }
 
+    /// The same facts with the plugin views' keys `keys` (tests and synthetic runs whose refs
+    /// are records the caller maps itself).
+    #[must_use]
+    pub fn with_keys(mut self, keys: ApiKeys) -> Self {
+        self.keys = keys;
+        self
+    }
+
     /// The presenters over the P3 facts of an install, with the plugin views' keys.
     #[must_use]
     pub fn install(npc: Arc<NpcData>, keys: ApiKeys) -> Self {

@@ -4,11 +4,11 @@
 
 | | |
 |---|---|
-| **Status** | Accepted (independent review 2026-10-13: CLEAN_ROOM.md §5.3 passed, every item) |
-| **Last updated** | 2026-10-13 |
+| **Status** | **Accepted** (2026-10-23, independent review 2026-10-23 by spec-review:spec-gameplay:2 (independent session), a session that wrote no part of the 2026-10-23 revision: passed CLEAN_ROOM.md §5.3, every item; contamination screen clean; see the review record). Before: **Revised** (2026-10-23, revision 1: the implementer OPENs of §4.6, §6.3, §6.8, §6.9 (b), §7.2, §7.3 and §8 answered with rows MW30–MW35; new §8.1 (the fallback map window, which makes the tier-1 world-map golden normative); implemented behaviour changes in §4.6 (the player's dungeon map indoors) and may change in §6.3 (the install's tooltip and coordinate entries may now be rendered); awaiting independent review). Before: Accepted (independent review 2026-10-13: CLEAN_ROOM.md §5.3 passed, every item) |
+| **Last updated** | 2026-10-23 |
 | **Author role** | Spec writer (dirty room), AI-assisted |
 | **Reviewer** | Spec reviewer (dirty room, AI-assisted, Clean-Room-Role: review), a session that wrote no part of this spec, of the P5 notes in `game-panels.md` and `map-data.md`, or of the P5 code, 2026-10-13 |
-| **Review record** | First version for decision 0024 P5 (client half only): exit criterion 1 ("the map panel renders every map region with scenario markers") and the "place lookup" theme of decision 0024 §5 P5. **Independent review 2026-10-13 (spec reviewer, dirty room, AI-assisted, not the author): passed; Accepted.** Checked against `docs/CLEAN_ROOM.md` §5.3: every statement is a functional fact (element IDs, rects, masks, counts, behaviours, math); no code, pseudo-code or decompiler-listing structure (the §3.4 inverse transform is a math formula; §4.2/§4.7 steps are plain-word behaviour); no copied prose or comments; all quoted identifiers are the install's own data labels, declared as interoperability names in the naming note; no game text (texts named by string table and token only), assets, keys, hostnames, endpoints or official-traffic dumps; every fact has a provenance row (MW1–MW29) marked OBS/BIN/Confirmed/Probable per the scheme at the top of §1, consistent with decisions 0011 and 0012; byte/rect tables give units (map pixels at design size, world units, z-levels); invariants MWI1–MWI10 are testable; unknowns are `> **OPEN:**` with explicit Tessera rules rather than guesses; decision-0034 scope item holds (offline map UI only; the BIN row records that the network protocol, login, keys, launcher and anti-tamper code were not read, decision 0004). Spot checks (reviewer's own read-only probes of the owner's install and client, 2026-10-13): **M1** — every cited record resolves in place (`map` layout 0x22000041, `ContextMenu` 0x2200007B and `radar` 0x2200003A in `client_local_English.dat`; `GameplayOptionDefaults` 0x78000006, `RegionControl` 0x7001819C and both icon tables 0x78000001/0x78000002 in `client_gamelogic.dat`; the two string tables in `client_local_English.dat`), and the `MapNoteType` mapper 0x230000D7 payload begins with its own DID then `0x230001A4`, exactly the base the spec states. **BIN** (decision 0011; read-only byte scan of the private client copy `lotroclient64.exe`, file time 2026-10-04): the version strings `4906` and change list `711794` match the provenance (PE 4906.0071.1794.4035); the pure-BIN immediates appear as the spec requires — the read AND-mask 0x9B7C7FFFFEFF0002 (MW12) twice, the 28-bit common mask 0x1B7C76E75CF00000 (MW3) once, the tooltip DIDs 0x0B0C5A53 (MW15), 0x053B8BB3 (MW19), 0x0B8B58E0 and 0x0DDC06F5 (MW22/MW15) present — while values the spec marks OBS (the near/radar filter defaults from `GameplayOptionDefaults`, the radar display mask from the radar layout) are correctly **not** code immediates, and the code references layout **keys** (0x10000041, 0x1000003A) rather than record DIDs, matching the naming note's key/record distinction. Census (§5.1–§5.4) and decision 0036 §1 are mutually consistent and the counts add up internally (node regions 74+47+40+38+25+2+1 = 227; filter-menu item buckets 127+88+4+1 nodes + 7 hidden = 227; R-node 227 + R-dungeon 1,298 = 1,525; 1,303 dungeons − 5 shared sets = 1,298; C5 = 2 so 1,523 marked; 540 area + 1 non-area = 541 node DIDs). Overlay/marker rules (§6) and the scenario-feed `map-region`/`markers` dependency (`scenario-feed.md` §8.3, §18.P5 T-D6/T-D7) agree. Non-blocking notes (not conditions of acceptance): (1) §6.2's back-to-front table mixes z across different parents (e.g. the quest-guide parent at z −5 versus the player marker at z −500), so the raw z column is comparable only within a parent; the quest-guide pieces are not drawn in P5 (§6.5), so this does not affect any P5 behaviour. (2) The §8 OPEN (no fallback map window defined) blocks the tier-1 world-map golden of decision 0036 §2 until the spec writer adds the rule; the implementer's provisional note covers the interim and is not a clean-room defect. These are logged as OPENs/notes in the spec, not fixes required for Accepted. |
+| **Review record** | **Review 2026-10-23** of the 2026-10-23 revision (spec-review:spec-gameplay:2 (independent session)): **passed**, CLEAN_ROOM.md §5.3 every item; contamination screen clean; MW30 hashes reproduced (`records.md` §1.5: `ns` 0x753, `ew` 0x6C7); MW32 labels reproduced by an own M1 probe of DID map 0x28000002 (`GameplayOptionDefaults` key 0x68, `Preferences_Gameplay_Option_Defaults` key 0x10000012); §8.1 rects and z-levels agree with the Accepted §3.2–§3.3 tables. Earlier: First version for decision 0024 P5 (client half only): exit criterion 1 ("the map panel renders every map region with scenario markers") and the "place lookup" theme of decision 0024 §5 P5. **Independent review 2026-10-13 (spec reviewer, dirty room, AI-assisted, not the author): passed; Accepted.** Checked against `docs/CLEAN_ROOM.md` §5.3: every statement is a functional fact (element IDs, rects, masks, counts, behaviours, math); no code, pseudo-code or decompiler-listing structure (the §3.4 inverse transform is a math formula; §4.2/§4.7 steps are plain-word behaviour); no copied prose or comments; all quoted identifiers are the install's own data labels, declared as interoperability names in the naming note; no game text (texts named by string table and token only), assets, keys, hostnames, endpoints or official-traffic dumps; every fact has a provenance row (MW1–MW29) marked OBS/BIN/Confirmed/Probable per the scheme at the top of §1, consistent with decisions 0011 and 0012; byte/rect tables give units (map pixels at design size, world units, z-levels); invariants MWI1–MWI10 are testable; unknowns are `> **OPEN:**` with explicit Tessera rules rather than guesses; decision-0034 scope item holds (offline map UI only; the BIN row records that the network protocol, login, keys, launcher and anti-tamper code were not read, decision 0004). Spot checks (reviewer's own read-only probes of the owner's install and client, 2026-10-13): **M1** — every cited record resolves in place (`map` layout 0x22000041, `ContextMenu` 0x2200007B and `radar` 0x2200003A in `client_local_English.dat`; `GameplayOptionDefaults` 0x78000006, `RegionControl` 0x7001819C and both icon tables 0x78000001/0x78000002 in `client_gamelogic.dat`; the two string tables in `client_local_English.dat`), and the `MapNoteType` mapper 0x230000D7 payload begins with its own DID then `0x230001A4`, exactly the base the spec states. **BIN** (decision 0011; read-only byte scan of the private client copy `lotroclient64.exe`, file time 2026-10-04): the version strings `4906` and change list `711794` match the provenance (PE 4906.0071.1794.4035); the pure-BIN immediates appear as the spec requires — the read AND-mask 0x9B7C7FFFFEFF0002 (MW12) twice, the 28-bit common mask 0x1B7C76E75CF00000 (MW3) once, the tooltip DIDs 0x0B0C5A53 (MW15), 0x053B8BB3 (MW19), 0x0B8B58E0 and 0x0DDC06F5 (MW22/MW15) present — while values the spec marks OBS (the near/radar filter defaults from `GameplayOptionDefaults`, the radar display mask from the radar layout) are correctly **not** code immediates, and the code references layout **keys** (0x10000041, 0x1000003A) rather than record DIDs, matching the naming note's key/record distinction. Census (§5.1–§5.4) and decision 0036 §1 are mutually consistent and the counts add up internally (node regions 74+47+40+38+25+2+1 = 227; filter-menu item buckets 127+88+4+1 nodes + 7 hidden = 227; R-node 227 + R-dungeon 1,298 = 1,525; 1,303 dungeons − 5 shared sets = 1,298; C5 = 2 so 1,523 marked; 540 area + 1 non-area = 541 node DIDs). Overlay/marker rules (§6) and the scenario-feed `map-region`/`markers` dependency (`scenario-feed.md` §8.3, §18.P5 T-D6/T-D7) agree. Non-blocking notes (not conditions of acceptance): (1) §6.2's back-to-front table mixes z across different parents (e.g. the quest-guide parent at z −5 versus the player marker at z −500), so the raw z column is comparable only within a parent; the quest-guide pieces are not drawn in P5 (§6.5), so this does not affect any P5 behaviour. (2) The §8 OPEN (no fallback map window defined) blocks the tier-1 world-map golden of decision 0036 §2 until the spec writer adds the rule; the implementer's provisional note covers the interim and is not a clean-room defect. These are logged as OPENs/notes in the spec, not fixes required for Accepted. |
 | **Implements into** | `crates/ui` (`tessera-ui` `game::worldmap`, `game::radar`, `game::map`: the map window's parts, navigation, the dungeon-map presentation, note, marker and filter-menu elements), `crates/gamedata` (the map-region census of §5 and the place-lookup index of §7.3), `crates/settings` (`tessera-settings`: the three filter values and the presentation switch of §6.9 and §3.1), `apps/client` (`tessera-client`: map panel wiring, feed markers, the `findplace` command, the census run), `apps/explorer` (optional: the census sheet of §5.4) |
 | **Companion specs** | [`game-panels.md`](game-panels.md) (**GP**: §8 minimap, §9 world map), [`map-data.md`](map-data.md) (**MD**: §3 places, §4 map notes, §4.8 selection, filters and icon tables), [`quest-journal.md`](quest-journal.md) (**QJ**: §8.3 quest markers), [`scenario-feed.md`](scenario-feed.md) (**SF**: §6.5 `marker`, `MarkerAdded`, `MarkerRemoved`), [`coordinates.md`](coordinates.md) (**CO**: §4 positions, §8 map coordinates, §9 `/loc`, §10 map pixel frame), [`wstate.md`](wstate.md) (**WS**: §11 areas, territories, regions, dungeons, `Region_Map_List`), [`ui-layout.md`](ui-layout.md) (**UL**: element trees, §9.3 drawing order, §5.9 object modes), [`ui-behaviour.md`](ui-behaviour.md) (**UB**: input routing, pointer commands), [`keymap.md`](keymap.md) (**KM**: input actions), [`lua-plugin-api.md`](lua-plugin-api.md) (**LPA**: §13.18–§13.19 stretch modes), [`chat-window.md`](chat-window.md) (**CW**: §8 command names, §10 Tessera's registry), [`walker.md`](walker.md) §6 (`--place` index), [`string-table.md`](string-table.md) (**ST**) |
 
@@ -98,6 +98,12 @@ but not proven in every case.
 | MW27 | The map window shows a note's tooltip on mouse-over only when the note's pixel is not under an unexplored cell of an active fog of war (§6.3) | BIN (q5) | Probable |
 | MW28 | An "open the map" request names the window's element and an optional node; without a node it selects the player's map (MW9), then shows the window (§4.6) | BIN (q3: the handler; its sender, likely the minimap's `MapZoom` event (GP G24), was not traced) | Probable |
 | MW29 | Of the 541 DIDs listed by nodes, 540 are area records and 1 (listed by the node of `area_rohan_west_helms_deep`) names a non-area object record; 135 of the 675 area records are listed by no node | OBS | Confirmed |
+| MW30 | The argument IDs of `CoordinateDisplay`'s entry are the name hashes (`records.md` §1.5) of `ns` (0x753) and `ew` (0x6C7), in that order in the entry; the names of 0x050F3B05 and 0x050F4F05 of the note tooltip entry were not recovered (no candidate of a coordinate vocabulary hashes to them); that entry places them, in that order, after the note's text (§6.3) | OBS (`WeenieClientMsgs` 0x250001C0 and `UI_Maps` entries: argument IDs and order only; hashes computed, 2026-10-23) | Confirmed 2026-10-23 |
+| MW31 | The off-screen images of both icon tables are 36 distinct 30 × 30 surfaces; 35 point to the right edge (east, +x of the image) with the point centred vertically, one (0x410F34EE) is a round marker narrowing downwards; none points another way (§6.8) | OBS (`UI_Map_MapNoteOffscreenImageStruct` of 0x78000001 and 0x78000002, the images decoded, 2026-10-23) | Confirmed 2026-10-23 |
+| MW32 | `GameplayOptionDefaults` is the label of key 0x68 of the `UNIQUEDB` DID map (root key 0xF; 0x28000002 here), which names the property set (0x78000006 here); the same set is also listed in the `DBPC` map (key 0x8) and under the `UNIQUEDB` label `Preferences_Gameplay_Option_Defaults` (key 0x10000012); no `WEENIECONTENT` entry names it (§6.9) | OBS (root and second-level DID maps, 2026-10-23) | Confirmed 2026-10-23 |
+| MW33 | The 22 nodes with a null `UI_Map_MenuName` (table 0, token 0) are all leaves (no child nodes), each lists 1–5 areas, in regions 2 (8 nodes), 3 (13) and 5 (1), at depths 2–4 (§7.2) | OBS (the map tree of the `map` layout, 2026-10-23) | Confirmed 2026-10-23 |
+| MW34 | Interior cells name their dungeon by `Dungeon_DID` in the cell's property set of the landblock-info record (`landblock.md` §4.4; 15,603 cells name 175 dungeons, `sound.md` §10.8.2); every dungeon record has `Dungeon_MapData` (§4.6) | OBS (through `wstate.md` §11.4, `game-panels.md` G18, `sound.md` §10.8.2) | Confirmed (cited) |
+| MW35 | The fallback map window of §8.1 (Tessera rule) | This spec | Decision |
 
 ---
 
@@ -350,8 +356,28 @@ when it has one, else the dungeon whose cell contains the position (WS §11.4), 
 map data is that dungeon's `Dungeon_MapData` (GP G18). The selection runs when the window is
 first shown in a session, on `MapZoom` (GP §8.7.5), and when the player's dungeon changes.
 
-> **OPEN:** (implementer, 2026-10-11, `apps/client` `map::ui`) The client half does not yet
-> know the player's dungeon: the session carries no `Dungeon_CurrentDungeon` for the player,
+**The player's dungeon in the client half (Tessera rule, revision 1, 2026-10-23; MW34).** The
+client half takes the player's dungeon from these sources, the first that gives one:
+
+1. a `Dungeon_CurrentDungeon` the session reports for the player (a scenario may set it as a
+   property of the player; the sandbox reports none by itself);
+2. when the player's position is in an interior cell, that cell's `Dungeon_DID`, read from
+   the cell's property set in the landblock-info record of the player's landblock (the same
+   lookup the minimap makes for its indoor map, `game-panels.md` §8.5.1);
+3. none: the player is outdoors, or the cell names no dungeon.
+
+The cell number the walker reports is enough for step 2: the client half reads the
+landblock-info record itself (asynchronously, as the minimap does; until it has loaded, the
+shown map stays as it is). The dungeon's map data is its `Dungeon_MapData` (MW34).
+
+> **Answered (spec writer, 2026-10-23; revision 1):** the input is the cell's `Dungeon_DID`
+> (step 2 above); the session need not carry `Dungeon_CurrentDungeon`. **Implemented
+> behaviour changes:** for a player in an interior cell whose cell names a dungeon, the map
+> window's player's map becomes that dungeon's `DungeonMap` (§4.6 step 2) instead of the
+> outdoor node. The implementer's text is kept as the record.
+>
+> (Was **OPEN:** implementer, 2026-10-11, `apps/client` `map::ui`.) The client half does not
+> yet know the player's dungeon: the session carries no `Dungeon_CurrentDungeon` for the player,
 > and the walker's minimap input gives the cell number but not the cell's dungeon. The map
 > window therefore shows the player's outdoor map (the node of the area of the player's
 > landblock, read from the install's block maps) and never `DungeonMap` for the player;
@@ -517,7 +543,21 @@ later read order).
    coordinates of its position; for the stable-master types the composite first argument.
    It is shown on mouse-over, except over unexplored fog (MW27).
 
-> **OPEN:** (implementer, 2026-10-11, `apps/client` `map::ui`) MW15 names the arguments
+**Argument order (revision 1, 2026-10-23; MW30).** `CoordinateDisplay`'s entry (MW19) takes
+the north–south text (latitude, the `S`/`N` part of CO §8) in 0x753 and the east–west text
+(longitude) in 0x6C7: the two IDs are the name hashes of `ns` and `ew`, and the entry writes
+them in that order. **Tessera rule** for the note tooltip (MW15), whose two argument names were
+not recovered: 0x050F3B05 takes the latitude text and 0x050F4F05 the longitude text, the order
+in which the entry writes them and in which CO §8 and `CoordinateDisplay` give coordinates. The
+client may now render both entries from the install (with the coordinate texts of CO §8) and
+falls back to the Tessera wording below only when an entry is missing.
+
+> **Answered (spec writer, 2026-10-23; revision 1):** 0x753 = latitude, 0x6C7 = longitude
+> (data); 0x050F3B05 = latitude, 0x050F4F05 = longitude (Tessera rule). **Implemented
+> behaviour may change:** the tooltip and `CoordinateDisplay` can render the install's entries
+> instead of the Tessera wording. The implementer's text is kept as the record.
+>
+> (Was **OPEN:** implementer, 2026-10-11, `apps/client` `map::ui`.) MW15 names the arguments
 > 0x050F3B05 and 0x050F4F05 as "the two map-coordinate texts" without saying which holds the
 > latitude and which the longitude (and MW19 likewise for 0x753 and 0x6C7). Until that is
 > stated the client builds a note's tooltip, and `CoordinateDisplay`'s text, in Tessera's
@@ -617,7 +657,17 @@ quest case and is kept, with the defaults below for what it leaves open.
 - **Order**: notes and feed markers behind `MinimapPlayerMarker` (Tessera rule; QJ §8.3 OPEN
   (2) confirmed).
 
-> **OPEN:** (implementer, 2026-10-11, `tessera-ui` `game::mapmarks`) Two readings were
+> **Answered (spec writer, 2026-10-23; revision 1; MW31):** (a) confirmed by the data: 35 of
+> the 36 off-screen images point east (to the image's right edge) when unturned, so turning
+> them by the angle of the direction from the player to the note points them at the note; the
+> one round image (0x410F34EE) looks the same at every angle except its downward point, which
+> it shares with the turning rule. The turn itself stays Probable (the client's rotation was
+> not traced; owner row O143). (b) Acceptable as a Tessera rule: drawing the unturned notes
+> inside the radius in the viewport's canvas shows the same pixels as giving each its own
+> surface; only the turned rim notes need one (`render.md` §6.10). No implemented behaviour
+> changes. The implementer's text is kept as the record.
+>
+> (Was **OPEN:** implementer, 2026-10-11, `tessera-ui` `game::mapmarks`.) Two readings were
 > needed. (a) The off-screen image's own direction is not stated; the implementation assumes it
 > points east unturned, as `MinimapPlayerMarker` does (GP §8.6.3), and turns it by the angle of
 > the direction from the player to the note (Probable item above). (b) MW22 gives every radar
@@ -654,7 +704,7 @@ quest case and is kept, with the defaults below for what it leaves open.
   character), initialised from `GameplayOptionDefaults` read at run time (never hard-coded);
   sorting of item labels as §4.5's Tessera rule.
 
-> **OPEN:** (implementer, 2026-10-11, `apps/client` `map::data`, `map::hub`) Two gaps the
+> (Was **OPEN:** implementer, 2026-10-11, `apps/client` `map::data`, `map::hub`; both gaps answered below.) Two gaps the
 > client half met. (a) `tessera-settings` has no keys for the three filter values,
 > `map_fullscreen`, `map_coordinates` and `map_discovery` yet (ROADMAP P5 deliverables), so the
 > client keeps them in memory for the run, initialised as this section says; a change made
@@ -668,6 +718,13 @@ quest case and is kept, with the defaults below for what it leaves open.
 > the six values in the `[Map]` section of Tessera's settings file (unset keys take the
 > install's defaults); the client lays them over the defaults and writes a filter or
 > presentation change back off the frame. Gap (b) stays open.
+>
+> **Answered (spec writer, 2026-10-23; revision 1; MW32):** gap (b): `GameplayOptionDefaults`
+> is found as the label of the root DID map's `UNIQUEDB` map (root key 0xF), entry key 0x68,
+> as `chat-window.md` and `fonts.md` already read it; look it up there by label at run time.
+> The `WEENIECONTENT` attempt finds nothing in this install and may be dropped. When no set is
+> found, the implementer's fallback (every bit of the read mask, both presentation switches
+> on) is the Tessera rule. No implemented behaviour changes on this install.
 
 ---
 
@@ -702,8 +759,16 @@ identifiers, MD §14.2), area names or dungeon names.
 | Places table | keys (9,025, MD §3) | a position and zone |
 | Coordinates | map coordinates text (CO §8) or a pasted `/loc` line (CO §9.8) | a position |
 
-> **OPEN:** (implementer, 2026-10-11, `tessera-gamedata` `map::PlaceIndex`) On this install
-> 22 of the 227 nodes store a null `UI_Map_MenuName` (string table 0, token 0; for example the
+> **Answered (spec writer, 2026-10-23; revision 1; MW33):** the 22 nodes are leaves that list
+> areas (regions 2, 3 and 5). **Tessera rule** (confirmed): they are kept as nodes (shown by
+> navigation, the player's map and place lookup through their areas), get no map-menu item
+> (an item without a label could not be told apart), have no name in the name index and an
+> empty `map-region` resolved name; a selector reaches them by element ID. What the original's
+> menu does with them was not traced. No implemented behaviour changes. The implementer's text
+> is kept as the record.
+>
+> (Was **OPEN:** implementer, 2026-10-11, `tessera-gamedata` `map::PlaceIndex`.) On this
+> install 22 of the 227 nodes store a null `UI_Map_MenuName` (string table 0, token 0; for example the
 > nodes of active elements 0x10003C53, 0x10003CCF, 0x10003D02), so 205 node names render, not
 > 227; their map-menu items (§4.5) and their `map-region` resolved names (`scenario-feed.md`
 > §8.3) are empty. Which label the original shows for such a node (an empty item, or none) is
@@ -745,7 +810,16 @@ owns it), label = the result's name or the coordinates text, no icon; one exists
 No result: one line "no place found" (Tessera wording), nothing else changes. Lookup reads the
 same index as `--place` and never writes to the install.
 
-> **OPEN:** (implementer, 2026-10-11, `apps/client` `map::data`, `map::lookup`) Two readings.
+> **Answered (spec writer, 2026-10-23; revision 1):** (a) a **per-record** target is meant:
+> the lookup's names are per record (§7.2), so the shown node, the marker and the tie rule's
+> "larger place" (that record's landblock count) all belong to the chosen record, as built;
+> `walker.md` §6's merged places stay the `--place` rule. (b) Confirmed: without the game UI
+> `findplace` posts its result lines only (one error line before the facts are loaded) and
+> shows nothing. No implemented behaviour changes. The implementer's text is kept as the
+> record.
+>
+> (Was **OPEN:** implementer, 2026-10-11, `apps/client` `map::data`, `map::lookup`.) Two
+> readings.
 > (a) `walker.md` §6 merges every area record of one name in a region into one place, but the
 > names here are per record (several area records share a name and region on this install),
 > so the shown node and a by-name marker can belong to different records. The client applies
@@ -776,8 +850,50 @@ same index as `--place` and never writes to the install.
 | Feed markers | none | §6.7 |
 | Place search | none | §7.3 |
 
-> **OPEN:** (implementer, 2026-10-11, P5 planning) No fallback map window is defined for runs
-> without an install. Decision 0036 §2 asks for a committed tier-1 golden of "Tessera's map
+<a id="s8-1"></a>
+### 8.1 The fallback map window (Tessera rule, revision 1, 2026-10-23; MW35)
+
+For runs without an install and for the committed tier-1 goldens of decision 0036 §2, the map
+window is built from code-made elements that carry the element IDs of §3.2–§3.3 (from the
+client's vocabulary; never read from an install in this case) at the rects and z-levels of the
+§3.2 table:
+
+1. **`MapWindow`** (0, 0, 1,024, 768), z −1,500, holding `MapField`, `MapDecoration`
+   (−73, 0, 1,168, 768; z −1,600; Tessera's own or CC0 frame art, drawn with alpha) and
+   `MapButtonsParent` (985, 2, 39, 16; z −3,000) with `ToggleMapFullscreenCollapse` and
+   `Toggle_Map_Panel` at (0, 0) and (20, 0), 16 × 16.
+2. **`MapField`** holds `MapPadding` (z −1,400, the background art), `MapBackground` and
+   `MapMenuScaleParent` (52, 18, 800, 25) with `FilterMenu` (0, 0, 150, 25) and `MapMenu`
+   (151, 0, 150, 25), labelled in Tessera's own short words, and `StablemasterButton`
+   hidden.
+3. **`MapBackground`** holds `MapQuestObjectiveIndicatorsParent` (hidden), `CoordinateDisplay`
+   (52, 730, 450, 25; z −10) and `QuestGuideOptionField` (hidden). It has **no object mode**
+   (it is drawn in `MapWindow`'s canvas at the design size), unlike the install's (mode 1),
+   so that a golden can capture it.
+4. **`MapPanel`** (the windowed root) is a frame of 1,038 × 802 with a title bar (its title in
+   Tessera's words), `ToggleMapFullscreenExpand` and `Toggle_Map_Panel`, and
+   `MapPanelPadding` at (5, 26); no resize bars.
+5. **Nodes**: a node's active element is a plain field of the node's pixel frame without
+   child-map buttons; `DungeonMap` (z −500) holds `DungeonMap_ImageField` (112, 84, 800, 600,
+   Stretch) and `DungeonMap_OverlayField` (0, 0, 1,024, 768) with Tessera's frame art;
+   `MapPlayerMarker` is 28 × 28, z −500, Stretch, with Tessera's marker art. Notes use
+   `MapNoteTemplate`'s size (30 × 30).
+6. **Data**: without an install there is no map tree, no georeference and no icon table; the
+   window shows its frame, the empty map background and the controls. A tree, its images, a
+   georeference and options given by a caller (the tier-1 golden's synthetic one-node tree)
+   are test data, not part of the fallback.
+
+The controllers of §4–§6 attach to this tree exactly as to the install's. The committed tier-1
+golden `p5_map_window` captures this window with a synthetic tree and is normative from this
+revision on (no longer provisional).
+
+> **Answered (spec writer, 2026-10-23; revision 1):** the rule is §8.1; it adopts the
+> provisional tree of the implementer note below without change, including the
+> `MapBackground` object-mode deviation. No implemented behaviour changes. The texts below are
+> kept as the record.
+>
+> (Was **OPEN:** implementer, 2026-10-11, P5 planning.) No fallback map window is defined for
+> runs without an install. Decision 0036 §2 asks for a committed tier-1 golden of "Tessera's map
 > window with a generated map image, notes and feed markers … and no install", and the travel
 > and instance windows each have a Tessera fallback window, but this spec gives the map window
 > none: no code-made element tree (`MapWindow`, the map field, the map background with the
@@ -921,11 +1037,12 @@ change log.
    rotation (Probable).
 8. §3.4: the `StablemasterButton` game test (MW21).
 9. §6.9: collation of the filter-menu labels.
-10. §8: a fallback map window for runs without an install (implementer OPEN, 2026-10-11).
+10. §8: answered 2026-10-23 (§8.1, the fallback map window).
 11. §4.5, §6.9: the popup presentation of the map and filter menus (implementer OPEN,
     2026-10-11).
-12. §6.8: the off-screen image's direction and object mode 1 for the rim notes only
-    (implementer OPEN, 2026-10-11).
+12. §6.8: answered 2026-10-23 (the images point east, MW31; rim-only surfaces accepted).
+13. §6.3: the names of the note tooltip's two coordinate arguments (Tessera rule given,
+    2026-10-23).
 
 ---
 
@@ -953,3 +1070,5 @@ For `docs/checklists/owner-observations.md` (numbers from O140, reconciled at me
 |---|---|---|
 | 2026-10-11 | First version (status Review) for decision 0024 P5: the map window's parts and presentations, navigation, dungeon-map presentation, the map-region census definition and counts, overlay order and look on the world map and the minimap, filter controls and defaults, feed-marker rules, place lookup. OBS and BIN (client 4906.0071.1794.4035, questions q1–q9). Additive notes pointing here added to `game-panels.md` §8.8, §9.2, §9.4, §9.5 and `map-data.md` §4.8.6, §15 item 1. | Spec writer (dirty room) |
 | 2026-10-13 | Independent review against CLEAN_ROOM.md §5.3: **passed**; status Review → Accepted. No fact changed (review-only commit). Record in the header; spot checks were the reviewer's own read-only M1 probes of the install and a BIN byte scan of the private client copy (decision 0011). Two non-blocking notes recorded in the header (§6.2 cross-parent z; §8 fallback-window OPEN still blocks decision 0036 §2's tier-1 world-map golden). | Spec reviewer (dirty room) |
+| 2026-10-23 | Revision 1 (spec writer, dirty room; own M1 probes of the install: string-table argument IDs and name hashes, the 36 off-screen images, the DID maps, the map tree): §4.6 the client half's dungeon input (cell `Dungeon_DID`), §6.3 argument order (MW30, data for `CoordinateDisplay`, Tessera rule for the note tooltip), §6.8 (a) and (b) (MW31), §6.9 (b) `GameplayOptionDefaults` by `UNIQUEDB` label (MW32), §7.2 null menu names (MW33), §7.3 per-record targets, new §8.1 fallback map window (MW35; the tier-1 golden `p5_map_window` is normative), §12 items 10, 12, 13; rows MW30–MW35. Status Accepted → Revised, awaiting independent review. **Implemented behaviour that changes:** §4.6 (indoors, the player's dungeon map); §6.3 may render the install's entries. | Spec writer (dirty room) |
+| 2026-10-23 | Independent review (spec-review:spec-gameplay:2 (independent session)) of the 2026-10-23 revision: **passed**, CLEAN_ROOM.md §5.3 every item; status Revised → Accepted. Header status and review record only; no other text changed; no implemented behaviour changes beyond those the revision row states. | Spec reviewer (dirty room) |

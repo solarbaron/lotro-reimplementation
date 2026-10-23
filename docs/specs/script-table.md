@@ -4,11 +4,11 @@
 
 | | |
 |---|---|
-| **Status** | Accepted (2026-10-14, narrow review of the header-only revision passed). Before: Revised (2026-10-14, header-only revision: the **Last updated** field refreshed after the non-blocking note of the 2026-10-11 review; no fact, rule or section changed). Before: Accepted (2026-10-11; independent review of the P2 (BIN8) revision, commit 7b14f27, passed; see the review record). Before: Revised (2026-10-10, P2 spec writer: new §9.1 (StoryHook and Execute nodes at run time, for `combat-visuals.md`), §9 hook bullet, §4.3 Execute payload row, new BIN8 and OBS5 rows, T44–T45; awaiting independent review). Before: Accepted (2026-10-08, narrow review of the BIN7 revision passed) |
-| **Last updated** | 2026-10-14 (header only; last content change 2026-10-10, BIN8) |
+| **Status** | **Accepted** (2026-10-23, independent review 2026-10-23 by spec-review:spec-gameplay:2 (independent session), a session that wrote no part of the 2026-10-23 revision: passed CLEAN_ROOM.md §5.3, every item; contamination screen clean; see the review record). Before: **Revised** (2026-10-23: §6.3, §7.8 point 1 and the §8.3 table brought in line with `appearance.md` §7.4.1 rule 4, row T46; awaiting independent review). Before: Accepted (2026-10-14, narrow review of the header-only revision passed). Before: Revised (2026-10-14, header-only revision: the **Last updated** field refreshed after the non-blocking note of the 2026-10-11 review; no fact, rule or section changed). Before: Accepted (2026-10-11; independent review of the P2 (BIN8) revision, commit 7b14f27, passed; see the review record). Before: Revised (2026-10-10, P2 spec writer: new §9.1 (StoryHook and Execute nodes at run time, for `combat-visuals.md`), §9 hook bullet, §4.3 Execute payload row, new BIN8 and OBS5 rows, T44–T45; awaiting independent review). Before: Accepted (2026-10-08, narrow review of the BIN7 revision passed) |
+| **Last updated** | 2026-10-23 (§6.3, §7.8, §8.3: scriptlet parameters reach node fields only through scriptlet-driven pairs). Before: 2026-10-14 (header only; last content change 2026-10-10, BIN8) |
 | **Author role** | Spec writer (dirty room) |
 | **Reviewer** | Spec reviewer (dirty room, a different session from the writer) |
-| **Review record** | Re-review 2026-10-07 of the revision after review: **passed**, Accepted. Review 2026-10-08 of the BIN5 (2026-10-07) and BIN6 (2026-10-08) revisions: **passed**, Accepted (two non-blocking notes). Full record in the review log (decision 0018). Writer's revision 2026-10-08 (non-blocking notes, BIN7). Narrow review 2026-10-08 of BIN7, T41, T42, §7.5 step 2, §8.2 step 3: **passed**, Accepted. Independent review 2026-10-11 of the P2 revision (BIN8; commit 7b14f27 on branch p2: header, §1 BIN8, OBS5, T44, T45, §4.3 Execute payload row, §9 hook bullet, new §9.1, change log), by a separate dirty-room session (AI-assisted; neither its author nor an implementer), checked against CLEAN_ROOM.md §5.3: **passed**, Accepted. Functional facts and pointers only; callback labels are DID-map labels needed for interoperability; BIN8 names build, question and why M1–M3 were not enough. Spot-check, own read-only probe 2026-10-11: T45 reproduced exactly (Execute callbacks 625, 125, 88 none, 64, 10, 4, 2, 2, 1, 1, 1; result ports (`SCP_GetUpcomingTargets_Result`, 1) 623, (…, 0) 4, (`ExecuteScript_ArrayContains_Param_Result`, 0) 2), StoryHook types 4,130 / 2,480. T44 (BIN only) not re-derived. Non-blocking: the **Last updated** field still reads 2026-10-08. Narrow review 2026-10-14 of the header-only revision (commit c3e20b3 on branch specfix: Status, **Last updated**, one change-log row), by a session that wrote no part of this spec: **passed**, Accepted. The diff touches only the header and the change log; no fact, rule or section changed; the 2026-10-11 non-blocking note is resolved. |
+| **Review record** | **Review 2026-10-23** of the 2026-10-23 revision (spec-review:spec-gameplay:2 (independent session)): **passed**, CLEAN_ROOM.md §5.3 every item; contamination screen clean; T46 consistent with `skeleton-anim.md` K31 and `appearance.md` §15; the wider run is marked Reported. Earlier: Re-review 2026-10-07 of the revision after review: **passed**, Accepted. Review 2026-10-08 of the BIN5 (2026-10-07) and BIN6 (2026-10-08) revisions: **passed**, Accepted (two non-blocking notes). Full record in the review log (decision 0018). Writer's revision 2026-10-08 (non-blocking notes, BIN7). Narrow review 2026-10-08 of BIN7, T41, T42, §7.5 step 2, §8.2 step 3: **passed**, Accepted. Independent review 2026-10-11 of the P2 revision (BIN8; commit 7b14f27 on branch p2: header, §1 BIN8, OBS5, T44, T45, §4.3 Execute payload row, §9 hook bullet, new §9.1, change log), by a separate dirty-room session (AI-assisted; neither its author nor an implementer), checked against CLEAN_ROOM.md §5.3: **passed**, Accepted. Functional facts and pointers only; callback labels are DID-map labels needed for interoperability; BIN8 names build, question and why M1–M3 were not enough. Spot-check, own read-only probe 2026-10-11: T45 reproduced exactly (Execute callbacks 625, 125, 88 none, 64, 10, 4, 2, 2, 1, 1, 1; result ports (`SCP_GetUpcomingTargets_Result`, 1) 623, (…, 0) 4, (`ExecuteScript_ArrayContains_Param_Result`, 0) 2), StoryHook types 4,130 / 2,480. T44 (BIN only) not re-derived. Non-blocking: the **Last updated** field still reads 2026-10-08. Narrow review 2026-10-14 of the header-only revision (commit c3e20b3 on branch specfix: Status, **Last updated**, one change-log row), by a session that wrote no part of this spec: **passed**, Accepted. The diff touches only the header and the change log; no fact, rule or section changed; the 2026-10-11 non-blocking note is resolved. |
 | **Implements into** | `crates/formats` (0x07 and 0x0C decoders: framing of every node kind, full animation-node model, skip rules for everything else), `crates/anim` (layered clip playback driven by the node fields of §6), a small graph evaluator for clip selection (§8, §11; `crates/anim` or a new `script` module of `crates/entity`), `fuzz/` (one target for each of the two record types, §12), `apps/dattool` / `apps/explorer` (table and scriptlet inspection, animation browser) |
 | **Companion specs** | [`records.md`](records.md) §1 (VLE, TSize, strings, StringInfo; this spec corrects P10 and the 0x0C row of §2.1, see §14). [`property-system.md`](property-system.md) §3–§5 (value encodings, property sets, entries with and without PID echo) and §8–§9 (enum mappers, DB-object types). [`havok-data.md`](havok-data.md) §2.3 (clip envelope: duration, track count, track weights), §4.4 (annotation tracks). [`skeleton-anim.md`](skeleton-anim.md) §2.2 (race table → avatar entity), §3.2 (positional binding), §7 (root motion, treadmill speeds). [`appearance.md`](appearance.md) §7 (NPC-like figures, idle properties). [`entity-descriptor.md`](entity-descriptor.md) §4.3 (weenie objects). Sound, VFX and camera node semantics are a later part of this spec (M6). |
 
@@ -133,6 +133,7 @@ Legend:
 | T43 | A held clip whose played length is 0 or less (a one-shot held node whose clip lasts at most 1/30 s) is held at local time 0: the setter limits the time to [0, played length] with the lower limit applied last, and the middleware's time step raises a negative local time to 0 and advances nothing when the played length is 0 (§6.7) | BIN6 | Confirmed 2026-10-08 (BIN only) |
 | T44 | A StoryHook node hands its type and the run's `StorySystem_StoryID` to the performing entity's combat-presentation component and completes at once; the component counts the events per story and type and releases the strikes of that number (§9.1) | BIN8 | Confirmed (BIN) |
 | T45 | Execute nodes: callbacks census; the payload of an Execute result port (type 5) is the PID of the callback's result property and the value that selects the port (§4.3, §9.1) | OBS5 | Confirmed (2026-10-10) |
+| T46 | Under `appearance.md` §7.4.1 rule 4 (a Scriptlet node's parameters reach an inner node's field only through that node's scriptlet-driven pairs) the walk, run and walk-back clips of the 14 avatars of §8.3 are unchanged and their displacements are unchanged except three: DwarfStoutAxe walk 0x05007A0D (1.667 m over 0.833 s, 2.00 m/s) and run 0x05007A14 (4.2 m over 0.7 s, 6.00 m/s), and RiverHobbit F walk back 0x0500159E (−4.667 m over 1.816 s, −2.57 m/s), which showed no displacement before (§6.3, §8.3) | OBS (the repository's clip resolver, which applies rule 4, over the race table's avatars, 2026-10-23); the wider run over 206,374 starts is the implementer's, reported in `appearance.md` §15 | Confirmed 2026-10-23 (avatars); Reported (wider run) |
 
 ---
 
@@ -651,9 +652,22 @@ the right, y forward, z up**, in metres. Evidence:
 - strafe bindings carry ±x only, diagonal bindings equal x and y, backward bindings −y.
 
 So the clip's **natural speed** is taken as |displacement| / duration. A Scriptlet node's
-parameter set (§7.8) usually supplies the displacement for the clip it invokes (26,132
-parameter sets carry it) and then overrides the node's own value (they differ in 12,328 of
-26,391 pairs examined).
+parameter set (§7.8) often carries a displacement for the clips it invokes (26,132 parameter
+sets carry it), but it reaches an animation node **only through a scriptlet-driven pair** of
+that node (`appearance.md` §7.4.1 rules 1–4; 4,812 pairs on
+`AnimationScript_LocomotionDisplacement`, A61 there); without such a pair the node keeps its
+own stored value (5,614 cases, A61). (Revised 2026-10-23: the earlier reading, that the
+parameter set overrides the node's own value by PID, is superseded by rule 4.)
+
+**Effect of rule 4 (T46).** It changes displacements, not clip choices: over the 14 avatars of
+§8.3 no clip changed and three displacements appear (DwarfStoutAxe walk 2.00 m/s and run
+6.00 m/s, RiverHobbit F walk back −2.57 m/s); over 206,374 starts the implementer's run found
+no primary clip changed on layers 10 and 20, displacements changed in 429 (state, layer)
+cells of 389 starts, two objects choose another layer-15 idle clip and eight gain a layer-10
+idle clip through a `ScriptletScript_File` pair (Reported, `appearance.md` §15). The original
+uses the displacement only for its animation component's locomotion velocity
+(`skeleton-anim.md` §7.4) and never matches a clip's rate to the ground speed; Tessera's own
+speed matching takes the natural speeds that rule 4 gives.
 
 **Entity scale (T31, BIN3).** When a clip starts, the client multiplies its displacement by
 the mean of the entity's three scale components ((*sx* + *sy* + *sz*) / 3; 1 for an entity
@@ -1122,8 +1136,13 @@ dictionary default and the value of nearly every Run node) is OPEN (§15).
 A Scriptlet node runs the root nodes of the 0x0C record `ScriptletScript_File`, in a scope
 where:
 
-1. its parameter **property set** overrides, for every node inside, the field bound to the
-   same PID (for example `AnimationScript_LocomotionDisplacement`, `TimerScript_SpeedMultiplier`);
+1. its parameter **property set** is what the scriptlet-driven pairs of the nodes inside read
+   (`appearance.md` §7.4.1 rules 1–4): a node's field takes a parameter only through such a
+   pair of that node, and reads only the invoking Scriptlet node's own set (rule 3); no field
+   is overridden by PID (rule 4). (Revised 2026-10-23: this point first said that the set
+   overrides, for every node inside, the field bound to the same PID, for example
+   `AnimationScript_LocomotionDisplacement` and `TimerScript_SpeedMultiplier`; that reading is
+   superseded. Its effect on locomotion displacements is in §6.3.)
 2. each of its Default ports (payload: a parameter **name**) binds that name to the port's
    children.
 
@@ -1255,9 +1274,9 @@ natural speeds (§6.3):
 | Beorning F 0x47007005 | 0x07001D86 | 0x07000471 | as Human F | | | |
 | HighElf M 0x4700806C | 0x0700204E | 0x07002048 | 0x050017FE | 0x050093BC, 2.02 | 0x050093DD, 8.79 | 0x0500185D, −2.57 |
 | HighElf F 0x47008071 | 0x07002053 | 0x07002060 | 0x05001804 | 0x050093A0, 1.82 | 0x050093DB, 6.50 | 0x05001AF0, −2.57 |
-| StoutAxe Dwarf 0x4700979A | 0x0700247A | 0x07002479 | 0x05007A13 (4.0 s) | 0x05007A0D (no displacement) | 0x05007A14 (none) | 0x05007A24 (none) |
+| StoutAxe Dwarf 0x4700979A | 0x0700247A | 0x07002479 | 0x05007A13 (4.0 s) | 0x05007A0D, 2.00 (T46) | 0x05007A14, 6.00 (T46) | 0x05007A24 (none) |
 | RiverHobbit M 0x4700CEA3 | 0x07002F15 | 0x07002F1C | 0x05008EE8 (5.1 s) | 0x05008EA9, 2.00 | 0x05008EA1, 6.50 | 0x0500145E, −2.57 |
-| RiverHobbit F 0x4700CEA4 | 0x07002F16 | 0x07002F1A | 0x05008EE7 (5.1 s) | 0x05008EB6, 2.00 | 0x05008EAD, 6.50 | 0x0500159E (none) |
+| RiverHobbit F 0x4700CEA4 | 0x07002F16 | 0x07002F1A | 0x05008EE7 (5.1 s) | 0x05008EB6, 2.00 | 0x05008EAD, 6.50 | 0x0500159E, −2.57 (T46) |
 
 Facts about this table:
 
@@ -2122,3 +2141,5 @@ table). Points for the spec owner:
 | 2026-10-10 (BIN8) | header; §1 (new BIN8, OBS5, T44, T45); §4.3 (Execute payload row); §9 (gameplay-hook bullet); new §9.1 | P2 revision for `combat-visuals.md`: StoryHook nodes at run time (they release strikes of the performer's story, BIN8), the Execute callback census and the meaning of the Execute result-port payload (OBS5), the Beam port. Status Accepted → Revised, awaiting review. The former sentence "in an offline client they are no-ops, and in M7 they become messages to Tessera's server" is replaced. | Spec writer (dirty room) |
 | 2026-10-14 | header | Non-blocking note of the independent review of 2026-10-11: **Last updated** now gives the date of this edit and of the last content change (2026-10-10, BIN8). No fact, rule or section changed; no implemented behaviour changes. Status Accepted → Revised for a reviewer's confirmation. | Spec writer (dirty room) |
 | 2026-10-14 | header | Narrow review of the header-only revision (independent spec reviewer): passed, status Accepted. No content change; no implemented behaviour changes. | Spec reviewer (dirty room) |
+| 2026-10-23 | header, §1 (T46), §6.3, §7.8, §8.3 | Revision answering the narrow OPEN of `appearance.md` §15 (for this spec and `skeleton-anim.md`): §7.8 point 1 and §6.3 now follow `appearance.md` §7.4.1 rule 4 (parameters reach node fields only through scriptlet-driven pairs, never by PID); §6.3 states the effect on locomotion displacement (no clip choice changes, three avatar displacements appear, the wider implementer run reported); §8.3 table: DwarfStoutAxe walk 2.00 and run 6.00 m/s, RiverHobbit F walk back −2.57 m/s (own resolver probe, T46). Status Accepted → Revised, awaiting independent review. **No implemented behaviour changes** (the implementation already follows rule 4). | Spec writer (dirty room) |
+| 2026-10-23 | header | Independent review (spec-review:spec-gameplay:2 (independent session)) of the 2026-10-23 revision: **passed**, CLEAN_ROOM.md §5.3 every item; status Revised → Accepted. Header status and review record only; no other text changed; no implemented behaviour changes beyond those the revision row states. | Spec reviewer (dirty room) |

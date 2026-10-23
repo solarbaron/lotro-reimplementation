@@ -35,8 +35,10 @@ recorded. Descriptions are our own words.
   hidden, the slots it does not touch keep their previous mesh, no body skin pokes through,
   dye default (`Item_ClothingColor`) applied.
 - Checked per held row: the item is in the expected location, its grip in the hand bone's
-  frame (blade or long axis along the forearm direction for in-hand locations), and it follows
-  the bone through idle, walk and run.
+  frame (for in-hand locations the blade or long axis leaves the fist along the item's +Y,
+  forward in the bind pose and so **across** the forearm, `skeleton-anim.md` §8.3; corrected
+  2026-10-23 from "along the forearm direction"), and it follows the bone through idle, walk
+  and run.
 
 ## Result
 
@@ -128,8 +130,12 @@ Notes:
 3. **Grip axis (H rows)**: every in-hand item sits at its location's bone and follows it;
    its long axis leaves the fist along the item's +Y, which `skeleton-anim.md` §8.3 gives as
    *forward* in the bind pose, that is across the forearm (the arms point sideways there).
-   The method above asks for the long axis *along* the forearm. **OPEN** (reported): which
-   of the two is meant; the rows pass on the location, bone and following checks.
+   **Answered (spec writer, 2026-10-23):** across the forearm is expected. On all eleven
+   player setups the weapon holders' +Y makes 85.5°–90° with the elbow-to-wrist direction in
+   the bind pose (`skeleton-anim.md` §8.3, row K32), as a fist holds a sword; the method's
+   "along the forearm" was wrong and is corrected above. The H rows pass on this check as
+   recorded (the long axis leaves the fist along +Y). (Was **OPEN**, reported: the method
+   asked for the long axis *along* the forearm.)
 4. Clip DIDs of the B rows equal the table of `script-table.md` §8.3 for all 14 bodies.
 5. **N rows** were checked in the client's sandbox backend (world walker), not in the
    character viewer: `apps/client/tests/npc_spots_real_data.rs` (release, headless) spawns

@@ -236,6 +236,9 @@ struct Resolution {
     order: Vec<(ContextId, Band)>,
     /// Whether the band held an `opaque_keys` entry (the band end, §3.3).
     opaque_keys: bool,
+    /// Whether the band held an `opaque_keys` entry that is not kept
+    /// ([`InputMapper::band_push_keeping_holds`]).
+    strict_opaque_keys: bool,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -243,6 +246,11 @@ struct HeldButton {
     button: Button,
     /// The UI-owned mark (§7.2.2).
     marked: bool,
+    /// Whether the band had an `opaque_keys` entry when the press was
+    /// resolved: a release of a button pressed before every band end goes
+    /// past a band end made of kept entries only
+    /// ([`InputMapper::band_push_keeping_holds`]).
+    under_band_end: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -284,6 +292,21 @@ pub struct InputMapper {
     serial: u64,
     /// The UI band, in band order (§3.2).
     band: Vec<BandEntry>,
+    /// Entries of [`band`](Self::band) made by
+    /// [`band_push_keeping_holds`](Self::band_push_keeping_holds): they
+    /// ended no game-band hold, and the "first entry" rules of §3.3 for a
+    /// later push are judged without them.
+    kept: Vec<BandEntry>,
+    /// Modifier keys held when a keeping push gave the band its first
+    /// barrier (an `opaque_keys` entry or an opaque context), until their
+    /// release: game-band modifier holds behind kept barriers are evaluated
+    /// with these modifiers only (Tessera rule, `ui-widgets.md` §18.4).
+    carried: Vec<Button>,
+    /// The window system's modifier report at the push that set
+    /// [`carried`](Self::carried), narrowed by every later report: those
+    /// modifiers are carried too while the report keeps them (§7.4 counts
+    /// the report as held modifiers).
+    carried_reported: Modifiers,
     held: Vec<HeldButton>,
     key_mods: Modifiers,
     reported_mods: Modifiers,
@@ -334,6 +357,9 @@ impl InputMapper {
             game: Vec::new(),
             serial: 0,
             band: Vec::new(),
+            kept: Vec::new(),
+            carried: Vec::new(),
+            carried_reported: Modifiers::empty(),
             held: Vec::new(),
             key_mods: Modifiers::empty(),
             reported_mods: Modifiers::empty(),
@@ -536,7 +562,7 @@ impl InputMapper {
         };
         if def.band == Band::Ui {
             let priority = def.priority;
-            self.push_entry(ctx, 0, priority);
+            self.push_entry(ctx, 0, priority, false);
             return;
         }
         let opaque = def.opaque;
@@ -605,7 +631,47 @@ impl InputMapper {
     /// refused with a log; an identical push changes nothing. Holds this
     /// ends (§3.3) report Ends through the end queue.
     pub fn band_push(&mut self, ctx: ContextId, owner: u64, priority: i32) {
-        self.push_entry(ctx, owner, priority);
+        self.push_entry(ctx, owner, priority, false);
+    }
+
+    /// Push the UI-band entry (`ctx`, `owner`, `priority`) like
+    /// [`band_push`](Self::band_push), but end no **game-band** hold: holds
+    /// from before stay held until their own release (`ui-widgets.md`
+    /// §18.4, revision 5 answer 1: a modal dialog appearing ends no hold).
+    ///
+    /// Everything else of the push is as for `band_push`: the entry's
+    /// `opaque_keys` band end (§3.3) applies to every press from the next
+    /// raw event, so a key pressed now reaches no game-band context, also
+    /// none without a command name; the pending sequence is dropped as
+    /// §3.2 says; holds of UI-band contexts consulted after an `opaque`
+    /// context's first entry end. Tessera rules for what the kept entry
+    /// changes elsewhere:
+    ///
+    /// - the "first `opaque_keys` entry" and "first entry of an `opaque`
+    ///   context" of §3.3 are judged without kept entries, so a later
+    ///   ordinary push (a text field taking the focus) still ends the
+    ///   game-band holds from before;
+    /// - game-band modifier holds (§7.4) behind kept barriers only are
+    ///   evaluated with the modifiers of the modifier keys that were held
+    ///   when the first barrier was pushed and are still held, so a
+    ///   modifier hold from before stays until its own release and a
+    ///   modifier pressed later holds nothing in the game band; the
+    ///   modifiers the window system reported at that push count as carried
+    ///   while every later report keeps them (§7.4 counts the report);
+    /// - a kept-only `opaque` UI-band context stops the modifier-hold
+    ///   evaluation of the UI-band contexts after it (§7.4), while the game
+    ///   band is still evaluated with the carried modifiers;
+    /// - at the release of a key or pad button, release-class bindings
+    ///   (§7.3.1) stop at a band end made of kept entries only when that
+    ///   button's press was resolved under a band end; the release of a
+    ///   button pressed before every band end goes past it, as its press did
+    ///   (`ui-widgets.md` §18.4, pairing rule). A band end with an ordinary
+    ///   `opaque_keys` entry stops every such release as §3.3 says.
+    ///
+    /// An identical push changes nothing (an existing entry keeps its
+    /// kind); a pop removes kept entries as any other.
+    pub fn band_push_keeping_holds(&mut self, ctx: ContextId, owner: u64, priority: i32) {
+        self.push_entry(ctx, owner, priority, true);
     }
 
     /// Pop every UI-band entry of (`ctx`, `owner`), at every priority
@@ -666,6 +732,7 @@ impl InputMapper {
         Resolution {
             order: self.order(),
             opaque_keys: self.band_has_opaque_keys(),
+            strict_opaque_keys: self.band_has_strict_opaque_keys(),
         }
     }
 
@@ -699,7 +766,56 @@ impl InputMapper {
             .any(|e| self.def(e.context).is_some_and(|d| d.opaque_keys))
     }
 
-    fn push_entry(&mut self, ctx: ContextId, owner: u64, priority: i32) {
+    /// Whether `e` was made by a keeping push.
+    fn is_kept(&self, e: &BandEntry) -> bool {
+        self.kept.contains(e)
+    }
+
+    /// Whether the band holds an `opaque_keys` entry that is not kept.
+    fn band_has_strict_opaque_keys(&self) -> bool {
+        self.band
+            .iter()
+            .any(|e| !self.is_kept(e) && self.def(e.context).is_some_and(|d| d.opaque_keys))
+    }
+
+    /// Whether the band holds a barrier: an `opaque_keys` entry or an entry
+    /// of an `opaque` context.
+    fn band_has_barrier(&self) -> bool {
+        self.band.iter().any(|e| {
+            self.def(e.context)
+                .is_some_and(|d| d.opaque_keys || d.opaque)
+        })
+    }
+
+    /// Whether every entry of the UI-band context `c` is kept (none is
+    /// ordinary). False for a game-band context.
+    fn kept_only(&self, c: ContextId) -> bool {
+        self.band_of(c) == Some(Band::Ui)
+            && self
+                .band
+                .iter()
+                .filter(|e| e.context == c)
+                .all(|e| self.is_kept(e))
+    }
+
+    /// The modifiers of the carried modifier keys still held, and the
+    /// carried modifiers the window system still reports.
+    fn carried_mods(&self) -> Modifiers {
+        self.carried
+            .iter()
+            .filter(|b| self.is_held(**b))
+            .fold(self.carried_reported & self.reported_mods, |m, b| {
+                m | b.modifier()
+            })
+    }
+
+    /// Forget the carried modifiers.
+    fn clear_carried(&mut self) {
+        self.carried.clear();
+        self.carried_reported = Modifiers::empty();
+    }
+
+    fn push_entry(&mut self, ctx: ContextId, owner: u64, priority: i32, keep: bool) {
         let Some(def) = self.def(ctx) else {
             tracing::debug!(?ctx, "band push of an unknown context ignored");
             return;
@@ -721,35 +837,73 @@ impl InputMapper {
             return;
         }
         let had_opaque_keys = self.band_has_opaque_keys();
+        let had_strict_opaque_keys = self.band_has_strict_opaque_keys();
+        let had_barrier = self.band_has_barrier();
         let was_present = self.band.iter().any(|e| e.context == ctx);
+        let was_present_strict = self
+            .band
+            .iter()
+            .any(|e| e.context == ctx && !self.is_kept(e));
         let pos = self
             .band
             .iter()
             .position(|e| e.priority <= priority)
             .unwrap_or(self.band.len());
-        self.band.insert(
-            pos,
-            BandEntry {
-                context: ctx,
-                owner,
-                priority,
-            },
-        );
-        if opaque_keys && !had_opaque_keys {
-            // §3.3: the first `opaque_keys` entry ends the game-band holds
-            // whose last stroke has a key or a pad button.
-            let game: Vec<ContextId> = self.game.iter().map(|(c, _)| *c).collect();
-            self.end_holds(|h| {
-                game.contains(&h.context) && h.buttons.iter().any(|b| is_key_or_pad(*b))
-            });
-            self.drop_pending_after(pos);
+        let entry = BandEntry {
+            context: ctx,
+            owner,
+            priority,
+        };
+        self.band.insert(pos, entry);
+        if keep {
+            self.kept.push(entry);
+            if !had_barrier && (opaque_keys || opaque) {
+                // The modifiers that may keep game-band modifier holds from
+                // before alive (`band_push_keeping_holds`).
+                self.carried = self
+                    .held
+                    .iter()
+                    .map(|h| h.button)
+                    .filter(|b| !b.modifier().is_empty())
+                    .collect();
+                self.carried_reported = self.reported_mods;
+            }
         }
-        if opaque && !was_present {
-            // §3.3: the first entry of an opaque context ends the holds of
-            // every context consulted after it.
-            let after = self.contexts_after(pos, ctx);
-            self.end_holds(|h| after.contains(&h.context));
-            self.drop_pending_after(pos);
+        if opaque_keys {
+            if !keep && !had_strict_opaque_keys {
+                // §3.3: the first `opaque_keys` entry ends the game-band holds
+                // whose last stroke has a key or a pad button (kept entries do
+                // not count as first).
+                let game: Vec<ContextId> = self.game.iter().map(|(c, _)| *c).collect();
+                self.end_holds(|h| {
+                    game.contains(&h.context) && h.buttons.iter().any(|b| is_key_or_pad(*b))
+                });
+                self.clear_carried();
+            }
+            if !had_opaque_keys {
+                self.drop_pending_after(pos);
+            }
+        }
+        if opaque {
+            // The context is consulted at its first entry (§3.2).
+            let at = self.first_entry(ctx).unwrap_or(pos);
+            let after = self.contexts_after(at, ctx);
+            if !keep && !was_present_strict {
+                // §3.3: the first entry of an opaque context ends the holds of
+                // every context consulted after it.
+                self.end_holds(|h| after.contains(&h.context));
+                self.clear_carried();
+            } else if keep && !was_present {
+                // A keeping push ends only the UI-band holds after it.
+                let ui: Vec<ContextId> = after
+                    .into_iter()
+                    .filter(|c| self.band_of(*c) == Some(Band::Ui))
+                    .collect();
+                self.end_holds(|h| ui.contains(&h.context));
+            }
+            if !was_present {
+                self.drop_pending_after(at);
+            }
         }
     }
 
@@ -788,6 +942,11 @@ impl InputMapper {
         let before = self.band.len();
         self.band
             .retain(|e| !(e.context == ctx && e.owner == owner));
+        self.kept
+            .retain(|e| !(e.context == ctx && e.owner == owner));
+        if !self.band_has_barrier() {
+            self.clear_carried();
+        }
         if self.band.len() == before || self.band.iter().any(|e| e.context == ctx) {
             return;
         }
@@ -803,7 +962,7 @@ impl InputMapper {
                 context,
                 owner,
                 priority,
-            } => self.push_entry(context, owner, priority),
+            } => self.push_entry(context, owner, priority, false),
             BandRequest::Pop { context, owner } => self.pop_entry(context, owner),
         }
     }
@@ -931,7 +1090,11 @@ impl InputMapper {
                     self.absolute[axis.index()] = value.clamp(-1.0, 1.0);
                 }
             }
-            RawEvent::Modifiers(m) => self.reported_mods = m,
+            RawEvent::Modifiers(m) => {
+                self.reported_mods = m;
+                // A carried modifier the report drops is released for good.
+                self.carried_reported &= m;
+            }
             RawEvent::Text(c) => self.text_input(c, now, sink),
             RawEvent::FocusLost => {
                 self.release_all();
@@ -951,6 +1114,7 @@ impl InputMapper {
     /// binding fires (§7.3); Ends of offered holds go to the end queue.
     pub fn release_all(&mut self) {
         self.held.clear();
+        self.clear_carried();
         self.key_mods = Modifiers::empty();
         self.reported_mods = Modifiers::empty();
         self.pending = None;
@@ -966,24 +1130,38 @@ impl InputMapper {
         self.expire_pending(now);
         let order = self.order();
         let mods = self.mods();
-        let ui_only = self.band_has_opaque_keys();
+        let ui_only = self.band_has_strict_opaque_keys();
+        let kept_keys = !ui_only && self.band_has_opaque_keys();
+        let carried = self.carried_mods();
 
         // Modifier holds (§7.4). A matching modifier-only binding is a held
         // digital binding, so its `value` also counts towards an axis
-        // action's value (§2, §5.1).
+        // action's value (§2, §5.1). Behind a kept barrier only the carried
+        // modifiers count (`band_push_keeping_holds`).
         let n = self.live.len();
         let mut held = vec![false; n];
         let mut modifier_value = vec![0.0f32; n];
+        let mut limited = false;
+        // Behind a kept-only opaque UI-band context no later UI-band context
+        // is evaluated (§7.4 stops there); only the game band goes on, with
+        // the carried modifiers.
+        let mut game_only = false;
         for &(c, band) in &order {
-            if ui_only && band == Band::Game {
-                break;
+            if band == Band::Game {
+                if ui_only {
+                    break;
+                }
+                limited |= kept_keys;
+            } else if game_only {
+                continue;
             }
+            let m = if limited { carried } else { mods };
             if let Some(cc) = self.compiled.get(c.index()) {
                 for b in &cc.digital {
                     let s = b.chord.first();
                     let i = b.action.index();
                     if s.is_modifier_hold()
-                        && mods_match(mods, s.mods(), b.policy).is_some()
+                        && mods_match(m, s.mods(), b.policy).is_some()
                         && let Some(h) = held.get_mut(i)
                     {
                         *h = true;
@@ -994,7 +1172,12 @@ impl InputMapper {
                 }
             }
             if self.is_opaque(c) {
-                break;
+                if self.kept_only(c) {
+                    limited = true;
+                    game_only = true;
+                } else {
+                    break;
+                }
             }
         }
         self.modifier_held = held;
@@ -1327,16 +1510,22 @@ impl InputMapper {
         if self.is_held(b) || self.held.len() >= MAX_HELD_BUTTONS {
             return;
         }
+        let order = self.resolution();
         self.held.push(HeldButton {
             button: b,
             marked: false,
+            under_band_end: order.opaque_keys,
         });
-        let order = self.resolution();
         self.resolve_press(b, now, &order, sink);
     }
 
     fn release_button(&mut self, b: Button, now: Duration, sink: &mut SinkRef<'_>) {
-        let Some(marked) = self.held.iter().find(|h| h.button == b).map(|h| h.marked) else {
+        let Some((marked, under_band_end)) = self
+            .held
+            .iter()
+            .find(|h| h.button == b)
+            .map(|h| (h.marked, h.under_band_end))
+        else {
             return;
         };
         // §7.8.5: the order and the band end are fixed before the release's
@@ -1345,8 +1534,9 @@ impl InputMapper {
         let order = self.resolution();
         self.end_holds(|h| h.owner != Owner::Pending && h.buttons.contains(&b));
         self.drain_ends(sink);
-        self.resolve_release(b, now, marked, &order, sink);
+        self.resolve_release(b, now, marked, under_band_end, &order, sink);
         self.held.retain(|h| h.button != b);
+        self.carried.retain(|c| *c != b);
     }
 
     /// An OS auto-repeat press: Repeat offers for the key's repeatable
@@ -1668,6 +1858,7 @@ impl InputMapper {
         b: Button,
         now: Duration,
         marked: bool,
+        under_band_end: bool,
         order: &Resolution,
         sink: &mut SinkRef<'_>,
     ) {
@@ -1675,7 +1866,11 @@ impl InputMapper {
             .presses
             .get(b)
             .is_some_and(|r| now.saturating_sub(r.time) <= self.timing.tap_time());
-        let band_end = order.opaque_keys && is_key_or_pad(b);
+        // §3.3 band end. A band end of kept entries only stops the release
+        // of a button pressed under a band end; a button pressed before
+        // every band end goes past it (`ui-widgets.md` §18.4 pairing rule).
+        let band_end =
+            is_key_or_pad(b) && (order.strict_opaque_keys || (order.opaque_keys && under_band_end));
         let mut fired: Vec<(ContextId, usize)> = Vec::new();
         let mut fired_pt: Vec<ContextId> = Vec::new();
         let mut produced = Vec::new();

@@ -13,9 +13,17 @@
 //!   cache whose unreferenced entries are evicted past the LRU budget or near the entry
 //!   cap [`MAX_IMAGE_ENTRIES`] (failed entries too, under the entry cap); images that a
 //!   canvas still references are pinned, and past the pinned cap new images get the
-//!   placeholder (decision 0015 §4.5, U5). The byte total is kept as a running sum and the
-//!   pinned bytes are sampled at most once per frame, so a request and the per-frame
-//!   figures cost O(1) whatever the cache size.
+//!   placeholder (decision 0015 §4.5, U5). An image that has just arrived is not evicted
+//!   until it was asked for once (or [`FRESH_POLLS`] polls passed): otherwise an image
+//!   larger than the LRU budget on its own (a 4096 × 4096 dungeon map is 64 MiB, the
+//!   default budget) would be evicted in the poll it arrived in, before anyone could take
+//!   it, and be decoded again for ever. The exemption is bounded in bytes (Tessera bound):
+//!   while the fresh images together hold more than the LRU budget and there are two or
+//!   more of them, the oldest fresh ones are evicted like any unreferenced image, so images
+//!   that arrive and are never asked for (a control whose image changes every frame) keep
+//!   at most about one LRU budget, or one image, beyond it. The byte total is kept as a
+//!   running sum and the pinned bytes are sampled at most once per frame, so a request
+//!   and the per-frame figures cost O(1) whatever the cache size.
 //! - **Fonts** are decoded on the workers into [`FontFace`]s (`fonts.md` §4.1); text is
 //!   shaped on the main thread by [`super::text`] once its fonts are there. At most
 //!   [`MAX_FONT_ENTRIES`] distinct font DIDs are tracked; past that a new DID does not
@@ -65,6 +73,9 @@ pub const SMALL_IMAGE_CACHE: usize = 1024;
 pub const PINNED_SAMPLE_PERIOD: u64 = 32;
 /// Most LRU keys looked at by one request that needs room under the entry cap.
 const MAX_EVICT_PROBES: usize = 64;
+/// Polls an image that arrived stays safe from eviction while nobody has asked for it
+/// (module docs; Tessera bound: a requester asks again within a frame or two).
+pub const FRESH_POLLS: u64 = 120;
 /// Size of Tessera's fallback font in pixels when the install gives no locale font
 /// (`fonts.md` §11).
 pub const FALLBACK_FONT_PX: u32 = 14;
@@ -205,6 +216,11 @@ pub struct EnvState {
     rx: Receiver<Done>,
     images: HashMap<ImageRef, Slot>,
     lru: VecDeque<ImageRef>,
+    /// Images that arrived and were not asked for since, with the poll they arrived in and
+    /// their bytes (module docs, [`FRESH_POLLS`]); never more keys than `images`.
+    fresh: HashMap<ImageRef, (u64, u64)>,
+    /// Bytes of the images in `fresh` (running sum).
+    fresh_bytes: u64,
     lru_budget: u64,
     pinned_cap: u64,
     /// Bytes of every ready image in the map (running sum).
@@ -282,6 +298,8 @@ impl EnvState {
             rx,
             images: HashMap::new(),
             lru: VecDeque::new(),
+            fresh: HashMap::new(),
+            fresh_bytes: 0,
             lru_budget,
             pinned_cap,
             ready_bytes: 0,
@@ -361,6 +379,15 @@ impl EnvState {
         self.images
             .retain(|k, _| !matches!(k, ImageRef::Skin { .. }));
         self.lru.retain(|k| !matches!(k, ImageRef::Skin { .. }));
+        let mut gone = 0u64;
+        self.fresh.retain(|k, (_, b)| {
+            let keep = !matches!(k, ImageRef::Skin { .. });
+            if !keep {
+                gone = gone.saturating_add(*b);
+            }
+            keep
+        });
+        self.fresh_bytes = self.fresh_bytes.saturating_sub(gone);
         let _ = self.walk();
     }
 
@@ -427,8 +454,33 @@ impl EnvState {
         }
     }
 
+    /// Records that `key` arrived ready in this poll (module docs, [`FRESH_POLLS`]).
+    fn mark_fresh(&mut self, key: &ImageRef, slot: &Slot) {
+        self.unfresh(key);
+        if let Slot::Ready(i) = slot {
+            let b = i.byte_size() as u64;
+            self.fresh.insert(key.clone(), (self.polls, b));
+            self.fresh_bytes = self.fresh_bytes.saturating_add(b);
+        }
+    }
+
+    /// Takes `key` out of the fresh set, keeping the fresh byte total.
+    fn unfresh(&mut self, key: &ImageRef) {
+        if let Some((_, b)) = self.fresh.remove(key) {
+            self.fresh_bytes = self.fresh_bytes.saturating_sub(b);
+        }
+    }
+
+    /// Whether the fresh images are past their byte bound (module docs): more than one of
+    /// them, holding more than the LRU budget together. Then the oldest fresh images are
+    /// evicted like any unreferenced image.
+    fn fresh_over_bound(&self) -> bool {
+        self.fresh.len() > 1 && self.fresh_bytes > self.lru_budget
+    }
+
     /// Removes `key`, keeping the byte total.
     fn remove(&mut self, key: &ImageRef) {
+        self.unfresh(key);
         if let Some(Slot::Ready(old)) = self.images.remove(key) {
             self.ready_bytes = self.ready_bytes.saturating_sub(old.byte_size() as u64);
         }
@@ -463,6 +515,7 @@ impl EnvState {
                         }
                     };
                     if self.images.contains_key(&key) {
+                        self.mark_fresh(&key, &slot);
                         self.put(key.clone(), slot);
                         self.lru.push_back(key);
                         self.images_arrived = true;
@@ -490,6 +543,7 @@ impl EnvState {
                                 Slot::Failed
                             }
                         };
+                        self.mark_fresh(&key, &slot);
                         self.put(key.clone(), slot);
                         self.lru.push_back(key);
                         self.images_arrived = true;
@@ -519,6 +573,18 @@ impl EnvState {
             }
         }
         self.polls = self.polls.wrapping_add(1);
+        if !self.fresh.is_empty() {
+            let polls = self.polls;
+            let mut gone = 0u64;
+            self.fresh.retain(|_, (at, b)| {
+                let keep = polls.wrapping_sub(*at) <= FRESH_POLLS;
+                if !keep {
+                    gone = gone.saturating_add(*b);
+                }
+                keep
+            });
+            self.fresh_bytes = self.fresh_bytes.saturating_sub(gone);
+        }
         // Unpinned bytes estimated from the last pinned sample; images unpinned since then
         // are found by the periodic sample.
         let over_bytes = self.ready_bytes.saturating_sub(self.pinned_sample) > self.lru_budget;
@@ -547,13 +613,34 @@ impl EnvState {
     fn evict(&mut self, mut unpinned: u64) {
         let target = Self::entry_target();
         let mut guard = self.lru.len();
-        while (unpinned > self.lru_budget || self.images.len() > target) && guard > 0 {
+        // The fresh images kept within their bound do not count against the budget: they
+        // stay whatever it says, so they must not make the loop turn the whole LRU.
+        let held = |st: &Self| {
+            if st.fresh_over_bound() {
+                0
+            } else {
+                st.fresh_bytes
+            }
+        };
+        while (unpinned.saturating_sub(held(self)) > self.lru_budget || self.images.len() > target)
+            && guard > 0
+        {
             guard -= 1;
             let Some(key) = self.lru.pop_front() else {
                 break;
             };
             let count_pressure = self.images.len() > target;
             match self.images.get(&key) {
+                // Not asked for since it arrived (module docs): evicted only past the
+                // fresh byte bound, oldest first.
+                Some(Slot::Ready(i)) if self.fresh.contains_key(&key) => {
+                    if self.fresh_over_bound() && Arc::strong_count(i) == 1 {
+                        unpinned = unpinned.saturating_sub(i.byte_size() as u64);
+                        self.evict_key(&key);
+                    } else {
+                        self.lru.push_back(key);
+                    }
+                }
                 Some(Slot::Ready(i)) if Arc::strong_count(i) == 1 => {
                     unpinned = unpinned.saturating_sub(i.byte_size() as u64);
                     self.evict_key(&key);
@@ -596,6 +683,13 @@ impl EnvState {
                 break;
             };
             match self.images.get(&key) {
+                Some(Slot::Ready(i)) if self.fresh.contains_key(&key) => {
+                    if self.fresh_over_bound() && Arc::strong_count(i) == 1 {
+                        self.evict_key(&key);
+                    } else {
+                        self.lru.push_back(key);
+                    }
+                }
                 Some(Slot::Ready(i)) if Arc::strong_count(i) == 1 => self.evict_key(&key),
                 Some(Slot::Failed) => self.evict_key(&key),
                 Some(Slot::Ready(_)) => self.lru.push_back(key),
@@ -631,7 +725,12 @@ impl EnvState {
 
     fn image(&mut self, key: &ImageRef) -> ImageState {
         match self.images.get(key) {
-            Some(Slot::Ready(i)) => return ImageState::Ready(Arc::clone(i)),
+            Some(Slot::Ready(i)) => {
+                let i = Arc::clone(i);
+                // Asked for: from now on it is evicted by the LRU rules (module docs).
+                self.unfresh(key);
+                return ImageState::Ready(i);
+            }
             Some(Slot::Pending) => return ImageState::Pending,
             Some(Slot::Failed) => return ImageState::Ready(Arc::clone(&self.placeholder)),
             None => {}
@@ -1075,6 +1174,89 @@ mod tests {
         let _ = st.poll();
         assert!(st.image_entries() <= MAX_IMAGE_ENTRIES - IMAGE_ENTRY_HEADROOM);
         assert!(st.stats().images_evicted >= IMAGE_ENTRY_HEADROOM as u64);
+    }
+
+    /// An image larger than the LRU budget on its own (a 4096 × 4096 dungeon map against
+    /// the 64 MiB default) is not evicted in the poll it arrives in: it waits until it was
+    /// asked for once (then the LRU rules apply), or until [`FRESH_POLLS`] polls passed.
+    #[test]
+    fn an_arrived_image_survives_until_it_is_asked_for() {
+        // A budget below one image: every unpinned image is over it.
+        let mut st = EnvState::new(None, 1, 1, 512 << 20);
+        let k = ImageRef::Did(0x4100_0002);
+        st.put(k.clone(), Slot::Pending);
+        st.tx
+            .send(Done::Image(k.clone(), Ok(tiny())))
+            .expect("send");
+        assert!(st.poll().images);
+        for _ in 0..3 {
+            let _ = st.poll();
+        }
+        assert!(
+            matches!(st.images.get(&k), Some(Slot::Ready(_))),
+            "kept until asked for"
+        );
+        let ImageState::Ready(img) = st.image(&k) else {
+            panic!("ready when asked for");
+        };
+        assert_eq!(img.width(), tiny().width());
+        drop(img);
+        // Asked for and not held: the LRU budget evicts it.
+        let _ = st.poll();
+        assert!(!st.images.contains_key(&k), "evicted once asked for");
+        // One nobody asks for goes after FRESH_POLLS polls.
+        let k2 = ImageRef::Did(0x4100_0003);
+        st.put(k2.clone(), Slot::Pending);
+        st.tx
+            .send(Done::Image(k2.clone(), Ok(tiny())))
+            .expect("send");
+        let _ = st.poll();
+        for _ in 1..FRESH_POLLS {
+            let _ = st.poll();
+        }
+        assert!(matches!(st.images.get(&k2), Some(Slot::Ready(_))));
+        for _ in 0..PINNED_SAMPLE_PERIOD + 2 {
+            let _ = st.poll();
+        }
+        assert!(
+            !st.images.contains_key(&k2),
+            "evicted after the fresh window"
+        );
+        assert!(st.fresh.is_empty());
+    }
+
+    /// Images that arrive and are never asked for (a control whose image changes every
+    /// frame) do not pile up beyond the LRU budget for the fresh window: past the fresh
+    /// byte bound the oldest fresh images go, and the newest one is still kept.
+    #[test]
+    fn fresh_images_nobody_asks_for_stay_within_a_byte_bound() {
+        let bytes = tiny().byte_size() as u64;
+        let budget = bytes * 3;
+        let mut st = EnvState::new(None, 1, budget, 512 << 20);
+        let mut last = None;
+        for i in 0..200u32 {
+            let k = ImageRef::Did(0x4100_1000 + i);
+            st.put(k.clone(), Slot::Pending);
+            st.tx
+                .send(Done::Image(k.clone(), Ok(tiny())))
+                .expect("send");
+            let _ = st.poll();
+            assert!(
+                st.stats().image_bytes <= budget + bytes,
+                "poll {i}: {} bytes kept against a budget of {budget}",
+                st.stats().image_bytes
+            );
+            assert!(st.fresh_bytes <= budget + bytes);
+            last = Some(k);
+        }
+        let last = last.expect("an image");
+        assert!(
+            matches!(st.images.get(&last), Some(Slot::Ready(_))),
+            "the newest arrival is kept until asked for"
+        );
+        assert!(st.stats().images_evicted >= 190, "{:?}", st.stats());
+        let sum: u64 = st.fresh.values().map(|(_, b)| *b).sum();
+        assert_eq!(sum, st.fresh_bytes, "the running sum matches");
     }
 
     #[test]

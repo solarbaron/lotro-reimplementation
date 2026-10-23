@@ -1725,12 +1725,13 @@ impl World {
             Event::EnterWorldFailed { character, reason } => {
                 tracing::warn!(%character, "net: {reason}");
                 // The session is back at character selection (`tessera-protocol.md`
-                // §6.2.11). A walker that entered by itself has nothing else to enter, so
-                // it leaves. The character screens leave too for now: they wait in their
-                // entering state until `WorldEntered` or `Disconnected` and do not yet
-                // take `EnterWorldFailed` back to the selection, so the session ends as
-                // before and the screens show the reason.
-                if let Err(e) = self.send(now, Command::Disconnect) {
+                // §6.2.11, Appendix A "Decision on `EnterWorldFailed`"). The character
+                // screens (manual entry) go back to the selection with the reason and the
+                // session kept, so the player can choose again. A walker that entered by
+                // itself (one fixed character) has nothing else to enter, so it leaves.
+                if !self.manual_enter
+                    && let Err(e) = self.send(now, Command::Disconnect)
+                {
                     tracing::debug!("net: disconnect not sent: {e}");
                 }
             }

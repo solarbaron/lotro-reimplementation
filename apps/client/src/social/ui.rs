@@ -179,7 +179,12 @@ impl SocialUi {
     /// The panels over the install's vocabulary (nothing is built until the first frame).
     #[must_use]
     pub fn new(vocab: SocialVocab, chars: CharVocab) -> Self {
-        let tips = ExamTooltips::new(chars.clone());
+        // Only `PinnedTooltipCloseButton` closes a pinned window (`item-tooltips.md` §10
+        // answer (2), IT28); unresolved, the tooltips keep their fallback close rule.
+        let mut tips = ExamTooltips::new(chars.clone());
+        if let Some(id) = chars.ids.resolved_pinned_close_button() {
+            tips.set_close_button_id(id);
+        }
         Self {
             vocab,
             chars,
@@ -256,8 +261,10 @@ impl SocialUi {
     }
 
     /// Shows a text-input dialog (`ui-widgets.md` §18.6): the question, the default answer,
-    /// the length bound and the focus on the entry.
-    fn open_dialog(&mut self, ui: &mut Ui, d: TextDialog, state: &mut SocialState) {
+    /// the length bound and the focus on the entry. The panels open their add and note
+    /// dialogs this way; its answer is acted on in a later [`Self::frame`] (tests and tools
+    /// call it directly).
+    pub fn open_dialog(&mut self, ui: &mut Ui, d: TextDialog, state: &mut SocialState) {
         let tag = self.next_tag;
         self.next_tag = self.next_tag.wrapping_add(1).max(1);
         let mut req = DialogRequest::text_input(tag, DialogText::Ref(d.question));
@@ -973,14 +980,17 @@ mod tests {
         assert!(out.commands.is_empty());
     }
 
-    /// The UI host hands the social panels only some kinds of UI events
-    /// (`UiHost::social_frame`: hover, drag ends and game messages), so the core's
-    /// `DialogResult` of a key never reaches them. The dialog the core hid is shown again at
-    /// the next frame instead of blocking every later dialog, and its buttons still answer.
+    /// A defensive case: when the core's `DialogResult` of a key never reaches the social
+    /// panels (an owner that filters its events and drops it), the dialog the core hid is
+    /// shown again at the next frame instead of blocking every later dialog, and its
+    /// buttons still answer. The client's host passes `DialogResult` on
+    /// (`UiHost::social_frame`; `tests/ui_host_dialogs.rs` checks that path); this test
+    /// drops it on purpose with a filter that passes only hover, drag ends and game
+    /// messages.
     #[test]
     fn a_dialog_key_result_the_host_drops_leaves_the_dialog_answerable() {
         use tessera_ui::game::social::friends::FriendsModel;
-        fn host_filter(s: &mut SocialUi, ui: &mut Ui) {
+        fn drop_dialog_results(s: &mut SocialUi, ui: &mut Ui) {
             for ev in ui.take_events() {
                 if matches!(
                     ev,
@@ -1009,7 +1019,7 @@ mod tests {
             ui.text_input(c);
         }
         assert!(ui.key_command(&tessera_ui::Command::named("AcceptInput"), true, 1.0));
-        host_filter(&mut s, &mut ui);
+        drop_dialog_results(&mut s, &mut ui);
         let out = s.frame(&mut ui, &mut st, None, None);
         assert!(out.commands.is_empty(), "the key result was dropped");
         let (root, _) = s.dialogs().shown().expect("still the shown dialog");

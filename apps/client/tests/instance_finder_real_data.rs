@@ -153,5 +153,11 @@ fn finder_scenario_renders_with_install_text() {
     assert!(install_entries > 0, "install templates were listed");
     assert!(queue_pictured && pe_pictured);
     assert!(tui.failures().is_empty(), "{:?}", tui.failures());
+    // The size and tier menus use the install's `ContextMenu` layout (`travel-windows.md`
+    // §6.8, `ui-widgets.md` §19.1), not the code-made menus.
+    assert!(
+        tui.finder_menu_refs().is_some_and(|m| m.layout.is_some()),
+        "the finder's menus resolve the install's ContextMenu layout"
+    );
     println!("pictures: {:?}", pics.results);
 }

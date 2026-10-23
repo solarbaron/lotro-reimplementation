@@ -8,8 +8,12 @@
 //! the figure with the static clip resolver (`script-table.md` §11.3: one run of each key
 //! with the figure's stored values and the caller's overrides, then every branch of those
 //! scripts; no key: the start-up scripts with the overrides, then every branch of them),
-//! and decodes every clip the evaluation reaches (at most [`MAX_PREFETCH_CLIPS`]). The combat layer also asks it, with no key, before a session figure
-//! starts its scripts. The answer is remembered per figure and request
+//! and decodes every clip the evaluation reaches (at most [`MAX_PREFETCH_CLIPS`]). A
+//! combat-state change asks with no key (the stance's start-up scripts with the combat
+//! overrides). Before a session figure is spawned the combat layer asks with the keys of
+//! `CombatState::ready_keys` (the scripts its persistent state runs as soon as it is
+//! spawned); a figure with no such keys is not asked (its start-up and looping clips start
+//! once decoded, without a wait). The answer is remembered per figure and request
 //! ([`PrefetchMemory`]); a request whose job the pool refused is asked again.
 
 use std::collections::HashMap;
@@ -85,7 +89,8 @@ pub fn clips_of(ctx: &FigureContext, scripts: &FigureScripts, request: &ClipPref
     }
     // For the keys' every-branch pass: a vocabulary under which nothing but the given
     // keys runs (no `Startup`, no start-up names), so that the figure's start-up clips,
-    // decoded when it was spawned, do not fill the request's cap.
+    // which are not this request's (they start once decoded, without a prefetch), do not
+    // fill the request's cap.
     let keys_only = ScriptVocabulary {
         startup_key: NO_SCRIPT,
         startup_script_names: None,

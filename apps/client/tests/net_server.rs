@@ -442,11 +442,11 @@ fn a_wrong_pin_is_refused_with_a_pin_hint() {
     assert_eq!(handle.stats().logged_in, 0);
 }
 
-/// Regression: with the character screens (manual entry) a refused `EnterWorld` must not
-/// leave the session waiting: the server's `EnterWorldFailed` ends the session as before
-/// (the screens close with the reason) and chat names the refusal.
+/// With the character screens (manual entry) a refused `EnterWorld` keeps the session
+/// (`tessera-protocol.md` §6.2.11, Appendix A "Decision on `EnterWorldFailed`"): it stays
+/// connected, chat names the refusal, and another `EnterWorld` then enters the world.
 #[test]
-fn a_refused_manual_entry_ends_the_session() {
+fn a_refused_manual_entry_keeps_the_session() {
     let Some(server) = start_server() else {
         return;
     };
@@ -470,15 +470,42 @@ fn a_refused_manual_entry_ends_the_session() {
             },
         )
         .expect("EnterWorld sent");
-    run_one(&mut world, |w| w.player().is_some());
-    assert_eq!(world.state(), SessionState::Closed, "the session ended");
-    assert!(world.player().is_none());
     let mut lines = Vec::new();
-    world.drain_hud_chat(&mut lines);
+    let deadline = Instant::now() + STEP;
+    while !lines
+        .iter()
+        .any(|l: &tessera_client::net::ChatLine| l.text.contains("UNKNOWN_CHARACTER"))
+    {
+        assert!(Instant::now() < deadline, "no refusal: {lines:?}");
+        assert_ne!(world.state(), SessionState::Closed, "the session ended");
+        world.update(Instant::now());
+        world.drain_hud_chat(&mut lines);
+        std::thread::sleep(FRAME);
+    }
     assert!(
         lines
             .iter()
             .any(|l| l.sender.is_empty() && l.text.contains("UNKNOWN_CHARACTER")),
         "{lines:?}"
     );
+    // A few more polls: no disconnect follows.
+    for _ in 0..10 {
+        world.update(Instant::now());
+        std::thread::sleep(FRAME);
+    }
+    assert_eq!(world.state(), SessionState::Connected, "the session stays");
+    assert!(world.player().is_none());
+    // Another choice enters the world.
+    world
+        .session_mut()
+        .send(
+            Instant::now(),
+            tessera_net::Command::EnterWorld {
+                character: "Aldith".into(),
+            },
+        )
+        .expect("EnterWorld sent again");
+    run_one(&mut world, |w| w.player().is_some());
+    assert_eq!(world.state(), SessionState::InWorld);
+    world.shutdown();
 }

@@ -47,8 +47,8 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use tessera_input::{
-    BandRequests, ContextId, InputMapper, Modifiers as InputModifiers, OfferPhase, OfferedEvent,
-    RawEvent, UiSink, Verdict, contexts,
+    BandRequests, Button, ContextId, InputMapper, Modifiers as InputModifiers, OfferPhase,
+    OfferedEvent, RawEvent, UiSink, Verdict, contexts,
 };
 use tessera_plugins::ui::{Modifiers, PluginUi};
 use tessera_plugins::{GameplayEvent, LocalPlayerEvent};
@@ -86,6 +86,19 @@ pub const MAX_ENTRY_LINES: usize = 64;
 /// Longest event window in frames (U4 (e) of decision 0015 §6: a screen-sized window's
 /// first job within 40 frames, plus the trigger frame).
 pub const MAX_EVENT_WINDOW_FRAMES: u32 = 41;
+/// Most key holds pressed while a modal engine dialog was shown whose releases are still to
+/// be consumed (`ui-widgets.md` §18.4; Tessera bound: beyond it the oldest is forgotten and
+/// its release reaches game code).
+pub const MAX_MODAL_HOLDS: usize = 256;
+/// Most keys and pad buttons pressed while a modal engine dialog was shown that are
+/// remembered until their release (`ui-widgets.md` §18.4; Tessera bound: beyond it a new
+/// press is not remembered and its release-class binding may reach game code).
+pub const MAX_MODAL_KEYS: usize = 64;
+/// The band owner of the host's own entry of the `text_entry` context while a modal engine
+/// dialog is shown ([`UiHost::modal_dialog_shown`]); not an [`ElementKey::owner`] in
+/// practice (generation and index both `u32::MAX`), and not the code owner 0, which
+/// `InputMapper::activate` uses.
+const MODAL_BAND_OWNER: u64 = u64::MAX;
 
 /// The step of the per-window scale (`ui-scaling.md` §7.4: steps of 0.05).
 pub const GROUP_SCALE_STEP: f32 = 0.05;
@@ -184,6 +197,18 @@ pub struct UiHost {
     limits: PaintLimits,
     deferred: RefCell<Deferred>,
     chat_holds: BTreeSet<u64>,
+    /// Key holds pressed while a modal engine dialog was shown (`ui-widgets.md` §18.4):
+    /// their repeats and releases are consumed too, even after the dialog closed (at most
+    /// [`MAX_MODAL_HOLDS`]). The value says whether the hold's Start was offered to the UI
+    /// (the keyboard target was inside the shown dialog), so its Repeats and End are too.
+    modal_holds: BTreeMap<u64, bool>,
+    /// Keys and pad buttons pressed (raw) while a modal engine dialog was shown, until
+    /// their raw release (at most [`MAX_MODAL_KEYS`]): a hold such a button makes, also a
+    /// release-class one made after the dialog closed, is consumed (§18.4).
+    modal_keys: Vec<Button>,
+    /// Whether the host's modal entry of the `text_entry` context is in the mapper's band
+    /// ([`Self::sync_modal_band`]).
+    modal_band: bool,
     player: Arc<WalkerPlayer>,
     /// The wallet views the plugins' local player carries (P3, [`Self::set_plugin_wallet`]).
     plugin_wallet: Option<Arc<crate::npc::SessionWallet>>,
@@ -211,6 +236,8 @@ pub struct UiHost {
     event_window: u32,
     started: Instant,
     clock: f64,
+    /// Where [`Self::end_frame`] takes the frame clock from ([`FrameClock`]).
+    frame_clock: FrameClock,
     frame: FrameAccum,
     last: FrameSample,
     recorder: Option<Recorder>,
@@ -433,6 +460,9 @@ impl UiHost {
             limits,
             deferred: RefCell::new(Deferred::default()),
             chat_holds: BTreeSet::new(),
+            modal_holds: BTreeMap::new(),
+            modal_keys: Vec::new(),
+            modal_band: false,
             player: WalkerPlayer::new(),
             plugin_wallet: None,
             plugin_party: None,
@@ -454,6 +484,7 @@ impl UiHost {
             event_window: 0,
             started: Instant::now(),
             clock: 0.0,
+            frame_clock: FrameClock::Wall,
             frame: FrameAccum::default(),
             last: FrameSample::default(),
             recorder: options.record.then(Recorder::default),
@@ -695,6 +726,27 @@ impl UiHost {
     #[must_use]
     pub fn clock(&self) -> f64 {
         self.clock
+    }
+
+    /// Chooses where the frame clock comes from from the next [`Self::end_frame`] on
+    /// (tests and captures, decision 0031: a picture of an animated part, such as the
+    /// loading screen's ring, is stable only at a fixed animation time). The clock goes on
+    /// from its current value; a stepped clock's step is held to 0–1 s (a non-finite step
+    /// holds it).
+    pub fn set_frame_clock(&mut self, clock: FrameClock) {
+        self.frame_clock = match clock {
+            FrameClock::Stepped { step } if step.is_finite() => FrameClock::Stepped {
+                step: step.clamp(0.0, 1.0),
+            },
+            FrameClock::Stepped { .. } => FrameClock::Held,
+            other => other,
+        };
+    }
+
+    /// Where the frame clock comes from.
+    #[must_use]
+    pub fn frame_clock(&self) -> FrameClock {
+        self.frame_clock
     }
 
     /// The skin selection, when the install has skin tables.
@@ -1873,6 +1925,82 @@ impl UiHost {
         self.ui.borrow().focus_element().is_some()
     }
 
+    /// Whether a modal engine dialog is shown (`ui-widgets.md` §18.4): then no key reaches
+    /// game code (the host consumes the actions the dialog does not take; callers with keys
+    /// of their own, such as the walker's world keys and the NPC windows' Escape and Enter,
+    /// leave them alone).
+    #[must_use]
+    pub fn modal_dialog_shown(&self) -> bool {
+        tessera_ui::widgets::dialog::modal_dialog_shown(&self.ui.borrow())
+    }
+
+    /// Whether the UI's keyboard target (the focus element, else the active panel) lies in
+    /// a shown engine dialog: only then do keys pressed under a modal dialog reach the UI
+    /// (§18.4: the dialog's own keys), so a dialog shown with `StartInactive`, which leaves
+    /// the keyboard where it was (for example in the chat entry), takes no key from it.
+    fn keyboard_in_dialog(&self) -> bool {
+        use tessera_ui::widgets::dialog::{MARK_PID, MARK_SHOWN, MARK_TAKEN_DOWN};
+        let ui = self.ui.borrow();
+        let mut cur = ui.keyboard_target();
+        // Tessera bound on the walk up (element trees are far shallower).
+        for _ in 0..256 {
+            let Some(k) = cur else {
+                return false;
+            };
+            let m = ui.prop(k, MARK_PID).int();
+            if m & MARK_SHOWN != 0 && m & MARK_TAKEN_DOWN == 0 && ui.is_displayed(k) {
+                return true;
+            }
+            cur = ui.parent(k);
+        }
+        false
+    }
+
+    /// §18.4 for bindings that are never offered to the UI (holds without a command name,
+    /// such as `toggle_mount`, are the game's at once, `keymap.md` §7.8): while a modal
+    /// engine dialog is shown, and until every key pressed under it is released, the host
+    /// keeps its own entry of the `text_entry` context in the UI band at the lowest
+    /// priority. Its `opaque_keys` keeps keys and pad buttons from the game band (§3.3),
+    /// while its bindings still give the dialog `AcceptInput` (Enter) and `EscapeKey`
+    /// (Escape), and the UI band's other contexts (the dialog's own map) come first.
+    /// Tessera reading: as when a text entry takes the keyboard, the game-band key holds
+    /// held from before the dialog end when it appears (their Ends reach game code).
+    fn sync_modal_band(&mut self, mapper: &mut InputMapper) {
+        let want = self.modal_dialog_shown() || !self.modal_keys.is_empty();
+        if want == self.modal_band {
+            return;
+        }
+        let Some(ctx) = self
+            .ids
+            .contexts
+            .iter()
+            .find(|(n, _)| *n == contexts::TEXT_ENTRY)
+            .map(|(_, c)| *c)
+        else {
+            return;
+        };
+        if want {
+            mapper.band_push(ctx, MODAL_BAND_OWNER, i32::MIN);
+        } else {
+            mapper.band_pop(ctx, MODAL_BAND_OWNER);
+        }
+        self.modal_band = want;
+    }
+
+    /// The raw keys of §18.4: a key or pad button pressed while a modal dialog is shown is
+    /// remembered until its release (`pressed` = the press side of the event).
+    fn modal_key_of(event: &RawEvent) -> Option<(Button, bool)> {
+        match *event {
+            RawEvent::Key {
+                key,
+                pressed,
+                repeat: false,
+            } => Some((Button::Key(key), pressed)),
+            RawEvent::PadButton { button, pressed } => Some((Button::Pad(button), pressed)),
+            _ => None,
+        }
+    }
+
     /// Step 1: feeds one raw event to `mapper` with this host as its UI sink. While the
     /// pointer lock is on, cursor-position and cursor-left reports are withheld (0015
     /// §2.5); a cursor-left withheld during the lock is fed right after the call that ends
@@ -1892,6 +2020,17 @@ impl UiHost {
         {
             return;
         }
+        // §18.4: remember the keys pressed under a modal dialog, and keep the game band
+        // from keys while one is shown (`sync_modal_band`).
+        let modal_key = Self::modal_key_of(event);
+        if let Some((b, true)) = modal_key
+            && self.modal_dialog_shown()
+            && !self.modal_keys.contains(&b)
+            && self.modal_keys.len() < MAX_MODAL_KEYS
+        {
+            self.modal_keys.push(b);
+        }
+        self.sync_modal_band(mapper);
         {
             let mut sink = Step1 {
                 host: self,
@@ -1900,6 +2039,12 @@ impl UiHost {
             };
             mapper.handle_with(event, now, &mut sink);
         }
+        match (modal_key, event) {
+            (Some((b, false)), _) => self.modal_keys.retain(|k| *k != b),
+            (_, RawEvent::FocusLost) => self.modal_keys.clear(),
+            _ => {}
+        }
+        self.sync_modal_band(mapper);
         if self.lock.take_withheld_left() {
             let mut sink = Step1 {
                 host: self,
@@ -1922,6 +2067,7 @@ impl UiHost {
         window: &mut dyn CursorWindow,
     ) {
         let t = Instant::now();
+        self.sync_modal_band(mapper);
         {
             let mut sink = Step1 {
                 host: self,
@@ -1988,6 +2134,12 @@ impl UiHost {
         let hold = a.hold.0;
         let wheel_step = is_wheel_step(&command);
         let is_pointer_cmd = command.is_mouse_button() || command.is_wheel();
+        // `ui-widgets.md` §18.4: while a modal engine dialog is shown no key reaches game
+        // code below it (the chat entry, the actions); the dialog's own keys reach it
+        // through the UI below. A hold made by a key pressed under the dialog counts too
+        // (a release-class binding fires at the release, maybe after the dialog closed).
+        let modal =
+            !is_pointer_cmd && (self.modal_dialog_shown() || self.modal_keys.contains(&a.source));
         // The chat window sees key presses first while it is the keyboard target
         // (`Chat::command`); its holds are not offered to the UI again.
         if !is_pointer_cmd {
@@ -1995,6 +2147,7 @@ impl UiHost {
                 return true;
             }
             if phase != Phase::End
+                && !modal
                 && self.panels.as_ref().is_some_and(|p| p.chat.is_some())
                 && let Some(out) = self.chat_command(plugins, &command.name, a.modifiers)
                 && out != CommandOutcome::NotHandled
@@ -2009,6 +2162,49 @@ impl UiHost {
             }
         }
         let name = Arc::clone(&command.name);
+        // §18.4: every other key press while the modal dialog is shown, and the repeats and
+        // the release of each key pressed while it was shown, are consumed. The UI sees
+        // them only while its keyboard target lies in the shown dialog (its own keys);
+        // otherwise (a `StartInactive` dialog left the keyboard in the chat entry) nobody
+        // does. Keys held from before the dialog are not consumed, so their releases are
+        // not lost (game-band key holds end when the dialog appears, `sync_modal_band`).
+        if !is_pointer_cmd {
+            let under_modal = match phase {
+                Phase::Start if modal => {
+                    if self.modal_holds.len() >= MAX_MODAL_HOLDS
+                        && let Some(oldest) = self.modal_holds.keys().next().copied()
+                    {
+                        self.modal_holds.remove(&oldest);
+                    }
+                    let offered = self.keyboard_in_dialog();
+                    self.modal_holds.insert(hold, offered);
+                    Some(offered)
+                }
+                Phase::Start => None,
+                // Offered on only while the keyboard is still in the dialog: the release of
+                // the key that closed it goes nowhere (no key broadcast either).
+                Phase::Repeat => self
+                    .modal_holds
+                    .get(&hold)
+                    .map(|o| *o && self.keyboard_in_dialog()),
+                Phase::End => self
+                    .modal_holds
+                    .remove(&hold)
+                    .map(|o| o && self.keyboard_in_dialog()),
+            };
+            if let Some(offered) = under_modal {
+                if offered {
+                    let _ = self.ui.borrow_mut().offer(&UiInput::Command(CommandOffer {
+                        phase,
+                        hold,
+                        command,
+                        value: a.value,
+                        position: a.position,
+                    }));
+                }
+                return true;
+            }
+        }
         // Every command goes through `Ui::offer`: the UI decides Impulse from the action
         // map's toggle types by command ID (`lua-plugin-api.md` §13.12.1, decision 0014 D9);
         // the host hard-codes none.
@@ -2154,6 +2350,16 @@ impl UiHost {
 
     fn offer_text(&mut self, ch: char, plugins: &mut Plugins) -> bool {
         let now = self.clock;
+        // `ui-widgets.md` §18.4: under a modal dialog typed text goes to the UI's focus only
+        // when that lies in the shown dialog (its entry); never to the chat window's entry
+        // or another element below the dialog, and none reaches game code.
+        if self.modal_dialog_shown() {
+            let _ = plugins;
+            if self.keyboard_in_dialog() {
+                let _ = self.ui.borrow_mut().offer(&UiInput::Char(ch));
+            }
+            return true;
+        }
         let chat = self.panels.as_mut().and_then(|p| p.chat.as_mut());
         let r = match chat {
             Some(c) => !matches!(
@@ -2444,9 +2650,14 @@ impl UiHost {
             return Vec::new();
         };
         for ev in events {
+            // The core's `DialogResult` of a dialog key (`ui-widgets.md` §18.4) reaches the
+            // social panels' dialogs too, so a dialog answered by key gets its result.
             if matches!(
                 ev,
-                UiEvent::ExamineHover { .. } | UiEvent::DragEnded { .. } | UiEvent::Game { .. }
+                UiEvent::ExamineHover { .. }
+                    | UiEvent::DragEnded { .. }
+                    | UiEvent::Game { .. }
+                    | UiEvent::DialogResult { .. }
             ) {
                 s.queue_event(ev);
             }
@@ -2504,6 +2715,12 @@ impl UiHost {
     /// The social panels, mutably (opening panels by name, tests).
     pub fn social_mut(&mut self) -> Option<&mut crate::social::SocialUi> {
         self.social.as_mut()
+    }
+
+    /// Gives the host social panels (tests and tools: a host made without an install,
+    /// [`Self::without_install`], has none; one booted from the install has them already).
+    pub fn set_social(&mut self, social: crate::social::SocialUi) {
+        self.social = Some(social);
     }
 
     /// Queues a line for the command dispatcher as the chat window's entry would
@@ -2830,7 +3047,11 @@ impl UiHost {
     /// and the frame's sample is recorded. `frame_ms` is the frame's own time (pacing
     /// excluded).
     pub fn end_frame(&mut self, plugins: &Plugins, frame_ms: f64) {
-        self.clock = self.started.elapsed().as_secs_f64();
+        self.clock = match self.frame_clock {
+            FrameClock::Wall => self.started.elapsed().as_secs_f64(),
+            FrameClock::Stepped { step } => self.clock + step,
+            FrameClock::Held => self.clock,
+        };
         plugins.set_game_time(self.clock);
         self.ui.borrow_mut().set_time(self.clock);
         self.last.frame_ms = frame_ms;
@@ -2942,6 +3163,24 @@ pub fn clock_text(now: std::time::SystemTime) -> String {
         .map_or(0, |d| d.as_secs())
         % 86_400;
     format!("{:02}:{:02}:{:02}", secs / 3600, secs / 60 % 60, secs % 60)
+}
+
+/// Where the UI host's frame clock (the UI's animation and hover clock, the plugins' game
+/// time) comes from ([`UiHost::set_frame_clock`]).
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub enum FrameClock {
+    /// Seconds since the host started (the client).
+    #[default]
+    Wall,
+    /// Advances by `step` seconds at each frame end, whatever the wall clock does (tests:
+    /// animation time follows the frames).
+    Stepped {
+        /// Seconds per frame (0–1).
+        step: f64,
+    },
+    /// Stays where it is (a capture waiting for images and paint: animations do not
+    /// move).
+    Held,
 }
 
 /// Parses a panel name for the command line: `P1`–`P15`, the panel's layout label or its

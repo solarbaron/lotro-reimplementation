@@ -3233,6 +3233,20 @@ impl Walker {
         self.draw_alone(frame, player, yaw_degrees, false)
     }
 
+    /// Draws entity `id`'s figure alone into `frame` as [`Self::draw_portrait`] draws the
+    /// player's: any entity whose character figure is built (the player, a placed NPC,
+    /// another player; `ui-widgets.md` §12.1), at the origin turned by `yaw_degrees`, in a
+    /// premultiplied-alpha pass. Returns whether a figure was drawn (`false` for an entity
+    /// without a figure on the GPU, for example one drawn as a plain object).
+    pub fn draw_entity_portrait(
+        &mut self,
+        frame: &mut Frame,
+        id: EntityId,
+        yaw_degrees: f32,
+    ) -> bool {
+        self.draw_alone(frame, Some(id), yaw_degrees, false)
+    }
+
     /// Shows the character screens' figure (`character-screens.md` §2.1, §6) or removes it
     /// (`None`, which also removes the scene); see [`CharacterLayer::set_preview`]. Call
     /// every frame the screens are open with their current figure

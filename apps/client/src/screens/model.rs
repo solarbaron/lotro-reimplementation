@@ -670,6 +670,16 @@ impl ScreenModel {
                 self.last_entered = Some(name.clone());
                 self.status = Status::Entered(name.clone());
             }
+            Event::EnterWorldFailed { reason, .. } => {
+                // The session is back at character selection and kept
+                // (`tessera-protocol.md` §6.2.11, Appendix A): the selection screen stays
+                // with the reason as an error line and Enter enabled again, as for a
+                // refused `EnterWorld` (§7.3, Tessera rule).
+                if matches!(self.status, Status::Entering(_)) {
+                    self.status = Status::Open;
+                }
+                self.own_error(OwnText::EnterRefused(reason.clone()));
+            }
             Event::Disconnected { reason } => {
                 let why = format!("{reason:?}");
                 self.own_error(OwnText::Disconnected(why.clone()));

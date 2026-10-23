@@ -36,6 +36,7 @@ use tessera_ui::game::travel::{
     EndTravelBox, TravelAction, TravelPresentation, TravelShow, TravelView, TravelWindow,
 };
 use tessera_ui::game::travelfallback;
+use tessera_ui::widgets::context_menu::MenuRefs;
 use tessera_ui::{ElementKey, Ui, UiEvent};
 
 use super::present::{
@@ -93,6 +94,11 @@ pub struct TravelUi {
     /// Windows that could be built neither from the layout nor as a fallback: not tried
     /// again in this run (no layout decode and no warning per frame).
     gave_up: Vec<P5Window>,
+    /// The finder's size and tier menus over the install's `ContextMenu` layout
+    /// (`travel-windows.md` §6.8, `ui-widgets.md` §19), resolved once the install's facts
+    /// were seen; until then (and without an install) the finder keeps its code-made
+    /// menus.
+    finder_menus: Option<MenuRefs>,
 }
 
 impl std::fmt::Debug for TravelUi {
@@ -126,7 +132,32 @@ impl TravelUi {
             panels: Vec::new(),
             failures: Vec::new(),
             gave_up: Vec::new(),
+            finder_menus: None,
         }
+    }
+
+    /// Resolves the finder's context-menu names from the install's presentation data once
+    /// (as the map window's menus, [`crate::map::ui::p5_menu_refs`]) and gives them to a
+    /// finder already open.
+    fn ensure_menu_refs(&mut self, data: Option<&NpcData>) {
+        if self.finder_menus.is_some() {
+            return;
+        }
+        let Some(d) = data else { return };
+        let refs = crate::map::ui::p5_menu_refs(Some(d.character()), &self.art);
+        if refs.layout.is_none() {
+            tracing::warn!("instance finder: ContextMenu layout missing; code-made menus");
+        }
+        if let Some((f, _)) = self.finder.as_mut() {
+            f.set_menu_refs(refs.clone());
+        }
+        self.finder_menus = Some(refs);
+    }
+
+    /// The finder's context-menu names in use: the install's once resolved (tests).
+    #[must_use]
+    pub fn finder_menu_refs(&self) -> Option<&MenuRefs> {
+        self.finder_menus.as_ref()
     }
 
     /// The names in use.
@@ -306,6 +337,9 @@ impl TravelUi {
         };
         let (nv, pv) = (self.refs.nv.clone(), self.refs.pv.clone());
         let mut w = FinderWindow::attach(ui, &nv, &pv, k, self.refs.finder, &self.art, texts);
+        if let Some(m) = &self.finder_menus {
+            w.set_menu_refs(m.clone());
+        }
         w.set_in_instance(ui, self.in_instance, texts);
         // The displayed queue state, as an existing finder shows it (§6.8 rule 6).
         if let Some((state, seconds, since)) = self.last_queue {
@@ -370,6 +404,7 @@ impl TravelUi {
         w: P5Window,
         data: Option<&NpcData>,
     ) -> Result<ElementKey, String> {
+        self.ensure_menu_refs(data);
         let texts = InstallTravelTexts::new(data);
         let root = match w {
             P5Window::Travel => {
@@ -445,6 +480,7 @@ impl TravelUi {
     /// `ToggleWorldJoin` (`travel-windows.md` TW14, TW15): shows the finder when hidden
     /// (opening it empty when no feed window is open), hides it when shown.
     pub fn toggle_finder(&mut self, ui: &mut Ui, data: Option<&NpcData>) {
+        self.ensure_menu_refs(data);
         if let Some((f, _)) = self.finder.as_ref()
             && ui.exists(f.root)
         {
@@ -470,6 +506,7 @@ impl TravelUi {
         ctx: &TravelContext<'_>,
         events: &[UiEvent],
     ) -> Vec<Command> {
+        self.ensure_menu_refs(data);
         let texts = InstallTravelTexts::new(data);
         self.sync(ui, state, data, ctx, &texts);
         self.present(ui, state, data, ctx.now, &texts);

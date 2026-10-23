@@ -417,6 +417,9 @@ impl App {
                 // events (the character screens own it while they are open). The headless
                 // `--ui` runs call the same function.
                 crate::ui_host::client::window_frames(ui, rt, walker, &mut gfx.renderer, now);
+                // The player and target frames' portraits (P4, P5), before step 8 paints
+                // the frame's composition list (`crate::portrait` module docs).
+                ui.render_combat_portraits(walker, &mut gfx.renderer);
                 ui.step8(walker, &mut gfx.renderer, rt);
             }
         } else {
@@ -691,9 +694,25 @@ impl ApplicationHandler for App {
                             rt.map.release_keys();
                         }
                         tessera_input::winit_adapter::window_event(&event, |e| {
+                            // A modal engine dialog takes every key (`ui-widgets.md`
+                            // §18.4): the keys below are game code's, so they do not act
+                            // while one is shown (their modifier and release tracking still
+                            // sees every event).
+                            let modal = ui.host().is_some_and(|h| h.modal_dialog_shown());
+                            let npc_key = matches!(
+                                e,
+                                tessera_input::RawEvent::Key {
+                                    key: tessera_input::KeyCode::Escape
+                                        | tessera_input::KeyCode::Enter,
+                                    pressed: true,
+                                    ..
+                                }
+                            );
                             // Escape and Enter on an active NPC window (P3, npc-windows.md
                             // §5.7, §7.5, §8.3) go to that window only.
-                            if ui.host().is_some_and(|h| rt.npc.raw_key(h, &e)) {
+                            if !(modal && npc_key)
+                                && ui.host().is_some_and(|h| rt.npc.raw_key(h, &e))
+                            {
                                 return;
                             }
                             // U (`use_selection`) and L (`toggle_quest_log`) are keymap
@@ -703,7 +722,7 @@ impl ApplicationHandler for App {
                             // modifiers; the keys act only without focus. `toggle_mount`
                             // (Ctrl+M) is a `tessera-input` action the walker's controls
                             // take (`walker.md` §16.4).
-                            let focused = ui.host().is_some_and(|h| h.keyboard_focused());
+                            let focused = modal || ui.host().is_some_and(|h| h.keyboard_focused());
                             if let Some(crate::map::P5Key::Finder) = rt.map.key(&e, focused) {
                                 rt.p5.request_finder();
                             }

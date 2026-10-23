@@ -1,21 +1,25 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! The portraits of the player and target frames on the user's install (decision 0024 P2;
 //! `combat-ui.md` §5.1, CU32; `ui-widgets.md` §12.1–§12.4): the client's headless loop with
-//! the game UI and its HUD over the plain sandbox, and [`CombatPortraits`] with the walker's
-//! figures. Checked from the UI tree, the composition list and the targets' pixels:
+//! the game UI and its HUD over the plain sandbox, and the client UI's own combat portraits
+//! ([`ClientUi::render_combat_portraits`], the call the windowed and headless loops make)
+//! with the walker's figures. Checked from the UI tree, the composition list and the
+//! targets' pixels:
 //!
 //! - before a figure is drawn both portraits are hidden (§12.4);
 //! - `PlayerPortrait` reads scene 0x21000004, a 62 × 62 target, opaque black and its
-//!   texture-list mask, and draws the local player through the scene's `Camera_1`: inside
-//!   the mask the target holds the figure on the black background, outside it is
+//!   texture-list mask, and draws the local player with the field of view and far plane of
+//!   the scene's `Camera_1` from Tessera's head-and-shoulders stand-in placement
+//!   (`crate::portrait::head_camera`; the per-target framing of §12.1 step 3 is not built):
+//!   inside the mask the target holds the figure on the black background, outside it is
 //!   transparent; the element is shown and composed as external content;
 //! - the targets are not drawn again once their drawing is complete (frame cost);
 //! - selecting the player itself (the session's `TargetChanged`, with a health report so
 //!   that P5 shows its vital field, where the portrait sits) fills P5, whose
 //!   `OpponentPortrait` draws the same figure into its own target with its own mask;
-//! - selecting a placed figure (an NPC), the usual P5 case, keeps P5 hidden: the walker
-//!   offers no portrait draw of other entities yet (a known gap, `crate::portrait` module
-//!   docs); this part is skipped when no placed figure is built near the start.
+//! - selecting another entity, the usual P5 case, fills P5 with that entity's figure
+//!   (`Walker::draw_entity_portrait`): a placed NPC when one is built near the start, else
+//!   the one member of the sandbox's crowd (`--crowd 1`, another character).
 //!
 //! The portraits are driven before the UI's step 8 (the order the module docs require).
 //!
@@ -26,18 +30,16 @@
 //! counts only.
 
 use std::path::PathBuf;
-use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use clap::Parser as _;
 use tessera_client::Args;
-use tessera_client::portrait::{CombatPortraits, content_id, render_combat_portraits};
+use tessera_client::portrait::{CombatPortraits, content_id};
 use tessera_client::runtime::Runtime;
 use tessera_client::ui_host::client::ClientUi;
 use tessera_client::ui_host::cursor::NoWindow;
 use tessera_client::walker::characters::FigureStatus;
 use tessera_client::walker_host::{WalkerHost, save_png};
-use tessera_dat::{ArchiveSet, SetOptions};
 use tessera_render::{OffscreenFormat, Renderer, RendererConfig, RgbaImage};
 use tessera_ui::game::combat::FrameKind;
 use tessera_ui::paint::EntryTexture;
@@ -61,7 +63,6 @@ struct Client<'r> {
     host: WalkerHost,
     ui: ClientUi,
     renderer: Renderer<'r>,
-    portraits: CombatPortraits<FigureStatus>,
     last: Instant,
     viewport_set: bool,
     frame_target: tessera_render::OffscreenTarget,
@@ -88,8 +89,12 @@ impl Client<'static> {
             "1280x720",
             // The walker's own HUD off; the game HUD (P4, P5) on.
             "--no-hud",
+            // One member of the sandbox's crowd: another character in front of the spawn,
+            // whose portrait P5 shows when it is selected.
+            "--crowd",
+            "1",
         ]);
-        args.game_dir = Some(game.clone());
+        args.game_dir = Some(game);
         args.data_dir = Some(data.join("data"));
         let rargs = ClientUi::runtime_args(&args);
         let mut rt = Runtime::start(&rargs, Instant::now()).expect("runtime");
@@ -97,9 +102,6 @@ impl Client<'static> {
         let host = WalkerHost::new(&args, shared);
         let mut ui = ClientUi::new(&rargs);
         ui.prepare(&mut rt);
-        // The masks are read from the install on the portraits' worker (read-only).
-        let set = ArchiveSet::open(&game, SetOptions::default()).expect("archive set");
-        let source: Arc<dyn tessera_props::RecordSource> = Arc::new(set);
         let frame_target = renderer
             .create_offscreen_target(SIZE.0, SIZE.1, OffscreenFormat::Rgba8Srgb)
             .expect("frame target");
@@ -108,7 +110,6 @@ impl Client<'static> {
             host,
             ui,
             renderer,
-            portraits: CombatPortraits::for_install(source),
             last: Instant::now(),
             viewport_set: false,
             frame_target,
@@ -148,9 +149,8 @@ impl Client<'_> {
             dt,
         );
         self.ui.after_update(walker, &mut self.rt, &ev);
-        if let Some(h) = self.ui.host() {
-            render_combat_portraits(&mut self.portraits, h, walker, &mut self.renderer);
-        }
+        // The client's own call (as `crate::app` and the headless `--ui` loop make it).
+        self.ui.render_combat_portraits(walker, &mut self.renderer);
         self.ui.step8(walker, &mut self.renderer, &mut self.rt);
         self.ui.render_portraits(walker, &mut self.renderer);
         let mut frame = self
@@ -176,8 +176,15 @@ impl Client<'_> {
         }
         panic!(
             "{what}: not reached in {MAX_FRAMES} frames; stats {:?}",
-            self.portraits.stats()
+            self.ui.combat_portraits().map(CombatPortraits::stats)
         );
+    }
+
+    /// The client UI's combat portraits (made when the UI attached).
+    fn portraits(&self) -> &CombatPortraits<FigureStatus> {
+        self.ui
+            .combat_portraits()
+            .expect("the client's combat portraits")
     }
 
     /// The portrait element of `kind`, whether it is displayed, and whether the
@@ -201,7 +208,7 @@ impl Client<'_> {
     }
 
     fn target_pixels(&self, kind: FrameKind) -> RgbaImage {
-        let t = self.portraits.target(kind).expect("a target");
+        let t = self.portraits().target(kind).expect("a target");
         self.renderer.read_viewport_pixels(t).expect("read back")
     }
 }
@@ -267,7 +274,7 @@ fn portraits_draw_for_the_player_and_the_player_selected() {
         })
     });
     // §12.4: no figure drawn yet, no portrait.
-    if !c.portraits.drawn(FrameKind::Player) {
+    if !c.portraits().drawn(FrameKind::Player) {
         let (shown, composed) = c.portrait_state(FrameKind::Player).expect("PlayerPortrait");
         assert!(!shown && !composed, "hidden while no figure is drawn");
     }
@@ -299,7 +306,7 @@ fn portraits_draw_for_the_player_and_the_player_selected() {
 
     // P4: the local player's figure.
     c.until("the player portrait drawn", |c| {
-        c.portraits.drawn(FrameKind::Player)
+        c.portraits().drawn(FrameKind::Player)
     });
     c.frame();
     let (shown, composed) = c.portrait_state(FrameKind::Player).expect("PlayerPortrait");
@@ -312,21 +319,21 @@ fn portraits_draw_for_the_player_and_the_player_selected() {
     // Frame cost: once the drawing is complete (the figure stable and the walker settled)
     // the target is not drawn again.
     c.until("the player portrait complete", |c| {
-        c.portraits.complete(FrameKind::Player)
+        c.portraits().complete(FrameKind::Player)
     });
     let p4 = c.target_pixels(FrameKind::Player);
     sheet("p4_complete", &p4);
     check_portrait("PlayerPortrait (complete)", &p4);
-    let renders = c.portraits.stats().renders;
+    let renders = c.portraits().stats().renders;
     for _ in 0..90 {
         c.frame();
     }
     assert_eq!(
-        c.portraits.stats().renders,
+        c.portraits().stats().renders,
         renders,
         "a complete portrait is not drawn again"
     );
-    eprintln!("complete: {:?}", c.portraits.stats());
+    eprintln!("complete: {:?}", c.portraits().stats());
 
     // P5: select the player itself; the target frame's portrait shows the same figure.
     // The plain sandbox answers no combat command, so the session's answer to
@@ -368,7 +375,7 @@ fn portraits_draw_for_the_player_and_the_player_selected() {
             .collect::<Vec<_>>()
     );
     c.until("the target portrait drawn", |c| {
-        c.portraits.drawn(FrameKind::Target)
+        c.portraits().drawn(FrameKind::Target)
     });
     c.frame();
     let (shown, composed) = c
@@ -384,10 +391,13 @@ fn portraits_draw_for_the_player_and_the_player_selected() {
         .expect("frame read back");
     sheet("frame", &frame);
 
-    // P5 with a placed figure (an NPC) selected: hidden, the known gap (module docs).
-    let npc = c.host.walker.as_ref().and_then(|w| {
+    // P5 with another entity selected (a placed NPC when one is built near the start, else
+    // the crowd member, another character): its own figure is drawn
+    // (`Walker::draw_entity_portrait`).
+    let other = |c: &Client<'_>| -> Option<tessera_net::EntityId> {
+        let w = c.host.walker.as_ref()?;
         let chars = w.characters();
-        chars.placed().map(|(id, _)| id).find(|id| {
+        let built = |id: &tessera_net::EntityId| {
             Some(*id) != chars.player_id()
                 && chars.figure_of(*id).is_some_and(|f| {
                     matches!(
@@ -396,10 +406,27 @@ fn portraits_draw_for_the_player_and_the_player_selected() {
                             if parts > 0
                     )
                 })
+        };
+        let placed = chars.placed().map(|(id, _)| id).find(|id| built(id));
+        placed.or_else(|| {
+            c.rt.world
+                .as_ref()?
+                .entities()
+                .keys()
+                .copied()
+                .find(|id| built(id))
         })
-    });
+    };
+    for _ in 0..MAX_FRAMES {
+        if other(&c).is_some() {
+            break;
+        }
+        c.frame();
+    }
+    let npc = other(&c);
     match npc {
         Some(npc) => {
+            let renders = c.portraits().stats().renders;
             let them = tessera_net::EntityId(npc.0);
             c.rt.world.as_mut().expect("world session").apply_polled(
                 Instant::now(),
@@ -416,25 +443,29 @@ fn portraits_draw_for_the_player_and_the_player_selected() {
                     }),
                 ],
             );
-            c.until("the placed figure selected", |c| {
+            c.until("the other entity selected", |c| {
                 c.ui.host()
                     .and_then(|h| h.combat_hud())
                     .is_some_and(|h| h.widgets().selection() == Some(npc.0))
             });
-            for _ in 0..30 {
-                c.frame();
-            }
+            c.until("the other entity's portrait drawn", |c| {
+                c.portraits().stats().renders > renders && c.portraits().drawn(FrameKind::Target)
+            });
+            c.frame();
             let (shown, composed) = c
                 .portrait_state(FrameKind::Target)
                 .expect("OpponentPortrait");
-            eprintln!("a placed figure selected: P5 shown {shown}, composed {composed} (gap)");
+            eprintln!("another entity selected: P5 shown {shown}, composed {composed}");
             assert!(
-                !shown && !composed,
-                "until the walker draws other entities' portraits, P5 stays hidden (§12.4)"
+                shown && composed,
+                "the other entity's portrait is shown and composed (§12.4: hidden only \
+                 while nothing is drawn)"
             );
-            assert!(!c.portraits.drawn(FrameKind::Target));
+            let npc_p5 = c.target_pixels(FrameKind::Target);
+            sheet("p5_npc", &npc_p5);
+            check_portrait("OpponentPortrait (other entity)", &npc_p5);
         }
-        None => eprintln!("no placed figure built near the start; the NPC selection is skipped"),
+        None => panic!("no other entity's figure was built (placed NPC or crowd member)"),
     }
-    eprintln!("stats: {:?}", c.portraits.stats());
+    eprintln!("stats: {:?}", c.portraits().stats());
 }

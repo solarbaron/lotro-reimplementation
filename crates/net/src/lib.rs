@@ -37,6 +37,8 @@
 //!   pluggable [`transport::Datagram`]. Like the session it is poll-driven on
 //!   the caller's thread: it spawns no thread and runs no async runtime. The
 //!   Tessera protocol does not use it (decision 0030).
+//! - [`account`]: the Account group of events and commands of an official-server login
+//!   (`docs/specs/official-entry.md` §8): progress, world list, queue, refusals.
 //! - [`compat`]: documentation-only note pointing to the separate `tessera-compat`
 //!   server-compatibility crate (decision 0034).
 //!
@@ -71,6 +73,7 @@
 //! # Ok::<(), tessera_net::NetError>(())
 //! ```
 
+pub mod account;
 pub mod compat;
 pub mod domain;
 mod error;
@@ -84,6 +87,7 @@ pub mod scenario;
 pub mod session;
 pub mod transport;
 
+pub use account::{AccountCommand, AccountEvent};
 pub use domain::{
     CharacterCommand, CharacterEvent, CombatCommand, CombatEvent, InventoryCommand, InventoryEvent,
     NpcCommand, NpcEvent, ProgressionCommand, ProgressionEvent, SocialCommand, SocialEvent,

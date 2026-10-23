@@ -89,6 +89,15 @@ proptest = "1"
 rand = { version = "0.9", default-features = false, features = ["std", "small_rng"] }
 thiserror = "2"
 tracing = "0.1"
+# The ban-risk consent of tessera-compat (official-entry.md §5.3, §5.6): config directory,
+# random key, record document, normalisation form C, and on Unix-like systems the file flags,
+# user ID and host name of the record's binding.
+dirs = "6"
+getrandom = "0.4"
+libc = "0.2"
+rustix = { version = "1", default-features = false }
+toml = "1"
+unicode-normalization = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 # M7 networking candidates (decision 0030 picks the transport; entries nobody uses are not

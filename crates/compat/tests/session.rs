@@ -22,12 +22,12 @@ use tessera_compat::session::{
     OPCODE_VERSION_CHALLENGE, OPCODE_VERSION_RESPONSE, OPCODE_VERSION_STATUS, OptionalHeaders,
     ReferralAuthHeader, RuntimeBitTreeTables, ServerRedirectHeader, SessionAuthCredentials,
     SessionAuthHeader, SessionAuthPayload, SessionConnection, SessionError, SessionEvent,
-    SessionMultiplexer, StdUdpTransport, SystemNotificationMessage, TransportErrorHeader,
-    UdpDatagramTransport, VALID_DATAGRAM_FLAGS_MASK, VALID_DATAGRAM_FLAGS_WITH_INTERNAL_MASK,
-    VersionResponseMessage, VersionStatusMessage, WorldReferralHeader, candidate_bind_ports,
-    compute_datagram_checksum, compute_packet_checksum, compute_unique_port, decode_datagram,
-    decode_entity_batch, decode_message, decode_variable_u32, des3_cbc_decrypt, des3_cbc_encrypt,
-    dispatch_message, encode_batch_container, encode_datagram, encode_entity_batch, encode_message,
+    SessionMultiplexer, SystemNotificationMessage, TransportErrorHeader, UdpDatagramTransport,
+    VALID_DATAGRAM_FLAGS_MASK, VALID_DATAGRAM_FLAGS_WITH_INTERNAL_MASK, VersionResponseMessage,
+    VersionStatusMessage, WorldReferralHeader, candidate_bind_ports, compute_datagram_checksum,
+    compute_packet_checksum, compute_unique_port, decode_datagram, decode_entity_batch,
+    decode_message, decode_variable_u32, des3_cbc_decrypt, des3_cbc_encrypt, dispatch_message,
+    encode_batch_container, encode_datagram, encode_entity_batch, encode_message,
     encode_message_with_routing, encode_single_wrapper, encode_variable_u32,
     map_transport_error_to_hresult, sndbuf_probe_midpoint, split_blob, verify_packet_checksum,
 };
@@ -46,12 +46,8 @@ fn transport_and_port_selection() {
     mem.send_to(&[0u8; 22], peer_addr).expect("send datagram");
     assert_eq!(mem.outbound_len(), 1);
 
-    // Loopback ephemeral bind with StdUdpTransport
-    let std_sock = StdUdpTransport::bind(Ipv4Addr::LOCALHOST, 0, false).expect("bind loopback");
-    assert_eq!(
-        *std_sock.local_addr().expect("addr").ip(),
-        Ipv4Addr::LOCALHOST
-    );
+    // The standard-library transport is made only through the network-access type, which
+    // needs a consent proof (official-entry.md §6.1); tests open no socket (§6.4).
 
     // Case A: explicit base port
     let ports_a = candidate_bind_ports(Ipv4Addr::new(192, 0, 2, 10), 2900, false);

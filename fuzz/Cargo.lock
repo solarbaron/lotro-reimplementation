@@ -2057,10 +2057,17 @@ dependencies = [
 name = "tessera-compat"
 version = "0.1.0"
 dependencies = [
+ "dirs",
  "flate2",
+ "getrandom 0.4.3",
+ "libc",
+ "rustix",
+ "sha2",
  "tessera-net",
  "thiserror",
+ "toml",
  "tracing",
+ "unicode-normalization",
 ]
 
 [[package]]

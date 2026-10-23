@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 [package]
 name = "tessera-compat"
-description = "Official-server compatibility crate: login, session, and world protocol modules (partly done; needs more work)"
+description = "Official-server compatibility crate: ban-risk consent, network-access gate, login, session and world protocol modules (partly done; needs more work)"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -9,10 +9,40 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
+# Tessera's per-user config directory for the acceptance record (official-entry.md §5.6).
+dirs.workspace = true
 flate2.workspace = true
-tessera-net.workspace = true
+# The record's random key (official-entry.md §5.6).
+getrandom.workspace = true
+# The warning digest and the record's authentication code (official-entry.md §5.3, §5.6).
+sha2.workspace = true
+# The neutral session model (`Backend`, `Session`, events and commands). Default features
+# are off so the test-server backend (`remote`: QUIC on tokio) is not pulled in through this
+# crate. tessera-net still has network code this crate must never use: the generic
+# `transport` module (its `UdpDatagram` opens a UDP socket, with no feature gate) and, when
+# feature unification turns `remote` on in a workspace build, `remote::RemoteBackend`. The
+# source scan of OE-T8 (b) (`tests/official_entry.rs`) refuses those names outside the
+# network-access type (official-entry.md §6.1). It is a path dependency because a workspace
+# dependency cannot turn the default features off.
+tessera-net = { path = "../net", default-features = false }
 thiserror.workspace = true
+# The record document (official-entry.md §5.6).
+toml.workspace = true
 tracing.workspace = true
+# Normalisation form C of the digest texts (official-entry.md §5.3).
+unicode-normalization.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+# O_NOFOLLOW and O_NONBLOCK for the record's files.
+libc.workspace = true
+# The user ID and host name of the record's binding (official-entry.md §5.6).
+rustix = { workspace = true, features = ["std", "process", "system"] }
+
+[features]
+## Exposes the record-building helpers of `consent::test_support` (records for injected
+## bindings, the authentication code, the pure evaluation) for fuzzing and other crates'
+## tests. Only the fuzz workspace and dev-dependencies enable it; release builds never do.
+test-support = []
 
 [dev-dependencies]
 tempfile = "3"

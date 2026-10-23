@@ -404,6 +404,31 @@ pub struct Args {
     #[arg(long, conflicts_with_all = ["character", "headless", "smoke", "showcase", "walk_path", "fly_path", "scenario", "no_data"])]
     pub character_select: bool,
 
+    // ----- official play (`docs/specs/official-entry.md` §4) -----
+    /// Open Tessera's start screen (Explore offline, Official servers, Quit) instead of
+    /// going straight to the offline walker. Needs a window.
+    #[arg(
+        long,
+        conflicts_with_all = [
+            "official", "server", "scenario", "headless", "smoke", "screenshot", "walk_path",
+            "ui_script",
+        ]
+    )]
+    pub start_screen: bool,
+
+    /// Open the start screen with "Official servers" chosen. It only selects: it never
+    /// accepts or skips the official-server warning and never fills the account form. Needs
+    /// a window and the install; no synthetic input and no plugin loads may come with it.
+    #[arg(
+        long,
+        conflicts_with_all = [
+            "server", "scenario", "scenario_input", "headless", "smoke", "showcase",
+            "walk_path", "fly_path", "ui_script", "commands", "load_plugins", "no_data",
+            "account", "character", "screenshot", "start_screen", "duration",
+        ]
+    )]
+    pub official: bool,
+
     // ----- audio -----
     /// Audio backend: `auto` (the output device, else silent mixing; the windowed
     /// default), `device`, `null` (mixed and discarded; the default for `--headless` and
@@ -974,6 +999,13 @@ impl Args {
             ));
         }
         Ok(())
+    }
+
+    /// Whether the run opens Tessera's start screen (`--start-screen` or `--official`,
+    /// `official-entry.md` §4.1).
+    #[must_use]
+    pub fn opens_start_screen(&self) -> bool {
+        self.start_screen || self.official
     }
 
     /// Whether the world walker runs (instead of the M0 showcase).

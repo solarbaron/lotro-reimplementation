@@ -1467,6 +1467,12 @@ impl Backend for SandboxBackend {
             }
             (Phase::InWorld, Command::Chat { channel, text }) => self.chat(now, channel, text),
             (Phase::Closed, _) => return Err(NetError::Closed),
+            // The Account group is the official login's (`official-entry.md` §8.2).
+            (_, Command::Account(_)) => {
+                return Err(NetError::InvalidCommand(
+                    "account commands are not available in the sandbox",
+                ));
+            }
             (_, Command::Disconnect) => self.disconnect(now),
             (phase, command) => {
                 tracing::debug!(?phase, command = command.name(), "sandbox ignoring command");

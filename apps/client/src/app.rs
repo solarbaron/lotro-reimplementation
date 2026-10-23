@@ -29,6 +29,11 @@ const TITLE_INTERVAL: Duration = Duration::from_secs(1);
 
 /// Run the windowed client until the window is closed.
 pub fn run(args: Args) -> anyhow::Result<()> {
+    // `--start-screen` and `--official` open Tessera's start screen first
+    // (`official-entry.md` §4); "Explore offline" comes back to `App` below.
+    if args.opens_start_screen() {
+        return crate::official::window::run(args);
+    }
     let event_loop = EventLoop::new().context("creating the event loop")?;
     event_loop.set_control_flow(ControlFlow::Poll);
     let mut app = App::new(args)?;
@@ -73,7 +78,7 @@ pub fn scenario_caption(title: Option<&str>) -> Option<String> {
 }
 
 #[derive(Debug)]
-struct App {
+pub(crate) struct App {
     args: Args,
     runtime: Option<Runtime>,
     gfx: Option<Gfx>,
@@ -139,7 +144,7 @@ fn key_action(code: KeyCode) -> Option<CameraAction> {
 }
 
 impl App {
-    fn new(args: Args) -> anyhow::Result<Self> {
+    pub(crate) fn new(args: Args) -> anyhow::Result<Self> {
         if let Some(path) = &args.frame_log {
             crate::runtime::refuse_install_path(&args, None, path)?;
         }
@@ -622,8 +627,13 @@ impl App {
         }
     }
 
+    /// The first error of the run, if one ended it.
+    pub(crate) fn take_error(&mut self) -> Option<anyhow::Error> {
+        self.error.take()
+    }
+
     /// Idempotent orderly shutdown.
-    fn shutdown(&mut self) {
+    pub(crate) fn shutdown(&mut self) {
         if let (Some(ui), Some(rt)) = (self.ui.as_mut(), self.runtime.as_mut()) {
             // After the last frame: every apartment unloads (decision 0014 D8).
             match self.gfx.as_mut() {

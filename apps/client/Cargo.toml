@@ -22,6 +22,10 @@ clap.workspace = true
 tessera-anim.workspace = true
 tessera-assets.workspace = true
 tessera-audio.workspace = true
+# Official play (docs/specs/official-entry.md): the ban-risk consent, the consent proof and
+# the compatibility backend (placeholder connector only; decision 0041). Never linked by
+# tessera-server.
+tessera-compat.workspace = true
 tessera-dat.workspace = true
 tessera-entity.workspace = true
 tessera-formats.workspace = true
@@ -76,6 +80,9 @@ audio-device = ["tessera-audio/device"]
 
 [dev-dependencies]
 tempfile = "3"
+# The record-building helpers of `consent::test_support` for the official-entry tests
+# (OE-T5, OE-T6 (c)); dev-dependency features never reach the client binary.
+tessera-compat = { workspace = true, features = ["test-support"] }
 # In-process test server and its types for the headless network test (`tests/net_server.rs`).
 tessera-protocol.workspace = true
 tessera-server.workspace = true

@@ -1883,8 +1883,8 @@ combat layer waits until a session figure's start-up clips are decoded before sp
 The 2026-10-23 revisions of `combat-ui.md`, `skill-tooltips.md` and `combat-visuals.md` are
 Accepted: they answer every implementer OPEN of `combat-visuals.md` and some of the other two;
 the `scenario-feed.md` §9.7 OPEN was answered in revision 9 (2026-10-14). The implementer
-OPENs of `particle-runtime.md`, `keymap.md` (its revision is in review, package
-`spec-ui-input`) and `lua-plugin-api.md` §15.2 still wait.
+OPENs of `particle-runtime.md` and `lua-plugin-api.md` §15.2 still wait; the `keymap.md`
+revision is Accepted (2026-10-23, package `spec-ui-input`) but not yet built.
 
 <a id="p3"></a>
 ### P3: NPC windows: dialogue, quests, vendors and loot

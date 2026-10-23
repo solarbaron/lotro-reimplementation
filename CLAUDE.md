@@ -392,10 +392,11 @@ fine. Format-level terms like "DID" or "landblock" are fine.
     independent review (2026-10-23): `appearance.md`, `combat-ui.md`, `combat-visuals.md`,
     `instruments.md`, `map-windows.md`, `mounts.md`, `scenario-feed.md` (revision 10),
     `script-table.md`, `skeleton-anim.md`, `skill-tooltips.md`, `social-panels.md`,
-    `travel-windows.md`. Package `spec-ui-input` (`keymap.md`, `ui-layout.md`,
-    `ui-widgets.md`, `ui-behaviour.md`, `game-panels.md`, `item-tooltips.md`,
-    `character-panels.md`) is still in review and not merged; those specs keep their earlier
-    Accepted text on main.
+    `travel-windows.md`. Package `spec-ui-input` revised `keymap.md`, `ui-layout.md`,
+    `ui-widgets.md`, `ui-behaviour.md`, `game-panels.md`, `item-tooltips.md` and
+    `character-panels.md` (plus the `m5-visual.md` P15 rows); all are Accepted after four
+    review rounds (2026-10-23). The code does not yet follow the `keymap.md` §8.3 changes or
+    the `item-tooltips.md` name-wrap and pinned-window changes.
   - **Walker camera.** The walk camera's code follows the install's camera record
     (`walker.md` §11.6–§11.8; the record is read on a worker at start-up), but `walker/mod.rs` does not call
     `Controls::follow_characters` yet, so the camera still uses the built-in §11.8 values

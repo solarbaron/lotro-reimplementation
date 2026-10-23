@@ -25,18 +25,26 @@
 //!   of [`STALL_GAP`]) and the **results** (§18.5).
 //! - **Keys** (§18.4, `ui-behaviour.md` §5.5): the UI core's dialog key handler, given the
 //!   dialog's kind with [`Ui::set_dialog_keys`] (`crate::DialogKeys`): a confirmation gives
-//!   yes on `AcceptKey` or `AcceptInput` and no on `EscapeKey` and consumes the releases of
-//!   `AcceptKey` and `EscapeKey`; a message gives OK on any of the three and consumes the
-//!   release of `AcceptKey`; both only while the dialog is the active panel and the
-//!   description does not ignore the keyboard (`UICore_Dialog_ignorekeyboardinput` is read
-//!   for those two kinds only). A text input gives done on `AcceptInput` in its entry and
-//!   quit on `EscapeKey` in its entry while the quit button is shown; a wait dialog handles
-//!   no keys. `DialogBoxes` is pushed while the dialog is active (§18.6 Tessera rule).
+//!   yes on `AcceptKey` or `AcceptInput` and no on `EscapeKey`; a message gives OK on any of
+//!   the three; both only while the dialog is the active panel and the description does not
+//!   ignore the keyboard (`UICore_Dialog_ignorekeyboardinput` is read for those two kinds
+//!   only). A text input gives done on `AcceptInput` in its entry and quit on `EscapeKey` in
+//!   its entry while the quit button is shown; a wait dialog handles no keys. A press and
+//!   its release go to the same receiver (§18.4 revision 5, Tessera rule): the release of a
+//!   key whose press gave a result is consumed even after the dialog is gone, and the
+//!   release of a key pressed before the dialog appeared goes past it. `DialogBoxes` is
+//!   pushed while the dialog is active (§18.6 Tessera rule).
 //! - **Modal** (§18.4): a modal description's dialog is made modal in the core
 //!   ([`Ui::set_dialog_modal`]): while it is shown the core consumes every other key press
 //!   and the release of every key pressed meanwhile, so no key reaches the broadcast that
-//!   feeds game code ([`modal_dialog_shown`] tells a host the same). Not passing those keys
-//!   to the client's own game-key handling is the host's part.
+//!   feeds the plugins and game code ([`modal_dialog_shown`] tells a host the same). Keys
+//!   held from before the dialog stay held, and their releases go past it. The client's UI
+//!   host applies the rule to its own game keys too: `UiHost::modal_dialog_shown` keeps the
+//!   chat entry and the game band from keys, `UiHost::keyboard_in_dialog` decides whether
+//!   the UI sees a key under the dialog at all, and the host's modal holds consume the
+//!   repeats and the release of every key pressed while the dialog was shown, even after it
+//!   closed. Callers with raw keys of their own (the walker's world keys, the NPC windows'
+//!   Escape and Enter, the map and finder keys) leave them alone while it is shown.
 //!
 //! **Tessera rules.**
 //!

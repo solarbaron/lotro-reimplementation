@@ -34,6 +34,7 @@ use std::sync::Arc;
 use tessera_formats::Did;
 use tessera_gamedata::map::{NoteSettings, ShownMap, select_notes};
 use tessera_net::domain::Text;
+use tessera_ui::game::context_menu::{MenuArt, MenuRefs};
 use tessera_ui::game::map::{GameMap, MapPoint};
 use tessera_ui::game::mapfallback::P5Art;
 use tessera_ui::game::mapmarks::{
@@ -45,7 +46,6 @@ use tessera_ui::game::mapwindow::{
 };
 use tessera_ui::game::radar::{Radar, RadarInput};
 use tessera_ui::game::worldmap::MapTree;
-use tessera_ui::widgets::context_menu::{MenuArt, MenuRefs};
 use tessera_ui::{ElementKey, ImageRef, Ui, UiEvent};
 
 use super::data::{MapFacts, MapSettings};

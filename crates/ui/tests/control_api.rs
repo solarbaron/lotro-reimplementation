@@ -393,3 +393,27 @@ fn opacity_stretch_mode_and_surfaces() {
     // Displayed width trunc((50 + 1) × 2 − 1) = 101 (UB §9.2.1).
     assert_eq!(ui.displayed_box(c).w(), 101);
 }
+
+/// `lua-plugin-api.md` §14.2.6 round-5 answer 1 (Tessera rule): a shown window's new element
+/// gets the old surface's rotation at once, also when it starts without a surface of its own
+/// (it gets the Stretch object mode, as `SetRotation` step 2 gave the old one).
+#[test]
+fn a_carried_rotation_rotates_a_shown_element_without_a_surface() {
+    let mut ui = ui();
+    let from = window(&mut ui, 200, 200);
+    assert!(ui.window_set_rotation(from, [0.0, 0.0, 45.0]));
+    assert!(ui.owns_surface(from));
+    let to = ui.create_control(ControlKind::Control, 1).unwrap();
+    ui.control_set_size(to, 200, 200);
+    ui.control_set_visible(to, true);
+    assert!(!ui.owns_surface(to), "starts without a surface");
+    ui.control_carry_state(from, to);
+    assert_eq!(ui.window_rotation(to), [0.0, 0.0, 45.0], "GetRotation");
+    assert!(ui.owns_surface(to), "has a surface now");
+    assert_eq!(
+        tessera_ui::game::held_rotation(&ui, to),
+        [0.0, 0.0, 45.0],
+        "its surface holds the old surface's rotation"
+    );
+    assert_eq!(ui.control_stretch_mode(to), 1);
+}

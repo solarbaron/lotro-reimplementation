@@ -7,38 +7,52 @@
 //! [`DialogKeys`] kind ([`Ui::set_dialog_keys`]; a panel marked without one reacts as a
 //! confirmation, the rule of `ui-behaviour.md` §5.5):
 //!
-//! | Kind | Press | Result | Releases consumed |
-//! |---|---|---|---|
-//! | confirmation | `AcceptKey`, `AcceptInput` / `EscapeKey` | yes / no | `AcceptKey`, `EscapeKey` |
-//! | message | `AcceptKey`, `AcceptInput` or `EscapeKey` | OK (reported as yes) | `AcceptKey` |
-//! | text input | `AcceptInput` in its entry / `EscapeKey` in its entry while the quit button is shown | done (yes) / quit (no) | none |
-//! | wait | none | — | none |
+//! | Kind | Press | Result |
+//! |---|---|---|
+//! | confirmation | `AcceptKey`, `AcceptInput` / `EscapeKey` | yes / no |
+//! | message | `AcceptKey`, `AcceptInput` or `EscapeKey` | OK (reported as yes) |
+//! | text input | `AcceptInput` in its entry / `EscapeKey` in its entry while the quit button is shown | done (yes) / quit (no) |
+//! | wait | none | — |
 //!
 //! A confirmation or message reacts only while it is the active panel and its
 //! `UICore_Dialog_ignorekeyboardinput` is not true; a text input reacts to the commands its
 //! entry reports while the entry has the keyboard focus. `EscapeKey` in the entry with the
-//! quit button hidden gives no result and goes on as an ordinary key of the entry.
+//! quit button hidden gives no result: the entry handles it as its own key (it gives up the
+//! focus when its `UICore_Text_lose_focus_on_escape` is true) and the key reaches nothing
+//! outside the dialog (no broadcast; `ui-widgets.md` §18.4, revision 5 answer to UI core (f)).
 //!
 //! **Modal dialogs** (§18.4 last paragraph, [`Ui::set_dialog_modal`]): while one is shown,
 //! every key press is consumed (none reaches the broadcast, so none reaches game code), and
 //! so is the release of every key pressed while it was shown.
 //!
-//! Tessera rules (`ui-widgets.md` §18.4 is silent on them):
+//! **Presses and releases go to the same receiver** (§18.4 revision 5, Tessera rule; a known
+//! difference from the original, which consumes the release of `AcceptKey` or `EscapeKey`
+//! on a shown confirmation whatever received the press): a release is consumed by the
+//! dialog rules exactly when its press was, because it gave a dialog result (of any kind,
+//! `AcceptInput` and the `EscapeKey` of a message included), the modal rule took it, it
+//! was the `EscapeKey` of a text-input entry above, or the dialog took it for its focus
+//! cycle (`FocusNext`, `FocusPrevious`): the pairing covers every key a dialog takes. Such a release is consumed even when the
+//! dialog is gone by then, so game code and the broadcast see neither half of the key. A
+//! release whose press went past every dialog (made before the dialog appeared, or while it
+//! did not react to keys) goes past the dialog too, even while a confirmation, message or
+//! modal dialog is shown, and raises the broadcast as usual.
 //!
-//! - A key press that a confirmation or message turned into a result has its release
-//!   consumed even though the dialog is gone by then, so game code sees neither half of it.
+//! Tessera rules (`ui-widgets.md` §18.4, revision 5 answers):
+//!
 //! - While a modal dialog is shown, a press whose keyboard target lies outside the dialog
 //!   is not delivered to that target either; a held release is delivered only to a target
 //!   inside a modal dialog still shown.
 //! - The held releases are matched by command name, at most [`MAX_HELD_RELEASES`] of them
-//!   (the oldest is forgotten first); a new press of the same command with no modal dialog
-//!   shown forgets it, so a lost release never swallows a later one. (On a loss of the
-//!   window focus the input layer ends every hold, so the held releases arrive.)
+//!   (the oldest is forgotten first, and its release then goes past unpaired); a new press
+//!   of the same command with no modal dialog shown forgets it, so a lost release never
+//!   swallows a later one. (On a loss of the window focus the input layer ends every hold,
+//!   so the held releases arrive.)
 //! - An OS repeat is told from a new press by the commands down ([`MAX_DOWN_KEYS`] of them).
 //!   A repeat never gives a dialog result and never starts a hold: it continues a press
 //!   that was already routed.
-//! - An OS repeat of a key that went down before a modal dialog appeared is consumed like
-//!   any press, but its release is not held back: game code saw that key go down.
+//! - A key held from before a modal dialog appeared stays held: an OS repeat of it is
+//!   consumed like any press, but its release is not held back: game code saw that key go
+//!   down.
 //! - An OS repeat of a key whose release is held is consumed and delivered to no target,
 //!   with or without a modal dialog: game code never saw that key go down.
 //! - While a modal dialog is shown, a typed character whose focused entry lies outside the
@@ -102,16 +116,17 @@ pub const MAX_DOWN_KEYS: usize = 64;
 /// How an engine dialog reacts to keys (`ui-widgets.md` §18.4; module docs).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum DialogKeys {
-    /// A confirmation: `AcceptKey` or `AcceptInput` give yes, `EscapeKey` no; the releases
-    /// of `AcceptKey` and `EscapeKey` are consumed. The kind of a panel marked without one
-    /// (`ui-behaviour.md` §5.5).
+    /// A confirmation: `AcceptKey` or `AcceptInput` give yes, `EscapeKey` no; the release
+    /// of a key that gave a result is consumed (module docs). The kind of a panel marked
+    /// without one (`ui-behaviour.md` §5.5).
     #[default]
     Confirmation,
     /// A message: `AcceptKey`, `AcceptInput` or `EscapeKey` give OK (reported as yes); the
-    /// release of `AcceptKey` is consumed.
+    /// release of a key that gave the result is consumed (module docs).
     Message,
     /// A text input: `AcceptInput` in `entry` gives done (yes), `EscapeKey` in `entry` while
-    /// `quit` is shown gives quit (no); no release is consumed.
+    /// `quit` is shown gives quit (no); the release of a key the dialog took is consumed
+    /// (module docs).
     TextInput {
         /// The text entry (`DialogTextInputTextEntry`), when the dialog has one.
         entry: Option<ElementKey>,
@@ -401,6 +416,57 @@ impl Ui {
         self.focus.activating = None;
     }
 
+    /// Lets element `to` take `from`'s place without any event (the first-marking rebuild
+    /// of a game-styled plugin window, `lua-plugin-api.md` §14.2.6 round-5 answer 2, Tessera
+    /// rule): when `from` is the active panel, `to` becomes it (with its input maps); `to`
+    /// takes `from`'s entry in the activation history and, when both have the same parent,
+    /// `from`'s place among its siblings; when `from` has the keyboard focus, `to` gets it.
+    /// No `Element_activated`, deactivation or focus message is posted. Call before `from`
+    /// is destroyed; afterwards `from` is neither active nor focused, so its destruction
+    /// posts none of them either.
+    pub fn control_take_place(&mut self, from: ElementKey, to: ElementKey) {
+        if from == to || !self.exists(from) || !self.exists(to) {
+            return;
+        }
+        // Sibling order.
+        let parents = (self.parent(from), self.parent(to));
+        if let (Some(pf), Some(pt)) = parents
+            && pf == pt
+            && let Some(mut kids) = self.el(pf).map(|e| e.children.clone())
+        {
+            kids.retain(|c| *c != to);
+            if let Some(i) = kids.iter().position(|c| *c == from) {
+                kids.insert(i, to);
+                if let Some(p) = self.el_mut(pf) {
+                    p.children = kids;
+                }
+                self.input.hover_dirty = true;
+                self.mark_dirty(to);
+            }
+        }
+        // Activation history.
+        self.focus.activation_list.retain(|x| *x != to);
+        for x in &mut self.focus.activation_list {
+            if *x == from {
+                *x = to;
+            }
+        }
+        // The keyboard focus (pushed at 50 by `set_focus_inner`).
+        if self.focus.focus == Some(from) {
+            let maps = self.element_maps(from);
+            self.pop_maps(from, maps);
+            self.focus.focus = Some(to);
+            self.push_maps(to, 50);
+        }
+        // The active panel (pushed at 0 by `activate`).
+        if self.focus.active == Some(from) {
+            let maps = self.element_maps(from);
+            self.pop_maps(from, maps);
+            self.focus.active = Some(to);
+            self.push_maps(to, 0);
+        }
+    }
+
     /// Activation requested by code or by `activate_on_show` (§5.1 step 2): the panel must be
     /// displayed and not active; a panel that is not activatable becomes activatable.
     pub fn request_activation(&mut self, k: ElementKey) {
@@ -606,7 +672,8 @@ impl Ui {
                 );
                 consumed |= a.is_some_and(|a| a >= Answer::Handled);
             } else {
-                consumed |= self.key_release_handler(t, c);
+                // A dialog consumes only the releases whose presses it took, which the
+                // held releases cover (module docs, pairing rule).
                 let a = self.post(
                     t,
                     self.v.msgs.key_release,
@@ -680,11 +747,19 @@ impl Ui {
         {
             match &*c.name {
                 commands::ACCEPT_INPUT => {
+                    self.hold_release(&c.name, None);
                     self.dialog_close(d, true);
                     return true;
                 }
                 commands::ESCAPE if quit.is_some_and(|q| self.is_displayed(q)) => {
+                    self.hold_release(&c.name, None);
                     self.dialog_close(d, false);
+                    return true;
+                }
+                commands::ESCAPE => {
+                    // The entry's own key; consumed in every case (module docs).
+                    let _ = self.text_key(t, c);
+                    self.hold_release(&c.name, None);
                     return true;
                 }
                 _ => {}
@@ -708,37 +783,23 @@ impl Ui {
             _ => None,
         };
         if let Some(yes) = result {
-            // The releases §18.4 consumes outlive the dialog (module docs).
-            let release_consumed = match keys {
-                DialogKeys::Confirmation => {
-                    matches!(name, commands::ACCEPT_KEY | commands::ESCAPE)
-                }
-                DialogKeys::Message => name == commands::ACCEPT_KEY,
-                _ => false,
-            };
-            if release_consumed {
-                self.hold_release(&c.name, None);
-            }
+            // The release of a press that gave a result is consumed, even after the dialog
+            // is gone (module docs, pairing rule).
+            self.hold_release(&c.name, None);
             self.dialog_close(d, yes);
             return true;
         }
         match name {
             commands::FOCUS_NEXT | commands::FOCUS_PREVIOUS if keys != DialogKeys::None => {
+                // The dialog takes the press, so it takes the release too (pairing rule). A
+                // repeat of a key whose press went past the dialog cycles the focus but
+                // leaves that press's release alone.
+                if !repeat {
+                    self.hold_release(&c.name, None);
+                }
                 self.focus_cycle(d, name == commands::FOCUS_NEXT);
                 true
             }
-            _ => false,
-        }
-    }
-
-    /// The target's key handler on a release: the releases a shown confirmation or message
-    /// consumes (`ui-widgets.md` §18.4).
-    fn key_release_handler(&mut self, t: ElementKey, c: &Command) -> bool {
-        match self.active_dialog_of(t) {
-            Some((_, DialogKeys::Confirmation)) => {
-                matches!(&*c.name, commands::ACCEPT_KEY | commands::ESCAPE)
-            }
-            Some((_, DialogKeys::Message)) => &*c.name == commands::ACCEPT_KEY,
             _ => false,
         }
     }

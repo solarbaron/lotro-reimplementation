@@ -1146,9 +1146,10 @@ fn show(ui: &mut Ui, d: &mut DialogBoxes, req: DialogRequest) -> ElementKey {
     d.shown().expect("shown").0
 }
 
-/// §18.4: a confirmation gives yes on `AcceptKey` and `AcceptInput` and no on `EscapeKey`,
-/// and consumes the releases of `AcceptKey` and `EscapeKey`, not that of `AcceptInput`; the
-/// release of a key whose press gave the result is consumed after the dialog is gone too.
+/// §18.4: a confirmation gives yes on `AcceptKey` and `AcceptInput` and no on `EscapeKey`.
+/// Revision 5 pairing rule (Tessera rule): the release of a key whose press gave the result
+/// is consumed, after the dialog is gone too (`AcceptInput` included), and the release of a
+/// key pressed before the confirmation appeared goes past it while it is shown.
 #[test]
 fn confirmation_keys_and_releases_follow_18_4() {
     let mut ui = ui(1024, 768);
@@ -1156,7 +1157,7 @@ fn confirmation_keys_and_releases_follow_18_4() {
     let req = || DialogRequest::confirmation(1, DialogText::plain("Sure?"));
     for (name, want, release_consumed) in [
         ("AcceptKey", DialogOutcome::Yes, true),
-        ("AcceptInput", DialogOutcome::Yes, false),
+        ("AcceptInput", DialogOutcome::Yes, true),
         ("EscapeKey", DialogOutcome::No, true),
     ] {
         let root = show(&mut ui, &mut d, req());
@@ -1171,48 +1172,90 @@ fn confirmation_keys_and_releases_follow_18_4() {
             "{name} release broadcast"
         );
     }
-    // A release while the confirmation is shown (the key went down before it appeared).
+    // Pressed before the confirmation appeared, released while it is shown: the releases
+    // go past it to their receiver, the key broadcast included (revision 5 item 3).
+    for name in ["AcceptKey", "EscapeKey", "AcceptInput"] {
+        assert!(!key(&mut ui, name), "{name}: no dialog yet");
+        assert!(broadcast(&mut ui));
+    }
     let _ = show(&mut ui, &mut d, req());
-    assert!(release(&mut ui, "AcceptKey"));
-    assert!(release(&mut ui, "EscapeKey"));
-    assert!(!release(&mut ui, "AcceptInput"));
+    for name in ["AcceptKey", "EscapeKey", "AcceptInput"] {
+        assert!(!release(&mut ui, name), "{name} release goes past");
+        assert!(broadcast(&mut ui), "{name} release broadcast");
+    }
     assert!(pump(&mut ui, &mut d).is_empty(), "releases give no result");
     d.close_all(&mut ui);
 }
 
-/// §18.4: a message gives OK on `AcceptKey`, `AcceptInput` and `EscapeKey`; only the release
-/// of `AcceptKey` is consumed.
+/// §18.4 revision 5 pairing rule ("the pairing covers every key a dialog takes"): a shown
+/// confirmation takes `FocusNext` and `FocusPrevious` for its focus cycle, so neither half
+/// of such a key reaches the broadcast; one pressed before the confirmation appeared goes
+/// past it at its release.
+#[test]
+fn a_dialogs_focus_cycle_keys_are_paired() {
+    let mut ui = ui(1024, 768);
+    let mut d = DialogBoxes::new(dialog_refs());
+    let req = || DialogRequest::confirmation(1, DialogText::plain("Sure?"));
+    let _ = show(&mut ui, &mut d, req());
+    for name in ["FocusNext", "FocusPrevious"] {
+        assert!(key(&mut ui, name), "{name} taken by the dialog");
+        assert!(!broadcast(&mut ui), "{name} press not broadcast");
+        assert!(release(&mut ui, name), "{name} release consumed");
+        assert!(!broadcast(&mut ui), "{name} release not broadcast");
+    }
+    d.close_all(&mut ui);
+    let _ = ui.take_events();
+    assert!(!key(&mut ui, "FocusNext"), "no dialog yet");
+    assert!(broadcast(&mut ui));
+    let _ = show(&mut ui, &mut d, req());
+    assert!(
+        !release(&mut ui, "FocusNext"),
+        "a release from before goes past"
+    );
+    assert!(broadcast(&mut ui), "and is broadcast");
+    d.close_all(&mut ui);
+}
+
+/// §18.4: a message gives OK on `AcceptKey`, `AcceptInput` and `EscapeKey`. Revision 5
+/// pairing rule: the release of each of them is consumed when its press gave the result
+/// (the `EscapeKey` of a message included), and goes past a shown message when the key went
+/// down before it.
 #[test]
 fn message_keys_and_releases_follow_18_4() {
     let mut ui = ui(1024, 768);
     let mut d = DialogBoxes::new(dialog_refs());
     let req = || DialogRequest::message(1, DialogText::plain("Done."));
-    for (name, release_consumed) in [
-        ("AcceptKey", true),
-        ("AcceptInput", false),
-        ("EscapeKey", false),
-    ] {
+    for name in ["AcceptKey", "AcceptInput", "EscapeKey"] {
         let _ = show(&mut ui, &mut d, req());
         assert!(key(&mut ui, name), "{name} taken");
         let out = pump(&mut ui, &mut d);
         assert_eq!(out[0].outcome, Some(DialogOutcome::Ok), "{name}");
-        assert_eq!(release(&mut ui, name), release_consumed, "{name} release");
+        assert!(release(&mut ui, name), "{name} release consumed");
+        assert!(
+            !broadcast(&mut ui),
+            "{name}: neither half reaches game code"
+        );
+    }
+    for name in ["AcceptKey", "EscapeKey"] {
+        assert!(!key(&mut ui, name));
     }
     let _ = show(&mut ui, &mut d, req());
     assert!(
-        release(&mut ui, "AcceptKey"),
-        "shown: AcceptKey release consumed"
+        !release(&mut ui, "AcceptKey"),
+        "shown: the AcceptKey release of an earlier press goes past"
     );
     assert!(
         !release(&mut ui, "EscapeKey"),
-        "shown: EscapeKey release not consumed"
+        "shown: the EscapeKey release of an earlier press goes past"
     );
     d.close_all(&mut ui);
 }
 
 /// §18.4: a text input gives done only on `AcceptInput` in its entry (not on `AcceptKey`),
-/// and quit on `EscapeKey` in its entry only while the quit button is shown; it consumes no
-/// release.
+/// and quit on `EscapeKey` in its entry only while the quit button is shown; with the quit
+/// button hidden `EscapeKey` is the entry's own key and reaches nothing outside the dialog
+/// (revision 5, UI core (f)). The release of a key the dialog took is consumed (pairing
+/// rule); other releases go on.
 #[test]
 fn text_input_keys_follow_18_4() {
     let mut ui = ui(1024, 768);
@@ -1235,20 +1278,28 @@ fn text_input_keys_follow_18_4() {
     ui.set_focus(d.entry());
     assert!(key(&mut ui, "AcceptInput"));
     assert_eq!(pump(&mut ui, &mut d)[0].outcome, Some(DialogOutcome::Done));
-    assert!(!release(&mut ui, "AcceptInput"), "no release consumed");
+    assert!(
+        release(&mut ui, "AcceptInput"),
+        "the release of the done key"
+    );
+    assert!(!broadcast(&mut ui));
     // The quit button hidden: EscapeKey gives no result and the dialog stays shown.
     req.display_cancel = false;
     let root = show(&mut ui, &mut d, req.clone());
-    key(&mut ui, "EscapeKey");
+    assert!(key(&mut ui, "EscapeKey"), "consumed by the entry");
+    let ev = ui.take_events();
     assert!(
-        !ui.take_events()
-            .iter()
-            .any(|e| matches!(e, UiEvent::DialogResult { .. })),
+        !ev.iter().any(|e| matches!(e, UiEvent::DialogResult { .. })),
         "no result from the core"
+    );
+    assert!(
+        !ev.iter().any(|e| matches!(e, UiEvent::KeyBroadcast { .. })),
+        "nothing outside the dialog"
     );
     assert!(pump(&mut ui, &mut d).is_empty());
     assert!(ui.is_visible(root), "never hidden");
-    let _ = release(&mut ui, "EscapeKey");
+    assert!(release(&mut ui, "EscapeKey"), "its release too");
+    assert!(!broadcast(&mut ui));
     d.close_all(&mut ui);
     let _ = d.take_results();
     // Shown: EscapeKey quits.
@@ -1256,7 +1307,7 @@ fn text_input_keys_follow_18_4() {
     let _ = show(&mut ui, &mut d, req);
     assert!(key(&mut ui, "EscapeKey"));
     assert_eq!(pump(&mut ui, &mut d)[0].outcome, Some(DialogOutcome::Quit));
-    assert!(!release(&mut ui, "EscapeKey"));
+    assert!(release(&mut ui, "EscapeKey"), "the release of the quit key");
 }
 
 /// §18.4: a modal dialog consumes every other key press and the release of every key

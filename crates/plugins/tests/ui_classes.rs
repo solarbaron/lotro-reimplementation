@@ -1138,6 +1138,140 @@ mod styled {
         fx.assert_no_errors();
     }
 
+    /// §14.2.6 round-5 answer 1 (Tessera rule): a hidden, rotated game-styled window keeps
+    /// its rotation across the first-marking rebuild: `GetRotation` is unchanged, and the
+    /// new surface gets the remembered angles when the window is shown again. A shown
+    /// window's new surface gets the old surface's angles at once.
+    #[test]
+    fn a_hidden_rotated_window_keeps_its_rotation_across_the_rebuild() {
+        let mut fx = fx();
+        fx.eval::<()>(
+            "Probe",
+            "w = Turbine.UI.Lotro.Window() w:SetPosition(120, 80) w:SetSize(400, 300) \
+             w:SetVisible(true) w:SetRotation({ x = 0, y = 0, z = 30 }) \
+             v = Turbine.UI.Lotro.Window() v:SetPosition(600, 80) v:SetSize(200, 200) \
+             v:SetVisible(true) v:SetRotation({ x = 0, y = 0, z = 15 })",
+        );
+        fx.frame(0.016);
+        fx.eval::<()>("Probe", "w:SetVisible(false)");
+        fx.frame(0.016);
+        let old = fx.control_key("Probe", "w");
+        let old_v = fx.control_key("Probe", "v");
+        let (before, before_v, held_v) = {
+            let ui = fx.pui.ui().borrow();
+            (
+                ui.window_rotation(old),
+                ui.window_rotation(old_v),
+                tessera_ui::game::held_rotation(&ui, old_v),
+            )
+        };
+        assert_ne!(before, [0.0; 3], "rotated");
+        assert_ne!(
+            held_v, [0.0; 3],
+            "the shown window's surface holds its rotation"
+        );
+        fx.eval::<()>("Probe", "w:SetScale(1.5) v:SetScale(1.5)");
+        fx.frame(0.016);
+        let new = fx.control_key("Probe", "w");
+        let new_v = fx.control_key("Probe", "v");
+        assert_ne!(new, old, "rebuilt");
+        assert_ne!(new_v, old_v, "rebuilt");
+        {
+            let ui = fx.pui.ui().borrow();
+            assert_eq!(
+                ui.window_rotation(new),
+                before,
+                "GetRotation kept while hidden"
+            );
+            assert_eq!(
+                tessera_ui::game::held_rotation(&ui, new),
+                [0.0; 3],
+                "a hidden window's surface holds nothing"
+            );
+            assert_eq!(
+                ui.window_rotation(new_v),
+                before_v,
+                "GetRotation kept while shown"
+            );
+            assert_eq!(
+                tessera_ui::game::held_rotation(&ui, new_v),
+                held_v,
+                "the shown window's new surface has the old surface's rotation"
+            );
+        }
+        fx.eval::<()>("Probe", "w:SetVisible(true)");
+        fx.frame(0.016);
+        let ui = fx.pui.ui().borrow();
+        assert_eq!(
+            tessera_ui::game::held_rotation(&ui, new),
+            before,
+            "shown again: the remembered rotation"
+        );
+        drop(ui);
+        fx.assert_no_errors();
+    }
+
+    /// §14.2.6 round-5 answer 2 (Tessera rule): the rebuild of the active window posts no
+    /// `Activated`, `Deactivated`, `FocusGained` or `FocusLost`; the window stays the active
+    /// window with its focus control, keeps its entry in the activation history (hiding it
+    /// activates the window active before it) and its place among its siblings.
+    #[test]
+    fn the_rebuild_of_the_active_window_posts_no_activation_events() {
+        let mut fx = fx();
+        fx.eval::<()>(
+            "Probe",
+            "acts = {} \
+             a = Turbine.UI.Lotro.Window() a:SetPosition(600, 80) a:SetSize(200, 200) \
+             a:SetVisible(true) \
+             w = Turbine.UI.Lotro.Window() w:SetPosition(120, 80) w:SetSize(400, 300) \
+             w:SetVisible(true) \
+             t = Turbine.UI.TextBox() t:SetParent(w) t:SetPosition(20, 60) t:SetSize(100, 20) \
+             t:SetVisible(true) \
+             function a:Activated() acts[#acts + 1] = 'a+' end \
+             function a:Deactivated() acts[#acts + 1] = 'a-' end \
+             function w:Activated() acts[#acts + 1] = 'w+' end \
+             function w:Deactivated() acts[#acts + 1] = 'w-' end \
+             t.FocusGained = function() acts[#acts + 1] = 't+' end \
+             t.FocusLost = function() acts[#acts + 1] = 't-' end \
+             a:Activate() w:Activate() t:Focus()",
+        );
+        fx.frame(0.016);
+        let set_up: String = fx.eval("Probe", "return table.concat(acts, ' ')");
+        assert!(set_up.ends_with("w+ t+"), "{set_up}");
+        let old = fx.control_key("Probe", "w");
+        let tk = fx.control_key("Probe", "t");
+        let place = |fx: &Fx, k: ElementKey| {
+            let ui = fx.pui.ui().borrow();
+            ui.children(ui.screen_root()).iter().position(|c| *c == k)
+        };
+        let old_place = place(&fx, old);
+        assert!(old_place.is_some());
+        fx.eval::<()>("Probe", "acts = {} w:SetScale(1.5)");
+        fx.frame(0.016);
+        let new = fx.control_key("Probe", "w");
+        assert_ne!(new, old, "rebuilt");
+        let acts: String = fx.eval("Probe", "return table.concat(acts, ' ')");
+        assert_eq!(acts, "", "no activation or focus events");
+        {
+            let ui = fx.pui.ui().borrow();
+            assert_eq!(ui.active_panel(), Some(new), "still the active window");
+            assert_eq!(ui.focus_element(), Some(tk), "the focus stays");
+        }
+        assert_eq!(
+            place(&fx, new),
+            old_place,
+            "the same place among its siblings"
+        );
+        assert!(fx.eval::<bool>("Probe", "return t:HasFocus()"));
+        // The activation history is kept: hiding it activates `a` again.
+        fx.eval::<()>("Probe", "w:SetVisible(false)");
+        fx.frame(0.016);
+        let acts: String = fx.eval("Probe", "return table.concat(acts, ' ')");
+        assert!(acts.ends_with("a+"), "{acts}");
+        assert!(acts.contains("w-"), "{acts}");
+        fx.assert_no_errors();
+    }
+
     /// Review finding: a hidden game-styled window first marked as scaled and then shown in
     /// the same chunk fires its `VisibleChanged` (the rebuild of a hidden window changes no
     /// visibility, so it must leave no quiet mark that swallows the real event); the same

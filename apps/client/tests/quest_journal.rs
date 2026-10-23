@@ -193,14 +193,14 @@ fn log_tracker_and_lines_on_the_ui() {
     let (dialog, req) = quests.dialogs().shown().expect("confirmation shown");
     assert_eq!(
         req.question,
-        Some(tessera_ui::widgets::dialog::DialogText::Plain(
+        Some(tessera_ui::game::dialog::DialogText::Plain(
             "Abandon Flour delivery?".into()
         ))
     );
     assert!(rig.host.ui().exists(dialog));
     let yes = quests
         .dialogs()
-        .button(tessera_ui::widgets::dialog::DialogOutcome::Yes)
+        .button(tessera_ui::game::dialog::DialogOutcome::Yes)
         .expect("yes");
     let (c, _) = click(&mut rig, &mut quests, &end, |ui| button(ui, yes));
     assert_eq!(

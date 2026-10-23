@@ -27,6 +27,7 @@ use std::sync::Arc;
 use tessera_formats::property::PropertyValue;
 use tessera_net::Command;
 use tessera_net::domain::{NpcCommand, WindowId, WorldCommand};
+use tessera_ui::game::context_menu::MenuRefs;
 use tessera_ui::game::finder::{
     FinderAction, FinderView, FinderWindow, InstanceTravelWindow, QueueAlert,
 };
@@ -36,7 +37,6 @@ use tessera_ui::game::travel::{
     EndTravelBox, TravelAction, TravelPresentation, TravelShow, TravelView, TravelWindow,
 };
 use tessera_ui::game::travelfallback;
-use tessera_ui::widgets::context_menu::MenuRefs;
 use tessera_ui::{ElementKey, Ui, UiEvent};
 
 use super::present::{

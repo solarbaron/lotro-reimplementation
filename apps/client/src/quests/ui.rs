@@ -59,6 +59,10 @@ use std::sync::Arc;
 use tessera_net::Command;
 use tessera_ui::game::GamePanels;
 use tessera_ui::game::chat::notice::NoTables;
+use tessera_ui::game::context_menu::{
+    ContextMenu, MenuArt, MenuEvent, MenuItem as WidgetItem, MenuReply, MenuRequest,
+};
+use tessera_ui::game::dialog::{DialogArt, DialogBoxes, DialogRequest, DialogText};
 use tessera_ui::game::npc::kit::FallbackArt;
 use tessera_ui::game::quest::details::QuestDetails;
 use tessera_ui::game::quest::fallback;
@@ -68,10 +72,6 @@ use tessera_ui::game::quest::markers::{QuestMarker, QuestMarkers};
 use tessera_ui::game::quest::tracker::{MENU, MenuItem, TrackerWindow};
 use tessera_ui::game::quest::{QuestAction, QuestKey, quest_label_text};
 use tessera_ui::game::radar::RadarInput;
-use tessera_ui::widgets::context_menu::{
-    ContextMenu, MenuArt, MenuEvent, MenuItem as WidgetItem, MenuReply, MenuRequest,
-};
-use tessera_ui::widgets::dialog::{DialogArt, DialogBoxes, DialogRequest, DialogText};
 use tessera_ui::{ElementKey, Ui, UiEvent};
 
 use super::present::{JournalView, command_of, position_of, ref_of};
@@ -997,9 +997,9 @@ impl QuestUi {
         view: &JournalView<'_>,
     ) -> Option<Command> {
         let outcome = if ok {
-            tessera_ui::widgets::dialog::DialogOutcome::Yes
+            tessera_ui::game::dialog::DialogOutcome::Yes
         } else {
-            tessera_ui::widgets::dialog::DialogOutcome::No
+            tessera_ui::game::dialog::DialogOutcome::No
         };
         let b = self.dialogs.button(outcome)?;
         let id = ui.element_id(b)?;

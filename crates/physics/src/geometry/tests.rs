@@ -1012,6 +1012,7 @@ proptest! {
 #[test]
 #[ignore = "timing probe"]
 fn bvh_build_timing() {
+    let _budget = super::bvh::budget_test_guard();
     let mut boxes = Vec::new();
     let mut x = 12345u32;
     let mut rnd = || {
@@ -1066,6 +1067,7 @@ fn random_boxes(count: usize, seed: u32) -> Vec<Aabb> {
 /// clusters of equal centres and a cluster deep enough to reach the depth limit mixed in.
 #[test]
 fn parallel_bvh_build_equals_the_single_threaded_one() {
+    let _budget = super::bvh::budget_test_guard();
     // Large enough that the top ranges' scans are shared among threads as well.
     // Signed zeros spread through the input: equal for the comparisons, different bits;
     // the earlier one must be kept, as the single-threaded fold keeps it.
@@ -1141,6 +1143,7 @@ fn parallel_bvh_build_equals_the_single_threaded_one() {
 #[test]
 #[ignore = "timing probe"]
 fn bvh_parallel_build_timing() {
+    let _budget = super::bvh::budget_test_guard();
     let boxes = random_boxes(900_000, 12_345);
     for threads in [1, 2, 4, MAX_BUILD_THREADS] {
         let t = std::time::Instant::now();
@@ -1490,6 +1493,7 @@ fn room_volume() -> (Arc<CellVolume>, Vec<[f32; 3]>) {
 /// the answers stay the lowest number (the earlier of duplicates).
 #[test]
 fn cells_in_any_order_give_the_lowest_number() {
+    let _budget = super::bvh::budget_test_guard();
     let (room, hull) = room_volume();
     let mut b = CollisionSetBuilder::new(CollisionLimits::default());
     // 20,000 cells in descending order on a 100 × 100 grid of rooms, two per room.
@@ -1747,6 +1751,7 @@ fn full_sets_refuse_objects_before_placing_them() {
 /// items. A query now stops at `MAX_QUERY_ITEMS` per set.
 #[test]
 fn queries_visit_a_bounded_number_of_items() {
+    let _budget = super::bvh::budget_test_guard();
     let n = MAX_QUERY_ITEMS + 1000;
     let positions = [[-1.0, -1.0, 0.0], [1.0, -1.0, 0.0], [0.0, 1.0, 0.0]];
     let tris = vec![[0u16, 1, 2]; n];

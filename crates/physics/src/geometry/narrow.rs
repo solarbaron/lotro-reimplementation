@@ -217,9 +217,8 @@ impl Convex {
 /// meaningful much below it). Tessera Decision, `collision.md` §12.4 (w).
 pub(crate) const TOUCH_GAP: f64 = 1e-6;
 
-/// A sweep reports an item only when the gap to it would fall to this many skins
-/// (`collision.md` §12.4 (w)), or to half the capsule's clearance when that is smaller (not
-/// in (w): implementer OPEN in §12.4).
+/// A sweep reports an item only when the gap to it would fall to this many skins, or to
+/// half the capsule's clearance when that is smaller (`collision.md` §12.4 (w)).
 pub(crate) const HIT_SKINS: f64 = 1.0;
 
 /// A sweep that reports an item leaves the capsule this many skins from it ...

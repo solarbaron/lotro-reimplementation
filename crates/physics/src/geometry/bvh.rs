@@ -16,10 +16,11 @@
 //! at most [`build_thread_budget`] threads work on parallel builds at once, the calling
 //! threads included, so builds started together on many workers (a streamed ring of
 //! landblocks) get no helpers and run on their own threads, and a build running alone gets
-//! up to [`MAX_BUILD_THREADS`]. [`Bvh::build_with_threads`] lets the caller choose the count
-//! instead (1: the calling thread only). A helper that cannot be had or started leaves its
-//! work to the calling thread. Helpers do not observe the caller's priority or cancellation
-//! (neither does the build on the calling thread).
+//! up to [`MAX_BUILD_THREADS`]. [`Bvh::build_with_threads`] lets the caller lower the count
+//! (1: the calling thread only, as for builds of jobs at `Prefetch` priority, §12.1 answer
+//! of 2026-10-23); its helpers come from the same budget. A helper that cannot be had or
+//! started leaves its work to the calling thread. Helpers do not observe the caller's
+//! priority or cancellation (neither does the build on the calling thread).
 //!
 //! The quantised trees stored in the data (§3) are not used for collision: they omit
 //! sliver triangles (§3.6) and exist per host, while a landblock set mixes many hosts.
@@ -67,17 +68,6 @@ pub fn build_thread_budget() -> usize {
     })
 }
 
-/// Where a build's helper threads come from.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Helpers {
-    /// The shared budget ([`Bvh::build`]): a helper only while fewer than
-    /// [`build_thread_budget`] threads are busy.
-    Shared,
-    /// The caller's own count ([`Bvh::build_with_threads`]); still counted as busy, so that
-    /// concurrent shared builds hold back.
-    Explicit,
-}
-
 /// One thread's place among [`BUILD_THREADS_BUSY`], given back on drop.
 struct BuildThread(());
 
@@ -88,11 +78,9 @@ impl BuildThread {
         Self(())
     }
 
-    /// A helper's place, or `None` when the shared budget is spent.
-    fn helper(helpers: Helpers) -> Option<Self> {
-        if helpers == Helpers::Explicit {
-            return Some(Self::caller());
-        }
+    /// A helper's place, or `None` when the shared budget is spent (`collision.md` §12.1:
+    /// all builds together, callers included, stay within it).
+    fn helper() -> Option<Self> {
         let budget = build_thread_budget();
         let mut busy = BUILD_THREADS_BUSY.load(Ordering::Acquire);
         while busy < budget {
@@ -116,6 +104,39 @@ impl Drop for BuildThread {
     }
 }
 
+/// Tests: serialises the lib tests that depend on the shared budget or use it up. Every lib
+/// test that runs a build of [`PARALLEL_MIN_ITEMS`] items or more on more than one thread
+/// ([`Bvh::build`] included), or holds places of the budget, holds this guard, so that a
+/// test asserting that helpers start is not starved by a concurrent build (lib tests run in
+/// parallel and the budget is process-wide; on a machine with few cores one concurrent
+/// build can take every place).
+///
+/// A parallel build on a thread that does not hold the guard fails its test
+/// (`Bvh::build_using`), so a new test that forgets it is found at once rather than
+/// making others flaky.
+#[cfg(test)]
+pub(crate) fn budget_test_guard() -> BudgetTestGuard {
+    static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let lock = LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    GUARDED.with(|g| g.set(true));
+    BudgetTestGuard { _lock: lock }
+}
+
+/// Tests: [`budget_test_guard`]'s guard; clears the thread's mark on drop.
+#[cfg(test)]
+pub(crate) struct BudgetTestGuard {
+    _lock: std::sync::MutexGuard<'static, ()>,
+}
+
+#[cfg(test)]
+impl Drop for BudgetTestGuard {
+    fn drop(&mut self) {
+        GUARDED.with(|g| g.set(false));
+    }
+}
+
 #[cfg(test)]
 thread_local! {
     /// Tests: bit `k % 32` set makes this thread's `k`-th helper start fail.
@@ -123,15 +144,16 @@ thread_local! {
     static SPAWNS: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
     /// Tests: helper threads this thread started.
     static STARTED: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+    /// Tests: this thread holds [`budget_test_guard`].
+    static GUARDED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
-/// Starts a helper thread in `scope` running `f`, with a place from `helpers`, or `None`
+/// Starts a helper thread in `scope` running `f`, with a place from the shared budget, or `None`
 /// when no place is free or the thread does not start (`f` is dropped; the caller then does
 /// the work itself, so it must be able to recover it).
 fn spawn_helper<'scope, T, F>(
     scope: &'scope std::thread::Scope<'scope, '_>,
     name: &str,
-    helpers: Helpers,
     f: F,
 ) -> Option<std::thread::ScopedJoinHandle<'scope, T>>
 where
@@ -149,7 +171,7 @@ where
             return None;
         }
     }
-    let place = BuildThread::helper(helpers)?;
+    let place = BuildThread::helper()?;
     let h = std::thread::Builder::new()
         .name(name.to_owned())
         .spawn_scoped(scope, move || {
@@ -207,7 +229,7 @@ impl Bvh {
     /// [`Bvh::build_with_threads`] with one thread gives, node for node.
     #[must_use]
     pub fn build(boxes: &[Aabb]) -> Self {
-        Self::build_using(boxes, MAX_BUILD_THREADS, Helpers::Shared)
+        Self::build_using(boxes, MAX_BUILD_THREADS)
     }
 
     /// [`Bvh::build`] on at most `threads` threads (the calling thread included; 0 and 1
@@ -219,16 +241,17 @@ impl Bvh {
     /// are identical (`collision.md` §12.1). A subtree whose thread cannot be started is
     /// built on the calling thread.
     ///
-    /// The count is the caller's choice (at most [`MAX_BUILD_THREADS`]) and is not limited
-    /// by the shared budget of [`Bvh::build`]; its threads are counted in that budget while
-    /// they work, so that concurrent [`Bvh::build`] calls hold back. A caller on a worker
-    /// pool can size it from the pool's idle workers.
+    /// The count is an upper bound chosen by the caller (at most [`MAX_BUILD_THREADS`]);
+    /// the helpers still come from the process-wide budget of [`Bvh::build`], so all builds
+    /// together, callers included, stay within it (`collision.md` §12.1, answer of
+    /// 2026-10-23). A count of 1 keeps the build on its worker, as for jobs at `Prefetch`
+    /// priority.
     #[must_use]
     pub fn build_with_threads(boxes: &[Aabb], threads: usize) -> Self {
-        Self::build_using(boxes, threads, Helpers::Explicit)
+        Self::build_using(boxes, threads)
     }
 
-    fn build_using(boxes: &[Aabb], threads: usize, helpers: Helpers) -> Self {
+    fn build_using(boxes: &[Aabb], threads: usize) -> Self {
         // Work on a contiguous copy (box, centre, item) that is partitioned in place, so
         // every pass reads memory in order.
         let mut prims: Vec<Prim> = boxes
@@ -249,16 +272,19 @@ impl Bvh {
         let threads = threads.clamp(1, MAX_BUILD_THREADS);
         // The budget is read only for large inputs (it is cached, but small sets and the
         // cell lookup never need it).
-        let alone = threads == 1
-            || prims.len() < PARALLEL_MIN_ITEMS
-            || (helpers == Helpers::Shared && build_thread_budget() <= 1);
+        let alone = threads == 1 || prims.len() < PARALLEL_MIN_ITEMS || build_thread_budget() <= 1;
         let nodes = if alone {
             let mut nodes: Vec<Node> = Vec::with_capacity(2 * prims.len() / MAX_LEAF_ITEMS + 1);
             build_range(&mut prims, 0, 0, &mut nodes);
             nodes
         } else {
+            #[cfg(test)]
+            assert!(
+                GUARDED.with(std::cell::Cell::get),
+                "a lib test runs a parallel build without bvh::budget_test_guard"
+            );
             let _caller = BuildThread::caller();
-            build_parallel(&mut prims, threads, helpers)
+            build_parallel(&mut prims, threads)
         };
         let order = prims.iter().map(|p| p.item).collect();
         let item_bounds = prims.iter().map(|p| p.bounds).collect();
@@ -367,16 +393,16 @@ enum Step {
 /// range's contents and the depth, which is what makes the parallel build equal to the
 /// single-threaded one.
 fn step(range: &mut [Prim], depth: usize) -> Step {
-    step_with(range, depth, 1, Helpers::Explicit)
+    step_with(range, depth, 1)
 }
 
 /// [`step`] with the two scans of a large range (its bounds and its bins) shared among up to
 /// `threads` threads. The scans are folds of exact minima, maxima and counts, merged in
 /// range order, so they give the bit patterns the single-threaded scans give (on equal
 /// values the earlier item is kept either way); the partition stays on the calling thread.
-fn step_with(range: &mut [Prim], depth: usize, threads: usize, helpers: Helpers) -> Step {
+fn step_with(range: &mut [Prim], depth: usize, threads: usize) -> Step {
     let (bounds, cbounds) = if threads > 1 && range.len() >= PARALLEL_SCAN_ITEMS {
-        par_fold(range, threads, helpers, scan, |a, b| {
+        par_fold(range, threads, scan, |a, b| {
             (fast_union(a.0, b.0), fast_union(a.1, b.1))
         })
     } else {
@@ -400,7 +426,7 @@ fn step_with(range: &mut [Prim], depth: usize, threads: usize, helpers: Helpers)
                 .then(a.item.cmp(&b.item))
         });
         mid
-    } else if let Some((axis, pivot_bin)) = choose_split(range, &cbounds, threads, helpers) {
+    } else if let Some((axis, pivot_bin)) = choose_split(range, &cbounds, threads) {
         // Partition: items whose centre bin is below the pivot go left.
         let lo = cbounds.min[axis];
         let scale = bin_scale(cbounds.max[axis] - cbounds.min[axis]);
@@ -476,27 +502,21 @@ fn build_range(prims: &mut [Prim], offset: usize, depth: usize, nodes: &mut Vec<
 /// The tree is therefore the single-threaded one, node for node. Every fork lowers both
 /// halves' budgets by at least 1, so forks nest at most [`MAX_BUILD_THREADS`] deep and the
 /// recursion is shallow.
-fn build_parallel(prims: &mut [Prim], threads: usize, helpers: Helpers) -> Vec<Node> {
-    build_task(prims, 0, 0, threads, helpers)
+fn build_parallel(prims: &mut [Prim], threads: usize) -> Vec<Node> {
+    build_task(prims, 0, 0, threads)
 }
 
 /// Builds the subtree over `prims` (items `offset..` of the whole build) whose root is at
-/// `depth` with a budget of `threads` threads (helpers from `helpers`); right-child indices
+/// `depth` with a budget of `threads` threads (helpers from the shared budget); right-child indices
 /// are local to the result.
-fn build_task(
-    prims: &mut [Prim],
-    offset: usize,
-    depth: usize,
-    threads: usize,
-    helpers: Helpers,
-) -> Vec<Node> {
+fn build_task(prims: &mut [Prim], offset: usize, depth: usize, threads: usize) -> Vec<Node> {
     let n = prims.len();
     if threads <= 1 || n < MIN_TASK_ITEMS {
         let mut nodes = Vec::with_capacity(2 * n / MAX_LEAF_ITEMS + 1);
         build_range(prims, offset, depth, &mut nodes);
         return nodes;
     }
-    let (bounds, mid) = match step_with(prims, depth, threads, helpers) {
+    let (bounds, mid) = match step_with(prims, depth, threads) {
         Step::Leaf(bounds) => {
             return vec![Node {
                 bounds,
@@ -524,10 +544,10 @@ fn build_task(
     };
     let right_offset = offset + mid;
     let (left_nodes, right_nodes) = std::thread::scope(|s| {
-        let spawned = spawn_helper(s, "tessera-bvh", helpers, || {
-            take().map(|r| build_task(r, right_offset, depth + 1, right_threads, helpers))
+        let spawned = spawn_helper(s, "tessera-bvh", || {
+            take().map(|r| build_task(r, right_offset, depth + 1, right_threads))
         });
-        let left_nodes = build_task(left, offset, depth + 1, left_threads, helpers);
+        let left_nodes = build_task(left, offset, depth + 1, left_threads);
         let joined = match spawned {
             Some(h) => match h.join() {
                 Ok(nodes) => nodes,
@@ -537,9 +557,8 @@ fn build_task(
         };
         // Not started (or the slot still full): build it here, after the left half, with
         // the right half's budget (its own forks may find helpers free by now).
-        let right_nodes = joined.or_else(|| {
-            take().map(|r| build_task(r, right_offset, depth + 1, right_threads, helpers))
-        });
+        let right_nodes = joined
+            .or_else(|| take().map(|r| build_task(r, right_offset, depth + 1, right_threads)));
         (left_nodes, right_nodes.unwrap_or_default())
     });
     let mut nodes = Vec::with_capacity(1 + left_nodes.len() + right_nodes.len());
@@ -624,12 +643,11 @@ fn bin_range(range: &[Prim], axis: usize, lo: f32, scale: f32) -> Bins {
 
 /// Folds `range` in up to `threads` contiguous chunks, one per thread (the calling thread
 /// takes the first), and merges the chunks' results in range order. A chunk whose helper
-/// cannot be had (`helpers`), cannot be started or fails is folded on the calling thread, so the result never depends
+/// cannot be had (the shared budget), cannot be started or fails is folded on the calling thread, so the result never depends
 /// on the threads.
 fn par_fold<T: Send>(
     range: &[Prim],
     threads: usize,
-    helpers: Helpers,
     fold: impl Fn(&[Prim]) -> T + Sync,
     merge: impl Fn(T, T) -> T,
 ) -> T {
@@ -640,7 +658,7 @@ fn par_fold<T: Send>(
     std::thread::scope(|s| {
         let handles: Vec<_> = parts
             .map(|part| {
-                let h = spawn_helper(s, "tessera-bvh-scan", helpers, move || fold(part));
+                let h = spawn_helper(s, "tessera-bvh-scan", move || fold(part));
                 (part, h)
             })
             .collect();
@@ -659,12 +677,7 @@ fn par_fold<T: Send>(
 /// The best (axis, pivot bin) by the binned SAH over the widest centre axis, or `None`
 /// when no split separates the items (all centres equal). A large range is binned on up to
 /// `threads` threads ([`step_with`]).
-fn choose_split(
-    range: &[Prim],
-    cbounds: &Aabb,
-    threads: usize,
-    helpers: Helpers,
-) -> Option<(usize, usize)> {
+fn choose_split(range: &[Prim], cbounds: &Aabb, threads: usize) -> Option<(usize, usize)> {
     let extent: [f32; 3] = std::array::from_fn(|a| cbounds.max[a] - cbounds.min[a]);
     let axis = (0..3)
         .max_by(|&a, &b| extent[a].total_cmp(&extent[b]).then(b.cmp(&a)))
@@ -678,7 +691,6 @@ fn choose_split(
         par_fold(
             range,
             threads,
-            helpers,
             |r| bin_range(r, axis, lo, scale),
             |mut a, b| {
                 for (x, y) in a.iter_mut().zip(b) {
@@ -792,6 +804,7 @@ mod thread_tests {
     /// still the single-threaded one bit for bit (`collision.md` §12.1).
     #[test]
     fn failed_helper_starts_give_the_single_threaded_tree() {
+        let _budget = budget_test_guard();
         // Large enough for shared scans at the top (PARALLEL_SCAN_ITEMS).
         let items = boxes(5 * PARALLEL_MIN_ITEMS);
         let one = Bvh::build_with_threads(&items, 1);
@@ -817,28 +830,46 @@ mod thread_tests {
                 );
             }
         }
-        // Without failures the explicit build does use helpers.
+        // Without failures the explicit build does use helpers (when the machine's budget
+        // has room for any). No other lib test builds in parallel or holds places while
+        // the guard is held, so the budget is free here.
+        assert_eq!(
+            BUILD_THREADS_BUSY.load(Ordering::Acquire),
+            0,
+            "the budget is free"
+        );
         let before = started();
         let many = Bvh::build_with_threads(&items, 4);
-        assert!(started() > before, "the explicit build started helpers");
+        if build_thread_budget() > 1 {
+            assert!(started() > before, "the explicit build started helpers");
+        }
         assert!(many.node_bits() == bits);
     }
 
-    /// With the shared budget spent (every place held), [`Bvh::build`] starts no helper and
-    /// builds on the calling thread; the tree is the same. Places are given back on drop.
+    /// With the shared budget spent (every place held), [`Bvh::build`] and
+    /// [`Bvh::build_with_threads`] start no helper and build on the calling thread: an
+    /// explicit count is an upper bound and draws on the same budget (`collision.md` §12.1,
+    /// answer of 2026-10-23). The tree is the same. Places are given back on drop.
     #[test]
     fn a_spent_shared_budget_builds_on_the_calling_thread() {
+        let _budget = budget_test_guard();
         let items = boxes(2 * PARALLEL_MIN_ITEMS);
         let one = Bvh::build_with_threads(&items, 1);
         let held: Vec<BuildThread> = (0..build_thread_budget())
             .map(|_| BuildThread::caller())
             .collect();
-        assert!(BuildThread::helper(Helpers::Shared).is_none());
-        assert!(BuildThread::helper(Helpers::Explicit).is_some());
+        assert!(BuildThread::helper().is_none());
         let before = started();
         let shared = Bvh::build(&items);
         assert_eq!(started(), before, "no helper while the budget is spent");
         assert!(shared.node_bits() == one.node_bits());
+        let explicit = Bvh::build_with_threads(&items, MAX_BUILD_THREADS);
+        assert_eq!(
+            started(),
+            before,
+            "no explicit helper while the budget is spent"
+        );
+        assert!(explicit.node_bits() == one.node_bits());
         drop(held);
     }
 

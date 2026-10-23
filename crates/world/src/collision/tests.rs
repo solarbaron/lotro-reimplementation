@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use tessera_assets::AssetError;
+use tessera_assets::{AssetError, Priority};
 use tessera_formats::collision::{CellGeometry, CellPlane, CellPortal, PlaneListEnd};
 use tessera_formats::landblock::{Cell, CellNeighbour, LandblockInfo, TSizeList};
 use tessera_formats::{Did, LandblockData, Position, PropertySet, TSize};
@@ -490,4 +490,92 @@ fn build_places_cells_from_the_cache() {
     assert_eq!(built.cells.len(), 1);
     assert!(!built.cells[0].geometry_available);
     assert_eq!(built.cell(0x100).map(|c| c.index), Some(0x100));
+}
+
+#[test]
+fn hierarchy_rule_follows_the_priority() {
+    // `collision.md` §12.1: Prefetch builds stay on their worker, Visible and higher draw
+    // on the shared budget.
+    assert_eq!(
+        HierarchyThreads::for_priority(Priority::Prefetch),
+        HierarchyThreads::Worker
+    );
+    assert_eq!(
+        HierarchyThreads::for_priority(Priority::Visible),
+        HierarchyThreads::Shared
+    );
+    assert_eq!(
+        HierarchyThreads::for_priority(Priority::Immediate),
+        HierarchyThreads::Shared
+    );
+    assert_eq!(HierarchyThreads::Worker.max_threads(), 1);
+    assert_eq!(HierarchyThreads::Shared.max_threads(), MAX_BUILD_THREADS);
+}
+
+#[test]
+fn prefetch_builds_stay_on_the_worker_and_give_the_same_set() {
+    let sys = system();
+    sys.seed_cell_geometry(room(0x0100_0001));
+    let info = info(vec![cell(
+        0x100,
+        0x0100_0001,
+        Some([50.0, 60.0, 10.0]),
+        None,
+    )]);
+    let src = MemoryWorldSource::new();
+    let schema: HashMap<u32, tessera_formats::PropertyType> = HashMap::new();
+    let data = LandblockData::from_heights(
+        key().data_did(),
+        tessera_formats::landblock::HeightGrid::flat(0),
+    );
+    let input = CollisionInput {
+        key: key(),
+        data: &data,
+        terrain: None,
+        info: Some(&info),
+        generated: &[],
+        water: None,
+        source: &src,
+        schema: &schema,
+    };
+    assert_eq!(sys.hierarchy_builds(), HierarchyBuildCounts::default());
+
+    let prefetch = sys.build_at(&input, Priority::Prefetch);
+    assert_eq!(
+        sys.hierarchy_builds(),
+        HierarchyBuildCounts {
+            worker: 1,
+            shared: 0,
+            last_max_threads: Some(1),
+        }
+    );
+    let visible = sys.build_at(&input, Priority::Visible);
+    let immediate = sys.build_at(&input, Priority::Immediate);
+    let plain = sys.build(&input);
+    assert_eq!(
+        sys.hierarchy_builds(),
+        HierarchyBuildCounts {
+            worker: 1,
+            shared: 3,
+            last_max_threads: Some(MAX_BUILD_THREADS),
+        }
+    );
+    // A Prefetch build after the shared ones is again given one thread.
+    let again = sys.build_at(&input, Priority::Prefetch);
+    assert_eq!(
+        sys.hierarchy_builds(),
+        HierarchyBuildCounts {
+            worker: 2,
+            shared: 3,
+            last_max_threads: Some(1),
+        }
+    );
+    assert_eq!(again.set.triangle_count(), prefetch.set.triangle_count());
+    // The set does not depend on the rule.
+    for other in [&visible, &immediate, &plain] {
+        assert_eq!(prefetch.set.triangle_count(), other.set.triangle_count());
+        assert_eq!(prefetch.cells, other.cells);
+        assert_eq!(prefetch.heap_bytes, other.heap_bytes);
+        assert_eq!(prefetch.cell_bounds, other.cell_bounds);
+    }
 }

@@ -6,7 +6,8 @@
 //! | Item | Purpose | Spec |
 //! |---|---|---|
 //! | [`CollisionSystem`] | Shared by every worker: the §9.1 property IDs, the object-collision cache (0x47 → setup → 0x66 mesh and volumes), the cell-geometry cache (0x01), limits and the content-layer options | §8, §9.1, §12.1 |
-//! | [`CollisionInput`], [`CollisionSystem::build`] | One landblock's set, in the order of §9.4: terrain and ceiling meshes, blocking statics (§9.3), blocking generated objects (§9.4), cells with their physics meshes and lookup (§5.3, §5.8.1), water plane and liquid boxes (`water.md` §6–§7) | §12.1 |
+//! | [`CollisionInput`], [`CollisionSystem::build`], [`CollisionSystem::build_at`] | One landblock's set, in the order of §9.4: terrain and ceiling meshes, blocking statics (§9.3), blocking generated objects (§9.4), cells with their physics meshes and lookup (§5.3, §5.8.1), water plane and liquid boxes (`water.md` §6–§7) | §12.1 |
+//! | [`HierarchyThreads`], [`HierarchyBuildCounts`] | Threads of one set's hierarchy build by job priority: `Prefetch` builds stay on their worker, `Visible` and higher draw helpers from the shared budget; counts per rule | §12.1 |
 //! | [`BlockCollision`], [`CellPortals`], [`Portal`] | The built set, the cells of landblock info with their portal links and portal polygons in the landblock frame, and the residency charge | §5.5, §5.8 |
 //!
 //! Building never fails: objects and cells that cannot be resolved, placed or that exceed
@@ -18,17 +19,38 @@
 //! geometries alike, so the next landblock tries again; the set built with it is marked
 //! incomplete ([`BlockCollision::complete`]) so that the streamer rebuilds it when the
 //! landblock loads again.
+//!
+//! # Hierarchy build threads
+//!
+//! A set's hierarchy is built on the worker that builds the set. A large set (at least
+//! [`PARALLEL_MIN_ITEMS`](tessera_physics::geometry::PARALLEL_MIN_ITEMS) items) may also
+//! use helper threads, at most [`MAX_BUILD_THREADS`] a build, drawn from the one
+//! process-wide budget of `tessera-physics` (§12.1). Which rule applies follows the
+//! priority of the job ([`CollisionSystem::build_at`], [`HierarchyThreads::for_priority`]):
+//! a job at `Prefetch` priority builds on its own worker alone (one thread), so prefetching
+//! never takes helpers from a landblock that is needed now; `Visible` and `Immediate` jobs
+//! use the shared budget. The tree, and so every query, does not depend on the rule.
+//!
+//! The contract of [`CollisionSystem::build_at`] is that the caller passes the priority its
+//! job holds when the build starts, so that a job raised from `Prefetch` to `Visible` while
+//! it waited in the queue builds under `Visible`'s rule. The landblock-bundle decoder does
+//! not know its job's priority yet (the asset pool's job context carries cancellation
+//! only) and calls [`CollisionSystem::build`], which applies `Visible`'s rule.
 
 use std::cell::Cell;
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
+
+use tessera_assets::Priority;
 
 use tessera_formats::collision::{CELL_GEOMETRY_PREFIX, CellGeometry};
 use tessera_formats::{Did, LandblockData, LandblockId, LandblockInfo, PropertySchema};
 use tessera_physics::geometry::{
     Aabb, BodyId, BuildReport, CellPlacement, CollisionLimits, CollisionSet, CollisionSetBuilder,
     DEFAULT_COLLISION_CACHE_BYTES, DEFAULT_COLLISION_CACHE_ENTRIES, FetchedRecord, GeneratedObject,
-    GridMesh, ObjectCollision, PhysicsPids, StaticOptions, resolve_object_collision,
+    GridMesh, MAX_BUILD_THREADS, ObjectCollision, PhysicsPids, StaticOptions,
+    resolve_object_collision,
 };
 
 use crate::coords::LandblockKey;
@@ -146,6 +168,54 @@ impl ObjectCache {
     }
 }
 
+/// How many threads may build one collision set's hierarchy (module docs, "Hierarchy build
+/// threads"; `collision.md` §12.1).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum HierarchyThreads {
+    /// On the building worker alone, one thread (jobs at `Prefetch` priority).
+    Worker,
+    /// Up to [`MAX_BUILD_THREADS`] threads, the worker included, every helper drawn from the
+    /// process-wide budget of `tessera-physics` (jobs at `Visible` priority or higher).
+    Shared,
+}
+
+impl HierarchyThreads {
+    /// The rule for a job at `priority`: [`HierarchyThreads::Worker`] for
+    /// [`Priority::Prefetch`], [`HierarchyThreads::Shared`] otherwise.
+    #[must_use]
+    pub fn for_priority(priority: Priority) -> Self {
+        match priority {
+            Priority::Prefetch => Self::Worker,
+            Priority::Visible | Priority::Immediate => Self::Shared,
+        }
+    }
+
+    /// The most threads a build under this rule may use, its worker included (an upper
+    /// bound: a shared build gets fewer helpers, down to none, when the budget is spent).
+    #[must_use]
+    pub fn max_threads(self) -> usize {
+        match self {
+            Self::Worker => 1,
+            Self::Shared => MAX_BUILD_THREADS,
+        }
+    }
+}
+
+/// How many hierarchy builds a [`CollisionSystem`] ran with each thread cap since it was
+/// made ([`CollisionSystem::hierarchy_builds`]). The counts follow the cap handed to the
+/// hierarchy build, not the rule that chose it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct HierarchyBuildCounts {
+    /// Builds capped at one thread, the building worker alone
+    /// ([`HierarchyThreads::Worker`]).
+    pub worker: u64,
+    /// Builds capped at more than one thread, helpers drawn from the shared budget
+    /// ([`HierarchyThreads::Shared`]).
+    pub shared: u64,
+    /// The thread cap of the last build (its worker included), `None` before the first.
+    pub last_max_threads: Option<usize>,
+}
+
 /// The shared collision state of a world: property IDs, caches, limits (module docs).
 pub struct CollisionSystem {
     pids: PhysicsPids,
@@ -154,6 +224,10 @@ pub struct CollisionSystem {
     objects: ObjectCache,
     cells: Mutex<HashMap<Did, Option<Arc<CellGeometry>>>>,
     max_cells: usize,
+    builds_on_worker: AtomicU64,
+    builds_shared: AtomicU64,
+    /// Thread cap of the last hierarchy build; 0 before the first.
+    last_max_threads: AtomicUsize,
 }
 
 impl std::fmt::Debug for CollisionSystem {
@@ -164,6 +238,7 @@ impl std::fmt::Debug for CollisionSystem {
             .field("statics", &self.statics)
             .field("objects", &self.objects.len())
             .field("cells", &self.cell_cache_len())
+            .field("hierarchy_builds", &self.hierarchy_builds())
             .finish_non_exhaustive()
     }
 }
@@ -183,6 +258,23 @@ impl CollisionSystem {
             ),
             cells: Mutex::new(HashMap::new()),
             max_cells: DEFAULT_CELL_CACHE_ENTRIES,
+            builds_on_worker: AtomicU64::new(0),
+            builds_shared: AtomicU64::new(0),
+            last_max_threads: AtomicUsize::new(0),
+        }
+    }
+
+    /// How many hierarchy builds ran under each thread rule (module docs, "Hierarchy build
+    /// threads"); a diagnostic and test hook.
+    #[must_use]
+    pub fn hierarchy_builds(&self) -> HierarchyBuildCounts {
+        HierarchyBuildCounts {
+            worker: self.builds_on_worker.load(Ordering::Relaxed),
+            shared: self.builds_shared.load(Ordering::Relaxed),
+            last_max_threads: match self.last_max_threads.load(Ordering::Relaxed) {
+                0 => None,
+                n => Some(n),
+            },
         }
     }
 
@@ -330,9 +422,43 @@ impl CollisionSystem {
     }
 
     /// Builds one landblock's collision (module docs; `collision.md` §9.4 order (1), (4)
-    /// and §12.1). Never fails; see [`BuildReport`] for what was left out.
+    /// and §12.1) with the hierarchy rule of a job at `Visible` priority: helpers from the
+    /// shared budget ([`HierarchyThreads::Shared`]). Never fails; see [`BuildReport`] for
+    /// what was left out. A job that knows its priority calls [`CollisionSystem::build_at`].
     #[must_use]
     pub fn build(&self, input: &CollisionInput<'_>) -> BlockCollision {
+        self.build_at(input, Priority::Visible)
+    }
+
+    /// [`CollisionSystem::build`] for a job at `priority`. The caller passes the priority its
+    /// job holds when the build starts, so that a job raised from `Prefetch` to `Visible`
+    /// while it waited builds with `Visible`'s rule: a `Prefetch` build stays on the calling
+    /// worker (one thread), `Visible`
+    /// and `Immediate` builds may draw helpers from the shared budget
+    /// ([`HierarchyThreads::for_priority`], `collision.md` §12.1). The set does not depend
+    /// on the priority.
+    #[must_use]
+    pub fn build_at(&self, input: &CollisionInput<'_>, priority: Priority) -> BlockCollision {
+        self.build_with(input, HierarchyThreads::for_priority(priority))
+    }
+
+    /// Builds `b`'s hierarchy on at most `cap` threads, the calling worker included, and
+    /// counts it: a cap of 1 builds on the caller alone and takes no helper; a larger cap
+    /// is [`MAX_BUILD_THREADS`], the cap of the budgeted build, whose helpers come from the
+    /// shared budget.
+    fn build_hierarchy(&self, b: CollisionSetBuilder, cap: usize) -> CollisionSet {
+        self.last_max_threads.store(cap, Ordering::Relaxed);
+        if cap <= 1 {
+            self.builds_on_worker.fetch_add(1, Ordering::Relaxed);
+            b.build_with_threads(cap)
+        } else {
+            self.builds_shared.fetch_add(1, Ordering::Relaxed);
+            b.build()
+        }
+    }
+
+    /// [`CollisionSystem::build`] with the hierarchy built under `threads`.
+    fn build_with(&self, input: &CollisionInput<'_>, threads: HierarchyThreads) -> BlockCollision {
         let mut b = CollisionSetBuilder::new(self.limits);
         if let Some(id) = LandblockId::from_did(input.key.data_did()) {
             b.set_landblock(id);
@@ -377,7 +503,11 @@ impl CollisionSystem {
         {
             tracing::warn!(landblock = %input.key, error = %e, "liquid boxes left out of the collision set");
         }
-        let set = b.build();
+        // One cap decides both the call and the count (the test hook), so the count says
+        // which cap the hierarchy build was given.
+        let cap = threads.max_threads();
+        let set = self.build_hierarchy(b, cap);
+        tracing::trace!(landblock = %input.key, ?threads, cap, "collision hierarchy built");
         // Portals of the cells the set accepted (bounded by its cell limit and the per-set
         // portal budgets).
         let (portals, portals_left_out) = match input.info {

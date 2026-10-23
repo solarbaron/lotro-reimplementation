@@ -10,9 +10,11 @@
 //! cylinders against *R*) and, in range, sends `Command::Npc(UseEntity { entity })`; out of
 //! range it sends nothing and returns the system line the client posts. The callers:
 //!
-//! - the input action **`USE`** ([`USE_KEY`], keyboard U, the install's default binding,
-//!   NW10) uses the **selection** (`npc-windows.md` §3.1: the player's `Entity_Selection`,
-//!   the P2 selection the session keeps, [`crate::combat::CombatState::selection`]): with
+//! - the input command **`USE`** (the keymap action `use_selection`, default keyboard U,
+//!   the install's default binding, NW10, `keymap.md` §8.3; the declined command reaches the
+//!   NPC hub through [`crate::character::routed`]) uses the **selection**
+//!   (`npc-windows.md` §3.1: the player's `Entity_Selection`, the P2 selection the session
+//!   keeps, [`crate::combat::CombatState::selection`]): with
 //!   no selection the client posts the no-selection line (the install's, else
 //!   [`NO_SELECTION_LINE`]) and sends nothing ([`crate::npc::NpcHub::request_use`]);
 //! - P2's world clicks: a left double-click and a right click on a non-player entity
@@ -39,21 +41,14 @@ use tessera_net::domain::{ItemId, NpcCommand, WindowId};
 use tessera_net::{Command, EntityId, EntityKind, Vec3};
 use tessera_ui::game::npc::NpcAction;
 
-/// The key of the input action `USE` (the install's default binding is keyboard U,
-/// `npc-windows.md` NW10).
-pub const USE_KEY: tessera_input::KeyCode = tessera_input::KeyCode::U;
-
-/// Whether `ev` triggers the input action `USE`: [`USE_KEY`] pressed (not a repeat).
+/// Retired raw-key test of `USE`: always `false`. `USE` is the keymap action
+/// `use_selection` (`keymap.md` §8.3, default keyboard U), whose declined command reaches
+/// [`crate::npc::NpcHub::frame`] through [`crate::character::routed`], so a rebound key
+/// moves with the action and a key typed into a text field never uses anything. Kept only
+/// until the windowed client's raw-key call goes.
 #[must_use]
-pub fn is_use_key(ev: &tessera_input::RawEvent) -> bool {
-    matches!(
-        ev,
-        tessera_input::RawEvent::Key {
-            key: USE_KEY,
-            pressed: true,
-            repeat: false,
-        }
-    )
+pub fn is_use_key(_ev: &tessera_input::RawEvent) -> bool {
+    false
 }
 
 /// `Usage_MinUsageDist` + this is the use range *R* (`interaction.md` §3.4.1 step 3).

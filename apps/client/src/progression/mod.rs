@@ -32,7 +32,9 @@
 //! headless `--ui`) runs [`hub::P6Hub::frame`]. The `--open-panel` names of
 //! [`commands::parse_p6_panel`] open the windows once the player is in the world; the
 //! `toggle_crafting` and `toggle_crafting_1` … `3` actions toggle the crafting panel
-//! (CP §4.1, §12). Trainers open on the feed's `TrainerShown` and `CraftTrainerShown`, which
+//! (CP §4.1, §12), and `toggle_traits` (J) and `toggle_skills` (K) the trait panel and the
+//! skill-training window (PP §1.4, `keymap.md` §8.3; their declined commands reach
+//! [`hub::P6Hub::frame`] through [`crate::character::routed`]). Trainers open on the feed's `TrainerShown` and `CraftTrainerShown`, which
 //! the feed sends when the player chooses an NPC's trainer option (NW §5.3); gathering nodes
 //! are feed actors used through the P3 use path (CP §9.1 Tessera rule), which the walker draws
 //! like any feed actor. It is exercised in process by `apps/client/tests/p6_panels.rs`

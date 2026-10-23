@@ -4,7 +4,8 @@
 //! loader on the hub's worker: `USE` with no selection posts the no-selection line and
 //! sends nothing; a use whose cylinder is still being read waits for it and runs once it
 //! arrives, or after the hub's bound with Decision D13's cylinder; and an open window's
-//! walk-away close waits for its entity's cylinder. Sandbox session, no install.
+//! walk-away close waits for its entity's cylinder; the routed `USE` and wallet toggle of
+//! `keymap.md` §8.3 reach the hub. Sandbox session, no install.
 
 mod ui_common;
 
@@ -133,6 +134,53 @@ fn use_without_a_selection_posts_the_line_and_sends_nothing() {
         !c.rig.host.settled(),
         "the line is queued for the chat window"
     );
+}
+
+/// `use_selection` (`keymap.md` §8.3, default U): its routed `USE` (`character::routed`)
+/// uses the selection as `request_use` does; a routed command of another hub does not.
+#[test]
+fn the_routed_use_command_uses_the_selection() {
+    use tessera_client::character::routed::RoutedCommand as R;
+    let mut c = Client::new(|_| Cylinder::NO_SETUP);
+    c.select(None);
+    c.npc.apply_routed(&[R::QuestLog, R::Traits]);
+    let at = c.avatar(1.0);
+    c.frame(Instant::now(), at);
+    assert_eq!(c.npc.last_use(), None, "no use without the USE command");
+    c.npc.apply_routed(&[R::Use]);
+    c.frame(Instant::now(), at);
+    assert_eq!(c.npc.last_use(), Some(&UseOutcome::NoSelection));
+}
+
+/// `toggle_wallet` (`keymap.md` §8.3, default B): its routed `TogglePaperItemPanel` opens
+/// the wallet window in the next frame and closes it in the one after.
+#[test]
+fn the_routed_wallet_toggle_opens_and_closes_the_wallet() {
+    use tessera_client::character::routed::RoutedCommand as R;
+    use tessera_ui::game::npc::NpcWindowKind;
+    let mut c = Client::new(|_| Cylinder::NO_SETUP);
+    let wallet = |c: &Client| {
+        c.npc
+            .ui()
+            .is_some_and(|u| u.panels().any(|(k, _)| k == NpcWindowKind::Wallet))
+    };
+    c.frame(Instant::now(), None);
+    assert!(!wallet(&c));
+    c.npc.apply_routed(&[R::Wallet]);
+    c.frame(Instant::now(), None);
+    assert!(wallet(&c), "B opens the wallet");
+    c.npc.apply_routed(&[R::Wallet]);
+    c.frame(Instant::now(), None);
+    assert!(!wallet(&c), "B again closes it");
+    // Repeated presses before one frame: one toggle per press (`character::routed`).
+    c.npc.apply_routed(&[R::Wallet, R::Wallet]);
+    assert!(!c.npc.wallet_toggle_pending(), "two presses cancel out");
+    c.frame(Instant::now(), None);
+    assert!(!wallet(&c), "B twice in one frame leaves it closed");
+    c.npc
+        .apply_routed(&[R::Wallet, R::Use, R::Wallet, R::Wallet]);
+    c.frame(Instant::now(), None);
+    assert!(wallet(&c), "three presses open it");
 }
 
 #[test]

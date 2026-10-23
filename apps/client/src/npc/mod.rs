@@ -26,10 +26,11 @@
 //! # Using an NPC
 //!
 //! [`use_entity`] is the client's one entry point: it checks the use range and sends
-//! `UseEntity`. Its callers are the input action `USE` on the selection
-//! ([`commands::USE_KEY`], keyboard U) and P2's world clicks, a left double-click and a
-//! right click ([`NpcHub::use_selection`], `npc-windows.md` §3.1). The scenario input
-//! script's `use` is sent by the input player itself.
+//! `UseEntity`. Its callers are the input command `USE` on the selection (the keymap action
+//! `use_selection`, default keyboard U, `keymap.md` §8.3; routed to [`NpcHub::frame`] by
+//! [`crate::character::routed`]) and P2's world clicks, a left double-click and a right
+//! click ([`NpcHub::use_selection`], `npc-windows.md` §3.1). The scenario input script's
+//! `use` is sent by the input player itself.
 
 pub mod commands;
 pub mod data;

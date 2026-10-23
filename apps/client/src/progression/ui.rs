@@ -165,7 +165,14 @@ struct TrainingUi {
 struct TraitsUi {
     panel: TraitPanel,
     handles: P6Handles,
+    /// The view must be built again: the panel is new, a `P6Change::Traits` arrived or a
+    /// tree tab was chosen since the last fill. Kept while the panel is hidden; showing
+    /// the panel again does not set it (the shown view is still current), so `J` reads no
+    /// records unless something changed (ARCHITECTURE §21; the first fill of a tree still
+    /// reads them on the frame thread, see [`P6Ui::trait_fills`]).
     dirty: bool,
+    /// How many times the view was built (tests and tools).
+    fills: u64,
 }
 
 /// The P6 windows on the game UI (module docs).
@@ -292,6 +299,16 @@ impl P6Ui {
     #[must_use]
     pub fn traits(&self) -> Option<ElementKey> {
         self.traits.as_ref().map(|t| t.panel.root)
+    }
+
+    /// How many times the trait panel's view was built since the panel was made (tests and
+    /// tools): once when it first shows, then once per showing frame after a
+    /// `P6Change::Traits` or a tree tab; never for hiding and showing it again. Each build
+    /// reads the tree's records on the frame thread (an ARCHITECTURE §21 gap: the first
+    /// view of a tree is not yet built on an asset worker); `None` without a panel.
+    #[must_use]
+    pub fn trait_fills(&self) -> Option<u64> {
+        self.traits.as_ref().map(|t| t.fills)
     }
 
     /// The experience bar while one is attached (and whether it is the fallback bar): the
@@ -498,6 +515,7 @@ impl P6Ui {
             panel,
             handles: P6Handles::new(),
             dirty: true,
+            fills: 0,
         });
         true
     }
@@ -585,6 +603,48 @@ impl P6Ui {
         }
     }
 
+    /// `ToggleTraitPanel` (`keymap.md` §8.3 `toggle_traits`, `progression-panels.md` §1.4):
+    /// hides the trait panel when it shows, else opens it as `--open-panel traits` does.
+    pub fn toggle_traits(&mut self, ui: &mut Ui) {
+        if let Some(t) = self.traits.as_ref()
+            && ui.exists(t.panel.root)
+            && ui.is_visible(t.panel.root)
+        {
+            ui.set_shown(t.panel.root, false);
+            return;
+        }
+        match self.open_panel(ui, P6Panel::Traits) {
+            Ok(k) => ui.request_activation(k),
+            Err(e) => tracing::warn!("{e}"),
+        }
+    }
+
+    /// `ToggleSkillPanel` (`keymap.md` §8.3 `toggle_skills`, `progression-panels.md` §1.4,
+    /// §4): closes the skill-training window when it shows, else opens it as
+    /// `--open-panel training` does (empty until a trainer's feed fills it). Closing a
+    /// window the feed opened returns its `CloseWindow` command, as its close button does
+    /// (§4.2; Tessera rule for the key).
+    pub fn toggle_training(&mut self, ui: &mut Ui) -> Option<Command> {
+        if let Some(t) = self.training.as_ref()
+            && ui.exists(t.window.root)
+            && ui.is_visible(t.window.root)
+        {
+            let feed = t.feed;
+            self.close_training(ui);
+            return feed.and_then(|window| {
+                progression_command(
+                    ProgressionAction::CloseTrainer { window },
+                    &P6Handles::new(),
+                )
+            });
+        }
+        match self.open_panel(ui, P6Panel::Training) {
+            Ok(k) => ui.request_activation(k),
+            Err(e) => tracing::warn!("{e}"),
+        }
+        None
+    }
+
     /// Opens window `p` by its `--open-panel` name (`crafting-panels.md` §3 Tessera rule,
     /// `progression-panels.md` §1.4): with the session's current state, or empty when the
     /// feed has given none (the trainers then show no NPC and no text).
@@ -645,8 +705,9 @@ impl P6Ui {
                 if !self.ensure_traits(ui) {
                     return Err(no());
                 }
-                let t = self.traits.as_mut().ok_or_else(no)?;
-                t.dirty = true;
+                // A new panel is dirty; a hidden one shown again keeps its view, which is
+                // current unless a change marked it dirty (`TraitsUi::dirty`).
+                let t = self.traits.as_ref().ok_or_else(no)?;
                 ui.set_shown(t.panel.root, true);
                 Ok(t.panel.root)
             }
@@ -900,9 +961,12 @@ impl P6Ui {
             self.traits = None;
             return;
         }
-        if !std::mem::take(&mut t.dirty) || !ui.is_visible(t.panel.root) {
+        // A hidden panel keeps its dirty mark for when it shows again.
+        if !t.dirty || !ui.is_visible(t.panel.root) {
             return;
         }
+        t.dirty = false;
+        t.fills = t.fills.saturating_add(1);
         let progression = state.progression();
         let (active, _) = progression.active_tree();
         t.handles.clear();

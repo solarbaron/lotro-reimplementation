@@ -3,7 +3,8 @@
 //! `quest-journal.md` §3, §4.8): a pointer click on the quest log's track button travels
 //! from the UI host's in-world event list (read by the NPC windows and the journal) to the
 //! journal windows, and its `TrackQuest` reaches the world session once (a pointer click
-//! gives several click messages, `QuestUi`'s one-click rule). Sandbox session, no install.
+//! gives several click messages, `QuestUi`'s one-click rule); the routed quest-log toggle
+//! (`keymap.md` §8.3) opens and closes the log. Sandbox session, no install.
 
 mod npc_windows_common;
 mod ui_common;
@@ -113,6 +114,57 @@ fn a_click_on_the_track_button_reaches_the_session() {
     // The next frame sends nothing more.
     c.frame();
     assert!(c.quests.sent().is_empty());
+}
+
+/// `toggle_quest_log` (`keymap.md` §8.3, default L): its routed `ToggleQuestPanel`
+/// (`character::routed`) opens the quest log in the next frame and closes it in the one
+/// after; a routed command of another hub leaves it alone.
+#[test]
+fn the_routed_quest_log_toggle_opens_and_closes_the_log() {
+    use tessera_client::character::routed::RoutedCommand as R;
+    let mut world = World::sandbox(Instant::now()).expect("sandbox");
+    for _ in 0..500 {
+        if world.player().is_some() {
+            break;
+        }
+        world.update(Instant::now());
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    assert!(world.player().is_some(), "the sandbox enters the world");
+    let mut npc = NpcHub::new(Vec::new());
+    npc.set_loaded(Arc::new(NpcRefs::fallback()), None);
+    let mut c = Client {
+        rig: Rig::new(|_| {}),
+        world,
+        npc,
+        quests: QuestHub::new(Vec::new()),
+    };
+    c.frame();
+    let open = |c: &Client| {
+        c.quests
+            .ui()
+            .and_then(|u| u.log_root())
+            .is_some_and(|k| c.rig.host.ui().exists(k) && c.rig.host.ui().is_visible(k))
+    };
+    assert!(!open(&c), "closed until toggled");
+    c.quests.apply_routed(&[R::Use, R::Wallet]);
+    c.frame();
+    assert!(!open(&c), "other hubs' commands");
+    c.quests.apply_routed(&[R::QuestLog]);
+    c.frame();
+    assert!(open(&c), "L opens the log");
+    c.quests.apply_routed(&[R::QuestLog]);
+    c.frame();
+    assert!(!open(&c), "L again closes it");
+    // Repeated presses before one frame: one toggle per press (`character::routed`).
+    c.quests.apply_routed(&[R::QuestLog, R::QuestLog]);
+    assert!(!c.quests.toggle_pending(), "two presses cancel out");
+    c.frame();
+    assert!(!open(&c), "L twice in one frame leaves the log closed");
+    c.quests
+        .apply_routed(&[R::QuestLog, R::Use, R::QuestLog, R::QuestLog]);
+    c.frame();
+    assert!(open(&c), "three presses open it");
 }
 
 /// `quest-journal.md` §8 (`--quest-icons`): the run's switch beats Tessera's saved setting,

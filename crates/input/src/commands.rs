@@ -171,7 +171,7 @@ const TABLE: &[Compact] = {
             Button,
         ),
         (MAIN, &["EscapeKey"], &[GLOBAL], &["menu"], Button),
-        // P1 panels (`keymap.md` §12.14.2 OPEN: rows added by the client implementer).
+        // Panel and use rows (`keymap.md` §8.3, §12.14.2).
         (
             MAIN,
             &["ToggleJournalPanel"],
@@ -212,6 +212,28 @@ const TABLE: &[Compact] = {
             &["TOOLTIP_DETACH"],
             &[GLOBAL],
             &["pin_tooltip"],
+            Button,
+        ),
+        (
+            MAIN,
+            &["TogglePaperItemPanel"],
+            &[GLOBAL],
+            &["toggle_wallet"],
+            Button,
+        ),
+        (
+            MAIN,
+            &["ToggleQuestPanel"],
+            &[GLOBAL],
+            &["toggle_quest_log"],
+            Button,
+        ),
+        (MAIN, &["USE"], &[GLOBAL], &["use_selection"], Button),
+        (
+            MAIN,
+            &["ToggleTraitPanel", "ToggleSkillPanel"],
+            &[GLOBAL],
+            &["toggle_traits", "toggle_skills"],
             Button,
         ),
         // P4 social panels (`social-panels.md` §7.2, TR12; `keymap.md` §12.14.2 OPEN:
@@ -277,7 +299,7 @@ const TABLE: &[Compact] = {
             ],
             Button,
         ),
-        // P6 crafting panel (`crafting-panels.md` §12; `keymap.md` §8.2 P6 OPEN).
+        // P6 crafting panel (`crafting-panels.md` §12; `keymap.md` §8.3).
         (
             MAIN,
             &[
@@ -664,21 +686,60 @@ mod tests {
             Some("ToggleJournalPanel")
         );
         assert_eq!(
-            command_for_entry("global", "toggle_bags", Button, &d("B")),
+            command_for_entry("global", "toggle_bags", Button, &d("I")),
             Some("QUICKSLOT_BACKPACK")
         );
         for n in 1..=6 {
             let action = format!("toggle_bag_{n}");
             let want = format!("QUICKSLOT_BACKPACK{n}");
             assert_eq!(
-                command_for_entry("global", &action, Button, &d("I")),
+                command_for_entry("global", &action, Button, &d("Ctrl+F1")),
                 Some(want.as_str())
             );
         }
         assert_eq!(
-            command_for_entry("global", "pin_tooltip", Button, &d("Ctrl+T")),
+            command_for_entry("global", "pin_tooltip", Button, &d("H")),
             Some("TOOLTIP_DETACH")
         );
+    }
+
+    /// The panel and use rows of the 2026-10-23 revision (`keymap.md` §8.3, §12.14.2):
+    /// each new action reports its command, and each command imports to its action.
+    #[test]
+    fn panel_and_use_commands_of_8_3() {
+        use ActionKind::Button;
+        let d = |t: &str| BindingSpec::digital(Chord::parse(t).unwrap(), 1.0);
+        let pairs = [
+            ("toggle_wallet", "TogglePaperItemPanel", "B"),
+            ("toggle_quest_log", "ToggleQuestPanel", "L"),
+            ("use_selection", "USE", "U"),
+            ("toggle_traits", "ToggleTraitPanel", "J"),
+            ("toggle_skills", "ToggleSkillPanel", "K"),
+        ];
+        for (action, command, key) in pairs {
+            assert_eq!(
+                command_for_entry("global", action, Button, &d(key)),
+                Some(command),
+                "{action}"
+            );
+            let rows: Vec<_> = command_rows()
+                .iter()
+                .filter(|r| r.command.eq_ignore_ascii_case(command))
+                .map(|r| (r.section, r.context, r.action, r.value))
+                .collect();
+            assert_eq!(
+                rows,
+                [("Main", contexts::GLOBAL, action, RowValue::Button)],
+                "{command}"
+            );
+        }
+        // The UI-scale actions have no original command (§8.3).
+        for action in ["ui_window_scale_up", "ui_window_scale_down"] {
+            assert!(
+                command_rows().iter().all(|r| r.action != action),
+                "{action}"
+            );
+        }
     }
 
     #[test]

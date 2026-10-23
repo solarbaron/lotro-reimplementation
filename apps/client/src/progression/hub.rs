@@ -35,6 +35,7 @@ use super::refs::P6Refs;
 use super::state::P6Change;
 use super::ui::{P6Context, P6Ui, level_up_text};
 use crate::character::PlayerState;
+use crate::character::routed::{MAX_ROUTED, RoutedCommand};
 use crate::combat::CombatInstall;
 use crate::npc::NpcData;
 use crate::ui_host::UiHost;
@@ -60,6 +61,8 @@ pub struct P6Hub {
     ui: Option<P6Ui>,
     pending_panels: Vec<P6Panel>,
     toggles: Vec<CraftToggle>,
+    /// The trait and skill-panel toggles of this frame (`keymap.md` §8.3), in press order.
+    panel_toggles: Vec<RoutedCommand>,
     model: SessionProgression,
     /// The changes since the windows last ran (bounded by [`MAX_UI_CHANGES`]).
     ui_changes: VecDeque<P6Change>,
@@ -212,6 +215,27 @@ impl P6Hub {
         }
     }
 
+    /// Applies routed input commands ([`crate::character::routed`]): every `Traits` and
+    /// `Skills` toggles the trait panel or the skill-training window once
+    /// (`progression-panels.md` §1.4), in the hub's next [`Self::frame`] (which also takes
+    /// the routed queue itself; this entry serves outside callers); other kinds are not
+    /// this hub's. At most [`MAX_ROUTED`] wait.
+    pub fn apply_routed(&mut self, routed: &[RoutedCommand]) {
+        for &r in routed {
+            if matches!(r, RoutedCommand::Traits | RoutedCommand::Skills)
+                && self.panel_toggles.len() < MAX_ROUTED
+            {
+                self.panel_toggles.push(r);
+            }
+        }
+    }
+
+    /// The trait and skill-panel toggles waiting for the next frame (tests and tools).
+    #[must_use]
+    pub fn pending_panel_toggles(&self) -> &[RoutedCommand] {
+        &self.panel_toggles
+    }
+
     /// One frame's P6 changes (in event order, against the state they left): the plugin
     /// model's events are raised on `manager` (`lua-plugin-api.md` §15.6) once the facts are
     /// known and the model was built from the state ([`Self::sync_model`]; before that the
@@ -287,6 +311,15 @@ impl P6Hub {
         now: Instant,
     ) {
         let changes: Vec<P6Change> = std::mem::take(&mut self.ui_changes).into();
+        // `ToggleTraitPanel` and `ToggleSkillPanel` declined by the UI (`keymap.md` §8.3,
+        // routed by the character panels): taken every frame; acted on below, dropped when
+        // the windows cannot run this frame.
+        let routed = host
+            .character_mut()
+            .map(|c| c.take_routed(&[RoutedCommand::Traits, RoutedCommand::Skills]))
+            .unwrap_or_default();
+        self.apply_routed(&routed);
+        let panel_toggles = std::mem::take(&mut self.panel_toggles);
         let (Some(refs), Some(data)) = (self.refs.clone(), self.data.clone()) else {
             return;
         };
@@ -309,6 +342,14 @@ impl P6Hub {
         }
         for t in std::mem::take(&mut self.toggles) {
             ui.toggle_crafting(&mut host.ui_mut(), t);
+        }
+        let mut closes = Vec::new();
+        for t in panel_toggles {
+            match t {
+                RoutedCommand::Traits => ui.toggle_traits(&mut host.ui_mut()),
+                RoutedCommand::Skills => closes.extend(ui.toggle_training(&mut host.ui_mut())),
+                _ => {}
+            }
         }
         // The holdings feed only the crafting panel: read them only while it exists.
         let holdings = if ui.crafting().is_some() {
@@ -336,7 +377,7 @@ impl P6Hub {
             now: host.clock(),
         };
         let commands = ui.frame(&mut host.ui_mut(), world.p6(), &changes, &ctx, events);
-        for c in commands {
+        for c in closes.into_iter().chain(commands) {
             if let Err(e) = world.send_command(now, c) {
                 tracing::info!("progression command not sent: {e}");
             }

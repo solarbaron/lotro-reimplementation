@@ -40,6 +40,7 @@ use super::refs::NpcRefs;
 use super::shapes::UseShapes;
 use super::ui::{NpcKey, NpcUi};
 use super::wallet::{SessionWallet, wallet_item_facts};
+use crate::character::routed::RoutedCommand;
 use crate::character::{CharacterData, PlayerChange, PlayerState};
 use crate::ui_host::UiHost;
 use tessera_settings::WindowPrefs;
@@ -327,6 +328,20 @@ impl NpcHub {
         self.use_requested = true;
     }
 
+    /// Applies routed input commands ([`crate::character::routed`]): `Use` requests the use
+    /// of the selection ([`Self::request_use`]; several in one batch use it once), every
+    /// `Wallet` one wallet toggle ([`Self::request_wallet_toggle`]); other kinds are not this
+    /// hub's and are ignored.
+    pub fn apply_routed(&mut self, routed: &[RoutedCommand]) {
+        for r in routed {
+            match r {
+                RoutedCommand::Use => self.request_use(),
+                RoutedCommand::Wallet => self.request_wallet_toggle(),
+                RoutedCommand::QuestLog | RoutedCommand::Traits | RoutedCommand::Skills => {}
+            }
+        }
+    }
+
     /// The use-range cylinders, as far as they have been read.
     #[must_use]
     pub fn shapes(&self) -> &UseShapes {
@@ -432,11 +447,19 @@ impl NpcHub {
         Some(self.run_use(host, world, entity, avatar, now))
     }
 
-    /// `TogglePaperItemPanel` (the character panel's `Player_Wallet_Button`, §9.1) was
-    /// triggered; the wallet window opens or closes in the next [`Self::frame`]. Tessera's
-    /// key map binds the install's default key (B) to the bags, so no key calls this yet.
+    /// `TogglePaperItemPanel` (the keymap action `toggle_wallet`, default B, `keymap.md`
+    /// §8.3; or the character panel's `Player_Wallet_Button`, §9.1) was triggered; the
+    /// wallet window opens or closes in the next [`Self::frame`]. Each call is one toggle:
+    /// two calls before one frame leave the wallet as it was (`character::routed`,
+    /// repeated presses).
     pub fn request_wallet_toggle(&mut self) {
-        self.wallet_toggle = true;
+        self.wallet_toggle = !self.wallet_toggle;
+    }
+
+    /// Whether the next frame toggles the wallet window (tests and tools).
+    #[must_use]
+    pub fn wallet_toggle_pending(&self) -> bool {
+        self.wallet_toggle
     }
 
     /// One raw input event of the windowed client, before the UI and the walker see it.
@@ -511,9 +534,19 @@ impl NpcHub {
         avatar: Option<tessera_net::Vec3>,
         now: Instant,
     ) {
+        // `USE` and `TogglePaperItemPanel` declined by the UI (`keymap.md` §8.3, routed by
+        // the character panels): taken every frame so none waits for a later one; dropped
+        // while the character screens are open or before the windows' names are known.
+        let routed = host
+            .character_mut()
+            .map(|c| c.take_routed(&[RoutedCommand::Use, RoutedCommand::Wallet]))
+            .unwrap_or_default();
         let Some(refs) = self.refs.clone() else {
             return;
         };
+        if !screens_open {
+            self.apply_routed(&routed);
+        }
         let toggles = self.buy_toggles();
         if self.ui.is_none() {
             let mut ui = NpcUi::new(Arc::clone(&refs), FallbackArt::default());
@@ -533,7 +566,8 @@ impl NpcHub {
                 matches!(e, tessera_ui::UiEvent::Game { message }
                     if message.msg == click && message.source_id == b)
             });
-            self.wallet_toggle |= clicked;
+            // One click (several click messages, one toggle) is one more toggle request.
+            self.wallet_toggle ^= clicked;
         }
         {
             let Some(ui) = self.ui.as_mut() else {

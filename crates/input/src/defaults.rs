@@ -56,9 +56,12 @@ fn action_defs() -> Vec<ActionDef> {
         b("toggle_fly"),
         b("toggle_debug"),
         b("open_chat"),
-        // P1 panels (`character-panels.md` §2, §4.1; `item-tooltips.md` §10): Tessera
-        // actions for the commands `ToggleJournalPanel`, `QUICKSLOT_BACKPACK`,
-        // `QUICKSLOT_BACKPACK1` … `6` and `TOOLTIP_DETACH` (`keymap.md` §12.14.2 OPEN).
+        // Panel and use actions (`keymap.md` §8.3): P1 (`character-panels.md` §2, §4.1;
+        // `item-tooltips.md` §10) for the commands `ToggleJournalPanel`,
+        // `QUICKSLOT_BACKPACK`, `QUICKSLOT_BACKPACK1` … `6` and `TOOLTIP_DETACH`; P3
+        // (`npc-windows.md` §3.1, §9.4; `quest-journal.md` §4.1) for
+        // `TogglePaperItemPanel`, `ToggleQuestPanel` and `USE`; P6
+        // (`progression-panels.md` §1.4) for `ToggleTraitPanel` and `ToggleSkillPanel`.
         b("toggle_character"),
         b("toggle_bags"),
         b("toggle_bag_1"),
@@ -68,6 +71,11 @@ fn action_defs() -> Vec<ActionDef> {
         b("toggle_bag_5"),
         b("toggle_bag_6"),
         b("pin_tooltip"),
+        b("toggle_wallet"),
+        b("toggle_quest_log"),
+        b("use_selection"),
+        b("toggle_traits"),
+        b("toggle_skills"),
         // P4 social panels (`social-panels.md` §7.2, §9 TR12): Tessera actions for the
         // commands `ToggleSocialPanel`, the five page commands, `SelectFellowOne` … `Six`
         // and `AssistFellowTwo` … `Six`.
@@ -88,21 +96,24 @@ fn action_defs() -> Vec<ActionDef> {
         b("assist_fellow_4"),
         b("assist_fellow_5"),
         b("assist_fellow_6"),
-        // P6 crafting panel (`crafting-panels.md` §4.1, §12): Tessera actions for the
-        // commands `ToggleCraftingPanel` and `ToggleCraftingProf1Panel` … `Prof3Panel`
-        // (`keymap.md` §8.2 P6 OPEN: the rows are not yet in the keymap spec).
+        // P6 crafting panel (`crafting-panels.md` §4.1, §12; `keymap.md` §8.3): Tessera
+        // actions for the commands `ToggleCraftingPanel` and `ToggleCraftingProf1Panel` …
+        // `Prof3Panel`.
         b("toggle_crafting"),
         b("toggle_crafting_1"),
         b("toggle_crafting_2"),
         b("toggle_crafting_3"),
-        // UI scaling (`ui-scaling.md` §7.3): Tessera actions for the UI-scale
-        // controls. Unbound by default — the free keys are taken (KM §8.2) —
-        // so the controls are reached by the `/uiscale` command and the
-        // Interface window unless the user binds them.
+        // UI scaling (`ui-scaling.md` §7.3, §7.4; `keymap.md` §8.3): Tessera actions
+        // for the UI-scale controls and the per-window factor of the panel under the
+        // pointer. Unbound by default (`keymap.md` §8.3 items 2 and 3), so the controls
+        // are reached by the `/uiscale` command and the Interface window unless the user
+        // binds them.
         b("ui_scale_up"),
         b("ui_scale_down"),
         b("ui_scale_auto"),
         b("ui_interface_window"),
+        b("ui_window_scale_up"),
+        b("ui_window_scale_down"),
     ];
     // P2 targeting and quickslot actions (`keymap.md` §8.2): exact policy, no repeat.
     v.extend(crate::combat::TARGET_ACTIONS.iter().map(|r| b(r.1)));
@@ -231,16 +242,23 @@ fn default_table() -> Vec<(&'static str, &'static str, Vec<Entry>)> {
         (GLOBAL, "toggle_fly", vec![D("Ctrl+F")]),
         (GLOBAL, "toggle_debug", vec![D("F3")]),
         (GLOBAL, "open_chat", vec![D("Enter"), D("NumpadEnter")]),
-        // P1 panels: Tessera's own default keys (`keymap.md` §12.14.2 OPEN).
+        // Panel and use actions (`keymap.md` §8.3): the original's keys C, I, H, B, L, U,
+        // J and K (K50). `toggle_bag_1` … `6` are unbound (§8.3 Decision 1: the original's
+        // Ctrl + F1 … F6 would take walker keys).
         (GLOBAL, "toggle_character", vec![D("C")]),
-        (GLOBAL, "toggle_bags", vec![D("B")]),
-        (GLOBAL, "toggle_bag_1", vec![D("I")]),
+        (GLOBAL, "toggle_bags", vec![D("I")]),
+        (GLOBAL, "toggle_bag_1", vec![]),
         (GLOBAL, "toggle_bag_2", vec![]),
         (GLOBAL, "toggle_bag_3", vec![]),
         (GLOBAL, "toggle_bag_4", vec![]),
         (GLOBAL, "toggle_bag_5", vec![]),
         (GLOBAL, "toggle_bag_6", vec![]),
-        (GLOBAL, "pin_tooltip", vec![D("Ctrl+T")]),
+        (GLOBAL, "pin_tooltip", vec![D("H")]),
+        (GLOBAL, "toggle_wallet", vec![D("B")]),
+        (GLOBAL, "toggle_quest_log", vec![D("L")]),
+        (GLOBAL, "use_selection", vec![D("U")]),
+        (GLOBAL, "toggle_traits", vec![D("J")]),
+        (GLOBAL, "toggle_skills", vec![D("K")]),
         // P4 social panels: O opens the Social panel (the install's default, SP20). The
         // page commands are unbound there too. The install binds `SelectFellowOne` … `Six`
         // to F1 … F6 and `AssistFellowTwo` … `Six` to Shift+F2 … F6 (SP20); Tessera's own
@@ -270,13 +288,16 @@ fn default_table() -> Vec<(&'static str, &'static str, Vec<Entry>)> {
         (GLOBAL, "toggle_crafting_1", vec![]),
         (GLOBAL, "toggle_crafting_2", vec![]),
         (GLOBAL, "toggle_crafting_3", vec![]),
-        // UI scaling (`ui-scaling.md` §7.3): unbound by default. KM §8.2 binds
-        // Minus and Equal with every modifier, so there is no free key; the
-        // Interface window and the `/uiscale` command reach the same controls.
+        // UI scaling (`ui-scaling.md` §7.3, §7.4; `keymap.md` §8.3 items 2 and 3):
+        // unbound by default. KM §8.2 binds Minus and Equal with every modifier, and
+        // Ctrl + wheel already gives `scroll_up`/`scroll_down`, `zoom` and `fly_speed`;
+        // the Interface window and the `/uiscale` command reach the same controls.
         (GLOBAL, "ui_scale_up", vec![]),
         (GLOBAL, "ui_scale_down", vec![]),
         (GLOBAL, "ui_scale_auto", vec![]),
         (GLOBAL, "ui_interface_window", vec![]),
+        (GLOBAL, "ui_window_scale_up", vec![]),
+        (GLOBAL, "ui_window_scale_down", vec![]),
         (CAMERA, "mouselook", vec![D("MouseRight")]),
         (
             CAMERA,
@@ -886,8 +907,9 @@ mod tests {
         release(&mut m, &[ShiftLeft], Digit1);
     }
 
-    /// P6 crafting toggles (`crafting-panels.md` §12): `T` opens the crafting panel under
-    /// the exact policy, `Ctrl+T` stays `pin_tooltip`, the profession toggles are unbound.
+    /// P6 crafting toggles (`crafting-panels.md` §12, `keymap.md` §8.3): `T` opens the
+    /// crafting panel under the exact policy, `Ctrl+T` gives nothing (`pin_tooltip` moved to
+    /// `H`), the profession toggles are unbound.
     #[test]
     fn p6_crafting_toggle_defaults() {
         let reg = default_registry();
@@ -931,9 +953,203 @@ mod tests {
             m.handle(&k(mk, true), t);
         }
         m.update(t);
-        assert!(m.just_pressed(pin));
+        assert!(!m.just_pressed(pin));
         assert!(!m.just_pressed(crafting));
         assert!(!m.pressed(ids.toggle_fly));
+    }
+
+    /// Presses `mods` then `key`, updates, and returns the actions that were just pressed;
+    /// then releases everything and updates again.
+    fn fired(m: &mut InputMapper, mods: &[KeyCode], key: KeyCode) -> Vec<String> {
+        let t = Duration::ZERO;
+        let k = |key, pressed| RawEvent::Key {
+            key,
+            pressed,
+            repeat: false,
+        };
+        for &mk in mods {
+            m.handle(&k(mk, true), t);
+        }
+        m.handle(&k(key, true), t);
+        m.update(t);
+        let out = m
+            .registry()
+            .actions()
+            .filter(|(id, _)| m.just_pressed(*id))
+            .map(|(_, d)| d.name.to_string())
+            .collect();
+        m.handle(&k(key, false), t);
+        for &mk in mods {
+            m.handle(&k(mk, false), t);
+        }
+        m.update(t);
+        out
+    }
+
+    /// The panel, use and UI-scale actions of `keymap.md` §8.3 (revision of 2026-10-23):
+    /// registered as button actions with the exact policy and no repeat, listed in `global`
+    /// only, with the section's default bindings.
+    #[test]
+    fn panel_use_and_scale_actions_of_8_3() {
+        let reg = default_registry();
+        let km = default_keymap();
+        let table: &[(&str, &[&str])] = &[
+            ("toggle_character", &["C"]),
+            ("toggle_bags", &["I"]),
+            ("toggle_bag_1", &[]),
+            ("toggle_bag_2", &[]),
+            ("toggle_bag_3", &[]),
+            ("toggle_bag_4", &[]),
+            ("toggle_bag_5", &[]),
+            ("toggle_bag_6", &[]),
+            ("pin_tooltip", &["H"]),
+            ("toggle_wallet", &["B"]),
+            ("toggle_quest_log", &["L"]),
+            ("use_selection", &["U"]),
+            ("toggle_traits", &["J"]),
+            ("toggle_skills", &["K"]),
+            ("toggle_crafting", &["T"]),
+            ("toggle_crafting_1", &[]),
+            ("toggle_crafting_2", &[]),
+            ("toggle_crafting_3", &[]),
+            ("ui_scale_up", &[]),
+            ("ui_scale_down", &[]),
+            ("ui_scale_auto", &[]),
+            ("ui_interface_window", &[]),
+            ("ui_window_scale_up", &[]),
+            ("ui_window_scale_down", &[]),
+        ];
+        for &(action, keys) in table {
+            let id = reg.action(action).unwrap_or_else(|| panic!("{action}"));
+            let def = reg.action_def(id).unwrap();
+            assert_eq!(def.kind, crate::ActionKind::Button, "{action}");
+            assert_eq!(def.modifiers, ModifierPolicy::Exact, "{action}");
+            assert!(!def.repeat, "{action}");
+            let ctxs: Vec<&str> = km
+                .iter()
+                .filter(|(_, a, _)| *a == action)
+                .map(|(c, _, _)| c)
+                .collect();
+            assert_eq!(ctxs, [contexts::GLOBAL], "{action}");
+            let want: Vec<BindingSpec> = keys
+                .iter()
+                .map(|k| BindingSpec::digital(crate::Chord::parse(k).unwrap(), 1.0))
+                .collect();
+            assert_eq!(
+                km.get(contexts::GLOBAL, action).unwrap(),
+                &want[..],
+                "{action}"
+            );
+        }
+    }
+
+    /// The §8.3 keys through the mapper in walk mode: each plain key fires its one action;
+    /// the same keys with a modifier fire none of them (exact policy); `B` is the wallet,
+    /// not the bags (the settled conflict).
+    #[test]
+    fn panel_and_use_keys_fire_their_actions() {
+        use KeyCode::{AltLeft, B, C, ControlLeft, H, I, J, K, L, ShiftLeft, U};
+        let (_, mut m) = walk_mapper();
+        for (key, action) in [
+            (C, "toggle_character"),
+            (I, "toggle_bags"),
+            (H, "pin_tooltip"),
+            (B, "toggle_wallet"),
+            (L, "toggle_quest_log"),
+            (U, "use_selection"),
+            (J, "toggle_traits"),
+            (K, "toggle_skills"),
+        ] {
+            assert_eq!(fired(&mut m, &[], key), [action], "{key:?}");
+            for mk in [ShiftLeft, ControlLeft, AltLeft] {
+                let got = fired(&mut m, &[mk], key);
+                assert!(!got.iter().any(|a| a == action), "{mk:?}+{key:?}: {got:?}");
+            }
+        }
+    }
+
+    /// Shadowing (`keymap.md` §8.3): in fly mode `C` lowers the flight and does not reach
+    /// `toggle_character`; in walk mode it opens the panel. With `text_entry` active the
+    /// keys are swallowed, so typing `U` or `L` uses or opens nothing.
+    #[test]
+    fn panel_keys_shadowed_by_fly_and_text_entry() {
+        let (ids, mut m) = walk_mapper();
+        assert_eq!(fired(&mut m, &[], KeyCode::C), ["toggle_character"]);
+        ids.enter_fly_mode(&mut m);
+        let t = Duration::ZERO;
+        m.handle(
+            &RawEvent::Key {
+                key: KeyCode::C,
+                pressed: true,
+                repeat: false,
+            },
+            t,
+        );
+        m.update(t);
+        assert!(m.value(ids.fly_vertical) < 0.0, "C lowers the flight");
+        let character = m.registry().action("toggle_character").unwrap();
+        assert!(!m.just_pressed(character));
+        m.handle(
+            &RawEvent::Key {
+                key: KeyCode::C,
+                pressed: false,
+                repeat: false,
+            },
+            t,
+        );
+        m.update(t);
+        ids.enter_walk_mode(&mut m);
+        let text = m.registry().context(contexts::TEXT_ENTRY).unwrap();
+        m.activate(text);
+        for key in [KeyCode::U, KeyCode::L, KeyCode::B, KeyCode::J] {
+            assert!(fired(&mut m, &[], key).is_empty(), "{key:?}");
+        }
+    }
+
+    /// `keymap.md` §8.3.1: no default binding, in any context, uses a key the world walker
+    /// reads as a raw key (`walker.md` §14.2–§14.3: `[`, `]`, `/`, `,`, `.`, F2, F4, F5–F8,
+    /// F11), alone or in a chord.
+    #[test]
+    fn no_default_binding_uses_a_walker_key() {
+        use crate::device::Button;
+        const WALKER_KEYS: [KeyCode; 12] = [
+            KeyCode::BracketLeft,
+            KeyCode::BracketRight,
+            KeyCode::Slash,
+            KeyCode::Comma,
+            KeyCode::Period,
+            KeyCode::F2,
+            KeyCode::F4,
+            KeyCode::F5,
+            KeyCode::F6,
+            KeyCode::F7,
+            KeyCode::F8,
+            KeyCode::F11,
+        ];
+        let km = default_keymap();
+        let mut strokes = 0;
+        for (ctx, action, list) in km.iter() {
+            for b in list {
+                let BindingSpec::Digital { chord, .. } = b else {
+                    continue;
+                };
+                for s in chord.strokes() {
+                    strokes += 1;
+                    for button in s.buttons() {
+                        if let Button::Key(k) = button {
+                            assert!(
+                                !WALKER_KEYS.contains(k),
+                                "{ctx}.{action} uses the walker key {k:?}"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+        assert!(
+            strokes > 100,
+            "the defaults were listed ({strokes} strokes)"
+        );
     }
 
     /// No two actions of one context share a digital binding with the same chord (and

@@ -4,11 +4,11 @@
 
 | | |
 |---|---|
-| **Status** | Accepted (2026-10-06: accepted after revision for decisions 0014/0015) |
-| **Last updated** | 2026-10-11 |
+| **Status** | Accepted (2026-10-23: the §10.3 answer with row G42, after its round-4 wording fix, passed an independent review; see the review record). Before: Accepted (2026-10-06: accepted after revision for decisions 0014/0015) |
+| **Last updated** | 2026-10-23 |
 | **Author role** | Spec writer (dirty room), AI-assisted |
-| **Reviewer** | Claude review session (spec-writer agent) |
-| **Review record** | Review of Revision 3 and its fixes, 2026-10-06: **passed**, Accepted (after revision for decisions 0014/0015). Full record moved to the review log (decision 0018). |
+| **Reviewer** | Claude review session (spec-writer agent); 2026-10-23 revision: spec-review:spec-ui-input:1 (independent session) |
+| **Review record** | **Review of the round-4 text, 2026-10-23** (spec-review:spec-ui-input:1 (independent session), which wrote no part of it): **passed**; status Revised → Accepted. CLEAN_ROOM.md §5.3 met: §10.3, G42 and §15 item 13 state functional facts only (the content a slot shows by shortcut type); BIN (q7) within decision 0011 with build, SHA-256, tool, question and why M1–M3 were not enough; mapper values and template names spot-checked against the install. Review of the 2026-10-23 revision, 2026-10-23 (spec-review:spec-ui-input:2): passed with a wording point on §10.3 and G42, which a later review made blocking; reworded 2026-10-23 (round 4), status back to Revised. Review of Revision 3 and its fixes, 2026-10-06: **passed**, Accepted (after revision for decisions 0014/0015). Full records moved to the review log (decision 0018). |
 | **Implements into** | `crates/ui` (`tessera-ui`: the fallback widgets of the game widget types named here), `apps/client` (`tessera-client`: the native panels of ROADMAP M5 exit criterion 2 and the data they show), `crates/world` (minimap and world-map image lookup, map pixel frames) |
 | **Companion specs** | [`ui-layout.md`](ui-layout.md) (**UL**: element trees, states §9.4, drawing §9.3 and §9.6, draw modes §9.6.1, the panel catalogue §17), [`ui-behaviour.md`](ui-behaviour.md) (**UB**: input routing, drag), [`landblock.md`](landblock.md) §6 (**LB**: landblock-properties records and minimap tiles), [`coordinates.md`](coordinates.md) §7, §10, §11.4 (**CO**: cell values, map pixel frame, compass heading), [`wstate.md`](wstate.md) §11 (**WS**: areas and dungeons), [`property-system.md`](property-system.md) (**PS**: property sets and value types), [`keymap.md`](keymap.md) §12 (**KM**: input actions), [`lua-plugin-api.md`](lua-plugin-api.md) Appendix A.1 and §15 (**LPA**: shortcut-type values and their data enum mapper), [`walker.md`](walker.md) §6 (the walker's own minimap) |
 
@@ -113,6 +113,7 @@ by BIN or data but not proven in every case; **Reported** = third-party only.
 | G39 | In the resolved P1 tree, `GamePlay_Radar`, `MinimapPlayerMarker` and `Minimap_Frame` carry `UICore_Element_ObjectMode` 1 (Stretch) in the layout data, so the marker already has the mode that §8.2 step 3 sets (§8.2, §8.7.2) | OBS (UL U46, every element of the instantiated P1, 2026-10-06) | Confirmed |
 | G40 | In the resolved P1 tree: `MinimapViewport` has no `DrawAfterChildren`; its children in drawing order (z-level descending, then read order, UL §9.3) are `MinimapMapImage` and `RadarMapImage` (z 2), `MinimapFogOfWarDisplay` (z 1), `RadarQuestObjective` and `MinimapPlayerMarker` (z 0, mode 1), then `Minimap_Frame` and seven more children at z −1, all in mode 1; the three map elements and their descendants have no object mode; `RadarMapImage_Template` has no object mode and no children; the children of `GamePlay_Radar` in mode 1 drawn before `MinimapViewport` (z ≥ 0 against its −1) lie at rows ≥ 194 of the radar, the viewport at rows 0–169; every child of `GamePlay_Radar` after `MinimapViewport` has mode 1 (§8.7.2) | OBS (2026-10-06: every element of the instantiated P1 and the template, resolved by UL §7, read-only probes) | Confirmed |
 | G41 | In the resolved P1 tree, `GamePlay_Radar` is a direct child of the root `GamePlay_RadarBox` (224 × 280) with rect (0, 33, 224, 260): it sits at x = 0, y = 33 of the root, so its box reaches 13 rows past the root's bottom edge; every child of `GamePlay_Radar` and every descendant of `MinimapViewport` lies above radar row 247 (root row 280) except the map elements and the fog, which `MinimapViewport` clips (§8.7.2 "Clip") | OBS (2026-10-06: the instantiated P1 tree resolved by UL §7, read-only probe; one record, so all records) | Confirmed |
+| G42 | The content a quickslot slot shows by shortcut type (§10.3 table): types 0 and 1 → `QuickslotEmptyTemplate`; 2 → `ItemDisplay_SlottedTemplate` of `itemdisplay`; 3 and 4 → `QuickslotAliasTemplate`; 5 and 12 → `QuickslotEmoteTemplate` (alias template when the shortcut has no emote ID); 6 → `SkillQuickslotDisplayTemplate`; 7 → a pet template by `UI_Shortcut_PetCommand`; 9 → `QuickslotHobbyTemplate`; 8, 10, 11 → no content | BIN, revision of 2026-10-23: method M4 under decision 0011, client `x64/lotroclient64.exe` 4906.0071.1794.4035, SHA-256 d22363eb9aff0fb599fd04b3efa9a1769d08da8af9d8f9b73121c12bfd7e21ee, Ghidra 12.1.3 headless on a private read-only copy of the shared project (deleted after use); **question (q7):** which content template a slot shows for each shortcut type; **why M1–M3 were not enough:** the layouts hold the templates and the data mapper names the types, but nothing in the data links a type to a template, and the original client cannot be observed in this session; read: BIN (q7); OBS (the shortcut-type mapper 0x23000137 and the `UI_Shortcut_PetCommand` mapper, 2026-10-23; the `quickslots` and `itemdisplay` layouts resolved) | BIN; mapper names and templates Confirmed 2026-10-23 |
 
 ---
 
@@ -1006,17 +1007,38 @@ empty slots follow the rule above (shown during a drag), with the counter below 
 ### 10.3 Slot content (BIN, G32)
 
 The content element depends on the shortcut's type (the shortcut-type values are those of the
-data enum mapper of shortcut types, LPA §15 table and Appendix A.1; that the client's content
-dispatcher uses the same values is Probable, see the OPEN below): an empty shortcut gets
+data enum mapper of shortcut types, LPA §15 table and Appendix A.1; that the slot content follows
+these same values is BIN since 2026-10-23, G42 and the answer below): an empty shortcut gets
 `QuickslotEmptyTemplate` (a 35 × 35 Field with one image, draw mode 4); other types get their own
 templates of the `quickslots` layout (`QuickslotAliasTemplate`, `QuickslotEmoteTemplate`,
 `QuickslotHobbyTemplate`, `QuickslotPetOneShotTemplate`, `QuickslotPetAssistTemplate`,
 `SkillQuickslotDisplayTemplate`, and item displays). The empty template's image is what an empty
 slot shows while visible (§10.2).
 
-> **OPEN:** the enumeration of shortcut types the content dispatcher switches on (Probable: the
+> **OPEN:** the enumeration of shortcut types that select a slot's content (Probable: the
 > shortcut-type mapper of LPA §15), the mapping of each type to its template, and how skill and
 > item icons are drawn into them (needs item and skill data; outside the sandbox).
+>
+> **Answered (spec writer, 2026-10-23; G42):** the content a slot shows depends on its shortcut
+> type, whose values are those of the data mapper of shortcut types (0x23000137 here, LPA §15;
+> names `Undef` 0, `Vendor` 1, `Item` 2, `Friend` 3, `Alias` 4, `Emote` 5, `Skill` 6, `Pet` 7,
+> `Decoration` 8, `Hobby` 9, `BankRepository` 10, `Wardrobe` 11, `CosmeticPetTrick` 12). A slot
+> shows at most one content template (layout by `UILAYOUT` label), inside the slot button:
+>
+> | Shortcut type | Content template |
+> |---|---|
+> | 0 `Undef`, 1 `Vendor` | `QuickslotEmptyTemplate` (`quickslots`) |
+> | 2 `Item` | `ItemDisplay_SlottedTemplate` of layout `itemdisplay` (key 0x1000004A, 0x22000051 here; widget type `ItemDisplay`, the 35 × 35 slotted item display of `character-panels.md` §5); the display shows the shortcut's item and is not draggable (`UICore_Element_dragable` false); for an item that uses a skill, its `Skill_MinRange` and `Skill_MaxRange` drive the range overlay |
+> | 3 `Friend`, 4 `Alias` | `QuickslotAliasTemplate` (`quickslots`): `AliasText` shows the shortcut's text and `QuickslotAliasIcon` shows the image the template's own `UI_Shortcut_Alias_Icon` names (draw mode 4) |
+> | 5 `Emote`, 12 `CosmeticPetTrick` | `QuickslotEmoteTemplate` (`quickslots`), its `QuickslotEmoteIcon` showing the emote's icon; a shortcut without an emote ID gets `QuickslotAliasTemplate` with its text instead |
+> | 6 `Skill` | `SkillQuickslotDisplayTemplate` (`quickslots`); its `RealQuickslotSkillDisplay` gets the skill DID (`UI_SkillDisplay_SkillDID`) |
+> | 7 `Pet` | by the shortcut's `UI_Shortcut_PetCommand` (mapper names): `Assist` → `QuickslotPetAssistTemplate`; `Skill_1` … `Skill_5` → `QuickslotPetSkillTemplate`; `Passive`, `Guard`, `Aggressive` → `QuickslotPetStanceTemplate`; `Stay`, `Follow`, `Attack` → `QuickslotPetOneShotTemplate`; any other command → no content. Its `PetCommandTemplate` gets `UI_Shortcut_QuickslotID` and `UI_Shortcut_PetCommand` |
+> | 9 `Hobby` | `QuickslotHobbyTemplate` (`quickslots`) |
+> | 8 `Decoration`, 10 `BankRepository`, 11 `Wardrobe` | none: the slot shows only the button's own art |
+>
+> So the item content template of `combat-ui.md` TR46 is `ItemDisplay_SlottedTemplate`. How
+> skill and item icons are drawn inside these templates is their widget types' business
+> (`character-panels.md` §5 for items; `combat-ui.md` §9 for skills).
 
 ---
 
@@ -1243,7 +1265,7 @@ At no step does the client quit (GP15).
 10. §8.8: note blips.
 11. §9.4: world-map choice outside listed areas; dungeon maps in the world-map window.
 12. §9.5: attachment of `MapWindow` and the active element; world-map marker.
-13. §10.3: the shortcut-type enumeration of the content dispatcher; shortcut type → content template; icons.
+13. §10.3: *answered 2026-10-23* (the content template per shortcut type, G42); the drawing of icons inside the templates belongs to their widget types.
 14. §11: drawing of the remaining game types; whether housing, medal and lock icons are hidden.
 15. §6.2: comparison of the value types that use their own comparison routine (codes 1–4, 6, 7,
     11–14, 16, 17, 19, 22); no field in the data compares one. Int, enum, float, boolean,
@@ -1309,3 +1331,7 @@ line must not label Escape "quit" then (IB, Cost).
 | 2026-10-11 | Note only (no fact changed), for P4: §14 points to `social-panels.md` for the fellowship panels (drag-box frames, §4 applies), `PlayerLeaderIcon` and the fallback of the social windows' game types. Status unchanged. |
 | 2026-10-11 | Note only (no fact of this spec changed), P4 revision 1 of `social-panels.md` (review 1 item B1): the §14 P4 note names the P4 voice elements and the member rows' status and voice elements that game code shows or hides, with the Tessera rule that hides the voice elements, and the coin-element lists of the two money-display types. Status unchanged. |
 | 2026-10-11 | Notes only (no fact changed), for P5: §8.8, §9.2, §9.4 and §9.5 point to `map-windows.md` (status Review), which answers their OPENs from a new BIN pass and proposes corrections to the Tessera rules of §9.2, §9.4 and §9.5 in its §11. Status unchanged; the answers carry `map-windows.md`'s review status. |
+| 2026-10-23 | Spec writer (dirty room), revision for `combat-ui.md` TR46; status Accepted → Revised, awaiting independent review. **§10.3:** the OPEN is answered: the content a slot shows for each shortcut type (the data mapper's values), including the item template `ItemDisplay_SlottedTemplate` of `itemdisplay` and the pet-command choice; types 8, 10 and 11 show only the button's own art. New provenance row G42 (BIN question (q7), build, full SHA-256, tool; mapper and layout data). §15 item 13 updated. No other section changed. |
+| 2026-10-23 | Spec writer (dirty room), round 4 after the independent review: §10.3 answer, G42 and §15 item 13 restated as functional facts (the content a slot shows by shortcut type; types 8, 10 and 11 show only the button's own art; G42 cites only BIN (q7) for what was read); review record reduced to a summary (decision 0018); status Accepted → Revised, awaiting a new independent review. No fact changed. |
+| 2026-10-23 | Independent review of the 2026-10-23 revision (spec-review:spec-ui-input:2): passed; status Revised → Accepted. No content change (header only). |
+| 2026-10-23 | Independent review of the round-4 text (spec-review:spec-ui-input:1, independent session): passed; status Revised → Accepted. (The row above records the earlier review, which preceded round 4.) No content change (header only). |

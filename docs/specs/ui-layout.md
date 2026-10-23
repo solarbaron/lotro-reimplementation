@@ -5,10 +5,10 @@
 | | |
 |---|---|
 | **Status** | Accepted (2026-10-06: accepted after revision for decisions 0014/0015; see the review record). Previously Accepted (M5 consolidation revision, reviewed 2026-10-06), then Revised for decisions 0014 and 0015 |
-| **Last updated** | 2026-10-06 |
+| **Last updated** | 2026-10-23 |
 | **Author role** | Spec writer (dirty room) |
 | **Reviewer** | Claude review session (spec-writer agent) |
-| **Review record** | Review of the decision-0014/0015 revision, 2026-10-06: **passed**, Accepted. Full record moved to the review log (decision 0018). |
+| **Review record** | Review of the §8.4 step 6 note of 2026-10-23, 2026-10-23 (spec-review:spec-ui-input:2, an independent session that wrote no part of it): **passed**; status stays Accepted (note only). Checked (CLEAN_ROOM.md §5.3): no rule of this spec changes; the note agrees with `ui-scaling.md` §5.7 (guard below 1 UI unit, empty by design on a zero design or parent extent) and §5.9 (fit containers, other Stretch elements, the guard replacing the stop-gap) and with that spec's implementer note that the guard is built; no code, copied prose or game text. **Non-blocking:** the header's "Last updated" still reads 2026-10-06. Review of the decision-0014/0015 revision, 2026-10-06: **passed**, Accepted. Full record moved to the review log (decision 0018). |
 | **Implements into** | `crates/formats` (decoder for prefix 0x22 records with a fuzz target, §4), `crates/ui` (descriptor resolution §7, run-time layout §8, element tree, states and media player §9, drawing of element images §9.6), `apps/explorer` (layout browser: tree, states, media, resolved view), `apps/client` (native panels, M5) |
 | **Companion specs** | [`records.md`](records.md) §1 (VLE, TSize and bucket order, Pascal strings), §2 (DID prefixes), §5 (render surfaces 0x41), §7 (enum mappers), §8 (DID maps). [`property-system.md`](property-system.md) §4–§5 (property values and embedded property sets), §8 (root DID map). [`dat-container.md`](dat-container.md) (routing; prefix 0x22 lives in `client_local_<Locale>.dat`). [`fonts.md`](fonts.md) §7–§9 (text layout, outline, font choice; written in parallel). [`string-table.md`](string-table.md) (StringInfo text). [`lua-plugin-api.md`](lua-plugin-api.md) (plugin controls, blend-mode values). [`install-layout.md`](install-layout.md) (install directory, the `raw/` folder). [`skin-definition.md`](skin-definition.md) (user skins, §9.8). [`ui-behaviour.md`](ui-behaviour.md) (run-time behaviour: hit flags §4.3, hover §4.4, message delivery §12.1, UI scale and the displayed box §9.2; called **UB** below). |
 
@@ -1039,6 +1039,18 @@ geometry and changes no box that a hit test reads.
 > §5.9. Its §5.2 also stops applying step 1 above to root panels: children of a Stretch root
 > are laid out by steps 2–6 (those of a full-screen root against the boxes of its §5.3). It
 > takes effect when that spec is Accepted and built.
+>
+> **Note (spec writer, 2026-10-23, no rule of this spec changed): the stop-gap is retired.**
+> `ui-scaling.md` §5–§6 are built (merged to main 2026-10-17), and the run-time layout now
+> applies the degenerate-box guard of `ui-scaling.md` §5.7 in place of the stop-gap rule above
+> (`ui-scaling.md` §5.9 and its implementer note there). The built answer to this OPEN is
+> `ui-scaling.md` §5.9: fit containers keep their design-size layout box with a uniform fit
+> factor (§5.4), other Stretch elements take the new size (§5.5), and the guard of §5.7 rescues
+> boxes below 1 UI unit. The one behavioural change from the stop-gap is that an element with a
+> zero design extent, or inside a parent of zero extent, stays empty by design (extent 0, not
+> drawn or hit) instead of being forced to 1. The "stop-gap rule above stays" wording of the
+> owner's answer and the "Tessera rule" paragraph above are kept for history only; they no
+> longer describe Tessera's behaviour. This OPEN is closed.
 
 Notes:
 
@@ -2233,3 +2245,4 @@ their sizes always and their positions only when the original has no saved locat
 | 2026-10-16 | Notes only (no fact or rule of this spec changed), decision 0040: §8.4 step 6 OPEN, §8.5 Tessera rule, §9.6 and §9.9 point to `ui-scaling.md` (§5, §3.2, §6.3, §5.8), which supersedes the Tessera rules named there once it is Accepted and built. Status unchanged. |
 | 2026-10-16 | Note only (no fact or rule of this spec changed), `ui-scaling.md` revision 3: the §8.4 step 6 note adds that full-cover fit containers that are layers of one screen share one factor and placement, bounded by the screen's height. Status unchanged. |
 | 2026-10-16 | Note only (no fact or rule of this spec changed): `ui-scaling.md` is now Accepted (revision 5), so the §8.4 step 6 note no longer calls it "to be written and reviewed"; the stop-gap rule stays until that spec is built. Status unchanged. |
+| 2026-10-23 | Note only (no fact or rule of this spec changed), spec writer (dirty room): the §8.4 step 6 OPEN is closed. The stop-gap Tessera rule is retired; `ui-scaling.md` §5.9 (with the degenerate-box guard of its §5.7, built 2026-10-17) is the built answer, and the old wording is kept for history. §17.2–§17.4 unchanged. Status unchanged. |

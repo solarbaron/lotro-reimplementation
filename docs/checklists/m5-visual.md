@@ -33,6 +33,8 @@ by default, the two hidden ones and the close box, and points to the new OPEN `u
 of P1, P2, P4, P5, P7, P8, P9, P10, P11, P12, P13 and P14 carry the new numbers. Awaiting
 re-review.
 
+**Revision (2026-10-23, spec writer):** the P15 rows are rewritten for the bag window `containerdisplay` / `PlayerBag1_Template` of `ui-layout.md` §17.2–§17.4 (U42, U45), with the root geometry and the counts of those sections; the self-check row P15 points to P15-G. **Reviewed 2026-10-23** (spec-review:spec-ui-input:2, an independent session that wrote no part of it): **passed**. The rows agree with `ui-layout.md` §17.2–§17.4: root (599, 164, 197, 183) at every screen size, edges (0, 0, 0, 0), flag 0, z 0, `loc`; 61 elements, 2 text elements, 7 string refs, 3 fonts, 47 surfaces, 67 states; the store button hidden as a Tessera choice; bags 2–6 the same layout (U45). No game text; element names are layout labels.
+
 Pass/fail record for [ROADMAP M5](../ROADMAP.md#m5) criterion 2: "at least 10 native panels
 render with the right art and geometry (checklist compared with screenshots taken by the
 owner; screenshots stay private)".
@@ -138,7 +140,7 @@ minimap position update) and `--test panels_real_data` (G rows at 1920 × 1080 a
 | P12 | (0, 0, 600, 400) = row | frame, tree, about and options tabs, buttons | tab and button labels; the about pane shows the layout's placeholder plugin entry | normal | G, A pass; T partial |
 | P13 | (0, 0, 500, 580) = row | frame, lineage tree art, description pane, buttons | lineage labels and buttons; title bar empty | normal | G, A pass; T partial |
 | P14 | (0, 650, 420, 55) = row | nothing visible (empty bar; drag-box frame hidden per §17.5) | — | — | G pass; A, T, S not judgeable |
-| P15 | (599, 164, 197, 183) = `ui-layout.md` §17.3 (see the OPEN above) | frame, title, three icons, search field | title label | store button hidden | pass against the spec |
+| P15 | (599, 164, 197, 183) = `ui-layout.md` §17.3 = row P15-G | frame, title, three icons, search field | title label | store button hidden | pass against the spec |
 
 Summary (Tessera side only): G 15 / 15; A pass for 12 panels, 1 partial (P5), 2 not
 judgeable (P11, P14); T pass for 3 panels, partial for 8 (labels that game code would set or
@@ -289,21 +291,20 @@ a note.
 | P14-T | One text element (the drag-box title, part of the frame, §17.5) | | | |
 | P14-S | Drag-box frame per §17.5; empty slots | | | |
 
-### P15 Bag (`backpack` / `RealBackpackField`)
+### P15 Bag (`containerdisplay` / `PlayerBag1_Template`)
 
 | # | Expected | Reference | Result | Note |
 |---|---|---|---|---|
-| P15-G | Root (0, 0, 276, 139) by layout; the original's open path and placement are OPEN (§17.5), so judge the size only | | | |
-| P15-A | Bag slot buttons and frame; 19 distinct surfaces | | | |
-| P15-T | No text elements | | | |
-| P15-S | Slot buttons normal and rollover | | | |
+| P15-G | Root (599, 164, 197, 183) at 1024 × 768, 1920 × 1080 and 2560 × 1440 (`ui-layout.md` §17.3; edges 0, 0, 0, 0; flag byte 0; z 0); location saved (`loc`). Bag 1 is judged; bags 2–6 (`PlayerBag2_Template` … `PlayerBag6_Template`) are the same layout with other roots (U45) | | | |
+| P15-A | 61 resolved elements, 47 distinct surfaces: the frame (`BackpackBackground`, based on `Box_Silver_BlueGradient`), the title bar with its bag icon, the mini bag icon, the drag bar, the close box (`Backpack_Base_Close_Button`), the resize bar (`Inventory_ResizeBar`) with its grip, the toolbar (`Backpack_Toolbar`: edit-mode, lock-mode and sort buttons, the search field with its find icon) and the empty item list (`Backpack_ItemList`) | | | |
+| P15-T | 2 text elements: the title (`Bag_TitleText`) and the search entry (`ToolbarFind_Entry`, empty); 7 string refs and 3 fonts in the panel | | | |
+| P15-S | 67 states over the panel; default states; the store button (`BuyInvSpace_Button`, `BuyNowButton`) hidden (Tessera choice, `ui-layout.md` §17.4); the item list shows no items | | | |
 
-> **OPEN (implementation, M5 clean room, 2026-10-08):** these P15 rows still describe the
-> retired bag panel (`backpack` / `RealBackpackField`). `ui-layout.md` §17.2–§17.4 replaced it
-> with `containerdisplay` / `PlayerBag1_Template`: root (599, 164, 197, 183) at every screen
-> size, 47 distinct surfaces, 2 text elements, the store button hidden. Tessera's panels and
-> their real-data test follow the spec. A maintainer or spec writer updates these rows; until
-> then judge P15 against `ui-layout.md` §17.2–§17.4, not against the rows above.
+> **Resolved (spec writer, 2026-10-23):** the rows above now describe the bag window of
+> `ui-layout.md` §17.2–§17.4 (`containerdisplay` / `PlayerBag1_Template`, U42, U45) with its
+> geometry and counts; the earlier rows for the retired `backpack` / `RealBackpackField` panel
+> are gone. As the implementer noted on 2026-10-08: root (599, 164, 197, 183) at every screen
+> size, 47 distinct surfaces, 2 text elements, the store button hidden.
 
 ## D. Drawing rules
 

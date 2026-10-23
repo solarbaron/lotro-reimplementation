@@ -767,6 +767,44 @@ fn enter_refused_while_a_creation_is_outstanding() {
     );
 }
 
+/// `tessera-protocol.md` §6.2.11 and Appendix A: the session's `EnterWorldFailed` keeps
+/// the session, so the screens go back from entering to the selection, show the reason as
+/// an error line and enable Enter again; a second Enter sends `EnterWorld` again.
+#[test]
+fn enter_world_failed_returns_to_the_selection() {
+    let (mut m, now) = select_model();
+    m.apply(Action::Enter, now);
+    assert!(
+        m.take_commands()
+            .iter()
+            .any(|c| matches!(c, Command::EnterWorld { .. }))
+    );
+    assert!(matches!(m.status(), Status::Entering(_)));
+    m.handle_event(
+        &Event::EnterWorldFailed {
+            character: "Wanderer".into(),
+            reason: "character busy".into(),
+        },
+        now,
+    );
+    assert_eq!(m.status(), &Status::Open);
+    assert_eq!(m.stage(), Stage::Select);
+    assert!(m.enter_button().is_enabled(), "Enter enabled again");
+    assert_eq!(
+        m.errors().last(),
+        Some(&tessera_client::screens::texts::ErrorLine::Own(
+            OwnText::EnterRefused("character busy".into())
+        ))
+    );
+    m.apply(Action::Enter, now);
+    assert!(
+        m.take_commands()
+            .iter()
+            .any(|c| matches!(c, Command::EnterWorld { character } if character == "Wanderer")),
+        "Enter sends again"
+    );
+}
+
 /// §2.1.4, §2.3 (CS32): the selection figure takes `Hover` while the pointer is on it and
 /// `Idle` when it leaves, unless it is the clicked figure, which keeps its value; a new
 /// stage clears the click. The race-and-class figure is created always selectable.

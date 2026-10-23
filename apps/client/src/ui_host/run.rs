@@ -270,6 +270,8 @@ pub fn run(args: &Args) -> anyhow::Result<UiRunReport> {
         // P3–P5): the same per-frame window updates the windowed path runs.
         super::client::window_frames(&mut ui, &mut rt, walker, &mut renderer, now);
         record_game_windows(&ui, &rt, &mut report);
+        // The player and target frames' portraits (P4, P5), before step 8 (as `crate::app`).
+        ui.render_combat_portraits(walker, &mut renderer);
         ui.step8(walker, &mut renderer, &mut rt);
         // A renderer error ends the loop through `finish`, which unloads the plugins
         // (decision 0014 D8) and shuts the walker down.

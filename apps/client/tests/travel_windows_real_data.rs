@@ -26,6 +26,7 @@ use std::sync::Arc;
 
 use tessera_client::travel::hub::holds_travel_array;
 use tessera_client::travel::{P5Change, P5Window, TravelContext, TravelUi};
+use tessera_client::ui_host::FrameClock;
 use tessera_net::EntityId;
 use tessera_net::domain::Ref;
 use tessera_ui::game::mapfallback::P5Art;
@@ -51,6 +52,13 @@ fn travel_scenario_renders_with_install_text() {
             w.panel_name()
         );
     }
+    // The UI clock follows the scenario's virtual time (one step per 100 ms poll), not the
+    // wall clock, so the animated parts are at the same time in every run (decision 0031):
+    // every capture holds the clock while it waits for images and paint
+    // (`travel_real_common::held_clock`), so only the scenario's own frames step it.
+    i.rig
+        .host
+        .set_frame_clock(FrameClock::Stepped { step: 0.1 });
     let mut tui = TravelUi::new(Arc::clone(&i.refs), P5Art::default());
     let mut pics = Pictures::new("travel_scenario_renders_with_install_text", &i.version);
     let npc = Arc::clone(&i.npc);
@@ -110,7 +118,9 @@ fn travel_scenario_renders_with_install_text() {
             pics.take_composed(&mut i.rig, root, "end-travel");
         }
         // The loading screen is pictured half-way (§5.2 rule 1: the meter fills linearly),
-        // at a fixed virtual time, so its meter shows; at the first frame it is empty.
+        // at a fixed virtual time, so its meter shows; at the first frame it is empty. Its
+        // ring is animated by the UI clock, which only the scenario's polls step (above), so
+        // the ring shows the frame of that virtual time.
         let meter = tui.presentation().map_or(0.0, |pr| pr.meter(p.now));
         if shown == Some(TravelShow::LoadingScreen)
             && !pictured_loading

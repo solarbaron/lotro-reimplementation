@@ -96,6 +96,15 @@ fn label_of(t: &Text, facts: Option<&MapFacts>) -> String {
 /// labels through the facts' presentation data, else the code-made menus with the P5 art.
 #[must_use]
 pub fn menu_refs(facts: Option<&MapFacts>, art: &P5Art) -> MenuRefs {
+    p5_menu_refs(facts.map(|f| &*f.character), art)
+}
+
+/// The context menus' names over the install's presentation data (`ui-widgets.md` §19.1:
+/// the `ContextMenu` layout and its labels), else (no install facts) the code-made menus
+/// with the P5 art. The map window's menus ([`menu_refs`]) and the instance finder's size
+/// and tier menus (`travel-windows.md` §6.8) use it.
+#[must_use]
+pub fn p5_menu_refs(data: Option<&crate::character::CharacterData>, art: &P5Art) -> MenuRefs {
     use tessera_gamedata::tooltip::TooltipData;
     let art = MenuArt {
         background: art.base.panel.clone(),
@@ -104,9 +113,9 @@ pub fn menu_refs(facts: Option<&MapFacts>, art: &P5Art) -> MenuRefs {
         unchecked: art.base.slot.clone(),
         arrow: None,
     };
-    match facts {
-        Some(f) => {
-            let t = f.character.engine().data();
+    match data {
+        Some(d) => {
+            let t = d.engine().data();
             MenuRefs::resolve(
                 &|l| t.layout_by_label(l),
                 &|n| t.ui_key(tessera_formats::ui_layout::UiEnum::ElementId, n),

@@ -14,7 +14,8 @@
 //!    (steps 2–6 and the mapper's snapshot);
 //! 3. [`ClientUi::after_update`] with the walker's events (Escape, positions, the session's
 //!    chat lines, step 7);
-//! 4. [`ClientUi::step8`];
+//! 4. [`ClientUi::render_combat_portraits`] (the combat frames' portraits, after the window
+//!    frames of `window_frames`), then [`ClientUi::step8`];
 //! 5. `Walker::draw`, then [`ClientUi::draw`] (the UI pass after the walker's overlays);
 //! 6. present, then [`ClientUi::end_frame`];
 //! 7. at exit, after the last frame, [`ClientUi::shutdown`].
@@ -99,6 +100,11 @@ pub struct ClientUi {
     /// The walker HUD and the game HUD wait for the character screens to close
     /// (`character-screens.md` §2: the screens own the display while open).
     hud: HudGate,
+    /// The portraits of the player and target frames (P4, P5; `combat-ui.md` §5.1,
+    /// `ui-widgets.md` §12): made when the UI attaches, over the install's records
+    /// ([`crate::portrait::CombatPortraits::for_install`]); released at shutdown.
+    combat_portraits:
+        Option<crate::portrait::CombatPortraits<crate::walker::characters::FigureStatus>>,
 }
 
 /// Whether the HUDs (the walker's overlays and the game HUD panels) are held back while the
@@ -269,6 +275,7 @@ impl ClientUi {
             settings: super::settings_writer::SettingsWriter::open_default(),
             persist_placements,
             hud: HudGate::default(),
+            combat_portraits: None,
         }
     }
 
@@ -603,6 +610,14 @@ impl ClientUi {
             }
             None => host.attach_combat(crate::combat::hud::floaty_settings(install.as_ref()), 0.0),
         }
+        // The combat frames' portraits read their masks and scenes from the install (on
+        // worker threads, ARCH §21).
+        if self.combat_portraits.is_none()
+            && let Some(set) = rt.archives.clone()
+        {
+            let source: std::sync::Arc<dyn tessera_props::RecordSource> = set;
+            self.combat_portraits = Some(crate::portrait::CombatPortraits::for_install(source));
+        }
         // `[UI] ui_scale_global` reaches every native panel through the panels' scalers as
         // it opens (UiHost::native_scale; `tessera-ui` has no `UIScale_Global` setter).
         self.attached_walker = true;
@@ -647,8 +662,8 @@ impl ClientUi {
         host.handle_raw(mapper, event, now, &mut rt.plugins, window);
         dispatch_lines(host, rt);
         // The walker's own keys (time of day, system switches) when no UI element has the
-        // keyboard focus.
-        if !host.keyboard_focused() {
+        // keyboard focus and no modal dialog is shown (`ui-widgets.md` §18.4).
+        if !host.keyboard_focused() && !host.modal_dialog_shown() {
             walker.world_key(event);
         }
         true
@@ -862,6 +877,29 @@ impl ClientUi {
         }
     }
 
+    /// The portraits of the player and target frames (P4, P5; `combat-ui.md` §5.1,
+    /// `ui-widgets.md` §12), drawn with the walker's figures into their targets
+    /// ([`crate::portrait::render_combat_portraits`]). Call after [`Self::after_update`]
+    /// (and the frame's window updates) and **before** [`Self::step8`], so that showing or
+    /// hiding a portrait reaches the same frame's composition list (`crate::portrait`
+    /// module docs, "Driving it"). Does nothing before the UI is attached.
+    pub fn render_combat_portraits(&mut self, walker: &mut Walker, renderer: &mut Renderer<'_>) {
+        if !self.attached_walker {
+            return;
+        }
+        if let (State::Ready(host), Some(p)) = (&self.state, self.combat_portraits.as_mut()) {
+            crate::portrait::render_combat_portraits(p, host, walker, renderer);
+        }
+    }
+
+    /// The combat frames' portraits, once the UI is attached (tests and tools).
+    #[must_use]
+    pub fn combat_portraits(
+        &self,
+    ) -> Option<&crate::portrait::CombatPortraits<crate::walker::characters::FigureStatus>> {
+        self.combat_portraits.as_ref()
+    }
+
     /// The portraits the UI shows (the paperdoll's figure and the character screens'
     /// figure, `render.md` §6.10), rendered with the walker into their targets. Call before
     /// the frame's `begin_frame`.
@@ -974,10 +1012,15 @@ impl ClientUi {
     pub fn shutdown(
         &mut self,
         rt: &mut Runtime,
-        renderer: Option<&mut Renderer<'_>>,
+        mut renderer: Option<&mut Renderer<'_>>,
         window: &mut dyn CursorWindow,
     ) {
         if let State::Ready(host) = &mut self.state {
+            // The combat portraits' targets and masks go with the UI (their contents are
+            // unregistered from the host's external table).
+            if let (Some(p), Some(r)) = (self.combat_portraits.as_mut(), renderer.as_deref_mut()) {
+                p.release(r, &host.textures().external_textures());
+            }
             // The last user move of a saved panel is written before the exit.
             if let Some(map) = host.take_placement_persist() {
                 self.settings
@@ -990,6 +1033,7 @@ impl ClientUi {
             host.shutdown(&mut rt.plugins, renderer);
             host.release_cursor(window);
         }
+        self.combat_portraits = None;
         self.settings.flush();
         rt.hold_chat_for_ui(false);
         self.fell_back = true;

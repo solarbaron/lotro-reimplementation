@@ -14,9 +14,9 @@ use std::time::{Duration, Instant};
 use tessera_client::character::CharacterData;
 use tessera_client::npc::NpcData;
 use tessera_client::travel::P5Refs;
-use tessera_client::ui_host::UiHost;
 use tessera_client::ui_host::boot::UiBoot;
 use tessera_client::ui_host::env::ClientEnv;
+use tessera_client::ui_host::{FrameClock, UiHost};
 use tessera_dat::{ArchiveSet, SetOptions};
 use tessera_ui::paint::{Addressing, EntryTexture, Layer, Rect, SurfaceId};
 use tessera_ui::{ElementKey, ImageRef, ImageState, UiEnv};
@@ -269,6 +269,19 @@ pub fn compose(host: &UiHost, root: ElementKey) -> (goldens::Rgba, ComposeReport
     )
 }
 
+/// Runs `f` (a capture's waits for images and paint) with the UI host's frame clock held,
+/// then restores the previous clock (decision 0031). The waits run a number of frames that
+/// depends on the wall clock (worker decodes, paint jobs); with the clock held those frames
+/// do not move the UI clock, so an animated part shows the frame of the caller's own clock
+/// (the scenario's polls under [`FrameClock::Stepped`]) in every run, and later pictures
+/// are not shifted by the frames earlier waits took.
+pub fn held_clock(rig: &mut Rig, f: impl FnOnce(&mut Rig)) {
+    let before = rig.host.frame_clock();
+    rig.host.set_frame_clock(FrameClock::Held);
+    f(rig);
+    rig.host.set_frame_clock(before);
+}
+
 /// Pictures checked against their local goldens.
 pub struct Pictures {
     dir: PathBuf,
@@ -365,9 +378,15 @@ impl Pictures {
     /// UI, composes `root` with every nested surface ([`compose`]) and checks it as
     /// `what`. For windows whose content lives in nested surfaces (the loading screen's
     /// stretched image, meter and label), where [`Self::take`] sees only the root canvas.
+    ///
+    /// The waits run with the frame clock held ([`held_clock`]), so an animated part (the
+    /// loading screen's ring) shows the frame of the caller's clock, and the frames the
+    /// waits take, which depend on the wall clock, never move the clock of later pictures.
     pub fn take_composed(&mut self, rig: &mut Rig, root: ElementKey, what: &str) {
-        wait_images(rig, root);
-        wait_settled(rig);
+        held_clock(rig, |rig| {
+            wait_images(rig, root);
+            wait_settled(rig);
+        });
         self.seq += 1;
         let name = format!("{:02}-{what}", self.seq);
         let (img, report) = compose(&rig.host, root);
@@ -395,7 +414,9 @@ impl Pictures {
         }
     }
 
-    /// Settles the UI, captures `root` and checks it as `what`.
+    /// Settles the UI, captures `root` and checks it as `what`. The clock runs on during
+    /// the wait (a window that settles only once time passes, such as the finder's queued
+    /// state, needs it); the callers of this capture run on the wall clock.
     pub fn take(&mut self, rig: &mut Rig, root: ElementKey, what: &str) {
         wait_settled(rig);
         self.seq += 1;

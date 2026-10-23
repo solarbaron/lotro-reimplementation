@@ -23,7 +23,9 @@
 //! and decoded on worker threads (ARCH §21); masks are uploaded once.
 //!
 //! Driving it: keep one [`CombatPortraits`] (built with [`CombatPortraits::for_install`])
-//! beside the UI host, call [`CombatPortraits::frame`] (or [`render_combat_portraits`] with
+//! beside the UI host (the client's [`crate::ui_host::client::ClientUi`] keeps one and
+//! drives it from `ClientUi::render_combat_portraits` in the windowed and headless loops),
+//! call [`CombatPortraits::frame`] (or [`render_combat_portraits`] with
 //! the walker) once per frame **before the UI paints the frame's composition list** (in the
 //! client, before `ClientUi::step8`; `render.md` §6.10 "Timing"), so that showing and hiding
 //! a portrait reach the same frame's list; and call [`CombatPortraits::release`] when the UI
@@ -46,17 +48,18 @@
 //!   of the install stores `Character_PortraitCameraName`, so the element's own key, the
 //!   `Camera_1` key, is what the install uses);
 //! - **deviation from §12.2:** the figure is drawn by the walker's portrait draw
-//!   ([`Walker::draw_portrait`]: the figure alone at the origin, unturned, in the walker's
-//!   unlit pipeline with its fixed directional light and ambient); the scene's three lights
+//!   ([`Walker::draw_entity_portrait`]: the figure alone at the origin, unturned, in the
+//!   walker's unlit pipeline with its fixed directional light and ambient); the scene's
+//!   three lights
 //!   and the viewport's ambient value (`UICore_Viewport_AmbientLight`, read into
 //!   [`PortraitSpec::ambient`]) are not applied, and the scene's own objects are not drawn.
 //!   That needs a lit portrait draw from the walker (as the creation viewport's
 //!   `draw_preview`), outside this module;
 //! - a still picture: the figure's idle animation does not redraw the target;
-//! - with the walker, only the local player's figure can be drawn ([`WalkerFigures`]): a
-//!   selected NPC or other player shows no portrait (§12.4) until the walker offers a
-//!   portrait draw of any entity (`CharacterLayer::portrait_draws` takes any entity, but
-//!   needs the walker's object layer).
+//! - with the walker, any entity whose character figure is built can be drawn
+//!   ([`WalkerFigures`], [`Walker::draw_entity_portrait`]): the player, a placed NPC, another
+//!   player. An entity the walker draws as a plain object (no character figure) shows no
+//!   portrait (§12.4: nothing to draw).
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -413,7 +416,7 @@ pub trait PortraitFigures {
     fn draw(&mut self, frame: &mut Frame, job: &PortraitJob) -> Option<usize>;
 }
 
-/// The walker's figures (module docs: only the local player's can be drawn, and only
+/// The walker's figures (module docs: any entity with a built character figure, drawn only
 /// through a scene camera).
 #[derive(Debug)]
 pub struct WalkerFigures<'w>(pub &'w mut Walker);
@@ -422,11 +425,12 @@ impl PortraitFigures for WalkerFigures<'_> {
     type Key = FigureStatus;
 
     fn figure_key(&self, entity: EntityId) -> Option<FigureStatus> {
-        let player = self.0.characters().player_id()?;
-        if player.0 != entity {
+        let id = tessera_net::EntityId(entity);
+        // The character screens' figure is not an entity of the world.
+        if id == crate::walker::characters::PREVIEW_ID {
             return None;
         }
-        let f = self.0.characters().figure_of(player)?;
+        let f = self.0.characters().figure_of(id)?;
         matches!(f.state, crate::walker::characters::FigureState::Built { parts, .. } if parts > 0)
             .then_some(f)
     }
@@ -441,13 +445,12 @@ impl PortraitFigures for WalkerFigures<'_> {
     fn draw(&mut self, frame: &mut Frame, job: &PortraitJob) -> Option<usize> {
         // U4 rule 4: without the viewport's camera nothing is drawn.
         let scene_camera = job.camera?;
-        let player = self
-            .0
-            .characters()
-            .player_id()
-            .filter(|p| p.0 == job.entity)?;
+        let id = tessera_net::EntityId(job.entity);
+        if id == crate::walker::characters::PREVIEW_ID {
+            return None;
+        }
         let first = frame.passes().len();
-        if !self.0.draw_portrait(frame, 0.0) {
+        if !self.0.draw_entity_portrait(frame, id, 0.0) {
             return None;
         }
         let drawn: usize = frame
@@ -462,7 +465,7 @@ impl PortraitFigures for WalkerFigures<'_> {
         // walker's portrait places it (at the origin, unturned), with the scene camera's
         // field of view and far plane.
         let bounds = self.0.characters().posed_bounds(
-            player,
+            id,
             &|scale| tessera_render::glam::Mat4::from_scale(scale),
             0.0,
         );

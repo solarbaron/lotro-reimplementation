@@ -3,10 +3,10 @@
 //! `ui-scaling.md` §9.3 golden G2, §6.4.4).
 //!
 //! The spec's G2 draws "the same paragraph at the ladder's exact, downsampled and
-//! distance-derived heights". The painted-paragraph form needs the `tessera-ui` text layout and
-//! painter to select derived glyphs at the content scale, which the layout/paint integration of
-//! §6 has not yet wired (see the suite's findings). What *is* testable today, and is the heart
-//! of G2, is the **derivation itself**: this golden builds a synthetic bitmap-font glyph as five
+//! distance-derived heights". The painted-paragraph form — the paragraph laid out and painted
+//! through the live `tessera-ui` text layout and painter at *c* = 1, 1.25, 1.5, 2 and 3 — is
+//! `ui_scaling_text_g2.rs` (`golden/uiscale_g2_c*.png`). This file keeps the golden of the
+//! **derivation itself**, the heart of G2: it builds a synthetic bitmap-font glyph as five
 //! records at the ladder heights 10, 12, 14, 16 and 20 (§9.3), then renders one glyph at an
 //! exact ladder height, two downsampled heights (`k < 1`, the area filter) and two
 //! distance-derived heights (`k > 1`, the §6.4.4 distance method) straight from the pure
@@ -14,8 +14,8 @@
 //! `tests/golden/uiscale_glyph_ladder.png`.
 //!
 //! `TESSERA_BLESS=1` rewrites the image. One step per channel, no outliers, no install file
-//! opened. When the painter integration lands, a painted-paragraph G2 over the headless renderer
-//! should be added beside this one (the content column of §9.3 is the oracle for both).
+//! opened. The painted-paragraph G2 beside it (`ui_scaling_text_g2.rs`) uses the same ladder
+//! heights (the content column of §9.3 is the oracle for both).
 
 use std::path::PathBuf;
 

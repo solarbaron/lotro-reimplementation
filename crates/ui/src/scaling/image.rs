@@ -41,6 +41,76 @@ pub fn axis_kind(native: i32, extent: i32) -> AxisKind {
     }
 }
 
+/// The art filter of `ui-scaling.md` §6.3 (setting `ui_art_filter`, §7.6): which column of the
+/// §6.3 filter table the painter resamples images with. At a scale of exactly 1 on both axes all
+/// three are the exact 1 : 1 copy (invariant I2).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum ArtFilter {
+    /// The default: nearest blocks at an integer scale ≥ 2, sharp bilinear above 1, the area
+    /// filter below 1.
+    #[default]
+    Sharp,
+    /// Plain bilinear above 1 (also at integer scales), the area filter below 1.
+    Smooth,
+    /// Nearest texel at every scale (pixel art).
+    Nearest,
+}
+
+impl ArtFilter {
+    /// The filter for a settings value (`"sharp"`, `"smooth"`, `"nearest"`, ASCII case
+    /// ignored; `None` for anything else).
+    #[must_use]
+    pub fn from_setting(value: &str) -> Option<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "sharp" => Some(Self::Sharp),
+            "smooth" => Some(Self::Smooth),
+            "nearest" => Some(Self::Nearest),
+            _ => None,
+        }
+    }
+
+    /// The settings value of the filter.
+    #[must_use]
+    pub fn as_setting(self) -> &'static str {
+        match self {
+            Self::Sharp => "sharp",
+            Self::Smooth => "smooth",
+            Self::Nearest => "nearest",
+        }
+    }
+}
+
+/// Whether a resample scale counts as an integer ≥ 2 for the §6.3 filter table ("an integer ≥ 2
+/// (within 10⁻⁶)"); returns that integer.
+#[must_use]
+pub fn integer_scale(s: f64) -> Option<u32> {
+    if !s.is_finite() || s < 2.0 - 1e-6 {
+        return None;
+    }
+    let r = s.round();
+    ((s - r).abs() <= 1e-6 && r <= f64::from(u32::MAX)).then_some(r as u32)
+}
+
+/// The **cover** factor of a backdrop image (`ui-scaling.md` §5.5): for an image of native size
+/// `native` on a Stretch element of design size `design` laid out at `current` (layout units),
+/// `Some(max(current w ÷ design w, current h ÷ design h))` when the image was made for the
+/// element (native size = design size, design width and height at least 1) and the layout has
+/// resized the element (current ≠ design); `None` otherwise (the image tiles as UL §9.6 says).
+/// The caller checks the element side (object mode Stretch, no edge in mode 6, no stretch
+/// vector).
+#[must_use]
+pub fn backdrop_cover(native: [i32; 2], design: [i32; 2], current: [i32; 2]) -> Option<f64> {
+    if design[0] < 1 || design[1] < 1 || native != design || current == design {
+        return None;
+    }
+    if current[0] < 1 || current[1] < 1 {
+        return None;
+    }
+    let f = (f64::from(current[0]) / f64::from(design[0]))
+        .max(f64::from(current[1]) / f64::from(design[1]));
+    (f.is_finite() && f > 0.0).then_some(f)
+}
+
 /// The resample scale of one axis (`ui-scaling.md` §6.3): a fitted axis scales to its physical
 /// box (`physical ÷ native`), a tiled or clipped axis scales by the content scale `c`. A
 /// non-positive `native` falls back to `c`.
@@ -180,6 +250,38 @@ mod tests {
             let sum: f64 = slot.iter().map(|&(_, wt)| wt).sum();
             assert!((sum - 1.0).abs() < 1e-9, "sum {sum}");
         }
+    }
+
+    #[test]
+    fn art_filter_settings() {
+        assert_eq!(ArtFilter::default(), ArtFilter::Sharp);
+        for f in [ArtFilter::Sharp, ArtFilter::Smooth, ArtFilter::Nearest] {
+            assert_eq!(ArtFilter::from_setting(f.as_setting()), Some(f));
+        }
+        assert_eq!(ArtFilter::from_setting(" Smooth "), Some(ArtFilter::Smooth));
+        assert_eq!(ArtFilter::from_setting("pixel"), None);
+    }
+
+    #[test]
+    fn integer_scales() {
+        assert_eq!(integer_scale(2.0), Some(2));
+        assert_eq!(integer_scale(3.000_000_5), Some(3));
+        assert_eq!(integer_scale(1.0), None);
+        assert_eq!(integer_scale(2.5), None);
+        assert_eq!(integer_scale(f64::NAN), None);
+    }
+
+    #[test]
+    fn backdrop_cover_rule() {
+        // §5.5 test of the task: a 1024 × 768 backdrop on a Stretch element resized to
+        // 1365 × 768 covers at max(1365 / 1024, 768 / 768) = 1.333.
+        let f = backdrop_cover([1024, 768], [1024, 768], [1365, 768]).unwrap();
+        assert!((f - 1365.0 / 1024.0).abs() < 1e-12);
+        // Not resized, not made for the element, or a degenerate design: no cover.
+        assert_eq!(backdrop_cover([1024, 768], [1024, 768], [1024, 768]), None);
+        assert_eq!(backdrop_cover([64, 64], [1024, 768], [1365, 768]), None);
+        assert_eq!(backdrop_cover([0, 0], [0, 0], [10, 10]), None);
+        assert_eq!(backdrop_cover([4, 4], [4, 4], [0, 10]), None);
     }
 
     #[test]

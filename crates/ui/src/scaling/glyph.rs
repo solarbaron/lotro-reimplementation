@@ -235,8 +235,9 @@ pub fn downsample_coverage(
 ///
 /// Returns an empty vector when the inputs are not a valid upscale — any zero extent, a derived
 /// box smaller than the source box, a source slice shorter than `src_w` × `src_h`, or a padded
-/// or derived box so large it would overflow or exceed [`MAX_DERIVED_GLYPH_TEXELS`] — treating
-/// every such case as hostile rather than panicking or allocating from an unchecked dimension.
+/// or derived box so large it would overflow or exceed `MAX_DERIVED_GLYPH_TEXELS` (4,194,304
+/// texels) — treating every such case as hostile rather than panicking or allocating from an
+/// unchecked dimension.
 #[must_use]
 pub fn distance_coverage(
     src: &[u8],
@@ -419,6 +420,8 @@ pub struct GlyphCache {
     /// glyph. Kept in exact step with `map` (one entry per cached glyph) so eviction finds its
     /// victim in `O(log n)` instead of scanning the whole map on every removal.
     lru: BTreeMap<u64, GlyphKey>,
+    /// Glyphs inserted since the cache was made (each one a derivation; budget S7 counts them).
+    inserted: u64,
 }
 
 impl GlyphCache {
@@ -431,7 +434,34 @@ impl GlyphCache {
             clock: 0,
             map: HashMap::new(),
             lru: BTreeMap::new(),
+            inserted: 0,
         }
+    }
+
+    /// The byte budget.
+    #[must_use]
+    pub fn budget(&self) -> usize {
+        self.budget
+    }
+
+    /// Changes the byte budget, evicting least-recently-used glyphs until the cache fits it.
+    pub fn set_budget(&mut self, budget_bytes: usize) {
+        self.budget = budget_bytes;
+        self.evict();
+    }
+
+    /// Removes every glyph (the budget and the insertion count are kept).
+    pub fn clear(&mut self) {
+        self.map.clear();
+        self.lru.clear();
+        self.bytes = 0;
+    }
+
+    /// How many glyphs were inserted since the cache was made: every insertion is one
+    /// derivation (`ui-scaling.md` §6.5; the paint slice counts them, budget S7).
+    #[must_use]
+    pub fn insertions(&self) -> u64 {
+        self.inserted
     }
 
     /// The current total byte size of the cached glyphs.
@@ -460,10 +490,7 @@ impl GlyphCache {
         // Move the recency index entry from the old clock to the new one.
         self.lru.remove(&old);
         self.lru.insert(clock, *key);
-        let slot = self
-            .map
-            .get_mut(key)
-            .expect("key present: just read it above and the map is unchanged");
+        let slot = self.map.get_mut(key)?;
         slot.0 = clock;
         Some(&slot.1)
     }
@@ -482,6 +509,7 @@ impl GlyphCache {
         }
         self.lru.insert(clock, key);
         self.bytes = self.bytes.saturating_add(new_bytes);
+        self.inserted = self.inserted.saturating_add(1);
         self.evict();
     }
 

@@ -25,7 +25,11 @@
 //!    done by [`crate::paint`]; [`TextPaint::push_to`] appends the operations to a
 //!    [`DisplayList`].
 //!
-//! [`mouse_to_text`] is the hit-test conversion of §6.3 item 3.
+//! [`mouse_to_text`] is the hit-test conversion of §6.3 item 3; [`mouse_to_text_physical`] and
+//! [`TextLayout::hit`] the physical hit test of the crisp scaled path (`ui-scaling.md` §6.4.6).
+//! [`layout_scaled`] / [`draw_scaled`] lay text out and draw it at a content scale with glyphs
+//! chosen or derived for that size (`ui-scaling.md` §6.4); [`physical_params`] and
+//! [`relayout_lines`] feed them from an element's layout-unit values.
 //!
 //! Everything here is pure and allocation-bounded: text longer than [`MAX_TEXT_UNITS`] code
 //! units is refused, all coordinates are computed in 64-bit integers and saturated to 32
@@ -41,6 +45,7 @@ mod chars;
 mod draw;
 mod fallback;
 mod layout;
+mod scaled;
 mod select;
 
 pub use atlas::{FontFace, FontId, FontLadder, GlyphLookup};
@@ -53,6 +58,11 @@ pub use layout::{
     CharPlace, JUSTIFY_BOTTOM, JUSTIFY_CENTER, JUSTIFY_LEFT, JUSTIFY_RIGHT, JUSTIFY_TOP,
     LayoutParams, LineBox, Margins, ScaleCtx, TextLayout, Truncation, layout, layout_scaled,
     leading_factor, list_extra, mouse_to_text, underline_thickness,
+};
+pub(crate) use scaled::stretch_text_ops;
+pub use scaled::{
+    DEFAULT_GLYPH_CACHE_BYTES, TEXT_SCALE_RANGE, TextParamsReader, UiTextSource, ceil_div_scale,
+    mouse_to_text_physical, physical_params, relayout_lines,
 };
 pub use select::{FontIndexSession, FontProps, FontSlots, FontStruct, SlotSource, StructMember};
 

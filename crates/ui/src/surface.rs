@@ -106,38 +106,19 @@ impl CanvasMap {
         )
     }
 
-    /// Maps a half-open [`Rect`] given in owner-relative layout coordinates to canvas pixels.
-    fn rect_r(&self, r: Rect) -> Rect {
-        if !self.active() || r.is_empty() {
-            return r;
-        }
-        Rect::new(self.cx(r.x0), self.cy(r.y0), self.cx(r.x1), self.cy(r.y1))
-    }
-
     /// Maps an owner-relative layout point (an image/overlay anchor) to a canvas pixel.
     fn point(&self, x: i32, y: i32) -> [i32; 2] {
         [self.cx(x), self.cy(y)]
     }
 
     /// The content scale `c` = (`mx·Kx`, `my·Ky`) (`ui-scaling.md` §3.4, §6.1): canvas pixels
-    /// per owner UI unit, used to resample image and glyph sources in the painter.
+    /// per owner UI unit, used to resample image sources in the painter and to choose the
+    /// target heights of text (§6.4.1).
     fn content_scale(&self) -> [f64; 2] {
         match self.screen {
             Some(f) => [self.mx * f.kx(), self.my * f.ky()],
             None => [1.0, 1.0],
         }
-    }
-
-    /// Scales a glyph box size (native coverage cell) to its canvas size by the content scale.
-    fn scale_size(&self, w: u32, h: u32) -> [u32; 2] {
-        if !self.active() {
-            return [w, h];
-        }
-        let c = self.content_scale();
-        let s = |v: u32, k: f64| -> u32 {
-            (f64::from(v) * k).round().clamp(0.0, f64::from(u32::MAX)) as u32
-        };
-        [s(w, c[0]), s(h, c[1])]
     }
 }
 
@@ -219,6 +200,8 @@ pub(crate) struct Painter {
     plan: Vec<PlanEntry>,
     /// The reference paint step ([`Ui::set_reference_paint`]).
     always_full: bool,
+    /// The crisp text path's state (`ui-scaling.md` §6.4, §6.5, §7.1, §7.5).
+    pub text: crate::text_ui::TextScaling,
 }
 
 /// Where the damage walk reaches an element: its box in canvas coordinates, its parent's
@@ -352,6 +335,7 @@ impl Painter {
             node_index: HashMap::new(),
             plan: Vec::new(),
             always_full: false,
+            text: crate::text_ui::TextScaling::default(),
         }
     }
 
@@ -398,6 +382,8 @@ impl Painter {
         self.external.remove(&k);
         self.image_waiters.remove(&k);
         self.text_runs.remove(&k);
+        self.text.runs.remove(&k);
+        self.text.reflow.remove(&k);
     }
 }
 
@@ -431,6 +417,24 @@ impl Ui {
     pub fn set_reference_paint(&mut self, on: bool) {
         self.painter.always_full = on;
         self.painter.text_runs.clear();
+        // The scaled runs stay for hit tests (§6.4.6); `always_full` keeps any from being
+        // reused for drawing.
+    }
+
+    /// Sets the art filter `ui_art_filter` (`ui-scaling.md` §6.3, §7.6): the column of the §6.3
+    /// filter table images are resampled with when they are painted (composition keeps
+    /// `ui_scale_filter`, §6.6). At a scale of exactly 1 every filter is the exact copy, so
+    /// surfaces at the identity do not change. Applied live: every surface repaints.
+    pub fn set_art_filter(&mut self, filter: crate::paint::ArtFilter) {
+        if self.painter.scheduler.set_art_filter(filter) {
+            self.invalidate_paint();
+        }
+    }
+
+    /// The art filter of [`Ui::set_art_filter`].
+    #[must_use]
+    pub fn art_filter(&self) -> crate::paint::ArtFilter {
+        self.painter.scheduler.art_filter()
     }
 
     /// Registers GPU-drawn external content for a viewport element (decision 0015
@@ -648,63 +652,6 @@ impl Ui {
         }
     }
 
-    /// Maps one cached paint operation from a surface's owner-relative layout coordinates to its
-    /// canvas pixels (`ui-scaling.md` §6.2). Image and glyph **sources** stay native (the
-    /// painter resamples them by the content scale); only geometry is mapped. A [`PaintOp::Nested`]
-    /// marker's coverage is already in canvas pixels (`coverage_region`), so it is kept as is. At
-    /// the identity the op is returned unchanged (invariant I2).
-    fn map_paint_op(op: &PaintOp, m: &CanvasMap) -> PaintOp {
-        if !m.active() {
-            return op.clone();
-        }
-        match op {
-            PaintOp::Image(l) => PaintOp::Image(ImageLayer {
-                rect: m.rect_r(l.rect),
-                clip: m.rect_r(l.clip),
-                anchor: m.point(l.anchor[0], l.anchor[1]),
-                image: l.image.clone(),
-                op: l.op,
-                opacity: l.opacity,
-            }),
-            PaintOp::Overlay(l) => PaintOp::Overlay(OverlayLayer {
-                rect: m.rect_r(l.rect),
-                clip: m.rect_r(l.clip),
-                colour: l.colour,
-                op: l.op,
-                image: l
-                    .image
-                    .as_ref()
-                    .map(|(img, a)| (img.clone(), m.point(a[0], a[1]))),
-            }),
-            PaintOp::Fill(f) => PaintOp::Fill(crate::paint::FillRect {
-                rect: m.rect_r(f.rect),
-                clip: m.rect_r(f.clip),
-                colour: f.colour,
-            }),
-            PaintOp::Text(run) => {
-                let glyphs = run
-                    .glyphs
-                    .iter()
-                    .map(|g| crate::paint::GlyphBox {
-                        dest: m.point(g.dest[0], g.dest[1]),
-                        size: m.scale_size(g.size[0], g.size[1]),
-                        src: g.src,
-                    })
-                    .collect();
-                PaintOp::Text(Arc::new(crate::paint::GlyphRun {
-                    clip: m.rect_r(run.clip),
-                    colour: run.colour,
-                    coverage: run.coverage.clone(),
-                    glyphs,
-                }))
-            }
-            PaintOp::Nested { entry, coverage } => PaintOp::Nested {
-                entry: *entry,
-                coverage: *coverage,
-            },
-        }
-    }
-
     fn to_paint_rect(b: &IBox) -> Rect {
         b.to_rect()
     }
@@ -891,30 +838,43 @@ impl Ui {
                     .float()
                     .clamp(0.0, 1.0),
             );
-            let _ = list.push(PaintOp::Image(ImageLayer {
+            let fit = self.backdrop_fit(k, &img, bx, m);
+            let layer = PaintOp::Image(ImageLayer {
                 rect,
                 clip: cl,
-                anchor,
+                anchor: fit.map_or(anchor, |f| f.0),
                 image: img,
                 op,
                 opacity: o,
-            }));
+            });
+            let _ = match fit {
+                Some((_, f)) => list.push_cover(layer, f),
+                None => list.push(layer),
+            };
         }
         if let Some(ov) = overlay
             && let Some(op) = CompositeOp::from_draw_mode(ov.draw_mode)
         {
+            let mut fit = None;
             let image = match &ov.image {
-                Some(r) => self.image_of(r, &mut waiting).map(|i| (i, anchor)),
+                Some(r) => self.image_of(r, &mut waiting).map(|i| {
+                    fit = self.backdrop_fit(k, &i, bx, m);
+                    (i, fit.map_or(anchor, |f| f.0))
+                }),
                 None => None,
             };
             if ov.image.is_none() || image.is_some() {
-                let _ = list.push(PaintOp::Overlay(OverlayLayer {
+                let layer = PaintOp::Overlay(OverlayLayer {
                     rect,
                     clip: cl,
                     colour: ov.colour,
                     op,
                     image,
-                }));
+                });
+                let _ = match fit {
+                    Some((_, f)) => list.push_cover(layer, f),
+                    None => list.push(layer),
+                };
             }
         }
         if waiting {
@@ -922,14 +882,21 @@ impl Ui {
             self.painter.image_waiters.insert(k);
         }
         if let Some(pt) = self.prepared_text(k) {
+            let scaled = if m.active() {
+                Some(self.text_params_of(k, None))
+            } else {
+                self.text_scaling_params(k)
+            };
+            if let Some(params) = scaled {
+                self.emit_text_scaled(k, &pt, bx, clip, list, m, params);
+                return;
+            }
             let (sx, sy) = self
                 .el(k)
                 .and_then(|e| e.widget.scroll.as_ref())
                 .map(|s| s.offset)
                 .unwrap_or((0, 0));
             let origin = [bx.l.saturating_sub(sx), bx.t.saturating_sub(sy)];
-            // Text is laid out and cached in the surface's **layout** coordinates (so the cache
-            // is reused across scales); the ops are mapped to canvas pixels on push (§6.2).
             let cl_layout = Self::to_paint_rect(&clip);
             let cached = self.painter.text_runs.get(&k).filter(|c| {
                 !self.painter.always_full
@@ -964,21 +931,257 @@ impl Ui {
                     },
                 );
             }
+            // A text drawn on this path is at the identity: no physical layout is kept.
+            self.painter.text.runs.remove(&k);
             if let Some(ops) = self.painter.text_runs.get(&k).and_then(|c| c.ops.as_ref())
                 && list.len().saturating_add(ops.len()) <= crate::paint::MAX_OPS
             {
-                if m.active() {
-                    let mapped: Vec<PaintOp> =
-                        ops.iter().map(|op| Self::map_paint_op(op, m)).collect();
-                    for op in mapped {
-                        let _ = list.push(op);
-                    }
-                } else {
-                    for op in ops {
-                        let _ = list.push(op.clone());
-                    }
+                for op in ops {
+                    let _ = list.push(op.clone());
                 }
             }
+        }
+    }
+
+    /// The backdrop cover fit of an image on element `k` (`ui-scaling.md` §5.5): for an element
+    /// in object mode Stretch with no edge in mode 6 and no stretch vector, whose layout box the
+    /// run-time layout resized away from its design size, an image whose native size is the
+    /// design size is drawn as one copy scaled uniformly by max(current ÷ design) per axis,
+    /// centred and clipped (then resampled at the content scale, §6.3). Returns the canvas
+    /// position of texel (0, 0) of the centred copy and the fit; `None` when the image tiles
+    /// as `ui-layout.md` §9.6 says.
+    fn backdrop_fit(
+        &self,
+        k: ElementKey,
+        img: &tessera_material::ui_image::UiImage,
+        bx: IBox,
+        m: &CanvasMap,
+    ) -> Option<([i32; 2], crate::paint::CoverFit)> {
+        let e = self.el(k)?;
+        if self.object_mode(k)? != object_mode::STRETCH || e.edges.contains(&6) || e.scale.is_some()
+        {
+            return None;
+        }
+        let native = [
+            i32::try_from(img.width()).ok()?,
+            i32::try_from(img.height()).ok()?,
+        ];
+        let design = [e.design.w(), e.design.h()];
+        let current = [bx.w(), bx.h()];
+        let f = crate::scaling::image::backdrop_cover(native, design, current)?;
+        let cs = m.content_scale();
+        let (ox, oy) = e.image_offset;
+        // The copy's top-left relative to the element, in layout units: centred.
+        let off = [
+            (f64::from(current[0]) - f64::from(design[0]) * f) / 2.0 + f64::from(ox),
+            (f64::from(current[1]) - f64::from(design[1]) * f) / 2.0 + f64::from(oy),
+        ];
+        let to_px = |v: f64, k: f64| -> i32 {
+            (v * k)
+                .round()
+                .clamp(f64::from(i32::MIN), f64::from(i32::MAX)) as i32
+        };
+        let anchor = [
+            m.cx(bx.l).saturating_add(to_px(off[0], cs[0])),
+            m.cy(bx.t).saturating_add(to_px(off[1], cs[1])),
+        ];
+        Some((
+            anchor,
+            crate::paint::CoverFit {
+                scale: [f * cs[0], f * cs[1]],
+            },
+        ))
+    }
+
+    /// The crisp text path (`ui-scaling.md` §6.4): the element's text laid out in canvas pixels
+    /// at the content scale with glyphs chosen or derived for their target height, drawn 1 : 1.
+    ///
+    /// Inputs in layout units are mapped to canvas pixels by the surface's edge mapping (§6.2):
+    /// the element's origin (minus its scroll offsets), its clip, and (with a registered
+    /// layout-parameter reader, whose output for the element is `params`) its width, height and
+    /// margins; the content scale `c` is the surface's (§3.4) and the text factor *x* is the one
+    /// that reaches the element (§7.5). With `c × x` = 1, game fonts and a pure translation
+    /// (`Se` = 1 with no node scale) the shaper's layout is drawn unchanged, so every canvas at
+    /// the identity is byte-identical (invariants I2, I7). Deriving glyphs and laying out run
+    /// inside the paint slice and are counted in the frame's figures
+    /// (`PaintFrameStats::glyphs_derived`, S7).
+    ///
+    /// **Stretched surfaces** (§6.1): a node scale that differs between the axes is a stretch
+    /// vector *σ* (the uniform kinds of §3.4 scale both axes alike). The text is then laid out
+    /// and drawn at the uniform content scale (*Se*) and the result is stretched by *σ* around
+    /// the text origin, as the picture stretch §6.1 applies at composition
+    /// ([`crate::text::stretch_text_ops`]); the hit test divides by *σ* (§6.4.6).
+    ///
+    /// The physical layout is cached apart from the draw: a scroll step or a move (origin or
+    /// clip only) draws the cached layout again without laying the text out again.
+    #[allow(clippy::too_many_arguments)]
+    fn emit_text_scaled(
+        &mut self,
+        k: ElementKey,
+        pt: &Arc<crate::env::PreparedText>,
+        bx: IBox,
+        clip: IBox,
+        list: &mut DisplayList,
+        m: &CanvasMap,
+        params: Option<crate::text::LayoutParams>,
+    ) {
+        let started = std::time::Instant::now();
+        let derived_before = self.painter.text.cache.insertions();
+        let (sx, sy) = self
+            .el(k)
+            .and_then(|e| e.widget.scroll.as_ref())
+            .map(|s| s.offset)
+            .unwrap_or((0, 0));
+        let cs = m.content_scale();
+        let stretched = m.active() && (m.mx - m.my).abs() > 1e-6;
+        let (kx, ky) = m.screen.map_or((1.0, 1.0), |f| (f.kx(), f.ky()));
+        let (c, sigma) = if stretched {
+            (ky, [m.mx, m.my])
+        } else {
+            (cs[1], [1.0, 1.0])
+        };
+        let x = self.text_factor_for(k, params.as_ref());
+        let origin = m.point(bx.l.saturating_sub(sx), bx.t.saturating_sub(sy));
+        let clip_c = m.rect(clip);
+        let round_px = |v: i32, f: f64| -> i32 {
+            (f64::from(v) * f)
+                .round()
+                .clamp(f64::from(i32::MIN), f64::from(i32::MAX)) as i32
+        };
+        // Layout-unit offsets inside the element to (unstretched) canvas pixels.
+        let fx = |v: i32| {
+            if stretched {
+                round_px(v, kx)
+            } else {
+                m.cx(bx.l.saturating_add(v)).saturating_sub(m.cx(bx.l))
+            }
+        };
+        let fy = |v: i32| {
+            if stretched {
+                round_px(v, ky)
+            } else {
+                m.cy(bx.t.saturating_add(v)).saturating_sub(m.cy(bx.t))
+            }
+        };
+        let box_phys = [fx(bx.w()), fy(bx.h())];
+        let layout_key = crate::text_ui::LayoutKey {
+            c: c.to_bits(),
+            x: x.to_bits(),
+            sigma: sigma.map(f64::to_bits),
+            params: params.clone(),
+            box_phys,
+            epoch: self.painter.text.epoch,
+        };
+        let draw_key = crate::text_ui::DrawKey {
+            origin,
+            clip: clip_c,
+            outline: pt.outline,
+            outline_colour: pt.outline_colour,
+        };
+        let cached = self.painter.text.runs.get(&k).filter(|r| {
+            !self.painter.always_full && Arc::ptr_eq(&r.prepared, pt) && r.layout_key == layout_key
+        });
+        let draw_fresh = cached.is_some_and(|r| r.draw_key == draw_key);
+        let cached_layout = cached.map(|r| Arc::clone(&r.layout));
+        if !draw_fresh {
+            let rf = self.painter.text.resolve_fonts(&pt.fonts, c, x);
+            let ctx = rf.ctx(c, x);
+            let layout = match cached_layout {
+                Some(l) => l,
+                None => {
+                    let unit_scale = cs == [1.0, 1.0] && (x - 1.0).abs() < 1e-12;
+                    let suffix = pt.layout.truncation.as_ref().map(|t| t.suffix.as_slice());
+                    let layout = if unit_scale && !rf.replaced {
+                        Ok(pt.layout.clone())
+                    } else {
+                        match &params {
+                            Some(p) => {
+                                let pp = crate::text::physical_params(p, fx, fy, c);
+                                crate::text::layout_scaled(&pt.chars, &rf.fonts, &pp, suffix, &ctx)
+                            }
+                            None => crate::text::relayout_lines(
+                                &pt.layout, &pt.chars, &rf.fonts, &ctx, fx, fy, c,
+                            ),
+                        }
+                    };
+                    Arc::new(layout.unwrap_or_else(|e| {
+                        tracing::debug!(error = %e, "scaled text layout refused");
+                        crate::text::TextLayout::default()
+                    }))
+                }
+            };
+            // In a stretched surface the text is drawn unstretched around its origin, inside
+            // the clip taken back by σ, and stretched afterwards.
+            let unstretch = |v: i32, o: i32, s: f64, up: bool| -> i32 {
+                let d = (f64::from(v) - f64::from(o)) / s;
+                let d = if up { d.ceil() } else { d.floor() };
+                (f64::from(o) + d).clamp(f64::from(i32::MIN), f64::from(i32::MAX)) as i32
+            };
+            let draw_clip = if stretched {
+                Rect::new(
+                    unstretch(clip_c.x0, origin[0], sigma[0], false),
+                    unstretch(clip_c.y0, origin[1], sigma[1], false),
+                    unstretch(clip_c.x1, origin[0], sigma[0], true),
+                    unstretch(clip_c.y1, origin[1], sigma[1], true),
+                )
+            } else {
+                clip_c
+            };
+            let dp = DrawParams {
+                origin,
+                clip: draw_clip,
+                outline: pt.outline,
+                outline_colour: pt.outline_colour,
+                bullet: None,
+            };
+            let tp = crate::text::draw_scaled(
+                &layout,
+                &pt.chars,
+                &rf.fonts,
+                &dp,
+                &ctx,
+                &mut self.painter.text.cache,
+            );
+            let mut own = DisplayList::new();
+            let mut ops = tp.push_to(&mut own, None).ok().map(|()| own.ops().to_vec());
+            if stretched && let Some(o) = &ops {
+                match crate::text::stretch_text_ops(o, origin, sigma, clip_c) {
+                    Some(st) => ops = Some(st),
+                    None => tracing::debug!("stretched text kept unstretched"),
+                }
+            }
+            let at = m.point(bx.l, bx.t);
+            self.painter.text.runs.insert(
+                k,
+                crate::text_ui::ScaledRuns {
+                    prepared: Arc::clone(pt),
+                    layout_key,
+                    draw_key,
+                    layout,
+                    ops,
+                    text_offset: [
+                        origin[0].saturating_sub(at[0]),
+                        origin[1].saturating_sub(at[1]),
+                    ],
+                    sigma,
+                },
+            );
+        }
+        self.painter.text_runs.remove(&k);
+        if let Some(ops) = self.painter.text.runs.get(&k).and_then(|r| r.ops.as_ref())
+            && list.len().saturating_add(ops.len()) <= crate::paint::MAX_OPS
+        {
+            for op in ops {
+                let _ = list.push(op.clone());
+            }
+        }
+        let t = &mut self.painter.text;
+        t.derived = t
+            .derived
+            .saturating_add(t.cache.insertions().saturating_sub(derived_before));
+        if !draw_fresh {
+            let ns = u64::try_from(started.elapsed().as_nanos()).unwrap_or(u64::MAX);
+            t.derive_ns = t.derive_ns.saturating_add(ns);
         }
     }
 
@@ -1047,10 +1250,14 @@ impl Ui {
             }
             None => CompositionList::default(),
         };
+        let mut stats = out.stats;
+        stats.glyphs_derived =
+            u32::try_from(std::mem::take(&mut self.painter.text.derived)).unwrap_or(u32::MAX);
+        stats.glyph_derive_ns = std::mem::take(&mut self.painter.text.derive_ns);
         UiFrame {
             ops: out.ops,
             composition,
-            stats: out.stats,
+            stats,
             surfaces: self.painter.recs.len(),
         }
     }

@@ -410,7 +410,7 @@ fails on such a question (criterion 2).
 | # | | Evidence |
 |---|---|---|
 | 1 | ✅ | `crates/mesh/tests/real_data.rs`: 47,563 of 47,563 mesh records decode (100 %), strict mode included, 0 trailing bytes, lossless re-encoding 47,563 / 47,563, every level flattens to renderer streams; 112,910 submeshes, 89.6 M vertices, 95.4 M triangles, 27 vertex formats. Failure categories are listed in `mesh.md` §15/§18 (none observed; the only invariant finding is MI10 `CollisionIndexOverflow` in 105 records, a data-quality check that does not stop decoding). Materials (`crates/material/tests/material_real_data.rs`): 510 / 510 shader records, 24,094 / 24,094 materials, 13,781 / 13,781 surfaces decode and resolve; 1,192 / 1,192 sampled diffuse textures decode. |
-| 2 | ✅ | [`docs/checklists/m2-visual.md`](checklists/m2-visual.md): 74 checks on 72 objects with `tessera-explorer --screenshot`, each image viewed: 15 weapons and shields, 13 armour (worn, bind pose, 2 dye previews), 15 creatures and NPCs (skinned, bind pose), 9 vegetation, 9 buildings, 13 props. **73 pass** (no slivers, UVs correct, alpha-tested foliage/feathers/fringes cut cleanly, dye confined to the mask). **1 fail**: a one-triangle placeholder part of a creature setup draws as a white triangle (decoded correctly; whether the original skips such parts is `setup.md` §8.5 OPEN). |
+| 2 | ✅ | [`docs/checklists/m2-visual.md`](checklists/m2-visual.md): 74 checks on 72 objects with `tessera-explorer --screenshot`, each image viewed: 15 weapons and shields, 13 armour (worn, bind pose, 2 dye previews), 15 creatures and NPCs (skinned, bind pose), 9 vegetation, 9 buildings, 13 props. **73 pass** (no slivers, UVs correct, alpha-tested foliage/feathers/fringes cut cleanly, dye confined to the mask). **1 fail**: a one-triangle placeholder part of a creature setup draws as a white triangle (decoded correctly; whether the original skips such parts is `setup.md` §8.5 OPEN). **2026-10-23:** `setup.md` §8.5 now gives the rule and the mesh view leaves one-triangle parts out of models with several parts, so row C6 passes in the mesh view (74 / 74). The character view (`--character 0x04000110`) still draws the stub; C6 counts as a mesh-view pass only until `apps/explorer/src/character.rs` applies the rule. |
 | 3 | ✅ | `crates/render/tests/mesh_golden.rs` (opaque, alpha test, alpha blend + order independence, two-sided, dye, normal map, debug views): 8 / 8 pass on Mesa lavapipe (Vulkan, Mesa 25.2.6) with `TESSERA_REQUIRE_GPU=1`, and 8 / 8 on Mesa llvmpipe (GL, Mesa 26.1.8); at most 2 (lavapipe) and 7 (llvmpipe) outliers of 40,960 pixels against a budget of 102. `render_test_scene` passes on lavapipe too. |
 | 4 | ✅ | `tools/fuzz-smoke.sh -t 60`: `mesh_decode`, `material_records`, `material_resolve`, `formats_surface`, `formats_setup`, `formats_setup_chain`, `formats_appearance`, `render_mesh_data`, `explorer_mesh_scene` each ran 60 s with no finding (0.23 M–8.4 M executions per target). |
 
@@ -1031,10 +1031,19 @@ and dropped paths, attachment frames, lingering, housekeeping, draw order, dista
 `apps/client/tests/particles_real_data.rs` draws particles at M3-03 and settles). The specs
 are **not implemented end to end**: fork effects (0x44) are not drawn (`particles.md` rule
 §10.2, Q1); systems of the post-processing pass are not drawn (the walker has none); weather
-systems and the global wind (Q13), the gameplay event handler (Q-RT5), the
-lights of lit systems (Q8 (b)), `inherit_opacity`, driven node fields and bounds culling
-(Q-RT3) remain (beams, Q-RT4, are drawn since P2: `particle-runtime.md` §11.1); the walker's own choices are recorded as implementer OPENs in
-`particle-runtime.md` §3.2, §5.4, §9.2 and §12.
+systems and the global wind (Q13), the gameplay event handler (Q-RT5), `inherit_opacity`
+and driven node fields remain (beams, Q-RT4, are drawn since P2: `particle-runtime.md` §11.1); the walker's own choices are recorded as implementer OPENs in
+`particle-runtime.md` §3.2, §5.4, §9.2 and §12. Since 2026-10-23 (follow-up
+`particles-decals`): the lights of lit systems (Q8 (b), rule 13: the ambient term and the
+owner's light list cut to five, `crates/particles/src/light.rs`) and bounds culling (Q-RT3,
+`crates/particles/src/draw.rs`) are built, with the tier-1 golden `particles_lit.png`; the
+readings are implementer OPENs in `particle-runtime.md` §9.3 and §12. The day and night lamp
+lights of `instance-scripts.md` §6 are not in the walker's light table yet, so they light no
+system. Placed decals (`decals.md`) are drawn in the walker too (decal pass in
+`tessera-render`, `apps/client/src/walker/effects/decals.rs`, tier-1 golden
+`decal_ground.png`); interior cells are not decal receivers yet (`decals.md` §9.1 OPEN).
+Water now draws before the blended instanced surfaces (`render.md` §5.7 Decision, golden
+`frill_over_water.png`); `render.md` §5.1 and R-D8 still describe the old order (spec writer).
 
 ---
 
@@ -1155,14 +1164,17 @@ fuzz targets, rustfmt on six fuzz targets, eight missing `fuzz/README.md` rows, 
 O39–O49.
 
 Remaining for M5 to close: owner observations O39 (criterion 2) and O40 (criterion 4); the
-U4 work in `tessera-ui` step 8, U4 (c)–(e) figures, timestamp queries for U2 and the idle
-re-measurement O49 (criterion 7); the P15 rows of `m5-visual.md`. Open review items the implementers
-could not fix in their own files: the class helper's `Turbine.Log` clock defaults to UTC
-(`crates/plugins/src/host.rs`, client `LogHost`); plugin TextBox read-only flag, caret and
+U4 work in `tessera-ui` step 8, U4 (c)–(e) figures, the client's U2 report and the idle
+re-measurement O49 (criterion 7; since 2026-10-23 `tessera-render` fills `UiStats::gpu_ns`
+where the adapter has timestamp queries, `render.md` §6.16); the P15 rows of `m5-visual.md`. Open review items the implementers
+could not fix in their own files: plugin TextBox read-only flag, caret and
 selection API, child insert position and title bars above a window's top edge need
-`tessera-ui` calls; `ImageRef::File` needs an origin; the
+`tessera-ui` calls (2026-10-23: the title bar of the game-styled window at top −8 is still
+cut, `lua-plugin-api.md` §14.2.6 OPEN (d)); `ImageRef::File` needs an origin; the
 `PluginData.Load` main-thread read waits on the `lua-plugin-api.md` §10.1 OPEN (ARCHITECTURE
-§21).
+§21). Settled 2026-10-23: the client's `LogHost` answers `Turbine.Engine.GetDate` in the
+operating system's time zone (`apps/client/src/plugins/localtime.rs`, read once at start-up;
+UTC only when no zone is found), no longer UTC by default.
 
 ---
 
@@ -1684,18 +1696,23 @@ then passed three runs in a row (2 / 2 each). `tools/fuzz-smoke.sh -t 60` on
 | 3 | **pass** | `worn_look_real_data` (2 / 2, three runs): a headless scenario gives and equips a chest piece and a primary weapon; the avatar's figure request then holds both records with slots 3 and 17, and the figure goes from 7 parts with 0 held to 7 parts with 1 held. Screenshots (verifier, `--scenario … --screenshot` at region 1, block (126, 140), heading 180, viewed): before the equip the figure wears its default clothes, after it a different chest piece and trousers, with the weapon as a held part. Server: client A runs the equips as an overlay run on an in-process `tessera-server`, observer B receives `AppearanceChanged` with the chest record in slot 3; `v11_looks.rs` `o9_observers_see_the_overlay_players_equipment` passes. |
 | 4 | **pass** | `plugin_inventory_checks` (8 / 8) runs `lua-plugin-api.md` §18 checks 66–69 through the client's plugin host on scenarios (`ScenarioPlugins`, the path of `--scenario --headless --load-plugin`): `GetBackpack` size and growth, backpack events, `GetEquipment` with the install's chest records, item details of 64 install items compared with the raw property sets, and the literal Lua string for a quality-4, max-quantity-50 record; `tessera-plugins` `inventory_views` 15 / 15 (identity across prunes, queued delivery, getters agree with `ItemInfo`); `inventory_real_data`: 23 paperdoll slots, CPI1–CPI3, 20 slots visible to plugins. |
 
-Remaining issues: the creation figure's visual defects (a)–(d) of the criterion 1 row; in
-a normal `--character-select` run the walker HUD and the game HUD still draw over the
-screens (implementer's report, not re-checked; the pictures hide them with
-`--no-hud --no-ui-hud`); the P1 implementer OPENs of
+Remaining issues: the creation figure's visual defects (a)–(d) of the criterion 1 row; the P1 implementer OPENs of
 `character-screens.md` §2.1, §6 and §7.1 await the spec writer and the P1 review;
 `server-content.md` stays Draft (owner; decision 0025 and the other specs it revised were
 Accepted on 2026-10-10, commit 286b70d); the stat rows of the character panel stay empty on
-this install (`character-panels.md` §3.4 OPEN); the bag-column settings are written on the
-main thread (ARCH §21 OPEN); `lua-plugin-api.md` §19 does not list the three new §15.1
-implementer OPENs (spec-writer bookkeeping); a plugin apartment with about 8,000 live native
-objects raises "out of Lua stack" (Lua error, no panic); `tessera-loadtest`'s hostile mode
+this install (`character-panels.md` §3.4 OPEN); `lua-plugin-api.md` §19 does not list the three new §15.1
+implementer OPENs (spec-writer bookkeeping); `tessera-loadtest`'s hostile mode
 sends the 1.1 vectors without logging in (`test-server.md` §13.1 OPEN).
+
+Settled since (follow-ups merged 2026-10-23): the walker HUD and the game HUD are held back
+while the character screens are active; the bag-column settings are written by the UI
+settings writer thread (ARCH §21); a live native plugin object holds no Lua handle, and
+20,000 live controls in one apartment raise no error (was "out of Lua stack" at about
+8,000); the creation figure runs its scripts live (gestures, class props, transition ports;
+a stage or action change keeps the figure; not done: Appearance and EditMaterial nodes that
+change with anything but the stage key, prop fade times, the figure's own sounds and
+particle nodes, `character-screens.md` §2.1.4 OPEN), and the scene's decals and effect
+particles are drawn in the creation viewport.
 
 Open going in (before the re-check; since then decision 0025, `scenario-feed.md` revision 4,
 `tessera-protocol.md` v1.1 and `test-server.md` are Accepted and commit 93b3dfd draws the
@@ -1853,6 +1870,21 @@ Since this verification: the walker keys moved off the `keymap.md` §8.2 default
 player name are hidden (`combat-ui.md` §4.1, TR14); the portrait stays empty without a scene
 (no white disc; portraits are not drawn yet); beam ribbons and heads are drawn (322c9e3);
 `combat-ui.md` revision 3 is Accepted and conformed (89d5ca0).
+
+Since the follow-ups merged 2026-10-23: combat cues no longer read records on the main thread
+(skill, effect, item and body records are answered on the asset workers,
+`apps/client/src/walker/combat/records.rs`, and the clip store never reads a clip on the
+frame thread; ARCH §21); U, left double-click and right click use the selection with
+use-range cylinders from the setups (`interaction.md` I6a), no longer the nearest NPC; plugin
+check 76's quickslot click runs end to end (`apps/client/tests/plugin_combat_checks.rs`), but
+one click through the client's UI host reaches the quickslot twice (two `UseSkill`
+commands; the ignored test `a_plugin_quickslot_click_activates_once` reproduces it); the
+combat layer waits until a session figure's start-up clips are decoded before spawning it.
+The 2026-10-23 revisions of `combat-ui.md`, `skill-tooltips.md` and `combat-visuals.md` are
+Accepted: they answer every implementer OPEN of `combat-visuals.md` and some of the other two;
+the `scenario-feed.md` §9.7 OPEN was answered in revision 9 (2026-10-14). The implementer
+OPENs of `particle-runtime.md`, `keymap.md` (its revision is in review, package
+`spec-ui-input`) and `lua-plugin-api.md` §15.2 still wait.
 
 <a id="p3"></a>
 ### P3: NPC windows: dialogue, quests, vendors and loot
@@ -2132,7 +2164,9 @@ join shared named channels (`apps/loadtest/src/bot.rs`); the hostile 1.2 cases a
 login (`apps/loadtest/src/hostile.rs`); each `PartyMember` follows an entity and receives its
 §15.2 effect-list events (§15.4 further rules 7–8, `crates/plugins/src/party.rs`); the
 member-row effect icons are built (TR16, `crates/ui/src/game/combat/mod.rs`); synthetic P4
-goldens are committed (`crates/ui/tests/p4_goldens.rs`).
+goldens are committed (`crates/ui/tests/p4_goldens.rs`). 2026-10-23: the Friends page adds
+its new tree rows in one batch (`Ui::tree_add_many`, one layout; `crates/ui/src/game/social/mod.rs`);
+`social-panels.md` revision 3 (TR16a–TR16d) is Accepted.
 
 Merge seams with P2 and
 P3 (both changed the same shared files additively; merged with main 2026-10-11): the `tessera-ui` game module index, the
@@ -2341,7 +2375,12 @@ surfaces, so it shows the meter and label (d8698bc, `travel_windows_real_data.rs
 finder's join label is fitted to its text (`crates/ui/src/game/finder.rs`); `walker.md` §16
 was reconciled and its §16.12 implementer OPENs closed (2026-10-14); the `travel-windows.md`
 §8.1 count is reconciled (2026-10-13); `ui-layout.md` §8.4 step 6 is answered by
-`ui-scaling.md` §5.9.
+`ui-scaling.md` §5.9. 2026-10-23: `map-windows.md` revision 1 (Accepted) answers the
+implementer OPENs of §4.6, §6.3, §6.8, §6.9 (b), §7.2, §7.3 and §8 (new §8.1, the fallback map
+window, makes the tier-1 world-map golden normative); it changes the implemented behaviour of
+§4.6 (the player's dungeon map indoors) and may change §6.3, and the code is not yet conformed
+to it. `travel-windows.md` revision 2 and the `mounts.md` §14.3/§14.7 revision (both
+Accepted) confirm what was built.
 
 <a id="p6"></a>
 ### P6: Progression and crafting panels
@@ -2478,6 +2517,17 @@ until P8.
 | 1 | **pass** (Tessera's side; trait half conformed to the Accepted `progression-panels.md`, commit fb83a61) | `crafting_real_data`: the crafting census over the install categorises every recipe record exactly once (count equals the recipe family size) with **0 failures** — 7,791 recipes (7,782 Shown, 9 `ResultImageMissing`); 10 professions, 7 vocations, 7 guilds, 32 trainers, 335 gathering nodes, 13 facility effects, 26 facility hotspots and 6,055 recipe scrolls each counted once; for every recipe the tree rows and each tier's recipe page are built, and the recipe-scroll tooltip rows (`ExaminationRecipeOneShot`/`ExaminationRecipeCooldown`) show exactly when the recipe is one-use or has a cooldown (1,339 one-use, 2,238 cooldown rows, 0 that disagree). `progression_real_data` (conformed to `progression-panels.md`, resting on the Accepted `combat-data.md` §8.5): 17 / 17 trait trees and 1,216 / 1,216 placements categorised Shown, 1,216 trait tooltips built, **0 failures**, every tree and placement counted once, all 511 prerequisites resolve within their own branch (97 shared cell keys in 4 trees). |
 | 2 | **pass** (Tessera's side; owner rows O160, O161, O167, O170 open) | The four committed synthetic scenarios `progression-panels` (level-up), `traits` (train/trait), `crafting` (craft) and `gathering` run `tessera-client --headless --no-data --scenario … --scenario-log …` and, with the install, with exit 0 and a byte-identical log on a second run; `scenario_committed_logs` (tessera-net) replays every committed log byte-identically. Golden images: 8 tier-1 committed synthetic goldens (`p6_xp_bar`, `p6_xp_levelup`, `p6_levelup_banner`, `p6_trait_panel`, `p6_skill_trainer`, `p6_craft_trainer`, `p6_crafting_a`, `p6_crafting_b`) match under `TESSERA_GOLDEN_REQUIRE=1`; viewed in this verification and judged correct (experience bar with level and fill, trait panel with trees/branches/cells/ranks/prerequisites and slotted traits, skill trainer with ghosted and too-expensive rows, craft trainer with its replace selector, the crafting panel with its recipe tree, recipe page and make controls). In-process panel tests (`p6_panels`, decision 0037 §3 item 4) assert each control sends the right command (Make/Make All, TrainSkill, TrainCraft, SetTraitRank, ChooseTraitBranch). |
 
+Since the follow-ups merged 2026-10-23 (package `client-host-p6`): the client opens the P6
+windows live. `--open-panel` takes the P6 names, T and `toggle_crafting_1`…`3` act, the
+crafting, trainer, trait and experience windows run windowed and in headless `--ui` runs, and
+the plugin progression source (`lua-plugin-api.md` §15.6) is fed by the session
+(`apps/client/src/progression/`). Open: no key opens the trait or skill-training panel
+(`tessera-input` has no such actions; `keymap.md` implementer OPEN); the plugin progression
+views read records on the main thread (ARCH §21 OPEN); the windows draw no item icons and no
+recipe cooldown timers (OPENs in `apps/client/src/progression/present.rs`); new implementer
+OPENs in `crafting-panels.md` §3 (a trainer opened by name sends nothing) and
+`progression-panels.md` §2.3, §4.1 and §6 wait for the spec writer.
+
 ---
 
 <a id="ui-scaling"></a>
@@ -2540,15 +2590,33 @@ G1 and G3–G8 (`crates/ui/tests/ui_scaling_goldens.rs`). The `ui-layout.md` §8
 stop-gap is retired in the code (§5.9 degenerate-box guard); a spec writer still updates
 `ui-layout.md` §8.4 to say so.
 
+Built in the follow-ups merged 2026-10-23 (packages `uis-text-paint`, `uis-layout`,
+`client-host-p6`): the §6.4 derived-glyph path is wired into the surface paint (crisp text at
+*c* ≠ 1, physical text hit test, glyph derivation counted in the paint slice), with the
+painted-paragraph G2 goldens committed (`crates/ui/tests/ui_scaling_text_g2.rs`,
+`golden/uiscale_g2_c{100,125,150,200,300}.png`); the §6.3 smooth/nearest art filters, the §5.5
+backdrop cover fit, the §6.7 cursor size and the §7.5 text factor in `tessera-ui`;
+multi-member fit groups (§5.4 steps 1–5), the §5.3 per-child safe boxes, keep-on-screen after
+every change of *Se*, *F* or *A*, re-layout on a safe-aspect change, live stateful invariant
+tests and a stateful fuzz mode; the placement bridge in the client host (`ui_host::placements`:
+`[UI.panels]` fills the in-memory store at start, placements are applied on attach and after
+each screen change and written off the frame thread, Reset clears both). The G8, G5 and G4
+goldens changed on purpose; G1, G2, G3, G6, G7 and the pre-scaling goldens are unchanged (I2).
+
 Open (follow-up):
 
-- the §6.4 **derived-glyph** path is not wired into the draw loop, so scaled text is sized
-  right but soft (the `layout_scaled`/`draw_scaled`/`FontLadder` entry points and the §6.5
-  glyph cache exist);
-- multi-member fit groups, the §5.3 per-child safe boxes and the §5.4 letterbox-bar fills;
-- the bridge between the in-memory placement store and the settings file in the client host;
-- the per-window scale, text-size and art-filter options (§7.4–§7.6) are stored and exposed in
-  the settings/plugin/explorer APIs but not yet wired through the live layout/paint;
+- drawing the §5.4 step-6 letterbox bars as composition entries: the bars are computed
+  (`Ui::letterbox_bars`) and hit-tested, but the composition list has no fill entry, so the
+  UI host has to draw them itself (`ui-scaling.md` §5.9 OPEN);
+- real-valued §3.4 displayed boxes in the live tree (the truncating integer rule leaves a
+  one-pixel bar row at C1 and a Type B panel one unit short in G4 at C1; §5.9 OPEN);
+- the stretched-surface step of the text hit test (§6.4.6, σ ≠ 1);
+- the client does not call the new `tessera-ui` setters yet (art filter, text scale, text
+  source, layout-parameter reader, font ladders, glyph-cache budget), so the `ui_text_scale`,
+  `ui_text_source` and `ui_art_filter` settings have no effect in a client run, and the cursor
+  texture is not rebuilt
+  at `Ui::cursor_physical_size` with its hot spot;
+- the per-window scale (§7.4) is stored and can be reset but is not applied in the live layout;
 - the §8 scale-dependent paint budgets (S4/S5 scale-change and per-pixel work; owner-measured,
   §8 OPEN);
 - the §9.4 tier-2 real-data goldens and the G7 mid-scale-change golden (needs a

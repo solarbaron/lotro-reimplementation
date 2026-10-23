@@ -30,13 +30,13 @@ Category descriptions below are our own words.
 
 ## Result
 
-**74 checks on 72 objects (the two dye previews re-use an armour object), 74 pass, 0 fail** (row C6 re-checked 2026-10-23 in the mesh view; the character view of the same setup is still open, see the row).
+**74 checks on 72 objects (the two dye previews re-use an armour object), 74 pass, 0 fail, with row C6 passing in the mesh view only** (re-checked 2026-10-23). The explorer's character view (`--character 0x04000110`) still draws the one-triangle stub of the same setup, so C6 counts as a mesh-view pass until `apps/explorer/src/character.rs` leaves such parts out (see the row).
 
 | Category | Checks | Pass | Fail |
 |---|---|---|---|
 | Weapons and shields | 15 | 15 | 0 |
 | Armour (worn, skinned, bind pose), incl. 2 dye previews | 13 | 13 | 0 |
-| Creatures and NPCs (skinned, bind pose) | 15 | 15 | 0 |
+| Creatures and NPCs (skinned, bind pose) | 15 | 15 (C6 in the mesh view only) | 0 |
 | Vegetation | 9 | 9 | 0 |
 | Buildings and large structures | 9 | 9 | 0 |
 | Props and furniture | 13 | 13 | 0 |

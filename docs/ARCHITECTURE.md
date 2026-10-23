@@ -2039,7 +2039,7 @@ subtracts its camera anchor in `f64` and narrows to `f32` (the §9.1 render posi
 | Thread | Owns | Talks to others via |
 |---|---|---|
 | **Main** (winit event loop thread) | Window, input, entity store, streamer, UI tree, Lua states, wgpu queue submission and resource creation | Request queue to workers; completion channel from workers; command channel to audio; event channel from network |
-| **Asset workers** (N = available cores − 2, at least 1) | Nothing long-lived; run jobs: read, inflate, decode, transcode, mesh/terrain generation, animation decompression and sampling | Priority job queue in; completion channel out; cancellation tokens |
+| **Asset workers** (N = available cores − 2, at least 1) | Nothing long-lived; run jobs: read, inflate, decode, transcode, mesh/terrain generation, animation decompression and sampling; in the walker also its combat records, clip decoding and the camera record (rules below). A collision hierarchy build of 16,384 items or more (`tessera-physics` `Bvh::build`, 2026-10-23) runs on up to 8 scoped helper threads, the calling worker included, drawn from a process-wide budget of available cores − 2 (at least 1) | Priority job queue in; completion channel out; cancellation tokens |
 | **Audio** (owned by the audio backend) | Mixer state, voices, streams | Lock-free command queue from main; event ring back to main (finished voices are dropped there) |
 | **Audio feeder** (`tessera-audio`, device and null backends) | Stream decoders of playing streamed voices | Job channel from main; wait-free sample rings to the audio thread |
 | **Network** (when a socket backend is active) | Sockets, protocol state machine, crypto | Bounded channels to and from main |
@@ -2082,7 +2082,19 @@ Rules:
     so its writes delay no frame;
   - the bag windows' column settings (`character-panels.md` §4.1) are not an exception:
     the character panels' frame hands a resize's changes to the UI settings writer
-    (table above), which writes them on its own thread.
+    (table above), which writes them on its own thread;
+  - the walker's combat layer is not an exception (2026-10-23): the skill, effect, item and
+    body records its cues need are answered on the asset workers
+    (`apps/client/src/walker/combat/records.rs`); a cue waits until its records are answered,
+    and lookups on the frame thread only read those answers (a record not answered yet reads
+    as absent and is counted);
+  - the walker's clip store is not an exception (2026-10-23): once the walker's frame thread
+    is named (`ClipStore::mark_frame_thread`), a clip that is not decoded yet is never read
+    there; the miss is counted and the clip queued for the workers
+    (`apps/client/src/walker/characters/figure.rs`);
+  - the walker's camera record (`walker.md` §11.6) is not an exception (2026-10-23): it is
+    read on a worker at start-up (`apps/client/src/walker/characters/mod.rs`); until it
+    arrives the built-in profile is used.
 
   > **OPEN (implementer, `tessera-client`, 2026-10-23):** the P6 plugin progression views
   > (`apps/client/src/progression/plugin.rs`, `lua-plugin-api.md` §15.6) read records on the
@@ -2094,8 +2106,9 @@ Rules:
   > `MAX_P6_CHANGES` changes, each profession read once and the untrained list built once
   > per batch), and run once more when the install's plugin keys arrive (the model is
   > rebuilt from the held state). A record the cache does not hold is a synchronous archive
-  > read on the main thread, which is none of the exceptions above (the P2 combat cues'
-  > record reads have the same open question). Either list it as an exception, or move the
+  > read on the main thread, which is none of the exceptions above. (The P2 combat plugin
+  > views still read this way; the walker's combat cues no longer do, see the bullet on the
+  > combat layer above, 2026-10-23.) Either list it as an exception, or move the
   > value resolution to a worker and raise the view events when it completes.
 - Worker pool: a dedicated pool with a priority queue (Decision), not a general
   work-stealing pool, because priority and cancellation matter more than throughput.

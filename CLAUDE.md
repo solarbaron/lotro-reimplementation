@@ -110,9 +110,11 @@ fine. Format-level terms like "DID" or "landblock" are fine.
   static entities and placed figures (`tessera-scriptgraph` runs the nodes; real-data test
   `apps/client/tests/particles_real_data.rs` at M3-03). **Not end to end:** fork effects are
   not drawn (`particles.md` rule §10.2), nor systems of the post-processing pass; weather
-  systems and wind, the gameplay event handler, lit systems' lights, `inherit_opacity`
-  and bounds culling wait for their specs (OPENs of `particle-runtime.md` §3.2, §5.4, §9.2,
-  §12). Beams (§11.1) are drawn (P2).
+  systems and wind, the gameplay event handler and `inherit_opacity` wait for their specs
+  (OPENs of `particle-runtime.md` §3.2, §5.4, §9.2, §12). Beams (§11.1) are drawn (P2).
+  Since 2026-10-23 lit systems take the owner's light list (rule 13) and instances are
+  culled by their bounds (Q-RT3); the day and night lamp lights (`instance-scripts.md` §6)
+  are not in the walker's light table yet, so they light no system or decal.
 - **M6 audio and player music (merged to main 2026-10-08, verified 2026-10-07):** done on Tessera's side.
   Criteria 1 (44,329 / 44,329 payloads decode) and 3 pass, 2 passes data-side (owner's
   listening comparison pending), 4 passes indicatively (re-measure on the idle laptop,
@@ -125,12 +127,16 @@ fine. Format-level terms like "DID" or "landblock" are fine.
   with M4.5 and M7 on main (2026-10-08). M5 (UI and plugins) is merged too (status below);
   M8 is in scope since 2026-10-11 (decision 0034, below).
 - **Beyond the milestones (merged 2026-10-09):** the far view (`far-view.md`, `--far-view on`:
-  far terrain, sprites and horizon beyond a 3 × 3 full-detail field; far entities, the
-  normal-mapped template and flow-map far water still open) and the particle runtime
+  far terrain, sprites and horizon beyond a 3 × 3 full-detail field) and the particle runtime
   (`particles.md`, `particle-runtime.md`: crate `tessera-particles`, render pipeline, walker
   effects from script-table nodes; not every client part yet, see ROADMAP). Census round 3
   specs (decals, instance scripts, mounts, NPC dramas, world logic) are Accepted; their
-  decoders are being built.
+  decoders are being built. Since 2026-10-23: far entities (§10), the normal-mapped
+  template (§6.4), the seam overlay (§6.5) and the flow-map copy of sector water are built,
+  but the walker never turns on the normal map or the seam overlay (it does not call
+  `FarViewSettings::apply_render_preferences`; graphics-core OPEN in `far-view.md` §12).
+  Placed decals (`decals.md`) are drawn in the walker (decal pass in `tessera-render`);
+  interior cells are not decal receivers yet (`decals.md` §9.1 OPEN).
 - **Water appearance (owner report 2026-10-09; merged 2026-10-10):** placed water, puddles,
   waterfalls, liquid distortion and lava draw with their own programs (`water.md` §8.5–§8.7,
   `material.md` §10.3, §11.6); second colour layers and animated texture matrices are drawn;
@@ -206,9 +212,12 @@ fine. Format-level terms like "DID" or "landblock" are fine.
   class costume on all 15 bodies, both stages), appears only once its textures are loaded,
   stands on the scene marker with the scene's objects, lights and tints around it, camera
   base/zoom frames and turntable, controls named from the data, gender selection shown.
-  Open: figure scripts are evaluated once, not run live (no gestures, class props, transition
-  ports; `character-screens.md` §2.1.4 OPEN), decals and effect particles not drawn. Since
-  done: `LookLimits` raised to 128/256 MiB and face-layer value 0 offered (owner, 2026-10-16);
+  Since 2026-10-23 the creation figure runs its scripts live (gestures, class props,
+  transition ports; a stage or action change keeps the figure), and the scene's decals and
+  effect particles are drawn in the creation viewport. Open: pieces of Appearance nodes and
+  colours of EditMaterial nodes that change with anything but the stage key, prop fade, life
+  and destroy times, the figure's own sounds and particle nodes (`character-screens.md`
+  §2.1.4 OPEN). Since done: `LookLimits` raised to 128/256 MiB and face-layer value 0 offered (owner, 2026-10-16);
   the side-panel overflow at 1280×720 is answered by `ui-scaling.md` §5.3–§5.4 (Type B fit
   containers, built in 6015d0e; not yet re-checked on the screen). Built: decision 0025 (Accepted) with
   `scenario-feed.md` rev 4, `tessera-protocol.md` v1.1 and `test-server.md` (Accepted) and
@@ -223,9 +232,9 @@ fine. Format-level terms like "DID" or "landblock" are fine.
   tooltips laid out, 0 failures); 8 races, 15 bodies, 130 (race, gender, class) choices.
   Checks on 93b3dfd: fmt, clippy `-D warnings` (workspace `--all-targets --all-features`,
   fuzz), server deps, content, SPDX clean; release tests with the install 5,813 passed, 0
-  failed, 10 ignored. Open: empty stat rows on this install (`character-panels.md` §3.4),
-  bag columns saved on the main thread (ARCH §21), walker and game HUDs over the screens in a
-  normal run.
+  failed, 10 ignored. Open: empty stat rows on this install (`character-panels.md` §3.4).
+  Since done (2026-10-23): the bag columns are saved by the UI settings writer thread (ARCH
+  §21), and the walker and game HUDs are held back while the character screens are active.
 - **P3 (NPC windows: dialogue, quests, vendors and loot; merged to main 2026-10-11, exit
   verification 2026-10-11)** (`docs/ROADMAP.md` P3 status): criteria 1 and 2 pass, its specs
   (`npc-windows.md`, `quest-journal.md`, `scenario-feed.md` rev 5, `lua-plugin-api.md` §15.3)
@@ -234,7 +243,14 @@ fine. Format-level terms like "DID" or "landblock" are fine.
   `tessera-client` `npc` and `quests`; scenarios `dialogue`, `vendor`, `loot`, `quest-log`.
   Real data: 20,807 quest records, 15,400 log rows, 0 failures; 19 local goldens matched.
   The text-fitting defects and the off-screen barter window are fixed (Tessera rules; pictures
-  not yet re-judged). Open: no dialog-box or popup-menu widget, U and L are raw keys.
+  not yet re-judged). Since 2026-10-23: the quest tracker menu uses Tessera's code-made popup
+  (the install's popup layout is still unnamed, `quest-journal.md` §6.6), the quest history
+  window (`QuestHistoryField`, tier-1 golden `p3_quest_history`) is built, items dropped on a
+  vendor window are sold, and the dialogue font, tracker visibility, quest-log font and
+  overhead quest icons are saved in `[GameWindows]` of `tessera-settings`. Open: no
+  dialog-box widget, U and L are raw keys; the local tier-2 goldens of the vendor, wallet and
+  quest log drift by 4–15 px since 2026-10-13 and wait for a re-bless after the owner's look
+  (decision 0031).
 - **P2 (targeting, skills and combat presentation; merged to main 2026-10-11, exit
   verification 2026-10-11)** (`docs/ROADMAP.md` P2 status): criteria 1-4 pass on Tessera's
   side. Accepted after independent review: `combat-ui.md` (rev 2), `skill-tooltips.md`,
@@ -251,8 +267,13 @@ fine. Format-level terms like "DID" or "landblock" are fine.
   `keymap.md` §8.2 defaults (owner, 2026-10-16), voice-chat icons over the player name hidden,
   the portrait left empty without a scene (portraits are not drawn yet), beam ribbons and
   heads drawn (322c9e3), install frame name/level text and defeat-panel parts (86e7210),
-  `combat-ui.md` rev 3 conformed (89d5ca0). Open: main-thread record reads in combat cues
-  (ARCH §21); U uses the nearest NPC, not the selection.
+  `combat-ui.md` rev 3 conformed (89d5ca0); since 2026-10-23 the combat layer's records are
+  read on the asset workers and clips never on the frame thread (ARCH §21), U, left
+  double-click and right click use the selection with use-range cylinders from the setups
+  (`interaction.md` I6a), and plugin check 76's quickslot click runs end to end. Open: one
+  left click through the client's UI host reaches a plugin quickslot twice (two `UseSkill`
+  commands; ignored test `a_plugin_quickslot_click_activates_once` in
+  `apps/client/tests/plugin_combat_checks.rs`).
 - **P4 (social panels: fellowship, trade, friends and ignore lists, tells, named chat channels,
   synchronised music; merged to main 2026-10-11, exit verification 2026-10-11)**
   (`docs/ROADMAP.md` P4 status): criteria 1-3 pass on Tessera's side. Accepted after
@@ -308,10 +329,13 @@ fine. Format-level terms like "DID" or "landblock" are fine.
   byte-identical headless (criterion 2). Checks on the merge commit (2f2b86c) and the fuzz-fmt
   fix-up (d2d1c26): fmt, clippy (workspace `--all-targets --all-features`, fuzz), release tests
   with the install 6,962 passed, 0 failed; content, SPDX, server deps, DCO clean; pushed to
-  main. Open: the live frame glue that opens the P6 windows in
-  the walker (`--open-panel` P6 names and `toggle_crafting` are defined but the client does not
-  yet act on them); `keymap.md` carries an implementer OPEN for the trait/skill panel toggles;
-  owner rows O160-O175.
+  main. Since 2026-10-23 the client opens the P6 windows live: `--open-panel` P6 names, T and
+  `toggle_crafting_1`…`3`, the crafting, trainer, trait and experience windows (windowed and
+  headless `--ui`) and the plugin progression source (§15.6). Open: no key opens the trait or
+  skill-training panel (`tessera-input` has no such actions; `keymap.md` implementer OPEN);
+  the plugin progression views read records on the main thread (ARCH §21 OPEN); the windows
+  draw no item icons and no recipe cooldown timers (OPENs in
+  `apps/client/src/progression/present.rs`); owner rows O160-O175.
 - **Owner decisions 2026-10-16:** decisions 0031 and 0036 (panel goldens: tier 1 committed
   synthetic, tier 2 local-only real data; P5 map census) are Accepted; the world walker's
   debug keys move off the five keys the keymap defaults take (`keymap.md` §8.2); and Tessera
@@ -344,14 +368,57 @@ fine. Format-level terms like "DID" or "landblock" are fine.
   routes through the §6 scaling paint, soft) in a single 237×202 region and was re-blessed
   (decision 0031; local goldens are never committed and do not gate CI). At *Se* = 1 with
   *A* = *F* the geometry is the identity (I2), so existing goldens/tests are unchanged; the
-  `ui-layout.md` §8.4 step-6 stop-gap is retired (§5.9). **Still deferred:** wiring the §6.4
-  **derived-glyph** path into the draw loop (scaled text is correctly sized but soft until then;
-  the `layout_scaled`/`draw_scaled`/`FontLadder` entry points and the §6.5 glyph cache exist),
-  multi-member fit groups / §5.3 per-child safe boxes / §5.4 letterbox-bar fills, the §8
-  scale-dependent paint budgets, the §9.4 tier-2 real-data goldens and the G7 mid-scale-change
-  golden (needs a `tessera-render` test), and the in-memory-store↔settings placement bridge in
-  the client host. A dirty-room spec-writer still updates `ui-layout.md` §8.4 to record the
-  retirement.
+  `ui-layout.md` §8.4 step-6 stop-gap is retired (§5.9). **Built since (2026-10-23):** the §6.4
+  derived-glyph path is wired into the surface paint (crisp text at *c* ≠ 1, physical text hit
+  test, glyph derivation counted in the paint slice) with the painted-paragraph G2 goldens
+  committed; the §6.3 smooth/nearest art filters, the §5.5 backdrop cover fit, the §6.7 cursor
+  size and the §7.5 text factor in `tessera-ui`; multi-member fit groups (§5.4 steps 1–5), §5.3
+  per-child safe boxes, keep-on-screen after every change of *Se*, *F* or *A*, re-layout on a
+  safe-aspect change, live stateful invariant tests and a stateful fuzz mode; the placement
+  bridge in the client host (`ui_host::placements`: `[UI.panels]` fills the in-memory store,
+  placements are saved off the frame thread, Reset clears both). **Still deferred:** drawing
+  the §5.4 step-6 letterbox bars as composition entries (computed and hit-tested; the
+  composition list has no fill entry), real-valued §3.4 displayed boxes in the live tree
+  (one-pixel effects at C1, `ui-scaling.md` §5.9 OPEN), the stretched-surface text hit test
+  (§6.4.6), the client calls of the new `tessera-ui` setters (art filter, text scale and
+  source, layout-parameter reader, font ladders, glyph-cache budget) and a cursor texture
+  rebuilt at `Ui::cursor_physical_size` with its hot spot, the per-window scale (§7.4), the §8
+  scale-dependent paint budgets, the §9.4 tier-2 real-data goldens and the G7
+  mid-scale-change golden (needs a `tessera-render` test). A dirty-room spec-writer still
+  updates `ui-layout.md` §8.4 to record the retirement.
+- **Follow-up packages (merged to main 2026-10-23, 02f2214..9620856):** ten packages; the
+  UI-scaling, P1, P2, P3, P6, particle and far-view items are in their bullets above. Also:
+  - **Specs.** Package `spec-gameplay` revised 12 specs and they are Accepted after an
+    independent review (2026-10-23): `appearance.md`, `combat-ui.md`, `combat-visuals.md`,
+    `instruments.md`, `map-windows.md`, `mounts.md`, `scenario-feed.md` (revision 10),
+    `script-table.md`, `skeleton-anim.md`, `skill-tooltips.md`, `social-panels.md`,
+    `travel-windows.md`. Package `spec-ui-input` (`keymap.md`, `ui-layout.md`,
+    `ui-widgets.md`, `ui-behaviour.md`, `game-panels.md`, `item-tooltips.md`,
+    `character-panels.md`) is still in review and not merged; those specs keep their earlier
+    Accepted text on main.
+  - **Walker camera.** The walk camera's code follows the install's camera record
+    (`walker.md` §11.6–§11.8; the record is read on a worker at start-up), but `walker/mod.rs` does not call
+    `Controls::follow_characters` yet, so the camera still uses the built-in §11.8 values
+    and a 1.7 m look-at height. Only the target fade uses the install's record. The
+    engineering choices are an implementer OPEN in `walker.md` §14.11.
+  - **Plugins and net.** The game-styled plugin controls (window, gold window, button, gold
+    button, check box, text box, scroll bar) are built from the install's plugin layouts,
+    with the neutral art as fallback; 20,000 live controls in one apartment raise no error.
+    Open: the title bar at top −8 is cut, no rebuild of windows marked as scaled, title
+    margins not set (`lua-plugin-api.md` §14.2.6 OPEN). `tessera-net` has the Appendix A
+    events and commands; `EnterWorldFailed` no longer ends the session, which differs from
+    the Accepted Appendix A row until a spec writer settles it (`tessera-protocol.md` §17
+    OPEN). Of the `test-server.md` §15.3 gaps, the epoch of moves and the 30 Hz poll remain.
+  - **Physics and render.** The collision hierarchy builds on up to 8 threads (same tree; a
+    process-wide budget of cores − 2; re-measure on a quiet machine with `TESSERA_PERF=1`);
+    the box-step walk test runs again; the edge-tie question is an OPEN in `collision.md`
+    §12.4. `UiStats::gpu_ns` is filled
+    where the adapter has timestamp queries; the client's U2 report is still to do.
+  - **Checks.** `check-content.sh` has the PNG location rule (decision 0031 Open item 1);
+    `tessera-gamedata`'s presenters have the fuzz target `gamedata_presenters`.
+  - **Build hazard.** A cargo target dir shared by several worktrees can link another
+    worktree's code (artifact names and dep-info are workspace-relative). Give parallel
+    worktrees their own target dirs.
 - **REA (decision 0033, Proposed):** optional dirty-only analysis tool, pilot pending; never
   registered as an MCP server.
 - **Pending owner input:** `docs/checklists/owner-observations.md` (`/loc` readings at the 20

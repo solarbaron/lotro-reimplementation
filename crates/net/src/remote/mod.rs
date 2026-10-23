@@ -30,9 +30,22 @@
 //! - **Events** (Appendix A): `LoginOk` → [`Event::Connected`]; `WorldEnter` →
 //!   [`Event::WorldEntered`], [`Event::AppearanceChanged`], [`Event::LocationReport`];
 //!   entities → [`Event::EntityCreated`] (with appearance), [`Event::EntityMoved`] (with
-//!   velocity), [`Event::AppearanceChanged`], [`Event::EntityDespawned`]; chat, notices
-//!   and refusals → [`Event::ChatMessage`]; every end → one [`Event::Disconnected`] with
-//!   a reason ([`RemoteBackend::failure`] has the details).
+//!   velocity), [`Event::AppearanceChanged`], [`Event::EntityDespawned`]; property changes
+//!   → [`Event::EntityStateChanged`]; `WorldClock` → [`Event::WorldClock`]; time samples →
+//!   [`Event::TimeSynced`]; chat → [`Event::ChatMessage`]; `TeleportRefused`,
+//!   `ChatRejected` and `ServerNotice` → [`Event::TeleportRefused`],
+//!   [`Event::ChatRejected`] and [`Event::ServerNotice`]; `EnterWorldFailed` →
+//!   [`Event::EnterWorldFailed`] (the session stays connected, back at character
+//!   selection); every end → one [`Event::Disconnected`] with a reason
+//!   ([`RemoteBackend::failure`] has the details).
+//! - **Commands beyond the basics**: [`Command::Register`] registers the configured
+//!   account and logs in; [`Command::Emote`], [`Command::Stance`] and
+//!   [`Command::SetAppearance`] send `EmoteSet`, `StanceSet` and `AppearanceSet`
+//!   (§6.2.15–§6.2.17; `SetAppearance` only when the server advertised
+//!   `APPEARANCE_CHANGE`). [`RemoteHandle`] keeps the older side channel for them.
+//! - **Abrupt loss**: [`RemoteBackend::drop_connection`] closes the QUIC connection at once
+//!   without sending `Disconnect`, as a client whose process or network went away would
+//!   (load tests, `test-server.md` §13.1).
 //! - **Named chat channels** (protocol minor 2, decision 0035, `scenario-feed.md` §9.8):
 //!   only when [`RemoteBackend::has_chat_channels`] is true (negotiated minor ≥ 2 and the
 //!   server's `CHAT_CHANNELS`), `JoinChannel`, `LeaveChannel` and `Named` chat lines are
@@ -95,13 +108,14 @@ use tessera_protocol::types::Motion;
 use tessera_protocol::value::Stance as WireStance;
 use tokio::sync::{mpsc, watch};
 
+pub use crate::model::EntityState;
 pub use config::{
     COMMAND_CHANNEL_CAPACITY, EVENT_CHANNEL_CAPACITY, FirstUse, MAX_CONTROL_BACKLOG, PENDING_PAUSE,
     Password, READ_CHUNK, RemoteConfig, Trust,
 };
 pub use harness::{HarnessInput, InboundHarness, MAX_ADVANCE, MAX_RECORDED_SENDS};
 pub use known::{MAX_KNOWN_SERVERS_BYTES, load_known_servers, record_known_server};
-pub use mapper::{EntityState, LOCAL_ID_BASE};
+pub use mapper::LOCAL_ID_BASE;
 pub use stats::{RemoteFailure, RemoteStats, ServerInfo};
 pub use tessera_protocol::client::ClientConfig;
 pub use tessera_protocol::codes::{
@@ -127,7 +141,8 @@ const CHANNELS_UNAVAILABLE: &str = "chat channels need protocol minor 2 with CHA
 
 /// What a [`Command`] becomes.
 enum Routed {
-    Connect,
+    /// `Connect` (`false`) or `Register` (`true`).
+    Connect(bool),
     Net(NetCommand),
     Move(MoveSlot),
     Disconnect,
@@ -140,7 +155,20 @@ enum Routed {
 /// limits).
 fn route(cmd: Command, mapper: &mut Mapper) -> Result<Routed, NetError> {
     Ok(match cmd {
-        Command::Connect => Routed::Connect,
+        Command::Connect => Routed::Connect(false),
+        Command::Register => Routed::Connect(true),
+        Command::Emote { anim, looping } => Routed::Net(NetCommand::Emote { anim, looping }),
+        Command::Stance { stance } => Routed::Net(NetCommand::Stance(stance)),
+        Command::SetAppearance { appearance } => {
+            let caps = mapper.server.as_ref().map_or(ServerCaps::NONE, |s| s.caps);
+            if !caps.contains(ServerCaps::APPEARANCE_CHANGE) {
+                return Err(NetError::InvalidCommand(
+                    "this server does not allow changing the appearance",
+                ));
+            }
+            let wire = convert::checked_wire_appearance(&appearance)?;
+            Routed::Net(NetCommand::Appearance(Box::new(wire)))
+        }
         Command::EnterWorld { character } => {
             if mapper.outstanding_create.is_some() {
                 // A second outstanding request is fatal on the wire (§13.1).
@@ -273,9 +301,11 @@ fn derive_motion(on_ground: bool, velocity: Vec3, heading: f32, walk: f32, run: 
     Motion::derive(on_ground, horizontal, walk, run, backward)
 }
 
-/// Commands beyond the neutral [`Command`] set, for a client or tool that knows it talks
-/// to a Tessera server: emotes, stance and appearance changes (`tessera-protocol.md`
-/// §6.2.15–§6.2.17). Cheap to clone and `Send`; every call is non-blocking.
+/// A side channel for emotes, stance and appearance changes (`tessera-protocol.md`
+/// §6.2.15–§6.2.17), kept for callers written before [`Command::Emote`],
+/// [`Command::Stance`] and [`Command::SetAppearance`] existed: each call queues the same
+/// network work as that command, without [`Session`]'s state checks. Prefer the commands.
+/// Cheap to clone and `Send`; every call is non-blocking.
 #[derive(Debug, Clone)]
 pub struct RemoteHandle {
     commands: mpsc::Sender<NetCommand>,
@@ -290,7 +320,7 @@ impl RemoteHandle {
     }
 
     /// Plays an emote: `anim` is an opaque animation key from the client's data, 0 stops
-    /// the current emote (`EmoteSet`).
+    /// the current emote (`EmoteSet`; as [`Command::Emote`]).
     ///
     /// # Errors
     ///
@@ -299,7 +329,7 @@ impl RemoteHandle {
         self.send(NetCommand::Emote { anim, looping })
     }
 
-    /// Sets the player's stance (`StanceSet`).
+    /// Sets the player's stance (`StanceSet`; as [`Command::Stance`]).
     ///
     /// # Errors
     ///
@@ -308,9 +338,10 @@ impl RemoteHandle {
         self.send(NetCommand::Stance(stance))
     }
 
-    /// Asks to change the player's appearance (`AppearanceSet`; the server must advertise
-    /// `APPEARANCE_CHANGE`). The server answers with an [`Event::AppearanceChanged`] for
-    /// the player carrying the result.
+    /// Asks to change the player's appearance (`AppearanceSet`; as
+    /// [`Command::SetAppearance`], but without its capability check: the server must
+    /// advertise `APPEARANCE_CHANGE`). The server answers with an
+    /// [`Event::AppearanceChanged`] for the player carrying the result.
     ///
     /// # Errors
     ///
@@ -347,6 +378,7 @@ struct Running {
     events: mpsc::Receiver<Inbound>,
     moves: watch::Sender<Option<MoveSlot>>,
     shutdown: watch::Sender<bool>,
+    abort: watch::Sender<bool>,
     _task: tokio::task::JoinHandle<()>,
 }
 
@@ -415,7 +447,7 @@ impl RemoteBackend {
         })
     }
 
-    fn start(&mut self) -> Result<(), NetError> {
+    fn start(&mut self, register: bool) -> Result<(), NetError> {
         let Some(config) = self.config.take() else {
             return Err(NetError::Closed);
         };
@@ -424,11 +456,12 @@ impl RemoteBackend {
             password: config.password.expose().to_owned(),
         };
         let client: ClientConfig = config.client.clone();
-        let driver = Driver::new(client, credentials, config.register);
+        let driver = Driver::new(client, credentials, config.register || register);
         let (cmd_tx, cmd_rx) = mpsc::channel(COMMAND_CHANNEL_CAPACITY);
         let (evt_tx, evt_rx) = mpsc::channel(EVENT_CHANNEL_CAPACITY);
         let (move_tx, move_rx) = watch::channel(None);
         let (stop_tx, stop_rx) = watch::channel(false);
+        let (abort_tx, abort_rx) = watch::channel(false);
         let task = link::spawn(link::LinkParams {
             server: config.server.clone(),
             trust: config.trust.clone(),
@@ -438,6 +471,7 @@ impl RemoteBackend {
             events: evt_tx,
             moves: move_rx,
             shutdown: stop_rx,
+            abort: abort_rx,
             stats: Arc::clone(&self.shared),
         })?;
         self.running = Some(Running {
@@ -445,6 +479,7 @@ impl RemoteBackend {
             events: evt_rx,
             moves: move_tx,
             shutdown: stop_tx,
+            abort: abort_tx,
             _task: task,
         });
         Ok(())
@@ -461,6 +496,32 @@ impl RemoteBackend {
         self.running.as_ref().map(|r| RemoteHandle {
             commands: r.commands.clone(),
         })
+    }
+
+    /// Ends the connection abruptly: the network thread closes the QUIC connection at once,
+    /// without sending `Disconnect` first (`tessera-protocol.md` §12.3 is skipped), as a
+    /// client whose process or network went away would. The session then ends with
+    /// [`Event::Disconnected`] `ClientRequested`. For load tests (`test-server.md` §13.1);
+    /// a client leaves with [`Command::Disconnect`]. Does nothing before
+    /// [`Command::Connect`] or after the end.
+    pub fn drop_connection(&self) {
+        if let Some(r) = self.running.as_ref() {
+            r.abort.send_replace(true);
+        }
+    }
+
+    /// The world instance the player entered (`WorldEnter.instance`, §6.3.1), once in the
+    /// world; it stays known after the end.
+    #[must_use]
+    pub fn instance(&self) -> Option<u32> {
+        self.mapper.instance
+    }
+
+    /// The code of the latest `EnterWorldFailed` (§14.5), surfaced as
+    /// [`Event::EnterWorldFailed`].
+    #[must_use]
+    pub fn enter_world_refusal(&self) -> Option<EnterWorldFailedCode> {
+        self.mapper.enter_refusal
     }
 
     /// The statistics snapshot taken at the latest poll.
@@ -567,7 +628,9 @@ impl RemoteBackend {
         &self.mapper.interp
     }
 
-    /// The replicated properties of an entity or the player (`STANCE`, `EMOTE`, speeds).
+    /// The replicated properties of an entity or the player (`STANCE`, `EMOTE`, speeds),
+    /// as the latest [`Event::EntityStateChanged`] for it reported them (or their
+    /// defaults).
     #[must_use]
     pub fn entity_state(&self, id: EntityId) -> Option<&EntityState> {
         self.mapper.state(id)
@@ -595,7 +658,7 @@ impl RemoteBackend {
         self.mapper.entity_count()
     }
 
-    /// The latest `WorldClock` (§6.3.9).
+    /// The latest `WorldClock` (§6.3.9), as the latest [`Event::WorldClock`] reported it.
     #[must_use]
     pub fn world_clock(&self) -> Option<&WorldClock> {
         self.mapper.world_clock.as_ref()
@@ -661,21 +724,28 @@ impl Backend for RemoteBackend {
 
     fn submit(&mut self, _now: Instant, command: Command) -> Result<(), NetError> {
         match route(command, &mut self.mapper)? {
-            Routed::Connect => {
+            Routed::Connect(register) => {
                 if self.running.is_some() {
                     return Err(NetError::InvalidCommand("already connected"));
                 }
-                self.start()
+                self.start(register)
             }
             Routed::Net(cmd) => {
                 let r = self.running.as_ref().ok_or(NetError::Closed)?;
                 let creation = cmd.creation();
+                let enter = match &cmd {
+                    NetCommand::EnterWorld(name) => Some(name.clone()),
+                    _ => None,
+                };
                 r.commands.try_send(cmd).map_err(|e| match e {
                     mpsc::error::TrySendError::Full(_) => NetError::SendQueueFull,
                     mpsc::error::TrySendError::Closed(_) => NetError::Closed,
                 })?;
                 if creation.is_some() {
                     self.mapper.outstanding_create = creation;
+                }
+                if enter.is_some() {
+                    self.mapper.outstanding_enter = enter;
                 }
                 Ok(())
             }
@@ -917,11 +987,13 @@ mod tests {
         let (_evt_tx, evt_rx) = mpsc::channel(1);
         let (move_tx, _move_rx) = watch::channel(None);
         let (stop_tx, _stop_rx) = watch::channel(false);
+        let (abort_tx, _abort_rx) = watch::channel(false);
         b.running = Some(Running {
             commands: cmd_tx,
             events: evt_rx,
             moves: move_tx,
             shutdown: stop_tx,
+            abort: abort_tx,
             _task: rt.spawn(async {}),
         });
         let create = |name: &str| {

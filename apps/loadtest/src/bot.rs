@@ -260,7 +260,7 @@ pub struct BotStats {
     /// World-entry latency (EnterWorld to WorldEntered), ms.
     pub enter_ms: Histogram,
     /// Application round-trip time (`Ping`), ms: each new measurement once (the backend
-    /// pings every 2 s; a value equal to the previous one is taken as the same ping).
+    /// pings every 2 s and counts its `Pong`s, `RemoteStats::ping_seq`).
     pub rtt_ms: Histogram,
     /// Sessions that ended without the bot asking.
     pub unexpected_disconnects: u64,
@@ -316,6 +316,9 @@ pub struct BotStats {
     pub cheat_extra_corrections: u64,
     /// Sessions given up while closing (no `Disconnected` within 10 s).
     pub close_timeouts: u64,
+    /// World entries the server refused (`EnterWorldFailed`, `tessera-protocol.md`
+    /// §6.2.11); the bot ended the session and tried again later.
+    pub enter_refusals: u64,
     /// Transport counters summed over finished sessions (and the current one at the end).
     pub traffic: Traffic,
 }
@@ -339,6 +342,17 @@ pub struct Traffic {
     pub lost_packets: u64,
     /// Messages dropped as stale or unexpected.
     pub protocol_dropped: u64,
+    /// Movement snapshots received (`MotionBatch`es with a new server time).
+    pub motion_snapshots: u64,
+    /// Sum of snapshot inter-arrival times, µs (over `motion_intervals` intervals).
+    pub motion_interval_sum_us: u64,
+    /// Snapshot intervals summed in `motion_interval_sum_us`.
+    pub motion_intervals: u64,
+    /// Longest snapshot inter-arrival time, µs.
+    pub motion_interval_max_us: u64,
+    /// Snapshot periods without a `MotionBatch` between two received ones (an upper bound
+    /// of the loss, `RemoteStats::motion_gaps`).
+    pub motion_gaps: u64,
 }
 
 impl Traffic {
@@ -351,6 +365,21 @@ impl Traffic {
         self.motion_dropped += s.motion_dropped;
         self.lost_packets += s.lost_packets;
         self.protocol_dropped += s.protocol_dropped;
+        self.motion_snapshots += s.motion_snapshots;
+        self.motion_interval_sum_us += s.motion_interval_sum_us;
+        self.motion_intervals += s.motion_snapshots.saturating_sub(1);
+        let max = s
+            .motion_interval_max
+            .map_or(0, |d| u64::try_from(d.as_micros()).unwrap_or(u64::MAX));
+        self.motion_interval_max_us = self.motion_interval_max_us.max(max);
+        self.motion_gaps += s.motion_gaps;
+    }
+
+    /// Mean snapshot inter-arrival time, ms, when at least one interval was measured.
+    #[must_use]
+    pub fn motion_interval_mean_ms(&self) -> Option<f64> {
+        (self.motion_intervals > 0)
+            .then(|| self.motion_interval_sum_us as f64 / self.motion_intervals as f64 / 1e3)
     }
 
     /// Adds another total.
@@ -363,6 +392,11 @@ impl Traffic {
         self.motion_dropped += o.motion_dropped;
         self.lost_packets += o.lost_packets;
         self.protocol_dropped += o.protocol_dropped;
+        self.motion_snapshots += o.motion_snapshots;
+        self.motion_interval_sum_us += o.motion_interval_sum_us;
+        self.motion_intervals += o.motion_intervals;
+        self.motion_interval_max_us = self.motion_interval_max_us.max(o.motion_interval_max_us);
+        self.motion_gaps += o.motion_gaps;
     }
 }
 
@@ -439,42 +473,22 @@ pub const MIN_CHANNEL_CYCLE: Duration = Duration::from_secs(15);
 /// A channel request must be answered within this time.
 pub const CHANNEL_ANSWER: Duration = Duration::from_secs(10);
 
-/// What a system line is. `tessera-net` turns `TeleportRefused`, `ChatRejected`,
-/// `ChannelRefused` and `ServerNotice` all into [`ChatChannel::System`] lines; the backend's prefixes tell them
-/// apart (an operator notice could imitate them; `test-server.md` §15.2 asks for typed
-/// events).
+/// What a system line is. `tessera-net` reports `TeleportRefused`, `ChatRejected` and
+/// `ServerNotice` as typed events ([`Event::TeleportRefused`], [`Event::ChatRejected`],
+/// [`Event::ServerNotice`]), so a [`ChatChannel::System`] line is always the backend's own
+/// text and an operator notice can no longer imitate a refusal (`test-server.md` §15.3).
+/// `ChannelRefused` stays a system line in the backend's own words.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SystemLine {
-    /// `teleport refused: CODE[: text]`.
-    TeleportRefused,
-    /// `chat not sent: CODE[: text]`; `benign` for a recipient that went offline or a
-    /// sender between places (`UNKNOWN_RECIPIENT`, `NOT_IN_WORLD`).
-    ChatRejected {
-        /// Expected in a run with reconnections.
-        benign: bool,
-    },
     /// `Cannot join the channel …` or `Cannot leave the channel …` (`ChannelRefused`).
     ChannelRefused,
-    /// Anything else (notices, location descriptions).
+    /// Anything else (location descriptions, removal from a channel).
     Other,
 }
 
-/// Classifies a system line by the backend's prefixes.
+/// Classifies a system line by the backend's own prefixes.
 #[must_use]
 pub fn classify_system_line(text: &str) -> SystemLine {
-    if text.starts_with("teleport refused:") {
-        return SystemLine::TeleportRefused;
-    }
-    if let Some(rest) = text.strip_prefix("chat not sent:") {
-        let code = rest
-            .trim_start()
-            .split(|c: char| c == ':' || c.is_whitespace())
-            .next()
-            .unwrap_or("");
-        return SystemLine::ChatRejected {
-            benign: matches!(code, "UNKNOWN_RECIPIENT" | "NOT_IN_WORLD"),
-        };
-    }
     if text.starts_with("Cannot join the channel ") || text.starts_with("Cannot leave the channel ")
     {
         return SystemLine::ChannelRefused;
@@ -566,7 +580,8 @@ pub struct Bot {
     /// Its stance as it last set it (Relaxed at world entry).
     pub stance: Stance,
     next_rtt: Instant,
-    last_rtt: Option<Duration>,
+    /// `RemoteStats::ping_seq` of the last RTT recorded (a new session starts at 0).
+    last_rtt: u64,
     chat_seq: u32,
     /// Membership of the bot's shared channel.
     channel: ChannelState,
@@ -666,7 +681,7 @@ impl Bot {
             cheat_seq: 0,
             stance: Stance::Relaxed,
             next_rtt: start,
-            last_rtt: None,
+            last_rtt: 0,
             chat_seq: 0,
             channel: ChannelState::Out,
             channel_since: start,
@@ -692,6 +707,13 @@ impl Bot {
     #[must_use]
     pub fn backend(&self) -> Option<&RemoteBackend> {
         self.session.as_ref()?.backend::<RemoteBackend>()
+    }
+
+    /// The world instance the bot entered in its current session (`WorldEnter.instance`,
+    /// `tessera-protocol.md` §6.3.1), once known.
+    #[must_use]
+    pub fn instance(&self) -> Option<u32> {
+        self.backend().and_then(RemoteBackend::instance)
     }
 
     /// In the world with a known position (a teleport may be pending: see
@@ -791,6 +813,9 @@ impl Bot {
             }
         };
         self.session = Some(Session::new(backend));
+        // A new backend counts its `Pong`s from 0 again; a `Pong` that arrives before
+        // world entry is recorded once, not again after it.
+        self.last_rtt = 0;
         self.traffic_flushed = false;
         self.stats.sessions += 1;
         self.connect_started = Some(now);
@@ -1129,13 +1154,17 @@ impl Bot {
         self.events = events;
         if now >= self.next_rtt {
             self.next_rtt = now + Duration::from_millis(500);
-            let rtt = self.backend().and_then(|b| b.stats().ping_rtt);
-            if let Some(v) = rtt
-                && rtt != self.last_rtt
+            // Each new `Pong` once, by its sequence counter (`test-server.md` §15.3): two
+            // equal round trips in a row both count.
+            let rtt = self
+                .backend()
+                .map(|b| (b.stats().ping_rtt, b.stats().ping_seq));
+            if let Some((Some(v), seq)) = rtt
+                && seq != self.last_rtt
             {
                 self.stats.rtt_ms.record(v.as_secs_f64() * 1e3);
+                self.last_rtt = seq;
             }
-            self.last_rtt = rtt;
         }
     }
 
@@ -1170,7 +1199,6 @@ impl Bot {
                 self.phase = Phase::InWorld;
                 // A new player entity starts Relaxed (`tessera-protocol.md` §7.3).
                 self.stance = Stance::Relaxed;
-                self.last_rtt = None;
                 self.online.push_back((now, None));
                 while self.online.len() > MAX_HISTORY {
                     self.online.pop_front();
@@ -1304,22 +1332,6 @@ impl Bot {
                 if channel == ChatChannel::System {
                     self.stats.system_lines += 1;
                     match classify_system_line(&text) {
-                        SystemLine::TeleportRefused => {
-                            if self.teleport_pending.take().is_some() {
-                                self.stats.teleports_refused += 1;
-                                self.fail(text);
-                            } else {
-                                self.stats.refusals_unmatched += 1;
-                                tracing::debug!(bot = self.spec.index, %text, "late refusal");
-                            }
-                        }
-                        SystemLine::ChatRejected { benign } => {
-                            self.stats.chat_rejected += 1;
-                            ctx.ledger.rejected(self.spec.index);
-                            if !benign {
-                                self.fail(text);
-                            }
-                        }
                         SystemLine::ChannelRefused => {
                             // Membership is unchanged by a refusal (§6.4.6); a bot within
                             // the limits is never refused.
@@ -1339,6 +1351,37 @@ impl Bot {
                 } else {
                     ctx.ledger.received(self.spec.index, &text, now);
                 }
+            }
+            Event::TeleportRefused { text, .. } => {
+                self.stats.system_lines += 1;
+                if self.teleport_pending.take().is_some() {
+                    self.stats.teleports_refused += 1;
+                    self.fail(text);
+                } else {
+                    self.stats.refusals_unmatched += 1;
+                    tracing::debug!(bot = self.spec.index, %text, "late refusal");
+                }
+            }
+            Event::ChatRejected { reason, text } => {
+                self.stats.system_lines += 1;
+                self.stats.chat_rejected += 1;
+                ctx.ledger.rejected(self.spec.index);
+                // A recipient that went offline or a sender between places is expected in a
+                // run with reconnections.
+                if !reason.is_benign() {
+                    self.fail(text);
+                }
+            }
+            Event::ServerNotice { .. } => self.stats.system_lines += 1,
+            Event::EnterWorldFailed { reason, .. } => {
+                // The session is back at character selection (`tessera-protocol.md`
+                // §6.2.11); the bot ends it and tries again later.
+                self.stats.enter_refusals += 1;
+                self.fail(reason);
+                self.end_session(now);
+                self.phase = Phase::Offline {
+                    at: now + Duration::from_secs(5),
+                };
             }
             Event::Disconnected { reason } => {
                 let failure = self.backend().and_then(|b| b.failure().cloned());
@@ -1543,12 +1586,9 @@ impl Bot {
                         species: 1 + self.rng.below(8) as u32,
                         sex: 1 + self.rng.below(2) as u32,
                     });
-                    if let Some(h) = self.backend().and_then(RemoteBackend::handle) {
-                        if h.set_appearance(&a).is_ok() {
-                            self.stats.appearance_changes += 1;
-                        } else {
-                            self.stats.send_errors += 1;
-                        }
+                    let appearance = Box::new(a);
+                    if self.send(now, Command::SetAppearance { appearance }) {
+                        self.stats.appearance_changes += 1;
                     }
                 }
                 // A stance change too (a replicated property, §13.2 "State").
@@ -1557,13 +1597,9 @@ impl Bot {
                 } else {
                     Stance::Relaxed
                 };
-                if let Some(h) = self.backend().and_then(RemoteBackend::handle) {
-                    if h.stance(stance).is_ok() {
-                        self.stance = stance;
-                        self.stats.stance_changes += 1;
-                    } else {
-                        self.stats.send_errors += 1;
-                    }
+                if self.send(now, Command::Stance { stance }) {
+                    self.stance = stance;
+                    self.stats.stance_changes += 1;
                 }
             }
         }
@@ -1696,6 +1732,7 @@ impl Bot {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tessera_net::{ChatRejection, NoticeLevel, TeleportRefusal};
 
     #[test]
     fn area_geometry() {
@@ -1745,16 +1782,13 @@ mod tests {
     #[test]
     fn system_lines_are_classified() {
         assert_eq!(
+            classify_system_line("Cannot join the channel Kin: it is full."),
+            SystemLine::ChannelRefused
+        );
+        // Refusals are typed events now; text that looks like one is just a line.
+        assert_eq!(
             classify_system_line("teleport refused: NOT_ALLOWED"),
-            SystemLine::TeleportRefused
-        );
-        assert_eq!(
-            classify_system_line("chat not sent: UNKNOWN_RECIPIENT: Botabc is not online"),
-            SystemLine::ChatRejected { benign: true }
-        );
-        assert_eq!(
-            classify_system_line("chat not sent: RATE_LIMITED"),
-            SystemLine::ChatRejected { benign: false }
+            SystemLine::Other
         );
         assert_eq!(
             classify_system_line("warning: server stopping soon"),
@@ -1805,26 +1839,73 @@ mod tests {
             sender: None,
             text: text.into(),
         };
+        let refused = |reason: TeleportRefusal| Event::TeleportRefused {
+            reason,
+            text: format!("teleport refused: {}", reason.name()),
+        };
+        let rejected = |reason: ChatRejection| Event::ChatRejected {
+            reason,
+            text: format!("chat not sent: {}", reason.name()),
+        };
         b.teleport_pending = Some(t0);
-        b.handle(line("chat not sent: UNKNOWN_RECIPIENT"), &mut ctx);
-        b.handle(line("server stopping in 30 s: maintenance"), &mut ctx);
+        b.handle(rejected(ChatRejection::UnknownRecipient), &mut ctx);
+        b.handle(
+            Event::ServerNotice {
+                level: NoticeLevel::Shutdown,
+                seconds: 30,
+                text: "teleport refused: maintenance".into(),
+            },
+            &mut ctx,
+        );
         b.handle(line("Tessera load test."), &mut ctx);
+        // An operator line that imitates a refusal is only a line.
+        b.handle(line("teleport refused: NOT_ALLOWED"), &mut ctx);
         assert!(b.teleport_pending.is_some());
         assert_eq!(b.stats.teleports_refused, 0);
         assert_eq!(b.stats.chat_rejected, 1);
-        assert_eq!(b.stats.system_lines, 3);
+        assert_eq!(b.stats.system_lines, 4);
         assert!(b.stats.failures.is_empty(), "{:?}", b.stats.failures);
-        b.handle(line("teleport refused: NOT_ALLOWED"), &mut ctx);
+        b.handle(refused(TeleportRefusal::NotAllowed), &mut ctx);
         assert!(b.teleport_pending.is_none());
         assert_eq!(b.stats.teleports_refused, 1);
         assert_eq!(b.stats.failures.len(), 1);
         // A refusal with nothing pending is counted, not failed.
-        b.handle(line("teleport refused: CANCELLED"), &mut ctx);
+        b.handle(refused(TeleportRefusal::Cancelled), &mut ctx);
         assert_eq!(b.stats.refusals_unmatched, 1);
         assert_eq!(b.stats.failures.len(), 1);
         // A rejection of a bot within the limits is a failure.
-        b.handle(line("chat not sent: RATE_LIMITED"), &mut ctx);
+        b.handle(rejected(ChatRejection::RateLimited), &mut ctx);
         assert_eq!(b.stats.failures.len(), 2);
+    }
+
+    /// Regression: the first `Pong` of a session usually arrives before world entry; the
+    /// sequence of the RTT recorded then must survive `WorldEntered`, or the same `Pong`
+    /// is recorded a second time at the next check.
+    #[test]
+    fn world_entry_keeps_the_recorded_ping() {
+        let t0 = Instant::now();
+        let mut b = test_bot(t0);
+        let names = HashMap::new();
+        let mut ledger = ChatLedger::new(1, t0);
+        let area = Area::around(0, 127, 127, 8, 0.0);
+        let mut ctx = Ctx {
+            now: t0,
+            names: &names,
+            ledger: &mut ledger,
+            time: TimeBase::Estimated,
+            area: &area,
+            radius: 2,
+        };
+        b.last_rtt = 1;
+        b.handle(
+            Event::WorldEntered {
+                player: tessera_net::EntityId(7),
+                name: "Botaaa".into(),
+                transform: tessera_net::Transform::default(),
+            },
+            &mut ctx,
+        );
+        assert_eq!(b.last_rtt, 1);
     }
 
     #[test]

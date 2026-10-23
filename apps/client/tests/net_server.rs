@@ -441,3 +441,44 @@ fn a_wrong_pin_is_refused_with_a_pin_hint() {
     );
     assert_eq!(handle.stats().logged_in, 0);
 }
+
+/// Regression: with the character screens (manual entry) a refused `EnterWorld` must not
+/// leave the session waiting: the server's `EnterWorldFailed` ends the session as before
+/// (the screens close with the reason) and chat names the refusal.
+#[test]
+fn a_refused_manual_entry_ends_the_session() {
+    let Some(server) = start_server() else {
+        return;
+    };
+    let handle = server.handle.as_ref().expect("server");
+    let mut world = World::remote(
+        Instant::now(),
+        &settings(handle, "alice", "Aldith"),
+        None,
+        None,
+    )
+    .expect("session");
+    world.set_manual_enter(true);
+    run_one(&mut world, |w| w.state() == SessionState::Connected);
+    assert_eq!(world.state(), SessionState::Connected, "not connected");
+    world
+        .session_mut()
+        .send(
+            Instant::now(),
+            tessera_net::Command::EnterWorld {
+                character: "Nobody".into(),
+            },
+        )
+        .expect("EnterWorld sent");
+    run_one(&mut world, |w| w.player().is_some());
+    assert_eq!(world.state(), SessionState::Closed, "the session ended");
+    assert!(world.player().is_none());
+    let mut lines = Vec::new();
+    world.drain_hud_chat(&mut lines);
+    assert!(
+        lines
+            .iter()
+            .any(|l| l.sender.is_empty() && l.text.contains("UNKNOWN_CHARACTER")),
+        "{lines:?}"
+    );
+}

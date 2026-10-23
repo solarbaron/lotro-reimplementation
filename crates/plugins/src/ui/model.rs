@@ -158,6 +158,10 @@ pub(crate) struct ScrollState {
     pub bound: Option<u64>,
     /// A thumb drag in progress: pointer offset inside the thumb along the axis.
     pub drag: Option<i32>,
+    /// A game-styled bar's layout widget (`lua-plugin-api.md` §14.2.2): the part element
+    /// built from `LotroScrollBar_Horizontal` or `_Vertical` and its run-time element ID
+    /// (the key of its listener-registry entries).
+    pub widget: Option<(ElementKey, u32)>,
 }
 
 /// List-box state (§13.7).
@@ -313,6 +317,15 @@ pub(crate) struct Ctl {
     /// The scroll bar this control is a replaceable part of: (bar, 0 decrement,
     /// 1 increment, 2 thumb).
     pub part_of: Option<(u64, u8)>,
+    /// Built from the install's layout (`lua-plugin-api.md` §14.2.1) rather than with
+    /// Tessera's neutral art (§14.2.1 step 5).
+    pub based: bool,
+    /// The element the `Label` members act on when it is not the control's own element
+    /// (§14.2.2: a game-styled check box's `LotroCheckBox_Text`).
+    pub text_part: Option<ElementKey>,
+    /// A game-styled check box's check mark (`LotroCheckBox_CheckBox`, §14.2.2), drawn
+    /// by the checked state.
+    pub mark_part: Option<ElementKey>,
 }
 
 impl Ctl {
@@ -344,7 +357,15 @@ impl Ctl {
             controls_list: None,
             owner: None,
             part_of: None,
+            based: false,
+            text_part: None,
+            mark_part: None,
         }
+    }
+
+    /// The element the text members act on (§14.2.2).
+    pub(crate) fn text_key(&self) -> ElementKey {
+        self.text_part.unwrap_or(self.key)
     }
 }
 

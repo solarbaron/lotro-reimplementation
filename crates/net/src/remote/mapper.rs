@@ -6,10 +6,14 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use tessera_protocol::codes::CharacterCreateFailedCode;
+use tessera_protocol::codes::{
+    CharacterCreateFailedCode, ChatRejectedCode, EnterWorldFailedCode, TeleportRefusedCode,
+};
 use tessera_protocol::limits::{DEFAULT_RUN_SPEED, DEFAULT_WALK_SPEED};
-use tessera_protocol::message::{ChatChannel as WireChannel, EntityCreate, LocationCause as Cause};
-use tessera_protocol::types::{Motion, reduce_heading};
+use tessera_protocol::message::{
+    ChatChannel as WireChannel, EntityCreate, LocationCause as Cause, NoticeLevel as WireNotice,
+};
+use tessera_protocol::types::reduce_heading;
 use tessera_protocol::value::{Emote, Property, Stance, Value, pid, speed_from_property};
 
 use super::convert;
@@ -19,8 +23,8 @@ use crate::NetError;
 use crate::domain::{CharacterEvent, CombatEvent, SocialEvent, Text};
 use crate::interp::{InterpConfig, InterpolationSet, Snapshot};
 use crate::model::{
-    Anchor, CharacterSummary, ChatChannel, DataId, EntityId, Landblock, Location, LocationCause,
-    Transform, Vec3,
+    Anchor, CharacterSummary, ChatChannel, ChatRejection, DataId, EntityId, EntityState, Landblock,
+    Location, LocationCause, NoticeLevel, TeleportRefusal, Transform, Vec3,
 };
 use crate::sandbox::world::{StaticConfig, StaticStats, Statics, WorldSource};
 use crate::session::Event;
@@ -30,38 +34,9 @@ use crate::session::Event;
 /// and (remapped) any server ID that would collide with them.
 pub const LOCAL_ID_BASE: u64 = 1 << 63;
 
-/// The replicated state of an entity: the protocol v1 properties (§7.3). Unknown property
-/// IDs are skipped, as §7.1 requires, so this stays small whatever the server sends.
-#[derive(Debug, Clone, Copy, PartialEq)]
-#[non_exhaustive]
-pub struct EntityState {
-    /// `STANCE` (default Relaxed).
-    pub stance: Stance,
-    /// `EMOTE`, when one is playing. When the struct has no `started` field, §7.3 says it
-    /// defaults to the message's `server_time`; `EntityUpdate` has none, so the backend
-    /// uses the newest server time it has seen in any message (world, chat or
-    /// `MotionBatch`) at that point (an open spec question, `tessera-protocol.md` §17.2).
-    pub emote: Option<Emote>,
-    /// `WALK_SPEED` in m/s (owner only; default 2).
-    pub walk_speed: f32,
-    /// `RUN_SPEED` in m/s (owner only; default 6).
-    pub run_speed: f32,
-    /// Motion byte of the newest movement state (§8.1).
-    pub motion: Motion,
-}
-
-impl Default for EntityState {
-    fn default() -> Self {
-        Self {
-            stance: Stance::Relaxed,
-            emote: None,
-            walk_speed: DEFAULT_WALK_SPEED,
-            run_speed: DEFAULT_RUN_SPEED,
-            motion: Motion::STANDING,
-        }
-    }
-}
-
+/// The replicated state of an entity is [`EntityState`]: the protocol v1 properties (§7.3).
+/// Unknown property IDs are skipped, as §7.1 requires, so it stays small whatever the server
+/// sends.
 impl EntityState {
     fn apply(&mut self, props: &[Property], message_time: u64) {
         for p in props {
@@ -118,6 +93,12 @@ pub(crate) struct Mapper {
     pending_target: Option<Option<EntityId>>,
     /// `SelectTarget`s with an unknown target so far (for the rate-limited log, item 4).
     unknown_targets: u64,
+    /// The character of the `EnterWorld` sent and not yet answered.
+    pub(crate) outstanding_enter: Option<String>,
+    /// The world instance of the latest `WorldEnter` (§6.3.1).
+    pub(crate) instance: Option<u32>,
+    /// The code of the latest `EnterWorldFailed`.
+    pub(crate) enter_refusal: Option<EnterWorldFailedCode>,
     scratch: Vec<Event>,
 }
 
@@ -153,6 +134,40 @@ pub(crate) fn create_failed_text(code: CharacterCreateFailedCode) -> &'static st
     }
 }
 
+/// `head`, then `: detail` when the server gave one.
+fn with_detail(head: &str, detail: &str) -> String {
+    if detail.is_empty() {
+        head.to_owned()
+    } else {
+        format!("{head}: {detail}")
+    }
+}
+
+/// The neutral reason of a `TeleportRefused` code (§14.6; unknown codes as `Other`).
+fn teleport_refusal(code: TeleportRefusedCode) -> TeleportRefusal {
+    match code.canonical() {
+        TeleportRefusedCode::UnknownPlace => TeleportRefusal::UnknownPlace,
+        TeleportRefusedCode::NotAllowed => TeleportRefusal::NotAllowed,
+        TeleportRefusedCode::Cancelled => TeleportRefusal::Cancelled,
+        TeleportRefusedCode::InvalidDestination => TeleportRefusal::InvalidDestination,
+        _ => TeleportRefusal::Other,
+    }
+}
+
+/// The neutral reason of a `ChatRejected` code (§14.7; unknown codes as `Other`). Not
+/// canonicalised: below minor 2 the decoder reports code 6 as `Other(6)` on purpose.
+fn chat_rejection(code: ChatRejectedCode) -> ChatRejection {
+    match code {
+        ChatRejectedCode::RateLimited => ChatRejection::RateLimited,
+        ChatRejectedCode::UnknownRecipient => ChatRejection::UnknownRecipient,
+        ChatRejectedCode::InvalidText => ChatRejection::InvalidText,
+        ChatRejectedCode::Muted => ChatRejection::Muted,
+        ChatRejectedCode::NotInWorld => ChatRejection::NotInWorld,
+        ChatRejectedCode::NotJoined => ChatRejection::NotJoined,
+        _ => ChatRejection::Other,
+    }
+}
+
 impl Mapper {
     pub(crate) fn new(
         statics: StaticConfig,
@@ -180,6 +195,9 @@ impl Mapper {
             live_statics: BTreeSet::new(),
             pending_target: None,
             unknown_targets: 0,
+            outstanding_enter: None,
+            instance: None,
+            enter_refusal: None,
             scratch: Vec::new(),
         }
     }
@@ -422,6 +440,8 @@ impl Mapper {
             Inbound::WorldEntered(w) => {
                 let (location, heading, anchor) = convert::pose(&w.pose);
                 let player = self.map_id(w.player);
+                self.outstanding_enter = None;
+                self.instance = Some(w.instance);
                 self.player_server = Some(w.player);
                 self.player = Some(player);
                 self.location = Some((location, heading, anchor));
@@ -483,13 +503,58 @@ impl Mapper {
                 sender: None,
                 text,
             }),
+            Inbound::EnterWorldFailed { code, text } => {
+                let character = self.outstanding_enter.take().unwrap_or_default();
+                tracing::info!(code = code.name(), text = %text, "world entry refused");
+                self.enter_refusal = Some(code);
+                out.push(Event::EnterWorldFailed {
+                    character,
+                    reason: with_detail(&format!("cannot enter the world: {}", code.name()), &text),
+                });
+            }
+            Inbound::TeleportRefused { code, text } => out.push(Event::TeleportRefused {
+                reason: teleport_refusal(code),
+                text: with_detail(&format!("teleport refused: {}", code.name()), &text),
+            }),
+            Inbound::ChatRejected { code, text } => out.push(Event::ChatRejected {
+                reason: chat_rejection(code),
+                text: with_detail(&format!("chat not sent: {}", code.name()), &text),
+            }),
+            Inbound::Notice {
+                level,
+                seconds,
+                text,
+            } => out.push(Event::ServerNotice {
+                level: match level {
+                    WireNotice::Info => NoticeLevel::Info,
+                    WireNotice::Warning => NoticeLevel::Warning,
+                    WireNotice::Shutdown => NoticeLevel::Shutdown,
+                },
+                seconds: u32::from(seconds),
+                text,
+            }),
+            Inbound::TimeSynced { offset, delay } => out.push(Event::TimeSynced {
+                offset_us: offset,
+                delay_us: delay,
+            }),
             Inbound::Created(c) => self.created(*c, out),
             Inbound::Updated(u) => {
                 let t = self.last_server_time.unwrap_or(0);
-                if Some(u.id) == self.player_server {
+                let changed = if Some(u.id) == self.player_server {
+                    let before = self.player_state;
                     self.player_state.apply(&u.changes, t);
+                    self.player
+                        .filter(|_| before != self.player_state)
+                        .map(|id| (id, self.player_state))
                 } else if let Some(e) = self.entities.get_mut(&u.id) {
+                    let before = e.state;
                     e.state.apply(&u.changes, t);
+                    (before != e.state).then_some((e.local, e.state))
+                } else {
+                    None
+                };
+                if let Some((id, state)) = changed {
+                    out.push(Event::EntityStateChanged { id, state });
                 }
             }
             Inbound::Appearance(a) => {
@@ -509,6 +574,11 @@ impl Mapper {
             Inbound::Clock(c) => {
                 self.note_time(c.server_time);
                 self.world_clock = Some(c);
+                out.push(Event::WorldClock {
+                    server_time_us: c.server_time,
+                    game_clock: c.game_clock,
+                    rate: c.rate,
+                });
             }
             Inbound::Chat(m) => {
                 self.note_time(m.server_time);
@@ -584,6 +654,11 @@ impl Mapper {
             ..EntityState::default()
         };
         state.apply(&c.properties, c.server_time);
+        // The motion byte travels with every move; only the properties are announced.
+        let announced = EntityState {
+            motion: EntityState::default().motion,
+            ..state
+        } != EntityState::default();
         self.entities.insert(c.id, Tracked { local: id, state });
         self.interp.reset(
             id,
@@ -611,6 +686,9 @@ impl Mapper {
                 transform: convert::transform(&location, heading),
                 velocity,
             });
+        }
+        if announced {
+            out.push(Event::EntityStateChanged { id, state });
         }
     }
 
@@ -682,6 +760,7 @@ mod tests {
     use super::*;
     use crate::model::DisconnectReason;
     use tessera_protocol::message::{EntityKind, EntityUpdate, WorldEnter};
+    use tessera_protocol::types::Motion;
     use tessera_protocol::types::{Appearance, Body, Location as WLoc, Pose, Vec3 as WVec};
 
     fn world_enter(player: u64) -> Inbound {

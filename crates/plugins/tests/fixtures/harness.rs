@@ -121,16 +121,39 @@ impl Fx {
 
     /// A fixture with the given limits.
     pub fn with_limits(limits: Limits) -> Self {
-        Self::build(limits, None)
+        Self::build(limits, None, MemoryEnv::default())
+    }
+
+    /// An empty fixture whose UI reads layouts (and prepared text) from `env`.
+    pub fn with_env(env: MemoryEnv) -> Self {
+        Self::build(Limits::default(), None, env)
+    }
+
+    /// An empty fixture whose UI uses the client services `env` (real-data runs).
+    pub fn with_ui_env(env: Box<dyn tessera_ui::UiEnv>, vocab: Vocab) -> Self {
+        Self::build_with(Limits::default(), None, env, vocab)
     }
 
     /// A fixture over an existing `Plugins/` folder, read-only (real-data runs); plugin data
     /// goes to a temporary folder.
     pub fn over(plugins: &Path) -> Self {
-        Self::build(Limits::default(), Some(plugins.to_path_buf()))
+        Self::build(
+            Limits::default(),
+            Some(plugins.to_path_buf()),
+            MemoryEnv::default(),
+        )
     }
 
-    fn build(limits: Limits, external: Option<PathBuf>) -> Self {
+    fn build(limits: Limits, external: Option<PathBuf>, env: MemoryEnv) -> Self {
+        Self::build_with(limits, external, Box::new(env), Vocab::default())
+    }
+
+    fn build_with(
+        limits: Limits,
+        external: Option<PathBuf>,
+        env: Box<dyn tessera_ui::UiEnv>,
+        vocab: Vocab,
+    ) -> Self {
         let dir = tempfile::tempdir().unwrap();
         let plugins = match external {
             Some(p) => p,
@@ -152,11 +175,7 @@ impl Fx {
             },
             binding: Mutex::new(None),
         });
-        let ui = Rc::new(RefCell::new(Ui::new(
-            Box::new(MemoryEnv::default()),
-            Vocab::default(),
-            SCREEN,
-        )));
+        let ui = Rc::new(RefCell::new(Ui::new(env, vocab, SCREEN)));
         let pui = PluginUi::new(ui);
         *host.binding.lock().unwrap() = Some(pui.binding());
         let mut config = ManagerConfig::new(&plugins).with_limits(limits);
@@ -395,6 +414,20 @@ impl Fx {
     fn next_hold(&mut self) -> u64 {
         self.hold += 1;
         self.hold
+    }
+
+    /// The element of a plugin control given by a Lua expression evaluated in `apartment`.
+    pub fn control_key(&self, apartment: &str, expr: &str) -> tessera_ui::ElementKey {
+        self.manager
+            .with_lua(apartment, |lua| {
+                let t: mlua::Table = self
+                    .chunk(lua, apartment, &format!("return {expr}"))
+                    .and_then(|c| c.eval())
+                    .unwrap_or_else(|e| panic!("{expr}: {e}"));
+                self.pui.element_of(lua, &t)
+            })
+            .flatten()
+            .unwrap_or_else(|| panic!("{expr} is not a control"))
     }
 
     /// The screen box (left, top, width, height) of a plugin object given by a Lua

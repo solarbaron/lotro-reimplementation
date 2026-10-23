@@ -298,13 +298,41 @@ pub(crate) fn create_control(
     styled: Styled,
 ) -> mlua::Result<u64> {
     let aid = sh.apartment_id(ap);
-    let key = sh
-        .ui
-        .try_borrow_mut()
-        .map_err(|_| script_error("the user interface is busy"))?
-        .create_control(kind.ui_kind(), aid)
-        .map_err(|e| script_error(e.to_string()))?;
-    let ctl = Ctl::new(key, kind, styled);
+    let (key, based) = {
+        let mut ui = sh
+            .ui
+            .try_borrow_mut()
+            .map_err(|_| script_error("the user interface is busy"))?;
+        match super::styled::base_element(kind, styled) {
+            Some((class_name, base)) => {
+                // A game-styled text box edits in its text element (§14.2.2): its own
+                // element is a plain control, so focus and keys never land on it.
+                let ui_kind = if kind == Kind::TextBox {
+                    tessera_ui::ControlKind::Control
+                } else {
+                    kind.ui_kind()
+                };
+                match ui.create_based_control(ui_kind, aid, super::styled::PLUGIN_LAYOUT_KEY, base)
+                {
+                    Ok(k) => (k, true),
+                    Err(e) => {
+                        super::styled::fallback_once(class_name, &e);
+                        let k = ui
+                            .create_control(kind.ui_kind(), aid)
+                            .map_err(|e| script_error(e.to_string()))?;
+                        (k, false)
+                    }
+                }
+            }
+            None => (
+                ui.create_control(kind.ui_kind(), aid)
+                    .map_err(|e| script_error(e.to_string()))?,
+                false,
+            ),
+        }
+    };
+    let mut ctl = Ctl::new(key, kind, styled);
+    ctl.based = based;
     let id = match bind_new(lua, sh, ap, this, cls, ObjData::Ctl(ctl)) {
         Ok(id) => id,
         Err(e) => {

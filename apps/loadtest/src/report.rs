@@ -182,6 +182,8 @@ pub struct Totals {
     pub cheat_extra_corrections: u64,
     /// Close timeouts.
     pub close_timeouts: u64,
+    /// World entries the server refused.
+    pub enter_refusals: u64,
     /// Transport counters.
     pub traffic: Traffic,
     /// Login latency, ms.
@@ -321,6 +323,7 @@ fn sum_totals(bots: &[(usize, bool, BotStats)]) -> (Totals, Vec<String>) {
         t.cheats_abandoned += s.cheats_abandoned;
         t.cheat_extra_corrections += s.cheat_extra_corrections;
         t.close_timeouts += s.close_timeouts;
+        t.enter_refusals += s.enter_refusals;
         t.traffic.merge(&s.traffic);
         t.login_ms.merge(&s.login_ms);
         t.enter_ms.merge(&s.enter_ms);
@@ -433,17 +436,11 @@ impl Report {
                 inputs.desync.lagging_rounds
             ));
         }
-        if !inputs.in_process {
+        if !inputs.in_process && inputs.params.say_range.is_none() {
             coverage.push(
-                "remote: the world instance of each bot is unknown, so Missing and Yell assume one instance (test-server.md §15.2)"
+                "remote: Say range unknown (--say-range), Say judged only for the speaker's echo"
                     .into(),
             );
-            if inputs.params.say_range.is_none() {
-                coverage.push(
-                    "remote: Say range unknown (--say-range), Say judged only for the speaker's echo"
-                        .into(),
-                );
-            }
         }
         let server_cheats = inputs.stats.map(|(a, b)| ServerCheatCounts {
             corrections: b.corrections.saturating_sub(a.corrections),
@@ -651,10 +648,11 @@ impl Report {
         );
         let _ = writeln!(
             s,
-            "sessions: {} started, {} logins, {} world entries, {} planned reconnects, {} admission refusals, {} unexpected disconnects, {} close timeouts, {} refused commands",
+            "sessions: {} started, {} logins, {} world entries ({} refused), {} planned reconnects, {} admission refusals, {} unexpected disconnects, {} close timeouts, {} refused commands",
             t.sessions,
             t.logins,
             t.world_entries,
+            t.enter_refusals,
             t.reconnects,
             t.admission_refusals,
             t.unexpected_disconnects,
@@ -755,6 +753,19 @@ impl Report {
             tr.lost_packets,
             tr.motion_dropped,
             tr.protocol_dropped
+        );
+        let _ = writeln!(
+            s,
+            "motion snapshots: {} received, interval mean {} max {} ms, {} empty snapshot periods",
+            tr.motion_snapshots,
+            tr.motion_interval_mean_ms()
+                .map_or("-".into(), |v| format!("{v:.1}")),
+            if tr.motion_intervals > 0 {
+                format!("{:.1}", tr.motion_interval_max_us as f64 / 1e3)
+            } else {
+                "-".into()
+            },
+            tr.motion_gaps
         );
         if let Some((a, b)) = &i.stats {
             let _ = writeln!(
@@ -1049,6 +1060,7 @@ impl Report {
             ("unexpected_disconnects", t.unexpected_disconnects),
             ("admission_refusals", t.admission_refusals),
             ("close_timeouts", t.close_timeouts),
+            ("enter_refusals", t.enter_refusals),
             ("send_errors", t.send_errors),
             ("corrections", t.corrections),
             ("teleports", t.teleports),
@@ -1079,6 +1091,11 @@ impl Report {
             ("motion_dropped", t.traffic.motion_dropped),
             ("lost_packets", t.traffic.lost_packets),
             ("protocol_dropped", t.traffic.protocol_dropped),
+            ("motion_snapshots", t.traffic.motion_snapshots),
+            ("motion_intervals", t.traffic.motion_intervals),
+            ("motion_interval_sum_us", t.traffic.motion_interval_sum_us),
+            ("motion_interval_max_us", t.traffic.motion_interval_max_us),
+            ("motion_gaps", t.traffic.motion_gaps),
         ] {
             j.uint(Some(k), v);
         }

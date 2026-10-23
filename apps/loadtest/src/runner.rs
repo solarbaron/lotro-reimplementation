@@ -1195,8 +1195,14 @@ fn send_chat(
                 ChatChannel::Say
             }
             ChatKind::Yell => {
+                // Instance-wide (`tessera-protocol.md` §10.1): bots in another instance
+                // (`WorldEnter.instance`) are excluded.
+                let mine = bots[s].instance();
                 for (r, b) in bots.iter().enumerate() {
                     if r == s {
+                        continue;
+                    }
+                    if b.in_world() && !crate::desync::same_instance(mine, b.instance()) {
                         continue;
                     }
                     if b.in_world() {

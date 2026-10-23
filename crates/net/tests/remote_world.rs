@@ -45,6 +45,7 @@ struct Seen {
     teleport_move: Option<WLoc>,
     chat: Option<String>,
     emote: Option<u32>,
+    stance: Option<Stance>,
 }
 
 #[test]
@@ -137,6 +138,9 @@ fn world_lifecycle_end_to_end() {
         if let Message::EmoteSet(e) = p.expect(MessageType::EmoteSet).await {
             seen.emote = Some(e.anim);
         }
+        if let Message::StanceSet(st) = p.expect(MessageType::StanceSet).await {
+            seen.stance = Some(st);
+        }
         p.expect(MessageType::Disconnect).await;
         seen
     });
@@ -186,6 +190,23 @@ fn world_lifecycle_end_to_end() {
             sex: 2
         }
     ));
+    // Property changes are events too (ARCH §19.1): the player's run speed, and the
+    // creation of 43 with a stance other than the default (announced right after its
+    // `EntityCreated`).
+    assert!(events.iter().any(|e| matches!(e,
+        Event::EntityStateChanged { id: EntityId(42), state } if state.run_speed == 8.0)));
+    let mut events = events;
+    events.extend(pump(&mut s, |e| {
+        matches!(
+            e,
+            Event::EntityStateChanged {
+                id: EntityId(43),
+                ..
+            }
+        )
+    }));
+    assert!(matches!(events.last(),
+        Some(Event::EntityStateChanged { id: EntityId(43), state }) if state.stance == Stance::Ready));
     let b = backend(&s);
     assert_eq!(b.entity_state(EntityId(42)).unwrap().run_speed, 8.0);
     assert_eq!(b.entity_state(EntityId(43)).unwrap().stance, Stance::Ready);
@@ -323,6 +344,12 @@ fn world_lifecycle_end_to_end() {
         .unwrap()
         .emote(0x1000_0123, false)
         .unwrap();
+    send(
+        &mut s,
+        Command::Stance {
+            stance: Stance::Ready,
+        },
+    );
     let _ = pump_for(&mut s, Duration::from_millis(100));
     send(&mut s, Command::Disconnect);
     let events = pump(&mut s, |e| matches!(e, Event::Disconnected { .. }));
@@ -335,6 +362,7 @@ fn world_lifecycle_end_to_end() {
 
     let seen = peer.join();
     assert_eq!(seen.chat.as_deref(), Some("hi Bram"));
+    assert_eq!(seen.stance, Some(Stance::Ready));
     assert_eq!(seen.first_move_epoch, 1);
     assert_eq!(seen.first_move_gait, Some(Gait::Running));
     let t = seen.teleport_move.unwrap();
@@ -494,6 +522,18 @@ fn remote_entities_interpolate_at_render_time() {
     assert!(be.stats().clock_offset_us.is_some());
     assert!(be.stats().time_samples >= 1);
     assert!(be.interpolation_delay() >= Duration::from_millis(150));
+    // `MotionBatch` timing (`test-server.md` §15.3). Only structural facts are checked
+    // here: arrival times depend on scheduling on a loaded machine (a starved network task
+    // drains a burst), so no interval bound holds; the driver's unit tests cover the exact
+    // counts. Interpolated samples need two snapshots.
+    let st = be.stats();
+    assert!(st.motion_snapshots >= 2, "{}", st.motion_snapshots);
+    assert!(st.motion_batches >= st.motion_snapshots);
+    let last = st.motion_interval_last.unwrap();
+    let max = st.motion_interval_max.unwrap();
+    assert!(max >= last);
+    assert!(u128::from(st.motion_interval_sum_us) >= max.as_micros());
+    assert!(st.motion_gaps < 30 * 30, "{}", st.motion_gaps);
     drop(s);
     assert_eq!(peer.join(), t0);
 }

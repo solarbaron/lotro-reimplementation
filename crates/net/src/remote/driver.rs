@@ -15,7 +15,8 @@ use tessera_protocol::client::{
     ChannelRequest, ClientConfig, ClientEvent, ClientSession, ClientState, CloseCause,
 };
 use tessera_protocol::codes::{
-    AppErrorCode, ChannelRefusedCode, CharacterCreateFailedCode, ClientFailure,
+    AppErrorCode, ChannelRefusedCode, CharacterCreateFailedCode, ChatRejectedCode, ClientFailure,
+    EnterWorldFailedCode, TeleportRefusedCode,
 };
 use tessera_protocol::frame::StreamKind;
 use tessera_protocol::limits::{DEFAULT_TICK_RATE, STANDING_SPEED};
@@ -61,12 +62,35 @@ pub(crate) enum Inbound {
         code: CharacterCreateFailedCode,
         text: String,
     },
+    /// `EnterWorldFailed` (§6.2.11): back in CharacterSelect.
+    EnterWorldFailed {
+        code: EnterWorldFailedCode,
+        text: String,
+    },
     /// `WorldEnter`.
     WorldEntered(Box<WorldEnter>),
     /// `LocationReport`.
     Location(Box<LocationReport>),
-    /// A line to show as system chat.
+    /// A line to show as system chat (Tessera's own words).
     System(String),
+    /// `TeleportRefused` (§6.2.13).
+    TeleportRefused {
+        code: TeleportRefusedCode,
+        text: String,
+    },
+    /// `ChatRejected` (§6.4.3).
+    ChatRejected {
+        code: ChatRejectedCode,
+        text: String,
+    },
+    /// `ServerNotice` (§6.4.2).
+    Notice {
+        level: NoticeLevel,
+        seconds: u16,
+        text: String,
+    },
+    /// A time sample was taken (§11.2): the estimate in use after it.
+    TimeSynced { offset: i64, delay: i64 },
     /// `EntityCreate`.
     Created(Box<EntityCreate>),
     /// `EntityUpdate`.
@@ -190,6 +214,8 @@ pub(crate) struct Driver {
     last_sent_heading: Option<f32>,
     forced: bool,
     next_ping: u64,
+    /// `server_time` and client arrival time (µs) of the newest snapshot received.
+    last_snapshot: Option<(u64, u64)>,
 }
 
 impl Driver {
@@ -210,7 +236,13 @@ impl Driver {
             last_sent_heading: None,
             forced: false,
             next_ping: 0,
+            last_snapshot: None,
         }
+    }
+
+    /// Sends `Register` instead of `Login` once the server greeted (`Command::Register`).
+    pub(crate) fn register_instead(&mut self) {
+        self.register = true;
     }
 
     /// The negotiated minor version (§3.1); control frames are encoded under it.
@@ -512,16 +544,11 @@ impl Driver {
                 );
             }
             ClientEvent::EnterWorldFailed(f) => {
-                let text = with_detail(
-                    &format!("cannot enter the world: {}", f.code.name()),
-                    &f.text,
-                );
-                self.push(Inbound::System(text.clone()));
-                self.end_with(
-                    now,
-                    DisconnectReason::ServerClosed(text),
-                    RemoteFailure::EnterWorld { code: f.code },
-                );
+                // §6.2.11: the client is back in CharacterSelect; the session goes on.
+                self.push(Inbound::EnterWorldFailed {
+                    code: f.code,
+                    text: f.text,
+                });
             }
             ClientEvent::WorldEntered(w) => {
                 self.current = Some(MoveSlot {
@@ -557,10 +584,10 @@ impl Driver {
                 self.push(Inbound::Location(Box::new(r)));
             }
             ClientEvent::TeleportRefused(t) => {
-                self.push(Inbound::System(with_detail(
-                    &format!("teleport refused: {}", t.code.name()),
-                    &t.text,
-                )));
+                self.push(Inbound::TeleportRefused {
+                    code: t.code,
+                    text: t.text,
+                });
             }
             ClientEvent::EntityCreated(c) => self.push(Inbound::Created(Box::new(c))),
             ClientEvent::EntityUpdated(u) => self.push(Inbound::Updated(u)),
@@ -569,16 +596,11 @@ impl Driver {
             ClientEvent::InterestReset(ids) => self.push(Inbound::Reset(ids)),
             ClientEvent::WorldClock(c) => self.push(Inbound::Clock(c)),
             ClientEvent::Chat(m) => self.push(Inbound::Chat(Box::new(m))),
-            ClientEvent::Notice(n) => {
-                let text = match n.level {
-                    NoticeLevel::Info => n.text,
-                    NoticeLevel::Warning => format!("warning: {}", n.text),
-                    NoticeLevel::Shutdown => {
-                        format!("server stopping in {} s: {}", n.seconds, n.text)
-                    }
-                };
-                self.push(Inbound::System(text));
-            }
+            ClientEvent::Notice(n) => self.push(Inbound::Notice {
+                level: n.level,
+                seconds: n.seconds,
+                text: n.text,
+            }),
             ClientEvent::ChannelJoined { name, .. } => self.push(Inbound::ChannelJoined(name)),
             ClientEvent::ChannelLeft { left, .. } => self.push(Inbound::ChannelLeft {
                 name: left.name,
@@ -602,31 +624,79 @@ impl Driver {
                     channel_refused_reason(refused.code),
                 )));
             }
-            ClientEvent::ChatRejected(f) => {
-                self.push(Inbound::System(with_detail(
-                    &format!("chat not sent: {}", f.code.name()),
-                    &f.text,
-                )));
-            }
+            ClientEvent::ChatRejected(f) => self.push(Inbound::ChatRejected {
+                code: f.code,
+                text: f.text,
+            }),
             ClientEvent::Motion {
                 server_time,
                 entries,
             } => {
                 self.stats.motion_batches += 1;
+                self.snapshot_timing(server_time, now);
                 self.push(Inbound::Motion {
                     server_time,
                     entries,
                 });
             }
-            ClientEvent::TimeSample(_) => self.stats.time_samples += 1,
+            ClientEvent::TimeSample(sample) => {
+                self.stats.time_samples += 1;
+                let clock = self.session.clock();
+                let offset = clock.offset().unwrap_or(sample.offset);
+                let delay = clock.best_delay().unwrap_or(sample.delay);
+                self.stats.clock_offset_us = Some(offset);
+                self.stats.clock_delay_us = Some(delay);
+                self.push(Inbound::TimeSynced { offset, delay });
+            }
             ClientEvent::Pong { rtt, .. } => {
                 self.stats.ping_rtt = Some(Duration::from_micros(rtt));
+                self.stats.ping_seq = self.stats.ping_seq.wrapping_add(1);
             }
             ClientEvent::Closed(cause) => {
                 let (reason, failure) = close_reason(&cause);
                 self.report_closed(reason, failure);
             }
             other => tracing::debug!(event = ?other, "client event ignored"),
+        }
+    }
+
+    /// `MotionBatch` timing (`test-server.md` §13.4): inter-arrival times of snapshots on
+    /// the client clock, and snapshot periods without a batch (from the server times and
+    /// the server's `snapshot_rate`).
+    ///
+    /// Only a batch newer than every earlier one starts a snapshot: another datagram of the
+    /// same snapshot (§8.5), or a late datagram of an older one (batches are unreliable
+    /// datagrams and may be reordered), counts as a batch only.
+    fn snapshot_timing(&mut self, server_time: u64, now: u64) {
+        let previous = self.last_snapshot;
+        if previous.is_some_and(|(t, _)| server_time <= t) {
+            return;
+        }
+        self.last_snapshot = Some((server_time, now));
+        self.stats.motion_snapshots = self.stats.motion_snapshots.saturating_add(1);
+        let Some((last_time, last_arrival)) = previous else {
+            return;
+        };
+        let interval = Duration::from_micros(now.saturating_sub(last_arrival));
+        self.stats.motion_interval_last = Some(interval);
+        self.stats.motion_interval_max = Some(
+            self.stats
+                .motion_interval_max
+                .map_or(interval, |m| m.max(interval)),
+        );
+        self.stats.motion_interval_sum_us = self
+            .stats
+            .motion_interval_sum_us
+            .saturating_add(now.saturating_sub(last_arrival));
+        let rate = self.stats.server.as_ref().map_or(0, |s| s.snapshot_rate);
+        if rate > 0 && server_time > last_time {
+            let period = 1_000_000 / u64::from(rate);
+            // Snapshot times are tick times (wake times, §11.1), so round to whole periods.
+            let periods = (server_time - last_time).saturating_add(period / 2) / period.max(1);
+            self.stats.motion_gaps = self
+                .stats
+                .motion_gaps
+                .saturating_add(periods.saturating_sub(1));
         }
     }
 
@@ -860,6 +930,50 @@ mod tests {
         let before = d.pending.len();
         d.command(NetCommand::QueryLocation, 3);
         assert_eq!(d.pending.len(), before);
+    }
+
+    /// `MotionBatch` timing (`test-server.md` §15.3): inter-arrival times on the client
+    /// clock, a second datagram of one snapshot counted once, and missing periods counted
+    /// from the server times at the advertised `snapshot_rate` (15 Hz here).
+    #[test]
+    fn snapshot_timing_counts_intervals_and_gaps() {
+        let mut d = driver();
+        d.on_control(&hello_ack(), 2);
+        assert_eq!(d.stats.server.as_ref().map(|s| s.snapshot_rate), Some(15));
+        // Server times one period (66,667 µs) apart, a split snapshot, then two lost.
+        d.snapshot_timing(1_000_000, 10_000_000);
+        d.snapshot_timing(1_066_667, 10_070_000);
+        d.snapshot_timing(1_066_667, 10_071_000);
+        d.snapshot_timing(1_266_667, 10_270_000);
+        let st = &d.stats;
+        assert_eq!(st.motion_snapshots, 3);
+        assert_eq!(st.motion_interval_last, Some(Duration::from_millis(200)));
+        assert_eq!(st.motion_interval_max, Some(Duration::from_millis(200)));
+        assert_eq!(st.motion_interval_sum_us, 270_000);
+        assert_eq!(st.motion_gaps, 2);
+        // A server time going backwards (a late datagram) is no new snapshot and adds no
+        // gap or interval.
+        d.snapshot_timing(1_200_000, 10_300_000);
+        assert_eq!(d.stats.motion_gaps, 2);
+        assert_eq!(d.stats.motion_snapshots, 3);
+        assert_eq!(d.stats.motion_interval_sum_us, 270_000);
+    }
+
+    /// Regression: a late second datagram of an older split snapshot (A1, B, A2, C) was
+    /// counted as a new snapshot with a near-zero interval, and C against it as a gap.
+    #[test]
+    fn reordered_datagrams_do_not_skew_snapshot_timing() {
+        let mut d = driver();
+        d.on_control(&hello_ack(), 2);
+        d.snapshot_timing(1_000_000, 10_000_000); // A1
+        d.snapshot_timing(1_066_667, 10_066_000); // B
+        d.snapshot_timing(1_000_000, 10_067_000); // A2, late
+        d.snapshot_timing(1_133_333, 10_133_000); // C
+        let st = &d.stats;
+        assert_eq!(st.motion_snapshots, 3);
+        assert_eq!(st.motion_gaps, 0);
+        assert_eq!(st.motion_interval_sum_us, 133_000);
+        assert_eq!(st.motion_interval_last, Some(Duration::from_millis(67)));
     }
 
     #[test]

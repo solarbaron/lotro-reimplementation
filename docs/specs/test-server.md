@@ -1794,6 +1794,19 @@ spec's rules.
   (no `MotionBatch` inter-arrival times or loss), and the bots poll at 30 Hz, which quantises
   chat latency to about 33 ms.
 
+> **OPEN:** (implementer, `tessera-net` / `tessera-loadtest`, 2026-10-23; a report, not a
+> question) of the `tessera-net` gaps above, these are closed in code: abrupt loss
+> (`RemoteBackend::drop_connection`, no `Disconnect`); the instance (`RemoteBackend::instance`,
+> used by the tool for Missing and Yell, so the "one instance" coverage note is gone); typed
+> `TeleportRefused`, `ChatRejected` and `ServerNotice` events (the tool no longer reads text
+> prefixes for them; `ChannelRefused` is still a system line in Tessera's own words); a ping
+> sequence counter (`RemoteStats::ping_seq`); and `MotionBatch` timing (`motion_snapshots`,
+> last and longest inter-arrival time, their sum, and `motion_gaps`, snapshot periods
+> without a batch, an upper bound of the loss; reported per run). Still open: the epoch of
+> moves and the 30 Hz poll. A spec writer may mark the closed items. Choice to confirm: the
+> `churn` scenario still leaves with `Disconnect` as §13.1 says; whether it should now also
+> drop some connections abruptly is a design decision for this spec.
+
 > **Answered (2026-10-10, sixth revision, spec writer; was OPEN, implementer,
 > `tessera-server`, 2026-10-10, commit 2c159fe):** the closed line's cause fields are now
 > normative in §11.1 ("Fields of the cause" and "Graceful shutdown"); §14 invariant 11 lists

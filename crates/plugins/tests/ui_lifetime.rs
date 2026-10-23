@@ -327,3 +327,21 @@ fn control_list_insert_and_set() {
     );
     assert_eq!(r, (3.0, true, true));
 }
+
+/// Twenty thousand live controls in one apartment raise no error: a native object holds no
+/// host-side handle to its class table (`lua-plugin-api.md` §8.3), so the count is bounded
+/// by memory, not by the Lua stack. `IsA` still answers from the class.
+#[test]
+fn twenty_thousand_live_controls_raise_no_error() {
+    let mut fx = fx_with("");
+    let r: Result<bool, _> = fx.try_eval(
+        "Probe",
+        "keep = {} for i = 1, 20000 do keep[i] = Turbine.UI.Control() end \
+         return keep[20000]:IsA(Turbine.UI.Control) and keep[1]:IsA(Turbine.Object) \
+           and not keep[1]:IsA(Turbine.UI.Window)",
+    );
+    assert_eq!(r.ok(), Some(true));
+    assert_eq!(fx.pui.object_count("Probe"), 20_000);
+    fx.frame(0.016);
+    fx.assert_no_errors();
+}

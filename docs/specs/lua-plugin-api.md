@@ -3223,6 +3223,47 @@ Tessera builds these controls from the user's own layout and art (they are skinn
 its own neutral frame; that frame uses the same part rectangles and z-levels as §14.2.3 so
 that plugin layouts stay correct.
 
+> **OPEN:** (implementer, `tessera-plugins` / `tessera-ui`, 2026-10-23; engineering choices
+> and gaps, not questions about the original) §14.2.1–§14.2.3 are built for `Window`,
+> `GoldWindow`, `Button`, `GoldButton`, `CheckBox`, `TextBox` and `ScrollBar`
+> (`Ui::create_based_control`, `Ui::create_based_part`; the fallback of step 5 logs once per
+> class). Choices a reviewer should confirm or correct:
+> (1) a new game-styled window sets `UICore_Element_hide` = true on its eight resize bars
+> (the table's "hidden unless resizable"), whatever the layout says; (2) the caption width
+> *m* is the text element's laid-out content width on one unwrapped line, 0 while its fonts
+> are not loaded; such a title is laid out again once a frame (before the `Update`
+> broadcast) until the caption measures, at most 1,800 times (about 30 s at 60 frames a
+> second, a Tessera bound), and a new caption or size starts the retries afresh; (3) the close button's
+> `Button_click` reaches the layer through the listener registry (one registration for
+> 0x10002298); (4) the check mark 0x100025B0 shows the state through
+> `UICore_Button_highlighted` and is made mouse-invisible, so a press on it goes to the
+> check box itself and the mark never toggles on its own; (5) a game-styled `TextBox`'s own
+> element is a plain control (never focused, never edited); its text element 0x100022AA is
+> made editable, keeps the focus on Escape and Enter like a plain text box, and its press,
+> release, click, double click, move, hover, wheel, focus, key and text-change
+> notifications reach the layer through the listener registry (one set of registrations for
+> 0x100022AA) and become the box's events, with positions relative to the box; enter and
+> leave come from the box's own element only; `Focus`/`HasFocus` act on the text element;
+> (6) a game-styled `ScrollBar` keeps the layer's own control element (its visibility,
+> position, size, z-level, background and numbers stay the layer's) and gets the layout's
+> scroll bar 0x1000239E or 0x1000239F as a part filling it, with a run-time element ID; the
+> part's new-position, line and page notifications (registered per part) set the value
+> (new position: minimum + the position fraction × (maximum − minimum), rounded; line: ±
+> small change; page: ± large change), and the layer writes the thumb fractions of §9.6 to
+> its `UICore_Scrollbar_position` and `UICore_Scrollbar_widget_size`; presses, moves and
+> the wheel over the bar are the part's (the control fires no `MouseDown` for them); parts a
+> plugin sets with `SetThumbButton` and the like are still placed by the layer, over the
+> layout's; (7) the step-3 rebuild of a scroll bar rebuilds that part only, so the kept
+> state of step 3 is kept by construction, and the blend-mode mapping is applied to the
+> control's element. Not built yet: (b) the rebuild of step 3 for windows first marked as
+> scaled, with the scaled-window base elements 0x10004D37 / 0x10004D38; (c) step 2 of the
+> title layout sets no text margins (no margin property IDs in the UI vocabulary); (d) the
+> title bar and drag bar at top −8 are still cut at the window's top edge: a window draws
+> into its own surface, whose canvas is the window's rectangle, and the composition clips
+> nested entries to the enclosing window (decision 0015, `render.md` §6.8); showing the 8
+> rows above needs a canvas that extends over children above the top edge, a change of the
+> `tessera-ui` surface code outside the plugin layer.
+
 <a id="14-3"></a>
 ### 14.3 Native panel control (`LotroUI`)
 

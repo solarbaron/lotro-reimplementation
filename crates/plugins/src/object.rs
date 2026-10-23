@@ -13,6 +13,12 @@ use tessera_script::{api_fn, host_error};
 /// Registry name of the weak-keyed table binding instance tables to native objects.
 pub(crate) const NATIVES_KEY: &str = "tessera.plugins.natives";
 
+/// Registry name of the weak-keyed table giving the class table each native object was
+/// constructed as (for `IsA`). The class lives on the Lua side, so a native object holds
+/// no host-side handle to a Lua value: the number of live objects is bounded by memory,
+/// not by the host's handle stack (about 8,000 slots in Lua 5.1).
+pub(crate) const NATIVE_CLASSES_KEY: &str = "tessera.plugins.native_classes";
+
 /// Longest `IsA` chain walked before giving up (guards against `__index` cycles).
 const MAX_CHAIN: usize = 256;
 
@@ -50,12 +56,11 @@ pub(crate) enum NativeKind {
     External(Payload),
 }
 
-/// The opaque userdata stored in the hidden natives table.
+/// The opaque userdata stored in the hidden natives table. Its class table is kept in
+/// the apartment's [`NATIVE_CLASSES_KEY`] table, never here.
 #[derive(Debug)]
 pub(crate) struct Native {
     pub kind: NativeKind,
-    /// The class table the object was constructed as (for `IsA`).
-    pub class: Table,
 }
 
 impl UserData for Native {}
@@ -71,9 +76,9 @@ pub(crate) fn native_of(lua: &Lua, obj: &Table) -> mlua::Result<Option<NativeKin
 
 /// The class table of the native object bound to `obj`, if any.
 pub(crate) fn native_class_of(lua: &Lua, obj: &Table) -> mlua::Result<Option<Table>> {
-    let natives: Table = lua.named_registry_value(NATIVES_KEY)?;
-    match natives.raw_get::<Value>(obj)? {
-        Value::UserData(ud) => Ok(Some(ud.borrow::<Native>()?.class.clone())),
+    let classes: Table = lua.named_registry_value(NATIVE_CLASSES_KEY)?;
+    match classes.raw_get::<Value>(obj)? {
+        Value::Table(class) => Ok(Some(class)),
         _ => Ok(None),
     }
 }
@@ -87,17 +92,22 @@ pub(crate) fn bind_native(
     class: Table,
 ) -> mlua::Result<()> {
     let natives: Table = lua.named_registry_value(NATIVES_KEY)?;
-    let ud = lua.create_userdata(Native { kind, class })?;
+    let classes: Table = lua.named_registry_value(NATIVE_CLASSES_KEY)?;
+    let ud = lua.create_userdata(Native { kind })?;
+    classes.raw_set(obj, class)?;
     natives.raw_set(obj, ud)
 }
 
-/// Create the hidden natives table (weak keys) of a new apartment.
+/// Create the hidden natives and native-classes tables (weak keys) of a new apartment.
 pub(crate) fn install_natives_table(lua: &Lua) -> mlua::Result<()> {
-    let natives = lua.create_table()?;
-    let weak = lua.create_table()?;
-    weak.raw_set("__mode", "k")?;
-    natives.set_metatable(Some(weak))?;
-    lua.set_named_registry_value(NATIVES_KEY, natives)
+    for key in [NATIVES_KEY, NATIVE_CLASSES_KEY] {
+        let t = lua.create_table()?;
+        let weak = lua.create_table()?;
+        weak.raw_set("__mode", "k")?;
+        t.set_metatable(Some(weak))?;
+        lua.set_named_registry_value(key, t)?;
+    }
+    Ok(())
 }
 
 /// Does `start`'s `__index` chain (starting at `start` itself) reach `target`?
@@ -217,5 +227,45 @@ impl<'a> Builder<'a> {
         t.raw_set("IsA", self.isa.clone())?;
         ns.raw_set(name, t.clone())?;
         Ok(t)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Twenty thousand live native objects, each bound with its own fresh handle of the
+    /// class table (as the gameplay views do), keep no host handle alive: binding never
+    /// runs out of the host's handle stack, and `IsA` still answers from the class.
+    #[test]
+    fn many_live_natives_hold_no_host_handles() {
+        let lua = Lua::new();
+        install_natives_table(&lua).unwrap();
+        let base = lua.create_table().unwrap();
+        let cls = lua.create_table().unwrap();
+        let mt = lua.create_table().unwrap();
+        mt.raw_set("__index", base.clone()).unwrap();
+        cls.set_metatable(Some(mt)).unwrap();
+        let other = lua.create_table().unwrap();
+        lua.set_named_registry_value("probe.class", cls).unwrap();
+        let mut last = None;
+        for i in 1..=20_000 {
+            // A fresh handle each time, dropped at the end of the iteration.
+            let class: Table = lua.named_registry_value("probe.class").unwrap();
+            let obj = lua.create_table().unwrap();
+            bind_native(&lua, &obj, NativeKind::Object, class).unwrap();
+            lua.globals().raw_set(format!("o{i}"), obj.clone()).unwrap();
+            last = Some(obj);
+        }
+        let last = last.unwrap();
+        let isa = |class: &Table| {
+            is_a(
+                &lua,
+                (Value::Table(last.clone()), Value::Table(class.clone())),
+            )
+            .unwrap()
+        };
+        let r = (isa(&base), isa(&other));
+        assert_eq!(r, (true, false));
     }
 }

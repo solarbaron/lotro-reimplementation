@@ -38,9 +38,10 @@ use crate::domain::{
     WorldCommand, WorldEvent,
 };
 use crate::model::{
-    Anchor, Appearance, CharacterSummary, ChatChannel, DataId, Destination, DisconnectReason,
-    EntityId, EntityKind, Location, LocationCause, MAX_CHAT_LEN, MAX_NAME_LEN, Placement,
-    Transform, Vec3, is_valid_name, sanitize_text,
+    Anchor, Appearance, CharacterSummary, ChatChannel, ChatRejection, DataId, Destination,
+    DisconnectReason, EntityId, EntityKind, EntityState, Location, LocationCause, MAX_CHAT_LEN,
+    MAX_NAME_LEN, NoticeLevel, Placement, Stance, TeleportRefusal, Transform, Vec3, is_valid_name,
+    sanitize_text,
 };
 
 /// Something that happened in the world, reported by a backend.
@@ -185,6 +186,67 @@ pub enum Event {
         /// Why.
         reason: DisconnectReason,
     },
+    /// The world source refused [`Command::EnterWorld`] (`docs/ARCHITECTURE.md` §19.1
+    /// "world-state change"). The session is back in [`SessionState::Connected`] and may
+    /// send another `EnterWorld`, a character command or `Disconnect`.
+    EnterWorldFailed {
+        /// The character that was asked for.
+        character: String,
+        /// Why, in Tessera's own words (the world source's detail appended when it gave
+        /// one).
+        reason: String,
+    },
+    /// The replicated state of an entity or the player changed (`docs/ARCHITECTURE.md`
+    /// §19.1 "property changed"): its whole [`EntityState`] after the change.
+    EntityStateChanged {
+        /// The entity (the player included).
+        id: EntityId,
+        /// Its state now.
+        state: EntityState,
+    },
+    /// The world source's clock (`tessera-protocol.md` §11.3): the game clock *G* in
+    /// seconds at a server time, and how fast it runs. The client turns *G* into a time of
+    /// day with its own data's constants.
+    WorldClock {
+        /// The server time at which `game_clock` holds, µs.
+        server_time_us: u64,
+        /// The game clock *G* in seconds (finite, ≥ 0).
+        game_clock: f64,
+        /// Game seconds per real second (finite, ≥ 0).
+        rate: f32,
+    },
+    /// A clock-synchronisation sample was taken (`docs/ARCHITECTURE.md` §19.1 "time sync";
+    /// `tessera-protocol.md` §11.2): the estimate in use after it.
+    TimeSynced {
+        /// Server clock minus client clock, µs.
+        offset_us: i64,
+        /// Smallest round-trip delay among the samples kept, µs.
+        delay_us: i64,
+    },
+    /// A [`Command::Teleport`] was refused (its one answer, instead of a
+    /// [`Event::LocationReport`]).
+    TeleportRefused {
+        /// Why.
+        reason: TeleportRefusal,
+        /// Tessera's line for it, with the world source's detail when it gave one.
+        text: String,
+    },
+    /// A [`Command::Chat`] line was not delivered.
+    ChatRejected {
+        /// Why.
+        reason: ChatRejection,
+        /// Tessera's line for it, with the world source's detail when it gave one.
+        text: String,
+    },
+    /// A notice from the world source's operator.
+    ServerNotice {
+        /// How urgent it is.
+        level: NoticeLevel,
+        /// For [`NoticeLevel::Shutdown`], seconds until the world source stops; else 0.
+        seconds: u32,
+        /// The notice as the operator wrote it.
+        text: String,
+    },
     /// A character event (character list details, levels;
     /// `docs/specs/scenario-feed.md` §9.2).
     Character(CharacterEvent),
@@ -219,6 +281,13 @@ impl Event {
             Self::EntityDespawned { .. } => "EntityDespawned",
             Self::ChatMessage { .. } => "ChatMessage",
             Self::Disconnected { .. } => "Disconnected",
+            Self::EnterWorldFailed { .. } => "EnterWorldFailed",
+            Self::EntityStateChanged { .. } => "EntityStateChanged",
+            Self::WorldClock { .. } => "WorldClock",
+            Self::TimeSynced { .. } => "TimeSynced",
+            Self::TeleportRefused { .. } => "TeleportRefused",
+            Self::ChatRejected { .. } => "ChatRejected",
+            Self::ServerNotice { .. } => "ServerNotice",
             Self::Character(e) => e.name(),
             Self::Inventory(e) => e.name(),
             Self::Combat(e) => e.name(),
@@ -285,6 +354,36 @@ pub enum Command {
     /// Close the session gracefully. The backend answers with
     /// [`Event::Disconnected`].
     Disconnect,
+    /// Open the session like [`Command::Connect`], creating the account first: the
+    /// backend's credentials are registered as a new account and then logged in
+    /// (`docs/ARCHITECTURE.md` §19.1). The remote backend sends `Register`; the sandbox
+    /// backend, which has no accounts, treats it as `Connect`. Other backends may not
+    /// support it: one that ignores it leaves the session in
+    /// [`SessionState::Connecting`], so send `Connect` to backends that create no
+    /// accounts.
+    Register,
+    /// Play an emote (in the world): `anim` is an opaque animation key from the client's
+    /// data, 0 stops the current emote. Answered with [`Event::EntityStateChanged`] for
+    /// the player by backends that replicate it.
+    Emote {
+        /// The animation key; 0 stops.
+        anim: u32,
+        /// Play until stopped.
+        looping: bool,
+    },
+    /// Set the player's stance (in the world). Answered with
+    /// [`Event::EntityStateChanged`] for the player by backends that replicate it.
+    Stance {
+        /// The new stance.
+        stance: Stance,
+    },
+    /// Ask to change the player's appearance (in the world). The world source answers
+    /// with an [`Event::AppearanceChanged`] for the player carrying the result; one that
+    /// does not allow it refuses the command with [`NetError::InvalidCommand`].
+    SetAppearance {
+        /// The appearance asked for ([`Appearance::is_valid`]).
+        appearance: Box<Appearance>,
+    },
     /// A character command (allowed while connected, before world entry).
     Character(CharacterCommand),
     /// An inventory command.
@@ -314,6 +413,10 @@ impl Command {
             Self::QueryLocation => "QueryLocation",
             Self::Chat { .. } => "Chat",
             Self::Disconnect => "Disconnect",
+            Self::Register => "Register",
+            Self::Emote { .. } => "Emote",
+            Self::Stance { .. } => "Stance",
+            Self::SetAppearance { .. } => "SetAppearance",
             Self::Character(c) => c.name(),
             Self::Inventory(c) => c.name(),
             Self::Combat(c) => c.name(),
@@ -495,13 +598,16 @@ impl Session {
         use SessionState as S;
         let now = self.monotonic(now);
         let allowed = match &command {
-            Command::Connect => self.state == S::Idle,
+            Command::Connect | Command::Register => self.state == S::Idle,
             Command::EnterWorld { .. } => self.state == S::Connected,
             Command::Character(_) => self.state == S::Connected,
             Command::Move { .. }
             | Command::Chat { .. }
             | Command::Teleport { .. }
             | Command::QueryLocation
+            | Command::Emote { .. }
+            | Command::Stance { .. }
+            | Command::SetAppearance { .. }
             | Command::Inventory(_)
             | Command::Combat(_)
             | Command::Npc(_)
@@ -527,7 +633,7 @@ impl Session {
         }
 
         let next = match &command {
-            Command::Connect => S::Connecting,
+            Command::Connect | Command::Register => S::Connecting,
             Command::EnterWorld { .. } => S::EnteringWorld,
             Command::Disconnect => S::Closing,
             _ => self.state,
@@ -750,6 +856,35 @@ impl Session {
             | Event::StaticSpawned { .. }
             | Event::StaticsCleared
             | Event::EntityDespawned { .. } => self.world_verdict(),
+            Event::EnterWorldFailed { .. } => match self.state {
+                S::EnteringWorld => {
+                    self.state = S::Connected;
+                    Verdict::Surface
+                }
+                _ if closing => Verdict::Stale,
+                _ => Verdict::Invalid("unexpected EnterWorldFailed"),
+            },
+            Event::EntityStateChanged { state, .. } if !state.is_valid() => {
+                Verdict::Invalid("invalid entity state")
+            }
+            Event::WorldClock {
+                game_clock, rate, ..
+            } if !(game_clock.is_finite()
+                && *game_clock >= 0.0
+                && rate.is_finite()
+                && *rate >= 0.0) =>
+            {
+                Verdict::Invalid("invalid world clock")
+            }
+            Event::EntityStateChanged { .. }
+            | Event::WorldClock { .. }
+            | Event::TeleportRefused { .. }
+            | Event::ChatRejected { .. } => self.world_verdict(),
+            Event::TimeSynced { .. } | Event::ServerNotice { .. } => match self.state {
+                S::Connecting | S::Connected | S::EnteringWorld | S::InWorld => Verdict::Surface,
+                S::Closing => Verdict::Stale,
+                _ => Verdict::Invalid("session event before connecting"),
+            },
             Event::Combat(e) if !e.is_valid() => Verdict::Invalid("non-finite vital or amount"),
             Event::World(e) if !e.is_valid() => Verdict::Invalid("invalid marker location"),
             Event::Character(e) if !e.is_valid() => {
@@ -871,7 +1006,17 @@ fn validate(command: &Command) -> Result<(), NetError> {
                 ));
             }
         }
-        Command::Connect | Command::Disconnect | Command::QueryLocation => {}
+        Command::SetAppearance { appearance } => {
+            if !appearance.is_valid() {
+                return Err(NetError::InvalidCommand("appearance out of range"));
+            }
+        }
+        Command::Connect
+        | Command::Register
+        | Command::Disconnect
+        | Command::QueryLocation
+        | Command::Emote { .. }
+        | Command::Stance { .. } => {}
         Command::Character(c) => c.validate().map_err(NetError::InvalidCommand)?,
         Command::Inventory(c) => c.validate().map_err(NetError::InvalidCommand)?,
         Command::Combat(c) => c.validate().map_err(NetError::InvalidCommand)?,
@@ -925,6 +1070,12 @@ fn clean_text(event: &mut Event) -> bool {
         Event::Disconnected {
             reason: DisconnectReason::ServerClosed(why) | DisconnectReason::TransportFailed(why),
         } => clean(why, MAX_CHAT_LEN),
+        Event::EnterWorldFailed { character, reason } => {
+            clean(character, MAX_NAME_LEN) | clean(reason, MAX_CHAT_LEN)
+        }
+        Event::TeleportRefused { text, .. }
+        | Event::ChatRejected { text, .. }
+        | Event::ServerNotice { text, .. } => clean(text, MAX_CHAT_LEN),
         Event::Character(e) => e.clean(),
         Event::Inventory(e) => e.clean(),
         Event::Combat(e) => e.clean(),

@@ -258,9 +258,12 @@ impl Backend for InboundHarness {
 
     fn submit(&mut self, _now: Instant, command: Command) -> Result<(), NetError> {
         match route(command, &mut self.mapper)? {
-            Routed::Connect => {
+            Routed::Connect(register) => {
                 if self.started {
                     return Err(NetError::InvalidCommand("already connected"));
+                }
+                if register {
+                    self.driver.register_instead();
                 }
                 self.started = true;
                 self.driver.connect(self.now);
@@ -270,6 +273,9 @@ impl Backend for InboundHarness {
             Routed::Net(cmd) => {
                 if let Some(name) = cmd.creation() {
                     self.mapper.outstanding_create = Some(name);
+                }
+                if let super::driver::NetCommand::EnterWorld(name) = &cmd {
+                    self.mapper.outstanding_enter = Some(name.clone());
                 }
                 self.driver.command(cmd, self.now);
             }

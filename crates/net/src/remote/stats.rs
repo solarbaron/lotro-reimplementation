@@ -56,6 +56,9 @@ pub struct RemoteStats {
     pub path_rtt: Option<Duration>,
     /// Latest application round-trip time measured by `Ping`/`Pong` (§6.2.18).
     pub ping_rtt: Option<Duration>,
+    /// `Pong`s measured so far: increases by one with every new [`ping_rtt`](Self::ping_rtt),
+    /// so two equal measurements in a row are told apart.
+    pub ping_seq: u64,
     /// Clock offset in use (server − client), µs (§11.2), once a sample exists.
     pub clock_offset_us: Option<i64>,
     /// Smallest round-trip delay δ among the kept time samples, µs.
@@ -76,6 +79,21 @@ pub struct RemoteStats {
     pub moves_sent: u64,
     /// `MotionBatch`es received and handed on.
     pub motion_batches: u64,
+    /// Snapshots received: `MotionBatch`es with a `server_time` later than every earlier
+    /// one's (the server may split one snapshot into several datagrams, §8.5, and a late
+    /// datagram of an older snapshot is no new one).
+    pub motion_snapshots: u64,
+    /// Client-clock time between the arrival of the latest snapshot and the one before it.
+    pub motion_interval_last: Option<Duration>,
+    /// Longest such inter-arrival time.
+    pub motion_interval_max: Option<Duration>,
+    /// Sum of all inter-arrival times, µs (mean = this / (`motion_snapshots` − 1)).
+    pub motion_interval_sum_us: u64,
+    /// Snapshot periods (1 / `snapshot_rate`, §8.5) between two received snapshots that
+    /// brought no `MotionBatch`: lost datagrams, or periods with nothing to send for this
+    /// client (a batch carries only entities that changed or need a refresh, so this is an
+    /// upper bound of the loss).
+    pub motion_gaps: u64,
     /// Movement items dropped because the main thread was not keeping up (§13.3).
     pub motion_dropped: u64,
     /// Messages the protocol session dropped as stale or unexpected (§13.2).
@@ -111,7 +129,11 @@ pub enum RemoteFailure {
         /// Seconds to wait before trying again (`RATE_LIMITED`).
         retry_after: u16,
     },
-    /// `EnterWorldFailed` (§14.5).
+    /// `EnterWorldFailed` (§14.5). No longer produced: a refused world entry no longer
+    /// ends the session (§6.2.11) and arrives as
+    /// [`Event::EnterWorldFailed`](crate::Event::EnterWorldFailed), its code from
+    /// [`RemoteBackend::enter_world_refusal`](super::RemoteBackend::enter_world_refusal).
+    /// Kept so that existing matches still compile.
     EnterWorld {
         /// The code.
         code: EnterWorldFailedCode,

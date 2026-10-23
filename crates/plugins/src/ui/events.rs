@@ -236,6 +236,11 @@ pub(crate) fn translate(ui: &mut Ui, st: &mut State, id: u64, ev: ControlEvent) 
         return;
     };
     let (key, kind, styled, internal, owner) = (c.key, c.kind, c.styled, c.internal, c.owner);
+    // The element that holds the text (a game-styled text box's text element, §14.2.2).
+    let text_key = c.text_key();
+    // A game-styled scroll bar's layout widget handles the pointer itself (§14.2.2).
+    let widget_bar =
+        kind == Kind::ScrollBar && c.scroll.as_deref().is_some_and(|s| s.widget.is_some());
     if let Some((role, owner)) = internal {
         part_event(ui, st, id, role, owner, ev);
         return;
@@ -249,10 +254,12 @@ pub(crate) fn translate(ui: &mut Ui, st: &mut State, id: u64, ev: ControlEvent) 
                 // Tessera rule (LPA §13.1): a text box takes focus when it is clicked. The
                 // press has already activated its window, so the focus moves now.
                 if kind == Kind::TextBox {
-                    ui.control_focus(key);
+                    ui.control_focus(text_key);
                 }
                 if kind == Kind::ScrollBar {
-                    bar_press(ui, st, id, x, y);
+                    if !widget_bar {
+                        bar_press(ui, st, id, x, y);
+                    }
                 } else if let Some((bar, 2)) = part_of_bar(st, id) {
                     let along = if bar_vertical(st, bar) { y } else { x };
                     thumb_press(st, bar, along);
@@ -300,7 +307,7 @@ pub(crate) fn translate(ui: &mut Ui, st: &mut State, id: u64, ev: ControlEvent) 
         }
         ControlEvent::MouseMove { x, y } => {
             fire(st, id, "MouseMove", Args::Pos { x, y });
-            if kind == Kind::ScrollBar {
+            if kind == Kind::ScrollBar && !widget_bar {
                 let p = if bar_vertical(st, id) { y } else { x };
                 bar_move(ui, st, id, p);
             } else if let Some((bar, 2)) = part_of_bar(st, id) {
@@ -313,7 +320,8 @@ pub(crate) fn translate(ui: &mut Ui, st: &mut State, id: u64, ev: ControlEvent) 
         ControlEvent::MouseWheel { direction, x, y } => {
             fire(st, id, "MouseWheel", Args::Wheel { direction, x, y });
             let bar = if kind == Kind::ScrollBar {
-                Some(id)
+                // The layout widget steps on its own wheel messages.
+                (!widget_bar).then_some(id)
             } else {
                 part_of_bar(st, id).map(|b| b.0)
             };
@@ -378,9 +386,8 @@ pub(crate) fn translate(ui: &mut Ui, st: &mut State, id: u64, ev: ControlEvent) 
             match kind {
                 Kind::ListBox | Kind::TreeView => super::lists::mark(st, id),
                 Kind::ScrollBar => super::scroll::layout_parts_with(ui, st, id),
-                Kind::Window if styled != Styled::Plain => {
-                    super::window::layout_frame_with(ui, st, id)
-                }
+                // §14.2.3: the title layout runs after the `SizeChanged` handlers.
+                Kind::Window if styled != Styled::Plain => push(st, Pending::TitleLayout(id)),
                 _ => {}
             }
             if let Some(o) = owner {
@@ -400,6 +407,7 @@ pub(crate) fn translate(ui: &mut Ui, st: &mut State, id: u64, ev: ControlEvent) 
                     if let Some(ObjData::Ctl(c)) = st.objs.get_mut(&id).map(|o| &mut o.data) {
                         c.checked = !c.checked;
                         changed = true;
+                        super::styled::sync_mark(ui, c);
                     }
                     if changed {
                         fire(st, id, "CheckedChanged", Args::Empty);
@@ -410,7 +418,7 @@ pub(crate) fn translate(ui: &mut Ui, st: &mut State, id: u64, ev: ControlEvent) 
             }
         }
         ControlEvent::TextChanged => {
-            if kind != Kind::TextBox || text_edited(ui, st, id, key) {
+            if kind != Kind::TextBox || text_edited(ui, st, id, text_key) {
                 fire(st, id, "TextChanged", Args::Empty);
             }
         }

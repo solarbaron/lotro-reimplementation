@@ -133,6 +133,9 @@ char_table! {
     CharIds {
         /// `PinnedTooltip` (`item-tooltips.md` §10).
         pinned_tooltip = ("PinnedTooltip", 0xFFFB_1001),
+        /// `PinnedTooltipCloseButton` (`item-tooltips.md` §10 answer (2), IT28): the only
+        /// element whose click closes the pinned window it is in.
+        pinned_tooltip_close_button = ("PinnedTooltipCloseButton", 0xFFFB_1003),
         /// `CurrentlyEquipped_Label` (§8.1).
         currently_equipped = ("CurrentlyEquipped_Label", 0xFFFB_1002),
         /// `ItemDisplay_SlottedTemplate` (`character-panels.md` §5).
@@ -275,6 +278,19 @@ char_table! {
     }
 }
 
+impl CharIds {
+    /// The element ID of `PinnedTooltipCloseButton` (`item-tooltips.md` §10 answer (2)) when
+    /// its label resolved, else `None`: the placeholder matches no element of real data, so
+    /// passing it to `ExamTooltips::set_close_button_id` would leave a pinned window no
+    /// button closes. With `None` the caller sets nothing and the tooltips keep their
+    /// fallback (every Button of the window outside the tooltip closes it).
+    #[must_use]
+    pub fn resolved_pinned_close_button(&self) -> Option<u32> {
+        let id = self.pinned_tooltip_close_button;
+        (id != 0 && id != Self::default().pinned_tooltip_close_button).then_some(id)
+    }
+}
+
 /// Everything the P1 widgets look up by label.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct CharVocab {
@@ -318,5 +334,57 @@ impl CharVocab {
             ui.register_game_type(t, C::Text);
         }
         ui.register_game_type(self.types.inventory_display, C::ListBox);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `PinnedTooltipCloseButton` is looked up by its label (`item-tooltips.md` §10, IT28)
+    /// and its placeholder is no other ID's and not 0 (0 means "no close button").
+    #[test]
+    fn the_pinned_close_button_resolves_by_label() {
+        let ids = CharIds::default();
+        assert_ne!(ids.pinned_tooltip_close_button, 0);
+        let entries = ids.entries();
+        assert_eq!(
+            entries
+                .iter()
+                .filter(|(_, v)| *v == ids.pinned_tooltip_close_button)
+                .count(),
+            1
+        );
+        let mut v = CharVocab::default();
+        v.resolve_with(
+            &mut |_| None,
+            &mut |l| (l == "PinnedTooltipCloseButton").then_some(0x1234),
+            &mut |_| None,
+            &mut |_| None,
+        );
+        assert_eq!(v.ids.pinned_tooltip_close_button, 0x1234);
+        assert_eq!(v.ids.pinned_tooltip, CharIds::default().pinned_tooltip);
+        assert_eq!(v.ids.resolved_pinned_close_button(), Some(0x1234));
+    }
+
+    /// An unresolved `PinnedTooltipCloseButton` (an install whose `UIElementID` enum lacks
+    /// the label) is reported as `None`, never as its placeholder, so a pinned window keeps
+    /// the fallback close rule instead of having no close button at all.
+    #[test]
+    fn an_unresolved_pinned_close_button_is_none() {
+        assert_eq!(CharIds::default().resolved_pinned_close_button(), None);
+        let mut v = CharVocab::default();
+        v.resolve_with(
+            &mut |_| None,
+            &mut |l| (l == "PinnedTooltip").then_some(0x99),
+            &mut |_| None,
+            &mut |_| None,
+        );
+        assert_eq!(v.ids.resolved_pinned_close_button(), None);
+        let ids = CharIds {
+            pinned_tooltip_close_button: 0,
+            ..CharIds::default()
+        };
+        assert_eq!(ids.resolved_pinned_close_button(), None);
     }
 }

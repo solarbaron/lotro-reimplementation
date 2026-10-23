@@ -456,6 +456,11 @@ impl App {
                     if let Some(walker) = host.walker.as_mut() {
                         walker.record_render_stats(&stats);
                     }
+                    // The UI pass's GPU time for U2 (render.md §6.16), as the headless
+                    // `--ui` runs report it.
+                    if let Some(ui) = self.ui.as_mut() {
+                        ui.record_render_stats(&stats);
+                    }
                     true
                 })
             }
@@ -683,7 +688,6 @@ impl ApplicationHandler for App {
                         let mut cursor = WinitCursor(&gfx.window);
                         if matches!(event, WindowEvent::Focused(false)) {
                             rt.npc.release_keys();
-                            rt.quests.release_keys();
                             rt.map.release_keys();
                         }
                         tessera_input::winit_adapter::window_event(&event, |e| {
@@ -692,18 +696,9 @@ impl ApplicationHandler for App {
                             if ui.host().is_some_and(|h| rt.npc.raw_key(h, &e)) {
                                 return;
                             }
-                            // The input action "use nearest NPC in range" (P3).
-                            if crate::npc::commands::is_use_key(&e)
-                                && !ui.host().is_some_and(|h| h.keyboard_focused())
-                            {
-                                rt.npc.request_use();
-                            }
-                            // `ToggleQuestPanel` (P3, key L with no modifier).
-                            if rt.quests.log_key(&e)
-                                && !ui.host().is_some_and(|h| h.keyboard_focused())
-                            {
-                                rt.quests.request_toggle();
-                            }
+                            // U (`use_selection`) and L (`toggle_quest_log`) are keymap
+                            // actions (`keymap.md` §8.3); their routed commands reach the
+                            // NPC and quest hubs, so no raw-key test is made here.
                             // P5: M (map), Ctrl+J (finder). Every event updates the
                             // modifiers; the keys act only without focus. `toggle_mount`
                             // (Ctrl+M) is a `tessera-input` action the walker's controls

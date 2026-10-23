@@ -832,3 +832,65 @@ fn a_lost_figure_gets_its_effects_again() {
     m.entity_removed(&mut h, DUMMY);
     assert!(m.known_entities().is_empty());
 }
+
+/// `ready_keys` names exactly the scripts `entity_ready` runs: nothing for an entity with no
+/// state or only a stance (so its figure is spawned without waiting for any clip), the
+/// effect runs a lost figure gets again, and the death script of a defeated entity.
+#[test]
+fn ready_keys_are_the_scripts_entity_ready_runs() {
+    let d = data();
+    let mut h = Host::new();
+    let mut m = machine();
+    assert!(
+        m.ready_keys(DUMMY).is_empty(),
+        "no state, nothing to wait for"
+    );
+    m.combat_state(&mut h, DUMMY, true);
+    assert!(m.ready_keys(DUMMY).is_empty(), "a stance runs no script");
+    m.effect_applied(&mut h, &d, DUMMY, 7, Some(EFFECT));
+    assert!(m.ready_keys(DUMMY).is_empty(), "the effect run is live");
+    m.entity_lost(DUMMY);
+    assert_eq!(m.ready_keys(DUMMY), vec![K]);
+    let before = h.keys_on(DUMMY).len();
+    m.entity_ready(&mut h, DUMMY);
+    assert_eq!(h.keys_on(DUMMY)[before..], [K]);
+    assert!(m.ready_keys(DUMMY).is_empty());
+    m.defeated(&mut h, DUMMY);
+    m.entity_lost(DUMMY);
+    assert_eq!(m.ready_keys(DUMMY), vec![DIE]);
+    let before = h.keys_on(DUMMY).len();
+    m.entity_ready(&mut h, DUMMY);
+    assert_eq!(h.keys_on(DUMMY)[before..], [DIE]);
+}
+
+/// The spawn gate of the combat layer (`super::super::spawn_waits_for_clips`): a figure
+/// whose persistent state runs nothing is spawned at once, without asking whether any clip
+/// is decoded (its start-up and looping clips are not waited for); one whose state runs
+/// scripts waits exactly for those scripts' clips.
+#[test]
+fn a_figure_with_nothing_to_run_waits_for_no_clip() {
+    use super::super::{ClipPrefetch, spawn_waits_for_clips};
+    let d = data();
+    let mut h = Host::new();
+    let mut m = machine();
+    let never = |_: &ClipPrefetch| -> bool { panic!("no clip is asked for") };
+    assert!(!spawn_waits_for_clips(&m, DUMMY, never), "no state");
+    m.combat_state(&mut h, DUMMY, true);
+    assert!(!spawn_waits_for_clips(&m, DUMMY, never), "a stance only");
+    m.effect_applied(&mut h, &d, DUMMY, 7, Some(EFFECT));
+    m.entity_lost(DUMMY);
+    let mut asked = Vec::new();
+    let waits = spawn_waits_for_clips(&m, DUMMY, |r| {
+        asked.push(r.clone());
+        false
+    });
+    assert!(waits, "the effect run's clips are not decoded");
+    assert_eq!(
+        asked,
+        vec![ClipPrefetch {
+            keys: vec![K],
+            overrides: Vec::new(),
+        }]
+    );
+    assert!(!spawn_waits_for_clips(&m, DUMMY, |_| true), "decoded");
+}

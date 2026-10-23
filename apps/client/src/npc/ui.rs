@@ -199,7 +199,12 @@ impl NpcUi {
     /// fallback widgets' `art`.
     #[must_use]
     pub fn new(refs: Arc<NpcRefs>, art: FallbackArt) -> Self {
+        // Only `PinnedTooltipCloseButton` closes a pinned window (`item-tooltips.md` §10
+        // answer (2), IT28); unresolved, the tooltips keep their fallback close rule.
         let mut tips = ExamTooltips::new(refs.char_vocab.clone());
+        if let Some(id) = refs.char_vocab.ids.resolved_pinned_close_button() {
+            tips.set_close_button_id(id);
+        }
         if let Some(l) = refs.examination {
             tips.set_pin_layout(l.0);
         }

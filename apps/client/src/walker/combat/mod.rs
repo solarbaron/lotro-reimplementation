@@ -41,8 +41,10 @@
 //! until then the cue, and every cue behind it (§9.6 order), waits (each cue at most
 //! [`MAX_CUE_WAIT`] from when it was queued, or from when the layer became ready, after
 //! which it is handled with what is there; a run of such cues is handled together). A session figure is
-//! spawned in the runtime only once its worn items are answered and the clips of its
-//! start-up scripts are decoded. The frame thread's lookups
+//! spawned in the runtime once its worn items are answered and the clips of the scripts its
+//! persistent state runs at once ([`state::CombatState::ready_keys`]) are decoded; it runs no
+//! start-up scripts, and its looping clips not yet decoded start once decoded
+//! (`effects::session`), so a figure with no such state waits for no clip. The frame thread's lookups
 //! read only answers ([`records::RecordCache::frame_thread_misses`] counts those that found
 //! none; [`CombatLayerStats::record_misses`]).
 
@@ -116,6 +118,26 @@ fn handled_cues(cues: impl Iterator<Item = (bool, Instant)>, now: Instant) -> (u
         }
     }
     (handled, unready)
+}
+
+/// Whether a session figure's spawn still waits for clips (module docs): only when the
+/// scripts its persistent state runs as soon as it is spawned
+/// ([`CombatState::ready_keys`]) are not all decoded; `clips_ready` is asked for those
+/// keys alone, and not at all for a figure with none (no wait for its start-up or looping
+/// clips, which start once decoded).
+fn spawn_waits_for_clips(
+    state: &CombatState,
+    entity: EntityId,
+    clips_ready: impl FnOnce(&ClipPrefetch) -> bool,
+) -> bool {
+    let keys = state.ready_keys(entity);
+    if keys.is_empty() {
+        return false;
+    }
+    !clips_ready(&ClipPrefetch {
+        keys,
+        overrides: Vec::new(),
+    })
 }
 
 /// One session report, by network ID (the neutral API's input).
@@ -1456,9 +1478,15 @@ impl CombatLayer {
                 self.waiting += 1;
                 continue;
             }
-            // Its start-up scripts start clips as soon as it runs: decoded on the workers
-            // first (the frame thread reads no clip, module docs).
-            if !characters.script_clips_ready(NetId(n), &ClipPrefetch::default()) {
+            // The figure is spawned without start-up scripts, and a looping clip not yet
+            // decoded starts on it once decoded (`effects::session`), so the spawn waits for
+            // no clip. The scripts its persistent state runs as soon as it is spawned
+            // (`CombatState::entity_ready`: death, effect runs) may hold one-shot clips,
+            // which complete at once when not decoded: those are decoded first (the frame
+            // thread reads no clip, module docs).
+            if spawn_waits_for_clips(state, EntityId(n), |r| {
+                characters.script_clips_ready(NetId(n), r)
+            }) {
                 self.waiting += 1;
                 continue;
             }

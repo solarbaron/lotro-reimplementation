@@ -1200,6 +1200,31 @@ impl CombatState {
         }
     }
 
+    /// The script keys [`Self::entity_ready`] would run on `entity` now, sorted and each
+    /// once: the death script's key of a defeated entity, else the keys of its shared
+    /// effect runs not running. Empty when nothing would run (the stance only sets
+    /// properties). The combat layer has those scripts' clips decoded before the figure
+    /// is spawned (a one-shot node whose clip is not decoded completes at once).
+    #[must_use]
+    pub fn ready_keys(&self, entity: EntityId) -> Vec<ScriptKey> {
+        let Some(st) = self.entities.get(&entity) else {
+            return Vec::new();
+        };
+        let mut keys: Vec<ScriptKey> = if st.defeated {
+            self.vocab.die_key.into_iter().collect()
+        } else {
+            self.shared
+                .iter()
+                .filter(|((e, _), s)| *e == entity && s.run.is_none())
+                .map(|((_, k), _)| *k)
+                .collect()
+        };
+        keys.retain(|k| *k != 0);
+        keys.sort_unstable();
+        keys.dedup();
+        keys
+    }
+
     /// The entity is gone: its stories end (strikes on others are still shown), its state
     /// is dropped.
     pub fn entity_removed(&mut self, host: &mut dyn ScriptHost, entity: EntityId) {

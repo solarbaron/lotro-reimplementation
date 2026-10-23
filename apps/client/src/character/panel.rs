@@ -373,7 +373,12 @@ impl CharacterUi {
     /// The panels over `vocab` with the layouts and IDs of `ids`.
     #[must_use]
     pub fn new(vocab: CharVocab, ids: PanelIds) -> Self {
+        // Only `PinnedTooltipCloseButton` closes a pinned window (`item-tooltips.md` §10
+        // answer (2), IT28); unresolved, the tooltips keep their fallback close rule.
         let mut tips = ExamTooltips::new(vocab.clone());
+        if let Some(id) = vocab.ids.resolved_pinned_close_button() {
+            tips.set_close_button_id(id);
+        }
         if let Some(l) = ids.examination_layout {
             tips.set_pin_layout(l.0);
         }

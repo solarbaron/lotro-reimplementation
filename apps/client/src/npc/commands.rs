@@ -41,16 +41,6 @@ use tessera_net::domain::{ItemId, NpcCommand, WindowId};
 use tessera_net::{Command, EntityId, EntityKind, Vec3};
 use tessera_ui::game::npc::NpcAction;
 
-/// Retired raw-key test of `USE`: always `false`. `USE` is the keymap action
-/// `use_selection` (`keymap.md` §8.3, default keyboard U), whose declined command reaches
-/// [`crate::npc::NpcHub::frame`] through [`crate::character::routed`], so a rebound key
-/// moves with the action and a key typed into a text field never uses anything. Kept only
-/// until the windowed client's raw-key call goes.
-#[must_use]
-pub fn is_use_key(_ev: &tessera_input::RawEvent) -> bool {
-    false
-}
-
 /// `Usage_MinUsageDist` + this is the use range *R* (`interaction.md` §3.4.1 step 3).
 pub const RANGE_MARGIN: f32 = 3.0;
 /// *R* of an entity without `Usage_MinUsageDist` (Decision D14: 3.0 + 3.0).

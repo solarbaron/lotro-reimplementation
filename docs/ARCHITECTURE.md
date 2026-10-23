@@ -1102,10 +1102,11 @@ P3; [`npc-windows.md`](specs/npc-windows.md), [`quest-journal.md`](specs/quest-j
   with the walker's camera and drawn after the scene and before the game UI
   (`quests::indicators`, `quest-journal.md` §8.2 OPEN).
 - **Dialogs and menus.** Since 2026-10-23 the abandon confirmation is an engine
-  confirmation dialog (`widgets::dialog`, `ui-widgets.md` §18) that answers for the quest it
+  confirmation dialog (`game::dialog`, `ui-widgets.md` §18) that answers for the quest it
   asked about, and the tracker's menu is a context menu at the pointer
-  (`widgets::context_menu`, §19). The client host does not yet drop game keys while a modal
-  dialog shows (§18.4, `modal_dialog_shown`). The plugin wallet views read the client's
+  (`game::context_menu`, §19). While a modal dialog shows, the client host passes no game
+  keys on (§18.4, `UiHost::modal_dialog_shown`); holds from before it stay held until their
+  own release. The plugin wallet views read the client's
   `npc::SessionWallet` (§18.2).
 
 <a id="ui-combat"></a>

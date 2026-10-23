@@ -282,9 +282,9 @@ fine. Format-level terms like "DID" or "landblock" are fine.
   Round 4: dialog keys follow §18.4 per dialog kind, and while a modal dialog shows no key,
   typed text or action reaches game code or the chat entry (`UiHost::modal_dialog_shown`).
   The local tier-2 goldens of the vendor, wallet and quest log were re-blessed with the
-  owner's approval (2026-10-23). Open: the social, map, quest and travel modules still use
-  the `tessera_ui::widgets::{dialog, context_menu}` re-export paths, and the module doc of
-  `crates/ui/src/game/dialog.rs` still calls the host's part of the modal rule unbuilt.
+  owner's approval (2026-10-23). Since round 6 every caller imports `tessera_ui::game::{dialog, context_menu}`
+  (the `widgets::` shim is gone), and a dialog consumes a release only when it took the
+  press (`ui-widgets.md` §18.4 revision 6).
 - **P2 (targeting, skills and combat presentation; merged to main 2026-10-11, exit
   verification 2026-10-11)** (`docs/ROADMAP.md` P2 status): criteria 1-4 pass on Tessera's
   side. Accepted after independent review: `combat-ui.md` (rev 2), `skill-tooltips.md`,

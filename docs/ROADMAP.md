@@ -2112,7 +2112,7 @@ of layout `ContextMenu` (`ui-widgets.md` §19).
 2026-10-23 (round 3): the raw-key blocks of U and L in `window_event` are deleted, with
 `npc::commands::is_use_key`, `QuestHub::log_key` and `QuestHub::release_keys` (package
 `client-glue`). The engine dialog boxes and context menus of `ui-widgets.md` §18 and §19 are
-built in `tessera-ui` (`widgets::dialog`, `widgets::context_menu`; package
+built in `tessera-ui` (`game::dialog`, `game::context_menu`, first as `widgets::`; package
 `ui-dialogs-menus`): the four dialog types from the install's `Dialog` layout or a code-made
 fallback, one dialog at a time with a queue, countdowns and results written back; menus with
 submenus at any depth, the W31 sizing, placement, check marks and the layout's open delay.

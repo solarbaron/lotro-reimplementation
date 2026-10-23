@@ -32,7 +32,10 @@ use tessera_assets::{CancelToken, Priority, WorkerPool};
 use tessera_formats::Did;
 use tessera_formats::gameplay::mounts::MountMesh;
 
-use super::figure::{ClipPlay, FigureContext, FigureRequest};
+use tessera_render::glam::{Mat4, Quat, Vec3};
+
+use super::figure::{ClipPlay, FigureContext, FigureRequest, PropAnchorRule};
+use crate::walker::effects::data::AttachPoints;
 use crate::walker::mount::eval::ShownClip;
 
 /// The fade of a switch between the on-foot and the mounted animator when the clips give no
@@ -48,6 +51,14 @@ pub struct PlayerMountView {
     pub figure: Option<FigureRequest>,
     /// The node's placement values.
     pub mesh: MountMesh,
+    /// Where the node anchors the mount on the rider (`script-table.md` §5.2 "Where a MeshFX
+    /// node attaches its entity"; [`crate::walker::mount::eval::MeshChoice::anchor`]): the
+    /// placement follows it ([`mount_model`]), as the refusal check does
+    /// ([`crate::walker::mount::eval::placeable_anchor`]).
+    pub anchor: PropAnchorRule,
+    /// The node's `AttachToParent` ([`crate::walker::mount::eval::MeshChoice::attached`]):
+    /// `false` keeps the mount at the world frame of its placement ([`HeldPlacement`]).
+    pub attached: bool,
     /// The rider's final model scale per axis (for [`MountMesh::draw_scale`]).
     pub rider_model_scale: [f32; 3],
     /// The mount's opacity, 0–1.
@@ -65,6 +76,109 @@ pub struct PlayerMountView {
     /// The key moves backwards (`Slider_Propel` < 0): the mount's phase is the rider's
     /// halved (`mounts.md` §14.5 item 6).
     pub back: bool,
+}
+
+/// The mount's model transform relative to the rider's feet (`mounts.md` §14.8 item 1, the
+/// Decision of §4.4): the rider's anchor of `view` ([`PlayerMountView::anchor`],
+/// `script-table.md` §5.2, [`crate::walker::mount::eval::anchor_matrix`]) with the rider's
+/// posed model matrices `model` (empty: the reference pose), composed by
+/// [`crate::walker::mount::mount_transform`] with `rider` (the rider's model rotation and
+/// final scale, no translation) and the node's `BoneOffset` and scale. `None` when the rider
+/// lacks the anchor the node names (the node shows nothing).
+///
+/// For an attached node the walker calls this every frame with the rider's current pose (the
+/// mount follows the anchor). For an unattached node (`script-table.md` §5.2 answer: the
+/// entity takes the anchor's world frame once, at placement, and keeps it) the walker calls
+/// it only at placement and holds the result ([`HeldPlacement`]). Every mount node of this
+/// install is attached (`mounts.md` §4.4).
+#[must_use]
+pub fn mount_model(
+    points: &AttachPoints,
+    view: &PlayerMountView,
+    model: &[Mat4],
+    rider: Mat4,
+) -> Option<Mat4> {
+    let anchor = crate::walker::mount::eval::anchor_matrix(points, view.anchor, model)?;
+    Some(crate::walker::mount::mount_transform(
+        rider,
+        anchor,
+        &view.mesh,
+        view.rider_model_scale,
+    ))
+}
+
+/// The world placement of the mount of an unattached node, held from the frame it was placed
+/// (`script-table.md` §5.2, the 2026-10-23 answer: an unattached node's entity takes the
+/// anchor's world frame, times the placement frame, once at placement and keeps it; only the
+/// props of attached nodes follow the anchor).
+///
+/// A placement is held while the same node ([`MountMesh::table`], [`MountMesh::node_id`] and
+/// [`MountMesh::entity`]) stays drawn; a hidden mount, an attached node or another node
+/// starts over, so the next unattached placement reads the anchor again.
+#[derive(Debug, Clone)]
+pub struct HeldPlacement<T> {
+    held: Option<((Did, u32, Did), T)>,
+}
+
+impl<T> Default for HeldPlacement<T> {
+    fn default() -> Self {
+        Self { held: None }
+    }
+}
+
+impl<T: Clone> HeldPlacement<T> {
+    /// The placement of the mount of `view` this frame: `place()` (the placement from the
+    /// rider's current anchor) for an attached node, every frame; for an unattached node the
+    /// placement held from its first frame, `place()` only until one succeeds. `None` (and
+    /// nothing held) when the mount is not drawn or `place()` finds no anchor.
+    pub fn place(
+        &mut self,
+        view: &PlayerMountView,
+        place: impl FnOnce() -> Option<T>,
+    ) -> Option<T> {
+        if !view.drawn {
+            self.held = None;
+            return None;
+        }
+        if view.attached {
+            self.held = None;
+            return place();
+        }
+        let key = (view.mesh.table, view.mesh.node_id, view.mesh.entity);
+        if let Some((k, v)) = &self.held
+            && *k == key
+        {
+            return Some(v.clone());
+        }
+        let v = place();
+        self.held = v.clone().map(|v| (key, v));
+        v
+    }
+
+    /// Forgets the held placement (the mount is hidden; its next placement reads the anchor
+    /// again).
+    pub fn clear(&mut self) {
+        self.held = None;
+    }
+
+    /// Whether a placement is held.
+    #[must_use]
+    pub fn is_held(&self) -> bool {
+        self.held.is_some()
+    }
+}
+
+/// The rider's model matrix without translation (`mounts.md` §14.8 item 1): its final model
+/// scale per axis and its rotation (a non-finite or zero rotation counts as none).
+#[must_use]
+pub fn rider_frame(scale: Vec3, rotation: [f32; 4]) -> Mat4 {
+    let rot = Quat::from_array(rotation);
+    let rot = if rot.is_finite() && rot.length_squared() > 0.0 {
+        rot.normalize()
+    } else {
+        Quat::IDENTITY
+    };
+    Mat4::from_scale_rotation_translation(scale, rot, Vec3::ZERO)
 }
 
 /// The phase a mount clip starts at (`mounts.md` §14.5 item 6): the rider's phase `rider`
@@ -621,6 +735,167 @@ mod tests {
             loops,
             track_weights: false,
         }
+    }
+
+    fn mount_view(anchor: PropAnchorRule, location: u32) -> PlayerMountView {
+        PlayerMountView {
+            figure: None,
+            mesh: MountMesh {
+                entity: Did(0x4700_0001),
+                holding_location: location,
+                bone_offset: [0.0, 0.0, 0.5],
+                scale: [1.0; 3],
+                scale_driven: false,
+                use_parent_scale: true,
+                behavior: 0,
+                table: Did(0x0700_0001),
+                node_id: 1,
+            },
+            anchor,
+            attached: true,
+            rider_model_scale: [1.0; 3],
+            alpha: 1.0,
+            drawn: true,
+            rider_clips: None,
+            mount_clips: Vec::new(),
+            rider_shown: None,
+            mount_shown: None,
+            back: false,
+        }
+    }
+
+    /// `script-table.md` §5.2 in the draw path: the mount is placed at the anchor its rule
+    /// names (a holding location at its bone and frame, a bone type at the bone, key 6 at
+    /// its element or the model origin, the origin), not at the mesh's holding location, and
+    /// a rider lacking the anchor draws nothing. The rider's pose and frame move it.
+    #[test]
+    fn mount_follows_the_anchor_rule() {
+        use crate::walker::characters::figure::prop_anchor_rule;
+        const LOC: u32 = 0x1000_0027;
+        let t = |x: f32| Mat4::from_translation(Vec3::new(x, 0.0, 0.0));
+        let pos = |m: Option<Mat4>| m.map(|m| m.to_scale_rotation_translation().2);
+        let near = |a: Option<Vec3>, b: Vec3| a.is_some_and(|a| (a - b).length() < 1e-5);
+        let points = AttachPoints {
+            holding: vec![(LOC, Some(1), t(0.5)), (6, None, t(-3.0))],
+            bones: vec![(3, 1)],
+            reference: vec![Mat4::IDENTITY, t(2.0)],
+        };
+        let rider = Mat4::IDENTITY;
+        let offset = Vec3::new(0.0, 0.0, 0.5);
+        // An attached node with its holding location: bone 1 (x 2) × frame (x 0.5).
+        let v = mount_view(prop_anchor_rule(true, LOC, 0), LOC);
+        assert!(near(
+            pos(mount_model(&points, &v, &[], rider)),
+            Vec3::new(2.5, 0.0, 0.5)
+        ));
+        // The posed bone moves it.
+        let posed = [Mat4::IDENTITY, t(10.0)];
+        assert!(near(
+            pos(mount_model(&points, &v, &posed, rider)),
+            Vec3::new(10.5, 0.0, 0.5)
+        ));
+        // An attached node with bone type 3 and no location: the bone, identity frame, even
+        // though the mesh still names a holding location of the rider.
+        let v = mount_view(prop_anchor_rule(true, 0, 3), LOC);
+        assert!(near(
+            pos(mount_model(&points, &v, &[], rider)),
+            Vec3::new(2.0, 0.0, 0.0) + offset
+        ));
+        // An unattached node setting both fields takes the bone (the reversed precedence).
+        let v = mount_view(prop_anchor_rule(false, LOC, 3), LOC);
+        assert_eq!(v.anchor, PropAnchorRule::Bone(3));
+        assert!(near(
+            pos(mount_model(&points, &v, &[], rider)),
+            Vec3::new(2.0, 0.0, 0.0) + offset
+        ));
+        // Key 6: the rider's key-6 element; without one the model origin.
+        let v = mount_view(prop_anchor_rule(true, 0, 0), 0);
+        assert!(near(
+            pos(mount_model(&points, &v, &[], rider)),
+            Vec3::new(-3.0, 0.0, 0.0) + offset
+        ));
+        let bare = AttachPoints {
+            holding: vec![(LOC, Some(1), t(0.5))],
+            ..points.clone()
+        };
+        assert!(near(pos(mount_model(&bare, &v, &[], rider)), offset));
+        // The origin (unattached, neither field).
+        let v = mount_view(prop_anchor_rule(false, 0, 0), 0);
+        assert!(near(pos(mount_model(&points, &v, &[], rider)), offset));
+        // A rider without the named location or bone: nothing drawn.
+        for rule in [PropAnchorRule::Location(77), PropAnchorRule::Bone(77)] {
+            assert!(mount_model(&points, &mount_view(rule, LOC), &[], rider).is_none());
+        }
+        // The rider's frame turns and scales the placement.
+        let turned = rider_frame(
+            Vec3::splat(2.0),
+            Quat::from_rotation_z(std::f32::consts::FRAC_PI_2).to_array(),
+        );
+        let v = mount_view(prop_anchor_rule(true, LOC, 0), LOC);
+        assert!(near(
+            pos(mount_model(&points, &v, &[], turned)),
+            Vec3::new(0.0, 5.0, 1.0)
+        ));
+        // A degenerate rotation counts as none.
+        assert_eq!(rider_frame(Vec3::ONE, [0.0; 4]), Mat4::IDENTITY);
+        assert_eq!(rider_frame(Vec3::ONE, [f32::NAN; 4]), Mat4::IDENTITY);
+    }
+
+    /// `script-table.md` §5.2 answer: an unattached node's mount keeps the world frame of
+    /// its placement while the rider moves; an attached node's follows the rider every
+    /// frame; hiding the mount or changing the node places it again.
+    #[test]
+    fn unattached_mount_keeps_its_placement() {
+        use crate::walker::characters::figure::prop_anchor_rule;
+        const LOC: u32 = 0x1000_0027;
+        let t = |x: f32| Mat4::from_translation(Vec3::new(x, 0.0, 0.0));
+        let points = AttachPoints {
+            holding: vec![(LOC, Some(1), t(0.5))],
+            bones: vec![(3, 1)],
+            reference: vec![Mat4::IDENTITY, t(2.0)],
+        };
+        // The world placement: the rider's position plus the model transform's translation.
+        let world = |rider_x: f32, posed: &[Mat4], v: &PlayerMountView| {
+            mount_model(&points, v, posed, Mat4::IDENTITY)
+                .map(|m| m.to_scale_rotation_translation().2 + Vec3::new(rider_x, 0.0, 0.0))
+        };
+        let moved = [Mat4::IDENTITY, t(10.0)];
+
+        // Unattached (bone type 3): placed once, then held while the rider walks and poses.
+        let mut un = mount_view(prop_anchor_rule(false, 0, 3), LOC);
+        un.attached = false;
+        let mut hold = HeldPlacement::default();
+        let first = hold.place(&un, || world(0.0, &[], &un)).unwrap();
+        assert!((first - Vec3::new(2.0, 0.0, 0.5)).length() < 1e-5);
+        assert!(hold.is_held());
+        let later = hold.place(&un, || world(5.0, &moved, &un)).unwrap();
+        assert_eq!(
+            later, first,
+            "the unattached mount does not follow the rider"
+        );
+        // Hidden, then shown again: a new placement from the current anchor.
+        un.drawn = false;
+        assert!(hold.place(&un, || world(5.0, &moved, &un)).is_none());
+        assert!(!hold.is_held());
+        un.drawn = true;
+        let again = hold.place(&un, || world(5.0, &moved, &un)).unwrap();
+        assert!((again - Vec3::new(15.0, 0.0, 0.5)).length() < 1e-5);
+        // Another node: placed again.
+        let mut other = un.clone();
+        other.mesh.node_id = 2;
+        let o = hold.place(&other, || world(0.0, &[], &other)).unwrap();
+        assert!((o - first).length() < 1e-5);
+        // A placement that finds no anchor holds nothing and is tried again.
+        assert!(hold.place(&un, || None).is_none());
+        assert!(!hold.is_held());
+
+        // Attached: follows the rider every frame and holds nothing.
+        let at = mount_view(prop_anchor_rule(true, LOC, 0), LOC);
+        let mut hold = HeldPlacement::default();
+        let a0 = hold.place(&at, || world(0.0, &[], &at)).unwrap();
+        let a1 = hold.place(&at, || world(5.0, &moved, &at)).unwrap();
+        assert!((a1 - a0 - Vec3::new(13.0, 0.0, 0.0)).length() < 1e-5);
+        assert!(!hold.is_held());
     }
 
     /// `mounts.md` §14.7: entering keeps the on-foot layers (full weight at first, faded

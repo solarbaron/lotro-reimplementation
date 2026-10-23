@@ -1440,6 +1440,7 @@ pub fn far_block(
             position: pos,
             lod: v.lod,
             generated: false,
+            entity: None,
             first,
             count,
             cell: OUTDOORS,

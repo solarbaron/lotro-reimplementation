@@ -241,7 +241,7 @@ workspace root and judges freshness by modification time, so a build in one work
 taken as fresh by another and link the other worktree's code (seen on 2026-10-23). With
 sccache (`incremental = false` is what lets it cache) the dependencies are not rebuilt per
 worktree, and `debug = 0` keeps each dir near 20 GB; with full debug info a debug dir grew by
-84 GB in half an hour. Set `max_parallel` so that 25 GB per code package in flight still
+84 GB in half an hour. Set `max_clean` so that 25 GB per code package in flight still
 leaves 40 GB free on `/`, and delete each dir after its branch is merged. Code packages are built, reviewed, fixed and audited, and spec
 packages are revised, screened and independently reviewed. Then review, commit and merge each
 branch and run the full gate once.

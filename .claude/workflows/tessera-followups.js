@@ -13,12 +13,13 @@
 //   Workflow({ name: "tessera-followups", args: {
 //     repo: "/abs/repo", game: "/abs/install or omitted", cache: "/home/<user>/.cache/tessera",
 //     max_parallel: 6,              // optional: packages in flight at once (default: all)
+//     max_clean: 3,                 // optional: clean packages in flight (default: max_parallel)
 //     packages: [{ key, kind: "clean-impl" | "spec-work", wt: "/abs/worktree", owns, specs,
 //                  task }] } })
 // Disk: one target dir PER clean worktree (never shared: cargo names workspace artifacts
 // relative to the workspace root and judges freshness by mtime, so worktrees sharing a dir link
 // each other's code). incremental = false (sccache shares dependency builds) and debug = 0 keep
-// each dir near 20 GB; size max_parallel so that 25 GB per clean package in flight still leaves
+// each dir near 20 GB; size max_clean so that 25 GB per clean package in flight still leaves
 // 40 GB free, and delete each dir after its branch is merged.
 // Never use it for M8 / official-protocol work (incident 0041) or M9.
 
@@ -131,16 +132,24 @@ async function specPackage(p) {
   return { key: p.key, kind: p.kind, accepted: false, issues_count: issues ? issues.length : 0, provenance: prov }
 }
 
-// Caps packages in flight (args.max_parallel); queued packages start as others finish.
-const MAX_PAR = Math.max(1, Number(args.max_parallel) || args.packages.length)
-let active = 0
-const waiting = []
-const slot = async fn => {
-  if (active >= MAX_PAR) await new Promise(r => waiting.push(r))
-  active++
-  try { return await fn() } finally { active--; const next = waiting.shift(); if (next) next() }
+// Caps packages in flight (args.max_parallel) and clean packages in flight (args.max_clean:
+// each holds its own ~20 GB target dir and builds). Queued packages start as others finish; a
+// freed slot passes straight to the next waiter, so a cap is never exceeded.
+const limiter = n => {
+  let active = 0
+  const waiting = []
+  return async fn => {
+    if (active >= n) await new Promise(r => waiting.push(r))
+    else active++
+    try { return await fn() } finally { const next = waiting.shift(); if (next) next(); else active-- }
+  }
 }
-const results = await pipeline(args.packages, p => slot(() => (p.kind === 'spec-work' ? specPackage(p) : cleanPackage(p))).catch(e => ({ key: p.key, error: String(e) })))
+const MAX_PAR = Math.max(1, Number(args.max_parallel) || args.packages.length)
+const MAX_CLEAN = Math.max(1, Number(args.max_clean) || MAX_PAR)
+const slot = limiter(MAX_PAR)
+const cleanSlot = limiter(MAX_CLEAN)
+const run = p => p.kind === 'spec-work' ? slot(() => specPackage(p)) : cleanSlot(() => slot(() => cleanPackage(p)))
+const results = await pipeline(args.packages, p => run(p).catch(e => ({ key: p.key, error: String(e) })))
 const bad = results.filter(r => !r || r.error || (r.audit && !r.audit.pass) || r.accepted === false)
 if (bad.length) log(`attention: ${bad.map(r => r ? r.key : '?').join(', ')}`)
 return { results }

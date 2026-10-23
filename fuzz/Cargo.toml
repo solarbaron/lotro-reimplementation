@@ -1452,3 +1452,12 @@ path = "fuzz_targets/gamedata_presenters.rs"
 test = false
 doc = false
 bench = false
+
+# --- tessera-ui engine dialog boxes and context menus (ui-widgets.md §18, §19) ---
+
+[[bin]]
+name = "ui_dialogs_menus"
+path = "fuzz_targets/ui_dialogs_menus.rs"
+test = false
+doc = false
+bench = false

@@ -18,18 +18,22 @@
 //! values, a new session (`Cleared`) or notes lost to the session's bound rebuild
 //! everything (markers too).
 //!
-//! Tessera rules of this client (the widgets do not exist yet in `tessera-ui`):
+//! Engine dialogs and context menus (`ui-widgets.md` §18, §19) and the Tessera rules of
+//! this client:
 //!
-//! - **Abandon confirmation** (§4.8): the first click on the abandon button posts the
-//!   confirmation text (`Quest` table token choice of §4.8) as a notice line; a second
-//!   click on the button for the same quest confirms ([`QuestUi::answer_abandon`] is the
-//!   dialog's entry point once a dialog box widget exists).
-//! - **Tracker menu** (§6.6): a right click on an entry's button opens Tessera's code-made
-//!   popup ([`tessera_ui::game::popup::Popup::open_menu`], the P5 popup rule) below the
-//!   button with the three items of §6.6; choosing one runs [`QuestUi::menu_choice`], a
-//!   click anywhere else closes it, and closing the tracker or a new session closes it too.
-//! - **Abandon cancel** (§4.8 OPEN): selecting another quest, closing the log or a new
-//!   session cancels a pending confirmation.
+//! - **Abandon confirmation** (§4.8, `ui-widgets.md` §18.6): a click on the abandon button
+//!   asks with a `Confirmation` engine dialog (`DialogConfirmationField` of layout `Dialog`,
+//!   without an install Tessera's code-made dialog) whose question is the `Quest` table
+//!   token choice of §4.8 with "inside an instance" false; yes sends `AbandonQuest` for the
+//!   quest it asked about, no sends nothing. A second click while that quest's dialog is
+//!   shown or waiting asks nothing more.
+//! - **Tracker menu** (§6.6 Tessera rule): a right click on an entry's button opens a
+//!   context menu (`ContextMenuElement` of layout `ContextMenu`, no title, no position)
+//!   at the pointer with the three plain items of §6.6; choosing one runs
+//!   [`QuestUi::menu_choice`], any activation outside it closes it, and closing the
+//!   tracker or a new session closes it too.
+//! - **Abandon cancel**: closing the log or a new session closes the abandon dialogs
+//!   without a result (nothing is sent).
 //! - **History** (§4.9): the history button opens the history window `QuestHistoryField`
 //!   (the install's `questhistory` layout, else the fallback window) for the selected quest,
 //!   listing objectives 1 … current in history order without rewards; the window keeps
@@ -54,8 +58,8 @@ use std::sync::Arc;
 
 use tessera_net::Command;
 use tessera_ui::game::GamePanels;
+use tessera_ui::game::chat::notice::NoTables;
 use tessera_ui::game::npc::kit::FallbackArt;
-use tessera_ui::game::popup::{Place, Popup, PopupItem};
 use tessera_ui::game::quest::details::QuestDetails;
 use tessera_ui::game::quest::fallback;
 use tessera_ui::game::quest::history::{self, HistoryWindow};
@@ -64,6 +68,10 @@ use tessera_ui::game::quest::markers::{QuestMarker, QuestMarkers};
 use tessera_ui::game::quest::tracker::{MENU, MenuItem, TrackerWindow};
 use tessera_ui::game::quest::{QuestAction, QuestKey, quest_label_text};
 use tessera_ui::game::radar::RadarInput;
+use tessera_ui::widgets::context_menu::{
+    ContextMenu, MenuArt, MenuEvent, MenuItem as WidgetItem, MenuReply, MenuRequest,
+};
+use tessera_ui::widgets::dialog::{DialogArt, DialogBoxes, DialogRequest, DialogText};
 use tessera_ui::{ElementKey, Ui, UiEvent};
 
 use super::present::{JournalView, command_of, position_of, ref_of};
@@ -179,10 +187,11 @@ pub struct QuestUi {
     /// The tracker visibility or the font index changed since the last
     /// [`QuestUi::take_changed_prefs`].
     prefs_changed: bool,
-    pending_abandon: Option<QuestKey>,
+    /// The engine dialogs (the abandon confirmations; the tag is the quest).
+    dialogs: DialogBoxes,
     menu: Option<QuestKey>,
-    /// The tracker menu's popup while it is open (§6.6 Tessera rule).
-    popup: Option<Popup>,
+    /// The tracker menu while it is open (§6.6 Tessera rule).
+    menu_tree: Option<ContextMenu>,
     /// The history window (§4.9) while it is open.
     history: Option<HistoryWindow>,
     registered: bool,
@@ -207,6 +216,8 @@ impl QuestUi {
     /// The windows over `refs` (the install's names, or [`QuestRefs::fallback`]).
     #[must_use]
     pub fn new(refs: Arc<QuestRefs>, art: FallbackArt) -> Self {
+        let mut dialog_refs = refs.dialogs.clone();
+        dialog_refs.art = DialogArt::from_fallback(&art);
         Self {
             refs,
             art,
@@ -226,9 +237,9 @@ impl QuestUi {
             tracker_on: true,
             font: None,
             prefs_changed: false,
-            pending_abandon: None,
+            dialogs: DialogBoxes::new(dialog_refs),
             menu: None,
-            popup: None,
+            menu_tree: None,
             history: None,
             registered: false,
             census: JournalCensus::default(),
@@ -303,10 +314,16 @@ impl QuestUi {
         self.menu
     }
 
-    /// The tracker menu's popup, while it is open.
+    /// The tracker menu, while it is open.
     #[must_use]
-    pub fn menu_popup(&self) -> Option<&Popup> {
-        self.popup.as_ref()
+    pub fn menu_tree(&self) -> Option<&ContextMenu> {
+        self.menu_tree.as_ref()
+    }
+
+    /// The engine dialogs (the abandon confirmations).
+    #[must_use]
+    pub fn dialogs(&self) -> &DialogBoxes {
+        &self.dialogs
     }
 
     /// The history window, while it is open (§4.9).
@@ -401,7 +418,7 @@ impl QuestUi {
 
     /// Closes the quest log.
     pub fn close_log(&mut self, ui: &mut Ui) {
-        self.cancel_abandon();
+        self.cancel_abandon(ui);
         if let Some((k, mut w)) = self.log.take() {
             w.detach(ui);
             if ui.exists(k) {
@@ -472,11 +489,11 @@ impl QuestUi {
         self.close_menu(ui);
     }
 
-    /// Closes the tracker menu's popup and forgets the menu's quest.
+    /// Closes the tracker menu and forgets the menu's quest.
     pub fn close_menu(&mut self, ui: &mut Ui) {
         self.menu = None;
-        if let Some(p) = self.popup.take() {
-            p.close(ui);
+        if let Some(mut m) = self.menu_tree.take() {
+            m.close(ui);
         }
     }
 
@@ -556,13 +573,13 @@ impl QuestUi {
     }
 
     /// Forgets everything of the previous session (a new session, or lost notes).
-    fn reset_session(&mut self) {
+    fn reset_session(&mut self, ui: &mut Ui) {
         self.full = true;
         self.stale = true;
         self.changed.clear();
         self.details_for = None;
         self.menu = None;
-        self.cancel_abandon();
+        self.cancel_abandon(ui);
     }
 
     /// Closes what a new session or lost notes invalidate: the tracker menu and the
@@ -572,10 +589,11 @@ impl QuestUi {
         self.close_history(ui);
     }
 
-    fn cancel_abandon(&mut self) {
-        if self.pending_abandon.take().is_some()
-            && let Some((_, w)) = self.log.as_mut()
-        {
+    /// Closes every abandon dialog, shown or waiting, without a result.
+    fn cancel_abandon(&mut self, ui: &mut Ui) {
+        self.dialogs.close_all(ui);
+        let _ = self.dialogs.take_results();
+        if let Some((_, w)) = self.log.as_mut() {
             let _ = w.confirm_abandon(false);
         }
     }
@@ -754,7 +772,7 @@ impl QuestUi {
                 "quest notes were dropped before they were read; rebuilt from the state"
             );
             self.rebuild_markers(ui, view);
-            self.reset_session();
+            self.reset_session(ui);
             self.reset_windows(ui);
             out.rings_changed = true;
             self.seen = session
@@ -792,7 +810,7 @@ impl QuestUi {
                     for id in ids {
                         self.markers.remove(ui, id);
                     }
-                    self.reset_session();
+                    self.reset_session(ui);
                     self.reset_windows(ui);
                     out.rings_changed = true;
                 }
@@ -828,15 +846,19 @@ impl QuestUi {
         }
         let texts = view.texts();
         for ev in one_click_each(ui, events) {
-            // The tracker menu's popup takes its clicks first (§6.6 Tessera rule): a row
-            // runs its item, a click outside closes it.
-            let popup = self
-                .popup
+            // The abandon dialogs take their buttons and keys first (§4.8).
+            if self.dialogs.handle_event(ui, ev, &mut NoTables) {
+                continue;
+            }
+            // Then the tracker menu (§6.6 Tessera rule): an item runs, an activation
+            // outside closes it.
+            let reply = self
+                .menu_tree
                 .as_mut()
-                .map(|p| (p.handle_event(ui, ev), p.dismissed(ui, ev)));
-            match popup {
-                Some((Some(i), _)) => {
-                    match MENU.get(i) {
+                .map_or(MenuReply::Ignored, |m| m.handle_event(ui, ev));
+            match reply {
+                MenuReply::Event(MenuEvent::Selected { id, .. }) => {
+                    match usize::try_from(id).ok().and_then(|i| MENU.get(i)) {
                         Some((item, _)) => {
                             let o = self.menu_choice(ui, view, *item);
                             out.commands.extend(o.commands);
@@ -846,11 +868,12 @@ impl QuestUi {
                     }
                     continue;
                 }
-                Some((None, true)) => {
+                MenuReply::Event(_) => {
                     self.close_menu(ui);
                     continue;
                 }
-                _ => {}
+                MenuReply::Consumed => continue,
+                MenuReply::Ignored => {}
             }
             if self
                 .history
@@ -871,16 +894,26 @@ impl QuestUi {
                 self.act(ui, view, a, &mut out);
             }
         }
-        // A click may have selected another quest: its details, and a pending abandon
-        // confirmation of the previous one is cancelled (§4.8 OPEN).
-        if let Some((_, w)) = self.log.as_ref() {
-            let selected = w.selected();
-            if self.pending_abandon.is_some() && self.pending_abandon != selected {
-                self.cancel_abandon();
+        // The dialogs' countdowns and queue, the menu's open delay; answered abandons.
+        self.dialogs.update(ui, &mut NoTables);
+        for r in self.dialogs.take_results() {
+            if r.confirmation_response == Some(true) {
+                let a = QuestAction::AbandonQuest { quest: r.tag };
+                out.commands.extend(command_of(view.session(), a));
             }
-            if selected != self.details_for {
-                self.refresh_details(ui, view, false);
+        }
+        if let Some(m) = self.menu_tree.as_mut() {
+            m.update(ui);
+            if !m.is_open() {
+                self.menu_tree = None;
+                self.menu = None;
             }
+        }
+        // A click may have selected another quest: its details.
+        if let Some((_, w)) = self.log.as_ref()
+            && w.selected() != self.details_for
+        {
+            self.refresh_details(ui, view, false);
         }
         // Texts fitted while their fonts were loading are fitted again once they arrive.
         if let Some((_, w)) = self.log.as_mut() {
@@ -905,15 +938,19 @@ impl QuestUi {
                 out.commands.extend(command_of(view.session(), a));
             }
             QuestAction::AskAbandon { quest } => {
-                if self.pending_abandon == Some(quest) {
-                    self.pending_abandon = None;
-                    let confirmed = self.log.as_mut().and_then(|(_, w)| w.confirm_abandon(true));
-                    if let Some(c) = confirmed.and_then(|c| command_of(view.session(), c)) {
-                        out.commands.push(c);
-                    }
-                } else {
-                    self.pending_abandon = Some(quest);
-                    out.notices.push(view.abandon_text(quest));
+                // The dialog keeps the quest it asks about (its tag); the log's own
+                // pending answer is not used.
+                if let Some((_, w)) = self.log.as_mut() {
+                    let _ = w.confirm_abandon(false);
+                }
+                let asked = self.dialogs.shown().is_some_and(|(_, r)| r.tag == quest)
+                    || self.dialogs.queued().iter().any(|r| r.tag == quest);
+                if !asked {
+                    let req = DialogRequest::confirmation(
+                        quest,
+                        DialogText::Plain(view.abandon_text(quest)),
+                    );
+                    self.dialogs.request(ui, req, &mut NoTables);
                 }
             }
             QuestAction::ShowHistory { quest } => {
@@ -951,12 +988,35 @@ impl QuestUi {
         }
     }
 
-    /// The abandon confirmation's answer (§4.8): OK gives `AbandonQuest` for the quest the
-    /// button asked about; cancel sends nothing.
-    pub fn answer_abandon(&mut self, ok: bool, view: &JournalView<'_>) -> Option<Command> {
-        self.pending_abandon = None;
-        let a = self.log.as_mut()?.1.confirm_abandon(ok)?;
-        command_of(view.session(), a)
+    /// Answers the shown abandon dialog as its buttons do (tests and tools): yes gives
+    /// `AbandonQuest` for the quest it asked about; no sends nothing.
+    pub fn answer_abandon(
+        &mut self,
+        ui: &mut Ui,
+        ok: bool,
+        view: &JournalView<'_>,
+    ) -> Option<Command> {
+        let outcome = if ok {
+            tessera_ui::widgets::dialog::DialogOutcome::Yes
+        } else {
+            tessera_ui::widgets::dialog::DialogOutcome::No
+        };
+        let b = self.dialogs.button(outcome)?;
+        let id = ui.element_id(b)?;
+        let ev = UiEvent::Game {
+            message: tessera_ui::Message {
+                seq: 0,
+                source: b,
+                source_id: id,
+                msg: ui.vocab().msgs.button_click,
+                arg: tessera_ui::MsgArg::default(),
+            },
+        };
+        self.dialogs.handle_event(ui, &ev, &mut NoTables);
+        let r = self.dialogs.take_results().into_iter().next()?;
+        (r.confirmation_response == Some(true))
+            .then(|| command_of(view.session(), QuestAction::AbandonQuest { quest: r.tag }))
+            .flatten()
     }
 
     /// The tracker menu's choice for the quest whose menu is open (§6.6 Tessera rules).
@@ -968,8 +1028,8 @@ impl QuestUi {
     ) -> QuestFrame {
         let mut out = QuestFrame::default();
         let quest = self.menu.take();
-        if let Some(p) = self.popup.take() {
-            p.close(ui);
+        if let Some(mut m) = self.menu_tree.take() {
+            m.close(ui);
         }
         let Some(quest) = quest else {
             return out;
@@ -991,39 +1051,31 @@ impl QuestUi {
         self.menu = Some(quest);
     }
 
-    /// Width of the tracker menu's popup (Tessera choice).
-    pub const MENU_WIDTH: i32 = 160;
-
     /// Opens the tracker menu for `quest` as a right click on its entry does (§6.6 Tessera
-    /// rule): the popup below the entry's button (the tracker list without one) with the
-    /// three items; a menu already open is closed first.
+    /// rule): a context menu at the pointer with the three items; a menu already open is
+    /// closed first.
     pub fn open_menu_popup(&mut self, ui: &mut Ui, view: &JournalView<'_>, quest: QuestKey) {
         self.close_menu(ui);
-        let Some((_, t)) = self.tracker.as_ref() else {
+        if self.tracker.is_none() {
             return;
-        };
-        let anchor = t
-            .entries
-            .iter()
-            .find(|(e, _)| e.quest == quest)
-            .map_or(t.list, |(_, p)| p.button.unwrap_or(p.entry));
+        }
         let texts = view.texts();
-        let items: Vec<PopupItem> = MENU
+        let items: Vec<WidgetItem> = MENU
             .iter()
-            .map(|(_, l)| PopupItem::command(&quest_label_text(&texts, *l)))
+            .enumerate()
+            .map(|(i, (_, l))| {
+                WidgetItem::plain(u32::try_from(i).unwrap_or(0), &quest_label_text(&texts, *l))
+            })
             .collect();
-        match Popup::open_menu(
-            ui,
-            &self.refs.nv,
-            &self.art,
-            None,
-            anchor,
-            Place::Below,
-            Self::MENU_WIDTH,
-            items,
-        ) {
-            Ok(p) => {
-                self.popup = Some(p);
+        let mut refs = self.refs.menus.clone();
+        refs.art = MenuArt {
+            background: self.art.panel.clone(),
+            rollover: self.art.row_highlight.clone(),
+            ..MenuArt::default()
+        };
+        match ContextMenu::open(ui, &refs, &MenuRequest::new(items)) {
+            Ok(m) => {
+                self.menu_tree = Some(m);
                 self.menu = Some(quest);
             }
             Err(e) => self.fail(format!("tracker menu: {e}")),

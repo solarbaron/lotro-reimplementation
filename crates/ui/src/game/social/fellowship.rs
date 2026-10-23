@@ -557,6 +557,7 @@ impl Fellowship {
         Some(ContextMenu {
             heading: Some(TextRef::new(T::UI_GUILD, 0x08AC_5E85)),
             entries,
+            submenu: true,
         })
     }
 
@@ -570,6 +571,7 @@ impl Fellowship {
                 enabled: true,
                 intent: Some(SocialIntent::LeaveFellowship),
             }],
+            submenu: true,
         })
     }
 }

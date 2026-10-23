@@ -332,7 +332,7 @@ fn example_10_1_notes_on_a_node() {
     let fm = v.parts.filter_menu.unwrap();
     assert!(click_view(&mut ui, &mut v, fm).is_empty());
     let popup = v.popup_root().expect("filter popup");
-    let rows = ui.children(popup);
+    let rows = v.menu().expect("filter menu").item_elements(0);
     // all, none, then bits by label "Type 38" (37) < "Type 43" (42): row 2 is bit 37.
     let rb = ui.displayed_box(rows[2]);
     let hit = ui.hit_test(rb.l + rb.w() / 2, rb.t + rb.h() / 2).unwrap();
@@ -604,20 +604,21 @@ fn map_menu_of_install_size_lies_on_the_screen() {
     v.show_node(&mut ui, 1, &T).unwrap();
     let mm = v.parts.map_menu.unwrap();
     click_view(&mut ui, &mut v, mm);
-    let popup = v.popup_root().expect("map menu");
-    let first = ui.children(popup)[0];
+    assert!(v.popup_root().is_some(), "map menu");
+    let first = v.menu().expect("map menu").item_elements(0)[0];
     click_view(&mut ui, &mut v, first);
     let sub = v.submenu_root().expect("submenu");
     settle(&mut ui);
-    let rows = ui.children(sub);
+    // `ui-widgets.md` §19.3: the submenu's list is at most 0.8 × the screen height and
+    // scrolls; the submenu lies on the screen.
+    let rows = v.menu().expect("map menu").item_elements(1);
     assert_eq!(rows.len(), 74);
-    for r in rows {
-        let b = ui.displayed_box(r);
-        assert!(
-            b.l >= 0 && b.t >= 0 && b.l + b.w() <= 1024 && b.t + b.h() <= 768,
-            "row {b:?} off the screen"
-        );
-    }
+    let b = ui.displayed_box(sub);
+    assert!(
+        b.l >= 0 && b.t >= 0 && b.l + b.w() <= 1024 && b.t + b.h() <= 768,
+        "submenu {b:?} off the screen"
+    );
+    assert!(b.h() <= 768 * 4 / 5 + 4, "list capped: {b:?}");
 }
 
 /// A real pointer click on `k` handed to the view: every action of every posted event.
@@ -630,11 +631,11 @@ fn click_view(ui: &mut Ui, v: &mut MapWindowView, k: ElementKey) -> Vec<MapActio
     out
 }
 
-fn row_texts(ui: &mut Ui, popup: ElementKey) -> Vec<String> {
-    ui.children(popup)
-        .iter()
+fn row_texts(ui: &mut Ui, rows: &[ElementKey]) -> Vec<String> {
+    let id = tessera_ui::widgets::context_menu::MenuIds::default().text;
+    rows.iter()
         .map(|r| {
-            let t = *ui.children(*r).last().unwrap();
+            let t = tessera_ui::game::find_below(ui, *r, id).unwrap();
             ui.text_of(t)
         })
         .collect()
@@ -657,26 +658,32 @@ fn map_menu_lists_regions_and_sorted_names() {
     let mm = v.parts.map_menu.unwrap();
     // One real click opens the menu (and does not close it again at once).
     assert!(click_view(&mut ui, &mut v, mm).is_empty());
-    let popup = v.popup_root().expect("map menu open");
-    assert_eq!(row_texts(&mut ui, popup), vec!["South", "North"]);
+    assert!(v.popup_root().is_some(), "map menu open");
+    let rows = v.menu().unwrap().item_elements(0);
+    assert_eq!(row_texts(&mut ui, &rows), vec!["South", "North"]);
     // A region opens its submenu beside its row, sorted by label.
-    let rows = ui.children(popup);
     assert!(click_view(&mut ui, &mut v, rows[1]).is_empty());
     let sub = v.submenu_root().expect("submenu");
-    assert_eq!(row_texts(&mut ui, sub), vec!["Alpha", "zeta"]);
+    let sub_rows = v.menu().unwrap().item_elements(1);
+    assert_eq!(row_texts(&mut ui, &sub_rows), vec!["Alpha", "zeta"]);
     let (r1, s) = (ui.displayed_box(rows[1]), ui.displayed_box(sub));
     assert!(s.l >= r1.l + r1.w() - 4, "beside its row");
     // Another region replaces it.
     assert!(click_view(&mut ui, &mut v, rows[0]).is_empty());
-    let sub = v.submenu_root().expect("submenu");
-    assert_eq!(row_texts(&mut ui, sub), vec!["Delta"]);
+    assert!(v.submenu_root().is_some(), "submenu");
+    let sub_rows = v.menu().unwrap().item_elements(1);
+    assert_eq!(row_texts(&mut ui, &sub_rows), vec!["Delta"]);
     // An item shows its node and closes both menus.
-    let item = ui.children(sub)[0];
+    let item = sub_rows[0];
     let acts = click_view(&mut ui, &mut v, item);
     assert_eq!(acts, vec![MapAction::Shown(Shown::Node(3))]);
     assert!(!v.popup_open());
     assert!(v.submenu_root().is_none());
-    // A second click on the button closes an open menu.
+    // Right after the menu closed a click on the button does not reopen it (§4.5); later
+    // it does, and a second click on the button closes the open menu.
+    click_view(&mut ui, &mut v, mm);
+    assert!(!v.popup_open(), "within the reopen guard");
+    ui.set_time(ui.time() + 1.0);
     click_view(&mut ui, &mut v, mm);
     assert!(v.popup_open());
     click_view(&mut ui, &mut v, mm);
@@ -1097,9 +1104,8 @@ fn map_layout() -> tessera_formats::ui_layout::UiLayout {
 #[test]
 fn install_layout_path() {
     let mut ui = ui_layouts(1280, 960, vec![map_layout()]);
-    let (gv, pv, nv) = vocabs();
-    let mut v =
-        MapWindowView::open_layout(&mut ui, &gv, &pv, &nv, Did(MAP_LAYOUT), &art()).unwrap();
+    let (gv, pv, _) = vocabs();
+    let mut v = MapWindowView::open_layout(&mut ui, &gv, &pv, Did(MAP_LAYOUT), &art()).unwrap();
     let t = v.tree().unwrap();
     assert_eq!(t.nodes.len(), 3);
     assert_eq!(t.options(1).display_mask(), 1 << 42);

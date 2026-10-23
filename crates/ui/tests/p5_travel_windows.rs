@@ -444,8 +444,8 @@ fn finder_window_selection_menus_and_join() {
     let sm = w.parts.size_menu.unwrap();
     let e = button(&ui, sm);
     w.handle_event(&mut ui, &e, &FT);
-    let popup = w.popup_root().expect("size menu");
-    let item = ui.children(popup)[1];
+    assert!(w.popup_root().is_some(), "size menu");
+    let item = w.menu().expect("size menu").item_elements(0)[1];
     let e = left(&ui, item);
     w.handle_event(&mut ui, &e, &FT);
     assert!(w.popup_root().is_none());

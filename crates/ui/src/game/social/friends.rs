@@ -262,6 +262,21 @@ impl FriendsModel {
         }
     }
 
+    /// The note dialog of friend `name` (§3.5): the question with argument 0xA2D94C5 = the
+    /// name and the current note as the default answer (TR5: no note, so empty). The
+    /// Note button and the menu entry are ghosted by TR5, so nothing opens it today.
+    #[must_use]
+    pub fn note_dialog(name: &str) -> TextDialog {
+        TextDialog {
+            purpose: DialogPurpose::FriendNote {
+                name: name.to_string(),
+            },
+            question: TextRef::new(T::UI_FRIENDS, 0x0803_A974).text(A::NOTE_NAME, name),
+            max_len: 0,
+            default: String::new(),
+        }
+    }
+
     /// The add dialog's answer: `AddFriend` for a valid name, else `None` (see
     /// [`DialogPurpose::answer`] for the line an invalid name posts).
     #[must_use]
@@ -334,6 +349,7 @@ impl FriendsModel {
                 entry(0x0386_01E5, false, None),
                 entry(0x065B_E227, false, None),
             ],
+            submenu: false,
         })
     }
 }
@@ -510,6 +526,12 @@ impl FriendsPage {
                 self.refresh(ui, model, src);
             } else if Some(m.source) == self.add {
                 out.push(SocialAction::Dialog(FriendsModel::add_dialog()));
+            } else if Some(m.source) == self.note {
+                if model.buttons().note
+                    && let Some(e) = model.selected_entry()
+                {
+                    out.push(SocialAction::Dialog(FriendsModel::note_dialog(&e.name)));
+                }
             } else if Some(m.source) == self.remove {
                 out.extend(model.remove().map(SocialAction::Intent));
             } else if Some(m.source) == self.tell {

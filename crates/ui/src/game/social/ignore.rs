@@ -153,6 +153,7 @@ impl IgnoreModel {
                     intent: None,
                 },
             ],
+            submenu: false,
         })
     }
 }

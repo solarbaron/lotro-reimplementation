@@ -17,29 +17,55 @@
 //! - `--open-panel social|friends|fellowship|trade` asks for a panel by name
 //!   ([`SocialUi::request_open`]).
 //!
-//! The client has no engine text-input dialog or context menu yet: an add dialog posts the
-//! command that does the same (`/friend add <name>`, `/ignore add <name>`), and a row menu
-//! is kept ([`SocialUi::menu`]) for [`SocialUi::choose_menu`] (tests and drivers); the
-//! fellowship commands (`/dismiss`, `/promote`, `/leave`) are the player's way meanwhile.
+//! The add and note dialogs are engine `TextInput` dialogs (`ui-widgets.md` §18,
+//! `DialogTextInputField` of layout `Dialog`; §18.6: done gives the entered text, quit an
+//! empty text, which adds or changes nothing), and the row menus of `social-panels.md`
+//! §3.5, §3.6 and §4.5 are engine context menus (`ui-widgets.md` §19, layout
+//! `ContextMenu`) opened at the pointer: the friends and ignore menus with their heading as
+//! the title, the fellowship member's menu as one submenu item, headed by the group
+//! heading, holding the entries (§4.5 "its group submenu"). The install's names are read
+//! from the facts the frame is given ([`CharacterData`]); before they are known the
+//! dialogs and menus are Tessera's code-made ones. The row menu last asked for is also kept
+//! ([`SocialUi::menu`]) for [`SocialUi::choose_menu`] (tests and drivers).
 //! Trade entries are item slots with the install's icons; hovering one shows its examination
 //! tooltip (the player's own item with its instance state, a peer's entry by its record).
 
+use tessera_gamedata::tooltip::TooltipData;
 use tessera_net::Command;
 use tessera_ui::game::CharVocab;
-use tessera_ui::game::chat::notice::{self as n, Notice};
+use tessera_ui::game::chat::notice::Notice;
 use tessera_ui::game::examine::ExamTooltips;
 use tessera_ui::game::items::SlotPlace;
+use tessera_ui::game::npc::kit::FallbackArt;
 use tessera_ui::game::social::fellowship::FellowshipPanels;
 use tessera_ui::game::social::friends::{FriendsPage, GroupState};
 use tessera_ui::game::social::ignore::IgnorePage;
 use tessera_ui::game::social::invite::InviteWindow;
 use tessera_ui::game::social::panel::{SocialPage, SocialPanel};
 use tessera_ui::game::social::trade::{OWN_CONTAINER, PEER_CONTAINER, TradeWindow};
-use tessera_ui::game::social::{ContextMenu, SocialAction, SocialIntent, SocialVocab};
+use tessera_ui::game::social::{
+    ContextMenu, DialogPurpose, SocialAction, SocialIntent, SocialVocab, TextDialog,
+};
+use tessera_ui::widgets::context_menu::{
+    ContextMenu as MenuTree, MenuArt, MenuEvent, MenuItem, MenuRefs, MenuReply, MenuRequest,
+};
+use tessera_ui::widgets::dialog::{
+    DialogArt, DialogBoxes, DialogOutcome, DialogRefs, DialogRequest, DialogText,
+};
 use tessera_ui::{ElementKey, Ui, UiEvent};
 
 use super::state::SocialState;
 use crate::character::{CharacterData, PlayerState};
+
+/// The code-made menus' art from the fallback widgets' art (as the quest journal's tracker
+/// menu takes it).
+fn menu_art(a: &FallbackArt) -> MenuArt {
+    MenuArt {
+        background: a.panel.clone(),
+        rollover: a.row_highlight.clone(),
+        ..MenuArt::default()
+    }
+}
 
 /// Most UI events and commands queued for the social panels in one frame.
 pub const MAX_QUEUED: usize = 4096;
@@ -123,6 +149,17 @@ pub struct SocialUi {
     commands: Vec<String>,
     open: Vec<SocialOpen>,
     menu: Option<ContextMenu>,
+    /// The row menu on the screen (`ui-widgets.md` §19).
+    menu_tree: Option<MenuTree>,
+    menu_refs: MenuRefs,
+    /// The engine dialogs (add and note dialogs), with the purpose of each tag.
+    dialogs: DialogBoxes,
+    purposes: Vec<(u64, DialogPurpose)>,
+    next_tag: u64,
+    /// The install's dialog and menu names were read.
+    widget_refs: bool,
+    /// Tessera's art of the code-made dialogs and menus ([`Self::set_fallback_art`]).
+    art: FallbackArt,
     /// The player-vitals panel P4 last bound ([`Self::attach_player_vitals`]).
     player_panel: Option<ElementKey>,
 }
@@ -159,7 +196,124 @@ impl SocialUi {
             commands: Vec::new(),
             open: Vec::new(),
             menu: None,
+            menu_tree: None,
+            menu_refs: MenuRefs::fallback(menu_art(&FallbackArt::default())),
+            dialogs: DialogBoxes::new(DialogRefs::fallback(DialogArt::default())),
+            purposes: Vec::new(),
+            next_tag: 1,
+            widget_refs: false,
+            art: FallbackArt::default(),
             player_panel: None,
+        }
+    }
+
+    /// Sets Tessera's art of the code-made dialogs and menus (the quest journal's
+    /// [`FallbackArt`]: the window, button and entry images of the dialogs, the panel and
+    /// row-highlight images of the menus), used before the install's names are known and
+    /// when its `Dialog` or `ContextMenu` layout does not resolve.
+    pub fn set_fallback_art(&mut self, art: FallbackArt) {
+        let mut d = self.dialogs.refs().clone();
+        d.art = DialogArt::from_fallback(&art);
+        self.dialogs.set_refs(d);
+        self.menu_refs.art = menu_art(&art);
+        self.art = art;
+    }
+
+    /// The row menu on the screen, while open (`ui-widgets.md` §19).
+    #[must_use]
+    pub fn menu_tree(&self) -> Option<&MenuTree> {
+        self.menu_tree.as_ref()
+    }
+
+    /// The engine dialogs (the add and note dialogs).
+    #[must_use]
+    pub fn dialogs(&self) -> &DialogBoxes {
+        &self.dialogs
+    }
+
+    /// Reads the install's names of the engine dialogs and context menus once the facts
+    /// are known (`Dialog` and `ContextMenu` layouts, `UIElementID` labels).
+    fn ensure_widget_refs(&mut self, data: Option<&CharacterData>) {
+        if self.widget_refs {
+            return;
+        }
+        let Some(d) = data else { return };
+        self.widget_refs = true;
+        let t = d.engine().data();
+        let layout = |l: &str| t.layout_by_label(l);
+        let element = |n: &str| t.ui_key(tessera_formats::ui_layout::UiEnum::ElementId, n);
+        let pid = |n: &str| t.pid(n);
+        self.dialogs.set_refs(DialogRefs::resolve(
+            &layout,
+            &element,
+            &pid,
+            DialogArt::from_fallback(&self.art),
+        ));
+        self.menu_refs = MenuRefs::resolve(&layout, &element, &pid, menu_art(&self.art));
+        if self.dialogs.refs().layout.is_none() || self.menu_refs.layout.is_none() {
+            tracing::warn!("social panels: Dialog or ContextMenu layout missing; code-made");
+        }
+    }
+
+    /// Shows a text-input dialog (`ui-widgets.md` §18.6): the question, the default answer,
+    /// the length bound and the focus on the entry.
+    fn open_dialog(&mut self, ui: &mut Ui, d: TextDialog, state: &mut SocialState) {
+        let tag = self.next_tag;
+        self.next_tag = self.next_tag.wrapping_add(1).max(1);
+        let mut req = DialogRequest::text_input(tag, DialogText::Ref(d.question));
+        req.response = d.default;
+        req.max_chars = i32::try_from(d.max_len).unwrap_or(i32::MAX);
+        req.activate_and_take_focus = true;
+        if self.purposes.len() >= tessera_ui::widgets::dialog::MAX_QUEUED * 2 {
+            self.purposes.remove(0);
+        }
+        self.purposes.push((tag, d.purpose));
+        self.dialogs.request(ui, req, state.text_source());
+    }
+
+    /// Shows a row menu at the pointer (`ui-widgets.md` §19.4 Tessera rule).
+    fn open_menu(&mut self, ui: &mut Ui, m: ContextMenu, state: &mut SocialState) {
+        if let Some(mut t) = self.menu_tree.take() {
+            t.close(ui);
+        }
+        let items: Vec<MenuItem> = m
+            .entries
+            .iter()
+            .enumerate()
+            .map(|(i, e)| {
+                MenuItem::plain(
+                    u32::try_from(i).unwrap_or(u32::MAX),
+                    &state.render_ref(&e.label),
+                )
+                .enabled(e.enabled)
+            })
+            .collect();
+        let heading = m
+            .heading
+            .as_ref()
+            .map(|h| state.render_ref(h))
+            .unwrap_or_default();
+        let req = if m.submenu {
+            MenuRequest::new(vec![MenuItem::submenu(0, &heading, items)])
+        } else {
+            MenuRequest {
+                title: heading,
+                ..MenuRequest::new(items)
+            }
+        };
+        match MenuTree::open(ui, &self.menu_refs, &req) {
+            Ok(t) => self.menu_tree = Some(t),
+            Err(e) => tracing::debug!("social row menu not shown: {e}"),
+        }
+        self.menu = Some(m);
+    }
+
+    /// The entry a menu selection names (its path from the root).
+    fn menu_entry(&self, path: &[usize]) -> Option<usize> {
+        let m = self.menu.as_ref()?;
+        match (m.submenu, path) {
+            (true, [0, i]) | (false, [i]) => Some(*i),
+            _ => None,
         }
     }
 
@@ -319,8 +473,16 @@ impl SocialUi {
 
     /// Chooses entry `i` of the kept row menu (as a click on it would): its action runs in
     /// the next [`Self::frame`]. Returns whether the entry exists and is enabled.
-    pub fn choose_menu(&mut self, i: usize, state: &mut SocialState) -> Option<Command> {
+    pub fn choose_menu(
+        &mut self,
+        ui: &mut Ui,
+        i: usize,
+        state: &mut SocialState,
+    ) -> Option<Command> {
         let menu = self.menu.take()?;
+        if let Some(mut t) = self.menu_tree.take() {
+            t.close(ui);
+        }
         let e = menu.entries.get(i)?;
         if !e.enabled {
             return None;
@@ -339,6 +501,7 @@ impl SocialUi {
     ) -> SocialFrame {
         let mut out = SocialFrame::default();
         self.ensure_open(ui);
+        self.ensure_widget_refs(data);
         let mut actions: Vec<SocialAction> = Vec::new();
         for name in std::mem::take(&mut self.commands) {
             if let Some(p) = self.panel.as_mut()
@@ -361,9 +524,46 @@ impl SocialUi {
         }
         for ev in std::mem::take(&mut self.events) {
             tracing::trace!(?ev, "social panels: UI event");
+            // The dialogs and the row menu take their events first.
+            if self.dialogs.handle_event(ui, &ev, state.text_source()) {
+                continue;
+            }
+            let reply = self
+                .menu_tree
+                .as_mut()
+                .map_or(MenuReply::Ignored, |m| m.handle_event(ui, &ev));
+            match reply {
+                MenuReply::Event(MenuEvent::Selected { path, .. }) => {
+                    let intent = self
+                        .menu_entry(&path)
+                        .and_then(|i| self.menu.as_ref()?.entries.get(i))
+                        .filter(|e| e.enabled)
+                        .and_then(|e| e.intent.clone());
+                    actions.extend(intent.map(SocialAction::Intent));
+                    continue;
+                }
+                MenuReply::Event(_) | MenuReply::Consumed => continue,
+                MenuReply::Ignored => {}
+            }
             actions.extend(self.event(ui, &ev, state, data, player));
         }
-        self.run_actions(actions, state, player, &mut out);
+        self.dialogs.update(ui, state.text_source());
+        for r in self.dialogs.take_results() {
+            let Some(pos) = self.purposes.iter().position(|(t, _)| *t == r.tag) else {
+                continue;
+            };
+            let (_, purpose) = self.purposes.remove(pos);
+            if r.outcome == Some(DialogOutcome::Done) {
+                actions.extend(purpose.answer(&r.response));
+            }
+        }
+        if let Some(t) = self.menu_tree.as_mut() {
+            t.update(ui);
+            if !t.is_open() {
+                self.menu_tree = None;
+            }
+        }
+        self.run_actions(ui, actions, state, player, &mut out);
         if self.seen != Some(state.generation()) || !out.commands.is_empty() {
             self.refresh(ui, state);
         }
@@ -471,6 +671,7 @@ impl SocialUi {
 
     fn run_actions(
         &mut self,
+        ui: &mut Ui,
         actions: Vec<SocialAction>,
         state: &mut SocialState,
         player: Option<&PlayerState>,
@@ -491,19 +692,8 @@ impl SocialUi {
                     }
                 }
                 SocialAction::Post(notice) => post(state, &notice, out),
-                SocialAction::Menu(m) => self.menu = Some(m),
-                SocialAction::Dialog(d) => {
-                    // No engine text-input dialog in the client yet (module docs).
-                    let cmd = match d.purpose {
-                        tessera_ui::game::social::DialogPurpose::AddFriend => "/friend add",
-                        tessera_ui::game::social::DialogPurpose::AddIgnore => "/ignore add",
-                    };
-                    let notice = Notice::own(
-                        format!("Type {cmd} <name> in the chat to add a name."),
-                        n::LOG,
-                    );
-                    post(state, &notice, out);
-                }
+                SocialAction::Menu(m) => self.open_menu(ui, m, state),
+                SocialAction::Dialog(d) => self.open_dialog(ui, d, state),
                 SocialAction::TradeDrop { item } => {
                     let (in_backpack, quantity) = backpack_item(player, item);
                     queue.push_back(state.trade_mut().drop_item(item, quantity, in_backpack));
@@ -703,6 +893,228 @@ mod tests {
         );
         assert!(!s.any_shown(&ui));
         assert!(s.escape(&mut ui).is_none());
+    }
+
+    fn entered_state() -> SocialState {
+        let mut st = SocialState::new(true);
+        let _ = st.apply(
+            &tessera_net::Event::WorldEntered {
+                player: EntityId(1),
+                name: "Tam".into(),
+                transform: tessera_net::Transform::new(tessera_net::Vec3::ZERO, 0.0),
+            },
+            &|_| None,
+        );
+        st
+    }
+
+    fn click_event(ui: &Ui, k: ElementKey) -> UiEvent {
+        UiEvent::Game {
+            message: tessera_ui::Message {
+                seq: 1,
+                source: k,
+                source_id: ui.element_id(k).unwrap_or(0),
+                msg: ui.vocab().msgs.mouse_click,
+                arg: tessera_ui::MsgArg {
+                    command: Some(tessera_ui::Command::named("SelectLeft")),
+                    ..tessera_ui::MsgArg::default()
+                },
+            },
+        }
+    }
+
+    /// The add dialog is an engine text-input dialog (Tessera's code-made one without an
+    /// install): the typed name and `AcceptInput` give `AddFriend`; quit gives nothing.
+    #[test]
+    fn the_add_dialog_adds_the_entered_name() {
+        use tessera_ui::game::social::friends::FriendsModel;
+        let mut ui = Ui::new(
+            Box::new(tessera_ui::NullEnv),
+            tessera_ui::Vocab::default(),
+            (800, 600),
+        );
+        let mut s = SocialUi::new(SocialVocab::default(), CharVocab::default());
+        let mut st = entered_state();
+        let mut out = SocialFrame::default();
+        s.run_actions(
+            &mut ui,
+            vec![SocialAction::Dialog(FriendsModel::add_dialog())],
+            &mut st,
+            None,
+            &mut out,
+        );
+        let entry = s.dialogs().entry().expect("entry");
+        assert_eq!(ui.focus_element(), Some(entry), "the entry takes the focus");
+        for c in "Kim".chars() {
+            ui.text_input(c);
+        }
+        assert!(ui.key_command(&tessera_ui::Command::named("AcceptInput"), true, 1.0));
+        for ev in ui.take_events() {
+            s.queue_event(&ev);
+        }
+        let out = s.frame(&mut ui, &mut st, None, None);
+        assert_eq!(out.commands.len(), 1, "{:?}", out.commands);
+        assert!(format!("{:?}", out.commands[0]).contains("Kim"));
+        assert!(s.dialogs().shown().is_none());
+        // Quit adds nothing.
+        let mut out = SocialFrame::default();
+        s.run_actions(
+            &mut ui,
+            vec![SocialAction::Dialog(FriendsModel::add_dialog())],
+            &mut st,
+            None,
+            &mut out,
+        );
+        assert!(ui.key_command(&tessera_ui::Command::named("EscapeKey"), true, 1.0));
+        for ev in ui.take_events() {
+            s.queue_event(&ev);
+        }
+        let out = s.frame(&mut ui, &mut st, None, None);
+        assert!(out.commands.is_empty());
+    }
+
+    /// The UI host hands the social panels only some kinds of UI events
+    /// (`UiHost::social_frame`: hover, drag ends and game messages), so the core's
+    /// `DialogResult` of a key never reaches them. The dialog the core hid is shown again at
+    /// the next frame instead of blocking every later dialog, and its buttons still answer.
+    #[test]
+    fn a_dialog_key_result_the_host_drops_leaves_the_dialog_answerable() {
+        use tessera_ui::game::social::friends::FriendsModel;
+        fn host_filter(s: &mut SocialUi, ui: &mut Ui) {
+            for ev in ui.take_events() {
+                if matches!(
+                    ev,
+                    UiEvent::ExamineHover { .. } | UiEvent::DragEnded { .. } | UiEvent::Game { .. }
+                ) {
+                    s.queue_event(&ev);
+                }
+            }
+        }
+        let mut ui = Ui::new(
+            Box::new(tessera_ui::NullEnv),
+            tessera_ui::Vocab::default(),
+            (800, 600),
+        );
+        let mut s = SocialUi::new(SocialVocab::default(), CharVocab::default());
+        let mut st = entered_state();
+        let mut out = SocialFrame::default();
+        s.run_actions(
+            &mut ui,
+            vec![SocialAction::Dialog(FriendsModel::add_dialog())],
+            &mut st,
+            None,
+            &mut out,
+        );
+        for c in "Kim".chars() {
+            ui.text_input(c);
+        }
+        assert!(ui.key_command(&tessera_ui::Command::named("AcceptInput"), true, 1.0));
+        host_filter(&mut s, &mut ui);
+        let out = s.frame(&mut ui, &mut st, None, None);
+        assert!(out.commands.is_empty(), "the key result was dropped");
+        let (root, _) = s.dialogs().shown().expect("still the shown dialog");
+        assert!(ui.is_visible(root), "shown again, not left hidden");
+        assert_eq!(ui.active_panel(), Some(root));
+        // Its done button still answers it.
+        let done = s
+            .dialogs()
+            .button(tessera_ui::widgets::dialog::DialogOutcome::Done)
+            .expect("done button");
+        let mut ev = click_event(&ui, done);
+        if let UiEvent::Game { message } = &mut ev {
+            message.msg = ui.vocab().msgs.button_click;
+        }
+        s.queue_event(&ev);
+        let out = s.frame(&mut ui, &mut st, None, None);
+        assert_eq!(out.commands.len(), 1, "{:?}", out.commands);
+        assert!(format!("{:?}", out.commands[0]).contains("Kim"));
+        // A later add dialog is shown at once.
+        let mut out = SocialFrame::default();
+        s.run_actions(
+            &mut ui,
+            vec![SocialAction::Dialog(FriendsModel::add_dialog())],
+            &mut st,
+            None,
+            &mut out,
+        );
+        assert!(s.dialogs().shown().is_some_and(|(k, _)| ui.is_visible(k)));
+    }
+
+    /// A row menu is an engine context menu: the heading is its title, a chosen entry runs
+    /// its intent; the fellowship's group menu is one submenu holding the entries.
+    #[test]
+    fn row_menus_are_context_menus() {
+        use tessera_ui::game::chat::TextRef;
+        use tessera_ui::game::social::MenuEntry;
+        let mut ui = Ui::new(
+            Box::new(tessera_ui::NullEnv),
+            tessera_ui::Vocab::default(),
+            (800, 600),
+        );
+        let mut s = SocialUi::new(SocialVocab::default(), CharVocab::default());
+        let mut st = entered_state();
+        let menu = |submenu: bool| ContextMenu {
+            heading: Some(
+                TextRef::new(
+                    tessera_ui::game::chat::notice::tables::UI_FRIENDS,
+                    0x0193_53F5,
+                )
+                .text(tessera_ui::game::chat::notice::args::NOTE_NAME, "Kim"),
+            ),
+            entries: vec![
+                MenuEntry {
+                    label: TextRef::new(1, 3),
+                    enabled: false,
+                    intent: None,
+                },
+                MenuEntry {
+                    label: TextRef::new(1, 4),
+                    enabled: true,
+                    intent: Some(SocialIntent::Ignore { name: "Kim".into() }),
+                },
+            ],
+            submenu,
+        };
+        let mut out = SocialFrame::default();
+        s.run_actions(
+            &mut ui,
+            vec![SocialAction::Menu(menu(false))],
+            &mut st,
+            None,
+            &mut out,
+        );
+        let tree = s.menu_tree().expect("menu");
+        let items = tree.item_elements(0);
+        assert_eq!(items.len(), 2);
+        let root = tree.root().unwrap();
+        let refs = MenuRefs::default();
+        assert_eq!(ui.element_id(root), Some(refs.ids.with_title), "titled");
+        // The ghosted entry does nothing; the other ignores Kim and closes the menu.
+        s.queue_event(&click_event(&ui, items[0]));
+        let out = s.frame(&mut ui, &mut st, None, None);
+        assert!(out.commands.is_empty());
+        assert!(s.menu_tree().is_some());
+        s.queue_event(&click_event(&ui, items[1]));
+        let out = s.frame(&mut ui, &mut st, None, None);
+        assert_eq!(out.commands.len(), 1, "{:?}", out.commands);
+        assert!(s.menu_tree().is_none());
+        // The group submenu.
+        let mut out = SocialFrame::default();
+        s.run_actions(
+            &mut ui,
+            vec![SocialAction::Menu(menu(true))],
+            &mut st,
+            None,
+            &mut out,
+        );
+        let item = s.menu_tree().expect("menu").item_elements(0)[0];
+        s.queue_event(&click_event(&ui, item));
+        let _ = s.frame(&mut ui, &mut st, None, None);
+        let sub = s.menu_tree().expect("menu").item_elements(1);
+        assert_eq!(sub.len(), 2, "the submenu holds the entries");
+        s.queue_event(&click_event(&ui, sub[1]));
+        let out = s.frame(&mut ui, &mut st, None, None);
+        assert_eq!(out.commands.len(), 1);
     }
 
     /// Regression (P4 review): a UI event of another panel (a bag drag, a click elsewhere)

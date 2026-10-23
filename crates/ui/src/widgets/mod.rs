@@ -6,8 +6,14 @@
 //! state part per class in its chain: a Scrollbar has Button and Scrollable parts, a Tree has
 //! Scrollable, ListBox and Tree parts. The behaviour lives in the submodules as `impl Ui`
 //! blocks.
+//!
+//! [`dialog`] (engine dialog boxes, §18) and [`context_menu`] (context menus, §19) are
+//! built by game code on top of the classes: a controller per dialog owner or open menu
+//! tree that creates its elements from the install's `Dialog` and `ContextMenu` layouts.
 
 pub(crate) mod button;
+pub mod context_menu;
+pub mod dialog;
 pub mod groupbox;
 pub(crate) mod listbox;
 pub(crate) mod menu;

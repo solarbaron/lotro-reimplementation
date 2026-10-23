@@ -24,6 +24,8 @@ use tessera_ui::game::quest::details::DetailsTemplates;
 use tessera_ui::game::quest::history::HistoryIds;
 use tessera_ui::game::quest::log::LogTemplates;
 use tessera_ui::game::quest::markers::NoteImages;
+use tessera_ui::widgets::context_menu::{MenuArt, MenuRefs};
+use tessera_ui::widgets::dialog::{DialogArt, DialogRefs};
 
 use crate::npc::{NpcData, NpcRefs};
 
@@ -62,6 +64,12 @@ pub struct QuestRefs {
     pub radar_images: NoteImages,
     /// The `Quest` note images of the map window's icon table.
     pub map_images: NoteImages,
+    /// The engine dialogs' names (the abandon confirmation, `quest-journal.md` §4.8,
+    /// `ui-widgets.md` §18.6); placeholders and code-made dialogs without an install.
+    pub dialogs: DialogRefs,
+    /// The context menus' names (the tracker menu, §6.6, `ui-widgets.md` §19);
+    /// placeholders and code-made menus without an install.
+    pub menus: MenuRefs,
     /// What did not resolve (`LayoutMissing` / `ElementMissing`), for the census.
     pub missing: Vec<String>,
 }
@@ -134,6 +142,8 @@ impl QuestRefs {
             tracker_template: t("questtracker", "QuestTracker_QuestTemplate"),
             radar_images: NoteImages::default(),
             map_images: NoteImages::default(),
+            dialogs: DialogRefs::default(),
+            menus: MenuRefs::default(),
             missing,
         }
     }
@@ -158,6 +168,24 @@ impl QuestRefs {
                 .map(|set| quest_note_images(&set, &|n| data.pid(n)))
                 .unwrap_or_default()
         };
+        r.dialogs = DialogRefs::resolve(
+            &|l| data.layout_by_label(l),
+            &|n| data.ui_key(UiEnum::ElementId, n),
+            &|n| data.pid(n),
+            DialogArt::default(),
+        );
+        r.menus = MenuRefs::resolve(
+            &|l| data.layout_by_label(l),
+            &|n| data.ui_key(UiEnum::ElementId, n),
+            &|n| data.pid(n),
+            MenuArt::default(),
+        );
+        if r.dialogs.layout.is_none() {
+            r.missing.push("LayoutMissing: Dialog".into());
+        }
+        if r.menus.layout.is_none() {
+            r.missing.push("LayoutMissing: ContextMenu".into());
+        }
         r.map_images = images(table(ICON_TABLES.0, ICON_TABLE_KEYS.0));
         r.radar_images = images(table(ICON_TABLES.1, ICON_TABLE_KEYS.1));
         if r.radar_images.normal.is_none() {

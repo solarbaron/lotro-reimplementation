@@ -48,6 +48,9 @@ pub struct TestEnv {
     pub images: HashMap<ImageRef, Arc<UiImage>>,
     face: Arc<FontFace>,
     colour_pid: u32,
+    /// The (horizontal, vertical) justification property IDs the shaper reads, when set
+    /// (`None`: every text is laid out top-left, as before).
+    pub justify: Option<(u32, u32)>,
 }
 
 impl TestEnv {
@@ -59,6 +62,7 @@ impl TestEnv {
             images: HashMap::new(),
             face,
             colour_pid: NpcVocab::default().pids.text_font_color,
+            justify: None,
         };
         for (i, img) in generated_art().into_iter().enumerate() {
             env.images
@@ -103,11 +107,28 @@ impl UiEnv for TestEnv {
         let chars = b.finish();
         let fonts = vec![Some(Arc::clone(&self.face))];
         let width = r.wrap_width.unwrap_or(r.size.0).max(1);
-        let p = LayoutParams {
+        let enum_of = |pid: u32| {
+            r.props
+                .iter()
+                .find(|(p, _)| *p == pid)
+                .and_then(|(_, v)| match v {
+                    PropertyValue::Enum(e) => Some(*e),
+                    _ => None,
+                })
+        };
+        let mut p = LayoutParams {
             width,
             height: r.size.1.max(0),
             ..LayoutParams::default()
         };
+        if let Some((h, v)) = self.justify {
+            if let Some(e) = enum_of(h) {
+                p.horizontal = e;
+            }
+            if let Some(e) = enum_of(v) {
+                p.vertical = e;
+            }
+        }
         let l = layout(&chars, &fonts, &p, None).ok()?;
         let extent = (l.content_width, l.content_height);
         Some(Arc::new(PreparedText {

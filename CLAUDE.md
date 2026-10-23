@@ -272,8 +272,8 @@ fine. Format-level terms like "DID" or "landblock" are fine.
   `ui-widgets.md` §18–§19 are built (`tessera-ui` `widgets::dialog`, `widgets::context_menu`):
   quest abandon is a confirmation dialog, the tracker menu a context menu at the pointer.
   Open: the client host does not yet drop game keys while a modal dialog shows (§18.4,
-  `modal_dialog_shown`); the local tier-2 goldens of the vendor, wallet and quest log drift
-  by 4–15 px since 2026-10-13 and wait for a re-bless after the owner's look (decision 0031).
+  `modal_dialog_shown`); the local tier-2 goldens of the vendor, wallet and quest log, which
+  drifted by 4–15 px since 2026-10-13, were re-blessed with the owner's approval (2026-10-23).
 - **P2 (targeting, skills and combat presentation; merged to main 2026-10-11, exit
   verification 2026-10-11)** (`docs/ROADMAP.md` P2 status): criteria 1-4 pass on Tessera's
   side. Accepted after independent review: `combat-ui.md` (rev 2), `skill-tooltips.md`,
@@ -348,8 +348,11 @@ fine. Format-level terms like "DID" or "landblock" are fine.
   and the note tooltips and `CoordinateDisplay` use the install's texts (§6.3). MapMenu,
   FilterMenu and the finder's size and tier menus are `ui-widgets.md` §19 context menus (the
   finder's stay code-made until `apps/client/src/travel` passes the install's menu refs).
-  The local tier-2 goldens of `map_census_real_data` (01-root), the finder and the travel
-  windows drift and wait for the owner's re-bless (decision 0031).
+  The local tier-2 goldens of the finder and the travel windows were re-blessed with the
+  owner's approval (2026-10-23). Still failing locally: `map_census_real_data` (one region,
+  dungeon map 0x78005EC9, never gets its image size; its 01-root golden waits behind it) and
+  the loading-screen golden (wall-clock ring animation, and the backdrop now fits the whole
+  image); both are round-4 items.
 - **P6 (progression and crafting panels; merged to main 2026-10-17, exit verification
   2026-10-16)** (`docs/ROADMAP.md` P6 status): criteria 1 and 2 pass on Tessera's side. Its
   specs are Accepted after independent review (2026-10-16): `progression-panels.md`,
@@ -438,8 +441,8 @@ fine. Format-level terms like "DID" or "landblock" are fine.
   0.5–2.0, saved in `[UI.group_scale]`, "Reset window scales"), the G7 golden
   (`crates/render/tests/ui_scaling_g7.rs`) and key repeat from the action map's type-3 set
   (`keymap.md` §7.8.6). `ui-scaling.md` rev 8 is Accepted. The local combat golden
-  (checkpoint-03800ms, 1.7× floaty text) drifts with the §3.4 rounding and waits for the
-  owner's look (decision 0031). **Still deferred:** measuring the S1–S7 budgets and the §9.4
+  (checkpoint-03800ms, 1.7× floaty text) drifted with the §3.4 rounding and was re-blessed
+  with the owner's approval (2026-10-23). **Still deferred:** measuring the S1–S7 budgets and the §9.4
   tier-2 real-data goldens.
 - **Follow-up packages (merged to main 2026-10-23, 02f2214..9620856):** ten packages; the
   UI-scaling, P1, P2, P3, P5, P6, particle and far-view items are in their bullets above.

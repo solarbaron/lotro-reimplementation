@@ -281,3 +281,9 @@ Line numbers refer to that commit.
 `19acce5`), fix B1–B4 and N1–N10 with fresh writer sessions, then fresh reviewer sessions that
 did not take part in the first pass and only review. Hand back as in §6; the orchestrator then
 re-runs this audit.
+
+**Decisions on N1, N5, N6 and N7:** [decision 0042](decisions/0042-m8-remediation-decisions.md)
+(owner-delegated, 2026-10-23). Drop step B2 of `official-login.md` §2.4.1 and the fallback
+URL built from path fragments (§2.4.1 then names only the user value and the version
+resource); admin/GM classes are out of scope; namespace and SOAPAction identifiers may stay as
+interoperability names; reviewers never edit what they review.

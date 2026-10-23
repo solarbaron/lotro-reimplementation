@@ -1417,3 +1417,77 @@ fn banded_upload_and_flush() -> Result<(), RenderError> {
     }
     Ok(())
 }
+
+/// Renders UI frames until `UiStats::gpu_ns` is reported (at most `frames` frames, waiting
+/// for the GPU between them) and returns every frame's figure.
+fn ui_gpu_times(r: &mut tessera_render::Renderer<'static>, frames: usize) -> Vec<Option<u64>> {
+    let tex = ui_texture(r, 64, 48, mixed).expect("UI texture");
+    let mut seen = Vec::new();
+    for _ in 0..frames {
+        let (_, stats) = render_ui(r, SIZE, UNORM, |p| {
+            p.entry(&UiEntry::new(tex, [64, 48], UiRect::new(13, 21, 64, 48)));
+        })
+        .expect("UI frame");
+        seen.push(stats.ui.gpu_ns);
+        if stats.ui.gpu_ns.is_some() {
+            break;
+        }
+        r.context().wait_idle().expect("wait");
+    }
+    r.destroy_texture(tex);
+    seen
+}
+
+/// render.md §6.16 U2: with `TIMESTAMP_QUERY` (requested when the adapter offers it) the
+/// UI passes' GPU time is reported a few frames late. Skipped where no adapter offers the
+/// feature.
+#[test]
+fn ui_gpu_time_with_timestamp_queries() {
+    let Some(mut r) = gpu::headless_renderer([0.0; 4]) else {
+        return;
+    };
+    let offered = r
+        .context()
+        .adapter
+        .features()
+        .contains(tessera_render::wgpu::Features::TIMESTAMP_QUERY);
+    let enabled = r
+        .context()
+        .device
+        .features()
+        .contains(tessera_render::wgpu::Features::TIMESTAMP_QUERY);
+    assert_eq!(offered, enabled, "the feature is requested when offered");
+    if !enabled {
+        eprintln!("SKIPPED: the adapter has no TIMESTAMP_QUERY");
+        return;
+    }
+    let seen = ui_gpu_times(&mut r, 16);
+    assert!(
+        seen.first().is_some_and(Option::is_none),
+        "the first frame has no resolved queries yet: {seen:?}"
+    );
+    let last = seen.last().copied().flatten();
+    assert!(
+        last.is_some(),
+        "no GPU time reported in 16 frames: {seen:?}"
+    );
+    // A 256 × 256 frame's UI work takes far less than a second.
+    assert!(last.is_some_and(|ns| ns < 1_000_000_000), "{seen:?}");
+}
+
+/// Without timestamp queries (switched off here) `gpu_ns` stays `None`.
+#[test]
+fn ui_gpu_time_is_none_without_timestamp_queries() {
+    let Some(mut r) = gpu::headless_renderer_with(|c| c.context.timestamp_queries = false) else {
+        return;
+    };
+    assert!(
+        !r.context()
+            .device
+            .features()
+            .contains(tessera_render::wgpu::Features::TIMESTAMP_QUERY)
+    );
+    let seen = ui_gpu_times(&mut r, 4);
+    assert_eq!(seen.len(), 4);
+    assert!(seen.iter().all(Option::is_none), "{seen:?}");
+}

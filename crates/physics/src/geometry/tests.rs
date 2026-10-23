@@ -1039,6 +1039,121 @@ fn bvh_build_timing() {
     );
 }
 
+/// `count` pseudo-random item boxes over a landblock (xorshift; no game data).
+fn random_boxes(count: usize, seed: u32) -> Vec<Aabb> {
+    let mut x = seed.max(1);
+    let mut rnd = || {
+        x ^= x << 13;
+        x ^= x >> 17;
+        x ^= x << 5;
+        #[allow(clippy::cast_precision_loss)]
+        let v = x as f32 / u32::MAX as f32;
+        v
+    };
+    (0..count)
+        .map(|_| {
+            let p = [rnd() * 160.0, rnd() * 160.0, rnd() * 50.0];
+            Aabb {
+                min: p,
+                max: [p[0] + rnd(), p[1] + rnd(), p[2] + rnd()],
+            }
+        })
+        .collect()
+}
+
+/// The parallel build gives the single-threaded tree node for node (`collision.md` §12.1:
+/// query contents and order unchanged), for every thread count, with invalid boxes,
+/// clusters of equal centres and a cluster deep enough to reach the depth limit mixed in.
+#[test]
+fn parallel_bvh_build_equals_the_single_threaded_one() {
+    // Large enough that the top ranges' scans are shared among threads as well.
+    // Signed zeros spread through the input: equal for the comparisons, different bits;
+    // the earlier one must be kept, as the single-threaded fold keeps it.
+    let mut boxes = Vec::new();
+    for (i, b) in random_boxes(6 * PARALLEL_MIN_ITEMS, 7)
+        .into_iter()
+        .enumerate()
+    {
+        boxes.push(b);
+        if i % 20 == 0 {
+            let z = if (i / 20) % 3 == 0 { 0.0 } else { -0.0 };
+            #[allow(clippy::cast_precision_loss)]
+            let c = (i % 40) as f32 * 4.0;
+            boxes.push(Aabb {
+                min: [z, c, z],
+                max: [0.5, c + 1.0, 0.5],
+            });
+        }
+    }
+    // Equal centres (split by count) and invalid boxes (left out).
+    for k in 0..5_000u16 {
+        boxes.push(Aabb {
+            min: [80.0, 80.0, 10.0],
+            max: [81.0, 81.0, 11.0],
+        });
+        if k % 7 == 0 {
+            boxes.push(Aabb {
+                min: [f32::NAN, 0.0, 0.0],
+                max: [1.0, 1.0, 1.0],
+            });
+            boxes.push(Aabb {
+                min: [2.0, 2.0, 2.0],
+                max: [1.0, 1.0, 1.0],
+            });
+        }
+    }
+    // Geometrically shrinking boxes: a long chain of uneven splits.
+    for k in 0..200 {
+        let e = 0.5f32.powi(k / 4);
+        boxes.push(Aabb {
+            min: [e, e, e],
+            max: [2.0 * e, 2.0 * e, 2.0 * e],
+        });
+    }
+    let one = Bvh::build_with_threads(&boxes, 1);
+    let bits = one.node_bits();
+    for threads in [0, 2, 3, 5, MAX_BUILD_THREADS, 64] {
+        let many = Bvh::build_with_threads(&boxes, threads);
+        assert!(many == one, "{threads} threads: the tree differs");
+        assert!(
+            many.node_bits() == bits,
+            "{threads} threads: node bits differ"
+        );
+    }
+    assert!(Bvh::build(&boxes) == one);
+    for k in 0..64u8 {
+        let c = [f32::from(k % 8) * 20.0, f32::from(k / 8) * 20.0, 0.0];
+        let q = Aabb {
+            min: c,
+            max: [c[0] + 15.0, c[1] + 15.0, 50.0],
+        };
+        let (mut a, mut b) = (Vec::new(), Vec::new());
+        one.query(&q, |i| a.push(i));
+        Bvh::build_with_threads(&boxes, 4).query(&q, |i| b.push(i));
+        assert_eq!(a, b);
+    }
+    // Small inputs never use threads, and still give the same tree.
+    let small = random_boxes(1_000, 3);
+    assert!(Bvh::build_with_threads(&small, 8) == Bvh::build_with_threads(&small, 1));
+    assert!(Bvh::build_with_threads(&[], 8) == Bvh::default());
+}
+
+#[test]
+#[ignore = "timing probe"]
+fn bvh_parallel_build_timing() {
+    let boxes = random_boxes(900_000, 12_345);
+    for threads in [1, 2, 4, MAX_BUILD_THREADS] {
+        let t = std::time::Instant::now();
+        let bvh = Bvh::build_with_threads(&boxes, threads);
+        eprintln!(
+            "bvh: {} items, {} nodes, {threads} threads, {:?}",
+            boxes.len(),
+            bvh.node_count(),
+            t.elapsed()
+        );
+    }
+}
+
 #[test]
 fn shared_types_are_send_and_sync() {
     fn check<T: Send + Sync>() {}

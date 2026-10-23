@@ -53,6 +53,11 @@ pub struct ContextOptions {
     /// limits raised to the adapter's texture resolution and alignment, which
     /// keeps the renderer honest about what it relies on.
     pub required_limits: Option<wgpu::Limits>,
+    /// Request [`wgpu::Features::TIMESTAMP_QUERY`] when the adapter offers it (default
+    /// `true`), so that the UI pass's GPU time is measured (`UiStats::gpu_ns`, render.md
+    /// §6.16 U2). With `false`, or on an adapter without the feature, the device has no
+    /// optional features and `gpu_ns` stays `None`.
+    pub timestamp_queries: bool,
 }
 
 impl Default for ContextOptions {
@@ -63,6 +68,7 @@ impl Default for ContextOptions {
             adapter_name: None,
             allow_software: true,
             required_limits: None,
+            timestamp_queries: true,
         }
     }
 }
@@ -308,9 +314,16 @@ impl GpuContext {
                     .using_resolution(adapter_limits.clone())
                     .using_alignment(adapter_limits.clone())
             });
+            // The only optional feature: timestamp queries for the UI pass timer, when the
+            // adapter offers them (render.md §6.16 U2).
+            let required_features = if options.timestamp_queries {
+                adapter.features() & wgpu::Features::TIMESTAMP_QUERY
+            } else {
+                wgpu::Features::empty()
+            };
             let request = adapter.request_device(&wgpu::DeviceDescriptor {
                 label: Some("tessera-device"),
-                required_features: wgpu::Features::empty(),
+                required_features,
                 required_limits,
                 ..Default::default()
             });

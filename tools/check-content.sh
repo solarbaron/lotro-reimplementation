@@ -11,6 +11,10 @@
 #             (archive magic at 0x140, DDS, Ogg, RIFF/WAVE, Bink, TrueType/OpenType/WOFF,
 #             PE executables, pcap)
 #   size      binary blobs larger than 1 MiB (text files above 1 MiB are a warning)
+#   png       PNG images (by extension or by signature) outside the committed golden
+#             directories, i.e. anywhere but below a `tests/golden/` directory, and every
+#             PNG below a path segment named `goldens` (the local-only real-data goldens
+#             of decision 0031 must never be committed; docs/decisions/0031 "Open" item 1)
 #   lfs       Git LFS filters in .gitattributes (LFS is disabled for this project)
 #   mcp       a .mcp.json file, or a .claude/settings*.json that declares an MCP server
 #             or names rea or ghidra: a decompiler MCP registration must never reach a
@@ -70,6 +74,25 @@ root, use_git, quiet, allow_path = sys.argv[1], sys.argv[2] == "1", sys.argv[3] 
 MIB = 1 << 20
 BINARY_LIMIT = 1 * MIB
 TEXT_WARN_LIMIT = 1 * MIB
+
+PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
+# Committed (tier-1, synthetic) goldens live below a `tests/golden/` directory
+# (decision 0031 §1); a `goldens` segment is the local-only tier-2 directory's name.
+GOLDEN_DIR = re.compile(r"(?:^|/)tests/golden/")
+LOCAL_GOLDENS = re.compile(r"(?:^|/)goldens(?:/|$)", re.I)
+
+
+def check_png(path, ext, head):
+    if ext != ".png" and head[:8] != PNG_SIGNATURE:
+        return
+    what = "PNG image" if ext == ".png" else "PNG image under another name"
+    if LOCAL_GOLDENS.search(os.path.dirname(path)):
+        report("png", path, 0, f"{what} under a 'goldens' directory (local-only goldens are "
+               "never committed, decision 0031)")
+    elif ext != ".png" or not GOLDEN_DIR.search(path):
+        report("png", path, 0, f"{what} outside the committed golden directories "
+               "(*/tests/golden/, decision 0031)")
+
 
 FORBIDDEN_EXT = {
     # Required by the project rules.
@@ -350,6 +373,7 @@ for path in files:
     what = sniff(head, size)
     if what:
         report("magic", path, 0, f"content looks like a {what}")
+    check_png(path, ext, head)
     binary = b"\x00" in head
     if not binary and size > len(head):
         with open(full, "rb") as f:
@@ -394,7 +418,16 @@ allowlist="$root/tools/content-allowlist.txt"
 if [ "$self_test" = 1 ]; then
     t="$(mktemp -d)"
     trap 'rm -rf "$t"' EXIT
-    mkdir -p "$t/crates/demo/src" "$t/docs" "$t/assets" "$t/.claude"
+    mkdir -p "$t/crates/demo/src" "$t/docs" "$t/assets" "$t/.claude" \
+        "$t/crates/demo/tests/golden/goldens" "$t/apps/x/tests/golden" "$t/goldens/t/v"
+    png='\x89PNG\r\n\x1a\n\x00\x00\x00\x0dIHDR'
+    printf "$png" > "$t/crates/demo/tests/golden/panel.png"
+    printf "$png" > "$t/apps/x/tests/golden/Shot.PNG"
+    printf "$png" > "$t/docs/screenshot.png"
+    printf "$png" > "$t/crates/demo/tests/capture.png"
+    printf "$png" > "$t/crates/demo/tests/golden/goldens/local.png"
+    printf "$png" > "$t/goldens/t/v/frame.png"
+    printf "$png" > "$t/crates/demo/tests/golden/renamed.bin"
     printf '{"mcpServers":{"x":{"command":"rea","args":["--mcp"]}}}\n' > "$t/.mcp.json"
     printf '{\n  "mcpServers": {"dec": {}},\n  "permissions": {"allow": ["Read(*)", "mcp__ghidra__decompile"]}\n}\n' \
         > "$t/.claude/settings.json"
@@ -431,13 +464,19 @@ RS
         "Cargo.toml:2: \[mark\] trademark word 'hobbit'" \
         ".mcp.json: \[mcp\]" \
         "settings.json: \[mcp\] declares MCP servers" \
-        "settings.json:3: \[mcp\] names the decompiler tool 'ghidra'"; do
+        "settings.json:3: \[mcp\] names the decompiler tool 'ghidra'" \
+        "docs/screenshot.png: \[png\] PNG image outside" \
+        "crates/demo/tests/capture.png: \[png\] PNG image outside" \
+        "golden/goldens/local.png: \[png\] PNG image under a 'goldens'" \
+        "goldens/t/v/frame.png: \[png\] PNG image under a 'goldens'" \
+        "golden/renamed.bin: \[png\] PNG image under another name"; do
         if ! printf '%s\n' "$out" | grep -q -- "$want"; then
             echo "self-test: expected a finding matching: $want" >&2
             fail=1
         fi
     done
-    for unwanted in "lib.rs:2:" "lib.rs:6:" "lib.rs:7:" "settings.local.json"; do
+    for unwanted in "lib.rs:2:" "lib.rs:6:" "lib.rs:7:" "settings.local.json" \
+        "golden/panel.png" "golden/Shot.PNG"; do
         if printf '%s\n' "$out" | grep -q -- "$unwanted"; then
             echo "self-test: false positive at $unwanted" >&2
             fail=1

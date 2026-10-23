@@ -7,7 +7,7 @@
 
 use std::sync::Arc;
 
-use tessera_formats::setup::{CollisionBox, Frame};
+use tessera_formats::setup::{CollisionBox, Frame, Quaternion};
 use tessera_physics::controller::{
     COS_PLAYER_WALKABLE, CharacterShape, ContactClass, Controller, ControllerConfig, Impulse,
     JumpNode, JumpTable, LayerConditions, LayerKind, LiquidWater, MAX_SPEED, MOVEMENT_FIELD_NAMES,
@@ -907,6 +907,189 @@ fn steps_up_to_the_step_up_height_are_climbed() {
         "top of the stairs: z {}",
         z(&c)
     );
+}
+
+/// Two steps (0.25 m, then 0.15 m higher) built of triangles, with the top faces listed
+/// before the risers or after them: both steps are climbed whatever the triangle order
+/// (`collision.md` §11.5, §12.4 (k); the edge-tie question is the implementer OPEN of
+/// §12.4).
+#[test]
+fn step_edges_climb_whatever_the_triangle_order() {
+    // Quads as (corners, top face?) with corners counter-clockwise seen from their front.
+    let quads: [([[f32; 3]; 4], bool); 4] = [
+        (
+            [
+                [3.0, -5.0, 0.0],
+                [3.0, 5.0, 0.0],
+                [3.0, 5.0, 0.25],
+                [3.0, -5.0, 0.25],
+            ],
+            false,
+        ),
+        (
+            [
+                [3.0, -5.0, 0.25],
+                [5.0, -5.0, 0.25],
+                [5.0, 5.0, 0.25],
+                [3.0, 5.0, 0.25],
+            ],
+            true,
+        ),
+        (
+            [
+                [5.0, -5.0, 0.25],
+                [5.0, 5.0, 0.25],
+                [5.0, 5.0, 0.4],
+                [5.0, -5.0, 0.4],
+            ],
+            false,
+        ),
+        (
+            [
+                [5.0, -5.0, 0.4],
+                [45.0, -5.0, 0.4],
+                [45.0, 5.0, 0.4],
+                [5.0, 5.0, 0.4],
+            ],
+            true,
+        ),
+    ];
+    for tops_first in [true, false] {
+        for (walking, forward) in [(true, 0.3), (true, 1.0), (false, 1.0)] {
+            let mut s = Scene::new();
+            s.floor(-50.0, -50.0, 50.0, 50.0, 0.0);
+            // One body per step, its riser and top in the chosen order.
+            for step in [[0usize, 1], [2, 3]] {
+                let order = if tops_first { [step[1], step[0]] } else { step };
+                let mut positions = Vec::new();
+                let mut tris = Vec::new();
+                for q in order {
+                    let base = positions.len() as u16;
+                    positions.extend_from_slice(&quads[q].0);
+                    tris.push([base, base + 1, base + 2]);
+                    tris.push([base, base + 2, base + 3]);
+                }
+                s.tris(&positions, &tris);
+            }
+            let set = s.build();
+            let mut c = controller([0.0, 0.0, 0.0], 0.0);
+            c.set_conditions(LayerConditions {
+                walking,
+                ..LayerConditions::default()
+            });
+            let input = MoveInput {
+                forward,
+                ..MoveInput::default()
+            };
+            // Until 3 m past the second riser (at most 20 s).
+            for _ in 0..1200 {
+                run(&set, &mut c, input, 1);
+                if x(&c) > 8.0 {
+                    break;
+                }
+            }
+            let what = format!("tops first {tops_first}, walking {walking}, forward {forward}");
+            assert!(x(&c) > 8.0, "{what}: climbed both steps: x {}", x(&c));
+            assert!((z(&c) - 0.4).abs() < 0.005, "{what}: on top: z {}", z(&c));
+            assert_eq!(
+                c.state().element,
+                MovementState::EarthControlledSurface,
+                "{what}"
+            );
+        }
+    }
+}
+
+/// The same two steps as solid boxes reaching below the floor, the upper one inside the
+/// lower one's volume (as `apps/client/tests/walk_synthetic.rs` builds them), unturned and
+/// turned by ±90° about y so that their triangles come in other orders.
+#[test]
+fn box_step_edges_climb_whatever_the_triangle_order() {
+    let boxes = [
+        ([3.0f32, -5.0, -2.0], [45.0f32, 5.0, 0.25]),
+        ([5.0, -5.0, -2.0], [45.0, 5.0, 0.4]),
+    ];
+    for turn in [0.0f32, 1.0, -1.0] {
+        for (walking, forward) in [(true, 0.3), (true, 1.0), (false, 1.0)] {
+            let mut s = Scene::new();
+            s.floor(-50.0, -50.0, 50.0, 50.0, 0.0);
+            for (min, max) in boxes {
+                let h = std::f32::consts::FRAC_1_SQRT_2;
+                // +90° about y: world (x, y, z) = (lz, ly, −lx); −90°: (−lz, ly, lx). The
+                // risers (facing −x) and the tops then swap places in the triangle list.
+                let (lmin, lmax, rotation) = if turn > 0.0 {
+                    (
+                        [-max[2], min[1], min[0]],
+                        [-min[2], max[1], max[0]],
+                        Quaternion {
+                            w: h,
+                            x: 0.0,
+                            y: h,
+                            z: 0.0,
+                        },
+                    )
+                } else if turn < 0.0 {
+                    (
+                        [min[2], min[1], -max[0]],
+                        [max[2], max[1], -min[0]],
+                        Quaternion {
+                            w: h,
+                            x: 0.0,
+                            y: -h,
+                            z: 0.0,
+                        },
+                    )
+                } else {
+                    (
+                        min,
+                        max,
+                        Quaternion {
+                            w: 1.0,
+                            x: 0.0,
+                            y: 0.0,
+                            z: 0.0,
+                        },
+                    )
+                };
+                let mut t = ShapeTemplate::default();
+                t.push_box(&CollisionBox {
+                    min: lmin,
+                    max: lmax,
+                    frame: Frame {
+                        position: [0.0; 3],
+                        scale: [1.0; 3],
+                        rotation,
+                    },
+                })
+                .unwrap();
+                s.add(&t, CollisionFlags::default());
+            }
+            let set = s.build();
+            let mut c = controller([0.0, 0.0, 0.0], 0.0);
+            c.set_conditions(LayerConditions {
+                walking,
+                ..LayerConditions::default()
+            });
+            let input = MoveInput {
+                forward,
+                ..MoveInput::default()
+            };
+            for _ in 0..1200 {
+                run(&set, &mut c, input, 1);
+                if x(&c) > 8.0 {
+                    break;
+                }
+            }
+            let what = format!("turn {turn}, walking {walking}, forward {forward}");
+            assert!(x(&c) > 8.0, "{what}: climbed both steps: x {}", x(&c));
+            assert!((z(&c) - 0.4).abs() < 0.005, "{what}: on top: z {}", z(&c));
+            assert_eq!(
+                c.state().element,
+                MovementState::EarthControlledSurface,
+                "{what}"
+            );
+        }
+    }
 }
 
 /// A ramp rising along +x from (x0, z=0) at `deg` degrees, 10 m wide (y ±5).

@@ -1,3 +1,5 @@
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+
 # World Clock Synchronization, Portal Placement (`0xCC`) State Schemas, and `ActionPayload` Wire Specification
 
 - **Status:** Draft

@@ -129,6 +129,9 @@ pub struct Pass {
     pub(crate) world: WorldDraws,
     /// Particle draws ([`Pass::particles`]), lit and unlit world passes.
     pub(crate) particles: Vec<crate::particles::ParticleDraw>,
+    /// Particle draws of the pass's last stage ([`Pass::post_particles`],
+    /// `particle-runtime.md` §12 rule 16).
+    pub(crate) post_particles: Vec<crate::particles::ParticleDraw>,
     /// Set by `Pass::premultiplied_alpha`: fixed blend states write alpha by
     /// `docs/specs/render.md` §6.10 "Fixed blends" (R12).
     pub(crate) premultiplied: bool,
@@ -181,6 +184,7 @@ impl Pass {
             hooks: Vec::new(),
             world: WorldDraws::default(),
             particles: Vec::new(),
+            post_particles: Vec::new(),
             premultiplied: false,
             opacity_mask: None,
         }

@@ -44,6 +44,7 @@ use tessera_world::{EntityRef, LandblockBundle, LandblockKey};
 use crate::audio::loader::fetch;
 use crate::walker::figures::figure_tag;
 use crate::walker::geometry::{TexRequest, VARIANT_OWN_ALPHA};
+use crate::walker::objects::PlacedObjectRef;
 
 /// The property dictionary's DID (`property-system.md`).
 pub const PROPERTY_DICTIONARY: u32 = tessera_world::context::PROPERTY_DICTIONARY_DID;
@@ -216,6 +217,30 @@ pub enum OwnerKind {
     },
 }
 
+/// The placed object a static owner of a landblock is drawn as: its landblock and the
+/// entity's identity in the object layer's block list (`ObjectLayer::placed_object_opacity`,
+/// `particle-runtime.md` §12 rule 15). An owner that has no drawn object of its own (no
+/// visual, or not drawn) carries no parts, so the lookup answers `None` (factor 1).
+#[derive(Debug, Clone, PartialEq)]
+pub struct PlacedObject {
+    /// The landblock.
+    pub key: LandblockKey,
+    /// The entity: placement position, parts and rank ([`PlacedObjectRef`]).
+    pub entity: PlacedObjectRef,
+}
+
+/// The part list of an entity as the object layer draws it: its visual's parts when it is
+/// drawn (`draw`, a finite placement position and at least one part, the conditions under
+/// which the layer's block list holds an object for it), else empty.
+fn drawn_parts(e: &tessera_world::PlacedEntity) -> Vec<u32> {
+    if !e.draw || !e.placement.position.iter().all(|v| v.is_finite()) {
+        return Vec::new();
+    }
+    e.visual
+        .as_deref()
+        .map_or_else(Vec::new, |v| v.parts.iter().map(|p| p.0).collect())
+}
+
 /// An effect owner a landblock scan found.
 #[derive(Debug, Clone, PartialEq)]
 pub struct EffectOwner {
@@ -235,6 +260,10 @@ pub struct EffectOwner {
     /// Region-global position (for figures, the placement in the data; the character layer
     /// gives the live one).
     pub position: [f64; 3],
+    /// For a static owner of a landblock, the placed object it is drawn as (its opacity is
+    /// the parent opacity of rule 15); `None` for figures and the creation viewport's
+    /// owners.
+    pub placed: Option<PlacedObject>,
 }
 
 /// What a landblock contributes.
@@ -860,10 +889,25 @@ impl EffectData {
                 EntityRef::Generated(_) => None,
             })
             .collect();
+        // Rule 15: the rank of each drawn entity among the earlier ones with the same
+        // position and parts (`ObjectLayer::placed_object_opacity`), counted over every
+        // entity, owner or not.
+        let mut seen: HashMap<([u32; 3], Arc<[u32]>), u32> = HashMap::new();
         for (ei, e) in bundle.entities.iter().enumerate() {
             if owners.len() >= MAX_OWNERS_PER_BLOCK {
                 break;
             }
+            let parts: Arc<[u32]> = drawn_parts(e).into();
+            let rank = if parts.is_empty() {
+                0
+            } else {
+                let n = seen
+                    .entry((e.placement.position.map(f32::to_bits), Arc::clone(&parts)))
+                    .or_insert(0);
+                let r = *n;
+                *n = n.saturating_add(1);
+                r
+            };
             if e.interior && !self.interiors {
                 continue;
             }
@@ -905,12 +949,13 @@ impl EffectData {
             } else {
                 Quat::IDENTITY
             };
-            let (id, kind, points) = match figure {
+            let (id, kind, points, placed) = match figure {
                 Some((fi, _)) => (
                     EntityId(figure_tag(key, *fi)),
                     OwnerKind::Figure {
                         tag: figure_tag(key, *fi),
                     },
+                    None,
                     None,
                 ),
                 None => {
@@ -934,6 +979,14 @@ impl EffectData {
                             scale,
                         },
                         points,
+                        Some(PlacedObject {
+                            key,
+                            entity: PlacedObjectRef {
+                                position: pl.position,
+                                parts,
+                                rank,
+                            },
+                        }),
                     )
                 }
             };
@@ -945,6 +998,7 @@ impl EffectData {
                 points,
                 scales,
                 position,
+                placed,
             });
         }
         BlockScan {
@@ -1033,6 +1087,7 @@ impl EffectData {
                 points,
                 scales,
                 position,
+                placed: None,
             });
         }
         owners

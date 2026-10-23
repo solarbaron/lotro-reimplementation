@@ -966,6 +966,7 @@ mod tests {
                 },
                 fade_in: 0.25,
                 fade_out: 0.25,
+                anchor: crate::walker::characters::figure::PropAnchorRule::Location(1),
             },
             timeline: Timeline::default(),
             rider_model_scale: [1.0; 3],

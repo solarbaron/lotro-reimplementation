@@ -2680,7 +2680,8 @@ impl<'w> Renderer<'w> {
                     }
                 }
                 let particle_draws = std::mem::take(&mut pass.particles);
-                if !particle_draws.is_empty() {
+                let post_draws = std::mem::take(&mut pass.post_particles);
+                if !particle_draws.is_empty() || !post_draws.is_empty() {
                     let pctx = ParticleFrame {
                         device: &self.ctx.device,
                         format,
@@ -2705,6 +2706,17 @@ impl<'w> Renderer<'w> {
                         &mut self.particle_state,
                         particle_draws,
                         &pctx,
+                        HookStage::Translucent,
+                    )? {
+                        pass.hooks.push(h);
+                    }
+                    // `particle-runtime.md` §12 rule 16: the systems of the pass after
+                    // post-processing, in the pass's last stage.
+                    if let Some(h) = crate::particles::build_hook(
+                        &mut self.particle_state,
+                        post_draws,
+                        &pctx,
+                        HookStage::Post,
                     )? {
                         pass.hooks.push(h);
                     }
@@ -2724,7 +2736,10 @@ impl<'w> Renderer<'w> {
                     hook.prepare(&prepare)?;
                 }
             } else {
-                if (!pass.meshes.is_empty() || !pass.world.is_empty() || !pass.particles.is_empty())
+                if (!pass.meshes.is_empty()
+                    || !pass.world.is_empty()
+                    || !pass.particles.is_empty()
+                    || !pass.post_particles.is_empty())
                     && !warnings.screen_mesh
                 {
                     tracing::warn!(pass = %pass.label, "meshes in a screen pass are ignored");
@@ -3116,6 +3131,12 @@ impl<'w> Renderer<'w> {
                     &mut stats,
                     group0,
                 );
+            }
+            // The last stage (`particle-runtime.md` §12 rule 16): the particle systems of
+            // the pass after post-processing, after every other draw of the pass.
+            if has_hooks {
+                hook_ctx.stage = HookStage::Post;
+                self.record_hooks(&mut rp, &pass.hooks, &hook_ctx, group0, &mut stats);
             }
         }
 

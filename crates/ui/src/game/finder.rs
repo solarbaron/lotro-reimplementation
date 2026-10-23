@@ -1247,8 +1247,10 @@ impl FinderWindow {
 
     /// Replaces the context menus' names (the install's `ContextMenu` layout, or the
     /// code-made menus with Tessera's art). Until a caller sets them the size and tier
-    /// menus are the code-made ones ([`MenuRefs::fallback`]); the client does not call this
-    /// yet, so its finder menus are code-made even with an install.
+    /// menus are the code-made ones ([`MenuRefs::fallback`]). The client sets the install's
+    /// `ContextMenu` names once it has resolved them (its travel windows, for a finder open
+    /// then and for every finder opened later), so its finder menus are code-made only
+    /// without an install or without that layout.
     pub fn set_menu_refs(&mut self, refs: MenuRefs) {
         self.menu_refs = refs;
     }

@@ -20,7 +20,8 @@
 //! `ui-scaling.md` §7.1 applied to `tessera-ui`), [`fonts`] (the §6.4.2 font ladders),
 //! [`gpu`] (UI textures and the UI pass),
 //! [`cursor`] (pointer lock), [`services`] (plugin adapters for the panels), [`stats`]
-//! (U1–U5), [`script`] (the scripted run of 0015 §6).
+//! (U1–U5), [`script`] (the scripted run of 0015 §6), [`workers`] (paint jobs and ladder
+//! steps on the asset workers, `ui-scaling.md` §8 S1, S7).
 
 pub mod boot;
 pub mod client;
@@ -39,6 +40,7 @@ pub mod services;
 pub mod settings_writer;
 pub mod stats;
 pub mod text;
+pub mod workers;
 
 use std::cell::{Ref, RefCell, RefMut};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
@@ -255,6 +257,17 @@ pub struct UiHost {
     /// Builds the font ladders of `ui-scaling.md` §6.4.2 once the enum's records have loaded
     /// on the asset workers ([`fonts`]); `None` without an install or once registered.
     ladders: Option<fonts::LadderLoader>,
+    /// The ladder steps derived on the asset workers ahead of a settle (`ui-scaling.md`
+    /// §6.5, S7; [`workers::LadderPrefetch`]).
+    ladder_prefetch: workers::LadderPrefetch,
+    /// The settle of a change of *Se* (`ui-scaling.md` §4.5 step 4): when the full repaint
+    /// at the new content scale is due (restarted by every further change of *Se*); `None`
+    /// when no repaint waits. Until then every surface keeps its last picture, composed onto
+    /// its new physical box (step 3), and the ladder steps arrive on the workers.
+    scale_repaint_at: Option<Instant>,
+    /// The UI screen and safe area last fed to `tessera-ui` (`Ui::set_ui_screen`), to tell a
+    /// change of *F* or *A* from a change of *Se* or the physical size alone.
+    fed_screen: (tessera_ui::scaling::UiScreen, tessera_ui::scaling::DBox),
     frames: u64,
     command_ids: Vec<(String, u32)>,
     /// The command IDs of toggle type 3 (AutoRepeat) in table A of the default action map
@@ -413,17 +426,17 @@ impl UiHost {
         // text path (§6.4.5; without them the §7.5 text factor is not applied). At *Se* = 1
         // with the defaults nothing is laid out or drawn differently (invariant I7).
         prefs::apply_text_and_art(&mut ui, &options.prefs);
-        // §8 S6: one unpinned pool for the decoded-image LRU and the glyph cache.
-        let s6 = prefs::s6_split(
-            options.prefs.image_lru_mib.saturating_mul(1 << 20),
-            scale.effective_scale(),
-        );
-        ui.set_glyph_cache_budget(s6.glyph);
+        // §8 S6: one total for the decoded-image LRU and the glyph caches, split by the UI
+        // (`Ui::set_image_memory`; worked out again on every change of *Se*); the image share
+        // goes to the environment's LRU once the UI screen is set below.
+        ui.set_image_memory(options.prefs.image_lru_mib);
         if let Some(h) = &handle {
-            h.borrow_mut().set_lru_budget(s6.image_lru);
             let st = h.borrow();
             let leading = st.data().map_or(0.0, |d| d.locale_leading);
             ui.set_text_layout_params(Some(prefs::text_params_reader(st.text_pids(), leading)));
+            // §8 S1: paint jobs whose damage exceeds 30,000 physical pixels run on the UI
+            // asset workers (windowed and headless clients alike).
+            ui.set_paint_spawner(Some(workers::paint_spawner(st.pool())));
         }
         // Decision 0040 (`ui-scaling.md` §3.2, §4.5 step 1): make the UI screen *F* and the
         // safe area *A* live from the first frame, so surfaces map to their physical box
@@ -431,6 +444,10 @@ impl UiHost {
         // (given to [`Ui::new`] above), so this stores *F*/*A* without changing its size. At
         // *Se* = 1 with *A* = *F* every mapping is the identity, so nothing changes (I2).
         ui.set_ui_screen(*scale.screen(), scale.safe_area());
+        // §8 S6: the images' share of the split for this *Se*.
+        if let Some(h) = &handle {
+            h.borrow_mut().set_lru_budget(ui.s6_budget().images);
+        }
         // The saved placements of `[UI.panels]` (`ui-scaling.md` §5.8): every panel opened
         // from now on is placed by them ([`placements`]).
         ui.set_saved_store(placements::store_from_prefs(&options.prefs.panels));
@@ -494,6 +511,9 @@ impl UiHost {
             cursor_hotspot: cursor::ARROW_HOTSPOT,
             pointer_physical: None,
             ladders,
+            ladder_prefetch: workers::LadderPrefetch::default(),
+            scale_repaint_at: None,
+            fed_screen: (*scale.screen(), scale.safe_area()),
             frames: 0,
             command_ids: Vec::new(),
             repeat_commands: None,
@@ -679,7 +699,8 @@ impl UiHost {
     }
 
     /// Whether the UI has settled: no position, notice or session line waits for step 7,
-    /// no UI asset job is in flight and the paint scheduler is idle (every surface drawn,
+    /// no change of *Se* waits for its settle (`ui-scaling.md` §4.5 step 4), no UI asset job
+    /// is in flight and the paint scheduler is idle (every surface drawn,
     /// nothing left to paint or upload). Waiting for this is independent of how many
     /// frames the paint slices need on a loaded machine.
     #[must_use]
@@ -689,6 +710,7 @@ impl UiHost {
             .as_ref()
             .is_some_and(|h| h.borrow().stats().in_flight > 0);
         self.pending_position.is_none()
+            && self.scale_repaint_at.is_none()
             && self.pending_notices.is_empty()
             && self.pending_session.is_empty()
             && !in_flight
@@ -1158,7 +1180,7 @@ impl UiHost {
         let p = self.note_interface_persist();
         p.clear_panels = true;
         self.frame.event = true;
-        self.feed_screen();
+        self.feed_screen(true);
     }
 
     /// The character the plugins see (the walker's avatar). A change raises `NameChanged`
@@ -1204,7 +1226,7 @@ impl UiHost {
             i32::try_from(height).unwrap_or(i32::MAX),
         );
         if self.scale.set_physical(phys, Instant::now()).screen_changed {
-            self.feed_screen();
+            self.feed_screen(false);
         }
     }
 
@@ -1214,36 +1236,72 @@ impl UiHost {
     pub fn set_os_scale(&mut self, sigma: f64) {
         if self.scale.set_os_scale(sigma).screen_changed {
             self.frame.event = true;
-            self.feed_screen();
+            self.feed_screen(false);
         }
     }
 
     /// Feeds the current UI screen *F* and safe area *A* into `tessera-ui` live
     /// (`ui-scaling.md` §4.5). [`Ui::set_ui_screen`] stores *F*/*A* for the §3.6 physical
     /// mapping and resizes the screen root to *F*'s UI-unit size, so every root is laid out
-    /// again by the §5 fit rules (step 2); [`Ui::invalidate_paint`] then asks for a full
-    /// repaint so every surface re-paints crisply at the new content scale (steps 2-4). At
-    /// *Se* = 1 with *A* = *F* the mappings are the identity and the root size is unchanged, so
-    /// the result stays byte-identical (invariant I2); only the repaint is extra work.
-    fn feed_screen(&mut self) {
+    /// again by the §5 fit rules (step 2), and runs keep-on-screen. The host applies the saved
+    /// placements of `[UI.panels]` again only after a change of *F* or *A* (§5.8 "Applying"),
+    /// or when `reapply` asks for it (the placements were reset); a change of *Se* or the
+    /// physical size alone keeps `tessera-ui`'s keep-on-screen result.
+    ///
+    /// A change of *Se* does not repaint at once: every surface keeps its last picture,
+    /// composed onto its new physical box (step 3), the ladder steps of the new *Se* are asked
+    /// of the workers (§6.5, S7), and the full repaint at the new content scale waits for the
+    /// settle (step 4: *Se* unchanged for [`scaling::SETTLE`]; [`Self::step8`] runs it). Any
+    /// other change repaints at once, as before. At *Se* = 1 with *A* = *F* the mappings are
+    /// the identity and the root size is unchanged, so the result stays byte-identical
+    /// (invariant I2); only the repaint is extra work.
+    fn feed_screen(&mut self, reapply: bool) {
         let screen = *self.scale.screen();
         let safe = self.scale.safe_area();
+        let (old_screen, old_safe) = self.fed_screen;
+        self.fed_screen = (screen, safe);
+        let layout_changed = screen.ui_size() != old_screen.ui_size() || safe != old_safe;
+        let se_changed =
+            screen.effective_scale().to_bits() != old_screen.effective_scale().to_bits();
         {
             let mut ui = self.ui.borrow_mut();
             ui.set_ui_screen(screen, safe);
-            // §8 S6: the pool of the image LRU and the glyph cache grows with Se².
-            let s6 = prefs::s6_split(
-                self.prefs.image_lru_mib.saturating_mul(1 << 20),
-                self.scale.effective_scale(),
-            );
-            ui.set_glyph_cache_budget(s6.glyph);
+            // §8 S6: `set_ui_screen` split the total again for the new *Se* (the glyph
+            // caches evict down to their share); the images' share goes to the LRU.
             if let Some(h) = &self.env {
-                h.borrow_mut().set_lru_budget(s6.image_lru);
+                h.borrow_mut().set_lru_budget(ui.s6_budget().images);
             }
-            ui.invalidate_paint();
+            if !se_changed && self.scale_repaint_at.is_none() {
+                ui.invalidate_paint();
+            }
         }
+        if se_changed {
+            // §4.5 step 4: the settle restarts with every change of Se.
+            self.scale_repaint_at = Some(Instant::now() + scaling::SETTLE);
+        }
+        // §6.5, S7: derive the ladders' printable range at the new target heights on the
+        // workers while the settle runs.
+        self.request_ladder_steps();
         // §5.8 "Applying": again after every change of F or A.
-        self.apply_saved_placements(true);
+        if layout_changed || reapply {
+            self.apply_saved_placements(true);
+        }
+    }
+
+    /// Settles a pending change of *Se* at once (`ui-scaling.md` §4.5 step 4, "or the slider
+    /// is released"): the next [`Self::step8`] polls the ladder steps that came back and then
+    /// repaints every surface at the new content scale. Does nothing when no change waits.
+    pub fn settle_scale_repaint(&mut self) {
+        if self.scale_repaint_at.is_some() {
+            self.scale_repaint_at = Some(Instant::now());
+        }
+    }
+
+    /// Whether a change of *Se* waits for its settle (`ui-scaling.md` §4.5 step 4): the
+    /// surfaces still show their pictures of the old content scale.
+    #[must_use]
+    pub fn scale_repaint_pending(&self) -> bool {
+        self.scale_repaint_at.is_some()
     }
 
     /// Applies the saved placements of `[UI.panels]` (`ui-scaling.md` §5.8 "Applying") to
@@ -1329,7 +1387,7 @@ impl UiHost {
         };
         if applied.screen_changed {
             self.frame.event = true;
-            self.feed_screen();
+            self.feed_screen(false);
         }
     }
 
@@ -1338,7 +1396,7 @@ impl UiHost {
     pub fn scale_tick(&mut self, now: Instant) {
         if self.scale.tick(now).screen_changed {
             self.frame.event = true;
-            self.feed_screen();
+            self.feed_screen(false);
         }
     }
 
@@ -1416,7 +1474,7 @@ impl UiHost {
         }
         if touched_scale {
             self.frame.event = true;
-            self.feed_screen();
+            self.feed_screen(false);
         }
         if closed {
             let mut ui = self.ui.borrow_mut();
@@ -1527,15 +1585,15 @@ impl UiHost {
             |id: Option<tessera_input::ActionId>| id.is_some_and(|i| mapper.just_pressed(i));
         if pressed(self.ids.ui_scale_up) && self.scale.step_scale(0.05, now).screen_changed {
             self.frame.event = true;
-            self.feed_screen();
+            self.feed_screen(false);
         }
         if pressed(self.ids.ui_scale_down) && self.scale.step_scale(-0.05, now).screen_changed {
             self.frame.event = true;
-            self.feed_screen();
+            self.feed_screen(false);
         }
         if pressed(self.ids.ui_scale_auto) && self.scale.set_auto(now).screen_changed {
             self.frame.event = true;
-            self.feed_screen();
+            self.feed_screen(false);
         }
         if pressed(self.ids.ui_interface_window) {
             self.want_interface = true;
@@ -1931,7 +1989,7 @@ impl UiHost {
     /// leave them alone).
     #[must_use]
     pub fn modal_dialog_shown(&self) -> bool {
-        tessera_ui::widgets::dialog::modal_dialog_shown(&self.ui.borrow())
+        tessera_ui::game::dialog::modal_dialog_shown(&self.ui.borrow())
     }
 
     /// Whether the UI's keyboard target (the focus element, else the active panel) lies in
@@ -1939,7 +1997,7 @@ impl UiHost {
     /// (§18.4: the dialog's own keys), so a dialog shown with `StartInactive`, which leaves
     /// the keyboard where it was (for example in the chat entry), takes no key from it.
     fn keyboard_in_dialog(&self) -> bool {
-        use tessera_ui::widgets::dialog::{MARK_PID, MARK_SHOWN, MARK_TAKEN_DOWN};
+        use tessera_ui::game::dialog::{MARK_PID, MARK_SHOWN, MARK_TAKEN_DOWN};
         let ui = self.ui.borrow();
         let mut cur = ui.keyboard_target();
         // Tessera bound on the walk up (element trees are far shallower).
@@ -2887,6 +2945,17 @@ impl UiHost {
         self.apply_saved_placements(false);
         let t = Instant::now();
         let now = Duration::from_secs_f64(self.clock.max(0.0));
+        // Ladder steps back from the workers go into the glyph cache before this frame's
+        // paint (S7; their worker time is in this frame's figures); steps the bound or a full
+        // queue held back are asked again.
+        self.request_ladder_steps();
+        self.ladder_prefetch.poll(&mut self.ui.borrow_mut());
+        // §4.5 step 4: once Se has settled, every surface repaints at the new content scale,
+        // after the steps polled above.
+        if self.scale_repaint_at.is_some_and(|at| t >= at) {
+            self.scale_repaint_at = None;
+            self.ui.borrow_mut().invalidate_paint();
+        }
         let frame = self
             .ui
             .borrow_mut()
@@ -2945,6 +3014,8 @@ impl UiHost {
             entries: u32::try_from(self.composition.entries.len()).unwrap_or(u32::MAX),
             bands: frame.stats.bands,
             ui_gpu_ms: None,
+            worker: stats::WorkerSample::of(&frame.stats),
+            glyphs: stats::GlyphSample::of(&frame.stats),
         };
     }
 
@@ -3017,9 +3088,42 @@ impl UiHost {
         };
         if let Some(ladders) = ladders {
             tracing::debug!(ladders = ladders.len(), "font ladders registered");
+            self.ladder_prefetch.set_ladders(ladders.clone());
             self.ui.borrow_mut().set_font_ladders(ladders);
             self.ladders = None;
+            self.request_ladder_steps();
         }
+    }
+
+    /// Asks the UI asset workers for the ladder steps of the current *Se*
+    /// (`ui-scaling.md` §6.5, S7; [`workers::LadderPrefetch::request`]): nothing at *Se* = 1,
+    /// before the ladders are registered, or when they were asked for this *Se* already.
+    fn request_ladder_steps(&mut self) {
+        let Some(h) = self.env.as_ref() else {
+            return;
+        };
+        let se = self.scale.effective_scale();
+        let n = self.ladder_prefetch.request(se, h.borrow().pool());
+        if n > 0 {
+            tracing::debug!(steps = n, se, "ladder steps asked of the UI workers");
+        }
+    }
+
+    /// Registers font ladders built elsewhere (tests and tools; with an install the host
+    /// builds them from the plugin font enum, [`fonts`]): the UI's (`Ui::set_font_ladders`)
+    /// and the workers' prefetch of their steps at the current *Se* (§6.5, S7).
+    pub fn set_font_ladders(&mut self, ladders: Vec<tessera_ui::text::FontLadder>) {
+        self.ladder_prefetch.set_ladders(ladders.clone());
+        self.ui.borrow_mut().set_font_ladders(ladders);
+        self.request_ladder_steps();
+    }
+
+    /// The ladder steps derived ahead of a settle: (asked and not back yet, accepted,
+    /// dropped as stale) (`ui-scaling.md` §6.5, S7).
+    #[must_use]
+    pub fn ladder_prefetch_counts(&self) -> (usize, u64, u64) {
+        let (a, s) = self.ladder_prefetch.counts();
+        (self.ladder_prefetch.in_flight(), a, s)
     }
 
     /// Step 10: the UI pass (after everything recorded so far, so after the walker's

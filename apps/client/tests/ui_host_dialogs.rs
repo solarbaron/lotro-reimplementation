@@ -28,9 +28,9 @@ use tessera_net::EntityId;
 use tessera_ui::UiEvent;
 use tessera_ui::game::CharVocab;
 use tessera_ui::game::chat::notice::NoTables;
+use tessera_ui::game::dialog::{DialogArt, DialogBoxes, DialogRefs, DialogRequest, DialogText};
 use tessera_ui::game::social::SocialVocab;
 use tessera_ui::game::social::friends::FriendsModel;
-use tessera_ui::widgets::dialog::{DialogArt, DialogBoxes, DialogRefs, DialogRequest, DialogText};
 use ui_common::{Rig, write_plugin};
 
 fn entered_state() -> SocialState {

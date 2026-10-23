@@ -33,8 +33,12 @@ pub const SETTLE: Duration = Duration::from_millis(150);
 /// What a frame tick or a change asks the host to do next.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Applied {
-    /// *F* (the UI-unit screen size) changed, so the host re-sizes the `tessera-ui` screen
-    /// root and lays the roots out again (`ui-scaling.md` §4.5 step 2).
+    /// The UI screen or the safe area changed (*F*, the UI-unit screen size; the physical
+    /// size and *Se* behind an unchanged *F*; or *A*), so the host feeds them to `tessera-ui`:
+    /// the screen root is re-sized and the roots laid out again when *F* or *A* changed
+    /// (`ui-scaling.md` §4.5 step 2), and the physical mapping (§3.6), the content scale and
+    /// the S6 split follow *Se*. The host tells the cases apart itself (saved placements are
+    /// applied again only after a change of *F* or *A*, §5.8 "Applying").
     pub screen_changed: bool,
 }
 
@@ -117,7 +121,8 @@ impl ScaleState {
     }
 
     /// Rebuilds *Se*, *F* and *A* from the current inputs. Keeps the last good screen when
-    /// the window has a zero side (`ui-scaling.md` §3.2). Returns whether *F* changed.
+    /// the window has a zero side (`ui-scaling.md` §3.2). Returns whether the screen (*F*, or
+    /// the physical size and *Se* behind it) or the safe area *A* changed.
     fn rebuild(&mut self) -> Applied {
         let (wp, hp) = self.phys;
         if wp < 1 || hp < 1 {
@@ -128,10 +133,12 @@ impl ScaleState {
         let Some(screen) = UiScreen::new(wp, hp, se) else {
             return Applied::NONE;
         };
-        let before = self.screen.ui_size();
+        // The whole screen, not only F: 2048 × 1536 at Se = 2 and 1024 × 768 at Se = 1 have
+        // the same F, but a different physical mapping and content scale.
+        let before = (self.screen, self.safe_box);
         self.screen = screen;
         self.safe_box = scaling::safe_area(&screen, self.safe.ratio().map(f64::from));
-        if screen.ui_size() == before {
+        if (screen, self.safe_box) == before {
             Applied::NONE
         } else {
             Applied::SCREEN
@@ -440,6 +447,22 @@ mod tests {
         assert!(ux2 >= 1279, "last column still inside F ({ux2})");
     }
 
+    /// A resize that keeps *F* but changes *Se* (twice the window at scale 2 back to the
+    /// window at scale 2, held to 1 by the design floor) is a screen change: the physical
+    /// mapping and the content scale follow (`ui-scaling.md` §3.2, §4.6).
+    #[test]
+    fn same_f_with_another_se_is_a_screen_change() {
+        let now = t0();
+        let mut st = ScaleState::new(UiScale::Fixed(2.0), SafeAspect::R21_9, (2048, 1536), 1.0);
+        assert_eq!(st.ui_size(), (1024, 768));
+        let a = st.set_physical((1024, 768), now);
+        assert_eq!(st.ui_size(), (1024, 768), "F unchanged");
+        assert!((st.effective_scale() - 1.0).abs() < 1e-9);
+        assert!(a.screen_changed);
+        // The same size again changes nothing.
+        assert_eq!(st.set_physical((1024, 768), now), Applied::NONE);
+    }
+
     /// A window with a zero side changes nothing (`ui-scaling.md` §3.2).
     #[test]
     fn zero_side_keeps_last() {
@@ -475,8 +498,10 @@ mod tests {
         let now = t0();
         let mut st = ScaleState::new(UiScale::Fixed(1.0), SafeAspect::R21_9, (5120, 1440), 1.0);
         let a = st.set_safe_aspect(SafeAspect::R16_9, now);
-        // The safe area narrows, but F (the UI screen) is unchanged by the aspect alone.
-        assert_eq!(a, Applied::NONE);
+        // F (the UI screen) is unchanged by the aspect alone, but the safe area narrows, so
+        // the host feeds it (`ui-scaling.md` §4.5 step 1, §5.1).
+        assert_eq!(st.ui_size(), (5120, 1440));
+        assert!(a.screen_changed, "a new safe area is fed");
         assert_eq!(st.safe_aspect(), SafeAspect::R16_9);
         // Not yet settled.
         assert!(st.take_persist(now).is_none());

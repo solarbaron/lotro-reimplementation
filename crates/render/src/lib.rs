@@ -158,7 +158,9 @@
 //! [`ParticleVertex`]es with quads first and triangles after, in the caller's order (no
 //! sorting), with the blend, alpha test and depth write of an [`AlphaMode`] and the
 //! surface program's [`ParticleShading`] (§9.1.1: texture-only alpha test, output alpha,
-//! doubling, fog, two layers), in lit and unlit world passes.
+//! doubling, fog, two layers), in lit and unlit world passes. [`Pass::post_particles`]
+//! queues the systems of the pass after post-processing for the pass's last stage, after
+//! every other draw of it (§12 rule 16).
 //! Game UI (M5): [`Renderer::create_ui_texture`] and
 //! [`Renderer::update_texture_rect`] hold panel canvases, and
 //! [`Frame::ui_pass`] composes them with transform and clip chains; see the

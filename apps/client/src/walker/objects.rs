@@ -877,6 +877,11 @@ struct ObjState {
     /// The draw frame ([`ObjectLayer::draw`] count, from 1) in which its fade was last
     /// updated; 0: never.
     faded_at: u64,
+    /// The draw frame in which it was last drawn (past every cull, with its parts queued);
+    /// 0: never ([`ObjectLayer::placed_object_opacity`]).
+    drawn_at: u64,
+    /// The opacity it was drawn with then: its draw-distance fade (`mesh.md` §8.7).
+    drawn_opacity: f32,
 }
 
 /// Whether an object's fade restarts in draw frame `frame`: its fade was not updated in the
@@ -923,9 +928,72 @@ struct BlockObjects {
     /// distance cap of those objects, within which the far entities are left to them
     /// ([`handed_to_main`]); set by the draw loop each frame, `None` otherwise.
     hand_over: Option<f32>,
+    /// The placed (not generated) objects by their block-local position, bit for bit, in
+    /// list order ([`ObjectLayer::placed_object_opacity`] tells them apart by their parts and
+    /// their rank).
+    by_position: HashMap<[u32; 3], Vec<u32>>,
+}
+
+/// The [`BlockObjects::by_position`] key of a block-local position.
+fn position_key(p: [f32; 3]) -> [u32; 3] {
+    p.map(f32::to_bits)
+}
+
+/// A placed entity of a landblock as [`ObjectLayer::placed_object_opacity`] finds its object:
+/// its block-local placement position, its visual's 0x06 parts in order (empty: the entity
+/// has no drawn object) and its rank among the earlier entities with that same position and
+/// part list.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PlacedObjectRef {
+    /// The block-local placement position.
+    pub position: [f32; 3],
+    /// The visual's part meshes, in order; empty when the entity is not drawn.
+    pub parts: Arc<[u32]>,
+    /// The number of earlier drawn entities of the landblock with the same position and parts.
+    pub rank: u32,
+}
+
+/// Records that an object was drawn in draw frame `draw_frame` with `opacity` (after every
+/// cull, [`ObjectLayer::placed_object_opacity`]).
+fn mark_drawn(st: &mut ObjState, draw_frame: u64, opacity: f32) {
+    st.drawn_at = draw_frame;
+    st.drawn_opacity = opacity;
 }
 
 impl BlockObjects {
+    /// The opacity the object of placed entity `entity` was drawn with in draw frame
+    /// `draw_frame` ([`ObjectLayer::placed_object_opacity`]); `None` when the block holds no
+    /// object of that entity or it was not drawn in that frame.
+    fn drawn_opacity(&self, entity: &PlacedObjectRef, draw_frame: u64) -> Option<f32> {
+        if entity.parts.is_empty() || draw_frame == 0 {
+            return None;
+        }
+        let i = self
+            .by_position
+            .get(&position_key(entity.position))?
+            .iter()
+            .copied()
+            .filter(|&i| self.object_parts_are(i, &entity.parts))
+            .nth(usize::try_from(entity.rank).ok()?)?;
+        let st = self.state.get(usize::try_from(i).ok()?)?;
+        (st.drawn_at == draw_frame).then_some(st.drawn_opacity)
+    }
+
+    /// Whether object `i`'s part instances are `parts`, in order.
+    fn object_parts_are(&self, i: u32, parts: &[u32]) -> bool {
+        let Some(o) = usize::try_from(i).ok().and_then(|i| self.objects.get(i)) else {
+            return false;
+        };
+        let (Ok(first), Ok(count)) = (usize::try_from(o.first), usize::try_from(o.count)) else {
+            return false;
+        };
+        count == parts.len()
+            && first
+                .checked_add(count)
+                .and_then(|end| self.instances.get(first..end))
+                .is_some_and(|inst| inst.iter().zip(parts).all(|(a, b)| a.part == *b))
+    }
+
     /// Updates the smoothed distance and the draw-distance fade of every object of the
     /// block from index `from` on that is in the scene (active, not a generated object with
     /// `scenery` off, drawn through a cell the camera sees) but not processed by the draw
@@ -1009,6 +1077,17 @@ impl BlockObjects {
                 figure_bias.entry(f).or_insert(o.depth_bias);
             }
         }
+        let mut by_position: HashMap<[u32; 3], Vec<u32>> = HashMap::new();
+        for (i, o) in objects.iter().enumerate() {
+            if o.generated || !o.position.is_finite() {
+                continue;
+            }
+            let Ok(i) = u32::try_from(i) else { break };
+            by_position
+                .entry(position_key(o.position.to_array()))
+                .or_default()
+                .push(i);
+        }
         BlockObjects {
             instances,
             objects,
@@ -1024,6 +1103,7 @@ impl BlockObjects {
             figure_cells,
             figure_bias,
             hand_over: None,
+            by_position,
         }
     }
 }
@@ -1747,6 +1827,31 @@ impl ObjectLayer {
                 .as_ref(),
             _ => None,
         }
+    }
+
+    /// The opacity the object of a placed entity of landblock `key` was drawn with in the
+    /// last [`Self::draw`]: its draw-distance fade or cross-fade (`mesh.md` §8.7; the layer
+    /// applies no other per-object factor). `None` when the layer holds no object of that
+    /// entity, or the object was not drawn in that frame (inactive, out of range, culled,
+    /// past the draw cap).
+    ///
+    /// For the effects of static owners (`particle-runtime.md` §12 rule 15: the parent
+    /// object's opacity; the caller counts `None` as 1). The entity is named by its identity
+    /// as the object layer's block list records it ([`PlacedObjectRef`]): its block-local
+    /// placement position bit for bit, its visual's part list in order, and its rank among
+    /// the earlier entities of the landblock with that same position and part list (the
+    /// block list holds the drawable entities in their order). An entity with no part (no
+    /// visual, or not drawn) names no object, so a pure emitter placed at another object's
+    /// origin never takes that object's fade.
+    #[must_use]
+    pub fn placed_object_opacity(
+        &self,
+        key: LandblockKey,
+        entity: &PlacedObjectRef,
+    ) -> Option<f32> {
+        self.blocks
+            .get(&(key, BlockSet::Main))?
+            .drawn_opacity(entity, self.draw_frame)
     }
 
     /// The cell the placed figure `tag` ([`figure_tag`]) is drawn through as a static
@@ -2846,6 +2951,7 @@ impl ObjectLayer {
                 let casts = frame.shadows
                     && (!frame.lod || d < obj.lod.shadow_distance(frame.g, &frame.settings));
                 objects_drawn += 1;
+                mark_drawn(st, draw_frame, opacity);
                 if id.1 == BlockSet::Far {
                     far_drawn += 1;
                 }
@@ -3206,6 +3312,74 @@ fn object_parts<'a>(instances: &'a [Instance], obj: &ObjectInfo) -> impl Iterato
 mod tests {
     use super::*;
     use tessera_render::{Camera, Perspective};
+
+    /// `particle-runtime.md` §12 rule 15 for static owners: the object of an entity is found
+    /// by its identity (position, parts, rank), not by its position alone; an undrawn,
+    /// generated or part-less match answers `None`, and an object drawn in an older frame
+    /// answers `None` too.
+    #[test]
+    fn placed_object_opacity_is_found_by_the_entity() {
+        let lod = LodValues([300.0, 100.0, 16.0, 80.0, 1000.0, 1000.0, 1100.0, -1.0]);
+        let p = Vec3::new(10.0, 20.0, 3.0);
+        let q = Vec3::new(50.0, 20.0, 3.0);
+        let o = |first, position, generated| ObjectInfo {
+            position,
+            lod,
+            generated,
+            first,
+            count: 1,
+            cell: OUTDOORS,
+            depth_bias: DrawDepthBias::NONE,
+        };
+        // 0: placed at P, part 7 (fading); 1: placed at Q, part 8 (past its draw distance,
+        // never drawn); 2: generated at P, part 7; 3: a second placed copy at P, part 7;
+        // 4: placed at P, part 9.
+        let instances: Arc<[Instance]> = vec![
+            inst(7, p, 1.0),
+            inst(8, q, 1.0),
+            inst(7, p, 1.0),
+            inst(7, p, 1.0),
+            inst(9, p, 1.0),
+        ]
+        .into();
+        let objects: Arc<[ObjectInfo]> = vec![
+            o(0, p, false),
+            o(1, q, false),
+            o(2, p, true),
+            o(3, p, false),
+            o(4, p, false),
+        ]
+        .into();
+        let mut b = BlockObjects::new(instances, objects);
+        let at = |pos: Vec3, parts: &[u32], rank| PlacedObjectRef {
+            position: pos.to_array(),
+            parts: parts.into(),
+            rank,
+        };
+        // Frame 1: objects 0 (fading), 2 (the generated one) and 4 drawn.
+        mark_drawn(&mut b.state[0], 1, 0.4);
+        mark_drawn(&mut b.state[2], 1, 0.9);
+        mark_drawn(&mut b.state[4], 1, 0.7);
+        assert_eq!(b.drawn_opacity(&at(p, &[7], 0), 1), Some(0.4));
+        assert_eq!(
+            b.drawn_opacity(&at(p, &[9], 0), 1),
+            Some(0.7),
+            "its own fade"
+        );
+        // The second copy (rank 1) is object 3, not drawn; the generated one never answers.
+        assert_eq!(b.drawn_opacity(&at(p, &[7], 1), 1), None);
+        assert_eq!(b.drawn_opacity(&at(p, &[7], 2), 1), None);
+        // Not drawn (past its draw distance); a pure emitter at P (no parts); other parts.
+        assert_eq!(b.drawn_opacity(&at(q, &[8], 0), 1), None);
+        assert_eq!(b.drawn_opacity(&at(p, &[], 0), 1), None);
+        assert_eq!(b.drawn_opacity(&at(p, &[8], 0), 1), None);
+        // One draw later object 0 left its range (not marked again): no answer.
+        mark_drawn(&mut b.state[4], 2, 0.75);
+        assert_eq!(b.drawn_opacity(&at(p, &[7], 0), 2), None);
+        assert_eq!(b.drawn_opacity(&at(p, &[9], 0), 2), Some(0.75));
+        // Before any draw nothing answers.
+        assert_eq!(b.drawn_opacity(&at(p, &[9], 0), 0), None);
+    }
 
     fn inst(part: u32, at: Vec3, scale: f32) -> Instance {
         Instance {

@@ -12,7 +12,7 @@
 //!   click gives a plugin control one `MouseClick`; without action-map data every type is 0,
 //!   so the `TapLeft` pulse gives a second one (Known difference 12);
 //! - the Interface window's text-size and art-filter actions reach the UI live;
-//! - the image LRU and the glyph cache share one S6 pool;
+//! - the image LRU and the glyph cache share one S6 total, split by the UI (whole MiB);
 //! - a scale-factor change moves the software cursor's physical position.
 //!
 //! Every fixture is synthetic; the real-data test only reads the install and prints counts.
@@ -290,27 +290,31 @@ fn interface_text_and_art_actions_reach_the_ui() {
     rig.shutdown();
 }
 
-/// §8 S6: the image LRU gets the S6 pool minus the glyph cache's share, and both grow with
-/// *Se*² on a scale change.
+/// §8 S6 (revision 8 answer): the UI splits *T* = `image_lru_mib` × max(1, *Se*²) (glyphs
+/// *T* ÷ 8 rounded down to whole MiB), and the host gives the images' share to the
+/// environment's LRU at start and after every change of *Se*.
 #[test]
 fn image_lru_and_glyph_cache_share_the_s6_pool() {
-    use tessera_client::ui_host::prefs::s6_split;
+    use tessera_ui::scaling::s6_budget;
+    const MIB: u64 = 1 << 20;
     let mut rig = Rig::with_host(
         |_| {},
         |o| {
             let mut o = o.clone();
             o.screen = (1024, 768);
             o.prefs.ui_scale = UiScale::Fixed(1.0);
+            // 100 MiB: T ÷ 8 = 12.5 MiB, so the glyph share is 12 whole MiB.
+            o.prefs.image_lru_mib = 100;
             UiHost::without_install(&o)
         },
     );
-    let lru = rig.host.prefs().image_lru_mib << 20;
     let lru_now = |rig: &Rig| rig.host.env().map(|h| h.borrow().lru_budget());
-    assert_eq!(lru_now(&rig), Some(s6_split(lru, 1.0).image_lru));
-    assert!(
-        s6_split(lru, 1.0).image_lru < lru,
-        "the glyph share is carved out"
-    );
+    let b = rig.host.ui().s6_budget();
+    assert_eq!(b, s6_budget(100, 1.0));
+    assert_eq!(b.glyphs, 12 * MIB, "rounded down to whole MiB");
+    assert_eq!(b.images, 88 * MIB);
+    assert_eq!(lru_now(&rig), Some(b.images));
+    assert_eq!(rig.host.ui().glyph_memory().0 as u64, b.glyphs);
     rig.host.resize(2048, 1536);
     rig.host.apply_uiscale_request(
         &tessera_client::commands::uiscale::UiScaleRequest::Set(2.0),
@@ -318,7 +322,18 @@ fn image_lru_and_glyph_cache_share_the_s6_pool() {
     );
     rig.frame();
     assert!((rig.host.scale().effective_scale() - 2.0).abs() < 1e-9);
-    assert_eq!(lru_now(&rig), Some(s6_split(lru, 2.0).image_lru));
+    let b2 = rig.host.ui().s6_budget();
+    assert_eq!(b2, s6_budget(100, 2.0));
+    assert_eq!(b2.glyphs, 50 * MIB);
+    assert_eq!(lru_now(&rig), Some(b2.images));
+    // Back to Se = 1: both shares fall again.
+    rig.host.resize(1024, 768);
+    rig.host.apply_uiscale_request(
+        &tessera_client::commands::uiscale::UiScaleRequest::Set(1.0),
+        std::time::Instant::now(),
+    );
+    rig.frame();
+    assert_eq!(lru_now(&rig), Some(88 * MIB));
     rig.shutdown();
 }
 

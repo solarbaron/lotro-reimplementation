@@ -1000,6 +1000,7 @@ impl FxState {
             id,
             LiveOwner {
                 kind: OwnerKind::Session { net },
+                placed: None,
                 iid: None,
                 points: view.points.clone(),
                 particle_scale: 1.0,

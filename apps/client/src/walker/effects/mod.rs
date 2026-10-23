@@ -75,14 +75,18 @@
 //! camera systems and the impact spawns.
 //!
 //! **Opacity** (rule 15): `inherit_opacity` systems of a figure owner take the opacity the
-//! character layer's fade gave the figure in its last draw pass (one frame late: placement
-//! runs before the draw pass; a Tessera reading); static owners count as 1 (the object
-//! layer keeps its per-object fade to itself, not given to this layer yet).
+//! character layer's fade gave the figure in its last draw pass, those of a static owner of
+//! a landblock the opacity the object layer drew its placed object with in its last draw
+//! (`ObjectLayer::placed_object_opacity`: the draw-distance fade or cross-fade; 1 when the
+//! object was not drawn then, [`static_parent_opacity`]); both one frame late, since
+//! placement runs before the draw pass (a Tessera reading). The creation viewport's owners
+//! count as 1.
 //!
 //! **Systems of the pass after post-processing** (rule 16): systems with `uses_video_post`
-//! are queued apart ([`EffectLayer::take_post_draws`]) and the walker draws them in a world
-//! pass of their own after the world pass (so after the far view and the translucent stage)
-//! and before the UI; in the creation viewport they come after the others in its one pass.
+//! are queued apart ([`EffectLayer::take_post_draws`]) and the walker queues them in the
+//! renderer's last stage of its world pass ([`post_stage`], `Pass::post_particles`: after
+//! every other draw of the pass, so after the far view and the translucent stage) and before
+//! the UI; in the creation viewport they go to the last stage of its one pass.
 //! [`EffectConfig::video_post`] off skips them.
 
 pub mod data;
@@ -311,6 +315,8 @@ struct Boot {
 #[derive(Debug, Clone)]
 struct LiveOwner {
     kind: OwnerKind,
+    /// A static owner's placed object (rule 15, [`data::PlacedObject`]).
+    placed: Option<data::PlacedObject>,
     iid: Option<u64>,
     points: Option<Arc<data::AttachPoints>>,
     particle_scale: f32,
@@ -347,8 +353,9 @@ struct OwnerFrame<'a> {
     points: Option<&'a data::AttachPoints>,
     drawn: bool,
     /// The opacity the owner is drawn with (`particle-runtime.md` §12 rule 15): a figure's
-    /// fade from the character layer's last draw; 1 for static owners (the object layer's
-    /// per-object fade is not given to this layer) and for owners not drawn.
+    /// fade from the character layer's last draw; 1 for owners not drawn and for static
+    /// owners here (their placed object's opacity comes from the object layer,
+    /// [`static_parent_opacity`]).
     opacity: f32,
 }
 
@@ -1318,11 +1325,23 @@ pub struct EffectLayer {
 /// the late stage) a list.
 trait ParticleTarget {
     fn queue(&mut self, draw: ParticleDraw);
+
+    /// Queues a draw of a system of the pass after post-processing (rule 16) on the target's
+    /// own late stage; a list has none and keeps it after the others it holds.
+    fn queue_post(&mut self, draw: ParticleDraw) {
+        self.queue(draw);
+    }
 }
 
 impl ParticleTarget for Pass {
     fn queue(&mut self, draw: ParticleDraw) {
         self.particles(draw);
+    }
+
+    /// The renderer's last stage of the pass, after every other draw of it
+    /// (`Pass::post_particles`).
+    fn queue_post(&mut self, draw: ParticleDraw) {
+        self.post_particles(draw);
     }
 }
 
@@ -1333,9 +1352,9 @@ impl ParticleTarget for Vec<ParticleDraw> {
 }
 
 /// The two particle stages of `particle-runtime.md` §12 rule 16: draws of systems with
-/// `uses_video_post` go to `late` when there is one (the walker's stage after every other
-/// draw of the world pass), else to `main` after the others (the creation viewport, which
-/// has one pass).
+/// `uses_video_post` go to `late` when there is one (the walker's list for its world pass's
+/// last stage, [`post_stage`]), else to `main`'s own late stage (the creation viewport's
+/// pass: the renderer's stage after every other draw of the pass).
 struct ParticleSink<'a, M: ParticleTarget + ?Sized> {
     main: &'a mut M,
     late: Option<&'a mut Vec<ParticleDraw>>,
@@ -1345,18 +1364,22 @@ impl<M: ParticleTarget + ?Sized> ParticleSink<'_, M> {
     fn queue(&mut self, post: bool, draw: ParticleDraw) {
         match (post, self.late.as_deref_mut()) {
             (true, Some(late)) => late.push(draw),
-            _ => self.main.queue(draw),
+            (true, None) => self.main.queue_post(draw),
+            (false, _) => self.main.queue(draw),
         }
     }
 }
 
 /// Queues `draws`, the systems of the pass after post-processing
-/// ([`EffectLayer::take_post_draws`]), on a world pass of their own appended to `frame`
-/// after the world pass (`particle-runtime.md` §12 rule 16: after every other draw of it,
-/// the far view and the translucent stage included, before the UI). It keeps the world
-/// pass's colour and depth (same `camera`, no clear) and, from a lit world pass's
-/// `lighting`, only the fog the particle program reads: no shadow map and no table lights.
-/// Nothing is appended without draws.
+/// ([`EffectLayer::take_post_draws`]), in the last stage of the frame's world pass, the last
+/// world pass recorded so far (`Pass::post_particles`; `particle-runtime.md` §12 rule 16:
+/// after every other draw of it, the far view and the translucent stage included, before
+/// the UI), so they share its camera, lighting and fog.
+///
+/// Without a world pass in `frame` they go to a world pass of their own appended to it
+/// (same `camera`, no clear, keeping the colour and depth drawn before it) with, from a lit
+/// world pass's `lighting`, only the fog the particle program reads: no shadow map and no
+/// table lights. Nothing is queued or appended without draws.
 pub fn post_stage(
     frame: &mut tessera_render::Frame,
     camera: &tessera_render::Camera,
@@ -1364,6 +1387,16 @@ pub fn post_stage(
     draws: Vec<ParticleDraw>,
 ) {
     if draws.is_empty() {
+        return;
+    }
+    let world = frame
+        .passes()
+        .iter()
+        .rposition(|p| matches!(p.space(), tessera_render::PassSpace::World { .. }));
+    if let Some(pass) = world.and_then(|i| frame.pass_mut(i)) {
+        for d in draws {
+            pass.post_particles(d);
+        }
         return;
     }
     let pass = frame.world_pass("walker-world-post", camera);
@@ -1389,6 +1422,21 @@ fn post_stage_lighting(l: &tessera_render::FrameLighting) -> tessera_render::Fra
         lights: Vec::new(),
         time: l.time,
     }
+}
+
+/// The parent opacity of a static owner drawn as `placed` (`particle-runtime.md` §12 rule 15):
+/// the opacity the object layer drew that object with in its last draw, clamped to [0, 1];
+/// 1 when it was not drawn then (or the layer does not hold it), as for an owner not drawn.
+fn static_parent_opacity(objects: &ObjectLayer, placed: &data::PlacedObject) -> f32 {
+    parent_factor(objects.placed_object_opacity(placed.key, &placed.entity))
+}
+
+/// Rule 15's factor from the object layer's answer: the opacity clamped to [0, 1]; 1 for no
+/// answer (the owner was not drawn) or a non-finite one.
+fn parent_factor(opacity: Option<f32>) -> f32 {
+    opacity
+        .filter(|o| o.is_finite())
+        .map_or(1.0, |o| o.clamp(0.0, 1.0))
 }
 
 /// The region value of the creation viewport's frame: no landblock has region 0, so a
@@ -1829,6 +1877,7 @@ impl EffectLayer {
             o.id,
             LiveOwner {
                 kind: o.kind,
+                placed: o.placed.clone(),
                 iid: o.iid,
                 points: o.points.clone(),
                 particle_scale: o.scales.particle,
@@ -2133,7 +2182,7 @@ impl EffectLayer {
             return 0;
         }
         let mut pending = 0usize;
-        // One pass: the post-processing systems come after the others in it (rule 16).
+        // One pass: the post-processing systems go to its last stage (rule 16).
         let mut sink = ParticleSink {
             main: pass,
             late: None,
@@ -2206,7 +2255,10 @@ impl EffectLayer {
             }
             let (scale_a, scale_b) = owner_scale_vectors(f.scale, Some(owner.particle_scale));
             let world = f.world;
-            let parent_opacity = f.opacity;
+            let parent_opacity = match &owner.placed {
+                Some(p) => static_parent_opacity(objects, p),
+                None => f.opacity,
+            };
             let model: Vec<Mat4> = f.model.to_vec();
             let points = f.points.cloned();
             // Unlit frames: the white ambient and no lights (a list set in a lit frame is
@@ -2862,6 +2914,18 @@ impl EffectLayer {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Rule 15 (`particle-runtime.md` §12): an owner not drawn, or a non-finite answer, gives
+    /// factor 1; an answer outside [0, 1] is clamped.
+    #[test]
+    fn static_parent_factor_is_clamped_and_defaults_to_one() {
+        assert_eq!(parent_factor(None), 1.0);
+        assert_eq!(parent_factor(Some(f32::NAN)), 1.0);
+        assert_eq!(parent_factor(Some(f32::INFINITY)), 1.0);
+        assert_eq!(parent_factor(Some(1.5)), 1.0);
+        assert_eq!(parent_factor(Some(-0.5)), 0.0);
+        assert_eq!(parent_factor(Some(0.25)), 0.25);
+    }
 
     /// Review finding, `particle-runtime.md` §12 rule 16: with a late stage the systems of
     /// the pass after post-processing never reach the main pass's list; without one (the

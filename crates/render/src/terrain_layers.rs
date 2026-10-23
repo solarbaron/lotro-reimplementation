@@ -1439,7 +1439,7 @@ impl PassHook for TerrainHook {
             return;
         };
         match ctx.stage {
-            HookStage::Translucent => {}
+            HookStage::Translucent | HookStage::Post => {}
             HookStage::Shadow => {
                 let mut bound = false;
                 for item in self.items.iter().filter(|i| i.cast) {

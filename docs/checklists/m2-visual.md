@@ -30,21 +30,22 @@ Category descriptions below are our own words.
 
 ## Result
 
-**74 checks on 72 objects (the two dye previews re-use an armour object), 74 pass, 0 fail, with row C6 passing in the mesh view only** (re-checked 2026-10-23). The explorer's character view (`--character 0x04000110`) still draws the one-triangle stub of the same setup, so C6 counts as a mesh-view pass until `apps/explorer/src/character.rs` leaves such parts out (see the row).
+**74 checks on 72 objects (the two dye previews re-use an armour object), 74 pass, 0 fail** (re-checked 2026-10-23).
+2026-10-23: the explorer's character view (`--character 0x04000110`) now leaves the one-triangle stub out too, so row C6 passes in the mesh view and in the character view (see the row).
 
 | Category | Checks | Pass | Fail |
 |---|---|---|---|
 | Weapons and shields | 15 | 15 | 0 |
 | Armour (worn, skinned, bind pose), incl. 2 dye previews | 13 | 13 | 0 |
-| Creatures and NPCs (skinned, bind pose) | 15 | 15 (C6 in the mesh view only) | 0 |
+| Creatures and NPCs (skinned, bind pose) | 15 | 15 | 0 |
 | Vegetation | 9 | 9 | 0 |
 | Buildings and large structures | 9 | 9 | 0 |
 | Props and furniture | 13 | 13 | 0 |
 
 The one earlier failure (row C6) was not a decoding error: the mesh decoded and drew as
 stored. [`setup.md` §8.5](../specs/setup.md#s8-5) now gives the rule (one-triangle parts are
-left out of models with several parts), and the mesh view applies it since 2026-10-23. The
-explorer's character view does not apply it yet (row C6).
+left out of models with several parts), and the mesh view applies it since 2026-10-23.
+2026-10-23: the explorer's character view applies it too (row C6).
 
 ## Weapons and shields
 
@@ -93,7 +94,7 @@ explorer's character view does not apply it yet (row C6).
 | C3 | 0x79030469 | | large wolf-like beast | pass | |
 | C4 | 0x79038EA0 | (also `--mesh-angle 30,60`) | giant spider | pass | legs straight out sideways in bind pose; has a one-triangle stub part too small to see |
 | C5 | 0x79018631 | | troll with bark-like limbs | pass | |
-| C6 | 0x79018D38 | (also `--mesh-angle 20,10`, `--mesh-select 2,0`) | goblin | pass (2026-10-23, mesh view) | was **fail**: part 2 (mesh 0x060068B9, one triangle, surface 0x310000E5) drew as a white triangle at the feet. Now the mesh view leaves one-triangle parts out of models with several parts (`setup.md` §8.5 steps 1–3, S14). Re-checked 2026-10-23 by a `--view mesh --mesh-angle 20,10 --screenshot` render on the reference laptop (window 1421 × 781, viewed in full): body drawn, no triangle at the feet, parts 1 and 2 (one triangle each) listed as "not drawn: a one-triangle placeholder part". The real-data test `checklist_row_c6_draws_no_placeholder_part` (`apps/explorer/src/scene.rs`) counts the same: 3 parts, 1 drawn, 2 left out. **Not covered:** the character view's bare-setup path (`--character 0x04000110`) does not apply the rule yet and still draws the triangle (follow-up in `apps/explorer/src/character.rs`, through `tessera_world::objects::drawn_parts`) |
+| C6 | 0x79018D38 | (also `--mesh-angle 20,10`, `--mesh-select 2,0`) | goblin | pass (2026-10-23, mesh and character views) | was **fail**: part 2 (mesh 0x060068B9, one triangle, surface 0x310000E5) drew as a white triangle at the feet. Now the mesh view leaves one-triangle parts out of models with several parts (`setup.md` §8.5 steps 1–3, S14). Re-checked 2026-10-23 by a `--view mesh --mesh-angle 20,10 --screenshot` render on the reference laptop (window 1421 × 781, viewed in full): body drawn, no triangle at the feet, parts 1 and 2 (one triangle each) listed as "not drawn: a one-triangle placeholder part". The real-data test `checklist_row_c6_draws_no_placeholder_part` (`apps/explorer/src/scene.rs`) counts the same: 3 parts, 1 drawn, 2 left out. 2026-10-23: the character view's bare-setup path (`--character 0x04000110`) applies the same rule (`apps/explorer/src/character.rs` `drawn_setup_parts`, through `tessera_world::objects::stub_part_drawn`); the implementer's real-data sheet of that view reports "2 one-triangle placeholder part(s) of the setup left out", and its image, viewed, shows no white triangle (no automated test covers this view) |
 | C7 | 0x790273B0 | | tree creature | pass | alpha-tested leaf cards with clean edges |
 | C8 | 0x7904E65C | | salamander | pass | |
 | C9 | 0x7900C0B8 | | large bird | pass | alpha-tested feather cards |

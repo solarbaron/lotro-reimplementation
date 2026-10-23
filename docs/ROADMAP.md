@@ -410,7 +410,7 @@ fails on such a question (criterion 2).
 | # | | Evidence |
 |---|---|---|
 | 1 | ✅ | `crates/mesh/tests/real_data.rs`: 47,563 of 47,563 mesh records decode (100 %), strict mode included, 0 trailing bytes, lossless re-encoding 47,563 / 47,563, every level flattens to renderer streams; 112,910 submeshes, 89.6 M vertices, 95.4 M triangles, 27 vertex formats. Failure categories are listed in `mesh.md` §15/§18 (none observed; the only invariant finding is MI10 `CollisionIndexOverflow` in 105 records, a data-quality check that does not stop decoding). Materials (`crates/material/tests/material_real_data.rs`): 510 / 510 shader records, 24,094 / 24,094 materials, 13,781 / 13,781 surfaces decode and resolve; 1,192 / 1,192 sampled diffuse textures decode. |
-| 2 | ✅ | [`docs/checklists/m2-visual.md`](checklists/m2-visual.md): 74 checks on 72 objects with `tessera-explorer --screenshot`, each image viewed: 15 weapons and shields, 13 armour (worn, bind pose, 2 dye previews), 15 creatures and NPCs (skinned, bind pose), 9 vegetation, 9 buildings, 13 props. **73 pass** (no slivers, UVs correct, alpha-tested foliage/feathers/fringes cut cleanly, dye confined to the mask). **1 fail**: a one-triangle placeholder part of a creature setup draws as a white triangle (decoded correctly; whether the original skips such parts is `setup.md` §8.5 OPEN). **2026-10-23:** `setup.md` §8.5 now gives the rule and the mesh view leaves one-triangle parts out of models with several parts, so row C6 passes in the mesh view (74 / 74). The character view (`--character 0x04000110`) still draws the stub; C6 counts as a mesh-view pass only until `apps/explorer/src/character.rs` applies the rule. |
+| 2 | ✅ | [`docs/checklists/m2-visual.md`](checklists/m2-visual.md): 74 checks on 72 objects with `tessera-explorer --screenshot`, each image viewed: 15 weapons and shields, 13 armour (worn, bind pose, 2 dye previews), 15 creatures and NPCs (skinned, bind pose), 9 vegetation, 9 buildings, 13 props. **73 pass** (no slivers, UVs correct, alpha-tested foliage/feathers/fringes cut cleanly, dye confined to the mask). **1 fail**: a one-triangle placeholder part of a creature setup draws as a white triangle (decoded correctly; whether the original skips such parts is `setup.md` §8.5 OPEN). **2026-10-23:** `setup.md` §8.5 now gives the rule and the mesh view leaves one-triangle parts out of models with several parts, so row C6 passes in the mesh view (74 / 74). 2026-10-23 (second round): the character view (`--character 0x04000110`) leaves the stub out too (`apps/explorer/src/character.rs`), so C6 passes in both views. |
 | 3 | ✅ | `crates/render/tests/mesh_golden.rs` (opaque, alpha test, alpha blend + order independence, two-sided, dye, normal map, debug views): 8 / 8 pass on Mesa lavapipe (Vulkan, Mesa 25.2.6) with `TESSERA_REQUIRE_GPU=1`, and 8 / 8 on Mesa llvmpipe (GL, Mesa 26.1.8); at most 2 (lavapipe) and 7 (llvmpipe) outliers of 40,960 pixels against a budget of 102. `render_test_scene` passes on lavapipe too. |
 | 4 | ✅ | `tools/fuzz-smoke.sh -t 60`: `mesh_decode`, `material_records`, `material_resolve`, `formats_surface`, `formats_setup`, `formats_setup_chain`, `formats_appearance`, `render_mesh_data`, `explorer_mesh_scene` each ran 60 s with no finding (0.23 M–8.4 M executions per target). |
 
@@ -1036,14 +1036,18 @@ and driven node fields remain (beams, Q-RT4, are drawn since P2: `particle-runti
 `particle-runtime.md` §3.2, §5.4, §9.2 and §12. Since 2026-10-23 (follow-up
 `particles-decals`): the lights of lit systems (Q8 (b), rule 13: the ambient term and the
 owner's light list cut to five, `crates/particles/src/light.rs`) and bounds culling (Q-RT3,
-`crates/particles/src/draw.rs`) are built, with the tier-1 golden `particles_lit.png`; the
-readings are implementer OPENs in `particle-runtime.md` §9.3 and §12. The day and night lamp
-lights of `instance-scripts.md` §6 are not in the walker's light table yet, so they light no
-system. Placed decals (`decals.md`) are drawn in the walker too (decal pass in
-`tessera-render`, `apps/client/src/walker/effects/decals.rs`, tier-1 golden
-`decal_ground.png`); interior cells are not decal receivers yet (`decals.md` §9.1 OPEN).
-Water now draws before the blended instanced surfaces (`render.md` §5.7 Decision, golden
-`frill_over_water.png`); `render.md` §5.1 and R-D8 still describe the old order (spec writer).
+`crates/particles/src/draw.rs`) are built, with the tier-1 golden `particles_lit.png`. Placed
+decals (`decals.md`) are drawn in the walker too (decal pass in `tessera-render`,
+`apps/client/src/walker/effects/decals.rs`, tier-1 golden `decal_ground.png`). Water now
+draws before the blended instanced surfaces (`render.md` §5.7 Decision, golden
+`frill_over_water.png`).
+2026-10-23 (second round, package `walker-wiring`): the day and night lamp lights of
+`instance-scripts.md` §6 (`tessera_world::lighting::lamps`) are in the walker's light table,
+nearest first and capped at 255, so they light objects, lit systems and decals. The revised
+`particle-runtime.md`, `decals.md` and `render.md` §5 and §6.16 are Accepted: they answer
+the §9.3 and §12 readings (rule 13 now gives point lights no range cut-off, which `crates/particles/src/light.rs` still applies), allow interior
+cells to stay non-receivers until the walker keeps CPU cell meshes (`decals.md` §9.1 answer
+(b)), and give the new world order in `render.md` §5.1 and R-D8.
 
 ---
 
@@ -1164,17 +1168,26 @@ fuzz targets, rustfmt on six fuzz targets, eight missing `fuzz/README.md` rows, 
 O39–O49.
 
 Remaining for M5 to close: owner observations O39 (criterion 2) and O40 (criterion 4); the
-U4 work in `tessera-ui` step 8, U4 (c)–(e) figures, the client's U2 report and the idle
+U4 work in `tessera-ui` step 8, U4 (c)–(e) figures, the windowed U2 feed and the idle
 re-measurement O49 (criterion 7; since 2026-10-23 `tessera-render` fills `UiStats::gpu_ns`
-where the adapter has timestamp queries, `render.md` §6.16); the P15 rows of `m5-visual.md`. Open review items the implementers
+where the adapter has timestamp queries, `render.md` §6.16); the P15 rows of `m5-visual.md`.
+2026-10-23 (second round): the U1–U5 report has a U2 row (per-frame `ui_gpu_ms`) in headless
+and scripted runs; windowed runs do not feed it yet (`apps/client/src/app.rs` does not call
+the UI's `record_render_stats`). Open review items the implementers
 could not fix in their own files: plugin TextBox read-only flag, caret and
-selection API, child insert position and title bars above a window's top edge need
-`tessera-ui` calls (2026-10-23: the title bar of the game-styled window at top −8 is still
-cut, `lua-plugin-api.md` §14.2.6 OPEN (d)); `ImageRef::File` needs an origin; the
+selection API and child insert position need `tessera-ui` calls; `ImageRef::File` needs an
+origin; the
 `PluginData.Load` main-thread read waits on the `lua-plugin-api.md` §10.1 OPEN (ARCHITECTURE
 §21). Settled 2026-10-23: the client's `LogHost` answers `Turbine.Engine.GetDate` in the
 operating system's time zone (`apps/client/src/plugins/localtime.rs`, read once at start-up;
 UTC only when no zone is found), no longer UTC by default.
+2026-10-23 (second round, package `ui-surface`): the title and drag bars of a game-styled
+plugin window at top −8 are drawn (its canvas reaches up to 64 units above the window), and
+a game-styled window marked as scaled is rebuilt from its scaled layout element
+(`crates/plugins/src/ui/styled.rs` `rebuild_scaled_window`). `lua-plugin-api.md` is
+Accepted (re-review 2026-10-23). Open: the title text margins (§14.2.3 step 2 and P115 now
+name the margin properties; not built) and the rebuild of a plain `Turbine.UI.Window`
+marked as scaled (§13.21 rule 1).
 
 ---
 
@@ -1714,6 +1727,18 @@ change with anything but the stage key, prop fade times, the figure's own sounds
 particle nodes, `character-screens.md` §2.1.4 OPEN), and the scene's decals and effect
 particles are drawn in the creation viewport.
 
+2026-10-23 (second round): the panel keys follow `keymap.md` §8.3 (package
+`conform-keymap`): C character, I every bag, H pin tooltip, B wallet; bags 1–6 have no
+default key, and an import of the install's key map gives the original's Ctrl+F1–F6. Item
+tooltips wrap the name at its own layout width (180) and cascade pinned windows by
+(18, 18) modulo 20 (package `conform-gameplay`, `crates/ui/src/game/examine/panel.rs`); only
+`PinnedTooltipCloseButton` closes a pinned window once a caller sets its ID, but no client
+caller does yet (`CharVocab` has no such entry). `character-screens.md` and `script-table.md`
+are Accepted: they settle the `RampIn` question as Tessera reads it and give the MeshFX
+attach rule (`script-table.md` §5.2: for attached nodes the holding location wins over the
+bone type; `apps/client/src/walker/characters/figure.rs` still tries the bone type first)
+and the prop fade and life rules (`appearance.md` §5.7), not built yet.
+
 Open going in (before the re-check; since then decision 0025, `scenario-feed.md` revision 4,
 `tessera-protocol.md` v1.1 and `test-server.md` are Accepted and commit 93b3dfd draws the
 figure and the received colours and faces): the specs of decision 0025 (`scenario-feed.md` revision 4,
@@ -1876,15 +1901,24 @@ Since the follow-ups merged 2026-10-23: combat cues no longer read records on th
 `apps/client/src/walker/combat/records.rs`, and the clip store never reads a clip on the
 frame thread; ARCH §21); U, left double-click and right click use the selection with
 use-range cylinders from the setups (`interaction.md` I6a), no longer the nearest NPC; plugin
-check 76's quickslot click runs end to end (`apps/client/tests/plugin_combat_checks.rs`), but
-one click through the client's UI host reaches the quickslot twice (two `UseSkill`
-commands; the ignored test `a_plugin_quickslot_click_activates_once` reproduces it); the
+check 76's quickslot click runs end to end (`apps/client/tests/plugin_combat_checks.rs`); the
 combat layer waits until a session figure's start-up clips are decoded before spawning it.
 The 2026-10-23 revisions of `combat-ui.md`, `skill-tooltips.md` and `combat-visuals.md` are
 Accepted: they answer every implementer OPEN of `combat-visuals.md` and some of the other two;
 the `scenario-feed.md` §9.7 OPEN was answered in revision 9 (2026-10-14). The implementer
 OPENs of `particle-runtime.md` and `lua-plugin-api.md` §15.2 still wait; the `keymap.md`
-revision is Accepted (2026-10-23, package `spec-ui-input`) but not yet built.
+revision is Accepted (2026-10-23, package `spec-ui-input`).
+
+2026-10-23 (second round): one left click through the client's UI host reaches a plugin
+quickslot once (package `ui-host-wiring`: UI boot reads table A of the action map and the host
+passes its toggle types to the UI, so `TapLeft` no longer clicks a second time);
+`a_plugin_quickslot_click_activates_once` runs again and passes, and check 76 still allows up
+to two sends. `skill-tooltips.md` rev 2 is conformed (package `conform-gameplay`):
+passive-skill trait rows are empty and dropped (44 trait rows shown), sub-second recovery rows
+are shown (3,394 rows). The `keymap.md` §8.3 actions are built (U `use_selection` among
+them). `interaction.md` is Accepted with the §3.4.1 answers (I6d, I6e). The client does not
+yet call `InputMapper::set_repeat_commands` with the action map's type-3 set (`keymap.md`
+§7.8.6), so key repeat follows the built-in flags.
 
 <a id="p3"></a>
 ### P3: NPC windows: dialogue, quests, vendors and loot
@@ -2004,6 +2038,15 @@ item reward rows show only `QuestReward_Item`, barter reputation fields hidden.
 |---|---|---|
 | 1 | **pass** | `tessera-client` `quest_journal_real_data::every_quest_record_in_the_log_and_the_tracker` (release, install): a scenario selects every quest record (`quest all`) and makes it active; 20,807 records: Shown 15,400 (15,400 log rows laid out, 15,400 details panes), Deed 5,407 (tracker only, `quest-journal.md` §4.2), NoName 0, Unreadable 0; every record tracked once in batches of 10 (20,807 tracker entries laid out); 20,258 quest chat lines; `JournalCensus` entries_failed 0, details_failed 0, tracker_failed 0. Flags as `tessera-gamedata` `quest_real_data`: CategoryFallback 2, LevelHidden 164, LevelFromPlayer 2,168, NoLevel 440, NoDescription 340, ObjectiveWithoutText 327, ObjectiveWithoutLines 1,238. Goldens of the log and tracker on a seeded sample (`log_and_tracker_goldens_on_a_seeded_sample`, 01-quest-log, 02-tracker) blessed, judged and matched as for criterion 2. Defect left (not a failure of the criterion): a long background or objective text is drawn on one line cut at the pane width (`quest-journal.md` §4.7 OPEN; owner row O119). |
 | 2 | **pass** (with visual defects listed) | Decision 0031 §3, install version `3905db5e60168527`: (1) tier 1: `tessera-ui` `p3_goldens` 12 / 12 committed synthetic goldens pass in the workspace run; (2) `npc_windows_real_data` and `quest_journal_real_data` blessed 19 images in a fresh `TESSERA_GOLDEN_DIR` of this verification alone (`~/.cache/tessera/scratch/P3/clean/verify3/goldens`); (3) each viewed and judged: dialogue 01 choice (action option with its template icon), 02 conversation, 03 and 04 NPC comment, 05 quest offer (install title, level, offer line, objective, coin and item-experience amounts, two install item rewards with icons and quantities), 06 choice with a quest-role line and an objective option; loot 01–05 (coins row, stacked entries, Loot All, then the chest's install items with icons and quality colours); vendor 01 buy (six install items, icons, prices in coins, stack overlays), 02 sell, 03 buy-back, 04 quantity dialog, 05 barter (token costs, coin cost); wallet 01 (coins row, currencies with totals); quest log 01 and tracker 02: correct install text and icons; (4) the same tests with the same directory and `TESSERA_GOLDEN_REQUIRE=1`: 19 / 19 passed. Census: dialogue lines Shown 12; vendor entries Shown 13, Literal 1, RecordUnreadable 0; loot Shown 10, Literal 9; wallet shown 4; 0 window failures. Visual defects left: a long option row wraps and is clipped instead of one truncated line (`npc-windows.md` §5.3 template), the offer's objective text is cut at the pane's right edge, long loot names wrap to two lines, a wallet currency that is not a wallet item sits under a category without a title (§9.4 OPEN), literal sell entries have no worth (§7.6 OPEN), and the barter window's root lands at x = −107 on a 1,600 px screen (§4 OPEN). Fixed since by Tessera rules (pictures not yet re-judged): option rows and loot names are one line, cut with the truncation suffix (`crates/ui/src/game/npc/dialogue.rs`, `loot.rs`); the objective and quest-detail texts wrap at the pane's width (`offer.rs`, `game/quest/details.rs`); such a currency goes under `Misc` (`tessera-gamedata` `npc/money.rs`); a worth of 0 shows the copper coin with 0 (`game/npc/vendor.rs`); NPC windows are kept on the screen (`apps/client/src/npc/ui.rs`). |
+
+2026-10-23 (second round): U (`use_selection`), L (`toggle_quest_log`) and B
+(`toggle_wallet`) are `keymap.md` §8.3 actions routed to the NPC and quest hubs
+(`apps/client/src/character/routed.rs`); the old raw-key checks always return false, and
+their calls in `apps/client/src/app.rs` wait to be deleted. `npc-windows.md` revision 3 and
+`quest-journal.md` revision 2 are Accepted; the latter makes the tracker menu a context menu
+of layout `ContextMenu` (`ui-widgets.md` §19), while the client still opens Tessera's
+code-made popup. Open: no dialog-box widget; the local tier-2 goldens of the vendor, wallet
+and quest log wait for a re-bless after the owner's look (decision 0031).
 
 <a id="p4"></a>
 ### P4: Social panels
@@ -2378,9 +2421,15 @@ was reconciled and its §16.12 implementer OPENs closed (2026-10-14); the `trave
 `ui-scaling.md` §5.9. 2026-10-23: `map-windows.md` revision 1 (Accepted) answers the
 implementer OPENs of §4.6, §6.3, §6.8, §6.9 (b), §7.2, §7.3 and §8 (new §8.1, the fallback map
 window, makes the tier-1 world-map golden normative); it changes the implemented behaviour of
-§4.6 (the player's dungeon map indoors) and may change §6.3, and the code is not yet conformed
-to it. `travel-windows.md` revision 2 and the `mounts.md` §14.3/§14.7 revision (both
-Accepted) confirm what was built.
+§4.6 (the player's dungeon map indoors) and may change §6.3. `travel-windows.md` revision 2
+and the `mounts.md` §14.3/§14.7 revision (both Accepted) confirm what was built.
+2026-10-23 (second round, package `conform-gameplay`): the code is conformed to
+`map-windows.md` revision 1: indoors the player's map follows the interior cell's
+`Dungeon_DID`, read on a worker thread with one lookup in flight
+(`apps/client/src/map/dungeon.rs`), and `CoordinateDisplay` and the note tooltips use the
+install's texts, with Tessera's wording as the fallback (`apps/client/src/map/texts.rs`). The
+local tier-2 golden of `map_census_real_data` (01-root, 1024 × 768 against the blessed
+1200 × 900) drifted and waits for the owner's re-bless (decision 0031).
 
 <a id="p6"></a>
 ### P6: Progression and crafting panels
@@ -2521,12 +2570,16 @@ Since the follow-ups merged 2026-10-23 (package `client-host-p6`): the client op
 windows live. `--open-panel` takes the P6 names, T and `toggle_crafting_1`…`3` act, the
 crafting, trainer, trait and experience windows run windowed and in headless `--ui` runs, and
 the plugin progression source (`lua-plugin-api.md` §15.6) is fed by the session
-(`apps/client/src/progression/`). Open: no key opens the trait or skill-training panel
-(`tessera-input` has no such actions; `keymap.md` implementer OPEN); the plugin progression
-views read records on the main thread (ARCH §21 OPEN); the windows draw no item icons and no
-recipe cooldown timers (OPENs in `apps/client/src/progression/present.rs`); new implementer
-OPENs in `crafting-panels.md` §3 (a trainer opened by name sends nothing) and
-`progression-panels.md` §2.3, §4.1 and §6 wait for the spec writer.
+(`apps/client/src/progression/`).
+2026-10-23 (second round): J (`toggle_traits`) and K (`toggle_skills`) toggle the trait and
+skill-training panels (`keymap.md` §8.3, package `conform-keymap`; `P6Ui::toggle_traits`,
+`P6Ui::toggle_training`), and closing a skill-training window the feed opened sends its
+`CloseWindow`. The revised `crafting-panels.md` and `progression-panels.md` are Accepted
+(2026-10-23); they answer the §3 and §2.3, §4.1 and §6 implementer OPENs by confirming the
+client's readings (a trainer opened by name sends nothing; a `recipes` offer opens the
+skill-training window, PP18). Open: the plugin progression views read records on the main
+thread (ARCH §21 OPEN); the windows draw no item icons and no recipe cooldown timers (OPENs
+in `apps/client/src/progression/present.rs`).
 
 ---
 
@@ -2587,8 +2640,8 @@ the `tessera-ui` element tree, canvases painted at the content scale with §6.3 
 resampling, the §5.8 anchored saved-placement store (with a `[UI.panels]` settings mirror), the
 §7.2 Interface window wired to the client scale state, and the §9.3 synthetic tier-1 goldens
 G1 and G3–G8 (`crates/ui/tests/ui_scaling_goldens.rs`). The `ui-layout.md` §8.4 step-6
-stop-gap is retired in the code (§5.9 degenerate-box guard); a spec writer still updates
-`ui-layout.md` §8.4 to say so.
+stop-gap is retired in the code (§5.9 degenerate-box guard); `ui-layout.md` §8.4 records the
+retirement (note of 2026-10-23).
 
 Built in the follow-ups merged 2026-10-23 (packages `uis-text-paint`, `uis-layout`,
 `client-host-p6`): the §6.4 derived-glyph path is wired into the surface paint (crisp text at
@@ -2603,24 +2656,38 @@ tests and a stateful fuzz mode; the placement bridge in the client host (`ui_hos
 each screen change and written off the frame thread, Reset clears both). The G8, G5 and G4
 goldens changed on purpose; G1, G2, G3, G6, G7 and the pre-scaling goldens are unchanged (I2).
 
+Built in the second round of follow-ups (merged 2026-10-23, packages `ui-surface` and
+`ui-host-wiring`): the §5.4 step-6 letterbox bars are composition fill entries
+(`EntryTexture::Fill`, placed before the lowest shown member of each group, counted in the
+entry cap), drawn by `tessera-render` `UiPass::fill` and recorded by the client in
+`apps/client/src/ui_host/gpu.rs`; the stretched-surface step of the text hit test (§6.4.6,
+pixel centre ÷ σ); `GlyphKey` includes the source kind and `set_font_ladders` keeps the glyph
+cache; the client sets the art filter, text scale and text source and registers the
+layout-parameter reader at start and on live changes from the Interface window
+(`ui_host/prefs.rs`), registers the font ladders once (`ui_host/fonts.rs`) and sets the
+glyph-cache budget at start and on every change of *Se*; the software cursor is built at
+`Ui::cursor_physical_size` with the scaled hot spot and rebuilt when that size changes.
+`ui-scaling.md` revision 7 is Accepted (2026-10-23), and the owner accepted its proposals
+(decision 0040 "Owner answers": the budgets S1–S7 as the exit budgets, the 21:9 default safe
+aspect and the auto-scale formula, *ρ* = 4 ÷ 3, full-window screens following the window; the
+§8 and §13 owner callouts are marked answered). Still open there: derived glyphs above *k* = 2
+and the default keys of the scale actions.
+
 Open (follow-up):
 
-- drawing the §5.4 step-6 letterbox bars as composition entries: the bars are computed
-  (`Ui::letterbox_bars`) and hit-tested, but the composition list has no fill entry, so the
-  UI host has to draw them itself (`ui-scaling.md` §5.9 OPEN);
 - real-valued §3.4 displayed boxes in the live tree (the truncating integer rule leaves a
-  one-pixel bar row at C1 and a Type B panel one unit short in G4 at C1; §5.9 OPEN);
-- the stretched-surface step of the text hit test (§6.4.6, σ ≠ 1);
-- the client does not call the new `tessera-ui` setters yet (art filter, text scale, text
-  source, layout-parameter reader, font ladders, glyph-cache budget), so the `ui_text_scale`,
-  `ui_text_source` and `ui_art_filter` settings have no effect in a client run, and the cursor
-  texture is not rebuilt
-  at `Ui::cursor_physical_size` with its hot spot;
-- the per-window scale (§7.4) is stored and can be reset but is not applied in the live layout;
-- the §8 scale-dependent paint budgets (S4/S5 scale-change and per-pixel work; owner-measured,
-  §8 OPEN);
+  one-pixel bar row at C1 and a Type B panel one unit short in G4 at C1); §5.9 now says the
+  §3.4 values are the rule and tests must not be re-blessed to the truncated ones;
+- the per-window scale (§7.4) is stored and can be reset but is not applied in the live
+  layout; `ui_window_scale_up`/`_down` exist in `tessera-input` but are bound to nothing and
+  not read by the UI host;
+- measuring the S1–S7 budgets of §8 (indicatively on the loaded reference machine, then idle);
 - the §9.4 tier-2 real-data goldens and the G7 mid-scale-change golden (needs a
-  `tessera-render` test).
+  `tessera-render` test);
+- no integration test drives the Interface window's text-size or art actions (the setters
+  are covered by unit tests and the start-up test);
+- the `Ui::letterbox_bars` doc in `crates/ui/src/scale.rs` still says the composition list has
+  no fill entry.
 
 ---
 

@@ -198,17 +198,27 @@ fn capture_phys(ui: &mut Ui, k: ElementKey) -> Img {
 }
 
 /// Composes several root surfaces onto the physical window `wp × hp` (§6.6: every surface drawn
-/// 1 : 1 onto its physical box; the window is cleared to opaque black, so a fit group's
-/// letterbox bars — the uncovered margin, §5.4 step 6 — read black). Straight-alpha "over", so a
-/// translucent upper layer shows the lower one through it. Used for the layered fit group G8.
+/// 1 : 1 onto its physical box). The window starts transparent; each fit group's letterbox bars
+/// (§5.4 step 6), as the UI reports them ([`Ui::letterbox_bars`]), are drawn as opaque black
+/// fills directly below the group's lowest shown member, so a bar reads black only where the
+/// layout says it is. Straight-alpha "over", so a translucent upper layer shows the lower one
+/// through it.
 fn compose_phys(ui: &mut Ui, roots: &[ElementKey], wp: i32, hp: i32) -> Img {
     settle(ui);
     let (w, h) = (wp.max(1) as u32, hp.max(1) as u32);
     let mut data = vec![0u8; (w * h * 4) as usize];
-    for p in data.chunks_mut(4) {
-        p[3] = 255; // opaque black bars
-    }
+    let bars = ui.letterbox_bars();
     for &k in roots {
+        for g in bars.iter().filter(|g| g.below == k) {
+            for r in &g.rects {
+                for y in r.y0.max(0)..r.y1.min(hp) {
+                    for x in r.x0.max(0)..r.x1.min(wp) {
+                        let i = ((y as u32 * w + x as u32) * 4) as usize;
+                        data[i..i + 4].copy_from_slice(&[0, 0, 0, 255]);
+                    }
+                }
+            }
+        }
         let b = ui.physical_box(k);
         for cy in 0..b.height() as i32 {
             for cx in 0..b.width() as i32 {
@@ -666,11 +676,14 @@ fn g6_toolarge_c1() {
 // G8 fit group: two layered 1024 × 768 fit roots (§10.6) plus a sparse 1440 × 900 fit root
 // (§10.7), composed onto the window. Configurations C1, C2, C7, C8, C9.
 //
-// The lower layer covers its whole area; the upper layer carries a small translucent content
-// box near the bottom. Both are full-cover Type A fit roots in one layout. The sparse root is a
-// separate full-cover fit root whose single small content box drives a large magnification.
-// Composed 1 : 1 onto the physical window (§6.6), the uncovered margin reads as black
-// letterbox bars.
+// The lower layer's content covers its whole area (like `StoryField`); the upper layer carries
+// a small translucent content box near the bottom. Both are full-cover Type A fit roots of one
+// layout, so they form **one fit group** (§5.4): one factor, one placement, the factor the
+// §10.6 table gives (1.4063 at C2, not the cover factor 1.875 the upper layer would get on its
+// own). The sparse root is the only fit root of its layout (a group of one) whose single child
+// is the §10.7 tutorial-chooser content (735 × 231 at (224, 0)), so the magnification bound
+// stops it at 2.1333 on the 1440-row screens. Each group's letterbox bars are drawn below its
+// lowest shown member.
 // ============================================================================================
 
 const G8_LAYOUT: u32 = 0x22E0_0800;
@@ -679,23 +692,35 @@ const G8_UPPER: u32 = 0x1000_0802;
 const G8_SPARSE: u32 = 0x1000_0803;
 
 fn build_g8() -> Ui {
-    // Lower fit root: covers its 1024 × 768 area.
-    let lower = fill(G8_LOWER, 0, 0, 1024, 768, [6, 5, 6, 5], LAYER_0);
+    // Lower fit root: its content covers the whole 1024 × 768 area.
+    let lower = child(
+        edges(field(G8_LOWER, 0, 0, 1024, 768), [6, 5, 6, 5]),
+        fill(0x1000_0806, 0, 0, 1024, 768, [0, 0, 0, 0], LAYER_0),
+    );
     // Upper fit root: a full-cover area that is otherwise transparent, with one small
     // translucent content box near the bottom (so the lower layer shows through around it).
     let upper = child(
         edges(field(G8_UPPER, 0, 0, 1024, 768), [6, 5, 6, 5]),
         fill(0x1000_0804, 312, 560, 400, 150, [0, 0, 0, 0], LAYER_1),
     );
-    // Sparse fit root: a full-cover 1440 × 900 area with a single small content box (§10.7).
+    // Sparse fit root: a full-cover 1440 × 900 area with the §10.7 content box.
     let sparse = child(
         edges(field(G8_SPARSE, 0, 0, 1440, 900), [6, 5, 6, 5]),
-        fill(0x1000_0805, 40, 40, 300, 120, [0, 0, 0, 0], SPARSE),
+        fill(0x1000_0805, 224, 0, 735, 231, [0, 0, 0, 0], SPARSE),
     );
     let mut env = base_env();
     env.add_layout(layout(G8_LAYOUT, 1024, 768, vec![lower, upper]));
     env.add_layout(layout(G8_LAYOUT + 1, 1440, 900, vec![sparse]));
     ui_with(env, 1024, 768)
+}
+
+/// The fit factors (§10.6 theatre group, §10.7 sparse root) a G8 configuration must show.
+fn g8_factors(c: &Config) -> (f32, f32) {
+    match c.name {
+        "c1" => (1.0, 0.9479),
+        "c2" => (1.4063, 1.3333),
+        _ => (1.875, 2.1333), // C7, C8, C9
+    }
 }
 
 fn g8(c: &Config) {
@@ -704,8 +729,35 @@ fn g8(c: &Config) {
     let up = ui.open_panel(Did(G8_LAYOUT), G8_UPPER).unwrap();
     let sp = ui.open_panel(Did(G8_LAYOUT + 1), G8_SPARSE).unwrap();
     apply(&mut ui, c);
+    // One group: one factor and one displayed box for both layers (I16), the §10.6 value.
+    let (fa, fs) = g8_factors(c);
+    assert_eq!(
+        ui.fit_factor(lo),
+        ui.fit_factor(up),
+        "{}: one group factor",
+        c.name
+    );
+    assert_eq!(
+        ui.displayed_box(lo),
+        ui.displayed_box(up),
+        "{}: one box",
+        c.name
+    );
+    assert!(
+        (ui.fit_factor(lo) - fa).abs() < 1e-3,
+        "{}: group f {} vs {fa}",
+        c.name,
+        ui.fit_factor(lo)
+    );
+    assert!(
+        (ui.fit_factor(sp) - fs).abs() < 1e-3,
+        "{}: sparse f {} vs {fs}",
+        c.name,
+        ui.fit_factor(sp)
+    );
     let img = compose_phys(&mut ui, &[lo, up, sp], c.wp, c.hp);
     assert_has(&img, PALETTE[SPARSE as usize], "sparse content");
+    assert_has(&img, PALETTE[LAYER_0 as usize], "lower layer");
     golden(&format!("uiscale_g8_fitgroup_{}", c.name), &img);
 }
 

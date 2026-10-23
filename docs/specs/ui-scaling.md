@@ -908,6 +908,85 @@ The stop-gap stays in force until this spec is Accepted and built.
 > UI-unit offset is then re-established the next time the user moves the window. This is a
 > defensive path: no released schema wrote normalized `[UI.panels]` entries.
 
+> **OPEN:** (implementer, tessera-ui, 2026-10-23) the **live-layout follow-up** of the
+> "first live-wiring increment" note above is built in `crates/ui` (`scale.rs`, `ui.rs`,
+> `wm.rs`, `pointer.rs`): multi-member Type A fit groups (§5.4 grouping rule, steps 1–5, hidden
+> members included, regrouped when a member is detached; checked against §10.6 at C1, C2, C7,
+> C8, C9 and a two-level group like the SC13 map group); §5.3 per-child safe boxes for the
+> direct children of full-screen (5, 5, 5, 5) roots, with layout frames; the UL §8.4 step-1
+> Stretch-parent skip is no longer applied once a UI screen is set (§5.2, §5.9; at the identity
+> it stays, so I2 holds); §5.6 *q* multiplies an existing node scale (per-window, plugin
+> `SetScale`, stretch) and applies to plugin windows (`GetSize()` unchanged); §5.8 items 1, 3
+> and 5 run after every root layout and every change of *Se*, *F* or *A* (saved placements
+> applied again after a change of *F* or *A*, not of *Se* alone; a plugin window inside the old
+> *F* is kept inside the new one, one placed off screen is left alone); a change of the safe
+> area alone lays the roots out again. **Not
+> built — the drawing half of §5.4 step 6.** The letterbox bars are computed
+> (`Ui::letterbox_bars`: per group, physical rectangles clipped to the window and the lowest
+> shown member they go below) and hit as §5.4 step 6 and I3 say, but they are not yet entries
+> of the composition list: its entry kinds (`EntryTexture::Surface`, `External`) carry only
+> textures, the list is built in the paint/surface layer, and `tessera-render`'s UI pass
+> (`UiEntry`) and the client's recorder (`apps/client/src/ui_host/gpu.rs`) have no untextured
+> fill. Adding a solid-fill entry needs a `tessera-render` change (or a client-side 1 × 1 black
+> texture) plus the client recorder, outside `crates/ui`; until then the UI host must draw the
+> bars itself from `Ui::letterbox_bars` (the CPU goldens do). Engineering choices recorded:
+> a fit group holds at most 64 members, the first 64 in drawing order (members past the cap
+> are fitted as groups of one, the same cut whichever member is laid out; the letterbox bars
+> are still worked out once for the whole uncut group); one scan for groups visits at most
+> 4,096 elements of a root panel (or 4,096 screen children for fit roots), and containers
+> beyond it are groups of one (the install's largest group has 2); one group's bars are split
+> into at most 256 rectangles (past that the remaining holes are not cut out, so a bar may lie
+> under a member's picture, never over it). Groups are found as one hash partition per root
+> panel (the §5.4 relation is equivalent to equal keys: the nearest fit container, scaled
+> element or root panel at or above the parent, the parent's box relative to it and the
+> parent's design size), cached for the layout path and checked on every use.
+
+> **OPEN:** (implementer, tessera-ui, 2026-10-23) the live tree still derives displayed boxes
+> by the truncating integer rule of UB §9.2.1 (`displayed_from`, node scales stored as `f32`),
+> not as the 64-bit real numbers of §3.4. Fit factors, groups and bars follow §5.4, but the
+> boxes they produce can lose up to one UI unit at an edge: the §10.1 image at C1
+> (*f* = 768 ÷ 1080) is displayed 767 units high, so a one-pixel bar row is left at the bottom
+> of the window, and a Type B panel whose design right edge meets its fit-root parent's ends one
+> unit short of it (G4 at C1). Building the §3.4 real-valued displayed box in the live tree
+> (hit test, painter, composition and physical boxes together) is a separate increment; no
+> spec fact is missing. Under a node scale *m* the same rule gives a displayed width of
+> ⌊(*w* + 1) × *m* − 1⌋, up to *m* − 1 units more than *w* × *m*: the §10.8 (b) container *X* is
+> displayed 2402 units wide instead of 2400 (its left 232 and its child's left 832 are exact).
+
+> **OPEN:** (implementer, tessera-ui, 2026-10-23) choices made in the review round of the
+> live-layout follow-up, for a spec writer to confirm or correct:
+> (a) **Fit containers under a node scale** (§3.4 item 2): the tree reads only the nearest
+> node scale (UB46), so a fit container stores *f* × *m*(parent) as its node scale and keeps
+> *f* apart (`Ui::fit_factor`). Its inner fit containers are fitted again whenever its scale
+> or box changes, and the fit containers of a root panel are fitted again after a per-window,
+> plugin `SetScale`, stretch or fit-to-screen change of the root and after **every move or
+> resize of the root** (a drag, keep-on-screen, a saved placement), because the Type A guard
+> box depends on the parent's displayed top-left and *m* (§10.8 (b) describes a panel the user
+> dragged across *A*'s edge). §5.4 says only that groups are formed "at every layout"; does
+> the fit follow moves and per-window scale changes, as built, or only re-layouts?
+> (b) **Modal dialogs** (§5.2 "a dialog inside its container is laid out against the
+> container's safe box (§5.3)"): built as a root panel laid out against the screen: a dialog
+> that covers its layout's design area with edges (5, 5, 5, 5) is laid out against the full
+> box (*N* = *F*, its children by §5.3); any other one in the safe area's frame with *O* = its
+> layout's design area (the container's design box is the screen size at creation, which is
+> no design coordinate system for the dialog), then §5.6 and keep-on-screen. §5.3 tests a
+> backdrop against "the root's design box"; for a dialog the layout's design area was used.
+> (c) **Fit containers that are safe-area roots** (a root whose edges make it Type A, B or C
+> but which is not a fit root): laid out in the safe area's frame (§5.2), so a Type A one has
+> *P* = *A* (in the screen's coordinates; §5.4 "the box it is laid out in" read over "its
+> parent's current box", which for a root would be *F*) and is a group of one (the grouping
+> rule names only fit roots and non-root containers); all of them get §5.6 and keep-on-screen
+> like other safe-area roots, *q* multiplying the fit factor.
+> (d) **Saved placements applied again** after a change of *F* or *A* (§4.5 step 2, §5.8
+> "Applying") set the position and size only; the `shown` field is applied when the panel is
+> opened (by the host's `apply_saved`), not again at every resize, so a panel that code hid
+> or showed since (a target frame without a target) keeps that state. §5.8 lists visibility
+> among what "Applying" sets "again after every change of *F* or *A*"; is that intended?
+> (e) **Saving** (§5.8 "Saving"): the UI records the anchored placement itself at the end of
+> a user move or resize of an element with the save properties (the same release that raises
+> UB §8.4 step 2's "layout changed" notification), so the store the placements are applied
+> from again is the user's last placement.
+
 ---
 
 <a id="s6"></a>
@@ -1546,6 +1625,16 @@ install's layouts at C1–C12:
   > I14 over the live element tree — belong to the §5–§6 layout/paint host, which this increment
   > does not build. Extend the configuration fuzz (or add a stateful companion) to drive a size
   > sequence through that host and assert them once it lands.
+
+  > **OPEN:** (implementer, tessera-ui, 2026-10-23) the stateful companion is built: the same
+  > `ui_scale_config` input now also drives a live `tessera_ui::Ui` (layered fit roots, a
+  > full-screen root with a Type A backdrop, a Type B panel and a safe-box child, a safe-area
+  > panel with a node scale, a plugin window; zero extents allowed) through sizes with zero
+  > sides, minimise/restore, shows/hides, drags and node-scale changes, asserting I1 part 2,
+  > I5, I6 (native roots after a change of *Se*, *F* or *A*), I16 and restore idempotence.
+  > `crates/ui/tests/ui_scaling_live.rs` holds the matching unit tests (zero sides and
+  > minimise/restore, the C8 → C9 → C8 round trip of a dragged mode-0 panel, I14 for a
+  > right-anchored safe-area panel). The note above is superseded for these parts.
 - **Unit:** the pixel-centre mapping at *K* = 0.937729, 1, 1.5, 2.25, 3 (I3, I4); the Type A,
   B and C fits with the numbers of §10; the Type A example of §5.4 step 4 (content in the
   left wing at C2 with the 4:3 safe area, I15); a fit root at C8 (bars drawn, no *q*, not

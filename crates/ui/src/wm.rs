@@ -233,6 +233,19 @@ impl Ui {
     /// normalized-corner entry is applied by the old rule (the §5.8 "Migration" fallback).
     /// Returns whether a placement applied.
     pub fn apply_saved(&mut self, k: ElementKey) -> bool {
+        self.apply_saved_with(k, true)
+    }
+
+    /// Applies the store to a root panel again after a change of *F* or *A*
+    /// (`ui-scaling.md` §4.5 step 2, §5.8 "Applying"): its position and size, then
+    /// keep-on-screen. The visibility a placement carries is left alone here: it is applied
+    /// when the panel is opened ([`Ui::apply_saved`]), and code that shows or hides the panel
+    /// since (a target frame without a target) keeps that state across a window resize.
+    pub(crate) fn reapply_saved(&mut self, k: ElementKey) -> bool {
+        self.apply_saved_with(k, false)
+    }
+
+    fn apply_saved_with(&mut self, k: ElementKey, visibility: bool) -> bool {
         let p = self.v.pids;
         let (sl, ss, sv) = (
             self.prop(k, p.save_loc).bool(),
@@ -240,6 +253,15 @@ impl Ui {
             self.prop(k, p.save_visibility).bool(),
         );
         if !(sl || ss || sv) {
+            return false;
+        }
+        let sv = sv && visibility;
+        if !(sl || ss || sv) {
+            return false;
+        }
+        // `ui-scaling.md` §5.2: no saved placement is applied to a fit root (its displayed box
+        // may reach beyond F by design).
+        if self.ui_screen.is_some() && self.is_fit_root(k) {
             return false;
         }
         let Some(key) = self.saved_key(k) else {
@@ -305,14 +327,20 @@ impl Ui {
         }
     }
 
-    /// Brings a root panel back inside the screen *F* after a saved placement is applied
-    /// (`ui-scaling.md` §5.8 "Keep-on-screen", item 2), through [`keep_on_screen`]. A panel
+    /// Brings a root panel back inside the screen *F* (`ui-scaling.md` §5.8 "Keep-on-screen":
+    /// after a root panel is laid out, item 1; after a saved placement is applied, item 2;
+    /// after a change of *Se*, *F*, *A* or a per-window scale, items 3 and 5), through
+    /// [`keep_on_screen`]. A panel
     /// already inside *F* does not move, so at the identity (`Se` = 1 with *F* = the screen
     /// size) this is a no-op and existing behaviour is unchanged. Non-root elements keep the
     /// layout's own clamping; a root panel's parent is the screen root (no node scale), so its
     /// displayed box is its absolute layout box and the clamp is exact in integers.
-    fn keep_root_on_screen(&mut self, k: ElementKey) {
+    pub(crate) fn keep_root_on_screen(&mut self, k: ElementKey) {
         if !self.el(k).is_some_and(|e| e.root_panel) {
+            return;
+        }
+        // Fit roots are exempt (`ui-scaling.md` §5.2, §5.8): clipped to F, never moved.
+        if self.ui_screen.is_some() && self.is_fit_root(k) {
             return;
         }
         let d = self.displayed_box(k);
@@ -450,6 +478,10 @@ impl Ui {
                 WmOp::Resizing { .. } => self.prop(target, p.save_size).bool(),
             };
             if notify {
+                // `ui-scaling.md` §5.8 "Saving": the end of a user move or resize of an element
+                // with the save properties records its anchored placement, so a placement applied
+                // again after a change of F or A puts the panel where the user left it.
+                self.record_saved(target);
                 self.emit(UiEvent::LayoutChanged { element: target });
             }
             return Answer::Handled;

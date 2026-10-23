@@ -23,14 +23,17 @@
 //!   a factor that does not depend on the factor of the container above it; a Type C fitted inside
 //!   a Type A member box (a B/C inside a Type A, §9.6) takes its factor from the member box alone.
 //!
-//! **Deferred to the live layout host (not in this increment).** §9.6 also names the *stateful*
-//! halves of I1 and I14: that a zero-side size leaves a *retained* `Se`/`F`/`A` and every laid-out
-//! box, fit factor and saved placement unchanged, that a minimise→restore moves a live panel
-//! nothing, and the frame-system re-layout determinism of I14 (a dragged mode-0 panel returning
-//! to the same box across `C8 → C9 → C8`). These need the retained element tree and painter of
-//! `tessera-ui`'s §5–§6 integration, which the pure geometry core cannot hold on its own; the
-//! companion suite (`crates/ui/tests/ui_scaling_invariants.rs`) and a `> **OPEN:**` in
-//! ui-scaling.md §9.6 record the same deferral so it is tracked outside this comment.
+//! **Stateful mode (the live layout host).** The same input also drives a live
+//! [`tessera_ui::Ui`] built from synthetic layouts (two layered fit roots of one layout, a
+//! full-screen (5, 5, 5, 5) root with a Type A backdrop, a Type B side panel and a safe-box
+//! child, a safe-area panel with a node scale, and a plugin window; extents may be 0) through a
+//! sequence of window sizes, zero sides, minimise/restore, shows and hides, drags and node-scale
+//! changes, and asserts the stateful halves of §9.6: a size with a zero side leaves `Se`, `F`,
+//! `A` and every displayed box, fit factor and fit-to-screen factor unchanged (I1 part 2); a
+//! restore to the same size moves nothing (I1, I14: laying out the same configuration again
+//! gives the same boxes); the two fit roots always share one factor and one displayed box,
+//! shown or not (I16); every fit factor is finite and positive and no layout box has a negative
+//! extent (I5); after a screen change every shown native root that fits lies inside `F` (I6).
 //!
 //! The synthetic glyph path (`target_height`, the ladder choice and a small bounded coverage
 //! derivation) is exercised too, so the downsample and distance filters see fuzzed heights
@@ -39,10 +42,14 @@
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;
+use tessera_formats::did::Did;
+use tessera_formats::property::{PropertyEntry, PropertyValue};
+use tessera_formats::ui_layout::{EdgeMode, ElementDesc, UiLayout};
 use tessera_ui::scaling::{
     self, Anchor, ComputedBox, ContentBox, DBox, Fit, FitMember, FitVerticalAnchor, GlyphMetrics,
     RHO, RefBox, SavedPlacement, SourceKind, UiScreen,
 };
+use tessera_ui::{ControlKind, ElementKey, IBox, MemoryEnv, Ui, Vocab};
 
 /// A little-endian byte reader that never runs out: past the end it reads zero.
 struct Bytes<'a> {
@@ -137,6 +144,12 @@ fn check_box(b: &DBox, what: &str) {
 }
 
 fuzz_target!(|data: &[u8]| {
+    pure(data);
+    stateful(data);
+});
+
+/// The pure geometry of `tessera_ui::scaling` on one input.
+fn pure(data: &[u8]) {
     let mut r = Bytes { data, pos: 0 };
 
     // ----- the window, the scale and the screen F (§3.2, §4.2, §4.3) --------------------------
@@ -374,16 +387,12 @@ fuzz_target!(|data: &[u8]| {
     }
 
     // ----- a window-size sequence with zero sides, and re-layout determinism ------------------
-    // §9.6 asks this target to run "sequences of window sizes that include zero sides" and to
-    // assert the parts of I1 and I14 the pure core can establish. The stateful halves — that a
-    // zero-side size leaves a *retained* Se/F/A and every laid-out box unchanged, that a
-    // minimise→restore moves a live panel nothing, and the frame-system re-layout determinism of
-    // I14 — live in `tessera-ui`'s layout/paint host, which this increment does not build (see the
-    // header and `> **OPEN:**` in ui-scaling.md §9.6). What the pure core establishes, and is
-    // checked here: a zero-sided window yields no screen (nothing is computed from it, I1 part 2),
-    // and recomputing a size's geometry — including after an intervening different size, A→B→A —
-    // is byte-identical (the deterministic slice of I14). `kept` stands in for the host's retained
-    // last-good state: a zero side must leave it exactly as it was.
+    // §9.6 asks this target to run "sequences of window sizes that include zero sides". The pure
+    // core establishes here that a zero-sided window yields no screen (nothing is computed from
+    // it, I1 part 2) and that recomputing a size's geometry — including after an intervening
+    // different size, A→B→A — is byte-identical (the deterministic slice of I14). `kept` stands
+    // in for a retained last-good state; the live tree's retained state is checked by
+    // `stateful` below.
     let a_sz = (r.side(), r.side());
     let b_sz = (r.side(), r.side());
     let seq = [a_sz, (0, a_sz.1), (a_sz.0, 0), (0, 0), b_sz, a_sz];
@@ -519,4 +528,316 @@ fuzz_target!(|data: &[u8]| {
     let cur = scaling::cursor_size(se, r.scale());
     assert!(cur >= 1, "cursor side below 1");
     let _ = (Fit::IDENTITY, Anchor::Centre);
-});
+}
+
+// ----- the stateful mode: a live `Ui` through a size sequence (§9.6) ---------------------------
+
+const L_THEATRE: u32 = 0x22F0_0001;
+const L_SCREEN: u32 = 0x22F0_0002;
+const L_PANEL: u32 = 0x22F0_0003;
+const E_LOWER: u32 = 0x1000_0001;
+const E_UPPER: u32 = 0x1000_0002;
+const E_SCREEN: u32 = 0x1000_0010;
+const E_PANEL: u32 = 0x1000_0020;
+
+/// Most operations of one stateful run (Tessera fuzz bound).
+const MAX_OPS: usize = 24;
+
+/// A field element at (x, y), w × h, with edge modes `e`.
+fn el(id: u32, x: i32, y: i32, w: i32, h: i32, e: [u32; 4]) -> ElementDesc {
+    let mut d = ElementDesc {
+        element_id: id,
+        element_type: Vocab::default().types.field,
+        ..ElementDesc::default()
+    };
+    d.block.rect.x = x;
+    d.block.rect.y = y;
+    d.block.rect.width = w;
+    d.block.rect.height = h;
+    d.block.has_position = true;
+    d.edges.left = EdgeMode(e[0]);
+    d.edges.top = EdgeMode(e[1]);
+    d.edges.right = EdgeMode(e[2]);
+    d.edges.bottom = EdgeMode(e[3]);
+    d
+}
+
+/// Object mode Stretch (a fit container when an edge is 6).
+fn stretch(mut d: ElementDesc) -> ElementDesc {
+    d.block.properties.entries.push(PropertyEntry {
+        pid: Vocab::default().pids.object_mode,
+        value: PropertyValue::Enum(tessera_ui::object_mode::STRETCH),
+    });
+    d.block.properties.size.count = d.block.properties.entries.len() as u32;
+    d
+}
+
+fn with_child(mut d: ElementDesc, c: ElementDesc) -> ElementDesc {
+    d.children.push(c);
+    d.children_size.count = d.children.len() as u32;
+    d
+}
+
+fn layout_of(did: u32, w: u32, h: u32, elements: Vec<ElementDesc>) -> UiLayout {
+    let mut l = UiLayout {
+        did: Did(did),
+        design_width: w,
+        design_height: h,
+        ..UiLayout::default()
+    };
+    l.elements_size.count = elements.len() as u32;
+    l.elements = elements;
+    l
+}
+
+/// A small design extent, 0 included (zero-extent paths, §5.4 "Zero extents", §5.7).
+fn small_extent(r: &mut Bytes) -> i32 {
+    i32::from(r.u16() % 2_048)
+}
+
+/// A small design coordinate, negatives included.
+fn small_coord(r: &mut Bytes) -> i32 {
+    i32::from(r.u16() % 4_096) - 1_024
+}
+
+/// An edge mode 0–6.
+fn edge(r: &mut Bytes) -> u32 {
+    u32::from(r.u8() % 7)
+}
+
+/// Every element's state the stateful invariants compare.
+type Snap = Vec<(IBox, Option<IBox>, f32, f32)>;
+
+fn snap(ui: &Ui, keys: &[ElementKey]) -> Snap {
+    keys.iter()
+        .map(|k| {
+            (
+                ui.displayed_box(*k),
+                ui.layout_box(*k),
+                ui.fit_factor(*k),
+                ui.fit_to_screen_factor(*k),
+            )
+        })
+        .collect()
+}
+
+/// Drives a live tree through a sequence of window sizes and changes (see the module docs).
+fn stateful(data: &[u8]) {
+    let mut r = Bytes { data, pos: 0 };
+    // Skip the bytes the pure half reads first so the two halves see different values.
+    let _ = r.u64();
+
+    // The layered fit roots of one 1024 × 768 layout (the theatre of §10.6), content fuzzed.
+    let lower = with_child(
+        el(E_LOWER, 0, 0, 1024, 768, [6, 5, 6, 5]),
+        el(0x1000_0003, 0, 0, 1024, 768, [0, 0, 0, 0]),
+    );
+    let upper = with_child(
+        el(E_UPPER, 0, 0, 1024, 768, [6, 5, 6, 5]),
+        el(
+            0x1000_0004,
+            small_coord(&mut r),
+            small_coord(&mut r),
+            small_extent(&mut r),
+            small_extent(&mut r),
+            [0, 0, 0, 0],
+        ),
+    );
+    // A full-screen (5, 5, 5, 5) root with a fuzzed design area: a Type A backdrop, a Type B side
+    // panel and a non-backdrop child laid out in the safe box (§5.3).
+    let (sw, sh) = (small_extent(&mut r), small_extent(&mut r));
+    let backdrop = with_child(
+        stretch(el(0x1000_0011, 0, 0, sw, sh, [6, 5, 6, 5])),
+        el(
+            0x1000_0012,
+            small_coord(&mut r),
+            small_coord(&mut r),
+            small_extent(&mut r),
+            small_extent(&mut r),
+            [0, 0, 0, 0],
+        ),
+    );
+    let side = stretch(el(
+        0x1000_0013,
+        0,
+        0,
+        small_extent(&mut r),
+        sh,
+        [5, 5, 6, 5],
+    ));
+    let safe_kid = el(
+        0x1000_0014,
+        small_coord(&mut r),
+        small_coord(&mut r),
+        small_extent(&mut r),
+        small_extent(&mut r),
+        [edge(&mut r), edge(&mut r), edge(&mut r), edge(&mut r)],
+    );
+    let screen_root = with_child(
+        with_child(
+            with_child(el(E_SCREEN, 0, 0, sw, sh, [5, 5, 5, 5]), backdrop),
+            side,
+        ),
+        safe_kid,
+    );
+    // A safe-area panel with fuzzed edges.
+    let panel = el(
+        E_PANEL,
+        small_coord(&mut r),
+        small_coord(&mut r),
+        small_extent(&mut r),
+        small_extent(&mut r),
+        [edge(&mut r), edge(&mut r), edge(&mut r), edge(&mut r)],
+    );
+    let mut env = MemoryEnv::default();
+    env.add_layout(layout_of(L_THEATRE, 1024, 768, vec![lower, upper]));
+    env.add_layout(layout_of(
+        L_SCREEN,
+        sw.max(0) as u32,
+        sh.max(0) as u32,
+        vec![screen_root],
+    ));
+    env.add_layout(layout_of(L_PANEL, 1024, 768, vec![panel]));
+    let mut ui = Ui::new(Box::new(env), Vocab::default(), (1024, 768));
+    let mut keys = Vec::new();
+    let lo = ui.open_panel(Did(L_THEATRE), E_LOWER).ok();
+    let up = ui.open_panel(Did(L_THEATRE), E_UPPER).ok();
+    keys.extend(lo);
+    keys.extend(up);
+    if let Ok(k) = ui.open_panel(Did(L_SCREEN), E_SCREEN) {
+        keys.push(k);
+        for id in [0x1000_0011, 0x1000_0013, 0x1000_0014] {
+            keys.extend(ui.find_child(k, id));
+        }
+    }
+    let panel = ui.open_panel(Did(L_PANEL), E_PANEL).ok();
+    keys.extend(panel);
+    let plugin = ui.create_control(ControlKind::Window, 1).ok();
+    if let Some(w) = plugin {
+        ui.control_set_size(w, small_extent(&mut r), small_extent(&mut r));
+        ui.control_set_position(w, small_coord(&mut r), small_coord(&mut r));
+        ui.control_set_visible(w, true);
+        keys.push(w);
+    }
+
+    let mut current: Option<(UiScreen, DBox)> = None;
+    let ops = (r.u8() as usize % MAX_OPS) + 1;
+    for _ in 0..ops {
+        match r.u8() % 6 {
+            // A window size: a zero side changes nothing (I1 part 2); otherwise §4.5 runs.
+            0 | 1 => {
+                let (wp, hp) = (r.side(), r.side());
+                let s = 0.5 + f64::from(r.u8()) / 64.0;
+                let se = scaling::effective_scale(s, wp, hp);
+                let asp = aspect(&mut r);
+                match UiScreen::new(wp, hp, se) {
+                    None => {
+                        let before = snap(&ui, &keys);
+                        let (scr, safe, size) =
+                            (ui.ui_screen(), ui.safe_area_box(), ui.screen_size());
+                        ui.resize_screen(wp, hp);
+                        if current.is_some() {
+                            assert_eq!(ui.ui_screen(), scr, "I1: Se/F kept at a zero side");
+                            assert_eq!(ui.safe_area_box(), safe, "I1: A kept at a zero side");
+                            assert_eq!(ui.screen_size(), size, "I1: F kept at a zero side");
+                            assert_eq!(snap(&ui, &keys), before, "I1: boxes kept at a zero side");
+                        }
+                    }
+                    Some(f) => {
+                        let a = scaling::safe_area(&f, asp);
+                        let changed = current != Some((f, a));
+                        ui.set_ui_screen(f, a);
+                        current = Some((f, a));
+                        if changed {
+                            check_inside(&ui, &keys, &[plugin, lo, up]);
+                        }
+                    }
+                }
+            }
+            // Minimise then restore to the same size: nothing moves (I1, I14).
+            2 => {
+                if let Some((f, a)) = current {
+                    let before = snap(&ui, &keys);
+                    ui.resize_screen(0, 0);
+                    ui.set_ui_screen(f, a);
+                    assert_eq!(
+                        snap(&ui, &keys),
+                        before,
+                        "I1: minimise/restore moved something"
+                    );
+                }
+            }
+            // Show or hide a fit root: no member moves (I16).
+            3 => {
+                if let (Some(lo), Some(up)) = (lo, up) {
+                    let k = if r.u8().is_multiple_of(2) { lo } else { up };
+                    let other = if k == lo { up } else { lo };
+                    let before = (ui.displayed_box(other), ui.fit_factor(other));
+                    let shown = ui.is_displayed(k);
+                    ui.set_shown(k, !shown);
+                    assert_eq!(
+                        (ui.displayed_box(other), ui.fit_factor(other)),
+                        before,
+                        "I16: hiding a member moved another"
+                    );
+                }
+            }
+            // A drag of the safe-area panel.
+            4 => {
+                if let Some(p) = panel {
+                    ui.move_to(p, small_coord(&mut r), small_coord(&mut r));
+                }
+            }
+            // A node scale on the panel (§5.6 multiplies it).
+            _ => {
+                if let Some(p) = panel {
+                    let s = 0.25 + f64::from(r.u8()) / 32.0;
+                    ui.set_node_scale(p, Some([s as f32, s as f32, 1.0]));
+                }
+            }
+        }
+        // I16 after every step: the two fit roots share one factor and one displayed box.
+        if let (Some(lo), Some(up)) = (lo, up) {
+            assert_eq!(ui.fit_factor(lo), ui.fit_factor(up), "I16: one factor");
+            assert_eq!(ui.displayed_box(lo), ui.displayed_box(up), "I16: one box");
+        }
+        // I5: positive finite factors, no negative extents.
+        for k in &keys {
+            let f = ui.fit_factor(*k);
+            assert!(f.is_finite() && f > 0.0, "I5: fit factor {f}");
+            if let Some(b) = ui.layout_box(*k) {
+                assert!(b.w() >= 0 && b.h() >= 0, "I5: negative extent {b:?}");
+            }
+        }
+        // The bars and the hit test never panic.
+        let bars = ui.letterbox_bars();
+        assert!(bars.iter().all(|g| g.rects.len() <= scaling::MAX_BAR_RECTS));
+        let (fw, fh) = ui.screen_size();
+        let _ = ui.hit_test(
+            i32::from(r.u16()) % fw.max(1),
+            i32::from(r.u16()) % fh.max(1),
+        );
+    }
+}
+
+/// I6 after a change of `Se`, `F` or `A`: every shown native root that is not a fit root, when
+/// its displayed box fits, lies inside F (`skip`: the plugin window, checked by its own rule of
+/// §5.8 item 5, and the fit roots, which are clipped to F instead).
+fn check_inside(ui: &Ui, keys: &[ElementKey], skip: &[Option<ElementKey>]) {
+    let (wu, hu) = ui.screen_size();
+    for k in keys {
+        if skip.contains(&Some(*k))
+            || !ui.is_displayed(*k)
+            || ui.parent(*k) != Some(ui.screen_root())
+        {
+            continue;
+        }
+        let d = ui.displayed_box(*k);
+        if d.w() <= wu && d.h() <= hu {
+            assert!(
+                d.l >= 0 && d.t >= 0 && d.r < wu && d.b < hu,
+                "I6: root outside F: {d:?} in {wu}x{hu}"
+            );
+        }
+    }
+}

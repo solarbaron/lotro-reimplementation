@@ -55,6 +55,10 @@ pub struct FrameSample {
     pub entries: u32,
     /// Bands painted.
     pub bands: u32,
+    /// GPU time of the UI pass (U2, render.md §6.16), milliseconds, from timestamp queries:
+    /// the most recent resolved figure when the frame was submitted; `None` without
+    /// `TIMESTAMP_QUERY` or before the first query resolved.
+    pub ui_gpu_ms: Option<f64>,
 }
 
 /// Percentile of sorted values (nearest rank); 0 for none.
@@ -104,6 +108,10 @@ impl Summary {
 pub struct Recorder {
     /// Frames, in order, with their phase label.
     pub frames: Vec<(&'static str, FrameSample)>,
+    /// Whether the run fed the renderer's frame figures to the UI host at least once
+    /// (`UiHost::record_render_stats`). Without that, a U2 row with no frames says nothing
+    /// about the adapter's timestamp queries.
+    pub render_stats_fed: bool,
 }
 
 /// Most frames a recorder keeps (about 30 minutes at 60 Hz).
@@ -129,6 +137,18 @@ impl Recorder {
     #[must_use]
     pub fn u1(&self, phase: Option<&str>) -> Summary {
         Summary::of(self.phase(phase).filter(|s| steady(s)).map(|s| s.ui_ms))
+    }
+
+    /// U2 over the steady-state frames that carry a GPU time (`UiStats::gpu_ns`, render.md
+    /// §6.16): `n` is 0 when no frame did (no timestamp queries, none resolved, or the run
+    /// never fed the renderer's figures, [`Recorder::render_stats_fed`]).
+    #[must_use]
+    pub fn u2(&self) -> Summary {
+        Summary::of(
+            self.phase(None)
+                .filter(|s| steady(s))
+                .filter_map(|s| s.ui_gpu_ms),
+        )
     }
 
     /// U3: steady-state mean and the overall maximum of the upload bytes.
@@ -229,6 +249,26 @@ pub fn report_markdown(rec: &Recorder, title: &str, notes: &[(String, String)]) 
         "| U1 UI main-thread time (steady) | all | mean {:.3} ms, p99 {:.3} ms ({} frames) | — |",
         all.mean, all.p99, all.n
     );
+    let u2 = rec.u2();
+    if u2.n > 0 {
+        let _ = writeln!(
+            s,
+            "| U2 UI pass GPU time (timestamp queries, steady) | all | mean {:.3} ms, p99 {:.3} ms, max {:.3} ms ({} frames) | ≤ 0.3 ms at 3840 × 2160 |",
+            u2.mean, u2.p99, u2.max, u2.n
+        );
+    } else {
+        // Only a run that fed the renderer's figures can blame the adapter; even then a
+        // short run may end before the first query resolved.
+        let why = if rec.render_stats_fed {
+            "no UI GPU time recorded: the adapter has no timestamp queries, or none resolved in the steady frames"
+        } else {
+            "no UI GPU time recorded: this run did not feed the renderer's frame figures to the UI host"
+        };
+        let _ = writeln!(
+            s,
+            "| U2 UI pass GPU time (timestamp queries, steady) | — | not measured ({why}) | ≤ 0.3 ms at 3840 × 2160 (not a gate when not measured) |"
+        );
+    }
     let (mean_up, max_up) = rec.u3();
     let _ = writeln!(
         s,
@@ -383,5 +423,62 @@ mod tests {
             md.contains("Longest frame overall (M3 rule) | all | 57.0 ms"),
             "{md}"
         );
+        // Not fed by this run: the row does not blame the adapter.
+        assert!(
+            md.contains("U2 UI pass GPU time") && md.contains("did not feed"),
+            "{md}"
+        );
+        assert!(!md.contains("no timestamp queries"), "{md}");
+    }
+
+    /// render.md §6.16 U2: the steady frames' GPU times are summarised; frames without one
+    /// and event frames are left out.
+    #[test]
+    fn u2_from_timestamp_queries() {
+        let mut r = Recorder::default();
+        for (gpu, event) in [
+            (Some(0.1), false),
+            (Some(0.3), false),
+            (None, false),
+            (Some(5.0), true),
+        ] {
+            r.push(
+                "walk",
+                FrameSample {
+                    ui_gpu_ms: gpu,
+                    event,
+                    ..FrameSample::default()
+                },
+            );
+        }
+        let u2 = r.u2();
+        assert_eq!(u2.n, 2);
+        assert!((u2.mean - 0.2).abs() < 1e-9);
+        assert_eq!(u2.max, 0.3);
+        let md = report_markdown(&r, "t", &[]);
+        assert!(
+            md.contains("| U2 UI pass GPU time (timestamp queries, steady) | all | mean 0.200 ms"),
+            "{md}"
+        );
+    }
+
+    /// A run that fed the renderer's figures but got no GPU time names the adapter (or an
+    /// unresolved query) as the reason; one that never fed them says so instead.
+    #[test]
+    fn u2_not_measured_reason() {
+        let mut r = Recorder::default();
+        r.push("walk", FrameSample::default());
+        let md = report_markdown(&r, "t", &[]);
+        assert!(
+            md.contains("did not feed the renderer's frame figures"),
+            "{md}"
+        );
+        r.render_stats_fed = true;
+        let md = report_markdown(&r, "t", &[]);
+        assert!(
+            md.contains("the adapter has no timestamp queries, or none resolved"),
+            "{md}"
+        );
+        assert!(!md.contains("did not feed"), "{md}");
     }
 }

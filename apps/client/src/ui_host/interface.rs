@@ -79,6 +79,12 @@ impl InterfaceController {
     pub fn scale_bar(&self) -> Option<tessera_ui::ElementKey> {
         self.window.scale_bar()
     }
+
+    /// The text-size slider's scroll-bar element (`ui-scaling.md` §7.2 row 8; tests).
+    #[must_use]
+    pub fn text_bar(&self) -> Option<tessera_ui::ElementKey> {
+        self.window.text_bar()
+    }
 }
 
 /// Builds the window's model from the scaling state and settings (`ui-scaling.md` §7.2 rows).

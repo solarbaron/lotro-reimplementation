@@ -911,6 +911,15 @@ impl ClientUi {
         }
     }
 
+    /// The renderer's figures of the frame just submitted (after `Renderer::end_frame`,
+    /// before [`Self::end_frame`]): the UI pass's GPU time for U2 (render.md §6.16,
+    /// [`UiHost::record_render_stats`]).
+    pub fn record_render_stats(&mut self, stats: &tessera_render::FrameStats) {
+        if let State::Ready(host) = &mut self.state {
+            host.record_render_stats(stats);
+        }
+    }
+
     /// After present: the frame clock.
     pub fn end_frame(&mut self, rt: &Runtime) {
         let frame_ms = self

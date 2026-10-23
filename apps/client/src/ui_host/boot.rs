@@ -10,7 +10,7 @@
 //! skin tables and the skins in the skins root (`skin-definition.md` §9.4: once, at UI
 //! start), and prepares the minimap data reader.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
@@ -107,6 +107,10 @@ pub struct UiBooted {
     pub skins: Option<SkinData>,
     /// InputActions command names → IDs.
     pub command_ids: Vec<(String, u32)>,
+    /// Toggle types of the default action map's table A, by command ID (`keymap.md`
+    /// §12.10, `lua-plugin-api.md` §13.12.1): the UI's Impulse test (decision 0014 D9).
+    /// Empty when the record is missing or does not decode.
+    pub toggle_types: BTreeMap<u32, u8>,
     /// The P1 widgets' vocabulary (item slots, tooltips, paperdoll).
     pub char_vocab: tessera_ui::game::CharVocab,
     /// The P1 panels' layouts and element IDs (`character-panels.md` §2, §4.1).
@@ -190,6 +194,48 @@ fn did_map(set: &ArchiveSet, did: Did) -> Option<DataIdMap> {
 fn enum_mapper(set: &ArchiveSet, did: Did) -> Option<EnumMapper> {
     let payload = set.read(did.0).ok()?;
     EnumMapper::parse_expecting(&payload, did).ok()
+}
+
+/// Key and label of the default action map in the `ACTIONMAP` DID map (`keymap.md` §12.2).
+const ACTIONMAP_DEFAULT: (u32, &str) = (1, "default");
+
+/// Most table-A rows taken from the action map (Tessera bound; the record's own decoder
+/// already checks its counts against the payload).
+const MAX_TOGGLE_ROWS: usize = 65_536;
+
+/// The toggle types of table A of the default action map (`keymap.md` §12.10), reached
+/// through the root DID map's `ACTIONMAP` entry and its key 1 labelled `default` (§12.2).
+/// A type that does not fit a byte is left out (types are 0–3). Empty, with a log line, when
+/// any step is missing or the record does not decode: the UI then treats every command as
+/// non-Impulse (`lua-plugin-api.md` §13.12.1).
+fn action_map_toggle_types(set: &ArchiveSet, root: &DataIdMap) -> BTreeMap<u32, u8> {
+    let Some(map) = root.by_label("ACTIONMAP").and_then(|d| did_map(set, d)) else {
+        tracing::info!("no ACTIONMAP DID map: no toggle types");
+        return BTreeMap::new();
+    };
+    let did = match map.get(ACTIONMAP_DEFAULT.0) {
+        Some(e) if &*e.label == ACTIONMAP_DEFAULT.1 && e.value.0 != 0 => e.value.0,
+        _ => {
+            tracing::info!("no default action map: no toggle types");
+            return BTreeMap::new();
+        }
+    };
+    let decoded = set
+        .read(did)
+        .map_err(|e| e.to_string())
+        .and_then(|b| tessera_input::import::decode_action_map(&b).map_err(|e| e.to_string()));
+    match decoded {
+        Ok(m) => m
+            .toggle_types
+            .iter()
+            .take(MAX_TOGGLE_ROWS)
+            .filter_map(|(c, t)| u8::try_from(*t).ok().map(|t| (*c, t)))
+            .collect(),
+        Err(e) => {
+            tracing::info!("action map {did:#010x}: {e}; no toggle types");
+            BTreeMap::new()
+        }
+    }
 }
 
 /// Every (name, key) of an enum mapper and its base chain, nearest first; the first
@@ -276,6 +322,7 @@ fn load(
     let decoded = layouts.values().filter(|l| l.is_some()).count();
 
     let command_ids = chain_names(&set, emapper.by_label("InputActions"));
+    let toggle_types = action_map_toggle_types(&set, &root);
     let input_maps: HashMap<u32, String> = chain_names(&set, emapper.by_label("InputMap"))
         .into_iter()
         .map(|(n, k)| (k, n))
@@ -377,6 +424,7 @@ fn load(
         layouts = decoded,
         panels = catalog.len(),
         commands = command_ids.len(),
+        toggle_types = toggle_types.len(),
         locale_font = ?locale_font.map(|d| format!("{d:#010x}")),
         skins = skins.as_ref().map_or(0, |s| s.skins.skins().len()),
         elapsed_ms,
@@ -393,6 +441,7 @@ fn load(
         maps,
         skins,
         command_ids,
+        toggle_types,
         char_vocab,
         char_ids,
         chargen,

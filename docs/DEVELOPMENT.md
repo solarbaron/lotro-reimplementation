@@ -234,7 +234,9 @@ Open items outside a milestone run go through the `tessera-followups` workflow
 non-overlapping paths, then give each package its own worktree and branch: a sparse checkout
 without `research/` (`git sparse-checkout set --no-cone '/*' '!/research/'`) for code
 packages, a full one for spec packages. Each worktree's git-ignored `.cargo/config.toml` points at
-one shared `target-dir` with `incremental = false`. The packages then share dependency builds,
+one shared `target-dir` with `incremental = false` and `debug = 0` for `[profile.dev]` and
+`[profile.dev.package."*"]`. Each worktree builds its own copy of the workspace crates, so
+with full debug info the shared debug dir grew by 84 GB in half an hour. The packages then share dependency builds,
 and cargo's lock serialises their builds. Every extra target dir of this workspace takes
 50–100 GB, so don't create one per package, and cap packages in flight with `max_parallel`. Code packages are built, reviewed, fixed and audited, and spec
 packages are revised, screened and independently reviewed. Then review, commit and merge each

@@ -201,18 +201,26 @@ Each milestone in `docs/ROADMAP.md` runs as one workflow:
    (`<cache>/scratch/<M>/dirty` for spec writers, `<cache>/scratch/<M>/clean` for everyone
    else). Use the same directory `tools/fetch-research-clones.sh` uses, so the clones are
    not fetched twice.
-2. The workflow plans the milestone, writes dirty-room specs, builds each crate clean-room in
-   dependency order (a task whose spec or dependency failed is skipped, not built
-   without it), runs three reviewers and a fix pass per crate, then verifies every exit
-   criterion and updates the status tables. It never commits.
+2. The workflow plans the milestone and writes dirty-room specs. Each spec then gets a
+   contamination screen (a clean auditor reading only the spec) and an independent review
+   ([CLEAN_ROOM.md §5.3](CLEAN_ROOM.md#53-review-checklist)) by a session that wrote none of
+   it; a failing spec is revised and reviewed again by fresh sessions, up to three rounds.
+   Only an Accepted spec feeds the build. Tasks start as soon as their dependencies are
+   done, with at most `max_builds` (default 3) builds or fixes at once; a task whose spec or
+   dependency failed is skipped, not built without it. Each task gets reviewers and a fix
+   pass; then every exit criterion is verified and the status tables are updated. It never
+   commits. Its result carries a `provenance` record (which agent wrote, screened, reviewed
+   and built what) for the commit messages.
 3. Review the result (run the tests yourself, look at a screenshot or two), then commit and
    push. One commit per milestone keeps history readable.
 4. Criteria that need the owner to observe the original client are collected in
    `docs/checklists/owner-observations.md`. Fill them in when convenient; they do not block
    the next milestone.
 5. **M8 is in scope** by the owner's decision of 2026-10-11
-   ([decision 0034](decisions/0034-official-server-compatibility.md)).
-   The workflow runs it and gives its spec writers the 0034 rules:
+   ([decision 0034](decisions/0034-official-server-compatibility.md)), but **paused** by
+   [incident 0041](decisions/0041-incident-m8-spec-contamination.md): the workflow refuses
+   `M8` until its specs are cleaned and independently re-accepted and the owner sets
+   `M8_PAUSED = false` in the script. When it runs, it gives its spec writers the 0034 rules:
    - the repository content and boundary rules of `CLAUDE.md` and decision 0034 §1;
    - no key material, hostnames or account data in the repository or specs;
    - captures stay in the dirty room;

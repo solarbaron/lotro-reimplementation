@@ -63,7 +63,7 @@ the spec's implementer-notes section.
   - Extended scripts (M9) run on an official server only after the user's opt-in, and
     automation never does.
 - Names: no LOTRO / Tolkien / Daybreak / Turbine marks in identifiers, crate names or UI
-  strings (`docs/LEGAL.md` §10). Interoperability names that the format or plugin API
+  strings (`CLAUDE.md` "Naming"). Interoperability names that the format or plugin API
   require are listed in `tools/content-allowlist.txt` with a reason.
 - Before handing back:
   ```

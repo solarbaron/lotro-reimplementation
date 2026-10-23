@@ -287,6 +287,12 @@ fn route(cmd: Command, mapper: &mut Mapper) -> Result<Routed, NetError> {
                 "gameplay commands are not available on the test server",
             ));
         }
+        // The Account group is the official login's (`official-entry.md` §8.2).
+        Command::Account(_) => {
+            return Err(NetError::InvalidCommand(
+                "account commands are not available on the test server",
+            ));
+        }
     })
 }
 

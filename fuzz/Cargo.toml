@@ -45,7 +45,9 @@ tessera-audio = { path = "../crates/audio" }
 tessera-scriptgraph = { path = "../crates/scriptgraph" }
 tessera-assets = { path = "../crates/assets" }
 tessera-particles = { path = "../crates/particles" }
-tessera-compat = { path = "../crates/compat" }
+# `test-support`: the record-building helpers of `consent::test_support` for the
+# `compat_consent_record` target (never enabled in release builds of the client).
+tessera-compat = { path = "../crates/compat", features = ["test-support"] }
 
 # Not a member of the root workspace.
 [workspace]
@@ -1485,6 +1487,24 @@ bench = false
 [[bin]]
 name = "world_far_view_prefs"
 path = "fuzz_targets/world_far_view_prefs.rs"
+test = false
+doc = false
+bench = false
+
+# --- tessera-compat ban-risk consent: the acceptance record's check (official-entry.md §5.6, §10.3) ---
+
+[[bin]]
+name = "compat_consent_record"
+path = "fuzz_targets/compat_consent_record.rs"
+test = false
+doc = false
+bench = false
+
+# --- tessera-client official entry: Account events into the login presentation (apps/client/src/official/login.rs, included by path; official-entry.md §8, §10.3) ---
+
+[[bin]]
+name = "client_official_entry"
+path = "fuzz_targets/client_official_entry.rs"
 test = false
 doc = false
 bench = false

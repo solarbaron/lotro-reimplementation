@@ -32,7 +32,7 @@
 
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::io::Read;
-use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4, UdpSocket};
+use std::net::{Ipv4Addr, SocketAddrV4};
 
 use flate2::Compression;
 use flate2::read::ZlibDecoder;
@@ -656,72 +656,10 @@ pub trait UdpDatagramTransport: std::fmt::Debug + Send {
     fn recv_from(&mut self, buf: &mut [u8]) -> Result<Option<(usize, SocketAddrV4)>, SessionError>;
 }
 
-/// Standard library non-blocking IPv4 `UdpSocket` transport (§3.1, §3.2).
-#[derive(Debug)]
-pub struct StdUdpTransport {
-    socket: UdpSocket,
-    local_addr: SocketAddrV4,
-}
-
-impl StdUdpTransport {
-    /// Binds a non-blocking IPv4 UDP socket following the §3.2 port-selection rules.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`SessionError::Io`] if binding or configuring non-blocking mode fails.
-    pub fn bind(
-        local_ip: Ipv4Addr,
-        explicit_base_port: u16,
-        compute_unique: bool,
-    ) -> Result<Self, SessionError> {
-        let ports = candidate_bind_ports(local_ip, explicit_base_port, compute_unique);
-        let mut bound_socket = None;
-        for port in ports {
-            if let Ok(sock) = UdpSocket::bind(SocketAddrV4::new(local_ip, port)) {
-                bound_socket = Some(sock);
-                break;
-            }
-        }
-        // Case C fallback to ephemeral port on local_ip, then INADDR_ANY (0.0.0.0:0)
-        if bound_socket.is_none() {
-            bound_socket = UdpSocket::bind(SocketAddrV4::new(local_ip, 0))
-                .or_else(|_| UdpSocket::bind(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0)))
-                .ok();
-        }
-        let socket = bound_socket
-            .ok_or_else(|| SessionError::Io("failed to bind IPv4 UDP socket".to_string()))?;
-        socket.set_nonblocking(true)?;
-        let local_addr = match socket.local_addr()? {
-            SocketAddr::V4(v4) => v4,
-            SocketAddr::V6(_) => {
-                return Err(SessionError::Io("expected IPv4 socket address".to_string()));
-            }
-        };
-        Ok(Self { socket, local_addr })
-    }
-}
-
-impl UdpDatagramTransport for StdUdpTransport {
-    fn local_addr(&self) -> Result<SocketAddrV4, SessionError> {
-        Ok(self.local_addr)
-    }
-
-    fn send_to(&mut self, buf: &[u8], target: SocketAddrV4) -> Result<usize, SessionError> {
-        if buf.len() > MAX_DATAGRAM_BUF {
-            return Err(SessionError::DatagramTooLarge { len: buf.len() });
-        }
-        Ok(self.socket.send_to(buf, SocketAddr::V4(target))?)
-    }
-
-    fn recv_from(&mut self, buf: &mut [u8]) -> Result<Option<(usize, SocketAddrV4)>, SessionError> {
-        match self.socket.recv_from(buf) {
-            Ok((len, SocketAddr::V4(src))) => Ok(Some((len, src))),
-            Ok((_, SocketAddr::V6(_))) => Ok(None),
-            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => Ok(None),
-            Err(e) => Err(SessionError::Io(e.to_string())),
-        }
-    }
-}
+/// The standard-library UDP transport lives behind the network-access type
+/// (`docs/specs/official-entry.md` §6.1): it is made only by
+/// [`NetworkAccess::bind_udp`](crate::net_access::NetworkAccess::bind_udp).
+pub use crate::net_access::StdUdpTransport;
 
 /// Deterministic in-memory UDP datagram transport for synthetic unit and integration tests.
 #[derive(Debug)]

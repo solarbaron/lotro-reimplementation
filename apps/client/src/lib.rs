@@ -39,6 +39,9 @@
 //!   chat lines, quest markers and NPC indicators, fed by the session's events.
 //! - [`map`]: the map windows (P5): the world map with feed markers and notes, the
 //!   minimap's feed markers, place lookup (`findplace`) and the map-region census.
+//! - [`official`]: official play (M8, `docs/specs/official-entry.md`): the start screen and
+//!   `--official`, the ban-risk warning and its acceptance record, the account form and the
+//!   login screens over the compatibility backend.
 //! - [`travel`]: travel and instances (P5): the travel window, the instance finder with its
 //!   queue, the instance-travel window, the travel presentation, the session's mount model
 //!   and the plugin mount views, the walker's feed mounts.
@@ -56,6 +59,7 @@ pub mod input;
 pub mod map;
 pub mod net;
 pub mod npc;
+pub mod official;
 pub mod panels;
 pub mod plugins;
 pub mod portrait;
@@ -82,7 +86,7 @@ pub use cli::Args;
 /// ([`scenario::run`]).
 #[must_use]
 pub fn run_to_exit_code(args: Args) -> u8 {
-    if args.scenario.is_some() {
+    if dispatch(&args) == Dispatch::Scenario {
         return scenario::run(args);
     }
     match run(args) {
@@ -97,7 +101,8 @@ pub fn run_to_exit_code(args: Args) -> u8 {
 /// Run the client as configured by `args` (`--scenario` runs go through
 /// [`run_to_exit_code`], which keeps their exit codes).
 pub fn run(args: Args) -> anyhow::Result<()> {
-    if args.scenario.is_some() {
+    let how = dispatch(&args);
+    if how == Dispatch::Scenario {
         return match scenario::run(args) {
             0 => Ok(()),
             code => Err(anyhow::anyhow!("scenario run failed (exit code {code})")),
@@ -108,13 +113,48 @@ pub fn run(args: Args) -> anyhow::Result<()> {
         smoke = args.smoke,
         "Tessera client starting"
     );
-    if args.smoke {
-        smoke::run(&args).map(|_| ())
+    match how {
+        Dispatch::StartScreen => official::window::run(args),
+        Dispatch::Smoke => smoke::run(&args).map(|_| ()),
+        Dispatch::HeadlessUi => ui_host::run::run(&args).map(|_| ()),
+        Dispatch::Headless => headless::run(&args).map(|_| ()),
+        Dispatch::Scenario | Dispatch::Windowed => app::run(args),
+    }
+}
+
+/// Which part of the client a run starts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Dispatch {
+    /// `--start-screen` or `--official`: Tessera's start screen, always windowed
+    /// (`official-entry.md` §4); decided before every other mode, so no headless or scripted
+    /// path can run instead.
+    StartScreen,
+    /// `--scenario` ([`scenario::run`]).
+    Scenario,
+    /// `--smoke`.
+    Smoke,
+    /// The headless walker with the game UI.
+    HeadlessUi,
+    /// The headless walker.
+    Headless,
+    /// The windowed client.
+    Windowed,
+}
+
+/// The dispatch decision of [`run`] and [`run_to_exit_code`].
+#[must_use]
+pub fn dispatch(args: &Args) -> Dispatch {
+    if args.opens_start_screen() {
+        Dispatch::StartScreen
+    } else if args.scenario.is_some() {
+        Dispatch::Scenario
+    } else if args.smoke {
+        Dispatch::Smoke
     } else if args.walker_headless() && args.ui_enabled() {
-        ui_host::run::run(&args).map(|_| ())
+        Dispatch::HeadlessUi
     } else if args.walker_headless() {
-        headless::run(&args).map(|_| ())
+        Dispatch::Headless
     } else {
-        app::run(args)
+        Dispatch::Windowed
     }
 }

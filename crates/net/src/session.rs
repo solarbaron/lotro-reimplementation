@@ -32,6 +32,7 @@
 use std::time::Instant;
 
 use crate::NetError;
+use crate::account::{AccountCommand, AccountEvent, WorldId};
 use crate::domain::{
     CharacterCommand, CharacterEvent, CombatCommand, CombatEvent, InventoryCommand, InventoryEvent,
     NpcCommand, NpcEvent, ProgressionCommand, ProgressionEvent, SocialCommand, SocialEvent,
@@ -262,6 +263,9 @@ pub enum Event {
     World(WorldEvent),
     /// A progression event (experience, skills, traits, crafting, reputation).
     Progression(ProgressionEvent),
+    /// An account event of the login before [`Event::Connected`] (official play,
+    /// `docs/specs/official-entry.md` §8): progress, world list, queue, refusals.
+    Account(AccountEvent),
 }
 
 impl Event {
@@ -295,6 +299,7 @@ impl Event {
             Self::Social(e) => e.name(),
             Self::World(e) => e.name(),
             Self::Progression(e) => e.name(),
+            Self::Account(e) => e.name(),
         }
     }
 }
@@ -398,6 +403,9 @@ pub enum Command {
     World(WorldCommand),
     /// A progression command.
     Progression(ProgressionCommand),
+    /// An account command of the login (official play, `docs/specs/official-entry.md` §8):
+    /// allowed only while [`SessionState::Connecting`].
+    Account(AccountCommand),
 }
 
 impl Command {
@@ -424,6 +432,7 @@ impl Command {
             Self::Social(c) => c.name(),
             Self::World(c) => c.name(),
             Self::Progression(c) => c.name(),
+            Self::Account(c) => c.name(),
         }
     }
 }
@@ -502,7 +511,19 @@ pub struct Session {
     /// Latest `now` handed to the backend.
     last_now: Option<Instant>,
     scratch: Vec<Event>,
+    /// The IDs of the latest [`AccountEvent::WorldList`] (at most
+    /// [`MAX_WORLDS`](crate::account::MAX_WORLDS), `official-entry.md` §8.2).
+    world_ids: Vec<WorldId>,
+    /// An [`AccountEvent::LoginRefused`] was surfaced: only `Disconnected` follows (§8.2).
+    login_refused: bool,
+    /// When a dropped Account event of each variant was last logged (one line per variant
+    /// per [`ACCOUNT_LOG_INTERVAL`], §8.2).
+    account_logged: [Option<Instant>; 5],
 }
+
+/// One log line per Account variant at most this often for dropped events
+/// (`official-entry.md` §8.2).
+pub const ACCOUNT_LOG_INTERVAL: std::time::Duration = std::time::Duration::from_secs(10);
 
 /// What [`Session::accept`] decided about an event.
 enum Verdict {
@@ -532,6 +553,9 @@ impl Session {
             player_anchor: None,
             last_now: None,
             scratch: Vec::new(),
+            world_ids: Vec::new(),
+            login_refused: false,
+            account_logged: [None; 5],
         }
     }
 
@@ -614,6 +638,7 @@ impl Session {
             | Command::Social(_)
             | Command::World(_)
             | Command::Progression(_) => self.state == S::InWorld,
+            Command::Account(_) => self.state == S::Connecting && !self.login_refused,
             Command::Disconnect => !matches!(self.state, S::Idle | S::Closing | S::Closed),
         };
         if !allowed {
@@ -623,6 +648,13 @@ impl Session {
             });
         }
         validate(&command)?;
+        if let Command::Account(AccountCommand::ChooseWorld { world }) = &command
+            && !self.world_ids.contains(world)
+        {
+            return Err(NetError::InvalidCommand(
+                "world is not in the latest world list",
+            ));
+        }
         if let (Command::Move { location, .. }, Some((current, _))) =
             (&command, &self.player_location)
             && location.region != current.region
@@ -700,7 +732,7 @@ impl Session {
         raw.clear();
         self.backend.poll(now, &mut raw);
         for mut event in raw.drain(..) {
-            if self.accept(&event) {
+            if self.accept(&event, now) {
                 if clean_text(&mut event) {
                     tracing::warn!(
                         backend = self.backend.name(),
@@ -768,9 +800,13 @@ impl Session {
     }
 
     /// Applies an event to the state machine; returns whether to surface it.
-    fn accept(&mut self, event: &Event) -> bool {
+    fn accept(&mut self, event: &Event, now: Instant) -> bool {
         use SessionState as S;
         let closing = self.state == S::Closing;
+        // After a surfaced LoginRefused only Disconnected follows (`official-entry.md` §8.2).
+        if self.login_refused && !matches!(event, Event::Disconnected { .. }) {
+            return self.drop_after_refusal(event, now);
+        }
         let verdict = match event {
             Event::Connected { .. } => match self.state {
                 S::Connecting => {
@@ -913,12 +949,15 @@ impl Session {
                 S::Closing => Verdict::Stale,
                 _ => Verdict::Invalid("chat before connecting"),
             },
+            Event::Account(e) => return self.accept_account(e, now),
             Event::Disconnected { .. } => {
                 let ok = self.state != S::Closed;
                 self.state = S::Closed;
                 self.player = None;
                 self.player_location = None;
                 self.player_anchor = None;
+                self.world_ids.clear();
+                self.login_refused = false;
                 if ok {
                     Verdict::Surface
                 } else {
@@ -947,6 +986,64 @@ impl Session {
                 false
             }
         }
+    }
+
+    /// The Account rules of `official-entry.md` §8.2: surfaced only in `Connecting`, stale in
+    /// `Closing` (entered from `Connecting`), a backend bug otherwise; out-of-bound values
+    /// dropped. Dropped Account events are logged without any field.
+    fn accept_account(&mut self, event: &AccountEvent, now: Instant) -> bool {
+        use SessionState as S;
+        let why = if !event.is_valid() {
+            "out of bounds"
+        } else {
+            match self.state {
+                S::Connecting => {
+                    match event {
+                        AccountEvent::WorldList { worlds } => {
+                            self.world_ids = worlds.iter().map(|w| w.id).collect();
+                        }
+                        AccountEvent::LoginRefused { .. } => self.login_refused = true,
+                        _ => {}
+                    }
+                    return true;
+                }
+                S::Closing if self.closing_from == S::Connecting => "overtaken by Disconnect",
+                _ => "outside the login",
+            }
+        };
+        self.log_dropped_account(event, why, now);
+        false
+    }
+
+    /// An event other than `Disconnected` after a surfaced `LoginRefused`.
+    fn drop_after_refusal(&mut self, event: &Event, now: Instant) -> bool {
+        match event {
+            Event::Account(e) => self.log_dropped_account(e, "after LoginRefused", now),
+            _ => tracing::debug!(
+                backend = self.backend.name(),
+                event = event.name(),
+                "dropping event after LoginRefused"
+            ),
+        }
+        false
+    }
+
+    /// One `debug` line naming only the variant and the reason, at most once per variant per
+    /// [`ACCOUNT_LOG_INTERVAL`] (`official-entry.md` §8.2).
+    fn log_dropped_account(&mut self, event: &AccountEvent, why: &'static str, now: Instant) {
+        let Some(slot) = self.account_logged.get_mut(event.index()) else {
+            return;
+        };
+        if slot.is_some_and(|t| now.saturating_duration_since(t) < ACCOUNT_LOG_INTERVAL) {
+            return;
+        }
+        *slot = Some(now);
+        tracing::debug!(
+            backend = self.backend.name(),
+            event = event.name(),
+            why,
+            "dropping account event from backend"
+        );
     }
 }
 
@@ -1016,7 +1113,8 @@ fn validate(command: &Command) -> Result<(), NetError> {
         | Command::Disconnect
         | Command::QueryLocation
         | Command::Emote { .. }
-        | Command::Stance { .. } => {}
+        | Command::Stance { .. }
+        | Command::Account(_) => {}
         Command::Character(c) => c.validate().map_err(NetError::InvalidCommand)?,
         Command::Inventory(c) => c.validate().map_err(NetError::InvalidCommand)?,
         Command::Combat(c) => c.validate().map_err(NetError::InvalidCommand)?,
@@ -1083,6 +1181,7 @@ fn clean_text(event: &mut Event) -> bool {
         Event::Social(e) => e.clean(),
         Event::World(e) => e.clean(),
         Event::Progression(e) => e.clean(),
+        Event::Account(e) => e.clean(),
         _ => false,
     }
 }
@@ -1203,7 +1302,11 @@ mod name_tests {
     #[test]
     fn event_and_command_names_are_unique() {
         let mut fns = BTreeMap::new();
-        for src in [include_str!("session.rs"), include_str!("domain.rs")] {
+        for src in [
+            include_str!("session.rs"),
+            include_str!("domain.rs"),
+            include_str!("account.rs"),
+        ] {
             for (ty, arms) in name_fns(src) {
                 assert!(fns.insert(ty.clone(), arms).is_none(), "{ty}: two name()s");
             }

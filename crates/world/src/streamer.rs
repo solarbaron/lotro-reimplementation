@@ -142,8 +142,19 @@
 //! bundle becomes resident as a ring member its water joins the streamer's [`WaterMap`];
 //! when it leaves, the water leaves too. A bundle has water whenever it has a collision set
 //! and its region's water tables loaded, even with [`crate::BundleOptions::build_water`]
-//! off (see that option). The lookups over what is resident (ring members;
-//! not bundles loaded ahead of the rings):
+//! off (see that option).
+//!
+//! A collision set's hierarchy is built with the thread rule of its request's priority
+//! when the set's build starts (`collision.md` §12.1, [`crate::bundle`] module docs, item
+//! 4): bundles requested at `Prefetch` (the far ring, the early part of the path) build it
+//! on their worker alone, so prefetching never takes helper threads from a landblock that
+//! is needed now; a request raised to `Visible` or `Immediate` before that point (the
+//! urgent part reaching it, the focus coming closer) draws helpers from the shared budget.
+//! [`FrameReport`] does not count the two rules;
+//! [`CollisionSystem::hierarchy_builds`](crate::CollisionSystem::hierarchy_builds) does.
+//!
+//! The lookups over what is resident (ring members; not bundles loaded ahead of the
+//! rings):
 //!
 //! | Lookup | Spec |
 //! |---|---|

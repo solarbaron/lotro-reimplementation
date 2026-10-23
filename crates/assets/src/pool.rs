@@ -46,8 +46,11 @@ impl SchedCell {
 pub(crate) trait Job: Send + Sync {
     /// The job's scheduling cell.
     fn sched(&self) -> &SchedCell;
-    /// Runs the job on a worker thread. Must not panic (the pool catches it anyway).
-    fn run(&self);
+    /// Runs the job on a worker thread. `priority` is the priority of the queue entry the
+    /// worker took it from (the job's scheduling cell is cleared by then), which the job
+    /// hands to its work as [`JobContext::priority`](crate::JobContext::priority). Must not
+    /// panic (the pool catches it anyway).
+    fn run(&self, priority: Priority);
     /// Finishes the job without running it (pool shut down, or `run` panicked).
     fn abort(&self, err: AssetError);
     /// Whether nobody wants the job any more (every request cancelled, or its store is
@@ -205,14 +208,16 @@ impl QueueState {
     }
 
     /// Takes the highest-priority queued job out of the queue, discarding the stale
-    /// entries above it (they hold no references, so nothing is released here).
-    fn pop_valid(&mut self) -> Option<Arc<dyn Job>> {
+    /// entries above it (they hold no references, so nothing is released here), and
+    /// returns it with the priority of its entry: the job's priority at the moment it left
+    /// the queue (its scheduling cell is cleared here, so this is the only record of it).
+    fn pop_valid(&mut self) -> Option<(Arc<dyn Job>, Priority)> {
         while let Some(e) = self.heap.pop() {
             if self.is_valid(&e)
                 && let Some(job) = self.queued.remove(&e.id)
             {
                 job.sched().set(None);
-                return Some(job);
+                return Some((job, e.priority));
             }
         }
         None
@@ -307,14 +312,14 @@ impl PoolShared {
 fn worker_loop(shared: Arc<PoolShared>, index: usize) {
     let _span = tracing::debug_span!("asset_worker", index).entered();
     loop {
-        let job = {
+        let (job, priority) = {
             let mut q = lock(&shared.queue);
             loop {
                 if q.shutdown {
                     return;
                 }
-                if let Some(job) = q.pop_valid() {
-                    break job;
+                if let Some(popped) = q.pop_valid() {
+                    break popped;
                 }
                 q = shared
                     .cond
@@ -323,7 +328,7 @@ fn worker_loop(shared: Arc<PoolShared>, index: usize) {
             }
         };
         shared.busy.fetch_add(1, Ordering::Relaxed);
-        if catch_unwind(AssertUnwindSafe(|| job.run())).is_err() {
+        if catch_unwind(AssertUnwindSafe(|| job.run(priority))).is_err() {
             tracing::error!("asset job panicked outside its guarded stages");
             // `abort` is a no-op if the job already finished.
             let _ = catch_unwind(AssertUnwindSafe(|| {
@@ -393,7 +398,7 @@ impl Drop for PoolHandle {
         let pending: Vec<Arc<dyn Job>> = {
             let mut q = lock(&self.shared.queue);
             let mut out = Vec::new();
-            while let Some(job) = q.pop_valid() {
+            while let Some((job, _)) = q.pop_valid() {
                 out.push(job);
             }
             q.heap.clear();
@@ -520,13 +525,16 @@ mod tests {
         sched: SchedCell,
         name: u32,
         out: Mutex<mpsc::Sender<u32>>,
+        /// The priority of the last run.
+        ran_at: Mutex<Option<Priority>>,
     }
 
     impl Job for Probe {
         fn sched(&self) -> &SchedCell {
             &self.sched
         }
-        fn run(&self) {
+        fn run(&self, priority: Priority) {
+            *lock(&self.ran_at) = Some(priority);
             let _ = lock(&self.out).send(self.name);
         }
         fn abort(&self, _err: AssetError) {
@@ -556,6 +564,7 @@ mod tests {
             sched: SchedCell::default(),
             name,
             out: Mutex::new(tx.clone()),
+            ran_at: Mutex::new(None),
         })
     }
 
@@ -575,10 +584,19 @@ mod tests {
         // Re-prioritise job 2 (Prefetch → Immediate): its old entry becomes stale.
         jobs[2].sched().set(Some(Priority::Immediate));
         q.push_entry(jobs[2].sched().id(), Priority::Immediate);
-        let order: Vec<usize> = std::iter::from_fn(|| q.pop_valid())
-            .map(|j| jobs.iter().position(|x| Arc::ptr_eq(x, &j)).unwrap())
+        let order: Vec<(usize, Priority)> = std::iter::from_fn(|| q.pop_valid())
+            .map(|(j, p)| (jobs.iter().position(|x| Arc::ptr_eq(x, &j)).unwrap(), p))
             .collect();
-        assert_eq!(order, vec![3, 2, 1, 0]);
+        // Each job leaves with the priority of its valid entry: job 2 with the raised one.
+        assert_eq!(
+            order,
+            vec![
+                (3, Priority::Immediate),
+                (2, Priority::Immediate),
+                (1, Priority::Visible),
+                (0, Priority::Prefetch),
+            ]
+        );
         assert_eq!(q.live(), 0);
     }
 
@@ -596,6 +614,51 @@ mod tests {
         assert_eq!(rx.recv_timeout(std::time::Duration::from_secs(10)), Ok(7));
         drop(pool);
         assert!(rx.try_recv().is_err());
+    }
+
+    /// A worker runs a job with the priority of the entry it popped: a job raised while it
+    /// waited runs with the raised priority, although its scheduling cell is cleared.
+    #[test]
+    fn worker_runs_a_job_at_its_popped_priority() {
+        let (tx, rx) = mpsc::channel();
+        let pool = WorkerPool::new(PoolConfig {
+            workers: 1,
+            ..PoolConfig::default()
+        });
+        let job = Arc::new(Probe {
+            sched: SchedCell::default(),
+            name: 5,
+            out: Mutex::new(tx.clone()),
+            ran_at: Mutex::new(None),
+        });
+        let as_job: Arc<dyn Job> = job.clone();
+        // Hold the queue lock so the worker cannot take the job before it is raised.
+        {
+            let mut q = lock(&pool.shared().queue);
+            assert!(q.insert(Arc::clone(&as_job), Priority::Prefetch).is_none());
+            as_job.sched().set(Some(Priority::Visible));
+            let id = as_job.sched().id();
+            q.push_entry(id, Priority::Visible);
+        }
+        pool.shared().cond.notify_one();
+        assert_eq!(rx.recv_timeout(std::time::Duration::from_secs(10)), Ok(5));
+        assert_eq!(*lock(&job.ran_at), Some(Priority::Visible));
+        assert_eq!(
+            job.sched().get(),
+            None,
+            "the cell is cleared when the job runs"
+        );
+        let job2 = Arc::new(Probe {
+            sched: SchedCell::default(),
+            name: 6,
+            out: Mutex::new(tx),
+            ran_at: Mutex::new(None),
+        });
+        pool.shared()
+            .submit(job2.clone(), Priority::Prefetch, None)
+            .unwrap();
+        assert_eq!(rx.recv_timeout(std::time::Duration::from_secs(10)), Ok(6));
+        assert_eq!(*lock(&job2.ran_at), Some(Priority::Prefetch));
     }
 
     #[test]
@@ -683,7 +746,8 @@ mod tests {
         assert_eq!(Arc::strong_count(&a), 2);
         assert!(shared.withdraw(b.sched()));
         assert_eq!(Arc::strong_count(&b), 1);
-        let popped = lock(&shared.queue).pop_valid().unwrap();
+        let (popped, at) = lock(&shared.queue).pop_valid().unwrap();
+        assert_eq!(at, Priority::Immediate);
         assert!(Arc::ptr_eq(&popped, &a));
         drop(popped);
         assert_eq!(Arc::strong_count(&a), 1);

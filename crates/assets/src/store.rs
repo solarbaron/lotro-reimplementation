@@ -758,7 +758,7 @@ impl<S: RecordSource + 'static, D: Decoder> StoreShared<S, D> {
 }
 
 impl<S: RecordSource + 'static, D: Decoder> JobImpl<S, D> {
-    fn run_inner(&self) {
+    fn run_inner(&self, priority: Priority) {
         let Some(store) = self.store.upgrade() else {
             self.slot.settle(AssetState::Failed(AssetError::Shutdown));
             return;
@@ -797,7 +797,8 @@ impl<S: RecordSource + 'static, D: Decoder> JobImpl<S, D> {
 
         let len = bytes.len();
         let check = || lock(&self.slot.inner).effective().is_none();
-        let ctx = JobContext::new(&check);
+        let current = || lock(&self.slot.inner).effective();
+        let ctx = JobContext::new(&check, priority).with_current(&current);
         let t1 = Instant::now();
         let decoded = catch_unwind(AssertUnwindSafe(|| store.decoder.decode(key, bytes, &ctx)));
         let decode_time = t1.elapsed();
@@ -867,8 +868,8 @@ impl<S: RecordSource + 'static, D: Decoder> Job for JobImpl<S, D> {
         &self.sched
     }
 
-    fn run(&self) {
-        self.run_inner();
+    fn run(&self, priority: Priority) {
+        self.run_inner(priority);
     }
 
     fn abort(&self, err: AssetError) {

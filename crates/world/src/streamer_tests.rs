@@ -1179,3 +1179,43 @@ fn stream_config_defaults_are_the_recorded_choices() {
     assert!(c.always_admit_near);
     assert_eq!(STORE_MAX_COMPLETIONS, 4_096);
 }
+
+/// End to end through the streamer (`collision.md` §12.1): with the focus standing still,
+/// the far ring's bundles (requested at `Prefetch`) build their collision hierarchies on
+/// their worker alone, the near and mid rings' (`Immediate`, `Visible`) with helpers from
+/// the shared budget.
+#[test]
+fn far_ring_collision_builds_stay_on_their_worker() {
+    let ctx = Arc::new(
+        WorldContext::load(
+            Arc::new(SyntheticWorld::rectangle(1, 0..=8, 0..=8).build()),
+            BundleOptions::default(),
+        )
+        .expect("synthetic context"),
+    );
+    let collision = ctx.systems().collision.clone().expect("collision on");
+    let pool = pool();
+    let mut w = WorldStreamer::new(Arc::clone(&ctx), &pool, config()).unwrap();
+    assert!(w.settle(centre(4, 4), Duration::from_secs(30)));
+    let (mut prefetch, mut raised) = (0u64, 0u64);
+    for x in 0..=8u8 {
+        for y in 0..=8u8 {
+            let k = key(x, y);
+            if loaded(&w, k).is_none() {
+                continue;
+            }
+            match w.request_priority(k) {
+                Some(Priority::Prefetch) => prefetch += 1,
+                Some(_) => raised += 1,
+                None => {}
+            }
+        }
+    }
+    assert!(prefetch > 0 && raised > 0, "{prefetch} {raised}");
+    let counts = collision.hierarchy_builds();
+    assert_eq!(
+        (counts.worker, counts.shared),
+        (prefetch, raised),
+        "{counts:?}"
+    );
+}

@@ -4,7 +4,7 @@
 use std::convert::Infallible;
 use std::fmt;
 
-use crate::AssetKey;
+use crate::{AssetKey, Priority};
 
 /// Turns the bytes of one record into a product, on a worker thread.
 ///
@@ -38,25 +38,55 @@ pub trait Decoder: Send + Sync + 'static {
     fn size_of(&self, value: &Self::Output) -> usize;
 }
 
-/// What a running job tells its decoder.
+/// What a running job tells its decoder: whether it was cancelled, and its priority.
+///
+/// Two priorities are on offer (`docs/ARCHITECTURE.md` §21 "Asset workers"):
+/// [`JobContext::priority`] is the one the job held when a worker took it out of the
+/// queue; [`JobContext::current_priority`] is the one it holds now, which a request may
+/// have raised or lowered since. A decoder that chooses how to run a stage by priority
+/// reads the latter when that stage starts (`collision.md` §12.1: the thread rule of a
+/// collision hierarchy build reads the job's priority once, when the build starts).
 pub struct JobContext<'a> {
     cancelled: &'a dyn Fn() -> bool,
+    /// The live priority of the job's requests (`None`: none live), when the job has any.
+    current: Option<&'a dyn Fn() -> Option<Priority>>,
+    priority: Priority,
     observed: std::cell::Cell<bool>,
 }
 
 impl<'a> JobContext<'a> {
-    pub(crate) fn new(cancelled: &'a dyn Fn() -> bool) -> Self {
+    /// A context for a job a worker took out of the queue at `priority`.
+    pub(crate) fn new(cancelled: &'a dyn Fn() -> bool, priority: Priority) -> Self {
         Self {
             cancelled,
+            current: None,
+            priority,
             observed: std::cell::Cell::new(false),
         }
     }
 
-    /// A context whose job is never cancelled, for calling a decoder directly.
+    /// The same context, whose [`JobContext::current_priority`] asks `current`.
+    pub(crate) fn with_current(mut self, current: &'a dyn Fn() -> Option<Priority>) -> Self {
+        self.current = Some(current);
+        self
+    }
+
+    /// A context whose job is never cancelled, for calling a decoder directly. Its
+    /// priority is [`Priority::Prefetch`], the lowest ([`JobContext::detached_at`] to
+    /// choose another).
     #[must_use]
     pub fn detached() -> JobContext<'static> {
+        Self::detached_at(Priority::Prefetch)
+    }
+
+    /// A context whose job is never cancelled and runs at `priority`, for calling a decoder
+    /// directly (tools and tests that want a decoder's behaviour at that priority).
+    #[must_use]
+    pub fn detached_at(priority: Priority) -> JobContext<'static> {
         JobContext {
             cancelled: &|| false,
+            current: None,
+            priority,
             observed: std::cell::Cell::new(false),
         }
     }
@@ -73,6 +103,27 @@ impl<'a> JobContext<'a> {
         c
     }
 
+    /// The priority of the queue entry the worker took this job from: the job's priority
+    /// when it started running (re-prioritisation while it waited included). Does not
+    /// change while the job runs.
+    #[must_use]
+    pub fn priority(&self) -> Priority {
+        self.priority
+    }
+
+    /// The job's priority now: for an [`AssetStore`](crate::AssetStore) job the highest
+    /// priority of its requests that are not cancelled (pins included), which
+    /// [`Handle::set_priority`](crate::Handle::set_priority) and new requests may have
+    /// changed since the job started; [`JobContext::priority`] when no request is live, and
+    /// for worker tasks and detached contexts (which have no requests).
+    ///
+    /// For an asset store job this takes the same short lock as
+    /// [`JobContext::is_cancelled`].
+    #[must_use]
+    pub fn current_priority(&self) -> Priority {
+        self.current.and_then(|f| f()).unwrap_or(self.priority)
+    }
+
     /// Whether the decoder ever saw [`JobContext::is_cancelled`] return true.
     pub(crate) fn observed_cancel(&self) -> bool {
         self.observed.get()
@@ -82,6 +133,7 @@ impl<'a> JobContext<'a> {
 impl fmt::Debug for JobContext<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("JobContext")
+            .field("priority", &self.priority)
             .field("observed_cancel", &self.observed.get())
             .finish_non_exhaustive()
     }
@@ -164,10 +216,36 @@ mod tests {
     #[test]
     fn context_records_observation() {
         let f = || true;
-        let ctx = JobContext::new(&f);
+        let ctx = JobContext::new(&f, Priority::Visible);
         assert!(!ctx.observed_cancel());
         assert!(ctx.is_cancelled());
         assert!(ctx.observed_cancel());
+    }
+
+    #[test]
+    fn context_priorities() {
+        assert_eq!(JobContext::detached().priority(), Priority::Prefetch);
+        assert_eq!(
+            JobContext::detached().current_priority(),
+            Priority::Prefetch
+        );
+        let at = JobContext::detached_at(Priority::Immediate);
+        assert_eq!(at.priority(), Priority::Immediate);
+        assert_eq!(at.current_priority(), Priority::Immediate);
+        assert!(!at.is_cancelled());
+
+        let never = || false;
+        let live = std::cell::Cell::new(Some(Priority::Visible));
+        let current = || live.get();
+        let ctx = JobContext::new(&never, Priority::Prefetch).with_current(&current);
+        assert_eq!(ctx.priority(), Priority::Prefetch);
+        assert_eq!(ctx.current_priority(), Priority::Visible);
+        // No live request: the pop-time priority.
+        live.set(None);
+        assert_eq!(ctx.current_priority(), Priority::Prefetch);
+        live.set(Some(Priority::Immediate));
+        assert_eq!(ctx.current_priority(), Priority::Immediate);
+        assert_eq!(ctx.priority(), Priority::Prefetch);
     }
 
     #[cfg(feature = "formats")]

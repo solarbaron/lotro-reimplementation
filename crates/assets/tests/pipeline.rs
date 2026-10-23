@@ -908,3 +908,121 @@ fn stress_tiny_queue_with_group_cancels() {
     assert_eq!(s.requests, 12_000);
     assert_eq!(s.completed + s.failed + s.cancelled, s.misses - s.rejected);
 }
+
+/// What [`PriorityDecoder`] saw: the DID, [`JobContext::priority`] and
+/// [`JobContext::current_priority`] at the start of the decode, and the current priority
+/// again at its end (after the gate on [`GATE`]).
+type Seen = (u32, Priority, Priority, Priority);
+
+/// Records the priorities a decode sees; blocks on [`GATE`] between its two readings.
+#[derive(Clone, Default)]
+struct PriorityDecoder {
+    seen: Arc<Mutex<Vec<Seen>>>,
+    started: Arc<AtomicUsize>,
+    gate: Arc<Gate>,
+}
+
+impl Decoder for PriorityDecoder {
+    type Output = Vec<u8>;
+    type Error = std::io::Error;
+    const NAME: &'static str = "test-priority";
+
+    fn decode(
+        &self,
+        key: AssetKey,
+        bytes: Vec<u8>,
+        ctx: &JobContext<'_>,
+    ) -> Result<Vec<u8>, std::io::Error> {
+        let at_pop = ctx.priority();
+        let first = ctx.current_priority();
+        self.started.fetch_add(1, Ordering::SeqCst);
+        if key.did == GATE {
+            self.gate.wait();
+        }
+        let last = ctx.current_priority();
+        self.seen
+            .lock()
+            .unwrap()
+            .push((key.did, at_pop, first, last));
+        Ok(bytes)
+    }
+
+    fn size_of(&self, value: &Vec<u8>) -> usize {
+        value.len()
+    }
+}
+
+/// A decode sees the priority its job left the queue with ([`JobContext::priority`],
+/// raises while queued included) and, through [`JobContext::current_priority`], raises
+/// and cancellations made while it runs.
+#[test]
+fn decoders_see_the_popped_and_the_current_priority() {
+    let pool = pool(1);
+    let dec = PriorityDecoder::default();
+    let store = AssetStore::new(&pool, source(1..=3, 1), dec.clone(), StoreConfig::default());
+    let gate = store.request(GATE, Priority::Prefetch);
+    wait_until(|| dec.started.load(Ordering::SeqCst) == 1);
+    // Queued behind the gate: 1 stays Prefetch, 2 is raised to Visible while it waits,
+    // 3 is joined by an Immediate request.
+    let a = store.request(1, Priority::Prefetch);
+    let b = store.request(2, Priority::Prefetch);
+    b.set_priority(Priority::Visible);
+    let c = store.request(3, Priority::Prefetch);
+    let c2 = store.request(3, Priority::Immediate);
+    // The running gate job is raised; a second request at Visible is then cancelled.
+    gate.set_priority(Priority::Immediate);
+    let extra = store.request(GATE, Priority::Visible);
+    extra.cancel();
+    dec.gate.open();
+    for h in [&gate, &a, &b, &c, &c2] {
+        assert!(matches!(h.wait(T), AssetState::Ready(_)));
+    }
+    let seen = dec.seen.lock().unwrap().clone();
+    assert_eq!(
+        seen,
+        vec![
+            (
+                GATE,
+                Priority::Prefetch,
+                Priority::Prefetch,
+                Priority::Immediate
+            ),
+            (
+                3,
+                Priority::Immediate,
+                Priority::Immediate,
+                Priority::Immediate
+            ),
+            (2, Priority::Visible, Priority::Visible, Priority::Visible),
+            (
+                1,
+                Priority::Prefetch,
+                Priority::Prefetch,
+                Priority::Prefetch
+            ),
+        ]
+    );
+}
+
+/// With every request of a running job cancelled, the current priority falls back to the
+/// popped one.
+#[test]
+fn current_priority_without_live_requests_is_the_popped_one() {
+    let pool = pool(1);
+    let dec = PriorityDecoder::default();
+    let store = AssetStore::new(&pool, source([], 1), dec.clone(), StoreConfig::default());
+    let gate = store.request(GATE, Priority::Visible);
+    wait_until(|| dec.started.load(Ordering::SeqCst) == 1);
+    gate.cancel();
+    dec.gate.open();
+    wait_until(|| !dec.seen.lock().unwrap().is_empty());
+    assert_eq!(
+        dec.seen.lock().unwrap()[0],
+        (
+            GATE,
+            Priority::Visible,
+            Priority::Visible,
+            Priority::Visible
+        )
+    );
+}

@@ -96,7 +96,7 @@ impl Job for TaskJob {
         &self.sched
     }
 
-    fn run(&self) {
+    fn run(&self, priority: Priority) {
         if self.token.is_cancelled() {
             self.discard(TaskStatus::Cancelled);
             return;
@@ -108,7 +108,7 @@ impl Job for TaskJob {
         *lock(&self.status) = TaskStatus::Running;
         let token = &self.token;
         let cancelled = || token.is_cancelled();
-        let ctx = JobContext::new(&cancelled);
+        let ctx = JobContext::new(&cancelled, priority);
         let result = catch_unwind(AssertUnwindSafe(move || work(&ctx)));
         match result {
             Ok(()) => self.finish_running(TaskStatus::Done),
@@ -230,7 +230,9 @@ impl WorkerPool {
     /// to several tasks to cancel them as a group).
     ///
     /// The closure runs at most once on a worker thread, with a [`JobContext`] that reports
-    /// the token's state. It is dropped without running if the task is cancelled first or
+    /// the token's state and the priority the task held when a worker took it
+    /// ([`JobContext::priority`]; a task has no requests, so
+    /// [`JobContext::current_priority`] is the same). It is dropped without running if the task is cancelled first or
     /// the pool shuts down, and also when this call fails (queue full or pool shut down):
     /// in every case it is dropped exactly once. A panic in the closure is caught and fails
     /// only this task.
@@ -473,8 +475,11 @@ mod tests {
         {
             let tx = tx.clone();
             hs.push(
-                p.spawn(pr, CancelToken::new(), move |_| tx.send(i).unwrap())
-                    .unwrap(),
+                p.spawn(pr, CancelToken::new(), move |job| {
+                    tx.send((i, job.priority(), job.current_priority()))
+                        .unwrap();
+                })
+                .unwrap(),
             );
         }
         // Raise the first one above the others.
@@ -483,8 +488,17 @@ mod tests {
         for h in &hs {
             assert!(h.wait(Duration::from_secs(10)).is_done());
         }
-        let order: Vec<usize> = rx.try_iter().collect();
+        let order: Vec<(usize, Priority, Priority)> = rx.try_iter().collect();
         // Task 2 was queued at Immediate before task 0 was raised: FIFO within a level.
-        assert_eq!(order, vec![2, 0, 1]);
+        // Each task sees the priority it held when the worker took it: task 0 the raised
+        // one.
+        assert_eq!(
+            order,
+            vec![
+                (2, Priority::Immediate, Priority::Immediate),
+                (0, Priority::Immediate, Priority::Immediate),
+                (1, Priority::Visible, Priority::Visible),
+            ]
+        );
     }
 }

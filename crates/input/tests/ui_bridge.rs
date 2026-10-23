@@ -1466,3 +1466,231 @@ fn button_offers_carry_value_one() {
         assert_eq!(edges(&m, ids.jump), (1, 1, false));
     }
 }
+
+// ----- keeping band push (ui-widgets.md §18.4, keymap.md §3.3) ---------------
+
+/// The client host's owner and priority of its modal `text_entry` entry.
+const MODAL_OWNER: u64 = u64::MAX;
+
+/// `band_push_keeping_holds`: game-band holds from before the push (an
+/// offered key hold and a modifier hold) stay held until their own release,
+/// while the entry's `opaque_keys` keeps every new key press, `toggle_mount`
+/// (Ctrl+M) included, from the game band.
+#[test]
+fn keeping_push_leaves_holds_from_before_and_blocks_new_keys() {
+    let (mut m, ids, ui) = defaults();
+    let (walk, mount) = (id(&m, "walk"), id(&m, "toggle_mount"));
+    let mut rec = Rec::default();
+    m.handle_with(&key(KeyCode::W, true), ms(0), &mut rec);
+    m.handle_with(&key(KeyCode::ShiftLeft, true), ms(0), &mut rec);
+    m.update(ms(0));
+    assert!(m.pressed(ids.move_forward) && m.pressed(walk));
+    m.band_push_keeping_holds(ui.text_entry, MODAL_OWNER, i32::MIN);
+    assert!(m.is_active(ui.text_entry));
+    m.offer_pending(&mut rec);
+    m.update(ms(1));
+    assert!(m.pressed(ids.move_forward), "W from before still moves");
+    assert!(m.pressed(walk), "Shift from before still walks");
+    assert_eq!(edges(&m, ids.move_forward), (0, 0, true), "no End");
+    assert!(
+        !rec.take(&m).iter().any(|e| e.starts_with("End")),
+        "no End offered at the push"
+    );
+    // A binding without a command name pressed now does not fire, while the
+    // holds from before are live.
+    m.handle_with(&key(KeyCode::ControlLeft, true), ms(2), &mut rec);
+    m.handle_with(&key(KeyCode::M, true), ms(3), &mut rec);
+    m.update(ms(3));
+    assert_eq!(edges(&m, mount), (0, 0, false), "Ctrl+M under the entry");
+    m.handle_with(&key(KeyCode::M, false), ms(4), &mut rec);
+    m.handle_with(&key(KeyCode::ControlLeft, false), ms(4), &mut rec);
+    m.update(ms(4));
+    assert_eq!(edges(&m, mount), (0, 0, false));
+    assert!(m.pressed(ids.move_forward) && m.pressed(walk));
+    // Each hold from before ends at its own release.
+    rec.take(&m);
+    m.handle_with(&key(KeyCode::W, false), ms(5), &mut rec);
+    m.update(ms(5));
+    assert_eq!(edges(&m, ids.move_forward), (0, 1, false), "W's release");
+    assert_eq!(rec.take(&m), ["End move_forward"]);
+    assert!(m.pressed(walk));
+    m.handle_with(&key(KeyCode::ShiftLeft, false), ms(6), &mut rec);
+    m.update(ms(6));
+    assert_eq!(edges(&m, walk), (0, 1, false), "Shift's release");
+    // Keys pressed now reach no game-band context, modifier holds included.
+    m.handle_with(&key(KeyCode::ShiftLeft, true), ms(7), &mut rec);
+    m.handle_with(&key(KeyCode::W, true), ms(7), &mut rec);
+    m.update(ms(7));
+    assert!(!m.pressed(walk), "Shift pressed under the entry");
+    assert!(!m.pressed(ids.move_forward), "W pressed under the entry");
+    m.handle_with(&key(KeyCode::W, false), ms(8), &mut rec);
+    m.handle_with(&key(KeyCode::ShiftLeft, false), ms(8), &mut rec);
+    m.band_pop(ui.text_entry, MODAL_OWNER);
+    assert!(!m.is_active(ui.text_entry));
+    m.handle_with(&key(KeyCode::ControlLeft, true), ms(9), &mut rec);
+    m.handle_with(&key(KeyCode::M, true), ms(10), &mut rec);
+    m.update(ms(10));
+    assert!(m.just_pressed(mount), "Ctrl+M works after the pop");
+}
+
+/// The same without a sink (`handle`): `toggle_mount` cannot fire under the
+/// kept entry while W from before is held, and W ends at its release.
+#[test]
+fn keeping_push_without_a_sink() {
+    let (mut m, ids, ui) = defaults();
+    let mount = id(&m, "toggle_mount");
+    m.handle(&key(KeyCode::W, true), ms(0));
+    m.band_push_keeping_holds(ui.text_entry, MODAL_OWNER, i32::MIN);
+    m.handle(&key(KeyCode::ControlLeft, true), ms(1));
+    m.handle(&key(KeyCode::M, true), ms(2));
+    m.update(ms(2));
+    assert!(m.pressed(ids.move_forward));
+    assert_eq!(edges(&m, mount), (0, 0, false));
+    m.handle(&key(KeyCode::W, false), ms(3));
+    m.update(ms(3));
+    assert_eq!(edges(&m, ids.move_forward), (0, 1, false));
+}
+
+/// A kept entry does not count as the band's first `opaque_keys` entry: a
+/// later ordinary push (a text field taking the focus) still ends the
+/// game-band key holds from before and the carried modifier holds (§3.3).
+#[test]
+fn an_ordinary_push_after_a_kept_entry_still_ends_holds() {
+    let (mut m, ids, ui) = defaults();
+    let walk = id(&m, "walk");
+    m.handle(&key(KeyCode::W, true), ms(0));
+    m.handle(&key(KeyCode::ShiftLeft, true), ms(0));
+    m.band_push_keeping_holds(ui.text_entry, MODAL_OWNER, i32::MIN);
+    m.update(ms(1));
+    assert!(m.pressed(ids.move_forward) && m.pressed(walk));
+    m.band_push(ui.text_entry, 7, 50);
+    m.update(ms(2));
+    assert!(!m.pressed(ids.move_forward), "the focus push ends W");
+    assert!(!m.pressed(walk), "and the modifier hold");
+    m.band_pop(ui.text_entry, 7);
+    m.update(ms(3));
+    assert!(!m.pressed(walk), "the kept entry does not bring it back");
+    // An identical push of the kept triple changes nothing.
+    m.band_push(ui.text_entry, MODAL_OWNER, i32::MIN);
+    assert_eq!(m.band().len(), 1);
+}
+
+/// A keeping push drops a game-band pending sequence (§3.2), so a key typed
+/// under the entry cannot complete it.
+#[test]
+fn keeping_push_drops_a_game_band_sequence() {
+    let doc = "[bindings.movement]\njump = [\"G G\"]\n";
+    let (mut m, ids, ui) = with_extra(&[], &[], doc);
+    m.handle(&key(KeyCode::G, true), ms(0));
+    m.handle(&key(KeyCode::G, false), ms(1));
+    assert!(m.sequence_pending());
+    m.band_push_keeping_holds(ui.text_entry, MODAL_OWNER, i32::MIN);
+    assert!(!m.sequence_pending());
+    m.handle(&key(KeyCode::G, true), ms(2));
+    m.update(ms(2));
+    assert_eq!(edges(&m, ids.jump), (0, 0, false));
+}
+
+/// `ui-widgets.md` §18.4 pairing rule: the release of a key pressed before
+/// a keeping push goes past its band end, so a game-band `release` binding
+/// without a command name fires at it; a key pressed under the kept entry
+/// stops there, and an ordinary `opaque_keys` entry stops both (§3.3).
+#[test]
+fn keeping_push_lets_the_release_of_a_key_from_before_through() {
+    let extra = [ActionDef::button("test.rel")];
+    let doc = "[bindings.movement]\n\"test.rel\" = [{ input = \"Insert\", on = \"release\" }]\n";
+    let (mut m, _, ui) = with_extra(&extra, &[], doc);
+    let rel = id(&m, "test.rel");
+    let mut rec = Rec::default();
+    // Pressed before the push, released under it: fires.
+    m.handle_with(&key(KeyCode::Insert, true), ms(0), &mut rec);
+    m.band_push_keeping_holds(ui.text_entry, MODAL_OWNER, i32::MIN);
+    m.handle_with(&key(KeyCode::Insert, false), ms(500), &mut rec);
+    m.update(ms(500));
+    assert_eq!(m.state(rel).presses, 1, "the release from before fires");
+    // Pressed under the kept entry: stops at the band end.
+    m.handle_with(&key(KeyCode::Insert, true), ms(600), &mut rec);
+    m.handle_with(&key(KeyCode::Insert, false), ms(1100), &mut rec);
+    m.update(ms(1100));
+    assert_eq!(m.state(rel).presses, 0, "pressed under the entry");
+    // Pressed under the kept entry, released after the pop: fires as usual.
+    m.handle_with(&key(KeyCode::Insert, true), ms(1200), &mut rec);
+    m.band_pop(ui.text_entry, MODAL_OWNER);
+    m.handle_with(&key(KeyCode::Insert, false), ms(1700), &mut rec);
+    m.update(ms(1700));
+    assert_eq!(m.state(rel).presses, 1, "no band end at the release");
+    // Pressed before both, released under an ordinary entry: §3.3 stops it.
+    m.handle_with(&key(KeyCode::Insert, true), ms(1800), &mut rec);
+    m.band_push_keeping_holds(ui.text_entry, MODAL_OWNER, i32::MIN);
+    m.band_push(ui.text_entry, 7, 50);
+    m.handle_with(&key(KeyCode::Insert, false), ms(2300), &mut rec);
+    m.update(ms(2300));
+    assert_eq!(m.state(rel).presses, 0, "an ordinary entry stops it");
+    // Pressed before a new kept push, released under it: fires.
+    m.band_pop(ui.text_entry, 7);
+    m.band_pop(ui.text_entry, MODAL_OWNER);
+    m.handle_with(&key(KeyCode::Insert, true), ms(2400), &mut rec);
+    m.band_push_keeping_holds(ui.text_entry, MODAL_OWNER, i32::MIN);
+    m.handle(&key(KeyCode::Insert, false), ms(2900));
+    m.update(ms(2900));
+    assert_eq!(m.state(rel).presses, 1, "without a sink too");
+}
+
+/// A game-band modifier hold live only through the window system's report
+/// (focus regained with Shift down: no key press) stays held across a
+/// keeping push until the report drops Shift; a later report of Shift
+/// holds nothing.
+#[test]
+fn keeping_push_carries_reported_modifiers() {
+    let (mut m, _, ui) = defaults();
+    let walk = id(&m, "walk");
+    m.handle(&RawEvent::Modifiers(tessera_input::Modifiers::SHIFT), ms(0));
+    m.update(ms(0));
+    assert!(m.pressed(walk), "walking through the report");
+    m.band_push_keeping_holds(ui.text_entry, MODAL_OWNER, i32::MIN);
+    for t in 1..4 {
+        m.update(ms(t));
+        assert!(m.pressed(walk), "still walking after the push");
+    }
+    m.handle(
+        &RawEvent::Modifiers(tessera_input::Modifiers::empty()),
+        ms(5),
+    );
+    m.update(ms(5));
+    assert!(!m.pressed(walk), "the report's release ends it");
+    m.handle(&RawEvent::Modifiers(tessera_input::Modifiers::SHIFT), ms(6));
+    m.update(ms(6));
+    assert!(!m.pressed(walk), "Shift reported under the entry");
+    m.band_pop(ui.text_entry, MODAL_OWNER);
+    m.update(ms(7));
+    assert!(m.pressed(walk), "after the pop the report counts again");
+}
+
+/// keymap.md §7.4: a kept-only `opaque` UI-band context stops the
+/// modifier-hold evaluation of the UI-band contexts after it; the game band
+/// is still evaluated with the carried modifiers (synthetic contexts).
+#[test]
+fn a_kept_opaque_context_stops_the_ui_modifier_holds_after_it() {
+    let extra = [ActionDef::button("test.ui_shift")];
+    let ctxs = [
+        ContextDef::new("test.opaque", 0).ui().opaque(),
+        ContextDef::new("test.below", 0).ui(),
+    ];
+    let doc = "[bindings.\"test.below\"]\n\"test.ui_shift\" = [\"Shift\"]\n";
+    let (mut m, _, _) = with_extra(&extra, &ctxs, doc);
+    let (o, y) = (ctx(&m, "test.opaque"), ctx(&m, "test.below"));
+    let (walk, ui_shift) = (id(&m, "walk"), id(&m, "test.ui_shift"));
+    m.band_push(y, 1, 0);
+    m.handle(&key(KeyCode::ShiftLeft, true), ms(0));
+    m.update(ms(0));
+    assert!(m.pressed(ui_shift) && m.pressed(walk));
+    m.band_push_keeping_holds(o, 2, 10);
+    for t in 1..4 {
+        m.update(ms(t));
+        assert!(!m.pressed(ui_shift), "no hold below the opaque context");
+        assert!(m.pressed(walk), "the game band keeps the carried Shift");
+    }
+    m.band_pop(o, 2);
+    m.update(ms(5));
+    assert!(m.pressed(ui_shift), "after the pop Shift holds it again");
+}

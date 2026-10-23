@@ -316,6 +316,53 @@ fn i10_records_alone_give_the_ui_defaults() {
     eprintln!("I10: {differences} differences");
 }
 
+/// I11 (`keymap.md` §8.3, K50): importing the records alone gives the panel and use actions
+/// the original's keys, and Tessera's defaults equal them except for the six bag toggles
+/// (§8.3 Decision 1: unbound in Tessera, Ctrl + F1 … F6 in the original).
+#[test]
+fn i11_records_give_the_panel_and_use_keys() {
+    let Some(data) = install() else { return };
+    let (doc, report) = import_key_map(None, &data, &ImportOptions::default());
+    assert!(report.rejected.is_none(), "{report:?}");
+    let defaults = default_keymap();
+    let mut rows: Vec<(String, Vec<String>)> = [
+        ("toggle_character", "C"),
+        ("toggle_bags", "I"),
+        ("pin_tooltip", "H"),
+        ("toggle_wallet", "B"),
+        ("toggle_quest_log", "L"),
+        ("use_selection", "U"),
+        ("toggle_traits", "J"),
+        ("toggle_skills", "K"),
+        ("toggle_crafting", "T"),
+    ]
+    .into_iter()
+    .map(|(a, k)| (a.to_owned(), vec![k.to_owned()]))
+    .collect();
+    for n in 1..=3 {
+        rows.push((format!("toggle_crafting_{n}"), Vec::new()));
+    }
+    for (action, want) in &rows {
+        let got = texts(doc.get(contexts::GLOBAL, action));
+        assert_eq!(&got, want, "imported {action}");
+        assert_eq!(
+            &texts(defaults.get(contexts::GLOBAL, action)),
+            want,
+            "default {action}"
+        );
+    }
+    for n in 1..=6 {
+        let action = format!("toggle_bag_{n}");
+        let got = texts(doc.get(contexts::GLOBAL, &action));
+        assert_eq!(got, [format!("Ctrl+F{n}")], "imported {action}");
+        assert!(
+            texts(defaults.get(contexts::GLOBAL, &action)).is_empty(),
+            "default {action}"
+        );
+    }
+    eprintln!("I11: {} panel and use actions as K50", rows.len() + 6);
+}
+
 fn texts_all(k: &Keymap) -> Vec<(String, String, Vec<String>)> {
     k.iter()
         .map(|(c, a, l)| (c.to_owned(), a.to_owned(), texts(Some(l))))

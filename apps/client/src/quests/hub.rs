@@ -11,15 +11,16 @@
 //! [`crate::ui_host::UiHost::take_game_events`]) and the walker's radar input; then [`QuestHub::update_indicators`] with the walker's entity positions; in the
 //! draw, [`QuestHub::draw_indicators`] after the walker's scene and before the game UI.
 //!
-//! `ToggleQuestPanel` (`npc-windows.md` NW10: key L, no modifier, `Main`) is
-//! [`QuestHub::log_key`]: the hub follows the modifier keys and toggles on L alone.
-//! `tessera-input`'s action registry has no `ToggleQuestPanel` action yet, so a keymap
-//! binding of it is not read (the default binding only).
+//! `ToggleQuestPanel` (`npc-windows.md` NW10: key L, no modifier, `Main`) is the keymap
+//! action `toggle_quest_log` (`keymap.md` §8.3, default L, exact policy): the UI host offers
+//! its command to the UI, and a declined one reaches [`QuestHub::frame`] through the
+//! character panels' route ([`crate::character::routed`]), so a rebound key moves with the
+//! action and an L typed into a text field opens nothing.
 
 use std::sync::Arc;
 use std::time::Instant;
 
-use tessera_input::{KeyCode, RawEvent};
+use tessera_input::RawEvent;
 use tessera_net::{ChatChannel, Command, EntityId};
 use tessera_render::glam::{Mat4, Vec3};
 use tessera_render::{Frame, PassSpace, Renderer};
@@ -31,6 +32,7 @@ use super::indicators::{Indicator, IndicatorOverlay, anchored};
 use super::present::{JournalView, RING_PROPERTY};
 use super::refs::QuestRefs;
 use super::ui::{QUEST_CHAT_TYPE, QuestUi};
+use crate::character::routed::RoutedCommand;
 use crate::npc::NpcHub;
 use crate::ui_host::UiHost;
 
@@ -54,66 +56,6 @@ pub fn parse_journal_panel(name: &str) -> Option<JournalPanel> {
     }
 }
 
-/// The input key of `ToggleQuestPanel` (L by default, `npc-windows.md` NW10).
-pub const LOG_KEY: tessera_input::KeyCode = tessera_input::KeyCode::L;
-
-/// Whether `ev` is a press of [`LOG_KEY`] (modifiers not considered; [`LogKey`] does).
-#[must_use]
-pub fn is_log_key(ev: &RawEvent) -> bool {
-    matches!(
-        ev,
-        RawEvent::Key {
-            key: LOG_KEY,
-            pressed: true,
-            repeat: false,
-        }
-    )
-}
-
-/// The modifier keys, each tracked on its own (left and right).
-const MODIFIER_KEYS: [KeyCode; 8] = [
-    KeyCode::ShiftLeft,
-    KeyCode::ShiftRight,
-    KeyCode::ControlLeft,
-    KeyCode::ControlRight,
-    KeyCode::AltLeft,
-    KeyCode::AltRight,
-    KeyCode::SuperLeft,
-    KeyCode::SuperRight,
-];
-
-/// `ToggleQuestPanel`'s default binding (NW10: [`LOG_KEY`] with no modifier): follows the
-/// modifier keys and reports a press of L while none is held.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct LogKey {
-    held: [bool; 8],
-}
-
-impl LogKey {
-    /// Takes one raw event; `true` when it triggers `ToggleQuestPanel`.
-    pub fn event(&mut self, ev: &RawEvent) -> bool {
-        let RawEvent::Key {
-            key,
-            pressed,
-            repeat,
-        } = ev
-        else {
-            return false;
-        };
-        if let Some(i) = MODIFIER_KEYS.iter().position(|k| k == key) {
-            self.held[i] = *pressed;
-            return false;
-        }
-        *key == LOG_KEY && *pressed && !*repeat && !self.held.iter().any(|h| *h)
-    }
-
-    /// Forgets the held modifiers (the window lost the focus: their releases may not
-    /// arrive).
-    pub fn release_all(&mut self) {
-        self.held = [false; 8];
-    }
-}
-
 /// Scale of the indicator glyphs (the walker HUD's bitmap font, Tessera choice).
 pub const INDICATOR_SCALE: u32 = 2;
 
@@ -123,8 +65,9 @@ pub struct QuestHub {
     refs: Option<Arc<QuestRefs>>,
     ui: Option<QuestUi>,
     pending: Vec<JournalPanel>,
+    /// The log toggles once in the next frame: an odd number of toggle requests since the
+    /// last frame (`character::routed`, repeated presses).
     toggle: bool,
-    log_key: LogKey,
     /// The overhead quest icons switch given for the run (`--quest-icons`, §8.2); `None`:
     /// Tessera's saved setting (default on).
     icons: Option<bool>,
@@ -147,7 +90,6 @@ impl Default for QuestHub {
             ui: None,
             pending: Vec::new(),
             toggle: false,
-            log_key: LogKey::default(),
             icons: None,
             prefs_applied: false,
             rings: Vec::new(),
@@ -189,15 +131,26 @@ impl QuestHub {
             .unwrap_or(true)
     }
 
-    /// Takes one raw event for `ToggleQuestPanel` ([`LogKey`]); `true` when it triggers
-    /// (the caller requests the toggle unless a text field has the keyboard).
-    pub fn log_key(&mut self, ev: &RawEvent) -> bool {
-        self.log_key.event(ev)
+    /// Retired raw-key test of `ToggleQuestPanel`: always `false`. The toggle is the keymap
+    /// action `toggle_quest_log` (module docs); kept only until the windowed client's
+    /// raw-key call goes.
+    pub fn log_key(&mut self, _ev: &RawEvent) -> bool {
+        false
     }
 
-    /// The window lost the focus: held modifiers are forgotten.
-    pub fn release_keys(&mut self) {
-        self.log_key.release_all();
+    /// The window lost the focus. Nothing to forget: the keymap's mapper tracks the
+    /// modifiers of `toggle_quest_log` (kept for the windowed client's call).
+    pub fn release_keys(&mut self) {}
+
+    /// Applies routed input commands ([`crate::character::routed`]): every `QuestLog`
+    /// requests one toggle of the log ([`Self::request_toggle`]); other kinds are not this
+    /// hub's.
+    pub fn apply_routed(&mut self, routed: &[RoutedCommand]) {
+        for r in routed {
+            if *r == RoutedCommand::QuestLog {
+                self.request_toggle();
+            }
+        }
     }
 
     /// The commands the last frame handed to the world session.
@@ -218,9 +171,17 @@ impl QuestHub {
         self.ui.as_ref()
     }
 
-    /// `ToggleQuestPanel` was triggered; the log opens or closes in the next frame.
+    /// `ToggleQuestPanel` was triggered; the log opens or closes in the next frame. Each
+    /// call is one toggle: two calls before one frame leave the log as it was
+    /// (`character::routed`, repeated presses).
     pub fn request_toggle(&mut self) {
-        self.toggle = true;
+        self.toggle = !self.toggle;
+    }
+
+    /// Whether the next frame toggles the log (tests and tools).
+    #[must_use]
+    pub fn toggle_pending(&self) -> bool {
+        self.toggle
     }
 
     /// Builds the names once the NPC windows' names are loaded (and, with an install,
@@ -262,6 +223,13 @@ impl QuestHub {
         radar: Option<&RadarInput>,
         now: Instant,
     ) {
+        // `ToggleQuestPanel` declined by the UI (`keymap.md` §8.3, routed by the character
+        // panels): taken every frame; dropped before the windows' names are known and out
+        // of the world.
+        let routed = host
+            .character_mut()
+            .map(|c| c.take_routed(&[RoutedCommand::QuestLog]))
+            .unwrap_or_default();
         let Some(refs) = self.ensure_refs(npc) else {
             return;
         };
@@ -269,6 +237,7 @@ impl QuestHub {
         if world.player().is_none() {
             return;
         }
+        self.apply_routed(&routed);
         let data = npc.data().cloned();
         // Only the ring property of other entities is kept once it is known (session.rs).
         if let Some(pid) = data
@@ -404,40 +373,22 @@ mod tests {
             Some(JournalPanel::Tracker)
         );
         assert_eq!(parse_journal_panel("quest"), None);
-        assert!(is_log_key(&tessera_input::RawEvent::Key {
-            key: LOG_KEY,
-            pressed: true,
-            repeat: false
-        }));
     }
 
-    fn key(key: KeyCode, pressed: bool) -> RawEvent {
-        RawEvent::Key {
-            key,
-            pressed,
-            repeat: false,
-        }
-    }
-
+    /// `toggle_quest_log` reaches the hub as a routed `QuestLog` (`keymap.md` §8.3); other
+    /// routed kinds and raw L presses toggle nothing.
     #[test]
-    fn the_log_key_needs_no_modifier() {
-        let mut k = LogKey::default();
-        assert!(k.event(&key(KeyCode::L, true)));
-        assert!(!k.event(&key(KeyCode::L, false)));
-        assert!(!k.event(&RawEvent::Key {
-            key: KeyCode::L,
+    fn the_log_toggles_from_the_routed_command_only() {
+        let mut h = QuestHub::default();
+        h.apply_routed(&[RoutedCommand::Use, RoutedCommand::Traits]);
+        assert!(!h.toggle);
+        assert!(!h.log_key(&RawEvent::Key {
+            key: tessera_input::KeyCode::L,
             pressed: true,
-            repeat: true
+            repeat: false,
         }));
-        // Ctrl+L and Alt+L do not toggle (NW10: no modifier).
-        assert!(!k.event(&key(KeyCode::ControlLeft, true)));
-        assert!(!k.event(&key(KeyCode::L, true)));
-        assert!(!k.event(&key(KeyCode::ControlLeft, false)));
-        assert!(!k.event(&key(KeyCode::AltRight, true)));
-        assert!(!k.event(&key(KeyCode::L, true)));
-        // A lost focus forgets the held modifier.
-        k.release_all();
-        assert!(k.event(&key(KeyCode::L, true)));
-        assert!(!k.event(&key(KeyCode::M, true)));
+        assert!(!h.toggle);
+        h.apply_routed(&[RoutedCommand::QuestLog]);
+        assert!(h.toggle);
     }
 }

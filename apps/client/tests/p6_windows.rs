@@ -5,7 +5,8 @@
 //! (§8.3 Tessera rule), its train button's `TrainCraft`, the skill-training window opened by
 //! `TrainerShown` (`progression-panels.md` §4.1), the `--open-panel` names (§3 Tessera rule),
 //! the experience bar on a synthetic toolbar meter beside the fallback bar asked for by name
-//! (§2.1, §6) and a session reset closing every window. Every value is invented; the windows are
+//! (§2.1, §6), the trait and skill toggles (`keymap.md` §8.3) and a session reset closing every
+//! window. Every value is invented; the windows are
 //! Tessera's fallbacks.
 
 use std::sync::Arc;
@@ -262,6 +263,123 @@ fn open_panel_names_open_their_windows_empty() {
     let e = button(&r.ui, cancel);
     assert!(r.frame_with(None, &[e]).is_empty());
     assert!(r.p6.craft_trainer().is_none(), "cancel closes it");
+}
+
+/// `toggle_traits` (J) and `toggle_skills` (K) of `keymap.md` §8.3 (`progression-panels.md`
+/// §1.4): each opens its window and closes it again; closing a feed trainer's window sends its
+/// `CloseWindow`, as its close button does.
+#[test]
+fn the_trait_and_skill_toggles_open_and_close_their_windows() {
+    let mut r = Rig::new();
+    assert!(r.p6.traits().is_none());
+    r.p6.toggle_traits(&mut r.ui);
+    r.frame_with(None, &[]);
+    let traits = r.p6.traits().expect("J opens the trait panel");
+    assert!(r.ui.is_visible(traits));
+    r.p6.toggle_traits(&mut r.ui);
+    assert!(!r.ui.is_visible(traits), "J again hides it");
+    r.p6.toggle_traits(&mut r.ui);
+    assert!(r.ui.is_visible(traits), "and shows it again");
+
+    assert!(r.p6.toggle_training(&mut r.ui).is_none());
+    r.frame_with(None, &[]);
+    assert!(
+        r.p6.training().is_some(),
+        "K opens the skill-training window"
+    );
+    assert!(
+        r.p6.toggle_training(&mut r.ui).is_none(),
+        "a window opened by the key has no feed window to close"
+    );
+    assert!(r.p6.training().is_none(), "K again closes it");
+
+    r.feed(Event::Progression(ProgressionEvent::TrainerShown {
+        window: WindowId(9),
+        trainer: Some(EntityId(7)),
+        entries: Vec::new(),
+        offers: TrainerOffer::Skills,
+    }));
+    assert!(r.p6.training().is_some(), "the feed opened the window");
+    let close = r.p6.toggle_training(&mut r.ui);
+    assert!(
+        matches!(
+            close,
+            Some(Command::Npc(tessera_net::domain::NpcCommand::CloseWindow {
+                window: WindowId(9)
+            }))
+        ),
+        "{close:?}"
+    );
+    assert!(r.p6.training().is_none());
+    r.frame_with(None, &[]);
+    assert!(
+        r.p6.training().is_none(),
+        "the same feed window does not open again by itself"
+    );
+}
+
+/// `J` (`toggle_traits`) hides and shows the trait panel without building its view again:
+/// the view (which reads the tree's records on the frame thread) is built when the panel is
+/// made and after a `P6Change::Traits`, and a change that arrives while the panel is hidden
+/// is kept for when it shows again.
+#[test]
+fn showing_the_trait_panel_again_reuses_its_view_until_a_change() {
+    let mut r = Rig::new();
+    r.p6.toggle_traits(&mut r.ui);
+    r.frame_with(None, &[]);
+    assert_eq!(r.p6.trait_fills(), Some(1), "built when it first shows");
+    r.frame_with(None, &[]);
+    assert_eq!(r.p6.trait_fills(), Some(1), "not rebuilt every frame");
+    for _ in 0..3 {
+        r.p6.toggle_traits(&mut r.ui);
+        r.frame_with(None, &[]);
+        r.p6.toggle_traits(&mut r.ui);
+        r.frame_with(None, &[]);
+    }
+    let traits = r.p6.traits().expect("panel");
+    assert!(r.ui.is_visible(traits));
+    assert_eq!(
+        r.p6.trait_fills(),
+        Some(1),
+        "J off and on reads nothing again"
+    );
+    // A change while hidden: kept, built once the panel shows.
+    r.p6.toggle_traits(&mut r.ui);
+    r.feed(Event::Progression(ProgressionEvent::TraitPoints {
+        available: 3,
+        total: 5,
+        tree: None,
+    }));
+    assert!(!r.ui.is_visible(traits));
+    assert_eq!(r.p6.trait_fills(), Some(1), "not built while hidden");
+    r.p6.toggle_traits(&mut r.ui);
+    r.frame_with(None, &[]);
+    assert_eq!(r.p6.trait_fills(), Some(2), "the hidden change is shown");
+    r.frame_with(None, &[]);
+    assert_eq!(r.p6.trait_fills(), Some(2));
+    // A change while shown: built in that frame.
+    r.feed(Event::Progression(ProgressionEvent::TraitPoints {
+        available: 2,
+        total: 5,
+        tree: None,
+    }));
+    assert_eq!(r.p6.trait_fills(), Some(3));
+}
+
+/// The routed trait and skill commands wait in the hub for its next frame, bounded; other
+/// routed kinds are not the P6 hub's.
+#[test]
+fn the_p6_hub_keeps_routed_trait_and_skill_toggles() {
+    use tessera_client::character::routed::RoutedCommand as R;
+    let mut hub = tessera_client::progression::hub::P6Hub::new(Vec::new());
+    hub.apply_routed(&[R::Use, R::Traits, R::QuestLog, R::Skills, R::Wallet]);
+    assert_eq!(hub.pending_panel_toggles(), [R::Traits, R::Skills]);
+    hub.apply_routed(&[R::Traits; 40]);
+    assert_eq!(
+        hub.pending_panel_toggles().len(),
+        tessera_client::character::routed::MAX_ROUTED,
+        "bounded"
+    );
 }
 
 const TOOLBAR_LAYOUT: tessera_formats::Did = tessera_formats::Did(0x22FF_6100);

@@ -2,14 +2,17 @@
 //! The character panel and the bag windows in the client's game UI on the user's install
 //! (read-only; decision 0024 P1, `character-panels.md` §2–§6, `item-tooltips.md` §8–§10):
 //!
-//! - the keys of Tessera's default key map reach the panels through the input mapper and
-//!   the UI host (`C` → `ToggleJournalPanel`, `I` → `QUICKSLOT_BACKPACK1`);
+//! - the keys of Tessera's default key map (`keymap.md` §8.3) reach the panels through the
+//!   input mapper and the UI host (`C` → `ToggleJournalPanel`, `I` → `QUICKSLOT_BACKPACK`,
+//!   `H` → `TOOLTIP_DETACH`), and `B`, `U`, `L`, `J` and `K` are queued for the hubs of the
+//!   wallet, the use, the quest log, the trait panel and the skill-training window
+//!   (`character::routed`);
 //! - `Journal_Window` opens with its 23 paperdoll slots, bag 1 with its 15 slots
 //!   (§4.3 rule 2), and the slots show the player state's items;
 //! - bag 1 lays out the columns of the user's `UI.Bag1Columns` setting (§4.1);
 //! - hovering an item slot shows its examination tooltip with the comparison of §8 (a
 //!   chest piece in the backpack against the equipped one; none with the comparison
-//!   setting off, `item-tooltips.md` §8.3), `TOOLTIP_DETACH` pins it;
+//!   setting off, `item-tooltips.md` §8.3), `H` (`TOOLTIP_DETACH`) pins it;
 //! - dragging a backpack item onto the paperdoll's chest slot sends `EquipItem` with key 3.
 //!
 //! With a GPU adapter the panels are also drawn offscreen; with `TESSERA_SHEET_DIR` set the
@@ -159,11 +162,43 @@ fn character_panel_and_bags_on_the_install() {
         .expect("character panels")
         .apply_settings(&prefs);
 
-    // `C` and `I` through the mapper and the UI host.
+    // `C` and `I` (every offered bag, `keymap.md` §8.3) through the mapper and the UI host.
     rig.key(KeyCode::C);
     frame(&mut rig, &mut p, &data);
     rig.key(KeyCode::I);
     frame(&mut rig, &mut p, &data);
+    // `I` opened every offered bag; the others than bag 1 are closed again (by command:
+    // `toggle_bag_2` … `6` have no default key), so that they cover no slot used below.
+    let open: Vec<usize> = (2..=6)
+        .filter(|n| rig.host.character().is_some_and(|c| c.bag(*n).is_some()))
+        .collect();
+    assert!(
+        !open.is_empty(),
+        "I opens more than bag 1 (30 backpack slots)"
+    );
+    for n in open {
+        let name = format!("QUICKSLOT_BACKPACK{n}");
+        assert!(rig.host.character_command(&name, &p.state, Some(&data)));
+    }
+    frame(&mut rig, &mut p, &data);
+    // `B`, `U`, `L`, `J`, `K`: the declined commands are queued for the other hubs.
+    {
+        use tessera_client::character::routed::RoutedCommand as R;
+        for key in [KeyCode::B, KeyCode::U, KeyCode::L, KeyCode::J, KeyCode::K] {
+            rig.key(key);
+            frame(&mut rig, &mut p, &data);
+        }
+        let routed = rig
+            .host
+            .character_mut()
+            .expect("character panels")
+            .take_routed(&R::ALL);
+        assert_eq!(
+            routed,
+            [R::Wallet, R::Use, R::QuestLog, R::Traits, R::Skills],
+            "the §8.3 keys reach their hubs' queue"
+        );
+    }
     let c = rig.host.character().expect("character panels");
     let journal = c.journal().expect("the character panel opened");
     assert!(rig.host.ui().is_visible(journal));
@@ -252,11 +287,9 @@ fn character_panel_and_bags_on_the_install() {
     .expect("tooltip");
     assert!(without.comparisons.is_empty());
     assert!(rig.host.character().expect("panels").compare_equipped());
-    // Pin it (`TOOLTIP_DETACH`, §10).
-    assert!(
-        rig.host
-            .character_command("TOOLTIP_DETACH", &p.state, Some(&data))
-    );
+    // Pin it: `H` is `pin_tooltip` (`TOOLTIP_DETACH`, §10; `keymap.md` §8.3).
+    rig.key(KeyCode::H);
+    frame(&mut rig, &mut p, &data);
     let pinned = rig.host.character().expect("panels").pinned().count();
     assert_eq!(pinned, 1, "the hovered tooltip is pinned");
 

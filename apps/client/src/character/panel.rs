@@ -14,7 +14,11 @@
 //!
 //! - `ToggleJournalPanel` toggles `Journal_Window` (§2 OPEN); `QUICKSLOT_BACKPACKn` toggles
 //!   bag *n*, `QUICKSLOT_BACKPACK` opens every offered bag when one is closed, else closes
-//!   them all (§4.1 OPEN); a bag that is not offered (§4.3 rule 4) does not open.
+//!   them all (§4.1 OPEN); a bag that is not offered (§4.3 rule 4) does not open. Their
+//!   default keys are `keymap.md` §8.3's: C, I (every bag), bags 1–6 unbound, H (pin).
+//! - The other §8.3 commands the UI declined (`USE`, `TogglePaperItemPanel`,
+//!   `ToggleQuestPanel`, `ToggleTraitPanel`, `ToggleSkillPanel`) take the same route and are
+//!   queued for the windows' hubs ([`super::routed`], [`CharacterUi::take_routed`]).
 //! - Only the player variant of the paperdoll is shown; the store button is hidden (§3.1,
 //!   §3.2).
 //! - Header: `PlayerName` shows the entered character's name, `PlayerLevel` its level and
@@ -228,6 +232,8 @@ pub struct CharacterUi {
     /// Per open bag: the window's width and the list's horizontal margin in it when the
     /// list was attached or last re-columned (a resize changes the window's width).
     bag_widths: [Option<(i32, i32)>; BAG_WINDOWS],
+    /// The routed §8.3 commands for the other windows' hubs ([`super::routed`]).
+    routed: super::routed::RoutedCommands,
 }
 
 /// First external-content id of the character panel's viewports (the client's id space).
@@ -391,6 +397,7 @@ impl CharacterUi {
             column_prefs: super::settings::P1Settings::default(),
             column_changes: Vec::new(),
             bag_widths: [None; BAG_WINDOWS],
+            routed: super::routed::RoutedCommands::default(),
         }
     }
 
@@ -516,10 +523,33 @@ impl CharacterUi {
         std::mem::take(&mut self.notices)
     }
 
+    /// Takes the routed commands of the kinds in `which` (press order), for the hub whose
+    /// windows they open ([`super::routed`]).
+    pub fn take_routed(
+        &mut self,
+        which: &[super::routed::RoutedCommand],
+    ) -> Vec<super::routed::RoutedCommand> {
+        self.routed.take(which)
+    }
+
+    /// Queues a routed command as a declined input command would (headless drivers and
+    /// tests); `false` when the queue is full.
+    pub fn route(&mut self, c: super::routed::RoutedCommand) -> bool {
+        self.routed.push(c)
+    }
+
+    /// The routed commands no hub has taken yet, in press order (tests and tools).
+    #[must_use]
+    pub fn routed_queued(&self) -> &[super::routed::RoutedCommand] {
+        self.routed.queued()
+    }
+
     // ----- opening and closing -----------------------------------------------------------
 
     /// Handles a panel input command by name (`ToggleJournalPanel`, `QUICKSLOT_BACKPACK`,
-    /// `QUICKSLOT_BACKPACK1` … `6`, `TOOLTIP_DETACH`); returns `false` for other names.
+    /// `QUICKSLOT_BACKPACK1` … `6`, `TOOLTIP_DETACH`), or queues a routed one for its
+    /// window's hub (`USE`, `TogglePaperItemPanel`, `ToggleQuestPanel`, `ToggleTraitPanel`,
+    /// `ToggleSkillPanel`; [`super::routed`]); returns `false` for other names.
     pub fn command(
         &mut self,
         ui: &mut Ui,
@@ -527,6 +557,10 @@ impl CharacterUi {
         state: &PlayerState,
         data: Option<&CharacterData>,
     ) -> bool {
+        if let Some(r) = super::routed::RoutedCommand::of_command(name) {
+            self.routed.push(r);
+            return true;
+        }
         if name.eq_ignore_ascii_case(labels::TOGGLE_JOURNAL) {
             self.toggle_journal(ui, state, data);
             return true;
@@ -1177,7 +1211,8 @@ impl CharacterUi {
 /// Whether `name` is one of the panel input commands [`CharacterUi::command`] runs.
 #[must_use]
 pub fn is_panel_command(name: &str) -> bool {
-    name.eq_ignore_ascii_case(labels::TOGGLE_JOURNAL)
+    super::routed::RoutedCommand::of_command(name).is_some()
+        || name.eq_ignore_ascii_case(labels::TOGGLE_JOURNAL)
         || name.eq_ignore_ascii_case(labels::PIN_TOOLTIP)
         || name.eq_ignore_ascii_case(labels::TOGGLE_BAGS)
         || name
@@ -1215,6 +1250,60 @@ pub fn shown_container(place: ItemPlace) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::character::routed::RoutedCommand;
+
+    /// The `keymap.md` §8.3 commands that open other windows take the panel route and are
+    /// queued for their hubs, case ignored; the P1 commands are not queued.
+    #[test]
+    fn routed_commands_are_queued_for_their_hubs() {
+        for name in [
+            "USE",
+            "TogglePaperItemPanel",
+            "ToggleQuestPanel",
+            "ToggleTraitPanel",
+            "ToggleSkillPanel",
+            "togglequestpanel",
+            "ToggleJournalPanel",
+            "QUICKSLOT_BACKPACK",
+            "QUICKSLOT_BACKPACK6",
+            "TOOLTIP_DETACH",
+        ] {
+            assert!(is_panel_command(name), "{name}");
+        }
+        for name in ["QUICKSLOT_BACKPACK7", "ToggleSocialPanel", "SelectLeft", ""] {
+            assert!(!is_panel_command(name), "{name}");
+        }
+        let mut ui = Ui::new(
+            Box::new(tessera_ui::NullEnv),
+            tessera_ui::Vocab::default(),
+            (1024, 768),
+        );
+        let state = PlayerState::new(crate::character::state::NO_INSTALL_BAGS);
+        let mut c = CharacterUi::new(CharVocab::default(), PanelIds::default());
+        for name in [
+            "USE",
+            "TogglePaperItemPanel",
+            "ToggleQuestPanel",
+            "ToggleSkillPanel",
+        ] {
+            assert!(c.command(&mut ui, name, &state, None), "{name}");
+        }
+        assert!(!c.command(&mut ui, "ToggleSocialPanel", &state, None));
+        assert_eq!(
+            c.take_routed(&[RoutedCommand::QuestLog]),
+            [RoutedCommand::QuestLog]
+        );
+        assert_eq!(
+            c.take_routed(&[RoutedCommand::Use, RoutedCommand::Wallet]),
+            [RoutedCommand::Use, RoutedCommand::Wallet]
+        );
+        assert!(c.route(RoutedCommand::Traits));
+        assert_eq!(
+            c.take_routed(&[RoutedCommand::Traits, RoutedCommand::Skills]),
+            [RoutedCommand::Skills, RoutedCommand::Traits]
+        );
+        assert!(c.take_routed(&RoutedCommand::ALL).is_empty());
+    }
 
     #[test]
     fn stat_texts() {

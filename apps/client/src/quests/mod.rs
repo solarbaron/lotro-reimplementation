@@ -33,7 +33,7 @@ pub mod refs;
 pub mod session;
 pub mod ui;
 
-pub use hub::{JournalPanel, QuestHub, is_log_key, parse_journal_panel};
+pub use hub::{JournalPanel, QuestHub, parse_journal_panel};
 pub use present::{JournalTexts, JournalView};
 pub use refs::QuestRefs;
 pub use session::{QuestNote, QuestSession};

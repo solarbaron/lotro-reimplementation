@@ -190,3 +190,94 @@ The orchestrator then does the clean side:
    - the gameplay handlers for P1–P6;
    - the live connector that replaces `PlaceholderConnector` in `tessera-client`.
 7. The owner's live check (M8 exit criterion 4), with the owner's own account.
+
+## 7. Audit of the first remediation (2026-10-23, commit 19acce5): BLOCK
+
+A default-mode clean-room audit of branch `m8-remediation` (commit `19acce5`, the remediation
+commit re-created with its trailers; content unchanged) found no registers, stack or frame
+offsets, vtable slots, decompiler names, addresses, keys or captures, and the guard scripts
+pass. The branch is **not merged** and M8 stays paused (`M8_PAUSED = true`) for these points.
+Line numbers refer to that commit.
+
+**Blocking**
+
+- **B1. Reviewers edited the specs they accepted** (§1 of this brief; `CLEAN_ROOM.md`
+  §5.2–§5.3). `official-login.md` (change log near line 939: O1 applied in §2.4.1, OPEN-LOGIN-2
+  resolved with new facts in §6.2, offsets changed in §2.4.3), `official-messages-play.md`
+  (near 1084: §6.1.3, §6.3, §6.4, §8, §9.2, §10.6 "reconciled"), `official-messages-gameplay.md`
+  (near 4570: bit-28 prose of §7.1.4 and §7.4.4 rewritten). Those edits have had no independent
+  review. Put the three specs back in Review; a fresh reviewer session checks them.
+- **B2. Script class names without a source.** The Accepted `wlib.md` (lines 264 and 743) says
+  the installed script library carries no class names, yet the gameplay spec names many classes
+  by ID (for example the guild classes 0x016C/0x0502, `LevelTable`, `SkillRegistry`,
+  `TitleRegistry`, `Fellow`, `Raid`); its §1.2 (line 35) accounts only for property and enum
+  names from the archives. State the source of each name, or replace it with a Tessera label
+  marked as invented.
+- **B3. Client-internal structure and call-sequence prose remains** (§3 of this brief; §5.3
+  item 2): `official-messages-world.md` lines 120 (an event factory that constructs, flags,
+  serialises and writes a field), 168 (every serialiser calls the base serialiser), 936 (the
+  client registers a 22-entry handler); `official-messages-play.md` lines 84–99 and 200–202 (the
+  client's 30-slot prediction ring buffer with index arithmetic and ternary pseudo-code),
+  468–472 (a ticket-refresh manager being instantiated and queried); `property-system.md` line
+  784 (the client's archive stream mode-flags word, values that never travel on the wire);
+  `official-messages-gameplay.md` line 99 (`local_0`, a decompiler-style local name). Reduce
+  each to wire behaviour.
+- **B4. Accepted specs contradict each other on the same wire facts**, all marked Confirmed
+  with 0 OPEN, so some are guesses or out of date (§5.3: unknowns are OPEN, not guessed):
+  - default `recipientId`: `official-session.md` 413 and 736 vs `official-messages-world.md`
+    105 and `official-messages-play.md` 30;
+  - fragment header field numbering and a `channelWord` field: world 106 and 226 vs session
+    405–417;
+  - routing header (u16 flags, four optional fields, 2-byte pad vs u8 flags, a destination
+    table, a 28-byte block and a big-endian count): session 747–752 vs world 124–131;
+  - event 0x186 (recursive envelope container vs 20-byte event): session 797 vs world 142;
+  - batch 0x0D/0x4C frame layouts: world 981–989 vs session 786–793;
+  - version string form ("netver" value, one GUID or a list of archives, length): login 157
+    and 195 vs session 771;
+  - byte order of the low word of the 4-byte variable-length integer: login 195 vs session 383.
+  Settle each against the install or the binary, record one fact in one place (the session
+  spec for transport, the world spec for world events) and link to it from the others.
+
+**Notes (fix with the above)**
+
+- **N1. O1.** §2.4.1 meets the letter of O1 (no `.text` scan, no error-string anchor), but
+  step B2 (login 165–166) adds two other scan anchors: a hard-coded `.rdata` signature (a marker
+  value followed by ten internal buffer sizes) and a diagnostic format string that never goes on
+  the wire. Neither is a version string or a 0012 algorithm constant. The owner confirms or
+  drops step B2; the `.rsrc` key lookup and the user override cover the need.
+- **N2. Code and pseudo-code fragments:** session 194–205, 266–276, 663–674; login 195 (casts);
+  play 932 (a Rust expression).
+- **N3. Unknown meanings without an OPEN:** session 527 and 529 (`unknown14`, `unknown1A`);
+  world 937 and 988–989; gameplay 116–120 and 133–138 ("Sync A/B", "Control A/B/C"). The
+  "Zero Open Questions Invariant" (gameplay 4553) cannot be tested; drop it.
+- **N4. Provenance mismatch:** the gameplay spec cites a different client SHA-256 (`b581fb97…`)
+  with no build number and another decompiler version (line 45) than the other specs
+  (`d22363eb…`, build 4906.0071.1794.4035). Re-check against one build.
+- **N5. Census tables** (gameplay 168–1720): code should read the RPC signatures from 0x56000000
+  at run time rather than embed them (0012 forbids bulk tables); say so in the spec. The census
+  includes admin/GM RPC classes (0x04DC–0x04DE): the owner confirms they are in scope. The
+  anchors `registered-netblob-factories` and `outbound-only-netblob-constructors` keep
+  internal-sounding framing.
+- **N6. Namespace URIs and service paths.** The vendor-domain namespace and SOAPAction strings
+  (login 257, 389, 648, and one in play) are marked as interoperability names; the service path
+  fragments used to build the fallback URL (login 343) need the owner's confirmation under 0034
+  §1 ("endpoints").
+- **N7. Decision 0041 Remediation section:** a malformed session ID (line 144, last group has
+  10 digits); the provenance table omits `lib.rs`, `compat_world_message.rs`,
+  `crates/net/src/compat.rs`, the client wiring and the hardening commit `2b6dfd7`, and cites no
+  evidence for how the IDs were established although finding 5 said no record existed; lines
+  105–120 list the same names both as replacements and as the internal names replaced; line 160
+  cites a machine-local scratch path; O1–O3 and "Accepted" were written by the agent with no
+  visible owner sign-off (the owner records it, or confirms it to the orchestrator).
+- **N8.** Commits need an `Assisted-by:` trailer naming the tool (CLAUDE.md), and
+  `Signed-off-by:` (the first commit had neither; the orchestrator added the sign-off).
+- **N9.** 18 absolute `file:///home/…` links in the play spec (for example line 28) must be
+  relative; gameplay line 31 cites `docs/LEGAL.md`, which does not exist.
+- **N10.** The `property-system.md` change log (line 1160) calls `PropertySet` and `StringInfo`
+  client-internal names, but Accepted specs and clean crates use them throughout. If the claim
+  is true W5 must cover them; if not, the change log overstates.
+
+**Next step for the remediation agent:** continue on branch `m8-remediation` (on top of
+`19acce5`), fix B1–B4 and N1–N10 with fresh writer sessions, then fresh reviewer sessions that
+did not take part in the first pass and only review. Hand back as in §6; the orchestrator then
+re-runs this audit.

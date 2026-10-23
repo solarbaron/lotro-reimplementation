@@ -9,6 +9,8 @@ struct FarDraw {
     fade: vec4<f32>,
     // x, y = detail (and normal) repeats per sector, z = flags (FT_*), w = sRGB bits (FS_*).
     params: vec4<f32>,
+    // x, y = colour-list repeats per sector (transform set 0 of the normal-mapped template).
+    colour: vec4<f32>,
 };
 
 const FT_NORMAL_MAP: u32 = 1u;
@@ -31,7 +33,11 @@ struct FarIn {
 };
 
 struct FarOut {
-    @builtin(position) clip: vec4<f32>,
+    // The seam overlay (far-view.md §6.5) draws the near terrain's own triangles again:
+    // its depth must equal the layer pipeline's (terrain_layers.wgsl), so both compute the
+    // position the same way and mark it invariant (without the mark the overlay z-fights;
+    // crates/render/tests/far_view_golden.rs checks it).
+    @builtin(position) @invariant clip: vec4<f32>,
     @location(0) uv: vec2<f32>,
     // Per-vertex light (plain template and the per-vertex passes).
     @location(1) light: vec3<f32>,
@@ -116,7 +122,7 @@ fn far_pixel_light(n_vertex: vec3<f32>, normal_texel: vec3<f32>, t: f32) -> vec3
 @fragment
 fn fs_far(v: FarOut) -> @location(0) vec4<f32> {
     // Every sample first, in uniform control flow.
-    let colour = far_stored(textureSample(t_colour, s_clamp, v.uv), FS_COLOUR).rgb;
+    let colour = far_stored(textureSample(t_colour, s_clamp, v.uv * fd.colour.xy), FS_COLOUR).rgb;
     let detail_uv = v.uv * fd.params.xy;
     let detail = far_stored(textureSample(t_detail, s_wrap, detail_uv), FS_DETAIL).rgb;
     let texel = far_stored(textureSample(t_normal, s_wrap, detail_uv), FS_NORMAL).rgb;

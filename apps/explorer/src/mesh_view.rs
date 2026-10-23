@@ -877,7 +877,12 @@ fn parts_list(
                     ui.label(RichText::new(levels.join(" · ")).small().weak());
                 }
                 if let Some(e) = &part.error {
-                    ui.colored_label(Color32::LIGHT_RED, e);
+                    if e == crate::scene::STUB_LEFT_OUT {
+                        // `setup.md` §8.5: left out by rule, not a failure.
+                        ui.label(RichText::new(e).weak());
+                    } else {
+                        ui.colored_label(Color32::LIGHT_RED, e);
+                    }
                 }
                 for issue in &part.issues {
                     ui.label(

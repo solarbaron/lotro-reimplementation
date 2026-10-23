@@ -46,7 +46,7 @@ use tessera_material::records::{
 use tessera_material::resolve::{DyeMask, ParamOrigin};
 use tessera_material::vocab::{AlphaUse, ColorUse, SlotKind, ids};
 use tessera_material::{BlendMode, Layering, ResolvedMaterial, SurfaceLook, TestedOpacity};
-use tessera_mesh::{DecodeOptions, GeometryLimits, LevelKind, Mesh, MeshError};
+use tessera_mesh::{DecodeOptions, GeometryLimits, LevelKind, Mesh, MeshError, MeshSummary};
 use tessera_props::Value;
 use tessera_render::{MeshConfig, MeshData, PreparedMesh};
 
@@ -2518,6 +2518,39 @@ fn positions_aabb(positions: &[[f32; 3]]) -> Option<([f32; 3], [f32; 3])> {
     out
 }
 
+/// The text a part left out by [`leave_out_stub_parts`] carries in [`ScenePart::error`].
+pub const STUB_LEFT_OUT: &str =
+    "not drawn: a one-triangle placeholder part of a model with several parts (setup.md §8.5)";
+
+/// Whether mesh record `did` is a one-triangle mesh (`mesh.md` §8.10,
+/// [`MeshSummary::is_stub`]); a record that cannot be read or summarised is not.
+fn mesh_is_stub(ctx: &DataContext, did: Did) -> bool {
+    matches!(fetch(ctx, did), Ok(Some(bytes)) if MeshSummary::parse(&bytes).is_ok_and(|s| s.is_stub()))
+}
+
+/// Leaves the one-triangle placeholder parts out of a model with several parts
+/// (`setup.md` §8.5 steps 2–3, S14; `mesh.md` §8.10): when the model has `part_count`
+/// parts (more than `parts` holds when the scene draws only the first ones), each part of
+/// `parts` whose entry of `stubs` is `true` loses its prepared streams and says why
+/// ([`STUB_LEFT_OUT`]); the only part of a model is kept, flagged or not; a part without an
+/// entry counts as not flagged. Returns how many parts were left out.
+pub(crate) fn leave_out_stub_parts(
+    parts: &mut [ScenePart],
+    stubs: &[bool],
+    part_count: usize,
+) -> usize {
+    let count = part_count.max(parts.len());
+    let mut left_out = 0;
+    for (p, &stub) in parts.iter_mut().zip(stubs) {
+        if !tessera_world::objects::stub_part_drawn(count, stub) {
+            p.prepared = None;
+            p.error = Some(STUB_LEFT_OUT.into());
+            left_out += 1;
+        }
+    }
+    left_out
+}
+
 /// A built mesh part placed in the scene as `spec`: its caption, and each draw's
 /// material (the surface record layered with the spec's appearance groups).
 fn place_part(mut part: ScenePart, spec: &PartSpec, mats: &mut Collector<'_>) -> ScenePart {
@@ -2901,6 +2934,24 @@ pub fn build_scene_limited(
             .clone();
         parts.push(place_part(mesh, spec, &mut mats));
     }
+    // `mesh.md` §8.10: whether each part's mesh record is flagged (all its detail levels).
+    // A model with one part draws it whatever it is (step 3): nothing to read then.
+    let stubs: Vec<bool> = if specs.len() > 1 {
+        specs
+            .iter()
+            .take(parts.len())
+            .map(|spec| mesh_is_stub(ctx, spec.mesh))
+            .collect()
+    } else {
+        Vec::new()
+    };
+    let left_out = leave_out_stub_parts(&mut parts, &stubs, specs.len());
+    if left_out > 0 {
+        notes.push(format!(
+            "{left_out} one-triangle placeholder part(s) not drawn: the model has several \
+             parts (setup.md §8.5)"
+        ));
+    }
     if budget.refused > 0 {
         notes.push(format!(
             "{} part meshes left out for the scene's geometry budget ({} vertices, {} \
@@ -3274,6 +3325,93 @@ mod tests {
         assert_eq!(param_name(1043), "alpha-test threshold");
         assert_eq!(param_name(2003), "dye colour");
         assert_eq!(param_name(1234), "");
+    }
+
+    /// `setup.md` §8.5 steps 1–3 (S14): in a synthetic two-part setup whose second part
+    /// has 3 vertices, the second part is left out; as the only part it is drawn.
+    #[test]
+    fn stub_parts_of_multi_part_models_are_left_out() {
+        use tessera_mesh::synth::MeshSpec;
+        let stub_bytes = MeshSpec::single(0x0000_0112, 3)
+            .build()
+            .unwrap()
+            .to_bytes()
+            .unwrap();
+        let body_bytes = MeshSpec::single(0x0000_0112, 24)
+            .build()
+            .unwrap()
+            .to_bytes()
+            .unwrap();
+        let flag = |b: &[u8]| MeshSummary::parse(b).is_ok_and(|s| s.is_stub());
+        assert!(flag(&stub_bytes) && !flag(&body_bytes));
+        let mut parts = tests_support::two_part_scene().parts;
+        let stubs = [flag(&body_bytes), flag(&stub_bytes)];
+        assert_eq!(leave_out_stub_parts(&mut parts, &stubs, 2), 1);
+        assert!(parts[0].prepared.is_some() && parts[0].error.is_none());
+        assert!(parts[1].prepared.is_none());
+        assert_eq!(parts[1].error.as_deref(), Some(STUB_LEFT_OUT));
+        // The only part of a model is drawn even when flagged.
+        let mut one = vec![tests_support::two_part_scene().parts.remove(1)];
+        assert_eq!(leave_out_stub_parts(&mut one, &[true], 1), 0);
+        // ... but not when the model has more parts than the scene draws.
+        assert_eq!(leave_out_stub_parts(&mut one.clone(), &[true], 3), 1);
+        assert!(one[0].prepared.is_some());
+        // Unknown flags never hide a part.
+        let mut parts = tests_support::two_part_scene().parts;
+        assert_eq!(leave_out_stub_parts(&mut parts, &[], 2), 0);
+    }
+
+    /// Real data (`docs/checklists/m2-visual.md` row C6): the object of that row has a
+    /// one-triangle placeholder part among several parts; the mesh view leaves it out and
+    /// still draws the rest. Read-only; skipped unless `TESSERA_GAME_DIR` is set. Prints
+    /// counts only.
+    #[test]
+    fn checklist_row_c6_draws_no_placeholder_part() {
+        let Some(dir) = std::env::var_os(tessera_install::GAME_DIR_ENV).filter(|d| !d.is_empty())
+        else {
+            eprintln!("TESSERA_GAME_DIR not set; skipping");
+            return;
+        };
+        let ctx = DataContext::open(std::path::Path::new(&dir), None).expect("open the install");
+        let scene = build_scene(
+            &ctx,
+            0x7901_8D38,
+            SceneRequest::default(),
+            &JobContext::detached(),
+        )
+        .expect("scene of row C6");
+        let left_out = scene
+            .parts
+            .iter()
+            .filter(|p| p.error.as_deref() == Some(STUB_LEFT_OUT))
+            .count();
+        let drawn = scene.parts.iter().filter(|p| p.prepared.is_some()).count();
+        eprintln!(
+            "row C6: {} parts, {drawn} drawn, {left_out} placeholder parts left out",
+            scene.parts.len()
+        );
+        assert!(left_out >= 1, "the placeholder part is drawn");
+        assert!(drawn >= 1, "nothing else is drawn");
+        // The same rule on the bare part list (what the character view's setup path will
+        // apply; follow-up in `character.rs`).
+        let meshes: Vec<Did> = scene.parts.iter().map(|p| Did(p.mesh)).collect();
+        let flag = |d: Did| Some(mesh_is_stub(&ctx, d));
+        assert_eq!(
+            tessera_world::objects::drawn_parts(&meshes, flag).len(),
+            drawn
+        );
+        assert_eq!(
+            tessera_world::objects::drawn_parts(&meshes[..1], flag).len(),
+            1
+        );
+        assert!(
+            scene
+                .parts
+                .iter()
+                .filter(|p| p.prepared.is_some())
+                .all(|p| p.triangles != 1),
+            "a drawn part is a one-triangle mesh"
+        );
     }
 
     #[test]

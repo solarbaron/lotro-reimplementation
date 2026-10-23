@@ -1049,3 +1049,75 @@ fn distant_set_fv_i12() {
         assert!(e.distance_sq(&at) < f64::from(e.view_distance_sq));
     }
 }
+
+/// §10 step 3 through the per-landblock groups: created entities join the group of their
+/// landblock, destroyed ones leave it; an instance change empties every group.
+#[test]
+fn distant_groups_create_and_remove() {
+    let s1 = SectorKey::new(1, 0, 0).unwrap_or_else(|| unreachable!());
+    let mut set = DistantSet::default();
+    // Entities 1 and 2 in landblock (0, 0), 3 in landblock (2, 0) (x 400).
+    set.add_sector([
+        entry(1, s1, 10.0, 1_000.0),
+        entry(2, s1, 20.0, 1_000.0),
+        entry(3, s1, 400.0, 300.0),
+    ]);
+    let lb0 = LandblockKey::new(1, 0, 0).unwrap_or_else(|_| unreachable!());
+    let lb2 = LandblockKey::new(1, 2, 0).unwrap_or_else(|_| unreachable!());
+    let mut groups = DistantGroups::default();
+    let at = WorldPos::new(1, 0.0, 0.0, 0.0);
+    let c = set.walk(&at, 0, 1.0, |_| false, |_| true);
+    assert_eq!(groups.apply(&c), 2, "entity 3 lies beyond its 300 units");
+    assert_eq!(groups.landblocks().collect::<Vec<_>>(), vec![lb0]);
+    assert_eq!(groups.members(lb0).collect::<Vec<_>>(), vec![1, 2]);
+    // The viewer moves east: 3 comes into range, 1 and 2 stay.
+    let east = WorldPos::new(1, 300.0, 0.0, 0.0);
+    let c = set.walk(&east, 0, 1.0, |_| false, |_| true);
+    assert_eq!(groups.apply(&c), 1);
+    assert_eq!(groups.landblocks().collect::<Vec<_>>(), vec![lb0, lb2]);
+    assert_eq!(groups.members(lb2).collect::<Vec<_>>(), vec![3]);
+    assert_eq!(groups.len(), 3);
+    // An entity that already exists (by instance ID) is not created.
+    let mut other = DistantSet::default();
+    other.add_sector([entry(9, s1, 30.0, 1_000.0)]);
+    let c = other.walk(&at, 0, 1.0, |i| i == 9, |_| true);
+    assert!(c.create.is_empty());
+    // Far away (scale factor s = 0.01): everything is removed, both landblocks change.
+    let c = set.walk(&east, 0, 0.01, |_| false, |_| true);
+    assert_eq!(groups.apply(&c), 0);
+    assert!(groups.is_empty());
+    assert_eq!(groups.landblocks().count(), 0);
+    // An instance change destroys every live entity, then recreates those in range.
+    let c = set.walk(&at, 0, 1.0, |_| false, |_| true);
+    groups.apply(&c);
+    assert_eq!(groups.len(), 2);
+    let c = set.walk(&at, 4, 1.0, |_| false, |_| true);
+    assert_eq!(c.destroy.len(), 2);
+    assert_eq!(groups.apply(&c), 2);
+    assert_eq!(groups.len(), 2);
+    groups.clear();
+    assert!(groups.is_empty());
+    assert_eq!(groups.landblocks().count(), 0);
+}
+
+/// §6.1, §6.5, §9.1: the `[Render]` booleans set the switches; unknown values keep them;
+/// the graphics core is never derived from the stored name (OPEN).
+#[test]
+fn render_preferences() {
+    use super::settings::preference_bool;
+    let mut s = FarViewSettings::default();
+    let prefs = [
+        ("FarLandscapeNormalMaps", "True"),
+        ("NearFarSeamBlending", " 1 "),
+        ("DistantImposters", "maybe"),
+        ("GraphicsCore", "D3D11"),
+    ];
+    s.apply_render_preferences(|k| prefs.iter().find(|(n, _)| *n == k).map(|(_, v)| *v));
+    assert!(s.normal_maps && s.seam_blending && s.imposters);
+    assert_eq!(s.graphics_core, 0);
+    assert_eq!(s.template(), Template::Plain, "graphics core unknown");
+    s.apply_render_preferences(|k| (k == "DistantImposters").then_some("FALSE"));
+    assert!(!s.imposters && s.normal_maps);
+    assert_eq!(preference_bool("off"), Some(false));
+    assert_eq!(preference_bool(""), None);
+}

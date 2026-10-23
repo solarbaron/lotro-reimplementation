@@ -192,10 +192,43 @@ impl FarViewSettings {
         self.imposters && self.device_class >= 3
     }
 
+    /// Applies the `[Render]` preferences of `UserPreferences.ini` that the far view reads
+    /// (`install-layout.md` §8.3; an unknown or missing value keeps the current one): the
+    /// booleans `FarLandscapeNormalMaps` (§6.1), `NearFarSeamBlending` (§6.5) and
+    /// `DistantImposters` (§9.1). `get(key)` returns the stored text of a key of that
+    /// section; it is called with those names spelt as here, so a case-insensitive lookup
+    /// (`walker.md` §11.2) is the caller's to make. The graphics-core condition of §6.1 (values 2 or 5) is not derived from the
+    /// stored `GraphicsCore` name: the mapping from names to those values is OPEN
+    /// (`far-view.md` §15), so [`FarViewSettings::graphics_core`] is left as it is.
+    pub fn apply_render_preferences<'a>(&mut self, get: impl Fn(&str) -> Option<&'a str>) {
+        let flag = |key: &str| get(key).and_then(preference_bool);
+        if let Some(b) = flag("FarLandscapeNormalMaps") {
+            self.normal_maps = b;
+        }
+        if let Some(b) = flag("NearFarSeamBlending") {
+            self.seam_blending = b;
+        }
+        if let Some(b) = flag("DistantImposters") {
+            self.imposters = b;
+        }
+    }
+
     /// Tessera Decision FD2: unlisted sectors stay cached while within *F* + 1 sector keys
     /// of the viewer's sector (Chebyshev).
     #[must_use]
     pub fn keep_radius(&self) -> u32 {
         self.far_radius + 1
+    }
+}
+
+/// A stored boolean preference: `true` / `false` (any case), `1` / `0`, `on` / `off`,
+/// `yes` / `no`, surrounding blanks ignored; anything else is `None` (the stored form of
+/// booleans was not traced, `install-layout.md` §8.3 OPEN; Tessera reads these forms).
+#[must_use]
+pub fn preference_bool(text: &str) -> Option<bool> {
+    match text.trim().to_ascii_lowercase().as_str() {
+        "true" | "1" | "on" | "yes" => Some(true),
+        "false" | "0" | "off" | "no" => Some(false),
+        _ => None,
     }
 }

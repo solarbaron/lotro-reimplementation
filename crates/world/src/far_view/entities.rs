@@ -17,7 +17,7 @@ use tessera_formats::landblock::SectorEntity;
 use tessera_formats::{Did, PropertyValue};
 
 use super::grid::SectorKey;
-use crate::coords::{LANDBLOCK_SIZE, WorldPos};
+use crate::coords::{LANDBLOCK_SIZE, LandblockKey, WorldPos};
 
 /// One distant-set entry (`distant-landscape.md` §3.8, §4.9).
 #[derive(Debug, Clone, PartialEq)]
@@ -226,5 +226,78 @@ impl DistantSet {
             }
         }
         out
+    }
+}
+
+/// The live distant entities grouped by the landblock their Position names, for a caller
+/// that draws them per landblock (the walker's object layer; `far-view.md` §10 step 3:
+/// create and remove).
+#[derive(Debug, Clone, Default)]
+pub struct DistantGroups {
+    groups: BTreeMap<LandblockKey, BTreeSet<u64>>,
+    landblock_of: BTreeMap<u64, LandblockKey>,
+}
+
+impl DistantGroups {
+    /// Applies a walk's changes: each created entry joins the group of its landblock, each
+    /// destroyed instance ID leaves its group. A created entry whose position names no
+    /// landblock is ignored (it is never drawn). Returns how many entries joined.
+    pub fn apply(&mut self, changes: &DistantChanges) -> usize {
+        for iid in &changes.destroy {
+            self.remove(*iid);
+        }
+        let mut joined = 0;
+        for e in &changes.create {
+            let Some(key) = e.position.landblock() else {
+                continue;
+            };
+            if let Some(old) = self.landblock_of.insert(e.iid, key)
+                && old != key
+                && let Some(g) = self.groups.get_mut(&old)
+            {
+                g.remove(&e.iid);
+            }
+            if self.groups.entry(key).or_default().insert(e.iid) {
+                joined += 1;
+            }
+        }
+        self.groups.retain(|_, g| !g.is_empty());
+        joined
+    }
+
+    fn remove(&mut self, iid: u64) {
+        if let Some(key) = self.landblock_of.remove(&iid)
+            && let Some(g) = self.groups.get_mut(&key)
+        {
+            g.remove(&iid);
+        }
+    }
+
+    /// The instance IDs of the live entities in `key` (ascending).
+    pub fn members(&self, key: LandblockKey) -> impl Iterator<Item = u64> + '_ {
+        self.groups.get(&key).into_iter().flatten().copied()
+    }
+
+    /// Landblocks that hold at least one live entity.
+    pub fn landblocks(&self) -> impl Iterator<Item = LandblockKey> + '_ {
+        self.groups.keys().copied()
+    }
+
+    /// Live entities over all groups.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.landblock_of.len()
+    }
+
+    /// Whether no live entity is grouped.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.landblock_of.is_empty()
+    }
+
+    /// Forgets every group.
+    pub fn clear(&mut self) {
+        self.groups.clear();
+        self.landblock_of.clear();
     }
 }

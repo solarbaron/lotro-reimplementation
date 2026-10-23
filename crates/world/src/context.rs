@@ -91,6 +91,9 @@ pub struct SystemPids {
     pub depth_bias_type: Option<u32>,
     /// The labels of the depth-bias definition sets (`decals.md` §6.5 "The table").
     pub depth_bias_defs: Option<crate::decals::shading::DepthBiasPids>,
+    /// `Render_Opacity`, the owner opacity of placed and generated entities
+    /// (`particle-runtime.md` §12 rule 15).
+    pub render_opacity: Option<u32>,
 }
 
 impl SystemPids {
@@ -107,6 +110,7 @@ impl SystemPids {
             lod_class: pid_of("Render_LODClass"),
             depth_bias_type: pid_of("Render_DepthBias_Type"),
             depth_bias_defs: Some(crate::decals::shading::DepthBiasPids::resolve(&pid_of)),
+            render_opacity: pid_of("Render_Opacity"),
         }
     }
 }

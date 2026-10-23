@@ -132,7 +132,7 @@ fn template_and_sprite_gates() {
     s.normal_maps = true;
     assert_eq!(s.template(), Template::NormalMapped);
     assert!(!s.seam_overlay(), "lighting quality level 0 (FD18)");
-    s.lighting_quality = 3;
+    s.lighting_quality = 2;
     assert!(s.seam_overlay());
     s.multi_pass_lighting = false;
     assert!(!s.seam_overlay(), "multi-pass lighting off");
@@ -1112,11 +1112,12 @@ fn distant_groups_create_and_remove() {
 }
 
 /// FD16–FD18: the `[Render]` values set `FarLandscapeNormalMaps`, `MultiPassLighting`,
-/// `LandscapeLightingQuality` and `DistantImposters`; unknown values keep them;
-/// `NearFarSeamBlending` and `GraphicsCore` are never read.
+/// `LandscapeLightingQuality` and `DistantImposters`; unknown boolean values keep them, an
+/// unknown lighting level is level 0; `NearFarSeamBlending` and `GraphicsCore` are never
+/// read.
 #[test]
 fn render_preferences() {
-    use super::settings::{lighting_quality_level, preference_bool};
+    use super::settings::preference_bool;
     let mut s = FarViewSettings::default();
     let prefs = [
         ("FarLandscapeNormalMaps", "True"),
@@ -1139,15 +1140,68 @@ fn render_preferences() {
     assert!(!s.imposters);
     assert_eq!(preference_bool("off"), Some(false));
     assert_eq!(preference_bool(""), None);
-    assert_eq!(lighting_quality_level(" veryhigh "), Some(3));
-    assert_eq!(lighting_quality_level("Low"), Some(0));
-    assert_eq!(lighting_quality_level("2"), Some(2));
-    assert_eq!(lighting_quality_level("loud"), None);
+    assert_eq!(s.lighting_quality, 2, "VeryHigh is level 2 (FV29)");
     let mut t = FarViewSettings::default();
     t.apply_render_preferences(|k| (k == "LandscapeLightingQuality").then_some("??"));
     assert_eq!(
         t,
         FarViewSettings::default(),
-        "unknown level keeps the built-in"
+        "unknown level: the built-in level 0"
     );
+}
+
+/// FD18 (FV29): `LandscapeLightingQuality` has three levels, `Low` 0, `High` 1 and
+/// `VeryHigh` 2, names read case-insensitively, numbers 0–2 as themselves; every other
+/// value, other options' level names and larger numbers included, is the built-in level
+/// 0. A value present but unknown sets level 0 even over an earlier source's level; a
+/// missing key keeps it.
+#[test]
+fn landscape_lighting_quality_names_follow_fd18() {
+    use super::settings::lighting_quality_level as level;
+    for (text, want) in [
+        ("Low", 0),
+        ("low", 0),
+        ("High", 1),
+        (" HIGH ", 1),
+        ("VeryHigh", 2),
+        (" veryhigh ", 2),
+        ("0", 0),
+        ("1", 1),
+        ("2", 2),
+        ("3", 0),
+        ("4294967295", 0),
+        ("-1", 0),
+        ("VeryLow", 0),
+        ("Medium", 0),
+        ("UltraHigh", 0),
+        ("Disabled", 0),
+        ("Off", 0),
+        ("", 0),
+        ("Very High", 0),
+        ("loud", 0),
+    ] {
+        assert_eq!(level(text), want, "{text:?}");
+    }
+    // The overlay: off at Low, on at High and VeryHigh, off for an unknown value.
+    let overlay = |text: &str| {
+        let mut s = FarViewSettings {
+            normal_maps: true,
+            ..FarViewSettings::default()
+        };
+        s.apply_render_preferences(|k| (k == "LandscapeLightingQuality").then_some(text));
+        s.seam_overlay()
+    };
+    assert!(!overlay("Low"));
+    assert!(overlay("High"));
+    assert!(overlay("VeryHigh"));
+    assert!(!overlay("Medium"));
+    assert!(!overlay("3"));
+    // Layered sources: a later unknown value resets to 0, a missing key keeps the level.
+    let mut s = FarViewSettings::default();
+    s.apply_render_preferences(|k| (k == "LandscapeLightingQuality").then_some("VeryHigh"));
+    assert_eq!(s.lighting_quality, 2);
+    s.apply_render_preferences(|_| None);
+    assert_eq!(s.lighting_quality, 2, "missing key keeps the level");
+    s.apply_render_preferences(|k| (k == "LandscapeLightingQuality").then_some("Medium"));
+    assert_eq!(s.lighting_quality, 0, "unknown value: built-in level 0");
 }

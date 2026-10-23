@@ -218,12 +218,14 @@ impl FarViewSettings {
     }
 
     /// Applies the `[Render]` preferences of `UserPreferences.ini` that the far view reads
-    /// (`install-layout.md` §8.3, `far-view.md` FD17; an unknown or missing value keeps the
-    /// current one): the booleans `FarLandscapeNormalMaps` (§6.1), `MultiPassLighting`
-    /// (§6.5) and `DistantImposters` (§9.1), and the level `LandscapeLightingQuality`
-    /// (§6.5, [`lighting_quality_level`]). `get(key)` returns the stored text of a key of
-    /// that section; it is called with those names spelt as here, so a case-insensitive
-    /// lookup (`walker.md` §11.2) is the caller's to make. `NearFarSeamBlending` and
+    /// (`install-layout.md` §8.3, `far-view.md` FD17; a missing value keeps the current
+    /// one): the booleans `FarLandscapeNormalMaps` (§6.1), `MultiPassLighting` (§6.5) and
+    /// `DistantImposters` (§9.1), where an unknown value keeps the current one too, and the
+    /// level `LandscapeLightingQuality` (§6.5, [`lighting_quality_level`]), where any value
+    /// other than its three names and the numbers 0–2 sets the built-in level 0 (FD18).
+    /// `get(key)` returns the stored text of a key of that section; it is called with those
+    /// names spelt as here, so a case-insensitive lookup (`walker.md` §11.2) is the
+    /// caller's to make. `NearFarSeamBlending` and
     /// `GraphicsCore` are **not** read (FD16, FD17, FD21): the seam switch stays on and the
     /// core stays [`TESSERA_GRAPHICS_CORE`].
     pub fn apply_render_preferences<'a>(&mut self, get: impl Fn(&str) -> Option<&'a str>) {
@@ -234,8 +236,8 @@ impl FarViewSettings {
         if let Some(b) = flag("MultiPassLighting") {
             self.multi_pass_lighting = b;
         }
-        if let Some(l) = get("LandscapeLightingQuality").and_then(lighting_quality_level) {
-            self.lighting_quality = l;
+        if let Some(t) = get("LandscapeLightingQuality") {
+            self.lighting_quality = lighting_quality_level(t);
         }
         if let Some(b) = flag("DistantImposters") {
             self.imposters = b;
@@ -262,29 +264,24 @@ pub fn preference_bool(text: &str) -> Option<bool> {
     }
 }
 
-/// The level of a stored `LandscapeLightingQuality` value (`far-view.md` FD18: only "above
-/// level 0" matters). A number is its own level; a level name is read case-insensitively,
-/// surrounding blanks ignored: `VeryLow`, `Low`, `Off`, `Disabled`, `None` → 0, `Medium` → 1,
-/// `High` → 2, `VeryHigh` → 3, `UltraHigh` → 4; anything else is `None` (the built-in level
-/// stays, `walker.md` W26). **Tessera reading, conservative:** no Accepted spec gives the
-/// stored names or level order of this key (`far-view.md` FD18 says only "above level 0";
-/// an OPEN is proposed for its spec writer, not yet in the spec). Names below `Medium`
-/// count as the lowest level, so the overlay stays off for them, and the owner's
-/// `VeryHigh` enables it, as FD17's outcome states. If the key used the `VeryLow`–`VeryHigh`
-/// scale of `LandscapeDrawDistance` (`walker.md` §11.2), `Low` would be level 1 and turn
-/// the overlay on; that is left to the answer.
+/// The level of a stored `LandscapeLightingQuality` value (`far-view.md` FD18, FV29; the
+/// seam overlay needs a level above 0). The option has three levels, stored by name:
+/// `Low` 0, `High` 1, `VeryHigh` 2, read case-insensitively with surrounding blanks
+/// ignored (`walker.md` W26); a number 0–2 counts as that level. Any other value, the
+/// names of other options' scales (`VeryLow`, `Medium`, `UltraHigh`, `Disabled`, …) and
+/// numbers above 2 included, counts as the built-in level 0 (FD18). A key that is missing
+/// is the caller's case: it keeps the level an earlier source gave (W26,
+/// [`FarViewSettings::apply_render_preferences`]).
 #[must_use]
-pub fn lighting_quality_level(text: &str) -> Option<u32> {
+pub fn lighting_quality_level(text: &str) -> u32 {
     let t = text.trim();
     if let Ok(n) = t.parse::<u32>() {
-        return Some(n);
+        return if n <= 2 { n } else { 0 };
     }
     match t.to_ascii_lowercase().as_str() {
-        "verylow" | "low" | "off" | "disabled" | "none" => Some(0),
-        "medium" => Some(1),
-        "high" => Some(2),
-        "veryhigh" => Some(3),
-        "ultrahigh" => Some(4),
-        _ => None,
+        "high" => 1,
+        "veryhigh" => 2,
+        // "low" and every other value: the built-in level 0.
+        _ => 0,
     }
 }

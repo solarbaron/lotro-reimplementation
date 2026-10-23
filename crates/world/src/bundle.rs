@@ -37,15 +37,22 @@
 //!      (§5.8), water (ARCHITECTURE §10.3: the set carries the water whenever it is built,
 //!      so with a collision set the water of step 3 is built even without
 //!      [`BundleOptions::build_water`]). Its hierarchy's thread rule follows the job's
-//!      priority, read once when the set's build starts (`collision.md` §12.1,
-//!      [`CollisionSystem::build_at`](crate::CollisionSystem::build_at)): a job still at
-//!      `Prefetch` builds on its worker alone, a job at `Visible` or higher (raised while it
-//!      waited or while its earlier stages ran included) draws helpers from the shared
-//!      budget. [`BundleDecoder`] passes its job's
-//!      [`JobContext::current_priority`]; [`build_bundle_with`] takes the priority from
-//!      the caller, [`build_bundle`] builds at `Visible`;
+//!      priority, read once when the set's hierarchy build starts, after its terrain,
+//!      statics, generated objects, cells and water are added (`collision.md` §12.1; the
+//!      bundle hands its priority source to
+//!      [`CollisionSystem::build_at`](crate::CollisionSystem::build_at), which reads it):
+//!      a job still at `Prefetch` then builds on its worker alone, a job at `Visible` or
+//!      higher (raised while it waited, while its earlier stages ran or while the set's
+//!      inputs were added included) draws helpers from the shared budget.
+//!      [`BundleDecoder`] passes its job's [`JobContext::current_priority`];
+//!      [`build_bundle_with`] takes the priority from the caller, [`build_bundle`] builds
+//!      at `Visible`;
 //!   5. the Light entities (`lighting.md` §8.3);
-//!   6. the LOD class of every placed and generated entity (`walker.md` §11.4.3).
+//!   6. the LOD class of every placed and generated entity (`walker.md` §11.4.3);
+//! - the owner property `Render_Opacity` of every placed and generated entity
+//!   ([`LandblockBundle::render_opacity`], `particle-runtime.md` §12 rule 15), read from the
+//!   weenie list's instance sets before the list is dropped, so the walker has it without
+//!   [`BundleOptions::keep_weenies`].
 //!
 //! The terrain's texture-layer products (`terrain-texturing.md`) are **not** part of the
 //! bundle: the walker builds them on its own terrain workers from the bundle's landblock
@@ -457,6 +464,18 @@ pub struct LandblockBundle {
     /// `Render_DepthBias_Type` of each generated object (its 0x47 chain), same order as
     /// [`LandblockBundle::generated`].
     pub generated_depth_bias_types: Vec<Option<u32>>,
+    /// The owner property `Render_Opacity` of each entity of [`LandblockBundle::entities`],
+    /// same order (`particle-runtime.md` §12 rule 15, the static owner's factor; `mesh.md`
+    /// §8.8): read from its per-instance set (the instance property set of its IID in the
+    /// landblock's weenie list when there is one, otherwise its own set;
+    /// `entity-descriptor.md` E26), then its 0x47 chain; clamped to 0–1, `None` when none
+    /// holds a finite float (the dictionary default 1 applies). Read at bundle build, so it
+    /// is there whether or not [`BundleOptions::keep_weenies`] keeps the weenie list. Empty
+    /// when the property dictionary has no `Render_Opacity`.
+    pub entity_render_opacities: Vec<Option<f32>>,
+    /// `Render_Opacity` of each generated object (its 0x47 chain only), same order as
+    /// [`LandblockBundle::generated`]; empty as [`LandblockBundle::entity_render_opacities`].
+    pub generated_render_opacities: Vec<Option<f32>>,
     /// Non-fatal problems.
     pub problems: Vec<BundleProblem>,
     /// The residency charge (`landblock.md` §8.1, "Residency charge" and "World parts"):
@@ -464,8 +483,8 @@ pub struct LandblockBundle {
     /// bytes of the info, block-map and properties records (an estimate that covers the
     /// placed entities, figures, instance sets and block-map pairs decoded from them), and
     /// the heap bytes of the world parts (scenery with its clearance volumes, markers and
-    /// generated objects, water, collision set, lights, LOD classes). Nothing else is
-    /// added.
+    /// generated objects, water, collision set, lights, LOD classes, render opacities).
+    /// Nothing else is added.
     pub heap_bytes: usize,
 }
 
@@ -667,6 +686,26 @@ impl LandblockBundle {
         self.depth_bias_type(self.entity_ref(e)?)
     }
 
+    /// The owner property `Render_Opacity` of an entity or generated object
+    /// (`particle-runtime.md` §12 rule 15; [`LandblockBundle::entity_render_opacities`]),
+    /// in 0–1: `None` when none of its sets holds a finite float value or `r` is out of
+    /// range; the caller then uses the dictionary default 1.
+    #[must_use]
+    pub fn render_opacity(&self, r: EntityRef) -> Option<f32> {
+        match r {
+            EntityRef::Entity(i) => self.entity_render_opacities.get(i as usize),
+            EntityRef::Generated(i) => self.generated_render_opacities.get(i as usize),
+        }
+        .copied()
+        .flatten()
+    }
+
+    /// [`LandblockBundle::render_opacity`] of `e`, an element of this bundle's lists.
+    #[must_use]
+    pub fn render_opacity_of(&self, e: &PlacedEntity) -> Option<f32> {
+        self.render_opacity(self.entity_ref(e)?)
+    }
+
     /// A bundle of `data` alone (no info, block map or properties; no world systems), as
     /// [`build_bundle`] delivers for a landblock with only a data record. For tests and
     /// tools that build bundles by hand.
@@ -697,6 +736,8 @@ impl LandblockBundle {
             entity_lod_classes: Vec::new(),
             entity_depth_bias_types: Vec::new(),
             generated_depth_bias_types: Vec::new(),
+            entity_render_opacities: Vec::new(),
+            generated_render_opacities: Vec::new(),
             generated_lod_classes: Vec::new(),
             problems: Vec::new(),
             heap_bytes,
@@ -814,7 +855,8 @@ pub fn build_bundle(
 }
 
 /// [`build_bundle`] for a job whose priority `priority` reports. It is called once, when
-/// the collision set's build starts (module docs, item 4; `collision.md` §12.1): at
+/// the collision set's hierarchy build starts (module docs, item 4; `collision.md` §12.1;
+/// [`CollisionSystem::build_at`](crate::CollisionSystem::build_at) reads it): at
 /// [`Priority::Prefetch`] the set's hierarchy is built on the calling thread alone, at
 /// `Visible` or higher with helpers from the shared budget. The bundle does not depend on
 /// the priority. [`BundleDecoder`] passes its job's [`JobContext::current_priority`].
@@ -1151,6 +1193,20 @@ pub fn build_bundle_with(
         &weenie_list,
         &mut bias_chains,
     );
+    // `Render_Opacity` (particle-runtime.md §12 rule 15), from the weenie list before it
+    // goes, so the walker has it without keeping the weenies.
+    let mut opacity_chains = ChainReads::default();
+    let opacity_pid = ctx.systems().pids.render_opacity;
+    let entity_render_opacities = opacity_pid.map_or_else(Vec::new, |pid| {
+        entity_render_opacities(
+            ctx,
+            pid,
+            info.as_ref(),
+            &entities,
+            &weenie_list,
+            &mut opacity_chains,
+        )
+    });
     drop(weenie_list);
     let generated_enums = |pid: Option<u32>, chains: &mut ChainReads| -> Vec<Option<u32>> {
         let Some(pid) = pid.filter(|_| ctx.options().load_environment) else {
@@ -1171,6 +1227,34 @@ pub fn build_bundle_with(
     world.generated_lod_classes = generated_lod_classes;
     world.bytes += (world.generated_lod_classes.capacity() + generated_depth_bias_types.capacity())
         * std::mem::size_of::<Option<u32>>();
+    let generated_render_opacities = opacity_pid.map_or_else(Vec::new, |pid| {
+        world
+            .generated
+            .iter()
+            .map(|g| {
+                owner_opacity_with(pid, None, || {
+                    chain_properties(ctx, g.object, &mut opacity_chains)
+                })
+            })
+            .collect::<Vec<_>>()
+    });
+    world.bytes += (entity_render_opacities.capacity() + generated_render_opacities.capacity())
+        * std::mem::size_of::<Option<f32>>();
+    // The LOD-class pass reads the same chains and reports their failures; without it (no
+    // environment) this pass does.
+    if opacity_chains.transient > 0 && chains.transient == 0 {
+        system_problem(
+            &mut problems,
+            key.data_did(),
+            "render opacity",
+            true,
+            true,
+            format!(
+                "{} object chains could not be read for a reason that is not the data's; their Render_Opacity is left out",
+                opacity_chains.transient
+            ),
+        );
+    }
     if chains.transient > 0 {
         system_problem(
             &mut problems,
@@ -1221,6 +1305,8 @@ pub fn build_bundle_with(
         generated_lod_classes: world.generated_lod_classes,
         entity_depth_bias_types,
         generated_depth_bias_types,
+        entity_render_opacities,
+        generated_render_opacities,
         problems,
         heap_bytes,
     })
@@ -1263,6 +1349,85 @@ fn entity_placement_enums(
         out.push(placement_lod_class(pid, instance, own, chain.as_deref()));
     }
     out
+}
+
+/// The owner property `Render_Opacity` (`pid`) of every placed entity
+/// ([`LandblockBundle::entity_render_opacities`]): its per-instance set (the instance set
+/// of its IID in the weenie list when there is one, **otherwise** its own set; never both,
+/// `entity-descriptor.md` E26), then its 0x47 chain. The chain is read only for an entity
+/// whose per-instance set does not hold the property, so an entity that carries its own
+/// value costs no record read and a failed read of a chain it does not need cannot make
+/// the bundle incomplete.
+fn entity_render_opacities(
+    ctx: &WorldContext,
+    pid: u32,
+    info: Option<&LandblockInfo>,
+    entities: &[PlacedEntity],
+    weenies: &[tessera_formats::landblock::Weenie],
+    chains: &mut ChainReads,
+) -> Vec<Option<f32>> {
+    let Some(info) = info else {
+        return Vec::new();
+    };
+    let by_iid: HashMap<u64, &PropertySet> =
+        weenies.iter().map(|w| (w.iid.0, &w.properties)).collect();
+    let mut out = Vec::with_capacity(entities.len());
+    for e in entities {
+        let per_instance = e
+            .iid
+            .and_then(|iid| by_iid.get(&iid.0).copied())
+            .or_else(|| {
+                info.entities
+                    .get(e.index as usize)
+                    .and_then(|s| s.properties.as_ref())
+            });
+        out.push(owner_opacity_with(pid, per_instance, || {
+            chain_properties(ctx, e.object, chains)
+        }));
+    }
+    out
+}
+
+/// The owner property `Render_Opacity` (`pid`, `particle-runtime.md` §12 rule 15) of a
+/// placed object from `per_instance` (the instance set of its IID, otherwise its own set;
+/// `entity-descriptor.md` E26), else from the nearest level of its 0x47 `chain` that holds
+/// it: a finite float clamped to 0–1 (Tessera choice: the factor multiplies an opacity in
+/// 0–1, as the client's object layer reads it); `None` when neither holds it, or the value
+/// found is not a finite float (the dictionary default 1 then applies). A per-instance
+/// value that is not a usable float hides the chain's. The one reading of the property:
+/// the bundle fills [`LandblockBundle::entity_render_opacities`] and
+/// [`LandblockBundle::generated_render_opacities`] with it.
+#[must_use]
+pub fn owner_opacity(
+    pid: u32,
+    per_instance: Option<&PropertySet>,
+    chain: Option<&crate::scenery::ObjectProperties>,
+) -> Option<f32> {
+    match per_instance.and_then(|s| s.get(pid)) {
+        Some(v) => opacity_value(v),
+        None => opacity_value(chain?.get(pid)?),
+    }
+}
+
+/// [`owner_opacity`] with the chain read by `chain` only when `per_instance` does not hold
+/// the property.
+fn owner_opacity_with(
+    pid: u32,
+    per_instance: Option<&PropertySet>,
+    chain: impl FnOnce() -> Option<Arc<crate::scenery::ObjectProperties>>,
+) -> Option<f32> {
+    match per_instance.and_then(|s| s.get(pid)) {
+        Some(v) => opacity_value(v),
+        None => owner_opacity(pid, None, chain().as_deref()),
+    }
+}
+
+/// A `Render_Opacity` value as the factor: a finite float clamped to 0–1, else `None`.
+fn opacity_value(v: &PropertyValue) -> Option<f32> {
+    match v {
+        PropertyValue::Float(f) if f.is_finite() => Some(f.clamp(0.0, 1.0)),
+        _ => None,
+    }
 }
 
 /// The properties of `object` along its 0x47 chain, when it is a 0x47 record that can be
@@ -1557,17 +1722,14 @@ fn build_world_parts(
     }
 
     // (4) Collision: statics, generated objects, cells, water (collision.md §12.1). The
-    // job's priority is read once, here, as `build_at` is entered: it chooses the
-    // hierarchy's thread rule (Prefetch: this worker alone; Visible and higher: the shared
-    // budget). §12.1 names the start of the hierarchy build as the reading point; that
-    // comes later, after `build_at` has resolved the statics, objects and cells, so a job
-    // raised in between keeps the rule read here (same tree, only latency differs). Moving
-    // the read needs `build_at` to take the priority source (collision module; reported).
+    // job's priority source goes to `build_at`, which reads it once, as the hierarchy build
+    // itself starts (after the statics, objects, cells and water are in the builder): a
+    // job raised or lowered while those stages ran builds under the rule of the priority
+    // it holds then (Prefetch: this worker alone; Visible and higher: the shared budget).
     if let Some(cs) = collision {
         let generated: Vec<GeneratedObject> =
             objects.iter().map(SceneryObject::to_generated).collect();
-        let at = priority();
-        tracing::trace!(landblock = %key, priority = %at, "collision set build starts");
+        tracing::trace!(landblock = %key, "collision set build starts");
         let built = cs.build_at(
             &CollisionInput {
                 key,
@@ -1579,7 +1741,7 @@ fn build_world_parts(
                 source,
                 schema,
             },
-            at,
+            priority,
         );
         let r = built.report();
         if r.over_limit > 0 || r.cells_refused > 0 || r.unresolved > 0 {
@@ -2058,6 +2220,41 @@ mod priority_tests {
         })
         .expect("bundle");
         assert!(!asked.get());
+    }
+
+    /// The priority is read when the hierarchy build itself starts, not when the collision
+    /// set's build is entered (§12.1): by then the set's statics have been resolved into
+    /// the collision system's object cache. A job raised while those inputs were added (the
+    /// source reports `Visible` once objects are resolved) builds under the shared rule.
+    #[test]
+    fn the_priority_is_read_when_the_hierarchy_build_starts() {
+        let ctx = context();
+        let k = key(10, 20);
+        let f = frame(&ctx, k);
+        let resolved = || collision(&ctx).object_cache().len();
+        assert_eq!(resolved(), 0, "a fresh context has resolved nothing");
+        let seen = Cell::new(None);
+        build_bundle_with(&ctx, k.data_did(), &f, &|| false, &|| {
+            let n = resolved();
+            assert!(seen.replace(Some(n)).is_none(), "read once");
+            if n > 0 {
+                Priority::Visible
+            } else {
+                Priority::Prefetch
+            }
+        })
+        .expect("bundle");
+        let at_read = seen.get().expect("the priority was read");
+        assert!(at_read > 0, "read after the statics were resolved");
+        assert_eq!(at_read, resolved(), "nothing is resolved after the read");
+        assert_eq!(
+            collision(&ctx).hierarchy_builds(),
+            HierarchyBuildCounts {
+                worker: 0,
+                shared: 1,
+                last_max_threads: Some(tessera_physics::geometry::MAX_BUILD_THREADS),
+            }
+        );
     }
 
     /// End to end through the bundle store: a job still at `Prefetch` when a worker takes

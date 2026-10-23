@@ -924,6 +924,8 @@ mod tests {
             generated_lod_classes: Vec::new(),
             entity_depth_bias_types: Vec::new(),
             generated_depth_bias_types: Vec::new(),
+            entity_render_opacities: Vec::new(),
+            generated_render_opacities: Vec::new(),
             problems: Vec::new(),
             heap_bytes: 0,
         }

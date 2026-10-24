@@ -384,9 +384,7 @@ pub fn run_observed(
         .context("walker session not configured")?;
     let mut renderer = Renderer::new_headless(&RendererConfig {
         clear_color: SKY,
-        meshes: crate::walker::mesh_config(crate::walker::arena_bytes(
-            &crate::walker_host::walker_config(args),
-        )),
+        meshes: crate::walker::mesh_config(crate::walker_host::walker_arena_bytes(args)),
         ..RendererConfig::default()
     })
     .context("creating the headless renderer")?;

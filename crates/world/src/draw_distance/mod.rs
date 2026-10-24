@@ -459,20 +459,21 @@ fn class_of(v: &PropertyValue) -> Option<u32> {
     }
 }
 
-/// The class of a placement (`walker.md` §11.4.3, **Tessera Decision** W22): the first
-/// `Render_LODClass` (`pid`) found in the SED's instance property set, the SED's own set,
-/// then the 0x47 chain from the named record towards its parents. `None` when none holds
-/// it (the component's initial values apply; the dictionary default is never used).
+/// The class of a placement (`walker.md` §11.4.3, W22 via `entity-descriptor.md` E26): the
+/// first `Render_LODClass` (`pid`) found in the placement's **per-instance** set, then along
+/// the 0x47 chain from the named record towards its parents. The per-instance set is the
+/// landblock's instance property set for the SED's IID when there is one, **otherwise** the
+/// SED's own set; the caller picks it, the two are never both consulted. `None` when neither
+/// holds it (the component's initial values apply; the dictionary default is never used).
+/// `Render_DepthBias_Type` uses the same lookup (`decals.md` §6.5).
 #[must_use]
 pub fn placement_lod_class(
     pid: u32,
-    instance: Option<&PropertySet>,
-    own: Option<&PropertySet>,
+    per_instance: Option<&PropertySet>,
     chain: Option<&ObjectProperties>,
 ) -> Option<u32> {
-    instance
+    per_instance
         .and_then(|s| s.get(pid))
-        .or_else(|| own.and_then(|s| s.get(pid)))
         .or_else(|| chain.and_then(|c| c.get(pid)))
         .and_then(class_of)
 }

@@ -140,19 +140,46 @@ const HIGHEST_DISTANCE_LEVEL: u8 = 4;
 const HIGHEST_FRILL_LEVEL: u8 = 5;
 
 /// The distance preferences of the command line over the built-in defaults
-/// (`walker.md` §11.2, §11.8): the dedicated options first, then `--render-pref` for
-/// `LandscapeDrawDistance`, `ObjectDrawDistance` and `ModelDetail`, then the built-in
-/// levels (§14.10, W28: the dedicated option is the last layer). A value is a level name
-/// in any case or a level number ([`crate::render_pref::capped_level_number`]: digits
-/// only, a number above level 4 counts as level 4); any other value, a signed number
-/// included, counts as the key's built-in level (W26, §14.10 answer item 2).
+/// ([`distance_settings_with`] without the user's file: headless runs, FD21).
 #[must_use]
 pub fn distance_settings(args: &Args) -> DistanceSettings {
+    distance_settings_with(args, None)
+}
+
+/// The value the layered sources give `[Render]` `key` (`walker.md` §11.2 answer item 3,
+/// §14.10 answer item 1, W26, W28): the last `--render-pref` of the key, else the user's
+/// `file` (windowed runs only, `far-view.md` FD21), else `None` (the key's built-in level
+/// applies). A source without the key leaves the value of the earlier one; the source that
+/// holds the key decides, so a value it holds that the key does not accept gives the
+/// built-in level even where an earlier source set the key (§14.10 answer item 3 (iv)).
+/// The dedicated walker options sit above both; each caller applies them.
+fn layered_render_value<'a>(
+    args: &'a Args,
+    file: Option<&'a tessera_install::Ini>,
+    key: &str,
+) -> Option<&'a str> {
+    render_pref(&args.render_prefs, key).or_else(|| file.and_then(|f| f.get("Render", key)))
+}
+
+/// The distance preferences (`walker.md` §11.2, §11.8) over the built-in defaults, in the
+/// layers of §14.10 answer item 1 (W28): the built-in levels, the `[Render]` section of
+/// the user's `file` (windowed runs, `far-view.md` FD21; `None` otherwise), `--render-pref`
+/// for `LandscapeDrawDistance`, `ObjectDrawDistance` and `ModelDetail`, then the dedicated
+/// options (`--landscape-distance`, `--object-draw-distance`, `--model-detail`) as the
+/// last layer ([`layered_render_value`]). A value is a level name in any case or a level
+/// number ([`crate::render_pref::capped_level_number`]: digits only, a number above level
+/// 4 counts as level 4); any other value, a signed number included, counts as the key's
+/// built-in level (W26, §14.10 answer item 2).
+#[must_use]
+pub fn distance_settings_with(
+    args: &Args,
+    file: Option<&tessera_install::Ini>,
+) -> DistanceSettings {
     use crate::render_pref::capped_level_number;
     use tessera_world::DetailLevel;
     use tessera_world::draw_distance::LandscapeLevel;
     let d = DistanceSettings::default();
-    let pref = |key: &str| render_pref(&args.render_prefs, key);
+    let pref = |key: &str| layered_render_value(args, file, key);
     let detail = |v: &str| {
         DetailLevel::from_name(v).or_else(|| {
             capped_level_number(v, HIGHEST_DISTANCE_LEVEL).and_then(DetailLevel::from_stored)
@@ -183,23 +210,78 @@ pub fn distance_settings(args: &Args) -> DistanceSettings {
     }
 }
 
-/// The `FrillDistance` level (`scenery.md` §8.3: 0–5): `--frill-distance`, else a
-/// `--render-pref FrillDistance=VALUE` ([`frill_level`]: a level name of `walker.md` §11.2
-/// or a level number, a number above 5 counting as 5; any other value counts as the
-/// built-in level, W26), else the built-in level. The dedicated option wins over a
-/// `--render-pref` of the same key, as for the other distance keys (W28,
-/// [`distance_settings`]).
+/// The `FrillDistance` level without the user's file ([`frill_distance_level_with`]).
 #[must_use]
 pub fn frill_distance_level(args: &Args) -> i32 {
+    frill_distance_level_with(args, None)
+}
+
+/// The `FrillDistance` level (`scenery.md` §8.3: 0–5): `--frill-distance`, else the
+/// layered value of `--render-pref FrillDistance=VALUE` over the user's `file`
+/// ([`layered_render_value`], [`frill_level`]: a level name of `walker.md` §11.2 or a
+/// level number, a number above 5 counting as 5; any other value counts as the built-in
+/// level, W26), else the built-in level. The dedicated option wins over both, as for the
+/// other distance keys (W28, [`distance_settings_with`]).
+#[must_use]
+pub fn frill_distance_level_with(args: &Args, file: Option<&tessera_install::Ini>) -> i32 {
     let builtin = FrillSettings::default().distance_level;
     args.frill_distance.map_or_else(
         || {
-            render_pref(&args.render_prefs, "FrillDistance")
+            layered_render_value(args, file, "FrillDistance")
                 .and_then(frill_level)
                 .unwrap_or(builtin)
         },
         i32::from,
     )
+}
+
+/// Sets the parts of `config` that follow the distance preferences
+/// ([`distance_settings_with`], [`frill_distance_level_with`] over the user's `file`):
+/// the distance settings, the streaming rings (the far ring is the landscape extent *E*,
+/// `walker.md` §11.3, §11.8, unless `--view-blocks` sets it or the far view keeps the
+/// original's near field), the object distance (`--object-distance`, else the far ring),
+/// the far view's radius and the frill level. [`walker_config`] calls it without the file;
+/// a windowed [`WalkerHost`] again with it (`far-view.md` FD21).
+pub fn apply_distance_preferences(
+    config: &mut WalkerConfig,
+    args: &Args,
+    file: Option<&tessera_install::Ini>,
+) {
+    let distances = distance_settings_with(args, file);
+    // With the far view on, full-detail terrain covers the original's 3 × 3 near field
+    // (`far-view.md` §2, §3.2, Tessera Decision FD9) and the sectors draw the rest out to
+    // E; `--view-blocks` keeps a larger full-detail ring.
+    let far = match (args.view_blocks, args.far_view) {
+        (Some(b), _) => f64::from(b) * LANDBLOCK_SIZE,
+        (None, true) => crate::walker::farview::NEAR_FIELD_RING,
+        (None, false) => f64::from(distances.landscape_extent()),
+    };
+    config.stream.rings = RingConfig {
+        near: (3.0 * LANDBLOCK_SIZE).min(far),
+        mid: (6.0 * LANDBLOCK_SIZE).min(far),
+        far,
+        hysteresis: LANDBLOCK_SIZE,
+    };
+    config.objects.distance = args.object_distance.unwrap_or(far);
+    config.stream.frills.distance_level = frill_distance_level_with(args, file);
+    config.far_view.settings.far_radius = distances.landscape.groups();
+    config.distances = distances;
+}
+
+/// The mesh-arena bytes a host of `args` creates its renderer with
+/// ([`crate::walker::arena_bytes`]). A windowed run reads the user's file only after the
+/// renderer exists ([`WalkerHost`]), so its arena is sized for the widest landscape
+/// distance the file could still choose (`LandscapeDrawDistance` at its highest level,
+/// below `--render-pref` and `--landscape-distance`, which decide when given); headless
+/// runs keep their exact configuration.
+#[must_use]
+pub fn walker_arena_bytes(args: &Args) -> u64 {
+    let mut config = walker_config(args);
+    if !args.walker_headless() {
+        let widest = tessera_install::Ini::parse("[Render]\nLandscapeDrawDistance=VeryHigh\n");
+        apply_distance_preferences(&mut config, args, Some(&widest));
+    }
+    crate::walker::arena_bytes(&config)
 }
 
 /// The level of a `FrillDistance` value (`walker.md` §11.2: 0 `Disabled`, 1 `Low`,
@@ -482,22 +564,6 @@ pub fn walker_config(args: &Args) -> WalkerConfig {
 
 /// [`walker_config`] before the `--render-pref` overrides of the far view and the effects.
 fn walker_config_base(args: &Args) -> WalkerConfig {
-    let distances = distance_settings(args);
-    // The far ring is the landscape extent E (`walker.md` §11.3, §11.8) unless
-    // `--view-blocks` sets it. With the far view on, full-detail terrain covers the
-    // original's 3 × 3 near field (`far-view.md` §2, §3.2, Tessera Decision FD9) and the
-    // sectors draw the rest out to E; `--view-blocks` keeps a larger full-detail ring.
-    let far = match (args.view_blocks, args.far_view) {
-        (Some(b), _) => f64::from(b) * LANDBLOCK_SIZE,
-        (None, true) => crate::walker::farview::NEAR_FIELD_RING,
-        (None, false) => f64::from(distances.landscape_extent()),
-    };
-    let rings = RingConfig {
-        near: (3.0 * LANDBLOCK_SIZE).min(far),
-        mid: (6.0 * LANDBLOCK_SIZE).min(far),
-        far,
-        hysteresis: LANDBLOCK_SIZE,
-    };
     let flight = args.fly_path.map(|path| FlightPlan {
         path,
         region: path.region.unwrap_or(args.region),
@@ -505,7 +571,7 @@ fn walker_config_base(args: &Args) -> WalkerConfig {
         height: args.fly_height,
         settle_timeout: Duration::from_secs(args.settle_timeout),
     });
-    WalkerConfig {
+    let mut config = WalkerConfig {
         mode: if args.fly
             || flight.is_some()
             || args.camera_loop.is_some()
@@ -517,18 +583,17 @@ fn walker_config_base(args: &Args) -> WalkerConfig {
         },
         fly_speed: args.fly_speed,
         region: args.region,
+        // The rings, the object distance, the frill level, the far view's radius and the
+        // distances: [`apply_distance_preferences`] below.
         stream: StreamConfig {
-            rings,
             residency_budget: usize::try_from(args.residency_mib << 20).unwrap_or(usize::MAX),
             frills: FrillSettings {
-                distance_level: frill_distance_level(args),
                 draw_frills: systems(args).on(System::Frills),
                 ..FrillSettings::default()
             },
             ..StreamConfig::default()
         },
         objects: ObjectConfig {
-            distance: args.object_distance.unwrap_or(far),
             gpu_budget: args.gpu_mib << 20,
             texture_cap: args.texture_cap,
             ..ObjectConfig::default()
@@ -587,7 +652,6 @@ fn walker_config_base(args: &Args) -> WalkerConfig {
                 .day_type
                 .unwrap_or(tessera_world::environment::INITIAL_DAY_TYPE),
         },
-        distances,
         // The collision mover takes the avatar's float height (`walker.md` §13.2).
         avatar: args.avatar.clone().unwrap_or_default(),
         far_band: args.far_band,
@@ -598,10 +662,7 @@ fn walker_config_base(args: &Args) -> WalkerConfig {
             } else {
                 crate::walker::farview::NearFieldMode::Original
             },
-            settings: tessera_world::far_view::FarViewSettings {
-                far_radius: distances.landscape.groups(),
-                ..tessera_world::far_view::FarViewSettings::default()
-            },
+            settings: tessera_world::far_view::FarViewSettings::default(),
             ..crate::walker::farview::FarViewConfig::default()
         },
         hud: !args.no_hud,
@@ -620,7 +681,9 @@ fn walker_config_base(args: &Args) -> WalkerConfig {
             (None, None) => None,
         },
         ..WalkerConfig::default()
-    }
+    };
+    apply_distance_preferences(&mut config, args, None);
+    config
 }
 
 /// The bundle options of a walker: the content layers of `--content-layers`.
@@ -674,9 +737,10 @@ pub struct WalkerHost {
     user_prefs: bool,
     /// The user's preferences, read on a thread of their own while the world starts up.
     prefs: PendingPreferences,
-    /// The `--render-pref` overrides, applied again after the user's file (`walker.md`
-    /// §14.10: they win over it).
-    render_prefs: Vec<RenderPref>,
+    /// The command line, for the layers above the user's file: the `--render-pref`
+    /// overrides, applied again after it (`walker.md` §14.10: they win over it), and the
+    /// dedicated distance options (W28).
+    args: Box<Args>,
 }
 
 /// Longest the walker's creation waits for the user's preferences after the world
@@ -721,7 +785,7 @@ impl PendingPreferences {
                     return false;
                 }
                 tracing::warn!(
-                    "the user's preferences were not read in time; built-in far-view settings"
+                    "the user's preferences were not read in time; built-in render settings"
                 );
             }
         }
@@ -755,20 +819,22 @@ impl WalkerHost {
             failed: None,
             user_prefs: !args.walker_headless(),
             prefs: PendingPreferences::default(),
-            render_prefs: args.render_prefs.clone(),
+            args: Box::new(args.clone()),
         }
     }
 
     /// Whether the user's preferences are read: the run may read them (windowed only,
-    /// `far-view.md` FD21) and something reads their `[Render]` section, the far view
-    /// (`far-view.md` §6.1, §6.5, §9.1) or the particle effects (`particle-runtime.md`
-    /// §11.2.2 and rule 16).
+    /// `far-view.md` FD21). Every windowed walker reads their `[Render]` section: the
+    /// distance keys (`walker.md` §11.2, W26 item 3) always, the far view (`far-view.md`
+    /// §6.1, §6.5, §9.1) and the particle effects (`particle-runtime.md` §11.2.2 and rule
+    /// 16) when they are on.
     fn wants_preferences(&self) -> bool {
-        self.user_prefs && (self.config.far_view.enabled || self.config.effects.enabled)
+        self.user_prefs
     }
 
-    /// Starts reading the user's preferences off the frame thread, for the far view and the
-    /// particle effects, when [`Self::wants_preferences`] holds.
+    /// Starts reading the user's preferences off the frame thread, for the distance
+    /// settings, the far view and the particle effects, when [`Self::wants_preferences`]
+    /// holds.
     fn start_preferences(&mut self, root: &Path) {
         if !self.wants_preferences() {
             return;
@@ -784,23 +850,35 @@ impl WalkerHost {
                 self.prefs =
                     PendingPreferences::new(rx, std::time::Instant::now() + PREFERENCES_WAIT);
             }
-            Err(e) => tracing::warn!("preferences thread: {e}; built-in far-view settings"),
+            Err(e) => tracing::warn!("preferences thread: {e}; built-in render settings"),
         }
     }
 
-    /// Applies the user's `[Render]` preferences to `config`'s far view and particle
-    /// effects, when they were read ([`PendingPreferences::settled`] has returned `true`).
+    /// Applies the user's `[Render]` preferences to `config`'s distance settings (with what
+    /// follows them, [`apply_distance_preferences`]), far view and particle effects, when
+    /// they were read ([`PendingPreferences::settled`] has returned `true`).
     fn take_preferences(&mut self, config: &mut WalkerConfig) {
         let Some(ini) = self.prefs.ini.take() else {
             return;
         };
+        // The file below `--render-pref` and the dedicated options (`walker.md` §14.10
+        // answer item 1, W26 item 3, W28).
+        apply_distance_preferences(config, &self.args, Some(&ini));
         apply_render_preferences(&mut config.far_view.settings, &ini);
         apply_effect_preferences(&mut config.effects, &ini);
         // `--render-pref` wins over the file (`walker.md` §14.10, `far-view.md` FD22).
         apply_render_overrides(
             &mut config.far_view.settings,
             &mut config.effects,
-            &self.render_prefs,
+            &self.args.render_prefs,
+        );
+        let d = &config.distances;
+        tracing::info!(
+            landscape = ?d.landscape,
+            object_draw_distance = ?d.object_draw_distance,
+            model_detail = ?d.model_detail,
+            frill_distance = config.stream.frills.distance_level,
+            "distances: [Render] preferences applied"
         );
         tracing::info!(
             precipitation = config.effects.precipitation,
@@ -1151,12 +1229,148 @@ AtmosphericsDetail=Bogus
         assert!(!config.effects.precipitation && !config.effects.video_post);
         assert_eq!(config.effects.atmospherics, Some(0));
 
-        // Neither the far view nor the effects: nothing reads the file.
+        // Neither the far view nor the effects: the distance keys still read the file
+        // (`walker.md` §11.2, W26 item 3).
         let a = Args::try_parse_from(["t", "--no-particles"]).unwrap();
         let mut h = WalkerHost::new(&a, Arc::new(Mutex::new(SourceShared::default())));
-        assert!(!h.wants_preferences());
+        assert!(h.wants_preferences());
         h.start_preferences(Path::new("/nonexistent"));
-        assert!(h.prefs.rx.is_none());
+        assert!(h.prefs.rx.is_some(), "the read is started");
+    }
+
+    /// `walker.md` §11.2 (W26 item 3), §14.10 answer item 1 (W28), `far-view.md` FD21: a
+    /// windowed run takes `LandscapeDrawDistance`, `ObjectDrawDistance`, `ModelDetail` and
+    /// `FrillDistance` from the user's file, with what follows them (the far ring, the
+    /// object distance, the far view's radius, the frill level); the file's values follow
+    /// the value rules of W26 (names in any case, capped numbers, anything else the
+    /// built-in level).
+    #[test]
+    fn the_users_file_sets_the_distance_keys() {
+        use tessera_world::DetailLevel;
+        use tessera_world::draw_distance::LandscapeLevel;
+        let a = Args::try_parse_from(["t"]).unwrap();
+        assert!(!a.walker_headless());
+        let mut h = WalkerHost::new(&a, Arc::new(Mutex::new(SourceShared::default())));
+        let built_in = h.config.clone();
+        assert_eq!(built_in.distances, DistanceSettings::default());
+        h.prefs.ini = Some(tessera_install::Ini::parse(
+            "[Render]\nLandscapeDrawDistance=verylow\nObjectDrawDistance=UltraHigh\nModelDetail=7\nFrillDistance=Disabled\n",
+        ));
+        let mut config = h.config.clone();
+        h.take_preferences(&mut config);
+        let d = &config.distances;
+        assert_eq!(d.landscape, LandscapeLevel::VeryLow);
+        assert_eq!(d.object_draw_distance, DetailLevel::UltraHigh);
+        assert_eq!(d.model_detail, DetailLevel::UltraHigh, "7 counts as 4");
+        assert_eq!(config.stream.frills.distance_level, 0);
+        let e = f64::from(LandscapeLevel::VeryLow.extent());
+        assert_eq!(config.stream.rings.far, e, "the far ring is E");
+        assert_eq!(config.objects.distance, e);
+        assert_eq!(
+            config.far_view.settings.far_radius,
+            LandscapeLevel::VeryLow.groups()
+        );
+        assert!(config.stream.rings.far < built_in.stream.rings.far);
+
+        // Values the keys do not accept, signed numbers included: the built-in levels.
+        let mut h = WalkerHost::new(&a, Arc::new(Mutex::new(SourceShared::default())));
+        h.prefs.ini = Some(tessera_install::Ini::parse(
+            "[Render]\nLandscapeDrawDistance=-1\nObjectDrawDistance=Huge\nModelDetail=\nFrillDistance=+3\n",
+        ));
+        let mut config = h.config.clone();
+        h.take_preferences(&mut config);
+        assert_eq!(config.distances, DistanceSettings::default());
+        assert_eq!(
+            config.stream.frills.distance_level,
+            FrillSettings::default().distance_level
+        );
+        assert_eq!(config.stream.rings, built_in.stream.rings);
+    }
+
+    /// `walker.md` §14.10 answer item 1 (W28) and item 3 (iv): `--render-pref` wins over the
+    /// file and the dedicated options over both; a key `--render-pref` does not name keeps
+    /// the file's level; an override value the key does not accept, an empty one included,
+    /// gives the built-in level, not the file's.
+    #[test]
+    fn the_distance_layers_stack_over_the_users_file() {
+        use tessera_world::DetailLevel;
+        use tessera_world::draw_distance::LandscapeLevel;
+        let file = tessera_install::Ini::parse(
+            "[Render]\nLandscapeDrawDistance=Low\nObjectDrawDistance=Low\nModelDetail=Low\nFrillDistance=Low\n",
+        );
+        let a = Args::try_parse_from([
+            "t",
+            "--render-pref",
+            "LandscapeDrawDistance=Medium",
+            "--render-pref",
+            "ObjectDrawDistance=",
+            "--object-draw-distance",
+            "VeryHigh",
+            "--render-pref",
+            "ModelDetail=",
+            "--render-pref",
+            "FrillDistance=VeryHigh",
+            "--frill-distance",
+            "5",
+        ])
+        .unwrap();
+        let mut h = WalkerHost::new(&a, Arc::new(Mutex::new(SourceShared::default())));
+        h.prefs.ini = Some(file.clone());
+        let mut config = h.config.clone();
+        h.take_preferences(&mut config);
+        let d = &config.distances;
+        assert_eq!(
+            d.landscape,
+            LandscapeLevel::Medium,
+            "--render-pref over the file"
+        );
+        assert_eq!(
+            d.object_draw_distance,
+            DetailLevel::VeryHigh,
+            "the dedicated option over both"
+        );
+        assert_eq!(
+            d.model_detail,
+            DistanceSettings::default().model_detail,
+            "an empty override: the built-in level, not the file's"
+        );
+        assert_eq!(config.stream.frills.distance_level, 5, "--frill-distance");
+        // A key the overrides do not name keeps the file's level.
+        let b = Args::try_parse_from(["t", "--render-pref", "ModelDetail=High"]).unwrap();
+        let d = distance_settings_with(&b, Some(&file));
+        assert_eq!(d.landscape, LandscapeLevel::Low);
+        assert_eq!(d.object_draw_distance, DetailLevel::Low);
+        assert_eq!(d.model_detail, DetailLevel::High);
+        assert_eq!(frill_distance_level_with(&b, Some(&file)), 1);
+        // Without the file (headless): the built-in levels below the overrides.
+        assert_eq!(distance_settings_with(&b, None), distance_settings(&b));
+    }
+
+    /// The renderer of a windowed run exists before the user's file is read, so its mesh
+    /// arena is sized for the widest landscape distance the file could choose; given on the
+    /// command line, or in a headless run, the exact distance decides.
+    #[test]
+    fn the_arena_covers_the_landscape_distance_of_the_file() {
+        let exact = |a: &Args| crate::walker::arena_bytes(&walker_config(a));
+        let windowed = Args::try_parse_from(["t"]).unwrap();
+        let widest = Args::try_parse_from(["t", "--landscape-distance", "VeryHigh"]).unwrap();
+        assert!(exact(&windowed) <= exact(&widest));
+        assert_eq!(walker_arena_bytes(&windowed), exact(&widest));
+        let mut h = WalkerHost::new(&windowed, Arc::new(Mutex::new(SourceShared::default())));
+        h.prefs.ini = Some(tessera_install::Ini::parse(
+            "[Render]\nLandscapeDrawDistance=VeryHigh\n",
+        ));
+        let mut config = h.config.clone();
+        h.take_preferences(&mut config);
+        assert!(crate::walker::arena_bytes(&config) <= walker_arena_bytes(&windowed));
+        for argv in [
+            &["t", "--landscape-distance", "Low"][..],
+            &["t", "--render-pref", "LandscapeDrawDistance=Low"][..],
+            &["t", "--screenshot", "/nonexistent/x.png"][..],
+        ] {
+            let a = Args::try_parse_from(argv).unwrap();
+            assert_eq!(walker_arena_bytes(&a), exact(&a), "{argv:?}");
+        }
     }
 
     /// `far-view.md` FD22, `walker.md` §14.10: a headless run with the three overrides of

@@ -600,6 +600,36 @@ fn world_systems_while_streaming() {
         b.drawable().count(),
         b.generated.len()
     );
+    // Over every resident block: placed entities with a class and a depth-bias type
+    // (`walker.md` §11.4.3, `entity-descriptor.md` E26 lookup order).
+    // The digest (FNV-1a over block key, entity and both values) tells a change of values
+    // apart from a change of counts.
+    let (mut placed, mut with_class, mut with_bias) = (0usize, 0usize, 0usize);
+    let mut digest = 0xcbf2_9ce4_8422_2325_u64;
+    let mut mix = |v: u64| {
+        for b in v.to_le_bytes() {
+            digest = (digest ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3);
+        }
+    };
+    let mut blocks: Vec<_> = w.resident().map(|(k, _, rb)| (k, Arc::clone(rb))).collect();
+    blocks.sort_by_key(|(k, _)| k.data_did().0);
+    for (k, rb) in &blocks {
+        for (r, _) in rb.entity_refs() {
+            if let tessera_world::EntityRef::Entity(i) = r {
+                placed += 1;
+                let (c, t) = (rb.lod_class(r), rb.depth_bias_type(r));
+                with_class += usize::from(c.is_some());
+                with_bias += usize::from(t.is_some());
+                mix(u64::from(k.data_did().0) << 32 | u64::from(i));
+                mix(c.map_or(u64::MAX, u64::from));
+                mix(t.map_or(u64::MAX, u64::from));
+            }
+        }
+    }
+    eprintln!(
+        "resident blocks: {placed} placed entities, {with_class} with a LOD class, \
+         {with_bias} with a depth-bias type (digest {digest:016x})"
+    );
 
     // Collision view and cells.
     let view = w.collision_view(&focus, 1);

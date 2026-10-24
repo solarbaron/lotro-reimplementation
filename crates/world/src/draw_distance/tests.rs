@@ -285,19 +285,14 @@ fn worked_example_class_of_a_placement() {
     let t = table();
     let s = DistanceSettings::default();
     // (1) The SED's own set holds A, the 0x47 record B: class A, D = 300.
-    let c = placement_lod_class(LOD, None, Some(&set(Some(0xA))), Some(&chain(&[Some(0xB)])));
+    let c = placement_lod_class(LOD, Some(&set(Some(0xA))), Some(&chain(&[Some(0xB)])));
     assert_eq!(c, Some(0xA));
     assert_eq!(t.values(c, false).draw_distance(2_080.0, &s), 300.0);
     // (2) Only the parent 0x47 holds B: class B, 45 m.
-    let c = placement_lod_class(
-        LOD,
-        None,
-        Some(&set(None)),
-        Some(&chain(&[None, Some(0xB)])),
-    );
+    let c = placement_lod_class(LOD, Some(&set(None)), Some(&chain(&[None, Some(0xB)])));
     assert_eq!(t.values(c, false).draw_distance(2_080.0, &s), 45.0);
     // (3) Nowhere: 200 m and 60 m; at ObjectDrawDistance Low, 120 m.
-    let c = placement_lod_class(LOD, None, Some(&set(None)), Some(&chain(&[None])));
+    let c = placement_lod_class(LOD, Some(&set(None)), Some(&chain(&[None])));
     assert_eq!(c, None);
     let low = DistanceSettings {
         object_draw_distance: DetailLevel::Low,
@@ -309,18 +304,20 @@ fn worked_example_class_of_a_placement() {
         1e-4
     ));
     // (4) A class without a table entry keeps 200 m and 60 m.
-    let c = placement_lod_class(LOD, None, Some(&set(Some(0x77))), None);
+    let c = placement_lod_class(LOD, Some(&set(Some(0x77))), None);
     assert_eq!(t.values(c, false).d0(), 200.0);
-    // The instance set comes first.
-    let c = placement_lod_class(LOD, Some(&set(Some(0xB))), Some(&set(Some(0xA))), None);
+    // (5) No per-instance set (a generated object): the chain's class.
+    let c = placement_lod_class(LOD, None, Some(&chain(&[Some(0xB)])));
     assert_eq!(c, Some(0xB));
+    // (6) Nothing at all.
+    assert_eq!(placement_lod_class(LOD, None, None), None);
 }
 
 /// `water.md` WA19 (§14 (a), W49–W50; `decals.md` §6.5 "Objects"): `Render_DepthBias_Type`
-/// is found in the entity lookup order. A SED with an instance set, a value on its 0x47
-/// object and none in either set gets the object's value; a value in both sets and on the
-/// object gives the sets' value (the one SED of the census with 4 on the SED and 3 on its
-/// object gets 4).
+/// is found in the entity lookup order (`entity-descriptor.md` E26). A SED with a value on
+/// its 0x47 object and none in its per-instance set gets the object's value; a value in the
+/// per-instance set and on the object gives the set's value (the one SED of the census with
+/// 4 on the SED and 3 on its object gets 4).
 #[test]
 fn depth_bias_type_follows_the_entity_lookup_order() {
     const BIAS: u32 = 0x5100_0002;
@@ -339,21 +336,11 @@ fn depth_bias_type_follows_the_entity_lookup_order() {
         }],
         incomplete: false,
     };
-    let t = placement_lod_class(
-        BIAS,
-        Some(&set(None)),
-        Some(&set(None)),
-        Some(&chain(Some(3))),
-    );
+    let t = placement_lod_class(BIAS, Some(&set(None)), Some(&chain(Some(3))));
     assert_eq!(t, Some(3), "the object's value");
-    let t = placement_lod_class(
-        BIAS,
-        Some(&set(Some(4))),
-        Some(&set(Some(4))),
-        Some(&chain(Some(3))),
-    );
-    assert_eq!(t, Some(4), "the sets' value");
-    let t = placement_lod_class(BIAS, Some(&set(None)), Some(&set(None)), Some(&chain(None)));
+    let t = placement_lod_class(BIAS, Some(&set(Some(4))), Some(&chain(Some(3))));
+    assert_eq!(t, Some(4), "the set's value");
+    let t = placement_lod_class(BIAS, Some(&set(None)), Some(&chain(None)));
     assert_eq!(t, None, "no source: the caller takes entry 0");
 }
 

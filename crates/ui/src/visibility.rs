@@ -46,6 +46,12 @@ impl Ui {
                 if fading.is_some_and(|f| f.to <= 0.0) {
                     return;
                 }
+                // Tessera rule (§11.2 implementer note): a surface that has never been drawn
+                // (no surface yet, or its first paint still withheld) was never on screen, so
+                // it hides at once, as a fade of zero length: the same messages and final
+                // opacity 0 (a later show fades in from 0), but no fade-out of a panel the
+                // user never saw.
+                let dur = if self.is_surface_drawn(k) { dur } else { 0.0 };
                 self.start_fade(k, 0.0, dur);
                 self.input.hover_dirty = true;
             } else {
@@ -139,21 +145,7 @@ impl Ui {
             (((self.now - f.start) / f64::from(f.duration)) as f32).clamp(0.0, 1.0)
         };
         let o = f.from + (f.to - f.from) * t;
-        let pid = self.v.pids.object_opacity;
-        self.set_property(k, pid, PropertyValue::Float(o));
-        // Each child with its own surface takes the fade opacity too (step 2).
-        let mut stack = self.children(k);
-        let mut n = 0;
-        while let Some(c) = stack.pop() {
-            n += 1;
-            if n > 1 << 16 {
-                break;
-            }
-            if self.owns_surface(c) {
-                self.set_property(c, pid, PropertyValue::Float(o));
-            }
-            stack.extend(self.children(c));
-        }
+        self.set_fade_opacity(k, o);
         if t >= 1.0 {
             if let Some(e) = self.el_mut(k) {
                 e.fade = None;
@@ -167,6 +159,42 @@ impl Ui {
         } else {
             true
         }
+    }
+
+    /// Writes a fade opacity into `k` and each child with its own surface (§11.1 step 2).
+    fn set_fade_opacity(&mut self, k: ElementKey, o: f32) {
+        let pid = self.v.pids.object_opacity;
+        self.set_property(k, pid, PropertyValue::Float(o));
+        let mut stack = self.children(k);
+        let mut n = 0;
+        while let Some(c) = stack.pop() {
+            n += 1;
+            if n > 1 << 16 {
+                break;
+            }
+            if self.owns_surface(c) {
+                self.set_property(c, pid, PropertyValue::Float(o));
+            }
+            stack.extend(self.children(c));
+        }
+    }
+
+    /// A panel opened hidden ([`Ui::open_panel_hidden`]) takes the state a completed fade-out
+    /// leaves when it has an auto-fade: opacity 0 on it and its children with surfaces, so
+    /// that code's first show fades it in from 0, as after an open and a hide.
+    pub(crate) fn opened_hidden(&mut self, k: ElementKey) {
+        if self.prop(k, self.v.pids.auto_fade).is_set() && self.wants_surface(k) {
+            self.set_fade_opacity(k, 0.0);
+        }
+    }
+
+    /// Whether the element's own drawing surface has been drawn: it exists and its first
+    /// paint is no longer withheld (decision 0015 Decision 1.8). `false` for an element
+    /// without a surface, and for one that was opened or shown and not painted since.
+    #[must_use]
+    pub fn is_surface_drawn(&self, k: ElementKey) -> bool {
+        self.surface_of(k)
+            .is_some_and(|id| self.painter.scheduler.is_drawn(id))
     }
 
     /// Whether an element is in an automatic fade (skipped by the hit test, §4.2).

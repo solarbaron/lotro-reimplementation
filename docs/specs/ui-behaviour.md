@@ -1740,6 +1740,22 @@ drawn yet (a recorded difference).
 `UICore_Element_hide` (769 elements, 165 states) sets the visibility (hide = true → not
 visible); a state that sets it shows or hides the element when the state is entered (UL §9.4).
 
+> **OPEN:** (clean-room implementer, 2026-10-24) hiding an auto-fade element (§11.1) whose
+> surface has never been drawn. Game code opens many panels (UL §9.1 step 5 shows them) and
+> hides them at once; with the withheld first paint of UR Decision 1.8, §11.1 then makes a
+> surface that was never on screen appear part-way through a fade-out, so the user sees
+> "ghost" windows fade at launch. Neither this section nor UR Decision 1.8 says what the
+> drawn picture of such a fade-out is. Interim Tessera rules in `tessera-ui`, to be confirmed
+> or replaced: (a) when code hides an auto-fade element whose own surface does not exist yet
+> or has not been drawn (first paint still withheld), it hides at once, as a fade of length
+> 0: `Element_auto_fade_start` and `Element_auto_fade_stop` are still sent, the opacity
+> (and that of its children with surfaces) ends at 0 so that the next show fades in from 0,
+> and nothing is drawn; (b) panels that the client hides right after opening them are opened
+> hidden (`Ui::open_panel_hidden`: UL §9.1 steps 1–4 only, no show reactions, no fade
+> messages, opacity 0 when it has an auto-fade). Questions: does the original draw anything
+> of a panel opened and hidden in the same frame, and does a first show of an element that
+> was never shown fade in from 0 or from its layout's `ObjectOpacity`?
+
 ---
 
 <a id="s12"></a>

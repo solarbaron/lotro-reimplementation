@@ -276,6 +276,44 @@ impl Ui {
         self.open_panel(did, element_id)
     }
 
+    /// "Open panel" by `UILAYOUT` entry key, **hidden**: as [`Ui::open_panel_hidden`].
+    ///
+    /// # Errors
+    /// [`UiError::NoLayoutKey`] when the map has no entry, else as [`Ui::open_panel`].
+    pub fn open_panel_hidden_by_key(
+        &mut self,
+        key: u32,
+        element_id: u32,
+    ) -> Result<ElementKey, UiError> {
+        let did = self
+            .env
+            .layout_by_key(key)
+            .ok_or(UiError::NoLayoutKey(key))?;
+        self.open_panel_hidden(did, element_id)
+    }
+
+    /// Opens a root panel as [`Ui::open_panel`] does, but **hidden** (Tessera rule,
+    /// `ui-behaviour.md` §11.2 implementer note): steps 1–4 of `ui-layout.md` §9.1 run and
+    /// step 5 does not, so the panel is created with its visibility flag off. It never owns a
+    /// surface, starts no auto-fade and runs none of the show reactions (`activate_on_show`,
+    /// `focus_on_show`) until code shows it; with an auto-fade it starts at opacity 0, as a
+    /// completed fade-out leaves it, so the first show fades in. For panels that code would
+    /// hide right after opening them (shown and hidden at once, they would fade out over the
+    /// screen without ever having been shown).
+    ///
+    /// # Errors
+    /// As [`Ui::create_element`].
+    pub fn open_panel_hidden(
+        &mut self,
+        layout: Did,
+        element_id: u32,
+    ) -> Result<ElementKey, UiError> {
+        self.enter_creation(layout, element_id)?;
+        let r = self.open_panel_inner(layout, element_id, false);
+        self.leave_creation();
+        r
+    }
+
     /// Opens a root panel (`ui-layout.md` §9.1 steps 1–5): builds the tree without a parent,
     /// runs post-creation, marks it screen-level with its own object mode, attaches it to the
     /// screen root (which lays it out from the layout's design size to the screen) and shows
@@ -287,12 +325,17 @@ impl Ui {
     /// As [`Ui::create_element`].
     pub fn open_panel(&mut self, layout: Did, element_id: u32) -> Result<ElementKey, UiError> {
         self.enter_creation(layout, element_id)?;
-        let r = self.open_panel_inner(layout, element_id);
+        let r = self.open_panel_inner(layout, element_id, true);
         self.leave_creation();
         r
     }
 
-    fn open_panel_inner(&mut self, layout: Did, element_id: u32) -> Result<ElementKey, UiError> {
+    fn open_panel_inner(
+        &mut self,
+        layout: Did,
+        element_id: u32,
+        show: bool,
+    ) -> Result<ElementKey, UiError> {
         let requested = (layout, element_id);
         let (mut l, mut i) = self.top_level(layout, element_id)?;
         let mut layout = layout;
@@ -330,14 +373,15 @@ impl Ui {
         }
         if (layout, element_id) != requested {
             self.enter_creation(layout, element_id)?;
-            let r = self.open_panel_build(&l, i, layout, element_id, modal);
+            let r = self.open_panel_build(&l, i, layout, element_id, modal, show);
             self.leave_creation();
             return r;
         }
-        self.open_panel_build(&l, i, layout, element_id, modal)
+        self.open_panel_build(&l, i, layout, element_id, modal, show)
     }
 
-    /// Steps 1–5 of `ui-layout.md` §9.1 for the (possibly overridden) top-level element.
+    /// Steps 1–5 of `ui-layout.md` §9.1 for the (possibly overridden) top-level element;
+    /// without `show`, steps 1–4 and the panel stays hidden ([`Ui::open_panel_hidden`]).
     fn open_panel_build(
         &mut self,
         l: &UiLayout,
@@ -345,6 +389,7 @@ impl Ui {
         layout: Did,
         element_id: u32,
         modal: bool,
+        show: bool,
     ) -> Result<ElementKey, UiError> {
         let size = (
             l.design_width.min(i32::MAX as u32) as i32,
@@ -377,6 +422,11 @@ impl Ui {
         if let Some(e) = self.el_mut(k) {
             e.screen_level = true;
             e.root_panel = true;
+            if !show {
+                // Hidden before it is attached: it is never displayed, so nothing is damaged,
+                // no surface is made and no visibility message is due.
+                e.visible = false;
+            }
         }
         if modal {
             // A modal dialog consumes the other keys while shown (`ui-widgets.md` §18.4).
@@ -391,9 +441,12 @@ impl Ui {
             return Err(e);
         }
         self.completion_pass(k);
+        if !show {
+            self.opened_hidden(k);
+        }
         // Step 5: shown with the screen root; the show reactions of UB §11.2
         // (`activate_on_show`, `focus_on_show`) run now that the panel is displayed.
-        if self.is_visible(self.screen) && !self.prop(k, self.v.pids.hide).bool() {
+        if show && self.is_visible(self.screen) && !self.prop(k, self.v.pids.hide).bool() {
             if self.is_visible(k) {
                 self.on_shown(k);
             } else {

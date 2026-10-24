@@ -565,8 +565,7 @@ impl TradeWindow {
         chars: CharVocab,
     ) -> Result<Self, crate::UiError> {
         vocab.register_classes(ui);
-        let root = ui.open_panel_by_key(vocab.layouts.securetrade, vocab.ids.trade)?;
-        ui.set_shown(root, false);
+        let root = ui.open_panel_hidden_by_key(vocab.layouts.securetrade, vocab.ids.trade)?;
         Ok(Self::attach(ui, vocab, chars, root))
     }
 

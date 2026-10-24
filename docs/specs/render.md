@@ -1661,6 +1661,22 @@ implementing; they add no facts about the game.
 > `OVER` alpha component is R12's `One`/`OneMinusSrcAlpha`; the guard test's coverage is recorded
 > in the "Fixed blends" row of the table above, and the stale "API" row is brought up to date.
 
+> **OPEN:** (implementer, `tessera-ui::paint` scheduler, 2026-10-24; engineering choice under
+> UR Decision 1.8 and U4 (c)) The scheduler knows whether a first paint's images are pending
+> only from the snapshot of the surface's job. (1) Built: a withheld first paint whose images
+> were pending starts again when damage reaches it (an arriving image damages the elements
+> that waited for it): its textures are destroyed and a first paint of the whole canvas runs
+> from a new snapshot, withheld under the same condition and within the same 100 ms of the
+> show (counted in `PaintFrameStats::first_paint_restarts`). Before, a first paint that was a
+> member of its group's generation, where no content job may start, waited the full 100 ms
+> and was drawn without the images that had arrived; on a clock that does not advance (the
+> headless combat screens run many frames at one checkpoint time) it was never drawn. Confirm
+> this rule or give another. (2) Not changed: `Ui::paint` gives the scheduler the pending
+> flag after the frame, so a first paint that completes and uploads in the frame of its first
+> snapshot is released in that frame although its images are pending (a later content job
+> paints them in). Decision 1.8 says such a paint is withheld; say whether that is to be
+> built (it would hold back every small first paint with a loading image, up to 100 ms).
+
 **Indicative measurements (2026-10-07, development machine under load from other builds,
 load average about 9–11; not the idle reference machine).** `tests/ui_perf.rs` (release,
 `--ignored`): a 3840 × 2160 `Rgba8Srgb` target, 46 entries (one screen-sized 1 : 1

@@ -18,7 +18,7 @@ use proptest::prelude::*;
 use tessera_formats::Did;
 use tessera_formats::ui_layout::UiLayout;
 use tessera_material::ui_image::{PixelLayout, UiImage};
-use tessera_ui::paint::{GpuOp, Rect, Slot, TexKey, Unlimited};
+use tessera_ui::paint::{BandBudget, GpuOp, Rect, Slot, TexKey, Unlimited};
 use tessera_ui::text::{CharListBuilder, DEFAULT_RANGES, LayoutParams, TesseraFont, layout};
 use tessera_ui::{
     Background, ControlKind, ElementKey, ImageRef, ImageState, MemoryEnv, PreparedText,
@@ -510,4 +510,58 @@ fn moved_text_with_the_same_clip_is_drawn_again() {
             "textures after frame {step}"
         );
     }
+}
+
+/// A window shown while its background image is loading, painted on a clock that does not
+/// advance (headless screens run many frames at one checkpoint): its first paint is
+/// withheld for the image (Decision 1.8), and once the image arrives the first paint is
+/// redone with it and drawn, without waiting for the 100 ms of U4 (c) to run out on the
+/// clock. Before the fix the withheld first paint of the new group's generation never saw
+/// the arrival and the UI never settled.
+#[test]
+fn a_first_paint_waiting_for_an_image_is_drawn_when_it_arrives_on_a_still_clock() {
+    let arrived = Arc::new(AtomicBool::new(false));
+    let env = LoadingEnv {
+        inner: env(),
+        arrived: Arc::clone(&arrived),
+    };
+    let mut ui = Ui::new(Box::new(env), tessera_ui::Vocab::default(), (320, 200));
+    let win = ui.create_control(ControlKind::Window, 1).expect("window");
+    ui.control_set_position(win, 10, 10);
+    ui.control_set_size(win, 120, 60);
+    ui.control_set_visible(win, true);
+    let pic = control(&mut ui, ControlKind::Control, win, [10, 10, 64, 40]);
+    ui.control_set_background(pic, Background::Did(IMAGES[2]));
+    let mut tex = Textures::default();
+    let t = Duration::from_millis(16);
+    // One band per frame, so the first paint spans frames (as large panels do in their
+    // slice) and its snapshot's pending image is known before it completes.
+    for _ in 0..8 {
+        let f = ui.paint(t, &mut BandBudget(1));
+        tex.apply(&f.ops);
+        assert_eq!(f.stats.first_paint_restarts, 0);
+    }
+    assert!(!ui.paint_settled(), "withheld while the image loads");
+    let before = tex.front();
+    arrived.store(true, Ordering::Relaxed);
+    ui.images_arrived();
+    let mut restarts = 0;
+    let mut frames = 0;
+    while !ui.paint_settled() {
+        let f = ui.paint(t, &mut BandBudget(1));
+        tex.apply(&f.ops);
+        restarts += f.stats.first_paint_restarts;
+        frames += 1;
+        assert!(
+            frames < 64,
+            "settles once the image is in, on the same clock"
+        );
+    }
+    assert_eq!(restarts, 1, "the withheld first paint started again once");
+    let after = tex.front();
+    assert_ne!(before, after, "the image is in the drawn picture");
+    assert!(
+        after.iter().any(|(_, _, px)| px.iter().any(|p| *p != 0)),
+        "the drawn picture has content"
+    );
 }

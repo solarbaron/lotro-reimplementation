@@ -636,6 +636,35 @@ impl<G> Scheduler<G> {
         }
     }
 
+    /// Whether the surface's pending damage (not yet taken by a job) meets `r`; `true` for a
+    /// surface the scheduler does not know (conservative). The tree side's test of `render.md`
+    /// §6.12 R13 counts pending damage as operations that may have changed since the surface's
+    /// last snapshot. Each pending rectangle looked at takes one of `checks`; with too few
+    /// left the answer is `true` ([`super::damage::DamageList::meets`]).
+    #[must_use]
+    pub fn damage_meets(&self, id: SurfaceId, r: Rect, checks: &mut usize) -> bool {
+        self.surfaces
+            .get(&id)
+            .is_none_or(|s| s.damage.meets(&r, checks))
+    }
+
+    /// Whether the surface's front textures show the picture of its last snapshot and nothing
+    /// is under way that would change them: it is drawn, has no job in flight (painting,
+    /// uploading, holding or waiting for the swap), no generation captured or running and no
+    /// withheld first paint. Only then is its last snapshot's display list the one its
+    /// canvases were painted from (`render.md` §6.12 R13 item 1 reads it); while a job runs,
+    /// the shown canvases may still hold operations that the job's snapshot no longer has.
+    #[must_use]
+    pub fn shows_last_snapshot(&self, id: SurfaceId) -> bool {
+        self.surfaces.get(&id).is_some_and(|s| {
+            s.drawn
+                && s.stage == Stage::Idle
+                && s.first.is_none()
+                && s.generation.is_none()
+                && s.gen_capture.is_none()
+        })
+    }
+
     /// Whether images requested by the surface's current states are still loading (part of
     /// the first-paint condition, Decision 1.8).
     pub fn set_images_pending(&mut self, id: SurfaceId, pending: bool) {

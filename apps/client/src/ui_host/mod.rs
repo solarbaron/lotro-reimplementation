@@ -247,6 +247,8 @@ pub struct UiHost {
     clock: f64,
     /// Where [`Self::end_frame`] takes the frame clock from ([`FrameClock`]).
     frame_clock: FrameClock,
+    /// The UI clock of the last paint ([`Self::paint_clock`]).
+    last_paint: Option<Duration>,
     frame: FrameAccum,
     last: FrameSample,
     recorder: Option<Recorder>,
@@ -511,6 +513,7 @@ impl UiHost {
             started: Instant::now(),
             clock: 0.0,
             frame_clock: FrameClock::Wall,
+            last_paint: None,
             frame: FrameAccum::default(),
             last: FrameSample::default(),
             recorder: options.record.then(Recorder::default),
@@ -712,8 +715,19 @@ impl UiHost {
     /// is in flight and the paint scheduler is idle (every surface drawn,
     /// nothing left to paint or upload). Waiting for this is independent of how many
     /// frames the paint slices need on a loaded machine.
+    ///
+    /// No surface may be in a geometry preview either (`ui-scaling.md` §6.1): a capture then
+    /// shows the settled, crisp picture, never the GPU-scaled or moved preview, whatever the
+    /// timing of the run. On a UI clock that advances the preview settles 150 ms after its
+    /// last change; on one that does not (headless checkpoints), [`Self::paint_clock`] settles
+    /// it once everything else has settled.
     #[must_use]
     pub fn settled(&self) -> bool {
+        self.settled_but_previews() && !self.ui.borrow().geometry_preview_pending()
+    }
+
+    /// [`Self::settled`] apart from geometry previews.
+    fn settled_but_previews(&self) -> bool {
         let in_flight = self
             .env
             .as_ref()
@@ -724,6 +738,21 @@ impl UiHost {
             && self.pending_session.is_empty()
             && !in_flight
             && self.ui.borrow().paint_settled()
+    }
+
+    /// The UI clock this frame paints at. When it has not advanced since the last paint (a
+    /// held clock: headless checkpoints, golden captures) and everything else has settled,
+    /// the remaining geometry previews (`ui-scaling.md` §6.1) are settled in this paint, as
+    /// 150 ms of an advancing clock without a change would settle them
+    /// ([`Ui::settle_previews_at_next_paint`]); such a run would otherwise wait for them
+    /// forever. A clock that advances is left to the rule's own settle time.
+    fn paint_clock(&mut self) -> Duration {
+        let now = Duration::from_secs_f64(self.clock.max(0.0));
+        if self.last_paint == Some(now) && self.settled_but_previews() {
+            self.ui.borrow_mut().settle_previews_at_next_paint();
+        }
+        self.last_paint = Some(now);
+        now
     }
 
     /// The recorder, when recording.
@@ -3000,7 +3029,7 @@ impl UiHost {
         // Panels attached this frame take their saved placements before they are painted.
         self.apply_saved_placements(false);
         let t = Instant::now();
-        let now = Duration::from_secs_f64(self.clock.max(0.0));
+        let now = self.paint_clock();
         // Ladder steps back from the workers go into the glyph cache before this frame's
         // paint (S7; their worker time is in this frame's figures); steps the bound or a full
         // queue held back are asked again.

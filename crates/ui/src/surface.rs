@@ -121,7 +121,158 @@ impl CanvasMap {
             None => [1.0, 1.0],
         }
     }
+
+    /// The **phases** of the owner's displayed top-left on the physical pixel grid
+    /// (`ui-scaling.md` §6.1 geometry preview): *rx* = E*x*(*L*) + ½ − *L* × *Kx*, *ry*
+    /// likewise. Every canvas column inside the surface, E*x*(*L* + *d*) − E*x*(*L*), depends on
+    /// *L* only through *rx*. `(0, 0)` at the identity, where the map is `x ↦ x`.
+    fn phases(&self) -> [f64; 2] {
+        match self.screen {
+            Some(f) => [
+                f64::from(self.ox) + 0.5 - self.dl * f.kx(),
+                f64::from(self.oy) + 0.5 - self.dt * f.ky(),
+            ],
+            None => [0.0, 0.0],
+        }
+    }
+
+    /// Whether two maps place every layout coordinate on the same canvas pixel (§6.1, the
+    /// mapping part of the canvas geometry): the same UI screen (so *Kx*, *Ky*), the same node
+    /// scale and the same phases. Compared as 64-bit floats, so two maps that differ only in
+    /// rounding count as different, which repaints and gives the same picture (§6.1 item 4).
+    fn same_geometry(&self, o: &Self) -> bool {
+        self.screen == o.screen && self.mx == o.mx && self.my == o.my && {
+            let (a, b) = (self.phases(), o.phases());
+            a[0] == b[0] && a[1] == b[1]
+        }
+    }
 }
+
+/// A surface's **canvas geometry** (`ui-scaling.md` §6.1 geometry preview): the owner→canvas
+/// map and the canvas size.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct PaintGeo {
+    map: CanvasMap,
+    canvas: [u32; 2],
+}
+
+impl PaintGeo {
+    /// Whether the two give the same canvas: the same size and the same mapping.
+    fn same(&self, o: &Self) -> bool {
+        self.canvas == o.canvas && self.map.same_geometry(&o.map)
+    }
+
+    /// Whether the node scales (and the UI screen) are those of `o`, so that only the phases
+    /// differ: a previewed canvas is then composed 1 : 1 (§6.1 item 3).
+    fn same_scale(&self, o: &Self) -> bool {
+        self.map.screen == o.map.screen && self.map.mx == o.map.mx && self.map.my == o.map.my
+    }
+}
+
+/// The settle time of a geometry preview (`ui-scaling.md` §6.1 item 4, the 150 ms of §4.5
+/// step 4 on the UI clock).
+const PREVIEW_SETTLE: Duration = Duration::from_millis(150);
+
+/// Whether the current physical box is more than twice or less than half the held canvas on an
+/// axis (`ui-scaling.md` §6.1 item 5, the factor-2 bound).
+fn beyond_factor_two(held: [u32; 2], current: [u32; 2]) -> bool {
+    held.iter().zip(current.iter()).any(|(&h, &c)| {
+        let (h, c) = (u64::from(h), u64::from(c));
+        c > 2 * h || 2 * c < h
+    })
+}
+
+/// What [`Ui::decide_geometry`] chose for a surface in this frame.
+#[derive(Debug, Clone, Copy)]
+struct GeoStep {
+    /// The geometry its paints use (the held one while previewed).
+    paint: PaintGeo,
+    /// The UI clock of the last frame its geometry changed in, while previewed.
+    preview: Option<Duration>,
+    /// Its paint geometry changed: the canvas is repainted in full.
+    repaint: bool,
+}
+
+/// The canvas pixel boxes of the operations a surface's last snapshot draws after each of its
+/// nested entries (`render.md` §6.12 R13: the operations drawn after a moved nested entry).
+#[derive(Debug, Default)]
+struct AfterOps {
+    /// Each nested entry of the list: the index in `boxes` of the first operation drawn after
+    /// it (its first place in the list, when it is listed twice) and the bounding box of every
+    /// box from there on, which rejects a region in one test.
+    entries: HashMap<u32, (usize, Rect)>,
+    /// The non-empty areas of the operations after the first nested entry, in drawing order.
+    boxes: Vec<Rect>,
+    /// More boxes than [`AfterOps::MAX`]: every region counts as met.
+    overflow: bool,
+}
+
+impl AfterOps {
+    /// Most boxes kept per surface.
+    const MAX: usize = 4_096;
+
+    fn of(list: &DisplayList) -> Self {
+        let mut a = Self::default();
+        let mut starts: Vec<(u32, usize)> = Vec::new();
+        for (op, area) in list.ops().iter().zip(list.areas()) {
+            match op {
+                PaintOp::Nested { entry, .. } => starts.push((*entry, a.boxes.len())),
+                _ if starts.is_empty() || area.is_empty() => {}
+                _ => {
+                    if a.boxes.len() >= Self::MAX {
+                        a.overflow = true;
+                        a.boxes.clear();
+                        return a;
+                    }
+                    a.boxes.push(*area);
+                }
+            }
+        }
+        // The bounding box of `boxes[i..]` for every `i`, from the end.
+        let mut tail = Vec::with_capacity(a.boxes.len() + 1);
+        let mut acc = Rect::default();
+        tail.push(acc);
+        for b in a.boxes.iter().rev() {
+            acc = b.union(&acc);
+            tail.push(acc);
+        }
+        tail.reverse();
+        for (entry, start) in starts {
+            let bound = tail.get(start).copied().unwrap_or_default();
+            a.entries.entry(entry).or_insert((start, bound));
+        }
+        a
+    }
+
+    /// Whether an operation drawn after `entry` may change a pixel in `region`; `true` when
+    /// `entry` is not in the list (conservative). A region outside the bounding box of the
+    /// operations after the entry is rejected at once; otherwise each box looked at takes one
+    /// of `checks`, and with too few left the answer is `true` (met) without looking, which
+    /// bounds the test's work per frame (R13 permits counting more operations than needed).
+    fn meets(&self, entry: u32, region: &Rect, checks: &mut usize) -> bool {
+        if self.overflow {
+            return true;
+        }
+        let Some(&(start, bound)) = self.entries.get(&entry) else {
+            return true;
+        };
+        if bound.intersect(region).is_empty() {
+            return false;
+        }
+        let tail = self.boxes.get(start..).unwrap_or(&[]);
+        if tail.len() > *checks {
+            *checks = 0;
+            return true;
+        }
+        *checks -= tail.len();
+        tail.iter().any(|b| !b.intersect(region).is_empty())
+    }
+}
+
+/// Most rectangle tests the R13 skip (`render.md` §6.12) makes in one frame, over the
+/// operations drawn after the moved entries and the parents' pending damage; past it every
+/// further region counts as met (damage and membership, as without R13).
+const R13_CHECKS: usize = 65_536;
 
 /// The colour of the letterbox bars (`ui-scaling.md` §5.4 step 6): opaque black, 0xAARRGGBB.
 pub(crate) const LETTERBOX_COLOUR: u32 = 0xFF00_0000;
@@ -137,15 +288,25 @@ fn clamp_i32(v: i64) -> i32 {
 pub struct GroupGeometry {
     /// The root's displayed box.
     pub root: Rect,
-    /// Per surface: displayed box relative to the root origin, canvas size.
+    /// Per surface: displayed box relative to the root origin, canvas size (the size its
+    /// canvas is painted at: the held one during a geometry preview, `ui-scaling.md` §6.1).
     pub entries: BTreeMap<u32, (Rect, [u32; 2])>,
+    /// The surfaces in a geometry preview whose node scales are the held ones: their canvas is
+    /// composed 1 : 1 at the destination's top-left, limited to it (§6.1 item 3).
+    pub exact: BTreeSet<u32>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 struct SurfaceRec {
     id: SurfaceId,
     group: GroupId,
+    /// The current canvas size (the owner's physical box).
     canvas: [u32; 2],
+    /// The canvas geometry the surface's paints use: the current one, or during a geometry
+    /// preview the held one (`ui-scaling.md` §6.1 item 2).
+    paint: PaintGeo,
+    /// While previewed: the UI clock of the last frame in which the geometry changed.
+    preview: Option<Duration>,
     displayed: Rect,
     coverage: Vec<(u32, Rect)>,
     stand_in: bool,
@@ -247,6 +408,21 @@ pub(crate) struct Painter {
     )>,
     /// How many times each surface pass ran ([`Ui::surface_passes`]).
     passes: SurfacePasses,
+    /// Per surface, the operations its last snapshot draws after each nested entry
+    /// (`render.md` §6.12 R13).
+    after_ops: HashMap<SurfaceId, AfterOps>,
+    /// Rectangle tests the R13 skip may still make in this frame ([`R13_CHECKS`]).
+    r13_checks: usize,
+    /// A lower bound of the UI clock at which any surface's geometry preview last changed
+    /// (`ui-scaling.md` §6.1), or `None` when no surface is previewed: frames before it can be
+    /// due skip every scan for due previews. Lowered wherever a record's preview is set,
+    /// made exact by [`Ui::choose_settles`].
+    preview_hint: Option<Duration>,
+    /// The due geometry previews this frame may settle ([`Ui::choose_settles`]); `None`: every
+    /// due one.
+    settle_now: Option<BTreeSet<ElementKey>>,
+    /// The next paint takes every geometry preview as due ([`Ui::settle_previews_at_next_paint`]).
+    force_settle: bool,
 }
 
 /// How many times [`Ui::paint`] ran each of its surface passes since the UI was made
@@ -414,7 +590,23 @@ impl Painter {
             s6: crate::scaling::S6Budget::default(),
             letterbox: None,
             passes: SurfacePasses::default(),
+            after_ops: HashMap::new(),
+            r13_checks: R13_CHECKS,
+            preview_hint: None,
+            settle_now: None,
+            force_settle: false,
         }
+    }
+
+    /// Lowers [`Painter::preview_hint`] for a record whose geometry preview last changed at
+    /// `t`.
+    fn note_preview(&mut self, t: Duration) {
+        self.preview_hint = Some(self.preview_hint.map_or(t, |h| h.min(t)));
+    }
+
+    /// Whether `k` owned a surface in the last surface pass.
+    pub fn owns_recorded(&self, k: ElementKey) -> bool {
+        self.recs.contains_key(&k)
     }
 
     /// Records a paint-dirty element for the next damage pass.
@@ -448,6 +640,7 @@ impl Painter {
     pub fn forget(&mut self, k: ElementKey) {
         if let Some(r) = self.recs.remove(&k) {
             self.scheduler.release_surface(r.id);
+            self.after_ops.remove(&r.id);
             self.structural = true;
         }
         if self.node_index.contains_key(&k) || self.external.contains_key(&k) {
@@ -533,9 +726,46 @@ impl Ui {
     /// paint scheduler is idle (every surface drawn, no job, upload or generation left).
     /// Tests wait on this instead of a fixed number of frames, since the paint step works
     /// in time slices and a loaded machine needs more frames for the same work.
+    ///
+    /// A surface in a geometry preview (`ui-scaling.md` §6.1) does not keep painting from
+    /// settling: its settle repaint waits for 150 ms of the clock given to [`Ui::paint`], which
+    /// a caller on a clock that does not advance never reaches (its picture is then the
+    /// preview, as the rule defines it). Callers that want the settled crisp picture (screen
+    /// captures, goldens) also wait for [`Ui::geometry_preview_pending`] to be `false`, while
+    /// their clock advances or, on a held clock, after [`Ui::settle_previews_at_next_paint`].
     #[must_use]
     pub fn paint_settled(&self) -> bool {
         !self.painter.touched && self.painter.dirty.is_empty() && self.painter.scheduler.is_idle()
+    }
+
+    /// Whether a surface is in a geometry preview (`ui-scaling.md` §6.1): composed from its held
+    /// canvas until its settle repaint.
+    #[must_use]
+    pub fn geometry_preview_pending(&self) -> bool {
+        self.painter.preview_hint.is_some()
+            && self.painter.recs.values().any(|r| r.preview.is_some())
+    }
+
+    /// Makes the next [`Ui::paint`] settle every geometry preview (`ui-scaling.md` §6.1 item 4)
+    /// as if 150 ms of the UI clock had passed since its last change, with no other change.
+    /// For capture checkpoints on a UI clock that does not advance (headless screenshots,
+    /// golden tests), whose picture is then the settled, crisp one rather than the preview;
+    /// interactive hosts, whose clock advances, never need it. The settle repaints run as
+    /// they would 150 ms later, so the result is the picture the rule gives once the
+    /// previews have held.
+    pub fn settle_previews_at_next_paint(&mut self) {
+        if self.geometry_preview_pending() {
+            self.painter.force_settle = true;
+        }
+    }
+
+    /// Whether the surface of `k` is in a geometry preview (`ui-scaling.md` §6.1), for tests.
+    #[must_use]
+    pub fn in_geometry_preview(&self, k: ElementKey) -> bool {
+        self.painter
+            .recs
+            .get(&k)
+            .is_some_and(|r| r.preview.is_some())
     }
 
     /// How many times each surface pass ran ([`SurfacePasses`]): benchmarks and tests check
@@ -594,6 +824,27 @@ impl Ui {
     pub fn surface_pixel(&self, k: ElementKey, x: i32, y: i32) -> Option<u32> {
         let id = self.painter.recs.get(&k)?.id;
         Some(self.painter.scheduler.canvases(id)?.below().pixel(x, y))
+    }
+
+    /// The size of the CPU canvases of an element's surface (after the last [`Ui::paint`]), or
+    /// `None` when it has none; for tests and tools that read [`Ui::surface_pixel`].
+    #[must_use]
+    pub fn surface_canvas_size(&self, k: ElementKey) -> Option<[u32; 2]> {
+        let id = self.painter.recs.get(&k)?.id;
+        Some(self.painter.scheduler.canvases(id)?.size())
+    }
+
+    /// The layers of the CPU canvases of an element's surface (after the last [`Ui::paint`]):
+    /// the canvas below first, then a canvas above each nested entry that has one (decision
+    /// 0015 Decision 1.7), for tests and tools that read [`Ui::surface_layer_pixel`]. Empty
+    /// when it has no canvas.
+    #[must_use]
+    pub fn surface_layers(&self, k: ElementKey) -> Vec<crate::paint::Layer> {
+        self.painter
+            .recs
+            .get(&k)
+            .and_then(|r| self.painter.scheduler.canvases(r.id))
+            .map_or_else(Vec::new, |c| c.layers().map(|(l, _)| l).collect())
     }
 
     /// A pixel of one canvas of surface `id` (CPU side, after the last [`Ui::paint`]): the
@@ -812,7 +1063,11 @@ impl Ui {
         let recs = std::mem::take(&mut self.painter.recs);
         let mut list = DisplayList::new();
         let mut pending = false;
-        let m = self.canvas_map(owner);
+        // The geometry the surface paints at (`ui-scaling.md` §6.1 item 2: the held one while
+        // previewed).
+        let m = recs
+            .get(&owner)
+            .map_or_else(|| self.canvas_map(owner), |r| r.paint.map);
         if let Some(b) = self.layout_box(owner) {
             let root_box = IBox::from_xywh(0, 0, b.w(), b.h());
             self.emit_rec(
@@ -1339,6 +1594,14 @@ impl Ui {
     /// within `budget`, uploads, and the composition list. `now` is a monotonic time.
     pub fn paint(&mut self, now: Duration, budget: &mut dyn PaintBudget) -> UiFrame {
         self.flush_list_layouts();
+        self.painter.r13_checks = R13_CHECKS;
+        // Which due geometry previews settle in this frame (within the slice, §8 S7).
+        self.choose_settles(now, &*budget);
+        // A due settle repaint of a surface with nested surfaces changes their coverage regions
+        // (they are in its canvas pixels): the full pass makes it (`ui-scaling.md` §6.1 item 4).
+        if self.preview_due_with_nested(now) {
+            self.painter.structure_changed();
+        }
         if self.painter.touched {
             // Every change the letterbox bars depend on (a layout box, visibility, parent,
             // property or the UI screen) touches the tree: work them out again.
@@ -1347,7 +1610,7 @@ impl Ui {
         if self.painter.touched {
             // The full surface pass when anything it decides may have changed; otherwise
             // only the damage of the recorded elements (same result, see `light_sync`).
-            if self.painter.structural || self.painter.always_full || !self.light_sync() {
+            if self.painter.structural || self.painter.always_full || !self.light_sync(now) {
                 self.sync_surfaces(now);
                 self.painter.nodes = None;
                 self.painter.passes.full = self.painter.passes.full.saturating_add(1);
@@ -1356,6 +1619,9 @@ impl Ui {
             }
             self.painter.structural = false;
         }
+        // Geometry previews that have held for the settle time and that no pass settled.
+        self.settle_previews(now);
+        self.painter.force_settle = false;
         // Cleared before the paint jobs, not after them: a change the jobs make (a text
         // cut to fit sets its truncated-text tooltip while its display list is built,
         // `ui-behaviour.md` §10.2) marks its element dirty for the next frame, which must
@@ -1445,6 +1711,8 @@ impl Ui {
         self.painter.plan = plan;
         let mut new_recs: BTreeMap<ElementKey, SurfaceRec> = BTreeMap::new();
         let mut group_of: BTreeMap<ElementKey, GroupId> = BTreeMap::new();
+        // Surfaces whose paint geometry changes in this frame: repainted in full.
+        let mut repaint: BTreeSet<ElementKey> = BTreeSet::new();
         for ((k, stand_in, tile, index), nested) in decided.iter().zip(decided_nested.iter()) {
             // Group: the nearest surface above, else itself.
             let mut g = None;
@@ -1470,17 +1738,40 @@ impl Ui {
             };
             let group = g.unwrap_or(GroupId(id.0));
             group_of.insert(*k, group);
+            let sig = self.owner_sig(*k, *index);
+            let cur = PaintGeo {
+                map: sig.map,
+                canvas: self.canvas_size(*k),
+            };
+            // The geometry preview (`ui-scaling.md` §6.1): a kept surface may paint at its held
+            // geometry; a new one paints at the current geometry.
+            let step = match keep {
+                Some(o) => self.decide_geometry(*k, o, cur, sig.bx, *tile, now),
+                None => GeoStep {
+                    paint: cur,
+                    preview: None,
+                    repaint: false,
+                },
+            };
+            if step.repaint {
+                repaint.insert(*k);
+            }
+            if let Some(t) = step.preview {
+                self.painter.note_preview(t);
+            }
             new_recs.insert(
                 *k,
                 SurfaceRec {
                     id,
                     group,
-                    canvas: self.canvas_size(*k),
+                    canvas: cur.canvas,
+                    paint: step.paint,
+                    preview: step.preview,
                     displayed: self.displayed_box(*k).to_rect(),
                     coverage: Vec::new(),
                     stand_in: *stand_in,
                     tile: *tile,
-                    sig: self.owner_sig(*k, *index),
+                    sig,
                     has_nested: !nested.is_empty(),
                 },
             );
@@ -1493,6 +1784,7 @@ impl Ui {
                 _ => {
                     self.painter.scheduler.release_surface(r.id);
                     self.painter.painted.drop_surface(r.id);
+                    self.painter.after_ops.remove(&r.id);
                 }
             }
         }
@@ -1521,11 +1813,13 @@ impl Ui {
                 nested_direct.extend(n.iter().rev());
             }
             let parent = &new_recs[k];
+            // In the canvas the parent paints at (its held one while previewed, `ui-scaling.md`
+            // §6.1), from the current displayed boxes.
             let pc = ParentCanvas {
                 displayed: parent.displayed,
-                canvas: parent.canvas,
+                canvas: parent.paint.canvas,
                 canvas_origin: [0, 0],
-                stored: parent.canvas,
+                stored: parent.paint.canvas,
             };
             let mut cov = Vec::new();
             for &n in &nested_direct {
@@ -1542,24 +1836,28 @@ impl Ui {
             }
         }
         // The per-surface content scale `c` the painter resamples by (`ui-scaling.md` §6.1):
-        // the owner's content scale, `(1, 1)` at the identity so the crisp native paths run.
-        for (k, r) in &new_recs {
-            let c = self.canvas_map(*k).content_scale();
+        // the content scale of the geometry it paints at, `(1, 1)` at the identity so the crisp
+        // native paths run.
+        for r in new_recs.values() {
+            let c = r.paint.map.content_scale();
             self.painter.scheduler.set_surface_scale(r.id, c);
         }
         // Layout changes and damage.
         let mut changed_groups: BTreeMap<GroupId, Vec<SurfaceId>> = BTreeMap::new();
+        type CoverChange = (SurfaceId, GroupId, Vec<(u32, Rect)>, Vec<(u32, Rect)>);
+        let mut cover_changes: Vec<CoverChange> = Vec::new();
         for (k, r) in &new_recs {
             if let Some(o) = old.get(k).filter(|o| o.id == r.id) {
-                if o.canvas != r.canvas {
+                if repaint.contains(k) {
                     self.painter.scheduler.damage_all(r.id);
+                }
+                if o.paint.canvas != r.paint.canvas {
                     changed_groups.entry(r.group).or_default().push(r.id);
                 }
                 if o.coverage != r.coverage {
-                    for (_, c) in o.coverage.iter().chain(r.coverage.iter()) {
-                        self.painter.scheduler.add_damage(r.id, *c);
-                    }
-                    changed_groups.entry(r.group).or_default().push(r.id);
+                    // Damaged after the damage walk, which `render.md` §6.12 R13 reads.
+                    cover_changes.push((r.id, r.group, o.coverage.clone(), r.coverage.clone()));
+                    changed_groups.entry(r.group).or_default();
                 }
                 let nested_moved = o.displayed != r.displayed && r.group.0 != r.id.0;
                 if nested_moved {
@@ -1571,6 +1869,11 @@ impl Ui {
         }
         self.painter.recs = new_recs;
         self.damage_pass();
+        for (id, g, old_cov, new_cov) in cover_changes {
+            if self.cover_damage(id, &old_cov, &new_cov) {
+                changed_groups.entry(g).or_default().push(id);
+            }
+        }
         for (g, members) in changed_groups {
             let geo = self.group_geometry(g);
             self.painter.scheduler.layout_change(g, geo, &members);
@@ -1791,9 +2094,9 @@ impl Ui {
         }
         let pc = ParentCanvas {
             displayed: pr.displayed,
-            canvas: pr.canvas,
+            canvas: pr.paint.canvas,
             canvas_origin: [0, 0],
-            stored: pr.canvas,
+            stored: pr.paint.canvas,
         };
         let region = if self.shown_below(parent, k) {
             let fp = self.footprint_node(k, &self.painter.recs, 0);
@@ -1806,6 +2109,299 @@ impl Ui {
             return None;
         }
         update(Some((parent, region)))
+    }
+
+    /// The geometry preview of `ui-scaling.md` §6.1 (SC21) for a kept surface whose record is
+    /// `o`, with the current canvas geometry `cur`, the owner's current layout box `bx` and
+    /// whether it is decided as a Tile surface now: the geometry its paints use from this
+    /// frame on, and whether it is previewed.
+    ///
+    /// - The same geometry as the one painted at: no preview (a move by whole physical pixels,
+    ///   or a return to the held geometry, item 4 "the preview simply ends").
+    /// - Otherwise, repainted at the current geometry (in full) when the surface is a Tile
+    ///   surface, stores only part of its canvas, has no picture swapped in yet, changed its
+    ///   layout size or the UI screen (item 1, item 6), when the current physical box is more
+    ///   than twice or less than half the held canvas on an axis (item 5), or when its geometry
+    ///   has held for the settle time (item 4) and this frame may settle it
+    ///   ([`Ui::choose_settles`]).
+    /// - Otherwise previewed: the held geometry stays; the clock of the last change is kept.
+    fn decide_geometry(
+        &self,
+        k: ElementKey,
+        o: &SurfaceRec,
+        cur: PaintGeo,
+        bx: IBox,
+        tile: bool,
+        now: Duration,
+    ) -> GeoStep {
+        let repaint = |repaint| GeoStep {
+            paint: cur,
+            preview: None,
+            repaint,
+        };
+        if o.paint.same(&cur) {
+            return repaint(false);
+        }
+        let max = self.painter.limits.max_surface_dim.max(1);
+        let partial = |g: &PaintGeo| g.canvas[0] >= max || g.canvas[1] >= max;
+        let excluded = tile
+            || o.tile
+            || (o.sig.bx.w(), o.sig.bx.h()) != (bx.w(), bx.h())
+            || partial(&cur)
+            || partial(&o.paint)
+            || o.paint.map.screen != cur.map.screen
+            || !self.painter.scheduler.is_drawn(o.id);
+        let changed = !PaintGeo {
+            map: o.sig.map,
+            canvas: o.canvas,
+        }
+        .same(&cur);
+        let due = !changed && self.settles_now(k, o, now);
+        if excluded || due || beyond_factor_two(o.paint.canvas, cur.canvas) {
+            return repaint(true);
+        }
+        GeoStep {
+            paint: o.paint,
+            preview: Some(if changed {
+                now
+            } else {
+                o.preview.unwrap_or(now)
+            }),
+            repaint: false,
+        }
+    }
+
+    /// Whether surface `k` (record `r`) has a geometry preview due for its settle repaint
+    /// (`ui-scaling.md` §6.1 item 4: 150 ms without a change) that this frame may make
+    /// ([`Ui::choose_settles`]).
+    fn settles_now(&self, k: ElementKey, r: &SurfaceRec, now: Duration) -> bool {
+        r.preview
+            .is_some_and(|t| self.painter.force_settle || now >= t.saturating_add(PREVIEW_SETTLE))
+            && self
+                .painter
+                .settle_now
+                .as_ref()
+                .is_none_or(|s| s.contains(&k))
+    }
+
+    /// Whether any preview can be due at `now` ([`Painter::preview_hint`]): when not, no scan.
+    fn any_preview_due(&self, now: Duration) -> bool {
+        self.painter
+            .preview_hint
+            .is_some_and(|t| self.painter.force_settle || now >= t.saturating_add(PREVIEW_SETTLE))
+    }
+
+    /// Whether a surface with nested surfaces has a geometry preview due for its settle repaint
+    /// in this frame: its nested entries' coverage regions are in its canvas pixels, so the
+    /// full pass makes it.
+    fn preview_due_with_nested(&self, now: Duration) -> bool {
+        self.any_preview_due(now)
+            && self
+                .painter
+                .recs
+                .iter()
+                .any(|(k, r)| r.has_nested && self.settles_now(*k, r, now))
+    }
+
+    /// Chooses the due geometry previews this frame settles (`ui-scaling.md` §6.1 item 4,
+    /// within the paint slice of UR §6 U4 (b) and §8 S7), and makes [`Painter::preview_hint`]
+    /// exact.
+    ///
+    /// A settle repaint builds the surface's display list at a new content scale, which lays
+    /// its text out again and may rasterise a face at a new height (§6.4.3, §6.5); that work
+    /// happens when the job starts, outside the bands the slice counts. So with a time budget
+    /// ([`PaintBudget::time_left`]) and more than one due preview, the earliest due one always
+    /// settles and each further one only while the slice has more time left than the costliest
+    /// settle of this frame took: the text resources of each chosen surface are prepared here
+    /// ([`Ui::warm_settle`]) and timed. The others stay previewed, showing their held picture
+    /// (item 4: "the held picture is shown until the swap"), and settle in later frames. Under
+    /// band and unlimited budgets every due preview settles in the frame it is due, so frames
+    /// stay deterministic.
+    fn choose_settles(&mut self, now: Duration, budget: &dyn PaintBudget) {
+        self.painter.settle_now = None;
+        if !self.any_preview_due(now) {
+            return;
+        }
+        let mut hint: Option<Duration> = None;
+        let mut due: Vec<(Duration, ElementKey)> = Vec::new();
+        for (k, r) in &self.painter.recs {
+            if let Some(t) = r.preview {
+                hint = Some(hint.map_or(t, |h| h.min(t)));
+                if self.painter.force_settle || now >= t.saturating_add(PREVIEW_SETTLE) {
+                    due.push((t, *k));
+                }
+            }
+        }
+        self.painter.preview_hint = hint;
+        if due.len() <= 1 || budget.time_left().is_none() {
+            return;
+        }
+        due.sort_unstable();
+        let mut chosen = BTreeSet::new();
+        let mut unit = Duration::ZERO;
+        for (_, k) in due {
+            if !chosen.is_empty() && budget.time_left().is_none_or(|left| left <= unit) {
+                break;
+            }
+            let started = std::time::Instant::now();
+            self.warm_settle(k);
+            unit = unit.max(started.elapsed());
+            chosen.insert(k);
+        }
+        self.painter.settle_now = Some(chosen);
+    }
+
+    /// Prepares the text resources the settle repaint of surface `k` uses at its current
+    /// geometry: for every text drawn into its canvas (nested surfaces excluded), the fonts at
+    /// the content scale and text factor the display list will ask for
+    /// ([`crate::text_ui::TextScaling::resolve_fonts`], which rasterises one of Tessera's faces
+    /// at a new height once, §6.4.3). Its cost is what [`Ui::choose_settles`] times. Text whose
+    /// shaping is stale is left to the display list. At most 4,096 elements are looked at.
+    fn warm_settle(&mut self, k: ElementKey) {
+        const MAX_WARM: usize = 4_096;
+        let Some(map) = self.painter.recs.get(&k).map(|r| r.sig.map) else {
+            return;
+        };
+        let cs = map.content_scale();
+        let stretched = map.active() && (map.mx - map.my).abs() > 1e-6;
+        let c = if stretched {
+            map.screen.map_or(1.0, |f| f.ky())
+        } else {
+            cs[1]
+        };
+        let mut stack = vec![k];
+        let mut seen = 0usize;
+        while let Some(e) = stack.pop() {
+            seen += 1;
+            if seen > MAX_WARM {
+                break;
+            }
+            let Some(el) = self.el(e) else { continue };
+            if !el.visible || (e != k && self.painter.recs.contains_key(&e)) {
+                continue;
+            }
+            let prepared = (!el.text.dirty).then(|| el.text.prepared.clone()).flatten();
+            stack.extend(el.children.iter().copied());
+            if let Some(pt) = prepared {
+                let x = self.text_factor_for(e, None);
+                let _ = self.painter.text.resolve_fonts(&pt.fonts, c, x);
+            }
+        }
+    }
+
+    /// The settle repaint of `ui-scaling.md` §6.1 item 4 for every geometry preview that has
+    /// held for the settle time and that no surface pass of this frame settled: the surface
+    /// paints at its current geometry from now on and is repainted in full, as a layout change
+    /// of its group when its canvas size changes (a generation; the held picture is shown until
+    /// the swap) and as a content job otherwise. Its elements' canvas areas are recorded in the
+    /// new geometry, as the next damage walk finds them. Its composition node changes.
+    fn settle_previews(&mut self, now: Duration) {
+        if !self.any_preview_due(now) {
+            return;
+        }
+        let due: Vec<ElementKey> = self
+            .painter
+            .recs
+            .iter()
+            .filter(|(k, r)| self.settles_now(**k, r, now))
+            .map(|(k, _)| *k)
+            .collect();
+        if due.is_empty() {
+            return;
+        }
+        let mut changed_groups: BTreeMap<GroupId, Vec<SurfaceId>> = BTreeMap::new();
+        let mut recs = std::mem::take(&mut self.painter.recs);
+        let mut painted = std::mem::take(&mut self.painter.painted);
+        let mut stack = std::mem::take(&mut self.painter.walk_stack);
+        for k in due {
+            let Some(r) = recs.get_mut(&k) else { continue };
+            let cur = PaintGeo {
+                map: r.sig.map,
+                canvas: r.canvas,
+            };
+            let resized = r.paint.canvas != cur.canvas;
+            r.paint = cur;
+            r.preview = None;
+            let (id, group) = (r.id, r.group);
+            self.painter
+                .scheduler
+                .set_surface_scale(id, cur.map.content_scale());
+            self.painter.scheduler.damage_all(id);
+            if resized {
+                changed_groups.entry(group).or_default().push(id);
+            }
+            if let Some(r) = recs.get(&k).cloned() {
+                self.walk_surface(k, &r, &recs, &mut painted, &mut stack, None);
+            }
+        }
+        self.painter.recs = recs;
+        self.painter.painted = painted;
+        self.painter.walk_stack = stack;
+        self.painter.nodes = None;
+        for (g, members) in changed_groups {
+            let geo = self.group_geometry(g);
+            self.painter.scheduler.layout_change(g, geo, &members);
+        }
+    }
+
+    /// Damages parent surface `pid` for a change of its nested entries' coverage regions from
+    /// `old` to `new` (decision 0015 Decision 1.4, 1.7) and returns whether it is a member of
+    /// the change's generation (Decision 1.5).
+    ///
+    /// When the same entries are listed in the same order, only the old and new regions of the
+    /// entries whose region changed are damaged, and `render.md` §6.12 R13 leaves out each
+    /// region in which no operation drawn after the entry can change a pixel ([`Ui::r13_skip`]);
+    /// with every region left out the parent is no member. Otherwise every old and new region is
+    /// damaged and the parent is a member.
+    fn cover_damage(&mut self, pid: SurfaceId, old: &[(u32, Rect)], new: &[(u32, Rect)]) -> bool {
+        let same_entries = old.len() == new.len() && old.iter().zip(new).all(|(a, b)| a.0 == b.0);
+        if !same_entries {
+            for (_, c) in old.iter().chain(new) {
+                self.painter.scheduler.add_damage(pid, *c);
+            }
+            return true;
+        }
+        let mut member = false;
+        for ((entry, o), (_, n)) in old.iter().zip(new) {
+            if o == n {
+                continue;
+            }
+            for region in [*o, *n] {
+                if !self.r13_skip(pid, *entry, region) {
+                    self.painter.scheduler.add_damage(pid, region);
+                    member = true;
+                }
+            }
+        }
+        member
+    }
+
+    /// `render.md` §6.12 R13: whether parent surface `pid` may leave out its damage at `region`
+    /// for a change of the coverage region of its nested entry `entry`. Item 1 asks that the
+    /// test be made against both the display list the parent's canvases were last painted from
+    /// and the current one. The painter knows the first only while the parent's front textures
+    /// show its last snapshot ([`Scheduler::shows_last_snapshot`]: drawn, no job, generation or
+    /// withheld first paint under way), so it skips only then. In that state the last
+    /// snapshot's list is the shown one: no operation drawn after the entry in it may meet the
+    /// region ([`AfterOps`], by its area after its clips), and every operation the current list
+    /// has and that list has not lies inside the parent's pending damage (Decision 1.4), which
+    /// must not meet the region either. Without a recorded list, while a job of the parent is
+    /// in flight, or once this frame's [`R13_CHECKS`] are used up, nothing is left out.
+    fn r13_skip(&mut self, pid: SurfaceId, entry: u32, region: Rect) -> bool {
+        if !self.painter.scheduler.shows_last_snapshot(pid) {
+            return false;
+        }
+        let Some(after) = self.painter.after_ops.get(&pid) else {
+            return false;
+        };
+        let mut checks = self.painter.r13_checks;
+        let skip = !after.meets(entry, &region, &mut checks)
+            && !self
+                .painter
+                .scheduler
+                .damage_meets(pid, region, &mut checks);
+        self.painter.r13_checks = checks;
+        skip
     }
 
     /// Whether `k` takes part in what the full surface pass decides: a surface owner (or
@@ -1837,7 +2433,7 @@ impl Ui {
     /// the clip and depth their ancestors give and leaving nested surfaces to their own
     /// walks, finds exactly the damage of the full walk. Returns `false`, having changed
     /// nothing, when the full pass is needed.
-    fn light_sync(&mut self) -> bool {
+    fn light_sync(&mut self, now: Duration) -> bool {
         /// Most elements below the recorded ones checked before the full pass is cheaper.
         const MAX_LIGHT: usize = 4_096;
         let recorded: Vec<ElementKey> = self.painter.dirty.iter().copied().collect();
@@ -1848,8 +2444,9 @@ impl Ui {
         let mut starts: Vec<LightStart> = Vec::new();
         // Recorded surface owners handled here ([`Ui::light_owner`]): their nodes are patched.
         let mut owners: Vec<ElementKey> = Vec::new();
-        // Recorded owners whose scale, displayed box or canvas size changed.
-        let mut rescaled: Vec<(ElementKey, SurfaceId, OwnerUpdate)> = Vec::new();
+        // Recorded owners whose scale, displayed box or canvas size changed, with the geometry
+        // their paints use from now on (`ui-scaling.md` §6.1 geometry preview).
+        let mut rescaled: Vec<(ElementKey, SurfaceId, OwnerUpdate, GeoStep)> = Vec::new();
         for &k in &recorded {
             let own = self.light_owner(k, true);
             if own.is_none() && self.is_structural(k) {
@@ -1879,18 +2476,29 @@ impl Ui {
                 self.push_children(c, &mut stack);
             }
             if let Some(LightOwner { id, update }) = own {
-                if let Some(u) = update {
-                    rescaled.push((k, id, u));
-                }
+                let Some(rec) = self.painter.recs.get(&k) else {
+                    return false;
+                };
+                // The geometry it paints at, decided as the full pass decides it.
+                let map = match update {
+                    Some(u) => {
+                        let cur = PaintGeo {
+                            map: u.sig.map,
+                            canvas: u.canvas,
+                        };
+                        let step = self.decide_geometry(k, rec, cur, u.sig.bx, rec.tile, now);
+                        let map = step.paint.map;
+                        rescaled.push((k, id, u, step));
+                        map
+                    }
+                    None => rec.paint.map,
+                };
                 // Its own surface draws it from its root box, as in the full damage walk.
                 let Some(b) = self.el(k).map(|e| e.bx) else {
                     return false;
                 };
                 let root_box = IBox::from_xywh(0, 0, b.w(), b.h());
-                starts.push((
-                    k,
-                    Some((id, self.canvas_map(k), Some((root_box, root_box, 0)))),
-                ));
+                starts.push((k, Some((id, map, Some((root_box, root_box, 0))))));
                 owners.push(k);
                 continue;
             }
@@ -1922,8 +2530,8 @@ impl Ui {
                 continue;
             }
             let drawn = owner.and_then(|o| {
-                let id = self.painter.recs.get(&o)?.id;
-                let m = self.canvas_map(o);
+                let r = self.painter.recs.get(&o)?;
+                let (id, m) = (r.id, r.paint.map);
                 Some((id, m, self.walk_state_below(o, &path, k)))
             });
             starts.push((k, drawn));
@@ -2011,10 +2619,10 @@ impl Ui {
         // (`sync_surfaces`: damage, then the layout changes).
         let mut changed_groups: BTreeMap<GroupId, Vec<SurfaceId>> = BTreeMap::new();
         let mut old_cover: BTreeMap<ElementKey, Vec<(u32, Rect)>> = BTreeMap::new();
-        for (k, id, u) in rescaled {
+        for (k, id, u, step) in rescaled {
             self.painter
                 .scheduler
-                .set_surface_scale(id, u.sig.map.content_scale());
+                .set_surface_scale(id, step.paint.map.content_scale());
             let Some(r) = self.painter.recs.get_mut(&k) else {
                 continue;
             };
@@ -2022,14 +2630,24 @@ impl Ui {
             let resized = r.canvas != u.canvas;
             // The node's destination is the owner's physical box.
             let new_dest = r.sig.physical != u.sig.physical;
+            // Its canvas, and how it is composed (`ui-scaling.md` §6.1 items 2–3).
+            let canvas_changed = r.paint.canvas != step.paint.canvas;
+            let preview_changed = r.paint != step.paint || r.preview != step.preview;
             r.displayed = u.displayed;
             r.canvas = u.canvas;
             r.sig = u.sig;
-            if moved || resized || new_dest {
+            r.paint = step.paint;
+            r.preview = step.preview;
+            if let Some(t) = step.preview {
+                self.painter.note_preview(t);
+            }
+            if moved || resized || new_dest || preview_changed {
                 self.painter.nodes = None;
             }
-            if resized {
+            if step.repaint {
                 self.painter.scheduler.damage_all(id);
+            }
+            if canvas_changed {
                 changed_groups.entry(u.group).or_default().push(id);
             }
             if let Some((parent, region)) = u.cover {
@@ -2053,16 +2671,11 @@ impl Ui {
                 continue;
             };
             if pr.coverage != old {
-                let (pid, group) = (pr.id, pr.group);
-                let rects: Vec<Rect> = old
-                    .iter()
-                    .chain(pr.coverage.iter())
-                    .map(|(_, c)| *c)
-                    .collect();
-                for c in rects {
-                    self.painter.scheduler.add_damage(pid, c);
+                let (pid, group, new) = (pr.id, pr.group, pr.coverage.clone());
+                changed_groups.entry(group).or_default();
+                if self.cover_damage(pid, &old, &new) {
+                    changed_groups.entry(group).or_default().push(pid);
                 }
-                changed_groups.entry(group).or_default().push(pid);
             }
         }
         for (g, members) in changed_groups {
@@ -2156,54 +2769,14 @@ impl Ui {
         let stamp = painted.stamp;
         let mut cleaned: Vec<ElementKey> = Vec::new();
         for (owner, r) in &recs {
-            let Some(b) = self.arena.get(*owner).map(|e| e.bx) else {
-                continue;
-            };
-            let root_box = IBox::from_xywh(0, 0, b.w(), b.h());
-            // Damage is in canvas pixels (`ui-scaling.md` §6.2), mapped by the same owner→canvas
-            // transform the display list uses, so damage aligns with painting at every scale. At
-            // the identity this is `clip.to_rect()` (invariant I2).
-            let m = self.canvas_map(*owner);
-            let mut walked = 0usize;
-            stack.clear();
-            stack.push((*owner, root_box, root_box, 0));
-            while let Some((k, bx, clip, depth)) = stack.pop() {
-                if depth > crate::ui::MAX_TREE_DEPTH + 2 || walked > crate::paint::MAX_OPS {
-                    continue;
-                }
-                let Some(e) = self.arena.get(k) else { continue };
-                if !e.visible {
-                    continue;
-                }
-                if k != *owner && recs.contains_key(&k) {
-                    walked += 1;
-                    continue;
-                }
-                let clip = clip.intersect(&bx);
-                if clip.is_empty() {
-                    continue;
-                }
-                walked += 1;
-                let area = m.rect(clip);
-                let dirty = e.paint_dirty;
-                match painted.get(k) {
-                    Some((s, a)) if s == r.id && a == area && !dirty => {}
-                    Some((s, a)) => {
-                        self.painter.scheduler.add_damage(s, a);
-                        self.painter.scheduler.add_damage(r.id, area);
-                    }
-                    None => self.painter.scheduler.add_damage(r.id, area),
-                }
-                painted.set(k, r.id, area);
-                if dirty {
-                    cleaned.push(k);
-                }
-                for c in e.children.iter().rev() {
-                    if let Some(cb) = self.arena.get(*c).map(|ce| ce.bx) {
-                        stack.push((*c, cb.offset(bx.l, bx.t), clip, depth + 1));
-                    }
-                }
-            }
+            self.walk_surface(
+                *owner,
+                r,
+                &recs,
+                &mut painted,
+                &mut stack,
+                Some(&mut cleaned),
+            );
         }
         // Elements no longer drawn anywhere.
         for slot in &mut painted.slots {
@@ -2230,6 +2803,72 @@ impl Ui {
         self.painter.recs = recs;
     }
 
+    /// The damage walk of one surface (see [`Ui::damage_pass`]): each element it draws gets its
+    /// canvas area in `painted`. With `cleaned`, an element whose area changed, or that is
+    /// dirty, damages its old and new areas, and the dirty ones are collected; without it the
+    /// areas are only recorded (the surface is repainted in full, [`Ui::settle_previews`]).
+    fn walk_surface(
+        &mut self,
+        owner: ElementKey,
+        r: &SurfaceRec,
+        recs: &BTreeMap<ElementKey, SurfaceRec>,
+        painted: &mut PaintedMap,
+        stack: &mut Vec<(ElementKey, IBox, IBox, usize)>,
+        mut cleaned: Option<&mut Vec<ElementKey>>,
+    ) {
+        let Some(b) = self.arena.get(owner).map(|e| e.bx) else {
+            return;
+        };
+        let root_box = IBox::from_xywh(0, 0, b.w(), b.h());
+        // Damage is in canvas pixels (`ui-scaling.md` §6.2), mapped by the same owner→canvas
+        // transform the display list uses (the geometry the surface paints at, §6.1), so damage
+        // aligns with painting at every scale. At the identity this is `clip.to_rect()`
+        // (invariant I2).
+        let m = r.paint.map;
+        let mut walked = 0usize;
+        stack.clear();
+        stack.push((owner, root_box, root_box, 0));
+        while let Some((k, bx, clip, depth)) = stack.pop() {
+            if depth > crate::ui::MAX_TREE_DEPTH + 2 || walked > crate::paint::MAX_OPS {
+                continue;
+            }
+            let Some(e) = self.arena.get(k) else { continue };
+            if !e.visible {
+                continue;
+            }
+            if k != owner && recs.contains_key(&k) {
+                walked += 1;
+                continue;
+            }
+            let clip = clip.intersect(&bx);
+            if clip.is_empty() {
+                continue;
+            }
+            walked += 1;
+            let area = m.rect(clip);
+            if let Some(cleaned) = cleaned.as_deref_mut() {
+                let dirty = e.paint_dirty;
+                match painted.get(k) {
+                    Some((s, a)) if s == r.id && a == area && !dirty => {}
+                    Some((s, a)) => {
+                        self.painter.scheduler.add_damage(s, a);
+                        self.painter.scheduler.add_damage(r.id, area);
+                    }
+                    None => self.painter.scheduler.add_damage(r.id, area),
+                }
+                if dirty {
+                    cleaned.push(k);
+                }
+            }
+            painted.set(k, r.id, area);
+            for c in e.children.iter().rev() {
+                if let Some(cb) = self.arena.get(*c).map(|ce| ce.bx) {
+                    stack.push((*c, cb.offset(bx.l, bx.t), clip, depth + 1));
+                }
+            }
+        }
+    }
+
     fn group_geometry(&self, g: GroupId) -> GroupGeometry {
         let mut geo = GroupGeometry::default();
         let root = self.painter.recs.values().find(|r| r.id.0 == g.0);
@@ -2239,10 +2878,45 @@ impl Ui {
         for r in self.painter.recs.values().filter(|r| r.group == g) {
             geo.entries.insert(
                 r.id.0,
-                (r.displayed.translate(-geo.root.x0, -geo.root.y0), r.canvas),
+                (
+                    r.displayed.translate(-geo.root.x0, -geo.root.y0),
+                    r.paint.canvas,
+                ),
             );
+            if Self::preview_exact(r) {
+                geo.exact.insert(r.id.0);
+            }
         }
         geo
+    }
+
+    /// Whether a surface is in a geometry preview whose node scales are the held ones, so that
+    /// its held canvas is composed 1 : 1 (`ui-scaling.md` §6.1 item 3).
+    fn preview_exact(r: &SurfaceRec) -> bool {
+        r.preview.is_some()
+            && r.paint.same_scale(&PaintGeo {
+                map: r.sig.map,
+                canvas: r.canvas,
+            })
+    }
+
+    /// The destination and canvas size of a composition node (`ui-scaling.md` §6.1 item 3,
+    /// §6.6): a canvas composed 1 : 1 during a geometry preview (`exact`) is placed at the
+    /// destination's top-left and limited to it, so a canvas one pixel larger loses its last
+    /// column or row and one a pixel smaller leaves the last ones empty; any other canvas is
+    /// composed onto the whole destination (scaled by the GPU when the sizes differ).
+    fn preview_dest(dest: Rect, canvas: [u32; 2], exact: bool) -> (Rect, [u32; 2]) {
+        if !exact {
+            return (dest, canvas);
+        }
+        let w = canvas[0].min(dest.width());
+        let h = canvas[1].min(dest.height());
+        let x1 = i64::from(dest.x0).saturating_add(i64::from(w));
+        let y1 = i64::from(dest.y0).saturating_add(i64::from(h));
+        (
+            Rect::new(dest.x0, dest.y0, clamp_i32(x1), clamp_i32(y1)),
+            [w, h],
+        )
     }
 
     /// The composition input: surfaces, stand-ins, windows without a surface below one and
@@ -2285,6 +2959,7 @@ impl Ui {
                 // at its canvas size: that size is composed (resampled) onto the destination
                 // (`ui-scaling.md` §4.5 step 3), not the size the running job paints at.
                 let mut shown_canvas = None;
+                let mut exact = Self::preview_exact(r);
                 let mut shown = displayed_flag;
                 if self.painter.scheduler.generation_running(r.group)
                     && let Some(geo) = self.painter.scheduler.shown(r.group)
@@ -2292,6 +2967,7 @@ impl Ui {
                     match geo.entries.get(&r.id.0) {
                         Some((rel, canvas)) => {
                             shown_canvas = Some(*canvas);
+                            exact = geo.exact.contains(&r.id.0);
                             let root_now = self
                                 .painter
                                 .recs
@@ -2322,11 +2998,14 @@ impl Ui {
                 // The destination is the surface's physical box (`ui-scaling.md` §3.6, §6.6):
                 // the canvas (painted in UI units) is composed onto it, 1 : 1 at `Se` = 1
                 // (invariant I2) and GPU-scaled with `ui_scale_filter` at other scales.
+                // A surface in a geometry preview is composed from its held canvas (§6.1 item 3).
+                let (dest, canvas) =
+                    Self::preview_dest(dest, shown_canvas.unwrap_or(r.paint.canvas), exact);
                 let mut n = CompNode::new(r.id, parent_idx, dest);
                 n.window = e.root_panel;
                 n.content = NodeContent::Canvas;
                 n.shown = shown;
-                n.canvas = shown_canvas.unwrap_or(r.canvas);
+                n.canvas = canvas;
                 n.addressing = addressing;
                 n.opacity = self.prop(k, self.v.pids.object_opacity).float();
                 n.stand_in = r.stand_in;
@@ -2533,13 +3212,19 @@ impl SnapshotSource for Source<'_> {
             .recs
             .iter()
             .find(|(_, r)| r.id == surface)
-            .map(|(k, r)| (*k, r.canvas))?;
+            .map(|(k, r)| (*k, r.paint.canvas))?;
         let (k, size) = owner;
         if size[0] == 0 || size[1] == 0 {
+            self.ui.painter.after_ops.remove(&surface);
             return None;
         }
         let (list, pending) = self.ui.build_display_list(k);
         self.pending.push((surface, pending));
+        // What this snapshot draws after its nested entries (`render.md` §6.12 R13).
+        self.ui
+            .painter
+            .after_ops
+            .insert(surface, AfterOps::of(&list));
         Some(Snapshot {
             list: Arc::new(list),
             size,

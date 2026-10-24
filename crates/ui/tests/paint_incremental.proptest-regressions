@@ -9,3 +9,4 @@ cc 31d36fb034ee47eceb1a784b4e3a299c89c7531ae870e686d68ff16199eb7a37 # shrinks to
 cc 2a7015c325f6ae5d9bb900860ab46e0f2a1b6f188ce6968ec9a84bc72be7f603 # shrinks to frames = [[WindowMove(2, 0, -1)]]
 cc df985ac8d1c17abc67082cfeb46b947a1a5292db11c39b5460b6b9781e21ce24 # shrinks to frames = [[WindowMove(2, -5, -5)]]
 cc 4944829fdd42183184ee8ed489ffe31cbb2fd4d98aaafa07b9ef4ff663229571 # shrinks to frames = [[], [ImagesArrived], [], [], [], [], [], [], [], [], [], [], [], [], []], bands = 3, screen = true
+cc 21b26521f5ebb185dabd382581607aa8a9440f8bc806e0911a8d9f3cfd82a480 # shrinks to frames = [[MoveNested(0, 0, 5)]], screen = 0

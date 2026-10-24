@@ -5,8 +5,6 @@
 //! game actions (`lua-plugin-api.md` §15.2), and a frame without the plugin host for the
 //! headless combat screens.
 
-use std::time::Duration;
-
 use tessera_render::Renderer;
 use tessera_ui::UiEvent;
 use tessera_ui::game::combat::vocab::LookPids;
@@ -180,7 +178,7 @@ impl UiHost {
         for ev in &events {
             self.queue_combat_event(ev);
         }
-        let now = Duration::from_secs_f64(self.clock.max(0.0));
+        let now = self.paint_clock();
         let frame = self
             .ui
             .borrow_mut()

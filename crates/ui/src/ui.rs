@@ -558,10 +558,29 @@ impl Ui {
             }
         }
         changed.sort_unstable();
-        self.note_paint_dirty(k);
+        // A change made only of composition properties of a surface owner
+        // ([`Ui::composition_only_property`]) paints nothing; the class's reaction to it
+        // records the element for the passes. Anything else may change what is painted.
+        if !changed.is_empty()
+            && changed
+                .iter()
+                .all(|p| self.composition_only_property(k, *p))
+        {
+            self.painter.note_dirty(k);
+        } else {
+            self.note_paint_dirty(k);
+        }
         for p in changed {
             self.property_changed(k, p);
         }
+    }
+
+    /// Whether property `pid` of `k` is applied only when `k`'s canvas is composed, never
+    /// painted into it: `UICore_Element_ObjectOpacity` of an element that owns a surface
+    /// (decision 0015 Decisions 1.6, 1.7; the surface passes take the new opacity for its
+    /// composition entry). A change of it repaints nothing of that canvas.
+    pub(crate) fn composition_only_property(&self, k: ElementKey, pid: u32) -> bool {
+        pid == self.v.pids.object_opacity && self.painter.owns_recorded(k)
     }
 
     // ----- sibling order and attachment --------------------------------------------------
@@ -1000,13 +1019,17 @@ impl Ui {
         if old == b {
             return;
         }
-        self.mark_dirty(k);
+        let size_changed = old.w() != b.w() || old.h() != b.h();
         if let Some(e) = self.el_mut(k) {
             e.bx = b;
         }
-        self.mark_dirty(k);
+        if size_changed {
+            self.mark_dirty(k);
+        } else {
+            // A move: no content of a surface owner's own canvas changes.
+            self.mark_geometry_dirty(k);
+        }
         self.input.hover_dirty = true;
-        let size_changed = old.w() != b.w() || old.h() != b.h();
         let moved = old.l != b.l || old.t != b.t;
         if size_changed {
             self.relayout_children(k);
@@ -1170,8 +1193,10 @@ impl Ui {
                     // §3.4 item 2: the fit containers inside follow the new stretch.
                     self.refit_descendants(k);
                     // A new displayed box of a surface: composition input, not damage. The
-                    // next paint with a change runs the full surface pass.
-                    self.painter.note_structure();
+                    // next paint runs the full surface pass, which takes the new geometry
+                    // (its composition, or the §6.1 geometry preview of `ui-scaling.md` under
+                    // an equal-factor stretch, which counts as uniform).
+                    self.painter.structure_changed();
                     self.input.hover_dirty = true;
                     return;
                 }
@@ -1385,6 +1410,22 @@ impl Ui {
     pub(crate) fn mark_dirty(&mut self, k: ElementKey) {
         self.note_paint_dirty(k);
         self.painter.touched = true;
+    }
+
+    /// Records a change of an element's own placement only (a move, or a node scale on it) for
+    /// the next damage pass. For an element that owns a surface nothing of its own canvas
+    /// changes (its content is drawn from its own root box; UR Decision 1.4, "a move is not
+    /// damage"): the passes take its new geometry (its composition, its coverage region in a
+    /// parent, `ui-scaling.md` §6.1 geometry preview), and the element is not marked
+    /// paint-dirty. Any other element is marked as by [`Ui::mark_dirty`]: its area in the
+    /// canvas that draws it changes.
+    pub(crate) fn mark_geometry_dirty(&mut self, k: ElementKey) {
+        if self.painter.owns_recorded(k) {
+            self.painter.note_dirty(k);
+            self.painter.touched = true;
+        } else {
+            self.mark_dirty(k);
+        }
     }
 
     /// Sets an element's paint-dirty flag and records it for the next damage pass, without

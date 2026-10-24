@@ -356,6 +356,143 @@ synthetic elements, so the full pass is much cheaper there than in the client):
 - The benchmarks' thread CPU clock is one helper (`benches/common`), wall-clock time on
   non-Unix targets.
 
+### ui-perf-2: geometry preview and R13 (2026-10-24, indicative)
+
+Follow-up package `ui-perf-2`, building the answers to the OPENs above: the geometry preview
+of `ui-scaling.md` §6.1 (SC21, revision 14, anchors `s6-1-preview`, `s6-1-anim`) with the
+fractional-move rule of §6.2 (`s6-2-phase`), and `render.md` §6.12 R13. **Indicative**, same
+method and command as the table above (release build of the `ui-perf-2` worktree, headless
+offscreen run at exactly 1920 × 1080, *Se* = 1, audio on the null backend), on the
+reference laptop while other worktrees were less busy (load averages beside every run).
+
+What changed (`crates/ui/src/surface.rs`; hooks in `ui.rs`, `scale.rs`, `paint/scheduler.rs`):
+
+1. **Geometry preview.** Each surface record keeps the canvas geometry its paints use (map
+   and canvas size) apart from the current one. A move or a node-scale change that changes
+   the canvas geometry (node scales, or the phase of the owner's displayed top-left on the
+   pixel grid) at fixed *Kx*, *Ky* and layout size is previewed: every paint keeps the held
+   geometry (display lists, damage areas, content scale), the held canvas is composed 1 : 1
+   at the new physical top-left limited to the new physical box (phases only) or GPU-scaled
+   onto it (node scales changed), and after 150 ms of the paint clock without a change the
+   surface is repainted once in full at the current geometry (a generation when its canvas
+   size changes, a content job otherwise). Beyond a factor of 2 it is repainted at once. Tile
+   surfaces, canvases at the size cap, surfaces not drawn yet, layout-size and UI-screen
+   changes repaint at once as before. The settle repaint is made by the full pass or, when no
+   pass ran, after the passes in `Ui::paint` (the full pass when the surface has nested
+   surfaces, whose coverage regions are in its canvas pixels). `Ui::paint_settled` does not
+   wait for a preview (headless checkpoints on a clock that does not advance would never
+   reach it); `Ui::geometry_preview_pending` reports one.
+2. **R13.** Each snapshot records the areas of the operations drawn after each nested
+   entry. When a nested entry's coverage region changes, its parent is damaged only at the
+   old and new region of that entry, and not at all at a region that no operation of the
+   last snapshot drawn after the entry meets and no pending damage of the parent meets; with
+   both left out the parent is no member of the change's generation (an empty generation
+   swaps in the frame it starts). Reordered or appearing entries damage every region as
+   before. Both passes use the same function (R14).
+3. **Own-canvas damage.** A move (size unchanged), a node-scale change and an
+   `ObjectOpacity` change of an element that owns a surface no longer mark its canvas
+   paint-dirty: nothing of its own canvas changes, and its composition entry, coverage
+   region and geometry are taken by the passes (UR Decision 1.4 "a move is not damage",
+   Decision 1.6). Before, every such change repainted the owner's whole canvas.
+
+| Run (60 s window) | Load average | U1 steady mean / p99 / max (ms) | Step 8 mean (ms) | U3 steady mean | U4 (b) | U4 (f) |
+|---|---|---|---|---|---|---|
+| Panels open (1) | 4.27 → 2.72 | **0.418** / 1.530 / 5.62 | **0.330** | 53.1 KiB | 4.30 ms | 6.51 ms |
+| No panels (1) | 2.72 → 2.02 | **0.372** / 1.231 / 3.03 | **0.290** | 52.9 KiB | 3.09 ms | 4.52 ms |
+| Panels open (2) | 2.02 → 1.56 | **0.420** / 1.603 / 5.82 | **0.332** | 53.4 KiB | 5.58 ms | 6.35 ms |
+| No panels (2) | 1.56 → 1.69 | **0.373** / 1.211 / 1.83 | **0.290** | 53.2 KiB | 4.40 ms | 4.84 ms |
+
+About 2,790–2,800 steady frames and 609–610 content-event frames per run; every window ran
+to its end with the scenario still playing. Against the "After" rows of the table above
+(U1 1.00–1.07 ms, step 8 0.73–0.79 ms, U3 270–273 KiB), U1 falls about 2.5 times, step 8
+about 2.4 times and U3 about 5 times. Step 1 stays 0.001 ms and step 7 0.07–0.08 ms.
+
+`paint_steady` (thread CPU time per `Ui::paint`, 600 frames per phase, load about 1–3;
+`--assert` passes, `--check` gives the reference's frames):
+
+| Phase | ui-perf (above) | ui-perf-2 |
+|---|---|---|
+| idle (no change) | 0.004–0.005 ms | 0.005 ms, no pass |
+| hud (panels open) | 0.245–0.246 ms | 0.048–0.049 ms, 820 jobs, 29.6 KiB/frame |
+| hud-alone | 0.188–0.191 ms | 0.043–0.044 ms |
+| floaters (new: rise, grow, fade, no new text) | — (with items 1, 2 and 3 but opacity still damage: 2,400 jobs, 100 KiB/frame) | 0.012 ms, **0 jobs, 0 bands, 0 bytes** |
+| rest (new: nothing changes) | — | 4 settle repaints (one per floating text), then idle; one frame of about 10.5 ms before the review fixes (all four settled in one frame), at most about 3.1 ms after them (one a frame, see "ui-perf-2 review fixes") |
+
+**Reading (indicative).**
+
+- U1 is still over its 0.3 ms mean (0.37–0.42 ms) but within about 0.1 ms of it; its p99
+  (1.2–1.6 ms) is over the 1.0 ms of decision 0043. What is left of step 8 is the HUD's real
+  content changes (the cast bar and its label every frame, chat lines, vitals, timers,
+  minimap markers), not geometry: the floating texts and the layer they rise in cost no
+  paint while they move, grow and fade.
+- U3 is now about 53 KiB a frame (budget 256 KiB).
+- U4 (b) and (f) are event frames and within the noise of these runs.
+- **Goldens.** All tier-1 goldens of `tessera-ui` are byte-identical. The client's tier-1
+  `combat_ui_golden` pictures (1.2 s, 3.1 s, 3.4 s, 4.3 s, 8.1 s) pass within their
+  tolerance but are not exact (267, 724, 676, 1,188 and 369 outliers of 786,432 pixels,
+  budget 1,966). The first reading here blamed the geometry preview; the review round showed
+  that wrong: the same five counts come from the sources of `main` (3a25650) with this
+  package's changes taken out, so the drift is older than this package and not caused by
+  it (see "ui-perf-2 review fixes"). Not re-blessed. The local
+  tier-2 golden `social_panels_real_data` `member-effects-01500ms` fails: three panels that
+  fade out after start-up are now drawn at their fade opacity (0.49 at 1.5 s), where before
+  every opacity step damaged them and restarted their withheld first paint (Decision 1.8,
+  images pending), so they were never drawn. It waits for the owner's look and re-bless
+  (decision 0031). Every other client test passed with the install (1,207 passed).
+
+### ui-perf-2 review fixes (2026-10-24, indicative)
+
+An independent review of the package found ten items; the fixes (same worktree, not yet
+re-measured headless in the client):
+
+1. **Settles within the slice** (§6.1 item 4, §8 S7). The `rest` frame of 10.5–11.8 ms was
+   the four floating texts settling in one frame: each settle repaint lays its text out at a
+   new content scale when its job starts, and rasterising Tessera's face at a new height
+   costs about 2.7 ms (no glyph is derived; `glyph_derive_ns` holds the layout and face
+   time). Now `Ui::choose_settles` lets the earliest due preview settle and further ones
+   only while the slice has more time left than the costliest settle of the frame took
+   (`PaintBudget::time_left`, `None` for band and unlimited budgets, so frames of the
+   deterministic tests are unchanged); the others keep showing their preview. The text
+   resources of each chosen surface are prepared and timed first (`Ui::warm_settle`).
+   `paint_steady --assert` now checks the `rest` maximum against the 4 ms slice: 2.99–3.09
+   ms in three runs (one settle a frame, four frames). The single settle is still about
+   2.7 ms because a face is rasterised whole; that is the `ui-scaling.md` §6.4.3 rule for
+   Tessera's faces, not a preview cost.
+2. **R13 only while the shown canvases are the last snapshot's** (RD §6.12 R13 item 1). The
+   skip is made only when the parent is drawn and has no job, generation or withheld first
+   paint under way (`Scheduler::shows_last_snapshot`); while a job runs, the shown canvases
+   may still hold operations its snapshot dropped. Regression test
+   `a_parent_with_a_job_in_flight_does_not_skip_a_moved_nested_entry` (one band a frame;
+   fails without the check).
+3. **R13 bounded.** Each entry keeps the bounding box of the operations after it (one test
+   rejects a region outside it) and is found through a map; every region test counts its
+   boxes and the parent's pending rectangles against 65,536 per frame (`R13_CHECKS`), past
+   which regions count as met (damage and membership, as without R13). New `paint_steady`
+   phase `r13-caps` (512 nested labels move every frame under a layer drawing 3,000 boxes
+   after them, all region tests worst case): 2.49–2.54 ms mean per frame for the whole
+   paint, of which the bounded test is a small part (the reviewer's copy of the unbounded
+   loop took 7.3 ms on its own).
+4. **Idle frames scan nothing.** `Painter::preview_hint` (a lower bound of the preview
+   clocks) skips every scan for due previews until one can be due.
+5. **Opacity decided at the source.** `Ui::composition_only_property` (ObjectOpacity of a
+   surface owner) makes `refresh_effective`, `property_changed` and the class reaction
+   record the element for the passes without marking it paint-dirty or reshaping its text;
+   the set-then-clear is gone, so another reason to repaint is no longer undone.
+6. **Captures wait for previews.** `UiHost::settled` also waits until no surface is
+   previewed, and on a held clock (the paint clock equal to the last one, everything else
+   settled) the host settles the previews in the next paint
+   (`Ui::settle_previews_at_next_paint`), as 150 ms of an advancing clock would. The combat
+   headless checkpoints now capture settled pictures (traced: previews pending at 2.1, 3.4,
+   4.0, 4.3, 4.7 s were settled before capture), yet the golden counts above stay the same,
+   as on `main`.
+7. **Stronger tests.** A property test compares the incremental UI frame by frame with a
+   full repaint of every surface in every frame (`Ui::invalidate_paint` before each paint,
+   all screens incl. non-integer *K*, every edit incl. `Rest`, node scale and moves; 24
+   cases), and the settled-canvas checks compare every canvas above a nested entry too, not
+   only the canvas below. The new comparison found one older defect, fixed: a Stretch
+   surface resized with nothing else changing waited for an unrelated change before it
+   was shown (`Ui::resize` now asks for the pass).
+
 ## Log
 
 | Date | Change |

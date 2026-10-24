@@ -93,6 +93,16 @@ fn worked_example_12_1() {
     assert_eq!(listing(tmp.path()), before, "discovery writes nothing (D1)");
 }
 
+/// Whether the file system holding `dir` ignores letter case (the default on Windows and
+/// macOS).
+fn ignores_case(dir: &Path) -> bool {
+    let probe = dir.join("case-probe.tmp");
+    std::fs::write(&probe, b"").unwrap();
+    let ignores = dir.join("CASE-PROBE.TMP").exists();
+    std::fs::remove_file(&probe).unwrap();
+    ignores
+}
+
 #[test]
 fn skins_root_letter_case_and_settings_dir() {
     let tmp = tempfile::tempdir().unwrap();
@@ -101,7 +111,18 @@ fn skins_root_letter_case_and_settings_dir() {
         &def("S", MAPPING),
     );
     let root = skins_root_in(tmp.path());
-    assert_eq!(root, tmp.path().join("UI/Skins"));
+    if ignores_case(tmp.path()) {
+        // The plain `ui/skins` already exists there (D2: the exact name when it exists)
+        // and names the same folder.
+        assert!(
+            root.as_os_str()
+                .as_encoded_bytes()
+                .eq_ignore_ascii_case(tmp.path().join("UI/Skins").as_os_str().as_encoded_bytes()),
+            "{root:?}"
+        );
+    } else {
+        assert_eq!(root, tmp.path().join("UI/Skins"));
+    }
     let set = SkinSet::discover(&root, &names());
     assert_eq!(set.skins().len(), 1);
 

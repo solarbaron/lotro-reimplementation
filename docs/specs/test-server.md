@@ -1908,6 +1908,26 @@ record) and are answered here; the notes themselves are not repeated.
 | §13.1 `chat` bots at minor 2 not joining channels (gap) | Closed: `tessera-loadtest` bots join, speak on and leave shared channels through the `tessera-net` test-server backend at minor 2 (`scenario-feed.md` §9.8); the rules are §13.1 "Shared channels" |
 | §13.1 bot minors, `chat` channels and hostile 1.2 cases as implemented | Adopted and written into §13.1: "Minors" (80 % minor 2, 10 % minor 1, 10 % minor 0, State compared at minor 0 only in what minor 0 carries), "Shared channels" (names, groups of four, join, cycle, judging) and "Hostile 1.2 cases" items 1–5 (in the world with four provisioned characters, skipped and counted without them, sent by capability, two variants of four requests, the limit joins left to the end-to-end test) |
 
+
+<a id="s15-5"></a>
+### 15.5 Implementer notes (`tessera-server`, `tessera-loadtest`, `tessera-net`, 2026-10-24)
+
+> **OPEN:** (engineering choice, implementer, awaiting review) On a CI host where a thread's
+> timer fired late in proportion to the request (a ≤ 33 ms wait took about 100 ms, a 10 ms
+> wait about 50 ms), the `tessera-loadtest` loop ran at about 10 Hz instead of its 33 ms
+> tick, so §13.1 "Scale" declared every run invalid (desync sampled at 8.3 Hz < 9 Hz), the
+> §8.1 tick overran on about half of its ticks with every tick under 10 ms of work, and the
+> client backend's 30 Hz tick slowed the same way. The spec states the rates but not how a
+> program waits for them. Chosen: the three waits (the `tessera-loadtest` loop, the
+> simulation's wait for the next tick, the `tessera-net` test-server backend's 30 Hz tick)
+> wait in slices until the deadline, each slice the time left divided by a smoothed ratio
+> of slept to asked time measured on earlier waits (between 1 and 64, starting at 1; slices
+> of at least 200 µs; waits under 1 ms not measured; waits ended early by an input not
+> measured). Where timers are close to exact the ratio stays near 1 and each wait is one
+> timer request. No rate, limit or verdict changes. Question for review: is this the
+> intended reading of §8.1 and §13.1 "Scale", or should a host whose timers fire late be
+> declared out of scope (run invalid) instead?
+
 ---
 
 <a id="s16"></a>

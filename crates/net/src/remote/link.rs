@@ -440,8 +440,11 @@ impl Link {
         let mut buf1 = vec![0u8; READ_CHUNK];
         let mut stopped = Box::pin(send.stopped());
         let mut stopped_done = false;
-        let mut ticker = tokio::time::interval(TICK);
-        ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        // The 30 Hz tick: due at once, then every TICK, missed ticks skipped. Where timers
+        // fire late in proportion to the request, the wait is made of shorter slices
+        // (`WakeEstimator`), so the tick keeps its rate.
+        let mut next_tick = tokio::time::Instant::now();
+        let mut wake = tessera_protocol::time::WakeEstimator::new();
 
         loop {
             // Carry out what the driver asked for.
@@ -483,6 +486,8 @@ impl Link {
             let accept = uni.iter().any(Option::is_none);
             let want_send = !self.driver.pending.is_empty() && self.main_alive;
             let [slot0, slot1] = &mut uni;
+            let armed = tokio::time::Instant::now();
+            let slice = wake.slice(next_tick.saturating_duration_since(armed));
 
             tokio::select! {
                 r = self.shutdown.changed(), if !self.shutdown_seen => {
@@ -564,7 +569,13 @@ impl Link {
                     }
                     Err(_) => self.main_gone(),
                 },
-                _ = ticker.tick() => {
+                () = tokio::time::sleep_until(armed + slice) => {
+                    let woke = tokio::time::Instant::now();
+                    wake.observe(slice, woke.saturating_duration_since(armed));
+                    if woke < next_tick {
+                        continue;
+                    }
+                    next_tick = next_after(next_tick, woke);
                     let now = self.now();
                     let latest = *self.moves.borrow_and_update();
                     self.driver.tick(now, latest);
@@ -740,6 +751,17 @@ fn resolve(host: &Host, port: u16) -> Result<SocketAddr, String> {
 }
 
 /// How quinn reported the end of a connection, as the protocol session wants it.
+/// The tick after `due` on its `TICK` schedule that is later than `now`: missed ticks are
+/// skipped, as `tokio::time::MissedTickBehavior::Skip` does.
+fn next_after(due: tokio::time::Instant, now: tokio::time::Instant) -> tokio::time::Instant {
+    let behind = now.saturating_duration_since(due).as_nanos() / TICK.as_nanos().max(1);
+    u32::try_from(behind + 1)
+        .ok()
+        .and_then(|n| TICK.checked_mul(n))
+        .and_then(|d| due.checked_add(d))
+        .unwrap_or(now + TICK)
+}
+
 fn connection_end(e: &ConnectionError) -> ConnectionEnd {
     match e {
         ConnectionError::ApplicationClosed(c) => ConnectionEnd::PeerClosed {
@@ -751,5 +773,21 @@ fn connection_end(e: &ConnectionError) -> ConnectionEnd {
         ConnectionError::TimedOut => ConnectionEnd::IdleTimeout,
         ConnectionError::LocallyClosed => ConnectionEnd::Local,
         other => ConnectionEnd::Transport(other.to_string()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn missed_ticks_are_skipped() {
+        let t0 = tokio::time::Instant::now();
+        assert_eq!(next_after(t0, t0), t0 + TICK);
+        assert_eq!(next_after(t0, t0 + TICK / 2), t0 + TICK);
+        assert_eq!(next_after(t0, t0 + TICK), t0 + TICK * 2);
+        assert_eq!(next_after(t0, t0 + TICK * 5 + TICK / 3), t0 + TICK * 6);
+        // Before its due time (cannot happen in the link): the next one.
+        assert_eq!(next_after(t0 + TICK, t0), t0 + TICK * 2);
     }
 }

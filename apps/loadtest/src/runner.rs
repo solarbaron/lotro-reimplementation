@@ -793,6 +793,7 @@ pub fn run(opts: &RunOptions) -> Result<Report, LoadtestError> {
     let mut hostile: Option<HostileRun> = None;
 
     let tick = Duration::from_millis(33);
+    let mut wake = tessera_protocol::time::WakeEstimator::new();
     let quiet_tail = Duration::from_secs(5).min(opts.duration / 4);
     let mut last = Instant::now();
     let mut next_desync = start;
@@ -964,8 +965,17 @@ pub fn run(opts: &RunOptions) -> Result<Report, LoadtestError> {
         if work > tick {
             tool.overruns += 1;
         }
-        if next > after {
-            std::thread::sleep(next - after);
+        // Wait in slices: where timers fire late in proportion to the request, one
+        // sleep for the rest of the tick would hold the loop well past it.
+        loop {
+            let left = next.saturating_duration_since(Instant::now());
+            if left.is_zero() {
+                break;
+            }
+            let asked = wake.slice(left);
+            let t = Instant::now();
+            std::thread::sleep(asked);
+            wake.observe(asked, t.elapsed());
         }
     }
     let measured_s = start.elapsed().as_secs_f64();

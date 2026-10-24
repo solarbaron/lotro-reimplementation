@@ -237,6 +237,15 @@ and mid rings are 3 and 6 landblocks, hysteresis one landblock.
 > poll cap. Player-music waits count polls in which start-up, a job or a queued command
 > finished. The real-data tests use these progress waits; no client behaviour changes.
 
+> **OPEN:** (clean-room implementer, P8, 2026-10-23; engineering choice, no client fact) the
+> timing run of a scenario (`--scenario-timing SECS`, `scenario-feed.md` §16) is the
+> `--duration` timing run above with its own option: the same settle wait and per-frame log,
+> started once the player is placed. Its report adds two counts the summary of this section
+> does not name, the frames over 16.7 ms and over 50 ms of the timed window (decision 0043 §3
+> item 3), and it is written by the headless UI run too, which now also writes `--frame-log`
+> (before, only the plain headless walker and the windowed client wrote it). Confirm that the
+> summary may carry the 16.7 ms count, or name it in the list above.
+
 <a id="s8"></a>
 ## 8. Verification (2026-10-04, this install, GTX 1070 Ti, Vulkan, release build)
 

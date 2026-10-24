@@ -4442,6 +4442,27 @@ are invented.
 > owner reverses this (label first, REF dropped, `Literal(label)` shown), the feed's text
 > check and resolution must test the label before the element.
 
+> **OPEN:** (non-blocking; for the spec owner, raised by the P8 implementer of `apps/client`,
+> 2026-10-23; engineering choice, no client fact) The busiest-scenario measurement of
+> decision 0043 §3 needs a scenario run that ends by itself after a set time once the area
+> has settled, with a frame log and a report. §12.1 keeps `--scenario` in conflict with
+> `--duration`, so the client adds its own option instead, conservatively and without
+> changing any rule of §12: `--scenario-timing SECS` (1 … 86,400; needs `--scenario`;
+> refuses `--no-data`, `--server` and `--screenshot`; implies `--ui`; a run without an
+> install found is a usage error, exit 2). Once the player is placed and the area has settled
+> (or `--settle-timeout` has passed) the walker logs every frame for SECS seconds; the run
+> then writes a timing report (frame-time p50, p95, p99, maximum, frames over 16.7 ms and over
+> 50 ms, the U1–U5 figures of the timed frames, audio underruns) to the log and to
+> `--ui-report`, `--frame-log` saves the timed frames, and the run ends. Windowed (§12.4) the
+> window then closes; with `--headless` it is the UI run of §12.2, whose end conditions gain
+> this one after `--duration` (the feed's `Finished` still comes first, so a scenario shorter
+> than the settle wait plus SECS ends early and the report says so). Neither form changes the
+> feed, its clock or the log. Decide whether §12.1 should name the option, or whether the
+> timing run should instead lift the `--duration` conflict for windowed and UI runs. Related:
+> §12.2 "With the game UI attached" step 3 lists `--duration` as an end of a UI run, which the
+> §12.1 conflict makes unreachable (the client's clap rule refuses the pair, exit 2); one of
+> the two texts should change.
+
 ---
 
 <a id="s17"></a>

@@ -1371,7 +1371,7 @@ fn far_visual(ctx: &WorldContext, e: &DistantEntry) -> FarVisualResult {
     let pids = &ctx.systems().pids;
     let enum_of = |pid: Option<u32>| {
         pid.and_then(|pid| {
-            tessera_world::draw_distance::placement_lod_class(pid, None, None, chain.as_deref())
+            tessera_world::draw_distance::placement_lod_class(pid, None, chain.as_deref())
         })
     };
     let default = LodClasses::default();

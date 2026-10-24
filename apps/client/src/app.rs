@@ -247,9 +247,7 @@ impl App {
                 CLEAR_COLOR
             },
             meshes: if walker {
-                crate::walker::mesh_config(crate::walker::arena_bytes(
-                    &crate::walker_host::walker_config(&self.args),
-                ))
+                crate::walker::mesh_config(crate::walker_host::walker_arena_bytes(&self.args))
             } else {
                 tessera_render::MeshConfig::default()
             },

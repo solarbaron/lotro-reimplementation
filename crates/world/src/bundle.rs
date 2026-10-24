@@ -1217,7 +1217,7 @@ pub fn build_bundle_with(
             .iter()
             .map(|g| {
                 let chain = chain_properties(ctx, g.object, chains);
-                placement_lod_class(pid, None, None, chain.as_deref())
+                placement_lod_class(pid, None, chain.as_deref())
             })
             .collect()
     };
@@ -1320,8 +1320,10 @@ struct ChainReads {
 }
 
 /// The enum property `pid` of every placed entity: `Render_LODClass` (`walker.md` §11.4.3,
-/// W22) or `Render_DepthBias_Type` (`decals.md` §6.5): its instance set in the weenie list,
-/// its own set, then its 0x47 chain. Empty without the property or the environment.
+/// W22) or `Render_DepthBias_Type` (`decals.md` §6.5): its per-instance set (the instance
+/// set of its IID in the weenie list when there is one, **otherwise** its own set; never
+/// both, `entity-descriptor.md` E26), then its 0x47 chain. Empty without the property or
+/// the environment.
 fn entity_placement_enums(
     ctx: &WorldContext,
     pid: Option<u32>,
@@ -1340,15 +1342,31 @@ fn entity_placement_enums(
         weenies.iter().map(|w| (w.iid.0, &w.properties)).collect();
     let mut out = Vec::with_capacity(entities.len());
     for e in entities {
-        let instance = e.iid.and_then(|iid| by_iid.get(&iid.0).copied());
-        let own = info
-            .entities
-            .get(e.index as usize)
-            .and_then(|s| s.properties.as_ref());
+        let per_instance = entity_per_instance_set(info, &by_iid, e);
+        // Read even when the per-instance set holds the value: this pass reports the chain
+        // failures of the bundle (the depth-bias pass relies on it).
         let chain = chain_properties(ctx, e.object, chains);
-        out.push(placement_lod_class(pid, instance, own, chain.as_deref()));
+        out.push(placement_lod_class(pid, per_instance, chain.as_deref()));
     }
     out
+}
+
+/// The per-instance property set of a placed entity (`entity-descriptor.md` E26): the
+/// landblock's instance property set for its IID (`by_iid`, from the weenie list) when there
+/// is one, otherwise the SED's own set. Never both: with an instance set the SED's own set
+/// is not consulted.
+fn entity_per_instance_set<'a>(
+    info: &'a LandblockInfo,
+    by_iid: &HashMap<u64, &'a PropertySet>,
+    e: &PlacedEntity,
+) -> Option<&'a PropertySet> {
+    match e.iid.and_then(|iid| by_iid.get(&iid.0).copied()) {
+        Some(instance) => Some(instance),
+        None => info
+            .entities
+            .get(e.index as usize)
+            .and_then(|s| s.properties.as_ref()),
+    }
 }
 
 /// The owner property `Render_Opacity` (`pid`) of every placed entity
@@ -1373,14 +1391,7 @@ fn entity_render_opacities(
         weenies.iter().map(|w| (w.iid.0, &w.properties)).collect();
     let mut out = Vec::with_capacity(entities.len());
     for e in entities {
-        let per_instance = e
-            .iid
-            .and_then(|iid| by_iid.get(&iid.0).copied())
-            .or_else(|| {
-                info.entities
-                    .get(e.index as usize)
-                    .and_then(|s| s.properties.as_ref())
-            });
+        let per_instance = entity_per_instance_set(info, &by_iid, e);
         out.push(owner_opacity_with(pid, per_instance, || {
             chain_properties(ctx, e.object, chains)
         }));

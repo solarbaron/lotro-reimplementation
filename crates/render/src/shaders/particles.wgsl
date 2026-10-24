@@ -9,6 +9,9 @@
 // texture uploaded sRGB is re-encoded after sampling, and an sRGB target is written the
 // decoded value so that it stores the result unchanged (`docs/specs/render.md` §4.1).
 
+// The alpha-test slack of frame.wgsl (this shader does not prepend it): see the comment there.
+const ALPHA_TEST_SLACK: f32 = 9.5367431640625e-7;
+
 struct ParticleDraw {
     view_proj: mat4x4<f32>,
     // M: material colour 2000 x the draw's tint (white when the program reads no M).
@@ -117,7 +120,7 @@ fn fs_particle(in: VsOut) -> @location(0) vec4<f32> {
         tex = vec4<f32>(tex.rgb + l2.rgb, tex.a * l2.a);
     }
     // The alpha test reads the texture's opacity alone (§9.1.1 rule 1).
-    if (draw.flags.z != 0u && tex.a <= draw.params.x) {
+    if (draw.flags.z != 0u && tex.a <= draw.params.x + ALPHA_TEST_SLACK) {
         discard;
     }
     let program = draw.flags.w;

@@ -58,3 +58,15 @@ const FRAME_SRGB_TARGET: u32 = 1u;
 const FRAME_MAX_LIGHTS: u32 = 256u;
 
 @group(0) @binding(0) var<uniform> frame: Frame;
+
+// The alpha test (material.md §11.2, lighting.md §5.12): a fragment is discarded when its
+// tested opacity is at or below the reference R. The comparison allows ALPHA_TEST_SLACK
+// (2^-20) above R, because GPUs need not turn an 8-bit texel into exactly n / 255: a
+// software rasteriser reads 204 as a little more than 204 / 255 = R(0.8) and kept the texel
+// the spec discards. 8-bit opacities, their products and sums, and R lie at least
+// 1 / 65025 apart when they differ, so the slack only absorbs conversion error and never
+// changes a result that exact arithmetic gives (lighting.md §15, implementer OPEN).
+const ALPHA_TEST_SLACK: f32 = 9.5367431640625e-7;
+fn frame_alpha_discards(opacity: f32, reference: f32) -> bool {
+    return opacity <= reference + ALPHA_TEST_SLACK;
+}

@@ -253,7 +253,8 @@ jobs:
         env:
           TESSERA_REQUIRE_GPU: ${{ runner.os == 'Linux' && '1' || '' }}
           SKIP_GOLDEN: ${{ runner.os != 'Linux' && '--skip matches_golden' || '' }}
-        run: cargo test --workspace --locked -- $SKIP_GOLDEN
+        # --no-fail-fast: one run reports every failing test target, not only the first.
+        run: cargo test --workspace --locked --no-fail-fast -- $SKIP_GOLDEN
       - name: Keep golden-image diffs
         if: failure() && runner.os == 'Linux'
         uses: actions/upload-artifact@v5

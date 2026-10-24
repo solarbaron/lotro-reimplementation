@@ -1134,6 +1134,17 @@ the baked-lighting textures, and what coordinate inputs 3 and 4 are (§4.3, L27)
 > **OPEN:** Glow composition (bloom); the other effect inputs of §4.2 E21 (metallic-specular
 > amount, opacity-fog properties, fake ambient terms); cube environment maps.
 
+> **OPEN (implementer, clean room, 2026-10-24; engineering choice, Tessera Decision
+> proposed):** §5.12 discards at *α* ≤ *R*, and the §14 example discards a texel alpha of
+> exactly 0.8 (byte 204) at *R* = 0.8. GPUs need not convert an 8-bit texel to exactly
+> *n* / 255: a software rasteriser (Mesa llvmpipe) read byte 204 as a value a little above
+> *R* and kept the texel. `tessera-render` therefore compares *α* ≤ *R* + 2⁻²⁰ in every
+> alpha test of its programs (lit, instanced, sky, water, terrain layers, decals,
+> particles); the CPU reference keeps the exact comparison. 8-bit opacities, their
+> products and sums, and *R* (a multiple of 1/255, or −1 or 0) differ by at least 1/65,025
+> when they differ, so the slack changes no result of exact arithmetic. Question for the
+> spec: confirm this slack (or name another) as the Tessera rule for §5.12.
+
 > **OPEN:** The channel order of property colour values (`property-system.md` §4.7); Tessera
 > Decision B, G, R, A (§4.4).
 

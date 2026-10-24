@@ -5,7 +5,7 @@ use std::fs;
 
 use tessera_settings::toml;
 use tessera_settings::{
-    Bookmark, LoadStatus, LoadWarning, MAX_NESTING_DEPTH, Settings, SettingsError, SettingsStore,
+    LoadStatus, LoadWarning, MAX_NESTING_DEPTH, Settings, SettingsError, SettingsStore,
 };
 
 /// `x = { k.k.(parts).k = { ... 1 } }` nested `levels` inline tables deep.
@@ -185,7 +185,7 @@ fn update_refuses_to_clobber_an_unreadable_file() {
     let mut s = Settings::default();
     s.remember_game_dir(dir.path().join("elsewhere"));
     for i in 0..10 {
-        assert!(s.add_bookmark(Bookmark::new(0x0A00_0000 + i, "mark")));
+        assert!(s.add_bookmark(tessera_settings::Bookmark::new(0x0A00_0000 + i, "mark")));
     }
     store.save(&s).unwrap();
     fs::set_permissions(&path, fs::Permissions::from_mode(0o000)).unwrap();

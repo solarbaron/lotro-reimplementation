@@ -134,7 +134,9 @@ locked=()
 [ "$ws" = "$repo" ] && locked=(--locked)
 
 tree() {
-    cargo tree -p "$client" --target all ${locked[@]+"${locked[@]}"} "$@" 2>/dev/null || {
+    # --color never: CARGO_TERM_COLOR=always (as in CI) styles parts of the output with
+    # escape codes, which the text matching below must not depend on.
+    cargo tree --color never -p "$client" --target all ${locked[@]+"${locked[@]}"} "$@" 2>/dev/null || {
         echo "check-release-features: cargo tree $* failed in $ws" >&2
         exit 2
     }

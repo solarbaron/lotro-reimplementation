@@ -59,6 +59,29 @@ fn digest_uses_normalisation_form_c() {
     assert_eq!(composed.digest(), decomposed.digest());
 }
 
+/// Makes a FIFO at `path` without starting a program (OE-T8 (b)) and without unsafe code
+/// (the crate forbids it): `mkfifoat` of rustix where it has one, `mkfifo` of nix on Apple
+/// systems, which rustix leaves out.
+#[cfg(all(unix, not(target_vendor = "apple")))]
+fn make_fifo(path: &Path) {
+    rustix::fs::mkfifoat(
+        rustix::fs::CWD,
+        path,
+        rustix::fs::Mode::from_raw_mode(0o600),
+    )
+    .expect("fifo");
+}
+
+/// See the other `make_fifo`.
+#[cfg(target_vendor = "apple")]
+fn make_fifo(path: &Path) {
+    nix::unistd::mkfifo(
+        path,
+        nix::sys::stat::Mode::S_IRUSR | nix::sys::stat::Mode::S_IWUSR,
+    )
+    .expect("fifo");
+}
+
 fn accept_now(dir: &Path, text: &WarningText) -> Acceptance {
     let (acc, write) = accept(Some(dir), text, UserConfirmation::confirmed_by_user());
     write.wait().expect("record written");
@@ -334,14 +357,7 @@ fn oe_t5_rejected_records() {
     let d = fresh();
     std::fs::remove_file(rec(d.path())).expect("rm");
     // The FIFO is made in-process (no other program is started, OE-T8 (b)).
-    rustix::fs::mknodat(
-        rustix::fs::CWD,
-        rec(d.path()),
-        rustix::fs::FileType::Fifo,
-        rustix::fs::Mode::from_raw_mode(0o600),
-        0,
-    )
-    .expect("fifo");
+    make_fifo(&rec(d.path()));
     assert_eq!(
         assert_rejected(d.path(), &text),
         NotAcceptedReason::Unreadable

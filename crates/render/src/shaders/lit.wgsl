@@ -200,7 +200,7 @@ fn lit_shade(in: LitVsOut) -> Shaded {
 fn alpha_test(s: Shaded) {
     // Kept only when the tested opacity is greater than the reference R (material.md §11.2):
     // discarded when opacity <= R. R = -1 keeps everything, R = 0 drops opacity 0 only.
-    if (s.opacity <= draw.params.x) {
+    if (frame_alpha_discards(s.opacity, draw.params.x)) {
         discard;
     }
 }

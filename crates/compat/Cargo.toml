@@ -47,9 +47,14 @@ test-support = []
 [dev-dependencies]
 tempfile = "3"
 
-[target.'cfg(unix)'.dev-dependencies]
-# `mknodat` makes the FIFO of the record tests in-process (no program is started, OE-T8 (b)).
+# The FIFO of the record tests is made in-process (no program is started, OE-T8 (b)) and
+# without unsafe code: `mkfifoat` of rustix, or `mkfifo` of nix on Apple systems, where rustix
+# has neither `mkfifoat` nor `mknodat`.
+[target.'cfg(all(unix, not(target_vendor = "apple")))'.dev-dependencies]
 rustix = { workspace = true, features = ["fs"] }
+
+[target.'cfg(target_vendor = "apple")'.dev-dependencies]
+nix = { version = "0.30", default-features = false, features = ["fs"] }
 
 [lints]
 workspace = true

@@ -153,7 +153,7 @@ impl DataDir {
         self.root.join("server.lock")
     }
 
-    /// `server.pid`: on Windows the running server's PID beside the lock (§15.5), because a
+    /// `server.pid`: on Windows the running server's PID beside the lock (§15.6), because a
     /// held `LockFileEx` lock keeps other processes from reading `server.lock` itself.
     #[must_use]
     pub fn pid_path(&self) -> PathBuf {
@@ -281,7 +281,7 @@ fn open_lock_file(path: &Path) -> Result<File, ServerError> {
     o.open(path).map_err(|e| ServerError::io(path, e))
 }
 
-/// Whether the PID is also kept in `server.pid` and read from there (§15.5): on Windows a
+/// Whether the PID is also kept in `server.pid` and read from there (§15.6): on Windows a
 /// lock taken with `LockFileEx` (what `File::try_lock` uses) covers the whole file and is
 /// mandatory, so no other process can read the PID from `server.lock` while it is held.
 const PID_SIDECAR: bool = cfg!(windows);
@@ -303,7 +303,7 @@ impl ServerLock {
     /// the PID of the holder when another process holds it. With `write_pid` (the `run`
     /// command) the file then holds this process's PID.
     ///
-    /// On Windows the PID is also written to `server.pid` (§15.5) and read from there. The
+    /// On Windows the PID is also written to `server.pid` (§15.6) and read from there. The
     /// lock alone decides whether a start is refused: a `server.pid` left by a crashed
     /// server is only read once the lock is found held, and is removed by the next holder.
     pub fn acquire(dir: &DataDir, write_pid: bool) -> Result<Self, ServerError> {
@@ -661,7 +661,7 @@ mod tests {
         }
     }
 
-    /// §15.5: the PID file names a running server; a stale one never refuses a start and
+    /// §15.6: the PID file names a running server; a stale one never refuses a start and
     /// never names a holder that wrote no PID.
     #[test]
     fn pid_file_beside_the_lock() {

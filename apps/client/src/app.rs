@@ -77,6 +77,25 @@ pub fn scenario_caption(title: Option<&str>) -> Option<String> {
     (!t.is_empty()).then(|| t.to_owned())
 }
 
+/// The overall deadline of a windowed scenario timing run (`--scenario-timing` without
+/// `--ui-script`), counted from `now`: `--settle-timeout` + the timed seconds + 180 s, as
+/// the headless UI run allows (`crate::ui_host::run`).
+fn timing_deadline(args: &Args, now: Instant) -> Option<Instant> {
+    let secs = args.scenario_timing.filter(|_| !args.ui_script)?;
+    Some(crate::runtime::deadline_after(
+        now,
+        Duration::from_secs(
+            args.settle_timeout
+                .saturating_add(secs)
+                .saturating_add(TIMING_LOAD_SECS),
+        ),
+    ))
+}
+
+/// Seconds a scenario timing run allows for loading the world, on top of the settle
+/// timeout and the timed seconds (as the headless UI run, `crate::ui_host::run`).
+const TIMING_LOAD_SECS: u64 = 180;
+
 #[derive(Debug)]
 pub(crate) struct App {
     args: Args,
@@ -101,6 +120,11 @@ pub(crate) struct App {
     scenario_caption: Option<String>,
     /// The window's scale factor the mapper's timing was last computed for.
     scale_factor: f64,
+    /// A scenario timing run's overall deadline (`--scenario-timing`): the settle timeout,
+    /// the timed seconds and 180 s for loading, as the headless UI run allows. A windowed
+    /// run that has not written its report by then fails, so it never stays open for ever
+    /// (a walker that failed, or a player never placed).
+    timing_deadline: Option<Instant>,
 }
 
 /// The pointer-lock window operations over the winit window (decision 0015 §2.5).
@@ -191,6 +215,7 @@ impl App {
             .as_deref()
             .and_then(|sc| scenario_caption(sc.title()))
             .map(|t| format!("{t} - "));
+        let timing_deadline = timing_deadline(&args, now);
         Ok(Self {
             args,
             runtime: Some(runtime),
@@ -207,7 +232,26 @@ impl App {
             input_prefs: crate::ui_host::cursor::input_prefs(),
             scale_factor: 1.0,
             scenario_caption: args_caption,
+            timing_deadline,
         })
+    }
+
+    /// Ends a windowed scenario timing run that has not finished by its deadline, or whose
+    /// walker failed: the run's error (exit non-zero) instead of a window that stays open.
+    fn check_timing_run(&mut self, event_loop: &ActiveEventLoop, now: Instant) -> bool {
+        let Some(deadline) = self.timing_deadline else {
+            return false;
+        };
+        let failed = self.host.as_ref().and_then(|h| h.failed.clone());
+        let err = match failed {
+            Some(reason) => anyhow::anyhow!("scenario timing run: world walker failed: {reason}"),
+            None if now > deadline => anyhow::anyhow!(
+                "scenario timing run: the timed window did not end in time (settle timeout + timing + 180 s)"
+            ),
+            None => return false,
+        };
+        self.fail(event_loop, err);
+        true
     }
 
     fn fail(&mut self, event_loop: &ActiveEventLoop, err: anyhow::Error) {
@@ -358,6 +402,9 @@ impl App {
 
     /// One frame of the world walker (or its loading screen).
     fn redraw_walker(&mut self, event_loop: &ActiveEventLoop, now: Instant, dt: f32) {
+        if self.check_timing_run(event_loop, now) {
+            return;
+        }
         let (Some(rt), Some(gfx), Some(host)) =
             (self.runtime.as_mut(), self.gfx.as_mut(), self.host.as_mut())
         else {
@@ -375,6 +422,7 @@ impl App {
         let mut quit = false;
         let mut shot = false;
         let mut flight_done = false;
+        let mut timing_done = false;
         if let Some(walker) = host.walker.as_mut() {
             if !had_walker {
                 walker.set_viewport(size.width, size.height);
@@ -406,6 +454,7 @@ impl App {
                 dt,
             );
             quit = ev.quit || ev.duration_done;
+            timing_done = ev.duration_done;
             shot = ev.screenshot;
             flight_done = ev.flight_done;
             // P5: the dispatcher's `ride`, `findplace` and `leaveinstance`, the feed's
@@ -524,6 +573,32 @@ impl App {
                 );
                 return;
             }
+        }
+        if timing_done
+            && self.args.scenario_timing.is_some()
+            && !self.args.ui_script
+            && let Some(walker) = host.walker.as_ref()
+        {
+            // The scenario timing run's report (decision 0043 §3), at the surface the
+            // compositor gave.
+            let t = crate::timing::build(
+                walker,
+                self.ui.as_ref(),
+                rt,
+                crate::timing::RunMode::Windowed,
+                (size.width, size.height),
+                !self.args.no_vsync,
+                &gfx.renderer.adapter_info().name,
+            );
+            if let Err(e) = crate::timing::emit(&t, &self.args, Some(&rt.status)) {
+                // As the headless run: a report that could not be written fails the run
+                // (exit non-zero); the window closes below (`quit`).
+                let e = e.context("timing report not written");
+                tracing::error!("{e:#}");
+                self.error.get_or_insert(e);
+            }
+            // The report is written (or failed): the run is over.
+            self.timing_deadline = None;
         }
         if shot && let Some(walker) = host.walker.as_mut() {
             let dir = crate::runtime::data_root(&self.args).join("screenshots");

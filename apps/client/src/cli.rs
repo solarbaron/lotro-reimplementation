@@ -560,7 +560,8 @@ pub struct Args {
     #[arg(long)]
     pub ui_script: bool,
 
-    /// Write the U1–U5 report of the run as Markdown to this file (implies `--ui`).
+    /// Write the U1–U5 report of the run as Markdown to this file (implies `--ui`); in a
+    /// `--scenario-timing` run, the timing report.
     #[arg(long, value_name = "FILE")]
     pub ui_report: Option<PathBuf>,
 
@@ -592,6 +593,28 @@ pub struct Args {
     /// tick, the `at pre` lines before the world is entered.
     #[arg(long, requires = "scenario")]
     pub scenario_input: bool,
+
+    /// Scenario runs: a timing run of SECS seconds (1 to 86,400). Once the player is placed
+    /// and the area has settled (or `--settle-timeout` has passed), every frame is logged
+    /// for SECS seconds, then the run ends with a timing report: frame-time p50, p95, p99
+    /// and maximum, the frames over 16.7 ms and over 50 ms, the U1–U5 figures of the game UI
+    /// over the timed frames and the audio underruns (logged, and written with
+    /// `--ui-report`; `--frame-log` saves the frames). Implies `--ui`. Windowed it closes
+    /// the window at the end; with `--headless` it runs the walker offscreen with the game
+    /// UI on the wall clock (it needs an install). The scenario keeps its own end: a
+    /// headless run also ends when the feed finishes (the report then says the window ended
+    /// early, or never started, and a run whose window never started exits non-zero). A
+    /// run that has not ended after `--settle-timeout` + SECS + 180 s, or whose report
+    /// cannot be written, fails. Not `--duration`, which `--scenario` refuses
+    /// (`scenario-feed.md` §12.1).
+    #[arg(
+        long,
+        value_name = "SECS",
+        requires = "scenario",
+        value_parser = clap::value_parser!(u64).range(1..=MAX_TIMEOUT_SECS),
+        conflicts_with_all = ["server", "screenshot", "no_data"]
+    )]
+    pub scenario_timing: Option<u64>,
 
     /// The resolved scenario of `--scenario`, set by the client after parsing and
     /// resolution (not a command-line option).
@@ -993,6 +1016,11 @@ impl Args {
                     "the argument '--scenario-input' requires '--scenario <FILE>'",
                 ));
             }
+            if self.scenario_timing.is_some() {
+                return Err(crate::scenario::usage_error(
+                    "the argument '--scenario-timing <SECS>' requires '--scenario <FILE>'",
+                ));
+            }
         }
         if let (Some(scenario), Some(log)) = (&self.scenario, &self.scenario_log)
             && log.as_os_str() != "-"
@@ -1044,7 +1072,16 @@ impl Args {
                 || !self.open_panel.is_empty()
                 || self.skin.is_some()
                 || self.ui_script
-                || self.ui_report.is_some())
+                || self.ui_report.is_some()
+                || self.scenario_timing.is_some())
+    }
+
+    /// The length of the timing run, when one is asked for: `--duration`, or
+    /// `--scenario-timing` (which `--scenario` runs use instead, since `--scenario` refuses
+    /// `--duration`, `scenario-feed.md` §12.1).
+    #[must_use]
+    pub fn timing_secs(&self) -> Option<u64> {
+        self.duration.or(self.scenario_timing)
     }
 
     /// Whether the walker renders offscreen (or, for `--walk-path`, runs without a GPU).
@@ -1421,6 +1458,107 @@ mod tests {
         ])
         .expect("args");
         assert!(a.check().is_ok());
+    }
+
+    #[test]
+    fn scenario_timing_args() {
+        let f = tempfile::NamedTempFile::new().expect("temp file");
+        let s = f.path().to_str().expect("utf-8");
+        // Windowed and headless, with a spawn, a frame log and a report (decision 0043 §3).
+        for headless in [false, true] {
+            let mut v = vec![
+                "t",
+                "--scenario",
+                s,
+                "--scenario-timing",
+                "60",
+                "--spawn",
+                "1,109,141,62.96,15.07,413.60",
+                "--frame-log",
+                "f.csv",
+                "--ui-report",
+                "r.md",
+                "--size",
+                "1920x1080",
+                "--ui-scale",
+                "1",
+                "--no-vsync",
+            ];
+            if headless {
+                v.push("--headless");
+            }
+            let a = Args::try_parse_from(&v).expect("args");
+            assert!(a.check().is_ok());
+            assert_eq!(a.scenario_timing, Some(60));
+            assert_eq!(a.timing_secs(), Some(60));
+            assert!(a.duration.is_none());
+            // It implies the game UI, so a headless run is the UI run (§12.2).
+            assert!(a.ui_enabled());
+            assert_eq!(a.walker_headless(), headless);
+            let w = crate::walker_host::walker_config(&a);
+            assert!(w.frame_log);
+            assert_eq!(
+                w.bench.map(|b| b.duration),
+                Some(std::time::Duration::from_secs(60))
+            );
+            assert!(crate::ui_host::run::check_end_condition(&a).is_ok());
+        }
+        // Range, and the options it needs or refuses.
+        for bad in [
+            &["t", "--scenario", s, "--scenario-timing", "0"][..],
+            &["t", "--scenario", s, "--scenario-timing", "86401"],
+            &["t", "--scenario", s, "--scenario-timing", "5", "--no-data"],
+            &[
+                "t",
+                "--scenario",
+                s,
+                "--scenario-timing",
+                "5",
+                "--screenshot",
+                "a.png",
+            ],
+            &[
+                "t",
+                "--scenario",
+                s,
+                "--scenario-timing",
+                "5",
+                "--server",
+                "127.0.0.1:1",
+                "--account",
+                "a",
+            ],
+            // `--scenario` keeps refusing `--duration` (`scenario-feed.md` §12.1).
+            &[
+                "t",
+                "--scenario",
+                s,
+                "--scenario-timing",
+                "5",
+                "--duration",
+                "5",
+            ],
+            &["t", "--scenario-timing", "5"],
+        ] {
+            assert!(Args::try_parse_from(bad).is_err(), "{bad:?}");
+        }
+        // clap drops `requires` when a conflicting task is given; check() still refuses.
+        let a = Args::try_parse_from([
+            "t",
+            "--headless",
+            "--duration",
+            "1",
+            "--scenario-timing",
+            "5",
+        ])
+        .expect("clap alone accepts it");
+        assert_eq!(a.check().expect_err("refused").exit_code(), 2);
+        // Without it nothing changes: no timing, no UI implied.
+        let a = Args::try_parse_from(["t", "--scenario", s]).expect("args");
+        assert!(a.timing_secs().is_none() && !a.ui_enabled());
+        let a = Args::try_parse_from(["t", "--headless", "--duration", "3"]).expect("args");
+        assert_eq!(a.timing_secs(), Some(3));
+        assert!(!a.ui_enabled());
     }
 
     #[test]

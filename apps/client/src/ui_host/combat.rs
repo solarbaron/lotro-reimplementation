@@ -510,7 +510,15 @@ impl UiHost {
             if std::mem::take(&mut self.combat.members_dirty) {
                 hud.set_member_lists(&mut ui, &self.combat.member_lists, state, install);
             }
+            let defeat_before = hud.defeat_panel(&ui);
             hud.apply(&mut ui, state, changes, install, now);
+            // The defeat panel opening this frame is a panel open: an event frame of
+            // decision 0015 §6 U4 (a), (b), as the NPC windows' opens are.
+            if let Some(k) = hud.defeat_panel(&ui)
+                && defeat_before != Some(k)
+            {
+                self.frame.event = true;
+            }
             if rebuild
                 && let (Some(p), Some(sc)) = (self.panels.as_mut(), self.combat.shortcuts.as_ref())
             {
@@ -796,5 +804,58 @@ mod tests {
         host.combat.members_dirty = true;
         frame(&mut host, &state, &[], 0.7);
         assert_eq!(count(&host), 0);
+    }
+
+    /// Decision 0043 §3 item 3 (c): the defeat panel opening is an event frame (U4 (a),
+    /// (b)); frames while it stays open are not new events.
+    #[test]
+    fn the_defeat_panel_opening_marks_an_event_frame() {
+        let mut host = UiHost::without_install(&UiOptions {
+            screen: SCREEN,
+            hud: true,
+            ..UiOptions::default()
+        });
+        host.attach_combat(FloatySettings::default(), 0.0);
+        let mut state = CombatState::new();
+        let mut step = |host: &mut UiHost, ev: &Event, now: f64| {
+            host.frame.event = false;
+            let mut c = Vec::new();
+            state.apply(ev, now, &mut c);
+            frame(host, &state, &c, now);
+            host.frame.event
+        };
+        let player = EntityId(1);
+        let enter = Event::WorldEntered {
+            player,
+            name: "P".into(),
+            transform: Transform::new(Vec3::ZERO, 0.0),
+        };
+        assert!(!step(&mut host, &enter, 0.0), "entering is no panel open");
+        assert!(
+            host.combat_hud()
+                .is_some_and(|h| h.widgets().defeat.is_some()),
+            "the HUD has a defeat panel"
+        );
+        let defeat = Event::Combat(CombatEvent::Defeated {
+            entity: player,
+            by: None,
+        });
+        assert!(step(&mut host, &defeat, 1.0), "the defeat panel opened");
+        assert!(
+            host.combat_hud()
+                .and_then(|h| h.defeat_panel(&host.ui.borrow()))
+                .is_some()
+        );
+        let tick = Event::Combat(CombatEvent::CooldownStarted {
+            what: Ref::Literal("Jab".into()),
+            duration_ms: 1_000,
+        });
+        assert!(!step(&mut host, &tick, 2.0), "still open: no new event");
+        let revive = Event::Combat(CombatEvent::Revived { entity: player });
+        assert!(!step(&mut host, &revive, 3.0), "closing is no open");
+        assert!(
+            step(&mut host, &defeat, 4.0),
+            "a second defeat opens it again"
+        );
     }
 }

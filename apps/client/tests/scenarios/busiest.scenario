@@ -1,0 +1,272 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# The busiest scenario of P8 exit criterion 3 (decision 0043 §3 item 1; scenario-feed.md
+# §6.1-§6.7, §7.3): everything at once for three minutes of virtual time. A crowd of 54
+# actors with figures stands in three rings around the player (four of them wander); a
+# combat loop every 6 s keeps a target selected with casts, an induction, effects, floating
+# damage and heals; the target is defeated at 30 s and 90 s (each time with a loot window)
+# and the player at 45 s and 120 s (the defeat panel); a full fellowship of six (the player
+# and five members, social-panels.md SP12) whose vitals change every 1.5 s; chat at a steady
+# 10 lines per second (decision 0015 §6); synchronised music every 20 s from 5 s; bags filled
+# and a tracked quest. The measured run opens the bags, character and quest tracker panels on
+# the command line (docs/perf/p8-busiest.md). Synthetic: every name and text is invented
+# for Tessera; without an install the selectors resolve empty, so the actors spawn without
+# bodies and the steps that name an element are skipped (counted).
+tessera-scenario 1
+title "Market day"
+tick 100ms
+end-at 180s
+player "Tamsin" level=40
+select $folk = creature kind=npc has-appearance=yes n=36 seed=4301
+select $beasts = creature kind=mob has-appearance=yes n=19 seed=4302
+select $strikes = skill harmful=yes n=2 seed=4303
+select $wards = effect role=vital-over-time n=2 seed=4304
+select $boons = effect role=property-modification n=2 seed=4305
+select $wares = item has-icon=yes n=24 seed=4306
+select $errands = quest deed=no n=2 seed=4307
+actor $a01 kind=npc name="Market visitor 1" pos=0.0,9.0,0 body=$folk[0]
+actor $a02 kind=npc name="Market visitor 2" pos=3.9,8.11,0 body=$folk[1]
+actor $a03 kind=creature name="Stray goat 3" pos=7.04,5.61,0 body=$beasts[1]
+actor $a04 kind=npc name="Market visitor 4" pos=8.77,2.0,0 body=$folk[2]
+actor $a05 kind=npc name="Market visitor 5" pos=8.77,-2.0,0 body=$folk[3]
+actor $a06 kind=creature name="Stray goat 6" pos=7.04,-5.61,0 body=$beasts[2]
+actor $a07 kind=npc name="Market visitor 7" pos=3.9,-8.11,0 body=$folk[4]
+actor $a08 kind=npc name="Market visitor 8" pos=0.0,-9.0,0 body=$folk[5]
+actor $a09 kind=creature name="Stray goat 9" pos=-3.9,-8.11,0 body=$beasts[3]
+actor $a10 kind=npc name="Market visitor 10" pos=-7.04,-5.61,0 body=$folk[6]
+actor $a11 kind=npc name="Market visitor 11" pos=-8.77,-2.0,0 body=$folk[7]
+actor $a12 kind=creature name="Stray goat 12" pos=-8.77,2.0,0 body=$beasts[4]
+actor $a13 kind=npc name="Market visitor 13" pos=-7.04,5.61,0 body=$folk[8]
+actor $a14 kind=npc name="Market visitor 14" pos=-3.9,8.11,0 body=$folk[9]
+actor $a15 kind=creature name="Stray goat 15" pos=2.6,14.77,0 body=$beasts[5]
+actor $a16 kind=npc name="Market visitor 16" pos=7.5,12.99,0 body=$folk[10]
+actor $a17 kind=npc name="Market visitor 17" pos=11.49,9.64,0 body=$folk[11]
+actor $a18 kind=creature name="Stray goat 18" pos=14.1,5.13,0 body=$beasts[6]
+actor $a19 kind=npc name="Market visitor 19" pos=15.0,0.0,0 body=$folk[12]
+actor $a20 kind=npc name="Market visitor 20" pos=14.1,-5.13,0 body=$folk[13]
+actor $a21 kind=creature name="Stray goat 21" pos=11.49,-9.64,0 body=$beasts[7]
+actor $a22 kind=npc name="Market visitor 22" pos=7.5,-12.99,0 body=$folk[14]
+actor $a23 kind=npc name="Market visitor 23" pos=2.6,-14.77,0 body=$folk[15]
+actor $a24 kind=creature name="Stray goat 24" pos=-2.6,-14.77,0 body=$beasts[8]
+actor $a25 kind=npc name="Market visitor 25" pos=-7.5,-12.99,0 body=$folk[16]
+actor $a26 kind=npc name="Market visitor 26" pos=-11.49,-9.64,0 body=$folk[17]
+actor $a27 kind=creature name="Stray goat 27" pos=-14.1,-5.13,0 body=$beasts[9]
+actor $a28 kind=npc name="Market visitor 28" pos=-15.0,-0.0,0 body=$folk[18]
+actor $a29 kind=npc name="Market visitor 29" pos=-14.1,5.13,0 body=$folk[19]
+actor $a30 kind=creature name="Stray goat 30" pos=-11.49,9.64,0 body=$beasts[10]
+actor $a31 kind=npc name="Market visitor 31" pos=-7.5,12.99,0 body=$folk[20]
+actor $a32 kind=npc name="Market visitor 32" pos=-2.6,14.77,0 body=$folk[21]
+actor $a33 kind=creature name="Stray goat 33" pos=1.53,21.95,0 body=$beasts[11]
+actor $a34 kind=npc name="Market visitor 34" pos=7.66,20.63,0 body=$folk[22]
+actor $a35 kind=npc name="Market visitor 35" pos=13.16,17.63,0 body=$folk[23]
+actor $a36 kind=creature name="Stray goat 36" pos=17.59,13.21,0 body=$beasts[12]
+actor $a37 kind=npc name="Market visitor 37" pos=20.6,7.72,0 body=$folk[24]
+actor $a38 kind=npc name="Market visitor 38" pos=21.94,1.6,0 body=$folk[25]
+actor $a39 kind=creature name="Stray goat 39" pos=21.5,-4.64,0 body=$beasts[13]
+actor $a40 kind=npc name="Market visitor 40" pos=19.33,-10.51,0 body=$folk[26]
+actor $a41 kind=npc name="Market visitor 41" pos=15.58,-15.53,0 body=$folk[27]
+actor $a42 kind=creature name="Stray goat 42" pos=10.57,-19.29,0 body=$beasts[14]
+actor $a43 kind=npc name="Market visitor 43" pos=4.71,-21.49,0 body=$folk[28]
+actor $a44 kind=npc name="Market visitor 44" pos=-1.53,-21.95,0 body=$folk[29]
+actor $a45 kind=creature name="Stray goat 45" pos=-7.66,-20.63,0 body=$beasts[15]
+actor $a46 kind=npc name="Market visitor 46" pos=-13.16,-17.63,0 body=$folk[30]
+actor $a47 kind=npc name="Market visitor 47" pos=-17.59,-13.21,0 body=$folk[31]
+actor $a48 kind=creature name="Stray goat 48" pos=-20.6,-7.72,0 body=$beasts[16]
+actor $a49 kind=npc name="Market visitor 49" pos=-21.94,-1.6,0 body=$folk[32]
+actor $a50 kind=npc name="Market visitor 50" pos=-21.5,4.64,0 body=$folk[33]
+actor $a51 kind=creature name="Stray goat 51" pos=-19.33,10.51,0 body=$beasts[17]
+actor $a52 kind=npc name="Market visitor 52" pos=-15.58,15.53,0 body=$folk[34]
+actor $a53 kind=npc name="Market visitor 53" pos=-10.57,19.29,0 body=$folk[35]
+actor $a54 kind=creature name="Stray goat 54" pos=-4.71,21.49,0 body=$beasts[18]
+actor $boar kind=creature name="Bristleback" pos=0,6,0 level=38 body=$beasts[0]
+actor $crier kind=npc name="Town crier" pos=-4,3,0 body=$folk[0]
+actor $brin kind=player name="Brin" pos=2,-2,0 level=39
+actor $cael kind=player name="Cael" pos=-2,-2,0 level=41
+item $bread "Bread" qty=6
+item $ale "Pale ale" qty=6
+item $rope "Coil of rope"
+item $lamp "Brass lamp"
+item $map "Folded map"
+item $salt "Salt pouch"
+item $knife "Whittling knife"
+item $apple "Red apple" qty=6
+
+# Start: the crowd, the target, the fellowship, the bags, the quest and the quickslots.
+at 0s spawn $boar
++0s spawn $crier
++0s spawn $brin
++0s spawn $cael
++0s spawn $a01
++0s spawn $a02
++0s spawn $a03
++0s spawn $a04
++0s spawn $a05
++0s spawn $a06
++0s spawn $a07
++0s spawn $a08
++0s spawn $a09
++0s spawn $a10
++0s spawn $a11
++0s spawn $a12
++0s spawn $a13
++0s spawn $a14
++0s spawn $a15
++0s spawn $a16
++0s spawn $a17
++0s spawn $a18
++0s spawn $a19
++0s spawn $a20
++0s spawn $a21
++0s spawn $a22
++0s spawn $a23
++0s spawn $a24
++0s spawn $a25
++0s spawn $a26
++0s spawn $a27
++0s spawn $a28
++0s spawn $a29
++0s spawn $a30
++0s spawn $a31
++0s spawn $a32
++0s spawn $a33
++0s spawn $a34
++0s spawn $a35
++0s spawn $a36
++0s spawn $a37
++0s spawn $a38
++0s spawn $a39
++0s spawn $a40
++0s spawn $a41
++0s spawn $a42
++0s spawn $a43
++0s spawn $a44
++0s spawn $a45
++0s spawn $a46
++0s spawn $a47
++0s spawn $a48
++0s spawn $a49
++0s spawn $a50
++0s spawn $a51
++0s spawn $a52
++0s spawn $a53
++0s spawn $a54
++0s vital player health 900/900
++0s vital player power 500/500
++0s vital player resource="Fervour" 0/5
++0s vital $boar health 1000/1000
++0s quickslot 1 "Quick jab"
++0s quickslot 2 "Rallying cry"
++0s quickslot 3 $strikes[0]
++0s give $wares
++0s give $bread
++0s give $ale
++0s give $rope
++0s give $lamp
++0s give $map
++0s give $salt
++0s give $knife
++0s give $apple
++0s wallet coin 123456
++0s quest "Market errands" active
++0s objective "Market errands" 1 0/6
++0s track "Market errands" on
++0s quest $errands active
++0.5s fellowship player $brin $cael "Dara" "Edric" "Fenn" leader=player
+
+# Chat at a steady 10 lines per second: three lines every 300 ms.
+at 0s repeat 600 every 300ms
++0s say $crier "Fresh bread by the well!" channel=yell
++0.1s say $brin "Anyone seen the lamp seller?" channel=fellowship
++0.1s say "Wren" "Selling rope, cheap."
+end
+
+# Fellowship vitals, changing every 1.5 s: two members with entities, three by name.
+at 0.5s repeat 120 every 1.5s
++0s vital $brin health 610/800
++0s vital $cael power 120/400
++0s fellow-vital "Dara" health 300/700
++0s fellow-vital "Edric" power 90/350
++0s fellow-vital "Fenn" health 820/900
++0.7s vital $brin health 780/800
++0s vital $cael power 330/400
++0s fellow-vital "Dara" health 560/700
++0s fellow-vital "Edric" power 300/350
++0s fellow-vital "Fenn" health 640/900
+end
+
+# The combat loop: target, casts, an induction, effects, damage and heals every 6 s.
+at 2s repeat 29 every 6s
++0s target player $boar
++0s target $boar player
++0s combat player on
++0s combat $boar on
++0s vital $boar health 1000/1000
++0s cast player "Quick jab" 800ms target=$boar
++0.8s damage player $boar 140 result=critical with="Quick jab" left=860
++0s cooldown "Quick jab" 2s
++0s effect $boar "Bleeding" for=3s from=player
++0s effect $boar $wards[0] for=3s from=player
++0.4s cast $boar "Gore" 1.2s target=player
++1.2s damage $boar player 85 left=815
++0s effect player "Bruised" for=2s from=$boar
++0.3s cast player "Rallying cry" 1.5s kind=induction
++1.5s heal player player 85 with="Rallying cry" left=900
++0s effect player $boons[0] for=4s
++0.2s cast player $strikes[0] 600ms target=$boar
++0.6s damage player $boar 210 with=$strikes[0] left=650
++0.2s damage player $boar 0 result=parry
+end
+
+# The wanderers: four of the inner ring walk out and back every 10 s.
+at 1s repeat 17 every 10s
++0s move $a01 3.0,11.0,0 over=500ms
++5s move $a01 0.0,9.0,0 over=500ms
+end
+at 2s repeat 17 every 10s
++0s move $a04 5.77,4.0,0 over=500ms
++5s move $a04 8.77,2.0,0 over=500ms
+end
+at 3s repeat 17 every 10s
++0s move $a07 5.9,-11.11,0 over=500ms
++5s move $a07 3.9,-8.11,0 over=500ms
+end
+at 4s repeat 17 every 10s
++0s move $a10 -9.04,-8.61,0 over=500ms
++5s move $a10 -7.04,-5.61,0 over=500ms
+end
+
+# Synchronised music every 20 s, so that any 60 s timed window holds a synchronised start
+# whatever the settle wait: the player and two members ready a tune, the leader starts it,
+# and the player and Brin stop 12 s later.
+at 5s repeat 9 every 20s
++0s perform $brin "Market Reel" sync
++0s perform "Dara" "Market Reel" sync
++0s perform player "Market Reel" sync
++1s perform-start by=player lead=700ms
++12s perform-stop $brin
++0s perform-stop player
+end
+
+# Defeats and a loot window twice, so that the timed window (which starts once the area
+# has settled) holds them: the target at 30 s and 90 s with a loot window, the player at
+# 45 s and 120 s (the defeat panel).
+at 30s defeat $boar by=player
++2s loot items="Bristle tuft","Old coin" from=$boar coin=250
++4s close loot
++0s revive $boar
++0s objective "Market errands" 1 2/6
+at 90s defeat $boar by=player
++2s loot items="Bristle tuft","Old coin" from=$boar coin=250
++4s close loot
++0s revive $boar
++0s objective "Market errands" 1 4/6
+at 45s damage $boar player 815 left=0
++0s defeat player by=$boar
++5s revive player
++0s vital player health 900/900
+at 120s damage $boar player 815 left=0
++0s defeat player by=$boar
++5s revive player
++0s vital player health 900/900
++0s objective "Market errands" 1 6/6 done
+at 179s combat player off
++0s fellowship none

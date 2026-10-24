@@ -142,6 +142,69 @@ note, never installed: the MSRV toolchains (`rustup toolchain install 1.90 1.95`
 warning to triage, not a failure. The fuzz smoke test (`--fuzz-secs`, default 10 s per
 target) runs here although CI skips it on pull requests. `--help` lists every option.
 
+### Fuzz targets and the coverage manifests
+
+Every parser has a fuzz target (`CLAUDE.md`; P8 exit criterion 2,
+[decision 0043](decisions/0043-p8-parity-audit.md) §2). A **parser** is every public entry point
+in `crates/` and `apps/` that decodes bytes or text that Tessera did not write itself in the same
+process: install records and files, network messages, settings, the keymap file, skins and UI
+XML, plugin descriptors and plugin data, ABC files, scenario files and their input scripts, and
+logs read back. A file Tessera wrote in an earlier run counts; in-memory data the same process
+produced does not. `crates/compat` is outside this rule for P8 (the M8 package audits it).
+
+`fuzz/coverage/*.toml` records, per crate and app, each parser with the fuzz target that drives
+it: `data.toml` for the data crates, `runtime.toml` for the runtime crates and the apps.
+`tools/check-fuzz-coverage.sh` checks them offline, without a build (bash, awk and find), and
+runs in CI (job `fuzz-coverage`) and in `tools/ci-local.sh`:
+
+```sh
+tools/check-fuzz-coverage.sh              # exit 0 covered, 1 a check failed, 2 usage or tree error
+tools/check-fuzz-coverage.sh --list       # also every scanned function and what covers it
+tools/check-fuzz-coverage.sh --self-test  # the checker's own fixture cases (CI runs this first)
+```
+
+Each failure names its manifest and line and a letter: (m) a malformed table, or a package that
+no manifest covers; (a) a target that is not a `[[bin]]` of `fuzz/Cargo.toml` with a source
+file; (b) a `[[bin]]` that no manifest names; (c) a parser-like `pub fn` in the sources that no
+`[[parser]]` entry or `[[skip]]` covers; (g) a recorded gap. The script's header (and
+`tools/README.md`) give the exact schema and the name rules of the scan.
+
+**When you add a parser** (or a new public decoding function in a file that already has one):
+
+1. Add a fuzz target `fuzz/fuzz_targets/<crate>_<thing>.rs` and register it as a `[[bin]]` in
+   `fuzz/Cargo.toml` (`name`, `path`, `test = false`, `doc = false`, `bench = false`).
+2. Add a `[[parser]]` table to the manifest of its half:
+
+   ```toml
+   [[parser]]
+   crate = "tessera-foo"                    # the package name
+   file = "crates/foo/src/bar.rs"           # the file that defines the entry point
+   entry = "tessera_foo::bar::Bar::parse"   # or an array of paths in that file
+   input = "install record"                 # install record | network | user file | scenario | settings | plugin | other
+   target = "foo_bar"                       # the [[bin]] that drives it
+   ```
+
+   Exactly one of `target`, `exempt` and `gap`. Use `exempt = "..."` only for a thin wrapper whose
+   whole input reaches a fuzzed parser; the reason must name that target (one of its words is
+   the `[[bin]]` name). `gap = "..."` records a parser that has no target yet; the checker lists
+   every gap as a failure, so a gap is a reminder, not a way through.
+3. Run `tools/check-fuzz-coverage.sh` until it ends with `check-fuzz-coverage: ok`, then
+   `tools/fuzz-smoke.sh -t 60 foo_bar`.
+
+A target reaches the code under test through the crate's library (`fuzz/Cargo.toml` depends on
+every data and runtime crate, and on the `tessera-client`, `tessera-explorer`,
+`tessera-loadtest`, `tessera-dattool` and `tessera-server` libraries), or includes a small leaf
+module by path when it should not link the whole app (`client_uiscale_command`,
+`loadtest_text`). Code that lives only in an app's binary (`main.rs` and its modules) cannot be
+reached: move the reader into the app's library first (as `tessera_dattool::hexarg`).
+
+Other tables: a new crate or app with no parser of its own gets a `[[package]]` table
+(`crate`, `reason`); it is still scanned. A function whose name looks like a parser but decodes
+nothing hostile gets a `[[skip]]` with `path`, `fns = ["name"]` and a `reason`; a fuzz target
+that drives a state machine or geometry rather than a parser is listed as a `[[skip]]` of its
+source file, so that check (b) knows it. Test-only code (`tests/`, `#[cfg(test)]` items and the
+like) is never scanned.
+
 ## 2. Handing over between machines
 
 Only one machine works at a time.
@@ -158,6 +221,7 @@ Only one machine works at a time.
    cargo deny check                           # and: cargo deny --manifest-path fuzz/Cargo.toml check
    tools/check-content.sh
    tools/check-spdx.sh                        # 0 errors, 0 warnings on a clean tree
+   tools/check-fuzz-coverage.sh               # every parser has a fuzz target (§1)
    ```
 3. Commit with `git commit -s` and the trailers that apply (CONTRIBUTING.md "Commits"):
    `Clean-Room-Role: spec | review | implementation` for any change under `crates/`,
@@ -281,7 +345,7 @@ commit message.
 |---|---|
 | `TESSERA_GAME_DIR` | Game install for real-data tests (the only way they find it) and the default for the apps |
 | `TESSERA_FULL=1` | Run exhaustive real-data tests (all records) instead of samples |
-| `TESSERA_PERF=1` | Also assert frame-time budgets in real-data tests (see "Performance assertions" below) |
+| `TESSERA_PERF=1` | Also assert frame-time budgets in real-data tests, and make the windowed timing runs of `p8_busiest_real_data` at all (see "Performance assertions" below) |
 | `TESSERA_REQUIRE_GPU` | `1`: fail instead of skipping when no GPU adapter is available (CI). `0`: skip GPU tests even when an adapter exists but no device can be created |
 | `TESSERA_BLESS=1` | Regenerate golden images (check them on lavapipe/llvmpipe first) |
 | `TESSERA_GOLDEN_DIR` | Where local-only real-data goldens of panels live (decision 0031 tier 2; default `${XDG_CACHE_HOME:-~/.cache}/tessera/goldens`; never inside a work tree) |
@@ -308,5 +372,27 @@ criterion, use a release build on an otherwise idle machine:
 TESSERA_PERF=1 cargo test --release -p tessera-client --test walker_real_data -- --nocapture
 TESSERA_PERF=1 cargo test --release -p tessera-world --test real_data -- --nocapture
 ```
+
+**The busiest scenario** (P8 criterion 3, [decision 0043](decisions/0043-p8-parity-audit.md)
+§3): `apps/client/tests/p8_busiest_real_data.rs` always checks, without an install, that the
+committed `busiest.scenario` has the decision's minimums and that `--scenario-timing` combines
+with the other options as the client says, and with `TESSERA_GAME_DIR` that the scenario
+resolves and plays to its end headless at the reference location, twice with the same log.
+Only with `TESSERA_PERF=1` does it make the two windowed timing runs (paced, then
+`--no-vsync`; 60 s each after the settle wait) and assert the budgets of decision 0043 §3
+item 3 on their timing reports. Those runs need a display (`WAYLAND_DISPLAY` or `DISPLAY`), a
+window of at least 1024 × 768 (give it a workspace of its own, so that the UI runs at
+*Se* = 1), an idle machine, and a build with the audio device backend. Without that feature the test fails with
+"(d) not measured", and at *Se* ≠ 1 it fails with "(c) not judged":
+
+```sh
+TESSERA_PERF=1 cargo test --release -p tessera-client --features audio-device \
+    --test p8_busiest_real_data -- --nocapture
+```
+
+The location, the commands of the runs without the test and the measured figures are in
+[`docs/perf/p8-busiest.md`](perf/p8-busiest.md); the scenario timing option is described in
+[`USER_GUIDE.md` §3.19](USER_GUIDE.md#timing-runs). Runs on a loaded machine are indicative
+only; the owner re-measures on the reference machine (decision 0010, owner row O200).
 
 `tools/ci-local.sh` passes `TESSERA_PERF` through when it is set (or `--perf` sets it).

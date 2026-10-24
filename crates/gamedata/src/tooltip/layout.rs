@@ -351,6 +351,76 @@ fn resolved_children(
         .collect()
 }
 
+/// The `UILAYOUT` label of the money-display layout (`item-tooltips.md` §6.11).
+pub const MONEY_LAYOUT_LABEL: &str = "moneydisplay";
+/// The coin element of the examination money display (`item-tooltips.md` §6.11 answer:
+/// `MoneyDisplay_ExaminationCoinTemplate`).
+pub const EXAM_COIN_TEMPLATE_LABEL: &str = "MoneyDisplay_ExaminationCoinTemplate";
+/// A coin element's icon (`MoneyDisplay_Icon`, §6.11 answer).
+pub const COIN_ICON_LABEL: &str = "MoneyDisplay_Icon";
+/// The coin icon's states, largest coin first (`Gold`, `Silver`, `Copper`, §6.11).
+pub const COIN_STATE_LABELS: [&str; 3] = ["Gold", "Silver", "Copper"];
+
+/// Most elements [`coin_icon_images`] visits below the coin element (hostile-input bound).
+const MAX_COIN_SEARCH: usize = 256;
+
+/// The worth row's coin images, largest coin first (gold, silver, copper): the image of
+/// each icon state of `MoneyDisplay_Icon` in the examination coin element of the
+/// `moneydisplay` layout (`item-tooltips.md` §6.11 answer: "the coin image is the state
+/// image of `MoneyDisplay_Icon`"). Base references are resolved (`ui-layout.md` §7.1);
+/// a state without an image, or any label or record that does not resolve, gives `None`
+/// for that coin.
+#[must_use]
+pub fn coin_icon_images(data: &dyn TooltipData) -> [Option<Did>; 3] {
+    let mut out = [None; 3];
+    let (Some(layout), Some(coin), Some(icon_id)) = (
+        data.layout_by_label(MONEY_LAYOUT_LABEL),
+        data.ui_key(UiEnum::ElementId, EXAM_COIN_TEMPLATE_LABEL),
+        data.ui_key(UiEnum::ElementId, COIN_ICON_LABEL),
+    ) else {
+        return out;
+    };
+    let Ok(top) = resolve_top(
+        data,
+        TemplateRef {
+            layout,
+            element: coin,
+        },
+    ) else {
+        return out;
+    };
+    // Breadth-first over the resolved children for the icon element.
+    let mut queue = std::collections::VecDeque::from([top.desc]);
+    let mut visited = 0usize;
+    let icon = loop {
+        let Some(d) = queue.pop_front() else {
+            return out;
+        };
+        if d.element_id == icon_id {
+            break d;
+        }
+        visited += 1;
+        if visited > MAX_COIN_SEARCH {
+            return out;
+        }
+        queue.extend(resolved_children(data, &d).into_iter().flatten());
+    };
+    for (slot, label) in out.iter_mut().zip(COIN_STATE_LABELS) {
+        let Some(state) = data.ui_key(UiEnum::StateId, label) else {
+            continue;
+        };
+        *slot = icon.state(state).and_then(|s| {
+            s.media.iter().find_map(|m| match m {
+                tessera_formats::ui_layout::MediaItem::Image { did, .. } if !did.is_null() => {
+                    Some(*did)
+                }
+                _ => None,
+            })
+        });
+    }
+    out
+}
+
 /// Label prefixes of the generic rows §6.20 leaves empty in P1: legendary
 /// (`ItemAdvancement_*`) and decoration-house rows.
 const DEFERRED_GENERIC: [&str; 3] = [

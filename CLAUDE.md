@@ -395,6 +395,30 @@ fine. Format-level terms like "DID" or "landblock" are fine.
   PP18). Open: the plugin progression views read records on the main thread (ARCH §21 OPEN); the windows
   draw no item icons and no recipe cooldown timers (OPENs in
   `apps/client/src/progression/present.rs`); owner rows O160-O175.
+- **P8 (parity audit; exit verification 2026-10-24, uncommitted on branch `p8`, worktree
+  `wt-p8`)** (`docs/ROADMAP.md` P8 status; decision 0043 Proposed, waits for the owner):
+  criterion 2 passes on Tessera's side (the CI run on the exit commit is pending): the
+  manifests `fuzz/coverage/{data,runtime}.toml` and `tools/check-fuzz-coverage.sh` (CI job
+  `fuzz-coverage`) list 413 parsers (315 with a target, 98 exempt naming a covering target,
+  0 gaps), 200 / 200 bins named, 505 / 505 parser-like functions covered; fuzz/ now links the
+  client, explorer and load-tester libraries (`client_text_readers`, `explorer_text_readers`,
+  `app_arg_readers`); the 19 P8 targets ran 60 s clean. Criterion 1 is data-side done, owner
+  observation pending (O196–O199): `docs/checklists/parity.md` is Accepted (independent
+  review), `docs/checklists/parity-tessera.md` holds the evidence per row (126 system rows
+  data-side ready, 4 feed only, 47 with a gap; Gaps table), and
+  `parity_tooltips_real_data` paints all 100 sample tooltips with 0 panel-audit failures after
+  the exit verification fixed the examination panel's icon field (`fill_held`), gave worth
+  coins their coin-state images and sorted currencies largest first (`item-tooltips.md`
+  §6.11); the tier-2 local pictures are re-blessed for O197/O198. Criterion 3 is open:
+  `busiest.scenario`, `--scenario-timing SECS` (scenario-feed.md §16 OPEN) and
+  `p8_busiest_real_data` exist; the exit verification's `TESSERA_PERF=1` run (load 1.3–2.4,
+  indicative, `docs/perf/p8-busiest.md`) met (a) (0 frames over 50 ms) and (b) (unpaced p99
+  11.47 ms) but missed (c): U1 2.92 ms against 0.3 ms, nearly all in the `tessera-ui` paint
+  (step 8; static panels about 1.1 ms with no uploads, the HUD about 1.5 ms), U3, U4 (b)/(f);
+  U2 reads 0 (a `crates/render` question); (d) needs an `audio-device` build. Profile the
+  paint before the owner's re-measure O200. Known client defects found: a tooltip built before its fonts load
+  is laid out with design sizes (first hover); a stray `..` row and an enum label on a bonus
+  line in some tooltips; K still opens skill training against `progression-panels.md` §1.4.
 - **Owner decisions 2026-10-16:** decisions 0031 and 0036 (panel goldens: tier 1 committed
   synthetic, tier 2 local-only real data; P5 map census) are Accepted; the world walker's
   debug keys move off the five keys the keymap defaults take (`keymap.md` §8.2); and Tessera
@@ -540,7 +564,7 @@ fine. Format-level terms like "DID" or "landblock" are fine.
   M3 reference locations, frame-capture questions from M2, M4 items O8–O17, M4.5 items
   O18–O27, M5 items O39–O49, M6 items O28, M7 items O70–O73, P1 items O80–O86 and
   O88–O90, P2 items O93–O109 and O126–O129, P3 items O110–O125, P4 items O130–O137, P5
-  items O140–O155, P6 items O160–O175). They
+  items O140–O155, P6 items O160–O175, P8 items O196–O200, which do block P8). They
   do not block the
   Tessera-side work.
 - **Toolchain:** the laptop now has rustup (Gentoo `rustup-init-gentoo --symlink`; put

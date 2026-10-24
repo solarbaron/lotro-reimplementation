@@ -63,6 +63,10 @@ pub struct ClientUi {
     frame_start: Option<Instant>,
     /// The scripted run of decision 0015 §6 (`--ui-script`).
     script: Option<UiScript>,
+    /// A scenario timing run (`--scenario-timing`): the recorder's frames are labelled
+    /// [`crate::timing::SETTLE_PHASE`] until the walker's timing starts and
+    /// [`crate::timing::TIMED_PHASE`] from then on.
+    timing: bool,
     /// Frames waited for the world to settle before the script starts.
     script_wait: u64,
     /// The drag of the current resize-bar phase: its start point.
@@ -252,12 +256,15 @@ impl ClientUi {
                 prefs,
                 hud: !args.no_ui_hud,
                 panels,
-                record: args.ui_script || args.ui_report.is_some(),
+                record: args.ui_script
+                    || args.ui_report.is_some()
+                    || args.scenario_timing.is_some(),
             },
             load: args.load_plugins.clone(),
             attached_walker: false,
             frame_start: None,
             script: args.ui_script.then(|| UiScript::new(args.size)),
+            timing: args.scenario_timing.is_some() && !args.ui_script,
             script_wait: 0,
             drag: None,
             screen_request: None,
@@ -682,6 +689,12 @@ impl ClientUi {
         }
         self.run_script(walker, rt, window);
         if let State::Ready(host) = &mut self.state {
+            if self.timing {
+                host.set_phase(match walker.timing_phase() {
+                    crate::walker::TimingPhase::Running { .. } => crate::timing::TIMED_PHASE,
+                    _ => crate::timing::SETTLE_PHASE,
+                });
+            }
             host.sync_cursor(window);
             let (mapper, _) = walker.mapper_mut();
             host.offer_pending(mapper, &mut rt.plugins, window);
@@ -1201,7 +1214,16 @@ pub(crate) fn window_frames(
     let avatar = walker
         .focus()
         .map(|p| tessera_net::Vec3::new(p.x as f32, p.y as f32, p.z as f32));
+    let npc_before = npc_window_ids(&rt.npc);
     rt.npc.frame(host, world, events, screens, avatar, now);
+    // An NPC window that opened this frame (a dialogue, vendor or loot window the session
+    // showed) is a panel open: an event frame of decision 0015 §6 U4 (a), (b).
+    if npc_window_ids(&rt.npc)
+        .iter()
+        .any(|id| !npc_before.contains(id))
+    {
+        host.mark_event();
+    }
     // The quest journal (P3), after the NPC windows.
     let radar = walker.radar_input();
     rt.quests
@@ -1219,6 +1241,13 @@ pub(crate) fn window_frames(
     let position = |id| walker.entity_render_pos(id);
     rt.quests
         .update_indicators(Some(renderer), world, &rt.npc, &position);
+}
+
+/// The ids of the NPC windows open now (P3), at most a handful.
+fn npc_window_ids(npc: &crate::npc::NpcHub) -> Vec<u32> {
+    npc.ui()
+        .map(|u| u.open_windows().map(|(id, _, _)| id).collect())
+        .unwrap_or_default()
 }
 
 /// The combat frame (decision 0024 P2, after the character panels): the combat state's

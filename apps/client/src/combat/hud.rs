@@ -177,6 +177,18 @@ impl CombatHud {
         &self.widgets
     }
 
+    /// The defeat panel's element while it is open (TR38). The UI host compares it before
+    /// and after a frame's changes: the panel opening is an event frame of decision 0015 §6
+    /// U4 (a), (b) (decision 0043 §3 item 3 (c): "the loot or defeat window").
+    #[must_use]
+    pub fn defeat_panel(&self, ui: &Ui) -> Option<ElementKey> {
+        self.widgets
+            .defeat
+            .as_ref()
+            .and_then(|d| d.panel())
+            .filter(|k| ui.exists(*k))
+    }
+
     /// The skill displays.
     #[must_use]
     pub fn slots(&self) -> &SkillSlots {

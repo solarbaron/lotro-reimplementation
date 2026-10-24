@@ -15,7 +15,8 @@ character panel with bag windows, and item tooltips (§3.13), and NPC windows, a
 and tracker and the wallet (§3.14), and it shows targeting, skills and combat as a session
 reports them (§3.15), and social panels, tells and chat channels, and synchronised music
 (§3.16), and maps, travel, the instance finder and mounts (§3.17). Scenario files (§3.11) script
-gameplay events for testing; they play back what the file says and compute nothing.
+gameplay events for testing; they play back what the file says and compute nothing. §3.19 is
+for the parity audit: timed scenario runs, the tooltip sample and the parity checklist.
 
 ---
 
@@ -283,9 +284,10 @@ nothing is computed from the game's rules.
 
 | Option | Meaning |
 |---|---|
-| `--scenario FILE` | Play FILE with the sandbox, or with `--server` as an overlay over a test server (below). Cannot be combined with `--walk-path`, `--fly-path`, `--duration`, `--smoke`, `--showcase`, `--ui-script` or `--character-select`. Works with `--no-data`, `--game-dir`, `--spawn`, `--place` and `--heading` (not in overlay runs with `--server`, where the server places the player: `--spawn` and `--place` are refused there, `--heading` does not place it); `--place` needs an install (with `--no-data` the run uses the default spawn and logs a chat notice). |
+| `--scenario FILE` | Play FILE with the sandbox, or with `--server` as an overlay over a test server (below). Cannot be combined with `--walk-path`, `--fly-path`, `--duration` (for a timed run use `--scenario-timing`), `--smoke`, `--showcase`, `--ui-script` or `--character-select`. Works with `--no-data`, `--game-dir`, `--spawn`, `--place` and `--heading` (not in overlay runs with `--server`, where the server places the player: `--spawn` and `--place` are refused there, `--heading` does not place it); `--place` needs an install (with `--no-data` the run uses the default spawn and logs a chat notice). |
 | `--scenario-log FILE` | Write the run's event log to FILE (`-` for standard output). Needs `--scenario` (refused with exit code 2 otherwise). FILE is created or overwritten without asking; the scenario file's own path is refused (exit code 2). A log can grow very large (below). |
 | `--scenario-input` | Windowed runs: also play the file's `input` block (headless runs always play it). Each line is sent when the scenario's clock reaches it, the `at pre` lines before the world is entered. |
+| `--scenario-timing SECS` | A **timing run** of the scenario: SECS seconds (1 to 86,400) of frames logged after the area has settled, then a timing report. Needs an install; implies `--ui`. See [§3.19](#timing-runs). |
 
 **Headless runs.** `--headless --scenario FILE` needs nothing else to end the run: the
 scenario runs on its own virtual clock, as fast as it can, to its end, then the client
@@ -997,6 +999,163 @@ and crafting trainer windows and two states of the crafting panel) are in
 `crates/ui/tests/golden/p6_*.png`; local real-data golden images of the install layouts follow
 §3.14's rules ([decision 0037](decisions/0037-p6-trait-tree-and-recipe-census.md), Proposed).
 
+<a id="parity-audit"></a>
+### 3.19 Parity audit: timing runs, the tooltip sample and the parity checklist
+
+The parity track ends with an audit (P8,
+[decision 0043](decisions/0043-p8-parity-audit.md), Proposed): the owner compares Tessera with
+the original client row by row, compares a sample of 50 item and 50 skill tooltips, and
+re-measures the frame-time budgets in the busiest scenario on the idle reference machine. This
+section says how to produce Tessera's side of each and how to record the comparison.
+
+<a id="timing-runs"></a>
+**Scenario timing runs.** `--scenario FILE --scenario-timing SECS` plays a scenario on the wall
+clock and times it. Once the player is placed and the area has settled (or `--settle-timeout`
+has passed, default 90 s), every frame is logged for SECS seconds (1 to 86,400); then the run
+ends by itself and writes a **timing report**. It needs an install (without one it is refused
+with exit status 2) and implies `--ui`. `--duration` stays refused with `--scenario`, and
+`--scenario-timing` cannot be combined with `--server`, `--screenshot` or `--no-data`.
+
+- **Windowed** (the measured form): the walker draws every frame and the window closes at the
+  end. Vsync is on unless you add `--no-vsync`. The compositor decides the window's size, so
+  the report records the surface it was given, not the `--size` you asked for.
+- **Headless** (`--headless`): the same run offscreen, with the game UI, on the wall clock, at
+  exactly `--size`; it is paced at 60 frames per second unless you add `--unpaced`. A headless
+  run also ends when the scenario finishes; if that happens before the timed window started,
+  the report says so, no frame log is written and the run exits with a non-zero status.
+- The folder of the `--frame-log` file must exist: the client does not create it (it does
+  create the folder of the `--ui-report` file). A headless run whose frame log cannot be
+  written fails with a non-zero exit status; a windowed run only logs a warning and keeps no
+  frame log. Create the folder first (`mkdir -p`).
+- A run that has not ended after `--settle-timeout` + SECS + 180 s, or whose report cannot be
+  written, fails with a non-zero exit status.
+
+The report is printed to the log and, with `--ui-report FILE`, written to FILE as Markdown (in
+a timing run `--ui-report` holds the timing report, not the scripted UI report of §3.12).
+`--frame-log CSV` saves the timed frames. The report gives:
+
+- the run: windowed or headless, the surface size, paced or unpaced; the timed window's
+  length and frame count, whether the area had settled when it started, whether it ran its
+  whole length (or ended early, or never started), and whether the scenario was still running
+  at its end;
+- frame times: p50, p95, p99 and maximum, and the frames over 16.7 ms and over 50 ms;
+- the audio underruns and the audio backend (or "no audio");
+- the game UI's figures U1–U5 of [decision 0015](decisions/0015-ui-rendering.md) §6: the
+  effective UI scale *Se*, U1 main-thread time over the steady frames (with its split by
+  step), U2 UI-pass GPU time where the adapter has timestamp queries, U3 upload bytes, U4 (a),
+  (b) over the frames where a window opens and U4 (f) over the frames with new chat lines,
+  and U5 memory peaks over the whole run; U4 (c)–(e) are not applicable to such a run;
+- the frames the frame log or the UI recorder could not keep because they were full.
+
+Each figure is shown next to its budget. The report ends with a fenced block that starts
+`tessera-timing-report 1` and holds the same figures as `key=value` lines for tools; the client
+itself never judges the budgets.
+
+**The busiest scenario.** `apps/client/tests/scenarios/busiest.scenario` is the committed
+synthetic scenario of P8 criterion 3: a crowd of more than 50 actors with figures, a combat
+loop with casts, an induction, effects, floating text and defeats, a fellowship of six with
+changing vitals, 10 chat lines per second and music played together, for three minutes of
+scenario time. The bags, character panel and quest tracker are not opened by the scenario but
+by the `--open-panel bags`, `--open-panel character` and `--open-panel tracker` options of the
+command below (the minimap is the HUD's); a run without them measures no main panels. The reference location, the
+exact commands and the measured figures are in
+[`docs/perf/p8-busiest.md`](perf/p8-busiest.md). In short (release build, with the audio
+device backend so that underruns are measured):
+
+```sh
+export TESSERA_GAME_DIR="$(cargo run -q -p tessera-dattool -- detect --path)"
+cargo build --release -p tessera-client --features audio-device
+mkdir -p ~/tessera-runs
+target/release/tessera-client --game-dir "$TESSERA_GAME_DIR" \
+    --scenario apps/client/tests/scenarios/busiest.scenario \
+    --spawn 1,109,141,62.96,15.07,413.60 --size 1920x1080 --ui-scale 1 \
+    --open-panel bags --open-panel character --open-panel tracker \
+    --settle-timeout 60 --scenario-timing 60 \
+    --ui-report ~/tessera-runs/paced.md --frame-log ~/tessera-runs/paced.csv
+# the same with --no-vsync (and other file names) for the unpaced run
+```
+
+`docs/perf/p8-busiest.md` also sets `TESSERA_SETTINGS_FILE`, `XDG_CONFIG_HOME`,
+`XDG_DATA_HOME` and `--data-dir` to a scratch folder, so that your own Tessera settings take no
+part. The real-data test runs both runs and checks the budgets of decision 0043 §3 for you,
+only with `TESSERA_PERF=1` (it needs a display and a window of at least 1024 × 768, so that the
+UI runs at *Se* = 1; at another *Se* budget (c) is not judged and the test fails, and without the
+`audio-device` feature budget (d) is not measured and the test fails too):
+
+```sh
+TESSERA_PERF=1 cargo test --release -p tessera-client --features audio-device \
+    --test p8_busiest_real_data -- --nocapture
+```
+
+Without `TESSERA_PERF=1` the test only checks that the scenario has the decision's minimums and
+that it plays to its end on your install, the same log twice. The budgets count only on the
+idle reference machine ([decision 0010](decisions/0010-reference-machine-laptop.md), the rules
+of [`reference-machine.md`](perf/reference-machine.md)): give the window a workspace of its
+own, close everything else, and record the result in `docs/perf/p8-busiest.md` (owner row
+[O200](checklists/owner-observations.md#o200)). Runs on a busy machine are indicative only.
+
+<a id="tooltip-sample"></a>
+**The tooltip sample (50 items and 50 skills).** The sample is chosen from your install when
+the test runs, by the seeded selectors of the committed scenario
+`apps/client/tests/scenarios/parity-tooltips.scenario`; the repository lists no record. The
+test takes the records in the scenario's order, each once, until it has 50 distinct items and
+50 distinct skills (fewer is a failure), and paints each hover tooltip with the client's own
+UI host at UI scale 1. It needs a GPU (without one it models the tooltips and paints none).
+
+```sh
+export TESSERA_GAME_DIR="$(cargo run -q -p tessera-dattool -- detect --path)"
+cargo test --release -p tessera-client --test parity_tooltips_real_data -- --nocapture
+```
+
+The images and the index land in the local golden directory of
+[decision 0031](decisions/0031-parity-panel-goldens.md) (§3.14):
+`${TESSERA_GOLDEN_DIR:-${XDG_CACHE_HOME:-~/.cache}/tessera/goldens}/tessera-client/parity_tooltips_real_data/fifty_item_and_fifty_skill_tooltips_are_painted/<install version>/`.
+The test prints the folder (`index: PATH` and `goldens in PATH`). It holds `item-01.png` …
+`item-50.png`, `skill-01.png` … `skill-50.png` and `index.txt`, one tab-separated line per
+record: ordinal, family (`item` or `skill`), DID, the tooltip's category (with its row
+failures and lookup misses) and the record's name, so that you can find it in the original
+client. A record whose tooltip falls into a category with nothing to paint is listed in the
+index with its category and has no image. The first run writes the images (`blessed`); later
+runs compare with them, and `TESSERA_GOLDEN_REQUIRE=1` and `TESSERA_GOLDEN_BLESS_LOCAL=1` work
+as in §3.14. **Never commit the images or the index**: the index holds the game's names. A
+patch of the install can change the sample and gives a new `<install version>` folder; compare
+the sample of the folder you name in your notes.
+
+<a id="parity-checklist"></a>
+**The parity checklist.** [`docs/checklists/parity.md`](checklists/parity.md) is the one
+checklist the owner walks in the original client: a row per client system or part, the 100
+rows of the tooltip sample (PT-I1 to PT-I50, PT-S1 to PT-S50, by ordinal), the known
+deviations and the performance row PF1. Its §1 says what may be written and how; in short:
+
+1. **Look at Tessera first.** Each row names the command, `--open-panel` name, committed
+   scenario or test that shows Tessera's side (the abbreviations C, E, D, S, T and P of its
+   §1.3). The Tessera-side evidence per row (built or not, tests, commit) will be collected in
+   `docs/checklists/parity-tessera.md` by the P8 package; that file is not written yet.
+2. **Compare in the original client** on your own account and install.
+3. **Set the row's state.** Only the owner sets `pass`, `differs (owner, DATE, NOTE)` or
+   `deviation (accepted by owner, DATE, REASON)`; the spec writer sets only `pending`,
+   `deviation (proposed)` and `not built`, and no agent ever sets `pass` (decision 0043 §1
+   item 2). A `not built` row cannot
+   pass. For a proposed deviation you accept or reject it.
+4. **Log it.** Every state change gets one line in the owner log (§7 of the checklist): the
+   date, the row, old and new state, the client build (numbers only), the Tessera commit you
+   compared, the graphics settings that matter, whether the original ran under Wine/Proton +
+   DXVK, and a short note in your own words.
+5. **Close the older owner rows.** An earlier row of
+   [`owner-observations.md`](checklists/owner-observations.md) that a parity row cites is
+   done when that parity row is `pass` or an accepted deviation; mark it **done** there.
+
+Write no game text (no names, tooltip lines, dialogue) and commit no screenshots: name records
+by DID or by the sample's ordinal and describe differences in your own words. The owner rows of
+the audit are [O196](checklists/owner-observations.md#o196) (walk the checklist),
+[O197](checklists/owner-observations.md#o197) and [O198](checklists/owner-observations.md#o198)
+(the item and skill tooltips), [O199](checklists/owner-observations.md#o199) (the proposed
+deviations) and [O200](checklists/owner-observations.md#o200) (the re-measure); the checklist
+itself still cites them as O180–O184, which decision 0043 renumbered. In the same way the
+checklist's §1.2 has no `differs` state yet: until its next revision adds it, record a
+difference as `pending` with an owner-log note saying what differs, which the exit verifier
+counts as `differs` ([decision 0043](decisions/0043-p8-parity-audit.md) §1 item 2).
+
 ---
 
 ## 4. Controls and the keymap file
@@ -1220,6 +1379,8 @@ Nothing goes into the install directory.
 | Walker screenshots (F12) | `screenshots/walker-<time>.png` in the data folder | client `--data-dir` |
 | Plugins and plugin data | `Plugins/` and `plugindata/` in the data folder | client `--plugins` |
 | Headless screenshots, sheets, frame and walk logs | wherever you point `--screenshot`, `--sheet`, `--frame-log`, `--walk-log` | |
+| Timing reports of `--scenario-timing` runs (§3.19) | wherever you point `--ui-report` (and `--frame-log` for the frames) | |
+| Local golden images of real-data panel tests, the parity tooltip images and their index (§3.14, §3.19) | `~/.cache/tessera/goldens/<package>/<test>/<function>/<install version>/` (`$XDG_CACHE_HOME/tessera/goldens`; never inside a git work tree) | `TESSERA_GOLDEN_DIR` |
 
 On other systems the settings file (and the keymap beside it) lives in the platform's
 usual per-user configuration directory, under `tessera/`. The data folder follows the same

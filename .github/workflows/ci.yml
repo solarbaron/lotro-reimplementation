@@ -11,6 +11,7 @@
 #   tools/check-spdx.sh                      SPDX headers
 #   tools/check-server-deps.sh               tessera-server and its hosts link no data crate (--self-test too)
 #   tools/check-release-features.sh          no tessera-compat test-support in the client binary (--self-test too)
+#   tools/check-fuzz-coverage.sh             every parser has a fuzz target (fuzz/coverage/*.toml; --self-test too)
 #   tools/check-dco.sh origin/main           Signed-off-by and clean-room trailers (unpushed
 #                                            commits; --all checks the whole history)
 #   (cd fuzz && cargo fmt --all -- --check && cargo clippy --bins --locked -- -D warnings)
@@ -194,6 +195,18 @@ jobs:
         run: tools/check-release-features.sh --self-test
       - name: Check tessera-client's normal feature graph
         run: tools/check-release-features.sh
+
+  fuzz-coverage:
+    name: fuzz coverage guard
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v5
+      # Offline text checks (bash, awk, find): no toolchain or build needed.
+      - name: Self-test the guard
+        run: tools/check-fuzz-coverage.sh --self-test
+      - name: Every parser has a fuzz target
+        run: tools/check-fuzz-coverage.sh
 
   test:
     name: test (${{ matrix.os }})

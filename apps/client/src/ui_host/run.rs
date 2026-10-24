@@ -46,6 +46,8 @@ pub struct UiRunReport {
     /// events (P3/P5/P6) and `--open-panel`, so a headless scenario run can check that they
     /// opened. The run logs them at its end (`game windows seen`).
     pub game_windows: std::collections::BTreeSet<&'static str>,
+    /// The timing report of a `--scenario-timing` run ([`crate::timing`]).
+    pub timing: Option<crate::timing::TimingReport>,
 }
 
 /// The arguments of a run: with `--ui-script` and no `--plugins`, the scripted run's own
@@ -132,7 +134,7 @@ pub fn capture_with_ui(
 /// When none is given.
 pub fn check_end_condition(args: &Args) -> anyhow::Result<()> {
     if args.screenshot.is_none()
-        && args.duration.is_none()
+        && args.timing_secs().is_none()
         && !args.ui_script
         && args.fly_path.is_none()
         && args.scenario_prepared.is_none()
@@ -211,7 +213,7 @@ pub fn run(args: &Args) -> anyhow::Result<UiRunReport> {
         Duration::from_secs(
             args.settle_timeout
                 .saturating_add(180)
-                .saturating_add(args.duration.unwrap_or(0))
+                .saturating_add(args.timing_secs().unwrap_or(0))
                 .saturating_add(script_secs),
         )
         .saturating_add(Duration::from_secs_f64(flight_secs.max(0.0))),
@@ -316,7 +318,8 @@ pub fn run(args: &Args) -> anyhow::Result<UiRunReport> {
                 report.settled = walker.settled();
                 break Ok(());
             }
-        } else if args.duration.is_some() {
+        } else if args.timing_secs().is_some() {
+            // `--duration`, or a scenario's `--scenario-timing` (crate::timing).
             if ev.duration_done {
                 report.settled = walker.settled();
                 break Ok(());
@@ -386,7 +389,57 @@ fn finish(
             })();
             keep(&mut first, r);
         }
-        if first.is_none() && (args.ui_script || args.ui_report.is_some()) {
+        // A scenario timing run whose timed window never started has only load and settle
+        // frames in its log (it is reset when the window starts): they are not written as
+        // the timed frames.
+        let timing_not_started = args.scenario_timing.is_some()
+            && !args.ui_script
+            && matches!(
+                walker.timing_phase(),
+                crate::walker::TimingPhase::Waiting | crate::walker::TimingPhase::Off
+            );
+        if let Some(log) = walker.frame_log() {
+            tracing::info!("frame summary: {}", log.summary());
+            if timing_not_started {
+                if let Some(path) = &args.frame_log {
+                    tracing::warn!(
+                        path = %path.display(),
+                        "the timed window never started; no frame log written"
+                    );
+                }
+            } else if let Some(path) = &args.frame_log {
+                let r = refuse_install_path(args, Some(&rt.status), path).and_then(|()| {
+                    log.write_csv(path)
+                        .with_context(|| format!("writing {}", path.display()))
+                });
+                keep(&mut first, r);
+            }
+        }
+        if args.scenario_timing.is_some() && !args.ui_script {
+            // The scenario timing run (decision 0043 §3): its own report, written to
+            // `--ui-report` instead of the scripted run's.
+            let t = crate::timing::build(
+                walker,
+                Some(&*ui),
+                rt,
+                crate::timing::RunMode::Headless,
+                args.size,
+                !args.unpaced,
+                &renderer.adapter_info().name,
+            );
+            keep(&mut first, crate::timing::emit(&t, args, Some(&rt.status)));
+            if t.window == crate::timing::WindowState::NotStarted {
+                // The report says so too; the run fails, as a run without its window.
+                keep(
+                    &mut first,
+                    Err(anyhow::anyhow!(
+                        "the timed window never started: the run ended (scenario {}) while it waited for the player to be placed and the area to settle",
+                        t.feed.key()
+                    )),
+                );
+            }
+            report.timing = Some(t);
+        } else if first.is_none() && (args.ui_script || args.ui_report.is_some()) {
             let notes = u2_proxy(renderer, target, walker, ui)
                 .map(|(with, without)| {
                     vec![(

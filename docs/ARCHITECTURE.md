@@ -1359,7 +1359,8 @@ no GPU, no Lua, no session, no world.
   §4.3, §6.7), and swapped in whole on the main thread. Image paths are checked against it
   (§15, 0015 §4.4).
 - **Names:** the plugin API's global namespace names are the original vendor's, used
-  verbatim for interoperability only ([0022](decisions/0022-plugin-runtime.md), `CLAUDE.md`
+  verbatim for interoperability only, as string data; module, type and binding names stay
+  neutral ([0023](decisions/0023-plugin-host-split.md) implementation notes, `CLAUDE.md`
   Naming).
 
 ---
@@ -2338,6 +2339,60 @@ and level-up lines have no committed golden and are checked by the scenario log 
   ignored local directories (`fuzz/corpus`, `fuzz/artifacts` are git-ignored).
 - CI runs a short fuzz smoke per target; longer runs happen locally.
 
+**Coverage manifests** (P8 exit criterion 2, [decision 0043](decisions/0043-p8-parity-audit.md)
+§2). "Every parser has a fuzz target" is recorded and checked, not assumed:
+
+- **What a parser is** (decision 0043 §2 item 1): every public entry point in `crates/` and
+  `apps/` that decodes bytes or text that Tessera did not write itself in the same process.
+  That covers install records and files (archives, records, Havok data, string tables, UI
+  layouts, `UserPreferences.ini`, Steam library files read for detection); network messages
+  (Tessera's own protocol, the test-server backend); and user or third-party files (settings,
+  the keymap file, skins and UI XML, plugin descriptors and plugin Lua data, ABC files,
+  scenario files and their input scripts, logs read back such as committed scenario logs). A
+  file Tessera wrote in an earlier run counts, since the user can edit it; in-memory data that
+  the same process produced and reads back does not. Third-party parsers (zlib, PNG, QUIC and
+  TLS, the Lua compiler) are not Tessera's, but the Tessera entry point that hands them hostile
+  input is, and its target covers that hand-off. "New" means every parser since M0 (item 2).
+- **The manifests** `fuzz/coverage/*.toml`: `data.toml` for the data crates (`dat`, `formats`,
+  `props`, `text`, `havok`, `anim`, `material`, `mesh`, `wstate`, `wvm`, `gamedata`, ...) and
+  `runtime.toml` for the runtime crates (`net`, `protocol`, `settings`, `input`, `script`,
+  `plugins`, `ui`, `render`) and the apps. A `[[parser]]` table names the package, the file,
+  the entry point(s), the input kind (`install record`, `network`, `user file`, `scenario`,
+  `settings`, `plugin`, `other`) and exactly one of: `target`, a `[[bin]]` of `fuzz/Cargo.toml`;
+  `exempt`, a reason that names the covering target (a thin wrapper whose whole input reaches a
+  fuzzed parser, item 3); or `gap`, a known parser without a target. A `[[package]]` table
+  records a package that decodes nothing (it is still scanned); a `[[skip]]` table (a path,
+  directory or glob, optionally limited to named functions, with a reason) covers code that
+  only looks like a parser, and the source files of fuzz targets that drive state machines or
+  geometry rather than a parser. The schema is written in the manifests' header comments, the
+  header of the checker and `tools/README.md` (item 4 leaves it to the building package).
+- **The checker** `tools/check-fuzz-coverage.sh` (bash, awk and find; offline, no build). It
+  fails (exit 1) on (m) a malformed manifest table (unknown or missing keys, not exactly one of
+  target/exempt/gap, an exemption that names no `[[bin]]`, an unknown input kind, a file that is
+  not in the named package or does not exist, an entry that is no `fn` of its file, a stale
+  skip) or a package under `crates/` or `apps/` that no manifest covers; (a) a target that is
+  not a `[[bin]]` with a source file; (b) a `[[bin]]` that no manifest names; (c) a source
+  function that no entry or skip covers; (g) every recorded gap, since criterion 2 is not met
+  while one remains. Check (c) is a heuristic scan per function of the plain `pub fn` items
+  under `crates/*/src` and `apps/*/src`: names `parse`, `decode`, `load`, `from_bytes`,
+  `from_slice` and `from_str` (alone or with a `_...` suffix), `read_...` and `..._from_payload`
+  always count; `read`, `open`, `open_...`, `discover`, `discover_...`, `walk_...` and
+  `available_...` count only when their parameters, generics or where clause take `&[u8]`, a
+  reader, a property set, struct or value, a path or a `Read` bound (`read` also with `&str`).
+  A new decoder in a file that already has a `[[parser]]` is therefore caught too. Test-only
+  and bench code (`tests/`, `benches/`, `examples/`, test-named files, the item that
+  follows each `#[cfg(test)]` attribute, up to its closing brace or `;`) is not scanned. `--list` shows what covers each scanned function;
+  `--self-test` plants every kind of violation in throwaway fixture trees.
+- **The compat skip** (item 5): `crates/compat` and the `compat_*` fuzz bins are skipped by
+  the checker itself, not through a manifest. They are M8 (decisions
+  [0034](decisions/0034-official-server-compatibility.md) and
+  [0042](decisions/0042-m8-remediation-decisions.md)) and are audited by the M8 package; an
+  exemption elsewhere cannot name a `compat_*` target as its cover.
+- **Pass** (item 6): the checker passes in CI on the exit commit, every named target builds,
+  and every target added in P8 runs 60 s clean in `tools/fuzz-smoke.sh`. Parsers added after
+  P8 inherit the rule: a new parser needs a target and a manifest entry in the same change
+  (`docs/DEVELOPMENT.md` §1, "Fuzz targets and the coverage manifests").
+
 <a id="testing-ci"></a>
 ### 23.5 CI gates
 
@@ -2362,6 +2417,15 @@ and targets it checks, the hosts, and its source scan; `--self-test` plants a vi
 each kind in throwaway workspaces and runs first in CI. Where it is stricter than or goes
 beyond `scenario-feed.md` §3.1, that section records an OPEN.
 
+**Fuzz coverage guard** (P8, `tools/check-fuzz-coverage.sh`, the `fuzz-coverage` job of CI and of
+`tools/ci-local.sh`): [decision 0043](decisions/0043-p8-parity-audit.md) §2 as a gate (§23.4).
+The CI job needs no toolchain: it checks out the tree, runs `--self-test` first and then the
+check of `fuzz/coverage/*.toml` against `fuzz/Cargo.toml` and the sources. It fails when a
+package has no manifest, when a manifest names a target that is not a `[[bin]]`, when a
+`[[bin]]` is named by no manifest, when an exemption names no covering target, when a
+parser-like public function is in no manifest, and while any `gap` remains. That the named
+targets build is the fuzz `clippy` step's part, and the 60 s runs are `tools/fuzz-smoke.sh`'s.
+
 ---
 
 <a id="tooling"></a>
@@ -2384,6 +2448,7 @@ beyond `scenario-feed.md` §3.1, that section records an OPEN.
 | `tools/imhex/`, `tools/kaitai/` | Pattern and schema files written from our specs, for interactive inspection | ongoing |
 | `fuzz/` | Fuzz targets | ongoing |
 | `tools/check-server-deps.sh` | Server dependency guard: `tessera-server` links nothing outside crates.io but `tessera-protocol` (no data-decoding crate, `tessera-gamedata` or `tessera-net`, so no scenario feed); its in-process hosts link no data-decoding crate or `tessera-gamedata` but may link `tessera-net`, feed included in a workspace build (§23.5) | P0 |
+| `tools/check-fuzz-coverage.sh` | Fuzz coverage guard: every parser of `crates/` and `apps/` (but `crates/compat`) has a fuzz target or an exemption naming one in `fuzz/coverage/*.toml`, and every fuzz `[[bin]]` is named (§23.4, §23.5) | P8 |
 
 ---
 
@@ -2402,7 +2467,7 @@ beyond `scenario-feed.md` §3.1, that section records an OPEN.
 | 8 | Entity storage / ECS choice: **decided**, project-owned store ([0008](decisions/0008-entity-storage.md)) | M4 | ADR 0008 |
 | 9 | Shader-record classification method | M2 | `specs/material.md` |
 | 10 | UI layout grammar, UIData variants, font records: **specified** (`ui-layout.md`, `fonts.md`, Accepted) | M5 | `specs/ui-layout.md`, `specs/fonts.md` |
-| 11 | Plugin namespace naming rationale: **recorded** ([0022](decisions/0022-plugin-runtime.md), `CLAUDE.md` Naming) | M5 | ADR 0022 |
+| 11 | Plugin namespace naming rationale: **recorded** ([0023](decisions/0023-plugin-host-split.md) implementation notes, `CLAUDE.md` Naming) | M5 | ADR 0023 |
 | 12 | Original keymap file syntax | M5 | `specs/keymap.md` |
 | 13 | Instrument samples and pitch mapping for player music | M6 | `specs/sound.md` |
 | 14 | Sky, weather, time of day, water: **answered** (§10; remaining OPENs non-blocking, in the specs) | M4.5 | `specs/environment.md`, `specs/water.md`, `specs/terrain-texturing.md` |

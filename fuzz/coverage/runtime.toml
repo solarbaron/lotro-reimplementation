@@ -1,0 +1,1678 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Fuzz coverage manifest, runtime half (P8 exit criterion 2, decision 0043 §2): the parsers
+# of tessera-net, tessera-protocol, tessera-settings, tessera-input, tessera-script,
+# tessera-plugins, tessera-ui, tessera-render and of the apps tessera-client,
+# tessera-server, tessera-loadtest, tessera-dattool and tessera-explorer, each with the fuzz
+# target that reaches it or an exemption naming the target or test that covers it.
+# The format and the checks are those of tools/check-fuzz-coverage.sh (its header; also
+# tools/README.md). The data half (dat, formats, props, text, material, mesh, ...) is in
+# the other manifests of this directory; crates/compat is outside P8 (M8).
+#
+# Conventions of this file:
+# - `entry` names the decoding entry points of `file` as crate paths.
+# - Most app targets include the app's module by path (as for ui_host/placements.rs and
+#   commands/uiscale.rs). Readers in modules that need the window, GPU or GUI stack are
+#   reached by linking the app's library: fuzz/ depends on tessera-client, tessera-explorer
+#   and tessera-loadtest for `client_text_readers`, `explorer_text_readers` and
+#   `app_arg_readers` (P8 exit verification, 2026-10-24). A parser that hands its whole
+#   input to a fuzzed inner parser is exempt with that target. A reader that no target
+#   reaches is recorded with `gap` (naming the unit test that checks it today), never as an
+#   exemption: decision 0043 §2.3 allows only exemptions that name a covering target, and
+#   the checker lists every gap as a failure (g), so criterion 2 is not met while any `gap`
+#   remains.
+# - Fuzz targets that drive state machines or geometry rather than a parser are listed in
+#   [[skip]] tables by their source file, so check (b) knows them.
+
+# =========================================================================================
+# tessera-net
+# =========================================================================================
+
+[[parser]]
+crate = "tessera-net"
+file = "crates/net/src/scenario/mod.rs"
+entry = "tessera_net::scenario::Scenario::parse"
+input = "scenario"
+target = "net_scenario_parse"
+
+[[parser]]
+crate = "tessera-net"
+file = "crates/net/src/scenario/mod.rs"
+entry = "tessera_net::scenario::Scenario::resolve"
+input = "scenario"
+target = "net_scenario_run"
+
+[[parser]]
+crate = "tessera-net"
+file = "crates/net/src/scenario/mod.rs"
+entry = "tessera_net::scenario::Scenario::check_overlay"
+input = "scenario"
+target = "net_scenario_overlay"
+
+[[parser]]
+crate = "tessera-net"
+file = "crates/net/src/scenario/input.rs"
+entry = ["tessera_net::scenario::InputPlayer::new", "tessera_net::scenario::InputPlayer::next_due"]
+input = "scenario"
+exempt = "the input script is part of the scenario file (Scenario::parse); played by the headless driver with its input script in `net_scenario_run`"
+
+[[parser]]
+crate = "tessera-net"
+file = "crates/net/src/scenario/driver.rs"
+entry = "tessera_net::scenario::HeadlessDriver::run_frames"
+input = "scenario"
+exempt = "plays a parsed scenario; driven for up to 72,000 ticks with a log writer by `net_scenario_run`"
+
+[[parser]]
+crate = "tessera-net"
+file = "crates/net/src/scenario/overlay.rs"
+entry = "tessera_net::scenario::OverlayBackend::new"
+input = "network"
+exempt = "the overlay over a hostile test-server stand-in is `net_scenario_overlay`"
+
+[[parser]]
+crate = "tessera-net"
+file = "crates/net/src/transport/packet.rs"
+entry = "tessera_net::transport::packet::Packet::decode"
+input = "network"
+target = "net_packet_decode"
+
+[[parser]]
+crate = "tessera-net"
+file = "crates/net/src/transport/endpoint.rs"
+entry = ["tessera_net::transport::ReliableEndpoint::poll", "tessera_net::transport::ReliableEndpoint::recv"]
+input = "network"
+target = "net_endpoint"
+
+[[parser]]
+crate = "tessera-net"
+file = "crates/net/src/session.rs"
+entry = ["tessera_net::Session::send", "tessera_net::Session::poll"]
+input = "other"
+target = "net_session"
+
+[[parser]]
+crate = "tessera-net"
+file = "crates/net/src/sandbox/world.rs"
+entry = "tessera_net::sandbox::world::SpawnPoint::parse"
+input = "user file"
+target = "net_sandbox_world"
+
+[[parser]]
+crate = "tessera-net"
+file = "crates/net/src/sandbox/mod.rs"
+entry = "tessera_net::sandbox::SandboxBackend::with_world"
+input = "install record"
+target = "net_npc_events"
+
+[[parser]]
+crate = "tessera-net"
+file = "crates/net/src/remote/harness.rs"
+entry = "tessera_net::remote::InboundHarness::new"
+input = "network"
+target = "net_remote_inbound"
+
+[[parser]]
+crate = "tessera-net"
+file = "crates/net/src/remote/harness.rs"
+entry = "tessera_net::remote::InboundHarness::with_world"
+input = "network"
+target = "net_remote_world"
+
+[[parser]]
+crate = "tessera-net"
+file = "crates/net/src/remote/harness.rs"
+entry = "tessera_net::remote::InboundHarness::push"
+input = "network"
+target = "net_social_channels"
+
+[[parser]]
+crate = "tessera-net"
+file = "crates/net/src/remote/mod.rs"
+entry = ["tessera_net::remote::RemoteBackend::new", "tessera_net::remote::session"]
+input = "network"
+exempt = "the QUIC backend feeds the same driver and mapper as `InboundHarness`, fuzzed by `net_remote_inbound`, `net_remote_world` and `net_social_channels`; the QUIC and TLS layers are third-party"
+
+[[parser]]
+crate = "tessera-net"
+file = "crates/net/src/remote/known.rs"
+entry = "tessera_net::remote::load_known_servers"
+input = "user file"
+exempt = "reads at most 1 MiB and hands the text to tessera_protocol::connect::KnownServers::parse, fuzzed by `protocol_fingerprint`"
+
+[[parser]]
+crate = "tessera-net"
+file = "crates/net/src/model.rs"
+entry = ["tessera_net::PropertyKind::from_keyword", "tessera_net::sanitize_text", "tessera_net::is_valid_name"]
+input = "scenario"
+exempt = "keyword and text checks called by the scenario parser and Session::send; reached by `net_scenario_parse` and `net_session`"
+
+# =========================================================================================
+# tessera-protocol
+# =========================================================================================
+
+[[parser]]
+crate = "tessera-protocol"
+file = "crates/protocol/src/frame.rs"
+entry = [
+    "tessera_protocol::frame::FrameDecoder::push",
+    "tessera_protocol::frame::split_frame",
+    "tessera_protocol::frame::decode_frame_message",
+    "tessera_protocol::frame::decode_frame_message_minor",
+]
+input = "network"
+target = "protocol_frame"
+
+[[parser]]
+crate = "tessera-protocol"
+file = "crates/protocol/src/frame.rs"
+entry = "tessera_protocol::frame::decode_datagram"
+input = "network"
+target = "protocol_datagram"
+
+[[parser]]
+crate = "tessera-protocol"
+file = "crates/protocol/src/frame.rs"
+entry = "tessera_protocol::frame::parse_frame_length"
+input = "network"
+target = "protocol_keys"
+
+[[parser]]
+crate = "tessera-protocol"
+file = "crates/protocol/src/value.rs"
+entry = "tessera_protocol::value::Value::decode"
+input = "network"
+exempt = "property values of §7.2 are decoded with every datagram and message body by `protocol_datagram` and `protocol_message`"
+
+[[parser]]
+crate = "tessera-protocol"
+file = "crates/protocol/src/message.rs"
+entry = ["tessera_protocol::Message::decode_body", "tessera_protocol::Message::decode_body_minor"]
+input = "network"
+target = "protocol_message"
+
+[[parser]]
+crate = "tessera-protocol"
+file = "crates/protocol/src/message.rs"
+entry = "tessera_protocol::Message::decode_body_minor"
+input = "network"
+target = "protocol_v12_message"
+
+[[parser]]
+crate = "tessera-protocol"
+file = "crates/protocol/src/connect.rs"
+entry = [
+    "tessera_protocol::connect::ServerKey::parse",
+    "tessera_protocol::connect::ConnectString::parse",
+    "tessera_protocol::connect::ConnectString::from_str",
+    "tessera_protocol::connect::KnownServers::parse",
+]
+input = "user file"
+target = "protocol_fingerprint"
+
+[[parser]]
+crate = "tessera-protocol"
+file = "crates/protocol/src/fingerprint.rs"
+entry = [
+    "tessera_protocol::fingerprint::Fingerprint::parse",
+    "tessera_protocol::fingerprint::Fingerprint::from_str",
+    "tessera_protocol::fingerprint::certificate_spki",
+    "tessera_protocol::fingerprint::certificate_fingerprint",
+]
+input = "network"
+target = "protocol_fingerprint"
+
+[[parser]]
+crate = "tessera-protocol"
+file = "crates/protocol/src/fingerprint.rs"
+entry = "tessera_protocol::fingerprint::ed25519_key_from_spki"
+input = "network"
+target = "protocol_keys"
+
+[[parser]]
+crate = "tessera-protocol"
+file = "crates/protocol/src/transport.rs"
+entry = ["tessera_protocol::transport::ServerIdentity::from_pkcs8_pem", "tessera_protocol::transport::ServerIdentity::from_pkcs8_der"]
+input = "user file"
+target = "protocol_keys"
+
+[[parser]]
+crate = "tessera-protocol"
+file = "crates/protocol/src/version.rs"
+entry = "tessera_protocol::version::major_from_alpn"
+input = "network"
+target = "protocol_keys"
+
+[[parser]]
+crate = "tessera-protocol"
+file = "crates/protocol/src/client.rs"
+entry = [
+    "tessera_protocol::client::ClientSession::on_control_data",
+    "tessera_protocol::client::ClientSession::on_stream_data",
+    "tessera_protocol::client::ClientSession::on_uni_stream",
+    "tessera_protocol::client::ClientSession::on_datagram",
+]
+input = "network"
+target = "protocol_handshake"
+
+[[parser]]
+crate = "tessera-protocol"
+file = "crates/protocol/src/server.rs"
+entry = ["tessera_protocol::server::ServerSession::on_control_data", "tessera_protocol::server::ServerSession::on_datagram"]
+input = "network"
+target = "protocol_handshake"
+
+# =========================================================================================
+# tessera-settings
+# =========================================================================================
+
+[[parser]]
+crate = "tessera-settings"
+file = "crates/settings/src/model.rs"
+entry = [
+    "tessera_settings::Settings::from_toml_str",
+    "tessera_settings::Settings::parse_lenient",
+    "tessera_settings::parse_did",
+]
+input = "settings"
+target = "settings_file"
+
+[[parser]]
+crate = "tessera-settings"
+file = "crates/settings/src/store.rs"
+entry = ["tessera_settings::SettingsStore::load", "tessera_settings::SettingsStore::try_load"]
+input = "settings"
+exempt = "reads the file and hands the text to Settings::parse_lenient / from_toml_str, fuzzed by `settings_file`"
+
+[[parser]]
+crate = "tessera-settings"
+file = "crates/settings/src/migrate.rs"
+entry = ["tessera_settings::migrate", "tessera_settings::migrate_with"]
+input = "settings"
+exempt = "runs inside Settings::from_toml_str and parse_lenient on every document, fuzzed by `settings_file`"
+
+[[parser]]
+crate = "tessera-settings"
+file = "crates/settings/src/ui.rs"
+entry = [
+    "tessera_settings::UiPrefs::from_settings",
+    "tessera_settings::MinimapMode::parse",
+    "tessera_settings::CursorMode::parse",
+    "tessera_settings::ScaleFilter::parse",
+    "tessera_settings::UiScale::parse_value",
+    "tessera_settings::SafeAspect::parse_value",
+    "tessera_settings::ArtFilter::parse",
+    "tessera_settings::TextSource::parse",
+]
+input = "settings"
+target = "ui_settings_keys"
+
+[[parser]]
+crate = "tessera-settings"
+file = "crates/settings/src/ui.rs"
+entry = "tessera_settings::UiPrefs::from_settings"
+input = "settings"
+target = "settings_prefs"
+
+[[parser]]
+crate = "tessera-settings"
+file = "crates/settings/src/input.rs"
+entry = "tessera_settings::InputPrefs::from_settings"
+input = "settings"
+target = "settings_prefs"
+
+[[parser]]
+crate = "tessera-settings"
+file = "crates/settings/src/graphics.rs"
+entry = "tessera_settings::GraphicsPrefs::from_settings"
+input = "settings"
+target = "settings_prefs"
+
+[[parser]]
+crate = "tessera-settings"
+file = "crates/settings/src/windows.rs"
+entry = "tessera_settings::WindowPrefs::from_settings"
+input = "settings"
+target = "settings_window_prefs"
+
+[[parser]]
+crate = "tessera-settings"
+file = "crates/settings/src/creation.rs"
+entry = "tessera_settings::CreatedCharacters::from_settings"
+input = "settings"
+target = "settings_created_characters"
+
+[[parser]]
+crate = "tessera-settings"
+file = "crates/settings/src/map.rs"
+entry = "tessera_settings::MapPrefs::from_settings"
+input = "settings"
+target = "settings_sections"
+
+[[parser]]
+crate = "tessera-settings"
+file = "crates/settings/src/audio.rs"
+entry = "tessera_settings::AudioSettings::from_settings"
+input = "settings"
+target = "settings_sections"
+
+[[parser]]
+crate = "tessera-settings"
+file = "crates/settings/src/audio.rs"
+entry = "tessera_settings::AudioSettings::import_sound_section"
+input = "user file"
+target = "client_audio"
+
+# =========================================================================================
+# tessera-input
+# =========================================================================================
+
+[[parser]]
+crate = "tessera-input"
+file = "crates/input/src/keymap.rs"
+entry = [
+    "tessera_input::BindingSpec::parse",
+    "tessera_input::Keymap::parse",
+    "tessera_input::Keymap::parse_lenient",
+]
+input = "user file"
+target = "input_keymap"
+
+[[parser]]
+crate = "tessera-input"
+file = "crates/input/src/keymap.rs"
+entry = "tessera_input::Keymap::load_file"
+input = "user file"
+exempt = "reads the keymap file and hands it to Keymap::parse_lenient, fuzzed by `input_keymap`"
+
+[[parser]]
+crate = "tessera-input"
+file = "crates/input/src/chord.rs"
+entry = ["tessera_input::Stroke::parse", "tessera_input::Chord::parse"]
+input = "user file"
+target = "input_keymap"
+
+[[parser]]
+crate = "tessera-input"
+file = "crates/input/src/import/text.rs"
+entry = ["tessera_input::import::parse_file", "tessera_input::import::parse_text"]
+input = "user file"
+target = "input_import"
+
+[[parser]]
+crate = "tessera-input"
+file = "crates/input/src/import/read.rs"
+entry = "tessera_input::import::read_key_map"
+input = "user file"
+target = "input_import"
+
+[[parser]]
+crate = "tessera-input"
+file = "crates/input/src/import/model.rs"
+entry = ["tessera_input::import::Guid::parse", "tessera_input::import::parse_activation"]
+input = "user file"
+exempt = "called by read_key_map on every GUID and activation of the original's key-mapping file; reached by `input_import`"
+
+[[parser]]
+crate = "tessera-input"
+file = "crates/input/src/import/record.rs"
+entry = ["tessera_input::import::decode_key_map_record", "tessera_input::import::decode_action_map"]
+input = "install record"
+target = "input_import"
+
+[[parser]]
+crate = "tessera-input"
+file = "crates/input/src/import/mod.rs"
+entry = ["tessera_input::import::import_key_map", "tessera_input::import::read_source_file"]
+input = "user file"
+target = "input_import"
+
+[[parser]]
+crate = "tessera-input"
+file = "crates/input/src/import/source.rs"
+entry = "tessera_input::import::load_install_data"
+input = "install record"
+exempt = "fetches the key-map and action-map records and hands them to decode_key_map_record / decode_action_map, fuzzed by `input_import`"
+
+[[parser]]
+crate = "tessera-input"
+file = "crates/input/src/mapper/mod.rs"
+entry = ["tessera_input::InputMapper::handle", "tessera_input::InputMapper::handle_with"]
+input = "other"
+target = "input_runtime"
+
+# =========================================================================================
+# tessera-script
+# =========================================================================================
+
+[[parser]]
+crate = "tessera-script"
+file = "crates/script/src/data.rs"
+entry = ["tessera_script::data::parse", "tessera_script::data::parse_with"]
+input = "plugin"
+target = "script_reader"
+
+[[parser]]
+crate = "tessera-script"
+file = "crates/script/src/state.rs"
+entry = ["tessera_script::compile_source", "tessera_script::ScriptState::compile_file", "tessera_script::ScriptState::eval"]
+input = "plugin"
+target = "script_source"
+
+[[parser]]
+crate = "tessera-script"
+file = "crates/script/src/state.rs"
+entry = "tessera_script::ScriptState::call_function"
+input = "plugin"
+target = "script_pattern"
+
+# =========================================================================================
+# tessera-plugins
+# =========================================================================================
+
+[[parser]]
+crate = "tessera-plugins"
+file = "crates/plugins/src/descriptor.rs"
+entry = "tessera_plugins::parse_descriptor"
+input = "plugin"
+target = "plugins_descriptor"
+
+[[parser]]
+crate = "tessera-plugins"
+file = "crates/plugins/src/options.rs"
+entry = "tessera_plugins::options::parse_options"
+input = "plugin"
+target = "plugins_descriptor"
+
+[[parser]]
+crate = "tessera-plugins"
+file = "crates/plugins/src/paths.rs"
+entry = ["tessera_plugins::paths::split_resource_path", "tessera_plugins::paths::name_order"]
+input = "plugin"
+target = "plugins_descriptor"
+
+[[parser]]
+crate = "tessera-plugins"
+file = "crates/plugins/src/host.rs"
+entry = ["tessera_plugins::sanitize_folder_name", "tessera_plugins::EngineDate::from_unix_utc"]
+input = "plugin"
+target = "plugins_descriptor"
+
+[[parser]]
+crate = "tessera-plugins"
+file = "crates/plugins/src/discovery.rs"
+entry = "tessera_plugins::discover"
+input = "plugin"
+exempt = "walks the plugins folder and hands every .plugin file to parse_descriptor, fuzzed by `plugins_descriptor`"
+
+[[parser]]
+crate = "tessera-plugins"
+file = "crates/plugins/src/plugindata.rs"
+entry = [
+    "tessera_plugins::plugindata::parse",
+    "tessera_plugins::plugindata::validate_key",
+    "tessera_plugins::plugindata::format_number",
+]
+input = "plugin"
+target = "plugins_plugindata"
+
+[[parser]]
+crate = "tessera-plugins"
+file = "crates/plugins/src/plugindata.rs"
+entry = [
+    "tessera_plugins::plugindata::load_path",
+    "tessera_plugins::plugindata::read_path",
+    "tessera_plugins::plugindata::load_file",
+]
+input = "plugin"
+exempt = "read a bounded .plugindata file and hand it to plugindata::parse, fuzzed by `plugins_plugindata`"
+
+[[parser]]
+crate = "tessera-plugins"
+file = "crates/plugins/src/root_ns/shell.rs"
+entry = "tessera_plugins::split_command_line"
+input = "user file"
+target = "plugins_descriptor"
+
+[[parser]]
+crate = "tessera-plugins"
+file = "crates/plugins/src/manager.rs"
+entry = "tessera_plugins::PluginManager::execute_command"
+input = "user file"
+target = "plugins_commands"
+
+[[parser]]
+crate = "tessera-plugins"
+file = "crates/plugins/src/manager.rs"
+entry = "tessera_plugins::PluginManager::load_plugin"
+input = "plugin"
+exempt = "loads a plugin's Lua files through tessera_script::compile_source (fuzzed by `script_source`); a plugin load and unload with hostile command lines is `plugins_commands`"
+
+[[parser]]
+crate = "tessera-plugins"
+file = "crates/plugins/src/manager.rs"
+entry = "tessera_plugins::PluginManager::raise_combat_events"
+input = "network"
+target = "plugins_combat_views"
+
+[[parser]]
+crate = "tessera-plugins"
+file = "crates/plugins/src/ui/shortcut.rs"
+entry = "tessera_plugins::ui::GameShortcut::parse"
+input = "plugin"
+target = "plugins_combat_views"
+
+[[parser]]
+crate = "tessera-plugins"
+file = "crates/plugins/src/progression.rs"
+entry = "tessera_plugins::progression::ProfessionValues::from_report"
+input = "network"
+target = "plugins_progression_views"
+
+# =========================================================================================
+# tessera-ui
+# =========================================================================================
+
+[[parser]]
+crate = "tessera-ui"
+file = "crates/ui/src/build.rs"
+entry = ["tessera_ui::Ui::open_panel", "tessera_ui::Ui::open_panel_by_key", "tessera_ui::Ui::open_activatables"]
+input = "install record"
+target = "ui_tree"
+
+[[parser]]
+crate = "tessera-ui"
+file = "crates/ui/src/build.rs"
+entry = ["tessera_ui::Ui::create_based_control", "tessera_ui::Ui::create_based_part"]
+input = "install record"
+target = "ui_based_controls"
+
+[[parser]]
+crate = "tessera-ui"
+file = "crates/ui/src/skin/xml.rs"
+entry = "tessera_ui::skin::xml::decode_document"
+input = "user file"
+target = "ui_skin_definition"
+
+[[parser]]
+crate = "tessera-ui"
+file = "crates/ui/src/skin/definition.rs"
+entry = ["tessera_ui::skin::parse_definition", "tessera_ui::skin::parse_int"]
+input = "user file"
+target = "ui_skin_definition"
+
+[[parser]]
+crate = "tessera-ui"
+file = "crates/ui/src/skin/discover.rs"
+entry = "tessera_ui::skin::SkinSet::discover"
+input = "user file"
+exempt = "walks the skins folder and hands every SkinDefinition.xml to parse_definition, fuzzed by `ui_skin_definition`"
+
+[[parser]]
+crate = "tessera-ui"
+file = "crates/ui/src/skin/art.rs"
+entry = ["tessera_ui::skin::SkinFile::load", "tessera_ui::skin::SkinFile::load_with"]
+input = "user file"
+exempt = "reads a bounded skin image file and hands it to tessera_material::ui_image::decode_as, fuzzed by `material_ui_image`; the file name joins are checked by `ui_skin_definition`"
+
+[[parser]]
+crate = "tessera-ui"
+file = "crates/ui/src/skin/tables.rs"
+entry = "tessera_ui::skin::SkinTables::load"
+input = "install record"
+exempt = "reads enum mappers and property sets through tessera_props::GameData (fuzzed by `props_game_data`) and copies decoded values; names resolve as in `ui_skin_definition`"
+
+[[parser]]
+crate = "tessera-ui"
+file = "crates/ui/src/text/fallback.rs"
+entry = ["tessera_ui::text::TesseraFont::from_bytes", "tessera_ui::text::TesseraFont::rasterise"]
+input = "user file"
+target = "ui_text_font"
+
+[[parser]]
+crate = "tessera-ui"
+file = "crates/ui/src/text/atlas.rs"
+entry = ["tessera_ui::text::FontFace::from_payloads", "tessera_ui::text::FontFace::from_record"]
+input = "install record"
+target = "ui_text"
+
+[[parser]]
+crate = "tessera-ui"
+file = "crates/ui/src/text/scaled.rs"
+entry = "tessera_ui::text::UiTextSource::from_setting"
+input = "settings"
+exempt = "fixed-word match on a value that tessera_settings::TextSource::parse already read (`ui_settings_keys`); unit test `text_source_settings`"
+
+[[parser]]
+crate = "tessera-ui"
+file = "crates/ui/src/scaling/image.rs"
+entry = "tessera_ui::scaling::ArtFilter::from_setting"
+input = "settings"
+exempt = "fixed-word match on a value that tessera_settings::ArtFilter::parse already read (`ui_settings_keys`); unit test `art_filter_settings`"
+
+[[parser]]
+crate = "tessera-ui"
+file = "crates/ui/src/game/map.rs"
+entry = ["tessera_ui::game::map::GameMap::from_value", "tessera_ui::game::map::tile_range", "tessera_ui::game::map::grid_blocks"]
+input = "install record"
+target = "ui_game_map_data"
+
+[[parser]]
+crate = "tessera-ui"
+file = "crates/ui/src/game/chat/config.rs"
+entry = "tessera_ui::game::chat::ChatConfig::from_value"
+input = "install record"
+target = "ui_game_map_data"
+
+[[parser]]
+crate = "tessera-ui"
+file = "crates/ui/src/game/chat/mask.rs"
+entry = [
+    "tessera_ui::game::chat::StyleMap::from_values",
+    "tessera_ui::game::chat::FeedbackSounds::from_value",
+    "tessera_ui::game::chat::OpacityTable::from_value",
+]
+input = "install record"
+target = "ui_game_map_data"
+
+[[parser]]
+crate = "tessera-ui"
+file = "crates/ui/src/game/hidewhen.rs"
+entry = ["tessera_ui::game::hidewhen::compare", "tessera_ui::game::hidewhen::compare_with_player"]
+input = "install record"
+target = "ui_game_map_data"
+
+[[parser]]
+crate = "tessera-ui"
+file = "crates/ui/src/game/worldmap.rs"
+entry = ["tessera_ui::game::worldmap::MapTree::from_value", "tessera_ui::game::worldmap::MapTree::read_options", "tessera_ui::game::worldmap::NodeOptions::from_struct"]
+input = "install record"
+target = "ui_p5_map_windows"
+
+[[parser]]
+crate = "tessera-ui"
+file = "crates/ui/src/game/mapmarks.rs"
+entry = "tessera_ui::game::mapmarks::read_filter"
+input = "settings"
+target = "ui_p5_map_windows"
+
+[[parser]]
+crate = "tessera-ui"
+file = "crates/ui/src/game/chat/command.rs"
+entry = ["tessera_ui::game::chat::command::split_names", "tessera_ui::game::chat::command::trim_ws"]
+input = "install record"
+target = "ui_game_command_line"
+
+[[parser]]
+crate = "tessera-ui"
+file = "crates/ui/src/game/chat/social.rs"
+entry = [
+    "tessera_ui::game::chat::SocialChat::tell",
+    "tessera_ui::game::chat::SocialChat::reply",
+    "tessera_ui::game::chat::SocialChat::join",
+    "tessera_ui::game::chat::SocialChat::session_line",
+]
+input = "network"
+target = "ui_social_chat"
+
+[[parser]]
+crate = "tessera-ui"
+file = "crates/ui/src/game/npc/quantity.rs"
+entry = "tessera_ui::game::npc::quantity::read_number"
+input = "other"
+target = "ui_social_chat"
+
+[[parser]]
+crate = "tessera-ui"
+file = "crates/ui/src/game/npc/mod.rs"
+entry = "tessera_ui::game::npc::NpcWindowKind::from_panel_name"
+input = "other"
+target = "ui_social_chat"
+
+[[parser]]
+crate = "tessera-ui"
+file = "crates/ui/src/game/crafting/rules.rs"
+entry = ["tessera_ui::game::crafting::rules::read", "tessera_ui::game::crafting::rules::shown"]
+input = "other"
+target = "ui_p6_panels"
+
+[[parser]]
+crate = "tessera-ui"
+file = "crates/ui/src/game/combat/look.rs"
+entry = "tessera_ui::game::combat::look::procedural_image"
+input = "install record"
+target = "ui_combat_feed"
+
+[[parser]]
+crate = "tessera-ui"
+file = "crates/ui/src/game/dialog.rs"
+entry = "tessera_ui::game::dialog::DialogKind::from_raw"
+input = "plugin"
+target = "ui_dialogs_menus"
+
+[[parser]]
+crate = "tessera-ui"
+file = "crates/ui/src/game/context_menu.rs"
+entry = "tessera_ui::game::context_menu::ContextMenu::open"
+input = "plugin"
+target = "ui_dialogs_menus"
+
+[[skip]]
+path = "crates/ui/src/paint/canvas.rs"
+fns = ["read_bgra"]
+reason = "read_bgra reads back Tessera's own CPU canvas; the paint path is fuzzed by `ui_paint`"
+
+[[skip]]
+path = "fuzz/fuzz_targets/ui_paint.rs"
+reason = "fuzz target of the painter (display lists Tessera builds), not of a parser"
+
+[[skip]]
+path = "fuzz/fuzz_targets/ui_paint_compose.rs"
+reason = "fuzz target of the composition-list builder, not of a parser"
+
+[[skip]]
+path = "fuzz/fuzz_targets/ui_paint_scheduler.rs"
+reason = "fuzz target of the paint scheduler, not of a parser"
+
+[[skip]]
+path = "fuzz/fuzz_targets/ui_scale_config.rs"
+reason = "fuzz target of the UI-scaling geometry (window sizes, scales and a synthetic layout), not of a parser; the [UI] settings keys it starts from are `ui_settings_keys`"
+
+# =========================================================================================
+# tessera-render
+# =========================================================================================
+
+[[parser]]
+crate = "tessera-render"
+file = "crates/render/src/mesh.rs"
+entry = ["tessera_render::MeshData::prepare", "tessera_render::MeshData::validate", "tessera_render::MeshData::compute_normals"]
+input = "install record"
+target = "render_mesh_data"
+
+[[parser]]
+crate = "tessera-render"
+file = "crates/render/src/mesh.rs"
+entry = ["tessera_render::MeshData::prepare_skinned", "tessera_render::MeshData::validate_skinned"]
+input = "install record"
+target = "render_skinned_mesh_data"
+
+[[parser]]
+crate = "tessera-render"
+file = "crates/render/src/skin.rs"
+entry = "tessera_render::MeshSkin::validate"
+input = "install record"
+target = "render_skinned_mesh_data"
+
+[[parser]]
+crate = "tessera-render"
+file = "crates/render/src/terrain_layers.rs"
+entry = "tessera_render::TerrainChunkData::validate"
+input = "install record"
+target = "render_chunk_data"
+
+[[parser]]
+crate = "tessera-render"
+file = "crates/render/src/far_view.rs"
+entry = "tessera_render::FarTerrainData::validate"
+input = "install record"
+target = "render_chunk_data"
+
+[[parser]]
+crate = "tessera-render"
+file = "crates/render/src/ui/geometry.rs"
+entry = "tessera_render::UiEntry::geometry"
+input = "other"
+target = "render_ui_entries"
+
+[[skip]]
+path = "crates/render/src/renderer.rs"
+fns = ["read_pixels"]
+reason = "read_pixels reads back Tessera's own render targets (GPU); no input is decoded here (the upload checks are the validators fuzzed by `render_mesh_data` and `render_chunk_data`)"
+
+[[skip]]
+path = "crates/render/src/viewport.rs"
+fns = ["read_viewport_pixels"]
+reason = "read_viewport_pixels reads back Tessera's own viewport target (GPU); nothing is decoded"
+
+[[skip]]
+path = "fuzz/fuzz_targets/render_range_alloc.rs"
+reason = "fuzz target of the mesh arena's range allocator, not of a parser"
+
+# =========================================================================================
+# tessera-client
+# =========================================================================================
+
+[[parser]]
+crate = "tessera-client"
+file = "apps/client/src/avatar.rs"
+entry = ["tessera_client::avatar::parse_avatar", "tessera_client::avatar::parse_did"]
+input = "other"
+target = "client_avatar_spec"
+
+[[parser]]
+crate = "tessera-client"
+file = "apps/client/src/commands/line.rs"
+entry = "tessera_client::commands::line::tokenize"
+input = "other"
+target = "client_command_line"
+
+[[parser]]
+crate = "tessera-client"
+file = "apps/client/src/commands/uiscale.rs"
+entry = ["tessera_client::commands::uiscale::parse", "tessera_client::commands::uiscale::run"]
+input = "other"
+target = "client_uiscale_command"
+
+[[parser]]
+crate = "tessera-client"
+file = "apps/client/src/commands/mod.rs"
+entry = "tessera_client::commands::split_tell"
+input = "other"
+target = "client_text_readers"
+
+[[parser]]
+crate = "tessera-client"
+file = "apps/client/src/commands/text.rs"
+entry = ["tessera_client::commands::text::CommandText::load", "tessera_client::commands::text::CommandText::from_strings"]
+input = "install record"
+exempt = "reads the install's string tables through tessera-text (fuzzed by `text_render`) and keeps the rendered words"
+
+[[parser]]
+crate = "tessera-client"
+file = "apps/client/src/audio/player_music/command.rs"
+entry = "tessera_client::audio::player_music::command::parse_args"
+input = "other"
+target = "client_player_music"
+
+[[parser]]
+crate = "tessera-client"
+file = "apps/client/src/audio/player_music.rs"
+entry = ["tessera_client::audio::player_music::read_from_folders", "tessera_client::audio::player_music::MusicData::load"]
+input = "user file"
+exempt = "reads the user's ABC files and hands them to tessera_audio::abc (`abc::read_song`), fuzzed by `audio_abc`; instruments by `audio_instruments`"
+
+[[parser]]
+crate = "tessera-client"
+file = "apps/client/src/audio/clock.rs"
+entry = "tessera_client::audio::clock::GameTime::parse"
+input = "install record"
+target = "client_audio"
+
+[[parser]]
+crate = "tessera-client"
+file = "apps/client/src/audio/backend.rs"
+entry = [
+    "tessera_client::audio::backend::BackendChoice::parse",
+    "tessera_client::audio::backend::PrefsChoice::parse",
+    "tessera_client::audio::backend::SettingsChoice::parse",
+    "tessera_client::audio::backend::import_preferences",
+]
+input = "user file"
+exempt = "import_preferences reads UserPreferences.ini with tessera_install::Ini and its [Sound] section with AudioSettings::import_sound_section, both fuzzed by `client_audio`; the three --audio option words are fixed-word matches (unit test `choices_parse`)"
+
+[[parser]]
+crate = "tessera-client"
+file = "apps/client/src/audio/loader.rs"
+entry = ["tessera_client::audio::loader::read_info", "tessera_client::audio::loader::load_payload", "tessera_client::audio::loader::InfoCache::load"]
+input = "install record"
+exempt = "sound infos are decoded by tessera-formats (`formats_sound_info`), payloads by tessera-audio (`audio_decode`)"
+
+[[parser]]
+crate = "tessera-client"
+file = "apps/client/src/audio/scripts.rs"
+entry = "tessera_client::audio::scripts::read_block_values"
+input = "install record"
+exempt = "landblock records and block-map descriptors are decoded by tessera-formats (`formats_landblock_data`, `formats_block_map`); place rules are `client_audio`"
+
+[[parser]]
+crate = "tessera-client"
+file = "apps/client/src/portrait/mask.rs"
+entry = "tessera_client::portrait::mask::load_mask"
+input = "install record"
+target = "client_portrait_mask"
+
+[[parser]]
+crate = "tessera-client"
+file = "apps/client/src/portrait/scene.rs"
+entry = "tessera_client::portrait::scene::read_portrait_scene"
+input = "install record"
+exempt = "the scene record is decoded by tessera-formats (`formats_scene`, `formats_scene_tables`) through tessera_props::GameData (`props_game_data`)"
+
+[[parser]]
+crate = "tessera-client"
+file = "apps/client/src/plugins/localtime.rs"
+entry = "tessera_client::plugins::localtime::PosixRule::parse"
+input = "other"
+target = "client_tzif"
+
+[[parser]]
+crate = "tessera-client"
+file = "apps/client/src/progression/commands.rs"
+entry = "tessera_client::progression::commands::parse_p6_panel"
+input = "other"
+target = "client_p6_panels"
+
+[[parser]]
+crate = "tessera-client"
+file = "apps/client/src/walker/parse.rs"
+entry = ["tessera_client::walker::parse::parse_fly_path", "tessera_client::walker::parse::parse_path_point"]
+input = "other"
+target = "client_walker_text"
+
+[[parser]]
+crate = "tessera-client"
+file = "apps/client/src/walk_path.rs"
+entry = [
+    "tessera_client::walk_path::parse_walk_file",
+    "tessera_client::walk_path::parse_walk_table",
+    "tessera_client::walk_path::parse_inputs",
+    "tessera_client::walk_path::parse_expect",
+]
+input = "user file"
+target = "client_walk_path"
+
+[[parser]]
+crate = "tessera-client"
+file = "apps/client/src/walker/movement/run.rs"
+entry = "tessera_client::walker::movement::run::read_walks"
+input = "user file"
+exempt = "reads a bounded walk file and hands it to walk_path::parse_walk_file / parse_walk_table, fuzzed by `client_walk_path`"
+
+[[parser]]
+crate = "tessera-client"
+file = "apps/client/src/walker/fxparse.rs"
+entry = ["tessera_client::walker::fxparse::parse_systems", "tessera_client::walker::fxparse::parse_camera_loop"]
+input = "other"
+target = "client_world_fx"
+
+[[parser]]
+crate = "tessera-client"
+file = "apps/client/src/walker/interiors.rs"
+entry = "tessera_client::walker::interiors::BlockVisibility::build"
+input = "install record"
+target = "client_interiors"
+
+[[parser]]
+crate = "tessera-client"
+file = "apps/client/src/walker/mount/spec.rs"
+entry = [
+    "tessera_client::walker::mount::spec::parse_mount",
+    "tessera_client::walker::mount::spec::parse_ride",
+    "tessera_client::walker::mount::spec::parse_did_text",
+    "tessera_client::walker::mount::spec::parse_gait",
+]
+input = "other"
+target = "client_mount_spec"
+
+[[parser]]
+crate = "tessera-client"
+file = "apps/client/src/ui_host/placements.rs"
+entry = ["tessera_client::ui_host::placements::parse_panel_key", "tessera_client::ui_host::placements::store_from_prefs"]
+input = "settings"
+target = "client_panel_placements"
+
+[[parser]]
+crate = "tessera-client"
+file = "apps/client/src/ui_host/env.rs"
+entry = "tessera_client::ui_host::env::decode_layout"
+input = "install record"
+exempt = "decodes UI layout records with tessera_formats::UiLayout (fuzzed by `formats_ui_layout`); UI image files go to tessera_material::ui_image::decode_file (`material_ui_image`)"
+
+[[parser]]
+crate = "tessera-client"
+file = "apps/client/src/scenario/mod.rs"
+entry = "tessera_client::scenario::read_file"
+input = "scenario"
+exempt = "reads at most MAX_FILE_BYTES + 1 bytes and hands them to tessera_net::scenario::Scenario::parse, fuzzed by `net_scenario_parse`"
+
+[[parser]]
+crate = "tessera-client"
+file = "apps/client/src/walker_host.rs"
+entry = "tessera_client::walker_host::read_user_preferences"
+input = "user file"
+exempt = "reads UserPreferences.ini with tessera_install::Ini (fuzzed by `install_config`); its [Render] section is `world_far_view_prefs`"
+
+[[parser]]
+crate = "tessera-client"
+file = "apps/client/src/walker/controls.rs"
+entry = ["tessera_client::walker::controls::load_keymap", "tessera_client::walker::controls::load_camera_profile"]
+input = "user file"
+exempt = "load_keymap hands the keymap file to tessera_input::Keymap::load_file (`input_keymap`); load_camera_profile reads the camera record through tessera-formats (`formats_camera_state`)"
+
+[[parser]]
+crate = "tessera-client"
+file = "apps/client/src/walker/movement/setup.rs"
+entry = ["tessera_client::walker::movement::setup::MoverSetup::load", "tessera_client::walker::movement::setup::load_jump_table"]
+input = "install record"
+exempt = "script tables and scriptlets are decoded by tessera-formats (`formats_script_table`) and resolved by the clip resolver (`formats_clip_resolver`)"
+
+[[parser]]
+crate = "tessera-client"
+file = "apps/client/src/walker/characters/live.rs"
+entry = "tessera_client::walker::characters::live::LiveRecords::decode"
+input = "install record"
+exempt = "hands each payload to tessera_formats ScriptTable / Scriptlet decoding, fuzzed by `formats_script_table`"
+
+[[parser]]
+crate = "tessera-client"
+file = "apps/client/src/walker/effects/weather.rs"
+entry = "tessera_client::walker::effects::weather::read_weather_dids"
+input = "install record"
+exempt = "a DID-map lookup through tessera_props::GameData, fuzzed by `props_game_data`"
+
+[[parser]]
+crate = "tessera-client"
+file = "apps/client/src/screens/controls.rs"
+entry = "tessera_client::screens::controls::read_avatar_detail"
+input = "install record"
+exempt = "appearance records and property sets are decoded by tessera-formats and tessera-props (`formats_appearance`, `props_game_data`); the creation data is `gamedata_presenters`"
+
+[[parser]]
+crate = "tessera-client"
+file = "apps/client/src/screens/controls.rs"
+entry = "tessera_client::screens::controls::parse_sliders"
+input = "install record"
+target = "client_text_readers"
+
+[[parser]]
+crate = "tessera-client"
+file = "apps/client/src/screens/data.rs"
+entry = "tessera_client::screens::data::ScreenData::load"
+input = "install record"
+exempt = "creation data comes from tessera_gamedata::chargen over tessera-props, fuzzed by `gamedata_presenters` and `props_game_data`"
+
+[[parser]]
+crate = "tessera-client"
+file = "apps/client/src/screens/scene.rs"
+entry = "tessera_client::screens::scene::load_scene"
+input = "install record"
+exempt = "scene records are decoded by tessera-formats (`formats_scene`, `formats_scene_tables`) through tessera_props::GameData (`props_game_data`)"
+
+[[parser]]
+crate = "tessera-client"
+file = "apps/client/src/character/data.rs"
+entry = "tessera_client::character::data::read_icon_property"
+input = "install record"
+exempt = "reads one decoded property value (icon-layers.md §3.1); the icon layers are `material_icon`, the property sets `formats_property_set`"
+
+[[parser]]
+crate = "tessera-client"
+file = "apps/client/src/character/settings.rs"
+entry = "tessera_client::character::settings::P1Settings::load_default"
+input = "settings"
+exempt = "reads the settings file through tessera_settings (`settings_file`) and its [[CreatedCharacters]] with CreatedCharacters::from_settings (`settings_created_characters`)"
+
+[[parser]]
+crate = "tessera-client"
+file = "apps/client/src/npc/prefs.rs"
+entry = "tessera_client::npc::prefs::load_window_prefs"
+input = "settings"
+exempt = "reads the settings file (`settings_file`) and its [GameWindows] with WindowPrefs::from_settings (`settings_window_prefs`)"
+
+[[parser]]
+crate = "tessera-client"
+file = "apps/client/src/npc/refs.rs"
+entry = "tessera_client::npc::refs::NpcRefs::load"
+input = "install record"
+exempt = "string tables and DID maps of the install through tessera-text and tessera-props (`text_render`, `props_game_data`); the NPC presenters are `gamedata_presenters`"
+
+[[parser]]
+crate = "tessera-client"
+file = "apps/client/src/npc/shapes.rs"
+entry = "tessera_client::npc::shapes::load_cylinder"
+input = "install record"
+exempt = "setup records are decoded by tessera-formats (`formats_setup`, `formats_setup_chain`); the cylinder is computed from decoded bounds"
+
+[[parser]]
+crate = "tessera-client"
+file = "apps/client/src/travel/refs.rs"
+entry = "tessera_client::travel::refs::P5Refs::load"
+input = "install record"
+exempt = "string tables and DID maps of the install through tessera-text and tessera-props (`text_render`, `props_game_data`); the travel presenters are `gamedata_presenters`"
+
+[[parser]]
+crate = "tessera-client"
+file = "apps/client/src/progression/refs.rs"
+entry = "tessera_client::progression::refs::P6Refs::load"
+input = "install record"
+exempt = "string tables and DID maps of the install through tessera-text and tessera-props (`text_render`, `props_game_data`); the progression presenters are `gamedata_presenters`"
+
+[[parser]]
+crate = "tessera-client"
+file = "apps/client/src/progression/data.rs"
+entry = "tessera_client::progression::data::P6Data::read_keys"
+input = "install record"
+exempt = "a root DID-map lookup through tessera_props::GameData, fuzzed by `props_game_data`"
+
+[[parser]]
+crate = "tessera-client"
+file = "apps/client/src/map/data.rs"
+entry = "tessera_client::map::data::MapFacts::load"
+input = "install record"
+exempt = "map records are decoded by tessera-formats and tessera-gamedata (`formats_gameplay_map`, `gamedata_presenters`); the map tree is `ui_p5_map_windows`"
+
+[[parser]]
+crate = "tessera-client"
+file = "apps/client/src/panels/chat.rs"
+entry = [
+    "tessera_client::panels::chat::ChatSetup::load_im_options",
+    "tessera_client::panels::chat::ChatSetup::load_defaults",
+    "tessera_client::panels::chat::ChatSetup::load_texts",
+]
+input = "install record"
+exempt = "the chat configuration records go through ChatConfig::from_value and StyleMap (`ui_game_map_data`); the texts through tessera-text (`text_render`)"
+
+[[parser]]
+crate = "tessera-client"
+file = "apps/client/src/panels/plugin_manager.rs"
+entry = "tessera_client::panels::plugin_manager::PluginManagerPanel::load_selected"
+input = "plugin"
+exempt = "asks the plugin host to load a plugin by name; the load path is `plugins_commands` and `script_source`"
+
+[[parser]]
+crate = "tessera-client"
+file = "apps/client/src/cli.rs"
+entry = "tessera_client::cli::parse_server"
+input = "other"
+exempt = "normalises a --server value and hands it to ConnectString::parse, fuzzed by `protocol_fingerprint`"
+
+[[parser]]
+crate = "tessera-client"
+file = "apps/client/src/cli.rs"
+entry = "tessera_client::cli::parse_spawn"
+input = "other"
+exempt = "hands a --spawn value to tessera_net::sandbox::world::SpawnPoint::parse, fuzzed by `net_sandbox_world`"
+
+[[parser]]
+crate = "tessera-client"
+file = "apps/client/src/cli.rs"
+entry = "tessera_client::cli::parse_mount_arg"
+input = "other"
+exempt = "hands a --mount value to walker::mount::spec::parse_mount, fuzzed by `client_mount_spec`"
+
+[[parser]]
+crate = "tessera-client"
+file = "apps/client/src/cli.rs"
+entry = ["tessera_client::cli::parse_layer", "tessera_client::cli::parse_surface_did", "tessera_client::cli::parse_size"]
+input = "other"
+target = "client_text_readers"
+
+[[parser]]
+crate = "tessera-client"
+file = "apps/client/src/cli.rs"
+entry = "tessera_client::cli::edit_password"
+input = "other"
+target = "client_text_readers"
+
+[[parser]]
+crate = "tessera-client"
+file = "apps/client/src/cli.rs"
+entry = "tessera_client::cli::read_password"
+input = "other"
+exempt = "reads the raw terminal bytes (echo off) and hands them to cli::edit_password, the line editor, fuzzed by `client_text_readers` (at most MAX_PASSWORD_BYTES kept, UTF-8 checked)"
+
+[[parser]]
+crate = "tessera-client"
+file = "apps/client/src/map/hub.rs"
+entry = "tessera_client::map::parse_map_panel"
+input = "other"
+target = "client_text_readers"
+
+[[parser]]
+crate = "tessera-client"
+file = "apps/client/src/quests/hub.rs"
+entry = "tessera_client::quests::parse_journal_panel"
+input = "other"
+target = "client_text_readers"
+
+[[parser]]
+crate = "tessera-client"
+file = "apps/client/src/npc/hub.rs"
+entry = "tessera_client::npc::parse_npc_panel"
+input = "other"
+exempt = "trims and lower-cases the name and hands it to tessera_ui::game::npc::NpcWindowKind::from_panel_name, fuzzed by `ui_social_chat`; test `every_window_opens_empty_by_name` (apps/client/tests/npc_windows.rs)"
+
+[[parser]]
+crate = "tessera-client"
+file = "apps/client/src/travel/hub.rs"
+entry = "tessera_client::travel::parse_travel_panel"
+input = "other"
+target = "client_text_readers"
+
+[[parser]]
+crate = "tessera-client"
+file = "apps/client/src/social/ui.rs"
+entry = "tessera_client::social::ui::parse_open"
+input = "other"
+target = "client_text_readers"
+
+[[parser]]
+crate = "tessera-client"
+file = "apps/client/src/ui_host/client.rs"
+entry = "tessera_client::ui_host::client::parse_p1_panel"
+input = "other"
+target = "client_text_readers"
+
+[[parser]]
+crate = "tessera-client"
+file = "apps/client/src/ui_host/mod.rs"
+entry = "tessera_client::ui_host::parse_panel"
+input = "other"
+target = "client_text_readers"
+
+[[parser]]
+crate = "tessera-client"
+file = "apps/client/src/timing/report.rs"
+entry = "tessera_client::timing::report::TimingReport::parse"
+input = "user file"
+target = "client_timing_report"
+
+[[parser]]
+crate = "tessera-client"
+file = "apps/client/src/character/data.rs"
+entry = "tessera_client::character::data::CharacterData::open"
+input = "install record"
+exempt = "opens the install with GameDataStore::open (ArchiveSet::open, `dat_archive_set`) and Strings::open_install (`text_named_tables`) and decodes nothing itself; the records are read later by the gamedata readers (`gamedata_loaders`)"
+
+[[parser]]
+crate = "tessera-client"
+file = "apps/client/src/scenario/resolver.rs"
+entry = "tessera_client::scenario::resolver::GameDataResolver::open"
+input = "install record"
+exempt = "opens the install with GameDataStore::open (ArchiveSet::open, `dat_archive_set`) and Strings::open_install (`text_named_tables`); selectors are resolved by tessera-gamedata (`gamedata_loaders`, `net_scenario_run`)"
+
+[[parser]]
+crate = "tessera-client"
+file = "apps/client/src/walker/mount/profile.rs"
+entry = "tessera_client::walker::mount::profile::MountData::open"
+input = "install record"
+exempt = "opens the install with GameDataStore::open (ArchiveSet::open, `dat_archive_set`) and Strings::open_install (`text_named_tables`); the mount records are read later by the gamedata readers (`gamedata_loaders`)"
+
+[[parser]]
+crate = "tessera-client"
+file = "apps/client/src/walker/movement/run.rs"
+entry = "tessera_client::walker::movement::run::WalkSession::open"
+input = "install record"
+exempt = "opens the archive set (`dat_archive_set`) and the world context for a walk run; the landblock, collision and setup records are decoded by tessera-formats and tessera-physics (`formats_landblock_data`, `physics_input`)"
+
+[[parser]]
+crate = "tessera-client"
+file = "apps/client/src/walker/env.rs"
+entry = "tessera_client::walker::env::IndoorInputs::read"
+input = "install record"
+exempt = "picks already decoded property values by type (landblock.md §4.13); the property sets are decoded by tessera-formats (`formats_property_set`)"
+
+[[skip]]
+path = "apps/client/src/audio/loader.rs"
+fns = ["load_bound_reached"]
+reason = "load_bound_reached compares a count of loads in flight with the queue bound; nothing is decoded"
+
+[[skip]]
+path = "apps/client/src/audio/player_music.rs"
+fns = ["load_now"]
+reason = "load_now starts the music start-up job; the files it reads are the [[parser]] entry of this file (`audio_abc`)"
+
+[[skip]]
+path = "apps/client/src/walker/mod.rs"
+fns = ["load_progress"]
+reason = "load_progress is a counter of loaded landblocks, not a decoder; the walker's inputs are the targets client_walker_text, client_world_fx, client_interiors and client_walk_path"
+
+[[skip]]
+path = "apps/client/src/walker/movement/mod.rs"
+fns = ["load_progress"]
+reason = "load_progress is a counter of loaded landblocks, not a decoder"
+
+[[skip]]
+path = "apps/client/src/walker/movement/owners.rs"
+fns = ["load_progress"]
+reason = "load_progress is a counter of loaded landblocks, not a decoder"
+
+# =========================================================================================
+# tessera-server
+# =========================================================================================
+
+[[parser]]
+crate = "tessera-server"
+file = "apps/server/src/conn.rs"
+entry = [
+    "tessera_server::conn::ConnectionCore::on_control_data",
+    "tessera_server::conn::ConnectionCore::decode_control",
+    "tessera_server::conn::ConnectionCore::on_datagram",
+]
+input = "network"
+target = "server_connection"
+
+[[parser]]
+crate = "tessera-server"
+file = "apps/server/src/conn.rs"
+entry = ["tessera_server::conn::ConnectionCore::on_control_data", "tessera_server::conn::ConnectionCore::apply"]
+input = "network"
+target = "server_v12_connection"
+
+[[parser]]
+crate = "tessera-server"
+file = "apps/server/src/sim.rs"
+entry = "tessera_server::sim::Sim::handle"
+input = "network"
+target = "server_world"
+
+[[parser]]
+crate = "tessera-server"
+file = "apps/server/src/sim.rs"
+entry = ["tessera_server::sim::Sim::handle", "tessera_server::sim::Sim::tick"]
+input = "network"
+target = "server_v12_world"
+
+[[parser]]
+crate = "tessera-server"
+file = "apps/server/src/config.rs"
+entry = ["tessera_server::Config::parse", "tessera_server::config::parse_listen"]
+input = "user file"
+target = "server_files"
+
+[[parser]]
+crate = "tessera-server"
+file = "apps/server/src/config.rs"
+entry = "tessera_server::Config::load"
+input = "user file"
+exempt = "reads the configuration file and hands it to Config::parse, fuzzed by `server_files`"
+
+[[parser]]
+crate = "tessera-server"
+file = "apps/server/src/accounts.rs"
+entry = ["tessera_server::accounts::AccountsFile::parse", "tessera_server::accounts::PhcHash::parse"]
+input = "user file"
+target = "server_files"
+
+[[parser]]
+crate = "tessera-server"
+file = "apps/server/src/accounts.rs"
+entry = ["tessera_server::accounts::read_accounts", "tessera_server::accounts::AccountStore::load"]
+input = "user file"
+exempt = "read the accounts file and hand it to AccountsFile::parse, fuzzed by `server_files`"
+
+[[parser]]
+crate = "tessera-server"
+file = "apps/server/src/characters.rs"
+entry = ["tessera_server::characters::CharacterFile::parse", "tessera_server::characters::WorldState::parse"]
+input = "user file"
+target = "server_files"
+
+[[parser]]
+crate = "tessera-server"
+file = "apps/server/src/characters.rs"
+entry = [
+    "tessera_server::characters::load_all",
+    "tessera_server::characters::read_file",
+    "tessera_server::characters::WorldState::load",
+]
+input = "user file"
+exempt = "read character and world-state files and hand them to CharacterFile::parse / WorldState::parse, fuzzed by `server_files`"
+
+[[parser]]
+crate = "tessera-server"
+file = "apps/server/src/appearance.rs"
+entry = ["parse_character", "parse"]
+input = "user file"
+exempt = "crate-private readers of the looks in character and content files; reached through CharacterFile::parse and content::check_text by `server_files`"
+
+[[parser]]
+crate = "tessera-server"
+file = "apps/server/src/content.rs"
+entry = ["tessera_server::content::Content::parse", "tessera_server::content::check_text"]
+input = "user file"
+target = "server_files"
+
+[[parser]]
+crate = "tessera-server"
+file = "apps/server/src/content.rs"
+entry = "tessera_server::content::check_file"
+input = "user file"
+exempt = "reads a content file and hands it to check_text, fuzzed by `server_files`"
+
+[[parser]]
+crate = "tessera-server"
+file = "apps/server/src/datadir.rs"
+entry = ["tessera_server::datadir::load_key", "tessera_server::datadir::load_or_generate_key"]
+input = "user file"
+exempt = "read at most 64 KiB of the key file and hand it to tessera_protocol::transport::ServerIdentity::from_pkcs8_pem, fuzzed by `protocol_keys`"
+
+[[parser]]
+crate = "tessera-server"
+file = "apps/server/src/names.rs"
+entry = ["tessera_server::names::canonical_account", "tessera_server::names::character_name", "tessera_server::names::channel_name"]
+input = "network"
+exempt = "name rules applied to every login, character and channel name the server receives; reached by `server_world` and `server_v12_world`"
+
+# =========================================================================================
+# tessera-loadtest
+# =========================================================================================
+
+[[parser]]
+crate = "tessera-loadtest"
+file = "apps/loadtest/src/sysinfo.rs"
+entry = [
+    "tessera_loadtest::sysinfo::parse_status_kib",
+    "tessera_loadtest::sysinfo::parse_loadavg",
+    "tessera_loadtest::sysinfo::parse_stat_cpu_ticks",
+    "tessera_loadtest::sysinfo::parse_cpu_model",
+]
+input = "other"
+target = "loadtest_text"
+
+[[parser]]
+crate = "tessera-loadtest"
+file = "apps/loadtest/src/sysinfo.rs"
+entry = "tessera_loadtest::sysinfo::load_average"
+input = "other"
+exempt = "reads /proc/loadavg (at most 4 MiB) and hands it to parse_loadavg, fuzzed by `loadtest_text`"
+
+[[parser]]
+crate = "tessera-loadtest"
+file = "apps/loadtest/src/chat.rs"
+entry = ["tessera_loadtest::chat::ChatLedger::parse", "tessera_loadtest::chat::ChatLedger::received"]
+input = "network"
+target = "loadtest_text"
+
+[[parser]]
+crate = "tessera-loadtest"
+file = "apps/loadtest/src/runner.rs"
+entry = "tessera_loadtest::runner::Scenario::parse"
+input = "other"
+target = "app_arg_readers"
+
+[[parser]]
+crate = "tessera-loadtest"
+file = "apps/loadtest/src/raw.rs"
+entry = ["tessera_loadtest::raw::ControlLink::recv", "tessera_loadtest::raw::WorldClient::next_chat"]
+input = "network"
+exempt = "server frames are read with tessera_protocol::frame::FrameDecoder, fuzzed by `protocol_frame`"
+
+# =========================================================================================
+# tessera-dattool
+# =========================================================================================
+
+[[parser]]
+crate = "tessera-dattool"
+file = "apps/dattool/src/snapfile.rs"
+entry = [
+    "tessera_dattool::snapfile::decode",
+    "tessera_dattool::snapfile::decode_from",
+    "tessera_dattool::snapfile::looks_like_snapshot",
+]
+input = "user file"
+target = "dattool_snapshot"
+
+[[parser]]
+crate = "tessera-dattool"
+file = "apps/dattool/src/snapshot.rs"
+entry = "load_if_snapshot"
+input = "user file"
+exempt = "streams a snapshot file through snapfile::decode_from, fuzzed by `dattool_snapshot`"
+
+[[parser]]
+crate = "tessera-dattool"
+file = "apps/dattool/src/diff.rs"
+entry = "load_sides"
+input = "install record"
+exempt = "opens archives with tessera-dat (`dat_archive`, `dat_header`) or snapshots with snapfile (`dattool_snapshot`)"
+
+[[parser]]
+crate = "tessera-dattool"
+file = "apps/dattool/src/input.rs"
+entry = "read_stored"
+input = "install record"
+exempt = "reads a stored payload through tessera-dat (`dat_archive`, `dat_inflate`)"
+
+[[parser]]
+crate = "tessera-dattool"
+file = "apps/dattool/src/world.rs"
+entry = ["decode", "load"]
+input = "install record"
+exempt = "dispatches to the tessera-formats decoders by DID kind (`formats_region_descriptor`, `formats_block_map`, `formats_landblock_data`, `formats_landblock_info`, `formats_landblock_properties`); the dictionary through tessera-props (`props_set`)"
+
+[[parser]]
+crate = "tessera-dattool"
+file = "apps/dattool/src/hexarg.rs"
+entry = ["tessera_dattool::hexarg::parse_did", "tessera_dattool::hexarg::parse_prefix"]
+input = "other"
+target = "app_arg_readers"
+
+# =========================================================================================
+# tessera-explorer
+# =========================================================================================
+
+[[parser]]
+crate = "tessera-explorer"
+file = "apps/explorer/src/charspec.rs"
+entry = [
+    "tessera_explorer::charspec::parse_did",
+    "tessera_explorer::charspec::parse_number",
+    "tessera_explorer::charspec::parse_figure",
+    "tessera_explorer::charspec::parse_item",
+    "tessera_explorer::charspec::parse_clip",
+    "tessera_explorer::charspec::parse_time",
+    "tessera_explorer::charspec::parse_sliders",
+    "tessera_explorer::charspec::parse_times",
+    "tessera_explorer::charspec::parse_angle_list",
+    "tessera_explorer::charspec::parse_tile",
+    "tessera_explorer::charspec::parse_focus",
+    "tessera_explorer::charspec::CharacterArgs::parse_words",
+]
+input = "other"
+target = "explorer_character_spec"
+
+[[parser]]
+crate = "tessera-explorer"
+file = "apps/explorer/src/data.rs"
+entry = "tessera_explorer::data::DataContext::open"
+input = "install record"
+exempt = "opens the archive set with ArchiveSet::open (`dat_archive_set`) and the string tables (`text_named_tables`); the records are decoded later by the explorer's views through tessera-formats (`formats_property_set` and the other formats targets)"
+
+[[parser]]
+crate = "tessera-explorer"
+file = "apps/explorer/src/query.rs"
+entry = "tessera_explorer::query::parse_query"
+input = "other"
+target = "explorer_query_hex"
+
+[[parser]]
+crate = "tessera-explorer"
+file = "apps/explorer/src/hex.rs"
+entry = "tessera_explorer::hex::hex_line"
+input = "install record"
+target = "explorer_query_hex"
+
+[[parser]]
+crate = "tessera-explorer"
+file = "apps/explorer/src/geometry.rs"
+entry = "tessera_explorer::geometry::level_mesh_data"
+input = "install record"
+target = "explorer_mesh_scene"
+
+[[parser]]
+crate = "tessera-explorer"
+file = "apps/explorer/src/collision_overlay.rs"
+entry = [
+    "tessera_explorer::collision_overlay::triangle_overlay",
+    "tessera_explorer::collision_overlay::template_overlays",
+    "tessera_explorer::collision_overlay::cell_overlays",
+    "tessera_explorer::collision_overlay::collision_set_overlays",
+]
+input = "install record"
+target = "explorer_collision_overlay"
+
+[[parser]]
+crate = "tessera-explorer"
+file = "apps/explorer/src/timeline.rs"
+entry = "tessera_explorer::timeline::day_timeline_with"
+input = "install record"
+target = "explorer_world"
+
+[[parser]]
+crate = "tessera-explorer"
+file = "apps/explorer/src/cli.rs"
+entry = "tessera_explorer::cli::parse_did_arg"
+input = "other"
+exempt = "hands the value to query::parse_query, fuzzed by `explorer_query_hex`"
+
+[[parser]]
+crate = "tessera-explorer"
+file = "apps/explorer/src/cli.rs"
+entry = [
+    "tessera_explorer::cli::parse_rgb_arg",
+    "tessera_explorer::cli::parse_pair_arg",
+    "tessera_explorer::cli::parse_angles_arg",
+    "tessera_explorer::cli::Args::try_parse_checked",
+]
+input = "other"
+target = "explorer_text_readers"
+
+[[parser]]
+crate = "tessera-explorer"
+file = "apps/explorer/src/views.rs"
+entry = "tessera_explorer::views::parse_values"
+input = "other"
+target = "explorer_text_readers"
+
+[[parser]]
+crate = "tessera-explorer"
+file = "apps/explorer/src/fonts.rs"
+entry = "tessera_explorer::fonts::check_font"
+input = "user file"
+target = "explorer_text_readers"
+
+[[parser]]
+crate = "tessera-explorer"
+file = "apps/explorer/src/fonts.rs"
+entry = "tessera_explorer::fonts::load_font"
+input = "user file"
+exempt = "reads the file (size-capped at MAX_FONT_BYTES) and hands its bytes to fonts::check_font, fuzzed by `explorer_text_readers`; skrifa (third-party) parses the font"
+
+[[parser]]
+crate = "tessera-explorer"
+file = "apps/explorer/src/persist.rs"
+entry = ["tessera_explorer::persist::Persist::load_default", "tessera_explorer::persist::Persist::load_from"]
+input = "settings"
+exempt = "reads Tessera's settings file through tessera_settings::SettingsStore (`settings_file`)"
+
+[[parser]]
+crate = "tessera-explorer"
+file = "apps/explorer/src/decoders.rs"
+entry = ["tessera_explorer::decoders::read_raw", "tessera_explorer::decoders::load_property_set"]
+input = "install record"
+exempt = "records are read with tessera-dat (`dat_archive`) and decoded by tessera-formats / tessera-props (`formats_records`, `formats_property_set`, `props_set`)"
+
+[[parser]]
+crate = "tessera-explorer"
+file = "apps/explorer/src/character.rs"
+entry = "tessera_explorer::character::load_clip"
+input = "install record"
+exempt = "clip records are decoded by tessera-havok (`havok_clip_record`) and bound by tessera-anim (`anim_bind`)"
+
+[[parser]]
+crate = "tessera-explorer"
+file = "apps/explorer/src/particle_view.rs"
+entry = "tessera_explorer::particle_view::load_source"
+input = "install record"
+exempt = "0x39 records are decoded by tessera-formats (`formats_gameplay_particles`) and simulated by tessera-particles (`particles_sim`)"

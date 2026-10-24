@@ -48,6 +48,11 @@ tessera-particles = { path = "../crates/particles" }
 # `test-support`: the record-building helpers of `consent::test_support` for the
 # `compat_consent_record` target (never enabled in release builds of the client).
 tessera-compat = { path = "../crates/compat", features = ["test-support"] }
+# The apps' small command-line and text readers (P8 exit criterion 2, decision 0043 §2):
+# `app_arg_readers`, `client_text_readers`, `explorer_text_readers`.
+tessera-loadtest = { path = "../apps/loadtest" }
+tessera-client = { path = "../apps/client" }
+tessera-explorer = { path = "../apps/explorer" }
 
 # Not a member of the root workspace.
 [workspace]
@@ -1500,11 +1505,27 @@ test = false
 doc = false
 bench = false
 
+# --- P8 criterion 2, runtime half (decision 0043 §2; fuzz/coverage/runtime.toml) ---
+
+[[bin]]
+name = "protocol_keys"
+path = "fuzz_targets/protocol_keys.rs"
+test = false
+doc = false
+bench = false
+
 # --- tessera-client official entry: Account events into the login presentation (apps/client/src/official/login.rs, included by path; official-entry.md §8, §10.3) ---
 
 [[bin]]
 name = "client_official_entry"
 path = "fuzz_targets/client_official_entry.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "script_source"
+path = "fuzz_targets/script_source.rs"
 test = false
 doc = false
 bench = false
@@ -1518,11 +1539,132 @@ test = false
 doc = false
 bench = false
 
+[[bin]]
+name = "client_panel_placements"
+path = "fuzz_targets/client_panel_placements.rs"
+test = false
+doc = false
+bench = false
+
 # --- tessera-client --render-pref KEY=VALUE (apps/client/src/render_pref.rs, included by path; walker.md §14.10, far-view.md FD22) ---
 
 [[bin]]
 name = "client_render_pref"
 path = "fuzz_targets/client_render_pref.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "client_uiscale_command"
+path = "fuzz_targets/client_uiscale_command.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "loadtest_text"
+path = "fuzz_targets/loadtest_text.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "settings_sections"
+path = "fuzz_targets/settings_sections.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "render_chunk_data"
+path = "fuzz_targets/render_chunk_data.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "ui_social_chat"
+path = "fuzz_targets/ui_social_chat.rs"
+test = false
+doc = false
+bench = false
+
+# --- P8 criterion 2, data half: entry points without a target before (fuzz/coverage/data.toml) ---
+
+[[bin]]
+name = "dat_archive_set"
+path = "fuzz_targets/dat_archive_set.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "text_named_tables"
+path = "fuzz_targets/text_named_tables.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "gamedata_loaders"
+path = "fuzz_targets/gamedata_loaders.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "install_validate"
+path = "fuzz_targets/install_validate.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "gamedata_quantity"
+path = "fuzz_targets/gamedata_quantity.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "physics_input"
+path = "fuzz_targets/physics_input.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "particles_effect"
+path = "fuzz_targets/particles_effect.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "client_timing_report"
+path = "fuzz_targets/client_timing_report.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "app_arg_readers"
+path = "fuzz_targets/app_arg_readers.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "client_text_readers"
+path = "fuzz_targets/client_text_readers.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "explorer_text_readers"
+path = "fuzz_targets/explorer_text_readers.rs"
 test = false
 doc = false
 bench = false

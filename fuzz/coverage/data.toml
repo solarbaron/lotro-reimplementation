@@ -1,0 +1,1560 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Fuzz coverage manifest, data half (P8 exit criterion 2; checked by
+# tools/check-fuzz-coverage.sh, format in its --help). The parsers of the data crates:
+# dat, formats, props, text, havok, anim, material, mesh, wstate, wvm, gamedata,
+# particles, scriptgraph, world, terrain, physics, install, assets, entity and audio
+# (sound records, ABC). One [[parser]] per decoding entry point (or group of entry
+# points in one file) with the fuzz target that drives it; `exempt` names the target or
+# test that covers an entry point without a target of its own. A thin wrapper is listed
+# with the target of what it wraps: `parse_expecting` (parse, then compare the record's
+# DID with the expected one), the `decode_*` helpers and `Record::parse` reached through
+# them, a default-options variant. Targets over decoded
+# values (animation, particles, terrain, physics, the audio engine) are listed with the
+# records or settings their values come from.
+#
+# Every exemption names the fuzz target(s) that cover its entry points; a parser without a
+# fuzz target would be a `gap` (none here). A [[package]] table records a package with no
+# parser of its own; the checker still scans it. A [[skip]] with `fns` covers only the named
+# functions of its files.
+#
+# The runtime crates are in fuzz/coverage/runtime.toml.
+
+# ---- tessera-dat (docs/specs/dat-container.md) -------------------------------------------
+
+[[parser]]
+crate = "tessera-dat"
+file = "crates/dat/src/header.rs"
+entry = "tessera_dat::Header::parse"
+input = "install record"
+target = "dat_header"
+
+[[parser]]
+crate = "tessera-dat"
+file = "crates/dat/src/entry.rs"
+entry = "tessera_dat::Entry::parse"
+input = "install record"
+target = "dat_header"
+
+[[parser]]
+crate = "tessera-dat"
+file = "crates/dat/src/archive.rs"
+entry = ["tessera_dat::Archive::from_bytes", "tessera_dat::Archive::read_entry", "tessera_dat::Archive::membership"]
+input = "install record"
+target = "dat_archive"
+
+[[parser]]
+crate = "tessera-dat"
+file = "crates/dat/src/archive.rs"
+entry = ["tessera_dat::Archive::open_with", "tessera_dat::Archive::read_raw"]
+input = "install record"
+target = "dat_archive_set"
+
+[[parser]]
+crate = "tessera-dat"
+file = "crates/dat/src/archive.rs"
+entry = "tessera_dat::Archive::open"
+input = "install record"
+exempt = "the default-options wrapper of Archive::open_with, which dat_archive_set fuzzes (every archive of the set it opens); the bytes go to Archive::from_bytes's checks (dat_archive)"
+
+[[parser]]
+crate = "tessera-dat"
+file = "crates/dat/src/btree.rs"
+entry = ["tessera_dat::Archive::lookup", "tessera_dat::Archive::entries"]
+input = "install record"
+target = "dat_node"
+
+[[parser]]
+crate = "tessera-dat"
+file = "crates/dat/src/validate.rs"
+entry = "tessera_dat::Archive::validate_with"
+input = "install record"
+target = "dat_node"
+
+[[parser]]
+crate = "tessera-dat"
+file = "crates/dat/src/compress.rs"
+entry = "tessera_dat::inflate_record"
+input = "install record"
+target = "dat_inflate"
+
+[[parser]]
+crate = "tessera-dat"
+file = "crates/dat/src/routing.rs"
+entry = "tessera_dat::RoutingTable::parse"
+input = "user file"
+target = "dat_routing"
+
+[[parser]]
+crate = "tessera-dat"
+file = "crates/dat/src/set.rs"
+entry = "tessera_dat::ArchiveId::from_file_name"
+input = "install record"
+target = "dat_archive_names"
+
+[[parser]]
+crate = "tessera-dat"
+file = "crates/dat/src/set.rs"
+entry = ["tessera_dat::ArchiveSet::open", "tessera_dat::ArchiveSet::locate", "tessera_dat::ArchiveSet::read", "tessera_dat::ArchiveSet::read_located", "tessera_dat::ArchiveSet::read_with_entry", "tessera_dat::ArchiveSet::validate"]
+input = "install record"
+target = "dat_archive_set"
+
+# ---- tessera-formats (docs/specs/records.md and the record specs) ------------------------
+
+[[parser]]
+crate = "tessera-formats"
+file = "crates/formats/src/reader.rs"
+entry = ["tessera_formats::Reader::new", "tessera_formats::reader::latin1_to_string"]
+input = "install record"
+target = "formats_primitives"
+
+[[parser]]
+crate = "tessera-formats"
+file = "crates/formats/src/string_info.rs"
+entry = "tessera_formats::StringInfo::read"
+input = "install record"
+target = "formats_primitives"
+
+[[parser]]
+crate = "tessera-formats"
+file = "crates/formats/src/string_info.rs"
+entry = "tessera_formats::StringInfo::parse"
+input = "install record"
+target = "formats_records"
+
+[[parser]]
+crate = "tessera-formats"
+file = "crates/formats/src/property.rs"
+entry = ["tessera_formats::PropertyValue::read", "tessera_formats::PropertyValue::read_with"]
+input = "install record"
+target = "formats_primitives"
+
+[[parser]]
+crate = "tessera-formats"
+file = "crates/formats/src/property.rs"
+entry = "tessera_formats::PropertyValue::parse"
+input = "install record"
+target = "formats_property_set"
+
+[[parser]]
+crate = "tessera-formats"
+file = "crates/formats/src/property.rs"
+entry = "tessera_formats::PropertyDictionary::parse"
+input = "install record"
+target = "formats_records"
+
+[[parser]]
+crate = "tessera-formats"
+file = "crates/formats/src/any.rs"
+entry = ["tessera_formats::AnyRecord::decode", "tessera_formats::AnyRecord::decode_with_stamp"]
+input = "install record"
+target = "formats_records"
+
+[[parser]]
+crate = "tessera-formats"
+file = "crates/formats/src/any.rs"
+entry = "tessera_formats::AnyRecord::decode_with_schema"
+input = "install record"
+target = "formats_script_table"
+
+[[parser]]
+crate = "tessera-formats"
+file = "crates/formats/src/decode.rs"
+entry = ["tessera_formats::decode_string_info", "tessera_formats::decode_enum_mapper", "tessera_formats::decode_did_map", "tessera_formats::decode_property_dictionary", "tessera_formats::decode_surface", "tessera_formats::decode_entity_descriptor", "tessera_formats::decode_entity_header", "tessera_formats::decode_visual_template", "tessera_formats::decode_setup", "tessera_formats::decode_appearance", "tessera_formats::decode_collision_mesh", "tessera_formats::decode_cell_geometry"]
+input = "install record"
+exempt = "one-line wrappers of the record decoders below (formats_records, formats_surface, formats_setup, formats_appearance, formats_collision_mesh, formats_cell_geometry)"
+
+[[parser]]
+crate = "tessera-formats"
+file = "crates/formats/src/decode.rs"
+entry = ["tessera_formats::decode_string_table", "tessera_formats::decode_texture_list", "tessera_formats::decode_sound", "tessera_formats::decode_sound_info", "tessera_formats::decode_property_set", "tessera_formats::decode_embedded_property_set", "tessera_formats::decode_property_value", "tessera_formats::decode_script_table", "tessera_formats::decode_scriptlet", "tessera_formats::decode_landblock_data", "tessera_formats::decode_landblock_info", "tessera_formats::decode_block_map", "tessera_formats::decode_block_map_descriptor", "tessera_formats::decode_landblock_properties", "tessera_formats::decode_landblock_group", "tessera_formats::decode_region_descriptor", "tessera_formats::decode_font", "tessera_formats::decode_ui_layout"]
+input = "install record"
+exempt = "one-line wrappers, each called by its record's target (formats_string_table, formats_texture_list, formats_sound_info, formats_property_set, formats_script_table, formats_landblock_*, formats_block_map, formats_region_descriptor, formats_font, formats_ui_layout)"
+
+[[parser]]
+crate = "tessera-formats"
+file = "crates/formats/src/did_map.rs"
+entry = "tessera_formats::DataIdMap::parse"
+input = "install record"
+target = "formats_records"
+
+[[parser]]
+crate = "tessera-formats"
+file = "crates/formats/src/enum_mapper.rs"
+entry = "tessera_formats::EnumMapper::parse"
+input = "install record"
+target = "formats_records"
+
+[[parser]]
+crate = "tessera-formats"
+file = "crates/formats/src/sound.rs"
+entry = ["tessera_formats::SoundRecord::parse", "tessera_formats::WaveInfo::parse"]
+input = "install record"
+target = "formats_records"
+
+[[parser]]
+crate = "tessera-formats"
+file = "crates/formats/src/sound_info.rs"
+entry = "tessera_formats::SoundInfo::parse"
+input = "install record"
+target = "formats_sound_info"
+
+[[parser]]
+crate = "tessera-formats"
+file = "crates/formats/src/surface.rs"
+entry = ["tessera_formats::Surface::parse", "tessera_formats::Surface::to_rgba8"]
+input = "install record"
+target = "formats_surface"
+
+[[parser]]
+crate = "tessera-formats"
+file = "crates/formats/src/bcn.rs"
+entry = "tessera_formats::decode_bcn"
+input = "install record"
+target = "formats_surface"
+
+[[parser]]
+crate = "tessera-formats"
+file = "crates/formats/src/property_set.rs"
+entry = ["tessera_formats::PropertySet::parse", "tessera_formats::PropertySet::read", "tessera_formats::PropertySetRecord::parse", "tessera_formats::PropertySetRecord::parse_expecting", "tessera_formats::PropertySetRecord::parse_prefix"]
+input = "install record"
+target = "formats_property_set"
+
+[[parser]]
+crate = "tessera-formats"
+file = "crates/formats/src/texture_list.rs"
+entry = "tessera_formats::TextureList::parse"
+input = "install record"
+target = "formats_texture_list"
+
+[[parser]]
+crate = "tessera-formats"
+file = "crates/formats/src/string_table.rs"
+entry = "tessera_formats::StringTable::parse"
+input = "install record"
+target = "formats_string_table"
+
+[[parser]]
+crate = "tessera-formats"
+file = "crates/formats/src/landblock/data.rs"
+entry = ["tessera_formats::LandblockData::parse", "tessera_formats::LandblockData::parse_expecting", "tessera_formats::LandblockData::parse_heights"]
+input = "install record"
+target = "formats_landblock_data"
+
+[[parser]]
+crate = "tessera-formats"
+file = "crates/formats/src/landblock/info.rs"
+entry = ["tessera_formats::LandblockInfo::parse", "tessera_formats::LandblockInfo::parse_expecting"]
+input = "install record"
+target = "formats_landblock_info"
+
+[[parser]]
+crate = "tessera-formats"
+file = "crates/formats/src/landblock/entity.rs"
+entry = "tessera_formats::landblock::StaticEntity::read"
+input = "install record"
+target = "formats_landblock_info"
+
+[[parser]]
+crate = "tessera-formats"
+file = "crates/formats/src/landblock/block_map.rs"
+entry = ["tessera_formats::BlockMap::parse", "tessera_formats::BlockMapDescriptor::parse", "tessera_formats::BlockMapDescriptor::parse_expecting"]
+input = "install record"
+target = "formats_block_map"
+
+[[parser]]
+crate = "tessera-formats"
+file = "crates/formats/src/landblock/properties.rs"
+entry = ["tessera_formats::LandblockProperties::parse", "tessera_formats::LandblockProperties::parse_expecting", "tessera_formats::landblock::LandblockGroupRecord::parse"]
+input = "install record"
+target = "formats_landblock_properties"
+
+[[parser]]
+crate = "tessera-formats"
+file = "crates/formats/src/landblock/sector.rs"
+entry = ["tessera_formats::SectorRecord::parse", "tessera_formats::SectorRecord::parse_expecting", "tessera_formats::landblock::decode_distant_sector"]
+input = "install record"
+target = "formats_distant_sector"
+
+[[parser]]
+crate = "tessera-formats"
+file = "crates/formats/src/landblock/region.rs"
+entry = "tessera_formats::RegionDescriptor::parse"
+input = "install record"
+target = "formats_region_descriptor"
+
+[[parser]]
+crate = "tessera-formats"
+file = "crates/formats/src/imposter.rs"
+entry = ["tessera_formats::ImposterTable::parse", "tessera_formats::imposter::decode_imposter_table"]
+input = "install record"
+target = "formats_imposter_table"
+
+[[parser]]
+crate = "tessera-formats"
+file = "crates/formats/src/instance/mod.rs"
+entry = ["tessera_formats::instance::decode_instance_set", "tessera_formats::instance::InstanceRecord::read"]
+input = "install record"
+target = "formats_instances"
+
+[[parser]]
+crate = "tessera-formats"
+file = "crates/formats/src/instance/battle.rs"
+entry = ["tessera_formats::instance::DistantBattleUnit::read_removals", "tessera_formats::instance::DistantBattleUnit::read", "tessera_formats::instance::battle::Removal::read", "tessera_formats::instance::BigBattleControl::read", "tessera_formats::instance::DistantBattleScript::read", "tessera_formats::instance::FormationControl::read"]
+input = "install record"
+target = "formats_instances"
+
+[[parser]]
+crate = "tessera-formats"
+file = "crates/formats/src/instance/control.rs"
+entry = ["tessera_formats::instance::PhasingFlags::read_fields", "tessera_formats::instance::PhasingFlags::read", "tessera_formats::instance::EncounterControl::read", "tessera_formats::instance::EntryFilter::read", "tessera_formats::instance::MatchParams::read", "tessera_formats::instance::SkillTrainerTraits::read", "tessera_formats::instance::WorldJoinControl::read", "tessera_formats::instance::WorldJoinTicket::read", "tessera_formats::instance::BattleStat::read", "tessera_formats::instance::SessionPlayControl::read", "tessera_formats::instance::FellowshipMakerControl::read"]
+input = "install record"
+target = "formats_instances"
+
+[[parser]]
+crate = "tessera-formats"
+file = "crates/formats/src/instance/skirmish.rs"
+entry = ["tessera_formats::instance::SkirmishControl::read", "tessera_formats::instance::DerivedStat::read"]
+input = "install record"
+target = "formats_instances"
+
+[[parser]]
+crate = "tessera-formats"
+file = "crates/formats/src/instance/template.rs"
+entry = "tessera_formats::instance::Template::read"
+input = "install record"
+target = "formats_instances"
+
+[[parser]]
+crate = "tessera-formats"
+file = "crates/formats/src/instance/finder.rs"
+entry = "tessera_formats::instance::finder::MatchingIndex::build"
+input = "install record"
+target = "formats_instances"
+
+[[parser]]
+crate = "tessera-formats"
+file = "crates/formats/src/setup/entity.rs"
+entry = ["tessera_formats::EntityHeader::parse", "tessera_formats::EntityHeader::read", "tessera_formats::EntityHeader::parse_expecting", "tessera_formats::EntityDescriptor::parse", "tessera_formats::EntityDescriptor::parse_expecting", "tessera_formats::EntityDescriptor::parse_prefix"]
+input = "install record"
+target = "formats_setup"
+
+[[parser]]
+crate = "tessera-formats"
+file = "crates/formats/src/setup/record.rs"
+entry = "tessera_formats::Setup::parse"
+input = "install record"
+target = "formats_setup"
+
+[[parser]]
+crate = "tessera-formats"
+file = "crates/formats/src/setup/template.rs"
+entry = "tessera_formats::VisualTemplate::parse"
+input = "install record"
+target = "formats_setup"
+
+[[parser]]
+crate = "tessera-formats"
+file = "crates/formats/src/setup/resolve.rs"
+entry = ["tessera_formats::resolve_setup", "tessera_formats::resolve_setup_did"]
+input = "install record"
+target = "formats_setup_chain"
+
+[[parser]]
+crate = "tessera-formats"
+file = "crates/formats/src/appearance.rs"
+entry = "tessera_formats::AppearanceRecord::parse"
+input = "install record"
+target = "formats_appearance"
+
+[[parser]]
+crate = "tessera-formats"
+file = "crates/formats/src/appearance.rs"
+entry = ["tessera_formats::appearance::AppearanceListPids::read_lists", "tessera_formats::appearance::AppearanceListPids::read_list", "tessera_formats::appearance::AppearanceListPids::read_element"]
+input = "install record"
+target = "formats_appearance_m4"
+
+[[parser]]
+crate = "tessera-formats"
+file = "crates/formats/src/avatar.rs"
+entry = ["tessera_formats::avatar::BoneSliderDefinition::read_all", "tessera_formats::avatar::parse_slider_values", "tessera_formats::avatar::resolve_avatar_body"]
+input = "install record"
+target = "formats_appearance_m4"
+
+[[parser]]
+crate = "tessera-formats"
+file = "crates/formats/src/item.rs"
+entry = ["tessera_formats::item::ItemLook::from_property_set", "tessera_formats::item::npc_held_items"]
+input = "install record"
+target = "formats_appearance_m4"
+
+[[parser]]
+crate = "tessera-formats"
+file = "crates/formats/src/script_table/record.rs"
+entry = ["tessera_formats::ScriptTable::parse", "tessera_formats::ScriptTable::parse_expecting", "tessera_formats::ScriptTable::parse_prefix", "tessera_formats::Scriptlet::parse", "tessera_formats::Scriptlet::parse_expecting", "tessera_formats::Scriptlet::parse_prefix"]
+input = "install record"
+target = "formats_script_table"
+
+[[parser]]
+crate = "tessera-formats"
+file = "crates/formats/src/script_table/resolve.rs"
+entry = ["tessera_formats::script_table::resolve::collect_entity_scripts", "tessera_formats::script_table::resolve::ClipResolver::resolve"]
+input = "install record"
+target = "formats_clip_resolver"
+
+[[parser]]
+crate = "tessera-formats"
+file = "crates/formats/src/script_table/instance.rs"
+entry = ["tessera_formats::script_table::instance::InstanceScriptTable::parse", "tessera_formats::script_table::instance::MemberOverride::parse"]
+input = "install record"
+target = "formats_instance_scripts"
+
+[[parser]]
+crate = "tessera-formats"
+file = "crates/formats/src/ui_layout/mod.rs"
+entry = ["tessera_formats::UiLayout::parse", "tessera_formats::UiLayout::parse_expecting"]
+input = "install record"
+target = "formats_ui_layout"
+
+[[parser]]
+crate = "tessera-formats"
+file = "crates/formats/src/ui_layout/labels.rs"
+entry = "tessera_formats::ui_layout::UiLabels::load"
+input = "install record"
+target = "gamedata_loaders"
+
+[[parser]]
+crate = "tessera-formats"
+file = "crates/formats/src/font/mod.rs"
+entry = ["tessera_formats::Font::parse", "tessera_formats::Font::parse_with_issues"]
+input = "install record"
+target = "formats_font"
+
+[[parser]]
+crate = "tessera-formats"
+file = "crates/formats/src/terrain_type.rs"
+entry = ["tessera_formats::terrain_type::TerrainTypeTable::parse", "tessera_formats::terrain_type::decode_terrain_type_table", "tessera_formats::terrain_type::FloatCurve::read"]
+input = "install record"
+target = "formats_terrain_type"
+
+[[parser]]
+crate = "tessera-formats"
+file = "crates/formats/src/scenery.rs"
+entry = ["tessera_formats::scenery::decode_terrain_scene_table", "tessera_formats::scenery::decode_scene_choice_table"]
+input = "install record"
+target = "formats_scene_tables"
+
+[[parser]]
+crate = "tessera-formats"
+file = "crates/formats/src/scenery.rs"
+entry = "tessera_formats::scenery::decode_scene"
+input = "install record"
+target = "formats_scene"
+
+[[parser]]
+crate = "tessera-formats"
+file = "crates/formats/src/environment/sky.rs"
+entry = "tessera_formats::environment::decode_sky_description"
+input = "install record"
+target = "formats_sky"
+
+[[parser]]
+crate = "tessera-formats"
+file = "crates/formats/src/environment/day.rs"
+entry = "tessera_formats::environment::decode_day_description"
+input = "install record"
+target = "formats_day_desc"
+
+[[parser]]
+crate = "tessera-formats"
+file = "crates/formats/src/environment/game_time.rs"
+entry = "tessera_formats::environment::decode_game_time"
+input = "install record"
+target = "formats_game_time"
+
+[[parser]]
+crate = "tessera-formats"
+file = "crates/formats/src/environment/lod.rs"
+entry = "tessera_formats::environment::decode_lod_class_table"
+input = "install record"
+target = "formats_lod_classes"
+
+[[parser]]
+crate = "tessera-formats"
+file = "crates/formats/src/water.rs"
+entry = "tessera_formats::water::decode_water_table"
+input = "install record"
+target = "formats_water_table"
+
+[[parser]]
+crate = "tessera-formats"
+file = "crates/formats/src/water.rs"
+entry = "tessera_formats::water::decode_fog_zone_table"
+input = "install record"
+target = "formats_fog_zone"
+
+[[parser]]
+crate = "tessera-formats"
+file = "crates/formats/src/environment/camera.rs"
+entry = ["tessera_formats::environment::CameraState::parse", "tessera_formats::environment::decode_camera_state"]
+input = "install record"
+target = "formats_camera_state"
+
+[[parser]]
+crate = "tessera-formats"
+file = "crates/formats/src/collision/tree.rs"
+entry = "tessera_formats::collision::Instruction::decode"
+input = "install record"
+target = "formats_collision_tree"
+
+[[parser]]
+crate = "tessera-formats"
+file = "crates/formats/src/collision/mesh.rs"
+entry = "tessera_formats::collision::CollisionMesh::parse"
+input = "install record"
+target = "formats_collision_mesh"
+
+[[parser]]
+crate = "tessera-formats"
+file = "crates/formats/src/collision/cell.rs"
+entry = ["tessera_formats::collision::CellGeometry::parse", "tessera_formats::collision::CellGeometry::parse_expecting"]
+input = "install record"
+target = "formats_cell_geometry"
+
+[[parser]]
+crate = "tessera-formats"
+file = "crates/formats/src/gameplay/common.rs"
+entry = ["tessera_formats::gameplay::common::GameObjectRecord::decode", "tessera_formats::gameplay::common::ObjectRoot::read", "tessera_formats::gameplay::common::ObjectRoot::read_expecting", "tessera_formats::gameplay::common::decode_object_properties"]
+input = "install record"
+target = "formats_gameplay_common"
+
+[[parser]]
+crate = "tessera-formats"
+file = "crates/formats/src/gameplay/particles.rs"
+entry = ["tessera_formats::gameplay::particles::ParticleSystem::decode", "tessera_formats::gameplay::particles::ForkSystem::decode"]
+input = "install record"
+target = "formats_gameplay_particles"
+
+[[parser]]
+crate = "tessera-formats"
+file = "crates/formats/src/gameplay/economy.rs"
+entry = ["tessera_formats::gameplay::economy::EconomyReader::decode", "tessera_formats::gameplay::economy::EconomyReader::decode_as", "tessera_formats::gameplay::economy::WeightedTable::parse", "tessera_formats::gameplay::economy::WeightedTable::read", "tessera_formats::gameplay::economy::BarterEntry::parse", "tessera_formats::gameplay::economy::BarterEntry::read"]
+input = "install record"
+target = "formats_gameplay_economy"
+
+[[parser]]
+crate = "tessera-formats"
+file = "crates/formats/src/gameplay/map.rs"
+entry = ["tessera_formats::gameplay::map::PlacesTable::parse", "tessera_formats::gameplay::map::PlacesTable::parse_expecting", "tessera_formats::gameplay::map::MapNotesTable::parse", "tessera_formats::gameplay::map::MapNotesTable::parse_expecting", "tessera_formats::gameplay::map::QuestNotesTable::parse", "tessera_formats::gameplay::map::QuestNotesTable::parse_expecting"]
+input = "install record"
+target = "formats_gameplay_map"
+
+[[parser]]
+crate = "tessera-formats"
+file = "crates/formats/src/gameplay/misc.rs"
+entry = ["tessera_formats::gameplay::misc::UiScene::parse", "tessera_formats::gameplay::misc::UiScene::parse_expecting", "tessera_formats::gameplay::misc::DxbcContainer::parse", "tessera_formats::gameplay::misc::ScriptChannels::parse", "tessera_formats::gameplay::misc::CompressionDictionaryEnvelope::parse"]
+input = "install record"
+target = "formats_gameplay_misc"
+
+[[parser]]
+crate = "tessera-formats"
+file = "crates/formats/src/gameplay/quests.rs"
+entry = ["tessera_formats::gameplay::quests::QuestMapNotes::parse", "tessera_formats::gameplay::quests::QuestMapNotes::parse_expecting"]
+input = "install record"
+target = "formats_gameplay_quests"
+
+[[parser]]
+crate = "tessera-formats"
+file = "crates/formats/src/gameplay/quests.rs"
+entry = [
+    "tessera_formats::gameplay::quests::Title::read",
+    "tessera_formats::gameplay::quests::Emote::read",
+    "tessera_formats::gameplay::quests::EmoteDirectory::read",
+    "tessera_formats::gameplay::quests::Faction::read",
+    "tessera_formats::gameplay::quests::AccountModifier::read",
+    "tessera_formats::gameplay::quests::ReputationControl::read",
+    "tessera_formats::gameplay::quests::WorldEventList::read",
+    "tessera_formats::gameplay::quests::NpcCommentList::read",
+    "tessera_formats::gameplay::quests::ColourTextList::read",
+    "tessera_formats::gameplay::quests::ColourTextControl::read",
+    "tessera_formats::gameplay::quests::Scene::read",
+    "tessera_formats::gameplay::quests::QuestItemRegionDirectory::read",
+    "tessera_formats::gameplay::quests::QuestItemDirectory::read",
+]
+input = "install record"
+target = "formats_gameplay_quests"
+
+[[parser]]
+crate = "tessera-formats"
+file = "crates/formats/src/gameplay/combat.rs"
+entry = "tessera_formats::gameplay::combat::read_combat_object"
+input = "install record"
+target = "formats_gameplay_combat"
+
+[[parser]]
+crate = "tessera-formats"
+file = "crates/formats/src/gameplay/creatures.rs"
+entry = "tessera_formats::gameplay::creatures::decode_encounter_table"
+input = "install record"
+target = "formats_gameplay_creatures"
+
+[[parser]]
+crate = "tessera-formats"
+file = "crates/formats/src/gameplay/creatures.rs"
+entry = ["tessera_formats::gameplay::creatures::ActionTable::read", "tessera_formats::gameplay::creatures::AiAction::read"]
+input = "install record"
+target = "formats_gameplay_creatures"
+
+[[parser]]
+crate = "tessera-formats"
+file = "crates/formats/src/gameplay/items.rs"
+entry = "tessera_formats::gameplay::items::ItemView::classify"
+input = "install record"
+target = "formats_gameplay_items"
+
+[[parser]]
+crate = "tessera-formats"
+file = "crates/formats/src/gameplay/drama.rs"
+entry = ["tessera_formats::gameplay::drama::DramaList::read", "tessera_formats::gameplay::drama::plan_drama"]
+input = "install record"
+target = "formats_drama"
+
+[[parser]]
+crate = "tessera-formats"
+file = "crates/formats/src/gameplay/mounts.rs"
+entry = ["tessera_formats::gameplay::mounts::check_application", "tessera_formats::gameplay::mounts::controller_flags"]
+input = "install record"
+target = "formats_mounts"
+
+[[parser]]
+crate = "tessera-formats"
+file = "crates/formats/src/gameplay/world_logic.rs"
+entry = ["tessera_formats::gameplay::world_logic::PhasingBox::read", "tessera_formats::gameplay::world_logic::CustomCondition::read_all", "tessera_formats::gameplay::world_logic::GeneratorMapping::read_all"]
+input = "install record"
+target = "formats_world_logic"
+
+[[parser]]
+crate = "tessera-formats"
+file = "crates/formats/src/gameplay/world_logic.rs"
+entry = "tessera_formats::gameplay::world_logic::PhasingBox::read_layers"
+input = "install record"
+exempt = "folds PhasingBox::read (formats_world_logic) over the given layers, nearest first; no bytes of its own"
+
+# ---- tessera-props (docs/specs/property-system.md) ---------------------------------------
+
+[[parser]]
+crate = "tessera-props"
+file = "crates/props/src/registry.rs"
+entry = "tessera_props::PropertyRegistry::parse"
+input = "install record"
+target = "props_set"
+
+[[parser]]
+crate = "tessera-props"
+file = "crates/props/src/set.rs"
+entry = ["tessera_props::PropertySet::parse_record", "tessera_props::PropertySet::parse_record_prefix", "tessera_props::PropertySet::parse_embedded", "tessera_props::PropertySet::parse_embedded_prefix", "tessera_props::PropertySet::read_embedded"]
+input = "install record"
+target = "props_set"
+
+[[parser]]
+crate = "tessera-props"
+file = "crates/props/src/game_data.rs"
+entry = ["tessera_props::GameData::registry", "tessera_props::GameData::enum_mapper", "tessera_props::GameData::did_map", "tessera_props::GameData::lookup_path", "tessera_props::GameData::object_properties"]
+input = "install record"
+target = "props_game_data"
+
+[[parser]]
+crate = "tessera-props"
+file = "crates/props/src/game_data.rs"
+entry = "tessera_props::GameData::open"
+input = "install record"
+exempt = "opens the install's archives with ArchiveSet::open (dat_archive_set) and decodes nothing itself; the records are read lazily by the GameData readers above (props_game_data)"
+
+# ---- tessera-text (docs/specs/string-table.md) -------------------------------------------
+
+[[parser]]
+crate = "tessera-text"
+file = "crates/text/src/message.rs"
+entry = "tessera_text::Message::from_entry"
+input = "install record"
+target = "text_render"
+
+[[parser]]
+crate = "tessera-text"
+file = "crates/text/src/markup.rs"
+entry = ["tessera_text::parse_markup", "tessera_text::decode_escapes", "tessera_text::Rgba::parse"]
+input = "install record"
+target = "text_render"
+
+[[parser]]
+crate = "tessera-text"
+file = "crates/text/src/format.rs"
+entry = ["tessera_text::parse_format_string", "tessera_text::render_template"]
+input = "install record"
+target = "text_render"
+
+[[parser]]
+crate = "tessera-text"
+file = "crates/text/src/tags.rs"
+entry = ["tessera_text::parse_tag_list", "tessera_text::parse_options", "tessera_text::split_tag_group"]
+input = "install record"
+target = "text_render"
+
+[[parser]]
+crate = "tessera-text"
+file = "crates/text/src/render.rs"
+entry = ["tessera_text::render", "tessera_text::display_text"]
+input = "install record"
+target = "text_render"
+
+[[parser]]
+crate = "tessera-text"
+file = "crates/text/src/strings.rs"
+entry = ["tessera_text::NamedTables::load", "tessera_text::NamedTables::from_did_map", "tessera_text::Strings::with_named_tables"]
+input = "install record"
+target = "text_named_tables"
+
+[[parser]]
+crate = "tessera-text"
+file = "crates/text/src/locale.rs"
+entry = ["tessera_text::available_languages", "tessera_text::open_locale"]
+input = "install record"
+exempt = "the install directory's file names, each through ArchiveId::from_file_name (dat_archive_names), select_language over those names, and Archive::open of the chosen archive (Archive::open_with, dat_archive_set; the header checks of dat_archive)"
+
+[[parser]]
+crate = "tessera-text"
+file = "crates/text/src/strings.rs"
+entry = "tessera_text::Strings::open_install"
+input = "install record"
+exempt = "open_locale (see crates/text/src/locale.rs) then Strings::new over the archive; the string tables it reads later are fuzzed by text_named_tables and the string-table targets"
+
+# ---- tessera-havok (docs/specs/havok-data.md) --------------------------------------------
+
+[[parser]]
+crate = "tessera-havok"
+file = "crates/havok/src/tagfile.rs"
+entry = "tessera_havok::Tagfile::parse"
+input = "install record"
+target = "havok_tagfile"
+
+[[parser]]
+crate = "tessera-havok"
+file = "crates/havok/src/skeleton.rs"
+entry = ["tessera_havok::Skeleton::parse", "tessera_havok::Skeleton::from_setup_record"]
+input = "install record"
+target = "havok_skeleton"
+
+[[parser]]
+crate = "tessera-havok"
+file = "crates/havok/src/clip.rs"
+entry = ["tessera_havok::Clip::parse", "tessera_havok::Envelope::parse", "tessera_havok::Animation::parse", "tessera_havok::ReferenceFrame::parse"]
+input = "install record"
+target = "havok_clip_record"
+
+[[parser]]
+crate = "tessera-havok"
+file = "crates/havok/src/spline.rs"
+entry = ["tessera_havok::SplineBlock::parse", "tessera_havok::spline::decode_quat40"]
+input = "install record"
+target = "havok_spline_block"
+
+[[parser]]
+crate = "tessera-havok"
+file = "crates/havok/src/classify.rs"
+entry = ["tessera_havok::classify_setup_record", "tessera_havok::classify_skeleton_tagfile"]
+input = "install record"
+target = "havok_skeleton"
+
+[[parser]]
+crate = "tessera-havok"
+file = "crates/havok/src/classify.rs"
+entry = "tessera_havok::classify_clip_record"
+input = "install record"
+target = "havok_clip_record"
+
+# ---- tessera-anim (docs/specs/skeleton-anim.md): values from decoded skeletons and clips --
+
+[[parser]]
+crate = "tessera-anim"
+file = "crates/anim/src/clip.rs"
+entry = ["tessera_anim::BoundClip::bind", "tessera_anim::BoundClip::sample"]
+input = "install record"
+target = "anim_bind"
+
+[[parser]]
+crate = "tessera-anim"
+file = "crates/anim/src/skeleton.rs"
+entry = "tessera_anim::Skeleton::from_havok"
+input = "install record"
+target = "anim_bind"
+
+[[parser]]
+crate = "tessera-anim"
+file = "crates/anim/src/skeleton.rs"
+entry = "tessera_anim::Skeleton::from_parts"
+input = "install record"
+target = "anim_rig"
+
+[[parser]]
+crate = "tessera-anim"
+file = "crates/anim/src/attach.rs"
+entry = "tessera_anim::AttachTable::new"
+input = "install record"
+target = "anim_rig"
+
+# ---- tessera-material (docs/specs/material.md, icon-layers.md, skin-definition.md §7) -----
+
+[[parser]]
+crate = "tessera-material"
+file = "crates/material/src/records/mod.rs"
+entry = ["tessera_material::MaterialRecord::parse", "tessera_material::SurfaceRecord::parse"]
+input = "install record"
+target = "material_records"
+
+[[parser]]
+crate = "tessera-material"
+file = "crates/material/src/records/shader.rs"
+entry = "tessera_material::ShaderRecord::parse"
+input = "install record"
+target = "material_records"
+
+[[parser]]
+crate = "tessera-material"
+file = "crates/material/src/records/params.rs"
+entry = "tessera_material::records::ParamEntry::parse"
+input = "install record"
+target = "material_records"
+
+[[parser]]
+crate = "tessera-material"
+file = "crates/material/src/records/curve.rs"
+entry = "tessera_material::FloatCurve::evaluate_at"
+input = "install record"
+target = "material_curves"
+
+[[parser]]
+crate = "tessera-material"
+file = "crates/material/src/water.rs"
+entry = "tessera_material::WaterMaterial::evaluate"
+input = "install record"
+target = "material_curves"
+
+[[parser]]
+crate = "tessera-material"
+file = "crates/material/src/library.rs"
+entry = "tessera_material::MaterialLibrary::new"
+input = "install record"
+target = "material_resolve"
+
+[[parser]]
+crate = "tessera-material"
+file = "crates/material/src/library.rs"
+entry = "tessera_material::MaterialLibrary::surface_inputs"
+input = "install record"
+target = "material_curves"
+
+[[parser]]
+crate = "tessera-material"
+file = "crates/material/src/dye.rs"
+entry = ["tessera_material::apply_dye", "tessera_material::select_dye_block"]
+input = "install record"
+target = "material_resolve"
+
+[[parser]]
+crate = "tessera-material"
+file = "crates/material/src/icon/mod.rs"
+entry = ["tessera_material::icon::decode_layer_with_limit", "tessera_material::icon::decode_layer", "tessera_material::icon::compose_images_with_limit"]
+input = "install record"
+target = "material_icon"
+
+[[parser]]
+crate = "tessera-material"
+file = "crates/material/src/ui_image/mod.rs"
+entry = ["tessera_material::ui_image::decode_file", "tessera_material::ui_image::decode_as", "tessera_material::ui_image::probe_header", "tessera_material::ui_image::from_surface"]
+input = "user file"
+target = "material_ui_image"
+
+[[parser]]
+crate = "tessera-material"
+file = "crates/material/src/ui_image/tga.rs"
+entry = "tessera_material::ui_image::decode_tga"
+input = "user file"
+target = "material_ui_image"
+
+[[parser]]
+crate = "tessera-material"
+file = "crates/material/src/ui_image/dds.rs"
+entry = "tessera_material::ui_image::decode_dds"
+input = "user file"
+target = "material_ui_image"
+
+[[parser]]
+crate = "tessera-material"
+file = "crates/material/src/ui_image/jpeg.rs"
+entry = "tessera_material::ui_image::decode_jpeg"
+input = "user file"
+target = "material_ui_image"
+
+# ---- tessera-mesh (docs/specs/mesh.md, appearance.md) -------------------------------------
+
+[[parser]]
+crate = "tessera-mesh"
+file = "crates/mesh/src/record.rs"
+entry = ["tessera_mesh::MeshHeader::parse", "tessera_mesh::Mesh::parse", "tessera_mesh::Mesh::decode", "tessera_mesh::Mesh::decode_expecting"]
+input = "install record"
+target = "mesh_decode"
+
+[[parser]]
+crate = "tessera-mesh"
+file = "crates/mesh/src/summary.rs"
+entry = "tessera_mesh::MeshSummary::parse"
+input = "install record"
+target = "mesh_summary"
+
+[[parser]]
+crate = "tessera-mesh"
+file = "crates/mesh/src/assembly/resolve.rs"
+entry = ["tessera_mesh::assembly::CharacterAssembler::assemble_character", "tessera_mesh::assembly::CharacterAssembler::assemble_object"]
+input = "install record"
+target = "mesh_assembly"
+
+[[parser]]
+crate = "tessera-mesh"
+file = "crates/mesh/src/assembly/look.rs"
+entry = "tessera_mesh::assembly::look::figure_look"
+input = "install record"
+target = "mesh_figure_look"
+
+[[parser]]
+crate = "tessera-mesh"
+file = "crates/mesh/src/assembly/shape.rs"
+entry = "tessera_mesh::assembly::read_slider_table"
+input = "install record"
+exempt = "glue over fuzzed decoders: reads one property-set record through GameData (props_game_data), decodes it with PropertySetRecord::parse_expecting (formats_property_set) and BoneSliderDefinition::read_all (formats_appearance_m4), labels mask bits through enum-mapper look-ups (props_game_data)"
+
+[[parser]]
+crate = "tessera-mesh"
+file = "crates/mesh/src/library.rs"
+entry = ["tessera_mesh::MeshLibrary::load", "tessera_mesh::MeshLibrary::read_record", "tessera_mesh::MeshLibrary::decode_now"]
+input = "install record"
+exempt = "reads a record through ArchiveSet::read_with_entry (dat_archive_set) and decodes it with Mesh::decode_expecting (mesh_decode) on the asset workers"
+
+# ---- tessera-wstate (docs/specs/wlib.md, wstate.md, player-character.md, game-controls.md) -
+
+[[parser]]
+crate = "tessera-wstate"
+file = "crates/wstate/src/library.rs"
+entry = "tessera_wstate::ClassLibrary::parse"
+input = "install record"
+target = "wstate_library"
+
+[[parser]]
+crate = "tessera-wstate"
+file = "crates/wstate/src/state.rs"
+entry = ["tessera_wstate::ObjectHeader::parse", "tessera_wstate::ObjectHeader::parse_with_imports", "tessera_wstate::ObjectState::parse", "tessera_wstate::ObjectState::parse_unchecked"]
+input = "install record"
+target = "wstate_object"
+
+[[parser]]
+crate = "tessera-wstate"
+file = "crates/wstate/src/store.rs"
+entry = ["tessera_wstate::ObjectStore::decode", "tessera_wstate::ObjectStore::state", "tessera_wstate::ObjectStore::properties"]
+input = "install record"
+target = "wstate_store_geo"
+
+[[parser]]
+crate = "tessera-wstate"
+file = "crates/wstate/src/store.rs"
+entry = "tessera_wstate::ObjectStore::open"
+input = "install record"
+exempt = "GameData::open (ArchiveSet::open, dat_archive_set) wrapped in an object store; the records are decoded later by ObjectStore::decode and the readers above (wstate_store_geo)"
+
+[[parser]]
+crate = "tessera-wstate"
+file = "crates/wstate/src/geo.rs"
+entry = ["tessera_wstate::Geo::area", "tessera_wstate::Geo::region"]
+input = "install record"
+target = "wstate_store_geo"
+
+[[parser]]
+crate = "tessera-wstate"
+file = "crates/wstate/src/character/race.rs"
+entry = "tessera_wstate::character::RaceDirectory::from_properties"
+input = "install record"
+target = "wstate_character"
+
+[[parser]]
+crate = "tessera-wstate"
+file = "crates/wstate/src/game_controls/generic.rs"
+entry = "tessera_wstate::game_controls::AdvancementTable::from_state"
+input = "install record"
+target = "wstate_game_controls"
+
+# ---- tessera-wvm (docs/specs/wlib-bytecode.md) -------------------------------------------
+
+[[parser]]
+crate = "tessera-wvm"
+file = "crates/wvm/src/code.rs"
+entry = "tessera_wvm::CodeBlock::decode"
+input = "install record"
+target = "wvm_code"
+
+[[parser]]
+crate = "tessera-wvm"
+file = "crates/wvm/src/instr.rs"
+entry = "tessera_wvm::Instruction::decode"
+input = "install record"
+target = "wvm_code"
+
+[[parser]]
+crate = "tessera-wvm"
+file = "crates/wvm/src/program.rs"
+entry = ["tessera_wvm::Program::parse", "tessera_wvm::Program::with_library"]
+input = "install record"
+target = "wvm_code"
+
+[[parser]]
+crate = "tessera-wvm"
+file = "crates/wvm/src/container.rs"
+entry = "tessera_wvm::Messages::parse"
+input = "install record"
+target = "wvm_code"
+
+# ---- tessera-gamedata (decision 0024 §3; the P1–P6 presentation specs) -------------------
+
+[[parser]]
+crate = "tessera-gamedata"
+file = "crates/gamedata/src/chargen/load.rs"
+entry = ["tessera_gamedata::chargen::load_chargen", "tessera_gamedata::chargen::load_names", "tessera_gamedata::chargen::load_name_filter"]
+input = "install record"
+target = "gamedata_loaders"
+
+[[parser]]
+crate = "tessera-gamedata"
+file = "crates/gamedata/src/chargen/appearance.rs"
+entry = "tessera_gamedata::chargen::read_controls"
+input = "install record"
+target = "gamedata_loaders"
+
+[[parser]]
+crate = "tessera-gamedata"
+file = "crates/gamedata/src/inventory/load.rs"
+entry = ["tessera_gamedata::inventory::load_inventory_control", "tessera_gamedata::inventory::load_paperdoll"]
+input = "install record"
+target = "gamedata_loaders"
+
+[[parser]]
+crate = "tessera-gamedata"
+file = "crates/gamedata/src/map/regions.rs"
+entry = "tessera_gamedata::map::MapRegions::load"
+input = "install record"
+target = "gamedata_loaders"
+
+[[parser]]
+crate = "tessera-gamedata"
+file = "crates/gamedata/src/vocab.rs"
+entry = "Vocab::load"
+input = "install record"
+target = "gamedata_loaders"
+
+[[parser]]
+crate = "tessera-gamedata"
+file = "crates/gamedata/src/map/tree.rs"
+entry = ["tessera_gamedata::map::GameMap::from_struct", "tessera_gamedata::map::game_map_of"]
+input = "install record"
+target = "gamedata_presenters"
+
+[[parser]]
+crate = "tessera-gamedata"
+file = "crates/gamedata/src/tooltip/mod.rs"
+entry = "tessera_gamedata::tooltip::TooltipEngine::new"
+input = "install record"
+target = "gamedata_presenters"
+
+[[parser]]
+crate = "tessera-gamedata"
+file = "crates/gamedata/src/map/notes.rs"
+entry = ["tessera_gamedata::map::NoteIcons::read", "tessera_gamedata::map::region_map_list"]
+input = "install record"
+target = "gamedata_presenters"
+
+[[skip]]
+path = "crates/gamedata/src/map/notes.rs"
+fns = ["read_filter"]
+reason = "read_filter masks a saved settings bit field (no decoding)"
+
+[[parser]]
+crate = "tessera-gamedata"
+file = "crates/gamedata/src/crafting/quantity.rs"
+entry = ["tessera_gamedata::crafting::quantity::read", "tessera_gamedata::crafting::quantity::limit_text", "tessera_gamedata::crafting::quantity::after_typing", "tessera_gamedata::crafting::quantity::shown"]
+input = "user file"
+target = "gamedata_quantity"
+
+[[parser]]
+crate = "tessera-gamedata"
+file = "crates/gamedata/src/store.rs"
+entry = "tessera_gamedata::GameDataStore::open"
+input = "install record"
+exempt = "ObjectStore::open (ArchiveSet::open, dat_archive_set) and GameDataStore::from_install, which lists the object records from the archives' directories (dat_node); the store's record decoders are fuzzed by gamedata_loaders and gamedata_presenters"
+
+# ---- tessera-particles (particles.md §8, particle-runtime.md): decoded 0x39 values -------
+
+[[parser]]
+crate = "tessera-particles"
+file = "crates/particles/src/sim.rs"
+entry = "tessera_particles::SystemSim::new"
+input = "install record"
+target = "particles_sim"
+
+[[parser]]
+crate = "tessera-particles"
+file = "crates/particles/src/lib.rs"
+entry = "tessera_particles::effect_from_payload"
+input = "install record"
+target = "particles_effect"
+
+[[parser]]
+crate = "tessera-particles"
+file = "crates/particles/src/runtime.rs"
+entry = "tessera_particles::classify_system"
+input = "install record"
+target = "particles_sim"
+
+[[parser]]
+crate = "tessera-particles"
+file = "crates/particles/src/beam.rs"
+entry = ["tessera_particles::beam::ribbon_segments", "tessera_particles::beam::ribbon_colour"]
+input = "install record"
+target = "particles_beam"
+
+# ---- tessera-scriptgraph (script-runtime.md): decoded script tables and scriptlets -------
+
+[[parser]]
+crate = "tessera-scriptgraph"
+file = "crates/scriptgraph/src/runtime/mod.rs"
+entry = "tessera_scriptgraph::Runtime::new"
+input = "install record"
+target = "scriptgraph_runtime"
+
+# ---- tessera-world (coordinates.md, landblock.md §8, environment.md, scenery.md, water.md,
+# far-view.md, decals.md) ----------------------------------------------------------------
+
+[[parser]]
+crate = "tessera-world"
+file = "crates/world/src/areas.rs"
+entry = "tessera_world::WStateAreaNames::open"
+input = "install record"
+exempt = "Strings::open_install of the install directory (open_locale: dat_archive_names, dat_archive_set) and an object store over the given set; the area records are read later by the area-name source (wstate_store_geo for the object records)"
+
+[[parser]]
+crate = "tessera-world"
+file = "crates/world/src/context.rs"
+entry = ["tessera_world::WorldContext::load", "tessera_world::WorldContext::load_systems"]
+input = "install record"
+target = "world_context"
+
+[[parser]]
+crate = "tessera-world"
+file = "crates/world/src/source.rs"
+entry = "tessera_world::BundleFrame::parse"
+input = "install record"
+target = "world_bundle"
+
+[[parser]]
+crate = "tessera-world"
+file = "crates/world/src/source.rs"
+entry = "tessera_world::BundleSource::read_bundle_records"
+input = "install record"
+target = "world_context"
+
+[[parser]]
+crate = "tessera-world"
+file = "crates/world/src/bundle.rs"
+entry = "tessera_world::build_bundle"
+input = "install record"
+target = "world_bundle"
+
+[[parser]]
+crate = "tessera-world"
+file = "crates/world/src/environment/state.rs"
+entry = ["tessera_world::SkyLibrary::load", "tessera_world::SkyLibrary::load_from"]
+input = "install record"
+target = "world_context"
+
+[[parser]]
+crate = "tessera-world"
+file = "crates/world/src/environment/choose.rs"
+entry = ["tessera_world::environment::choose_day", "tessera_world::environment::choose_day_with_fallback"]
+input = "install record"
+target = "world_environment"
+
+[[parser]]
+crate = "tessera-world"
+file = "crates/world/src/draw_distance/mod.rs"
+entry = "tessera_world::draw_distance::LodClasses::load"
+input = "install record"
+target = "world_context"
+
+[[parser]]
+crate = "tessera-world"
+file = "crates/world/src/scenery/tables.rs"
+entry = ["tessera_world::scenery::SceneryTables::load", "tessera_world::scenery::SceneryTables::load_all_regions", "tessera_world::scenery::SceneLibrary::load"]
+input = "install record"
+target = "world_context"
+
+[[parser]]
+crate = "tessera-world"
+file = "crates/world/src/scenery/props.rs"
+entry = ["tessera_world::scenery::ObjectProperties::load", "tessera_world::scenery::read_set"]
+input = "install record"
+target = "world_context"
+
+[[parser]]
+crate = "tessera-world"
+file = "crates/world/src/scenery/generate.rs"
+entry = "tessera_world::scenery::generate_landblock"
+input = "install record"
+target = "world_scenery"
+
+[[parser]]
+crate = "tessera-world"
+file = "crates/world/src/frills/sector.rs"
+entry = "tessera_world::frills::generate_sector"
+input = "install record"
+target = "world_scenery"
+
+[[parser]]
+crate = "tessera-world"
+file = "crates/world/src/water/tables.rs"
+entry = "tessera_world::water::WaterTables::load"
+input = "install record"
+target = "world_context"
+
+[[parser]]
+crate = "tessera-world"
+file = "crates/world/src/water/query.rs"
+entry = "tessera_world::water::WaterSystem::load"
+input = "install record"
+target = "world_context"
+
+[[parser]]
+crate = "tessera-world"
+file = "crates/world/src/water/volumes.rs"
+entry = "tessera_world::water::monitors_from_value"
+input = "install record"
+target = "world_water"
+
+[[parser]]
+crate = "tessera-world"
+file = "crates/world/src/water/decide.rs"
+entry = "tessera_world::water::decide_water"
+input = "install record"
+target = "world_water"
+
+[[parser]]
+crate = "tessera-world"
+file = "crates/world/src/decals/shading.rs"
+entry = "tessera_world::decals::shading::DepthBiasTable::load"
+input = "install record"
+target = "world_context"
+
+[[parser]]
+crate = "tessera-world"
+file = "crates/world/src/decals/mod.rs"
+entry = ["tessera_world::decals::DecalParams::initial", "tessera_world::decals::DecalParams::collect"]
+input = "install record"
+target = "world_decals"
+
+[[parser]]
+crate = "tessera-world"
+file = "crates/world/src/decals/builder.rs"
+entry = "tessera_world::decals::build_mesh"
+input = "install record"
+target = "world_decals"
+
+[[parser]]
+crate = "tessera-world"
+file = "crates/world/src/far_view/load.rs"
+entry = ["tessera_world::far_view::FarViewRecords::load", "tessera_world::far_view::read_sector", "tessera_world::far_view::read_imposter_table"]
+input = "install record"
+exempt = "read a record from the world source and call a fuzzed decoder: DataIdMap::parse_expecting (formats_records, world_context), SectorRecord::parse_expecting (formats_distant_sector), ImposterTable::parse_expecting (formats_imposter_table)"
+
+[[parser]]
+crate = "tessera-world"
+file = "crates/world/src/far_view/mesh.rs"
+entry = "tessera_world::far_view::build_batch"
+input = "install record"
+target = "world_far_mesh"
+
+[[parser]]
+crate = "tessera-world"
+file = "crates/world/src/far_view/settings.rs"
+entry = "tessera_world::far_view::FarViewSettings::apply_render_preferences"
+input = "user file"
+target = "world_far_view_prefs"
+
+[[parser]]
+crate = "tessera-world"
+file = "crates/world/src/mapcoords.rs"
+entry = ["tessera_world::MapCoords::from_str", "tessera_world::LocReport::from_str"]
+input = "other"
+target = "world_text"
+
+# ---- tessera-terrain (terrain.md, terrain-texturing.md): decoded landblock values --------
+
+[[parser]]
+crate = "tessera-terrain"
+file = "crates/terrain/src/mesh.rs"
+entry = "tessera_terrain::TerrainMesh::build"
+input = "install record"
+target = "terrain_mesh"
+
+[[parser]]
+crate = "tessera-terrain"
+file = "crates/terrain/src/layers.rs"
+entry = ["tessera_terrain::resolve_landblock", "tessera_terrain::resolve_chunk"]
+input = "install record"
+target = "terrain_layers"
+
+# ---- tessera-physics (collision.md, water.md §7.4; decision 0013) ------------------------
+
+[[parser]]
+crate = "tessera-physics"
+file = "crates/physics/src/geometry/set.rs"
+entry = ["tessera_physics::geometry::CollisionSetBuilder::add_object", "tessera_physics::geometry::CollisionSetBuilder::build"]
+input = "install record"
+target = "physics_collision_set"
+
+[[parser]]
+crate = "tessera-physics"
+file = "crates/physics/src/controller/params.rs"
+entry = "tessera_physics::controller::PlayerMovementRecord::from_set"
+input = "install record"
+target = "physics_controller_step"
+
+[[parser]]
+crate = "tessera-physics"
+file = "crates/physics/src/controller/step.rs"
+entry = "tessera_physics::controller::Controller::step"
+input = "install record"
+target = "physics_controller_step"
+
+[[parser]]
+crate = "tessera-physics"
+file = "crates/physics/src/controller/input.rs"
+entry = ["tessera_physics::controller::decode_input", "tessera_physics::controller::pack_input"]
+input = "other"
+target = "physics_input"
+
+# ---- tessera-install (docs/specs/install-layout.md) --------------------------------------
+
+[[parser]]
+crate = "tessera-install"
+file = "crates/install/src/vdf.rs"
+entry = ["tessera_install::vdf::parse", "tessera_install::vdf::parse_bytes"]
+input = "user file"
+target = "install_vdf"
+
+[[parser]]
+crate = "tessera-install"
+file = "crates/install/src/steam.rs"
+entry = ["tessera_install::steam::parse_library_folders", "tessera_install::steam::parse_app_manifest"]
+input = "user file"
+target = "install_vdf"
+
+[[parser]]
+crate = "tessera-install"
+file = "crates/install/src/ini.rs"
+entry = ["tessera_install::Ini::parse", "tessera_install::Ini::from_bytes"]
+input = "user file"
+target = "install_config"
+
+[[parser]]
+crate = "tessera-install"
+file = "crates/install/src/ini.rs"
+entry = "tessera_install::Ini::read"
+input = "user file"
+exempt = "reads the file with a size cap (MAX_INI_SIZE) and hands the bytes to Ini::from_bytes, which install_config fuzzes"
+
+[[parser]]
+crate = "tessera-install"
+file = "crates/install/src/install.rs"
+entry = "tessera_install::GameInstall::open"
+input = "install record"
+exempt = "validate of the directory (install_validate) and its Steam or Wine context: the app manifest is read with read_vdf and steam::parse_app_manifest (install_vdf); the rest is path arithmetic"
+
+[[parser]]
+crate = "tessera-install"
+file = "crates/install/src/discover.rs"
+entry = "tessera_install::discover_with"
+input = "user file"
+exempt = "searches the Steam libraries (libraryfolders.vdf and app manifests through vdf::parse and steam::parse_library_folders / parse_app_manifest: install_vdf), the launcher configs (onelauncher::read_configs: install_config) and the Wine prefixes, then opens each candidate with GameInstall::open (validate: install_validate)"
+
+[[parser]]
+crate = "tessera-install"
+file = "crates/install/src/launcherconfig.rs"
+entry = "tessera_install::launcherconfig::parse_launcher_config"
+input = "user file"
+target = "install_config"
+
+[[parser]]
+crate = "tessera-install"
+file = "crates/install/src/launcherconfig.rs"
+entry = "tessera_install::launcherconfig::read_launcher_config"
+input = "user file"
+target = "install_validate"
+
+[[parser]]
+crate = "tessera-install"
+file = "crates/install/src/onelauncher.rs"
+entry = "tessera_install::onelauncher::parse_config"
+input = "user file"
+target = "install_config"
+
+[[parser]]
+crate = "tessera-install"
+file = "crates/install/src/onelauncher.rs"
+entry = "tessera_install::onelauncher::read_configs"
+input = "user file"
+exempt = "walks <data home>/onelauncher/games/*/config.toml (case-insensitive names, size cap) and hands each file to parse_config (install_config)"
+
+[[parser]]
+crate = "tessera-install"
+file = "crates/install/src/fsutil.rs"
+entry = "tessera_install::translate_windows_path"
+input = "user file"
+target = "install_config"
+
+[[parser]]
+crate = "tessera-install"
+file = "crates/install/src/archive.rs"
+entry = ["tessera_install::parse_archive_name", "tessera_install::ArchiveHeader::parse"]
+input = "install record"
+target = "install_records"
+
+[[parser]]
+crate = "tessera-install"
+file = "crates/install/src/records.rs"
+entry = ["tessera_install::IterationRecord::parse", "tessera_install::InstallStamp::parse", "tessera_install::SetMembership::parse"]
+input = "install record"
+target = "install_records"
+
+[[parser]]
+crate = "tessera-install"
+file = "crates/install/src/fingerprint.rs"
+entry = "tessera_install::ContentFingerprint::compute"
+input = "install record"
+target = "install_records"
+
+[[parser]]
+crate = "tessera-install"
+file = "crates/install/src/validate.rs"
+entry = "tessera_install::verify_split_set"
+input = "install record"
+target = "install_records"
+
+[[parser]]
+crate = "tessera-install"
+file = "crates/install/src/validate.rs"
+entry = ["tessera_install::validate", "tessera_install::read_project_version", "tessera_install::detect_game_type"]
+input = "user file"
+target = "install_validate"
+
+# ---- tessera-assets, tessera-entity: no parsers of their own ------------------------------
+
+[[package]]
+crate = "tessera-assets"
+reason = "the asset workers run decoders their callers hand them (the parsers listed in this file); the pool, cache and cancellation decode nothing"
+
+[[package]]
+crate = "tessera-entity"
+reason = "the entity store holds decoded state (transforms, network IDs, handles, change lists) that other crates give it; it reads no bytes or text"
+
+# ---- tessera-audio (sound.md, abc-dialect.md, instruments.md) ----------------------------
+
+[[parser]]
+crate = "tessera-audio"
+file = "crates/audio/src/decode/mod.rs"
+entry = ["tessera_audio::decode::decode_record", "tessera_audio::decode::decode_payload_with", "tessera_audio::decode::open_payload", "tessera_audio::decode::probe_payload"]
+input = "install record"
+target = "audio_decode"
+
+[[parser]]
+crate = "tessera-audio"
+file = "crates/audio/src/decode/mod.rs"
+entry = "tessera_audio::decode::open_record"
+input = "install record"
+exempt = "SoundRecord::parse of the record, then open_payload of its payload; audio_decode fuzzes both (decode_record parses the same record header)"
+
+[[parser]]
+crate = "tessera-audio"
+file = "crates/audio/src/decode/setup.rs"
+entry = ["tessera_audio::decode::setup::walk_setup", "tessera_audio::decode::setup::patch_unused_books"]
+input = "install record"
+target = "audio_decode"
+
+[[parser]]
+crate = "tessera-audio"
+file = "crates/audio/src/decode/mod.rs"
+entry = "tessera_audio::decode::decode_payload"
+input = "install record"
+exempt = "decode_payload_with with the default options (audio_decode)"
+
+[[parser]]
+crate = "tessera-audio"
+file = "crates/audio/src/decode/ogg.rs"
+entry = "tessera_audio::decode::OggStream::parse"
+input = "install record"
+target = "audio_decode"
+
+[[parser]]
+crate = "tessera-audio"
+file = "crates/audio/src/decode/vorbis.rs"
+entry = "tessera_audio::decode::decode_ogg"
+input = "install record"
+target = "audio_decode"
+
+[[parser]]
+crate = "tessera-audio"
+file = "crates/audio/src/decode/wav.rs"
+entry = "tessera_audio::decode::decode_wav"
+input = "install record"
+target = "audio_decode"
+
+[[parser]]
+crate = "tessera-audio"
+file = "crates/audio/src/abc/mod.rs"
+entry = "tessera_audio::abc::parse"
+input = "user file"
+target = "audio_abc"
+
+[[parser]]
+crate = "tessera-audio"
+file = "crates/audio/src/abc/files.rs"
+entry = "tessera_audio::abc::read_song"
+input = "user file"
+exempt = "finds the song file (name rules) and reads at most the size cap, then abc::parse (audio_abc); tests/abc_conformance.rs reads songs from a directory"
+
+[[parser]]
+crate = "tessera-audio"
+file = "crates/audio/src/instruments/table.rs"
+entry = "tessera_audio::instruments::InstrumentTable::build"
+input = "install record"
+target = "audio_instruments"
+
+[[parser]]
+crate = "tessera-audio"
+file = "crates/audio/src/engine/mod.rs"
+entry = "tessera_audio::AudioEngine::new"
+input = "install record"
+target = "audio_engine"
+
+[[skip]]
+path = "crates/audio/src/engine/mixer.rs"
+fns = ["load_last", "load_max"]
+reason = "load_last and load_max read the mixer's atomic statistics; no input"
+
+[[skip]]
+path = "crates/mesh/src/error.rs"
+fns = ["decode_error"]
+reason = "MeshError::decode_error returns the decode error inside a pipeline failure; no input"

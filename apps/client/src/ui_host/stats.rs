@@ -212,16 +212,22 @@ pub struct Recorder {
     /// (`UiHost::record_render_stats`). Without that, a U2 row with no frames says nothing
     /// about the adapter's timestamp queries.
     pub render_stats_fed: bool,
+    /// Frames not kept because the recorder was full ([`MAX_RECORDED_FRAMES`]); reports
+    /// that judge the frames say so when this is not 0.
+    pub dropped: usize,
 }
 
 /// Most frames a recorder keeps (about 30 minutes at 60 Hz).
 pub const MAX_RECORDED_FRAMES: usize = 120_000;
 
 impl Recorder {
-    /// Adds a frame.
+    /// Adds a frame (counted in [`Recorder::dropped`] instead once the recorder holds
+    /// [`MAX_RECORDED_FRAMES`]).
     pub fn push(&mut self, phase: &'static str, s: FrameSample) {
         if self.frames.len() < MAX_RECORDED_FRAMES {
             self.frames.push((phase, s));
+        } else {
+            self.dropped = self.dropped.saturating_add(1);
         }
     }
 

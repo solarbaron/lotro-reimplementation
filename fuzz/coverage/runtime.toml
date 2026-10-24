@@ -1676,3 +1676,32 @@ file = "apps/explorer/src/particle_view.rs"
 entry = "tessera_explorer::particle_view::load_source"
 input = "install record"
 exempt = "0x39 records are decoded by tessera-formats (`formats_gameplay_particles`) and simulated by tessera-particles (`particles_sim`)"
+
+# =========================================================================================
+# Added at the P8 merge (2026-10-24): parsers and targets that landed on main while P8 ran
+# =========================================================================================
+
+[[parser]]
+crate = "tessera-client"
+file = "apps/client/src/render_pref.rs"
+entry = "tessera_client::render_pref::parse_render_pref"
+input = "other"
+target = "client_render_pref"
+
+[[skip]]
+path = "apps/client/src/official/view.rs"
+fns = ["load"]
+reason = "Fonts::load rasterises Tessera's own bundled font at a clamped scale; it decodes no outside input (the font reader is fuzzed by the ui text targets)"
+
+[[skip]]
+path = "apps/client/src/walker/effects/weather.rs"
+fns = ["read_drop_materials"]
+reason = "a DID-map lookup of two UNIQUEDB keys through tessera_props::GameData, fuzzed by `props_game_data` (as read_weather_dids above)"
+
+[[skip]]
+path = "fuzz/fuzz_targets/client_official_entry.rs"
+reason = "fuzz target of the official login presenter (Account events and the user's actions on Tessera's own state machine, official-entry.md §8), not of a parser"
+
+[[skip]]
+path = "fuzz/fuzz_targets/particles_weather.rs"
+reason = "fuzz target of the weather drop simulation and the MeshFX prop life (particle-runtime.md §11.2.5-§11.2.6, appearance.md §5.7), not of a parser"

@@ -402,6 +402,7 @@ fn reorder(ui: &mut Ui, k: ElementKey, to_start: bool) {
     } else {
         p.children.push(k);
     }
+    ui.note_order_change(k);
     ui.input.hover_dirty = true;
     ui.mark_dirty(k);
 }

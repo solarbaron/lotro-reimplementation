@@ -214,6 +214,148 @@ re-measure (O200).
   the world stays after the scenario finishes, §12.4). Whether to name the option in
   `scenario-feed.md` §12.1 is the §16 OPEN of 2026-10-23.
 
+## ui-perf (2026-10-24, indicative)
+
+Follow-up package `ui-perf`: where the steady-state step 8 of this scenario went, what was
+changed in `tessera-ui`, and the figures before and after. **Indicative:** the reference
+laptop was not idle (other worktrees built and tested; load averages beside every run), and
+the runs are headless (the offscreen UI run of `scenario-feed.md` §12.2 at exactly
+1920 × 1080, *Se* = 1), which decision 0043 does not judge. The owner's idle windowed
+re-measure (O200) still decides (c).
+
+### Where the time went
+
+Temporary timers in `Ui::paint` and the scheduler (removed again) over 600-frame windows of
+the headless run with the bags, character panel and tracker open:
+
+- **The full surface pass ran on 90–100 % of the steady frames** (538–600 of 600) and cost
+  about 1.9–2.1 ms each: the surface decision walk of the whole tree about 1.26 ms, the
+  damage walk of every surface about 0.5 ms, records, coverage and groups the rest. Its
+  cost grows with every element of the open tree, which is why the three static panels added
+  about 1.1 ms to every frame without painting or uploading anything.
+- **Why it ran:** the light pass (`light_sync`) gave up whenever a recorded element was a
+  surface owner or had one below it. In this HUD surface owners change in every frame: the
+  floating combat texts (canvas-resize owners nested in a screen-sized code-made layer) rise
+  and grow by a node-scale animation, a pulsing node-scaled marker, the vital and cast bars
+  (owners below the frames that change), the cast bar's label, minimap markers. Nothing
+  about the surfaces' decisions changed in those frames except the owners' own geometry.
+- The rest of step 8 (about 0.6 ms) is real paint work of the HUD: about 5 paint jobs and
+  10 bands per frame, about 270 KiB uploaded (the growing floating texts repaint their
+  canvas at every new physical size, `ui-scaling.md` §6.1, and each move re-splits the
+  1920 × 1080 layer at the old and new coverage regions, decision 0015 Decision 1.7).
+
+### What changed (`crates/ui/src/surface.rs`; hooks in `ui.rs`, `focus.rs`, `game/mod.rs`)
+
+1. **Surface owners in the light pass.** Each surface record keeps what the full pass read
+   from its owner itself (`OwnerSig`: parent and sibling index, visibility, shown with every
+   ancestor, root-panel flag, ownership, object mode, layout box, physical box, owner→canvas
+   map, node scale) and whether surfaces are nested in it. A recorded owner whose signature,
+   canvas size and displayed box are unchanged is walked by the light pass from its own root
+   box like any other element, and its composition node's opacity, alpha threshold and
+   rotation are patched as `comp_nodes` sets them. An unchanged owner *below* a recorded
+   element is skipped by that element's walk, as the full damage walk skips nested surfaces.
+2. **Owner geometry the full pass answers locally.** A recorded owner may also change its
+   node scale and canvas map in place (the surface takes its new content scale), and, when no
+   surface is nested in it and it is a group root or nested directly in one, move and change
+   its canvas size: the light pass then updates its record, rebuilds the composition nodes,
+   damages a resized canvas in full, replaces its coverage region in its parent in place
+   (damaging the parent at the old and new regions when they differ) and records the group's
+   layout change, all as `sync_surfaces` does. A coverage region that appears or vanishes,
+   deeper nesting, tile addressing, stand-ins, drag icons and external content still take the
+   full pass.
+3. **Order changes.** Attaching, detaching or reordering a subtree that holds a surface (or
+   anything else the full pass decides) asks for the full pass (`note_order_change`), since
+   the composition plan's pre-order may change and the light pass checks only each owner's
+   own inputs.
+4. `Ui::surface_passes()` counts full and light passes for tests and benchmarks.
+
+**Same pictures.** `crates/ui/tests/paint_incremental.rs` gained a layer window with three
+nested owners (moving, growing, node-scaled, re-texted, faded, shown and hidden, moved
+between parents), content drawn over them, subtree moves between windows and z-order
+changes, a second property under a UI screen (node scales change the canvas map), a third
+in a band budget of 1–3 bands per frame (jobs and generations span frames) and fixed
+sequences; every frame's composition list and textures must equal the reference paint step
+(full pass every frame). Disabling the coverage update, the content scale, the opacity patch,
+the node rebuild, the layout change or the order hook each makes it fail. All 945
+`tessera-ui` tests pass in debug and in release with the install (tier-1 goldens
+byte-identical, none re-blessed); the client's golden and real-data panel tests pass with the
+install and `TESSERA_GOLDEN_REQUIRE=1` (every tier-2 golden matched).
+
+**Regression guards.** The test
+`a_frame_without_change_paints_nothing_and_steady_hud_changes_stay_light` requires a frame
+with no change to run no surface pass and paint, start, upload and emit nothing (with the
+composition list unchanged), and 40 frames of floating-text changes to run only light passes.
+The benchmark `cargo bench -p tessera-ui --bench paint_steady -- --assert` fails the same way
+on its busiest-shaped synthetic UI (`--check` compares every frame with the reference paint
+step).
+
+### Before and after (headless, same binary)
+
+Release build of the `ui-perf` worktree with a temporary switch (since removed) that made
+the light pass refuse every surface owner, which is the pass choice before this change; the
+same command for every run, interleaved:
+
+```sh
+tessera-client --game-dir "$TESSERA_GAME_DIR" --scenario apps/client/tests/scenarios/busiest.scenario \
+  --spawn 1,109,141,62.96,15.07,413.60 --size 1920x1080 --ui-scale 1 \
+  --settle-timeout 60 --scenario-timing 60 --headless --ui-report report.md --frame-log frames.csv \
+  [--open-panel bags --open-panel character --open-panel tracker]
+```
+
+| Run (60 s window) | Load average | U1 steady mean / p99 / max (ms) | Step 8 mean (ms) | U3 steady mean | U4 (b) | U4 (f) |
+|---|---|---|---|---|---|---|
+| Before, panels open (1) | 5.48 → 3.11 | 3.010 / 5.480 / 7.06 | 2.756 | 262.2 KiB | 4.88 ms | 7.03 ms |
+| **After, panels open (1)** | 3.11 → 1.96 | **1.046** / 3.252 / 5.49 | **0.772** | 273.4 KiB | 4.23 ms | 6.51 ms |
+| Before, panels open (2) | 1.96 → 1.73 | 2.998 / 5.609 / 6.59 | 2.741 | 263.2 KiB | 5.70 ms | 6.31 ms |
+| **After, panels open (2)** | 1.73 → 1.89 | **1.066** / 3.403 / 6.34 | **0.793** | 269.9 KiB | 4.19 ms | 6.87 ms |
+| Before, no panels | 1.89 → 1.50 | 1.846 / 5.132 / 7.25 | 1.580 | 273.0 KiB | 4.43 ms | 5.86 ms |
+| **After, no panels** | 1.50 → 2.19 | **0.998** / 3.052 / 6.31 | **0.727** | 271.8 KiB | 3.44 ms | 5.71 ms |
+
+About 2,740–2,770 steady frames per run, 609 content-event frames. With the change the full
+pass runs on about 4 % of the steady frames (23–27 of 600; tracker resizes, owners with
+nested surfaces that move), the three static panels cost about 0.05 ms instead of 1.1–1.2 ms,
+and step 8 is about 3.5 times cheaper. The original binary of the main tree, before any change,
+measured U1 3.509 ms and step 8 3.241 ms in the same headless run at load 15.8 → 14.4.
+
+`paint_steady` (thread CPU time per `Ui::paint`, 600 frames per phase, load about 2–3; 871
+synthetic elements, so the full pass is much cheaper there than in the client):
+
+| Phase | Before (old pass choice) | After |
+|---|---|---|
+| idle (no change) | 0.005 ms, no pass | 0.004–0.005 ms, no pass |
+| hud (panels open) | 0.363–0.372 ms, full pass 600 / 600 | 0.245–0.246 ms, full pass 0 / 600 |
+| hud-alone | 0.232–0.239 ms, full pass 600 / 600 | 0.188–0.191 ms, full pass 1 / 600 |
+
+### Reading (indicative)
+
+- **U1 is still over its 0.3 ms mean** in this scenario (about 1.0–1.07 ms), but no longer
+  because of anything static: a steady frame without a change costs a few microseconds, and
+  what is left is the HUD's own per-frame repaint (step 8 about 0.75 ms: the floating texts'
+  canvases repainted at every new physical size, the layer's coverage re-split, the cast bar)
+  plus about 0.27 ms of the host's other steps (step 7 about 0.07 ms of it). Meeting 0.3 ms here would take a different
+  paint rule for animated node scales and moving nested entries (OPENs of this package, for
+  `ui-scaling.md` §6.1 and decision 0015 Decision 1.7), not a damage-tracking fix.
+- U3 is unchanged at about 270 KiB (it is the HUD's uploads); U4 (b) and (f) are event frames
+  and within the noise of these runs.
+
+### Review fixes (2026-10-24)
+
+- A Tile-mode owner resized to power-of-two sides in a later frame than its mode change now
+  takes the full pass (the light pass kept fit addressing); fixed sequence and proptest edits
+  added.
+- The owner's position among its siblings is taken from the decision walk (and checked in
+  O(1) in the light pass), so the full pass is linear in sibling windows again
+  (`the_full_pass_is_linear_in_sibling_windows`: 4 × the windows cost about 5 × in a release
+  build, 10 × before).
+- A recorded nested owner below a recorded ancestor is left to its own light-pass iteration,
+  so a fading layer with moving floaters stays on the light pass.
+- The UI-screen properties run at *Se* 1, 1.25 and 1.5 and leave image arrivals out: both
+  passes leave a nested canvas stale after a move by a fraction of a physical pixel (ignored
+  test `a_nested_surface_moved_by_a_fraction_of_a_pixel_is_repainted`, open question for
+  decision 0015 / `ui-scaling.md` §6.2).
+- The benchmarks' thread CPU clock is one helper (`benches/common`), wall-clock time on
+  non-Unix targets.
+
 ## Log
 
 | Date | Change |
@@ -221,3 +363,4 @@ re-measure (O200).
 | 2026-10-23 | First indicative measurement (this file): the scenario, the timing option and the test are new. |
 | 2026-10-23 | Review fixes: the report records *Se*, the window state and full-store counts; U5 over the whole run; the defeat panel open is an event frame; (c) not judged unless *Se* = 1 and (d) not measured without the device backend; music every 20 s; `--settle-timeout 60`; windowed runs have a deadline and fail when the report cannot be written. The table above is from before these fixes and was not re-measured. |
 | 2026-10-24 | Exit verification: one `TESSERA_PERF=1` run after the review fixes at load 1.3–2.4 (above): (a) and (b) met, (c) missed (U1 2.92 ms, step 8), (d) not measured; two headless runs split U1 into the static panels (about 1.1 ms, no uploads) and the HUD (about 1.5 ms). |
+| 2026-10-24 | ui-perf: surface owners in the light pass (section "ui-perf"); headless U1 3.0 → 1.05 ms, step 8 2.75 → 0.78 ms, static panels 1.1 → 0.05 ms; regression test and `paint_steady` bench. Indicative; the owner's windowed idle re-measure (O200) still decides (c). |

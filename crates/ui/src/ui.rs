@@ -592,6 +592,7 @@ impl Ui {
         if let Some(p) = self.el_mut(parent) {
             p.children.insert(pos, child);
         }
+        self.note_order_change(child);
     }
 
     /// Moves `k` to the front-most position among its siblings with the same z-level
@@ -614,6 +615,7 @@ impl Ui {
         if let Some(p) = self.el_mut(parent) {
             p.children = kids;
         }
+        self.note_order_change(k);
         self.input.hover_dirty = true;
         self.mark_dirty(k);
     }
@@ -733,6 +735,7 @@ impl Ui {
                 None
             };
         self.mark_dirty(k);
+        self.note_order_change(k);
         let mut tree_fix = None;
         if let Some(p) = self.el_mut(parent) {
             p.children.retain(|c| *c != k);

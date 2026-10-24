@@ -18,8 +18,7 @@
 //! wall-clock time, as in the client. Results are **indicative** unless taken on the reference machine under rule 1 of
 //! `docs/perf/reference-machine.md`; record the conditions next to every number.
 
-// The one `unsafe` call reads the thread's CPU clock (`thread_cpu`); std has no safe API.
-#![allow(unsafe_code)]
+mod common;
 
 use std::collections::HashMap;
 use std::collections::hash_map::DefaultHasher;
@@ -380,25 +379,6 @@ fn step(s: &mut Scene, phase: Phase, f: u32) {
     }
 }
 
-/// CPU time of the calling thread so far (`CLOCK_THREAD_CPUTIME_ID`), so that waiting for
-/// a core on a loaded machine is not counted. Falls back to wall-clock time since `start`.
-fn thread_cpu(start: Instant) -> Duration {
-    let mut ts = libc::timespec {
-        tv_sec: 0,
-        tv_nsec: 0,
-    };
-    // SAFETY: `ts` is a valid, writable `timespec` owned by this frame, and the clock id is
-    // a constant the C library defines; `clock_gettime` writes only into `ts`.
-    let rc = unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &raw mut ts) };
-    if rc != 0 {
-        return start.elapsed();
-    }
-    Duration::new(
-        u64::try_from(ts.tv_sec).unwrap_or(0),
-        u32::try_from(ts.tv_nsec).unwrap_or(0),
-    )
-}
-
 fn stats(v: &mut [Duration]) -> (f64, f64, f64, f64) {
     v.sort_unstable();
     let ms = |d: Duration| d.as_secs_f64() * 1e3;
@@ -431,9 +411,9 @@ fn main() {
         let mut slice = TimeSlice::new(Duration::from_millis(4));
         let mut unlimited = Unlimited;
         let budget: &mut dyn PaintBudget = if check { &mut unlimited } else { &mut slice };
-        let c = thread_cpu(t0);
+        let c = common::thread_cpu(t0);
         let frame = s.ui.paint(*now, budget);
-        let d = thread_cpu(t0).saturating_sub(c);
+        let d = common::thread_cpu(t0).saturating_sub(c);
         if check {
             tex.apply(&frame.ops);
             hash_composition(&frame.composition, h);

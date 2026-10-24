@@ -83,7 +83,7 @@ pub use env::{ImageRef, ImageState, MemoryEnv, NullEnv, PreparedText, TextReques
 pub use events::{Answer, Command, ControlEvent, Message, MsgArg, UiEvent};
 pub use focus::{BandChange, BandEntry, DialogKeys, MAX_HELD_RELEASES};
 pub use geom::IBox;
-pub use surface::{GroupGeometry, UiFrame};
+pub use surface::{GroupGeometry, SurfacePasses, UiFrame};
 pub use tree::ElementKey;
 pub use ui::{
     BuildCensus, MAX_BUILD_ELEMENTS, MAX_CREATE_NESTING, MAX_ELEMENTS, MAX_TREE_DEPTH, Ui,

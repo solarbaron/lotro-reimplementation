@@ -56,5 +56,11 @@ harness = false
 name = "paint_frame"
 harness = false
 
+# Steady-state step 8 on a synthetic UI shaped like the P8 busiest scenario (static panels,
+# a HUD that changes every frame; docs/perf/p8-busiest.md "ui-perf"); a plain binary.
+[[bench]]
+name = "paint_steady"
+harness = false
+
 [lints]
 workspace = true

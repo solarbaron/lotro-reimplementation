@@ -217,19 +217,23 @@ impl LiquidBox {
         Ok(b)
     }
 
-    /// Whether landblock-frame `p` is inside (boundary included), in f64.
+    /// Whether landblock-frame `p` is inside (boundary included), in f64: `p`.z lies in the
+    /// box's [`LiquidBox::column_span`] through (`p`.x, `p`.y).
+    ///
+    /// Containment is defined by the column span, not by a separate test of `p` in the box
+    /// frame, so that "a liquid box contains the point" means the same here as in the water
+    /// surface rule built on the spans (`water.md` §7.4; `water_from_spans`). Two separately
+    /// rounded tests disagreed at the boundary: for a box flat on a box-frame axis that is
+    /// almost but not exactly horizontal, the span treats the column as parallel to that
+    /// axis (direction component below 1e-12) while the point test saw it 1e-34 outside.
     #[must_use]
     pub fn contains(&self, p: [f32; 3]) -> bool {
         if !math::finite3(p) {
             return false;
         }
-        let t = &self.transform;
-        let local = rotate_d(t.rotation, math::sub(d3(p), d3(t.position)), true);
-        (0..3).all(|a| {
-            let s = f64::from(t.scale[a]);
-            let v = local[a];
-            v >= f64::from(self.min[a]) * s && v <= f64::from(self.max[a]) * s
-        })
+        let z = f64::from(p[2]);
+        self.column_span(p[0], p[1])
+            .is_some_and(|(lo, hi)| lo <= z && z <= hi)
     }
 
     /// The heights z, in the landblock frame, at which (x, y, z) is inside the box

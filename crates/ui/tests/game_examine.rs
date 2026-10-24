@@ -45,6 +45,9 @@ const KIN_LAYOUT: u32 = 0x22FF_5002;
 const KFRAME: u32 = 0x1000_0050;
 const NAMEICON: u32 = 0x1000_0060;
 const ICON: u32 = 0x1000_0061;
+const NAMEICON_FIELD: u32 = 0x1000_0062;
+const ICON_FIELD: u32 = 0x1000_0063;
+const ICON_IN: u32 = 0x1000_0064;
 const LONG_NAME: &str = "A name far too long for one line of the tooltip";
 
 fn cv() -> CharVocab {
@@ -126,13 +129,39 @@ fn exam_layout() -> UiLayout {
     nameicon = prop(nameicon, vv.pids.lb_horizontal, b(true));
     nameicon = prop(nameicon, vv.pids.lb_templates, templates(&[ICON, NAME]));
     let icon = typed(ICON, t.exam_icon, 0, 0, 40, 48);
+    // The install's form of the row (§4.2 `Icon_Base`): the icon entry is a 40 × 48 field
+    // holding the 32 × 32 `ExaminationIcon` at (4, 8).
+    let mut nameicon_field = typed(NAMEICON_FIELD, t.auto_resize_list_box, 0, 0, 229, 48);
+    nameicon_field = prop(nameicon_field, vv.pids.lb_horizontal, b(true));
+    nameicon_field = prop(
+        nameicon_field,
+        vv.pids.lb_templates,
+        templates(&[ICON_FIELD, NAME]),
+    );
+    let icon_field = child(
+        field(ICON_FIELD, 0, 0, 40, 48),
+        typed(ICON_IN, t.exam_icon, 4, 8, 32, 32),
+    );
     layout(
         EXAM,
         1920,
         1080,
         vec![
-            frame, name, bind, sep, armour, dur, desc, worth, lines, current, pinned, nameicon,
+            frame,
+            name,
+            bind,
+            sep,
+            armour,
+            dur,
+            desc,
+            worth,
+            lines,
+            current,
+            pinned,
+            nameicon,
             icon,
+            nameicon_field,
+            icon_field,
         ],
     )
 }
@@ -926,6 +955,67 @@ fn long_name_keeps_the_name_and_icon_row_within_the_list() {
     assert_eq!((nb.l, nb.w()), (40, 180));
     assert_eq!(rb.w(), 220);
     assert_eq!(built.size.0, 230);
+}
+
+#[test]
+fn an_icon_field_entry_fills_the_icon_it_holds() {
+    // §4.2 `Icon_Base` (a field holding the `ExaminationIcon`): the model's entry for the
+    // field is a list of its filled children, so the icon inside is filled where the layout
+    // puts it, and the field keeps its 40 × 48 before the name. A field with nothing to show
+    // leaves the row.
+    let mut ui = ui();
+    let tips = ExamTooltips::new(cv());
+    let mut input = input_14_1();
+    input.templates = Some(vec![ExamTemplate {
+        layout: EXAM,
+        element: NAMEICON_FIELD,
+    }]);
+    let row = |icon: RowContent| ExamRow {
+        content: RowContent::List(vec![
+            ExamRow {
+                content: RowContent::List(vec![ExamRow {
+                    content: icon,
+                    ..ExamRow::default()
+                }]),
+                ..ExamRow::default()
+            },
+            ExamRow::text("Sword"),
+        ]),
+        ..ExamRow::default()
+    };
+    let img = tessera_ui::ImageRef::Did(0x4100_0123);
+    input.rows = vec![row(RowContent::Icon {
+        image: Some(tessera_ui::game::IconImage::Composed(img.clone())),
+        ghosted: false,
+    })];
+    let built = tips.build(&mut ui, &input).unwrap();
+    assert_eq!(built.rows.len(), 1);
+    let r = built.rows[0];
+    let f = ui.find_descendant(r, ICON_FIELD).expect("icon field kept");
+    let fb = ui.layout_box(f).unwrap();
+    assert_eq!((fb.l, fb.w(), fb.h()), (0, 40, 48));
+    let icon = ui
+        .find_descendant(f, ICON_IN)
+        .expect("icon inside the field");
+    assert_eq!(ui.base_image(icon).map(|(i, _)| i), Some(img));
+    let ib = ui.layout_box(icon).unwrap();
+    assert_eq!((ib.l, ib.t, ib.w(), ib.h()), (4, 8, 32, 32));
+    let name = ui.find_descendant(r, NAME).unwrap();
+    assert_eq!(ui.layout_box(name).unwrap().l, 40);
+    ui.destroy(built.frame);
+
+    // No icon (the model's empty icon row for a record without one): the field shows
+    // nothing and leaves the row; the name moves to the left.
+    input.rows = vec![row(RowContent::Empty)];
+    let built = tips.build(&mut ui, &input).unwrap();
+    let r = built.rows[0];
+    assert!(ui.find_descendant(r, ICON_FIELD).is_none());
+    assert_eq!(
+        ui.layout_box(ui.find_descendant(r, NAME).unwrap())
+            .unwrap()
+            .l,
+        0
+    );
 }
 
 #[test]

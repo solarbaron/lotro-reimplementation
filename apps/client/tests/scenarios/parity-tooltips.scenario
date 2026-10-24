@@ -1,0 +1,103 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Tooltip sample of the parity audit (decision 0024 P8 exit criterion 1, the part "tooltips
+# of 50 items and 50 skills included"; docs/specs/item-tooltips.md, docs/specs/skill-tooltips.md).
+# Seeded selectors (scenario-feed.md §8.5) pick item records spread over thirteen item kinds
+# and non-monster skills (monster=no: monster skills have no hover tooltip) in six groups
+# whose yes/no filters exclude each other. monster=no is not a class-table filter, so the
+# skill sample can hold skills outside every class table (item-granted, session-play or
+# companion skills) that the original client may not offer the player (decision 0043 Open).
+# Each family draws more than 50 records (the last line of each over-draws by five), so that
+# overlaps and a patch that drops a candidate still leave 50 distinct records; the test takes
+# the first 50 distinct per family in line order (decision 0043 §1 item 6). With an install
+# the items fill one bag and the skills fill quickslots 1-50, each record shown once; without
+# one every selector resolves empty and the quickslot steps are skips.
+# apps/client/tests/parity_tooltips_real_data.rs paints each sampled record's hover tooltip.
+# Every name and text here is invented for Tessera.
+tessera-scenario 1
+title "Tooltip sample"
+tick 100ms
+player "Rook" level=50
+select $weapons = item kind=weapon has-icon=yes n=6 seed=3
+select $garments = item kind=wearable has-icon=yes n=6 seed=5
+select $rings = item kind=jewellery has-icon=yes n=4 seed=7
+select $shields = item kind=shield has-icon=yes n=3 seed=9
+select $scrolls = item kind=recipe-scroll has-icon=yes n=4 seed=11
+select $manuals = item kind=multi-recipe-scroll has-icon=yes n=2 seed=13
+select $parcels = item kind=package has-icon=yes n=3 seed=15
+select $letters = item kind=text-item has-icon=yes n=3 seed=17
+select $tokens = item kind=property-token has-icon=yes n=2 seed=19
+select $keys = item kind=key has-icon=yes n=3 seed=21
+select $waystones = item kind=travel-point has-icon=yes n=3 seed=23
+select $marks = item kind=milestone has-icon=yes n=2 seed=25
+select $sundries = item kind=general has-icon=yes n=14 seed=29
+select $strikes = skill monster=no harmful=yes induction=no toggle=no n=10 seed=31
+select $channels = skill monster=no harmful=yes induction=yes n=6 seed=33
+select $aids = skill monster=no harmful=no induction=no toggle=no mount=no n=12 seed=35
+select $stances = skill monster=no harmful=no toggle=yes n=10 seed=37
+select $rides = skill monster=no harmful=no toggle=no mount=yes n=2 seed=39
+select $rites = skill monster=no harmful=no induction=yes toggle=no mount=no n=15 seed=41
+
+at 0s bag 64
++0s give $weapons
++0s give $garments
++0s give $rings
++0s give $shields
++0s give $scrolls
++0s give $manuals
++0s give $parcels
++0s give $letters
++0s give $tokens
++0s give $keys
++0s give $waystones
++0s give $marks
++0s give $sundries
+at 1s quickslot 1 $strikes[0]
++0s quickslot 2 $strikes[1]
++0s quickslot 3 $strikes[2]
++0s quickslot 4 $strikes[3]
++0s quickslot 5 $strikes[4]
++0s quickslot 6 $strikes[5]
++0s quickslot 7 $strikes[6]
++0s quickslot 8 $strikes[7]
++0s quickslot 9 $strikes[8]
++0s quickslot 10 $strikes[9]
++0s quickslot 11 $channels[0]
++0s quickslot 12 $channels[1]
++0s quickslot 13 $channels[2]
++0s quickslot 14 $channels[3]
++0s quickslot 15 $channels[4]
++0s quickslot 16 $channels[5]
++0s quickslot 17 $aids[0]
++0s quickslot 18 $aids[1]
++0s quickslot 19 $aids[2]
++0s quickslot 20 $aids[3]
++0s quickslot 21 $aids[4]
++0s quickslot 22 $aids[5]
++0s quickslot 23 $aids[6]
++0s quickslot 24 $aids[7]
++0s quickslot 25 $aids[8]
++0s quickslot 26 $aids[9]
++0s quickslot 27 $aids[10]
++0s quickslot 28 $aids[11]
++0s quickslot 29 $stances[0]
++0s quickslot 30 $stances[1]
++0s quickslot 31 $stances[2]
++0s quickslot 32 $stances[3]
++0s quickslot 33 $stances[4]
++0s quickslot 34 $stances[5]
++0s quickslot 35 $stances[6]
++0s quickslot 36 $stances[7]
++0s quickslot 37 $stances[8]
++0s quickslot 38 $stances[9]
++0s quickslot 39 $rides[0]
++0s quickslot 40 $rides[1]
++0s quickslot 41 $rites[0]
++0s quickslot 42 $rites[1]
++0s quickslot 43 $rites[2]
++0s quickslot 44 $rites[3]
++0s quickslot 45 $rites[4]
++0s quickslot 46 $rites[5]
++0s quickslot 47 $rites[6]
++0s quickslot 48 $rites[7]
++0s quickslot 49 $rites[8]
++0s quickslot 50 $rites[9]

@@ -360,6 +360,20 @@ fn line(data: &CharacterData, l: &tessera_gamedata::tooltip::Line) -> ExamLine {
     }
 }
 
+/// A worth-row coin's image (`item-tooltips.md` §6.11 answer): the coin icon state of its
+/// denomination. The model's currencies are sorted largest first, so with the install's
+/// three coins (gold, silver, copper) the currency index is the coin's state; with any
+/// other currency list no image is given (Tessera rule, as `npc-windows.md` §9.2 shows only
+/// three coins).
+fn coin_icon(data: &CharacterData, index: usize) -> Option<ImageRef> {
+    data.coin_values()?;
+    data.coin_icons()
+        .get(index)
+        .copied()
+        .flatten()
+        .map(|d| ImageRef::Did(d.0))
+}
+
 fn row(data: &CharacterData, r: &Row, icon: &dyn Fn(Did) -> Option<IconImage>) -> ExamRow {
     let content = match &r.content {
         MRow::Empty => RowContent::Empty,
@@ -376,7 +390,7 @@ fn row(data: &CharacterData, r: &Row, icon: &dyn Fn(Did) -> Option<IconImage>) -
                 .iter()
                 .map(|c| ExamCoin {
                     text: c.text.clone(),
-                    icon: None,
+                    icon: coin_icon(data, c.index),
                 })
                 .collect(),
         },

@@ -1048,6 +1048,9 @@ impl ExamTooltips {
     ) -> Filled {
         let horizontal = ui.prop(k, ui.vocab().pids.lb_horizontal).bool();
         let templates = Self::templates_of(ui, k);
+        if templates.is_empty() {
+            return self.fill_held(ui, k, rows, wrap, depth);
+        }
         let empty = ExamRow::default();
         if horizontal {
             // The list grows sideways to fit its non-empty entries (§4.3). Each entry wraps
@@ -1106,6 +1109,90 @@ impl ExamTooltips {
     /// The element's `UICore_Text_fit_to_text` mode is not read (the vocabularies carry no
     /// PID for it): the `Desc` rule is applied to `ExaminationName` texts, every other text
     /// keeps the list's limit (the `Parent` reading; implementer OPEN).
+    /// A nested row whose element has no entry templates: a field holding examination
+    /// widgets (the icon field `Icon_Base`, the legendary name-and-icon field,
+    /// `item-tooltips.md` §4.2) or a list without templates. The model's entries are then
+    /// the element's own children in read order that it fills (the model's template
+    /// reader: "the row shows its filled children"), so each entry fills the child it
+    /// came from, where the layout puts it. The element keeps its designed size, grown to
+    /// hold what its children show, while any child shows something; with nothing shown it
+    /// is empty and leaves the row (§5 step 1).
+    ///
+    /// Pairing (Tessera rule): with as many children as entries, in order; otherwise each
+    /// entry takes the next child in read order that can show it (an icon an
+    /// `ExaminationIcon`, a text a text widget, a nested list or pair an element with
+    /// children, anything else any child), and an entry without one is not shown.
+    fn fill_held(
+        &self,
+        ui: &mut Ui,
+        k: ElementKey,
+        rows: &[ExamRow],
+        wrap: i32,
+        depth: usize,
+    ) -> Filled {
+        let mut children: Vec<ElementKey> = ui
+            .children(k)
+            .into_iter()
+            .filter(|c| ui.element_id(*c) != Some(super::super::ICON_LAYER_ID))
+            .take(MAX_ROWS)
+            .collect();
+        children.sort_by_key(|c| ui.el(*c).map_or(u32::MAX, |e| e.desc.read_order));
+        let pairs: Vec<(ElementKey, &ExamRow)> = if children.len() == rows.len() {
+            children.iter().copied().zip(rows.iter()).collect()
+        } else {
+            let types = self.vocab.types;
+            let text_types = types.text_rows();
+            let mut next = 0usize;
+            let mut out = Vec::new();
+            for row in rows.iter().take(MAX_ROWS) {
+                let fits = |c: ElementKey| {
+                    let ty = ui.element_type(c).unwrap_or(0);
+                    match &row.content {
+                        RowContent::Icon { .. } => ty == types.exam_icon,
+                        RowContent::Text(_) => {
+                            text_types.contains(&ty)
+                                || ui.class(c).is_some_and(WidgetClass::is_text)
+                        }
+                        // A nested entry (a field holding widgets, a pair) came from an
+                        // element with children of its own.
+                        RowContent::List(_) | RowContent::Pair { .. } => !ui.children(c).is_empty(),
+                        _ => true,
+                    }
+                };
+                if let Some(off) = children.iter().skip(next).position(|c| fits(*c)) {
+                    let at = next + off;
+                    if let Some(c) = children.get(at) {
+                        out.push((*c, row));
+                    }
+                    next = at + 1;
+                }
+            }
+            out
+        };
+        let design = ui.design_box(k).unwrap_or_default();
+        let (mut w, mut h) = (0i32, 0i32);
+        let mut shown = false;
+        for (c, row) in pairs {
+            let b = ui.layout_box(c).unwrap_or_default();
+            let left = self
+                .own_wrap(ui, c)
+                .unwrap_or_else(|| wrap.saturating_sub(b.l.max(0)).max(1));
+            let f = self.fill_row(ui, c, row, left, depth + 1);
+            if f.asm.width <= 0 || f.asm.height <= 0 {
+                ui.set_layout_box(c, IBox::from_xywh(b.l, b.t, 0, 0));
+                continue;
+            }
+            shown = true;
+            ui.set_layout_box(c, IBox::from_xywh(b.l, b.t, f.asm.width, f.asm.height));
+            w = w.max(b.l.max(0).saturating_add(f.asm.width));
+            h = h.max(b.t.max(0).saturating_add(f.asm.height));
+        }
+        if !shown {
+            return Filled::sized(0, 0);
+        }
+        Filled::sized(w.max(design.w().max(0)), h.max(design.h().max(0)))
+    }
+
     fn own_wrap(&self, ui: &Ui, entry: ElementKey) -> Option<i32> {
         let name = self.vocab.types.exam_name;
         let t = Self::text_target(ui, entry)?;

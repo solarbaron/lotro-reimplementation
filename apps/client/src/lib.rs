@@ -68,6 +68,7 @@ pub mod scene;
 pub mod screens;
 pub mod smoke;
 pub mod social;
+pub mod timing;
 pub mod travel;
 pub mod ui_host;
 pub mod wait;

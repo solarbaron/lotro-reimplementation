@@ -444,6 +444,12 @@ impl FrameLog {
         }
     }
 
+    /// Rows not kept because the log was full ([`MAX_ROWS`]).
+    #[must_use]
+    pub fn dropped(&self) -> usize {
+        self.dropped
+    }
+
     /// Rows so far.
     #[must_use]
     pub fn rows(&self) -> &[FrameRow] {

@@ -6,6 +6,12 @@ Every parser of untrusted input has a target here (`CLAUDE.md`, "Parsers treat a
 hostile"). This directory is its own Cargo workspace, so the main workspace keeps building on
 stable without libFuzzer.
 
+The complete index of which target covers which parser is the set of coverage manifests
+`coverage/*.toml`, checked by `tools/check-fuzz-coverage.sh` in CI (P8 exit criterion 2,
+[decision 0043](../docs/decisions/0043-p8-parity-audit.md) §2; `docs/DEVELOPMENT.md`). The
+table below describes the targets; some older ones have no row yet and are described by their
+own module docs and their manifest entries.
+
 | Target | Code under test | Spec |
 |---|---|---|
 | `dat_header` | `Header::parse`, `Entry::parse` round trip, `Archive::from_bytes` header checks | `docs/specs/dat-container.md` §3, §5.2 |
@@ -166,6 +172,25 @@ stable without libFuzzer.
 | `formats_gameplay_items` | item views and rules over decoded and harness-built property sets with a class parent map: kind rules, value, DPS, timing, wear and armour tables, modifiers, effects, sockets, sets, relics, legacy readers | `docs/specs/items.md` §2–§9 |
 | `net_scenario_parse` | `tessera_net::scenario` parser and static checks on arbitrary bytes, then 200 ticks of playback with the empty resolver; parse peak allocation bounded by a counting allocator | `docs/specs/scenario-feed.md` §4–§7, §11 |
 | `net_scenario_run` | a scenario (bytes before the first NUL) resolved by a synthetic resolver driven by the bytes after it (statuses, counts, DIDs, rows, labels, enum values, display names), then the headless driver with its input script; per-poll event bound and queued-weight limit | `scenario-feed.md` §7.4, §8.6, §11.1, §11.4, §12 |
+| `dat_archive_set` | `ArchiveSet::open` and its read paths over synthetic archive files written to a fresh temporary directory per run | `docs/specs/dat-container.md` §2–§7, `install-layout.md` §3.1 |
+| `text_named_tables` | `NamedTables::load` and `from_did_map` over raw parts (length-prefixed) or harness-built maps | `docs/specs/string-table.md` §9.1 |
+| `gamedata_loaders` | the creation, inventory and paperdoll loaders, `read_controls`, map regions and the vocabulary over a synthetic install with mutated records | `docs/specs/property-system.md` §4 and the P1–P5 specs the loaders serve |
+| `install_validate` | install validation, `read_project_version` and `detect_game_type` over a synthetic install tree | `docs/specs/install-layout.md` §9 |
+| `physics_input` | the controller's input packing (`decode_input`, `pack_input`) | `docs/specs/collision.md` |
+| `gamedata_quantity` | the crafting quantity reader | `docs/specs/crafting-panels.md` |
+| `particles_effect` | effect start descriptions from script-node payloads (`effect_from_payload`) | `docs/specs/particle-runtime.md` |
+| `protocol_keys` | the server key file (PKCS#8 PEM and DER), the Ed25519 SPKI reader, `major_from_alpn`, `parse_frame_length` | `docs/specs/tessera-protocol.md` §3, §4.3, §5.4; `test-server.md` §3.3 |
+| `script_source` | Lua source handed to the compiler and `eval` under the budget and memory caps | `docs/specs/plugin-runtime.md` |
+| `settings_sections` | hostile `[Map]` and `[audio]` sections of Tessera's settings | `docs/specs/map-windows.md` §8 |
+| `render_chunk_data` | `TerrainChunkData::validate` and `FarTerrainData::validate`, including the vertex, triangle and index caps | `docs/specs/render.md` |
+| `ui_social_chat` | typed social chat commands and server lines, the NPC quantity reader, NPC window names | `docs/specs/chat-window.md` §15 (CT5, CW-I21) |
+| `client_panel_placements` | the `[UI.panels]` key bridge of the client's UI host (included by path) | `docs/specs/ui-scaling.md` §5.8 |
+| `client_uiscale_command` | the `/uiscale` built-in's argument reader and handler (included by path) | `docs/specs/ui-scaling.md` §7.3 |
+| `loadtest_text` | the load tester's `/proc` readers and chat-ledger tag reader (included by path) | `docs/specs/test-server.md` §13.2–§13.4 |
+| `client_timing_report` | the timing report's text form read back (`TimingReport::parse`) | decision 0043 §3; `scenario-feed.md` §16 OPEN |
+| `app_arg_readers` | `tessera-dattool`'s DID and prefix argument readers and `tessera-loadtest`'s `--scenario` name | Tessera command lines (no format spec) |
+| `client_text_readers` | the client's small readers linked from its library: `split_tell`, `parse_sliders`, the command-line number readers, the password line editor and the `--open-panel` name readers | `docs/specs/appearance.md` §6.3; `chat-window.md`; Tessera command lines |
+| `explorer_text_readers` | the explorer's command-line value readers and whole command line, the string view's test values, and the font check behind `load_font` | Tessera command lines (no format spec) |
 
 ## Running
 

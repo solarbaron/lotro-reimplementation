@@ -89,6 +89,9 @@ pub struct CharacterData {
     /// The coin denominations' `Currency_Value`s, largest first (`economy.md` §7: the
     /// currency directory's three coins), when the install has exactly three.
     coin_values: Option<[u64; 3]>,
+    /// The worth row's coin images, gold, silver, copper (`item-tooltips.md` §6.11 answer:
+    /// the icon states of the examination coin element).
+    coin_icons: [Option<Did>; 3],
 }
 
 /// The `Currency_Value`s of the currency directory's entries (`economy.md` §7), largest
@@ -240,6 +243,10 @@ impl CharacterData {
         if coin_values.is_none() {
             tracing::info!("coin denominations unavailable; trade coin is shown unsplit");
         }
+        let coin_icons = tessera_gamedata::tooltip::layout::coin_icon_images(&data);
+        if coin_icons.iter().any(Option::is_none) {
+            tracing::info!("worth-row coin images not all found; coins without one show none");
+        }
         Ok(Self {
             store,
             strings,
@@ -252,6 +259,7 @@ impl CharacterData {
             icon_pids,
             facts: Mutex::new(HashMap::new()),
             coin_values,
+            coin_icons,
         })
     }
 
@@ -260,6 +268,13 @@ impl CharacterData {
     #[must_use]
     pub fn coin_values(&self) -> Option<[u64; 3]> {
         self.coin_values
+    }
+
+    /// The worth row's coin images, gold, silver, copper (`item-tooltips.md` §6.11), each
+    /// when the install's money-display layout names it.
+    #[must_use]
+    pub fn coin_icons(&self) -> [Option<Did>; 3] {
+        self.coin_icons
     }
 
     /// The install's record store.

@@ -625,6 +625,10 @@ impl<D: TooltipData> TooltipEngine<D> {
                         });
                     }
                 }
+                // `item-tooltips.md` §6.11 order caveat (`npc-windows.md` §9.3): the
+                // property set does not store the coins largest first, so a reader of it
+                // sorts them by `Currency_Value`, largest first (stable for equal values).
+                out.sort_by_key(|c| std::cmp::Reverse(c.value));
                 Some(out)
             };
             read().unwrap_or_default()

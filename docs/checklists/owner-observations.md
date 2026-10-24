@@ -4,7 +4,7 @@
 
 | | |
 |---|---|
-| **Status** | Open list; started 2026-10-04; last updated 2026-10-16 (p6: decision 0024 P6 items O160–O175 added: experience bar, level-up, trait panel, skill training, crafting panel, crafting trainers, gathering, plugin progression and crafting views, panel keys); 2026-10-13 (merge of p5: decision 0024 P5 items O140–O154 added: maps, travel, instance finder, mounts, plugin mount views; O155, server-added map markers, added at the P5 exit verification 2026-10-12); P4 spec writer: items O130–O137 added, decision 0035; `social-panels.md` revision 1: O130, O132, O133 gain questions; decision 0024 P3 items O110–O125 added: NPC windows, quest journal, wallet; P2 exit verification: O128 and O129 added; P2 documentation: O93–O109, O126 and O127 added); 2026-10-10 (spec writer: O85 and O86 gain the expectations the client gives for the creation screens, `character-screens.md` revision CS19–CS27); 2026-10-10 (spec writer: O24 gains the W14 question on the puddles' colour and opacity); 2026-10-10 (P1 exit verification: O88–O90 added); 2026-10-10 (spec writer: O26 gains the question on the sky line of row W9; new items O91, the far sea of row W2, and O92, the generated fallen soldiers of 3, 0xD7E7); 2026-10-10 (O24 extended to the water rows W10–W17 of `m4-5-visual.md` §4.8, with the W13 and W17 questions); 2026-10-09 (decision 0024 P1 items O80–O86 added; merge of main: the M5 items O39–O49 joined the summary next to the 2026-10-08 statuses); 2026-10-08 (every pending item checked against the data and the offline client: O5, O14, O70 answered; O6, O18, O28 narrowed; the rest marked as needing the original) |
+| **Status** | Open list; started 2026-10-04; last updated 2026-10-23 (p8: decision 0024 P8 items O196–O200 added (numbered clear of the O180–O195 that `crafting-panels.md` and `lua-plugin-api.md` cite): parity checklist walk, item and skill tooltip samples, proposed deviations, busiest-scenario re-measure; decision 0043); 2026-10-16 (p6: decision 0024 P6 items O160–O175 added: experience bar, level-up, trait panel, skill training, crafting panel, crafting trainers, gathering, plugin progression and crafting views, panel keys); 2026-10-13 (merge of p5: decision 0024 P5 items O140–O154 added: maps, travel, instance finder, mounts, plugin mount views; O155, server-added map markers, added at the P5 exit verification 2026-10-12); P4 spec writer: items O130–O137 added, decision 0035; `social-panels.md` revision 1: O130, O132, O133 gain questions; decision 0024 P3 items O110–O125 added: NPC windows, quest journal, wallet; P2 exit verification: O128 and O129 added; P2 documentation: O93–O109, O126 and O127 added); 2026-10-10 (spec writer: O85 and O86 gain the expectations the client gives for the creation screens, `character-screens.md` revision CS19–CS27); 2026-10-10 (spec writer: O24 gains the W14 question on the puddles' colour and opacity); 2026-10-10 (P1 exit verification: O88–O90 added); 2026-10-10 (spec writer: O26 gains the question on the sky line of row W9; new items O91, the far sea of row W2, and O92, the generated fallen soldiers of 3, 0xD7E7); 2026-10-10 (O24 extended to the water rows W10–W17 of `m4-5-visual.md` §4.8, with the W13 and W17 questions); 2026-10-09 (decision 0024 P1 items O80–O86 added; merge of main: the M5 items O39–O49 joined the summary next to the 2026-10-08 statuses); 2026-10-08 (every pending item checked against the data and the offline client: O5, O14, O70 answered; O6, O18, O28 narrowed; the rest marked as needing the original) |
 | **Author role** | Spec writer (dirty room) |
 | **Who fills it in** | The project owner, in the original client, on their own account and install |
 | **Method** | Black-box observation of the unmodified official client: its own UI, `/loc`, and frame captures (RenderDoc or apitrace under Wine/DXVK). Allowed by `docs/CLEAN_ROOM.md` §4 (method M3) and [ROADMAP §2.1](../ROADMAP.md#method-allowed). |
@@ -158,6 +158,11 @@ marks the item **done** here.
 | [O173](#o173) | Gathering nodes: highlight, cursors, gathering bar, loot or bags, node removal, refusals | `crafting-panels.md` §9.1; `interaction.md` §3.3–§3.8 | Look, timing | open (P6) |
 | [O174](#o174) | Plugin progression and crafting views: profession levels and titles, events, `RecipeAdded`, untrained list, vocation | `lua-plugin-api.md` §15.6 | Own test plugin | open (P6) |
 | [O175](#o175) | Panel toggle keys: crafting, trait and skills panels, profession toggles, close behaviour | `crafting-panels.md` §12; `progression-panels.md`; `keymap.md` §8.2 | Key-binding options | open (P6) |
+| [O196](#o196) | Walk the parity checklist row by row in the original client | `docs/checklists/parity.md`; decision 0043 §1 | Look, every system | open (P8 criterion 1) |
+| [O197](#o197) | Compare the 50 sampled item tooltips with the original | decision 0043 §1 item 6; `item-tooltips.md` | Look, local tier-2 images | open (P8 criterion 1) |
+| [O198](#o198) | Compare the 50 sampled skill tooltips with the original | decision 0043 §1 item 6; `skill-tooltips.md` | Look, local tier-2 images | open (P8 criterion 1) |
+| [O199](#o199) | Accept or reject each proposed deviation of the parity checklist (decisions 0016 and 0022 included) | `docs/checklists/parity.md`; decision 0043 §1 items 4–5 | Decision | open (P8 criterion 1) |
+| [O200](#o200) | Re-measure the busiest scenario on the idle reference machine with `TESSERA_PERF=1` | decision 0043 §3; `docs/perf/p8-busiest.md`; decision 0010 | Reference machine, idle | open (P8 criterion 3) |
 
 M4 exit criteria that wait on these items ([ROADMAP M4 status](../ROADMAP.md#m4-status)):
 criterion 2 (bodies play idle, walk and run): O8, O9, O16 (O14 answered from the client on 2026-10-08); criterion 3 (worn and held
@@ -215,6 +220,16 @@ progression and crafting views with the original; no P6 exit criterion waits on 
 ([decision 0037](../decisions/0037-p6-trait-tree-and-recipe-census.md)), and they block nothing
 until P8. They number in one sequence the rows the P6 specs proposed (`crafting-panels.md`
 O180–O191, `lua-plugin-api.md` O192–O195); the mapping is at the head of the section.
+
+P8 items O196–O200 ([below](#p8-items)) are the owner's part of the P8 exit criteria
+([decision 0043](../decisions/0043-p8-parity-audit.md)): criterion 1 waits on O196 (walking
+`docs/checklists/parity.md`), O197 and O198 (the tooltip sample) and O199 (the proposed
+deviations); criterion 3 waits on O200 (the idle re-measure). Unlike the earlier P rows they
+block P8. They are numbered from O196 to stay clear of every number an Accepted spec cites:
+`crafting-panels.md` §17 still calls its proposed rows O180–O191 (this file numbers them into
+the P6 items, its O180–O184 becoming O166–O169) and `lua-plugin-api.md` §15.6 calls its rows
+O192–O195 (now O174). The numbers O180–O195 are not used for rows in this file
+([retired numbers](#retired-o180-o195)).
 
 ---
 
@@ -3218,3 +3233,149 @@ crafting profession entries and any trait or training entries.
 **Record:** which key opens which panel; whether a second press closes it and whether Escape
 does; whether the profession entries have a default key and what they do when pressed (open the
 panel at that tab or something else); whether opening one panel closes another.
+
+<a id="p8-items"></a>
+## Decision 0024 P8 items (parity audit)
+
+These rows are the owner's part of the P8 exit criteria
+([decision 0043](../decisions/0043-p8-parity-audit.md)): criterion 1 passes only when the owner
+has walked the parity checklist, compared the tooltip sample and answered the proposed
+deviations (O196–O199), and criterion 3 is judged only on the owner's idle reference machine
+(O200). Unlike the rows of P0–P6, they do block P8. O199 is a decision, not an observation, and
+O200 is a measurement of Tessera, not of the original. Describe what you see in your own words;
+never copy item, skill, effect, NPC or place names, tooltip texts or chat lines into this file
+or into `docs/checklists/parity.md`; use row IDs, ordinals and DIDs.
+
+**Row states** (decision 0043 §1 item 2) that the owner writes in `parity.md`: `pass` (it
+matches), `differs (owner, DATE, NOTE)` (it does not match, or a proposed deviation is
+rejected; NOTE in your own words), and `deviation (accepted by owner, DATE, REASON)`. The spec
+writer moves a `differs` row on: to `deviation (proposed)` when the difference is a Tessera
+rule or cannot be matched, or back to `pending` once Tessera is fixed, for a new comparison.
+
+<a id="retired-o180-o195"></a><a id="o180"></a><a id="o181"></a><a id="o182"></a><a id="o183"></a><a id="o184"></a>
+**Retired numbers O180–O195.** No row of this file has these numbers. The Accepted
+`crafting-panels.md` §17 proposed owner checks O180–O191 and `lua-plugin-api.md` §15.6 proposed
+O192–O195; they are numbered into the [P6 items](#p6-items) (mapping at the head of that
+section: O180 → O166, O181 → O167, O182 → O167, O183 → O169, O184 → O168, O185 → O170, O186 →
+O167, O187 → O171, O188 → O172, O189 → O172, O190 → O173, O191 → O168, O192–O195 → O174). A
+reference to O180–O195 in those specs means the mapped P6 item; the P8 items are O196–O200.
+The anchors `o180`–`o184` lead to this note, so older links to the P8 items land here.
+
+**Tessera's side** for every row: the evidence per `parity.md` row in
+`docs/checklists/parity-tessera.md`, and the P8 status in
+[ROADMAP P8](../ROADMAP.md#p8-status).
+
+<a id="o196"></a>
+## O196. Walk the parity checklist in the original client (P8)
+
+**Spec:** `docs/checklists/parity.md` (the one parity checklist; decision 0043 §1); the
+Tessera-side evidence in `docs/checklists/parity-tessera.md`.
+
+**Tessera's side:** every row names the specs it rests on, the earlier owner rows it covers and
+its state; `parity-tessera.md` names, per row, the scenario, `--open-panel` name, test or
+command that shows Tessera's current output. Agents never set a row to `pass`.
+
+**What to do:** once `parity.md` is Accepted, go through it row by row. For each row, show
+Tessera's output with the command its `parity-tessera.md` entry names, then look at the same
+system in the original client. Where a row cites earlier owner rows (O1–O175), the comparison
+answers them too.
+
+**Record:** in `parity.md`, per row, `pass`, or `differs (owner, DATE, NOTE)` with a short note
+in your own words of what differs (say in the note if you think it should be a deviation
+rather than a fix; the spec writer then moves the row to `deviation (proposed)` or, once
+Tessera is fixed, back to `pending`); the date and client build of the session. Mark the earlier owner rows a passing row covers as **done** here.
+
+<a id="o197"></a>
+## O197. The 50 sampled item tooltips (P8)
+
+**Spec:** decision 0043 §1 item 6; `item-tooltips.md`; `scenario-feed.md` §8 (seeded selectors).
+
+**Tessera's side:** the committed scenario `apps/client/tests/scenarios/parity-tooltips.scenario`
+chooses 50 item records from your install by its seeded `select` lines; the real-data test
+`apps/client/tests/parity_tooltips_real_data.rs` paints their tooltips with the client's UI host
+into the decision-0031 tier-2 directory
+(`${TESSERA_GOLDEN_DIR:-${XDG_CACHE_HOME:-~/.cache}/tessera/goldens}/…/<install version>/`),
+with a local index of ordinal, DID and name. Run it first:
+`TESSERA_GAME_DIR=… cargo test --release -p tessera-client --test parity_tooltips_real_data`.
+The images and the index stay local; the sample changes when the install is patched.
+
+**What to do:** for each item ordinal 1–50 of the index, find the item in the original client
+(on your character, a vendor, the auction house or a wardrobe preview; the index name helps you
+find it) and compare its tooltip with Tessera's image: rows and their order, values, colours,
+icons, wrapping and size.
+
+**Record:** the install version the index directory names; per ordinal and DID: same, or what
+differs in your own words (which row, what kind of difference); ordinals you could not find in
+the original. **Do not record names or tooltip text.**
+
+<a id="o198"></a>
+## O198. The 50 sampled skill tooltips (P8)
+
+**Spec:** decision 0043 §1 item 6; `skill-tooltips.md`; `scenario-feed.md` §8 (seeded
+selectors).
+
+**Tessera's side:** as O197, for the 50 skill records the same scenario chooses (spread over
+the yes/no attributes of the `skill` selector family; 50 distinct skills, each listed once in
+the index), painted by the same test into the same
+local directory and index.
+
+**What to do:** for each skill ordinal 1–50 of the index, open its tooltip in the original
+client on a character of its class (skills panel or quickslot), at a level where it is
+available if you can, and compare it with Tessera's image: rows and their order, values,
+cooldown and induction rows, colours, icon, wrapping and size.
+
+**Record:** the install version; per ordinal and DID: same, or what differs in your own words;
+the character level you compared at when it changes values; ordinals you could not reach (no
+character of that class, level too low). The sample's filter excludes monster skills but is
+not a class filter (no Accepted spec names the class labels yet, decision 0043 Open), so some
+ordinals may be skills that no class offers a player in the original client; list those as
+"not reachable", not as a difference. **Do not record names or tooltip text.**
+
+<a id="o199"></a>
+## O199. Accept or reject each proposed deviation (P8)
+
+**Spec:** `docs/checklists/parity.md` (rows in state `deviation (proposed)`); decision 0043
+§1 items 4–5.
+
+**Tessera's side:** every proposed deviation names its reason and the decision or spec rule
+behind it. Decisions [0016](../decisions/0016-plugin-class-helper.md) (Tessera's own plugin
+`class` helper) and [0022](../decisions/0022-bundled-ui-font.md) (bundled Noto Sans fallback
+font) are listed as proposed unless you have already accepted them as deviations. Already
+accepted, no answer needed: decision 0040 (UI scaling), P7 dropped (decision 0024 amendment),
+the walker debug keys off the `keymap.md` §8.2 defaults (2026-10-16).
+
+**What to do:** read each proposed deviation and its reason; where it helps, compare the two
+clients for that row (O196).
+
+**Record:** per row, in `parity.md`: `deviation (accepted by owner, DATE, REASON)` with your
+reason in a few words, or `differs (owner, DATE, NOTE)` with "rejected" and what Tessera should
+do instead in NOTE (the row stays `differs` until Tessera follows; then the spec writer sets it
+back to `pending` for a new comparison).
+
+<a id="o200"></a>
+## O200. Re-measure the busiest scenario on the idle reference machine (P8)
+
+**Spec:** decision 0043 §3; `docs/perf/p8-busiest.md`; [`reference-machine.md`](../perf/reference-machine.md)
+rules; decision 0015 §6 (U1–U5); decision 0010.
+
+**Tessera's side:** the committed scenario `apps/client/tests/scenarios/busiest.scenario` (at
+least 50 actors with figures, combat, a fellowship of six, 10 chat lines per second, the main
+panels, at least 60 s after settle) runs at the reference location named in
+`docs/perf/p8-busiest.md`, with the M4.5 systems at their `walker.md` defaults, in a release
+build, as the windowed scenario run (`scenario-feed.md` §12.4) with `--size 1920x1080`
+requested and `--ui-scale 1`, once paced (vsync) and once unpaced (`--no-vsync`); the budgets
+are asserted only with `TESSERA_PERF=1`. Agent runs on a loaded machine are recorded there as
+indicative.
+
+**What to do:** on the reference laptop, idle (nothing else running, mains power, the power
+profile of `reference-machine.md`), run the command `docs/perf/p8-busiest.md` names with
+`TESSERA_PERF=1` and `TESSERA_GAME_DIR` set, once with archives cached and once cold if the file
+asks for it.
+
+**Record:** in `docs/perf/p8-busiest.md`, with the details rule 1 of `reference-machine.md` asks
+for (machine and driver, the surface size the compositor gave, vsync, power profile, caching,
+anything else running): the paced run's count of frames over 50 ms after settle (budget 0); the
+unpaced run's frame-time p99 after settle (budget 16.7 ms); U1 and U3 over the steady-state
+frames, U4 (a), (b) over the event frames (or "no event frames"), U4 (f) over the chat frames,
+U4 (c)–(e) "not applicable", U2 ("not measured" if the adapter has no timestamp queries), U5;
+audio underruns; pass or fail per budget.

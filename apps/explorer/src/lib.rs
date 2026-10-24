@@ -138,3 +138,6 @@ pub mod world_view;
 
 pub use app::{AppConfig, ExplorerApp, ScreenshotPlan, run};
 pub use error::ExplorerError;
+/// The string view's test-value reader, public for `fuzz/` (target
+/// `explorer_text_readers`, decision 0043 §2).
+pub use views::parse_values;

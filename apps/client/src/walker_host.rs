@@ -281,7 +281,9 @@ pub fn walker_config(args: &Args) -> WalkerConfig {
         interiors: args.interiors,
         keymap: args.keymap.clone(),
         flight,
-        frame_log: args.frame_log.is_some() || args.fly_path.is_some() || args.duration.is_some(),
+        frame_log: args.frame_log.is_some()
+            || args.fly_path.is_some()
+            || args.timing_secs().is_some(),
         heading: args
             .heading
             .map(tessera_net::model::heading_from_compass_degrees),
@@ -298,7 +300,7 @@ pub fn walker_config(args: &Args) -> WalkerConfig {
             ..CharacterConfig::default()
         },
         autorun: args.autorun.as_deref().map(|g| g == "walk"),
-        bench: args.duration.map(|secs| crate::walker::BenchPlan {
+        bench: args.timing_secs().map(|secs| crate::walker::BenchPlan {
             duration: Duration::from_secs(secs),
             settle_timeout: Duration::from_secs(args.settle_timeout),
         }),

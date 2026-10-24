@@ -851,6 +851,54 @@ fn example_14_4_worth_coins() {
 }
 
 #[test]
+fn worth_coins_sort_a_property_set_currency_list_largest_first() {
+    // §6.11 order caveat (`npc-windows.md` §9.3): the currency directory's property set
+    // stores silver, gold, copper; a reader of it sorts by `Currency_Value`, largest first,
+    // so the breakdown of example 14.4 is unchanged.
+    let mut m = install();
+    let list_pid = m.known("Currency_CurrencyList");
+    let currency = m.known("Currency_Currency");
+    m.records.insert(
+        CURRENCY_DIR,
+        Arc::new(set(vec![(
+            list_pid,
+            PropertyValue::Array(PropertyArray {
+                count: 3,
+                elements: [SILVER, GOLD, COPPER]
+                    .iter()
+                    .map(|&d| PropertyEntry {
+                        pid: currency,
+                        value: PropertyValue::DidRef(d),
+                    })
+                    .collect(),
+            }),
+        )])),
+    );
+    let e = TooltipEngine::new(m);
+    let req = TooltipRequest {
+        instance: Instance {
+            quantity: Some(2),
+            ..Instance::default()
+        },
+        ..TooltipRequest::hover(ITEM)
+    };
+    let m = e.build(&req, &Viewer::default()).expect("tooltip");
+    let worth = m
+        .rows
+        .iter()
+        .find(|r| r.widget == Widget::Worth)
+        .expect("worth");
+    let RowContent::Money { coins, .. } = &worth.content else {
+        panic!("{:?}", worth.content);
+    };
+    let c: Vec<_> = coins
+        .iter()
+        .map(|c| (c.currency, c.index, c.count))
+        .collect();
+    assert_eq!(c, [(GOLD, 0, 2), (SILVER, 1, 468), (COPPER, 2, 10)]);
+}
+
+#[test]
 fn generic_rows_follow_6_4() {
     let e = engine();
     let m = e

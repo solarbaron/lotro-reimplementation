@@ -144,6 +144,18 @@ binding and the renderer composition are built and verified; the §5–§6 live 
 text integration into the UI element tree — which the committed goldens G1, G3–G8 and the
 real-data goldens depend on — is the outstanding follow-up.
 
+**P8 (parity audit) is in its exit phase** ([P8 status](docs/ROADMAP.md#p8-status),
+[decision 0043](docs/decisions/0043-p8-parity-audit.md), Proposed): the one parity checklist
+[`parity.md`](docs/checklists/parity.md) (178 client systems, a sample of 50 item and 50 skill
+tooltips, 8 deviations and the performance row) is Accepted, and its Tessera-side evidence is
+recorded per row; the tooltip sample paints all 100 tooltips from the install with no panel
+defect; every parser of `crates/` and `apps/` (outside `tessera-compat`) has a fuzz target or
+an exemption naming one, checked in CI by `tools/check-fuzz-coverage.sh` (413 parsers, 0 gaps);
+and the busiest scenario (a crowd, combat, a full fellowship, steady chat, synchronised music)
+runs with a timing report. Still open: the owner's walk of the checklist in the original client,
+and the frame-time budgets on the idle reference machine (an indicative run meets the frame
+budgets but shows the UI paint about ten times over its budget in that scenario).
+
 **M8 (official-server compatibility) is partly done and needs more work**
 ([M8 status](docs/ROADMAP.md#m8-status)): all six Phase 1 specifications
 ([`official-login.md`](docs/specs/official-login.md),
@@ -188,6 +200,7 @@ more work.
 | Social panels (fellowship display with shared vitals, invitation prompt, trade window, Social panel friend and ignore lists), tells, instant-message tab and named chat channels (protocol 1.2 on the test server), synchronised fellowship music, plugin `Party` views | done (P4, merged): criteria 1–3 pass on Tessera's side; 4 committed synthetic scenarios with logs; synchronised starts within 0.0001 s (worst 8.9e-16 s); specs Accepted and code conformed (2026-10-11) |
 | World map with notes, feed markers and filters, minimap markers, place lookup (`/findplace`), travel window and travel presentation, instance finder with queue and alert, instance-travel window, mounted walker (`--mount`, `/ride`, `toggle_mount`), plugin mount views; scenario feed revision "P5 travel" | P5 criteria pass on Tessera's side: 1,525 / 1,525 map regions shown, 1,523 marked, 0 failures; 721 / 722 mount effects drawable per body (1 categorised); 13 local window goldens matched, 12 judged correct (the loading screen is not drawn whole); 6 synthetic goldens; specs in review |
 | Experience bar and level-up, trait panel with trees, branches, cells and slots, skill- and craft-training windows, crafting panel with professions, tiers, meters, recipe list and make controls, recipe-scroll tooltips, gathering hotspots, plugin progression and crafting views (`lua-plugin-api.md` §15.6); scenario feed revision "P6 progression" | P6 criteria pass on Tessera's side: 7,791 / 7,791 recipe records categorised with 0 failures (and 10 professions, 7 vocations, 7 guilds, 32 trainers, 335 gathering nodes, 6,055 scrolls); 17 trees and 1,216 placements categorised (trait half provisional, held by decision 0037 until `progression-panels.md` lands); 4 committed synthetic scenarios replay byte for byte; 8 synthetic panel goldens; 3 fuzz targets; specs in review, `progression-panels.md` not yet in the tree |
+| Parity audit: the parity checklist and its evidence, the 50 + 50 tooltip sample, fuzz coverage manifests and checker, the busiest scenario with `--scenario-timing` | P8 exit phase: criterion 2 passes on Tessera's side (413 parsers, 0 gaps, 19 new targets 60 s clean); 100 / 100 sample tooltips painted with 0 audit failures; owner walk and idle re-measure pending |
 | Official-server compatibility (`tessera-compat`, M8) | partly done, needs more work ([decision 0034](docs/decisions/0034-official-server-compatibility.md)): protocol specs written but not Accepted, building paused by incident [0041](docs/decisions/0041-incident-m8-spec-contamination.md); `backend`, `login`, `session`, and `world` codecs built in `crates/compat` (61 tests, 3 fuzz targets); play/gameplay handlers, end-to-end client wiring, and live verification still need more work |
 
 The full plan, with exit criteria per milestone, is in [docs/ROADMAP.md](docs/ROADMAP.md).

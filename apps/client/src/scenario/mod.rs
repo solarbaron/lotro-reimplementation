@@ -350,6 +350,12 @@ pub fn run(mut args: Args) -> u8 {
         let _ = e.print();
         return EXIT_USAGE;
     }
+    if args.scenario_timing.is_some() && install == InstallChoice::None {
+        // A timing run measures the walker, which needs an install.
+        let e = usage_error("--scenario-timing needs an install (none was found)");
+        let _ = e.print();
+        return EXIT_USAGE;
+    }
     let resolved = match prepare(&args, &install) {
         Ok(r) => Arc::new(r),
         Err(e) => {
@@ -362,9 +368,9 @@ pub fn run(mut args: Args) -> u8 {
         return overlay::run_headless(&args, resolved);
     }
     // A headless run with the game UI attached (`--ui`, `--open-panel`, `--skin`,
-    // `--ui-script`) and an install, without `--screenshot`: the walker runs offscreen with
-    // the UI, which drives the NPC, quest, social and P5 windows from the feed
-    // (`scenario-feed.md` §12.2 OPEN). `--server` (overlay), `--screenshot` and runs without
+    // `--ui-script`, or `--scenario-timing`, which implies `--ui`) and an install, without
+    // `--screenshot`: the walker runs offscreen with the UI, which drives the NPC, quest,
+    // social and P5 windows from the feed (`scenario-feed.md` §12.2 OPEN). `--server` (overlay), `--screenshot` and runs without
     // an install keep the driver-only and walker-only paths above and below.
     if headless && args.ui_enabled() && args.screenshot.is_none() && install.is_some() {
         return run_headless_ui(args, resolved, install);
@@ -395,7 +401,9 @@ pub fn run(mut args: Args) -> u8 {
 /// Runs a resolved scenario headless with the game UI attached and returns the exit code
 /// (`scenario-feed.md` §12.2 OPEN): the walker runs offscreen with the UI
 /// ([`crate::ui_host::run::run`]), the runtime plays the feed and writes the log, and the
-/// run ends when the feed reports `Finished`. A log that could not be written is a run-time
+/// run ends when the feed reports `Finished` (with `--scenario-timing` also when the timed
+/// window's duration is over, whichever comes first; a run whose window never started
+/// exits non-zero, [`crate::timing`]). A log that could not be written is a run-time
 /// error (5), as in a windowed run.
 fn run_headless_ui(mut args: Args, scenario: Arc<ResolvedScenario>, install: Option<&Path>) -> u8 {
     let slot = match open_log(&args, install) {

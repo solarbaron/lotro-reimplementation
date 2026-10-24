@@ -42,6 +42,11 @@
 > specs are Accepted and the foundational `backend`, `login`, `session`, and `world` modules in
 > `tessera-compat` are built, while play/gameplay message integration, end-to-end client
 > wiring, and live verification still need more work.
+> [P8](#p8) (parity audit) started on 2026-10-23 on branch `p8`: [decision 0043](decisions/0043-p8-parity-audit.md)
+> (Proposed) fixes what its exit criteria mean. Exit verification 2026-10-24
+> ([P8 status](#p8-status)): criterion 2 passes on Tessera's side, criterion 1 is data-side done
+> and waits for the owner's walk of the parity checklist, criterion 3 waits for the owner's
+> re-measure on the idle reference machine.
 > Milestones are ordered by dependency: each one builds on the previous one.
 
 <a id="purpose"></a>
@@ -1100,7 +1105,7 @@ existing third-party UI plugins that the user has installed.
    create their windows and respond to input. Their incompatibilities are recorded.
 5. Sandbox escape tests: plugins cannot read or write outside their tree or data
    directory, cannot load C modules, and cannot exceed memory and instruction limits.
-6. The plugin-namespace interoperability rules are recorded ([0022](decisions/0022-plugin-runtime.md),
+6. The plugin-namespace interoperability rules are recorded ([0023](decisions/0023-plugin-host-split.md),
    `CLAUDE.md` Naming, which replaces the former ARCH §18.2 OPEN).
 7. **UI budgets.** U1–U5 of decision 0015 §6 hold, measured with its scripted run under
    `docs/perf/reference-machine.md`, at 3840 × 2160 fullscreen and at the window size the
@@ -1136,7 +1141,7 @@ and `render.md` §6, in Review at this verification, were Accepted after their r
 | 3 | ✅ (Tessera side) | `cargo test --release -p tessera-client --test ui_skin_real_data`: a generated skin (CC0 one-colour TGA files in a temporary skins root) changes the checked art of 13 / 13 panels that have skinnable art in their default view (P11 and P14 have none); the panel override moves P6 to (40, 30, 240, 290); a missing skin file shows the placeholder; turning the skin off restores the art. `tessera-ui` `skin_real_data`: the skin tables of the install load (5,625 art-asset labels, 4,742 base-table entries, SI1–SI9 hold). Optional cross-check with a published skin: O41. |
 | 4 | ⏳ owner install pending | No `Plugins` folder exists on the owner's machine (`compat_real_plugins` reports it and passes as a skip). Tessera's synthetic plugin suite passes: `tessera-plugins` `compat_plugins` 12 / 12 (plugins load, create windows, respond to clicks, hover, typing, keys, timers and shell commands), `ui_classes`, `ui_controls`, `ui_input`, `ui_lifetime`, `class_helper` 37 / 37, and `tessera-client` `plugins_suite` 3 / 3. The current incompatibility table (18 rows) is in the module docs of `crates/plugins/tests/compat_plugins.rs`; the visible ones: game-styled windows use a neutral frame (no call yet to build a plugin control from a based layout element), check boxes draw no mark, quickslots draw no icon, `ControlList:Insert`/`Set` append. The 14 plugins of `plugin-api-usage.md` §9: owner observation O40. |
 | 5 | ✅ | `cargo test --release -p tessera-plugins --test escape`: 6 / 6 (path traversal, absolute paths, symlinks, `import` tricks, image paths and plugin-data keys refused; C modules and bytecode refused; memory limits against string, table, `gsub` and format growth; instruction limits against loops, `pcall`/`xpcall` handlers, coroutines, patterns, metamethods and finalizers, per tick and at close); `ui_escape` 7 / 7 (UI-layer paths, refused image formats, hostile numbers, object caps); `sandbox` 6 / 6. |
-| 6 | ✅ | [Decision 0022](decisions/0022-plugin-runtime.md) and `CLAUDE.md` Naming record the plugin-namespace interoperability rules. This verification enforced the naming rule in the code: the namespace module of `tessera-plugins` and its bindings got neutral names (`root_ns`, `ns_root`); `tools/content-allowlist.txt` now allows the original names only in `crates/plugins/tests/` (the stale `crates/script/*` entry is gone, so the plugin-free core is checked). |
+| 6 | ✅ | [Decision 0023](decisions/0023-plugin-host-split.md) and `CLAUDE.md` Naming record the plugin-namespace interoperability rules. This verification enforced the naming rule in the code: the namespace module of `tessera-plugins` and its bindings got neutral names (`root_ns`, `ns_root`); `tools/content-allowlist.txt` now allows the original names only in `crates/plugins/tests/` (the stale `crates/script/*` entry is gone, so the plugin-free core is checked). |
 | 7 | ❌ not met (indicative) | [docs/perf/m5-ui-budgets.md](perf/m5-ui-budgets.md), three runs of the scripted run at 3840 × 2160 and 1920 × 1080 offscreen on the loaded reference laptop. Third run (this verification, 3840 × 2160, load 8–13): U1 walking mean 0.89 ms, p99 8.4 ms (budget 0.3 / 1.0 ms) **fails**; U4 (b) 12.8 ms and U4 (f) 6.1 ms (4 ms) **fail**; U4 (a) 33.5 ms passes here but was 54.0 ms on the second run; U3 (steady mean 72 KiB) and U5 (canvases 45 MiB, textures 90 MiB, images 11 MiB) **pass**; U2 is a proxy only (no timestamp queries in `tessera-render`, `render.md` §6.16 OPEN); U4 (c)–(e) are not measured. The time is in `tessera-ui`'s step 8 (`Ui::paint`). The painter probe (`crates/ui/benches/paint_probe.rs`) has measured Mix colour (1.4 ns/pixel) and the erase. After the step-8 optimisation (2026-10-09, indicative, loaded machine) every U1 mean and p99 was inside the budget in three of five runs ([m5-ui-budgets.md](perf/m5-ui-budgets.md) "Step-8 optimisation"). Idle re-measurement and the compositor-window run: O49. |
 
 Repository checks in this verification: `cargo fmt --check` (workspace and `fuzz/`), `cargo
@@ -2632,6 +2637,102 @@ client's readings (a trainer opened by name sends nothing; a `recipes` offer ope
 skill-training window, PP18). Open: the plugin progression views read records on the main
 thread (ARCH §21 OPEN); the windows draw no item icons and no recipe cooldown timers (OPENs
 in `apps/client/src/progression/present.rs`).
+
+<a id="p8"></a>
+### P8: Parity audit
+
+**Goal:** one checklist of every client system, compared by the owner with the original
+client ([decision 0024](decisions/0024-parity-track.md) §5 P8), and the two engineering audits
+that close the parity track: every parser Tessera has (since M0) is fuzzed, and the frame-time
+budgets hold in the busiest scenario on the reference machine. P8 builds no new gameplay
+presentation; it checks what P0–P6 built (P7 was dropped by the owner on 2026-10-16, so P8
+depends on P1–P6). Client half only: `server-content.md` §7 is unchanged, `tessera-server`
+runs no gameplay rule and links no data crate. `crates/compat` (M8) is outside P8 and is
+audited by the M8 package. Started 2026-10-23 on branch `p8` (worktree `wt-p8`).
+
+<a id="p8-deliverables"></a>
+**Deliverables**
+
+- `docs/checklists/parity.md`: the one parity checklist, a row per client system and part the
+  owner can compare, with the states `pending`, `pass`, `deviation (proposed)`,
+  `deviation (accepted by owner, date, reason)`, `differs (owner, date, note)` and `not built`; written by the dirty-room spec
+  package and independently reviewed; only the owner sets `pass`, `differs` or an accepted deviation
+  ([decision 0043](decisions/0043-p8-parity-audit.md) §1). Beside it
+  `docs/checklists/parity-tessera.md`: the Tessera-side evidence per row (what is built, the
+  tests, scenarios, goldens and commands that show it), recorded by agents.
+- The tooltip sample: the committed synthetic scenario
+  `apps/client/tests/scenarios/parity-tooltips.scenario` (seeded `select` lines of the `item`
+  and `skill` families, selectors only, no DIDs; `scenario-feed.md` §8) and the real-data test
+  `apps/client/tests/parity_tooltips_real_data.rs`, which paints the 50 distinct item and 50
+  distinct skill tooltips with the client's UI host into the decision-0031 tier-2 local directory with a local
+  index of ordinal, DID and name (never committed; the sample depends on the install version).
+- Fuzz coverage: the manifests `fuzz/coverage/*.toml` (every parser of `crates/` and `apps/`
+  with its fuzz target or an exemption naming the covering target), the checker
+  `tools/check-fuzz-coverage.sh` and its CI job, and fuzz targets for any parser found without
+  one (decision 0043 §2).
+- The busiest scenario: the committed synthetic `apps/client/tests/scenarios/busiest.scenario`
+  (at least 50 feed actors with figures, combat with target frame, casts, effects, floating
+  text and a defeat, a fellowship of the player and five members with changing vitals, 10 chat
+  lines per second, the main panels open, synchronised music if the feed allows it, at least
+  60 s after the settle wait), measured in the existing windowed scenario run on the wall clock
+  (`scenario-feed.md` §12.4; paced and `--no-vsync`, `--size 1920x1080` requested and the
+  surface given recorded, `--ui-scale 1`), its real-data test (the scenario resolves and plays
+  on the install; budgets asserted only with `TESSERA_PERF=1`) and `docs/perf/p8-busiest.md`
+  (the reference location, the commands, indicative and reference numbers; decision 0043 §3).
+- [Decision 0043](decisions/0043-p8-parity-audit.md): what P8's three exit criteria mean.
+- Documentation: owner rows O196–O200
+  ([owner-observations.md](checklists/owner-observations.md#p8-items)); at close-out
+  `CLAUDE.md` Current state.
+
+<a id="p8-specs"></a>
+**Specs needed:** `docs/checklists/parity.md` (new, dirty room, independently reviewed before it
+counts for criterion 1); no new format or protocol spec. The checklist rows cite the Accepted
+specs of P0–P6 and of M1–M7 that the client shows, and the proposed deviations cite their
+decisions and spec rules. [`scenario-feed.md`](specs/scenario-feed.md) is used as Accepted: the
+busiest scenario runs in its existing windowed mode (§12.4), and if the scenario needs a form
+the feed lacks, that is an OPEN for its spec writer, not a change made by an implementer.
+Decision 0043 asks the spec writer whether an Accepted spec should name the class mapper's
+labels (needed before a committed scenario may use `skill class=@…`, §13 rule 2), and
+`parity.md` needs a revision for decision 0043's `differs` state, the owner rows O196–O200
+and row PF1's budgets.
+
+**RE tasks:** a census of the install's UI layouts (M1), only to build the system list of
+`parity.md`. No protocol, server or client-binary work.
+
+<a id="p8-exit"></a>
+**Exit criteria** (decision 0024 §5, quoted)
+
+1. `docs/checklists/parity.md`: every row passes or has an owner-accepted deviation
+   (tooltips of 50 items and 50 skills included).
+2. Every new parser has a fuzz target.
+3. Frame-time budgets hold in the busiest scenario on the reference machine
+   (`TESSERA_PERF=1`, decision 0010).
+
+What the checklist, its row states, the tooltip sample, "every new parser" and "the busiest
+scenario" with its budgets mean is fixed by
+[decision 0043](decisions/0043-p8-parity-audit.md) (Proposed). Criterion 1 is the owner's
+(O196–O199) and criterion 3 is judged only on the idle reference machine (O200): paced, 0 frames
+over 50 ms; unpaced, p99 ≤ 16.7 ms; U1–U5 at *Se* = 1; no audio underruns. Agent runs on a
+loaded machine are indicative.
+
+<a id="p8-status"></a>
+**Status:** started 2026-10-23 on branch `p8` (worktree `wt-p8`); **exit verification
+2026-10-24**: criterion 2 passes on Tessera's side (the CI run on the exit commit is still to
+come), criterion 1 is data-side done with the owner's observation pending, criterion 3 is open
+(indicative runs only; the owner re-measures). [Decision 0043](decisions/0043-p8-parity-audit.md)
+is Proposed (waits for the owner). Nothing of P8 is committed yet; the evidence commit is to be
+recorded in `parity-tessera.md` when it is.
+
+| # | Status | Evidence |
+|---|---|---|
+| 1 | **data-side done, owner observation pending** (O196–O199) | [`parity.md`](checklists/parity.md) Accepted 2026-10-23 (independent review spec-review:parity-checklist:1): 178 system rows, 100 sample rows, 8 deviations, PF1, every row `pending`, `deviation (proposed)` or `not built`. `parity-tessera.md` records the Tessera side of every row: 126 system rows data-side ready, 4 feed only (PA83, PA132, PA134, PA143), 47 with a gap (PA2, PA4–PA7, PA24, PA35, PA44, PA61, PA74, PA118, PA136, PA144 for K, PA145–PA178; the [Gaps](checklists/parity-tessera.md#gaps) table names what records each). Tooltip sample: `parity_tooltips_real_data` passes with the install (55 + 55 distinct records resolved, 100 tooltips modelled with 0 failures, **100 painted, 0 panel-audit failures**), after the exit verification fixed the examination panel's icon field, the worth row's coin images and currency order; pictures re-blessed in the tier-2 local directory for O197/O198. The owner's walk (O196), tooltip comparisons (O197, O198) and deviation answers (O199) are pending |
+| 2 | **passes on Tessera's side**; the CI run on the exit commit is pending (decision 0043 §2 item 6) | `tools/check-fuzz-coverage.sh`: ok, 2 manifests, 413 `[[parser]]` (315 with a target, 98 exempt naming a covering target, **0 gaps**), 2 `[[package]]`, 16 `[[skip]]`; 200 / 200 fuzz bins named; 505 / 505 parser-like public functions in 241 files covered; `--self-test` passes; CI job `fuzz-coverage`. The last 15 gaps were closed at the exit verification: `app_arg_readers`, `client_text_readers` and `explorer_text_readers` (fuzz/ now links the client, explorer and load-tester libraries; `dattool`'s hex readers moved into its library). Every target added in P8 (19) ran 60 s clean in `tools/fuzz-smoke.sh` (stable libFuzzer, 0 crashes); `cargo clippy --bins --locked -- -D warnings` on the fuzz workspace clean |
+| 3 | **open**: indicative runs only; owner re-measure O200 | `busiest.scenario` (54 + 4 actors with figures, combat with an induction, 4 defeats, 2 loot windows, a fellowship of six with changing vitals, 10 chat lines per second, synchronised music every 20 s, 180 s), `--scenario-timing SECS` and `p8_busiest_real_data` (determinism with the install at M3-03 passes). Exit-verification `TESSERA_PERF=1` run ([`p8-busiest.md`](perf/p8-busiest.md), load 1.3–2.4, not the verified idle run; surface 1895 × 1041, *Se* = 1): (a) paced 0 frames over 50 ms, met; (b) unpaced p99 11.47 ms, met; **(c) missed: U1 steady mean 2.92 ms / p99 4.77 ms against 0.3 / 1.0 ms, almost all in the `tessera-ui` paint (step 8; the static panels add about 1.1 ms without uploads, the HUD about 1.5 ms)**, U3 262 KiB, U4 (b) 4.30 ms, U4 (f) 5.28 ms; U2 reads 0.0000 ms (a `crates/render` question); (d) not measured (no `audio-device` build). The UI paint needs profiling before the owner's re-measure |
+
+---|---|---|
+| 1 | open | `parity.md` not yet written and reviewed; the owner's walk (O196), tooltip comparisons (O197, O198) and deviation answers (O199) pending |
+| 2 | open | fuzz coverage manifests and `tools/check-fuzz-coverage.sh` not yet in CI |
+| 3 | open | busiest scenario not yet built; reference runs on the idle reference machine (O200) pending |
 
 ---
 

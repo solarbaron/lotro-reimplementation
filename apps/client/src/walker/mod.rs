@@ -477,7 +477,29 @@ struct Bench {
     plan: BenchPlan,
     wait_until: Option<Instant>,
     started: Option<Instant>,
+    /// Whether the area had settled when the timing started (`false`: the settle timeout
+    /// passed first).
+    started_settled: bool,
     done: bool,
+}
+
+/// Where a timing run (`--duration`, `--scenario-timing`) stands.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TimingPhase {
+    /// No timing run is configured.
+    Off,
+    /// Waiting for the player to be placed and the area to settle (or the settle timeout).
+    Waiting,
+    /// Every frame is logged; `settled` says whether the area had settled at the start.
+    Running {
+        /// The area had settled when the timing started.
+        settled: bool,
+    },
+    /// The timing run's duration is over.
+    Done {
+        /// The area had settled when the timing started.
+        settled: bool,
+    },
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -1211,6 +1233,7 @@ impl Walker {
                 plan,
                 wait_until: None,
                 started: None,
+                started_settled: false,
                 done: false,
             }),
             entity_events: Vec::new(),
@@ -1681,6 +1704,21 @@ impl Walker {
     #[must_use]
     pub fn frame_log(&self) -> Option<&FrameLog> {
         self.log.as_ref()
+    }
+
+    /// Where the timing run stands (`--duration`, `--scenario-timing`).
+    #[must_use]
+    pub fn timing_phase(&self) -> TimingPhase {
+        match self.bench {
+            None => TimingPhase::Off,
+            Some(b) if b.done => TimingPhase::Done {
+                settled: b.started_settled,
+            },
+            Some(b) if b.started.is_some() => TimingPhase::Running {
+                settled: b.started_settled,
+            },
+            Some(_) => TimingPhase::Waiting,
+        }
     }
 
     /// Whether the viewer has been placed in the world.
@@ -2428,6 +2466,7 @@ impl Walker {
                 if settled || now >= wait {
                     tracing::info!(settled, "timing run starts");
                     b.started = Some(now);
+                    b.started_settled = settled;
                     self.log_start = now;
                     if let Some(log) = &mut self.log {
                         *log = FrameLog::default();

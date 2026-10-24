@@ -1,0 +1,31 @@
+tessera-scenario-log 1
+install none
+tick 100
+title "Tooltip sample"
+resolve $weapons line=20 family=item requested=6 candidates=0 got=0 note=no-install
+resolve $garments line=21 family=item requested=6 candidates=0 got=0 note=no-install
+resolve $rings line=22 family=item requested=4 candidates=0 got=0 note=no-install
+resolve $shields line=23 family=item requested=3 candidates=0 got=0 note=no-install
+resolve $scrolls line=24 family=item requested=4 candidates=0 got=0 note=no-install
+resolve $manuals line=25 family=item requested=2 candidates=0 got=0 note=no-install
+resolve $parcels line=26 family=item requested=3 candidates=0 got=0 note=no-install
+resolve $letters line=27 family=item requested=3 candidates=0 got=0 note=no-install
+resolve $tokens line=28 family=item requested=2 candidates=0 got=0 note=no-install
+resolve $keys line=29 family=item requested=3 candidates=0 got=0 note=no-install
+resolve $waystones line=30 family=item requested=3 candidates=0 got=0 note=no-install
+resolve $marks line=31 family=item requested=2 candidates=0 got=0 note=no-install
+resolve $sundries line=32 family=item requested=14 candidates=0 got=0 note=no-install
+resolve $strikes line=33 family=skill requested=10 candidates=0 got=0 note=no-install
+resolve $channels line=34 family=skill requested=6 candidates=0 got=0 note=no-install
+resolve $aids line=35 family=skill requested=12 candidates=0 got=0 note=no-install
+resolve $stances line=36 family=skill requested=10 candidates=0 got=0 note=no-install
+resolve $rides line=37 family=skill requested=2 candidates=0 got=0 note=no-install
+resolve $rites line=38 family=skill requested=15 candidates=0 got=0 note=no-install
+pre > Connect
+pre Connected characters=["Rook"]
+pre CharacterInfo name="Rook" body=none class=none level=50 look=none
+pre > EnterWorld character="Rook"
+0.000 WorldEntered entity=player name="Rook" at=0.000,0.000,0.000 facing=90.00
+0.000 LocationReport entity=player at=0:0.000,0.000,0.000 facing=90.00 anchor=none cause=entered
+0.000 ContainerSize container=backpack slots=64
+1.000 end reason=complete skipped=50 input-skipped=0 dropped=0 spilled=0

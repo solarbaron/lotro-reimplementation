@@ -268,12 +268,19 @@ pub fn apply_distance_preferences(
     config.distances = distances;
 }
 
-/// The mesh-arena bytes a host of `args` creates its renderer with
-/// ([`crate::walker::arena_bytes`]). A windowed run reads the user's file only after the
-/// renderer exists ([`WalkerHost`]), so its arena is sized for the widest landscape
-/// distance the file could still choose (`LandscapeDrawDistance` at its highest level,
-/// below `--render-pref` and `--landscape-distance`, which decide when given); headless
-/// runs keep their exact configuration.
+/// The mesh-arena cap a host of `args` creates its renderer with
+/// ([`crate::walker::arena_bytes`]: the object budget plus the terrain share of a landscape
+/// level; `walker.md` §14.10 W29 item 1). A windowed run reads the user's file only after the
+/// renderer exists ([`WalkerHost`]), so its cap is sized for the highest
+/// `LandscapeDrawDistance` level (4, `VeryHigh`), unless the command line gives the level
+/// (`--landscape-distance`, or `--render-pref LandscapeDrawDistance=…` with any value, one
+/// the key does not accept included: no later layer can change it, W28) or fixes the far
+/// ring (`--view-blocks`, the far view's near field); then the level given sizes it.
+/// Headless runs, which read no file (`far-view.md` FD21), use their exact level. The cap is
+/// a limit, not an allocation (`render.md` §2.2: pages are created as meshes arrive), so a
+/// cap the file then undercuts costs no memory (W29 item 2), and every level the file can
+/// give fits in it (item 4); object parts still keep to the object budget
+/// (`walker::objects::object_arena_limit`, item 3).
 #[must_use]
 pub fn walker_arena_bytes(args: &Args) -> u64 {
     let mut config = walker_config(args);
@@ -1348,9 +1355,57 @@ AtmosphericsDetail=Bogus
         assert_eq!(distance_settings_with(&b, None), distance_settings(&b));
     }
 
-    /// The renderer of a windowed run exists before the user's file is read, so its mesh
-    /// arena is sized for the widest landscape distance the file could choose; given on the
-    /// command line, or in a headless run, the exact distance decides.
+    /// `walker.md` §14.10 W29 item 3: `Walker::new` hands the object layer the arena total
+    /// of the configuration it starts with (read after the user's file) less that
+    /// configuration's terrain share, which is exactly the object budget at every landscape
+    /// level, whatever cap the renderer was created with; `object_arena_limit` keeps it.
+    #[test]
+    fn the_walker_hands_the_objects_their_budget() {
+        use crate::walker::objects::object_arena_limit;
+        use crate::walker::{arena_bytes, mesh_config, terrain_arena_reserve};
+        // The share as `Walker::new` computes it.
+        let share = |c: &crate::walker::WalkerConfig| {
+            mesh_config(arena_bytes(c))
+                .max_total_bytes
+                .saturating_sub(terrain_arena_reserve(c.stream.rings.far))
+        };
+        let windowed = Args::try_parse_from(["t"]).unwrap();
+        for level in ["VeryLow", "Low", "Medium", "High", "VeryHigh"] {
+            let mut h = WalkerHost::new(&windowed, Arc::new(Mutex::new(SourceShared::default())));
+            h.prefs.ini = Some(tessera_install::Ini::parse(&format!(
+                "[Render]\nLandscapeDrawDistance={level}\n"
+            )));
+            let mut config = h.config.clone();
+            h.take_preferences(&mut config);
+            let budget = config.objects.gpu_budget;
+            assert_eq!(share(&config), budget, "{level}");
+            assert_eq!(
+                object_arena_limit(share(&config), budget),
+                budget,
+                "{level}"
+            );
+            // The renderer's cap of the run is larger at a lower level; the objects'
+            // share is not.
+            assert!(
+                walker_arena_bytes(&windowed) >= arena_bytes(&config),
+                "{level}"
+            );
+            let a = Args::try_parse_from(["t", "--landscape-distance", level]).unwrap();
+            let c = walker_config(&a);
+            assert_eq!(share(&c), c.objects.gpu_budget, "{level} given");
+        }
+        // A small object budget (the arena floor of `mesh_config` is covered by the
+        // terrain share, which is never below it).
+        let small = Args::try_parse_from(["t", "--gpu-mib", "64"]).unwrap();
+        let c = walker_config(&small);
+        assert_eq!(share(&c), c.objects.gpu_budget);
+    }
+
+    /// `walker.md` §14.10 W29: the renderer of a windowed run exists before the user's file
+    /// is read, so its mesh-arena cap is sized for the highest landscape level (item 1), and
+    /// every level the file can give fits in it (item 4); given on the command line (a value
+    /// `--render-pref` does not accept included: it decides the built-in level), or in a
+    /// headless run, the exact level decides.
     #[test]
     fn the_arena_covers_the_landscape_distance_of_the_file() {
         let exact = |a: &Args| crate::walker::arena_bytes(&walker_config(a));
@@ -1358,21 +1413,201 @@ AtmosphericsDetail=Bogus
         let widest = Args::try_parse_from(["t", "--landscape-distance", "VeryHigh"]).unwrap();
         assert!(exact(&windowed) <= exact(&widest));
         assert_eq!(walker_arena_bytes(&windowed), exact(&widest));
-        let mut h = WalkerHost::new(&windowed, Arc::new(Mutex::new(SourceShared::default())));
+        // Item 4: whatever level the file gives, the configuration in force fits the cap.
+        for value in [
+            "VeryLow",
+            "low",
+            "Medium",
+            "High",
+            "VERYHIGH",
+            "0",
+            "2",
+            "4",
+            "0004",
+            "9",
+            "99999999999999999999",
+            "+4",
+            "-1",
+            "Bogus",
+            "",
+            " 3 ",
+        ] {
+            let mut h = WalkerHost::new(&windowed, Arc::new(Mutex::new(SourceShared::default())));
+            h.prefs.ini = Some(tessera_install::Ini::parse(&format!(
+                "[Render]\nLandscapeDrawDistance={value}\n"
+            )));
+            let mut config = h.config.clone();
+            h.take_preferences(&mut config);
+            assert!(
+                crate::walker::arena_bytes(&config) <= walker_arena_bytes(&windowed),
+                "{value:?}"
+            );
+        }
+        // Item 1: the command line decides the level, so it sizes the cap.
+        for argv in [
+            &["t", "--landscape-distance", "Low"][..],
+            &["t", "--render-pref", "LandscapeDrawDistance=Low"][..],
+            &["t", "--render-pref", "LandscapeDrawDistance=1"][..],
+            &["t", "--render-pref", "LandscapeDrawDistance=+4"][..],
+            &["t", "--render-pref", "LandscapeDrawDistance=Bogus"][..],
+            &["t", "--render-pref", "LandscapeDrawDistance="][..],
+            &[
+                "t",
+                "--landscape-distance",
+                "VeryLow",
+                "--render-pref",
+                "LandscapeDrawDistance=VeryHigh",
+            ][..],
+            &["t", "--screenshot", "/nonexistent/x.png"][..],
+            &[
+                "t",
+                "--screenshot",
+                "/nonexistent/x.png",
+                "--landscape-distance",
+                "VeryLow",
+            ][..],
+        ] {
+            let a = Args::try_parse_from(argv).unwrap();
+            assert_eq!(walker_arena_bytes(&a), exact(&a), "{argv:?}");
+        }
+        // An accepted level below the highest never sizes a larger cap than the widest.
+        let low =
+            Args::try_parse_from(["t", "--render-pref", "LandscapeDrawDistance=Low"]).unwrap();
+        assert!(walker_arena_bytes(&low) <= walker_arena_bytes(&windowed));
+        // A value the key does not accept is the built-in level, which the file cannot change.
+        let bogus =
+            Args::try_parse_from(["t", "--render-pref", "LandscapeDrawDistance=+4"]).unwrap();
+        let mut h = WalkerHost::new(&bogus, Arc::new(Mutex::new(SourceShared::default())));
         h.prefs.ini = Some(tessera_install::Ini::parse(
             "[Render]\nLandscapeDrawDistance=VeryHigh\n",
         ));
         let mut config = h.config.clone();
         h.take_preferences(&mut config);
-        assert!(crate::walker::arena_bytes(&config) <= walker_arena_bytes(&windowed));
-        for argv in [
-            &["t", "--landscape-distance", "Low"][..],
-            &["t", "--render-pref", "LandscapeDrawDistance=Low"][..],
-            &["t", "--screenshot", "/nonexistent/x.png"][..],
-        ] {
-            let a = Args::try_parse_from(argv).unwrap();
-            assert_eq!(walker_arena_bytes(&a), exact(&a), "{argv:?}");
+        assert_eq!(
+            crate::walker::arena_bytes(&config),
+            walker_arena_bytes(&bogus)
+        );
+    }
+
+    /// `walker.md` §11.2 (W26, the digits-only answer) and `far-view.md` FD18: a level value
+    /// is read alike from the user's file and from `--render-pref`, for every key that takes
+    /// levels: names in any case, numbers of decimal digits only (leading zeros allowed), the
+    /// white space around the value not part of it; a sign, a fraction, an exponent or other
+    /// text gives the key's built-in level.
+    #[test]
+    fn level_values_read_alike_from_the_file_and_render_pref() {
+        use crate::walker::effects::EffectConfig;
+        use tessera_world::far_view::FarViewSettings;
+        const VALUES: [&str; 24] = [
+            "VeryLow",
+            "low",
+            " Medium ",
+            "HIGH",
+            "\tVeryHigh",
+            "UltraHigh",
+            "Disabled",
+            "0",
+            "1",
+            "2",
+            "3",
+            "4",
+            "5",
+            "6",
+            "007",
+            " 2 ",
+            "+1",
+            "-0",
+            "1.0",
+            "1e0",
+            "0x1",
+            "",
+            "Bogus",
+            "99999999999999999999",
+        ];
+        let windowed = Args::try_parse_from(["t"]).unwrap();
+        for v in VALUES {
+            let text = format!(
+                "[Render]\nLandscapeDrawDistance={v}\nObjectDrawDistance={v}\nModelDetail={v}\nFrillDistance={v}\nLandscapeLightingQuality={v}\nAtmosphericsDetail={v}\n"
+            );
+            let ini = tessera_install::Ini::parse(&text);
+            // From the file (windowed).
+            let file_d = distance_settings_with(&windowed, Some(&ini));
+            let file_f = frill_distance_level_with(&windowed, Some(&ini));
+            let mut file_far = FarViewSettings::default();
+            apply_render_preferences(&mut file_far, &ini);
+            let mut file_fx = EffectConfig::default();
+            apply_effect_preferences(&mut file_fx, &ini);
+            // From `--render-pref` (the option trims the value as the file reader does).
+            let mut argv = vec!["t".to_owned()];
+            for key in [
+                "LandscapeDrawDistance",
+                "ObjectDrawDistance",
+                "ModelDetail",
+                "FrillDistance",
+                "LandscapeLightingQuality",
+                "AtmosphericsDetail",
+            ] {
+                argv.push("--render-pref".into());
+                argv.push(format!("{key}={v}"));
+            }
+            let a = Args::try_parse_from(&argv).unwrap();
+            let w = walker_config(&a);
+            assert_eq!(distance_settings(&a), file_d, "{v:?}");
+            assert_eq!(frill_distance_level(&a), file_f, "{v:?}");
+            assert_eq!(
+                w.far_view.settings.lighting_quality, file_far.lighting_quality,
+                "{v:?}"
+            );
+            assert_eq!(w.effects.atmospherics, file_fx.atmospherics, "{v:?}");
+            // The direct readers agree with the trimmed text.
+            assert_eq!(
+                landscape_lighting_level(v),
+                landscape_lighting_level(v.trim()),
+                "{v:?}"
+            );
+            assert_eq!(atmospherics_level(v), atmospherics_level(v.trim()), "{v:?}");
+            assert_eq!(frill_level(v), frill_level(v.trim()), "{v:?}");
         }
+        // Signed numbers give the built-in levels from the file, for every level key.
+        let ini = tessera_install::Ini::parse(
+            "[Render]\nLandscapeDrawDistance=+0\nObjectDrawDistance=-1\nModelDetail=+4\nFrillDistance=-0\nLandscapeLightingQuality=+1\nAtmosphericsDetail=+2\n",
+        );
+        assert_eq!(
+            distance_settings_with(&windowed, Some(&ini)),
+            DistanceSettings::default()
+        );
+        assert_eq!(
+            frill_distance_level_with(&windowed, Some(&ini)),
+            FrillSettings::default().distance_level
+        );
+        let mut far = FarViewSettings {
+            lighting_quality: 2,
+            ..FarViewSettings::default()
+        };
+        apply_render_preferences(&mut far, &ini);
+        assert_eq!(far.lighting_quality, 0, "FD18: the built-in level 0");
+        let mut fx = EffectConfig {
+            atmospherics: Some(0),
+            ..EffectConfig::default()
+        };
+        apply_effect_preferences(&mut fx, &ini);
+        assert_eq!(fx.atmospherics, None, "the built-in Medium");
+        // Padded values from the file are the levels they name.
+        let ini = tessera_install::Ini::parse(
+            "[Render]\nLandscapeDrawDistance =  Low \nModelDetail=\t003\t\nLandscapeLightingQuality= 02 \nAtmosphericsDetail = high \n",
+        );
+        let d = distance_settings_with(&windowed, Some(&ini));
+        assert_eq!(
+            d.landscape,
+            tessera_world::draw_distance::LandscapeLevel::Low
+        );
+        assert_eq!(d.model_detail, tessera_world::DetailLevel::VeryHigh);
+        let mut far = FarViewSettings::default();
+        apply_render_preferences(&mut far, &ini);
+        assert_eq!(far.lighting_quality, 2);
+        let mut fx = EffectConfig::default();
+        apply_effect_preferences(&mut fx, &ini);
+        assert_eq!(fx.atmospherics, Some(2));
     }
 
     /// `far-view.md` FD22, `walker.md` §14.10: a headless run with the three overrides of

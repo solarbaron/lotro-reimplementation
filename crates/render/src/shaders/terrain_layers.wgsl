@@ -161,7 +161,7 @@ fn fs_terrain(in: TerrainOut) -> @location(0) vec4<f32> {
         default: {}
     }
     // Discarded when alpha <= tau; the first drawn layer never is (§7 step 1).
-    if (!layer_flag(TL_FIRST) && alpha <= layer.glow.w) {
+    if (!layer_flag(TL_FIRST) && frame_alpha_discards(alpha, layer.glow.w)) {
         discard;
     }
 

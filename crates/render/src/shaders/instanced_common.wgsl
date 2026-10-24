@@ -140,5 +140,5 @@ fn surface_opacity(base: vec4<f32>) -> f32 {
 
 // The alpha test of lit surfaces (lighting.md §5.12): discarded when opacity <= threshold.
 fn surface_alpha_test(opacity: f32) -> bool {
-    return surface.params.x >= -0.5 && opacity <= surface.params.x;
+    return surface.params.x >= -0.5 && frame_alpha_discards(opacity, surface.params.x);
 }

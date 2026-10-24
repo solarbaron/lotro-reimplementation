@@ -6,8 +6,8 @@
 //! Every tune is original to the spec or written for this file. The real-data test is
 //! skipped (reported as passed) unless `TESSERA_GAME_DIR` names an install; it only reads.
 
-use std::path::PathBuf;
-use std::time::{Duration, Instant};
+use std::path::{Path, PathBuf};
+use std::time::Instant;
 
 use proptest::prelude::*;
 use tessera_audio::abc::{
@@ -590,6 +590,32 @@ fn temp_dir(tag: &str) -> TempDir {
     TempDir(dir)
 }
 
+/// Whether the file system holding `dir` ignores letter case (the default on Windows and
+/// macOS). There `find_song`'s plain existence test (§3.1 step 3) already succeeds for
+/// another spelling and returns the path as asked, which names the same file.
+fn ignores_case(dir: &Path) -> bool {
+    let probe = dir.join("case-probe.tmp");
+    std::fs::write(&probe, b"").unwrap();
+    let ignores = dir.join("CASE-PROBE.TMP").exists();
+    std::fs::remove_file(&probe).unwrap();
+    ignores
+}
+
+/// `got` is the song file `want`: the same path, or on a file system that ignores letter
+/// case the same path in another spelling.
+fn assert_same_song(dir: &Path, got: &Path, want: &Path, what: &str) {
+    if ignores_case(dir) {
+        assert!(
+            got.as_os_str()
+                .as_encoded_bytes()
+                .eq_ignore_ascii_case(want.as_os_str().as_encoded_bytes()),
+            "{what}: {got:?} is not {want:?}"
+        );
+    } else {
+        assert_eq!(got, want, "{what}");
+    }
+}
+
 #[test]
 fn lookup_rules() {
     let dir = temp_dir("lookup");
@@ -646,7 +672,8 @@ fn song_listing() {
     assert_eq!(list[1].parts[0].request(), PartRequest::Number(5));
     // Every listed name plays the listed file (here: `Song One` finds `Song One.ABC`).
     for song in &list {
-        assert_eq!(find_song(&dir, &song.name).unwrap(), song.path, "{song:?}");
+        let found = find_song(&dir, &song.name).unwrap();
+        assert_same_song(&dir, &found, &song.path, &format!("{song:?}"));
     }
 }
 
@@ -679,13 +706,16 @@ fn listed_names_resolve() {
     );
     assert!(names.contains(&("v1.2.TxT", "v1.2.TxT")), "{names:?}");
     for song in &list {
-        assert_eq!(find_song(&dir, &song.name).unwrap(), song.path, "{song:?}");
+        let found = find_song(&dir, &song.name).unwrap();
+        assert_same_song(&dir, &found, &song.path, &format!("{song:?}"));
         let p = read_song(&dir, &song.name, PartRequest::Unspecified).unwrap();
         assert_eq!(p.note_ons().count(), 2, "{song:?}");
     }
     // Letter case of the whole name is ignored, as on the original's file system.
-    assert_eq!(find_song(&dir, "tune").unwrap(), dir.join("Tune.ABC"));
-    assert_eq!(find_song(&dir, "OTHER").unwrap(), dir.join("Other.TXT"));
+    let found = find_song(&dir, "tune").unwrap();
+    assert_same_song(&dir, &found, &dir.join("Tune.ABC"), "tune");
+    let found = find_song(&dir, "OTHER").unwrap();
+    assert_same_song(&dir, &found, &dir.join("Other.TXT"), "OTHER");
 }
 
 /// §3.1 order with letter case ignored: `.abc` in any case comes before `.txt`, and an
@@ -695,9 +725,14 @@ fn lookup_letter_case_order() {
     let dir = temp_dir("case");
     std::fs::write(dir.join("Mix.ABC"), tune("G|")).unwrap();
     std::fs::write(dir.join("Mix.txt"), tune("A|")).unwrap();
-    assert_eq!(find_song(&dir, "Mix").unwrap(), dir.join("Mix.ABC"));
-    std::fs::write(dir.join("Mix.abc"), tune("B|")).unwrap();
-    assert_eq!(find_song(&dir, "Mix").unwrap(), dir.join("Mix.abc"));
+    let found = find_song(&dir, "Mix").unwrap();
+    assert_same_song(&dir, &found, &dir.join("Mix.ABC"), "Mix");
+    // Two spellings side by side exist only where the file system keeps letter case apart;
+    // elsewhere `Mix.abc` is `Mix.ABC` and the exact-match rule has nothing to choose.
+    if !ignores_case(&dir) {
+        std::fs::write(dir.join("Mix.abc"), tune("B|")).unwrap();
+        assert_eq!(find_song(&dir, "Mix").unwrap(), dir.join("Mix.abc"));
+    }
     let e = find_song(&dir, "Mixx").unwrap_err();
     assert_eq!(e.kind, AbcErrorKind::FileNotFound);
     assert_eq!(e.path, Some(dir.join("Mixx.txt")));
@@ -724,7 +759,7 @@ fn lookup_refuses_non_regular_files() {
             std::thread::spawn(move || {
                 let _ = tx.send(read_song(&d, "pipe", PartRequest::Unspecified));
             });
-            let r = rx.recv_timeout(Duration::from_secs(5));
+            let r = rx.recv_timeout(std::time::Duration::from_secs(5));
             if r.is_err() {
                 // Unblock the stuck reader before failing.
                 let _ = std::fs::OpenOptions::new().write(true).open(&fifo);

@@ -8,6 +8,9 @@
 // target is written the decoded value so that it stores the result unchanged
 // (`docs/specs/render.md` §4.1).
 
+// The alpha-test slack of frame.wgsl (this shader does not prepend it): see the comment there.
+const ALPHA_TEST_SLACK: f32 = 9.5367431640625e-7;
+
 struct DecalDraw {
     view_proj: mat4x4<f32>,
     // M: material colour 2000.
@@ -78,7 +81,7 @@ fn fs_decal(in: VsOut) -> @location(0) vec4<f32> {
     if (draw.flags.x != 0u) {
         tex = vec4<f32>(decal_linear_to_srgb(tex.rgb), tex.a);
     }
-    if (draw.flags.z != 0u && tex.a <= draw.params.x) {
+    if (draw.flags.z != 0u && tex.a <= draw.params.x + ALPHA_TEST_SLACK) {
         discard;
     }
     var v = vec4<f32>(1.0);

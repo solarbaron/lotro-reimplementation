@@ -796,34 +796,39 @@ fn lit_inputs(
     let r = reference.reference();
     let threshold = f.alpha_test.map(|_| r);
     let translucent = opacity_from_base || color[3] < 1.0;
-    let lit_alpha = match f.blend.mode {
-        BlendMode::Opaque => AlphaMode::Opaque,
-        BlendMode::Cutout => match (threshold, opacity_from_base) {
-            (Some(c), true) => AlphaMode::Mask { cutoff: c },
-            _ => AlphaMode::Opaque,
-        },
-        // Unlit records: the record's own blend triple and depth write as a fixed-function
-        // blend, with the alpha test whenever R ≥ 0 (`render.md` §4.3 `Fixed`, row R-A3:
-        // without a drawn opacity source the tested opacity is 1, so R = 0 discards nothing)
-        // (`material.md` §11.3 rule for unlit records, §11.2; `walker.md` §14.5 "Unlit blend
-        // pairs"); a triple
-        // with a code the renderer cannot express keeps the source-alpha blend below.
-        BlendMode::Additive | BlendMode::Custom
-            if !f.lit
-                && let Some(b) = fixed_blend(f, Some(r).filter(|r| *r >= 0.0)) =>
-        {
-            AlphaMode::Fixed(b)
+    // Unlit records: the record's own blend triple and depth write as a fixed-function
+    // blend, with the alpha test whenever R ≥ 0 (`render.md` §4.3 `Fixed`, row R-A3:
+    // without a drawn opacity source the tested opacity is 1, so R = 0 discards nothing)
+    // (`material.md` §11.3 rule for unlit records, §11.2; `walker.md` §14.5 "Unlit blend
+    // pairs"); a triple with a code the renderer cannot express keeps the source-alpha
+    // blend below. (Computed before the match: `if let` guards need a newer compiler than
+    // the workspace MSRV.)
+    let fixed = match f.blend.mode {
+        BlendMode::Additive | BlendMode::Custom if !f.lit => {
+            fixed_blend(f, Some(r).filter(|r| *r >= 0.0))
         }
-        BlendMode::Additive => AlphaMode::Additive,
-        BlendMode::AlphaBlend | BlendMode::Custom if !translucent => AlphaMode::Opaque,
-        BlendMode::AlphaBlend | BlendMode::Custom => {
-            // §11.2 step 3: with the test off, a SRCALPHA permutation still discards
-            // opacity 0 (R = 0): the lit `ColorAndOpacity` surface without a test.
-            let cutoff = if opacity_from_base { r } else { -1.0 };
-            if f.blend.depth_write {
-                AlphaMode::TestBlend { cutoff }
-            } else {
-                AlphaMode::Blend
+        _ => None,
+    };
+    let lit_alpha = if let Some(b) = fixed {
+        AlphaMode::Fixed(b)
+    } else {
+        match f.blend.mode {
+            BlendMode::Opaque => AlphaMode::Opaque,
+            BlendMode::Cutout => match (threshold, opacity_from_base) {
+                (Some(c), true) => AlphaMode::Mask { cutoff: c },
+                _ => AlphaMode::Opaque,
+            },
+            BlendMode::Additive => AlphaMode::Additive,
+            BlendMode::AlphaBlend | BlendMode::Custom if !translucent => AlphaMode::Opaque,
+            BlendMode::AlphaBlend | BlendMode::Custom => {
+                // §11.2 step 3: with the test off, a SRCALPHA permutation still discards
+                // opacity 0 (R = 0): the lit `ColorAndOpacity` surface without a test.
+                let cutoff = if opacity_from_base { r } else { -1.0 };
+                if f.blend.depth_write {
+                    AlphaMode::TestBlend { cutoff }
+                } else {
+                    AlphaMode::Blend
+                }
             }
         }
     };

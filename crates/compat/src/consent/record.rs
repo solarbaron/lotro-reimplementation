@@ -470,7 +470,7 @@ fn load_or_make_key_with(
 }
 
 /// Makes the key of `dir` with a racing hook (tests, OE-T16).
-#[cfg(test)]
+#[cfg(all(test, unix))] // only the Unix record tests use it
 pub(crate) fn make_key_racing(
     dir: &Path,
     before_link: impl FnOnce(),

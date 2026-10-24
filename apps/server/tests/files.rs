@@ -6,7 +6,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use tessera_server::accounts::{self, Account, AccountsFile};
-use tessera_server::datadir::{self, ServerLock};
+use tessera_server::datadir::ServerLock;
 use tessera_server::error::ServerError;
 use tessera_server::shared::{SimInput, Stats, WriteJob, WriterMsg};
 use tessera_server::workers::Writer;
@@ -89,6 +89,7 @@ fn accounts_file_never_grows_past_what_readers_accept() {
 #[cfg(unix)]
 #[test]
 fn forced_keygens_keep_every_backup() {
+    use tessera_server::datadir;
     let tmp = tempfile::tempdir().unwrap();
     let dir = DataDir::new(tmp.path().join("data"));
     dir.create().unwrap();

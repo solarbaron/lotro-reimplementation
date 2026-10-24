@@ -122,9 +122,12 @@ reason_for() {
 cargo_tree() {
     local lock=""
     [ -f "$ws/Cargo.lock" ] && [ "$ws" = "$repo" ] && lock="--locked"
-    # cargo's own error messages go to stderr unchanged.
+    # cargo's own error messages go to stderr unchanged. --color never: with colour on
+    # (CARGO_TERM_COLOR=always, as in CI) cargo styles the "(*)" marks with escape codes, the
+    # parser below no longer recognises repeated packages, and hosts and unified features
+    # go unseen.
     # shellcheck disable=SC2086
-    cargo tree --manifest-path "$ws/Cargo.toml" $lock "$@" --prefix depth --format '{p}'
+    cargo tree --manifest-path "$ws/Cargo.toml" $lock "$@" --color never --prefix depth --format '{p}'
 }
 
 # stdin: `cargo tree --prefix depth --format '{p}'` output.
@@ -407,10 +410,11 @@ if [ "$self_test" = 1 ]; then
         fixture_base "$d"
         if ! plant "$case" "$d"; then failures=$((failures + 1)); continue; fi
         rc=0
+        # Forced colour, as CI sets it: the parser must not depend on the terminal.
         if [ "$case" = git ]; then
-            out="$(CARGO_HOME="$tmp/cargo-home" CARGO_NET_GIT_FETCH_WITH_CLI=true bash "$script" --root "$d" 2>&1)" || rc=$?
+            out="$(CARGO_TERM_COLOR=always CARGO_HOME="$tmp/cargo-home" CARGO_NET_GIT_FETCH_WITH_CLI=true bash "$script" --root "$d" 2>&1)" || rc=$?
         else
-            out="$(bash "$script" --root "$d" 2>&1)" || rc=$?
+            out="$(CARGO_TERM_COLOR=always bash "$script" --root "$d" 2>&1)" || rc=$?
         fi
         if [ "$rc" = "$want" ] && { [ -z "$pattern" ] || grep -Eq -- "$pattern" <<< "$out"; }; then
             echo "  ok: $case (exit $rc)"

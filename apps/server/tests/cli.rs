@@ -8,7 +8,6 @@ use std::process::{Command, Stdio};
 
 use tessera_server::DataDir;
 use tessera_server::datadir;
-use tessera_server::error::ServerError;
 
 fn bin() -> Command {
     let mut c = Command::new(env!("CARGO_BIN_EXE_tessera-server"));
@@ -127,7 +126,10 @@ fn key_permissions_are_checked() {
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(dir.key_path(), std::fs::Permissions::from_mode(0o644)).unwrap();
         let e = datadir::load_key(&dir).unwrap_err();
-        assert!(matches!(e, ServerError::KeyPermissions { .. }), "{e}");
+        assert!(
+            matches!(e, tessera_server::error::ServerError::KeyPermissions { .. }),
+            "{e}"
+        );
         assert!(e.to_string().contains("chmod 600"));
         assert_eq!(e.exit_status(), 1);
     }

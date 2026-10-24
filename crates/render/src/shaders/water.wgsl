@@ -661,7 +661,7 @@ fn shade_liquid(in: WaterOut) -> vec4<f32> {
     if (water.kind.x == FAM_LIQUID_LIT) {
         // The lit record tests its opacity texel before any vertex multiply (lighting.md
         // §5.12, §5.13).
-        if ((water.kind.w & FL_ALPHA_TEST) != 0u && texel.a <= water.extra1.x) {
+        if ((water.kind.w & FL_ALPHA_TEST) != 0u && frame_alpha_discards(texel.a, water.extra1.x)) {
             discard;
         }
         let alpha = texel.a * m.a;

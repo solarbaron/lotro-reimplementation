@@ -88,7 +88,7 @@ impl Binding {
     }
 
     /// The same binding for another directory (the canonical path bytes `directory`).
-    #[cfg(test)]
+    #[cfg(all(test, unix))] // only the Unix record tests use it
     #[must_use]
     pub(crate) fn with_directory(&self, directory: &[u8]) -> Self {
         Self {

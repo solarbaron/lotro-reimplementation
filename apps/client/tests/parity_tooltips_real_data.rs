@@ -74,7 +74,7 @@ use std::time::Instant;
 
 use tessera_client::character::CharacterData;
 use tessera_client::character::tooltip::convert;
-use tessera_client::combat::headless::{CLEAR, MAX_SETTLE_FRAMES};
+use tessera_client::combat::headless::{CLEAR, SETTLE_LIMIT};
 use tessera_client::combat::view::exam_tooltip;
 use tessera_client::scenario::resolver::GameDataResolver;
 use tessera_client::ui_host::boot::UiBoot;
@@ -405,9 +405,11 @@ struct Shot {
     want: Wanted,
 }
 
-/// Runs UI frames until the host has settled; returns whether it did.
+/// Runs UI frames until the host has settled, for at most [`SETTLE_LIMIT`] of wall-clock time
+/// (as the combat screens do); returns whether it settled.
 fn settle(host: &mut UiHost, renderer: &mut Renderer<'_>) -> bool {
-    for _ in 0..MAX_SETTLE_FRAMES {
+    let start = std::time::Instant::now();
+    while start.elapsed() < SETTLE_LIMIT {
         let _ = host.frame_without_plugins(Some(renderer));
         if host.settled() {
             let _ = host.frame_without_plugins(Some(renderer));

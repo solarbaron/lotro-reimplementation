@@ -103,6 +103,19 @@ fn ignores_case(dir: &Path) -> bool {
     ignores
 }
 
+/// Whether two paths name the same components, ignoring ASCII letter case. Compares
+/// components, not bytes, so the `/` and `\` separators Windows mixes do not matter.
+fn same_ignoring_case(a: &Path, b: &Path) -> bool {
+    let a: Vec<_> = a.components().collect();
+    let b: Vec<_> = b.components().collect();
+    a.len() == b.len()
+        && a.iter().zip(&b).all(|(x, y)| {
+            x.as_os_str()
+                .as_encoded_bytes()
+                .eq_ignore_ascii_case(y.as_os_str().as_encoded_bytes())
+        })
+}
+
 #[test]
 fn skins_root_letter_case_and_settings_dir() {
     let tmp = tempfile::tempdir().unwrap();
@@ -115,9 +128,7 @@ fn skins_root_letter_case_and_settings_dir() {
         // The plain `ui/skins` already exists there (D2: the exact name when it exists)
         // and names the same folder.
         assert!(
-            root.as_os_str()
-                .as_encoded_bytes()
-                .eq_ignore_ascii_case(tmp.path().join("UI/Skins").as_os_str().as_encoded_bytes()),
+            same_ignoring_case(&root, &tmp.path().join("UI").join("Skins")),
             "{root:?}"
         );
     } else {

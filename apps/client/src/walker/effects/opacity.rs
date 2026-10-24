@@ -186,7 +186,7 @@ impl OwnerOpacity {
     /// start-up scripts already wrote one (or there is none).
     ///
     /// A start-up write is any value that is not the stored or default value itself, compared
-    /// raw ([`same_raw`]), not after the value handling: a write handled to the stored factor
+    /// raw (`same_raw`), not after the value handling: a write handled to the stored factor
     /// is still the scripts' own value, which an exact read of the run-time layer would keep
     /// in place of the held one (`s12-r15-detect` answer item 1: no frame may differ). A
     /// write of exactly the stored value reads as none and is overridden: only an exact read

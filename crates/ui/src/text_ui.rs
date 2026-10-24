@@ -865,7 +865,7 @@ impl Ui {
     /// **During a geometry preview** of the surface the text is drawn into (§6.1; §6.4.6
     /// revision 15, anchor `s6-4-6-preview`) the canvas shows the text laid out at the held
     /// geometry, so the lookup uses that **held layout**: the pointer is taken into the held
-    /// canvas by the inverse of its composition ([`Ui::held_canvas_point`]: 1 : 1 at the
+    /// canvas by the inverse of its composition (`Ui::held_canvas_point`: 1 : 1 at the
     /// surface's current top-left while the node scales are the held ones, scaled by held
     /// canvas size ÷ current physical box size otherwise), then the text's drawn origin in
     /// held-canvas pixels is subtracted and, in a stretched surface, the held *σ* taken back.

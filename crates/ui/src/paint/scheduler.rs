@@ -34,7 +34,13 @@
 //!   withheld until the job is complete, uploaded and the requested images have arrived, at
 //!   most [`super::PaintLimits::first_paint_wait`]; after that, finished bands go straight
 //!   into the texture as they complete. A first paint that belongs to a generation counts as
-//!   complete for it under the same condition.
+//!   complete for it under the same condition. Whether the images are in is known from the
+//!   snapshot of the surface's job, so a withheld first paint whose images were pending
+//!   starts again (textures dropped, a new snapshot, the whole canvas) when damage reaches
+//!   it, as an arriving image's damage does (Tessera rule: without it a first paint inside
+//!   a generation, where no content job may start, would wait the full 100 ms and be drawn
+//!   without the images that arrived meanwhile; on a clock that does not advance, as in
+//!   headless screens at one checkpoint, it would never be drawn).
 //! - **Scheduling of the shared slice and cap** (open review item, Tessera rule): first
 //!   paints and generation jobs before content jobs, first-in first-out within each class,
 //!   for both painting and uploading. A frame uploads first paints and generation work
@@ -289,6 +295,9 @@ pub struct PaintFrameStats {
     pub worker_pixels: u64,
     /// Worker jobs that failed (the worker panicked) in this frame; their surfaces repaint.
     pub worker_failures: u32,
+    /// Withheld first paints started again in this frame because damage (an image
+    /// arriving) reached them while their images were pending (Decision 1.8).
+    pub first_paint_restarts: u32,
 }
 
 /// What a frame produced.
@@ -879,6 +888,15 @@ impl<G> Scheduler<G> {
             if s.stage != Stage::Idle {
                 continue;
             }
+            if s.first.is_some() && s.first_started && s.images_pending && !s.damage.is_empty() {
+                // Damage reached a withheld first paint that waits for images (an image
+                // arriving damages the elements that waited for it): the first paint starts
+                // again from a new snapshot, which tells whether the images are in now.
+                self.restart_first_paint(id, out);
+            }
+            let Some(s) = self.surfaces.get(&id) else {
+                continue;
+            };
             let (kind, snap, captured) = if s.first.is_some() && !s.first_started {
                 (Kind::FirstPaint, self.valid_snapshot(source, id), None)
             } else if s.generation.is_some() && !s.gen_job_started {
@@ -976,6 +994,39 @@ impl<G> Scheduler<G> {
             s.done_rects.clear();
             out.stats.jobs_started += 1;
         }
+    }
+
+    /// Starts the withheld first paint of `id` again (module docs, "First paints"): its
+    /// textures are destroyed and its canvases dropped, so the next job is a first paint of
+    /// the whole canvas, withheld under the same condition and within the same 100 ms of
+    /// the show. Nothing has drawn the surface yet, so nothing on screen changes.
+    fn restart_first_paint(&mut self, id: SurfaceId, out: &mut FrameOutput) {
+        let Some(s) = self.surfaces.get_mut(&id) else {
+            return;
+        };
+        let mut freed = 0u64;
+        for (layer, t) in std::mem::take(&mut s.textures) {
+            for (slot, b) in [(Slot::Front, t.front), (Slot::Back, t.back)] {
+                if let Some(b) = b {
+                    freed += bytes_of(&b);
+                    out.ops.push(GpuOp::Destroy {
+                        tex: TexKey {
+                            surface: id,
+                            layer,
+                            slot,
+                        },
+                    });
+                }
+            }
+        }
+        s.canvases = None;
+        s.coverage.clear();
+        s.queue.clear();
+        s.done_rects.clear();
+        s.damage = super::damage::DamageList::new();
+        s.first_started = false;
+        self.texture_bytes = self.texture_bytes.saturating_sub(freed);
+        out.stats.first_paint_restarts += 1;
     }
 
     /// Surfaces in priority order: first paints and generation jobs, then content jobs;

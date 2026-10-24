@@ -1179,3 +1179,96 @@ fn a_generation_job_on_a_worker_swaps_as_usual() {
     assert_eq!(gpu.front(1, Layer::Below, 70, 3), 0xFF22_4466);
     assert_front_is_canvas(&gpu, &s, 1);
 }
+
+/// The source of a UI whose images are loading: every snapshot it takes reports whether the
+/// surface's images are pending, which the caller passes on after the frame (as `Ui::paint`
+/// does with `Scheduler::set_images_pending`).
+struct Loading<'a> {
+    inner: &'a mut Source,
+    pending: bool,
+    taken: Vec<SurfaceId>,
+}
+
+impl SnapshotSource for Loading<'_> {
+    fn snapshot(&mut self, surface: SurfaceId) -> Option<Snapshot> {
+        self.taken.push(surface);
+        self.inner.snapshot(surface)
+    }
+}
+
+fn loading_frame(
+    s: &mut Scheduler<&'static str>,
+    src: &mut Source,
+    gpu: &mut Gpu,
+    now: Duration,
+    pending: bool,
+) -> tessera_ui::paint::FrameOutput {
+    let mut l = Loading {
+        inner: src,
+        pending,
+        taken: Vec::new(),
+    };
+    let out = s.frame(now, &mut l, &mut Unlimited);
+    for id in l.taken {
+        s.set_images_pending(id, l.pending);
+    }
+    gpu.apply(&out.ops);
+    out
+}
+
+#[test]
+fn a_withheld_first_paint_in_a_generation_starts_again_when_its_image_arrives() {
+    // A new window (its own group, so its first paint is a member of the group's first
+    // generation) whose image is loading: only a small corner has content.
+    let mut src = Source::default();
+    src.set(
+        1,
+        [128, 64],
+        vec![fill(Rect::new(0, 0, 16, 16), 0xFF10_2030)],
+    );
+    let mut s = Scheduler::new(limits());
+    let mut gpu = Gpu::default();
+    s.create_surface(SurfaceId(1), GroupId(1), Duration::ZERO)
+        .unwrap();
+    s.layout_change(GroupId(1), "g1", &[SurfaceId(1)]);
+    // A first paint spanning frames: its first snapshot's pending image is known before it
+    // completes.
+    s.set_images_pending(SurfaceId(1), true);
+    // The clock does not advance: the 100 ms of U4 (c) never run out.
+    let now = ms(5);
+    for _ in 0..6 {
+        let out = loading_frame(&mut s, &mut src, &mut gpu, now, true);
+        assert!(out.swapped.is_empty() && out.first_drawn.is_empty());
+    }
+    assert!(!s.is_drawn(SurfaceId(1)), "withheld for its image");
+    assert!(!s.is_idle());
+    // The image arrives: its element is damaged and draws over the whole canvas.
+    src.set(
+        1,
+        [128, 64],
+        vec![
+            fill(Rect::of_size(128, 64), 0xFF55_6677),
+            fill(Rect::new(0, 0, 16, 16), 0xFF10_2030),
+        ],
+    );
+    s.add_damage(SurfaceId(1), Rect::of_size(128, 64));
+    let mut restarts = 0;
+    let mut frames = 0;
+    while !s.is_idle() {
+        let out = loading_frame(&mut s, &mut src, &mut gpu, now, false);
+        restarts += out.stats.first_paint_restarts;
+        frames += 1;
+        assert!(frames < 16, "drawn once the image is in, on the same clock");
+    }
+    assert_eq!(restarts, 1);
+    assert!(s.is_drawn(SurfaceId(1)));
+    assert_eq!(s.shown(GroupId(1)), Some(&"g1"));
+    // The whole picture with the image, not the shrunk texture of the first try.
+    assert_eq!(
+        s.front_box(SurfaceId(1), Layer::Below),
+        Some(Rect::of_size(128, 64))
+    );
+    assert_eq!(gpu.front(1, Layer::Below, 100, 40), 0xFF55_6677);
+    assert_eq!(gpu.front(1, Layer::Below, 4, 4), 0xFF10_2030);
+    assert_front_is_canvas(&gpu, &s, 1);
+}

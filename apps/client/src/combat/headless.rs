@@ -24,8 +24,11 @@ use crate::ui_host::{UiHost, UiOptions};
 
 /// The clear colour behind the UI in the screens (a dark grey, so every look shows).
 pub const CLEAR: [f32; 4] = [0.08, 0.09, 0.1, 1.0];
-/// Most frames [`CombatScreens::settle`] runs at one checkpoint.
-pub const MAX_SETTLE_FRAMES: usize = 400;
+/// Longest wall-clock wait of [`CombatScreens::settle`] at one checkpoint. The settle ends
+/// on [`UiHost::settled`], never on a frame count: the paint works in time slices and on
+/// the asset workers, so a loaded machine needs more frames and more time for the same
+/// work; the bound only stops a UI that never settles.
+pub const SETTLE_LIMIT: std::time::Duration = std::time::Duration::from_secs(120);
 
 /// The elements of `combat-ui.md` §14 (§2 numbering).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -196,17 +199,22 @@ impl CombatScreens {
     }
 
     /// Runs frames at the current time until the UI has settled (images and fonts loaded,
-    /// nothing left to paint), at most [`MAX_SETTLE_FRAMES`]; returns whether it settled.
+    /// no paint job on the frame thread or the workers, nothing left to paint), for at most
+    /// [`SETTLE_LIMIT`]; returns whether it settled.
     pub fn settle(&mut self, mut renderer: Option<&mut Renderer<'_>>) -> bool {
-        for _ in 0..MAX_SETTLE_FRAMES {
+        let start = Instant::now();
+        loop {
             self.frame(renderer.as_deref_mut());
             if self.host.settled() {
                 self.frame(renderer.as_deref_mut());
                 return true;
             }
+            if start.elapsed() >= SETTLE_LIMIT {
+                tracing::warn!(limit = ?SETTLE_LIMIT, "combat screens did not settle");
+                return false;
+            }
             std::thread::sleep(std::time::Duration::from_millis(2));
         }
-        false
     }
 
     /// Renders the UI offscreen at the screen size.

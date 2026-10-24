@@ -630,8 +630,17 @@ fn light_index(i: u32) -> u32 {
     return (word >> ((i & 3u) * 8u)) & 255u;
 }
 
-// Liquid-distortion records (§8.5.5).
-fn shade_liquid(in: WaterOut) -> vec4<f32> {
+// The shaded liquid colour and whether the fragment is cut by its alpha test.
+struct Liquid {
+    color: vec4<f32>,
+    cut: bool,
+}
+
+// Liquid-distortion records (§8.5.5). The alpha test only sets `cut`; the entry point
+// discards. FXC (Direct3D) refuses a value-returning function that holds a `discard`
+// ("not all control paths return a value", X3507), so this function has no `discard` and
+// one return at the end.
+fn shade_liquid(in: WaterOut) -> Liquid {
     let t = frame.eye.w;
     // 1. Coordinates: UV through texture matrix 0, or B.
     var base = vec2<f32>(dot(water.uv_row0.xyz, vec3<f32>(in.uv, 1.0)),
@@ -658,14 +667,13 @@ fn shade_liquid(in: WaterOut) -> vec4<f32> {
         texel = ts;
     }
     let m = water.material;
-    // One return at the end: FXC (Direct3D) refuses this function with an early return
-    // out of the lit branch ("not all control paths return a value").
     var out = vec4<f32>(0.0);
+    var cut = false;
     if (water.kind.x == FAM_LIQUID_LIT) {
         // The lit record tests its opacity texel before any vertex multiply (lighting.md
         // §5.12, §5.13).
         if ((water.kind.w & FL_ALPHA_TEST) != 0u && frame_alpha_discards(texel.a, water.extra1.x)) {
-            discard;
+            cut = true;
         }
         let alpha = texel.a * m.a;
         // Lit like a lit ColorAndOpacity surface (lighting.md §5): ambient, the sun with its
@@ -694,11 +702,11 @@ fn shade_liquid(in: WaterOut) -> vec4<f32> {
         let c = texel * vc;
         let alpha = c.a * m.a;
         if ((water.kind.w & FL_ALPHA_TEST) != 0u && alpha <= water.extra1.x) {
-            discard;
+            cut = true;
         }
         out = vec4<f32>(frame_apply_fog(c.rgb * m.rgb * water.misc1.z, in.fog.x), alpha);
     }
-    return out;
+    return Liquid(out, cut);
 }
 
 // Opaque families (plain, plain on UV, older bump, flow map, lava): alpha 1, written with
@@ -731,9 +739,18 @@ fn fs_water(in: WaterOut) -> @location(0) vec4<f32> {
 @fragment
 fn fs_water_blend(in: WaterOut) -> @location(0) vec4<f32> {
     var c = vec4<f32>(0.0);
+    var cut = false;
     switch (water.kind.x) {
         case 5u: { c = shade_mirror(in); }
-        default: { c = shade_liquid(in); }
+        default: {
+            let l = shade_liquid(in);
+            c = l.color;
+            cut = l.cut;
+        }
+    }
+    // The liquid alpha test (§8.5.5) discards here, in the entry point (see shade_liquid).
+    if (cut) {
+        discard;
     }
     return vec4<f32>(frame_output(c.rgb), clamp(c.a, 0.0, 1.0));
 }

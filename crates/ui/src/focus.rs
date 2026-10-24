@@ -440,6 +440,7 @@ impl Ui {
                 if let Some(p) = self.el_mut(pf) {
                     p.children = kids;
                 }
+                self.note_order_change(to);
                 self.input.hover_dirty = true;
                 self.mark_dirty(to);
             }

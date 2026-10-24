@@ -1,0 +1,11 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 03ba450dfcb7bd88b25b0223876bf63ba0fc0280a4b3975111286d42806743d7 # shrinks to frames = [[FloatMove(0, 0, -1)]]
+cc 31d36fb034ee47eceb1a784b4e3a299c89c7531ae870e686d68ff16199eb7a37 # shrinks to frames = [[FloatMove(0, 0, 2)]]
+cc 2a7015c325f6ae5d9bb900860ab46e0f2a1b6f188ce6968ec9a84bc72be7f603 # shrinks to frames = [[WindowMove(2, 0, -1)]]
+cc df985ac8d1c17abc67082cfeb46b947a1a5292db11c39b5460b6b9781e21ce24 # shrinks to frames = [[WindowMove(2, -5, -5)]]
+cc 4944829fdd42183184ee8ed489ffe31cbb2fd4d98aaafa07b9ef4ff663229571 # shrinks to frames = [[], [ImagesArrived], [], [], [], [], [], [], [], [], [], [], [], [], []], bands = 3, screen = true

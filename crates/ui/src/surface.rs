@@ -37,7 +37,7 @@ use crate::ui::{Ui, object_mode};
 /// built before scaling is wired in and the C2/C4/C7/C9/C10/C12 configurations — the map is
 /// `x ↦ x`, the content scale is `(1, 1)`, and every produced box and canvas size equals
 /// today's, so all existing goldens and paint tests stay byte-identical (invariant I2).
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 struct CanvasMap {
     screen: Option<crate::scaling::UiScreen>,
     /// The owner's displayed top-left (UI units) and node scale `m`.
@@ -150,6 +150,33 @@ struct SurfaceRec {
     coverage: Vec<(u32, Rect)>,
     stand_in: bool,
     tile: bool,
+    /// What the full pass read from the owner itself ([`Ui::owner_sig`]).
+    sig: OwnerSig,
+    /// Whether the full pass found surfaces nested in this one (Decision 1.7).
+    has_nested: bool,
+}
+
+/// What the full surface pass reads from a surface's owner itself, as opposed to its
+/// ancestors (a change to one records that ancestor, and `light_sync` then checks this
+/// signature for every owner below it, running the full pass when it differs): when a
+/// recorded owner's signature, canvas size and displayed box are those of the last full
+/// pass, the pass would decide the same surface, group, coverage and composition node for it
+/// (apart from the fields [`Ui::light_sync`] patches in place).
+#[derive(Debug, Clone, PartialEq)]
+struct OwnerSig {
+    parent: Option<ElementKey>,
+    /// The position among the parent's children (the pre-order of the composition plan).
+    index: Option<usize>,
+    visible: bool,
+    /// Shown with every ancestor up to the screen root (the plan's `shown`, attachment).
+    displayed: bool,
+    root_panel: bool,
+    owns: bool,
+    mode: u32,
+    bx: IBox,
+    physical: Rect,
+    map: CanvasMap,
+    node_scale: (f32, f32, f32),
 }
 
 /// What one frame of painting produced.
@@ -218,6 +245,20 @@ pub(crate) struct Painter {
         Option<crate::scaling::UiScreen>,
         Vec<crate::scaling::LetterboxBars>,
     )>,
+    /// How many times each surface pass ran ([`Ui::surface_passes`]).
+    passes: SurfacePasses,
+}
+
+/// How many times [`Ui::paint`] ran each of its surface passes since the UI was made
+/// (decision 0015 Decision 1.4–1.6). A frame in which nothing changed runs neither; a frame
+/// in which only elements changed whose surfaces stay as they were runs the light pass,
+/// which walks only the changed subtrees; the full pass walks the whole tree.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct SurfacePasses {
+    /// Full surface passes (surface decisions, coverage, groups, every surface's damage).
+    pub full: u64,
+    /// Light passes (only the damage of the recorded elements).
+    pub light: u64,
 }
 
 /// Where the damage walk reaches an element: its box in canvas coordinates, its parent's
@@ -228,11 +269,28 @@ type WalkState = Option<(IBox, IBox, usize)>;
 /// it, that surface's owner→canvas map ([`CanvasMap`], `ui-scaling.md` §6.2) and the walk state.
 type LightStart = (ElementKey, Option<(SurfaceId, CanvasMap, WalkState)>);
 
+/// A surface owner [`Ui::light_sync`] can take ([`Ui::light_owner`]).
+struct LightOwner {
+    id: SurfaceId,
+    /// The owner's new signature, displayed box and canvas size, when they changed.
+    update: Option<OwnerUpdate>,
+}
+
+/// What changed about a surface owner taken by [`Ui::light_sync`].
+struct OwnerUpdate {
+    sig: OwnerSig,
+    displayed: Rect,
+    canvas: [u32; 2],
+    group: GroupId,
+    /// For a nested owner: its parent surface's owner and its new coverage region there.
+    cover: Option<(ElementKey, Option<Rect>)>,
+}
+
 /// What [`Ui::decide_surfaces`] finds.
 #[derive(Debug, Default)]
 struct Decided {
-    /// (owner, stand-in, tile) in tree pre-order.
-    surfaces: Vec<(ElementKey, bool, bool)>,
+    /// (owner, stand-in, tile, position among its parent's children) in tree pre-order.
+    surfaces: Vec<(ElementKey, bool, bool, Option<usize>)>,
     /// For each surface, its direct nested surfaces in tree pre-order.
     nested: Vec<Vec<ElementKey>>,
     /// The elements that get composition nodes.
@@ -355,6 +413,7 @@ impl Painter {
             image_lru_mib: None,
             s6: crate::scaling::S6Budget::default(),
             letterbox: None,
+            passes: SurfacePasses::default(),
         }
     }
 
@@ -477,6 +536,13 @@ impl Ui {
     #[must_use]
     pub fn paint_settled(&self) -> bool {
         !self.painter.touched && self.painter.dirty.is_empty() && self.painter.scheduler.is_idle()
+    }
+
+    /// How many times each surface pass ran ([`SurfacePasses`]): benchmarks and tests check
+    /// that a frame with no change runs neither and that a steady change runs the light one.
+    #[must_use]
+    pub fn surface_passes(&self) -> SurfacePasses {
+        self.painter.passes
     }
 
     /// The reference paint step: the full surface pass on every frame with a change
@@ -609,7 +675,7 @@ impl Ui {
         let mut out = Decided::default();
         // (element, nearest surface above is Tile, surfaced depth, a surface above, shown
         // with every ancestor, nearest plan entry with a node of its own, index of the
-        // nearest surface above in `out.surfaces`)
+        // nearest surface above in `out.surfaces`, position among the parent's children)
         type Item = (
             ElementKey,
             bool,
@@ -618,10 +684,21 @@ impl Ui {
             bool,
             Option<usize>,
             Option<usize>,
+            Option<usize>,
         );
         let screen_shown = self.is_visible(self.screen);
-        let mut stack: Vec<Item> = vec![(self.screen, false, 0, false, screen_shown, None, None)];
-        while let Some((k, under_tile, depth, surface_above, shown, plan_parent, surface)) =
+        let screen_index = self.child_index(self.screen, None);
+        let mut stack: Vec<Item> = vec![(
+            self.screen,
+            false,
+            0,
+            false,
+            screen_shown,
+            None,
+            None,
+            screen_index,
+        )];
+        while let Some((k, under_tile, depth, surface_above, shown, plan_parent, surface, index)) =
             stack.pop()
         {
             let Some(e) = self.el(k) else { continue };
@@ -634,7 +711,7 @@ impl Ui {
                     let tile = self.surface_mode(k) == object_mode::TILE
                         && pow2(e.bx.w().max(0) as u32)
                         && pow2(e.bx.h().max(0) as u32);
-                    out.surfaces.push((k, false, tile));
+                    out.surfaces.push((k, false, tile, index));
                     has = true;
                     tile_here = tile;
                 } else if e.root_panel
@@ -642,7 +719,7 @@ impl Ui {
                     && !surface_above
                     && self.object_mode(k) == Some(object_mode::NONE)
                 {
-                    out.surfaces.push((k, true, false));
+                    out.surfaces.push((k, true, false, index));
                     has = true;
                 }
             }
@@ -672,7 +749,7 @@ impl Ui {
                     child_plan = Some(out.plan.len() - 1);
                 }
             }
-            for c in e.children.iter().rev() {
+            for (i, c) in e.children.iter().enumerate().rev() {
                 let child_shown = shown && self.is_visible(*c);
                 stack.push((
                     *c,
@@ -682,6 +759,7 @@ impl Ui {
                     child_shown,
                     child_plan,
                     child_surface,
+                    Some(i),
                 ));
             }
         }
@@ -1272,6 +1350,9 @@ impl Ui {
             if self.painter.structural || self.painter.always_full || !self.light_sync() {
                 self.sync_surfaces(now);
                 self.painter.nodes = None;
+                self.painter.passes.full = self.painter.passes.full.saturating_add(1);
+            } else {
+                self.painter.passes.light = self.painter.passes.light.saturating_add(1);
             }
             self.painter.structural = false;
         }
@@ -1364,7 +1445,7 @@ impl Ui {
         self.painter.plan = plan;
         let mut new_recs: BTreeMap<ElementKey, SurfaceRec> = BTreeMap::new();
         let mut group_of: BTreeMap<ElementKey, GroupId> = BTreeMap::new();
-        for (k, stand_in, tile) in &decided {
+        for ((k, stand_in, tile, index), nested) in decided.iter().zip(decided_nested.iter()) {
             // Group: the nearest surface above, else itself.
             let mut g = None;
             let mut cur = self.parent(*k);
@@ -1399,6 +1480,8 @@ impl Ui {
                     coverage: Vec::new(),
                     stand_in: *stand_in,
                     tile: *tile,
+                    sig: self.owner_sig(*k, *index),
+                    has_nested: !nested.is_empty(),
                 },
             );
         }
@@ -1428,7 +1511,7 @@ impl Ui {
         let nested_of: BTreeMap<ElementKey, &Vec<ElementKey>> = decided
             .iter()
             .zip(decided_nested.iter())
-            .map(|((k, _, _), n)| (*k, n))
+            .map(|((k, _, _, _), n)| (*k, n))
             .collect();
         let keys: Vec<ElementKey> = new_recs.keys().copied().collect();
         let mut nested_direct: Vec<ElementKey> = Vec::new();
@@ -1549,6 +1632,182 @@ impl Ui {
         }
     }
 
+    /// Called when `k` is attached, detached or moves among its siblings. When its subtree
+    /// holds anything the full surface pass decides ([`Ui::is_structural`]), the next pass
+    /// with a change is the full one: the pre-order of the composition plan may change,
+    /// and [`Ui::light_sync`] checks only each nested surface owner's own inputs. A subtree
+    /// not attached below the screen root has nothing in the plan (attaching it later
+    /// comes here again).
+    pub(crate) fn note_order_change(&mut self, k: ElementKey) {
+        /// Most elements checked before the full pass is asked for anyway.
+        const MAX_CHECK: usize = 4_096;
+        if !self.is_ancestor_or_self(self.screen, k) {
+            return;
+        }
+        let mut stack = vec![k];
+        let mut n = 0usize;
+        while let Some(c) = stack.pop() {
+            n += 1;
+            if n > MAX_CHECK || self.is_structural(c) {
+                self.painter.note_structure();
+                return;
+            }
+            self.push_children(c, &mut stack);
+        }
+    }
+
+    /// The position of `k` among its parent's children. `hint` is a position it may have
+    /// (the one the full pass recorded, or the one its walk found): when the child there is
+    /// `k` that is the answer, without searching the parent's list (whose length a plugin
+    /// controls; a search per surface owner would make the surface passes quadratic in it).
+    fn child_index(&self, k: ElementKey, hint: Option<usize>) -> Option<usize> {
+        let pe = self.el(k)?.parent.and_then(|p| self.el(p))?;
+        if let Some(i) = hint
+            && pe.children.get(i) == Some(&k)
+        {
+            return Some(i);
+        }
+        pe.children.iter().position(|c| *c == k)
+    }
+
+    /// The owner's own inputs to the full surface pass ([`OwnerSig`]); `index` as
+    /// [`Ui::child_index`] takes it.
+    fn owner_sig(&self, k: ElementKey, index: Option<usize>) -> OwnerSig {
+        let e = self.el(k);
+        let parent = e.and_then(|e| e.parent);
+        OwnerSig {
+            parent,
+            index: self.child_index(k, index),
+            visible: e.is_some_and(|e| e.visible),
+            displayed: self.is_displayed(k),
+            root_panel: e.is_some_and(|e| e.root_panel),
+            owns: self.owns_surface(k),
+            mode: self.surface_mode(k),
+            bx: e.map(|e| e.bx).unwrap_or_default(),
+            physical: self.physical_box(k),
+            map: self.canvas_map(k),
+            node_scale: self.node_scale_at_or_above(k),
+        }
+    }
+
+    /// The surface of an element that owns one whose decision the full pass would not
+    /// change: not the screen root, a drag icon or external content, with a composition
+    /// node, and with the canvas size, displayed box and [`OwnerSig`] of the last full pass.
+    /// Its content can then be damaged by the light pass like any other element's (its own
+    /// surface draws it from its root box).
+    ///
+    /// With `recorded` (a recorded owner, whose own subtree the light pass walks), changes
+    /// of the owner's own geometry are taken too, when the full pass would answer them
+    /// without deciding anything else again:
+    ///
+    /// - a new node scale and owner→canvas map with the same canvas size and displayed box
+    ///   (a node-scale animation): the surface takes its new content scale;
+    /// - for an owner with no surface nested in it that is a group root, or nested directly
+    ///   in a group root, also a move and a new canvas size (floating text that rises and
+    ///   grows): its displayed box and composition node move; a new canvas size repaints it
+    ///   in full; as a nested entry its coverage region in its parent changes in place, and
+    ///   its group gets the layout change the full pass gives it (Decision 1.5, 1.7). A
+    ///   coverage region that appears or vanishes, deeper nesting, tile addressing and
+    ///   stand-ins are left to the full pass.
+    fn light_owner(&self, k: ElementKey, recorded: bool) -> Option<LightOwner> {
+        let e = self.el(k)?;
+        if k == self.screen || e.drag_icon || self.painter.external.contains_key(&k) {
+            return None;
+        }
+        let r = self.painter.recs.get(&k)?;
+        if !self.painter.node_index.contains_key(&k) {
+            return None;
+        }
+        let canvas = self.canvas_size(k);
+        let displayed = self.displayed_box(k).to_rect();
+        let sig = self.owner_sig(k, r.sig.index);
+        if r.sig == sig && r.displayed == displayed && r.canvas == canvas {
+            return Some(LightOwner {
+                id: r.id,
+                update: None,
+            });
+        }
+        if !recorded || r.tile || r.stand_in {
+            return None;
+        }
+        // A Tile-mode owner whose new size has power-of-two sides would be decided as a Tile
+        // surface ([`Ui::decide_surfaces`]): its addressing and its subtree's surfaces change.
+        let tile = sig.mode == object_mode::TILE
+            && pow2(sig.bx.w().max(0) as u32)
+            && pow2(sig.bx.h().max(0) as u32);
+        if tile != r.tile {
+            return None;
+        }
+        // The signature apart from the owner's own geometry and scale.
+        let same_rest = OwnerSig {
+            map: r.sig.map,
+            node_scale: r.sig.node_scale,
+            bx: r.sig.bx,
+            physical: r.sig.physical,
+            ..sig.clone()
+        } == r.sig;
+        if !same_rest {
+            return None;
+        }
+        let update = |cover| {
+            Some(LightOwner {
+                id: r.id,
+                update: Some(OwnerUpdate {
+                    sig: sig.clone(),
+                    displayed,
+                    canvas,
+                    group: r.group,
+                    cover,
+                }),
+            })
+        };
+        if r.displayed == displayed && r.canvas == canvas && sig.bx == r.sig.bx {
+            return update(None);
+        }
+        if r.has_nested {
+            return None;
+        }
+        if r.group.0 == r.id.0 {
+            return update(None);
+        }
+        // Nested: the parent surface must be its group's root, and the coverage region must
+        // stay in its parent's list (in place) or stay out of it.
+        let mut cur = self.parent(k);
+        let mut n = 0usize;
+        let parent = loop {
+            let c = cur?;
+            if self.painter.recs.contains_key(&c) {
+                break c;
+            }
+            n += 1;
+            if n > crate::ui::MAX_TREE_DEPTH * 4 {
+                return None;
+            }
+            cur = self.parent(c);
+        };
+        let pr = self.painter.recs.get(&parent)?;
+        if pr.group != r.group || pr.group.0 != pr.id.0 {
+            return None;
+        }
+        let pc = ParentCanvas {
+            displayed: pr.displayed,
+            canvas: pr.canvas,
+            canvas_origin: [0, 0],
+            stored: pr.canvas,
+        };
+        let region = if self.shown_below(parent, k) {
+            let fp = self.footprint_node(k, &self.painter.recs, 0);
+            coverage_region(&fp, &pc)
+        } else {
+            None
+        };
+        let listed = pr.coverage.iter().any(|(id, _)| *id == r.id.0);
+        if listed != region.is_some() {
+            return None;
+        }
+        update(Some((parent, region)))
+    }
+
     /// Whether `k` takes part in what the full surface pass decides: a surface owner (or
     /// an element that would own one), a root panel (stand-in surfaces, clip windows), an
     /// element with a composition node or external content, the screen root, or an element
@@ -1565,14 +1824,19 @@ impl Ui {
     }
 
     /// The damage pass for a frame in which only the recorded paint-dirty elements changed
-    /// and none of them, nor anything below them, takes part in the surface decisions
-    /// ([`Ui::is_structural`]). Then the surfaces, their canvas sizes, displayed boxes,
-    /// coverage regions, groups and composition nodes are those of the last full pass, and
-    /// an element's canvas area can only have changed if it or an ancestor was recorded
-    /// (every change of a layout box, visibility, parent or sibling order records the
-    /// element it changes). So walking the subtrees of the recorded elements, with the
-    /// clip and depth their ancestors give, finds exactly the damage of the full walk.
-    /// Returns `false`, having changed nothing, when the full pass is needed.
+    /// and the surface decisions stay: no recorded element, nor anything below one, takes
+    /// part in them ([`Ui::is_structural`]), except surface owners whose own inputs to the
+    /// full pass are unchanged ([`Ui::light_owner`]; a recorded owner may also change the
+    /// geometry that function lists, which is applied here as the full pass would).
+    /// Then the surfaces, their canvas sizes, displayed boxes, coverage regions, groups
+    /// and composition nodes are those of the last full pass (or updated here), and an
+    /// element's canvas area can only have changed if it or an ancestor was recorded (every
+    /// change of a layout box, visibility, parent or sibling order records the element it
+    /// changes; one that moves a subtree holding a surface asks for the full pass,
+    /// [`Ui::note_order_change`]). So walking the subtrees of the recorded elements, with
+    /// the clip and depth their ancestors give and leaving nested surfaces to their own
+    /// walks, finds exactly the damage of the full walk. Returns `false`, having changed
+    /// nothing, when the full pass is needed.
     fn light_sync(&mut self) -> bool {
         /// Most elements below the recorded ones checked before the full pass is cheaper.
         const MAX_LIGHT: usize = 4_096;
@@ -1582,18 +1846,53 @@ impl Ui {
         // Where each walk starts: the element, and the surface that draws it with the walk
         // state the full walk gives it, or `None` when it is not drawn.
         let mut starts: Vec<LightStart> = Vec::new();
+        // Recorded surface owners handled here ([`Ui::light_owner`]): their nodes are patched.
+        let mut owners: Vec<ElementKey> = Vec::new();
+        // Recorded owners whose scale, displayed box or canvas size changed.
+        let mut rescaled: Vec<(ElementKey, SurfaceId, OwnerUpdate)> = Vec::new();
         for &k in &recorded {
-            if self.is_structural(k) {
+            let own = self.light_owner(k, true);
+            if own.is_none() && self.is_structural(k) {
                 return false;
             }
             stack.clear();
             self.push_children(k, &mut stack);
             while let Some(c) = stack.pop() {
                 below += 1;
-                if below > MAX_LIGHT || self.is_structural(c) {
+                if below > MAX_LIGHT {
+                    return false;
+                }
+                if self.is_structural(c) {
+                    // A recorded element has its own iteration of this loop, which takes
+                    // its own geometry changes or asks for the full pass; its walk covers
+                    // its subtree.
+                    if self.painter.dirty.contains(&c) {
+                        continue;
+                    }
+                    // A nested surface the full pass would decide as before: the walk below
+                    // skips it.
+                    if self.light_owner(c, false).is_some() {
+                        continue;
+                    }
                     return false;
                 }
                 self.push_children(c, &mut stack);
+            }
+            if let Some(LightOwner { id, update }) = own {
+                if let Some(u) = update {
+                    rescaled.push((k, id, u));
+                }
+                // Its own surface draws it from its root box, as in the full damage walk.
+                let Some(b) = self.el(k).map(|e| e.bx) else {
+                    return false;
+                };
+                let root_box = IBox::from_xywh(0, 0, b.w(), b.h());
+                starts.push((
+                    k,
+                    Some((id, self.canvas_map(k), Some((root_box, root_box, 0)))),
+                ));
+                owners.push(k);
+                continue;
             }
             // The path up to the surface that draws `k`.
             let mut path: Vec<ElementKey> = Vec::new();
@@ -1602,6 +1901,9 @@ impl Ui {
             let mut covered = false;
             while let Some(c) = cur {
                 if self.painter.recs.contains_key(&c) {
+                    // A recorded owner is handled here (or the full pass runs): its walk
+                    // includes this subtree.
+                    covered = self.painter.dirty.contains(&c);
                     owner = Some(c);
                     break;
                 }
@@ -1652,6 +1954,11 @@ impl Ui {
             walk.clear();
             walk.push((k, start));
             while let Some((n, st)) = walk.pop() {
+                // A nested surface draws itself (its owner is checked above), as in the
+                // full damage walk.
+                if n != k && self.painter.recs.contains_key(&n) {
+                    continue;
+                }
                 let Some(e) = self.arena.get(n) else { continue };
                 let drawn = st.and_then(|(bx, clip, depth)| {
                     if depth > crate::ui::MAX_TREE_DEPTH + 2 || !e.visible {
@@ -1699,13 +2006,96 @@ impl Ui {
                 e.paint_dirty = false;
             }
         }
+        // A changed owner's surface record, content scale, composition node, its parent's
+        // coverage regions and its group's layout change, as the full pass sets them
+        // (`sync_surfaces`: damage, then the layout changes).
+        let mut changed_groups: BTreeMap<GroupId, Vec<SurfaceId>> = BTreeMap::new();
+        let mut old_cover: BTreeMap<ElementKey, Vec<(u32, Rect)>> = BTreeMap::new();
+        for (k, id, u) in rescaled {
+            self.painter
+                .scheduler
+                .set_surface_scale(id, u.sig.map.content_scale());
+            let Some(r) = self.painter.recs.get_mut(&k) else {
+                continue;
+            };
+            let moved = r.displayed != u.displayed;
+            let resized = r.canvas != u.canvas;
+            // The node's destination is the owner's physical box.
+            let new_dest = r.sig.physical != u.sig.physical;
+            r.displayed = u.displayed;
+            r.canvas = u.canvas;
+            r.sig = u.sig;
+            if moved || resized || new_dest {
+                self.painter.nodes = None;
+            }
+            if resized {
+                self.painter.scheduler.damage_all(id);
+                changed_groups.entry(u.group).or_default().push(id);
+            }
+            if let Some((parent, region)) = u.cover {
+                if moved {
+                    changed_groups.entry(u.group).or_default();
+                }
+                if let Some(pr) = self.painter.recs.get_mut(&parent) {
+                    old_cover
+                        .entry(parent)
+                        .or_insert_with(|| pr.coverage.clone());
+                    if let Some(region) = region
+                        && let Some(entry) = pr.coverage.iter_mut().find(|(i, _)| *i == id.0)
+                    {
+                        entry.1 = region;
+                    }
+                }
+            }
+        }
+        for (parent, old) in old_cover {
+            let Some(pr) = self.painter.recs.get(&parent) else {
+                continue;
+            };
+            if pr.coverage != old {
+                let (pid, group) = (pr.id, pr.group);
+                let rects: Vec<Rect> = old
+                    .iter()
+                    .chain(pr.coverage.iter())
+                    .map(|(_, c)| *c)
+                    .collect();
+                for c in rects {
+                    self.painter.scheduler.add_damage(pid, c);
+                }
+                changed_groups.entry(group).or_default().push(pid);
+            }
+        }
+        for (g, members) in changed_groups {
+            let geo = self.group_geometry(g);
+            self.painter.scheduler.layout_change(g, geo, &members);
+        }
+        // The node fields of a recorded owner that its signature does not decide, as
+        // `comp_nodes` sets them.
+        for k in owners {
+            let opacity = self.prop(k, self.v.pids.object_opacity).float();
+            let alpha_threshold = self.meter_alpha_threshold(k).unwrap_or(0.0);
+            let rotation = self.el(k).map(|e| e.rotation);
+            if let Some(&i) = self.painter.node_index.get(&k)
+                && let Some(n) = self.painter.nodes.as_mut().and_then(|n| n.get_mut(i))
+            {
+                n.opacity = opacity;
+                n.alpha_threshold = alpha_threshold;
+                if let Some(r) = rotation {
+                    n.rotation = r;
+                }
+            }
+        }
         true
     }
 
     /// Retires every element of the walk's subtrees: its old area is damaged and it is
-    /// no longer painted.
+    /// no longer painted. Nested surfaces are left to their own walks, as in the full
+    /// damage walk.
     fn retire_walk(&mut self, walk: &mut Vec<(ElementKey, WalkState)>, painted: &mut PaintedMap) {
         while let Some((n, _)) = walk.pop() {
+            if self.painter.recs.contains_key(&n) {
+                continue;
+            }
             if let Some((s, a)) = painted.remove(n) {
                 self.painter.scheduler.add_damage(s, a);
             }

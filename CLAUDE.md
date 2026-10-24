@@ -110,20 +110,23 @@ fine. Format-level terms like "DID" or "landblock" are fine.
   static entities and placed figures (`tessera-scriptgraph` runs the nodes; real-data test
   `apps/client/tests/particles_real_data.rs` at M3-03). **Not end to end:** fork effects are
   not drawn (`particles.md` rule §10.2); the gameplay event handler waits for its spec
-  (OPENs of `particle-runtime.md` §3.2, §5.4, §9.2, §12). Beams (§11.1) are drawn (P2).
-  Since 2026-10-23 lit systems take the owner's light list (rule 13) and instances are
-  culled by their bounds (Q-RT3).
-  2026-10-23: the day and night lamp lights (`instance-scripts.md` §6,
-  `tessera_world::lighting::lamps`) are in the walker's light table, so they light objects,
-  lit systems and decals. Rounds 4 and 5: point lights of lit systems have no range cut-off
-  (rule 13, `crates/particles/src/light.rs`); `inherit_opacity` systems take the drawn fade
-  of their figure or placed object (rule 15, `ObjectLayer::placed_object_opacity`);
-  post-pass systems are drawn in a new last stage of each world pass (rule 16,
-  `HookStage::Post`, `Pass::post_particles`), in the walker and the creation viewport. The
-  ten weather systems of §11.2 run in the walker (`walker/effects/weather.rs`: wind from
-  the day curves, sky-exposure tests, branch thresholds, camera and water systems, impacts,
-  gusts), but no rain streaks or snow flakes are drawn yet (drop spawns and the §11.2.5
-  figure effects; `particle-runtime.md` round 5 adds the §11.2.6 rain and snow parameters).
+  (OPENs of `particle-runtime.md` §3.2, §5.4, §9.2, §12). Built since: beams (§11.1, P2);
+  lit systems with the owner's light list and no range cut-off (rule 13), bounds culling
+  (Q-RT3); the day and night lamp lights in the walker's light table
+  (`tessera_world::lighting::lamps`); post-pass systems (rule 16, `HookStage::Post`) in the
+  walker and the creation viewport; `inherit_opacity` (rule 15) for figures and static
+  owners. A static owner's object is found by its entity index and drawn with fade ×
+  `Render_Opacity` (read at bundle build in E26 order, `LandblockBundle::render_opacity`);
+  run-time script writes reach it through `walker/effects/opacity.rs`
+  (`ObjectLayer::set_runtime_opacity`, counted in `EffectStats`; open: a write equal to the
+  stored value is not seen, static entities without Particle nodes run no scripts).
+  Weather (§11.2, rule 17; `walker/effects/weather.rs`, `tessera_particles::weather`): the
+  ten systems, wind, exposure tests and gusts, and since rounds 6–7 the §11.2.6 rain drops
+  and streaks (snow by the interim one-streak rule until Q-RT13) with the P59 count gate, the
+  §11.2.5 figure effects on the avatar, streaks in `colour_4`, `AtmosphericsDetail` from
+  `[Render]` or `--render-pref`, and rain, snow and wind blended through the sky cross-fade
+  and the sun-change fade; headless reports carry the counters (rain at M3-03: 810 drops,
+  3,240 streak vertices).
 - **M6 audio and player music (merged to main 2026-10-08, verified 2026-10-07):** done on Tessera's side.
   Criteria 1 (44,329 / 44,329 payloads decode) and 3 pass, 2 passes data-side (owner's
   listening comparison pending), 4 passes indicatively (re-measure on the idle laptop,
@@ -143,14 +146,17 @@ fine. Format-level terms like "DID" or "landblock" are fine.
   decoders are being built. Since 2026-10-23: far entities (§10), the normal-mapped
   template (§6.4), the seam overlay (§6.5) and the flow-map copy of sector water are built.
   Placed decals (`decals.md`) are drawn in the walker (decal pass in `tessera-render`).
-  2026-10-23: the walker passes the `[Render]` section of `UserPreferences.ini` to
-  `FarViewSettings::apply_render_preferences` (windowed runs only). Round 4: Tessera counts
-  as graphics core 5 with `NearFarSeamBlending` always on and never read from the file
-  (`far-view.md` FD16–FD18); `FarLandscapeNormalMaps`, `MultiPassLighting` and
-  `LandscapeLightingQuality` choose the template and the seam overlay. Open: the FD17
-  command-line override for a headless check of the normal-mapped template.
-  `decals.md` (Accepted) allows interior cells to stay non-receivers until the walker keeps
-  CPU cell meshes (§9.1 answer (b)).
+  Tessera counts as graphics core 5 with `NearFarSeamBlending` always on (`far-view.md`
+  FD16–FD18); `FarLandscapeNormalMaps`, `MultiPassLighting` and `LandscapeLightingQuality`
+  (FD18 level names) choose the template and the seam overlay. Windowed runs read
+  `[Render]` of `UserPreferences.ini` (far-view, draw-distance, `ModelDetail`,
+  `FrillDistance` and effect keys); since rounds 8–11 `--render-pref KEY=VALUE`
+  (`apps/client/src/render_pref.rs`, fuzz `client_render_pref`) goes over it in every run
+  and the dedicated options over both (`walker.md` §14.10, W26, FD22); the headless check of
+  the normal-mapped template and seam overlay passes (`render_pref_real_data`). The windowed
+  mesh arena is sized for the largest landscape level, and object part meshes keep to the
+  object budget (W29). `decals.md` (Accepted) allows interior cells to stay non-receivers
+  until the walker keeps CPU cell meshes (§9.1 answer (b)).
 - **Water appearance (owner report 2026-10-09; merged 2026-10-10):** placed water, puddles,
   waterfalls, liquid distortion and lava draw with their own programs (`water.md` §8.5–§8.7,
   `material.md` §10.3, §11.6); second colour layers and animated texture matrices are drawn;
@@ -166,8 +172,8 @@ fine. Format-level terms like "DID" or "landblock" are fine.
   with M8, by an official server; decision 0034); Tessera's test server never runs gameplay
   rules (`docs/specs/server-content.md`). P0 (scenario feed, `tessera-gamedata`,
   `tessera-client --scenario`, server dependency check) is merged to main (2026-10-10; exit
-  criteria 1–4 pass). P1–P6 are merged to main (2026-10-10 to 2026-10-17, below); P8 has
-  started. P7 (client-run game code) was dropped by the owner on 2026-10-16: with server
+  criteria 1–4 pass). P1–P6 are merged to main (2026-10-10 to 2026-10-17, below), and P8
+  (2026-10-24). P7 (client-run game code) was dropped by the owner on 2026-10-16: with server
   compatibility (M8) the official server runs that code; the milestone workflow refuses P7.
 - **Priority (owner, 2026-10-08):** extended scripting (decision 0017, planned as M5.5) is
   now M9, the last milestone: it starts only after full client parity and server
@@ -229,16 +235,16 @@ fine. Format-level terms like "DID" or "landblock" are fine.
   Since 2026-10-23 the creation figure runs its scripts live (gestures, class props,
   transition ports; a stage or action change keeps the figure), and the scene's decals and
   effect particles are drawn in the creation viewport. Open: pieces of Appearance nodes and
-  colours of EditMaterial nodes that change with anything but the stage key, prop fade, life
-  and destroy times, the figure's own sounds and particle nodes (`character-screens.md`
-  §2.1.4 OPEN).
-  2026-10-23: `character-screens.md` and `script-table.md` (both Accepted) settle the
-  `RampIn` question as Tessera reads it. Rounds 4 and 5: the MeshFX anchor follows
-  `script-table.md` §5.2 in the shared figure path (`prop_anchor_rule`: attached nodes take
-  the holding location, then the bone type, then key 6), mount props included
-  (`MeshChoice::anchor`); the mount draw path still uses only the holding location (every
-  mount node of this install is attached at `Mount_Connection`). The prop fade, life and
-  destroy times (`appearance.md` §5.7, revised in round 5) are not built yet. Since done: `LookLimits` raised to 128/256 MiB and face-layer value 0 offered (owner, 2026-10-16);
+  colours of EditMaterial nodes that change with anything but the stage key, the figure's
+  own sounds and particle nodes (`character-screens.md` §2.1.4 OPEN).
+  `character-screens.md` and `script-table.md` settle the `RampIn` question as Tessera reads
+  it. MeshFX props follow the `script-table.md` §5.2 anchor table (`prop_anchor_rule`:
+  holding location, then bone type, then key 6), the walker's mount draw too
+  (`mounted::mount_model`, round 6). Since rounds 6–8 the screens' live figure follows the
+  prop times of `appearance.md` §5.7 (`tessera-mesh` `assembly::prop_life`): props are drawn
+  at their fade, blended while `Translucent` holds, and props of unattached nodes keep their
+  placement per instance (`LiveFigure::prop_instances`). Since done: `LookLimits` raised to
+  128/256 MiB and face-layer value 0 offered (owner, 2026-10-16);
   the side-panel overflow at 1280×720 is answered by `ui-scaling.md` §5.3–§5.4 (Type B fit
   containers, built in 6015d0e; not yet re-checked on the screen). Built: decision 0025 (Accepted) with
   `scenario-feed.md` rev 4, `tessera-protocol.md` v1.1 and `test-server.md` (Accepted) and
@@ -279,12 +285,14 @@ fine. Format-level terms like "DID" or "landblock" are fine.
   `quest-journal.md` rev 2 are Accepted. The engine dialog boxes and context menus of
   `ui-widgets.md` §18–§19 are built (`tessera-ui` `game::dialog`, `game::context_menu`):
   quest abandon is a confirmation dialog, the tracker menu a context menu at the pointer.
-  Round 4: dialog keys follow §18.4 per dialog kind, and while a modal dialog shows no key,
-  typed text or action reaches game code or the chat entry (`UiHost::modal_dialog_shown`).
-  The local tier-2 goldens of the vendor, wallet and quest log were re-blessed with the
-  owner's approval (2026-10-23). Since round 6 every caller imports `tessera_ui::game::{dialog, context_menu}`
-  (the `widgets::` shim is gone), and a dialog consumes a release only when it took the
-  press (`ui-widgets.md` §18.4 revision 6).
+  Dialog keys follow §18.4 per dialog kind, and a dialog consumes a release only when it took
+  the press. Since round 7 the host pushes its modal band at once with
+  `InputMapper::band_push_keeping_holds` (`keymap.md` §3.3): while a modal dialog shows no
+  key, typed text or action reaches game code or the chat entry (`UiHost::modal_dialog_shown`),
+  commandless bindings such as Ctrl+M cannot fire, and holds from before it end only at their
+  own release. Callers import `tessera_ui::game::{dialog, context_menu}` (the `widgets::` shim
+  is gone). The local tier-2 goldens of the vendor, wallet and quest log were re-blessed with
+  the owner's approval (2026-10-23).
 - **P2 (targeting, skills and combat presentation; merged to main 2026-10-11, exit
   verification 2026-10-11)** (`docs/ROADMAP.md` P2 status): criteria 1-4 pass on Tessera's
   side. Accepted after independent review: `combat-ui.md` (rev 2), `skill-tooltips.md`,
@@ -301,7 +309,9 @@ fine. Format-level terms like "DID" or "landblock" are fine.
   `keymap.md` §8.2 defaults (owner, 2026-10-16), voice-chat icons over the player name hidden,
   the portrait left empty without a scene, beam ribbons and
   heads drawn (322c9e3), install frame name/level text and defeat-panel parts (86e7210),
-  `combat-ui.md` rev 3 conformed (89d5ca0); since 2026-10-23 the combat layer's records are
+  `combat-ui.md` rev 3 conformed (89d5ca0); a held-back first paint restarts when its images
+  arrive, and the combat screens settle on `UiHost::settled()` within 120 s of wall clock
+  (`combat-settle`, 2026-10-24); since 2026-10-23 the combat layer's records are
   read on the asset workers and clips never on the frame thread (ARCH §21), U, left
   double-click and right click use the selection with use-range cylinders from the setups
   (`interaction.md` I6a), and plugin check 76's quickslot click runs end to end.
@@ -334,10 +344,12 @@ fine. Format-level terms like "DID" or "landblock" are fine.
   `trade`, `friends`, `music-sync`. The M5 `--ui` gap is closed (chat window, overlay and
   `--command` share the dispatcher). Since done: member-row effect icons (TR16), committed
   synthetic P4 goldens (`crates/ui/tests/p4_goldens.rs`), the Leave `NOT_IN_WORLD` code
-  (`tessera-protocol.md` §10.6); 2026-10-23: the friends and ignore add dialogs (and the
-  note dialog) are engine text-input dialogs and the row menus of `social-panels.md` §3.5,
-  §3.6 and §4.5 are context menus (the fellowship menu as one group submenu). Owner rows
-  O130-O137.
+  (`tessera-protocol.md` §10.6); the friends, ignore and note dialogs are engine text-input
+  dialogs and the row menus of `social-panels.md` §3.5, §3.6 and §4.5 context menus.
+  Since 2026-10-24 (`fade-fix`) the social, trade, invitation and fellowship panels and the
+  map window's panel open hidden, and a never-drawn auto-fade element hides at once
+  (`Ui::open_panel_hidden`, `ui-behaviour.md` §11.2 OPEN): no half-faded panels at launch.
+  Owner rows O130-O137.
 - **P5 (map, travel, mounts and instances; merged to main 2026-10-13, exit verification
   2026-10-12)** (`docs/ROADMAP.md` P5 status): criteria 1-3 pass on Tessera's side. Its specs
   (`map-windows.md`, `travel-windows.md`, `mounts.md` §14, `walker.md` §16,
@@ -395,30 +407,28 @@ fine. Format-level terms like "DID" or "landblock" are fine.
   PP18). Open: the plugin progression views read records on the main thread (ARCH §21 OPEN); the windows
   draw no item icons and no recipe cooldown timers (OPENs in
   `apps/client/src/progression/present.rs`); owner rows O160-O175.
-- **P8 (parity audit; exit verification 2026-10-24, uncommitted on branch `p8`, worktree
-  `wt-p8`)** (`docs/ROADMAP.md` P8 status; decision 0043 Proposed, waits for the owner):
-  criterion 2 passes on Tessera's side (the CI run on the exit commit is pending): the
+- **P8 (parity audit; merged to main 2026-10-24 (1de1114), exit verification 2026-10-24)**
+  (`docs/ROADMAP.md` P8 status; decision 0043 Proposed, waits for the owner). Built:
+  `docs/checklists/parity.md` (Accepted, independent review) and `parity-tessera.md` (evidence
+  per row: 126 system rows data-side ready, 4 feed only, 47 with a gap; Gaps table); the
   manifests `fuzz/coverage/{data,runtime}.toml` and `tools/check-fuzz-coverage.sh` (CI job
-  `fuzz-coverage`) list 413 parsers (315 with a target, 98 exempt naming a covering target,
-  0 gaps), 200 / 200 bins named, 505 / 505 parser-like functions covered; fuzz/ now links the
-  client, explorer and load-tester libraries (`client_text_readers`, `explorer_text_readers`,
-  `app_arg_readers`); the 19 P8 targets ran 60 s clean. Criterion 1 is data-side done, owner
-  observation pending (O196–O199): `docs/checklists/parity.md` is Accepted (independent
-  review), `docs/checklists/parity-tessera.md` holds the evidence per row (126 system rows
-  data-side ready, 4 feed only, 47 with a gap; Gaps table), and
-  `parity_tooltips_real_data` paints all 100 sample tooltips with 0 panel-audit failures after
-  the exit verification fixed the examination panel's icon field (`fill_held`), gave worth
-  coins their coin-state images and sorted currencies largest first (`item-tooltips.md`
-  §6.11); the tier-2 local pictures are re-blessed for O197/O198. Criterion 3 is open:
-  `busiest.scenario`, `--scenario-timing SECS` (scenario-feed.md §16 OPEN) and
-  `p8_busiest_real_data` exist; the exit verification's `TESSERA_PERF=1` run (load 1.3–2.4,
-  indicative, `docs/perf/p8-busiest.md`) met (a) (0 frames over 50 ms) and (b) (unpaced p99
-  11.47 ms) but missed (c): U1 2.92 ms against 0.3 ms, nearly all in the `tessera-ui` paint
-  (step 8; static panels about 1.1 ms with no uploads, the HUD about 1.5 ms), U3, U4 (b)/(f);
-  U2 reads 0 (a `crates/render` question); (d) needs an `audio-device` build. Profile the
-  paint before the owner's re-measure O200. Known client defects found: a tooltip built before its fonts load
-  is laid out with design sizes (first hover); a stray `..` row and an enum label on a bonus
-  line in some tooltips; K still opens skill training against `progression-panels.md` §1.4.
+  `fuzz-coverage`; fuzz/ links the client, explorer and load-tester libraries); scenarios
+  `parity-tooltips` and `busiest`, `--scenario-timing SECS` (`tessera_client::timing`;
+  `scenario-feed.md` §16 OPEN), the real-data tests `parity_tooltips_real_data` and
+  `p8_busiest_real_data`, and `docs/perf/p8-busiest.md`. Criterion 1 is data-side done
+  (100 / 100 sample tooltips painted, 0 panel-audit failures, after fixing the examination
+  panel's icons (`fill_held`) and the worth row's coin images and order, `item-tooltips.md`
+  §6.11) and waits for the owner (O196–O199). Criterion 2 passes on Tessera's side: on main
+  the checker lists 414 parsers (316 with a target, 98 exempt, 0 gaps), 204 / 204 bins and
+  508 / 508 parser-like functions, and its CI job passes (run of 0efb7d5). Criterion 3 is
+  open: the indicative exit run met (a) and (b) but not (c). Since then `ui-perf` (the light
+  pass for unchanged surface owners) and `ui-perf-2` (geometry preview, R13 skip; an owner's
+  move, scale or fade is no damage) took the busiest scenario's U1 from 3.0 to 1.05 to
+  0.42 ms (headless, indicative; budget 0.3 ms, p99 1.2–1.6 against 1.0 ms) and U3 from 270
+  to 53 KiB; the rest is real HUD repaint, U4 (b)/(f) stay over 4 ms, and (d) needs an
+  `audio-device` build; the owner re-measures (O200). Known client defects: a tooltip built
+  before its fonts load is laid out with design sizes; a stray `..` row and an enum label on
+  a bonus line in some tooltips; K still opens skill training (`progression-panels.md` §1.4).
 - **Owner decisions 2026-10-16:** decisions 0031 and 0036 (panel goldens: tier 1 committed
   synthetic, tier 2 local-only real data; P5 map census) are Accepted; the world walker's
   debug keys move off the five keys the keymap defaults take (`keymap.md` §8.2); and Tessera
@@ -432,11 +442,8 @@ fine. Format-level terms like "DID" or "landblock" are fine.
   §5, canvas/image/glyph crispness §6), the `[UI]` settings keys with the `ui_scale_global`
   migration, the four §7.3 input actions, the client `ScaleState` (UI screen *F* sizing, pointer
   §3.6, auto default, live scale change, `/uiscale`, `--ui-scale`/`--ui-safe-aspect`), the plugin
-  `Display` one-space binding (§7.7) and the renderer §6.6 composition. Gate on the merged
-  tree (install, 2026-10-17): fmt, clippy (workspace `--all-targets --all-features`, fuzz), release
-  tests with the install 7,080 passed / 0 failed; fuzz smoke `ui_settings_keys` 116,861 and
-  `ui_scale_config` 2,360,150 executions, 0 crashes; content, SPDX, server deps, DCO, doc links clean.
-  Invariants §9.5 (I1,I3,I4,I5,I8,I10,I15,I16,I17,I18,T1,T3) and the §9.2 named configs C1–C12 are
+  `Display` one-space binding (§7.7) and the renderer §6.6 composition; release tests with
+  the install 7,080 passed / 0 failed. Invariants §9.5 and the §9.2 named configs C1–C12 are
   tested.
 - **UI scaling — §5–§6 live integration merged to main 2026-10-17 (`6015d0e`):** the deferred
   layout/paint integration is built on the foundation — live §5.2–§5.6 fit rules in the
@@ -444,12 +451,7 @@ fine. Format-level terms like "DID" or "landblock" are fine.
   image resampling, the §5.8 anchored saved-placement store (with a `[UI.panels]` settings
   mirror), the §7.2 Interface window wired to the client scale state (`feed_screen` →
   `Ui::set_ui_screen`; `UiHost::new` sets *F*/*A* from the first frame), and the §9.3 synthetic
-  tier-1 goldens G1 and G3–G8 (committed alongside the G2 glyph stand-in). Gate on the merged
-  tree (install, 2026-10-17): fmt, fuzz-fmt, clippy (workspace `--all-targets --all-features`,
-  fuzz 0), release tests with the install 0 failed; content, SPDX, server-deps, DCO clean. One
-  tier-2 local-only combat golden drifted at the 1.7× critical floaty text (node-scaled text now
-  routes through the §6 scaling paint, soft) in a single 237×202 region and was re-blessed
-  (decision 0031; local goldens are never committed and do not gate CI). At *Se* = 1 with
+  tier-1 goldens G1 and G3–G8 (committed alongside the G2 glyph stand-in). At *Se* = 1 with
   *A* = *F* the geometry is the identity (I2), so existing goldens/tests are unchanged; the
   `ui-layout.md` §8.4 step-6 stop-gap is retired (§5.9). **Built since (2026-10-23):** the §6.4
   derived-glyph path is wired into the surface paint (crisp text at *c* ≠ 1, physical text hit
@@ -483,6 +485,14 @@ fine. Format-level terms like "DID" or "landblock" are fine.
   split between images, scaled images and glyphs (`scaling::s6_budget`,
   `Ui::set_image_memory`); S7 glyph-derivation and ladder-step times in the U-report, with
   ladder steps derived on the workers after each *Se* change (`LadderPrefetch`).
+  **Built 2026-10-23/24 (rounds 6–11):** a failed S1 worker never blanks its surface
+  (tested); the S6 glyph floor comes out of the images' share and Tessera faces take at most
+  half the glyph share; the §6.1 geometry preview (SC21: a canvas whose node scale or pixel
+  phase changes is composed GPU-scaled or moved 1:1 and repainted once after 150 ms of the
+  paint clock), the §6.2 fractional-move rule, `render.md` R13/R14 (nested-entry damage
+  skip) and the light pass for unchanged surface owners (`OwnerSig`); U1 numbers: P8.
+  `ui-scaling.md` revisions 12–14 are Accepted. The client's tier-1 `combat_ui` goldens pass
+  within tolerance but are no longer exact (not re-blessed).
   **Still deferred:** measuring the S1–S7 budgets (`TESSERA_PERF=1` on a quiet machine) and
   the §9.4 tier-2 real-data goldens.
 - **Follow-up packages (merged to main 2026-10-23, 02f2214..9620856):** ten packages; the
@@ -494,10 +504,14 @@ fine. Format-level terms like "DID" or "landblock" are fine.
   `uis-remaining`; specs `spec-world-r3`, `spec-ui-r3`. Round 4 was merged
   (fc1af9c..48a2bf4, 913e1c9): code `client-wiring`, `ui-core`, `world-conform`; specs
   `spec-ui-r4`, `spec-uis-r4`. Round 5 was merged (f39f4f6..c81720a): code
-  `client-host-r5`; specs `spec-collision-r5`, `spec-world-r5`, `spec-ui-r5`. Round 4's
-  `physics-conform` is not merged; it is finishing against `collision.md` §12.4 (z). Round 6
-  is in progress: code `walker-leftovers`, `world-prefetch`, `world-r6`, `ui-r6`,
-  `deps-advisories`; specs `spec-world-r6`, `spec-ui-r6`. Also:
+  `client-host-r5`; specs `spec-collision-r5`, `spec-world-r5`, `spec-ui-r5`; round 4's
+  `physics-conform` followed (8db4c0a). Rounds 6–11 were merged (fe72206..8b6927c,
+  2026-10-23/24): round 6 code `walker-leftovers`, `world-prefetch`, `world-r6`, `ui-r6`,
+  `deps-advisories`, specs `spec-world-r6`, `spec-ui-r6`; the official-entry packages (see
+  M8); round 7 `walker-wiring-r7`, `assets-priority`, `input-band`, `spec-world-r7`,
+  `spec-ui-r7`; round 8 `client-r8`, `world-r8`, `spec-r8`; round 9 `world-r9`,
+  `client-r9`, `spec-r9`; `glue-r10`, `glue-r11`, `combat-settle`, P8; round 11 `ui-perf`,
+  `ui-perf-2`, `walker-r11`, `spec-r10`, `fade-fix`. Also:
   - **Specs.** Package `spec-gameplay` revised 12 specs and they are Accepted after an
     independent review (2026-10-23): `appearance.md`, `combat-ui.md`, `combat-visuals.md`,
     `instruments.md`, `map-windows.md`, `mounts.md`, `scenario-feed.md` (revision 10),
@@ -507,8 +521,8 @@ fine. Format-level terms like "DID" or "landblock" are fine.
     `character-panels.md` (plus the `m5-visual.md` P15 rows); all are Accepted after four
     review rounds (2026-10-23).
     2026-10-23: the code follows `keymap.md` §8.3 (with `ui_window_scale_up`/`_down` since
-    round 3) and the `item-tooltips.md` name wrap, pinned cascade and close button (except
-    the social windows, see P1). Second-round specs, all Accepted after independent
+    round 3) and the `item-tooltips.md` name wrap, pinned cascade and close button
+    (social windows since round 4, see P1). Second-round specs, all Accepted after independent
     review: `ui-scaling.md` rev 7, `crafting-panels.md`, `progression-panels.md`,
     `interaction.md`, `npc-windows.md`, `quest-journal.md`; `far-view.md`,
     `particle-runtime.md`, `decals.md`, `character-screens.md`, `script-table.md`,
@@ -519,9 +533,12 @@ fine. Format-level terms like "DID" or "landblock" are fine.
     `particles.md`, `render.md` §6.5, §6.16, §6.17, `walker.md` §14.9 and §14.11,
     `far-view.md`, `instance-scripts.md`, `script-table.md`, `character-screens.md`;
     `item-tooltips.md`, `keymap.md`, `lua-plugin-api.md` (round-3 parts), `map-windows.md`,
-    `progression-panels.md`, `ui-scaling.md` rev 8. The round-4 and round-5 specs are
-    Accepted after independent review (2026-10-23; lists in b73d9e2, 3803049, cd5a4fc,
-    10bb394, 14f45c2).
+    `progression-panels.md`, `ui-scaling.md` rev 8. The specs of rounds 4–10 are Accepted
+    after independent review (lists in their merge commits): among them `collision.md`,
+    `particle-runtime.md`, `particles.md`, `appearance.md`, `script-table.md`, `mounts.md`,
+    `environment.md`, `far-view.md`, `render.md` §5.1, §6.12, §6.16, `walker.md` §11.2,
+    §11.4.3, §14.10, `keymap.md`, `ui-widgets.md` rev 7, `ui-scaling.md` rev 14, `fonts.md`
+    rev 9 and `lua-plugin-api.md`.
   - **Walker camera.** 2026-10-23: `walker/mod.rs` calls `Controls::follow_characters`, so
     the walk camera follows the install's camera record (`walker.md` §11.6–§11.8: distance,
     pitch, height factor, offsets, fade) and the figure's look-at height; the walk projection
@@ -543,18 +560,22 @@ fine. Format-level terms like "DID" or "landblock" are fine.
     §15.3 settles the epoch of moves and the 30 Hz poll as accepted limits; `ChannelRefused`
     still arrives as a System chat line.
   - **Physics and render.** The collision hierarchy builds on up to 8 threads (same tree; a
-    process-wide budget of cores − 2; re-measure on a quiet machine with `TESSERA_PERF=1`);
-    the box-step walk test runs again. 2026-10-23: `collision.md` §12.4 (Accepted, round 5)
-    answers the edge-tie question: (k) judges a step-up landing by the support probe alone,
-    and the new (z) gives slide and ground-snap hits at a shared edge the best class among
-    the triangle contacts within 4 skins; §12.1 makes an explicit build-thread count an upper
-    bound within the shared budget. `tessera-physics` on main does not follow it yet
-    (package `physics-conform`). `UiStats::gpu_ns` is filled where the
+    process-wide budget of cores − 2, an explicit count is an upper bound; re-measure on a
+    quiet machine with `TESSERA_PERF=1`). Since rounds 6–9 a bundle job still at Prefetch
+    when its hierarchy build starts builds on its worker alone (`collision.md` §12.1:
+    `CollisionSystem::build_at` with a `PrioritySource`; `tessera-assets`
+    `JobContext::priority`/`current_priority`). `tessera-physics` follows `collision.md`
+    §12.4 (k) (a step-up landing judged by the support probe alone) and (z) (an edge tie takes
+    the best class of the contacts within 4 skins; CO63 box-step orders) since
+    `physics-conform` (481ff45). `UiStats::gpu_ns` is filled where the
     adapter has timestamp queries, and the client's U1–U5 report has a U2 row (`ui_gpu_ms`)
     in headless, scripted and (since round 3) windowed runs (`app.rs` calls the UI's
     `record_render_stats`).
   - **Checks.** `check-content.sh` has the PNG location rule (decision 0031 Open item 1);
-    `tessera-gamedata`'s presenters have the fuzz target `gamedata_presenters`.
+    `tessera-gamedata`'s presenters have the fuzz target `gamedata_presenters`;
+    `tools/check-release-features.sh` (CI job `release-features`) keeps `tessera-compat`'s
+    `test-support` out of release builds; `cargo deny` (root and fuzz) passes again after
+    the round-6 lockfile updates (the CI advisories leg stays `continue-on-error`).
   - **Build hazard.** A cargo target dir shared by several worktrees can link another
     worktree's code (artifact names and dep-info are workspace-relative). Give parallel
     worktrees their own target dirs.
@@ -576,11 +597,14 @@ fine. Format-level terms like "DID" or "landblock" are fine.
     prose and is held in `research/held/incident-0041/`; `official-messages-world.md`,
     `official-messages-play.md` and `property-system.md` §10 are back in Review (no
     independent review); `official-login.md` and `official-session.md` are Revised.
-    `official-entry.md` (Tessera-side entry points, consent gate) is Accepted.
-  - **Incident 0041 stays open** (`docs/decisions/0042-m8-remediation-decisions.md`): the
-    first remediation pass (branch `m8-remediation`) failed its default-mode audit
-    (`docs/m8-remediation.md` §7, B1–B4), so `M8_PAUSED` stays set and no official-protocol
-    handler is built until a pass passes the audit.
+    `official-entry.md` (Tessera-side entry points, consent gate) is Accepted (revision 6,
+    2026-10-24).
+  - **Incident 0041 stays open** (`docs/decisions/0042-m8-remediation-decisions.md`): both
+    remediation passes on branch `m8-remediation` failed their default-mode audits
+    (`docs/m8-remediation.md` §7, 19acce5, and §8, 6c71fe66 on 2026-10-24: contradictions
+    between the specs on shared wire facts, client-internal residue, writer and reviewer work
+    in one commit), so `M8_PAUSED` stays set and no official-protocol handler is built until
+    a pass passes the audit. Next: a third pass with separate writer and reviewer commits.
   - **Partly built (`crates/compat`, `fuzz/`):** `backend` (`CompatBackend` shell), `login`
     (install configuration, language and network-version discovery, SOAP login, world
     status, queue, ticket refresh), `version_resource` (PE version resource reader),
@@ -592,8 +616,15 @@ fine. Format-level terms like "DID" or "landblock" are fine.
     fuzz targets `compat_login_xml`, `compat_session_packet`, `compat_world_message`,
     `compat_version_resource`. 2026-10-23 (`compat-cleanup`, decision 0042 items 1–3 and
     5): no code scan (user value, then the version resource), neutral names, no fallback
-    URL, notice 0x12E receive-only, hardening. The `official-entry.md` consent gate is being
-    built.
+    URL, notice 0x12E receive-only, hardening. The `official-entry.md` entry points are built
+    (revisions 3–6, 2026-10-23/24): `--start-screen` and `--official`, the start screen, the
+    ban-risk warning and the HMAC-bound acceptance record, Withdraw off the frame thread
+    (it ends the run's acceptance at once), a non-cloneable consent proof that every backend
+    constructor and the `NetworkAccess` gate (the only UDP bind) require (`consent`,
+    `net_access`, `credentials`), the account form and the progress, world-list, queue and
+    error screens (`apps/client/src/official/`), `tessera-net` Account events and commands,
+    fuzz `compat_consent_record` and `client_official_entry`; the character screens stay a
+    placeholder until a session can feed them.
   - **Still needs more work (waits for the specs, decision 0042 item 4):** the play
     messages (movement, chat, emotes, logout, the chat-server client) and the P1–P6
     gameplay messages in `crates/compat`, a live `Connector` and session driver in

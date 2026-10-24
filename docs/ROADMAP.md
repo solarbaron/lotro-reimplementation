@@ -38,18 +38,19 @@
 > side (exit verification 2026-10-12, [P5 status](#p5-status)), its specs are Accepted after
 > independent review (2026-10-13); the code was conformed to them and P5 merged to main.
 > [P6](#p6) (progression and crafting panels) merged to main on 2026-10-17
-> ([P6 status](#p6-status)); P8 has started.
+> ([P6 status](#p6-status)), and [P8](#p8) (parity audit) on 2026-10-24.
 > [M8](#m8) (official-server compatibility, [decision 0034](decisions/0034-official-server-compatibility.md))
 > is partly done and paused ([M8 status](#m8-status)): since incident
 > [0041](decisions/0041-incident-m8-spec-contamination.md) none of its six Phase 1 protocol
 > specs is Accepted, and by [decision 0042](decisions/0042-m8-remediation-decisions.md) the
-> incident stays open and no official-protocol handler is built until the specs pass a
-> clean-room audit. The foundational `backend`, `login`, `session` and `world` modules in
-> `tessera-compat` are built and were cleaned up under decision 0042 (2026-10-23).
-> [P8](#p8) (parity audit) started on 2026-10-23 on branch `p8`: [decision 0043](decisions/0043-p8-parity-audit.md)
-> (Proposed) fixes what its exit criteria mean. Exit verification 2026-10-24
-> ([P8 status](#p8-status)): criterion 2 passes on Tessera's side, criterion 1 is data-side done
-> and waits for the owner's walk of the parity checklist, criterion 3 waits for the owner's
+> incident stays open (the second remediation pass was blocked by its audit on 2026-10-24) and
+> no official-protocol handler is built until the specs pass a clean-room audit. The
+> foundational `backend`, `login`, `session` and `world` modules in `tessera-compat` are built
+> and were cleaned up under decision 0042 (2026-10-23); the `official-entry.md` entry points
+> and consent gate are built (2026-10-23/24).
+> P8 ([decision 0043](decisions/0043-p8-parity-audit.md), Proposed; [P8 status](#p8-status)):
+> criterion 2 passes on Tessera's side, criterion 1 is data-side done and waits for the
+> owner's walk of the parity checklist, criterion 3 waits for the UI budget and the owner's
 > re-measure on the idle reference machine.
 > Milestones are ordered by dependency: each one builds on the previous one.
 
@@ -1074,11 +1075,40 @@ is a `tessera-render` stage (`HookStage::Post`, `Pass::post_particles`, the last
 world pass, after the blended meshes), used by the walker and the creation viewport; effects
 of static owners inherit the object's drawn fade (`ObjectLayer::placed_object_opacity`,
 matched by placement position); mount props carry the §5.2 anchor rule (`MeshChoice::anchor`).
-Open: no rain streaks or snow flakes (the §11.2.3 drop spawns and §11.2.5 figure effects;
-`particle-runtime.md` round 5 adds the §11.2.6 rain and snow parameters); the §11.3 effect
-preview of the options window; the FD17 command-line override; unattached MeshFX anchors are
-not yet read once at placement; the mount draw path uses only the holding location; the prop
-fade, life and destroy times (`appearance.md` §5.7, revised in round 5) are not built.
+2026-10-23/24 (rounds 6–11; packages `walker-leftovers`, `world-r6`, `walker-wiring-r7`,
+`client-r8`, `world-r8`, `world-r9`, `client-r9`, `glue-r10`, `glue-r11`, `walker-r11`):
+the §11.2.6 rain drops and streaks (`crates/particles/src/weather.rs`: parameter tables,
+quality factors, count gate P59, placement, wrap, streak quads; snow by the interim
+one-streak rule until Q-RT13), spawned into the vapour, ripple and gust systems, drawn in
+the translucent stage in `colour_4`, with the §11.2.5 figure effects on the avatar; rain,
+snow and wind follow the sky-key cross-fade and the sun-change fade (`walker/env.rs`);
+`AtmosphericsDetail` comes from `[Render]` or `--render-pref`; the headless report carries
+weather counters (rain at M3-03: 810 drops, 3,240 streak vertices). Rule 15 for static
+owners: the object is found by its entity index (`ObjectLayer::placed_entity_opacity`),
+culled owners keep their fade, static objects are drawn with fade × `Render_Opacity` (read
+at bundle build in E26 order, `LandblockBundle::render_opacity`), and run-time script writes
+reach the object layer (`walker/effects/opacity.rs`, `ObjectLayer::set_runtime_opacity`,
+counters in `EffectStats`). The walker's mount draw follows the §5.2 anchor table
+(`mounted::mount_model`); the screens' live figure follows `appearance.md` §5.7 (prop
+times, fades and translucency, unattached props fixed per instance). The FD17 override is
+`--render-pref KEY=VALUE` (`apps/client/src/render_pref.rs`, `walker.md` §14.10, FD22;
+headless check `render_pref_real_data`); windowed runs read the draw-distance keys from
+`UserPreferences.ini` below it, `lighting_quality_level` follows FD18, and object part
+meshes keep to the object budget (W29). `placement_lod_class` takes the E26 order too
+(no class or depth-bias change over the 357 resident blocks of region 1). Collision
+(packages `physics-conform`, 481ff45; `world-prefetch`, `assets-priority`, `world-r8`,
+`world-r9`): `tessera-physics` follows `collision.md` §12.4 (k) (a step-up landing judged by
+the support probe alone), (z) (a slide or ground-snap hit whose class the face normal
+lowered takes the best class of the triangle contacts within 4 skins, measured from the hit
+triangle's own contact; CO63 compares five triangle orders head-on and oblique) and (g)
+(hostile contacts dropped by one test); by §12.1 an explicit build-thread count is an upper
+bound in the shared budget, and a bundle job still at Prefetch when its hierarchy build
+starts builds on its worker alone (`CollisionSystem::build_at` with a `PrioritySource`, read
+then; `tessera-assets` `JobContext::priority`, `current_priority`, `detached_at`; a real
+`WorldStreamer` test keeps the far ring on one thread).
+Open: the §11.3 effect preview of the options window; snow flakes' own motion (Q-RT13);
+run-time `Render_Opacity` writes equal to the stored value are not detected, and static
+entities without Particle nodes run no scripts.
 
 ---
 
@@ -1476,7 +1506,7 @@ builds ([decision 0034](decisions/0034-official-server-compatibility.md)).
    events. The owner records the result.
 
 <a id="m8-status"></a>
-**Status (2026-10-23): Partly done; building paused by incident [0041](decisions/0041-incident-m8-spec-contamination.md), which stays open by [decision 0042](decisions/0042-m8-remediation-decisions.md). No Phase 1 specification is Accepted: the gameplay spec is held for disassembly prose, the world, play and `property-system.md` §10 specs are back in Review, and the login and session specs are Revised. The first remediation pass (branch `m8-remediation`, 19acce5) failed its default-mode clean-room audit ([`m8-remediation.md`](m8-remediation.md) §7: B1–B4, N1–N10), so `M8_PAUSED` stays `true` and no official-protocol message handler is built until a pass passes the audit. [`official-entry.md`](specs/official-entry.md) (the Tessera-side entry points: start screen, consent gate, account form, world list, queue) is Accepted. The 4 foundational Phase 2 modules (`backend`, `login`, `session`, `world` in `crates/compat`) were built before the incident and cleaned up under decision 0042 items 1–3 and 5 (2026-10-23); play/gameplay message handlers, live client connector wiring, and live verification still need more work.**
+**Status (2026-10-24): Partly done; building paused by incident [0041](decisions/0041-incident-m8-spec-contamination.md), which stays open by [decision 0042](decisions/0042-m8-remediation-decisions.md). No Phase 1 specification is Accepted: the gameplay spec is held for disassembly prose, the world, play and `property-system.md` §10 specs are back in Review, and the login and session specs are Revised. The first remediation pass (branch `m8-remediation`, 19acce5) failed its default-mode clean-room audit ([`m8-remediation.md`](m8-remediation.md) §7: B1–B4, N1–N10), and so did the second (6c71fe66, 2026-10-24, §8: B4 remains with new contradictions between the specs on shared wire facts, client-internal residue, writer and reviewer work in one commit), so `M8_PAUSED` stays `true` and no official-protocol message handler is built until a pass passes the audit; the next step is a third pass with separate writer and reviewer commits. [`official-entry.md`](specs/official-entry.md) (the Tessera-side entry points: start screen, consent gate, account form, world list, queue) is Accepted (revision 6, 2026-10-24) and built. The 4 foundational Phase 2 modules (`backend`, `login`, `session`, `world` in `crates/compat`) were built before the incident and cleaned up under decision 0042 items 1–3 and 5 (2026-10-23); play/gameplay message handlers, live client connector wiring, and live verification still need more work.**
 
 - **Specs (written 2026-10-20 to 2026-10-22; none is Accepted since incident 0041, see the status line above; `official-messages-gameplay.md` is held in `research/held/incident-0041/`, so links to it dangle). What they cover:**
   - [`official-login.md`](specs/official-login.md): launcher configuration and user preference discovery, language discovery, network-version and archive-version discovery, the SOAP datacenter and account exchanges, remote configuration, world status, the login queue, the launch hand-off and in-game ticket refresh. By decision 0042 the version comes from a user value, then the executable's version resource, otherwise the user is asked (no scan, signature or anchor), and no fallback URL is built.
@@ -1488,7 +1518,7 @@ builds ([decision 0034](decisions/0034-official-server-compatibility.md)).
   - `crates/compat/src/{lib,backend,login,version_resource,session,world}.rs`: the compatibility backend shell, login exchanges and state machine with version discovery, a hostile-input reader of the PE version resource, the UDP session and transport layer, and the world-session message and property codecs; synthetic tests in `tests/{login,session,world,hardening,version_resource}.rs`.
   - `fuzz/fuzz_targets/{compat_login_xml,compat_session_packet,compat_world_message,compat_version_resource}.rs` (4 fuzz targets).
   - 2026-10-23 (package `compat-cleanup`, 84b7981, decision 0042 items 1–3 and 5, built without reading the M8 specs): the machine-code version scan, its error-string anchor and the fixed-offset fallback are removed (`version_resource.rs`, public PE layout only; the real-data launcher test runs again); about 205 client-internal identifiers are renamed to neutral names (names only); the status-URL fallback built from path fragments is removed, and the SOAP namespace and action identifiers live only in the encoder; the session notice 0x12E is receive-only (decoded and shown, never sent); hardening with a regression test each (bit-tree `i16::MIN`, sequence group range, out-of-order-ack cap, recipient-ID collisions refused before any state change, out-of-range and exhausted IDs, container depth clamped to 32, one decompression budget per container tree, size checks before reading files, credentials and request bodies wiped). Independent code review and default-mode clean-room audit: pass with notes, findings fixed.
-- **In progress:** the consent gate of `official-entry.md` (decision 0042 item 5).
+- **Built 2026-10-23/24** (packages `official-entry-impl`, `entry-followups`, `entry-r5-code`; `official-entry.md` revisions 3–6, written and reviewed without the M8 protocol specs): `--start-screen` and `--official` (they only select and conflict with every scripted, headless or plugin-loading option); the start screen with Explore offline, Official servers and Withdraw; the ban-risk warning (Tessera's own text with a pinned digest, device input only, 1 s delay, tick box); the acceptance record (one canonical document with an HMAC bound to user, machine and directory; fails closed without hard links); Withdraw off the frame thread, which ends the run's acceptance and every consent proof at once and reports a failed or partial deletion; the §4.6 window-close table; in `tessera-compat` a non-cloneable consent proof that every backend constructor and the `NetworkAccess` gate (the only UDP bind) require (`consent`, `net_access`, `credentials`; record helpers behind the `test-support` feature); the masked account form, `tessera-net` Account events and commands, and the progress, world-list, queue and error screens (`apps/client/src/official/`); the character screens are a placeholder until a session can feed them. Tests OE-T1 to OE-T25, fuzz targets `compat_consent_record` and `client_official_entry`, and `tools/check-release-features.sh` (CI job `release-features`: release builds never carry `test-support`).
 - **Still needs more work (waits for Accepted specs, decision 0042 item 4):**
   - the play messages (movement, chat, emotes, logout, the chat-server client) and the P1–P6 gameplay messages in `crates/compat`, mapped into `CompatBackend`;
   - live client connector wiring in `tessera-client` (in place of `PlaceholderConnector`);
@@ -1496,7 +1526,7 @@ builds ([decision 0034](decisions/0034-official-server-compatibility.md)).
 
 | # | Status | Evidence |
 |---|---|---|
-| 1 | **not met** (incident 0041) | The 2026-10-22 clean-room audit found disassembly prose in the gameplay spec (held) and no independent review of the world, play and `property-system.md` §10 specs; login and session were revised after review. The first remediation pass failed its audit on 2026-10-23 (`m8-remediation.md` §7); decision 0042 keeps the incident open. Earlier claim: all 6 Phase 1 specifications (`official-login.md`, `official-session.md`, `official-messages-world.md`, `official-messages-play.md`, `official-messages-gameplay.md`, `property-system.md` §10) are **Accepted** after `CLEAN_ROOM.md` §5.3 review with `0` open questions, `0` Ghidra addresses/symbols, complete provenance tables (`DAT`, `CFG`, `LL`, `DOC`, `BIN`), and synthetic `example.invalid` test vectors only. |
+| 1 | **not met** (incident 0041) | The 2026-10-22 clean-room audit found disassembly prose in the gameplay spec (held) and no independent review of the world, play and `property-system.md` §10 specs; login and session were revised after review. The first remediation pass failed its audit on 2026-10-23 (`m8-remediation.md` §7) and the second on 2026-10-24 (§8); decision 0042 keeps the incident open. Earlier claim: all 6 Phase 1 specifications (`official-login.md`, `official-session.md`, `official-messages-world.md`, `official-messages-play.md`, `official-messages-gameplay.md`, `property-system.md` §10) are **Accepted** after `CLEAN_ROOM.md` §5.3 review with `0` open questions, `0` Ghidra addresses/symbols, complete provenance tables (`DAT`, `CFG`, `LL`, `DOC`, `BIN`), and synthetic `example.invalid` test vectors only. |
 | 2 | **pass** | `tools/check-content.sh`, `tools/check-spdx.sh`, and `tools/check-server-deps.sh` pass with 0 errors and 0 warnings; no official URLs, hostnames, ports, keys, certificates, or packet captures exist anywhere in the repository. |
 | 3 | **pass** | Fuzz targets `compat_login_xml`, `compat_session_packet`, `compat_world_message` and (since 2026-10-23) `compat_version_resource` compile cleanly in `fuzz/` (`cargo clippy --manifest-path fuzz/Cargo.toml --bins -- -D warnings`) and cover all login XML/SOAP/status/queue parsers, UDP datagram/header/fragment/envelope decoders, and compact wire value/property/world-message decoders. |
 | 4 | **pending (owner)** | Live login, world entry, movement, and chat against an official server with the owner's account. |
@@ -1761,8 +1791,8 @@ settings writer thread (ARCH §21); a live native plugin object holds no Lua han
 20,000 live controls in one apartment raise no error (was "out of Lua stack" at about
 8,000); the creation figure runs its scripts live (gestures, class props, transition ports;
 a stage or action change keeps the figure; not done: Appearance and EditMaterial nodes that
-change with anything but the stage key, prop fade times, the figure's own sounds and
-particle nodes, `character-screens.md` §2.1.4 OPEN), and the scene's decals and effect
+change with anything but the stage key, the figure's own sounds and particle nodes,
+`character-screens.md` §2.1.4 OPEN), and the scene's decals and effect
 particles are drawn in the creation viewport.
 
 2026-10-23 (second round): the panel keys follow `keymap.md` §8.3 (package
@@ -1778,7 +1808,14 @@ are Accepted: they settle the `RampIn` question as Tessera reads it and give the
 attach rule (`script-table.md` §5.2: for attached nodes the holding location wins over the
 bone type; built in round 4 in the shared figure path, `prop_anchor_rule`, and for mount
 props in round 5, see the M4.5 particle notes) and the prop fade and life rules
-(`appearance.md` §5.7, revised in round 5), not built yet. 2026-10-23 (round 4, package
+(`appearance.md` §5.7), built since rounds 6–8 (packages `world-r6`, `walker-wiring-r7`,
+`client-r8`): `tessera-mesh` `assembly::prop_life` gives the start, fade-in, scheduled
+fade-out, stop and removal times; the screens' live figure draws its props at their fade,
+blended while `Translucent` holds, and a prop of an unattached node keeps its placement per
+instance (`LiveFigure::prop_instances`). The walker's mount draw follows the §5.2 table
+(`mounted::mount_model`, round 6). P8 (2026-10-24) fixed the examination panel's icons
+(`fill_held`) and the worth row's coin images and currency order (`item-tooltips.md` §6.11).
+2026-10-23 (round 4, package
 `client-wiring`): a refused manual world entry (`EnterWorldFailed`) keeps the session, and
 the character screens go back to the selection with the reason and Enter enabled
 (`tessera-protocol.md` Appendix A); a fixed-character run still disconnects.
@@ -1989,6 +2026,13 @@ placed NPC when one is built). Open: the UI scene's `Camera_1`, lights, ambient 
 (§12.2), the per-target viewport description and the portrait preference (§12.1) are not
 applied.
 
+2026-10-24 (package `combat-settle`): a held-back first paint inside its group's generation
+restarts from a new snapshot when an image arrives after the snapshot started
+(`PaintFrameStats::first_paint_restarts`), so a stopped clock no longer waits for the 100 ms
+timeout; the combat screens settle on `UiHost::settled()` within 120 s of wall clock
+(implementer OPENs in `render.md` §6.17). Since `ui-perf-2` the client's tier-1 `combat_ui`
+goldens pass within their tolerance but are no longer exact (not re-blessed).
+
 <a id="p3"></a>
 ### P3: NPC windows: dialogue, quests, vendors and loot
 
@@ -2135,10 +2179,13 @@ press and the release of each key pressed under it are consumed, and in the clie
 action or typed text reaches game code or the chat entry (`UiHost::modal_dialog_shown`; the
 walker's world keys, NPC Escape/Enter and the map and finder keys wait too). The dialog and
 context-menu controllers moved to `tessera_ui::game::{dialog, context_menu}`; the client's
-UI host uses them there since round 5. Open: no range check runs (§18.3 OPEN); the social,
-map, quest and travel modules and two quest tests still use the `widgets::` re-export
-paths; the module doc of `crates/ui/src/game/dialog.rs` still calls the host's part
-unbuilt.
+UI host uses them there since round 5. Rounds 6 and 7 (packages `ui-r6`, `input-band`):
+every caller imports `tessera_ui::game::{dialog, context_menu}` and the `widgets::` shim is
+deleted; a dialog consumes a release only when it took the press (§18.4 revision 6); the
+host pushes its modal band at once with `InputMapper::band_push_keeping_holds`
+(`keymap.md` §3.3), so holds from before a dialog end only at their own release and
+commandless bindings such as Ctrl+M cannot fire under it. Open: no range check runs (§18.3
+OPEN).
 
 <a id="p4"></a>
 ### P4: Social panels
@@ -2308,6 +2355,11 @@ its new tree rows in one batch (`Ui::tree_add_many`, one layout; `crates/ui/src/
 (§4.5); this closes the text-input dialog and context-menu item above. 2026-10-23 (round 4,
 package `client-wiring`): `UiHost::social_frame` passes dialog results to the social panels,
 and the social windows' pinned tooltips set the `PinnedTooltipCloseButton` ID (see P1).
+2026-10-24 (package `fade-fix`): the social, trade, invitation and fellowship panels (and
+the map window's panel) are opened hidden at start-up (`Ui::open_panel_hidden`), and an
+auto-fade element whose surface was never drawn hides at once (interim Tessera rules,
+`ui-behaviour.md` §11.2 OPEN), so no half-faded panels are drawn at launch; the local
+golden `member-effects-01500ms` matches again without a re-bless.
 
 Merge seams with P2 and
 P3 (both changed the same shared files additively; merged with main 2026-10-11): the `tessera-ui` game module index, the
@@ -2547,6 +2599,10 @@ A UI frame clock (`FrameClock`: wall, stepped, held) lets the travel test step t
 the scenario and hold it for the loading-screen capture, stable in 3 of 3 runs; that local
 golden needs one re-bless (delete only its PNG and rerun).
 
+2026-10-23 (round 6, package `walker-leftovers`): the walker's mount draw follows the
+`script-table.md` §5.2 anchor table (`mounted::mount_model` through `eval::anchor_matrix`),
+and `placeable_anchor` accepts the same anchors.
+
 <a id="p6"></a>
 ### P6: Progression and crafting panels
 
@@ -2695,7 +2751,8 @@ skill-training panels (`keymap.md` §8.3, package `conform-keymap`; `P6Ui::toggl
 client's readings (a trainer opened by name sends nothing; a `recipes` offer opens the
 skill-training window, PP18). Open: the plugin progression views read records on the main
 thread (ARCH §21 OPEN); the windows draw no item icons and no recipe cooldown timers (OPENs
-in `apps/client/src/progression/present.rs`).
+in `apps/client/src/progression/present.rs`). The P8 audit (2026-10-24) found that K still
+opens skill training against `progression-panels.md` §1.4.
 
 <a id="p8"></a>
 ### P8: Parity audit
@@ -2776,22 +2833,17 @@ loaded machine are indicative.
 
 <a id="p8-status"></a>
 **Status:** started 2026-10-23 on branch `p8` (worktree `wt-p8`); **exit verification
-2026-10-24**: criterion 2 passes on Tessera's side (the CI run on the exit commit is still to
-come), criterion 1 is data-side done with the owner's observation pending, criterion 3 is open
-(indicative runs only; the owner re-measures). [Decision 0043](decisions/0043-p8-parity-audit.md)
-is Proposed (waits for the owner). Nothing of P8 is committed yet; the evidence commit is to be
-recorded in `parity-tessera.md` when it is.
+2026-10-24; merged to main 2026-10-24 (1de1114; coverage entries for targets that landed on
+main meanwhile in dc90521)**: criterion 2 passes on Tessera's side, criterion 1 is data-side
+done with the owner's observation pending, criterion 3 is open (indicative runs only; the UI
+budget (c) is still missed; the owner re-measures).
+[Decision 0043](decisions/0043-p8-parity-audit.md) is Proposed (waits for the owner).
 
 | # | Status | Evidence |
 |---|---|---|
 | 1 | **data-side done, owner observation pending** (O196–O199) | [`parity.md`](checklists/parity.md) Accepted 2026-10-23 (independent review spec-review:parity-checklist:1): 178 system rows, 100 sample rows, 8 deviations, PF1, every row `pending`, `deviation (proposed)` or `not built`. `parity-tessera.md` records the Tessera side of every row: 126 system rows data-side ready, 4 feed only (PA83, PA132, PA134, PA143), 47 with a gap (PA2, PA4–PA7, PA24, PA35, PA44, PA61, PA74, PA118, PA136, PA144 for K, PA145–PA178; the [Gaps](checklists/parity-tessera.md#gaps) table names what records each). Tooltip sample: `parity_tooltips_real_data` passes with the install (55 + 55 distinct records resolved, 100 tooltips modelled with 0 failures, **100 painted, 0 panel-audit failures**), after the exit verification fixed the examination panel's icon field, the worth row's coin images and currency order; pictures re-blessed in the tier-2 local directory for O197/O198. The owner's walk (O196), tooltip comparisons (O197, O198) and deviation answers (O199) are pending |
-| 2 | **passes on Tessera's side**; the CI run on the exit commit is pending (decision 0043 §2 item 6) | `tools/check-fuzz-coverage.sh`: ok, 2 manifests, 413 `[[parser]]` (315 with a target, 98 exempt naming a covering target, **0 gaps**), 2 `[[package]]`, 16 `[[skip]]`; 200 / 200 fuzz bins named; 505 / 505 parser-like public functions in 241 files covered; `--self-test` passes; CI job `fuzz-coverage`. The last 15 gaps were closed at the exit verification: `app_arg_readers`, `client_text_readers` and `explorer_text_readers` (fuzz/ now links the client, explorer and load-tester libraries; `dattool`'s hex readers moved into its library). Every target added in P8 (19) ran 60 s clean in `tools/fuzz-smoke.sh` (stable libFuzzer, 0 crashes); `cargo clippy --bins --locked -- -D warnings` on the fuzz workspace clean |
-| 3 | **open**: indicative runs only; owner re-measure O200 | `busiest.scenario` (54 + 4 actors with figures, combat with an induction, 4 defeats, 2 loot windows, a fellowship of six with changing vitals, 10 chat lines per second, synchronised music every 20 s, 180 s), `--scenario-timing SECS` and `p8_busiest_real_data` (determinism with the install at M3-03 passes). Exit-verification `TESSERA_PERF=1` run ([`p8-busiest.md`](perf/p8-busiest.md), load 1.3–2.4, not the verified idle run; surface 1895 × 1041, *Se* = 1): (a) paced 0 frames over 50 ms, met; (b) unpaced p99 11.47 ms, met; **(c) missed: U1 steady mean 2.92 ms / p99 4.77 ms against 0.3 / 1.0 ms, almost all in the `tessera-ui` paint (step 8; the static panels add about 1.1 ms without uploads, the HUD about 1.5 ms)**, U3 262 KiB, U4 (b) 4.30 ms, U4 (f) 5.28 ms; U2 reads 0.0000 ms (a `crates/render` question); (d) not measured (no `audio-device` build). The UI paint needs profiling before the owner's re-measure |
-
----|---|---|
-| 1 | open | `parity.md` not yet written and reviewed; the owner's walk (O196), tooltip comparisons (O197, O198) and deviation answers (O199) pending |
-| 2 | open | fuzz coverage manifests and `tools/check-fuzz-coverage.sh` not yet in CI |
-| 3 | open | busiest scenario not yet built; reference runs on the idle reference machine (O200) pending |
+| 2 | **passes on Tessera's side** (decision 0043 §2 item 6) | At the exit verification: `tools/check-fuzz-coverage.sh` ok, 413 `[[parser]]` (315 with a target, 98 exempt naming a covering target, **0 gaps**), 200 / 200 fuzz bins named, 505 / 505 parser-like public functions covered; the last 15 gaps were closed by `app_arg_readers`, `client_text_readers` and `explorer_text_readers` (fuzz/ links the client, explorer and load-tester libraries; `dattool`'s hex readers moved into its library); every target added in P8 (19) ran 60 s clean in `tools/fuzz-smoke.sh`. After the merge (dc90521 names what landed on main while P8 ran: one parser with its target, four skips with reasons), checker run on main 2026-10-24: 2 manifests, **414 `[[parser]]` (316 with a target, 98 exempt, 0 gaps)**, 2 `[[package]]`, 20 `[[skip]]`, 204 / 204 bins, 508 / 508 functions in 243 files; the CI job `fuzz-coverage` passes on main (run of 0efb7d5) |
+| 3 | **open**: indicative runs only; UI budget (c) missed; owner re-measure O200 | `busiest.scenario` (54 + 4 actors with figures, combat with an induction, 4 defeats, 2 loot windows, a fellowship of six with changing vitals, 10 chat lines per second, synchronised music every 20 s, 180 s), `--scenario-timing SECS` (`tessera_client::timing`) and `p8_busiest_real_data` (determinism with the install at M3-03 passes). Exit-verification `TESSERA_PERF=1` run ([`p8-busiest.md`](perf/p8-busiest.md), load 1.3–2.4, *Se* = 1): (a) paced 0 frames over 50 ms, met; (b) unpaced p99 11.47 ms, met; (c) missed: U1 steady mean 2.92 ms / p99 4.77 ms against 0.3 / 1.0 ms, U3 262 KiB, U4 (b) 4.30 ms, U4 (f) 5.28 ms; U2 reads 0.0000 ms (a `crates/render` question); (d) not measured (no `audio-device` build). Follow-ups (headless, indicative, same binary per A/B): `ui-perf` (light pass for unchanged surface owners, `OwnerSig`, `note_order_change`) U1 3.0 → 1.05 ms, step 8 2.75 → 0.78 ms; `ui-perf-2` (the `ui-scaling.md` §6.1 geometry preview, the §6.2 fractional-move rule, `render.md` R13/R14, an owner's move, node scale or fade no longer damage) **U1 0.37–0.42 ms** (p99 1.2–1.6 ms), step 8 0.29–0.33 ms, U3 about 53 KiB; U4 (b) 3.1–5.6 ms and (f) 4.5–6.5 ms. What is left of step 8 is the HUD's real content repaint (cast bar, chat, vitals, timers, minimap) |
 
 ---
 
@@ -2930,6 +2982,30 @@ Built in the fourth and fifth rounds of follow-ups (merged 2026-10-23, packages 
 
 `ui-scaling.md` was revised in rounds 4 (revisions 9 and 10) and 5 (§8 S1 and S6 floor,
 §6.5, SC18); both are Accepted after independent review.
+
+Built in rounds 6–11 (merged 2026-10-23/24, packages `ui-r6`, `combat-settle`, `ui-perf`,
+`ui-perf-2`, `fade-fix`):
+
+- S1: a failed paint worker never blanks its surface (the last picture stays until the full
+  repaint swaps in whole; tested). S6 (revision 11): the 1 MiB glyph floor comes out of the
+  images' share, and Tessera faces take at most half the glyph share (the face in use is
+  always kept);
+- the light pass for recorded surface owners whose own inputs, canvas and displayed box are
+  unchanged (`OwnerSig`; `note_order_change` asks for the full pass when a subtree with a
+  surface is attached, detached or reordered; `Ui::surface_passes`, bench `paint_steady`);
+- the §6.1 geometry preview (SC21, revision 14): a surface whose node scale or pixel phase
+  changes is composed from its held canvas, GPU-scaled or moved 1:1, and repainted once after
+  150 ms of the paint clock without change (at once beyond a factor of 2 and in the excluded
+  cases), settles chosen within the slice (`Ui::choose_settles`); the §6.2 fractional-move
+  rule (the formerly ignored test passes); `render.md` R13/R14, the nested-entry damage skip,
+  bounded per frame; a surface owner's own move, node-scale or opacity change is no damage
+  of its canvas;
+- a held-back first paint restarts when its images arrive (`first_paint_restarts`), and a
+  never-drawn auto-fade element hides at once (`Ui::open_panel_hidden`).
+
+`ui-scaling.md` revisions 12–14 are Accepted after independent review. U1 in P8's busiest
+scenario: [P8 status](#p8-status). Open there: the text hit test during a scaled geometry
+preview uses the last drawn layout (OPEN), and a change of *Kx*/*Ky* still repaints at once.
 
 Open (follow-up):
 

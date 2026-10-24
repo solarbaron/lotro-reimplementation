@@ -422,3 +422,59 @@ W world, P play, G gameplay, L login; line numbers of `a780a67`.
 **Next step:** writer fixes for the above (one canonical definition per wire fact; delete the
 duplicate envelope, 0xCE and ref-header layouts in the gameplay spec), commit, merge main, then
 the independent reviewer commit, then this audit again.
+
+## 10. Final audit of the third pass (2026-10-24, ed9b5b9): BLOCK
+
+The process was followed: a writer commit `3e6a06e` (role `spec`), main merged in (`51583e9`),
+and a header-only reviewer commit `ed9b5b9` (role `review`). Most of §9 is fixed: 0x6F, the
+ref header, `tail_a8`/`tail_ac`, the 0xE0 tier, the chat opcodes, 0xC7, the ActionPayload
+carriers, the dictionary size and redirect, the receive mask, pakSize, the error codes,
+the service IDs, the test vectors, the missing OPENs, the enum tables of the world and play
+specs and the labelling policy. It still blocks. Line numbers refer to `ed9b5b9`.
+
+**Blocking**
+
+- **New contamination (CLEAN_ROOM.md §5.3 item 2, §10):** `3e6a06e` added client-internal C++
+  class and method names to the gameplay spec (G1558–1560, 1563, 1569, 1615, 1616, 1622, 1625,
+  1911–1913, 2194, 2197, 2496, 2558), script-bytecode internals written as pseudo-code (G60,
+  G62), shift-and-mask expressions (G58), "bytecode local slot" (G102) and VM lifecycle
+  primitives (G80–82). None of it was in `a780a67`; reviewer `116b34f7` accepted it. Decision
+  0041 on the branch (116–119) and the `3e6a06e` commit message state client in-memory
+  structure offsets. Apply §10: hold the gameplay text, void its acceptance, add writer
+  `f0a991a9`, reviewer `116b34f7` and the auditing session to the exposure list.
+- **Contradictions, almost all involving the gameplay spec:** the property-update opcodes and
+  type codes (G1577–1591 vs W1136–1152 and W355–378; G1761); script class 0x051E (logout in
+  P242, P606–616; quickslot/targeting in G404, G725–732, G1204–1214, G1754; logout in class
+  0x0510 at G394); 0xAA (W749 vs P368); the 0x00D3 class (G169 vs W §2.5.1); the 0x5F trailing
+  field (G135 vs P686); the gameplay census lacks 0x0D, 0x24, 0xF4 and gives 0xDC the wrong
+  direction (G280 vs W597).
+- **Process records:** the writer sessions named in `a780a67`'s message and the change logs
+  (7aa0951a, c3312844, 5ae75fbf) differ from decision 0041's (cc6fd3c4, dd9e328f, a4d01e0f,
+  which are also missing from its exposure list); G4213 cites a review session recorded
+  nowhere; `3e6a06e` names no writers.
+
+**Decision ([0042](decisions/0042-m8-remediation-decisions.md) items 8–9, owner-delegated):** M8
+is built in stages. **Next pass:**
+1. Move `official-messages-gameplay.md` back out of `docs/specs/` (held), and void its
+   acceptance.
+2. Finish the five core specs (login, session, world, play, property-system §10) consistent
+   with each other, with no link that needs the gameplay spec. Remaining core items from this
+   audit:
+   - 0xAA (W749 vs P368);
+   - login §2.4.3 (L197–216) still has its own 0x28000010 layout and names (L572, L740);
+   - the 0xBF size (P131, P825 give 5–53; its fields add up to 6–57);
+   - client-structure prose at S922–923 and S246–251/706;
+   - 0x30000045 is still listed among the logout triggers (P21, P628);
+   - the 0x3000001B-band lists in the play spec (P21/P628/P663/P817) cite a P §6.5.2 that
+     does not exist;
+   - L900 cites §8 labels that do not exist;
+   - the notes on S96, S107, S225, S487–492, L571/L581/L632, S770, L187, the schema label,
+     P712, P537, W1060 and P105;
+   - change-log rows must quote no removed internal values (W1310, P847, L901);
+   - mark the world PID tables and calendar values as verification values that the code
+     computes at run time.
+3. Rebuild the branch so that its merged history carries no contaminated text (item 9). For
+   example, branch fresh from main and commit only the cleaned core specs, as a writer commit
+   and then a header-only reviewer commit by new sessions. One consistent table of every writer
+   and reviewer session goes in decision 0041, with a complete exposure list.
+4. Then this audit again, for the core stage only.

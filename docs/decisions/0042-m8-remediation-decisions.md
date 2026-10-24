@@ -72,3 +72,23 @@ and sets what may be built until the specs pass.
   consent gate go ahead now.
 - The remediation agent continues on `m8-remediation` with `m8-remediation.md` §7 and this
   record. Step B2 of §2.4.1 and the fallback URL are removed from the login spec.
+
+## Amendment (2026-10-24): M8 in stages after the third pass
+
+The final audit of the third remediation pass (`ed9b5b9`) blocked it again
+([`m8-remediation.md`](../m8-remediation.md) §10). Its writer commit put client-internal C++
+class and method names and script-bytecode internals into the gameplay spec, and nearly
+every remaining contradiction between the specs involves the gameplay spec. So (owner-delegated):
+
+8. **M8 is built in stages.** Stage 1 is the core: `official-login.md`,
+   `official-session.md`, `official-messages-world.md`, `official-messages-play.md` and
+   `property-system.md` §10. They are finished consistent with each other and audited without
+   the gameplay spec. When they pass, they are merged, incident 0041 is closed for them, and
+   the core build starts: login, world entry, movement and chat. Stage 2 is the gameplay
+   messages. `official-messages-gameplay.md` is held again (out of `docs/specs/`). It is
+   re-derived later by new writer sessions that have not read the held text, and audited on
+   its own. Until stage 2 passes, the client presents P1–P6 from the sandbox feed only.
+9. **No contaminated text reaches main through history.** The pass-3 commits that carry
+   client-internal names or structure offsets (in a spec, a decision record or a commit
+   message) are not merged. The branch is rebuilt so that its merged history contains only
+   clean text.

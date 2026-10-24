@@ -719,7 +719,7 @@ impl UiHost {
     /// No surface may be in a geometry preview either (`ui-scaling.md` §6.1): a capture then
     /// shows the settled, crisp picture, never the GPU-scaled or moved preview, whatever the
     /// timing of the run. On a UI clock that advances the preview settles 150 ms after its
-    /// last change; on one that does not (headless checkpoints), [`Self::paint_clock`] settles
+    /// last change; on one that does not (headless checkpoints), `Self::paint_clock` settles
     /// it once everything else has settled.
     #[must_use]
     pub fn settled(&self) -> bool {
@@ -1647,7 +1647,7 @@ impl UiHost {
     /// The per-window scale gesture (`ui-scaling.md` §7.4) over the panel under the pointer:
     /// the panel's scaling group *g* (`UIComponent_UIScaler_Group`) takes the factor *p* ±
     /// 0.05, on the 0.05 grid, within the group's range; every open panel of the group follows
-    /// ([`Self::apply_group_scales`]) and `[UI.group_scale]` is written off the frame thread
+    /// (`Self::apply_group_scales`) and `[UI.group_scale]` is written off the frame thread
     /// ([`Self::take_group_scale_persist`]), and the plugin layer is told the group's new value
     /// at the next delivery (§7.7). Nothing happens, and nothing is saved, over a panel without
     /// a group, a plugin window, a panel that takes no per-window factor

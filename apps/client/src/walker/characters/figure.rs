@@ -551,7 +551,7 @@ pub const MAX_PENDING_CLIPS: usize = 256;
 ///
 /// **Frame thread** (ARCHITECTURE §21: no blocking I/O on the main thread). Once
 /// [`ClipStore::mark_frame_thread`] has named the walker's frame thread, a clip that is not
-/// decoded yet is never read there: [`ClipStore::bind`] fails for that call (the asking
+/// decoded yet is never read there: `ClipStore::bind` fails for that call (the asking
 /// node plays nothing, a placeholder for the frame), the miss is counted
 /// ([`ClipStore::frame_thread_misses`]) and the DID queued for the workers
 /// ([`ClipStore::take_pending`], [`ClipStore::prefetch`]). Worker threads read and decode

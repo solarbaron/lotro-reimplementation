@@ -2,7 +2,7 @@
 //! The vocabulary of the P6 windows (decision 0024 P6): the labels of the element IDs and
 //! states that `crafting-panels.md` names, the experience meter's game type
 //! (`game-panels.md` §11, through [`super::GameVocab`]), and Tessera's own element IDs of the
-//! progression fallbacks ([`P6Own`]).
+//! progression fallbacks ([`own`]).
 //!
 //! As in [`super::p5vocab`], values are looked up **by label** at run time
 //! ([`P6Vocab::resolve_with`]); the defaults are Tessera placeholders in ranges no data uses

@@ -295,7 +295,7 @@ pub fn far_plane(ring_far: f64) -> f32 {
 /// The world camera's vertical field of view (radians) and near plane (metres) in `mode`
 /// with camera state `profile` (`walker.md` §11.7–§11.8): the state's in walk mode, the
 /// walker's [`FOV_Y`] and [`NEAR`] otherwise. The profile's values are already checked
-/// ([`CameraProfile::from_state`]: FOV inside 1°–179°, near above 0 and at most 10 m).
+/// (`CameraProfile::from_state`: FOV inside 1°–179°, near above 0 and at most 10 m).
 #[must_use]
 pub fn lens_of(mode: MoveMode, profile: &CameraProfile) -> (f32, f32) {
     match mode {
@@ -1578,7 +1578,7 @@ impl Walker {
 
     /// The world camera's vertical field of view (radians) and near plane (metres): in walk
     /// mode the camera state's (`walker.md` §11.7–§11.8: the record's FOV, vertical by the
-    /// §11.7 Decision, and near clip; [`CameraProfile::FALLBACK`] gives 45° and 0.1 m until
+    /// §11.7 Decision, and near clip; `CameraProfile::FALLBACK` gives 45° and 0.1 m until
     /// the record is read), else the walker's [`FOV_Y`] and [`NEAR`] (free fly and scripted
     /// flights are Tessera's own cameras).
     #[must_use]

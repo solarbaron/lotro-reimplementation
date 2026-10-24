@@ -20,8 +20,8 @@
 //!
 //! Further rules 7–8 (§15.4, 2026-10-14): each `PartyMember` **follows** an entity (the
 //! entity of its name's entry while the name is in its episode's list, afterwards the last
-//! one it followed). The host keeps one [`MemberLink`] per (episode, name) that every
-//! apartment's object of that member shares, updates it in [`PartyModel::apply`] and fans
+//! one it followed). The host keeps one `MemberLink` per (episode, name) that every
+//! apartment's object of that member shares, updates it in `PartyModel::apply` and fans
 //! the §15.2 effect-list events of the followed entity out to the members' own
 //! `EffectList` objects ([`PartyViewEvent::MemberEffects`]); a change of the followed entity
 //! queues `EffectsCleared` and `EffectAdded { 1 … n }` ([`MemberEffectsEvent::Refollowed`]).

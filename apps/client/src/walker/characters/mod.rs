@@ -46,17 +46,17 @@
 //! # The camera's target fade
 //!
 //! The layer reads the walker's camera state on a worker at start-up
-//! ([`super::controls::load_camera_profile`], `walker.md` §11.6; until it arrives, or
-//! without one, [`CameraProfile::FALLBACK`]); [`CharacterLayer::camera_profile`] and
+//! (`super::controls::load_camera_profile`, `walker.md` §11.6; until it arrives, or
+//! without one, `CameraProfile::FALLBACK`); [`CharacterLayer::camera_profile`] and
 //! [`CharacterLayer::player_look_at_height`] give it and the player's look-at height to
-//! the walk camera ([`super::controls::Controls::follow_characters`]), which gives back
+//! the walk camera (`super::controls::Controls::follow_characters`), which gives back
 //! the profile it follows and its look-at point ([`CharacterLayer::set_camera_view`]). The
 //! player's own character is drawn at that profile's target fade opacity while the camera
 //! is closer than the fade distance to that look-at point (`walker.md` §11.7), the opacity
 //! moving towards its goal with the zoom smoothing time. So the fade and the camera use one
 //! profile and one point. Until the walk camera gives its view (or without a look-at point,
-//! outside walk mode) the fade uses the camera's own defaults: [`CameraProfile::FALLBACK`]
-//! and the feet raised by *f* × [`super::controls::DEFAULT_LOOK_AT_HEIGHT`] (the camera's
+//! outside walk mode) the fade uses the camera's own defaults: `CameraProfile::FALLBACK`
+//! and the feet raised by *f* × `super::controls::DEFAULT_LOOK_AT_HEIGHT` (the camera's
 //! view; outside walk mode the given profile and the figure's own look-at height).
 
 pub mod catalog;
@@ -604,7 +604,7 @@ pub struct CharacterLayer {
 /// drawn) as the fade, and whether it is drawn in the translucent stage: while
 /// `translucent` holds (the start of a fade-out sets `Translucent` before the opacity
 /// drops) or the opacity is below 1. A translucent prop at opacity 1 keeps its opacity, so
-/// its colour and alpha-test reference are those of the opaque draw ([`surface_draw_in`]).
+/// its colour and alpha-test reference are those of the opaque draw (`surface_draw_in`).
 /// `None` when the part is not drawn now (opacity 0 or below, or not finite).
 #[must_use]
 pub fn prop_draw_fade(opacity: Option<f32>, translucent: bool) -> Option<PropDraw> {
@@ -948,8 +948,8 @@ impl CharacterLayer {
     }
 
     /// The walker's camera state (`walker.md` §11.6): the install's record once its
-    /// start-up job finished, else [`CameraProfile::FALLBACK`]. The walk camera follows it
-    /// with [`super::controls::Controls::set_camera_profile`].
+    /// start-up job finished, else `CameraProfile::FALLBACK`. The walk camera follows it
+    /// with `super::controls::Controls::set_camera_profile`.
     #[must_use]
     pub fn camera_profile(&self) -> &CameraProfile {
         &self.camera
@@ -957,7 +957,7 @@ impl CharacterLayer {
 
     /// The profile the walk camera follows and its look-at point (`None` outside walk
     /// mode), for the player's target fade (module docs; given by
-    /// [`super::controls::Controls::follow_characters`] every frame before the draws).
+    /// `super::controls::Controls::follow_characters` every frame before the draws).
     pub fn set_camera_view(&mut self, profile: CameraProfile, target: Option<WorldPos>) {
         self.camera_view = Some((profile, target));
     }
@@ -1127,7 +1127,7 @@ impl CharacterLayer {
     }
 
     /// The player's look-at height times its z scale (*H* × *s_z*, step 1 of `walker.md`
-    /// §11.7) for the walk camera ([`super::controls::Controls::set_look_at_height`]):
+    /// §11.7) for the walk camera (`super::controls::Controls::set_look_at_height`):
     /// `None` before the player's figure is built or when no level of it holds
     /// `Entity_Camera_Lookat_Height`.
     #[must_use]

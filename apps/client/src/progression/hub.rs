@@ -14,7 +14,7 @@
 //! entry, reached no view, because their DID-map keys were not known yet); after the NPC
 //! windows, the quest journal and the P5 windows, [`P6Hub::frame`] runs the windows with the
 //! frame's UI events and sends their commands
-//! ([`crate::ui_host::client::window_frames`]).
+//! (`crate::ui_host::client::window_frames`).
 
 use std::collections::VecDeque;
 use std::sync::Arc;

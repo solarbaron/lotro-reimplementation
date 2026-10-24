@@ -30,12 +30,12 @@
 //!   resolved on the layer's workers (chain, parts, `Render_LODClass`,
 //!   `Render_DepthBias_Type`; an object that cannot be read now is tried
 //!   [`FAR_MAX_ATTEMPTS`] times, then left undrawn) and the entities are handed to the
-//!   object layer per landblock ([`ObjectLayer::insert_far`]) once none of the landblock's
+//!   object layer per landblock (`ObjectLayer::insert_far`) once none of the landblock's
 //!   entries is still being resolved, so a far block is rebuilt once per batch of changes,
 //!   not once per resolved entry. The layer activates, fades and draws them by their own
 //!   draw distances like every static object (`walker.md` §11.4). Where the layer holds the
 //!   landblock's own objects too, it leaves each far entity to them within their distance
-//!   cap and draws it beyond ([`super::objects::handed_to_main`]): §10's "exists through
+//!   cap and draws it beyond (`super::objects::handed_to_main`): §10's "exists through
 //!   the main set" by distance, since the layer's static objects carry no instance IDs
 //!   (Tessera choice, `far-view.md` §12 OPEN). Entries of type Weenie and setups that are
 //!   skinned rigs are created but not drawn (the walker draws figures through its
@@ -446,7 +446,7 @@ fn template_defaults_of(
 /// Whether the far view hands the sector materials to the near terrain for the seam
 /// overlay (§6.5, FD18): the switch, the normal-mapped template wanted and the lighting
 /// inputs ([`FarViewSettings::seam_overlay`]) **and** the template that was read is the
-/// normal-mapped one (UNIQUEDB may name only the plain one, [`active_template`]).
+/// normal-mapped one (UNIQUEDB may name only the plain one, `active_template`).
 #[must_use]
 pub fn seam_enabled(settings: &FarViewSettings, template: &TemplateDefaults) -> bool {
     settings.seam_overlay() && template.template == Template::NormalMapped
@@ -1388,7 +1388,7 @@ fn far_visual(ctx: &WorldContext, e: &DistantEntry) -> FarVisualResult {
     }))
 }
 
-/// The objects of far landblock `key` for the object layer: one [`ObjectInfo`] per entry
+/// The objects of far landblock `key` for the object layer: one `ObjectInfo` per entry
 /// with its part instances in the landblock's frame, placed by the entry's Position
 /// (orientation stored as (w, x, y, z), `coordinates.md` §11.1) and uniform scale. Entries
 /// with a non-finite position or no parts are left out; a non-finite or non-positive scale

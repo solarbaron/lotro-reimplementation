@@ -855,7 +855,7 @@ impl Ui {
     /// (`px`, `py`) (`ui-scaling.md` §6.4.6): the pointer minus the element's physical origin
     /// plus its scroll offsets in physical pixels, looked up in the physical layout the element
     /// was last drawn with ([`TextLayout::hit`]). In a stretched surface (§6.1) the pointer is
-    /// first taken into the unstretched text ([`unstretch_point`]): the centre of its pixel
+    /// first taken into the unstretched text (`unstretch_point`): the centre of its pixel
     /// relative to the text origin, divided by the stretch vector *σ*, since the text was laid
     /// out unstretched at the screen's factor and stretched by *σ* when drawn. Without a
     /// UI screen and before the element was drawn on the scaled path, the shaper's layout is

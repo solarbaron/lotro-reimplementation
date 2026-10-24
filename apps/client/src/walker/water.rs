@@ -219,7 +219,7 @@ impl WaterSurfaces {
     }
 }
 
-/// Index of the flow map in the [`OWN_TEXTURES`] list of [`own_textures`].
+/// Index of the flow map in the `OWN_TEXTURES` list of `own_textures`.
 pub const FLOW_TEXTURE: usize = 1;
 
 /// The textures of a material copy whose slot 3075 is `flow` (`distant-landscape.md`

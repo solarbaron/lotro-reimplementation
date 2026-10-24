@@ -17,11 +17,11 @@
 //!
 //! A looping animation node whose clip is still being decoded on the workers (the frame
 //! thread reads no clip, ARCHITECTURE §21) runs until stopped and its clip starts once
-//! decoded ([`DeferredClips`]), as on the character layer's live figures; a one-shot node,
+//! decoded (`DeferredClips`), as on the character layer's live figures; a one-shot node,
 //! or one whose clip failed, completes at once.
 //!
 //! A beam's ribbon (§11.1 step 6) is drawn by [`super::EffectLayer::draw`] with the surfaces
-//! of its three materials, its head entity (step 9) by [`super::EffectLayer::draw_heads`]
+//! of its three materials, its head entity (step 9) by `super::EffectLayer::draw_heads`
 //! through the object layer's instanced models.
 
 use std::collections::{HashMap, HashSet};

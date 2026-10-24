@@ -2518,7 +2518,7 @@ fn positions_aabb(positions: &[[f32; 3]]) -> Option<([f32; 3], [f32; 3])> {
     out
 }
 
-/// The text a part left out by [`leave_out_stub_parts`] carries in [`ScenePart::error`].
+/// The text a part left out by `leave_out_stub_parts` carries in [`ScenePart::error`].
 pub const STUB_LEFT_OUT: &str =
     "not drawn: a one-triangle placeholder part of a model with several parts (setup.md §8.5)";
 

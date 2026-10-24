@@ -22,7 +22,7 @@
 //! 7. until the text has been laid out in full with the bundled font the delay has not begun
 //!    and Continue stays disabled (fail closed).
 //!
-//! The Continue handler ([`WarningScreen::activate_continue`]) is the only place outside
+//! The Continue handler (`WarningScreen::activate_continue`) is the only place outside
 //! test code that creates a [`tessera_compat::consent::UserConfirmation`] and calls the
 //! acceptance writer (§6.3, source scan OE-T6 (d)).
 

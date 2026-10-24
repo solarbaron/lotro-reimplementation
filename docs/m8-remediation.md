@@ -350,3 +350,75 @@ blocks the merge; M8 stays paused (decision 0042 item 4). Line numbers refer to 
 
 **Next step:** a third pass on `m8-remediation`, with the process of the "Blocking: process"
 item, then this audit again.
+
+## 9. Pre-review audit of the third pass, writer commit (2026-10-24, a780a67): NOT READY
+
+The writer commit follows the §8 process (role `spec`, `Assisted-by` in TOOL:MODEL form, signed
+off, all six specs in Review; the reviewer commit is still to come). A default-mode audit of
+the writer state finds most of §8 fixed (field 8b, routing header, 0x24, ticket refresh and
+launch arguments, the chat connection state, handshake names, most residue, the login test
+vectors, the admin messages, the headers), but it would block review. Prefixes: S session,
+W world, P play, G gameplay, L login; line numbers of `a780a67`.
+
+**Blocking**
+
+- **0x6F has three meanings:** world entry request (W701–707), logout with a u32 reason
+  (P207/P705, which calls the world layout canonical but describes another), and portal-exit
+  property sync (P19, P34, P157; W849–850 has the client send only 0xF4 after a portal).
+- **Contamination sign:** G1604 and G1615–1616 name fields `tail_a8`/`tail_ac` and flags
+  `has_tail_a8`/`has_tail_ac`, which read like structure offsets (same bytes and defaults as
+  W1073–1074). Delete G §3.3, point to W §5.4, and have a writer check where the names came from.
+- **The ref (state-object) header disagrees with itself:** a VariableU32 count (G90, P233) vs one
+  byte (P844) vs `u32 ref_count` without `node_flags` (G1895, G1927, G1977, G1994, G2039, G2108,
+  G2121).
+- **G §3.2 (G1572–1594)** puts a containment block after the entity header in 0x98/0x52; W969–981
+  has none.
+- **B4 base_flags / RPC envelopes still unsettled:** W154–158 and S761–764 say base_flags is
+  always 0x00; G63, G104–105, G115, G135, G1881–1883 and P227 give it a bit 5 that adds an
+  entity_id. G115/G134–145 describe an "11/19-byte outer header" and cite W §3.2/§3.2.5
+  (character-creation sections); G1877–1885 puts the opcode inside the payload; the G vectors
+  1837–1866 and 2096–2127 start with `30`/`CE 00`. All conflict with S §9, W §1.1 and P32.
+  Settle base_flags against the binary and keep one envelope definition.
+
+**Also to fix**
+
+- 0xE0 tier shape: W206 accepts first bytes 0xE0..0xFF, S381 rejects 0xE1..0xFF; W208 vs
+  S381/S409 on the opcode word size.
+- The G309–370 census still lists 0x15C–0x195 and 0x1A2 as primary-connection opcodes (the
+  chat space is separate: S790, P407, P533); G403–411 lists 9 opcodes of the 0x3000001B range,
+  P21/P685 claim the whole range.
+- 0xC7 (W769 vs W1120; field order G171 vs W324); 0xCE mode bit 0x10 reintroduced with the
+  opposite meaning at G1616; ActionPayload carrier list W1120 vs P105.
+- Other shared-layout mismatches: 0x00E1 count (G173 vs P233); 0x00A6 (G168) vs
+  EncodedPropertyTable; the dictionary size 29,219 (G45) vs 27,546 elsewhere; 0x51 (S764 vs
+  G137); S764 lists 0x100E, 0x10B5, 0x10B6, 0x10BA, 0x1000201C found nowhere else (G3534 has
+  0x1000201C as a property ID); chat authentication ticket raw (P423–431) vs UTF-16 string
+  (S487–500), authType values; the dictionary redirect rule at S160 loops on 0x0E010001 (L224
+  is right); L223–235 and L590 repeat S §4.1.3 and §6.3–§6.4 under other names, L590 mislabels
+  key 0x10000001.
+- Session contradictions: S256 receive mask vs the reply header of bit 26 (S247, S717); pakSize
+  range S215 vs 0xFF7B at S225/S816; status and error codes that look client-internal (S318,
+  S461, S534, S599–609, S721): keep only those on the wire.
+- Remaining residue: service type and service IDs at P255 and P415–417 (in no wire layout);
+  registration/pipeline prose at W862, W912, W1005; P141, P177, P266, P287, P305, P375, P379,
+  P669–673; S156, S492–494, S687; L570, L574, L601–610.
+- N2: Rust-like signatures at G1660 and G1721; `==`/`!=` at W952–955 and L224.
+- Test vectors: P10.7 is 36 bytes, text says 37 (P852–859); G TV1 is 23 bytes, text says 22
+  (G1845); W Vector 8 labels vs tables (W1321–1322 vs W802–822).
+- References and tags: W860 cites S §5.3 (ClockSync is §8.1); P699/P751 cite W §5.6.2 for 0xCC;
+  P882 cites `BIN-MOV-PARSE` with an offset that disagrees with P143 ("31-byte" for a variable
+  layout); G2164–2168 cite `BIN-CLIENT`/`BIN-WLIB` not in the legend; L936 cites §8 labels that
+  do not exist.
+- Facts missing without an OPEN: W328 ("u16 (or u8)"), W117 (zlib threshold), W410–414, P183–184,
+  P551 (two 0x16A variants, no selector), P529 ("mode word").
+- Decision 0042 item 2: 0x30000045 is called "administrative" (P374, P301, P716) with no rule.
+- Enum label tables still at W830–843, W988–1000, W1183–1199, P605–646 (keep only values the
+  logic needs). Labelling policy differs: W37 (labels invented) vs G35 (names observed in the
+  data); state one rule. W903 (month tokens) contradicts itself and adds a guess.
+- Decision 0041 on the branch: add the pass-3 writers to the exposure list and record the §8
+  BLOCK; the branch lacks decision 0042 and §7–§9 of this brief, so the specs' links to 0042 are
+  dead there: **merge main into `m8-remediation` before the reviewer pass.**
+
+**Next step:** writer fixes for the above (one canonical definition per wire fact; delete the
+duplicate envelope, 0xCE and ref-header layouts in the gameplay spec), commit, merge main, then
+the independent reviewer commit, then this audit again.

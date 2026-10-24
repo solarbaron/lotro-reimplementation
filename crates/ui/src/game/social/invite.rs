@@ -108,8 +108,7 @@ impl InviteWindow {
     /// # Errors
     /// The panel could not be opened.
     pub fn open(ui: &mut Ui, vocab: &SocialVocab) -> Result<Self, crate::UiError> {
-        let root = ui.open_panel_by_key(vocab.layouts.fellowinvite, vocab.ids.invite)?;
-        ui.set_shown(root, false);
+        let root = ui.open_panel_hidden_by_key(vocab.layouts.fellowinvite, vocab.ids.invite)?;
         Ok(Self::attach(ui, vocab, root))
     }
 

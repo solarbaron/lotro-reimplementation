@@ -997,6 +997,42 @@ fn fellowship_layout() -> Vec<ElementDesc> {
     out
 }
 
+/// The panels the client hides at start-up are opened hidden: with an auto-fade (as the
+/// install's windows have) none of them fades out over the screen or is ever composed before
+/// code shows it, and the first show fades in from 0 (regression: ghost windows at launch).
+#[test]
+fn start_up_panels_open_hidden_without_a_fade_out() {
+    let vocab = sv();
+    let fade = v().pids.auto_fade;
+    let opacity = v().pids.object_opacity;
+    let with_fade = |els: Vec<ElementDesc>| -> Vec<ElementDesc> {
+        els.into_iter().map(|e| prop(e, fade, f(0.1))).collect()
+    };
+    let mut elements = with_fade(social_layout());
+    elements.extend(with_fade(fellowship_layout()));
+    let mut ui = ui_social(elements);
+    let panel = SocialPanel::open(&mut ui, &vocab).unwrap();
+    let fellows = FellowshipPanels::open(&mut ui, &vocab);
+    let mut roots = vec![panel.root];
+    roots.extend(fellows.panels.iter().copied());
+    assert_eq!(roots.len(), 5);
+    for &k in &roots {
+        assert!(!ui.is_visible(k) && !ui.is_fading(k));
+    }
+    let mut t = std::time::Duration::ZERO;
+    for _ in 0..8 {
+        t += std::time::Duration::from_millis(16);
+        let frame = ui.paint(t, &mut tessera_ui::paint::Unlimited);
+        assert!(frame.composition.entries.is_empty(), "no ghost window");
+        for &k in &roots {
+            assert!(ui.surface_of(k).is_none());
+        }
+    }
+    ui.set_shown(panel.root, true);
+    assert!(ui.is_fading(panel.root));
+    assert_eq!(ui.prop(panel.root, opacity).float(), 0.0, "fades in from 0");
+}
+
 #[test]
 fn fellowship_panels_on_the_tree() {
     let vocab = sv();

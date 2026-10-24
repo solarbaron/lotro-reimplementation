@@ -607,11 +607,8 @@ impl FellowshipPanels {
             ids.fellow_panel_3,
             ids.fellow_panel_4,
         ] {
-            match ui.open_panel_by_key(vocab.layouts.minifellow, id) {
-                Ok(k) => {
-                    ui.set_shown(k, false);
-                    panels.push(k);
-                }
+            match ui.open_panel_hidden_by_key(vocab.layouts.minifellow, id) {
+                Ok(k) => panels.push(k),
                 Err(e) => tracing::debug!("fellowship panel not opened: {e}"),
             }
         }

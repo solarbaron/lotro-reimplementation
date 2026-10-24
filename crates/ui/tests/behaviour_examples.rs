@@ -584,6 +584,8 @@ fn auto_fade_hides_after_the_fade_and_is_not_hit_while_fading() {
     );
     let mut ui = ui_one(LAYOUT, 1024, 768, vec![p], 1024, 768);
     let k = open(&mut ui, 0x1);
+    // Drawn first: only a panel that has been on screen fades out (§11.2 implementer note).
+    paint_until_drawn(&mut ui, k);
     ui.set_shown(k, false);
     assert!(ui.is_visible(k) && ui.is_fading(k));
     assert_eq!(ui.hit_test(5, 5), None);
@@ -596,6 +598,105 @@ fn auto_fade_hides_after_the_fade_and_is_not_hit_while_fading() {
     assert!(!ui.is_visible(k) && !ui.is_fading(k));
     ui.set_shown(k, true);
     assert!(ui.is_visible(k) && ui.is_fading(k));
+}
+
+/// Paints frames (16 ms apart on the paint clock) until `k`'s surface is drawn.
+fn paint_until_drawn(ui: &mut Ui, k: ElementKey) {
+    let mut t = std::time::Duration::ZERO;
+    for _ in 0..64 {
+        t += std::time::Duration::from_millis(16);
+        let _ = ui.paint(t, &mut tessera_ui::paint::Unlimited);
+        if ui.is_surface_drawn(k) {
+            return;
+        }
+    }
+    panic!("the surface is drawn");
+}
+
+fn fade_messages(ui: &mut Ui) -> (usize, usize) {
+    let vv = v();
+    let ev = ui.take_events();
+    let count = |m: u32| {
+        ev.iter()
+            .filter(|e| matches!(e, UiEvent::Game { message } if message.msg == m))
+            .count()
+    };
+    (
+        count(vv.msgs.auto_fade_start),
+        count(vv.msgs.auto_fade_stop),
+    )
+}
+
+/// Tessera rule (§11.2 implementer note): a panel hidden before its surface was ever drawn
+/// was never on screen, so it hides at once (a fade of zero length) instead of fading out
+/// over the screen; its next show still fades in from 0.
+#[test]
+fn auto_fade_panel_hidden_before_its_first_paint_hides_at_once() {
+    let vv = v();
+    let p = prop(field(0x1, 0, 0, 100, 100), vv.pids.auto_fade, f(0.1));
+    let mut ui = ui_one(LAYOUT, 1024, 768, vec![p], 1024, 768);
+    ui.register_handler(0x1, vv.msgs.auto_fade_start);
+    ui.register_handler(0x1, vv.msgs.auto_fade_stop);
+    let k = open(&mut ui, 0x1);
+    assert!(ui.is_visible(k), "opened: shown");
+    assert!(!ui.is_surface_drawn(k));
+    let _ = ui.take_events();
+    ui.set_shown(k, false);
+    assert!(!ui.is_visible(k) && !ui.is_fading(k), "hidden at once");
+    assert_eq!(ui.prop(k, vv.pids.object_opacity).float(), 0.0);
+    assert_eq!(fade_messages(&mut ui), (1, 1), "a fade of zero length");
+    // Painting draws nothing of it: no surface, no composition entry.
+    let mut t = std::time::Duration::ZERO;
+    for _ in 0..8 {
+        t += std::time::Duration::from_millis(16);
+        let frame = ui.paint(t, &mut tessera_ui::paint::Unlimited);
+        assert!(ui.surface_of(k).is_none());
+        assert!(frame.composition.entries.is_empty(), "nothing composed");
+    }
+    // Shown again: an ordinary fade-in from 0.
+    ui.set_time(1.0);
+    ui.set_shown(k, true);
+    assert!(ui.is_visible(k) && ui.is_fading(k));
+    ui.set_time(1.05);
+    ui.frame_work();
+    let o = ui.prop(k, vv.pids.object_opacity).float();
+    assert!((o - 0.5).abs() < 1e-3, "fades in from 0: {o}");
+    // Drawn, then hidden: the ordinary fade-out.
+    ui.set_time(1.2);
+    ui.frame_work();
+    paint_until_drawn(&mut ui, k);
+    ui.set_shown(k, false);
+    assert!(
+        ui.is_visible(k) && ui.is_fading(k),
+        "a drawn panel fades out"
+    );
+}
+
+/// A panel opened hidden (`Ui::open_panel_hidden`) is never displayed, gets no surface and no
+/// fade, and fades in from 0 when code shows it.
+#[test]
+fn panel_opened_hidden_is_never_drawn_and_fades_in_when_shown() {
+    let vv = v();
+    let p = prop(field(0x1, 0, 0, 100, 100), vv.pids.auto_fade, f(0.1));
+    let p = prop(p, vv.pids.activate_on_show, b(true));
+    let mut ui = ui_one(LAYOUT, 1024, 768, vec![p], 1024, 768);
+    ui.register_handler(0x1, vv.msgs.auto_fade_start);
+    ui.register_handler(0x1, vv.msgs.auto_fade_stop);
+    let k = ui.open_panel_hidden(Did(LAYOUT), 0x1).unwrap();
+    assert!(!ui.is_visible(k) && !ui.is_fading(k));
+    assert_eq!(ui.active_panel(), None, "no show reaction");
+    assert_eq!(fade_messages(&mut ui), (0, 0));
+    let mut t = std::time::Duration::ZERO;
+    for _ in 0..8 {
+        t += std::time::Duration::from_millis(16);
+        let frame = ui.paint(t, &mut tessera_ui::paint::Unlimited);
+        assert!(ui.surface_of(k).is_none());
+        assert!(frame.composition.entries.is_empty(), "nothing composed");
+    }
+    ui.set_shown(k, true);
+    assert!(ui.is_visible(k) && ui.is_fading(k));
+    assert_eq!(ui.active_panel(), Some(k));
+    assert_eq!(ui.prop(k, vv.pids.object_opacity).float(), 0.0);
 }
 
 #[test]

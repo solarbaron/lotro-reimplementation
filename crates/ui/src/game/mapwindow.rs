@@ -284,11 +284,8 @@ impl MapWindowView {
             },
             None => MapTree::default(),
         };
-        let panel = match ui.open_panel(layout, pv.ids.map_panel) {
-            Ok(k) => {
-                ui.set_shown(k, false);
-                Some(k)
-            }
+        let panel = match ui.open_panel_hidden(layout, pv.ids.map_panel) {
+            Ok(k) => Some(k),
             Err(e) => {
                 tracing::debug!("map window: no windowed root: {e}");
                 None

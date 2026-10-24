@@ -18,7 +18,7 @@
 //! effective scales 1, 1.25 and 1.5 (every one a map that is not the identity: the UI
 //! screen has at least 1024 × 768 units).
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
@@ -27,7 +27,9 @@ use proptest::prelude::*;
 use tessera_formats::Did;
 use tessera_formats::ui_layout::UiLayout;
 use tessera_material::ui_image::{PixelLayout, UiImage};
-use tessera_ui::paint::{BandBudget, GpuOp, Rect, Slot, TexKey, Unlimited};
+use tessera_ui::paint::{
+    BandBudget, CompositionList, Entry, EntryTexture, GpuOp, Layer, Rect, Slot, TexKey, Unlimited,
+};
 use tessera_ui::text::{CharListBuilder, DEFAULT_RANGES, LayoutParams, TesseraFont, layout};
 use tessera_ui::{
     Background, ControlKind, ElementKey, ImageRef, ImageState, MemoryEnv, PreparedText,
@@ -284,6 +286,9 @@ enum Edit {
     ContainerParent(usize, usize),
     WindowZ(usize, i32),
     ImagesArrived,
+    /// The frame comes 160 ms after the one before: every geometry preview that held since
+    /// then is due for its settle repaint (`ui-scaling.md` §6.1 item 4).
+    Rest,
     Nothing,
 }
 
@@ -321,6 +326,7 @@ fn edit() -> impl Strategy<Value = Edit> {
         (0..3usize, 0..3usize).prop_map(|(i, w)| Edit::ContainerParent(i, w)),
         (0..4usize, -2..3i32).prop_map(|(i, z)| Edit::WindowZ(i, z)),
         Just(Edit::ImagesArrived),
+        Just(Edit::Rest),
         Just(Edit::Nothing),
     ]
 }
@@ -465,7 +471,7 @@ fn apply(s: &mut Scene, e: &Edit) {
                 ui.invalidate_paint();
             }
         }
-        Edit::Nothing => {}
+        Edit::Rest | Edit::Nothing => {}
     }
 }
 
@@ -573,6 +579,21 @@ proptest! {
         same_frames(SCREENS.get(screen).copied(), &frames)?;
     }
 
+    /// `ui-scaling.md` I20 (b), (d): after any edits, 150 ms at rest and the images in, every
+    /// canvas of the incremental UI is the canvas a fresh paint at the final geometry gives.
+    #[test]
+    fn settled_canvases_equal_a_fresh_paint(
+        frames in prop::collection::vec(prop::collection::vec(edit(), 0..4), 1..16),
+        screen in 0..=SCREENS.len(),
+    ) {
+        let screen = SCREENS.get(screen).copied();
+        let mut frames = frames;
+        frames.push(vec![Edit::ImagesArrived]);
+        let (mut inc, t) = same_frames_in(screen, None, &frames)?;
+        settle(&mut inc, t);
+        same_canvases(&inc, &fresh(screen, &frames))?;
+    }
+
     #[test]
     fn incremental_frames_equal_full_frames_in_a_band_budget(
         frames in prop::collection::vec(prop::collection::vec(edit(), 0..4), 1..24),
@@ -583,9 +604,59 @@ proptest! {
     }
 }
 
+/// The reference painter of a frame-by-frame comparison.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Reference {
+    /// The full surface pass in every frame (`Ui::set_reference_paint`), with the damage it
+    /// finds.
+    FullPass,
+    /// The full surface pass and a full repaint of every surface in every frame
+    /// (`Ui::invalidate_paint` before each paint): `ui-scaling.md` I20 (d) and `render.md`
+    /// R14 item 4. Both UIs get an upload cap that a full repaint fits in, so that neither
+    /// defers uploads.
+    Repaint,
+}
+
+proptest! {
+    // A full repaint of every surface in every frame is slow: fewer cases.
+    #![proptest_config(ProptestConfig { cases: 24, ..ProptestConfig::default() })]
+
+    /// `ui-scaling.md` I20 (d), `render.md` R14 item 4: frame by frame, the incremental UI
+    /// gives the frames of a full repaint of every surface in every frame, under a UI screen
+    /// with non-integer *Kx*, *Ky*, through moves, node scales and rests (geometry previews
+    /// and their settles).
+    #[test]
+    fn incremental_frames_equal_a_full_repaint_every_frame(
+        frames in prop::collection::vec(prop::collection::vec(edit(), 0..4), 1..16),
+        screen in 0..=SCREENS.len(),
+    ) {
+        same_frames_kept(SCREENS.get(screen).copied(), None, Reference::Repaint, &frames)?;
+    }
+}
+
+/// A Stretch surface resized with nothing else changing (`ui-behaviour.md` §9.2.1: only its
+/// stretch changes) is shown at its new size in that frame, as a full repaint of every surface
+/// shows it; before, the change waited for some other change to touch the tree. Under a UI
+/// screen the equal-factor stretch counts as uniform (`ui-scaling.md` §3.4): a factor of 4 is
+/// past the bound of §6.1 item 5, so the surface is repainted at once.
+#[test]
+fn a_stretch_resize_alone_is_shown_like_a_full_repaint() {
+    for screen in [None, Some(SCREENS[0])] {
+        for w in [10, 39, 55] {
+            same_frames_kept(
+                screen,
+                None,
+                Reference::Repaint,
+                &[vec![Edit::StretchSize(w)]],
+            )
+            .expect("the frames of a full repaint");
+        }
+    }
+}
+
 /// Plays `frames` on an incremental and a reference UI and compares every frame.
 fn same_frames(screen: Screen, frames: &[Vec<Edit>]) -> Result<(), TestCaseError> {
-    same_frames_in(screen, None, frames)
+    same_frames_in(screen, None, frames).map(|_| ())
 }
 
 /// [`same_frames`] with every frame's paint limited to `bands` bands (`None`: unlimited),
@@ -594,49 +665,138 @@ fn same_frames_in(
     screen: Screen,
     bands: Option<u32>,
     frames: &[Vec<Edit>],
-) -> Result<(), TestCaseError> {
+) -> Result<(Scene, Duration), TestCaseError> {
+    same_frames_kept(screen, bands, Reference::FullPass, frames).map(|(inc, _, t)| (inc, t))
+}
+
+/// [`same_frames_in`] against `reference`, returning both UIs (incremental, reference) and the
+/// clock of the last frame.
+fn same_frames_kept(
+    screen: Screen,
+    bands: Option<u32>,
+    reference: Reference,
+    frames: &[Vec<Edit>],
+) -> Result<(Scene, Scene, Duration), TestCaseError> {
     let mut inc = scene_with(false, screen);
     let mut full = scene_with(true, screen);
+    if reference == Reference::Repaint {
+        let limits = tessera_ui::paint::PaintLimits {
+            upload_cap_bytes: 1 << 40,
+            ..tessera_ui::paint::PaintLimits::default()
+        };
+        inc.ui.set_paint_limits(limits);
+        full.ui.set_paint_limits(limits);
+    }
     let (mut ti, mut tf) = (Textures::default(), Textures::default());
     let mut t = Duration::ZERO;
-    let mut step = |inc: &mut Scene, full: &mut Scene, ti: &mut Textures, tf: &mut Textures| {
-        t += Duration::from_millis(16);
-        let (a, b) = match bands {
-            Some(n) => (
-                inc.ui.paint(t, &mut BandBudget(n)),
-                full.ui.paint(t, &mut BandBudget(n)),
-            ),
-            None => (
-                inc.ui.paint(t, &mut Unlimited),
-                full.ui.paint(t, &mut Unlimited),
-            ),
+    let mut step =
+        |inc: &mut Scene, full: &mut Scene, ti: &mut Textures, tf: &mut Textures, rest: bool| {
+            t += Duration::from_millis(if rest { 160 } else { 16 });
+            if reference == Reference::Repaint {
+                full.ui.invalidate_paint();
+            }
+            let (a, b) = match bands {
+                Some(n) => (
+                    inc.ui.paint(t, &mut BandBudget(n)),
+                    full.ui.paint(t, &mut BandBudget(n)),
+                ),
+                None => (
+                    inc.ui.paint(t, &mut Unlimited),
+                    full.ui.paint(t, &mut Unlimited),
+                ),
+            };
+            ti.apply(&a.ops);
+            tf.apply(&b.ops);
+            (a.composition, b.composition)
         };
-        ti.apply(&a.ops);
-        tf.apply(&b.ops);
-        (a.composition, b.composition)
-    };
     // First paints.
     for _ in 0..8 {
-        let (a, b) = step(&mut inc, &mut full, &mut ti, &mut tf);
+        let (a, b) = step(&mut inc, &mut full, &mut ti, &mut tf, false);
         prop_assert_eq!(a, b);
     }
     prop_assert_eq!(ti.front(), tf.front());
     for (n, edits) in frames.iter().enumerate() {
         for e in edits {
             // The reference repaints everything when images arrive, which takes more
-            // bands: in a band budget the two would differ until both settle. Under a UI
-            // screen it would also redraw canvases that both UIs leave stale after a move
-            // by a fraction of a pixel (the ignored test
-            // `a_nested_surface_moved_by_a_fraction_of_a_pixel_is_repainted`).
-            if (bands.is_some() || screen.is_some()) && matches!(e, Edit::ImagesArrived) {
+            // bands: in a band budget the two would differ until both settle. (Under a UI
+            // screen both paint a previewed surface at its held geometry, `ui-scaling.md`
+            // §6.1 item 2, so the arrival is played there.)
+            if bands.is_some() && matches!(e, Edit::ImagesArrived) {
                 continue;
             }
             apply(&mut inc, e);
             apply(&mut full, e);
         }
-        let (a, b) = step(&mut inc, &mut full, &mut ti, &mut tf);
+        let rest = edits.iter().any(|e| matches!(e, Edit::Rest));
+        let (a, b) = step(&mut inc, &mut full, &mut ti, &mut tf, rest);
         prop_assert_eq!(a, b, "composition of frame {}", n);
         prop_assert!(ti.front() == tf.front(), "textures after frame {}", n);
+    }
+    Ok((inc, full, t))
+}
+
+/// Paints `s` from clock `t` on, a frame every 16 ms, until it settles (every geometry
+/// preview included, `ui-scaling.md` §6.1 item 4); returns the clock.
+fn settle(s: &mut Scene, mut t: Duration) -> Duration {
+    for _ in 0..256 {
+        t += Duration::from_millis(16);
+        let _ = s.ui.paint(t, &mut Unlimited);
+        if s.ui.paint_settled() && !s.ui.geometry_preview_pending() {
+            return t;
+        }
+    }
+    panic!("the UI settles");
+}
+
+/// The scene after `frames` played without painting between them (images loaded), painted
+/// until it settles: every canvas a fresh paint at the final geometry.
+fn fresh(screen: Screen, frames: &[Vec<Edit>]) -> Scene {
+    let mut s = scene_with(false, screen);
+    s.arrived.store(true, Ordering::Relaxed);
+    s.ui.images_arrived();
+    for e in frames.iter().flatten() {
+        apply(&mut s, e);
+    }
+    settle(&mut s, Duration::ZERO);
+    s
+}
+
+/// Every surface owner of the scene that the edits may touch.
+fn owners(s: &Scene) -> Vec<ElementKey> {
+    let mut v = s.windows.clone();
+    v.push(s.layer);
+    v.extend(&s.nested);
+    v.extend(&s.floaters);
+    v.extend(&s.containers);
+    v.extend(&s.controls);
+    v
+}
+
+/// Every canvas of each surface of `a` equals `b`'s (size, the canvas below and each canvas
+/// above a nested entry, every pixel; [`canvas_of`]): `ui-scaling.md` I20 (b), a settled
+/// canvas is byte-identical to a fresh paint at the current geometry.
+fn same_canvases(a: &Scene, b: &Scene) -> Result<(), TestCaseError> {
+    for (ka, kb) in owners(a).into_iter().zip(owners(b)) {
+        let (ca, cb) = (canvas_of_opt(&a.ui, ka), canvas_of_opt(&b.ui, kb));
+        prop_assert_eq!(
+            ca.as_ref().map(|c| c.0),
+            cb.as_ref().map(|c| c.0),
+            "canvas size of {:?}",
+            ka
+        );
+        let (Some((_, la)), Some((_, lb))) = (ca, cb) else {
+            continue;
+        };
+        prop_assert_eq!(
+            la.keys().collect::<Vec<_>>(),
+            lb.keys().collect::<Vec<_>>(),
+            "canvases of {:?}",
+            ka
+        );
+        for (layer, pa) in &la {
+            let pb = lb.get(layer);
+            prop_assert!(Some(pa) == pb, "pixels of {:?}, layer {:?}", ka, layer);
+        }
     }
     Ok(())
 }
@@ -813,7 +973,7 @@ fn a_frame_without_change_paints_nothing_and_steady_hud_changes_stay_light() {
         t += Duration::from_millis(16);
         let _ = s.ui.paint(t, &mut Unlimited);
         frames += 1;
-        if s.ui.paint_settled() {
+        if s.ui.paint_settled() && !s.ui.geometry_preview_pending() {
             break;
         }
         assert!(frames < 256, "the first paints settle");
@@ -865,21 +1025,40 @@ fn a_frame_without_change_paints_nothing_and_steady_hud_changes_stay_light() {
 }
 
 /// A nested surface owner moved by a fraction of a physical pixel under a UI screen (here
-/// *K* = 0.625), with its canvas size unchanged: neither the full pass nor the light pass
-/// repaints its canvas, although its elements' canvas boxes (`ui-scaling.md` §6.2: physical
-/// box minus the canvas origin) may move by a pixel. Both UIs keep the same stale canvas
-/// until images arrive, when the reference repaints everything. Whether such a surface must
-/// be repainted is an open question of the package (decision 0015 / `ui-scaling.md` §6.2);
-/// the UI-screen properties leave image arrivals out until it is answered.
+/// *K* = 0.625), with its canvas size unchanged: its elements' canvas boxes (`ui-scaling.md`
+/// §6.2: physical box minus the canvas origin) may move by a pixel, so its canvas geometry
+/// changes through its phase (§6.1 geometry preview, `s6-2-phase`). It is previewed (its held
+/// canvas composed 1 : 1 at its new place), images that arrive meanwhile are painted at the
+/// held geometry by both painters (the reference repaints everything then), and once its
+/// geometry has held for 150 ms it is repainted in full at the current geometry: the canvas a
+/// fresh paint gives (I20 (b)).
 #[test]
-#[ignore = "open question: repaint of a surface whose canvas origin moves by a fraction"]
 fn a_nested_surface_moved_by_a_fraction_of_a_pixel_is_repainted() {
-    let seq = vec![
+    let mut seq = vec![
         vec![Edit::MoveNested(0, -4, 0)],
         vec![Edit::WindowMove(0, -4, 6), Edit::StretchSize(39)],
         vec![Edit::ImagesArrived],
     ];
-    same_frames(Some(SCREENS[0]), &seq).expect("the frames of the full pass");
+    let (inc, full, _) = same_frames_kept(Some(SCREENS[0]), None, Reference::FullPass, &seq)
+        .expect("the frames of the full pass");
+    assert!(
+        inc.ui.in_geometry_preview(inc.windows[0]) && full.ui.in_geometry_preview(full.windows[0]),
+        "the window moved by a fraction of a pixel is previewed"
+    );
+    // Ten frames at rest (160 ms): the previews settle in both painters, frame by frame alike.
+    seq.extend((0..10).map(|_| Vec::new()));
+    let (mut inc, mut full, t) =
+        same_frames_kept(Some(SCREENS[0]), None, Reference::FullPass, &seq)
+            .expect("the frames of the full pass");
+    let t = settle(&mut inc, t);
+    settle(&mut full, t);
+    assert!(!inc.ui.geometry_preview_pending() && !full.ui.geometry_preview_pending());
+    let fresh = fresh(Some(SCREENS[0]), &seq);
+    same_canvases(&inc, &fresh).expect("the settled canvases are a fresh paint");
+    same_canvases(&full, &fresh).expect("the reference's settled canvases are a fresh paint");
+    // And frame by frame like a full repaint of every surface in every frame (I20 (d)).
+    same_frames_kept(Some(SCREENS[0]), None, Reference::Repaint, &seq)
+        .expect("the frames of a full repaint");
 }
 
 /// The full surface pass over `n` sibling windows under the screen root, forced by
@@ -939,5 +1118,560 @@ fn the_full_pass_is_linear_in_sibling_windows() {
             "{n} windows {small:?}, {} windows {large:?}: ratio {ratio:.2}",
             4 * n
         );
+    }
+}
+
+/// The composition entry of the canvas below of `k`'s surface in `list`.
+fn entry_of(ui: &Ui, list: &CompositionList, k: ElementKey) -> Option<Entry> {
+    let id = ui.surface_of(k)?;
+    list.entries
+        .iter()
+        .find(|e| {
+            e.texture
+                == EntryTexture::Surface {
+                    surface: id,
+                    layer: Layer::Below,
+                }
+        })
+        .cloned()
+}
+
+/// A UI with images loaded, painted until it settles, under `screen`; returns the UI and its
+/// clock.
+fn quiet_ui(screen: Screen, build: impl FnOnce(&mut Ui)) -> (Ui, Duration) {
+    let (ui, t, _) = quiet_ui_with_textures(screen, build);
+    (ui, t)
+}
+
+/// [`quiet_ui`] with a model of its UI textures.
+fn quiet_ui_with_textures(screen: Screen, build: impl FnOnce(&mut Ui)) -> (Ui, Duration, Textures) {
+    let mut tex = Textures::default();
+    let env = LoadingEnv {
+        inner: env(),
+        arrived: Arc::new(AtomicBool::new(true)),
+    };
+    let mut ui = Ui::new(Box::new(env), tessera_ui::Vocab::default(), (640, 480));
+    if let Some((wp, hp, se)) = screen {
+        let f = tessera_ui::scaling::UiScreen::new(wp, hp, se).expect("screen");
+        ui.set_ui_screen(f, tessera_ui::scaling::safe_area(&f, None));
+    }
+    build(&mut ui);
+    let mut t = Duration::ZERO;
+    for _ in 0..256 {
+        t += Duration::from_millis(16);
+        let f = ui.paint(t, &mut Unlimited);
+        tex.apply(&f.ops);
+        if ui.paint_settled() && !ui.geometry_preview_pending() {
+            return (ui, t, tex);
+        }
+    }
+    panic!("the UI settles");
+}
+
+/// A layer of a surface's canvases, named the same way in two UIs built alike: the canvas
+/// below, or the canvas above the nested entry whose owner is reached from the surface's owner
+/// by these child indices.
+type LayerName = Option<Vec<usize>>;
+
+/// A surface's canvas size and its canvases by layer ([`canvas_of`]).
+type Canvases = ([u32; 2], BTreeMap<LayerName, Vec<u32>>);
+
+/// Every CPU canvas of `k`'s surface, row by row (decision 0015 Decision 1.7): the canvas
+/// below and each canvas above a nested entry that holds a pixel (an all-transparent canvas
+/// above draws what no canvas draws), with the canvas size.
+fn canvas_of(ui: &Ui, k: ElementKey) -> Canvases {
+    canvas_of_opt(ui, k).expect("a canvas")
+}
+
+/// [`canvas_of`], `None` when the surface has no canvas.
+fn canvas_of_opt(ui: &Ui, k: ElementKey) -> Option<Canvases> {
+    let size = ui.surface_canvas_size(k)?;
+    let id = ui.surface_of(k)?;
+    let mut out = BTreeMap::new();
+    for layer in ui.surface_layers(k) {
+        let name = match layer {
+            Layer::Below => None,
+            Layer::Above(e) => Some(path_to_surface(ui, k, e).unwrap_or_else(|| vec![usize::MAX])),
+        };
+        let mut px = Vec::with_capacity((size[0] * size[1]) as usize);
+        for y in 0..size[1] as i32 {
+            for x in 0..size[0] as i32 {
+                px.push(ui.surface_layer_pixel(id, layer, x, y).unwrap_or(0));
+            }
+        }
+        if name.is_some() && px.iter().all(|p| *p == 0) {
+            continue;
+        }
+        out.insert(name, px);
+    }
+    Some((size, out))
+}
+
+/// The child indices from `from` to the element whose surface is `entry`.
+fn path_to_surface(ui: &Ui, from: ElementKey, entry: u32) -> Option<Vec<usize>> {
+    let mut stack = vec![(from, Vec::new())];
+    while let Some((k, path)) = stack.pop() {
+        if k != from && ui.surface_of(k).is_some_and(|s| s.0 == entry) {
+            return Some(path);
+        }
+        if path.len() > 64 {
+            continue;
+        }
+        for (i, c) in ui.children(k).into_iter().enumerate() {
+            let mut p = path.clone();
+            p.push(i);
+            stack.push((c, p));
+        }
+    }
+    None
+}
+
+/// A window with a picture and a label.
+fn picture_window(ui: &mut Ui, x: i32, y: i32) -> ElementKey {
+    let w = ui.create_control(ControlKind::Window, 1).expect("window");
+    ui.control_set_position(w, x, y);
+    ui.control_set_size(w, 180, 120);
+    ui.control_set_visible(w, true);
+    ui.control_set_background(w, Background::Did(IMAGES[0]));
+    let l = control(ui, ControlKind::Label, w, [10, 10, 150, 40]);
+    ui.set_text(l, Some(TEXTS[3].to_string()));
+    w
+}
+
+/// `ui-scaling.md` §6.1 geometry preview and I20 (a), (b): a window moved by a fraction of a
+/// physical pixel (*K* = 0.625) is not repainted in the frame of the move; its held canvas is
+/// composed 1 : 1 at its new physical top-left, limited to its new physical box (each edge
+/// within one pixel of it). After 150 ms at rest it is repainted once, in full, at the current
+/// geometry: composed 1 : 1 onto exactly its physical box, with the canvas a fresh paint gives.
+#[test]
+fn a_moved_window_is_previewed_then_repainted_crisp_after_the_settle_time() {
+    let screen = Some(SCREENS[0]);
+    let mut w = None;
+    let (mut ui, mut t) = quiet_ui(screen, |ui| w = Some(picture_window(ui, 20, 30)));
+    let w = w.expect("window");
+    let held = canvas_of(&ui, w);
+    ui.control_set_position(w, 21, 30);
+    t += Duration::from_millis(16);
+    let f = ui.paint(t, &mut Unlimited);
+    assert!(
+        ui.in_geometry_preview(w),
+        "a move by 0.625 pixels is previewed"
+    );
+    assert_eq!(
+        (f.stats.jobs_started, f.stats.bands, f.stats.upload_bytes),
+        (0, 0, 0),
+        "the move paints and uploads nothing"
+    );
+    let phys = ui.physical_box(w);
+    let e = entry_of(&ui, &f.composition, w).expect("an entry");
+    assert_eq!(
+        (e.dest.x0, e.dest.y0),
+        (phys.x0, phys.y0),
+        "at the new top-left"
+    );
+    assert_eq!(
+        e.canvas,
+        [e.dest.width(), e.dest.height()],
+        "composed 1 : 1"
+    );
+    assert!(
+        e.dest.x1 <= phys.x1 && e.dest.y1 <= phys.y1 && phys.x1 - e.dest.x1 <= 1,
+        "limited to the physical box, edges within a pixel: {:?} in {phys:?}",
+        e.dest
+    );
+    assert_eq!(canvas_of(&ui, w), held, "the held canvas");
+    // 144 ms more at rest: still previewed; at 160 ms the settle repaint.
+    for _ in 0..9 {
+        t += Duration::from_millis(16);
+        let f = ui.paint(t, &mut Unlimited);
+        assert_eq!(
+            f.stats.jobs_started, 0,
+            "nothing painted before the settle time"
+        );
+        assert!(ui.in_geometry_preview(w));
+    }
+    t += Duration::from_millis(16);
+    let f = ui.paint(t, &mut Unlimited);
+    assert!(!ui.in_geometry_preview(w), "the preview ends after 150 ms");
+    assert!(f.stats.jobs_started >= 1, "one repaint");
+    for _ in 0..64 {
+        if ui.paint_settled() && !ui.geometry_preview_pending() {
+            break;
+        }
+        t += Duration::from_millis(16);
+        let _ = ui.paint(t, &mut Unlimited);
+    }
+    t += Duration::from_millis(16);
+    let f = ui.paint(t, &mut Unlimited);
+    let e = entry_of(&ui, &f.composition, w).expect("an entry");
+    assert_eq!(e.dest, phys, "composed onto the physical box");
+    assert_eq!(e.canvas, [phys.width(), phys.height()], "1 : 1");
+    let mut w2 = None;
+    let (fresh, _) = quiet_ui(screen, |ui| w2 = Some(picture_window(ui, 21, 30)));
+    assert!(
+        canvas_of(&ui, w) == canvas_of(&fresh, w2.expect("window")),
+        "the settled canvas is a fresh paint at the current geometry (I20 (b))"
+    );
+}
+
+/// A canvas-resize label in a transparent screen-sized layer (floating combat text).
+fn layer_with_floater(ui: &mut Ui, after: bool) -> (ElementKey, ElementKey, Option<ElementKey>) {
+    let layer = ui.create_control(ControlKind::Window, 1).expect("window");
+    ui.control_set_position(layer, 0, 0);
+    ui.control_set_size(layer, 640, 480);
+    ui.control_set_visible(layer, true);
+    // Drawn before the floater: stays in the layer's canvas below wherever it moves.
+    let under = control(ui, ControlKind::Control, layer, [100, 100, 300, 200]);
+    ui.control_set_back_colour(under, Some([0.2, 0.4, 0.8, 0.5]));
+    let f = control(ui, ControlKind::Label, layer, [200, 200, 90, 40]);
+    ui.control_set_stretch_mode(f, 3);
+    ui.set_text(f, Some(TEXTS[0].to_string()));
+    // Optionally drawn after it, over its path.
+    let over = after.then(|| {
+        let o = control(ui, ControlKind::Control, layer, [180, 150, 60, 30]);
+        ui.control_set_back_colour(o, Some([0.9, 0.1, 0.1, 0.5]));
+        o
+    });
+    (layer, f, over)
+}
+
+/// `render.md` §6.12 R13: a nested entry that moves under a parent that draws nothing after it
+/// at its old or new coverage region costs its parent no damage and no generation membership;
+/// with nothing to repaint the frame paints nothing (an empty generation swaps at once, R13
+/// item 4). Where the parent draws something after the entry over the region, the parent is
+/// repainted there. Incremental and reference painting give the same frames, and the result is
+/// a fresh paint.
+#[test]
+fn a_parent_takes_no_damage_where_nothing_is_drawn_after_a_moved_nested_entry() {
+    for screen in [None, Some(SCREENS[1])] {
+        // Nothing drawn after the floater.
+        let mut keys = None;
+        let (mut ui, mut t) = quiet_ui(screen, |ui| keys = Some(layer_with_floater(ui, false)));
+        let (layer, f, _) = keys.expect("scene");
+        for i in 0..6 {
+            ui.control_set_position(f, 200 + 2 * i, 200 - 2 * i);
+            t += Duration::from_millis(16);
+            let fr = ui.paint(t, &mut Unlimited);
+            assert_eq!(
+                (fr.stats.jobs_started, fr.stats.bands, fr.stats.upload_bytes),
+                (0, 0, 0),
+                "frame {i} under {screen:?}: the move repaints nothing"
+            );
+        }
+        for _ in 0..64 {
+            if ui.paint_settled() && !ui.geometry_preview_pending() {
+                break;
+            }
+            t += Duration::from_millis(16);
+            let _ = ui.paint(t, &mut Unlimited);
+        }
+        let mut k2 = None;
+        let (fresh, _) = quiet_ui(screen, |ui| {
+            let k = layer_with_floater(ui, false);
+            ui.control_set_position(k.1, 210, 190);
+            k2 = Some(k);
+        });
+        let (fl, ff, _) = k2.expect("scene");
+        assert!(
+            canvas_of(&ui, layer) == canvas_of(&fresh, fl),
+            "the layer is a fresh paint"
+        );
+        assert!(
+            canvas_of(&ui, f) == canvas_of(&fresh, ff),
+            "the floater is a fresh paint"
+        );
+        // Something drawn after it over its path: the layer is repainted there.
+        let mut keys = None;
+        let (mut ui, mut t) = quiet_ui(screen, |ui| keys = Some(layer_with_floater(ui, true)));
+        let (_, f, _) = keys.expect("scene");
+        ui.control_set_position(f, 200, 160);
+        t += Duration::from_millis(16);
+        let fr = ui.paint(t, &mut Unlimited);
+        assert!(
+            fr.stats.jobs_started >= 1,
+            "the layer's split changes under {screen:?}"
+        );
+    }
+    // Frame by frame like the reference, both with and without content over the path.
+    for after in [false, true] {
+        for screen in [None, Some(SCREENS[0]), Some(SCREENS[1])] {
+            let mut uis: Vec<(Ui, ElementKey)> = [false, true]
+                .into_iter()
+                .map(|reference| {
+                    let mut f = None;
+                    let (mut ui, _) =
+                        quiet_ui(screen, |ui| f = Some(layer_with_floater(ui, after).1));
+                    ui.set_reference_paint(reference);
+                    (ui, f.expect("floater"))
+                })
+                .collect();
+            let mut tex = [Textures::default(), Textures::default()];
+            let mut t = Duration::from_secs(10);
+            for step in 0..30 {
+                t += Duration::from_millis(if step % 7 == 6 { 160 } else { 16 });
+                let mut comps = Vec::new();
+                for ((ui, f), tx) in uis.iter_mut().zip(tex.iter_mut()) {
+                    if step % 7 != 6 {
+                        let (x, y) = ui.control_position(*f);
+                        ui.control_set_position(*f, x + 3, y - 5);
+                        ui.set_node_scale(*f, Some([1.0 + step as f32 / 40.0; 3]));
+                    }
+                    let fr = ui.paint(t, &mut Unlimited);
+                    tx.apply(&fr.ops);
+                    comps.push(fr.composition);
+                }
+                assert_eq!(comps[0], comps[1], "composition of frame {step}");
+                assert!(
+                    tex[0].front() == tex[1].front(),
+                    "textures after frame {step}"
+                );
+            }
+        }
+    }
+}
+
+/// `ui-scaling.md` §6.1 items 3 and 5, I20 (c): a node-scale change (floating text that grows)
+/// is composed GPU-scaled from the held canvas onto the current physical box, with no paint,
+/// while the physical box stays within a factor of 2 of the held canvas; beyond it the surface
+/// is repainted at once at the current geometry, and the preview goes on from that picture.
+#[test]
+fn a_growing_node_scale_is_composed_scaled_within_a_factor_of_two() {
+    let mut keys = None;
+    let (mut ui, mut t) = quiet_ui(Some(SCREENS[1]), |ui| {
+        keys = Some(layer_with_floater(ui, false))
+    });
+    let (_, f, _) = keys.expect("scene");
+    let held = ui.surface_canvas_size(f).expect("canvas");
+    let mut repaints = 0;
+    for step in 1..=40 {
+        ui.set_node_scale(f, Some([1.0 + step as f32 / 10.0; 3]));
+        t += Duration::from_millis(16);
+        let fr = ui.paint(t, &mut Unlimited);
+        let phys = ui.physical_box(f);
+        let e = entry_of(&ui, &fr.composition, f).expect("an entry");
+        assert_eq!(e.dest, phys, "composed onto the current physical box");
+        let canvas = ui.surface_canvas_size(f).expect("canvas");
+        assert_eq!(e.canvas, canvas, "from the canvas it holds");
+        for a in 0..2 {
+            let (c, d) = (e.canvas[a], [phys.width(), phys.height()][a]);
+            assert!(
+                d <= 2 * c && 2 * d >= c,
+                "step {step}: {d} pixels from a canvas of {c} (I20 (c))"
+            );
+        }
+        if fr.stats.jobs_started > 0 {
+            repaints += 1;
+            assert_eq!(
+                canvas,
+                [phys.width(), phys.height()],
+                "repainted at the current box"
+            );
+        }
+    }
+    assert!(ui.in_geometry_preview(f));
+    // 1.1 to 5.0 from 1.0: repainted when the box passes twice the held canvas, about 1×,
+    // 2×, 4×, so two or three times, never every frame.
+    assert!(
+        (1..=3).contains(&repaints),
+        "{repaints} repaints from a held canvas of {held:?}"
+    );
+}
+
+/// A surface owner's `ObjectOpacity` and its moves are applied when its canvas is composed
+/// (decision 0015 Decision 1.4, 1.6: no content of its own canvas changes): fading or moving a
+/// window by whole pixels starts no paint job and uploads nothing; only its composition entry
+/// changes.
+#[test]
+fn fading_or_moving_a_window_repaints_nothing() {
+    for screen in [None, Some((1024, 768, 1.0))] {
+        let mut w = None;
+        let (mut ui, mut t) = quiet_ui(screen, |ui| w = Some(picture_window(ui, 20, 30)));
+        let w = w.expect("window");
+        for i in 0..10 {
+            ui.control_set_opacity(w, 1.0 - i as f32 / 20.0);
+            let (x, y) = ui.control_position(w);
+            ui.control_set_position(w, x + 2, y + 1);
+            t += Duration::from_millis(16);
+            let f = ui.paint(t, &mut Unlimited);
+            assert_eq!(
+                (f.stats.jobs_started, f.stats.bands, f.stats.upload_bytes),
+                (0, 0, 0),
+                "frame {i} under {screen:?}"
+            );
+            let e = entry_of(&ui, &f.composition, w).expect("an entry");
+            assert!(
+                (e.opacity - (1.0 - i as f32 / 20.0)).abs() < 1e-6,
+                "the new opacity"
+            );
+            assert_eq!(e.dest, ui.physical_box(w), "at the new place");
+        }
+    }
+}
+
+/// `render.md` §6.12 R13 item 1 while the parent's job is in flight: the layer draws a control
+/// X after the floater N; X is hidden, and the layer's content job runs over several frames
+/// (one band a frame). Meanwhile N moves into X's place. The last snapshot no longer has X, but
+/// the layer's shown canvases still do (X sits in its canvas below there, since N's old region
+/// did not meet it). So the layer must not skip that region: N is shown at its new place only
+/// once the layer's canvas there no longer holds X, never over a stale X drawn under it.
+#[test]
+fn a_parent_with_a_job_in_flight_does_not_skip_a_moved_nested_entry() {
+    for screen in [None, Some(SCREENS[1])] {
+        let mut keys = None;
+        let (mut ui, mut t, mut tex) =
+            quiet_ui_with_textures(screen, |ui| keys = Some(layer_with_floater(ui, true)));
+        let (layer, f, over) = keys.expect("scene");
+        let over = over.expect("drawn after the floater");
+        let lid = ui.surface_of(layer).expect("the layer's surface");
+        let below = TexKey {
+            surface: lid,
+            layer: Layer::Below,
+            slot: Slot::Front,
+        };
+        // A canvas pixel inside X (and inside N's new place).
+        let ob = ui.physical_box(over);
+        let lb = ui.physical_box(layer);
+        let (sx, sy) = ((ob.x0 + ob.x1) / 2 - lb.x0, (ob.y0 + ob.y1) / 2 - lb.y0);
+        let shown = |tex: &Textures| {
+            tex.tex
+                .get(&below)
+                .filter(|(b, _)| b.contains(sx, sy))
+                .map_or(0, |(b, p)| p[Textures::at(b, sx, sy)])
+        };
+        let with_x = shown(&tex);
+        assert_ne!(
+            with_x, 0,
+            "X is in the layer's canvas below under {screen:?}"
+        );
+        let comp = ui.paint(t, &mut Unlimited).composition;
+        let old_dest = entry_of(&ui, &comp, f).expect("N's entry").dest;
+        // Frame 1: X is hidden; the layer's job takes one band.
+        ui.control_set_visible(over, false);
+        t += Duration::from_millis(16);
+        let fr = ui.paint(t, &mut BandBudget(1));
+        tex.apply(&fr.ops);
+        assert!(!ui.paint_settled(), "the layer's job is still running");
+        // Frame 2 on: N moves into X's place, the job goes on a band a frame.
+        ui.control_set_position(f, 170, 140);
+        let mut moved = false;
+        for step in 0..256 {
+            t += Duration::from_millis(16);
+            let fr = ui.paint(t, &mut BandBudget(1));
+            tex.apply(&fr.ops);
+            let dest = entry_of(&ui, &fr.composition, f).expect("N's entry").dest;
+            if dest != old_dest {
+                moved = true;
+                assert_ne!(
+                    shown(&tex),
+                    with_x,
+                    "frame {step} under {screen:?}: N is at its new place over a stale X"
+                );
+            }
+            if ui.paint_settled() && !ui.geometry_preview_pending() {
+                break;
+            }
+        }
+        assert!(moved, "N reaches its new place under {screen:?}");
+        // At rest the layer is a fresh paint of the new state.
+        let mut k2 = None;
+        let (fresh, _) = quiet_ui(screen, |ui| {
+            let k = layer_with_floater(ui, true);
+            ui.control_set_visible(k.2.expect("over"), false);
+            ui.control_set_position(k.1, 170, 140);
+            k2 = Some(k);
+        });
+        let (fl, _, _) = k2.expect("scene");
+        assert!(
+            canvas_of(&ui, layer) == canvas_of(&fresh, fl),
+            "the layer is a fresh paint under {screen:?}"
+        );
+    }
+}
+
+/// A time budget with no time left after the first unit of work (a slice already used up).
+struct SpentSlice;
+
+impl tessera_ui::paint::PaintBudget for SpentSlice {
+    fn exhausted(&mut self) -> bool {
+        true
+    }
+
+    fn time_left(&self) -> Option<Duration> {
+        Some(Duration::ZERO)
+    }
+}
+
+/// `ui-scaling.md` §6.1 item 4 within the slice (§8 S7, UR §6 U4 (b)): four floating texts
+/// that grew together come to rest together. Under a time budget their settle repaints, which
+/// lay text out at a new content scale when their jobs start, are spread over frames: the
+/// earliest due one in each frame while the slice has no time for more, the others still
+/// shown as their preview. Under an unlimited budget all four settle in the frame they are due.
+/// Either way the settled canvases are a fresh paint (I20 (b)).
+#[test]
+fn previews_due_together_settle_within_the_slice() {
+    fn floaters(ui: &mut Ui) -> Vec<ElementKey> {
+        let layer = ui.create_control(ControlKind::Window, 1).expect("window");
+        ui.control_set_position(layer, 0, 0);
+        ui.control_set_size(layer, 640, 480);
+        ui.control_set_visible(layer, true);
+        (0..4)
+            .map(|i| {
+                let f = control(ui, ControlKind::Label, layer, [60 + i * 140, 200, 90, 40]);
+                ui.control_set_stretch_mode(f, 3);
+                ui.set_text(f, Some(TEXTS[i as usize % TEXTS.len()].to_string()));
+                f
+            })
+            .collect()
+    }
+    for spent in [true, false] {
+        let mut keys = Vec::new();
+        let (mut ui, mut t) = quiet_ui(Some(SCREENS[1]), |ui| keys = floaters(ui));
+        for &f in &keys {
+            ui.set_node_scale(f, Some([1.3, 1.3, 1.0]));
+        }
+        t += Duration::from_millis(16);
+        let _ = ui.paint(t, &mut Unlimited);
+        let previewed = |ui: &Ui| keys.iter().filter(|k| ui.in_geometry_preview(**k)).count();
+        assert_eq!(previewed(&ui), 4, "all four grew: previewed");
+        t += Duration::from_millis(160);
+        let mut left = Vec::new();
+        for _ in 0..4 {
+            if spent {
+                let _ = ui.paint(t, &mut SpentSlice);
+            } else {
+                let _ = ui.paint(t, &mut Unlimited);
+            }
+            left.push(previewed(&ui));
+            t += Duration::from_millis(16);
+        }
+        let want = if spent {
+            vec![3, 2, 1, 0]
+        } else {
+            vec![0, 0, 0, 0]
+        };
+        assert_eq!(
+            left, want,
+            "previews left after each frame (time budget: {spent})"
+        );
+        for _ in 0..64 {
+            if ui.paint_settled() && !ui.geometry_preview_pending() {
+                break;
+            }
+            t += Duration::from_millis(16);
+            let _ = ui.paint(t, &mut Unlimited);
+        }
+        let mut fresh_keys = Vec::new();
+        let (fresh, _) = quiet_ui(Some(SCREENS[1]), |ui| {
+            fresh_keys = floaters(ui);
+            for &f in &fresh_keys {
+                ui.set_node_scale(f, Some([1.3, 1.3, 1.0]));
+            }
+        });
+        for (a, b) in keys.iter().zip(&fresh_keys) {
+            assert!(
+                canvas_of(&ui, *a) == canvas_of(&fresh, *b),
+                "a settled floater is a fresh paint (time budget: {spent})"
+            );
+        }
     }
 }

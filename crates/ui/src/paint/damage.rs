@@ -61,6 +61,23 @@ impl DamageList {
         !self.full && self.rects.is_empty()
     }
 
+    /// Whether the pending damage meets `r`: the whole canvas is damaged, or a pending
+    /// rectangle overlaps it (`render.md` §6.12 R13 reads it). Each pending rectangle looked
+    /// at takes one of `checks`; when fewer are left than there are rectangles, the answer is
+    /// `true` (met, the conservative one) without looking.
+    #[must_use]
+    pub fn meets(&self, r: &Rect, checks: &mut usize) -> bool {
+        if self.full {
+            return true;
+        }
+        if self.rects.len() > *checks {
+            *checks = 0;
+            return true;
+        }
+        *checks -= self.rects.len();
+        self.rects.iter().any(|d| !d.intersect(r).is_empty())
+    }
+
     /// The bounding box of the pending rectangles (not clipped).
     #[must_use]
     pub fn bounding_box(&self) -> Rect {

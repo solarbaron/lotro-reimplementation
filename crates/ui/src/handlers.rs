@@ -202,7 +202,12 @@ impl Ui {
         }
         if pid == p.object_mode || pid == p.object_opacity || pid == p.keep_object_when_hidden {
             self.painter.touched = true;
-            self.mark_dirty(k);
+            if self.composition_only_property(k, pid) {
+                // Composed, not painted: the passes take it, the canvas stays.
+                self.mark_geometry_dirty(k);
+            } else {
+                self.mark_dirty(k);
+            }
         }
         match class {
             WidgetClass::Meter => {

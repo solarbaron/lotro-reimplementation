@@ -286,7 +286,9 @@ impl Ui {
         self.after_scale_change(k, was_inside);
         self.refit_descendants(k);
         self.input.hover_dirty = true;
-        self.mark_dirty(k);
+        // A surface owner's canvas follows its geometry (`ui-scaling.md` §6.1): no content of
+        // its own changes.
+        self.mark_geometry_dirty(k);
     }
 
     /// Resizes the screen root (§9.4): every root panel is laid out again from its layout's

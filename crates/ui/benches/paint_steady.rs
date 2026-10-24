@@ -18,7 +18,12 @@
 //!
 //! Phases: `idle` (nothing changes), `hud` (the HUD changes every frame, the panels are
 //! open), `hud-alone` (the same with the panels closed: the panels' share of a steady
-//! frame is the difference). Times are the paint call's **thread CPU time**
+//! frame is the difference), `floaters` (only the floating texts rise, grow and fade, with
+//! no new text: the geometry preview of `ui-scaling.md` §6.1 and `render.md` §6.12 R13 make
+//! that free of paint), `rest` (nothing changes after it: the floating texts get their one
+//! settle repaint, §6.1 item 4). With `--assert` the `floaters` phase must start no job,
+//! paint no band and upload nothing, and after `rest` no geometry preview may be pending and
+//! painting must have settled. Times are the paint call's **thread CPU time**
 //! (`CLOCK_THREAD_CPUTIME_ID`); results are **indicative** unless taken on the reference
 //! machine under rule 1 of `docs/perf/reference-machine.md`.
 
@@ -43,6 +48,8 @@ use tessera_ui::{
 };
 
 const SCREEN: (i32, i32) = (1920, 1080);
+/// The paint slice of every timed frame (UR §6 U4 (b)).
+const SLICE: Duration = Duration::from_millis(4);
 const IMG_PANEL: u32 = 0x4100_0001;
 const IMG_ICON: u32 = 0x4100_0002;
 const IMG_FRAME: u32 = 0x4100_0003;
@@ -264,20 +271,25 @@ fn scene(reference: bool) -> Scene {
     }
 }
 
-/// The HUD's changes of frame `f` (60 frames a second).
-fn hud_step(s: &mut Scene, f: u32) {
+/// The floating texts' changes of frame `f`: each rises and grows for 90 frames, then starts
+/// again lower down (with a new text when `text`).
+fn float_step(s: &mut Scene, f: u32, text: bool) {
     for (i, k) in s.floaters.clone().into_iter().enumerate() {
-        // Each text rises and grows for 90 frames, then starts again lower down.
         let age = (f + i as u32 * 23) % 90;
         let (x, _) = s.ui.control_position(k);
         s.ui.control_set_position(k, x, 420 - age as i32);
         let scale = 1.0 + age as f32 / 120.0;
         s.ui.set_node_scale(k, Some([scale, scale, 1.0]));
         s.ui.control_set_opacity(k, 1.0 - age as f32 / 120.0);
-        if age == 0 {
+        if text && age == 0 {
             s.ui.set_text(k, Some(format!("-{}", 60 + (f % 40))));
         }
     }
+}
+
+/// The HUD's changes of frame `f` (60 frames a second).
+fn hud_step(s: &mut Scene, f: u32) {
+    float_step(s, f, true);
     for (i, k) in s.bars.clone().into_iter().enumerate() {
         // Vitals change every 90 frames, the cast bar every frame.
         if i + 1 == s.bars.len() || (f + i as u32 * 7).is_multiple_of(90) {
@@ -404,6 +416,8 @@ enum Phase {
     Idle,
     Hud,
     HudAlone,
+    Floaters,
+    Rest,
 }
 
 impl Phase {
@@ -412,7 +426,14 @@ impl Phase {
             Phase::Idle => "idle",
             Phase::Hud => "hud",
             Phase::HudAlone => "hud-alone",
+            Phase::Floaters => "floaters",
+            Phase::Rest => "rest",
         }
+    }
+
+    /// Whether the phase changes the UI in every frame.
+    fn changes(self) -> bool {
+        matches!(self, Phase::Hud | Phase::HudAlone | Phase::Floaters)
     }
 }
 
@@ -451,7 +472,13 @@ fn main() -> ExitCode {
         }
     }
     let mut frame_no = 0u32;
-    for phase in [Phase::Idle, Phase::Hud, Phase::HudAlone] {
+    for phase in [
+        Phase::Idle,
+        Phase::Hud,
+        Phase::HudAlone,
+        Phase::Floaters,
+        Phase::Rest,
+    ] {
         if phase == Phase::HudAlone {
             for k in s.panels.clone() {
                 s.ui.control_set_visible(k, false);
@@ -466,7 +493,13 @@ fn main() -> ExitCode {
         let mut times = Vec::with_capacity(frames as usize);
         let (mut bands, mut jobs, mut upload) = (0u64, 0u64, 0u64);
         for _ in 0..frames {
-            if phase != Phase::Idle {
+            if phase == Phase::Floaters {
+                float_step(&mut s, frame_no, false);
+                if let Some(r) = reference.as_mut() {
+                    float_step(r, frame_no, false);
+                }
+                frame_no += 1;
+            } else if phase.changes() {
                 hud_step(&mut s, frame_no);
                 if let Some(r) = reference.as_mut() {
                     hud_step(r, frame_no);
@@ -474,7 +507,7 @@ fn main() -> ExitCode {
                 frame_no += 1;
             }
             now += Duration::from_micros(16_667);
-            let mut slice = TimeSlice::new(Duration::from_millis(4));
+            let mut slice = TimeSlice::new(SLICE);
             let mut unlimited = Unlimited;
             let c = common::thread_cpu(t0);
             let f = if check {
@@ -510,16 +543,95 @@ fn main() -> ExitCode {
         );
         if assert {
             let idle_bad = phase == Phase::Idle && (full + light + jobs + bands + upload) > 0;
-            let hud_bad = phase != Phase::Idle && full * 20 > u64::from(frames);
-            if idle_bad || hud_bad {
+            let hud_bad = phase.changes() && full * 20 > u64::from(frames);
+            let float_bad = phase == Phase::Floaters && (jobs + bands + upload) > 0;
+            // The settle repaints keep within the slice (`ui-scaling.md` §6.1 item 4, §8 S7):
+            // previews due together settle over several frames.
+            let rest_bad = phase == Phase::Rest
+                && (s.ui.geometry_preview_pending()
+                    || !s.ui.paint_settled()
+                    || (!check && max > SLICE.as_secs_f64() * 1e3));
+            if idle_bad || hud_bad || float_bad || rest_bad {
                 eprintln!("{}: steady-state regression", phase.name());
                 failures += 1;
             }
         }
+    }
+    if !check {
+        r13_caps(t0, frames.min(120));
     }
     if failures > 0 {
         ExitCode::FAILURE
     } else {
         ExitCode::SUCCESS
     }
+}
+
+/// `render.md` §6.12 R13 at the caps a plugin can reach: a screen-sized transparent layer with
+/// 512 nested canvas-resize labels (`MAX_NESTED`), then 3,000 controls drawn after them in a
+/// ring around the screen's edge, so that the bounding box of the operations drawn after each
+/// entry covers the whole layer while none of them meets a label's path: every region test
+/// has to look at every box. All 512 labels move by one whole pixel every frame (no geometry
+/// preview at *Se* = 1), so each frame makes 1,024 region tests; the per-frame bound of the
+/// test (`R13_CHECKS`) keeps its share of the frame small, and the regions past it are
+/// damaged as without R13. Printed only (indicative).
+fn r13_caps(t0: Instant, frames: u32) {
+    let mut s = scene(false);
+    for k in s.panels.clone() {
+        s.ui.control_set_visible(k, false);
+    }
+    let layer = window(&mut s.ui, [0, 0, SCREEN.0, SCREEN.1]);
+    let labels: Vec<ElementKey> = (0..512)
+        .map(|i| {
+            let k = label(
+                &mut s.ui,
+                layer,
+                [200 + (i % 32) * 48, 200 + (i / 32) * 40, 30, 16],
+                "-7",
+            );
+            s.ui.control_set_stretch_mode(k, 3);
+            k
+        })
+        .collect();
+    for i in 0..3_000 {
+        // 750 squares on each edge, 2 × 2 units, inside the outer 40 units.
+        let (x, y) = match i % 4 {
+            0 => ((i / 4) * 2 % SCREEN.0, 10),
+            1 => ((i / 4) * 2 % SCREEN.0, SCREEN.1 - 30),
+            2 => (10, (i / 4) * 2 % SCREEN.1),
+            _ => (SCREEN.0 - 30, (i / 4) * 2 % SCREEN.1),
+        };
+        let c = control(&mut s.ui, ControlKind::Control, layer, [x, y, 2, 2]);
+        s.ui.control_set_back_colour(c, Some([0.9, 0.9, 0.9, 1.0]));
+    }
+    let mut now = Duration::from_secs(1_000);
+    for _ in 0..600 {
+        now += Duration::from_micros(16_667);
+        let _ = s.ui.paint(now, &mut Unlimited);
+        if s.ui.paint_settled() {
+            break;
+        }
+    }
+    let mut times = Vec::with_capacity(frames as usize);
+    let (mut jobs, mut bands) = (0u64, 0u64);
+    for f in 0..frames {
+        let dx = if f % 2 == 0 { 1 } else { -1 };
+        for &k in &labels {
+            let (x, y) = s.ui.control_position(k);
+            s.ui.control_set_position(k, x + dx, y);
+        }
+        now += Duration::from_micros(16_667);
+        let mut slice = TimeSlice::new(SLICE);
+        let c = common::thread_cpu(t0);
+        let fr = s.ui.paint(now, &mut slice);
+        times.push(common::thread_cpu(t0).saturating_sub(c));
+        jobs += u64::from(fr.stats.jobs_started);
+        bands += u64::from(fr.stats.bands);
+    }
+    let (mean, p50, p99, max) = stats(&mut times);
+    println!(
+        "{:<10} frames {frames:>4}  mean {mean:7.3} ms  p50 {p50:7.3}  p99 {p99:7.3}  max {max:7.3}  \
+         jobs {jobs} bands {bands}  (512 nested entries move every frame)",
+        "r13-caps",
+    );
 }

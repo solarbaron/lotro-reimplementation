@@ -89,7 +89,14 @@ impl Ui {
     /// reactions, then the class's.
     pub(crate) fn property_changed(&mut self, k: ElementKey, pid: u32) {
         let p = self.v.pids;
-        self.mark_dirty(k);
+        // A composition property of a surface owner paints nothing and shapes no text
+        // ([`Ui::composition_only_property`]); the passes take it.
+        let composed = self.composition_only_property(k, pid);
+        if composed {
+            self.mark_geometry_dirty(k);
+        } else {
+            self.mark_dirty(k);
+        }
         let val = self.property(k, pid).cloned();
         let b = val.as_ref().is_some_and(as_bool);
         match pid {
@@ -121,7 +128,8 @@ impl Ui {
             }
             _ => {}
         }
-        if let Some(e) = self.el_mut(k)
+        if !composed
+            && let Some(e) = self.el_mut(k)
             && e.class.is_text()
         {
             e.text.dirty = true;

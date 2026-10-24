@@ -23,6 +23,15 @@ pub const BAND_ROWS: i32 = 16;
 pub trait PaintBudget {
     /// Whether no more bands may be painted in this frame.
     fn exhausted(&mut self) -> bool;
+
+    /// The time left in this frame's slice, for work the painter spends outside bands (the
+    /// settle repaints of geometry previews, `ui-scaling.md` §6.1 item 4, whose display lists
+    /// lay text out at a new content scale, §8 S7). It does not count as a band. `None` (the
+    /// default) when the budget is not a time: such work is then never put off to a later
+    /// frame, so frames under band and unlimited budgets stay deterministic.
+    fn time_left(&self) -> Option<Duration> {
+        None
+    }
 }
 
 /// A wall-clock slice (U4 (b): 4 ms on the main thread).
@@ -44,6 +53,10 @@ impl TimeSlice {
 impl PaintBudget for TimeSlice {
     fn exhausted(&mut self) -> bool {
         Instant::now() >= self.deadline
+    }
+
+    fn time_left(&self) -> Option<Duration> {
+        Some(self.deadline.saturating_duration_since(Instant::now()))
     }
 }
 

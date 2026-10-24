@@ -3169,6 +3169,9 @@ pub fn run(mut sim: Sim, rx: &std::sync::mpsc::Receiver<SimInput>, clock: crate:
     // schedule and repeat tick numbers).
     let mut k = tessera_protocol::time::tick_at(clock.now(), DEFAULT_TICK_RATE) + 1;
     let mut next = tessera_protocol::time::tick_start(k, DEFAULT_TICK_RATE);
+    // Where timers fire late in proportion to the request, one wait for the rest of the
+    // tick would start it late; the wait is made of slices until the tick is due.
+    let mut wake = tessera_protocol::time::WakeEstimator::new();
     loop {
         // Wait for the next tick, handling inputs as they come.
         loop {
@@ -3176,9 +3179,14 @@ pub fn run(mut sim: Sim, rx: &std::sync::mpsc::Receiver<SimInput>, clock: crate:
             if now >= next {
                 break;
             }
-            match rx.recv_timeout(Duration::from_micros(next - now)) {
+            let asked = wake.slice(Duration::from_micros(next - now));
+            let t = std::time::Instant::now();
+            match rx.recv_timeout(asked) {
                 Ok(input) => sim.handle(input, clock.now()),
-                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => break,
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                    wake.observe(asked, t.elapsed());
+                    continue;
+                }
                 Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => return,
             }
             if sim.stopped() {

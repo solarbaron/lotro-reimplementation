@@ -21,6 +21,7 @@ use tessera_protocol::message::{
     ChatChannel as WireChannel, ChatMessage, EntityAppearance, EntityUpdate,
     LocationCause as Cause, LocationReport, Message, MessageType,
 };
+use tessera_protocol::time::WakeEstimator;
 use tessera_protocol::types::{Appearance, Body, Gait, Location as WLoc, Pose};
 use tessera_protocol::value::{Property, Value, pid};
 
@@ -462,6 +463,35 @@ fn statics_stream_from_the_clients_own_data() {
     peer.join();
 }
 
+/// Sleeps until `deadline` in slices: where timers fire late in proportion to the request
+/// (timer coalescing), one 10 ms sleep can take several times as long.
+fn sleep_until(deadline: Instant, wake: &mut WakeEstimator) {
+    loop {
+        let left = deadline.saturating_duration_since(Instant::now());
+        if left.is_zero() {
+            return;
+        }
+        let asked = wake.slice(left);
+        let t = Instant::now();
+        std::thread::sleep(asked);
+        wake.observe(asked, t.elapsed());
+    }
+}
+
+/// [`sleep_until`] on the peer's runtime.
+async fn sleep_until_async(deadline: tokio::time::Instant, wake: &mut WakeEstimator) {
+    loop {
+        let left = deadline.saturating_duration_since(tokio::time::Instant::now());
+        if left.is_zero() {
+            return;
+        }
+        let asked = wake.slice(left);
+        let t = tokio::time::Instant::now();
+        tokio::time::sleep(asked).await;
+        wake.observe(asked, t.elapsed());
+    }
+}
+
 #[test]
 fn remote_entities_interpolate_at_render_time() {
     const SPEED: f64 = 2.0;
@@ -474,8 +504,10 @@ fn remote_entities_interpolate_at_render_time() {
         let t0 = p.now();
         p.world(entity_create(43, t0, X0, SPEED as f32)).await;
         // 15 Hz snapshots for 2 s along +X at 2 m/s.
-        for _ in 0..30 {
-            tokio::time::sleep(Duration::from_micros(66_667)).await;
+        let mut wake = WakeEstimator::new();
+        let from = tokio::time::Instant::now();
+        for i in 1..=30 {
+            sleep_until_async(from + Duration::from_micros(66_667 * i), &mut wake).await;
             let t = p.now();
             let x = X0 + SPEED * (t - t0) as f64 / 1e6;
             p.datagram(&motion(t, 43, x as f32, SPEED as f32));
@@ -496,6 +528,7 @@ fn remote_entities_interpolate_at_render_time() {
     let mut worst: f64 = 0.0;
     let end = Instant::now() + Duration::from_millis(1500);
     let mut sink = Vec::new();
+    let mut wake = WakeEstimator::new();
     while Instant::now() < end {
         s.poll_into(Instant::now(), &mut sink);
         sink.clear();
@@ -510,7 +543,7 @@ fn remote_entities_interpolate_at_render_time() {
             interpolated += 1;
             assert_eq!(sample.motion.gait, Gait::Walking);
         }
-        std::thread::sleep(Duration::from_millis(10));
+        sleep_until(Instant::now() + Duration::from_millis(10), &mut wake);
     }
     assert!(
         interpolated > 50,

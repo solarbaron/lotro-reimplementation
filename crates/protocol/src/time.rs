@@ -259,8 +259,81 @@ impl WorldClock {
     }
 }
 
+/// The shortest timer request a [`WakeEstimator`] hands out (unless less time is left).
+pub const WAKE_MIN_SLICE: std::time::Duration = std::time::Duration::from_micros(200);
+/// Requests shorter than this are not observed: a fixed wake-up cost would dominate them.
+const WAKE_OBSERVE_MIN: std::time::Duration = std::time::Duration::from_millis(1);
+/// The largest slept ÷ asked ratio a [`WakeEstimator`] believes.
+pub const WAKE_MAX_RATIO: f64 = 64.0;
+
+/// Paces a wait for a deadline on a system whose timers fire late (engineering choice, not
+/// a protocol rule; `test-server.md` §15.5).
+///
+/// Some systems let a thread's timer fire well after its deadline, in proportion to the
+/// time asked (timer coalescing for threads of a low latency class can add several times
+/// the request, up to a cap). A loop that sleeps "until the next tick" then runs at a
+/// fraction of its rate. The estimator keeps a smoothed ratio of slept to asked time and
+/// divides the next request by it; the caller waits in slices until its deadline, asking
+/// [`slice`](Self::slice) before each timer wait and reporting each wait that ran its full
+/// length to [`observe`](Self::observe) (not one ended early by an input). Where timers are
+/// close to exact the ratio stays near 1 and a wait is one timer request.
+///
+/// It performs no I/O and never sleeps itself.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct WakeEstimator {
+    ratio: f64,
+}
+
+impl Default for WakeEstimator {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl WakeEstimator {
+    /// An estimator that trusts the timer (ratio 1).
+    #[must_use]
+    pub const fn new() -> Self {
+        Self { ratio: 1.0 }
+    }
+
+    /// The smoothed slept ÷ asked ratio, in 1 ..= [`WAKE_MAX_RATIO`].
+    #[must_use]
+    pub fn ratio(&self) -> f64 {
+        self.ratio
+    }
+
+    /// The timer request for a wait with `left` to go: `left` ÷ ratio, at least
+    /// [`WAKE_MIN_SLICE`], never more than `left`. Zero when nothing is left.
+    #[must_use]
+    pub fn slice(&self, left: std::time::Duration) -> std::time::Duration {
+        if left.is_zero() {
+            return left;
+        }
+        std::time::Duration::try_from_secs_f64(left.as_secs_f64() / self.ratio)
+            .unwrap_or(left)
+            .max(WAKE_MIN_SLICE)
+            .min(left)
+    }
+
+    /// Records that a timer wait of `asked` took `slept`.
+    pub fn observe(&mut self, asked: std::time::Duration, slept: std::time::Duration) {
+        if asked < WAKE_OBSERVE_MIN {
+            return;
+        }
+        let r = slept.as_secs_f64() / asked.as_secs_f64();
+        if !r.is_finite() {
+            return;
+        }
+        let r = r.clamp(1.0, WAKE_MAX_RATIO);
+        self.ratio = ((self.ratio * 3.0 + r) / 4.0).clamp(1.0, WAKE_MAX_RATIO);
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
     use super::*;
 
     #[test]
@@ -398,5 +471,70 @@ mod tests {
         };
         assert_eq!(c.game_clock_at(6_000_000), 43_202.0);
         assert_eq!(c.game_clock_at(4_000_000), 43_198.0);
+    }
+
+    /// Simulated waits for a 33 ms deadline on a timer that wakes `late(asked)` after the
+    /// request; returns (timer requests, mean lateness past the deadline in µs) over 200 waits.
+    fn paced(late: impl Fn(Duration) -> Duration) -> (u32, f64) {
+        let mut est = WakeEstimator::new();
+        let deadline = Duration::from_micros(33_333);
+        let (mut requests, mut lateness) = (0, 0.0);
+        for _ in 0..200 {
+            let mut t = Duration::ZERO;
+            while t < deadline {
+                let asked = est.slice(deadline - t);
+                let slept = asked + late(asked);
+                est.observe(asked, slept);
+                t += slept;
+                requests += 1;
+            }
+            lateness += (t - deadline).as_secs_f64() * 1e6;
+        }
+        (requests, lateness / 200.0)
+    }
+
+    #[test]
+    fn wake_estimator_slices() {
+        let e = WakeEstimator::new();
+        assert_eq!(e.slice(Duration::ZERO), Duration::ZERO);
+        assert_eq!(
+            e.slice(Duration::from_millis(10)),
+            Duration::from_millis(10)
+        );
+        assert_eq!(
+            e.slice(Duration::from_micros(50)),
+            Duration::from_micros(50)
+        );
+        assert_eq!(e.slice(Duration::MAX), Duration::MAX);
+        let mut e = WakeEstimator::new();
+        for _ in 0..100 {
+            e.observe(Duration::from_millis(10), Duration::from_secs(10));
+        }
+        assert!(e.ratio() > WAKE_MAX_RATIO - 0.01 && e.ratio() <= WAKE_MAX_RATIO);
+        assert_eq!(e.slice(Duration::from_millis(1)), WAKE_MIN_SLICE);
+        // Ignored: too short, never ending, early.
+        let mut e = WakeEstimator::new();
+        e.observe(Duration::from_micros(500), Duration::from_millis(50));
+        e.observe(Duration::ZERO, Duration::from_millis(50));
+        e.observe(Duration::from_millis(10), Duration::from_millis(1));
+        assert_eq!(e.ratio(), 1.0);
+    }
+
+    #[test]
+    fn exact_timers_need_one_request_per_wait() {
+        let (requests, late) = paced(|_| Duration::from_micros(60));
+        assert!(requests <= 210, "{requests}");
+        assert!(late < 100.0, "{late}");
+    }
+
+    #[test]
+    fn coalesced_timers_are_asked_for_less() {
+        // Lateness of 4 × the request, at most 75 ms: unpaced, a 33 ms wait takes 108 ms.
+        let (requests, late) = paced(|a| (a * 4).min(Duration::from_millis(75)));
+        assert!(late < 5_000.0, "{late}");
+        assert!(requests < 200 * 6, "{requests}");
+        // 32 × the request, at most 100 ms.
+        let (_, late) = paced(|a| (a * 32).min(Duration::from_millis(100)));
+        assert!(late < 5_000.0, "{late}");
     }
 }

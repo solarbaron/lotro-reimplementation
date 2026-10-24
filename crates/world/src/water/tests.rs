@@ -952,3 +952,51 @@ fn column_water_agrees_with_the_controller_near_the_plane() {
     .unwrap();
     assert_eq!(s.surface, 0.0);
 }
+
+/// Regression (fuzz `world_water`, CI run 40049524233): a box flat in one box-frame axis
+/// (0 to 0 in y) under a rotation that tilts that axis by 2e-30 from horizontal. The
+/// column span treated the vertical line as parallel to the axis and found water, while
+/// the box-frame point test put the point 4e-34 outside, so `water_at` reported water
+/// where `is_under_water` did not. Containment now is the span test (`water.md` §7.4: in
+/// water when a liquid box contains the point).
+#[test]
+fn water_at_and_under_water_agree_for_a_nearly_flat_tilted_box() {
+    let template = VolumeTemplate {
+        object: Did(0x4700_0001),
+        boxes: vec![VolumeBox {
+            min: [0.0, 0.0, 0.0],
+            max: [1.0e-7, 0.0, 80.0],
+            scale_with_entity: false,
+            flags: LiquidFlags {
+                liquid: true,
+                ..LiquidFlags::default()
+            },
+            properties: Did(0x7800_0073),
+            name: None,
+        }],
+        unreadable_sets: 0,
+    };
+    let rotation = Quaternion {
+        w: 0.0,
+        x: 0.0,
+        y: 1.0e-30,
+        z: 1.0,
+    };
+    let boxes = template.place([0.0; 3], rotation, [1.0; 3]);
+    assert_eq!(boxes.len(), 1);
+    let bw = BlockWater {
+        key: key(10, 10),
+        decision: Err(DryReason::NoTable),
+        boxes,
+        placed_volume_entities: 0,
+        boxes_left_out: 0,
+    };
+    for z in [0.0_f32, 0.0002, 40.0, 80.0, 80.5, -0.5] {
+        let p = [0.0, 0.0, z];
+        let sample = bw.water_at(p);
+        assert_eq!(sample.is_some(), bw.is_under_water(p), "{p:?}");
+        assert_eq!(sample.is_some(), bw.liquid_at(p).liquid, "{p:?}");
+    }
+    assert!(bw.is_under_water([0.0, 0.0, 0.0002]));
+    assert!(!bw.is_under_water([0.0, 0.0, 80.5]));
+}

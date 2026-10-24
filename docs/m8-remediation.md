@@ -478,3 +478,55 @@ is built in stages. **Next pass:**
    and then a header-only reviewer commit by new sessions. One consistent table of every writer
    and reviewer session goes in decision 0041, with a complete exposure list.
 4. Then this audit again, for the core stage only.
+
+## 11. Audit of stage 1, the core specs (2026-10-25, 9b31155): BLOCK, close
+
+The rebuilt branch follows decision 0042 items 8–9: fresh from main, a writer commit `5470c8f`
+(role `spec`) and a header-only reviewer commit `9b31155` (role `review`), the gameplay spec
+held, no link to it, no earlier pass in its history. **No contamination was found** (specs,
+decision 0041, both commit messages). Most §10 core items are fixed (0xAA, login's own
+0x28000010 layout, the 0xBF size, 0x30000045, the band citation, L900, the change-log rows,
+the verification-value markings). It still blocks on consistency; line numbers refer to
+`9b31155` (L login, S session, W world, P play, PS property-system, D decision 0041).
+
+**Blocking**
+
+- **B1 Chat server address:** S90 says it arrives "via an in-band game message" that no spec
+  defines; L514, P270, P289–290 and P425 take it from `--chatserver`, falling back to `--host`.
+  Link S90 to L §4.1 (or specify the message).
+- **B2 Launch parameters:** S69, S72, S76 (`localaddress`/`localport`) and S87
+  (`serveraddress`/`serverport`, a bracketed host:host:port form) cite the login spec, which
+  defines only `-h`, `-p` and `--outport` (L503–527, L549–552).
+- **B3 Ticket and auth mode:** S490, S497, P434, P721 fix the ticket blob at 108 bytes from a
+  144-character ticket; L385 says about 180–256 characters. Make `blobLen` the decoded length.
+  S490–492 do not say which `authType` the primary connection uses: give one selection rule.
+- **B4 `checkValue`:** in `ConnectAcceptHeader`, `checkValue` (S527) is "computed from the
+  connection's time/state" with no derivation and no OPEN; the handshake cannot be built. Give
+  the derivation, or an OPEN with a clean-room fallback.
+- **B5 Counts:** the band has "18 opcodes" (P21, P645, P649, P839, P871) but the listed ranges
+  hold 20; `ActionPayload` maximum 52 bytes (W82, W1106, P105, D184, D197) adds up to 56 (each
+  VariableU32 can be 5 bytes); S312: 0x1FBC4 is 129,988, not 130,004.
+
+**Also fix in the same pass**
+
+- Session prose: the "inbound optional-header parser mask 0x093FFB00" and the low-byte flag
+  names (S246–253, S887), dispatcher/handler wording (S686, S699); S900 quotes the mask in a
+  change-log row; W1321 and W1324 (and W889) quote a client pre-load fallback value.
+- S96 `localRecId` range vs S99/S466 (0xFEFF); S107/S215/S225 `pakSize` vs the 65,404-byte
+  datagram; `pos_sync_flags` (P716, P816) vs `sync_flags` (W778); `interp_param_a`/`_b`
+  (W1058–1059) defaults without meaning or OPEN; W1070 says the 0x24 stamp is echoed from 0xCC,
+  0xCE or 0xBF but only 0xCE carries one (P147–157); `sub_entry_flag` vs `sub_flag` (P702);
+  vestigial anchors at P223; the CompactPID reader on first bytes 0x81–0xBF (W275–279 vs PS
+  §10.2: both reject); state that the UTF-16 length prefixes differ (S478, S733–734 VariableU32;
+  W229 3-tier); OPENs or receiver rules for the 3DES key source (S603), the 0xBF `state_flags`
+  (P136), 0x9F (W1158), the bare opcode lists (W706, W756) and 0xED with an unknown controller
+  GUID (P183–184); how code finds the world PIDs at run time (labels invented, .dat names not
+  given); provenance wording about client internals (P46, P49–51).
+- Content: W711 quotes a game UI label with a Tolkien mark; L714 test tokens should be neutral
+  synthetic values.
+- Decision 0041: D117 cites a commit `9b4081e` that does not exist (§8 records `6c71fe66`); the
+  exposure list (D46–50) lacks the §7, §8 and §9 auditors (who read the gameplay spec), names
+  the `ed9b5b9` auditor without a session ID, and lacks the pass-4 parent session.
+
+**Next step:** one writer commit for the above on `m8-remediation`, then a header-only reviewer
+commit by new sessions, then this audit again (stage 1 only).

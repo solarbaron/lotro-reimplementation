@@ -43,7 +43,7 @@
 //! Beam nodes make beams (`particle-runtime.md` §11.1: envelope, ends, head arrival, the
 //! beam and head particle systems, the ribbon drawn with its materials' surfaces before the
 //! systems ([`EffectLayer::draw`]), and the head entity drawn through the object layer's
-//! instanced models ([`EffectLayer::update_heads`], [`EffectLayer::draw_heads`])).
+//! instanced models (`EffectLayer::update_heads`, `EffectLayer::draw_heads`)).
 //!
 //! **Lit systems** (`particles.md` §8.14, runtime §12 rule 13): the walker gives the layer
 //! the frame's ambient term *A₀* (`lighting.md` §5.3) and its light table

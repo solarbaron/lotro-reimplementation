@@ -168,9 +168,7 @@ pub fn translate_windows_path(prefix: &Path, win: &str) -> Option<PathBuf> {
         b'c' => prefix.join("drive_c"),
         b'z' => PathBuf::from("/"),
         other => {
-            let link = prefix
-                .join("dosdevices")
-                .join(format!("{}:", char::from(other)));
+            let link = dosdevices_link(prefix, char::from(other));
             if fs::metadata(&link).is_ok() {
                 link
             } else {
@@ -192,6 +190,16 @@ pub fn translate_windows_path(prefix: &Path, win: &str) -> Option<PathBuf> {
         }
     }
     Some(base)
+}
+
+/// `<prefix>/dosdevices/<letter>:` as a plain path component. `Path::join("d:")` would
+/// not do: on Windows a `d:` component is a drive prefix and replaces the whole path (the
+/// link would name the host's own drive D:).
+fn dosdevices_link(prefix: &Path, letter: char) -> PathBuf {
+    let mut link = prefix.join("dosdevices").into_os_string();
+    link.push(std::path::MAIN_SEPARATOR_STR);
+    link.push(format!("{letter}:"));
+    PathBuf::from(link)
 }
 
 /// Limits for a bounded walk.

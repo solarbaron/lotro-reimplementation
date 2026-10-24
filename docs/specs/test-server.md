@@ -1908,6 +1908,33 @@ record) and are answered here; the notes themselves are not repeated.
 | §13.1 `chat` bots at minor 2 not joining channels (gap) | Closed: `tessera-loadtest` bots join, speak on and leave shared channels through the `tessera-net` test-server backend at minor 2 (`scenario-feed.md` §9.8); the rules are §13.1 "Shared channels" |
 | §13.1 bot minors, `chat` channels and hostile 1.2 cases as implemented | Adopted and written into §13.1: "Minors" (80 % minor 2, 10 % minor 1, 10 % minor 0, State compared at minor 0 only in what minor 0 carries), "Shared channels" (names, groups of four, join, cycle, judging) and "Hostile 1.2 cases" items 1–5 (in the world with four provisioned characters, skipped and counted without them, sent by capability, two variants of four requests, the limit joins left to the end-to-end test) |
 
+<a id="s15-5"></a>
+### 15.5 Implementer note (`tessera-server`, Windows, 2026-10-24)
+
+> **OPEN (implementer note, choice made and built; for the spec writer to fold into §3.7):**
+> §3.7 asks for an exclusive `LockFileEx` lock on `server.lock` *and* for a refused command
+> to name the PID written into that file. On Windows a byte-range lock is mandatory: while
+> the server holds `std::fs::File::try_lock` (an exclusive lock over the whole file), no
+> other process can read the PID from `server.lock`, so a refusal gave status 4 without the
+> PID. Of (a) a reviewed `unsafe` range lock past the PID, (b) the PID in a second, unlocked
+> file, (c) no PID on Windows, the owner's delegate chose **(b)** on 2026-10-24. As built in
+> `apps/server/src/datadir.rs` (`ServerLock`):
+>
+> - On Windows only, `run` (a lock taken with the PID) also writes its PID, followed by a
+>   line feed, to `server.pid` beside `server.lock` (atomic write, §3.7), after the lock is
+>   taken. `server.lock` still gets the PID too, as §3.7 says.
+> - A refused command on Windows reads the PID from `server.pid` (at most 64 bytes);
+>   elsewhere it reads `server.lock` as before. A missing or unreadable file gives status 4
+>   without a PID.
+> - The lock alone decides a refusal: `server.pid` is read only after the lock was found
+>   held, so a stale file never refuses a start. A new holder replaces a stale file with its
+>   own PID, or removes it when it writes no PID (`keygen`, `account remove`, `character
+>   remove`, `character move`), so a stale PID never names such a holder.
+> - A clean release (the lock dropped at exit) removes `server.pid` before unlocking. A
+>   crashed server leaves it behind until the next holder.
+>
+> The §3.2 layout table does not list `server.pid` yet.
+
 ---
 
 <a id="s16"></a>

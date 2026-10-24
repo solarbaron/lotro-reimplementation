@@ -306,7 +306,7 @@ impl ExamTooltips {
     /// the window by the same amount (§10 answers (3), (5)). The *k*-th window opened
     /// opens at the `PinnedTooltip` root's design position plus *k* ×
     /// (`UI_Examination_Tooltip_PinnedOffset_X`, `…_Y`), *k* counting the windows opened
-    /// so far modulo [`PIN_CASCADE_MODULUS`] (0 for the first; §10 answer (1), IT28); it does
+    /// so far modulo `PIN_CASCADE_MODULUS` (0 for the first; §10 answer (1), IT28); it does
     /// not follow the hover tooltip, and `_pointer` is not used.
     ///
     /// Only a click on the window's `PinnedTooltipCloseButton`

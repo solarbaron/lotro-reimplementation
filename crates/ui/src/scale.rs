@@ -328,7 +328,7 @@ impl Ui {
     /// Sets the current UI screen *F* and safe area *A* (`ui-scaling.md` §3.2, §5.1), applied
     /// live. The UI host computes `screen` from the window's inner physical size and the
     /// effective scale ([`crate::scaling::effective_scale`], [`crate::scaling::UiScreen::new`])
-    /// and `safe` from [`crate::scaling::safe_area`]; this routine resizes the screen root to
+    /// and `safe` from [`crate::scaling::safe_area()`]; this routine resizes the screen root to
     /// *F*'s UI-unit size (`Wu` × `Hu`), so every root panel is laid out again in UI units
     /// (the screen-size path of `ui-layout.md` §8.5 and `ui-behaviour.md` §9.4), and records
     /// the axis factors (`Kx`, `Ky`) used to place every surface on its physical box at

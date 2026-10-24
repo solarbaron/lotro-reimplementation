@@ -7,7 +7,7 @@
 //!
 //! The window is presentation only; this module holds the glue the UI host calls each frame:
 //! it opens the window on request, feeds UI events to it, and turns the returned
-//! [`InterfaceAction`] back into model values for the host to apply live (§4.5) and persist
+//! [`InterfaceAction`](tessera_ui::game::interface::InterfaceAction) back into model values for the host to apply live (§4.5) and persist
 //! to the `[UI]` keys (§4.4, §7.1).
 
 use tessera_settings::{ArtFilter, SafeAspect, UiPrefs, UiScale};

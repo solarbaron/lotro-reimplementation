@@ -1,0 +1,11 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Every text file is checked out with LF line endings on every platform. Committed scenario
+# logs, scenario files, goldens' canonical logs and other fixtures are compared byte for
+# byte with what the code writes (always `\n`), so a Windows checkout with
+# `core.autocrlf=true` (the GitHub Windows runners' default) must not turn them into CRLF.
+* text=auto eol=lf
+
+# Binary content: never converted, never diffed as text.
+*.png binary
+*.ttf binary

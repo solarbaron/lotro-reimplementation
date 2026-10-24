@@ -3,13 +3,13 @@
 //!
 //! A [`DeviceInput`] is a key, pointer or text event that the windowing system delivered to
 //! the client's window. Its only constructor outside test builds,
-//! [`DeviceInput::from_window_event`], is called from one place: the window-event handler
+//! `DeviceInput::from_window_event`, is called from one place: the window-event handler
 //! of a start-screen run ([`super::window`], `EntryApp::window_event`, the windowing
 //! library's per-window event callback); a source-scan test (OE-T7 (c)) fails if it is called
 //! anywhere else outside `#[cfg(test)]` code. Synthetic sources (the windowed input script,
 //! `--ui-script`, `--command` lines, the command dispatcher, the plugin host, scenario
 //! drivers) feed the UI through other entry points and cannot make one; tests build values
-//! with [`DeviceInput::test`], which exists only in test builds of the client.
+//! with `DeviceInput::test`, which exists only in test builds of the client.
 
 use std::time::Instant;
 

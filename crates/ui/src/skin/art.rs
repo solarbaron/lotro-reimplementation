@@ -495,15 +495,22 @@ fn split_file_name(
         }
         let (base, fallback) = match letter {
             'c' => (prefix.join("drive_c"), None),
-            'z' => (
-                prefix.join("dosdevices").join("z:"),
-                Some(PathBuf::from("/")),
-            ),
-            other => (prefix.join("dosdevices").join(format!("{other}:")), None),
+            'z' => (dosdevices_link(prefix, 'z'), Some(PathBuf::from("/"))),
+            other => (dosdevices_link(prefix, other), None),
         };
         return Ok((base, fallback, components));
     }
     Ok((folder.to_path_buf(), None, parts(file_name)))
+}
+
+/// `<prefix>/dosdevices/<letter>:` with the link name as a plain path component (lexical,
+/// as above). `Path::join("z:")` would not do: on Windows a `z:` component is a drive
+/// prefix and replaces the whole path.
+fn dosdevices_link(prefix: &Path, letter: char) -> PathBuf {
+    let mut link = prefix.join("dosdevices").into_os_string();
+    link.push(std::path::MAIN_SEPARATOR_STR);
+    link.push(format!("{letter}:"));
+    PathBuf::from(link)
 }
 
 /// Load state of one skin file in the current activation (D16, D27).

@@ -988,7 +988,9 @@ mod tests {
             resolve_path(&base.join("game/../cfg/settings.toml")).unwrap(),
             base.join("cfg/settings.toml")
         );
-        assert!(write_target(&base.join("game/..")).is_err());
+        // Not on `base`: on Windows `canonicalize` gives a verbatim (`\\?\`) path, and
+        // pushing onto one folds `..` away, so the path would name `base` itself.
+        assert!(write_target(&dir.path().join("game").join("..")).is_err());
         assert!(write_target(Path::new("/")).is_err());
     }
 

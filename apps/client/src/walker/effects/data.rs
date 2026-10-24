@@ -227,11 +227,11 @@ pub struct PlacedObject {
     /// The landblock.
     pub key: LandblockKey,
     /// The entity's index in its landblock's info record (`tessera_world::PlacedEntity::index`),
-    /// the [`ObjectInfo::entity`](crate::walker::objects::ObjectInfo::entity) of its object:
+    /// the `ObjectInfo::entity` of its object:
     /// the object layer finds the owner's own object by it, even when another entity is
     /// placed at the same position with the same parts. `None` falls back to [`Self::entity`].
     pub index: Option<u32>,
-    /// The entity: placement position, parts and rank ([`PlacedObjectRef`]).
+    /// The entity: placement position, parts and rank (`PlacedObjectRef`).
     pub entity: PlacedObjectRef,
     /// The owner property `Render_Opacity` of the entity's property sets as the object layer
     /// draws it (`tessera_world::LandblockBundle::entity_render_opacities`: the per-instance
@@ -244,7 +244,7 @@ impl PlacedObject {
     /// The placed object of static owner `e` of landblock `key` with its drawn `parts` and
     /// `rank` ([`EffectData::scan_block`]): its index is the entity's own
     /// (`PlacedEntity::index`, the value the object layer's block list gives the object of a
-    /// placed, not generated, entity as [`ObjectInfo::entity`](crate::walker::objects::ObjectInfo::entity)).
+    /// placed, not generated, entity as `ObjectInfo::entity`).
     /// It carries no [`Self::property_opacity`] ([`Self::with_property_opacity`]).
     #[must_use]
     pub fn of_entity(

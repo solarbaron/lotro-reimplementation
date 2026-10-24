@@ -2031,11 +2031,19 @@ fn oe_t11_input_rules() {
     match w.input(&press(Key::Enter, t), &wl) {
         Some(WarningOutcome::Accepted { acceptance, write }) => {
             assert!(acceptance.proof().is_current());
-            write.wait().expect("written");
+            if consent::STORES_RECORDS {
+                write.wait().expect("written");
+            } else {
+                // Windows stores no record (§5.6 "Windows"); the acceptance lasts for the run.
+                assert!(matches!(write.wait(), Err(consent::WriteError::NotStored)));
+            }
         }
         other => panic!("{other:?}"),
     }
-    assert!(consent::check(dir3.path(), &WarningText::shipped()).is_accepted());
+    assert_eq!(
+        consent::check(dir3.path(), &WarningText::shipped()).is_accepted(),
+        consent::STORES_RECORDS
+    );
 }
 
 #[test]

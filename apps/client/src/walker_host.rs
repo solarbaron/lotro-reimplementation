@@ -166,7 +166,7 @@ fn layered_render_value<'a>(
 /// the user's `file` (windowed runs, `far-view.md` FD21; `None` otherwise), `--render-pref`
 /// for `LandscapeDrawDistance`, `ObjectDrawDistance` and `ModelDetail`, then the dedicated
 /// options (`--landscape-distance`, `--object-draw-distance`, `--model-detail`) as the
-/// last layer ([`layered_render_value`]). A value is a level name in any case or a level
+/// last layer (`layered_render_value`). A value is a level name in any case or a level
 /// number ([`crate::render_pref::capped_level_number`]: digits only, a number above level
 /// 4 counts as level 4); any other value, a signed number included, counts as the key's
 /// built-in level (W26, §14.10 answer item 2).
@@ -218,7 +218,7 @@ pub fn frill_distance_level(args: &Args) -> i32 {
 
 /// The `FrillDistance` level (`scenery.md` §8.3: 0–5): `--frill-distance`, else the
 /// layered value of `--render-pref FrillDistance=VALUE` over the user's `file`
-/// ([`layered_render_value`], [`frill_level`]: a level name of `walker.md` §11.2 or a
+/// (`layered_render_value`, [`frill_level`]: a level name of `walker.md` §11.2 or a
 /// level number, a number above 5 counting as 5; any other value counts as the built-in
 /// level, W26), else the built-in level. The dedicated option wins over both, as for the
 /// other distance keys (W28, [`distance_settings_with`]).

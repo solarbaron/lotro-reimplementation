@@ -119,7 +119,7 @@ impl EffectRows {
     /// Adds an effect (replacing an icon of the same instance) by the §8.2 Order rule
     /// (revision 3, CU30): an untimed icon that is not combat-only goes to position 0;
     /// otherwise the row is scanned from the last icon towards the first and the new icon is
-    /// placed right after the first icon the scan stops at ([`Self::stops`]), or at position
+    /// placed right after the first icon the scan stops at (`Self::stops`), or at position
     /// 0 when the scan reaches the front. So the untimed non-combat-only icons come first
     /// (most recent first), an untimed combat-only icon goes right after the last of them,
     /// and the timed icons follow by start (most recent first).

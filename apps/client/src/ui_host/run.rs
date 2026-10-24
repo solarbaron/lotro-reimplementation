@@ -42,7 +42,7 @@ pub struct UiRunReport {
     /// Short names of the game windows (`npc`, `quest`, `travel`, `finder`, and the P6
     /// `crafting`, `profession-trainer`, `vocation-trainer`, `craftguild-trainer`,
     /// `training`, `traits`, `experience`) seen open at any frame of the run: the per-frame
-    /// window updates of [`super::client::window_frames`] drive them from the session's
+    /// window updates of `super::client::window_frames` drive them from the session's
     /// events (P3/P5/P6) and `--open-panel`, so a headless scenario run can check that they
     /// opened. The run logs them at its end (`game windows seen`).
     pub game_windows: std::collections::BTreeSet<&'static str>,

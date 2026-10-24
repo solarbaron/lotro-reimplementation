@@ -6,7 +6,7 @@
 //! screens show. Its `window_event` is the client's window-event handler of such a run: the
 //! one place that makes [`DeviceInput`] values (§5.4 rule 1), handed directly to the flow.
 //! "Explore offline" closes this window and starts the offline walker as the client does
-//! without a mode option ([`crate::app::App`], which starts the plugin host with the
+//! without a mode option (`crate::app::App`, which starts the plugin host with the
 //! `--load-plugin` queue, §4.5); from then on every event goes to it.
 
 use std::sync::Arc;

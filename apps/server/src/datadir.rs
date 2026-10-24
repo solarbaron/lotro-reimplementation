@@ -153,6 +153,13 @@ impl DataDir {
         self.root.join("server.lock")
     }
 
+    /// `server.pid`: on Windows the running server's PID beside the lock (§15.5), because a
+    /// held `LockFileEx` lock keeps other processes from reading `server.lock` itself.
+    #[must_use]
+    pub fn pid_path(&self) -> PathBuf {
+        self.root.join("server.pid")
+    }
+
     /// `accounts.toml`.
     #[must_use]
     pub fn accounts_path(&self) -> PathBuf {
@@ -274,42 +281,99 @@ fn open_lock_file(path: &Path) -> Result<File, ServerError> {
     o.open(path).map_err(|e| ServerError::io(path, e))
 }
 
+/// Whether the PID is also kept in `server.pid` and read from there (§15.5): on Windows a
+/// lock taken with `LockFileEx` (what `File::try_lock` uses) covers the whole file and is
+/// mandatory, so no other process can read the PID from `server.lock` while it is held.
+const PID_SIDECAR: bool = cfg!(windows);
+
+/// The longest PID text read back from a lock or PID file.
+const MAX_PID_TEXT: u64 = 64;
+
 /// The exclusive server lock (`server.lock`, §3.7), held until dropped.
 #[derive(Debug)]
 pub struct ServerLock {
     file: File,
     path: PathBuf,
+    /// `server.pid` while this lock holds it (Windows, [`PID_SIDECAR`]).
+    pid_file: Option<PathBuf>,
 }
 
 impl ServerLock {
     /// Takes the lock without waiting. Fails with [`ServerError::Locked`] (status 4) naming
     /// the PID of the holder when another process holds it. With `write_pid` (the `run`
     /// command) the file then holds this process's PID.
+    ///
+    /// On Windows the PID is also written to `server.pid` (§15.5) and read from there. The
+    /// lock alone decides whether a start is refused: a `server.pid` left by a crashed
+    /// server is only read once the lock is found held, and is removed by the next holder.
     pub fn acquire(dir: &DataDir, write_pid: bool) -> Result<Self, ServerError> {
+        Self::acquire_with(dir, write_pid, PID_SIDECAR)
+    }
+
+    fn acquire_with(dir: &DataDir, write_pid: bool, sidecar: bool) -> Result<Self, ServerError> {
         let path = dir.lock_path();
         let mut file = open_lock_file(&path)?;
         match file.try_lock() {
             Ok(()) => {}
             Err(std::fs::TryLockError::WouldBlock) => {
                 let mut s = String::new();
-                let _ = (&file).take(64).read_to_string(&mut s);
+                if sidecar {
+                    if let Ok(f) = File::open(dir.pid_path()) {
+                        let _ = f.take(MAX_PID_TEXT).read_to_string(&mut s);
+                    }
+                } else {
+                    let _ = (&file).take(MAX_PID_TEXT).read_to_string(&mut s);
+                }
                 return Err(ServerError::Locked {
                     pid: s.trim().parse().ok(),
                 });
             }
             Err(std::fs::TryLockError::Error(e)) => return Err(ServerError::io(&path, e)),
         }
+        let pid_text = format!("{}\n", std::process::id());
         if write_pid {
             let _ = file.set_len(0);
-            let _ = file.write_all(format!("{}\n", std::process::id()).as_bytes());
+            let _ = file.write_all(pid_text.as_bytes());
             let _ = file.flush();
         }
-        Ok(Self { file, path })
+        let mut pid_file = None;
+        if sidecar {
+            // We hold the lock, so no server runs: any `server.pid` is stale. Replace it with
+            // ours, or remove it so a holder without a PID is never named by an old one.
+            let pid_path = dir.pid_path();
+            if write_pid {
+                match atomic_write(&pid_path, pid_text.as_bytes(), 0o600) {
+                    Ok(()) => pid_file = Some(pid_path),
+                    Err(e) => {
+                        tracing::warn!(file = %pid_path.display(), error = %e, "cannot write the PID file");
+                    }
+                }
+            } else {
+                remove_pid_file(&pid_path);
+            }
+        }
+        Ok(Self {
+            file,
+            path,
+            pid_file,
+        })
+    }
+}
+
+fn remove_pid_file(path: &Path) {
+    match fs::remove_file(path) {
+        Ok(()) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => tracing::warn!(file = %path.display(), error = %e, "cannot remove the PID file"),
     }
 }
 
 impl Drop for ServerLock {
     fn drop(&mut self) {
+        // The PID file goes first, while the lock still keeps any new holder out.
+        if let Some(pid) = self.pid_file.take() {
+            remove_pid_file(&pid);
+        }
         let _ = self.file.set_len(0);
         if let Err(e) = self.file.unlock() {
             tracing::debug!(file = %self.path.display(), error = %e, "unlock failed");
@@ -588,5 +652,37 @@ mod tests {
         assert!(is_game_archive_name("x.datx"));
         assert!(!is_game_archive_name("client_cell_1.dat.bak"));
         assert!(!is_game_archive_name("other.dat"));
+    }
+
+    fn locked_pid(dir: &DataDir) -> Option<u32> {
+        match ServerLock::acquire_with(dir, false, true) {
+            Err(ServerError::Locked { pid }) => pid,
+            other => panic!("expected Locked, got {other:?}"),
+        }
+    }
+
+    /// §15.5: the PID file names a running server; a stale one never refuses a start and
+    /// never names a holder that wrote no PID.
+    #[test]
+    fn pid_file_beside_the_lock() {
+        let t = tempfile::tempdir().unwrap();
+        let dir = DataDir::new(t.path());
+        fs::write(dir.pid_path(), "999999\n").unwrap();
+        // A stale PID file without a held lock: the start goes ahead and replaces it.
+        let lock = ServerLock::acquire_with(&dir, true, true).expect("start");
+        assert_eq!(
+            fs::read_to_string(dir.pid_path()).unwrap().trim(),
+            std::process::id().to_string()
+        );
+        assert_eq!(locked_pid(&dir), Some(std::process::id()));
+        drop(lock);
+        assert!(!dir.pid_path().exists(), "removed on a clean release");
+        // A holder without a PID (an exclusive CLI command) removes a stale file.
+        fs::write(dir.pid_path(), "999999\n").unwrap();
+        let lock = ServerLock::acquire_with(&dir, false, true).expect("command");
+        assert!(!dir.pid_path().exists());
+        assert_eq!(locked_pid(&dir), None);
+        drop(lock);
+        ServerLock::acquire_with(&dir, true, true).expect("free again");
     }
 }

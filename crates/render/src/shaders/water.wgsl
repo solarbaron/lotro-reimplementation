@@ -658,6 +658,9 @@ fn shade_liquid(in: WaterOut) -> vec4<f32> {
         texel = ts;
     }
     let m = water.material;
+    // One return at the end: FXC (Direct3D) refuses this function with an early return
+    // out of the lit branch ("not all control paths return a value").
+    var out = vec4<f32>(0.0);
     if (water.kind.x == FAM_LIQUID_LIT) {
         // The lit record tests its opacity texel before any vertex multiply (lighting.md
         // §5.12, §5.13).
@@ -679,21 +682,23 @@ fn shade_liquid(in: WaterOut) -> vec4<f32> {
                 sum = sum + frame_light(idx, in.world_pos, n, v, 1.0, -1.0).diffuse * m.rgb;
             }
         }
-        return vec4<f32>(frame_apply_fog(2.0 * texel.rgb * sum, in.fog.x), alpha);
+        out = vec4<f32>(frame_apply_fog(2.0 * texel.rgb * sum, in.fog.x), alpha);
+    } else {
+        // 5. Unlit: the texel (RGBA) first multiplied by the vertex colour (0x2B00063E), its
+        // alpha then by the material alpha; the alpha test reads that output alpha (discard at
+        // or below the reference, W45); colour x material colour x 1066, fogged.
+        var vc = vec4<f32>(1.0);
+        if ((water.kind.w & FL_VERTEX_COLOR) != 0u) {
+            vc = in.color;
+        }
+        let c = texel * vc;
+        let alpha = c.a * m.a;
+        if ((water.kind.w & FL_ALPHA_TEST) != 0u && alpha <= water.extra1.x) {
+            discard;
+        }
+        out = vec4<f32>(frame_apply_fog(c.rgb * m.rgb * water.misc1.z, in.fog.x), alpha);
     }
-    // 5. Unlit: the texel (RGBA) first multiplied by the vertex colour (0x2B00063E), its
-    // alpha then by the material alpha; the alpha test reads that output alpha (discard at
-    // or below the reference, W45); colour x material colour x 1066, fogged.
-    var vc = vec4<f32>(1.0);
-    if ((water.kind.w & FL_VERTEX_COLOR) != 0u) {
-        vc = in.color;
-    }
-    let c = texel * vc;
-    let alpha = c.a * m.a;
-    if ((water.kind.w & FL_ALPHA_TEST) != 0u && alpha <= water.extra1.x) {
-        discard;
-    }
-    return vec4<f32>(frame_apply_fog(c.rgb * m.rgb * water.misc1.z, in.fog.x), alpha);
+    return out;
 }
 
 // Opaque families (plain, plain on UV, older bump, flow map, lava): alpha 1, written with

@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! The P6 window views (decision 0024 P6, client half only): the plain view structs
 //! `tessera-ui` draws, built from the session's [`P6State`](super::state::P6State), the
-//! install presenters ([`P6Data`](super::data::P6Data)) and the player's holdings. The
+//! install presenters ([`P6Data`]) and the player's holdings. The
 //! `tessera-gamedata` presenters do the work (names, counts, meter and info texts, filtering,
 //! the make test); this module maps their output field by field into the UI's view structs
 //! and assigns the opaque `u64` handles the UI returns in its actions (kept in
-//! [`P6Handles`](super::commands::P6Handles) so [`super::commands`] can turn an action back
+//! [`P6Handles`] so [`super::commands`] can turn an action back
 //! into a session command).
 //!
 //! > **OPEN** (`crafting-panels.md` §5.4, `item-tooltips.md`): item icons on recipe rows,

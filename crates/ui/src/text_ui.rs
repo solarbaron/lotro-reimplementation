@@ -861,9 +861,30 @@ impl Ui {
     /// UI screen and before the element was drawn on the scaled path, the shaper's layout is
     /// used (layout units are physical pixels then). `None` when the element has no text, the
     /// point is on no character, or a UI screen is set and the element was not drawn yet.
+    ///
+    /// **During a geometry preview** of the surface the text is drawn into (§6.1; §6.4.6
+    /// revision 15, anchor `s6-4-6-preview`) the canvas shows the text laid out at the held
+    /// geometry, so the lookup uses that **held layout**: the pointer is taken into the held
+    /// canvas by the inverse of its composition ([`Ui::held_canvas_point`]: 1 : 1 at the
+    /// surface's current top-left while the node scales are the held ones, scaled by held
+    /// canvas size ÷ current physical box size otherwise), then the text's drawn origin in
+    /// held-canvas pixels is subtracted and, in a stretched surface, the held *σ* taken back.
+    /// No layout at the current content scale is made for it.
     #[must_use]
     pub fn text_hit_test(&self, k: ElementKey, px: i32, py: i32) -> Option<usize> {
         if let Some(r) = self.painter.text.runs.get(&k) {
+            let held = self
+                .text_surface_owner(k)
+                .and_then(|o| self.held_canvas_point(o, px, py));
+            if let Some(point) = held {
+                let [hx, hy] = point?;
+                let x = hx.saturating_sub(r.draw_key.origin[0]);
+                let y = hy.saturating_sub(r.draw_key.origin[1]);
+                return r.layout.hit(
+                    unstretch_point(x, r.sigma[0]),
+                    unstretch_point(y, r.sigma[1]),
+                );
+            }
             let b = self.physical_box(k);
             let origin = [
                 b.x0.saturating_add(r.text_offset[0]),

@@ -722,8 +722,10 @@ impl Default for Vocab {
 impl Vocab {
     /// Sets the dictionary defaults that `ui-widgets.md` §2.2 lists, plus the documented
     /// defaults of `UICore_Element_ObjectOpacity` and `UICore_Element_alphablendmod` (1.0,
-    /// `ui-layout.md` §5.9, `lua-plugin-api.md` §13.19) and `UICore_Element_AllowStretchOnDrag`
-    /// (true, `ui-behaviour.md` §7.2).
+    /// `ui-layout.md` §5.9, `lua-plugin-api.md` §13.19, `ui-behaviour.md` UB49),
+    /// `UICore_Element_AutoFade` (0.1, UB49) and `UICore_Element_AllowStretchOnDrag` (true,
+    /// `ui-behaviour.md` §7.2). The install's own dictionary defaults, when the caller of
+    /// [`Vocab::resolve_with`] passes them, take precedence (UB49: read at run time).
     pub fn set_spec_defaults(&mut self) {
         let p = self.pids;
         let s = self.states;
@@ -741,6 +743,10 @@ impl Vocab {
         d.insert(p.meter_notify, PropertyValue::Bool(false));
         d.insert(p.sb_hwheel, PropertyValue::Bool(false));
         d.insert(p.object_opacity, PropertyValue::Float(1.0));
+        // `ui-behaviour.md` UB49: the dictionary default of `UICore_Element_AutoFade` is 0.1;
+        // an auto-fade starts only for an element's own value (UB48), so the default is never
+        // used as a fade time.
+        d.insert(p.auto_fade, PropertyValue::Float(0.1));
         d.insert(p.alphablendmod, PropertyValue::Float(1.0));
         if p.allow_stretch_on_drag != 0 {
             d.insert(p.allow_stretch_on_drag, PropertyValue::Bool(true));

@@ -1675,3 +1675,329 @@ fn previews_due_together_settle_within_the_slice() {
         }
     }
 }
+
+/// The characters a text hit test finds in `rows` × `cols` of window-physical pixels.
+fn hits(
+    ui: &Ui,
+    k: ElementKey,
+    cols: std::ops::Range<i32>,
+    rows: std::ops::Range<i32>,
+) -> Vec<Option<usize>> {
+    rows.flat_map(|y| cols.clone().map(move |x| (x, y)))
+        .map(|(x, y)| ui.text_hit_test(k, x, y))
+        .collect()
+}
+
+/// `ui-scaling.md` §6.4.6 during a geometry preview, item 1, and I20 (e): a window moved by one
+/// UI unit at *Se* = 1.25 is previewed with the held node scales, its held canvas composed 1 : 1
+/// at its new physical top-left. The label inside it moves by two pixels while the canvas moves
+/// by one, so the hit test must take the pointer into the held canvas (pointer minus the
+/// surface's current top-left) and look it up in the held layout: every pixel finds exactly the
+/// character the held picture shows there, the one found at the same canvas pixel before.
+#[test]
+fn text_hit_tests_during_a_phase_preview_use_the_held_canvas() {
+    let screen = Some(SCREENS[1]);
+    let mut w = None;
+    let (mut ui, mut t) = quiet_ui(screen, |ui| w = Some(picture_window(ui, 20, 30)));
+    let w = w.expect("window");
+    let label = ui.children(w)[0];
+    let (b0, w0) = (ui.physical_box(label), ui.physical_box(w));
+    let cols = b0.x0..b0.x1;
+    let rows = b0.y0..b0.y0 + 16;
+    let before = hits(&ui, label, cols.clone(), rows.clone());
+    assert!(before.iter().any(Option::is_some), "the text is hit");
+    ui.control_set_position(w, 21, 31);
+    t += Duration::from_millis(16);
+    let _ = ui.paint(t, &mut Unlimited);
+    assert!(
+        ui.in_geometry_preview(w),
+        "a move by 1.25 pixels is previewed"
+    );
+    let (b1, w1) = (ui.physical_box(label), ui.physical_box(w));
+    let (dx, dy) = (w1.x0 - w0.x0, w1.y0 - w0.y0);
+    assert_ne!(
+        (b1.x0 - b0.x0, b1.y0 - b0.y0),
+        (dx, dy),
+        "the label moves by another number of pixels than the canvas"
+    );
+    let after = hits(
+        &ui,
+        label,
+        cols.start + dx..cols.end + dx,
+        rows.start + dy..rows.end + dy,
+    );
+    assert_eq!(
+        after, before,
+        "the characters the held canvas shows (I20 (e))"
+    );
+    // Settled: the layout of the settle repaint, at the label's current box.
+    assert!(ui.capture_settle(t, &mut Unlimited, 64, |_| {}));
+    let settled = hits(&ui, label, b1.x0..b1.x1, b1.y0..b1.y0 + 16);
+    let mut fresh_w = None;
+    let (fresh, _) = quiet_ui(screen, |ui| fresh_w = Some(picture_window(ui, 21, 31)));
+    let fl = fresh.children(fresh_w.expect("window"))[0];
+    assert_eq!(
+        settled,
+        hits(&fresh, fl, b1.x0..b1.x1, b1.y0..b1.y0 + 16),
+        "after the settle the hit test is that of a fresh paint"
+    );
+}
+
+/// `ui-scaling.md` §6.4.6 during a geometry preview, item 2, and I20 (e): a floating label whose
+/// node scale grows by 1.5 is previewed GPU-scaled from its held canvas. A pointer pixel of the
+/// current physical box is scaled into the held canvas (pixel centre × held size ÷ current
+/// size, rounded down) and looked up in the held layout, so it finds the character found before
+/// the change at that held-canvas pixel; outside the current box nothing is hit.
+#[test]
+fn text_hit_tests_during_a_scale_preview_scale_the_pointer_into_the_held_canvas() {
+    let mut keys = None;
+    let (mut ui, mut t) = quiet_ui(Some(SCREENS[1]), |ui| {
+        keys = Some(layer_with_floater(ui, false))
+    });
+    let (_, f, _) = keys.expect("scene");
+    let b0 = ui.physical_box(f);
+    let before = |ui: &Ui, x: i32, y: i32| ui.text_hit_test(f, x, y);
+    let held: Vec<Vec<Option<usize>>> = (b0.y0..b0.y1)
+        .map(|y| (b0.x0..b0.x1).map(|x| before(&ui, x, y)).collect())
+        .collect();
+    assert!(
+        held.iter().flatten().any(Option::is_some),
+        "the text is hit"
+    );
+    ui.set_node_scale(f, Some([1.5, 1.5, 1.0]));
+    t += Duration::from_millis(16);
+    let fr = ui.paint(t, &mut Unlimited);
+    assert!(ui.in_geometry_preview(f));
+    assert_eq!(fr.stats.jobs_started, 0, "previewed, not repainted");
+    let b1 = ui.physical_box(f);
+    let (wh, hh) = (i64::from(b0.width()), i64::from(b0.height()));
+    let (wc, hc) = (i64::from(b1.width()), i64::from(b1.height()));
+    assert_ne!((wh, hh), (wc, hc), "the box grew");
+    let mut found = 0;
+    for y in b1.y0..b1.y1 {
+        for x in b1.x0..b1.x1 {
+            // (v + ½) × Wh ÷ Wc rounded down, in integers: ⌊(2v + 1) × Wh ÷ 2Wc⌋.
+            let hx = ((2 * i64::from(x - b1.x0) + 1) * wh).div_euclid(2 * wc);
+            let hy = ((2 * i64::from(y - b1.y0) + 1) * hh).div_euclid(2 * hc);
+            let want = held[hy as usize][hx as usize];
+            assert_eq!(ui.text_hit_test(f, x, y), want, "pixel ({x}, {y})");
+            found += usize::from(want.is_some());
+        }
+    }
+    assert!(found > 0);
+    assert_eq!(ui.text_hit_test(f, b1.x1, b1.y0), None, "outside the box");
+    assert_eq!(
+        ui.text_hit_test(f, b1.x0 - 1, b1.y0),
+        None,
+        "outside the box"
+    );
+}
+
+/// `ui-scaling.md` §6.4.6 during a geometry preview, items 2 and 3, in a stretched surface (the
+/// alternative form of §6.1): a floating label stretched by the node scale (2, 1) grows to
+/// (3, 1.25). During the preview the pointer is scaled into the held canvas and then taken back
+/// by the **held** *σ* = (2, 1), not the current (3, 1.25): every pixel of the current box finds
+/// the character the settled picture found at that held-canvas pixel.
+#[test]
+fn text_hit_tests_during_a_stretched_scale_preview_use_the_held_sigma() {
+    let mut keys = None;
+    let (mut ui, mut t) = quiet_ui(Some(SCREENS[1]), |ui| {
+        let k = layer_with_floater(ui, false);
+        ui.set_node_scale(k.1, Some([2.0, 1.0, 1.0]));
+        keys = Some(k);
+    });
+    let (_, f, _) = keys.expect("scene");
+    let b0 = ui.physical_box(f);
+    let held: Vec<Vec<Option<usize>>> = (b0.y0..b0.y1)
+        .map(|y| (b0.x0..b0.x1).map(|x| ui.text_hit_test(f, x, y)).collect())
+        .collect();
+    assert!(
+        held.iter().flatten().any(Option::is_some),
+        "the text is hit"
+    );
+    ui.set_node_scale(f, Some([3.0, 1.25, 1.0]));
+    t += Duration::from_millis(16);
+    let fr = ui.paint(t, &mut Unlimited);
+    assert!(ui.in_geometry_preview(f), "previewed");
+    assert_eq!(fr.stats.jobs_started, 0, "previewed, not repainted");
+    let b1 = ui.physical_box(f);
+    let (wh, hh) = (i64::from(b0.width()), i64::from(b0.height()));
+    let (wc, hc) = (i64::from(b1.width()), i64::from(b1.height()));
+    assert!(wc > wh && hc > hh, "the box grew on both axes");
+    let mut found = 0;
+    for y in b1.y0..b1.y1 {
+        for x in b1.x0..b1.x1 {
+            let hx = ((2 * i64::from(x - b1.x0) + 1) * wh).div_euclid(2 * wc);
+            let hy = ((2 * i64::from(y - b1.y0) + 1) * hh).div_euclid(2 * hc);
+            let want = held[hy as usize][hx as usize];
+            assert_eq!(ui.text_hit_test(f, x, y), want, "pixel ({x}, {y})");
+            found += usize::from(want.is_some());
+        }
+    }
+    assert!(found > 0);
+    // Taken back by the current σ instead, a held-canvas pixel would land at 2 ÷ 3 of its
+    // place in the text: the test above finds other characters then.
+}
+
+/// `ui-scaling.md` §9.3 capture settle and I20 (f): on a paint clock that does not advance,
+/// `Ui::capture_settle` settles every geometry preview as if 150 ms had passed, without moving
+/// the UI clock: afterwards no surface is previewed and the canvases are a fresh paint at the
+/// current geometry, while a running fade keeps the opacity of the checkpoint's moment.
+#[test]
+fn the_capture_settle_settles_previews_on_a_held_clock() {
+    let screen = Some(SCREENS[0]);
+    let mut w = None;
+    let (mut ui, t) = quiet_ui(screen, |ui| w = Some(picture_window(ui, 20, 30)));
+    let w = w.expect("window");
+    let vv = tessera_ui::Vocab::default();
+    // A running fade: the element's own `AutoFade`, faded out half-way at the checkpoint.
+    ui.set_property(
+        w,
+        vv.pids.auto_fade,
+        tessera_formats::PropertyValue::Float(1.0),
+    );
+    ui.set_time(5.0);
+    ui.set_shown(w, false);
+    ui.set_time(5.5);
+    ui.frame_work();
+    let opacity = ui.prop(w, vv.pids.object_opacity).float();
+    assert!((opacity - 0.5).abs() < 1e-3);
+    ui.control_set_position(w, 21, 30);
+    // The checkpoint's frame, then frames on the same paint clock: the preview stays.
+    for _ in 0..4 {
+        let _ = ui.paint(t, &mut Unlimited);
+    }
+    assert!(
+        ui.in_geometry_preview(w),
+        "a held clock never reaches the settle time"
+    );
+    let mut frames = 0;
+    assert!(ui.capture_settle(t, &mut Unlimited, 64, |_| frames += 1));
+    assert!(frames >= 1);
+    assert!(
+        !ui.geometry_preview_pending(),
+        "no surface in a preview (I20 (f))"
+    );
+    assert!(ui.is_fading(w), "the fade has not moved");
+    assert_eq!(ui.prop(w, vv.pids.object_opacity).float(), opacity);
+    let mut w2 = None;
+    let (fresh, _) = quiet_ui(screen, |ui| w2 = Some(picture_window(ui, 21, 30)));
+    assert!(
+        canvas_of(&ui, w) == canvas_of(&fresh, w2.expect("window")),
+        "the settled canvas is a fresh paint at the current geometry"
+    );
+    // Nothing left: the capture settle paints no further frame.
+    let mut more = 0;
+    assert!(ui.capture_settle(t, &mut Unlimited, 64, |_| more += 1));
+    assert_eq!(more, 0);
+}
+
+/// A transparent layer with a nested surface owner A that holds a nested floater B (two levels
+/// of nested entries), and optionally a control drawn after A at the place B moves to.
+fn layer_with_deep_floater(ui: &mut Ui, after: bool) -> (ElementKey, ElementKey, ElementKey) {
+    let layer = ui.create_control(ControlKind::Window, 1).expect("window");
+    ui.control_set_position(layer, 0, 0);
+    ui.control_set_size(layer, 640, 480);
+    ui.control_set_visible(layer, true);
+    let under = control(ui, ControlKind::Control, layer, [100, 100, 300, 200]);
+    ui.control_set_back_colour(under, Some([0.2, 0.4, 0.8, 0.5]));
+    let a = control(ui, ControlKind::Control, layer, [150, 150, 200, 150]);
+    ui.control_set_stretch_mode(a, 3);
+    let b = control(ui, ControlKind::Label, a, [20, 20, 90, 40]);
+    ui.control_set_stretch_mode(b, 3);
+    ui.set_text(b, Some(TEXTS[0].to_string()));
+    if after {
+        let o = control(ui, ControlKind::Control, layer, [360, 150, 80, 80]);
+        ui.control_set_back_colour(o, Some([0.9, 0.1, 0.1, 0.5]));
+    }
+    (layer, a, b)
+}
+
+/// `render.md` §6.12 R13 item 3 and R15 precision 3 (per parent): when the floater B reaches
+/// out of its parent A's box, A's coverage region in the layer changes through the join of UR
+/// Decision 1.7 step 2. Each parent whose split the move touches makes its own test: A draws
+/// nothing after B, and the layer draws nothing after A at the old or new region, so neither is
+/// damaged nor a member and the move paints nothing; when the layer draws a control after A
+/// over B's new place, the layer is repainted. Incremental and reference painting give the
+/// same frames, and the result at rest is a fresh paint.
+#[test]
+fn every_parent_whose_split_a_moved_entry_touches_makes_its_own_r13_test() {
+    for screen in [None, Some(SCREENS[1])] {
+        for after in [false, true] {
+            let mut keys = None;
+            let (mut ui, mut t) =
+                quiet_ui(screen, |ui| keys = Some(layer_with_deep_floater(ui, after)));
+            let (layer, a, b) = keys.expect("scene");
+            assert!(
+                ui.surface_of(a).is_some() && ui.surface_of(b).is_some(),
+                "two levels of nested entries"
+            );
+            // B reaches out of A's box but stays partly inside it (so it keeps its entry in
+            // A's list, R15 item 3); 4 units are 5 pixels at Se = 1.25.
+            ui.control_set_position(b, 152, 24);
+            t += Duration::from_millis(16);
+            let fr = ui.paint(t, &mut Unlimited);
+            if after {
+                assert!(
+                    fr.stats.jobs_started >= 1,
+                    "the layer draws after A over B's new place ({screen:?})"
+                );
+            } else {
+                assert_eq!(
+                    (fr.stats.jobs_started, fr.stats.bands, fr.stats.upload_bytes),
+                    (0, 0, 0),
+                    "neither parent is damaged ({screen:?})"
+                );
+            }
+            assert!(ui.capture_settle(t, &mut Unlimited, 256, |_| {}));
+            let mut k2 = None;
+            let (fresh, _) = quiet_ui(screen, |ui| {
+                let k = layer_with_deep_floater(ui, after);
+                ui.control_set_position(k.2, 152, 24);
+                k2 = Some(k);
+            });
+            let (fl, fa, fb) = k2.expect("scene");
+            for (x, y, what) in [(layer, fl, "layer"), (a, fa, "A"), (b, fb, "B")] {
+                assert!(
+                    canvas_of(&ui, x) == canvas_of(&fresh, y),
+                    "{what} is a fresh paint ({screen:?}, after {after})"
+                );
+            }
+        }
+    }
+    // Frame by frame like the reference.
+    for after in [false, true] {
+        for screen in [None, Some(SCREENS[0]), Some(SCREENS[1])] {
+            let mut uis: Vec<(Ui, ElementKey)> = [false, true]
+                .into_iter()
+                .map(|reference| {
+                    let mut b = None;
+                    let (mut ui, _) =
+                        quiet_ui(screen, |ui| b = Some(layer_with_deep_floater(ui, after).2));
+                    ui.set_reference_paint(reference);
+                    (ui, b.expect("floater"))
+                })
+                .collect();
+            let mut tex = [Textures::default(), Textures::default()];
+            let mut t = Duration::from_secs(10);
+            for step in 0..30 {
+                t += Duration::from_millis(if step % 7 == 6 { 160 } else { 16 });
+                let mut comps = Vec::new();
+                for ((ui, b), tx) in uis.iter_mut().zip(tex.iter_mut()) {
+                    if step % 7 != 6 {
+                        let (x, y) = ui.control_position(*b);
+                        ui.control_set_position(*b, x + 11, y + 3);
+                    }
+                    let fr = ui.paint(t, &mut Unlimited);
+                    tx.apply(&fr.ops);
+                    comps.push(fr.composition);
+                }
+                assert_eq!(comps[0], comps[1], "composition of frame {step}");
+                assert!(
+                    tex[0].front() == tex[1].front(),
+                    "textures after frame {step}"
+                );
+            }
+        }
+    }
+}

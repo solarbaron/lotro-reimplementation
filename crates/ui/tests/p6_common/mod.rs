@@ -11,8 +11,8 @@ pub mod p5;
 
 #[allow(unused_imports)]
 pub use p5::{
-    Rgba, art_ref, button, capture, double, left, message, part, real_click, right, settle, ui,
-    ui_layouts,
+    Rgba, art_ref, button, capture, double, left, message, paint_frames, part, real_click, right,
+    settle, ui, ui_layouts,
 };
 use tessera_ui::game::IconImage;
 use tessera_ui::game::crafting::{

@@ -713,5 +713,7 @@ fn p3_windows_on_the_install() {
         ))
     );
     assert_eq!(t.entries.len(), 3);
-    p3_common::settle(&mut i.ui);
+    // Nothing is captured, and `InstallEnv` serves layouts only: surfaces that draw images
+    // keep waiting for them, so the asserting capture helper is not for this scene.
+    p3_common::paint_frames(&mut i.ui);
 }

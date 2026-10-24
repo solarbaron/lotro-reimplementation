@@ -16,12 +16,17 @@
 //! (a script started from the walker, `EffectLayer::set_entity_property`) reach the object
 //! one frame later, which item 2 allows too.
 //!
-//! **How a run-time value is told apart** (Tessera engineering choice): the runtime's public
-//! interface gives only the value an entity reads (its run-time value, else its stored
-//! value, else the dictionary default). The stored value does not change while the owner is
-//! spawned, so a value that differs from it ([`OwnerOpacity::new`]'s baseline) is a run-time
-//! value, and one equal to it is taken as none. So that this never changes what is drawn,
-//! the owner's stored `Render_Opacity` in the runtime is made to give the same factor as
+//! **How a run-time value is told apart** (detection by difference, confirmed as conforming by
+//! the answer under the anchor `s12-r15-detect`, item 1): the runtime's public interface gives
+//! only the value an entity reads (its run-time value, else its stored value, else the
+//! dictionary default). The stored value does not change while the owner is spawned, so a
+//! value whose factor differs from the stored one's ([`OwnerOpacity::new`]'s baseline) is a
+//! run-time value, and one with the same factor is taken as none. Both sides are compared
+//! after the value handling of the spec-r10 answer item 3 ([`runtime_factor`]), and the
+//! comparison is made again at every observation, so a later write back to the stored value
+//! ends the run-time value. Such writes change nothing drawn and are not counted. So that
+//! this never changes what is drawn, the owner's stored `Render_Opacity` in the runtime is
+//! made to give the same factor as
 //! the value the object layer reads from the owner's property sets (the per-instance set,
 //! then the 0x47 chain; rule 15, spec-r9 answer item 1) wherever the two differ
 //! ([`stored_value`]): the script side alone reads only the chain, because the walker's
@@ -38,11 +43,13 @@
 //! after its start-up scripts ran, unless they wrote one ([`OwnerOpacity::holding`],
 //! [`OwnerOpacity::restore`]; listeners of the property react to it then, while the
 //! start-up scripts themselves still read the stored value: Tessera's reach-based despawn
-//! has no counterpart in the client, so this is an engineering choice). While the owner
-//! stays spawned and the landblock's objects are built again, the object layer is handed
-//! the runtime's value again. Objects of a landblock placed again after it was unloaded
-//! start without one (the owner despawned with the landblock). Removing the value in the
-//! runtime removes it from the object layer.
+//! has no counterpart in the client, so this is an engineering choice). Whether they wrote
+//! one is decided on the raw value, not on the handled factor, so a start-up write of the
+//! stored factor in another form is kept; only a write of exactly the stored value cannot
+//! be told apart from none. While the owner stays spawned and the landblock's objects are
+//! built again, the object layer is handed the runtime's value again. Objects of a landblock
+//! placed again after it was unloaded start without one (the owner despawned with the
+//! landblock). Removing the value in the runtime removes it from the object layer.
 //!
 //! **Counts** (spec-r10 answer item 4): every write seen is counted ([`WriteCounts`]) and
 //! ends as applied (it reached the object layer), replaced (a later write or a removal came
@@ -61,39 +68,47 @@ use crate::walker::objects::ObjectLayer;
 #[must_use]
 pub fn written_factor(value: &PropertyValue) -> f32 {
     match value {
-        PropertyValue::Float(f) if f.is_finite() => f.clamp(0.0, 1.0),
+        // `+ 0.0` turns a clamped −0 into +0, so that the factors compare by value.
+        PropertyValue::Float(f) if f.is_finite() => f.clamp(0.0, 1.0) + 0.0,
         _ => 1.0,
     }
 }
 
-/// Whether two values the runtime reads are the same (floats compared bit for bit, so a
-/// stored value that is not a number still equals itself).
-fn same(a: Option<&PropertyValue>, b: Option<&PropertyValue>) -> bool {
+/// The factor a value the runtime reads gives after the value handling of the spec-r10
+/// answer item 3 ([`written_factor`]); no value at all gives the dictionary default 1.
+fn handled(v: Option<&PropertyValue>) -> f32 {
+    v.map_or(1.0, written_factor)
+}
+
+/// Whether two handled factors are the same (`None`: no value). Factors are finite and in
+/// 0–1 after the handling, so they compare by value (−0 equals +0).
+fn same_factor(a: Option<f32>, b: Option<f32>) -> bool {
+    a == b
+}
+
+/// Whether two raw values the runtime reads are the same value (`None`: no value): floats
+/// bit for bit, so that a NaN equals itself and −0 differs from +0; others by equality.
+fn same_raw(a: Option<&PropertyValue>, b: Option<&PropertyValue>) -> bool {
     match (a, b) {
         (Some(PropertyValue::Float(x)), Some(PropertyValue::Float(y))) => {
             x.to_bits() == y.to_bits()
         }
-        (a, b) => a == b,
+        _ => a == b,
     }
 }
 
-/// Whether two factors are the same, bit for bit (`None`: no value).
-fn same_factor(a: Option<f32>, b: Option<f32>) -> bool {
-    a.map(f32::to_bits) == b.map(f32::to_bits)
-}
-
 /// The run-time value of an owner whose runtime reads `current` and whose stored or
-/// default value is `baseline` (module docs): `None` when they agree (no run-time value),
-/// else the factor `current` gives ([`written_factor`]).
+/// default value is `baseline` (module docs): `None` when both give the same factor after
+/// the value handling ([`written_factor`] on both sides; `s12-r15-detect` answer item 1), so a
+/// write of the stored value, or of any value handled to the same factor, is no run-time
+/// value; else the factor `current` gives.
 #[must_use]
 pub fn runtime_factor(
     current: Option<&PropertyValue>,
     baseline: Option<&PropertyValue>,
 ) -> Option<f32> {
-    if same(current, baseline) {
-        return None;
-    }
-    current.map(written_factor)
+    let now = handled(current);
+    (!same_factor(Some(now), Some(handled(baseline)))).then_some(now)
 }
 
 /// The stored `Render_Opacity` a static owner's runtime entity takes in place of its
@@ -110,8 +125,9 @@ pub fn stored_value(
         Some(v) if v.is_finite() => v.clamp(0.0, 1.0),
         _ => 1.0,
     };
+    let drawn = drawn + 0.0;
     let script = script_side.map_or(1.0, written_factor);
-    (script.to_bits() != drawn.to_bits()).then_some(PropertyValue::Float(drawn))
+    (!same_factor(Some(script), Some(drawn))).then_some(PropertyValue::Float(drawn))
 }
 
 /// The watch on one static owner's `Render_Opacity` (module docs).
@@ -133,7 +149,8 @@ pub enum OpacityChange {
     None,
     /// A run-time value was written (a new value, or one where there was none).
     Written(f32),
-    /// The run-time value was removed.
+    /// The run-time value was removed, or written with a value whose handled factor is the
+    /// stored one's (which ends it, `s12-r15-detect` answer item 1).
     Removed,
 }
 
@@ -167,12 +184,17 @@ impl OwnerOpacity {
     /// The run-time value to give the freshly spawned owner, whose runtime now reads
     /// `current`: the value the object layer held at spawn ([`Self::holding`]), unless the
     /// start-up scripts already wrote one (or there is none).
+    ///
+    /// A start-up write is any value that is not the stored or default value itself, compared
+    /// raw ([`same_raw`]), not after the value handling: a write handled to the stored factor
+    /// is still the scripts' own value, which an exact read of the run-time layer would keep
+    /// in place of the held one (`s12-r15-detect` answer item 1: no frame may differ). A
+    /// write of exactly the stored value reads as none and is overridden: only an exact read
+    /// could tell it apart.
     #[must_use]
     pub fn restore(&self, current: Option<&PropertyValue>) -> Option<PropertyValue> {
         let held = self.seen?;
-        runtime_factor(current, self.baseline.as_ref())
-            .is_none()
-            .then_some(PropertyValue::Float(held))
+        same_raw(current, self.baseline.as_ref()).then_some(PropertyValue::Float(held))
     }
 
     /// Observes the value the runtime reads now; a written value becomes pending for the
@@ -216,7 +238,9 @@ impl OwnerOpacity {
 /// `writes` = `applied` + `replaced` + `lost` + `waiting` at the end of every frame.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct WriteCounts {
-    /// Writes seen (a value that differs from the last one the owner read).
+    /// Writes seen: writes whose handled factor differs both from the stored one's and from
+    /// the last run-time factor (`s12-r15-detect` answer item 1: writes that change nothing,
+    /// such as one of the stored factor, are not counted).
     pub writes: u64,
     /// Of them, those that reached the object layer.
     pub applied: u64,
@@ -342,7 +366,8 @@ mod tests {
         assert_eq!(written_factor(&PropertyValue::Enum(0)), 1.0);
     }
 
-    /// A value equal to the stored or default one is no run-time value; any other is.
+    /// `s12-r15-detect` answer item 1: a value whose factor, after the value handling on both
+    /// sides, equals the stored or default one's is no run-time value; any other is.
     #[test]
     fn a_runtime_value_differs_from_the_baseline() {
         let half = PropertyValue::Float(0.5);
@@ -353,11 +378,90 @@ mod tests {
         assert_eq!(runtime_factor(None, None), None);
         assert_eq!(runtime_factor(None, Some(&one)), None);
         let nan = PropertyValue::Float(f32::NAN);
-        assert_eq!(runtime_factor(Some(&nan), Some(&nan)), None, "bit for bit");
+        assert_eq!(runtime_factor(Some(&nan), Some(&nan)), None);
+        // Handled to the same factor on both sides: no run-time value.
         assert_eq!(
             runtime_factor(Some(&PropertyValue::Int(1)), Some(&one)),
+            None
+        );
+        assert_eq!(
+            runtime_factor(Some(&PropertyValue::Float(7.0)), Some(&one)),
+            None
+        );
+        assert_eq!(runtime_factor(Some(&nan), None), None);
+        assert_eq!(
+            runtime_factor(
+                Some(&PropertyValue::Float(-2.0)),
+                Some(&PropertyValue::Float(0.0))
+            ),
+            None
+        );
+        assert_eq!(
+            runtime_factor(Some(&one), Some(&PropertyValue::Int(5))),
+            None
+        );
+        // −0 is handled to the factor 0, the same as a stored 0 (and as a stored −3).
+        let neg_zero = PropertyValue::Float(-0.0);
+        let zero = PropertyValue::Float(0.0);
+        assert_eq!(written_factor(&neg_zero).to_bits(), 0.0f32.to_bits());
+        assert_eq!(runtime_factor(Some(&neg_zero), Some(&zero)), None);
+        assert_eq!(runtime_factor(Some(&zero), Some(&neg_zero)), None);
+        assert_eq!(
+            runtime_factor(Some(&neg_zero), Some(&PropertyValue::Float(-3.0))),
+            None
+        );
+        let mut w = OwnerOpacity::new(Some(zero.clone()));
+        assert_eq!(w.observe(Some(&neg_zero)).change, OpacityChange::None);
+        assert_eq!(w.wanted(), None, "a write of −0 over a stored 0 is none");
+        assert_eq!(
+            stored_value(Some(&zero), Some(-0.0)),
+            None,
+            "the drawn −0 is the factor 0 the script side gives"
+        );
+        // A different factor after the handling is one.
+        assert_eq!(
+            runtime_factor(Some(&PropertyValue::Int(1)), Some(&half)),
             Some(1.0)
         );
+        assert_eq!(
+            runtime_factor(Some(&PropertyValue::Float(-2.0)), Some(&one)),
+            Some(0.0)
+        );
+    }
+
+    /// `s12-r15-detect` answer item 1: detection by difference gives the opacity an exact read
+    /// of the run-time layer gives in every frame. A sequence of writes (values of every
+    /// kind, the stored value among them) is followed by the watch and by a model that holds
+    /// the run-time layer itself; the factor the object is drawn with is the same after every
+    /// frame, and a write back to the stored value ends the run-time value.
+    #[test]
+    fn detection_by_difference_draws_what_an_exact_read_draws() {
+        let stored = PropertyValue::Float(0.5);
+        let writes = [
+            Some(PropertyValue::Float(0.25)),
+            Some(stored.clone()),
+            Some(PropertyValue::Float(9.0)),
+            Some(PropertyValue::Int(0)),
+            None,
+            Some(PropertyValue::Float(f32::NAN)),
+            Some(PropertyValue::Float(0.5)),
+            Some(PropertyValue::Float(-1.0)),
+            None,
+        ];
+        let mut w = OwnerOpacity::new(Some(stored.clone()));
+        for (i, write) in writes.into_iter().enumerate() {
+            // The exact model: the run-time layer holds `write`; the drawn factor is that of
+            // the run-time value, else of the stored value.
+            let exact = handled(write.as_ref().or(Some(&stored)));
+            // The watch sees only what the runtime reads.
+            let read = write.clone().unwrap_or_else(|| stored.clone());
+            w.observe(Some(&read));
+            let drawn = w.wanted().unwrap_or_else(|| handled(Some(&stored)));
+            assert_eq!(drawn.to_bits(), exact.to_bits(), "frame {i}: {write:?}");
+            if write.as_ref().is_some_and(|v| handled(Some(v)) == 0.5) {
+                assert_eq!(w.wanted(), None, "frame {i}: the stored factor ends it");
+            }
+        }
     }
 
     /// The runtime's stored value is replaced only where its factor differs from the one
@@ -447,6 +551,16 @@ mod tests {
             w.observe(Some(&PropertyValue::String("x".into()))).change,
             OpacityChange::Written(1.0)
         );
+        assert_eq!(
+            w.observe(Some(&PropertyValue::Float(1.0))).change,
+            OpacityChange::None,
+            "a float of the same factor as the other type"
+        );
+        // A write handled to the stored factor (0.8) ends the run-time value.
+        assert_eq!(
+            w.observe(Some(&PropertyValue::Float(0.8))).change,
+            OpacityChange::Removed
+        );
         let mut d = OwnerOpacity::default();
         assert_eq!(d.observe(None), none);
         assert_eq!(
@@ -467,6 +581,49 @@ mod tests {
             OwnerOpacity::new(Some(one.clone())).restore(Some(&one)),
             None
         );
+        // A start-up write whose factor is the baseline's is still the scripts' own value,
+        // which an exact read of the run-time layer keeps: no restore over it.
+        let w = OwnerOpacity::holding(None, Some(0.3));
+        assert_eq!(w.restore(Some(&one)), None, "1.0 written, no stored value");
+        assert_eq!(w.restore(None), Some(PropertyValue::Float(0.3)));
+        let w = OwnerOpacity::holding(Some(one.clone()), Some(0.3));
+        assert_eq!(w.restore(Some(&PropertyValue::Int(1))), None);
+        assert_eq!(w.restore(Some(&PropertyValue::Float(7.0))), None);
+        let w = OwnerOpacity::holding(Some(PropertyValue::Float(0.0)), Some(0.3));
+        assert_eq!(w.restore(Some(&PropertyValue::Float(-0.0))), None);
+        // Exactly the stored value reads as no write (NaN included).
+        assert_eq!(
+            w.restore(Some(&PropertyValue::Float(0.0))),
+            Some(PropertyValue::Float(0.3))
+        );
+        let nan = PropertyValue::Float(f32::NAN);
+        let w = OwnerOpacity::holding(Some(nan.clone()), Some(0.3));
+        assert_eq!(w.restore(Some(&nan)), Some(PropertyValue::Float(0.3)));
+    }
+
+    /// `s12-r15-detect` answer item 1 on the respawn path: a respawned owner holding 0.3,
+    /// whose start-up scripts write a value handled to the baseline factor, is drawn with
+    /// what an exact read of the run-time layer gives (the scripts' value), after the
+    /// restore and the next observation alike.
+    #[test]
+    fn a_respawn_restore_draws_what_an_exact_read_draws() {
+        let cases = [
+            (None, PropertyValue::Float(1.0)),
+            (Some(PropertyValue::Float(1.0)), PropertyValue::Int(1)),
+            (Some(PropertyValue::Float(1.0)), PropertyValue::Float(4.0)),
+            (Some(PropertyValue::Float(0.0)), PropertyValue::Float(-0.0)),
+            (Some(PropertyValue::Float(0.5)), PropertyValue::Float(0.25)),
+        ];
+        for (baseline, write) in cases {
+            let mut w = OwnerOpacity::holding(baseline.clone(), Some(0.3));
+            // The exact model: the run-time layer holds the start-up write.
+            let exact = handled(Some(&write));
+            // What the runtime reads after the restore.
+            let read = w.restore(Some(&write)).unwrap_or_else(|| write.clone());
+            w.observe(Some(&read));
+            let drawn = w.wanted().unwrap_or_else(|| handled(baseline.as_ref()));
+            assert_eq!(drawn, exact, "{baseline:?} then {write:?}");
+        }
     }
 
     // --- The watch on a real runtime and the object layer's blocks ---

@@ -27,9 +27,19 @@ impl Ui {
         let af = self.prop(k, self.v.pids.auto_fade);
         let auto = af.is_set() && self.wants_surface(k) && k != self.screen;
         let dur = af.float();
+        let fading_out = fading.is_some_and(|f| f.to <= 0.0);
         if show {
-            if visible && fading.is_none_or(|f| f.to >= 1.0) {
+            if visible && !fading_out {
                 return;
+            }
+            if fading_out {
+                // §11.1 "Show during a fade-out" (UB48): the show stops the running fade-out,
+                // also one that goes on after a second hide hid the element, and fades in from
+                // the opacity reached so far (`start_fade` reads it).
+                if let Some(e) = self.el_mut(k) {
+                    e.fade = None;
+                }
+                self.post(k, self.v.msgs.auto_fade_stop, MsgArg::default());
             }
             self.set_visible_flag(k, true);
             if auto {
@@ -42,10 +52,18 @@ impl Ui {
             if !visible {
                 return;
             }
+            if fading_out {
+                // §11.1 "Second hide during a fade-out" (UB48, UB-I22): no new fade; the
+                // element is hidden at once with the effects of §11.2, as the end of a
+                // fade-out hides it. The running fade-out is not stopped: it goes on writing
+                // `ObjectOpacity` down to 0 and sends `Element_auto_fade_stop` at its end,
+                // where its own hide finds the element hidden already. This holds whether or
+                // not the element still has its own `AutoFade` and a surface now: those decide
+                // only whether a show or hide starts a fade, and this one starts none.
+                self.hide_now(k);
+                return;
+            }
             if auto {
-                if fading.is_some_and(|f| f.to <= 0.0) {
-                    return;
-                }
                 // Tessera rule (§11.2 implementer note): a surface that has never been drawn
                 // (no surface yet, or its first paint still withheld) was never on screen, so
                 // it hides at once, as a fade of zero length: the same messages and final
@@ -119,7 +137,12 @@ impl Ui {
     }
 
     fn start_fade(&mut self, k: ElementKey, to: f32, duration: f32) {
+        // §11.1 step 1, UB48: the element's `ObjectOpacity` (own value, else the dictionary
+        // default, UB49). Tessera rule for hostile values (the plugin `SetOpacity` does not
+        // clamp, §13.19): a start that is not finite is taken as the default 1 (UB49), so
+        // that no step writes a NaN.
         let from = self.prop(k, self.v.pids.object_opacity).float();
+        let from = if from.is_finite() { from } else { 1.0 };
         let now = self.now;
         if let Some(e) = self.el_mut(k) {
             e.fade = Some(AutoFade {
@@ -139,12 +162,22 @@ impl Ui {
         let Some(f) = self.el(k).and_then(|e| e.fade) else {
             return false;
         };
-        let t = if f.duration.abs() <= 0.0002 {
+        // §11.1 step 2. Tessera rule: an `AutoFade` that is NaN gives no defined *t*, so it
+        // counts as a fade of zero length (*t* = 1). A finite negative or an infinite one
+        // follows the step's formula (*t* stays 0).
+        let t = if f.duration.is_nan() || f.duration.abs() <= 0.0002 {
             1.0
         } else {
-            (((self.now - f.start) / f64::from(f.duration)) as f32).clamp(0.0, 1.0)
+            let t = ((self.now - f.start) / f64::from(f.duration)) as f32;
+            if t.is_nan() { 0.0 } else { t.clamp(0.0, 1.0) }
         };
-        let o = f.from + (f.to - f.from) * t;
+        // At *t* = 1 the target itself (UB48: a finished fade-out leaves 0 and a finished
+        // fade-in 1), not the interpolation, which loses it for a far-off start opacity.
+        let o = if t >= 1.0 {
+            f.to
+        } else {
+            f.from + (f.to - f.from) * t
+        };
         self.set_fade_opacity(k, o);
         if t >= 1.0 {
             if let Some(e) = self.el_mut(k) {
@@ -152,7 +185,9 @@ impl Ui {
             }
             self.input.hover_dirty = true;
             self.post(k, self.v.msgs.auto_fade_stop, MsgArg::default());
-            if f.to <= 0.0 {
+            // The end of a fade-out hides the element for real, unless a second hide did so
+            // already (§11.1, UB48: no second visibility change).
+            if f.to <= 0.0 && self.el(k).is_some_and(|e| e.visible) {
                 self.hide_now(k);
             }
             false

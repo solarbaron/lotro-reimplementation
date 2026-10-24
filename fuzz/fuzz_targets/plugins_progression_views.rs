@@ -10,8 +10,12 @@
 //! starts by leaving the world (the manager, plugin and model are shared between inputs,
 //! as the model's generations continue across sessions).
 //!
-//! As in `plugins_commands`, LeakSanitizer reports small allocations mlua makes while a
-//! plugin loads, so this target needs `detect_leaks=0` under cargo-fuzz.
+//! As in `plugins_commands`, LeakSanitizer reports the shared reference counts of Lua
+//! values that mlua clones while the plugin loads (kept by the long-lived manager, but
+//! held through a pointer it does not count), so `tools/fuzz-smoke.sh` runs this target
+//! with `detect_leaks=0` under cargo-fuzz (the marker line below).
+//!
+//! fuzz-smoke: detect_leaks=0
 
 #![no_main]
 

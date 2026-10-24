@@ -16,6 +16,8 @@
 //! reports small allocations mlua makes while a plugin loads (not traceable to the
 //! long-lived manager), so this target needs `detect_leaks=0` there, as `script_pattern`
 //! had when it drove the manager.
+//!
+//! fuzz-smoke: detect_leaks=0
 
 #![no_main]
 

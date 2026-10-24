@@ -125,17 +125,18 @@ run_one() {
     local t="$1" log="$logs/$1.log" start end rc=0 extra=()
     mkdir -p "$fuzz/corpus/$t" "$fuzz/artifacts/$t"
     if [ -f "$fuzz/dict/$t.dict" ]; then extra+=(-dict="$fuzz/dict/$t.dict"); fi
-    # mlua makes one-time allocations that LeakSanitizer cannot trace back to a long-lived
-    # Lua state (the script state of fuzz_targets/script_pattern.rs, the plugin manager of
-    # fuzz_targets/plugins_commands.rs). Only matters
-    # with cargo-fuzz (AddressSanitizer); the stable path has no leak checker. Leak checks
-    # are turned off in LeakSanitizer only: libFuzzer's own -detect_leaks=0 would also skip
-    # installing the malloc hooks that enforce -malloc_limit_mb.
+    # A target that keeps a Lua state for the whole run (a script state or a plugin manager
+    # in a static) shows LeakSanitizer false positives: mlua's shared reference counts of
+    # cloned Lua values are `Arc<()>` blocks held only through a pointer one past the end
+    # of the 16-byte block, which LeakSanitizer does not count as a reference. Such a
+    # target says so with a line `//! fuzz-smoke: detect_leaks=0` in its source. Only
+    # matters with cargo-fuzz (AddressSanitizer); the stable path has no leak checker. Leak
+    # checks are turned off in LeakSanitizer only: libFuzzer's own -detect_leaks=0 would
+    # also skip installing the malloc hooks that enforce -malloc_limit_mb.
     local asan="${ASAN_OPTIONS:-}"
-    case "$t" in
-        script_pattern|plugins_commands)
-            asan="${asan:+$asan:}detect_leaks=0" ;; # per-input and at-exit checks
-    esac
+    if grep -qx '//! fuzz-smoke: detect_leaks=0' "$fuzz/fuzz_targets/$t.rs" 2>/dev/null; then
+        asan="${asan:+$asan:}detect_leaks=0" # per-input and at-exit checks
+    fi
     start=$(date +%s)
     if [ "$mode" = "cargo-fuzz" ]; then
         (cd "$fuzz" && { [ -z "$asan" ] || export ASAN_OPTIONS="$asan"; } \

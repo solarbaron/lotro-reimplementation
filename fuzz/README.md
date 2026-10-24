@@ -224,6 +224,14 @@ ones built.
 
 `cargo check` in this directory type-checks the targets on stable.
 
+A target that keeps a Lua state for the whole run (a script state or a plugin manager in a
+static) gets LeakSanitizer false positives under cargo-fuzz: mlua's shared reference counts
+of cloned Lua values are 16-byte `Arc<()>` blocks reached only through a pointer one past
+their end, which LeakSanitizer does not count. Such a target carries the line
+`//! fuzz-smoke: detect_leaks=0` in its source, and `tools/fuzz-smoke.sh` then runs it with
+`ASAN_OPTIONS=detect_leaks=0` (the malloc limit stays on). With `cargo fuzz run` by hand,
+set that variable yourself.
+
 ## Dictionaries
 
 `dict/<target>.dict` (libFuzzer `-dict` format) holds the syntax tokens of a text format,

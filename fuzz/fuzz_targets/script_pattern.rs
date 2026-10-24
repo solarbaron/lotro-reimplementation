@@ -13,6 +13,8 @@
 //! `tools/fuzz-smoke.sh` runs this target with `-detect_leaks=0` under cargo-fuzz. Input
 //! layout: byte 0 selects the operation, then the subject, pattern and replacement
 //! separated by 0xFF bytes.
+//!
+//! fuzz-smoke: detect_leaks=0
 
 #![no_main]
 

@@ -7,6 +7,11 @@
 //! per-pixel tolerance); the run writes the committed canonical log byte for byte; two
 //! runs give the same element states (CUI9).
 //!
+//! Every checkpoint is captured after the capture settle of `ui-scaling.md` §9.3 (revision
+//! 15): the previews of §6.1 (floating text that grows, bars that move) are settled as if
+//! 150 ms had passed, on the scenario's virtual clock, which does not move, so the goldens are
+//! the settled, crisp pictures of the checkpoint's moment.
+//!
 //! Regenerate the goldens with `TESSERA_BLESS=1 cargo test -p tessera-client --test
 //! combat_ui_golden`. The rendering part skips (reported as passed) without a GPU adapter.
 
@@ -81,13 +86,25 @@ fn run(mut renderer: Option<&mut tessera_render::Renderer<'static>>) -> RunResul
         let Some(elements) = checkpoints.get(&at) else {
             return;
         };
-        s.settle(renderer.as_deref_mut());
+        // `ui-scaling.md` §9.3: the capture settle on the held scenario clock; no preview is
+        // captured (I20 (f)).
+        assert!(s.settle(renderer.as_deref_mut()), "settles at {at} ms");
+        assert!(!s.preview_pending(), "a preview at {at} ms");
         let states: Vec<(Element, bool)> = elements.iter().map(|e| (*e, s.is_shown(*e))).collect();
         shown.insert(at, states);
         if let Some(r) = renderer.as_deref_mut()
             && GOLDEN.iter().any(|(t, _)| *t == at)
         {
-            images.push((at, s.render(r).expect("renders")));
+            let image = s.render(r).expect("renders");
+            // I20 (b), (f): the settled capture is the picture a full repaint of every surface
+            // at the current geometry gives, at the same moment.
+            s.host().ui_mut().invalidate_paint();
+            let repainted = s.render(r).expect("renders");
+            assert!(
+                image.data == repainted.data,
+                "the capture at {at} ms is not the settled picture"
+            );
+            images.push((at, image));
         }
     })
     .expect("sandbox");

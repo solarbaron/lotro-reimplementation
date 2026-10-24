@@ -199,15 +199,27 @@ impl CombatScreens {
     }
 
     /// Runs frames at the current time until the UI has settled (images and fonts loaded,
-    /// no paint job on the frame thread or the workers, nothing left to paint), for at most
-    /// [`SETTLE_LIMIT`]; returns whether it settled.
+    /// no paint job on the frame thread or the workers, nothing left to paint, no surface in
+    /// a preview), for at most [`SETTLE_LIMIT`]; returns whether it settled.
+    ///
+    /// Every frame asks for the **capture settle** of `ui-scaling.md` §9.3 (revision 15): a
+    /// pending change of *Se* is settled at once (§4.5 step 4) and every geometry preview as
+    /// if its 150 ms settle time had passed (§6.1 item 4), while the scenario clock, and with
+    /// it the UI clock that drives floating text, fades, cast bars and cooldowns, stays at the
+    /// checkpoint's moment. So a checkpoint captures the settled, crisp picture of that moment,
+    /// never a preview, and never content advanced by 150 ms.
     pub fn settle(&mut self, mut renderer: Option<&mut Renderer<'_>>) -> bool {
         let start = Instant::now();
         loop {
+            self.request_capture_settle();
             self.frame(renderer.as_deref_mut());
             if self.host.settled() {
+                // One more frame on the same clock, so that the GPU operations of the settled
+                // state are applied; it changes nothing, so the UI stays settled.
                 self.frame(renderer.as_deref_mut());
-                return true;
+                if self.host.settled() {
+                    return true;
+                }
             }
             if start.elapsed() >= SETTLE_LIMIT {
                 tracing::warn!(limit = ?SETTLE_LIMIT, "combat screens did not settle");
@@ -217,13 +229,30 @@ impl CombatScreens {
         }
     }
 
+    /// Asks for the capture settle of `ui-scaling.md` §9.3 at the next frame ([`Self::settle`]):
+    /// the §4.5 preview of a change of *Se* and every §6.1 geometry preview settle as if their
+    /// settle time had passed; no clock moves.
+    fn request_capture_settle(&mut self) {
+        self.host.settle_scale_repaint();
+        self.host.ui_mut().settle_previews_at_next_paint();
+    }
+
+    /// Whether the UI shows a preview (`ui-scaling.md` §4.5 step 3 or §6.1): a capture now
+    /// would not be the settled picture of §9.3. `false` after [`Self::settle`] returned true.
+    #[must_use]
+    pub fn preview_pending(&self) -> bool {
+        self.host.scale_repaint_pending() || self.host.ui().geometry_preview_pending()
+    }
+
     /// Renders the UI offscreen at the screen size.
     ///
     /// # Errors
     ///
     /// The renderer's errors.
     pub fn render(&mut self, renderer: &mut Renderer<'_>) -> Result<RgbaImage, RenderError> {
-        self.settle(Some(renderer));
+        if !self.settle(Some(renderer)) || self.preview_pending() {
+            tracing::warn!("combat screens captured before the capture settle ended");
+        }
         let (w, h) = self.screen;
         let target = renderer.create_offscreen_target(w, h, OffscreenFormat::Rgba8Srgb)?;
         let mut frame = renderer.begin_offscreen_frame(&target)?;

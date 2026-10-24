@@ -175,6 +175,16 @@ fn settle(ui: &mut Ui) {
     for t in 0..6u64 {
         ui.paint(Duration::from_millis(16 * t + 1), &mut budget);
     }
+    // `ui-scaling.md` §9.3: a capture shows the settled picture, every geometry preview
+    // settled on the held paint clock, with nothing else moved.
+    assert!(
+        ui.capture_settle(Duration::from_millis(16 * 5 + 1), &mut budget, 256, |_| {}),
+        "the capture settle did not finish: a golden would record a preview (§9.3 item 4)"
+    );
+    assert!(
+        !ui.geometry_preview_pending(),
+        "no surface in a geometry preview"
+    );
 }
 
 /// Paints and reads the canvas of root panel `k` as RGBA at its **content scale** (its physical

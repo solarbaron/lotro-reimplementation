@@ -480,12 +480,34 @@ pub fn real_click(ui: &mut Ui, k: ElementKey) -> Vec<UiEvent> {
     real_click_at(ui, b.l + b.w() / 2, b.t + b.h() / 2)
 }
 
-/// Paints until settled.
+/// Paints the frames [`settle`] paints without asserting that painting settled: for scenes
+/// whose environment serves layouts only (the real-data tests), where surfaces that draw images
+/// keep waiting for them and nothing is captured.
+pub fn paint_frames(ui: &mut Ui) {
+    let mut budget = Unlimited;
+    for t in 0..6u64 {
+        ui.paint(Duration::from_millis(16 * t + 1), &mut budget);
+    }
+    let _ = ui.capture_settle(Duration::from_millis(16 * 5 + 1), &mut budget, 256, |_| {});
+}
+
+/// Paints until settled, for a capture: asserts that the capture settle of `ui-scaling.md`
+/// §9.3 finished, so that a golden never records a preview or an unfinished paint (item 4).
 pub fn settle(ui: &mut Ui) {
     let mut budget = Unlimited;
     for t in 0..6u64 {
         ui.paint(Duration::from_millis(16 * t + 1), &mut budget);
     }
+    // `ui-scaling.md` §9.3: a capture shows the settled picture, every geometry preview
+    // settled on the held paint clock, with nothing else moved.
+    assert!(
+        ui.capture_settle(Duration::from_millis(16 * 5 + 1), &mut budget, 256, |_| {}),
+        "the capture settle did not finish: a golden would record a preview (§9.3 item 4)"
+    );
+    assert!(
+        !ui.geometry_preview_pending(),
+        "no surface in a geometry preview"
+    );
 }
 
 /// An RGBA image of a painted window.

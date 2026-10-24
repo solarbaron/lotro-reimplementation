@@ -18,7 +18,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
-use p5_common::{art, icons, settle};
+use p5_common::{art, icons, paint_frames};
 use tessera_dat::{ArchiveSet, SetOptions};
 use tessera_formats::ui_layout::{UiEnum, UiLabels};
 use tessera_formats::{DataIdMap, Did, EnumMapper, PropertyDictionary, Record, UiLayout};
@@ -332,7 +332,7 @@ fn map_window_from_the_install() {
     let m = v.tree().unwrap().nodes[0].map.clone();
     v.show_dungeon(ui, m, &t).expect("DungeonMap");
     assert_eq!(v.shown, Some(Shown::Dungeon));
-    settle(ui);
+    paint_frames(ui);
     v.detach(ui);
 }
 
@@ -408,7 +408,7 @@ fn travel_windows_from_the_install() {
     );
     assert_eq!(w.rows.len(), 4);
     w.select(ui, Some(1), &tt);
-    settle(ui);
+    paint_frames(ui);
     // The fellowship maker's finder page (§6.2).
     let root = ins.open("fellowshipmaker", "FellowshipMaker_Window");
     let ftemplates = FinderTemplates {
@@ -476,7 +476,7 @@ fn travel_windows_from_the_install() {
     assert_eq!(f.rows.len(), 2, "two finder rows");
     f.select(ui, Some(0), &ft);
     f.set_queue(ui, 2, Some(30), 0.0, &ft);
-    settle(ui);
+    paint_frames(ui);
     // The instance-travel window (§4.11).
     let root = ins.open("pe_travel", "RootPETravelField");
     let ui = &mut ins.ui;
@@ -508,5 +508,5 @@ fn travel_windows_from_the_install() {
         }
         Err(e) => panic!("FellowshipMakerWaitingInQueueAlertField: {e} (ElementMissing)"),
     }
-    settle(ui);
+    paint_frames(ui);
 }

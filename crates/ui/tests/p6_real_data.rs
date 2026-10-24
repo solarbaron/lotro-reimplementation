@@ -16,7 +16,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
-use p6_common::{art, button, page_master, panel_b, settle};
+use p6_common::{art, button, page_master, paint_frames, panel_b};
 use tessera_dat::{ArchiveSet, SetOptions};
 use tessera_formats::ui_layout::{UiEnum, UiLabels};
 use tessera_formats::{DataIdMap, Did, EnumMapper, PropertyDictionary, Record, UiLayout};
@@ -356,7 +356,7 @@ fn crafting_panel_from_the_install() {
     p.show_recipe(ui, Some(&page_master(true)), &T);
     assert!(p.make_enabled());
     assert_eq!(p.critical_percent(), Some(7));
-    settle(ui);
+    paint_frames(ui);
     // The recipe page is shown and painted.
     let rp = p.parts.recipe_page.expect("Craft_RecipePage");
     assert!(ui.is_visible(rp));
@@ -457,7 +457,7 @@ fn crafting_trainers_from_the_install() {
             w.parts.confirm.is_some(),
             "{layout}: Tessera's confirmation added"
         );
-        settle(ui);
+        paint_frames(ui);
         let b = ui.displayed_box(root);
         println!("{layout}: {} × {}", b.w(), b.h());
     }
@@ -487,7 +487,7 @@ fn experience_bar_on_the_install_toolbar() {
     );
     let pid = ui.vocab().pids.meter_position;
     assert_eq!(ui.prop(m, pid).float(), 0.75);
-    settle(ui);
+    paint_frames(ui);
 }
 
 /// The resolved close-button ID of a trainer kind.

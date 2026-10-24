@@ -699,6 +699,283 @@ fn panel_opened_hidden_is_never_drawn_and_fades_in_when_shown() {
     assert_eq!(ui.prop(k, vv.pids.object_opacity).float(), 0.0);
 }
 
+/// The fade messages and the visibility broadcasts of panel 0x1 since the last call.
+fn fade_and_visibility_messages(ui: &mut Ui) -> (usize, usize, Vec<i64>) {
+    let vv = v();
+    let ev = ui.take_events();
+    let count = |m: u32| {
+        ev.iter()
+            .filter(|e| matches!(e, UiEvent::Game { message } if message.msg == m))
+            .count()
+    };
+    let shown = ev
+        .iter()
+        .filter_map(|e| match e {
+            UiEvent::Game { message } if message.msg == vv.msgs.is_visible_changed => {
+                Some(message.arg.value)
+            }
+            _ => None,
+        })
+        .collect();
+    (
+        count(vv.msgs.auto_fade_start),
+        count(vv.msgs.auto_fade_stop),
+        shown,
+    )
+}
+
+/// A drawn auto-fade panel with a visibility broadcast and handlers for its messages.
+fn drawn_fading_panel() -> (Ui, ElementKey) {
+    let vv = v();
+    let p = prop(field(0x1, 0, 0, 100, 100), vv.pids.auto_fade, f(0.1));
+    let p = prop(p, vv.pids.enable_visibility_broadcast, b(true));
+    let mut ui = ui_one(LAYOUT, 1024, 768, vec![p], 1024, 768);
+    for m in [
+        vv.msgs.auto_fade_start,
+        vv.msgs.auto_fade_stop,
+        vv.msgs.is_visible_changed,
+    ] {
+        ui.register_handler(0x1, m);
+    }
+    let k = open(&mut ui, 0x1);
+    paint_until_drawn(&mut ui, k);
+    ui.set_time(1.0);
+    ui.frame_work();
+    let _ = ui.take_events();
+    (ui, k)
+}
+
+/// `ui-behaviour.md` §11.1 "Second hide during a fade-out" (UB48, UB-I22): a second hide while
+/// a fade-out runs starts no new fade and hides the panel at once (one visibility change); the
+/// running fade-out goes on writing `ObjectOpacity` down to 0 and sends one
+/// `Element_auto_fade_stop` at its end, whose hide changes nothing more.
+#[test]
+fn second_hide_during_a_fade_out_hides_at_once_and_the_fade_runs_on() {
+    let vv = v();
+    let (mut ui, k) = drawn_fading_panel();
+    let opacity = |ui: &Ui| ui.prop(k, vv.pids.object_opacity).float();
+    ui.set_shown(k, false);
+    assert!(
+        ui.is_visible(k) && ui.is_fading(k),
+        "the first hide fades out"
+    );
+    assert_eq!(fade_and_visibility_messages(&mut ui), (1, 0, vec![]));
+    ui.set_time(1.04);
+    ui.frame_work();
+    assert!((opacity(&ui) - 0.6).abs() < 1e-3);
+    // The second hide: hidden at once, no new fade, the fade runs on.
+    ui.set_shown(k, false);
+    assert!(!ui.is_visible(k), "hidden at once");
+    assert!(ui.is_fading(k), "the running fade-out is not stopped");
+    assert_eq!(fade_and_visibility_messages(&mut ui), (0, 0, vec![0]));
+    assert_eq!(ui.hit_test(5, 5), None);
+    ui.set_time(1.08);
+    ui.frame_work();
+    assert!(
+        (opacity(&ui) - 0.2).abs() < 1e-3,
+        "same start time and start opacity: {}",
+        opacity(&ui)
+    );
+    assert_eq!(fade_and_visibility_messages(&mut ui), (0, 0, vec![]));
+    // A third hide changes nothing.
+    ui.set_shown(k, false);
+    assert_eq!(fade_and_visibility_messages(&mut ui), (0, 0, vec![]));
+    ui.set_time(1.2);
+    ui.frame_work();
+    assert_eq!(opacity(&ui), 0.0, "the fade wrote 0");
+    assert!(!ui.is_fading(k) && !ui.is_visible(k));
+    assert_eq!(
+        fade_and_visibility_messages(&mut ui),
+        (0, 1, vec![]),
+        "one stop, no second visibility change"
+    );
+    // The next show fades in from 0.
+    ui.set_shown(k, true);
+    ui.set_time(1.25);
+    ui.frame_work();
+    assert!((opacity(&ui) - 0.5).abs() < 1e-3);
+    assert_eq!(fade_and_visibility_messages(&mut ui), (1, 0, vec![1]));
+}
+
+/// §11.1 "Show during a fade-out" after a second hide (UB48): the show stops the running
+/// fade-out (`Element_auto_fade_stop`) and fades in from the opacity reached so far; without a
+/// second hide the same.
+#[test]
+fn show_during_a_fade_out_stops_it_and_fades_in_from_the_opacity_reached() {
+    let vv = v();
+    for second_hide in [true, false] {
+        let (mut ui, k) = drawn_fading_panel();
+        let opacity = |ui: &Ui| ui.prop(k, vv.pids.object_opacity).float();
+        ui.set_shown(k, false);
+        ui.set_time(1.05);
+        ui.frame_work();
+        if second_hide {
+            ui.set_shown(k, false);
+            assert!(!ui.is_visible(k));
+        }
+        let _ = ui.take_events();
+        ui.set_shown(k, true);
+        assert!(ui.is_visible(k) && ui.is_fading(k), "fades in");
+        let broadcast = if second_hide { vec![1] } else { vec![] };
+        assert_eq!(
+            fade_and_visibility_messages(&mut ui),
+            (1, 1, broadcast),
+            "the fade-out stops, a fade-in starts (second hide: {second_hide})"
+        );
+        ui.set_time(1.1);
+        ui.frame_work();
+        assert!(
+            (opacity(&ui) - 0.75).abs() < 1e-3,
+            "from 0.5 towards 1: {}",
+            opacity(&ui)
+        );
+        ui.set_time(1.2);
+        ui.frame_work();
+        assert_eq!(opacity(&ui), 1.0);
+        assert!(ui.is_visible(k) && !ui.is_fading(k));
+        assert_eq!(fade_and_visibility_messages(&mut ui), (0, 1, vec![]));
+    }
+}
+
+/// §11.1 "Second hide during a fade-out" (UB48, UB-I22) when the panel lost its own `AutoFade`
+/// in the middle of the fade-out: the own `AutoFade` only decides whether a show or hide starts
+/// a fade, so the second hide still hides at once and leaves the running fade-out alone, which
+/// ends with `ObjectOpacity` 0 and one `Element_auto_fade_stop`.
+#[test]
+fn second_hide_after_auto_fade_is_cleared_leaves_the_fade_out_running() {
+    let vv = v();
+    let (mut ui, k) = drawn_fading_panel();
+    let opacity = |ui: &Ui| ui.prop(k, vv.pids.object_opacity).float();
+    ui.set_shown(k, false);
+    ui.set_time(1.04);
+    ui.frame_work();
+    assert!((opacity(&ui) - 0.6).abs() < 1e-3);
+    let _ = ui.take_events();
+    ui.clear_property(k, vv.pids.auto_fade);
+    ui.set_shown(k, false);
+    assert!(!ui.is_visible(k), "hidden at once");
+    assert!(ui.is_fading(k), "the running fade-out is not dropped");
+    assert_eq!(fade_and_visibility_messages(&mut ui), (0, 0, vec![0]));
+    ui.set_time(1.2);
+    ui.frame_work();
+    assert_eq!(opacity(&ui), 0.0, "the fade wrote 0");
+    assert!(!ui.is_fading(k));
+    assert_eq!(fade_and_visibility_messages(&mut ui), (0, 1, vec![]));
+}
+
+/// UB48: each fade step writes `ObjectOpacity`, so a finished fade-out leaves exactly 0 and a
+/// finished fade-in exactly 1, also from a start opacity a plugin `SetOpacity` left out of
+/// range (it does not clamp, `lua-plugin-api.md` §13.19). Tessera rule: a start opacity that is
+/// not finite is the dictionary default 1 (UB49), so no step writes a NaN.
+#[test]
+fn a_finished_fade_leaves_its_target_from_any_start_opacity() {
+    let vv = v();
+    for start in [f32::NAN, 1e30, -1e30, f32::INFINITY, 5.0] {
+        // Fade-in from the hostile value.
+        let (mut ui, k) = drawn_fading_panel();
+        let opacity = |ui: &Ui| ui.prop(k, vv.pids.object_opacity).float();
+        ui.set_shown(k, false);
+        ui.set_time(1.2);
+        ui.frame_work();
+        assert!(!ui.is_visible(k) && opacity(&ui) == 0.0);
+        ui.set_property(k, vv.pids.object_opacity, f(start));
+        ui.set_shown(k, true);
+        ui.set_time(1.25);
+        ui.frame_work();
+        assert!(!opacity(&ui).is_nan(), "{start}: no NaN step");
+        ui.set_time(1.4);
+        ui.frame_work();
+        assert!(!ui.is_fading(k));
+        assert_eq!(opacity(&ui), 1.0, "{start}: a finished fade-in leaves 1");
+        // Fade-out from the hostile value.
+        ui.set_property(k, vv.pids.object_opacity, f(start));
+        ui.set_shown(k, false);
+        ui.set_time(1.45);
+        ui.frame_work();
+        assert!(!opacity(&ui).is_nan(), "{start}: no NaN step");
+        ui.set_time(1.6);
+        ui.frame_work();
+        assert!(!ui.is_fading(k) && !ui.is_visible(k));
+        assert_eq!(opacity(&ui), 0.0, "{start}: a finished fade-out leaves 0");
+    }
+}
+
+/// §11.1 step 2 with hostile `AutoFade` values. Tessera rule: NaN gives no defined *t* and
+/// counts as a fade of zero length, so the fade ends in its first frame with its target and
+/// its stop message. A negative value keeps *t* at 0 by the step's formula (the fade does not
+/// advance), and a show then stops it as any running fade-out.
+#[test]
+fn hostile_auto_fade_durations() {
+    let vv = v();
+    let (mut ui, k) = drawn_fading_panel();
+    let opacity = |ui: &Ui| ui.prop(k, vv.pids.object_opacity).float();
+    ui.set_property(k, vv.pids.auto_fade, f(f32::NAN));
+    ui.set_shown(k, false);
+    assert!(!ui.is_visible(k) && !ui.is_fading(k), "NaN: zero length");
+    assert_eq!(opacity(&ui), 0.0);
+    assert_eq!(fade_and_visibility_messages(&mut ui), (1, 1, vec![0]));
+    ui.set_shown(k, true);
+    assert!(ui.is_visible(k) && !ui.is_fading(k));
+    assert_eq!(opacity(&ui), 1.0);
+    let _ = ui.take_events();
+    ui.set_property(k, vv.pids.auto_fade, f(-1.0));
+    ui.set_shown(k, false);
+    ui.set_time(5.0);
+    ui.frame_work();
+    assert!(ui.is_visible(k) && ui.is_fading(k), "negative: t stays 0");
+    assert_eq!(opacity(&ui), 1.0, "the start opacity");
+    ui.set_shown(k, true);
+    assert_eq!(fade_and_visibility_messages(&mut ui), (2, 1, vec![]));
+}
+
+/// UB49: the defaults of `ObjectOpacity` (1.0) and `AutoFade` (0.1). UB-I22: an auto-fade
+/// panel without an `ObjectOpacity` of its own that never faded fades in from 1 on its first
+/// show, so it is drawn at full opacity from its first drawn frame, with its fade messages.
+#[test]
+fn first_show_of_an_auto_fade_panel_starts_from_the_default_opacity() {
+    let vv = v();
+    assert_eq!(
+        vv.defaults.get(&vv.pids.object_opacity),
+        Some(&PropertyValue::Float(1.0))
+    );
+    assert_eq!(
+        vv.defaults.get(&vv.pids.auto_fade),
+        Some(&PropertyValue::Float(0.1))
+    );
+    let p = prop(field(0x1, 0, 0, 100, 100), vv.pids.auto_fade, f(0.1));
+    let p = prop(p, vv.pids.hide, b(true));
+    let mut ui = ui_one(LAYOUT, 1024, 768, vec![p], 1024, 768);
+    ui.register_handler(0x1, vv.msgs.auto_fade_start);
+    ui.register_handler(0x1, vv.msgs.auto_fade_stop);
+    let k = open(&mut ui, 0x1);
+    assert!(!ui.is_visible(k), "hidden by its layout");
+    let _ = ui.take_events();
+    ui.set_shown(k, true);
+    assert!(ui.is_fading(k), "a fade from 1 to 1");
+    assert_eq!(fade_messages(&mut ui), (1, 0));
+    let mut t = std::time::Duration::ZERO;
+    let mut drawn = false;
+    for _ in 0..64 {
+        t += std::time::Duration::from_millis(16);
+        let frame = ui.paint(t, &mut tessera_ui::paint::Unlimited);
+        if ui.is_surface_drawn(k) {
+            let e = frame.composition.entries.iter().find(|e| e.opacity < 1.0);
+            assert!(e.is_none(), "full opacity from the first drawn frame");
+            drawn = true;
+            break;
+        }
+    }
+    assert!(drawn);
+    assert_eq!(ui.prop(k, vv.pids.object_opacity).float(), 1.0);
+    // An element's own `AutoFade` only starts a fade: the default 0.1 does not.
+    let plain = field(0x1, 0, 0, 100, 100);
+    let mut ui = ui_one(LAYOUT, 1024, 768, vec![plain], 1024, 768);
+    let k = open(&mut ui, 0x1);
+    paint_until_drawn(&mut ui, k);
+    ui.set_shown(k, false);
+    assert!(!ui.is_visible(k) && !ui.is_fading(k), "hidden at once");
+}
+
 #[test]
 fn dialog_keys_close_with_results() {
     let vv = v();

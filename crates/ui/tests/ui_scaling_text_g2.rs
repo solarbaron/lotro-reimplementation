@@ -137,12 +137,23 @@ fn scene_with(faces: &[Arc<FontFace>], reader: bool) -> Scene {
 
 fn settle(ui: &mut Ui) {
     let mut budget = Unlimited;
+    let mut last = 1;
     for t in 0..8u64 {
-        ui.paint(Duration::from_millis(16 * t + 1), &mut budget);
+        last = 16 * t + 1;
+        ui.paint(Duration::from_millis(last), &mut budget);
         if ui.paint_settled() {
             break;
         }
     }
+    // `ui-scaling.md` §9.3: every geometry preview settled before the capture.
+    assert!(
+        ui.capture_settle(Duration::from_millis(last), &mut budget, 256, |_| {}),
+        "the capture settle did not finish: a golden would record a preview (§9.3 item 4)"
+    );
+    assert!(
+        !ui.geometry_preview_pending(),
+        "no surface in a geometry preview"
+    );
 }
 
 /// The window's canvas as RGBA (its physical box, §6.1).

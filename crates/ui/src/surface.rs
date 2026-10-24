@@ -731,8 +731,9 @@ impl Ui {
     /// settling: its settle repaint waits for 150 ms of the clock given to [`Ui::paint`], which
     /// a caller on a clock that does not advance never reaches (its picture is then the
     /// preview, as the rule defines it). Callers that want the settled crisp picture (screen
-    /// captures, goldens) also wait for [`Ui::geometry_preview_pending`] to be `false`, while
-    /// their clock advances or, on a held clock, after [`Ui::settle_previews_at_next_paint`].
+    /// captures, goldens; `ui-scaling.md` §9.3) also wait for [`Ui::geometry_preview_pending`]
+    /// to be `false`, while their clock advances or, on a held clock, through the capture
+    /// settle ([`Ui::capture_settle`], [`Ui::settle_previews_at_next_paint`]).
     #[must_use]
     pub fn paint_settled(&self) -> bool {
         !self.painter.touched && self.painter.dirty.is_empty() && self.painter.scheduler.is_idle()
@@ -757,6 +758,108 @@ impl Ui {
         if self.geometry_preview_pending() {
             self.painter.force_settle = true;
         }
+    }
+
+    /// The **capture settle** of `ui-scaling.md` §9.3 (revision 15, SC22): paints frames at the
+    /// held paint clock `now` until no surface is in a geometry preview (§6.1) and painting has
+    /// settled ([`Ui::paint_settled`]), settling every preview as if its 150 ms settle time had
+    /// passed ([`Ui::settle_previews_at_next_paint`]) and changing nothing else: the UI clock
+    /// of [`Ui::set_time`] (fades, timers, floating text, meters, media) is not touched, so the
+    /// captured content is that of the checkpoint's moment (§9.3 item 2). Each frame is handed
+    /// to `each` (GPU operations and composition, for callers that keep UI textures). At most
+    /// `max_frames` frames; returns whether everything settled.
+    ///
+    /// For capture checkpoints of goldens and screenshots on a clock that does not advance
+    /// (§9.3 item 3); interactive hosts, whose clock runs, never need it. The §4.5 step 3
+    /// preview of a change of *Se* belongs to the host, which settles it on its own.
+    #[must_use = "a capture after an unsettled capture settle would record a preview (§9.3 item 4)"]
+    pub fn capture_settle(
+        &mut self,
+        now: Duration,
+        budget: &mut dyn PaintBudget,
+        max_frames: u32,
+        mut each: impl FnMut(UiFrame),
+    ) -> bool {
+        for _ in 0..max_frames {
+            if self.paint_settled() && !self.geometry_preview_pending() {
+                return true;
+            }
+            self.settle_previews_at_next_paint();
+            each(self.paint(now, budget));
+        }
+        self.paint_settled() && !self.geometry_preview_pending()
+    }
+
+    /// The pixel of the held canvas under a pointer at window-physical pixel (`px`, `py`) for
+    /// the text hit test of `ui-scaling.md` §6.4.6 during a geometry preview (revision 15,
+    /// anchor `s6-4-6-preview`), by the inverse of the composition of §6.1 item 3. `owner` is
+    /// the surface the text was drawn into. `None` when that surface is not previewed (the
+    /// caller then uses the current geometry); `Some(None)` when the pointer lies outside the
+    /// current physical box while the node scales differ from the held ones (item 2: nothing
+    /// is hit).
+    ///
+    /// 1. Node scales equal to the held ones: the held canvas is composed 1 : 1 at the
+    ///    surface's current physical top-left, so the pointer minus that top-left.
+    /// 2. Otherwise the held canvas (*Wh* × *Hh*) is composed onto the current physical box
+    ///    (*Wc* × *Hc*): the centre of the pointer's pixel relative to the box, times
+    ///    *Wh* ÷ *Wc* (*Hh* ÷ *Hc*), rounded down.
+    pub(crate) fn held_canvas_point(
+        &self,
+        owner: ElementKey,
+        px: i32,
+        py: i32,
+    ) -> Option<Option<[i32; 2]>> {
+        let r = self.painter.recs.get(&owner)?;
+        r.preview?;
+        let cur = PaintGeo {
+            map: r.sig.map,
+            canvas: r.canvas,
+        };
+        let b = self.physical_box(owner);
+        let v = [
+            i64::from(px) - i64::from(b.x0),
+            i64::from(py) - i64::from(b.y0),
+        ];
+        if r.paint.same_scale(&cur) {
+            return Some(Some(v.map(clamp_i32)));
+        }
+        let (wc, hc) = (b.width(), b.height());
+        if wc == 0
+            || hc == 0
+            || v[0] < 0
+            || v[1] < 0
+            || v[0] >= i64::from(wc)
+            || v[1] >= i64::from(hc)
+        {
+            return Some(None);
+        }
+        let scale = |v: i64, held: u32, cur: u32| -> i32 {
+            ((v as f64 + 0.5) * f64::from(held) / f64::from(cur))
+                .floor()
+                .clamp(f64::from(i32::MIN), f64::from(i32::MAX)) as i32
+        };
+        Some(Some([
+            scale(v[0], r.paint.canvas[0], wc),
+            scale(v[1], r.paint.canvas[1], hc),
+        ]))
+    }
+
+    /// The surface whose canvas the text of `k` is drawn into: `k` itself when it owns a
+    /// recorded surface, else its nearest such ancestor.
+    pub(crate) fn text_surface_owner(&self, k: ElementKey) -> Option<ElementKey> {
+        let mut cur = Some(k);
+        let mut n = 0usize;
+        while let Some(e) = cur {
+            if self.painter.recs.contains_key(&e) {
+                return Some(e);
+            }
+            n += 1;
+            if n > crate::ui::MAX_TREE_DEPTH + 2 {
+                return None;
+            }
+            cur = self.parent(e);
+        }
+        None
     }
 
     /// Whether the surface of `k` is in a geometry preview (`ui-scaling.md` §6.1), for tests.

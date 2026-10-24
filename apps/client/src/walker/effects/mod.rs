@@ -99,9 +99,22 @@
 //! landblock's instance set for the entity's IID when there is one, otherwise its own set,
 //! then its 0x47 chain), taken by `walker::terrain::block_objects`; the bundle reads it
 //! while the weenie list is still there, so the walker's bundles dropping that list
-//! (`keep_weenies` off) loses nothing. Scripts that write `Render_Opacity` of
-//! a static owner later are not followed (the value is the one read when the landblock's
-//! objects are built). The creation viewport's owners count as 1.
+//! (`keep_weenies` off) loses nothing. Scripts that write `Render_Opacity` of a static owner
+//! later are followed for **effect owners in reach only** ([`opacity`]): once per frame,
+//! after the layer's runtime calls of the frame (the beam ports included), the layer keeps
+//! the object layer's run-time value of each spawned static owner in step with the value its
+//! runtime entity reads (`ObjectLayer::set_runtime_opacity`); the walker draws the object
+//! with it in that frame and the factor follows one frame later; removing the value brings
+//! the property sets' value back. The runtime's stored value of such an owner is made to
+//! agree with the object layer's property-set value, so a write of exactly the stored value
+//! changes nothing that is drawn ([`opacity`] module docs). Only the static entities whose
+//! start-up scripts reach Particle nodes run their scripts in the walker, and only while
+//! inside their effects' reach: the writes of other static entities never happen. The
+//! report counts the writes seen and those not applied (replaced or lost before they
+//! reached the object layer, or waiting for it) and the static entities whose start-up
+//! scripts write `Render_Opacity` but which are no effect owners
+//! ([`EffectStats::opacity`], [`opacity::WriteCounts`]). The creation viewport's owners
+//! count as 1.
 //!
 //! **Systems of the pass after post-processing** (rule 16): systems with `uses_video_post`
 //! are queued apart ([`EffectLayer::take_post_draws`]) and the walker queues them in the
@@ -112,6 +125,7 @@
 
 pub mod data;
 pub mod decals;
+pub mod opacity;
 pub mod session;
 pub mod weather;
 
@@ -317,6 +331,11 @@ pub struct EffectStats {
     pub weather_systems: usize,
     /// Weather and water systems placed in the last world frame.
     pub weather_placed: usize,
+    /// Run-time writes of static owners' `Render_Opacity` (`particle-runtime.md` §12 rule
+    /// 15, [`opacity`]): seen, applied, replaced, lost and waiting, and the static entities
+    /// whose writes are not followed (spec-r10 answer item 4: the departure shows in the
+    /// report).
+    pub opacity: opacity::WriteCounts,
     /// The drops of the weather code and the figure effects (`particle-runtime.md` §11.2.5,
     /// §11.2.6).
     pub weather: weather::WeatherStats,
@@ -349,6 +368,9 @@ struct LiveOwner {
     kind: OwnerKind,
     /// A static owner's placed object (rule 15, [`data::PlacedObject`]).
     placed: Option<data::PlacedObject>,
+    /// The watch on a static owner's run-time `Render_Opacity` (rule 15, [`opacity`]);
+    /// `None` for figures and owners without a placed object.
+    opacity: Option<opacity::OwnerOpacity>,
     iid: Option<u64>,
     points: Option<Arc<data::AttachPoints>>,
     particle_scale: f32,
@@ -809,6 +831,9 @@ struct FxState {
     weather: weather::Weather,
     /// Systems with `uses_video_post` are drawn (rule 16, [`EffectConfig::video_post`]).
     video_post: bool,
+    /// The PID of `Render_Opacity` (rule 15, [`opacity`]); `None` when the dictionary has
+    /// none.
+    opacity_pid: Option<u32>,
 }
 
 impl FxState {
@@ -1566,6 +1591,31 @@ fn placed_parent_opacity(objects: &ObjectLayer, placed: &data::PlacedObject) -> 
     parent_factor(current)
 }
 
+/// The HUD note on run-time `Render_Opacity` writes (rule 15, [`opacity`]): empty when
+/// none was seen and no entity's writes go unfollowed; else the writes, those that did not
+/// reach the object layer (replaced or lost before they reached it, or waiting for it, of
+/// which the waiting ones are named) and the static entities whose writes are not followed,
+/// so the departure shows in the report (spec-r10 answer item 4).
+fn opacity_writes_note(s: &EffectStats) -> String {
+    let c = &s.opacity;
+    let mut note = String::new();
+    if c.writes > 0 {
+        note.push_str(&format!(
+            ", opacity writes {} ({} not applied, {} waiting)",
+            c.writes,
+            c.not_applied(),
+            c.waiting
+        ));
+    }
+    if c.unfollowed_writers > 0 {
+        note.push_str(&format!(
+            ", {} opacity writers not followed",
+            c.unfollowed_writers
+        ));
+    }
+    note
+}
+
 /// Rule 15's factor from the object layer's answer: the opacity clamped to [0, 1]; 1 for no
 /// answer (the owner has no drawn object) or a non-finite one.
 fn parent_factor(opacity: Option<f32>) -> f32 {
@@ -1733,7 +1783,7 @@ impl EffectLayer {
         if !s.ready {
             return "Particles: starting".into();
         }
-        format!(
+        let mut line = format!(
             "Particles: {} owners ({} live), {} systems ({} lingering), {} particles, {} drawn / {} vertices",
             s.owners_found,
             s.owners_live,
@@ -1742,7 +1792,9 @@ impl EffectLayer {
             s.live_particles,
             s.drawn_systems,
             s.drawn_vertices
-        )
+        );
+        line.push_str(&opacity_writes_note(s));
+        line
     }
 
     fn poll_boot(&mut self) {
@@ -1762,6 +1814,7 @@ impl EffectLayer {
                 )
                 .with_seed(u64::from(self.config.seed));
                 let (load_tx, load_rx) = mpsc::channel();
+                let opacity_pid = b.data.dict.pid("Render_Opacity");
                 self.graph = Some(graph);
                 self.load_rx = Some(load_rx);
                 self.st = Some(FxState {
@@ -1790,6 +1843,7 @@ impl EffectLayer {
                     session: session::SessionState::default(),
                     weather: weather::Weather::new(b.weather).with_materials(b.drop_materials),
                     video_post: self.config.video_post,
+                    opacity_pid,
                 });
                 self.stats.ready = true;
                 tracing::info!("particle effects ready");
@@ -1927,7 +1981,9 @@ impl EffectLayer {
         if let Some(st) = self.st.as_mut() {
             let now = st.now;
             st.manager.remove_owner(id.0, now);
-            st.owners.remove(&id);
+            if let Some(w) = st.owners.remove(&id).and_then(|o| o.opacity) {
+                self.stats.opacity.despawned(&w);
+            }
             st.handles.retain(|_, o| *o != id);
         }
     }
@@ -1957,7 +2013,7 @@ impl EffectLayer {
     }
 
     /// The owners to spawn and despawn for a viewer at `eye` (region coordinates).
-    fn check_owners(&mut self, eye: [f64; 3], characters: &CharacterLayer) {
+    fn check_owners(&mut self, eye: [f64; 3], characters: &CharacterLayer, objects: &ObjectLayer) {
         let dist = |p: [f64; 3]| -> f32 {
             let d = [p[0] - eye[0], p[1] - eye[1], p[2] - eye[2]];
             ((d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt()) as f32
@@ -2008,28 +2064,50 @@ impl EffectLayer {
                     None => continue,
                 }
             }
-            self.spawn(key, &o);
+            self.spawn(key, &o, objects);
             spawned += 1;
         }
         self.pending_spawns = pending;
     }
 
-    fn spawn(&mut self, key: LandblockKey, o: &EffectOwner) {
-        if self.spawn_owner(o) {
+    fn spawn(&mut self, key: LandblockKey, o: &EffectOwner, objects: &ObjectLayer) {
+        if self.spawn_owner(o, objects) {
             self.live.insert(o.id, key);
         }
     }
 
-    /// Spawns `o` in the runtime; `true` when it runs.
-    fn spawn_owner(&mut self, o: &EffectOwner) -> bool {
+    /// Spawns `o` in the runtime; `true` when it runs. `objects` gives a static owner the
+    /// run-time `Render_Opacity` the object layer still holds for it (rule 15, [`opacity`]).
+    fn spawn_owner(&mut self, o: &EffectOwner, objects: &ObjectLayer) -> bool {
         let Some(st) = self.st.as_mut() else {
             return false;
         };
+        let mut properties = o.scripts.properties.clone();
+        // Rule 15: a static owner's run-time `Render_Opacity` is told from its stored value,
+        // which is made to agree with the object layer's property-set value; a value the
+        // object layer still holds from an earlier spawn is taken back ([`opacity`]).
+        let watch = match (o.kind, &o.placed, st.opacity_pid) {
+            (OwnerKind::Static { .. }, Some(placed), Some(pid)) => {
+                let script_side = properties
+                    .get(pid)
+                    .cloned()
+                    .or_else(|| st.data.dict.definition(pid).and_then(|d| d.default.clone()));
+                let stored = opacity::stored_value(script_side.as_ref(), placed.property_opacity);
+                if let Some(v) = &stored {
+                    properties.set(pid, v.clone());
+                }
+                let held = opacity::RuntimeOpacityLayer::runtime_opacity(objects, placed).flatten();
+                Some(opacity::OwnerOpacity::holding(stored.or(script_side), held))
+            }
+            _ => None,
+        };
+        let restore = watch.clone().zip(st.opacity_pid);
         st.owners.insert(
             o.id,
             LiveOwner {
                 kind: o.kind,
                 placed: o.placed.clone(),
+                opacity: watch,
                 iid: o.iid,
                 points: o.points.clone(),
                 particle_scale: o.scales.particle,
@@ -2038,7 +2116,7 @@ impl EffectLayer {
         let init = tessera_scriptgraph::EntityInit {
             tables: o.scripts.tables.clone(),
             startup_scripts: o.scripts.startup_scripts.clone(),
-            properties: o.scripts.properties.clone(),
+            properties,
             parent: None,
             run_startup: true,
             // Effect owners are not figures: their Random nodes keep the runtime's
@@ -2046,7 +2124,14 @@ impl EffectLayer {
             random_seed: None,
         };
         match Self::with_graph(&mut self.graph, &mut self.st, |g, sink| {
-            g.spawn_entity(sink, o.id, init)
+            g.spawn_entity(sink, o.id, init)?;
+            // The held value, unless the start-up scripts wrote one (rule 15, [`opacity`]).
+            if let Some((watch, pid)) = &restore
+                && let Some(v) = watch.restore(g.property(o.id, *pid).as_ref())
+            {
+                let _ = g.set_property(sink, o.id, *pid, v);
+            }
+            Ok::<(), tessera_scriptgraph::RuntimeError>(())
         }) {
             Some(Ok(())) => true,
             Some(Err(e)) => {
@@ -2165,7 +2250,7 @@ impl EffectLayer {
         }
         if self.time >= self.next_check {
             self.next_check = self.time + OWNER_CHECK_INTERVAL;
-            self.check_owners([eye.x, eye.y, eye.z], input.characters);
+            self.check_owners([eye.x, eye.y, eye.z], input.characters, objects);
         }
         // The runtime's timers.
         let _ = Self::with_graph(&mut self.graph, &mut self.st, |g, sink| g.advance(sink, dt));
@@ -2198,6 +2283,10 @@ impl EffectLayer {
         self.place_all(input.lighting, objects);
         // Beam heads that arrived fire their node's port; removed beams end their node.
         self.finish_beams();
+        // Rule 15: after the frame's runtime calls (the beam ports included), the run-time
+        // `Render_Opacity` of static owners reaches the object layer, which the walker draws
+        // after this update.
+        self.follow_opacity_writes(objects);
         self.refresh_stats();
         self.stats.update_ms = t0.elapsed().as_secs_f64() * 1e3;
     }
@@ -2290,7 +2379,7 @@ impl EffectLayer {
             }
             let mut spawned = Vec::new();
             for o in owners.iter().take(MAX_LIVE_OWNERS) {
-                if self.spawn_owner(o) {
+                if self.spawn_owner(o, objects) {
                     spawned.push(o.id);
                 }
             }
@@ -2494,6 +2583,32 @@ impl EffectLayer {
         self.stats.weather_placed = weather_placed;
     }
 
+    /// Keeps the object layer's run-time `Render_Opacity` of every spawned static owner in
+    /// step with the value its runtime entity reads (`particle-runtime.md` §12 rule 15,
+    /// spec-r10 answer items 1–4; [`opacity::follow`]): a write waits while the layer does
+    /// not hold the owner's object and is retried in later frames; a removal is handed over
+    /// once; the counts go to [`EffectStats::opacity`].
+    fn follow_opacity_writes(&mut self, objects: &mut ObjectLayer) {
+        let (Some(graph), Some(st)) = (self.graph.as_ref(), self.st.as_mut()) else {
+            return;
+        };
+        let Some(pid) = st.opacity_pid else {
+            return;
+        };
+        let owners = st.owners.iter_mut().filter_map(|(id, o)| {
+            let LiveOwner {
+                opacity, placed, ..
+            } = o;
+            Some((*id, opacity.as_mut()?, placed.as_ref()?))
+        });
+        opacity::follow(
+            owners,
+            |id| graph.has_entity(id).then(|| graph.property(id, pid)),
+            objects,
+            &mut self.stats.opacity,
+        );
+    }
+
     fn finish_beams(&mut self) {
         let Some(st) = self.st.as_mut() else { return };
         let arrived = std::mem::take(&mut st.session.arrived);
@@ -2516,6 +2631,12 @@ impl EffectLayer {
     fn refresh_stats(&mut self) {
         let Some(st) = self.st.as_ref() else { return };
         self.stats.blocks = self.blocks.len();
+        self.stats.opacity.unfollowed_writers = self
+            .blocks
+            .values()
+            .filter_map(|b| b.scan.as_ref())
+            .map(|s| usize::try_from(s.unfollowed_opacity_writers).unwrap_or(usize::MAX))
+            .fold(0usize, usize::saturating_add);
         self.stats.owners_found = self
             .blocks
             .values()
@@ -3105,6 +3226,48 @@ mod tests {
         assert_eq!(parent_factor(Some(1.5)), 1.0);
         assert_eq!(parent_factor(Some(-0.5)), 0.0);
         assert_eq!(parent_factor(Some(0.25)), 0.25);
+    }
+
+    /// Spec-r10 answer item 4 of rule 15: the HUD line reports run-time `Render_Opacity`
+    /// writes once there are any, with every one that did not reach the object layer
+    /// (replaced, lost or waiting), and the static entities whose writes are not followed.
+    #[test]
+    fn opacity_writes_show_in_the_report() {
+        let mut s = EffectStats::default();
+        assert_eq!(opacity_writes_note(&s), "");
+        s.opacity = opacity::WriteCounts {
+            writes: 5,
+            applied: 2,
+            replaced: 1,
+            lost: 1,
+            waiting: 1,
+            unfollowed_writers: 0,
+        };
+        assert_eq!(
+            opacity_writes_note(&s),
+            ", opacity writes 5 (3 not applied, 1 waiting)"
+        );
+        // Three writes while the block waited, then the block arrived: two never applied.
+        s.opacity = opacity::WriteCounts {
+            writes: 3,
+            applied: 1,
+            replaced: 2,
+            ..opacity::WriteCounts::default()
+        };
+        assert_eq!(
+            opacity_writes_note(&s),
+            ", opacity writes 3 (2 not applied, 0 waiting)"
+        );
+        s.opacity.unfollowed_writers = 4;
+        assert_eq!(
+            opacity_writes_note(&s),
+            ", opacity writes 3 (2 not applied, 0 waiting), 4 opacity writers not followed"
+        );
+        s.opacity = opacity::WriteCounts {
+            unfollowed_writers: 2,
+            ..opacity::WriteCounts::default()
+        };
+        assert_eq!(opacity_writes_note(&s), ", 2 opacity writers not followed");
     }
 
     /// Rule 15 as revised (`particle-runtime.md` §12): a static owner the draw pass culls

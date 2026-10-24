@@ -20,10 +20,14 @@
 //!   parts and by the other users of the layer (characters, terrain, frills, sky, water).
 //! - GPU memory has a budget: unreferenced parts and textures are kept for reuse until
 //!   the budget is exceeded or they have been unused for a while, then freed least
-//!   recently used first. Part meshes share the renderer's mesh arena with the terrain, so
-//!   they never fill it beyond the terrain's share ([`super::terrain_arena_reserve`]) below
-//!   its cap; a part that does not fit waits, and the distance cap shrinks until what is
-//!   in range fits.
+//!   recently used first. Part meshes share the renderer's mesh arena with the terrain;
+//!   they never fill more of it than the object budget of the configuration in force
+//!   (`walker.md` §14.10 W29 item 3): the walker hands the layer that budget (it derives
+//!   the share from the configuration it starts with, after the user's file is read), and
+//!   [`object_arena_limit`] guards it, so the terrain keeps its share
+//!   ([`super::terrain_arena_reserve`]) and the share a lower landscape level leaves free in
+//!   a renderer cap sized for a higher one stays unused; a part that does not fit waits,
+//!   and the distance cap shrinks until what is in range fits.
 //! - **Drawing** (`mesh.md` §8.4–§8.7): per object the distance *d* to the nearest point of
 //!   its box, the 1.5 s fade when *d* crosses *D* ([`DrawFade`]), the detail level from the
 //!   smoothed distance and *R_d* = `d1` × *M* ([`detail_level`]). The opacity an object is
@@ -928,6 +932,19 @@ impl std::ops::Deref for ObjectList {
     }
 }
 
+/// The mesh-arena bytes the object layer's part meshes may fill together
+/// (`walker.md` §14.10 W29 item 3): `arena_limit`, the share the walker hands the layer, but
+/// never more than `gpu_budget`, the object budget of the configuration in force. The walker
+/// already hands the layer exactly that budget: it derives the share from the configuration
+/// it starts with (`Walker::new`: the arena total of that configuration less its terrain
+/// share), not from the renderer's cap, which a windowed run sizes for the highest landscape
+/// level (W29 item 1). This only guards the rule against a caller that would hand the layer
+/// the renderer's cap less the terrain share of a lower level in force.
+#[must_use]
+pub fn object_arena_limit(arena_limit: u64, gpu_budget: u64) -> u64 {
+    arena_limit.min(gpu_budget)
+}
+
 /// Factor `i` of `factors` ([`ObjectList`]): 1 past the end or when not finite, else
 /// clamped to 0–1.
 fn owner_factor(factors: &[f32], i: usize) -> f32 {
@@ -1011,6 +1028,11 @@ struct BlockObjects {
     by_entity: HashMap<u32, u32>,
     /// The objects' owner opacity factors (`Render_Opacity`, [`ObjectList`]; empty: all 1).
     owner_opacity: Arc<[f32]>,
+    /// Run-time `Render_Opacity` values scripts wrote on placed objects, by object index
+    /// ([`ObjectLayer::set_runtime_opacity`]): the first layer of `particle-runtime.md` §12
+    /// rule 15 (spec-r9 answer item 1), masking [`Self::owner_opacity`] while present. Kept
+    /// as long as the block's objects stay in the layer; objects placed again start without.
+    runtime_opacity: HashMap<u32, f32>,
 }
 
 /// The [`BlockObjects::by_position`] key of a block-local position.
@@ -1066,10 +1088,7 @@ impl BlockObjects {
         draw_frame: u64,
         never_drawn: &dyn Fn(u32, u32) -> bool,
     ) -> Option<f32> {
-        let i = match index {
-            Some(e) if !self.by_entity.is_empty() => *self.by_entity.get(&e)?,
-            _ => self.object_at(entity)?,
-        };
+        let i = self.placed_object(index, entity)?;
         let i = usize::try_from(i).ok()?;
         let st = self.state.get(i)?;
         if st.sphere.is_none() {
@@ -1252,6 +1271,7 @@ impl BlockObjects {
             by_position,
             by_entity,
             owner_opacity: Arc::from(Vec::new()),
+            runtime_opacity: HashMap::new(),
         }
     }
 
@@ -1262,9 +1282,78 @@ impl BlockObjects {
         b
     }
 
-    /// Object `i`'s owner opacity factor (`Render_Opacity`, [`ObjectList`]).
+    /// Object `i`'s owner opacity factor (`Render_Opacity`): its run-time value when a
+    /// script wrote one, else the value of its property sets ([`ObjectList`]).
     fn owner(&self, i: usize) -> f32 {
-        owner_factor(&self.owner_opacity, i)
+        object_owner_factor(&self.owner_opacity, &self.runtime_opacity, i)
+    }
+
+    /// [`ObjectLayer::set_runtime_opacity`] on this block: `false` when no object of the
+    /// block is the entity's.
+    fn set_runtime_opacity(
+        &mut self,
+        index: Option<u32>,
+        entity: &PlacedObjectRef,
+        value: Option<f32>,
+    ) -> bool {
+        let Some(i) = self.placed_object(index, entity) else {
+            return false;
+        };
+        match value {
+            Some(v) => {
+                self.runtime_opacity.insert(i, owner_factor(&[v], 0));
+            }
+            None => {
+                self.runtime_opacity.remove(&i);
+            }
+        }
+        true
+    }
+
+    /// The index of placed entity `index` / `entity`'s object, as [`Self::opacity_of`]
+    /// finds it.
+    fn placed_object(&self, index: Option<u32>, entity: &PlacedObjectRef) -> Option<u32> {
+        match index {
+            Some(e) if !self.by_entity.is_empty() => self.by_entity.get(&e).copied(),
+            _ => self.object_at(entity),
+        }
+    }
+}
+
+/// [`ObjectLayer::set_runtime_opacity`] on `blocks`: the landblock's own objects
+/// ([`BlockSet::Main`]) only; far entities carry no owner factors.
+fn set_block_runtime_opacity(
+    blocks: &mut HashMap<BlockId, BlockObjects>,
+    key: LandblockKey,
+    index: Option<u32>,
+    entity: &PlacedObjectRef,
+    value: Option<f32>,
+) -> bool {
+    blocks
+        .get_mut(&(key, BlockSet::Main))
+        .is_some_and(|b| b.set_runtime_opacity(index, entity, value))
+}
+
+/// [`ObjectLayer::runtime_opacity`] on `blocks`.
+fn block_runtime_opacity(
+    blocks: &HashMap<BlockId, BlockObjects>,
+    key: LandblockKey,
+    index: Option<u32>,
+    entity: &PlacedObjectRef,
+) -> Option<Option<f32>> {
+    let b = blocks.get(&(key, BlockSet::Main))?;
+    let i = b.placed_object(index, entity)?;
+    Some(b.runtime_opacity.get(&i).copied())
+}
+
+/// The owner factor of object `i` ([`BlockObjects::owner`]): the run-time value of
+/// `runtime` when it holds one, else factor `i` of `factors` ([`owner_factor`]); either is
+/// clamped to 0–1, a value that is not finite counting 1 (`particle-runtime.md` §12 rule 15,
+/// spec-r9 answer item 4 and spec-r10 answer item 3).
+fn object_owner_factor(factors: &[f32], runtime: &HashMap<u32, f32>, i: usize) -> f32 {
+    match u32::try_from(i).ok().and_then(|k| runtime.get(&k)) {
+        Some(&v) => owner_factor(&[v], 0),
+        None => owner_factor(factors, i),
     }
 }
 
@@ -1742,7 +1831,8 @@ pub struct ObjectLayer {
     /// When the cap was last adjusted.
     adjusted: Option<Instant>,
     order: Vec<(f64, BlockId)>,
-    /// Arena bytes part meshes may fill together (the arena cap less the terrain's share).
+    /// Arena bytes part meshes may fill together ([`object_arena_limit`]: never more than
+    /// the object budget).
     arena_limit: u64,
     /// When a part last had to wait for arena space.
     arena_full_at: Option<Instant>,
@@ -1780,7 +1870,8 @@ impl std::fmt::Debug for ObjectLayer {
 
 impl ObjectLayer {
     /// A layer whose decode jobs run on `pool`; part meshes fill at most `arena_limit`
-    /// bytes of the renderer's mesh arena.
+    /// bytes of the renderer's mesh arena, and never more than the object budget
+    /// [`ObjectConfig::gpu_budget`] ([`object_arena_limit`]).
     #[must_use]
     pub fn new(
         set: Arc<ArchiveSet>,
@@ -1848,7 +1939,7 @@ impl ObjectLayer {
             distance: config.distance,
             adjusted: None,
             order: Vec::new(),
-            arena_limit,
+            arena_limit: object_arena_limit(arena_limit, config.gpu_budget),
             arena_full_at: None,
             batches: HashMap::new(),
             frame: ObjectFrame::default(),
@@ -2047,6 +2138,43 @@ impl ObjectLayer {
             self.draw_frame,
             &never_drawn,
         )
+    }
+
+    /// Sets (`Some`) or removes (`None`) the run-time `Render_Opacity` of placed entity
+    /// `index` / `entity` of landblock `key` (found as [`Self::placed_entity_opacity`] finds
+    /// it): the value a script wrote on the static owner after placement
+    /// (`particle-runtime.md` §12 rule 15, spec-r9 answer item 3 and spec-r10 answer item
+    /// 1). While present it replaces the value of the object's property sets
+    /// ([`ObjectList`]) both in the opacity the object is drawn with (`mesh.md` §8.8) and in
+    /// the opacity [`Self::placed_entity_opacity`] reports; removing it brings that value
+    /// back. The value is clamped to 0–1 and one that is not finite counts as 1 (spec-r10
+    /// answer item 3); a caller that read a value of another type passes 1. It lasts while
+    /// the landblock's objects stay in the layer: objects inserted again
+    /// ([`Self::insert`]) start without one.
+    ///
+    /// `false` when the layer holds no object of that entity (its landblock's objects are
+    /// not in the layer, or no object carries the entity), so nothing was set or removed.
+    pub fn set_runtime_opacity(
+        &mut self,
+        key: LandblockKey,
+        index: Option<u32>,
+        entity: &PlacedObjectRef,
+        value: Option<f32>,
+    ) -> bool {
+        set_block_runtime_opacity(&mut self.blocks, key, index, entity, value)
+    }
+
+    /// The run-time `Render_Opacity` held for placed entity `index` / `entity` of landblock
+    /// `key` ([`Self::set_runtime_opacity`]): `None` when the layer holds no object of that
+    /// entity, `Some(None)` when its object has no run-time value.
+    #[must_use]
+    pub fn runtime_opacity(
+        &self,
+        key: LandblockKey,
+        index: Option<u32>,
+        entity: &PlacedObjectRef,
+    ) -> Option<Option<f32>> {
+        block_runtime_opacity(&self.blocks, key, index, entity)
     }
 
     /// The cell the placed figure `tag` ([`figure_tag`]) is drawn through as a static
@@ -3140,7 +3268,7 @@ impl ObjectLayer {
                 // `particle-runtime.md` §12 rule 15 and `mesh.md` §8.8: the object is drawn
                 // with its fade times its owner property `Render_Opacity` ([`ObjectList`]),
                 // which decides its stage, its alpha and whether it casts shadows.
-                let opacity = fade * owner_factor(&b.owner_opacity, oi);
+                let opacity = fade * object_owner_factor(&b.owner_opacity, &b.runtime_opacity, oi);
                 // Before the culls: see the culled-block branch above.
                 let ds = st.smooth.update(d, frame.fps, false);
                 // With distance levels off the fade is always 1: the hand-over is a cut.
@@ -3516,6 +3644,114 @@ fn object_parts<'a>(instances: &'a [Instance], obj: &ObjectInfo) -> impl Iterato
     instances[start..end].iter().map(|i| i.part)
 }
 
+/// The object layer's landblock map without its GPU side, for tests of its users
+/// (`effects::opacity`): the same lookups as [`ObjectLayer::runtime_opacity`] and
+/// [`ObjectLayer::set_runtime_opacity`] on the same block lists.
+#[cfg(test)]
+pub(crate) mod test_blocks {
+    use super::*;
+
+    /// Landblocks' objects as the layer holds them ([`ObjectLayer::insert`],
+    /// [`ObjectLayer::insert_far`]).
+    #[derive(Default)]
+    pub struct TestBlocks {
+        blocks: HashMap<BlockId, BlockObjects>,
+    }
+
+    impl TestBlocks {
+        /// Sets the objects of `key` (replacing earlier ones, as [`ObjectLayer::insert`]):
+        /// one object, of placed entity `index`, with owner factor `factor`; the far set
+        /// gets an object of the same entity too, which the lookups must not take.
+        pub fn insert(&mut self, key: LandblockKey, index: u32, factor: f32) {
+            let (instances, objects) = Self::one_object(index);
+            let main = ObjectList::new(Arc::clone(&objects), vec![factor].into());
+            self.blocks.insert(
+                (key, BlockSet::Main),
+                BlockObjects::from_list(Arc::clone(&instances), main),
+            );
+            self.insert_far(key, index);
+        }
+
+        /// Sets the far entities of `key` ([`ObjectLayer::insert_far`]): one object, of
+        /// placed entity `index`.
+        pub fn insert_far(&mut self, key: LandblockKey, index: u32) {
+            let (instances, objects) = Self::one_object(index);
+            self.blocks.insert(
+                (key, BlockSet::Far),
+                BlockObjects::from_list(instances, ObjectList::from(objects)),
+            );
+        }
+
+        fn one_object(index: u32) -> (Arc<[Instance]>, Arc<[ObjectInfo]>) {
+            let p = Vec3::new(1.0, 2.0, 3.0);
+            let instances: Arc<[Instance]> = vec![Instance {
+                part: 5,
+                model: Mat4::from_translation(p),
+                scale: 1.0,
+                figure: None,
+                object: 0,
+            }]
+            .into();
+            let objects: Arc<[ObjectInfo]> = vec![ObjectInfo {
+                position: p,
+                lod: LodValues([300.0, 100.0, 16.0, 80.0, 1000.0, 1000.0, 1100.0, -1.0]),
+                generated: false,
+                entity: Some(index),
+                first: 0,
+                count: 1,
+                cell: OUTDOORS,
+                depth_bias: DrawDepthBias::NONE,
+            }]
+            .into();
+            (instances, objects)
+        }
+
+        /// Forgets `key`'s objects ([`ObjectLayer::remove`]).
+        pub fn remove(&mut self, key: LandblockKey) {
+            self.blocks.remove(&(key, BlockSet::Main));
+            self.blocks.remove(&(key, BlockSet::Far));
+        }
+
+        /// The owner factor the draw loop gives the object of entity `index` of `key`.
+        #[must_use]
+        pub fn owner_factor(&self, key: LandblockKey, index: u32) -> Option<f32> {
+            let b = self.blocks.get(&(key, BlockSet::Main))?;
+            let i = usize::try_from(*b.by_entity.get(&index)?).ok()?;
+            Some(object_owner_factor(&b.owner_opacity, &b.runtime_opacity, i))
+        }
+
+        /// The run-time value held for entity `index` of `key` (by index only).
+        #[must_use]
+        pub fn runtime_value(&self, key: LandblockKey, index: u32) -> Option<Option<f32>> {
+            let b = self.blocks.get(&(key, BlockSet::Main))?;
+            let i = *b.by_entity.get(&index)?;
+            Some(b.runtime_opacity.get(&i).copied())
+        }
+
+        /// [`ObjectLayer::runtime_opacity`].
+        #[must_use]
+        pub fn runtime_opacity(
+            &self,
+            key: LandblockKey,
+            index: Option<u32>,
+            entity: &PlacedObjectRef,
+        ) -> Option<Option<f32>> {
+            block_runtime_opacity(&self.blocks, key, index, entity)
+        }
+
+        /// [`ObjectLayer::set_runtime_opacity`].
+        pub fn set_runtime_opacity(
+            &mut self,
+            key: LandblockKey,
+            index: Option<u32>,
+            entity: &PlacedObjectRef,
+            value: Option<f32>,
+        ) -> bool {
+            set_block_runtime_opacity(&mut self.blocks, key, index, entity, value)
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3650,6 +3886,144 @@ mod tests {
         let plain: ObjectList = vec![o(0, 1)].into();
         assert_eq!(plain.owner_opacity(0), 1.0);
         assert_eq!(plain.len(), 1);
+    }
+
+    /// `particle-runtime.md` §12 rule 15 (spec-r9 answer items 1 and 3, spec-r10 answer
+    /// items 1–3): a run-time `Render_Opacity` written on a placed object masks the value of
+    /// its property sets in the opacity it is drawn with and reports, the last write
+    /// counting; removing it brings that value back; values are clamped and non-finite ones
+    /// count 1; an entity the block does not hold takes nothing; objects placed again start
+    /// without the value.
+    #[test]
+    fn runtime_render_opacity_masks_the_property_sets() {
+        let lod = LodValues([300.0, 100.0, 16.0, 80.0, 1000.0, 1000.0, 1100.0, -1.0]);
+        let p = Vec3::new(10.0, 20.0, 3.0);
+        let o = |first, entity| ObjectInfo {
+            position: p,
+            lod,
+            generated: false,
+            entity: Some(entity),
+            first,
+            count: 1,
+            cell: OUTDOORS,
+            depth_bias: DrawDepthBias::NONE,
+        };
+        let instances: Arc<[Instance]> = vec![inst(7, p, 1.0), inst(8, p, 1.0)].into();
+        let objects: Arc<[ObjectInfo]> = vec![o(0, 1), o(1, 2)].into();
+        let list = ObjectList::new(objects, vec![0.5].into());
+        let mut b = BlockObjects::from_list(Arc::clone(&instances), list.clone());
+        let none = PlacedObjectRef {
+            position: p.to_array(),
+            parts: Arc::from(Vec::new()),
+            rank: 0,
+        };
+        for st in &mut b.state {
+            st.fade.update(1.0, 100.0, 0.016, 0.0, true, true);
+        }
+        assert_eq!(b.owner(0), 0.5);
+        assert_eq!(b.drawn_opacity(Some(1), &none, 1), Some(0.5));
+        // Written: the run-time value replaces the property sets' value; the last counts.
+        assert!(b.set_runtime_opacity(Some(1), &none, Some(0.9)));
+        assert!(b.set_runtime_opacity(Some(1), &none, Some(0.25)));
+        assert_eq!(b.owner(0), 0.25);
+        assert_eq!(b.drawn_opacity(Some(1), &none, 1), Some(0.25));
+        assert_eq!(
+            object_owner_factor(&b.owner_opacity, &b.runtime_opacity, 0),
+            0.25,
+            "the draw loop's factor"
+        );
+        // An object without a listed factor takes its written value too.
+        assert!(b.set_runtime_opacity(Some(2), &none, Some(0.0)));
+        assert_eq!(b.drawn_opacity(Some(2), &none, 1), Some(0.0));
+        // Clamped; not finite: 1.
+        assert!(b.set_runtime_opacity(Some(1), &none, Some(3.0)));
+        assert_eq!(b.owner(0), 1.0);
+        assert!(b.set_runtime_opacity(Some(1), &none, Some(-2.0)));
+        assert_eq!(b.owner(0), 0.0);
+        assert!(b.set_runtime_opacity(Some(1), &none, Some(f32::NAN)));
+        assert_eq!(b.owner(0), 1.0);
+        // Removed: the property sets' value again.
+        assert!(b.set_runtime_opacity(Some(1), &none, None));
+        assert_eq!(b.owner(0), 0.5);
+        assert_eq!(b.drawn_opacity(Some(1), &none, 1), Some(0.5));
+        // An index no object carries: nothing set.
+        assert!(!b.set_runtime_opacity(Some(9), &none, Some(0.1)));
+        assert_eq!(b.runtime_opacity.len(), 1, "only object 1's value");
+        // Without an index the object is found by position, parts and rank.
+        let plain: Arc<[ObjectInfo]> = vec![
+            ObjectInfo {
+                entity: None,
+                ..o(0, 0)
+            },
+            ObjectInfo {
+                entity: None,
+                ..o(1, 0)
+            },
+        ]
+        .into();
+        let mut q = BlockObjects::from_list(Arc::clone(&instances), plain.into());
+        let at8 = PlacedObjectRef {
+            position: p.to_array(),
+            parts: vec![8].into(),
+            rank: 0,
+        };
+        assert!(q.set_runtime_opacity(None, &at8, Some(0.3)));
+        assert_eq!(q.owner(1), 0.3);
+        assert_eq!(q.owner(0), 1.0);
+        assert!(
+            !q.set_runtime_opacity(None, &none, Some(0.3)),
+            "no parts: no object"
+        );
+        // Placed again: no run-time value.
+        let again = BlockObjects::from_list(instances, list);
+        assert_eq!(again.owner(0), 0.5);
+        assert!(again.runtime_opacity.is_empty());
+    }
+
+    /// Rule 15's run-time values live on the landblock's own objects: a layer that holds
+    /// only the far entities of the landblock holds no object of the entity.
+    #[test]
+    fn runtime_opacity_takes_the_landblocks_own_objects_only() {
+        let key = LandblockKey::new(1, 10, 20).unwrap();
+        let mut t = test_blocks::TestBlocks::default();
+        let at = PlacedObjectRef {
+            position: [1.0, 2.0, 3.0],
+            parts: vec![5].into(),
+            rank: 0,
+        };
+        assert_eq!(t.runtime_opacity(key, Some(3), &at), None);
+        t.insert_far(key, 3);
+        assert_eq!(t.runtime_opacity(key, Some(3), &at), None, "far set only");
+        assert!(!t.set_runtime_opacity(key, Some(3), &at, Some(0.5)));
+        t.insert(key, 3, 0.8);
+        assert_eq!(t.runtime_opacity(key, Some(3), &at), Some(None));
+        assert!(t.set_runtime_opacity(key, Some(3), &at, Some(0.5)));
+        assert_eq!(t.runtime_opacity(key, Some(3), &at), Some(Some(0.5)));
+        assert_eq!(
+            t.runtime_opacity(key, None, &at),
+            Some(Some(0.5)),
+            "by position"
+        );
+        assert_eq!(t.owner_factor(key, 3), Some(0.5));
+        assert!(!t.set_runtime_opacity(key, Some(4), &at, Some(0.5)));
+        // Placed again: no run-time value.
+        t.insert(key, 3, 0.8);
+        assert_eq!(t.runtime_value(key, 3), Some(None));
+        assert_eq!(t.owner_factor(key, 3), Some(0.8));
+        t.remove(key);
+        assert_eq!(t.runtime_opacity(key, Some(3), &at), None);
+    }
+
+    /// `walker.md` §14.10 W29 item 3: part meshes never fill more than the object budget,
+    /// whatever share a caller hands the layer (the walker's own share is the budget; see
+    /// `walker_host`'s `the_walker_hands_the_objects_their_budget`).
+    #[test]
+    fn object_parts_keep_to_the_object_budget() {
+        let budget = 1536 << 20;
+        assert_eq!(object_arena_limit(budget, budget), budget);
+        assert_eq!(object_arena_limit(budget + (300 << 20), budget), budget);
+        assert_eq!(object_arena_limit(64 << 20, budget), 64 << 20);
+        assert_eq!(object_arena_limit(u64::MAX, budget), budget);
     }
 
     /// `particle-runtime.md` §12 rule 15 for static owners, by the entity index: two placed

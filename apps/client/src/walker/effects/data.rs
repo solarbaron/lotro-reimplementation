@@ -233,6 +233,11 @@ pub struct PlacedObject {
     pub index: Option<u32>,
     /// The entity: placement position, parts and rank ([`PlacedObjectRef`]).
     pub entity: PlacedObjectRef,
+    /// The owner property `Render_Opacity` of the entity's property sets as the object layer
+    /// draws it (`tessera_world::LandblockBundle::entity_render_opacities`: the per-instance
+    /// set, then the 0x47 chain, clamped; `None`: none holds a usable value, factor 1). The
+    /// runtime's stored value is made to agree with it (rule 15, [`super::opacity`]).
+    pub property_opacity: Option<f32>,
 }
 
 impl PlacedObject {
@@ -240,6 +245,7 @@ impl PlacedObject {
     /// `rank` ([`EffectData::scan_block`]): its index is the entity's own
     /// (`PlacedEntity::index`, the value the object layer's block list gives the object of a
     /// placed, not generated, entity as [`ObjectInfo::entity`](crate::walker::objects::ObjectInfo::entity)).
+    /// It carries no [`Self::property_opacity`] ([`Self::with_property_opacity`]).
     #[must_use]
     pub fn of_entity(
         key: LandblockKey,
@@ -255,7 +261,15 @@ impl PlacedObject {
                 parts,
                 rank,
             },
+            property_opacity: None,
         }
+    }
+
+    /// With [`Self::property_opacity`] `value`.
+    #[must_use]
+    pub fn with_property_opacity(mut self, value: Option<f32>) -> Self {
+        self.property_opacity = value;
+        self
     }
 }
 
@@ -305,6 +319,10 @@ pub struct BlockScan {
     pub bundle: usize,
     /// Effect owners.
     pub owners: Vec<EffectOwner>,
+    /// Static entities whose start-up scripts reach a SetProperty of `Render_Opacity` but no
+    /// Particle node, so that they are no effect owners and their writes are never made
+    /// (rule 15, [`super::opacity::WriteCounts::unfollowed_writers`]).
+    pub unfollowed_opacity_writers: u32,
 }
 
 /// The resolved material and texture-matrix bindings of a particle surface whose values
@@ -541,6 +559,24 @@ pub(crate) struct ScanOut {
     pub effects: Vec<(Did, f32)>,
     /// Whether a Particle node attaches to a holding location or a bone.
     pub attaches: bool,
+    /// Whether a SetProperty node writes [`ScanPairs::opacity`] (rule 15).
+    pub writes_opacity: bool,
+}
+
+/// What [`EffectData::owner_scan`] found.
+#[derive(Debug, Default)]
+struct OwnerScan {
+    /// The scripts, when the entity is an effect owner.
+    scripts: Option<OwnerScripts>,
+    /// No effect owner, but its start-up scripts reach a SetProperty of `Render_Opacity`.
+    unfollowed_opacity_writes: bool,
+}
+
+/// [`OwnerScan`] as cached per entity object.
+#[derive(Debug, Clone, Default)]
+struct ObjectScan {
+    scripts: Option<Arc<OwnerScripts>>,
+    unfollowed_opacity_writes: bool,
 }
 
 /// Shared data and caches (module docs).
@@ -560,7 +596,9 @@ pub struct EffectData {
     materials: Arc<MaterialLibrary<Arc<ArchiveSet>>>,
     tables: Mutex<HashMap<Did, Option<Arc<ScriptTable>>>>,
     scriptlets: Mutex<HashMap<Did, Option<Arc<Scriptlet>>>>,
-    objects: Mutex<HashMap<Did, Option<Arc<OwnerScripts>>>>,
+    objects: Mutex<HashMap<Did, ObjectScan>>,
+    /// The PID of `Render_Opacity` (rule 15, [`ScanPairs::opacity`]).
+    opacity_pid: Option<u32>,
     points: Mutex<HashMap<Did, Option<Arc<AttachPoints>>>>,
     scales: Mutex<HashMap<Did, ModelScales>>,
     records: Mutex<HashMap<u32, Option<Arc<EffectRecord>>>>,
@@ -601,6 +639,7 @@ impl EffectData {
                 }
             };
         let startup_key = svocab.as_ref().map(|v| v.startup_key);
+        let opacity_pid = dict.pid("Render_Opacity");
         Ok(Self {
             set,
             dict: Arc::new(dict),
@@ -612,6 +651,7 @@ impl EffectData {
             tables: Mutex::new(HashMap::new()),
             scriptlets: Mutex::new(HashMap::new()),
             objects: Mutex::new(HashMap::new()),
+            opacity_pid,
             points: Mutex::new(HashMap::new()),
             scales: Mutex::new(HashMap::new()),
             records: Mutex::new(HashMap::new()),
@@ -711,6 +751,7 @@ impl EffectData {
                     .and_then(|d| d.default.as_ref())
                     .and_then(PropertyValue::as_did)
             },
+            opacity: self.opacity_pid,
         };
         scan_scripts(closure, keys, &pairs, |d| self.scriptlet(d))
     }
@@ -719,23 +760,37 @@ impl EffectData {
     /// last), when its start-up scripts reach a Particle node; every effect record they
     /// name is loaded on the way (the reach needs their fade distances).
     fn owner_scripts(&self, object: Did, instance: Option<&PropertySet>) -> Option<OwnerScripts> {
-        let v = self.svocab.as_ref()?;
-        let chain =
-            collect_entity_scripts(object, &*self.dict, v, |d: Did| fetch(&self.set, d.0)).ok()?;
+        self.owner_scan(object, instance).scripts
+    }
+
+    /// [`Self::owner_scripts`], also noting an entity that is no owner but whose start-up
+    /// scripts write `Render_Opacity` ([`ObjectScan::unfollowed_opacity_writes`]).
+    fn owner_scan(&self, object: Did, instance: Option<&PropertySet>) -> OwnerScan {
+        let Some(v) = self.svocab.as_ref() else {
+            return OwnerScan::default();
+        };
+        let Ok(chain) =
+            collect_entity_scripts(object, &*self.dict, v, |d: Did| fetch(&self.set, d.0))
+        else {
+            return OwnerScan::default();
+        };
         let mut s = chain.scripts;
         if let Some(set) = instance {
             s.add_property_set(set, v);
         }
         let tables = s.tables();
         if tables.is_empty() {
-            return None;
+            return OwnerScan::default();
         }
         let closure = self.closure(&tables);
         let mut keys: Vec<u32> = self.startup_key.into_iter().collect();
         keys.extend_from_slice(&s.startup_scripts);
         let scan = self.scan(&closure, &keys, &s.properties);
         if scan.effects.is_empty() {
-            return None;
+            return OwnerScan {
+                scripts: None,
+                unfollowed_opacity_writes: scan.writes_opacity,
+            };
         }
         let mut reach: Option<f32> = None;
         for (did, extra) in &scan.effects {
@@ -753,21 +808,33 @@ impl EffectData {
             };
             reach = Some(reach.map_or(r, |x: f32| x.max(r)));
         }
-        Some(OwnerScripts {
-            tables,
-            startup_scripts: s.startup_scripts.clone(),
-            properties: s.properties.clone(),
-            reach: reach.unwrap_or(DEFAULT_REACH).min(MAX_REACH),
-            attaches: scan.attaches,
-        })
+        OwnerScan {
+            scripts: Some(OwnerScripts {
+                tables,
+                startup_scripts: s.startup_scripts.clone(),
+                properties: s.properties.clone(),
+                reach: reach.unwrap_or(DEFAULT_REACH).min(MAX_REACH),
+                attaches: scan.attaches,
+            }),
+            unfollowed_opacity_writes: false,
+        }
     }
 
     /// The effect scripts of an entity object without an instance set, read once.
     fn object_scripts(&self, object: Did) -> Option<Arc<OwnerScripts>> {
+        self.object_scan(object).scripts
+    }
+
+    /// [`Self::owner_scan`] of an entity object without an instance set, read once.
+    fn object_scan(&self, object: Did) -> ObjectScan {
         if let Some(o) = lock(&self.objects).get(&object) {
             return o.clone();
         }
-        let o = self.owner_scripts(object, None).map(Arc::new);
+        let scan = self.owner_scan(object, None);
+        let o = ObjectScan {
+            scripts: scan.scripts.map(Arc::new),
+            unfollowed_opacity_writes: scan.unfollowed_opacity_writes,
+        };
         let mut m = lock(&self.objects);
         if m.len() < MAX_CACHED_OBJECTS {
             m.insert(object, o.clone());
@@ -909,6 +976,7 @@ impl EffectData {
         let key = bundle.key;
         let origin = key.origin();
         let mut owners = Vec::new();
+        let mut unfollowed_opacity_writers = 0u32;
         let figure_of: HashMap<u32, (u32, Option<Arc<PropertySet>>)> = bundle
             .figures
             .iter()
@@ -958,7 +1026,11 @@ impl EffectData {
                     self.owner_scripts(object, Some(instance)).map(Arc::new)
                 }
                 _ if object.prefix() == ENTITY_PREFIX || figure.is_some() => {
-                    self.object_scripts(object)
+                    let scan = self.object_scan(object);
+                    if figure.is_none() && scan.unfollowed_opacity_writes {
+                        unfollowed_opacity_writers = unfollowed_opacity_writers.saturating_add(1);
+                    }
+                    scan.scripts
                 }
                 _ => None,
             };
@@ -1010,7 +1082,11 @@ impl EffectData {
                             scale,
                         },
                         points,
-                        Some(PlacedObject::of_entity(key, e, parts, rank)),
+                        Some(
+                            PlacedObject::of_entity(key, e, parts, rank).with_property_opacity(
+                                bundle.entity_render_opacities.get(ei).copied().flatten(),
+                            ),
+                        ),
                     )
                 }
             };
@@ -1029,6 +1105,7 @@ impl EffectData {
             key,
             bundle: identity,
             owners,
+            unfollowed_opacity_writers,
         }
     }
 }
@@ -1130,6 +1207,9 @@ pub(crate) struct ScanPairs<'a> {
     pub owner: &'a PropertyState,
     /// The dictionary default of a property, when it is a DID.
     pub default: &'a dyn Fn(u32) -> Option<Did>,
+    /// The PID of `Render_Opacity`, whose SetProperty nodes the scan notes
+    /// ([`ScanOut::writes_opacity`]); `None`: not noted.
+    pub opacity: Option<u32>,
 }
 
 impl ScanPairs<'_> {
@@ -1247,6 +1327,9 @@ fn scan_node(
             out.attaches |= p.holding_location != 0 || p.bone_type != 0;
         }
         NodeData::Run(r) if !r.stop => keys.push(r.script),
+        NodeData::SetProperty { property, .. } if Some(*property) == pairs.opacity => {
+            out.writes_opacity = true;
+        }
         NodeData::Scriptlet { file, parameters } => {
             let (files, filled) = scriptlet_choices(n, *file, parameters, context, pairs);
             for f in files {
@@ -1445,6 +1528,7 @@ mod tests {
             file: Some(FILE),
             owner,
             default: &|_| None,
+            opacity: None,
         };
         let out = scan_scripts(closure, &[STARTUP], &pairs, |d| {
             scriptlets.iter().find(|s| s.0 == d.0).map(|s| {
@@ -1459,6 +1543,55 @@ mod tests {
         found.sort_unstable();
         found.dedup();
         found
+    }
+
+    /// Rule 15 (spec-r10 answer item 4): the scan notes a SetProperty of `Render_Opacity`
+    /// (through scriptlets too), so entities that write it without being effect owners can
+    /// be counted as not followed; another property, or no PID, notes nothing.
+    #[test]
+    fn effect_scan_notes_opacity_writes() {
+        const OPACITY: u32 = 0x1000_0020;
+        let set = |property| {
+            script_node(
+                NodeKind::SET_PROPERTY,
+                NodeData::SetProperty {
+                    property,
+                    value: Some(Box::new(PropertyEntry {
+                        pid: property,
+                        value: PropertyValue::Float(0.0),
+                    })),
+                    server_only: false,
+                },
+                BaseBlock::default(),
+            )
+        };
+        let owner = PropertyState::new();
+        let scan = |closure: &[Arc<ScriptTable>], opacity, scriptlets: &[(u32, Vec<_>)]| {
+            let pairs = ScanPairs {
+                file: Some(FILE),
+                owner: &owner,
+                default: &|_| None,
+                opacity,
+            };
+            scan_scripts(closure, &[STARTUP], &pairs, |d| {
+                scriptlets.iter().find(|s| s.0 == d.0).map(|s| {
+                    Arc::new(Scriptlet {
+                        did: d,
+                        roots: s.1.clone(),
+                        dependencies: Vec::new(),
+                    })
+                })
+            })
+        };
+        let direct = startup(vec![set(OPACITY)]);
+        let out = scan(&direct, Some(OPACITY), &[]);
+        assert!(out.writes_opacity);
+        assert!(out.effects.is_empty());
+        assert!(!scan(&direct, None, &[]).writes_opacity);
+        assert!(!scan(&startup(vec![set(OPACITY + 1)]), Some(OPACITY), &[]).writes_opacity);
+        let nested = startup(vec![invoke(0x0C00_0001, &[], &[], &[])]);
+        let scriptlets = [(0x0C00_0001, vec![set(OPACITY)])];
+        assert!(scan(&nested, Some(OPACITY), &scriptlets).writes_opacity);
     }
 
     /// `appearance.md` §7.4.1, edge-case Decision: a driven `ScriptletScript_File` pair on

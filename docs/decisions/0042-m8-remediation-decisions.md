@@ -92,3 +92,20 @@ every remaining contradiction between the specs involves the gameplay spec. So (
    client-internal names or structure offsets (in a spec, a decision record or a commit
    message) are not merged. The branch is rebuilt so that its merged history contains only
    clean text.
+
+## Amendment (2026-10-25): documented script RPC layouts
+
+The clean-room audit of package `m8-play` blocked it on item 2: the code embeds the argument
+layouts of the 38 script RPC methods that `official-messages-play.md` §6.3–§7.1 documents. The
+spec contradicts itself here: §5.1 says the signatures are read from the install at run time,
+while §6.3–§7.1 give them in full, and no Accepted spec says how to read a method's signature
+from the install. So (owner-delegated):
+
+10. **The documented methods are message layouts.** The argument layouts that an Accepted
+    official-protocol spec documents per method are wire message layouts, like any opcode's
+    field table (decision 0034 §2 item 4, decision 0012), and may be written in code with the
+    spec as their source. Item 2's rule stays for everything else: a method no Accepted spec
+    documents is decoded only with a signature read from the install at run time, never with a
+    table in code. The generic argument decoder is kept for that. A writer reconciles §5.1 with
+    §6.3–§7.1 in the next spec pass, and records how a method's signature is read from the
+    install, or an OPEN for it.

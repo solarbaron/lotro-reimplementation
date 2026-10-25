@@ -656,3 +656,33 @@ stage 2 (the held gameplay spec).
 **Next for the other AI:** stage 2 (the gameplay spec held in `research/held/incident-0041/`),
 under the same rules: a writer commit, a header-only reviewer commit by new sessions, signed off
 with one trailer paragraph.
+
+## 15. Spec work found by the stage-1 build (2026-10-25)
+
+For the next spec pass on the core specs (same rules: a writer commit, then a header-only
+reviewer commit by new sessions). From the `m8-play` build and its audit:
+
+- **Play §5.1 vs §6.3–§7.1:** §5.1 says RPC signatures are read from the install at run time,
+  but §6.3–§7.1 give them in full. Reconcile per decision 0042 item 10, and record how a
+  method's signature is read from the install, or an OPEN for it.
+- **Play §4.5 step 2:** which server event starts a portal-space wait, and where
+  `expected_stamp` comes from before the 0xCE that step 3 handles.
+- **Play §4.2 and §8:** the mapping from a neutral move command (position, heading, velocity) to
+  0x24's `move_state` and three input axes: the `move_state` values and the axis scale. Also
+  what counts as "moving" for the 20 Hz cadence (§4.2 item 1).
+- **Play §4.3.2:** correction tolerances and how many unacknowledged steps to keep.
+- **Play §4.4.1 / world §2.5.2:** the reference and direction of the 1-byte heading (the code
+  reads it as the `coordinates.md` §11.3 yaw, Tessera heading = wire + π/2).
+- **Play §4.5 step 4:** the portal-space loading timeout.
+- **Play §4.6.1:** `path_type` meanings, `speed_param` units, interpolation along 0x59 paths.
+- **Play §6.7:** the chat category numbers of Yell and Fellowship, and which install enum labels
+  they come from.
+- **Play §6.6.1–§6.6.5:** the chat server's delivery queue and order numbering; the wait for
+  0x165; when the initial delay and when the retry interval applies; the 0x16A `msg_flags`,
+  `delivery_flag` and the local sender descriptor; the room ID when joining a user room by
+  name; whether `/join` sends 0x16E or 0x177 (or both, in which order) and with what flags.
+- **Play §6.6.4:** the 0x08040000 note names `chat_mode_word`, which that message type does not
+  contain.
+- **Play §6.5.1:** properties typed "Prefixed UTF-16LE string", which no property type encodes.
+- **Play §6.3.2:** the meaning of 0x84EC001A's `status_code`.
+- **Play §8:** the mapping from a neutral emote command to 0x84F90007 / 0x84F90005.

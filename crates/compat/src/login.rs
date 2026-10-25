@@ -14,10 +14,11 @@
 //! they live only in [`soap_encoder`].
 //!
 //! The client network version string comes, in this order, from a value the
-//! user supplies, from the string the caller names in the client executable's
-//! version resource ([`crate::version_resource`]), or from the user when
-//! neither gives one ([`discover_network_version`], decision 0042 item 1). The
-//! executable's code is never scanned.
+//! user supplies, from the `StringFileInfo` string of the client executable's
+//! version resource ([`crate::version_resource`]; the keys and executable paths
+//! of `official-login.md` §2.4.1 step 2 unless the caller names others), or from
+//! the user when neither gives one ([`discover_network_version`], decision 0042
+//! item 1). The executable's code is never scanned.
 //!
 //! # Hostile input
 //!
@@ -80,10 +81,11 @@ pub const DICT_KEY_SERVER_TO_CLIENT: u32 = 0x1000_0003;
 /// DID Map (`0x28000000`) is the compression dictionary sub-map (`official-session.md` §4.1.3).
 pub const ROOT_KEY_COMPRESSION_DICTIONARY: u32 = 0x0000_0003;
 
-/// Data ID of Master DID Map `3` observed in `client_general.dat` (`0x28000010`, §2.4.3).
-/// Code resolves the sub-map through the root map at run time
-/// ([`compression_dictionary_map_did`]); this value is the verification fact.
-pub const DID_MASTER_MAP_3_COMPRESSION: u32 = 0x2800_0010;
+/// File offset of the Master DID Map file ID (`u32` LE) in a `.dat` superblock
+/// (`0x170..0x173`, `official-session.md` §4.1.3 item 1). The root map, the compression
+/// dictionary sub-map and the dictionary records are all found at run time from here
+/// (`property-system.md` §8.1: their DIDs are never built in).
+pub const DAT_ROOT_DID_MAP_OFFSET: usize = 0x170;
 
 /// 16-byte mixed-endian `formatUuid` (`E795878D-C633-471C-8315-C3DBBEAD2FAA`) at
 /// `+0x00..+0x0F` of every `0x0E01xxxx` compression dictionary record (§2.4.3, invariant `I16`).
@@ -334,7 +336,7 @@ impl LoginError {
 
 /// Zeroes a mutable byte slice in place using `black_box` so the compiler
 /// does not elide the wipe (§6.3).
-fn zeroize_bytes(buf: &mut [u8]) {
+pub(crate) fn zeroize_bytes(buf: &mut [u8]) {
     buf.fill(0);
     std::hint::black_box(&buf);
 }
@@ -342,7 +344,7 @@ fn zeroize_bytes(buf: &mut [u8]) {
 /// Zeroes the whole backing buffer of a `String` (its capacity, not only its
 /// length) and leaves it empty (§6.3). The buffer is taken out of the string,
 /// so no copy is made and no reallocation can leave the old bytes behind.
-fn zeroize_string(s: &mut String) {
+pub(crate) fn zeroize_string(s: &mut String) {
     let mut bytes = std::mem::take(s).into_bytes();
     // Growing to the existing capacity never reallocates.
     bytes.resize(bytes.capacity(), 0);
@@ -1501,6 +1503,37 @@ pub fn extract_didver_from_dat_header(header_bytes: &[u8]) -> Result<(String, u3
     parse_dat_superblock_didver_descriptor(desc)
 }
 
+/// Reads the Master DID Map file ID (the root `DataIdMap` DID) from the superblock of a
+/// `.dat` archive: the `u32` LE at file offset `0x170` (`official-session.md` §4.1.3 item 1),
+/// after checking the `"BT\0\0"` magic at `0x140`. The value must be a DID map (prefix
+/// `0x28`).
+///
+/// # Errors
+///
+/// Returns [`LoginError::ConfigInvalid`] (`F02_CONFIG_INVALID`) if `header_bytes` is too
+/// short, the magic is missing, or the value is not a DID map DID.
+pub fn root_did_map_from_superblock(header_bytes: &[u8]) -> Result<u32, LoginError> {
+    let magic = header_bytes.get(DAT_SUPERBLOCK_OFFSET..DAT_SUPERBLOCK_OFFSET + 4);
+    if magic != Some(&DAT_SUPERBLOCK_MAGIC[..]) {
+        return Err(LoginError::ConfigInvalid {
+            reason: "invalid or missing .dat superblock magic at 0x140".to_owned(),
+        });
+    }
+    let raw: [u8; 4] = header_bytes
+        .get(DAT_ROOT_DID_MAP_OFFSET..DAT_ROOT_DID_MAP_OFFSET + 4)
+        .and_then(|b| b.try_into().ok())
+        .ok_or_else(|| LoginError::ConfigInvalid {
+            reason: ".dat header too short for the Master DID Map ID at 0x170".to_owned(),
+        })?;
+    let did = u32::from_le_bytes(raw);
+    if did >> 24 != 0x28 {
+        return Err(LoginError::ConfigInvalid {
+            reason: format!("superblock Master DID Map ID 0x{did:08X} is not a DID map"),
+        });
+    }
+    Ok(did)
+}
+
 /// Reads the superblock of a `.dat` archive on disk (e.g. `client_general.dat`)
 /// and extracts `(<didver_string>, archive_version_u32)` (`docs/specs/official-login.md` §2.4.1).
 ///
@@ -1528,12 +1561,19 @@ pub fn extract_didver_from_dat_file(dat_path: &Path) -> Result<(String, u32), Lo
 // ============================================================================
 
 /// Maximum byte length of a client network version string accepted by
-/// [`is_valid_network_version`].
-///
-/// `official-login.md` §2.4.1 allows `1` to `24` characters. This crate still accepts up to
-/// `64` because a test outside this module's files asserts that bound; the reduction to
-/// `24` is recorded as outstanding work.
-pub const MAX_NETWORK_VERSION_LEN: usize = 64;
+/// [`is_valid_network_version`]: `1` to `24` printable ASCII characters
+/// (`official-login.md` §2.4.1 steps 1 and 2).
+pub const MAX_NETWORK_VERSION_LEN: usize = 24;
+
+/// The `StringFileInfo` keys read from the version resource when the caller names none, in
+/// order: the spelling found in the client's resource (without the second `i`) and the
+/// regular spelling (`official-login.md` §2.4.1 step 2; interoperability strings).
+pub const DEFAULT_NETWORK_VERSION_KEYS: [&str; 2] = ["CompatibiltyVersion", "CompatibilityVersion"];
+
+/// The client executables whose version resource is read when the caller names none,
+/// relative to the install root and in order: the 64-bit client, then the 32-bit client
+/// (`official-login.md` §2.4.1 step 2; interoperability file names).
+pub const DEFAULT_CLIENT_EXECUTABLES: [&str; 2] = ["x64/lotroclient64.exe", "lotroclient.exe"];
 
 /// Checks that `candidate` can serve as the client network version string: printable
 /// ASCII characters (`0x21..=0x7E`, so no whitespace) other than `;`, at most
@@ -1567,21 +1607,20 @@ pub enum AskUserReason {
     /// consulted, so a bad override is never silently replaced. An empty or
     /// whitespace-only value counts as not supplied.
     UserValueInvalid,
-    /// No executable path was given, so the version resource was not read.
+    /// No executable path was given and none of [`DEFAULT_CLIENT_EXECUTABLES`] exists
+    /// under the install root (or no install root was given), so the version resource
+    /// was not read.
     NoExecutable,
-    /// The caller named no version-resource string, so the version resource
-    /// was not consulted (no key name is built in).
-    NoResourceKey,
     /// The executable's version resource could not be read.
     ResourceUnreadable(VersionResourceError),
-    /// The version resource has no string with the named key.
+    /// The version resource has no string with any of the keys tried.
     ResourceEntryMissing {
-        /// The key the caller named.
+        /// The key tried (the keys tried, joined by `" or "`, for the default keys).
         key: String,
     },
-    /// The named string exists but is not a valid network version string.
+    /// The string found exists but is not a valid network version string.
     ResourceEntryInvalid {
-        /// The key the caller named.
+        /// The key of the string found.
         key: String,
     },
 }
@@ -1606,10 +1645,14 @@ pub struct NetworkVersionQuery<'a> {
     /// A value the user supplied (setting or command line); always wins.
     /// Empty or whitespace-only counts as not supplied.
     pub user_value: Option<&'a str>,
-    /// Path of the client executable whose version resource may be read.
+    /// The install root: when `client_executable` is `None`, the first of
+    /// [`DEFAULT_CLIENT_EXECUTABLES`] that exists under it is read.
+    pub install_root: Option<&'a Path>,
+    /// Path of the client executable whose version resource is read (overrides the
+    /// default paths under `install_root`).
     pub client_executable: Option<&'a Path>,
-    /// Key of the version-resource string that holds the version. There is no
-    /// default: when `None`, the version resource is not consulted.
+    /// Key of the version-resource string that holds the version. When `None`, the keys of
+    /// [`DEFAULT_NETWORK_VERSION_KEYS`] are tried in order.
     pub resource_key: Option<&'a str>,
 }
 
@@ -1620,29 +1663,61 @@ pub fn network_version_from_resource(
     resource: &VersionResource,
     key: &str,
 ) -> NetworkVersionDiscovery {
-    match resource.lookup(key).map(str::trim) {
-        None => NetworkVersionDiscovery::AskUser(AskUserReason::ResourceEntryMissing {
-            key: key.to_owned(),
-        }),
-        Some(value) if is_valid_network_version(value) => NetworkVersionDiscovery::Found {
-            version: value.to_owned(),
-            source: NetworkVersionSource::VersionResource {
-                key: key.to_owned(),
-            },
-        },
-        Some(_) => NetworkVersionDiscovery::AskUser(AskUserReason::ResourceEntryInvalid {
-            key: key.to_owned(),
-        }),
-    }
+    network_version_from_resource_keys(resource, &[key])
 }
 
-/// Finds the client network version string in the order of decision 0042
-/// item 1:
+/// Looks up the network version string under the first of `keys` that the version resource
+/// has (step 2 of [`discover_network_version`]); the string found decides, valid or not.
+#[must_use]
+pub fn network_version_from_resource_keys(
+    resource: &VersionResource,
+    keys: &[&str],
+) -> NetworkVersionDiscovery {
+    for &key in keys {
+        match resource.lookup(key).map(str::trim) {
+            None => {}
+            Some(value) if is_valid_network_version(value) => {
+                return NetworkVersionDiscovery::Found {
+                    version: value.to_owned(),
+                    source: NetworkVersionSource::VersionResource {
+                        key: key.to_owned(),
+                    },
+                };
+            }
+            Some(_) => {
+                return NetworkVersionDiscovery::AskUser(AskUserReason::ResourceEntryInvalid {
+                    key: key.to_owned(),
+                });
+            }
+        }
+    }
+    NetworkVersionDiscovery::AskUser(AskUserReason::ResourceEntryMissing {
+        key: keys.join(" or "),
+    })
+}
+
+/// The executable [`discover_network_version`] reads: the one named, otherwise the first of
+/// [`DEFAULT_CLIENT_EXECUTABLES`] that is a file under `install_root`.
+#[must_use]
+pub fn client_executable_for_version(query: &NetworkVersionQuery<'_>) -> Option<PathBuf> {
+    if let Some(exe) = query.client_executable {
+        return Some(exe.to_path_buf());
+    }
+    let root = query.install_root?;
+    DEFAULT_CLIENT_EXECUTABLES
+        .iter()
+        .map(|rel| root.join(rel))
+        .find(|path| path.is_file())
+}
+
+/// Finds the client network version string in the order of `official-login.md` §2.4.1
+/// item 1 (decision 0042 item 1):
 ///
 /// 1. the value the user supplied, when there is one;
-/// 2. the string the caller names in the string table of the client
-///    executable's version resource (a documented PE structure; no key name is
-///    built in);
+/// 2. the `StringFileInfo` string of the client executable's version resource (a
+///    documented PE structure): the executable named, or else the first of
+///    [`DEFAULT_CLIENT_EXECUTABLES`] under the install root; the key named, or else the
+///    keys of [`DEFAULT_NETWORK_VERSION_KEYS`] in order;
 /// 3. otherwise [`NetworkVersionDiscovery::AskUser`].
 ///
 /// The executable is only read (headers and version resource), never scanned.
@@ -1660,15 +1735,20 @@ pub fn discover_network_version(query: &NetworkVersionQuery<'_>) -> NetworkVersi
             NetworkVersionDiscovery::AskUser(AskUserReason::UserValueInvalid)
         };
     }
-    let Some(key) = query.resource_key else {
-        return NetworkVersionDiscovery::AskUser(AskUserReason::NoResourceKey);
-    };
-    let Some(exe) = query.client_executable else {
+    let Some(exe) = client_executable_for_version(query) else {
         return NetworkVersionDiscovery::AskUser(AskUserReason::NoExecutable);
     };
-    match read_version_resource_from_file(exe) {
+    let named;
+    let keys: &[&str] = match query.resource_key {
+        Some(key) => {
+            named = [key];
+            &named
+        }
+        None => &DEFAULT_NETWORK_VERSION_KEYS,
+    };
+    match read_version_resource_from_file(&exe) {
         Ok(resource) => {
-            let outcome = network_version_from_resource(&resource, key);
+            let outcome = network_version_from_resource_keys(&resource, keys);
             if let NetworkVersionDiscovery::AskUser(reason) = &outcome {
                 tracing::debug!(?reason, "version resource gave no network version string");
             }
@@ -1709,7 +1789,7 @@ pub fn encode_client_version_payload(version_str: &str) -> Result<Vec<u8>, Login
 /// Client and data version identifiers prepared for the UDP session layer
 /// (`docs/specs/official-login.md` §2.4.1, invariant `I11`, Vector `V7`). The compression
 /// dictionaries and their `codecUuid`s are resolved separately
-/// ([`resolve_prefix_tree_dictionary`], §2.4.3).
+/// ([`resolve_bit_tree_table`], §2.4.3).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VersionInfo {
     /// `<netver_string>` (§2.4.1 item 1; see [`is_valid_network_version`]).
@@ -1820,7 +1900,7 @@ pub struct DidMap3Entry {
     pub target_did: u32,
 }
 
-/// Largest number of groups accepted in one DID map (engineering bound; the records of an
+/// Largest number of groups accepted in one DID map (engineering choice, spec silent; the records of an
 /// install have two, `records.md` §8.1).
 pub const MAX_DID_MAP_GROUPS: usize = 64;
 
@@ -1933,6 +2013,8 @@ impl DidMap3Table {
             });
         }
         let mut entries: Vec<DidMap3Entry> = Vec::new();
+        let mut seen_keys = BTreeSet::new();
+        let mut duplicates = 0usize;
         let mut names = BTreeMap::new();
         let mut groups = 0usize;
         loop {
@@ -1941,7 +2023,7 @@ impl DidMap3Table {
                 return Err(DatCursor::err("too many groups"));
             }
             let n = c.tsize(8)?;
-            let mut group = Vec::with_capacity(n);
+            let mut group = Vec::with_capacity(n.min(64));
             for _ in 0..n {
                 let enum_key = c.u32()?;
                 let target_did = c.u32()?;
@@ -1962,15 +2044,22 @@ impl DidMap3Table {
                 names.entry(key).or_insert(label);
             }
             for entry in group {
-                if entries.iter().any(|e| e.enum_key == entry.enum_key) {
-                    tracing::warn!(key = entry.enum_key, "duplicate DID map key; first kept");
-                } else {
+                if seen_keys.insert(entry.enum_key) {
                     entries.push(entry);
+                } else {
+                    duplicates += 1;
                 }
             }
             if c.is_empty() {
                 break;
             }
+        }
+        if duplicates > 0 {
+            tracing::warn!(
+                self_did,
+                duplicates,
+                "duplicate DID map keys; the first of each kept"
+            );
         }
         Ok(Self {
             self_did,
@@ -2009,7 +2098,7 @@ pub fn compression_dictionary_map_did(root_map_bytes: &[u8]) -> Result<u32, Logi
 /// Parsed 44-byte (`0x2C`) header of a `0x0E01xxxx` compression dictionary record
 /// (`official-session.md` §4.1.3 item 2; `official-login.md` §2.4.3, invariant `I16`).
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PrefixTreeDictionaryHeader {
+pub struct BitTreeTableHeader {
     /// `formatUuid` at `+0x00..+0x0F` (always [`PREFIX_TREE_DICT_SCHEMA_GUID`]).
     pub format_uuid: [u8; 16],
     /// `codecUuid` at `+0x10..+0x1F`, matched against `ConnectChallengeHeader.codecUuid`.
@@ -2027,7 +2116,7 @@ pub struct PrefixTreeDictionaryHeader {
     pub redirects: bool,
 }
 
-impl PrefixTreeDictionaryHeader {
+impl BitTreeTableHeader {
     /// Minimum byte length of a `0x0E01xxxx` compression dictionary record (`44` bytes = `0x2C`).
     pub const MIN_HEADER_LEN: usize = 0x2C;
 
@@ -2101,7 +2190,7 @@ impl PrefixTreeDictionaryHeader {
 /// Result of resolving a compression dictionary key through Master DID Map `3` and an optional
 /// redirect (`docs/specs/official-login.md` §2.4.3, invariant `I16`).
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ResolvedPrefixTreeDictionary {
+pub struct ResolvedBitTreeTable {
     /// Requested key (e.g. `0x10000002` or `0x10000001`).
     pub enum_key: u32,
     /// Data ID the map gives (e.g. `0x0E010000` or `0x0E010002`).
@@ -2109,7 +2198,7 @@ pub struct ResolvedPrefixTreeDictionary {
     /// Data ID of the literal dictionary after any redirect (e.g. `0x0E010000` or `0x0E010001`).
     pub resolved_did: u32,
     /// Header of the literal dictionary record.
-    pub header: PrefixTreeDictionaryHeader,
+    pub header: BitTreeTableHeader,
 }
 
 /// Resolves a compression dictionary key (`0x10000002`, `0x10000001` or `0x10000003`) via
@@ -2120,12 +2209,12 @@ pub struct ResolvedPrefixTreeDictionary {
 ///
 /// Returns [`LoginError::ConfigInvalid`] (`F02_CONFIG_INVALID`) if `enum_key` is absent from
 /// `map`, a record is missing from `load_record`, a record fails
-/// [`PrefixTreeDictionaryHeader::parse`], or the redirect target redirects again.
-pub fn resolve_prefix_tree_dictionary<'a, F>(
+/// [`BitTreeTableHeader::parse`], or the redirect target redirects again.
+pub fn resolve_bit_tree_table<'a, F>(
     map: &DidMap3Table,
     enum_key: u32,
     mut load_record: F,
-) -> Result<ResolvedPrefixTreeDictionary, LoginError>
+) -> Result<ResolvedBitTreeTable, LoginError>
 where
     F: FnMut(u32) -> Option<&'a [u8]>,
 {
@@ -2137,9 +2226,9 @@ where
     let initial_bytes = load_record(initial_did).ok_or_else(|| LoginError::ConfigInvalid {
         reason: format!("missing compression dictionary record 0x{initial_did:08X}"),
     })?;
-    let initial_hdr = PrefixTreeDictionaryHeader::parse(initial_bytes, initial_did)?;
+    let initial_hdr = BitTreeTableHeader::parse(initial_bytes, initial_did)?;
     if !initial_hdr.redirects {
-        return Ok(ResolvedPrefixTreeDictionary {
+        return Ok(ResolvedBitTreeTable {
             enum_key,
             initial_did,
             resolved_did: initial_did,
@@ -2154,7 +2243,7 @@ where
                 "missing redirected compression dictionary record 0x{redirected_did:08X} (from 0x{initial_did:08X})"
             ),
         })?;
-    let redirected_hdr = PrefixTreeDictionaryHeader::parse(redirected_bytes, redirected_did)?;
+    let redirected_hdr = BitTreeTableHeader::parse(redirected_bytes, redirected_did)?;
     if redirected_hdr.redirects {
         return Err(LoginError::ConfigInvalid {
             reason: format!(
@@ -2163,7 +2252,7 @@ where
             ),
         });
     }
-    Ok(ResolvedPrefixTreeDictionary {
+    Ok(ResolvedBitTreeTable {
         enum_key,
         initial_did,
         resolved_did: redirected_did,

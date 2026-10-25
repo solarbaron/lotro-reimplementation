@@ -29,11 +29,20 @@ use crate::session::{MessageRoutingHeader, SessionError, decode_message};
 /// `Array`) and nested `LocalizedTokenText` (argument kind 1) values (§7.1 item 2).
 pub const MAX_RECURSION_DEPTH: usize = 16;
 
+/// Most entries a decoder reserves room for before it has read them. Counts are checked
+/// against the bytes that remain, but nested tables each check against the same remaining
+/// bytes, so reserving the full count at every level could reserve far more memory than the
+/// message holds. Vectors start at most this large and grow as entries are read
+/// (engineering choice, spec silent).
+pub const MAX_PREALLOC_ENTRIES: usize = 64;
+
 /// Type 4 (`Timestamp`) "no time" value (`3.4028234663852886e38`, §2.7.1).
 pub const TIMESTAMP_NO_TIME: f64 = 3.402_823_466_385_288_6e38;
 
-/// Record DID of the in-game calendar in `client_general.dat` (`0x35000000`, §4.4.2).
-pub const WORLD_CALENDAR_CONFIG_DID: u32 = 0x3500_0000;
+/// Key of the in-game calendar record in its directory (`0x96` = `150`, §4.4.2). The record
+/// DID is the one this key resolves to at run time (`0x35000000` in the install the spec
+/// describes, a verification value); [`WorldCalendarConfig::decode`] is given it.
+pub const CALENDAR_DIRECTORY_KEY: u32 = 0x0000_0096;
 
 /// `state_schema_id` of `0xCC` when `sync_flags` bit 7 (`0x80`) is clear (`0x0000000C`,
 /// the surface-movement player-physics script, §4.3.1).
@@ -277,6 +286,13 @@ pub enum WorldError {
     /// A `0x35000000` record did not start with its own DID or had an unusable value (§4.4.2).
     #[error("invalid world calendar record: {0}")]
     InvalidWorldCalendar(&'static str),
+    /// A count does not fit the wire field that carries it (for example more than 255
+    /// actions in one `0x24` slot, §5.5 row 10).
+    #[error("count {count} does not fit its wire field")]
+    CountOverflow {
+        /// The count.
+        count: usize,
+    },
     /// Trailing unread bytes remained after decoding a fixed-framing payload.
     #[error("{0} trailing byte(s) remained after decoding payload")]
     TrailingBytes(usize),
@@ -307,7 +323,7 @@ pub const MAX_WORLD_COORDINATE_M: f32 = 100_000.0;
 
 /// Rejects a NaN or infinite position or velocity component
 /// (`official-messages-play.md` §9.1 rule 4).
-fn require_finite(field: &'static str, value: f32) -> Result<f32, WorldError> {
+pub(crate) fn require_finite(field: &'static str, value: f32) -> Result<f32, WorldError> {
     if value.is_finite() {
         Ok(value)
     } else {
@@ -317,7 +333,7 @@ fn require_finite(field: &'static str, value: f32) -> Result<f32, WorldError> {
 
 /// Rejects a non-finite world coordinate or one outside `±MAX_WORLD_COORDINATE_M`
 /// (`official-messages-play.md` §9.1 rule 4).
-fn require_world_coordinate(field: &'static str, value: f32) -> Result<f32, WorldError> {
+pub(crate) fn require_world_coordinate(field: &'static str, value: f32) -> Result<f32, WorldError> {
     let value = require_finite(field, value)?;
     if (-MAX_WORLD_COORDINATE_M..=MAX_WORLD_COORDINATE_M).contains(&value) {
         Ok(value)
@@ -706,7 +722,7 @@ impl<'a> WireReader<'a> {
         let count = self.read_vle3()? as usize;
         self.ensure_count(count, 2)?;
         let raw = self.read_bytes(count * 2)?;
-        let mut units = Vec::with_capacity(count);
+        let mut units = Vec::with_capacity(count.min(MAX_PREALLOC_ENTRIES));
         for &pair in raw.as_chunks::<2>().0 {
             units.push(u16::from_le_bytes(pair));
         }
@@ -903,7 +919,8 @@ impl WireWriter {
     /// Returns [`WorldError::Vle3Overflow`] if the UTF-16 code-unit count exceeds `0x3FFF_FFFF`.
     pub fn write_utf16le_string(&mut self, s: &str) -> Result<(), WorldError> {
         let units: Vec<u16> = s.encode_utf16().collect();
-        let len_u32 = u32::try_from(units.len()).map_err(|_| WorldError::Vle3Overflow(u32::MAX))?;
+        let len_u32 = u32::try_from(units.len())
+            .map_err(|_| WorldError::CountOverflow { count: units.len() })?;
         self.write_vle3(len_u32)?;
         for u in units {
             self.write_u16_le(u);
@@ -923,7 +940,8 @@ impl WireWriter {
             let b = u8::try_from(cp).map_err(|_| WorldError::InvalidLatin1Char(cp))?;
             bytes.push(b);
         }
-        let len_u32 = u32::try_from(bytes.len()).map_err(|_| WorldError::Vle3Overflow(u32::MAX))?;
+        let len_u32 = u32::try_from(bytes.len())
+            .map_err(|_| WorldError::CountOverflow { count: bytes.len() })?;
         self.write_vle3(len_u32)?;
         self.write_bytes(&bytes);
         Ok(())
@@ -1310,7 +1328,15 @@ impl WirePosition {
         wire_mode: bool,
         allow_orientation: bool,
     ) -> Result<Self, WorldError> {
-        let flags = reader.read_u8()?;
+        // A base Position has no orientation bytes (§2.5.1 row 7), so bit 5 says nothing
+        // there; it is dropped, as the encoder drops it (whether a peer ever sets it on a
+        // base Position: spec silent).
+        let raw_flags = reader.read_u8()?;
+        let flags = if allow_orientation {
+            raw_flags
+        } else {
+            raw_flags & !POS_FLAG_ORIENTATION
+        };
         let region = if (flags & POS_FLAG_REGION) != 0 {
             if wire_mode && (flags & POS_FLAG_REGION_IS_ONE) != 0 {
                 1
@@ -1764,7 +1790,9 @@ impl LocalizedTokenText {
             writer.write_u8(1);
         }
         let arg_count =
-            u32::try_from(self.arguments.len()).map_err(|_| WorldError::Vle3Overflow(u32::MAX))?;
+            u32::try_from(self.arguments.len()).map_err(|_| WorldError::CountOverflow {
+                count: self.arguments.len(),
+            })?;
         writer.write_vle3(arg_count)?;
         for arg in &self.arguments {
             writer.write_u32_le(arg.key);
@@ -1817,7 +1845,7 @@ impl LocalizedTokenText {
             return Err(WorldError::UnsupportedWireTextArguments);
         }
         reader.ensure_count(arg_count, 6)?;
-        let mut arguments = Vec::with_capacity(arg_count);
+        let mut arguments = Vec::with_capacity(arg_count.min(MAX_PREALLOC_ENTRIES));
         for _ in 0..arg_count {
             let key = reader.read_u32_le()?;
             let kind = reader.read_u16_le()?;
@@ -2026,8 +2054,8 @@ impl WireWaveform {
                 }
                 writer.write_f32_le(*period);
                 writer.write_bool8(*loop_flag);
-                let count =
-                    u32::try_from(pairs.len()).map_err(|_| WorldError::Vle3Overflow(u32::MAX))?;
+                let count = u32::try_from(pairs.len())
+                    .map_err(|_| WorldError::CountOverflow { count: pairs.len() })?;
                 writer.write_u32_le(count);
                 for &(t, v) in pairs {
                     writer.write_f32_le(t);
@@ -2053,7 +2081,7 @@ impl WireWaveform {
             let loop_flag = reader.read_bool8()?;
             let count = reader.read_u32_le()? as usize;
             reader.ensure_count(count, 8)?;
-            let mut pairs = Vec::with_capacity(count);
+            let mut pairs = Vec::with_capacity(count.min(MAX_PREALLOC_ENTRIES));
             for _ in 0..count {
                 pairs.push((reader.read_f32_le()?, reader.read_f32_le()?));
             }
@@ -2184,8 +2212,8 @@ impl EncodedPropertyValue {
                 ps.encode_with_depth(writer, depth + 1)?;
             }
             Self::Array(items) => {
-                let count =
-                    u32::try_from(items.len()).map_err(|_| WorldError::Vle3Overflow(u32::MAX))?;
+                let count = u32::try_from(items.len())
+                    .map_err(|_| WorldError::CountOverflow { count: items.len() })?;
                 writer.write_u32_le(count);
                 for entry in items {
                     entry.encode_with_depth(writer, depth + 1)?;
@@ -2244,7 +2272,7 @@ impl EncodedPropertyValue {
             PropertyType::Array => reader.with_recursion(|r| {
                 let count = r.read_u32_le()? as usize;
                 r.ensure_count(count, 2)?;
-                let mut entries = Vec::with_capacity(count);
+                let mut entries = Vec::with_capacity(count.min(MAX_PREALLOC_ENTRIES));
                 for _ in 0..count {
                     entries.push(EncodedPropertyEntry::decode(r, schema)?);
                 }
@@ -2405,8 +2433,9 @@ impl EncodedPropertyTable {
                 max: MAX_RECURSION_DEPTH,
             });
         }
-        let count =
-            u32::try_from(self.entries.len()).map_err(|_| WorldError::Vle3Overflow(u32::MAX))?;
+        let count = u32::try_from(self.entries.len()).map_err(|_| WorldError::CountOverflow {
+            count: self.entries.len(),
+        })?;
         writer.write_vle3(count)?;
         for entry in &self.entries {
             entry.encode_with_depth(writer, depth)?;
@@ -2421,7 +2450,7 @@ impl EncodedPropertyTable {
     ) -> Result<Self, WorldError> {
         let count = reader.read_vle3()? as usize;
         reader.ensure_count(count, 2)?;
-        let mut entries = Vec::with_capacity(count);
+        let mut entries = Vec::with_capacity(count.min(MAX_PREALLOC_ENTRIES));
         for _ in 0..count {
             entries.push(EncodedPropertyEntry::decode(reader, schema)?);
         }
@@ -2627,13 +2656,16 @@ impl PartEntry {
             writer.write_u32_le(*id);
         }
         if let Some(map) = &self.sub_map {
-            let count = u32::try_from(map.len()).map_err(|_| WorldError::Vle3Overflow(u32::MAX))?;
+            let count = u32::try_from(map.len())
+                .map_err(|_| WorldError::CountOverflow { count: map.len() })?;
             writer.write_u32_le(count);
             for (key, table) in map {
                 writer.write_u32_le(*key);
                 writer.write_u8(table.hint);
-                let n = u32::try_from(table.entries.len())
-                    .map_err(|_| WorldError::Vle3Overflow(u32::MAX))?;
+                let n =
+                    u32::try_from(table.entries.len()).map_err(|_| WorldError::CountOverflow {
+                        count: table.entries.len(),
+                    })?;
                 writer.write_vle3(n)?;
                 for e in &table.entries {
                     writer.write_u32_le(e.k);
@@ -2660,7 +2692,7 @@ impl PartEntry {
             let count = reader.read_u32_le()? as usize;
             // Each entry is at least a 4-byte key and a 2-byte empty TSize.
             reader.ensure_count(count, 6)?;
-            let mut map = Vec::with_capacity(count);
+            let mut map = Vec::with_capacity(count.min(MAX_PREALLOC_ENTRIES));
             for _ in 0..count {
                 let key = reader.read_u32_le()?;
                 let hint = reader.read_u8()?;
@@ -2669,7 +2701,7 @@ impl PartEntry {
                 }
                 let n = reader.read_vle3()? as usize;
                 reader.ensure_count(n, 12)?;
-                let mut entries = Vec::with_capacity(n);
+                let mut entries = Vec::with_capacity(n.min(MAX_PREALLOC_ENTRIES));
                 for _ in 0..n {
                     entries.push(SubPartEntry {
                         k: reader.read_u32_le()?,
@@ -2773,8 +2805,8 @@ impl EntityAppearanceDesc {
             writer.write_f32_le(a);
         }
         if let Some(tints) = &self.tint_entries {
-            let count =
-                u32::try_from(tints.len()).map_err(|_| WorldError::Vle3Overflow(u32::MAX))?;
+            let count = u32::try_from(tints.len())
+                .map_err(|_| WorldError::CountOverflow { count: tints.len() })?;
             writer.write_u32_le(count);
             for t in tints {
                 for w in [t.slot, t.key, t.color_bgra, t.field_d, t.field_e] {
@@ -2787,7 +2819,8 @@ impl EntityAppearanceDesc {
         }
         if let Some((hint, map)) = &self.part_map {
             writer.write_u8(*hint);
-            let n = u32::try_from(map.len()).map_err(|_| WorldError::Vle3Overflow(u32::MAX))?;
+            let n = u32::try_from(map.len())
+                .map_err(|_| WorldError::CountOverflow { count: map.len() })?;
             writer.write_vle3(n)?;
             for (key, part) in map {
                 writer.write_u32_le(*key);
@@ -2833,7 +2866,7 @@ impl EntityAppearanceDesc {
         let tint_entries = if flags & 0x0080 != 0 {
             let count = reader.read_u32_le()? as usize;
             reader.ensure_count(count, 20)?;
-            let mut tints = Vec::with_capacity(count);
+            let mut tints = Vec::with_capacity(count.min(MAX_PREALLOC_ENTRIES));
             for _ in 0..count {
                 tints.push(AppearanceTint {
                     slot: reader.read_u32_le()?,
@@ -2857,7 +2890,7 @@ impl EntityAppearanceDesc {
             }
             let n = reader.read_vle3()? as usize;
             reader.ensure_count(n, 8)?;
-            let mut map = Vec::with_capacity(n);
+            let mut map = Vec::with_capacity(n.min(MAX_PREALLOC_ENTRIES));
             for _ in 0..n {
                 let key = reader.read_u32_le()?;
                 map.push((key, PartEntry::decode(reader)?));
@@ -3002,7 +3035,9 @@ impl CharacterListResponse {
     pub fn encode(&self, writer: &mut WireWriter) -> Result<(), WorldError> {
         writer.write_base_flags();
         let count =
-            u32::try_from(self.characters.len()).map_err(|_| WorldError::Vle3Overflow(u32::MAX))?;
+            u32::try_from(self.characters.len()).map_err(|_| WorldError::CountOverflow {
+                count: self.characters.len(),
+            })?;
         writer.write_u32_le(count);
         for ch in &self.characters {
             ch.encode(writer)?;
@@ -3022,7 +3057,7 @@ impl CharacterListResponse {
         reader.read_base_flags()?;
         let count = reader.read_u32_le()? as usize;
         reader.ensure_count(count, CharacterSummaryEntry::MIN_WIRE_LEN)?;
-        let mut characters = Vec::with_capacity(count);
+        let mut characters = Vec::with_capacity(count.min(MAX_PREALLOC_ENTRIES));
         for _ in 0..count {
             characters.push(CharacterSummaryEntry::decode(reader, schema)?);
         }
@@ -3841,7 +3876,9 @@ impl PortalPositionSync {
             writer.write_vle3(val)?;
         }
         let extra_len =
-            u32::try_from(self.extra_blob.len()).map_err(|_| WorldError::Vle3Overflow(u32::MAX))?;
+            u32::try_from(self.extra_blob.len()).map_err(|_| WorldError::CountOverflow {
+                count: self.extra_blob.len(),
+            })?;
         writer.write_u32_le(extra_len);
         writer.write_bytes(&self.extra_blob);
         Ok(())
@@ -3897,7 +3934,7 @@ impl PortalPositionSync {
             .collect();
         let n_enum = schema.enum_pids.len();
         reader.ensure_count(n_enum, 1)?;
-        let mut enum_states = Vec::with_capacity(n_enum);
+        let mut enum_states = Vec::with_capacity(n_enum.min(MAX_PREALLOC_ENTRIES));
         for _ in 0..n_enum {
             enum_states.push(reader.read_vle3()?);
         }
@@ -4105,6 +4142,8 @@ impl NetworkClock {
 /// time. The spec's table gives the record's verification values; none is built in.
 #[derive(Debug, Clone, PartialEq)]
 pub struct WorldCalendarConfig {
+    /// Record DID at `+0x00` (the DID [`CALENDAR_DIRECTORY_KEY`] resolved to).
+    pub record_did: u32,
     /// `day_length_seconds` (`f32`, `> 0`).
     pub day_length_seconds: f32,
     /// `days_per_year` (`i32`, `> 0`).
@@ -4147,8 +4186,8 @@ impl WorldCalendarConfig {
     ///
     /// Returns [`WorldError`] if a list is too long to count.
     pub fn encode(&self, writer: &mut WireWriter) -> Result<(), WorldError> {
-        let count = |n: usize| u32::try_from(n).map_err(|_| WorldError::Vle3Overflow(u32::MAX));
-        writer.write_u32_le(WORLD_CALENDAR_CONFIG_DID);
+        let count = |n: usize| u32::try_from(n).map_err(|_| WorldError::CountOverflow { count: n });
+        writer.write_u32_le(self.record_did);
         writer.write_f32_le(self.day_length_seconds);
         writer.write_i32_le(self.days_per_year);
         writer.write_f64_le(self.calendar_epoch_offset);
@@ -4173,17 +4212,19 @@ impl WorldCalendarConfig {
         Ok(())
     }
 
-    /// Reads the record (§4.4.2 field order).
+    /// Reads the record (§4.4.2 field order). `expected_did` is the DID that
+    /// [`CALENDAR_DIRECTORY_KEY`] resolved to in its directory; the record must start with it.
     ///
     /// # Errors
     ///
-    /// Returns [`WorldError::InvalidWorldCalendar`] if the record does not start with its own
-    /// DID, has a non-positive or non-finite day length, a non-positive days-per-year, or
-    /// non-finite thresholds; or a framing error.
-    pub fn decode(reader: &mut WireReader<'_>) -> Result<Self, WorldError> {
-        if reader.read_u32_le()? != WORLD_CALENDAR_CONFIG_DID {
+    /// Returns [`WorldError::InvalidWorldCalendar`] if the record does not start with
+    /// `expected_did`, has a non-positive or non-finite day length, a non-positive
+    /// days-per-year, or non-finite thresholds; or a framing error.
+    pub fn decode(reader: &mut WireReader<'_>, expected_did: u32) -> Result<Self, WorldError> {
+        let record_did = reader.read_u32_le()?;
+        if record_did != expected_did {
             return Err(WorldError::InvalidWorldCalendar(
-                "record DID is not 0x35000000",
+                "record DID is not the DID its directory key resolved to",
             ));
         }
         let day_length_seconds = reader.read_f32_le()?;
@@ -4212,24 +4253,25 @@ impl WorldCalendarConfig {
         }
         let n = reader.read_u32_le()? as usize;
         reader.ensure_count(n, 8)?;
-        let mut tod_phases = Vec::with_capacity(n);
+        let mut tod_phases = Vec::with_capacity(n.min(MAX_PREALLOC_ENTRIES));
         for _ in 0..n {
             tod_phases.push((reader.read_f32_le()?, reader.read_u32_le()?));
         }
         let n = reader.read_u32_le()? as usize;
         reader.ensure_count(n, 4)?;
-        let mut aux_tokens = Vec::with_capacity(n);
+        let mut aux_tokens = Vec::with_capacity(n.min(MAX_PREALLOC_ENTRIES));
         for _ in 0..n {
             aux_tokens.push(reader.read_u32_le()?);
         }
         let n = reader.read_u32_le()? as usize;
         reader.ensure_count(n, 8)?;
-        let mut months = Vec::with_capacity(n);
+        let mut months = Vec::with_capacity(n.min(MAX_PREALLOC_ENTRIES));
         for _ in 0..n {
             months.push((reader.read_u32_le()?, reader.read_u32_le()?));
         }
         let era_string_token = reader.read_u32_le()?;
         Ok(Self {
+            record_did,
             day_length_seconds,
             days_per_year,
             calendar_epoch_offset,
@@ -4250,7 +4292,31 @@ impl WorldCalendarConfig {
         present_time_of_day < self.dawn_threshold || present_time_of_day >= self.dusk_threshold
     }
 }
-plain_codec!(WorldCalendarConfig);
+impl WorldCalendarConfig {
+    /// Encodes the record to a standalone byte vector.
+    ///
+    /// # Errors
+    ///
+    /// Propagates the encoder's error.
+    pub fn to_bytes(&self) -> Result<Vec<u8>, WorldError> {
+        let mut w = WireWriter::new();
+        self.encode(&mut w)?;
+        Ok(w.into_vec())
+    }
+
+    /// Decodes the record from a standalone byte slice (see [`Self::decode`]); trailing
+    /// bytes are an error.
+    ///
+    /// # Errors
+    ///
+    /// Propagates the decoder's error.
+    pub fn from_bytes(bytes: &[u8], expected_did: u32) -> Result<Self, WorldError> {
+        let mut r = WireReader::new(bytes);
+        let msg = Self::decode(&mut r, expected_did)?;
+        r.finish()?;
+        Ok(msg)
+    }
+}
 
 /// The in-game calendar clock of §4.4.2 steps 1–4: `world_time_offset` added to the network
 /// time, `world_time_dilation` integrated per tick, and the calendar day advanced at
@@ -4372,8 +4438,9 @@ impl SubEventFrame {
                 payload,
             } => {
                 writer.write_vle4(*sub_event_id);
-                let len =
-                    u32::try_from(payload.len()).map_err(|_| WorldError::Vle3Overflow(u32::MAX))?;
+                let len = u32::try_from(payload.len()).map_err(|_| WorldError::CountOverflow {
+                    count: payload.len(),
+                })?;
                 writer.write_u32_le(len);
                 writer.write_bytes(payload);
             }
@@ -4432,8 +4499,9 @@ impl SubEventBatch {
             return Err(WorldError::WrongEventId(self.event_id));
         }
         writer.write_base_flags();
-        let count =
-            u32::try_from(self.frames.len()).map_err(|_| WorldError::Vle3Overflow(u32::MAX))?;
+        let count = u32::try_from(self.frames.len()).map_err(|_| WorldError::CountOverflow {
+            count: self.frames.len(),
+        })?;
         writer.write_vle4(count);
         for frame in &self.frames {
             frame.encode(writer)?;
@@ -4457,7 +4525,7 @@ impl SubEventBatch {
         reader.read_base_flags()?;
         let count = reader.read_vle4()? as usize;
         reader.ensure_count(count, 4)?;
-        let mut frames = Vec::with_capacity(count);
+        let mut frames = Vec::with_capacity(count.min(MAX_PREALLOC_ENTRIES));
         for _ in 0..count {
             frames.push(SubEventFrame::decode(reader)?);
         }
@@ -4768,6 +4836,18 @@ impl PositionUpdate {
             u32::from(mode_flags),
             u32::from(Self::MODE_FLAGS_VALID),
         )?;
+        // Bit 3 selects extended attachment data and bit 4 the full world Position; §5.4
+        // gives bit 3 no meaning without bit 2 (attachment mode) and bit 4 none with it. Such
+        // a combination could not be written back, so it is refused (engineering choice,
+        // spec silent).
+        let attach = mode_flags & 0x04 != 0;
+        if (!attach && mode_flags & 0x08 != 0) || (attach && mode_flags & 0x10 != 0) {
+            tracing::debug!(mode_flags, "0xCE mode_flags combination refused");
+            return Err(WorldError::UndefinedFlagBits {
+                field: "0xCE mode_flags",
+                bits: u32::from(mode_flags & if attach { 0x10 } else { 0x08 }),
+            });
+        }
         let seq_byte = (header_flags & 0x08 != 0)
             .then(|| reader.read_u8())
             .transpose()?;
@@ -4953,8 +5033,8 @@ impl ClientPhysicsSync {
         }
         if flags.iter().any(|&f| f & 0x01 != 0) {
             for slot in &self.slot_actions {
-                let count =
-                    u8::try_from(slot.len()).map_err(|_| WorldError::Vle3Overflow(u32::MAX))?;
+                let count = u8::try_from(slot.len())
+                    .map_err(|_| WorldError::CountOverflow { count: slot.len() })?;
                 writer.write_u8(count);
                 for (action_id, payload) in slot {
                     action_id.encode(writer)?;
@@ -5490,7 +5570,7 @@ impl ActionChainSync {
     ///
     /// Propagates encoding errors.
     pub fn encode(&self, writer: &mut WireWriter) -> Result<(), WorldError> {
-        let count = |n: usize| u32::try_from(n).map_err(|_| WorldError::Vle3Overflow(u32::MAX));
+        let count = |n: usize| u32::try_from(n).map_err(|_| WorldError::CountOverflow { count: n });
         writer.write_base_flags();
         writer.write_u8(self.chain_mode);
         writer.write_vle4(count(self.actions.len())?);
@@ -5523,7 +5603,7 @@ impl ActionChainSync {
         let count_a = reader.read_vle4()? as usize;
         // Compact DID (2) + VariableU32 (1) + ActionPayload (11).
         reader.ensure_count(count_a, 14)?;
-        let mut actions = Vec::with_capacity(count_a);
+        let mut actions = Vec::with_capacity(count_a.min(MAX_PREALLOC_ENTRIES));
         for _ in 0..count_a {
             let did = CompactDid::decode(reader)?;
             let seq = reader.read_vle4()?;
@@ -5532,7 +5612,7 @@ impl ActionChainSync {
         let count_b = reader.read_vle4()? as usize;
         // Compact DID (2) + VariableU32 (1) + f64 (8) + bool8 (1).
         reader.ensure_count(count_b, 12)?;
-        let mut completions = Vec::with_capacity(count_b);
+        let mut completions = Vec::with_capacity(count_b.min(MAX_PREALLOC_ENTRIES));
         for _ in 0..count_b {
             completions.push(ActionChainCompletion {
                 action_id: CompactDid::decode(reader)?,
@@ -5581,7 +5661,9 @@ impl EntityAnimLayerState {
     /// Propagates encoding errors.
     pub fn encode(&self, writer: &mut WireWriter) -> Result<(), WorldError> {
         writer.write_base_flags();
-        let n = u32::try_from(self.layers.len()).map_err(|_| WorldError::Vle3Overflow(u32::MAX))?;
+        let n = u32::try_from(self.layers.len()).map_err(|_| WorldError::CountOverflow {
+            count: self.layers.len(),
+        })?;
         writer.write_vle3(n)?;
         for layer in &self.layers {
             layer.action_did.encode(writer)?;
@@ -5605,7 +5687,7 @@ impl EntityAnimLayerState {
         let n = reader.read_vle3()? as usize;
         // Compact DID (2) + VariableU32 (1) + ActionPayload (11) + bitfield (1).
         reader.ensure_count(n, 15)?;
-        let mut layers = Vec::with_capacity(n);
+        let mut layers = Vec::with_capacity(n.min(MAX_PREALLOC_ENTRIES));
         for _ in 0..n {
             layers.push(ActionLayerEntry {
                 action_did: CompactDid::decode(reader)?,

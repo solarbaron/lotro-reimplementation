@@ -12,21 +12,22 @@ use tessera_compat::login::soap_encoder::{
     build_login_account_request,
 };
 use tessera_compat::login::{
-    ArgTemplateParams, Credentials, DAT_DIDVER_DESCRIPTOR_OFFSET, DAT_SUPERBLOCK_MAGIC,
-    DAT_SUPERBLOCK_OFFSET, DEFAULT_TICKET_LIFETIME_SEC, DICT_KEY_CLIENT_TO_SERVER,
-    DICT_KEY_SERVER_TO_CLIENT, DICT_KEY_SERVER_TO_CLIENT_DEFERRED, DID_MASTER_MAP_3_COMPRESSION,
-    DidMap3Table, GameSubscription, HttpClient, HttpMethod, HttpRequest, HttpResponse,
-    INVALID_LOGIN_SERVER_SENTINEL, LauncherConfig, LoginDriver, LoginError, LoginFailureClass,
-    LoginHost, LoginStateId, MAX_XML_DEPTH, MAX_XML_INPUT_BYTES, MAX_XML_ITEMS,
-    PREFIX_TREE_DICT_SCHEMA_GUID, PrefixTreeDictionaryHeader, QueueEvaluation, QueueResult,
+    ArgTemplateParams, BitTreeTableHeader, Credentials, DAT_DIDVER_DESCRIPTOR_OFFSET,
+    DAT_ROOT_DID_MAP_OFFSET, DAT_SUPERBLOCK_MAGIC, DAT_SUPERBLOCK_OFFSET,
+    DEFAULT_TICKET_LIFETIME_SEC, DICT_KEY_CLIENT_TO_SERVER, DICT_KEY_SERVER_TO_CLIENT,
+    DICT_KEY_SERVER_TO_CLIENT_DEFERRED, DidMap3Table, GameSubscription, HttpClient, HttpMethod,
+    HttpRequest, HttpResponse, INVALID_LOGIN_SERVER_SENTINEL, LauncherConfig, LoginDriver,
+    LoginError, LoginFailureClass, LoginHost, LoginStateId, MAX_XML_DEPTH, MAX_XML_INPUT_BYTES,
+    MAX_XML_ITEMS, PREFIX_TREE_DICT_SCHEMA_GUID, QueueEvaluation, QueueResult,
     ROOT_KEY_COMPRESSION_DICTIONARY, RefreshOutcome, RegistryTicketReader, RemoteLauncherConfig,
     SessionHandoff, TicketIntakeArgs, TicketRefresher, UserPreferences, VersionInfo, WorldStatus,
     build_launch_argv, build_leave_queue_body, build_take_a_number_body, check_billing_role,
     compression_dictionary_map_did, encode_client_version_payload, extract_didver_from_dat_file,
     extract_didver_from_dat_header, fetch_world_status, is_rfc1918_queue_url,
     language_to_feed_code, parse_dat_superblock_didver_descriptor, parse_get_datacenters_response,
-    parse_login_account_response, resolve_install_language, resolve_prefix_tree_dictionary,
-    resolve_ticket_intake, split_arg_template_argv, substitute_arg_template,
+    parse_login_account_response, resolve_bit_tree_table, resolve_install_language,
+    resolve_ticket_intake, root_did_map_from_superblock, split_arg_template_argv,
+    substitute_arg_template,
 };
 use tessera_compat::version_resource::read_version_resource_from_file;
 
@@ -456,7 +457,7 @@ fn v7_client_version_and_prefix_tree_dictionary_resolution() {
         0xAA, 0xAA, 0xBB, 0xCC, 0xDD, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0x00,
         0xAB, 0xCD, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x09, 0x00, 0x00, 0x00,
     ];
-    let hdr_0e010000 = PrefixTreeDictionaryHeader::parse(&dict_0e010000, 0x0E01_0000).unwrap();
+    let hdr_0e010000 = BitTreeTableHeader::parse(&dict_0e010000, 0x0E01_0000).unwrap();
     assert_eq!(hdr_0e010000.format_uuid, PREFIX_TREE_DICT_SCHEMA_GUID);
     assert_eq!(
         hdr_0e010000.codec_uuid,
@@ -476,18 +477,18 @@ fn v7_client_version_and_prefix_tree_dictionary_resolution() {
         0xAA, 0x10, 0x20, 0x30, 0x40, 0x50, 0x60, 0x70, 0x80, 0x90, 0xA0, 0xB0, 0xC0, 0xD0, 0xE0,
         0xF0, 0x01, 0x01, 0x00, 0x01, 0x0E, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
     ];
-    let hdr_0e010002 = PrefixTreeDictionaryHeader::parse(&dict_0e010002_stub, 0x0E01_0002).unwrap();
+    let hdr_0e010002 = BitTreeTableHeader::parse(&dict_0e010002_stub, 0x0E01_0002).unwrap();
     assert!(hdr_0e010002.redirects);
     assert_eq!(hdr_0e010002.redirect_did, 0x0E01_0001);
     // A record whose redirectDid is its own DID (0x0E010001) is a literal dictionary.
     let mut self_ref = dict_0e010000;
     self_ref[32..36].copy_from_slice(&0x0E01_0001u32.to_le_bytes());
-    let hdr_self = PrefixTreeDictionaryHeader::parse(&self_ref, 0x0E01_0001).unwrap();
+    let hdr_self = BitTreeTableHeader::parse(&self_ref, 0x0E01_0001).unwrap();
     assert!(!hdr_self.redirects);
     // A literal dictionary must be version 1.
     let mut v0 = dict_0e010000;
     v0[36] = 0;
-    assert!(PrefixTreeDictionaryHeader::parse(&v0, 0x0E01_0000).is_err());
+    assert!(BitTreeTableHeader::parse(&v0, 0x0E01_0000).is_err());
 
     // 4. VersionInfo with netver = "1234": 56-byte versionString, 57-byte ClientVersionMessage payload.
     let info = VersionInfo::from_dat_superblock_descriptor("1234", &descriptor_20).unwrap();
@@ -1211,6 +1212,27 @@ fn dictionary_record(codec: u8, redirect: u32, version: u32, body_len: u32, node
 /// Invariant `I16` (§2.4.3; `official-session.md` §4.1.3): the root map's key 3 names the
 /// compression sub-map, whose keys `0x10000002` -> `0x0E010000` and `0x10000001` ->
 /// `0x0E010002` -> (redirect) `0x0E010001` resolve; `0x0E010001` names itself and is literal.
+/// The sub-map DID of the install the spec describes: a verification value only
+/// (`property-system.md` §8.1), never built into the code.
+const DID_MASTER_MAP_3_COMPRESSION: u32 = 0x2800_0010;
+
+/// `official-session.md` §4.1.3 item 1: the root DID map comes from superblock `+0x170`.
+#[test]
+fn root_did_map_comes_from_the_superblock() {
+    let mut header = vec![0u8; 0x1A8];
+    header[DAT_SUPERBLOCK_OFFSET..DAT_SUPERBLOCK_OFFSET + 4].copy_from_slice(&DAT_SUPERBLOCK_MAGIC);
+    assert_eq!(DAT_ROOT_DID_MAP_OFFSET, 0x170);
+    header[0x170..0x174].copy_from_slice(&0x2800_0007u32.to_le_bytes());
+    assert_eq!(root_did_map_from_superblock(&header).unwrap(), 0x2800_0007);
+    // Not a DID map, no magic, too short: all refused.
+    header[0x170..0x174].copy_from_slice(&0x0E01_0000u32.to_le_bytes());
+    assert!(root_did_map_from_superblock(&header).is_err());
+    let mut no_magic = header.clone();
+    no_magic[DAT_SUPERBLOCK_OFFSET] = 0;
+    assert!(root_did_map_from_superblock(&no_magic).is_err());
+    assert!(root_did_map_from_superblock(&header[..0x172]).is_err());
+}
+
 #[test]
 fn i16_prefix_tree_dictionary_did_map_and_deferred_redirection() {
     let root = did_map_record(
@@ -1278,13 +1300,12 @@ fn i16_prefix_tree_dictionary_did_map_and_deferred_redirection() {
         }
     };
 
-    let out_dict = resolve_prefix_tree_dictionary(&map, DICT_KEY_CLIENT_TO_SERVER, lookup).unwrap();
+    let out_dict = resolve_bit_tree_table(&map, DICT_KEY_CLIENT_TO_SERVER, lookup).unwrap();
     assert_eq!(out_dict.resolved_did, 0x0E01_0000);
     assert_eq!(out_dict.header.codec_uuid, [0xA1; 16]);
     assert_eq!(out_dict.header.node_count, Some(3));
 
-    let in_dict =
-        resolve_prefix_tree_dictionary(&map, DICT_KEY_SERVER_TO_CLIENT_DEFERRED, lookup).unwrap();
+    let in_dict = resolve_bit_tree_table(&map, DICT_KEY_SERVER_TO_CLIENT_DEFERRED, lookup).unwrap();
     assert_eq!(in_dict.initial_did, 0x0E01_0002);
     assert_eq!(in_dict.resolved_did, 0x0E01_0001);
     assert_eq!(in_dict.header.codec_uuid, [0xB2; 16]);
@@ -1292,7 +1313,7 @@ fn i16_prefix_tree_dictionary_did_map_and_deferred_redirection() {
     assert_eq!(in_dict.header.body_len, 13);
 
     // Direct key 0x10000003 reaches 0x0E010001, whose redirectDid is its own DID.
-    let direct = resolve_prefix_tree_dictionary(&map, DICT_KEY_SERVER_TO_CLIENT, lookup).unwrap();
+    let direct = resolve_bit_tree_table(&map, DICT_KEY_SERVER_TO_CLIENT, lookup).unwrap();
     assert_eq!(direct.initial_did, 0x0E01_0001);
     assert_eq!(direct.resolved_did, 0x0E01_0001);
 
@@ -1549,6 +1570,12 @@ fn real_data_discover_launcher_config_and_language() {
             .expect("client_general.dat must contain a valid .dat superblock didver descriptor");
         assert_eq!(didver_guid.len(), 36);
         assert!(archive_ver > 0);
+        let mut header = vec![0u8; 0x1A8];
+        std::io::Read::read_exact(&mut std::fs::File::open(&general_dat).unwrap(), &mut header)
+            .unwrap();
+        let root_map = root_did_map_from_superblock(&header)
+            .expect("client_general.dat names a root DID map in its superblock");
+        assert_eq!(root_map >> 24, 0x28);
     }
 
     // Decision 0042 item 1: the version resource of the client executable is

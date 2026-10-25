@@ -51,6 +51,50 @@ fn schema() -> BTreeMap<u32, PropertyType> {
 }
 
 // ---------------------------------------------------------------------------
+// Reservation bound (§7.1 item 1)
+// ---------------------------------------------------------------------------
+
+/// The process's peak virtual size (`VmPeak` of `/proc/self/status`, bytes) on Linux. It
+/// grows with reserved but untouched memory too, which is what an over-eager
+/// `Vec::with_capacity` costs. `None` where the file does not exist.
+fn vm_peak_bytes() -> Option<u64> {
+    let status = std::fs::read_to_string("/proc/self/status").ok()?;
+    let line = status.lines().find(|l| l.starts_with("VmPeak:"))?;
+    let kib: u64 = line.split_whitespace().nth(1)?.parse().ok()?;
+    Some(kib * 1024)
+}
+
+/// Nested arrays each check their count against the message's remaining bytes; a decoder
+/// that reserved the full count at every level would reserve gigabytes for a 4 MiB message
+/// (fix round 1, B1). Reservations are bounded now.
+#[test]
+fn nested_property_tables_reserve_bounded_memory() {
+    const ARRAY_PID: [u8; 2] = [0x01, 0x0C]; // 0x0000010C: type code 12 (array) in `schema()`
+    let s = schema();
+    let total = 4 * 1024 * 1024;
+    let count = u32::try_from(total / 2 - 1024).unwrap();
+    let mut bytes = vec![0x01]; // one top-level entry
+    for _ in 0..(MAX_RECURSION_DEPTH - 2) {
+        bytes.extend_from_slice(&ARRAY_PID);
+        bytes.extend_from_slice(&count.to_le_bytes());
+    }
+    // The innermost first element names a PID the schema lacks, so decoding fails there.
+    bytes.extend_from_slice(&[0x80, 0x78, 0x56, 0x34, 0x12]);
+    bytes.resize(total, 0);
+    let before = vm_peak_bytes();
+    assert_eq!(
+        EncodedPropertyTable::from_bytes(&bytes, &s),
+        Err(WorldError::UnknownPropertyId(0x1234_5678))
+    );
+    // Reserving every declared count would add well over 1 GiB of address space here; the
+    // bounded reservation adds next to nothing (other tests in the process stay far below).
+    if let (Some(before), Some(after)) = (before, vm_peak_bytes()) {
+        let grown = after.saturating_sub(before);
+        assert!(grown < 512 * 1024 * 1024, "decode reserved {grown} bytes");
+    }
+}
+
+// ---------------------------------------------------------------------------
 // §7.2 Vectors 1–6: value encodings
 // ---------------------------------------------------------------------------
 
@@ -783,8 +827,12 @@ fn network_clock_snap_slew_and_boost() {
     assert_eq!(clock.decode_wire_timestamp(1.0, true), 1.0);
 }
 
+/// A synthetic calendar record DID (the run-time directory lookup gives the real one).
+const CALENDAR_DID: u32 = 0x3500_0000;
+
 fn synthetic_calendar() -> WorldCalendarConfig {
     WorldCalendarConfig {
+        record_did: CALENDAR_DID,
         day_length_seconds: 1000.0,
         days_per_year: 10,
         calendar_epoch_offset: 0.0,
@@ -802,17 +850,31 @@ fn synthetic_calendar() -> WorldCalendarConfig {
 fn world_calendar_record_and_clock() {
     let cal = synthetic_calendar();
     let bytes = cal.to_bytes().unwrap();
-    assert_eq!(WorldCalendarConfig::from_bytes(&bytes).unwrap(), cal);
+    assert_eq!(
+        WorldCalendarConfig::from_bytes(&bytes, CALENDAR_DID).unwrap(),
+        cal
+    );
+    // §4.4.2: the record must carry the DID its directory key resolved to, whatever it is.
+    let mut other = cal.clone();
+    other.record_did = 0x3500_0007;
+    assert_eq!(
+        WorldCalendarConfig::from_bytes(&other.to_bytes().unwrap(), 0x3500_0007).unwrap(),
+        other
+    );
+    assert!(matches!(
+        WorldCalendarConfig::from_bytes(&bytes, 0x3500_0007),
+        Err(WorldError::InvalidWorldCalendar(_))
+    ));
     let mut bad = bytes.clone();
     bad[4..8].copy_from_slice(&0.0f32.to_le_bytes());
     assert!(matches!(
-        WorldCalendarConfig::from_bytes(&bad),
+        WorldCalendarConfig::from_bytes(&bad, CALENDAR_DID),
         Err(WorldError::InvalidWorldCalendar(_))
     ));
     let mut bad_did = bytes;
     bad_did[0] = 1;
     assert!(matches!(
-        WorldCalendarConfig::from_bytes(&bad_did),
+        WorldCalendarConfig::from_bytes(&bad_did, CALENDAR_DID),
         Err(WorldError::InvalidWorldCalendar(_))
     ));
 
@@ -1011,6 +1073,58 @@ fn position_update_full_position_defaults_and_hostile_values() {
     ));
 }
 
+#[test]
+fn position_update_refuses_mode_combinations_it_cannot_write_back() {
+    // mode_flags byte is at offset 10 (base_flags, header_flags, 8-byte entity ID).
+    // 0x08 (extended attachment data) without 0x04 (attachment mode).
+    let mut bytes = ce_with_heading().to_bytes().unwrap();
+    bytes[10] = 0x08;
+    assert_eq!(
+        PositionUpdate::from_bytes(&bytes),
+        Err(WorldError::UndefinedFlagBits {
+            field: "0xCE mode_flags",
+            bits: 0x08,
+        })
+    );
+    // 0x10 (full world Position) together with 0x04 (attachment mode).
+    let attached = PositionUpdate {
+        placement: EntityPlacement::Attachment {
+            parent_id: 4,
+            attach_slot: 1,
+            extension: None,
+        },
+        ..ce_with_heading()
+    };
+    let mut bytes = attached.to_bytes().unwrap();
+    assert_eq!(bytes[10], 0x04);
+    assert_eq!(PositionUpdate::from_bytes(&bytes).unwrap(), attached);
+    bytes[10] = 0x14;
+    assert_eq!(
+        PositionUpdate::from_bytes(&bytes),
+        Err(WorldError::UndefinedFlagBits {
+            field: "0xCE mode_flags",
+            bits: 0x10,
+        })
+    );
+}
+
+#[test]
+fn base_position_drops_the_orientation_bit() {
+    // A base Position (0xCE world mode with heading) carries no quaternion (§2.5.1 row 7):
+    // bit 0x20 in its flags byte is not kept, so a decode / encode round trip is exact.
+    let mut bytes = ce_with_heading().to_bytes().unwrap();
+    // The Position flags byte follows mode_flags at offset 11.
+    bytes[11] |= 0x20;
+    let decoded = PositionUpdate::from_bytes(&bytes).unwrap();
+    let EntityPlacement::WorldWithHeading { position, .. } = &decoded.placement else {
+        panic!("world placement expected");
+    };
+    assert_eq!(position.flags & 0x20, 0);
+    assert_eq!(decoded, ce_with_heading());
+    bytes[11] &= !0x20;
+    assert_eq!(decoded.to_bytes().unwrap(), bytes);
+}
+
 fn full_action_payload() -> ActionPayload {
     ActionPayload {
         action_mode: 10,
@@ -1180,6 +1294,14 @@ fn client_physics_sync_base_length_and_slot_flags() {
     assert_eq!(&bytes[18..22], &[0x00, 0x00, 0x01, 0x10]);
     busy.slot_flags = busy.encoded_slot_flags();
     assert_eq!(ClientPhysicsSync::from_bytes(&bytes, &s).unwrap(), busy);
+
+    // The u8 action count of a slot cannot exceed 255.
+    let mut crowded = busy;
+    crowded.slot_actions[0] = vec![(CompactDid(0x7000_0001), ActionPayload::default()); 256];
+    assert_eq!(
+        crowded.to_bytes(),
+        Err(WorldError::CountOverflow { count: 256 })
+    );
 }
 
 #[test]

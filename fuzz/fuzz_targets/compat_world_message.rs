@@ -99,7 +99,7 @@ fuzz_target!(|data: &[u8]| {
     let _ = PortalTransitionComplete::from_bytes(data);
     let _ = PortalStateNotice::from_bytes(data);
     let _ = PortalReadyAck::from_bytes(data);
-    let _ = WorldCalendarConfig::from_bytes(data);
+    let _ = WorldCalendarConfig::from_bytes(data, 0x3500_0000);
 
     // §5 object lifecycle, movement, actions, properties
     let _ = SubEventBatch::from_bytes(data, SubEventBatch::EVENT_ID_AOI_ENTER);

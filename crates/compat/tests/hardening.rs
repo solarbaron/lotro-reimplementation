@@ -6,12 +6,12 @@ use std::net::{Ipv4Addr, SocketAddrV4};
 
 use tessera_compat::login::{LauncherConfig, LoginError, MAX_XML_INPUT_BYTES, UserPreferences};
 use tessera_compat::session::{
-    BitTreeCodec, BlobFragmentHeader, ConnectChallengeHeader, ConnectionState, DatagramHeader,
-    InMemoryUdpTransport, MAX_CONTAINER_DEPTH, MAX_NAK_ENTRIES, MAX_PENDING_OUT_OF_ORDER_ACKS,
-    MAX_UNPACKED_MESSAGES, OPCODE_BATCH_CONTAINER, OPCODE_SINGLE_WRAPPER, OptionalHeaders,
-    RuntimeBitTreeTables, SessionConnection, SessionError, SessionMultiplexer, dispatch_message,
-    encode_batch_container, encode_datagram, encode_message, encode_single_wrapper,
-    encode_variable_u32,
+    BitTreeCodec, BitTreeNode, BitTreeTable, BlobFragmentHeader, ConnectChallengeHeader,
+    ConnectionState, DatagramHeader, InMemoryUdpTransport, MAX_CONTAINER_DEPTH, MAX_NAK_ENTRIES,
+    MAX_PENDING_OUT_OF_ORDER_ACKS, MAX_UNPACKED_MESSAGES, OPCODE_BATCH_CONTAINER,
+    OPCODE_SINGLE_WRAPPER, OptionalHeaders, SessionAuthHeader, SessionConnection, SessionError,
+    SessionMultiplexer, WireCodecs, dispatch_message, encode_batch_container, encode_datagram,
+    encode_message, encode_single_wrapper, encode_variable_u32,
 };
 
 fn peer(last: u8) -> SocketAddrV4 {
@@ -22,27 +22,61 @@ fn unsequenced(opt: &OptionalHeaders) -> Vec<u8> {
     encode_datagram(DatagramHeader::default(), opt, &[], None, None).expect("encode datagram")
 }
 
-/// A caller-built table whose fast-lookup entry is `i16::MIN` used to negate
-/// out of range; it must now fail cleanly.
+/// A caller-built table (its nodes are public) with child indices out of range, a root
+/// out of range or a leaf root must fail cleanly and leave the output untouched.
 #[test]
-fn bit_tree_table_with_minimum_entry_does_not_panic() {
-    let mut tables = RuntimeBitTreeTables::synthetic_canonical();
-    tables.fast_lookup.fill(i16::MIN);
-    let mut out = Vec::new();
-    assert!(tables.decode(&[0xFF, 0x00, 0x12], &mut out, 64).is_err());
+fn bit_tree_table_with_hostile_nodes_does_not_panic() {
+    let mut out = vec![0x77];
 
-    // Every 9-bit prefix leads into the tree, whose only node holds
-    // `i16::MIN` leaves (codes longer than 9 bits); those used to be negated
-    // out of range and are now refused as symbols outside `0..=0x100`.
-    let tables = RuntimeBitTreeTables {
-        codewords: [0; 257],
-        bit_lengths: [10; 257],
-        fast_lookup: [1; 512],
-        tree_transitions: vec![[i16::MAX, i16::MAX], [i16::MIN, i16::MIN]],
+    let mut far = BitTreeTable::synthetic_dictionary([0; 16]);
+    for node in &mut far.nodes {
+        if let BitTreeNode::Branch {
+            child0_1based,
+            child1_1based,
+        } = node
+        {
+            *child0_1based = u16::MAX;
+            *child1_1based = u16::MAX;
+        }
+    }
+    assert_eq!(
+        far.decode(&[0xFF, 0x00, 0x12], &mut out, 64),
+        Err(SessionError::WireDecompressionFailed)
+    );
+
+    let mut lost_root = BitTreeTable::synthetic_dictionary([0; 16]);
+    lost_root.root_node_index = usize::MAX;
+    assert_eq!(
+        lost_root.decode(&[0xFF, 0x00], &mut out, 64),
+        Err(SessionError::WireDecompressionFailed)
+    );
+
+    // A leaf root would emit symbols without consuming bits.
+    let mut leaf_root = BitTreeTable::synthetic_dictionary([0; 16]);
+    leaf_root.root_node_index = 0;
+    assert_eq!(
+        leaf_root.decode(&[0x01, 0x00], &mut out, 64),
+        Err(SessionError::WireDecompressionFailed)
+    );
+    assert_eq!(out, [0x77]);
+}
+
+/// Branches that only lead to branches (a cycle) consume every bit and then fail; the
+/// leaves decoded before the failure are not left in the output.
+#[test]
+fn bit_tree_table_cycle_terminates_and_leaves_no_partial_output() {
+    let mut table = BitTreeTable::synthetic_dictionary([0; 16]);
+    let root = table.root_node_index;
+    let root_1based = u16::try_from(root + 1).unwrap();
+    // `0` from the root still reaches the 4-zero-byte leaf; `1` loops back to the root.
+    table.nodes[root] = BitTreeNode::Branch {
+        child0_1based: 1,
+        child1_1based: root_1based,
     };
     let mut out = Vec::new();
+    // Header 0x01 (compressed, 0 unused bits); bits 4..: 0 (a leaf, 4 bytes), then 1s.
     assert_eq!(
-        tables.decode(&[0xFF; 8], &mut out, 64),
+        table.decode(&[0x01, 0xFE], &mut out, 64),
         Err(SessionError::WireDecompressionFailed)
     );
     assert!(out.is_empty());
@@ -82,7 +116,7 @@ fn out_of_order_ack_queue_is_capped_and_counted() {
             sequence_nak: Some((first..first + per_packet).collect()),
             ..OptionalHeaders::default()
         };
-        conn.receive_datagram(&unsequenced(&opt), server, 0.1, None)
+        conn.receive_datagram(&unsequenced(&opt), server, 0.1, WireCodecs::NONE)
             .expect("NAK datagram accepted");
     }
     let sent = usize::try_from(packets * per_packet).unwrap();
@@ -94,6 +128,14 @@ fn out_of_order_ack_queue_is_capped_and_counted() {
         conn.dropped_out_of_order_acks(),
         u64::try_from(sent - MAX_PENDING_OUT_OF_ORDER_ACKS).unwrap()
     );
+}
+
+/// Starts `id`'s login so it is in State 1, where a challenge is acted on (§6.4).
+fn start(mux: &mut SessionMultiplexer, id: u16) {
+    mux.connection_mut(id)
+        .unwrap()
+        .start_login(SessionAuthHeader::for_login("A", None, 0).unwrap(), 0.0)
+        .unwrap();
 }
 
 fn challenge(assigned: u16) -> Vec<u8> {
@@ -115,9 +157,13 @@ fn recipient_id_collision_never_replaces_another_connection() {
     let a = mux.create_connection(peer(1), 0.0).unwrap();
     let b = mux.create_connection(peer(2), 0.0).unwrap();
     assert_ne!(a, b);
+    start(&mut mux, a);
+    start(&mut mux, b);
+    let mut transport = InMemoryUdpTransport::new(peer(9));
+    mux.flush_outbound(&mut transport).unwrap();
 
     let err = mux
-        .receive_from_peer(&challenge(b), peer(1), 0.1, None)
+        .receive_from_peer(&challenge(b), peer(1), 0.1, WireCodecs::NONE)
         .unwrap_err();
     assert_eq!(err, SessionError::RecipientIdCollision { rec_id: b });
     assert_eq!(mux.connection(b).unwrap().remote_addr(), peer(2));
@@ -127,8 +173,7 @@ fn recipient_id_collision_never_replaces_another_connection() {
     assert_eq!(conn_a.remote_addr(), peer(1));
     assert_eq!(conn_a.local_rec_id(), a);
     assert_eq!(conn_a.server_rec_id(), 0);
-    assert_eq!(conn_a.state(), ConnectionState::Idle);
-    let mut transport = InMemoryUdpTransport::new(peer(9));
+    assert_eq!(conn_a.state(), ConnectionState::SessionAuthSent);
     assert_eq!(
         mux.flush_outbound(&mut transport).unwrap(),
         0,
@@ -137,7 +182,7 @@ fn recipient_id_collision_never_replaces_another_connection() {
 
     // A datagram for `b` still reaches `b`, not `a`.
     let (id, _) = mux
-        .receive_from_peer(&challenge(0), peer(2), 0.2, None)
+        .receive_from_peer(&challenge(0), peer(2), 0.2, WireCodecs::NONE)
         .expect("b accepts its own challenge");
     assert_eq!(id, b);
 }
@@ -147,8 +192,9 @@ fn recipient_id_collision_never_replaces_another_connection() {
 fn out_of_range_assigned_recipient_id_is_ignored() {
     let mut mux = SessionMultiplexer::new();
     let a = mux.create_connection(peer(1), 0.0).unwrap();
+    start(&mut mux, a);
     let (id, _) = mux
-        .receive_from_peer(&challenge(0xFFF0), peer(1), 0.1, None)
+        .receive_from_peer(&challenge(0xFFF0), peer(1), 0.1, WireCodecs::NONE)
         .expect("challenge accepted");
     assert_eq!(id, a);
     assert_eq!(mux.connection(a).unwrap().local_rec_id(), a);
@@ -178,7 +224,7 @@ fn nested_decompression_is_budgeted_per_container_tree() {
 
     let fits: Vec<(u32, Vec<u8>)> = (0..8).map(|i| (0x10 + i, sub.clone())).collect();
     let container = encode_batch_container(&fits, false).unwrap();
-    let out = dispatch_message(OPCODE_BATCH_CONTAINER, &container, false, 1024 * 1024, 4).unwrap();
+    let out = dispatch_message(OPCODE_BATCH_CONTAINER, &container, 1024 * 1024, 4).unwrap();
     assert_eq!(out.len(), 8);
 
     // Sixteen sub-messages use the 1 MiB budget up; the seventeenth may only
@@ -187,7 +233,7 @@ fn nested_decompression_is_budgeted_per_container_tree() {
     let too_many: Vec<(u32, Vec<u8>)> = (0..32).map(|i| (0x10 + i, sub.clone())).collect();
     let container = encode_batch_container(&too_many, false).unwrap();
     assert_eq!(
-        dispatch_message(OPCODE_BATCH_CONTAINER, &container, false, 1024 * 1024, 4),
+        dispatch_message(OPCODE_BATCH_CONTAINER, &container, 1024 * 1024, 4),
         Err(SessionError::UnpackBudgetExceeded {
             what: "bytes",
             actual: 17 * 64 * 1024,
@@ -207,13 +253,7 @@ fn container_depth_is_clamped() {
         opcode = OPCODE_SINGLE_WRAPPER;
     }
     assert_eq!(
-        dispatch_message(
-            OPCODE_SINGLE_WRAPPER,
-            &payload,
-            false,
-            1024 * 1024,
-            usize::MAX
-        ),
+        dispatch_message(OPCODE_SINGLE_WRAPPER, &payload, 1024 * 1024, usize::MAX),
         Err(SessionError::ContainerRecursionLimitExceeded {
             max_depth: MAX_CONTAINER_DEPTH
         })
@@ -229,13 +269,7 @@ fn unpacked_message_count_is_capped() {
         .collect();
     let container = encode_batch_container(&subs, false).unwrap();
     assert!(matches!(
-        dispatch_message(
-            OPCODE_BATCH_CONTAINER,
-            &container,
-            false,
-            16 * 1024 * 1024,
-            4
-        ),
+        dispatch_message(OPCODE_BATCH_CONTAINER, &container, 16 * 1024 * 1024, 4),
         Err(SessionError::UnpackBudgetExceeded {
             what: "messages",
             ..

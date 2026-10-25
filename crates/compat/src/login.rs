@@ -341,6 +341,16 @@ pub(crate) fn zeroize_bytes(buf: &mut [u8]) {
     std::hint::black_box(&buf);
 }
 
+/// Zeroes the whole backing buffer of a `Vec<u8>` (its capacity, not only its
+/// length) and leaves it empty (§6.3).
+pub(crate) fn zeroize_vec(buf: &mut Vec<u8>) {
+    // Growing to the existing capacity never reallocates.
+    buf.resize(buf.capacity(), 0);
+    buf.fill(0);
+    std::hint::black_box(&buf);
+    buf.clear();
+}
+
 /// Zeroes the whole backing buffer of a `String` (its capacity, not only its
 /// length) and leaves it empty (§6.3). The buffer is taken out of the string,
 /// so no copy is made and no reallocation can leave the old bytes behind.

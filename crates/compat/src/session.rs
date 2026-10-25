@@ -1469,8 +1469,14 @@ pub fn send_payload_checksum(
     fragments: &[BlobFragment],
 ) -> Result<u32, SessionError> {
     let mut sum = 0u32;
+    let secret = opt_headers.session_auth.is_some();
     for buffer in opt_headers.encode_buffers()? {
-        sum = sum.wrapping_add(compute_datagram_checksum(&buffer));
+        // The SessionAuthHeader buffer holds the ticket (`official-login.md` §6.3).
+        let buffer = SecretBuf {
+            buf: buffer,
+            secret,
+        };
+        sum = sum.wrapping_add(compute_datagram_checksum(&buffer.buf));
     }
     for frag in fragments {
         let mut buffer = Vec::new();
@@ -2058,11 +2064,63 @@ pub const MAX_TICKET_STRING_LEN: usize = 4095;
 
 /// Writes an `AccountString`: 4-tier `VariableU32` UTF-16 code-unit count + UTF-16LE units
 /// (§6.2.1).
+///
+/// The units are written straight from the string, with no intermediate copy: an
+/// `AccountString` may be a credential (`official-login.md` §6.3).
 fn encode_wstring(s: &str, out: &mut Vec<u8>) {
-    let utf16: Vec<u16> = s.encode_utf16().collect();
-    encode_variable_u32(utf16.len() as u32, out);
-    for unit in utf16 {
+    let units = s.encode_utf16().count();
+    encode_variable_u32(units as u32, out);
+    for unit in s.encode_utf16() {
         out.extend_from_slice(&unit.to_le_bytes());
+    }
+}
+
+/// The encoded length of [`encode_wstring`]'s output for `s`.
+fn wstring_encoded_len(s: &str) -> usize {
+    let units = s.encode_utf16().count();
+    variable_u32_len(units as u32).saturating_add(units.saturating_mul(2))
+}
+
+/// The byte length of a 4-tier `VariableU32` encoding of `value` (§5.6.1).
+fn variable_u32_len(value: u32) -> usize {
+    if value < 0x80 {
+        1
+    } else if value < 0x4000 {
+        2
+    } else if value < 0x2000_0000 {
+        4
+    } else {
+        5
+    }
+}
+
+/// A byte buffer wiped over its whole capacity when it is dropped, if it may hold
+/// credentials (`official-login.md` §6.3). Capacities are reserved up front, so no
+/// reallocation frees an unwiped copy.
+struct SecretBuf {
+    buf: Vec<u8>,
+    secret: bool,
+}
+
+impl SecretBuf {
+    fn with_capacity(capacity: usize, secret: bool) -> Self {
+        Self {
+            buf: Vec::with_capacity(capacity),
+            secret,
+        }
+    }
+
+    /// Hands the bytes to the caller, who then owns the wipe.
+    fn into_inner(mut self) -> Vec<u8> {
+        std::mem::take(&mut self.buf)
+    }
+}
+
+impl Drop for SecretBuf {
+    fn drop(&mut self) {
+        if self.secret {
+            crate::login::zeroize_vec(&mut self.buf);
+        }
     }
 }
 
@@ -2121,21 +2179,25 @@ pub fn decode_ticket_base64(ticket: &str) -> Result<Vec<u8>, SessionError> {
     if pad > 2 || (pad > 0 && !raw.len().is_multiple_of(4)) || data.len() % 4 == 1 {
         return Err(SessionError::InvalidTicketEncoding);
     }
-    let mut out = Vec::with_capacity(data.len() / 4 * 3 + 2);
+    // The exact decoded size is reserved, so the buffer never moves; a failed decode wipes
+    // the bytes decoded so far (`official-login.md` §6.3).
+    let mut out = SecretBuf::with_capacity(data.len() / 4 * 3 + 2, true);
     for group in data.chunks(4) {
         let mut acc = 0u32;
         for &b in group {
             acc = (acc << 6) | sextet(b).ok_or(SessionError::InvalidTicketEncoding)?;
         }
         acc <<= 6 * (4 - group.len() as u32);
-        let bytes = acc.to_be_bytes();
+        let mut bytes = acc.to_be_bytes();
         let take = group.len().saturating_sub(1);
-        out.extend_from_slice(bytes.get(1..1 + take).unwrap_or_default());
+        out.buf
+            .extend_from_slice(bytes.get(1..1 + take).unwrap_or_default());
+        crate::login::zeroize_bytes(&mut bytes);
     }
-    if out.is_empty() {
+    if out.buf.is_empty() {
         return Err(SessionError::InvalidTicketEncoding);
     }
-    Ok(out)
+    Ok(out.into_inner())
 }
 
 /// Credentials payload of a `SessionAuthHeader` `authBlock` (`authFlags` bit 0 clear:
@@ -2181,10 +2243,25 @@ impl Drop for SessionAuthCredentials {
 }
 
 impl SessionAuthCredentials {
-    /// Serializes `credentialsPayload` in the §6.2.1 field order.
+    /// The byte length of [`Self::encode`]'s output.
+    #[must_use]
+    pub fn encoded_len(&self) -> usize {
+        let mut len = wstring_encoded_len(&self.account_or_ticket);
+        if let Some(second) = &self.second_string {
+            len = len.saturating_add(wstring_encoded_len(second));
+        }
+        if let Some(extra) = &self.extra_blob {
+            len = len.saturating_add(4).saturating_add(extra.len());
+        }
+        len
+    }
+
+    /// Serializes `credentialsPayload` in the §6.2.1 field order. The buffer is reserved
+    /// at its exact size, so no reallocation leaves a copy of the credentials behind
+    /// (`official-login.md` §6.3); the caller wipes it.
     #[must_use]
     pub fn encode(&self) -> Vec<u8> {
-        let mut buf = Vec::new();
+        let mut buf = Vec::with_capacity(self.encoded_len());
         encode_wstring(&self.account_or_ticket, &mut buf);
         if let Some(second) = &self.second_string {
             encode_wstring(second, &mut buf);
@@ -2300,6 +2377,14 @@ impl SessionAuthHeader {
         })
     }
 
+    /// The byte length of [`Self::encode`]'s output: the `7`-byte magic, the `4`-byte
+    /// `authBlockPaddedLen` and the `authBlock` padded to a multiple of `4` (§6.2).
+    #[must_use]
+    pub fn encoded_len(&self) -> usize {
+        let block = self.credentials.encoded_len().saturating_add(12);
+        11usize.saturating_add(block.saturating_add(3) & !3)
+    }
+
     /// Serializes this header into `out` (§6.2): `"180804\0"` (`7` B), `authBlockPaddedLen`
     /// (`u32` LE), and `authBlock` zero-padded to a multiple of `4` bytes. `auth_type` and
     /// `auth_flags` are written as they are; they are never replaced.
@@ -2326,8 +2411,11 @@ impl SessionAuthHeader {
             });
         }
         let start = out.len();
+        // `out` is reserved first, so writing the ticket into it never moves it; the two
+        // temporary buffers are reserved at their exact sizes (`official-login.md` §6.3).
+        out.reserve(self.encoded_len());
         let mut credentials = self.credentials.encode();
-        let mut auth_block = Vec::with_capacity(12 + credentials.len() + 3);
+        let mut auth_block = Vec::with_capacity((12 + credentials.len() + 3) & !3);
         auth_block.extend_from_slice(&self.auth_type.to_le_bytes());
         auth_block.extend_from_slice(&self.auth_flags.to_le_bytes());
         auth_block.extend_from_slice(&self.client_timestamp.to_le_bytes());
@@ -2785,21 +2873,57 @@ impl OptionalHeaders {
     /// # Errors
     ///
     /// See [`Self::encode`].
+    ///
+    /// When `session_auth` is present the combined copy is wiped before returning, and the
+    /// returned buffers hold the credentials: the caller wipes them (`official-login.md`
+    /// §6.3; [`send_payload_checksum`] does).
     pub fn encode_buffers(&self) -> Result<Vec<Vec<u8>>, SessionError> {
-        let mut all = Vec::new();
+        let mut all = SecretBuf::with_capacity(self.encoded_len(), self.session_auth.is_some());
         let mut marks = Vec::new();
-        self.encode_marked(&mut all, &mut marks)?;
+        self.encode_marked(&mut all.buf, &mut marks)?;
         let mut buffers = Vec::with_capacity(marks.len());
         let mut from = 0usize;
         for end in marks {
             if end > from
-                && let Some(slice) = all.get(from..end)
+                && let Some(slice) = all.buf.get(from..end)
             {
                 buffers.push(slice.to_vec());
             }
             from = end;
         }
         Ok(buffers)
+    }
+
+    /// The byte length of [`Self::encode`]'s output (§4.3 header sizes). Counts outside
+    /// `1..=114` are measured as they are; [`Self::encode`] refuses them.
+    #[must_use]
+    pub fn encoded_len(&self) -> usize {
+        let list = |seqs: &Option<Vec<u32>>| {
+            seqs.as_ref()
+                .map_or(0, |s| 4usize.saturating_add(s.len().saturating_mul(4)))
+        };
+        let fixed = |present: bool, len: usize| if present { len } else { 0 };
+        [
+            fixed(self.server_redirect.is_some(), 8),
+            fixed(self.auth_server_address.is_some(), 8),
+            fixed(self.world_referral.is_some(), 18),
+            list(&self.sequence_nak),
+            list(&self.out_of_order_ack),
+            fixed(self.cumulative_ack.is_some(), 4),
+            self.session_auth
+                .as_ref()
+                .map_or(0, SessionAuthHeader::encoded_len),
+            fixed(self.referral_auth.is_some(), 8),
+            fixed(self.connect_challenge.is_some(), 44),
+            fixed(self.connect_accept.is_some(), 28),
+            fixed(self.transport_error.is_some(), 8),
+            fixed(self.transport_fatal_error.is_some(), 8),
+            fixed(self.client_control.is_some(), 4),
+            fixed(self.clock_sync.is_some(), 8),
+            fixed(self.flow_control.is_some(), 6),
+        ]
+        .iter()
+        .fold(0usize, |acc, &n| acc.saturating_add(n))
     }
 
     /// [`Self::encode`], pushing the end offset of every header written onto `marks`.
@@ -2809,6 +2933,9 @@ impl OptionalHeaders {
         marks: &mut Vec<usize>,
     ) -> Result<usize, SessionError> {
         let start = out.len();
+        // Reserved up front: once the credentials are written, `out` never moves
+        // (`official-login.md` §6.3).
+        out.reserve(self.encoded_len());
         // Bit 8: 0x00000100 ServerRedirect (8 B)
         if let Some(ss) = self.server_redirect {
             out.extend_from_slice(&ss.switch_seq.to_le_bytes());
@@ -3978,6 +4105,10 @@ pub struct DecodedPacket {
 ///   (§4.4.2).
 /// - Prepends `0x0000` when `wire_codec` is `None`, or `header.rec_id` (big-endian) followed by
 ///   the bit-tree compressed `[DatagramHeader[2..20] | payload]` when `wire_codec` is `Some` (§4.1.1, §4.1.2).
+///   A packet with a `SessionAuthHeader` is a control packet and is always written
+///   unencoded (§4.1.1); `wire_codec` is not used for it.
+/// - Every intermediate buffer of a packet with a `SessionAuthHeader` is wiped when it is
+///   dropped (`official-login.md` §6.3); the returned datagram belongs to the caller.
 ///
 /// # Errors
 ///
@@ -3995,20 +4126,29 @@ pub fn encode_datagram(
         });
     }
 
-    let mut payload = Vec::new();
-    opt_headers.encode(&mut payload)?;
+    // A SessionAuthHeader carries the ticket: every intermediate copy is reserved at its
+    // exact size and wiped when it is dropped, on the error paths too (`official-login.md`
+    // §6.3). The returned datagram belongs to the caller.
+    let secret = opt_headers.session_auth.is_some();
+    let mut frag_bytes = Vec::new();
     for frag in fragments {
-        frag.encode(&mut payload)?;
+        frag.encode(&mut frag_bytes)?;
     }
+    let mut payload = SecretBuf::with_capacity(
+        opt_headers.encoded_len().saturating_add(frag_bytes.len()),
+        secret,
+    );
+    opt_headers.encode(&mut payload.buf)?;
+    payload.buf.extend_from_slice(&frag_bytes);
 
-    if payload.len() > usize::from(MAX_PAK_SIZE) {
+    if payload.buf.len() > usize::from(MAX_PAK_SIZE) {
         return Err(SessionError::InvalidPakSize {
             pak_size: u16::MAX,
-            actual_payload_len: payload.len(),
+            actual_payload_len: payload.buf.len(),
         });
     }
 
-    header.pak_size = payload.len() as u16;
+    header.pak_size = payload.buf.len() as u16;
     header.flags |= opt_headers.flags_mask();
     if !fragments.is_empty() {
         header.flags |= FLAG_HAS_FRAGMENTED_BLOBS;
@@ -4028,21 +4168,26 @@ pub fn encode_datagram(
     header.checksum = combine_packet_checksum(header, payload_sum, xor_mask)?;
     let wire_hdr = header.to_wire_bytes();
 
-    if let Some(codec) = wire_codec {
-        let mut plain_after_rec_id = Vec::with_capacity(18 + payload.len());
-        plain_after_rec_id.extend_from_slice(&wire_hdr[2..20]);
-        plain_after_rec_id.extend_from_slice(&payload);
+    // A SessionAuthHeader packet is a control packet and always goes out unencoded
+    // (§4.1.1), so the ticket never passes through a codec's own buffers.
+    match wire_codec.filter(|_| !secret) {
+        Some(codec) => {
+            let mut plain_after_rec_id = SecretBuf::with_capacity(18 + payload.buf.len(), secret);
+            plain_after_rec_id.buf.extend_from_slice(&wire_hdr[2..20]);
+            plain_after_rec_id.buf.extend_from_slice(&payload.buf);
 
-        let mut out = Vec::with_capacity(2 + plain_after_rec_id.len());
-        out.extend_from_slice(&header.rec_id.to_be_bytes());
-        codec.encode(&plain_after_rec_id, &mut out, MAX_DATAGRAM_BUF - 2)?;
-        Ok(out)
-    } else {
-        let mut out = Vec::with_capacity(2 + DATAGRAM_HEADER_BYTES + payload.len());
-        out.extend_from_slice(&0u16.to_be_bytes());
-        out.extend_from_slice(&wire_hdr);
-        out.extend_from_slice(&payload);
-        Ok(out)
+            let mut out = Vec::with_capacity(2 + plain_after_rec_id.buf.len());
+            out.extend_from_slice(&header.rec_id.to_be_bytes());
+            codec.encode(&plain_after_rec_id.buf, &mut out, MAX_DATAGRAM_BUF - 2)?;
+            Ok(out)
+        }
+        None => {
+            let mut out = Vec::with_capacity(2 + DATAGRAM_HEADER_BYTES + payload.buf.len());
+            out.extend_from_slice(&0u16.to_be_bytes());
+            out.extend_from_slice(&wire_hdr);
+            out.extend_from_slice(&payload.buf);
+            Ok(out)
+        }
     }
 }
 
@@ -4315,6 +4460,16 @@ impl std::fmt::Debug for SessionConnection {
     }
 }
 
+impl Drop for SessionConnection {
+    // Queued datagrams may carry a SessionAuthHeader with the ticket: wipe every one still
+    // queued (`official-login.md` §6.3). The stored header wipes its own credentials.
+    fn drop(&mut self) {
+        for dgram in &mut self.outbound_datagrams {
+            crate::login::zeroize_vec(dgram);
+        }
+    }
+}
+
 impl SessionConnection {
     /// Creates a new `SessionConnection` in State `0` (`Idle`) bound to `local_rec_id` (`0x0100..=0xFEFF`)
     /// and `remote_addr` (§3.4, §5.1, §6.1).
@@ -4448,6 +4603,11 @@ impl SessionConnection {
     }
 
     /// Pops the next queued outbound UDP datagram ready to transmit to `remote_addr`.
+    ///
+    /// The caller owns the returned bytes: a `SessionAuthHeader` datagram carries the
+    /// ticket, so wipe it once it is sent (`official-login.md` §6.3);
+    /// [`SessionMultiplexer::flush_outbound`] does. Datagrams still queued are wiped when
+    /// the connection is dropped.
     pub fn pop_outbound_datagram(&mut self) -> Option<Vec<u8>> {
         self.outbound_datagrams.pop_front()
     }
@@ -4489,16 +4649,38 @@ impl SessionConnection {
         self.events.push_back(SessionEvent::Disconnected { reason });
     }
 
-    /// The wire codec for a normal sequenced data packet: only once `remoteRecId` is known
-    /// (§4.1.2). Control packets always go out with `wirePrefix` `0x0000` (§4.1.1).
+    /// Whether a `BitTreeTable` codec was negotiated: the `ConnectChallengeHeader` named a
+    /// non-null `codecUuid` (§7.3).
+    fn codec_negotiated(&self) -> bool {
+        self.active_codec_uuid != [0u8; 16]
+    }
+
+    /// The wire codec for a normal sequenced data packet: only on a connection that
+    /// negotiated a non-null `codecUuid` and once `remoteRecId` is known (§4.1.1, §4.1.2,
+    /// §7.3); otherwise the packet goes out with `wirePrefix` `0x0000`. Control packets
+    /// always go out with `wirePrefix` `0x0000` (§4.1.1).
     fn data_codec<'c>(
         &self,
         wire_codec: Option<&'c dyn BitTreeCodec>,
     ) -> Option<&'c dyn BitTreeCodec> {
-        if self.server_rec_id == 0 {
+        if self.server_rec_id == 0 || !self.codec_negotiated() {
             None
         } else {
             wire_codec
+        }
+    }
+
+    /// The wire codec for received datagrams: none on a connection without a negotiated
+    /// `codecUuid` (§4.1.1, §7.3), so a non-zero `wirePrefix` is then refused
+    /// ([`SessionError::MissingWireCodec`]).
+    fn receive_codec<'c>(
+        &self,
+        wire_codec: Option<&'c dyn BitTreeCodec>,
+    ) -> Option<&'c dyn BitTreeCodec> {
+        if self.codec_negotiated() {
+            wire_codec
+        } else {
+            None
         }
     }
 
@@ -4795,7 +4977,7 @@ impl SessionConnection {
         }
 
         // Decode framing & structural bounds first without mutating connection state
-        let pkt = decode_datagram(datagram, true, codecs.incoming, true)?;
+        let pkt = decode_datagram(datagram, true, self.receive_codec(codecs.incoming), true)?;
         let hdr = pkt.header;
 
         if let Some(cr) = &pkt.opt_headers.connect_challenge {
@@ -4818,9 +5000,18 @@ impl SessionConnection {
             }
         }
 
+        // The reassembly key's sender ID, computed once for the check and the ingest: a
+        // ConnectChallengeHeader in this packet sets `serverRecId` before its fragments are
+        // ingested (§6.4 step 1), so its fragments are keyed by the new ID.
+        let sender_rec_id = pkt
+            .opt_headers
+            .connect_challenge
+            .as_ref()
+            .map_or(self.server_rec_id, |cr| cr.server_rec_id);
+
         // Rule 8: every fragment is checked before anything is committed.
         self.reassembler
-            .check_packet(self.server_rec_id, &pkt.fragments, now_sec)?;
+            .check_packet(sender_rec_id, &pkt.fragments, now_sec)?;
 
         // Rules 5 & 6: sequence window and checksum, computed on copies (§5.1, §7.2).
         let commit = if (hdr.flags & FLAG_MASKED_CHECKSUM) != 0 {
@@ -4869,9 +5060,9 @@ impl SessionConnection {
         // Process blob fragments (checked above; duplicate sequenced packets were dropped,
         // §5.6.4)
         for frag in &pkt.fragments {
-            if let Some(blob) =
-                self.reassembler
-                    .ingest(self.server_rec_id, frag.clone(), now_sec)?
+            if let Some(blob) = self
+                .reassembler
+                .ingest(sender_rec_id, frag.clone(), now_sec)?
             {
                 self.events.push_back(SessionEvent::BlobReceived(blob));
             }
@@ -5549,8 +5740,11 @@ impl SessionMultiplexer {
         let mut count = 0usize;
         for conn in self.connections.values_mut() {
             let remote = conn.remote_addr();
-            while let Some(dgram) = conn.pop_outbound_datagram() {
-                transport.send_to(&dgram, remote)?;
+            while let Some(mut dgram) = conn.pop_outbound_datagram() {
+                let sent = transport.send_to(&dgram, remote);
+                // A sent (or failed) datagram may hold the ticket (`official-login.md` §6.3).
+                crate::login::zeroize_vec(&mut dgram);
+                sent?;
                 count += 1;
             }
         }

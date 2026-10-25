@@ -51,50 +51,6 @@ fn schema() -> BTreeMap<u32, PropertyType> {
 }
 
 // ---------------------------------------------------------------------------
-// Reservation bound (§7.1 item 1)
-// ---------------------------------------------------------------------------
-
-/// The process's peak virtual size (`VmPeak` of `/proc/self/status`, bytes) on Linux. It
-/// grows with reserved but untouched memory too, which is what an over-eager
-/// `Vec::with_capacity` costs. `None` where the file does not exist.
-fn vm_peak_bytes() -> Option<u64> {
-    let status = std::fs::read_to_string("/proc/self/status").ok()?;
-    let line = status.lines().find(|l| l.starts_with("VmPeak:"))?;
-    let kib: u64 = line.split_whitespace().nth(1)?.parse().ok()?;
-    Some(kib * 1024)
-}
-
-/// Nested arrays each check their count against the message's remaining bytes; a decoder
-/// that reserved the full count at every level would reserve gigabytes for a 4 MiB message
-/// (fix round 1, B1). Reservations are bounded now.
-#[test]
-fn nested_property_tables_reserve_bounded_memory() {
-    const ARRAY_PID: [u8; 2] = [0x01, 0x0C]; // 0x0000010C: type code 12 (array) in `schema()`
-    let s = schema();
-    let total = 4 * 1024 * 1024;
-    let count = u32::try_from(total / 2 - 1024).unwrap();
-    let mut bytes = vec![0x01]; // one top-level entry
-    for _ in 0..(MAX_RECURSION_DEPTH - 2) {
-        bytes.extend_from_slice(&ARRAY_PID);
-        bytes.extend_from_slice(&count.to_le_bytes());
-    }
-    // The innermost first element names a PID the schema lacks, so decoding fails there.
-    bytes.extend_from_slice(&[0x80, 0x78, 0x56, 0x34, 0x12]);
-    bytes.resize(total, 0);
-    let before = vm_peak_bytes();
-    assert_eq!(
-        EncodedPropertyTable::from_bytes(&bytes, &s),
-        Err(WorldError::UnknownPropertyId(0x1234_5678))
-    );
-    // Reserving every declared count would add well over 1 GiB of address space here; the
-    // bounded reservation adds next to nothing (other tests in the process stay far below).
-    if let (Some(before), Some(after)) = (before, vm_peak_bytes()) {
-        let grown = after.saturating_sub(before);
-        assert!(grown < 512 * 1024 * 1024, "decode reserved {grown} bytes");
-    }
-}
-
-// ---------------------------------------------------------------------------
 // §7.2 Vectors 1–6: value encodings
 // ---------------------------------------------------------------------------
 

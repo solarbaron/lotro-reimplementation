@@ -15,11 +15,15 @@ use tessera_compat::session::{
     OPCODE_SYSTEM_NOTIFICATION, OPCODE_VERSION_REQUEST, OPCODE_VERSION_STATUS, OptionalHeaders,
     SessionAuthHeader, SessionConnection, SessionMultiplexer, WireCodecs, WorldReferralHeader,
     compute_datagram_checksum, decode_datagram, decode_message, decode_ticket_base64,
-    decode_variable_u32, des3_cbc_decrypt, dispatch_message,
+    decode_variable_u32, des3_cbc_decrypt, dispatch_message, encode_datagram,
 };
 
 /// A synthetic record DID (the real one is resolved at run time).
 const SYNTHETIC_DICT_DID: u32 = 0x0E01_0001;
+
+/// A synthetic non-null `codecUuid`: only a connection that negotiated one decompresses
+/// (official-session.md §4.1.1, §7.3).
+const FUZZ_CODEC_UUID: [u8; 16] = [0x5A; 16];
 
 fuzz_target!(|data: &[u8]| {
     let _ = compute_datagram_checksum(data);
@@ -63,14 +67,42 @@ fuzz_target!(|data: &[u8]| {
     };
     let mut conn = SessionConnection::new(0x0100, peer, 0.0);
     let _ = conn.receive_datagram(data, peer, 0.5, codecs);
-    // In State 1 a ConnectChallengeHeader is acted on (official-session.md §6.4).
+    // In State 1 a ConnectChallengeHeader is acted on (official-session.md §6.4). The
+    // registered codecUuid lets a challenge that names it attach the codecs (§7.3).
     let mut started = SessionConnection::new(0x0100, peer, 0.0);
+    started.register_codec_uuid(FUZZ_CODEC_UUID);
     if let Ok(auth) = SessionAuthHeader::for_login("A", None, 0)
         && started.start_login(auth, 0.0).is_ok()
     {
         let _ = started.receive_datagram(data, peer, 0.5, codecs);
         let _ = started.receive_datagram(data, peer, 0.6, WireCodecs::NONE);
         let _ = started.tick(1.0);
+    }
+    // A connection whose synthetic challenge negotiated a codec takes compressed datagrams.
+    let mut negotiated = SessionConnection::new(0x0100, peer, 0.0);
+    negotiated.register_codec_uuid(FUZZ_CODEC_UUID);
+    let challenge = OptionalHeaders {
+        connect_challenge: Some(ConnectChallengeHeader {
+            server_time: 0.0,
+            assigned_client_rec_id: 0,
+            server_rec_id: 0x0304,
+            outgoing_seed: 1,
+            incoming_seed: 2,
+            reserved_dword_14: 0,
+            client_conn_idx: 1,
+            reserved_word_1a: 0,
+            codec_uuid: FUZZ_CODEC_UUID,
+        }),
+        ..OptionalHeaders::default()
+    };
+    if let Ok(auth) = SessionAuthHeader::for_login("A", None, 0)
+        && negotiated.start_login(auth, 0.0).is_ok()
+        && let Ok(dgram) = encode_datagram(DatagramHeader::default(), &challenge, &[], None, None)
+        && negotiated
+            .receive_datagram(&dgram, peer, 0.1, WireCodecs::NONE)
+            .is_ok()
+    {
+        let _ = negotiated.receive_datagram(data, peer, 0.5, codecs);
     }
 
     let _ = decode_message(1, data, 65_536);

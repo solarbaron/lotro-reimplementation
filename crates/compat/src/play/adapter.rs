@@ -25,7 +25,7 @@ use crate::play::movement::{
     wire_location,
 };
 use crate::play::rpc::{OPCODE_SCRIPT_RPC, PlayRpc};
-use crate::play::{OutgoingEvent, PlayError};
+use crate::play::{OutgoingEvent, PlayError, clean_display_name};
 use crate::world::{EntityPlacement, PortalSpaceReady, WireLocalizedText, WirePosition};
 
 /// Most names kept in the client-side ignore list. Engineering choice, spec silent.
@@ -50,8 +50,10 @@ pub struct PlayCounters {
     pub ignored_controllers: u64,
     /// `0xCC` events addressed to another entity than the local player (dropped).
     pub foreign_syncs: u64,
-    /// `0xCC` acknowledgements of a step the client has not made (dropped).
-    pub bad_acks: u64,
+    /// `0xCC` acknowledgements outside the retained step history (ahead of the newest
+    /// step, as at world entry, or no longer retained): reset to the authoritative state
+    /// (§4.3.2 item 3) and counted.
+    pub outside_history_acks: u64,
     /// Outgoing messages that failed to encode (logged and dropped).
     pub encode_failures: u64,
     /// Incoming tells refused by the client's ignore list (`0x84EC004D` sent).
@@ -136,9 +138,9 @@ fn clean_text(s: &str) -> String {
     sanitize_text(s, MAX_CHAT_LEN).into_owned()
 }
 
-/// Sanitises first (control characters become spaces), then trims.
+/// Sanitises first (control characters become spaces), trims, then caps the length.
 fn clean_name(s: &str) -> Option<String> {
-    let n = sanitize_text(s, MAX_NAME_LEN).trim().to_owned();
+    let n = clean_display_name(s, MAX_NAME_LEN);
     (!n.is_empty()).then_some(n)
 }
 
@@ -421,13 +423,23 @@ impl PlayAdapter {
                 match movement.reconcile(p, self.tolerance) {
                     Ok(r) => {
                         if let Reconciliation::Corrected {
+                            ack,
                             location,
                             anchor,
                             heading,
                             velocity,
+                            outside_history,
                             ..
                         } = &r
                         {
+                            if *outside_history {
+                                self.counters.outside_history_acks += 1;
+                                tracing::debug!(
+                                    ack,
+                                    newest = movement.sequence(),
+                                    "0xCC outside the step history: reset"
+                                );
+                            }
                             out.events
                                 .push(Self::moved(player, location, *heading, *velocity));
                             out.events.push(Event::LocationReport {
@@ -439,10 +451,6 @@ impl PlayAdapter {
                             });
                         }
                         out.signals.push(PlaySignal::Reconciled(r));
-                    }
-                    Err(PlayError::AckAheadOfSequence { ack, newest }) => {
-                        self.counters.bad_acks += 1;
-                        tracing::debug!(ack, newest, "0xCC acknowledges a step not yet made");
                     }
                     Err(_) => self.counters.ignored_positions += 1,
                 }

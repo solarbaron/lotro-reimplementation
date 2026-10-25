@@ -38,6 +38,16 @@ pub mod rpc;
 use crate::session::SessionError;
 use crate::world::WorldError;
 
+/// A name from an untrusted source made safe to show: control characters become spaces,
+/// the result is trimmed, and only then cut to `max_len` bytes on a character boundary (so
+/// leading blanks never take the room of the name); a blank left at the cut is trimmed too.
+pub(crate) fn clean_display_name(s: &str, max_len: usize) -> String {
+    let sanitized = tessera_net::model::sanitize_text(s, s.len());
+    tessera_net::model::sanitize_text(sanitized.trim(), max_len)
+        .trim_end()
+        .to_owned()
+}
+
 /// Errors of the play and chat-server layers (`official-messages-play.md`).
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[non_exhaustive]
@@ -136,15 +146,6 @@ pub enum PlayError {
     /// the opcode `0x30000045` or the RPC `0x84EC002C`.
     #[error("0x{0:08X} is an admin message and is never sent")]
     AdminMessageRefused(u32),
-    /// A `0xCC` acknowledges a step the client has not made yet (§4.3.2; serial-number
-    /// comparison, engineering choice: the spec says nothing about such an ack).
-    #[error("acknowledged step {ack} is ahead of the newest step {newest}")]
-    AckAheadOfSequence {
-        /// The acknowledged step.
-        ack: u32,
-        /// The newest step made.
-        newest: u32,
-    },
     /// A Type 22 bitfield whose byte count does not match its bit count
     /// (`official-messages-world.md` §2.7.1).
     #[error("a bitfield of {bit_count} bits does not match its {bytes} bytes")]
@@ -226,5 +227,23 @@ impl OutgoingEvent {
     #[must_use]
     pub fn into_parts(self) -> (u32, Vec<u8>) {
         (self.opcode, self.payload)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::clean_display_name;
+
+    #[test]
+    fn names_are_sanitized_trimmed_then_capped() {
+        // Leading blanks and control characters do not take the room of the name.
+        let padded = format!("{}Name", " ".repeat(40));
+        assert_eq!(clean_display_name(&padded, 8), "Name");
+        assert_eq!(clean_display_name("\u{7}\t Ab\ncd \r", 32), "Ab cd");
+        // A cut that ends on a blank leaves no trailing blank.
+        assert_eq!(clean_display_name("ab cd", 3), "ab");
+        // The cut keeps character boundaries.
+        assert_eq!(clean_display_name("ééé", 5), "éé");
+        assert_eq!(clean_display_name(" \u{0} ", 8), "");
     }
 }

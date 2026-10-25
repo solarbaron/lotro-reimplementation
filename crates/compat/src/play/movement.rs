@@ -271,6 +271,9 @@ pub enum Reconciliation {
         enum_states: Vec<u32>,
         /// The unacknowledged steps to re-apply, oldest first.
         replay: Vec<StepInput>,
+        /// The ack was outside the retained step history (ahead of the newest step, or
+        /// no longer retained): item 3's reset to the authoritative state.
+        outside_history: bool,
     },
 }
 
@@ -419,38 +422,41 @@ impl MovementSender {
     /// Reconciles a `0xCC` acknowledgement of `ack_step_seq` (§4.3.2). Step numbers are
     /// compared as serial numbers ([`step_after`]), so the wrap of the counter is handled.
     ///
+    /// An ack outside the retained step history is a reset to the authoritative state
+    /// (§4.3.2 item 3): [`Reconciliation::Corrected`] with `outside_history` set. This is
+    /// the `0xCC` that places the player at world entry (`official-messages-world.md`
+    /// §4.3.3 step 3) and after a return from character selection, whose ack is ahead of
+    /// the newest step made: every step is then acknowledged, the history is cleared and
+    /// nothing is replayed. An ack behind the history re-applies every retained step
+    /// after it. The step counter is not moved (engineering choice, spec silent).
+    ///
     /// # Errors
     ///
-    /// [`PlayError::AckAheadOfSequence`] when the ack is after the newest step made (the
-    /// history is left as it was), or [`PlayError::BadCoordinate`] when the authoritative
-    /// position is not a valid location.
+    /// [`PlayError::BadCoordinate`] when the authoritative position is not a valid
+    /// location (the history is left as it was).
     pub fn reconcile(
         &mut self,
         placement: &PortalPlacement,
         tolerance: ReconcileTolerance,
     ) -> Result<Reconciliation, PlayError> {
         let ack = placement.sequence_or_reason;
-        if step_after(ack, self.seq) {
-            return Err(PlayError::AckAheadOfSequence {
-                ack,
-                newest: self.seq,
-            });
-        }
         let (location, anchor) = wire_location(&placement.position)
             .ok_or(PlayError::BadCoordinate("authoritative position"))?;
         let heading = wire_heading(placement.heading_raw);
-        let predicted = self
-            .history
-            .iter()
-            .find(|r| r.seq == ack)
-            .and_then(|r| r.predicted);
-        let within = predicted.is_some_and(|p| {
+        let record = self.history.iter().find(|r| r.seq == ack);
+        let outside_history = record.is_none();
+        let within = record.and_then(|r| r.predicted).is_some_and(|p| {
             p.location.region == location.region
                 && distance(&p.location, &location) <= tolerance.distance_m
                 && angle_diff(p.heading, heading) <= tolerance.heading_rad
         });
-        // Steps up to and including `ack` are acknowledged (item 1).
-        self.history.retain(|r| step_after(r.seq, ack));
+        // Steps up to and including `ack` are acknowledged (item 1). An ack ahead of the
+        // newest step acknowledges all of them, so the history is cleared.
+        if step_after(ack, self.seq) {
+            self.history.clear();
+        } else {
+            self.history.retain(|r| step_after(r.seq, ack));
+        }
         if within {
             return Ok(Reconciliation::Accepted { ack });
         }
@@ -471,6 +477,7 @@ impl MovementSender {
             bool_states: placement.bool_states.clone(),
             enum_states: placement.enum_states.clone(),
             replay,
+            outside_history,
         })
     }
 }

@@ -34,7 +34,7 @@ use crate::chat_session::{CHAT_RECIPIENT_ID, chat_auth_header};
 use crate::net_access::{NetworkAccess, StdUdpTransport};
 use crate::play::PlayError;
 use crate::play::chat::{MAX_ARGUMENT_UNITS, MAX_CHAT_UNITS};
-use crate::play::check_units;
+use crate::play::{check_units, clean_display_name};
 use crate::session::{
     BitTreeCodec, ConnectionState, MAX_DATAGRAM_BUF, OptionalHeaders, SessionAuthHeader,
     SessionEvent, SessionMultiplexer, UdpDatagramTransport, split_blob,
@@ -137,14 +137,19 @@ pub struct ChatCounters {
     pub admin_ignored: u64,
     /// Chat events that failed to decode.
     pub decode_errors: u64,
-    /// Datagrams the session layer refused.
+    /// Datagrams the session layer refused and failed sends, on the current connection
+    /// and on old connections finishing their disconnect flush.
     pub transport_errors: u64,
-    /// Socket reads that failed (the poll goes on).
+    /// Socket reads that failed, on the current socket and on the sockets of old
+    /// connections finishing their disconnect flush (the poll goes on).
     pub recv_errors: u64,
     /// Connection attempts made.
     pub connects: u64,
     /// Connection attempts that could not be started (a retry is scheduled).
     pub connect_failures: u64,
+    /// Fresh sockets that could not be bound when a connection was retired: the old
+    /// connection is let go after one flush instead of draining on its own socket.
+    pub rebind_failures: u64,
     /// Graceful disconnects requested on a connection that was still up.
     pub disconnects: u64,
     /// Heartbeats sent.
@@ -216,6 +221,11 @@ impl ChatClient<StdUdpTransport> {
     /// Opens the chat-server socket through `access` and prepares the session; the first
     /// connection attempt follows after the initial delay of §6.6.3. Every later attempt
     /// binds a fresh socket through `access`.
+    ///
+    /// The client keeps `access` (and with it the consent proof) for those later binds.
+    /// The connector must drop the `ChatClient` when the session ends, and at once when
+    /// the user withdraws the acceptance: Withdraw drops the consent proof
+    /// (`official-entry.md` §5.5), and a kept `ChatClient` would keep it alive.
     ///
     /// # Errors
     ///
@@ -394,7 +404,7 @@ impl<T: UdpDatagramTransport> ChatClient<T> {
                 });
             }
             Err(e) => {
-                self.counters.connect_failures += 1;
+                self.counters.rebind_failures += 1;
                 tracing::warn!(error = %e, "could not bind a fresh chat-server socket");
             }
         }
@@ -671,7 +681,8 @@ impl<T: UdpDatagramTransport> ChatClient<T> {
     }
 
     /// Runs the old connections that are finishing their disconnect flush; each reads and
-    /// writes only its own socket. Their events are dropped.
+    /// writes only its own socket. Their events are dropped; failed reads, refused
+    /// datagrams and failed sends are counted.
     fn poll_draining(&mut self, now: f64, buf: &mut [u8]) {
         let codec = self.codec.clone();
         let mut i = 0;
@@ -679,11 +690,20 @@ impl<T: UdpDatagramTransport> ChatClient<T> {
             for _ in 0..MAX_DATAGRAMS_PER_POLL {
                 match d.transport.recv_from(buf) {
                     Ok(Some((len, src))) => {
-                        if let Some(dgram) = buf.get(..len) {
-                            let _ = d.mux.receive_from_peer(dgram, src, now, codec.as_deref());
+                        let Some(dgram) = buf.get(..len) else {
+                            break;
+                        };
+                        if let Err(e) = d.mux.receive_from_peer(dgram, src, now, codec.as_deref()) {
+                            self.counters.transport_errors += 1;
+                            tracing::debug!(error = %e, "old chat-server datagram refused");
                         }
                     }
-                    Ok(None) | Err(_) => break,
+                    Ok(None) => break,
+                    Err(e) => {
+                        self.counters.recv_errors += 1;
+                        tracing::debug!(error = %e, "old chat-server socket read failed");
+                        break;
+                    }
                 }
             }
             let done = match d.mux.connection_mut(d.conn) {
@@ -697,7 +717,14 @@ impl<T: UdpDatagramTransport> ChatClient<T> {
                 }
                 None => true,
             };
-            let flushed = d.mux.flush_outbound(&mut d.transport).is_ok();
+            let flushed = match d.mux.flush_outbound(&mut d.transport) {
+                Ok(_) => true,
+                Err(e) => {
+                    self.counters.transport_errors += 1;
+                    tracing::debug!(error = %e, "old chat-server flush failed");
+                    false
+                }
+            };
             if done || !flushed {
                 self.draining.remove(i);
             } else {
@@ -796,9 +823,9 @@ impl<T: UdpDatagramTransport> ChatClient<T> {
         self.rooms.retain(|r| r.name() != Some(name));
     }
 
-    /// Sanitises first (control characters become spaces), then trims.
+    /// Sanitises first (control characters become spaces), trims, then caps the length.
     fn channel_name(name: &str) -> Option<String> {
-        let n = sanitize_text(name, MAX_NAME_LEN).trim().to_owned();
+        let n = clean_display_name(name, MAX_NAME_LEN);
         is_valid_name(&n).then_some(n)
     }
 
@@ -1007,7 +1034,7 @@ impl<T: UdpDatagramTransport> ChatClient<T> {
             .name()
             .filter(|n| !n.is_empty())
             .or_else(|| sender.name())
-            .map(|n| sanitize_text(n, MAX_NAME_LEN).trim().to_owned())
+            .map(|n| clean_display_name(n, MAX_NAME_LEN))
             .filter(|n| !n.is_empty());
         out.events.push(Event::ChatMessage {
             channel,

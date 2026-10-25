@@ -751,6 +751,26 @@ impl FakeServer {
         .expect("keepalive")
     }
 
+    /// The server's own graceful `Disconnect` (`official-session.md` §8.3), answering the
+    /// client's.
+    fn disconnect(&self) -> Vec<u8> {
+        encode_datagram(
+            DatagramHeader {
+                rec_id: 0x0111,
+                seq_num: self.seq,
+                ..DatagramHeader::default()
+            },
+            &OptionalHeaders {
+                disconnect: true,
+                ..OptionalHeaders::default()
+            },
+            &[],
+            None,
+            None,
+        )
+        .expect("disconnect")
+    }
+
     fn event(&mut self, ev: &ChatEvent) -> Vec<u8> {
         let inner = ev.encode().expect("event");
         self.blob(ev.opcode(), &inner)
@@ -1071,6 +1091,8 @@ struct Net {
     inbound: Vec<VecDeque<(Vec<u8>, SocketAddrV4)>>,
     sent: Vec<(usize, Vec<u8>)>,
     fail_binds: bool,
+    /// Reads on this socket fail.
+    fail_reads: Option<usize>,
 }
 
 #[derive(Debug)]
@@ -1093,6 +1115,9 @@ impl UdpDatagramTransport for NetSocket {
 
     fn recv_from(&mut self, buf: &mut [u8]) -> Result<Option<(usize, SocketAddrV4)>, SessionError> {
         let mut net = self.net.lock().expect("net");
+        if net.fail_reads == Some(self.index) {
+            return Err(SessionError::Io("read refused".into()));
+        }
         let Some((data, src)) = net
             .inbound
             .get_mut(self.index)
@@ -1182,6 +1207,13 @@ fn reconnect_binds_a_fresh_socket_and_flushes_the_old_disconnect() {
         "Disconnect on the old socket"
     );
     assert!(out.iter().all(|(i, _)| *i == 0));
+    assert_eq!(client.draining_len(), 1, "waiting for the server's answer");
+    // The server acknowledges the Disconnect: the old connection is let go at once, long
+    // before the drain limit.
+    push(&net, 0, server.disconnect());
+    client.poll(62.5, &schema).expect("poll");
+    assert_eq!(client.draining_len(), 0);
+    assert_eq!(client.counters().transport_errors, 0);
 
     // The next attempt authenticates on socket 1; stale traffic on socket 0 never reaches
     // it.
@@ -1204,6 +1236,74 @@ fn reconnect_binds_a_fresh_socket_and_flushes_the_old_disconnect() {
     // The old connection is let go once the session layer is done with it.
     client.poll(until + 46.0, &schema).expect("poll");
     assert_eq!(client.draining_len(), 0);
+}
+
+/// Drives a client over the test network to a ready session on socket 0, then to the
+/// chat-level drop at 61.3 s with a reliable heartbeat still unacknowledged.
+fn ready_then_dropped(
+    net: &Arc<Mutex<Net>>,
+    fail_rebind: bool,
+) -> (ChatClient<NetSocket>, FakeServer) {
+    let config = ChatConfig::new(SERVER, "acct", None, 0);
+    let mut client = ChatClient::with_binder(net_binder(net), config, None, 0.0).expect("client");
+    let schema = no_schema();
+    let mut server = FakeServer::new();
+    client.poll(1.0, &schema).expect("poll");
+    push(net, 0, FakeServer::challenge());
+    client.poll(1.1, &schema).expect("poll");
+    let login = server.event(&ChatEvent::LoginStatus { status: 0 });
+    push(net, 0, login);
+    client.poll(1.2, &schema).expect("poll");
+    assert!(client.is_ready());
+    client.poll(16.3, &schema).expect("poll");
+    for t in [30.0, 55.0] {
+        push(net, 0, server.keepalive(None));
+        client.poll(t, &schema).expect("poll");
+    }
+    net.lock().expect("net").fail_binds = fail_rebind;
+    client.poll(61.3, &schema).expect("poll");
+    assert!(!client.is_ready());
+    assert_eq!(client.counters().disconnects, 1);
+    (client, server)
+}
+
+#[test]
+fn failed_reads_of_an_old_connection_are_counted() {
+    let net = Arc::new(Mutex::new(Net::default()));
+    let (mut client, _server) = ready_then_dropped(&net, false);
+    assert_eq!(client.draining_len(), 1);
+    let before = client.counters();
+    net.lock().expect("net").fail_reads = Some(0);
+    client.poll(61.5, &no_schema()).expect("poll");
+    assert_eq!(client.counters().recv_errors, before.recv_errors + 1);
+    assert_eq!(
+        client.draining_len(),
+        1,
+        "a failed read does not end the drain"
+    );
+    // A datagram the old session refuses is counted as a transport error.
+    net.lock().expect("net").fail_reads = None;
+    push(&net, 0, vec![0xFF; 3]);
+    client.poll(61.6, &no_schema()).expect("poll");
+    assert_eq!(
+        client.counters().transport_errors,
+        before.transport_errors + 1
+    );
+}
+
+#[test]
+fn a_failed_rebind_on_retire_is_not_a_connect_failure() {
+    let net = Arc::new(Mutex::new(Net::default()));
+    let (client, _server) = ready_then_dropped(&net, true);
+    let c = client.counters();
+    assert_eq!(c.rebind_failures, 1);
+    assert_eq!(c.connect_failures, 0);
+    assert_eq!(c.connects, 1);
+    assert_eq!(
+        client.draining_len(),
+        0,
+        "without a fresh socket the old connection is let go after one flush"
+    );
 }
 
 #[test]

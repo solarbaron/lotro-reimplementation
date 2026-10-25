@@ -216,7 +216,7 @@ fn cadence_is_20_hz_with_60_hz_frames() {
 }
 
 #[test]
-fn reconcile_uses_serial_numbers_and_refuses_future_acks() {
+fn reconcile_uses_serial_numbers_and_resets_on_acks_outside_history() {
     let mut ack = PortalPlacement::from_bytes(&tv7()).expect("0xCC");
     let mut s = MovementSender::new(PLAYER);
     let walk = MovementInput {
@@ -225,26 +225,88 @@ fn reconcile_uses_serial_numbers_and_refuses_future_acks() {
         ..MovementInput::default()
     };
     s.update(walk, 0.0, 0, None).expect("step 1");
+    // §4.3.2 item 3: an ack ahead of the newest step is outside the retained history: a
+    // reset to the authoritative state, the history cleared and nothing replayed.
     ack.sequence_or_reason = 2;
-    assert_eq!(
-        s.reconcile(&ack, ReconcileTolerance::default()),
-        Err(PlayError::AckAheadOfSequence { ack: 2, newest: 1 })
-    );
-    assert_eq!(s.history_len(), 1, "a refused ack prunes nothing");
+    match s
+        .reconcile(&ack, ReconcileTolerance::default())
+        .expect("reconcile")
+    {
+        Reconciliation::Corrected {
+            ack: 2,
+            replay,
+            outside_history: true,
+            ..
+        } => assert!(replay.is_empty()),
+        other => panic!("expected a reset: {other:?}"),
+    }
+    assert_eq!(s.history_len(), 0, "every step is acknowledged");
+    assert_eq!(s.sequence(), 1, "the step counter is not moved");
+    // An ack behind the retained history re-applies every retained step after it.
+    let mut s = MovementSender::new(PLAYER);
+    for i in 0..3u8 {
+        let input = MovementInput {
+            move_state: i + 1,
+            ..MovementInput::default()
+        };
+        s.update(input, f64::from(i) * 0.01, 0, None).expect("step");
+    }
+    ack.sequence_or_reason = 2;
+    s.reconcile(&ack, ReconcileTolerance::default())
+        .expect("ack 2");
+    assert_eq!(s.history_len(), 1);
+    ack.sequence_or_reason = 1; // no longer retained
+    match s
+        .reconcile(&ack, ReconcileTolerance::default())
+        .expect("reconcile")
+    {
+        Reconciliation::Corrected {
+            ack: 1,
+            replay,
+            outside_history: true,
+            ..
+        } => assert_eq!(replay.len(), 1, "step 3 is re-applied"),
+        other => panic!("expected a reset: {other:?}"),
+    }
     assert!(step_after(2, u32::MAX), "2 comes after the wrap");
     assert!(!step_after(u32::MAX, 2));
     assert!(!step_after(7, 7));
-    // Through the adapter: counted, nothing emitted.
+}
+
+#[test]
+fn world_entry_placement_ack_corrects_the_player() {
+    // The 0xCC that places the player at world entry (`official-messages-world.md`
+    // §4.3.3 step 3) acknowledges a step the client has not made: right after
+    // `enter_world`, ack 100 with no step made is a reset (§4.3.2 item 3).
     let mut a = PlayAdapter::new(ChatCategories::default());
     a.enter_world(PLAYER, None);
-    let mut bytes = tv7();
-    bytes[2] = 0x09; // ack 9, no step made yet
-    let msg = decode_play_message(PortalPlacement::EVENT_ID, PLAYER, &bytes, &no_schema())
+    let msg = decode_play_message(PortalPlacement::EVENT_ID, PLAYER, &tv7(), &no_schema())
         .expect("decode")
         .expect("msg");
     let out = a.handle(&msg, &LiteralTexts);
-    assert!(out.events.is_empty() && out.signals.is_empty());
-    assert_eq!(a.counters().bad_acks, 1);
+    assert!(matches!(
+        out.events.as_slice(),
+        [
+            Event::EntityMoved { .. },
+            Event::LocationReport {
+                cause: LocationCause::Corrected,
+                ..
+            }
+        ]
+    ));
+    match out.signals.as_slice() {
+        [
+            PlaySignal::Reconciled(Reconciliation::Corrected {
+                ack: 100,
+                replay,
+                outside_history: true,
+                ..
+            }),
+        ] => assert!(replay.is_empty()),
+        other => panic!("expected a reset: {other:?}"),
+    }
+    assert_eq!(a.counters().outside_history_acks, 1);
+    assert_eq!(a.counters().ignored_positions, 0);
 }
 
 #[test]

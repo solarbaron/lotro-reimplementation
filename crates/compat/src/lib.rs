@@ -51,10 +51,12 @@
 #![warn(missing_docs)]
 
 pub mod backend;
+pub mod chat_session;
 pub mod consent;
 pub mod credentials;
 pub mod login;
 pub mod net_access;
+pub mod play;
 pub mod session;
 pub mod version_resource;
 pub mod world;

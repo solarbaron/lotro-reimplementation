@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Fuzz target for `tessera_compat::login` (`docs/specs/official-login.md` §2–§7):
 //! exercises all XML, SOAP, `.launcherconfig`, `LauncherConfigurationServer`,
-//! `UserPreferences.ini`, `StatusServer.aspx`, `LoginQueue.aspx`, and entity/URL
+//! `UserPreferences.ini`, the world status and queue responses, and entity/URL
 //! encoders and parsers on arbitrary hostile bytes.
 
 #![no_main]
@@ -44,7 +44,8 @@ fuzz_target!(|data: &[u8]| {
         let _ = form_urlencode(text);
         let _ = parse_hex_u32(text, LoginFailureClass::F08QueueError);
         let _ = tessera_compat::login::is_valid_network_version(text);
-        let _ = tessera_compat::login::encode_version_response_payload(text);
+        let _ = tessera_compat::login::encode_client_version_payload(text);
+        let _ = tessera_compat::login::LoginHost::parse(text);
         let _ = build_take_a_number_body(
             "command=TakeANumber&subscription={0}&ticket={1}&ticket_type=GLS&queue_url={2}",
             text,

@@ -4,32 +4,32 @@
 use std::net::{Ipv4Addr, SocketAddrV4};
 
 use tessera_compat::session::{
-    AUTH_FLAG_ENCRYPTED, AUTH_FLAG_HAS_EXTRA_BLOB, AUTH_FLAG_HAS_SECOND_STRING,
+    AUTH_FLAG_HAS_EXTRA_BLOB, AUTH_FLAG_HAS_SECOND_STRING, AUTH_TYPE_ACCOUNT, AUTH_TYPE_TICKET,
     AuthServerAddressHeader, BIT_TREE_TABLE_FORMAT_UUID, BLOB_FLAG_DEFAULT_RECIPIENT,
-    BLOB_FLAG_HAS_ATTACHMENT, BitTreeCodec, BlobFragment, BlobFragmentHeader, BlobReassembler,
-    ConnectAcceptHeader, ConnectChallengeHeader, ConnectionState, ControlMessage,
-    DEFAULT_MAX_CONTAINER_DEPTH, DEFAULT_MAX_DECOMPRESSED_MESSAGE_BYTES, DID_DICT_SERVER_TO_CLIENT,
-    DatBitTreeTable, DatagramHeader, ENVELOPE_FLAG_HAS_ROUTING_HEADER, ENVELOPE_FLAG_WAS_ENCRYPTED,
-    ENVELOPE_FLAG_ZLIB_COMPRESSED, EntityBatchMessage, EntityBatchSubEvent, FLAG_AUTH_SERVER_ADDR,
-    FLAG_CLIENT_CONTROL, FLAG_CLOCK_SYNC, FLAG_CONNECT_CHALLENGE, FLAG_CUMULATIVE_ACK,
-    FLAG_DISCONNECT, FLAG_EMPTY_HEADER_10, FLAG_FLOW_CONTROL, FLAG_HAS_FRAGMENTED_BLOBS,
-    FLAG_MASKED_CHECKSUM, FLAG_OUT_OF_ORDER_ACK, FLAG_RESERVED_23, FLAG_SEQUENCE_NAK,
-    FLAG_SERVER_REDIRECT, FLAG_TRANSPORT_ERROR, FLAG_WORLD_REFERRAL, FlowControlHeader,
-    FragmentAttachment, INVALID_DATAGRAM_FLAGS_MASK, InMemoryUdpTransport, IsaacCipher,
-    LoginQueueStatusMessage, MAX_BLOB_FRAG_PAYLOAD, MAX_FRAGS_PER_PACKET, MAX_NAK_ENTRIES,
-    MAX_SEQ_LOOKAHEAD, MessageRoutingHeader, OPCODE_BATCH_CONTAINER, OPCODE_ENTITY_BATCH_UPDATE,
-    OPCODE_ENTITY_ENTRY_BATCH, OPCODE_LOGIN_QUEUE_STATUS, OPCODE_SYSTEM_NOTIFICATION,
-    OPCODE_VERSION_CHALLENGE, OPCODE_VERSION_RESPONSE, OPCODE_VERSION_STATUS, OptionalHeaders,
-    ReferralAuthHeader, RuntimeBitTreeTables, ServerRedirectHeader, SessionAuthCredentials,
-    SessionAuthHeader, SessionAuthPayload, SessionConnection, SessionError, SessionEvent,
-    SessionMultiplexer, SystemNotificationMessage, TransportErrorHeader, UdpDatagramTransport,
-    VALID_DATAGRAM_FLAGS_MASK, VALID_DATAGRAM_FLAGS_WITH_INTERNAL_MASK, VersionResponseMessage,
-    VersionStatusMessage, WorldReferralHeader, candidate_bind_ports, compute_datagram_checksum,
-    compute_packet_checksum, compute_unique_port, decode_datagram, decode_entity_batch,
-    decode_message, decode_variable_u32, des3_cbc_decrypt, des3_cbc_encrypt, dispatch_message,
-    encode_batch_container, encode_datagram, encode_entity_batch, encode_message,
-    encode_message_with_routing, encode_single_wrapper, encode_variable_u32,
-    map_transport_error_to_hresult, sndbuf_probe_midpoint, split_blob, verify_packet_checksum,
+    BLOB_FLAG_ENCRYPTED, BLOB_FLAG_HAS_ATTACHMENT, BitTreeCodec, BlobFragment, BlobFragmentHeader,
+    BlobReassembler, ClientVersionMessage, ConnectAcceptHeader, ConnectChallengeHeader,
+    ConnectionState, ControlMessage, DEFAULT_MAX_CONTAINER_DEPTH,
+    DEFAULT_MAX_DECOMPRESSED_MESSAGE_BYTES, DID_DICT_CLIENT_TO_SERVER, DID_DICT_SERVER_TO_CLIENT,
+    DID_DICT_SERVER_TO_CLIENT_DEFERRED, DatBitTreeNode, DatBitTreeTable, DatagramHeader,
+    DisconnectReason, ENVELOPE_FLAG_HAS_ROUTING_HEADER, ENVELOPE_FLAG_ZLIB_COMPRESSED,
+    FLAG_AUTH_SERVER_ADDR, FLAG_CLIENT_CONTROL, FLAG_CLOCK_SYNC, FLAG_CONNECT_CHALLENGE,
+    FLAG_CUMULATIVE_ACK, FLAG_DISCONNECT, FLAG_FLOW_CONTROL, FLAG_HAS_FRAGMENTED_BLOBS,
+    FLAG_MASKED_CHECKSUM, FLAG_OUT_OF_ORDER_ACK, FLAG_SEQUENCE_NAK, FLAG_SERVER_REDIRECT,
+    FLAG_TRANSPORT_ERROR, FLAG_UNDEFINED_10, FLAG_UNDEFINED_23, FLAG_WORLD_REFERRAL,
+    FlowControlHeader, FragmentAttachment, INVALID_DATAGRAM_FLAGS_MASK, InMemoryUdpTransport,
+    IsaacCipher, LoginQueueStatusMessage, MAX_BLOB_FRAG_PAYLOAD, MAX_FRAGS_PER_PACKET,
+    MAX_NAK_ENTRIES, MAX_SEQ_LOOKAHEAD, MessageRoutingHeader, OPCODE_BATCH_CONTAINER,
+    OPCODE_CLIENT_VERSION, OPCODE_LOGIN_QUEUE_STATUS, OPCODE_SINGLE_WRAPPER,
+    OPCODE_SYSTEM_NOTIFICATION, OPCODE_VERSION_REQUEST, OPCODE_VERSION_STATUS, OptionalHeaders,
+    ReferralAuthHeader, ServerRedirectHeader, SessionAuthCredentials, SessionAuthHeader,
+    SessionConnection, SessionError, SessionEvent, SessionMultiplexer, SystemNotificationMessage,
+    TransportErrorHeader, UdpDatagramTransport, VALID_DATAGRAM_FLAGS_MASK, VersionStatusMessage,
+    WorldReferralHeader, candidate_bind_ports, compute_datagram_checksum, compute_packet_checksum,
+    compute_unique_port, decode_datagram, decode_message, decode_ticket_base64,
+    decode_variable_u32, des3_cbc_decrypt, des3_cbc_encrypt, dispatch_message,
+    encode_batch_container, encode_datagram, encode_message, encode_message_with_routing,
+    encode_single_wrapper, encode_single_wrapper_with_context, encode_variable_u32,
+    sndbuf_probe_midpoint, split_blob, verify_packet_checksum,
 };
 
 // ---------------------------------------------------------------------------
@@ -152,6 +152,17 @@ fn vector_3_variable_u32_round_trip() {
         assert_eq!(decoded, val);
         assert_eq!(consumed, expected_bytes.len());
     }
+    // §5.6.1: first bytes 0xE1..=0xFF are invalid.
+    for b0 in [0xE1u8, 0xFF] {
+        assert_eq!(
+            decode_variable_u32(&[b0, 0, 0, 0, 0]),
+            Err(SessionError::InvalidVariableU32)
+        );
+    }
+    // Vector 3 table row: 0x3000001B uses the 5-byte form.
+    let mut buf = Vec::new();
+    encode_variable_u32(0x3000_001B, &mut buf);
+    assert_eq!(buf, [0xE0, 0x1B, 0x00, 0x00, 0x30]);
 }
 
 #[test]
@@ -188,7 +199,7 @@ fn vector_4_compact_blob_fragment_header() {
 
 #[test]
 fn bit_tree_wire_codec_round_trip() {
-    let tables = RuntimeBitTreeTables::synthetic_canonical();
+    let tables = DatBitTreeTable::synthetic_dictionary([0x11; 16]);
     let hdr = DatagramHeader {
         rec_id: 0x0234,
         pak_size: 0,
@@ -250,66 +261,276 @@ fn des3_cbc_and_isaac_prng_invariants() {
 }
 
 // ---------------------------------------------------------------------------
-// §4.3 Optional Headers & §6.2 SessionAuth (Case A & Case B)
+// §6.2 SessionAuthHeader and the authType selection rule (§6.2.1)
 // ---------------------------------------------------------------------------
 
-#[test]
-fn session_auth_case_a_and_case_b_round_trip() {
-    // Case A: unencrypted credentials with second string and extra blob
-    let creds = SessionAuthCredentials {
-        account_or_ticket: "player_one".to_string(),
-        second_string: Some("GLS_TICKET_SYNTHETIC".to_string()),
-        extra_blob: Some(vec![0xAA, 0xBB, 0xCC]),
-    };
-    let lr_a = SessionAuthHeader {
-        auth_type: 1,
-        auth_flags: AUTH_FLAG_HAS_SECOND_STRING | AUTH_FLAG_HAS_EXTRA_BLOB,
-        client_timestamp: 1_700_000_000,
-        payload: SessionAuthPayload::Unencrypted(creds.clone()),
-    };
-    let mut buf_a = Vec::new();
-    let len_a = lr_a.encode(&mut buf_a).expect("encode Case A");
-    assert_eq!(&buf_a[0..7], b"180804\0");
-    let (dec_a, consumed_a) = SessionAuthHeader::decode(&buf_a).expect("decode Case A");
-    assert_eq!(consumed_a, len_a);
-    assert_eq!(dec_a, lr_a);
-
-    // Case B: 3DES-CBC encrypted credentials with raw 24-byte key transport
-    let des3_key = [0x42u8; 24];
-    let lr_b = SessionAuthHeader {
-        auth_type: 1,
-        auth_flags: AUTH_FLAG_ENCRYPTED | AUTH_FLAG_HAS_SECOND_STRING | AUTH_FLAG_HAS_EXTRA_BLOB,
-        client_timestamp: 1_700_000_123,
-        payload: SessionAuthPayload::Encrypted {
-            encrypted_session_key: des3_key.to_vec(),
-            des3_key,
-            credentials: creds,
-        },
-    };
-    let mut buf_b = Vec::new();
-    let len_b = lr_b.encode(&mut buf_b).expect("encode Case B");
-    let (dec_b, consumed_b) = SessionAuthHeader::decode(&buf_b).expect("decode Case B");
-    assert_eq!(consumed_b, len_b);
-    assert_eq!(dec_b, lr_b);
+/// A synthetic 144-character Base64 ticket (108 bytes, no padding).
+fn synthetic_ticket() -> (String, Vec<u8>) {
+    let raw: Vec<u8> = (0..108u8).map(|i| i.wrapping_mul(7)).collect();
+    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut text = String::new();
+    for group in raw.chunks(3) {
+        let n = (u32::from(group[0]) << 16) | (u32::from(group[1]) << 8) | u32::from(group[2]);
+        for shift in [18, 12, 6, 0] {
+            text.push(char::from(ALPHABET[((n >> shift) & 0x3F) as usize]));
+        }
+    }
+    (text, raw)
 }
 
 #[test]
-fn all_optional_headers_ascending_bit_order_and_hresult_mapping() {
+fn session_auth_selection_rule_and_ticket_length() {
+    let (ticket, raw) = synthetic_ticket();
+    assert_eq!(ticket.len(), 144);
+    assert_eq!(decode_ticket_base64(&ticket).unwrap(), raw);
+
+    // Rule 1: ticket present -> 0x40000002 + HasExtraBlob; blobLen is the decoded length.
+    let with_ticket = SessionAuthHeader::for_login("SUBSCRIPTION", Some(&ticket), 1_000).unwrap();
+    assert_eq!(with_ticket.auth_type, AUTH_TYPE_TICKET);
+    assert_eq!(with_ticket.auth_flags, AUTH_FLAG_HAS_EXTRA_BLOB);
+    assert_eq!(
+        with_ticket.credentials.extra_blob.as_deref(),
+        Some(&raw[..])
+    );
+    let mut buf = Vec::new();
+    let len = with_ticket.encode(&mut buf).unwrap();
+    assert_eq!(&buf[0..7], b"180804\0");
+    let padded = u32::from_le_bytes([buf[7], buf[8], buf[9], buf[10]]) as usize;
+    assert_eq!(padded % 4, 0);
+    assert_eq!(len, 11 + padded);
+    // authType 0x40000002 and authFlags 4 at the start of authBlock.
+    assert_eq!(
+        &buf[11..19],
+        &[0x02, 0x00, 0x00, 0x40, 0x04, 0x00, 0x00, 0x00]
+    );
+    // ... and blobLen 108 (0x6C) after the 12-character account string.
+    let blob_len_at = 11 + 12 + 1 + 2 * "SUBSCRIPTION".len();
+    assert_eq!(&buf[blob_len_at..blob_len_at + 4], &108u32.to_le_bytes());
+    let (decoded, consumed) = SessionAuthHeader::decode(&buf).unwrap();
+    assert_eq!(consumed, len);
+    assert_eq!(decoded, with_ticket);
+
+    // Rule 2: no ticket -> 0x00000001, authFlags 0, the account string only.
+    let account_only = SessionAuthHeader::for_login("SUBSCRIPTION", None, 1_000).unwrap();
+    assert_eq!(account_only.auth_type, AUTH_TYPE_ACCOUNT);
+    assert_eq!(account_only.auth_flags, 0);
+    let mut buf = Vec::new();
+    account_only.encode(&mut buf).unwrap();
+    assert_eq!(SessionAuthHeader::decode(&buf).unwrap().0, account_only);
+
+    // The alternate receiver encoding: 0x00000001 with the ticket in secondStr.
+    let alternate = SessionAuthHeader {
+        auth_type: AUTH_TYPE_ACCOUNT,
+        auth_flags: AUTH_FLAG_HAS_SECOND_STRING,
+        client_timestamp: 5,
+        credentials: SessionAuthCredentials {
+            account_or_ticket: "SUBSCRIPTION".to_owned(),
+            second_string: Some(ticket.clone()),
+            extra_blob: None,
+        },
+    };
+    let mut buf = Vec::new();
+    alternate.encode(&mut buf).unwrap();
+    assert_eq!(SessionAuthHeader::decode(&buf).unwrap().0, alternate);
+
+    // Padding variants of the decoded length.
+    assert_eq!(decode_ticket_base64("QUJD").unwrap(), b"ABC");
+    assert_eq!(decode_ticket_base64("QUI=").unwrap(), b"AB");
+    assert_eq!(decode_ticket_base64("QQ==").unwrap(), b"A");
+    assert_eq!(decode_ticket_base64("QQ").unwrap(), b"A");
+    for bad in ["", "Q", "QQ=", "Q===", "QU=I", "QU!I"] {
+        assert_eq!(
+            decode_ticket_base64(bad),
+            Err(SessionError::InvalidTicketEncoding),
+            "{bad:?}"
+        );
+    }
+    assert_eq!(
+        SessionAuthHeader::for_login("A", Some("not base64!"), 0),
+        Err(SessionError::InvalidTicketEncoding)
+    );
+}
+
+#[test]
+fn session_auth_refuses_encrypted_and_unknown_flags() {
+    let header = SessionAuthHeader::for_login("A", None, 0).unwrap();
+    let mut buf = Vec::new();
+    header.encode(&mut buf).unwrap();
+    // authFlags lives at authBlock + 4 = datagram offset 15.
+    for flags in [0x01u32, 0x08, 0x800, 0x1000] {
+        let mut bad = buf.clone();
+        bad[15..19].copy_from_slice(&flags.to_le_bytes());
+        assert_eq!(
+            SessionAuthHeader::decode(&bad),
+            Err(SessionError::UnsupportedAuthFlags { flags })
+        );
+    }
+    let mut bad_header = header.clone();
+    bad_header.auth_flags = 0x01;
+    assert_eq!(
+        bad_header.encode(&mut Vec::new()),
+        Err(SessionError::UnsupportedAuthFlags { flags: 0x01 })
+    );
+    // Non-zero padding after the credentials is malformed.
+    let mut bad_pad = buf.clone();
+    *bad_pad.last_mut().unwrap() = 0x55;
+    assert_eq!(
+        SessionAuthHeader::decode(&bad_pad),
+        Err(SessionError::InvalidAuthBlock)
+    );
+}
+
+// ---------------------------------------------------------------------------
+// §6.3–§6.4 ConnectChallengeHeader -> ConnectAcceptHeader (§10.2 Vector 5)
+// ---------------------------------------------------------------------------
+
+fn vector_5_challenge() -> ConnectChallengeHeader {
+    ConnectChallengeHeader {
+        server_time: 1000.0,
+        assigned_client_rec_id: 0x0102,
+        server_rec_id: 0x0304,
+        outgoing_seed: 0x1122_3344,
+        incoming_seed: 0x5566_7788,
+        reserved_dword_14: 0,
+        client_conn_idx: 0x0005,
+        reserved_word_1a: 0,
+        codec_uuid: [0u8; 16],
+    }
+}
+
+#[test]
+fn vector_5_connect_accept_derivation() {
+    let challenge = vector_5_challenge();
+    let mut wire = Vec::new();
+    challenge.encode(&mut wire);
+    assert_eq!(
+        wire,
+        [
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x40, 0x8F, 0x40, 0x02, 0x01, 0x04, 0x03, 0x11, 0x22,
+            0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x00, 0x00, 0x00, 0x00, 0x05, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00
+        ]
+    );
+    assert_eq!(challenge.check_value(), 0x0201_0403_1122_3344);
+
+    // The connection answers with the Vector 5 ConnectAcceptHeader bytes.
+    let server = SocketAddrV4::new(Ipv4Addr::new(198, 51, 100, 5), 9000);
+    let mut conn = SessionConnection::new(0x0200, server, 0.0);
+    conn.start_login(SessionAuthHeader::for_login("A", None, 0).unwrap(), 0.0)
+        .unwrap();
+    conn.pop_outbound_datagram().expect("SessionAuthHeader");
+    let dgram = encode_datagram(
+        DatagramHeader::default(),
+        &OptionalHeaders {
+            connect_challenge: Some(challenge),
+            ..OptionalHeaders::default()
+        },
+        &[],
+        None,
+        None,
+    )
+    .unwrap();
+    conn.receive_datagram(&dgram, server, 0.1, None).unwrap();
+    // §6.4 step 1: the assigned ID becomes the local ID (Vector 5: 0x0102).
+    assert_eq!(conn.local_rec_id(), 0x0102);
+    assert_eq!(conn.server_rec_id(), 0x0304);
+    let accept = conn.pop_outbound_datagram().expect("ConnectAcceptHeader");
+    // wirePrefix 0, 20-byte header, then the 28-byte ConnectAcceptHeader.
+    assert_eq!(
+        &accept[22..50],
+        &[
+            0x44, 0x33, 0x22, 0x11, 0x03, 0x04, 0x01, 0x02, 0x02, 0x01, 0x05, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
+        ]
+    );
+    let parsed = decode_datagram(&accept, false, None, true).unwrap();
+    let resp = parsed.opt_headers.connect_accept.unwrap();
+    assert_eq!(resp.check_value, 0x0201_0403_1122_3344);
+    assert_eq!(resp.local_rec_id, 0x0102);
+}
+
+#[test]
+fn assigned_rec_id_zero_keeps_and_out_of_range_is_ignored() {
+    let server = SocketAddrV4::new(Ipv4Addr::new(198, 51, 100, 6), 9000);
+    for (assigned, expected) in [(0u16, 0x0150u16), (0x0001, 0x0150), (0xFF00, 0x0150)] {
+        let mut conn = SessionConnection::new(0x0150, server, 0.0);
+        conn.start_login(SessionAuthHeader::for_login("A", None, 0).unwrap(), 0.0)
+            .unwrap();
+        let mut challenge = vector_5_challenge();
+        challenge.assigned_client_rec_id = assigned;
+        let dgram = encode_datagram(
+            DatagramHeader::default(),
+            &OptionalHeaders {
+                connect_challenge: Some(challenge),
+                ..OptionalHeaders::default()
+            },
+            &[],
+            None,
+            None,
+        )
+        .unwrap();
+        conn.receive_datagram(&dgram, server, 0.1, None).unwrap();
+        assert_eq!(conn.local_rec_id(), expected);
+    }
+}
+
+#[test]
+fn unsupported_codec_uuid_closes_with_reason() {
+    let server = SocketAddrV4::new(Ipv4Addr::new(198, 51, 100, 7), 9000);
+    let mut conn = SessionConnection::new(0x0150, server, 0.0);
+    conn.start_login(SessionAuthHeader::for_login("A", None, 0).unwrap(), 0.0)
+        .unwrap();
+    let mut challenge = vector_5_challenge();
+    challenge.codec_uuid = [0xAB; 16];
+    let dgram = encode_datagram(
+        DatagramHeader::default(),
+        &OptionalHeaders {
+            connect_challenge: Some(challenge),
+            ..OptionalHeaders::default()
+        },
+        &[],
+        None,
+        None,
+    )
+    .unwrap();
+    assert_eq!(
+        conn.receive_datagram(&dgram, server, 0.1, None)
+            .unwrap_err(),
+        SessionError::UnsupportedCodecUuid { uuid: [0xAB; 16] }
+    );
+    assert_eq!(conn.state(), ConnectionState::Closing);
+    assert_eq!(
+        conn.pop_event(),
+        Some(SessionEvent::Disconnected {
+            reason: DisconnectReason::UnsupportedCodec
+        })
+    );
+    // A registered dictionary UUID is accepted.
+    let mut conn = SessionConnection::new(0x0150, server, 0.0);
+    conn.register_codec_uuid([0xAB; 16]);
+    conn.start_login(SessionAuthHeader::for_login("A", None, 0).unwrap(), 0.0)
+        .unwrap();
+    conn.receive_datagram(&dgram, server, 0.1, None).unwrap();
+    assert_eq!(conn.active_codec_uuid(), [0xAB; 16]);
+}
+
+#[test]
+fn all_optional_headers_ascending_bit_order() {
     let opt = OptionalHeaders {
         server_redirect: Some(ServerRedirectHeader {
-            redirect_seq: 11,
-            redirect_type: 2,
+            switch_seq: 11,
+            switch_type: 2,
         }),
         auth_server_address: Some(AuthServerAddressHeader {
             sin_family: 2,
             addr: SocketAddrV4::new(Ipv4Addr::new(192, 0, 2, 55), 2900),
         }),
-        empty_header_10: false,
         world_referral: Some(WorldReferralHeader {
             referral_cookie: 0x0102_0304_0506_0708,
             sin_family: 2,
             target_addr: SocketAddrV4::new(Ipv4Addr::new(198, 51, 100, 99), 9050),
-            world_server_id: 7,
+            reserved_word_10: 0,
         }),
         sequence_nak: Some(vec![3, 4]),
         out_of_order_ack: Some(vec![2]),
@@ -323,9 +544,9 @@ fn all_optional_headers_ascending_bit_order_and_hresult_mapping() {
             server_rec_id: 0x0250,
             outgoing_seed: 0x1122_3344,
             incoming_seed: 0x5566_7788,
-            unknown_14: 0,
+            reserved_dword_14: 0,
             client_conn_idx: 3,
-            unknown_1a: 0,
+            reserved_word_1a: 0,
             codec_uuid: [0u8; 16],
         }),
         connect_accept: None,
@@ -336,8 +557,6 @@ fn all_optional_headers_ascending_bit_order_and_hresult_mapping() {
         transport_fatal_error: None,
         client_control: None,
         clock_sync: Some(4567.89),
-        latency_probe: None,
-        latency_reply: None,
         flow_control: Some(FlowControlHeader {
             bytes_received_delta: 2048,
             interval_ms: 500,
@@ -389,16 +608,17 @@ fn all_optional_headers_ascending_bit_order_and_hresult_mapping() {
     assert_eq!(c_world, world_payload.len());
     assert_eq!(dec_world, opt_world);
 
-    // §6.7 error code mapping
-    assert_eq!(map_transport_error_to_hresult(0x0000_0000, 0), 0x0000_0000);
-    assert_eq!(map_transport_error_to_hresult(0x00A7_E948, 0), 0x8004_1006);
-    assert_eq!(map_transport_error_to_hresult(0x7DC4_1B4A, 0), 0x8004_1006);
-    assert_eq!(map_transport_error_to_hresult(0x00CD_0B73, 0), 0x8004_100F);
-    assert_eq!(map_transport_error_to_hresult(0x06F1_6F2E, 0), 0x8004_100F);
-    assert_eq!(map_transport_error_to_hresult(0x0DFB_256E, 0), 0x8004_100F);
-    assert_eq!(map_transport_error_to_hresult(0x00F9_982C, 0), 0x8004_1016);
-    assert_eq!(map_transport_error_to_hresult(0x07CF_6BF2, 0), 0x8004_1012);
-    assert_eq!(map_transport_error_to_hresult(0x0058_3B44, 0), 0x8004_100E);
+    // §6.7: the two confirmed login-refusal codes.
+    for code in [0x00A7_E948, 0x7DC4_1B4A] {
+        assert!(
+            TransportErrorHeader {
+                error_code: code,
+                error_subcode: 0
+            }
+            .is_login_refusal()
+        );
+    }
+    assert!(!TransportErrorHeader::default().is_login_refusal());
 }
 
 // ---------------------------------------------------------------------------
@@ -418,16 +638,7 @@ fn handshake_out_of_order_isaac_recovery_and_referral_flow() {
         .expect("free recipient ID");
 
     // Step 1: Client starts login -> State 1 (SessionAuthSent)
-    let login_req = SessionAuthHeader {
-        auth_type: 1,
-        auth_flags: 0,
-        client_timestamp: 1000,
-        payload: SessionAuthPayload::Unencrypted(SessionAuthCredentials {
-            account_or_ticket: "acct".to_string(),
-            second_string: None,
-            extra_blob: None,
-        }),
-    };
+    let login_req = SessionAuthHeader::for_login("acct", None, 1000).expect("SessionAuthHeader");
     mux.connection_mut(login_id)
         .expect("conn")
         .start_login(login_req, 0.0)
@@ -453,9 +664,9 @@ fn handshake_out_of_order_isaac_recovery_and_referral_flow() {
             server_rec_id: 0x0222,
             outgoing_seed,
             incoming_seed,
-            unknown_14: 0,
+            reserved_dword_14: 0,
             client_conn_idx: 4,
-            unknown_1a: 0,
+            reserved_word_1a: 0,
             codec_uuid: [0u8; 16],
         }),
         ..OptionalHeaders::default()
@@ -501,8 +712,7 @@ fn handshake_out_of_order_isaac_recovery_and_referral_flow() {
     let mask_seq_4 = server_isaac.next_mask();
 
     let large_payload: Vec<u8> = (0..1000usize).map(|i| (i & 0xFF) as u8).collect();
-    let frags = split_blob(2, 1, 42, 0, None, 0x0000_1234, &large_payload, false, None)
-        .expect("split 3 frags");
+    let frags = split_blob(2, 1, 42, 0, None, 0x0000_1234, &large_payload).expect("split 3 frags");
     assert_eq!(frags.len(), 3);
 
     let make_server_seq_pkt = |seq_num: u32, mask: u32, frag: BlobFragment| -> Vec<u8> {
@@ -581,7 +791,7 @@ fn handshake_out_of_order_isaac_recovery_and_referral_flow() {
                 referral_cookie: 0xABCD_EF01_2345_6789,
                 sin_family: 2,
                 target_addr: world_server_addr,
-                world_server_id: 9,
+                reserved_word_10: 9,
             }),
             ..OptionalHeaders::default()
         },
@@ -598,10 +808,10 @@ fn handshake_out_of_order_isaac_recovery_and_referral_flow() {
         if let SessionEvent::WorldReferralReceived {
             referral_cookie,
             world_addr,
-            world_server_id,
+            reserved_word_10,
         } = ev
         {
-            referral_event = Some((referral_cookie, world_addr, world_server_id));
+            referral_event = Some((referral_cookie, world_addr, reserved_word_10));
         }
     }
     let (cookie, resolved_world_addr, world_id) =
@@ -655,7 +865,7 @@ fn message_envelope_zlib_and_recursive_batch_container_0x186() {
     let dispatched = dispatch_message(
         OPCODE_BATCH_CONTAINER,
         &batch_payload,
-        true,
+        false,
         DEFAULT_MAX_DECOMPRESSED_MESSAGE_BYTES,
         DEFAULT_MAX_CONTAINER_DEPTH,
     )
@@ -664,20 +874,49 @@ fn message_envelope_zlib_and_recursive_batch_container_0x186() {
     assert_eq!(dispatched.len(), 2);
     assert_eq!(dispatched[0].opcode, 0x0000_0201);
     assert_eq!(dispatched[0].body, vec![0x10, 0x20, 0x30]);
-    assert_ne!(
-        dispatched[0].envelope_flags & ENVELOPE_FLAG_WAS_ENCRYPTED,
-        0
-    );
-
     assert_eq!(dispatched[1].opcode, 0x0000_0202);
     assert_eq!(dispatched[1].body, vec![0x40; 200]);
     assert_ne!(
         dispatched[1].envelope_flags & ENVELOPE_FLAG_ZLIB_COMPRESSED,
         0
     );
-    assert_ne!(
-        dispatched[1].envelope_flags & ENVELOPE_FLAG_WAS_ENCRYPTED,
-        0
+
+    // A blob that arrived encrypted is refused (§7.1, OPEN-SESSION-6).
+    assert_eq!(
+        dispatch_message(
+            OPCODE_BATCH_CONTAINER,
+            &batch_payload,
+            true,
+            DEFAULT_MAX_DECOMPRESSED_MESSAGE_BYTES,
+            DEFAULT_MAX_CONTAINER_DEPTH,
+        ),
+        Err(SessionError::EncryptedBlobRejected)
+    );
+
+    // 0x179 carries contextId (u64) and resultCode (u32) after the inner payload (§9.4.2).
+    let inner = encode_message(0, &[0x00, 0x01], false).unwrap();
+    let wrapped = encode_single_wrapper_with_context(0x0000_0203, &inner, 7, 0, false).unwrap();
+    let out = dispatch_message(
+        OPCODE_SINGLE_WRAPPER,
+        &wrapped,
+        false,
+        DEFAULT_MAX_DECOMPRESSED_MESSAGE_BYTES,
+        DEFAULT_MAX_CONTAINER_DEPTH,
+    )
+    .unwrap();
+    assert_eq!(out[0].opcode, 0x0000_0203);
+    let truncated = &wrapped[..wrapped.len() - 1];
+    assert_eq!(
+        dispatch_message(
+            OPCODE_SINGLE_WRAPPER,
+            truncated,
+            false,
+            DEFAULT_MAX_DECOMPRESSED_MESSAGE_BYTES,
+            DEFAULT_MAX_CONTAINER_DEPTH,
+        ),
+        Err(SessionError::InvalidControlMessage {
+            opcode: OPCODE_SINGLE_WRAPPER
+        })
     );
 }
 
@@ -707,10 +946,12 @@ fn hostile_input_rejection_rules_1_to_8() {
         })
     ));
 
-    // Rule 2: Bit-tree decompression failure (missing 0x100 end symbol)
-    let tables = RuntimeBitTreeTables::synthetic_canonical();
-    let mut bad_compressed = [0u8; 22]; // 22 bytes so Rule 1 passes, symbols 0x00 without 0x100 terminator
+    // Rule 2: bit-tree decompression failure (a stream that ends inside a codeword).
+    let tables = DatBitTreeTable::synthetic_dictionary([0x22; 16]);
+    let mut bad_compressed = [0u8; 22];
     bad_compressed[0] = 0x01;
+    bad_compressed[2] = 0x01; // isCompressed, unusedTrailingBits 0
+    bad_compressed[21] = 0x80; // a final `1` bit starts a 9-bit leaf that never ends
     assert!(matches!(
         decode_datagram(&bad_compressed, true, Some(&tables), false),
         Err(SessionError::WireDecompressionFailed)
@@ -724,10 +965,10 @@ fn hostile_input_rejection_rules_1_to_8() {
         Err(SessionError::InvalidHeaderFlags { flags: 1 })
     ));
 
-    // Rule 7: Forbidden server flag 0x00000400 (EmptyHeader10) when from_server == true
+    // Rule 3: undefined bit 0x00000400
     let forbidden_hdr = DatagramHeader {
         rec_id: 0x0100,
-        flags: FLAG_EMPTY_HEADER_10,
+        flags: FLAG_UNDEFINED_10,
         ..DatagramHeader::default()
     };
     let mut forbidden_dgram = vec![0x00, 0x00];
@@ -886,7 +1127,7 @@ fn hostile_input_rejection_rules_1_to_8() {
         payload: vec![0u8; 10],
     };
     assert!(matches!(
-        reassembler.ingest(1, oversized_frag, 0.0, None),
+        reassembler.ingest(1, oversized_frag, 0.0),
         Err(SessionError::BlobTooLarge { .. })
     ));
 
@@ -918,7 +1159,7 @@ fn hostile_input_rejection_rules_1_to_8() {
     let mut fake_bomb = vec![ENVELOPE_FLAG_ZLIB_COMPRESSED];
     fake_bomb.extend_from_slice(&(10_000_000u32).to_le_bytes());
     assert!(matches!(
-        decode_message(1, &fake_bomb, false, 1024),
+        decode_message(1, &fake_bomb, 1024),
         Err(SessionError::DecompressedMessageTooLarge {
             size: 10_000_000,
             limit: 1024
@@ -950,18 +1191,33 @@ fn dat_bit_tree_table_and_4bit_wire_body_header() {
     let parsed = DatBitTreeTable::from_dat_bytes(&dat_bytes).expect("parse .dat dictionary");
     assert_eq!(parsed, dict);
 
-    // Also verify version = 0x00010001 is accepted
+    // §4.1.3 item 2: the parser requires version == 1.
     let mut dat_v10001 = dat_bytes.clone();
     dat_v10001[36..40].copy_from_slice(&0x0001_0001u32.to_le_bytes());
-    assert!(DatBitTreeTable::from_dat_bytes(&dat_v10001).is_ok());
+    assert_eq!(
+        DatBitTreeTable::from_dat_bytes(&dat_v10001),
+        Err(SessionError::InvalidBitTreeTable)
+    );
 
-    // Redirect stub record (0x0E010002 -> 0x0E010001, version = 0, bodyLen = 0)
+    // Redirect rule (§4.1.3 item 1): follow redirectDid only when non-zero and not the
+    // record's own DID.
     let mut stub = vec![0u8; 44];
     stub[0..16].copy_from_slice(&BIT_TREE_TABLE_FORMAT_UUID);
     stub[32..36].copy_from_slice(&DID_DICT_SERVER_TO_CLIENT.to_le_bytes());
     assert_eq!(
-        DatBitTreeTable::parse_redirect_did(&stub).expect("parse redirect stub"),
+        DatBitTreeTable::parse_redirect_did(&stub, DID_DICT_SERVER_TO_CLIENT_DEFERRED)
+            .expect("parse redirect stub"),
         Some(DID_DICT_SERVER_TO_CLIENT)
+    );
+    assert_eq!(
+        DatBitTreeTable::parse_redirect_did(&stub, DID_DICT_SERVER_TO_CLIENT).unwrap(),
+        None
+    );
+    let mut literal = stub.clone();
+    literal[32..36].copy_from_slice(&0u32.to_le_bytes());
+    assert_eq!(
+        DatBitTreeTable::parse_redirect_did(&literal, DID_DICT_CLIENT_TO_SERVER).unwrap(),
+        None
     );
 
     // Case 1: Zero-rich payload compresses via 4-byte [0,0,0,0] leaf -> isCompressed == 1 (wireBody[0] & 1 == 1)
@@ -1046,7 +1302,6 @@ fn dat_bit_tree_table_and_4bit_wire_body_header() {
 #[test]
 fn reconciled_datagram_header_flags_mask_0x0f7ffb00() {
     assert_eq!(VALID_DATAGRAM_FLAGS_MASK, 0x0F7F_FB00);
-    assert_eq!(VALID_DATAGRAM_FLAGS_WITH_INTERNAL_MASK, 0x0F7F_FB06);
     assert_eq!(INVALID_DATAGRAM_FLAGS_MASK, 0xF080_04FF);
 
     // 0x00008000 (Disconnect) IS valid on the wire
@@ -1068,7 +1323,12 @@ fn reconciled_datagram_header_flags_mask_0x0f7ffb00() {
     assert!(dec_disc.opt_headers.disconnect);
 
     // 0x00000400 (bit 10) and 0x00800000 (bit 23) are undefined and rejected by Rule 3 (0xF08004FF)
-    for bad_bit in [FLAG_EMPTY_HEADER_10, FLAG_RESERVED_23, 0x1000_0000] {
+    for bad_bit in [
+        FLAG_UNDEFINED_10,
+        FLAG_UNDEFINED_23,
+        0x1000_0000,
+        0x0000_0002,
+    ] {
         let mut raw = [0u8; 20];
         raw[4..8].copy_from_slice(&bad_bit.to_be_bytes());
         assert!(matches!(
@@ -1130,7 +1390,6 @@ fn message_routing_header_and_post_handshake_control_messages() {
     let dec_uncomp = decode_message(
         0x0000_1000,
         &env_uncompressed,
-        false,
         DEFAULT_MAX_DECOMPRESSED_MESSAGE_BYTES,
     )
     .expect("decode with routing uncompressed");
@@ -1152,7 +1411,6 @@ fn message_routing_header_and_post_handshake_control_messages() {
     let dec_comp = decode_message(
         0x0000_1000,
         &env_compressed,
-        false,
         DEFAULT_MAX_DECOMPRESSED_MESSAGE_BYTES,
     )
     .expect("decode with routing compressed");
@@ -1161,24 +1419,19 @@ fn message_routing_header_and_post_handshake_control_messages() {
 
     // Reject reserved envelopeFlags bits (envelopeFlags & 0xFC != 0)
     assert!(matches!(
-        decode_message(
-            1,
-            &[0x04, 0x00],
-            false,
-            DEFAULT_MAX_DECOMPRESSED_MESSAGE_BYTES
-        ),
+        decode_message(1, &[0x04, 0x00], DEFAULT_MAX_DECOMPRESSED_MESSAGE_BYTES),
         Err(SessionError::InvalidEnvelopeFlags { flags: 0x04 })
     ));
 
     // 2. §9.3 Post-handshake session/version negotiation messages (0x0000012C..0x00000130)
     let controls = [
-        ControlMessage::VersionChallenge,
-        ControlMessage::VersionResponse(VersionResponseMessage {
-            version_string: "netver:1; didver:00000000-0000-0000-0000000000000000".to_owned(),
+        ControlMessage::VersionRequest,
+        ControlMessage::ClientVersion(ClientVersionMessage {
+            version_string: "netver:1234; didver:01020304-0506-0708-090A-0B0C0D0E0F10".to_owned(),
         }),
         ControlMessage::VersionStatus(VersionStatusMessage {
             status: 1,
-            server_version_info: "4906.0071.1794.4035".to_owned(),
+            server_version_info: "1.2.3.4".to_owned(),
         }),
         ControlMessage::LoginQueueStatus(LoginQueueStatusMessage {
             login_result: 0,
@@ -1191,8 +1444,8 @@ fn message_routing_header_and_post_handshake_control_messages() {
         }),
     ];
     let expected_opcodes = [
-        OPCODE_VERSION_CHALLENGE,
-        OPCODE_VERSION_RESPONSE,
+        OPCODE_VERSION_REQUEST,
+        OPCODE_CLIENT_VERSION,
         OPCODE_VERSION_STATUS,
         OPCODE_LOGIN_QUEUE_STATUS,
         OPCODE_SYSTEM_NOTIFICATION,
@@ -1226,7 +1479,7 @@ fn message_routing_header_and_post_handshake_control_messages() {
         assert_eq!(&decoded, msg);
     }
 
-    // VersionStatus status == 0 -> VersionRejected (0x0DD6BAE1)
+    // VersionStatusMessage status == 0 -> VersionRejected
     let rejected = VersionStatusMessage {
         status: 0,
         server_version_info: "mismatch".to_owned(),
@@ -1236,40 +1489,16 @@ fn message_routing_header_and_post_handshake_control_messages() {
         Err(SessionError::VersionRejected { .. })
     ));
 
-    // 3. §9.4.1 World entity batches (0x0000000D EntityEntryBatch with tail flag, 0x0000004C EntityBatchUpdate without tail flag)
-    let entry_batch = EntityBatchMessage {
-        opcode: OPCODE_ENTITY_ENTRY_BATCH,
-        base_flags: 0x00,
-        sub_events: vec![
-            EntityBatchSubEvent {
-                sub_opcode: 0x0000_10B5,
-                sub_payload: vec![0x00, 0x01, 0x02, 0x03],
-            },
-            EntityBatchSubEvent {
-                sub_opcode: 0x0000_0051,
-                sub_payload: vec![0x00, 0xAA, 0xBB],
-            },
-        ],
-        entry_batch_tail_flag: Some(0x01),
-    };
-    let encoded_entry_batch = encode_entity_batch(&entry_batch);
-    let decoded_entry_batch = decode_entity_batch(OPCODE_ENTITY_ENTRY_BATCH, &encoded_entry_batch)
-        .expect("decode EntityEntryBatch");
-    assert_eq!(decoded_entry_batch, entry_batch);
-
-    let entity_batch_update = EntityBatchMessage {
-        opcode: OPCODE_ENTITY_BATCH_UPDATE,
-        base_flags: 0x00,
-        sub_events: vec![EntityBatchSubEvent {
-            sub_opcode: 0x0000_10BA,
-            sub_payload: vec![0x00, 0x55],
-        }],
-        entry_batch_tail_flag: None,
-    };
-    let encoded_update = encode_entity_batch(&entity_batch_update);
-    let decoded_update = decode_entity_batch(OPCODE_ENTITY_BATCH_UPDATE, &encoded_update)
-        .expect("decode EntityBatchUpdate");
-    assert_eq!(decoded_update, entity_batch_update);
+    // ClientVersionMessage strings are ASCII.
+    let mut non_ascii = Vec::new();
+    encode_variable_u32(2, &mut non_ascii);
+    non_ascii.extend_from_slice("é".as_bytes());
+    assert_eq!(
+        ClientVersionMessage::decode(&non_ascii),
+        Err(SessionError::InvalidControlMessage {
+            opcode: OPCODE_CLIENT_VERSION
+        })
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -1301,7 +1530,7 @@ fn reassembly_rejects_final_fragment_past_buffer_end() {
     let mut reassembler = BlobReassembler::default();
     // numFrags = 2, fragIndex = 1, fragDataLen = 464: 436 + 464 > 2 * 436.
     let err = reassembler
-        .ingest(1, multi_frag(1, 2, 464), 0.0, None)
+        .ingest(1, multi_frag(1, 2, 464), 0.0)
         .expect_err("final fragment overruns the reassembly buffer");
     assert_eq!(
         err,
@@ -1316,12 +1545,12 @@ fn reassembly_rejects_final_fragment_past_buffer_end() {
     // The largest final slice that fits (436 bytes) still completes the blob.
     assert!(
         reassembler
-            .ingest(1, multi_frag(0, 2, 436), 0.0, None)
+            .ingest(1, multi_frag(0, 2, 436), 0.0)
             .expect("first fragment")
             .is_none()
     );
     let blob = reassembler
-        .ingest(1, multi_frag(1, 2, 436), 0.0, None)
+        .ingest(1, multi_frag(1, 2, 436), 0.0)
         .expect("final fragment")
         .expect("completed blob");
     assert_eq!(blob.payload.len(), 2 * MAX_BLOB_FRAG_PAYLOAD);
@@ -1402,4 +1631,152 @@ fn des3_cbc_rejects_all_padding_block() {
     // One byte of plaintext (padLen = 7 < 8) still decrypts.
     let ct1 = des3_cbc_encrypt(&key, &[0x42]);
     assert_eq!(des3_cbc_decrypt(&key, &ct1).expect("decrypt"), vec![0x42]);
+}
+
+// ---------------------------------------------------------------------------
+// Conformance regressions (§4.1, §5.6.4, §6.7, §7.1, §3.4)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn encrypted_fragmented_blob_is_always_rejected() {
+    let mut frag = multi_frag(0, 1, 8);
+    frag.header.blob_flags |= BLOB_FLAG_ENCRYPTED;
+    let mut reassembler = BlobReassembler::default();
+    assert_eq!(
+        reassembler.ingest(1, frag, 0.0),
+        Err(SessionError::EncryptedBlobRejected)
+    );
+    // split_blob never sets the bit.
+    for f in split_blob(2, 0, 1, 0, None, 0x10, &[0u8; 1000]).unwrap() {
+        assert_eq!(f.header.blob_flags & BLOB_FLAG_ENCRYPTED, 0);
+    }
+}
+
+#[test]
+fn bit_tree_null_child_is_rejected_at_traversal() {
+    let mut dict = DatBitTreeTable::synthetic_dictionary([0x33; 16]);
+    // Make the root's `0` branch null; the table still loads (§4.1.3 item 3).
+    let root = dict.root_node_index;
+    dict.nodes[root] = DatBitTreeNode::Branch {
+        child0_1based: 0,
+        child1_1based: 259,
+    };
+    let reloaded = DatBitTreeTable::from_dat_bytes(&dict.to_dat_bytes()).expect("null child loads");
+    let mut out = Vec::new();
+    // Compressed header byte with bit 4 (the first code bit) = 0 selects the null child.
+    assert_eq!(
+        reloaded.decode(&[0x01, 0x00], &mut out, 64),
+        Err(SessionError::WireDecompressionFailed)
+    );
+}
+
+#[test]
+fn control_packets_stay_uncompressed_and_errors_close_with_reason() {
+    let server = SocketAddrV4::new(Ipv4Addr::new(198, 51, 100, 8), 9000);
+    let codec = DatBitTreeTable::synthetic_dictionary([0x44; 16]);
+    let mut conn = SessionConnection::new(0x0150, server, 0.0);
+    conn.register_codec_uuid([0x44; 16]);
+    conn.start_login(SessionAuthHeader::for_login("A", None, 0).unwrap(), 0.0)
+        .unwrap();
+    let mut challenge = vector_5_challenge();
+    challenge.codec_uuid = [0x44; 16];
+    let dgram = encode_datagram(
+        DatagramHeader::default(),
+        &OptionalHeaders {
+            connect_challenge: Some(challenge),
+            ..OptionalHeaders::default()
+        },
+        &[],
+        None,
+        None,
+    )
+    .unwrap();
+    conn.receive_datagram(&dgram, server, 0.1, Some(&codec))
+        .unwrap();
+    while conn.pop_outbound_datagram().is_some() {}
+    // A sequenced data packet goes out compressed (wirePrefix = remoteRecId) ...
+    conn.send_blob(2, 0, 0x10, &[0x00; 64], 0.2, Some(&codec))
+        .unwrap();
+    let data = conn.pop_outbound_datagram().unwrap();
+    assert_eq!(u16::from_be_bytes([data[0], data[1]]), 0x0304);
+    // ... while the State 2 ConnectAcceptHeader retransmit stays unencoded.
+    conn.tick(1.0, Some(&codec)).unwrap();
+    let retransmit = conn.pop_outbound_datagram().unwrap();
+    assert_eq!(&retransmit[0..2], &[0x00, 0x00]);
+
+    // TransportErrorHeader: numbers kept, connection closed (OPEN-SESSION-4).
+    let err = encode_datagram(
+        DatagramHeader {
+            rec_id: 0x0102,
+            ..DatagramHeader::default()
+        },
+        &OptionalHeaders {
+            transport_error: Some(TransportErrorHeader {
+                error_code: 0x00A7_E948,
+                error_subcode: 3,
+            }),
+            ..OptionalHeaders::default()
+        },
+        &[],
+        None,
+        None,
+    )
+    .unwrap();
+    conn.receive_datagram(&err, server, 1.1, None).unwrap();
+    let mut reason = None;
+    while let Some(ev) = conn.pop_event() {
+        if let SessionEvent::Disconnected { reason: r } = ev {
+            reason = Some(r);
+        }
+    }
+    assert_eq!(
+        reason,
+        Some(DisconnectReason::TransportError {
+            fatal: false,
+            error_code: 0x00A7_E948,
+            error_subcode: 3,
+        })
+    );
+    assert_eq!(conn.state(), ConnectionState::Closing);
+}
+
+#[test]
+fn handshake_timeout_closes_with_reason() {
+    let server = SocketAddrV4::new(Ipv4Addr::new(198, 51, 100, 9), 9000);
+    let mut conn = SessionConnection::new(0x0150, server, 0.0);
+    conn.start_login(SessionAuthHeader::for_login("A", None, 0).unwrap(), 0.0)
+        .unwrap();
+    conn.tick(20.0, None).unwrap();
+    assert_eq!(
+        conn.pop_event(),
+        Some(SessionEvent::Disconnected {
+            reason: DisconnectReason::HandshakeTimeout
+        })
+    );
+}
+
+#[test]
+fn multiplexer_falls_back_to_source_address_on_id_miss() {
+    let server = SocketAddrV4::new(Ipv4Addr::new(198, 51, 100, 10), 9000);
+    let mut mux = SessionMultiplexer::new();
+    let id = mux.create_connection(server, 0.0).unwrap();
+    // recId 0x0777 names no connection: the source address decides (§3.4 step 3).
+    let dgram = encode_datagram(
+        DatagramHeader {
+            rec_id: 0x0777,
+            ..DatagramHeader::default()
+        },
+        &OptionalHeaders::default(),
+        &[],
+        None,
+        None,
+    )
+    .unwrap();
+    let (routed, _) = mux.receive_from_peer(&dgram, server, 0.1, None).unwrap();
+    assert_eq!(routed, id);
+    let stranger = SocketAddrV4::new(Ipv4Addr::new(198, 51, 100, 11), 9000);
+    assert!(matches!(
+        mux.receive_from_peer(&dgram, stranger, 0.1, None),
+        Err(SessionError::UnknownRecipient { .. })
+    ));
 }

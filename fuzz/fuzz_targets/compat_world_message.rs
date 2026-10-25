@@ -1,106 +1,136 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! Fuzz target for `tessera_compat::world`: wire value encodings, encoded
-//! property tables and every world-session message decoder on arbitrary
-//! hostile bytes.
+//! Fuzz target for `tessera_compat::world` (`docs/specs/official-messages-world.md`): wire
+//! value encodings, encoded property tables, the event envelope and every world-session
+//! message decoder on arbitrary hostile bytes. The property and portal-state schemas are
+//! synthetic stand-ins for the run-time lookups.
 #![no_main]
 
 use std::collections::BTreeMap;
 
 use libfuzzer_sys::fuzz_target;
 use tessera_compat::world::{
-    AccountBooted, ActionErrorResponse, ActionStatusResponse, CharacterCreateError,
-    CharacterCreateSuccess, CharacterDeletedResult, CharacterError, CharacterSet,
-    CheckCharacterName, ClientActionCommand, ClientMoveCommand, CreateCharacter, DeleteCharacter,
-    DeleteEntity, DisplayLocalizedText, EncodedPropertyTable, EntityActionEvent,
-    EntityAppearanceDescUpdate, EntityBatchSubEvents, EntityCreate, EntityInitialProperties,
-    EntityPositionUpdate, PID_ADVANCEMENT_LEVEL, PID_AGENT_SPECIES, PID_CHARGEN_CHARACTER_LEVEL,
-    PID_NAME, PlayerSessionStart, PortalPlacement, PortalSpaceExit, PortalSpaceReady,
-    PortalSpaceState, PropertyRemove, PropertyType, QueryMissingEntity, SelectCharacter,
-    SendSteamId, ServerLastWords, SinglePropertyUpdate, WireLocalizedText, WirePosition,
-    WireReader, WorldCalendarConfig, WorldName, decode_blob_payload, decode_vle3, decode_vle4,
-    decode_vle16,
+    AccountEvictionNotice, ActionCancel, ActionChainSync, ActionPayload, ActionQueueEnable,
+    ActionStart, ActionStateReset, ActionStepComplete, CharacterCreateAck, CharacterCreateReject,
+    CharacterCreateRequest, CharacterDeleteRequest, CharacterDeleteStatus,
+    CharacterEnterWorldRequest, CharacterListResponse, CharacterNameCheckRequest,
+    CharacterOperationError, ClientActionCommand, ClientPhysicsSync, CompactDid, CompactPid,
+    DEFAULT_PORTAL_STATE_SCHEMA_ID, DisplayLocalizedText, EncodedPropertyTable,
+    EntityAnimLayerState, EntityAppearanceDesc, EntityCreate, EntityDespawn, EntityStringEvent,
+    LandblockPropertyEvent, LocalizedTokenText, LocalizedTokenTextArgPayload, MissingEntityQuery,
+    PID_AGENT_SPECIES, PID_ENTITY_DISPLAY_NAME, PlatformAccountIdReport, PlayerSessionReady,
+    PortalPositionSync, PortalReadyAck, PortalStateNotice, PortalStateSchema,
+    PortalTransitionComplete, PositionUpdate, PredictedPropertyAck, PropertyRemoval,
+    PropertyTableUpdate, PropertyType, ServerShutdownText, SinglePropertyUpdate, SubEventBatch,
+    VisualDescriptionUpdate, WireBitfield, WirePosition, WireReader, WorldCalendarConfig,
+    WorldNameAnnouncement, decode_event_envelope, decode_vle3, decode_vle4, decode_vle16,
 };
 
 fn fuzz_schema() -> BTreeMap<u32, PropertyType> {
     let mut map = BTreeMap::new();
-    map.insert(PID_NAME, PropertyType::LocalizedText);
-    map.insert(PID_ADVANCEMENT_LEVEL, PropertyType::Int);
-    map.insert(PID_CHARGEN_CHARACTER_LEVEL, PropertyType::Int);
+    map.insert(PID_ENTITY_DISPLAY_NAME, PropertyType::LocalizedTokenText);
     map.insert(PID_AGENT_SPECIES, PropertyType::Enum);
-    map.insert(0x0000_0001, PropertyType::String);
-    map.insert(0x0000_0002, PropertyType::StringToken);
-    map.insert(0x0000_0003, PropertyType::Waveform);
-    map.insert(0x0000_0004, PropertyType::Timestamp);
-    map.insert(0x0000_0005, PropertyType::TriState);
-    map.insert(0x0000_0006, PropertyType::Vector3);
-    map.insert(0x0000_0007, PropertyType::InstanceId);
-    map.insert(0x0000_0008, PropertyType::Enum);
-    map.insert(0x0000_0009, PropertyType::Float);
-    map.insert(0x0000_000A, PropertyType::PropertyId);
-    map.insert(0x0000_000B, PropertyType::Struct);
-    map.insert(0x0000_000C, PropertyType::Array);
-    map.insert(0x0000_000D, PropertyType::LocalizedText);
-    map.insert(0x0000_000E, PropertyType::Bitfield64);
-    map.insert(0x0000_000F, PropertyType::Int);
-    map.insert(0x0000_0010, PropertyType::Color);
-    map.insert(0x0000_0011, PropertyType::Position);
-    map.insert(0x0000_0012, PropertyType::Bitfield32);
-    map.insert(0x0000_0013, PropertyType::Int64);
-    map.insert(0x0000_0014, PropertyType::DidRef);
-    map.insert(0x0000_0015, PropertyType::Boolean);
-    map.insert(0x0000_0016, PropertyType::Bitfield);
+    for code in 1u32..=22 {
+        if let Ok(kind) = PropertyType::from_code(code) {
+            map.insert(code, kind);
+        }
+    }
+    map
+}
+
+fn portal_schemas() -> BTreeMap<u32, PortalStateSchema> {
+    let mut map = BTreeMap::new();
+    map.insert(
+        DEFAULT_PORTAL_STATE_SCHEMA_ID,
+        PortalStateSchema {
+            bool_pids: (1..=8).collect(),
+            enum_pids: (9..=14).collect(),
+        },
+    );
+    map.insert(0x0000_0100, PortalStateSchema::default());
     map
 }
 
 fuzz_target!(|data: &[u8]| {
     let schema = fuzz_schema();
+    let portal = portal_schemas();
+    let reader = || WireReader::new(data);
 
     let _ = decode_vle3(data);
     let _ = decode_vle4(data);
     let _ = decode_vle16(data);
-    let _ = WirePosition::decode_wire(&mut WireReader::new(data));
-    let _ = WirePosition::decode_base(&mut WireReader::new(data));
-    let _ = WirePosition::decode_stored(&mut WireReader::new(data));
-    let _ = WireLocalizedText::from_bytes(data);
-    let _ = WireLocalizedText::decode_stored(&mut WireReader::new(data));
+    let _ = CompactDid::from_bytes(data);
+    let _ = CompactPid::from_bytes(data);
+    let _ = WirePosition::decode_wire(&mut reader());
+    let _ = WirePosition::decode_stored(&mut reader());
+    let _ = LocalizedTokenText::from_bytes(data);
+    let _ = LocalizedTokenText::decode_stored(&mut reader());
+    for kind in 0u16..=8 {
+        let _ = LocalizedTokenTextArgPayload::decode(&mut reader(), kind, true);
+        let _ = LocalizedTokenTextArgPayload::decode(&mut reader(), kind, false);
+    }
     let _ = EncodedPropertyTable::from_bytes(data, &schema);
-    let _ = decode_blob_payload(data, 0);
+    let _ = WireBitfield::decode(&mut reader());
+    let _ = EntityAppearanceDesc::decode(&mut reader());
+    let _ = ActionPayload::decode(&mut reader(), &schema);
+    if let Some((&id, rest)) = data.split_first() {
+        let _ = decode_event_envelope(u32::from(id), 2, rest, 65_536);
+    }
 
-    let _ = CharacterSet::from_bytes(data, &schema);
-    let _ = CheckCharacterName::from_bytes(data);
-    let _ = CreateCharacter::from_bytes(data, &schema);
-    let _ = CharacterCreateSuccess::from_bytes(data, &schema);
-    let _ = CharacterCreateError::from_bytes(data);
-    let _ = DeleteCharacter::from_bytes(data, false);
-    let _ = DeleteCharacter::from_bytes(data, true);
-    let _ = CharacterDeletedResult::from_bytes(data);
-    let _ = CharacterError::from_bytes(data);
-    let _ = AccountBooted::from_bytes(data);
-    let _ = SendSteamId::from_bytes(data);
-    let _ = SelectCharacter::from_bytes(data, &schema);
+    // §3 character screen
+    let _ = CharacterListResponse::from_bytes(data, &schema);
+    let _ = CharacterNameCheckRequest::from_bytes(data);
+    let _ = CharacterCreateRequest::from_bytes(data, &schema);
+    let _ = CharacterCreateAck::from_bytes(data, &schema);
+    let _ = CharacterCreateReject::from_bytes(data);
+    let _ = CharacterDeleteRequest::from_bytes(data, 0x7A);
+    let _ = CharacterDeleteRequest::from_bytes(data, 0xD1);
+    let _ = CharacterDeleteStatus::from_bytes(data);
+    let _ = CharacterOperationError::from_bytes(data);
+    let _ = AccountEvictionNotice::from_bytes(data);
+    let _ = PlatformAccountIdReport::from_bytes(data);
+    let _ = CharacterEnterWorldRequest::from_bytes(data, &schema);
 
-    let _ = WorldName::from_bytes(data);
+    // §4 world entry, portal space, calendar
+    let _ = WorldNameAnnouncement::from_bytes(data);
     let _ = DisplayLocalizedText::from_bytes(data);
-    let _ = ServerLastWords::from_bytes(data);
-    let _ = PlayerSessionStart::from_bytes(data, &schema);
-    let _ = PortalPlacement::from_bytes(data);
-    let _ = PortalSpaceExit::from_bytes(data);
-    let _ = PortalSpaceState::from_bytes(data);
-    let _ = PortalSpaceReady::from_bytes(data);
+    let _ = ServerShutdownText::from_bytes(data);
+    let _ = PlayerSessionReady::from_bytes(data, &schema);
+    let _ = PortalPositionSync::from_bytes(data, &portal);
+    let _ = PortalTransitionComplete::from_bytes(data);
+    let _ = PortalStateNotice::from_bytes(data);
+    let _ = PortalReadyAck::from_bytes(data);
     let _ = WorldCalendarConfig::from_bytes(data);
 
-    let _ = EntityBatchSubEvents::from_bytes(data);
+    // §5 object lifecycle, movement, actions, properties
+    let _ = SubEventBatch::from_bytes(data, SubEventBatch::EVENT_ID_AOI_ENTER);
+    let _ = SubEventBatch::from_bytes(data, SubEventBatch::EVENT_ID_SUB_EVENT);
     let _ = EntityCreate::from_bytes(data);
-    let _ = EntityInitialProperties::from_bytes(data, &schema);
-    let _ = EntityAppearanceDescUpdate::from_bytes(data, &schema);
-    let _ = DeleteEntity::from_bytes(data);
-    let _ = QueryMissingEntity::from_bytes(data);
-    let _ = EntityPositionUpdate::from_bytes(data);
-    let _ = ClientMoveCommand::from_bytes(data, &schema);
+    let _ = EntityDespawn::from_bytes(data);
+    let _ = MissingEntityQuery::from_bytes(data);
+    let _ = PositionUpdate::from_bytes(data);
+    let _ = ClientPhysicsSync::from_bytes(data, &schema);
     let _ = ClientActionCommand::from_bytes(data, &schema);
-    let _ = EntityActionEvent::from_bytes(data, &schema);
-    let _ = ActionErrorResponse::from_bytes(data);
-    let _ = ActionStatusResponse::from_bytes(data);
-    let _ = SinglePropertyUpdate::from_bytes(data, &schema);
-    let _ = PropertyRemove::from_bytes(data);
+    let _ = ActionStart::from_bytes(data, 0x5A, &schema);
+    let _ = ActionStart::from_bytes(data, 0xA8, &schema);
+    let _ = ActionStepComplete::from_bytes(data);
+    let _ = ActionCancel::from_bytes(data);
+    let _ = ActionChainSync::from_bytes(data, &schema);
+    let _ = EntityAnimLayerState::from_bytes(data, &schema);
+    let _ = ActionQueueEnable::from_bytes(data);
+    let _ = ActionStateReset::from_bytes(data);
+    let _ = VisualDescriptionUpdate::from_bytes(data);
+    for id in [0x52u32, 0xFE] {
+        let _ = PropertyTableUpdate::decode(&mut reader(), id, &schema);
+    }
+    for id in [0x88u32, 0x92, 0xB0, 0x149] {
+        let _ = SinglePropertyUpdate::decode(&mut reader(), id, &schema);
+    }
+    for id in [0x0Eu32, 0xE7, 0x76, 0x14A] {
+        let _ = PropertyRemoval::decode(&mut reader(), id);
+    }
+    for id in [0x146u32, 0x147, 0x148] {
+        let _ = LandblockPropertyEvent::decode(&mut reader(), id, &schema);
+    }
+    let _ = EntityStringEvent::from_bytes(data);
+    let _ = PredictedPropertyAck::from_bytes(data);
 });

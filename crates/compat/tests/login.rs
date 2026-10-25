@@ -13,17 +13,18 @@ use tessera_compat::login::soap_encoder::{
 };
 use tessera_compat::login::{
     ArgTemplateParams, Credentials, DAT_DIDVER_DESCRIPTOR_OFFSET, DAT_SUPERBLOCK_MAGIC,
-    DAT_SUPERBLOCK_OFFSET, DEFAULT_TICKET_LIFETIME_SEC, DID_MASTER_MAP_3_COMPRESSION,
-    DID_VERSION_PRIMARY, DID_VERSION_SECONDARY, DidMap3Table, GameSubscription, HttpClient,
-    HttpMethod, HttpRequest, HttpResponse, INVALID_LOGIN_SERVER_SENTINEL, LauncherConfig,
-    LoginDriver, LoginError, LoginFailureClass, LoginStateId, MAX_XML_DEPTH, MAX_XML_INPUT_BYTES,
-    MAX_XML_ITEMS, PREFIX_TREE_DICT_SCHEMA_GUID, PrefixTreeDictionaryHeader, QueueEvaluation,
-    QueueResult, RefreshOutcome, RegistryTicketReader, RemoteLauncherConfig, SessionHandoff,
-    TicketIntakeArgs, TicketRefresher, UserPreferences, VersionInfo, WorldStatus,
+    DAT_SUPERBLOCK_OFFSET, DEFAULT_TICKET_LIFETIME_SEC, DICT_KEY_CLIENT_TO_SERVER,
+    DICT_KEY_SERVER_TO_CLIENT, DICT_KEY_SERVER_TO_CLIENT_DEFERRED, DID_MASTER_MAP_3_COMPRESSION,
+    DidMap3Table, GameSubscription, HttpClient, HttpMethod, HttpRequest, HttpResponse,
+    INVALID_LOGIN_SERVER_SENTINEL, LauncherConfig, LoginDriver, LoginError, LoginFailureClass,
+    LoginHost, LoginStateId, MAX_XML_DEPTH, MAX_XML_INPUT_BYTES, MAX_XML_ITEMS,
+    PREFIX_TREE_DICT_SCHEMA_GUID, PrefixTreeDictionaryHeader, QueueEvaluation, QueueResult,
+    ROOT_KEY_COMPRESSION_DICTIONARY, RefreshOutcome, RegistryTicketReader, RemoteLauncherConfig,
+    SessionHandoff, TicketIntakeArgs, TicketRefresher, UserPreferences, VersionInfo, WorldStatus,
     build_launch_argv, build_leave_queue_body, build_take_a_number_body, check_billing_role,
-    encode_version_response_payload, extract_didver_from_dat_file, extract_didver_from_dat_header,
-    fetch_world_status, is_rfc1918_queue_url, language_to_feed_code,
-    parse_dat_superblock_didver_descriptor, parse_get_datacenters_response,
+    compression_dictionary_map_did, encode_client_version_payload, extract_didver_from_dat_file,
+    extract_didver_from_dat_header, fetch_world_status, is_rfc1918_queue_url,
+    language_to_feed_code, parse_dat_superblock_didver_descriptor, parse_get_datacenters_response,
     parse_login_account_response, resolve_install_language, resolve_prefix_tree_dictionary,
     resolve_ticket_intake, split_arg_template_argv, substitute_arg_template,
 };
@@ -75,7 +76,7 @@ fn write_synthetic_install(root: &Path, with_bom: bool) {
         br#"<?xml version="1.0" encoding="utf-8"?>
 <configuration>
   <appSettings>
-    <add key="Launcher.DataCenterService.GLS" value="https://gls.example.invalid/GLS.DataCenterServer/Service.asmx" />
+    <add key="Launcher.DataCenterService.GLS" value="https://gls.example.invalid/service/datacenter" />
     <add key="DataCenter.GameName" value="LOTRO" />
     <add key="DataCenter.DefaultCenter" value="LOTRO" />
     <add key="Product.DocumentFolder" value="The Lord of the Rings Online" />
@@ -95,7 +96,7 @@ const V2_DATACENTERS_RESPONSE_XML: &str = r#"<?xml version="1.0" encoding="utf-8
       <GetDatacentersResult>
         <Datacenter>
           <Name>LOTRO</Name>
-          <AuthServer>https://gls-auth.example.invalid/GLS.AuthServer/Service.asmx</AuthServer>
+          <AuthServer>https://gls-auth.example.invalid/service/auth</AuthServer>
           <PatchServer>patch.example.invalid:6015</PatchServer>
           <LauncherConfigurationServer>https://gls.example.invalid/Launcher/lotrolauncher.server.config.xml</LauncherConfigurationServer>
           <Worlds>
@@ -103,14 +104,14 @@ const V2_DATACENTERS_RESPONSE_XML: &str = r#"<?xml version="1.0" encoding="utf-8
               <Name>WorldAlpha [OLD]</Name>
               <LoginServerUrl>(invalid service specified)</LoginServerUrl>
               <ChatServerUrl>chat.example.invalid:2900</ChatServerUrl>
-              <StatusServerUrl>http://legacy-status.example.invalid/GLS.DataCenterServer/StatusServer.aspx?s=shard-alpha</StatusServerUrl>
+              <StatusServerUrl>http://legacy-status.example.invalid/service/status?s=shard-alpha</StatusServerUrl>
               <Order>2</Order>
             </World>
             <World>
               <Name>[EN] WorldBeta</Name>
               <LoginServerUrl>(invalid service specified)</LoginServerUrl>
               <ChatServerUrl>chat.example.invalid:2900</ChatServerUrl>
-              <StatusServerUrl>https://gls.example.invalid/GLS.DataCenterServer/StatusServer.aspx?s=shard-beta</StatusServerUrl>
+              <StatusServerUrl>https://gls.example.invalid/service/status?s=shard-beta</StatusServerUrl>
               <Order>1</Order>
             </World>
           </Worlds>
@@ -127,10 +128,10 @@ const SYNTHETIC_REMOTE_LAUNCHER_CONFIG_XML: &str = r#"<?xml version="1.0" encodi
     <add key="GameClient.WIN32.ArgTemplate" value="-a {SUBSCRIPTION} -h {LOGIN} --glsticketdirect &quot;{GLS}&quot; --chatserver &quot;{CHAT}&quot; --language {LANG} --rodat on --gametype {GAMETYPE} --authserverurl &quot;{AUTHSERVERURL}&quot; --glsticketlifetime {GLSTICKETLIFETIME} --supporturl &quot;{SUPPORTURL}&quot; --supportserviceurl &quot;{SUPPORTSERVICEURL}&quot; --bugurl &quot;{BUGURL}&quot;" />
     <add key="GameClient.Arg.glsticketlifetime" value="21600" />
     <add key="GameClient.Arg.supporturl" value="https://support.example.invalid" />
-    <add key="GameClient.Arg.supportserviceurl" value="https://support-svc.example.invalid/SubmitTicket.asmx" />
+    <add key="GameClient.Arg.supportserviceurl" value="https://support-svc.example.invalid/service/support" />
     <add key="GameClient.Arg.bugurl" value="https://bugs.example.invalid" />
     <add key="GameClient.HighResPatchArg" value=" --HighResOutOfDate" />
-    <add key="WorldQueue.LoginQueue.URL" value="https://gls-auth.example.invalid/GLS.AuthServer/LoginQueue.aspx" />
+    <add key="WorldQueue.LoginQueue.URL" value="https://gls-auth.example.invalid/service/queue" />
     <add key="WorldQueue.TakeANumber.Parameters" value="command=TakeANumber&amp;subscription={0}&amp;ticket={1}&amp;ticket_type=GLS&amp;queue_url={2}" />
     <add key="WorldQueue.LeaveQueue.Parameters" value="command=LeaveQueue&amp;subscription={0}&amp;context={1}&amp;ticket_type=GLS&amp;queue_url={2}" />
     <add key="WorldQueue.PollTimer" value="120" />
@@ -202,7 +203,7 @@ fn v1_local_launcherconfig_with_utf8_bom() {
     assert_eq!(path.file_name().unwrap(), "lotro.launcherconfig");
     assert_eq!(
         cfg.gls_datacenter_service,
-        "https://gls.example.invalid/GLS.DataCenterServer/Service.asmx"
+        "https://gls.example.invalid/service/datacenter"
     );
     assert_eq!(cfg.datacenter_game_name, "LOTRO");
     assert_eq!(cfg.default_center.as_deref(), Some("LOTRO"));
@@ -216,15 +217,10 @@ fn v1_local_launcherconfig_with_utf8_bom() {
 /// Vector `V2` — `GetDatacenters` SOAP request and response with `[OLD]` world sorting.
 #[test]
 fn v2_get_datacenters_soap_request_and_response() {
-    let req = build_get_datacenters_request(
-        "https://gls.example.invalid/GLS.DataCenterServer/Service.asmx",
-        "LOTRO",
-    );
+    let req =
+        build_get_datacenters_request("https://gls.example.invalid/service/datacenter", "LOTRO");
     assert_eq!(req.method, HttpMethod::Post);
-    assert_eq!(
-        req.url,
-        "https://gls.example.invalid/GLS.DataCenterServer/Service.asmx"
-    );
+    assert_eq!(req.url, "https://gls.example.invalid/service/datacenter");
     assert_eq!(req.content_type(), Some("text/xml; charset=utf-8"));
     assert_eq!(req.soap_action(), Some(SOAP_ACTION_GET_DATACENTERS));
     let body_str = std::str::from_utf8(&req.body).unwrap();
@@ -237,7 +233,7 @@ fn v2_get_datacenters_soap_request_and_response() {
     assert_eq!(dc.name, "LOTRO");
     assert_eq!(
         dc.auth_server,
-        "https://gls-auth.example.invalid/GLS.AuthServer/Service.asmx"
+        "https://gls-auth.example.invalid/service/auth"
     );
     assert_eq!(dc.patch_server, "patch.example.invalid:6015");
     assert_eq!(
@@ -259,7 +255,7 @@ fn v2_get_datacenters_soap_request_and_response() {
       <GetDatacentersResult>
         <Datacenter>
           <Name>LOTRO</Name>
-          <AuthServer>https://gls-auth.example.invalid/Service.asmx</AuthServer>
+          <AuthServer>https://gls-auth.example.invalid/service/auth</AuthServer>
           <PatchServer>patch.example.invalid:6015</PatchServer>
           <LauncherConfigurationServer>https://gls.example.invalid/config.xml</LauncherConfigurationServer>
           <SupportURL>https://support-dc.example.invalid/help</SupportURL>
@@ -287,12 +283,11 @@ fn v2_get_datacenters_soap_request_and_response() {
     );
 }
 
-/// Vector `V3` — `StatusServer.aspx` `<Status>` parsing; no fallback URL is
+/// Vector `V3` — `World/StatusServerUrl` `<Status>` parsing; no fallback URL is
 /// built from built-in fragments (decision 0042 item 3).
 #[test]
 fn v3_status_server_query_and_status_parsing() {
-    let primary_status_url =
-        "http://legacy-status.example.invalid/GLS.DataCenterServer/StatusServer.aspx?s=shard-alpha";
+    let primary_status_url = "http://legacy-status.example.invalid/service/status?s=shard-alpha";
 
     let mut http = MockHttpClient::default();
     http.push_ok(200, V3_STATUS_XML.as_bytes().to_vec());
@@ -385,7 +380,7 @@ fn v5_take_a_number_post_body_encoding_and_result_evaluation() {
 #[test]
 fn v6_refresh_ticket_soap_exchange_and_backoff_arithmetic() {
     let mut refresher = TicketRefresher::new(
-        "https://gls-auth.example.invalid/GLS.AuthServer/Service.asmx",
+        "https://gls-auth.example.invalid/service/auth",
         "LOTROSUB00000000000000002",
         "SYNTH+TICKET/ABC123==",
         21600,
@@ -441,10 +436,10 @@ fn v6_refresh_ticket_soap_exchange_and_backoff_arithmetic() {
     assert!(refresher.parsed_result_flag());
 }
 
-/// Vector `V7` — `netver`/`didver` serialization in `VersionResponse` (`0x0000012C`)
+/// Vector `V7` — `netver`/`didver` serialization in `ClientVersionMessage` (`0x0000012C`)
 /// and `0x10000002`/`0x10000001` dictionary resolution (§2.4, invariants `I11` & `I16`, §7.2).
 #[test]
-fn v7_version_response_and_prefix_tree_dictionary_resolution() {
+fn v7_client_version_and_prefix_tree_dictionary_resolution() {
     // 1. Synthetic 20-byte .dat superblock descriptor at file offset 0x17C..0x18F:
     let descriptor_20: [u8; 20] = [
         0x04, 0x03, 0x02, 0x01, 0x06, 0x05, 0x08, 0x07, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F,
@@ -461,18 +456,19 @@ fn v7_version_response_and_prefix_tree_dictionary_resolution() {
         0xAA, 0xAA, 0xBB, 0xCC, 0xDD, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0x00,
         0xAB, 0xCD, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x09, 0x00, 0x00, 0x00,
     ];
-    let hdr_0e010000 = PrefixTreeDictionaryHeader::parse(&dict_0e010000).unwrap();
-    assert_eq!(hdr_0e010000.schema_guid, PREFIX_TREE_DICT_SCHEMA_GUID);
+    let hdr_0e010000 = PrefixTreeDictionaryHeader::parse(&dict_0e010000, 0x0E01_0000).unwrap();
+    assert_eq!(hdr_0e010000.format_uuid, PREFIX_TREE_DICT_SCHEMA_GUID);
     assert_eq!(
-        hdr_0e010000.dict_guid,
+        hdr_0e010000.codec_uuid,
         [
             0xAA, 0xBB, 0xCC, 0xDD, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0x00,
             0xAB, 0xCD
         ]
     );
-    assert_eq!(hdr_0e010000.deferred_target_did, 0);
-    assert_eq!(hdr_0e010000.dict_format_version, 1);
-    assert_eq!(hdr_0e010000.tree_stream_len, 9);
+    assert_eq!(hdr_0e010000.redirect_did, 0);
+    assert!(!hdr_0e010000.redirects);
+    assert_eq!(hdr_0e010000.version, 1);
+    assert_eq!(hdr_0e010000.body_len, 9);
 
     // 3. Synthetic 0x0E010002 ("Server2ClientDeferred", mapped by 0x10000001 in 0x28000010) stub (44 bytes):
     let dict_0e010002_stub: [u8; 44] = [
@@ -480,41 +476,35 @@ fn v7_version_response_and_prefix_tree_dictionary_resolution() {
         0xAA, 0x10, 0x20, 0x30, 0x40, 0x50, 0x60, 0x70, 0x80, 0x90, 0xA0, 0xB0, 0xC0, 0xD0, 0xE0,
         0xF0, 0x01, 0x01, 0x00, 0x01, 0x0E, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
     ];
-    let hdr_0e010002 = PrefixTreeDictionaryHeader::parse(&dict_0e010002_stub).unwrap();
-    assert!(hdr_0e010002.is_deferred_redirect());
-    assert_eq!(hdr_0e010002.deferred_target_did, 0x0E01_0001);
+    let hdr_0e010002 = PrefixTreeDictionaryHeader::parse(&dict_0e010002_stub, 0x0E01_0002).unwrap();
+    assert!(hdr_0e010002.redirects);
+    assert_eq!(hdr_0e010002.redirect_did, 0x0E01_0001);
+    // A record whose redirectDid is its own DID (0x0E010001) is a literal dictionary.
+    let mut self_ref = dict_0e010000;
+    self_ref[32..36].copy_from_slice(&0x0E01_0001u32.to_le_bytes());
+    let hdr_self = PrefixTreeDictionaryHeader::parse(&self_ref, 0x0E01_0001).unwrap();
+    assert!(!hdr_self.redirects);
+    // A literal dictionary must be version 1.
+    let mut v0 = dict_0e010000;
+    v0[36] = 0;
+    assert!(PrefixTreeDictionaryHeader::parse(&v0, 0x0E01_0000).is_err());
 
-    // 4. Construct VersionInfo with netver = "1234" and verify 56-byte versionString and 57-byte VersionResponse payload:
-    let info = VersionInfo::from_dat_superblock_descriptor(
-        "1234",
-        &descriptor_20,
-        &hdr_0e010000.dict_guid,
-    )
-    .unwrap();
+    // 4. VersionInfo with netver = "1234": 56-byte versionString, 57-byte ClientVersionMessage payload.
+    let info = VersionInfo::from_dat_superblock_descriptor("1234", &descriptor_20).unwrap();
     assert_eq!(info.didver_string(), "01020304-0506-0708-090A-0B0C0D0E0F10");
-    assert_eq!(
-        info.didver_with_version_string(),
-        "01020304-0506-0708-090A-0B0C0D0E0F10 : 1100"
-    );
+    assert_eq!(info.didver_version, 1100);
     assert_eq!(
         info.version_string(),
         "netver:1234; didver:01020304-0506-0708-090A-0B0C0D0E0F10"
     );
     assert_eq!(info.version_string().len(), 56);
 
-    let encoded = info.encode_version_response_payload().unwrap();
+    let encoded = info.encode_client_version_payload().unwrap();
     assert_eq!(encoded.len(), 57);
     assert_eq!(encoded[0], 0x38);
     assert_eq!(
         &encoded[1..],
         b"netver:1234; didver:01020304-0506-0708-090A-0B0C0D0E0F10"
-    );
-    assert_eq!(
-        info.record_10000002_header,
-        [
-            0xAA, 0xBB, 0xCC, 0xDD, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0x00,
-            0xAB, 0xCD
-        ]
     );
 }
 
@@ -533,7 +523,7 @@ fn i2_bootstrap_config_discovery_order() {
     let legacy_xml = br#"<?xml version="1.0" encoding="utf-8"?>
 <configuration>
   <appSettings>
-    <add key="Launcher.DataCenterService.GLS" value="https://legacy.example.invalid/GLS.DataCenterServer/Service.asmx" />
+    <add key="Launcher.DataCenterService.GLS" value="https://legacy.example.invalid/service/datacenter" />
     <add key="DataCenter.GameName" value="LEGACY" />
   </appSettings>
 </configuration>"#;
@@ -550,7 +540,7 @@ fn i2_bootstrap_config_discovery_order() {
     std::fs::write(
         dir.path().join("aa_first.launcherconfig"),
         br#"<configuration><appSettings>
-            <add key="Launcher.DataCenterService.GLS" value="https://aa.example.invalid/Service.asmx" />
+            <add key="Launcher.DataCenterService.GLS" value="https://aa.example.invalid/service/datacenter" />
             <add key="DataCenter.GameName" value="AA_FIRST" />
         </appSettings></configuration>"#,
     )
@@ -580,13 +570,7 @@ fn i3_login_server_url_placeholder_rejection() {
         assert!(world.usable_login_server_url().is_none());
     }
 
-    let version = VersionInfo::new(
-        "4906.0071.1794.4035",
-        "00000000-0000-0000-0000-000000000001",
-        42,
-        &[0xAA; 16],
-    )
-    .unwrap();
+    let version = VersionInfo::new("1234", "00000000-0000-0000-0000-000000000001", 42).unwrap();
 
     // Attempting to construct SessionHandoff with `(invalid service specified)` is rejected.
     let bad = SessionHandoff::new(
@@ -597,7 +581,7 @@ fn i3_login_server_url_placeholder_rejection() {
         version,
         "English",
         "chat.example.invalid:2900",
-        "https://gls-auth.example.invalid/GLS.AuthServer/Service.asmx",
+        "https://gls-auth.example.invalid/service/auth",
         DEFAULT_TICKET_LIFETIME_SEC,
     );
     assert!(bad.is_err());
@@ -619,8 +603,7 @@ fn i3_login_server_url_placeholder_rejection() {
 /// built from built-in path fragments.
 #[test]
 fn i4_status_server_failure_builds_no_fallback_url() {
-    let world_status_url =
-        "http://unreachable.example.invalid/GLS.DataCenterServer/StatusServer.aspx?s=world-1";
+    let world_status_url = "http://unreachable.example.invalid/service/status?s=world-1";
 
     for (code, body) in [(200u16, Vec::new()), (404, b"Not Found".to_vec())] {
         let mut http = MockHttpClient::default();
@@ -683,7 +666,7 @@ fn i5_subscription_name_vs_username() {
     http.push_ok(200, queue_ready_xml.as_bytes().to_vec());
 
     let mut driver = LoginDriver::new();
-    assert_eq!(driver.state(), LoginStateId::S1_LOAD_LOCAL_CONFIG);
+    assert_eq!(driver.state(), LoginStateId::S1_LOCAL_DISCOVERY);
     driver.load_local_config(dir.path(), None).unwrap();
     driver.execute_get_datacenters(&mut http).unwrap();
     driver.execute_get_launcher_config(&mut http).unwrap();
@@ -707,13 +690,7 @@ fn i5_subscription_name_vs_username() {
     assert!(queue_req_body.contains("subscription=SUB9876543210ABCDEF012345"));
     assert!(!queue_req_body.contains("alice_login"));
 
-    let version = VersionInfo::new(
-        "4906.0071.1794.4035",
-        "11111111-2222-3333-4444-555555555555",
-        100,
-        &[1u8; 16],
-    )
-    .unwrap();
+    let version = VersionInfo::new("1234", "11111111-2222-3333-4444-555555555555", 100).unwrap();
     let handoff = driver.complete_session_handoff(version, 0, 0.0).unwrap();
     assert_eq!(handoff.subscription_name(), "SUB9876543210ABCDEF012345");
     assert_ne!(handoff.subscription_name(), "alice_login");
@@ -773,7 +750,7 @@ fn i7_take_a_number_ticket_percent_encoding() {
             chat_server: "chat.example.invalid:2900".to_owned(),
             language: "English".to_owned(),
             game_type: "LOTRO".to_owned(),
-            auth_server_url: "https://gls-auth.example.invalid/Service.asmx".to_owned(),
+            auth_server_url: "https://gls-auth.example.invalid/service/auth".to_owned(),
             gls_ticket_lifetime_sec: 21600,
             support_url: "https://support.example.invalid".to_owned(),
             support_service_url: "https://support-svc.example.invalid".to_owned(),
@@ -830,7 +807,7 @@ fn i9_refresh_ticket_backoff_schedule() {
     http.push_ok(500, b"Internal Server Error".to_vec());
 
     let mut refresher = TicketRefresher::new(
-        "https://gls-auth.example.invalid/GLS.AuthServer/Service.asmx",
+        "https://gls-auth.example.invalid/service/auth",
         "SUB01",
         "SYNTH+TICKET/INITIAL==",
         21600,
@@ -907,7 +884,7 @@ fn i10_refresh_ticket_reset_on_success() {
     http.push_ok(200, success_xml.to_vec());
 
     let mut refresher = TicketRefresher::new(
-        "https://gls-auth.example.invalid/GLS.AuthServer/Service.asmx",
+        "https://gls-auth.example.invalid/service/auth",
         "SUB01",
         "SYNTH+TICKET/INITIAL==",
         21600,
@@ -950,62 +927,75 @@ fn i10_refresh_ticket_reset_on_success() {
     );
 }
 
-/// Invariant `I11` (`VersionResponse` string format): Given a 20-byte `.dat`
+/// Invariant `I11` (`ClientVersionMessage` string format): Given a 20-byte `.dat`
 /// superblock descriptor (`[guid_16, version_u32_le]`) at `0x17C..0x18F` and a
-/// `<netver_string>`, the combined version string serialized into `VersionResponse`
+/// `<netver_string>`, the combined version string serialized into `ClientVersionMessage`
 /// (`0x0000012C`) matches the exact 56-byte ASCII pattern
 /// `netver:<netver>; didver:<XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX>` (omitting
 /// the `u32` archive version integer from `0x18C`) and is prefixed on the wire
 /// by its `VariableU32` byte length (`0x38` for a 56-byte string).
 #[test]
 fn i11_version_string_format() {
-    let payload = [
-        0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F,
-        0x10, 0x99, 0x88,
-    ];
-    let info = VersionInfo::new(
-        "1234",
-        "A1B2C3D4-E5F6-7890-ABCD-EF0123456789",
-        20261020,
-        &payload,
-    )
-    .unwrap();
+    let info = VersionInfo::new("1234", "A1B2C3D4-E5F6-7890-ABCD-EF0123456789", 20261020).unwrap();
     assert_eq!(info.didver_string(), "A1B2C3D4-E5F6-7890-ABCD-EF0123456789");
-    assert_eq!(
-        info.didver_with_version_string(),
-        "A1B2C3D4-E5F6-7890-ABCD-EF0123456789 : 20261020"
-    );
     assert_eq!(
         info.version_string(),
         "netver:1234; didver:A1B2C3D4-E5F6-7890-ABCD-EF0123456789"
     );
     assert_eq!(info.version_string().len(), 56);
-    let encoded = info.encode_version_response_payload().unwrap();
+    let encoded = info.encode_client_version_payload().unwrap();
     assert_eq!(encoded.len(), 57);
     assert_eq!(encoded[0], 0x38);
     assert_eq!(&encoded[1..], info.version_string().as_bytes());
-    assert_eq!(info.record_10000002_header, payload[..16]);
-    assert_eq!(
-        info.registered_dids,
-        [DID_VERSION_PRIMARY, DID_VERSION_SECONDARY]
-    );
 
-    // Also test 2-byte VariableU32 length prefix (128 <= L <= 16383)
-    let long_str = "a".repeat(200);
-    let long_encoded = encode_version_response_payload(&long_str).unwrap();
-    assert_eq!(long_encoded.len(), 202);
-    assert_eq!(long_encoded[0], 0x80);
-    assert_eq!(long_encoded[1], 200);
+    // The length prefix is the session layer's 4-tier VariableU32 (official-session.md §5.6.1).
+    let long_encoded = encode_client_version_payload(&"a".repeat(200)).unwrap();
+    assert_eq!(&long_encoded[..2], &[0x80, 200]);
+    let four_tier = encode_client_version_payload(&"b".repeat(0x4000)).unwrap();
+    assert_eq!(&four_tier[..4], &[0xC0, 0x00, 0x00, 0x40]);
+    assert_eq!(four_tier.len(), 0x4000 + 4);
+    assert!(encode_client_version_payload("netver:é").is_err());
 
-    // The largest two-byte prefix is accepted; anything longer is refused
-    // instead of guessing the four-byte form.
-    let max_str = "b".repeat(0x3FFF);
-    let max_encoded = encode_version_response_payload(&max_str).unwrap();
-    assert_eq!(&max_encoded[..2], &[0xBF, 0xFF]);
-    assert_eq!(max_encoded.len(), 0x3FFF + 2);
-    let too_long = "c".repeat(0x4000);
-    let err = encode_version_response_payload(&too_long).unwrap_err();
-    assert_eq!(err.failure_class(), LoginFailureClass::F02_CONFIG_INVALID);
+    // netver validation (§2.4.1): printable ASCII, no `;`, no whitespace; didver is a GUID.
+    assert!(VersionInfo::new("12;34", "A1B2C3D4-E5F6-7890-ABCD-EF0123456789", 0).is_err());
+    assert!(VersionInfo::new("1 2", "A1B2C3D4-E5F6-7890-ABCD-EF0123456789", 0).is_err());
+    assert!(VersionInfo::new("1234", "0000-0000", 0).is_err());
+}
+
+/// The `-h` / `--host` forms of §4.1 with zero, one or two colons, and `-p` / `--port`.
+#[test]
+fn login_host_forms() {
+    let zero = LoginHost::parse("login.example.invalid").unwrap();
+    assert_eq!(zero.local_host, None);
+    assert_eq!(zero.remote_host, "login.example.invalid");
+    assert_eq!(zero.port, None);
+    assert_eq!(zero.remote_port(Some(19000)).unwrap(), 19000);
+    assert!(zero.remote_port(None).is_err());
+    assert!(zero.remote_port(Some(70_000)).is_err());
+
+    let one = LoginHost::parse("login.example.invalid:19001").unwrap();
+    assert_eq!(one.port, Some(19001));
+    // The embedded port wins over -p.
+    assert_eq!(one.remote_port(Some(1)).unwrap(), 19001);
+
+    let two = LoginHost::parse("192.0.2.10:login.example.invalid:19002").unwrap();
+    assert_eq!(two.local_host.as_deref(), Some("192.0.2.10"));
+    assert_eq!(two.remote_host, "login.example.invalid");
+    assert_eq!(two.port, Some(19002));
+
+    for bad in [
+        "",
+        "a:b:c:1",
+        ":19000",
+        "host:",
+        "host:0",
+        "host:65536",
+        "host:+1",
+        "<localHost:remoteHost:port>",
+        "ho st:1",
+    ] {
+        assert!(LoginHost::parse(bad).is_err(), "{bad:?}");
+    }
 }
 
 /// Invariant `I12` (Credential & ticket redaction): Formatting any error, debug,
@@ -1019,7 +1009,7 @@ fn i12_credential_and_ticket_redaction() {
 
     let creds = Credentials::new("player_user", secret_pass);
     let sub = GameSubscription::new("LOTRO", secret_sub, Some("Main".to_owned()), vec![]);
-    let version = VersionInfo::new("1.0", "0000-0000", 1, &[0u8; 16]).unwrap();
+    let version = VersionInfo::new("1.0", "00000000-0000-0000-0000-000000000000", 1).unwrap();
     let handoff = SessionHandoff::new(
         "login.example.invalid:9000",
         0,
@@ -1028,19 +1018,19 @@ fn i12_credential_and_ticket_redaction() {
         version,
         "English",
         "chat.example.invalid:2900",
-        "https://gls-auth.example.invalid/Service.asmx",
+        "https://gls-auth.example.invalid/service/auth",
         21600,
     )
     .unwrap();
     let refresher = TicketRefresher::new(
-        "https://gls-auth.example.invalid/Service.asmx",
+        "https://gls-auth.example.invalid/service/auth",
         secret_sub,
         secret_ticket,
         21600,
         0.0,
     );
     let req = build_login_account_request(
-        "https://gls-auth.example.invalid/Service.asmx",
+        "https://gls-auth.example.invalid/service/auth",
         "player_user",
         secret_pass,
     );
@@ -1154,7 +1144,7 @@ fn i15_arg_template_legacy_aliases_and_argv_filtering() {
         chat_server: "chat.example.invalid:2900".to_owned(),
         language: "DE".to_owned(),
         game_type: "LOTRO".to_owned(),
-        auth_server_url: "https://gls-auth.example.invalid/Service.asmx".to_owned(),
+        auth_server_url: "https://gls-auth.example.invalid/service/auth".to_owned(),
         gls_ticket_lifetime_sec: 21600,
         support_url: String::new(),
         support_service_url: String::new(),
@@ -1168,7 +1158,7 @@ fn i15_arg_template_legacy_aliases_and_argv_filtering() {
     let argv = build_launch_argv(template, &params, Some(" --HighResOutOfDate"));
     assert!(argv.contains(&"DE".to_owned()));
     assert!(argv.contains(&"LOTRO".to_owned()));
-    assert!(argv.contains(&"https://gls-auth.example.invalid/Service.asmx".to_owned()));
+    assert!(argv.contains(&"https://gls-auth.example.invalid/service/auth".to_owned()));
     assert!(argv.contains(&"SYNTH+TICKET/ABC123==".to_owned()));
     assert!(argv.contains(&"1".to_owned()));
     assert!(argv.contains(&"/tmp/user prefs".to_owned()));
@@ -1185,73 +1175,100 @@ fn i15_arg_template_legacy_aliases_and_argv_filtering() {
     );
 }
 
-/// Invariant `I16` (Compression dictionary DID map & deferred redirection, §2.4.3):
-/// - `DIDMasterMap[3]` (`0x28000010`) maps enumerator `0x10000002` -> `0x0E010000`
-///   and `0x10000001` -> `0x0E010002`.
-/// - When `0x0E010002` has a non-zero `deferred_target_did` (`0x0E010001`) at
-///   `+0x20..+0x23`, the resolver follows the redirect and loads `0x0E010001`.
-/// - Also tests `.dat` superblock `extract_didver_from_dat_header`.
+/// Builds a `DataIdMap` record (`records.md` §8.1) with one group of `(key, did, label)`
+/// entries and an empty second group.
+fn did_map_record(self_did: u32, entries: &[(u32, u32, &str)]) -> Vec<u8> {
+    let mut out = Vec::new();
+    out.extend_from_slice(&self_did.to_le_bytes());
+    out.push(1); // TSize hint
+    out.push(u8::try_from(entries.len()).unwrap()); // VLE count
+    for (key, did, _) in entries {
+        out.extend_from_slice(&key.to_le_bytes());
+        out.extend_from_slice(&did.to_le_bytes());
+    }
+    out.push(1);
+    out.push(u8::try_from(entries.len()).unwrap());
+    for (key, _, label) in entries {
+        out.extend_from_slice(&key.to_le_bytes());
+        out.push(u8::try_from(label.len()).unwrap());
+        out.extend_from_slice(label.as_bytes());
+    }
+    out.extend_from_slice(&[1, 0, 1, 0]); // empty second group
+    out
+}
+
+/// A synthetic 48-byte `0x0E01xxxx` record prefix (header + `nodeCount`).
+fn dictionary_record(codec: u8, redirect: u32, version: u32, body_len: u32, nodes: u32) -> Vec<u8> {
+    let mut out = PREFIX_TREE_DICT_SCHEMA_GUID.to_vec();
+    out.extend_from_slice(&[codec; 16]);
+    out.extend_from_slice(&redirect.to_le_bytes());
+    out.extend_from_slice(&version.to_le_bytes());
+    out.extend_from_slice(&body_len.to_le_bytes());
+    out.extend_from_slice(&nodes.to_le_bytes());
+    out
+}
+
+/// Invariant `I16` (§2.4.3; `official-session.md` §4.1.3): the root map's key 3 names the
+/// compression sub-map, whose keys `0x10000002` -> `0x0E010000` and `0x10000001` ->
+/// `0x0E010002` -> (redirect) `0x0E010001` resolve; `0x0E010001` names itself and is literal.
 #[test]
 fn i16_prefix_tree_dictionary_did_map_and_deferred_redirection() {
-    // 1. Build DID Map 3 (0x28000010) record with optional trailing name table:
-    let mut map_bytes = Vec::new();
-    map_bytes.extend_from_slice(&0x2800_0010u32.to_le_bytes()); // self_did
-    map_bytes.push(0x02); // flags
-    map_bytes.extend_from_slice(&2u32.to_le_bytes()); // entry_count = 2
-    // Entry 0: 0x10000001 -> 0x0E010002
-    map_bytes.extend_from_slice(&0x1000_0001u32.to_le_bytes());
-    map_bytes.extend_from_slice(&0x0E01_0002u32.to_le_bytes());
-    // Entry 1: 0x10000002 -> 0x0E010000
-    map_bytes.extend_from_slice(&0x1000_0002u32.to_le_bytes());
-    map_bytes.extend_from_slice(&0x0E01_0000u32.to_le_bytes());
-    // Optional name table (2 entries: "RecvData\0", "SendData\0")
-    map_bytes.extend_from_slice(&2u32.to_le_bytes());
-    map_bytes.extend_from_slice(&0x1000_0001u32.to_le_bytes());
-    map_bytes.extend_from_slice(b"RecvData\0");
-    map_bytes.extend_from_slice(&0x1000_0002u32.to_le_bytes());
-    map_bytes.extend_from_slice(b"SendData\0");
+    let root = did_map_record(
+        0x2800_0000,
+        &[
+            (0, 0, "Undef"),
+            (
+                ROOT_KEY_COMPRESSION_DICTIONARY,
+                DID_MASTER_MAP_3_COMPRESSION,
+                "Synthetic3",
+            ),
+        ],
+    );
+    assert_eq!(
+        compression_dictionary_map_did(&root).unwrap(),
+        DID_MASTER_MAP_3_COMPRESSION
+    );
 
+    // The sub-map of official-session.md §4.1.3 (labels synthetic): 4 entries incl. Undef.
+    let map_bytes = did_map_record(
+        DID_MASTER_MAP_3_COMPRESSION,
+        &[
+            (0, 0, "Undef"),
+            (
+                DICT_KEY_SERVER_TO_CLIENT_DEFERRED,
+                0x0E01_0002,
+                "InDeferred",
+            ),
+            (DICT_KEY_CLIENT_TO_SERVER, 0x0E01_0000, "Out"),
+            (DICT_KEY_SERVER_TO_CLIENT, 0x0E01_0001, "In"),
+        ],
+    );
     let map = DidMap3Table::parse(&map_bytes).unwrap();
     assert_eq!(map.self_did, DID_MASTER_MAP_3_COMPRESSION);
-    assert_eq!(map.flags, 2);
-    assert_eq!(map.resolve_enum_key(DID_VERSION_PRIMARY), Some(0x0E01_0000));
     assert_eq!(
-        map.resolve_enum_key(DID_VERSION_SECONDARY),
-        Some(0x0E01_0002)
+        map.resolve_enum_key(0),
+        None,
+        "the Undef sentinel is a miss"
     );
     assert_eq!(
-        map.names.get(&DID_VERSION_SECONDARY).map(String::as_str),
-        Some("RecvData")
+        map.resolve_enum_key(DICT_KEY_CLIENT_TO_SERVER),
+        Some(0x0E01_0000)
     );
     assert_eq!(
-        map.names.get(&DID_VERSION_PRIMARY).map(String::as_str),
-        Some("SendData")
+        map.names
+            .get(&DICT_KEY_SERVER_TO_CLIENT_DEFERRED)
+            .map(String::as_str),
+        Some("InDeferred")
     );
+    // A label list that does not match the map list, or a non-0x28 record, is refused.
+    let mut bad = map_bytes.clone();
+    bad[4 + 2 + 32 + 1] = 3;
+    assert!(DidMap3Table::parse(&bad).is_err());
+    assert!(DidMap3Table::parse(&did_map_record(0x2500_0000, &[])).is_err());
 
-    // 2. Concrete outgoing dictionary record 0x0E010000 (48-byte prefix from §2.4.3):
-    let rec_0e010000: [u8; 48] = [
-        0x8D, 0x87, 0x95, 0xE7, 0x33, 0xC6, 0x1C, 0x47, 0x83, 0x15, 0xC3, 0xDB, 0xBE, 0xAD, 0x2F,
-        0xAA, 0xF7, 0x16, 0xDE, 0xD2, 0xB8, 0x34, 0x56, 0x4A, 0x85, 0x14, 0x57, 0xB6, 0x34, 0x2F,
-        0x25, 0xFE, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0xD3, 0x16, 0x00, 0x00, 0x6A,
-        0x05, 0x00, 0x00,
-    ];
-
-    // 3. Deferred redirect record 0x0E010002 (44 bytes, redirects to 0x0E010001):
-    let rec_0e010002: [u8; 44] = [
-        0x8D, 0x87, 0x95, 0xE7, 0x33, 0xC6, 0x1C, 0x47, 0x83, 0x15, 0xC3, 0xDB, 0xBE, 0xAD, 0x2F,
-        0xAA, 0x16, 0x91, 0xDC, 0xC5, 0x0D, 0x8D, 0xE1, 0x4D, 0x83, 0xA1, 0x97, 0xF6, 0x25, 0x1D,
-        0xD8, 0xE7, 0x01, 0x00, 0x01, 0x0E, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    ];
-
-    // 4. Concrete incoming dictionary record 0x0E010001 (48-byte prefix: codecUuid = C5DC9116-8D0D-4DE1-83A1-97F6251DD8E7,
-    // deferred_target_did = 0, dict_format_version = 1, tree_stream_len = 19576 (0x4C78), node_count = 4242 (0x1092)):
-    let rec_0e010001: [u8; 48] = [
-        0x8D, 0x87, 0x95, 0xE7, 0x33, 0xC6, 0x1C, 0x47, 0x83, 0x15, 0xC3, 0xDB, 0xBE, 0xAD, 0x2F,
-        0xAA, 0x16, 0x91, 0xDC, 0xC5, 0x0D, 0x8D, 0xE1, 0x4D, 0x83, 0xA1, 0x97, 0xF6, 0x25, 0x1D,
-        0xD8, 0xE7, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x78, 0x4C, 0x00, 0x00, 0x92,
-        0x10, 0x00, 0x00,
-    ];
-
+    let rec_0e010000 = dictionary_record(0xA1, 0, 1, 9, 3);
+    let rec_0e010002 = dictionary_record(0xB2, 0x0E01_0001, 0, 0, 0)[..44].to_vec();
+    let rec_0e010001 = dictionary_record(0xB2, 0x0E01_0001, 1, 13, 5);
     let lookup = |did: u32| -> Option<&[u8]> {
         match did {
             0x0E01_0000 => Some(&rec_0e010000),
@@ -1261,42 +1278,36 @@ fn i16_prefix_tree_dictionary_did_map_and_deferred_redirection() {
         }
     };
 
-    // Resolve outgoing (0x10000002 -> 0x0E010000 directly)
-    let out_dict = resolve_prefix_tree_dictionary(&map, DID_VERSION_PRIMARY, lookup).unwrap();
-    assert_eq!(out_dict.initial_did, 0x0E01_0000);
+    let out_dict = resolve_prefix_tree_dictionary(&map, DICT_KEY_CLIENT_TO_SERVER, lookup).unwrap();
     assert_eq!(out_dict.resolved_did, 0x0E01_0000);
-    assert_eq!(
-        out_dict.header.dict_guid_string(),
-        "D2DE16F7-34B8-4A56-8514-57B6342F25FE"
-    );
-    assert_eq!(out_dict.header.tree_stream_len, 5843);
-    assert_eq!(out_dict.header.node_count, Some(1386));
+    assert_eq!(out_dict.header.codec_uuid, [0xA1; 16]);
+    assert_eq!(out_dict.header.node_count, Some(3));
 
-    // Resolve incoming (0x10000001 -> 0x0E010002 redirect -> 0x0E010001 concrete)
-    let in_dict = resolve_prefix_tree_dictionary(&map, DID_VERSION_SECONDARY, lookup).unwrap();
+    let in_dict =
+        resolve_prefix_tree_dictionary(&map, DICT_KEY_SERVER_TO_CLIENT_DEFERRED, lookup).unwrap();
     assert_eq!(in_dict.initial_did, 0x0E01_0002);
     assert_eq!(in_dict.resolved_did, 0x0E01_0001);
-    assert_eq!(
-        in_dict.header.dict_guid_string(),
-        "C5DC9116-8D0D-4DE1-83A1-97F6251DD8E7"
-    );
-    assert_eq!(in_dict.header.deferred_target_did, 0);
-    assert_eq!(in_dict.header.dict_format_version, 1);
-    assert_eq!(in_dict.header.tree_stream_len, 19576);
-    assert_eq!(in_dict.header.node_count, Some(4242));
+    assert_eq!(in_dict.header.codec_uuid, [0xB2; 16]);
+    assert!(!in_dict.header.redirects);
+    assert_eq!(in_dict.header.body_len, 13);
 
-    // 5. Verify .dat superblock header extraction (magic "BT\0\0" at 0x140 + descriptor at 0x17C):
+    // Direct key 0x10000003 reaches 0x0E010001, whose redirectDid is its own DID.
+    let direct = resolve_prefix_tree_dictionary(&map, DICT_KEY_SERVER_TO_CLIENT, lookup).unwrap();
+    assert_eq!(direct.initial_did, 0x0E01_0001);
+    assert_eq!(direct.resolved_did, 0x0E01_0001);
+
+    // .dat superblock extraction (magic "BT\0\0" at 0x140 + descriptor at 0x17C).
     let mut dat_hdr = vec![0u8; 0x1A8];
     dat_hdr[DAT_SUPERBLOCK_OFFSET..DAT_SUPERBLOCK_OFFSET + 4]
         .copy_from_slice(&DAT_SUPERBLOCK_MAGIC);
     let desc_20: [u8; 20] = [
-        0x05, 0x29, 0x32, 0xAC, 0x3D, 0xA9, 0xFB, 0x48, 0x99, 0x02, 0x7D, 0x32, 0xEE, 0xAC, 0x1C,
-        0x4E, 0x4C, 0x04, 0x00, 0x00,
+        0x04, 0x03, 0x02, 0x01, 0x06, 0x05, 0x08, 0x07, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F,
+        0x10, 0x4C, 0x04, 0x00, 0x00,
     ];
     dat_hdr[DAT_DIDVER_DESCRIPTOR_OFFSET..DAT_DIDVER_DESCRIPTOR_OFFSET + 20]
         .copy_from_slice(&desc_20);
     let (guid, ver) = extract_didver_from_dat_header(&dat_hdr).unwrap();
-    assert_eq!(guid, "AC322905-A93D-48FB-9902-7D32EEAC1C4E");
+    assert_eq!(guid, "01020304-0506-0708-090A-0B0C0D0E0F10");
     assert_eq!(ver, 1100);
 }
 
@@ -1438,7 +1449,7 @@ fn ticket_intake_precedence_and_registry_fallback() {
     let primary = resolve_ticket_intake(
         &TicketIntakeArgs {
             gls_ticket_direct: Some("RAW+DIRECT/TICKET==".to_owned()),
-            auth_server_url: Some("https://gls-auth.example.invalid/Service.asmx".to_owned()),
+            auth_server_url: Some("https://gls-auth.example.invalid/service/auth".to_owned()),
             gls_ticket_registry_key: Some("Software\\ IgnoredKey".to_owned()),
             gls_ticket_lifetime_sec: 21600,
         },
@@ -1555,4 +1566,42 @@ fn real_data_discover_launcher_config_and_language() {
         );
         eprintln!("x64/lotroclient64.exe version resource: {pairs} string(s)");
     }
+}
+
+/// §4.2 / `official-session.md` §6.2.1: the hand-off builds the `SessionAuthHeader` with
+/// authType `0x40000002`, authFlags `0x04` and an extra blob of the decoded ticket length.
+#[test]
+fn handoff_session_auth_header_uses_decoded_ticket_length() {
+    let version = VersionInfo::new("1234", "01020304-0506-0708-090A-0B0C0D0E0F10", 1100).unwrap();
+    let handoff = |ticket: &str| {
+        SessionHandoff::new(
+            "login.example.invalid:19001",
+            0,
+            "LOTROSUB00000000000000002",
+            ticket,
+            version.clone(),
+            "English",
+            "chat.example.invalid:2900",
+            "https://gls-auth.example.invalid/service/auth",
+            DEFAULT_TICKET_LIFETIME_SEC,
+        )
+        .unwrap()
+    };
+    // "U1lOVEhUSUNLRVQ=" is Base64 of the 11 bytes "SYNTHTICKET".
+    let ok = handoff("U1lOVEhUSUNLRVQ=");
+    assert_eq!(ok.login_host().unwrap().port, Some(19001));
+    let header = ok.session_auth_header(7).unwrap();
+    assert_eq!(header.auth_type, 0x4000_0002);
+    assert_eq!(header.auth_flags, 0x04);
+    assert_eq!(
+        header.credentials.extra_blob.as_deref(),
+        Some(&b"SYNTHTICKET"[..])
+    );
+    assert_eq!(
+        header.credentials.account_or_ticket,
+        "LOTROSUB00000000000000002"
+    );
+    // The V4/V6 synthetic ticket text is not well-formed Base64 (21 characters).
+    let bad = handoff("SYNTH+TICKET/ABC123==");
+    assert!(bad.session_auth_header(7).is_err());
 }

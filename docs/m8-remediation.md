@@ -530,3 +530,51 @@ the verification-value markings). It still blocks on consistency; line numbers r
 
 **Next step:** one writer commit for the above on `m8-remediation`, then a header-only reviewer
 commit by new sessions, then this audit again (stage 1 only).
+
+## 12. Audit of stage 1 after pass 5 (2026-10-25, 2e30790): BLOCK, narrow
+
+No contamination. Every §11 blocking item is fixed (the chat server address, the launch
+parameters, the ticket and `authType` rule, `checkValue` now an OPEN with a fallback, the
+counts), and nearly all of the "also fix" list. Three small points remain; line numbers refer
+to `2e30790` (S session, W world, P play, PS property-system, D decision 0041).
+
+**Blocking**
+
+1. **CompactPID:** W274 and W279 reject first bytes 0x81..0xFF "matching" PS §10.2, but PS800
+   (§10.2) still reads any first byte other than 0x80 as the 2-byte form. Add the rejection rule
+   to PS §10.2; a new reviewer re-accepts PS §10.
+2. **Earlier review rows were rewritten:** the pass-5 writer changed the change-log rows of
+   earlier writers and reviewers (S908–912; W1324–1328; P870–872), so they now say those passes
+   checked 20 opcodes, 56 bytes, 0xFEFF and "0 optional header bytes", which is not what they
+   accepted. Restore those rows as written at `9b31155`, replacing only the quoted internal
+   values with a marked redaction (for example "[value removed under §11]").
+3. **Exposure list (D44–95):** add the session IDs of the pass-4 and pass-5 orchestrating
+   (parent) sessions, the §7–§10 auditors (now named only by audited commit), and the
+   `ed9b5b9` auditor; where an ID was not recorded, say so plainly.
+
+**Notes to fix in the same pass**
+
+- Citations: P434 and P721 cite a session "§10.1 synthetic test vector" that does not exist;
+  W1069 cites play §4.4.4, which does not exist.
+- P147 (§4.5 step 2): say which message supplies `expected_stamp` (0xCE, per W1069).
+- L385, L509, L554, L561: the ⌊L×3/4⌋ formula is wrong with padding; say "the decoded length".
+- The `<localHost:remoteHost:port>` form (login and session): define it (brackets literal or
+  not, how it differs from `host:port`), or replace it with an OPEN.
+- Sender rules for the 0x24 `trailer_u32` and the OPEN `slot_flags` bits (W1081).
+- `LoginQueueStatusMessage`: optional at L185, but S741 and W §1.1.4 put it before 0x6C without
+  saying it may be absent.
+- Decision 0041: D147 claims every §11 item resolved; D174 says §6.1 (the tokens are in §7.1);
+  D182 calls 0x1FBC4 a byte count (it is a packet count); add a BLOCK bullet for pass 4.
+- Optional: the unreferenced anchors `s5-2-1-msg-0030` and the P234 aliases.
+
+**Carry to the build:** `OPEN-SESSION-5` (`checkValue`) has a guessed fallback; synthetic tests
+can pass while a live handshake fails (M8 exit criterion 4). Pass 4 renumbered session §7 and §8,
+so the `crates/compat` conformance check (0042 item 6) re-maps code citations.
+
+**Merge (decision 0042 item 9, owner-delegated):** when stage 1 passes, it is merged into main as
+**one squashed commit** of the final text, so the intermediate commits (`5470c8f` and `9b31155`
+carry a client parser mask, low-byte flag names and a pre-load fallback value that the final
+text no longer has) do not reach main's history.
+
+**Next step:** one writer commit for the three blocking points and the notes, then a header-only
+reviewer commit by new sessions (re-accepting PS §10), then a check of that diff.

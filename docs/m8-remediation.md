@@ -711,3 +711,25 @@ From the `m8-conform` build (session S, login L, world W):
   `LocalizedTokenText` blocks every text with arguments.
 - **property-system.md §8.1 vs S §4.1.3:** §8.1 says root-map labels are looked up by name, §4.1.3
   by numeric key 3; reconcile.
+
+From the `m8-play` fix round:
+
+- **Play §4.3.2:** 0xCC `sequence_or_reason` carries either an `ack_step_seq` or a teleport
+  reason (world §4.3.1); how a receiver tells them apart, and how to treat an ack ahead of the
+  newest step sent (the code refuses and counts it).
+- **Play §7.2 item 2:** what counts as "moves/acts" for cancelling a logout countdown, and
+  whether the cancel is resent while waiting for 0x851E0003.
+- **Play §6.6.3:** whether a reconnect disconnects the old chat session gracefully and waits for
+  its flush, and whether each attempt uses a new socket (the code does both).
+
+From the `m8-conform` fix round:
+
+- **S §3.2 Case B:** for k near 11, `(ip mod 0xFA07) + 256 k` can exceed 0xFFFF: is the candidate
+  skipped, truncated, or does the loop stop (the code skips it)? A Case B test vector.
+- **W §4.4.2:** how the client finds directory 0x0F000002 (key 0x96) at run time: which root-map
+  or sub-map key leads to it.
+- **W §5.4:** whether `mode_flags` can carry 0x08 without 0x04, or 0x10 with 0x04, and what a
+  receiver does then (the code refuses both).
+- **W §2.5.1:** whether a base Position (no quaternion) can carry flag bit 0x20, and whether it is
+  kept.
+- **S §9.4.2:** whether bytes after the M records of 0x186 are an error (the code ignores them).

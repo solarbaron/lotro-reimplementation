@@ -4,10 +4,10 @@
 
 | Field | Value |
 |---|---|
-| Status | `Revised` (changed after its 2026-10-20 review; re-review required, decision 0041) |
-| Last updated | `2026-10-20` |
+| Status | **Accepted** (re-accepted on independent Stage 1 core pass 7 review, 2026-10-25; acceptance gated by decision 0042 items 4 & 8; 0 OPEN) |
+| Last updated | 2026-10-25 |
 | Author role | `Spec writer (dirty room)` |
-| Reviewer | `Independent clean-room review (2026-10-20; passed CLEAN_ROOM.md §5.3)` |
+| Reviewer | `51f17dc6-f21c-4df8-9e60-d0e41af7ff2b` (independent session, Stage 1 core pass 7, 2026-10-25; `CLEAN_ROOM.md` §5.3 **Pass** — review only, zero body edits) |
 | Implements into | `crates/compat` (`tessera-compat`: GLS/world-queue login client & ticket refresh), `apps/client` (login flow & session hand-off) |
 | Companion specs | `docs/specs/install-layout.md`, `docs/specs/official-session.md` |
 
@@ -23,9 +23,9 @@ Specifically, this document covers:
 2. **Launcher-side HTTP/SOAP exchanges** in execution order:
    - Datacenter and world directory discovery (`GetDatacenters` SOAP 1.1 call).
    - Remote launcher configuration retrieval (`LauncherConfigurationServer` XML).
-   - Per-world status and login server discovery (`StatusServer.aspx` XML, including host/path fallback rewriting and billing-role checks).
+   - Per-world status and login server discovery (`World/StatusServerUrl` XML and billing-role checks; no fallback URL is constructed from path fragments, per `docs/decisions/0042-m8-remediation-decisions.md` item 3).
    - Account authentication (`LoginAccount` SOAP 1.1 call, fault handling, and subscription selection).
-   - World login queue entry, polling, and cancellation (`LoginQueue.aspx` `TakeANumber` and `LeaveQueue` form POSTs).
+   - World login queue entry, polling, and cancellation (`WorldQueue.LoginQueue.URL` `TakeANumber` and `LeaveQueue` form POSTs).
    - Launcher-to-client parameter hand-off (command-line template placeholders and flags).
 3. **Client-side ticket intake, session hand-off, and ticket refresh**:
    - Intake of `--glsticketdirect`, `--authserverurl`, `--glsticketlifetime`, and the legacy `--glsticket` Windows registry fallback.
@@ -35,7 +35,9 @@ Specifically, this document covers:
 5. **Security and access-control rules**, including TLS validation requirements, credential and ticket redaction, and access-control stop conditions.
 6. **Testable invariants and synthetic test vectors** using exclusively RFC 2606 `.example.invalid` placeholders and synthetic tokens.
 
-In accordance with `CLAUDE.md`, `docs/CLEAN_ROOM.md`, and `docs/decisions/0034-official-server-compatibility.md`, this specification states **only where** the launcher and client discover URLs, hostnames, ports, and service endpoints at runtime in the user's local installation or in server responses; it never embeds or publishes live endpoint values, keys, certificates, or account data.
+In accordance with `CLAUDE.md`, `docs/CLEAN_ROOM.md`, `docs/decisions/0034-official-server-compatibility.md`, and `docs/decisions/0042-m8-remediation-decisions.md`, this specification states **only where** the launcher and client discover URLs, hostnames, ports, and service endpoints at runtime in the user's local installation or in server responses; it never embeds or publishes live endpoint values, hostnames, service path fragments, keys, certificates, or account data.
+
+**Interoperability identifier rule (`docs/CLEAN_ROOM.md` §3.3, §5.3; `docs/decisions/0042-m8-remediation-decisions.md` items 1 & 3):** Every literal identifier retained in this specification — specifically XML element and attribute names, SOAP 1.1 action URIs (`"http://www.turbine.com/SE/GLS/GetDatacenters"`, `"http://www.turbine.com/SE/GLS/LoginAccount"`, `"http://www.turbine.com/SE/GLS/RefreshTicket"`) and XML namespaces (`http://www.turbine.com/SE/GLS`), `.NET` `appSettings` configuration keys, `.ini` section and key names, installation filenames (`lotro.launcherconfig`, `TurbineLauncher.exe.config`, `UserPreferences*.ini`, `client_local_<Lang>.dat`, `client_general.dat`, `client_gamelogic.dat`, `x64/lotroclient64.exe`, `lotroclient.exe`), HTTP `application/x-www-form-urlencoded` field names, command-line option flags and template `{PLACEHOLDER}` tokens, the wire version prefix literals (`"netver:"`, `"; didver:"`), and the PE `VS_VERSION_INFO` `StringFileInfo` version resource key (`"CompatibiltyVersion"` / `"CompatibilityVersion"`) — appears literally on the HTTP/SOAP/UDP wire, in the installation's XML/INI/`.dat`/PE files on disk, or on the client executable's command line, and is required for interoperability. Per `docs/decisions/0042-m8-remediation-decisions.md` item 3, the XML namespace URI (`http://www.turbine.com/SE/GLS`) and `SOAPAction` strings are XML/SOAP protocol identifiers that are never contacted as network endpoints and may appear in code as constants only in the SOAP message encoder. Client-internal and launcher-internal C++/C# class, struct, method, and variable names are excluded; all wire messages, header fields, and state variables are named using neutral descriptive terminology.
 
 ---
 
@@ -47,7 +49,7 @@ In accordance with `CLAUDE.md`, `docs/CLEAN_ROOM.md`, and `docs/decisions/0034-o
 |---|---|---|
 | `OBS` | M1 | Direct read-only inspection of the local LOTRO installation (`lotro.launcherconfig`, `client_local_*.dat`, `x64/lotroclient64.exe`). |
 | `LL` | M2 | Project owner's *lotro-launcher* — GPL-3.0-or-later, consulted for protocol facts, XML parsing tolerances, `<queueurls>` RFC 1918 filtering, SOAP fault classification, mandatory `TakeANumber` execution, HRESULT sign-bit evaluation, and launch argument template aliases. |
-| `OL` | M2 | June Stepp, *OneLauncher* — GPL-3.0, consulted for protocol facts only (local/remote config keys, SOAP envelopes, world status and queue XML schemas, and URL fallback behavior). |
+| `OL` | M2 | June Stepp, *OneLauncher* — GPL-3.0, consulted for protocol facts only (local/remote config keys, SOAP envelopes, and world status and queue XML schemas). |
 | `PL` | M2 | Alan Jackson, *PyLotRO* — GPL-3.0, consulted for protocol facts only (GLS SOAP calls, world status and queue handling, and client command-line template substitution). |
 | `GLS` | M2 | `lotro-gls` — consulted for SOAP 1.1 service namespaces, operation signatures, and XML element schemas (`GetDatacenters`, `LoginAccount`, `RefreshTicket`). |
 | `REDDO` | M2 | Xaymar, *RE-DDO* (`protocol/launcher.md`, `protocol/game.md`) — related-engine analogue consulted for cross-checking GLS and command-line conventions. |
@@ -61,8 +63,8 @@ In accordance with `CLAUDE.md`, `docs/CLEAN_ROOM.md`, and `docs/decisions/0034-o
 |---|---|---|---|---|---|
 | `BIN-Q1` | `x64/lotroclient64.exe` (`4906.0071.1794.4035`) | `d22363eb9aff0fb599fd04b3efa9a1769d08da8af9d8f9b73121c12bfd7e21ee` | Ghidra 11.x headless (`-readOnly`) | How does the game client parse and prioritize `--glsticketdirect`, `--glsticket`, `--authserverurl`, and `--glsticketlifetime`, and how does `--glsticket` load the fallback ticket from the Windows registry? | Third-party launchers (`OL`, `PL`) only construct `--glsticketdirect`; they do not document client-side intake, wide-to-narrow conversion, or the `--glsticket` registry hive and value name. |
 | `BIN-Q2` | `x64/lotroclient64.exe` (`4906.0071.1794.4035`) | `d22363eb9aff0fb599fd04b3efa9a1769d08da8af9d8f9b73121c12bfd7e21ee` | Ghidra 11.x headless (`-readOnly`) | How does the game client schedule, format, transmit, and parse the in-game `RefreshTicket` SOAP call, including retry limits, backoff formula, HTTP timeout, and TLS peer verification settings? | Third-party launchers exit once the client starts; `GLS` only shows the server stub signature `RefreshTicket` without the client's timer arithmetic, retry cap, or HTTP client configuration. |
-| `BIN-Q3` | `x64/lotroclient64.exe` (`4906.0071.1794.4035`) | `d22363eb9aff0fb599fd04b3efa9a1769d08da8af9d8f9b73121c12bfd7e21ee` | Ghidra 11.x headless (`-readOnly`) & `objdump` | How does the game client construct its version identifier string (`"netver:<netver>; didver:<didver>"`), where do `<netver>` and `<didver>` originate in `.rdata` and `.dat` archives, and how is that string serialized on the wire in the post-handshake `VersionSend` (`0x0000012C`) message (`docs/specs/official-session.md` §9.3)? | M2 launcher sources do not cover the client's internal hand-off to the UDP login session, the origin of `<netver>` and `<didver>`, or how the session version string is sent in `VersionSend` (`0x0000012C`) after the `"180804"` `LoginRequest` (`0x00010000`) transport handshake. |
-| `BIN-Q4` | `x64/lotroclient64.exe` (`4906.0071.1794.4035`) | `d22363eb9aff0fb599fd04b3efa9a1769d08da8af9d8f9b73121c12bfd7e21ee` | Ghidra 11.x headless (`-readOnly`) & `objdump` | How are keys `0x10000002` and `0x10000001` resolved to `.dat` records, what is the byte layout of the target records (`0x0E010000`, `0x0E010002`, `0x0E010001`), which 16 bytes from `0x10000002` are copied into the session context, and where are they negotiated in the UDP handshake? | M1 shows `0x10000001` and `0x10000002` are absent from the B-tree root directory of all `.dat` files; M4 was required to trace their resolution through DID Map `3` (`0x28000010`), the `0x0E01xxxx` compression dictionary parser, and their use in `ConnectRequest` (`0x00040000`) and `ConnectResponse` (`0x00080000`). |
+| `BIN-Q3` | `x64/lotroclient64.exe` (`4906.0071.1794.4035`) | `d22363eb9aff0fb599fd04b3efa9a1769d08da8af9d8f9b73121c12bfd7e21ee` | Ghidra 11.x headless (`-readOnly`) & `objdump` | How does the game client construct its wire version string (`"netver:<netver>; didver:<didver>"`), where do `<netver>` and `<didver>` reside in the PE `.rsrc` `VS_VERSION_INFO` version resource and `.dat` archives, and how is that string serialized on the wire in the post-handshake `ClientVersionMessage` (`0x0000012C`, `docs/specs/official-session.md` §9.3)? | M2 launcher sources do not cover the client's hand-off to the UDP login session, the origin of `<netver>` and `<didver>`, or how the session version string is sent in `ClientVersionMessage` (`0x0000012C`) after the `"180804"` `SessionAuthHeader` (`0x00010000`) transport handshake. |
+| `BIN-Q4` | `x64/lotroclient64.exe` (`4906.0071.1794.4035`) | `d22363eb9aff0fb599fd04b3efa9a1769d08da8af9d8f9b73121c12bfd7e21ee` | Ghidra 11.x headless (`-readOnly`) & `objdump` | How are keys `0x10000002` and `0x10000001` resolved to `.dat` records, what is the byte layout of the target records (`0x0E010000`, `0x0E010002`, `0x0E010001`), which 16 bytes from `0x10000002` are copied into the session context, and where are they negotiated in the UDP handshake? | M1 shows `0x10000001` and `0x10000002` are absent from the B-tree root directory of all `.dat` files; M4 was required to trace their resolution through DID Map `3` (`0x28000010`), the `0x0E01xxxx` compression dictionary record format, and their use in `ConnectChallengeHeader` (`0x00040000`) and `ConnectAcceptHeader` (`0x00080000`). |
 
 ### 1.3 Provenance matrix <a id="s1-3-provenance-matrix"></a>
 
@@ -70,17 +72,17 @@ In accordance with `CLAUDE.md`, `docs/CLEAN_ROOM.md`, and `docs/decisions/0034-o
 |---|---|---|---|---|
 | `P1` | §2.1 Local launcher config discovery & XML keys | **Confirmed** | `OBS`, `LL`, `OL`, `PL`, `IL` | Verified against local `lotro.launcherconfig` and third-party launcher parsers. |
 | `P2` | §2.2–§2.3 Language discovery & `UserPreferences.ini` | **Confirmed** | `OBS`, `LL`, `OL`, `IL` | Cross-referenced with `docs/specs/install-layout.md` §3.1, §7, and §8, including 64-bit `UserPreferences64.ini` / `UserPreferences_x64.ini` lookup order in `LL`. |
-| `P3` | §2.4 Client version identifiers (`netver`, `didver`), DID Map `3` (`0x28000010`), & compression dictionaries (`0x10000001`/`0x10000002` $\rightarrow$ `0x0E01xxxx`) | **Confirmed** | `BIN` (`BIN-Q3`, `BIN-Q4`), `OBS`, `IL` | Exact runtime derivation of `<netver>` (`.rdata` compatibility version) and `<didver>` (`.dat` superblock `0x17C..0x18B` GUID), `VLUInt` serialization in `VersionSend` (`0x0000012C`), and `0x0E01xxxx` compression dictionary layout and `ConnectRequest` (`0x00040000`) / `ConnectResponse` (`0x00080000`) placement confirmed in `lotroclient64.exe` and `client_general.dat`. |
+| `P3` | §2.4 Client version identifiers (`netver`, `didver`) & DID Map `3` (`0x28000010`) compression dictionary resolution | **Confirmed** | `BIN` (`BIN-Q3`, `BIN-Q4`), `OBS`, `IL` | Read-only discovery of `<netver>` (via user-supplied setting/CLI value, PE `.rsrc` `VS_VERSION_INFO` `StringFileInfo` version resource, or user prompt per `docs/decisions/0042-m8-remediation-decisions.md` item 1) and `<didver>` (`.dat` superblock `0x17C..0x18B` GUID), `VariableU32` serialization in `ClientVersionMessage` (`0x0000012C`, `docs/specs/official-session.md` §5.6.1 and §9.3), and DID Map `3` (`0x28000010`) resolution of `0x10000001`/`0x10000002` to the `0x0E01xxxx` compression dictionary records specified in `docs/specs/official-session.md` §4.1.2–§4.1.3 and §6.3–§6.4. |
 | `P4` | §3.1 `GetDatacenters` SOAP 1.1 exchange | **Confirmed** | `LL`, `OL`, `PL`, `GLS`, `REDDO`, `DDOL` | All M2 sources agree on namespace, `SOAPAction`, request body, and response schema (including optional `SupportURL` and `Order` sorting in `LL`). |
 | `P5` | §3.2 Remote launcher configuration XML (`LauncherConfigurationServer`) | **Confirmed** | `LL`, `OL`, `PL`, `REDDO` | `.NET` `appSettings` schema and key names confirmed across `LL`, `OL`, `PL`, and `REDDO`. |
-| `P6` | §3.3 Per-world status query (`StatusServer.aspx`), fallback rewrite, RFC 1918 queue URL selection, & billing-role check | **Confirmed** | `LL`, `OL`, `PL`, `DDOL`, `REDDO` | XML schema, case-insensitive tag matching, host/path fallback rewrite, `<queueurls>` RFC 1918 filtering, and billing-role intersection confirmed across `LL`, `OL`, and `PL`. |
+| `P6` | §3.3 Per-world status query (`World/StatusServerUrl`), RFC 1918 queue URL selection, & billing-role check | **Confirmed** | `LL`, `OL`, `PL`, `DDOL`, `REDDO` | XML schema, case-insensitive tag matching, `<queueurls>` RFC 1918 filtering, and billing-role intersection confirmed across `LL`, `OL`, and `PL`; no fallback URL is constructed from path fragments (`docs/decisions/0042-m8-remediation-decisions.md` item 3). |
 | `P7` | §3.4 `LoginAccount` SOAP 1.1 exchange, faults, & subscription selection | **Confirmed** | `LL`, `OL`, `PL`, `GLS`, `REDDO`, `DDOL` | Request/response elements, `GameSubscription/Name` vs username distinction, and `BIS` SOAP fault classification confirmed across all M2 sources. |
 | `P8` | §3.5 World login queue (`TakeANumber`, `LeaveQueue`) | **Confirmed** | `LL`, `OL`, `PL`, `REDDO`, `DDOL` | Form templates, URL-encoding requirements, mandatory execution when `queue_url` is non-empty, and `<Result>` HRESULT sign-bit evaluation confirmed across `LL`, `OL`, `PL`, `REDDO`, and `DDOL`. |
 | `P9` | §3.6 Launcher-to-client command-line template & placeholders | **Confirmed** | `LL`, `OL`, `PL`, `REDDO`, `BIN` (`BIN-Q1`) | Template placeholders (including `{LANGUAGE}`, `{PRODUCT}`, `{AUTHSERVER}`, `{HIGHRES}`, `{USERDIR}` aliases and unreplaced token filtering in `LL`) and client CLI option table confirmed in `lotroclient64.exe`. |
 | `P10` | §4.1 Client ticket intake (`--glsticketdirect` vs `--glsticket` registry fallback) | **Confirmed** | `BIN` (`BIN-Q1`) | Confirmed in `lotroclient64.exe` startup and `HKEY_CURRENT_USER` `"Ticket"` reader. |
-| `P11` | §4.2 Hand-off to UDP session layer (`docs/specs/official-session.md`) | **Confirmed** | `BIN` (`BIN-Q1`, `BIN-Q3`, `BIN-Q4`), `OBS` | Session hand-off parameters, `VersionSend` (`0x0000012C`) version string, compression dictionary registration, and listener notification confirmed in `lotroclient64.exe`. |
+| `P11` | §4.2 Hand-off to UDP session layer (`docs/specs/official-session.md`) | **Confirmed** | `BIN` (`BIN-Q1`, `BIN-Q3`, `BIN-Q4`), `OBS` | Session hand-off parameters, `ClientVersionMessage` (`0x0000012C`) version string, and compression dictionary hand-off to `docs/specs/official-session.md` confirmed in `lotroclient64.exe`. |
 | `P12` | §4.3 In-game `RefreshTicket` SOAP 1.1 lifecycle, backoff math, & retry cap | **Confirmed** | `BIN` (`BIN-Q2`), `GLS` | Half-remaining-lifetime backoff ($0.5 L$, $0.75 L$, $0.875 L$), 3-attempt cap, 30 s timeout, and XML response parsing confirmed in `lotroclient64.exe`. |
-| `P13` | §6.2 Official client TLS peer verification setting | **Confirmed** | `BIN` (`BIN-Q2`), `PL`, `DDOL` | Confirmed in `lotroclient64.exe` SOAP transport initializer; Tessera policy overrides this to require strict TLS verification. |
+| `P13` | §6.2 Official client TLS peer verification setting | **Confirmed** | `BIN` (`BIN-Q2`), `PL`, `DDOL` | Confirmed in `lotroclient64.exe` SOAP transport configuration; Tessera policy overrides this to require strict TLS verification. |
 
 ---
 
@@ -90,7 +92,7 @@ All service bootstrap endpoints, game identifiers, and local asset metadata are 
 
 ### 2.1 Local launcher configuration (`*.launcherconfig`) <a id="s2-1-launcherconfig"></a>
 
-To locate the bootstrap configuration file inside the game installation root directory (`<InstallRoot>`), the client searches the following relative paths in order and uses the first file that exists (`docs/specs/install-layout.md` §6.1):
+To locate the bootstrap configuration file inside the game installation root directory (`<InstallRoot>`), the client searches the following relative paths in order and uses the first file that exists (`docs/specs/install-layout.md` §6.1). All filenames (`lotro.launcherconfig`, `TurbineLauncher.exe.config`), XML element/attribute names (`configuration`, `appSettings`, `add`, `key`, `value`), and `<add key="...">` key strings in the table below appear literally in the installation's XML configuration files on disk and are required for interoperability:
 
 1. `lotro.launcherconfig`
 2. The lexicographically first file matching `*.launcherconfig` in `<InstallRoot>`
@@ -100,7 +102,7 @@ The file is a UTF-8 XML document (with or without a leading UTF-8 byte-order mar
 
 | `<add key="...">` Name | Required | Meaning |
 |---|---|---|
-| `Launcher.DataCenterService.GLS` | Yes | Full HTTP/HTTPS URL of the GLS `DataCenterServer` SOAP 1.1 endpoint used in Exchange 1 (§3.1). |
+| `Launcher.DataCenterService.GLS` | Yes | Full HTTP/HTTPS URL of the GLS datacenter directory SOAP 1.1 endpoint used in Exchange 1 (§3.1). |
 | `DataCenter.GameName` | Yes | Game identifier string passed in `<game>` to `GetDatacenters` and used to filter `GameSubscription/Game` in Exchange 4 (§3.4). In LOTRO installations this value is `LOTRO`. |
 | `DataCenter.DefaultCenter` | No | Default datacenter name in `GetDatacentersResult` (in LOTRO installations, `LOTRO`). If absent, `DataCenter.GameName` is used. |
 | `Product.DocumentFolder` | No | Subdirectory name under the user's documents directory where `UserPreferences.ini` is stored (in LOTRO installations, `The Lord of the Rings Online`; see `docs/specs/install-layout.md` §8). |
@@ -110,7 +112,7 @@ If the configuration file cannot be found, is not well-formed XML, or lacks eith
 
 ### 2.2 Language and locale resolution <a id="s2-2-language"></a>
 
-The set of languages installed in `<InstallRoot>` is determined by scanning `<InstallRoot>` for archives matching `client_local_<Lang>.dat` (`docs/specs/install-layout.md` §3.1 and §7):
+The set of languages installed in `<InstallRoot>` is determined by scanning `<InstallRoot>` for archives matching `client_local_<Lang>.dat` (`docs/specs/install-layout.md` §3.1 and §7). The archive filename pattern `client_local_<Lang>.dat`, the `<Lang>` tokens (`English`, `EN_GB`, `FR`, `DE`), and the two-letter feed codes (`en`, `fr`, `de`) appear literally in the installation directory on disk, in feed URLs, and on the `--language` command line, and are required for interoperability:
 
 | `<Lang>` Token (`--language` Argument) | Two-Letter Feed Code (`{0}`) | Language |
 |---|---|---|
@@ -129,7 +131,7 @@ The launcher and client read optional user preferences from `<Documents>/<Produc
 2. `UserPreferences_x64.ini`
 3. `UserPreferences.ini`
 
-INI comment lines beginning with either `;` or `#` (after trimming leading whitespace) are ignored (`LL`). Relevant keys are:
+INI comment lines beginning with either `;` or `#` (after trimming leading whitespace) are ignored (`LL`). All INI filenames above, section headers (`[Launcher]`, `[General]`), and key names (`GameClientType`, `LastLocale`, `LastWorld`) appear literally in the user preferences INI files on disk and are required for interoperability:
 
 | Section | Key | Meaning |
 |---|---|---|
@@ -141,105 +143,73 @@ INI comment lines beginning with either `;` or `#` (after trimming leading white
 
 ### 2.4 Client version, data version, and compression dictionary bootstrap (`netver`, `didver`, and `0x10000001`/`0x10000002`) <a id="s2-4-version-ids"></a>
 
-During client initialization (`BIN-Q3`, `BIN-Q4`, `OBS`), the client prepares two artefacts for the UDP session layer (`docs/specs/official-session.md`): (1) a combined client/data version string (`"netver:<netver_string>; didver:<didver_string>"`) sent in the post-handshake `VersionSend` (`0x0000012C`) message (`docs/specs/official-session.md` §9.3), and (2) two Huffman/prefix-tree compression dictionaries resolved via enumerator keys `0x10000002` (`Client2Server`) and `0x10000001` (`Server2ClientDeferred`) in `client_general.dat` (`docs/specs/official-session.md` §4.1.3), whose 16-byte dictionary GUIDs (`codecUuid`) are negotiated in `ConnectRequest` (`0x00040000`) and `ConnectResponse` (`0x00080000`) (`docs/specs/official-session.md` §6.3–§6.4).
+During client initialization (`BIN-Q3`, `BIN-Q4`, `OBS`), the client prepares two artefacts for the UDP session layer (`docs/specs/official-session.md`): (1) a combined client/data version string (`"netver:<netver_string>; didver:<didver_string>"`) sent on the wire in the post-handshake `ClientVersionMessage` (`0x0000012C`, `docs/specs/official-session.md` §9.3), and (2) two Huffman/prefix-tree compression dictionaries resolved via Master DID Map `3` (`0x28000010` in `client_general.dat`: outgoing dictionary key `0x10000002` $\rightarrow$ `0x0E010000` and incoming dictionary key `0x10000001` $\rightarrow$ `0x0E010002` $\rightarrow$ `0x0E010001`), whose Master DID Map `3` resolution, `0x0E01xxxx` record layout, bit-tree algorithm, and 16-byte dictionary identifier GUID (`codecUuid`) negotiation in `ConnectChallengeHeader` (`0x00040000`) and `ConnectAcceptHeader` (`0x00080000`) are canonically specified in [`docs/specs/official-session.md`](official-session.md) §4.1.2–§4.1.3 and §6.3–§6.4.
 
-#### 2.4.1 Construction and runtime extraction of `"netver:<netver_string>; didver:<didver_string>"` <a id="s2-4-1-netver-didver"></a>
+#### 2.4.1 Construction and runtime discovery of `"netver:<netver_string>; didver:<didver_string>"` <a id="s2-4-1-netver-didver"></a>
 
-The combined version string has the exact ASCII format (with no trailing newline or NUL inside the string):
+The combined version string transmitted on the UDP wire has the exact ASCII format (with no trailing newline or NUL inside the string):
 
 `netver:<netver_string>; didver:<didver_string>`
 
-1. **Origin and runtime extraction of `<netver_string>` (`BIN-Q3`, `OBS`)**:
-   - `<netver_string>` is the client's network protocol compatibility version (e.g. a 4-digit decimal string in observed builds, or `"1"` if the compatibility singleton is unpopulated). It is a standalone string constant compiled into the `.rdata` section of `x64/lotroclient64.exe` and is **distinct from** the 4-part PE `FileVersion` / `ProductVersion` resource (`docs/specs/install-layout.md` §2.2).
-   - At process startup in `x64/lotroclient64.exe`, a dynamic initializer calls the compatibility-version singleton accessor with the address of `<netver_string>` in `.rdata`; the accessor copies that string into the static version singleton and rejects any subsequent attempt to set it with the error string `"Cannot set version string twice\0"`.
-   - **Clean-room runtime extraction algorithm (without executing `lotroclient64.exe`)**:
-     1. Open `<InstallRoot>/x64/lotroclient64.exe` read-only, validate the DOS (`"MZ"`) and PE-32+ (`"PE\0\0"`, magic `0x020B`) headers, read `ImageBase` (`u64 LE` at optional header offset `+0x18`), and parse the section headers to map virtual addresses (VAs) to file offsets in `.text` and `.rdata`.
-     2. Search `.rdata` for the unique NUL-terminated ASCII string `"Cannot set version string twice\0"` and compute its virtual address $V_{\text{err}}$.
-     3. **Primary method (instruction cross-reference)**: Scan `.text` for the 7-byte RIP-relative `LEA` instruction referencing $V_{\text{err}}$ and identify the enclosing accessor function entry point $V_{\text{fn}}$ (aligned on a 16-byte boundary preceded by `CC` padding). Then scan `.text` for the dynamic initializer sequence consisting of a 7-byte `LEA RCX, [RIP + disp32]` (`48 8D 0D <disp32:i32 LE>`) immediately followed by a 5-byte `CALL rel32` (`E8 <rel32:i32 LE>`) whose target equals $V_{\text{fn}}$. Resolve $V_{\text{str}} = \text{RIP}_{\text{next}} + \text{disp32}$ in `.rdata` and read the NUL-terminated ASCII string at $V_{\text{str}}$ as `<netver_string>`.
-     4. **Secondary layout fallback**: In `.rdata`, `<netver_string>` is placed on the 16-byte-aligned boundary immediately following the 32-byte `"Cannot set version string twice\0"` literal (i.e. at file offset $\text{off}(\text{"Cannot set version string twice\0"}) + 0x20$).
-     5. Validate that `<netver_string>` is non-empty and consists of 1 to 16 printable ASCII characters (`0x21..0x7E`, digits `0..9` in observed builds). If extraction fails, abort before network activity with `F02_CONFIG_INVALID`.
+The wire prefix literals `"netver:"` and `"; didver:"` appear on the UDP wire in `ClientVersionMessage` (`0x0000012C`), and the `VS_VERSION_INFO` `StringFileInfo` key `"CompatibiltyVersion"` (spelled literally without the second `i` in the PE version resource; or `"CompatibilityVersion"`) appears literally in the documented PE version resource (`.rsrc`) of `<InstallRoot>/x64/lotroclient64.exe` and `<InstallRoot>/lotroclient.exe` (`BIN-Q3`, `OBS`). They are documented here because they define on the wire or locate in the PE version resource on disk the `netver:<netver_string>; didver:<didver_string>` payload required by the UDP version exchange (`0x0000012C`).
+
+1. **Origin and clean discovery of `<netver_string>` (`BIN-Q3`, `OBS`; `docs/decisions/0042-m8-remediation-decisions.md` item 1, confirming `O1` of `docs/decisions/0041-incident-m8-spec-contamination.md`)**:
+   - `<netver_string>` is the client's network protocol compatibility version token (for example, a 4-digit decimal string such as `"9386"` in build `4906.0071.1794.4035`, or a 4-part dotted decimal string such as `"1808.0052.0882.4202"` in earlier builds). It is stored in the PE version resource (`.rsrc`) of `<InstallRoot>/x64/lotroclient64.exe` (and `<InstallRoot>/lotroclient.exe`) and is **distinct from** the 4-part PE `FileVersion` / `ProductVersion` fields (`docs/specs/install-layout.md` §2.2).
+   - **Normative rule (`docs/decisions/0042-m8-remediation-decisions.md` item 1):** Tessera **never** scans or disassembles the client binary's code section, uses **no** hard-coded data-section signature, and uses **no** diagnostic or error format string as an anchor. No anchor, signature, or scan heuristic is kept. Instead, `<netver_string>` is obtained from the following three sources in strict order:
+     1. **Step 1 — Value supplied by the user (setting or command line)**:
+        - If the user supplies a non-empty network version string via configuration setting or command-line option, validate that the trimmed value consists of `1` to `24` printable ASCII characters (`0x21..0x7E`, excluding `;` and whitespace) and use it directly as `<netver_string>`.
+     2. **Step 2 — String table of the executable's PE version resource (`.rsrc` `VS_VERSION_INFO` `StringFileInfo`, a documented PE structure)**:
+        - Otherwise, open `<InstallRoot>/x64/lotroclient64.exe` (falling back to `<InstallRoot>/lotroclient.exe` if the 64-bit binary is absent) read-only, validate the DOS (`"MZ"`) and PE (`"PE\0\0"`) headers, parse the documented PE `VS_VERSION_INFO` version resource in the `.rsrc` section, and look up the `StringFileInfo` string-table entry `"CompatibiltyVersion"` (or `"CompatibilityVersion"`). In observed builds (`OBS`), the entry value is the NUL-terminated UTF-16LE `<netver_string>` (e.g., `"9386"`). Convert the UTF-16LE characters to ASCII and validate that the trimmed value consists of `1` to `24` printable ASCII characters (`0x21..0x7E`, excluding `;` and whitespace).
+     3. **Step 3 — Ask the user (or fail with `F02_CONFIG_INVALID`)**:
+        - Otherwise, the user is asked to supply `<netver_string>` (or, if no value can be obtained from the user, the login flow aborts before any network activity with `F02_CONFIG_INVALID`).
 
 2. **Origin and runtime extraction of `<didver_string>` (`BIN-Q3`, `OBS`)**:
-   - When opening `.dat` archives (`client_gamelogic.dat`, `client_general.dat`, etc.), the client reads the first `0x1A8` (`424`) bytes of the archive from file offset `0x000` and copies the `0x68`-byte superblock header at **file offset `0x140..0x1A7`** (`"BT\x00\x00"`, see `docs/specs/dat-container.md` §3.2).
+   - When opening `.dat` archives (`client_gamelogic.dat`, `client_general.dat`, etc.), the client reads the first `0x1A8` (`424`) bytes of the archive from file offset `0x000` and reads the `0x68`-byte superblock header at **file offset `0x140..0x1A7`** (`"BT\x00\x00"`, see `docs/specs/dat-container.md` §3.2).
    - Within that superblock header, **file offset `0x17C..0x18F` (`20` bytes)** holds the archive's data-version descriptor:
 
 | File Offset in `.dat` | Offset in Descriptor | Size (bytes) | Type | Byte Order | Meaning |
 |---|---|---|---|---|---|
-| `0x17C` | `+0x00` | `4` | `u32` | Little-endian | `didver` GUID `Data1` (formatted as 8 uppercase hex digits `%08X`). |
-| `0x180` | `+0x04` | `2` | `u16` | Little-endian | `didver` GUID `Data2` (formatted as 4 uppercase hex digits `%04hX`). |
-| `0x182` | `+0x06` | `2` | `u16` | Little-endian | `didver` GUID `Data3` (formatted as 4 uppercase hex digits `%04hX`). |
-| `0x184` | `+0x08` | `2` | `u8[2]` | Raw byte order | `didver` GUID `Data4[0..1]` (formatted as 4 uppercase hex digits `%02X%02X`). |
-| `0x186` | `+0x0A` | `6` | `u8[6]` | Raw byte order | `didver` GUID `Data4[2..7]` (formatted as 12 uppercase hex digits `%02X%02X%02X%02X%02X%02X`). |
+| `0x17C` | `+0x00` | `4` | `u32` | Little-endian | `didver` GUID `Data1` (formatted as 8 uppercase hexadecimal digits). |
+| `0x180` | `+0x04` | `2` | `u16` | Little-endian | `didver` GUID `Data2` (formatted as 4 uppercase hexadecimal digits). |
+| `0x182` | `+0x06` | `2` | `u16` | Little-endian | `didver` GUID `Data3` (formatted as 4 uppercase hexadecimal digits). |
+| `0x184` | `+0x08` | `2` | `u8[2]` | Raw byte order | `didver` GUID `Data4[0..1]` (formatted as 4 uppercase hexadecimal digits). |
+| `0x186` | `+0x0A` | `6` | `u8[6]` | Raw byte order | `didver` GUID `Data4[2..7]` (formatted as 12 uppercase hexadecimal digits). |
 | `0x18C` | `+0x10` | `4` | `u32` | Little-endian | Archive version integer (`1100` in base archives, `17139` in expansion cell/map archives). |
 
-   - All `client_*.dat` archives in a consistent LOTRO installation carry the identical 16-byte GUID at file offset `0x17C..0x18B`. At runtime, the client queries the opened general/gamelogic archive handle (`<InstallRoot>/client_gamelogic.dat` or `<InstallRoot>/client_general.dat`) for this 20-byte descriptor and passes it to a formatting helper that produces both:
-     - Out-parameter 1 (return value): `"<guid_string> : <version_u32>"` (`"%s : %lu"`), and
-     - Out-parameter 2: `<guid_string>` alone (`"%08X-%04hX-%04hX-%02X%02X-%02X%02X%02X%02X%02X%02X"`, exactly `36` uppercase ASCII characters).
-   - Crucially (`BIN-Q3`), the version-string builder **discards** out-parameter 1 (`"<guid_string> : <version_u32>"`) and appends **only out-parameter 2 (`<guid_string>`, the 36-character uppercase ASCII GUID without `" : <version_u32>"`)** after `"; didver:"`.
+   - All `client_*.dat` archives in a consistent LOTRO installation carry the identical 16-byte GUID at file offset `0x17C..0x18B`. Although the 20-byte superblock descriptor at `0x17C..0x18F` includes the 4-byte archive version integer at `0x18C..0x18F`, the wire version string sent in the UDP session (`BIN-Q3`) **omits** that version integer and appends **only `<guid_string>` (the 36-character uppercase ASCII GUID `XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX`)** after `"; didver:"`.
    - **Clean-room runtime extraction algorithm**: Read bytes `0x17C..0x18B` (`16` bytes) directly from `<InstallRoot>/client_general.dat` (or `<InstallRoot>/client_gamelogic.dat`), verify that the superblock magic at `0x140..0x143` is `42 54 00 00` (`"BT\0\0"`), and format the 16-byte mixed-endian GUID as `XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX` (`36` uppercase ASCII characters).
 
-#### 2.4.2 Wire placement in `LoginRequest` (`0x00010000`) vs `VersionSend` (`0x0000012C`) <a id="s2-4-2-loginrequest-wire"></a>
+#### 2.4.2 Wire placement in `SessionAuthHeader` (`0x00010000`) vs `ClientVersionMessage` (`0x0000012C`) <a id="s2-4-2-loginrequest-wire"></a>
 
-1. **Transport `LoginRequest` (`0x00010000`, `docs/specs/official-session.md` §6.2)**:
-   - The transport-level `LoginRequest` optional header (`0x00010000`) always begins at offset `0x00` with the fixed 7-byte NUL-terminated transport protocol version string `"180804\0"` (`31 38 30 38 30 34 00`), followed at offset `0x07` by `u32 LE authBlockPaddedLen` and the serialized `authBlock` carrying the account/subscription name and GLS ticket (`docs/specs/official-session.md` §6.2.1).
-2. **Post-handshake `VersionSend` (`0x0000012C`, `docs/specs/official-session.md` §9.3)**:
-   - Immediately after `ConnectRequest` (`0x00040000`) and `ConnectResponse` (`0x00080000`) complete the transport handshake and the session enters State `5` (`Connected`), the server sends `ReqVersionSend` (`0x0000012F`) and the client sends `VersionSend` (`0x0000012C`).
-   - In `VersionSend` (`0x0000012C`), the runtime `versionString` `"netver:<netver_string>; didver:<didver_string>"` constructed in §2.4.1 is serialized at payload offset `+0x00` (after `envelopeFlags`) as a length-prefixed narrow string (`PString`: `PackedDWORD` / `VLUInt` byte length $L$ followed by $L$ raw ASCII bytes with **no** trailing NUL):
+1. **Transport `SessionAuthHeader` (`0x00010000`, [`docs/specs/official-session.md`](official-session.md) §6.2)**:
+   - The transport-level `SessionAuthHeader` (`0x00010000`) always begins at offset `0x00` with the fixed 7-byte NUL-terminated transport protocol version literal `"180804\0"` (`31 38 30 38 30 34 00`), followed at offset `0x07` by `u32 LE auth_block_padded_len` and the serialized `auth_block` carrying the account/subscription name and GLS ticket ([`docs/specs/official-session.md`](official-session.md) §6.2.1).
+2. **Post-handshake `ClientVersionMessage` (`0x0000012C`, [`docs/specs/official-session.md`](official-session.md) §9.3)**:
+   - Immediately after `ConnectChallengeHeader` (`0x00040000`) and `ConnectAcceptHeader` (`0x00080000`) complete the transport handshake and the session enters State `5` (`Connected`), the post-handshake sequence proceeds with `VersionRequestMessage` (`0x0000012F`) $\rightarrow$ `ClientVersionMessage` (`0x0000012C`) $\rightarrow$ `VersionStatusMessage` (`0x0000012D`) and optional `LoginQueueStatusMessage` (`0x00000130`) in [`docs/specs/official-session.md`](official-session.md) §9.3, followed by character selection in [`docs/specs/official-messages-world.md`](official-messages-world.md) §3 and `WorldReferralHeader` (`0x00000800`) in [`docs/specs/official-session.md`](official-session.md) §6.5 upon world entry.
+   - In `ClientVersionMessage` (`0x0000012C`), the runtime client version string `"netver:<netver_string>; didver:<didver_string>"` constructed in §2.4.1 is serialized at payload offset `+0x00` (after the 1-byte `envelopeFlags`) as a length-prefixed ASCII string: its byte length $L$ is encoded as a `VariableU32` ([`docs/specs/official-session.md`](official-session.md) §5.6.1; for a 56-byte string, a single byte `0x38`) followed by $L$ raw ASCII bytes with **no** trailing NUL:
 
-| Offset in `VersionSend` (`0x0000012C`) Inner Payload | Size (bytes) | Type | Byte Order | Meaning |
+| Offset in `ClientVersionMessage` (`0x0000012C`) Inner Payload | Size (bytes) | Type | Byte Order | Meaning |
 |---|---|---|---|---|
-| `+0x00` | `1`, `2`, or `4` | `VLUInt` (`PackedDWORD`) | Big-endian prefix bits | Character count $L$ of `versionString` (excluding NUL):<br>• If $L \le 127$ (`0x7F`): `1` byte `u8` equal to $L$.<br>• If $128 \le L \le 16383$ (`0x3FFF`): `2` bytes `[((L >> 8) | 0x80) as u8, (L & 0xFF) as u8]`.<br>• If $L > 16383$: `4` bytes `[((L >> 24) | 0xC0) as u8, ((L >> 16) & 0xFF) as u8, ((L >> 8) & 0xFF) as u8, (L & 0xFF) as u8]`.<br>For a 4-character `<netver_string>` and 36-character `<didver_string>`, $L = 7 + 4 + 9 + 36 = 56$ (`0x38`), so this field is the single byte `0x38`. |
-| `+0x01` (when $L \le 127$) | $L$ (`56` when `<netver>` is 4 chars) | `u8[L]` | Raw ASCII | Raw ASCII bytes of `"netver:<netver_string>; didver:<didver_string>"` with **no** trailing NUL byte. |
+| `+0x00` | `1`, `2`, or `4` | `VariableU32` | Per [`docs/specs/official-session.md`](official-session.md) §5.6.1 | Byte length $L$ of `"netver:<netver_string>; didver:<didver_string>"` (excluding NUL), encoded as a `VariableU32` ([`docs/specs/official-session.md`](official-session.md) §5.6.1). For a 4-character `<netver_string>` and 36-character `<didver_string>`, $L = 7 + 4 + 9 + 36 = 56$ (`0x38`), which encodes as the single byte `0x38`. |
+| `+0x01` (when $L \le 127$) | $L$ (`56` when `<netver>` is 4 chars) | `u8[L]` | Raw ASCII | Raw ASCII bytes of `"netver:<netver_string>; didver:<didver_string>"` with **no** trailing NUL byte ([`docs/specs/official-session.md`](official-session.md) §9.3). |
 
 #### 2.4.3 Bootstrap `.dat` compression dictionary records (`0x10000002` and `0x10000001`) <a id="s2-4-3-compression-dicts"></a>
 
-Immediately after building the version string, the client loads two compression dictionaries identified by enumerator keys `0x10000002` and `0x10000001` (`BIN-Q4`, `OBS`; see `docs/specs/official-session.md` §4.1.3 for the full bit-tree compression/decompression algorithm).
+Immediately after building the version string, the client resolves the two compression dictionary enumerator keys via Master DID Map `3` (`0x28000010` in `<InstallRoot>/client_general.dat`, `BIN-Q4`, `OBS`):
 
-1. **Resolution via Master DID Map `3` (`0x28000010` in `client_general.dat`)**:
-   - `0x10000002` and `0x10000001` are **not** direct `.dat` B-tree file IDs; they are enumerator keys in **DID Map `3` (`"COMPRESSIONDICTIONARY"`)** inside `<InstallRoot>/client_general.dat`.
-   - To resolve a `"COMPRESSIONDICTIONARY"` enumerator key from `<InstallRoot>/client_general.dat`:
-     1. Read the Master DID Map file ID from superblock offset `0x170..0x173` (`u32 LE`, value `0x28000000` in `client_general.dat`; see `docs/specs/dat-container.md` §3.2).
-     2. In record `0x28000000`, subsystem index `0x00000003` (`"COMPRESSIONDICTIONARY"`) maps to DID `0x28000010`.
-     3. Record `0x28000010` (`116` bytes in `client_general.dat`) is a DID map table:
+- Outgoing dictionary key `0x10000002` $\rightarrow$ `0x0E010000` (outgoing client-to-server compression dictionary).
+- Incoming dictionary key `0x10000001` $\rightarrow$ `0x0E010002` (deferred redirect stub) $\rightarrow$ `0x0E010001` (incoming server-to-client decompression dictionary).
 
-| Offset in `0x28000010` | Size (bytes) | Type | Byte Order | Meaning |
-|---|---|---|---|---|
-| `+0x00` | `4` | `u32` | Little-endian | Record self-DID (`0x28000010`). |
-| `+0x04` | `1` | `u8` | — | Map format flags (`0x00`). |
-| `+0x05` | `4` | `u32` | Little-endian | Entry count $M$ (`4` in `client_general.dat`). |
-| `+0x09` | $8 \times M$ (`32`) | `(u32, u32)[M]` | Little-endian | $M$ pairs of `(enum_key: u32 LE, target_did: u32 LE)`:<br>• `[0]`: `0x00000000` $\rightarrow$ `0x00000000`<br>• `[1]`: `0x10000001` $\rightarrow$ `0x0E010002`<br>• `[2]`: `0x10000002` $\rightarrow$ `0x0E010000`<br>• `[3]`: `0x10000003` $\rightarrow$ `0x0E010001` |
-| `+0x29` | `4` | `u32` | Little-endian | Name count $M$ (`4`). |
-| `+0x2D..end` | Variable | `(u32 LE, cstr)[M]` | Little-endian | $M$ pairs of `(enum_key: u32 LE, name: NUL-terminated ASCII)`:<br>• `0x00000000` = `"Undef"`<br>• `0x10000001` = `"Server2ClientDeferred"`<br>• `0x10000002` = `"Client2Server"`<br>• `0x10000003` = `"Server2Client"` |
-
-2. **Byte layout of `0x0E01xxxx` CompressionDictionary records in `client_general.dat` (`BIN-Q4`, `OBS`)**:
-   - Each target record (`0x0E010000`, `0x0E010001`, `0x0E010002` in `client_general.dat`, with no leading DID prologue; see `docs/specs/official-session.md` §4.1.3) has a 44-byte (`0x2C`) header followed by the serialized node stream:
-
-| Offset in Record | Size (bytes) | Type | Byte Order | Meaning |
-|---|---|---|---|---|
-| `+0x00` | `16` | GUID (`u32, u16, u16, u8[8]`) | Mixed-endian | Fixed CompressionDictionary schema GUID `E795878D-C633-471C-8315-C3DBBEAD2FAA` (raw bytes `8D 87 95 E7 33 C6 1C 47 83 15 C3 DB BE AD 2F AA`). Loader rejects the record if these 16 bytes do not match. |
-| `+0x10` | `16` | GUID (`u8[16]`) | Mixed-endian | **Dictionary identifier GUID (`dict_guid` / `codecUuid`)**.<br>• For `0x10000002` (`"Client2Server"` $\rightarrow$ `0x0E010000`), these 16 bytes at `+0x10..+0x1F` are stored as the client's preferred `codecUuid`.<br>• For `0x10000001` (`"Server2ClientDeferred"` $\rightarrow$ `0x0E010002`) and `0x10000003` (`"Server2Client"` $\rightarrow$ `0x0E010001`), these 16 bytes identify the server-to-client dictionary selected by `codecUuid` in `ConnectRequest` (`0x00040000`). |
-| `+0x20` | `4` | `u32` | Little-endian | `deferred_target_did` (`redirectDid`).<br>• If `0x00000000` (as in `0x0E010000`), this record contains the dictionary tree inline.<br>• If non-zero (as in `0x0E010002`, where `deferred_target_did == 0x0E010001`), this record is a 44-byte deferred stub; the loader immediately loads the record with DID `deferred_target_did` (`0x0E010001`) in its place. |
-| `+0x24` | `4` | `u32` | Little-endian | `dict_format_version` (`version`). Must equal `1` in a non-deferred dictionary record (`0` in the 44-byte stub `0x0E010002`). |
-| `+0x28` | `4` | `u32` | Little-endian | `tree_stream_len` (`bodyLen`) — byte length of the serialized prefix-tree stream starting at `+0x2C` (`0` in `0x0E010002`; `218,203` in `0x0E010000`; `214,909` in `0x0E010001`). |
-| `+0x2C` | `4` | `u32` | Little-endian | `node_count` (present when `tree_stream_len > 0`) — total number of nodes in the Huffman/prefix tree (`32,743` in `0x0E010000`; `32,249` in `0x0E010001`). |
-| `+0x30..+0x2C + tree_stream_len` | `tree_stream_len - 4` | Node stream | Little-endian | `node_count` consecutive tree nodes (`1`-based node indices `1..node_count`):<br>• `is_leaf` (`u8`):<br>  - If `is_leaf != 0` (leaf node): `symbol_len` (`u8`), `symbol_bytes` (`u8[symbol_len]`), `bit_len` (`u8`), `codeword_bytes` (`u8[(bit_len >> 3) + 1]`).<br>  - If `is_leaf == 0` (internal branch node): `left_child_index_1based` (`u16 LE`), `right_child_index_1based` (`u16 LE`). |
-
-3. **Wire placement and negotiation in the UDP handshake (`BIN-Q4`, `docs/specs/official-session.md` §4.1.3, §6.3–§6.4)**:
-   - During network session initialization, both resolved dictionaries (`0x10000002` $\rightarrow$ `0x0E010000` and `0x10000001` $\rightarrow$ `0x0E010002` $\rightarrow$ `0x0E010001`) are registered in the session layer's codec table keyed by their 16-byte `dict_guid` (`codecUuid` at `+0x10..+0x1F`), and the 16-byte `dict_guid` of `0x10000002` (`0x0E010000` bytes `+0x10..+0x1F`) is stored as the client's outgoing `codecUuid`.
-   - When `ConnectRequest` (`0x00040000`, `docs/specs/official-session.md` §6.3, 44-byte payload) arrives from the server, the client reads the server's 16-byte `codecUuid` at `ConnectRequest` payload offset `+0x1C..+0x2B`:
-     - If `codecUuid` is 16 zero bytes, packet bit-tree compression/decompression is disabled (`wirePrefix = 0x0000`).
-     - Otherwise, the client looks up `codecUuid` in its loaded dictionary table. If `codecUuid` is not found in the table, the client aborts connection setup.
-   - Immediately upon accepting `ConnectRequest`, the client transmits `ConnectResponse` (`0x00080000`, `docs/specs/official-session.md` §6.4, 28-byte payload), placing the 16-byte `codecUuid` at payload offset `+0x0C..+0x1B` (after the 8-byte `checkValue` at `+0x00..+0x07`, 2-byte `localRecId` at `+0x08..+0x09`, and 2-byte `clientConnIdx` at `+0x0A..+0x0B`).
+[`docs/specs/official-session.md` §4.1.2–§4.1.3 and §6.3–§6.4](official-session.md) is the single canonical specification of Master DID Map `3` (`0x28000010` in `client_general.dat`, reached via superblock offset `0x170..0x173` $\rightarrow$ `0x28000000` entry `0x00000003`), the enumerator keys `0x10000002` ($\rightarrow$ `0x0E010000` outgoing compression dictionary) and `0x10000001` ($\rightarrow$ `0x0E010002` deferred redirect stub $\rightarrow$ `0x0E010001` incoming decompression dictionary), the `0x0E01xxxx` record layout and redirect rule, the bit-tree compression/decompression algorithm, and the 16-byte `codecUuid` (`+0x10..+0x1F`) negotiation in `ConnectChallengeHeader` (`0x00040000` payload offset `+0x1C..+0x2B`) and `ConnectAcceptHeader` (`0x00080000` payload offset `+0x0C..+0x1B`).
 
 ---
 
 ## 3. Launcher-Side Service Exchanges <a id="s3-launcher-exchanges"></a>
 
-All network exchanges in §3 use endpoints discovered at runtime in §2.1 or returned by earlier exchanges.
+All network exchanges in §3 use endpoints discovered at runtime in §2.1 or returned by earlier exchanges. Every SOAP 1.1 action URI, XML namespace, XML element and attribute name, `.NET` `appSettings` key, HTTP `application/x-www-form-urlencoded` field name, and command-line template placeholder documented in §3.1–§3.6 appears literally on the HTTP/SOAP wire, in the remote configuration XML, or on the client executable's command line, and is required for interoperability. Per `docs/decisions/0042-m8-remediation-decisions.md` item 3, the XML namespace URI (`http://www.turbine.com/SE/GLS`) and the `SOAPAction` header values (`"http://www.turbine.com/SE/GLS/GetDatacenters"`, `"http://www.turbine.com/SE/GLS/LoginAccount"`, `"http://www.turbine.com/SE/GLS/RefreshTicket"`) are XML/SOAP protocol identifiers that are never contacted as network endpoints and may appear in code as constants only in the SOAP message encoder.
 
 ### 3.1 Exchange 1 — Datacenter and world discovery (`GetDatacenters`) <a id="s3-1-get-datacenters"></a>
 
-The first network exchange queries the GLS `DataCenterServer` SOAP 1.1 service to discover the authentication server URL, remote launcher configuration URL, patch server address, and the list of game worlds (`P4`).
+The first network exchange queries the GLS datacenter directory SOAP 1.1 service (`Launcher.DataCenterService.GLS`) to discover the authentication server URL, remote launcher configuration URL, patch server address, and the list of game worlds (`P4`).
 
 #### Request parameters
 
@@ -248,7 +218,7 @@ The first network exchange queries the GLS `DataCenterServer` SOAP 1.1 service t
 | Endpoint URL | Runtime value of `Launcher.DataCenterService.GLS` from `lotro.launcherconfig` (§2.1). |
 | HTTP Method | `POST` |
 | `Content-Type` header | `text/xml; charset=utf-8` |
-| `SOAPAction` header | `"http://www.turbine.com/SE/GLS/GetDatacenters"` |
+| `SOAPAction` header | `"http://www.turbine.com/SE/GLS/GetDatacenters"` (a SOAP 1.1 protocol action identifier that is never contacted as a network endpoint; `docs/decisions/0042-m8-remediation-decisions.md` item 3). |
 | Request encoding | UTF-8 XML with XML 1.0 declaration `<?xml version="1.0" encoding="utf-8"?>` |
 
 #### Request XML structure
@@ -256,20 +226,20 @@ The first network exchange queries the GLS `DataCenterServer` SOAP 1.1 service t
 | XPath (relative to root) | Namespace | Content / Meaning |
 |---|---|---|
 | `/soap:Envelope` | `http://schemas.xmlsoap.org/soap/envelope/` | Standard SOAP 1.1 envelope (also declares `xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"` and `xmlns:xsd="http://www.w3.org/2001/XMLSchema"`). |
-| `/soap:Envelope/soap:Body/GetDatacenters` | `http://www.turbine.com/SE/GLS` | Operation element. |
+| `/soap:Envelope/soap:Body/GetDatacenters` | `http://www.turbine.com/SE/GLS` | Operation element (the namespace URI is an XML protocol identifier that is never contacted as a network endpoint; `docs/decisions/0042-m8-remediation-decisions.md` item 3). |
 | `/soap:Envelope/soap:Body/GetDatacenters/game` | `http://www.turbine.com/SE/GLS` | Game identifier string from `DataCenter.GameName` in `lotro.launcherconfig` (e.g. `LOTRO`). |
 
 #### Response XML structure (`HTTP 200 OK`)
 
-The response is a SOAP 1.1 envelope in namespace `http://www.turbine.com/SE/GLS` under `/soap:Envelope/soap:Body/GetDatacentersResponse/GetDatacentersResult`:
+The response is a SOAP 1.1 envelope in XML namespace `http://www.turbine.com/SE/GLS` (an XML protocol identifier, never contacted) under `/soap:Envelope/soap:Body/GetDatacentersResponse/GetDatacentersResult`:
 
 | Element Path (under `GetDatacentersResult`) | Type | Cardinality | Meaning |
 |---|---|---|---|
 | `Datacenter` | Complex | `1..*` | Datacenter entry. Select the `Datacenter` whose `Name` equals `DataCenter.GameName` (or `DataCenter.DefaultCenter`). If no `Datacenter` matches, fail with `F03_SERVICE_UNAVAILABLE`. |
 | `Datacenter/Name` | String | `1` | Datacenter identifier (matches `DataCenter.GameName`). |
-| `Datacenter/AuthServer` | String (URL) | `1` | Runtime HTTPS URL of the GLS authentication service (`GLS.AuthServer/Service.asmx`), used for `LoginAccount` (§3.4) and passed to the client as `--authserverurl` for `RefreshTicket` (§4.3). |
+| `Datacenter/AuthServer` | String (URL) | `1` | Runtime HTTPS URL of the GLS authentication service, used for `LoginAccount` (§3.4) and passed to the client as `--authserverurl` for `RefreshTicket` (§4.3). |
 | `Datacenter/PatchServer` | String (`host:port`) | `1` | Patch server address (used by the patcher; not contacted during login). |
-| `Datacenter/LauncherConfigurationServer` | String (URL) | `1` | Runtime URL of the remote launcher configuration XML file (`lotrolauncher.server.config.xml`), fetched in Exchange 2 (§3.2). |
+| `Datacenter/LauncherConfigurationServer` | String (URL) | `1` | Runtime URL of the remote launcher configuration XML document, fetched in Exchange 2 (§3.2). |
 | `Datacenter/SupportURL` | String (URL) | `0..1` | Optional customer-support URL associated with the datacenter (`LL`). |
 | `Datacenter/Worlds/World` | Complex | `0..*` | Descriptor for each game world (shard) in this datacenter. |
 | `Datacenter/Worlds/World/Name` | String | `1` | Display name of the world (e.g., `[EN-RP] ...` or `... [OLD]`). Worlds whose trimmed `Name` ends case-insensitively with `[old]` are sorted after active worlds; within each group, worlds are sorted by `Order` ascending and then alphabetically by `Name` (`LL`, `OL`). |
@@ -312,7 +282,7 @@ The response is a UTF-8 `.NET` configuration XML document (`<configuration>/<app
 | `GameClient.Arg.DefaultUploadThrottleMbps` | No | Numeric string substituted for `{UPLOADTHROTTLE}` in the argument template. |
 | `GameClient.HighResPatchArg` | No | Argument appended when high-resolution textures (`client_highres.dat`) are missing or out of date (typically `" --HighResOutOfDate"`). |
 | `GameClient.ResetGraphicsArg` | No | Argument appended when safe display settings are requested (typically `" --safe"`). |
-| `WorldQueue.LoginQueue.URL` | Yes | Runtime HTTPS URL of the login queue service (`LoginQueue.aspx`) used in Exchange 5 (§3.5). |
+| `WorldQueue.LoginQueue.URL` | Yes | Runtime HTTPS URL of the login queue service used in Exchange 5 (§3.5). |
 | `WorldQueue.TakeANumber.Parameters` | Yes | `.NET` format template (`{0}`, `{1}`, `{2}`) for the `TakeANumber` POST body in Exchange 5 (§3.5): `command=TakeANumber&subscription={0}&ticket={1}&ticket_type=GLS&queue_url={2}`. |
 | `WorldQueue.LeaveQueue.Parameters` | No | `.NET` format template (`{0}`, `{1}`, `{2}`) for the `LeaveQueue` POST body in Exchange 5 (§3.5): `command=LeaveQueue&subscription={0}&context={1}&ticket_type=GLS&queue_url={2}`. |
 | `WorldQueue.PollTimer` | No | Nominal queue poll interval in seconds configured by the server (e.g., `120`). |
@@ -324,17 +294,17 @@ The response is a UTF-8 `.NET` configuration XML document (`<configuration>/<app
 
 ---
 
-### 3.3 Exchange 3 — Per-world status query (`StatusServer.aspx`) <a id="s3-3-world-status"></a>
+### 3.3 Exchange 3 — Per-world status query (`World/StatusServerUrl`) <a id="s3-3-world-status"></a>
 
 To check whether a selected world is online, verify subscription billing-role permissions, and discover its active login server `host:port` and queue URL, the client queries the world's `StatusServerUrl` (`P6`). When refreshing status across multiple worlds for display in a world list, requests should be issued sequentially with a `10 s` per-world timeout (`LL`) so the status server is not rate-limited or overwhelmed.
 
-#### Request parameters and URL fallback rule
+#### Request parameters (`docs/decisions/0042-m8-remediation-decisions.md` item 3)
 
 | Parameter | Value |
 |---|---|
-| Primary Endpoint URL | Runtime value of `World/StatusServerUrl` for the selected world from Exchange 1 (§3.1). |
+| Endpoint URL | Runtime value of `World/StatusServerUrl` for the selected world from Exchange 1 (§3.1, reached via `Launcher.DataCenterService.GLS` from the user's install `*.launcherconfig`). |
 | HTTP Method | `GET` |
-| Fallback Endpoint Rewrite Rule | Some worlds in `GetDatacentersResult` return a legacy unreachable host or outdated path prefix in `World/StatusServerUrl` that yields `HTTP 404 Not Found` or an empty response body (`Confirmed` in `OL`). If the initial `GET` to `World/StatusServerUrl` returns HTTP 404 or a zero-length body, the client constructs a fallback URL by taking the scheme, host, port, and service base path of `Launcher.DataCenterService.GLS` (removing its trailing `/GLS.DataCenterServer/Service.asmx` segments), appending `/StatusServer.aspx`, and preserving the query string (`?...`) from `World/StatusServerUrl`, then retries the `GET` once. |
+| No Fallback URL Rule (`docs/decisions/0042-m8-remediation-decisions.md` item 3) | Tessera hard-codes no service URL, host, or path fragment. The per-world status query contacts only the runtime `World/StatusServerUrl` returned by `GetDatacenters`. If `World/StatusServerUrl` is missing, malformed, or returns an HTTP error (such as `HTTP 404 Not Found`) or an empty body, there is **no** fallback URL rewrite and the status query fails (`F06_WORLD_CLOSED` / `F03_SERVICE_UNAVAILABLE`), reporting that the configuration/datacenter response provides no usable status URL. |
 
 #### Response XML structure (`HTTP 200 OK`)
 
@@ -343,8 +313,8 @@ The response is a UTF-8 XML document with root element `<Status>` and no XML nam
 | Element Name (under `<Status>`) | Type | Required | Meaning |
 |---|---|---|---|
 | `name` | String | No | World name string. |
-| `loginservers` | String | Yes | Semicolon-separated (`;`) list of login server `host:port` endpoints (e.g., `login1.example.invalid:9000;login2.example.invalid:9000;`). Split on `;`, trim whitespace, and discard empty segments and `(invalid service specified)`; the **first non-empty segment** is the world's `login_server` (`host:port`). If no non-empty segment exists, the world is unavailable (`F06_WORLD_CLOSED`). |
-| `queueurls` | String | Yes | Semicolon-separated (`;`) list of world queue URLs (e.g., `http://queue1.example.invalid:7080/command;http://queue2.example.invalid:7080/command;` or `;`). Split on `;`, trim whitespace, and discard empty segments. **Queue URL selection rule (`LL`):** Some worlds list internal RFC 1918 private IPv4 literals (`10.0.0.0/8`, `172.16.0.0/12` i.e. `172.16.*`–`172.31.*`, or `192.168.0.0/16`) alongside or instead of public hostnames because `queue_url` is passed as an identifier parameter to `LoginQueue.aspx` (§3.5) rather than dialed directly by the client. When selecting the primary `queue_url` from the non-empty segments, prefer the first segment whose host is **not** an RFC 1918 private IPv4 address (`://10.`, `://192.168.`, `://172.16.`..`://172.31.`); if all non-empty segments use RFC 1918 addresses, fall back to the first non-empty segment (`LL`). If no non-empty segment exists, `queue_url` is `None`. |
+| `loginservers` | String | Yes | Semicolon-separated (`;`) list of login server `host:port` endpoints (e.g., `login1.example.invalid:19000;login2.example.invalid:19000;`). Split on `;`, trim whitespace, and discard empty segments and `(invalid service specified)`; the **first non-empty segment** is the world's `login_server` (`host:port`). If no non-empty segment exists, the world is unavailable (`F06_WORLD_CLOSED`). |
+| `queueurls` | String | Yes | Semicolon-separated (`;`) list of world queue URLs (e.g., `http://queue1.example.invalid:8080/queue;http://queue2.example.invalid:8080/queue;` or `;`). Split on `;`, trim whitespace, and discard empty segments. **Queue URL selection rule (`LL`):** Some worlds list internal RFC 1918 private IPv4 literals (`10.0.0.0/8`, `172.16.0.0/12` i.e. `172.16.*`–`172.31.*`, or `192.168.0.0/16`) alongside or instead of public hostnames because `queue_url` is passed as an identifier parameter to `WorldQueue.LoginQueue.URL` (§3.5) rather than dialed directly by the client. When selecting the primary `queue_url` from the non-empty segments, prefer the first segment whose host is **not** an RFC 1918 private IPv4 address (`://10.`, `://192.168.`, `://172.16.`..`://172.31.`); if all non-empty segments use RFC 1918 addresses, fall back to the first non-empty segment (`LL`). If no non-empty segment exists, `queue_url` is `None`. |
 | `nowservingqueuenumber` | Hex string | No | Current queue number being served, formatted with a `0x` prefix (e.g., `0x0000010A`), parsed as an unsigned 32-bit base-16 integer. |
 | `lastassignedqueuenumber` | Hex string | No | Last queue number assigned, formatted with a `0x` prefix, parsed as an unsigned 32-bit base-16 integer. |
 | `allow_billing_role` | String | No | Comma-separated (`,`) list of billing role tokens permitted to enter this world (e.g. VIP/subscription tiers on legendary worlds). Empty or absent means all billing roles are permitted. |
@@ -380,7 +350,7 @@ When the user submits their account username and password, the client authentica
 | Endpoint URL | Runtime value of `Datacenter/AuthServer` from Exchange 1 (§3.1). |
 | HTTP Method | `POST` |
 | `Content-Type` header | `text/xml; charset=utf-8` |
-| `SOAPAction` header | `"http://www.turbine.com/SE/GLS/LoginAccount"` |
+| `SOAPAction` header | `"http://www.turbine.com/SE/GLS/LoginAccount"` (a SOAP 1.1 protocol action identifier that is never contacted as a network endpoint; `docs/decisions/0042-m8-remediation-decisions.md` item 3). |
 | Request encoding | UTF-8 XML with XML 1.0 declaration `<?xml version="1.0" encoding="utf-8"?>` |
 
 #### Request XML structure
@@ -388,14 +358,14 @@ When the user submits their account username and password, the client authentica
 | XPath (relative to root) | Namespace | Content / Meaning |
 |---|---|---|
 | `/soap:Envelope` | `http://schemas.xmlsoap.org/soap/envelope/` | SOAP 1.1 envelope. |
-| `/soap:Envelope/soap:Body/LoginAccount` | `http://www.turbine.com/SE/GLS` | Operation element. |
+| `/soap:Envelope/soap:Body/LoginAccount` | `http://www.turbine.com/SE/GLS` | Operation element (the namespace URI is an XML protocol identifier that is never contacted as a network endpoint; `docs/decisions/0042-m8-remediation-decisions.md` item 3). |
 | `/soap:Envelope/soap:Body/LoginAccount/username` | `http://www.turbine.com/SE/GLS` | User-entered account login name, XML-escaped (`&`, `<`, `>`, `"`, `'` escaped as XML entities). |
 | `/soap:Envelope/soap:Body/LoginAccount/password` | `http://www.turbine.com/SE/GLS` | User-entered account password, XML-escaped. |
 | `/soap:Envelope/soap:Body/LoginAccount/additionalInfo` | `http://www.turbine.com/SE/GLS` | Empty element (`<additionalInfo></additionalInfo>`). |
 
 #### Response XML structure (`HTTP 200 OK`)
 
-A successful authentication returns `/soap:Envelope/soap:Body/LoginAccountResponse/LoginAccountResult` in namespace `http://www.turbine.com/SE/GLS`:
+A successful authentication returns `/soap:Envelope/soap:Body/LoginAccountResponse/LoginAccountResult` in XML namespace `http://www.turbine.com/SE/GLS` (an XML protocol identifier, never contacted):
 
 | Element Path (under `LoginAccountResult`) | Type | Cardinality | Meaning |
 |---|---|---|---|
@@ -412,7 +382,7 @@ A successful authentication returns `/soap:Envelope/soap:Body/LoginAccountRespon
 | `Subscriptions/GameSubscription/AutoRenew` | String | `0..1` | Auto-renew flag string (`TRUE`/`FALSE`). |
 | `Subscriptions/GameSubscription/BillingSystemTime` | String | `0..1` | Server billing timestamp string. |
 | `Subscriptions/GameSubscription/AdditionalInfo` | String | `0..1` | Optional additional metadata XML/text. |
-| `Ticket` | String | `1` | Non-empty opaque ASCII base64-encoded GLS session ticket (~180–256 characters, containing alphanumeric characters, `+`, `/`, and `=`). |
+| `Ticket` | String | `1` | Non-empty opaque ASCII Base64-encoded GLS session ticket of variable Base64 character length $L$ (observed `144` to `256` ASCII Base64 characters, containing alphanumeric characters, `+`, `/`, and `=`, which Base64-decodes to $B$ raw bytes, where $B$ is the decoded byte length of the Base64 ticket string — e.g. up to `108` raw bytes (`0x0000006C`, or `106..108` bytes depending on `'='` padding) for a 144-character Base64 ticket or up to `135..192` raw bytes (`133..192` bytes depending on `'='` padding) for a `180..256`-character Base64 ticket — carried in `extraBlob` of `SessionAuthHeader` `0x00010000`, [`docs/specs/official-session.md`](official-session.md) §6.2.1). |
 
 #### Subscription filtering and selection
 
@@ -441,11 +411,11 @@ The GLS `LoginAccount` SOAP 1.1 service does not define or support a multi-facto
 
 ---
 
-### 3.5 Exchange 5 — World login queue (`LoginQueue.aspx`: `TakeANumber` and `LeaveQueue`) <a id="s3-5-world-queue"></a>
+### 3.5 Exchange 5 — World login queue (`WorldQueue.LoginQueue.URL`: `TakeANumber` and `LeaveQueue`) <a id="s3-5-world-queue"></a>
 
 #### Entry condition (`LL`, `OL`, `DDOL`)
 
-After Exchange 3 (`StatusServer.aspx`), Exchange 4 (`LoginAccount`), subscription selection, and the billing-role check (§3.3) have all succeeded (`P8`):
+After Exchange 3 (`World/StatusServerUrl`), Exchange 4 (`LoginAccount`), subscription selection, and the billing-role check (§3.3) have all succeeded (`P8`):
 
 - Let `queue_url` be the primary queue URL selected from `<queueurls>` in the selected world's `<Status>` XML (§3.3).
 - **Mandatory queue registration when `queue_url` is non-empty (`LL`, `OL`, `DDOL`):** Whenever `queue_url` is non-empty, the client **must** execute at least one `TakeANumber` request against `WorldQueue.LoginQueue.URL` before connecting to the world's UDP login server — even when `lastassignedqueuenumber <= nowservingqueuenumber` — because the world server rejects the subsequent UDP session connection if the subscription and GLS ticket have not been registered with the login queue (`LL`). Only when `queue_url` itself is empty (`None`) is Exchange 5 skipped.
@@ -471,7 +441,7 @@ The response is a UTF-8 XML document with root element `<Result>` and no XML nam
 | Element Name (under `<Result>`) | Type | Required | Meaning |
 |---|---|---|---|
 | `Command` | String | No | Echoes the command name (e.g., `TakeANumber`). |
-| `HResult` | Hex string | Conditional | 32-bit HRESULT formatted with a `0x` prefix (e.g., `0x00000000` or `0x80004005`), parsed as a base-16 unsigned 32-bit integer `hr`. **Sign-bit rule (`LL`):** Per standard Windows `HRESULT` conventions (`FAILED(hr)`), the operation failed if and only if bit 31 is set (`(hr & 0x80000000) != 0`, `F08_QUEUE_ERROR`); any non-negative `hr` with bit 31 == `0` (`(hr & 0x80000000) == 0`) is treated as success. **Fallback tolerance (`LL`):** If `<HResult>` is absent from `<Result>`, the response is still treated as successful (`hr = 0`) provided both `<QueueNumber>` and `<NowServingNumber>` are present and valid. |
+| `HResult` | Hex string | Conditional | 32-bit HRESULT formatted with a `0x` prefix (e.g., `0x00000000` or `0x80004005`), parsed as a base-16 unsigned 32-bit integer `hr`. **Sign-bit rule (`LL`):** Per standard Windows `HRESULT` conventions, the operation failed if and only if bit 31 (the sign bit, mask `0x80000000`) is set (`F08_QUEUE_ERROR`); any non-negative `hr` with bit 31 clear is treated as success. **Fallback tolerance (`LL`):** If `<HResult>` is absent from `<Result>`, the response is still treated as successful (`hr = 0`) provided both `<QueueNumber>` and `<NowServingNumber>` are present and valid. |
 | `QueueName` | String | No | Internal queue name. |
 | `QueueNumber` | Hex string | Yes (on success) | The user's assigned queue number with a `0x` prefix (e.g., `0x0000002B`), parsed as base-16 unsigned integer. |
 | `NowServingNumber` | Hex string | Yes (on success) | The queue number currently being admitted with a `0x` prefix (e.g., `0x0000002A`), parsed as base-16 unsigned integer. |
@@ -481,7 +451,7 @@ The response is a UTF-8 XML document with root element `<Result>` and no XML nam
 
 #### Queue polling loop and ready condition
 
-1. Parse `HResult` as base-16 integer `hr` (defaulting to `0` if `<HResult>` is absent and both `<QueueNumber>` and `<NowServingNumber>` are present). If `(hr & 0x80000000) != 0` (bit 31 is set, such as `0x80004005` `E_FAIL`, which occurs if the world is closed, the ticket is invalid, or the client is polling too rapidly), abort or back off (`F08_QUEUE_ERROR`).
+1. Parse `HResult` as base-16 integer `hr` (defaulting to `0` if `<HResult>` is absent and both `<QueueNumber>` and `<NowServingNumber>` are present). If bit 31 (the sign bit, mask `0x80000000`) of `hr` is set (such as `0x80004005` `E_FAIL`, which occurs if the world is closed, the ticket is invalid, or the client is polling too rapidly), abort or back off (`F08_QUEUE_ERROR`).
 2. Parse `QueueNumber` ($q$) and `NowServingNumber` ($s$) as base-16 integers.
 3. **Ready condition**: If $q \le s$, the user has reached the front of the queue; exit the queue loop immediately and proceed to §3.6.
 4. **Waiting condition**: If $q > s$, the number of players ahead of the user is $q - s$. Display the queue position $q - s$ to the user, wait for the poll interval (between `5` seconds and `WorldQueue.PollTimer` seconds; polling faster than `2` seconds risks `0x80004005` rate-limiting), and repeat the `TakeANumber` POST unless the user cancels (in which case send `LeaveQueue` if `ContextNumber` is known and transition to `SF_ABORTED`).
@@ -507,7 +477,7 @@ The standard remote template has the form:
 | `{AUTHSERVERURL}` | `{AUTHSERVER}` | `GameClient.Arg.authserverurl` from Exchange 2, or `Datacenter/AuthServer` from Exchange 1 | GLS `AuthServer` SOAP URL passed to `--authserverurl` for in-game ticket refresh (§4.3). |
 | `{GLSTICKETLIFETIME}` | — | `GameClient.Arg.glsticketlifetime` from Exchange 2 (default `21600`) | Ticket lifetime in seconds passed to `--glsticketlifetime`. |
 | `{SUPPORTURL}` | — | `GameClient.Arg.supporturl` from Exchange 2 (or `Datacenter/SupportURL` from Exchange 1) | In-game support browser URL. |
-| `{SUPPORTSERVICEURL}` | — | `GameClient.Arg.supportserviceurl` from Exchange 2 | In-game support SOAP endpoint URL (`SubmitTicket.asmx`). |
+| `{SUPPORTSERVICEURL}` | — | `GameClient.Arg.supportserviceurl` from Exchange 2 | In-game support SOAP endpoint URL. |
 | `{BUGURL}` | — | `GameClient.Arg.bugurl` from Exchange 2 | In-game bug-report URL. |
 | `{CRASHRECEIVER}` | — | `GameClient.Arg.crashreceiver` from Exchange 2 | Crash upload receiver URL (if present in template). |
 | `{UPLOADTHROTTLE}` | — | `GameClient.Arg.DefaultUploadThrottleMbps` from Exchange 2 | Crash upload throttle (if present in template). |
@@ -524,27 +494,35 @@ When splitting an expanded template into an `argv` argument vector for process e
 
 ## 4. Game Client Ticket Intake, Session Hand-off, and Ticket Refresh <a id="s4-client-ticket-and-refresh"></a>
 
-This section specifies what the game client (`x64/lotroclient64.exe`, confirmed via `BIN-Q1`–`BIN-Q3`) does with the hand-off parameters at startup and during an active session.
+This section specifies what the game client (`x64/lotroclient64.exe`, confirmed via `BIN-Q1`–`BIN-Q3`) does with the hand-off parameters at startup and during an active session. Every command-line flag, Windows registry hive and value name (`HKEY_CURRENT_USER`, `"Ticket"`), and SOAP 1.1 action URI and XML element name in §4.1–§4.3 appears literally on the client executable's command line, in the OS registry hand-off contract, or on the HTTP/SOAP wire, and is required for interoperability.
 
 ### 4.1 Command-line and registry ticket intake <a id="s4-1-ticket-intake"></a>
 
-#### Login-related command-line options (`BIN-Q1`)
+#### Login-related command-line options (`BIN-Q1`, `LL`)
 
 | Short Flag | Long Flag | Value Type | Meaning |
 |---|---|---|---|
 | `-a` | `--account` | Wide string | Subscription name (`GameSubscription/Name`) to log on with. |
-| `-h` | `--host` | Narrow string | Target login server `host` or `host:port` to contact. |
-| `-p` | `--port` | `u32` (`1..65535`) | Target login server UDP port (when not embedded as `:port` in `-h`). |
-| — | `--outport` | `u32` (`1..65535`) | Local outgoing UDP port to bind (optional; OS ephemeral port if omitted). |
-| `-z` | `--glsticketdirect` | Wide string | Direct GLS authentication ticket string. |
-| — | `--glsticket` | Narrow string | Windows registry subkey under `HKEY_CURRENT_USER` from which to load the `"Ticket"` value if `--glsticketdirect` is not used. |
+| `-h` | `--host` | Narrow string | Target login server address string: accepts a colon-delimited string with zero colons (`remoteHost`), one colon (`remoteHost:port`), or two colons (`localHost:remoteHost:port`, where the first segment before the first `:` specifies the local bind address/interface, the second segment specifies the remote login server host, and the third segment specifies the remote UDP port; any angle brackets in `<localHost:remoteHost:port>` help text are metasyntactic placeholders, not literal `<` `>` characters on the command line; [`docs/specs/official-session.md`](official-session.md) §3.2–§3.3). |
+| `-p` | `--port` | `u32` (`1..65535`) | Target login server remote UDP port (when not embedded as `:port` in `-h`; [`docs/specs/official-session.md`](official-session.md) §3.3). |
+| — | `--outport` | `u32` (`1..65535`) | Local outgoing UDP bind port (optional; resolved alongside `Net.BindInterface` and `Net.ComputeUniquePort` in `UserPreferences.ini` and any `localHost:` prefix in the two-colon `localHost:remoteHost:port` form of `-h`, per [`docs/specs/official-session.md`](official-session.md) §3.2). |
+| `-z` | `--glsticketdirect` | Wide string | Direct ASCII Base64 GLS authentication ticket string of variable Base64 character length $L$ (observed `144` to `256` characters), Base64-decoded to $B$ raw bytes (where $B$ is the decoded byte length of the Base64 ticket string, e.g. up to `108` raw bytes (`0x0000006C`, or `106..108` bytes depending on `'='` padding) for a 144-character Base64 ticket or up to `135..192` raw bytes (`133..192` bytes depending on `'='` padding) for a `180..256`-character Base64 ticket) in `extraBlob` of `SessionAuthHeader` (`0x00010000`, §4.2.1; [`docs/specs/official-session.md`](official-session.md) §6.2.1). |
+| — | `--glsticket` | Narrow string | Windows registry subkey under `HKEY_CURRENT_USER` from which to load the `"Ticket"` value if `--glsticketdirect` is not used (also Base64-decoded into `extraBlob` of `SessionAuthHeader` `0x00010000`, §4.2.1; [`docs/specs/official-session.md`](official-session.md) §6.2.1). |
 | — | `--authserverurl` | Wide string | GLS `AuthServer` URL for refreshing the GLS ticket. |
 | — | `--glsticketlifetime` | `u32` (seconds) | Lifetime of GLS tickets in seconds. |
 | — | `--language` | Narrow string | Language to run the client in (`English`, `EN_GB`, `FR`, `DE`). |
-| — | `--chatserver` | Narrow string | Chat server `host:port` to connect to. |
-| — | `--usechat` | Flag (boolean) | Enables chat server connection. |
+| — | `--chatserver` | Narrow string | Chat server `host:port` to connect to. Supplying `--chatserver` also enables the chat subsystem (`--usechat` = `1`). If chat is enabled and `--chatserver` is empty after argument parsing, the client copies the `--host` (`-h`) string into `--chatserver` ([`docs/specs/official-session.md`](official-session.md) §3.3; [`docs/specs/official-messages-play.md`](official-messages-play.md) §6.1.1). |
+| — | `--usechat` | Flag (boolean) | Enables chat server connection (also enabled automatically when `--chatserver` is supplied; [`docs/specs/official-messages-play.md`](official-messages-play.md) §6.1.1). |
+| — | `--voiceoff` | Flag (boolean) | Disables the in-game voice subsystem (default: voice enabled; [`docs/specs/official-messages-play.md`](official-messages-play.md) §6.1.1). |
 | — | `--rodat` | Ignored argument | Retained only for backward compatibility; ignored by the client. |
 | — | `--gametype` | Wide string | Game type identifier (`LOTRO`) used for support URLs. |
+| — | `--highres` | Narrow string (`0`/`1`) | High-resolution texture toggle token (`{HIGHRES}`) when present in `ArgTemplate` (`LL`). |
+| — | `--HighResOutOfDate` | Flag (boolean) | Appended via `GameClient.HighResPatchArg` when `client_highres.dat` is absent or out of date. |
+| — | `--safe` | Flag (boolean) | Appended via `GameClient.ResetGraphicsArg` when safe display settings are requested. |
+| — | `--userdir` | Path string | Optional custom user preferences / settings directory path (`{USERDIR}`, `LL`). |
+| — | `--bugurl` | Wide string (URL) | In-game bug-report URL (`{BUGURL}`). |
+| — | `--supporturl` | Wide string (URL) | In-game support browser URL (`{SUPPORTURL}`). |
+| — | `--supportserviceurl` | Wide string (URL) | In-game support SOAP endpoint URL (`{SUPPORTSERVICEURL}`). |
 | `-f` | `--franchise` | Narrow string | Franchise name. |
 | `-u` | `--user` | Wide string | Optional character name to auto-select on login. |
 
@@ -554,14 +532,13 @@ At client startup, the client resolves its initial GLS ticket using the followin
 
 1. **Primary path — Direct CLI ticket (`--glsticketdirect` + `--authserverurl`)**:
    - Checked first: both `--authserverurl` and `--glsticketdirect` must be non-empty strings.
-   - The client initializes its in-game ticket refresh handler with an XML SAX parser.
-   - The client converts `--authserverurl` and `--glsticketdirect` from UTF-16 wide strings to UTF-8/ASCII (a direct character-encoding conversion, **not** URL percent-decoding).
-   - The client stores the ticket string as the active account authentication ticket, initializes the refresh timer (§4.3) with the 32-bit `--glsticketlifetime` value (in seconds), and notifies registered network session listeners with the `(ticket, account_name)` pair.
+   - The `--authserverurl` and `--glsticketdirect` arguments are converted from UTF-16 wide strings to UTF-8/ASCII (a direct character-encoding conversion, **not** URL percent-decoding).
+   - The ticket string and `--account` (`-a`) subscription identifier are passed to the UDP session transport layer (§4.2–§4.2.1, [`docs/specs/official-session.md`](official-session.md) §6.2), and periodic `RefreshTicket` scheduling (§4.3) is armed with the 32-bit `--glsticketlifetime` value (in seconds).
 2. **Fallback path — Windows registry key (`--glsticket`)**:
    - Used only if `--authserverurl` or `--glsticketdirect` is empty and `--glsticket` is non-empty.
-   - The client opens `HKEY_CURRENT_USER\<--glsticket>` with read access (`KEY_READ = 0x20019`) and reads the string value named `"Ticket"` into a 4096-byte buffer (maximum string length `4095` bytes), then closes the registry key.
-   - If the registry read succeeds, the client stores the ticket string as the active account authentication ticket and notifies network session listeners. Note that the in-game ticket refresh handler is **not** created in this fallback path, so periodic `RefreshTicket` calls do not run when `--authserverurl` or `--glsticketdirect` is omitted.
-   - If the registry key or `"Ticket"` value is missing or unreadable, the client aborts startup (`F09_TICKET_INACCESSIBLE`).
+   - Opens `HKEY_CURRENT_USER\<--glsticket>` with read access and reads the string value named `"Ticket"` into a 4096-byte buffer (maximum string length `4095` bytes), then closes the registry key.
+   - If the registry read succeeds, the ticket string and `--account` (`-a`) subscription identifier are passed to the UDP session transport layer (§4.2–§4.2.1). Periodic `RefreshTicket` requests (§4.3) do not run when `--authserverurl` or `--glsticketdirect` is omitted.
+   - If the registry key or `"Ticket"` value is missing or unreadable, startup fails (`F09_TICKET_INACCESSIBLE`).
 
 ---
 
@@ -571,80 +548,79 @@ Once ticket intake (§4.1) and version/data initialization (§2.4) succeed, the 
 
 | Parameter | Source | Value Handed to `docs/specs/official-session.md` |
 |---|---|---|
-| Login server endpoint | `-h` (`--host`) and `-p` (`--port`) CLI options | Target UDP IPv4/hostname and port from the first non-empty entry of `<Status>/<loginservers>` (§3.3). |
-| Local UDP bind port | `--outport` CLI option | Optional local UDP port (`1..65535`), or `0` (ephemeral). |
+| Login server endpoint | `-h` (`--host`) and `-p` (`--port`) CLI options | Target UDP IPv4/hostname and port from the first non-empty entry of `<Status>/<loginservers>` (§3.3). `-h` (`--host`) accepts a colon-delimited string with zero colons (`remoteHost`), one colon (`remoteHost:port`), or two colons (`localHost:remoteHost:port`, where the first segment before the first `:` specifies the local bind address/interface, the second segment specifies the remote login server host, and the third segment specifies the remote UDP port; any angle brackets in `<localHost:remoteHost:port>` help text are metasyntactic placeholders, not literal `<` `>` characters on the command line), and `-p` (`--port`) sets the remote UDP port when not embedded in `-h` ([`docs/specs/official-session.md`](official-session.md) §3.2–§3.3). |
+| Local UDP bind port | `--outport` CLI option (alongside `Net.BindInterface` and `Net.ComputeUniquePort` in `UserPreferences.ini`, and any `localHost:` prefix in the two-colon `localHost:remoteHost:port` form of `-h`) | Optional local UDP bind port (`1..65535`), or `0` (resolved alongside `Net.BindInterface` and `Net.ComputeUniquePort` in `UserPreferences.ini` as specified in [`docs/specs/official-session.md`](official-session.md) §3.2). |
 | Subscription / Account ID | `-a` (`--account`) CLI option | Selected `GameSubscription/Name` string from `LoginAccountResult` (§3.4). |
-| GLS Session Ticket | `--glsticketdirect` (or `--glsticket` registry fallback) | Raw ASCII ticket string from `LoginAccountResult/Ticket` (and updated on `RefreshTicket`). |
-| Client & Data Version (`versionString`) | Version builder (§2.4.1–§2.4.2) | Runtime ASCII string `"netver:<netver_string>; didver:<didver_string>"` (where `<didver_string>` is the 36-char uppercase GUID from `.dat` superblock `0x17C..0x18B`), serialized with a `VLUInt` (`PackedDWORD`) length prefix at offset `+0x00` of `VersionSend` (`0x0000012C`; `docs/specs/official-session.md` §9.3), after the transport `LoginRequest` (`0x00010000`; `"180804\0"` header, `docs/specs/official-session.md` §6.2) completes the handshake. |
-| Compression Dictionaries & `codecUuid` | `.dat` DID Map `3` (`0x28000010` in `client_general.dat`, §2.4.3) | Loaded `Client2Server` (`0x10000002` $\rightarrow$ `0x0E010000`) and `Server2Client` (`0x10000001` $\rightarrow$ `0x0E010002` $\rightarrow$ `0x0E010001`) dictionaries keyed by their 16-byte `dict_guid` (`codecUuid` at `+0x10..+0x1F`), negotiated via `ConnectRequest` (`0x00040000` offset `+0x1C..+0x2B`) and `ConnectResponse` (`0x00080000` offset `+0x0C..+0x1B`; `docs/specs/official-session.md` §6.3–§6.4). |
+| GLS Session Ticket | `--glsticketdirect` (or `--glsticket` registry fallback) | Raw ASCII Base64 ticket string from `LoginAccountResult/Ticket` (and updated on `RefreshTicket`), of variable Base64 character length $L$ (observed `144` to `256` characters), Base64-decoded to $B$ raw bytes (where $B$ is the decoded byte length of the Base64 ticket string, e.g. up to `108` raw bytes (`0x0000006C`, or `106..108` bytes depending on `'='` padding) for a 144-character Base64 ticket or up to `135..192` raw bytes (`133..192` bytes depending on `'='` padding) for a `180..256`-character Base64 ticket) in `extraBlob` of `SessionAuthHeader` (`0x00010000`, §4.2.1; [`docs/specs/official-session.md`](official-session.md) §6.2.1). |
+| Client & Data Version (`client_version_string`) | Version builder (§2.4.1–§2.4.2) | Runtime ASCII string `"netver:<netver_string>; didver:<didver_string>"` (where `<didver_string>` is the 36-char uppercase GUID from `.dat` superblock `0x17C..0x18B`), serialized with a `VariableU32` length prefix ([`docs/specs/official-session.md`](official-session.md) §5.6.1) at offset `+0x00` of `ClientVersionMessage` (`0x0000012C`; exchanged after `SessionAuthHeader` `0x00010000` with `"180804\0"` header and `VersionRequestMessage` `0x0000012F`, and followed by `VersionStatusMessage` `0x0000012D`, optional `LoginQueueStatusMessage` `0x00000130`, character selection in [`docs/specs/official-messages-world.md`](official-messages-world.md) §3, and `WorldReferralHeader` `0x00000800` upon world entry; [`docs/specs/official-session.md`](official-session.md) §6.2, §6.5, and §9.3). |
+| Compression Dictionaries & `codecUuid` | `.dat` DID Map `3` (`0x28000010` in `client_general.dat`, §2.4.3; [`docs/specs/official-session.md`](official-session.md) §4.1.2–§4.1.3) | Resolved outgoing dictionary key `0x10000002` ($\rightarrow$ `0x0E010000`) and incoming dictionary key `0x10000001` ($\rightarrow$ `0x0E010002` $\rightarrow$ `0x0E010001`) dictionaries and their 16-byte `codecUuid` (`+0x10..+0x1F`), loaded and negotiated via `ConnectChallengeHeader` (`0x00040000` offset `+0x1C..+0x2B`) and `ConnectAcceptHeader` (`0x00080000` offset `+0x0C..+0x1B`) as canonically specified in [`docs/specs/official-session.md`](official-session.md) §4.1.2–§4.1.3 and §6.3–§6.4. |
 | Client Language | `--language` CLI option | Selected `<Lang>` string (`English`, `EN_GB`, `FR`, `DE`). |
 
-All subsequent UDP packet framing, connection handshake messages, cryptographic key exchange, encryption, and world-server redirection are specified in `docs/specs/official-session.md`.
+#### 4.2.1 `SessionAuthHeader` (`0x00010000`) ticket and `authType` selection rule <a id="s4-2-1-session-auth-mode"></a>
+
+Whenever a GLS ticket is present (`--glsticketdirect` or `--glsticket`), `SessionAuthHeader` (`0x00010000`, [`docs/specs/official-session.md`](official-session.md) §6.2.1) on both the primary login/world UDP connection and the secondary `ChatSession` UDP connection uses `authType = 0x40000002` with `authFlags = 0x00000004` (`HasExtraBlob`), `accountOrTicketStr` set to the UTF-16LE `--account` (`-a`) string, and `extraBlob` set to `u32` LE `blobLen` followed by the `blobLen` Base64-decoded ticket bytes ($B$ raw bytes, where $B$ is the decoded byte length of the Base64 ticket string — e.g. up to `108` raw bytes (`0x0000006C`, or `106..108` bytes depending on `'='` padding) for a 144-character Base64 ticket or up to `135..192` raw bytes (`133..192` bytes depending on `'='` padding) for a `180..256`-character Base64 ticket). The unauthenticated mode (`authType = 0x00000001`, `authFlags = 0x00000000`, carrying only `accountOrTicketStr`) is used only when no GLS ticket is supplied, while a clean-room receiver also accepts `authType = 0x00000001` with `authFlags = 0x00000002` (`HasSecondString`, where `secondStr` carries the UTF-16LE GLS ticket string; [`docs/specs/official-session.md`](official-session.md) §6.2.1).
+
+All subsequent UDP packet framing, connection handshake messages (`SessionAuthHeader` `0x00010000`, `ConnectChallengeHeader` `0x00040000`, `ConnectAcceptHeader` `0x00080000`, `VersionRequestMessage` `0x0000012F`, `ClientVersionMessage` `0x0000012C`, `VersionStatusMessage` `0x0000012D`, `LoginQueueStatusMessage` `0x00000130`, and `WorldReferralHeader` `0x00000800`), cryptographic key exchange, encryption, and world-server redirection are specified in `docs/specs/official-session.md`.
 
 ---
 
 ### 4.3 In-game GLS ticket refresh (`RefreshTicket`) <a id="s4-3-refresh-ticket"></a>
 
-While the game client is running, its ticket refresh handler (`BIN-Q2`) periodically refreshes the active GLS ticket so that in-game services that consume the GLS ticket (such as customer-support SOAP calls `NewTicket` to `--supportserviceurl`, which embed `<glsTicket>...</glsTicket>`) continue to have a valid ticket across multi-hour sessions.
+While an authenticated game session is active, the client periodically sends the SOAP 1.1 `RefreshTicket` request (`BIN-Q2`, `GLS`) to `--authserverurl` so that services consuming the GLS ticket (such as customer-support SOAP `NewTicket` requests to `--supportserviceurl`, which embed `<glsTicket>...</glsTicket>`, and any subsequent UDP `SessionAuthHeader` `0x00010000` or `WorldReferralHeader` `0x00000800` reconnect handshake in [`docs/specs/official-session.md`](official-session.md) §6.2 and §6.5) continue to hold a valid ticket across multi-hour sessions.
 
-#### State variables of the ticket refresh handler
+#### Timing parameters
 
-| Variable | Type | Initial Value | Meaning |
-|---|---|---|---|
-| `auth_server_url` | String | `--authserverurl` | HTTPS URL of `GLS.AuthServer/Service.asmx`. |
-| `lifetime_sec` | `u32` | `--glsticketlifetime` | Nominal ticket lifetime $L$ in seconds (typically `21600`). |
-| `start_time_sec` | `f64` | $t_0$ (monotonic clock) | Timestamp when the current ticket was installed. |
-| `parsed_result_flag` | `bool` | `false` | Cleared before XML parsing; set to `true` when `<RefreshTicketResult>` is parsed. |
-| `attempt_count` | `u32` | `0` | Number of `RefreshTicket` attempts made for the current ticket (`0..3`). |
-| `next_refresh_offset_sec` | `f64` | $0.5 \times L$ | Elapsed seconds after `start_time_sec` at which the next refresh attempt will fire. |
+| Parameter | Source / Initial Value | Meaning |
+|---|---|---|
+| Endpoint URL | `--authserverurl` | HTTPS URL of the GLS authentication service (`Datacenter/AuthServer` or `GameClient.Arg.authserverurl`). |
+| Nominal ticket lifetime $L$ | `--glsticketlifetime` (`u32`, seconds) | Nominal ticket lifetime in seconds (typically `21600` seconds = 6 hours). When $L$ equals `0`, periodic `RefreshTicket` requests are disabled. |
+| Ticket installation time $t_0$ | Monotonic timestamp (seconds) | Timestamp at which the current ticket was installed (at startup or upon receiving a valid `<RefreshTicketResult>`). |
+| Next refresh offset $\Delta t_{\text{next}}$ | Initialized to $0.5 \times L$ (seconds) | Elapsed seconds after $t_0$ at which the next `RefreshTicket` request is transmitted. |
+| Attempt count $k$ | Initialized to `0` (`0..3`) | Number of `RefreshTicket` requests transmitted for the current ticket. |
 
-#### Scheduling and exponential half-life backoff algorithm (`BIN-Q2`)
+#### Scheduling and exponential half-life backoff rule (`BIN-Q2`)
 
-On every periodic update tick of the ticket refresh handler at monotonic time $t$:
+At monotonic time $t$:
 
-1. **Guard checks**:
-   - If `lifetime_sec` ($L$) is `0`, return immediately (ticket refresh disabled).
-   - Compute elapsed age of the current ticket: $\Delta t = t - \text{start\_time\_sec}$.
-   - If $\Delta t \le \text{next\_refresh\_offset\_sec}$, return immediately (not yet time to refresh).
-   - If $\text{attempt\_count} > 2$ (i.e. 3 attempts have already been made for the current ticket), return immediately (no further retries).
-2. **Read current ticket and account**:
-   - Read the current active ticket string and subscription/account name. If either is empty or absent, return immediately.
-3. **Update backoff schedule and attempt counter**:
-   - Advance `next_refresh_offset_sec` by half of the remaining lifetime at time $t$:
-     $$\text{next\_refresh\_offset\_sec} \leftarrow \text{next\_refresh\_offset\_sec} + 0.5 \times \bigl(L - (t - \text{start\_time\_sec})\bigr)$$
-   - Increment `attempt_count`:
-     $$\text{attempt\_count} \leftarrow \text{attempt\_count} + 1$$
-   - If $\text{attempt\_count} > 2$ (this is the 3rd and final attempt), record a warning that failure of this final refresh will prevent submitting in-game support tickets.
-   - Transmit the `RefreshTicket` SOAP request.
+1. **Preconditions**:
+   - If the nominal lifetime $L$ is `0`, or either the active ticket string or the subscription/account name is empty, or `3` attempts have already been transmitted for the current ticket ($k > 2$), no request is sent.
+   - If the elapsed ticket age $\Delta t = t - t_0$ does not exceed $\Delta t_{\text{next}}$ ($\Delta t \le \Delta t_{\text{next}}$), no request is sent.
+2. **Schedule update and transmission when $\Delta t > \Delta t_{\text{next}}$**:
+   - Advance the next refresh offset $\Delta t_{\text{next}}$ by half of the remaining lifetime at time $t$:
+     $$\Delta t_{\text{next}} \leftarrow \Delta t_{\text{next}} + 0.5 \times \bigl(L - (t - t_0)\bigr)$$
+   - Increment the attempt count:
+     $$k \leftarrow k + 1$$
+   - When $k = 3$ (the 3rd and final attempt for the current ticket), record a warning that failure of this final refresh will prevent submitting in-game support tickets.
+   - Transmit the `RefreshTicket` SOAP 1.1 request.
 
 For the standard lifetime $L = 21600\text{ s}$ (6 hours), the three attempts occur at:
 
-| Attempt (`attempt_count`) | Trigger Time ($t - t_0$) | Fraction of $L$ | Remaining Lifetime at Trigger | Next Offset Scheduled (if attempt fails) |
+| Attempt ($k$) | Trigger Time ($t - t_0$) | Fraction of $L$ | Remaining Lifetime at Trigger | Next Offset $\Delta t_{\text{next}}$ Scheduled (if attempt fails) |
 |---|---|---|---|---|
 | `1` | $10800\text{ s}$ (`3h 00m`) | $0.500 \times L$ | $10800\text{ s}$ | $10800 + 0.5 \times 10800 = 16200\text{ s}$ |
 | `2` | $16200\text{ s}$ (`4h 30m`) | $0.750 \times L$ | $5400\text{ s}$ | $16200 + 0.5 \times 5400 = 18900\text{ s}$ |
-| `3` (final) | $18900\text{ s}$ (`5h 15m`) | $0.875 \times L$ | $2700\text{ s}$ | $18900 + 0.5 \times 2700 = 20250\text{ s}$ (never fires because $\text{attempt\_count} = 3 > 2$) |
+| `3` (final) | $18900\text{ s}$ (`5h 15m`) | $0.875 \times L$ | $2700\text{ s}$ | $18900 + 0.5 \times 2700 = 20250\text{ s}$ (never fires because $k = 3 > 2$) |
 
 #### `RefreshTicket` SOAP 1.1 request (`BIN-Q2`, `GLS`)
 
 | Parameter | Value |
 |---|---|
-| Endpoint URL | `auth_server_url` (`--authserverurl`) |
+| Endpoint URL | `--authserverurl` (`Datacenter/AuthServer` or `GameClient.Arg.authserverurl`) |
 | HTTP Method | `POST` |
 | `Content-Type` header | `text/xml; charset=utf-8` |
-| `SOAPAction` header | `"http://www.turbine.com/SE/GLS/RefreshTicket"` |
+| `SOAPAction` header | `"http://www.turbine.com/SE/GLS/RefreshTicket"` (a SOAP 1.1 protocol action identifier that is never contacted as a network endpoint; `docs/decisions/0042-m8-remediation-decisions.md` item 3). |
 | HTTP Timeout | `30` seconds |
-| Request XML Structure | SOAP 1.1 `/soap:Envelope/soap:Body/RefreshTicket` in namespace `http://www.turbine.com/SE/GLS`, containing a single child element `<ticket>` whose text is the current raw GLS ticket string. |
+| Request XML Structure | SOAP 1.1 `/soap:Envelope/soap:Body/RefreshTicket` in XML namespace `http://www.turbine.com/SE/GLS` (an XML protocol identifier, never contacted), containing a single child element `<ticket>` whose text is the current raw GLS ticket string. |
 
 #### `RefreshTicket` SOAP 1.1 response handling (`BIN-Q2`)
 
 1. **Success path (`HTTP 200 OK` with `<RefreshTicketResult>`)**:
-   - The response body is parsed for the character data of `/soap:Envelope/soap:Body/RefreshTicketResponse/RefreshTicketResult` in namespace `http://www.turbine.com/SE/GLS`.
-   - When `<RefreshTicketResult>` is present, `parsed_result_flag` is set to `true` and the new ticket is installed: the active authentication ticket is updated to `new_ticket`, `start_time_sec` is reset to the current time $t$, `next_refresh_offset_sec` is reset to $0.5 \times L$, and `attempt_count` is reset to `0`.
-   - If `new_ticket` is non-empty and differs from the previous ticket string, active network session listeners are notified with `(new_ticket, account_name)`.
+   - The response body is parsed for the character data of `/soap:Envelope/soap:Body/RefreshTicketResponse/RefreshTicketResult` in XML namespace `http://www.turbine.com/SE/GLS` (an XML protocol identifier, never contacted).
+   - When `<RefreshTicketResult>` is present, the returned ticket string replaces the active GLS ticket, the ticket installation timestamp $t_0$ resets to the current time $t$, the next refresh offset $\Delta t_{\text{next}}$ resets to $0.5 \times L$, and the attempt count $k$ resets to `0`.
+   - If the refreshed ticket is non-empty and differs from the previous ticket string, the updated `(ticket, account_name)` pair is supplied to the UDP session transport layer for any subsequent `SessionAuthHeader` (`0x00010000`) or `WorldReferralHeader` (`0x00000800`) handshake ([`docs/specs/official-session.md`](official-session.md) §6.2, §6.5).
 2. **Failure path (HTTP/network error, SOAP Fault, or missing `<RefreshTicketResult>`)**:
-   - If `parsed_result_flag` remains `false` after XML parsing, the client treats the response as `0x80004005` (`E_FAIL`).
-   - The existing ticket is left untouched, and `attempt_count` and `next_refresh_offset_sec` retain the values updated in step 3 of the scheduling algorithm so that the next retry (if `attempt_count <= 2`) occurs at the scheduled backoff time.
+   - If the HTTP request fails, returns a SOAP `Fault`, or omits `<RefreshTicketResult>`, the refresh attempt fails.
+   - The existing ticket remains active, and $k$ and $\Delta t_{\text{next}}$ retain the values updated when the request was sent so that the next retry (when $k \le 2$) occurs at the scheduled backoff time.
 
 ---
 
@@ -658,12 +634,12 @@ For the standard lifetime $L = 21600\text{ s}$ (6 hours), the three attempts occ
 | `S2_GET_DATACENTERS` | Local config loaded. | Send `GetDatacenters` SOAP 1.1 request to `Launcher.DataCenterService.GLS` (§3.1). | • `HTTP 200` & matching `Datacenter` found $\rightarrow$ `S3_GET_LAUNCHER_CONFIG`<br>• Network/HTTP/SOAP error or no matching `Datacenter` $\rightarrow$ `SF_FAILED(F03_SERVICE_UNAVAILABLE)` |
 | `S3_GET_LAUNCHER_CONFIG` | `Datacenter` descriptor obtained. | Send `GET` to `Datacenter/LauncherConfigurationServer` (§3.2). Populate world list in UI. | • `HTTP 200` & valid XML $\rightarrow$ `S4_AWAIT_CREDENTIALS_AND_WORLD`<br>• Network/HTTP/XML error $\rightarrow$ `SF_FAILED(F03_SERVICE_UNAVAILABLE)` |
 | `S4_AWAIT_CREDENTIALS_AND_WORLD` | Remote launcher config and world list loaded. | Prompt user for account `username`, `password`, and target `World`. | • User submits non-empty credentials and world $\rightarrow$ `S5_LOGIN_ACCOUNT`<br>• User cancels $\rightarrow$ `SF_ABORTED` |
-| `S5_LOGIN_ACCOUNT` | User submitted credentials and selected world. | Send `LoginAccount` SOAP 1.1 request to `Datacenter/AuthServer` (§3.4). Filter `GameSubscription` where `Game == DataCenter.GameName`. | • `HTTP 200` & 1 matching subscription $\rightarrow$ `S7_QUERY_WORLD_STATUS`<br>• `HTTP 200` & $>1$ matching subscriptions $\rightarrow$ `S6_SELECT_SUBSCRIPTION`<br>• `HTTP 200` & 0 matching subscriptions $\rightarrow$ `SF_FAILED(F05_NO_GAME_SUBSCRIPTION)`<br>• SOAP `Fault` (`BIS`) $\rightarrow$ `SF_FAILED(F04_AUTH_REJECTED)` (return to `S4`)<br>• Network/HTTP error $\rightarrow$ `SF_FAILED(F03_SERVICE_UNAVAILABLE)` |
+| `S5_LOGIN_ACCOUNT` | User submitted credentials and selected world. | Send `LoginAccount` SOAP 1.1 request to `Datacenter/AuthServer` (§3.4). Filter `GameSubscription` entries whose `Game` element equals `DataCenter.GameName`. | • `HTTP 200` & 1 matching subscription $\rightarrow$ `S7_QUERY_WORLD_STATUS`<br>• `HTTP 200` & $>1$ matching subscriptions $\rightarrow$ `S6_SELECT_SUBSCRIPTION`<br>• `HTTP 200` & 0 matching subscriptions $\rightarrow$ `SF_FAILED(F05_NO_GAME_SUBSCRIPTION)`<br>• SOAP `Fault` (`BIS`) $\rightarrow$ `SF_FAILED(F04_AUTH_REJECTED)` (return to `S4`)<br>• Network/HTTP error $\rightarrow$ `SF_FAILED(F03_SERVICE_UNAVAILABLE)` |
 | `S6_SELECT_SUBSCRIPTION` | `LoginAccountResult` has $>1$ subscriptions for `DataCenter.GameName`. | Prompt user to select one subscription by `Description` / `Name` (§3.4). | • User selects subscription $\rightarrow$ `S7_QUERY_WORLD_STATUS`<br>• User cancels $\rightarrow$ `SF_ABORTED` |
-| `S7_QUERY_WORLD_STATUS` | Subscription selected (`GameSubscription/Name` and `ProductTokens` known). | Send `GET` to `World/StatusServerUrl` (with fallback rewrite on HTTP 404/empty body; §3.3). Verify `<loginservers>` non-empty and check `allow_billing_role` / `deny_billing_role`. | • World open, role permitted, and `queue_url` non-empty $\rightarrow$ `S8_WORLD_QUEUE`<br>• World open, role permitted, and `queue_url` empty $\rightarrow$ `S9_SESSION_HANDOFF`<br>• `loginservers` empty or status unavailable $\rightarrow$ `SF_FAILED(F06_WORLD_CLOSED)`<br>• Billing role check failed $\rightarrow$ `SF_FAILED(F07_WORLD_ROLE_DENIED)` |
-| `S8_WORLD_QUEUE` | World requires login queue (`queue_url` non-empty). | Send `TakeANumber` POST to `WorldQueue.LoginQueue.URL` (§3.5). Poll while `QueueNumber > NowServingNumber`. | • `HResult == 0` and `QueueNumber <= NowServingNumber` $\rightarrow$ `S9_SESSION_HANDOFF`<br>• `HResult != 0` or HTTP error $\rightarrow$ `SF_FAILED(F08_QUEUE_ERROR)`<br>• User cancels (send `LeaveQueue` if `ContextNumber` known) $\rightarrow$ `SF_ABORTED` |
-| `S9_SESSION_HANDOFF` | Queue passed (or not required). | Initialize ticket refresh handler with `Ticket`, `AuthServer`, and `glsticketlifetime` (§4.1); prepare `netver`/`didver` (§2.4); hand off `(login_server, GameSubscription/Name, Ticket, version_info, language)` to `docs/specs/official-session.md` (§4.2). | • Session transport connected $\rightarrow$ `S10_IN_GAME_TICKET_REFRESH`<br>• Ticket missing/inaccessible $\rightarrow$ `SF_FAILED(F09_TICKET_INACCESSIBLE)` |
-| `S10_IN_GAME_TICKET_REFRESH` | Active game session running. | Run periodic ticket refresh check (§4.3): send `RefreshTicket` at $0.5 L$ (with retries at $0.75 L$ and $0.875 L$, max 3 attempts). | • `RefreshTicketResult` received $\rightarrow$ update active ticket, reset timer to $0.5 L$ and attempts to `0`, remain in `S10_IN_GAME_TICKET_REFRESH`<br>• 3rd attempt fails $\rightarrow$ record support-ticket warning, stop refreshing, session continues until user exits |
+| `S7_QUERY_WORLD_STATUS` | Subscription selected (`GameSubscription/Name` and `ProductTokens` known). | Send `GET` to `World/StatusServerUrl` (§3.3; no fallback URL is constructed on HTTP 404 or empty body, per `docs/decisions/0042-m8-remediation-decisions.md` item 3). Verify `<loginservers>` non-empty and check `allow_billing_role` / `deny_billing_role`. | • World open, role permitted, and `queue_url` non-empty $\rightarrow$ `S8_WORLD_QUEUE`<br>• World open, role permitted, and `queue_url` empty $\rightarrow$ `S9_SESSION_HANDOFF`<br>• `loginservers` empty or status unavailable $\rightarrow$ `SF_FAILED(F06_WORLD_CLOSED)`<br>• Billing role check failed $\rightarrow$ `SF_FAILED(F07_WORLD_ROLE_DENIED)` |
+| `S8_WORLD_QUEUE` | World requires login queue (`queue_url` non-empty). | Send `TakeANumber` POST to `WorldQueue.LoginQueue.URL` (§3.5). Poll while `QueueNumber > NowServingNumber`. | • `HResult` non-negative (bit 31 clear) and `QueueNumber <= NowServingNumber` $\rightarrow$ `S9_SESSION_HANDOFF`<br>• `HResult` negative (bit 31 set) or HTTP error $\rightarrow$ `SF_FAILED(F08_QUEUE_ERROR)`<br>• User cancels (send `LeaveQueue` if `ContextNumber` known) $\rightarrow$ `SF_ABORTED` |
+| `S9_SESSION_HANDOFF` | Queue passed (or not required). | Arm periodic `RefreshTicket` schedule with `Ticket`, `AuthServer`, and `glsticketlifetime` (§4.1, §4.3); prepare `netver`/`didver` (§2.4); hand off `(login_server, GameSubscription/Name, Ticket, version_info, language)` to `docs/specs/official-session.md` (§4.2). | • Session transport connected $\rightarrow$ `S10_IN_GAME_TICKET_REFRESH`<br>• Ticket missing/inaccessible $\rightarrow$ `SF_FAILED(F09_TICKET_INACCESSIBLE)` |
+| `S10_IN_GAME_TICKET_REFRESH` | Active game session running. | Run periodic ticket refresh schedule (§4.3): send `RefreshTicket` at $0.5 L$ (with retries at $0.75 L$ and $0.875 L$, max 3 attempts). | • `RefreshTicketResult` received $\rightarrow$ update active ticket, reset $\Delta t_{\text{next}}$ to $0.5 L$ and attempt count $k$ to `0`, remain in `S10_IN_GAME_TICKET_REFRESH`<br>• 3rd attempt fails $\rightarrow$ record support-ticket warning, stop refreshing, session continues until user exits |
 | `SF_ABORTED` | User cancelled login or queue. | Zero in-memory credentials and tickets; close any open HTTP sockets. | Terminal state. |
 | `SF_FAILED(class)` | Recoverable or fatal error encountered. | Zero in-memory password; display user-facing failure message for `class` (§5.3). | Recoverable classes (`F03`–`F08`) may return to `S4_AWAIT_CREDENTIALS_AND_WORLD`; `F02` returns to main menu. |
 
@@ -671,22 +647,21 @@ For the standard lifetime $L = 21600\text{ s}$ (6 hours), the three attempts occ
 
 | Operation | Timeout / Interval | Max Attempts / Retries | Provenance |
 |---|---|---|---|
-| HTTP/SOAP requests (`GetDatacenters`, `LauncherConfigurationServer`, `LoginAccount`, `TakeANumber`, `RefreshTicket`) | `30 s` per HTTP request | `1` attempt per user action (except `StatusServer.aspx` and `RefreshTicket` below) | `BIN` (`BIN-Q2`), `OL` |
-| `StatusServer.aspx` host/path fallback (`S7`) | `30 s` per HTTP request | `2` attempts (`1` primary GET to `World/StatusServerUrl` + `1` fallback GET with host/path rewritten to `Launcher.DataCenterService.GLS` prefix on HTTP 404 or empty body) | `OL` |
-| World login queue polling (`S8` `TakeANumber`) | Poll interval: `5 s` minimum recommended (`WorldQueue.PollTimer` server config value is `120 s`; polling faster than `2 s` risks `0x80004005`) | Indefinite while `HResult == 0` and `QueueNumber > NowServingNumber` until user cancels | `OL`, `PL`, `DDOL` |
-| In-game `RefreshTicket` (`S10`) | Initial trigger at $0.5 \times L$; retry triggers add $0.5 \times (L - \text{elapsed})$ ($0.75 \times L$, $0.875 \times L$) | `3` attempts maximum per ticket (`attempt_count` `1`, `2`, `3`) | `BIN` (`BIN-Q2`) |
+| HTTP/SOAP requests (`GetDatacenters`, `LauncherConfigurationServer`, `World/StatusServerUrl`, `LoginAccount`, `TakeANumber`, `RefreshTicket`) | `30 s` per HTTP request (`10 s` per world when refreshing multiple world statuses sequentially) | `1` attempt per user action (except `RefreshTicket` and queue polling below; no fallback URL retry on `World/StatusServerUrl`, per `docs/decisions/0042-m8-remediation-decisions.md` item 3) | `BIN` (`BIN-Q2`), `LL`, `OL` |
+| World login queue polling (`S8` `TakeANumber`) | Poll interval: `5 s` minimum recommended (`WorldQueue.PollTimer` server config value is `120 s`; polling faster than `2 s` risks `0x80004005`) | Indefinite while `HResult` is non-negative (bit 31 clear) and `QueueNumber > NowServingNumber` until user cancels | `LL`, `OL`, `PL`, `DDOL` |
+| In-game `RefreshTicket` (`S10`) | Initial trigger at $0.5 \times L$; retry triggers add $0.5 \times (L - \text{elapsed})$ ($0.75 \times L$, $0.875 \times L$) | `3` attempts maximum per ticket (attempt count $k$ of `1`, `2`, `3`) | `BIN` (`BIN-Q2`) |
 
 ### 5.3 User-facing failure classes <a id="s5-3-failure-classes"></a>
 
 | Code | Class Name | Trigger Condition | User-Facing Action / Message Summary |
 |---|---|---|---|
-| `F02_CONFIG_INVALID` | Local Install Configuration Invalid | `lotro.launcherconfig` missing/malformed, required keys missing, or `client_local_<Lang>.dat` missing. | Report which local file or key in `<InstallRoot>` is missing or unreadable. |
+| `F02_CONFIG_INVALID` | Local Install Configuration Invalid | `lotro.launcherconfig` missing/malformed, required keys missing, `client_local_<Lang>.dat` missing, or `<netver_string>` unavailable after checking user override, `.rsrc` `VS_VERSION_INFO`, and user prompt (§2.4.1). | Report which local file, key, or version string in `<InstallRoot>` is missing or unreadable. |
 | `F03_SERVICE_UNAVAILABLE` | GLS / Config Service Unavailable | DNS failure, TLS verification failure, HTTP timeout, or non-200 response from `GetDatacenters`, `LauncherConfigurationServer`, or `AuthServer`. | Report that the login service could not be reached and allow retry. |
-| `F04_AUTH_REJECTED` | Authentication Rejected | `LoginAccount` returns a SOAP `Fault` (e.g., `faultcode == "BIS"`). | Display authentication failure (invalid username or password) and prompt for credentials again. |
-| `F05_NO_GAME_SUBSCRIPTION` | No Subscription for Game | `LoginAccountResult` contains zero `GameSubscription` entries with `Game == DataCenter.GameName`. | Inform the user that the authenticated account has no LOTRO subscription. |
-| `F06_WORLD_CLOSED` | World Offline or Closed | `StatusServer.aspx` fails after fallback, returns an empty body, or `<loginservers>` has no non-empty entry. | Inform the user that the selected world is currently offline or unavailable. |
+| `F04_AUTH_REJECTED` | Authentication Rejected | `LoginAccount` returns a SOAP `Fault` (e.g., `faultcode` equals `"BIS"`). | Display authentication failure (invalid username or password) and prompt for credentials again. |
+| `F05_NO_GAME_SUBSCRIPTION` | No Subscription for Game | `LoginAccountResult` contains zero `GameSubscription` entries whose `Game` element equals `DataCenter.GameName`. | Inform the user that the authenticated account has no LOTRO subscription. |
+| `F06_WORLD_CLOSED` | World Offline or Closed | `World/StatusServerUrl` is missing, returns an HTTP error (such as HTTP 404) or an empty body (with no fallback URL constructed, per `docs/decisions/0042-m8-remediation-decisions.md` item 3), or `<loginservers>` has no non-empty entry. | Inform the user that the selected world is currently offline or that the configuration provides no usable status URL. |
 | `F07_WORLD_ROLE_DENIED` | World Billing Role Denied | Subscription `ProductTokens` fail the `allow_billing_role` / `deny_billing_role` check in §3.3. | Inform the user that the selected subscription tier (e.g., non-VIP) is not permitted on this world. |
-| `F08_QUEUE_ERROR` | World Queue Error | `TakeANumber` returns `HResult != 0` (e.g., `0x80004005`) or malformed XML. | Inform the user that joining the world login queue failed and allow retry. |
+| `F08_QUEUE_ERROR` | World Queue Error | `TakeANumber` returns a negative `HResult` (bit 31 set, e.g., `0x80004005`) or malformed XML. | Inform the user that joining the world login queue failed and allow retry. |
 | `F09_TICKET_INACCESSIBLE` | GLS Ticket Inaccessible | Client started without `--glsticketdirect`/`--authserverurl` and `--glsticket` registry read failed. | Abort session startup. |
 | `F10_REFRESH_EXHAUSTED` | Ticket Refresh Exhausted | All 3 in-game `RefreshTicket` attempts failed. | Record warning that in-game support ticket submission will be unavailable; do not disconnect the active game session. |
 
@@ -696,19 +671,17 @@ For the standard lifetime $L = 21600\text{ s}$ (6 hours), the three attempts occ
 
 ### 6.1 Runtime endpoint and credential boundary <a id="s6-1-runtime-discovery"></a>
 
-Per `CLAUDE.md` and `docs/CLEAN_ROOM.md`, all service URLs, hostnames, ports, and endpoints are discovered at runtime from the user's local installation (`lotro.launcherconfig`) or from server responses; no official endpoint, key, certificate, or account data is embedded in the repository, tests, or configuration defaults.
+Per `CLAUDE.md`, `docs/CLEAN_ROOM.md`, `docs/decisions/0034-official-server-compatibility.md` §1, and `docs/decisions/0042-m8-remediation-decisions.md` item 3, Tessera hard-codes no service URL, host, or path fragment: all service URLs, hostnames, ports, and endpoints are discovered at runtime from the user's local installation (`lotro.launcherconfig`) or from server responses, and if a required endpoint is absent there is no fallback URL. No official endpoint, key, certificate, or account data is embedded in the repository, tests, or configuration defaults. The XML namespace URI (`http://www.turbine.com/SE/GLS`) and `SOAPAction` strings are XML/SOAP protocol identifiers that are never contacted as network endpoints and may appear in code as constants only in the SOAP message encoder.
 
 ### 6.2 TLS and certificate validation <a id="s6-2-tls"></a>
 
 1. **Observed behavior in official binary and legacy launchers (`BIN-Q2`, `PL`, `DDOL`)**:
-   - In `x64/lotroclient64.exe`, the HTTP/SOAP client explicitly sets libcurl option `64` (`CURLOPT_SSL_VERIFYPEER`) to `0`, disabling TLS peer certificate verification for `RefreshTicket` and support SOAP requests.
+   - In `x64/lotroclient64.exe`, the HTTP/SOAP client disables TLS peer certificate verification for `RefreshTicket` and support SOAP requests.
    - Older third-party launchers (`PL`, `DDOL`) also disabled certificate verification or forced legacy TLS 1.0/SSLv23 ciphers to work around historical server configurations.
 2. **Mandatory requirement for Tessera**:
    - Because `LoginAccount` transmits the user's plaintext password and returns the bearer `Ticket`, disabling TLS certificate or hostname verification exposes the user's credentials and session ticket to trivial man-in-the-middle interception.
-   - Tessera **must** enforce standard TLS certificate chain validation (against the platform or Mozilla root store) and RFC 6125 hostname verification on all `https://` connections (`AuthServer`, `LoginQueue.aspx`, and any `https://` `DataCenterServer`, `LauncherConfigurationServer`, or `StatusServer.aspx` URLs).
+   - Tessera **must** enforce standard TLS 1.2+ certificate chain validation (against the platform or Mozilla root store, plus any optional user-configured custom CA bundle path if supplied in user settings) and RFC 6125 hostname verification on all `https://` connections (`Datacenter/AuthServer`, `WorldQueue.LoginQueue.URL`, and any `https://` `Launcher.DataCenterService.GLS`, `Datacenter/LauncherConfigurationServer`, or `World/StatusServerUrl` URLs).
    - Tessera **must not** disable certificate verification silently or by default.
-
-> **OPEN (`OPEN-LOGIN-2`):** Because contacting live official servers from the dirty room is forbidden, verify during clean-room testing (with a user-opted-in test environment) whether current official GLS `https://` endpoints negotiate TLS 1.2+ with a certificate chain trusted by the standard Mozilla/OS root store, or whether a specific intermediate CA certificate must be bundled.
 
 ### 6.3 Credential, ticket, and personal data handling <a id="s6-3-credentials"></a>
 
@@ -726,7 +699,7 @@ Per `CLAUDE.md` and `docs/CLEAN_ROOM.md`, all service URLs, hostnames, ports, an
 
 Per `docs/decisions/0034-official-server-compatibility.md` and `docs/CLEAN_ROOM.md`:
 
-1. **No access-control circumvention**: The official GLS login flow (`GetDatacenters` $\rightarrow$ `LauncherConfigurationServer` $\rightarrow$ `StatusServer.aspx` $\rightarrow$ `LoginAccount` $\rightarrow$ `TakeANumber` $\rightarrow$ client hand-off $\rightarrow$ `RefreshTicket`) uses standard unauthenticated and password/ticket-authenticated HTTP/HTTPS XML and SOAP 1.1 calls. Static analysis of `x64/lotroclient64.exe` (`BIN-Q1`–`BIN-Q3`) and inspection of third-party launchers (`OL`, `PL`) confirm that **no client code-signing attestation, cryptographic challenge-response secret, anti-cheat module, or anti-tamper check** is present in the GLS login or ticket-refresh protocol.
+1. **No access-control circumvention**: The official GLS login flow (`GetDatacenters` $\rightarrow$ `LauncherConfigurationServer` $\rightarrow$ `World/StatusServerUrl` $\rightarrow$ `LoginAccount` $\rightarrow$ `TakeANumber` $\rightarrow$ client hand-off $\rightarrow$ `RefreshTicket`) uses standard unauthenticated and password/ticket-authenticated HTTP/HTTPS XML and SOAP 1.1 calls. Static analysis of `x64/lotroclient64.exe` (`BIN-Q1`–`BIN-Q3`) and inspection of third-party launchers (`OL`, `PL`) confirm that **no client code-signing attestation, cryptographic challenge-response secret, anti-cheat module, or anti-tamper check** is present in the GLS login or ticket-refresh protocol.
 2. **Binding stop condition**: If Standing Stone Games / Daybreak ever introduces client binary attestation, anti-cheat challenge tokens, or any other technical access control into the GLS authentication or world-queue endpoints, Tessera **must stop** and fail cleanly rather than attempting to emulate, spoof, or bypass the check.
 
 ---
@@ -737,89 +710,86 @@ All test vectors in this section use synthetic RFC 2606 `.example.invalid` endpo
 
 ### 7.1 Testable invariants <a id="s7-1-invariants"></a>
 
-- **`I1` (Local discovery failure network silence)**: When `S1_LOCAL_DISCOVERY` fails with `F02_CONFIG_INVALID` (missing or malformed `lotro.launcherconfig` or missing `client_local_<Lang>.dat`), zero DNS queries and zero TCP/UDP socket connections are initiated by the login module.
+- **`I1` (Local discovery failure network silence)**: When `S1_LOCAL_DISCOVERY` fails with `F02_CONFIG_INVALID` (missing or malformed `lotro.launcherconfig`, missing `client_local_<Lang>.dat`, or missing `<netver_string>`), zero DNS queries and zero TCP/UDP socket connections are initiated by the login module.
 - **`I2` (Bootstrap config discovery order)**: Given a directory containing both `lotro.launcherconfig` and `TurbineLauncher.exe.config`, the parser loads `lotro.launcherconfig` (with or without a UTF-8 BOM `EF BB BF`).
 - **`I3` (`LoginServerUrl` placeholder rejection)**: The literal value `(invalid service specified)` in `Datacenter/Worlds/World/LoginServerUrl` is never passed to `-h` or used as a socket target; the target `host:port` is always taken from the first non-empty `;`-delimited entry of `<Status>/<loginservers>`.
-- **`I4` (`StatusServer.aspx` fallback rewrite)**: When `GET` to `World/StatusServerUrl` returns HTTP 404 or an empty body, the client retries exactly once against `<scheme>://<host_of_GLS_DataCenterService><base_path_of_GLS_DataCenterService>/StatusServer.aspx?<query_of_StatusServerUrl>`.
+- **`I4` (`World/StatusServerUrl` runtime endpoint only; no fallback URL rewrite)**: Per `docs/decisions/0042-m8-remediation-decisions.md` item 3, the per-world status query contacts only the runtime `World/StatusServerUrl` from `GetDatacentersResult`. When `World/StatusServerUrl` is missing, returns `HTTP 404 Not Found`, or returns an empty body, zero fallback URLs are constructed from `Launcher.DataCenterService.GLS` or any hard-coded path fragment, and the query fails immediately with `F06_WORLD_CLOSED`.
 - **`I5` (Subscription `Name` vs `username`)**: When `LoginAccount` is called with `<username>alice_login</username>` and returns a matching `GameSubscription` with `<Game>LOTRO</Game>` and `<Name>SUB9876543210ABCDEF012345</Name>`, the value passed to `TakeANumber` (`subscription=`) and to the session layer (`-a`) is `SUB9876543210ABCDEF012345`, never `alice_login`.
-- **`I6` (Billing role check)**: If `<Status>/<allow_billing_role>` is `RoleVIP,RoleFounder` and the selected subscription's `ProductTokens` set is `{"AngmarTrial", "MoriaExp"}`, the world status check rejects entry with `F07_WORLD_ROLE_DENIED` before calling `TakeANumber`.
+- **`I6` (Billing role check)**: If `<Status>/<allow_billing_role>` is `RoleVIP,RoleFounder` and the selected subscription's `ProductTokens` set is `{"SyntheticTokenA", "SyntheticTokenB"}`, the world status check rejects entry with `F07_WORLD_ROLE_DENIED` before calling `TakeANumber`.
 - **`I7` (`TakeANumber` ticket percent-encoding)**: When constructing the `application/x-www-form-urlencoded` body for `TakeANumber`, `+`, `/`, and `=` characters in `Ticket` are percent-encoded as `%2B`, `%2F`, and `%3D`, while `--glsticketdirect` (and in-memory session hand-off) receives the raw unencoded `Ticket` string.
-- **`I8` (Queue completion boundary)**: In `S8_WORLD_QUEUE`, `QueueNumber == NowServingNumber` and `QueueNumber < NowServingNumber` both terminate the queue loop immediately without sleeping for a poll interval.
+- **`I8` (Queue completion boundary)**: In `S8_WORLD_QUEUE`, `QueueNumber` equal to `NowServingNumber` and `QueueNumber` less than `NowServingNumber` (`QueueNumber <= NowServingNumber`) both terminate the queue loop immediately without sleeping for a poll interval.
 - **`I9` (`RefreshTicket` backoff schedule)**: Given `--glsticketlifetime 21600` installed at $t_0 = 0.0\text{ s}$, if every `RefreshTicket` call fails, `RefreshTicket` is invoked at $t = 10800.0\text{ s}$, $t = 16200.0\text{ s}$, and $t = 18900.0\text{ s}$, and is never invoked a 4th time ($t > 18900.0\text{ s}$).
-- **`I10` (`RefreshTicket` reset on success)**: If `RefreshTicket` succeeds at $t = 16200.0\text{ s}$ (attempt 2) with a new ticket, `start_time_sec` resets to $16200.0\text{ s}$, `next_refresh_offset_sec` resets to $10800.0\text{ s}$ (next fire at $t = 27000.0\text{ s}$), and `attempt_count` resets to `0`.
-- **`I11` (Version string format and `VersionSend` `VLUInt` prefix)**: The combined client version string matches the exact 56-character ASCII pattern `netver:<netver>; didver:<XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX>` (where `<didver>` is the 36-character uppercase GUID from `.dat` superblock `0x17C..0x18B` without `" : <version_u32>"`) and is serialized at offset `+0x00` of `VersionSend` (`0x0000012C`, `docs/specs/official-session.md` §9.3) as a `VLUInt` (`PackedDWORD`) length prefix (`0x38` when length is `56`) followed by the raw ASCII bytes without a trailing NUL.
+- **`I10` (`RefreshTicket` reset on success)**: If `RefreshTicket` succeeds at $t = 16200.0\text{ s}$ (attempt 2) with a new ticket, the ticket installation time $t_0$ resets to $16200.0\text{ s}$, the next refresh offset $\Delta t_{\text{next}}$ resets to $10800.0\text{ s}$ (next fire at $t = 27000.0\text{ s}$), and the attempt count $k$ resets to `0`.
+- **`I11` (Version string discovery, format, and `ClientVersionMessage` `0x0000012C` `VariableU32` prefix)**: `<netver_string>` is obtained only from (1) a user-supplied setting or CLI value, (2) the PE `.rsrc` `VS_VERSION_INFO` `StringFileInfo` version resource (`"CompatibiltyVersion"` / `"CompatibilityVersion"`), or (3) a user prompt (`docs/decisions/0042-m8-remediation-decisions.md` item 1), with no code scan or data-section signature. The combined client version string matches the exact ASCII pattern `netver:<netver>; didver:<XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX>` (where `<didver>` is the 36-character uppercase GUID from `.dat` superblock `0x17C..0x18B` without the archive version integer) and is serialized at offset `+0x00` of `ClientVersionMessage` (`0x0000012C`, [`docs/specs/official-session.md`](official-session.md) §9.3) as a `VariableU32` byte-length prefix ([`docs/specs/official-session.md`](official-session.md) §5.6.1; `0x38` when length is `56`) followed by the raw ASCII bytes without a trailing NUL.
 - **`I12` (Credential & ticket redaction)**: Formatting any error, debug, or info log event produced during `S4`–`S10` never outputs the substring of the user's password or the `Ticket` value.
-- **`I13` (`<queueurls>` RFC 1918 private-IPv4 filtering with fallback)**: When `<Status>/<queueurls>` contains both an RFC 1918 private-IPv4 URL (`http://10.0.0.1:7080/command`) and a non-RFC-1918 URL (`http://queue-a.example.invalid:7080/command`), `queue_url` selects the non-RFC-1918 URL; when all non-empty entries use RFC 1918 private IPv4 addresses, `queue_url` falls back to the first non-empty entry (`LL`).
-- **`I14` (`TakeANumber` HRESULT sign-bit evaluation and fallback)**: In `S8_WORLD_QUEUE`, a `<Result>` with `(HResult & 0x80000000) == 0` (any non-negative 32-bit `HRESULT`), or a `<Result>` omitting `<HResult>` while providing valid `<QueueNumber>` and `<NowServingNumber>`, is evaluated as a successful queue response (`LL`).
+- **`I13` (`<queueurls>` RFC 1918 private-IPv4 filtering with fallback)**: When `<Status>/<queueurls>` contains both an RFC 1918 private-IPv4 URL (`http://10.0.0.1:8080/queue`) and a non-RFC-1918 URL (`http://queue-a.example.invalid:8080/queue`), `queue_url` selects the non-RFC-1918 URL; when all non-empty entries use RFC 1918 private IPv4 addresses, `queue_url` falls back to the first non-empty entry (`LL`).
+- **`I14` (`TakeANumber` HRESULT sign-bit evaluation and fallback)**: In `S8_WORLD_QUEUE`, a `<Result>` whose 32-bit `HResult` has bit 31 clear (any non-negative `HRESULT`), or a `<Result>` omitting `<HResult>` while providing valid `<QueueNumber>` and `<NowServingNumber>`, is evaluated as a successful queue response (`LL`).
 - **`I15` (`ArgTemplate` legacy alias substitution and unreplaced token filtering)**: Substituting `ArgTemplate` replaces `{LANGUAGE}`, `{PRODUCT}`, and `{AUTHSERVER}` alongside `{LANG}`, `{GAMETYPE}`, and `{AUTHSERVERURL}`, strips surrounding double quotes when splitting into `argv`, and drops any token still containing an unreplaced `{...}` placeholder (`LL`).
-- **`I16` (Compression dictionary DID map resolution, deferred redirection, and `ConnectResponse` `codecUuid`)**: Resolving enumerator key `0x10000002` (`"Client2Server"`) via DID Map `3` (`0x28000010` in `client_general.dat`) loads record `0x0E010000`, validates schema GUID `E795878D-C633-471C-8315-C3DBBEAD2FAA` at `+0x00..+0x0F`, and registers the 16-byte `dict_guid` at `+0x10..+0x1F` for `codecUuid` negotiation in `ConnectRequest` (`0x00040000` at `+0x1C..+0x2B`) and `ConnectResponse` (`0x00080000` at `+0x0C..+0x1B`); resolving `0x10000001` (`"Server2ClientDeferred"`) loads stub `0x0E010002`, reads `deferred_target_did == 0x0E010001` at `+0x20..+0x23`, and redirects to load `0x0E010001` (`"Server2Client"`).
+- **`I16` (Compression dictionary DID map resolution, deferred redirection, and `ConnectAcceptHeader` `0x00080000` `codecUuid`)**: Resolving outgoing dictionary key `0x10000002` via Master DID Map `3` (`0x28000010` in `client_general.dat`, [`docs/specs/official-session.md`](official-session.md) §4.1.2–§4.1.3) resolves to record `0x0E010000`, validates format UUID `E795878D-C633-471C-8315-C3DBBEAD2FAA` at `+0x00..+0x0F`, and registers the 16-byte `codecUuid` at `+0x10..+0x1F` for negotiation in `ConnectChallengeHeader` (`0x00040000` at `+0x1C..+0x2B`) and `ConnectAcceptHeader` (`0x00080000` at `+0x0C..+0x1B`); resolving incoming dictionary key `0x10000001` resolves to stub `0x0E010002`, reads `redirectDid` equal to `0x0E010001` at `+0x20..+0x23`, and redirects to load `0x0E010001` ([`docs/specs/official-session.md`](official-session.md) §4.1.2–§4.1.3, §6.3–§6.4).
 
 ---
 
 ### 7.2 Synthetic test vectors <a id="s7-2-vectors"></a>
 
-#### Vector `V1` — Local `lotro.launcherconfig` with UTF-8 BOM
+#### 7.2.1 Vector 1 (`V1` / `TV1`) — Local `lotro.launcherconfig` with UTF-8 BOM
 
 Input bytes start with `EF BB BF` followed by:
 
 | Element / Attribute | Synthetic Value |
 |---|---|
-| `/configuration/appSettings/add[@key="Launcher.DataCenterService.GLS"]/@value` | `https://gls.example.invalid/GLS.DataCenterServer/Service.asmx` |
+| `/configuration/appSettings/add[@key="Launcher.DataCenterService.GLS"]/@value` | `https://gls.example.invalid/service/datacenter` |
 | `/configuration/appSettings/add[@key="DataCenter.GameName"]/@value` | `LOTRO` |
 | `/configuration/appSettings/add[@key="DataCenter.DefaultCenter"]/@value` | `LOTRO` |
 | `/configuration/appSettings/add[@key="Product.DocumentFolder"]/@value` | `The Lord of the Rings Online` |
 | `/configuration/appSettings/add[@key="Launcher.DocumentFolder"]/@value` | `Launcher` |
 
 Expected parsed output:
-- `gls_datacenter_service` = `"https://gls.example.invalid/GLS.DataCenterServer/Service.asmx"`
+- `gls_datacenter_service` = `"https://gls.example.invalid/service/datacenter"`
 - `datacenter_game_name` = `"LOTRO"`
 - `document_folder` = `"The Lord of the Rings Online"`
 
 ---
 
-#### Vector `V2` — `GetDatacenters` SOAP request and response
+#### 7.2.2 Vector 2 (`V2` / `TV2`) — `GetDatacenters` SOAP request and response
 
 - **Request**:
-  - `POST https://gls.example.invalid/GLS.DataCenterServer/Service.asmx`
+  - `POST https://gls.example.invalid/service/datacenter`
   - `Content-Type: text/xml; charset=utf-8`
   - `SOAPAction: "http://www.turbine.com/SE/GLS/GetDatacenters"`
   - Body elements: `/soap:Envelope/soap:Body/GetDatacenters[@xmlns="http://www.turbine.com/SE/GLS"]/game` = `LOTRO`
 - **Synthetic Response Elements** (under `GetDatacentersResponse/GetDatacentersResult/Datacenter`):
   - `Name` = `LOTRO`
-  - `AuthServer` = `https://gls-auth.example.invalid/GLS.AuthServer/Service.asmx`
-  - `PatchServer` = `patch.example.invalid:6015`
-  - `LauncherConfigurationServer` = `https://gls.example.invalid/Launcher/lotrolauncher.server.config.xml`
-  - `Worlds/World[1]`: `Name` = `WorldAlpha [OLD]`, `LoginServerUrl` = `(invalid service specified)`, `ChatServerUrl` = `chat.example.invalid:2900`, `StatusServerUrl` = `http://legacy-status.example.invalid/GLS.DataCenterServer/StatusServer.aspx?s=shard-alpha`, `Order` = `2`
-  - `Worlds/World[2]`: `Name` = `[EN] WorldBeta`, `LoginServerUrl` = `(invalid service specified)`, `ChatServerUrl` = `chat.example.invalid:2900`, `StatusServerUrl` = `https://gls.example.invalid/GLS.DataCenterServer/StatusServer.aspx?s=shard-beta`, `Order` = `1`
+  - `AuthServer` = `https://gls-auth.example.invalid/service/auth`
+  - `PatchServer` = `patch.example.invalid:18000`
+  - `LauncherConfigurationServer` = `https://gls.example.invalid/config/launcher-config.xml`
+  - `Worlds/World[1]`: `Name` = `WorldAlpha [OLD]`, `LoginServerUrl` = `(invalid service specified)`, `ChatServerUrl` = `chat.example.invalid:18001`, `StatusServerUrl` = `http://legacy-status.example.invalid/service/status?s=shard-alpha`, `Order` = `2`
+  - `Worlds/World[2]`: `Name` = `[EN] WorldBeta`, `LoginServerUrl` = `(invalid service specified)`, `ChatServerUrl` = `chat.example.invalid:18001`, `StatusServerUrl` = `https://gls.example.invalid/service/status?s=shard-beta`, `Order` = `1`
 - **Expected parsed output**:
   - Sorted world display order places `[EN] WorldBeta` before `WorldAlpha [OLD]` (because `WorldAlpha [OLD]` ends case-insensitively with `[old]`).
 
 ---
 
-#### Vector `V3` — `StatusServer.aspx` fallback URL rewrite and `<Status>` parsing
+#### 7.2.3 Vector 3 (`V3` / `TV3`) — `World/StatusServerUrl` `<Status>` parsing and no-fallback failure on `HTTP 404`
 
-- **Input**:
-  - `Launcher.DataCenterService.GLS` = `https://gls.example.invalid/GLS.DataCenterServer/Service.asmx`
-  - `World[1].StatusServerUrl` = `http://legacy-status.example.invalid/GLS.DataCenterServer/StatusServer.aspx?s=shard-alpha`
-  - Primary `GET` to `http://legacy-status.example.invalid/GLS.DataCenterServer/StatusServer.aspx?s=shard-alpha` returns `HTTP 404 Not Found`.
-- **Expected fallback URL**:
-  - `https://gls.example.invalid/StatusServer.aspx?s=shard-alpha`
-- **Synthetic `<Status>` XML fields**:
-  - `<loginservers>login-a.example.invalid:9001;login-b.example.invalid:9002;</loginservers>`
-  - `<queueurls>http://queue-a.example.invalid:7080/command;http://queue-b.example.invalid:7080/command;</queueurls>`
-  - `<nowservingqueuenumber>0x00000010</nowservingqueuenumber>`
-  - `<lastassignedqueuenumber>0x00000015</lastassignedqueuenumber>`
-  - `<allow_billing_role>RoleTierVIP</allow_billing_role>`
-  - `<deny_billing_role></deny_billing_role>`
-- **Expected parsed output**:
-  - `login_server` = `"login-a.example.invalid:9001"`
-  - `queue_url` = `"http://queue-a.example.invalid:7080/command"`
-  - `now_serving` = `16` (`0x10`), `last_assigned` = `21` (`0x15`)
-  - `allow_billing_role` = `{"RoleTierVIP"}`
+- **Case A (`HTTP 200 OK` on `World[2].StatusServerUrl` = `https://gls.example.invalid/service/status?s=shard-beta`)**:
+  - **Synthetic `<Status>` XML fields**:
+    - `<loginservers>login-a.example.invalid:19001;login-b.example.invalid:19002;</loginservers>`
+    - `<queueurls>http://queue-a.example.invalid:8080/queue;http://queue-b.example.invalid:8080/queue;</queueurls>`
+    - `<nowservingqueuenumber>0x00000010</nowservingqueuenumber>`
+    - `<lastassignedqueuenumber>0x00000015</lastassignedqueuenumber>`
+    - `<allow_billing_role>RoleTierVIP</allow_billing_role>`
+    - `<deny_billing_role></deny_billing_role>`
+  - **Expected parsed output**:
+    - `login_server` = `"login-a.example.invalid:19001"`
+    - `queue_url` = `"http://queue-a.example.invalid:8080/queue"`
+    - `now_serving` = `16` (`0x10`), `last_assigned` = `21` (`0x15`)
+    - `allow_billing_role` = `{"RoleTierVIP"}`
+- **Case B (`HTTP 404 Not Found` or empty body on `World[1].StatusServerUrl` = `http://legacy-status.example.invalid/service/status?s=shard-alpha`)**:
+  - **Expected result (`docs/decisions/0042-m8-remediation-decisions.md` item 3)**: Fails immediately with `F06_WORLD_CLOSED`; zero fallback URLs are constructed or requested.
 
 ---
 
-#### Vector `V4` — `LoginAccount` multi-subscription filtering and SOAP fault
+#### 7.2.4 Vector 4 (`V4` / `TV4`) — `LoginAccount` multi-subscription filtering and SOAP fault
 
 - **Case A (Success with multiple subscriptions across games)**:
   - `LoginAccountResult/Ticket` = `"SYNTH+TICKET/ABC123=="`
@@ -833,88 +803,73 @@ Expected parsed output:
 
 ---
 
-#### Vector `V5` — `TakeANumber` POST body encoding and `<Result>` evaluation
+#### 7.2.5 Vector 5 (`V5` / `TV5`) — `TakeANumber` POST body encoding and `<Result>` evaluation
 
 - **Inputs**:
-  - `WorldQueue.LoginQueue.URL` = `https://gls-auth.example.invalid/GLS.AuthServer/LoginQueue.aspx`
+  - `WorldQueue.LoginQueue.URL` = `https://gls-auth.example.invalid/service/queue`
   - `WorldQueue.TakeANumber.Parameters` = `command=TakeANumber&subscription={0}&ticket={1}&ticket_type=GLS&queue_url={2}`
   - `{0}` (`GameSubscription/Name`) = `LOTROSUB00000000000000002`
   - `{1}` (`Ticket`) = `SYNTH+TICKET/ABC123==`
-  - `{2}` (`queue_url`) = `http://queue-a.example.invalid:7080/command`
+  - `{2}` (`queue_url`) = `http://queue-a.example.invalid:8080/queue`
 - **Expected `application/x-www-form-urlencoded` POST body**:
-  `command=TakeANumber&subscription=LOTROSUB00000000000000002&ticket=SYNTH%2BTICKET%2FABC123%3D%3D&ticket_type=GLS&queue_url=http%3A%2F%2Fqueue-a.example.invalid%3A7080%2Fcommand`
+  `command=TakeANumber&subscription=LOTROSUB00000000000000002&ticket=SYNTH%2BTICKET%2FABC123%3D%3D&ticket_type=GLS&queue_url=http%3A%2F%2Fqueue-a.example.invalid%3A8080%2Fqueue`
 - **Response Poll 1**:
   - `<Result><Command>TakeANumber</Command><HResult>0x00000000</HResult><QueueNumber>0x00000014</QueueNumber><NowServingNumber>0x00000011</NowServingNumber><ContextNumber>0x00000099</ContextNumber></Result>`
-  - **Expected action**: `HResult == 0`, `QueueNumber` (`20`) > `NowServingNumber` (`17`); display `3` players ahead and remain in `S8_WORLD_QUEUE`.
+  - **Expected action**: `HResult` is `0` (non-negative), `QueueNumber` (`20`) > `NowServingNumber` (`17`); display `3` players ahead and remain in `S8_WORLD_QUEUE`.
 - **Response Poll 2**:
   - `<Result><Command>TakeANumber</Command><HResult>0x00000000</HResult><QueueNumber>0x00000014</QueueNumber><NowServingNumber>0x00000014</NowServingNumber><ContextNumber>0x00000099</ContextNumber></Result>`
   - **Expected action**: `QueueNumber` (`20`) <= `NowServingNumber` (`20`); transition immediately to `S9_SESSION_HANDOFF`.
 
 ---
 
-#### Vector `V6` — `RefreshTicket` SOAP exchange and backoff arithmetic
+#### 7.2.6 Vector 6 (`V6` / `TV6`) — `RefreshTicket` SOAP exchange and backoff arithmetic
 
 - **Initial state**: $t_0 = 1000.0\text{ s}$, $L = 21600\text{ s}$, `ticket` = `"SYNTH+TICKET/ABC123=="`.
-  - `start_time_sec` = $1000.0$, `next_refresh_offset_sec` = $10800.0$, `attempt_count` = `0`.
-- **Tick at $t = 11800.0\text{ s}$** ($\Delta t = 10800.0 \le 10800.0$): no action.
-- **Tick at $t = 11800.1\text{ s}$** ($\Delta t = 10800.1 > 10800.0$):
-  - `next_refresh_offset_sec` $\leftarrow 10800.0 + 0.5 \times (21600.0 - 10800.1) = 16199.95\text{ s}$.
-  - `attempt_count` $\leftarrow 1$.
+  - Installation timestamp $t_0 = 1000.0\text{ s}$, next refresh offset $\Delta t_{\text{next}} = 10800.0\text{ s}$, attempt count $k = 0$.
+- **Check at $t = 11800.0\text{ s}$** ($\Delta t = 10800.0 \le 10800.0$): no request sent.
+- **Check at $t = 11800.1\text{ s}$** ($\Delta t = 10800.1 > 10800.0$):
+  - $\Delta t_{\text{next}} \leftarrow 10800.0 + 0.5 \times (21600.0 - 10800.1) = 16199.95\text{ s}$.
+  - $k \leftarrow 1$.
   - Sends SOAP 1.1 `POST` to `--authserverurl` with `SOAPAction: "http://www.turbine.com/SE/GLS/RefreshTicket"` and `/soap:Envelope/soap:Body/RefreshTicket[@xmlns="http://www.turbine.com/SE/GLS"]/ticket` = `"SYNTH+TICKET/ABC123=="`.
 - **Response at $t = 11800.5\text{ s}$**:
   - `/soap:Envelope/soap:Body/RefreshTicketResponse[@xmlns="http://www.turbine.com/SE/GLS"]/RefreshTicketResult` = `"SYNTH+TICKET/NEW456=="`.
-  - **Expected state update**: Active ticket updated to `"SYNTH+TICKET/NEW456=="`; `start_time_sec` $\leftarrow 11800.5$; `next_refresh_offset_sec` $\leftarrow 10800.0$; `attempt_count` $\leftarrow 0$; session listeners notified via `(ticket="SYNTH+TICKET/NEW456==", account="LOTROSUB00000000000000002")`.
+  - **Expected state update**: Active ticket updated to `"SYNTH+TICKET/NEW456=="` (used for subsequent support SOAP calls and any UDP `SessionAuthHeader` `0x00010000` / `WorldReferralHeader` `0x00000800` reconnect handshake); $t_0 \leftarrow 11800.5\text{ s}$; $\Delta t_{\text{next}} \leftarrow 10800.0\text{ s}$; $k \leftarrow 0$.
 
 ---
 
-#### Vector `V7` — `netver`/`didver` serialization in `VersionSend` (`0x0000012C`) and `0x10000002`/`0x10000001` dictionary resolution
+#### 7.2.7 Vector 7 (`V7` / `TV7`) — `netver`/`didver` serialization in `ClientVersionMessage` (`0x0000012C`) and `0x10000002`/`0x10000001` dictionary resolution
 
 - **Synthetic inputs**:
-  - Extracted `<netver_string>` from `.rdata`: `"1234"` (`4` ASCII bytes `31 32 33 34`).
+  - Discovered `<netver_string>` from user-supplied value or PE `.rsrc` `VS_VERSION_INFO` `StringFileInfo` (`"CompatibiltyVersion"`): `"1234"` (`4` ASCII bytes `31 32 33 34`).
   - Synthetic `.dat` superblock descriptor at file offset `0x17C..0x18F` (`20` bytes):
     `04 03 02 01 06 05 08 07 09 0A 0B 0C 0D 0E 0F 10 4C 04 00 00`
     (`Data1 = 0x01020304`, `Data2 = 0x0506`, `Data3 = 0x0708`, `Data4 = 09 0A 0B 0C 0D 0E 0F 10`, `ver_u32 = 1100`).
-  - Synthetic `0x0E010000` (`"Client2Server"`, mapped by `0x10000002` in `0x28000010`) header (`44` bytes):
-    - `+0x00..+0x0F` (schema GUID): `8D 87 95 E7 33 C6 1C 47 83 15 C3 DB BE AD 2F AA`
-    - `+0x10..+0x1F` (`dict_guid` / `codecUuid`): `AA BB CC DD 11 22 33 44 55 66 77 88 99 00 AB CD`
-    - `+0x20..+0x23` (`deferred_target_did`): `00 00 00 00`
-    - `+0x24..+0x27` (`dict_format_version`): `01 00 00 00`
-    - `+0x28..+0x2B` (`tree_stream_len`): `09 00 00 00`
-  - Synthetic `0x0E010002` (`"Server2ClientDeferred"`, mapped by `0x10000001` in `0x28000010`) stub (`44` bytes):
-    - `+0x00..+0x0F` (schema GUID): `8D 87 95 E7 33 C6 1C 47 83 15 C3 DB BE AD 2F AA`
-    - `+0x10..+0x1F` (`dict_guid` / `codecUuid`): `10 20 30 40 50 60 70 80 90 A0 B0 C0 D0 E0 F0 01`
-    - `+0x20..+0x23` (`deferred_target_did`): `01 00 01 0E` (`0x0E010001` LE)
-    - `+0x24..+0x27` (`dict_format_version`): `00 00 00 00`
-    - `+0x28..+0x2B` (`tree_stream_len`): `00 00 00 00`
+  - Synthetic `0x28000010` DID Map `3` mappings (§2.4.3; [`docs/specs/official-session.md`](official-session.md) §4.1.2–§4.1.3): outgoing dictionary key `0x10000002` $\rightarrow$ `0x0E010000` (with 16-byte `codecUuid` `AA BB CC DD 11 22 33 44 55 66 77 88 99 00 AB CD` at `+0x10..+0x1F`) and incoming dictionary key `0x10000001` $\rightarrow$ `0x0E010002` (44-byte deferred stub with `redirectDid = 0x0E010001` at `+0x20..+0x23`, [`docs/specs/official-session.md`](official-session.md) §4.1.2–§4.1.3).
 - **Expected derived values and wire bytes**:
-  - `<didver_string>` = `"01020304-0506-0708-090A-0B0C0D0E0F10"` (`36` uppercase ASCII chars; `ver_u32 = 1100` is discarded).
-  - Combined `versionString` = `"netver:1234; didver:01020304-0506-0708-090A-0B0C0D0E0F10"` (`56` ASCII bytes).
-  - `VersionSend` (`0x0000012C`, `docs/specs/official-session.md` §9.3) inner payload bytes `+0x00..+0x38` (`57` bytes):
-    `38` (`VLUInt` / `PackedDWORD` length `56`) followed by the `56` ASCII bytes of `"netver:1234; didver:01020304-0506-0708-090A-0B0C0D0E0F10"` (no trailing NUL).
-  - Resolving `0x10000001` redirects from stub `0x0E010002` to `0x0E010001`.
-  - `ConnectResponse` (`0x00080000`, `docs/specs/official-session.md` §6.4) payload bytes `+0x0C..+0x1B` (`codecUuid`, `16` bytes, when echoing the `0x0E010000` dictionary):
-    `AA BB CC DD 11 22 33 44 55 66 77 88 99 00 AB CD`.
+  - `<didver_string>` = `"01020304-0506-0708-090A-0B0C0D0E0F10"` (`36` uppercase ASCII chars; `ver_u32 = 1100` is omitted).
+  - Combined `client_version_string` = `"netver:1234; didver:01020304-0506-0708-090A-0B0C0D0E0F10"` (`56` ASCII bytes).
+  - `ClientVersionMessage` (`0x0000012C`, [`docs/specs/official-session.md`](official-session.md) §9.3) inner payload bytes `+0x00..+0x38` (`57` bytes):
+    `38` (`VariableU32` length `56`, [`docs/specs/official-session.md`](official-session.md) §5.6.1) followed by the `56` ASCII bytes of `"netver:1234; didver:01020304-0506-0708-090A-0B0C0D0E0F10"` (no trailing NUL).
+  - Resolving incoming dictionary key `0x10000001` redirects from stub `0x0E010002` to `0x0E010001` ([`docs/specs/official-session.md`](official-session.md) §4.1.3), and `ConnectAcceptHeader` (`0x00080000`, [`docs/specs/official-session.md`](official-session.md) §6.4) payload bytes `+0x0C..+0x1B` carry the 16-byte `codecUuid` `AA BB CC DD 11 22 33 44 55 66 77 88 99 00 AB CD`.
 
 ---
 
 ## 8. Implementer Notes <a id="s8-implementer-notes"></a>
 
-1. **XML namespace and case-sensitivity handling**:
-   - Official GLS responses use default namespace `xmlns="http://www.turbine.com/SE/GLS"` on `<GetDatacentersResponse>`, `<LoginAccountResponse>`, and `<RefreshTicketResponse>`, while `<Status>` (`StatusServer.aspx`) and `<Result>` (`LoginQueue.aspx`) have **no XML namespace**. Clean-room XML parsers should match SOAP payload elements in the `http://www.turbine.com/SE/GLS` namespace (or match local element names after verifying the SOAP body), match SOAP `<Fault>` case-insensitively (`Fault` / `fault`, extracting either `<faultstring>` or `<Message>`), and match child element names under `<Status>` case-insensitively (`LL`).
+1. **XML namespace, `SOAPAction` protocol identifiers, and case-sensitivity handling**:
+   - Official GLS responses use default namespace `xmlns="http://www.turbine.com/SE/GLS"` on `<GetDatacentersResponse>`, `<LoginAccountResponse>`, and `<RefreshTicketResponse>`, while `<Status>` (`World/StatusServerUrl`) and `<Result>` (`WorldQueue.LoginQueue.URL`) have **no XML namespace**. Per `docs/decisions/0042-m8-remediation-decisions.md` item 3, the XML namespace URI `http://www.turbine.com/SE/GLS` and the `SOAPAction` strings (`"http://www.turbine.com/SE/GLS/GetDatacenters"`, `"http://www.turbine.com/SE/GLS/LoginAccount"`, `"http://www.turbine.com/SE/GLS/RefreshTicket"`) are XML/SOAP protocol identifiers that are never contacted as network endpoints and may appear in code as constants only in the SOAP message encoder. Clean-room XML parsers should match SOAP payload elements in the `http://www.turbine.com/SE/GLS` namespace (or match local element names after verifying the SOAP body), match SOAP `<Fault>` case-insensitively (`Fault` / `fault`, extracting either `<faultstring>` or `<Message>`), and match child element names under `<Status>` case-insensitively (`LL`).
 2. **Splitting `;`-delimited lists and RFC 1918 filtering in `<Status>`**:
-   - Both `<loginservers>` and `<queueurls>` in `StatusServer.aspx` typically have a trailing semicolon (e.g., `host:port;`). Splitting on `;` produces a trailing empty string `""`; implementations must filter out empty segments when extracting `login_server` and `queue_url`. When `<queueurls>` contains multiple non-empty entries, prefer the first non-RFC-1918 URL (`!contains("://10.")`, `!contains("://192.168.")`, `!contains("://172.16.".."://172.31.")`) and fall back to the first non-empty entry if all entries are RFC 1918 private IPs (`LL`).
+   - Both `<loginservers>` and `<queueurls>` in the `World/StatusServerUrl` `<Status>` response typically have a trailing semicolon (e.g., `host:port;`). Splitting on `;` produces a trailing empty string `""`; implementations must filter out empty segments when extracting `login_server` and `queue_url`. When `<queueurls>` contains multiple non-empty entries, prefer the first non-RFC-1918 URL whose host is not in the RFC 1918 private IPv4 ranges `10.0.0.0/8`, `172.16.0.0/12` (`172.16.*` through `172.31.*`), or `192.168.0.0/16`, and fall back to the first non-empty entry if all entries are RFC 1918 private IPv4 addresses (`LL`).
 3. **Hexadecimal integer parsing and HRESULT sign bit in `<Status>` and `<Result>`**:
-   - `nowservingqueuenumber`, `lastassignedqueuenumber`, `HResult`, `QueueNumber`, `NowServingNumber`, and `ContextNumber` are formatted with a leading `0x` or `0X` prefix. Strip the `0x`/`0X` prefix and parse as base-16 `u32`. For `<Result>/<HResult>`, test bit 31 (`(hresult & 0x80000000) != 0`) for failure rather than `hresult != 0`, and treat a missing `<HResult>` as `0` when both `<QueueNumber>` and `<NowServingNumber>` are present (`LL`).
+   - `nowservingqueuenumber`, `lastassignedqueuenumber`, `HResult`, `QueueNumber`, `NowServingNumber`, and `ContextNumber` are formatted with a leading `0x` or `0X` prefix. Strip the `0x`/`0X` prefix and parse as base-16 `u32`. For `<Result>/<HResult>`, test whether bit 31 (the sign bit, mask `0x80000000`) is set for failure rather than testing whether the value is non-zero, and treat a missing `<HResult>` as `0` when both `<QueueNumber>` and `<NowServingNumber>` are present (`LL`).
 4. **In-memory hand-off vs CLI process spawning**:
-   - Section 3.6 and Section 4.1 document the command-line flags (`-a`, `-h`, `--glsticketdirect`, `--authserverurl`, `--glsticketlifetime`, `--glsticket`) for completeness and interoperability. Inside Tessera, the launcher service client and the UDP session client reside in the same workspace and should pass the session hand-off structure directly in memory (§4.2) rather than round-tripping through process CLI arguments or the Windows registry.
+   - Section 3.6 and Section 4.1 document the command-line flags (`-a`, `-h`, `--glsticketdirect`, `--authserverurl`, `--glsticketlifetime`, `--glsticket`, etc.) for completeness and interoperability. Inside Tessera, the launcher service client and the UDP session client reside in the same workspace and should pass the session hand-off structure directly in memory (§4.2) rather than round-tripping through process CLI arguments or the Windows registry.
 
 ---
 
 ## 9. Summary of Open Questions <a id="s9-open-questions"></a>
 
-| ID | Section | Question | How to Resolve |
-|---|---|---|---|
-| `OPEN-LOGIN-2` | §6.2 | Whether current official GLS `https://` endpoints negotiate TLS 1.2+ with a certificate chain valid under the standard Mozilla/OS root store, or require a specific intermediate CA certificate. | Verify in clean-room integration testing with user-supplied credentials. |
+None (`0` open questions). All prior questions (`OPEN-LOGIN-1` in §2.4, owner decision `O1` of `docs/decisions/0041-incident-m8-spec-contamination.md` and `docs/decisions/0042-m8-remediation-decisions.md` items 1 & 3 in §2.4.1 and §3.3, and `OPEN-LOGIN-2` in §6.2) have been resolved.
 
 ---
 
@@ -925,5 +880,19 @@ Expected parsed output:
 | `2026-10-20` | `Spec writer (dirty room)` | Initial draft of `docs/specs/official-login.md` covering runtime config discovery, GLS/world-queue exchanges, client ticket intake and `RefreshTicket` lifecycle, state machine, security notes, invariants, and synthetic test vectors (`OBS`, `OL`, `PL`, `GLS`, `REDDO`, `DDOL`, `BIN`). |
 | `2026-10-20` | `Clean-room reviewer` | Independent review against `CLEAN_ROOM.md` §5.3: fixed SPDX header, set target crate to `crates/compat`, and marked status `Accepted`. |
 | `2026-10-20` | `Spec writer (dirty room)` | Cross-referenced against project owner's `lotro-launcher` (`LL`): added 64-bit `UserPreferences64.ini`/`UserPreferences_x64.ini` lookup order and `LastWorld` (§2.3), optional `Datacenter/SupportURL` and `Order` sorting (§3.1), case-insensitive `<Status>` child matching and `<queueurls>` RFC 1918 private-IP filtering with fallback (§3.3, `I13`), SOAP `<Fault>`/`<Message>` classification for maintenance and locked accounts (§3.4), mandatory `TakeANumber` execution when `queue_url` is non-empty and `HResult` bit-31 sign evaluation with `<QueueNumber>`/`<NowServingNumber>` fallback (§3.5, `I14`), and legacy `ArgTemplate` aliases (`{LANGUAGE}`, `{PRODUCT}`, `{AUTHSERVER}`, `{HIGHRES}`, `{USERDIR}`) plus unreplaced `{...}` token filtering (§3.6, `I15`). |
-| `2026-10-20` | `Spec writer (dirty room)` | Resolved `OPEN-LOGIN-1` (`BIN-Q3`, `BIN-Q4`, `OBS`): documented runtime extraction of `<netver_string>` from `x64/lotroclient64.exe` `.rdata` and `<didver_string>` from `.dat` superblock `0x17C..0x18B` (36-char uppercase GUID without `" : <version_u32>"`), `VLUInt`-prefixed wire encoding of `"netver:<netver>; didver:<didver>"` in `VersionSend` (`0x0000012C`), resolution of enumerator keys `0x10000002` and `0x10000001` via DID Map `3` (`0x28000010` in `client_general.dat`) to `0x0E010000` and `0x0E010002` $\rightarrow$ `0x0E010001`, byte layout of `0x0E01xxxx` compression dictionary records, and `codecUuid` negotiation in `ConnectRequest` (`0x00040000`) and `ConnectResponse` (`0x00080000`) (§1.2, §1.3, §2.4, §4.2, `I11`, `I16`, `V7`, §9). |
-
+| `2026-10-20` | `Spec writer (dirty room)` | Resolved `OPEN-LOGIN-1` (`BIN-Q3`, `BIN-Q4`, `OBS`): documented runtime discovery of `<netver_string>` and `<didver_string>` (`.dat` superblock `0x17C..0x18B` 36-char uppercase GUID without the archive version integer), `VariableU32`-prefixed wire encoding of `"netver:<netver>; didver:<didver>"` in `ClientVersionMessage` (`0x0000012C`), resolution of enumerator keys `0x10000002` and `0x10000001` via DID Map `3` (`0x28000010` in `client_general.dat`) to `0x0E010000` and `0x0E010002` $\rightarrow$ `0x0E010001`, byte layout of `0x0E01xxxx` compression dictionary records, and `dictionary_guid` negotiation in `ConnectChallengeHeader` (`0x00040000`) and `ConnectAcceptHeader` (`0x00080000`) (§1.2, §1.3, §2.4, §4.2, `I11`, `I16`, `V7`, §9). |
+| `2026-10-23` | `Spec writer (dirty room)` | Remediated under incident 0041 (`docs/decisions/0041-incident-m8-spec-contamination.md`, `docs/m8-remediation.md` W2/C2): removed client-internal names and in-memory structure descriptions, replaced the `.text` instruction-pattern scan in §2.4.1, added explicit interoperability statements for all wire/file/CLI identifiers, and set status to `Revised`. |
+| `2026-10-23` | `Spec reviewer (a8686178-b869-4b5e-a35f-08a974755163)` | Pass 1 W4 review (`docs/m8-remediation.md` §4 item 4, `docs/CLEAN_ROOM.md` §5.3): spot-checked `lotro.launcherconfig`, `client_local_English.dat` and `client_general.dat` superblocks, `client_general.dat` records `0x28000000`/`0x28000010` and `0x0E010000`/`0x0E010001`/`0x0E010002`, and `x64/lotroclient64.exe` `.rsrc` `CompatibiltyVersion` (`"9386"`). |
+| `2026-10-23` | `Spec writer (dirty room, 8abac49d-40d9-4385-8491-f8bd2e0dedba)` | Remediation Pass 2 (`docs/m8-remediation.md` §7 `B1`, `B4` items 6 & 7, `N1`, `N2`, `N6`; `docs/decisions/0042-m8-remediation-decisions.md` items 1 & 3): (1) `N1` & Decision 0042 item 1 — dropped Step B2 and all data-section signatures and diagnostic format strings from §2.4.1, §0, and §1, establishing the three-step `<netver_string>` discovery order (user-supplied value, PE `.rsrc` `VS_VERSION_INFO` `StringFileInfo` `"CompatibiltyVersion"` / `"CompatibilityVersion"`, or user prompt / `F02_CONFIG_INVALID`); (2) `B4` items 6 & 7 and `N2` — removed the duplicate variable-length integer byte-order formula and Rust casts in §2.4.2 and replaced the legacy type name with `VariableU32` linked to `docs/specs/official-session.md` §5.6.1 and §9.3, corrected the `0x28000010` `DataIdMap` `TSize` offsets (`u8` bucket-count hint + `VariableU32` `VLE` count at `+0x04..+0x05`, `+0x26..+0x27`, and `+0x70..+0x73`) in §2.4.3 per `docs/specs/records.md` §1.3 & §8.1, and replaced bitwise/code expressions in §2.4.3, §3.5, §7.1, and §8 with plain prose; (3) `N6` & Decision 0042 item 3 — removed the fallback world-status URL path-fragment rewrite from §0, §1, §3.3, §5, `I4`, and Vector `V3`, and noted explicitly in §0, §3.1, §3.4, §4.3, §6.1, and §8 that the XML namespace URI (`http://www.turbine.com/SE/GLS`) and `SOAPAction` strings are XML/SOAP protocol identifiers that are never contacted as network endpoints; (4) `B1` — returned status to `Review (remediation pass 2; awaiting independent review)`. |
+| `2026-10-23` | `Spec reviewer (1d1d854d-7fcb-4e05-b387-04da8ffbe515)` | Independent Remediation Pass 2 review (`docs/m8-remediation.md` §7, `docs/decisions/0042-m8-remediation-decisions.md` item 7, `docs/CLEAN_ROOM.md` §5.3; review only, zero body edits): verified `N1` & Decision 0042 item 1 (Step B2 and all data-section signatures and diagnostic format strings removed; `<netver_string>` discovery restricted to user-supplied value, PE `.rsrc` `VS_VERSION_INFO` `StringFileInfo` `"CompatibiltyVersion"` / `"CompatibilityVersion"`, or user prompt), `B4` items 6 & 7 and `N2` (`VariableU32` linked to `docs/specs/official-session.md` §5.6.1 and §9.3; zero code or pseudo-code fragments), `N6` & Decision 0042 item 3 (no fallback status URL rewrite; XML namespace and `SOAPAction` strings noted as non-contacted protocol identifiers), and `N9` / `CLEAN_ROOM.md` §5.3 (zero `file:///` links, `LEGAL.md` references, Ghidra addresses/symbols, registers/stack/vtable offsets, internal C++ identifiers/memory layouts, secrets, or captures); independently spot-checked against the user's install `lotro.launcherconfig` (UTF-8 BOM and all five keys), `client_general.dat`/`client_local_English.dat`/`client_gamelogic.dat` superblocks (`"BT\0\0"`, `0x170` = `0x28000000`, `0x17C..0x18B` 36-char uppercase GUID, `0x18C` = `1100`), `client_general.dat` records `0x28000000` (key `0x00000003` $\rightarrow$ `0x28000010`), `0x28000010` (`116` bytes `+0x00..+0x73` byte-for-byte match), and `0x0E010000`/`0x0E010001`/`0x0E010002` (schema GUID, sizes `218,247`/`214,953`/`44`, node counts `32,743`/`32,249`, redirect `0x0E010002` $\rightarrow$ `0x0E010001`), and `x64/lotroclient64.exe` (`d22363eb9aff0fb599fd04b3efa9a1769d08da8af9d8f9b73121c12bfd7e21ee`) `.rsrc` `CompatibiltyVersion` (`"9386"`). Result: `Pass`; status set to `Accepted`. |
+| `2026-10-24` | `Spec writer (dirty room, 5ae75fbf-2c81-45ed-9881-94448337644c)` | Remediation Pass 3 (`docs/m8-remediation.md` §8 `F2`, `F3`, `F7`, `F9`; `docs/decisions/0042-m8-remediation-decisions.md` items 3 & 4): (1) `F3` & Decision 0042 item 3 — replaced all remaining service path fragments and real port numbers across §0–§7.2 and Vectors `V1`–`V5` (`TV1`–`TV5`) in §7.2 with runtime XML/configuration key names (`Launcher.DataCenterService.GLS`, `Datacenter/AuthServer`, `Datacenter/LauncherConfigurationServer`, `World/StatusServerUrl`, `WorldQueue.LoginQueue.URL`, `GameClient.Arg.supportserviceurl`) and neutral synthetic `.example.invalid` paths/ports; (2) `F7` — reconciled §4.1 with `docs/specs/official-messages-play.md` §6.1.1 by adding `--voiceoff` and the `--chatserver`/`--usechat` post-parse fallback rule, and reconciled §1.2, §1.3, §2.4.2, §2.4.3, §4.2, `I11`, `I16`, and `V7` (`TV7`) with the canonical handshake header and message names in `docs/specs/official-session.md` §6 and §9.3 (`SessionAuthHeader` `0x00010000`, `ConnectChallengeHeader` `0x00040000`, `ConnectAcceptHeader` `0x00080000`, `VersionRequestMessage` `0x0000012F`, `ClientVersionMessage` `0x0000012C`, `VersionStatusMessage` `0x0000012D`, `LoginQueueStatusMessage` `0x00000130`, `WorldReferralHeader` `0x00000800`); (3) `F2` & `F9` — set status to `Review (remediation pass 3; awaiting independent review; acceptance gated by decision 0042 item 4)` and logged full 36-character session UUID. |
+| `2026-10-24` | `Spec writer (dirty room, f0a991a9-0eab-4b03-b4eb-0ef3b61fc5fe)` | Pass 3 pre-review audit fixes (`docs/m8-remediation.md` §9): (1) deduplicated `0x0E01xxxx` compression dictionary record layout and `codecUuid` negotiation in §2.4.3, §4.2, `I16`, and `V7` (`TV7`) by cross-referencing `docs/specs/official-session.md` §4.1.2–§4.1.3 and §6.3–§6.4, and fixed incoming dictionary key `0x10000001` ($\rightarrow$ `0x0E010002` $\rightarrow$ `0x0E010001`) description in §4.2; (2) removed client-internal handler/struct/listener residue from §1.3, §4.1, §4.3, §5.1, `I10`, and `V6` (`TV6`); (3) replaced remaining `==`/`!=` operators in prose with English words and aligned §7.2 test vector headings (`V1`/`TV1`–`V7`/`TV7`) with §10. |
+| `2026-10-24` | `Spec reviewer (a4c73c75-5bab-45c5-aff3-4b5331946564)` | Independent Remediation Pass 3 review (`docs/m8-remediation.md` §8–§9, `docs/decisions/0042-m8-remediation-decisions.md` item 7, `docs/CLEAN_ROOM.md` §5.3; review only, zero body edits): verified all `CLEAN_ROOM.md` §5.3 checklist items and all `docs/m8-remediation.md` §8–§9 requirements (§2.4.1 `<netver_string>` discovery per Decision 0042 item 1; §2.4.3 and §4.2 cross-references to `official-session.md` §4.1.2–§4.1.3 and §6.3–§6.4 for compression dictionary records and `codecUuid` negotiation; §3.3 no-fallback status URL and non-endpoint SOAP/XML protocol identifiers per Decision 0042 item 3; §4.1 and §4.3 alignment with `official-messages-play.md` §6.1.1–§6.1.2; neutral `.example.invalid` synthetic test vectors `V1`/`TV1`–`V7`/`TV7` in §7.2); independently spot-checked against the user's install `lotro.launcherconfig` (UTF-8 BOM `EF BB BF` and all five `<add key="...">` keys), `client_general.dat`/`client_local_English.dat`/`client_gamelogic.dat` superblocks (`"BT\0\0"` magic at `0x140..0x143`, `0x170..0x173` = `0x28000000` in `client_general.dat`, identical 36-char uppercase GUID at `0x17C..0x18B`, `0x18C..0x18F` = `1100`), and `x64/lotroclient64.exe` (build `4906.0071.1794.4035`, SHA-256 `d22363eb9aff0fb599fd04b3efa9a1769d08da8af9d8f9b73121c12bfd7e21ee`) `.rsrc` `VS_VERSION_INFO` `StringFileInfo` `"CompatibiltyVersion"` (`"9386"`). Result: `Pass`; status set to `Accepted`. |
+| `2026-10-24` | `Spec writer (dirty room, 5f20d593-e8c6-4c5f-b050-7cc670ee5d2d)` | Remediation Pass 4 — Stage 1 Core (`docs/m8-remediation.md` §10, `docs/decisions/0042-m8-remediation-decisions.md` items 4, 8, & 9): (1) replaced the duplicate `0x28000010` layout table in §2.4.3 with a concise cross-reference to `docs/specs/official-session.md` §4.1.2–§4.1.3 and §6.3–§6.4 and removed all `.dat` label strings across §0, §2.4, §2.4.3, §4.2, `I16`, `V7` (`TV7`), and §10; (2) clarified the post-handshake version negotiation, character selection (`official-messages-world.md` §3), and `WorldReferralHeader` (`0x00000800`) sequence in §2.4.2 and corrected the `WorldReferralHeader` citation in §4.2–§4.3 to `official-session.md` §6.5; (3) corrected §10 change-log section citations (`§0–§7.2`) and removed quoted internal names from change-log history; (4) set status to `Review (remediation pass 4 — Stage 1 core; awaiting independent review; acceptance gated by decision 0042 items 4 & 8)`. |
+| `2026-10-24` | `Spec reviewer (2cbf5815-ab41-434e-9e3d-60ea0d3009b8)` | Independent Remediation Pass 4 — Stage 1 Core review (`docs/m8-remediation.md` §10, `docs/decisions/0042-m8-remediation-decisions.md` items 1–9, `docs/CLEAN_ROOM.md` §5.3; review only, zero body edits): verified all `CLEAN_ROOM.md` §5.3 checklist items and all `docs/m8-remediation.md` §10 requirements (§2.4.3 delegates Master DID Map `3` `0x28000010`, `0x0E01xxxx` record layout, and `codecUuid` negotiation to `official-session.md` §4.1.2–§4.1.3 and §6.3–§6.4 with no duplicate layout table and no `.dat` label strings; `WorldReferralHeader` `0x00000800` cites `official-session.md` §6.5 in §2.4.2, §4.2, and §4.3; §10 change log cites `§7.2` for synthetic test vectors and quotes no removed internal values; zero references to the held gameplay spec); independently spot-checked against the user's install `lotro.launcherconfig` (UTF-8 BOM `EF BB BF` and all five `<add key="...">` keys), `client_general.dat`/`client_local_English.dat`/`client_gamelogic.dat` superblocks (`"BT\0\0"` magic at `0x140..0x143`, `0x170..0x173` = `0x28000000` in `client_general.dat`, identical 36-char uppercase GUID at `0x17C..0x18B`, `0x18C..0x18F` = `1100`), `client_general.dat` records `0x28000000` (entry `0x00000003` $\rightarrow$ `0x28000010`), `0x28000010` (`116` bytes mapping `0x10000001` $\rightarrow$ `0x0E010002`, `0x10000002` $\rightarrow$ `0x0E010000`, `0x10000003` $\rightarrow$ `0x0E010001`), and `0x0E010000`/`0x0E010001`/`0x0E010002` (`44`-byte stub `0x0E010002` redirecting at `+0x20` to `0x0E010001`), and `x64/lotroclient64.exe` (build `4906.0071.1794.4035`, SHA-256 `d22363eb9aff0fb599fd04b3efa9a1769d08da8af9d8f9b73121c12bfd7e21ee`) `.rsrc` `VS_VERSION_INFO` `StringFileInfo` `"CompatibiltyVersion"` (`"9386"`). Result: `Pass`; status set to `Accepted`. |
+| `2026-10-25` | `Spec writer (dirty room, 9013ee1d-b5e8-4dec-94e9-01362f120e0d)` | Remediation Pass 5 — Stage 1 Core (`docs/m8-remediation.md` §11 `B1`–`B3` and content note, `docs/decisions/0042-m8-remediation-decisions.md` items 4 & 8): (1) `B1` & `B2` — reconciled §4.1 and §4.2 launch parameters (`-h`/`--host` accepting `host`, `host:port`, or `<localHost:remoteHost:port>`, `-p`/`--port` remote UDP port, `--outport` local UDP bind port alongside `Net.BindInterface` and `Net.ComputeUniquePort` in `UserPreferences.ini`, and `--chatserver` fallback to `--host`) with `docs/specs/official-session.md` §3.2–§3.3; (2) `B3` — reconciled `<Ticket>` variable Base64 character length $L$ (`144..256` characters) and Base64-decoded byte length $B = \lfloor L \times 3 / 4 \rfloor$ (`108` to `192` bytes) in §3.4, §4.1, and §4.2, and added §4.2.1 stating the deterministic `SessionAuthHeader` (`0x00010000`) `authType` selection rule matching `docs/specs/official-session.md` §6.2.1 (`authType = 0x40000002`, `authFlags = 0x00000004` `HasExtraBlob` with `extraBlob` carrying `u32` LE `blobLen` + Base64-decoded ticket bytes whenever a GLS ticket is present; `authType = 0x00000001`, `authFlags = 0x00000000` only when no ticket is supplied); (3) replaced the `I6` billing-role test tokens in §7.1 with neutral synthetic tokens (`{"SyntheticTokenA", "SyntheticTokenB"}`); (4) set status to `Review (remediation pass 5 — Stage 1 core; awaiting independent review; acceptance gated by decision 0042 items 4 & 8)`. |
+| `2026-10-25` | `Spec reviewer (bd1d6391-5a95-4501-8b24-1ae896887eb3)` | Independent Remediation Pass 5 — Stage 1 Core review (`docs/m8-remediation.md` §11, `docs/decisions/0042-m8-remediation-decisions.md` items 7–9, `docs/CLEAN_ROOM.md` §5.3; review only, zero body edits): verified all `CLEAN_ROOM.md` §5.3 checklist items and all `docs/m8-remediation.md` §11 requirements (`B1` & `B2` launch parameters `-h`/`--host` including `<localHost:remoteHost:port>`, `-p`/`--port`, `--outport`, and `--chatserver` fallback matching `official-session.md` §3.2–§3.3; `B3` variable-length Base64 GLS ticket `144..256` chars decoding to `108..192` bytes and deterministic `SessionAuthHeader` `0x00010000` `authType = 0x40000002` / `0x00000001` selection rule in §4.2.1 matching `official-session.md` §6.2.1; neutral synthetic tokens in §7.1 `I6`); independently spot-checked against the user's install `lotro.launcherconfig` (UTF-8 BOM `EF BB BF` and all five `<add key="...">` keys), `client_general.dat`/`client_local_English.dat`/`client_gamelogic.dat` superblocks (`"BT\0\0"` magic at `0x140..0x143`, `0x170..0x173` = `0x28000000` in `client_general.dat`, identical 36-char uppercase GUID at `0x17C..0x18B`, `0x18C..0x18F` = `1100`), and `x64/lotroclient64.exe` (build `4906.0071.1794.4035`, SHA-256 `d22363eb9aff0fb599fd04b3efa9a1769d08da8af9d8f9b73121c12bfd7e21ee`) `.rsrc` `VS_VERSION_INFO` `StringFileInfo` `"CompatibiltyVersion"` (`"9386"`). Result: `Pass`; status set to `Accepted`. |
+| `2026-10-25` | `Spec writer (dirty room, e39a5eb7-89c1-4e5b-a082-a2d6fbbaba04)` | Remediation Pass 6 — Stage 1 Core (`docs/m8-remediation.md` §12 notes, `docs/decisions/0042-m8-remediation-decisions.md` items 4 & 8): (1) replaced the $\lfloor L \times 3 / 4 \rfloor$ formula in §3.4, §4.1, §4.2, and §4.2.1 with the decoded byte length of the Base64 ticket string; (2) clarified in §4.1 and §4.2 that `-h` / `--host` accepts a colon-delimited string with zero colons (`remoteHost`), one colon (`remoteHost:port`), or two colons (`localHost:remoteHost:port`, where the three colon-separated segments specify the local bind address/interface, remote login server host, and remote UDP port, and any `<` `>` brackets in help text are metasyntactic placeholders rather than literal command-line characters; `docs/specs/official-session.md` §3.2–§3.3); (3) set status to `Review (remediation pass 6 — Stage 1 core; awaiting independent review; acceptance gated by decision 0042 items 4 & 8)`. |
+| `2026-10-25` | `Spec reviewer (a971230f-5b5e-4d3f-880a-cbae947c26eb)` | Independent Remediation Pass 6 — Stage 1 Core review (`docs/m8-remediation.md` §12, `docs/decisions/0042-m8-remediation-decisions.md` items 7–9, `docs/CLEAN_ROOM.md` §5.3; `Reviewer: a971230f-5b5e-4d3f-880a-cbae947c26eb`; review only, zero body edits): verified all `CLEAN_ROOM.md` §5.3 checklist items and all `docs/m8-remediation.md` §12 requirements (decoded byte length of the Base64 ticket string in §3.4, §4.1, §4.2, and §4.2.1 with no floor formula; `-h`/`--host` zero-colon `remoteHost`, one-colon `remoteHost:port`, and two-colon `localHost:remoteHost:port` definition with metasyntactic angle brackets in §4.1–§4.2 matching `official-session.md` §3.2–§3.3; optional `LoginQueueStatusMessage` `0x00000130` in §2.4.2 and §4.2); independently spot-checked against the user's install `lotro.launcherconfig` (UTF-8 BOM `EF BB BF` and all five `<add key="...">` keys), `client_general.dat`/`client_local_English.dat`/`client_gamelogic.dat` superblocks (`"BT\0\0"` magic at `0x140..0x143`, `0x170..0x173` = `0x28000000` in `client_general.dat`, identical 36-char uppercase GUID at `0x17C..0x18B`, `0x18C..0x18F` = `1100`), and `x64/lotroclient64.exe` (build `4906.0071.1794.4035`, SHA-256 `d22363eb9aff0fb599fd04b3efa9a1769d08da8af9d8f9b73121c12bfd7e21ee`) `.rsrc` `VS_VERSION_INFO` `StringFileInfo` `"CompatibiltyVersion"` (`"9386"`). Result: `Pass`; status set to `Accepted`. |
+| `2026-10-25` | `Spec writer (dirty room, 685c8123-ea45-4b5e-85a5-6bf376f44935)` | Remediation Pass 7 — Stage 1 Core (`docs/m8-remediation.md` §13 note, `docs/decisions/0042-m8-remediation-decisions.md` items 4 & 8): (1) clarified Base64-decoded GLS ticket byte length examples in §3.4 (`L385`), §4.1 (`L509`), §4.2 (`L554`), and §4.2.1 (`L561`) to say "up to `108` raw bytes (`0x0000006C`, or `106..108` bytes depending on `'='` padding) for a 144-character Base64 ticket or up to `135..192` raw bytes (`133..192` bytes depending on `'='` padding) for a `180..256`-character Base64 ticket"; (2) set status to `Review (remediation pass 7 — Stage 1 core; awaiting independent review; acceptance gated by decision 0042 items 4 & 8; 0 OPEN)`. |
+| `2026-10-25` | `Spec reviewer (51f17dc6-f21c-4df8-9e60-d0e41af7ff2b)` | Independent Remediation Pass 7 — Stage 1 Core review (`docs/m8-remediation.md` §13, `docs/decisions/0042-m8-remediation-decisions.md` items 7–9, `docs/CLEAN_ROOM.md` §5.3; `Reviewer: 51f17dc6-f21c-4df8-9e60-d0e41af7ff2b`; review only, zero body edits): verified all `CLEAN_ROOM.md` §5.3 checklist items and the `docs/m8-remediation.md` §13 note ("up to `108` raw bytes (`0x0000006C`, or `106..108` bytes depending on `'='` padding) for a 144-character Base64 ticket or up to `135..192` raw bytes (`133..192` bytes depending on `'='` padding) for a `180..256`-character Base64 ticket" in §3.4 `L385`, §4.1 `L509`, §4.2 `L554`, and §4.2.1 `L561`); independently spot-checked against the user's install `lotro.launcherconfig` (UTF-8 BOM `EF BB BF` and all five `<add key="...">` keys), `client_general.dat`/`client_local_English.dat`/`client_gamelogic.dat` superblocks (`"BT\0\0"` magic at `0x140..0x143`, `0x170..0x173` = `0x28000000` in `client_general.dat`, identical 36-char uppercase GUID at `0x17C..0x18B`, `0x18C..0x18F` = `1100`), and `x64/lotroclient64.exe` (build `4906.0071.1794.4035`, SHA-256 `d22363eb9aff0fb599fd04b3efa9a1769d08da8af9d8f9b73121c12bfd7e21ee`) `.rsrc` `VS_VERSION_INFO` `StringFileInfo` `"CompatibiltyVersion"` (`"9386"`). Result: `Pass`; status set to `Accepted`. |

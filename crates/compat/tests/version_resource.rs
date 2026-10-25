@@ -6,7 +6,8 @@
 use std::path::Path;
 
 use tessera_compat::login::{
-    AskUserReason, LoginError, LoginFailureClass, NetworkVersionDiscovery, NetworkVersionQuery,
+    AskUserReason, DEFAULT_CLIENT_EXECUTABLES, DEFAULT_NETWORK_VERSION_KEYS, LoginError,
+    LoginFailureClass, MAX_NETWORK_VERSION_LEN, NetworkVersionDiscovery, NetworkVersionQuery,
     NetworkVersionSource, discover_network_version, is_valid_network_version,
     network_version_from_resource,
 };
@@ -315,6 +316,7 @@ fn user_value_wins_over_the_version_resource() {
     let exe = write_exe(dir.path());
     let found = discover_network_version(&NetworkVersionQuery {
         user_value: Some("  9.8.7.6 "),
+        install_root: None,
         client_executable: Some(&exe),
         resource_key: Some("SyntheticBuild"),
     });
@@ -333,12 +335,13 @@ fn invalid_user_value_asks_the_user_and_skips_the_resource() {
     let exe = write_exe(dir.path());
     for bad in [
         "has space",
-        "x".repeat(65).as_str(),
+        "x".repeat(25).as_str(),
         "tab\there",
         "non-ascii-é",
     ] {
         let outcome = discover_network_version(&NetworkVersionQuery {
             user_value: Some(bad),
+            install_root: None,
             client_executable: Some(&exe),
             resource_key: Some("SyntheticBuild"),
         });
@@ -358,6 +361,7 @@ fn empty_user_value_counts_as_not_supplied() {
         assert_eq!(
             discover_network_version(&NetworkVersionQuery {
                 user_value: Some(empty),
+                install_root: None,
                 client_executable: Some(&exe),
                 resource_key: Some("SyntheticBuild"),
             }),
@@ -375,7 +379,7 @@ fn empty_user_value_counts_as_not_supplied() {
             user_value: Some(" "),
             ..NetworkVersionQuery::default()
         }),
-        NetworkVersionDiscovery::AskUser(AskUserReason::NoResourceKey)
+        NetworkVersionDiscovery::AskUser(AskUserReason::NoExecutable)
     );
 }
 
@@ -385,6 +389,7 @@ fn resource_entry_named_by_the_caller_is_used() {
     let exe = write_exe(dir.path());
     let found = discover_network_version(&NetworkVersionQuery {
         user_value: None,
+        install_root: None,
         client_executable: Some(&exe),
         resource_key: Some("SyntheticBuild"),
     });
@@ -400,26 +405,38 @@ fn resource_entry_named_by_the_caller_is_used() {
 }
 
 #[test]
-fn no_default_key_and_every_gap_asks_the_user() {
+fn every_gap_asks_the_user() {
     let dir = tempfile::tempdir().unwrap();
     let exe = write_exe(dir.path());
 
-    // No key named: the resource is not consulted even though it exists.
+    // No key named: the two default keys are tried; this synthetic image has neither.
     assert_eq!(
         discover_network_version(&NetworkVersionQuery {
             user_value: None,
+            install_root: None,
             client_executable: Some(&exe),
             resource_key: None,
         }),
-        NetworkVersionDiscovery::AskUser(AskUserReason::NoResourceKey)
+        NetworkVersionDiscovery::AskUser(AskUserReason::ResourceEntryMissing {
+            key: "CompatibiltyVersion or CompatibilityVersion".to_owned()
+        })
     );
     assert_eq!(
         discover_network_version(&NetworkVersionQuery::default()),
-        NetworkVersionDiscovery::AskUser(AskUserReason::NoResourceKey)
+        NetworkVersionDiscovery::AskUser(AskUserReason::NoExecutable)
+    );
+    // An install root without either default executable.
+    assert_eq!(
+        discover_network_version(&NetworkVersionQuery {
+            install_root: Some(dir.path()),
+            ..NetworkVersionQuery::default()
+        }),
+        NetworkVersionDiscovery::AskUser(AskUserReason::NoExecutable)
     );
     assert_eq!(
         discover_network_version(&NetworkVersionQuery {
             user_value: None,
+            install_root: None,
             client_executable: None,
             resource_key: Some("SyntheticBuild"),
         }),
@@ -428,6 +445,7 @@ fn no_default_key_and_every_gap_asks_the_user() {
     assert_eq!(
         discover_network_version(&NetworkVersionQuery {
             user_value: None,
+            install_root: None,
             client_executable: Some(&exe),
             resource_key: Some("Missing"),
         }),
@@ -440,6 +458,7 @@ fn no_default_key_and_every_gap_asks_the_user() {
         assert_eq!(
             discover_network_version(&NetworkVersionQuery {
                 user_value: None,
+                install_root: None,
                 client_executable: Some(&exe),
                 resource_key: Some(key),
             }),
@@ -454,6 +473,7 @@ fn no_default_key_and_every_gap_asks_the_user() {
     std::fs::write(&garbage, b"MZ").unwrap();
     let outcome = discover_network_version(&NetworkVersionQuery {
         user_value: None,
+        install_root: None,
         client_executable: Some(&garbage),
         resource_key: Some("SyntheticBuild"),
     });
@@ -468,8 +488,11 @@ fn no_default_key_and_every_gap_asks_the_user() {
 #[test]
 fn network_version_validation_and_resource_lookup() {
     assert!(is_valid_network_version("1.2.3.4"));
-    assert!(is_valid_network_version(&"9".repeat(64)));
-    assert!(!is_valid_network_version(&"9".repeat(65)));
+    // official-login.md §2.4.1: 1 to 24 printable ASCII characters.
+    assert_eq!(MAX_NETWORK_VERSION_LEN, 24);
+    assert!(is_valid_network_version("9386"));
+    assert!(is_valid_network_version(&"9".repeat(24)));
+    assert!(!is_valid_network_version(&"9".repeat(25)));
     assert!(!is_valid_network_version(""));
     assert!(!is_valid_network_version("a;b c"));
 
@@ -497,4 +520,84 @@ fn version_resource_errors_map_to_config_invalid() {
     let err = LoginError::from(VersionResourceError::NoVersionResource);
     assert_eq!(err.failure_class(), LoginFailureClass::F02_CONFIG_INVALID);
     assert!(err.to_string().contains("version resource"));
+}
+
+/// A synthetic image whose string table holds `strings`.
+fn image_with(strings: &[(&str, &str)]) -> Vec<u8> {
+    pe_image(&resource_section(&version_info(strings), 16), true)
+}
+
+#[test]
+fn default_keys_and_executable_paths_follow_section_2_4_1() {
+    assert_eq!(
+        DEFAULT_NETWORK_VERSION_KEYS,
+        ["CompatibiltyVersion", "CompatibilityVersion"]
+    );
+    assert_eq!(
+        DEFAULT_CLIENT_EXECUTABLES,
+        ["x64/lotroclient64.exe", "lotroclient.exe"]
+    );
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let found = |version: &str, key: &str| NetworkVersionDiscovery::Found {
+        version: version.to_owned(),
+        source: NetworkVersionSource::VersionResource {
+            key: key.to_owned(),
+        },
+    };
+    let query = NetworkVersionQuery {
+        install_root: Some(root),
+        ..NetworkVersionQuery::default()
+    };
+
+    // Only the 32-bit client: it is the fallback, with the regular key spelling.
+    std::fs::write(
+        root.join("lotroclient.exe"),
+        image_with(&[("CompatibilityVersion", "1111")]),
+    )
+    .unwrap();
+    assert_eq!(
+        discover_network_version(&query),
+        found("1111", "CompatibilityVersion")
+    );
+
+    // The 64-bit client comes first; its key without the second `i` comes first too.
+    std::fs::create_dir(root.join("x64")).unwrap();
+    std::fs::write(
+        root.join("x64").join("lotroclient64.exe"),
+        image_with(&[
+            ("CompatibilityVersion", "2222"),
+            ("CompatibiltyVersion", "9386"),
+        ]),
+    )
+    .unwrap();
+    assert_eq!(
+        discover_network_version(&query),
+        found("9386", "CompatibiltyVersion")
+    );
+
+    // The first key present decides: an invalid value asks the user.
+    std::fs::write(
+        root.join("x64").join("lotroclient64.exe"),
+        image_with(&[("CompatibiltyVersion", &"9".repeat(25))]),
+    )
+    .unwrap();
+    assert_eq!(
+        discover_network_version(&query),
+        NetworkVersionDiscovery::AskUser(AskUserReason::ResourceEntryInvalid {
+            key: "CompatibiltyVersion".to_owned()
+        })
+    );
+
+    // A named executable and key override the defaults.
+    let exe = write_exe(root);
+    assert_eq!(
+        discover_network_version(&NetworkVersionQuery {
+            install_root: Some(root),
+            client_executable: Some(&exe),
+            resource_key: Some("SyntheticBuild"),
+            user_value: None,
+        }),
+        found("4321.0001.0002.0003", "SyntheticBuild")
+    );
 }

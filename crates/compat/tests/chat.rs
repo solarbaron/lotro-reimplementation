@@ -4,9 +4,11 @@
 //! end-to-end test drives the client against an in-process synthetic server over the
 //! session module's in-memory transport: no socket is opened.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, VecDeque};
 use std::net::{Ipv4Addr, SocketAddrV4};
+use std::sync::{Arc, Mutex};
 
+use tessera_compat::chat_session::client::TransportBinder;
 use tessera_compat::chat_session::events::{
     CHAT_REQUEST_OPCODES, ChatEvent, ChatRequest, is_chat_opcode,
 };
@@ -22,10 +24,12 @@ use tessera_compat::chat_session::{
 use tessera_compat::play::PlayError;
 use tessera_compat::session::{
     AUTH_FLAG_HAS_EXTRA_BLOB, ConnectChallengeHeader, DatagramHeader, InMemoryUdpTransport,
-    IsaacCipher, OptionalHeaders, SessionAuthPayload, decode_datagram, encode_datagram, split_blob,
+    IsaacCipher, OptionalHeaders, SessionAuthPayload, SessionError, UdpDatagramTransport,
+    decode_datagram, encode_datagram, split_blob,
 };
 use tessera_compat::world::{
-    EncodedPropertyTable, EncodedPropertyValue, PropertyType, WireReader, encode_blob_payload,
+    EncodedPropertyTable, EncodedPropertyValue, PropertyType, WireReader, WorldError,
+    encode_blob_payload,
 };
 use tessera_net::{ChatChannel, Command, Event, SocialCommand, SocialEvent};
 
@@ -164,15 +168,21 @@ fn descriptor_and_opcode_validation() {
 fn container_counts_are_bounded_before_allocation() {
     let mut b = vec![0xFF, 0xFF, 0xFF, 0x7F];
     b.extend([0u8; 8]);
+    let too_many = |r: Result<(), PlayError>| {
+        matches!(
+            r,
+            Err(PlayError::World(WorldError::CountExceedsRemaining { .. }))
+        )
+    };
     let mut r = WireReader::new(&b);
-    assert!(read_descriptor_list(&mut r).is_err());
+    assert!(too_many(read_descriptor_list(&mut r).map(|_| ())));
     let buf2 = hex("10 00 FF FF FF FF");
     let mut r = WireReader::new(&buf2);
-    assert!(U64ToU32Table::decode(&mut r).is_err());
+    assert!(too_many(U64ToU32Table::decode(&mut r).map(|_| ())));
     let buf3 = hex("FF FF 02 00 00 00 00 00 00 00");
     let mut r = WireReader::new(&buf3);
     assert!(
-        DescriptorSet::decode(&mut r).is_err(),
+        too_many(DescriptorSet::decode(&mut r).map(|_| ())),
         "2 descriptors need 8 bytes"
     );
     let buf4 = hex("FF FF 01 00 00 00 00 00 00 00");
@@ -591,7 +601,10 @@ fn base64_lengths() {
     assert_eq!(decode_base64("TWE=").expect("Ma"), b"Ma");
     assert_eq!(decode_base64("TWE").expect("Ma unpadded"), b"Ma");
     assert_eq!(decode_base64("TQ==").expect("M"), b"M");
-    for bad in ["T", "TQ=", "TQ===", "T=Q=", "TW u", "TWE*"] {
+    // "TR==" and "TWF=" carry non-zero pad bits: not canonical (RFC 4648 §3.5).
+    for bad in [
+        "T", "TQ=", "TQ===", "T=Q=", "TW u", "TWE*", "TR==", "TWF=", "TWF",
+    ] {
         assert_eq!(decode_base64(bad), Err(PlayError::InvalidTicket), "{bad}");
     }
     // A 144-character ticket decodes to 106..=108 bytes depending on padding.
@@ -633,7 +646,7 @@ fn login_gate_heartbeat_and_drop() {
     let mut s = ChatSessionState::new(0.0);
     assert_eq!(s.tick(0.5), None, "initial delay 1 s");
     assert_eq!(s.tick(1.0), Some(ChatAction::Connect));
-    assert_eq!(s.phase(), ChatPhase::Connecting);
+    assert_eq!(s.phase(), ChatPhase::Connecting { since: 1.0 });
     s.on_transport_connected(2.0);
     assert!(!s.is_ready(), "State 5 alone is not ready");
     // A refused login: retry after the initial policy's 30 s.
@@ -660,6 +673,11 @@ fn login_gate_heartbeat_and_drop() {
     s.on_transport_connected(132.0);
     assert_eq!(s.tick(152.0), None);
     assert_eq!(s.tick(152.5), Some(ChatAction::Disconnect));
+    // A transport handshake that never finishes times out the same way.
+    assert_eq!(s.tick(162.5), Some(ChatAction::Connect));
+    assert_eq!(s.tick(182.5), None);
+    assert_eq!(s.tick(182.6), Some(ChatAction::Disconnect));
+    assert!(matches!(s.phase(), ChatPhase::Waiting { .. }));
     s.close();
     assert_eq!(s.tick(1000.0), None);
 }
@@ -713,6 +731,26 @@ impl FakeServer {
         .expect("challenge")
     }
 
+    /// A transport-level datagram without blobs: unsequenced, acknowledging `ack` when
+    /// given. It keeps the session alive without being a chat event.
+    fn keepalive(&self, ack: Option<u32>) -> Vec<u8> {
+        encode_datagram(
+            DatagramHeader {
+                rec_id: 0x0111,
+                seq_num: self.seq,
+                ..DatagramHeader::default()
+            },
+            &OptionalHeaders {
+                cumulative_ack: ack,
+                ..OptionalHeaders::default()
+            },
+            &[],
+            None,
+            None,
+        )
+        .expect("keepalive")
+    }
+
     fn event(&mut self, ev: &ChatEvent) -> Vec<u8> {
         let inner = ev.encode().expect("event");
         self.blob(ev.opcode(), &inner)
@@ -746,6 +784,16 @@ impl FakeServer {
         )
         .expect("datagram")
     }
+}
+
+/// Whether any datagram the client sent since the last call carries `Disconnect`.
+fn sent_disconnect(client: &mut ChatClient<InMemoryUdpTransport>) -> bool {
+    let mut seen = false;
+    while let Some((dgram, _)) = client.transport_mut().pop_outbound() {
+        let pkt = decode_datagram(&dgram, false, None, false).expect("client datagram");
+        seen |= pkt.opt_headers.disconnect;
+    }
+    seen
 }
 
 /// Every blob the client sent since the last call: `(recipient, opcode, inner payload)`.
@@ -930,9 +978,51 @@ fn chat_client_end_to_end() {
     assert!(polled.events.is_empty());
     assert_eq!(client.counters().admin_ignored, 1);
 
-    // 15 s without events: a heartbeat (0x17E, payload 0x00).
+    // A room message for a nameless room with ID 0 is not guessed by ID, even when a
+    // room kept with ID 0 is known.
+    let created = server.event(&ChatEvent::CreateRoomResp {
+        ctx_id: 999,
+        status: 0,
+        room_name: "Zero".into(),
+    });
+    client.transport_mut().push_inbound(created, SERVER);
+    let polled = client.poll(2.35, &schema).expect("poll");
+    assert_eq!(
+        polled.events,
+        vec![Event::Social(SocialEvent::ChannelJoined {
+            channel: "Zero".into()
+        })]
+    );
+    let nameless = ChatMessagePayload::text(
+        ChatRoomDescriptor::new(DescriptorKind::Entity, 9, "Bob"),
+        "lost",
+    )
+    .to_bytes()
+    .expect("payload");
+    let recv = server.event(&ChatEvent::RecvDataFromRoom {
+        recv_flags: 0,
+        sender: ChatRoomDescriptor::new(DescriptorKind::Entity, 9, "Bob"),
+        room: ChatRoomDescriptor::new(DescriptorKind::UserRoom, 0, ""),
+        msg_type: MSG_TYPE_CHAT,
+        data: nameless,
+        is_echo: false,
+    });
+    client.transport_mut().push_inbound(recv, SERVER);
+    let polled = client.poll(2.4, &schema).expect("poll");
+    assert!(polled.events.is_empty());
+    assert_eq!(client.counters().unmapped_messages, 1);
+
+    // A blob that fails to decode still counts as received (§6.6.3 rule 1).
+    let junk = server.blob(0x179, &[0x00]);
+    client.transport_mut().push_inbound(junk, SERVER);
+    client.poll(10.0, &schema).expect("poll");
+    assert_eq!(client.counters().decode_errors, 1);
     let _ = sent_blobs(&mut client);
     client.poll(17.4, &schema).expect("poll");
+    assert_eq!(client.counters().heartbeats, 0, "idle since 10.0 only");
+
+    // 15 s without events: a heartbeat (0x17E, payload 0x00).
+    client.poll(25.1, &schema).expect("poll");
     let blobs = sent_blobs(&mut client);
     assert!(
         blobs
@@ -941,13 +1031,221 @@ fn chat_client_end_to_end() {
     );
     assert_eq!(client.counters().heartbeats, 1);
 
-    // 60 s without events while the heartbeat is outstanding: dropped, reconnect in 10 s.
-    client.poll(62.4, &schema).expect("poll");
+    // 60 s without chat events while the heartbeat is outstanding. The transport is kept
+    // alive (and the heartbeat acknowledged) by blob-free datagrams, so only the chat-level
+    // drop rule can fire: the session is still connected and gets a graceful Disconnect.
+    for t in [40.0, 65.0] {
+        client
+            .transport_mut()
+            .push_inbound(server.keepalive(Some(10_000)), SERVER);
+        client.poll(t, &schema).expect("poll");
+        assert!(
+            client.is_ready(),
+            "transport alive, no chat event: still ready"
+        );
+    }
+    let _ = sent_blobs(&mut client);
+    client.poll(70.2, &schema).expect("poll");
     assert!(!client.is_ready());
-    assert!(matches!(client.phase(), ChatPhase::Waiting { .. }));
+    assert_eq!(client.counters().disconnects, 1);
+    assert!(
+        sent_disconnect(&mut client),
+        "Disconnect flushed before the drop"
+    );
+    let ChatPhase::Waiting { until } = client.phase() else {
+        panic!("expected a scheduled reconnect, got {:?}", client.phase());
+    };
+    assert!((until - 80.2).abs() < 1e-9, "reconnect policy: 10 s");
+    client.poll(until, &schema).expect("poll");
+    assert_eq!(client.counters().connects, 2);
+}
+
+// ---------------------------------------------------------------------------
+// Reconnects bind a fresh socket; the old session flushes its Disconnect on its own
+// ---------------------------------------------------------------------------
+
+/// Sockets of the test network: per socket an inbound queue, and one log of sent
+/// datagrams with the sending socket's index.
+#[derive(Debug, Default)]
+struct Net {
+    inbound: Vec<VecDeque<(Vec<u8>, SocketAddrV4)>>,
+    sent: Vec<(usize, Vec<u8>)>,
+    fail_binds: bool,
+}
+
+#[derive(Debug)]
+struct NetSocket {
+    index: usize,
+    net: Arc<Mutex<Net>>,
+}
+
+impl UdpDatagramTransport for NetSocket {
+    fn local_addr(&self) -> Result<SocketAddrV4, SessionError> {
+        let port = u16::try_from(9100 + self.index).unwrap_or(9100);
+        Ok(SocketAddrV4::new(Ipv4Addr::LOCALHOST, port))
+    }
+
+    fn send_to(&mut self, buf: &[u8], _target: SocketAddrV4) -> Result<usize, SessionError> {
+        let mut net = self.net.lock().expect("net");
+        net.sent.push((self.index, buf.to_vec()));
+        Ok(buf.len())
+    }
+
+    fn recv_from(&mut self, buf: &mut [u8]) -> Result<Option<(usize, SocketAddrV4)>, SessionError> {
+        let mut net = self.net.lock().expect("net");
+        let Some((data, src)) = net
+            .inbound
+            .get_mut(self.index)
+            .and_then(VecDeque::pop_front)
+        else {
+            return Ok(None);
+        };
+        buf[..data.len()].copy_from_slice(&data);
+        Ok(Some((data.len(), src)))
+    }
+}
+
+fn net_binder(net: &Arc<Mutex<Net>>) -> TransportBinder<NetSocket> {
+    let net = Arc::clone(net);
+    Box::new(move || {
+        let mut n = net.lock().expect("net");
+        if n.fail_binds {
+            return Err(PlayError::InvalidEndpoint("bind refused".into()));
+        }
+        n.inbound.push(VecDeque::new());
+        Ok(NetSocket {
+            index: n.inbound.len() - 1,
+            net: Arc::clone(&net),
+        })
+    })
+}
+
+fn push(net: &Arc<Mutex<Net>>, socket: usize, dgram: Vec<u8>) {
+    net.lock().expect("net").inbound[socket].push_back((dgram, SERVER));
+}
+
+/// The sent datagrams since the last call, decoded: `(socket, packet)`.
+fn sent(net: &Arc<Mutex<Net>>) -> Vec<(usize, tessera_compat::session::DecodedPacket)> {
+    let mut n = net.lock().expect("net");
+    std::mem::take(&mut n.sent)
+        .into_iter()
+        .map(|(i, d)| {
+            (
+                i,
+                decode_datagram(&d, false, None, false).expect("datagram"),
+            )
+        })
+        .collect()
+}
+
+#[test]
+fn reconnect_binds_a_fresh_socket_and_flushes_the_old_disconnect() {
+    let net = Arc::new(Mutex::new(Net::default()));
+    let config = ChatConfig::new(SERVER, "acct", None, 0);
+    let mut client = ChatClient::with_binder(net_binder(&net), config, None, 0.0).expect("client");
+    let schema = no_schema();
+    let mut server = FakeServer::new();
+
+    client.poll(1.0, &schema).expect("poll");
+    assert!(
+        sent(&net).iter().all(|(i, _)| *i == 0),
+        "socket 0 for attempt 1"
+    );
+    push(&net, 0, FakeServer::challenge());
+    client.poll(1.1, &schema).expect("poll");
+    let login = server.event(&ChatEvent::LoginStatus { status: 0 });
+    push(&net, 0, login);
+    client.poll(1.2, &schema).expect("poll");
+    assert!(client.is_ready());
+
+    // The heartbeat at 16.3 stays unacknowledged; blob-free datagrams keep the transport
+    // alive without acknowledging it.
+    client.poll(16.3, &schema).expect("poll");
+    assert_eq!(client.counters().heartbeats, 1);
+    for t in [30.0, 55.0] {
+        push(&net, 0, server.keepalive(None));
+        client.poll(t, &schema).expect("poll");
+    }
+    let _ = sent(&net);
+    // The chat-level drop: the old connection still has a reliable packet to flush, so
+    // it keeps socket 0 while a fresh socket is bound for the next attempt.
+    client.poll(61.3, &schema).expect("poll");
+    assert!(!client.is_ready());
+    assert_eq!(client.counters().disconnects, 1);
+    assert_eq!(client.draining_len(), 1);
+    // Once the server acknowledges, the old session sends its Disconnect on socket 0.
+    push(&net, 0, server.keepalive(Some(10_000)));
+    client.poll(62.0, &schema).expect("poll");
+    let out = sent(&net);
+    assert!(
+        out.iter().any(|(i, p)| *i == 0 && p.opt_headers.disconnect),
+        "Disconnect on the old socket"
+    );
+    assert!(out.iter().all(|(i, _)| *i == 0));
+
+    // The next attempt authenticates on socket 1; stale traffic on socket 0 never reaches
+    // it.
+    let ChatPhase::Waiting { until } = client.phase() else {
+        panic!("expected a scheduled reconnect");
+    };
+    push(&net, 0, server.keepalive(None));
+    client.poll(until, &schema).expect("poll");
+    let out = sent(&net);
+    assert!(
+        out.iter()
+            .any(|(i, p)| *i == 1 && p.opt_headers.session_auth.is_some()),
+        "SessionAuth on the fresh socket"
+    );
+    assert!(
+        !out.iter()
+            .any(|(i, p)| *i == 0 && p.opt_headers.session_auth.is_some())
+    );
+    assert_eq!(client.counters().connects, 2);
+    // The old connection is let go once the session layer is done with it.
+    client.poll(until + 46.0, &schema).expect("poll");
+    assert_eq!(client.draining_len(), 0);
+}
+
+#[test]
+fn a_failed_connection_attempt_schedules_a_retry() {
+    let net = Arc::new(Mutex::new(Net::default()));
+    let config = ChatConfig::new(SERVER, "acct", None, 0);
+    let mut client = ChatClient::with_binder(net_binder(&net), config, None, 0.0).expect("client");
+    let schema = no_schema();
+    client.poll(1.0, &schema).expect("poll");
+    assert!(matches!(client.phase(), ChatPhase::Connecting { .. }));
+    // No server answers: the handshake times out and a retry is scheduled.
+    client.poll(21.5, &schema).expect("poll");
+    let ChatPhase::Waiting { until } = client.phase() else {
+        panic!("expected a retry, got {:?}", client.phase());
+    };
+    // The next attempt cannot bind a socket: counted, and a retry is scheduled again
+    // instead of hanging in Connecting.
+    net.lock().expect("net").fail_binds = true;
+    client.poll(until, &schema).expect("poll");
+    assert_eq!(client.counters().connect_failures, 1);
+    assert!(
+        matches!(client.phase(), ChatPhase::Waiting { until: next } if next > until),
+        "{:?}",
+        client.phase()
+    );
+    // Binding works again: the following attempt connects.
+    net.lock().expect("net").fail_binds = false;
     let ChatPhase::Waiting { until } = client.phase() else {
         unreachable!()
     };
     client.poll(until, &schema).expect("poll");
+    assert!(matches!(client.phase(), ChatPhase::Connecting { .. }));
     assert_eq!(client.counters().connects, 2);
+}
+
+#[test]
+fn set_ticket_validates() {
+    let mut config = ChatConfig::new(SERVER, "acct", Some("AAEC".into()), 0);
+    assert_eq!(
+        config.set_ticket(Some("not base64!".into())),
+        Err(PlayError::InvalidTicket)
+    );
+    assert_eq!(config.set_ticket(Some("AAEF".into())), Ok(()));
+    assert_eq!(config.set_ticket(None), Ok(()));
 }

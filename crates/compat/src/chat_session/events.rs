@@ -346,7 +346,29 @@ impl ChatRequest {
     /// The correlation ID; `None` for `0x171` and `0x17E`.
     #[must_use]
     pub fn ctx_id(&self) -> Option<u32> {
-        self.clone().ctx_slot().map(|c| *c)
+        match self {
+            Self::GetRoomList | Self::Heartbeat => None,
+            Self::SendDataToName { ctx_id, .. }
+            | Self::UpdateRoomFlags { ctx_id, .. }
+            | Self::SetRoomParam { ctx_id, .. }
+            | Self::RoomAction { ctx_id, .. }
+            | Self::SendDataToRoom { ctx_id, .. }
+            | Self::InviteToRoom { ctx_id, .. }
+            | Self::CreateRoom { ctx_id, .. }
+            | Self::DestroyRoom { ctx_id, .. }
+            | Self::QueryBuddyList { ctx_id, .. }
+            | Self::BatchRoomOp { ctx_id, .. }
+            | Self::RoomEnter { ctx_id, .. }
+            | Self::ModifySubscription { ctx_id, .. }
+            | Self::QueryRoom { ctx_id, .. }
+            | Self::QueryRoomInfo { ctx_id, .. }
+            | Self::ChangePassword { ctx_id, .. }
+            | Self::SetRoomLeader { ctx_id, .. }
+            | Self::KickFromRoom { ctx_id, .. }
+            | Self::SendDataToEntity { ctx_id, .. }
+            | Self::RoomLeave { ctx_id, .. }
+            | Self::QueryTracker { ctx_id, .. } => Some(*ctx_id),
+        }
     }
 
     /// Sets the correlation ID (no effect on `0x171` and `0x17E`).

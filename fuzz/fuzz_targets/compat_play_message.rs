@@ -7,6 +7,7 @@
 use std::collections::BTreeMap;
 
 use libfuzzer_sys::fuzz_target;
+use tessera_compat::play::OutgoingEvent;
 use tessera_compat::play::adapter::PlayAdapter;
 use tessera_compat::play::chat::{ChatCategories, LiteralTexts, UiPropertyEvent};
 use tessera_compat::play::inbound::{PLAY_OPCODES, decode_play_message};
@@ -56,6 +57,11 @@ fuzz_target!(|data: &[u8]| {
         if let Ok(Some(msg)) = decode_play_message(op, player, data, &schema) {
             let _ = adapter.handle(&msg, &LiteralTexts);
         }
+    }
+
+    // The outgoing-event gate (admin messages are refused, decision 0042 item 2).
+    for op in [0x30u32, 0x24, 0xF4, 0x3000_0045] {
+        let _ = OutgoingEvent::new(op, data.to_vec());
     }
 
     // Direct decoders, and re-encoding of what decodes.

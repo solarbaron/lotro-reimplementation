@@ -132,6 +132,28 @@ pub enum PlayError {
     /// No known chat room has this name.
     #[error("no joined chat room is named {0:?}")]
     UnknownRoom(String),
+    /// An admin or game-master message, which Tessera never sends (decision 0042 item 2):
+    /// the opcode `0x30000045` or the RPC `0x84EC002C`.
+    #[error("0x{0:08X} is an admin message and is never sent")]
+    AdminMessageRefused(u32),
+    /// A `0xCC` acknowledges a step the client has not made yet (§4.3.2; serial-number
+    /// comparison, engineering choice: the spec says nothing about such an ack).
+    #[error("acknowledged step {ack} is ahead of the newest step {newest}")]
+    AckAheadOfSequence {
+        /// The acknowledged step.
+        ack: u32,
+        /// The newest step made.
+        newest: u32,
+    },
+    /// A Type 22 bitfield whose byte count does not match its bit count
+    /// (`official-messages-world.md` §2.7.1).
+    #[error("a bitfield of {bit_count} bits does not match its {bytes} bytes")]
+    BitfieldMismatch {
+        /// The bit count.
+        bit_count: u32,
+        /// The bytes given.
+        bytes: usize,
+    },
 }
 
 /// Number of UTF-16 code units of `text`, the unit of the limits of §6.2.
@@ -158,10 +180,51 @@ pub fn check_units(text: &str, max: usize) -> Result<(), PlayError> {
 /// (`official-messages-world.md` §1.1.1–§1.1.2). The connector wraps it with
 /// `envelopeFlags = 0x00` (`crate::world::encode_blob_payload`) and sends it as a
 /// fragmented blob.
+///
+/// The fields are private so that every value passes [`Self::new`], which refuses the
+/// out-of-scope admin messages (decision 0042 item 2): the admin text notice
+/// `0x30000045` and a `0x30` envelope carrying the admin RPC `0x84EC002C`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OutgoingEvent {
+    opcode: u32,
+    payload: Vec<u8>,
+}
+
+impl OutgoingEvent {
+    /// An event to send.
+    ///
+    /// # Errors
+    ///
+    /// [`PlayError::AdminMessageRefused`] for opcode `0x30000045`, or for a `0x30`
+    /// payload whose `function_id` (inner offset `0x01`, §5.2) is `0x84EC002C`.
+    pub fn new(opcode: u32, payload: Vec<u8>) -> Result<Self, PlayError> {
+        if opcode == chat::OPCODE_ADMIN_TEXT_NOTICE {
+            return Err(PlayError::AdminMessageRefused(opcode));
+        }
+        if opcode == rpc::OPCODE_SCRIPT_RPC
+            && let Some(id) = payload.get(1..5).and_then(|b| <[u8; 4]>::try_from(b).ok())
+            && u32::from_le_bytes(id) == rpc::FN_ADMIN_TELL
+        {
+            return Err(PlayError::AdminMessageRefused(rpc::FN_ADMIN_TELL));
+        }
+        Ok(Self { opcode, payload })
+    }
+
     /// The event ID (`blobHeaderWord`).
-    pub opcode: u32,
+    #[must_use]
+    pub fn opcode(&self) -> u32 {
+        self.opcode
+    }
+
     /// The inner payload.
-    pub payload: Vec<u8>,
+    #[must_use]
+    pub fn payload(&self) -> &[u8] {
+        &self.payload
+    }
+
+    /// The opcode and the inner payload.
+    #[must_use]
+    pub fn into_parts(self) -> (u32, Vec<u8>) {
+        (self.opcode, self.payload)
+    }
 }

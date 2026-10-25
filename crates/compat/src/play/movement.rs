@@ -2,8 +2,9 @@
 //! Player movement and remote entity motion (`docs/specs/official-messages-play.md` §4).
 //!
 //! - [`MovementSender`]: the monotonic step counter, the 4-step rolling window of `0x24`
-//!   (§4.1–§4.2) and the step history that `0xCC` acknowledgements reconcile against
-//!   (§4.3.2).
+//!   (§4.1–§4.2, a ring of the last four steps) and, apart from it, the step history that
+//!   `0xCC` acknowledgements reconcile against (§4.3.2). An acknowledgement prunes and a
+//!   teleport clears only the history, never the window.
 //! - [`TeleportSync`]: the modulo-256 teleport stamp state machine (§4.5).
 //! - [`ServerSetPosition`] (`0xBF`, §4.4.2), [`EntitySplinePath`] (`0x59`, §4.6.1),
 //!   [`MotionControllerUpdate`] (`0xED`, §4.6.2) and [`AnimLayerState`] (`0xBD`, §4.6.3).
@@ -34,15 +35,24 @@ pub const OPCODE_ENTITY_ANIM_LAYER_STATE: u32 = 0x0000_00BD;
 
 /// Nominal step interval while moving: 20 Hz (§4.2 item 1).
 pub const STEP_INTERVAL_SEC: f64 = 0.05;
-/// Steps of history kept for reconciliation. The spec gives no capacity (it was removed
-/// as client-internal); engineering choice.
+/// Slack when testing whether a periodic step is due, so that frame times that land on
+/// the 50 ms grid up to rounding are not a frame late. Engineering choice, spec silent.
+pub const STEP_TIME_EPSILON_SEC: f64 = 1e-6;
+/// Steps in the rolling window of `0x24` (§4.1 item 2).
+pub const WINDOW_STEPS: usize = 4;
+/// Steps of history kept for reconciliation. The spec gives no capacity; engineering
+/// choice.
 pub const STEP_HISTORY_CAP: usize = 256;
 /// Largest coordinate magnitude of `0xBF` and `0xCE`, metres (§4.4.2, §9.1 rule 4).
 pub const MAX_COORDINATE_M: f32 = 100_000.0;
-/// Most waypoints accepted in one `0x59` path (engineering cap; the spec bounds the count
-/// only by the remaining bytes).
+/// Most waypoints accepted in one `0x59` path. Engineering choice, spec silent (it bounds
+/// the count only by the remaining bytes).
 pub const MAX_WAYPOINTS: usize = 1024;
-/// Most animation layers accepted in one `0xBD` event (engineering cap).
+/// Smallest wire size of one `0x59` waypoint: a `Full wire Position` is 1 to 36 bytes
+/// (§3.1), so the count check of §4.6.1 (`M <= remaining_bytes`) is the tightest bound the
+/// spec allows; a 1-byte position (only `flags`) is valid on the wire.
+pub const MIN_WAYPOINT_BYTES: usize = 1;
+/// Most animation layers accepted in one `0xBD` event. Engineering choice, spec silent.
 pub const MAX_ANIM_LAYERS: usize = 256;
 
 // ---------------------------------------------------------------------------
@@ -96,8 +106,13 @@ pub fn wire_location(pos: &WirePosition) -> Option<(Location, Option<Anchor>)> {
 }
 
 /// Tessera's heading (radians, 0 = +X, counter-clockwise, `(-π, π]`) of a quantized wire
-/// heading, reading the wire angle as the yaw ψ of `coordinates.md` §11.3 (0 = facing
-/// north, counter-clockwise). See the OPEN on this reading in the module's report.
+/// heading (`official-messages-world.md` §2.5.2).
+///
+/// The play and world specs give the wire angle in radians but not its zero direction or
+/// sense. This reads it as the yaw ψ of `coordinates.md` §11.3 (0 = facing north, +Y,
+/// counter-clockwise seen from above), so Tessera's heading is the wire angle plus π/2.
+/// An engineering reading, spec silent, pending a spec answer; only this function and
+/// its use in the reconciliation tolerance depend on it.
 #[must_use]
 pub fn wire_heading(raw: u8) -> f32 {
     wrap_pi(decode_heading_u8(raw) + std::f32::consts::FRAC_PI_2)
@@ -204,7 +219,7 @@ struct StepRecord {
 }
 
 /// Spatial tolerance of an acknowledgement (§4.3.2 item 2). The spec gives no values;
-/// [`Self::default`] is an engineering choice.
+/// [`Self::default`] is an engineering choice, spec silent.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ReconcileTolerance {
     /// Largest accepted distance, metres.
@@ -214,7 +229,7 @@ pub struct ReconcileTolerance {
 }
 
 impl Default for ReconcileTolerance {
-    /// 0.5 m and two heading quanta (2 · 2π / 256).
+    /// 0.5 m and two heading quanta (2 · 2π / 256); engineering choice, spec silent.
     fn default() -> Self {
         Self {
             distance_m: 0.5,
@@ -243,9 +258,27 @@ pub enum Reconciliation {
         heading: f32,
         /// The linear velocity components of the event (zero when absent).
         velocity: [f32; 3],
+        /// The angular velocity components of the event (zero when absent).
+        angular_velocity: [f32; 3],
+        /// The movement mode byte.
+        movement_mode: u8,
+        /// The state schema of the boolean and enum values (`official-messages-world.md`
+        /// §4.3.1).
+        state_schema_id: u32,
+        /// The boolean state values to apply, in schema order.
+        bool_states: Vec<bool>,
+        /// The enum state values to apply, in schema order.
+        enum_states: Vec<u32>,
         /// The unacknowledged steps to re-apply, oldest first.
         replay: Vec<StepInput>,
     },
+}
+
+/// Whether step `a` comes after step `b` under 32-bit serial-number arithmetic
+/// (RFC 1982 style; engineering choice for the wrap of the `u32` counter, spec silent).
+#[must_use]
+pub fn step_after(a: u32, b: u32) -> bool {
+    a != b && a.wrapping_sub(b) < 0x8000_0000
 }
 
 /// The local player's movement step window and history (§4.1–§4.3).
@@ -253,6 +286,9 @@ pub enum Reconciliation {
 pub struct MovementSender {
     entity_id: u64,
     seq: u32,
+    /// The last [`WINDOW_STEPS`] steps `(seq, input)`, oldest first: the `0x24` window.
+    ring: VecDeque<(u32, StepInput)>,
+    /// The unacknowledged steps with their predictions, for reconciliation.
     history: VecDeque<StepRecord>,
     last_sent: Option<StepInput>,
     last_step_time: f64,
@@ -265,6 +301,7 @@ impl MovementSender {
         Self {
             entity_id,
             seq: 0,
+            ring: VecDeque::with_capacity(WINDOW_STEPS),
             history: VecDeque::new(),
             last_sent: None,
             last_step_time: f64::NEG_INFINITY,
@@ -284,10 +321,13 @@ impl MovementSender {
     }
 
     /// Feeds the input of this frame. A new step is made, and its `0x24` returned, when the
-    /// input changed or, while moving, when [`STEP_INTERVAL_SEC`] has passed since the last
-    /// step (§4.1 item 1, §4.2 item 1). `stamp` is the current teleport stamp echoed in
-    /// `header_byte` (§4.2 item 3); `predicted` is the client's predicted state after the
-    /// step, kept for reconciliation.
+    /// input changed or, while moving, when the next 20 Hz tick is due (§4.1 item 1, §4.2
+    /// item 1). Periodic steps keep an exact 50 ms grid: the tick time advances by
+    /// [`STEP_INTERVAL_SEC`] and is reset to `now` only when the caller fell more than one
+    /// interval behind (no burst of catch-up steps); an input change starts a new grid at
+    /// `now`. `stamp` is the current teleport stamp echoed in `header_byte` (§4.2 item 3);
+    /// `predicted` is the client's predicted state after the step, kept for
+    /// reconciliation.
     pub fn update(
         &mut self,
         input: MovementInput,
@@ -297,11 +337,24 @@ impl MovementSender {
     ) -> Option<ClientMoveCommand> {
         let step = StepInput::from_input(input);
         let changed = self.last_sent != Some(step);
-        let due = step.is_moving() && now - self.last_step_time >= STEP_INTERVAL_SEC;
+        let due = step.is_moving()
+            && now - self.last_step_time >= STEP_INTERVAL_SEC - STEP_TIME_EPSILON_SEC;
         if !changed && !due {
             return None;
         }
+        if changed {
+            self.last_step_time = now;
+        } else {
+            self.last_step_time += STEP_INTERVAL_SEC;
+            if now - self.last_step_time >= STEP_INTERVAL_SEC - STEP_TIME_EPSILON_SEC {
+                self.last_step_time = now;
+            }
+        }
         self.seq = self.seq.wrapping_add(1);
+        if self.ring.len() >= WINDOW_STEPS {
+            self.ring.pop_front();
+        }
+        self.ring.push_back((self.seq, step));
         if self.history.len() >= STEP_HISTORY_CAP {
             self.history.pop_front();
         }
@@ -311,26 +364,28 @@ impl MovementSender {
             predicted,
         });
         self.last_sent = Some(step);
-        self.last_step_time = now;
         Some(self.window(stamp))
     }
 
-    /// The `0x24` of the current window (§4.1 item 2, §4.2 item 2): slots `0..=3` carry the
-    /// steps `max(seq − 3 + k, 0)`; `slot_flags` bits under mask `0xEE` and `trailer_u32`
-    /// are sent as `0` (`official-messages-world.md` §5.5 OPEN).
+    /// The `0x24` of the current window (§4.1 item 2, §4.2 item 2): slot `k` carries step
+    /// `max(seq − 3 + k, 0)` from the ring of the last four steps. A slot for step `0`
+    /// (before the first step) or for a step not in the ring is [`StepInput::default`].
+    /// `slot_flags` bits under mask `0xEE` and `trailer_u32` are sent as `0`
+    /// (`official-messages-world.md` §5.5).
     #[must_use]
     pub fn window(&self, stamp: u8) -> ClientMoveCommand {
-        let fallback = self.last_sent.unwrap_or_default();
         let mut move_state = [0u8; 4];
         let mut axes = [[0u8; 4]; 3];
         for k in 0..4u32 {
             let seq = self.seq.saturating_sub(3 - k);
-            let step = self
-                .history
-                .iter()
-                .rev()
-                .find(|r| r.seq == seq)
-                .map_or(fallback, |r| r.input);
+            let step = if seq == 0 {
+                StepInput::default()
+            } else {
+                self.ring
+                    .iter()
+                    .find(|(s, _)| *s == seq)
+                    .map_or_else(StepInput::default, |(_, i)| *i)
+            };
             let i = k as usize;
             if let Some(m) = move_state.get_mut(i) {
                 *m = step.move_state;
@@ -355,23 +410,32 @@ impl MovementSender {
         )
     }
 
-    /// Drops every unacknowledged step after a teleport was accepted (§4.5 item 3).
+    /// Drops every unacknowledged step after a teleport was accepted (§4.5 item 3). The
+    /// `0x24` window is kept: it reports the last steps made, acknowledged or not.
     pub fn discard_history(&mut self) {
         self.history.clear();
     }
 
-    /// Reconciles a `0xCC` acknowledgement of `ack_step_seq` (§4.3.2).
+    /// Reconciles a `0xCC` acknowledgement of `ack_step_seq` (§4.3.2). Step numbers are
+    /// compared as serial numbers ([`step_after`]), so the wrap of the counter is handled.
     ///
     /// # Errors
     ///
-    /// [`PlayError::BadCoordinate`] when the authoritative position is not a valid
-    /// location.
+    /// [`PlayError::AckAheadOfSequence`] when the ack is after the newest step made (the
+    /// history is left as it was), or [`PlayError::BadCoordinate`] when the authoritative
+    /// position is not a valid location.
     pub fn reconcile(
         &mut self,
         placement: &PortalPlacement,
         tolerance: ReconcileTolerance,
     ) -> Result<Reconciliation, PlayError> {
         let ack = placement.sequence_or_reason;
+        if step_after(ack, self.seq) {
+            return Err(PlayError::AckAheadOfSequence {
+                ack,
+                newest: self.seq,
+            });
+        }
         let (location, anchor) = wire_location(&placement.position)
             .ok_or(PlayError::BadCoordinate("authoritative position"))?;
         let heading = wire_heading(placement.heading_raw);
@@ -386,7 +450,7 @@ impl MovementSender {
                 && angle_diff(p.heading, heading) <= tolerance.heading_rad
         });
         // Steps up to and including `ack` are acknowledged (item 1).
-        self.history.retain(|r| r.seq > ack);
+        self.history.retain(|r| step_after(r.seq, ack));
         if within {
             return Ok(Reconciliation::Accepted { ack });
         }
@@ -401,6 +465,11 @@ impl MovementSender {
             anchor,
             heading,
             velocity: placement.linear_velocity,
+            angular_velocity: placement.angular_velocity,
+            movement_mode: placement.movement_mode,
+            state_schema_id: placement.state_schema_id,
+            bool_states: placement.bool_states.clone(),
+            enum_states: placement.enum_states.clone(),
             replay,
         })
     }
@@ -691,7 +760,7 @@ impl EntitySplinePath {
         };
         let waypoints = if path_flags & 0x0001 != 0 {
             let count = reader.read_u32_le()? as usize;
-            reader.ensure_count(count, 1)?;
+            reader.ensure_count(count, MIN_WAYPOINT_BYTES)?;
             if count > MAX_WAYPOINTS {
                 return Err(PlayError::TooMany {
                     what: "path waypoints",
@@ -865,8 +934,8 @@ impl AnimLayerState {
     ///
     /// # Errors
     ///
-    /// [`PlayError`] when a layer's bitfield length does not match its bit count, or a
-    /// wire error.
+    /// [`PlayError::BitfieldMismatch`] when a layer's bitfield length does not match its
+    /// bit count, or a wire error.
     pub fn encode(&self, writer: &mut WireWriter) -> Result<(), PlayError> {
         if self.layers.len() > MAX_ANIM_LAYERS {
             return Err(PlayError::TooMany {
@@ -882,9 +951,9 @@ impl AnimLayerState {
             writer.write_vle4(layer.action_seq);
             layer.action.encode(writer)?;
             if layer.bits.len() != (layer.bit_count as usize).div_ceil(8) {
-                return Err(PlayError::TooMany {
-                    what: "bitfield bytes",
-                    max: (layer.bit_count as usize).div_ceil(8),
+                return Err(PlayError::BitfieldMismatch {
+                    bit_count: layer.bit_count,
+                    bytes: layer.bits.len(),
                 });
             }
             writer.write_vle3(layer.bit_count)?;
@@ -917,11 +986,16 @@ impl AnimLayerState {
             let action_did = CompactDid::decode(reader)?;
             let action_seq = reader.read_vle4()?;
             let action = ActionPayload::decode(reader, schema)?;
-            let EncodedPropertyValue::Bitfield { bit_count, bytes } =
-                EncodedPropertyValue::decode(reader, PropertyType::Bitfield, schema)?
-            else {
-                return Err(PlayError::UnsupportedCommand("bitfield"));
-            };
+            let (bit_count, bytes) =
+                match EncodedPropertyValue::decode(reader, PropertyType::Bitfield, schema)? {
+                    EncodedPropertyValue::Bitfield { bit_count, bytes } => (bit_count, bytes),
+                    _ => {
+                        return Err(PlayError::BitfieldMismatch {
+                            bit_count: 0,
+                            bytes: 0,
+                        });
+                    }
+                };
             layers.push(ActionLayerEntry {
                 action_did,
                 action_seq,

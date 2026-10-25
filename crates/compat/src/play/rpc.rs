@@ -3,11 +3,15 @@
 //! (`docs/specs/official-messages-play.md` §5), with typed codecs of the play methods of
 //! classes `0x04EC` (chat, §6.3), `0x04F9` (emotes, §6.4) and `0x051E` (logout, §7.1).
 //!
-//! The argument kinds of each method are those the spec tables give (§6.3.1, §6.3.2, §6.4,
-//! §7.1). §5.1 asks implementations to read method signatures from the install's script
-//! record at run time; the generic [`decode_args`] / [`encode_args`] take a signature as
-//! data so a run-time table can drive them, while [`PlayRpc`] covers only the methods the
-//! spec documents.
+//! Where the argument layouts come from: [`documented_signature`] holds the argument kinds
+//! of exactly the methods the Accepted play spec documents per method (§6.3.1, §6.3.2,
+//! §6.4, §7.1). Decision 0042 item 10 (amendment of 2026-10-25) makes those documented
+//! layouts wire message layouts, like any opcode's field table, so they may be written in
+//! code with the spec as their source. Every other method is decoded only with a signature
+//! read from the install at run time (decision 0042 items 2 and 10, §5.1): the generic
+//! [`decode_args`] / [`encode_args`] take a signature as data for that, and no table of
+//! undocumented methods exists here. The admin RPC `0x84EC002C` is never encoded
+//! (decision 0042 item 2).
 
 use crate::play::PlayError;
 use crate::world::{WireLocalizedText, WireReader, WireWriter};
@@ -35,7 +39,7 @@ pub const FN_ADMIN_TELL: u32 = 0x84EC_002C;
 
 /// Largest node count accepted in one `ScriptStateObject` bundle. The bound of §9.1 rule 3
 /// (`N <= remaining / 4`) already caps it; this smaller cap keeps one argument from holding
-/// thousands of nodes (engineering choice).
+/// thousands of nodes. Engineering choice, spec silent.
 pub const MAX_STATE_NODES: usize = 64;
 
 /// A script RPC function identifier (§5.1): bit 31 set, the 15-bit class in bits 16..30,
@@ -89,11 +93,15 @@ impl ScriptRpcMessage {
     ///
     /// # Errors
     ///
-    /// [`PlayError::InvalidFunctionId`] when bit 31 of the function ID is clear, or
-    /// [`PlayError::TooMany`] when the frame does not fit a `u32` length.
+    /// [`PlayError::InvalidFunctionId`] when bit 31 of the function ID is clear,
+    /// [`PlayError::AdminMessageRefused`] for the admin RPC `0x84EC002C` (decision 0042
+    /// item 2), or [`PlayError::TooMany`] when the frame does not fit a `u32` length.
     pub fn encode(&self, writer: &mut WireWriter) -> Result<(), PlayError> {
         if !FunctionId(self.function_id).is_valid() {
             return Err(PlayError::InvalidFunctionId(self.function_id));
+        }
+        if self.function_id == FN_ADMIN_TELL {
+            return Err(PlayError::AdminMessageRefused(FN_ADMIN_TELL));
         }
         let len = u32::try_from(self.arg_frame.len()).map_err(|_| PlayError::TooMany {
             what: "script argument frame bytes",
@@ -407,13 +415,17 @@ pub fn decode_args(frame: &[u8], signature: &[ArgKind]) -> Result<Vec<ScriptArg>
 ///
 /// # Errors
 ///
-/// [`PlayError::ArgumentMismatch`] when an argument does not match its kind or the counts
-/// differ, or an encoding error of a reference.
+/// [`PlayError::AdminMessageRefused`] for the admin RPC `0x84EC002C` (decision 0042
+/// item 2), [`PlayError::ArgumentMismatch`] when an argument does not match its kind or the
+/// counts differ, or an encoding error of a reference.
 pub fn encode_args(
     function_id: u32,
     signature: &[ArgKind],
     args: &[ScriptArg],
 ) -> Result<Vec<u8>, PlayError> {
+    if function_id == FN_ADMIN_TELL {
+        return Err(PlayError::AdminMessageRefused(FN_ADMIN_TELL));
+    }
     if signature.len() != args.len() {
         return Err(PlayError::ArgumentMismatch {
             function_id,
@@ -858,20 +870,21 @@ impl PlayRpc {
 
     fn args(&self) -> Vec<ScriptArg> {
         use ScriptArg as A;
-        match self.clone() {
+        let r = |v: &StateRef| A::Ref(v.clone());
+        match self {
             Self::Say {
                 flags,
                 text,
                 chat_type,
-            } => vec![A::U32(flags), A::Ref(text), A::U32(chat_type)],
-            Self::Tell { message, target } => vec![A::Ref(message), A::Ref(target)],
-            Self::IgnoreAdd { name } => vec![A::Ref(name)],
-            Self::SetChatFilter { flag } => vec![A::U32(flag)],
-            Self::SocialPair { a, b } => vec![A::Ref(a), A::Ref(b)],
-            Self::SocialSingle { target } => vec![A::Ref(target)],
-            Self::TellRejected { sender } => vec![A::U64(sender)],
-            Self::IgnoreRemove { entity, name } => vec![A::U64(entity), A::Ref(name)],
-            Self::ReportSpam { reason, spammer } => vec![A::U32(reason), A::U64(spammer)],
+            } => vec![A::U32(*flags), r(text), A::U32(*chat_type)],
+            Self::Tell { message, target } => vec![r(message), r(target)],
+            Self::IgnoreAdd { name } => vec![r(name)],
+            Self::SetChatFilter { flag } => vec![A::U32(*flag)],
+            Self::SocialPair { a, b } => vec![r(a), r(b)],
+            Self::SocialSingle { target } => vec![r(target)],
+            Self::TellRejected { sender } => vec![A::U64(*sender)],
+            Self::IgnoreRemove { entity, name } => vec![A::U64(*entity), r(name)],
+            Self::ReportSpam { reason, spammer } => vec![A::U32(*reason), A::U64(*spammer)],
             Self::ChatLine {
                 flags,
                 sender_name,
@@ -879,54 +892,51 @@ impl PlayRpc {
                 text,
                 sender,
             } => vec![
-                A::U32(flags),
-                A::Ref(sender_name),
-                A::U32(chat_type),
-                A::Ref(text),
-                A::U64(sender),
+                A::U32(*flags),
+                r(sender_name),
+                A::U32(*chat_type),
+                r(text),
+                A::U64(*sender),
             ],
             Self::EntityText { text, entity } | Self::EntityCommNotice { text, entity } => {
-                vec![A::Ref(text), A::U64(entity)]
+                vec![r(text), A::U64(*entity)]
             }
             Self::TellStatus {
                 status,
                 target,
                 target_name,
                 text,
-            } => vec![
-                A::U32(status),
-                A::U64(target),
-                A::Ref(target_name),
-                A::Ref(text),
-            ],
+            } => vec![A::U32(*status), A::U64(*target), r(target_name), r(text)],
             Self::SocialListStatus {
                 action,
                 name,
                 status,
-            } => vec![A::U32(action), A::Ref(name), A::U32(status)],
-            Self::SocialTable { table: r } | Self::SocialState { state: r } => vec![A::Ref(r)],
+            } => vec![A::U32(*action), r(name), A::U32(*status)],
+            Self::SocialTable { table: v } | Self::SocialState { state: v } => vec![r(v)],
             Self::ChannelNotice {
                 text,
                 entity_a,
                 entity_b,
-            } => vec![A::Ref(text), A::U64(entity_a), A::U64(entity_b)],
+            } => vec![r(text), A::U64(*entity_a), A::U64(*entity_b)],
             Self::SocialCommandStatus {
                 status,
                 text_a,
                 text_b,
-            } => vec![A::U32(status), A::Ref(text_a), A::Ref(text_b)],
+            } => vec![A::U32(*status), r(text_a), r(text_b)],
             Self::TellReceived {
                 text,
                 sender_name,
                 sender,
-            } => vec![A::Ref(text), A::Ref(sender_name), A::U64(sender)],
-            Self::EmoteText { text } => vec![A::Ref(text)],
-            Self::EmoteAtEntity { target, emote_did } => vec![A::U64(target), A::U32(emote_did)],
+            } => vec![r(text), r(sender_name), A::U64(*sender)],
+            Self::EmoteText { text } => vec![r(text)],
+            Self::EmoteAtEntity { target, emote_did } => {
+                vec![A::U64(*target), A::U32(*emote_did)]
+            }
             Self::EmoteByName {
                 target_name,
                 emote_did,
-            } => vec![A::Ref(target_name), A::U32(emote_did)],
-            Self::EmoteById { emote_did } => vec![A::U32(emote_did)],
+            } => vec![r(target_name), A::U32(*emote_did)],
+            Self::EmoteById { emote_did } => vec![A::U32(*emote_did)],
             Self::EmoteTargeted {
                 source_name,
                 target_name,
@@ -934,11 +944,11 @@ impl PlayRpc {
                 message,
                 emote_did,
             } => vec![
-                A::Ref(source_name),
-                A::Ref(target_name),
-                A::U64(source),
-                A::Ref(message),
-                A::U32(emote_did),
+                r(source_name),
+                r(target_name),
+                A::U64(*source),
+                r(message),
+                A::U32(*emote_did),
             ],
             Self::EmoteUntargeted {
                 source_name,
@@ -946,26 +956,28 @@ impl PlayRpc {
                 source,
                 emote_did,
             } => vec![
-                A::Ref(source_name),
-                A::Ref(message),
-                A::U64(source),
-                A::U32(emote_did),
+                r(source_name),
+                r(message),
+                A::U64(*source),
+                A::U32(*emote_did),
             ],
             Self::EmoteCustom {
                 source_name,
                 text,
                 source,
-            } => vec![A::Ref(source_name), A::Ref(text), A::U64(source)],
-            Self::EmoteGranted { emote_did, player } => vec![A::U32(emote_did), A::U64(player)],
+            } => vec![r(source_name), r(text), A::U64(*source)],
+            Self::EmoteGranted { emote_did, player } => {
+                vec![A::U32(*emote_did), A::U64(*player)]
+            }
             Self::LogoutCountdown { arg0, arg1, arg2 } => {
-                vec![A::I32(arg0), A::I32(arg1), A::I32(arg2)]
+                vec![A::I32(*arg0), A::I32(*arg1), A::I32(*arg2)]
             }
             Self::SessionNotice {
                 is_error_or_modal,
                 text,
-            } => vec![A::I32(is_error_or_modal), A::Ref(text)],
-            Self::SessionValue { value } => vec![A::U64(value)],
-            Self::SessionStateCode { code } => vec![A::I32(code)],
+            } => vec![A::I32(*is_error_or_modal), r(text)],
+            Self::SessionValue { value } => vec![A::U64(*value)],
+            Self::SessionStateCode { code } => vec![A::I32(*code)],
             Self::AutoGagSync
             | Self::CommSessionSync
             | Self::LogoutRequest

@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Fuzz target for `tessera_compat::chat_session`: every chat-server event and request
 //! decoder (`official-messages-play.md` §6.6) on hostile bytes, the wire structures,
-//! the endpoint and ticket readers, the state machine, and the client fed raw datagrams
-//! over the in-memory transport (no socket).
+//! the endpoint and ticket readers, the state machine, the client fed raw datagrams
+//! over the in-memory transport (no socket), and the client's event handling fed a
+//! sequence of decoded chat events and commands.
 #![no_main]
 
 use std::collections::BTreeMap;
@@ -22,6 +23,7 @@ use tessera_compat::chat_session::{
 };
 use tessera_compat::session::InMemoryUdpTransport;
 use tessera_compat::world::{PropertyType, WireReader};
+use tessera_net::{ChatChannel, Command, SocialCommand};
 
 fn fuzz_schema() -> BTreeMap<u32, PropertyType> {
     let mut map = BTreeMap::new();
@@ -95,5 +97,65 @@ fuzz_target!(|data: &[u8]| {
         client.transport_mut().push_inbound(data.to_vec(), server);
         let _ = client.poll(1.1, &schema);
         let _ = client.poll(30.0, &schema);
+    }
+
+    // The client's event handling: a ready session fed a sequence of decoded events
+    // (`[selector, len, payload...]` records) and commands.
+    let config = ChatConfig::new(server, "fuzz", None, 0);
+    if let Ok(mut client) =
+        ChatClient::with_transport(InMemoryUdpTransport::new(client_addr), config, None, 0.0)
+    {
+        let _ = client.poll(1.0, &schema);
+        client.state_mut().on_transport_connected(1.0);
+        let _ = client.handle_event(ChatEvent::LoginStatus { status: 0 }, 1.0, &schema);
+        client.set_self_descriptor(5, "Fuzz");
+        client.set_fellowship_channel_type(data.first().map(|b| u32::from(*b)));
+        let span = CHAT_OPCODE_LAST - CHAT_OPCODE_FIRST + 2;
+        let mut now = 1.0f64;
+        let mut rest = data;
+        while let [sel, len, tail @ ..] = rest {
+            let n = usize::from(*len).min(tail.len());
+            let (payload, next) = tail.split_at(n);
+            rest = next;
+            now += f64::from(*sel & 0x0F) * 0.5;
+            let k = u32::from(*sel) % span;
+            let op = if k == span - 1 {
+                CHAT_OPCODE_ENTITY_OFFLINE
+            } else {
+                CHAT_OPCODE_FIRST + k
+            };
+            match sel >> 6 {
+                0 | 1 => {
+                    if let Ok(ev) = ChatEvent::decode(op, payload) {
+                        let _ = client.handle_event(ev, now, &schema);
+                    }
+                }
+                2 => {
+                    let name = String::from_utf8_lossy(payload).into_owned();
+                    let cmd = if sel & 0x20 != 0 {
+                        Command::Social(SocialCommand::JoinChannel { name })
+                    } else {
+                        Command::Social(SocialCommand::LeaveChannel { name })
+                    };
+                    let _ = client.command(&cmd, now);
+                }
+                _ => {
+                    let text = String::from_utf8_lossy(payload).into_owned();
+                    let channel = if sel & 0x20 != 0 {
+                        ChatChannel::Fellowship
+                    } else {
+                        ChatChannel::Named {
+                            name: "World".to_string(),
+                        }
+                    };
+                    let _ = client.command(&Command::Chat { channel, text }, now);
+                }
+            }
+            if sel & 0x10 != 0 {
+                let _ = client.poll(now, &schema);
+            }
+        }
+        let _ = client.rooms();
+        let _ = client.counters();
     }
 });

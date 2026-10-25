@@ -24,8 +24,13 @@ use crate::world::{
 pub enum PlayMessage {
     /// `0xCE` (`position_update`, §4.4.1).
     PositionUpdate(EntityPositionUpdate),
-    /// `0xCC` (`portal_position_sync`, §4.3).
-    MovementSync(PortalPlacement),
+    /// `0xCC` (`portal_position_sync`, §4.3) addressed to `recipient`.
+    MovementSync {
+        /// The blob's recipient (the adapter reconciles only its own player's).
+        recipient: u64,
+        /// The message.
+        placement: PortalPlacement,
+    },
     /// `0xBF` (`server_set_position`, §4.4.2) for the blob's recipient.
     SetPosition {
         /// The recipient entity.
@@ -124,7 +129,10 @@ pub fn decode_play_message(
         EntityPositionUpdate::EVENT_ID => {
             PlayMessage::PositionUpdate(EntityPositionUpdate::from_bytes(inner)?)
         }
-        PortalPlacement::EVENT_ID => PlayMessage::MovementSync(PortalPlacement::from_bytes(inner)?),
+        PortalPlacement::EVENT_ID => PlayMessage::MovementSync {
+            recipient,
+            placement: PortalPlacement::from_bytes(inner)?,
+        },
         OPCODE_SERVER_SET_POSITION => PlayMessage::SetPosition {
             entity: recipient,
             msg: ServerSetPosition::from_bytes(inner)?,

@@ -7,9 +7,10 @@
 pub const HEARTBEAT_INTERVAL_SEC: f64 = 15.0;
 /// Idle time, with a heartbeat outstanding, before the session is declared dead (§6.6.3).
 pub const DROP_TIMEOUT_SEC: f64 = 60.0;
-/// Time to wait for `0x165` after the transport connected. The spec says only "or the
-/// connection attempt times out"; the session handshake timeout of `official-session.md`
-/// §6.1 (20 s) is reused (engineering choice).
+/// Time to wait for `0x165` after the transport connected, and for the transport
+/// handshake itself. The spec says only "or the connection attempt times out"; the session
+/// handshake timeout of `official-session.md` §6.1 (20 s) is reused. Engineering choice,
+/// spec silent.
 pub const LOGIN_STATUS_TIMEOUT_SEC: f64 = 20.0;
 
 /// A connection retry policy (§6.6.3).
@@ -45,8 +46,11 @@ pub enum ChatPhase {
         /// When to connect.
         until: f64,
     },
-    /// The transport handshake is running.
-    Connecting,
+    /// The transport handshake is running since `since`.
+    Connecting {
+        /// When the attempt started.
+        since: f64,
+    },
     /// The transport is connected (State 5); waiting for `0x165` since `since`.
     AwaitingLogin {
         /// When the transport connected.
@@ -139,8 +143,12 @@ impl ChatSessionState {
         match self.phase {
             ChatPhase::Waiting { until } if now >= until => {
                 self.attempts = self.attempts.saturating_add(1);
-                self.phase = ChatPhase::Connecting;
+                self.phase = ChatPhase::Connecting { since: now };
                 Some(ChatAction::Connect)
+            }
+            ChatPhase::Connecting { since } if now - since > LOGIN_STATUS_TIMEOUT_SEC => {
+                self.schedule_retry(now);
+                Some(ChatAction::Disconnect)
             }
             ChatPhase::AwaitingLogin { since } if now - since > LOGIN_STATUS_TIMEOUT_SEC => {
                 self.schedule_retry(now);
@@ -164,12 +172,12 @@ impl ChatSessionState {
 
     /// The transport reached State 5 (`Connected`): wait for `0x165` (§6.6.2 item 3).
     pub fn on_transport_connected(&mut self, now: f64) {
-        if self.phase == ChatPhase::Connecting {
+        if matches!(self.phase, ChatPhase::Connecting { .. }) {
             self.phase = ChatPhase::AwaitingLogin { since: now };
         }
     }
 
-    /// Any chat event arrived (§6.6.3 rule 1).
+    /// Any chat-server blob arrived (§6.6.3 rule 1), also one that failed to decode.
     pub fn on_event(&mut self, now: f64) {
         self.last_recv = now;
         self.heartbeat_sent = false;
@@ -194,11 +202,12 @@ impl ChatSessionState {
         }
     }
 
-    /// The transport failed or closed: reconnect under the active policy.
+    /// The transport failed or closed, or a connection attempt could not be started:
+    /// reconnect under the active policy.
     pub fn on_transport_lost(&mut self, now: f64) {
         if matches!(
             self.phase,
-            ChatPhase::Connecting | ChatPhase::AwaitingLogin { .. } | ChatPhase::Ready
+            ChatPhase::Connecting { .. } | ChatPhase::AwaitingLogin { .. } | ChatPhase::Ready
         ) {
             self.schedule_retry(now);
         }

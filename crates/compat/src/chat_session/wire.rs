@@ -13,7 +13,8 @@ pub const MSG_TYPE_CHAT: u32 = 0x0802_0000;
 pub const MSG_TYPE_STRING: u32 = 0x0804_0000;
 /// Smallest wire size of a descriptor (a null one), for count bounds (§9.1 rule 1).
 pub const MIN_DESCRIPTOR_BYTES: usize = 4;
-/// Most entries accepted in one container (engineering cap on top of the byte bounds).
+/// Most entries accepted in one container, on top of the byte bounds. Engineering choice,
+/// spec silent.
 pub const MAX_CONTAINER_ENTRIES: usize = 4096;
 
 /// The kind of a non-null descriptor (`desc_type`, §6.6.4).

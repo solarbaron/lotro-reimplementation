@@ -15,17 +15,18 @@ use tessera_compat::play::logout::{LogoutState, WORLD_TEARDOWN_OPCODES, is_world
 use tessera_compat::play::movement::{
     AnimLayerState, EntitySplinePath, MotionControllerUpdate, MovementInput, MovementSender,
     PredictedState, ReconcileTolerance, Reconciliation, ServerSetPosition, TeleportSync,
-    decode_signed_normalized, encode_signed_normalized, stamp_newer_or_equal, wire_heading,
-    wire_location,
+    decode_signed_normalized, encode_signed_normalized, stamp_newer_or_equal, step_after,
+    wire_heading, wire_location,
 };
 use tessera_compat::play::rpc::{
     ArgKind, FN_ADMIN_TELL, FunctionId, OPCODE_SCRIPT_RPC, PlayRpc, ScriptArg, ScriptRpcMessage,
     StateRef, decode_args, documented_signature, encode_args,
 };
-use tessera_compat::play::{PlayError, utf16_units};
+use tessera_compat::play::{OutgoingEvent, PlayError, utf16_units};
 use tessera_compat::world::{
     ActionPayload, ClientMoveCommand, CompactDid, EncodedPropertyTable, EncodedPropertyValue,
     EntityPositionUpdate, PortalPlacement, PropertyType, WireLocalizedText, WirePosition,
+    WorldError,
 };
 use tessera_net::{ChatChannel, Command, Event, LocationCause, RegionId};
 
@@ -102,6 +103,12 @@ fn window_reconstruction_and_fixed_size() {
     assert!(s.update(stop, t + 5.0, 9, None).is_none());
 }
 
+/// Decodes the inner payload of a `0x24` the sender built.
+fn decoded(cmd: &ClientMoveCommand) -> ClientMoveCommand {
+    let bytes = cmd.to_bytes().expect("encode");
+    ClientMoveCommand::from_bytes(&bytes, &no_schema()).expect("decode")
+}
+
 #[test]
 fn window_slots_clamp_at_zero() {
     let mut s = MovementSender::new(PLAYER);
@@ -110,15 +117,134 @@ fn window_slots_clamp_at_zero() {
         strafe: -1.0,
         ..MovementInput::default()
     };
-    let w = s.update(a, 0.0, 0, None).expect("step 1");
-    // Slots carry steps max(0, 1-3+k): 0, 0, 0, 1.
+    // Step 1: slots carry steps max(0, 1-3+k) = 0, 0, 0, 1; step 0 is the default slot.
+    let w = decoded(&s.update(a, 0.0, 0, None).expect("step 1"));
     assert_eq!(w.sequence, 1);
-    assert_eq!(w.axis_a[3], (-127i8) as u8);
-    for seq in [0u32, 1, 2, 3, 100, u32::MAX] {
-        let expect: Vec<u32> = (0..4u32).map(|k| seq.saturating_sub(3 - k)).collect();
-        assert_eq!(expect.len(), 4);
-        assert_eq!(expect[3], seq);
+    assert_eq!(w.move_state, [0, 0, 0, 2]);
+    assert_eq!(w.axis_a, [0, 0, 0, (-127i8) as u8]);
+    assert_eq!(w.axis_b, [0; 4]);
+    assert_eq!(w.axis_c, [0; 4]);
+    assert_eq!(w.slot_flags, [0; 4]);
+    // Step 2: 0, 0, 1, 2.
+    let b = MovementInput {
+        move_state: 3,
+        forward: 1.0,
+        ..MovementInput::default()
+    };
+    let w = decoded(&s.update(b, 0.01, 0, None).expect("step 2"));
+    assert_eq!(w.sequence, 2);
+    assert_eq!(w.move_state, [0, 0, 2, 3]);
+    assert_eq!(w.axis_a, [0, 0, (-127i8) as u8, 0]);
+    assert_eq!(w.axis_b, [0, 0, 0, 127]);
+}
+
+#[test]
+fn window_survives_acknowledgement_and_teleport() {
+    // Five distinct steps, then a 0xCC acknowledging all of them: the history is pruned,
+    // but the next 0x24 still carries the last four steps (§4.1 item 2, §4.2 item 2).
+    let mut s = MovementSender::new(PLAYER);
+    let inputs: Vec<MovementInput> = (1..=6u8)
+        .map(|i| MovementInput {
+            move_state: i,
+            turn: f32::from(i) / 10.0,
+            ..MovementInput::default()
+        })
+        .collect();
+    for (i, input) in inputs.iter().take(5).enumerate() {
+        s.update(*input, i as f64 * 0.01, 0, None).expect("step");
     }
+    assert_eq!(s.sequence(), 5);
+    let mut ack = PortalPlacement::from_bytes(&tv7()).expect("0xCC");
+    ack.sequence_or_reason = 5;
+    let r = s
+        .reconcile(&ack, ReconcileTolerance::default())
+        .expect("ack");
+    assert!(matches!(r, Reconciliation::Corrected { ack: 5, .. }));
+    assert_eq!(s.history_len(), 0, "the ack pruned the history");
+    let w = decoded(&s.update(inputs[5], 0.1, 0, None).expect("step 6"));
+    assert_eq!(w.sequence, 6);
+    assert_eq!(
+        w.move_state,
+        [3, 4, 5, 6],
+        "steps 3..=6 from the window ring"
+    );
+    let turn = |i: u8| encode_signed_normalized(f32::from(i) / 10.0) as u8;
+    assert_eq!(w.axis_c, [turn(3), turn(4), turn(5), turn(6)]);
+
+    // A teleport clears the history, never the window.
+    s.discard_history();
+    let w = decoded(&s.window(1));
+    assert_eq!(w.move_state, [3, 4, 5, 6]);
+    assert_eq!(w.header_byte, 1);
+}
+
+#[test]
+fn cadence_is_20_hz_with_60_hz_frames() {
+    let mut s = MovementSender::new(PLAYER);
+    let walk = MovementInput {
+        move_state: 1,
+        forward: 1.0,
+        ..MovementInput::default()
+    };
+    // 61 frames at 1/60 s over one second: the first step at t = 0, then one every 50 ms.
+    let mut steps = 0;
+    for i in 0..=60u32 {
+        if s.update(walk, f64::from(i) / 60.0, 0, None).is_some() {
+            steps += 1;
+        }
+    }
+    assert_eq!(steps, 21, "t = 0 and 20 periodic steps");
+    assert_eq!(s.sequence(), 21);
+    // Jittered frames keep the 50 ms grid on average: 10 s of frames 13–20 ms apart.
+    let mut s = MovementSender::new(PLAYER);
+    let mut t = 0.0;
+    let mut steps = 0;
+    let mut k = 0u32;
+    while t <= 10.0 {
+        if s.update(walk, t, 0, None).is_some() {
+            steps += 1;
+        }
+        k += 1;
+        t += 0.013 + f64::from(k % 8) * 0.001;
+    }
+    assert!((200..=202).contains(&steps), "{steps} steps in 10 s");
+    // A stall of 0.5 s gives one step, not a burst of catch-up steps.
+    let before = s.sequence();
+    assert!(s.update(walk, t + 0.5, 0, None).is_some());
+    assert!(s.update(walk, t + 0.5 + 1.0 / 60.0, 0, None).is_none());
+    assert_eq!(s.sequence(), before + 1);
+}
+
+#[test]
+fn reconcile_uses_serial_numbers_and_refuses_future_acks() {
+    let mut ack = PortalPlacement::from_bytes(&tv7()).expect("0xCC");
+    let mut s = MovementSender::new(PLAYER);
+    let walk = MovementInput {
+        move_state: 1,
+        forward: 1.0,
+        ..MovementInput::default()
+    };
+    s.update(walk, 0.0, 0, None).expect("step 1");
+    ack.sequence_or_reason = 2;
+    assert_eq!(
+        s.reconcile(&ack, ReconcileTolerance::default()),
+        Err(PlayError::AckAheadOfSequence { ack: 2, newest: 1 })
+    );
+    assert_eq!(s.history_len(), 1, "a refused ack prunes nothing");
+    assert!(step_after(2, u32::MAX), "2 comes after the wrap");
+    assert!(!step_after(u32::MAX, 2));
+    assert!(!step_after(7, 7));
+    // Through the adapter: counted, nothing emitted.
+    let mut a = PlayAdapter::new(ChatCategories::default());
+    a.enter_world(PLAYER, None);
+    let mut bytes = tv7();
+    bytes[2] = 0x09; // ack 9, no step made yet
+    let msg = decode_play_message(PortalPlacement::EVENT_ID, PLAYER, &bytes, &no_schema())
+        .expect("decode")
+        .expect("msg");
+    let out = a.handle(&msg, &LiteralTexts);
+    assert!(out.events.is_empty() && out.signals.is_empty());
+    assert_eq!(a.counters().bad_acks, 1);
 }
 
 #[test]
@@ -238,7 +364,7 @@ fn movement_suspended_in_portal_space_until_ready_ack() {
         ..MovementInput::default()
     };
     assert!(
-        a.movement_step(walk, 0.0, None).is_none(),
+        a.movement_step(walk, 0.0, None).is_empty(),
         "not in the world"
     );
     a.enter_world(PLAYER, None);
@@ -246,14 +372,96 @@ fn movement_suspended_in_portal_space_until_ready_ack() {
         a.teleport().in_portal_space(),
         "world entry is portal space"
     );
-    assert!(a.movement_step(walk, 0.0, None).is_none());
+    assert!(a.movement_step(walk, 0.0, None).is_empty());
     let ack = a.portal_loading(true, false).expect("0xF4");
-    assert_eq!(ack.opcode, 0xF4);
-    assert_eq!(ack.payload, vec![0x00]);
+    assert_eq!(ack.opcode(), 0xF4);
+    assert_eq!(ack.payload(), [0x00]);
     assert!(a.portal_loading(true, false).is_none());
-    let step = a.movement_step(walk, 0.1, None).expect("0x24");
-    assert_eq!(step.opcode, 0x24);
-    assert_eq!(step.payload.len(), 38);
+    let sent = a.movement_step(walk, 0.1, None);
+    assert_eq!(sent.len(), 1);
+    assert_eq!(sent[0].opcode(), 0x24);
+    assert_eq!(sent[0].payload().len(), 38);
+}
+
+/// A `0xCE` for the player with `header_flags` bit 3 (a stamp) and an attachment
+/// placement, which carries no usable location.
+fn stamped_attachment(stamp: u8) -> Vec<u8> {
+    let mut bytes = vec![0x00, 0x08];
+    bytes.extend(PLAYER.to_le_bytes());
+    bytes.push(0x04); // mode_flags bit 2: parent attachment
+    bytes.push(stamp);
+    bytes.extend(0x0A0B_0C0D_0E0F_1011u64.to_le_bytes());
+    bytes.push(0x03); // attach slot (3-tier VLE)
+    bytes
+}
+
+#[test]
+fn stamp_applies_before_the_placement_check() {
+    let mut a = PlayAdapter::new(ChatCategories::default());
+    a.enter_world(PLAYER, None);
+    assert!(
+        a.portal_loading(true, false).is_some(),
+        "left world-entry portal space"
+    );
+    a.begin_portal_space(5);
+    assert!(a.teleport().waiting());
+    let msg = decode_play_message(
+        EntityPositionUpdate::EVENT_ID,
+        PLAYER,
+        &stamped_attachment(5),
+        &no_schema(),
+    )
+    .expect("decode")
+    .expect("msg");
+    let out = a.handle(&msg, &LiteralTexts);
+    assert!(out.events.is_empty(), "no usable location");
+    assert_eq!(a.teleport().stamp(), 5, "stamp adopted");
+    assert!(!a.teleport().waiting(), "wait cleared");
+    assert_eq!(a.counters().ignored_positions, 1);
+    // Portal-space exit after the loading timeout now works.
+    let ready = a
+        .portal_loading(false, true)
+        .expect("0xF4 after the timeout");
+    assert_eq!(ready.opcode(), 0xF4);
+}
+
+#[test]
+fn moving_during_a_logout_countdown_cancels_it_once() {
+    let mut a = PlayAdapter::new(ChatCategories::default());
+    a.enter_world(PLAYER, None);
+    assert!(a.portal_loading(true, false).is_some());
+    let countdown = rpc_message(&PlayRpc::LogoutCountdown {
+        arg0: 10,
+        arg1: 0,
+        arg2: 0,
+    });
+    let _ = a.handle(&countdown, &LiteralTexts);
+    assert!(a.logout().active());
+    let walk = MovementInput {
+        move_state: 1,
+        forward: 1.0,
+        ..MovementInput::default()
+    };
+    let cancel = PlayRpc::LogoutCancel.to_bytes().expect("encode");
+    let sent = a.movement_step(walk, 0.0, None);
+    assert_eq!(sent.len(), 2);
+    assert_eq!(sent[0].opcode(), OPCODE_SCRIPT_RPC);
+    assert_eq!(sent[0].payload(), cancel);
+    assert_eq!(sent[1].opcode(), 0x24);
+    // Further steps while the server has not confirmed: no second cancel.
+    let sent = a.movement_step(walk, 0.06, None);
+    assert_eq!(sent.len(), 1);
+    assert_eq!(sent[0].opcode(), 0x24);
+    // A new countdown arms it again.
+    let _ = a.handle(&rpc_message(&PlayRpc::LogoutCancelled), &LiteralTexts);
+    let _ = a.handle(&countdown, &LiteralTexts);
+    let sent = a.movement_step(walk, 0.12, None);
+    assert_eq!(sent.len(), 2);
+    // Standing still is not a move.
+    let _ = a.handle(&rpc_message(&PlayRpc::LogoutCancelled), &LiteralTexts);
+    let _ = a.handle(&countdown, &LiteralTexts);
+    let sent = a.movement_step(MovementInput::default(), 0.2, None);
+    assert_eq!(sent.len(), 1, "a stop step is not a move");
 }
 
 // ---------------------------------------------------------------------------
@@ -334,10 +542,44 @@ fn tv7_portal_position_sync_and_reconcile() {
     // Through the adapter: a correction emits EntityMoved + LocationReport(Corrected).
     let mut a = PlayAdapter::new(ChatCategories::default());
     a.enter_world(PLAYER, None);
-    let msg = decode_play_message(PortalPlacement::EVENT_ID, 2, &bytes, &no_schema())
+    assert!(a.portal_loading(true, false).is_some());
+    for i in 0..103 {
+        let _ = a.movement_step(walk, f64::from(i) * 0.06, None);
+    }
+    // Addressed to another entity: dropped and counted.
+    let foreign = decode_play_message(PortalPlacement::EVENT_ID, 2, &bytes, &no_schema())
+        .expect("decode")
+        .expect("msg");
+    let out = a.handle(&foreign, &LiteralTexts);
+    assert!(out.events.is_empty() && out.signals.is_empty());
+    assert_eq!(a.counters().foreign_syncs, 1);
+    let msg = decode_play_message(PortalPlacement::EVENT_ID, PLAYER, &bytes, &no_schema())
         .expect("decode")
         .expect("msg");
     let out = a.handle(&msg, &LiteralTexts);
+    match out.signals.as_slice() {
+        [
+            PlaySignal::Reconciled(Reconciliation::Corrected {
+                ack,
+                angular_velocity,
+                movement_mode,
+                state_schema_id,
+                bool_states,
+                enum_states,
+                replay,
+                ..
+            }),
+        ] => {
+            assert_eq!(*ack, 100);
+            assert_eq!(*angular_velocity, [0.0; 3]);
+            assert_eq!(*movement_mode, 1);
+            assert_eq!(*state_schema_id, 0x0C);
+            assert_eq!(bool_states, &vec![false; 8]);
+            assert_eq!(enum_states, &vec![2, 1, 1, 0, 23, 1]);
+            assert_eq!(replay.len(), 3);
+        }
+        other => panic!("expected a correction: {other:?}"),
+    }
     assert!(matches!(
         out.events.as_slice(),
         [
@@ -387,8 +629,8 @@ fn tv3_tv4_logout() {
     a.enter_world(PLAYER, None);
     let sent = a.command(&Command::Disconnect).expect("logout");
     assert_eq!(sent.len(), 1);
-    assert_eq!(sent[0].opcode, OPCODE_SCRIPT_RPC);
-    assert_eq!(sent[0].payload, req);
+    assert_eq!(sent[0].opcode(), OPCODE_SCRIPT_RPC);
+    assert_eq!(sent[0].payload(), req);
     let msg = decode_play_message(OPCODE_SCRIPT_RPC, 2, &countdown, &no_schema())
         .expect("decode")
         .expect("msg");
@@ -474,7 +716,7 @@ fn tv6_say_hi() {
             text: "Hi".into(),
         })
         .expect("say");
-    assert_eq!(sent[0].payload, expected);
+    assert_eq!(sent[0].payload(), expected);
     assert_eq!(
         a.command(&Command::Chat {
             channel: ChatChannel::Yell,
@@ -645,7 +887,10 @@ fn hostile_script_rpc_frames() {
         Err(PlayError::InvalidFunctionId(0x04EC_001B))
     );
     // arg_frame_len above the remaining bytes.
-    assert!(ScriptRpcMessage::from_bytes(&hex("00 1B 00 EC 84 FF FF FF FF 00")).is_err());
+    assert!(matches!(
+        ScriptRpcMessage::from_bytes(&hex("00 1B 00 EC 84 FF FF FF FF 00")),
+        Err(PlayError::World(WorldError::CountExceedsRemaining { .. }))
+    ));
     // Bad base flags.
     assert!(ScriptRpcMessage::from_bytes(&hex("01 1B 00 EC 84 00 00 00 00")).is_err());
     // Node flags without bit 28.
@@ -655,7 +900,10 @@ fn hostile_script_rpc_frames() {
         Err(PlayError::InvalidStateNodeFlags(0))
     );
     // Node count above remaining / 4.
-    assert!(decode_args(&hex("40 00 FF FF 00"), &[ArgKind::Ref]).is_err());
+    assert!(matches!(
+        decode_args(&hex("40 00 FF FF 00"), &[ArgKind::Ref]),
+        Err(PlayError::World(WorldError::CountExceedsRemaining { .. }))
+    ));
     // A class this layer cannot size.
     let other = hex("01 00 00 00 00 00 00 00 10 12 34");
     assert_eq!(
@@ -712,12 +960,25 @@ fn admin_messages_are_ignored_and_counted() {
         .expect("msg");
     let out = a.handle(&m, &LiteralTexts);
     assert!(out.events.is_empty() && out.outgoing.is_empty() && out.signals.is_empty());
-    let tell = ScriptRpcMessage {
+    // Never encoded: the envelope, the argument frame and the outgoing event refuse it.
+    let refused = PlayError::AdminMessageRefused(FN_ADMIN_TELL);
+    let env = ScriptRpcMessage {
         function_id: FN_ADMIN_TELL,
         arg_frame: vec![0, 0],
-    }
-    .to_bytes()
-    .expect("env");
+    };
+    assert_eq!(env.to_bytes(), Err(refused.clone()));
+    assert_eq!(encode_args(FN_ADMIN_TELL, &[], &[]), Err(refused.clone()));
+    // The hostile server's bytes, built by hand: base_flags, function_id, len 2, frame.
+    let tell = hex("00 2C 00 EC 84 02 00 00 00 00 00");
+    assert_eq!(
+        OutgoingEvent::new(OPCODE_SCRIPT_RPC, tell.clone()),
+        Err(refused)
+    );
+    assert_eq!(
+        OutgoingEvent::new(OPCODE_ADMIN_TEXT_NOTICE, notice.clone()),
+        Err(PlayError::AdminMessageRefused(OPCODE_ADMIN_TEXT_NOTICE))
+    );
+    assert!(OutgoingEvent::new(OPCODE_SCRIPT_RPC, vec![0x00]).is_ok());
     let m = decode_play_message(OPCODE_SCRIPT_RPC, 2, &tell, &no_schema())
         .expect("decode")
         .expect("msg");
@@ -811,7 +1072,7 @@ fn incoming_chat_tells_and_emotes() {
         .to_bytes()
         .expect("encode");
     assert_eq!(out.outgoing.len(), 1);
-    assert_eq!(out.outgoing[0].payload, expect);
+    assert_eq!(out.outgoing[0].payload(), expect);
     assert_eq!(a.counters().rejected_tells, 1);
 
     let emote = rpc_message(&PlayRpc::EmoteCustom {
@@ -835,7 +1096,7 @@ fn incoming_chat_tells_and_emotes() {
             text: "hi".into(),
         })
         .expect("tell");
-    let env = ScriptRpcMessage::from_bytes(&sent[0].payload).expect("env");
+    let env = ScriptRpcMessage::from_bytes(sent[0].payload()).expect("env");
     assert_eq!(env.function_id, 0x84EC_000E);
     let sent = a
         .command(&Command::Chat {
@@ -843,7 +1104,7 @@ fn incoming_chat_tells_and_emotes() {
             text: "dances".into(),
         })
         .expect("emote");
-    let env = ScriptRpcMessage::from_bytes(&sent[0].payload).expect("env");
+    let env = ScriptRpcMessage::from_bytes(sent[0].payload()).expect("env");
     assert_eq!(env.function_id, 0x84F9_000A);
     assert!(
         a.command(&Command::Chat {
@@ -1003,7 +1264,10 @@ fn spline_path() {
     let mut bad = hex("00 01 00 00 00 09 00 00 00 00 00 00 00 01 00");
     bad.extend_from_slice(&1000u32.to_le_bytes());
     bad.push(0x00);
-    assert!(EntitySplinePath::from_bytes(&bad).is_err());
+    assert!(matches!(
+        EntitySplinePath::from_bytes(&bad),
+        Err(PlayError::World(WorldError::CountExceedsRemaining { .. }))
+    ));
 }
 
 #[test]
@@ -1029,12 +1293,28 @@ fn motion_controller() {
         MotionControllerUpdate::from_bytes(&[0, 2]).is_err(),
         "bool8 2 fails"
     );
+    // §4.6.2 receiver rule: a typed controller is counted and dropped, a cleared one
+    // passes on.
     let mut a = PlayAdapter::new(ChatCategories::default());
     let m = decode_play_message(0xED, 5, &typed, &no_schema())
         .expect("decode")
         .expect("msg");
-    a.handle(&m, &LiteralTexts);
+    let out = a.handle(&m, &LiteralTexts);
+    assert!(out.signals.is_empty() && out.events.is_empty());
     assert_eq!(a.counters().ignored_controllers, 1);
+    let mut cleared = vec![0, 1];
+    cleared.extend([0u8; 16]);
+    let m = decode_play_message(0xED, 5, &cleared, &no_schema())
+        .expect("decode")
+        .expect("msg");
+    let out = a.handle(&m, &LiteralTexts);
+    assert_eq!(
+        out.signals,
+        vec![PlaySignal::MotionController {
+            entity: 5,
+            update: MotionControllerUpdate::Cleared
+        }]
+    );
 }
 
 #[test]
@@ -1052,7 +1332,22 @@ fn anim_layers() {
     let back = AnimLayerState::from_bytes(&b, &no_schema()).expect("decode");
     assert_eq!(back, state);
     // A layer count above the remaining bytes.
-    assert!(AnimLayerState::from_bytes(&hex("00 40 00 FF FF"), &no_schema()).is_err());
+    assert!(matches!(
+        AnimLayerState::from_bytes(&hex("00 40 00 FF FF"), &no_schema()),
+        Err(PlayError::World(WorldError::CountExceedsRemaining { .. }))
+    ));
+    // A bitfield whose bytes do not match its bit count.
+    let mut bad = state.clone();
+    if let Some(l) = bad.layers.first_mut() {
+        l.bits.push(0);
+    }
+    assert_eq!(
+        bad.to_bytes(),
+        Err(PlayError::BitfieldMismatch {
+            bit_count: 9,
+            bytes: 3
+        })
+    );
 }
 
 #[test]

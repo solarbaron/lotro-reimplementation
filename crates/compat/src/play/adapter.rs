@@ -21,14 +21,14 @@ use crate::play::inbound::PlayMessage;
 use crate::play::logout::{LogoutChange, LogoutState};
 use crate::play::movement::{
     AnimLayerState, MotionControllerUpdate, MovementInput, MovementSender, PredictedState,
-    ReconcileTolerance, Reconciliation, TeleportSync, quaternion_heading, wire_heading,
+    ReconcileTolerance, Reconciliation, StepInput, TeleportSync, quaternion_heading, wire_heading,
     wire_location,
 };
 use crate::play::rpc::{OPCODE_SCRIPT_RPC, PlayRpc};
 use crate::play::{OutgoingEvent, PlayError};
 use crate::world::{EntityPlacement, PortalSpaceReady, WireLocalizedText, WirePosition};
 
-/// Most names kept in the client-side ignore list (engineering cap).
+/// Most names kept in the client-side ignore list. Engineering choice, spec silent.
 pub const MAX_IGNORED_NAMES: usize = 1024;
 
 /// What the adapter ignored or could not map, for diagnostics.
@@ -46,8 +46,14 @@ pub struct PlayCounters {
     pub unmapped_category: u64,
     /// Position updates that carried no usable location (attachments, invalid positions).
     pub ignored_positions: u64,
-    /// Typed motion-controller updates skipped (§4.6.2 receiver rule).
+    /// Typed motion-controller updates skipped and dropped (§4.6.2 receiver rule).
     pub ignored_controllers: u64,
+    /// `0xCC` events addressed to another entity than the local player (dropped).
+    pub foreign_syncs: u64,
+    /// `0xCC` acknowledgements of a step the client has not made (dropped).
+    pub bad_acks: u64,
+    /// Outgoing messages that failed to encode (logged and dropped).
+    pub encode_failures: u64,
     /// Incoming tells refused by the client's ignore list (`0x84EC004D` sent).
     pub rejected_tells: u64,
 }
@@ -74,7 +80,8 @@ pub enum PlaySignal {
         /// Valid waypoint locations, in order.
         waypoints: Vec<tessera_net::Location>,
     },
-    /// A motion controller update (§4.6.2).
+    /// A motion controller update (§4.6.2): no controller, or the controller cleared.
+    /// Typed controllers are dropped (their type IDs are OPEN) and only counted.
     MotionController {
         /// The entity.
         entity: u64,
@@ -114,24 +121,24 @@ pub struct PlayAdapter {
     teleport: TeleportSync,
     movement: Option<MovementSender>,
     logout: LogoutState,
+    /// A `0x851E0006` was sent because the player moved during the current countdown.
+    move_cancel_sent: bool,
     tolerance: ReconcileTolerance,
     ignored: BTreeSet<String>,
     counters: PlayCounters,
 }
 
 fn rpc_event(rpc: &PlayRpc) -> Result<OutgoingEvent, PlayError> {
-    Ok(OutgoingEvent {
-        opcode: OPCODE_SCRIPT_RPC,
-        payload: rpc.to_bytes()?,
-    })
+    OutgoingEvent::new(OPCODE_SCRIPT_RPC, rpc.to_bytes()?)
 }
 
 fn clean_text(s: &str) -> String {
     sanitize_text(s, MAX_CHAT_LEN).into_owned()
 }
 
+/// Sanitises first (control characters become spaces), then trims.
 fn clean_name(s: &str) -> Option<String> {
-    let n = sanitize_text(s.trim(), MAX_NAME_LEN).into_owned();
+    let n = sanitize_text(s, MAX_NAME_LEN).trim().to_owned();
     (!n.is_empty()).then_some(n)
 }
 
@@ -154,6 +161,7 @@ impl PlayAdapter {
             teleport: TeleportSync::default(),
             movement: None,
             logout: LogoutState::default(),
+            move_cancel_sent: false,
             tolerance: ReconcileTolerance::default(),
             ignored: BTreeSet::new(),
             counters: PlayCounters::default(),
@@ -172,6 +180,7 @@ impl PlayAdapter {
         self.teleport = TeleportSync::default();
         self.teleport.begin_portal_space(self.teleport.stamp());
         self.logout = LogoutState::default();
+        self.move_cancel_sent = false;
     }
 
     /// The local player's entity, while in the world.
@@ -226,35 +235,64 @@ impl PlayAdapter {
     /// Reports the loading state while in portal space; returns `0xF4` (`portal_ready_ack`)
     /// once portal space ends (§4.5 item 4).
     pub fn portal_loading(&mut self, loading_done: bool, timed_out: bool) -> Option<OutgoingEvent> {
-        self.teleport
-            .try_exit_portal_space(loading_done, timed_out)
-            .then(|| OutgoingEvent {
-                opcode: PortalSpaceReady::EVENT_ID,
-                payload: PortalSpaceReady.to_bytes(),
-            })
+        if !self.teleport.try_exit_portal_space(loading_done, timed_out) {
+            return None;
+        }
+        self.outgoing(PortalSpaceReady::EVENT_ID, Ok(PortalSpaceReady.to_bytes()))
     }
 
-    /// Feeds this frame's movement input; returns the `0x24` to send, if a step was made
-    /// (§4.1–§4.2). Nothing is sent outside the world or in portal space (§4.5 item 2).
+    /// An outgoing event, or `None` (logged and counted) when it failed to encode.
+    fn outgoing(
+        &mut self,
+        opcode: u32,
+        payload: Result<Vec<u8>, PlayError>,
+    ) -> Option<OutgoingEvent> {
+        match payload.and_then(|p| OutgoingEvent::new(opcode, p)) {
+            Ok(ev) => Some(ev),
+            Err(e) => {
+                self.counters.encode_failures += 1;
+                tracing::warn!(opcode, error = %e, "an outgoing play message failed to encode");
+                None
+            }
+        }
+    }
+
+    /// Feeds this frame's movement input and returns what to send (§4.1–§4.2): the `0x24`
+    /// of a new step, if one was made, and, when the player moves while a logout
+    /// countdown is active, one `0x851E0006` (cancel) before it (§7.2 item 2). Nothing is
+    /// sent outside the world or in portal space (§4.5 item 2).
     pub fn movement_step(
         &mut self,
         input: MovementInput,
         now: f64,
         predicted: Option<PredictedState>,
-    ) -> Option<OutgoingEvent> {
+    ) -> Vec<OutgoingEvent> {
+        let mut out = Vec::new();
         if self.teleport.in_portal_space() {
-            return None;
+            return out;
         }
         let stamp = self.teleport.stamp();
-        let cmd = self
+        let Some(cmd) = self
             .movement
-            .as_mut()?
-            .update(input, now, stamp, predicted)?;
-        let payload = cmd.to_bytes().ok()?;
-        Some(OutgoingEvent {
-            opcode: crate::world::ClientMoveCommand::EVENT_ID,
-            payload,
-        })
+            .as_mut()
+            .and_then(|m| m.update(input, now, stamp, predicted))
+        else {
+            return out;
+        };
+        if StepInput::from_input(input).is_moving()
+            && !self.move_cancel_sent
+            && let Some(cancel) = self.logout.cancel()
+        {
+            self.move_cancel_sent = true;
+            if let Some(ev) = self.outgoing(OPCODE_SCRIPT_RPC, cancel.to_bytes()) {
+                out.push(ev);
+            }
+        }
+        let payload = cmd.to_bytes().map_err(PlayError::from);
+        if let Some(ev) = self.outgoing(crate::world::ClientMoveCommand::EVENT_ID, payload) {
+            out.push(ev);
+        }
+        out
     }
 
     /// `0x851E002F` while no logout countdown is active (§7.2 item 1).
@@ -368,10 +406,18 @@ impl PlayAdapter {
         let mut out = PlayOutput::default();
         match msg {
             PlayMessage::PositionUpdate(u) => self.on_position(u, &mut out),
-            PlayMessage::MovementSync(p) => {
+            PlayMessage::MovementSync {
+                recipient,
+                placement: p,
+            } => {
                 let (Some(player), Some(movement)) = (self.player, self.movement.as_mut()) else {
                     return out;
                 };
+                // §4.3.2 applies to `0xCC` for the local player only.
+                if *recipient != player {
+                    self.counters.foreign_syncs += 1;
+                    return out;
+                }
                 match movement.reconcile(p, self.tolerance) {
                     Ok(r) => {
                         if let Reconciliation::Corrected {
@@ -394,6 +440,10 @@ impl PlayAdapter {
                         }
                         out.signals.push(PlaySignal::Reconciled(r));
                     }
+                    Err(PlayError::AckAheadOfSequence { ack, newest }) => {
+                        self.counters.bad_acks += 1;
+                        tracing::debug!(ack, newest, "0xCC acknowledges a step not yet made");
+                    }
                     Err(_) => self.counters.ignored_positions += 1,
                 }
             }
@@ -414,8 +464,10 @@ impl PlayAdapter {
                 waypoints: p.waypoint_locations(),
             }),
             PlayMessage::MotionController { entity, update } => {
+                // §4.6.2 receiver rule: a typed controller is skipped and ignored.
                 if matches!(update, MotionControllerUpdate::Typed { .. }) {
                     self.counters.ignored_controllers += 1;
+                    return out;
                 }
                 out.signals.push(PlaySignal::MotionController {
                     entity: *entity,
@@ -486,6 +538,7 @@ impl PlayAdapter {
             }
             PlayMessage::WorldTeardown { opcode } => {
                 self.logout.on_teardown();
+                self.move_cancel_sent = false;
                 self.player = None;
                 self.movement = None;
                 self.teleport = TeleportSync::default();
@@ -515,13 +568,13 @@ impl PlayAdapter {
             EntityPlacement::WorldPositionOnly { position } => Self::located(position, None),
             _ => None,
         };
-        let Some((loc, anchor, heading)) = located else {
-            self.counters.ignored_positions += 1;
-            return;
-        };
-        if Some(u.entity_id) == self.player
-            && let Some(stamp) = u.seq_byte
-        {
+        // §4.4.1, §4.5 item 3: `seq_byte` is present exactly when `header_flags` bit 3 is
+        // set (`official-messages-world.md` §5.4). For the local player the stamp is
+        // applied first, whatever the placement: a newer or equal stamp is adopted, the
+        // unacknowledged history is discarded, and a portal-space wait may end, also when
+        // the event carries no usable location (an attachment, an invalid position).
+        let local = Some(u.entity_id) == self.player;
+        if local && let Some(stamp) = u.seq_byte {
             let outcome = self.teleport.on_local_position(stamp);
             if !outcome.snap {
                 self.counters.stale_stamps += 1;
@@ -530,6 +583,10 @@ impl PlayAdapter {
             if let Some(m) = self.movement.as_mut() {
                 m.discard_history();
             }
+            let Some((loc, anchor, heading)) = located else {
+                self.counters.ignored_positions += 1;
+                return;
+            };
             out.events
                 .push(Self::moved(u.entity_id, &loc, heading, u.velocity));
             out.events.push(Event::LocationReport {
@@ -541,6 +598,10 @@ impl PlayAdapter {
             });
             return;
         }
+        let Some((loc, _, heading)) = located else {
+            self.counters.ignored_positions += 1;
+            return;
+        };
         out.events
             .push(Self::moved(u.entity_id, &loc, heading, u.velocity));
     }
@@ -593,7 +654,8 @@ impl PlayAdapter {
                 };
                 if self.ignored.contains(&peer) {
                     self.counters.rejected_tells += 1;
-                    if let Ok(ev) = rpc_event(&PlayRpc::TellRejected { sender: *sender }) {
+                    let payload = PlayRpc::TellRejected { sender: *sender }.to_bytes();
+                    if let Some(ev) = self.outgoing(OPCODE_SCRIPT_RPC, payload) {
                         out.outgoing.push(ev);
                     }
                     return;
@@ -651,7 +713,11 @@ impl PlayAdapter {
                 });
             }
             PlayRpc::LogoutCountdown { .. } | PlayRpc::LogoutCancelled => {
-                match self.logout.on_rpc(rpc) {
+                let change = self.logout.on_rpc(rpc);
+                if change.is_some() {
+                    self.move_cancel_sent = false;
+                }
+                match change {
                     Some(LogoutChange::CountdownStarted { arg0, .. }) => out
                         .events
                         .push(system_line(format!("Logout countdown started ({arg0})."))),

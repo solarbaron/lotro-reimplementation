@@ -41,7 +41,8 @@ pub const CHAT_RECIPIENT_ID: u64 = 0x0700_0000_0000_FFF9;
 pub const AUTH_TYPE_TICKET: u32 = 0x4000_0002;
 /// `authType` of account-only authentication (no ticket).
 pub const AUTH_TYPE_ACCOUNT: u32 = 0x0000_0001;
-/// Longest decoded ticket accepted (engineering cap; the spec's examples reach 192 bytes).
+/// Longest decoded ticket accepted. Engineering choice, spec silent (its examples reach
+/// 192 bytes).
 pub const MAX_TICKET_BYTES: usize = 4096;
 
 /// The effective chat-server endpoint string of §6.1.1: `None` when the chat subsystem is
@@ -79,13 +80,16 @@ pub fn parse_endpoint(s: &str) -> Result<SocketAddrV4, PlayError> {
     Ok(addr)
 }
 
-/// Decodes standard Base64 (RFC 4648 §4), with or without `=` padding; whitespace is not
-/// accepted.
+/// Decodes standard Base64 (RFC 4648 §4) strictly: the alphabet of §4 only, no
+/// whitespace, `=` padding either absent or complete (to a multiple of 4 characters), and
+/// the unused low bits of a final partial group zero (RFC 4648 §3.5, canonical encoding).
+/// The decoded length is the ticket length of §6.6.2.
 ///
 /// # Errors
 ///
-/// [`PlayError::InvalidTicket`] on a character outside the alphabet, misplaced padding or
-/// an impossible length; [`PlayError::TicketTooLong`] above [`MAX_TICKET_BYTES`].
+/// [`PlayError::InvalidTicket`] on a character outside the alphabet, misplaced or partial
+/// padding, non-zero pad bits or an impossible length; [`PlayError::TicketTooLong`] above
+/// [`MAX_TICKET_BYTES`].
 pub fn decode_base64(s: &str) -> Result<Vec<u8>, PlayError> {
     let bytes = s.as_bytes();
     let unpadded = bytes.iter().rposition(|&b| b != b'=').map_or(0, |i| i + 1);
@@ -119,6 +123,11 @@ pub fn decode_base64(s: &str) -> Result<Vec<u8>, PlayError> {
         }
         acc <<= 6 * (4 - chunk.len() as u32);
         let produced = chunk.len().saturating_sub(1);
+        // Canonical form: the bits below the produced bytes are zero.
+        let unused_bits = 24 - 8 * produced as u32;
+        if acc & ((1u32 << unused_bits) - 1) != 0 {
+            return Err(PlayError::InvalidTicket);
+        }
         for i in 0..produced {
             out.push((acc >> (16 - 8 * i as u32)) as u8);
         }

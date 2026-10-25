@@ -4,12 +4,21 @@
 //!
 //! [`ChatClient`] owns its own session multiplexer and socket, separate from the
 //! world-server connection (`official-session.md` §3.4), so a chat-server timeout or
-//! reconnect never touches the world session (§11 item 2). The live socket is made only
-//! by [`ChatClient::open`], which needs a [`NetworkAccess`] (`official-entry.md` §6.1);
-//! [`ChatClient::with_transport`] takes a transport made elsewhere (for tests, the
-//! in-memory transport of the session module).
+//! reconnect never touches the world session (§11 item 2). The live sockets are made only
+//! through a [`NetworkAccess`] (`official-entry.md` §6.1): [`ChatClient::open`] binds one
+//! per connection attempt, so traffic of an old session never reaches the next handshake.
+//! [`ChatClient::with_binder`] takes any socket maker, [`ChatClient::with_transport`] one
+//! transport for every attempt (for tests, the in-memory transport of the session module).
+//!
+//! When a session ends while its transport is still up (a chat-level drop, a refused login,
+//! a reconnect), the client asks the session layer for a graceful disconnect and flushes the
+//! `Disconnect` before it lets the connection go. With a socket maker, a connection that
+//! still has reliable packets to flush keeps its old socket until the session layer is done
+//! (`official-session.md` §6.1 states 6 and 7). The session layer will offer
+//! `SessionMultiplexer::remove_connection` and a send of a blob with a recipient later; this
+//! module does not use them yet.
 
-use std::collections::BTreeMap;
+use std::collections::VecDeque;
 use std::net::{Ipv4Addr, SocketAddrV4};
 use std::sync::Arc;
 
@@ -27,20 +36,33 @@ use crate::play::PlayError;
 use crate::play::chat::{MAX_ARGUMENT_UNITS, MAX_CHAT_UNITS};
 use crate::play::check_units;
 use crate::session::{
-    BitTreeCodec, MAX_DATAGRAM_BUF, OptionalHeaders, SessionAuthHeader, SessionEvent,
-    SessionMultiplexer, UdpDatagramTransport, split_blob,
+    BitTreeCodec, ConnectionState, MAX_DATAGRAM_BUF, OptionalHeaders, SessionAuthHeader,
+    SessionEvent, SessionMultiplexer, UdpDatagramTransport, split_blob,
 };
 use crate::world::{PropertySchemaLookup, decode_blob_payload, encode_blob_payload};
 
-/// Most rooms kept in the directory (engineering cap against a hostile server).
+/// Most rooms kept in the directory, against a hostile server. Engineering choice, spec
+/// silent.
 pub const MAX_ROOMS: usize = 256;
-/// Most requests awaiting a response (engineering cap).
+/// Most requests awaiting a response; the oldest is forgotten first. Engineering choice,
+/// spec silent.
 pub const MAX_PENDING: usize = 256;
-/// Most datagrams read per [`ChatClient::poll`] (engineering cap).
+/// Most datagrams read per [`ChatClient::poll`] and socket. Engineering choice, spec
+/// silent.
 pub const MAX_DATAGRAMS_PER_POLL: usize = 256;
-/// Delivery queue of outgoing chat-server blobs. The spec does not say which queue the
-/// chat server uses; queue 2 (`ReliableOrdered`) is an engineering choice.
+/// Delivery queue of outgoing chat-server blobs. Engineering choice, spec silent (it does
+/// not say which queue the chat server uses): queue 2 (`ReliableOrdered`).
 pub const CHAT_QUEUE_ID: u8 = 2;
+/// Most old connections kept to finish their disconnect flush. Engineering choice, spec
+/// silent.
+pub const MAX_DRAINING: usize = 4;
+/// Longest time an old connection is kept for its disconnect flush: the session layer's
+/// 20 s flush (state 6) and 20 s `Disconnect` retransmission (state 7) of
+/// `official-session.md` §6.1, plus a margin. Engineering choice, spec silent.
+pub const DRAIN_LIMIT_SEC: f64 = 45.0;
+
+/// Makes a fresh, unconnected transport for a connection attempt.
+pub type TransportBinder<T> = Box<dyn FnMut() -> Result<T, PlayError> + Send>;
 
 /// What the chat client needs to connect: the endpoint (from the launch parameters,
 /// §6.1.1) and the credentials of §6.6.2. The account and ticket are kept out of
@@ -86,8 +108,17 @@ impl ChatConfig {
 
     /// Replaces the ticket after an in-game refresh (`official-login.md` §4.3); the next
     /// connection attempt uses it (§6.1.2).
-    pub fn set_ticket(&mut self, ticket_base64: Option<String>) {
+    ///
+    /// # Errors
+    ///
+    /// [`PlayError::InvalidTicket`] or [`PlayError::TicketTooLong`] when the ticket is not
+    /// strict Base64 ([`crate::chat_session::decode_base64`]); the old ticket is kept.
+    pub fn set_ticket(&mut self, ticket_base64: Option<String>) -> Result<(), PlayError> {
+        if let Some(t) = ticket_base64.as_deref().filter(|t| !t.is_empty()) {
+            crate::chat_session::decode_base64(t)?;
+        }
         self.ticket_base64 = ticket_base64;
+        Ok(())
     }
 
     fn auth_header(&self) -> Result<SessionAuthHeader, PlayError> {
@@ -108,8 +139,14 @@ pub struct ChatCounters {
     pub decode_errors: u64,
     /// Datagrams the session layer refused.
     pub transport_errors: u64,
+    /// Socket reads that failed (the poll goes on).
+    pub recv_errors: u64,
     /// Connection attempts made.
     pub connects: u64,
+    /// Connection attempts that could not be started (a retry is scheduled).
+    pub connect_failures: u64,
+    /// Graceful disconnects requested on a connection that was still up.
+    pub disconnects: u64,
     /// Heartbeats sent.
     pub heartbeats: u64,
     /// Room messages that could not be mapped (unknown room, other message types).
@@ -132,16 +169,28 @@ enum Pending {
     Other,
 }
 
+/// An old connection finishing its disconnect flush on its own socket.
+struct Draining<T> {
+    transport: T,
+    mux: SessionMultiplexer,
+    conn: u16,
+    since: f64,
+}
+
 /// The chat-server session (§6.6).
 pub struct ChatClient<T: UdpDatagramTransport> {
     transport: T,
+    binder: Option<TransportBinder<T>>,
+    /// The current transport carried a connection; the next attempt binds a fresh one.
+    transport_used: bool,
+    draining: Vec<Draining<T>>,
     config: ChatConfig,
     codec: Option<Arc<dyn BitTreeCodec>>,
     mux: SessionMultiplexer,
     conn: Option<u16>,
     state: ChatSessionState,
     next_ctx: u32,
-    pending: BTreeMap<u32, Pending>,
+    pending: VecDeque<(u32, Pending)>,
     rooms: Vec<ChatRoomDescriptor>,
     self_desc: ChatRoomDescriptor,
     fellowship_channel_type: Option<u32>,
@@ -157,6 +206,7 @@ impl<T: UdpDatagramTransport> std::fmt::Debug for ChatClient<T> {
             .field("config", &self.config)
             .field("phase", &self.state.phase())
             .field("rooms", &self.rooms.len())
+            .field("draining", &self.draining.len())
             .field("counters", &self.counters)
             .finish_non_exhaustive()
     }
@@ -164,19 +214,24 @@ impl<T: UdpDatagramTransport> std::fmt::Debug for ChatClient<T> {
 
 impl ChatClient<StdUdpTransport> {
     /// Opens the chat-server socket through `access` and prepares the session; the first
-    /// connection attempt follows after the initial delay of §6.6.3.
+    /// connection attempt follows after the initial delay of §6.6.3. Every later attempt
+    /// binds a fresh socket through `access`.
     ///
     /// # Errors
     ///
     /// [`PlayError`] when the ticket is not valid Base64 or binding fails.
     pub fn open(
-        access: &NetworkAccess,
+        access: Arc<NetworkAccess>,
         config: ChatConfig,
         codec: Option<Arc<dyn BitTreeCodec>>,
         now: f64,
     ) -> Result<Self, PlayError> {
-        let transport = access.bind_udp(Ipv4Addr::UNSPECIFIED, 0, false)?;
-        Self::with_transport(transport, config, codec, now)
+        let binder: TransportBinder<StdUdpTransport> = Box::new(move || {
+            access
+                .bind_udp(Ipv4Addr::UNSPECIFIED, 0, false)
+                .map_err(PlayError::from)
+        });
+        Self::with_binder(binder, config, codec, now)
     }
 }
 
@@ -196,13 +251,16 @@ impl<T: UdpDatagramTransport> ChatClient<T> {
         config.auth_header()?;
         Ok(Self {
             transport,
+            binder: None,
+            transport_used: false,
+            draining: Vec::new(),
             config,
             codec,
             mux: SessionMultiplexer::new(),
             conn: None,
             state: ChatSessionState::new(now),
             next_ctx: 1,
-            pending: BTreeMap::new(),
+            pending: VecDeque::new(),
             rooms: Vec::new(),
             self_desc: ChatRoomDescriptor::Null,
             fellowship_channel_type: None,
@@ -213,7 +271,31 @@ impl<T: UdpDatagramTransport> ChatClient<T> {
         })
     }
 
-    /// The transport (for tests: the in-memory transport's queues).
+    /// A chat client that makes a fresh transport with `binder` for its first and every
+    /// later connection attempt.
+    ///
+    /// # Errors
+    ///
+    /// [`PlayError`] when the ticket is not valid Base64 or the first bind fails.
+    pub fn with_binder(
+        mut binder: TransportBinder<T>,
+        config: ChatConfig,
+        codec: Option<Arc<dyn BitTreeCodec>>,
+        now: f64,
+    ) -> Result<Self, PlayError> {
+        let transport = binder()?;
+        let mut client = Self::with_transport(transport, config, codec, now)?;
+        client.binder = Some(binder);
+        Ok(client)
+    }
+
+    /// Old connections still finishing their disconnect flush.
+    #[must_use]
+    pub fn draining_len(&self) -> usize {
+        self.draining.len()
+    }
+
+    /// The current transport (for tests: the in-memory transport's queues).
     pub fn transport_mut(&mut self) -> &mut T {
         &mut self.transport
     }
@@ -258,23 +340,104 @@ impl<T: UdpDatagramTransport> ChatClient<T> {
         self.fellowship_channel_type = channel_type;
     }
 
-    fn teardown(&mut self) {
+    /// Forgets the session without a disconnect (its transport is already gone).
+    fn drop_session(&mut self) {
         self.mux = SessionMultiplexer::new();
         self.conn = None;
         self.pending.clear();
     }
 
+    /// Ends the current session: a graceful disconnect when it is still connected, the
+    /// `Disconnect` flushed before the connection is let go (§6.6.3 rule 3 tears the
+    /// session down; `official-session.md` §6.1 states 6–7 say how).
+    fn retire(&mut self, now: f64) {
+        let Some(id) = self.conn.take() else {
+            self.drop_session();
+            return;
+        };
+        let mut mux = std::mem::take(&mut self.mux);
+        self.pending.clear();
+        let codec = self.codec.clone();
+        let mut lingering = false;
+        if let Some(conn) = mux.connection_mut(id) {
+            if conn.state() == ConnectionState::Connected {
+                self.counters.disconnects += 1;
+            }
+            conn.request_disconnect(now);
+            if let Err(e) = conn.tick(now, codec.as_deref()) {
+                tracing::debug!(error = %e, "chat-server disconnect tick failed");
+            }
+            lingering = matches!(
+                conn.state(),
+                ConnectionState::DisconnectingFlush | ConnectionState::DisconnectSent
+            );
+        }
+        if let Err(e) = mux.flush_outbound(&mut self.transport) {
+            self.counters.transport_errors += 1;
+            tracing::debug!(error = %e, "chat-server disconnect flush failed");
+        }
+        if !lingering || self.binder.is_none() {
+            // Without a socket maker the old connection cannot keep its socket apart from
+            // the next attempt; it is let go after one flush.
+            return;
+        }
+        match self.rebind() {
+            Ok(old) => {
+                if self.draining.len() >= MAX_DRAINING {
+                    self.draining.remove(0);
+                }
+                self.draining.push(Draining {
+                    transport: old,
+                    mux,
+                    conn: id,
+                    since: now,
+                });
+            }
+            Err(e) => {
+                self.counters.connect_failures += 1;
+                tracing::warn!(error = %e, "could not bind a fresh chat-server socket");
+            }
+        }
+    }
+
+    /// Replaces the transport with a fresh one from the binder; returns the old one.
+    fn rebind(&mut self) -> Result<T, PlayError> {
+        let binder = self.binder.as_mut().ok_or(PlayError::ChatNotReady)?;
+        let fresh = binder()?;
+        self.transport_used = false;
+        Ok(std::mem::replace(&mut self.transport, fresh))
+    }
+
     fn connect(&mut self, now: f64) -> Result<(), PlayError> {
-        self.teardown();
-        let id = self.mux.create_connection(self.config.endpoint, now)?;
+        if self.conn.is_some() {
+            self.retire(now);
+        }
+        self.drop_session();
+        if self.transport_used && self.binder.is_some() {
+            drop(self.rebind()?);
+        }
         let auth = self.config.auth_header()?;
-        if let Some(conn) = self.mux.connection_mut(id) {
-            conn.start_login(auth, now)?;
+        let id = self.mux.create_connection(self.config.endpoint, now)?;
+        self.transport_used = true;
+        match self.mux.connection_mut(id) {
+            Some(conn) => conn.start_login(auth, now)?,
+            None => return Err(PlayError::ChatNotReady),
         }
         self.conn = Some(id);
         self.order_num = 0;
         self.counters.connects += 1;
         Ok(())
+    }
+
+    /// Starts a connection attempt; on any failure the partial session is dropped and a
+    /// retry is scheduled under the active policy.
+    fn try_connect(&mut self, now: f64) {
+        if let Err(e) = self.connect(now) {
+            self.counters.connect_failures += 1;
+            tracing::warn!(error = %e, "chat-server connection attempt failed");
+            self.drop_session();
+            self.state.on_transport_lost(now);
+        }
     }
 
     fn send_raw(&mut self, req: &ChatRequest, now: f64) -> Result<(), PlayError> {
@@ -309,13 +472,18 @@ impl<T: UdpDatagramTransport> ChatClient<T> {
         Ok(())
     }
 
+    /// Remembers a request; the oldest is forgotten first (insertion order).
     fn remember(&mut self, ctx: u32, pending: Pending) {
-        if self.pending.len() >= MAX_PENDING
-            && let Some(first) = self.pending.keys().next().copied()
-        {
-            self.pending.remove(&first);
+        self.take_pending(ctx);
+        if self.pending.len() >= MAX_PENDING {
+            self.pending.pop_front();
         }
-        self.pending.insert(ctx, pending);
+        self.pending.push_back((ctx, pending));
+    }
+
+    fn take_pending(&mut self, ctx: u32) -> Option<Pending> {
+        let i = self.pending.iter().position(|(c, _)| *c == ctx)?;
+        self.pending.remove(i).map(|(_, p)| p)
     }
 
     /// Sends `req` with a fresh `ctx_id`, returned for requests that carry one.
@@ -401,6 +569,10 @@ impl<T: UdpDatagramTransport> ChatClient<T> {
                 self.send(req, now).map(|_| ())
             }
             Command::Social(SocialCommand::JoinChannel { name }) => {
+                // Gap: the spec does not say whether `/join` sends 0x16E, 0x177 or both (in
+                // which order, with which flags), nor the room ID of a user room joined by
+                // name (§6.6.5; with the spec writers, `docs/m8-remediation.md` §15). This
+                // sends 0x177 alone, flags 0, room ID 0.
                 check_units(name, MAX_ARGUMENT_UNITS)?;
                 let req = ChatRequest::RoomEnter {
                     ctx_id: 0,
@@ -429,7 +601,8 @@ impl<T: UdpDatagramTransport> ChatClient<T> {
         }
     }
 
-    /// Closes the session: a graceful transport disconnect, no reconnection.
+    /// Closes the session: a graceful transport disconnect, no reconnection. Later polls
+    /// keep running the session layer until the `Disconnect` is out.
     pub fn close(&mut self, now: f64) {
         self.state.close();
         if let Some(conn) = self.conn.and_then(|id| self.mux.connection_mut(id)) {
@@ -442,8 +615,8 @@ impl<T: UdpDatagramTransport> ChatClient<T> {
     ///
     /// # Errors
     ///
-    /// [`PlayError::Session`] when the transport fails. Malformed input is counted, not
-    /// returned.
+    /// [`PlayError::Session`] when sending on the transport fails. Malformed input, failed
+    /// reads and failed connection attempts are counted, not returned.
     pub fn poll(
         &mut self,
         now: f64,
@@ -456,8 +629,9 @@ impl<T: UdpDatagramTransport> ChatClient<T> {
             let received = match self.transport.recv_from(&mut buf) {
                 Ok(r) => r,
                 Err(e) => {
-                    self.recv_buf = buf;
-                    return Err(e.into());
+                    self.counters.recv_errors += 1;
+                    tracing::debug!(error = %e, "chat-server socket read failed");
+                    break;
                 }
             };
             let Some((len, src)) = received else {
@@ -480,6 +654,7 @@ impl<T: UdpDatagramTransport> ChatClient<T> {
                 }
             }
         }
+        self.poll_draining(now, &mut buf);
         self.recv_buf = buf;
         self.drain_session(now, schema, &mut out);
         if let Some(conn) = self.conn.and_then(|id| self.mux.connection_mut(id))
@@ -489,24 +664,81 @@ impl<T: UdpDatagramTransport> ChatClient<T> {
         }
         self.drain_session(now, schema, &mut out);
         if let Some(action) = self.state.tick(now) {
-            self.act(action, now)?;
+            self.act(action, now);
         }
         self.mux.flush_outbound(&mut self.transport)?;
         Ok(out)
     }
 
-    fn act(&mut self, action: ChatAction, now: f64) -> Result<(), PlayError> {
-        match action {
-            ChatAction::Connect => self.connect(now),
-            ChatAction::SendHeartbeat => {
-                self.counters.heartbeats += 1;
-                self.send_raw(&ChatRequest::Heartbeat, now)
+    /// Runs the old connections that are finishing their disconnect flush; each reads and
+    /// writes only its own socket. Their events are dropped.
+    fn poll_draining(&mut self, now: f64, buf: &mut [u8]) {
+        let codec = self.codec.clone();
+        let mut i = 0;
+        while let Some(d) = self.draining.get_mut(i) {
+            for _ in 0..MAX_DATAGRAMS_PER_POLL {
+                match d.transport.recv_from(buf) {
+                    Ok(Some((len, src))) => {
+                        if let Some(dgram) = buf.get(..len) {
+                            let _ = d.mux.receive_from_peer(dgram, src, now, codec.as_deref());
+                        }
+                    }
+                    Ok(None) | Err(_) => break,
+                }
             }
-            ChatAction::Disconnect => {
-                self.teardown();
-                Ok(())
+            let done = match d.mux.connection_mut(d.conn) {
+                Some(conn) => {
+                    while conn.pop_event().is_some() {}
+                    let _ = conn.tick(now, codec.as_deref());
+                    matches!(
+                        conn.state(),
+                        ConnectionState::Closing | ConnectionState::Idle
+                    ) || now - d.since > DRAIN_LIMIT_SEC
+                }
+                None => true,
+            };
+            let flushed = d.mux.flush_outbound(&mut d.transport).is_ok();
+            if done || !flushed {
+                self.draining.remove(i);
+            } else {
+                i += 1;
             }
         }
+    }
+
+    fn act(&mut self, action: ChatAction, now: f64) {
+        match action {
+            ChatAction::Connect => self.try_connect(now),
+            ChatAction::SendHeartbeat => {
+                self.counters.heartbeats += 1;
+                if let Err(e) = self.send_raw(&ChatRequest::Heartbeat, now) {
+                    tracing::debug!(error = %e, "chat-server heartbeat not sent");
+                }
+            }
+            ChatAction::Disconnect => self.retire(now),
+        }
+    }
+
+    /// Feeds one decoded chat event as if it had arrived now, without the transport.
+    /// For the fuzz target; the connector uses [`Self::poll`].
+    #[doc(hidden)]
+    pub fn handle_event(
+        &mut self,
+        ev: ChatEvent,
+        now: f64,
+        schema: &dyn PropertySchemaLookup,
+    ) -> ChatPoll {
+        let mut out = ChatPoll::default();
+        self.state.on_event(now);
+        self.on_chat_event(&ev, now, schema, &mut out);
+        out.raw.push(ev);
+        out
+    }
+
+    /// The session state machine, to drive it without a transport. For the fuzz target.
+    #[doc(hidden)]
+    pub fn state_mut(&mut self) -> &mut ChatSessionState {
+        &mut self.state
     }
 
     fn drain_session(&mut self, now: f64, schema: &dyn PropertySchemaLookup, out: &mut ChatPoll) {
@@ -521,16 +753,18 @@ impl<T: UdpDatagramTransport> ChatClient<T> {
                 SessionEvent::Connected { .. } => self.state.on_transport_connected(now),
                 SessionEvent::Disconnected { .. } => {
                     self.state.on_transport_lost(now);
-                    self.teardown();
+                    self.drop_session();
                     return;
                 }
                 SessionEvent::BlobReceived(blob) => {
+                    // §6.6.3 rule 1: any received blob resets the idle timer, also one
+                    // that fails to decode below.
+                    self.state.on_event(now);
                     let decoded = decode_blob_payload(&blob.payload, blob.recipient_id)
                         .map_err(PlayError::from)
                         .and_then(|d| ChatEvent::decode(blob.blob_header_word, &d.inner_payload));
                     match decoded {
                         Ok(ev) => {
-                            self.state.on_event(now);
                             self.on_chat_event(&ev, now, schema, out);
                             out.raw.push(ev);
                         }
@@ -562,8 +796,9 @@ impl<T: UdpDatagramTransport> ChatClient<T> {
         self.rooms.retain(|r| r.name() != Some(name));
     }
 
+    /// Sanitises first (control characters become spaces), then trims.
     fn channel_name(name: &str) -> Option<String> {
-        let n = sanitize_text(name.trim(), MAX_NAME_LEN).into_owned();
+        let n = sanitize_text(name, MAX_NAME_LEN).trim().to_owned();
         is_valid_name(&n).then_some(n)
     }
 
@@ -587,15 +822,26 @@ impl<T: UdpDatagramTransport> ChatClient<T> {
         {
             return Some(ChatChannel::Fellowship);
         }
+        // A room without a name is looked up by its ID, but only a non-zero ID names one
+        // room (user rooms entered by name are kept with ID 0).
         let name = room.name().filter(|n| !n.is_empty()).or_else(|| {
-            self.rooms
-                .iter()
-                .find(|r| r.id() == room.id() && r.kind() == room.kind())
-                .and_then(ChatRoomDescriptor::name)
+            room.id()
+                .is_some_and(|id| id != 0)
+                .then(|| {
+                    self.rooms
+                        .iter()
+                        .find(|r| r.id() == room.id() && r.kind() == room.kind())
+                        .and_then(ChatRoomDescriptor::name)
+                })
+                .flatten()
         })?;
         Self::channel_name(name).map(|name| ChatChannel::Named { name })
     }
 
+    /// Gap: the spec gives no meanings for the status, notice and flag codes of the room
+    /// events (`0x160`, `0x166`, `0x17C`, `0x18B`, `0x195`, ...); only the sign of a status
+    /// is used (non-negative = success, as for `0x165` in §6.6.2), and the other codes are
+    /// passed on raw in [`ChatPoll::raw`].
     fn on_chat_event(
         &mut self,
         ev: &ChatEvent,
@@ -606,7 +852,7 @@ impl<T: UdpDatagramTransport> ChatClient<T> {
         match ev {
             ChatEvent::LoginStatus { status } => {
                 if self.state.on_login_status(*status, now) == Some(ChatAction::Disconnect) {
-                    self.teardown();
+                    self.retire(now);
                 }
             }
             ChatEvent::AdminIgnored { .. } => self.counters.admin_ignored += 1,
@@ -633,7 +879,7 @@ impl<T: UdpDatagramTransport> ChatClient<T> {
                 room_name,
                 room,
             } => {
-                let asked = self.pending.remove(ctx_id);
+                let asked = self.take_pending(*ctx_id);
                 let name = if room_name.is_empty() {
                     match &asked {
                         Some(Pending::Join(n)) => n.clone(),
@@ -668,7 +914,7 @@ impl<T: UdpDatagramTransport> ChatClient<T> {
                 status,
                 room_name,
             } => {
-                self.pending.remove(ctx_id);
+                self.take_pending(*ctx_id);
                 if *status >= 0 {
                     self.add_room(ChatRoomDescriptor::new(
                         DescriptorKind::UserRoom,
@@ -689,7 +935,7 @@ impl<T: UdpDatagramTransport> ChatClient<T> {
                 ctx_id,
                 status,
             } => {
-                if let Some(Pending::Leave(name)) = self.pending.remove(ctx_id)
+                if let Some(Pending::Leave(name)) = self.take_pending(*ctx_id)
                     && *status >= 0
                 {
                     self.remove_room_named(&name);
@@ -730,7 +976,7 @@ impl<T: UdpDatagramTransport> ChatClient<T> {
             }
             ev => {
                 if let Some(ctx) = ev.ctx_id() {
-                    self.pending.remove(&ctx);
+                    self.take_pending(ctx);
                 }
             }
         }
@@ -745,6 +991,9 @@ impl<T: UdpDatagramTransport> ChatClient<T> {
         schema: &dyn PropertySchemaLookup,
         out: &mut ChatPoll,
     ) {
+        // Gap: room messages of type 0x08040000 (`MSG_TYPE_STRING`) are not mapped: the
+        // spec's note on that type names a field the type does not contain (§6.6.4; with
+        // the spec writers, `docs/m8-remediation.md` §15). They are counted.
         if msg_type != MSG_TYPE_CHAT {
             self.counters.unmapped_messages += 1;
             return;
@@ -758,7 +1007,7 @@ impl<T: UdpDatagramTransport> ChatClient<T> {
             .name()
             .filter(|n| !n.is_empty())
             .or_else(|| sender.name())
-            .map(|n| sanitize_text(n.trim(), MAX_NAME_LEN).into_owned())
+            .map(|n| sanitize_text(n, MAX_NAME_LEN).trim().to_owned())
             .filter(|n| !n.is_empty());
         out.events.push(Event::ChatMessage {
             channel,

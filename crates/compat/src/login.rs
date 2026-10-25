@@ -14,10 +14,11 @@
 //! they live only in [`soap_encoder`].
 //!
 //! The client network version string comes, in this order, from a value the
-//! user supplies, from the string the caller names in the client executable's
-//! version resource ([`crate::version_resource`]), or from the user when
-//! neither gives one ([`discover_network_version`], decision 0042 item 1). The
-//! executable's code is never scanned.
+//! user supplies, from the `StringFileInfo` string of the client executable's
+//! version resource ([`crate::version_resource`]; the keys and executable paths
+//! of `official-login.md` §2.4.1 step 2 unless the caller names others), or from
+//! the user when neither gives one ([`discover_network_version`], decision 0042
+//! item 1). The executable's code is never scanned.
 //!
 //! # Hostile input
 //!
@@ -62,23 +63,33 @@ pub const MIN_QUEUE_POLL_INTERVAL_SEC: u64 = 5;
 /// Maximum `RefreshTicket` attempts per ticket lifetime (§4.3, §5.2).
 pub const MAX_REFRESH_ATTEMPTS: u32 = 3;
 
-/// Primary `.dat` data identifier (enumerator key `2`) registered during version
-/// bootstrap (`0x10000002`, outgoing compression dictionary, §2.4.1 & §2.4.3).
-pub const DID_VERSION_PRIMARY: u32 = 0x1000_0002;
+/// Sub-map key of the outgoing (client-to-server) compression dictionary in Master DID
+/// Map `3` (`0x10000002`, label `"Client2Server"` -> `0x0E010000`; §2.4.3,
+/// `official-session.md` §4.1.3).
+pub const DICT_KEY_CLIENT_TO_SERVER: u32 = 0x1000_0002;
 
-/// Secondary `.dat` data identifier (enumerator key `1`) registered during version
-/// bootstrap (`0x10000001`, incoming decompression dictionary, §2.4.1 & §2.4.3).
-pub const DID_VERSION_SECONDARY: u32 = 0x1000_0001;
+/// Sub-map key of the incoming (server-to-client) deferred redirect stub in Master DID
+/// Map `3` (`0x10000001`, label `"Server2ClientDeferred"` -> `0x0E010002` -> `0x0E010001`;
+/// §2.4.3, `official-session.md` §4.1.3).
+pub const DICT_KEY_SERVER_TO_CLIENT_DEFERRED: u32 = 0x1000_0001;
 
-/// `.dat` Data ID of `DIDMasterMap[3]`, the compression dictionary enumerator-to-DID
-/// mapping table (`0x28000010`, `docs/specs/official-login.md` §2.4.3, invariant `I16`).
-pub const DID_MASTER_MAP_3_COMPRESSION: u32 = 0x2800_0010;
+/// Sub-map key of the direct incoming dictionary in Master DID Map `3` (`0x10000003`, label
+/// `"Server2Client"` -> `0x0E010001`; `official-session.md` §4.1.3).
+pub const DICT_KEY_SERVER_TO_CLIENT: u32 = 0x1000_0003;
 
-/// 16-byte mixed-endian schema/type GUID (`E795878D-C633-471C-8315-C3DBBEAD2FAA`)
-/// at offset `+0x00..+0x0F` of every `0x0E01xxxx` compression dictionary record (§2.4.3, invariant `I16`).
-pub const PREFIX_TREE_DICT_SCHEMA_GUID: [u8; 16] = [
-    0x8D, 0x87, 0x95, 0xE7, 0x33, 0xC6, 0x1C, 0x47, 0x83, 0x15, 0xC3, 0xDB, 0xBE, 0xAD, 0x2F, 0xAA,
-];
+/// Root-map key (`0x00000003`, label `"COMPRESSIONDICTIONARY"`) whose target in the Master
+/// DID Map (`0x28000000`) is the compression dictionary sub-map (`official-session.md` §4.1.3).
+pub const ROOT_KEY_COMPRESSION_DICTIONARY: u32 = 0x0000_0003;
+
+/// File offset of the Master DID Map file ID (`u32` LE) in a `.dat` superblock
+/// (`0x170..0x173`, `official-session.md` §4.1.3 item 1). The root map, the compression
+/// dictionary sub-map and the dictionary records are all found at run time from here
+/// (`property-system.md` §8.1: their DIDs are never built in).
+pub const DAT_ROOT_DID_MAP_OFFSET: usize = 0x170;
+
+/// 16-byte mixed-endian `formatUuid` (`E795878D-C633-471C-8315-C3DBBEAD2FAA`) at
+/// `+0x00..+0x0F` of every `0x0E01xxxx` compression dictionary record (§2.4.3, invariant `I16`).
+pub const PREFIX_TREE_DICT_SCHEMA_GUID: [u8; 16] = crate::session::BIT_TREE_TABLE_FORMAT_UUID;
 
 /// File offset of the 104-byte `.dat` superblock (`0x140`, §2.4.1).
 pub const DAT_SUPERBLOCK_OFFSET: usize = 0x140;
@@ -112,7 +123,7 @@ pub enum LoginFailureClass {
     F04AuthRejected,
     /// `F05_NO_GAME_SUBSCRIPTION`: Authenticated account has zero subscriptions for the game.
     F05NoGameSubscription,
-    /// `F06_WORLD_CLOSED`: `StatusServer.aspx` failed or returned no active login servers.
+    /// `F06_WORLD_CLOSED`: `World/StatusServerUrl` failed or returned no active login servers.
     F06WorldClosed,
     /// `F07_WORLD_ROLE_DENIED`: Subscription `ProductTokens` failed the world billing-role check.
     F07WorldRoleDenied,
@@ -255,7 +266,7 @@ pub enum LoginError {
     /// World login queue (`TakeANumber` / `LeaveQueue`) failed (`F08_QUEUE_ERROR`).
     #[error("world login queue error: {reason}")]
     QueueError {
-        /// Optional `HResult` code returned by `LoginQueue.aspx`.
+        /// Optional `HResult` code returned by `WorldQueue.LoginQueue.URL`.
         hresult: Option<u32>,
         /// Description of the queue failure.
         reason: String,
@@ -325,15 +336,25 @@ impl LoginError {
 
 /// Zeroes a mutable byte slice in place using `black_box` so the compiler
 /// does not elide the wipe (§6.3).
-fn zeroize_bytes(buf: &mut [u8]) {
+pub(crate) fn zeroize_bytes(buf: &mut [u8]) {
     buf.fill(0);
     std::hint::black_box(&buf);
+}
+
+/// Zeroes the whole backing buffer of a `Vec<u8>` (its capacity, not only its
+/// length) and leaves it empty (§6.3).
+pub(crate) fn zeroize_vec(buf: &mut Vec<u8>) {
+    // Growing to the existing capacity never reallocates.
+    buf.resize(buf.capacity(), 0);
+    buf.fill(0);
+    std::hint::black_box(&buf);
+    buf.clear();
 }
 
 /// Zeroes the whole backing buffer of a `String` (its capacity, not only its
 /// length) and leaves it empty (§6.3). The buffer is taken out of the string,
 /// so no copy is made and no reallocation can leave the old bytes behind.
-fn zeroize_string(s: &mut String) {
+pub(crate) fn zeroize_string(s: &mut String) {
     let mut bytes = std::mem::take(s).into_bytes();
     // Growing to the existing capacity never reallocates.
     bytes.resize(bytes.capacity(), 0);
@@ -1007,7 +1028,7 @@ fn parse_app_settings_xml(
 /// `*.launcherconfig`, or `TurbineLauncher.exe.config` (`docs/specs/official-login.md` §2.1).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LauncherConfig {
-    /// Full HTTP/HTTPS URL of the GLS `DataCenterServer` SOAP 1.1 endpoint
+    /// Full HTTP/HTTPS URL of the GLS datacenter directory SOAP 1.1 endpoint
     /// (`Launcher.DataCenterService.GLS`).
     pub gls_datacenter_service: String,
     /// Game identifier string (`DataCenter.GameName`).
@@ -1492,6 +1513,37 @@ pub fn extract_didver_from_dat_header(header_bytes: &[u8]) -> Result<(String, u3
     parse_dat_superblock_didver_descriptor(desc)
 }
 
+/// Reads the Master DID Map file ID (the root `DataIdMap` DID) from the superblock of a
+/// `.dat` archive: the `u32` LE at file offset `0x170` (`official-session.md` §4.1.3 item 1),
+/// after checking the `"BT\0\0"` magic at `0x140`. The value must be a DID map (prefix
+/// `0x28`).
+///
+/// # Errors
+///
+/// Returns [`LoginError::ConfigInvalid`] (`F02_CONFIG_INVALID`) if `header_bytes` is too
+/// short, the magic is missing, or the value is not a DID map DID.
+pub fn root_did_map_from_superblock(header_bytes: &[u8]) -> Result<u32, LoginError> {
+    let magic = header_bytes.get(DAT_SUPERBLOCK_OFFSET..DAT_SUPERBLOCK_OFFSET + 4);
+    if magic != Some(&DAT_SUPERBLOCK_MAGIC[..]) {
+        return Err(LoginError::ConfigInvalid {
+            reason: "invalid or missing .dat superblock magic at 0x140".to_owned(),
+        });
+    }
+    let raw: [u8; 4] = header_bytes
+        .get(DAT_ROOT_DID_MAP_OFFSET..DAT_ROOT_DID_MAP_OFFSET + 4)
+        .and_then(|b| b.try_into().ok())
+        .ok_or_else(|| LoginError::ConfigInvalid {
+            reason: ".dat header too short for the Master DID Map ID at 0x170".to_owned(),
+        })?;
+    let did = u32::from_le_bytes(raw);
+    if did >> 24 != 0x28 {
+        return Err(LoginError::ConfigInvalid {
+            reason: format!("superblock Master DID Map ID 0x{did:08X} is not a DID map"),
+        });
+    }
+    Ok(did)
+}
+
 /// Reads the superblock of a `.dat` archive on disk (e.g. `client_general.dat`)
 /// and extracts `(<didver_string>, archive_version_u32)` (`docs/specs/official-login.md` §2.4.1).
 ///
@@ -1518,16 +1570,31 @@ pub fn extract_didver_from_dat_file(dat_path: &Path) -> Result<(String, u32), Lo
 // §2.4.1 Client network version string (decision 0042 item 1)
 // ============================================================================
 
-/// Maximum byte length of a client network version string.
-pub const MAX_NETWORK_VERSION_LEN: usize = 64;
+/// Maximum byte length of a client network version string accepted by
+/// [`is_valid_network_version`]: `1` to `24` printable ASCII characters
+/// (`official-login.md` §2.4.1 steps 1 and 2).
+pub const MAX_NETWORK_VERSION_LEN: usize = 24;
 
-/// Checks that `candidate` can serve as the client network version string:
-/// `1..=`[`MAX_NETWORK_VERSION_LEN`] printable ASCII characters (`0x21..=0x7E`)
-/// with no spaces, so it embeds safely in `"netver:<value>; didver:<GUID>"`.
+/// The `StringFileInfo` keys read from the version resource when the caller names none, in
+/// order: the spelling found in the client's resource (without the second `i`) and the
+/// regular spelling (`official-login.md` §2.4.1 step 2; interoperability strings).
+pub const DEFAULT_NETWORK_VERSION_KEYS: [&str; 2] = ["CompatibiltyVersion", "CompatibilityVersion"];
+
+/// The client executables whose version resource is read when the caller names none,
+/// relative to the install root and in order: the 64-bit client, then the 32-bit client
+/// (`official-login.md` §2.4.1 step 2; interoperability file names).
+pub const DEFAULT_CLIENT_EXECUTABLES: [&str; 2] = ["x64/lotroclient64.exe", "lotroclient.exe"];
+
+/// Checks that `candidate` can serve as the client network version string: printable
+/// ASCII characters (`0x21..=0x7E`, so no whitespace) other than `;`, at most
+/// [`MAX_NETWORK_VERSION_LEN`] of them, so it embeds safely in
+/// `"netver:<value>; didver:<GUID>"` (§2.4.1).
 #[must_use]
 pub fn is_valid_network_version(candidate: &str) -> bool {
     (1..=MAX_NETWORK_VERSION_LEN).contains(&candidate.len())
-        && candidate.bytes().all(|b| (0x21..=0x7E).contains(&b))
+        && candidate
+            .bytes()
+            .all(|b| (0x21..=0x7E).contains(&b) && b != b';')
 }
 
 /// Where a discovered client network version string came from.
@@ -1550,21 +1617,20 @@ pub enum AskUserReason {
     /// consulted, so a bad override is never silently replaced. An empty or
     /// whitespace-only value counts as not supplied.
     UserValueInvalid,
-    /// No executable path was given, so the version resource was not read.
+    /// No executable path was given and none of [`DEFAULT_CLIENT_EXECUTABLES`] exists
+    /// under the install root (or no install root was given), so the version resource
+    /// was not read.
     NoExecutable,
-    /// The caller named no version-resource string, so the version resource
-    /// was not consulted (no key name is built in).
-    NoResourceKey,
     /// The executable's version resource could not be read.
     ResourceUnreadable(VersionResourceError),
-    /// The version resource has no string with the named key.
+    /// The version resource has no string with any of the keys tried.
     ResourceEntryMissing {
-        /// The key the caller named.
+        /// The key tried (the keys tried, joined by `" or "`, for the default keys).
         key: String,
     },
-    /// The named string exists but is not a valid network version string.
+    /// The string found exists but is not a valid network version string.
     ResourceEntryInvalid {
-        /// The key the caller named.
+        /// The key of the string found.
         key: String,
     },
 }
@@ -1589,10 +1655,14 @@ pub struct NetworkVersionQuery<'a> {
     /// A value the user supplied (setting or command line); always wins.
     /// Empty or whitespace-only counts as not supplied.
     pub user_value: Option<&'a str>,
-    /// Path of the client executable whose version resource may be read.
+    /// The install root: when `client_executable` is `None`, the first of
+    /// [`DEFAULT_CLIENT_EXECUTABLES`] that exists under it is read.
+    pub install_root: Option<&'a Path>,
+    /// Path of the client executable whose version resource is read (overrides the
+    /// default paths under `install_root`).
     pub client_executable: Option<&'a Path>,
-    /// Key of the version-resource string that holds the version. There is no
-    /// default: when `None`, the version resource is not consulted.
+    /// Key of the version-resource string that holds the version. When `None`, the keys of
+    /// [`DEFAULT_NETWORK_VERSION_KEYS`] are tried in order.
     pub resource_key: Option<&'a str>,
 }
 
@@ -1603,29 +1673,61 @@ pub fn network_version_from_resource(
     resource: &VersionResource,
     key: &str,
 ) -> NetworkVersionDiscovery {
-    match resource.lookup(key).map(str::trim) {
-        None => NetworkVersionDiscovery::AskUser(AskUserReason::ResourceEntryMissing {
-            key: key.to_owned(),
-        }),
-        Some(value) if is_valid_network_version(value) => NetworkVersionDiscovery::Found {
-            version: value.to_owned(),
-            source: NetworkVersionSource::VersionResource {
-                key: key.to_owned(),
-            },
-        },
-        Some(_) => NetworkVersionDiscovery::AskUser(AskUserReason::ResourceEntryInvalid {
-            key: key.to_owned(),
-        }),
-    }
+    network_version_from_resource_keys(resource, &[key])
 }
 
-/// Finds the client network version string in the order of decision 0042
-/// item 1:
+/// Looks up the network version string under the first of `keys` that the version resource
+/// has (step 2 of [`discover_network_version`]); the string found decides, valid or not.
+#[must_use]
+pub fn network_version_from_resource_keys(
+    resource: &VersionResource,
+    keys: &[&str],
+) -> NetworkVersionDiscovery {
+    for &key in keys {
+        match resource.lookup(key).map(str::trim) {
+            None => {}
+            Some(value) if is_valid_network_version(value) => {
+                return NetworkVersionDiscovery::Found {
+                    version: value.to_owned(),
+                    source: NetworkVersionSource::VersionResource {
+                        key: key.to_owned(),
+                    },
+                };
+            }
+            Some(_) => {
+                return NetworkVersionDiscovery::AskUser(AskUserReason::ResourceEntryInvalid {
+                    key: key.to_owned(),
+                });
+            }
+        }
+    }
+    NetworkVersionDiscovery::AskUser(AskUserReason::ResourceEntryMissing {
+        key: keys.join(" or "),
+    })
+}
+
+/// The executable [`discover_network_version`] reads: the one named, otherwise the first of
+/// [`DEFAULT_CLIENT_EXECUTABLES`] that is a file under `install_root`.
+#[must_use]
+pub fn client_executable_for_version(query: &NetworkVersionQuery<'_>) -> Option<PathBuf> {
+    if let Some(exe) = query.client_executable {
+        return Some(exe.to_path_buf());
+    }
+    let root = query.install_root?;
+    DEFAULT_CLIENT_EXECUTABLES
+        .iter()
+        .map(|rel| root.join(rel))
+        .find(|path| path.is_file())
+}
+
+/// Finds the client network version string in the order of `official-login.md` §2.4.1
+/// item 1 (decision 0042 item 1):
 ///
 /// 1. the value the user supplied, when there is one;
-/// 2. the string the caller names in the string table of the client
-///    executable's version resource (a documented PE structure; no key name is
-///    built in);
+/// 2. the `StringFileInfo` string of the client executable's version resource (a
+///    documented PE structure): the executable named, or else the first of
+///    [`DEFAULT_CLIENT_EXECUTABLES`] under the install root; the key named, or else the
+///    keys of [`DEFAULT_NETWORK_VERSION_KEYS`] in order;
 /// 3. otherwise [`NetworkVersionDiscovery::AskUser`].
 ///
 /// The executable is only read (headers and version resource), never scanned.
@@ -1643,15 +1745,20 @@ pub fn discover_network_version(query: &NetworkVersionQuery<'_>) -> NetworkVersi
             NetworkVersionDiscovery::AskUser(AskUserReason::UserValueInvalid)
         };
     }
-    let Some(key) = query.resource_key else {
-        return NetworkVersionDiscovery::AskUser(AskUserReason::NoResourceKey);
-    };
-    let Some(exe) = query.client_executable else {
+    let Some(exe) = client_executable_for_version(query) else {
         return NetworkVersionDiscovery::AskUser(AskUserReason::NoExecutable);
     };
-    match read_version_resource_from_file(exe) {
+    let named;
+    let keys: &[&str] = match query.resource_key {
+        Some(key) => {
+            named = [key];
+            &named
+        }
+        None => &DEFAULT_NETWORK_VERSION_KEYS,
+    };
+    match read_version_resource_from_file(&exe) {
         Ok(resource) => {
-            let outcome = network_version_from_resource(&resource, key);
+            let outcome = network_version_from_resource_keys(&resource, keys);
             if let NetworkVersionDiscovery::AskUser(reason) = &outcome {
                 tracing::debug!(?reason, "version resource gave no network version string");
             }
@@ -1664,157 +1771,110 @@ pub fn discover_network_version(query: &NetworkVersionQuery<'_>) -> NetworkVersi
     }
 }
 
-/// Largest version string length [`encode_version_response_payload`] accepts
-/// (`0x3FFF`, the two-byte form of the variable-length prefix).
-pub const MAX_VERSION_RESPONSE_STRING_LEN: usize = 0x3FFF;
-
-/// Encodes `version_str` (`"netver:<netver_string>; didver:<didver_string>"`)
-/// as the version response (`0x0000012C`) payload: a variable-length
-/// (`VariableU32`) byte-length prefix followed by the raw ASCII bytes of
-/// `version_str` without a trailing NUL (`docs/specs/official-login.md`
-/// §2.4.2, invariant `I11`, Vector `V7`).
-///
-/// Prefix encoding for byte length $L$:
-/// - $L \le 127$ (`0x7F`): 1 byte (`L as u8`)
-/// - $128 \le L \le 16383$ (`0x3FFF`): 2 bytes (`[((L >> 8) | 0x80) as u8, (L & 0xFF) as u8]`)
+/// Encodes `version_str` (`"netver:<netver_string>; didver:<didver_string>"`) as the
+/// `ClientVersionMessage` (`0x0000012C`) payload: a 4-tier `VariableU32` byte-length prefix
+/// (`official-session.md` §5.6.1) followed by the raw ASCII bytes of `version_str` without a
+/// trailing NUL (`docs/specs/official-login.md` §2.4.2, invariant `I11`, Vector `V7`).
 ///
 /// # Errors
 ///
-/// Returns [`LoginError::ConfigInvalid`] when `version_str` is longer than
-/// [`MAX_VERSION_RESPONSE_STRING_LEN`] bytes. Longer strings would need the
-/// four-byte prefix form, whose byte order the login and session code do not
-/// agree on, so they are refused rather than guessed.
-pub fn encode_version_response_payload(version_str: &str) -> Result<Vec<u8>, LoginError> {
+/// Returns [`LoginError::ConfigInvalid`] when `version_str` is not ASCII or longer than
+/// `u32::MAX` bytes.
+pub fn encode_client_version_payload(version_str: &str) -> Result<Vec<u8>, LoginError> {
     let raw = version_str.as_bytes();
-    let len = raw.len();
-    let mut out = Vec::with_capacity(len.saturating_add(2));
-    if let Ok(short) = u8::try_from(len)
-        && short <= 0x7F
-    {
-        out.push(short);
-    } else if len <= MAX_VERSION_RESPONSE_STRING_LEN {
-        out.push(0x80 | ((len >> 8) & 0x3F) as u8);
-        out.push((len & 0xFF) as u8);
-    } else {
+    if !raw.is_ascii() {
         return Err(LoginError::ConfigInvalid {
-            reason: format!(
-                "version string of {len} bytes exceeds the {MAX_VERSION_RESPONSE_STRING_LEN}-byte limit"
-            ),
+            reason: "client version string must be ASCII".to_owned(),
         });
     }
+    let len = u32::try_from(raw.len()).map_err(|_| LoginError::ConfigInvalid {
+        reason: "client version string is too long".to_owned(),
+    })?;
+    let mut out = Vec::with_capacity(raw.len().saturating_add(5));
+    crate::session::encode_variable_u32(len, &mut out);
     out.extend_from_slice(raw);
     Ok(out)
 }
 
-/// Client version and `.dat` verification metadata prepared for the UDP session
-/// layer (`docs/specs/official-login.md` §2.4, invariant `I11`, Vector `V7`).
+/// Client and data version identifiers prepared for the UDP session layer
+/// (`docs/specs/official-login.md` §2.4.1, invariant `I11`, Vector `V7`). The compression
+/// dictionaries and their `codecUuid`s are resolved separately
+/// ([`resolve_bit_tree_table`], §2.4.3).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VersionInfo {
-    /// Network protocol / build version string (`<netver_string>`, e.g. `"1701.0056.3422.4000"`).
+    /// `<netver_string>` (§2.4.1 item 1; see [`is_valid_network_version`]).
     pub netver: String,
-    /// 36-character uppercase ASCII GUID (`<didver_string>`, e.g. `"AC322905-A93D-48FB-9902-7D32EEAC1C4E"`).
+    /// `<didver_string>`: 36-character uppercase GUID from `.dat` superblock `0x17C..0x18B`.
     pub didver_guid: String,
-    /// Unsigned 32-bit decimal archive version integer from `.dat` superblock offset `0x18C` (e.g. `1100`).
+    /// Archive version integer at `0x18C..0x18F` (not part of the wire string, §2.4.1 item 2).
     pub didver_version: u32,
-    /// 16-byte header (`codecUuid` or first 16 bytes) copied from `.dat` compression record.
-    pub record_10000002_header: [u8; 16],
-    /// Registered bootstrap compression dictionary enumerator keys (`[0x10000002, 0x10000001]`).
-    pub registered_dids: [u32; 2],
 }
 
 impl VersionInfo {
-    /// Constructs [`VersionInfo`] from `netver`, `didver_guid`, `didver_version`,
-    /// and a 16-byte record header slice (§2.4).
+    /// Constructs [`VersionInfo`] from `netver`, `didver_guid` and `didver_version` (§2.4.1).
     ///
     /// # Errors
     ///
-    /// Returns [`LoginError::ConfigInvalid`] (`F02_CONFIG_INVALID`) if `netver`
-    /// or `didver_guid` is empty or `record_10000002_payload` is shorter than
-    /// 16 bytes.
+    /// Returns [`LoginError::ConfigInvalid`] (`F02_CONFIG_INVALID`) if `netver` fails
+    /// [`is_valid_network_version`] or `didver_guid` is not a 36-character GUID string.
     pub fn new(
         netver: impl Into<String>,
         didver_guid: impl Into<String>,
         didver_version: u32,
-        record_10000002_payload: &[u8],
     ) -> Result<Self, LoginError> {
         let netver = netver.into();
         let didver_guid = didver_guid.into();
-        if !is_valid_network_version(&netver) || didver_guid.trim().is_empty() {
+        if !is_valid_network_version(&netver) || !is_guid_string(&didver_guid) {
             return Err(LoginError::ConfigInvalid {
-                reason: "netver must be a valid network version string and didver_guid non-empty"
+                reason: "netver must be a valid network version string and didver a 36-character \
+                         GUID string"
                     .to_owned(),
             });
         }
-        let header_slice =
-            record_10000002_payload
-                .get(..16)
-                .ok_or_else(|| LoginError::ConfigInvalid {
-                    reason: format!(
-                        "DID 0x10000002 payload requires at least 16 bytes, got {}",
-                        record_10000002_payload.len()
-                    ),
-                })?;
-        let mut record_10000002_header = [0u8; 16];
-        record_10000002_header.copy_from_slice(header_slice);
         Ok(Self {
             netver,
             didver_guid,
             didver_version,
-            record_10000002_header,
-            registered_dids: [DID_VERSION_PRIMARY, DID_VERSION_SECONDARY],
         })
     }
 
-    /// Constructs [`VersionInfo`] directly from `<netver_string>`, the 20-byte
-    /// `.dat` superblock data-version descriptor at file offset `0x17C..0x18F`,
-    /// and the 16-byte header slice (§2.4.1, Vector `V7`).
+    /// Constructs [`VersionInfo`] from `<netver_string>` and the 20-byte `.dat` superblock
+    /// data-version descriptor at file offset `0x17C..0x18F` (§2.4.1, Vector `V7`).
     ///
     /// # Errors
     ///
-    /// Returns [`LoginError::ConfigInvalid`] if the descriptor is shorter than
-    /// 20 bytes or the arguments fail [`VersionInfo::new`] validation.
+    /// Returns [`LoginError::ConfigInvalid`] if the descriptor is shorter than 20 bytes or the
+    /// arguments fail [`VersionInfo::new`] validation.
     pub fn from_dat_superblock_descriptor(
         netver: impl Into<String>,
         descriptor_20_bytes: &[u8],
-        record_10000002_payload: &[u8],
     ) -> Result<Self, LoginError> {
         let (didver_guid, didver_version) =
             parse_dat_superblock_didver_descriptor(descriptor_20_bytes)?;
-        Self::new(netver, didver_guid, didver_version, record_10000002_payload)
+        Self::new(netver, didver_guid, didver_version)
     }
 
-    /// Returns `<didver_string>`, the 36-character uppercase ASCII GUID
-    /// `"XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX"` used in `VersionResponse` (§2.4.1 & §2.4.2).
+    /// Returns `<didver_string>`, the 36-character uppercase GUID (§2.4.1 item 2).
     #[must_use]
     pub fn didver_string(&self) -> &str {
         &self.didver_guid
     }
 
-    /// Formats the `.dat` superblock helper's first out-parameter string
-    /// `"<guid_string> : <version_u32>"` (which is discarded by the `VersionResponse`
-    /// builder in favor of [`VersionInfo::didver_string`], §2.4.1).
-    #[must_use]
-    pub fn didver_with_version_string(&self) -> String {
-        format!("{} : {}", self.didver_guid, self.didver_version)
-    }
-
     /// Formats the combined client version string in the exact ASCII format
-    /// `"netver:<netver_string>; didver:<didver_string>"`
-    /// (`docs/specs/official-login.md` §2.4.1 & §2.4.2, invariant `I11`, Vector `V7`).
+    /// `"netver:<netver_string>; didver:<didver_string>"` (§2.4.1, invariant `I11`, Vector `V7`).
     #[must_use]
     pub fn version_string(&self) -> String {
         format!("netver:{}; didver:{}", self.netver, self.didver_guid)
     }
 
-    /// Encodes the version response (`0x0000012C`) payload (`VariableU32`
-    /// byte-length prefix followed by raw ASCII bytes of
-    /// [`VersionInfo::version_string`], §2.4.2, invariant `I11`, Vector `V7`).
+    /// Encodes the `ClientVersionMessage` (`0x0000012C`) payload of
+    /// [`VersionInfo::version_string`] (§2.4.2, invariant `I11`, Vector `V7`).
     ///
     /// # Errors
     ///
-    /// See [`encode_version_response_payload`].
-    pub fn encode_version_response_payload(&self) -> Result<Vec<u8>, LoginError> {
-        encode_version_response_payload(&self.version_string())
+    /// See [`encode_client_version_payload`].
+    pub fn encode_client_version_payload(&self) -> Result<Vec<u8>, LoginError> {
+        encode_client_version_payload(&self.version_string())
     }
 }
 
@@ -1824,170 +1884,261 @@ impl fmt::Display for VersionInfo {
     }
 }
 
+/// Whether `s` is a 36-character uppercase GUID string `XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX`.
+fn is_guid_string(s: &str) -> bool {
+    s.len() == 36
+        && s.bytes().enumerate().all(|(i, b)| {
+            if matches!(i, 8 | 13 | 18 | 23) {
+                b == b'-'
+            } else {
+                b.is_ascii_digit() || (b'A'..=b'F').contains(&b)
+            }
+        })
+}
+
 // ============================================================================
-// §2.4.3 Compression Dictionary Resolution (`0x28000010` DID Map 3 & `0x0E01xxxx`)
+// §2.4.3 Compression Dictionary Resolution (Master DID Map 3 & `0x0E01xxxx`)
 // ============================================================================
 
-/// A single `(enum_key, target_did)` mapping entry in `DIDMasterMap[3]` (`0x28000010`, §2.4.3).
+/// A single `(enum_key, target_did)` entry of a `DataIdMap` record (`records.md` §8.1).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DidMap3Entry {
-    /// Enumerator key (e.g. `0x10000001` or `0x10000002`).
+    /// Map key (e.g. `0x10000001` or `0x10000002`).
     pub enum_key: u32,
-    /// Mapped `.dat` Data ID (e.g. `0x0E010000` or `0x0E010002`).
+    /// Mapped `.dat` Data ID (e.g. `0x0E010000` or `0x0E010002`; `0` for the "undefined"
+    /// sentinel).
     pub target_did: u32,
 }
 
-/// Parsed `DIDMasterMap[3]` (`0x28000010`) compression dictionary mapping table
-/// (`docs/specs/official-login.md` §2.4.3, invariant `I16`, Vector `V7`).
+/// Largest number of groups accepted in one DID map (engineering choice, spec silent; the records of an
+/// install have two, `records.md` §8.1).
+pub const MAX_DID_MAP_GROUPS: usize = 64;
+
+/// A parsed `DataIdMap` record (`records.md` §8.1) such as the root map `0x28000000` or
+/// Master DID Map `3` (`0x28000010`, `docs/specs/official-login.md` §2.4.3, invariant `I16`).
+///
+/// Layout: the record's own DID (`u32` LE), then groups until the payload ends; each group
+/// is a TSize (`u8` hint `0..=22` + 3-tier VLE count *n*), *n* `(u32 key, u32 DID)` pairs, a
+/// second TSize whose count equals *n*, and *n* `(u32 key, u8 length + ASCII label)` pairs.
+/// All groups merge into one table; the first group wins on a duplicate key.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DidMap3Table {
-    /// Self-identifying DID at offset `+0x00` (must equal [`DID_MASTER_MAP_3_COMPRESSION`], `0x28000010`).
+    /// Self-identifying DID at offset `+0x00` (prefix `0x28`).
     pub self_did: u32,
-    /// Table flags byte at offset `+0x04`.
-    pub flags: u8,
-    /// Ordered `(enum_key, target_did)` pairs.
+    /// Merged `(enum_key, target_did)` pairs in stored order.
     pub entries: Vec<DidMap3Entry>,
-    /// Optional human-readable enumerator names keyed by `enum_key`.
+    /// Labels by key (`"Client2Server"`, `"Server2Client"`, …), kept for diagnostics.
     pub names: BTreeMap<u32, String>,
 }
 
+/// Bounded little-endian cursor for the `.dat` records of §2.4.3.
+struct DatCursor<'a> {
+    bytes: &'a [u8],
+    pos: usize,
+}
+
+impl<'a> DatCursor<'a> {
+    fn err(what: &str) -> LoginError {
+        LoginError::ConfigInvalid {
+            reason: format!("malformed DID map record: {what}"),
+        }
+    }
+
+    fn take(&mut self, n: usize) -> Result<&'a [u8], LoginError> {
+        let end = self
+            .pos
+            .checked_add(n)
+            .ok_or_else(|| Self::err("length overflow"))?;
+        let slice = self
+            .bytes
+            .get(self.pos..end)
+            .ok_or_else(|| Self::err("truncated"))?;
+        self.pos = end;
+        Ok(slice)
+    }
+
+    fn u8(&mut self) -> Result<u8, LoginError> {
+        Ok(self.take(1)?[0])
+    }
+
+    fn u32(&mut self) -> Result<u32, LoginError> {
+        let b = self.take(4)?;
+        Ok(u32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+    }
+
+    /// 3-tier VLE of the stored formats (`records.md` §1.2).
+    fn vle(&mut self) -> Result<u32, LoginError> {
+        let a = self.u8()?;
+        if a < 0x80 {
+            Ok(u32::from(a))
+        } else if a < 0xC0 {
+            Ok((u32::from(a & 0x3F) << 8) | u32::from(self.u8()?))
+        } else {
+            let b = self.u8()?;
+            let lo = self.take(2)?;
+            Ok((u32::from(a & 0x3F) << 24)
+                | (u32::from(b) << 16)
+                | u32::from(u16::from_le_bytes([lo[0], lo[1]])))
+        }
+    }
+
+    /// TSize (`records.md` §1.3): hint `0..=22` + VLE count, with the count bounded by
+    /// `min_entry` bytes per element.
+    fn tsize(&mut self, min_entry: usize) -> Result<usize, LoginError> {
+        let hint = self.u8()?;
+        if hint > 22 {
+            return Err(Self::err("TSize hint above 22"));
+        }
+        let count = self.vle()? as usize;
+        if count > MAX_XML_ITEMS
+            || count.saturating_mul(min_entry) > self.bytes.len().saturating_sub(self.pos)
+        {
+            return Err(LoginError::InputTooLarge {
+                class: LoginFailureClass::F02ConfigInvalid,
+                detail: "DID map entry count exceeds the record or MAX_XML_ITEMS",
+            });
+        }
+        Ok(count)
+    }
+
+    fn is_empty(&self) -> bool {
+        self.pos >= self.bytes.len()
+    }
+}
+
 impl DidMap3Table {
-    /// Parses a `0x28000010` (`DIDMasterMap[3]`) record from `bytes` (§2.4.3).
+    /// Parses a `DataIdMap` record from `bytes` (`records.md` §8.1, §2.4.3).
     ///
     /// # Errors
     ///
-    /// Returns [`LoginError::ConfigInvalid`] (`F02_CONFIG_INVALID`) if the record
-    /// header is truncated, `self_did != 0x28000010`, or the entry count exceeds
-    /// [`MAX_XML_ITEMS`].
+    /// Returns [`LoginError::ConfigInvalid`] (`F02_CONFIG_INVALID`) if the record is truncated,
+    /// its DID is not a `0x28` DID map, a label list does not match its map list, or a count
+    /// exceeds the record ([`LoginError::InputTooLarge`]).
     pub fn parse(bytes: &[u8]) -> Result<Self, LoginError> {
-        let hdr = bytes.get(0..9).ok_or_else(|| LoginError::ConfigInvalid {
-            reason: format!(
-                "DID Map 3 (0x28000010) record too short for 9-byte header (len = {})",
-                bytes.len()
-            ),
-        })?;
-        let self_did = u32::from_le_bytes([hdr[0], hdr[1], hdr[2], hdr[3]]);
-        if self_did != DID_MASTER_MAP_3_COMPRESSION {
+        let mut c = DatCursor { bytes, pos: 0 };
+        let self_did = c.u32()?;
+        if self_did >> 24 != 0x28 {
             return Err(LoginError::ConfigInvalid {
-                reason: format!(
-                    "unexpected DID Map 3 self_did 0x{self_did:08X} (expected 0x{DID_MASTER_MAP_3_COMPRESSION:08X})"
-                ),
+                reason: format!("record 0x{self_did:08X} is not a DID map (prefix 0x28)"),
             });
         }
-        let flags = hdr[4];
-        let entry_count = usize::try_from(u32::from_le_bytes([hdr[5], hdr[6], hdr[7], hdr[8]]))
-            .map_err(|_| LoginError::ConfigInvalid {
-                reason: "invalid DID Map 3 entry_count".to_owned(),
-            })?;
-        if entry_count > MAX_XML_ITEMS {
-            return Err(LoginError::InputTooLarge {
-                class: LoginFailureClass::F02ConfigInvalid,
-                detail: "DID Map 3 entry_count exceeds MAX_XML_ITEMS",
-            });
-        }
-        let entries_byte_len = entry_count.saturating_mul(8);
-        let entries_end = 9usize.saturating_add(entries_byte_len);
-        let entries_slice = bytes
-            .get(9..entries_end)
-            .ok_or_else(|| LoginError::ConfigInvalid {
-                reason: format!(
-                    "DID Map 3 record truncated in entries array (need {entries_end} bytes, got {})",
-                    bytes.len()
-                ),
-            })?;
-
-        let mut entries = Vec::with_capacity(entry_count);
-        for chunk in entries_slice.as_chunks::<8>().0 {
-            let enum_key = u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
-            let target_did = u32::from_le_bytes([chunk[4], chunk[5], chunk[6], chunk[7]]);
-            entries.push(DidMap3Entry {
-                enum_key,
-                target_did,
-            });
-        }
-
-        // Optional trailing name table: name_count (u32 LE) followed by (enum_key: u32 LE, cstr) pairs.
+        let mut entries: Vec<DidMap3Entry> = Vec::new();
+        let mut seen_keys = BTreeSet::new();
+        let mut duplicates = 0usize;
         let mut names = BTreeMap::new();
-        if let Some(rem) = bytes.get(entries_end..)
-            && rem.len() >= 4
-        {
-            let name_count = usize::try_from(u32::from_le_bytes([rem[0], rem[1], rem[2], rem[3]]))
-                .unwrap_or(0)
-                .min(MAX_XML_ITEMS);
-            let mut cursor = 4usize;
-            for _ in 0..name_count {
-                let Some(key_bytes) = rem.get(cursor..cursor.saturating_add(4)) else {
-                    break;
-                };
-                let key =
-                    u32::from_le_bytes([key_bytes[0], key_bytes[1], key_bytes[2], key_bytes[3]]);
-                cursor = cursor.saturating_add(4);
-                let Some(str_rem) = rem.get(cursor..) else {
-                    break;
-                };
-                let Some(nul_idx) = str_rem.iter().position(|&b| b == 0) else {
-                    break;
-                };
-                if let Some(name_slice) = str_rem.get(..nul_idx)
-                    && let Ok(name_str) = std::str::from_utf8(name_slice)
-                {
-                    names.insert(key, name_str.to_owned());
+        let mut groups = 0usize;
+        loop {
+            groups += 1;
+            if groups > MAX_DID_MAP_GROUPS {
+                return Err(DatCursor::err("too many groups"));
+            }
+            let n = c.tsize(8)?;
+            let mut group = Vec::with_capacity(n.min(64));
+            for _ in 0..n {
+                let enum_key = c.u32()?;
+                let target_did = c.u32()?;
+                group.push(DidMap3Entry {
+                    enum_key,
+                    target_did,
+                });
+            }
+            let labels = c.tsize(5)?;
+            if labels != n {
+                return Err(DatCursor::err("label count differs from map count"));
+            }
+            for _ in 0..labels {
+                let key = c.u32()?;
+                let len = usize::from(c.u8()?);
+                let raw = c.take(len)?;
+                let label: String = raw.iter().map(|&b| char::from(b)).collect();
+                names.entry(key).or_insert(label);
+            }
+            for entry in group {
+                if seen_keys.insert(entry.enum_key) {
+                    entries.push(entry);
+                } else {
+                    duplicates += 1;
                 }
-                cursor = cursor.saturating_add(nul_idx).saturating_add(1);
+            }
+            if c.is_empty() {
+                break;
             }
         }
-
+        if duplicates > 0 {
+            tracing::warn!(
+                self_did,
+                duplicates,
+                "duplicate DID map keys; the first of each kept"
+            );
+        }
         Ok(Self {
             self_did,
-            flags,
             entries,
             names,
         })
     }
 
-    /// Resolves an enumerator key (e.g. `0x10000001` or `0x10000002`) to its
-    /// mapped `.dat` Data ID (`0x0E01xxxx`).
+    /// Resolves a key (e.g. `0x10000001` or `0x10000002`) to its mapped `.dat` Data ID. The
+    /// "undefined" sentinel (target `0`) is a miss.
     #[must_use]
     pub fn resolve_enum_key(&self, enum_key: u32) -> Option<u32> {
         self.entries
             .iter()
             .find(|e| e.enum_key == enum_key)
             .map(|e| e.target_did)
+            .filter(|&did| did != 0)
     }
 }
 
-/// Parsed 44-byte (`0x2C`) header of a `0x0E01xxxx` compression dictionary record
-/// (`docs/specs/official-login.md` §2.4.3, invariant `I16`, Vector `V7`).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PrefixTreeDictionaryHeader {
-    /// Schema/type GUID at `+0x00..+0x0F` (always [`PREFIX_TREE_DICT_SCHEMA_GUID`]).
-    pub schema_guid: [u8; 16],
-    /// Dictionary identity GUID (`codecUuid`) at `+0x10..+0x1F`.
-    pub dict_guid: [u8; 16],
-    /// Non-zero when this record is a deferred redirect to another `0x0E01xxxx` DID (`+0x20..+0x23`).
-    pub deferred_target_did: u32,
-    /// Dictionary format version at `+0x24..+0x27` (`1` for concrete dictionaries, `0` for redirects).
-    pub dict_format_version: u32,
-    /// Byte length $B$ of the serialized tree stream following offset `+0x2C` (`+0x28..+0x2B`).
-    pub tree_stream_len: u32,
-    /// First `u32 LE` of the tree stream at `+0x2C..+0x2F` (`node_count`), when `tree_stream_len >= 4`.
-    pub node_count: Option<u32>,
+/// Resolves the compression dictionary sub-map DID from the root `DataIdMap` (the Master DID
+/// Map named by `client_general.dat`'s superblock, `0x28000000`) through root key `3`
+/// (`"COMPRESSIONDICTIONARY"`, `official-session.md` §4.1.3).
+///
+/// # Errors
+///
+/// Returns [`LoginError::ConfigInvalid`] if the root map is malformed or has no such key.
+pub fn compression_dictionary_map_did(root_map_bytes: &[u8]) -> Result<u32, LoginError> {
+    let root = DidMap3Table::parse(root_map_bytes)?;
+    root.resolve_enum_key(ROOT_KEY_COMPRESSION_DICTIONARY)
+        .ok_or_else(|| LoginError::ConfigInvalid {
+            reason: "the root DID map has no compression dictionary entry (key 3)".to_owned(),
+        })
 }
 
-impl PrefixTreeDictionaryHeader {
+/// Parsed 44-byte (`0x2C`) header of a `0x0E01xxxx` compression dictionary record
+/// (`official-session.md` §4.1.3 item 2; `official-login.md` §2.4.3, invariant `I16`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BitTreeTableHeader {
+    /// `formatUuid` at `+0x00..+0x0F` (always [`PREFIX_TREE_DICT_SCHEMA_GUID`]).
+    pub format_uuid: [u8; 16],
+    /// `codecUuid` at `+0x10..+0x1F`, matched against `ConnectChallengeHeader.codecUuid`.
+    pub codec_uuid: [u8; 16],
+    /// `redirectDid` at `+0x20..+0x23`.
+    pub redirect_did: u32,
+    /// `version` at `+0x24..+0x27` (`1` for a literal dictionary, `0` in the stub).
+    pub version: u32,
+    /// `bodyLen` at `+0x28..+0x2B`.
+    pub body_len: u32,
+    /// First `u32 LE` of the body at `+0x2C..+0x2F` (`nodeCount`), when `bodyLen >= 4`.
+    pub node_count: Option<u32>,
+    /// Whether the loader must follow `redirect_did`: non-zero **and** not the record's own
+    /// DID (§4.1.3 item 1).
+    pub redirects: bool,
+}
+
+impl BitTreeTableHeader {
     /// Minimum byte length of a `0x0E01xxxx` compression dictionary record (`44` bytes = `0x2C`).
     pub const MIN_HEADER_LEN: usize = 0x2C;
 
-    /// Parses the 44-byte (`0x2C`) header (and optional `node_count` at `+0x2C..+0x30`)
-    /// of a `0x0E01xxxx` compression dictionary record (§2.4.3, invariant `I16`).
+    /// Parses the 44-byte header of the record `own_did` (§2.4.3, invariant `I16`). A literal
+    /// dictionary (no redirect) must have `version == 1`.
     ///
     /// # Errors
     ///
-    /// Returns [`LoginError::ConfigInvalid`] (`F02_CONFIG_INVALID`) if `bytes` is
-    /// shorter than 44 bytes, the schema GUID at `+0x00..+0x10` does not match
-    /// [`PREFIX_TREE_DICT_SCHEMA_GUID`], or a concrete dictionary (`deferred_target_did == 0`)
-    /// does not have `dict_format_version == 1`.
-    pub fn parse(bytes: &[u8]) -> Result<Self, LoginError> {
+    /// Returns [`LoginError::ConfigInvalid`] (`F02_CONFIG_INVALID`) if `bytes` is shorter
+    /// than 44 bytes, `formatUuid` does not match [`PREFIX_TREE_DICT_SCHEMA_GUID`], or a
+    /// literal dictionary has a `version` other than `1`.
+    pub fn parse(bytes: &[u8], own_did: u32) -> Result<Self, LoginError> {
         let hdr = bytes
             .get(..Self::MIN_HEADER_LEN)
             .ok_or_else(|| LoginError::ConfigInvalid {
@@ -1997,111 +2148,97 @@ impl PrefixTreeDictionaryHeader {
                     bytes.len()
                 ),
             })?;
-        let mut schema_guid = [0u8; 16];
-        if let Some(s) = hdr.get(0..16) {
-            schema_guid.copy_from_slice(s);
-        }
-        if schema_guid != PREFIX_TREE_DICT_SCHEMA_GUID {
+        let mut format_uuid = [0u8; 16];
+        format_uuid.copy_from_slice(&hdr[0..16]);
+        if format_uuid != PREFIX_TREE_DICT_SCHEMA_GUID {
             return Err(LoginError::ConfigInvalid {
                 reason: format!(
-                    "invalid compression dictionary schema GUID {}",
-                    format_mixed_endian_guid(&schema_guid)
+                    "invalid compression dictionary format UUID {}",
+                    format_mixed_endian_guid(&format_uuid)
                 ),
             });
         }
-        let mut dict_guid = [0u8; 16];
-        if let Some(d) = hdr.get(16..32) {
-            dict_guid.copy_from_slice(d);
-        }
-        let deferred_target_did = u32::from_le_bytes([hdr[32], hdr[33], hdr[34], hdr[35]]);
-        let dict_format_version = u32::from_le_bytes([hdr[36], hdr[37], hdr[38], hdr[39]]);
-        let tree_stream_len = u32::from_le_bytes([hdr[40], hdr[41], hdr[42], hdr[43]]);
-
-        if deferred_target_did == 0 && dict_format_version != 1 {
+        let mut codec_uuid = [0u8; 16];
+        codec_uuid.copy_from_slice(&hdr[16..32]);
+        let word = |at: usize| u32::from_le_bytes([hdr[at], hdr[at + 1], hdr[at + 2], hdr[at + 3]]);
+        let redirect_did = word(32);
+        let version = word(36);
+        let body_len = word(40);
+        let redirects = redirect_did != 0 && redirect_did != own_did;
+        if !redirects && version != 1 {
             return Err(LoginError::ConfigInvalid {
                 reason: format!(
-                    "unsupported concrete compression dictionary format version {dict_format_version} (expected 1)"
+                    "unsupported compression dictionary version {version} (expected 1)"
                 ),
             });
         }
-
-        let node_count = if tree_stream_len >= 4 {
+        let node_count = if body_len >= 4 {
             bytes
                 .get(0x2C..0x30)
                 .map(|nc| u32::from_le_bytes([nc[0], nc[1], nc[2], nc[3]]))
         } else {
             None
         };
-
         Ok(Self {
-            schema_guid,
-            dict_guid,
-            deferred_target_did,
-            dict_format_version,
-            tree_stream_len,
+            format_uuid,
+            codec_uuid,
+            redirect_did,
+            version,
+            body_len,
             node_count,
+            redirects,
         })
     }
 
-    /// Formats `dict_guid` (`codecUuid` at `+0x10..+0x1F`) as a 36-character
-    /// uppercase mixed-endian GUID string (§2.4.3, Vector `V7`).
+    /// Formats `codec_uuid` as a 36-character uppercase mixed-endian GUID string (§2.4.3).
     #[must_use]
-    pub fn dict_guid_string(&self) -> String {
-        format_mixed_endian_guid(&self.dict_guid)
-    }
-
-    /// Returns `true` if this record is a deferred redirect (`deferred_target_did != 0`, §2.4.3).
-    #[must_use]
-    pub const fn is_deferred_redirect(&self) -> bool {
-        self.deferred_target_did != 0
+    pub fn codec_uuid_string(&self) -> String {
+        format_mixed_endian_guid(&self.codec_uuid)
     }
 }
 
-/// Result of resolving a compression dictionary enumerator key (`0x10000002` or
-/// `0x10000001`) through `DIDMasterMap[3]` (`0x28000010`) and optional deferred
-/// `0x0E01xxxx` redirection (`docs/specs/official-login.md` §2.4.3, invariant `I16`).
+/// Result of resolving a compression dictionary key through Master DID Map `3` and an optional
+/// redirect (`docs/specs/official-login.md` §2.4.3, invariant `I16`).
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ResolvedPrefixTreeDictionary {
-    /// Requested enumerator key (e.g. `0x10000002` or `0x10000001`).
+pub struct ResolvedBitTreeTable {
+    /// Requested key (e.g. `0x10000002` or `0x10000001`).
     pub enum_key: u32,
-    /// Initial `.dat` Data ID obtained from `0x28000010` (e.g. `0x0E010000` or `0x0E010002`).
+    /// Data ID the map gives (e.g. `0x0E010000` or `0x0E010002`).
     pub initial_did: u32,
-    /// Final concrete `.dat` Data ID after following any deferred redirect (e.g. `0x0E010000` or `0x0E010001`).
+    /// Data ID of the literal dictionary after any redirect (e.g. `0x0E010000` or `0x0E010001`).
     pub resolved_did: u32,
-    /// Parsed header of the final concrete `0x0E01xxxx` dictionary record.
-    pub header: PrefixTreeDictionaryHeader,
+    /// Header of the literal dictionary record.
+    pub header: BitTreeTableHeader,
 }
 
-/// Resolves a compression dictionary enumerator key (`0x10000002` or `0x10000001`)
-/// via `DIDMasterMap[3]` (`0x28000010`) and follows up to one deferred `0x0E01xxxx`
-/// redirect (`docs/specs/official-login.md` §2.4.3, invariant `I16`, Vector `V7`).
+/// Resolves a compression dictionary key (`0x10000002`, `0x10000001` or `0x10000003`) via
+/// Master DID Map `3` and follows at most one redirect: only when `redirectDid` is non-zero and
+/// not the record's own DID (`official-session.md` §4.1.3 item 1; invariant `I16`, Vector `V7`).
 ///
 /// # Errors
 ///
-/// Returns [`LoginError::ConfigInvalid`] (`F02_CONFIG_INVALID`) if `enum_key` is
-/// absent from `map`, if a required `.dat` record is missing from `load_record`,
-/// if a record fails [`PrefixTreeDictionaryHeader::parse`], or if the redirected
-/// target record is still a deferred redirect (`deferred_target_did != 0`).
-pub fn resolve_prefix_tree_dictionary<'a, F>(
+/// Returns [`LoginError::ConfigInvalid`] (`F02_CONFIG_INVALID`) if `enum_key` is absent from
+/// `map`, a record is missing from `load_record`, a record fails
+/// [`BitTreeTableHeader::parse`], or the redirect target redirects again.
+pub fn resolve_bit_tree_table<'a, F>(
     map: &DidMap3Table,
     enum_key: u32,
     mut load_record: F,
-) -> Result<ResolvedPrefixTreeDictionary, LoginError>
+) -> Result<ResolvedBitTreeTable, LoginError>
 where
     F: FnMut(u32) -> Option<&'a [u8]>,
 {
     let initial_did = map
         .resolve_enum_key(enum_key)
         .ok_or_else(|| LoginError::ConfigInvalid {
-            reason: format!("enumerator key 0x{enum_key:08X} not found in DID Map 3 (0x28000010)"),
+            reason: format!("key 0x{enum_key:08X} not found in the compression dictionary map"),
         })?;
     let initial_bytes = load_record(initial_did).ok_or_else(|| LoginError::ConfigInvalid {
         reason: format!("missing compression dictionary record 0x{initial_did:08X}"),
     })?;
-    let initial_hdr = PrefixTreeDictionaryHeader::parse(initial_bytes)?;
-
-    if initial_hdr.deferred_target_did == 0 {
-        return Ok(ResolvedPrefixTreeDictionary {
+    let initial_hdr = BitTreeTableHeader::parse(initial_bytes, initial_did)?;
+    if !initial_hdr.redirects {
+        return Ok(ResolvedBitTreeTable {
             enum_key,
             initial_did,
             resolved_did: initial_did,
@@ -2109,24 +2246,23 @@ where
         });
     }
 
-    let redirected_did = initial_hdr.deferred_target_did;
+    let redirected_did = initial_hdr.redirect_did;
     let redirected_bytes =
         load_record(redirected_did).ok_or_else(|| LoginError::ConfigInvalid {
             reason: format!(
                 "missing redirected compression dictionary record 0x{redirected_did:08X} (from 0x{initial_did:08X})"
             ),
         })?;
-    let redirected_hdr = PrefixTreeDictionaryHeader::parse(redirected_bytes)?;
-    if redirected_hdr.deferred_target_did != 0 {
+    let redirected_hdr = BitTreeTableHeader::parse(redirected_bytes, redirected_did)?;
+    if redirected_hdr.redirects {
         return Err(LoginError::ConfigInvalid {
             reason: format!(
-                "redirected compression dictionary record 0x{redirected_did:08X} still has non-zero deferred_target_did 0x{:08X}",
-                redirected_hdr.deferred_target_did
+                "redirected compression dictionary record 0x{redirected_did:08X} redirects again to 0x{:08X}",
+                redirected_hdr.redirect_did
             ),
         });
     }
-
-    Ok(ResolvedPrefixTreeDictionary {
+    Ok(ResolvedBitTreeTable {
         enum_key,
         initial_did,
         resolved_did: redirected_did,
@@ -2467,7 +2603,7 @@ impl WorldDescriptor {
     /// placeholder `(invalid service specified)` (§3.1, invariant `I3`).
     ///
     /// Note that per §3.1, the actual world login server `host:port` is always
-    /// obtained from Exchange 3 (`StatusServer.aspx`), never from `WorldDescriptor`.
+    /// obtained from Exchange 3 (`World/StatusServerUrl`), never from `WorldDescriptor`.
     #[must_use]
     pub fn usable_login_server_url(&self) -> Option<&str> {
         let trimmed = self.login_server_url.trim();
@@ -2820,10 +2956,10 @@ impl RemoteLauncherConfig {
 }
 
 // ============================================================================
-// §3.3 Exchange 3 — Per-World Status Query (StatusServer.aspx) & Billing Role Check
+// §3.3 Exchange 3 — Per-World Status Query (World/StatusServerUrl) & Billing Role Check
 // ============================================================================
 
-/// Per-world status parsed from `StatusServer.aspx` `<Status>` XML
+/// Per-world status parsed from the `World/StatusServerUrl` `<Status>` XML
 /// (`docs/specs/official-login.md` §3.3, Vector `V3`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorldStatus {
@@ -2881,7 +3017,7 @@ pub fn is_rfc1918_queue_url(url: &str) -> bool {
 }
 
 impl WorldStatus {
-    /// Parses `<Status>` XML bytes returned by `StatusServer.aspx` with
+    /// Parses `<Status>` XML bytes returned by `World/StatusServerUrl` with
     /// case-insensitive child element matching (§3.3, Vector `V3`).
     ///
     /// # Errors
@@ -3062,7 +3198,7 @@ pub fn check_billing_role(
     Ok(())
 }
 
-/// Builds an HTTP `GET` request for `StatusServer.aspx` (§3.3).
+/// Builds an HTTP `GET` request for `World/StatusServerUrl` (§3.3).
 #[must_use]
 pub fn build_world_status_request(url: &str) -> HttpRequest {
     HttpRequest {
@@ -3075,7 +3211,7 @@ pub fn build_world_status_request(url: &str) -> HttpRequest {
     }
 }
 
-/// Executes Exchange 3 (`StatusServer.aspx`) against `http` (§3.3).
+/// Executes Exchange 3 (`World/StatusServerUrl`) against `http` (§3.3).
 ///
 /// The only status URL is the world's `StatusServerUrl` from the datacenter
 /// response. Tessera builds no fallback URL from built-in path fragments
@@ -3105,7 +3241,7 @@ pub fn fetch_world_status(
     if resp.status_code == 404 || resp.body.iter().all(u8::is_ascii_whitespace) {
         return Err(LoginError::WorldClosed {
             reason: format!(
-                "StatusServer.aspx returned HTTP {} with no status, and the install's \
+                "World/StatusServerUrl returned HTTP {} with no status, and the install's \
                  configuration provides no fallback status URL",
                 resp.status_code
             ),
@@ -3113,7 +3249,7 @@ pub fn fetch_world_status(
     }
     if resp.status_code != 200 {
         return Err(LoginError::WorldClosed {
-            reason: format!("StatusServer.aspx returned HTTP {}", resp.status_code),
+            reason: format!("World/StatusServerUrl returned HTTP {}", resp.status_code),
         });
     }
     WorldStatus::parse(&resp.body)
@@ -3460,7 +3596,7 @@ pub enum QueueEvaluation {
     },
 }
 
-/// Parsed `<Result>` XML from `LoginQueue.aspx` (`TakeANumber` or `LeaveQueue`,
+/// Parsed `<Result>` XML from `WorldQueue.LoginQueue.URL` (`TakeANumber` or `LeaveQueue`,
 /// `docs/specs/official-login.md` §3.5, Vector `V5`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct QueueResult {
@@ -3479,7 +3615,7 @@ pub struct QueueResult {
 }
 
 impl QueueResult {
-    /// Parses a `<Result>` XML response from `LoginQueue.aspx` (§3.5, invariant `I14`,
+    /// Parses a `<Result>` XML response from `WorldQueue.LoginQueue.URL` (§3.5, invariant `I14`,
     /// Vector `V5`).
     ///
     /// If `<HResult>` is absent from `<Result>`, `hresult` defaults to `0`
@@ -4041,6 +4177,95 @@ pub fn resolve_ticket_intake(
     })
 }
 
+/// A `-h` / `--host` value (§4.1, §4.2): a colon-delimited string with zero colons
+/// (`remoteHost`), one colon (`remoteHost:port`) or two colons (`localHost:remoteHost:port`,
+/// where `localHost` is the local bind address / interface of `official-session.md` §3.2).
+/// Angle brackets in help text are metasyntactic, so a literal `<` or `>` is refused.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LoginHost {
+    /// `localHost` of the two-colon form.
+    pub local_host: Option<String>,
+    /// `remoteHost`: the login server host name or IPv4 address.
+    pub remote_host: String,
+    /// The port embedded in the value (one- and two-colon forms).
+    pub port: Option<u16>,
+}
+
+impl LoginHost {
+    /// Parses a `-h` / `--host` value.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LoginError::WorldClosed`] for more than two colons, an empty segment, a
+    /// segment with whitespace or angle brackets, or a port outside `1..=65535`.
+    pub fn parse(value: &str) -> Result<Self, LoginError> {
+        let bad = |why: &str| LoginError::WorldClosed {
+            reason: format!("invalid login server address: {why}"),
+        };
+        let trimmed = value.trim();
+        let segments: Vec<&str> = trimmed.split(':').collect();
+        if segments.len() > 3 {
+            return Err(bad("more than two ':'"));
+        }
+        for seg in &segments {
+            if seg.is_empty() {
+                return Err(bad("empty segment"));
+            }
+            if seg
+                .chars()
+                .any(|c| c.is_whitespace() || c == '<' || c == '>')
+            {
+                return Err(bad("whitespace or angle bracket"));
+            }
+        }
+        let parse_port = |p: &str| -> Result<u16, LoginError> {
+            if !p.bytes().all(|b| b.is_ascii_digit()) {
+                return Err(bad("port is not a decimal number"));
+            }
+            p.parse::<u16>()
+                .ok()
+                .filter(|&n| n != 0)
+                .ok_or_else(|| bad("port outside 1..=65535"))
+        };
+        Ok(match segments.as_slice() {
+            [remote] => Self {
+                local_host: None,
+                remote_host: (*remote).to_owned(),
+                port: None,
+            },
+            [remote, port] => Self {
+                local_host: None,
+                remote_host: (*remote).to_owned(),
+                port: Some(parse_port(port)?),
+            },
+            [local, remote, port] => Self {
+                local_host: Some((*local).to_owned()),
+                remote_host: (*remote).to_owned(),
+                port: Some(parse_port(port)?),
+            },
+            _ => return Err(bad("empty value")),
+        })
+    }
+
+    /// The remote UDP port: the port embedded in `-h`, otherwise `-p` / `--port`
+    /// (`1..=65535`, §4.1). No default port is built in.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LoginError::WorldClosed`] if neither gives a port in `1..=65535`.
+    pub fn remote_port(&self, port_option: Option<u32>) -> Result<u16, LoginError> {
+        self.port
+            .or_else(|| {
+                port_option
+                    .and_then(|p| u16::try_from(p).ok())
+                    .filter(|&p| p != 0)
+            })
+            .ok_or_else(|| LoginError::WorldClosed {
+                reason: "no login server port in -h and no valid -p".to_owned(),
+            })
+    }
+}
+
 /// In-memory session hand-off parameters passed from the login module to the
 /// UDP session transport layer (`docs/specs/official-login.md` §4.2, §6.3).
 ///
@@ -4057,8 +4282,7 @@ pub struct SessionHandoff {
     subscription_name: String,
     /// Raw (unencoded) ASCII GLS session ticket (`--glsticketdirect`, invariant `I7`).
     gls_ticket: String,
-    /// Client & data version metadata (`"netver:<netver>; didver:<GUID> : <u32>"`
-    /// + 16-byte header from `.dat` DID `0x10000002` and DID `0x10000001`, §2.4).
+    /// Client and data version identifiers (`"netver:<netver>; didver:<GUID>"`, §2.4.1).
     pub version_info: VersionInfo,
     /// Client language token (`English`, `EN_GB`, `FR`, `DE`, §2.2).
     pub language: String,
@@ -4075,8 +4299,9 @@ impl SessionHandoff {
     ///
     /// # Errors
     ///
-    /// - [`LoginError::WorldClosed`] if `login_server` is empty or equals
-    ///   [`INVALID_LOGIN_SERVER_SENTINEL`] (invariant `I3`).
+    /// - [`LoginError::WorldClosed`] if `login_server` is empty, equals
+    ///   [`INVALID_LOGIN_SERVER_SENTINEL`] (invariant `I3`), or is not a valid
+    ///   [`LoginHost`] form.
     /// - [`LoginError::TicketInaccessible`] (`F09_TICKET_INACCESSIBLE`) if
     ///   `gls_ticket` or `subscription_name` is empty.
     #[allow(clippy::too_many_arguments)]
@@ -4100,6 +4325,7 @@ impl SessionHandoff {
                 reason: "refusing to hand off invalid or empty login server address".to_owned(),
             });
         }
+        LoginHost::parse(trimmed_login)?;
         let subscription_name = subscription_name.into();
         let gls_ticket = gls_ticket.into();
         if subscription_name.trim().is_empty() || gls_ticket.is_empty() {
@@ -4131,6 +4357,38 @@ impl SessionHandoff {
     #[must_use]
     pub fn gls_ticket(&self) -> &str {
         &self.gls_ticket
+    }
+
+    /// Parses the login server value in the `-h` / `--host` forms (§4.1, §4.2).
+    ///
+    /// # Errors
+    ///
+    /// See [`LoginHost::parse`].
+    pub fn login_host(&self) -> Result<LoginHost, LoginError> {
+        LoginHost::parse(&self.login_server)
+    }
+
+    /// Builds the `SessionAuthHeader` (`0x00010000`) of the login connection by the
+    /// `authType` selection rule (§4.2.1; `official-session.md` §6.2.1): the ticket is present,
+    /// so `authType = 0x40000002` and `extraBlob` holds the Base64-decoded ticket, whose
+    /// decoded byte count is `blobLen`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LoginError::TicketInaccessible`] (`F09_TICKET_INACCESSIBLE`) if the ticket is
+    /// not valid Base64.
+    pub fn session_auth_header(
+        &self,
+        client_timestamp: u32,
+    ) -> Result<crate::session::SessionAuthHeader, LoginError> {
+        crate::session::SessionAuthHeader::for_login(
+            &self.subscription_name,
+            Some(&self.gls_ticket),
+            client_timestamp,
+        )
+        .map_err(|_| LoginError::TicketInaccessible {
+            reason: "the GLS ticket is not valid Base64".to_owned(),
+        })
     }
 
     /// Updates the in-memory GLS ticket after a successful `RefreshTicket` call (§4.3).
@@ -4243,7 +4501,7 @@ pub enum RefreshOutcome {
         /// Present when `new_ticket != old_ticket` so session listeners can be notified.
         notification: Option<TicketListenerNotification>,
     },
-    /// Refresh attempt failed (`0x80004005` `E_FAIL`), but retries remain
+    /// Refresh attempt failed, but retries remain
     /// (`attempt_count <= 2`).
     FailedWillRetry {
         /// Number of attempts made so far (`1` or `2`).
@@ -4445,7 +4703,7 @@ impl TicketRefresher {
             return RefreshOutcome::Refreshed { notification };
         }
 
-        // Failure path (`0x80004005` E_FAIL): existing ticket, attempt_count,
+        // Failure path: the existing ticket, attempt_count,
         // and next_refresh_offset_sec remain untouched (§4.3).
         if self.attempt_count >= MAX_REFRESH_ATTEMPTS {
             self.support_warning_recorded = true;
@@ -4528,8 +4786,8 @@ impl fmt::Debug for TicketRefresher {
 /// (`docs/specs/official-login.md` §5.1).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum LoginStateId {
-    /// `S1_LOAD_LOCAL_CONFIG`
-    S1LoadLocalConfig,
+    /// `S1_LOCAL_DISCOVERY`
+    S1LocalDiscovery,
     /// `S2_GET_DATACENTERS`
     S2GetDatacenters,
     /// `S3_GET_LAUNCHER_CONFIG`
@@ -4556,8 +4814,8 @@ pub enum LoginStateId {
 
 #[allow(non_upper_case_globals)]
 impl LoginStateId {
-    /// `S1_LOAD_LOCAL_CONFIG` (§5.1).
-    pub const S1_LOAD_LOCAL_CONFIG: Self = Self::S1LoadLocalConfig;
+    /// `S1_LOCAL_DISCOVERY` (§5.1).
+    pub const S1_LOCAL_DISCOVERY: Self = Self::S1LocalDiscovery;
     /// `S2_GET_DATACENTERS` (§5.1).
     pub const S2_GET_DATACENTERS: Self = Self::S2GetDatacenters;
     /// `S3_GET_LAUNCHER_CONFIG` (§5.1).
@@ -4579,11 +4837,11 @@ impl LoginStateId {
     /// `SF_ABORTED` (§5.1).
     pub const SF_ABORTED: Self = Self::SfAborted;
 
-    /// Returns the canonical specification state name (`"S1_LOAD_LOCAL_CONFIG"` .. `"SF_FAILED"`).
+    /// Returns the canonical specification state name (`"S1_LOCAL_DISCOVERY"` .. `"SF_FAILED"`).
     #[must_use]
     pub const fn code(self) -> &'static str {
         match self {
-            Self::S1LoadLocalConfig => "S1_LOAD_LOCAL_CONFIG",
+            Self::S1LocalDiscovery => "S1_LOCAL_DISCOVERY",
             Self::S2GetDatacenters => "S2_GET_DATACENTERS",
             Self::S3GetLauncherConfig => "S3_GET_LAUNCHER_CONFIG",
             Self::S4AwaitCredentialsAndWorld => "S4_AWAIT_CREDENTIALS_AND_WORLD",
@@ -4630,11 +4888,11 @@ impl Default for LoginDriver {
 }
 
 impl LoginDriver {
-    /// Creates a new state machine starting in `S1_LOAD_LOCAL_CONFIG` (§5.1).
+    /// Creates a new state machine starting in `S1_LOCAL_DISCOVERY` (§5.1).
     #[must_use]
     pub fn new() -> Self {
         Self {
-            state: LoginStateId::S1LoadLocalConfig,
+            state: LoginStateId::S1LocalDiscovery,
             local_config: None,
             language: None,
             user_prefs: None,
@@ -4666,19 +4924,19 @@ impl LoginDriver {
         self.last_error.as_ref()
     }
 
-    /// Returns the loaded [`LauncherConfig`] once `S1_LOAD_LOCAL_CONFIG` succeeds.
+    /// Returns the loaded [`LauncherConfig`] once `S1_LOCAL_DISCOVERY` succeeds.
     #[must_use]
     pub fn local_config(&self) -> Option<&LauncherConfig> {
         self.local_config.as_ref()
     }
 
-    /// Returns the resolved `<Lang>` token once `S1_LOAD_LOCAL_CONFIG` succeeds.
+    /// Returns the resolved `<Lang>` token once `S1_LOCAL_DISCOVERY` succeeds.
     #[must_use]
     pub fn language(&self) -> Option<&str> {
         self.language.as_deref()
     }
 
-    /// Returns the optional [`UserPreferences`] supplied in `S1_LOAD_LOCAL_CONFIG`.
+    /// Returns the optional [`UserPreferences`] supplied in `S1_LOCAL_DISCOVERY`.
     #[must_use]
     pub fn user_prefs(&self) -> Option<&UserPreferences> {
         self.user_prefs.as_ref()
@@ -4754,7 +5012,7 @@ impl LoginDriver {
         err
     }
 
-    /// `S1_LOAD_LOCAL_CONFIG` $\rightarrow$ `S2_GET_DATACENTERS`: Loads local
+    /// `S1_LOCAL_DISCOVERY` $\rightarrow$ `S2_GET_DATACENTERS`: Loads local
     /// `lotro.launcherconfig` (§2.1), scans `client_local_<Lang>.dat` (§2.2),
     /// and applies optional `UserPreferences` (§2.3).
     ///
@@ -4767,10 +5025,10 @@ impl LoginDriver {
         install_root: &Path,
         user_prefs: Option<UserPreferences>,
     ) -> Result<(), LoginError> {
-        if self.state != LoginStateId::S1LoadLocalConfig {
+        if self.state != LoginStateId::S1LocalDiscovery {
             return Err(LoginError::InvalidState {
                 state: self.state.code(),
-                reason: "expected S1_LOAD_LOCAL_CONFIG",
+                reason: "expected S1_LOCAL_DISCOVERY",
             });
         }
         let (_, config) = match LauncherConfig::discover(install_root) {
@@ -5158,7 +5416,10 @@ impl LoginDriver {
         if resp.status_code != 200 {
             return Err(self.fail(LoginError::QueueError {
                 hresult: None,
-                reason: format!("LoginQueue.aspx returned HTTP {}", resp.status_code),
+                reason: format!(
+                    "WorldQueue.LoginQueue.URL returned HTTP {}",
+                    resp.status_code
+                ),
             }));
         }
         let qr = match QueueResult::parse(&resp.body) {

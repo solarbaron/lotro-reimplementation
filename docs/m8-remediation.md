@@ -578,3 +578,43 @@ text no longer has) do not reach main's history.
 
 **Next step:** one writer commit for the three blocking points and the notes, then a header-only
 reviewer commit by new sessions (re-accepting PS §10), then a check of that diff.
+
+## 13. Check of pass 6 (2026-10-25, 2ebe9bc + 3f98b17): BLOCK, one sentence
+
+No contamination. All three §12 blocking points are fixed (the CompactPID rejection in PS §10.2;
+the earlier change-log rows restored exactly, with only the internal values redacted; the
+exposure list complete), and nearly all §12 notes. Line numbers refer to `3f98b17`.
+
+**Blocking**
+
+1. **Teleport stamp contradiction:** play P150 (§4.5 step 2) takes `expected_stamp` from the
+   0xCE `seq_byte` when bit 3 is **clear**, but world W1047 (§5.4 row 5) and play P152 say
+   `seq_byte` is present only when `header_flags` bit 3 is **set**. P150 also mixes up
+   `mode_flags` bit 3 (extended attachment) with `header_flags` bit 3. Restate step 2 using
+   `header_flags` bit 3 set, matching W §5.4; a new reviewer re-accepts the play spec.
+
+**Notes to fix in the same pass**
+
+- `checkValue` (S526, S531): the new derivation cites `BIN-03`, whose provenance row (S44)
+  covers byte layouts only, and pass 5 described a different source; add the observation that
+  supports the derivation to the provenance table. Name the §6.3 fields that bytes +0x08..+0x0F
+  are (`assignedClientRecId`, `serverRecId`, `outgoingSeed`), and add a synthetic handshake
+  test vector to §10.2.
+- `slot_flags` (W1072, W1082, W1307): the sender and receiver rules mask 0xEE, but the OPEN still
+  names 0x6E, so bit 7 is neither defined nor OPEN; extend the OPEN to 0xEE.
+- W1047 still cites play §4.4.4, which does not exist.
+- L385, L509, L554, L561: "135..192" bytes for 180..256 characters ignores padding; say "up to".
+- Optional: say whether the CompactPID rejection (PS97, PS800–802) is the client's behaviour or
+  a Tessera hostile-input rule.
+
+**Commit form:** `2ebe9bc` and `3f98b17` have no `Signed-off-by` (check-dco fails) and use
+`AI-Tool:` instead of `Assisted-by: <tool>:<model>`; their session lines sit in separate
+paragraphs, so git does not read them as trailers. Use `git commit -s` and a single final trailer
+paragraph, as in `2e30790`. (The squashed merge to main carries correct trailers either way.)
+
+**Carry to the build:** `crates/compat` computes `check_value` from server time and the local
+connection ID, which contradicts S531, so the 0042 item 6 conformance check changes it; the rule
+is confirmed live only under exit criterion 4.
+
+**Next step:** one writer commit for the blocking point and the notes, then a header-only
+reviewer commit by new sessions, then a check of that diff.

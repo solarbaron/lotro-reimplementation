@@ -593,18 +593,15 @@ fine. Format-level terms like "DID" or "landblock" are fine.
 - **M8 (official-server compatibility) is in scope** by the owner's decision of 2026-10-11
   (`docs/decisions/0034-official-server-compatibility.md`); **partly done and needs more
   work** (`docs/ROADMAP.md` M8 status):
-  - **Specs: none Accepted (incident 0041, 2026-10-22).** The gameplay spec held disassembly
-    prose and is held in `research/held/incident-0041/`; `official-messages-world.md`,
-    `official-messages-play.md` and `property-system.md` §10 are back in Review (no
-    independent review); `official-login.md` and `official-session.md` are Revised.
-    `official-entry.md` (Tessera-side entry points, consent gate) is Accepted (revision 6,
-    2026-10-24).
-  - **Incident 0041 stays open** (`docs/decisions/0042-m8-remediation-decisions.md`): both
-    remediation passes on branch `m8-remediation` failed their default-mode audits
-    (`docs/m8-remediation.md` §7, 19acce5, and §8, 6c71fe66 on 2026-10-24: contradictions
-    between the specs on shared wire facts, client-internal residue, writer and reviewer work
-    in one commit), so `M8_PAUSED` stays set and no official-protocol handler is built until
-    a pass passes the audit. Next: a third pass with separate writer and reviewer commits.
+  - **Specs: stage 1 Accepted (2026-10-25).** `official-login.md`, `official-session.md`,
+    `official-messages-world.md`, `official-messages-play.md` and `property-system.md` §10
+    passed independent review and the default-mode audit with notes after seven remediation
+    passes (`docs/m8-remediation.md` §7–§14; merged as one squashed commit, `21f9596`).
+    Incident 0041 is closed for this stage and open for stage 2: the gameplay spec stays held
+    in `research/held/incident-0041/`, so the P1–P6 gameplay messages wait. The milestone
+    workflow keeps `M8_PAUSED` and the follow-ups workflow its M8 guard; the core packages run
+    as direct clean-room agents. `official-entry.md` (Tessera-side entry points, consent gate)
+    is Accepted (revision 6, 2026-10-24).
   - **Partly built (`crates/compat`, `fuzz/`):** `backend` (`CompatBackend` shell), `login`
     (install configuration, language and network-version discovery, SOAP login, world
     status, queue, ticket refresh), `version_resource` (PE version resource reader),
@@ -625,9 +622,9 @@ fine. Format-level terms like "DID" or "landblock" are fine.
     error screens (`apps/client/src/official/`), `tessera-net` Account events and commands,
     fuzz `compat_consent_record` and `client_official_entry`; the character screens stay a
     placeholder until a session can feed them.
-  - **Still needs more work (waits for the specs, decision 0042 item 4):** the play
-    messages (movement, chat, emotes, logout, the chat-server client) and the P1–P6
-    gameplay messages in `crates/compat`, a live `Connector` and session driver in
+  - **Still needs more work:** conforming the built modules to the accepted specs, the play
+    messages (movement, chat, emotes, logout, the chat-server client), the P1–P6
+    gameplay messages (stage 2) in `crates/compat`, a live `Connector` and session driver in
     `tessera-client` in place of `PlaceholderConnector`, and owner live verification (exit
     criterion 4).
   - **Clean-room and content boundaries:** no shipping, mirroring or linking to client

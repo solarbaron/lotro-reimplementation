@@ -2,7 +2,7 @@
 
 # 0041 — Incident: disassembly prose in the M8 gameplay spec, M8 specs without independent review
 
-**Status:** Proposed incident record, 2026-10-22 (remediation passes 1–2 recorded 2026-10-23, pass 3 and Stage 1 core pass 4 recorded 2026-10-24, and Stage 1 core passes 5–7 recorded 2026-10-25 on `m8-remediation`; closes for Stage 1 core upon clean-room audit per [decision 0042](0042-m8-remediation-decisions.md) items 4, 8 & 9). Recorded under `docs/CLEAN_ROOM.md` §10.
+**Status:** Closed for the Stage 1 core specs on 2026-10-25: the default-mode audit of pass 7 (`61eb7f6`) passed with notes ([`m8-remediation.md`](../m8-remediation.md) §14) and the five core specs reached `main` as one squashed commit (`21f9596`, [decision 0042](0042-m8-remediation-decisions.md) item 9). Open for Stage 2 (the gameplay spec held in `research/held/incident-0041/`). Recorded under `docs/CLEAN_ROOM.md` §10; passes 1–7 are recorded below.
 
 ## Context
 

@@ -61,8 +61,9 @@ if (/^P7\b/.test(M)) {
 if (/^M9\b/.test(M)) {
   throw new Error('M9 (extended scripting) starts only after full parity: P8 (decision 0024) and M8 (decision 0034 §1 item 3) (owner, 2026-10-08); this workflow will not run it')
 }
-// Incident 0041 (2026-10-22): the M8 specs are held or back in Review. The owner sets this to
-// false once they are cleaned and independently re-accepted.
+// Incident 0041 (2026-10-22): the M8 specs were held or back in Review. Stage 1 (the core specs)
+// is accepted since 2026-10-25 and its packages run as direct clean-room agents; the gameplay
+// spec (stage 2) is still held, so a whole-milestone M8 run stays refused until it is accepted.
 const M8_PAUSED = true
 if (M === 'M8' && M8_PAUSED) {
   throw new Error('M8 is paused by incident 0041 (docs/decisions/0041-incident-m8-spec-contamination.md): its specs must be cleaned and independently re-accepted first; the owner then sets M8_PAUSED = false in this script')

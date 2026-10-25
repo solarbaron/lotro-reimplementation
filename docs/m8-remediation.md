@@ -618,3 +618,41 @@ is confirmed live only under exit criterion 4.
 
 **Next step:** one writer commit for the blocking point and the notes, then a header-only
 reviewer commit by new sessions, then a check of that diff.
+
+## 14. Check of pass 7 (2026-10-25, 478e6e4 + 61eb7f6): PASS WITH NOTES; stage 1 merged
+
+No contamination. The §13 blocking point (the teleport stamp now follows `header_flags` bit 3
+set, in world §5.4 and play §4.5 alike) and every §13 note are fixed. The new handshake test
+vector (session §10.2, Vector 5) is synthetic and was recomputed by hand. Both pass-7 commits
+are signed off with correct trailers. Stage 1 was merged into main as one squashed commit
+(`21f9596`, decision 0042 item 9); incident 0041 closes for the core stage, and stays open for
+stage 2 (the held gameplay spec).
+
+**Non-blocking findings for a later spec pass**
+
+- W278 and the W1334 change-log row cite property-system §7.1, which is about enum values; the
+  intended section is probably world §7.1.
+- Play §4.5 steps 2 and 3 set and clear the wait flag from the same 0xCE message, and no other
+  trigger of a portal-space transition is named; add one, or an OPEN.
+- Session S44 speaks of a "handler" and a "serializer"; reword to behaviour only.
+- W278, PS97, PS800, PS802 describe the client's branch test; state the client's behaviour
+  instead (it reads first bytes 0x81..0xFF in the 2-byte form), beside the Tessera rule.
+- Vector 5 sets `localRecId` to `assignedClientRecId`, but session §6.4 step 1 does not say that
+  the client adopts the assigned ID, or what happens when it is 0; add the rule.
+- The "up to 135..192 (133..192)" wording would read better as: decoded bytes = 3L/4 minus the
+  padding (0..2).
+
+**Carried into the build**
+
+- `crates/compat` computes `check_value` from server time and the local ID, against session
+  S531; the conformance package (0042 item 6) replaces it, with Vector 5 as its unit test.
+- The CompactPID rejection is a Tessera hostile-input rule, logged when it fires.
+- The teleport stamp follows world §5.4 (`header_flags` bit 3), not `mode_flags`.
+- A sender leaves the `slot_flags` bits under mask 0xEE at 0; a receiver ignores them.
+- Session §7 and §8 were renumbered after the code was written: re-map code citations.
+- Exit criterion 4 (owner live verification) confirms `checkValue`, the stamp rules and the
+  0x81..0xFF case.
+
+**Next for the other AI:** stage 2 (the gameplay spec held in `research/held/incident-0041/`),
+under the same rules: a writer commit, a header-only reviewer commit by new sessions, signed off
+with one trailer paragraph.

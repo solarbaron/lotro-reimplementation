@@ -686,3 +686,28 @@ reviewer commit by new sessions). From the `m8-play` build and its audit:
 - **Play §6.5.1:** properties typed "Prefixed UTF-16LE string", which no property type encodes.
 - **Play §6.3.2:** the meaning of 0x84EC001A's `status_code`.
 - **Play §8:** the mapping from a neutral emote command to 0x84F90007 / 0x84F90005.
+
+From the `m8-conform` build (session S, login L, world W):
+
+- **S §6.3 / §6.4 step 1:** name `assignedClientRecId` in the step (Vector 5 implies the client
+  adopts it) and say what happens with a non-zero value outside 0x0100..=0xFEFF.
+- **S §4.2:** the iteration and table values the client writes in its `DatagramHeader`.
+- **S §6.2:** the meaning of `authFlags` bits 3..11.
+- **S §4.4.2:** the send side computes the payload checksum per piece, the receive side over the
+  whole payload; make them agree.
+- **L V4/V6:** the synthetic ticket is not valid Base64, so the strict decoder that L §4.2 and
+  S §6.2.1 require refuses it; use a valid synthetic ticket.
+- **L §2.4.3 and S §4.1.3** name the dictionary-map DID explicitly, while property-system §8.1
+  and records §8.2 forbid hard-coding map DIDs; say it is found through the root map (key 3).
+- **L netver limit:** the spec says 24 characters; confirm (the code allowed 64).
+- **L change log:** a reviewer row records the install's build number and the binary's SHA-256;
+  move such identifiers out of the spec or say why they are needed.
+- **W §1.1.2:** which entity is the target when a routing header is present.
+- **W §4.4.2:** the `world_day_type` rollover rule and what "updated in steps of 0.01" means.
+- **W §5:** whether the 0x0D tail flag appears when the batch is nested; the policy for undefined
+  header, mode and action flag bits; a bound on container record counts (§9.4).
+- **Blocking OPENs for the core build:** the `EntityAppearanceDesc` bit-0 `model_b` gate means no
+  0x6C entry with a base model can be decoded, and the missing wire argument key of
+  `LocalizedTokenText` blocks every text with arguments.
+- **property-system.md §8.1 vs S §4.1.3:** §8.1 says root-map labels are looked up by name, §4.1.3
+  by numeric key 3; reconcile.

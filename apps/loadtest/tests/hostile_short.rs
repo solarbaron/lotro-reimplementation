@@ -19,7 +19,9 @@ fn hostile_clients_do_not_disturb_honest_bots() {
         pace: Duration::from_millis(100),
     });
     o.sample_interval = Duration::from_secs(1);
-    o.warmup_min = Duration::from_secs(3);
+    // Half the run (the cap of `test-server.md` §13.3 item 3): the hostile clients keep
+    // connections open for a while, so resident memory still ramps after 3 s.
+    o.warmup_min = Duration::from_secs(15);
     let r = run(&o).expect("the run starts");
     print!("{}", r.text());
     let h = r.inputs.hostile.as_ref().expect("hostile clients ran");

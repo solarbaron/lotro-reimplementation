@@ -13,17 +13,17 @@ use tessera_compat::play::chat::{ChatCategories, LiteralTexts, UiPropertyEvent};
 use tessera_compat::play::inbound::{PLAY_OPCODES, decode_play_message};
 use tessera_compat::play::logout::WORLD_TEARDOWN_OPCODES;
 use tessera_compat::play::movement::{
-    AnimLayerState, EntitySplinePath, MotionControllerUpdate, MovementInput, ServerSetPosition,
-    TeleportSync, decode_signed_normalized,
+    EntitySplinePath, MotionControllerUpdate, MovementInput, ServerSetPosition, TeleportSync,
+    decode_anim_layers, decode_signed_normalized, encode_anim_layers,
 };
 use tessera_compat::play::rpc::{ArgKind, PlayRpc, ScriptRpcMessage, decode_args};
-use tessera_compat::world::PropertyType;
+use tessera_compat::world::{DEFAULT_PORTAL_STATE_SCHEMA_ID, PortalStateSchema, PropertyType};
 
 fn fuzz_schema() -> BTreeMap<u32, PropertyType> {
     let mut map = BTreeMap::new();
     map.insert(0x1000_00B1, PropertyType::Enum);
-    map.insert(0x1000_15D7, PropertyType::LocalizedText);
-    map.insert(0x1000_0914, PropertyType::LocalizedText);
+    map.insert(0x1000_15D7, PropertyType::LocalizedTokenText);
+    map.insert(0x1000_0914, PropertyType::LocalizedTokenText);
     map.insert(0x1000_215A, PropertyType::InstanceId);
     map.insert(0x1000_133D, PropertyType::Boolean);
     map.insert(0x0000_0001, PropertyType::String);
@@ -32,6 +32,21 @@ fn fuzz_schema() -> BTreeMap<u32, PropertyType> {
     map.insert(0x0000_0004, PropertyType::Array);
     map.insert(0x0000_0005, PropertyType::Position);
     map.insert(0x0000_0006, PropertyType::Bitfield);
+    map
+}
+
+/// A `0xCC` state schema for the default ID with 8 boolean and 6 enum states, and an
+/// empty one (synthetic PIDs; the real ones come from the install at run time).
+fn fuzz_portal_schemas() -> BTreeMap<u32, PortalStateSchema> {
+    let mut map = BTreeMap::new();
+    map.insert(
+        DEFAULT_PORTAL_STATE_SCHEMA_ID,
+        PortalStateSchema {
+            bool_pids: (1..=8).collect(),
+            enum_pids: (11..=16).collect(),
+        },
+    );
+    map.insert(0x1000_0001, PortalStateSchema::default());
     map
 }
 
@@ -48,13 +63,14 @@ const KINDS: [ArgKind; 8] = [
 
 fuzz_target!(|data: &[u8]| {
     let schema = fuzz_schema();
+    let portal_schemas = fuzz_portal_schemas();
     let player = 0x0102_0304_0506_0708u64;
     let mut adapter = PlayAdapter::new(ChatCategories::default());
     adapter.enter_world(player, Some("Self".to_string()));
     adapter.set_ignored(["Ignored".to_string()]);
 
     for &op in PLAY_OPCODES.iter().chain(WORLD_TEARDOWN_OPCODES.iter()) {
-        if let Ok(Some(msg)) = decode_play_message(op, player, data, &schema) {
+        if let Ok(Some(msg)) = decode_play_message(op, player, data, &schema, &portal_schemas) {
             let _ = adapter.handle(&msg, &LiteralTexts);
         }
     }
@@ -81,8 +97,8 @@ fuzz_target!(|data: &[u8]| {
     if let Ok(m) = MotionControllerUpdate::from_bytes(data) {
         let _ = m.to_bytes();
     }
-    if let Ok(m) = AnimLayerState::from_bytes(data, &schema) {
-        let _ = m.to_bytes();
+    if let Ok(m) = decode_anim_layers(data, &schema) {
+        let _ = encode_anim_layers(&m);
     }
     if let Ok(m) = UiPropertyEvent::from_bytes(data, &schema) {
         let _ = m.to_bytes();

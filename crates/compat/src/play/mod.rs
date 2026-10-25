@@ -133,8 +133,10 @@ pub enum PlayError {
         /// The cap.
         max: usize,
     },
-    /// An `0x59` waypoint, `0xBF` or `0xCE` coordinate failed the bounds of §9.1 rule 4.
-    #[error("non-finite or out-of-range {0} in a movement message")]
+    /// A movement message lacks a field its flags name, or its position is not a valid
+    /// location. Values outside the bounds of §9.1 rule 4 are
+    /// [`WorldError::NonFiniteFloat`] and [`WorldError::CoordinateOutOfRange`].
+    #[error("missing or invalid {0} in a movement message")]
     BadCoordinate(&'static str),
     /// The chat-server session is not ready (no successful `0x165` yet, §6.6.2).
     #[error("the chat-server session is not ready")]
@@ -179,7 +181,7 @@ pub fn check_units(text: &str, max: usize) -> Result<(), PlayError> {
 /// One inner event payload to send on the world-server connection: the `blobHeaderWord`
 /// opcode and the inner payload starting with `u8 base_flags = 0x00`
 /// (`official-messages-world.md` §1.1.1–§1.1.2). The connector wraps it with
-/// `envelopeFlags = 0x00` (`crate::world::encode_blob_payload`) and sends it as a
+/// `envelopeFlags = 0x00` ([`crate::world::encode_event_envelope`]) and sends it as a
 /// fragmented blob.
 ///
 /// The fields are private so that every value passes [`Self::new`], which refuses the

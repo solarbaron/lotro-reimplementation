@@ -13,10 +13,10 @@ use tessera_compat::play::chat::{
 use tessera_compat::play::inbound::{PlayMessage, decode_play_message};
 use tessera_compat::play::logout::{LogoutState, WORLD_TEARDOWN_OPCODES, is_world_teardown};
 use tessera_compat::play::movement::{
-    AnimLayerState, EntitySplinePath, MotionControllerUpdate, MovementInput, MovementSender,
+    EntitySplinePath, MAX_ANIM_LAYERS, MotionControllerUpdate, MovementInput, MovementSender,
     PredictedState, ReconcileTolerance, Reconciliation, ServerSetPosition, TeleportSync,
-    decode_signed_normalized, encode_signed_normalized, stamp_newer_or_equal, step_after,
-    wire_heading, wire_location,
+    decode_anim_layers, decode_signed_normalized, encode_anim_layers, encode_signed_normalized,
+    stamp_newer_or_equal, step_after, wire_heading, wire_location,
 };
 use tessera_compat::play::rpc::{
     ArgKind, FN_ADMIN_TELL, FunctionId, OPCODE_SCRIPT_RPC, PlayRpc, ScriptArg, ScriptRpcMessage,
@@ -24,9 +24,10 @@ use tessera_compat::play::rpc::{
 };
 use tessera_compat::play::{OutgoingEvent, PlayError, utf16_units};
 use tessera_compat::world::{
-    ActionPayload, ClientMoveCommand, CompactDid, EncodedPropertyTable, EncodedPropertyValue,
-    EntityPositionUpdate, PortalPlacement, PropertyType, WireLocalizedText, WirePosition,
-    WorldError,
+    ActionLayerEntry, ActionPayload, ClientPhysicsSync, CompactDid, DEFAULT_PORTAL_STATE_SCHEMA_ID,
+    EncodedPropertyTable, EncodedPropertyValue, EntityAnimLayerState, LocalizedTokenText,
+    PortalPositionSync, PortalStateSchema, PositionUpdate, PropertyType, WireBitfield,
+    WirePosition, WorldError,
 };
 use tessera_net::{ChatChannel, Command, Event, LocationCause, RegionId};
 
@@ -38,6 +39,37 @@ fn hex(s: &str) -> Vec<u8> {
 
 fn no_schema() -> BTreeMap<u32, PropertyType> {
     BTreeMap::new()
+}
+
+/// The `0xCC` state schema `0x0C` as the run-time construction of
+/// `official-messages-world.md` §4.3.1 yields it: 8 boolean and 6 enum `PID`s (the spec's
+/// verification table).
+fn portal_schemas() -> BTreeMap<u32, PortalStateSchema> {
+    let mut map = BTreeMap::new();
+    map.insert(
+        DEFAULT_PORTAL_STATE_SCHEMA_ID,
+        PortalStateSchema {
+            bool_pids: vec![
+                0x0000_068A,
+                0x1000_3EA0,
+                0x1000_6676,
+                0x1000_4157,
+                0x1000_0ED8,
+                0x1000_1A27,
+                0x1000_0ED7,
+                0x1000_0443,
+            ],
+            enum_pids: vec![
+                0x0000_0126,
+                0x0000_0201,
+                0x0000_0687,
+                0x1000_136E,
+                0x1000_00FC,
+                0x1000_0469,
+            ],
+        },
+    );
+    map
 }
 
 const PLAYER: u64 = 0x0102_0304_0506_0708;
@@ -53,18 +85,15 @@ fn tv1_client_physics_sync_bytes() {
          00 00 00 00 00 00 7F 7F 00 00 00 00 00 00 00 00",
     );
     assert_eq!(expected.len(), 38);
-    let cmd = ClientMoveCommand::new_base(
+    let cmd = ClientPhysicsSync::new_base(
         PLAYER,
         0x07,
         100,
         [1, 1, 1, 1],
-        [0; 4],
-        [0, 0, 127, 127],
-        [0; 4],
-        0,
+        [[0; 4], [0, 0, 127, 127], [0; 4]],
     );
     assert_eq!(cmd.to_bytes().expect("encode"), expected);
-    let back = ClientMoveCommand::from_bytes(&expected, &no_schema()).expect("decode");
+    let back = ClientPhysicsSync::from_bytes(&expected, &no_schema()).expect("decode");
     assert_eq!(back, cmd);
 }
 
@@ -87,7 +116,7 @@ fn window_reconstruction_and_fixed_size() {
         last = s.update(fwd, t, 9, None).expect("periodic step");
     }
     assert_eq!(last.sequence, 6);
-    assert_eq!(last.header_byte, 9);
+    assert_eq!(last.teleport_stamp, 9);
     assert_eq!(last.slot_flags, [0; 4], "mask 0xEE bits and actions are 0");
     assert_eq!(last.trailer_u32, 0);
     assert_eq!(last.to_bytes().expect("encode").len(), 38);
@@ -104,9 +133,9 @@ fn window_reconstruction_and_fixed_size() {
 }
 
 /// Decodes the inner payload of a `0x24` the sender built.
-fn decoded(cmd: &ClientMoveCommand) -> ClientMoveCommand {
+fn decoded(cmd: &ClientPhysicsSync) -> ClientPhysicsSync {
     let bytes = cmd.to_bytes().expect("encode");
-    ClientMoveCommand::from_bytes(&bytes, &no_schema()).expect("decode")
+    ClientPhysicsSync::from_bytes(&bytes, &no_schema()).expect("decode")
 }
 
 #[test]
@@ -121,7 +150,7 @@ fn window_slots_clamp_at_zero() {
     let w = decoded(&s.update(a, 0.0, 0, None).expect("step 1"));
     assert_eq!(w.sequence, 1);
     assert_eq!(w.move_state, [0, 0, 0, 2]);
-    assert_eq!(w.axis_a, [0, 0, 0, (-127i8) as u8]);
+    assert_eq!(w.axis_a, [0, 0, 0, -127]);
     assert_eq!(w.axis_b, [0; 4]);
     assert_eq!(w.axis_c, [0; 4]);
     assert_eq!(w.slot_flags, [0; 4]);
@@ -134,7 +163,7 @@ fn window_slots_clamp_at_zero() {
     let w = decoded(&s.update(b, 0.01, 0, None).expect("step 2"));
     assert_eq!(w.sequence, 2);
     assert_eq!(w.move_state, [0, 0, 2, 3]);
-    assert_eq!(w.axis_a, [0, 0, (-127i8) as u8, 0]);
+    assert_eq!(w.axis_a, [0, 0, -127, 0]);
     assert_eq!(w.axis_b, [0, 0, 0, 127]);
 }
 
@@ -154,7 +183,7 @@ fn window_survives_acknowledgement_and_teleport() {
         s.update(*input, i as f64 * 0.01, 0, None).expect("step");
     }
     assert_eq!(s.sequence(), 5);
-    let mut ack = PortalPlacement::from_bytes(&tv7()).expect("0xCC");
+    let mut ack = PortalPositionSync::from_bytes(&tv7(), &portal_schemas()).expect("0xCC");
     ack.sequence_or_reason = 5;
     let r = s
         .reconcile(&ack, ReconcileTolerance::default())
@@ -168,14 +197,14 @@ fn window_survives_acknowledgement_and_teleport() {
         [3, 4, 5, 6],
         "steps 3..=6 from the window ring"
     );
-    let turn = |i: u8| encode_signed_normalized(f32::from(i) / 10.0) as u8;
+    let turn = |i: u8| encode_signed_normalized(f32::from(i) / 10.0);
     assert_eq!(w.axis_c, [turn(3), turn(4), turn(5), turn(6)]);
 
     // A teleport clears the history, never the window.
     s.discard_history();
     let w = decoded(&s.window(1));
     assert_eq!(w.move_state, [3, 4, 5, 6]);
-    assert_eq!(w.header_byte, 1);
+    assert_eq!(w.teleport_stamp, 1);
 }
 
 #[test]
@@ -217,7 +246,7 @@ fn cadence_is_20_hz_with_60_hz_frames() {
 
 #[test]
 fn reconcile_uses_serial_numbers_and_resets_on_acks_outside_history() {
-    let mut ack = PortalPlacement::from_bytes(&tv7()).expect("0xCC");
+    let mut ack = PortalPositionSync::from_bytes(&tv7(), &portal_schemas()).expect("0xCC");
     let mut s = MovementSender::new(PLAYER);
     let walk = MovementInput {
         move_state: 1,
@@ -280,9 +309,15 @@ fn world_entry_placement_ack_corrects_the_player() {
     // `enter_world`, ack 100 with no step made is a reset (§4.3.2 item 3).
     let mut a = PlayAdapter::new(ChatCategories::default());
     a.enter_world(PLAYER, None);
-    let msg = decode_play_message(PortalPlacement::EVENT_ID, PLAYER, &tv7(), &no_schema())
-        .expect("decode")
-        .expect("msg");
+    let msg = decode_play_message(
+        PortalPositionSync::EVENT_ID,
+        PLAYER,
+        &tv7(),
+        &no_schema(),
+        &portal_schemas(),
+    )
+    .expect("decode")
+    .expect("msg");
     let out = a.handle(&msg, &LiteralTexts);
     assert!(matches!(
         out.events.as_slice(),
@@ -334,9 +369,15 @@ fn tv2() -> Vec<u8> {
 fn tv2_position_update_and_stamp_wrap() {
     let bytes = tv2();
     assert_eq!(bytes.len(), 28);
-    let msg = decode_play_message(EntityPositionUpdate::EVENT_ID, 2, &bytes, &no_schema())
-        .expect("decode")
-        .expect("play message");
+    let msg = decode_play_message(
+        PositionUpdate::EVENT_ID,
+        2,
+        &bytes,
+        &no_schema(),
+        &portal_schemas(),
+    )
+    .expect("decode")
+    .expect("play message");
     let PlayMessage::PositionUpdate(u) = &msg else {
         panic!("not a position update: {msg:?}");
     };
@@ -349,9 +390,15 @@ fn tv2_position_update_and_stamp_wrap() {
     let with_stamp = |stamp: u8| {
         let mut b = tv2();
         b[11] = stamp;
-        decode_play_message(EntityPositionUpdate::EVENT_ID, 2, &b, &no_schema())
-            .expect("decode")
-            .expect("msg")
+        decode_play_message(
+            PositionUpdate::EVENT_ID,
+            2,
+            &b,
+            &no_schema(),
+            &portal_schemas(),
+        )
+        .expect("decode")
+        .expect("msg")
     };
     for stamp in [0x70, 0xE0, 0xFE] {
         adapter.handle(&with_stamp(stamp), &LiteralTexts);
@@ -468,10 +515,11 @@ fn stamp_applies_before_the_placement_check() {
     a.begin_portal_space(5);
     assert!(a.teleport().waiting());
     let msg = decode_play_message(
-        EntityPositionUpdate::EVENT_ID,
+        PositionUpdate::EVENT_ID,
         PLAYER,
         &stamped_attachment(5),
         &no_schema(),
+        &portal_schemas(),
     )
     .expect("decode")
     .expect("msg");
@@ -541,7 +589,7 @@ fn tv7() -> Vec<u8> {
 fn tv7_portal_position_sync_and_reconcile() {
     let bytes = tv7();
     assert_eq!(bytes.len(), 36);
-    let p = PortalPlacement::from_bytes(&bytes).expect("decode 0xCC");
+    let p = PortalPositionSync::from_bytes(&bytes, &portal_schemas()).expect("decode 0xCC");
     assert_eq!(p.sequence_or_reason, 100);
     assert_eq!(p.enum_states, vec![2, 1, 1, 0, 23, 1]);
     let (loc, _) = wire_location(&p.position).expect("location");
@@ -609,15 +657,27 @@ fn tv7_portal_position_sync_and_reconcile() {
         let _ = a.movement_step(walk, f64::from(i) * 0.06, None);
     }
     // Addressed to another entity: dropped and counted.
-    let foreign = decode_play_message(PortalPlacement::EVENT_ID, 2, &bytes, &no_schema())
-        .expect("decode")
-        .expect("msg");
+    let foreign = decode_play_message(
+        PortalPositionSync::EVENT_ID,
+        2,
+        &bytes,
+        &no_schema(),
+        &portal_schemas(),
+    )
+    .expect("decode")
+    .expect("msg");
     let out = a.handle(&foreign, &LiteralTexts);
     assert!(out.events.is_empty() && out.signals.is_empty());
     assert_eq!(a.counters().foreign_syncs, 1);
-    let msg = decode_play_message(PortalPlacement::EVENT_ID, PLAYER, &bytes, &no_schema())
-        .expect("decode")
-        .expect("msg");
+    let msg = decode_play_message(
+        PortalPositionSync::EVENT_ID,
+        PLAYER,
+        &bytes,
+        &no_schema(),
+        &portal_schemas(),
+    )
+    .expect("decode")
+    .expect("msg");
     let out = a.handle(&msg, &LiteralTexts);
     match out.signals.as_slice() {
         [
@@ -693,9 +753,15 @@ fn tv3_tv4_logout() {
     assert_eq!(sent.len(), 1);
     assert_eq!(sent[0].opcode(), OPCODE_SCRIPT_RPC);
     assert_eq!(sent[0].payload(), req);
-    let msg = decode_play_message(OPCODE_SCRIPT_RPC, 2, &countdown, &no_schema())
-        .expect("decode")
-        .expect("msg");
+    let msg = decode_play_message(
+        OPCODE_SCRIPT_RPC,
+        2,
+        &countdown,
+        &no_schema(),
+        &portal_schemas(),
+    )
+    .expect("decode")
+    .expect("msg");
     let out = a.handle(&msg, &LiteralTexts);
     assert!(matches!(
         out.events.as_slice(),
@@ -739,13 +805,15 @@ fn world_teardown_opcodes() {
     let mut a = PlayAdapter::new(ChatCategories::default());
     for op in WORLD_TEARDOWN_OPCODES {
         a.enter_world(PLAYER, None);
-        let m = decode_play_message(op, 2, &[0x00], &no_schema())
+        let m = decode_play_message(op, 2, &[0x00], &no_schema(), &portal_schemas())
             .expect("decode")
             .expect("msg");
         let out = a.handle(&m, &LiteralTexts);
         assert_eq!(out.signals, vec![PlaySignal::LeftWorld { opcode: op }]);
         assert_eq!(a.player(), None);
-        assert!(decode_play_message(op, 2, &[0x00, 0x00], &no_schema()).is_err());
+        assert!(
+            decode_play_message(op, 2, &[0x00, 0x00], &no_schema(), &portal_schemas()).is_err()
+        );
     }
 }
 
@@ -821,7 +889,7 @@ fn chat_length_limits_and_refused_categories() {
 #[test]
 fn every_documented_rpc_round_trips() {
     let t = || StateRef::text("txt");
-    let l = || StateRef::localized(WireLocalizedText::reference(7, 0x2500_0001));
+    let l = || StateRef::localized(LocalizedTokenText::reference(7, 0x2500_0001));
     let rpcs = vec![
         PlayRpc::Tell {
             message: t(),
@@ -998,6 +1066,7 @@ fn hostile_script_rpc_frames() {
         2,
         &env.to_bytes().expect("env"),
         &no_schema(),
+        &portal_schemas(),
     )
     .expect("decode")
     .expect("msg");
@@ -1017,9 +1086,15 @@ fn admin_messages_are_ignored_and_counted() {
     let mut a = PlayAdapter::new(ChatCategories::default());
     a.enter_world(PLAYER, None);
     let notice = hex("00 02 68 69 01 00 00 00 00 00 00 00 02 00 00 00 00 00 00 00");
-    let m = decode_play_message(OPCODE_ADMIN_TEXT_NOTICE, 2, &notice, &no_schema())
-        .expect("decode")
-        .expect("msg");
+    let m = decode_play_message(
+        OPCODE_ADMIN_TEXT_NOTICE,
+        2,
+        &notice,
+        &no_schema(),
+        &portal_schemas(),
+    )
+    .expect("decode")
+    .expect("msg");
     let out = a.handle(&m, &LiteralTexts);
     assert!(out.events.is_empty() && out.outgoing.is_empty() && out.signals.is_empty());
     // Never encoded: the envelope, the argument frame and the outgoing event refuse it.
@@ -1041,7 +1116,7 @@ fn admin_messages_are_ignored_and_counted() {
         Err(PlayError::AdminMessageRefused(OPCODE_ADMIN_TEXT_NOTICE))
     );
     assert!(OutgoingEvent::new(OPCODE_SCRIPT_RPC, vec![0x00]).is_ok());
-    let m = decode_play_message(OPCODE_SCRIPT_RPC, 2, &tell, &no_schema())
+    let m = decode_play_message(OPCODE_SCRIPT_RPC, 2, &tell, &no_schema(), &portal_schemas())
         .expect("decode")
         .expect("msg");
     assert!(matches!(
@@ -1066,6 +1141,7 @@ fn rpc_message(rpc: &PlayRpc) -> PlayMessage {
         2,
         &rpc.to_bytes().expect("encode"),
         &no_schema(),
+        &portal_schemas(),
     )
     .expect("decode")
     .expect("msg")
@@ -1104,7 +1180,7 @@ fn incoming_chat_tells_and_emotes() {
     // An unresolvable localized name is dropped and counted.
     let loc = rpc_message(&PlayRpc::ChatLine {
         flags: 0,
-        sender_name: StateRef::localized(WireLocalizedText::reference(1, 0x2500_0000)),
+        sender_name: StateRef::localized(LocalizedTokenText::reference(1, 0x2500_0000)),
         chat_type: 5,
         text: StateRef::text("x"),
         sender: 3,
@@ -1181,24 +1257,24 @@ fn incoming_chat_tells_and_emotes() {
 fn ui_property_chat_line() {
     let mut schema = BTreeMap::new();
     schema.insert(PID_CHAT_CATEGORY, PropertyType::Enum);
-    schema.insert(PID_CHAT_TEXT, PropertyType::LocalizedText);
-    schema.insert(PID_CHAT_SENDER_NAME, PropertyType::LocalizedText);
+    schema.insert(PID_CHAT_TEXT, PropertyType::LocalizedTokenText);
+    schema.insert(PID_CHAT_SENDER_NAME, PropertyType::LocalizedTokenText);
     let mut props = EncodedPropertyTable::new();
     props.push(PID_CHAT_CATEGORY, EncodedPropertyValue::Enum(5));
     props.push(
         PID_CHAT_TEXT,
-        EncodedPropertyValue::LocalizedText(WireLocalizedText::literal("good day")),
+        EncodedPropertyValue::LocalizedTokenText(LocalizedTokenText::literal("good day")),
     );
     props.push(
         PID_CHAT_SENDER_NAME,
-        EncodedPropertyValue::LocalizedText(WireLocalizedText::literal("Ann")),
+        EncodedPropertyValue::LocalizedTokenText(LocalizedTokenText::literal("Ann")),
     );
     let ev = UiPropertyEvent {
         event_code: UI_EVENT_CHAT_LINE,
         properties: props,
     };
     let bytes = ev.to_bytes().expect("encode");
-    let m = decode_play_message(0x1C, 2, &bytes, &schema)
+    let m = decode_play_message(0x1C, 2, &bytes, &schema, &portal_schemas())
         .expect("decode")
         .expect("msg");
     let mut a = PlayAdapter::new(ChatCategories::default());
@@ -1213,7 +1289,7 @@ fn ui_property_chat_line() {
         }]
     );
     // Without the dictionary entry the event cannot be decoded.
-    assert!(decode_play_message(0x1C, 2, &bytes, &no_schema()).is_err());
+    assert!(decode_play_message(0x1C, 2, &bytes, &no_schema(), &portal_schemas()).is_err());
 }
 
 #[test]
@@ -1224,11 +1300,11 @@ fn system_texts_and_eviction() {
     let mut aa = vec![0x00];
     aa.extend_from_slice(&5u64.to_le_bytes());
     aa.extend(
-        WireLocalizedText::literal("Notice")
+        LocalizedTokenText::literal("Notice")
             .to_bytes()
             .expect("text"),
     );
-    let m = decode_play_message(0xAA, 2, &aa, &no_schema())
+    let m = decode_play_message(0xAA, 2, &aa, &no_schema(), &portal_schemas())
         .expect("decode")
         .expect("msg");
     let out = a.handle(&m, &LiteralTexts);
@@ -1242,8 +1318,12 @@ fn system_texts_and_eviction() {
     );
     // 0xB3 with an unresolvable text: Tessera's own reason.
     let mut b3 = vec![0x00, 0x04, 0x00, 0x00, 0x00];
-    b3.extend(WireLocalizedText::reference(1, 2).to_bytes().expect("text"));
-    let m = decode_play_message(0xB3, 2, &b3, &no_schema())
+    b3.extend(
+        LocalizedTokenText::reference(1, 2)
+            .to_bytes()
+            .expect("text"),
+    );
+    let m = decode_play_message(0xB3, 2, &b3, &no_schema(), &portal_schemas())
         .expect("decode")
         .expect("msg");
     let out = a.handle(&m, &LiteralTexts);
@@ -1299,7 +1379,7 @@ fn server_set_position() {
     assert!(ServerSetPosition::from_bytes(&raw).is_err());
 
     let mut a = PlayAdapter::new(ChatCategories::default());
-    let m = decode_play_message(0xBF, 77, &b, &no_schema())
+    let m = decode_play_message(0xBF, 77, &b, &no_schema(), &portal_schemas())
         .expect("decode")
         .expect("msg");
     let out = a.handle(&m, &LiteralTexts);
@@ -1358,7 +1438,7 @@ fn motion_controller() {
     // §4.6.2 receiver rule: a typed controller is counted and dropped, a cleared one
     // passes on.
     let mut a = PlayAdapter::new(ChatCategories::default());
-    let m = decode_play_message(0xED, 5, &typed, &no_schema())
+    let m = decode_play_message(0xED, 5, &typed, &no_schema(), &portal_schemas())
         .expect("decode")
         .expect("msg");
     let out = a.handle(&m, &LiteralTexts);
@@ -1366,7 +1446,7 @@ fn motion_controller() {
     assert_eq!(a.counters().ignored_controllers, 1);
     let mut cleared = vec![0, 1];
     cleared.extend([0u8; 16]);
-    let m = decode_play_message(0xED, 5, &cleared, &no_schema())
+    let m = decode_play_message(0xED, 5, &cleared, &no_schema(), &portal_schemas())
         .expect("decode")
         .expect("msg");
     let out = a.handle(&m, &LiteralTexts);
@@ -1381,38 +1461,55 @@ fn motion_controller() {
 
 #[test]
 fn anim_layers() {
-    let state = AnimLayerState {
-        layers: vec![tessera_compat::play::movement::ActionLayerEntry {
+    let state = EntityAnimLayerState {
+        layers: vec![ActionLayerEntry {
             action_did: CompactDid(0x0100_0002),
             action_seq: 300,
-            action: ActionPayload::default(),
-            bit_count: 9,
-            bits: vec![0xFF, 0x01],
+            payload: ActionPayload::default(),
+            bitfield: WireBitfield {
+                bit_count: 9,
+                bytes: vec![0xFF, 0x01],
+            },
         }],
     };
-    let b = state.to_bytes().expect("encode");
-    let back = AnimLayerState::from_bytes(&b, &no_schema()).expect("decode");
+    let b = encode_anim_layers(&state).expect("encode");
+    assert_eq!(b, state.to_bytes().expect("world encoder"));
+    let back = decode_anim_layers(&b, &no_schema()).expect("decode");
     assert_eq!(back, state);
     // A layer count above the remaining bytes.
     assert!(matches!(
-        AnimLayerState::from_bytes(&hex("00 40 00 FF FF"), &no_schema()),
+        decode_anim_layers(&hex("00 40 00 FF FF"), &no_schema()),
         Err(PlayError::World(WorldError::CountExceedsRemaining { .. }))
     ));
-    // A bitfield whose bytes do not match its bit count.
+    // A bitfield whose bytes do not match its bit count is refused, not padded or cut.
     let mut bad = state.clone();
     if let Some(l) = bad.layers.first_mut() {
-        l.bits.push(0);
+        l.bitfield.bytes.push(0);
     }
     assert_eq!(
-        bad.to_bytes(),
+        encode_anim_layers(&bad),
         Err(PlayError::BitfieldMismatch {
             bit_count: 9,
             bytes: 3
         })
     );
+    // More layers than the play layer accepts, in either direction.
+    let many = EntityAnimLayerState {
+        layers: vec![state.layers[0].clone(); MAX_ANIM_LAYERS + 1],
+    };
+    let too_many = PlayError::TooMany {
+        what: "animation layers",
+        max: MAX_ANIM_LAYERS,
+    };
+    assert_eq!(encode_anim_layers(&many), Err(too_many.clone()));
+    let wire = many.to_bytes().expect("world encoder");
+    assert_eq!(decode_anim_layers(&wire, &no_schema()), Err(too_many));
 }
 
 #[test]
 fn unknown_opcodes_are_not_play_messages() {
-    assert_eq!(decode_play_message(0x6C, 2, &[0], &no_schema()), Ok(None));
+    assert_eq!(
+        decode_play_message(0x6C, 2, &[0], &no_schema(), &portal_schemas()),
+        Ok(None)
+    );
 }

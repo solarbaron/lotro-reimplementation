@@ -18,18 +18,18 @@ use tessera_compat::chat_session::wire::{
     MSG_TYPE_CHAT, U64ToU32Table, read_descriptor_list,
 };
 use tessera_compat::chat_session::{
-    AUTH_TYPE_ACCOUNT, AUTH_TYPE_TICKET, CHAT_RECIPIENT_ID, ChatClient, ChatConfig,
+    AUTH_TYPE_ACCOUNT, AUTH_TYPE_TICKET, CHAT_RECIPIENT_ID, ChatClient, ChatCodecs, ChatConfig,
     chat_auth_header, decode_base64, effective_endpoint, parse_endpoint,
 };
 use tessera_compat::play::PlayError;
 use tessera_compat::session::{
     AUTH_FLAG_HAS_EXTRA_BLOB, ConnectChallengeHeader, DatagramHeader, InMemoryUdpTransport,
-    IsaacCipher, OptionalHeaders, SessionAuthPayload, SessionError, UdpDatagramTransport,
-    decode_datagram, encode_datagram, split_blob,
+    IsaacCipher, OptionalHeaders, SessionError, UdpDatagramTransport, decode_datagram,
+    encode_datagram, split_blob,
 };
 use tessera_compat::world::{
     EncodedPropertyTable, EncodedPropertyValue, PropertyType, WireReader, WorldError,
-    encode_blob_payload,
+    encode_event_envelope,
 };
 use tessera_net::{ChatChannel, Command, Event, SocialCommand, SocialEvent};
 
@@ -622,9 +622,7 @@ fn chat_auth_header_modes() {
     let h = chat_auth_header("acct", Some(ticket), 1000).expect("header");
     assert_eq!(h.auth_type, AUTH_TYPE_TICKET);
     assert_eq!(h.auth_flags, AUTH_FLAG_HAS_EXTRA_BLOB);
-    let SessionAuthPayload::Unencrypted(c) = &h.payload else {
-        panic!("encrypted payload");
-    };
+    let c = &h.credentials;
     assert_eq!(c.account_or_ticket, "acct");
     assert_eq!(c.extra_blob.as_deref(), Some(&[0u8, 1, 2][..]));
     let mut wire = Vec::new();
@@ -711,9 +709,9 @@ impl FakeServer {
                 server_rec_id: 0x0222,
                 outgoing_seed: 0xCAFE_1234,
                 incoming_seed: INCOMING_SEED,
-                unknown_14: 0,
+                reserved_dword_14: 0,
                 client_conn_idx: 4,
-                unknown_1a: 0,
+                reserved_word_1a: 0,
                 codec_uuid: [0u8; 16],
             }),
             ..OptionalHeaders::default()
@@ -751,7 +749,7 @@ impl FakeServer {
         .expect("keepalive")
     }
 
-    /// The server's own graceful `Disconnect` (`official-session.md` §8.3), answering the
+    /// The server's own graceful `Disconnect` (`official-session.md` §8.2), answering the
     /// client's.
     fn disconnect(&self) -> Vec<u8> {
         encode_datagram(
@@ -785,9 +783,7 @@ impl FakeServer {
             0,
             None,
             opcode,
-            &encode_blob_payload(inner),
-            false,
-            None,
+            &encode_event_envelope(inner),
         )
         .expect("split");
         let mask = self.isaac.next_mask();
@@ -839,9 +835,13 @@ fn sent_blobs(client: &mut ChatClient<InMemoryUdpTransport>) -> Vec<(u64, u32, V
 fn chat_client_end_to_end() {
     let config = ChatConfig::new(SERVER, "acct", Some("AAEC".into()), 1000);
     assert!(!format!("{config:?}").contains("acct"), "account redacted");
-    let mut client =
-        ChatClient::with_transport(InMemoryUdpTransport::new(CLIENT), config, None, 0.0)
-            .expect("client");
+    let mut client = ChatClient::with_transport(
+        InMemoryUdpTransport::new(CLIENT),
+        config,
+        ChatCodecs::default(),
+        0.0,
+    )
+    .expect("client");
     client.set_self_descriptor(5, "Me");
     let schema = no_schema();
 
@@ -1167,7 +1167,8 @@ fn sent(net: &Arc<Mutex<Net>>) -> Vec<(usize, tessera_compat::session::DecodedPa
 fn reconnect_binds_a_fresh_socket_and_flushes_the_old_disconnect() {
     let net = Arc::new(Mutex::new(Net::default()));
     let config = ChatConfig::new(SERVER, "acct", None, 0);
-    let mut client = ChatClient::with_binder(net_binder(&net), config, None, 0.0).expect("client");
+    let mut client = ChatClient::with_binder(net_binder(&net), config, ChatCodecs::default(), 0.0)
+        .expect("client");
     let schema = no_schema();
     let mut server = FakeServer::new();
 
@@ -1233,6 +1234,16 @@ fn reconnect_binds_a_fresh_socket_and_flushes_the_old_disconnect() {
             .any(|(i, p)| *i == 0 && p.opt_headers.session_auth.is_some())
     );
     assert_eq!(client.counters().connects, 2);
+    // The server gives the new connection the recipient ID of the old one: the handshake
+    // still completes and the new session opens.
+    let mut server = FakeServer::new();
+    push(&net, 1, FakeServer::challenge());
+    client.poll(until + 0.1, &schema).expect("poll");
+    let login = server.event(&ChatEvent::LoginStatus { status: 0 });
+    push(&net, 1, login);
+    client.poll(until + 0.2, &schema).expect("poll");
+    assert!(client.is_ready(), "the second session opens");
+    let _ = sent(&net);
     // The old connection is let go once the session layer is done with it.
     client.poll(until + 46.0, &schema).expect("poll");
     assert_eq!(client.draining_len(), 0);
@@ -1245,7 +1256,8 @@ fn ready_then_dropped(
     fail_rebind: bool,
 ) -> (ChatClient<NetSocket>, FakeServer) {
     let config = ChatConfig::new(SERVER, "acct", None, 0);
-    let mut client = ChatClient::with_binder(net_binder(net), config, None, 0.0).expect("client");
+    let mut client = ChatClient::with_binder(net_binder(net), config, ChatCodecs::default(), 0.0)
+        .expect("client");
     let schema = no_schema();
     let mut server = FakeServer::new();
     client.poll(1.0, &schema).expect("poll");
@@ -1310,7 +1322,8 @@ fn a_failed_rebind_on_retire_is_not_a_connect_failure() {
 fn a_failed_connection_attempt_schedules_a_retry() {
     let net = Arc::new(Mutex::new(Net::default()));
     let config = ChatConfig::new(SERVER, "acct", None, 0);
-    let mut client = ChatClient::with_binder(net_binder(&net), config, None, 0.0).expect("client");
+    let mut client = ChatClient::with_binder(net_binder(&net), config, ChatCodecs::default(), 0.0)
+        .expect("client");
     let schema = no_schema();
     client.poll(1.0, &schema).expect("poll");
     assert!(matches!(client.phase(), ChatPhase::Connecting { .. }));

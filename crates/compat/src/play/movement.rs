@@ -6,24 +6,30 @@
 //!   `0xCC` acknowledgements reconcile against (§4.3.2). An acknowledgement prunes and a
 //!   teleport clears only the history, never the window.
 //! - [`TeleportSync`]: the modulo-256 teleport stamp state machine (§4.5).
-//! - [`ServerSetPosition`] (`0xBF`, §4.4.2), [`EntitySplinePath`] (`0x59`, §4.6.1),
-//!   [`MotionControllerUpdate`] (`0xED`, §4.6.2) and [`AnimLayerState`] (`0xBD`, §4.6.3).
+//! - [`ServerSetPosition`] (`0xBF`, §4.4.2), [`EntitySplinePath`] (`0x59`, §4.6.1) and
+//!   [`MotionControllerUpdate`] (`0xED`, §4.6.2); the play-layer bounds of `0xBD` (§4.6.3)
+//!   around [`EntityAnimLayerState`].
 //!
-//! The wire layouts of `0x24`, `0xCC` and `0xCE` live in [`crate::world`]
-//! (`official-messages-world.md` §4.3.1, §5.4, §5.5); this module uses them.
+//! The wire layouts of `0x24`, `0xCC`, `0xCE` and `0xBD` live in [`crate::world`]
+//! (`official-messages-world.md` §4.3.1, §5.4, §5.5, §5.6.1), as do the
+//! `SignedNormalizedByte` codec and the coordinate bounds of §9.1 rule 4; this module uses
+//! them.
 
 use std::collections::VecDeque;
 
 use tessera_net::{Anchor, Landblock, Location, RegionId, Rotation};
 
 use crate::play::PlayError;
+pub use crate::world::{
+    ActionLayerEntry, EntityAnimLayerState, decode_signed_normalized, encode_signed_normalized,
+};
 use crate::world::{
-    ActionPayload, ClientMoveCommand, CompactDid, EncodedPropertyValue, PortalPlacement,
-    PropertySchemaLookup, PropertyType, WirePosition, WireReader, WireWriter, decode_heading_u8,
+    ClientPhysicsSync, PortalPositionSync, PropertySchemaLookup, WirePosition, WireReader,
+    WireWriter, decode_heading_u8, require_finite, require_world_coordinate,
 };
 
 /// Event ID of the client movement step event (`client_physics_sync`, §4.2).
-pub const OPCODE_CLIENT_PHYSICS_SYNC: u32 = ClientMoveCommand::EVENT_ID;
+pub const OPCODE_CLIENT_PHYSICS_SYNC: u32 = ClientPhysicsSync::EVENT_ID;
 /// Event ID of the full movement-state setter (`server_set_position`, §4.4.2).
 pub const OPCODE_SERVER_SET_POSITION: u32 = 0x0000_00BF;
 /// Event ID of the entity path event (`entity_spline_path`, §4.6.1).
@@ -31,7 +37,7 @@ pub const OPCODE_ENTITY_SPLINE_PATH: u32 = 0x0000_0059;
 /// Event ID of the motion controller event (`entity_motion_state`, §4.6.2).
 pub const OPCODE_ENTITY_MOTION_STATE: u32 = 0x0000_00ED;
 /// Event ID of the animation layer event (`entity_anim_layer_state`, §4.6.3).
-pub const OPCODE_ENTITY_ANIM_LAYER_STATE: u32 = 0x0000_00BD;
+pub const OPCODE_ENTITY_ANIM_LAYER_STATE: u32 = EntityAnimLayerState::EVENT_ID;
 
 /// Nominal step interval while moving: 20 Hz (§4.2 item 1).
 pub const STEP_INTERVAL_SEC: f64 = 0.05;
@@ -43,8 +49,6 @@ pub const WINDOW_STEPS: usize = 4;
 /// Steps of history kept for reconciliation. The spec gives no capacity; engineering
 /// choice.
 pub const STEP_HISTORY_CAP: usize = 256;
-/// Largest coordinate magnitude of `0xBF` and `0xCE`, metres (§4.4.2, §9.1 rule 4).
-pub const MAX_COORDINATE_M: f32 = 100_000.0;
 /// Most waypoints accepted in one `0x59` path. Engineering choice, spec silent (it bounds
 /// the count only by the remaining bytes).
 pub const MAX_WAYPOINTS: usize = 1024;
@@ -58,30 +62,6 @@ pub const MAX_ANIM_LAYERS: usize = 256;
 // ---------------------------------------------------------------------------
 // Wire scalars and coordinates
 // ---------------------------------------------------------------------------
-
-/// Encodes a value in `[-1, 1]` as a `SignedNormalizedByte` (`official-messages-world.md`
-/// §2.3.1): clamp, multiply by 127, round toward zero. NaN encodes as `0`.
-#[must_use]
-pub fn encode_signed_normalized(value: f32) -> i8 {
-    if !value.is_finite() {
-        return if value.is_nan() {
-            0
-        } else if value > 0.0 {
-            127
-        } else {
-            -127
-        };
-    }
-    let scaled = (value.clamp(-1.0, 1.0) * 127.0).trunc();
-    // Within [-127, 127] after the clamp.
-    scaled as i8
-}
-
-/// Decodes a `SignedNormalizedByte`: `clamp(b / 127, -1, 1)` (§2.3.1).
-#[must_use]
-pub fn decode_signed_normalized(b: i8) -> f32 {
-    (f32::from(b) / 127.0).clamp(-1.0, 1.0)
-}
 
 /// Whether `new_stamp` is newer than or equal to `current` under modulo-256 serial number
 /// arithmetic: `(new - current) mod 256 < 128` (§4.5 item 1).
@@ -138,20 +118,10 @@ fn angle_diff(a: f32, b: f32) -> f32 {
     wrap_pi(a - b).abs()
 }
 
-fn check_world_coordinate(field: &'static str, v: f32) -> Result<(), PlayError> {
-    if v.is_finite() && (-MAX_COORDINATE_M..=MAX_COORDINATE_M).contains(&v) {
-        Ok(())
-    } else {
-        Err(PlayError::BadCoordinate(field))
-    }
-}
-
+/// The finiteness check of §9.1 rule 4 ([`crate::world`]'s), as a play error.
 fn check_finite(field: &'static str, v: f32) -> Result<(), PlayError> {
-    if v.is_finite() {
-        Ok(())
-    } else {
-        Err(PlayError::BadCoordinate(field))
-    }
+    require_finite(field, v)?;
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -337,7 +307,7 @@ impl MovementSender {
         now: f64,
         stamp: u8,
         predicted: Option<PredictedState>,
-    ) -> Option<ClientMoveCommand> {
+    ) -> Option<ClientPhysicsSync> {
         let step = StepInput::from_input(input);
         let changed = self.last_sent != Some(step);
         let due = step.is_moving()
@@ -376,9 +346,9 @@ impl MovementSender {
     /// `slot_flags` bits under mask `0xEE` and `trailer_u32` are sent as `0`
     /// (`official-messages-world.md` §5.5).
     #[must_use]
-    pub fn window(&self, stamp: u8) -> ClientMoveCommand {
+    pub fn window(&self, stamp: u8) -> ClientPhysicsSync {
         let mut move_state = [0u8; 4];
-        let mut axes = [[0u8; 4]; 3];
+        let mut axes = [[0i8; 4]; 3];
         for k in 0..4u32 {
             let seq = self.seq.saturating_sub(3 - k);
             let step = if seq == 0 {
@@ -395,22 +365,11 @@ impl MovementSender {
             }
             for (axis, value) in axes.iter_mut().zip(step.axes) {
                 if let Some(slot) = axis.get_mut(i) {
-                    // The i8 travels as its two's-complement byte.
-                    *slot = value as u8;
+                    *slot = value;
                 }
             }
         }
-        let [axis_a, axis_b, axis_c] = axes;
-        ClientMoveCommand::new_base(
-            self.entity_id,
-            stamp,
-            self.seq,
-            move_state,
-            axis_a,
-            axis_b,
-            axis_c,
-            0,
-        )
+        ClientPhysicsSync::new_base(self.entity_id, stamp, self.seq, move_state, axes)
     }
 
     /// Drops every unacknowledged step after a teleport was accepted (§4.5 item 3). The
@@ -436,7 +395,7 @@ impl MovementSender {
     /// location (the history is left as it was).
     pub fn reconcile(
         &mut self,
-        placement: &PortalPlacement,
+        placement: &PortalPositionSync,
         tolerance: ReconcileTolerance,
     ) -> Result<Reconciliation, PlayError> {
         let ack = placement.sequence_or_reason;
@@ -470,8 +429,8 @@ impl MovementSender {
             location,
             anchor,
             heading,
-            velocity: placement.linear_velocity,
-            angular_velocity: placement.angular_velocity,
+            velocity: placement.linear_velocity.map(|v| v.unwrap_or(0.0)),
+            angular_velocity: placement.angular_velocity.map(|v| v.unwrap_or(0.0)),
             movement_mode: placement.movement_mode,
             state_schema_id: placement.state_schema_id,
             bool_states: placement.bool_states.clone(),
@@ -682,7 +641,7 @@ impl ServerSetPosition {
 
 fn check_position(pos: &WirePosition) -> Result<(), PlayError> {
     for (f, v) in ["pos_x", "pos_y", "pos_z"].into_iter().zip(pos.offset) {
-        check_world_coordinate(f, v)?;
+        require_world_coordinate(f, v)?;
     }
     for v in pos.orientation {
         check_finite("orientation", v)?;
@@ -909,131 +868,71 @@ impl MotionControllerUpdate {
 // §4.6.3 0xBD
 // ---------------------------------------------------------------------------
 
-/// One `ActionLayerEntry` of `0xBD` (§4.6.3).
-#[derive(Debug, Clone, PartialEq)]
-pub struct ActionLayerEntry {
-    /// The animation/action DID.
-    pub action_did: CompactDid,
-    /// The layer sequence number.
-    pub action_seq: u32,
-    /// The action parameters (`official-messages-world.md` §5.6.2).
-    pub action: ActionPayload,
-    /// The layer bitfield's bit count.
-    pub bit_count: u32,
-    /// The bitfield bytes (`ceil(bit_count / 8)`).
-    pub bits: Vec<u8>,
-}
-
-/// Event `0xBD` (`entity_anim_layer_state`, §4.6.3) for the entity of the blob's
-/// `recipientId`.
-#[derive(Debug, Clone, PartialEq)]
-pub struct AnimLayerState {
-    /// The layers.
-    pub layers: Vec<ActionLayerEntry>,
-}
-
 /// Smallest wire size of one `ActionLayerEntry`: Compact DID 2, `VariableU32` 1,
 /// `ActionPayload` 11, bitfield 1.
 const MIN_LAYER_BYTES: usize = 15;
 
-impl AnimLayerState {
-    /// Encodes the inner payload.
-    ///
-    /// # Errors
-    ///
-    /// [`PlayError::BitfieldMismatch`] when a layer's bitfield length does not match its
-    /// bit count, or a wire error.
-    pub fn encode(&self, writer: &mut WireWriter) -> Result<(), PlayError> {
-        if self.layers.len() > MAX_ANIM_LAYERS {
-            return Err(PlayError::TooMany {
-                what: "animation layers",
-                max: MAX_ANIM_LAYERS,
+/// Checks the play-layer bounds of an `0xBD` (§4.6.3): at most [`MAX_ANIM_LAYERS`] layers,
+/// and every layer's bitfield holds exactly `ceil(bit_count / 8)` bytes
+/// (`official-messages-world.md` §2.7.1; [`crate::world::WireBitfield::encode`] would pad or
+/// cut them).
+///
+/// # Errors
+///
+/// [`PlayError::TooMany`] or [`PlayError::BitfieldMismatch`].
+pub fn check_anim_layers(state: &EntityAnimLayerState) -> Result<(), PlayError> {
+    if state.layers.len() > MAX_ANIM_LAYERS {
+        return Err(PlayError::TooMany {
+            what: "animation layers",
+            max: MAX_ANIM_LAYERS,
+        });
+    }
+    for layer in &state.layers {
+        let b = &layer.bitfield;
+        if b.bytes.len() != (b.bit_count as usize).div_ceil(8) {
+            return Err(PlayError::BitfieldMismatch {
+                bit_count: b.bit_count,
+                bytes: b.bytes.len(),
             });
         }
-        writer.write_base_flags();
-        // Bounded by MAX_ANIM_LAYERS.
-        writer.write_vle3(self.layers.len() as u32)?;
-        for layer in &self.layers {
-            layer.action_did.encode(writer)?;
-            writer.write_vle4(layer.action_seq);
-            layer.action.encode(writer)?;
-            if layer.bits.len() != (layer.bit_count as usize).div_ceil(8) {
-                return Err(PlayError::BitfieldMismatch {
-                    bit_count: layer.bit_count,
-                    bytes: layer.bits.len(),
-                });
-            }
-            writer.write_vle3(layer.bit_count)?;
-            writer.write_bytes(&layer.bits);
-        }
-        Ok(())
     }
+    Ok(())
+}
 
-    /// Decodes the inner payload; action property tables use `schema`.
-    ///
-    /// # Errors
-    ///
-    /// [`PlayError`] on truncation, a count over the remaining bytes or
-    /// [`MAX_ANIM_LAYERS`], or a bad action payload.
-    pub fn decode(
-        reader: &mut WireReader<'_>,
-        schema: &dyn PropertySchemaLookup,
-    ) -> Result<Self, PlayError> {
-        reader.read_base_flags()?;
-        let count = reader.read_vle3()? as usize;
-        reader.ensure_count(count, MIN_LAYER_BYTES)?;
-        if count > MAX_ANIM_LAYERS {
-            return Err(PlayError::TooMany {
-                what: "animation layers",
-                max: MAX_ANIM_LAYERS,
-            });
-        }
-        let mut layers = Vec::with_capacity(count);
-        for _ in 0..count {
-            let action_did = CompactDid::decode(reader)?;
-            let action_seq = reader.read_vle4()?;
-            let action = ActionPayload::decode(reader, schema)?;
-            let (bit_count, bytes) =
-                match EncodedPropertyValue::decode(reader, PropertyType::Bitfield, schema)? {
-                    EncodedPropertyValue::Bitfield { bit_count, bytes } => (bit_count, bytes),
-                    _ => {
-                        return Err(PlayError::BitfieldMismatch {
-                            bit_count: 0,
-                            bytes: 0,
-                        });
-                    }
-                };
-            layers.push(ActionLayerEntry {
-                action_did,
-                action_seq,
-                action,
-                bit_count,
-                bits: bytes,
-            });
-        }
-        Ok(Self { layers })
-    }
+/// Encodes an `0xBD` inner payload with [`EntityAnimLayerState::encode`] after
+/// [`check_anim_layers`].
+///
+/// # Errors
+///
+/// As [`check_anim_layers`], or a wire error.
+pub fn encode_anim_layers(state: &EntityAnimLayerState) -> Result<Vec<u8>, PlayError> {
+    check_anim_layers(state)?;
+    Ok(state.to_bytes()?)
+}
 
-    /// Decodes a standalone inner payload.
-    ///
-    /// # Errors
-    ///
-    /// As [`Self::decode`], plus trailing bytes.
-    pub fn from_bytes(bytes: &[u8], schema: &dyn PropertySchemaLookup) -> Result<Self, PlayError> {
-        let mut r = WireReader::new(bytes);
-        let m = Self::decode(&mut r, schema)?;
-        r.finish()?;
-        Ok(m)
+/// Decodes a standalone `0xBD` inner payload (§4.6.3, §9.1 rule 1); action property tables
+/// use `schema`. The layer count is checked against the remaining bytes before anything is
+/// allocated, then against [`MAX_ANIM_LAYERS`].
+///
+/// # Errors
+///
+/// [`PlayError`] on truncation, a count over the remaining bytes or [`MAX_ANIM_LAYERS`],
+/// a bad action payload, or trailing bytes.
+pub fn decode_anim_layers(
+    bytes: &[u8],
+    schema: &dyn PropertySchemaLookup,
+) -> Result<EntityAnimLayerState, PlayError> {
+    let mut r = WireReader::new(bytes);
+    r.read_base_flags()?;
+    let count = r.read_vle3()? as usize;
+    r.ensure_count(count, MIN_LAYER_BYTES)?;
+    if count > MAX_ANIM_LAYERS {
+        return Err(PlayError::TooMany {
+            what: "animation layers",
+            max: MAX_ANIM_LAYERS,
+        });
     }
-
-    /// Encodes to a standalone inner payload.
-    ///
-    /// # Errors
-    ///
-    /// As [`Self::encode`].
-    pub fn to_bytes(&self) -> Result<Vec<u8>, PlayError> {
-        let mut w = WireWriter::new();
-        self.encode(&mut w)?;
-        Ok(w.into_vec())
-    }
+    let state = EntityAnimLayerState::from_bytes(bytes, schema)?;
+    check_anim_layers(&state)?;
+    Ok(state)
 }

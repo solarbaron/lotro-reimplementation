@@ -14,7 +14,7 @@
 //! (decision 0042 item 2).
 
 use crate::play::PlayError;
-use crate::world::{WireLocalizedText, WireReader, WireWriter};
+use crate::world::{LocalizedTokenText, WireReader, WireWriter};
 
 /// Event ID of the script RPC envelope (`script_rpc_message`, §5.2).
 pub const OPCODE_SCRIPT_RPC: u32 = 0x0000_0030;
@@ -189,7 +189,7 @@ pub enum NodeValue {
     /// Class `0xE1`: a prefixed UTF-16LE string.
     Text(String),
     /// Class `0xC7`: a wire `LocalizedTokenText` (`official-messages-world.md` §2.6).
-    Localized(WireLocalizedText),
+    Localized(LocalizedTokenText),
 }
 
 /// One node of a `ScriptStateObject` bundle.
@@ -227,7 +227,7 @@ impl StateRef {
 
     /// A `ref_localized_text` holding `text`.
     #[must_use]
-    pub fn localized(text: WireLocalizedText) -> Self {
+    pub fn localized(text: LocalizedTokenText) -> Self {
         Self::Nodes(vec![StateNode {
             label: 0,
             flags: NODE_FLAG_BINARY_STATE,
@@ -317,7 +317,7 @@ impl StateRef {
             let value = match class_id {
                 STATE_CLASS_UTF16_TEXT => NodeValue::Text(reader.read_utf16le_string()?),
                 STATE_CLASS_LOCALIZED_TEXT => {
-                    NodeValue::Localized(WireLocalizedText::decode(reader)?)
+                    NodeValue::Localized(LocalizedTokenText::decode(reader)?)
                 }
                 other => return Err(PlayError::UnsupportedStateClass(other)),
             };

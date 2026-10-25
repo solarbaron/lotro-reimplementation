@@ -19,7 +19,8 @@ use tessera_compat::chat_session::wire::{
     read_u64_list,
 };
 use tessera_compat::chat_session::{
-    ChatClient, ChatConfig, chat_auth_header, decode_base64, effective_endpoint, parse_endpoint,
+    ChatClient, ChatCodecs, ChatConfig, chat_auth_header, decode_base64, effective_endpoint,
+    parse_endpoint,
 };
 use tessera_compat::session::InMemoryUdpTransport;
 use tessera_compat::world::{PropertyType, WireReader};
@@ -30,7 +31,7 @@ fn fuzz_schema() -> BTreeMap<u32, PropertyType> {
     map.insert(0x0000_0001, PropertyType::String);
     map.insert(0x0000_0002, PropertyType::Int);
     map.insert(0x0000_0003, PropertyType::Struct);
-    map.insert(0x0000_0004, PropertyType::LocalizedText);
+    map.insert(0x0000_0004, PropertyType::LocalizedTokenText);
     map
 }
 
@@ -90,9 +91,12 @@ fuzz_target!(|data: &[u8]| {
     let client_addr = SocketAddrV4::new(Ipv4Addr::new(127, 0, 0, 1), 9100);
     let server = SocketAddrV4::new(Ipv4Addr::new(198, 51, 100, 9), 9200);
     let config = ChatConfig::new(server, "fuzz", Some("AAEC".to_string()), 0);
-    if let Ok(mut client) =
-        ChatClient::with_transport(InMemoryUdpTransport::new(client_addr), config, None, 0.0)
-    {
+    if let Ok(mut client) = ChatClient::with_transport(
+        InMemoryUdpTransport::new(client_addr),
+        config,
+        ChatCodecs::default(),
+        0.0,
+    ) {
         let _ = client.poll(1.0, &schema);
         client.transport_mut().push_inbound(data.to_vec(), server);
         let _ = client.poll(1.1, &schema);
@@ -102,9 +106,12 @@ fuzz_target!(|data: &[u8]| {
     // The client's event handling: a ready session fed a sequence of decoded events
     // (`[selector, len, payload...]` records) and commands.
     let config = ChatConfig::new(server, "fuzz", None, 0);
-    if let Ok(mut client) =
-        ChatClient::with_transport(InMemoryUdpTransport::new(client_addr), config, None, 0.0)
-    {
+    if let Ok(mut client) = ChatClient::with_transport(
+        InMemoryUdpTransport::new(client_addr),
+        config,
+        ChatCodecs::default(),
+        0.0,
+    ) {
         let _ = client.poll(1.0, &schema);
         client.state_mut().on_transport_connected(1.0);
         let _ = client.handle_event(ChatEvent::LoginStatus { status: 0 }, 1.0, &schema);

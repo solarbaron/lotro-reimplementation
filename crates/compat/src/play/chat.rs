@@ -8,8 +8,8 @@ use tessera_net::ChatChannel;
 use crate::play::rpc::{PlayRpc, StateRef};
 use crate::play::{PlayError, check_units};
 use crate::world::{
-    EncodedPropertyTable, EncodedPropertyValue, PropertySchemaLookup, WireLocalizedText,
-    WireLocalizedTextContent, WireReader, WireWriter,
+    EncodedPropertyTable, EncodedPropertyValue, LocalizedTokenText, LocalizedTokenTextContent,
+    PropertySchemaLookup, WireReader, WireWriter,
 };
 
 /// Largest standard chat text (`/say`, `/tell`, channel chat), UTF-16 code units (§6.2).
@@ -206,7 +206,7 @@ pub fn emote_by_name(target: Option<&str>, emote_did: u32) -> Result<PlayRpc, Pl
 /// without data; references need the install's string tables.
 pub trait TextResolver {
     /// The display text of `text`, or `None` when it cannot be resolved.
-    fn resolve(&self, text: &WireLocalizedText) -> Option<String>;
+    fn resolve(&self, text: &LocalizedTokenText) -> Option<String>;
 }
 
 /// A resolver that knows only literal texts (mode `1`).
@@ -214,10 +214,10 @@ pub trait TextResolver {
 pub struct LiteralTexts;
 
 impl TextResolver for LiteralTexts {
-    fn resolve(&self, text: &WireLocalizedText) -> Option<String> {
+    fn resolve(&self, text: &LocalizedTokenText) -> Option<String> {
         match &text.content {
-            WireLocalizedTextContent::Literal(s) => Some(s.clone()),
-            WireLocalizedTextContent::Reference { .. } => None,
+            LocalizedTokenTextContent::Literal(s) => Some(s.clone()),
+            LocalizedTokenTextContent::Reference { .. } => None,
         }
     }
 }
@@ -382,7 +382,7 @@ fn value_u64(v: &EncodedPropertyValue) -> Option<u64> {
 fn value_text(v: &EncodedPropertyValue, resolver: &dyn TextResolver) -> Option<String> {
     match v {
         EncodedPropertyValue::String(s) => Some(s.clone()),
-        EncodedPropertyValue::LocalizedText(t) => resolver.resolve(t),
+        EncodedPropertyValue::LocalizedTokenText(t) => resolver.resolve(t),
         _ => None,
     }
 }

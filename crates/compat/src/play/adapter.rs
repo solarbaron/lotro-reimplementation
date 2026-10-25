@@ -20,13 +20,13 @@ use crate::play::chat::{self, ChatCategories, TextResolver, ref_text};
 use crate::play::inbound::PlayMessage;
 use crate::play::logout::{LogoutChange, LogoutState};
 use crate::play::movement::{
-    AnimLayerState, MotionControllerUpdate, MovementInput, MovementSender, PredictedState,
+    EntityAnimLayerState, MotionControllerUpdate, MovementInput, MovementSender, PredictedState,
     ReconcileTolerance, Reconciliation, StepInput, TeleportSync, quaternion_heading, wire_heading,
     wire_location,
 };
 use crate::play::rpc::{OPCODE_SCRIPT_RPC, PlayRpc};
 use crate::play::{OutgoingEvent, PlayError, clean_display_name};
-use crate::world::{EntityPlacement, PortalSpaceReady, WireLocalizedText, WirePosition};
+use crate::world::{EntityPlacement, LocalizedTokenText, PortalReadyAck, WirePosition};
 
 /// Most names kept in the client-side ignore list. Engineering choice, spec silent.
 pub const MAX_IGNORED_NAMES: usize = 1024;
@@ -95,7 +95,7 @@ pub enum PlaySignal {
         /// The entity.
         entity: u64,
         /// The layers.
-        state: AnimLayerState,
+        state: EntityAnimLayerState,
     },
     /// The world name announcement, resolved (`0x43`).
     WorldName(String),
@@ -240,7 +240,10 @@ impl PlayAdapter {
         if !self.teleport.try_exit_portal_space(loading_done, timed_out) {
             return None;
         }
-        self.outgoing(PortalSpaceReady::EVENT_ID, Ok(PortalSpaceReady.to_bytes()))
+        self.outgoing(
+            PortalReadyAck::EVENT_ID,
+            PortalReadyAck.to_bytes().map_err(PlayError::from),
+        )
     }
 
     /// An outgoing event, or `None` (logged and counted) when it failed to encode.
@@ -291,7 +294,7 @@ impl PlayAdapter {
             }
         }
         let payload = cmd.to_bytes().map_err(PlayError::from);
-        if let Some(ev) = self.outgoing(crate::world::ClientMoveCommand::EVENT_ID, payload) {
+        if let Some(ev) = self.outgoing(crate::world::ClientPhysicsSync::EVENT_ID, payload) {
             out.push(ev);
         }
         out
@@ -363,7 +366,11 @@ impl PlayAdapter {
         }
     }
 
-    fn resolve(&mut self, text: &WireLocalizedText, resolver: &dyn TextResolver) -> Option<String> {
+    fn resolve(
+        &mut self,
+        text: &LocalizedTokenText,
+        resolver: &dyn TextResolver,
+    ) -> Option<String> {
         let r = resolver.resolve(text);
         if r.is_none() {
             self.counters.unresolved_text += 1;
@@ -567,13 +574,13 @@ impl PlayAdapter {
         out
     }
 
-    fn on_position(&mut self, u: &crate::world::EntityPositionUpdate, out: &mut PlayOutput) {
+    fn on_position(&mut self, u: &crate::world::PositionUpdate, out: &mut PlayOutput) {
         let located = match &u.placement {
             EntityPlacement::WorldWithHeading {
                 position,
                 heading_raw,
             } => Self::located(position, Some(wire_heading(*heading_raw))),
-            EntityPlacement::WorldPositionOnly { position } => Self::located(position, None),
+            EntityPlacement::WorldFull { position } => Self::located(position, None),
             _ => None,
         };
         // §4.4.1, §4.5 item 3: `seq_byte` is present exactly when `header_flags` bit 3 is
@@ -595,8 +602,12 @@ impl PlayAdapter {
                 self.counters.ignored_positions += 1;
                 return;
             };
-            out.events
-                .push(Self::moved(u.entity_id, &loc, heading, u.velocity));
+            out.events.push(Self::moved(
+                u.entity_id,
+                &loc,
+                heading,
+                velocity_or_zero(u.velocity),
+            ));
             out.events.push(Event::LocationReport {
                 id: EntityId(u.entity_id),
                 location: loc,
@@ -610,8 +621,12 @@ impl PlayAdapter {
             self.counters.ignored_positions += 1;
             return;
         };
-        out.events
-            .push(Self::moved(u.entity_id, &loc, heading, u.velocity));
+        out.events.push(Self::moved(
+            u.entity_id,
+            &loc,
+            heading,
+            velocity_or_zero(u.velocity),
+        ));
     }
 
     fn on_rpc(&mut self, rpc: &PlayRpc, resolver: &dyn TextResolver, out: &mut PlayOutput) {
@@ -738,4 +753,9 @@ impl PlayAdapter {
             other => out.signals.push(PlaySignal::Rpc(other.clone())),
         }
     }
+}
+
+/// The velocity components of `0xCE`, `0.0` where absent (`official-messages-world.md` §5.4).
+fn velocity_or_zero(v: [Option<f32>; 3]) -> [f32; 3] {
+    v.map(|c| c.unwrap_or(0.0))
 }

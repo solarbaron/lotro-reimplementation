@@ -14,9 +14,10 @@
 //! a reconnect), the client asks the session layer for a graceful disconnect and flushes the
 //! `Disconnect` before it lets the connection go. With a socket maker, a connection that
 //! still has reliable packets to flush keeps its old socket until the session layer is done
-//! (`official-session.md` §6.1 states 6 and 7). The session layer will offer
-//! `SessionMultiplexer::remove_connection` and a send of a blob with a recipient later; this
-//! module does not use them yet.
+//! (`official-session.md` §6.1 states 6 and 7): it is taken out of the multiplexer with
+//! `SessionMultiplexer::remove_connection`, so datagrams addressed to it are refused there.
+//! Blobs go out with `SessionConnection::send_blob_to`, which keeps the per-queue order
+//! numbers and blob IDs of the connection (`official-session.md` §5.6).
 
 use std::collections::VecDeque;
 use std::net::{Ipv4Addr, SocketAddrV4};
@@ -36,10 +37,11 @@ use crate::play::PlayError;
 use crate::play::chat::{MAX_ARGUMENT_UNITS, MAX_CHAT_UNITS};
 use crate::play::{check_units, clean_display_name};
 use crate::session::{
-    BitTreeCodec, ConnectionState, MAX_DATAGRAM_BUF, OptionalHeaders, SessionAuthHeader,
-    SessionEvent, SessionMultiplexer, UdpDatagramTransport, split_blob,
+    BitTreeCodec, ConnectionState, DEFAULT_MAX_DECOMPRESSED_MESSAGE_BYTES, MAX_DATAGRAM_BUF,
+    SessionAuthHeader, SessionConnection, SessionEvent, SessionMultiplexer, UdpDatagramTransport,
+    WireCodecs,
 };
-use crate::world::{PropertySchemaLookup, decode_blob_payload, encode_blob_payload};
+use crate::world::{PropertySchemaLookup, decode_event_envelope, encode_event_envelope};
 
 /// Most rooms kept in the directory, against a hostile server. Engineering choice, spec
 /// silent.
@@ -64,6 +66,28 @@ pub const DRAIN_LIMIT_SEC: f64 = 45.0;
 /// Makes a fresh, unconnected transport for a connection attempt.
 pub type TransportBinder<T> = Box<dyn FnMut() -> Result<T, PlayError> + Send>;
 
+/// The two wire codecs of the chat-server connection (`official-session.md` §4.1.2), from
+/// the install's tables: `incoming` decompresses received datagrams, `outgoing` compresses
+/// sent ones. The owned form of [`WireCodecs`]; `None` in a direction means no codec.
+#[derive(Debug, Clone, Default)]
+pub struct ChatCodecs {
+    /// Server-to-client dictionary.
+    pub incoming: Option<Arc<dyn BitTreeCodec>>,
+    /// Client-to-server dictionary.
+    pub outgoing: Option<Arc<dyn BitTreeCodec>>,
+}
+
+impl ChatCodecs {
+    /// The borrowed codecs for one session-layer call.
+    #[must_use]
+    pub fn wire(&self) -> WireCodecs<'_> {
+        WireCodecs {
+            incoming: self.incoming.as_deref(),
+            outgoing: self.outgoing.as_deref(),
+        }
+    }
+}
+
 /// What the chat client needs to connect: the endpoint (from the launch parameters,
 /// §6.1.1) and the credentials of §6.6.2. The account and ticket are kept out of
 /// `Debug`.
@@ -75,6 +99,17 @@ pub struct ChatConfig {
     ticket_base64: Option<String>,
     /// Unix time in seconds when the transport was initialised (`clientTimestamp`).
     pub client_timestamp: u32,
+}
+
+impl Drop for ChatConfig {
+    // The account and the ticket are wiped when the configuration goes away
+    // (`official-login.md` §6.3), as the session layer does for its credentials.
+    fn drop(&mut self) {
+        crate::login::zeroize_string(&mut self.account);
+        if let Some(t) = self.ticket_base64.as_mut() {
+            crate::login::zeroize_string(t);
+        }
+    }
 }
 
 impl std::fmt::Debug for ChatConfig {
@@ -115,7 +150,11 @@ impl ChatConfig {
     /// strict Base64 ([`crate::chat_session::decode_base64`]); the old ticket is kept.
     pub fn set_ticket(&mut self, ticket_base64: Option<String>) -> Result<(), PlayError> {
         if let Some(t) = ticket_base64.as_deref().filter(|t| !t.is_empty()) {
-            crate::chat_session::decode_base64(t)?;
+            let mut checked = crate::chat_session::decode_base64(t)?;
+            crate::login::zeroize_vec(&mut checked);
+        }
+        if let Some(old) = self.ticket_base64.as_mut() {
+            crate::login::zeroize_string(old);
         }
         self.ticket_base64 = ticket_base64;
         Ok(())
@@ -174,11 +213,11 @@ enum Pending {
     Other,
 }
 
-/// An old connection finishing its disconnect flush on its own socket.
+/// An old connection finishing its disconnect flush on its own socket, taken out of the
+/// multiplexer with `SessionMultiplexer::remove_connection`.
 struct Draining<T> {
     transport: T,
-    mux: SessionMultiplexer,
-    conn: u16,
+    conn: SessionConnection,
     since: f64,
 }
 
@@ -190,7 +229,7 @@ pub struct ChatClient<T: UdpDatagramTransport> {
     transport_used: bool,
     draining: Vec<Draining<T>>,
     config: ChatConfig,
-    codec: Option<Arc<dyn BitTreeCodec>>,
+    codecs: ChatCodecs,
     mux: SessionMultiplexer,
     conn: Option<u16>,
     state: ChatSessionState,
@@ -199,8 +238,6 @@ pub struct ChatClient<T: UdpDatagramTransport> {
     rooms: Vec<ChatRoomDescriptor>,
     self_desc: ChatRoomDescriptor,
     fellowship_channel_type: Option<u32>,
-    order_num: u16,
-    blob_id: u16,
     counters: ChatCounters,
     recv_buf: Vec<u8>,
 }
@@ -233,7 +270,7 @@ impl ChatClient<StdUdpTransport> {
     pub fn open(
         access: Arc<NetworkAccess>,
         config: ChatConfig,
-        codec: Option<Arc<dyn BitTreeCodec>>,
+        codecs: ChatCodecs,
         now: f64,
     ) -> Result<Self, PlayError> {
         let binder: TransportBinder<StdUdpTransport> = Box::new(move || {
@@ -241,12 +278,12 @@ impl ChatClient<StdUdpTransport> {
                 .bind_udp(Ipv4Addr::UNSPECIFIED, 0, false)
                 .map_err(PlayError::from)
         });
-        Self::with_binder(binder, config, codec, now)
+        Self::with_binder(binder, config, codecs, now)
     }
 }
 
 impl<T: UdpDatagramTransport> ChatClient<T> {
-    /// A chat client over `transport`. `codec` decodes bit-tree encoded datagrams
+    /// A chat client over `transport`. `codecs` are the bit-tree wire codecs
     /// (`official-session.md` §4.1.2), from the install's tables.
     ///
     /// # Errors
@@ -255,7 +292,7 @@ impl<T: UdpDatagramTransport> ChatClient<T> {
     pub fn with_transport(
         transport: T,
         config: ChatConfig,
-        codec: Option<Arc<dyn BitTreeCodec>>,
+        codecs: ChatCodecs,
         now: f64,
     ) -> Result<Self, PlayError> {
         config.auth_header()?;
@@ -265,7 +302,7 @@ impl<T: UdpDatagramTransport> ChatClient<T> {
             transport_used: false,
             draining: Vec::new(),
             config,
-            codec,
+            codecs,
             mux: SessionMultiplexer::new(),
             conn: None,
             state: ChatSessionState::new(now),
@@ -274,8 +311,6 @@ impl<T: UdpDatagramTransport> ChatClient<T> {
             rooms: Vec::new(),
             self_desc: ChatRoomDescriptor::Null,
             fellowship_channel_type: None,
-            order_num: 0,
-            blob_id: 1,
             counters: ChatCounters::default(),
             recv_buf: vec![0u8; MAX_DATAGRAM_BUF],
         })
@@ -290,11 +325,11 @@ impl<T: UdpDatagramTransport> ChatClient<T> {
     pub fn with_binder(
         mut binder: TransportBinder<T>,
         config: ChatConfig,
-        codec: Option<Arc<dyn BitTreeCodec>>,
+        codecs: ChatCodecs,
         now: f64,
     ) -> Result<Self, PlayError> {
         let transport = binder()?;
-        let mut client = Self::with_transport(transport, config, codec, now)?;
+        let mut client = Self::with_transport(transport, config, codecs, now)?;
         client.binder = Some(binder);
         Ok(client)
     }
@@ -350,10 +385,12 @@ impl<T: UdpDatagramTransport> ChatClient<T> {
         self.fellowship_channel_type = channel_type;
     }
 
-    /// Forgets the session without a disconnect (its transport is already gone).
+    /// Forgets the session without a disconnect (its transport is already gone): the
+    /// connection is removed from the multiplexer, which refuses its later datagrams.
     fn drop_session(&mut self) {
-        self.mux = SessionMultiplexer::new();
-        self.conn = None;
+        if let Some(id) = self.conn.take() {
+            self.mux.remove_connection(id);
+        }
         self.pending.clear();
     }
 
@@ -365,16 +402,14 @@ impl<T: UdpDatagramTransport> ChatClient<T> {
             self.drop_session();
             return;
         };
-        let mut mux = std::mem::take(&mut self.mux);
         self.pending.clear();
-        let codec = self.codec.clone();
         let mut lingering = false;
-        if let Some(conn) = mux.connection_mut(id) {
+        if let Some(conn) = self.mux.connection_mut(id) {
             if conn.state() == ConnectionState::Connected {
                 self.counters.disconnects += 1;
             }
             conn.request_disconnect(now);
-            if let Err(e) = conn.tick(now, codec.as_deref()) {
+            if let Err(e) = conn.tick(now) {
                 tracing::debug!(error = %e, "chat-server disconnect tick failed");
             }
             lingering = matches!(
@@ -382,10 +417,14 @@ impl<T: UdpDatagramTransport> ChatClient<T> {
                 ConnectionState::DisconnectingFlush | ConnectionState::DisconnectSent
             );
         }
-        if let Err(e) = mux.flush_outbound(&mut self.transport) {
+        if let Err(e) = self.mux.flush_outbound(&mut self.transport) {
             self.counters.transport_errors += 1;
             tracing::debug!(error = %e, "chat-server disconnect flush failed");
         }
+        // The multiplexer refuses later datagrams for the old ID.
+        let Some(old_conn) = self.mux.remove_connection(id) else {
+            return;
+        };
         if !lingering || self.binder.is_none() {
             // Without a socket maker the old connection cannot keep its socket apart from
             // the next attempt; it is let go after one flush.
@@ -398,8 +437,7 @@ impl<T: UdpDatagramTransport> ChatClient<T> {
                 }
                 self.draining.push(Draining {
                     transport: old,
-                    mux,
-                    conn: id,
+                    conn: old_conn,
                     since: now,
                 });
             }
@@ -426,6 +464,10 @@ impl<T: UdpDatagramTransport> ChatClient<T> {
         if self.transport_used && self.binder.is_some() {
             drop(self.rebind()?);
         }
+        // Every attempt gets its own multiplexer: the IDs removed from the old one stay
+        // refused there, and a server that gives the new connection the recipient ID of an
+        // old one is not turned away.
+        self.mux = SessionMultiplexer::new();
         let auth = self.config.auth_header()?;
         let id = self.mux.create_connection(self.config.endpoint, now)?;
         self.transport_used = true;
@@ -434,7 +476,6 @@ impl<T: UdpDatagramTransport> ChatClient<T> {
             None => return Err(PlayError::ChatNotReady),
         }
         self.conn = Some(id);
-        self.order_num = 0;
         self.counters.connects += 1;
         Ok(())
     }
@@ -453,32 +494,17 @@ impl<T: UdpDatagramTransport> ChatClient<T> {
     fn send_raw(&mut self, req: &ChatRequest, now: f64) -> Result<(), PlayError> {
         let id = self.conn.ok_or(PlayError::ChatNotReady)?;
         let inner = req.encode()?;
-        let payload = encode_blob_payload(&inner);
-        let blob_id = self.blob_id;
-        self.blob_id = self.blob_id.checked_add(1).unwrap_or(1);
-        let frags = split_blob(
+        let payload = encode_event_envelope(&inner);
+        let conn = self.mux.connection_mut(id).ok_or(PlayError::ChatNotReady)?;
+        conn.send_blob_to(
             CHAT_QUEUE_ID,
-            self.order_num,
-            blob_id,
             0,
-            Some(CHAT_RECIPIENT_ID),
+            CHAT_RECIPIENT_ID,
             req.opcode(),
             &payload,
-            false,
-            None,
+            now,
+            self.codecs.outgoing.as_deref(),
         )?;
-        self.order_num = self.order_num.wrapping_add(1);
-        let codec = self.codec.clone();
-        let conn = self.mux.connection_mut(id).ok_or(PlayError::ChatNotReady)?;
-        for frag in frags {
-            conn.send_sequenced_packet(
-                OptionalHeaders::default(),
-                vec![frag],
-                true,
-                now,
-                codec.as_deref(),
-            )?;
-        }
         Ok(())
     }
 
@@ -655,7 +681,7 @@ impl<T: UdpDatagramTransport> ChatClient<T> {
             }
             match self
                 .mux
-                .receive_from_peer(datagram, src, now, self.codec.as_deref())
+                .receive_from_peer(datagram, src, now, self.codecs.wire())
             {
                 Ok((id, _)) => self.conn = Some(id),
                 Err(e) => {
@@ -667,10 +693,15 @@ impl<T: UdpDatagramTransport> ChatClient<T> {
         self.poll_draining(now, &mut buf);
         self.recv_buf = buf;
         self.drain_session(now, schema, &mut out);
-        if let Some(conn) = self.conn.and_then(|id| self.mux.connection_mut(id))
-            && let Err(e) = conn.tick(now, self.codec.as_deref())
-        {
-            tracing::debug!(error = %e, "chat-server session tick failed");
+        // Ticks the connection and reaps one that has been closing for 20 s
+        // (`official-session.md` §6.1).
+        match self.mux.tick(now) {
+            Ok(reaped) => self.forget_reaped(&reaped),
+            Err(e) => {
+                tracing::debug!(error = %e, "chat-server session tick failed");
+                let reaped = self.mux.reap_closed(now);
+                self.forget_reaped(&reaped);
+            }
         }
         self.drain_session(now, schema, &mut out);
         if let Some(action) = self.state.tick(now) {
@@ -680,11 +711,19 @@ impl<T: UdpDatagramTransport> ChatClient<T> {
         Ok(out)
     }
 
+    /// The current connection was reaped by the multiplexer: the session is gone.
+    fn forget_reaped(&mut self, reaped: &[u16]) {
+        if self.conn.is_some_and(|id| reaped.contains(&id)) {
+            self.conn = None;
+            self.pending.clear();
+        }
+    }
+
     /// Runs the old connections that are finishing their disconnect flush; each reads and
     /// writes only its own socket. Their events are dropped; failed reads, refused
     /// datagrams and failed sends are counted.
     fn poll_draining(&mut self, now: f64, buf: &mut [u8]) {
-        let codec = self.codec.clone();
+        let codecs = self.codecs.clone();
         let mut i = 0;
         while let Some(d) = self.draining.get_mut(i) {
             for _ in 0..MAX_DATAGRAMS_PER_POLL {
@@ -693,7 +732,7 @@ impl<T: UdpDatagramTransport> ChatClient<T> {
                         let Some(dgram) = buf.get(..len) else {
                             break;
                         };
-                        if let Err(e) = d.mux.receive_from_peer(dgram, src, now, codec.as_deref()) {
+                        if let Err(e) = d.conn.receive_datagram(dgram, src, now, codecs.wire()) {
                             self.counters.transport_errors += 1;
                             tracing::debug!(error = %e, "old chat-server datagram refused");
                         }
@@ -706,19 +745,14 @@ impl<T: UdpDatagramTransport> ChatClient<T> {
                     }
                 }
             }
-            let done = match d.mux.connection_mut(d.conn) {
-                Some(conn) => {
-                    while conn.pop_event().is_some() {}
-                    let _ = conn.tick(now, codec.as_deref());
-                    matches!(
-                        conn.state(),
-                        ConnectionState::Closing | ConnectionState::Idle
-                    ) || now - d.since > DRAIN_LIMIT_SEC
-                }
-                None => true,
-            };
-            let flushed = match d.mux.flush_outbound(&mut d.transport) {
-                Ok(_) => true,
+            while d.conn.pop_event().is_some() {}
+            let _ = d.conn.tick(now);
+            let done = matches!(
+                d.conn.state(),
+                ConnectionState::Closing | ConnectionState::Idle
+            ) || now - d.since > DRAIN_LIMIT_SEC;
+            let flushed = match flush_connection(&mut d.conn, &mut d.transport) {
+                Ok(()) => true,
                 Err(e) => {
                     self.counters.transport_errors += 1;
                     tracing::debug!(error = %e, "old chat-server flush failed");
@@ -787,9 +821,14 @@ impl<T: UdpDatagramTransport> ChatClient<T> {
                     // §6.6.3 rule 1: any received blob resets the idle timer, also one
                     // that fails to decode below.
                     self.state.on_event(now);
-                    let decoded = decode_blob_payload(&blob.payload, blob.recipient_id)
-                        .map_err(PlayError::from)
-                        .and_then(|d| ChatEvent::decode(blob.blob_header_word, &d.inner_payload));
+                    let decoded = decode_event_envelope(
+                        blob.blob_header_word,
+                        blob.recipient_id,
+                        &blob.payload,
+                        DEFAULT_MAX_DECOMPRESSED_MESSAGE_BYTES,
+                    )
+                    .map_err(PlayError::from)
+                    .and_then(|d| ChatEvent::decode(d.event_id, &d.inner_payload));
                     match decoded {
                         Ok(ev) => {
                             self.on_chat_event(&ev, now, schema, out);
@@ -1042,4 +1081,20 @@ impl<T: UdpDatagramTransport> ChatClient<T> {
             text: sanitize_text(&payload.text, MAX_CHAT_LEN).into_owned(),
         });
     }
+}
+
+/// Sends the queued datagrams of a connection that is no longer in a multiplexer, as
+/// `SessionMultiplexer::flush_outbound` does: each sent (or failed) datagram is wiped, as it
+/// may hold the ticket (`official-login.md` §6.3).
+fn flush_connection<T: UdpDatagramTransport>(
+    conn: &mut SessionConnection,
+    transport: &mut T,
+) -> Result<(), PlayError> {
+    let remote = conn.remote_addr();
+    while let Some(mut dgram) = conn.pop_outbound_datagram() {
+        let sent = transport.send_to(&dgram, remote);
+        crate::login::zeroize_vec(&mut dgram);
+        sent?;
+    }
+    Ok(())
 }

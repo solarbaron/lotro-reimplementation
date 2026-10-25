@@ -6,16 +6,16 @@ use crate::play::PlayError;
 use crate::play::chat::{OPCODE_ADMIN_TEXT_NOTICE, OPCODE_UI_PROPERTY_EVENT, UiPropertyEvent};
 use crate::play::logout::is_world_teardown;
 use crate::play::movement::{
-    AnimLayerState, EntitySplinePath, MotionControllerUpdate, OPCODE_ENTITY_ANIM_LAYER_STATE,
+    EntityAnimLayerState, EntitySplinePath, MotionControllerUpdate, OPCODE_ENTITY_ANIM_LAYER_STATE,
     OPCODE_ENTITY_MOTION_STATE, OPCODE_ENTITY_SPLINE_PATH, OPCODE_SERVER_SET_POSITION,
-    ServerSetPosition,
+    ServerSetPosition, decode_anim_layers,
 };
 use crate::play::rpc::{
     FN_ADMIN_TELL, OPCODE_SCRIPT_RPC, PlayRpc, RpcDirection, ScriptRpcMessage, documented_signature,
 };
 use crate::world::{
-    AccountBooted, DisplayLocalizedText, EntityPositionUpdate, PortalPlacement,
-    PropertySchemaLookup, ServerLastWords, WireReader, WorldName,
+    AccountEvictionNotice, DisplayLocalizedText, PortalPositionSync, PortalStateSchemaLookup,
+    PositionUpdate, PropertySchemaLookup, ServerShutdownText, WireReader, WorldNameAnnouncement,
 };
 
 /// A decoded server-to-client play message.
@@ -23,13 +23,13 @@ use crate::world::{
 #[non_exhaustive]
 pub enum PlayMessage {
     /// `0xCE` (`position_update`, §4.4.1).
-    PositionUpdate(EntityPositionUpdate),
+    PositionUpdate(PositionUpdate),
     /// `0xCC` (`portal_position_sync`, §4.3) addressed to `recipient`.
     MovementSync {
         /// The blob's recipient (the adapter reconciles only its own player's).
         recipient: u64,
         /// The message.
-        placement: PortalPlacement,
+        placement: PortalPositionSync,
     },
     /// `0xBF` (`server_set_position`, §4.4.2) for the blob's recipient.
     SetPosition {
@@ -52,7 +52,7 @@ pub enum PlayMessage {
         /// The recipient entity.
         entity: u64,
         /// The layers.
-        state: AnimLayerState,
+        state: EntityAnimLayerState,
     },
     /// A documented server-to-client script RPC in `0x30` (§6.3.2, §6.4, §7.1).
     Rpc(PlayRpc),
@@ -62,11 +62,11 @@ pub enum PlayMessage {
     /// `0xAA` (`display_localized_text`).
     DisplayText(DisplayLocalizedText),
     /// `0xFA` (`server_shutdown_text`).
-    ShutdownText(ServerLastWords),
+    ShutdownText(ServerShutdownText),
     /// `0x43` (`world_name_announcement`).
-    WorldName(WorldName),
+    WorldName(WorldNameAnnouncement),
     /// `0xB3` (`account_eviction_notice`).
-    Eviction(AccountBooted),
+    Eviction(AccountEvictionNotice),
     /// `0x1C` (`ui_property_event`).
     UiProperty(UiPropertyEvent),
     /// One of the world-teardown opcodes of §7.2.
@@ -87,17 +87,17 @@ pub enum PlayMessage {
 /// The opcodes [`decode_play_message`] handles (besides the teardown opcodes of
 /// [`crate::play::logout::WORLD_TEARDOWN_OPCODES`]).
 pub const PLAY_OPCODES: [u32; 13] = [
-    EntityPositionUpdate::EVENT_ID,
-    PortalPlacement::EVENT_ID,
+    PositionUpdate::EVENT_ID,
+    PortalPositionSync::EVENT_ID,
     OPCODE_SERVER_SET_POSITION,
     OPCODE_ENTITY_SPLINE_PATH,
     OPCODE_ENTITY_MOTION_STATE,
     OPCODE_ENTITY_ANIM_LAYER_STATE,
     OPCODE_SCRIPT_RPC,
     DisplayLocalizedText::EVENT_ID,
-    ServerLastWords::EVENT_ID,
-    WorldName::EVENT_ID,
-    AccountBooted::EVENT_ID,
+    ServerShutdownText::EVENT_ID,
+    WorldNameAnnouncement::EVENT_ID,
+    AccountEvictionNotice::EVENT_ID,
     OPCODE_UI_PROPERTY_EVENT,
     OPCODE_ADMIN_TEXT_NOTICE,
 ];
@@ -114,7 +114,9 @@ fn whole<T>(
 
 /// Decodes the inner payload of a server-to-client event `opcode` addressed to
 /// `recipient` (the blob's `recipientId`, `official-messages-world.md` §1.1.1). Property
-/// types come from `schema`. `Ok(None)` for opcodes outside the play layer.
+/// types come from `schema`; the state section of `0xCC` is framed by the schema
+/// `portal_states` gives for its `state_schema_id` (`official-messages-world.md` §4.3.1).
+/// `Ok(None)` for opcodes outside the play layer.
 ///
 /// # Errors
 ///
@@ -124,14 +126,13 @@ pub fn decode_play_message(
     recipient: u64,
     inner: &[u8],
     schema: &dyn PropertySchemaLookup,
+    portal_states: &dyn PortalStateSchemaLookup,
 ) -> Result<Option<PlayMessage>, PlayError> {
     let msg = match opcode {
-        EntityPositionUpdate::EVENT_ID => {
-            PlayMessage::PositionUpdate(EntityPositionUpdate::from_bytes(inner)?)
-        }
-        PortalPlacement::EVENT_ID => PlayMessage::MovementSync {
+        PositionUpdate::EVENT_ID => PlayMessage::PositionUpdate(PositionUpdate::from_bytes(inner)?),
+        PortalPositionSync::EVENT_ID => PlayMessage::MovementSync {
             recipient,
-            placement: PortalPlacement::from_bytes(inner)?,
+            placement: PortalPositionSync::from_bytes(inner, portal_states)?,
         },
         OPCODE_SERVER_SET_POSITION => PlayMessage::SetPosition {
             entity: recipient,
@@ -144,7 +145,7 @@ pub fn decode_play_message(
         },
         OPCODE_ENTITY_ANIM_LAYER_STATE => PlayMessage::AnimLayers {
             entity: recipient,
-            state: AnimLayerState::from_bytes(inner, schema)?,
+            state: decode_anim_layers(inner, schema)?,
         },
         OPCODE_SCRIPT_RPC => {
             let env = ScriptRpcMessage::from_bytes(inner)?;
@@ -166,11 +167,15 @@ pub fn decode_play_message(
         DisplayLocalizedText::EVENT_ID => {
             PlayMessage::DisplayText(whole(inner, DisplayLocalizedText::decode)?)
         }
-        ServerLastWords::EVENT_ID => {
-            PlayMessage::ShutdownText(whole(inner, ServerLastWords::decode)?)
+        ServerShutdownText::EVENT_ID => {
+            PlayMessage::ShutdownText(whole(inner, ServerShutdownText::decode)?)
         }
-        WorldName::EVENT_ID => PlayMessage::WorldName(whole(inner, WorldName::decode)?),
-        AccountBooted::EVENT_ID => PlayMessage::Eviction(whole(inner, AccountBooted::decode)?),
+        WorldNameAnnouncement::EVENT_ID => {
+            PlayMessage::WorldName(whole(inner, WorldNameAnnouncement::decode)?)
+        }
+        AccountEvictionNotice::EVENT_ID => {
+            PlayMessage::Eviction(whole(inner, AccountEvictionNotice::decode)?)
+        }
         OPCODE_UI_PROPERTY_EVENT => {
             PlayMessage::UiProperty(UiPropertyEvent::from_bytes(inner, schema)?)
         }

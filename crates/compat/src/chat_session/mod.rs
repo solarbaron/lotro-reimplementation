@@ -28,19 +28,15 @@ pub mod wire;
 
 use std::net::SocketAddrV4;
 
-pub use client::{ChatClient, ChatConfig};
+/// The `authType` values of §6.6.2 (`official-session.md` §6.2.1).
+pub use crate::session::{AUTH_TYPE_ACCOUNT, AUTH_TYPE_TICKET};
+pub use client::{ChatClient, ChatCodecs, ChatConfig};
 
 use crate::play::PlayError;
-use crate::session::{
-    AUTH_FLAG_HAS_EXTRA_BLOB, SessionAuthCredentials, SessionAuthHeader, SessionAuthPayload,
-};
+use crate::session::{AUTH_FLAG_HAS_EXTRA_BLOB, SessionAuthCredentials, SessionAuthHeader};
 
 /// `recipientId` stamped into every outgoing chat-server fragment (§6.6.1).
 pub const CHAT_RECIPIENT_ID: u64 = 0x0700_0000_0000_FFF9;
-/// `authType` of ticket authentication (§6.6.2, `official-session.md` §6.2.1).
-pub const AUTH_TYPE_TICKET: u32 = 0x4000_0002;
-/// `authType` of account-only authentication (no ticket).
-pub const AUTH_TYPE_ACCOUNT: u32 = 0x0000_0001;
 /// Longest decoded ticket accepted. Engineering choice, spec silent (its examples reach
 /// 192 bytes).
 pub const MAX_TICKET_BYTES: usize = 4096;
@@ -83,7 +79,8 @@ pub fn parse_endpoint(s: &str) -> Result<SocketAddrV4, PlayError> {
 /// Decodes standard Base64 (RFC 4648 §4) strictly: the alphabet of §4 only, no
 /// whitespace, `=` padding either absent or complete (to a multiple of 4 characters), and
 /// the unused low bits of a final partial group zero (RFC 4648 §3.5, canonical encoding).
-/// The decoded length is the ticket length of §6.6.2.
+/// The decoded length is the ticket length of §6.6.2. The bytes decoded before an error
+/// are wiped (`official-login.md` §6.3).
 ///
 /// # Errors
 ///
@@ -116,30 +113,41 @@ pub fn decode_base64(s: &str) -> Result<Vec<u8>, PlayError> {
         }))
     };
     let mut out = Vec::with_capacity(out_len);
-    for chunk in body.chunks(4) {
-        let mut acc = 0u32;
-        for &c in chunk {
-            acc = (acc << 6) | value(c)?;
+    let decoded = (|| {
+        for chunk in body.chunks(4) {
+            let mut acc = 0u32;
+            for &c in chunk {
+                acc = (acc << 6) | value(c)?;
+            }
+            acc <<= 6 * (4 - chunk.len() as u32);
+            let produced = chunk.len().saturating_sub(1);
+            // Canonical form: the bits below the produced bytes are zero.
+            let unused_bits = 24 - 8 * produced as u32;
+            if acc & ((1u32 << unused_bits) - 1) != 0 {
+                return Err(PlayError::InvalidTicket);
+            }
+            for i in 0..produced {
+                out.push((acc >> (16 - 8 * i as u32)) as u8);
+            }
         }
-        acc <<= 6 * (4 - chunk.len() as u32);
-        let produced = chunk.len().saturating_sub(1);
-        // Canonical form: the bits below the produced bytes are zero.
-        let unused_bits = 24 - 8 * produced as u32;
-        if acc & ((1u32 << unused_bits) - 1) != 0 {
-            return Err(PlayError::InvalidTicket);
-        }
-        for i in 0..produced {
-            out.push((acc >> (16 - 8 * i as u32)) as u8);
+        Ok(())
+    })();
+    match decoded {
+        Ok(()) => Ok(out),
+        Err(e) => {
+            crate::login::zeroize_vec(&mut out);
+            Err(e)
         }
     }
-    Ok(out)
 }
 
 /// Builds the chat-server `SessionAuthHeader` (§6.6.2 item 1, `official-session.md`
 /// §6.2.1): with a ticket, `authType = 0x40000002`, `authFlags = 0x04` and the decoded
 /// ticket as `extraBlob` (its length is the decoded length); without one,
 /// `authType = 0x00000001` and `authFlags = 0`. `client_timestamp` is the Unix time in
-/// seconds when the transport was initialised.
+/// seconds when the transport was initialised. The modes are the selection rule of
+/// `SessionAuthHeader::for_login`; this builder decodes the ticket with the strict
+/// [`decode_base64`] and treats an empty ticket as none.
 ///
 /// # Errors
 ///
@@ -161,10 +169,10 @@ pub fn chat_auth_header(
         auth_type,
         auth_flags,
         client_timestamp,
-        payload: SessionAuthPayload::Unencrypted(SessionAuthCredentials {
+        credentials: SessionAuthCredentials {
             account_or_ticket: account.to_owned(),
             second_string: None,
             extra_blob,
-        }),
+        },
     })
 }

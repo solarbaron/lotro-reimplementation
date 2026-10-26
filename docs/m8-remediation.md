@@ -732,4 +732,7 @@ From the `m8-conform` fix round:
   receiver does then (the code refuses both).
 - **W §2.5.1:** whether a base Position (no quaternion) can carry flag bit 0x20, and whether it is
   kept.
-- **S §9.4.2:** whether bytes after the M records of 0x186 are an error (the code ignores them).
+- **S §9.4.2:** whether bytes after the M records of 0x186, or after `resultCode` of 0x179, are an
+  error (the code ignores the first and refuses the second).
+- **S §3.4:** whether a server may give a new connection a recipient ID that an earlier,
+  removed connection used.

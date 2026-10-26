@@ -2,10 +2,13 @@
 //! Run-time writes of a static owner's `Render_Opacity` (`particle-runtime.md` §12 rule 15,
 //! its spec-r9 answer item 3 and the spec-r10 answer under the anchor `s12-r15-writes`).
 //!
-//! The scripts of a static effect owner run in the effects layer's script runtime, where a
-//! SetProperty node (or any other write) gives the owner a run-time value that masks its
-//! stored value. Rule 15 asks the object layer to follow such a value, both in the opacity
-//! it draws the object with and in the rule-15 factor of the owner's systems. Once per frame,
+//! The scripts of a static effect owner run in the effects layer's script runtime, and so do
+//! those of a static entity that is no effect owner but whose start-up scripts reach a
+//! SetProperty of its `Render_Opacity` (answer item 2 under the anchor `s12-r15-detect`: run
+//! while the object layer places it, [`super::data::RunScope::Placed`]). There a SetProperty
+//! node (or any other write) gives the owner a run-time value that masks its stored value.
+//! Rule 15 asks the object layer to follow such a value, both in the opacity it draws the
+//! object with and in the rule-15 factor of the owner's systems. Once per frame,
 //! after every runtime call of the effects layer's frame (the timers, the beam ports), the
 //! layer watches the value the runtime reads for each static owner
 //! ([`OwnerOpacity::observe`]) and keeps the object layer's run-time value in step with it
@@ -31,7 +34,9 @@
 //! then the 0x47 chain; rule 15, spec-r9 answer item 1) wherever the two differ
 //! ([`stored_value`]): the script side alone reads only the chain, because the walker's
 //! bundles do not keep the landblock's instance sets. A write of exactly the stored value
-//! then gives the object the factor it already has, and is not counted as a write.
+//! then gives the object the factor it already has, and is not counted as a write. That a
+//! write of exactly the stored value is not seen is therefore no gap: it draws in every frame
+//! what an exact read of the run-time layer would draw (answer item 1).
 //!
 //! **Values** (spec-r9 answer item 4, spec-r10 answer item 3): a float is clamped to 0–1, a
 //! float that is not finite and a value of any other type count as 1 ([`written_factor`]).
@@ -235,7 +240,9 @@ impl OwnerOpacity {
 }
 
 /// The run-time `Render_Opacity` writes of static owners (module docs, "Counts"):
-/// `writes` = `applied` + `replaced` + `lost` + `waiting` at the end of every frame.
+/// `writes` = `applied` + `replaced` + `lost` + `waiting` at the end of every frame; and the
+/// static entities run for their writes alone (answer item 2 under the anchor
+/// `s12-r15-detect`).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct WriteCounts {
     /// Writes seen: writes whose handled factor differs both from the stored one's and from
@@ -252,9 +259,19 @@ pub struct WriteCounts {
     /// most, so also the owners waiting).
     pub waiting: u64,
     /// Static entities of the scanned landblocks whose start-up scripts reach a SetProperty
-    /// of `Render_Opacity` but no Particle node: they run no scripts in the walker, so
-    /// their writes are never made and not followed (`EffectData::scan_block`).
-    pub unfollowed_writers: usize,
+    /// of `Render_Opacity` but no Particle node and that have a drawn object
+    /// (`EffectData::scan_block`, [`super::data::RunScope::Placed`]): they are run while the
+    /// object layer places their object.
+    pub writers: usize,
+    /// Of them, those whose scripts run now.
+    pub writers_running: usize,
+    /// Of them, those placed but held back at the last owner check by the live cap of
+    /// writers (`super::MAX_LIVE_WRITERS`).
+    pub writers_capped: usize,
+    /// Such entities without a drawn part: the object layer places no object of them, so
+    /// they are not run (their writes could reach no object; rule 15 gives an owner without
+    /// a drawn object the factor 1).
+    pub writers_without_object: usize,
 }
 
 impl WriteCounts {
@@ -674,8 +691,23 @@ mod tests {
         script_side: Option<PropertyValue>,
         drawn: Option<f32>,
     ) -> OwnerOpacity {
+        spawn_with(g, layer, script_side, drawn, Vec::new())
+    }
+
+    /// [`spawn`] with the script tables `tables` (their start-up scripts run).
+    fn spawn_with(
+        g: &mut Runtime<'static>,
+        layer: &TestBlocks,
+        script_side: Option<PropertyValue>,
+        drawn: Option<f32>,
+        tables: Vec<tessera_formats::Did>,
+    ) -> OwnerOpacity {
         let p = placed();
-        let mut init = EntityInit::default();
+        let mut init = EntityInit {
+            tables,
+            run_startup: true,
+            ..EntityInit::default()
+        };
         if let Some(v) = &script_side {
             init.properties.set(PID, v.clone());
         }
@@ -865,6 +897,117 @@ mod tests {
         assert_eq!(layer.runtime_value(key(), 3), Some(None));
     }
 
+    // --- Static entities run for their opacity writes (`s12-r15-detect` answer item 2) ---
+
+    const STARTUP: u32 = 5;
+    const TABLE: tessera_formats::Did = tessera_formats::Did(0x0700_0001);
+
+    /// A runtime whose one table's start-up script writes `value` to [`PID`] with a
+    /// SetProperty node (`script-table.md` §7.7) and reaches no Particle node.
+    fn writer_runtime(value: PropertyValue) -> Runtime<'static> {
+        use tessera_formats::script_table::{BaseBlock, NodeKind};
+        use tessera_formats::{Node, NodeData, PropertyEntry, Script, ScriptTable, TSize};
+        let set = Node {
+            kind: NodeKind::SET_PROPERTY,
+            data: NodeData::SetProperty {
+                property: PID,
+                value: Some(Box::new(PropertyEntry { pid: PID, value })),
+                server_only: false,
+            },
+            base: BaseBlock {
+                probability: 1.0,
+                intensity_multiplier: 1.0,
+                use_parent_intensity: true,
+                ..BaseBlock::default()
+            },
+            particle_flag: None,
+            ports: Vec::new(),
+            targets: Vec::new(),
+        };
+        let mut src = MemorySource::new();
+        src.insert_table(
+            TABLE,
+            ScriptTable {
+                did: TABLE,
+                kind: 2,
+                includes: Vec::new(),
+                scripts_size: TSize::default(),
+                scripts: vec![Script {
+                    key: STARTUP,
+                    roots: vec![set],
+                }],
+                properties_size: TSize::default(),
+                script_properties: Vec::new(),
+                dids_size: TSize::default(),
+                script_dids: Vec::new(),
+            },
+        );
+        let mut catalog = SyntheticCatalog::default();
+        catalog.defaults.insert(PID, PropertyValue::Float(1.0));
+        let vocab = RuntimeVocabulary {
+            startup_key: Some(STARTUP),
+            ..RuntimeVocabulary::default()
+        };
+        Runtime::new(src, catalog, vocab)
+    }
+
+    /// A static entity that is no effect owner, run while placed: its start-up write of
+    /// `Render_Opacity` reaches the placed object in the frame after the spawn and is
+    /// counted as applied; when its landblock's objects go and come back, the object starts
+    /// without the value (spec-r10 answer item 1), and the writer spawned again writes it
+    /// again.
+    #[test]
+    fn a_placed_writers_start_up_write_reaches_its_object() {
+        let mut g = writer_runtime(PropertyValue::Float(0.0));
+        let mut layer = TestBlocks::default();
+        layer.insert(key(), 3, 1.0);
+        let mut counts = WriteCounts::default();
+        let mut w = spawn_with(&mut g, &layer, None, None, vec![TABLE]);
+        assert_eq!(g.property(OWNER, PID), Some(PropertyValue::Float(0.0)));
+        frame(&g, &mut w, &mut layer, &mut counts);
+        assert_eq!(layer.owner_factor(key(), 3), Some(0.0));
+        assert_eq!((counts.writes, counts.applied), (1, 1));
+        // The landblock's objects are removed: the writer is despawned (the walker's
+        // "until it is removed"); placed again, the object has no run-time value.
+        layer.remove(key());
+        g.despawn(&mut NullSink, OWNER).expect("despawn");
+        counts.despawned(&w);
+        layer.insert(key(), 3, 1.0);
+        assert_eq!(layer.runtime_value(key(), 3), Some(None));
+        assert_eq!(layer.owner_factor(key(), 3), Some(1.0));
+        let mut w = spawn_with(&mut g, &layer, None, None, vec![TABLE]);
+        frame(&g, &mut w, &mut layer, &mut counts);
+        assert_eq!(layer.owner_factor(key(), 3), Some(0.0));
+        assert_eq!((counts.writes, counts.applied, counts.lost), (2, 2, 0));
+    }
+
+    /// `s12-r15-detect` answer item 1 for a placed writer: a start-up write of the stored
+    /// value (here the property sets' 0.4, or the default 1) is not seen and changes nothing
+    /// drawn, which is conforming; a write of 1 over an object the per-instance set hides
+    /// (0) is seen and shows it.
+    #[test]
+    fn a_placed_writers_write_of_the_stored_value_changes_nothing() {
+        for (written, drawn, factor) in [(1.0, None, 1.0), (0.4, Some(0.4), 0.4)] {
+            let mut g = writer_runtime(PropertyValue::Float(written));
+            let mut layer = TestBlocks::default();
+            layer.insert(key(), 3, factor);
+            let mut counts = WriteCounts::default();
+            let mut w = spawn_with(&mut g, &layer, None, drawn, vec![TABLE]);
+            frame(&g, &mut w, &mut layer, &mut counts);
+            assert_eq!(layer.owner_factor(key(), 3), Some(factor), "{written}");
+            assert_eq!(layer.runtime_value(key(), 3), Some(None), "{written}");
+            assert_eq!(counts, WriteCounts::default(), "{written}");
+        }
+        let mut g = writer_runtime(PropertyValue::Float(1.0));
+        let mut layer = TestBlocks::default();
+        layer.insert(key(), 3, 0.0);
+        let mut counts = WriteCounts::default();
+        let mut w = spawn_with(&mut g, &layer, None, Some(0.0), vec![TABLE]);
+        frame(&g, &mut w, &mut layer, &mut counts);
+        assert_eq!(layer.owner_factor(key(), 3), Some(1.0));
+        assert_eq!((counts.writes, counts.applied), (1, 1));
+    }
+
     /// The HUD figures add up.
     #[test]
     fn not_applied_is_writes_less_applied() {
@@ -874,7 +1017,7 @@ mod tests {
             replaced: 1,
             lost: 1,
             waiting: 1,
-            unfollowed_writers: 0,
+            ..WriteCounts::default()
         };
         assert_eq!(c.not_applied(), 3);
     }

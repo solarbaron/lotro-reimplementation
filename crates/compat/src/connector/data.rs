@@ -14,7 +14,7 @@ use std::sync::Arc;
 
 use crate::chat_session::ChatCodecs;
 use crate::login::{
-    DICT_KEY_CLIENT_TO_SERVER, DICT_KEY_SERVER_TO_CLIENT_DEFERRED, DidMap3Table, LauncherConfig,
+    DICT_KEY_CLIENT_TO_SERVER, DICT_KEY_SERVER_TO_CLIENT_DEFERRED, DataIdMap, LauncherConfig,
     LoginError, NetworkVersionDiscovery, NetworkVersionQuery, UserPreferences, VersionInfo,
     compression_dictionary_map_did, discover_network_version, extract_didver_from_dat_file,
     resolve_bit_tree_table, resolve_install_language, root_did_map_from_superblock,
@@ -190,7 +190,7 @@ fn record(data: &dyn InstallData, did: u32) -> Result<Vec<u8>, LoginError> {
 /// (`official-session.md` §4.1.3 item 1; invariant `I16`).
 fn dictionary(
     data: &dyn InstallData,
-    map: &DidMap3Table,
+    map: &DataIdMap,
     key: u32,
 ) -> Result<(Arc<dyn BitTreeCodec>, [u8; 16]), LoginError> {
     let initial = map
@@ -230,7 +230,7 @@ pub(crate) fn load_codecs(
     let root = record(data, root_did)?;
     let sub_did = compression_dictionary_map_did(&root)?;
     let sub = record(data, sub_did)?;
-    let map = DidMap3Table::parse(&sub)?;
+    let map = DataIdMap::parse(&sub)?;
     let (outgoing, out_uuid) = dictionary(data, &map, DICT_KEY_CLIENT_TO_SERVER)?;
     let (incoming, in_uuid) = dictionary(data, &map, DICT_KEY_SERVER_TO_CLIENT_DEFERRED)?;
     let mut uuids = vec![out_uuid];

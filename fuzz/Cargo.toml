@@ -1447,6 +1447,15 @@ test = false
 doc = false
 bench = false
 
+# --- M8: tessera-compat .dat bootstrap records: superblock, DataIdMap, BitTreeTable headers (official-session.md §4.1.3) ---
+
+[[bin]]
+name = "compat_dat_records"
+path = "fuzz_targets/compat_dat_records.rs"
+test = false
+doc = false
+bench = false
+
 # --- tessera-client local time for Turbine.Engine.GetDate (apps/client/src/plugins/localtime.rs, included by path; lua-plugin-api.md §12) ---
 
 [[bin]]

@@ -1,0 +1,363 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Fuzz coverage manifest, tessera-compat half (M8, decisions 0034 and 0042): the parsers of
+# the official-server compatibility crate, each with the fuzz target that reaches it or an
+# exemption naming the target that covers it. The format and the checks are those of
+# tools/check-fuzz-coverage.sh (its header; also tools/README.md). Every input here is
+# hostile: server datagrams and SOAP/XML replies, the chat server's events, the user's
+# install (its launcher configuration, the `.dat` superblock and bootstrap records, the
+# client's PE version resource) and the consent record.
+#
+# Conventions of this file:
+# - `entry` names the decoding entry points of `file` as crate paths. The world and play
+#   messages have one `decode` (from a `WireReader`) and one `from_bytes` (a whole payload)
+#   per message type; every message type the file defines is listed.
+# - A decoder reached only through a listed one (an inner record, a reader primitive) is
+#   listed with the target that reaches it through the outer decoder.
+# - Functions with a parser-like name that take no hostile bytes (numeric conversions of a
+#   decoded value, a directory listing by file name) are in [[skip]] tables with fns.
+
+# =========================================================================================
+# login: SOAP/XML replies, launcher configuration, `.dat` bootstrap records
+# =========================================================================================
+
+[[parser]]
+crate = "tessera-compat"
+file = "crates/compat/src/login.rs"
+entry = [
+    "tessera_compat::login::RemoteLauncherConfig::parse",
+    "tessera_compat::login::WorldStatus::parse",
+    "tessera_compat::login::QueueResult::parse",
+    "tessera_compat::login::LoginHost::parse",
+    "tessera_compat::login::parse_get_datacenters_response",
+    "tessera_compat::login::parse_login_account_response",
+    "tessera_compat::login::parse_refresh_ticket_response",
+    "tessera_compat::login::parse_hex_u32",
+]
+input = "network"
+target = "compat_login_xml"
+
+[[parser]]
+crate = "tessera-compat"
+file = "crates/compat/src/login.rs"
+entry = [
+    "tessera_compat::login::LauncherConfig::parse",
+    "tessera_compat::login::UserPreferences::parse",
+]
+input = "user file"
+target = "compat_login_xml"
+
+[[parser]]
+crate = "tessera-compat"
+file = "crates/compat/src/login.rs"
+entry = [
+    "tessera_compat::login::extract_didver_from_dat_header",
+    "tessera_compat::login::root_did_map_from_superblock",
+    "tessera_compat::login::parse_dat_superblock_didver_descriptor",
+    "tessera_compat::login::DataIdMap::parse",
+    "tessera_compat::login::compression_dictionary_map_did",
+    "tessera_compat::login::BitTreeTableHeader::parse",
+    "tessera_compat::login::resolve_bit_tree_table",
+]
+input = "install record"
+target = "compat_dat_records"
+
+[[parser]]
+crate = "tessera-compat"
+file = "crates/compat/src/login.rs"
+entry = [
+    "tessera_compat::login::LauncherConfig::discover",
+    "tessera_compat::login::UserPreferences::discover",
+    "tessera_compat::login::LoginDriver::load_local_config",
+    "tessera_compat::login::extract_didver_from_dat_file",
+]
+input = "user file"
+exempt = "read a file of the install and hand its bytes to LauncherConfig::parse or UserPreferences::parse (compat_login_xml) or to the superblock reader (compat_dat_records)"
+
+[[skip]]
+path = "crates/compat/src/login.rs"
+fns = ["discover_installed_languages"]
+reason = "lists the install directory and matches file names; reads no file content"
+
+# =========================================================================================
+# session: datagrams, optional headers, fragments, message envelopes
+# =========================================================================================
+
+[[parser]]
+crate = "tessera-compat"
+file = "crates/compat/src/session.rs"
+entry = [
+    "tessera_compat::session::decode_datagram",
+    "tessera_compat::session::decode_variable_u32",
+    "tessera_compat::session::decode_ticket_base64",
+    "tessera_compat::session::decode_message",
+    "tessera_compat::session::SessionAuthCredentials::decode",
+    "tessera_compat::session::SessionAuthHeader::decode",
+    "tessera_compat::session::ConnectChallengeHeader::decode",
+    "tessera_compat::session::ConnectAcceptHeader::decode",
+    "tessera_compat::session::WorldReferralHeader::decode",
+    "tessera_compat::session::OptionalHeaders::decode",
+    "tessera_compat::session::BlobFragmentHeader::decode",
+    "tessera_compat::session::BlobFragment::decode",
+    "tessera_compat::session::MessageRoutingHeader::decode",
+    "tessera_compat::session::ClientVersionMessage::decode",
+    "tessera_compat::session::VersionStatusMessage::decode",
+    "tessera_compat::session::LoginQueueStatusMessage::decode",
+    "tessera_compat::session::SystemNotificationMessage::decode",
+    "tessera_compat::session::ControlMessage::decode",
+]
+input = "network"
+target = "compat_session_packet"
+
+[[parser]]
+crate = "tessera-compat"
+file = "crates/compat/src/session.rs"
+entry = [
+    "tessera_compat::session::BitTreeTable::parse_redirect_did",
+    "tessera_compat::session::BitTreeTable::from_dat_bytes",
+]
+input = "install record"
+target = "compat_dat_records"
+
+# =========================================================================================
+# world: wire values, property tables, world-session messages
+# =========================================================================================
+
+[[parser]]
+crate = "tessera-compat"
+file = "crates/compat/src/world.rs"
+entry = [
+    "tessera_compat::world::decode_vle3",
+    "tessera_compat::world::decode_vle4",
+    "tessera_compat::world::decode_vle16",
+    "tessera_compat::world::decode_event_envelope",
+    "tessera_compat::world::CompactDid::decode",
+    "tessera_compat::world::CompactDid::from_bytes",
+    "tessera_compat::world::CompactPid::decode",
+    "tessera_compat::world::CompactPid::from_bytes",
+    "tessera_compat::world::WirePosition::decode_wire",
+    "tessera_compat::world::WirePosition::decode_base",
+    "tessera_compat::world::WirePosition::decode_stored",
+    "tessera_compat::world::LocalizedTokenTextArgPayload::decode",
+    "tessera_compat::world::LocalizedTokenText::decode",
+    "tessera_compat::world::LocalizedTokenText::decode_stored",
+    "tessera_compat::world::LocalizedTokenText::from_bytes",
+    "tessera_compat::world::WireWaveform::decode",
+    "tessera_compat::world::EncodedPropertyValue::decode",
+    "tessera_compat::world::EncodedPropertyEntry::decode",
+    "tessera_compat::world::EncodedPropertyTable::decode",
+    "tessera_compat::world::EncodedPropertyTable::from_bytes",
+    "tessera_compat::world::WireBitfield::decode",
+    "tessera_compat::world::EntityAppearanceDesc::decode",
+    "tessera_compat::world::CharacterSummaryEntry::decode",
+    "tessera_compat::world::CharacterListResponse::decode",
+    "tessera_compat::world::CharacterNameCheckRequest::decode",
+    "tessera_compat::world::CharacterCreateRequest::decode",
+    "tessera_compat::world::CharacterCreateAck::decode",
+    "tessera_compat::world::CharacterCreateReject::decode",
+    "tessera_compat::world::CharacterDeleteRequest::decode",
+    "tessera_compat::world::CharacterDeleteRequest::from_bytes",
+    "tessera_compat::world::CharacterDeleteStatus::decode",
+    "tessera_compat::world::CharacterOperationError::decode",
+    "tessera_compat::world::AccountEvictionNotice::decode",
+    "tessera_compat::world::PlatformAccountIdReport::decode",
+    "tessera_compat::world::CharacterEnterWorldRequest::decode",
+    "tessera_compat::world::WorldNameAnnouncement::decode",
+    "tessera_compat::world::DisplayLocalizedText::decode",
+    "tessera_compat::world::ServerShutdownText::decode",
+    "tessera_compat::world::PlayerSessionReady::decode",
+    "tessera_compat::world::PortalPositionSync::decode_with",
+    "tessera_compat::world::PortalPositionSync::from_bytes",
+    "tessera_compat::world::PortalTransitionComplete::decode",
+    "tessera_compat::world::PortalStateNotice::decode",
+    "tessera_compat::world::PortalReadyAck::decode",
+    "tessera_compat::world::WorldCalendarConfig::decode",
+    "tessera_compat::world::WorldCalendarConfig::from_bytes",
+    "tessera_compat::world::SubEventBatch::decode",
+    "tessera_compat::world::SubEventBatch::from_bytes",
+    "tessera_compat::world::EntityCreate::decode",
+    "tessera_compat::world::EntityDespawn::decode",
+    "tessera_compat::world::MissingEntityQuery::decode",
+    "tessera_compat::world::PositionUpdate::decode",
+    "tessera_compat::world::ClientPhysicsSync::decode",
+    "tessera_compat::world::ActionPayload::decode",
+    "tessera_compat::world::ClientActionCommand::decode",
+    "tessera_compat::world::ActionStart::decode",
+    "tessera_compat::world::ActionStart::from_bytes",
+    "tessera_compat::world::ActionStepComplete::decode",
+    "tessera_compat::world::ActionCancel::decode",
+    "tessera_compat::world::ActionChainSync::decode",
+    "tessera_compat::world::EntityAnimLayerState::decode",
+    "tessera_compat::world::ActionQueueEnable::decode",
+    "tessera_compat::world::ActionStateReset::decode",
+    "tessera_compat::world::VisualDescriptionUpdate::decode",
+    "tessera_compat::world::PropertyTableUpdate::decode",
+    "tessera_compat::world::SinglePropertyUpdate::decode",
+    "tessera_compat::world::PropertyRemoval::decode",
+    "tessera_compat::world::EntityStringEvent::decode",
+    "tessera_compat::world::LandblockPropertyEvent::decode",
+    "tessera_compat::world::PredictedPropertyAck::decode",
+]
+input = "network"
+target = "compat_world_message"
+
+# The `WireReader` primitives every decoder above reads through (compat_world_message also
+# builds readers over the raw input directly).
+[[parser]]
+crate = "tessera-compat"
+file = "crates/compat/src/world.rs"
+entry = [
+    "tessera_compat::world::WireReader::read_bytes",
+    "tessera_compat::world::WireReader::read_u8",
+    "tessera_compat::world::WireReader::read_i8",
+    "tessera_compat::world::WireReader::read_bool8",
+    "tessera_compat::world::WireReader::read_base_flags",
+    "tessera_compat::world::WireReader::read_u16_le",
+    "tessera_compat::world::WireReader::read_u16_be",
+    "tessera_compat::world::WireReader::read_i16_le",
+    "tessera_compat::world::WireReader::read_u32_le",
+    "tessera_compat::world::WireReader::read_u32_be",
+    "tessera_compat::world::WireReader::read_i32_le",
+    "tessera_compat::world::WireReader::read_u64_le",
+    "tessera_compat::world::WireReader::read_i64_le",
+    "tessera_compat::world::WireReader::read_f32_le",
+    "tessera_compat::world::WireReader::read_f64_le",
+    "tessera_compat::world::WireReader::read_vle3",
+    "tessera_compat::world::WireReader::read_vle4",
+    "tessera_compat::world::WireReader::read_vle16",
+    "tessera_compat::world::WireReader::read_signed_normalized",
+    "tessera_compat::world::WireReader::read_utf16le_string",
+    "tessera_compat::world::WireReader::read_pascal_string",
+]
+input = "network"
+target = "compat_world_message"
+
+[[skip]]
+path = "crates/compat/src/world.rs"
+fns = ["decode_signed_normalized", "decode_heading_u8", "decode_wire_timestamp"]
+reason = "numeric conversions of one already-decoded value (a signed byte, an angle byte, a clock value); no byte input"
+
+# =========================================================================================
+# play: play messages on the world connection
+# =========================================================================================
+
+[[parser]]
+crate = "tessera-compat"
+file = "crates/compat/src/play/inbound.rs"
+entry = "tessera_compat::play::inbound::decode_play_message"
+input = "network"
+target = "compat_play_message"
+
+[[parser]]
+crate = "tessera-compat"
+file = "crates/compat/src/play/movement.rs"
+entry = [
+    "tessera_compat::play::movement::ServerSetPosition::decode",
+    "tessera_compat::play::movement::ServerSetPosition::from_bytes",
+    "tessera_compat::play::movement::EntitySplinePath::decode",
+    "tessera_compat::play::movement::EntitySplinePath::from_bytes",
+    "tessera_compat::play::movement::MotionControllerUpdate::from_bytes",
+    "tessera_compat::play::movement::decode_anim_layers",
+]
+input = "network"
+target = "compat_play_message"
+
+[[parser]]
+crate = "tessera-compat"
+file = "crates/compat/src/play/rpc.rs"
+entry = [
+    "tessera_compat::play::rpc::ScriptRpcMessage::decode",
+    "tessera_compat::play::rpc::ScriptRpcMessage::from_bytes",
+    "tessera_compat::play::rpc::decode_args",
+]
+input = "network"
+target = "compat_play_message"
+
+[[parser]]
+crate = "tessera-compat"
+file = "crates/compat/src/play/chat.rs"
+entry = [
+    "tessera_compat::play::chat::UiPropertyEvent::decode",
+    "tessera_compat::play::chat::UiPropertyEvent::from_bytes",
+]
+input = "network"
+target = "compat_play_message"
+
+# =========================================================================================
+# chat_session: the chat server connection
+# =========================================================================================
+
+[[parser]]
+crate = "tessera-compat"
+file = "crates/compat/src/chat_session/events.rs"
+entry = [
+    "tessera_compat::chat_session::events::ChatRequest::decode",
+    "tessera_compat::chat_session::events::ChatEvent::decode",
+]
+input = "network"
+target = "compat_chat_message"
+
+[[parser]]
+crate = "tessera-compat"
+file = "crates/compat/src/chat_session/mod.rs"
+entry = [
+    "tessera_compat::chat_session::parse_endpoint",
+    "tessera_compat::chat_session::decode_base64",
+]
+input = "network"
+target = "compat_chat_message"
+
+[[parser]]
+crate = "tessera-compat"
+file = "crates/compat/src/chat_session/wire.rs"
+entry = [
+    "tessera_compat::chat_session::wire::ChatRoomDescriptor::decode",
+    "tessera_compat::chat_session::wire::read_bytes_prefixed",
+    "tessera_compat::chat_session::wire::read_descriptor_list",
+    "tessera_compat::chat_session::wire::DescriptorSet::decode",
+    "tessera_compat::chat_session::wire::read_u64_list",
+    "tessera_compat::chat_session::wire::U64ToU32Table::decode",
+    "tessera_compat::chat_session::wire::ChatMessagePayload::decode",
+    "tessera_compat::chat_session::wire::ChatMessagePayload::from_bytes",
+]
+input = "network"
+target = "compat_chat_message"
+
+# =========================================================================================
+# version_resource: the client's PE version resource (decision 0042 item 1)
+# =========================================================================================
+
+[[parser]]
+crate = "tessera-compat"
+file = "crates/compat/src/version_resource.rs"
+entry = [
+    "tessera_compat::version_resource::read_version_resource",
+    "tessera_compat::version_resource::parse_version_info",
+]
+input = "user file"
+target = "compat_version_resource"
+
+[[parser]]
+crate = "tessera-compat"
+file = "crates/compat/src/version_resource.rs"
+entry = "tessera_compat::version_resource::read_version_resource_from_file"
+input = "user file"
+exempt = "the same header and resource-directory walk as read_version_resource over a file source instead of a slice, then parse_version_info; both fuzzed by compat_version_resource"
+
+# =========================================================================================
+# consent: the acceptance record (official-entry.md §5.6, §10.3)
+# =========================================================================================
+
+[[parser]]
+crate = "tessera-compat"
+file = "crates/compat/src/consent/mod.rs"
+entry = "tessera_compat::consent::test_support::evaluate"
+input = "user file"
+target = "compat_consent_record"
+
+[[parser]]
+crate = "tessera-compat"
+file = "crates/compat/src/consent/mod.rs"
+entry = "tessera_compat::consent::check"
+input = "user file"
+exempt = "reads the record and key files and hands them to the record check that compat_consent_record fuzzes (through test_support::evaluate)"

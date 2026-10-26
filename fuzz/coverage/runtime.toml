@@ -7,7 +7,7 @@
 # target that reaches it or an exemption naming the target or test that covers it.
 # The format and the checks are those of tools/check-fuzz-coverage.sh (its header; also
 # tools/README.md). The data half (dat, formats, props, text, material, mesh, ...) is in
-# the other manifests of this directory; crates/compat is outside P8 (M8).
+# the other manifests of this directory; crates/compat (M8) is in compat.toml.
 #
 # Conventions of this file:
 # - `entry` names the decoding entry points of `file` as crate paths.

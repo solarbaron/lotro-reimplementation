@@ -3,7 +3,6 @@
 
 use std::collections::BTreeSet;
 
-use tessera_formats::gameplay::combat::{ModEntryKind, Progression, ProgressionValue};
 use tessera_formats::gameplay::items::{
     DpsTable, DurationMap, ItemSchema, ItemSetView, ItemView, control_labels, damage_range,
     equipment_category_keys, weapon_damage,
@@ -897,55 +896,6 @@ impl<D: TooltipData> TooltipEngine<D> {
             .flatten()
     }
 
-    fn progression_value(&self, did: Did, level: i32) -> Option<String> {
-        let set = self.data.record(did).ok()??;
-        let p = Progression::from_properties(&*set, false, &self.schema.progressions).ok()?;
-        match p.value_at(i64::from(level))? {
-            ProgressionValue::Float(x) => Some(stat_number(x)),
-            ProgressionValue::Property(v) => value_text(&v),
-            _ => None,
-        }
-    }
-
-    fn mod_lines(
-        &self,
-        mods: &[tessera_formats::gameplay::combat::ModEntry],
-        level: i32,
-        colour: Option<u32>,
-    ) -> Vec<Line> {
-        mods.iter()
-            .filter(|m| {
-                matches!(
-                    m.kind,
-                    ModEntryKind::Inline
-                        | ModEntryKind::ProgressionDriven
-                        | ModEntryKind::Conflicting
-                )
-            })
-            .take(MAX_LINES)
-            .map(|m| {
-                let name = self
-                    .data
-                    .property_name(m.modified)
-                    .unwrap_or_else(|| format!("{:#x}", m.modified));
-                let value = match (m.progression, &m.value) {
-                    (Some(p), _) => self.progression_value(p, level),
-                    (None, Some(v)) => value_text(v),
-                    (None, None) => None,
-                };
-                let text = match value {
-                    Some(v) => format!("{name}: {v}"),
-                    None => name,
-                };
-                Line {
-                    text: RichText::plain(&text),
-                    state: None,
-                    colour,
-                }
-            })
-            .collect()
-    }
-
     /// The item effect-list rows (`item-tooltips.md` §6.16, P2 revision: the effect lines of
     /// `skill-tooltips.md` §9 over the item's lists of §9.7, filtered by the row's
     /// `UI_Examination_Tooltip_EffectCategory`; a row without one is matched by its label as in
@@ -1060,17 +1010,33 @@ impl<D: TooltipData> TooltipEngine<D> {
                 let level = self.set_level(f, &set, &members, c);
                 let mut parts: Vec<String> = Vec::new();
                 for e in tier.effects.iter().take(MAX_LINES) {
-                    if let Some(name) = e.effect.and_then(|d| self.effect_name(f, d)) {
+                    if let Some(name) = e.effect.and_then(|d| self.effect_name(f, d))
+                        && !name.is_empty()
+                    {
                         parts.push(name);
                     }
                 }
+                // The tier's stat lines by the §6.16 rule: the modifier lines of
+                // `skill-tooltips.md` §9.4 (the operator's template with the property's
+                // `PropertyMetaData_Name`, or the entry's override); a property without a
+                // metadata object gives no line, never its dictionary name.
                 let room = MAX_LINES.saturating_sub(parts.len());
+                let mut misses = 0;
                 parts.extend(
-                    self.mod_lines(&tier.mods, level, None)
-                        .into_iter()
-                        .take(room)
-                        .map(|l| text_of(&l.text)),
+                    tier.mods
+                        .iter()
+                        .take(MAX_LINES)
+                        .filter_map(|m| self.modifier_line(m, level, &mut misses))
+                        .map(|t| text_of(&t))
+                        .filter(|t| !t.is_empty())
+                        .take(room),
                 );
+                f.ex.ctx.miss(misses);
+                // A tier with nothing to name (no effect name, no stat line) gets no line
+                // (Tessera rule, §6.17 implementer OPEN): never a bare "c: ".
+                if parts.is_empty() {
+                    continue;
+                }
                 lines.push(line(
                     format!("{c}: {}", parts.join(", ")),
                     gate && count >= c,
@@ -1316,33 +1282,6 @@ fn max_active(set: &PropertySet, schema: &ItemSchema) -> Option<i32> {
     match set.get(schema.sets.max_active_members.id()?)? {
         PropertyValue::Int(i) => Some(*i),
         _ => None,
-    }
-}
-
-/// A plain value as text (stat lines).
-fn value_text(v: &PropertyValue) -> Option<String> {
-    Some(match v {
-        PropertyValue::Int(i) => i.to_string(),
-        PropertyValue::Int64(i) => i.to_string(),
-        PropertyValue::Float(x) => stat_number(*x),
-        PropertyValue::Enum(k) => k.to_string(),
-        PropertyValue::Bool(b) => b.to_string(),
-        _ => return None,
-    })
-}
-
-/// A stat value as text (Tessera rule of §6.16): at most two decimals, trailing zeros
-/// dropped.
-fn stat_number(x: f32) -> String {
-    if !x.is_finite() {
-        return String::new();
-    }
-    let s = format!("{:.2}", f64::from(x));
-    let s = s.trim_end_matches('0').trim_end_matches('.');
-    if s == "-0" {
-        "0".to_owned()
-    } else {
-        s.to_owned()
     }
 }
 

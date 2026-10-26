@@ -22,7 +22,8 @@ use super::data::SchemaView;
 use super::data::{InstallData, LocalPaths};
 use super::net::{ConnectorNet, NetFactory, SendHttpClient, carries_secret, is_https};
 use super::session_phase::{
-    DRIVER_EVENT_CAP, SessionDriver, SessionStart, movement_input, refusal_cut,
+    DRIVER_EVENT_CAP, PORTAL_LOADING_TIMEOUT_SEC, RETURN_TIMEOUT_SEC, SessionDriver, SessionStart,
+    movement_input, refusal_cut,
 };
 use super::worker::SHUTDOWN_LIMIT;
 use super::{EVENT_QUEUE, LiveConfig, LiveConnector};
@@ -1102,6 +1103,10 @@ fn into_world(run: &mut Run, login: &Server) -> Server {
 /// The world acknowledges what the client sent reliably after entering (the portal exit,
 /// `0xF4`), so a later graceful disconnect need not wait for its flush.
 fn ack_portal_exit(run: &mut Run, world: &Server) {
+    // The client's loading is done (`official-messages-play.md` §4.5 item 4).
+    run.session
+        .send(Instant::now(), Command::WorldLoaded)
+        .expect("loaded");
     let acked = loop {
         let (d, dst) = run.wait_sent();
         let Ok(pkt) = decode_datagram(&d, false, None, false) else {
@@ -3019,4 +3024,192 @@ fn login_failures_map_to_the_entry_categories() {
         }),
         WorldRefusal::Closed
     );
+}
+
+// ---------------------------------------------------------------------------
+// Tests: world loading and the way back to character selection
+// ---------------------------------------------------------------------------
+
+/// The opcodes of the blobs the client sent since the last call, with their targets.
+fn sent_blobs(world: &World) -> Vec<(u32, SocketAddrV4)> {
+    world
+        .take_sent()
+        .into_iter()
+        .filter_map(|(d, dst)| {
+            let pkt = decode_datagram(&d, false, None, false).ok()?;
+            Some(
+                pkt.fragments
+                    .into_iter()
+                    .filter_map(|f| f.header.blob_header_word)
+                    .map(move |w| (w, dst))
+                    .collect::<Vec<_>>(),
+            )
+        })
+        .flatten()
+        .collect()
+}
+
+/// A driver in the world as "Aldo" on the login connection (no referral) at `t = 1.1`.
+fn driver_in_world() -> (World, SessionDriver<FakeNet>, Server) {
+    let (world, mut d, mut login) = driver_at_characters(Service::default(), 0);
+    let enter = Command::EnterWorld {
+        character: "Aldo".to_owned(),
+    };
+    d.command(&enter, 1.0).expect("enter");
+    world.deliver(login.event(0x90, &session_ready()), LOGIN_SERVER);
+    d.step(1.1, true, &go);
+    assert!(
+        d.take_events()
+            .iter()
+            .any(|e| matches!(e, Event::WorldEntered { .. }))
+    );
+    (world, d, login)
+}
+
+#[test]
+fn the_portal_exit_waits_for_the_clients_loading() {
+    let (world, mut d, _login) = driver_in_world();
+    for t in [1.2, 5.0, 20.0] {
+        d.step(t, true, &go);
+    }
+    assert!(
+        !sent_blobs(&world).iter().any(|(op, _)| *op == 0xF4),
+        "no portal exit before the client's loading is done"
+    );
+    d.command(&Command::WorldLoaded, 20.5).expect("loaded");
+    d.step(20.6, true, &go);
+    let sent = sent_blobs(&world);
+    assert_eq!(
+        sent.iter().filter(|(op, _)| *op == 0xF4).count(),
+        1,
+        "{sent:?}"
+    );
+    // Once: a later WorldLoaded outside portal space sends nothing.
+    d.command(&Command::WorldLoaded, 21.0).expect("loaded");
+    d.step(21.1, true, &go);
+    assert!(!sent_blobs(&world).iter().any(|(op, _)| *op == 0xF4));
+}
+
+#[test]
+fn the_portal_exit_follows_its_time_out_without_the_clients_signal() {
+    let (world, mut d, _login) = driver_in_world();
+    d.step(1.2, true, &go);
+    d.step(1.2 + PORTAL_LOADING_TIMEOUT_SEC - 1.0, true, &go);
+    assert!(!sent_blobs(&world).iter().any(|(op, _)| *op == 0xF4));
+    d.step(1.3 + PORTAL_LOADING_TIMEOUT_SEC, true, &go);
+    assert!(sent_blobs(&world).iter().any(|(op, _)| *op == 0xF4));
+}
+
+#[test]
+fn leaving_the_world_returns_to_the_character_list_on_the_same_session() {
+    let (world, mut d, mut login) = driver_in_world();
+    let _ = sent_blobs(&world);
+    // `LeaveWorld` is the logout request (`0x30`, `official-messages-play.md` §7.2 item 1).
+    d.command(&Command::LeaveWorld, 2.0).expect("leave");
+    d.step(2.1, true, &go);
+    let sent = sent_blobs(&world);
+    assert!(sent.contains(&(0x30, LOGIN_SERVER)), "{sent:?}");
+    // The teardown (§7.2 item 3) keeps the session; the list that follows is the answer.
+    world.deliver(login.event(0x3000_001B, &[0]), LOGIN_SERVER);
+    d.step(3.0, true, &go);
+    assert!(!d.ended());
+    assert!(!d.in_world());
+    let events = d.take_events();
+    assert!(
+        !events
+            .iter()
+            .any(|e| matches!(e, Event::ReturnedToCharacterSelect { .. })),
+        "not before the list: {events:?}"
+    );
+    world.deliver(login.event(0x6C, &character_list()), LOGIN_SERVER);
+    d.step(3.5, true, &go);
+    let events = d.take_events();
+    let back = events.iter().find_map(|e| match e {
+        Event::ReturnedToCharacterSelect { characters } => Some(characters.clone()),
+        _ => None,
+    });
+    assert_eq!(
+        back.map(|c| c.into_iter().map(|c| c.name).collect::<Vec<_>>()),
+        Some(vec!["Aldo".to_owned()]),
+        "{events:?}"
+    );
+    assert!(matches!(
+        d.command(&Command::LeaveWorld, 3.6),
+        Err(tessera_net::NetError::InvalidCommand(_))
+    ));
+    // The character enters again: `0x6F` once more.
+    d.command(
+        &Command::EnterWorld {
+            character: "Aldo".to_owned(),
+        },
+        4.0,
+    )
+    .expect("enter again");
+    d.step(4.1, true, &go);
+    assert!(sent_blobs(&world).contains(&(0x6F, LOGIN_SERVER)));
+    world.deliver(login.event(0x90, &session_ready()), LOGIN_SERVER);
+    d.step(4.2, true, &go);
+    assert!(
+        d.take_events()
+            .iter()
+            .any(|e| matches!(e, Event::WorldEntered { .. }))
+    );
+}
+
+#[test]
+fn without_a_list_after_the_teardown_the_old_list_is_offered() {
+    let (world, mut d, mut login) = driver_in_world();
+    world.deliver(login.event(0x3000_0042, &[0]), LOGIN_SERVER);
+    d.step(2.0, true, &go);
+    d.step(2.0 + RETURN_TIMEOUT_SEC - 1.0, true, &go);
+    assert!(
+        !d.take_events()
+            .iter()
+            .any(|e| matches!(e, Event::ReturnedToCharacterSelect { .. }))
+    );
+    d.step(2.1 + RETURN_TIMEOUT_SEC, true, &go);
+    assert!(d.take_events().iter().any(|e| matches!(
+        e,
+        Event::ReturnedToCharacterSelect { characters } if characters.len() == 1
+    )));
+    assert!(!d.ended());
+}
+
+#[test]
+fn the_live_connector_returns_to_character_selection() {
+    let mut run = start(Service::default(), true);
+    let login = to_character_list(&mut run);
+    let mut world = into_world(&mut run, &login);
+    ack_portal_exit(&mut run, &world);
+    run.session
+        .send(Instant::now(), Command::LeaveWorld)
+        .expect("leave");
+    loop {
+        let (op, _) = run.wait_blob(WORLD_SERVER);
+        if op == 0x30 {
+            break;
+        }
+    }
+    run.world
+        .deliver(world.event(0x3000_001C, &[0]), WORLD_SERVER);
+    run.world
+        .deliver(world.event(0x6C, &character_list()), WORLD_SERVER);
+    run.wait_event(|e| matches!(e, Event::ReturnedToCharacterSelect { .. }));
+    assert_eq!(run.session.state(), tessera_net::SessionState::Connected);
+    // The list came on the world connection: the next `0x6F` goes there.
+    run.session
+        .send(
+            Instant::now(),
+            Command::EnterWorld {
+                character: "Aldo".to_owned(),
+            },
+        )
+        .expect("enter again");
+    loop {
+        let (op, _) = run.wait_blob(WORLD_SERVER);
+        if op == 0x6F {
+            break;
+        }
+    }
+    let _ = run.session.send(Instant::now(), Command::Disconnect);
 }

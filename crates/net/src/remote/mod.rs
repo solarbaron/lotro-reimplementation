@@ -267,6 +267,15 @@ fn route(cmd: Command, mapper: &mut Mapper) -> Result<Routed, NetError> {
             Routed::Net(NetCommand::LeaveChannel(name))
         }
         Command::Disconnect => Routed::Disconnect,
+        // The test server does not wait for the client's loading (nothing to send).
+        Command::WorldLoaded => Routed::Local,
+        // `tessera-protocol.md` has no message that leaves the world for character
+        // selection.
+        Command::LeaveWorld => {
+            return Err(NetError::InvalidCommand(
+                "returning to character selection is not available on the test server",
+            ));
+        }
         // Selection is local: the backend answers with `TargetChanged` for the player in
         // the next poll and sends nothing (scenario-feed.md §9.7, decision 0032 D1).
         Command::Combat(CombatCommand::SelectTarget { target }) => {

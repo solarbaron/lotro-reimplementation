@@ -13,8 +13,9 @@
 //! cancel flag hold), bit 7 the end without sending (a revoked right, `abandon`) instead of
 //! the graceful shutdown. Then arbitrary
 //! datagrams from the login, world and chat servers, arbitrary messages wrapped in valid
-//! sequenced datagrams of the login or world connection, neutral commands and clock steps
-//! follow. No panic, bounded state.
+//! sequenced datagrams of the login or world connection (the widened opcodes of the bytes
+//! 0xC0 and above fall in the world-teardown band), neutral commands (`LeaveWorld` and
+//! `WorldLoaded` among them) and clock steps follow. No panic, bounded state.
 #![no_main]
 
 use std::collections::VecDeque;
@@ -403,6 +404,8 @@ fuzz_target!(|data: &[u8]| {
                 // A message: opcode (one byte, widened) and its envelope, on the world
                 // connection once in the world, else on the login connection.
                 let opcode = match chunk.first() {
+                    // The world-teardown band (`official-messages-play.md` §7.2 item 3).
+                    Some(&b) if kind % 8 == 3 && b >= 0xC0 => 0x3000_0010 | u32::from(b & 0x3F),
                     Some(&b) if kind % 8 == 3 => 0x0000_0100 | u32::from(b),
                     Some(&b) => u32::from(b),
                     None => 0x6C,
@@ -416,7 +419,9 @@ fuzz_target!(|data: &[u8]| {
             }
             4 => {
                 let text = String::from_utf8_lossy(chunk).into_owned();
-                let cmd = match chunk.first().copied().unwrap_or(0) % 5 {
+                let cmd = match chunk.first().copied().unwrap_or(0) % 7 {
+                    5 => Command::LeaveWorld,
+                    6 => Command::WorldLoaded,
                     0 => Command::EnterWorld { character: text },
                     1 => Command::Chat {
                         channel: ChatChannel::Say,

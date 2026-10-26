@@ -1063,11 +1063,19 @@ fn oe_t6d_writer_and_confirmation_only_in_the_continue_handler() {
             "KEY_FILE",
             "test-support",
         ],
-        &definitions,
+        &[
+            ws.join("crates/compat/src/consent"),
+            // The connector's synthetic service for other crates' tests (feature
+            // `test-support`): it builds no record.
+            ws.join("crates/compat/src/connector/test_support.rs"),
+        ],
     );
     for (file, func, line) in &found {
+        let synthetic_service = file.ends_with("crates/compat/src/connector/mod.rs")
+            && (line == "pub mod test_support;"
+                || line == "#[cfg(any(test, feature = \"test-support\"))]");
         assert!(
-            file.ends_with("fuzz/fuzz_targets/compat_consent_record.rs"),
+            file.ends_with("fuzz/fuzz_targets/compat_consent_record.rs") || synthetic_service,
             "{}: {func}: {line}",
             file.display()
         );
@@ -2751,6 +2759,21 @@ fn oe_t20_character_placeholder() {
         "{drawn}"
     );
     assert_eq!(f.flow.plugin_host().starts(), 0);
+    // §8.7: the window is asked to hand the session over to the character screens; until
+    // it takes it the screen above (with Back) shows.
+    assert_eq!(f.flow.take_request(), Some(FlowRequest::HandOver));
+    let handed = f.flow.take_hand_over().expect("the session");
+    assert_eq!(handed.characters.len(), 1);
+    assert_eq!(handed.session.state(), tessera_net::SessionState::Connected);
+    assert!(f.flow.take_hand_over().is_none(), "once");
+    assert!(f.flow.handed_over());
+    // The character screens ended: the account form, both fields empty.
+    drop(handed);
+    f.flow.characters_ended();
+    assert_eq!(f.flow.screen(), Screen::Form);
+    assert_eq!(f.flow.form().map(AccountForm::account_text), Some(""));
+    assert!(!f.flow.handed_over());
+    assert_eq!(f.flow.plugin_host().starts(), 0);
     // Back, Escape and closing the window: Disconnect and the empty form.
     for ev in [
         Vec::from(click_seq(0.0, f.t0)),
@@ -3437,4 +3460,179 @@ fn oe_t10_keystroke_text_is_zeroed_and_no_clipboard_shortcut_acts() {
         form.input(&typed_with(ch, mods, t), &hit);
     }
     assert_eq!(form.account_text(), "ab");
+}
+
+// ----- hand-over over the live connector (M8 plan C3, item 4) -----
+
+/// The live connector over the synthetic in-memory service of `tessera-compat`'s
+/// test-support feature, built through the client's one construction site.
+#[derive(Debug)]
+struct SyntheticBackends {
+    service: tessera_compat::connector::test_support::SyntheticService,
+    install: PathBuf,
+}
+
+impl BackendFactory for SyntheticBackends {
+    fn availability(&self) -> Availability {
+        Availability::Available
+    }
+
+    fn construct(&mut self, config: CompatConfig) -> Result<Box<dyn Backend>, CompatError> {
+        let live = self.service.live_config(&self.install).expect("install");
+        super::backend::construct_backend(
+            config,
+            tessera_compat::LiveConnector::with_factory(live, self.service.factory()),
+        )
+    }
+}
+
+/// Start screen → warning accepted → login → world list → character list (handed over) →
+/// enter world → in world (loading done, portal exit) → back to character select → the
+/// account form, against the live connector and a synthetic server; no network.
+/// Needs a persisted record (Unix-like systems; on Windows the write fails closed).
+#[cfg(unix)]
+#[test]
+fn the_official_flow_hands_its_session_to_the_character_screens_and_back() {
+    use crate::screens::{
+        Action, BackendKind, CharacterScreens, ScreenData, ScreenOptions, Status,
+    };
+    use tessera_compat::connector::test_support::{CHARACTER, SyntheticService};
+    use tessera_net::SessionState;
+
+    let _guard = net_lock();
+    let service = SyntheticService::new();
+    let install = tempfile::tempdir().expect("temp dir");
+    let mut f = fixture(Availability::Available);
+    let mut flow = Flow::new(
+        config(f.record.path(), f.settings.path(), WarningText::shipped()),
+        Box::new(SyntheticBackends {
+            service: service.clone(),
+            install: install.path().join("install"),
+        }),
+        Box::new(CountingHost::default()),
+    );
+    std::mem::swap(&mut f.flow, &mut flow);
+    assert_eq!(f.flow.screen(), Screen::Start);
+    f.reach_login("acct", "pw");
+    let until = Instant::now() + Duration::from_secs(20);
+    let tick = |f: &mut Fixture, what: &str, done: &dyn Fn(&Flow) -> bool| {
+        while !done(&f.flow) {
+            assert!(
+                Instant::now() < until,
+                "no {what}: screen {:?}, login {:?}",
+                f.flow.screen(),
+                f.flow.login_screen()
+            );
+            f.flow.tick(Instant::now());
+            std::thread::sleep(Duration::from_millis(2));
+        }
+    };
+    tick(&mut f, "world list", &|fl| {
+        fl.login_screen() == Some(&LoginScreen::Worlds)
+    });
+    f.flow
+        .device_input(&press(Key::Enter, Instant::now()), &|_, _| None);
+    tick(&mut f, "character list", &|fl| {
+        fl.screen() == Screen::Characters
+    });
+    assert_eq!(f.flow.take_request(), Some(FlowRequest::HandOver));
+    let handed = f.flow.take_hand_over().expect("the hand-over");
+    assert_eq!(handed.session.state(), SessionState::Connected);
+
+    // The character screens over the handed-over session (`pre_world`).
+    let now = Instant::now();
+    let mut world = crate::net::World::handed_over(now, handed.session, handed.characters);
+    world.set_manual_enter(true);
+    world.set_external_poll(true);
+    let data = Arc::new(ScreenData::default());
+    let mut screens = CharacterScreens::new(
+        world.session_mut(),
+        Arc::clone(&data),
+        ScreenOptions::default(),
+    );
+    crate::pre_world::seed_from_world(&mut screens, &world);
+    let rows: Vec<&str> = screens
+        .model()
+        .rows()
+        .iter()
+        .map(|r| r.name.as_str())
+        .collect();
+    assert_eq!(rows, [CHARACTER]);
+    assert_eq!(screens.model().backend(), &BackendKind::Official);
+    assert!(
+        !screens.model().new_button().is_enabled(),
+        "creation stays unavailable"
+    );
+    assert!(
+        !screens.model().delete_button().is_enabled(),
+        "deletion too"
+    );
+    screens.act(Action::Enter, now);
+    let mut events = Vec::new();
+    while !matches!(screens.status(), Status::Entered(_)) {
+        assert!(
+            Instant::now() < until,
+            "not entered: {:?}",
+            screens.status()
+        );
+        events.clear();
+        let now = Instant::now();
+        screens.pump(world.session_mut(), now, &mut events);
+        world.apply_polled(now, &events);
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    world.set_external_poll(false);
+    assert_eq!(world.state(), SessionState::InWorld);
+
+    // The walker's first settled frame: `WorldLoaded`, and the connector's portal exit.
+    world.world_loaded(Instant::now());
+    while !service.seen().blobs.contains(&0xF4) {
+        assert!(
+            Instant::now() < until,
+            "no portal exit: {:?}",
+            service.seen()
+        );
+        world.update(Instant::now());
+        std::thread::sleep(Duration::from_millis(2));
+    }
+
+    // Back to character selection on the same session.
+    world.leave_world(Instant::now()).expect("leave");
+    while !world.take_returned() {
+        assert!(
+            Instant::now() < until,
+            "no return; state {:?}",
+            world.state()
+        );
+        world.update(Instant::now());
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    assert_eq!(world.state(), SessionState::Connected);
+    assert!(world.player().is_none() && world.entities().is_empty());
+    let mut again = CharacterScreens::new(
+        world.session_mut(),
+        Arc::clone(&data),
+        ScreenOptions::default(),
+    );
+    crate::pre_world::seed_from_world(&mut again, &world);
+    let rows: Vec<&str> = again
+        .model()
+        .rows()
+        .iter()
+        .map(|r| r.name.as_str())
+        .collect();
+    assert_eq!(rows, [CHARACTER], "the list again");
+    assert_eq!(again.status(), &Status::Open);
+
+    // Leaving the character screens: the session ends, the empty account form shows.
+    drop(again);
+    drop(screens);
+    world.shutdown();
+    assert_eq!(world.state(), SessionState::Closed);
+    f.flow.characters_ended();
+    assert_eq!(f.flow.screen(), Screen::Form);
+    assert_eq!(f.flow.form().map(AccountForm::account_text), Some(""));
+    assert_eq!(f.flow.plugin_host().starts(), 0);
+    assert_eq!(f.flow.constructions(), 1);
+    assert_eq!(service.seen().binds, 1);
 }

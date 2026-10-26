@@ -54,6 +54,8 @@ pub mod data;
 pub mod login_phase;
 pub mod net;
 pub mod session_phase;
+#[cfg(any(test, feature = "test-support"))]
+pub mod test_support;
 pub mod worker;
 
 #[cfg(test)]
@@ -217,14 +219,16 @@ impl<F: NetFactory> LiveConnector<F> {
 }
 
 /// Whether the live session carries `command` at all (the rest is refused at once,
-/// `NetError::InvalidCommand`): the Account commands, `EnterWorld`, `Move`, `Chat` and the
-/// chat-server channel commands. Character creation and deletion, and the gameplay groups,
-/// wait for their specs.
+/// `NetError::InvalidCommand`): the Account commands, `EnterWorld`, `LeaveWorld`,
+/// `WorldLoaded`, `Move`, `Chat` and the chat-server channel commands. Character creation
+/// and deletion, and the gameplay groups, wait for their specs.
 fn carried(command: &Command) -> bool {
     matches!(
         command,
         Command::Account(_)
             | Command::EnterWorld { .. }
+            | Command::LeaveWorld
+            | Command::WorldLoaded
             | Command::Move { .. }
             | Command::Chat { .. }
             | Command::Social(

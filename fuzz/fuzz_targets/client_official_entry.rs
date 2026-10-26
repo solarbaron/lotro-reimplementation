@@ -80,7 +80,7 @@ impl Bytes<'_> {
 }
 
 fn event(b: &mut Bytes<'_>) -> Event {
-    match b.u8() % 8 {
+    match b.u8() % 9 {
         0 => Event::Account(AccountEvent::LoginProgress {
             stage: match b.u8() % 3 {
                 0 => LoginStage::Authenticating,
@@ -154,6 +154,11 @@ fn event(b: &mut Bytes<'_>) -> Event {
                 2 => DisconnectReason::ServerClosed(b.text(100)),
                 _ => DisconnectReason::TransportFailed(b.text(100)),
             },
+        },
+        7 => Event::ReturnedToCharacterSelect {
+            characters: (0..b.u8() % 4)
+                .map(|_| CharacterSummary { name: b.text(70) })
+                .collect(),
         },
         _ => Event::StaticsCleared,
     }

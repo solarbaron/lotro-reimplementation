@@ -12,6 +12,11 @@
 //! the player's actions. Escape is the selection screen's quit (`crate::screens::ui`
 //! module docs). On `WorldEntered` the screens close and the world session polls again.
 //!
+//! A session that is already at character selection when the screens open (one the
+//! official login handed over, `official-entry.md` §8.7, or one back from the world after
+//! `Event::ReturnedToCharacterSelect`) gives the screens the world's copy of its character
+//! list ([`World::character_list`]).
+//!
 //! The viewport's figure: each frame [`PreWorld::figure_job`] gives the walker the figure
 //! of the current stage and choices (`Walker::set_preview`; every creation control
 //! applied, the stage's `CharGen_Stage` carried), and [`PreWorld::portrait`] says what to
@@ -20,7 +25,7 @@
 use std::sync::Arc;
 use std::time::Instant;
 
-use tessera_net::Event;
+use tessera_net::{Event, SessionState};
 use tessera_ui::{Ui, UiEvent};
 
 use crate::character::CharacterData;
@@ -28,6 +33,18 @@ use crate::net::World;
 use crate::screens::data::InstallTexts;
 use crate::screens::ui::{ChargenRefs, ScreenUi};
 use crate::screens::{Action, CharacterScreens, ScreenData, ScreenOptions, Status};
+
+/// Gives `screens` the character list of a session that is already at character selection
+/// when they open (no-op otherwise): one the official login handed over
+/// (`official-entry.md` §8.7) or one back from the world (`Event::ReturnedToCharacterSelect`).
+/// Its list was polled before the screens opened, so they start from the world's copy of it
+/// ([`World::character_list`]).
+pub fn seed_from_world(screens: &mut CharacterScreens, world: &World) {
+    if world.state() == SessionState::Connected {
+        let characters = world.character_list().to_vec();
+        screens.handle_events(&[Event::Connected { characters }], Instant::now());
+    }
+}
 
 /// How the pre-world flow stands after a frame.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -66,7 +83,8 @@ impl PreWorld {
     ) -> Self {
         world.set_manual_enter(true);
         world.set_external_poll(true);
-        let screens = CharacterScreens::new(world.session_mut(), screen_data, options);
+        let mut screens = CharacterScreens::new(world.session_mut(), screen_data, options);
+        seed_from_world(&mut screens, world);
         let ui = ui.map(|(ui, refs)| {
             let s = ScreenUi::open(ui, refs);
             for m in &s.missing {

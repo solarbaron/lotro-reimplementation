@@ -814,6 +814,17 @@ impl ClientUi {
         if !self.attached_walker {
             return;
         }
+        if self.pre_world.is_none()
+            && rt.waits_for_character_screens()
+            && rt
+                .world
+                .as_mut()
+                .is_some_and(crate::net::World::take_returned)
+        {
+            // Back from the world on the same session (`Event::ReturnedToCharacterSelect`,
+            // `official-messages-play.md` §7.2): the character screens open again.
+            self.want_screens = true;
+        }
         self.open_screens(rt);
         let screens = self.pre_world.is_some();
         // The HUDs held back for the character screens show once they closed.

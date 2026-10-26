@@ -3,10 +3,11 @@
 //!
 //! In a run that opens the start screen the client's plugin host is not started at start-up:
 //! the offline walker's runtime starts its own when "Explore offline" starts the walker (with
-//! the `--load-plugin` queue), and for official play [`PluginSlot`] would start one when real
-//! character screens take the session at §8.7 (not while the placeholder shows, which is all
-//! this revision has) and unloads every apartment and stops it before the account form or the
-//! start screen shows again. No `--load-plugin` name is queued here (`--official` conflicts
+//! the `--load-plugin` queue), and for official play the character screens' client, which
+//! takes the session at §8.7 (`crate::app::App::with_session`), starts its own and stops it
+//! (every apartment unloaded) when it is shut down, before the account form shows again.
+//! [`PluginSlot`] is the flow's host: it stays stopped (the flow starts nothing itself) and
+//! is stopped again before the account form or the start screen shows. No `--load-plugin` name is queued here (`--official` conflicts
 //! with it; a `--start-screen` run drops its names once official play is chosen).
 
 use std::path::PathBuf;

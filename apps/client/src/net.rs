@@ -33,8 +33,8 @@ use tessera_net::remote::{
 use tessera_net::sandbox::world::WorldSource;
 use tessera_net::sandbox::{SandboxBackend, SandboxConfig};
 use tessera_net::{
-    ChatChannel, Command, Destination, EntityId, EntityKind, Event, Location, LocationCause,
-    NetError, NoticeLevel, Session, SessionState, Transform, Vec3,
+    CharacterSummary, ChatChannel, Command, Destination, EntityId, EntityKind, Event, Location,
+    LocationCause, NetError, NoticeLevel, Session, SessionState, Transform, Vec3,
 };
 
 /// How long [`World::shutdown`] waits for the backend to confirm the disconnect.
@@ -359,6 +359,17 @@ impl crate::walker::WalkerSession for World {
     }
 }
 
+/// A session someone else opened and brought to character selection, with the characters
+/// of its `Connected`: the official login's hand-over to the character screens
+/// (`official-entry.md` §8.7), taken by [`World::handed_over`].
+#[derive(Debug)]
+pub struct HandOver {
+    /// The session, at `SessionState::Connected`.
+    pub session: Session,
+    /// The characters of its `Connected`.
+    pub characters: Vec<CharacterSummary>,
+}
+
 /// The client's view of the world source.
 #[derive(Debug)]
 pub struct World {
@@ -463,6 +474,13 @@ pub struct World {
     /// Its changes not yet taken ([`World::take_p6_changes`]), at most [`MAX_P6_CHANGES`]
     /// (the oldest are dropped; consumers resynchronise from the state).
     p6_changes: std::collections::VecDeque<crate::progression::state::P6Change>,
+    /// The latest character list (`Connected`, `ReturnedToCharacterSelect`, or the list of
+    /// a session handed over at character selection, [`World::handed_over`]).
+    character_list: Vec<CharacterSummary>,
+    /// A `ReturnedToCharacterSelect` arrived since the last [`World::take_returned`].
+    returned: bool,
+    /// `WorldLoaded` was sent for the current world entry ([`World::world_loaded`]).
+    loaded_sent: bool,
 }
 
 /// Most P6 changes kept for [`World::take_p6_changes`] between two takes.
@@ -611,10 +629,31 @@ impl World {
         Self::from_session(now, Session::new(backend))
     }
 
+    /// A world over a session someone else opened and brought to character selection: the
+    /// official login hands its session over this way (`official-entry.md` §8.7), with the
+    /// `characters` of its `Connected` (already polled by the login screens). No `Connect`
+    /// is sent; the character screens read the list from [`World::character_list`].
+    #[must_use]
+    pub fn handed_over(now: Instant, session: Session, characters: Vec<CharacterSummary>) -> Self {
+        tracing::info!(
+            backend = session.backend_name(),
+            state = ?session.state(),
+            characters = characters.len(),
+            "world session handed over"
+        );
+        let mut w = Self::over(now, session);
+        w.character_list = characters;
+        w
+    }
+
     fn from_session(now: Instant, mut session: Session) -> Result<Self, NetError> {
         tracing::info!(backend = session.backend_name(), "world session created");
         session.send(now, Command::Connect)?;
-        Ok(Self {
+        Ok(Self::over(now, session))
+    }
+
+    fn over(now: Instant, session: Session) -> Self {
+        Self {
             session,
             events: Vec::new(),
             entities: BTreeMap::new(),
@@ -660,7 +699,47 @@ impl World {
             p5_changes: std::collections::VecDeque::new(),
             p6: crate::progression::state::P6State::new(),
             p6_changes: std::collections::VecDeque::new(),
-        })
+            character_list: Vec::new(),
+            returned: false,
+            loaded_sent: false,
+        }
+    }
+
+    /// The latest character list of the session (empty before the first).
+    #[must_use]
+    pub fn character_list(&self) -> &[CharacterSummary] {
+        &self.character_list
+    }
+
+    /// Whether the session came back from the world to character selection since the last
+    /// call (`Event::ReturnedToCharacterSelect`): the character screens open again.
+    pub fn take_returned(&mut self) -> bool {
+        std::mem::take(&mut self.returned)
+    }
+
+    /// Asks to leave the world for character selection, keeping the session
+    /// (`Command::LeaveWorld`; `official-messages-play.md` §7.2).
+    ///
+    /// # Errors
+    ///
+    /// As `Session::send` (outside the world, or a backend that cannot leave it).
+    pub fn leave_world(&mut self, now: Instant) -> Result<(), NetError> {
+        self.send(now, Command::LeaveWorld)
+    }
+
+    /// The client's world loading for the current entry is complete (the walker's first
+    /// settled frame): sends `Command::WorldLoaded` once per world entry
+    /// (`official-messages-play.md` §4.5 item 4). Not written to a scenario log: it is a
+    /// loading signal, not a player's command, and backends other than the official one
+    /// ignore it.
+    pub fn world_loaded(&mut self, now: Instant) {
+        if self.loaded_sent || self.state() != SessionState::InWorld {
+            return;
+        }
+        self.loaded_sent = true;
+        if let Err(e) = self.session.send(now, Command::WorldLoaded) {
+            tracing::debug!("net: world-loaded signal not sent: {e}");
+        }
     }
 
     /// The player's social state (decision 0024 P4).
@@ -1561,10 +1640,35 @@ impl World {
             self.queue_combat_event(c);
         }
         match ev {
+            Event::ReturnedToCharacterSelect { characters } => {
+                tracing::info!(
+                    characters = characters.len(),
+                    "net: back at character selection"
+                );
+                // The walker drops every figure it has (as one despawn each), the placed
+                // ones with the statics.
+                let ids: Vec<EntityId> = self.entities.keys().copied().collect();
+                for id in ids {
+                    self.queue_entity_event(&Event::EntityDespawned { id });
+                }
+                self.queue_entity_event(&Event::StaticsCleared);
+                self.entities.clear();
+                self.placed.clear();
+                self.player = None;
+                self.location = None;
+                self.entered_at = None;
+                self.loaded_sent = false;
+                self.character_list.clone_from(characters);
+                self.returned = true;
+                if !self.manual_enter {
+                    self.enter_from_list(now, characters);
+                }
+            }
             Event::Connected { characters } => {
                 let names: Vec<&str> = characters.iter().map(|c| c.name.as_str()).collect();
                 tracing::info!(characters = %names.join(","), "net: connected");
                 self.show_motd();
+                self.character_list.clone_from(characters);
                 if self.manual_enter {
                     return;
                 }
@@ -1574,32 +1678,7 @@ impl World {
                     self.pending_enter = Some((self.character.clone(), false));
                     return;
                 }
-                let chosen = match self.character.as_deref() {
-                    Some(w) => {
-                        let key = name_key(w);
-                        let found = characters.iter().find(|c| name_key(&c.name) == key);
-                        if found.is_none() {
-                            let text = no_such_character(w, &names);
-                            tracing::warn!("net: {text}");
-                            self.push_chat(ChatLine::system(text));
-                            if let Err(e) = self.send(now, Command::Disconnect) {
-                                tracing::debug!("net: disconnect not sent: {e}");
-                            }
-                            return;
-                        }
-                        found
-                    }
-                    None => characters.first(),
-                };
-                if let Some(first) = chosen {
-                    let character = first.name.clone();
-                    if let Err(e) = self.send(now, Command::EnterWorld { character }) {
-                        tracing::warn!("net: enter world failed: {e}");
-                    }
-                } else {
-                    tracing::warn!("net: the account has no characters");
-                    self.push_chat(ChatLine::system("This account has no characters."));
-                }
+                self.enter_from_list(now, characters);
             }
             Event::WorldEntered {
                 player,
@@ -1609,6 +1688,7 @@ impl World {
                 tracing::info!(player = player.0, %name, pos = ?transform.position, "net: world entered");
                 self.show_motd();
                 self.entered_at = Some(now);
+                self.loaded_sent = false;
                 self.player = Some(*player);
                 self.entities.insert(
                     *player,
@@ -1752,6 +1832,39 @@ impl World {
                 self.location = None;
             }
             other => tracing::debug!(?other, "net: unhandled event"),
+        }
+    }
+
+    /// Enters the chosen character (`--character`, a scenario's) or the first one of
+    /// `characters`, as a session that enters by itself does on `Connected`; a name the list
+    /// does not hold ends the session with a system line listing the characters.
+    fn enter_from_list(&mut self, now: Instant, characters: &[CharacterSummary]) {
+        let names: Vec<&str> = characters.iter().map(|c| c.name.as_str()).collect();
+        let chosen = match self.character.as_deref() {
+            Some(w) => {
+                let key = name_key(w);
+                let found = characters.iter().find(|c| name_key(&c.name) == key);
+                if found.is_none() {
+                    let text = no_such_character(w, &names);
+                    tracing::warn!("net: {text}");
+                    self.push_chat(ChatLine::system(text));
+                    if let Err(e) = self.send(now, Command::Disconnect) {
+                        tracing::debug!("net: disconnect not sent: {e}");
+                    }
+                    return;
+                }
+                found
+            }
+            None => characters.first(),
+        };
+        if let Some(first) = chosen {
+            let character = first.name.clone();
+            if let Err(e) = self.send(now, Command::EnterWorld { character }) {
+                tracing::warn!("net: enter world failed: {e}");
+            }
+        } else {
+            tracing::warn!("net: the account has no characters");
+            self.push_chat(ChatLine::system("This account has no characters."));
         }
     }
 

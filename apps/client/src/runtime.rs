@@ -124,6 +124,9 @@ pub struct Runtime {
     pub p5: crate::travel::TravelHub,
     /// The map windows (decision 0024 P5): the install's map facts and the map window.
     pub map: crate::map::MapHub,
+    /// A session handed over by the official login (`official-entry.md` §8.7), until the
+    /// walker's world takes it ([`Runtime::start_walker_session`]).
+    handed: Option<crate::net::HandOver>,
     /// Progression and crafting (decision 0024 P6): the windows' install names, the
     /// plugins' progression model, the P6 windows on the game UI.
     pub p6: crate::progression::P6Hub,
@@ -274,6 +277,20 @@ pub fn refuse_install_path(
 impl Runtime {
     /// Start the loader thread, the world session and the plugin host.
     pub fn start(args: &Args, now: Instant) -> anyhow::Result<Self> {
+        Self::start_with(args, now, None)
+    }
+
+    /// [`Runtime::start`] over a session the official login handed over
+    /// (`official-entry.md` §8.7): the world session is that one (no sandbox or test-server
+    /// session is opened), taken by the walker's world once it starts
+    /// ([`Runtime::start_walker_session`]), or at once in a run without the walker. The
+    /// character screens (`--character-select`) are then fed from it.
+    pub fn start_with(
+        args: &Args,
+        now: Instant,
+        handed: Option<crate::net::HandOver>,
+    ) -> anyhow::Result<Self> {
+        let mut handed = handed;
         let remote = crate::cli::remote_settings_from_env(args)?;
         // The walker shows no showcase texture and needs the disk for streaming: no
         // texture search and no directory walk then.
@@ -309,6 +326,10 @@ impl Runtime {
                 }
                 Err(e) => Err(e),
             },
+            // A handed-over session without the walker: the world session at once.
+            None if handed.is_some() => Ok(handed
+                .take()
+                .map(|h| World::handed_over(now, h.session, h.characters))),
             // No walker (`--no-data`): the plain sandbox with the spawn of `--spawn`,
             // `--place` and `--heading` (`scenario-feed.md` §12.1), as a headless run.
             None => match scenario {
@@ -421,6 +442,7 @@ impl Runtime {
                     .filter_map(|n| crate::progression::parse_p6_panel(n))
                     .collect(),
             ),
+            handed,
         })
     }
 
@@ -485,13 +507,18 @@ impl Runtime {
             c
         });
         let remote = self.remote.as_ref();
-        let world = match World::for_walker(now, remote, config, WalkerSource::new(shared.clone()))
-        {
-            Err(e) if retry.is_some() => {
-                tracing::warn!("world session refused the crowd ({e}); starting without it");
-                retry.map(|c| World::for_walker(now, remote, c, WalkerSource::new(shared)))
+        let world = if let Some(h) = self.handed.take() {
+            // The official login's session (`official-entry.md` §8.7): the walker draws
+            // from the client's own data; the session is the server's.
+            Some(Ok(World::handed_over(now, h.session, h.characters)))
+        } else {
+            match World::for_walker(now, remote, config, WalkerSource::new(shared.clone())) {
+                Err(e) if retry.is_some() => {
+                    tracing::warn!("world session refused the crowd ({e}); starting without it");
+                    retry.map(|c| World::for_walker(now, remote, c, WalkerSource::new(shared)))
+                }
+                other => Some(other),
             }
-            other => Some(other),
         };
         match world {
             Some(Ok(mut w)) => {

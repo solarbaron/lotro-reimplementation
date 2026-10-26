@@ -11,10 +11,19 @@
 //! | 4 | availability | `NotBuilt`: message, start; `Available`: 5 |
 //! | 5 | [`Screen::Form`] | Log in: backend, session, `Connect`, 6; Back: start |
 //! | 6 | [`Screen::Login`] | `Connected`: 7; a refusal or end: §8.6 |
-//! | 7 | [`Screen::Characters`] | — |
+//! | 7 | [`Screen::Characters`]: the session is handed over | the account form when they end |
 //!
 //! The acceptance made at step 2 or 3 is held for the run; each backend constructed at step 5
 //! gets a new proof from it, without reading the record again. Withdrawing drops it.
+//!
+//! **Hand-over (§8.7).** On `Connected` the flow asks the window for the hand-over
+//! ([`FlowRequest::HandOver`]); the window takes the session ([`Flow::take_hand_over`]) and
+//! runs the character screens and the world over it (`crate::app::App::with_session`, whose
+//! runtime starts the plugin host, §4.5). When that part of the run ends (the player leaves
+//! the character screens, closes the window, or the session ends) the window calls
+//! [`Flow::characters_ended`]: the account form shows with both fields empty. Until the
+//! window takes it the flow keeps polling the session and shows the screen of §8.7 (with
+//! Back), which is also what shows if the character screens cannot open.
 
 use std::collections::HashSet;
 use std::path::PathBuf;
@@ -119,6 +128,9 @@ pub enum FlowRequest {
     ExploreOffline,
     /// End the client (exit code 0).
     Quit,
+    /// Take the session at the character list ([`Flow::take_hand_over`]) and open the
+    /// character screens over it (§8.7).
+    HandOver,
 }
 
 /// The start screen's acceptance line (§4.1).
@@ -191,8 +203,10 @@ pub struct Flow {
     login: Option<(Session, LoginPresenter)>,
     /// The account name of the running login, only for `BadCredentials` (§8.6).
     kept_account: Option<AccountBuffer>,
-    /// The session handed over to the character screens (§8.7).
+    /// The session at the character list, until the window takes it (§8.7).
     characters: Option<(Session, Vec<tessera_net::CharacterSummary>)>,
+    /// The window took the session ([`Flow::take_hand_over`]) and runs the character screens.
+    handed_over: bool,
     request: Option<FlowRequest>,
     constructions: usize,
     plugin_loads_dropped: bool,
@@ -236,6 +250,7 @@ impl Flow {
             login: None,
             kept_account: None,
             characters: None,
+            handed_over: false,
             request: None,
             constructions: 0,
             plugin_loads_dropped: false,
@@ -572,10 +587,13 @@ impl Flow {
         }
         match end.target {
             Target::CharacterScreens(characters) => {
-                // §8.7: the placeholder; the plugin host stays stopped (§4.5) until real
-                // character screens take the session.
+                // §8.7: the character screens take the session; the window does that on
+                // this request. The plugin host starts with them (the window's runtime,
+                // §4.5), not here.
                 self.characters = Some((session, characters));
+                self.handed_over = false;
                 self.screen = Screen::Characters;
+                self.request = Some(FlowRequest::HandOver);
             }
             Target::AccountForm { .. } => {
                 drop(session);
@@ -597,12 +615,54 @@ impl Flow {
         }
     }
 
+    /// The session at the character list for the character screens (§8.7), once: the window
+    /// asks for it on [`FlowRequest::HandOver`]. From then on the window runs it, and the
+    /// flow waits for [`Flow::characters_ended`].
+    pub fn take_hand_over(&mut self) -> Option<crate::net::HandOver> {
+        if self.screen != Screen::Characters {
+            return None;
+        }
+        let (session, characters) = self.characters.take()?;
+        self.handed_over = true;
+        tracing::info!(
+            characters = characters.len(),
+            "official session handed over to the character screens"
+        );
+        Some(crate::net::HandOver {
+            session,
+            characters,
+        })
+    }
+
+    /// Whether the window runs the character screens over the handed-over session.
+    #[must_use]
+    pub fn handed_over(&self) -> bool {
+        self.handed_over
+    }
+
+    /// The character screens over the handed-over session ended (the player left them, the
+    /// window was closed or the session ended; the window has shut them down, which ended
+    /// the session and stopped their plugin host): the account form shows with both fields
+    /// empty (§8.7, §4.5). The warning is not shown again.
+    pub fn characters_ended(&mut self) {
+        if !self.handed_over {
+            return;
+        }
+        self.handed_over = false;
+        self.leave_characters();
+    }
+
     /// Leaves the character placeholder (Back, Escape or closing the window): the session ends
     /// (`Disconnect`), the plugin host is stopped if anything started it, the account form
     /// shows with both fields empty (§8.7, §4.5).
     fn leave_characters(&mut self) {
         if let Some((mut session, _)) = self.characters.take() {
             let _ = session.send(Instant::now(), Command::Disconnect);
+        }
+        self.handed_over = false;
+        if self.request == Some(FlowRequest::HandOver) {
+            // Left before the window took the session: nothing to hand over any more.
+            self.request = None;
         }
         self.plugins.stop();
         self.form = Some(AccountForm::new());

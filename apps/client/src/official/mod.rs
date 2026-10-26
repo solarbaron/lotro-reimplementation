@@ -24,10 +24,15 @@
 //!
 //! - The screens are painted by Tessera's own code with the bundled font, not built from
 //!   `tessera-ui` elements (§4.6, [`view`]).
-//! - The character screens of §8.7 are a placeholder for official sessions
-//!   (`official.characters.unavailable` with Back; Back, Escape and closing the window
-//!   disconnect and reopen the empty form); the plugin host is not started while it shows
-//!   (§4.5).
+//! - §8.7: on `Connected` the session is handed over to the character screens of
+//!   `--character-select` (`crate::pre_world`) in a client over that session
+//!   (`crate::app::App::with_session`, [`window`]), whose runtime starts the plugin host
+//!   (§4.5). Creation and deletion are ghosted there with their reason (their creation
+//!   properties need install enum mappers no spec assigns yet). Leaving the screens, closing
+//!   the window or the session's end shuts that client down and reopens the empty account
+//!   form. The §8.7 screen with `official.characters.unavailable` and Back is left only as
+//!   the fallback while the window has not taken the session (or could not open the
+//!   screens).
 //! - There is no way back from the offline walker to the start screen: quitting it ends the
 //!   client (§4.1, §4.5).
 //! - On Windows no acceptance record is stored (§5.6 "Windows"): an acceptance lasts for the

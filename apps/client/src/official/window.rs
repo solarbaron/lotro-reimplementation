@@ -8,6 +8,13 @@
 //! "Explore offline" closes this window and starts the offline walker as the client does
 //! without a mode option (`crate::app::App`, which starts the plugin host with the
 //! `--load-plugin` queue, §4.5); from then on every event goes to it.
+//!
+//! The hand-over of §8.7 does the same with the official session: this window closes and a
+//! client over that session (`crate::app::App::with_session`, the character screens of
+//! `--character-select`, with its own plugin host, §4.5) takes every event. When its part of
+//! the run ends ([`crate::app::App::handed_over_ended`]: the player left the character
+//! screens, closed the window or the session ended) it is shut down (its session ends and its
+//! plugin host stops) and this window opens again on the account form, both fields empty.
 
 use std::sync::Arc;
 use std::sync::mpsc;
@@ -76,6 +83,8 @@ pub struct EntryApp {
     scene: Scene,
     modifiers: Modifiers,
     offline: Option<crate::app::App>,
+    /// The client over the handed-over official session (§8.7), while it runs.
+    official: Option<crate::app::App>,
     error: Option<anyhow::Error>,
 }
 
@@ -150,11 +159,15 @@ impl EntryApp {
             scene: Scene::default(),
             modifiers: Modifiers::default(),
             offline: None,
+            official: None,
             error: None,
         }
     }
 
     fn finish(mut self) -> anyhow::Result<()> {
+        if let Some(mut app) = self.official.take() {
+            app.shutdown();
+        }
         self.flow.finish_writes();
         if let Some(mut app) = self.offline.take() {
             app.shutdown();
@@ -261,7 +274,62 @@ impl EntryApp {
         match self.flow.take_request() {
             Some(FlowRequest::Quit) => event_loop.exit(),
             Some(FlowRequest::ExploreOffline) => self.explore_offline(event_loop),
+            Some(FlowRequest::HandOver) => self.hand_over(event_loop),
             None => {}
+        }
+    }
+
+    /// §8.7: the character screens and the world over the official session, in a client
+    /// window of their own (module docs). If that client cannot start, the session it was
+    /// given ends with it and this window shows the account form again.
+    fn hand_over(&mut self, event_loop: &ActiveEventLoop) {
+        let Some(handed) = self.flow.take_hand_over() else {
+            return;
+        };
+        let mut args = self.args.clone();
+        args.start_screen = false;
+        args.official = false;
+        args.character_select = true;
+        args.load_plugins.clear();
+        self.release();
+        event_loop.set_control_flow(ControlFlow::Poll);
+        match crate::app::App::with_session(args, Some(handed)) {
+            Ok(mut app) => {
+                app.resumed(event_loop);
+                self.official = Some(app);
+            }
+            Err(e) => {
+                tracing::error!("the character screens cannot open: {e:#}");
+                self.flow.characters_ended();
+                if let Err(e) = self.create_gfx(event_loop) {
+                    self.fail(event_loop, e);
+                }
+            }
+        }
+    }
+
+    /// The handed-over client's part of the run ended: it is shut down (its session ends
+    /// and its plugin host stops before anything else shows, §4.5) and this window opens
+    /// again on the account form.
+    fn official_ended(&mut self, event_loop: &ActiveEventLoop) {
+        if !self
+            .official
+            .as_ref()
+            .is_some_and(crate::app::App::handed_over_ended)
+        {
+            return;
+        }
+        if let Some(mut app) = self.official.take() {
+            app.shutdown();
+            if let Some(e) = app.take_error() {
+                tracing::error!("official session: {e:#}");
+            }
+        }
+        self.flow.characters_ended();
+        if self.gfx.is_none()
+            && let Err(e) = self.create_gfx(event_loop)
+        {
+            self.fail(event_loop, e);
         }
     }
 
@@ -288,7 +356,7 @@ impl EntryApp {
         let now = Instant::now();
         self.flow.tick(now);
         self.handle_request(event_loop);
-        if self.offline.is_some() {
+        if self.offline.is_some() || self.official.is_some() {
             return;
         }
         let fonts = self.fonts();
@@ -367,6 +435,10 @@ impl ApplicationHandler for EntryApp {
             app.resumed(event_loop);
             return;
         }
+        if let Some(app) = self.official.as_mut() {
+            app.resumed(event_loop);
+            return;
+        }
         if self.gfx.is_none()
             && let Err(e) = self.create_gfx(event_loop)
         {
@@ -379,6 +451,11 @@ impl ApplicationHandler for EntryApp {
     fn window_event(&mut self, event_loop: &ActiveEventLoop, id: WindowId, event: WindowEvent) {
         if let Some(app) = self.offline.as_mut() {
             app.window_event(event_loop, id, event);
+            return;
+        }
+        if let Some(app) = self.official.as_mut() {
+            app.window_event(event_loop, id, event);
+            self.official_ended(event_loop);
             return;
         }
         match &event {
@@ -414,12 +491,19 @@ impl ApplicationHandler for EntryApp {
     fn device_event(&mut self, event_loop: &ActiveEventLoop, id: DeviceId, event: DeviceEvent) {
         if let Some(app) = self.offline.as_mut() {
             app.device_event(event_loop, id, event);
+        } else if let Some(app) = self.official.as_mut() {
+            app.device_event(event_loop, id, event);
         }
     }
 
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
         if let Some(app) = self.offline.as_mut() {
             app.about_to_wait(event_loop);
+            return;
+        }
+        if let Some(app) = self.official.as_mut() {
+            app.about_to_wait(event_loop);
+            self.official_ended(event_loop);
             return;
         }
         event_loop.set_control_flow(ControlFlow::WaitUntil(Instant::now() + FRAME_INTERVAL));
@@ -430,6 +514,9 @@ impl ApplicationHandler for EntryApp {
 
     fn exiting(&mut self, event_loop: &ActiveEventLoop) {
         if let Some(app) = self.offline.as_mut() {
+            app.exiting(event_loop);
+        }
+        if let Some(app) = self.official.as_mut() {
             app.exiting(event_loop);
         }
         self.release();

@@ -361,3 +361,13 @@ file = "crates/compat/src/consent/mod.rs"
 entry = "tessera_compat::consent::check"
 input = "user file"
 exempt = "reads the record and key files and hands them to the record check that compat_consent_record fuzzes (through test_support::evaluate)"
+
+[[parser]]
+crate = "tessera-compat"
+file = "crates/compat/src/connector/session_phase.rs"
+entry = [
+    "tessera_compat::connector::session_phase::SessionDriver::start",
+    "tessera_compat::connector::session_phase::SessionDriver::step",
+]
+input = "network"
+target = "compat_connector_session"

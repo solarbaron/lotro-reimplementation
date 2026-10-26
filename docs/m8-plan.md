@@ -31,7 +31,7 @@ by new sessions, a default-mode audit and a squashed merge ([`m8-remediation.md`
 | `crates/compat` `login`, `session`, `world` | Conformed to the specs (`m8-conform`), on main |
 | `crates/compat` `play`, `chat_session` | Built (`m8-play`), on main |
 | Fuzz coverage of `crates/compat` | All parsers covered (`m8-conform-notes`), on main |
-| Live connector (`crates/compat/src/connector/`, HTTPS on ureq/rustls) | Built and reviewed, four fix rounds; merging |
+| Live connector (`crates/compat/src/connector/`, HTTPS on ureq/rustls) | Merged 2026-10-26 after four fix rounds (C1) |
 | Hand-over of an official session to the character screens | Not built; the client shows a placeholder |
 | `availability()` | `NotBuilt`: `--official` stops before any network use |
 | Live verification (exit criterion 4) | Not started |

@@ -617,7 +617,7 @@ fine. Format-level terms like "DID" or "landblock" are fine.
     (revisions 3–6, 2026-10-23/24): `--start-screen` and `--official`, the start screen, the
     ban-risk warning and the HMAC-bound acceptance record, Withdraw off the frame thread
     (it ends the run's acceptance at once), a non-cloneable consent proof that every backend
-    constructor and the `NetworkAccess` gate (the only UDP bind) require (`consent`,
+    constructor and the `NetworkAccess` gate (every bind, send, lookup and HTTPS request) require (`consent`,
     `net_access`, `credentials`), the account form and the progress, world-list, queue and
     error screens (`apps/client/src/official/`), `tessera-net` Account events and commands,
     fuzz `compat_consent_record` and `client_official_entry`; the character screens stay a
@@ -633,9 +633,17 @@ fine. Format-level terms like "DID" or "landblock" are fine.
     `crates/compat` (`fuzz/coverage/compat.toml`). Each package had two independent reviews,
     fix rounds and a default-mode clean-room audit. Spec questions the build found are in
     `docs/m8-remediation.md` §15 for the next spec pass.
-  - **Still needs more work:** the live `Connector` (package `m8-connector`, in review: HTTPS
-    login on ureq/rustls, UDP session to world entry; `availability()` stays `NotBuilt`), the
-    §8.7 hand-over of an official session to the character screens, the P1–P6 gameplay
+  - **Live connector (merged 2026-10-26, `m8-connector`):** `crates/compat/src/connector/`
+    reads the install, logs in over HTTPS (`ureq` 3.5 pinned, rustls on ring, OS trust store,
+    no redirects, no proxy, bounded bodies; secrets only along an all-HTTPS chain) and runs the
+    UDP session through the referral to world entry, with the play adapter and chat client.
+    Every network operation needs the revocable `NetworkAccess` (moved, never copied;
+    Withdraw calls `revoke_all`); after a cancel, a drop or Withdraw nothing more is sent and
+    no handshake connection resends the ticket. Four fix rounds after two reviews and audits.
+    `availability()` stays `NotBuilt` until the character-screen hand-over exists.
+  - **Still needs more work:** the steps in `docs/m8-plan.md`: the connector support package
+    (C2), the §8.7 hand-over to the character screens (C3), the in-world feed (C4), turning on
+    `availability()` (C5), the spec answers of `docs/m8-remediation.md` §15, the P1–P6 gameplay
     messages (stage 2), and owner live verification (exit criterion 4).
   - **Clean-room and content boundaries:** no shipping, mirroring or linking to client
     binaries, dat files, patches or old clients; no modified, patched, redirected or

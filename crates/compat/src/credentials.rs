@@ -74,6 +74,17 @@ impl Credentials {
     pub fn lengths(&self) -> (usize, usize) {
         (self.account.0.len(), self.password.0.len())
     }
+
+    /// The account name and the password as typed, for the one request of the live
+    /// connector that carries them (`official-login.md` §3.4; §7.3 "One use"). Crate-private:
+    /// nothing outside this crate reads them.
+    pub(crate) fn expose(&self) -> (&str, &str) {
+        // Both were checked to be UTF-8 when the value was made.
+        (
+            std::str::from_utf8(&self.account.0).unwrap_or_default(),
+            std::str::from_utf8(&self.password.0).unwrap_or_default(),
+        )
+    }
 }
 
 #[cfg(test)]

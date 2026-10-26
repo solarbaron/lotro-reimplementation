@@ -4,11 +4,11 @@
 //!
 //! Every constructor takes a [`CompatConfig`], which can only be made from a
 //! [`ConsentProof`] (by value) and the user's [`Credentials`]; the backend refuses to be built
-//! when the proof is not for the shipped warning text. While [`PlaceholderConnector`] is the
-//! only connector built into this binary, [`availability`] answers
-//! [`Availability::NotBuilt`] and a placeholder backend answers `Connect` with
-//! `LoginRefused { reason: NotAvailable }` and one `Disconnected` in the same poll, opening
-//! no socket.
+//! when the proof is not for the shipped warning text. A placeholder backend answers
+//! `Connect` with `LoginRefused { reason: NotAvailable }` and one `Disconnected` in the same
+//! poll, opening no socket. The live connector ([`crate::connector::LiveConnector`]) runs the
+//! official login and session; [`availability`] still answers [`Availability::NotBuilt`]
+//! (see there).
 //!
 //! A backend cannot be built without a proof (OE-T8 (d)). Each `compile_fail` example below
 //! differs from the compiling one only in the step it is about (the error code is checked by
@@ -69,11 +69,25 @@ pub enum Availability {
     NotBuilt,
 }
 
-/// The availability of official play in this binary (§4.4): [`Availability::NotBuilt`] while
-/// [`PlaceholderConnector`] is the only connector.
+/// The availability of official play in this binary (§4.4).
+///
+/// [`Availability::NotBuilt`]: the live connector ([`LiveConnector`](crate::connector::LiveConnector)) logs in, lists the
+/// worlds, queues, opens the session and delivers the character list, but the client cannot
+/// yet take an official session past that point: the hand-over to the character screens
+/// (`official-entry.md` §8.7) still shows the placeholder, character creation and deletion
+/// and the in-world gameplay messages wait for their specs, and the `0xCC` state schemas are
+/// not yet built from the install. The answer becomes `Available` when official play can be
+/// used end to end; until then the flow stops at §9 step 4 and no backend is constructed.
 #[must_use]
 pub fn availability() -> Availability {
     Availability::NotBuilt
+}
+
+/// Whether the live connector ([`LiveConnector`](crate::connector::LiveConnector)) is compiled into this binary
+/// (diagnostics; independent of [`availability`]).
+#[must_use]
+pub const fn live_connector_built() -> bool {
+    true
 }
 
 /// Pluggable connection driver behind [`CompatBackend`].
@@ -89,6 +103,30 @@ pub trait Connector: Send + std::fmt::Debug {
         network: &NetworkAccess,
         credentials: Credentials,
     ) -> Result<(), CompatError>;
+
+    /// A command after a successful [`Self::connect`] (everything but `Connect` and
+    /// `Disconnect`, which the backend handles). The default refuses Account commands and
+    /// ignores the rest.
+    ///
+    /// # Errors
+    ///
+    /// [`NetError`] when the command cannot be carried.
+    fn submit(&mut self, _now: Instant, command: Command) -> Result<(), NetError> {
+        match command {
+            Command::Account(_) => Err(NetError::InvalidCommand(
+                "the official login is not available in this version of Tessera",
+            )),
+            _ => Ok(()),
+        }
+    }
+
+    /// Appends the connection's new events. The default has none.
+    fn poll(&mut self, _now: Instant, _out: &mut Vec<Event>) {}
+
+    /// The user ended the session (`Disconnect`): the backend has reported
+    /// `Disconnected { ClientRequested }` itself; the connector closes what it opened
+    /// without further events. The default has nothing to close.
+    fn disconnect(&mut self, _now: Instant) {}
 }
 
 /// The connector of this build: always fails with [`CompatError::ProtocolNotBuilt`] and never
@@ -141,6 +179,8 @@ pub struct CompatBackend<C: Connector = PlaceholderConnector> {
     credentials: Option<Credentials>,
     connector: C,
     pending_events: Vec<Event>,
+    /// A `Disconnected` was handed out: nothing follows it.
+    ended: bool,
 }
 
 impl CompatBackend<PlaceholderConnector> {
@@ -170,6 +210,7 @@ impl<C: Connector> CompatBackend<C> {
             credentials: Some(credentials),
             connector,
             pending_events: Vec::new(),
+            ended: false,
         })
     }
 
@@ -223,26 +264,41 @@ impl<C: Connector> Backend for CompatBackend<C> {
         None
     }
 
-    fn submit(&mut self, _now: Instant, command: Command) -> Result<(), NetError> {
+    fn submit(&mut self, now: Instant, command: Command) -> Result<(), NetError> {
         match command {
             Command::Connect => self.connect(),
             Command::Disconnect => {
                 self.credentials = None;
+                self.connector.disconnect(now);
                 self.pending_events.push(Event::Disconnected {
                     reason: DisconnectReason::ClientRequested,
                 });
             }
-            Command::Account(_) => {
-                return Err(NetError::InvalidCommand(
-                    "the official login is not available in this version of Tessera",
-                ));
-            }
-            _ => {}
+            other => return self.connector.submit(now, other),
         }
         Ok(())
     }
 
-    fn poll(&mut self, _now: Instant, out: &mut Vec<Event>) {
+    fn poll(&mut self, now: Instant, out: &mut Vec<Event>) {
+        if self.ended {
+            return;
+        }
+        if !self
+            .pending_events
+            .iter()
+            .any(|e| matches!(e, Event::Disconnected { .. }))
+        {
+            self.connector.poll(now, &mut self.pending_events);
+        }
+        if let Some(i) = self
+            .pending_events
+            .iter()
+            .position(|e| matches!(e, Event::Disconnected { .. }))
+        {
+            // Nothing follows a `Disconnected`.
+            self.pending_events.truncate(i + 1);
+            self.ended = true;
+        }
         if self
             .pending_events
             .iter()

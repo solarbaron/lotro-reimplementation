@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 [package]
 name = "tessera-compat"
-description = "Official-server compatibility crate: ban-risk consent, network-access gate, login, session and world protocol modules (partly done; needs more work)"
+description = "Official-server compatibility crate: ban-risk consent, network-access gate, login, session, world and play protocol modules and the live connector (partly done; needs more work)"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -31,6 +31,9 @@ toml.workspace = true
 tracing.workspace = true
 # Normalisation form C of the digest texts (official-entry.md §5.3).
 unicode-normalization.workspace = true
+# HTTPS for the login exchanges (official-login.md §3, §4.3, §6.2), named only in the
+# network-access type's file (official-entry.md §6.1, OE-T8 (b)).
+ureq.workspace = true
 
 [target.'cfg(unix)'.dependencies]
 # O_NOFOLLOW and O_NONBLOCK for the record's files.

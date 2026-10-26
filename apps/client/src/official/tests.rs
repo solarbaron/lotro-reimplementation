@@ -1264,7 +1264,7 @@ fn oe_t7d_no_plugin_host_before_the_hand_over() {
         let mut flow = super::window::start_flow(
             &args,
             super::window::flow_config(&args, Some(record.path().to_path_buf()), None),
-            Box::new(super::backend::ProductionBackends),
+            Box::new(super::backend::ProductionBackends::default()),
             slot(),
         );
         let t0 = Instant::now();
@@ -1341,7 +1341,7 @@ fn choosing_official_drops_queued_plugin_loads() {
     assert_eq!(config.queued_plugin_loads, 2);
     let mut flow = Flow::new(
         config,
-        Box::new(super::backend::ProductionBackends),
+        Box::new(super::backend::ProductionBackends::default()),
         Box::new(CountingHost::default()),
     );
     assert!(!flow.plugin_loads_dropped());
@@ -1489,7 +1489,7 @@ fn oe_t9_placeholder_shows_not_available_after_the_warning() {
             last_world: None,
             queued_plugin_loads: 0,
         },
-        Box::new(super::backend::ProductionBackends),
+        Box::new(super::backend::ProductionBackends::default()),
         Box::new(CountingHost::default()),
     );
     let t0 = Instant::now();
@@ -2087,7 +2087,7 @@ fn oe_t12_decline_changes_nothing_and_withdraw_removes_both_files() {
     pre_accept(f.record.path(), &WarningText::shipped());
     let mut flow = Flow::new(
         config(f.record.path(), f.settings.path(), WarningText::shipped()),
-        Box::new(super::backend::ProductionBackends),
+        Box::new(super::backend::ProductionBackends::default()),
         Box::new(CountingHost::default()),
     );
     flow.wait_checks(f.t0);

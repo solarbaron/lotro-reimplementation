@@ -139,7 +139,7 @@ impl EntryApp {
         let flow = start_flow(
             &args,
             config,
-            Box::new(ProductionBackends),
+            Box::new(ProductionBackends::new(args.game_dir.clone())),
             Box::new(PluginSlot::new(plugins_dir, root.join("plugindata"))),
         );
         Self {

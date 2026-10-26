@@ -395,7 +395,7 @@ pub fn read_project_version(dir: &Path) -> ProjectVersion {
         Ok(b) => b,
         Err(Error::TooLarge { .. }) => return ProjectVersion::Malformed,
         Err(e) => {
-            tracing::debug!(error = %e, "cannot read ProjectVersion");
+            tracing::debug!(error = %e.class(), "cannot read ProjectVersion");
             return ProjectVersion::Missing;
         }
     };
@@ -458,7 +458,7 @@ fn detect_game_type_in(dir: &Path, entries: &[DirEntry]) -> GameType {
         let cfg = match launcherconfig::read_launcher_config(&path) {
             Ok(c) => c,
             Err(e) => {
-                tracing::debug!(error = %e, "launcher config unreadable; trying the next");
+                tracing::debug!(error = %e.class(), "launcher config unreadable; trying the next");
                 continue;
             }
         };
@@ -562,7 +562,7 @@ pub fn validate(dir: &Path) -> ValidationReport {
     }
     report.usable = report.core_ok && !matches!(report.game_type, GameType::Unsupported(_));
     for w in &report.warnings {
-        tracing::debug!(dir = %dir.display(), warning = %w, "validation warning");
+        tracing::debug!(warning = %w, "validation warning");
     }
     report
 }

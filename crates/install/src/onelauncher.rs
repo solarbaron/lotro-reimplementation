@@ -120,7 +120,7 @@ pub fn read_configs(data_home: &Path) -> Vec<LauncherGameConfig> {
                 cfg.path = file;
                 out.push(cfg);
             }
-            Err(e) => tracing::debug!(error = %e, "cannot read launcher config"),
+            Err(e) => tracing::debug!(error = %e.class(), "cannot read launcher config"),
         }
     }
     out

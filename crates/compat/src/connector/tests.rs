@@ -4,6 +4,8 @@
 //! every endpoint is an RFC 2606 `.example.invalid` placeholder or a documentation address
 //! (RFC 5737).
 
+mod deadlines;
+
 use std::collections::{BTreeMap, VecDeque};
 use std::net::{Ipv4Addr, SocketAddrV4};
 use std::path::Path;

@@ -3858,6 +3858,15 @@ impl BlobReassembler {
         self.incomplete.len()
     }
 
+    /// When the oldest incomplete blob expires (`30.0` s after its first fragment,
+    /// §5.6.4 rule 3); `None` with no incomplete blob.
+    fn next_expiry(&self) -> Option<f64> {
+        self.incomplete
+            .values()
+            .map(|entry| entry.created_at_sec + 30.0)
+            .reduce(f64::min)
+    }
+
     /// Purges incomplete blobs older than `30.0` seconds (§5.6.4).
     pub fn purge_expired(&mut self, now_sec: f64) {
         self.incomplete
@@ -5501,6 +5510,70 @@ impl SessionConnection {
         Ok(())
     }
 
+    /// The earliest time (on the clock of `now_sec`) at which [`Self::tick`] or the
+    /// multiplexer's cleanup has work on this connection: the handshake retransmits and
+    /// timeouts (§6.1), the out-of-order acknowledgements waiting (§5.4, due at once), the
+    /// `ClockSyncHeader` (§8.1), the `SequenceNakHeader` or `CumulativeAckHeader` (§5.2,
+    /// §5.3), the silence timeout (§8.2), the disconnect's flush, retransmit and end
+    /// (§6.1, §8.2), the cleanup after `20.0` s in State `8` (§6.1) and the expiry of an
+    /// incomplete blob (§5.6.4). `None` when no timer runs (States `0`, `3`, `4` with no
+    /// incomplete blob). A time already past is returned as it is: the caller ticks at once.
+    ///
+    /// A timeout that fires only once `now - t > limit` (the silence timeout, the blob
+    /// expiry) is due at `t + limit`; a tick at exactly that time may find it not yet over,
+    /// so the caller waits a little more (the connector waits at least 1 ms).
+    #[must_use]
+    pub fn next_deadline(&self) -> Option<f64> {
+        let mut next = self.reassembler.next_expiry();
+        let mut at = |t: f64| next = Some(next.map_or(t, |n: f64| n.min(t)));
+        match self.state {
+            ConnectionState::SessionAuthSent => {
+                at(self.state_entered_at_sec + 20.0);
+                at(self.last_handshake_retransmit_sec + 2.0);
+            }
+            ConnectionState::ChallengeAcceptSent => {
+                at(self.state_entered_at_sec + 20.0);
+                if self.stored_connect_accept.is_some() {
+                    at(self.last_handshake_retransmit_sec + 0.6);
+                }
+            }
+            ConnectionState::Connected => {
+                let silence_limit = if self.extended_silence_timeout {
+                    300.0
+                } else {
+                    60.0
+                };
+                at(self.last_recv_time_sec + silence_limit);
+                if !self.out_of_order_ack_queue.is_empty() {
+                    // Flushed on the next tick (§5.4).
+                    at(f64::NEG_INFINITY);
+                }
+                at(self.last_clock_sync_sent_sec + 30.0);
+                if !self.missing_gaps.is_empty() {
+                    at(self.last_ack_nak_sent_sec + 0.6);
+                } else if self.recv_seq_expected > 1 {
+                    at(self.last_ack_nak_sent_sec + 2.0);
+                }
+            }
+            ConnectionState::DisconnectingFlush => {
+                if self.retransmit_table.is_empty() {
+                    at(f64::NEG_INFINITY);
+                } else {
+                    at(self.state_entered_at_sec + 20.0);
+                }
+            }
+            ConnectionState::DisconnectSent => {
+                at(self.state_entered_at_sec + 20.0);
+                at(self.last_handshake_retransmit_sec + 1.0);
+            }
+            ConnectionState::Closing => at(self.state_entered_at_sec + 20.0),
+            ConnectionState::Idle
+            | ConnectionState::ServerListening
+            | ConnectionState::ServerConnectSent => {}
+        }
+        next
+    }
+
     /// Queues an unsequenced control packet that carries the last assigned `seqNum` without
     /// `MaskedChecksumFlag` and goes out uncompressed (§4.1.1, §5.1).
     fn queue_control(&mut self, now_sec: f64, opt: OptionalHeaders) -> Result<(), SessionError> {
@@ -5727,6 +5800,20 @@ impl SessionMultiplexer {
             self.remove_connection(id);
         }
         done
+    }
+
+    /// The earliest timer of its connections ([`SessionConnection::next_deadline`]: the
+    /// retransmits, keep-alives, acknowledgements, handshake and silence timeouts, the
+    /// disconnect and the cleanup of State `8`, §5–§8), on the clock of `now_sec`: the time
+    /// at which [`Self::tick`] next has work. A timer already due gives `now_sec`; `None`
+    /// when no connection has a timer (nothing happens until a datagram or a call).
+    #[must_use]
+    pub fn next_deadline(&self, now_sec: f64) -> Option<f64> {
+        self.connections
+            .values()
+            .filter_map(SessionConnection::next_deadline)
+            .reduce(f64::min)
+            .map(|t| t.max(now_sec))
     }
 
     /// Flushes all queued outbound datagrams across all connections to `transport`.

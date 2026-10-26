@@ -86,10 +86,34 @@ pub enum Error {
 }
 
 impl Error {
+    /// What kind of error this is, for a log line: no path, no file content (the parse
+    /// errors of a Steam or launcher file may quote it), only the I/O error's kind.
+    pub(crate) fn class(&self) -> ErrorClass<'_> {
+        ErrorClass(self)
+    }
+
     pub(crate) fn io(path: impl Into<PathBuf>, source: std::io::Error) -> Self {
         Self::Io {
             path: path.into(),
             source,
+        }
+    }
+}
+
+/// [`Error::class`]: the error's kind without any path.
+pub(crate) struct ErrorClass<'a>(&'a Error);
+
+impl std::fmt::Display for ErrorClass<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self.0 {
+            Error::Io { source, .. } => write!(f, "I/O error ({:?})", source.kind()),
+            Error::TooLarge { limit, .. } => write!(f, "larger than the {limit}-byte limit"),
+            Error::Vdf { .. } => f.write_str("malformed VDF"),
+            Error::LauncherConfig { .. } => f.write_str("malformed launcher config"),
+            Error::NotUsable { problems, .. } => {
+                write!(f, "not a usable install ({} problems)", problems.len())
+            }
+            Error::UnsupportedGame { .. } => f.write_str("unsupported game"),
         }
     }
 }

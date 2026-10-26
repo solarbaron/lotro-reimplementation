@@ -9,7 +9,9 @@
 //!   handler that alone creates the user-confirmation value (§6.3).
 //! - [`form`]: the account form with its secret buffers (§7).
 //! - [`login`]: the world list, queue, progress and error presentation (§8.3–§8.6).
-//! - [`backend`]: the one construction site of the compatibility backend (§6.2).
+//! - [`backend`]: the one construction site of the compatibility backend (§6.2), over the
+//!   live connector.
+//! - [`install_data`]: the install's records for the live connector.
 //! - [`plugin_host`]: the plugin host of a start-screen run (§4.5).
 //! - [`view`]: the screens' drawing with the bundled font.
 //! - [`window`]: the window and its event handler of a start-screen run (§4).
@@ -35,6 +37,7 @@ pub mod backend;
 pub mod flow;
 pub mod form;
 pub mod input;
+pub mod install_data;
 pub mod login;
 pub mod plugin_host;
 pub mod view;

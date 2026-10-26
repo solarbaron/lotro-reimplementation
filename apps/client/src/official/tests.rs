@@ -179,7 +179,7 @@ impl BackendFactory for Doubles {
 struct Recording(Arc<Mutex<u32>>);
 
 impl Connector for Recording {
-    fn connect(&mut self, _n: &NetworkAccess, _c: Credentials) -> Result<(), CompatError> {
+    fn connect(&mut self, _n: NetworkAccess, _c: Credentials) -> Result<(), CompatError> {
         *self.0.lock().expect("calls") += 1;
         Ok(())
     }
@@ -1264,7 +1264,7 @@ fn oe_t7d_no_plugin_host_before_the_hand_over() {
         let mut flow = super::window::start_flow(
             &args,
             super::window::flow_config(&args, Some(record.path().to_path_buf()), None),
-            Box::new(super::backend::ProductionBackends),
+            Box::new(super::backend::ProductionBackends::default()),
             slot(),
         );
         let t0 = Instant::now();
@@ -1341,7 +1341,7 @@ fn choosing_official_drops_queued_plugin_loads() {
     assert_eq!(config.queued_plugin_loads, 2);
     let mut flow = Flow::new(
         config,
-        Box::new(super::backend::ProductionBackends),
+        Box::new(super::backend::ProductionBackends::default()),
         Box::new(CountingHost::default()),
     );
     assert!(!flow.plugin_loads_dropped());
@@ -1419,7 +1419,13 @@ fn oe_t8c_backend_named_only_at_the_construction_site() {
     let ws = workspace();
     let found = uses(
         &[ws.join("apps"), ws.join("crates"), ws.join("fuzz")],
-        &["CompatBackend", "PlaceholderConnector", "Connector for"],
+        &[
+            "CompatBackend",
+            "PlaceholderConnector",
+            "Connector for",
+            "LiveConnector",
+            "LiveConfig",
+        ],
         &[ws.join("crates/compat")],
     );
     assert!(!found.is_empty());
@@ -1489,7 +1495,7 @@ fn oe_t9_placeholder_shows_not_available_after_the_warning() {
             last_world: None,
             queued_plugin_loads: 0,
         },
-        Box::new(super::backend::ProductionBackends),
+        Box::new(super::backend::ProductionBackends::default()),
         Box::new(CountingHost::default()),
     );
     let t0 = Instant::now();
@@ -2087,7 +2093,7 @@ fn oe_t12_decline_changes_nothing_and_withdraw_removes_both_files() {
     pre_accept(f.record.path(), &WarningText::shipped());
     let mut flow = Flow::new(
         config(f.record.path(), f.settings.path(), WarningText::shipped()),
-        Box::new(super::backend::ProductionBackends),
+        Box::new(super::backend::ProductionBackends::default()),
         Box::new(CountingHost::default()),
     );
     flow.wait_checks(f.t0);
@@ -2111,6 +2117,35 @@ fn oe_t12_decline_changes_nothing_and_withdraw_removes_both_files() {
         consent::check(f.record.path(), &WarningText::shipped()).reason(),
         Some(NotAcceptedReason::Missing)
     );
+}
+
+/// Withdraw ends every network right of the run at once (§5.5, §6.1): a network-access value
+/// made before it can do nothing more.
+#[test]
+fn withdraw_revokes_every_network_right() {
+    let _guard = net_lock();
+    let f = fixture(Availability::Available);
+    pre_accept(f.record.path(), &WarningText::shipped());
+    let held = tempfile::tempdir().expect("temp dir");
+    let (acc, write) = consent::accept(
+        Some(held.path()),
+        &WarningText::shipped(),
+        UserConfirmation::confirmed_by_user(),
+    );
+    let _ = write.wait();
+    let access = NetworkAccess::new(&acc.proof()).expect("access");
+    assert!(access.is_live());
+    let mut flow = Flow::new(
+        config(f.record.path(), f.settings.path(), WarningText::shipped()),
+        Box::new(super::backend::ProductionBackends::default()),
+        Box::new(CountingHost::default()),
+    );
+    flow.wait_checks(f.t0);
+    for e in click_seq(0.0, f.t0) {
+        flow.device_input(&e, &|_, _| Some(Control::StartWithdraw));
+    }
+    flow.wait_withdraw(f.t0);
+    assert!(!access.is_live(), "the right ended with the acceptance");
 }
 
 // ----- OE-T14 -----

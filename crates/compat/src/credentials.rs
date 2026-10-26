@@ -74,6 +74,17 @@ impl Credentials {
     pub fn lengths(&self) -> (usize, usize) {
         (self.account.0.len(), self.password.0.len())
     }
+
+    /// The account name and the password as typed, for the one request of the live
+    /// connector that carries them (`official-login.md` §3.4; §7.3 "One use"). Crate-private:
+    /// nothing outside this crate reads them. Both were checked to be UTF-8 when the value
+    /// was made; `None` if that ever fails, and the caller then refuses the login rather
+    /// than send an empty value.
+    pub(crate) fn expose(&self) -> Option<(&str, &str)> {
+        let account = std::str::from_utf8(&self.account.0).ok()?;
+        let password = std::str::from_utf8(&self.password.0).ok()?;
+        (!account.is_empty() && !password.is_empty()).then_some((account, password))
+    }
 }
 
 #[cfg(test)]
@@ -105,5 +116,6 @@ mod tests {
         let c = Credentials::new(b"canary-name", b"canary-pass").expect("valid");
         assert_eq!(format!("{c:?}"), "<redacted>");
         assert_eq!(c.lengths(), (11, 11));
+        assert_eq!(c.expose(), Some(("canary-name", "canary-pass")));
     }
 }

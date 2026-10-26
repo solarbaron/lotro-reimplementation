@@ -633,6 +633,14 @@ impl Flow {
         if self.pending_withdraw.is_some() {
             return;
         }
+        // No network right outlives the acceptance (§5.5, §6.1): every one of this process
+        // ends now, a connector thread that still runs included, and any session left is
+        // dropped (which cancels it).
+        tessera_compat::net_access::revoke_all();
+        self.end_login(false);
+        if let Some((session, _)) = self.characters.take() {
+            drop(session);
+        }
         self.acceptance = None;
         self.accepted_date = None;
         self.run_only = None;

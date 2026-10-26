@@ -111,6 +111,17 @@ rustls = { version = "0.23", default-features = false, features = ["ring", "std"
 sha2 = "0.10"
 snow = "0.10"
 tokio = { version = "1", default-features = false }
+# The HTTPS client of tessera-compat's network-access type (official-login.md §3, §6.2):
+# blocking HTTP/1.1 on rustls with the ring provider (decision 0030's TLS stack), TLS 1.2+
+# with the operating system's certificate verifier. `rustls-no-provider` + `_ring` is the
+# crate's `rustls` feature without its bundled root list (webpki-roots carries a licence
+# deny.toml does not list); no gzip, cookies, JSON or native TLS.
+# `_ring` is an internal feature of ureq (the leading underscore: not part of its stable
+# interface), so the version is pinned to 3.5.x and the feature list must be rechecked on
+# every ureq update. The platform verifier pulls in `webpki-root-certs` only on targets
+# without a system verifier (not one of deny.toml's `targets`), so no bundled root list
+# reaches a shipped build.
+ureq = { version = "=3.5", default-features = false, features = ["rustls-no-provider", "_ring", "platform-verifier"] }
 
 [workspace.lints.rust]
 unsafe_code = "deny"

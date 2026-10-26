@@ -16,7 +16,12 @@
 //! still has reliable packets to flush keeps its old socket until the session layer is done
 //! (`official-session.md` §6.1 states 6 and 7): it is taken out of the multiplexer with
 //! `SessionMultiplexer::remove_connection`, so datagrams addressed to it are refused there.
-//! Blobs go out with `SessionConnection::send_blob_to`, which keeps the per-queue order
+//! A connection still in its handshake (`SessionAuthSent`, `ChallengeAcceptSent`) has no
+//! session to end: when it is retired or the client is closed it is removed at once and
+//! nothing more is sent on it (no retransmitted `SessionAuthHeader`, which holds the ticket),
+//! and a challenge that arrives for it afterwards is not answered. Engineering choice, spec
+//! silent (question with the spec writers): `official-session.md` §8.2 describes the
+//! disconnect of a connected session only. Blobs go out with `SessionConnection::send_blob_to`, which keeps the per-queue order
 //! numbers and blob IDs of the connection (`official-session.md` §5.6).
 
 use std::collections::VecDeque;
@@ -213,6 +218,22 @@ enum Pending {
     Other,
 }
 
+/// Whether a connection in `state` is still in its handshake (module docs).
+fn in_handshake(state: ConnectionState) -> bool {
+    matches!(
+        state,
+        ConnectionState::SessionAuthSent | ConnectionState::ChallengeAcceptSent
+    )
+}
+
+/// Lets a connection go without sending anything more: its unsent datagrams (which may hold
+/// the ticket, `official-login.md` §6.3) are wiped.
+fn discard(mut conn: SessionConnection) {
+    while let Some(mut dgram) = conn.pop_outbound_datagram() {
+        crate::login::zeroize_vec(&mut dgram);
+    }
+}
+
 /// An old connection finishing its disconnect flush on its own socket, taken out of the
 /// multiplexer with `SessionMultiplexer::remove_connection`.
 struct Draining<T> {
@@ -259,10 +280,12 @@ impl ChatClient<StdUdpTransport> {
     /// connection attempt follows after the initial delay of §6.6.3. Every later attempt
     /// binds a fresh socket through `access`.
     ///
-    /// The client keeps `access` (and with it the consent proof) for those later binds.
-    /// The connector must drop the `ChatClient` when the session ends, and at once when
-    /// the user withdraws the acceptance: Withdraw drops the consent proof
-    /// (`official-entry.md` §5.5), and a kept `ChatClient` would keep it alive.
+    /// The client keeps `access` for those later binds. A [`NetworkAccess`] holds no
+    /// consent proof: it is the revocable network right made from one (`official-entry.md`
+    /// §6.1). Once that right is revoked (Withdraw's
+    /// [`crate::net_access::revoke_all`], §5.5, or the revocation of this one value), every
+    /// later bind, send and receive of this client fails. The connector still drops the
+    /// `ChatClient` when the session ends.
     ///
     /// # Errors
     ///
@@ -403,6 +426,17 @@ impl<T: UdpDatagramTransport> ChatClient<T> {
             return;
         };
         self.pending.clear();
+        if self
+            .mux
+            .connection(id)
+            .is_some_and(|c| in_handshake(c.state()))
+        {
+            // No session to end: removed without a tick or a flush (module docs).
+            if let Some(conn) = self.mux.remove_connection(id) {
+                discard(conn);
+            }
+            return;
+        }
         let mut lingering = false;
         if let Some(conn) = self.mux.connection_mut(id) {
             if conn.state() == ConnectionState::Connected {
@@ -637,11 +671,37 @@ impl<T: UdpDatagramTransport> ChatClient<T> {
         }
     }
 
-    /// Closes the session: a graceful transport disconnect, no reconnection. Later polls
-    /// keep running the session layer until the `Disconnect` is out.
+    /// Closes the session, with no reconnection: a graceful transport disconnect when it
+    /// is connected (later polls keep running the session layer until the `Disconnect` is
+    /// out). A connection still in its handshake is removed at once and nothing more is
+    /// sent on it (module docs), and the same holds for any old connection being drained.
     pub fn close(&mut self, now: f64) {
         self.state.close();
-        if let Some(conn) = self.conn.and_then(|id| self.mux.connection_mut(id)) {
+        self.pending.clear();
+        let mut i = 0;
+        while let Some(d) = self.draining.get(i) {
+            if in_handshake(d.conn.state()) {
+                let d = self.draining.remove(i);
+                discard(d.conn);
+            } else {
+                i += 1;
+            }
+        }
+        let Some(id) = self.conn else {
+            return;
+        };
+        let Some(state) = self.mux.connection(id).map(SessionConnection::state) else {
+            self.conn = None;
+            return;
+        };
+        if in_handshake(state) {
+            self.conn = None;
+            if let Some(conn) = self.mux.remove_connection(id) {
+                discard(conn);
+            }
+            return;
+        }
+        if let Some(conn) = self.mux.connection_mut(id) {
             conn.request_disconnect(now);
         }
     }
@@ -721,11 +781,18 @@ impl<T: UdpDatagramTransport> ChatClient<T> {
 
     /// Runs the old connections that are finishing their disconnect flush; each reads and
     /// writes only its own socket. Their events are dropped; failed reads, refused
-    /// datagrams and failed sends are counted.
+    /// datagrams and failed sends are counted. One in a handshake state has no disconnect
+    /// to finish (`retire` never drains one; this guards the rule): it is let go without a
+    /// read, a tick or a flush.
     fn poll_draining(&mut self, now: f64, buf: &mut [u8]) {
         let codecs = self.codecs.clone();
         let mut i = 0;
         while let Some(d) = self.draining.get_mut(i) {
+            if in_handshake(d.conn.state()) {
+                let d = self.draining.remove(i);
+                discard(d.conn);
+                continue;
+            }
             for _ in 0..MAX_DATAGRAMS_PER_POLL {
                 match d.transport.recv_from(buf) {
                     Ok(Some((len, src))) => {

@@ -9,7 +9,8 @@
 //! Current status: **partly done**. The stage-1 core specifications
 //! (`official-login.md`, `official-session.md`, `official-messages-world.md`,
 //! `official-messages-play.md`, `property-system.md` §10) are Accepted (decision 0042
-//! item 8); the gameplay messages of stage 2 and the live connector are not built yet.
+//! item 8); the gameplay messages of stage 2 are not built yet, and the client cannot take
+//! an official session past the character list yet.
 //! The crate contains:
 //!
 //! 1. [`consent`]: the ban-risk warning of decision 0034 §1 item 4
@@ -20,8 +21,8 @@
 //!    a consent proof makes.
 //! 3. [`backend`]: the [`CompatBackend`] shell implementing [`tessera_net::Backend`], built
 //!    only from a [`CompatConfig`] carrying a consent proof and the user's
-//!    [`Credentials`]; [`backend::availability`] says whether a live connector exists (the
-//!    backend uses the [`PlaceholderConnector`] only).
+//!    [`Credentials`], over a [`Connector`]; [`backend::availability`] says whether official
+//!    play can be offered (still `NotBuilt`, see there).
 //! 4. [`login`]: launcher configuration discovery, the SOAP authentication,
 //!    world status and login queue exchanges, ticket refresh and the client
 //!    network version discovery of decision 0042 item 1.
@@ -38,6 +39,9 @@
 //! 9. [`chat_session`]: the separate chat-server session (§6.1, §6.6): ticket
 //!    authentication, the login-status gate, heartbeat and retry policies, room
 //!    descriptors and its 59 events, over sockets made through [`net_access`].
+//! 10. [`connector`]: the live connector: the login over HTTPS, the world list and queue,
+//!     the UDP session to the character list and into the world, the play messages and the
+//!     chat server, on a thread of its own, every network operation through [`net_access`].
 //!
 //! # Rules this crate keeps
 //!
@@ -59,6 +63,7 @@
 
 pub mod backend;
 pub mod chat_session;
+pub mod connector;
 pub mod consent;
 pub mod credentials;
 pub mod login;
@@ -70,7 +75,9 @@ pub mod world;
 
 pub use backend::{
     Availability, CompatBackend, CompatConfig, Connector, PlaceholderConnector, availability,
+    live_connector_built,
 };
+pub use connector::{LiveConfig, LiveConnector};
 pub use credentials::{Credentials, CredentialsError};
 
 /// Errors returned by [`CompatBackend`] and the compatibility modules.

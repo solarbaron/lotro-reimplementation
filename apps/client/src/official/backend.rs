@@ -8,8 +8,11 @@
 //! only from §9 step 5 ([`super::flow::Flow`] after Log in), with a configuration that
 //! carries the proof made at step 2 or 3 and the user's credentials.
 
+use std::path::PathBuf;
+
+use tessera_compat::connector::LocalPaths;
 use tessera_compat::{
-    Availability, CompatBackend, CompatConfig, CompatError, Connector, PlaceholderConnector,
+    Availability, CompatBackend, CompatConfig, CompatError, Connector, LiveConfig, LiveConnector,
 };
 use tessera_net::Backend;
 
@@ -27,10 +30,22 @@ pub fn construct_backend<C: Connector + 'static>(
     Ok(Box::new(CompatBackend::with_connector(config, connector)?))
 }
 
-/// The backends of this build: the availability answer of `tessera-compat` and the
-/// placeholder connector (§4.4).
+/// The backends of this build: the availability answer of `tessera-compat` (§4.4) and the
+/// live connector over the user's install (`--game-dir`, else `TESSERA_GAME_DIR`, else
+/// discovery; found on the connector's thread). While the answer is `NotBuilt` the flow
+/// stops at §9 step 4 and [`BackendFactory::construct`] is never reached.
 #[derive(Debug, Default)]
-pub struct ProductionBackends;
+pub struct ProductionBackends {
+    game_dir: Option<PathBuf>,
+}
+
+impl ProductionBackends {
+    /// The backends for the install named by `--game-dir` (or found otherwise).
+    #[must_use]
+    pub fn new(game_dir: Option<PathBuf>) -> Self {
+        Self { game_dir }
+    }
+}
 
 impl BackendFactory for ProductionBackends {
     fn availability(&self) -> Availability {
@@ -38,6 +53,16 @@ impl BackendFactory for ProductionBackends {
     }
 
     fn construct(&mut self, config: CompatConfig) -> Result<Box<dyn Backend>, CompatError> {
-        construct_backend(config, PlaceholderConnector)
+        let live = LiveConfig {
+            // The install root and the original's settings directory (inside a Wine,
+            // Proton or CrossOver prefix for an install there) come from the locator on
+            // the connector's thread. No network version string is supplied: Tessera has
+            // no setting or option for it yet (`official-login.md` §2.4.1 step 1), so the
+            // client's version resource is read.
+            paths: LocalPaths::default(),
+            loader: super::install_data::loader(),
+            locate: Some(super::install_data::locator(self.game_dir.clone())),
+        };
+        construct_backend(config, LiveConnector::new(live))
     }
 }

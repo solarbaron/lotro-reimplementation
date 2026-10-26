@@ -1438,6 +1438,15 @@ test = false
 doc = false
 bench = false
 
+# --- M8: tessera-compat live connector, UDP session driver (official-session.md §6, §9.3; official-messages-world.md §3–§4) ---
+
+[[bin]]
+name = "compat_connector_session"
+path = "fuzz_targets/compat_connector_session.rs"
+test = false
+doc = false
+bench = false
+
 # --- M8 cleanup: tessera-compat PE version-resource reader (decision 0042 item 1) ---
 
 [[bin]]

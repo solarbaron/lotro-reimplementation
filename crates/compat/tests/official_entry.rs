@@ -458,6 +458,14 @@ fn oe_t8b_manifest_lists_no_network_io_dependency() {
             continue;
         };
         let name = name.trim();
+        // The network-access type's own HTTPS client (OE-T8 (b) names `ureq` among the
+        // names allowed in that file only, which `oe_t8b_network_names_only_in_the_network_
+        // access_file` enforces): the one network-I/O dependency, and only as the
+        // workspace's entry (rustls on ring, no native TLS).
+        if name == "ureq.workspace" || name == "ureq" {
+            assert!(line.contains("ureq.workspace = true"), "{line}");
+            continue;
+        }
         for bad in NETWORK_CRATES {
             assert!(!name.starts_with(bad), "Cargo.toml lists {name}");
         }
@@ -528,7 +536,7 @@ struct Recording {
 impl Connector for Recording {
     fn connect(
         &mut self,
-        _network: &NetworkAccess,
+        _network: NetworkAccess,
         credentials: Credentials,
     ) -> Result<(), CompatError> {
         self.calls

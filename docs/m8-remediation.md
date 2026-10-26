@@ -736,3 +736,36 @@ From the `m8-conform` fix round:
   error (the code ignores the first and refuses the second).
 - **S §3.4:** whether a server may give a new connection a recipient ID that an earlier,
   removed connection used.
+
+From the `m8-connector` build (entry E = `official-entry.md`):
+
+- **L §5.1 vs E §8.3:** §5.1 orders the world choice before `LoginAccount`, while E §8.3's progress
+  texts imply authenticating first; the connector authenticates first and keeps the ticket, so a
+  later world choice needs no password. Confirm the order.
+- **L §2.4.1 step 3:** Tessera has no prompt for a missing netver value; it ends in an error.
+- **L §3.5:** the poll interval when `PollTimer` is absent or extreme (the code clamps to 5-120 s,
+  5 s when absent).
+- **S §9.3:** whether 0x12C is sent only after 0x12F or proactively; the `logonResult` values of
+  0x130.
+- **S §5.6.2:** which delivery queue 0x12C, 0x6F, 0x24 and the RPCs use (the code uses 2).
+- **S §6.5:** whether the client closes the login connection after the referral.
+- **P §8:** play maps the world-teardown opcodes and the later 0x6C to `Event::Connected`, but a
+  `tessera-net` session refuses `Connected` outside `Connecting`, so returning from the world to
+  character select cannot be expressed; also the neutral `Command::Move` (location, velocity)
+  vs 0x24's input axes and `move_state`.
+- **P §4.5:** no neutral "loading done" signal exists, so the connector ends portal space as soon
+  as the server stamp allows.
+- **E §8.1 / §8.6:** the world-list status mapping and the refusal mapping are implementer
+  choices (recorded in the code); confirm or specify.
+- **E §8.7 vs W §6 and §3.2.5:** the character screens' create and delete need install enum
+  mappers that no spec assigns to the connector or the client.
+- **E §4.4:** what "Available" means once a live connector exists but the §8.7 hand-over is not
+  built.
+- **E §8.6:** a category for an install that cannot be used (F02), whose target is the start
+  screen.
+- **L §6.2:** whether a password or ticket may go to an HTTPS URL learned over plain HTTP (the
+  code refuses).
+- **S §3.2:** whether the `UserPreferences.ini` bind keys must be read, and the bind rules for the
+  chat socket.
+- **E OE-T8 (b):** name `ureq` in the manifest clause as the one HTTPS dependency of the
+  network-access file.

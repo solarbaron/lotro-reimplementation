@@ -1614,6 +1614,48 @@ Census (OBS, every 0x47, 0x78 and 0x79 record, 0 decode failures): 1,535 records
 > the 1,606 `Opponent` and `Self` descriptions of the census), then the starting idle (§12.5),
 > then images.
 
+> **OPEN (implementer, 2026-10-26):** (`apps/client/src/portrait/scene.rs`; steps 2–4
+> built) facts the build needed and the spec does not state; the choices below are Tessera
+> readings until answered:
+> (a) **Which records are "the entity's properties"** for steps 3 and 4. As implemented: the
+> placed figure's instance property set, then the property set of its game object (the
+> +0x09000000 rule), then the own property set of its visual entity (the 0x47 its `PhysObj`
+> names, or the 0x47 body itself); the first set that holds the property wins. A player's
+> body is the race table's `RaceTable_Gender_PlayerAvatar` object (`appearance.md` §2.1).
+> Template chains and the 0x47 `extra_sets` are not searched. With this reading every
+> entity the real-data test shows (the player as P4 and P5, another entity as P5) has a
+> description.
+> (b) **The `Name` of a `UIViewport_EntityStruct`** has the dictionary type StringInfo on
+> this install. As implemented: a StringInfo with literal text (or a plain string) gives
+> the name; one that refers to a string table gives none (an element name is not localised
+> text). The entry applies to the **first** element, in stored order, whose descriptor name
+> (bit 0x100) equals it exactly (case-sensitive), as U4 takes the first match.
+> (c) **`UIViewport_EntityPosition` and `UIViewport_EntityProperties`.** As implemented: the
+> position is a position value (its offset and its orientation, each only when present) or
+> a vector (position only), in the scene's frame, replacing the element's placement part by
+> part; a placement outside the descriptor limits is not applied. The properties are the
+> entries of the value (struct fields or array elements), each replacing the element's
+> property of the same PID or joining its set; at most 64 entries per array and 64
+> properties per entry (engineering bounds). An entry may name any element, the figure's
+> marker element of the Tessera rule below too: the figure then stands where the entry puts
+> it (the marker is looked for after the entries are applied).
+> (d) **`UIViewport_LightingScene`**: which record types it names. As implemented: a
+> property-set record (0x78–0x7F), a game object (its set) or a 0x47 entity (its own set);
+> its `UIViewport_EntityArray` entries are applied after the description's own.
+> (e) **An image description** (`UIViewport_Image`): with no rule for drawing the image
+> (§12.3 OPEN), the portrait shows no figure and is hidden as §12.4 says.
+> (f) Step 4 for every `TargetViewport`: when the entity lacks the camera property (or the
+> element has no `UI_TargetViewport_CameraPropertyName`) the key labelled `Camera_1` is
+> used, whatever key the element stores (a stored key of 0 included); the element's own
+> key only when that label does not resolve.
+> (g) **What counts as "the target's own camera entry"** of the §12.2 answer (scene camera
+> as it stands, else the stand-in). As implemented: an entry that names the camera element
+> U4 picks and writes at least one property or replaces its placement. An entry with a name
+> alone, or whose only change is a position outside the descriptor limits (not applied),
+> does not count, and the stand-in stays. An entry with properties alone (for example
+> `CameraFOV`, no position) counts, so the scene camera is used at its own placement with
+> that field of view. Is that the intended reading?
+
 > **OPEN:** where the figure stands in the portrait scene (no marker element was traced for
 > `TargetViewport`). **Tessera rule:** the rule of `character-screens.md` §2.1.2 (the first
 > Physics element whose setup has the holding location `Holding_Loc_Entity_00`), else the
@@ -1648,6 +1690,17 @@ values; values are read from the install at run time.
 > of view, not observed); the per-target camera entries of §12.1 step 3 are taken to give the
 > close framing. **Tessera rule:** for a target whose description gives no camera entry, the
 > stand-in camera may stay in use after the scene is drawn.
+
+> **OPEN (implementer, 2026-10-26):** (`apps/client/src/portrait/scene.rs`) the scene's
+> light curves: the portrait is a still picture (§12.5 stand-in), so a Light element whose
+> `LightDiffuseIntensity` is not constant is evaluated at time 0, and a light driven by the
+> day cycle uses its day variant (the creation viewport's rule, `character-screens.md`
+> §2.1.1). The ambient input is `UICore_Viewport_AmbientLight` as stored values (the
+> portraits leave it at the dictionary default, opaque black), the hemispheric input zero;
+> the viewport's own fog (`UseFog`, near, far, colour) applies unless the scene's
+> `fog_override` replaces it (U3). With black ambient the figure is lit by the three scene
+> lights alone; please confirm that this is the intended look (no other ambient term in a
+> portrait).
 
 <a id="s12-3"></a>
 ### 12.3 Render target, background and opacity mask (BIN, W32; Tessera rules)

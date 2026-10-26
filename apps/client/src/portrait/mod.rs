@@ -3,9 +3,8 @@
 //! §5.1, CU32; `ui-widgets.md` §12.1–§12.4): each `TargetViewport` (`PlayerPortrait` of P4,
 //! `OpponentPortrait` of P5) gets a [`ViewportTarget`] of its render-to-texture size (62 × 62
 //! with the install), the entity's figure is drawn into it through the shared figure path
-//! with the field of view and far plane of the viewport's scene camera ([`scene`]:
-//! `Camera_1` of scene 0x21000004 with the install) from a head-and-shoulders placement
-//! (below), onto the target cleared to the background colour, the opacity mask (a texture
+//! through the viewport's scene camera ([`scene`]: `Camera_1` of scene 0x21000004 with the
+//! install; below), onto the target cleared to the background colour, the opacity mask (a texture
 //! list, 0x40000E4B and 0x40000E4C with the install) is applied, and the target is
 //! registered as the element's external content. While no figure is drawn (no entity, a
 //! figure still loading or one the client cannot draw, a scene without the viewport's
@@ -13,8 +12,9 @@
 //! children (§12.4).
 //!
 //! Frame cost: a target is drawn again only when what it shows changes (the entity, its
-//! figure as [`PortraitFigures::figure_key`] reports it, the scene and camera key, the size,
-//! the background or the mask), never every frame; the UI composes the last drawing. A
+//! figure as [`PortraitFigures::figure_key`] reports it, the scene and camera key, the scene
+//! read, the viewport's ambient and fog values, the size, the background or the mask), never
+//! every frame; the UI composes the last drawing. A
 //! figure that could not be drawn is tried again every [`RETRY_FRAMES`] frames. A drawn one
 //! is checked again every [`RECHECK_FRAMES`] frames until it is complete: [`STABLE_CHECKS`]
 //! checks in a row drew no more of it **while** the figure reported itself settled
@@ -33,28 +33,35 @@
 //! portrait's texture therefore stays registered until the next call, so a list painted
 //! before the hide still draws its last drawing rather than the element's own media alone.
 //!
-//! Tessera rules and known gaps here:
-//! - the portrait option of §12.1 step 2 is on (Tessera's settings have no such option);
-//! - §12.1 step 3 (the entity's `UIViewport_Array`: per-target camera framing,
-//!   `UIViewport_Image`, `UIViewport_LightingScene`, `UIViewport_StartingIdle`) is not
-//!   built (which record holds an entity's `UIViewport_Array` is not stated). In data that
-//!   step replaces the camera's placement per target; seen from `Camera_1`'s own placement
-//!   the player's figure is small and off-centre. So, as a stand-in for the per-target
-//!   placement and **not** a reading of the spec, the camera keeps the scene camera's field
-//!   of view and far plane and is placed by [`head_camera`]: level, in front of the figure,
-//!   framing its head and shoulders from the posed figure's joints. The exact scene
-//!   placement is [`PortraitScene::figure_camera`], for when step 3 is built;
-//! - §12.1 step 4's `UI_TargetViewport_CameraPropertyName` lookup is not built (no record
-//!   of the install stores `Character_PortraitCameraName`, so the element's own key, the
-//!   `Camera_1` key, is what the install uses);
-//! - **deviation from §12.2:** the figure is drawn by the walker's portrait draw
-//!   ([`Walker::draw_entity_portrait`]: the figure alone at the origin, unturned, in the
-//!   walker's unlit pipeline with its fixed directional light and ambient); the scene's
-//!   three lights
-//!   and the viewport's ambient value (`UICore_Viewport_AmbientLight`, read into
-//!   [`PortraitSpec::ambient`]) are not applied, and the scene's own objects are not drawn.
-//!   That needs a lit portrait draw from the walker (as the creation viewport's
-//!   `draw_preview`), outside this module;
+//! The scene, its camera, its lights and the target's own viewport description are read
+//! on a worker per (scene, camera key, camera property, viewport type, target) ([`scene`]):
+//!
+//! - §12.1 step 2: the portrait option ([`CombatPortraits::set_portrait_option`],
+//!   [`portrait_option`] over a `[Render]` look-up for `EnablePortraits`): while it is off, an
+//!   element with `UI_TargetViewport_DisableObjectCreationFromPreference` draws no figure and
+//!   is hidden. **Not fed by the client host yet:** nothing outside the tests sets it, so it
+//!   stays on in every run (the windowed host's `[Render]` reading lies outside this module);
+////! - §12.1 step 3: the target's `UIViewport_Array` description of the viewport's
+//!   `UIViewport_Type` (its entity entries and its lighting scene's are applied to the
+//!   scene's elements by name). A description with a `UIViewport_Image` shows no figure
+//!   (how the image is drawn is OPEN, §12.3: the portrait is hidden, §12.4). Its starting
+//!   idle is recorded only (a still picture, below);
+//! - §12.1 step 4: the camera key from the entity's property named by
+//!   `UI_TargetViewport_CameraPropertyName`, else `Camera_1` (the scene is read even when the
+//!   element stores no camera key of its own);
+//! - camera: when an entry of the description changed the camera element (wrote one of its
+//!   properties or replaced its placement; an entry that changes nothing does not count),
+//!   the scene's camera itself
+//!   ([`PortraitScene::figure_camera`]); otherwise the §12.2 Tessera stand-in: the scene
+//!   camera's field of view and far plane from [`head_camera`]'s placement (level, in front
+//!   of the figure, framing its head and shoulders from the posed figure's joints);
+//! - lighting: [`PortraitJob::lighting`] holds the scene's lights in the figure's frame, the
+//!   viewport's `UICore_Viewport_AmbientLight` and the fog of U3 (the scene's override, else
+//!   the viewport's `UseFog` values) as a lit pass's [`tessera_render::FrameLighting`]
+//!   ([`portrait_lighting`]). **Not applied by the walker's figures:**
+//!   [`Walker::draw_entity_portrait`] draws the figure unlit with its fixed light (the
+//!   walker has no lit draw of an entity's figure alone yet, outside this module); a
+//!   [`PortraitFigures`] with a lit draw uses it;
 //! - a still picture: the figure's idle animation does not redraw the target;
 //! - with the walker, any entity whose character figure is built can be drawn
 //!   ([`WalkerFigures`], [`Walker::draw_entity_portrait`]): the player, a placed NPC, another
@@ -82,7 +89,10 @@ pub mod mask;
 pub mod scene;
 
 pub use mask::{MAX_MASK_SIDE, MaskError, MaskImage, alpha_from_red, has_alpha_channel, load_mask};
-pub use scene::{PortraitScene, SceneCamera, read_portrait_scene};
+pub use scene::{
+    PortraitLighting, PortraitScene, PortraitTarget, SceneCamera, SceneRequest, ViewportLook,
+    ViewportPids, portrait_lighting, read_portrait_scene,
+};
 
 /// External-content id of `PlayerPortrait` (P4); `OpponentPortrait` (P5) is the next one
 /// (the client's id space: the paperdoll's are 0x0050_xxxx, the creation viewport's
@@ -102,8 +112,9 @@ pub const STABLE_CHECKS: u8 = 3;
 /// Most distinct masks kept (Tessera bound; the install has two).
 pub const MAX_MASKS: usize = 16;
 
-/// Most distinct (scene, camera key) pairs kept (Tessera bound; the install has one).
-pub const MAX_SCENES: usize = 16;
+/// Most scene reads kept, one per (scene, camera key, camera property, viewport type,
+/// target) (Tessera bound); the least recently used finished one makes room.
+pub const MAX_SCENES: usize = 64;
 
 /// The content id of a frame's portrait.
 #[must_use]
@@ -254,14 +265,50 @@ impl Masks {
     }
 }
 
-/// Reads a viewport's scene for a camera key (on a worker thread): [`read_portrait_scene`]
-/// over the install, or a test's own.
-pub type SceneReader = Arc<dyn Fn(Did, u32) -> Result<PortraitScene, String> + Send + Sync>;
+/// Reads a viewport's scenes on worker threads: [`InstallScenes`] over the install, or a
+/// test's own.
+pub trait SceneReader: Send + Sync {
+    /// The PIDs of the viewport properties read on the frame thread.
+    ///
+    /// # Errors
+    ///
+    /// A text when they cannot be resolved (the §12 defaults then apply).
+    fn viewport_pids(&self) -> Result<ViewportPids, String>;
+
+    /// The scene of `request` with its target's description ([`read_portrait_scene`]).
+    ///
+    /// # Errors
+    ///
+    /// A text when the scene cannot be read (nothing is drawn, U4 rule 4).
+    fn scene(&self, request: &SceneRequest) -> Result<PortraitScene, String>;
+}
+
+/// The scene reader over an install ([`read_portrait_scene`] with one shared
+/// [`GameData`]).
+pub struct InstallScenes {
+    gd: GameData<Arc<dyn RecordSource>>,
+}
+
+impl std::fmt::Debug for InstallScenes {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("InstallScenes").finish_non_exhaustive()
+    }
+}
+
+impl SceneReader for InstallScenes {
+    fn viewport_pids(&self) -> Result<ViewportPids, String> {
+        scene::viewport_pids(&self.gd)
+    }
+
+    fn scene(&self, request: &SceneRequest) -> Result<PortraitScene, String> {
+        read_portrait_scene(&self.gd, request)
+    }
+}
 
 #[derive(Debug)]
 enum SceneState {
     Loading,
-    Ready(Arc<PortraitScene>),
+    Ready(Arc<PortraitScene>, u64),
     Failed,
 }
 
@@ -270,21 +317,49 @@ enum SceneState {
 enum SceneNow {
     /// Still being read.
     Pending,
-    /// Read: its camera when it has the viewport's.
-    Ready(Option<SceneCamera>),
-    /// No scene, no camera key, or the scene could not be read: nothing is drawn (U4
-    /// rule 4).
+    /// Read, with the generation of the result.
+    Ready(Arc<PortraitScene>, u64),
+    /// No scene, or the scene could not be read: nothing is drawn (U4 rule 4).
     Failed,
-    /// No scene reader (tests and tools): the job carries no camera.
+    /// No scene reader (tests and tools): the job carries no scene.
     Unread,
 }
 
-type SceneResult = ((u32, u32), Result<PortraitScene, String>);
+/// The viewport PIDs as the frame sees them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PidsNow {
+    Pending,
+    Ready(ViewportPids),
+}
 
-/// The scenes by (scene DID, camera key): read on worker threads.
+/// What identifies one scene read ([`SceneRequest`] without the instance set itself).
+type SceneKey = (u32, u32, u32, u32, Option<(tessera_net::Body, Option<u64>)>);
+
+fn scene_key(r: &SceneRequest) -> SceneKey {
+    (
+        r.scene.0,
+        r.camera_key,
+        r.camera_property,
+        r.viewport_type,
+        r.target.as_ref().map(|t| (t.body, t.instance_key)),
+    )
+}
+
+type SceneResult = (SceneKey, Result<PortraitScene, String>);
+
+/// The scenes by request: read on worker threads; the oldest finished entries make room
+/// past [`MAX_SCENES`].
 struct Scenes {
-    reader: Option<SceneReader>,
-    state: BTreeMap<(u32, u32), SceneState>,
+    reader: Option<Arc<dyn SceneReader>>,
+    state: BTreeMap<SceneKey, (SceneState, u64)>,
+    pids: Option<Result<ViewportPids, ()>>,
+    pids_rx: Option<Receiver<Result<ViewportPids, String>>>,
+    /// Counter of requests and results (ages and generations).
+    clock: u64,
+    /// Scene workers started whose result has not arrived yet; not reset by
+    /// [`Scenes::release`], so the workers of released entries still count against
+    /// [`MAX_SCENES`].
+    in_flight: usize,
     tx: Sender<SceneResult>,
     rx: Receiver<SceneResult>,
 }
@@ -294,24 +369,51 @@ impl std::fmt::Debug for Scenes {
         f.debug_struct("Scenes")
             .field("reader", &self.reader.is_some())
             .field("state", &self.state)
+            .field("pids", &self.pids)
             .finish_non_exhaustive()
     }
 }
 
 impl Scenes {
-    fn new(reader: Option<SceneReader>) -> Self {
+    fn new(reader: Option<Arc<dyn SceneReader>>) -> Self {
         let (tx, rx) = channel();
         Self {
             reader,
             state: BTreeMap::new(),
+            pids: None,
+            pids_rx: None,
+            clock: 0,
+            in_flight: 0,
             tx,
             rx,
         }
     }
 
+    fn tick(&mut self) -> u64 {
+        self.clock = self.clock.wrapping_add(1);
+        self.clock
+    }
+
     fn poll(&mut self) {
+        if let Some(rx) = &self.pids_rx {
+            match rx.try_recv() {
+                Ok(r) => {
+                    self.pids = Some(r.map_err(|e| {
+                        tracing::warn!("portrait viewport properties: {e}; defaults used");
+                    }));
+                    self.pids_rx = None;
+                }
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    self.pids = Some(Err(()));
+                    self.pids_rx = None;
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => {}
+            }
+        }
         while let Ok((key, result)) = self.rx.try_recv() {
-            let Some(s @ SceneState::Loading) = self.state.get_mut(&key) else {
+            self.in_flight = self.in_flight.saturating_sub(1);
+            let generation = self.tick();
+            let Some((s @ SceneState::Loading, _)) = self.state.get_mut(&key) else {
                 continue;
             };
             *s = match result {
@@ -319,11 +421,11 @@ impl Scenes {
                     if scene.camera.is_none() {
                         tracing::warn!(
                             scene = format_args!("{:#010x}", key.0),
-                            camera = format_args!("{:#010x}", key.1),
+                            camera = format_args!("{:#010x}", scene.camera_key),
                             "portrait scene has no such camera; nothing is drawn"
                         );
                     }
-                    SceneState::Ready(Arc::new(scene))
+                    SceneState::Ready(Arc::new(scene), generation)
                 }
                 Err(e) => {
                     tracing::warn!(
@@ -336,59 +438,122 @@ impl Scenes {
         }
     }
 
-    fn get(&mut self, scene: Option<Did>, camera: Option<u32>) -> SceneNow {
+    /// The viewport PIDs: asked once from the reader on a worker; without a reader, or
+    /// when they cannot be resolved, none (the §12 defaults apply).
+    fn pids(&mut self) -> PidsNow {
+        match &self.pids {
+            Some(Ok(p)) => return PidsNow::Ready(*p),
+            Some(Err(())) => return PidsNow::Ready(ViewportPids::default()),
+            None => {}
+        }
+        let Some(reader) = self.reader.clone() else {
+            return PidsNow::Ready(ViewportPids::default());
+        };
+        if self.pids_rx.is_some() {
+            return PidsNow::Pending;
+        }
+        let (tx, rx) = channel();
+        match std::thread::Builder::new()
+            .name("portrait-pids".into())
+            .spawn(move || {
+                let _ = tx.send(reader.viewport_pids());
+            }) {
+            Ok(_) => {
+                self.pids_rx = Some(rx);
+                PidsNow::Pending
+            }
+            Err(e) => {
+                tracing::warn!("portrait viewport properties worker: {e}");
+                self.pids = Some(Err(()));
+                PidsNow::Ready(ViewportPids::default())
+            }
+        }
+    }
+
+    fn get(&mut self, request: Option<SceneRequest>) -> SceneNow {
         let Some(reader) = self.reader.clone() else {
             return SceneNow::Unread;
         };
-        let (Some(scene), Some(camera)) = (scene.filter(|d| d.0 != 0), camera.filter(|k| *k != 0))
-        else {
+        let Some(request) = request else {
             return SceneNow::Failed;
         };
-        let key = (scene.0, camera);
-        if let Some(s) = self.state.get(&key) {
+        let key = scene_key(&request);
+        let now = self.tick();
+        if let Some((s, age)) = self.state.get_mut(&key) {
+            *age = now;
             return match s {
                 SceneState::Loading => SceneNow::Pending,
-                SceneState::Ready(s) => SceneNow::Ready(s.camera),
+                SceneState::Ready(s, g) => SceneNow::Ready(Arc::clone(s), *g),
                 SceneState::Failed => SceneNow::Failed,
             };
         }
         if self.state.len() >= MAX_SCENES {
-            return SceneNow::Failed;
+            // Make room: the least recently asked-for finished entry goes.
+            let oldest = self
+                .state
+                .iter()
+                .filter(|(_, (s, _))| !matches!(s, SceneState::Loading))
+                .min_by_key(|(_, (_, age))| *age)
+                .map(|(k, _)| *k);
+            match oldest {
+                Some(k) => {
+                    self.state.remove(&k);
+                }
+                None => return SceneNow::Pending,
+            }
+        }
+        if self.in_flight >= MAX_SCENES {
+            // Workers of released entries are still running.
+            return SceneNow::Pending;
         }
         let tx = self.tx.clone();
+        let job_key = key;
         let spawned = std::thread::Builder::new()
             .name("portrait-scene".into())
             .spawn(move || {
-                let _ = tx.send((key, reader(scene, camera)));
+                // Every worker reports, so that it stops counting as in flight.
+                let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    reader.scene(&request)
+                }))
+                .unwrap_or_else(|_| Err("the scene reader panicked".into()));
+                let _ = tx.send((job_key, result));
             });
         match spawned {
             Ok(_) => {
-                self.state.insert(key, SceneState::Loading);
+                self.in_flight += 1;
+                self.state.insert(key, (SceneState::Loading, now));
                 SceneNow::Pending
             }
             Err(e) => {
                 tracing::warn!("portrait scene worker: {e}");
-                self.state.insert(key, SceneState::Failed);
+                self.state.insert(key, (SceneState::Failed, now));
                 SceneNow::Failed
             }
         }
     }
 
+    /// Forgets every entry; workers still running keep counting as in flight until their
+    /// results arrive (and are dropped, or fill a new `Loading` entry of the same request).
     fn release(&mut self) {
         self.state.clear();
     }
 }
 
 /// One portrait to draw.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct PortraitJob {
     /// The element and its viewport properties.
     pub spec: PortraitSpec,
     /// The entity whose figure is drawn.
     pub entity: EntityId,
-    /// The viewport's scene camera as the scene stores it (module docs: its field of view
-    /// and far plane are used); `None` without a scene reader ([`CombatPortraits::new`]).
+    /// The viewport's scene camera after the target's description (module docs);
+    /// `None` without a scene reader ([`CombatPortraits::new`]).
     pub camera: Option<SceneCamera>,
+    /// The scene as read for this target; `None` without a scene reader.
+    pub scene: Option<Arc<PortraitScene>>,
+    /// The portrait's lighting (§12.2: the scene's lights, the viewport's ambient and fog,
+    /// in the figure's frame); `None` without a scene reader.
+    pub lighting: Option<Arc<PortraitLighting>>,
 }
 
 /// Draws the figures of portraits (the walker's figure path, or a test's synthetic one).
@@ -399,6 +564,13 @@ pub trait PortraitFigures {
     /// The key of `entity`'s figure when it can be drawn now; `None` while it is loading,
     /// failed or cannot be drawn (the portrait is then hidden, `ui-widgets.md` §12.4).
     fn figure_key(&self, entity: EntityId) -> Option<Self::Key>;
+
+    /// The records of the figure `key` identifies, whose properties may hold the target's
+    /// viewport description (§12.1 steps 3 and 4). The default: none (no description).
+    fn target_of(&self, key: &Self::Key) -> Option<PortraitTarget> {
+        let _ = key;
+        None
+    }
 
     /// Whether everything `entity`'s figure draws with (its parts and their textures) has
     /// arrived, or failed for good. A drawing is complete only once it was checked while
@@ -435,6 +607,14 @@ impl PortraitFigures for WalkerFigures<'_> {
             .then_some(f)
     }
 
+    fn target_of(&self, key: &FigureStatus) -> Option<PortraitTarget> {
+        Some(PortraitTarget {
+            body: key.request.body,
+            instance: key.request.instance.clone(),
+            instance_key: key.request.instance_key,
+        })
+    }
+
     /// The walker's own settled state ([`Walker::settled`]): it covers every part and
     /// texture the walker holds, the figure's among them (the walker reports no narrower
     /// one), so a portrait keeps being checked while the world around it loads.
@@ -460,22 +640,33 @@ impl PortraitFigures for WalkerFigures<'_> {
             .iter()
             .map(|p| p.meshes().len())
             .sum();
-        // The walker frames the whole figure (the paperdoll's view); the portrait frames its
-        // head and shoulders (module docs) from the posed figure's joints, placed as the
-        // walker's portrait places it (at the origin, unturned), with the scene camera's
-        // field of view and far plane.
-        let bounds = self.0.characters().posed_bounds(
-            id,
-            &|scale| tessera_render::glam::Mat4::from_scale(scale),
-            0.0,
-        );
-        let camera = bounds.and_then(|(lo, hi)| head_camera(lo, hi, &scene_camera))?;
+        // A camera the target's description placed (§12.1 step 3) is used as the scene
+        // stands, moved into the figure's frame (the walker draws it at the origin,
+        // unturned); otherwise the head-and-shoulders stand-in (§12.2 Tessera rule) from
+        // the posed figure's joints, with the scene camera's field of view and far plane.
+        let described = job
+            .scene
+            .as_ref()
+            .filter(|s| s.camera_described)
+            .and_then(|s| s.figure_camera());
+        let camera = match described {
+            Some(c) => c,
+            None => {
+                let bounds = self.0.characters().posed_bounds(
+                    id,
+                    &|scale| tessera_render::glam::Mat4::from_scale(scale),
+                    0.0,
+                );
+                bounds.and_then(|(lo, hi)| head_camera(lo, hi, &scene_camera))?
+            }
+        };
         let aspect = frame.aspect();
         for i in first..frame.passes().len() {
             if let Some(p) = frame.pass_mut(i) {
                 p.set_camera(&camera, aspect);
             }
         }
+        // `job.lighting` is not applied: the walker's portrait draw is unlit (module docs).
         Some(drawn)
     }
 }
@@ -545,6 +736,10 @@ struct DrawKey<K> {
     size: (u32, u32),
     background: u32,
     mask: Option<TextureId>,
+    /// The generation of the scene read ([`Scenes`]), `None` without a reader.
+    scene_read: Option<u64>,
+    /// The viewport's own values (ambient, fog, camera property).
+    look: ViewportLook,
 }
 
 #[derive(Debug)]
@@ -568,6 +763,8 @@ struct Slot<K> {
     /// The target is registered in the external table but the portrait was hidden: it is
     /// unregistered at the next frame (module docs, "Driving it").
     unregister: bool,
+    /// The job of the current drawing ([`CombatPortraits::drawn_job`]).
+    job: Option<PortraitJob>,
 }
 
 impl<K> Slot<K> {
@@ -583,6 +780,7 @@ impl<K> Slot<K> {
             complete: false,
             recheck_in: 0,
             unregister: false,
+            job: None,
         }
     }
 }
@@ -600,6 +798,17 @@ pub struct PortraitStats {
     pub targets: u64,
 }
 
+/// What [`CombatPortraits::frame`] hands one portrait.
+#[derive(Debug, Clone, Copy)]
+struct SlotInput {
+    spec: PortraitSpec,
+    entity: Option<EntityId>,
+    /// The viewport's own values; `None` while its properties are being resolved.
+    look: Option<ViewportLook>,
+    /// The portrait option (§12.1 step 2).
+    option: bool,
+}
+
 /// The portraits of P4 and P5 (module docs).
 #[derive(Debug)]
 pub struct CombatPortraits<K> {
@@ -607,6 +816,8 @@ pub struct CombatPortraits<K> {
     masks: Masks,
     scenes: Scenes,
     stats: PortraitStats,
+    /// The portrait option of §12.1 step 2 ([`CombatPortraits::set_portrait_option`]).
+    portrait_option: bool,
 }
 
 /// The straight linear RGBA of a 0xAARRGGBB colour (stored values, `render.md` §6.10).
@@ -616,12 +827,42 @@ pub fn argb_to_rgba(c: u32) -> [f32; 4] {
     [ch(16), ch(8), ch(0), ch(24)]
 }
 
-/// The scene reader over an install ([`read_portrait_scene`] with one shared
-/// [`GameData`]).
+/// The scene reader over an install ([`InstallScenes`]).
 #[must_use]
-pub fn install_scene_reader(source: Arc<dyn RecordSource>) -> SceneReader {
-    let gd = Arc::new(GameData::new(source));
-    Arc::new(move |scene, camera| read_portrait_scene(&*gd, scene, camera))
+pub fn install_scene_reader(source: Arc<dyn RecordSource>) -> Arc<dyn SceneReader> {
+    Arc::new(InstallScenes {
+        gd: GameData::new(source),
+    })
+}
+
+/// The portrait option of `ui-widgets.md` §12.1 step 2 from a stored `[Render]
+/// EnablePortraits` value (§12.1 revision-4 answer, Tessera rule): `False`, compared
+/// without regard to case (surrounding white space ignored), turns it off; any other value
+/// or none leaves it on.
+#[must_use]
+pub fn portrait_option_value(stored: Option<&str>) -> bool {
+    !stored.is_some_and(|v| v.trim().eq_ignore_ascii_case("false"))
+}
+
+/// The portrait option from a look-up of `[Render]` keys ([`portrait_option_value`] of the
+/// value `render` gives for [`PORTRAIT_OPTION_KEY`]). A host passes its layered `[Render]`
+/// look-up (`--render-pref KEY=VALUE` over the user's `UserPreferences.ini` in windowed
+/// runs, `walker.md` §14.10), so both layers are honoured; a look-up that finds nothing
+/// leaves the option on. The client host does not call it yet (module docs).
+#[must_use]
+pub fn portrait_option<'a>(render: impl FnOnce(&str) -> Option<&'a str>) -> bool {
+    portrait_option_value(render(PORTRAIT_OPTION_KEY))
+}
+
+/// The `[Render]` key of the portrait option (§12.1 step 2, revision-4 answer).
+pub const PORTRAIT_OPTION_KEY: &str = "EnablePortraits";
+
+/// Whether a portrait may build its figure (§12.1 step 2): not while its element has
+/// `UI_TargetViewport_DisableObjectCreationFromPreference` (`needs_preference`) and the
+/// option is off.
+#[must_use]
+pub fn figure_allowed(needs_preference: bool, option: bool) -> bool {
+    option || !needs_preference
 }
 
 impl<K: Clone + PartialEq + std::fmt::Debug> CombatPortraits<K> {
@@ -635,6 +876,7 @@ impl<K: Clone + PartialEq + std::fmt::Debug> CombatPortraits<K> {
             masks: Masks::new(source),
             scenes: Scenes::new(None),
             stats: PortraitStats::default(),
+            portrait_option: true,
         }
     }
 
@@ -647,9 +889,31 @@ impl<K: Clone + PartialEq + std::fmt::Debug> CombatPortraits<K> {
     /// Reads the viewports' scenes with `reader`: a portrait is then drawn only through its
     /// scene's camera, and hidden when the scene has none (U4 rule 4).
     #[must_use]
-    pub fn with_scene_reader(mut self, reader: SceneReader) -> Self {
+    pub fn with_scene_reader(mut self, reader: Arc<dyn SceneReader>) -> Self {
         self.scenes = Scenes::new(Some(reader));
         self
+    }
+
+    /// Sets the portrait option of §12.1 step 2 ([`portrait_option`]; on from the start; the
+    /// client host does not call it yet, module docs).
+    /// While it is off, a portrait whose element has
+    /// `UI_TargetViewport_DisableObjectCreationFromPreference` draws no figure and is hidden
+    /// (§12.4); turning it on draws the figure again in the next frame.
+    pub fn set_portrait_option(&mut self, on: bool) {
+        self.portrait_option = on;
+    }
+
+    /// The portrait option (§12.1 step 2).
+    #[must_use]
+    pub fn portrait_option(&self) -> bool {
+        self.portrait_option
+    }
+
+    /// Scene reads started whose results the frames have not received yet (diagnostics
+    /// and tests: at 0, every read asked for so far has reached [`CombatPortraits::frame`]).
+    #[must_use]
+    pub fn scene_reads_in_flight(&self) -> usize {
+        self.scenes.in_flight
     }
 
     /// Counters.
@@ -670,6 +934,14 @@ impl<K: Clone + PartialEq + std::fmt::Debug> CombatPortraits<K> {
         self.slots
             .iter()
             .any(|s| s.kind == kind && s.drawn.is_some())
+    }
+
+    /// What a frame's portrait drew its current drawing with (its scene read and lighting;
+    /// tests and tools), `None` while it shows none.
+    #[must_use]
+    pub fn drawn_job(&self, kind: FrameKind) -> Option<&PortraitJob> {
+        let s = self.slots.iter().find(|s| s.kind == kind)?;
+        s.drawn.as_ref().and(s.job.as_ref())
     }
 
     /// Whether a frame's portrait shows a complete drawing (module docs; tests).
@@ -694,6 +966,7 @@ impl<K: Clone + PartialEq + std::fmt::Debug> CombatPortraits<K> {
     ) {
         self.masks.poll(renderer);
         self.scenes.poll();
+        let pids = self.scenes.pids();
         let views = combat.portraits(ui);
         for slot in &mut self.slots {
             let id = content_id(slot.kind);
@@ -708,13 +981,23 @@ impl<K: Clone + PartialEq + std::fmt::Debug> CombatPortraits<K> {
                 // state.
                 continue;
             }
+            let look = match pids {
+                PidsNow::Ready(p) => {
+                    Some(ViewportLook::read(ui, v.spec.element, &p, v.spec.ambient))
+                }
+                PidsNow::Pending => None,
+            };
             let shown = Self::slot_frame(
                 slot,
                 &mut self.masks,
                 &mut self.scenes,
                 &mut self.stats,
-                v.spec,
-                v.entity,
+                SlotInput {
+                    spec: v.spec,
+                    entity: v.entity,
+                    look,
+                    option: self.portrait_option,
+                },
                 renderer,
                 figures,
             );
@@ -739,19 +1022,24 @@ impl<K: Clone + PartialEq + std::fmt::Debug> CombatPortraits<K> {
     }
 
     /// One portrait; returns whether its target shows a drawing.
-    #[allow(clippy::too_many_arguments)]
     fn slot_frame<F: PortraitFigures<Key = K>>(
         slot: &mut Slot<K>,
         masks: &mut Masks,
         scenes: &mut Scenes,
         stats: &mut PortraitStats,
-        spec: PortraitSpec,
-        entity: Option<EntityId>,
+        input: SlotInput,
         renderer: &mut Renderer<'_>,
         figures: &mut F,
     ) -> bool {
-        // §12.1 step 1 (no entity) and §12.4 (no figure that can be drawn).
-        let Some(entity) = entity else {
+        let SlotInput {
+            spec,
+            entity,
+            look,
+            option,
+        } = input;
+        // §12.1 step 1 (no entity), step 2 (the portrait option) and §12.4 (no figure that
+        // can be drawn).
+        let Some(entity) = entity.filter(|_| figure_allowed(spec.needs_preference, option)) else {
             slot.drawn = None;
             return false;
         };
@@ -759,23 +1047,49 @@ impl<K: Clone + PartialEq + std::fmt::Debug> CombatPortraits<K> {
             slot.drawn = None;
             return false;
         };
-        // While the mask or the scene loads, a drawing of the same entity is kept (no
-        // unmasked square, no other entity's figure).
+        // While the mask, the viewport's properties or the scene load, a drawing of the same
+        // entity is kept (no unmasked square, no other entity's figure).
         let keep = slot.drawn.as_ref().is_some_and(|d| d.entity == entity);
         let mask = match masks.get(spec.mask) {
             MaskNow::Pending => return keep,
             MaskNow::Ready(t) => Some(t),
             MaskNow::None => None,
         };
-        let camera = match scenes.get(spec.scene, spec.camera) {
+        let Some(look) = look else {
+            return keep;
+        };
+        // §12.1 step 4 sets the camera key on every update (the entity's camera property,
+        // else `Camera_1`), so the scene is read even when the element stores no key of its
+        // own (0); the reader resolves the key, and U4 rule 4 hides the portrait when the
+        // resulting key names no camera.
+        let request = spec.scene.filter(|d| d.0 != 0).map(|scene| SceneRequest {
+            scene,
+            camera_key: spec.camera.unwrap_or(0),
+            camera_property: look.camera_property,
+            viewport_type: spec.viewport_type,
+            target: figures.target_of(&figure),
+        });
+        let (scene, scene_read) = match scenes.get(request) {
             SceneNow::Pending => return keep,
-            SceneNow::Ready(Some(c)) => Some(c),
-            SceneNow::Ready(None) | SceneNow::Failed => {
-                // U4 rule 4: nothing is drawn.
+            SceneNow::Ready(s, generation) => {
+                if s.camera.is_none() {
+                    // U4 rule 4: nothing is drawn.
+                    slot.drawn = None;
+                    return false;
+                }
+                if s.image.is_some() {
+                    // §12.1 step 3: an image in place of the figure; how it is drawn is
+                    // OPEN (§12.3), so no figure is drawn (§12.4).
+                    slot.drawn = None;
+                    return false;
+                }
+                (Some(s), Some(generation))
+            }
+            SceneNow::Failed => {
                 slot.drawn = None;
                 return false;
             }
-            SceneNow::Unread => None,
+            SceneNow::Unread => (None, None),
         };
         let key = DrawKey {
             entity,
@@ -785,6 +1099,8 @@ impl<K: Clone + PartialEq + std::fmt::Debug> CombatPortraits<K> {
             size: spec.target_size,
             background: spec.background,
             mask,
+            scene_read,
+            look,
         };
         let same = slot.drawn.as_ref() == Some(&key);
         if same {
@@ -840,7 +1156,11 @@ impl<K: Clone + PartialEq + std::fmt::Debug> CombatPortraits<K> {
         let job = PortraitJob {
             spec,
             entity,
-            camera,
+            camera: scene.as_ref().and_then(|s| s.camera),
+            lighting: scene
+                .as_ref()
+                .map(|s| Arc::new(portrait_lighting(s, &look, 0.0))),
+            scene,
         };
         let drawn = match renderer.begin_viewport_frame(target) {
             Ok(mut frame) => {
@@ -873,6 +1193,7 @@ impl<K: Clone + PartialEq + std::fmt::Debug> CombatPortraits<K> {
             slot.complete = slot.stable >= STABLE_CHECKS;
             slot.recheck_in = RECHECK_FRAMES;
             slot.drawn = Some(key);
+            slot.job = Some(job);
             true
         } else {
             stats.empty = stats.empty.saturating_add(1);
@@ -1004,5 +1325,215 @@ mod tests {
         assert!(matches!(state.get(&7), Some(MaskState::Ready(t)) if *t == t1));
         assert_eq!(accept_mask(&mut state, 7, MaskState::Failed), None);
         assert!(matches!(state.get(&7), Some(MaskState::Ready(t)) if *t == t1));
+    }
+
+    #[test]
+    fn the_portrait_option_is_off_only_for_false() {
+        assert!(portrait_option_value(None));
+        assert!(portrait_option_value(Some("True")));
+        assert!(portrait_option_value(Some("")));
+        assert!(portrait_option_value(Some("0")), "only the word False");
+        for off in ["False", "false", "FALSE", " False "] {
+            assert!(!portrait_option_value(Some(off)), "{off:?}");
+        }
+        let ini = tessera_install::Ini::parse("[Render]\nenableportraits = false\n");
+        assert!(
+            !portrait_option(|k| ini.get("Render", k)),
+            "the key is read without regard to case"
+        );
+        let ini = tessera_install::Ini::parse("[Sound]\nEnablePortraits=False\n");
+        assert!(portrait_option(|k| ini.get("Render", k)), "another section");
+        assert!(portrait_option(|_| None));
+        // A layer above the file (a `--render-pref` value) decides when it holds the key.
+        let file = tessera_install::Ini::parse("[Render]\nEnablePortraits=True\n");
+        let layered = |k: &str| (k == PORTRAIT_OPTION_KEY).then_some("False");
+        assert!(!portrait_option(
+            |k| layered(k).or_else(|| file.get("Render", k))
+        ));
+        assert!(figure_allowed(true, true) && figure_allowed(false, false));
+        assert!(!figure_allowed(true, false));
+    }
+
+    struct FakeReader {
+        calls: std::sync::atomic::AtomicUsize,
+    }
+
+    impl SceneReader for FakeReader {
+        fn viewport_pids(&self) -> Result<ViewportPids, String> {
+            Ok(ViewportPids {
+                use_fog: Some(1),
+                ..ViewportPids::default()
+            })
+        }
+
+        fn scene(&self, request: &SceneRequest) -> Result<PortraitScene, String> {
+            self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            if request.camera_key == 0xBAD {
+                return Err("unreadable".into());
+            }
+            Ok(PortraitScene::with_camera(
+                request.scene,
+                request.camera_key,
+                Some(camera_1()),
+            ))
+        }
+    }
+
+    /// A reader whose scene reads wait while `blocked` is set.
+    struct BlockingReader {
+        blocked: std::sync::atomic::AtomicBool,
+        calls: std::sync::atomic::AtomicUsize,
+    }
+
+    impl SceneReader for BlockingReader {
+        fn viewport_pids(&self) -> Result<ViewportPids, String> {
+            Ok(ViewportPids::default())
+        }
+
+        fn scene(&self, request: &SceneRequest) -> Result<PortraitScene, String> {
+            use std::sync::atomic::Ordering::SeqCst;
+            self.calls.fetch_add(1, SeqCst);
+            for _ in 0..20_000 {
+                if !self.blocked.load(SeqCst) {
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(1));
+            }
+            Ok(PortraitScene::with_camera(
+                request.scene,
+                request.camera_key,
+                Some(camera_1()),
+            ))
+        }
+    }
+
+    /// A release while scene workers run does not let more than [`MAX_SCENES`] of them run
+    /// at once: the released workers count until their results arrive.
+    #[test]
+    fn released_scene_workers_still_bound_new_ones() {
+        use std::sync::atomic::Ordering::SeqCst;
+        let reader = Arc::new(BlockingReader {
+            blocked: std::sync::atomic::AtomicBool::new(true),
+            calls: std::sync::atomic::AtomicUsize::new(0),
+        });
+        let mut scenes = Scenes::new(Some(Arc::clone(&reader) as Arc<dyn SceneReader>));
+        for i in 0..MAX_SCENES as u32 {
+            assert!(matches!(
+                scenes.get(Some(request(0x1E, 0x4900_0000 + i))),
+                SceneNow::Pending
+            ));
+        }
+        assert_eq!(scenes.in_flight, MAX_SCENES);
+        scenes.release();
+        assert!(scenes.state.is_empty());
+        // A new request waits: no worker is started while the old ones run.
+        let fresh = request(0x1E, 0x4A00_0000);
+        for _ in 0..3 {
+            scenes.poll();
+            assert!(matches!(scenes.get(Some(fresh.clone())), SceneNow::Pending));
+        }
+        assert!(scenes.state.is_empty(), "not even a Loading entry");
+        assert_eq!(scenes.in_flight, MAX_SCENES);
+        // The old workers finish (their results dropped): the new request is read.
+        reader.blocked.store(false, SeqCst);
+        let SceneNow::Ready(..) = settle(&mut scenes, &fresh) else {
+            panic!("read after the old workers ended");
+        };
+        for _ in 0..5000 {
+            scenes.poll();
+            if scenes.in_flight == 0 {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+        assert_eq!(scenes.in_flight, 0);
+        // Every worker has reported: the old ones and the one new read.
+        assert_eq!(reader.calls.load(SeqCst), MAX_SCENES + 1);
+        assert_eq!(scenes.state.len(), 1, "released results are not stored");
+    }
+
+    fn request(camera_key: u32, body: u32) -> SceneRequest {
+        SceneRequest {
+            scene: Did(0x2100_0004),
+            camera_key,
+            camera_property: 0,
+            viewport_type: 2,
+            target: Some(PortraitTarget {
+                body: tessera_net::Body::Object(tessera_net::DataId(body)),
+                instance: None,
+                instance_key: None,
+            }),
+        }
+    }
+
+    fn settle(scenes: &mut Scenes, r: &SceneRequest) -> SceneNow {
+        for _ in 0..2000 {
+            scenes.poll();
+            match scenes.get(Some(r.clone())) {
+                SceneNow::Pending => std::thread::sleep(std::time::Duration::from_millis(1)),
+                other => return other,
+            }
+        }
+        panic!("the scene read did not finish");
+    }
+
+    #[test]
+    fn scenes_are_read_once_per_request_and_make_room() {
+        let reader = Arc::new(FakeReader {
+            calls: std::sync::atomic::AtomicUsize::new(0),
+        });
+        let mut scenes = Scenes::new(Some(Arc::clone(&reader) as Arc<dyn SceneReader>));
+        // The viewport PIDs arrive from a worker.
+        let mut pids = scenes.pids();
+        for _ in 0..2000 {
+            if pids != PidsNow::Pending {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(1));
+            scenes.poll();
+            pids = scenes.pids();
+        }
+        assert_eq!(
+            pids,
+            PidsNow::Ready(ViewportPids {
+                use_fog: Some(1),
+                ..ViewportPids::default()
+            })
+        );
+        let a = request(0x1E, 0x4700_0001);
+        let SceneNow::Ready(s, g) = settle(&mut scenes, &a) else {
+            panic!("read");
+        };
+        assert_eq!(s.camera_key, 0x1E);
+        // Asked again: the same read, no second call.
+        let SceneNow::Ready(_, g2) = settle(&mut scenes, &a) else {
+            panic!("kept");
+        };
+        assert_eq!(g, g2);
+        assert_eq!(reader.calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+        // Another target is another read; an unreadable scene draws nothing.
+        assert!(matches!(
+            settle(&mut scenes, &request(0x1E, 0x4700_0002)),
+            SceneNow::Ready(..)
+        ));
+        assert!(matches!(
+            settle(&mut scenes, &request(0xBAD, 0x4700_0002)),
+            SceneNow::Failed
+        ));
+        assert!(matches!(scenes.get(None), SceneNow::Failed));
+        // Past the bound the least recently used read goes; `a` was asked for most
+        // recently among the first ones and is kept until it is the oldest.
+        for i in 0..(MAX_SCENES as u32 + 4) {
+            let r = request(0x1E, 0x4800_0000 + i);
+            assert!(matches!(settle(&mut scenes, &r), SceneNow::Ready(..)));
+            assert!(scenes.state.len() <= MAX_SCENES);
+        }
+        // Without a reader nothing is read.
+        assert!(matches!(Scenes::new(None).get(Some(a)), SceneNow::Unread));
+        assert_eq!(scenes.in_flight, 0);
+        assert_eq!(
+            Scenes::new(None).pids(),
+            PidsNow::Ready(ViewportPids::default())
+        );
     }
 }

@@ -8,9 +8,10 @@
 //!
 //! - before a figure is drawn both portraits are hidden (§12.4);
 //! - `PlayerPortrait` reads scene 0x21000004, a 62 × 62 target, opaque black and its
-//!   texture-list mask, and draws the local player with the field of view and far plane of
-//!   the scene's `Camera_1` from Tessera's head-and-shoulders stand-in placement
-//!   (`crate::portrait::head_camera`; the per-target framing of §12.1 step 3 is not built):
+//!   texture-list mask, and draws the local player through the scene's `Camera_1` (placed
+//!   by the target's own description when it has one, §12.1 step 3, else from Tessera's
+//!   head-and-shoulders stand-in placement, `crate::portrait::head_camera`), with the
+//!   scene's three lights, the viewport's ambient and fog in the job's lighting:
 //!   inside the mask the target holds the figure on the black background, outside it is
 //!   transparent; the element is shown and composed as external content;
 //! - the targets are not drawn again once their drawing is complete (frame cost);
@@ -249,6 +250,59 @@ fn check_portrait(name: &str, img: &RgbaImage) {
     assert!(black > 50, "{name}: the opaque black background shows");
 }
 
+/// What the drawing of `kind` was made with (counts and flags only): the scene read's
+/// Light elements (three in scene 0x21000004, `ui-widgets.md` §12.2), the lit inputs, and
+/// whether the target's description applied. With `described` the target's own description
+/// must have framed the portrait (§12.1 step 3: found, its entries naming elements of the
+/// scene, its camera entry changing the camera), as it does for the player's character on
+/// the install.
+fn report_scene(c: &Client<'_>, kind: FrameKind, name: &str, described: bool) {
+    let job = c
+        .portraits()
+        .drawn_job(kind)
+        .unwrap_or_else(|| panic!("{name}: drawn"));
+    let scene = job.scene.as_ref().expect("the scene read");
+    let lit = job.lighting.as_ref().expect("the portrait lighting");
+    eprintln!(
+        "{name}: scene lights {}, lit lights {}, fog {}, described {} ({} entries, {} naming an element), \
+         camera described {}, starting idle {}, image {}",
+        scene.lights.len(),
+        lit.lighting.lights.len(),
+        lit.lighting.fog.is_some(),
+        scene.described,
+        scene.entries,
+        scene.entries_applied,
+        scene.camera_described,
+        scene.starting_idle.is_some(),
+        scene.image.is_some()
+    );
+    assert_eq!(
+        scene.lights.len(),
+        3,
+        "{name}: the scene's three Light elements"
+    );
+    assert_eq!(lit.lighting.lights.len(), lit.reach.len());
+    assert!(lit.lighting.sun.is_none(), "{name}: no sun in a UI scene");
+    assert!(
+        scene.image.is_none(),
+        "{name}: a drawn portrait shows no image"
+    );
+    if described {
+        assert!(
+            scene.described,
+            "{name}: the target has a viewport description"
+        );
+        assert!(
+            scene.entries_applied > 0,
+            "{name}: the description's entries name elements of the scene"
+        );
+        assert!(
+            scene.camera_described,
+            "{name}: the description's camera entry frames the portrait"
+        );
+    }
+}
+
 fn sheet(name: &str, img: &RgbaImage) {
     if let Some(dir) = std::env::var_os("TESSERA_SHEET_DIR") {
         let path = PathBuf::from(dir).join(format!("combat_portraits_{name}.png"));
@@ -324,6 +378,7 @@ fn portraits_draw_for_the_player_and_the_player_selected() {
     let p4 = c.target_pixels(FrameKind::Player);
     sheet("p4_complete", &p4);
     check_portrait("PlayerPortrait (complete)", &p4);
+    report_scene(&c, FrameKind::Player, "PlayerPortrait", true);
     let renders = c.portraits().stats().renders;
     for _ in 0..90 {
         c.frame();
@@ -385,6 +440,7 @@ fn portraits_draw_for_the_player_and_the_player_selected() {
     let p5 = c.target_pixels(FrameKind::Target);
     sheet("p5", &p5);
     check_portrait("OpponentPortrait", &p5);
+    report_scene(&c, FrameKind::Target, "OpponentPortrait", true);
     let frame = c
         .renderer
         .read_pixels(&c.frame_target)
@@ -464,6 +520,12 @@ fn portraits_draw_for_the_player_and_the_player_selected() {
             let npc_p5 = c.target_pixels(FrameKind::Target);
             sheet("p5_npc", &npc_p5);
             check_portrait("OpponentPortrait (other entity)", &npc_p5);
+            report_scene(
+                &c,
+                FrameKind::Target,
+                "OpponentPortrait (other entity)",
+                false,
+            );
         }
         None => panic!("no other entity's figure was built (placed NPC or crowd member)"),
     }

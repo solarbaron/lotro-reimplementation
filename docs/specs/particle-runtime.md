@@ -2217,6 +2217,46 @@ yet; if Tessera builds one, its preview follows the paragraph above.
 > and whose start-up scripts write their own `Render_Opacity` have those scripts run while they
 > are placed. Items 1, 3 and 4 change nothing.
 
+> **OPEN (implementer, fu-walker-static-scripts, 2026-10-26; engineering choices and a status
+> note, no client fact):** item 2 of the answer above is built in the walker
+> (`apps/client/src/walker/effects`). Choices made where the rule is silent; please confirm or
+> correct:
+> (1) **Which landblocks.** So that a writer runs wherever the object layer places it, the
+> effects layer now scans every resident landblock whose objects the object layer holds, not only
+> those within 2 of the viewer; the effect owners of the farther landblocks are not spawned (the
+> §3.2 scan radius and its one-landblock hysteresis are unchanged for them). A landblock out of
+> that effect scope is scanned for its writers alone (no figures, no effect records loaded for
+> reaches) and scanned again in full when it enters the scope; the writers keep running across
+> that rescan. Scans are queued nearest first, at most 16 in flight, and the layer is not settled
+> while a scan waits.
+> (2) **Which entities.** The same filters as for effect owners (content layers as the world's,
+> interior entities only with `--interiors`). A SetProperty node with `ServerOnly` set is no
+> write (`script-table.md` §7.7: it sets nothing locally), so it alone does not make a writer. A writer that is a placed figure is not run (it is
+> drawn by the character layer, not the object layer), nor is a static entity without a drawn
+> part (the object layer places no object of it, so its writes could reach nothing; it is counted
+> as "without object" in the report). An entity whose scripts reach a Particle node stays an
+> effect owner under the reach rule, whether or not they also write the opacity.
+> (3) **When.** A writer is spawned at the first 0.25 s owner check at which the object layer
+> holds its object, within the shared cap of 16 starts per check (nearest first, effect owners
+> and writers together). It is despawned in the frame in which the object layer no longer holds
+> its landblock's objects, and at the next owner check when a rebuilt object list no longer holds
+> its object; when its object is placed again it is spawned again and its start-up scripts run
+> again (the object starts without a run-time value, glue-r10 answer item 1).
+> (4) **Caps.** Writers have a live cap of their own (2,048), apart from the effect owners'
+> 2,048, so that far writers never keep a near effect owner from spawning; placed writers held
+> back by that cap alone are counted in the report ("over the cap", logged once) and do not keep
+> the layer from settling. A landblock scan takes at most 1,024 effect owners and, apart, at
+> most 1,024 writers, so that neither takes the other's place. A writer has no
+> effects component, so the placement and housekeeping of §3.2 skip it (unless its scripts
+> started a system after all).
+> (5) **Status note (census, observation of Tessera's own scan on this install, 2026-10-26):** of
+> 40,643 entity descriptors (0x47) scanned without an instance set, 6,277 are effect owners and
+> 1 reaches a SetProperty of `Render_Opacity` without a Particle node. Headless runs at M3-03
+> (outdoors and with `--interiors`) and M3-09 found no such writer among the placed entities of
+> the about 580 landblocks the object layer held, so no reference location exists for a visual
+> check; the rule is tested on synthetic data. Is a reference location with such an entity
+> known?
+
 16. **Systems of the pass after post-processing** (`uses_video_post` = 1, `particles.md` §8.15;
     RT55, RT56): the client draws them only while its post-processing step is active, which with
     the built-in `VideoPostEffects` on and a qualifying device is the normal case (both of the

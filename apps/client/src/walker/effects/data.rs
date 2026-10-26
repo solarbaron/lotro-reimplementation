@@ -4,6 +4,11 @@
 //! points and scales, and the effect records with the texture and blend state of their
 //! surfaces (`particle-runtime.md` §5, §6.4, §9.1; `particles.md` §4.1, §7.1.1).
 //!
+//! A landblock scan also finds the static entities whose start-up scripts reach a SetProperty
+//! of their own `Render_Opacity` but no Particle node (`particle-runtime.md` §12 rule 15,
+//! answer item 2 under the anchor `s12-r15-detect`; `script-table.md` §7.7): they are owners
+//! too, run while the object layer places them rather than by reach ([`RunScope::Placed`]).
+//!
 //! Every record is read once through [`EffectData`]'s caches. The runtime's
 //! [`ScriptSource`] ([`EffectSource`]) reads from the same caches and counts the reads it
 //! has to make on the main thread.
@@ -58,8 +63,11 @@ pub const MAX_SCAN_SCRIPTLETS: usize = 1024;
 pub const MAX_CACHED_SCRIPTS: usize = 8192;
 /// Most owner objects, setups and effect records cached (each).
 pub const MAX_CACHED_OBJECTS: usize = 32_768;
-/// Most effect owners taken from one landblock.
+/// Most effect owners ([`RunScope::Reach`]) taken from one landblock.
 pub const MAX_OWNERS_PER_BLOCK: usize = 1024;
+/// Most static entities run while placed ([`RunScope::Placed`]) taken from one landblock: a
+/// bound of their own, so that writers never take an effect owner's place in a scan.
+pub const MAX_WRITERS_PER_BLOCK: usize = 1024;
 /// The reach of an owner whose effect records give none (metres): the default far fade of
 /// a new Particle node (`particle-runtime.md` §5.2).
 pub const DEFAULT_REACH: f32 = 60.0;
@@ -175,7 +183,21 @@ impl Default for ModelScales {
     }
 }
 
-/// The scripts of an owner whose start-up scripts reach Particle nodes.
+/// How an owner a scan found is run (`particle-runtime.md` §3.2 and §12 rule 15).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum RunScope {
+    /// An effect owner: its start-up scripts reach Particle nodes, and it runs while the
+    /// viewer is within its reach (§3.2, walker application of the Q-RT1 Decision).
+    Reach,
+    /// A static entity that is no effect owner but whose start-up scripts reach a
+    /// SetProperty of `Render_Opacity` (rule 15, answer item 2 under the anchor
+    /// `s12-r15-detect`): it runs from the frame in which the object layer places its object
+    /// until the object is removed, whatever the viewer's distance.
+    Placed,
+}
+
+/// The scripts of an owner whose start-up scripts reach Particle nodes, or (with
+/// [`RunScope::Placed`]) write the owner's `Render_Opacity`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct OwnerScripts {
     /// Its tables (class, instance, additional).
@@ -190,6 +212,9 @@ pub struct OwnerScripts {
     pub reach: f32,
     /// Whether one of its nodes attaches to a holding location or a bone.
     pub attaches: bool,
+    /// How it is run. [`RunScope::Placed`] scripts reach no Particle node: their
+    /// [`Self::reach`] is 0 and unused, [`Self::attaches`] false.
+    pub scope: RunScope,
 }
 
 /// What an owner is.
@@ -317,12 +342,87 @@ pub struct BlockScan {
     pub key: LandblockKey,
     /// Identity of the bundle scanned (its address), to drop stale results.
     pub bundle: usize,
-    /// Effect owners.
+    /// Effect owners ([`RunScope::Reach`]) and the static entities run while placed for their
+    /// `Render_Opacity` writes ([`RunScope::Placed`]), in entity order.
     pub owners: Vec<EffectOwner>,
     /// Static entities whose start-up scripts reach a SetProperty of `Render_Opacity` but no
-    /// Particle node, so that they are no effect owners and their writes are never made
-    /// (rule 15, [`super::opacity::WriteCounts::unfollowed_writers`]).
-    pub unfollowed_opacity_writers: u32,
+    /// Particle node, and that have no object the object layer could place (no drawn part):
+    /// they are not run, since their writes would reach no object
+    /// ([`super::opacity::WriteCounts::writers_without_object`]).
+    pub writers_without_object: u32,
+    /// Whether the scan looked for effect owners. A scan made while the landblock is out of
+    /// the effect scope (`super::effects_scope`) looks for the static entities run while
+    /// placed alone ([`ScanDepth::Writers`]); the layer scans the landblock again in full
+    /// when it enters the scope.
+    pub effects_scanned: bool,
+    /// How many of [`Self::owners`] are effect owners ([`RunScope::Reach`]), counted once at
+    /// the scan so that the per-frame statistics do not walk the owners.
+    pub effect_owner_count: usize,
+    /// How many of [`Self::owners`] are run while placed ([`RunScope::Placed`]).
+    pub writer_count: usize,
+}
+
+/// How much a landblock scan looks for ([`scan_bundle`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ScanDepth {
+    /// Effect owners and the static entities run while placed.
+    Full,
+    /// The static entities run while placed alone (a landblock out of the effect scope):
+    /// figures are skipped, and an entity whose start-up scripts reach a Particle node is
+    /// noted without loading its effect records ([`OwnerLookup::Unmeasured`]).
+    Writers,
+}
+
+/// What an [`OwnerSource`] knows of an entity object's start-up scripts.
+#[derive(Debug, Clone, PartialEq)]
+pub enum OwnerLookup {
+    /// Its scripts make it an owner of the given scope.
+    Scripts(Arc<OwnerScripts>),
+    /// An effect owner whose reach was not measured ([`ScanDepth::Writers`] only).
+    Unmeasured,
+    /// Neither.
+    None,
+}
+
+impl OwnerLookup {
+    fn scripts(self) -> Option<Arc<OwnerScripts>> {
+        match self {
+            Self::Scripts(s) => Some(s),
+            Self::Unmeasured | Self::None => None,
+        }
+    }
+}
+
+/// What [`scan_bundle`] reads per entity ([`EffectData`], or a synthetic source in tests).
+pub trait OwnerSource {
+    /// Whether interior entities are scanned.
+    fn interiors(&self) -> bool;
+    /// Whether content layer `layer` is active.
+    fn layer_active(&self, layer: u32) -> bool;
+    /// The start-up scripts of entity object `object`: with `instance` (a figure's
+    /// instance property set, added last) when given; at [`ScanDepth::Writers`] an effect
+    /// owner may come back as [`OwnerLookup::Unmeasured`].
+    fn lookup(&self, object: Did, instance: Option<&PropertySet>, depth: ScanDepth) -> OwnerLookup;
+    /// The template scales along `chain` of `object`.
+    fn model_scales(&self, object: Did, chain: &[Did]) -> ModelScales;
+    /// The attachment points of setup `setup`.
+    fn setup_points(&self, setup: Did) -> Option<Arc<AttachPoints>>;
+}
+
+impl BlockScan {
+    /// The effect owners ([`RunScope::Reach`]).
+    pub fn effect_owners(&self) -> impl Iterator<Item = &EffectOwner> {
+        self.owners
+            .iter()
+            .filter(|o| o.scripts.scope == RunScope::Reach)
+    }
+
+    /// The static entities run while placed ([`RunScope::Placed`]).
+    pub fn opacity_writers(&self) -> impl Iterator<Item = &EffectOwner> {
+        self.owners
+            .iter()
+            .filter(|o| o.scripts.scope == RunScope::Placed)
+    }
 }
 
 /// The resolved material and texture-matrix bindings of a particle surface whose values
@@ -559,24 +659,26 @@ pub(crate) struct ScanOut {
     pub effects: Vec<(Did, f32)>,
     /// Whether a Particle node attaches to a holding location or a bone.
     pub attaches: bool,
-    /// Whether a SetProperty node writes [`ScanPairs::opacity`] (rule 15).
+    /// Whether a SetProperty node that is not `ServerOnly` writes [`ScanPairs::opacity`]
+    /// (rule 15; `script-table.md` §7.7: a `ServerOnly` one sets nothing locally).
     pub writes_opacity: bool,
 }
 
-/// What [`EffectData::owner_scan`] found.
-#[derive(Debug, Default)]
-struct OwnerScan {
-    /// The scripts, when the entity is an effect owner.
-    scripts: Option<OwnerScripts>,
-    /// No effect owner, but its start-up scripts reach a SetProperty of `Render_Opacity`.
-    unfollowed_opacity_writes: bool,
-}
-
-/// [`OwnerScan`] as cached per entity object.
-#[derive(Debug, Clone, Default)]
-struct ObjectScan {
-    scripts: Option<Arc<OwnerScripts>>,
-    unfollowed_opacity_writes: bool,
+impl ScanOut {
+    /// How an entity whose start-up scripts gave this scan is run: an effect owner when they
+    /// reach a Particle node, else a writer run while placed when they reach a SetProperty
+    /// of `Render_Opacity` (rule 15, answer item 2 under the anchor `s12-r15-detect`), else
+    /// not at all.
+    #[must_use]
+    pub fn scope(&self) -> Option<RunScope> {
+        if !self.effects.is_empty() {
+            Some(RunScope::Reach)
+        } else if self.writes_opacity {
+            Some(RunScope::Placed)
+        } else {
+            None
+        }
+    }
 }
 
 /// Shared data and caches (module docs).
@@ -596,7 +698,12 @@ pub struct EffectData {
     materials: Arc<MaterialLibrary<Arc<ArchiveSet>>>,
     tables: Mutex<HashMap<Did, Option<Arc<ScriptTable>>>>,
     scriptlets: Mutex<HashMap<Did, Option<Arc<Scriptlet>>>>,
-    objects: Mutex<HashMap<Did, ObjectScan>>,
+    /// [`OwnerLookup::Scripts`] or [`OwnerLookup::None`] per entity object (never
+    /// [`OwnerLookup::Unmeasured`]).
+    objects: Mutex<HashMap<Did, OwnerLookup>>,
+    /// Entity objects found to be effect owners by a [`ScanDepth::Writers`] scan, whose
+    /// reach is not measured yet.
+    unmeasured: Mutex<HashSet<Did>>,
     /// The PID of `Render_Opacity` (rule 15, [`ScanPairs::opacity`]).
     opacity_pid: Option<u32>,
     points: Mutex<HashMap<Did, Option<Arc<AttachPoints>>>>,
@@ -651,6 +758,7 @@ impl EffectData {
             tables: Mutex::new(HashMap::new()),
             scriptlets: Mutex::new(HashMap::new()),
             objects: Mutex::new(HashMap::new()),
+            unmeasured: Mutex::new(HashSet::new()),
             opacity_pid,
             points: Mutex::new(HashMap::new()),
             scales: Mutex::new(HashMap::new()),
@@ -757,22 +865,23 @@ impl EffectData {
     }
 
     /// The scripts of `object` (with `instance`, a figure's instance property set, added
-    /// last), when its start-up scripts reach a Particle node; every effect record they
-    /// name is loaded on the way (the reach needs their fade distances).
-    fn owner_scripts(&self, object: Did, instance: Option<&PropertySet>) -> Option<OwnerScripts> {
-        self.owner_scan(object, instance).scripts
-    }
-
-    /// [`Self::owner_scripts`], also noting an entity that is no owner but whose start-up
-    /// scripts write `Render_Opacity` ([`ObjectScan::unfollowed_opacity_writes`]).
-    fn owner_scan(&self, object: Did, instance: Option<&PropertySet>) -> OwnerScan {
+    /// last), when its start-up scripts reach a Particle node ([`RunScope::Reach`]) or, failing
+    /// that, a SetProperty of `Render_Opacity` ([`RunScope::Placed`]); every effect record they
+    /// name is loaded on the way (the reach needs their fade distances), except at
+    /// [`ScanDepth::Writers`], where an effect owner is [`OwnerLookup::Unmeasured`].
+    fn owner_scan(
+        &self,
+        object: Did,
+        instance: Option<&PropertySet>,
+        depth: ScanDepth,
+    ) -> OwnerLookup {
         let Some(v) = self.svocab.as_ref() else {
-            return OwnerScan::default();
+            return OwnerLookup::None;
         };
         let Ok(chain) =
             collect_entity_scripts(object, &*self.dict, v, |d: Did| fetch(&self.set, d.0))
         else {
-            return OwnerScan::default();
+            return OwnerLookup::None;
         };
         let mut s = chain.scripts;
         if let Some(set) = instance {
@@ -780,17 +889,29 @@ impl EffectData {
         }
         let tables = s.tables();
         if tables.is_empty() {
-            return OwnerScan::default();
+            return OwnerLookup::None;
         }
         let closure = self.closure(&tables);
         let mut keys: Vec<u32> = self.startup_key.into_iter().collect();
         keys.extend_from_slice(&s.startup_scripts);
         let scan = self.scan(&closure, &keys, &s.properties);
-        if scan.effects.is_empty() {
-            return OwnerScan {
-                scripts: None,
-                unfollowed_opacity_writes: scan.writes_opacity,
-            };
+        match scan.scope() {
+            None => return OwnerLookup::None,
+            Some(RunScope::Placed) => {
+                // Rule 15, answer item 2 under the anchor `s12-r15-detect`.
+                return OwnerLookup::Scripts(Arc::new(OwnerScripts {
+                    tables,
+                    startup_scripts: s.startup_scripts.clone(),
+                    properties: s.properties.clone(),
+                    reach: 0.0,
+                    attaches: false,
+                    scope: RunScope::Placed,
+                }));
+            }
+            Some(RunScope::Reach) if depth == ScanDepth::Writers => {
+                return OwnerLookup::Unmeasured;
+            }
+            Some(RunScope::Reach) => {}
         }
         let mut reach: Option<f32> = None;
         for (did, extra) in &scan.effects {
@@ -808,36 +929,45 @@ impl EffectData {
             };
             reach = Some(reach.map_or(r, |x: f32| x.max(r)));
         }
-        OwnerScan {
-            scripts: Some(OwnerScripts {
-                tables,
-                startup_scripts: s.startup_scripts.clone(),
-                properties: s.properties.clone(),
-                reach: reach.unwrap_or(DEFAULT_REACH).min(MAX_REACH),
-                attaches: scan.attaches,
-            }),
-            unfollowed_opacity_writes: false,
-        }
+        OwnerLookup::Scripts(Arc::new(OwnerScripts {
+            tables,
+            startup_scripts: s.startup_scripts.clone(),
+            properties: s.properties.clone(),
+            reach: reach.unwrap_or(DEFAULT_REACH).min(MAX_REACH),
+            attaches: scan.attaches,
+            scope: RunScope::Reach,
+        }))
     }
 
-    /// The effect scripts of an entity object without an instance set, read once.
+    /// The effect scripts of an entity object without an instance set
+    /// ([`RunScope::Reach`] only), read once.
     fn object_scripts(&self, object: Did) -> Option<Arc<OwnerScripts>> {
-        self.object_scan(object).scripts
+        self.object_scan(object, ScanDepth::Full)
+            .scripts()
+            .filter(|s| s.scope == RunScope::Reach)
     }
 
-    /// [`Self::owner_scan`] of an entity object without an instance set, read once.
-    fn object_scan(&self, object: Did) -> ObjectScan {
+    /// [`Self::owner_scan`] of an entity object without an instance set, read once (an
+    /// [`OwnerLookup::Unmeasured`] answer is remembered apart, so that a later full scan
+    /// still measures the reach).
+    fn object_scan(&self, object: Did, depth: ScanDepth) -> OwnerLookup {
         if let Some(o) = lock(&self.objects).get(&object) {
             return o.clone();
         }
-        let scan = self.owner_scan(object, None);
-        let o = ObjectScan {
-            scripts: scan.scripts.map(Arc::new),
-            unfollowed_opacity_writes: scan.unfollowed_opacity_writes,
-        };
-        let mut m = lock(&self.objects);
-        if m.len() < MAX_CACHED_OBJECTS {
-            m.insert(object, o.clone());
+        if depth == ScanDepth::Writers && lock(&self.unmeasured).contains(&object) {
+            return OwnerLookup::Unmeasured;
+        }
+        let o = self.owner_scan(object, None, depth);
+        if matches!(o, OwnerLookup::Unmeasured) {
+            let mut u = lock(&self.unmeasured);
+            if u.len() < MAX_CACHED_OBJECTS {
+                u.insert(object);
+            }
+        } else {
+            let mut m = lock(&self.objects);
+            if m.len() < MAX_CACHED_OBJECTS {
+                m.insert(object, o.clone());
+            }
         }
         o
     }
@@ -968,145 +1098,220 @@ impl EffectData {
         }
     }
 
-    /// What landblock `bundle` contributes: its static entities and figures whose start-up
-    /// scripts reach Particle nodes (content layers as the world's, interiors only when
-    /// asked). Blocking (workers only).
+    /// What landblock `bundle` contributes ([`scan_bundle`] with these caches). Blocking
+    /// (workers only).
     #[must_use]
-    pub fn scan_block(&self, bundle: &LandblockBundle, identity: usize) -> BlockScan {
-        let key = bundle.key;
-        let origin = key.origin();
-        let mut owners = Vec::new();
-        let mut unfollowed_opacity_writers = 0u32;
-        let figure_of: HashMap<u32, (u32, Option<Arc<PropertySet>>)> = bundle
-            .figures
-            .iter()
-            .enumerate()
-            .filter_map(|(i, f)| match f.entity {
-                // Start-up scripts are scanned for the info record's entities only.
-                EntityRef::Entity(e) => Some((e, (u32::try_from(i).ok()?, f.instance.clone()))),
-                EntityRef::Generated(_) => None,
-            })
-            .collect();
-        // Rule 15: the rank of each drawn entity among the earlier ones with the same
-        // position and parts (`ObjectLayer::placed_entity_opacity`'s fallback when the
-        // object layer's objects carry no entity index), counted over every
-        // entity, owner or not.
-        let mut seen: HashMap<([u32; 3], Arc<[u32]>), u32> = HashMap::new();
-        for (ei, e) in bundle.entities.iter().enumerate() {
-            if owners.len() >= MAX_OWNERS_PER_BLOCK {
-                break;
+    pub fn scan_block(
+        &self,
+        bundle: &LandblockBundle,
+        identity: usize,
+        depth: ScanDepth,
+    ) -> BlockScan {
+        scan_bundle(self, bundle, identity, depth)
+    }
+}
+
+impl OwnerSource for EffectData {
+    fn interiors(&self) -> bool {
+        self.interiors
+    }
+
+    fn layer_active(&self, layer: u32) -> bool {
+        self.active_layers.contains(&layer)
+    }
+
+    fn lookup(&self, object: Did, instance: Option<&PropertySet>, depth: ScanDepth) -> OwnerLookup {
+        match instance {
+            Some(set) => self.owner_scan(object, Some(set), depth),
+            None => self.object_scan(object, depth),
+        }
+    }
+
+    fn model_scales(&self, object: Did, chain: &[Did]) -> ModelScales {
+        EffectData::model_scales(self, object, chain)
+    }
+
+    fn setup_points(&self, setup: Did) -> Option<Arc<AttachPoints>> {
+        EffectData::setup_points(self, setup)
+    }
+}
+
+/// What landblock `bundle` contributes: its static entities and figures whose start-up
+/// scripts reach Particle nodes (not at [`ScanDepth::Writers`]), and its static entities
+/// with a drawn object whose start-up scripts reach a SetProperty of `Render_Opacity` but no
+/// Particle node ([`RunScope::Placed`]; content layers as the world's, interiors only when
+/// asked, as for the effect owners). At most [`MAX_OWNERS_PER_BLOCK`] effect owners and
+/// [`MAX_WRITERS_PER_BLOCK`] writers, each in entity order.
+#[must_use]
+pub fn scan_bundle<S: OwnerSource + ?Sized>(
+    src: &S,
+    bundle: &LandblockBundle,
+    identity: usize,
+    depth: ScanDepth,
+) -> BlockScan {
+    let key = bundle.key;
+    let origin = key.origin();
+    let mut owners = Vec::new();
+    let mut writers_without_object = 0u32;
+    let (mut effect_owner_count, mut writer_count) = (0usize, 0usize);
+    let figure_of: HashMap<u32, (u32, Option<Arc<PropertySet>>)> = bundle
+        .figures
+        .iter()
+        .enumerate()
+        .filter_map(|(i, f)| match f.entity {
+            // Start-up scripts are scanned for the info record's entities only.
+            EntityRef::Entity(e) => Some((e, (u32::try_from(i).ok()?, f.instance.clone()))),
+            EntityRef::Generated(_) => None,
+        })
+        .collect();
+    // Rule 15: the rank of each drawn entity among the earlier ones with the same
+    // position and parts (`ObjectLayer::placed_entity_opacity`'s fallback when the
+    // object layer's objects carry no entity index), counted over every
+    // entity, owner or not.
+    let mut seen: HashMap<([u32; 3], Arc<[u32]>), u32> = HashMap::new();
+    for (ei, e) in bundle.entities.iter().enumerate() {
+        let effects_full =
+            depth == ScanDepth::Writers || effect_owner_count >= MAX_OWNERS_PER_BLOCK;
+        if effects_full && writer_count >= MAX_WRITERS_PER_BLOCK {
+            break;
+        }
+        let parts: Arc<[u32]> = drawn_parts(e).into();
+        let rank = if parts.is_empty() {
+            0
+        } else {
+            let n = seen
+                .entry((e.placement.position.map(f32::to_bits), Arc::clone(&parts)))
+                .or_insert(0);
+            let r = *n;
+            *n = n.saturating_add(1);
+            r
+        };
+        if e.interior && !src.interiors() {
+            continue;
+        }
+        let layers_pass = match e.content_layers.as_deref() {
+            None | Some([]) => true,
+            Some(l) => l.iter().any(|x| src.layer_active(*x)),
+        };
+        if !layers_pass {
+            continue;
+        }
+        let Some(object) = e.object else {
+            continue;
+        };
+        let figure = u32::try_from(ei).ok().and_then(|i| figure_of.get(&i));
+        // A figure is never run while placed (below), so a writers' scan skips it.
+        if figure.is_some() && depth == ScanDepth::Writers {
+            continue;
+        }
+        let lookup = match figure {
+            Some((_, Some(instance))) => src.lookup(object, Some(instance), depth),
+            _ if object.prefix() == ENTITY_PREFIX || figure.is_some() => {
+                src.lookup(object, None, depth)
             }
-            let parts: Arc<[u32]> = drawn_parts(e).into();
-            let rank = if parts.is_empty() {
-                0
-            } else {
-                let n = seen
-                    .entry((e.placement.position.map(f32::to_bits), Arc::clone(&parts)))
-                    .or_insert(0);
-                let r = *n;
-                *n = n.saturating_add(1);
-                r
-            };
-            if e.interior && !self.interiors {
-                continue;
-            }
-            let layers_pass = match e.content_layers.as_deref() {
-                None | Some([]) => true,
-                Some(l) => l.iter().any(|x| self.active_layers.contains(x)),
-            };
-            if !layers_pass {
-                continue;
-            }
-            let Some(object) = e.object else {
-                continue;
-            };
-            let figure = u32::try_from(ei).ok().and_then(|i| figure_of.get(&i));
-            let scripts = match figure {
-                Some((_, Some(instance))) => {
-                    self.owner_scripts(object, Some(instance)).map(Arc::new)
+            _ => OwnerLookup::None,
+        };
+        let Some(scripts) = lookup.scripts() else {
+            continue;
+        };
+        match scripts.scope {
+            RunScope::Reach => {
+                if effects_full {
+                    continue;
                 }
-                _ if object.prefix() == ENTITY_PREFIX || figure.is_some() => {
-                    let scan = self.object_scan(object);
-                    if figure.is_none() && scan.unfollowed_opacity_writes {
-                        unfollowed_opacity_writers = unfollowed_opacity_writers.saturating_add(1);
-                    }
-                    scan.scripts
+            }
+            RunScope::Placed => {
+                // Rule 15 asks for the writes of static entities on their placed object: a
+                // figure is drawn by the character layer, and an entity without a drawn
+                // part has no object the object layer places.
+                if figure.is_some() {
+                    continue;
                 }
-                _ => None,
-            };
-            let Some(scripts) = scripts else {
-                continue;
-            };
-            let chain: &[Did] = e.visual.as_deref().map_or(&[], |v| v.chain.as_slice());
-            let scales = self.model_scales(object, chain);
-            let pl = &e.placement;
-            let position = [
-                origin[0] + f64::from(pl.position[0]),
-                origin[1] + f64::from(pl.position[1]),
-                f64::from(pl.position[2]),
-            ];
-            let q = pl.rotation;
-            let rotation = Quat::from_xyzw(q.x, q.y, q.z, q.w);
-            let rotation = if rotation.is_finite() && rotation.length_squared() > 1e-12 {
-                rotation.normalize()
-            } else {
-                Quat::IDENTITY
-            };
-            let (id, kind, points, placed) = match figure {
-                Some((fi, _)) => (
-                    EntityId(figure_tag(key, *fi)),
-                    OwnerKind::Figure {
-                        tag: figure_tag(key, *fi),
+                if parts.is_empty() {
+                    writers_without_object = writers_without_object.saturating_add(1);
+                    continue;
+                }
+                if writer_count >= MAX_WRITERS_PER_BLOCK {
+                    continue;
+                }
+            }
+        }
+        let chain: &[Did] = e.visual.as_deref().map_or(&[], |v| v.chain.as_slice());
+        let scales = src.model_scales(object, chain);
+        let pl = &e.placement;
+        let position = [
+            origin[0] + f64::from(pl.position[0]),
+            origin[1] + f64::from(pl.position[1]),
+            f64::from(pl.position[2]),
+        ];
+        let q = pl.rotation;
+        let rotation = Quat::from_xyzw(q.x, q.y, q.z, q.w);
+        let rotation = if rotation.is_finite() && rotation.length_squared() > 1e-12 {
+            rotation.normalize()
+        } else {
+            Quat::IDENTITY
+        };
+        let (id, kind, points, placed) = match figure {
+            Some((fi, _)) => (
+                EntityId(figure_tag(key, *fi)),
+                OwnerKind::Figure {
+                    tag: figure_tag(key, *fi),
+                },
+                None,
+                None,
+            ),
+            None => {
+                let points = if scripts.attaches {
+                    e.visual
+                        .as_ref()
+                        .and_then(|v| v.setup)
+                        .and_then(|s| src.setup_points(s))
+                } else {
+                    None
+                };
+                let mut scale = e.scale;
+                for (a, b) in scale.iter_mut().zip(scales.model) {
+                    *a *= b;
+                }
+                (
+                    static_owner_id(key, e.index),
+                    OwnerKind::Static {
+                        position,
+                        rotation,
+                        scale,
                     },
-                    None,
-                    None,
-                ),
-                None => {
-                    let points = if scripts.attaches {
-                        e.visual
-                            .as_ref()
-                            .and_then(|v| v.setup)
-                            .and_then(|s| self.setup_points(s))
-                    } else {
-                        None
-                    };
-                    let mut scale = e.scale;
-                    for (a, b) in scale.iter_mut().zip(scales.model) {
-                        *a *= b;
-                    }
-                    (
-                        static_owner_id(key, e.index),
-                        OwnerKind::Static {
-                            position,
-                            rotation,
-                            scale,
-                        },
-                        points,
-                        Some(
-                            PlacedObject::of_entity(key, e, parts, rank).with_property_opacity(
-                                bundle.entity_render_opacities.get(ei).copied().flatten(),
-                            ),
+                    points,
+                    Some(
+                        PlacedObject::of_entity(key, e, parts, rank).with_property_opacity(
+                            bundle.entity_render_opacities.get(ei).copied().flatten(),
                         ),
-                    )
-                }
-            };
-            owners.push(EffectOwner {
-                id,
-                kind,
-                iid: e.iid.map(|i| i.0),
-                scripts,
-                points,
-                scales,
-                position,
-                placed,
-            });
+                    ),
+                )
+            }
+        };
+        match scripts.scope {
+            RunScope::Reach => effect_owner_count += 1,
+            RunScope::Placed => writer_count += 1,
         }
-        BlockScan {
-            key,
-            bundle: identity,
-            owners,
-            unfollowed_opacity_writers,
-        }
+        owners.push(EffectOwner {
+            id,
+            kind,
+            iid: e.iid.map(|i| i.0),
+            scripts,
+            points,
+            scales,
+            position,
+            placed,
+        });
+    }
+    BlockScan {
+        key,
+        bundle: identity,
+        owners,
+        writers_without_object,
+        effects_scanned: depth == ScanDepth::Full,
+        effect_owner_count,
+        writer_count,
     }
 }
 
@@ -1327,7 +1532,13 @@ fn scan_node(
             out.attaches |= p.holding_location != 0 || p.bone_type != 0;
         }
         NodeData::Run(r) if !r.stop => keys.push(r.script),
-        NodeData::SetProperty { property, .. } if Some(*property) == pairs.opacity => {
+        // A ServerOnly SetProperty sets nothing locally (`script-table.md` §7.7), so it is
+        // no write of the opacity rule 15 follows.
+        NodeData::SetProperty {
+            property,
+            server_only: false,
+            ..
+        } if Some(*property) == pairs.opacity => {
             out.writes_opacity = true;
         }
         NodeData::Scriptlet { file, parameters } => {
@@ -1423,6 +1634,147 @@ impl ScriptSource for EffectSource {
         }
         self.0.main_thread_reads.fetch_add(1, Ordering::Relaxed);
         self.0.scriptlet(did)
+    }
+}
+
+/// Synthetic landblocks and a synthetic [`OwnerSource`] for tests of the scan and of the
+/// layer's owner lifecycle (`super::plan_sync`, `super::plan_owner_check`).
+#[cfg(test)]
+pub(crate) mod testkit {
+    use super::*;
+    use tessera_formats::landblock::{HeightGrid, LandblockData, Placement};
+    use tessera_formats::setup::Quaternion;
+    use tessera_world::{DrawFlags, FigureKind, PlacedEntity, PlacedFigure, ResolvedObject};
+
+    /// Owner scripts by entity object; records which effect owners a lookup measured.
+    #[derive(Default)]
+    pub(crate) struct FakeSource {
+        pub objects: HashMap<Did, Arc<OwnerScripts>>,
+        pub measured: Mutex<Vec<Did>>,
+    }
+
+    impl FakeSource {
+        /// A source where `writer` reaches a SetProperty of `Render_Opacity` only and
+        /// `effect` a Particle node.
+        pub(crate) fn new(writer: Did, effect: Did) -> Self {
+            let mut objects = HashMap::new();
+            objects.insert(writer, scripts(RunScope::Placed));
+            objects.insert(effect, scripts(RunScope::Reach));
+            Self {
+                objects,
+                measured: Mutex::new(Vec::new()),
+            }
+        }
+    }
+
+    impl OwnerSource for FakeSource {
+        fn interiors(&self) -> bool {
+            false
+        }
+
+        fn layer_active(&self, _layer: u32) -> bool {
+            false
+        }
+
+        fn lookup(
+            &self,
+            object: Did,
+            _instance: Option<&PropertySet>,
+            depth: ScanDepth,
+        ) -> OwnerLookup {
+            match self.objects.get(&object) {
+                None => OwnerLookup::None,
+                Some(s) if s.scope == RunScope::Reach && depth == ScanDepth::Writers => {
+                    OwnerLookup::Unmeasured
+                }
+                Some(s) => {
+                    if s.scope == RunScope::Reach {
+                        lock(&self.measured).push(object);
+                    }
+                    OwnerLookup::Scripts(Arc::clone(s))
+                }
+            }
+        }
+
+        fn model_scales(&self, _object: Did, _chain: &[Did]) -> ModelScales {
+            ModelScales::default()
+        }
+
+        fn setup_points(&self, _setup: Did) -> Option<Arc<AttachPoints>> {
+            None
+        }
+    }
+
+    /// Owner scripts of `scope` (reach 40 m for an effect owner).
+    pub(crate) fn scripts(scope: RunScope) -> Arc<OwnerScripts> {
+        Arc::new(OwnerScripts {
+            tables: vec![Did(0x2000_0001)],
+            startup_scripts: Vec::new(),
+            properties: PropertyState::new(),
+            reach: if scope == RunScope::Reach { 40.0 } else { 0.0 },
+            attaches: false,
+            scope,
+        })
+    }
+
+    /// A drawn static entity `index` of `object` at `position` with part meshes `parts`.
+    pub(crate) fn entity(
+        index: u32,
+        object: Did,
+        position: [f32; 3],
+        parts: &[u32],
+    ) -> PlacedEntity {
+        PlacedEntity {
+            index,
+            iid: None,
+            kind: None,
+            object: Some(object),
+            placement: Placement::new(position, Quaternion::IDENTITY).expect("placement"),
+            scale: [1.0; 3],
+            interior: false,
+            content_layers: None,
+            own_draw: DrawFlags::default(),
+            visual: Some(Arc::new(ResolvedObject {
+                object,
+                physics: Some(object),
+                chain: vec![object],
+                setup: None,
+                parts: parts.iter().map(|p| Did(*p)).collect::<Vec<_>>().into(),
+                draw: DrawFlags::default(),
+                weenie_type: None,
+                bones: None,
+                error: None,
+                transient: false,
+            })),
+            draw: true,
+            figure: None,
+        }
+    }
+
+    /// A landblock `key` with `entities`, of which those at the positions `figures` (in
+    /// the entity list) are figures.
+    pub(crate) fn bundle(
+        key: LandblockKey,
+        entities: Vec<PlacedEntity>,
+        figures: &[u32],
+    ) -> LandblockBundle {
+        let mut b = LandblockBundle::from_data(
+            key,
+            LandblockData::from_heights(key.data_did(), HeightGrid::flat(1_000)),
+        );
+        b.entities = entities;
+        b.figures = figures
+            .iter()
+            .map(|i| PlacedFigure {
+                entity: EntityRef::Entity(*i),
+                kind: FigureKind::Npc,
+                instance: None,
+                idle: None,
+                random_appearance: None,
+                weenie_type: None,
+            })
+            .collect();
+        b
     }
 }
 
@@ -1545,9 +1897,10 @@ mod tests {
         found
     }
 
-    /// Rule 15 (spec-r10 answer item 4): the scan notes a SetProperty of `Render_Opacity`
-    /// (through scriptlets too), so entities that write it without being effect owners can
-    /// be counted as not followed; another property, or no PID, notes nothing.
+    /// Rule 15 (answer item 2 under the anchor `s12-r15-detect`): the scan notes a SetProperty
+    /// of `Render_Opacity` (through scriptlets too), so entities that write it without being
+    /// effect owners are run while placed; another property, or no PID, notes nothing. A
+    /// Particle node makes an effect owner, whether or not the scripts write the opacity.
     #[test]
     fn effect_scan_notes_opacity_writes() {
         const OPACITY: u32 = 0x1000_0020;
@@ -1587,11 +1940,123 @@ mod tests {
         let out = scan(&direct, Some(OPACITY), &[]);
         assert!(out.writes_opacity);
         assert!(out.effects.is_empty());
+        assert_eq!(out.scope(), Some(RunScope::Placed));
         assert!(!scan(&direct, None, &[]).writes_opacity);
-        assert!(!scan(&startup(vec![set(OPACITY + 1)]), Some(OPACITY), &[]).writes_opacity);
+        assert_eq!(scan(&direct, None, &[]).scope(), None);
+        let other = scan(&startup(vec![set(OPACITY + 1)]), Some(OPACITY), &[]);
+        assert!(!other.writes_opacity);
+        assert_eq!(other.scope(), None);
         let nested = startup(vec![invoke(0x0C00_0001, &[], &[], &[])]);
         let scriptlets = [(0x0C00_0001, vec![set(OPACITY)])];
-        assert!(scan(&nested, Some(OPACITY), &scriptlets).writes_opacity);
+        assert_eq!(
+            scan(&nested, Some(OPACITY), &scriptlets).scope(),
+            Some(RunScope::Placed)
+        );
+        let both = scan(
+            &startup(vec![set(OPACITY), particle(EFFECT)]),
+            Some(OPACITY),
+            &[],
+        );
+        assert!(both.writes_opacity);
+        assert_eq!(both.scope(), Some(RunScope::Reach), "an effect owner first");
+        // A ServerOnly SetProperty sets nothing locally (`script-table.md` §7.7): no write.
+        let server_only = script_node(
+            NodeKind::SET_PROPERTY,
+            NodeData::SetProperty {
+                property: OPACITY,
+                value: Some(Box::new(PropertyEntry {
+                    pid: OPACITY,
+                    value: PropertyValue::Float(0.0),
+                })),
+                server_only: true,
+            },
+            BaseBlock::default(),
+        );
+        let out = scan(&startup(vec![server_only]), Some(OPACITY), &[]);
+        assert!(!out.writes_opacity);
+        assert_eq!(out.scope(), None);
+    }
+
+    /// Rule 15 answer item 2 (`s12-r15-detect`) in the landblock scan: a drawn static writer
+    /// is a [`RunScope::Placed`] owner with the placed object of its entity; a figure with
+    /// the same scripts is not run, and one without a drawn part is counted, not run. A
+    /// writers' scan ([`ScanDepth::Writers`]) finds the same writers, no effect owner, and
+    /// measures no effect owner's reach.
+    #[test]
+    fn a_block_scan_finds_placed_writers() {
+        use testkit::{FakeSource, bundle, entity};
+        const WRITER: Did = Did(0x4700_0010);
+        const EFFECT: Did = Did(0x4700_0020);
+        let key = LandblockKey::new(1, 10, 20).expect("key");
+        let src = FakeSource::new(WRITER, EFFECT);
+        let b = bundle(
+            key,
+            vec![
+                entity(3, WRITER, [1.0, 2.0, 3.0], &[5]),
+                entity(4, WRITER, [9.0, 9.0, 3.0], &[5]),
+                entity(5, WRITER, [7.0, 7.0, 3.0], &[]),
+                entity(6, EFFECT, [4.0, 4.0, 3.0], &[6]),
+                entity(7, Did(0x4700_0030), [5.0, 5.0, 3.0], &[6]),
+            ],
+            &[1],
+        );
+        let full = scan_bundle(&src, &b, 7, ScanDepth::Full);
+        assert!(full.effects_scanned);
+        assert_eq!(full.owners.len(), 2, "{:?}", full.owners);
+        let w = &full.owners[0];
+        assert_eq!(w.scripts.scope, RunScope::Placed);
+        assert_eq!(w.id, static_owner_id(key, 3));
+        let placed = w.placed.as_ref().expect("a placed object");
+        assert_eq!((placed.key, placed.index), (key, Some(3)));
+        assert_eq!(placed.entity.position, [1.0, 2.0, 3.0]);
+        assert_eq!(&*placed.entity.parts, &[5]);
+        assert_eq!(full.owners[1].scripts.scope, RunScope::Reach);
+        assert_eq!(full.owners[1].id, static_owner_id(key, 6));
+        assert_eq!(
+            (full.writer_count, full.effect_owner_count),
+            (1, 1),
+            "the figure is not run"
+        );
+        assert_eq!(full.writers_without_object, 1);
+        assert_eq!(full.opacity_writers().count(), full.writer_count);
+        assert_eq!(full.effect_owners().count(), full.effect_owner_count);
+        assert_eq!(*lock(&src.measured), vec![EFFECT]);
+
+        let src = FakeSource::new(WRITER, EFFECT);
+        let writers = scan_bundle(&src, &b, 7, ScanDepth::Writers);
+        assert!(!writers.effects_scanned);
+        assert_eq!(writers.owners, full.owners[..1]);
+        assert_eq!((writers.writer_count, writers.effect_owner_count), (1, 0));
+        assert_eq!(writers.writers_without_object, 1);
+        assert!(lock(&src.measured).is_empty(), "no reach measured");
+    }
+
+    /// Review finding (scan bounds): writers and effect owners have bounds of their own per
+    /// landblock, so neither takes the other's place, whichever comes first.
+    #[test]
+    fn writers_and_effect_owners_are_bounded_apart() {
+        use testkit::{FakeSource, bundle, entity};
+        const WRITER: Did = Did(0x4700_0010);
+        const EFFECT: Did = Did(0x4700_0020);
+        let key = LandblockKey::new(1, 10, 20).expect("key");
+        let src = FakeSource::new(WRITER, EFFECT);
+        let many = |first: Did, then: Did| {
+            let mut v: Vec<_> = (0..1030u32)
+                .map(|i| entity(i, first, [i as f32 * 0.1, 1.0, 3.0], &[5]))
+                .collect();
+            v.push(entity(2000, then, [1.0, 1.0, 3.0], &[6]));
+            bundle(key, v, &[])
+        };
+        let s = scan_bundle(&src, &many(WRITER, EFFECT), 1, ScanDepth::Full);
+        assert_eq!(s.writer_count, MAX_WRITERS_PER_BLOCK);
+        assert_eq!(
+            s.effect_owner_count, 1,
+            "the effect owner after the writers is found"
+        );
+        let s = scan_bundle(&src, &many(EFFECT, WRITER), 1, ScanDepth::Full);
+        assert_eq!(s.effect_owner_count, MAX_OWNERS_PER_BLOCK);
+        assert_eq!(s.writer_count, 1);
+        assert_eq!(s.owners.len(), MAX_OWNERS_PER_BLOCK + 1);
     }
 
     /// `appearance.md` §7.4.1, edge-case Decision: a driven `ScriptletScript_File` pair on
@@ -1855,6 +2320,58 @@ mod tests {
         assert_eq!(
             reference(written, 0.5),
             Some((0.25_f32 * 255.0).floor() / 255.0)
+        );
+    }
+
+    /// A census of the install's entity descriptors (read-only; skipped unless
+    /// `TESSERA_GAME_DIR` is set; run with `cargo test --release -p tessera-client --lib
+    /// census_of_static_opacity_writers -- --ignored --nocapture`): how many descriptors are
+    /// effect owners and how many would be run while placed for their `Render_Opacity`
+    /// writes alone (`particle-runtime.md` §12 rule 15, answer item 2 under the anchor
+    /// `s12-r15-detect`, whose census is open). Only counts are printed.
+    #[test]
+    #[ignore = "reads every entity descriptor of the install"]
+    fn census_of_static_opacity_writers() {
+        let Some(dir) = std::env::var_os("TESSERA_GAME_DIR").filter(|d| !d.is_empty()) else {
+            eprintln!("TESSERA_GAME_DIR not set; skipping");
+            return;
+        };
+        let set = Arc::new(
+            ArchiveSet::open(&dir, tessera_dat::SetOptions::default()).expect("archive set"),
+        );
+        let materials = Arc::new(MaterialLibrary::new(Arc::clone(&set)));
+        let data =
+            EffectData::open(Arc::clone(&set), materials, Vec::new(), true).expect("effect data");
+        let lo = u32::from(ENTITY_PREFIX) << 24;
+        let mut dids: Vec<u32> = Vec::new();
+        for m in set.members() {
+            for e in m.archive.entries_range(lo..=(lo | 0x00FF_FFFF)) {
+                let Ok(e) = e else { break };
+                dids.push(e.did);
+            }
+        }
+        dids.sort_unstable();
+        dids.dedup();
+        let (mut reach, mut placed) = (0usize, 0usize);
+        for d in &dids {
+            match data
+                .object_scan(Did(*d), ScanDepth::Full)
+                .scripts()
+                .map(|s| s.scope)
+            {
+                Some(RunScope::Reach) => reach += 1,
+                Some(RunScope::Placed) => placed += 1,
+                None => {}
+            }
+        }
+        eprintln!(
+            "entity descriptors: {}; effect owners {reach}; opacity writers without Particle \
+             nodes {placed}",
+            dids.len()
+        );
+        assert!(
+            data.opacity_pid.is_some(),
+            "no Render_Opacity in the dictionary"
         );
     }
 

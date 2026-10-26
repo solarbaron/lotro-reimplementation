@@ -12,14 +12,18 @@
 //!
 //! # Per frame ([`EffectLayer::update`], the Decision of Q-RT1)
 //!
-//! 1. Landblocks near the viewer are scanned on the workers for effect owners: static
-//!    entities and placed figures whose start-up scripts reach Particle nodes. An owner is
-//!    spawned in the layer's own script runtime when the viewer comes within its reach (the
-//!    largest far-fade end of the effects it can start, plus [`SPAWN_MARGIN`]) and
-//!    despawned beyond its reach plus [`DESPAWN_MARGIN`] or when its landblock leaves; a
-//!    placed figure only once the character layer has its figure (its attachment points
-//!    and pose come from there). Despawning stops its never-ending nodes (§7.1) and
-//!    releases its effects (§7.2).
+//! 1. Landblocks within [`SCAN_BLOCKS`] of the viewer (the effect scope, with one landblock
+//!    of hysteresis) are scanned on the workers for effect owners: static entities and
+//!    placed figures whose start-up scripts reach Particle nodes. An owner is spawned in the
+//!    layer's own script runtime when the viewer comes within its reach (the largest
+//!    far-fade end of the effects it can start, plus [`SPAWN_MARGIN`]) and despawned beyond
+//!    its reach plus [`DESPAWN_MARGIN`], when its landblock leaves the effect scope or when
+//!    the landblock leaves; a placed figure only once the character layer has its figure
+//!    (its attachment points and pose come from there). Every other landblock the object
+//!    layer holds objects of is scanned for the static entities run while placed alone
+//!    (rule 15 below; [`data::ScanDepth::Writers`]), and scanned again in full when it
+//!    enters the effect scope. Despawning stops its never-ending nodes (§7.1) and releases
+//!    its effects (§7.2).
 //! 2. The lingering sweep (§7.3), then placement: each owner that is drawn places its
 //!    attached systems with the attachment frame of §6 (static owners are drawn while they
 //!    are spawned; figures while the character layer draws them, Q-RT1), then the
@@ -100,21 +104,35 @@
 //! then its 0x47 chain), taken by `walker::terrain::block_objects`; the bundle reads it
 //! while the weenie list is still there, so the walker's bundles dropping that list
 //! (`keep_weenies` off) loses nothing. Scripts that write `Render_Opacity` of a static owner
-//! later are followed for **effect owners in reach only** ([`opacity`]): once per frame,
-//! after the layer's runtime calls of the frame (the beam ports included), the layer keeps
-//! the object layer's run-time value of each spawned static owner in step with the value its
-//! runtime entity reads (`ObjectLayer::set_runtime_opacity`); the walker draws the object
-//! with it in that frame and the factor follows one frame later; removing the value brings
-//! the property sets' value back. The runtime's stored value of such an owner is made to
-//! agree with the object layer's property-set value, so a write of exactly the stored value
-//! changes nothing that is drawn ([`opacity`] module docs). Only the static entities whose
-//! start-up scripts reach Particle nodes run their scripts in the walker, and only while
-//! inside their effects' reach: the writes of other static entities never happen. The
-//! report counts the writes seen and those not applied (replaced or lost before they
-//! reached the object layer, or waiting for it) and the static entities whose start-up
-//! scripts write `Render_Opacity` but which are no effect owners
-//! ([`EffectStats::opacity`], [`opacity::WriteCounts`]). The creation viewport's owners
-//! count as 1.
+//! later are followed ([`opacity`]): once per frame, after the layer's runtime calls of the
+//! frame (the beam ports included), the layer keeps the object layer's run-time value of each
+//! spawned static owner in step with the value its runtime entity reads
+//! (`ObjectLayer::set_runtime_opacity`); the walker draws the object with it in that frame
+//! and the factor follows one frame later; removing the value brings the property sets'
+//! value back. The runtime's stored value of such an owner is made to agree with the object
+//! layer's property-set value, so a write of exactly the stored value changes nothing that is
+//! drawn ([`opacity`] module docs; detection by difference, confirmed as conforming by answer
+//! item 1 under the anchor `s12-r15-detect`).
+//!
+//! **Static entities run for their opacity writes** (rule 15, answer item 2 under the anchor
+//! `s12-r15-detect`): a static entity with a drawn object whose start-up scripts reach a
+//! SetProperty of `Render_Opacity` but no Particle node ([`data::RunScope::Placed`]) is
+//! spawned in the layer's runtime once the object layer holds its object, whatever the
+//! viewer's distance, and despawned when the object layer no longer holds it (its landblock's
+//! objects removed, checked every frame; the object gone from a rebuilt list, checked with
+//! the owner check) or when its landblock leaves the layer. Such writers take part in the
+//! spawn cap of §3.2 with the effect owners ([`MAX_SPAWNS_PER_CHECK`] per check, nearest
+//! first) and have a live cap of their own ([`MAX_LIVE_WRITERS`]; writers held back by it
+//! alone do not keep the layer from settling and are counted). Since they run while placed
+//! rather than by reach, the layer scans every landblock the object layer holds, not only
+//! those within [`SCAN_BLOCKS`]; the farther ones for their writers alone, without loading
+//! effect records (the effect owners of those landblocks are not spawned: the reach rule of
+//! §3.2 is unchanged). They have no effects component, so placement and housekeeping skip
+//! them; their scripts' other nodes run as the runtime runs them. The lifecycle is in pure
+//! helpers (`plan_sync`, `plan_owner_check`, `unplaced_writer_blocks`) that the layer
+//! applies. The report counts the writers found, those running and the static
+//! writers without a drawn object, which are not run ([`EffectStats::opacity`],
+//! [`opacity::WriteCounts`]). The creation viewport's owners count as 1.
 //!
 //! **Systems of the pass after post-processing** (rule 16): systems with `uses_video_post`
 //! are queued apart ([`EffectLayer::take_post_draws`]) and the walker queues them in the
@@ -158,7 +176,7 @@ use tessera_scriptgraph::{
     EffectSink, EntityId, EnvironmentHandle, EnvironmentRequest, ParticleHandle, ParticleStart,
     Runtime as GraphRuntime, RuntimeVocabulary, SoundHandle, SoundStart, SoundStartOutcome,
 };
-use tessera_world::{LandblockKey, WorldPos, WorldStreamer};
+use tessera_world::{LandblockBundle, LandblockKey, WorldPos, WorldStreamer};
 
 use self::data::{
     BlockScan, EffectData, EffectOwner, EffectRecord, EffectSource, OwnerKind, SurfaceLook,
@@ -169,7 +187,10 @@ use super::objects::{ObjectLayer, TexLookup};
 use super::resolver::{ObjectAnswer, Resolver};
 use super::view::{Anchor, Frustum};
 
-/// Landblocks scanned around the viewer (Chebyshev radius).
+/// The effect scope around the viewer (Chebyshev radius; one landblock more for a landblock
+/// already in it, [`effects_scope`]): the landblocks whose effect owners are scanned for and
+/// may spawn. Every landblock the object layer holds is scanned too, for the static
+/// entities run while placed alone ([`data::ScanDepth::Writers`]).
 pub const SCAN_BLOCKS: u32 = 2;
 /// Owners are spawned when the viewer is this much inside their reach…
 pub const SPAWN_MARGIN: f32 = 20.0;
@@ -179,8 +200,12 @@ pub const DESPAWN_MARGIN: f32 = 60.0;
 pub const OWNER_CHECK_INTERVAL: f64 = 0.25;
 /// Most owners spawned per check (nearest first).
 pub const MAX_SPAWNS_PER_CHECK: usize = 16;
-/// Most owners alive at once.
+/// Most effect owners alive at once.
 pub const MAX_LIVE_OWNERS: usize = 2048;
+/// Most static entities alive at once for their `Render_Opacity` writes alone
+/// ([`data::RunScope::Placed`]); a cap of their own, so that writers far away never keep a
+/// near effect owner from spawning.
+pub const MAX_LIVE_WRITERS: usize = 2048;
 /// Most landblock scans queued at once.
 pub const MAX_SCANS_IN_FLIGHT: usize = 16;
 /// Most record loads queued at once.
@@ -233,11 +258,13 @@ impl Default for EffectConfig {
 pub struct EffectStats {
     /// Start-up finished (the runtime runs).
     pub ready: bool,
-    /// Landblocks scanned and kept.
+    /// Landblocks scanned and kept (those in the effect scope and every other one the object
+    /// layer holds, [`SCAN_BLOCKS`]).
     pub blocks: usize,
-    /// Effect owners found in the scanned landblocks.
+    /// Effect owners found in the scanned landblocks of the effect scope.
     pub owners_found: usize,
-    /// Owners spawned in the runtime.
+    /// Effect owners spawned in the runtime (without the static entities run for their
+    /// opacity writes, [`opacity::WriteCounts::writers_running`]).
     pub owners_live: usize,
     /// Running systems (attached, shared, lingering, dropped).
     pub systems: usize,
@@ -1272,6 +1299,504 @@ struct BlockFx {
     bundle: usize,
     scan: Option<Arc<BlockScan>>,
     token: CancelToken,
+    /// Its effect owners may spawn ([`effects_scope`]).
+    effects: bool,
+    /// A full scan replacing a writers' scan ([`data::ScanDepth::Writers`]) is queued; the
+    /// writers' scan stays until it arrives, so the writers keep running.
+    upgrading: bool,
+}
+
+/// Whether the effect owners of a landblock at Chebyshev distance `d` from the viewer's may
+/// spawn (`particle-runtime.md` §3.2, walker application of the Q-RT1 Decision): within
+/// [`SCAN_BLOCKS`] yes, beyond [`SCAN_BLOCKS`] + 1 no, in between as before (`was`; a block
+/// the layer did not track yet: no).
+#[must_use]
+pub fn effects_scope(was: Option<bool>, d: u32) -> bool {
+    if d <= SCAN_BLOCKS {
+        true
+    } else if d > SCAN_BLOCKS + 1 {
+        false
+    } else {
+        was.unwrap_or(false)
+    }
+}
+
+/// What the owner check does with one owner a scan found ([`owner_check`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OwnerAction {
+    /// Spawn it (subject to the spawn cap).
+    Spawn,
+    /// Despawn it.
+    Despawn,
+    /// Leave it as it is.
+    Keep,
+}
+
+/// What the owner check knows of one owner, by its scope ([`owner_check`]).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum OwnerInput {
+    /// An effect owner ([`data::RunScope::Reach`]).
+    Reach {
+        /// Its distance from the viewer, metres.
+        distance: f32,
+        /// Its effects' reach, metres.
+        reach: f32,
+        /// Whether its landblock's effect owners may spawn ([`effects_scope`]).
+        in_scope: bool,
+    },
+    /// A static entity run while placed ([`data::RunScope::Placed`]).
+    Placed {
+        /// Whether the object layer holds its object.
+        placed: bool,
+    },
+}
+
+/// The owner check for one owner that runs (`live`) or not (`particle-runtime.md` §3.2 and
+/// §12 rule 15, answer item 2 under the anchor `s12-r15-detect`).
+///
+/// An effect owner spawns within *reach* + [`SPAWN_MARGIN`] and despawns beyond *reach* +
+/// [`DESPAWN_MARGIN`] (a distance that is not a number too) or when its landblock leaves the
+/// effect scope; a writer runs exactly while placed.
+#[must_use]
+pub fn owner_check(live: bool, input: OwnerInput) -> OwnerAction {
+    match input {
+        OwnerInput::Reach {
+            distance,
+            reach,
+            in_scope,
+        } => {
+            if live {
+                if in_scope && distance <= reach + DESPAWN_MARGIN {
+                    OwnerAction::Keep
+                } else {
+                    OwnerAction::Despawn
+                }
+            } else if in_scope && distance < reach + SPAWN_MARGIN {
+                OwnerAction::Spawn
+            } else {
+                OwnerAction::Keep
+            }
+        }
+        OwnerInput::Placed { placed } => match (live, placed) {
+            (true, false) => OwnerAction::Despawn,
+            (false, true) => OwnerAction::Spawn,
+            _ => OwnerAction::Keep,
+        },
+    }
+}
+
+/// What [`pick_spawns`] picked.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SpawnPick<T> {
+    /// The payloads to spawn, in spawn order.
+    pub picked: Vec<T>,
+    /// Candidates left for a later check: over [`MAX_SPAWNS_PER_CHECK`], or effect owners
+    /// over their live cap (the layer is not settled while any wait).
+    pub waiting: usize,
+    /// Writers held back by [`MAX_LIVE_WRITERS`] alone: they spawn only when a writer
+    /// despawns, so they do not keep the layer from settling (they are counted in
+    /// [`opacity::WriteCounts::writers_capped`]).
+    pub writers_capped: usize,
+}
+
+/// Picks the owners to spawn from `candidates` (any order; distance, scope, payload), nearest
+/// first (a distance that is not a number counts as infinite), at most
+/// [`MAX_SPAWNS_PER_CHECK`] of both scopes together (§3.2: the spawn cap), and of each scope
+/// no more than its free room (`room_effects`, `room_writers`).
+#[must_use]
+pub fn pick_spawns<T>(
+    mut candidates: Vec<(f32, data::RunScope, T)>,
+    mut room_effects: usize,
+    mut room_writers: usize,
+) -> SpawnPick<T> {
+    let rank = |d: f32| if d.is_nan() { f32::INFINITY } else { d };
+    candidates.sort_by(|a, b| rank(a.0).total_cmp(&rank(b.0)));
+    let mut out = SpawnPick {
+        picked: Vec::new(),
+        waiting: 0,
+        writers_capped: 0,
+    };
+    for (_, scope, c) in candidates {
+        let room = match scope {
+            data::RunScope::Reach => &mut room_effects,
+            data::RunScope::Placed => &mut room_writers,
+        };
+        if *room == 0 && scope == data::RunScope::Placed {
+            out.writers_capped += 1;
+            continue;
+        }
+        if out.picked.len() >= MAX_SPAWNS_PER_CHECK || *room == 0 {
+            out.waiting += 1;
+            continue;
+        }
+        *room -= 1;
+        out.picked.push(c);
+    }
+    out
+}
+
+/// The owners of the landblock scans that run, with their landblock and scope (the creation
+/// viewport's and session owners are not listed), and the live writers counted per
+/// landblock, so that neither the per-frame despawn of [`unplaced_writer_blocks`] nor the
+/// statistics walk the owners.
+#[derive(Debug, Default)]
+pub(crate) struct LiveOwners {
+    map: HashMap<EntityId, (LandblockKey, data::RunScope)>,
+    writer_blocks: HashMap<LandblockKey, usize>,
+    writers: usize,
+}
+
+impl LiveOwners {
+    /// Notes `id` as running, an owner of landblock `key` with `scope`.
+    pub(crate) fn insert(&mut self, id: EntityId, key: LandblockKey, scope: data::RunScope) {
+        if let Some(old) = self.map.insert(id, (key, scope)) {
+            self.forget(old);
+        }
+        if scope == data::RunScope::Placed {
+            self.writers += 1;
+            *self.writer_blocks.entry(key).or_insert(0) += 1;
+        }
+    }
+
+    /// Forgets `id`; its landblock and scope when it ran.
+    pub(crate) fn remove(&mut self, id: EntityId) -> Option<(LandblockKey, data::RunScope)> {
+        let old = self.map.remove(&id)?;
+        self.forget(old);
+        Some(old)
+    }
+
+    fn forget(&mut self, (key, scope): (LandblockKey, data::RunScope)) {
+        if scope != data::RunScope::Placed {
+            return;
+        }
+        self.writers = self.writers.saturating_sub(1);
+        if let Some(n) = self.writer_blocks.get_mut(&key) {
+            *n = n.saturating_sub(1);
+            if *n == 0 {
+                self.writer_blocks.remove(&key);
+            }
+        }
+    }
+
+    /// Whether `id` runs.
+    pub(crate) fn contains(&self, id: EntityId) -> bool {
+        self.map.contains_key(&id)
+    }
+
+    /// The scope of `id`, when it runs.
+    pub(crate) fn scope(&self, id: EntityId) -> Option<data::RunScope> {
+        self.map.get(&id).map(|(_, s)| *s)
+    }
+
+    /// Every running owner.
+    pub(crate) fn ids(&self) -> Vec<EntityId> {
+        self.map.keys().copied().collect()
+    }
+
+    /// The running owners of landblock `key` (of `scope` only, when given).
+    pub(crate) fn ids_of(&self, key: LandblockKey, scope: Option<data::RunScope>) -> Vec<EntityId> {
+        self.map
+            .iter()
+            .filter(|(_, (k, s))| *k == key && scope.is_none_or(|w| w == *s))
+            .map(|(id, _)| *id)
+            .collect()
+    }
+
+    /// Running writers ([`data::RunScope::Placed`]).
+    pub(crate) fn writers(&self) -> usize {
+        self.writers
+    }
+
+    /// Running effect owners ([`data::RunScope::Reach`]).
+    pub(crate) fn effect_owners(&self) -> usize {
+        self.map.len().saturating_sub(self.writers)
+    }
+}
+
+/// The object layer as the owner check sees it ([`plan_owner_check`],
+/// [`unplaced_writer_blocks`]).
+pub(crate) trait HeldObjects {
+    /// Whether the layer holds landblock `key`'s own objects.
+    fn holds_block(&self, key: LandblockKey) -> bool;
+    /// Whether it holds the object of `placed` (`ObjectLayer::runtime_opacity`'s lookup).
+    fn places(&self, placed: &data::PlacedObject) -> bool;
+}
+
+impl HeldObjects for ObjectLayer {
+    fn holds_block(&self, key: LandblockKey) -> bool {
+        self.holds(key)
+    }
+
+    fn places(&self, placed: &data::PlacedObject) -> bool {
+        opacity::RuntimeOpacityLayer::runtime_opacity(self, placed).is_some()
+    }
+}
+
+/// The landblocks of running writers whose objects `objects` no longer holds (rule 15,
+/// answer item 2 under the anchor `s12-r15-detect`: "until it is removed"): one lookup per
+/// landblock with a running writer, none when no writer runs, so it runs every frame.
+pub(crate) fn unplaced_writer_blocks(
+    live: &LiveOwners,
+    objects: &impl HeldObjects,
+) -> Vec<LandblockKey> {
+    live.writer_blocks
+        .keys()
+        .filter(|k| !objects.holds_block(**k))
+        .copied()
+        .collect()
+}
+
+/// What one owner check does ([`plan_owner_check`]).
+#[derive(Debug, Default)]
+pub(crate) struct OwnerPlan {
+    /// Owners to despawn first.
+    pub despawn: Vec<EntityId>,
+    /// Owners to spawn then, in spawn order, with their landblock.
+    pub spawn: Vec<(LandblockKey, EffectOwner)>,
+    /// [`SpawnPick::waiting`].
+    pub pending: usize,
+    /// [`SpawnPick::writers_capped`].
+    pub writers_capped: usize,
+}
+
+/// The owner check over the tracked landblocks' scans (`blocks`: key, effect scope, scan)
+/// for a viewer at `eye` (region coordinates; [`owner_check`] per owner, then
+/// [`pick_spawns`] within the room the despawns leave): `figure_position` gives the
+/// position of a placed figure the character layer has (a figure it has not yet waits).
+pub(crate) fn plan_owner_check<'a>(
+    blocks: impl IntoIterator<Item = (LandblockKey, bool, &'a BlockScan)>,
+    live: &LiveOwners,
+    objects: &impl HeldObjects,
+    eye: [f64; 3],
+    figure_position: impl Fn(u64) -> Option<[f64; 3]>,
+) -> OwnerPlan {
+    let dist = |p: [f64; 3]| -> f32 {
+        let d = [p[0] - eye[0], p[1] - eye[1], p[2] - eye[2]];
+        ((d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt()) as f32
+    };
+    let mut plan = OwnerPlan::default();
+    let mut spawn: Vec<(f32, data::RunScope, (LandblockKey, EffectOwner))> = Vec::new();
+    let (mut gone_effects, mut gone_writers) = (0usize, 0usize);
+    for (key, effects, scan) in blocks {
+        for o in &scan.owners {
+            let scope = o.scripts.scope;
+            // The effect owners of a block out of the effect scope do not run (and a
+            // block's scope ending despawned them in `sync_blocks`).
+            if scope == data::RunScope::Reach && !effects {
+                continue;
+            }
+            let figure = match o.kind {
+                OwnerKind::Figure { tag } => Some(figure_position(tag)),
+                OwnerKind::Static { .. } | OwnerKind::Session { .. } => None,
+            };
+            let d = dist(figure.flatten().unwrap_or(o.position));
+            let input = match scope {
+                data::RunScope::Reach => OwnerInput::Reach {
+                    distance: d,
+                    reach: o.scripts.reach,
+                    in_scope: effects,
+                },
+                data::RunScope::Placed => OwnerInput::Placed {
+                    placed: o.placed.as_ref().is_some_and(|p| objects.places(p)),
+                },
+            };
+            match owner_check(live.contains(o.id), input) {
+                OwnerAction::Despawn => {
+                    match live.scope(o.id) {
+                        Some(data::RunScope::Placed) => gone_writers += 1,
+                        Some(data::RunScope::Reach) => gone_effects += 1,
+                        None => {}
+                    }
+                    plan.despawn.push(o.id);
+                }
+                // A placed figure waits for its figure (attachment points, pose).
+                OwnerAction::Spawn if figure.is_some_and(|f| f.is_none()) => {}
+                OwnerAction::Spawn => spawn.push((d, scope, (key, o.clone()))),
+                OwnerAction::Keep => {}
+            }
+        }
+    }
+    let pick = pick_spawns(
+        spawn,
+        MAX_LIVE_OWNERS.saturating_sub(live.effect_owners().saturating_sub(gone_effects)),
+        MAX_LIVE_WRITERS.saturating_sub(live.writers().saturating_sub(gone_writers)),
+    );
+    plan.spawn = pick.picked;
+    plan.pending = pick.waiting;
+    plan.writers_capped = pick.writers_capped;
+    plan
+}
+
+/// A resident landblock as [`plan_sync`] sees it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct ResidentBlock {
+    /// The landblock.
+    pub key: LandblockKey,
+    /// Its Chebyshev distance from the viewer's.
+    pub d: u32,
+    /// The identity of its bundle (its address).
+    pub identity: usize,
+    /// Whether the object layer holds its own objects.
+    pub held: bool,
+}
+
+/// A landblock scan to queue ([`plan_sync`]).
+#[derive(Debug)]
+pub(crate) struct QueuedScan<B> {
+    pub key: LandblockKey,
+    pub identity: usize,
+    pub depth: data::ScanDepth,
+    pub token: CancelToken,
+    /// The viewer's landblock (scanned first).
+    pub immediate: bool,
+    pub bundle: B,
+}
+
+/// What [`plan_sync`] asks for.
+#[derive(Debug)]
+pub(crate) struct SyncPlan<B> {
+    /// Scans to queue, nearest first.
+    pub queued: Vec<QueuedScan<B>>,
+    /// Landblocks whose owners all despawn (no longer tracked, or tracked anew).
+    pub gone: Vec<LandblockKey>,
+    /// Landblocks whose effect scope ended: their effect owners despawn.
+    pub out_of_scope: Vec<LandblockKey>,
+    /// Scans the in-flight cap kept back.
+    pub waiting: usize,
+}
+
+/// Keeps `blocks` in step with the `resident` landblocks (each with its bundle payload)
+/// around the viewer's landblock `here` (module docs, step 1): a landblock within
+/// [`SCAN_BLOCKS`] + 1 is tracked (for its effect owners; one beyond [`SCAN_BLOCKS`] only
+/// while it already is), and so is every one the object layer holds objects of (for the
+/// static entities run while placed, rule 15). A landblock is scanned in full while in the
+/// effect scope ([`effects_scope`]) and for its writers alone outside it
+/// ([`data::ScanDepth::Writers`]: no effect records, no figures); a writers' scan is
+/// replaced by a full one when the landblock enters the scope, keeping its writers running.
+/// Scans are queued nearest first, at most [`MAX_SCANS_IN_FLIGHT`] in flight (the viewer's
+/// landblock always); `in_flight` counts them.
+fn plan_sync<B>(
+    blocks: &mut HashMap<LandblockKey, BlockFx>,
+    resident: Vec<(ResidentBlock, B)>,
+    here: LandblockKey,
+    in_flight: &mut usize,
+) -> SyncPlan<B> {
+    let mut wanted = HashSet::new();
+    let mut plan = SyncPlan {
+        queued: Vec::new(),
+        gone: Vec::new(),
+        out_of_scope: Vec::new(),
+        waiting: 0,
+    };
+    // (distance, upgrade, block, payload)
+    let mut want: Vec<(u32, bool, ResidentBlock, B)> = Vec::new();
+    for (r, bundle) in resident {
+        if r.d > SCAN_BLOCKS + 1 && !r.held {
+            continue;
+        }
+        wanted.insert(r.key);
+        if let Some(b) = blocks.get_mut(&r.key) {
+            let now_in = effects_scope(Some(b.effects), r.d);
+            if b.effects && !now_in {
+                plan.out_of_scope.push(r.key);
+            }
+            b.effects = now_in;
+        }
+        match blocks.get(&r.key) {
+            Some(b) if b.bundle == r.identity => {
+                let writers_only = b.scan.as_ref().is_some_and(|s| !s.effects_scanned);
+                if b.effects && writers_only && !b.upgrading {
+                    want.push((r.d, true, r, bundle));
+                }
+            }
+            // One beyond the scan radius and not held, a landblock is not scanned anew
+            // (the hysteresis of §3.2 keeps one already tracked).
+            _ if r.d > SCAN_BLOCKS && !r.held => {}
+            _ => want.push((r.d, false, r, bundle)),
+        }
+    }
+    want.sort_by_key(|(d, _, _, _)| *d);
+    for (d, upgrade, r, bundle) in want {
+        if *in_flight >= MAX_SCANS_IN_FLIGHT && r.key != here {
+            plan.waiting += 1;
+            continue;
+        }
+        let token = if upgrade {
+            let Some(b) = blocks.get_mut(&r.key) else {
+                continue;
+            };
+            b.upgrading = true;
+            b.token.clone()
+        } else {
+            let was = blocks.get(&r.key).map(|b| b.effects);
+            if let Some(old) = blocks.remove(&r.key) {
+                old.token.cancel();
+                plan.gone.push(r.key);
+            }
+            let token = CancelToken::new();
+            blocks.insert(
+                r.key,
+                BlockFx {
+                    bundle: r.identity,
+                    scan: None,
+                    token: token.clone(),
+                    effects: effects_scope(was, d),
+                    upgrading: false,
+                },
+            );
+            token
+        };
+        let full = blocks.get(&r.key).is_some_and(|b| b.effects);
+        *in_flight += 1;
+        plan.queued.push(QueuedScan {
+            key: r.key,
+            identity: r.identity,
+            depth: if full {
+                data::ScanDepth::Full
+            } else {
+                data::ScanDepth::Writers
+            },
+            token,
+            immediate: r.key == here,
+            bundle,
+        });
+    }
+    let dropped: Vec<LandblockKey> = blocks
+        .keys()
+        .filter(|k| !wanted.contains(k))
+        .copied()
+        .collect();
+    for k in dropped {
+        if let Some(b) = blocks.remove(&k) {
+            b.token.cancel();
+        }
+        plan.gone.push(k);
+    }
+    plan
+}
+
+/// Takes one scan reply into `blocks` (stale ones, of a bundle no longer tracked, are
+/// dropped): a scan replaces the landblock's (a full scan its writers' scan); a scan that
+/// did not run drops a landblock that has none yet, so it is queued again, and lets a
+/// failed upgrade be queued again.
+fn receive_scan(blocks: &mut HashMap<LandblockKey, BlockFx>, msg: ScanMsg) {
+    match msg {
+        Ok(scan) => {
+            if let Some(b) = blocks.get_mut(&scan.key)
+                && b.bundle == scan.bundle
+            {
+                b.scan = Some(Arc::new(scan));
+                b.upgrading = false;
+            }
+        }
+        Err((key, identity)) => match blocks.get_mut(&key) {
+            Some(b) if b.bundle == identity && b.scan.is_none() => {
+                blocks.remove(&key);
+            }
+            Some(b) if b.bundle == identity => b.upgrading = false,
+            _ => {}
+        },
+    }
 }
 
 type ScanMsg = Result<BlockScan, (LandblockKey, usize)>;
@@ -1441,12 +1966,18 @@ pub struct EffectLayer {
     st: Option<FxState>,
     blocks: HashMap<LandblockKey, BlockFx>,
     scans_in_flight: usize,
+    /// Landblocks whose scan could not be queued in the last [`EffectLayer::sync_blocks`]
+    /// (the in-flight cap): the layer is not settled while any wait.
+    scans_waiting: usize,
     scan_tx: mpsc::Sender<ScanMsg>,
     scan_rx: mpsc::Receiver<ScanMsg>,
     load_rx: Option<mpsc::Receiver<u32>>,
-    live: HashMap<EntityId, LandblockKey>,
+    /// The owners of the landblock scans that run ([`LiveOwners`]).
+    live: LiveOwners,
     next_check: f64,
     pending_spawns: usize,
+    /// The writer cap was met and logged once.
+    writer_cap_logged: bool,
     time: f64,
     problem: Option<String>,
     stats: EffectStats,
@@ -1592,10 +2123,11 @@ fn placed_parent_opacity(objects: &ObjectLayer, placed: &data::PlacedObject) -> 
 }
 
 /// The HUD note on run-time `Render_Opacity` writes (rule 15, [`opacity`]): empty when
-/// none was seen and no entity's writes go unfollowed; else the writes, those that did not
-/// reach the object layer (replaced or lost before they reached it, or waiting for it, of
-/// which the waiting ones are named) and the static entities whose writes are not followed,
-/// so the departure shows in the report (spec-r10 answer item 4).
+/// none was seen and no writer was found; else the writes, those that did not reach the
+/// object layer (replaced or lost before they reached it, or waiting for it, of which the
+/// waiting ones are named; spec-r10 answer item 4), the static entities run for their writes
+/// (found and running, answer item 2 under the anchor `s12-r15-detect`) and those not run
+/// because they have no drawn object.
 fn opacity_writes_note(s: &EffectStats) -> String {
     let c = &s.opacity;
     let mut note = String::new();
@@ -1607,10 +2139,20 @@ fn opacity_writes_note(s: &EffectStats) -> String {
             c.waiting
         ));
     }
-    if c.unfollowed_writers > 0 {
+    if c.writers > 0 {
         note.push_str(&format!(
-            ", {} opacity writers not followed",
-            c.unfollowed_writers
+            ", opacity writers {} ({} running",
+            c.writers, c.writers_running
+        ));
+        if c.writers_capped > 0 {
+            note.push_str(&format!(", {} over the cap", c.writers_capped));
+        }
+        note.push(')');
+    }
+    if c.writers_without_object > 0 {
+        note.push_str(&format!(
+            ", {} opacity writers without object",
+            c.writers_without_object
         ));
     }
     note
@@ -1696,12 +2238,14 @@ impl EffectLayer {
             st: None,
             blocks: HashMap::new(),
             scans_in_flight: 0,
+            scans_waiting: 0,
             scan_tx,
             scan_rx,
             load_rx: None,
-            live: HashMap::new(),
+            live: LiveOwners::default(),
             next_check: 0.0,
             pending_spawns: 0,
+            writer_cap_logged: false,
             time: 0.0,
             problem,
             stats: EffectStats::default(),
@@ -1754,15 +2298,18 @@ impl EffectLayer {
     }
 
     /// Whether nothing the viewer should see is still loading: start-up done (or off),
-    /// no landblock scan or record load in flight, no owner in range waiting to spawn, no
-    /// drawn system waiting for its texture, no creation-scene scan running, and no placed
-    /// decal building or waiting for its texture ([`decals::DecalLayer::settled`]).
+    /// no landblock scan waiting or in flight, no record load in flight, no owner waiting to
+    /// spawn (effect owners in range, writers placed; writers held back by their live cap
+    /// alone do not wait, [`SpawnPick::writers_capped`]), no drawn system waiting for its
+    /// texture, no creation-scene scan running, and no placed decal building or waiting for
+    /// its texture ([`decals::DecalLayer::settled`]).
     #[must_use]
     pub fn settled(&self) -> bool {
         let effects = !self.config.enabled
             || self.problem.is_some()
             || (self.boot.is_none()
                 && self.scans_in_flight == 0
+                && self.scans_waiting == 0
                 && self.pending_spawns == 0
                 && self.stage.as_ref().is_none_or(|s| s.scan.is_none())
                 && self.stats.loading == 0
@@ -1867,116 +2414,82 @@ impl EffectLayer {
         Some(f(graph, &mut sink))
     }
 
-    fn sync_blocks(&mut self, streamer: &WorldStreamer, here: LandblockKey) {
+    /// Keeps the landblock scans in step with the resident landblocks ([`plan_sync`]),
+    /// queues the scans it asks for on the workers, despawns the owners of the landblocks
+    /// no longer tracked and the effect owners of those out of the effect scope, and takes
+    /// the scans that arrived.
+    fn sync_blocks(&mut self, streamer: &WorldStreamer, here: LandblockKey, objects: &ObjectLayer) {
         let Some(data) = self.st.as_ref().map(|s| Arc::clone(&s.data)) else {
             return;
         };
-        let mut wanted = HashSet::new();
-        let mut gone_blocks = Vec::new();
-        for (key, _ring, bundle) in streamer.resident() {
-            let Some(d) = key.chebyshev(here) else {
-                continue;
-            };
-            if d > SCAN_BLOCKS + 1 {
-                continue;
-            }
-            wanted.insert(key);
-            let identity = Arc::as_ptr(bundle) as usize;
-            let fresh = self.blocks.get(&key).is_none_or(|b| b.bundle != identity);
-            if !fresh || d > SCAN_BLOCKS {
-                continue;
-            }
-            if self.scans_in_flight >= MAX_SCANS_IN_FLIGHT && key != here {
-                continue;
-            }
-            if let Some(old) = self.blocks.remove(&key) {
-                old.token.cancel();
-                gone_blocks.push(key);
-            }
-            let token = CancelToken::new();
-            self.blocks.insert(
-                key,
-                BlockFx {
-                    bundle: identity,
-                    scan: None,
-                    token: token.clone(),
-                },
-            );
-            self.scans_in_flight += 1;
+        let resident: Vec<(ResidentBlock, &Arc<LandblockBundle>)> = streamer
+            .resident()
+            .filter_map(|(key, _ring, bundle)| {
+                let d = key.chebyshev(here)?;
+                let r = ResidentBlock {
+                    key,
+                    d,
+                    identity: Arc::as_ptr(bundle) as usize,
+                    held: objects.holds(key),
+                };
+                Some((r, bundle))
+            })
+            .collect();
+        let plan = plan_sync(&mut self.blocks, resident, here, &mut self.scans_in_flight);
+        self.scans_waiting = plan.waiting;
+        for q in plan.queued {
             let reply = ScanReply {
                 tx: Some(self.scan_tx.clone()),
-                key,
-                identity,
+                key: q.key,
+                identity: q.identity,
             };
             let data = Arc::clone(&data);
-            let bundle = Arc::clone(bundle);
+            let bundle = Arc::clone(q.bundle);
+            let (identity, depth) = (q.identity, q.depth);
             let job = move |ctx: &tessera_assets::JobContext<'_>| {
                 if ctx.is_cancelled() {
                     return;
                 }
-                reply.send(data.scan_block(&bundle, identity));
+                reply.send(data.scan_block(&bundle, identity, depth));
             };
-            let priority = if key == here {
+            let priority = if q.immediate {
                 Priority::Immediate
             } else {
                 Priority::Prefetch
             };
-            if let Err(e) = self.pool.spawn(priority, token, job) {
+            if let Err(e) = self.pool.spawn(priority, q.token, job) {
                 tracing::debug!("effects: landblock scan not queued: {e}");
             }
         }
-        let dropped: Vec<LandblockKey> = self
-            .blocks
-            .keys()
-            .filter(|k| !wanted.contains(k))
-            .copied()
-            .collect();
-        for k in dropped {
-            if let Some(b) = self.blocks.remove(&k) {
-                b.token.cancel();
-            }
-            gone_blocks.push(k);
+        for k in plan.gone {
+            self.despawn_block(k, None);
         }
-        for k in gone_blocks {
-            self.despawn_block(k);
+        for k in plan.out_of_scope {
+            self.despawn_block(k, Some(data::RunScope::Reach));
         }
         while let Ok(msg) = self.scan_rx.try_recv() {
             self.scans_in_flight = self.scans_in_flight.saturating_sub(1);
-            match msg {
-                Ok(scan) => {
-                    if let Some(b) = self.blocks.get_mut(&scan.key)
-                        && b.bundle == scan.bundle
-                    {
-                        b.scan = Some(Arc::new(scan));
-                    }
-                }
-                Err((key, identity)) => {
-                    if self
-                        .blocks
-                        .get(&key)
-                        .is_some_and(|b| b.bundle == identity && b.scan.is_none())
-                    {
-                        self.blocks.remove(&key);
-                    }
-                }
-            }
+            receive_scan(&mut self.blocks, msg);
         }
     }
 
-    fn despawn_block(&mut self, key: LandblockKey) {
-        let ids: Vec<EntityId> = self
-            .live
-            .iter()
-            .filter(|(_, k)| **k == key)
-            .map(|(id, _)| *id)
-            .collect();
-        for id in ids {
+    /// Despawns the owners of landblock `key` (of `scope` only, when given).
+    fn despawn_block(&mut self, key: LandblockKey, scope: Option<data::RunScope>) {
+        for id in self.live.ids_of(key, scope) {
             self.despawn(id);
         }
     }
 
+    /// Despawns the static entities run while placed whose landblock's objects the object
+    /// layer no longer holds ([`unplaced_writer_blocks`]); every frame.
+    fn despawn_unplaced_blocks(&mut self, objects: &ObjectLayer) {
+        for k in unplaced_writer_blocks(&self.live, objects) {
+            self.despawn_block(k, Some(data::RunScope::Placed));
+        }
+    }
+
     fn despawn(&mut self, id: EntityId) {
-        self.live.remove(&id);
+        self.live.remove(id);
         let _ = Self::with_graph(&mut self.graph, &mut self.st, |g, sink| g.despawn(sink, id));
         if let Some(st) = self.st.as_mut() {
             let now = st.now;
@@ -1990,8 +2503,7 @@ impl EffectLayer {
 
     /// Clears everything (a region change).
     fn clear(&mut self) {
-        let ids: Vec<EntityId> = self.live.keys().copied().collect();
-        for id in ids {
+        for id in self.live.ids() {
             self.despawn(id);
         }
         self.clear_stage();
@@ -2012,67 +2524,45 @@ impl EffectLayer {
         }
     }
 
-    /// The owners to spawn and despawn for a viewer at `eye` (region coordinates).
+    /// The owners to spawn and despawn for a viewer at `eye` (region coordinates)
+    /// ([`plan_owner_check`]).
     fn check_owners(&mut self, eye: [f64; 3], characters: &CharacterLayer, objects: &ObjectLayer) {
-        let dist = |p: [f64; 3]| -> f32 {
-            let d = [p[0] - eye[0], p[1] - eye[1], p[2] - eye[2]];
-            ((d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt()) as f32
-        };
-        let mut despawn = Vec::new();
-        let mut spawn: Vec<(f32, LandblockKey, EffectOwner)> = Vec::new();
-        for (key, b) in &self.blocks {
-            let Some(scan) = &b.scan else { continue };
-            for o in &scan.owners {
-                let pos = match o.kind {
-                    OwnerKind::Figure { tag } => characters
-                        .figure_effect_view(tag)
-                        .map_or(o.position, |v| v.position),
-                    OwnerKind::Static { .. } | OwnerKind::Session { .. } => o.position,
-                };
-                let d = dist(pos);
-                let reach = o.scripts.reach;
-                if self.live.contains_key(&o.id) {
-                    // A distance that is not a number despawns too.
-                    let within = d <= reach + DESPAWN_MARGIN;
-                    if !within {
-                        despawn.push(o.id);
-                    }
-                } else if d < reach + SPAWN_MARGIN {
-                    spawn.push((d, *key, o.clone()));
-                }
-            }
-        }
-        for id in despawn {
+        let plan = plan_owner_check(
+            self.blocks
+                .iter()
+                .filter_map(|(k, b)| Some((*k, b.effects, b.scan.as_deref()?))),
+            &self.live,
+            objects,
+            eye,
+            |tag| characters.figure_effect_view(tag).map(|v| v.position),
+        );
+        for id in plan.despawn {
             self.despawn(id);
         }
-        spawn.sort_by(|a, b| a.0.total_cmp(&b.0));
-        let mut pending = 0usize;
-        let mut spawned = 0usize;
-        for (_, key, o) in spawn {
-            if spawned >= MAX_SPAWNS_PER_CHECK || self.live.len() >= MAX_LIVE_OWNERS {
-                pending += 1;
-                continue;
-            }
-            // A placed figure waits for its figure (attachment points, pose).
-            if let OwnerKind::Figure { tag } = o.kind {
-                match characters.figure_effect_view(tag) {
-                    Some(v) => {
-                        if let Some(st) = self.st.as_mut() {
-                            st.figures.insert(tag, v);
-                        }
-                    }
-                    None => continue,
-                }
+        for (key, o) in plan.spawn {
+            if let OwnerKind::Figure { tag } = o.kind
+                && let Some(v) = characters.figure_effect_view(tag)
+                && let Some(st) = self.st.as_mut()
+            {
+                st.figures.insert(tag, v);
             }
             self.spawn(key, &o, objects);
-            spawned += 1;
         }
-        self.pending_spawns = pending;
+        self.pending_spawns = plan.pending;
+        self.stats.opacity.writers_capped = plan.writers_capped;
+        if plan.writers_capped > 0 && !self.writer_cap_logged {
+            self.writer_cap_logged = true;
+            tracing::warn!(
+                cap = MAX_LIVE_WRITERS,
+                waiting = plan.writers_capped,
+                "effects: Render_Opacity writers over the live cap are not run"
+            );
+        }
     }
 
     fn spawn(&mut self, key: LandblockKey, o: &EffectOwner, objects: &ObjectLayer) {
         if self.spawn_owner(o, objects) {
-            self.live.insert(o.id, key);
+            self.live.insert(o.id, key, o.scripts.scope);
         }
     }
 
@@ -2246,8 +2736,9 @@ impl EffectLayer {
         }
         // 1. Landblocks and owners.
         if let Some(here) = eye.landblock() {
-            self.sync_blocks(input.streamer, here);
+            self.sync_blocks(input.streamer, here, objects);
         }
+        self.despawn_unplaced_blocks(objects);
         if self.time >= self.next_check {
             self.next_check = self.time + OWNER_CHECK_INTERVAL;
             self.check_owners([eye.x, eye.y, eye.z], input.characters, objects);
@@ -2503,7 +2994,18 @@ impl EffectLayer {
         };
         let main = lighting.and_then(|l| l.main).map(|(c, _)| c);
         let mut lit = 0usize;
-        let ids: Vec<EntityId> = st.owners.keys().copied().collect();
+        // The static entities run for their opacity writes alone have no systems to place
+        // or keep, unless their scripts started one after all (rule 15, [`data::RunScope`]).
+        let live = &self.live;
+        let ids: Vec<EntityId> = st
+            .owners
+            .keys()
+            .filter(|id| {
+                live.scope(**id).is_none_or(|s| s == data::RunScope::Reach)
+                    || st.manager.component(id.0).is_some()
+            })
+            .copied()
+            .collect();
         for id in &ids {
             let Some(owner) = st.owners.get(id).cloned() else {
                 continue;
@@ -2631,19 +3133,21 @@ impl EffectLayer {
     fn refresh_stats(&mut self) {
         let Some(st) = self.st.as_ref() else { return };
         self.stats.blocks = self.blocks.len();
-        self.stats.opacity.unfollowed_writers = self
-            .blocks
-            .values()
-            .filter_map(|b| b.scan.as_ref())
-            .map(|s| usize::try_from(s.unfollowed_opacity_writers).unwrap_or(usize::MAX))
-            .fold(0usize, usize::saturating_add);
-        self.stats.owners_found = self
-            .blocks
-            .values()
-            .filter_map(|b| b.scan.as_ref())
-            .map(|s| s.owners.len())
-            .sum();
-        self.stats.owners_live = self.live.len();
+        let (mut without, mut writers, mut found) = (0usize, 0usize, 0usize);
+        for b in self.blocks.values() {
+            let Some(scan) = &b.scan else { continue };
+            without = without
+                .saturating_add(usize::try_from(scan.writers_without_object).unwrap_or(usize::MAX));
+            writers = writers.saturating_add(scan.writer_count);
+            if b.effects {
+                found = found.saturating_add(scan.effect_owner_count);
+            }
+        }
+        self.stats.opacity.writers_without_object = without;
+        self.stats.opacity.writers = writers;
+        self.stats.owners_found = found;
+        self.stats.opacity.writers_running = self.live.writers();
+        self.stats.owners_live = self.live.effect_owners();
         self.stats.systems = st.manager.running_count();
         self.stats.weather_systems = st.weather.running();
         self.stats.lingering = st.manager.lingering().len();
@@ -3241,7 +3745,7 @@ mod tests {
             replaced: 1,
             lost: 1,
             waiting: 1,
-            unfollowed_writers: 0,
+            ..opacity::WriteCounts::default()
         };
         assert_eq!(
             opacity_writes_note(&s),
@@ -3258,16 +3762,432 @@ mod tests {
             opacity_writes_note(&s),
             ", opacity writes 3 (2 not applied, 0 waiting)"
         );
-        s.opacity.unfollowed_writers = 4;
+        s.opacity.writers = 4;
+        s.opacity.writers_running = 3;
         assert_eq!(
             opacity_writes_note(&s),
-            ", opacity writes 3 (2 not applied, 0 waiting), 4 opacity writers not followed"
+            ", opacity writes 3 (2 not applied, 0 waiting), opacity writers 4 (3 running)"
+        );
+        s.opacity.writers_capped = 1;
+        assert!(
+            opacity_writes_note(&s).ends_with("opacity writers 4 (3 running, 1 over the cap)"),
+            "{}",
+            opacity_writes_note(&s)
         );
         s.opacity = opacity::WriteCounts {
-            unfollowed_writers: 2,
+            writers_without_object: 2,
             ..opacity::WriteCounts::default()
         };
-        assert_eq!(opacity_writes_note(&s), ", 2 opacity writers not followed");
+        assert_eq!(
+            opacity_writes_note(&s),
+            ", 2 opacity writers without object"
+        );
+    }
+
+    /// The object layer for the lifecycle tests: the block lists of [`TestBlocks`] and the
+    /// landblocks whose own objects it holds.
+    #[derive(Default)]
+    struct Held {
+        blocks: crate::walker::objects::test_blocks::TestBlocks,
+        held: HashSet<LandblockKey>,
+    }
+
+    impl Held {
+        fn insert(&mut self, key: LandblockKey, index: u32) {
+            self.blocks.insert(key, index, 1.0);
+            self.held.insert(key);
+        }
+
+        fn remove(&mut self, key: LandblockKey) {
+            self.blocks.remove(key);
+            self.held.remove(&key);
+        }
+    }
+
+    impl HeldObjects for Held {
+        fn holds_block(&self, key: LandblockKey) -> bool {
+            self.held.contains(&key)
+        }
+
+        fn places(&self, placed: &data::PlacedObject) -> bool {
+            opacity::RuntimeOpacityLayer::runtime_opacity(&self.blocks, placed).is_some()
+        }
+    }
+
+    /// One frame of the layer's lifecycle on synthetic inputs, applied as
+    /// [`EffectLayer::update`] applies it: [`plan_sync`] (a scan it queues runs at once on
+    /// `bundle`, [`data::scan_bundle`], and arrives through [`receive_scan`]), the per-frame
+    /// despawn of [`unplaced_writer_blocks`], then the owner check ([`plan_owner_check`]).
+    struct Lifecycle {
+        blocks: HashMap<LandblockKey, BlockFx>,
+        in_flight: usize,
+        live: LiveOwners,
+        src: data::testkit::FakeSource,
+        bundle: LandblockBundle,
+        /// Scans queued but not yet run (`run_scans`): bundle identity and depth.
+        queued: Vec<(usize, data::ScanDepth)>,
+    }
+
+    impl Lifecycle {
+        fn sync(&mut self, here: LandblockKey, objects: &Held) -> SyncPlan<()> {
+            let key = self.bundle.key;
+            let r = ResidentBlock {
+                key,
+                d: key.chebyshev(here).expect("same region"),
+                identity: 7,
+                held: objects.holds_block(key),
+            };
+            let plan = plan_sync(&mut self.blocks, vec![(r, ())], here, &mut self.in_flight);
+            for k in plan.gone.iter().chain(&plan.out_of_scope) {
+                let scope = plan
+                    .out_of_scope
+                    .contains(k)
+                    .then_some(data::RunScope::Reach);
+                for id in self.live.ids_of(*k, scope) {
+                    self.live.remove(id);
+                }
+            }
+            self.queued
+                .extend(plan.queued.iter().map(|q| (q.identity, q.depth)));
+            plan
+        }
+
+        fn run_scans(&mut self) {
+            for (identity, depth) in std::mem::take(&mut self.queued) {
+                let scan = data::scan_bundle(&self.src, &self.bundle, identity, depth);
+                self.in_flight -= 1;
+                receive_scan(&mut self.blocks, Ok(scan));
+            }
+        }
+
+        fn frame(&mut self, objects: &Held) {
+            for k in unplaced_writer_blocks(&self.live, objects) {
+                for id in self.live.ids_of(k, Some(data::RunScope::Placed)) {
+                    self.live.remove(id);
+                }
+            }
+        }
+
+        fn check(&mut self, eye: [f64; 3], objects: &Held) -> OwnerPlan {
+            let plan = plan_owner_check(
+                self.blocks
+                    .iter()
+                    .filter_map(|(k, b)| Some((*k, b.effects, b.scan.as_deref()?))),
+                &self.live,
+                objects,
+                eye,
+                |_| None,
+            );
+            for id in &plan.despawn {
+                self.live.remove(*id);
+            }
+            for (key, o) in &plan.spawn {
+                self.live.insert(o.id, *key, o.scripts.scope);
+            }
+            plan
+        }
+    }
+
+    /// Review finding (rule 15, answer item 2 under the anchor `s12-r15-detect`, through the
+    /// layer's lifecycle): (a) a landblock far from the viewer is tracked once the object
+    /// layer holds it, and scanned for its writers alone; (b) its writer spawns at the first
+    /// owner check after the object layer holds its object, whatever the distance, and its
+    /// write reaches that object; (c) it despawns in the frame in which the landblock's
+    /// objects are removed, and at the next check when a rebuilt list no longer holds its
+    /// object; (d) the landblock's effect owner stays unspawned until the landblock enters the
+    /// effect scope, where a full scan replaces the writers' scan without despawning the
+    /// writer, and despawns when the landblock leaves the scope again.
+    #[test]
+    fn placed_writers_run_while_their_object_is_placed() {
+        use data::testkit::{FakeSource, bundle, entity};
+        const WRITER: Did = Did(0x4700_0010);
+        const EFFECT: Did = Did(0x4700_0020);
+        let here = LandblockKey::new(1, 10, 20).expect("key");
+        let far = LandblockKey::new(1, 30, 20).expect("key");
+        let mut life = Lifecycle {
+            blocks: HashMap::new(),
+            in_flight: 0,
+            live: LiveOwners::default(),
+            src: FakeSource::new(WRITER, EFFECT),
+            bundle: bundle(
+                far,
+                vec![
+                    entity(3, WRITER, [1.0, 2.0, 3.0], &[5]),
+                    entity(4, EFFECT, [1.0, 2.0, 3.0], &[6]),
+                ],
+                &[],
+            ),
+            queued: Vec::new(),
+        };
+        let writer = data::static_owner_id(far, 3);
+        let effect = data::static_owner_id(far, 4);
+        let mut objects = Held::default();
+        let eye_here = [0.0, 0.0, 0.0];
+
+        // Not held, far away: not tracked.
+        let plan = life.sync(here, &objects);
+        assert!(plan.queued.is_empty() && life.blocks.is_empty());
+        // (a) Held: a writers' scan.
+        objects.insert(far, 3);
+        let plan = life.sync(here, &objects);
+        assert_eq!(plan.queued.len(), 1);
+        assert_eq!(plan.queued[0].depth, data::ScanDepth::Writers);
+        assert!(!plan.queued[0].immediate);
+        life.run_scans();
+        let scan = life.blocks[&far].scan.clone().expect("scan arrived");
+        assert_eq!(scan.owners.len(), 1);
+        assert!(!scan.effects_scanned);
+        assert!(data::lock(&life.src.measured).is_empty());
+        // (b) The object is held: the writer spawns, though about 3,800 m away.
+        let p = life.check(eye_here, &objects);
+        assert_eq!(p.spawn.len(), 1);
+        assert_eq!(p.spawn[0].1.id, writer);
+        assert!(life.live.contains(writer) && life.live.writers() == 1);
+        assert_eq!(
+            life.check(eye_here, &objects).spawn.len(),
+            0,
+            "spawned once"
+        );
+        // Its write reaches the object through the scan's placed object.
+        let placed = scan.owners[0].placed.clone().expect("placed object");
+        let mut watch =
+            opacity::OwnerOpacity::new(Some(tessera_formats::PropertyValue::Float(1.0)));
+        let mut counts = opacity::WriteCounts::default();
+        opacity::follow(
+            [(writer, &mut watch, &placed)],
+            |_| Some(Some(tessera_formats::PropertyValue::Float(0.25))),
+            &mut objects.blocks,
+            &mut counts,
+        );
+        assert_eq!(objects.blocks.owner_factor(far, 3), Some(0.25));
+        assert_eq!((counts.writes, counts.applied), (1, 1));
+        // (c) The landblock's objects are removed: despawned in that frame.
+        life.frame(&objects);
+        assert!(life.live.contains(writer));
+        objects.remove(far);
+        life.frame(&objects);
+        assert!(!life.live.contains(writer) && life.live.writers() == 0);
+        assert!(unplaced_writer_blocks(&life.live, &objects).is_empty());
+        // Placed again: spawned again; a rebuilt list without its object: despawned at the
+        // next check, though the landblock is still held.
+        objects.insert(far, 3);
+        let plan = life.sync(here, &objects);
+        assert!(
+            plan.queued.is_empty() && plan.gone.is_empty(),
+            "the scan is kept"
+        );
+        assert_eq!(life.check(eye_here, &objects).spawn.len(), 1);
+        objects.insert(far, 9);
+        life.frame(&objects);
+        assert!(life.live.contains(writer));
+        let p = life.check(eye_here, &objects);
+        assert_eq!(p.despawn, vec![writer]);
+        assert!(!life.live.contains(writer));
+        objects.insert(far, 3);
+        assert_eq!(life.check(eye_here, &objects).spawn.len(), 1);
+
+        // (d) The viewer next to the effect owner, its landblock still out of the scope:
+        // nothing new spawns (the writers' scan has no effect owner).
+        let eye_far = life.blocks[&far].scan.as_ref().expect("scan").owners[0].position;
+        assert!(life.check(eye_far, &objects).spawn.is_empty());
+        // The viewer enters the landblock: a full scan is queued, the writer keeps running.
+        let plan = life.sync(far, &objects);
+        assert_eq!(plan.queued.len(), 1);
+        assert_eq!(plan.queued[0].depth, data::ScanDepth::Full);
+        assert!(plan.queued[0].immediate);
+        assert!(plan.gone.is_empty() && life.live.contains(writer));
+        assert!(
+            life.sync(far, &objects).queued.is_empty(),
+            "one upgrade at a time"
+        );
+        assert!(
+            life.check(eye_far, &objects).spawn.is_empty(),
+            "not scanned yet"
+        );
+        life.run_scans();
+        assert_eq!(*data::lock(&life.src.measured), vec![EFFECT]);
+        let p = life.check(eye_far, &objects);
+        assert_eq!(p.spawn.len(), 1);
+        assert_eq!(p.spawn[0].1.id, effect);
+        assert!(life.live.contains(writer) && life.live.contains(effect));
+        assert_eq!((life.live.writers(), life.live.effect_owners()), (1, 1));
+        // The viewer leaves: the effect owner despawns with the scope, the writer stays.
+        let plan = life.sync(here, &objects);
+        assert_eq!(plan.out_of_scope, vec![far]);
+        assert!(!life.live.contains(effect) && life.live.contains(writer));
+        // Back next to it, but out of the scope: the full scan's effect owner stays down.
+        assert!(life.check(eye_far, &objects).spawn.is_empty());
+        // No longer held and far: the landblock is dropped with its writer.
+        objects.remove(far);
+        let plan = life.sync(here, &objects);
+        assert_eq!(plan.gone, vec![far]);
+        assert!(life.blocks.is_empty() && !life.live.contains(writer));
+    }
+
+    /// Review finding (rule 15 writers' live cap): placed writers held back by
+    /// [`MAX_LIVE_WRITERS`] alone are counted as capped, not as waiting, so the layer can
+    /// settle; a writer that despawns makes room for one of them.
+    #[test]
+    fn writers_over_their_cap_do_not_keep_the_layer_unsettled() {
+        use data::testkit::{FakeSource, bundle, entity};
+        const WRITER: Did = Did(0x4700_0010);
+        let key = LandblockKey::new(1, 10, 20).expect("key");
+        let src = FakeSource::new(WRITER, Did(0x4700_0020));
+        let b = bundle(key, vec![entity(3, WRITER, [1.0, 2.0, 3.0], &[5])], &[]);
+        let scan = data::scan_bundle(&src, &b, 1, data::ScanDepth::Writers);
+        let mut objects = Held::default();
+        objects.insert(key, 3);
+        let other = LandblockKey::new(1, 11, 20).expect("key");
+        let mut live = LiveOwners::default();
+        for i in 0..MAX_LIVE_WRITERS as u64 {
+            live.insert(EntityId((1 << 40) | i), other, data::RunScope::Placed);
+        }
+        let check = |live: &LiveOwners| {
+            plan_owner_check([(key, false, &scan)], live, &objects, [0.0; 3], |_| None)
+        };
+        let p = check(&live);
+        assert!(p.spawn.is_empty());
+        assert_eq!((p.pending, p.writers_capped), (0, 1));
+        live.remove(EntityId(1 << 40));
+        let p = check(&live);
+        assert_eq!((p.spawn.len(), p.pending, p.writers_capped), (1, 0, 0));
+    }
+
+    /// Review finding (per-frame cost): the per-frame despawn looks each landblock with a
+    /// running writer up once, and nothing when no writer runs.
+    #[test]
+    fn the_unplaced_check_looks_each_writer_block_up_once() {
+        struct Counting(std::cell::Cell<usize>);
+        impl HeldObjects for Counting {
+            fn holds_block(&self, _key: LandblockKey) -> bool {
+                self.0.set(self.0.get() + 1);
+                false
+            }
+            fn places(&self, _placed: &data::PlacedObject) -> bool {
+                false
+            }
+        }
+        let a = LandblockKey::new(1, 10, 20).expect("key");
+        let b = LandblockKey::new(1, 11, 20).expect("key");
+        let objects = Counting(std::cell::Cell::new(0));
+        let mut live = LiveOwners::default();
+        live.insert(EntityId(1), a, data::RunScope::Reach);
+        assert!(unplaced_writer_blocks(&live, &objects).is_empty());
+        assert_eq!(objects.0.get(), 0, "no writer, no lookup");
+        for i in 0..500 {
+            live.insert(
+                EntityId(10 + i),
+                if i % 2 == 0 { a } else { b },
+                data::RunScope::Placed,
+            );
+        }
+        let gone = unplaced_writer_blocks(&live, &objects);
+        assert!(gone.len() == 2 && gone.contains(&a) && gone.contains(&b));
+        assert_eq!(objects.0.get(), 2);
+        // Re-inserting and removing keeps the per-landblock counts.
+        live.insert(EntityId(10), b, data::RunScope::Placed);
+        for i in 0..500 {
+            live.remove(EntityId(10 + i));
+        }
+        assert_eq!(live.writers(), 0);
+        assert!(unplaced_writer_blocks(&live, &objects).is_empty());
+        assert_eq!(live.effect_owners(), 1);
+    }
+
+    /// `particle-runtime.md` §3.2 (walker application of the Q-RT1 Decision): the effect
+    /// scope of a landblock, with its hysteresis of one landblock.
+    #[test]
+    fn the_effect_scope_keeps_its_hysteresis() {
+        assert!(effects_scope(None, 0));
+        assert!(effects_scope(Some(false), SCAN_BLOCKS));
+        assert!(
+            !effects_scope(None, SCAN_BLOCKS + 1),
+            "a new block there: no"
+        );
+        assert!(effects_scope(Some(true), SCAN_BLOCKS + 1));
+        assert!(!effects_scope(Some(false), SCAN_BLOCKS + 1));
+        assert!(!effects_scope(Some(true), SCAN_BLOCKS + 2));
+        assert!(!effects_scope(None, 40));
+    }
+
+    /// §3.2 for effect owners (reach with hysteresis, effect scope) and rule 15 answer item 2
+    /// (`s12-r15-detect`) for static writers: run exactly while the object layer places
+    /// them, whatever the distance and the effect scope.
+    #[test]
+    fn owners_spawn_by_reach_and_writers_while_placed() {
+        use OwnerAction::{Despawn, Keep, Spawn};
+        let r = 40.0;
+        let reach = |distance, in_scope| OwnerInput::Reach {
+            distance,
+            reach: r,
+            in_scope,
+        };
+        // Effect owners.
+        assert_eq!(owner_check(false, reach(r + 19.0, true)), Spawn);
+        assert_eq!(owner_check(false, reach(r + 20.0, true)), Keep);
+        assert_eq!(owner_check(false, reach(1.0, false)), Keep);
+        assert_eq!(owner_check(true, reach(r + 60.0, true)), Keep);
+        assert_eq!(owner_check(true, reach(r + 61.0, true)), Despawn);
+        assert_eq!(owner_check(true, reach(f32::NAN, true)), Despawn);
+        assert_eq!(owner_check(false, reach(f32::NAN, true)), Keep);
+        assert_eq!(owner_check(true, reach(1.0, false)), Despawn);
+        // Writers: placed or not decides alone.
+        let placed = |placed| OwnerInput::Placed { placed };
+        assert_eq!(owner_check(false, placed(true)), Spawn);
+        assert_eq!(owner_check(false, placed(false)), Keep);
+        assert_eq!(owner_check(true, placed(true)), Keep);
+        assert_eq!(owner_check(true, placed(false)), Despawn);
+    }
+
+    /// §3.2's spawn cap (rule 15 answer item 2: effect owners and writers together): nearest
+    /// first, at most [`MAX_SPAWNS_PER_CHECK`] per check, each scope within its room; the
+    /// rest wait for later checks, except writers held back by their live cap alone, which
+    /// are counted apart so that they do not keep the layer from settling.
+    #[test]
+    fn spawns_share_one_cap_nearest_first() {
+        use data::RunScope::{Placed, Reach};
+        let mut c: Vec<(f32, data::RunScope, u32)> = (0..30)
+            .map(|i| {
+                let scope = if i % 2 == 0 { Reach } else { Placed };
+                (100.0 - i as f32, scope, i)
+            })
+            .collect();
+        // Distances that are not numbers, of both signs (an arithmetic NaN is negative on
+        // common hardware): last, never ahead of a real distance.
+        let arithmetic = (f32::INFINITY - f32::INFINITY).sqrt();
+        c.push((f32::NAN, Placed, 99));
+        c.push((-f32::NAN, Placed, 98));
+        c.push((arithmetic, Reach, 97));
+        let n = c.len();
+        let p = pick_spawns(c.clone(), usize::MAX, usize::MAX);
+        assert_eq!(p.picked.len(), MAX_SPAWNS_PER_CHECK);
+        assert_eq!(p.waiting, n - MAX_SPAWNS_PER_CHECK);
+        assert_eq!(p.writers_capped, 0);
+        assert_eq!(p.picked.first(), Some(&29), "nearest first");
+        assert!(
+            p.picked.iter().all(|i| *i < 90),
+            "a distance that is not a number comes last: {:?}",
+            p.picked
+        );
+        // With room for every candidate, the NaN ones are picked after every real one.
+        let p = pick_spawns(
+            c.iter().filter(|x| x.2 >= 25).cloned().collect(),
+            usize::MAX,
+            usize::MAX,
+        );
+        assert_eq!(p.picked[..5], [29, 28, 27, 26, 25]);
+        // No room for writers: only effect owners spawn; the writers are capped, not waiting.
+        let p = pick_spawns(c.clone(), usize::MAX, 0);
+        assert!(p.picked.iter().all(|i| i % 2 == 0 || *i == 97));
+        assert_eq!(p.picked.len(), MAX_SPAWNS_PER_CHECK);
+        assert_eq!(p.writers_capped, 17);
+        assert_eq!(p.waiting, 0, "the 16 effect owners all fit");
+        // Room for two effect owners: the others wait (their cap is reached within reach).
+        let p = pick_spawns(c, 2, usize::MAX);
+        assert_eq!(p.picked.iter().filter(|i| *i % 2 == 0).count(), 2);
+        assert_eq!(p.picked.len(), MAX_SPAWNS_PER_CHECK);
+        let p = pick_spawns(Vec::<(f32, data::RunScope, u32)>::new(), 1, 1);
+        assert!(p.picked.is_empty() && p.waiting == 0 && p.writers_capped == 0);
     }
 
     /// Rule 15 as revised (`particle-runtime.md` §12): a static owner the draw pass culls

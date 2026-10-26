@@ -33,7 +33,8 @@ impl std::fmt::Debug for ArchiveData {
     }
 }
 
-/// The 4-byte length prefix of a compressed record's stored payload (`dat` §5.3).
+/// The 4-byte inflated-length prefix a compressed record's stored `length` includes
+/// (`dat-container.md` §5.2).
 const COMPRESSED_PREFIX: u64 = 4;
 
 impl InstallData for ArchiveData {

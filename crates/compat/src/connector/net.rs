@@ -141,6 +141,12 @@ impl<'a, N: ConnectorNet> NetHttp<'a, N> {
     pub fn new(net: &'a mut N, stop: &'a dyn Fn() -> bool) -> Self {
         Self { net, stop }
     }
+
+    /// Whether the network right still holds ([`ConnectorNet::is_live`]).
+    #[must_use]
+    pub fn is_live(&self) -> bool {
+        self.net.is_live()
+    }
 }
 
 impl<N: ConnectorNet> HttpClient for NetHttp<'_, N> {

@@ -38,10 +38,16 @@
 //! pass (or its next exchange) and ends without trying to send, its graceful disconnect
 //! included.
 //!
-//! The name lookups of the login and chat servers come before the last cancel check ahead
-//! of the session, and the session's start looks at the flag again right before its bind
-//! and its first send: a cancel during a lookup binds and sends nothing. Once cancelled, the
-//! session loop accepts no referral, starts no ticket refresh and opens no chat session.
+//! The flag is looked at before and after each name lookup of the login and chat servers,
+//! and the session's start looks at it again right before its local-address probe, its bind
+//! and its first send: a cancel before or during a lookup probes, binds and sends nothing.
+//! A command that arrives after the cancel is dropped unread. Once cancelled, the session
+//! loop accepts no referral, starts no ticket refresh (the refresh thread itself looks at
+//! the flag right before its request) and opens no chat session; the shutdown sends the
+//! graceful disconnect only on connected connections and closes one still in its handshake
+//! without a word (`session_phase` "Ending the session"). A failure caused by a revoked
+//! right (the queue's wait included, which ends on the revocation) ends the session with
+//! "the network access was revoked", never with a refusal of the login or the world.
 
 mod control;
 pub mod data;

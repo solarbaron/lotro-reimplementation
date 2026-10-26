@@ -9,7 +9,9 @@
 //! referral, the world handshake and `0x90` (the session is then in the world), bit 3 the
 //! wire dictionaries of a synthetic install, bit 4 a chat server with an in-memory socket
 //! binder, bit 5 a ticket lifetime (so the refresh runs, against a client that always
-//! fails), bit 6 a cancelled attempt (the driver's stop predicate holds). Then arbitrary
+//! fails), bit 6 a cancelled attempt (the driver's stop predicate and the refresh thread's
+//! cancel flag hold), bit 7 the end without sending (a revoked right, `abandon`) instead of
+//! the graceful shutdown. Then arbitrary
 //! datagrams from the login, world and chat servers, arbitrary messages wrapped in valid
 //! sequenced datagrams of the login or world connection, neutral commands and clock steps
 //! follow. No panic, bounded state.
@@ -17,6 +19,7 @@
 
 use std::collections::VecDeque;
 use std::net::{Ipv4Addr, SocketAddrV4};
+use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 
 use libfuzzer_sys::fuzz_target;
@@ -292,6 +295,7 @@ fn start(net: &mut Net, flags: u8) -> Option<SessionDriver<Net>> {
         codecs,
         codec_uuids,
         schema: SchemaView(Arc::new(NoData)),
+        cancel: Arc::new(AtomicBool::new(flags & 0x40 != 0)),
     };
     SessionDriver::start(net, start, 0.0, &|| false).ok()
 }
@@ -447,6 +451,11 @@ fuzz_target!(|data: &[u8]| {
         }
         step(&mut driver, now);
     }
-    driver.begin_shutdown(now);
-    let _ = driver.shutdown_step(now + 1.0);
+    if flags & 0x80 != 0 {
+        driver.abandon();
+    } else {
+        driver.begin_shutdown(now);
+        let _ = driver.shutdown_step(now + 1.0);
+        let _ = driver.shutdown_step(now + 3.0);
+    }
 });

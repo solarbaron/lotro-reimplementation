@@ -35,9 +35,9 @@ use crate::login::{
 };
 use crate::net_access::{NetworkAccess, Revocation};
 use crate::session::{
-    BitTreeTable, ConnectChallengeHeader, DatagramHeader, IsaacCipher, LoginQueueStatusMessage,
-    OPCODE_BATCH_CONTAINER, OPCODE_SYSTEM_NOTIFICATION, OptionalHeaders, SessionError,
-    UdpDatagramTransport, VersionStatusMessage, WorldReferralHeader, decode_datagram,
+    BitTreeTable, ConnectChallengeHeader, ConnectionState, DatagramHeader, IsaacCipher,
+    LoginQueueStatusMessage, OPCODE_BATCH_CONTAINER, OPCODE_SYSTEM_NOTIFICATION, OptionalHeaders,
+    SessionError, UdpDatagramTransport, VersionStatusMessage, WorldReferralHeader, decode_datagram,
     encode_batch_container, encode_datagram, encode_variable_u32, split_blob,
 };
 use crate::world::{
@@ -202,16 +202,36 @@ fn status(queue: bool, login: &str) -> String {
     format!("<Status><loginservers>{login};</loginservers><queueurls>{q}</queueurls></Status>")
 }
 
-/// A gate that holds the `GetDatacenters` answer until the test opens it.
+/// A gate that holds an answer (or a lookup) until the test opens it; the first `pass`
+/// waits go through.
 #[derive(Debug, Default)]
 struct Gate {
     open: Mutex<bool>,
     cv: Condvar,
     reached: AtomicBool,
+    pass: AtomicUsize,
 }
 
 impl Gate {
+    /// A gate that lets the first `n` waits through.
+    fn passing(n: usize) -> Self {
+        Self {
+            pass: AtomicUsize::new(n),
+            ..Self::default()
+        }
+    }
+
     fn wait(&self) {
+        let mut p = self.pass.load(Ordering::SeqCst);
+        while p > 0 {
+            match self
+                .pass
+                .compare_exchange(p, p - 1, Ordering::SeqCst, Ordering::SeqCst)
+            {
+                Ok(_) => return,
+                Err(now) => p = now,
+            }
+        }
         self.reached.store(true, Ordering::SeqCst);
         let mut open = self.open.lock().expect("gate");
         while !*open {
@@ -250,6 +270,10 @@ struct Service {
     failing_chat: bool,
     /// Holds the chat server's name lookup until the test opens it.
     chat_gate: Option<Arc<Gate>>,
+    /// Holds the answers of Alpha's status (`Gate::passing` lets the world list's through).
+    status_gate: Option<Arc<Gate>>,
+    /// The chat binder makes working sockets over the chat server's own synthetic queue.
+    chat_socket: bool,
     /// The synthetic network follows the run's network-access value, Withdraw's
     /// `revoke_all` included (the test holds [`crate::net_access::TEST_REVOKE_LOCK`]);
     /// otherwise only the value's own revocation (the reaper's), which `revoke_all` in
@@ -271,6 +295,8 @@ impl Default for Service {
             refresh_gate: None,
             failing_chat: false,
             chat_gate: None,
+            status_gate: None,
+            chat_socket: false,
             follow_withdraw: false,
         }
     }
@@ -290,6 +316,15 @@ struct Shared {
     requests: Vec<Recorded>,
     binds: usize,
     udp: UdpState,
+    /// What the chat server sends (the chat sockets read only this).
+    chat_inbound: VecDeque<(Vec<u8>, SocketAddrV4)>,
+    /// Requests, sends, binds and lookups tried while the right was revoked (refused, but
+    /// counted: none may be tried).
+    dead_attempts: usize,
+    /// Name lookups made.
+    resolves: usize,
+    /// Local-address probes made.
+    probes: usize,
 }
 
 /// The network right as the synthetic network sees it (`Service::follow_withdraw`).
@@ -327,6 +362,7 @@ impl World {
     fn answer(&self, req: &HttpRequest) -> Result<HttpResponse, LoginError> {
         let mut s = self.shared.lock().expect("shared");
         if !self.live() {
+            s.dead_attempts += 1;
             return Err(LoginError::ServiceUnavailable {
                 reason: "revoked".to_owned(),
             });
@@ -361,10 +397,15 @@ impl World {
                 ok(&datacenters(&self.service.auth, &self.service.chat))
             }
             "https://gls.example.invalid/launcher.xml" => ok(LAUNCHER),
-            "https://gls.example.invalid/status/alpha" => ok(&status(
-                self.service.alpha_queue,
-                &self.service.login_server,
-            )),
+            "https://gls.example.invalid/status/alpha" => {
+                if let Some(g) = &self.service.status_gate {
+                    g.wait();
+                }
+                ok(&status(
+                    self.service.alpha_queue,
+                    &self.service.login_server,
+                ))
+            }
             "https://gls.example.invalid/status/beta" => match &self.service.beta_status {
                 Some(s) => ok(s),
                 None => Ok(HttpResponse {
@@ -426,6 +467,42 @@ impl World {
             .inbound
             .push_back((datagram, from));
     }
+
+    /// A datagram from the chat server, to the chat sockets.
+    fn deliver_chat(&self, datagram: Vec<u8>) {
+        self.shared
+            .lock()
+            .expect("shared")
+            .chat_inbound
+            .push_back((datagram, CHAT_SERVER));
+    }
+
+    fn chat_inbound_len(&self) -> usize {
+        self.shared.lock().expect("shared").chat_inbound.len()
+    }
+
+    fn dead_attempts(&self) -> usize {
+        self.shared.lock().expect("shared").dead_attempts
+    }
+
+    fn resolves(&self) -> usize {
+        self.shared.lock().expect("shared").resolves
+    }
+
+    fn probes(&self) -> usize {
+        self.shared.lock().expect("shared").probes
+    }
+
+    /// Takes every datagram sent so far.
+    fn take_sent(&self) -> Vec<(Vec<u8>, SocketAddrV4)> {
+        self.shared
+            .lock()
+            .expect("shared")
+            .udp
+            .outbound
+            .drain(..)
+            .collect()
+    }
 }
 
 #[derive(Debug)]
@@ -437,8 +514,10 @@ impl HttpClient for FakeHttp {
     }
 }
 
+/// A synthetic socket: the session's (`false`) or a chat socket (`true`, reading the chat
+/// server's queue). Both record what they send in one queue.
 #[derive(Debug)]
-struct FakeUdp(World);
+struct FakeUdp(World, bool);
 
 impl UdpDatagramTransport for FakeUdp {
     fn local_addr(&self) -> Result<SocketAddrV4, SessionError> {
@@ -450,6 +529,7 @@ impl UdpDatagramTransport for FakeUdp {
         // queue sees every datagram sent before the revocation.
         let mut s = self.0.shared.lock().expect("shared");
         if !self.0.live() {
+            s.dead_attempts += 1;
             return Err(revoked_io());
         }
         s.udp.outbound.push_back((buf.to_vec(), target));
@@ -460,14 +540,13 @@ impl UdpDatagramTransport for FakeUdp {
         if !self.0.live() {
             return Err(revoked_io());
         }
-        let next = self
-            .0
-            .shared
-            .lock()
-            .expect("shared")
-            .udp
-            .inbound
-            .pop_front();
+        let mut s = self.0.shared.lock().expect("shared");
+        let next = if self.1 {
+            s.chat_inbound.pop_front()
+        } else {
+            s.udp.inbound.pop_front()
+        };
+        drop(s);
         Ok(next.and_then(|(d, src)| {
             let n = d.len().min(buf.len());
             buf.get_mut(..n)?.copy_from_slice(d.get(..n)?);
@@ -501,9 +580,13 @@ impl ConnectorNet for FakeNet {
     }
 
     fn resolve(&mut self, host: &str, port: u16) -> Result<SocketAddrV4, SessionError> {
+        let mut s = self.0.shared.lock().expect("shared");
         if !self.0.live() {
+            s.dead_attempts += 1;
             return Err(revoked_io());
         }
+        s.resolves += 1;
+        drop(s);
         match (host, port) {
             ("login.example.invalid", 9001) => Ok(LOGIN_SERVER),
             ("chat.example.invalid", 9200) => {
@@ -517,6 +600,12 @@ impl ConnectorNet for FakeNet {
     }
 
     fn local_ipv4_toward(&mut self, _remote: SocketAddrV4) -> Option<Ipv4Addr> {
+        let mut s = self.0.shared.lock().expect("shared");
+        if !self.0.live() {
+            s.dead_attempts += 1;
+            return None;
+        }
+        s.probes += 1;
         Some(*LOCAL.ip())
     }
 
@@ -526,16 +615,26 @@ impl ConnectorNet for FakeNet {
         _explicit_base_port: u16,
         _compute_unique: bool,
     ) -> Result<FakeUdp, SessionError> {
+        let mut s = self.0.shared.lock().expect("shared");
         if !self.0.live() {
+            s.dead_attempts += 1;
             return Err(revoked_io());
         }
-        self.0.shared.lock().expect("shared").binds += 1;
-        Ok(FakeUdp(self.0.clone()))
+        s.binds += 1;
+        drop(s);
+        Ok(FakeUdp(self.0.clone(), false))
     }
 
     fn chat_binder(
         &self,
     ) -> Option<Box<dyn FnMut() -> Result<FakeUdp, crate::play::PlayError> + Send>> {
+        if self.0.service.chat_socket {
+            let world = self.0.clone();
+            return Some(Box::new(move || {
+                world.chat_binds.fetch_add(1, Ordering::SeqCst);
+                Ok(FakeUdp(world.clone(), true))
+            }));
+        }
         if !self.0.service.failing_chat {
             return None;
         }
@@ -826,6 +925,18 @@ impl Server {
     fn connect(&self, run: &Run, seed: u32, addr: SocketAddrV4) {
         run.world.deliver(self.challenge(seed), addr);
         run.world.deliver(
+            self.control(OptionalHeaders {
+                cumulative_ack: Some(0),
+                ..OptionalHeaders::default()
+            }),
+            addr,
+        );
+    }
+
+    /// [`Self::connect`] on a world without a running connector.
+    fn connect_to(&self, world: &World, seed: u32, addr: SocketAddrV4) {
+        world.deliver(self.challenge(seed), addr);
+        world.deliver(
             self.control(OptionalHeaders {
                 cumulative_ack: Some(0),
                 ..OptionalHeaders::default()
@@ -1750,8 +1861,16 @@ fn new_world(service: Service) -> World {
 
 /// A driver whose `SessionAuthHeader` went out, with a ticket of `lifetime` seconds.
 fn driver_at_login(service: Service, lifetime: u32) -> (World, SessionDriver<FakeNet>) {
-    let world = new_world(service);
-    let mut net = FakeNet(world.clone());
+    driver_at_login_with(service, lifetime, None, Arc::default())
+}
+
+/// The start values of a session with a ticket of `lifetime` seconds, the chat server at
+/// `chat` and the attempt's `cancel` flag.
+fn session_start(
+    lifetime: u32,
+    chat: Option<SocketAddrV4>,
+    cancel: Arc<AtomicBool>,
+) -> SessionStart {
     let version =
         VersionInfo::new("9999", "00000000-0000-0000-0000-000000000000", 1).expect("version");
     let auth = "https://auth.example.invalid/login";
@@ -1768,17 +1887,30 @@ fn driver_at_login(service: Service, lifetime: u32) -> (World, SessionDriver<Fak
         lifetime,
     )
     .expect("handoff");
-    let start = SessionStart {
+    SessionStart {
         handoff,
         login_peer: LOGIN_SERVER,
         refresh_secure: true,
         refresher: TicketRefresher::new(auth, sub, TICKET, lifetime, 0.0),
-        chat_endpoint: None,
+        chat_endpoint: chat,
         version,
         codecs: crate::chat_session::ChatCodecs::default(),
         codec_uuids: Vec::new(),
         schema: SchemaView(Arc::new(records())),
-    };
+        cancel,
+    }
+}
+
+/// [`driver_at_login`] with the chat server at `chat` and the attempt's `cancel` flag.
+fn driver_at_login_with(
+    service: Service,
+    lifetime: u32,
+    chat: Option<SocketAddrV4>,
+    cancel: Arc<AtomicBool>,
+) -> (World, SessionDriver<FakeNet>) {
+    let world = new_world(service);
+    let mut net = FakeNet(world.clone());
+    let start = session_start(lifetime, chat, cancel);
     let d = SessionDriver::start(&mut net, start, 0.0, &go).expect("start");
     (world, d)
 }
@@ -1788,7 +1920,17 @@ fn driver_at_characters(
     service: Service,
     lifetime: u32,
 ) -> (World, SessionDriver<FakeNet>, Server) {
-    let (world, mut d) = driver_at_login(service, lifetime);
+    driver_at_characters_with(service, lifetime, None, Arc::default())
+}
+
+/// [`driver_at_characters`] with the chat server at `chat` and the attempt's `cancel` flag.
+fn driver_at_characters_with(
+    service: Service,
+    lifetime: u32,
+    chat: Option<SocketAddrV4>,
+    cancel: Arc<AtomicBool>,
+) -> (World, SessionDriver<FakeNet>, Server) {
+    let (world, mut d) = driver_at_login_with(service, lifetime, chat, cancel);
     let mut login = Server::new(0x0111, 0xBEEF_0001);
     world.deliver(login.challenge(0xBEEF_0001), LOGIN_SERVER);
     world.deliver(
@@ -2128,6 +2270,15 @@ fn withdraw_ends_a_running_session_thread_at_once() {
         true,
     );
     let _login = to_character_list(&mut run);
+    // The session settles first (nothing is being sent when the right ends).
+    let mut quiet = Instant::now();
+    while quiet.elapsed() < Duration::from_millis(300) {
+        if run.world.pop_sent().is_some() {
+            quiet = Instant::now();
+        }
+        run.drain();
+        std::thread::sleep(Duration::from_millis(5));
+    }
     // Withdraw (`official-entry.md` §5.5): every right of the process ends, then the
     // session is dropped. The login server never answers the disconnect: without the
     // revocation the thread would try for `SHUTDOWN_LIMIT`.
@@ -2163,6 +2314,8 @@ fn withdraw_ends_a_running_session_thread_at_once() {
         requests,
         "a request after the revocation"
     );
+    // Not even tried (the synthetic network refuses and counts what comes after).
+    assert_eq!(world.dead_attempts(), 0, "a send or request was tried");
     drop(guard);
 }
 
@@ -2187,7 +2340,367 @@ fn withdraw_during_the_login_ends_the_thread_with_no_further_request() {
     assert_eq!(run.world.requests().len(), 1, "{:?}", run.world.requests());
     assert_eq!(login_requests(&run.world), 0);
     assert_eq!(run.world.binds(), 0);
+    assert_eq!(run.world.dead_attempts(), 0, "a request was tried");
+    assert!(
+        run.seen.iter().any(|e| matches!(
+            e,
+            Event::Disconnected { reason: DisconnectReason::TransportFailed(r) }
+                if r.contains("revoked")
+        )),
+        "the end names the revocation, not a refusal: {:?}",
+        run.seen
+    );
+    assert_eq!(run.refused(), None);
     drop(guard);
+}
+
+#[test]
+fn withdraw_while_queued_ends_the_wait_without_a_world_refusal() {
+    let guard = revoke_lock();
+    let mut run = start(
+        Service {
+            alpha_queue: true,
+            queue_waiting: true,
+            follow_withdraw: true,
+            ..Service::default()
+        },
+        true,
+    );
+    run.wait_event(is_world_list);
+    run.choose(0);
+    run.wait_event(|e| matches!(e, Event::Account(AccountEvent::LoginQueueChanged { .. })));
+    let requests = run.world.requests().len();
+    let t0 = Instant::now();
+    crate::net_access::revoke_all();
+    let end = run.wait_event(is_disconnected);
+    // The wait between two polls is 5 s or more: the revocation ended it at once.
+    assert!(t0.elapsed() < Duration::from_secs(3), "{:?}", t0.elapsed());
+    assert!(
+        matches!(&end, Event::Disconnected { reason: DisconnectReason::TransportFailed(r) } if r.contains("revoked")),
+        "{end:?}"
+    );
+    assert!(
+        !run.seen
+            .iter()
+            .any(|e| matches!(e, Event::Account(AccountEvent::WorldRefused { .. }))),
+        "{:?}",
+        run.seen
+    );
+    run.wait_exit(true);
+    assert_eq!(run.world.requests().len(), requests);
+    assert_eq!(run.world.dead_attempts(), 0);
+    drop(guard);
+}
+
+// ---------------------------------------------------------------------------
+// Tests: nothing after the cancel
+// ---------------------------------------------------------------------------
+
+/// Whether `datagram` carries the given optional header.
+fn has_session_auth(datagram: &[u8]) -> bool {
+    decode_datagram(datagram, false, None, true).is_ok_and(|p| p.opt_headers.session_auth.is_some())
+}
+
+#[test]
+fn a_cancel_two_seconds_into_the_login_handshake_sends_nothing() {
+    let (world, mut d) = driver_at_login(Service::default(), 0);
+    let first = world.take_sent();
+    assert_eq!(first.len(), 1);
+    assert!(has_session_auth(&first[0].0));
+    d.step(1.0, true, &go);
+    assert!(world.take_sent().is_empty(), "no retransmission before 2 s");
+    // The handshake's retransmission is due at 2 s: the cancel comes after it.
+    d.begin_shutdown(2.5);
+    assert!(
+        world.take_sent().is_empty(),
+        "no SessionAuthHeader after the cancel"
+    );
+    assert_eq!(d.connection_states().0, None, "closed locally");
+    for t in [3.0, 4.6, 8.0, 21.0] {
+        assert!(!d.shutdown_step(t), "nothing to flush at {t}");
+        assert!(world.take_sent().is_empty(), "a datagram at {t}");
+    }
+}
+
+#[test]
+fn a_world_challenge_after_the_cancel_is_not_answered() {
+    let (world, mut d, login) = driver_at_characters(Service::default(), 0);
+    d.command(
+        &Command::EnterWorld {
+            character: "Aldo".to_owned(),
+        },
+        1.0,
+    )
+    .expect("enter");
+    world.deliver(
+        login.referral(0x1122_3344_5566_7788, WORLD_SERVER),
+        LOGIN_SERVER,
+    );
+    d.step(1.1, true, &go);
+    assert!(
+        world
+            .take_sent()
+            .iter()
+            .any(|(_, dst)| *dst == WORLD_SERVER),
+        "the referral was followed"
+    );
+    d.begin_shutdown(1.2);
+    assert_eq!(
+        d.connection_states().1,
+        None,
+        "the world handshake was closed"
+    );
+    // The world server's challenge arrives after the cancel (the ID the login connection
+    // has, as in the end-to-end test).
+    let ws = Server::new(0x0111, 0xBEEF_0002);
+    ws.connect_to(&world, 0xBEEF_0002, WORLD_SERVER);
+    for t in [1.3, 2.0, 3.5, 6.0, 25.0] {
+        let _ = d.shutdown_step(t);
+        for (datagram, dst) in world.take_sent() {
+            assert_ne!(dst, WORLD_SERVER, "sent to the world server at {t}");
+            let pkt = decode_datagram(&datagram, false, None, false);
+            assert!(
+                pkt.is_ok_and(|p| p.opt_headers.connect_accept.is_none()),
+                "a ConnectAccept at {t}"
+            );
+        }
+    }
+}
+
+/// A driver in the world on the login connection (no referral), with the chat server's
+/// session attached over its own synthetic socket and its `SessionAuthHeader` sent; the
+/// time is 2.3 s.
+fn driver_with_chat_handshake() -> (World, SessionDriver<FakeNet>, Server) {
+    let (world, mut d, mut login) = driver_at_characters_with(
+        Service {
+            chat_socket: true,
+            ..Service::default()
+        },
+        0,
+        Some(CHAT_SERVER),
+        Arc::default(),
+    );
+    d.command(
+        &Command::EnterWorld {
+            character: "Aldo".to_owned(),
+        },
+        1.0,
+    )
+    .expect("enter");
+    world.deliver(login.event(0x90, &session_ready()), LOGIN_SERVER);
+    d.step(1.1, true, &go);
+    assert!(d.in_world());
+    let (player, name) = d.wants_chat(1.2).expect("the chat session is due");
+    let net = FakeNet(world.clone());
+    d.attach_chat(net.chat_binder().expect("binder"), player, &name, 1.2);
+    // The first attempt follows the initial delay (§6.6.3, 1 s).
+    d.step(2.3, true, &go);
+    assert!(
+        world
+            .take_sent()
+            .iter()
+            .any(|(dgram, dst)| *dst == CHAT_SERVER && has_session_auth(dgram)),
+        "the chat handshake began"
+    );
+    (world, d, login)
+}
+
+#[test]
+fn a_cancel_during_the_chat_handshake_sends_no_chat_datagram() {
+    let (world, mut d, _login) = driver_with_chat_handshake();
+    d.begin_shutdown(2.5);
+    // The world connection (here the login connection) has the unacknowledged `0x6F` to
+    // flush before its `Disconnect`.
+    assert!(
+        matches!(
+            d.connection_states().0,
+            Some(ConnectionState::DisconnectingFlush | ConnectionState::DisconnectSent)
+        ),
+        "{:?}",
+        d.connection_states()
+    );
+    let mut said_disconnect = false;
+    let mut t = 2.5;
+    while t < 30.0 {
+        let _ = d.shutdown_step(t);
+        for (datagram, dst) in world.take_sent() {
+            assert_ne!(dst, CHAT_SERVER, "a chat datagram at {t}");
+            if dst == LOGIN_SERVER {
+                said_disconnect |= decode_datagram(&datagram, false, None, false)
+                    .is_ok_and(|p| p.opt_headers.disconnect);
+            }
+        }
+        t += 0.5;
+    }
+    assert!(said_disconnect, "the world connection said Disconnect");
+}
+
+#[test]
+fn a_chat_flood_is_read_only_as_events_are_taken() {
+    let (world, mut d, mut login) = driver_with_chat_handshake();
+    let mut chat = Server::new(0x0111, 0xBEEF_0003);
+    world.deliver_chat(chat.challenge(0xBEEF_0003));
+    world.deliver_chat(chat.control(OptionalHeaders {
+        cumulative_ack: Some(0),
+        ..OptionalHeaders::default()
+    }));
+    d.step(2.4, true, &go);
+    let _ = d.take_events();
+    let total = 3 * DRIVER_EVENT_CAP;
+    for i in 0..total {
+        let add = crate::chat_session::events::ChatEvent::AddRoom {
+            notice_flags: 0,
+            room: crate::chat_session::wire::ChatRoomDescriptor::new(
+                crate::chat_session::wire::DescriptorKind::UserRoom,
+                0,
+                format!("room{i}"),
+            ),
+        };
+        let inner = add.encode().expect("event");
+        world.deliver_chat(chat.event(add.opcode(), &inner));
+    }
+    // The session's own events come first in a pass: the chat client's reading must stop
+    // at the room left under the cap.
+    world.deliver(
+        notifications(&mut login, 0, FLOOD_PER_DATAGRAM),
+        LOGIN_SERVER,
+    );
+    let mut t = 2.5;
+    for _ in 0..20 {
+        d.step(t, true, &go);
+        t += 0.01;
+    }
+    assert!(
+        d.event_count() <= DRIVER_EVENT_CAP + 1,
+        "{} events held",
+        d.event_count()
+    );
+    assert!(d.event_count() > 0);
+    assert!(
+        world.chat_inbound_len() > 0,
+        "chat reading stopped at the cap"
+    );
+    let mut joined = Vec::new();
+    while joined.len() < total {
+        joined.extend(d.take_events().into_iter().filter_map(|e| match e {
+            Event::Social(tessera_net::SocialEvent::ChannelJoined { channel }) => Some(channel),
+            _ => None,
+        }));
+        d.step(t, true, &go);
+        assert!(d.event_count() <= DRIVER_EVENT_CAP + 1);
+        t += 0.01;
+        assert!(t < 60.0, "only {} of {total}", joined.len());
+    }
+    let expected: Vec<String> = (0..total).map(|i| format!("room{i}")).collect();
+    assert_eq!(joined, expected);
+}
+
+#[test]
+fn the_refresh_thread_looks_at_the_cancel_flag_before_its_request() {
+    let cancel = Arc::new(AtomicBool::new(false));
+    let (world, mut d, _login) =
+        driver_at_characters_with(Service::default(), 60, None, Arc::clone(&cancel));
+    // The connector cancels from its own thread; the driver's own stop predicate has not
+    // seen it yet.
+    cancel.store(true, Ordering::SeqCst);
+    d.step(31.0, true, &go);
+    assert!(d.refresh_running(), "a refresh thread was started");
+    let until = Instant::now() + Duration::from_secs(10);
+    let mut t = 31.0;
+    while d.refresh_running() {
+        assert!(Instant::now() < until, "the refresh thread did not end");
+        t += 0.01;
+        d.step(t, true, &go);
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    let refreshes = world
+        .requests()
+        .iter()
+        .filter(|r| r.2.as_deref().is_some_and(|a| a.contains("RefreshTicket")))
+        .count();
+    assert_eq!(refreshes, 0, "no request after the cancel");
+}
+
+#[test]
+fn a_cancelled_start_probes_binds_and_sends_nothing() {
+    let world = new_world(Service::default());
+    let mut net = FakeNet(world.clone());
+    let start = session_start(0, None, Arc::default());
+    let r = SessionDriver::start(&mut net, start, 0.0, &cancelled);
+    assert!(matches!(
+        r,
+        Err(super::session_phase::StartFailure::Cancelled)
+    ));
+    assert_eq!(world.probes(), 0, "no local-address probe");
+    assert_eq!(world.binds(), 0);
+    assert!(world.take_sent().is_empty());
+}
+
+#[test]
+fn a_cancel_while_the_world_status_is_asked_resolves_nothing() {
+    // The world list's status of Alpha goes through; the one after `ChooseWorld` is held.
+    let gate = Arc::new(Gate::passing(1));
+    let mut run = start(
+        Service {
+            status_gate: Some(Arc::clone(&gate)),
+            chat: "chat.example.invalid:9200".to_owned(),
+            ..Service::default()
+        },
+        true,
+    );
+    run.wait_event(is_world_list);
+    run.choose(0);
+    gate.wait_reached();
+    run.session
+        .send(Instant::now(), Command::Disconnect)
+        .expect("disconnect");
+    gate.release();
+    run.wait_exit(true);
+    assert_eq!(run.world.resolves(), 0, "no name lookup after the cancel");
+    assert_eq!(run.world.binds(), 0);
+    assert!(run.world.pop_sent().is_none());
+}
+
+#[test]
+fn the_shutdown_drops_play_messages_not_yet_queued() {
+    let (world, mut d, mut login) = driver_at_characters(Service::default(), 0);
+    d.command(
+        &Command::EnterWorld {
+            character: "Aldo".to_owned(),
+        },
+        1.0,
+    )
+    .expect("enter");
+    world.deliver(login.event(0x90, &session_ready()), LOGIN_SERVER);
+    d.step(1.1, true, &go);
+    assert!(d.in_world());
+    let opcodes = |sent: Vec<(Vec<u8>, SocketAddrV4)>| -> Vec<u32> {
+        sent.iter()
+            .filter_map(|(d, _)| decode_datagram(d, false, None, false).ok())
+            .flat_map(|p| p.fragments)
+            .filter_map(|f| f.header.blob_header_word)
+            .collect()
+    };
+    let before = opcodes(world.take_sent());
+    d.command(
+        &Command::Chat {
+            channel: ChatChannel::Say,
+            text: "hello".to_owned(),
+        },
+        1.2,
+    )
+    .expect("say");
+    d.begin_shutdown(1.2);
+    let mut after = opcodes(world.take_sent());
+    for t in [1.5, 3.0, 25.0] {
+        let _ = d.shutdown_step(t);
+        after.extend(opcodes(world.take_sent()));
+    }
+    // Only what was queued on the connection before (its retransmissions) goes out.
+    assert!(
+        after.iter().all(|op| *op == 0x6F || before.contains(op)),
+        "before {before:x?}, after {after:x?}"
+    );
 }
 
 // ---------------------------------------------------------------------------

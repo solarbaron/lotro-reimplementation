@@ -29,15 +29,33 @@
 //!
 //! # Bounded events
 //!
-//! The driver holds at most [`DRIVER_EVENT_CAP`] events, plus those of the one message being
-//! handled (on world entry, of the at most [`MAX_ENTRY_MESSAGES`] held for it): at the cap it reads no datagram, takes no session event from its connections
-//! and leaves the messages of a received blob in its inbox (at most one blob's messages,
-//! which the session layer bounds by bytes) until events are taken.
+//! Once the driver holds [`DRIVER_EVENT_CAP`] events it reads no datagram (from the session
+//! socket or the chat server's), takes no session event from its connections and leaves the
+//! messages of a received blob in its inbox (at most one blob's messages, which the session
+//! layer bounds by bytes) until events are taken. It goes over the cap only by what one
+//! unit of work adds after the last check: the events of one message (on world entry, of
+//! the at most [`MAX_ENTRY_MESSAGES`] messages held for it), the events of one chat-server
+//! datagram (the chat client is let read one datagram at a time, [`CHAT_DATAGRAMS_PER_STEP`]
+//! at most per pass, and is not read at the cap), and the events a pass makes without a
+//! datagram: a command's `EnterWorldFailed`, the entry deadline's, and the session's end
+//! (`LoginRefused` with its `Disconnected`).
+//!
+//! # Ending the session
+//!
+//! [`SessionDriver::begin_shutdown`] sends the transport disconnect only on connected
+//! connections (and lets those already disconnecting finish). A connection still in its
+//! handshake (`SessionAuthSent`, `ChallengeAcceptSent`), the chat server's included, is
+//! closed locally: nothing more is sent on it (no retransmitted `SessionAuthHeader` or
+//! `ReferralAuthHeader`, so no ticket), and a challenge that arrives for it afterwards finds
+//! no connection and is not answered. Engineering choice, spec silent (question with the
+//! spec writers): `official-session.md` §8.2 describes the disconnect of a connected
+//! session only. [`SessionDriver::abandon`] ends everything without sending, for a revoked
+//! network right.
 
 use std::collections::VecDeque;
 use std::net::SocketAddrV4;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc;
 
 use tessera_net::account::{AccountEvent, LoginRefusal, LoginStage};
@@ -120,8 +138,45 @@ pub const LOG_INTERVAL_SEC: f64 = 10.0;
 /// not even bind: engineering choice, spec silent (question with the spec writers).
 pub const CHAT_RETRY_SEC: f64 = INITIAL_CONNECT_POLICY.retry_interval_sec;
 
+/// Most chat-server datagrams read in one pass (module docs "Bounded events"). Engineering
+/// choice.
+pub const CHAT_DATAGRAMS_PER_STEP: usize = 64;
+
 /// What the refresh thread sends back: the answer and the client, for the next refresh.
 type RefreshReply = (Result<HttpResponse, LoginError>, SendHttpClient);
+
+/// A chat-server socket that hands out only as many datagrams as the driver allows
+/// (module docs "Bounded events"). Every socket of the chat client (the current one and the
+/// old ones finishing their disconnect) shares one allowance: a read with no allowance left
+/// finds nothing, and the datagram waits in the socket.
+#[derive(Debug)]
+pub struct Metered<T> {
+    inner: T,
+    allowance: Arc<AtomicUsize>,
+}
+
+impl<T: UdpDatagramTransport> UdpDatagramTransport for Metered<T> {
+    fn local_addr(&self) -> Result<SocketAddrV4, SessionError> {
+        self.inner.local_addr()
+    }
+
+    fn send_to(&mut self, buf: &[u8], target: SocketAddrV4) -> Result<usize, SessionError> {
+        self.inner.send_to(buf, target)
+    }
+
+    fn recv_from(&mut self, buf: &mut [u8]) -> Result<Option<(usize, SocketAddrV4)>, SessionError> {
+        if self.allowance.load(Ordering::SeqCst) == 0 {
+            return Ok(None);
+        }
+        let got = self.inner.recv_from(buf)?;
+        if got.is_some() {
+            // One thread polls the chat client: a load and a store cannot race.
+            let left = self.allowance.load(Ordering::SeqCst).saturating_sub(1);
+            self.allowance.store(left, Ordering::SeqCst);
+        }
+        Ok(got)
+    }
+}
 
 /// One log line per [`LOG_INTERVAL_SEC`] for a kind of event; the rest are counted.
 #[derive(Debug, Clone, Copy, Default)]
@@ -197,6 +252,36 @@ impl Link {
     fn disconnect(&mut self, now: f64) {
         if let Some(c) = self.mux.connection_mut(self.conn) {
             c.request_disconnect(now);
+        }
+    }
+
+    /// Whether the connection is still in its handshake (`SessionAuthSent`,
+    /// `ChallengeAcceptSent`).
+    fn in_handshake(&self) -> bool {
+        matches!(
+            self.state(),
+            Some(ConnectionState::SessionAuthSent | ConnectionState::ChallengeAcceptSent)
+        )
+    }
+
+    /// Closes the connection locally without sending anything (module docs "Ending the
+    /// session"): it is taken out of its multiplexer, which refuses later datagrams for its
+    /// ID, and its unsent datagrams (which may hold the ticket) are wiped.
+    fn close_quietly(&mut self) {
+        if let Some(mut c) = self.mux.remove_connection(self.conn) {
+            while let Some(mut d) = c.pop_outbound_datagram() {
+                zeroize_vec(&mut d);
+            }
+        }
+    }
+
+    /// The end of the session for this connection: the graceful disconnect when it is
+    /// connected, a local close when it is still in its handshake.
+    fn end_session(&mut self, now: f64) {
+        if self.in_handshake() {
+            self.close_quietly();
+        } else {
+            self.disconnect(now);
         }
     }
 
@@ -285,6 +370,9 @@ pub struct SessionStart {
     pub codec_uuids: Vec<[u8; 16]>,
     /// The install's tables.
     pub schema: SchemaView,
+    /// The attempt's cancel flag (the connector's): the ticket refresh thread looks at it
+    /// right before its request.
+    pub cancel: Arc<AtomicBool>,
 }
 
 /// Why the session could not start (before any datagram was sent).
@@ -339,7 +427,8 @@ pub struct SessionDriver<N: ConnectorNet> {
     stage: Stage,
     characters: Vec<(u64, String)>,
     adapter: PlayAdapter,
-    chat: Option<ChatClient<N::Udp>>,
+    chat: Option<ChatClient<Metered<N::Udp>>>,
+    chat_allowance: Arc<AtomicUsize>,
     chat_endpoint: Option<SocketAddrV4>,
     chat_retry_at: f64,
     chat_warned: bool,
@@ -349,6 +438,7 @@ pub struct SessionDriver<N: ConnectorNet> {
     refresh_warned: bool,
     refreshing: Option<Refreshing>,
     background_http: Option<SendHttpClient>,
+    cancel: Arc<AtomicBool>,
     client_timestamp: u32,
     events: VecDeque<Event>,
     ended: bool,
@@ -467,8 +557,8 @@ fn header_rec_id(datagram: &[u8]) -> Option<u16> {
 impl<N: ConnectorNet> SessionDriver<N> {
     /// Opens the login connection (`official-session.md` §3.2–§3.3, §6.2): binds the
     /// socket and queues `SessionAuthHeader` to the resolved login server. `stop` is looked
-    /// at right before the bind and right before the first send: once it holds, nothing is
-    /// bound or sent.
+    /// at right before the local-address probe, right before the bind and right before the
+    /// first send: once it holds, nothing is probed, bound or sent.
     ///
     /// # Errors
     ///
@@ -484,6 +574,9 @@ impl<N: ConnectorNet> SessionDriver<N> {
             .login_host()
             .map_err(|_| StartFailure::Address)?;
         let peer = start.login_peer;
+        if stop() {
+            return Err(StartFailure::Cancelled);
+        }
         // The local address: the two-colon `-h` form's `localHost`, else the address the
         // system routes towards the server (`NetworkAccess::local_ipv4_toward` says why),
         // else `0.0.0.0`.
@@ -522,6 +615,7 @@ impl<N: ConnectorNet> SessionDriver<N> {
             characters: Vec::new(),
             adapter: PlayAdapter::new(ChatCategories::default()),
             chat: None,
+            chat_allowance: Arc::new(AtomicUsize::new(0)),
             chat_endpoint: start.chat_endpoint,
             chat_retry_at: 0.0,
             chat_warned: false,
@@ -531,6 +625,7 @@ impl<N: ConnectorNet> SessionDriver<N> {
             refresh_warned: false,
             refreshing: None,
             background_http: Some(net.background_http()),
+            cancel: start.cancel,
             client_timestamp,
             events: VecDeque::new(),
             ended: false,
@@ -695,7 +790,7 @@ impl<N: ConnectorNet> SessionDriver<N> {
         let character = name.clone();
         tracing::info!("official session: the world did not answer the entry");
         if let Some(mut w) = self.world.take() {
-            w.disconnect(now);
+            w.end_session(now);
             self.keep_old(w);
         }
         self.entry_messages.clear();
@@ -960,7 +1055,9 @@ impl<N: ConnectorNet> SessionDriver<N> {
                     return;
                 }
                 if let Some(mut old) = self.world.replace(link) {
-                    old.disconnect(now);
+                    // Still in its handshake: closed without a word (module docs "Ending
+                    // the session"), so it sends no more `ReferralAuthHeader`.
+                    old.end_session(now);
                     self.keep_old(old);
                 }
                 tracing::info!("official session: referred to the world server");
@@ -1137,8 +1234,11 @@ impl<N: ConnectorNet> SessionDriver<N> {
         }
     }
 
-    /// A play message. `0xB3` (eviction) ends the session in every stage
-    /// (`official-messages-world.md` §3.6); while the world is being entered the others are
+    /// A play message. `0xB3` (eviction) ends the session in every stage:
+    /// `official-messages-world.md` §3.4 has the server send it whenever it disconnects or
+    /// boots the account, in no particular stage (§3.6 draws it at the character list and
+    /// during world entry; ending the session on it during the login and in the world as
+    /// well is Tessera's reading, engineering choice). While the world is being entered the others are
     /// kept for [`Self::session_ready`]; in the world they go to the play layer when they
     /// come from the world connection, or from the login connection when there was no
     /// referral.
@@ -1313,14 +1413,31 @@ impl<N: ConnectorNet> SessionDriver<N> {
         }
     }
 
+    /// Runs the chat client, letting it read one datagram per poll while the driver is
+    /// below [`DRIVER_EVENT_CAP`], at most [`CHAT_DATAGRAMS_PER_STEP`] (module docs "Bounded
+    /// events").
     fn run_chat(&mut self, now: f64) {
         let Some(chat) = self.chat.as_mut() else {
             return;
         };
-        match chat.poll(now, &self.schema) {
-            Ok(p) => self.events.extend(p.events),
-            Err(e) => tracing::debug!(error = %e, "official chat session: poll failed"),
+        for _ in 0..CHAT_DATAGRAMS_PER_STEP {
+            if self.events.len() >= DRIVER_EVENT_CAP {
+                break;
+            }
+            self.chat_allowance.store(1, Ordering::SeqCst);
+            match chat.poll(now, &self.schema) {
+                Ok(p) => self.events.extend(p.events),
+                Err(e) => {
+                    tracing::debug!(error = %e, "official chat session: poll failed");
+                    break;
+                }
+            }
+            if self.chat_allowance.load(Ordering::SeqCst) != 0 {
+                // Nothing was read: the sockets are empty.
+                break;
+            }
         }
+        self.chat_allowance.store(0, Ordering::SeqCst);
     }
 
     /// Ends the refresh thread: its stop flag is set (a request not yet sent is not sent)
@@ -1388,11 +1505,14 @@ impl<N: ConnectorNet> SessionDriver<N> {
         let (tx, rx) = mpsc::sync_channel(1);
         let stop = Arc::new(AtomicBool::new(false));
         let thread_stop = Arc::clone(&stop);
+        let cancelled = Arc::clone(&self.cancel);
         let spawned = std::thread::Builder::new()
             .name("tessera-official-refresh".into())
             .spawn(move || {
                 let mut req = req;
-                if thread_stop.load(Ordering::SeqCst) {
+                // Right before the request: the driver's stop (shutdown) and the attempt's
+                // cancel (`Disconnect`, drop), which the connector sets from its own thread.
+                if thread_stop.load(Ordering::SeqCst) || cancelled.load(Ordering::SeqCst) {
                     req.zeroize_body();
                     return;
                 }
@@ -1528,7 +1648,9 @@ impl<N: ConnectorNet> SessionDriver<N> {
     }
 
     /// Ends the session gracefully (`official-session.md` §8.2, `official-messages-play.md`
-    /// §7.2 item 4: the transport disconnect on every connection). No ticket refresh starts
+    /// §7.2 item 4: the transport disconnect on every connected connection; module docs
+    /// "Ending the session": a connection still in its handshake is closed without sending).
+    /// Play messages not yet queued on a connection are dropped. No ticket refresh starts
     /// after this, and a running one is stopped.
     pub fn begin_shutdown(&mut self, now: f64) {
         self.ended = true;
@@ -1536,15 +1658,37 @@ impl<N: ConnectorNet> SessionDriver<N> {
         // Nobody takes them any more; reading must go on for the disconnect's answers.
         self.events.clear();
         self.inbox.clear();
+        self.pending_out.clear();
+        self.entry_messages.clear();
+        self.entry_bytes = 0;
         self.stop_refresh();
         for l in self.links_mut() {
-            l.disconnect(now);
+            l.end_session(now);
         }
+        self.old.retain(Link::live);
         if let Some(chat) = self.chat.as_mut() {
             chat.close(now);
         }
         self.tick(now);
         self.flush(now);
+    }
+
+    /// Ends the session without sending anything (the network right was revoked: nothing
+    /// could be sent): every connection is closed locally and the chat client dropped.
+    pub fn abandon(&mut self) {
+        self.ended = true;
+        self.shutting_down = true;
+        self.events.clear();
+        self.inbox.clear();
+        self.pending_out.clear();
+        self.entry_messages.clear();
+        self.entry_bytes = 0;
+        self.stop_refresh();
+        for l in self.links_mut() {
+            l.close_quietly();
+        }
+        self.old.clear();
+        self.chat = None;
     }
 
     /// One pass of the shutdown: runs the connections until their `Disconnect` is out.
@@ -1557,7 +1701,10 @@ impl<N: ConnectorNet> SessionDriver<N> {
         }
         self.inbox.clear();
         if let Some(chat) = self.chat.as_mut() {
+            // Its events are dropped: it may read all it has.
+            self.chat_allowance.store(usize::MAX, Ordering::SeqCst);
             let _ = chat.poll(now, &self.schema);
+            self.chat_allowance.store(0, Ordering::SeqCst);
         }
         self.tick(now);
         self.flush(now);
@@ -1585,7 +1732,16 @@ impl<N: ConnectorNet> SessionDriver<N> {
             Some(self.handoff.gls_ticket().to_owned()),
             self.client_timestamp,
         );
-        match ChatClient::with_binder(binder, config, self.codecs.clone(), now) {
+        let mut binder = binder;
+        let allowance = Arc::clone(&self.chat_allowance);
+        let metered: crate::chat_session::client::TransportBinder<Metered<N::Udp>> =
+            Box::new(move || {
+                binder().map(|inner| Metered {
+                    inner,
+                    allowance: Arc::clone(&allowance),
+                })
+            });
+        match ChatClient::with_binder(metered, config, self.codecs.clone(), now) {
             Ok(mut chat) => {
                 chat.set_self_descriptor(player, name);
                 self.chat = Some(chat);

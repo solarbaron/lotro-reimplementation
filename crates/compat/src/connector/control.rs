@@ -3,8 +3,8 @@
 //! (`ARCHITECTURE.md` §19.4): the cancel flag, the credentials until their one use, the
 //! newest-move slot and the count of events waiting for `poll`.
 
-use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
 
 use tessera_net::Command;
 
@@ -23,7 +23,8 @@ pub enum Msg {
 /// The shared state (module docs).
 #[derive(Debug, Default)]
 pub struct Control {
-    cancelled: AtomicBool,
+    /// Shared with the ticket refresh thread ([`Self::cancel_flag`]).
+    cancelled: Arc<AtomicBool>,
     credentials: Mutex<Option<Credentials>>,
     newest_move: Mutex<Option<Command>>,
     wake_queued: AtomicBool,
@@ -54,6 +55,13 @@ impl Control {
     #[must_use]
     pub fn cancelled(&self) -> bool {
         self.cancelled.load(Ordering::SeqCst)
+    }
+
+    /// The cancel flag itself, for a thread that must look at it right before its request
+    /// (the ticket refresh): [`Self::cancel`] sets it.
+    #[must_use]
+    pub fn cancel_flag(&self) -> Arc<AtomicBool> {
+        Arc::clone(&self.cancelled)
     }
 
     /// The credentials, once (`None` after a cancel or the first take).
@@ -126,8 +134,14 @@ mod tests {
         let c = Control::new(Credentials::new(b"a", b"b").expect("creds"));
         assert!(c.put_move(Command::Disconnect));
         assert!(!c.put_move(Command::Disconnect), "one wake at a time");
+        let flag = c.cancel_flag();
+        assert!(!flag.load(Ordering::SeqCst));
         c.cancel();
         assert!(c.cancelled());
+        assert!(
+            flag.load(Ordering::SeqCst),
+            "the shared flag follows the cancel"
+        );
         assert!(c.take_credentials().is_none());
         assert!(c.take_move().is_none());
         assert!(!c.put_move(Command::Disconnect));

@@ -147,11 +147,27 @@ impl Out {
         ]);
     }
 
-    fn stopped(&mut self, stop: LoginStop) {
-        if let LoginStop::Refused(reason, detail) = stop
-            && !self.control.cancelled()
-        {
+    /// A login step failed: its refusal, unless the attempt was cancelled (nothing more
+    /// is said) or the network right was revoked (`live` false: the failure is the
+    /// revocation's, not the service's, so it ends with [`revoked`], never a refusal).
+    fn stopped(&mut self, stop: LoginStop, live: bool) {
+        if self.control.cancelled() {
+            return;
+        }
+        if !live {
+            self.one(revoked());
+            return;
+        }
+        if let LoginStop::Refused(reason, detail) = stop {
             self.refuse(reason, detail);
+        }
+    }
+
+    /// The end of an attempt that cannot go on: [`revoked`] when the network right was
+    /// revoked and the backend still listens; nothing after a cancel.
+    fn end_unless_cancelled(&mut self, live: bool) {
+        if !live && !self.control.cancelled() {
+            self.one(revoked());
         }
     }
 }
@@ -176,7 +192,11 @@ enum Choice {
     Joined(Box<Joined>),
     Refused(WorldRefusal),
     Left,
+    /// The attempt was cancelled: nothing more is said or sent.
     Shutdown,
+    /// The network right was revoked (Withdraw): the session ends with [`revoked`], and no
+    /// `WorldRefused` is reported for a failure the revocation caused.
+    Revoked,
 }
 
 /// Runs the session to its end.
@@ -229,13 +249,13 @@ pub fn run<N: ConnectorNet>(mut net: N, input: WorkerInput) {
     // S2.
     let dc = match get_datacenters(&mut NetHttp::new(&mut net, &stop), &local) {
         Ok(v) => v,
-        Err(e) => return out.stopped(LoginStop::from(&e)),
+        Err(e) => return out.stopped(LoginStop::from(&e), net.is_live()),
     };
     out.progress(LoginStage::Authenticating);
     // S3.
     let remote = match get_remote_config(&mut NetHttp::new(&mut net, &stop), &dc) {
         Ok(v) => v,
-        Err(e) => return out.stopped(LoginStop::from(&e)),
+        Err(e) => return out.stopped(LoginStop::from(&e), net.is_live()),
     };
     out.progress(LoginStage::Authenticating);
     let secure = Secure::of(&local.config.gls_datacenter_service, &dc, &remote);
@@ -255,12 +275,13 @@ pub fn run<N: ConnectorNet>(mut net: N, input: WorkerInput) {
         credentials,
     ) {
         Ok(a) => a,
-        Err(e) => return out.stopped(e),
+        Err(e) => return out.stopped(e, net.is_live()),
     };
     // The ticket's lifetime counts from here (`official-login.md` §4.3, `t0`).
     let ticket_installed = clock.elapsed().as_secs_f64();
     tracing::info!("official login: authenticated");
     let Some(mut list) = list_worlds(&mut net, &mut out, &stop, &auth) else {
+        out.end_unless_cancelled(net.is_live());
         return;
     };
     if list.is_empty() {
@@ -281,6 +302,10 @@ pub fn run<N: ConnectorNet>(mut net: N, input: WorkerInput) {
             Ok(Msg::Wake) | Err(RecvTimeoutError::Timeout) => continue,
             Err(RecvTimeoutError::Disconnected) => return,
         };
+        if stop() {
+            // A command that arrives after the cancel is dropped unread.
+            return;
+        }
         match cmd {
             Command::Account(AccountCommand::ChooseWorld { world }) => {
                 let Some(desc) = descriptor(&list, &auth.datacenter.worlds, world) else {
@@ -300,6 +325,12 @@ pub fn run<N: ConnectorNet>(mut net: N, input: WorkerInput) {
                 };
                 match choose(&mut net, &mut out, &ctx, desc) {
                     Choice::Joined(j) => break *j,
+                    Choice::Refused(_) if stop() => return,
+                    Choice::Refused(_) | Choice::Revoked if !net.is_live() => {
+                        out.end_unless_cancelled(false);
+                        return;
+                    }
+                    Choice::Revoked => return,
                     Choice::Refused(reason) => {
                         out.one(Event::Account(AccountEvent::WorldRefused {
                             world,
@@ -318,7 +349,10 @@ pub fn run<N: ConnectorNet>(mut net: N, input: WorkerInput) {
                                 out.refuse(LoginRefusal::ServiceUnavailable, None);
                                 return;
                             }
-                            None => return,
+                            None => {
+                                out.end_unless_cancelled(net.is_live());
+                                return;
+                            }
                         }
                     }
                     Choice::Shutdown => return,
@@ -333,6 +367,10 @@ pub fn run<N: ConnectorNet>(mut net: N, input: WorkerInput) {
     if stop() {
         return;
     }
+    if !net.is_live() {
+        out.one(revoked());
+        return;
+    }
     let start = SessionStart {
         handoff: joined.handoff,
         login_peer: joined.peer,
@@ -343,11 +381,16 @@ pub fn run<N: ConnectorNet>(mut net: N, input: WorkerInput) {
         codecs: local.codecs.clone(),
         codec_uuids: local.codec_uuids.clone(),
         schema: SchemaView(local.data.clone()),
+        cancel: control.cancel_flag(),
     };
     let now = || clock.elapsed().as_secs_f64();
     let mut driver = match SessionDriver::start(&mut net, start, now(), &stop) {
         Ok(d) => d,
         Err(StartFailure::Cancelled) => return,
+        Err(_) if !net.is_live() => {
+            out.end_unless_cancelled(false);
+            return;
+        }
         Err(StartFailure::Address) => {
             out.refuse(LoginRefusal::ServiceUnavailable, None);
             return;
@@ -369,7 +412,8 @@ pub fn run<N: ConnectorNet>(mut net: N, input: WorkerInput) {
 }
 
 /// The world list with each world's status (§3.3 sequential status queries, 10 s each),
-/// keeping the watchdog alive; `None` when the attempt was cancelled.
+/// keeping the watchdog alive; `None` when the attempt was cancelled or the network right
+/// was revoked (a status the revocation failed is not reported as the world's).
 fn list_worlds<N: ConnectorNet>(
     net: &mut N,
     out: &mut Out,
@@ -379,11 +423,11 @@ fn list_worlds<N: ConnectorNet>(
     out.progress(LoginStage::ListingWorlds);
     let mut http = NetHttp::new(net, stop);
     world_list(&auth.datacenter.worlds, &auth.subscription, |w| {
-        if stop() {
+        if stop() || !http.is_live() {
             return None;
         }
         let s = world_status(&mut http, w, WORLD_LIST_STATUS_TIMEOUT_SEC);
-        if stop() {
+        if stop() || !http.is_live() {
             return None;
         }
         out.progress(LoginStage::ListingWorlds);
@@ -417,9 +461,11 @@ struct Ctx<'a> {
 
 /// After `ChooseWorld`: the world's status, the billing-role check, the queue and the
 /// hand-off values (§3.3–§3.6, §4.2), with the login server's and the chat server's
-/// addresses resolved (an unusable login server refuses the world, §5.1 `S7`). Both name
-/// lookups come before the last cancel check, so a cancel during either binds and sends
-/// nothing.
+/// addresses resolved (an unusable login server refuses the world, §5.1 `S7`). The cancel
+/// flag is looked at before each name lookup and after the last, so a cancel before or
+/// during either binds and sends nothing. A failure while the network right is revoked
+/// (Withdraw) is [`Choice::Revoked`], never a refusal of the world; the queue's wait ends
+/// on a revocation too.
 fn choose<N: ConnectorNet>(
     net: &mut N,
     out: &mut Out,
@@ -428,10 +474,20 @@ fn choose<N: ConnectorNet>(
 ) -> Choice {
     let stop = ctx.stop;
     let auth = ctx.auth;
+    // Why the attempt cannot go on, if it cannot.
+    let halted = |net: &N| {
+        if stop() {
+            Some(Choice::Shutdown)
+        } else if !net.is_live() {
+            Some(Choice::Revoked)
+        } else {
+            None
+        }
+    };
     out.progress(LoginStage::JoiningWorld);
     let status = match join_status(&mut NetHttp::new(net, stop), world, &auth.subscription) {
         Ok(s) => s,
-        Err(_) if stop() => return Choice::Shutdown,
+        Err(_) if halted(net).is_some() => return halted(net).unwrap_or(Choice::Shutdown),
         Err(e) => {
             tracing::info!(class = %e.failure_class(), "official login: world refused");
             return Choice::Refused(world_refusal(&e));
@@ -440,8 +496,8 @@ fn choose<N: ConnectorNet>(
     if let Some(queue_url) = status.queue_url() {
         let wait = queue_poll_interval(&auth.remote);
         loop {
-            if stop() {
-                return Choice::Shutdown;
+            if let Some(h) = halted(net) {
+                return h;
             }
             match take_a_number(&mut NetHttp::new(net, stop), auth, queue_url) {
                 Ok(QueueEvaluation::Ready) => {
@@ -464,6 +520,10 @@ fn choose<N: ConnectorNet>(
                             break;
                         }
                         match ctx.commands.recv_timeout(left.min(COMMAND_WAIT)) {
+                            Ok(Msg::Command(_)) if halted(net).is_some() => {
+                                // Dropped unread: the attempt ended.
+                                return halted(net).unwrap_or(Choice::Shutdown);
+                            }
                             Ok(Msg::Command(Command::Account(AccountCommand::LeaveLoginQueue))) => {
                                 leave_queue(
                                     &mut NetHttp::new(net, stop),
@@ -478,8 +538,8 @@ fn choose<N: ConnectorNet>(
                                 "official login: command ignored while queued"
                             ),
                             Ok(Msg::Wake) | Err(RecvTimeoutError::Timeout) => {
-                                if stop() {
-                                    return Choice::Shutdown;
+                                if let Some(h) = halted(net) {
+                                    return h;
                                 }
                             }
                             // The backend let go: nothing more goes on the network, not even
@@ -490,7 +550,7 @@ fn choose<N: ConnectorNet>(
                         }
                     }
                 }
-                Err(_) if stop() => return Choice::Shutdown,
+                Err(_) if halted(net).is_some() => return halted(net).unwrap_or(Choice::Shutdown),
                 Err(e) => {
                     tracing::info!(class = %e.failure_class(), "official login: queue failed");
                     return Choice::Refused(WorldRefusal::Other);
@@ -520,13 +580,22 @@ fn choose<N: ConnectorNet>(
             return Choice::Refused(world_refusal(&e));
         }
     };
+    if let Some(h) = halted(net) {
+        return h;
+    }
     let Some(peer) = login_peer(net, &handoff) else {
+        if let Some(h) = halted(net) {
+            return h;
+        }
         tracing::info!("official login: the login server's address is not usable");
         return Choice::Refused(WorldRefusal::Other);
     };
+    if let Some(h) = halted(net) {
+        return h;
+    }
     let chat_endpoint = resolve_chat_endpoint(net, &handoff);
-    if stop() {
-        return Choice::Shutdown;
+    if let Some(h) = halted(net) {
+        return h;
     }
     let refresher = TicketRefresher::new(
         auth_url,
@@ -588,7 +657,9 @@ fn session_loop<N: ConnectorNet>(
                 None => driver.chat_failed(t),
             }
         }
-        if let Some(m) = control.take_move() {
+        if let Some(m) = control.take_move()
+            && !control.cancelled()
+        {
             if let Err(e) = driver.command(&m, t) {
                 tracing::debug!(error = %e, "official session: move not carried");
             }
@@ -613,6 +684,12 @@ fn session_loop<N: ConnectorNet>(
             (wait * 2).min(LOOP_WAIT_MAX)
         };
         match commands.recv_timeout(wait) {
+            Ok(Msg::Command(_)) if control.cancelled() || out.gone => {
+                // Dropped unread: after the cancel nothing new goes out (no `0x6F`, no chat
+                // line for the shutdown to flush).
+                shutdown(net, driver, &now);
+                return;
+            }
             Ok(Msg::Command(cmd)) => {
                 if let Err(e) = driver.command(&cmd, now()) {
                     tracing::debug!(command = cmd.name(), error = %e, "official session: command not carried");
@@ -629,11 +706,18 @@ fn session_loop<N: ConnectorNet>(
     }
 }
 
-/// The graceful end after the backend let go: the transport disconnect on every
+/// The graceful end after the backend let go: the transport disconnect on every connected
 /// connection, for at most [`SHUTDOWN_LIMIT`] (`official-session.md` §8.2). It is the only
-/// traffic after a cancel; nothing new is started. It ends at once when the network right
-/// is revoked (Withdraw): nothing could be sent any more.
+/// traffic after a cancel; nothing new is started, and a connection still in its handshake
+/// is closed without a word ([`SessionDriver::begin_shutdown`]). When the network right is
+/// already revoked (Withdraw) nothing is tried at all ([`SessionDriver::abandon`]); a
+/// revocation during the shutdown ends it at once.
 fn shutdown<N: ConnectorNet>(net: &N, driver: &mut SessionDriver<N>, now: &impl Fn() -> f64) {
+    if !net.is_live() {
+        driver.abandon();
+        tracing::info!("official session closed: the network access was revoked");
+        return;
+    }
     driver.begin_shutdown(now());
     let until = Instant::now() + SHUTDOWN_LIMIT;
     while Instant::now() < until && net.is_live() && driver.shutdown_step(now()) {

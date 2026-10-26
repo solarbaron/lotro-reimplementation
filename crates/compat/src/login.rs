@@ -33,6 +33,7 @@ use std::fmt;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
+use crate::session::BIT_TREE_TABLE_FORMAT_UUID;
 use crate::version_resource::{
     VersionResource, VersionResourceError, read_version_resource_from_file,
 };
@@ -86,10 +87,6 @@ pub const ROOT_KEY_COMPRESSION_DICTIONARY: u32 = 0x0000_0003;
 /// dictionary sub-map and the dictionary records are all found at run time from here
 /// (`property-system.md` §8.1: their DIDs are never built in).
 pub const DAT_ROOT_DID_MAP_OFFSET: usize = 0x170;
-
-/// 16-byte mixed-endian `formatUuid` (`E795878D-C633-471C-8315-C3DBBEAD2FAA`) at
-/// `+0x00..+0x0F` of every `0x0E01xxxx` compression dictionary record (§2.4.3, invariant `I16`).
-pub const PREFIX_TREE_DICT_SCHEMA_GUID: [u8; 16] = crate::session::BIT_TREE_TABLE_FORMAT_UUID;
 
 /// File offset of the 104-byte `.dat` superblock (`0x140`, §2.4.1).
 pub const DAT_SUPERBLOCK_OFFSET: usize = 0x140;
@@ -1902,7 +1899,7 @@ fn is_guid_string(s: &str) -> bool {
 
 /// A single `(enum_key, target_did)` entry of a `DataIdMap` record (`records.md` §8.1).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct DidMap3Entry {
+pub struct DataIdMapEntry {
     /// Map key (e.g. `0x10000001` or `0x10000002`).
     pub enum_key: u32,
     /// Mapped `.dat` Data ID (e.g. `0x0E010000` or `0x0E010002`; `0` for the "undefined"
@@ -1922,11 +1919,11 @@ pub const MAX_DID_MAP_GROUPS: usize = 64;
 /// second TSize whose count equals *n*, and *n* `(u32 key, u8 length + ASCII label)` pairs.
 /// All groups merge into one table; the first group wins on a duplicate key.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct DidMap3Table {
+pub struct DataIdMap {
     /// Self-identifying DID at offset `+0x00` (prefix `0x28`).
     pub self_did: u32,
     /// Merged `(enum_key, target_did)` pairs in stored order.
-    pub entries: Vec<DidMap3Entry>,
+    pub entries: Vec<DataIdMapEntry>,
     /// Labels by key (`"Client2Server"`, `"Server2Client"`, …), kept for diagnostics.
     pub names: BTreeMap<u32, String>,
 }
@@ -2006,7 +2003,7 @@ impl<'a> DatCursor<'a> {
     }
 }
 
-impl DidMap3Table {
+impl DataIdMap {
     /// Parses a `DataIdMap` record from `bytes` (`records.md` §8.1, §2.4.3).
     ///
     /// # Errors
@@ -2022,7 +2019,7 @@ impl DidMap3Table {
                 reason: format!("record 0x{self_did:08X} is not a DID map (prefix 0x28)"),
             });
         }
-        let mut entries: Vec<DidMap3Entry> = Vec::new();
+        let mut entries: Vec<DataIdMapEntry> = Vec::new();
         let mut seen_keys = BTreeSet::new();
         let mut duplicates = 0usize;
         let mut names = BTreeMap::new();
@@ -2037,7 +2034,7 @@ impl DidMap3Table {
             for _ in 0..n {
                 let enum_key = c.u32()?;
                 let target_did = c.u32()?;
-                group.push(DidMap3Entry {
+                group.push(DataIdMapEntry {
                     enum_key,
                     target_did,
                 });
@@ -2098,7 +2095,7 @@ impl DidMap3Table {
 ///
 /// Returns [`LoginError::ConfigInvalid`] if the root map is malformed or has no such key.
 pub fn compression_dictionary_map_did(root_map_bytes: &[u8]) -> Result<u32, LoginError> {
-    let root = DidMap3Table::parse(root_map_bytes)?;
+    let root = DataIdMap::parse(root_map_bytes)?;
     root.resolve_enum_key(ROOT_KEY_COMPRESSION_DICTIONARY)
         .ok_or_else(|| LoginError::ConfigInvalid {
             reason: "the root DID map has no compression dictionary entry (key 3)".to_owned(),
@@ -2109,7 +2106,7 @@ pub fn compression_dictionary_map_did(root_map_bytes: &[u8]) -> Result<u32, Logi
 /// (`official-session.md` §4.1.3 item 2; `official-login.md` §2.4.3, invariant `I16`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BitTreeTableHeader {
-    /// `formatUuid` at `+0x00..+0x0F` (always [`PREFIX_TREE_DICT_SCHEMA_GUID`]).
+    /// `formatUuid` at `+0x00..+0x0F` (always [`BIT_TREE_TABLE_FORMAT_UUID`]).
     pub format_uuid: [u8; 16],
     /// `codecUuid` at `+0x10..+0x1F`, matched against `ConnectChallengeHeader.codecUuid`.
     pub codec_uuid: [u8; 16],
@@ -2136,7 +2133,7 @@ impl BitTreeTableHeader {
     /// # Errors
     ///
     /// Returns [`LoginError::ConfigInvalid`] (`F02_CONFIG_INVALID`) if `bytes` is shorter
-    /// than 44 bytes, `formatUuid` does not match [`PREFIX_TREE_DICT_SCHEMA_GUID`], or a
+    /// than 44 bytes, `formatUuid` does not match [`BIT_TREE_TABLE_FORMAT_UUID`], or a
     /// literal dictionary has a `version` other than `1`.
     pub fn parse(bytes: &[u8], own_did: u32) -> Result<Self, LoginError> {
         let hdr = bytes
@@ -2150,7 +2147,7 @@ impl BitTreeTableHeader {
             })?;
         let mut format_uuid = [0u8; 16];
         format_uuid.copy_from_slice(&hdr[0..16]);
-        if format_uuid != PREFIX_TREE_DICT_SCHEMA_GUID {
+        if format_uuid != BIT_TREE_TABLE_FORMAT_UUID {
             return Err(LoginError::ConfigInvalid {
                 reason: format!(
                     "invalid compression dictionary format UUID {}",
@@ -2221,7 +2218,7 @@ pub struct ResolvedBitTreeTable {
 /// `map`, a record is missing from `load_record`, a record fails
 /// [`BitTreeTableHeader::parse`], or the redirect target redirects again.
 pub fn resolve_bit_tree_table<'a, F>(
-    map: &DidMap3Table,
+    map: &DataIdMap,
     enum_key: u32,
     mut load_record: F,
 ) -> Result<ResolvedBitTreeTable, LoginError>

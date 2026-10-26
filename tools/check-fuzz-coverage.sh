@@ -31,11 +31,11 @@
 #
 # Checks (each failure is listed with the manifest and line it comes from):
 #   (m) every manifest table is well formed: known keys, required keys, one of target,
-#       exempt and gap, an exempt that names a (non-compat) [[bin]], a known input kind, the
+#       exempt and gap, an exempt that names a [[bin]], a known input kind, the
 #       crate is a workspace package whose directory holds the file, the file exists, the
 #       last segment of every entry is a `fn` in the file, every skip matches some file and
 #       every name in its fns is a `fn` of a matched file; and every package under crates/
-#       and apps/ (but crates/compat) is in a manifest: a [[parser]] names it as crate, a
+#       and apps/ is in a manifest: a [[parser]] names it as crate, a
 #       [[package]] names it, or a whole-file skip covers its directory
 #   (a) every target names a [[bin]] of fuzz/Cargo.toml whose source file exists
 #   (b) every [[bin]] of fuzz/Cargo.toml is named by some manifest target (or its source
@@ -51,8 +51,6 @@
 #       discover, discover_..., walk_... and available_... (`read` also with `&str`)
 #   (g) every gap, with its reason: criterion 2 is not met while any remain
 # Built-in skips, not read from manifests:
-#   - crates/compat and the fuzz bins named compat_*: the M8 package (decisions 0034,
-#     0042) audits its own parsers; outside P8
 #   - test-only and bench code: files under tests/, benches/ or examples/ directories,
 #     files named tests.rs, test.rs, *_tests.rs, test_*.rs or benches.rs, and every item
 #     that follows a #[cfg(test)] attribute (its brace block is not scanned)
@@ -107,14 +105,14 @@ done
 
 # ---- self-test --------------------------------------------------------------------------
 
-# fixture DIR: a clean tree (two packages, a skipped compat crate, test-only code, one
-# manifest that covers everything).
+# fixture DIR: a clean tree (two packages, test-only code, one manifest that covers
+# everything). The compat cases add a tessera-compat crate and a compat_* bin, which are
+# checked like every other package and bin.
 fixture() {
     local d="$1"
-    mkdir -p "$d/crates/alpha/src/nested" "$d/crates/alpha/tests" "$d/crates/compat/src" \
+    mkdir -p "$d/crates/alpha/src/nested" "$d/crates/alpha/tests" \
         "$d/apps/tool/src" "$d/fuzz/fuzz_targets" "$d/fuzz/coverage"
     printf '[package]\nname = "tessera-alpha"\nversion = "0.0.0"\n' > "$d/crates/alpha/Cargo.toml"
-    printf '[package]\nname = "tessera-compat"\n' > "$d/crates/compat/Cargo.toml"
     printf '[workspace]\n\n[package]\nname = "tessera-tool"\n' > "$d/apps/tool/Cargo.toml"
     cat > "$d/crates/alpha/src/lib.rs" <<'EOF'
 pub mod nested;
@@ -141,7 +139,6 @@ pub const fn decoded_len() -> usize { 0 }
 EOF
     printf 'pub fn parse_case() {}\n' > "$d/crates/alpha/src/tests.rs"
     printf 'pub fn decode_test() {}\n' > "$d/crates/alpha/tests/it.rs"
-    printf 'pub fn decode_wire() {}\n' > "$d/crates/compat/src/lib.rs"
     printf 'pub fn read_config(p: &str) {}\npub fn from_str_lossy(s: &str) {}\n' > "$d/apps/tool/src/main.rs"
     cat > "$d/fuzz/Cargo.toml" <<'EOF'
 [package]
@@ -151,13 +148,8 @@ name = "fixture-fuzz"
 name = "alpha_rec"
 path = "fuzz_targets/alpha_rec.rs"
 test = false
-
-[[bin]]
-name = "compat_wire"
-path = "fuzz_targets/compat_wire.rs"
 EOF
     : > "$d/fuzz/fuzz_targets/alpha_rec.rs"
-    : > "$d/fuzz/fuzz_targets/compat_wire.rs"
     cat > "$d/fuzz/coverage/fixture.toml" <<'EOF'
 # A comment.
 [[parser]]
@@ -212,9 +204,23 @@ pub fn decode_fixture() {
 EOF
                ;;
         nomanifest) rm "$m" ;;
-        compatsrc) printf 'pub fn parse_reply() {}\n' >> "$d/crates/compat/src/lib.rs" ;;
+        compatsrc|compatbin|compatcovered)
+            mkdir -p "$d/crates/compat/src"
+            printf '[package]\nname = "tessera-compat"\n' > "$d/crates/compat/Cargo.toml"
+            printf 'pub fn decode_wire(b: &[u8]) {}\n' > "$d/crates/compat/src/lib.rs"
+            case "$c" in
+                compatbin|compatcovered)
+                    printf '\n[[bin]]\nname = "compat_wire"\npath = "fuzz_targets/compat_wire.rs"\n' >> "$d/fuzz/Cargo.toml"
+                    : > "$d/fuzz/fuzz_targets/compat_wire.rs" ;;
+            esac
+            case "$c" in
+                compatbin) printf '\n[[package]]\ncrate = "tessera-compat"\nreason = "x"\n' >> "$m"
+                           : > "$d/crates/compat/src/lib.rs" ;;
+                compatcovered)
+                    printf '\n[[parser]]\ncrate = "tessera-compat"\nfile = "crates/compat/src/lib.rs"\nentry = "tessera_compat::decode_wire"\ninput = "network"\ntarget = "compat_wire"\n' >> "$m"
+                    sed 's/^exempt = .*/exempt = "covered by compat_wire"/' "$m" > "$m.new" && mv "$m.new" "$m" ;;
+            esac ;;
         exemptx) sed 's/^exempt = .*/exempt = "x"/' "$m" > "$m.new" && mv "$m.new" "$m" ;;
-        exemptcompat) sed 's/^exempt = .*/exempt = "covered by compat_wire"/' "$m" > "$m.new" && mv "$m.new" "$m" ;;
         gap) sed 's/^exempt = /gap = /' "$m" > "$m.new" && mv "$m.new" "$m" ;;
         newfn) printf 'pub fn decode_hostile(b: &[u8]) {}\n' >> "$d/crates/alpha/src/lib.rs" ;;
         skipfns) printf 'pub fn decode_hostile(b: &[u8]) {}\n' >> "$d/crates/alpha/src/lib.rs"
@@ -302,9 +308,10 @@ syntax|1|\(m\) .*fixture.toml:[0-9]+: table \[parser\]
 unterminated|1|\(m\) .*fixture.toml:[0-9]+: unterminated string
 cfgfn|0|
 nomanifest|1|no manifests in fuzz/coverage
-compatsrc|0|
+compatsrc|1|\(c\) crates/compat/src/lib.rs: decode_wire \(line 1\)
+compatbin|1|\(b\) compat_wire \(fuzz/fuzz_targets/compat_wire.rs\)
+compatcovered|0|covered: crates/compat/src/lib.rs decode_wire \(line 1\) by fixture.toml:[0-9]+ target compat_wire
 exemptx|1|\(m\) .*fixture.toml:9: exempt names no covering fuzz target
-exemptcompat|1|\(m\) .*fixture.toml:9: exempt names no covering fuzz target
 gap|1|\(g\) .*fixture.toml:9: apps/tool/src/main.rs read_config
 newfn|1|\(c\) crates/alpha/src/lib.rs: decode_hostile \(line 18\) \(the file has a \[\[parser\]\], fixture.toml:2
 skipfns|0|covered: crates/alpha/src/lib.rs decode_hostile \(line 18\) by skip crates/alpha/src/lib.rs
@@ -515,7 +522,6 @@ scan_sources() {
     local f
     while IFS= read -r f; do
         case "$f" in
-            crates/compat/*) continue ;;
             */tests/*|*/benches/*|*/examples/*) continue ;;
             */tests.rs|*/test.rs|*_tests.rs|*/test_*.rs|*/benches.rs) continue ;;
         esac
@@ -663,10 +669,10 @@ awk -v list="$list" -v manifests="$manifests" '
             if (path ~ skre[i] && (skfns[i] == "" || (i, fn) in skfn)) return i
         return 0
     }
-    # Whether an exemption reason names a (non-compat) fuzz [[bin]] as one of its words.
+    # Whether an exemption reason names a fuzz [[bin]] as one of its words.
     function names_bin(r,    n, ws, j) {
         n = split(r, ws, /[^A-Za-z0-9_]+/)
-        for (j = 1; j <= n; j++) if (ws[j] != "" && (ws[j] in bin) && ws[j] !~ /^compat_/) return 1
+        for (j = 1; j <= n; j++) if (ws[j] != "" && (ws[j] in bin)) return 1
         return 0
     }
     # Names of the fns defined in a file (cached).
@@ -799,15 +805,13 @@ awk -v list="$list" -v manifests="$manifests" '
             b = binname[i]; p = binpath[i]
             if (b == "-") { problem("b", "a [[bin]] without a name (path " p ")"); continue }
             if (b in named) { nbins_ok++; continue }
-            if (b ~ /^compat_/) { nbins_ok++; continue }
             if (p != "-" && skipped(p)) { nbins_ok++; continue }
             problem("b", b " (" p ")")
         }
-        # every package (but compat) is in some manifest: a [[parser]] crate, a [[package]]
+        # every package is in some manifest: a [[parser]] crate, a [[package]]
         # table or a whole-file skip that covers the package directory
         for (p in pkgdir) {
             dir = pkgdir[p]
-            if (dir == "crates/compat") continue
             if (p in pcrate) {
                 if (p in pkgtable) problem("m", pkgtable[p] ": [[package]] " p " has [[parser]] tables too (drop the [[package]])")
                 continue

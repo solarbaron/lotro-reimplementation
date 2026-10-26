@@ -573,7 +573,8 @@ pub enum SessionError {
         /// The count.
         count: usize,
     },
-    /// Bytes are left after the last field of a message (§9.4.2 `0x00000179`).
+    /// Bytes are left after the last field of a message (`0x00000179`: §9.4.2 lists the
+    /// fields only; refusing bytes after `resultCode` is an engineering choice, spec silent).
     #[error("{remaining} trailing bytes after message {opcode:#010x}")]
     TrailingMessageBytes {
         /// Message opcode.
@@ -6587,6 +6588,8 @@ fn dispatch_message_inner(
                 opcode: OPCODE_SINGLE_WRAPPER,
             });
         };
+        // §9.4.2 lists the five fields only and says nothing of bytes after `resultCode`;
+        // refusing them is an engineering choice (spec silent), the conservative reading.
         let trailing = bytes.len().saturating_sub(cursor.saturating_add(12));
         if trailing != 0 {
             return Err(SessionError::TrailingMessageBytes {

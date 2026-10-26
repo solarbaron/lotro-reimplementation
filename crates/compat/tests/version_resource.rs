@@ -490,7 +490,7 @@ fn network_version_validation_and_resource_lookup() {
     assert!(is_valid_network_version("1.2.3.4"));
     // official-login.md §2.4.1: 1 to 24 printable ASCII characters.
     assert_eq!(MAX_NETWORK_VERSION_LEN, 24);
-    assert!(is_valid_network_version("9386"));
+    assert!(is_valid_network_version("1234"));
     assert!(is_valid_network_version(&"9".repeat(24)));
     assert!(!is_valid_network_version(&"9".repeat(25)));
     assert!(!is_valid_network_version(""));
@@ -567,13 +567,13 @@ fn default_keys_and_executable_paths_follow_section_2_4_1() {
         root.join("x64").join("lotroclient64.exe"),
         image_with(&[
             ("CompatibilityVersion", "2222"),
-            ("CompatibiltyVersion", "9386"),
+            ("CompatibiltyVersion", "1234"),
         ]),
     )
     .unwrap();
     assert_eq!(
         discover_network_version(&query),
-        found("9386", "CompatibiltyVersion")
+        found("1234", "CompatibiltyVersion")
     );
 
     // The first key present decides: an invalid value asks the user.

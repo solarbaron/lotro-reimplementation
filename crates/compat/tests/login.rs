@@ -15,20 +15,21 @@ use tessera_compat::login::{
     ArgTemplateParams, BitTreeTableHeader, Credentials, DAT_DIDVER_DESCRIPTOR_OFFSET,
     DAT_ROOT_DID_MAP_OFFSET, DAT_SUPERBLOCK_MAGIC, DAT_SUPERBLOCK_OFFSET,
     DEFAULT_TICKET_LIFETIME_SEC, DICT_KEY_CLIENT_TO_SERVER, DICT_KEY_SERVER_TO_CLIENT,
-    DICT_KEY_SERVER_TO_CLIENT_DEFERRED, DidMap3Table, GameSubscription, HttpClient, HttpMethod,
+    DICT_KEY_SERVER_TO_CLIENT_DEFERRED, DataIdMap, GameSubscription, HttpClient, HttpMethod,
     HttpRequest, HttpResponse, INVALID_LOGIN_SERVER_SENTINEL, LauncherConfig, LoginDriver,
     LoginError, LoginFailureClass, LoginHost, LoginStateId, MAX_XML_DEPTH, MAX_XML_INPUT_BYTES,
-    MAX_XML_ITEMS, PREFIX_TREE_DICT_SCHEMA_GUID, QueueEvaluation, QueueResult,
-    ROOT_KEY_COMPRESSION_DICTIONARY, RefreshOutcome, RegistryTicketReader, RemoteLauncherConfig,
-    SessionHandoff, TicketIntakeArgs, TicketRefresher, UserPreferences, VersionInfo, WorldStatus,
-    build_launch_argv, build_leave_queue_body, build_take_a_number_body, check_billing_role,
-    compression_dictionary_map_did, encode_client_version_payload, extract_didver_from_dat_file,
-    extract_didver_from_dat_header, fetch_world_status, is_rfc1918_queue_url,
-    language_to_feed_code, parse_dat_superblock_didver_descriptor, parse_get_datacenters_response,
+    MAX_XML_ITEMS, QueueEvaluation, QueueResult, ROOT_KEY_COMPRESSION_DICTIONARY, RefreshOutcome,
+    RegistryTicketReader, RemoteLauncherConfig, SessionHandoff, TicketIntakeArgs, TicketRefresher,
+    UserPreferences, VersionInfo, WorldStatus, build_launch_argv, build_leave_queue_body,
+    build_take_a_number_body, check_billing_role, compression_dictionary_map_did,
+    encode_client_version_payload, extract_didver_from_dat_file, extract_didver_from_dat_header,
+    fetch_world_status, is_rfc1918_queue_url, language_to_feed_code,
+    parse_dat_superblock_didver_descriptor, parse_get_datacenters_response,
     parse_login_account_response, resolve_bit_tree_table, resolve_install_language,
     resolve_ticket_intake, root_did_map_from_superblock, split_arg_template_argv,
     substitute_arg_template,
 };
+use tessera_compat::session::BIT_TREE_TABLE_FORMAT_UUID;
 use tessera_compat::version_resource::read_version_resource_from_file;
 
 type RecordedRequest = (String, HttpMethod, Vec<(String, String)>, Vec<u8>);
@@ -458,7 +459,7 @@ fn v7_client_version_and_prefix_tree_dictionary_resolution() {
         0xAB, 0xCD, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x09, 0x00, 0x00, 0x00,
     ];
     let hdr_0e010000 = BitTreeTableHeader::parse(&dict_0e010000, 0x0E01_0000).unwrap();
-    assert_eq!(hdr_0e010000.format_uuid, PREFIX_TREE_DICT_SCHEMA_GUID);
+    assert_eq!(hdr_0e010000.format_uuid, BIT_TREE_TABLE_FORMAT_UUID);
     assert_eq!(
         hdr_0e010000.codec_uuid,
         [
@@ -1200,7 +1201,7 @@ fn did_map_record(self_did: u32, entries: &[(u32, u32, &str)]) -> Vec<u8> {
 
 /// A synthetic 48-byte `0x0E01xxxx` record prefix (header + `nodeCount`).
 fn dictionary_record(codec: u8, redirect: u32, version: u32, body_len: u32, nodes: u32) -> Vec<u8> {
-    let mut out = PREFIX_TREE_DICT_SCHEMA_GUID.to_vec();
+    let mut out = BIT_TREE_TABLE_FORMAT_UUID.to_vec();
     out.extend_from_slice(&[codec; 16]);
     out.extend_from_slice(&redirect.to_le_bytes());
     out.extend_from_slice(&version.to_le_bytes());
@@ -1265,7 +1266,7 @@ fn i16_prefix_tree_dictionary_did_map_and_deferred_redirection() {
             (DICT_KEY_SERVER_TO_CLIENT, 0x0E01_0001, "In"),
         ],
     );
-    let map = DidMap3Table::parse(&map_bytes).unwrap();
+    let map = DataIdMap::parse(&map_bytes).unwrap();
     assert_eq!(map.self_did, DID_MASTER_MAP_3_COMPRESSION);
     assert_eq!(
         map.resolve_enum_key(0),
@@ -1285,8 +1286,8 @@ fn i16_prefix_tree_dictionary_did_map_and_deferred_redirection() {
     // A label list that does not match the map list, or a non-0x28 record, is refused.
     let mut bad = map_bytes.clone();
     bad[4 + 2 + 32 + 1] = 3;
-    assert!(DidMap3Table::parse(&bad).is_err());
-    assert!(DidMap3Table::parse(&did_map_record(0x2500_0000, &[])).is_err());
+    assert!(DataIdMap::parse(&bad).is_err());
+    assert!(DataIdMap::parse(&did_map_record(0x2500_0000, &[])).is_err());
 
     let rec_0e010000 = dictionary_record(0xA1, 0, 1, 9, 3);
     let rec_0e010002 = dictionary_record(0xB2, 0x0E01_0001, 0, 0, 0)[..44].to_vec();

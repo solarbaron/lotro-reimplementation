@@ -8,8 +8,8 @@
 //! - `B` (`toggle_wallet`) opens and closes the wallet window (`npc-windows.md` §9.4);
 //! - `U` (`use_selection`) uses the selection; with none, the system line (§3.1);
 //! - `L` (`toggle_quest_log`) opens and closes the quest log (`quest-journal.md` §4.1);
-//! - `J` (`toggle_traits`) and `K` (`toggle_skills`) open and close the trait panel and the
-//!   skill-training window (`progression-panels.md` §1.4);
+//! - `J` (`toggle_traits`) opens and closes the trait panel; `K` (`toggle_skills`) opens
+//!   nothing, not the skill-training window (`progression-panels.md` §1.4, PP19);
 //!
 //! and after every frame the routed queue is empty (no press waits for a later frame).
 //!
@@ -165,7 +165,7 @@ fn the_routed_keys_reach_their_windows_on_a_booted_host() {
     c.press(KeyCode::J);
     assert!(c.traits(), "J opens the trait panel");
     c.press(KeyCode::K);
-    assert!(c.training(), "K opens the skill-training window");
+    assert!(!c.training(), "K opens no skill-training window");
 
     c.press(KeyCode::B);
     assert!(!c.wallet(), "B again closes the wallet");
@@ -174,5 +174,5 @@ fn the_routed_keys_reach_their_windows_on_a_booted_host() {
     c.press(KeyCode::J);
     assert!(!c.traits(), "J again hides the trait panel");
     c.press(KeyCode::K);
-    assert!(!c.training(), "K again closes the training window");
+    assert!(!c.training(), "K again opens nothing");
 }

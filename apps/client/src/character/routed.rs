@@ -23,6 +23,8 @@
 //! a **toggle** (`Wallet`, `QuestLog`, `Traits`, `Skills`) toggles its window once, so an
 //! even number of presses before one frame leaves the window as it was; several presses of
 //! **`Use`** before one frame use the selection once (a use is a request, not a toggle).
+//! `Skills` has no window yet (`progression-panels.md` §1.4): its presses are taken and
+//! dropped.
 
 /// Most routed commands kept between two frames (Tessera bound; further presses in the same
 /// frame are dropped).
@@ -39,8 +41,9 @@ pub enum RoutedCommand {
     QuestLog,
     /// `ToggleTraitPanel`: open or close the trait panel (`progression-panels.md` §1.4, §3).
     Traits,
-    /// `ToggleSkillPanel`: open or close the skill-training window
-    /// (`progression-panels.md` §1.4, §4).
+    /// `ToggleSkillPanel`: the player's skill panel (`progression-panels.md` §1.4, PP19),
+    /// which no spec describes yet, so it opens nothing (Tessera rule there); the P6 hub
+    /// still takes it from the queue. It never opens the skill-training window of §4.
     Skills,
 }
 

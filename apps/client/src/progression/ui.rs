@@ -47,11 +47,12 @@ use super::commands::{
 };
 use super::data::P6Data;
 use super::present::{
-    CraftPresentation, NoIcons, PlayerHoldings, craft_panel_view, craft_trainer_view,
-    experience_view, recipe_page_view, skill_trainer_view, trait_panel_view,
+    CooldownClock, CraftPresentation, P6Icons, PlayerHoldings, craft_panel_view_at,
+    craft_trainer_view, experience_view, recipe_page_view_at, skill_trainer_view, trait_panel_view,
 };
 use super::refs::{P6Refs, P6Window};
 use super::state::{CraftTrainer, P6Change, P6State, feed_ref};
+use crate::character::routed::RoutedCommand;
 
 /// Most distinct failure reasons kept (Tessera bound).
 pub const MAX_FAILURES: usize = 64;
@@ -79,6 +80,11 @@ pub struct P6Context<'a> {
     pub toolbar: Option<ElementKey>,
     /// The client clock in seconds (the level-up banner).
     pub now: f64,
+    /// The windows' icons (`crafting-panels.md` §5.4, `icon-layers.md` §3).
+    pub icons: &'a dyn P6Icons,
+    /// The running recipe cooldowns (`crafting-panels.md` §4.5, §5.2); `holdings` carries
+    /// the same set ([`CooldownClock::mark`]).
+    pub cooldowns: &'a CooldownClock,
 }
 
 impl std::fmt::Debug for P6Context<'_> {
@@ -142,6 +148,17 @@ struct CraftUi {
     holdings: Option<PlayerHoldings>,
     /// The panel's facts changed since the last fill.
     dirty: bool,
+    /// The rows drawn with a running timer at the last fill ([`CraftPresentation::timer_rows`]).
+    timer_rows: Vec<(u64, RecordRef)>,
+    /// The timer texts last set on those rows' elements, by recipe handle.
+    timers: std::collections::BTreeMap<u64, String>,
+    /// The recipe page's timer text last set (`None`: no timer shown or not set yet).
+    page_timer: Option<String>,
+    /// The shown page's rows may carry other timer texts than [`Self::timers`] (a fill, a
+    /// rebuilt page, a tab switch or a search since): set them at the next timer pass.
+    timers_stale: bool,
+    /// The last fill met icons not answered yet.
+    awaiting_icons: bool,
 }
 
 /// An open crafting-trainer window.
@@ -159,6 +176,8 @@ struct TrainingUi {
     /// The feed window, when opened by the feed.
     feed: Option<u32>,
     dirty: bool,
+    /// The last fill met icons not answered yet.
+    awaiting_icons: bool,
 }
 
 /// The open trait panel.
@@ -173,6 +192,8 @@ struct TraitsUi {
     dirty: bool,
     /// How many times the view was built (tests and tools).
     fills: u64,
+    /// The last fill met icons not answered yet.
+    awaiting_icons: bool,
 }
 
 /// The P6 windows on the game UI (module docs).
@@ -452,6 +473,11 @@ impl P6Ui {
             pres: CraftPresentation::default(),
             holdings: None,
             dirty: true,
+            timer_rows: Vec::new(),
+            timers: std::collections::BTreeMap::new(),
+            page_timer: None,
+            timers_stale: false,
+            awaiting_icons: false,
         });
         true
     }
@@ -494,6 +520,7 @@ impl P6Ui {
             window,
             feed: None,
             dirty: true,
+            awaiting_icons: false,
         });
         true
     }
@@ -516,6 +543,7 @@ impl P6Ui {
             handles: P6Handles::new(),
             dirty: true,
             fills: 0,
+            awaiting_icons: false,
         });
         true
     }
@@ -619,30 +647,40 @@ impl P6Ui {
         }
     }
 
-    /// `ToggleSkillPanel` (`keymap.md` §8.3 `toggle_skills`, `progression-panels.md` §1.4,
-    /// §4): closes the skill-training window when it shows, else opens it as
-    /// `--open-panel training` does (empty until a trainer's feed fills it). Closing a
-    /// window the feed opened returns its `CloseWindow` command, as its close button does
-    /// (§4.2; Tessera rule for the key).
-    pub fn toggle_training(&mut self, ui: &mut Ui) -> Option<Command> {
-        if let Some(t) = self.training.as_ref()
-            && ui.exists(t.window.root)
-            && ui.is_visible(t.window.root)
+    /// A routed panel command (`keymap.md` §8.3, [`crate::character::routed`]):
+    /// `ToggleTraitPanel` (J) toggles the trait panel ([`Self::toggle_traits`]);
+    /// `ToggleSkillPanel` (K) opens nothing (`progression-panels.md` §1.4, PP19: it is the
+    /// player's skill panel, which no spec describes yet; Tessera rule): the skill-training
+    /// window opens only from a trainer's `TrainerShown` or its `--open-panel` name, and an
+    /// open one stays. Other kinds are not the P6 windows'.
+    pub fn panel_toggle(&mut self, ui: &mut Ui, command: RoutedCommand) {
+        match command {
+            RoutedCommand::Traits => self.toggle_traits(ui),
+            RoutedCommand::Skills => {
+                tracing::debug!("ToggleSkillPanel: the skill panel is not built; nothing opens");
+            }
+            RoutedCommand::Use | RoutedCommand::Wallet | RoutedCommand::QuestLog => {}
+        }
+    }
+
+    /// Icon answers arrived ([`super::present::ItemIcons::poll`]): every window whose last
+    /// fill met an icon not answered yet is filled again at its next showing frame.
+    pub fn icons_arrived(&mut self) {
+        if let Some(c) = self.craft.as_mut()
+            && std::mem::take(&mut c.awaiting_icons)
         {
-            let feed = t.feed;
-            self.close_training(ui);
-            return feed.and_then(|window| {
-                progression_command(
-                    ProgressionAction::CloseTrainer { window },
-                    &P6Handles::new(),
-                )
-            });
+            c.dirty = true;
         }
-        match self.open_panel(ui, P6Panel::Training) {
-            Ok(k) => ui.request_activation(k),
-            Err(e) => tracing::warn!("{e}"),
+        if let Some(t) = self.training.as_mut()
+            && std::mem::take(&mut t.awaiting_icons)
+        {
+            t.dirty = true;
         }
-        None
+        if let Some(t) = self.traits.as_mut()
+            && std::mem::take(&mut t.awaiting_icons)
+        {
+            t.dirty = true;
+        }
     }
 
     /// Opens window `p` by its `--open-panel` name (`crafting-panels.md` §3 Tessera rule,
@@ -939,8 +977,16 @@ impl P6Ui {
                     && std::mem::take(&mut w.dirty)
                 {
                     let title = t.npc.and_then(|e| (ctx.entity_name)(e)).unwrap_or_default();
-                    let view =
-                        skill_trainer_view(t, ctx.data, &title, ctx.coin, ctx.currencies, &NoIcons);
+                    let before = ctx.icons.misses();
+                    let view = skill_trainer_view(
+                        t,
+                        ctx.data,
+                        &title,
+                        ctx.coin,
+                        ctx.currencies,
+                        ctx.icons,
+                    );
+                    w.awaiting_icons = ctx.icons.misses() > before;
                     w.window.show(ui, &view, &PT);
                 }
             }
@@ -970,12 +1016,14 @@ impl P6Ui {
         let progression = state.progression();
         let (active, _) = progression.active_tree();
         t.handles.clear();
+        let before = ctx.icons.misses();
         let view = match active {
             Some(RecordRef::Record(did)) => {
-                trait_panel_view(Did(did.0), ctx.data, progression, &NoIcons, &mut t.handles)
+                trait_panel_view(Did(did.0), ctx.data, progression, ctx.icons, &mut t.handles)
             }
             _ => None,
         };
+        t.awaiting_icons = ctx.icons.misses() > before;
         let view = view.unwrap_or_else(|| literal_tree_view(active, progression, &mut t.handles));
         t.panel.show(ui, &view);
     }
@@ -991,40 +1039,103 @@ impl P6Ui {
         if !ui.is_visible(c.panel.root) {
             return;
         }
+        // §4.5: counts and states follow the holdings and the recipe cooldowns starting or
+        // ending (the clock holds only learned recipes, `CooldownClock::of_combat`): those
+        // refill the panel. A running timer's text alone changes in place (below), so a
+        // countdown neither rebuilds the tree (its scroll position) nor rewrites the recipe
+        // page (its quantity entry).
         let held_changed = c.holdings.as_ref().is_none_or(|h| {
             h.craft().holdings != ctx.holdings.craft().holdings
                 || h.craft().literal_holdings != ctx.holdings.craft().literal_holdings
+                || h.craft().cooldowns != ctx.holdings.craft().cooldowns
         });
-        if !c.dirty && !held_changed {
+        if c.dirty || held_changed {
+            c.dirty = false;
+            c.holdings = Some(ctx.holdings.clone());
+            let mut pres = craft_panel_view_at(
+                state.crafting(),
+                ctx.data,
+                ctx.holdings.craft(),
+                ctx.cooldowns,
+            );
+            pres.keep_timer_texts(&c.pres);
+            c.pres = pres;
+            c.timer_rows = c.pres.timer_rows();
+            c.timers_stale = true;
+            c.awaiting_icons = false;
+            c.panel.show(ui, &c.pres.view, &CT);
+            if let Some(i) = self.pending_tab.take() {
+                // A profession tab's selection is shown below; the "train more" tab has none.
+                let _ = c.panel.select_tab(ui, i, &CT);
+            }
+            if std::mem::take(&mut self.select_first) {
+                let first = c
+                    .pres
+                    .view
+                    .professions
+                    .get(c.panel.current())
+                    .and_then(|p| p.tiers.first())
+                    .and_then(|t| t.categories.first())
+                    .and_then(|k| k.recipes.first())
+                    .map(|r| (r.recipe, r.tier));
+                if first.is_some() {
+                    let _ = c.panel.select(ui, first);
+                }
+            }
+            Self::show_page(c, ui, state, ctx);
+        }
+        Self::update_timers(c, ui, ctx, &self.refs.p6.ids);
+    }
+
+    /// Sets the running timers' texts on the shown page's rows and on the recipe page's
+    /// `Craft_Recipe_CooldownTimer` in place (`crafting-panels.md` §4.5, §5.2), when a text
+    /// changed or the page may show older ones ([`CraftUi::timers_stale`]). Only texts
+    /// change: which rows show a timer follows the fills.
+    fn update_timers(
+        c: &mut CraftUi,
+        ui: &mut Ui,
+        ctx: &P6Context<'_>,
+        ids: &tessera_ui::game::p6vocab::P6Ids,
+    ) {
+        let page_text = c
+            .panel
+            .page_view()
+            .filter(|p| p.cooldown_timer.is_some())
+            .and_then(|p| c.pres.recipe_ref(p.recipe))
+            .and_then(|r| ctx.cooldowns.timer_text(r));
+        let texts: std::collections::BTreeMap<u64, String> = c
+            .timer_rows
+            .iter()
+            .filter_map(|(h, r)| Some((*h, ctx.cooldowns.timer_text(r)?)))
+            .collect();
+        if !c.timers_stale && texts == c.timers && page_text == c.page_timer {
             return;
         }
-        c.dirty = false;
-        c.holdings = Some(ctx.holdings.clone());
-        c.pres = craft_panel_view(state.crafting(), ctx.data, ctx.holdings.craft(), &NoIcons);
-        c.panel.show(ui, &c.pres.view, &CT);
-        if let Some(i) = self.pending_tab.take() {
-            // A profession tab's selection is shown below; the "train more" tab has none.
-            let _ = c.panel.select_tab(ui, i, &CT);
-        }
-        if std::mem::take(&mut self.select_first) {
-            let first = c
-                .pres
-                .view
-                .professions
-                .get(c.panel.current())
-                .and_then(|p| p.tiers.first())
-                .and_then(|t| t.categories.first())
-                .and_then(|k| k.recipes.first())
-                .map(|r| (r.recipe, r.tier));
-            if first.is_some() {
-                let _ = c.panel.select(ui, first);
+        c.timers_stale = false;
+        if !texts.is_empty() {
+            for (row, sel) in c.panel.rows(c.panel.current()) {
+                if let Some(text) = sel.and_then(|(h, _)| texts.get(&h)) {
+                    put_text_if_changed(ui, part(ui, row, ids.row_timer), text);
+                }
             }
         }
-        Self::show_page(c, ui, state, ctx);
+        if let Some(t) = &page_text {
+            put_text_if_changed(
+                ui,
+                c.panel
+                    .parts
+                    .recipe_page
+                    .and_then(|page| part(ui, page, ids.cooldown_timer)),
+                t,
+            );
+        }
+        c.timers = texts;
+        c.page_timer = page_text;
     }
 
     /// Renders the recipe page of the panel's current selection (or empties it).
     fn show_page(c: &mut CraftUi, ui: &mut Ui, state: &P6State, ctx: &P6Context<'_>) {
+        let before = ctx.icons.misses();
         let sel = c.panel.selection(c.panel.current());
         let page = sel.and_then(|(recipe, tier)| {
             let ctl = &c.panel.controls;
@@ -1040,7 +1151,7 @@ impl P6Ui {
                 busy: c.panel.is_busy(),
                 quantity_text: ctl.quantity.clone(),
             };
-            recipe_page_view(
+            recipe_page_view_at(
                 &c.pres,
                 recipe,
                 tier,
@@ -1048,10 +1159,16 @@ impl P6Ui {
                 ctx.data,
                 state.crafting(),
                 ctx.holdings.craft(),
-                &NoIcons,
+                ctx.icons,
+                ctx.cooldowns,
             )
         });
+        c.awaiting_icons |= ctx.icons.misses() > before;
         c.panel.show_recipe(ui, page.as_ref(), &CT);
+        // The page carries the timer text of this moment: the next timer pass compares
+        // against what it shows.
+        c.page_timer = None;
+        c.timers_stale = true;
     }
 
     fn handle_event(
@@ -1064,7 +1181,13 @@ impl P6Ui {
     ) {
         if let Some(c) = self.craft.as_mut()
             && ui.exists(c.panel.root)
-            && let Some(a) = c.panel.handle_event(ui, ev, &CT)
+            && let Some(a) = {
+                let a = c.panel.handle_event(ui, ev, &CT);
+                // A tab switch or a search may have rebuilt the shown page's rows with the
+                // texts of the last fill: the next timer pass sets the live ones.
+                c.timers_stale |= !c.timer_rows.is_empty();
+                a
+            }
         {
             match a {
                 CraftAction::Close => {
@@ -1131,6 +1254,26 @@ impl P6Ui {
                 }
             }
         }
+    }
+}
+
+/// The element with ID `id` in `k`'s subtree (`k` itself included).
+fn part(ui: &Ui, k: ElementKey, id: u32) -> Option<ElementKey> {
+    if id == 0 {
+        return None;
+    }
+    if ui.element_id(k) == Some(id) {
+        return Some(k);
+    }
+    tessera_ui::game::find_below(ui, k, id)
+}
+
+/// Sets `k`'s text to `text` (cut as the panel cuts its texts) when it shows another.
+fn put_text_if_changed(ui: &mut Ui, k: Option<ElementKey>, text: &str) {
+    let Some(k) = k else { return };
+    let t = tessera_ui::game::npc::kit::cut(text);
+    if ui.text_of(k) != t {
+        ui.set_text(k, Some(t));
     }
 }
 

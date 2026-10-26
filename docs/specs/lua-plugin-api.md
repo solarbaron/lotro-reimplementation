@@ -4645,6 +4645,25 @@ from the last position down; the vocation becomes none, with one `VocationChange
 > is the client's (it resolves recipe records into the getter values); the plugin host's
 > half runs on synthetic values.
 
+> **OPEN:** (implementer, `apps/client` `progression::plugin::ViewWorker`, 2026-10-26)
+> delivery lag of the progression model in the client, for a spec writer to rule on.
+> The record values of the views (profession names and titles, the recipes' getter values,
+> the untrained skills' `SkillInfo` values) are read off the frame thread (ARCHITECTURE
+> §21), so the client updates the model and queues the §15.6 events only when a frame's
+> batch has been resolved on a worker: one or more frames after the feed event. Within the
+> progression views the feed's order holds (batches apply in submission order). Across
+> view families it does not: the wallet, mount, inventory and combat views (§15.1–§15.5)
+> still change and queue their events in the frame of their feed event. So (a) a handler
+> of another family's event raised in that frame (for example §15.2 `LevelChanged`, or a
+> wallet or backpack event) reads the previous progression values (`GetUntrainedSkills()`,
+> `GetRecipeCount()`), and the §15.6 events of the same feed poll are delivered after
+> events that followed them in the feed; (b) a view object made between the feed event and
+> the apply also receives the event, against "only for view objects that exist in the
+> apartment at the change" above. A batch whose worker job failed is applied without its
+> record values (empty names), in its place in the order. Questions: is this lag allowed
+> as a Tessera rule; or must the client hold the other families' events of that feed poll
+> until the batch is applied, or resolve the batch before frame-loop step 7?
+
 **Proposed owner observations** (rows O192–O195, chosen after the crafting spec's O180–O191;
 reconciled at the merge):
 

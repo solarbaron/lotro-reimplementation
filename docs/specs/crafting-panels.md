@@ -383,6 +383,19 @@ state `RecipeGroup_CooldownReady` and the row is filled like a plain row.
 > ref to its `CooldownEnded` (SF §6.2 `cooldown`); the timer counts down to the end the feed
 > scheduled.
 
+> **OPEN:** (implementer, `apps/client`, 2026-10-26) the text of the remaining-time timer (the
+> row's timer and `Craft_Recipe_CooldownTimer`, §5.2) is not given: its format, how a fraction
+> of a second is rounded, what it shows once the scheduled end has passed while no
+> `CooldownEnded` has arrived, and how often it is updated. `tessera-client` shows the
+> remaining seconds (the scheduled end, taken as the `CooldownStarted` arrival time on the
+> client's combat clock plus its `duration_ms`, less the current time) as the duration text of
+> `item-tooltips.md` §6.18, as the §5.2 cooldown line does (largest two non-zero units, whole
+> seconds rounded to nearest, `0s` from the scheduled end until `CooldownEnded`). When only
+> that text changes it is set on the timer elements in place; the panel is refilled only when
+> the set of running recipe cooldowns (or the holdings) changes, so a countdown neither
+> rebuilds the recipe tree nor renders the recipe page again. The spec should state the timer's format and clock source,
+> and whether the Timer widget counts down by itself.
+
 <a id="s4-6"></a>
 ### 4.6 Search, expand and collapse (BIN, CP7)
 

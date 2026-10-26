@@ -366,9 +366,9 @@ fn portraits_draw_for_the_player_and_the_player_selected() {
     let (shown, composed) = c.portrait_state(FrameKind::Player).expect("PlayerPortrait");
     assert!(shown, "PlayerPortrait shown with its scene");
     assert!(composed, "composed as external content");
-    let p4 = c.target_pixels(FrameKind::Player);
-    sheet("p4", &p4);
-    check_portrait("PlayerPortrait", &p4);
+    // The first drawing can come before every part of the figure has loaded (a loaded
+    // machine), so the pixels are judged once the drawing is complete, below.
+    sheet("p4", &c.target_pixels(FrameKind::Player));
 
     // Frame cost: once the drawing is complete (the figure stable and the walker settled)
     // the target is not drawn again.
@@ -437,6 +437,9 @@ fn portraits_draw_for_the_player_and_the_player_selected() {
         .portrait_state(FrameKind::Target)
         .expect("OpponentPortrait");
     assert!(shown && composed, "OpponentPortrait shown and composed");
+    c.until("the target portrait complete", |c| {
+        c.portraits().complete(FrameKind::Target)
+    });
     let p5 = c.target_pixels(FrameKind::Target);
     sheet("p5", &p5);
     check_portrait("OpponentPortrait", &p5);
@@ -517,6 +520,9 @@ fn portraits_draw_for_the_player_and_the_player_selected() {
                 "the other entity's portrait is shown and composed (§12.4: hidden only \
                  while nothing is drawn)"
             );
+            c.until("the other entity's portrait complete", |c| {
+                c.portraits().complete(FrameKind::Target)
+            });
             let npc_p5 = c.target_pixels(FrameKind::Target);
             sheet("p5_npc", &npc_p5);
             check_portrait("OpponentPortrait (other entity)", &npc_p5);

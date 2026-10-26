@@ -2469,6 +2469,22 @@ is a golden of a preview (G7, or a golden named as one):
 > **Implemented behaviour changes:** yes, for captures: headless checkpoints and golden tests
 > settle every preview before they capture; goldens that captured previews change once.
 
+> **OPEN (implementer, 2026-10-26, follow-up `ui-host-settle`):** engineering choices of the
+> client for item 3, to confirm or replace. (a) A **held UI clock** (the clock has not advanced
+> since the last paint: headless checkpoints, golden captures, `FrameClock::Held`) is treated
+> as a capture: the host then settles a pending change of *Se* at once, whatever else is
+> pending, and the geometry previews once no change of *Se* waits and the rest has settled,
+> without being asked; a clock that advances keeps the 150 ms rules. (b) The headless
+> screenshot of a walker run with the UI (`--headless --ui --screenshot`) takes the capture
+> settle after the run's last frame by running settle steps of its own: the settle request,
+> the UI asset workers' arrivals and the step-8 paint, and nothing else. No plugin code runs
+> (no step 7: no `Update` broadcast, no event delivery, no deferred plugin work), there is no
+> hover check, change request or per-frame element work, no walker update and no frame end,
+> so neither plugin state, the world nor the UI clock moves and the steps are not recorded in
+> the U-report. It runs at most 5,000 steps or 60 s, then captures; it warns and captures
+> anyway when the UI has not settled by then. The windowed screenshot key keeps no capture settle
+> (an interactive host whose clock runs, item 3).
+
 <a id="s9-4"></a>
 ### 9.4 Local real-data goldens (decision 0031 tier 2)
 

@@ -260,7 +260,37 @@ fn chain_names(set: &ArchiveSet, first: Option<Did>) -> Vec<(String, u32)> {
     out
 }
 
+/// The dictionary default of `pid` (`property-system.md` §2.2, `ui-widgets.md` §2.2 step 2):
+/// the default value its definition stores, `None` when the PID has no definition or the
+/// definition stores none.
+#[must_use]
+pub fn dictionary_default(
+    dict: &PropertyDictionary,
+    pid: u32,
+) -> Option<tessera_formats::PropertyValue> {
+    dict.definition(pid).and_then(|d| d.default.clone())
+}
+
+/// The PIDs whose default value another spec states as a rule of the property, kept even
+/// when the install's dictionary defines the PID without a stored default (`ui-widgets.md`
+/// §2.2 implementer OPEN of 2026-10-26): `UICore_Element_alphablendmod` (default 1,
+/// `ui-layout.md` §9.6; a plugin background keeps 1.0, `lua-plugin-api.md` §13.17) and
+/// `UICore_Element_AllowStretchOnDrag` (default true, `ui-behaviour.md` §7.2). Without this
+/// an install that stores no default for the image opacity would draw every base image
+/// fully transparent.
+fn stated_defaults(vocab: &Vocab) -> [u32; 2] {
+    [vocab.pids.alphablendmod, vocab.pids.allow_stretch_on_drag]
+}
+
 /// The UI vocabulary and the game vocabulary resolved through the dictionary and labels.
+/// The UI vocabulary's dictionary defaults follow `ui-widgets.md` §2.2 with the install's
+/// dictionary read at run time (UB49): a PID whose definition stores a default takes the
+/// install's; a PID the install defines **without** a default has none (§2.2 step 3: zero,
+/// false or none for its type), even where the spec's table of observed defaults lists one;
+/// only a PID the dictionary does not define keeps the spec table's value (the table stands
+/// in for a dictionary that lacks the definition), and the defaults other specs state as a
+/// rule of the property ([`stated_defaults`]) are always kept. Runs on the start-up thread
+/// ([`UiBoot`]), never on the frame thread.
 #[must_use]
 pub fn vocabs(dict: &PropertyDictionary, labels: &UiLabels) -> (Vocab, GameVocab) {
     let mut vocab = Vocab::default();
@@ -270,8 +300,15 @@ pub fn vocabs(dict: &PropertyDictionary, labels: &UiLabels) -> (Vocab, GameVocab
         &mut |n| labels.key(UiEnum::StateId, n),
         &mut |n| labels.key(UiEnum::ElementType, n),
         &mut |n| labels.key(UiEnum::ElementId, n),
-        &mut |_| None,
+        &mut |p| dictionary_default(dict, p),
     );
+    // §2.2 steps 2 and 3: a definition without a stored default gives no default, except
+    // for the PIDs whose default other specs state as a rule of the property rather than as
+    // an observed dictionary default ([`stated_defaults`]).
+    let stated = stated_defaults(&vocab);
+    vocab.defaults.retain(|&p, _| {
+        stated.contains(&p) || dict.definition(p).is_none_or(|d| d.default.is_some())
+    });
     let mut gv = GameVocab::default();
     gv.resolve_with(
         &mut |n| labels.key(UiEnum::ElementType, n),
@@ -532,4 +569,193 @@ pub fn social_vocab(
 /// Registers the game widget classes on a new UI.
 pub fn register(ui: &mut Ui, game_vocab: &GameVocab) {
     game_vocab.register_classes(ui);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tessera_formats::PropertyValue;
+
+    /// A synthetic property dictionary (`property-system.md` §2.1, §2.2): `(pid, name, type
+    /// code, default bytes)`; a definition stores a default when its bytes are given.
+    /// Counts and name lengths stay below 128, so every VLE is one byte.
+    fn dictionary(defs: &[(u32, &str, u32, Option<&[u8]>)]) -> Vec<u8> {
+        let mut out = Vec::new();
+        out.extend_from_slice(&0x3400_0000u32.to_le_bytes());
+        out.extend_from_slice(&[0; 8]);
+        out.push(0);
+        out.push(u8::try_from(defs.len()).expect("few"));
+        for (pid, name, _, _) in defs {
+            out.extend_from_slice(&pid.to_le_bytes());
+            out.push(u8::try_from(name.len()).expect("short"));
+            out.extend_from_slice(name.as_bytes());
+        }
+        out.extend_from_slice(&[0, 0]);
+        out.push(0);
+        out.push(u8::try_from(defs.len()).expect("few"));
+        for (pid, _, ty, default) in defs {
+            for v in [*pid, *pid, *ty, 0, 4, 0, 0] {
+                out.extend_from_slice(&v.to_le_bytes());
+            }
+            let flags = if default.is_some() {
+                tessera_formats::property::FLAG_HAS_DEFAULT
+            } else {
+                0
+            };
+            out.extend_from_slice(&flags.to_le_bytes());
+            if let Some(d) = default {
+                out.extend_from_slice(d);
+            }
+            out.extend_from_slice(&0x3FC0_0000u32.to_le_bytes());
+            out.extend_from_slice(&[2, 2, 4, 0, 1]);
+            out.push(0); // children (VLE)
+            out.extend_from_slice(&0u32.to_le_bytes()); // subset count
+            out.extend_from_slice(&0u32.to_le_bytes()); // terminator
+        }
+        out
+    }
+
+    /// `ui-widgets.md` §2.2 steps 2 and 3: the UI vocabulary takes the install's dictionary
+    /// defaults, which win over the spec table; a PID whose definition stores no default has
+    /// none (step 3: false here), even where the spec table lists one; a PID outside the
+    /// spec table gets the install's default; a table PID the dictionary does not define
+    /// keeps the table's value.
+    #[test]
+    fn vocab_defaults_come_from_the_dictionary() {
+        let widget = 2.5f32.to_le_bytes();
+        let mode = 2u32.to_le_bytes();
+        let bytes = dictionary(&[
+            (0x06DF, "UICore_Scrollbar_widget_size", 9, Some(&widget)),
+            (0x0170, "UICore_Scrollable_keep_in_bounds", 21, None),
+            (0x0203, "UICore_Element_ObjectMode", 8, Some(&mode)),
+            (0x0C00, "UICore_Element_AllowStretchOnDrag", 21, Some(&[0])),
+            (0x06E5, "UICore_Element_alphablendmod", 9, None),
+        ]);
+        let dict = PropertyDictionary::parse(&bytes).expect("synthetic dictionary");
+        assert_eq!(
+            dictionary_default(&dict, 0x06DF),
+            Some(PropertyValue::Float(2.5))
+        );
+        assert_eq!(dictionary_default(&dict, 0x0170), None);
+        assert_eq!(dictionary_default(&dict, 0x7777), None);
+
+        let (vocab, _) = vocabs(&dict, &UiLabels::default());
+        let p = vocab.pids;
+        assert_eq!(p.allow_stretch_on_drag, 0x0C00, "resolved by name");
+        let d = &vocab.defaults;
+        assert_eq!(
+            d.get(&0x06DF),
+            Some(&PropertyValue::Float(2.5)),
+            "install wins"
+        );
+        assert_eq!(
+            d.get(&p.scrollable_keep_in_bounds),
+            None,
+            "defined without a default: none (step 3), not the table's true"
+        );
+        assert_eq!(
+            d.get(&0x0203),
+            Some(&PropertyValue::Enum(2)),
+            "outside the table"
+        );
+        assert_eq!(d.get(&0x0C00), Some(&PropertyValue::Bool(false)));
+        // A default another spec states as the property's rule is kept without a stored one.
+        assert_eq!(p.alphablendmod, 0x06E5);
+        assert_eq!(
+            d.get(&0x06E5),
+            Some(&PropertyValue::Float(1.0)),
+            "ui-layout.md §9.6"
+        );
+        // A spec-table PID the dictionary does not define keeps the table's value.
+        assert_eq!(d.get(&p.object_opacity), Some(&PropertyValue::Float(1.0)));
+    }
+
+    /// A dictionary that defines none of the table's PIDs (and stores no default) leaves
+    /// exactly the spec table's defaults; defining a table PID without a default drops only
+    /// that entry (§2.2 step 3).
+    #[test]
+    fn vocab_defaults_without_dictionary_defaults_are_the_spec_table() {
+        let bytes = dictionary(&[(0x0C01, "Tessera_Test_unrelated", 21, None)]);
+        let dict = PropertyDictionary::parse(&bytes).expect("synthetic dictionary");
+        let (vocab, _) = vocabs(&dict, &UiLabels::default());
+        assert_eq!(vocab.defaults, Vocab::default().defaults);
+
+        let bytes = dictionary(&[(0x06DF, "UICore_Scrollbar_widget_size", 9, None)]);
+        let dict = PropertyDictionary::parse(&bytes).expect("synthetic dictionary");
+        let (vocab, _) = vocabs(&dict, &UiLabels::default());
+        let mut want = Vocab::default().defaults;
+        assert!(want.remove(&0x06DF).is_some(), "a table PID");
+        assert_eq!(vocab.defaults, want);
+    }
+
+    /// Real data (`TESSERA_GAME_DIR`, read-only): with §2.2 step 3 applied, no default of
+    /// Tessera's table is dropped: the install stores a default for every table PID it
+    /// defines, apart from the stated defaults of [`stated_defaults`], which are kept;
+    /// `ObjectOpacity` keeps 1.0 (`ui-behaviour.md` UB49) and the image opacity 1
+    /// (`ui-layout.md` §9.6), so no element or image turns transparent by default. Only
+    /// counts are printed.
+    #[test]
+    fn vocab_defaults_real_data() {
+        let Some(dir) = std::env::var_os("TESSERA_GAME_DIR").filter(|d| !d.is_empty()) else {
+            eprintln!("TESSERA_GAME_DIR not set; skipping");
+            return;
+        };
+        let set = ArchiveSet::open(Path::new(&dir), tessera_dat::SetOptions::default())
+            .expect("open the archive set");
+        let did = tessera_props::PROPERTY_DICTIONARY_DID;
+        let payload = set.read(did.0).expect("property dictionary");
+        let dict = PropertyDictionary::parse_expecting(&payload, did.0).expect("dictionary");
+        let (vocab, _) = vocabs(&dict, &UiLabels::default());
+        let mut table = Vocab::default();
+        table.resolve_with(
+            &mut |n| dict.pid(n),
+            &mut |_| None,
+            &mut |_| None,
+            &mut |_| None,
+            &mut |_| None,
+            &mut |_| None,
+        );
+        let defined: Vec<u32> = table
+            .defaults
+            .keys()
+            .copied()
+            .filter(|&p| dict.definition(p).is_some())
+            .collect();
+        let dropped: Vec<u32> = defined
+            .iter()
+            .copied()
+            .filter(|p| !vocab.defaults.contains_key(p))
+            .collect();
+        let stated = stated_defaults(&vocab);
+        let unstored = defined
+            .iter()
+            .filter(|&&p| dict.definition(p).is_some_and(|d| d.default.is_none()))
+            .count();
+        eprintln!(
+            "table defaults {}, defined by the install {}, without a stored default {}, dropped {}",
+            table.defaults.len(),
+            defined.len(),
+            unstored,
+            dropped.len()
+        );
+        assert!(
+            dropped.is_empty(),
+            "table PIDs without a stored default: {dropped:#x?}"
+        );
+        assert_eq!(
+            vocab.defaults.get(&vocab.pids.object_opacity),
+            Some(&tessera_formats::PropertyValue::Float(1.0))
+        );
+        for p in stated {
+            assert!(
+                vocab.defaults.contains_key(&p),
+                "stated default {p:#x} kept"
+            );
+        }
+        assert_eq!(
+            vocab.defaults.get(&vocab.pids.alphablendmod),
+            Some(&tessera_formats::PropertyValue::Float(1.0)),
+            "image opacity 1 (ui-layout.md §9.6)"
+        );
+    }
 }

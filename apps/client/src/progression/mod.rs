@@ -32,17 +32,20 @@
 //! headless `--ui`) runs [`hub::P6Hub::frame`]. The `--open-panel` names of
 //! [`commands::parse_p6_panel`] open the windows once the player is in the world; the
 //! `toggle_crafting` and `toggle_crafting_1` … `3` actions toggle the crafting panel
-//! (CP §4.1, §12), and `toggle_traits` (J) and `toggle_skills` (K) the trait panel and the
-//! skill-training window (PP §1.4, `keymap.md` §8.3; their declined commands reach
-//! [`hub::P6Hub::frame`] through [`crate::character::routed`]). Trainers open on the feed's `TrainerShown` and `CraftTrainerShown`, which
+//! (CP §4.1, §12), and `toggle_traits` (J) the trait panel (PP §1.4, `keymap.md` §8.3);
+//! `toggle_skills` (K) opens nothing (PP §1.4 Tessera rule: it is the original's skill panel,
+//! not yet specified; the skill-training window opens only from a trainer or `--open-panel`).
+//! Their declined commands reach [`hub::P6Hub::frame`] through [`crate::character::routed`].
+//! Trainers open on the feed's `TrainerShown` and `CraftTrainerShown`, which
 //! the feed sends when the player chooses an NPC's trainer option (NW §5.3); gathering nodes
 //! are feed actors used through the P3 use path (CP §9.1 Tessera rule), which the walker draws
 //! like any feed actor. It is exercised in process by `apps/client/tests/p6_panels.rs`
 //! (decision 0037 §3 item 4), `apps/client/tests/p6_windows.rs` and the unit tests here.
 //!
-//! The windows resolve no icon yet ([`present::NoIcons`]; the P1 icon layer is not wired to
-//! [`present::P6Icons`]), and a recipe row's cooldown timer stays empty (the module OPENs of
-//! [`present`]).
+//! The windows' item icons are the P1 item-icon layer read on the asset workers
+//! ([`present::ItemIcons`]); a cooldown row and the recipe page show the remaining time of the
+//! hub's cooldown clock ([`present::CooldownClock`]); the plugin views' record values are
+//! resolved on the workers too ([`plugin::ViewWorker`], ARCHITECTURE §21).
 
 pub mod commands;
 pub mod data;
@@ -59,9 +62,10 @@ pub use commands::{
 };
 pub use data::{ApiKeys, NoData, P6Data};
 pub use hub::P6Hub;
-pub use plugin::{ProgressionPlayer, SessionProgression};
+pub use plugin::{ProgressionPlayer, SessionProgression, ViewWorker};
 pub use present::{
-    CraftPresentation, NoIcons, P6Icons, PlayerHoldings, craft_panel_view, craft_trainer_view,
-    experience_view, recipe_page_view, skill_trainer_view, trait_panel_view,
+    CooldownClock, CraftPresentation, ItemIcons, NoIcons, P6Icons, PlayerHoldings,
+    craft_panel_view, craft_panel_view_at, craft_trainer_view, experience_view, recipe_page_view,
+    recipe_page_view_at, skill_trainer_view, trait_panel_view,
 };
 pub use state::{P6Change, P6State};

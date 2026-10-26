@@ -15,12 +15,31 @@
 //! windows, the quest journal and the P5 windows, [`P6Hub::frame`] runs the windows with the
 //! frame's UI events and sends their commands
 //! (`crate::ui_host::client::window_frames`).
+//!
+//! **Asset workers (ARCHITECTURE §21).** The hub keeps one small worker pool of its own. The
+//! plugin views' record values are resolved there ([`ViewWorker`]): [`P6Hub::after_events`]
+//! and the first [`P6Hub::sync_model`] queue the requests, and every [`P6Hub::sync_model`]
+//! applies the finished batches in order and raises their view events. The windows' item
+//! icons are read there too ([`ItemIcons`]); a window filled before its icons arrived is
+//! filled again when they do ([`P6Ui::icons_arrived`]).
+//!
+//! **Cooldown clock.** Each frame with the crafting panel open, the hub reads the combat
+//! state's running cooldowns of learned recipes at the combat clock
+//! ([`CooldownClock::of_combat`]; skill cooldowns are left out): they mark the recipes whose
+//! cooldown runs (`crafting-panels.md` §4.5) and give the rows' and the recipe page's timer
+//! texts, which the window sets in place without refilling the panel.
+//!
+//! **`toggle_skills` (K).** `progression-panels.md` §1.4 (PP19–PP21): the command opens the
+//! player's skill panel, which no spec describes yet, so (Tessera rule) it opens nothing; the
+//! hub still takes it from the routed queue so no press waits. The skill-training window opens
+//! only from a trainer (`TrainerShown`) or its `--open-panel` name.
 
 use std::collections::VecDeque;
 use std::sync::Arc;
 use std::thread::JoinHandle;
 use std::time::Instant;
 
+use tessera_assets::{PoolConfig, WorkerPool};
 use tessera_dat::ArchiveSet;
 use tessera_net::EntityId;
 use tessera_plugins::PluginManager;
@@ -29,8 +48,8 @@ use tessera_ui::game::crafting::P6Art;
 
 use super::commands::P6Panel;
 use super::data::{ApiKeys, P6Data};
-use super::plugin::SessionProgression;
-use super::present::PlayerHoldings;
+use super::plugin::{SessionProgression, ViewWorker, replay_changes, view_requests};
+use super::present::{CooldownClock, ItemIcons, PlayerHoldings};
 use super::refs::P6Refs;
 use super::state::P6Change;
 use super::ui::{P6Context, P6Ui, level_up_text};
@@ -43,6 +62,11 @@ use crate::ui_host::UiHost;
 /// Most P6 changes kept for the windows between two frames (Tessera bound; beyond it the
 /// oldest are dropped and the windows refill from the state).
 pub const MAX_UI_CHANGES: usize = 1024;
+
+/// Workers of the hub's pool (Tessera choice: the jobs are small and few).
+pub const P6_WORKERS: usize = 1;
+/// Most jobs waiting in the hub's pool.
+pub const P6_MAX_QUEUED: usize = 512;
 
 /// A crafting-panel toggle (`crafting-panels.md` §12): `None` the panel, `Some(i)` the panel
 /// at 0-based profession tab `i`.
@@ -70,6 +94,12 @@ pub struct P6Hub {
     model_synced: bool,
     /// The windows ran with the player in the world in an earlier frame.
     in_world: bool,
+    /// The hub's worker pool (started at its first job).
+    pool: Option<WorkerPool>,
+    /// The plugin views' batches on the workers.
+    views: ViewWorker,
+    /// The windows' item icons, for the facts they were made for.
+    icons: Option<(Arc<P6Data>, ItemIcons)>,
 }
 
 impl std::fmt::Debug for P6Hub {
@@ -215,11 +245,11 @@ impl P6Hub {
         }
     }
 
-    /// Applies routed input commands ([`crate::character::routed`]): every `Traits` and
-    /// `Skills` toggles the trait panel or the skill-training window once
-    /// (`progression-panels.md` §1.4), in the hub's next [`Self::frame`] (which also takes
-    /// the routed queue itself; this entry serves outside callers); other kinds are not
-    /// this hub's. At most [`MAX_ROUTED`] wait.
+    /// Applies routed input commands ([`crate::character::routed`]): every `Traits` toggles
+    /// the trait panel once and every `Skills` is taken and opens nothing
+    /// (`progression-panels.md` §1.4, [`P6Ui::panel_toggle`]), in the hub's next
+    /// [`Self::frame`] (which also takes the routed queue itself; this entry serves outside
+    /// callers); other kinds are not this hub's. At most [`MAX_ROUTED`] wait.
     pub fn apply_routed(&mut self, routed: &[RoutedCommand]) {
         for &r in routed {
             if matches!(r, RoutedCommand::Traits | RoutedCommand::Skills)
@@ -236,12 +266,20 @@ impl P6Hub {
         &self.panel_toggles
     }
 
-    /// One frame's P6 changes (in event order, against the state they left): the plugin
-    /// model's events are raised on `manager` (`lua-plugin-api.md` §15.6) once the facts are
-    /// known and the model was built from the state ([`Self::sync_model`]; before that the
-    /// model is not fed, and the rebuild covers these changes), a level-up's notice line is
-    /// returned for the chat (`progression-panels.md` §2.3 item 1), and the changes are kept
-    /// for the windows (the oldest dropped past [`MAX_UI_CHANGES`]).
+    /// One frame's P6 changes (in event order, against the state they left): once the facts
+    /// are known and the model was built from the state ([`Self::sync_model`]; before that
+    /// the model is not fed, and the rebuild covers these changes), the plugin model's
+    /// updates are queued for the workers and their events are raised on `manager` by a
+    /// later [`Self::sync_model`] (`lua-plugin-api.md` §15.6, module docs); a level-up's
+    /// notice line is returned for the chat (`progression-panels.md` §2.3 item 1), and the
+    /// changes are kept for the windows (the oldest dropped past [`MAX_UI_CHANGES`]).
+    ///
+    /// `combat` and `manager` are **unused** (kept for the runtime's call): the events are
+    /// raised on the manager given to [`Self::sync_model`] when the batch is applied, and the
+    /// workers resolve the untrained skills' values with a combat install of their own over
+    /// the same character facts, because a borrowed `&CombatInstall` cannot be handed to a
+    /// worker (sharing the runtime's `Arc<CombatInstall>` needs the runtime to pass the
+    /// `Arc`; until then the second install is built once, at the first untrained list).
     pub fn after_events(
         &mut self,
         changes: &[P6Change],
@@ -249,13 +287,16 @@ impl P6Hub {
         combat: Option<&CombatInstall>,
         manager: &mut PluginManager,
     ) -> Vec<String> {
+        let _ = (combat, manager);
         if changes.is_empty() {
             return Vec::new();
         }
         if self.model_synced
-            && let Some(data) = self.data.as_deref()
+            && let Some(data) = self.data.clone()
         {
-            self.model.apply(changes, state, data, combat, manager);
+            let requests = view_requests(changes, state, &data);
+            let pool = self.pool();
+            self.views.submit(requests, &data, &pool);
         }
         let mut notices = Vec::new();
         // Only the newest MAX_UI_CHANGES of the batch can stay.
@@ -276,23 +317,68 @@ impl P6Hub {
     }
 
     /// Builds the plugin model from the held P6 `state` once, the first time the facts are
-    /// known (install or fallback), and raises its view events on `manager` (module docs).
-    /// Call every frame after [`Self::after_events`]; a no-op until the facts are known and
-    /// after the first build.
+    /// known (install or fallback; queued for the workers like [`Self::after_events`]), and
+    /// applies the batches the workers finished, raising their view events on `manager`
+    /// (module docs). Call every frame after [`Self::after_events`]. `combat` is unused
+    /// (see [`Self::after_events`]).
     pub fn sync_model(
         &mut self,
         state: &super::state::P6State,
         combat: Option<&CombatInstall>,
         manager: &mut PluginManager,
     ) {
-        if self.model_synced {
-            return;
+        let _ = combat;
+        if !self.model_synced
+            && let Some(data) = self.data.clone()
+        {
+            let requests = view_requests(&replay_changes(state), state, &data);
+            let pool = self.pool();
+            self.views.submit(requests, &data, &pool);
+            self.model_synced = true;
         }
-        let Some(data) = self.data.clone() else {
-            return;
-        };
-        self.model.resync(state, &data, combat, manager);
-        self.model_synced = true;
+        self.views.poll_into(&self.model, manager);
+    }
+
+    /// Plugin-view batches whose events are not raised yet (tests and tools).
+    #[must_use]
+    pub fn views_pending(&self) -> usize {
+        self.views.pending()
+    }
+
+    /// The hub's worker pool, started at its first use.
+    fn pool(&mut self) -> WorkerPool {
+        self.pool
+            .get_or_insert_with(|| {
+                WorkerPool::new(PoolConfig {
+                    workers: P6_WORKERS,
+                    max_queued: P6_MAX_QUEUED,
+                    thread_name: "tessera-p6".to_owned(),
+                })
+            })
+            .clone()
+    }
+
+    /// The windows' item icons for `data`, polled once this frame: returns whether answers
+    /// arrived.
+    fn poll_icons(&mut self, data: &Arc<P6Data>) -> bool {
+        if self
+            .icons
+            .as_ref()
+            .is_some_and(|(d, i)| Arc::ptr_eq(d, data) && i.is_idle())
+        {
+            return false;
+        }
+        let pool = self.pool();
+        if self
+            .icons
+            .as_ref()
+            .is_none_or(|(d, _)| !Arc::ptr_eq(d, data))
+        {
+            self.icons = Some((Arc::clone(data), ItemIcons::for_data(data)));
+        }
+        self.icons
+            .as_mut()
+            .is_some_and(|(_, icons)| icons.poll(&pool) > 0)
     }
 
     /// Whether the plugin model was built from the state ([`Self::sync_model`]).
@@ -332,9 +418,13 @@ impl P6Hub {
             return;
         }
         self.in_world = true;
+        let arrived = self.poll_icons(&data);
         let ui = self
             .ui
             .get_or_insert_with(|| P6Ui::new(Arc::clone(&refs), P6Art::default()));
+        if arrived {
+            ui.icons_arrived();
+        }
         for p in std::mem::take(&mut self.pending_panels) {
             if let Err(e) = ui.open_panel(&mut host.ui_mut(), p) {
                 tracing::warn!("{}: {e}", p.panel_name());
@@ -343,20 +433,24 @@ impl P6Hub {
         for t in std::mem::take(&mut self.toggles) {
             ui.toggle_crafting(&mut host.ui_mut(), t);
         }
-        let mut closes = Vec::new();
         for t in panel_toggles {
-            match t {
-                RoutedCommand::Traits => ui.toggle_traits(&mut host.ui_mut()),
-                RoutedCommand::Skills => closes.extend(ui.toggle_training(&mut host.ui_mut())),
-                _ => {}
-            }
+            ui.panel_toggle(&mut host.ui_mut(), t);
         }
-        // The holdings feed only the crafting panel: read them only while it exists.
-        let holdings = if ui.crafting().is_some() {
-            holdings_of(world.player_state())
+        // The holdings and the cooldown clock feed only the crafting panel: read them only
+        // while it exists.
+        let (mut holdings, clock) = if ui.crafting().is_some() {
+            (
+                holdings_of(world.player_state()),
+                CooldownClock::of_combat(
+                    world.combat_state(),
+                    world.combat_clock(now),
+                    world.p6().crafting(),
+                ),
+            )
         } else {
-            PlayerHoldings::new()
+            (PlayerHoldings::new(), CooldownClock::new())
         };
+        clock.mark(&mut holdings.craft);
         let names = |id: EntityId| {
             world
                 .entities()
@@ -375,9 +469,14 @@ impl P6Hub {
             entity_name: &names,
             toolbar,
             now: host.clock(),
+            icons: match &self.icons {
+                Some((_, i)) => i,
+                None => &super::present::NoIcons,
+            },
+            cooldowns: &clock,
         };
         let commands = ui.frame(&mut host.ui_mut(), world.p6(), &changes, &ctx, events);
-        for c in closes.into_iter().chain(commands) {
+        for c in commands {
             if let Err(e) = world.send_command(now, c) {
                 tracing::info!("progression command not sent: {e}");
             }
@@ -425,6 +524,22 @@ mod tests {
         let mut out = Vec::new();
         s.apply(&ev, &mut out);
         out
+    }
+
+    /// Runs `sync_model` until the workers' batches are applied.
+    fn settle(hub: &mut P6Hub, s: &P6State, m: &mut PluginManager) {
+        let start = Instant::now();
+        loop {
+            hub.sync_model(s, None, m);
+            if hub.views_pending() == 0 {
+                return;
+            }
+            assert!(
+                start.elapsed() < std::time::Duration::from_secs(30),
+                "views"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
     }
 
     /// Reports that arrive before the install's plugin keys (world entry) reach the plugin
@@ -488,6 +603,7 @@ mod tests {
         );
         hub.sync_model(&s, None, &mut m);
         assert!(hub.model_synced());
+        settle(&mut hub, &s, &mut m);
         let p = src.profession(9).expect("held");
         assert_eq!(
             (p.values.proficiency_level, p.values.proficiency_experience),
@@ -504,9 +620,16 @@ mod tests {
             }),
         );
         hub.after_events(&again, &s, None, &mut m);
+        assert_eq!(hub.views_pending(), 1, "resolved on the workers");
+        settle(&mut hub, &s, &mut m);
         assert_eq!(src.vocation(), 0);
         hub.sync_model(&s, None, &mut m);
         assert_eq!(src.recipe_count(9), 1, "built once");
+        assert_eq!(
+            hub.views.inline_batches(),
+            0,
+            "nothing resolved on this thread"
+        );
     }
 
     /// The windows' queue keeps the newest changes, bounded.

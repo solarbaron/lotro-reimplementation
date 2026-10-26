@@ -25,6 +25,10 @@ use crate::walker_host::{WalkerHost, save_png};
 const SETTLED_FRAMES: u32 = 30;
 /// Frames of each half of the U2 proxy measurement.
 const U2_FRAMES: u32 = 60;
+/// Most UI steps the capture settle of a screenshot runs ([`capture_settle`]).
+const CAPTURE_SETTLE_STEPS: u32 = 5_000;
+/// Most wall time the capture settle of a screenshot runs ([`capture_settle`]).
+const CAPTURE_SETTLE_LIMIT: Duration = Duration::from_secs(60);
 
 /// What a headless UI run produced.
 #[derive(Debug, Clone, Default)]
@@ -123,6 +127,40 @@ pub fn capture_with_ui(
     let target = renderer.create_offscreen_target(size.0, size.1, OffscreenFormat::Rgba8Srgb)?;
     render_frame(renderer, &target, walker, Some(ui))?;
     Ok(renderer.read_pixels(&target)?)
+}
+
+/// The **capture settle** of `ui-scaling.md` §9.3 (revision 15) before a headless
+/// screenshot: every surface still in a preview (a change of *Se* waiting for its §4.5 step 4
+/// repaint, a §6.1 geometry preview) is settled as if its 150 ms settle time had passed, and
+/// settle steps ([`super::UiHost::capture_settle_step`]: the settle request, the workers'
+/// arrivals and step 8's paint, its GPU operations applied to `renderer`) run until
+/// [`super::UiHost::settled`] holds, for at most [`CAPTURE_SETTLE_STEPS`] steps and
+/// [`CAPTURE_SETTLE_LIMIT`].
+///
+/// **Nothing else changes** (§9.3 items 1 and 2): no plugin code runs (no step 7: no
+/// `Update` broadcast, no event delivery, no deferred plugin work), the walker is not updated
+/// and the UI's frame clock is not advanced (no frame end), so plugin state, fades, timers,
+/// tooltips, floating text and the world stay at the moment the run ended; the steps are not
+/// recorded in the U-report or the frame log. Returns whether the UI settled (`true` without
+/// an attached UI).
+pub fn capture_settle(ui: &mut ClientUi, renderer: &mut Renderer<'_>, rt: &mut Runtime) -> bool {
+    if !ui.attached() {
+        return true;
+    }
+    let start = Instant::now();
+    for _ in 0..CAPTURE_SETTLE_STEPS {
+        let Some(host) = ui.host_mut() else {
+            return true;
+        };
+        if host.capture_settle_step(Some(renderer), &mut rt.plugins) {
+            return true;
+        }
+        if start.elapsed() >= CAPTURE_SETTLE_LIMIT {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    ui.host().is_none_or(super::UiHost::settled)
 }
 
 /// Checks that a headless UI run has something that ends it: `--screenshot`,
@@ -382,6 +420,10 @@ fn finish(
         {
             let r = (|| {
                 refuse_install_path(args, Some(&rt.status), path)?;
+                // §9.3: the settled picture, never a preview, at the run's last moment.
+                if !capture_settle(ui, renderer, rt) {
+                    tracing::warn!("UI previews not settled; taking the screenshot anyway");
+                }
                 let image = capture_with_ui(renderer, walker, ui, args.size)?;
                 save_png(path, &image)?;
                 tracing::info!(path = %path.display(), settled = report.settled, "UI screenshot saved");

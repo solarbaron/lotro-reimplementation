@@ -160,6 +160,21 @@ that matter here (OBS, 2026-10-06; read them from the install):
 Every other property named in §4–§11 has no dictionary default, so it reads as zero or false
 when absent.
 
+> **OPEN (implementer, 2026-10-26, follow-up `ui-host-settle`):** the client reads the install's
+> dictionary at start-up and follows the order above: a PID whose definition stores a default
+> takes the install's value; a PID the install defines **without** a stored default has none
+> (step 3), even where the table above lists one; the table's value is used only for a PID
+> the dictionary does not define. On this install every table PID above is defined with a
+> stored default, so nothing changes there. One conflict remains: the install's definition of
+> `UICore_Element_alphablendmod` (0x06E5) stores no default, so step 3 would give 0, while
+> `ui-layout.md` §9.6 gives the property "default 1" and `lua-plugin-api.md` §13.17 says a
+> plugin background's factor "stays 1.0". Engineering choice until answered: a default that
+> another spec states as a rule of the property (`alphablendmod` 1, `ui-layout.md` §9.6;
+> `UICore_Element_AllowStretchOnDrag` true, `ui-behaviour.md` §7.2) is kept whatever the
+> dictionary stores; step 3 applies to every other PID. Question: is the "default 1" of §9.6
+> the reading the client applies when the property is absent (so step 3 does not apply to it),
+> or should `ui-layout.md` §9.6 and LPA §13.17 follow step 3?
+
 <a id="s2-3"></a>
 ### 2.3 Finding parts by element ID (BIN)
 

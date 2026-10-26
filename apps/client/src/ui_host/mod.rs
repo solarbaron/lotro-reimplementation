@@ -723,33 +723,60 @@ impl UiHost {
     /// it once everything else has settled.
     #[must_use]
     pub fn settled(&self) -> bool {
-        self.settled_but_previews() && !self.ui.borrow().geometry_preview_pending()
+        self.scale_repaint_at.is_none()
+            && self.settled_but_previews()
+            && !self.ui.borrow().geometry_preview_pending()
     }
 
-    /// [`Self::settled`] apart from geometry previews.
+    /// [`Self::settled`] apart from previews: the §4.5 settle of a change of *Se* and the
+    /// §6.1 geometry previews (`ui-scaling.md`).
     fn settled_but_previews(&self) -> bool {
         let in_flight = self
             .env
             .as_ref()
             .is_some_and(|h| h.borrow().stats().in_flight > 0);
         self.pending_position.is_none()
-            && self.scale_repaint_at.is_none()
             && self.pending_notices.is_empty()
             && self.pending_session.is_empty()
             && !in_flight
             && self.ui.borrow().paint_settled()
     }
 
+    /// Asks for the **capture settle** of `ui-scaling.md` §9.3 (revision 15) at the next
+    /// [`Self::step8`]: a pending change of *Se* is settled at once (§4.5 step 4, as
+    /// [`Self::settle_scale_repaint`]) and every geometry preview as if its 150 ms settle time
+    /// had passed (§6.1 item 4, [`Ui::settle_previews_at_next_paint`]). No clock moves: the
+    /// UI clock, and with it fades, timers, tooltips and floating text, stays where it is.
+    /// The code that takes a capture calls it before every frame it runs for that capture,
+    /// until [`Self::settled`] holds (a settle repaint may itself start a preview-free
+    /// repaint that needs several frames); interactive hosts never need it.
+    pub fn request_capture_settle(&mut self) {
+        self.settle_scale_repaint();
+        self.ui.borrow_mut().settle_previews_at_next_paint();
+    }
+
     /// The UI clock this frame paints at. When it has not advanced since the last paint (a
-    /// held clock: headless checkpoints, golden captures) and everything else has settled,
-    /// the remaining geometry previews (`ui-scaling.md` §6.1) are settled in this paint, as
-    /// 150 ms of an advancing clock without a change would settle them
-    /// ([`Ui::settle_previews_at_next_paint`]); such a run would otherwise wait for them
-    /// forever. A clock that advances is left to the rule's own settle time.
+    /// held clock: headless checkpoints, golden captures), the previews are settled as by
+    /// [`Self::request_capture_settle`] (`ui-scaling.md` §9.3), as 150 ms of an advancing
+    /// clock without a change would settle them; such a run would otherwise wait for the
+    /// wall clock (the *Se* settle) or forever (the geometry previews):
+    ///
+    /// - a pending change of *Se* repaints in this frame's [`Self::step8`] (§4.5 step 4),
+    ///   whatever else is pending (the surfaces of the old content scale count as unpainted,
+    ///   so waiting for the paint to settle first would wait for the wall clock);
+    /// - the remaining geometry previews (§6.1) are settled in this paint once no change of
+    ///   *Se* waits and everything else has settled, so that a preview is not settled at the
+    ///   old content scale or before its images and fonts arrived.
+    ///
+    /// A clock that advances is left to the rules' own settle times.
     fn paint_clock(&mut self) -> Duration {
         let now = Duration::from_secs_f64(self.clock.max(0.0));
-        if self.last_paint == Some(now) && self.settled_but_previews() {
-            self.ui.borrow_mut().settle_previews_at_next_paint();
+        if self.last_paint == Some(now) {
+            if self.scale_repaint_at.is_some() {
+                self.settle_scale_repaint();
+            } else if self.settled_but_previews() {
+                self.ui.borrow_mut().settle_previews_at_next_paint();
+            }
         }
         self.last_paint = Some(now);
         now
@@ -2564,9 +2591,9 @@ impl UiHost {
 
     // ----- step 7 --------------------------------------------------------------------
 
-    /// Step 7 (module docs).
-    pub fn step7(&mut self, plugins: &mut Plugins, mapper: Option<&mut InputMapper>) {
-        let t = Instant::now();
+    /// The UI asset workers' arrivals (start of step 7): images that arrived let the UI
+    /// repaint what waited for them, fonts that arrived invalidate the laid-out text.
+    fn take_arrivals(&mut self) {
         if let Some(h) = &self.env {
             let a = h.borrow_mut().poll();
             let mut ui = self.ui.borrow_mut();
@@ -2577,6 +2604,37 @@ impl UiHost {
                 ui.invalidate_text();
             }
         }
+    }
+
+    /// One step of the **capture settle** of `ui-scaling.md` §9.3 (revision 15) before a
+    /// capture: asks for the settle ([`Self::request_capture_settle`]), takes the workers'
+    /// arrivals and the font ladders back from them, and paints ([`Self::step8`], its GPU
+    /// operations applied to `renderer` when given). Returns [`Self::settled`]; the code that
+    /// takes the capture runs steps until it holds (or its own limit), then captures.
+    ///
+    /// **Nothing else runs** (§9.3 items 1 and 2): no plugin code (no `Update` broadcast, no
+    /// event delivery, no deferred plugin work or loads, no plugin manager request), no hover
+    /// check, change request or per-frame element work (media, auto-repeat, fades), and no
+    /// clock moves. The UI's events stay in its outbox for the next step 7. So the captured
+    /// content is that of the run's last frame, and a UI whose plugins change it every frame
+    /// settles as fast as one without plugins. `plugins` is only read for the step-8 plugin
+    /// time, which these steps do not add to.
+    pub fn capture_settle_step(
+        &mut self,
+        renderer: Option<&mut Renderer<'_>>,
+        plugins: &mut Plugins,
+    ) -> bool {
+        self.request_capture_settle();
+        self.take_arrivals();
+        self.poll_ladders();
+        self.step8(renderer, plugins);
+        self.settled()
+    }
+
+    /// Step 7 (module docs).
+    pub fn step7(&mut self, plugins: &mut Plugins, mapper: Option<&mut InputMapper>) {
+        let t = Instant::now();
+        self.take_arrivals();
         self.poll_ladders();
         self.ui.borrow_mut().tick_hover();
         self.deliver(plugins);
@@ -3036,8 +3094,10 @@ impl UiHost {
         self.request_ladder_steps();
         self.ladder_prefetch.poll(&mut self.ui.borrow_mut());
         // §4.5 step 4: once Se has settled, every surface repaints at the new content scale,
-        // after the steps polled above.
-        if self.scale_repaint_at.is_some_and(|at| t >= at) {
+        // after the steps polled above. Read against the time now, so that a settle asked
+        // for before this paint (`Self::settle_scale_repaint`, the capture settle of §9.3,
+        // a held clock in `Self::paint_clock`) repaints in this frame.
+        if self.scale_repaint_at.is_some_and(|at| Instant::now() >= at) {
             self.scale_repaint_at = None;
             self.ui.borrow_mut().invalidate_paint();
         }
@@ -4078,5 +4138,178 @@ mod tests {
         assert_eq!(parse_panel(id.layout_label()), Some(id));
         assert_eq!(parse_panel(&id.root_label().to_ascii_uppercase()), Some(id));
         assert_eq!(parse_panel("nothing"), None);
+    }
+
+    /// A window that the UI paints, for the capture-settle tests.
+    fn settle_window(rig: &mut KeyRig) {
+        let mut ui = rig.host.ui_mut();
+        let w = ui
+            .create_control(tessera_ui::ControlKind::Window, 1)
+            .expect("window");
+        ui.control_set_position(w, 50, 40);
+        ui.control_set_size(w, 300, 200);
+        ui.control_set_back_colour(w, Some([1.0, 0.2, 0.3, 0.4]));
+        ui.control_set_visible(w, true);
+    }
+
+    /// Changes *Se* as the Interface window's slider does (a new *S*, then the screen fed
+    /// to the UI, §4.5), between 1 and 2 at a 3200 × 1800 window where neither is limited.
+    fn change_se(rig: &mut KeyRig) {
+        let se = rig.host.scale().effective_scale();
+        let target = if (se - 2.0).abs() < 1e-6 { 1.0 } else { 2.0 };
+        rig.host.scale.set_scale(target, Instant::now());
+        rig.host.feed_screen(false);
+        assert!(
+            (rig.host.scale().effective_scale() - se).abs() > 1e-6,
+            "a change of Se from {se}"
+        );
+    }
+
+    /// Frames until the host has settled; returns the frames run (`None` after `max`).
+    fn frames_to_settle(rig: &mut KeyRig, max: usize) -> Option<usize> {
+        for n in 0..max {
+            if rig.host.settled() {
+                return Some(n);
+            }
+            rig.frame();
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        rig.host.settled().then_some(max)
+    }
+
+    /// `ui-scaling.md` §9.3 item 1 on a held UI clock (headless checkpoints): a pending change
+    /// of *Se* is settled by the next paint, not after 150 ms of the wall clock, and the UI
+    /// clock does not move.
+    #[test]
+    fn a_held_clock_settles_a_change_of_se_at_once() {
+        let mut rig = KeyRig::new();
+        rig.host.set_frame_clock(FrameClock::Held);
+        settle_window(&mut rig);
+        assert!(frames_to_settle(&mut rig, 500).is_some(), "first paint");
+        rig.host.resize(3200, 1800);
+        assert!(frames_to_settle(&mut rig, 500).is_some(), "the new window");
+        let clock = rig.host.clock();
+        change_se(&mut rig);
+        assert!(rig.host.scale_repaint_pending(), "the settle waits");
+        assert!(!rig.host.settled());
+        // The first paint on the held clock settles it (the time it takes does not matter:
+        // nothing waits for 150 ms of the wall clock).
+        rig.frame();
+        assert!(!rig.host.scale_repaint_pending(), "settled by the paint");
+        assert!(frames_to_settle(&mut rig, 500).is_some(), "repainted");
+        assert!(!rig.host.ui().geometry_preview_pending());
+        assert_eq!(
+            rig.host.clock().to_bits(),
+            clock.to_bits(),
+            "no clock moved"
+        );
+    }
+
+    /// §9.3 items 1 and 3: on a running clock the capture settle asked for before a frame
+    /// settles a pending change of *Se* in that frame's paint; without it the settle waits.
+    #[test]
+    fn the_capture_settle_settles_a_change_of_se_in_the_next_paint() {
+        let mut rig = KeyRig::new();
+        settle_window(&mut rig);
+        assert!(frames_to_settle(&mut rig, 500).is_some(), "first paint");
+        rig.host.resize(3200, 1800);
+        assert!(frames_to_settle(&mut rig, 500).is_some(), "the new window");
+        change_se(&mut rig);
+        assert!(rig.host.scale_repaint_pending());
+        rig.host.request_capture_settle();
+        rig.frame();
+        assert!(!rig.host.scale_repaint_pending(), "settled in the paint");
+        let mut frames = 0;
+        while !rig.host.settled() && frames < 500 {
+            rig.host.request_capture_settle();
+            rig.frame();
+            frames += 1;
+        }
+        assert!(rig.host.settled(), "settled after {frames} frames");
+        assert!(!rig.host.ui().geometry_preview_pending());
+    }
+
+    /// `ui-scaling.md` §9.3 items 1 and 2: the capture settle of a headless screenshot runs
+    /// no plugin code. A plugin whose `Update` handler changes a label every frame (a frame
+    /// counter) counts on in ordinary frames, but not in capture-settle steps, whose picture
+    /// is then the last frame's and settles at once instead of waiting for its step limit.
+    #[test]
+    fn the_capture_settle_runs_no_plugin_code() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let plugins_dir = dir.path().join("Plugins");
+        let pkg = plugins_dir.join("T");
+        std::fs::create_dir_all(&pkg).expect("mkdir");
+        std::fs::write(
+            pkg.join("Up.plugin"),
+            "<Plugin><Information><Name>Up</Name><Author>Tessera</Author>\
+             <Version>1</Version></Information><Package>T.Up</Package>\
+             <Configuration Apartment=\"Default\"/></Plugin>",
+        )
+        .expect("descriptor");
+        std::fs::write(
+            pkg.join("Up.lua"),
+            "W = Turbine.UI.Window()\n\
+             W:SetSize(200, 60)\n\
+             W:SetVisible(true)\n\
+             L = Turbine.UI.Label()\n\
+             L:SetParent(W)\n\
+             L:SetSize(200, 60)\n\
+             N = 0\n\
+             W.Update = function() N = N + 1; L:SetText(tostring(N)) end\n\
+             W:SetWantsUpdates(true)\n",
+        )
+        .expect("plugin");
+        let mut plugins = Plugins::start(&plugins_dir, dir.path().join("data"), &[]);
+        plugins.data_unavailable();
+        let options = UiOptions {
+            screen: (1600, 900),
+            ..UiOptions::default()
+        };
+        let mut host = UiHost::without_install(&options);
+        host.set_frame_clock(FrameClock::Held);
+        host.attach_plugins(&mut plugins, &["Up".to_owned()]);
+        let start = Instant::now();
+        while plugins.manager().loaded_plugins().is_empty() {
+            plugins.pump();
+            host.step7(&mut plugins, None);
+            host.step8(None, &mut plugins);
+            host.end_frame(&plugins, 0.0);
+            assert!(start.elapsed() < Duration::from_secs(30), "plugin load");
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        let count = |plugins: &Plugins| -> i64 {
+            plugins
+                .manager()
+                .with_lua("Default", |lua| lua.load("return T.N").eval::<i64>())
+                .expect("apartment")
+                .expect("evaluates")
+        };
+        for _ in 0..5 {
+            host.step7(&mut plugins, None);
+            host.step8(None, &mut plugins);
+            host.end_frame(&plugins, 0.0);
+        }
+        let before = count(&plugins);
+        assert!(before >= 5, "Update runs in ordinary frames: {before}");
+        let mut steps = 0;
+        while !host.capture_settle_step(None, &mut plugins) {
+            steps += 1;
+            assert!(steps < 500, "settled without plugin code");
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        for _ in 0..20 {
+            assert!(
+                host.capture_settle_step(None, &mut plugins),
+                "stays settled"
+            );
+        }
+        assert_eq!(
+            count(&plugins),
+            before,
+            "no Update during the capture settle"
+        );
+        // The ordinary frames go on afterwards.
+        host.step7(&mut plugins, None);
+        assert_eq!(count(&plugins), before + 1);
     }
 }

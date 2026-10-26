@@ -289,7 +289,7 @@ fn stated_defaults(vocab: &Vocab) -> [u32; 2] {
 /// false or none for its type), even where the spec's table of observed defaults lists one;
 /// only a PID the dictionary does not define keeps the spec table's value (the table stands
 /// in for a dictionary that lacks the definition), and the defaults other specs state as a
-/// rule of the property ([`stated_defaults`]) are always kept. Runs on the start-up thread
+/// rule of the property (`stated_defaults`) are always kept. Runs on the start-up thread
 /// ([`UiBoot`]), never on the frame thread.
 #[must_use]
 pub fn vocabs(dict: &PropertyDictionary, labels: &UiLabels) -> (Vocab, GameVocab) {

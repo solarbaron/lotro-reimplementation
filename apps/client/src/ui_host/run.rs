@@ -134,8 +134,8 @@ pub fn capture_with_ui(
 /// repaint, a §6.1 geometry preview) is settled as if its 150 ms settle time had passed, and
 /// settle steps ([`super::UiHost::capture_settle_step`]: the settle request, the workers'
 /// arrivals and step 8's paint, its GPU operations applied to `renderer`) run until
-/// [`super::UiHost::settled`] holds, for at most [`CAPTURE_SETTLE_STEPS`] steps and
-/// [`CAPTURE_SETTLE_LIMIT`].
+/// [`super::UiHost::settled`] holds, for at most `CAPTURE_SETTLE_STEPS` steps and
+/// `CAPTURE_SETTLE_LIMIT`.
 ///
 /// **Nothing else changes** (§9.3 items 1 and 2): no plugin code runs (no step 7: no
 /// `Update` broadcast, no event delivery, no deferred plugin work), the walker is not updated

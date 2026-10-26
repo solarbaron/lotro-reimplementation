@@ -17,6 +17,22 @@
 //! goes to the connection whose recipient ID it names and whose server address it comes
 //! from (§3.4 step 2), else to the newest connection with that server address (step 3): the
 //! world connection, then the replaced ones (newest first), then the login connection.
+//!
+//! A datagram that names the recipient ID of a connection but comes from another address is
+//! discarded and counted ([`DriverCounters::address_mismatches`]): this is how Tessera reads
+//! step 2's "it also verifies that the packet's source IPv4 address and UDP port match"
+//! (a failed check is not a lookup miss, so step 3 does not apply). One exception follows
+//! from the multiplexer per connection: while a connection from that address still waits
+//! for its server's challenge (state `SessionAuthSent`), its server cannot know any ID yet
+//! and may name one another server assigned; such a datagram goes to step 3. Engineering
+//! choice, spec silent (question with the spec writers).
+//!
+//! # Bounded events
+//!
+//! The driver holds at most [`DRIVER_EVENT_CAP`] events, plus those of the one message being
+//! handled (on world entry, of the at most [`MAX_ENTRY_MESSAGES`] held for it): at the cap it reads no datagram, takes no session event from its connections
+//! and leaves the messages of a received blob in its inbox (at most one blob's messages,
+//! which the session layer bounds by bytes) until events are taken.
 
 use std::collections::VecDeque;
 use std::net::SocketAddrV4;
@@ -65,6 +81,10 @@ pub const SEND_QUEUE: u8 = 2;
 
 /// Most datagrams read per step.
 pub const MAX_DATAGRAMS_PER_STEP: usize = 512;
+
+/// Most events the driver lets wait before it stops reading (module docs "Bounded events";
+/// `ARCHITECTURE.md` §19.4: reading stops once 256 items wait).
+pub const DRIVER_EVENT_CAP: usize = super::READ_PAUSE;
 
 /// Most old world connections kept (a later referral replaces the world connection).
 pub const MAX_OLD_LINKS: usize = 4;
@@ -180,15 +200,40 @@ impl Link {
         }
     }
 
-    fn events(&mut self) -> Vec<SessionEvent> {
-        let mut out = Vec::new();
-        if let Some(c) = self.mux.connection_mut(self.conn) {
-            while let Some(e) = c.pop_event() {
-                out.push(e);
-            }
-        }
-        out
+    /// Whether the connection still waits for its server's challenge (no ID assigned yet).
+    fn awaiting_challenge(&self) -> bool {
+        self.state() == Some(ConnectionState::SessionAuthSent)
     }
+
+    fn pop_event(&mut self) -> Option<SessionEvent> {
+        self.mux.connection_mut(self.conn)?.pop_event()
+    }
+
+    /// Drops the waiting events (a replaced connection, or the shutdown).
+    fn drain_events(&mut self) {
+        while self.pop_event().is_some() {}
+    }
+}
+
+/// A message of a received blob, waiting for [`SessionDriver::message`] (module docs
+/// "Bounded events").
+#[derive(Debug)]
+struct Inbound {
+    opcode: u32,
+    recipient: u64,
+    body: Vec<u8>,
+    world: bool,
+}
+
+/// Where a received datagram goes (module docs).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Route {
+    /// To the connection with this index (`0` login, `1` world, `2 + i` replaced one `i`).
+    Link(usize),
+    /// It names a connection's ID from another address: discarded.
+    AddressMismatch,
+    /// No connection has its address: discarded.
+    Unknown,
 }
 
 /// Where the session is (`official-messages-world.md` §3.6).
@@ -229,6 +274,9 @@ pub struct SessionStart {
     pub refresh_secure: bool,
     /// The ticket refresh (`official-login.md` §4.3).
     pub refresher: TicketRefresher,
+    /// The chat server's address, resolved before the hand-off with the login server's
+    /// ([`resolve_chat_endpoint`]); `None` without one.
+    pub chat_endpoint: Option<SocketAddrV4>,
     /// The version string's parts (§2.4.1).
     pub version: VersionInfo,
     /// The wire codecs.
@@ -248,6 +296,8 @@ pub enum StartFailure {
     Bind,
     /// The ticket cannot be sent (`F09`).
     Ticket,
+    /// The attempt was cancelled before anything was sent.
+    Cancelled,
 }
 
 /// Counters for diagnostics.
@@ -257,6 +307,10 @@ pub struct DriverCounters {
     pub refused_datagrams: u64,
     /// Datagrams from an address no connection has.
     pub unknown_sources: u64,
+    /// Datagrams naming a connection's recipient ID from another address (module docs).
+    pub address_mismatches: u64,
+    /// Referrals ignored because the attempt was cancelled.
+    pub cancelled_referrals: u64,
     /// Messages that failed to decode.
     pub decode_errors: u64,
     /// Opcodes this driver does not handle.
@@ -302,10 +356,12 @@ pub struct SessionDriver<N: ConnectorNet> {
     counters: DriverCounters,
     buf: Vec<u8>,
     pending_out: VecDeque<OutgoingEvent>,
+    inbox: VecDeque<Inbound>,
     entry_messages: Vec<(u32, u64, Vec<u8>)>,
     entry_bytes: usize,
     refused_log: LogLimit,
     unknown_log: LogLimit,
+    send_log: LogLimit,
 }
 
 impl<N: ConnectorNet> std::fmt::Debug for SessionDriver<N> {
@@ -363,6 +419,38 @@ pub fn movement_input(heading: f32, velocity: Vec3) -> MovementInput {
     }
 }
 
+/// The chat server's address (`official-messages-play.md` §6.1.1: `--chatserver`, which the
+/// launcher fills from the world's `ChatServerUrl`, §3.6), or `None` without one. A name
+/// lookup: the connector resolves it before its last cancel check ahead of the session.
+pub fn resolve_chat_endpoint<N: ConnectorNet>(
+    net: &mut N,
+    handoff: &SessionHandoff,
+) -> Option<SocketAddrV4> {
+    let raw = handoff.chat_server.trim();
+    if raw.is_empty() {
+        return None;
+    }
+    let host = crate::login::LoginHost::parse(raw).ok()?;
+    let port = host.remote_port(None).ok()?;
+    net.resolve(&host.remote_host, port).ok()
+}
+
+/// `n` moved so that it never falls between a `LoginRefused` and the `Disconnected` after it
+/// (`official-entry.md` §8.1: both arrive in the same poll): one more is taken then.
+#[must_use]
+pub fn refusal_cut(events: &[Event], n: usize) -> usize {
+    let n = n.min(events.len());
+    let refused = n
+        .checked_sub(1)
+        .and_then(|i| events.get(i))
+        .is_some_and(|e| matches!(e, Event::Account(AccountEvent::LoginRefused { .. })));
+    if refused && matches!(events.get(n), Some(Event::Disconnected { .. })) {
+        n + 1
+    } else {
+        n
+    }
+}
+
 /// The recipient ID a datagram names (`official-session.md` §3.4 step 1): the non-zero
 /// wire prefix, else `DatagramHeader.recId`.
 fn header_rec_id(datagram: &[u8]) -> Option<u16> {
@@ -378,12 +466,19 @@ fn header_rec_id(datagram: &[u8]) -> Option<u16> {
 
 impl<N: ConnectorNet> SessionDriver<N> {
     /// Opens the login connection (`official-session.md` §3.2–§3.3, §6.2): binds the
-    /// socket and queues `SessionAuthHeader` to the resolved login server.
+    /// socket and queues `SessionAuthHeader` to the resolved login server. `stop` is looked
+    /// at right before the bind and right before the first send: once it holds, nothing is
+    /// bound or sent.
     ///
     /// # Errors
     ///
     /// [`StartFailure`] before any datagram was sent.
-    pub fn start(net: &mut N, start: SessionStart, now: f64) -> Result<Self, StartFailure> {
+    pub fn start(
+        net: &mut N,
+        start: SessionStart,
+        now: f64,
+        stop: &dyn Fn() -> bool,
+    ) -> Result<Self, StartFailure> {
         let host = start
             .handoff
             .login_host()
@@ -398,6 +493,9 @@ impl<N: ConnectorNet> SessionDriver<N> {
             .and_then(|h| h.parse().ok())
             .or_else(|| net.local_ipv4_toward(peer))
             .unwrap_or(std::net::Ipv4Addr::UNSPECIFIED);
+        if stop() {
+            return Err(StartFailure::Cancelled);
+        }
         let transport = net
             .bind_udp(local_ip, start.handoff.local_bind_port, true)
             .map_err(|_| StartFailure::Bind)?;
@@ -410,7 +508,6 @@ impl<N: ConnectorNet> SessionDriver<N> {
         if let Some(c) = login.mux.connection_mut(login.conn) {
             c.start_login(auth, now).map_err(|_| StartFailure::Ticket)?;
         }
-        let chat_endpoint = Self::chat_endpoint(net, &start.handoff);
         let mut driver = Self {
             transport,
             codecs: start.codecs,
@@ -425,7 +522,7 @@ impl<N: ConnectorNet> SessionDriver<N> {
             characters: Vec::new(),
             adapter: PlayAdapter::new(ChatCategories::default()),
             chat: None,
-            chat_endpoint,
+            chat_endpoint: start.chat_endpoint,
             chat_retry_at: 0.0,
             chat_warned: false,
             handoff: start.handoff,
@@ -441,25 +538,18 @@ impl<N: ConnectorNet> SessionDriver<N> {
             counters: DriverCounters::default(),
             buf: vec![0u8; MAX_DATAGRAM_BUF],
             pending_out: VecDeque::new(),
+            inbox: VecDeque::new(),
             entry_messages: Vec::new(),
             entry_bytes: 0,
             refused_log: LogLimit::default(),
             unknown_log: LogLimit::default(),
+            send_log: LogLimit::default(),
         };
-        driver.flush();
-        Ok(driver)
-    }
-
-    /// The chat server's address (`official-messages-play.md` §6.1.1: `--chatserver`, which
-    /// the launcher fills from the world's `ChatServerUrl`, §3.6), or `None` without one.
-    fn chat_endpoint(net: &mut N, handoff: &SessionHandoff) -> Option<SocketAddrV4> {
-        let raw = handoff.chat_server.trim();
-        if raw.is_empty() {
-            return None;
+        if stop() {
+            return Err(StartFailure::Cancelled);
         }
-        let host = crate::login::LoginHost::parse(raw).ok()?;
-        let port = host.remote_port(None).ok()?;
-        net.resolve(&host.remote_host, port).ok()
+        driver.flush(now);
+        Ok(driver)
     }
 
     /// The events produced since the last call.
@@ -467,10 +557,23 @@ impl<N: ConnectorNet> SessionDriver<N> {
         self.events.drain(..).collect()
     }
 
-    /// At most `n` of the events produced, oldest first; the rest wait for the next call.
+    /// At most `n` of the events produced, oldest first; the rest wait for the next call. A
+    /// `LoginRefused` is never parted from its `Disconnected` ([`refusal_cut`]: one more
+    /// is taken then).
     pub fn take_events_up_to(&mut self, n: usize) -> Vec<Event> {
-        let n = n.min(self.events.len());
+        let n = refusal_cut(self.events.make_contiguous(), n);
         self.events.drain(..n).collect()
+    }
+
+    /// How many events wait to be taken.
+    #[must_use]
+    pub fn event_count(&self) -> usize {
+        self.events.len()
+    }
+
+    /// Whether the driver holds [`DRIVER_EVENT_CAP`] events (it reads nothing more).
+    fn full(&self) -> bool {
+        self.events.len() >= DRIVER_EVENT_CAP
     }
 
     /// Whether events wait to be taken.
@@ -548,22 +651,24 @@ impl<N: ConnectorNet> SessionDriver<N> {
         ));
     }
 
-    /// One pass: read the socket (when `read`; the connector stops reading while its event
-    /// queue is full), run the connections, the chat client and the ticket refresh, and
-    /// send what is due (acknowledgements and keep-alives go out either way). Returns
-    /// whether anything arrived or was produced.
-    pub fn step(&mut self, now: f64, read: bool) -> bool {
+    /// One pass: read the socket (when `read` and below [`DRIVER_EVENT_CAP`]; the connector
+    /// stops reading while its event queue is full), run the connections, the chat client
+    /// and the ticket refresh, and send what is due (acknowledgements and keep-alives go out
+    /// either way). Once `stop` holds (the attempt was cancelled) no referral is accepted
+    /// and no ticket refresh is started. Returns whether anything arrived or was produced.
+    pub fn step(&mut self, now: f64, read: bool, stop: &dyn Fn() -> bool) -> bool {
         if self.ended {
             return false;
         }
         let before = self.events.len();
-        let read_any = read && self.receive(now) > 0;
-        self.run_links(now);
-        if read && !self.ended {
+        let read = read && !self.full();
+        let read_any = read && self.receive(now, stop) > 0;
+        self.run_links(now, stop);
+        if read && !self.ended && !self.full() {
             // The chat client reads its own socket: it pauses with the session's.
             self.run_chat(now);
         }
-        self.run_refresh(now);
+        self.run_refresh(now, stop);
         self.enter_deadline(now);
         if let Some(ack) = self.adapter.portal_loading(true, false) {
             // Interim departure from `official-messages-play.md` §4.5 step 4 (engineering
@@ -574,7 +679,7 @@ impl<N: ConnectorNet> SessionDriver<N> {
         }
         self.send_pending(now);
         self.tick(now);
-        self.flush();
+        self.flush(now);
         read_any || self.events.len() != before
     }
 
@@ -602,9 +707,8 @@ impl<N: ConnectorNet> SessionDriver<N> {
         });
     }
 
-    /// The connection a datagram from `src` naming `rec_id` goes to (module docs): `0` is
-    /// the login connection, `1` the world connection, `2 + i` the replaced one `i`.
-    fn route(&self, rec_id: Option<u16>, src: SocketAddrV4) -> Option<usize> {
+    /// Where a datagram from `src` naming `rec_id` goes (module docs).
+    fn route(&self, rec_id: Option<u16>, src: SocketAddrV4) -> Route {
         let candidates = || {
             self.world
                 .iter()
@@ -613,12 +717,21 @@ impl<N: ConnectorNet> SessionDriver<N> {
                 .chain(std::iter::once((0usize, &self.login)))
         };
         let in_range = rec_id.filter(|id| (MIN_LOCAL_REC_ID..=MAX_LOCAL_REC_ID).contains(id));
-        if let Some(id) = in_range
-            && let Some((i, _)) = candidates().find(|(_, l)| l.conn == id && l.peer == src)
-        {
-            return Some(i);
+        if let Some(id) = in_range {
+            // Step 2: the connection with that ID, from its own server's address.
+            if let Some((i, _)) = candidates().find(|(_, l)| l.conn == id && l.peer == src) {
+                return Route::Link(i);
+            }
+            let named = candidates().any(|(_, l)| l.conn == id);
+            let unassigned = candidates().any(|(_, l)| l.peer == src && l.awaiting_challenge());
+            if named && !unassigned {
+                return Route::AddressMismatch;
+            }
         }
-        candidates().find(|(_, l)| l.peer == src).map(|(i, _)| i)
+        // Step 3: a lookup miss goes by the source address.
+        candidates()
+            .find(|(_, l)| l.peer == src)
+            .map_or(Route::Unknown, |(i, _)| Route::Link(i))
     }
 
     fn link_mut(&mut self, index: usize) -> Option<&mut Link> {
@@ -629,12 +742,18 @@ impl<N: ConnectorNet> SessionDriver<N> {
         }
     }
 
-    /// Reads up to [`MAX_DATAGRAMS_PER_STEP`] datagrams; returns how many.
-    fn receive(&mut self, now: f64) -> usize {
+    /// Reads up to [`MAX_DATAGRAMS_PER_STEP`] datagrams, handling each before the next is
+    /// read, and stops at [`DRIVER_EVENT_CAP`] events; returns how many were read.
+    fn receive(&mut self, now: f64, stop: &dyn Fn() -> bool) -> usize {
         let mut buf = std::mem::take(&mut self.buf);
         buf.resize(MAX_DATAGRAM_BUF, 0);
         let mut read = 0usize;
         for _ in 0..MAX_DATAGRAMS_PER_STEP {
+            // The shutdown reads on for the disconnect's answers; a session that ended
+            // otherwise reads nothing more.
+            if self.full() || (self.ended && !self.shutting_down) {
+                break;
+            }
             let (len, src) = match self.transport.recv_from(&mut buf) {
                 Ok(Some(r)) => r,
                 Ok(None) => break,
@@ -649,15 +768,28 @@ impl<N: ConnectorNet> SessionDriver<N> {
             let Some(datagram) = buf.get(..len) else {
                 break;
             };
-            let Some(index) = self.route(header_rec_id(datagram), src) else {
-                self.counters.unknown_sources += 1;
-                if let Some(skipped) = self.unknown_log.allow(now) {
-                    tracing::debug!(
-                        skipped,
-                        "official session: datagram from an unknown address"
-                    );
+            let index = match self.route(header_rec_id(datagram), src) {
+                Route::Link(i) => i,
+                Route::AddressMismatch => {
+                    self.counters.address_mismatches += 1;
+                    if let Some(skipped) = self.unknown_log.allow(now) {
+                        tracing::debug!(
+                            skipped,
+                            "official session: datagram for a connection from another address"
+                        );
+                    }
+                    continue;
                 }
-                continue;
+                Route::Unknown => {
+                    self.counters.unknown_sources += 1;
+                    if let Some(skipped) = self.unknown_log.allow(now) {
+                        tracing::debug!(
+                            skipped,
+                            "official session: datagram from an unknown address"
+                        );
+                    }
+                    continue;
+                }
             };
             let codecs = self.codecs.clone();
             let Some(link) = self.link_mut(index) else {
@@ -675,32 +807,46 @@ impl<N: ConnectorNet> SessionDriver<N> {
                     }
                 }
             }
+            // What this datagram brought is handled before the next is read, so the cap
+            // holds.
+            self.run_links(now, stop);
         }
         self.buf = buf;
         read
     }
 
-    fn run_links(&mut self, now: f64) {
-        for e in self.login.events() {
-            self.link_event(e, false, now);
-            if self.ended {
-                return;
-            }
-        }
-        let world_events = self.world.as_mut().map(Link::events).unwrap_or_default();
-        for e in world_events {
-            self.link_event(e, true, now);
-            if self.ended {
-                return;
-            }
-        }
+    /// Hands the inbox and the connections' session events on (login first, then world)
+    /// until none is left, the session ended or [`DRIVER_EVENT_CAP`] events wait; what is
+    /// left waits for the next pass.
+    fn run_links(&mut self, now: f64, stop: &dyn Fn() -> bool) {
         for old in &mut self.old {
             // A replaced connection only finishes its disconnect.
-            drop(old.events());
+            old.drain_events();
+        }
+        loop {
+            if self.ended || self.full() {
+                return;
+            }
+            if let Some(m) = self.inbox.pop_front() {
+                self.message(m.opcode, m.recipient, &m.body, m.world, now);
+                continue;
+            }
+            let next = match self.login.pop_event() {
+                Some(e) => Some((e, false)),
+                None => self
+                    .world
+                    .as_mut()
+                    .and_then(Link::pop_event)
+                    .map(|e| (e, true)),
+            };
+            let Some((e, world)) = next else {
+                return;
+            };
+            self.link_event(e, world, now, stop);
         }
     }
 
-    fn link_event(&mut self, event: SessionEvent, world: bool, now: f64) {
+    fn link_event(&mut self, event: SessionEvent, world: bool, now: f64, stop: &dyn Fn() -> bool) {
         match event {
             SessionEvent::Connected { .. } => {
                 tracing::info!(world, "official session: connection established");
@@ -721,12 +867,13 @@ impl<N: ConnectorNet> SessionDriver<N> {
                     DEFAULT_MAX_CONTAINER_DEPTH,
                 ) {
                     Ok(envelopes) => {
-                        for env in envelopes {
-                            self.message(env.opcode, blob.recipient_id, &env.body, world, now);
-                            if self.ended {
-                                return;
-                            }
-                        }
+                        // Handled by `run_links` within the cap (module docs).
+                        self.inbox.extend(envelopes.into_iter().map(|env| Inbound {
+                            opcode: env.opcode,
+                            recipient: blob.recipient_id,
+                            body: env.body,
+                            world,
+                        }));
                     }
                     Err(e) => {
                         self.counters.decode_errors += 1;
@@ -738,7 +885,15 @@ impl<N: ConnectorNet> SessionDriver<N> {
                 referral_cookie,
                 world_addr,
                 ..
-            } => self.referral(referral_cookie, world_addr, now),
+            } => {
+                if stop() {
+                    // No world login after a cancel.
+                    self.counters.cancelled_referrals += 1;
+                    tracing::debug!("official session: referral after the cancel ignored");
+                } else {
+                    self.referral(referral_cookie, world_addr, now);
+                }
+            }
             SessionEvent::ServerRedirect(_) | SessionEvent::AuthServerAddress(_) => {
                 // §6.6 names no client action that this session needs.
                 tracing::debug!("official session: redirect header ignored");
@@ -1122,25 +1277,39 @@ impl<N: ConnectorNet> SessionDriver<N> {
     }
 
     fn tick(&mut self, now: f64) {
+        let mut failed = None;
         for l in self.links_mut() {
             if let Err(e) = l.mux.tick(now) {
-                tracing::debug!(error = %e, "official session: tick failed");
+                failed = Some(e);
             }
+        }
+        if let Some(e) = failed
+            && let Some(skipped) = self.send_log.allow(now)
+        {
+            tracing::debug!(error = %e, skipped, "official session: tick failed");
         }
         self.old.retain(Link::live);
     }
 
-    fn flush(&mut self) {
+    /// Sends what the connections have queued; a failure is logged at most once per
+    /// [`LOG_INTERVAL_SEC`] (a revoked right fails every send).
+    fn flush(&mut self, now: f64) {
         let mut links: Vec<&mut Link> = Vec::with_capacity(2 + self.old.len());
         links.push(&mut self.login);
         if let Some(w) = self.world.as_mut() {
             links.push(w);
         }
         links.extend(self.old.iter_mut());
+        let mut failed = None;
         for l in links {
             if let Err(e) = l.mux.flush_outbound(&mut self.transport) {
-                tracing::debug!(error = %e, "official session: send failed");
+                failed = Some(e);
             }
+        }
+        if let Some(e) = failed
+            && let Some(skipped) = self.send_log.allow(now)
+        {
+            tracing::debug!(error = %e, skipped, "official session: send failed");
         }
     }
 
@@ -1171,8 +1340,9 @@ impl<N: ConnectorNet> SessionDriver<N> {
     }
 
     /// The in-game ticket refresh (`official-login.md` §4.3), on a thread of its own so a
-    /// slow answer never stalls the session. None is started once the shutdown began.
-    fn run_refresh(&mut self, now: f64) {
+    /// slow answer never stalls the session. None is started once the shutdown began or
+    /// `stop` holds.
+    fn run_refresh(&mut self, now: f64, stop: &dyn Fn() -> bool) {
         if self.shutting_down || self.ended {
             return;
         }
@@ -1193,6 +1363,9 @@ impl<N: ConnectorNet> SessionDriver<N> {
                 Err(mpsc::TryRecvError::Empty) => {}
                 Err(mpsc::TryRecvError::Disconnected) => self.refreshing = None,
             }
+            return;
+        }
+        if stop() {
             return;
         }
         let Some(req) = self.refresher.poll_refresh_request(now) else {
@@ -1360,6 +1533,9 @@ impl<N: ConnectorNet> SessionDriver<N> {
     pub fn begin_shutdown(&mut self, now: f64) {
         self.ended = true;
         self.shutting_down = true;
+        // Nobody takes them any more; reading must go on for the disconnect's answers.
+        self.events.clear();
+        self.inbox.clear();
         self.stop_refresh();
         for l in self.links_mut() {
             l.disconnect(now);
@@ -1368,21 +1544,23 @@ impl<N: ConnectorNet> SessionDriver<N> {
             chat.close(now);
         }
         self.tick(now);
-        self.flush();
+        self.flush(now);
     }
 
     /// One pass of the shutdown: runs the connections until their `Disconnect` is out.
     /// Returns whether anything is still flushing.
     pub fn shutdown_step(&mut self, now: f64) -> bool {
-        self.receive(now);
+        // `ended` holds: `run_links` hands nothing on, and no referral is accepted.
+        self.receive(now, &|| true);
         for l in self.links_mut() {
-            drop(l.events());
+            l.drain_events();
         }
+        self.inbox.clear();
         if let Some(chat) = self.chat.as_mut() {
             let _ = chat.poll(now, &self.schema);
         }
         self.tick(now);
-        self.flush();
+        self.flush(now);
         self.login.flushing()
             || self.world.as_ref().is_some_and(Link::flushing)
             || self.old.iter().any(Link::flushing)

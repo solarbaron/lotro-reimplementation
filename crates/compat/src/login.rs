@@ -2358,6 +2358,15 @@ pub struct HttpResponse {
     pub body: Vec<u8>,
 }
 
+/// The body may hold a ticket (`LoginAccount`, `RefreshTicket`, `official-login.md` §6.3):
+/// it is wiped when the response is dropped, wherever that happens (a refresh answer sent
+/// to a receiver that is gone, an answer nobody reads).
+impl Drop for HttpResponse {
+    fn drop(&mut self) {
+        zeroize_vec(&mut self.body);
+    }
+}
+
 impl fmt::Debug for HttpResponse {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("HttpResponse")

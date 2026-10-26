@@ -259,10 +259,12 @@ impl ChatClient<StdUdpTransport> {
     /// connection attempt follows after the initial delay of §6.6.3. Every later attempt
     /// binds a fresh socket through `access`.
     ///
-    /// The client keeps `access` (and with it the consent proof) for those later binds.
-    /// The connector must drop the `ChatClient` when the session ends, and at once when
-    /// the user withdraws the acceptance: Withdraw drops the consent proof
-    /// (`official-entry.md` §5.5), and a kept `ChatClient` would keep it alive.
+    /// The client keeps `access` for those later binds. A [`NetworkAccess`] holds no
+    /// consent proof: it is the revocable network right made from one (`official-entry.md`
+    /// §6.1). Once that right is revoked (Withdraw's
+    /// [`crate::net_access::revoke_all`], §5.5, or the revocation of this one value), every
+    /// later bind, send and receive of this client fails. The connector still drops the
+    /// `ChatClient` when the session ends.
     ///
     /// # Errors
     ///

@@ -482,6 +482,11 @@ impl UdpDatagramTransport for StdUdpTransport {
     }
 }
 
+/// [`revoke_all`] ends every right of the process: a test that calls it holds this for
+/// writing, and a test that needs its rights to stay live holds it for reading.
+#[cfg(test)]
+pub(crate) static TEST_REVOKE_LOCK: std::sync::RwLock<()> = std::sync::RwLock::new(());
+
 #[cfg(test)]
 mod tests {
     //! The HTTPS client against a loopback HTTP server (plain HTTP: no certificate is
@@ -492,8 +497,7 @@ mod tests {
     use super::*;
     use crate::consent::{self, UserConfirmation, WarningText};
 
-    /// [`revoke_all`] ends every right of the process: the test that calls it runs alone.
-    static REVOKE: std::sync::RwLock<()> = std::sync::RwLock::new(());
+    use super::TEST_REVOKE_LOCK as REVOKE;
 
     struct Fixture {
         _guard: std::sync::RwLockReadGuard<'static, ()>,

@@ -9,9 +9,10 @@
 //! referral, the world handshake and `0x90` (the session is then in the world), bit 3 the
 //! wire dictionaries of a synthetic install, bit 4 a chat server with an in-memory socket
 //! binder, bit 5 a ticket lifetime (so the refresh runs, against a client that always
-//! fails). Then arbitrary datagrams from the login, world and chat servers, arbitrary
-//! messages wrapped in valid sequenced datagrams of the login or world connection, neutral
-//! commands and clock steps follow. No panic, bounded state.
+//! fails), bit 6 a cancelled attempt (the driver's stop predicate holds). Then arbitrary
+//! datagrams from the login, world and chat servers, arbitrary messages wrapped in valid
+//! sequenced datagrams of the login or world connection, neutral commands and clock steps
+//! follow. No panic, bounded state.
 #![no_main]
 
 use std::collections::VecDeque;
@@ -117,6 +118,10 @@ impl ConnectorNet for Net {
 
     fn background_http(&self) -> SendHttpClient {
         Box::new(NoHttp)
+    }
+
+    fn is_live(&self) -> bool {
+        true
     }
 
     fn resolve(&mut self, host: &str, _port: u16) -> Result<SocketAddrV4, SessionError> {
@@ -282,12 +287,13 @@ fn start(net: &mut Net, flags: u8) -> Option<SessionDriver<Net>> {
         login_peer: LOGIN,
         refresh_secure: true,
         refresher,
+        chat_endpoint: (flags & 0x10 != 0).then_some(CHAT),
         version,
         codecs,
         codec_uuids,
         schema: SchemaView(Arc::new(NoData)),
     };
-    SessionDriver::start(net, start, 0.0).ok()
+    SessionDriver::start(net, start, 0.0, &|| false).ok()
 }
 
 fn ack() -> OptionalHeaders {
@@ -318,7 +324,8 @@ fuzz_target!(|data: &[u8]| {
     let mut in_world = false;
     let mut now = 0.0f64;
     let step = |driver: &mut SessionDriver<Net>, now: f64| {
-        driver.step(now, true);
+        // Bit 6 of the first byte: the attempt is cancelled (no referral, no refresh).
+        driver.step(now, true, &|| flags & 0x40 != 0);
         if let Some((player, name)) = driver.wants_chat(now) {
             match net.chat_binder() {
                 Some(b) => driver.attach_chat(b, player, &name, now),

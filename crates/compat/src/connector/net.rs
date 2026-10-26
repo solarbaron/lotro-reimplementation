@@ -32,6 +32,11 @@ pub trait ConnectorNet: Send + std::fmt::Debug + 'static {
     /// A separate HTTP client for a background request.
     fn background_http(&self) -> SendHttpClient;
 
+    /// Whether the network right still holds: `false` once it was revoked (the reaper, or
+    /// Withdraw's [`crate::net_access::revoke_all`]). Nothing can be sent or received any
+    /// more then, so the connector's thread ends instead of trying.
+    fn is_live(&self) -> bool;
+
     /// Resolves `host` and `port` to an IPv4 address (`official-session.md` §3.3).
     ///
     /// # Errors
@@ -116,7 +121,8 @@ fn check_secret(request: &HttpRequest) -> Result<(), LoginError> {
 
 /// The connector's network as the login module's HTTP client, under the rule of
 /// [`guarded`], and stopped by the connector's cancel flag: once the backend let go, no
-/// further exchange starts (`crate::connector` "Ending a session").
+/// further exchange starts (`crate::connector` "Ending a session"), nor once the network
+/// right was revoked.
 pub struct NetHttp<'a, N: ConnectorNet> {
     net: &'a mut N,
     stop: &'a dyn Fn() -> bool,
@@ -139,7 +145,7 @@ impl<'a, N: ConnectorNet> NetHttp<'a, N> {
 
 impl<N: ConnectorNet> HttpClient for NetHttp<'_, N> {
     fn execute(&mut self, request: &HttpRequest) -> Result<HttpResponse, LoginError> {
-        if (self.stop)() {
+        if (self.stop)() || !self.net.is_live() {
             return Err(LoginError::ServiceUnavailable {
                 reason: "the login was cancelled".to_owned(),
             });
@@ -185,6 +191,10 @@ impl ConnectorNet for LiveNet {
 
     fn background_http(&self) -> SendHttpClient {
         Box::new(self.access.https_client())
+    }
+
+    fn is_live(&self) -> bool {
+        self.access.is_live()
     }
 
     fn resolve(&mut self, host: &str, port: u16) -> Result<SocketAddrV4, SessionError> {

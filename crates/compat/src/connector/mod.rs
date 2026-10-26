@@ -34,7 +34,14 @@
 //! [`worker::SHUTDOWN_LIMIT`]. A reaper thread waits for the thread for at most
 //! [`REAP_LIMIT`] and then revokes the attempt's network right, so a thread still blocked
 //! in an exchange can do nothing more when it returns. A withdrawal of the acceptance ends
-//! every right at once ([`crate::net_access::revoke_all`]).
+//! every right at once ([`crate::net_access::revoke_all`]); the thread sees it at its next
+//! pass (or its next exchange) and ends without trying to send, its graceful disconnect
+//! included.
+//!
+//! The name lookups of the login and chat servers come before the last cancel check ahead
+//! of the session, and the session's start looks at the flag again right before its bind
+//! and its first send: a cancel during a lookup binds and sends nothing. Once cancelled, the
+//! session loop accepts no referral, starts no ticket refresh and opens no chat session.
 
 mod control;
 pub mod data;
@@ -75,7 +82,8 @@ pub const COMMAND_QUEUE: usize = 256;
 pub const EVENT_QUEUE: usize = 1024;
 
 /// Events the session loop lets wait before it stops reading the socket
-/// (`ARCHITECTURE.md` §19.4: reading stops once 256 items wait).
+/// (`ARCHITECTURE.md` §19.4: reading stops once 256 items wait): those waiting for `poll`
+/// and those the session driver holds, together.
 pub const READ_PAUSE: usize = 256;
 
 /// Most events in one batch on the channel.

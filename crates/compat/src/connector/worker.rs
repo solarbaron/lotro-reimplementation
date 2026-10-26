@@ -26,7 +26,9 @@ use super::login_phase::{
     world_list, world_refusal, world_status,
 };
 use super::net::{ConnectorNet, NetHttp};
-use super::session_phase::{SessionDriver, SessionStart, StartFailure};
+use super::session_phase::{
+    SessionDriver, SessionStart, StartFailure, refusal_cut, resolve_chat_endpoint,
+};
 use super::{EVENT_QUEUE, MAX_BATCH, READ_PAUSE};
 
 /// Shortest wait of the session loop for a command (after a pass in which something
@@ -88,15 +90,17 @@ impl Out {
         EVENT_QUEUE.saturating_sub(self.pending())
     }
 
-    /// Sends `events` now, in batches of at most [`MAX_BATCH`]; the caller keeps to
-    /// [`Self::room`].
+    /// Sends `events` now, in batches of at most [`MAX_BATCH`] (one more when that keeps a
+    /// `LoginRefused` and its `Disconnected` together, [`refusal_cut`]: a batch is taken by
+    /// one poll); the caller keeps to [`Self::room`].
     fn push(&mut self, events: Vec<Event>) {
         if self.gone {
             return;
         }
-        let mut events = events.into_iter().peekable();
-        while events.peek().is_some() {
-            let batch: Vec<Event> = events.by_ref().take(MAX_BATCH).collect();
+        let mut events = events;
+        while !events.is_empty() {
+            let rest = events.split_off(refusal_cut(&events, MAX_BATCH));
+            let batch = std::mem::replace(&mut events, rest);
             let n = batch.len();
             self.control.add_pending(n);
             if self.tx.send(batch).is_err() {
@@ -157,6 +161,15 @@ struct Joined {
     handoff: SessionHandoff,
     refresher: TicketRefresher,
     peer: std::net::SocketAddrV4,
+    chat_endpoint: Option<std::net::SocketAddrV4>,
+}
+
+/// The end of a session whose network right was revoked (Withdraw, `official-entry.md`
+/// §5.5): nothing more can be sent.
+fn revoked() -> Event {
+    Event::Disconnected {
+        reason: DisconnectReason::TransportFailed("the network access was revoked".to_owned()),
+    }
 }
 
 enum Choice {
@@ -259,6 +272,10 @@ pub fn run<N: ConnectorNet>(mut net: N, input: WorkerInput) {
         if out.gone || stop() {
             return;
         }
+        if !net.is_live() {
+            out.one(revoked());
+            return;
+        }
         let cmd = match commands.recv_timeout(COMMAND_WAIT) {
             Ok(Msg::Command(c)) => c,
             Ok(Msg::Wake) | Err(RecvTimeoutError::Timeout) => continue,
@@ -321,14 +338,16 @@ pub fn run<N: ConnectorNet>(mut net: N, input: WorkerInput) {
         login_peer: joined.peer,
         refresh_secure,
         refresher: joined.refresher,
+        chat_endpoint: joined.chat_endpoint,
         version: local.version.clone(),
         codecs: local.codecs.clone(),
         codec_uuids: local.codec_uuids.clone(),
         schema: SchemaView(local.data.clone()),
     };
     let now = || clock.elapsed().as_secs_f64();
-    let mut driver = match SessionDriver::start(&mut net, start, now()) {
+    let mut driver = match SessionDriver::start(&mut net, start, now(), &stop) {
         Ok(d) => d,
+        Err(StartFailure::Cancelled) => return,
         Err(StartFailure::Address) => {
             out.refuse(LoginRefusal::ServiceUnavailable, None);
             return;
@@ -397,8 +416,10 @@ struct Ctx<'a> {
 }
 
 /// After `ChooseWorld`: the world's status, the billing-role check, the queue and the
-/// hand-off values (§3.3–§3.6, §4.2), with the login server's address resolved (an
-/// unusable one refuses the world, §5.1 `S7`).
+/// hand-off values (§3.3–§3.6, §4.2), with the login server's and the chat server's
+/// addresses resolved (an unusable login server refuses the world, §5.1 `S7`). Both name
+/// lookups come before the last cancel check, so a cancel during either binds and sends
+/// nothing.
 fn choose<N: ConnectorNet>(
     net: &mut N,
     out: &mut Out,
@@ -499,13 +520,14 @@ fn choose<N: ConnectorNet>(
             return Choice::Refused(world_refusal(&e));
         }
     };
-    if stop() {
-        return Choice::Shutdown;
-    }
     let Some(peer) = login_peer(net, &handoff) else {
         tracing::info!("official login: the login server's address is not usable");
         return Choice::Refused(WorldRefusal::Other);
     };
+    let chat_endpoint = resolve_chat_endpoint(net, &handoff);
+    if stop() {
+        return Choice::Shutdown;
+    }
     let refresher = TicketRefresher::new(
         auth_url,
         auth.subscription.name(),
@@ -517,6 +539,7 @@ fn choose<N: ConnectorNet>(
         handoff,
         refresher,
         peer,
+        chat_endpoint,
     }))
 }
 
@@ -540,13 +563,26 @@ fn session_loop<N: ConnectorNet>(
     now: impl Fn() -> f64,
 ) {
     let mut wait = LOOP_WAIT_MIN;
+    let stop = || control.cancelled();
     loop {
+        if out.gone || control.cancelled() {
+            shutdown(net, driver, &now);
+            return;
+        }
+        if !net.is_live() {
+            // Revoked without a cancel: nothing can be sent, not even the disconnect.
+            out.push(vec![revoked()]);
+            tracing::info!("official session ended: the network access was revoked");
+            return;
+        }
         let t = now();
         // A full event queue: stop reading the socket (§19.4); ticks and acknowledgements
-        // go on.
-        let read = out.pending() < READ_PAUSE;
-        let mut busy = driver.step(t, read);
-        if let Some((player, name)) = driver.wants_chat(t) {
+        // go on. The driver's own events count too.
+        let read = out.pending().saturating_add(driver.event_count()) < READ_PAUSE;
+        let mut busy = driver.step(t, read, &stop);
+        if let Some((player, name)) = driver.wants_chat(t)
+            && !control.cancelled()
+        {
             match net.chat_binder() {
                 Some(binder) => driver.attach_chat(binder, player, &name, t),
                 None => driver.chat_failed(t),
@@ -568,7 +604,7 @@ fn session_loop<N: ConnectorNet>(
             return;
         }
         if out.gone || control.cancelled() {
-            shutdown(driver, &now);
+            shutdown(net, driver, &now);
             return;
         }
         wait = if busy {
@@ -586,7 +622,7 @@ fn session_loop<N: ConnectorNet>(
             Ok(Msg::Wake) => wait = LOOP_WAIT_MIN,
             Err(RecvTimeoutError::Timeout) => {}
             Err(RecvTimeoutError::Disconnected) => {
-                shutdown(driver, &now);
+                shutdown(net, driver, &now);
                 return;
             }
         }
@@ -595,12 +631,64 @@ fn session_loop<N: ConnectorNet>(
 
 /// The graceful end after the backend let go: the transport disconnect on every
 /// connection, for at most [`SHUTDOWN_LIMIT`] (`official-session.md` §8.2). It is the only
-/// traffic after a cancel; nothing new is started.
-fn shutdown<N: ConnectorNet>(driver: &mut SessionDriver<N>, now: &impl Fn() -> f64) {
+/// traffic after a cancel; nothing new is started. It ends at once when the network right
+/// is revoked (Withdraw): nothing could be sent any more.
+fn shutdown<N: ConnectorNet>(net: &N, driver: &mut SessionDriver<N>, now: &impl Fn() -> f64) {
     driver.begin_shutdown(now());
     let until = Instant::now() + SHUTDOWN_LIMIT;
-    while Instant::now() < until && driver.shutdown_step(now()) {
+    while Instant::now() < until && net.is_live() && driver.shutdown_step(now()) {
         std::thread::sleep(LOOP_WAIT_MIN);
     }
     tracing::info!("official session closed");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tessera_net::account::LoginRefusal;
+
+    #[test]
+    fn a_batch_never_parts_a_refusal_from_its_disconnect() {
+        let control = Arc::new(Control::default());
+        let (tx, rx) = std::sync::mpsc::channel();
+        let mut out = Out {
+            tx,
+            control: Arc::clone(&control),
+            gone: false,
+        };
+        let mut events: Vec<Event> = (0..MAX_BATCH - 1)
+            .map(|_| {
+                Event::Account(AccountEvent::LoginProgress {
+                    stage: LoginStage::JoiningWorld,
+                })
+            })
+            .collect();
+        events.push(Event::Account(AccountEvent::LoginRefused {
+            reason: LoginRefusal::Other,
+            retry_after_seconds: None,
+            detail: None,
+        }));
+        events.push(revoked());
+        out.push(events);
+        let first = rx.try_recv().expect("one batch");
+        assert_eq!(first.len(), MAX_BATCH + 1);
+        assert!(matches!(first.last(), Some(Event::Disconnected { .. })));
+        assert!(rx.try_recv().is_err(), "nothing split off");
+        assert_eq!(control.pending(), MAX_BATCH + 1);
+    }
+
+    #[test]
+    fn batches_are_cut_at_the_batch_size_otherwise() {
+        let control = Arc::new(Control::default());
+        let (tx, rx) = std::sync::mpsc::channel();
+        let mut out = Out {
+            tx,
+            control,
+            gone: false,
+        };
+        let events: Vec<Event> = (0..2 * MAX_BATCH + 1).map(|_| revoked()).collect();
+        out.push(events);
+        let sizes: Vec<usize> = rx.try_iter().map(|b| b.len()).collect();
+        assert_eq!(sizes, vec![MAX_BATCH, MAX_BATCH, 1]);
+    }
 }

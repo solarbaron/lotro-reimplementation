@@ -1424,6 +1424,20 @@ test = false
 doc = false
 bench = false
 
+[[bin]]
+name = "compat_play_message"
+path = "fuzz_targets/compat_play_message.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "compat_chat_message"
+path = "fuzz_targets/compat_chat_message.rs"
+test = false
+doc = false
+bench = false
+
 # --- M8 cleanup: tessera-compat PE version-resource reader (decision 0042 item 1) ---
 
 [[bin]]

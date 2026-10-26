@@ -6,11 +6,11 @@
 //! lives (`docs/decisions/0034-official-server-compatibility.md`). Removing it
 //! from the workspace withdraws the feature without restructuring the client.
 //!
-//! Current status: **partly done and paused** (incident 0041; decision 0042).
-//! The code is kept and will be checked against the M8 specifications once
-//! they pass review (decision 0042 item 6). Until then only cleanup,
-//! hardening and the neutral renames of decision 0042 item 5 land here; no
-//! new protocol behaviour. The crate contains:
+//! Current status: **partly done**. The stage-1 core specifications
+//! (`official-login.md`, `official-session.md`, `official-messages-world.md`,
+//! `official-messages-play.md`, `property-system.md` §10) are Accepted (decision 0042
+//! item 8); the gameplay messages of stage 2 and the live connector are not built yet.
+//! The crate contains:
 //!
 //! 1. [`consent`]: the ban-risk warning of decision 0034 §1 item 4
 //!    (`docs/specs/official-entry.md` §5, §6.1): its texts, digest, the acceptance record
@@ -31,6 +31,13 @@
 //!    checksums and ISAAC masks, blob fragmentation and reassembly, and message envelopes.
 //! 7. [`world`]: wire value encodings, schema-driven encoded property tables,
 //!    character list and selection, world entry and object lifecycle codecs.
+//! 8. [`play`]: the in-world play messages (`official-messages-play.md` §4–§8): movement
+//!    steps, server corrections, teleport stamps, remote motion, the script RPC envelope
+//!    for chat, emotes and timed logout, world-server system chat, and the mapping to
+//!    `tessera_net`'s neutral events and commands. Sans I/O.
+//! 9. [`chat_session`]: the separate chat-server session (§6.1, §6.6): ticket
+//!    authentication, the login-status gate, heartbeat and retry policies, room
+//!    descriptors and its 59 events, over sockets made through [`net_access`].
 //!
 //! # Rules this crate keeps
 //!
@@ -51,10 +58,12 @@
 #![warn(missing_docs)]
 
 pub mod backend;
+pub mod chat_session;
 pub mod consent;
 pub mod credentials;
 pub mod login;
 pub mod net_access;
+pub mod play;
 pub mod session;
 pub mod version_resource;
 pub mod world;
@@ -87,4 +96,9 @@ pub enum CompatError {
     /// An error occurred in the official world-messages codec.
     #[error("official world message error: {0}")]
     World(#[from] world::WorldError),
+
+    /// An error occurred in the play messages or the chat-server session (both report
+    /// [`play::PlayError`]).
+    #[error("official play message error: {0}")]
+    Play(#[from] play::PlayError),
 }

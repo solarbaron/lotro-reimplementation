@@ -622,11 +622,21 @@ fine. Format-level terms like "DID" or "landblock" are fine.
     error screens (`apps/client/src/official/`), `tessera-net` Account events and commands,
     fuzz `compat_consent_record` and `client_official_entry`; the character screens stay a
     placeholder until a session can feed them.
-  - **Still needs more work:** conforming the built modules to the accepted specs, the play
-    messages (movement, chat, emotes, logout, the chat-server client), the P1–P6
-    gameplay messages (stage 2) in `crates/compat`, a live `Connector` and session driver in
-    `tessera-client` in place of `PlaceholderConnector`, and owner live verification (exit
-    criterion 4).
+  - **Stage-1 build (2026-10-25/26, merged):** `m8-conform` conformed `login`, `session` and
+    `world` to the accepted specs (handshake `checkValue` with session Vector 5, per-buffer send
+    checksum, check-before-commit of fragments, the three auth modes, multiplexer reaping,
+    ticket wiping, root DID map from the superblock, no exported map DIDs, bounded
+    preallocation); `m8-play` added `play/` (movement at 20 Hz with reconciliation, the
+    teleport stamp, the documented script RPCs under decision 0042 item 10, chat, emotes,
+    logout) and `chat_session/` (the chat-server session, 59 opcodes); `m8-conform-notes`
+    added fuzz `compat_dat_records`, and `tools/check-fuzz-coverage.sh` now covers
+    `crates/compat` (`fuzz/coverage/compat.toml`). Each package had two independent reviews,
+    fix rounds and a default-mode clean-room audit. Spec questions the build found are in
+    `docs/m8-remediation.md` §15 for the next spec pass.
+  - **Still needs more work:** the live `Connector` (package `m8-connector`, in review: HTTPS
+    login on ureq/rustls, UDP session to world entry; `availability()` stays `NotBuilt`), the
+    §8.7 hand-over of an official session to the character screens, the P1–P6 gameplay
+    messages (stage 2), and owner live verification (exit criterion 4).
   - **Clean-room and content boundaries:** no shipping, mirroring or linking to client
     binaries, dat files, patches or old clients; no modified, patched, redirected or
     injected official client; no Daybreak keys or other secrets in the repository,

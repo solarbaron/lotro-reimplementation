@@ -536,7 +536,7 @@ struct Recording {
 impl Connector for Recording {
     fn connect(
         &mut self,
-        _network: &NetworkAccess,
+        _network: NetworkAccess,
         credentials: Credentials,
     ) -> Result<(), CompatError> {
         self.calls

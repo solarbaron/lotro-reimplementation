@@ -89,8 +89,9 @@ pub fn is_https(url: &str) -> bool {
 
 /// The connector's rule over every HTTP exchange: a request that carries the password or
 /// the ticket goes only over `https://` (`official-login.md` §6.2, §6.3: the plaintext
-/// password and the bearer ticket must not be exposed). Engineering choice where the spec
-/// names an endpoint "HTTP/HTTPS": refused, not sent.
+/// password and the bearer ticket must not be exposed). Where the spec names an endpoint
+/// "HTTP/HTTPS", such a request is refused, not sent: engineering choice, spec silent
+/// (question with the spec writers).
 ///
 /// # Errors
 ///
@@ -114,18 +115,43 @@ fn check_secret(request: &HttpRequest) -> Result<(), LoginError> {
 }
 
 /// The connector's network as the login module's HTTP client, under the rule of
-/// [`guarded`].
-#[derive(Debug)]
-pub struct NetHttp<'a, N: ConnectorNet>(pub &'a mut N);
+/// [`guarded`], and stopped by the connector's cancel flag: once the backend let go, no
+/// further exchange starts (`crate::connector` "Ending a session").
+pub struct NetHttp<'a, N: ConnectorNet> {
+    net: &'a mut N,
+    stop: &'a dyn Fn() -> bool,
+}
 
-impl<N: ConnectorNet> HttpClient for NetHttp<'_, N> {
-    fn execute(&mut self, request: &HttpRequest) -> Result<HttpResponse, LoginError> {
-        check_secret(request)?;
-        self.0.http(request)
+impl<N: ConnectorNet> std::fmt::Debug for NetHttp<'_, N> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("NetHttp")
+            .field("net", &self.net)
+            .finish_non_exhaustive()
     }
 }
 
-/// The connector's network: the run's network-access value.
+impl<'a, N: ConnectorNet> NetHttp<'a, N> {
+    /// The network `net`; `stop` says whether the attempt was cancelled.
+    pub fn new(net: &'a mut N, stop: &'a dyn Fn() -> bool) -> Self {
+        Self { net, stop }
+    }
+}
+
+impl<N: ConnectorNet> HttpClient for NetHttp<'_, N> {
+    fn execute(&mut self, request: &HttpRequest) -> Result<HttpResponse, LoginError> {
+        if (self.stop)() {
+            return Err(LoginError::ServiceUnavailable {
+                reason: "the login was cancelled".to_owned(),
+            });
+        }
+        check_secret(request)?;
+        self.net.http(request)
+    }
+}
+
+/// The connector's network: the attempt's network-access value, moved in (no copy of it
+/// exists; the chat-server binder and the background clients share it, and its
+/// revocation ends them all).
 #[derive(Debug)]
 pub struct LiveNet {
     access: std::sync::Arc<NetworkAccess>,
@@ -183,6 +209,9 @@ impl ConnectorNet for LiveNet {
         &self,
     ) -> Option<Box<dyn FnMut() -> Result<StdUdpTransport, crate::play::PlayError> + Send>> {
         let access = self.access();
+        // `0.0.0.0:0`: the chat session's own socket takes no preference
+        // (`Net.BindInterface`, `Net.ComputeUniquePort` are not read) and no computed port.
+        // Engineering choice, spec silent (question with the spec writers).
         Some(Box::new(move || {
             access
                 .bind_udp(Ipv4Addr::UNSPECIFIED, 0, false)

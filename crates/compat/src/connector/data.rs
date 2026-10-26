@@ -37,13 +37,46 @@ pub const GAMELOGIC_ARCHIVE: &str = "client_gamelogic.dat";
 /// maps are far smaller). Engineering choice, spec silent.
 pub const MAX_RECORD_BYTES: usize = 16 * 1024 * 1024;
 
+/// What went wrong while finding or opening the install: a kind only, never a path of
+/// the user (`official-entry.md` §7.3 "Never on disk or in logs" applies to logs of the
+/// install's location too: engineering choice, spec silent (question with the spec
+/// writers)).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum InstallProblem {
+    /// No usable install was found.
+    #[error("no usable install was found")]
+    NotFound,
+    /// The archives could not be opened.
+    #[error("the install's archives cannot be opened")]
+    Archives,
+    /// A record could not be read.
+    #[error("a record of the install cannot be read")]
+    Record,
+    /// The property dictionary could not be decoded.
+    #[error("the install's property dictionary cannot be decoded")]
+    Properties,
+}
+
+/// The install the client found: its root and, when the client knows it, the directory
+/// of the original's `UserPreferences.ini` (inside a Wine, Proton or CrossOver prefix for
+/// an install there, `install-layout.md` §8.1).
+#[derive(Debug, Clone, Default)]
+pub struct LocatedInstall {
+    /// The install root.
+    pub root: PathBuf,
+    /// The settings directory, if known.
+    pub user_settings_dir: Option<PathBuf>,
+}
+
 /// Read-only records and tables of the user's install, supplied by the client.
 ///
 /// Everything here is data of the user's own install, read at run time (decision 0034 §3,
 /// `ARCHITECTURE.md` §19.3); nothing is built in.
 pub trait InstallData: Send + Sync + std::fmt::Debug {
-    /// The payload of the archive record `did`, or `None` when the install has none.
-    fn record(&self, did: u32) -> Option<Vec<u8>>;
+    /// The payload of the archive record `did`, or `None` when the install has none or it
+    /// is longer than `max_bytes`. The bound is applied while reading (a larger record is
+    /// never read in full).
+    fn record(&self, did: u32, max_bytes: usize) -> Option<Vec<u8>>;
 
     /// The property type of `pid` in the master property dictionary (`0x34000000`,
     /// `official-messages-world.md` §2.7.1), or `None` when the dictionary has none.
@@ -63,12 +96,12 @@ pub trait InstallData: Send + Sync + std::fmt::Debug {
 }
 
 /// Makes the [`InstallData`] of the install root it is given, on the connector's thread
-/// (opening the archives can take a while; it never runs on the frame thread). An error
-/// names what is missing, without paths of the user.
-pub type InstallDataLoader = Box<dyn FnOnce(&Path) -> Result<Arc<dyn InstallData>, String> + Send>;
+/// (opening the archives can take a while; it never runs on the frame thread).
+pub type InstallDataLoader =
+    Box<dyn FnOnce(&Path) -> Result<Arc<dyn InstallData>, InstallProblem> + Send>;
 
-/// Finds the install root on the connector's thread (install discovery can scan the disk).
-pub type InstallLocator = Box<dyn FnOnce() -> Result<PathBuf, String> + Send>;
+/// Finds the install on the connector's thread (install discovery can scan the disk).
+pub type InstallLocator = Box<dyn FnOnce() -> Result<LocatedInstall, InstallProblem> + Send>;
 
 /// The [`InstallData`] seen as the world module's property schema.
 #[derive(Debug, Clone)]
@@ -92,15 +125,17 @@ impl TextResolver for SchemaView {
     }
 }
 
-/// Where the connector looks on this machine (all given by the client; nothing found
-/// here is written to).
+/// Where the connector looks on this machine, and the values the user supplied (all given
+/// by the client; nothing found here is written to).
 #[derive(Debug, Clone, Default)]
 pub struct LocalPaths {
     /// The install root (`<InstallRoot>`, `official-login.md` §2).
     pub install_root: PathBuf,
-    /// The directory of `UserPreferences*.ini`, when the client knows it (§2.3).
+    /// The directory of `UserPreferences*.ini`, when the client knows it (§2.3); without
+    /// one, `<Documents>/<Product.DocumentFolder>/` of this machine is tried.
     pub user_settings_dir: Option<PathBuf>,
-    /// A network version string the user supplied (§2.4.1 step 1).
+    /// A network version string the user supplied (§2.4.1 step 1), from the client's
+    /// settings or command line.
     pub network_version: Option<String>,
 }
 
@@ -141,9 +176,10 @@ fn archive_header(path: &Path) -> Result<Vec<u8>, LoginError> {
 }
 
 fn record(data: &dyn InstallData, did: u32) -> Result<Vec<u8>, LoginError> {
-    let bytes = data
-        .record(did)
-        .ok_or_else(|| invalid("a record the session needs is missing from the install"))?;
+    let bytes = data.record(did, MAX_RECORD_BYTES).ok_or_else(|| {
+        invalid("a record the session needs is missing from the install or too large")
+    })?;
+    // The supplier promised the bound; a larger answer is refused all the same.
     if bytes.len() > MAX_RECORD_BYTES {
         return Err(invalid("a record the session needs is too large"));
     }
@@ -237,6 +273,10 @@ pub fn discover_local(
             .map(|(_, p)| p),
         None => None,
     };
+    if prefs.is_none() {
+        // Once per login attempt; no path is named.
+        tracing::debug!("official login: no preferences file; the install's language is used");
+    }
     let language =
         resolve_install_language(root, prefs.as_ref().and_then(|p| p.last_locale.as_deref()))?;
     let netver = match discover_network_version(&NetworkVersionQuery {
@@ -255,7 +295,7 @@ pub fn discover_local(
         .or_else(|_| extract_didver_from_dat_file(&root.join(GAMELOGIC_ARCHIVE)))?;
     let version = VersionInfo::new(netver, guid, archive_version)?;
     let data = loader(root).map_err(|why| {
-        tracing::warn!("official login: the install's records cannot be read ({why})");
+        tracing::warn!(problem = %why, "official login: the install's records cannot be read");
         invalid("the install's records cannot be read")
     })?;
     let (codecs, codec_uuids) = load_codecs(root, data.as_ref())?;

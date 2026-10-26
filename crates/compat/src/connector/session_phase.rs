@@ -9,27 +9,33 @@
 //! # One multiplexer per connection
 //!
 //! The login connection and every world connection each get a multiplexer of their own,
-//! all on the session's one socket; datagrams go to the newest connection whose server
-//! address they come from. `official-session.md` §3.4 does not say whether a world server
-//! may assign the client the recipient ID the login connection has (or had): a shared
-//! multiplexer would refuse such a challenge (the ID is in use, or retired once removed).
-//! With one multiplexer per connection the IDs of one server never meet another's
-//! (engineering choice, the parent connection's question; tested).
+//! all on the session's one socket. `official-session.md` §3.4 does not say whether a world
+//! server may assign the client the recipient ID the login connection has (or had): a
+//! shared multiplexer would refuse such a challenge (the ID is in use, or retired once
+//! removed). With one multiplexer per connection the IDs of one server never meet another's
+//! (engineering choice, spec silent (question with the spec writers); tested). A datagram
+//! goes to the connection whose recipient ID it names and whose server address it comes
+//! from (§3.4 step 2), else to the newest connection with that server address (step 3): the
+//! world connection, then the replaced ones (newest first), then the login connection.
 
 use std::collections::VecDeque;
 use std::net::SocketAddrV4;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 
-use tessera_net::account::{AccountEvent, LoginRefusal};
+use tessera_net::account::{AccountEvent, LoginRefusal, LoginStage};
 use tessera_net::model::{MAX_NAME_LEN, is_valid_name};
 use tessera_net::{
     CharacterSummary, ChatChannel, Command, DisconnectReason, EntityId, Event, NoticeLevel,
     Transform, Vec3,
 };
 
+use crate::chat_session::state::INITIAL_CONNECT_POLICY;
 use crate::chat_session::{ChatClient, ChatCodecs, ChatConfig};
 use crate::login::{
     HttpResponse, LoginError, RefreshOutcome, SessionHandoff, TicketRefresher, VersionInfo,
+    zeroize_vec,
 };
 use crate::play::adapter::{PlayAdapter, PlaySignal};
 use crate::play::chat::ChatCategories;
@@ -39,20 +45,22 @@ use crate::play::{OutgoingEvent, clean_display_name};
 use crate::session::{
     ClientVersionMessage, ConnectionState, ControlMessage, DEFAULT_MAX_CONTAINER_DEPTH,
     DEFAULT_MAX_DECOMPRESSED_MESSAGE_BYTES, DisconnectReason as LinkEnd, MAX_DATAGRAM_BUF,
-    OPCODE_CLIENT_VERSION, OPCODE_LOGIN_QUEUE_STATUS, SessionError, SessionEvent,
-    SessionMultiplexer, UdpDatagramTransport, dispatch_message,
+    MAX_LOCAL_REC_ID, MIN_DATAGRAM_BYTES, MIN_LOCAL_REC_ID, OPCODE_CLIENT_VERSION,
+    OPCODE_LOGIN_QUEUE_STATUS, SessionError, SessionEvent, SessionMultiplexer,
+    UdpDatagramTransport, dispatch_message,
 };
 use crate::world::{
-    CharacterEnterWorldRequest, CharacterListResponse, CharacterOperationError, PlayerSessionReady,
-    encode_event_envelope,
+    AccountEvictionNotice, CharacterEnterWorldRequest, CharacterListResponse,
+    CharacterOperationError, PlayerSessionReady, encode_event_envelope,
 };
 
 use super::data::SchemaView;
 use super::net::{ConnectorNet, SendHttpClient};
 
 /// Delivery queue of every message the client sends on the login and world connections.
-/// Engineering choice, spec silent (`official-session.md` §5.6.2 names the queues, not which
-/// message uses which): queue 2 (`ReliableOrdered`), as the chat client does.
+/// Engineering choice, spec silent (question with the spec writers; `official-session.md`
+/// §5.6.2 names the queues, not which message uses which): queue 2 (`ReliableOrdered`), as
+/// the chat client does.
 pub const SEND_QUEUE: u8 = 2;
 
 /// Most datagrams read per step.
@@ -69,8 +77,58 @@ pub const MAX_CHARACTERS: usize = 256;
 /// authentication rejected during login" (`official-session.md` §6.7).
 pub const LOGIN_REFUSAL_CODES: [u32; 2] = [0x00A7_E948, 0x7DC4_1B4A];
 
+/// Longest wait for the world after `EnterWorld` (`0x6F`) before the entry fails and the
+/// character list is offered again. Engineering choice, spec silent (question with the spec
+/// writers).
+pub const ENTER_WORLD_TIMEOUT_SEC: f64 = 60.0;
+
+/// Most play messages kept while the world is being entered (those before `0x90`, such as
+/// `0x43`), handed to the play layer once the world is entered. Engineering choice, spec
+/// silent.
+pub const MAX_ENTRY_MESSAGES: usize = 64;
+
+/// Most bytes of the play messages kept while the world is being entered.
+pub const MAX_ENTRY_BYTES: usize = 256 * 1024;
+
+/// Shortest time between two log lines of one kind of refused datagram; the lines between
+/// are counted (engineering choice).
+pub const LOG_INTERVAL_SEC: f64 = 10.0;
+
+/// The wait before a chat-server attachment that failed is tried again: the retry interval
+/// of the Initial Connect Policy (`official-messages-play.md` §6.6.3, 30 s). §6.6.3 does not
+/// say when the initial delay and when the retry interval applies to an attempt that could
+/// not even bind: engineering choice, spec silent (question with the spec writers).
+pub const CHAT_RETRY_SEC: f64 = INITIAL_CONNECT_POLICY.retry_interval_sec;
+
 /// What the refresh thread sends back: the answer and the client, for the next refresh.
 type RefreshReply = (Result<HttpResponse, LoginError>, SendHttpClient);
+
+/// One log line per [`LOG_INTERVAL_SEC`] for a kind of event; the rest are counted.
+#[derive(Debug, Clone, Copy, Default)]
+struct LogLimit {
+    next: f64,
+    suppressed: u64,
+}
+
+impl LogLimit {
+    /// Whether to log now, with how many lines were left out since the last.
+    fn allow(&mut self, now: f64) -> Option<u64> {
+        if now < self.next {
+            self.suppressed = self.suppressed.saturating_add(1);
+            return None;
+        }
+        self.next = now + LOG_INTERVAL_SEC;
+        Some(std::mem::take(&mut self.suppressed))
+    }
+}
+
+/// The ticket refresh running on its thread.
+#[derive(Debug)]
+struct Refreshing {
+    rx: mpsc::Receiver<RefreshReply>,
+    stop: Arc<AtomicBool>,
+    thread: std::thread::JoinHandle<()>,
+}
 
 /// One connection with its own multiplexer (module docs).
 #[derive(Debug)]
@@ -109,6 +167,19 @@ impl Link {
         )
     }
 
+    fn flushing(&self) -> bool {
+        matches!(
+            self.state(),
+            Some(ConnectionState::DisconnectingFlush | ConnectionState::DisconnectSent)
+        )
+    }
+
+    fn disconnect(&mut self, now: f64) {
+        if let Some(c) = self.mux.connection_mut(self.conn) {
+            c.request_disconnect(now);
+        }
+    }
+
     fn events(&mut self) -> Vec<SessionEvent> {
         let mut out = Vec::new();
         if let Some(c) = self.mux.connection_mut(self.conn) {
@@ -121,7 +192,7 @@ impl Link {
 }
 
 /// Where the session is (`official-messages-world.md` §3.6).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 enum Stage {
     /// The login connection's handshake and version exchange; `Connected` not yet sent.
     Login,
@@ -133,6 +204,8 @@ enum Stage {
         id: u64,
         /// Its name.
         name: String,
+        /// When `0x6F` was sent.
+        since: f64,
     },
     /// In the world as `player`.
     InWorld {
@@ -148,6 +221,12 @@ enum Stage {
 pub struct SessionStart {
     /// The hand-off values (`official-login.md` §4.2).
     pub handoff: SessionHandoff,
+    /// The login server's address, resolved before the hand-off (an unusable address is a
+    /// refusal of the chosen world, `official-login.md` §5.1 `S7`).
+    pub login_peer: SocketAddrV4,
+    /// Whether the refresh URL may receive the ticket (`crate::connector::login_phase`
+    /// "Where a secret may go"); without it no refresh is sent.
+    pub refresh_secure: bool,
     /// The ticket refresh (`official-login.md` §4.3).
     pub refresher: TicketRefresher,
     /// The version string's parts (§2.4.1).
@@ -165,7 +244,7 @@ pub struct SessionStart {
 pub enum StartFailure {
     /// The login server's address is unusable (`F06`).
     Address,
-    /// The socket could not be bound.
+    /// The socket could not be bound (or the network right was revoked).
     Bind,
     /// The ticket cannot be sent (`F09`).
     Ticket,
@@ -184,6 +263,12 @@ pub struct DriverCounters {
     pub unhandled: u64,
     /// Outgoing messages that could not be queued.
     pub send_failures: u64,
+    /// Referrals outside world entry and the world, ignored.
+    pub stray_referrals: u64,
+    /// Play messages dropped while the world was being entered (over the bounds).
+    pub entry_overflow: u64,
+    /// Failed chat-server attachments.
+    pub chat_failures: u64,
 }
 
 /// The UDP session (module docs).
@@ -202,16 +287,25 @@ pub struct SessionDriver<N: ConnectorNet> {
     adapter: PlayAdapter,
     chat: Option<ChatClient<N::Udp>>,
     chat_endpoint: Option<SocketAddrV4>,
+    chat_retry_at: f64,
+    chat_warned: bool,
     handoff: SessionHandoff,
     refresher: TicketRefresher,
-    refreshing: Option<mpsc::Receiver<RefreshReply>>,
+    refresh_secure: bool,
+    refresh_warned: bool,
+    refreshing: Option<Refreshing>,
     background_http: Option<SendHttpClient>,
     client_timestamp: u32,
-    events: Vec<Event>,
+    events: VecDeque<Event>,
     ended: bool,
+    shutting_down: bool,
     counters: DriverCounters,
     buf: Vec<u8>,
     pending_out: VecDeque<OutgoingEvent>,
+    entry_messages: Vec<(u32, u64, Vec<u8>)>,
+    entry_bytes: usize,
+    refused_log: LogLimit,
+    unknown_log: LogLimit,
 }
 
 impl<N: ConnectorNet> std::fmt::Debug for SessionDriver<N> {
@@ -223,6 +317,12 @@ impl<N: ConnectorNet> std::fmt::Debug for SessionDriver<N> {
             .field("chat", &self.chat.is_some())
             .field("counters", &self.counters)
             .finish_non_exhaustive()
+    }
+}
+
+impl<N: ConnectorNet> Drop for SessionDriver<N> {
+    fn drop(&mut self) {
+        self.stop_refresh();
     }
 }
 
@@ -240,9 +340,9 @@ fn character_name(name: &str) -> Option<String> {
 }
 
 /// The `0x24` input of a neutral move (`official-messages-play.md` §8; the mapping of a
-/// position and velocity onto the input axes is not in the spec, OPEN): the velocity's
-/// direction relative to the heading, as forward and strafe axes in `[-1, 1]`, no turn,
-/// movement state `0`.
+/// position and velocity onto the input axes is not in the spec). Engineering choice, spec
+/// silent (question with the spec writers): the velocity's direction relative to the
+/// heading, as forward and strafe axes in `[-1, 1]`, no turn, movement state `0`.
 #[must_use]
 pub fn movement_input(heading: f32, velocity: Vec3) -> MovementInput {
     let (vx, vy) = (velocity.x, velocity.y);
@@ -263,9 +363,22 @@ pub fn movement_input(heading: f32, velocity: Vec3) -> MovementInput {
     }
 }
 
+/// The recipient ID a datagram names (`official-session.md` §3.4 step 1): the non-zero
+/// wire prefix, else `DatagramHeader.recId`.
+fn header_rec_id(datagram: &[u8]) -> Option<u16> {
+    if datagram.len() < MIN_DATAGRAM_BYTES {
+        return None;
+    }
+    let prefix = u16::from_be_bytes([*datagram.first()?, *datagram.get(1)?]);
+    if prefix != 0 {
+        return Some(prefix);
+    }
+    Some(u16::from_be_bytes([*datagram.get(2)?, *datagram.get(3)?]))
+}
+
 impl<N: ConnectorNet> SessionDriver<N> {
-    /// Opens the login connection (`official-session.md` §3.2–§3.3, §6.2): resolves the
-    /// login server, binds the socket, and queues `SessionAuthHeader`.
+    /// Opens the login connection (`official-session.md` §3.2–§3.3, §6.2): binds the
+    /// socket and queues `SessionAuthHeader` to the resolved login server.
     ///
     /// # Errors
     ///
@@ -275,10 +388,10 @@ impl<N: ConnectorNet> SessionDriver<N> {
             .handoff
             .login_host()
             .map_err(|_| StartFailure::Address)?;
-        let port = host.remote_port(None).map_err(|_| StartFailure::Address)?;
-        let peer = net
-            .resolve(&host.remote_host, port)
-            .map_err(|_| StartFailure::Address)?;
+        let peer = start.login_peer;
+        // The local address: the two-colon `-h` form's `localHost`, else the address the
+        // system routes towards the server (`NetworkAccess::local_ipv4_toward` says why),
+        // else `0.0.0.0`.
         let local_ip = host
             .local_host
             .as_deref()
@@ -313,16 +426,25 @@ impl<N: ConnectorNet> SessionDriver<N> {
             adapter: PlayAdapter::new(ChatCategories::default()),
             chat: None,
             chat_endpoint,
+            chat_retry_at: 0.0,
+            chat_warned: false,
             handoff: start.handoff,
             refresher: start.refresher,
+            refresh_secure: start.refresh_secure,
+            refresh_warned: false,
             refreshing: None,
             background_http: Some(net.background_http()),
             client_timestamp,
-            events: Vec::new(),
+            events: VecDeque::new(),
             ended: false,
+            shutting_down: false,
             counters: DriverCounters::default(),
             buf: vec![0u8; MAX_DATAGRAM_BUF],
             pending_out: VecDeque::new(),
+            entry_messages: Vec::new(),
+            entry_bytes: 0,
+            refused_log: LogLimit::default(),
+            unknown_log: LogLimit::default(),
         };
         driver.flush();
         Ok(driver)
@@ -342,10 +464,22 @@ impl<N: ConnectorNet> SessionDriver<N> {
 
     /// The events produced since the last call.
     pub fn take_events(&mut self) -> Vec<Event> {
-        std::mem::take(&mut self.events)
+        self.events.drain(..).collect()
     }
 
-    /// Whether the session ended (a `Disconnected` was produced).
+    /// At most `n` of the events produced, oldest first; the rest wait for the next call.
+    pub fn take_events_up_to(&mut self, n: usize) -> Vec<Event> {
+        let n = n.min(self.events.len());
+        self.events.drain(..n).collect()
+    }
+
+    /// Whether events wait to be taken.
+    #[must_use]
+    pub fn has_events(&self) -> bool {
+        !self.events.is_empty()
+    }
+
+    /// Whether the session ended (a `Disconnected` was produced, or the shutdown began).
     #[must_use]
     pub fn ended(&self) -> bool {
         self.ended
@@ -363,6 +497,12 @@ impl<N: ConnectorNet> SessionDriver<N> {
         self.counters
     }
 
+    /// Whether a ticket refresh thread is running (tests).
+    #[must_use]
+    pub fn refresh_running(&self) -> bool {
+        self.refreshing.is_some()
+    }
+
     /// The local recipient IDs of the login and world connections (tests).
     #[must_use]
     pub fn connection_ids(&self) -> (u16, Option<u16>) {
@@ -378,96 +518,184 @@ impl<N: ConnectorNet> SessionDriver<N> {
         )
     }
 
+    /// The states of the replaced world connections, oldest first (tests).
+    #[must_use]
+    pub fn old_connection_states(&self) -> Vec<Option<ConnectionState>> {
+        self.old.iter().map(Link::state).collect()
+    }
+
     fn end(&mut self, reason: DisconnectReason) {
         if self.ended {
             return;
         }
         self.ended = true;
-        self.events.push(Event::Disconnected { reason });
+        self.stop_refresh();
+        self.events.push_back(Event::Disconnected { reason });
     }
 
     fn refuse(&mut self, reason: LoginRefusal) {
         if self.ended {
             return;
         }
-        self.events.push(Event::Account(AccountEvent::LoginRefused {
-            reason,
-            retry_after_seconds: None,
-            detail: None,
-        }));
+        self.events
+            .push_back(Event::Account(AccountEvent::LoginRefused {
+                reason,
+                retry_after_seconds: None,
+                detail: None,
+            }));
         self.end(DisconnectReason::TransportFailed(
             "official login refused".to_owned(),
         ));
     }
 
-    /// One pass: read the socket, run the connections, the chat client and the ticket
-    /// refresh, and send what is due.
-    pub fn step(&mut self, now: f64) {
+    /// One pass: read the socket (when `read`; the connector stops reading while its event
+    /// queue is full), run the connections, the chat client and the ticket refresh, and
+    /// send what is due (acknowledgements and keep-alives go out either way). Returns
+    /// whether anything arrived or was produced.
+    pub fn step(&mut self, now: f64, read: bool) -> bool {
         if self.ended {
-            return;
+            return false;
         }
-        self.receive(now);
+        let before = self.events.len();
+        let read_any = read && self.receive(now) > 0;
         self.run_links(now);
-        self.run_chat(now);
+        if read && !self.ended {
+            // The chat client reads its own socket: it pauses with the session's.
+            self.run_chat(now);
+        }
         self.run_refresh(now);
+        self.enter_deadline(now);
         if let Some(ack) = self.adapter.portal_loading(true, false) {
-            // The client's loading state has no neutral command yet: portal space ends as
-            // soon as the server's stamp allows (OPEN, `official-messages-play.md` §4.5).
+            // Interim departure from `official-messages-play.md` §4.5 step 4 (engineering
+            // choice, spec silent (question with the spec writers)): the client has no
+            // neutral "loading done" signal yet, so portal space ends as soon as the
+            // server's stamp allows, without waiting for the destination to load.
             self.pending_out.push_back(ack);
         }
         self.send_pending(now);
         self.tick(now);
         self.flush();
+        read_any || self.events.len() != before
     }
 
-    fn receive(&mut self, now: f64) {
+    /// `0x6F` was sent and the world has not been entered within
+    /// [`ENTER_WORLD_TIMEOUT_SEC`]: the entry fails and the character list is offered again.
+    fn enter_deadline(&mut self, now: f64) {
+        let Stage::Entering { name, since, .. } = &self.stage else {
+            return;
+        };
+        if now - since < ENTER_WORLD_TIMEOUT_SEC {
+            return;
+        }
+        let character = name.clone();
+        tracing::info!("official session: the world did not answer the entry");
+        if let Some(mut w) = self.world.take() {
+            w.disconnect(now);
+            self.keep_old(w);
+        }
+        self.entry_messages.clear();
+        self.entry_bytes = 0;
+        self.stage = Stage::Characters;
+        self.events.push_back(Event::EnterWorldFailed {
+            character,
+            reason: "The world did not answer.".to_owned(),
+        });
+    }
+
+    /// The connection a datagram from `src` naming `rec_id` goes to (module docs): `0` is
+    /// the login connection, `1` the world connection, `2 + i` the replaced one `i`.
+    fn route(&self, rec_id: Option<u16>, src: SocketAddrV4) -> Option<usize> {
+        let candidates = || {
+            self.world
+                .iter()
+                .map(|w| (1usize, w))
+                .chain(self.old.iter().enumerate().rev().map(|(i, l)| (2 + i, l)))
+                .chain(std::iter::once((0usize, &self.login)))
+        };
+        let in_range = rec_id.filter(|id| (MIN_LOCAL_REC_ID..=MAX_LOCAL_REC_ID).contains(id));
+        if let Some(id) = in_range
+            && let Some((i, _)) = candidates().find(|(_, l)| l.conn == id && l.peer == src)
+        {
+            return Some(i);
+        }
+        candidates().find(|(_, l)| l.peer == src).map(|(i, _)| i)
+    }
+
+    fn link_mut(&mut self, index: usize) -> Option<&mut Link> {
+        match index {
+            0 => Some(&mut self.login),
+            1 => self.world.as_mut(),
+            i => self.old.get_mut(i.checked_sub(2)?),
+        }
+    }
+
+    /// Reads up to [`MAX_DATAGRAMS_PER_STEP`] datagrams; returns how many.
+    fn receive(&mut self, now: f64) -> usize {
         let mut buf = std::mem::take(&mut self.buf);
         buf.resize(MAX_DATAGRAM_BUF, 0);
+        let mut read = 0usize;
         for _ in 0..MAX_DATAGRAMS_PER_STEP {
             let (len, src) = match self.transport.recv_from(&mut buf) {
                 Ok(Some(r)) => r,
                 Ok(None) => break,
                 Err(e) => {
-                    tracing::debug!(error = %e, "official session: socket read failed");
+                    if let Some(skipped) = self.refused_log.allow(now) {
+                        tracing::debug!(error = %e, skipped, "official session: socket read failed");
+                    }
                     break;
                 }
             };
+            read += 1;
             let Some(datagram) = buf.get(..len) else {
                 break;
             };
-            let codecs = self.codecs.clone();
-            let link = match &mut self.world {
-                Some(w) if w.peer == src => Some(w),
-                _ if self.login.peer == src => Some(&mut self.login),
-                _ => None,
-            };
-            let Some(link) = link else {
+            let Some(index) = self.route(header_rec_id(datagram), src) else {
                 self.counters.unknown_sources += 1;
+                if let Some(skipped) = self.unknown_log.allow(now) {
+                    tracing::debug!(
+                        skipped,
+                        "official session: datagram from an unknown address"
+                    );
+                }
                 continue;
             };
-            match link
+            let codecs = self.codecs.clone();
+            let Some(link) = self.link_mut(index) else {
+                continue;
+            };
+            let result = link
                 .mux
-                .receive_from_peer(datagram, src, now, codecs.wire())
-            {
+                .receive_from_peer(datagram, src, now, codecs.wire());
+            match result {
                 Ok((id, _)) => link.conn = id,
                 Err(e) => {
                     self.counters.refused_datagrams += 1;
-                    tracing::debug!(error = %e, "official session: datagram refused");
+                    if let Some(skipped) = self.refused_log.allow(now) {
+                        tracing::debug!(error = %e, skipped, "official session: datagram refused");
+                    }
                 }
             }
         }
         self.buf = buf;
+        read
     }
 
     fn run_links(&mut self, now: f64) {
         for e in self.login.events() {
             self.link_event(e, false, now);
+            if self.ended {
+                return;
+            }
         }
         let world_events = self.world.as_mut().map(Link::events).unwrap_or_default();
         for e in world_events {
             self.link_event(e, true, now);
+            if self.ended {
+                return;
+            }
         }
         for old in &mut self.old {
+            // A replaced connection only finishes its disconnect.
             drop(old.events());
         }
     }
@@ -476,6 +704,14 @@ impl<N: ConnectorNet> SessionDriver<N> {
         match event {
             SessionEvent::Connected { .. } => {
                 tracing::info!(world, "official session: connection established");
+                if self.stage == Stage::Login {
+                    // The progress screen's watchdog (`official-entry.md` §8.3) stays
+                    // alive while the version exchange and the character list follow.
+                    self.events
+                        .push_back(Event::Account(AccountEvent::LoginProgress {
+                            stage: LoginStage::JoiningWorld,
+                        }));
+                }
             }
             SessionEvent::BlobReceived(blob) => {
                 match dispatch_message(
@@ -541,9 +777,25 @@ impl<N: ConnectorNet> SessionDriver<N> {
         self.end(r);
     }
 
+    fn keep_old(&mut self, link: Link) {
+        self.old.push(link);
+        if self.old.len() > MAX_OLD_LINKS {
+            self.old.remove(0);
+        }
+    }
+
     /// A `WorldReferralHeader` (`official-session.md` §6.5): a new world connection on the
-    /// same socket, in a multiplexer of its own (module docs).
+    /// same socket, in a multiplexer of its own (module docs). Accepted only while the world
+    /// is being entered or in it (`official-messages-world.md` §3.6 shows the referral only
+    /// there); a replaced world connection is disconnected gracefully and kept until its
+    /// disconnect is out. Both: engineering choice, spec silent (question with the spec
+    /// writers).
     fn referral(&mut self, cookie: u64, addr: SocketAddrV4, now: f64) {
+        if !matches!(self.stage, Stage::Entering { .. } | Stage::InWorld { .. }) {
+            self.counters.stray_referrals += 1;
+            tracing::debug!("official session: referral outside world entry ignored");
+            return;
+        }
         match Link::new(addr, &self.codec_uuids, now) {
             Ok(mut link) => {
                 if let Some(c) = link.mux.connection_mut(link.conn)
@@ -552,11 +804,9 @@ impl<N: ConnectorNet> SessionDriver<N> {
                     tracing::warn!(error = %e, "official session: referral not started");
                     return;
                 }
-                if let Some(old) = self.world.replace(link) {
-                    self.old.push(old);
-                    if self.old.len() > MAX_OLD_LINKS {
-                        self.old.remove(0);
-                    }
+                if let Some(mut old) = self.world.replace(link) {
+                    old.disconnect(now);
+                    self.keep_old(old);
                 }
                 tracing::info!("official session: referred to the world server");
             }
@@ -615,10 +865,11 @@ impl<N: ConnectorNet> SessionDriver<N> {
             }
             ControlMessage::LoginQueueStatus(q) => {
                 if self.stage == Stage::Login {
-                    // `logonResult`'s values are not in the spec (OPEN); the position and
-                    // total are shown when non-zero.
+                    // `logonResult`'s values are not in the spec; the position and total
+                    // are shown when non-zero. Engineering choice, spec silent (question
+                    // with the spec writers).
                     self.events
-                        .push(Event::Account(AccountEvent::LoginQueueChanged {
+                        .push_back(Event::Account(AccountEvent::LoginQueueChanged {
                             position: (q.queue_position > 0).then_some(q.queue_position),
                             length: (q.queue_total > 0).then_some(q.queue_total),
                             wait_seconds: None,
@@ -626,7 +877,7 @@ impl<N: ConnectorNet> SessionDriver<N> {
                 }
             }
             ControlMessage::SystemNotification(n) => {
-                self.events.push(Event::ServerNotice {
+                self.events.push_back(Event::ServerNotice {
                     level: NoticeLevel::Info,
                     seconds: 0,
                     text: n.text,
@@ -664,7 +915,7 @@ impl<N: ConnectorNet> SessionDriver<N> {
                 count = self.characters.len(),
                 "official session: characters listed"
             );
-            self.events.push(Event::Connected { characters });
+            self.events.push_back(Event::Connected { characters });
         }
     }
 
@@ -675,7 +926,9 @@ impl<N: ConnectorNet> SessionDriver<N> {
         if let Stage::Entering { name, .. } = &self.stage {
             let character = name.clone();
             self.stage = Stage::Characters;
-            self.events.push(Event::EnterWorldFailed {
+            self.entry_messages.clear();
+            self.entry_bytes = 0;
+            self.events.push_back(Event::EnterWorldFailed {
                 character,
                 reason: match code {
                     Some(c) => format!("The world refused the character (code {c})."),
@@ -712,22 +965,83 @@ impl<N: ConnectorNet> SessionDriver<N> {
             player: ready.player_id,
             name: name.clone(),
         };
-        self.events.push(Event::WorldEntered {
+        self.events.push_back(Event::WorldEntered {
             player: EntityId(ready.player_id),
-            name: name.clone(),
+            name,
             transform: Transform::default(),
         });
+        // What arrived before `0x90` (the world name `0x43` among it) now reaches the play
+        // layer, in order.
+        let held = std::mem::take(&mut self.entry_messages);
+        self.entry_bytes = 0;
+        for (opcode, recipient, body) in held {
+            self.play_in_world(opcode, recipient, &body);
+            if self.ended {
+                return;
+            }
+        }
     }
 
+    /// A play message. `0xB3` (eviction) ends the session in every stage
+    /// (`official-messages-world.md` §3.6); while the world is being entered the others are
+    /// kept for [`Self::session_ready`]; in the world they go to the play layer when they
+    /// come from the world connection, or from the login connection when there was no
+    /// referral.
     fn play(&mut self, opcode: u32, recipient: u64, body: &[u8], world: bool) {
-        if !world || !self.in_world() {
+        if opcode == AccountEvictionNotice::EVENT_ID {
+            self.eviction(opcode, recipient, body);
+            return;
+        }
+        if !world && self.world.is_some() {
             self.counters.unhandled += 1;
             tracing::trace!(
                 opcode,
-                "official session: message outside the world ignored"
+                "official session: login-connection message after the referral"
             );
             return;
         }
+        match self.stage {
+            Stage::InWorld { .. } => self.play_in_world(opcode, recipient, body),
+            Stage::Entering { .. } => {
+                if self.entry_messages.len() >= MAX_ENTRY_MESSAGES
+                    || self.entry_bytes.saturating_add(body.len()) > MAX_ENTRY_BYTES
+                {
+                    self.counters.entry_overflow += 1;
+                    return;
+                }
+                self.entry_bytes += body.len();
+                self.entry_messages.push((opcode, recipient, body.to_vec()));
+            }
+            Stage::Login | Stage::Characters => {
+                self.counters.unhandled += 1;
+                tracing::trace!(
+                    opcode,
+                    "official session: message outside the world ignored"
+                );
+            }
+        }
+    }
+
+    fn eviction(&mut self, opcode: u32, recipient: u64, body: &[u8]) {
+        match decode_play_message(opcode, recipient, body, &self.schema, &self.schema) {
+            Ok(Some(msg)) => {
+                let out = self.adapter.handle(&msg, &self.schema);
+                let reason = out.events.into_iter().find_map(|e| match e {
+                    Event::Disconnected { reason } => Some(reason),
+                    _ => None,
+                });
+                tracing::info!("official session: the server ended the session");
+                self.end(reason.unwrap_or_else(|| DisconnectReason::ServerClosed(String::new())));
+            }
+            Ok(None) | Err(_) => {
+                // A malformed eviction still ends the session: the server said it closes.
+                self.counters.decode_errors += 1;
+                self.end(DisconnectReason::ServerClosed(String::new()));
+            }
+        }
+    }
+
+    fn play_in_world(&mut self, opcode: u32, recipient: u64, body: &[u8]) {
         let decoded = decode_play_message(opcode, recipient, body, &self.schema, &self.schema);
         let msg = match decoded {
             Ok(Some(m)) => m,
@@ -744,14 +1058,11 @@ impl<N: ConnectorNet> SessionDriver<N> {
         let out = self.adapter.handle(&msg, &self.schema);
         self.pending_out.extend(out.outgoing);
         for e in out.events {
-            let ends = matches!(e, Event::Disconnected { .. });
-            if ends {
-                if let Event::Disconnected { reason } = e {
-                    self.end(reason);
-                }
+            if let Event::Disconnected { reason } = e {
+                self.end(reason);
                 return;
             }
-            self.events.push(e);
+            self.events.push_back(e);
         }
         for s in out.signals {
             if let PlaySignal::LeftWorld { .. } = s {
@@ -800,14 +1111,18 @@ impl<N: ConnectorNet> SessionDriver<N> {
         }
     }
 
-    fn tick(&mut self, now: f64) {
+    fn links_mut(&mut self) -> Vec<&mut Link> {
         let mut links: Vec<&mut Link> = Vec::with_capacity(2 + self.old.len());
         links.push(&mut self.login);
         if let Some(w) = self.world.as_mut() {
             links.push(w);
         }
         links.extend(self.old.iter_mut());
-        for l in links {
+        links
+    }
+
+    fn tick(&mut self, now: f64) {
+        for l in self.links_mut() {
             if let Err(e) = l.mux.tick(now) {
                 tracing::debug!(error = %e, "official session: tick failed");
             }
@@ -839,43 +1154,41 @@ impl<N: ConnectorNet> SessionDriver<N> {
         }
     }
 
+    /// Ends the refresh thread: its stop flag is set (a request not yet sent is not sent)
+    /// and it is joined if it has finished. A request already on the wire cannot be
+    /// aborted (the HTTP crate has no cancel): it ends by its own timeout, its answer is
+    /// dropped (and wiped) unread, and the reaper's revocation ends its client's right.
+    fn stop_refresh(&mut self) {
+        if let Some(r) = self.refreshing.take() {
+            r.stop.store(true, Ordering::SeqCst);
+            if r.thread.is_finished() {
+                let _ = r.thread.join();
+            }
+            if let Ok((Ok(mut resp), _)) = r.rx.try_recv() {
+                zeroize_vec(&mut resp.body);
+            }
+        }
+    }
+
     /// The in-game ticket refresh (`official-login.md` §4.3), on a thread of its own so a
-    /// slow answer never stalls the session.
+    /// slow answer never stalls the session. None is started once the shutdown began.
     fn run_refresh(&mut self, now: f64) {
-        if let Some(rx) = &self.refreshing {
-            match rx.try_recv() {
+        if self.shutting_down || self.ended {
+            return;
+        }
+        if let Some(r) = &self.refreshing {
+            match r.rx.try_recv() {
                 Ok((result, http)) => {
-                    self.refreshing = None;
-                    self.background_http = Some(http);
-                    let outcome = self.refresher.handle_refresh_response(result.as_ref(), now);
-                    match outcome {
-                        RefreshOutcome::Refreshed {
-                            notification: Some(n),
-                        } => {
-                            self.handoff.update_ticket(n.ticket());
-                            if let Some(chat) = self.chat.as_mut()
-                                && chat
-                                    .config_mut()
-                                    .set_ticket(Some(n.ticket().to_owned()))
-                                    .is_err()
-                            {
-                                tracing::debug!("official chat session: refreshed ticket refused");
-                            }
-                            tracing::info!("official session: ticket refreshed");
-                        }
-                        RefreshOutcome::Refreshed { notification: None } => {}
-                        RefreshOutcome::FailedWillRetry { attempt_count, .. } => {
-                            tracing::info!(
-                                attempt_count,
-                                "official session: ticket refresh failed"
-                            );
-                        }
-                        RefreshOutcome::Exhausted(_) => {
-                            tracing::warn!(
-                                "official session: ticket refresh exhausted; the session goes on"
-                            );
-                        }
+                    if let Some(done) = self.refreshing.take() {
+                        let _ = done.thread.join();
                     }
+                    self.background_http = Some(http);
+                    let mut result = result;
+                    let outcome = self.refresher.handle_refresh_response(result.as_ref(), now);
+                    if let Ok(resp) = result.as_mut() {
+                        zeroize_vec(&mut resp.body);
+                    }
+                    self.refresh_outcome(outcome);
                 }
                 Err(mpsc::TryRecvError::Empty) => {}
                 Err(mpsc::TryRecvError::Disconnected) => self.refreshing = None,
@@ -885,20 +1198,65 @@ impl<N: ConnectorNet> SessionDriver<N> {
         let Some(req) = self.refresher.poll_refresh_request(now) else {
             return;
         };
+        let mut req = req;
+        if !self.refresh_secure {
+            // The ticket goes only to a URL that arrived over HTTPS (§6.2–§6.3).
+            req.zeroize_body();
+            if !self.refresh_warned {
+                self.refresh_warned = true;
+                tracing::warn!("official session: the refresh URL is not trusted; no refresh");
+            }
+            return;
+        }
         let Some(mut http) = self.background_http.take() else {
+            req.zeroize_body();
             return;
         };
         let (tx, rx) = mpsc::sync_channel(1);
+        let stop = Arc::new(AtomicBool::new(false));
+        let thread_stop = Arc::clone(&stop);
         let spawned = std::thread::Builder::new()
             .name("tessera-official-refresh".into())
             .spawn(move || {
+                let mut req = req;
+                if thread_stop.load(Ordering::SeqCst) {
+                    req.zeroize_body();
+                    return;
+                }
                 let result = super::net::guarded(&mut *http, &req);
+                req.zeroize_body();
                 drop(req);
                 let _ = tx.send((result, http));
             });
         match spawned {
-            Ok(_) => self.refreshing = Some(rx),
+            Ok(thread) => self.refreshing = Some(Refreshing { rx, stop, thread }),
             Err(_) => tracing::warn!("official session: ticket refresh thread not started"),
+        }
+    }
+
+    fn refresh_outcome(&mut self, outcome: RefreshOutcome) {
+        match outcome {
+            RefreshOutcome::Refreshed {
+                notification: Some(n),
+            } => {
+                self.handoff.update_ticket(n.ticket());
+                if let Some(chat) = self.chat.as_mut()
+                    && chat
+                        .config_mut()
+                        .set_ticket(Some(n.ticket().to_owned()))
+                        .is_err()
+                {
+                    tracing::debug!("official chat session: refreshed ticket refused");
+                }
+                tracing::info!("official session: ticket refreshed");
+            }
+            RefreshOutcome::Refreshed { notification: None } => {}
+            RefreshOutcome::FailedWillRetry { attempt_count, .. } => {
+                tracing::info!(attempt_count, "official session: ticket refresh failed");
+            }
+            RefreshOutcome::Exhausted(_) => {
+                tracing::warn!("official session: ticket refresh exhausted; the session goes on");
+            }
         }
     }
 
@@ -909,6 +1267,9 @@ impl<N: ConnectorNet> SessionDriver<N> {
     /// [`tessera_net::NetError::InvalidCommand`] for commands this session cannot carry.
     pub fn command(&mut self, cmd: &Command, now: f64) -> Result<(), tessera_net::NetError> {
         use tessera_net::NetError;
+        if self.ended {
+            return Err(NetError::InvalidCommand("the official session ended"));
+        }
         match cmd {
             Command::EnterWorld { character } => {
                 if self.stage != Stage::Characters {
@@ -920,7 +1281,7 @@ impl<N: ConnectorNet> SessionDriver<N> {
                     .find(|(_, n)| n == character)
                     .cloned()
                 else {
-                    self.events.push(Event::EnterWorldFailed {
+                    self.events.push_back(Event::EnterWorldFailed {
                         character: character.clone(),
                         reason: "No such character on this account.".to_owned(),
                     });
@@ -930,13 +1291,17 @@ impl<N: ConnectorNet> SessionDriver<N> {
                     .to_envelope_bytes()
                     .map_err(|_| NetError::InvalidCommand("character not encodable"))?;
                 if !self.send_on_login(CharacterEnterWorldRequest::EVENT_ID, &env, now) {
-                    self.events.push(Event::EnterWorldFailed {
+                    self.events.push_back(Event::EnterWorldFailed {
                         character: name,
                         reason: "The request could not be sent.".to_owned(),
                     });
                     return Ok(());
                 }
-                self.stage = Stage::Entering { id, name };
+                self.stage = Stage::Entering {
+                    id,
+                    name,
+                    since: now,
+                };
                 Ok(())
             }
             Command::Move {
@@ -990,18 +1355,14 @@ impl<N: ConnectorNet> SessionDriver<N> {
     }
 
     /// Ends the session gracefully (`official-session.md` §8.2, `official-messages-play.md`
-    /// §7.2 item 4: the transport disconnect on every connection).
+    /// §7.2 item 4: the transport disconnect on every connection). No ticket refresh starts
+    /// after this, and a running one is stopped.
     pub fn begin_shutdown(&mut self, now: f64) {
         self.ended = true;
-        let mut links: Vec<&mut Link> = Vec::with_capacity(2);
-        links.push(&mut self.login);
-        if let Some(w) = self.world.as_mut() {
-            links.push(w);
-        }
-        for l in links {
-            if let Some(c) = l.mux.connection_mut(l.conn) {
-                c.request_disconnect(now);
-            }
+        self.shutting_down = true;
+        self.stop_refresh();
+        for l in self.links_mut() {
+            l.disconnect(now);
         }
         if let Some(chat) = self.chat.as_mut() {
             chat.close(now);
@@ -1014,25 +1375,22 @@ impl<N: ConnectorNet> SessionDriver<N> {
     /// Returns whether anything is still flushing.
     pub fn shutdown_step(&mut self, now: f64) -> bool {
         self.receive(now);
-        drop(self.login.events());
-        if let Some(w) = self.world.as_mut() {
-            drop(w.events());
+        for l in self.links_mut() {
+            drop(l.events());
         }
         if let Some(chat) = self.chat.as_mut() {
             let _ = chat.poll(now, &self.schema);
         }
         self.tick(now);
         self.flush();
-        let flushing = |l: &Link| {
-            matches!(
-                l.state(),
-                Some(ConnectionState::DisconnectingFlush | ConnectionState::DisconnectSent)
-            )
-        };
-        flushing(&self.login) || self.world.as_ref().is_some_and(flushing)
+        self.login.flushing()
+            || self.world.as_ref().is_some_and(Link::flushing)
+            || self.old.iter().any(Link::flushing)
     }
 
-    /// Opens the chat-server session with `binder` (`official-messages-play.md` §6.6).
+    /// Opens the chat-server session with `binder` (`official-messages-play.md` §6.6). A
+    /// failure is tried again after [`CHAT_RETRY_SEC`] (§6.6.3's Initial Connect Policy),
+    /// with one warning.
     pub fn attach_chat(
         &mut self,
         binder: Box<dyn FnMut() -> Result<N::Udp, crate::play::PlayError> + Send>,
@@ -1054,16 +1412,34 @@ impl<N: ConnectorNet> SessionDriver<N> {
                 chat.set_self_descriptor(player, name);
                 self.chat = Some(chat);
             }
-            Err(e) => tracing::info!(error = %e, "official chat session not started"),
+            Err(e) => {
+                self.chat_failed(now);
+                tracing::debug!(error = %e, "official chat session not started");
+            }
         }
     }
 
-    /// The player and name once in the world, for [`Self::attach_chat`].
+    /// The chat-server session could not be opened (no socket, or the network has no
+    /// chat binder): the next attempt waits [`CHAT_RETRY_SEC`].
+    pub fn chat_failed(&mut self, now: f64) {
+        self.counters.chat_failures += 1;
+        self.chat_retry_at = now + CHAT_RETRY_SEC;
+        if !self.chat_warned {
+            self.chat_warned = true;
+            tracing::warn!("official chat session could not be opened; retrying every 30 s");
+        }
+    }
+
+    /// The player and name once in the world, for [`Self::attach_chat`], when an attempt
+    /// is due.
     #[must_use]
-    pub fn wants_chat(&self) -> Option<(u64, String)> {
+    pub fn wants_chat(&self, now: f64) -> Option<(u64, String)> {
         match &self.stage {
             Stage::InWorld { player, name }
-                if self.chat.is_none() && self.chat_endpoint.is_some() =>
+                if self.chat.is_none()
+                    && self.chat_endpoint.is_some()
+                    && !self.ended
+                    && now >= self.chat_retry_at =>
             {
                 Some((*player, name.clone()))
             }

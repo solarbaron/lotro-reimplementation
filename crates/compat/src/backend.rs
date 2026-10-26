@@ -71,6 +71,10 @@ pub enum Availability {
 
 /// The availability of official play in this binary (§4.4).
 ///
+/// It stays [`Availability::NotBuilt`] on purpose while the hand-over to the character
+/// screens (§8.7) is a package of its own: offering official play earlier would end every
+/// login at the placeholder.
+///
 /// [`Availability::NotBuilt`]: the live connector ([`LiveConnector`](crate::connector::LiveConnector)) logs in, lists the
 /// worlds, queues, opens the session and delivers the character list, but the client cannot
 /// yet take an official session past that point: the hand-over to the character screens
@@ -94,13 +98,16 @@ pub const fn live_connector_built() -> bool {
 pub trait Connector: Send + std::fmt::Debug {
     /// Opens the connection through `network` with `credentials` (taken on their first use,
     /// §7.3; the connector drops them as soon as the login reports success or failure).
+    /// The network-access value is moved in: the connector holds the run's one right for
+    /// this attempt and nothing else does (no copy is made, §6.1), so dropping the
+    /// connector, or [`crate::net_access::revoke_all`], ends it.
     ///
     /// # Errors
     ///
     /// Returns [`CompatError`] if the connection refuses to open.
     fn connect(
         &mut self,
-        network: &NetworkAccess,
+        network: NetworkAccess,
         credentials: Credentials,
     ) -> Result<(), CompatError>;
 
@@ -137,10 +144,11 @@ pub struct PlaceholderConnector;
 impl Connector for PlaceholderConnector {
     fn connect(
         &mut self,
-        _network: &NetworkAccess,
+        network: NetworkAccess,
         credentials: Credentials,
     ) -> Result<(), CompatError> {
         drop(credentials);
+        drop(network);
         Err(CompatError::ProtocolNotBuilt)
     }
 }
@@ -232,7 +240,7 @@ impl<C: Connector> CompatBackend<C> {
             return;
         };
         let result = NetworkAccess::new(&self.proof)
-            .and_then(|network| self.connector.connect(&network, credentials));
+            .and_then(|network| self.connector.connect(network, credentials));
         match result {
             Ok(()) => {}
             Err(CompatError::ProtocolNotBuilt) => {

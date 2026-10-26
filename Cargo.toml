@@ -116,7 +116,12 @@ tokio = { version = "1", default-features = false }
 # with the operating system's certificate verifier. `rustls-no-provider` + `_ring` is the
 # crate's `rustls` feature without its bundled root list (webpki-roots carries a licence
 # deny.toml does not list); no gzip, cookies, JSON or native TLS.
-ureq = { version = "3.5", default-features = false, features = ["rustls-no-provider", "_ring", "platform-verifier"] }
+# `_ring` is an internal feature of ureq (the leading underscore: not part of its stable
+# interface), so the version is pinned to 3.5.x and the feature list must be rechecked on
+# every ureq update. The platform verifier pulls in `webpki-root-certs` only on targets
+# without a system verifier (not one of deny.toml's `targets`), so no bundled root list
+# reaches a shipped build.
+ureq = { version = "=3.5", default-features = false, features = ["rustls-no-provider", "_ring", "platform-verifier"] }
 
 [workspace.lints.rust]
 unsafe_code = "deny"

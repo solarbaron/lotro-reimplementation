@@ -16,54 +16,84 @@
 //!    character list (`Event::Connected`), `EnterWorld`, the referral to the world server,
 //!    the play messages, the chat server and the in-game ticket refresh.
 //!
-//! Every network operation goes through the run's [`NetworkAccess`] ([`net::LiveNet`]);
-//! endpoints come only from the install and the service's answers (decision 0042 item 3).
-//! Commands and events cross between the backend and the thread over two bounded
-//! channels (`ARCHITECTURE.md` §19.4): `submit` never blocks (a full queue is
-//! `SendQueueFull`), `poll` never waits.
+//! Every network operation goes through the run's [`NetworkAccess`] ([`net::LiveNet`]),
+//! which is moved into the thread (there is no copy of it); endpoints come only from the
+//! install and the service's answers (decision 0042 item 3). Commands and events cross
+//! between the backend and the thread as `ARCHITECTURE.md` §19.4 has it: a command queue of
+//! [`COMMAND_QUEUE`] (`submit` never blocks; a full queue is `SendQueueFull`), a
+//! newest-move slot of one (moves never fill the queue), a cancel flag, and at most
+//! [`EVENT_QUEUE`] events waiting for `poll` (counted in events, not batches; `poll` never
+//! waits).
+//!
+//! # Ending a session
+//!
+//! `Disconnect` and dropping the connector cancel the thread: the credentials, if not yet
+//! used, are dropped at once; no further HTTP exchange, login step or connection is started
+//! (every exchange, the authentication, each step of the world list and the session start
+//! check the flag); a running UDP session sends its graceful disconnect within
+//! [`worker::SHUTDOWN_LIMIT`]. A reaper thread waits for the thread for at most
+//! [`REAP_LIMIT`] and then revokes the attempt's network right, so a thread still blocked
+//! in an exchange can do nothing more when it returns. A withdrawal of the acceptance ends
+//! every right at once ([`crate::net_access::revoke_all`]).
 
+mod control;
 pub mod data;
 pub mod login_phase;
 pub mod net;
 pub mod session_phase;
-mod worker;
+pub mod worker;
 
 #[cfg(test)]
 mod tests;
 
+use std::sync::Arc;
 use std::sync::mpsc::{self, Receiver, SyncSender, TryRecvError, TrySendError};
-use std::time::Instant;
+use std::thread::JoinHandle;
+use std::time::{Duration, Instant};
 
 use tessera_net::{Command, DisconnectReason, Event, NetError, SocialCommand};
 
 use crate::CompatError;
 use crate::backend::Connector;
 use crate::credentials::Credentials;
-use crate::net_access::NetworkAccess;
+use crate::net_access::{NetworkAccess, Revocation};
 use crate::session::SessionError;
 
-pub use data::{InstallData, InstallDataLoader, InstallLocator, LocalPaths};
+use control::{Control, Msg};
+
+pub use data::{
+    InstallData, InstallDataLoader, InstallLocator, InstallProblem, LocalPaths, LocatedInstall,
+};
 pub use net::{ConnectorNet, LiveNet, LiveNetFactory, NetFactory};
 
 /// Commands waiting for the connector's thread (`ARCHITECTURE.md` §19.4: 256).
 pub const COMMAND_QUEUE: usize = 256;
 
-/// Event batches waiting for `poll` (`ARCHITECTURE.md` §19.4: 1,024 items; a batch is one
-/// pass of the thread). When full the thread waits, and the session layer's flow control
-/// holds the server back.
+/// Events waiting for `poll` (`ARCHITECTURE.md` §19.4: 1,024 items). When the session
+/// loop has this many waiting it holds its own events back and stops reading the socket
+/// (it keeps acknowledging and sending keep-alives); the login phase waits.
 pub const EVENT_QUEUE: usize = 1024;
 
-/// Most event batches taken in one `poll`.
-pub const MAX_BATCHES_PER_POLL: usize = 1024;
+/// Events the session loop lets wait before it stops reading the socket
+/// (`ARCHITECTURE.md` §19.4: reading stops once 256 items wait).
+pub const READ_PAUSE: usize = 256;
+
+/// Most events in one batch on the channel.
+pub const MAX_BATCH: usize = 64;
+
+/// Longest wait for the thread after `Disconnect` or a drop before its network right is
+/// revoked: the graceful disconnect's limit plus a margin. Engineering choice, spec silent.
+pub const REAP_LIMIT: Duration = Duration::from_secs(7);
 
 /// The configuration of a live connector: where the install is and how to read its
 /// records. Made by the client's official-entry module (`official-entry.md` §6.2).
 pub struct LiveConfig {
-    /// Paths on this machine.
+    /// Paths and values from the client (the install root is replaced by what `locate`
+    /// finds, when given).
     pub paths: LocalPaths,
     /// The install's records, made on the connector's thread.
     pub loader: InstallDataLoader,
-    /// Finds the install root on the connector's thread; `None` uses `paths.install_root`.
+    /// Finds the install on the connector's thread; `None` uses `paths`.
     pub locate: Option<InstallLocator>,
 }
 
@@ -75,9 +105,55 @@ impl std::fmt::Debug for LiveConfig {
     }
 }
 
+/// A running attempt. Dropping it cancels the thread and hands it to a reaper (module
+/// docs).
 struct Running {
-    commands: SyncSender<Command>,
-    events: Receiver<Vec<Event>>,
+    commands: Option<SyncSender<Msg>>,
+    events: Option<Receiver<Vec<Event>>>,
+    control: Arc<Control>,
+    worker: Option<JoinHandle<()>>,
+    revocation: Revocation,
+}
+
+impl Running {
+    fn stop(&mut self) {
+        self.control.cancel();
+        // Closing both channels: the thread sees the backend gone at its next wait.
+        self.commands = None;
+        self.events = None;
+        let Some(worker) = self.worker.take() else {
+            return;
+        };
+        let revocation = self.revocation.clone();
+        let reaper = std::thread::Builder::new()
+            .name("tessera-official-reaper".into())
+            .spawn(move || reap(worker, &revocation));
+        if reaper.is_err() {
+            // Nothing can wait for the thread: its right ends now (its graceful disconnect
+            // is lost).
+            self.revocation.revoke();
+        }
+    }
+}
+
+impl Drop for Running {
+    fn drop(&mut self) {
+        self.stop();
+    }
+}
+
+/// Waits for the thread for at most [`REAP_LIMIT`], then revokes its network right.
+fn reap(worker: JoinHandle<()>, revocation: &Revocation) {
+    let until = Instant::now() + REAP_LIMIT;
+    while !worker.is_finished() && Instant::now() < until {
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    revocation.revoke();
+    if worker.is_finished() {
+        let _ = worker.join();
+    } else {
+        tracing::info!("official connection thread still blocked; its network right is revoked");
+    }
 }
 
 /// The live connector (module docs).
@@ -118,6 +194,12 @@ impl<F: NetFactory> LiveConnector<F> {
             ended: false,
         }
     }
+
+    /// Events sent by the thread and not yet taken by `poll` (diagnostics and tests).
+    #[must_use]
+    pub fn pending_events(&self) -> usize {
+        self.running.as_ref().map_or(0, |r| r.control.pending())
+    }
 }
 
 /// Whether the live session carries `command` at all (the rest is refused at once,
@@ -140,7 +222,7 @@ fn carried(command: &Command) -> bool {
 impl<F: NetFactory> Connector for LiveConnector<F> {
     fn connect(
         &mut self,
-        network: &NetworkAccess,
+        network: NetworkAccess,
         credentials: Credentials,
     ) -> Result<(), CompatError> {
         let Some(config) = self.config.take() else {
@@ -149,28 +231,38 @@ impl<F: NetFactory> Connector for LiveConnector<F> {
                 "the connector was already used".to_owned(),
             )));
         };
-        let net = self.factory.make(network.duplicate());
+        let revocation = network.revocation();
+        let net = self.factory.make(network);
+        let control = Arc::new(Control::new(credentials));
         let (cmd_tx, cmd_rx) = mpsc::sync_channel(COMMAND_QUEUE);
-        let (ev_tx, ev_rx) = mpsc::sync_channel(EVENT_QUEUE);
+        let (ev_tx, ev_rx) = mpsc::channel();
         let input = worker::WorkerInput {
             paths: config.paths,
             loader: config.loader,
             locate: config.locate,
-            credentials,
+            control: Arc::clone(&control),
             commands: cmd_rx,
             events: ev_tx,
         };
-        std::thread::Builder::new()
+        let worker = std::thread::Builder::new()
             .name("tessera-official".into())
-            .spawn(move || worker::run(net, input))
-            .map_err(|_| {
-                CompatError::Session(SessionError::Io(
+            .spawn(move || worker::run(net, input));
+        let worker = match worker {
+            Ok(w) => w,
+            Err(_) => {
+                control.cancel();
+                revocation.revoke();
+                return Err(CompatError::Session(SessionError::Io(
                     "the official connection thread could not start".to_owned(),
-                ))
-            })?;
+                )));
+            }
+        };
         self.running = Some(Running {
-            commands: cmd_tx,
-            events: ev_rx,
+            commands: Some(cmd_tx),
+            events: Some(ev_rx),
+            control,
+            worker: Some(worker),
+            revocation,
         });
         tracing::info!("official login started");
         Ok(())
@@ -187,7 +279,17 @@ impl<F: NetFactory> Connector for LiveConnector<F> {
                 "the official session is not running",
             ));
         };
-        match r.commands.try_send(command) {
+        let Some(tx) = r.commands.as_ref() else {
+            return Ok(());
+        };
+        if matches!(command, Command::Move { .. }) {
+            // The newest-move slot (§19.4): a move replaces the one waiting.
+            if r.control.put_move(command) && tx.try_send(Msg::Wake).is_err() {
+                r.control.wake_not_queued();
+            }
+            return Ok(());
+        }
+        match tx.try_send(Msg::Command(command)) {
             Ok(()) => Ok(()),
             Err(TrySendError::Full(_)) => Err(NetError::SendQueueFull),
             // The thread ended; its `Disconnected` is on the way.
@@ -202,10 +304,16 @@ impl<F: NetFactory> Connector for LiveConnector<F> {
         let Some(r) = self.running.as_ref() else {
             return;
         };
+        let Some(rx) = r.events.as_ref() else {
+            return;
+        };
         let mut closed = false;
-        for _ in 0..MAX_BATCHES_PER_POLL {
-            match r.events.try_recv() {
+        let mut taken = 0usize;
+        while taken < EVENT_QUEUE {
+            match rx.try_recv() {
                 Ok(batch) => {
+                    r.control.take_pending(batch.len());
+                    taken += batch.len();
                     for e in batch {
                         let last = matches!(e, Event::Disconnected { .. });
                         out.push(e);
@@ -234,12 +342,13 @@ impl<F: NetFactory> Connector for LiveConnector<F> {
             });
         }
         if self.ended {
+            // Dropping it cancels the thread (if it still runs) and reaps it.
             self.running = None;
         }
     }
 
     fn disconnect(&mut self, _now: Instant) {
-        // Closing the command channel asks the thread to disconnect gracefully and end.
+        // Cancels the thread: no further login step; a session says Disconnect gracefully.
         self.ended = true;
         self.running = None;
     }

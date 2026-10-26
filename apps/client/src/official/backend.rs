@@ -54,6 +54,11 @@ impl BackendFactory for ProductionBackends {
 
     fn construct(&mut self, config: CompatConfig) -> Result<Box<dyn Backend>, CompatError> {
         let live = LiveConfig {
+            // The install root and the original's settings directory (inside a Wine,
+            // Proton or CrossOver prefix for an install there) come from the locator on
+            // the connector's thread. No network version string is supplied: Tessera has
+            // no setting or option for it yet (`official-login.md` §2.4.1 step 1), so the
+            // client's version resource is read.
             paths: LocalPaths::default(),
             loader: super::install_data::loader(),
             locate: Some(super::install_data::locator(self.game_dir.clone())),

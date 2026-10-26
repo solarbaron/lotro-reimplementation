@@ -11,7 +11,8 @@
 
 use std::io::Read as _;
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4, ToSocketAddrs, UdpSocket};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::Duration;
 
 use crate::CompatError;
@@ -64,6 +65,71 @@ pub fn created_count() -> u64 {
 #[derive(Debug)]
 pub struct NetworkAccess {
     _private: (),
+    right: Right,
+}
+
+/// The revocation epoch of this process: [`revoke_all`] moves it on, and every value made
+/// before that is dead (Withdraw, `official-entry.md` §5.5).
+static EPOCH: AtomicU64 = AtomicU64::new(0);
+
+/// Ends every network right of this process at once: each [`NetworkAccess`] made so far and
+/// everything made from one (the HTTPS clients, the UDP transports) refuses every further
+/// operation. The client calls it when the user withdraws the acceptance
+/// (`official-entry.md` §5.5 "Withdraw always ends the run's acceptance, at once"), so no
+/// live network right is left anywhere, a worker that is still running included. Values
+/// made afterwards (from a new acceptance) are live.
+pub fn revoke_all() {
+    EPOCH.fetch_add(1, Ordering::SeqCst);
+    tracing::info!("official network access revoked");
+}
+
+/// One network right: live until its own revocation flag is set or [`revoke_all`] runs.
+/// Shared by a [`NetworkAccess`] and everything made from it.
+#[derive(Debug, Clone)]
+struct Right {
+    epoch: u64,
+    revoked: Arc<AtomicBool>,
+}
+
+impl Right {
+    fn new() -> Self {
+        Self {
+            epoch: EPOCH.load(Ordering::SeqCst),
+            revoked: Arc::new(AtomicBool::new(false)),
+        }
+    }
+
+    fn live(&self) -> bool {
+        !self.revoked.load(Ordering::SeqCst) && self.epoch == EPOCH.load(Ordering::SeqCst)
+    }
+
+    fn check(&self) -> Result<(), SessionError> {
+        if self.live() {
+            Ok(())
+        } else {
+            Err(SessionError::Io(
+                "the network access was revoked".to_owned(),
+            ))
+        }
+    }
+}
+
+/// Ends one [`NetworkAccess`] and everything made from it (the live connector uses it once
+/// a cancelled session's thread had its bounded time to close, `crate::connector`).
+#[derive(Debug, Clone)]
+pub struct Revocation(Arc<AtomicBool>);
+
+impl Revocation {
+    /// Revokes the right.
+    pub fn revoke(&self) {
+        self.0.store(true, Ordering::SeqCst);
+    }
+
+    /// Whether the right was revoked through this handle.
+    #[must_use]
+    pub fn is_revoked(&self) -> bool {
+        self.0.load(Ordering::SeqCst)
+    }
 }
 
 impl NetworkAccess {
@@ -77,7 +143,23 @@ impl NetworkAccess {
             return Err(CompatError::ConsentMismatch);
         }
         CREATED.fetch_add(1, Ordering::SeqCst);
-        Ok(Self { _private: () })
+        Ok(Self {
+            _private: (),
+            right: Right::new(),
+        })
+    }
+
+    /// Whether this value may still use the network (not revoked, [`revoke_all`] not run
+    /// since it was made).
+    #[must_use]
+    pub fn is_live(&self) -> bool {
+        self.right.live()
+    }
+
+    /// The handle that revokes this value and everything made from it.
+    #[must_use]
+    pub fn revocation(&self) -> Revocation {
+        Revocation(Arc::clone(&self.right.revoked))
     }
 
     /// Binds a non-blocking IPv4 UDP socket following the port-selection rules of the
@@ -92,21 +174,20 @@ impl NetworkAccess {
         explicit_base_port: u16,
         compute_unique: bool,
     ) -> Result<StdUdpTransport, SessionError> {
-        StdUdpTransport::bind(local_ip, explicit_base_port, compute_unique)
+        self.right.check()?;
+        StdUdpTransport::bind(
+            local_ip,
+            explicit_base_port,
+            compute_unique,
+            self.right.clone(),
+        )
     }
 
-    /// Another network-access value of the same run, for a worker that outlives the call
-    /// that holds this one (the live connector's thread). It exists only because this one
-    /// does, so it too was made from a proof.
-    pub(crate) fn duplicate(&self) -> Self {
-        CREATED.fetch_add(1, Ordering::SeqCst);
-        Self { _private: () }
-    }
-
-    /// The HTTPS client of the login exchanges (`official-login.md` §3, §4.3, §6.2).
+    /// The HTTPS client of the login exchanges (`official-login.md` §3, §4.3, §6.2). It
+    /// shares this value's right: once that is revoked the client refuses every request.
     #[must_use]
     pub fn https_client(&self) -> HttpsClient {
-        HttpsClient::new()
+        HttpsClient::new(self.right.clone())
     }
 
     /// Resolves `host` (a name or an IPv4 literal) and `port` to the first IPv4 address
@@ -117,28 +198,54 @@ impl NetworkAccess {
     ///
     /// [`SessionError::Io`] when the name does not resolve or has no IPv4 address.
     pub fn resolve_ipv4(&self, host: &str, port: u16) -> Result<SocketAddrV4, SessionError> {
+        self.right.check()?;
         if let Ok(ip) = host.parse::<Ipv4Addr>() {
             return Ok(SocketAddrV4::new(ip, port));
         }
-        let addrs = (host, port)
-            .to_socket_addrs()
-            .map_err(|_| SessionError::Io("the server name did not resolve".to_owned()))?;
-        addrs
-            .take(MAX_RESOLVED_ADDRESSES)
-            .find_map(|a| match a {
-                SocketAddr::V4(v4) => Some(v4),
-                SocketAddr::V6(_) => None,
+        // The system resolver has no timeout of its own: it runs on a helper thread and is
+        // waited for at most `RESOLVE_TIMEOUT` (engineering choice, spec silent). A lookup
+        // that outlasts it is abandoned; its thread ends when the resolver returns.
+        let (tx, rx) = std::sync::mpsc::sync_channel(1);
+        let name = host.to_owned();
+        std::thread::Builder::new()
+            .name("tessera-official-resolve".into())
+            .spawn(move || {
+                let found = (name.as_str(), port)
+                    .to_socket_addrs()
+                    .ok()
+                    .and_then(|addrs| {
+                        addrs.take(MAX_RESOLVED_ADDRESSES).find_map(|a| match a {
+                            SocketAddr::V4(v4) => Some(v4),
+                            SocketAddr::V6(_) => None,
+                        })
+                    });
+                let _ = tx.send(found);
             })
-            .ok_or_else(|| SessionError::Io("the server name has no IPv4 address".to_owned()))
+            .map_err(|_| SessionError::Io("the name lookup could not start".to_owned()))?;
+        match rx.recv_timeout(RESOLVE_TIMEOUT) {
+            Ok(Some(v4)) => Ok(v4),
+            Ok(None) => Err(SessionError::Io(
+                "the server name did not resolve to an IPv4 address".to_owned(),
+            )),
+            Err(_) => Err(SessionError::Io("the name lookup timed out".to_owned())),
+        }
     }
 
     /// The local IPv4 address the operating system routes towards `remote`: the first
     /// non-loopback local address of `official-session.md` §3.2 item 1 without an
     /// interface list. A UDP socket is bound to `0.0.0.0:0` and connected (a connected UDP
     /// socket sends nothing); `None` when that fails or gives a loopback or unspecified
-    /// address.
+    /// address. The session then binds to that address (Case B of §3.2 needs it); the
+    /// address the system routes towards the server stands for "the first non-loopback
+    /// local address" of §3.2, which names no order (engineering choice, spec silent
+    /// (question with the spec writers)). `Net.BindInterface` and `Net.ComputeUniquePort`
+    /// of `UserPreferences.ini` are not read (the same question): no interface mask is
+    /// applied and the computed port is always tried.
     #[must_use]
     pub fn local_ipv4_toward(&self, remote: SocketAddrV4) -> Option<Ipv4Addr> {
+        if !self.right.live() {
+            return None;
+        }
         let sock = UdpSocket::bind(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0)).ok()?;
         sock.connect(SocketAddr::V4(remote)).ok()?;
         match sock.local_addr().ok()? {
@@ -153,6 +260,17 @@ impl NetworkAccess {
 /// Most addresses looked at when a name resolves to many.
 const MAX_RESOLVED_ADDRESSES: usize = 64;
 
+/// Longest wait for a name lookup (engineering choice, spec silent).
+pub const RESOLVE_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Longest response head (status line and headers) of a login exchange. Engineering
+/// choice, spec silent: the service's heads are small.
+pub const MAX_RESPONSE_HEADER_BYTES: usize = 16 * 1024;
+
+/// The `User-Agent` of the login exchanges: a neutral value that names no product or mark.
+/// Engineering choice, spec silent (question with the spec writers).
+pub const USER_AGENT: &str = "login-client/1";
+
 /// Longest response body read from a login exchange: the login module's parsers refuse
 /// anything larger than [`MAX_XML_INPUT_BYTES`], so one more byte is enough to tell.
 const MAX_RESPONSE_BYTES: u64 = MAX_XML_INPUT_BYTES as u64 + 1;
@@ -165,17 +283,30 @@ const MAX_RESPONSE_BYTES: u64 = MAX_XML_INPUT_BYTES as u64 + 1;
 ///   (§6.2).
 /// - No redirect is followed: a login request goes only to the URL the install or a
 ///   service response named (§6.1); a redirect answer is returned as its status code.
-/// - The request's `timeout_sec` bounds the whole exchange (§5.2).
-/// - Response bodies are read up to the login parsers' input bound plus one byte.
-/// - Plain `http://` URLs are sent as given; the live connector refuses to send a
-///   credential or ticket over one (`crate::connector`).
+/// - No proxy: the environment's proxy settings (`HTTP_PROXY` and the like, which the HTTP
+///   crate's defaults read) are not used, so a request goes only to the host its URL names
+///   (engineering choice, spec silent).
+/// - A neutral `User-Agent` ([`USER_AGENT`], engineering choice, spec silent).
+/// - The request's `timeout_sec` bounds the whole exchange (§5.2); a response head is at
+///   most [`MAX_RESPONSE_HEADER_BYTES`].
+/// - Response bodies are read up to the login parsers' input bound plus one byte, into a
+///   buffer allocated once at that size, so no copy of a body is left behind by a
+///   reallocation. The HTTP and TLS crates' own buffers cannot be wiped from here (known
+///   limitation, `official-login.md` §6.3 is best effort).
+/// - A request that carries the password or the ticket
+///   ([`crate::connector::net::carries_secret`]) is sent with the HTTP crate's `https_only`
+///   set as well, so it can never go over plain HTTP; plain `http://` URLs are otherwise
+///   sent as given.
+/// - It shares the right of the [`NetworkAccess`] that made it: once that is revoked every
+///   request is refused before anything is sent.
 #[derive(Debug)]
 pub struct HttpsClient {
     agent: ureq::Agent,
+    right: Right,
 }
 
 impl HttpsClient {
-    fn new() -> Self {
+    fn new(right: Right) -> Self {
         let tls = ureq::tls::TlsConfig::builder()
             .provider(ureq::tls::TlsProvider::Rustls)
             .root_certs(ureq::tls::RootCerts::PlatformVerifier)
@@ -183,13 +314,17 @@ impl HttpsClient {
             .build();
         let config = ureq::Agent::config_builder()
             .tls_config(tls)
+            .proxy(None)
+            .user_agent(USER_AGENT)
             .http_status_as_error(false)
             .max_redirects(0)
             .max_redirects_will_error(false)
+            .max_response_header_size(MAX_RESPONSE_HEADER_BYTES)
             .max_idle_connections(4)
             .build();
         Self {
             agent: config.new_agent(),
+            right,
         }
     }
 }
@@ -200,10 +335,13 @@ fn http_failure(e: &ureq::Error) -> LoginError {
         ureq::Error::HostNotFound => "the service name did not resolve",
         ureq::Error::Tls(_) => "the TLS handshake or certificate check failed",
         ureq::Error::BodyExceedsLimit(_) => "the response is too large",
+        ureq::Error::LargeResponseHeader(_, _) => "the response head is too large",
         ureq::Error::BadUri(_) => "the service URL is not valid",
+        ureq::Error::RequireHttpsOnly(_) => "a request that needs HTTPS named another scheme",
         _ => "the request failed",
     };
-    tracing::debug!(error = %e, "official HTTPS request failed");
+    // The kind only: the HTTP crate's text can name the URL.
+    tracing::debug!(reason, "official HTTPS request failed");
     LoginError::ServiceUnavailable {
         reason: reason.to_owned(),
     }
@@ -211,6 +349,11 @@ fn http_failure(e: &ureq::Error) -> LoginError {
 
 impl HttpClient for HttpsClient {
     fn execute(&mut self, request: &HttpRequest) -> Result<HttpResponse, LoginError> {
+        if !self.right.live() {
+            return Err(LoginError::ServiceUnavailable {
+                reason: "the network access was revoked".to_owned(),
+            });
+        }
         if !request.require_tls_validation {
             // Every request of the login module asks for validation (§6.2); one that does
             // not is refused rather than sent with weaker checks.
@@ -219,6 +362,7 @@ impl HttpClient for HttpsClient {
             });
         }
         let timeout = Some(Duration::from_secs(request.timeout_sec.clamp(1, 300)));
+        let https_only = crate::connector::net::carries_secret(request);
         let result = match request.method {
             HttpMethod::Get => {
                 let mut b = self
@@ -226,6 +370,7 @@ impl HttpClient for HttpsClient {
                     .get(request.url.as_str())
                     .config()
                     .timeout_global(timeout)
+                    .https_only(https_only)
                     .build();
                 for (k, v) in &request.headers {
                     b = b.header(k.as_str(), v.as_str());
@@ -238,6 +383,7 @@ impl HttpClient for HttpsClient {
                     .post(request.url.as_str())
                     .config()
                     .timeout_global(timeout)
+                    .https_only(https_only)
                     .build();
                 for (k, v) in &request.headers {
                     b = b.header(k.as_str(), v.as_str());
@@ -247,15 +393,20 @@ impl HttpClient for HttpsClient {
         };
         let mut response = result.map_err(|e| http_failure(&e))?;
         let status_code = response.status().as_u16();
-        let mut body = Vec::new();
-        response
+        // One allocation of the full bound: `read_to_end` never grows it (the reader stops
+        // at the bound), so no partial copy of a body is freed unwiped.
+        let mut body = Vec::with_capacity(MAX_RESPONSE_BYTES as usize);
+        let read = response
             .body_mut()
             .as_reader()
             .take(MAX_RESPONSE_BYTES)
-            .read_to_end(&mut body)
-            .map_err(|_| LoginError::ServiceUnavailable {
+            .read_to_end(&mut body);
+        if read.is_err() {
+            crate::login::zeroize_vec(&mut body);
+            return Err(LoginError::ServiceUnavailable {
                 reason: "the response could not be read".to_owned(),
-            })?;
+            });
+        }
         Ok(HttpResponse { status_code, body })
     }
 }
@@ -266,6 +417,7 @@ impl HttpClient for HttpsClient {
 pub struct StdUdpTransport {
     socket: UdpSocket,
     local_addr: SocketAddrV4,
+    right: Right,
 }
 
 impl StdUdpTransport {
@@ -273,6 +425,7 @@ impl StdUdpTransport {
         local_ip: Ipv4Addr,
         explicit_base_port: u16,
         compute_unique: bool,
+        right: Right,
     ) -> Result<Self, SessionError> {
         let ports = candidate_bind_ports(local_ip, explicit_base_port, compute_unique);
         let mut bound_socket = None;
@@ -297,7 +450,11 @@ impl StdUdpTransport {
                 return Err(SessionError::Io("expected IPv4 socket address".to_string()));
             }
         };
-        Ok(Self { socket, local_addr })
+        Ok(Self {
+            socket,
+            local_addr,
+            right,
+        })
     }
 }
 
@@ -307,6 +464,7 @@ impl UdpDatagramTransport for StdUdpTransport {
     }
 
     fn send_to(&mut self, buf: &[u8], target: SocketAddrV4) -> Result<usize, SessionError> {
+        self.right.check()?;
         if buf.len() > MAX_DATAGRAM_BUF {
             return Err(SessionError::DatagramTooLarge { len: buf.len() });
         }
@@ -314,6 +472,7 @@ impl UdpDatagramTransport for StdUdpTransport {
     }
 
     fn recv_from(&mut self, buf: &mut [u8]) -> Result<Option<(usize, SocketAddrV4)>, SessionError> {
+        self.right.check()?;
         match self.socket.recv_from(buf) {
             Ok((len, SocketAddr::V4(src))) => Ok(Some((len, src))),
             Ok((_, SocketAddr::V6(_))) => Ok(None),
@@ -333,16 +492,37 @@ mod tests {
     use super::*;
     use crate::consent::{self, UserConfirmation, WarningText};
 
-    fn access() -> (tempfile::TempDir, NetworkAccess) {
-        let dir = tempfile::tempdir().expect("temp");
+    /// [`revoke_all`] ends every right of the process: the test that calls it runs alone.
+    static REVOKE: std::sync::RwLock<()> = std::sync::RwLock::new(());
+
+    struct Fixture {
+        _guard: std::sync::RwLockReadGuard<'static, ()>,
+        _dir: tempfile::TempDir,
+    }
+
+    fn proof_in(dir: &std::path::Path) -> ConsentProof {
         let (acc, write) = consent::accept(
-            Some(dir.path()),
+            Some(dir),
             &WarningText::shipped(),
             UserConfirmation::confirmed_by_user(),
         );
         let _ = write.wait();
-        let access = NetworkAccess::new(&acc.proof()).expect("access");
-        (dir, access)
+        acc.proof()
+    }
+
+    fn access() -> (Fixture, NetworkAccess) {
+        let guard = REVOKE
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let dir = tempfile::tempdir().expect("temp");
+        let access = NetworkAccess::new(&proof_in(dir.path())).expect("access");
+        (
+            Fixture {
+                _guard: guard,
+                _dir: dir,
+            },
+            access,
+        )
     }
 
     /// Serves one connection with `answer` and returns the request it read.
@@ -394,7 +574,7 @@ mod tests {
 
     #[test]
     fn a_post_returns_status_and_body() {
-        let (_d, access) = access();
+        let (_f, access) = access();
         let (url, server) =
             serve(b"HTTP/1.1 500 Internal Server Error\r\nContent-Length: 5\r\nConnection: close\r\n\r\nfault".to_vec());
         let resp = access
@@ -410,7 +590,7 @@ mod tests {
 
     #[test]
     fn a_redirect_is_not_followed() {
-        let (_d, access) = access();
+        let (_f, access) = access();
         let (url, server) = serve(
             b"HTTP/1.1 302 Found\r\nLocation: http://127.0.0.1:9/elsewhere\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
                 .to_vec(),
@@ -425,7 +605,7 @@ mod tests {
 
     #[test]
     fn a_large_body_is_cut_after_the_parsers_bound() {
-        let (_d, access) = access();
+        let (_f, access) = access();
         let size = MAX_XML_INPUT_BYTES + 4096;
         let mut answer =
             format!("HTTP/1.1 200 OK\r\nContent-Length: {size}\r\nConnection: close\r\n\r\n")
@@ -442,7 +622,7 @@ mod tests {
 
     #[test]
     fn a_request_without_validation_is_refused() {
-        let (_d, access) = access();
+        let (_f, access) = access();
         let mut req = request(HttpMethod::Get, "https://a.example.invalid/", b"");
         req.require_tls_validation = false;
         assert!(access.https_client().execute(&req).is_err());
@@ -450,10 +630,140 @@ mod tests {
 
     #[test]
     fn literal_addresses_resolve_without_a_lookup() {
-        let (_d, access) = access();
+        let (_f, access) = access();
         assert_eq!(
             access.resolve_ipv4("192.0.2.7", 9000).expect("literal"),
             SocketAddrV4::new(Ipv4Addr::new(192, 0, 2, 7), 9000)
         );
+    }
+
+    /// A server that accepts one connection, reads the request head and then sends `head`
+    /// one byte every `gap`.
+    fn drip(head: Vec<u8>, gap: Duration) -> (String, std::thread::JoinHandle<()>) {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("loopback");
+        let addr = listener.local_addr().expect("addr");
+        let handle = std::thread::spawn(move || {
+            let Ok((mut s, _)) = listener.accept() else {
+                return;
+            };
+            let _ = s.set_read_timeout(Some(Duration::from_secs(5)));
+            let mut buf = [0u8; 4096];
+            let _ = s.read(&mut buf);
+            for b in head {
+                if s.write_all(&[b]).is_err() {
+                    return;
+                }
+                std::thread::sleep(gap);
+            }
+        });
+        (format!("http://{addr}/slow"), handle)
+    }
+
+    #[test]
+    fn a_drip_feeding_server_times_out() {
+        let (_f, access) = access();
+        let mut head = b"HTTP/1.1 200 OK\r\nContent-Length: 4000\r\n\r\n".to_vec();
+        head.extend(std::iter::repeat_n(b'a', 4000));
+        let (url, server) = drip(head, Duration::from_millis(20));
+        let mut req = request(HttpMethod::Get, &url, b"");
+        req.timeout_sec = 1;
+        let t = std::time::Instant::now();
+        assert!(access.https_client().execute(&req).is_err());
+        assert!(t.elapsed() < Duration::from_secs(4), "{:?}", t.elapsed());
+        drop(server);
+    }
+
+    #[test]
+    fn an_oversized_response_head_is_refused() {
+        let (_f, access) = access();
+        let mut answer = b"HTTP/1.1 200 OK\r\n".to_vec();
+        for i in 0..2_000 {
+            answer.extend(format!("X-Filler-{i}: {}\r\n", "b".repeat(20)).into_bytes());
+        }
+        answer.extend(b"Content-Length: 0\r\n\r\n");
+        let (url, server) = serve(answer);
+        let err = access
+            .https_client()
+            .execute(&request(HttpMethod::Get, &url, b""))
+            .expect_err("refused");
+        assert!(matches!(err, LoginError::ServiceUnavailable { .. }));
+        let _ = server.join();
+    }
+
+    #[test]
+    fn a_secret_never_goes_over_plain_http() {
+        let (_f, access) = access();
+        let listener = TcpListener::bind("127.0.0.1:0").expect("loopback");
+        listener.set_nonblocking(true).expect("nonblocking");
+        let addr = listener.local_addr().expect("addr");
+        let mut req = request(HttpMethod::Post, &format!("http://{addr}/login"), b"secret");
+        req.headers
+            .push(("SOAPAction".to_owned(), "\"x/LoginAccount\"".to_owned()));
+        assert!(access.https_client().execute(&req).is_err());
+        std::thread::sleep(Duration::from_millis(50));
+        assert!(listener.accept().is_err(), "no connection was made");
+    }
+
+    #[test]
+    fn revocation_ends_every_right_made_from_a_value() {
+        let (_f, access) = access();
+        let mut udp = access
+            .bind_udp(Ipv4Addr::LOCALHOST, 0, false)
+            .expect("bind");
+        let me = udp.local_addr().expect("addr");
+        let mut http = access.https_client();
+        assert!(access.is_live());
+        access.revocation().revoke();
+        assert!(!access.is_live());
+        assert!(udp.send_to(b"x", me).is_err());
+        assert!(udp.recv_from(&mut [0u8; 8]).is_err());
+        assert!(access.bind_udp(Ipv4Addr::LOCALHOST, 0, false).is_err());
+        assert!(access.resolve_ipv4("192.0.2.1", 1).is_err());
+        assert!(
+            access
+                .local_ipv4_toward(SocketAddrV4::new(Ipv4Addr::new(192, 0, 2, 1), 1))
+                .is_none()
+        );
+        assert!(
+            http.execute(&request(HttpMethod::Get, "http://127.0.0.1:9/", b""))
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn the_connector_network_holds_no_right_after_revocation() {
+        use crate::connector::net::{ConnectorNet, LiveNet};
+        let (_f, access) = access();
+        let revocation = access.revocation();
+        let mut net = LiveNet::new(access);
+        let mut binder = net.chat_binder().expect("binder");
+        let mut background = net.background_http();
+        revocation.revoke();
+        assert!(net.bind_udp(Ipv4Addr::LOCALHOST, 0, false).is_err());
+        assert!(binder().is_err());
+        assert!(net.resolve("192.0.2.1", 1).is_err());
+        let req = request(HttpMethod::Get, "http://127.0.0.1:9/", b"");
+        assert!(net.http(&req).is_err());
+        assert!(background.execute(&req).is_err());
+    }
+
+    #[test]
+    fn revoke_all_ends_every_value_made_before_it() {
+        let guard = REVOKE
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let dir = tempfile::tempdir().expect("temp");
+        let proof = proof_in(dir.path());
+        let old = NetworkAccess::new(&proof).expect("access");
+        let mut udp = old.bind_udp(Ipv4Addr::LOCALHOST, 0, false).expect("bind");
+        let me = udp.local_addr().expect("addr");
+        revoke_all();
+        assert!(!old.is_live());
+        assert!(udp.send_to(b"x", me).is_err());
+        assert!(old.bind_udp(Ipv4Addr::LOCALHOST, 0, false).is_err());
+        // A value made afterwards (a new acceptance) is live.
+        let new = NetworkAccess::new(&proof).expect("access");
+        assert!(new.is_live());
+        drop(guard);
     }
 }

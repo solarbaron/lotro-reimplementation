@@ -821,6 +821,15 @@ equipment container (§11).
 > of count *c* is active when at least *c* members are worn and the level gate passes); the
 > original's tier activation is `items.md` §7.1's question and was not traced here.
 
+> **OPEN:** (implementer, `crates/gamedata`, 2026-10-26; engineering choice, for review) the
+> stat parts of a bonus line now follow the §6.16 rule as the closed note above says: each is
+> a `skill-tooltips.md` §9.4 modifier line (the operator's template with the property's
+> `PropertyMetaData_Name`, or the entry's override), so an entry on a property without a
+> metadata object adds nothing (before, the dictionary name of the property was shown, an
+> internal label, P8 audit). A tier whose effects have no names and whose entries give no
+> line would then show only "*c*: "; as implemented, such a tier gets **no bonus line**
+> (and a bonus list without lines is empty, §5). Please confirm or give the rule.
+
 > **OPEN:** (implementer, 2026-10-10) the set level of `items.md` §7.1 ("Set level for count
 > *c*") needs a request's "given level" and the character's `Apparent_Level`. The
 > implementation evaluates each tier's stat lines at that set level with these readings:
@@ -963,6 +972,26 @@ no skill (1,194 items name one). They are of two kinds:
 > list" rule is not a rule of this spec. **Implemented behaviour changes:** entries of a
 > horizontal list wrap by their own mode, and a `Desc`-mode element wraps at its layout
 > width whatever its widget type.
+
+> **OPEN:** (implementer, `crates/ui`, 2026-10-26; engineering choices, for review) two
+> measuring rules the spec does not give. (1) **Fonts still loading.** A row text that cannot
+> be measured when the tooltip is built (its font is still loading) takes its element's
+> designed size, so the first tooltip shown after start-up was laid out with designed sizes
+> (P8 audit). As implemented, such a tooltip is marked as provisional and, once every one of
+> its texts can be measured, built again from the same input: a hover tooltip the UI still
+> shows is shown again at the same pointer and placed by §9 at its new size; a tooltip on its
+> own keeps its position; a pinned copy (§10) is built again in a new window opened at the old
+> window's position, keeping its place in the pin order and not advancing the §10 cascade
+> counter. The caller drives this every frame, as the quest details pane's texts are fitted
+> again (`quest-journal.md` §4.7). (2)
+> **Text widgets without a text element.** The skill and effect rows of
+> `skill-tooltips.md` §4.3 (`ExaminationSkillQualifier`, `…SkillMaxRange`, `…SkillMaxTargets`,
+> `…SkillCastingTime`, `…SkillRecoveryTime` and the others that show one text) are widget
+> types Tessera's UI creates with its fallback class, so their text had no element and the
+> row stayed blank at its designed size (the "empty band" under skill names). As
+> implemented, a row element that is given a text and has no text element shows it in a
+> text element made from the row's own descriptor (its text properties: font, colours,
+> margins, one-line flag), at the row's top left. Please confirm or give the rules.
 
 ---
 

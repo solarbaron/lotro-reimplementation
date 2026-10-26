@@ -31,10 +31,12 @@
 //! displayed `ExaminationName` element with text (§6.2). A failed audit is a failure, and
 //! its picture is neither written nor compared.
 //!
-//! **Warm-up.** The first record's tooltip is built and destroyed once, and the UI settled,
-//! before the pictures: the panel measures its texts when it is built, so a tooltip built
-//! while its fonts still load is laid out with the elements' design sizes (a client defect
-//! of the first hover, recorded in the P8 status), which this test does not judge.
+//! **Fonts that load after the build.** The panel measures its texts when it is built, so a
+//! tooltip built while its fonts still load is laid out with the elements' design sizes and
+//! marked `unmeasured`; once the UI has settled (the fonts have arrived) the test builds it
+//! again through `ExamTooltips::rebuild_when_ready`, the panel's path for such a
+//! tooltip, and judges the rebuilt one. There is no warm-up: the first record's tooltip is
+//! built while the fonts load.
 //!
 //! **Output** (decision 0031 tier 2, `ui_common/goldens.rs`): `item-NN.png`, `skill-NN.png`
 //! and a local `index.txt` (ordinal, family, DID, the record's tooltip category with its
@@ -734,33 +736,48 @@ fn fifty_item_and_fifty_skill_tooltips_are_painted() {
         "the empty UI did not settle"
     );
 
-    // Warm-up (module docs): the tooltip fonts load before the first picture.
-    if let Some(first) = shots.first() {
-        let built = {
-            let mut ui = host.ui_mut();
-            tips.build(&mut ui, &first.input)
-        };
-        if let Ok(b) = built {
-            let _ = settle(&mut host, &mut renderer);
-            host.ui_mut().destroy(b.frame);
-            let _ = settle(&mut host, &mut renderer);
-        }
-    }
-
     let t1 = Instant::now();
     let (mut blessed, mut matched, mut clipped, mut defective) = (0, 0, 0, 0);
+    // Tooltips built again after their fonts arrived (module docs).
+    let mut rebuilt = 0;
     for shot in &shots {
         let built = {
             let mut ui = host.ui_mut();
             tips.build(&mut ui, &shot.input)
         };
-        let built = match built {
+        let mut built = match built {
             Ok(b) => b,
             Err(e) => {
                 failures.push(format!("{} ({}): panel: {e}", shot.name, shot.did));
                 continue;
             }
         };
+        // A tooltip measured while its fonts loaded is built again once they have arrived
+        // (a font fit may ask for further fonts, so a few rounds).
+        for _ in 0..4 {
+            if !built.unmeasured {
+                break;
+            }
+            host.ui_mut().move_to(built.frame, 0, 0);
+            let _ = settle(&mut host, &mut renderer);
+            let again = {
+                let mut ui = host.ui_mut();
+                tips.rebuild_when_ready(&mut ui, &built, &shot.input)
+            };
+            match again {
+                Some(b) => {
+                    built = b;
+                    rebuilt += 1;
+                }
+                None => break,
+            }
+        }
+        if built.unmeasured {
+            failures.push(format!(
+                "{} ({}): texts still unmeasured after the UI settled",
+                shot.name, shot.did
+            ));
+        }
         if !built.failures.is_empty() || built.size.0 <= 0 || built.size.1 <= 0 {
             failures.push(format!(
                 "{} ({}): size {:?}, {} template failures",
@@ -810,7 +827,8 @@ fn fifty_item_and_fifty_skill_tooltips_are_painted() {
     }
     eprintln!(
         "painted {} tooltips in {:?}: {blessed} blessed, {matched} passed, {defective} failed \
-         the panel audit (not painted), {clipped} taller or wider than the screen; goldens in {}",
+         the panel audit (not painted), {clipped} taller or wider than the screen, {rebuilt} \
+         built again after their fonts arrived; goldens in {}",
         blessed + matched,
         t1.elapsed(),
         golden_dir.display()

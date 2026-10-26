@@ -426,6 +426,13 @@ bits (`item-tooltips.md` §6.4 step 7 and its any-width OPEN); 0 (the default) �
 A generic row on `Skill_Desc` of the examined object (not *K*, §6.1). `Skill_Desc` is a
 StringInfo; an entry that renders empty → empty row (`item-tooltips.md` §6.4 step 4).
 
+> **OPEN:** (implementer, `crates/gamedata`, 2026-10-26) the P8 audit saw a description row
+> showing only `..` (sample skill-01). Tessera's own run shows that the skill's `Skill_Desc`
+> entry is itself the text `..` (one piece, no slots), not a rendering fault, so by this
+> section and `item-tooltips.md` §6.4 the row shows it, and the implementation keeps doing
+> so. Does the original client hide such placeholder descriptions (for example a text of only
+> punctuation), or show them too?
+
 <a id="s7-9"></a>
 ### 7.9 Damage (BC classes 1078, 827; BIN (a))
 

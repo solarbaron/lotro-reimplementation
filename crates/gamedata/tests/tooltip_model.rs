@@ -121,6 +121,9 @@ struct Mem {
     styled: HashMap<(u32, u32), u32>,
     /// Item → its set (`set_of`).
     sets: HashMap<Did, Did>,
+    /// Render a blank text as a present, empty text rather than as no text (an install
+    /// whose renderer does not drop blank results).
+    keep_blank: bool,
 }
 
 impl Mem {
@@ -255,7 +258,7 @@ impl TooltipData for Mem {
             TextRef::Info(_) => None,
         };
         Ok(Self::fill(&template, values)
-            .filter(|t| !t.trim().is_empty())
+            .filter(|t| self.keep_blank || !t.trim().is_empty())
             .map(|t| match colour {
                 Some(c) => {
                     let [b, g, r, a] = c.to_le_bytes();
@@ -1531,6 +1534,7 @@ fn p1_rows(m: &mut Mem) {
                                     mod_entry,
                                     vec![vec![
                                         (modified, PropertyValue::PropertyId(might)),
+                                        (mod_op, PropertyValue::Enum(7)),
                                         (mod_progression, PropertyValue::DidRef(PROG)),
                                     ]],
                                 ),
@@ -1542,10 +1546,20 @@ fn p1_rows(m: &mut Mem) {
                                 mod_array,
                                 structs(
                                     mod_entry,
-                                    vec![vec![
-                                        (modified, PropertyValue::PropertyId(might)),
-                                        (might, PropertyValue::Int(9)),
-                                    ]],
+                                    vec![
+                                        vec![
+                                            (modified, PropertyValue::PropertyId(might)),
+                                            (mod_op, PropertyValue::Enum(7)),
+                                            (might, PropertyValue::Int(9)),
+                                        ],
+                                        // A property without a metadata object: no
+                                        // line, never its dictionary name (§6.16).
+                                        vec![
+                                            (modified, PropertyValue::PropertyId(tier)),
+                                            (mod_op, PropertyValue::Enum(7)),
+                                            (tier, PropertyValue::Int(4)),
+                                        ],
+                                    ],
                                 ),
                             ),
                         ],
@@ -1761,14 +1775,103 @@ fn set_lines_states_colours_and_set_level_6_17() {
         ]
     );
     // Two of three worn: tier 2 active, tier 3 not. Tier 2's progression is read at the
-    // set level 50 (`items.md` §7.1), not the ring's item level 30 (which gives 300).
+    // set level 50 (`items.md` §7.1), not the ring's item level 30 (which gives 300). The
+    // stat parts are §6.16 modifier lines with the metadata name (`skill-tooltips.md`
+    // §9.4); tier 3's entry on a property without metadata adds nothing.
     assert_eq!(
         lines_of(row(&m, "GameSetBonusListDisplayBase")),
         [
-            with("2: Stat_Might: 500", active()),
-            with("3: Stat_Might: 9", inactive()),
+            with("2: +500 Might", active()),
+            with("3: +9 Might", inactive()),
         ]
     );
+}
+
+/// One bonus tier for [`set_tiers`]: its count, its entries (property name, value) and its
+/// effect records.
+type TierSpec<'a> = (i32, &'a [(&'a str, i32)], &'a [Did]);
+
+/// Replaces the bonus tiers of the fixture's set: each tier is (count, entries on
+/// properties of the given names, effect records).
+fn set_tiers(m: &mut Mem, tiers: &[TierSpec<'_>]) {
+    use PropertyType as T;
+    let list = m.known("Set_ActiveCountDataList");
+    let tier_data = m.known("Set_ActiveCountData");
+    let active_count = m.known("Set_ActiveCount");
+    let mod_array = m.known("Mod_Array");
+    let mod_entry = m.known("Mod_Entry");
+    let modified = m.known("Mod_Modified");
+    let mod_op = m.known("Mod_Op");
+    let effects = m.p("Set_EffectDataList", T::Array);
+    let effect_struct = m.p("EffectGenerator_EffectStruct", T::Struct);
+    let effect_id = m.p("EffectGenerator_EffectID", T::DidRef);
+    let tiers = tiers
+        .iter()
+        .map(|(count, mods, effs)| {
+            let mods = mods
+                .iter()
+                .map(|(name, v)| {
+                    let pid = m.known(name);
+                    vec![
+                        (modified, PropertyValue::PropertyId(pid)),
+                        (mod_op, PropertyValue::Enum(7)),
+                        (pid, PropertyValue::Int(*v)),
+                    ]
+                })
+                .collect();
+            let effs = effs
+                .iter()
+                .map(|d| vec![(effect_id, PropertyValue::DidRef(*d))])
+                .collect();
+            vec![
+                (active_count, PropertyValue::Int(*count)),
+                (mod_array, structs(mod_entry, mods)),
+                (effects, structs(effect_struct, effs)),
+            ]
+        })
+        .collect();
+    let tiers = structs(tier_data, tiers);
+    let mut set = (**m.records.get(&SET).expect("set record")).clone();
+    for e in &mut set.entries {
+        if e.pid == list {
+            e.value = tiers.clone();
+        }
+    }
+    m.records.insert(SET, Arc::new(set));
+}
+
+/// §6.17 (Tessera rule of the implementer OPEN): a tier with nothing to name, because its
+/// stat entries are on properties without a metadata object and its effect's name renders
+/// empty, gets no line, never a bare "c: "; a list made only of such tiers is empty (§5).
+#[test]
+fn set_tiers_with_nothing_to_name_get_no_line_6_17() {
+    const NAMELESS: Did = Did(0x7000_0060);
+    let bonus = |tiers: &[TierSpec<'_>]| {
+        let mut m = install();
+        m.keep_blank = true;
+        let effect_name = m.p("Effect_Name", PropertyType::StringInfo);
+        m.records.insert(
+            NAMELESS,
+            Arc::new(set(vec![(effect_name, info(literal("")))])),
+        );
+        set_tiers(&mut m, tiers);
+        let model = TooltipEngine::new(m)
+            .build(&TooltipRequest::hover(RING), &ring_viewer())
+            .expect("tooltip");
+        row(&model, "GameSetBonusListDisplayBase").content.clone()
+    };
+    let content = bonus(&[
+        (2, &[("Item_Tier", 4)], &[NAMELESS]),
+        (3, &[("Stat_Might", 9)], &[]),
+    ]);
+    let RowContent::Lines { lines, .. } = &content else {
+        panic!("{content:?}");
+    };
+    let texts: Vec<String> = lines.iter().map(|l| l.text.plain_text()).collect();
+    assert_eq!(texts, ["3: +9 Might"]);
+
+    let content = bonus(&[(2, &[("Item_Tier", 4)], &[]), (3, &[], &[NAMELESS])]);
+    assert!(matches!(content, RowContent::Empty), "{content:?}");
 }
 
 #[test]

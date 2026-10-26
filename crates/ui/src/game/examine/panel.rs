@@ -2,6 +2,7 @@
 //! Building, assembling, showing and pinning examination tooltips on the element tree
 //! (`item-tooltips.md` §4–§5, §7–§10).
 
+use std::cell::Cell;
 use std::sync::Arc;
 
 use tessera_formats::did::Did;
@@ -63,6 +64,11 @@ pub struct BuiltTooltip {
     /// The kept row element of each row template (by template index, as
     /// [`ExamTooltip::rows`]); `None` for a row §5 removed or that could not be created.
     pub by_template: Vec<Option<ElementKey>>,
+    /// Whether a text was measured while its fonts were still loading: it took its
+    /// element's designed size, so the layout is provisional and the tooltip is built again
+    /// once the fonts have arrived ([`ExamTooltips::rebuild_when_ready`],
+    /// [`ExamTooltips::reshow_when_ready`]).
+    pub unmeasured: bool,
 }
 
 /// What [`ExamTooltips::show`] showed.
@@ -74,6 +80,8 @@ pub struct ShownTooltip {
     pub comparisons: Vec<BuiltTooltip>,
     /// Screen positions: the hover tooltip first, then the comparisons.
     pub positions: Vec<(i32, i32)>,
+    /// The pointer position the tooltip was placed at (§9).
+    pub pointer: (i32, i32),
 }
 
 /// One pinned tooltip window.
@@ -121,6 +129,12 @@ pub struct ExamTooltips {
     close_button: Option<u32>,
     /// Pinned windows opened so far, modulo [`PIN_CASCADE_MODULUS`] (§10 answer (1)).
     opened: u32,
+    /// Set while a tooltip is built when one of its texts could not be measured (its fonts
+    /// still loading); copied to [`BuiltTooltip::unmeasured`].
+    unmeasured: Cell<bool>,
+    /// The inputs of the pinned tooltips that were built while their fonts were loading,
+    /// to build them again ([`ExamTooltips::refresh_pins`]); at most one per pin.
+    pending_pins: Vec<(ExamKey, ExamTooltip)>,
 }
 
 impl ExamTooltips {
@@ -133,6 +147,8 @@ impl ExamTooltips {
             pin_layout: None,
             close_button: None,
             opened: 0,
+            unmeasured: Cell::new(false),
+            pending_pins: Vec::new(),
         }
     }
 
@@ -236,7 +252,9 @@ impl ExamTooltips {
             ui.destroy(frame);
             return Err(e.into());
         }
-        let built = self.fill_list(ui, frame, list, input, removed);
+        self.unmeasured.set(false);
+        let mut built = self.fill_list(ui, frame, list, input, removed);
+        built.unmeasured = self.unmeasured.replace(false);
         Ok(built)
     }
 
@@ -293,7 +311,93 @@ impl ExamTooltips {
             hover,
             comparisons,
             positions,
+            pointer,
         })
+    }
+
+    /// Whether every text of `built` can be measured now (an empty text always can): false
+    /// while a font one of its texts uses is still loading.
+    pub fn texts_ready(&self, ui: &mut Ui, built: &BuiltTooltip) -> bool {
+        if !ui.exists(built.frame) {
+            return true;
+        }
+        let texts: Vec<ElementKey> = subtree(ui, built.frame)
+            .into_iter()
+            .filter(|k| ui.class(*k).is_some_and(WidgetClass::is_text))
+            .collect();
+        texts.into_iter().all(|k| {
+            let text = ui.text_of(k);
+            if text.is_empty() {
+                return true;
+            }
+            let w = ui.layout_box(k).map_or(1, |b| b.w()).max(1);
+            shaped(ui, k, &text, w).is_some()
+        })
+    }
+
+    /// Builds `built` again from `input` once the fonts that were loading when it was
+    /// measured have arrived (Tessera rule, as the quest details pane's texts are fitted
+    /// again, `quest-journal.md` §4.7): a tooltip built before its fonts load is otherwise
+    /// laid out with its elements' designed sizes. Call every frame while the tooltip
+    /// exists; it does nothing (returns `None`) unless `built` was [`BuiltTooltip::unmeasured`],
+    /// is still a root panel on the tree and every one of its texts can now be measured.
+    /// The new tooltip takes the old one's position and the old one is destroyed; keys taken
+    /// from the old one (rows, timers) are stale. If the new one cannot be built the old one
+    /// stays. A hover tooltip that the UI shows is built again with
+    /// [`ExamTooltips::reshow_when_ready`] instead, so that it is placed by §9 at its new size:
+    /// this function refuses it (returns `None`), as rebuilding it here would leave a root
+    /// panel the UI's tooltip rules (`ui-behaviour.md` §6.6) no longer hide. A pinned tooltip
+    /// (inside its window) is built again by [`ExamTooltips::refresh_pins`].
+    pub fn rebuild_when_ready(
+        &self,
+        ui: &mut Ui,
+        built: &BuiltTooltip,
+        input: &ExamTooltip,
+    ) -> Option<BuiltTooltip> {
+        if !built.unmeasured
+            || !ui.exists(built.frame)
+            || !ui.el(built.frame).is_some_and(|e| e.root_panel)
+            || ui.tooltip_panel() == Some(built.frame)
+            || ui.tooltip_extra_panels().contains(&built.frame)
+            || !self.texts_ready(ui, built)
+        {
+            return None;
+        }
+        let at = ui.layout_box(built.frame).unwrap_or_default();
+        match self.build(ui, input) {
+            Ok(b) => {
+                ui.destroy(built.frame);
+                ui.move_to(b.frame, at.l, at.t);
+                Some(b)
+            }
+            Err(e) => {
+                tracing::debug!("tooltip not built again after its fonts arrived: {e}");
+                None
+            }
+        }
+    }
+
+    /// [`ExamTooltips::rebuild_when_ready`] for a hover tooltip shown by
+    /// [`ExamTooltips::show`]: while the UI still shows it, once every text of it and of its
+    /// comparisons that was measured while its fonts were loading can be measured, it is
+    /// shown again from `input` at the same pointer (placed by §9 at its new size). Returns
+    /// `None` when nothing was done, else the result of [`ExamTooltips::show`] (on an error
+    /// the old tooltip is already hidden). Keys taken from the old tooltip (timer rows) are
+    /// stale afterwards.
+    pub fn reshow_when_ready(
+        &self,
+        ui: &mut Ui,
+        shown: &ShownTooltip,
+        input: &ExamTooltip,
+    ) -> Option<Result<ShownTooltip, ExamError>> {
+        let all = || std::iter::once(&shown.hover).chain(shown.comparisons.iter());
+        if !all().any(|b| b.unmeasured) || ui.tooltip_panel() != Some(shown.hover.frame) {
+            return None;
+        }
+        if !all().all(|b| self.texts_ready(ui, b)) {
+            return None;
+        }
+        Some(self.show(ui, input, shown.pointer))
     }
 
     /// The pin toggle (`item-tooltips.md` §10, with the Tessera rule for its input:
@@ -331,9 +435,31 @@ impl ExamTooltips {
             PinOutcome::Refused => return Ok(PinOutcome::Refused),
             PinOutcome::Pinned => {}
         }
+        let tip = ExamTooltip {
+            comparisons: Vec::new(),
+            ..input.clone()
+        };
+        let w = self.open_pin(ui, &tip, None)?;
+        if w.tooltip.unmeasured {
+            self.pending_pins.push((input.key, tip));
+        }
+        self.pins.insert(input.key, w);
+        self.opened = (self.opened + 1) % PIN_CASCADE_MODULUS;
+        Ok(PinOutcome::Pinned)
+    }
+
+    /// Opens one pinned window holding a copy of `tip` (the body of [`ExamTooltips::pin`]):
+    /// at `at` when given (a window built again, [`ExamTooltips::refresh_pins`]), else at
+    /// the §10 cascade position of the next window.
+    fn open_pin(
+        &self,
+        ui: &mut Ui,
+        tip: &ExamTooltip,
+        at: Option<(i32, i32)>,
+    ) -> Result<PinnedWindow, ExamError> {
         let window = match self.pin_layout {
             Some(l) => ui.open_panel(Did(l), self.vocab.ids.pinned_tooltip)?,
-            None => ui.open_panel(Did(input.frame.layout), self.vocab.ids.pinned_tooltip)?,
+            None => ui.open_panel(Did(tip.frame.layout), self.vocab.ids.pinned_tooltip)?,
         };
         // §10 answer (1): the window's own design position.
         let anchor = ui
@@ -351,11 +477,7 @@ impl ExamTooltips {
                 return Err(ExamError::NoListBox);
             }
         };
-        let tip = ExamTooltip {
-            comparisons: Vec::new(),
-            ..input.clone()
-        };
-        let tooltip = match self.build(ui, &tip) {
+        let tooltip = match self.build(ui, tip) {
             Ok(t) => t,
             Err(e) => {
                 ui.destroy(window);
@@ -399,25 +521,30 @@ impl ExamTooltips {
                 hb.h().max(tooltip.size.1),
             ),
         );
-        let p = self.vocab.pids;
-        let off_x = ui.prop(window, p.pinned_offset_x);
-        let off_y = ui.prop(window, p.pinned_offset_y);
-        let ox = if off_x.is_set() {
-            off_x.int()
-        } else {
-            DEFAULT_PIN_OFFSET
+        let (x, y) = match at {
+            Some(p) => p,
+            None => {
+                let p = self.vocab.pids;
+                let off_x = ui.prop(window, p.pinned_offset_x);
+                let off_y = ui.prop(window, p.pinned_offset_y);
+                let ox = if off_x.is_set() {
+                    off_x.int()
+                } else {
+                    DEFAULT_PIN_OFFSET
+                };
+                let oy = if off_y.is_set() {
+                    off_y.int()
+                } else {
+                    DEFAULT_PIN_OFFSET
+                };
+                let k = i32::try_from(self.opened % PIN_CASCADE_MODULUS).unwrap_or(0);
+                (
+                    anchor.0.saturating_add(ox.saturating_mul(k)),
+                    anchor.1.saturating_add(oy.saturating_mul(k)),
+                )
+            }
         };
-        let oy = if off_y.is_set() {
-            off_y.int()
-        } else {
-            DEFAULT_PIN_OFFSET
-        };
-        let k = i32::try_from(self.opened % PIN_CASCADE_MODULUS).unwrap_or(0);
-        ui.move_to(
-            window,
-            anchor.0.saturating_add(ox.saturating_mul(k)),
-            anchor.1.saturating_add(oy.saturating_mul(k)),
-        );
+        ui.move_to(window, x, y);
         let in_tooltip = subtree(ui, tooltip.frame);
         let close_button = self.close_button;
         let close_buttons: Vec<ElementKey> = subtree(ui, window)
@@ -436,21 +563,73 @@ impl ExamTooltips {
                 registered_ids.push(id);
             }
         }
-        self.pins.insert(
-            input.key,
-            PinnedWindow {
-                window,
-                tooltip,
-                close_buttons,
-                registered_ids,
-            },
-        );
-        self.opened = (self.opened + 1) % PIN_CASCADE_MODULUS;
-        Ok(PinOutcome::Pinned)
+        Ok(PinnedWindow {
+            window,
+            tooltip,
+            close_buttons,
+            registered_ids,
+        })
+    }
+
+    /// Builds again each pinned tooltip that was built while its fonts were loading
+    /// ([`BuiltTooltip::unmeasured`]) once every one of its texts can be measured (Tessera
+    /// rule, as [`ExamTooltips::rebuild_when_ready`] for a free tooltip): its window is
+    /// opened again from the pinned input at the old window's position, keeps its place in
+    /// the pin order and does not advance the §10 cascade counter, and the old window is
+    /// closed. Keys taken from the old window are stale afterwards. A window that cannot be
+    /// opened again keeps its provisional layout. [`ExamTooltips::prune`] calls this, so a
+    /// caller that prunes every frame needs nothing more. Returns how many were built again.
+    pub fn refresh_pins(&mut self, ui: &mut Ui) -> usize {
+        if self.pending_pins.is_empty() {
+            return 0;
+        }
+        let mut ready = Vec::new();
+        for (key, w) in self.pins.iter() {
+            if !self.pending_pins.iter().any(|(k, _)| k == key) {
+                continue;
+            }
+            if !ui.exists(w.window) || self.texts_ready(ui, &w.tooltip) {
+                ready.push(*key);
+            }
+        }
+        if ready.is_empty() {
+            return 0;
+        }
+        let old = std::mem::replace(&mut self.pins, PinRegistry::new());
+        let mut rebuilt = 0;
+        for (key, w) in old.iter() {
+            let pending = ready
+                .contains(key)
+                .then(|| self.pending_pins.iter().find(|(k, _)| k == key))
+                .flatten()
+                .map(|(_, tip)| tip.clone());
+            let w = match pending {
+                Some(tip) if ui.exists(w.window) => {
+                    let at = ui.layout_box(w.window).map_or((0, 0), |b| (b.l, b.t));
+                    match self.open_pin(ui, &tip, Some(at)) {
+                        Ok(new) => {
+                            self.release_window(ui, w);
+                            rebuilt += 1;
+                            new
+                        }
+                        Err(e) => {
+                            tracing::debug!("pinned tooltip not built again: {e}");
+                            w.clone()
+                        }
+                    }
+                }
+                _ => w.clone(),
+            };
+            self.pins.insert(*key, w);
+        }
+        // Done with: rebuilt, failed (kept provisional) or gone (pruned next).
+        self.pending_pins.retain(|(k, _)| !ready.contains(k));
+        rebuilt
     }
 
     /// Closes the pinned tooltip of `key`. Returns whether one was open.
     pub fn unpin(&mut self, ui: &mut Ui, key: ExamKey) -> bool {
+        self.pending_pins.retain(|(k, _)| *k != key);
         match self.pins.remove(key) {
             Some(w) => {
                 self.release_window(ui, &w);
@@ -471,12 +650,16 @@ impl ExamTooltips {
     }
 
     /// Forgets pinned windows that were destroyed elsewhere (a closed panel) and removes
-    /// their close buttons' game-code handlers.
+    /// their close buttons' game-code handlers, then builds again the pinned tooltips whose
+    /// fonts have arrived ([`ExamTooltips::refresh_pins`]).
     pub fn prune(&mut self, ui: &mut Ui) {
         let gone = self.pins.remove_where(|_, w| !ui.exists(w.window));
         for w in gone {
             self.release_window(ui, &w);
         }
+        let pins = &self.pins;
+        self.pending_pins.retain(|(k, _)| pins.contains(*k));
+        self.refresh_pins(ui);
     }
 
     /// Handles a UI event: a `Button_click` of a pinned window's close button closes that
@@ -618,6 +801,7 @@ impl ExamTooltips {
             rows: kept,
             failures,
             by_template,
+            unmeasured: false,
         }
     }
 
@@ -745,7 +929,7 @@ impl ExamTooltips {
             let own = ui.text_of(k);
             if !own.is_empty() {
                 self.set_colour(ui, k, row.colour);
-                return Filled::from_size(measure(ui, k, &own, wrap));
+                return Filled::from_size(self.measure(ui, k, &own, wrap));
             }
         }
         self.clear_row(ui, k);
@@ -779,7 +963,16 @@ impl ExamTooltips {
             self.clear_row(ui, k);
             return Filled::sized(0, 0);
         }
-        let Some(t) = Self::text_target(ui, k) else {
+        // A row element whose widget type the UI does not create as a Text (the skill and
+        // effect rows of `skill-tooltips.md` §4.3, such as `ExaminationSkillQualifier`, are
+        // examination widgets that show one text but get the fallback class) shows its text
+        // in a Text made from its own descriptor, which carries the row's text properties
+        // (font, colours, margins; Tessera rule).
+        let target = Self::text_target(ui, k).or_else(|| {
+            let style = ui.el(k).map(|e| e.desc.clone());
+            Self::code_text(ui, k, style)
+        });
+        let Some(t) = target else {
             tracing::debug!("examination row without a text element; text not shown");
             let d = ui.design_box(k).unwrap_or_default();
             return Filled::sized(d.w(), d.h());
@@ -799,7 +992,7 @@ impl ExamTooltips {
         let (w, h) = if fit {
             self.fit_fonts(ui, t, text, wrap)
         } else {
-            measure(ui, t, text, wrap)
+            self.measure(ui, t, text, wrap)
         };
         if t != k {
             ui.set_layout_box(t, IBox::from_xywh(b.l, b.t, w, h));
@@ -824,7 +1017,7 @@ impl ExamTooltips {
     /// `UICore_Text_fonts` in order until one fits; if none fits the last stays.
     fn fit_fonts(&self, ui: &mut Ui, k: ElementKey, text: &str, wrap: i32) -> (i32, i32) {
         let limit = ui.design_box(k).map_or(0, |b| b.h());
-        let first = measure(ui, k, text, wrap);
+        let first = self.measure(ui, k, text, wrap);
         if first.1 <= limit {
             return first;
         }
@@ -856,7 +1049,7 @@ impl ExamTooltips {
                     }],
                 }),
             );
-            last = measure(ui, k, text, wrap);
+            last = self.measure(ui, k, text, wrap);
             if last.1 <= limit {
                 break;
             }
@@ -937,7 +1130,7 @@ impl ExamTooltips {
             }
             self.set_colour(ui, e, line.colour.or(colour));
             ui.set_text(e, Some(line.text.clone()));
-            let (lw, lh) = measure(ui, e, &line.text, wrap);
+            let (lw, lh) = self.measure(ui, e, &line.text, wrap);
             ui.set_layout_box(e, IBox::from_xywh(0, y, lw, lh));
             y = y.saturating_add(lh);
             w = w.max(lw);
@@ -976,7 +1169,7 @@ impl ExamTooltips {
             };
             self.set_colour(ui, e, colour);
             ui.set_text(e, Some(text.to_string()));
-            let (w, th) = measure(ui, e, text, wrap);
+            let (w, th) = self.measure(ui, e, text, wrap);
             parts.push((e, w, th));
             let Some(c) = coin else { continue };
             let (iw, ih) = c
@@ -1268,10 +1461,30 @@ fn image_size(ui: &mut Ui, img: &ImageRef) -> Option<(i32, i32)> {
     }
 }
 
-/// Measures `text` in element `k` with wrap width `wrap` (`fonts.md` §7; the extent
-/// includes the element's margins). Without shaped text (fonts not loaded) the element's
-/// designed size stands in.
-fn measure(ui: &mut Ui, k: ElementKey, text: &str, wrap: i32) -> (i32, i32) {
+impl ExamTooltips {
+    /// Measures `text` in element `k` with wrap width `wrap` (`fonts.md` §7; the extent
+    /// includes the element's margins). Without shaped text (fonts not loaded) the
+    /// element's designed size stands in and the tooltip being built is marked
+    /// [`BuiltTooltip::unmeasured`].
+    fn measure(&self, ui: &mut Ui, k: ElementKey, text: &str, wrap: i32) -> (i32, i32) {
+        match shaped(ui, k, text, wrap) {
+            Some(e) => e,
+            None => {
+                self.unmeasured.set(true);
+                let d = ui
+                    .design_box(k)
+                    .or_else(|| ui.layout_box(k))
+                    .unwrap_or_default();
+                (d.w().max(0), d.h().max(0))
+            }
+        }
+    }
+}
+
+/// The extent of `text` in element `k` with wrap width `wrap` (`fonts.md` §7; it includes
+/// the element's margins), or `None` while the shaper cannot lay it out (its fonts are
+/// still loading).
+fn shaped(ui: &mut Ui, k: ElementKey, text: &str, wrap: i32) -> Option<(i32, i32)> {
     let props = ui.properties(k);
     let b = ui.layout_box(k).unwrap_or_default();
     let req = TextRequest {
@@ -1280,11 +1493,361 @@ fn measure(ui: &mut Ui, k: ElementKey, text: &str, wrap: i32) -> (i32, i32) {
         size: (b.w(), b.h()),
         wrap_width: Some(wrap.max(1)),
     };
-    match ui.env.shape_text(&req) {
-        Some(p) => (p.extent.0.clamp(0, wrap.max(1)), p.extent.1.max(0)),
-        None => {
-            let d = ui.design_box(k).unwrap_or(b);
-            (d.w().max(0), d.h().max(0))
+    ui.env
+        .shape_text(&req)
+        .map(|p| (p.extent.0.clamp(0, wrap.max(1)), p.extent.1.max(0)))
+}
+
+#[cfg(test)]
+mod tests {
+    //! Synthetic trees (invented IDs and sizes; types and properties are the placeholders of
+    //! `CharVocab::default()` and `Vocab::default()`).
+
+    use std::collections::HashMap;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    use tessera_formats::property::PropertyStruct;
+    use tessera_formats::ui_layout::UiLayout;
+
+    use super::*;
+    use crate::env::{PreparedText, UiEnv};
+    use crate::vocab::Vocab;
+
+    const EXAM: u32 = 0x22FF_6000;
+    const FRAME: u32 = 0x1000_0101;
+    const LIST: u32 = 0x1000_0102;
+    /// A row of a widget type the UI does not create as a Text (as
+    /// `ExaminationSkillQualifier`, `skill-tooltips.md` §4.3).
+    const SKILL_ROW: u32 = 0x1000_0103;
+    const SKILL_TYPE: u32 = 0x1000_7001;
+    const DESC_ROW: u32 = 0x1000_0104;
+    const PIN_LIST: u32 = 0x1000_0105;
+    const PIN_CLOSE: u32 = 0x1000_0106;
+
+    /// Texts of known extent; none of them can be measured until `ready` (fonts loading).
+    struct LateEnv {
+        layouts: HashMap<u32, Arc<UiLayout>>,
+        texts: HashMap<String, (i32, i32)>,
+        ready: Arc<AtomicBool>,
+    }
+
+    impl UiEnv for LateEnv {
+        fn layout(&mut self, did: Did) -> Option<Arc<UiLayout>> {
+            self.layouts.get(&did.0).cloned()
         }
+
+        fn shape_text(&mut self, request: &TextRequest<'_>) -> Option<Arc<PreparedText>> {
+            if !self.ready.load(Ordering::Relaxed) {
+                return None;
+            }
+            let extent = *self.texts.get(request.text)?;
+            Some(Arc::new(PreparedText {
+                extent,
+                ..PreparedText::default()
+            }))
+        }
+    }
+
+    fn typed(id: u32, ty: u32, (x, y, w, h): (i32, i32, i32, i32)) -> ElementDesc {
+        let mut d = ElementDesc {
+            element_id: id,
+            element_type: ty,
+            ..ElementDesc::default()
+        };
+        d.block.rect.x = x;
+        d.block.rect.y = y;
+        d.block.rect.width = w;
+        d.block.rect.height = h;
+        d.block.has_position = true;
+        d
+    }
+
+    fn prop(mut d: ElementDesc, pid: u32, value: PropertyValue) -> ElementDesc {
+        d.block
+            .properties
+            .entries
+            .push(PropertyEntry { pid, value });
+        d.block.properties.size.count = u32::try_from(d.block.properties.entries.len()).unwrap();
+        d
+    }
+
+    fn templates(ids: &[u32]) -> PropertyValue {
+        let p = Vocab::default().pids;
+        let elements = ids
+            .iter()
+            .map(|id| {
+                let mut s = PropertyStruct::default();
+                s.fields.push(PropertyEntry {
+                    pid: p.lb_template_layout,
+                    value: PropertyValue::DidRef(Did(EXAM)),
+                });
+                s.fields.push(PropertyEntry {
+                    pid: p.lb_template_element,
+                    value: PropertyValue::Enum(*id),
+                });
+                s.size.count = 2;
+                PropertyEntry {
+                    pid: p.lb_templates,
+                    value: PropertyValue::Struct(s),
+                }
+            })
+            .collect::<Vec<_>>();
+        PropertyValue::Array(PropertyArray {
+            count: u32::try_from(elements.len()).unwrap(),
+            elements,
+        })
+    }
+
+    fn layout() -> UiLayout {
+        let cv = CharVocab::default();
+        let v = Vocab::default();
+        let mut list = typed(LIST, cv.types.exam_list_box, (5, 5, 229, 90));
+        list = prop(list, v.pids.lb_templates, templates(&[SKILL_ROW, DESC_ROW]));
+        list = prop(list, v.pids.max_width, PropertyValue::Int(229));
+        let mut frame = typed(FRAME, v.types.field, (0, 0, 239, 100));
+        frame.children.push(list);
+        frame.children_size.count = 1;
+        // The pinned window at (300, 200): a list box for the tooltip and a close button.
+        let mut pinned = typed(cv.ids.pinned_tooltip, v.types.field, (300, 200, 250, 140));
+        pinned
+            .children
+            .push(typed(PIN_LIST, v.types.list_box, (5, 25, 229, 100)));
+        pinned
+            .children
+            .push(typed(PIN_CLOSE, v.types.button, (230, 2, 16, 16)));
+        pinned.children_size.count = 2;
+        let elements = vec![
+            frame,
+            pinned,
+            typed(SKILL_ROW, SKILL_TYPE, (0, 0, 229, 18)),
+            typed(DESC_ROW, cv.types.exam_generic, (0, 0, 220, 18)),
+        ];
+        let mut l = UiLayout {
+            did: Did(EXAM),
+            design_width: 1920,
+            design_height: 1080,
+            ..UiLayout::default()
+        };
+        l.elements_size.count = u32::try_from(elements.len()).unwrap();
+        l.elements = elements;
+        l
+    }
+
+    fn ui(ready: bool) -> (Ui, Arc<AtomicBool>) {
+        let flag = Arc::new(AtomicBool::new(ready));
+        let mut layouts = HashMap::new();
+        layouts.insert(EXAM, Arc::new(layout()));
+        let texts = [("Range 30m", (70, 16)), ("A short description", (150, 16))]
+            .into_iter()
+            .map(|(t, e)| (t.to_owned(), e))
+            .collect();
+        let env = LateEnv {
+            layouts,
+            texts,
+            ready: Arc::clone(&flag),
+        };
+        let mut ui = Ui::new(Box::new(env), Vocab::default(), (1920, 1080));
+        CharVocab::default().register_classes(&mut ui);
+        (ui, flag)
+    }
+
+    fn input() -> ExamTooltip {
+        ExamTooltip {
+            frame: ExamTemplate {
+                layout: EXAM,
+                element: FRAME,
+            },
+            rows: vec![
+                ExamRow::text("Range 30m"),
+                ExamRow::text("A short description"),
+            ],
+            comparisons: Vec::new(),
+            key: ExamKey {
+                instance: 0,
+                record: 0x7900_0002,
+            },
+            templates: None,
+        }
+    }
+
+    fn tips() -> ExamTooltips {
+        ExamTooltips::new(CharVocab::default())
+    }
+
+    /// The empty band under skill names (P8 audit): a skill row's widget type is created
+    /// with the fallback class, so its text had no element and the row kept its designed
+    /// size, blank.
+    #[test]
+    fn a_row_without_a_text_element_shows_its_text_in_one_made_from_its_descriptor() {
+        let (mut ui, _) = ui(true);
+        let tips = tips();
+        let built = tips.build(&mut ui, &input()).unwrap();
+        assert!(!built.unmeasured);
+        let row = built.by_template[0].expect("kept");
+        assert!(!ui.class(row).is_some_and(WidgetClass::is_text));
+        let t = ExamTooltips::text_target(&ui, row).expect("a text element");
+        assert_ne!(t, row);
+        assert_eq!(ui.text_of(t), "Range 30m");
+        let b = ui.layout_box(row).unwrap();
+        assert_eq!(
+            (b.w(), b.h()),
+            (70, 16),
+            "measured, not the designed 229 × 18"
+        );
+    }
+
+    #[test]
+    fn a_tooltip_built_while_its_fonts_load_is_built_again_when_they_arrive() {
+        let (mut ui, fonts) = ui(false);
+        let tips = tips();
+        let input = input();
+        let first = tips.build(&mut ui, &input).unwrap();
+        assert!(first.unmeasured);
+        // The designed sizes stood in: the list is as wide as the widest row's design.
+        assert_eq!(first.size.0, 229 + 10);
+        ui.move_to(first.frame, 40, 60);
+        assert!(!tips.texts_ready(&mut ui, &first));
+        assert!(tips.rebuild_when_ready(&mut ui, &first, &input).is_none());
+        assert!(ui.exists(first.frame));
+
+        fonts.store(true, Ordering::Relaxed);
+        assert!(tips.texts_ready(&mut ui, &first));
+        let again = tips
+            .rebuild_when_ready(&mut ui, &first, &input)
+            .expect("built again");
+        assert!(!again.unmeasured);
+        assert!(!ui.exists(first.frame));
+        assert_eq!(again.size, (150 + 10, 16 + 16 + 10));
+        let b = ui.layout_box(again.frame).unwrap();
+        assert_eq!((b.l, b.t), (40, 60));
+        // Measured now: nothing more to do.
+        assert!(tips.rebuild_when_ready(&mut ui, &again, &input).is_none());
+    }
+
+    #[test]
+    fn a_shown_hover_tooltip_is_shown_again_at_its_pointer_when_its_fonts_arrive() {
+        let (mut ui, fonts) = ui(false);
+        let tips = tips();
+        let input = input();
+        let shown = tips.show(&mut ui, &input, (300, 200)).unwrap();
+        assert!(shown.hover.unmeasured);
+        assert_eq!(shown.pointer, (300, 200));
+        assert!(tips.reshow_when_ready(&mut ui, &shown, &input).is_none());
+
+        fonts.store(true, Ordering::Relaxed);
+        let again = tips
+            .reshow_when_ready(&mut ui, &shown, &input)
+            .expect("shown again")
+            .unwrap();
+        assert!(!again.hover.unmeasured);
+        assert!(!ui.exists(shown.hover.frame));
+        assert_eq!(ui.tooltip_panel(), Some(again.hover.frame));
+        assert_eq!(again.pointer, (300, 200));
+        assert!(tips.reshow_when_ready(&mut ui, &again, &input).is_none());
+    }
+
+    #[test]
+    fn a_hidden_hover_tooltip_is_not_shown_again() {
+        let (mut ui, fonts) = ui(false);
+        let tips = tips();
+        let input = input();
+        let shown = tips.show(&mut ui, &input, (300, 200)).unwrap();
+        ui.hide_tooltip();
+        fonts.store(true, Ordering::Relaxed);
+        assert!(tips.reshow_when_ready(&mut ui, &shown, &input).is_none());
+        assert_eq!(ui.tooltip_panel(), None);
+    }
+
+    /// A hover tooltip the UI shows is not rebuilt as a free tooltip: the new frame would be
+    /// a root panel the §6.6 hiding rules do not know, and the UI would forget the old one.
+    #[test]
+    fn a_shown_hover_tooltip_is_not_rebuilt_as_a_free_tooltip() {
+        let (mut ui, fonts) = ui(false);
+        let tips = tips();
+        let mut input = input();
+        input.comparisons = vec![self::input()];
+        let shown = tips.show(&mut ui, &input, (300, 200)).unwrap();
+        assert!(shown.hover.unmeasured);
+        assert_eq!(shown.comparisons.len(), 1);
+        fonts.store(true, Ordering::Relaxed);
+        assert!(
+            tips.rebuild_when_ready(&mut ui, &shown.hover, &input)
+                .is_none()
+        );
+        let cmp = &shown.comparisons[0];
+        assert!(cmp.unmeasured);
+        assert!(tips.rebuild_when_ready(&mut ui, cmp, &input).is_none());
+        assert!(ui.exists(shown.hover.frame));
+        assert!(ui.exists(cmp.frame));
+        assert_eq!(ui.tooltip_panel(), Some(shown.hover.frame));
+        assert_eq!(ui.tooltip_extra_panels(), [cmp.frame]);
+    }
+
+    /// A pinned copy built while its fonts load keeps the designed sizes until they arrive,
+    /// then is built again in place (window position, pin order and cascade counter kept).
+    #[test]
+    fn a_pinned_tooltip_built_while_its_fonts_load_is_built_again_when_they_arrive() {
+        let (mut ui, fonts) = ui(false);
+        let mut tips = tips();
+        let input = input();
+        let mut other = self::input();
+        other.key.record = 0x7900_0003;
+        assert_eq!(
+            tips.pin(&mut ui, &input, (0, 0)).unwrap(),
+            PinOutcome::Pinned
+        );
+        assert_eq!(
+            tips.pin(&mut ui, &other, (0, 0)).unwrap(),
+            PinOutcome::Pinned
+        );
+        let before: Vec<(ExamKey, PinnedWindow)> = tips.pinned().cloned().collect();
+        assert!(before.iter().all(|(_, w)| w.tooltip.unmeasured));
+        assert_eq!(before[0].1.tooltip.size.0, 229 + 10, "designed sizes");
+        ui.move_to(before[0].1.window, 500, 400);
+        let counter = tips.pin_counter();
+        // Fonts still loading: nothing changes.
+        tips.prune(&mut ui);
+        assert_eq!(tips.refresh_pins(&mut ui), 0);
+        let same: Vec<(ExamKey, PinnedWindow)> = tips.pinned().cloned().collect();
+        assert_eq!(same, before);
+
+        fonts.store(true, Ordering::Relaxed);
+        tips.prune(&mut ui);
+        let after: Vec<(ExamKey, PinnedWindow)> = tips.pinned().cloned().collect();
+        assert_eq!(after.len(), 2);
+        assert_eq!(after[0].0, input.key, "pin order kept");
+        assert_eq!(after[1].0, other.key);
+        for ((_, old), (_, new)) in before.iter().zip(&after) {
+            assert!(!ui.exists(old.window));
+            assert!(ui.exists(new.window));
+            assert!(!new.tooltip.unmeasured);
+            assert_eq!(new.tooltip.size, (150 + 10, 16 + 16 + 10));
+        }
+        let b = ui.layout_box(after[0].1.window).unwrap();
+        assert_eq!(
+            (b.l, b.t),
+            (500, 400),
+            "the moved window stays where it was"
+        );
+        assert_eq!(tips.pin_counter(), counter);
+        // The new close button closes its window; the old registration is gone with it.
+        let close = after[0].1.close_buttons[0];
+        let click = ui.vocab().msgs.button_click;
+        ui.take_events();
+        ui.post(close, click, crate::events::MsgArg::default());
+        let events = ui.take_events();
+        assert!(events.iter().any(|e| tips.handle_event(&mut ui, e)));
+        assert!(!ui.exists(after[0].1.window));
+        assert_eq!(tips.pinned().count(), 1);
+        // Built once: nothing more to do.
+        assert_eq!(tips.refresh_pins(&mut ui), 0);
+        // Unpinning a provisional pin forgets its input.
+        fonts.store(false, Ordering::Relaxed);
+        let mut third = self::input();
+        third.key.record = 0x7900_0004;
+        tips.pin(&mut ui, &third, (0, 0)).unwrap();
+        assert!(tips.unpin(&mut ui, third.key));
+        fonts.store(true, Ordering::Relaxed);
+        assert_eq!(tips.refresh_pins(&mut ui), 0);
     }
 }

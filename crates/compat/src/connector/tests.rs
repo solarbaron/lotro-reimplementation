@@ -1932,7 +1932,17 @@ fn driver_at_characters_with(
     chat: Option<SocketAddrV4>,
     cancel: Arc<AtomicBool>,
 ) -> (World, SessionDriver<FakeNet>, Server) {
-    let (world, mut d) = driver_at_login_with(service, lifetime, chat, cancel);
+    driver_at_characters_from(service, session_start(lifetime, chat, cancel))
+}
+
+/// A driver started from `start`, at the character list.
+fn driver_at_characters_from(
+    service: Service,
+    start: SessionStart,
+) -> (World, SessionDriver<FakeNet>, Server) {
+    let world = new_world(service);
+    let mut net = FakeNet(world.clone());
+    let mut d = SessionDriver::start(&mut net, start, 0.0, &go).expect("start");
     let mut login = Server::new(0x0111, 0xBEEF_0001);
     world.deliver(login.challenge(0xBEEF_0001), LOGIN_SERVER);
     world.deliver(

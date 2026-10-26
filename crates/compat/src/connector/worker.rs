@@ -702,6 +702,10 @@ fn session_loop<N: ConnectorNet>(
             return;
         }
         let t = now();
+        // Datagrams still queued after the pass's flush are deliberately not "due now": the
+        // flush stops at a failed send, and a send error that persists (a revoked right
+        // fails every send) would otherwise wake this loop every `LOOP_WAIT_MIN`. The next
+        // timer or `LOOP_WAIT_MAX` tries the queue again (`SessionMultiplexer::next_deadline`).
         let deadline = if busy {
             Some(t)
         } else {

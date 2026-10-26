@@ -8,8 +8,10 @@ use std::net::{Ipv4Addr, SocketAddrV4};
 
 use tessera_compat::connector::worker::{LOOP_WAIT_MAX, LOOP_WAIT_MIN, loop_wait};
 use tessera_compat::session::{
-    ConnectChallengeHeader, ConnectionState, DatagramHeader, IsaacCipher, OptionalHeaders,
-    SessionAuthHeader, SessionEvent, SessionMultiplexer, WireCodecs, encode_datagram, split_blob,
+    BLOB_REASSEMBLY_EXPIRY_SEC, BlobFragment, CLOSING_CLEANUP_SEC, ConnectChallengeHeader,
+    ConnectionState, DISCONNECT_FLUSH_LIMIT_SEC, DISCONNECT_SENT_LIMIT_SEC, DatagramHeader,
+    EXTENDED_SILENCE_TIMEOUT_SEC, IsaacCipher, OptionalHeaders, SessionAuthHeader, SessionEvent,
+    SessionMultiplexer, WireCodecs, encode_datagram, split_blob,
 };
 
 const SERVER: SocketAddrV4 = SocketAddrV4::new(Ipv4Addr::new(198, 51, 100, 40), 9000);
@@ -92,9 +94,14 @@ impl Server {
             self.seq += 1;
             let _ = self.isaac.next_mask();
         }
-        self.seq += 1;
         let frags =
-            split_blob(2, (self.seq & 0xFFFF) as u16, 1, 0, None, 0x10, b"x").expect("split");
+            split_blob(2, ((self.seq + 1) & 0xFFFF) as u16, 1, 0, None, 0x10, b"x").expect("split");
+        self.carrying(&frags)
+    }
+
+    /// The next sequenced packet, carrying `frags`.
+    fn carrying(&mut self, frags: &[BlobFragment]) -> Vec<u8> {
+        self.seq += 1;
         let mask = self.isaac.next_mask();
         encode_datagram(
             DatagramHeader {
@@ -103,7 +110,7 @@ impl Server {
                 ..DatagramHeader::default()
             },
             &OptionalHeaders::default(),
-            &frags,
+            frags,
             Some(mask),
             None,
         )
@@ -266,6 +273,233 @@ fn the_disconnect_flush_retransmit_and_end_are_deadlines() {
     assert!(near(mux.next_deadline(1.0), 2.0));
     fires_at(&mut mux, id, 2.0);
     assert!(near(mux.next_deadline(2.0), 3.0));
+    for k in 3..=20 {
+        let due = f64::from(k);
+        assert!(
+            near(mux.next_deadline(due - 1.0), due),
+            "retransmit at {due}"
+        );
+        fires_at(&mut mux, id, due);
+    }
+    // State 7 ends 20 s after it began (§6.1 table); the retransmit due then is not sent.
+    let end = 1.0 + DISCONNECT_SENT_LIMIT_SEC;
+    assert!(near(mux.next_deadline(20.0), end));
+    mux.tick(end - JUST_BEFORE).expect("tick");
+    assert_eq!(state(&mux, id), ConnectionState::DisconnectSent);
+    drain(&mut mux, id);
+    mux.tick(end).expect("tick");
+    assert_eq!(state(&mux, id), ConnectionState::Closing);
+    assert_eq!(drain(&mut mux, id), 0, "no DisconnectHeader once closed");
+    // Then the cleanup of State 8.
+    assert!(near(mux.next_deadline(end), end + CLOSING_CLEANUP_SEC));
+    assert_eq!(mux.tick(end + CLOSING_CLEANUP_SEC).expect("tick"), vec![id]);
+    assert_eq!(mux.next_deadline(end + CLOSING_CLEANUP_SEC), None);
+}
+
+/// The state of connection `id`.
+fn state(mux: &SessionMultiplexer, id: u16) -> ConnectionState {
+    mux.connection(id).expect("conn").state()
+}
+
+/// An unsequenced control packet from the server carrying `opt`.
+fn control(opt: OptionalHeaders) -> Vec<u8> {
+    encode_datagram(
+        DatagramHeader {
+            rec_id: ASSIGNED,
+            seq_num: 1,
+            ..DatagramHeader::default()
+        },
+        &opt,
+        &[],
+        None,
+        None,
+    )
+    .expect("control")
+}
+
+/// A connection in State 5 since `t`, reached with an unsequenced packet (so no
+/// acknowledgement is owed), with nothing queued.
+fn connected_at(t: f64) -> (SessionMultiplexer, u16) {
+    let (mut mux, _) = at_login(0.0);
+    let id = receive(&mut mux, &challenge(), 0.0);
+    receive(
+        &mut mux,
+        &control(OptionalHeaders {
+            cumulative_ack: Some(0),
+            ..OptionalHeaders::default()
+        }),
+        t,
+    );
+    assert_eq!(state(&mux, id), ConnectionState::Connected);
+    drain(&mut mux, id);
+    (mux, id)
+}
+
+/// The connector's loop on a virtual clock from `t` until `until` or until `done` holds:
+/// tick, then wait as [`loop_wait`] says. Asserts that no wait is the shortest unless a
+/// deadline is that close (no spin). Returns the pass times and the time it stopped.
+fn run_loop(
+    mux: &mut SessionMultiplexer,
+    id: u16,
+    mut t: f64,
+    until: f64,
+    mut done: impl FnMut(&mut SessionMultiplexer, f64) -> bool,
+) -> (Vec<f64>, f64) {
+    let mut passes = Vec::new();
+    while t < until {
+        mux.tick(t).expect("tick");
+        passes.push(t);
+        if done(mux, t) {
+            return (passes, t);
+        }
+        if mux.connection(id).is_some() {
+            drain(mux, id);
+        }
+        let deadline = mux.next_deadline(t);
+        let wait = loop_wait(t, deadline);
+        if wait == LOOP_WAIT_MIN {
+            let left = deadline.map_or(f64::INFINITY, |d| d - t);
+            assert!(left <= LOOP_WAIT_MIN.as_secs_f64(), "spun at {t}");
+        }
+        t += wait.as_secs_f64();
+    }
+    (passes, t)
+}
+
+/// Whether a pass at `pass` is on time for a timer due at `due`: not before it and late by
+/// at most the shortest wait (a pass that lands a hair before its timer waits 1 ms more).
+fn on_time(pass: f64, due: f64) -> bool {
+    pass >= due - 1e-9 && pass - due < 1.1e-3
+}
+
+/// Fewer passes than `secs` at the longest wait plus `extra`.
+fn few(passes: &[f64], secs: f64, extra: usize) -> bool {
+    passes.len() <= (secs / LOOP_WAIT_MAX.as_secs_f64()) as usize + extra
+}
+
+#[test]
+fn out_of_order_acknowledgements_waiting_are_due_at_once() {
+    let (mut mux, id) = connected_at(5.0);
+    assert!(mux.next_deadline(5.0).is_some_and(|d| d > 5.5));
+    // The server asks for a packet the client never sent: it goes on the
+    // OutOfOrderAckHeader queue (§5.3), flushed on the next tick (§5.4).
+    receive(
+        &mut mux,
+        &control(OptionalHeaders {
+            sequence_nak: Some(vec![50]),
+            ..OptionalHeaders::default()
+        }),
+        6.0,
+    );
+    drain(&mut mux, id);
+    assert!(near(mux.next_deadline(6.0), 6.0), "due now");
+    mux.tick(6.0).expect("tick");
+    assert_eq!(drain(&mut mux, id), 1, "the OutOfOrderAckHeader");
+    // Flushed: no longer due, so the loop does not stay at its shortest wait.
+    assert!(mux.next_deadline(6.0).is_some_and(|d| d > 6.5));
+}
+
+#[test]
+fn the_expiry_of_an_incomplete_blob_is_a_deadline() {
+    let blob = vec![0x5Au8; 600];
+    let frags = split_blob(2, 1, 7, 0, None, 0x10, &blob).expect("split");
+    assert_eq!(frags.len(), 2);
+    let (mut mux, _) = at_login(0.0);
+    let id = receive(&mut mux, &challenge(), 0.0);
+    let mut server = Server::new();
+    receive(&mut mux, &server.packet(0), 0.1);
+    receive(&mut mux, &server.carrying(&frags[..1]), 5.0);
+    drain(&mut mux, id);
+    let expiry = 5.0 + BLOB_REASSEMBLY_EXPIRY_SEC;
+    // The acknowledgements every 2 s (at 34 and 36 s) and the clock sync (30.1 s) are
+    // the other timers: a pass at 35 s is the expiry's.
+    let (passes, end) = run_loop(&mut mux, id, 5.0, expiry + 1.0, |_, t| t > expiry);
+    // Purged within the shortest wait of its time, not up to the longest wait late.
+    assert!(on_time(end, expiry), "purged at {end}");
+    assert!(few(&passes, expiry - 5.0, 40), "{} passes", passes.len());
+    // Purged: the second fragment starts a new blob instead of completing it.
+    receive(&mut mux, &server.carrying(&frags[1..]), end);
+    let conn = mux.connection_mut(id).expect("conn");
+    while let Some(e) = conn.pop_event() {
+        assert!(
+            !matches!(e, SessionEvent::BlobReceived(_)),
+            "the expired blob completed"
+        );
+    }
+}
+
+#[test]
+fn an_incomplete_blob_completes_before_its_expiry() {
+    let blob = vec![0x5Au8; 600];
+    let frags = split_blob(2, 1, 7, 0, None, 0x10, &blob).expect("split");
+    let (mut mux, _) = at_login(0.0);
+    let id = receive(&mut mux, &challenge(), 0.0);
+    let mut server = Server::new();
+    receive(&mut mux, &server.packet(0), 0.1);
+    receive(&mut mux, &server.carrying(&frags[..1]), 5.0);
+    drain(&mut mux, id);
+    let expiry = 5.0 + BLOB_REASSEMBLY_EXPIRY_SEC;
+    let (_, end) = run_loop(&mut mux, id, 5.0, expiry - 0.5, |_, _| false);
+    receive(&mut mux, &server.carrying(&frags[1..]), end);
+    let conn = mux.connection_mut(id).expect("conn");
+    let mut done = false;
+    while let Some(e) = conn.pop_event() {
+        done |= matches!(e, SessionEvent::BlobReceived(_));
+    }
+    assert!(done, "the blob completed (the control of the expiry test)");
+}
+
+#[test]
+fn the_extended_silence_limit_is_a_deadline() {
+    let (mut mux, id) = connected_at(5.0);
+    mux.connection_mut(id)
+        .expect("conn")
+        .set_extended_silence_timeout(true);
+    // The last packet at 7 s: the limit ends at 307 s, apart from the clock syncs (every
+    // 30 s from 5 s, §8.1).
+    receive(
+        &mut mux,
+        &control(OptionalHeaders {
+            cumulative_ack: Some(0),
+            ..OptionalHeaders::default()
+        }),
+        7.0,
+    );
+    drain(&mut mux, id);
+    let limit = 7.0 + EXTENDED_SILENCE_TIMEOUT_SEC;
+    let (passes, end) = run_loop(&mut mux, id, 7.0, limit + 1.0, |m, _| {
+        state(m, id) == ConnectionState::Closing
+    });
+    // Past the normal 60 s limit it was still connected (it ran on).
+    assert!(passes.iter().any(|&p| p > 70.0));
+    // The limit fires once exceeded, within the shortest wait of its time (§8.2).
+    assert!(end > limit && on_time(end, limit), "closed at {end}");
+    assert!(few(&passes, limit - 7.0, 20), "{} passes", passes.len());
+}
+
+#[test]
+fn the_flush_waits_twenty_seconds_for_unacknowledged_packets() {
+    let (mut mux, _) = at_login(0.0);
+    let id = receive(&mut mux, &challenge(), 0.0);
+    let mut server = Server::new();
+    receive(&mut mux, &server.packet(0), 0.1);
+    let conn = mux.connection_mut(id).expect("conn");
+    conn.send_blob(1, 0, 0x10, b"unacknowledged", 1.0, None)
+        .expect("blob");
+    drain(&mut mux, id);
+    mux.connection_mut(id)
+        .expect("conn")
+        .request_disconnect(3.0);
+    assert_eq!(state(&mux, id), ConnectionState::DisconnectingFlush);
+    // The retransmit table is not empty: State 6 waits up to 20 s (§6.1 table, §8.2), and
+    // that is its only timer.
+    let end = 3.0 + DISCONNECT_FLUSH_LIMIT_SEC;
+    assert!(near(mux.next_deadline(3.0), end));
+    let (passes, at) = run_loop(&mut mux, id, 3.0, end + 1.0, |m, _| {
+        state(m, id) == ConnectionState::DisconnectSent
+    });
+    assert!(on_time(at, end), "the DisconnectHeader at {at}");
+    assert!(few(&passes, end - 3.0, 2), "{} passes", passes.len());
 }
 
 #[test]

@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Discovery's log lines name kinds of locations and counts, never a path below the
-//! user's home (`official-entry.md` §7.3: no user data in logs). Every line of every level
-//! is captured by a subscriber of this test and searched for the synthetic directory names.
+//! user's home. The rule extends `official-entry.md` §7.3; the path rule is a pending spec
+//! question (`docs/m8-remediation.md` §15, E §7.3). Every line of every level is captured
+//! by a subscriber of this test and searched for the synthetic directory names.
 
 mod common;
 

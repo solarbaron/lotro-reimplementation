@@ -1818,11 +1818,18 @@ impl<N: ConnectorNet> SessionDriver<N> {
             {
                 at(self.chat_retry_at);
             }
+            // The conditions under which `run_refresh` acts on a past deadline
+            // (`TicketRefresher::poll_refresh_request`'s guards, the trusted URL and no
+            // refresh running): a refresh that step would not send is no deadline, so it can
+            // never hold the loop at its shortest wait.
             let r = &self.refresher;
             if self.refreshing.is_none()
                 && self.refresh_secure
                 && r.lifetime_sec() > 0
                 && r.attempt_count() <= 2
+                && !r.ticket().is_empty()
+                && !r.account_name().is_empty()
+                && !r.auth_server_url().is_empty()
             {
                 at(r.start_time_sec() + r.next_refresh_offset_sec());
             }

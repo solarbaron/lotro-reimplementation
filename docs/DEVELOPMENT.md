@@ -150,7 +150,7 @@ in `crates/` and `apps/` that decodes bytes or text that Tessera did not write i
 process: install records and files, network messages, settings, the keymap file, skins and UI
 XML, plugin descriptors and plugin data, ABC files, scenario files and their input scripts, and
 logs read back. A file Tessera wrote in an earlier run counts; in-memory data the same process
-produced does not. `crates/compat` is outside this rule for P8 (the M8 package audits it).
+produced does not. `crates/compat` (M8) is covered too, by `fuzz/coverage/compat.toml`.
 
 `fuzz/coverage/*.toml` records, per crate and app, each parser with the fuzz target that drives
 it: `data.toml` for the data crates, `runtime.toml` for the runtime crates and the apps.

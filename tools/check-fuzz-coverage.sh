@@ -221,7 +221,6 @@ EOF
                     sed 's/^exempt = .*/exempt = "covered by compat_wire"/' "$m" > "$m.new" && mv "$m.new" "$m" ;;
             esac ;;
         exemptx) sed 's/^exempt = .*/exempt = "x"/' "$m" > "$m.new" && mv "$m.new" "$m" ;;
-        exemptcompat) sed 's/^exempt = .*/exempt = "covered by compat_wire"/' "$m" > "$m.new" && mv "$m.new" "$m" ;;
         gap) sed 's/^exempt = /gap = /' "$m" > "$m.new" && mv "$m.new" "$m" ;;
         newfn) printf 'pub fn decode_hostile(b: &[u8]) {}\n' >> "$d/crates/alpha/src/lib.rs" ;;
         skipfns) printf 'pub fn decode_hostile(b: &[u8]) {}\n' >> "$d/crates/alpha/src/lib.rs"
@@ -313,7 +312,6 @@ compatsrc|1|\(c\) crates/compat/src/lib.rs: decode_wire \(line 1\)
 compatbin|1|\(b\) compat_wire \(fuzz/fuzz_targets/compat_wire.rs\)
 compatcovered|0|covered: crates/compat/src/lib.rs decode_wire \(line 1\) by fixture.toml:[0-9]+ target compat_wire
 exemptx|1|\(m\) .*fixture.toml:9: exempt names no covering fuzz target
-exemptcompat|1|\(m\) .*fixture.toml:9: exempt names no covering fuzz target
 gap|1|\(g\) .*fixture.toml:9: apps/tool/src/main.rs read_config
 newfn|1|\(c\) crates/alpha/src/lib.rs: decode_hostile \(line 18\) \(the file has a \[\[parser\]\], fixture.toml:2
 skipfns|0|covered: crates/alpha/src/lib.rs decode_hostile \(line 18\) by skip crates/alpha/src/lib.rs

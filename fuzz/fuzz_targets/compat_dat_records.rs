@@ -7,8 +7,9 @@
 //! of `resolve_bit_tree_table` and the full dictionary parser.
 //!
 //! Raw input rarely carries the superblock magic, a DID-map DID or the format UUID, so
-//! three of the four modes place those first and fill the rest from the input. The record
-//! DIDs are made up (the real ones are resolved at run time from the install).
+//! three of the four modes place those first and fill the rest from the input. The dictionary
+//! record DIDs are made up; the DID-map DID is the format value `official-session.md` §4.1.3
+//! item 1 records (the code resolves the real one at run time from the install).
 
 #![no_main]
 

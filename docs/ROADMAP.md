@@ -2764,7 +2764,7 @@ budgets hold in the busiest scenario on the reference machine. P8 builds no new 
 presentation; it checks what P0–P6 built (P7 was dropped by the owner on 2026-10-16, so P8
 depends on P1–P6). Client half only: `server-content.md` §7 is unchanged, `tessera-server`
 runs no gameplay rule and links no data crate. `crates/compat` (M8) is outside P8 and is
-audited by the M8 package. Started 2026-10-23 on branch `p8` (worktree `wt-p8`).
+audited by the M8 package (its parsers are in the fuzz coverage check since 2026-10-26). Started 2026-10-23 on branch `p8` (worktree `wt-p8`).
 
 <a id="p8-deliverables"></a>
 **Deliverables**

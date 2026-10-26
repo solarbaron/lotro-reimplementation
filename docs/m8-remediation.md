@@ -769,3 +769,22 @@ From the `m8-connector` build (entry E = `official-entry.md`):
   chat socket.
 - **E OE-T8 (b):** name `ureq` in the manifest clause as the one HTTPS dependency of the
   network-access file.
+- **L §3.5:** whether `LeaveQueue` is sent when the user cancels the login while queued (the code
+  sends nothing after a cancel).
+- **L §3:** which `User-Agent` the exchanges carry and whether a system proxy is used (the code
+  sends a neutral value and uses no proxy).
+- **W §3.6:** whether a `WorldReferralHeader` is valid outside world entry, and how long the client
+  waits between 0x6F and 0x90 (the code ignores it outside entry or the world and fails the entry
+  after 60 s).
+- **S §8.2:** how long the client waits for the disconnect flush at logout (the code stops after
+  5 s).
+- **P §6.6.3:** the delay after a chat attempt that could not bind (the code waits 30 s).
+- **E §8.5:** a setting for the network version when the install gives none (`[Official]` allows
+  only `last_world`).
+- **S §3.4 step 2:** a datagram naming a connection's ID from another address: discarded, or does
+  step 3 apply? May a world server assign a client ID the login connection holds? (The code
+  discards, except while a connection from that address waits for its challenge.)
+- **W §3.6 / §3.4:** whether 0xB3 ends the session in the login and in-world stages too (the code
+  does), and the world-entry deadline (the code fails the entry after 60 s).
+- **E §7.3:** extend "no credentials in logs" to install paths and other user paths (the code logs
+  kinds only).

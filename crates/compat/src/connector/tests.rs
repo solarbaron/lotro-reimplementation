@@ -2423,6 +2423,45 @@ fn a_cancel_two_seconds_into_the_login_handshake_sends_nothing() {
 }
 
 #[test]
+fn a_cancel_during_a_step_with_the_resend_due_sends_no_session_auth() {
+    let (world, mut d) = driver_at_login(Service::default(), 0);
+    assert_eq!(world.take_sent().len(), 1);
+    d.step(1.0, true, &go);
+    assert!(world.take_sent().is_empty(), "no retransmission before 2 s");
+    // The retransmission is due at 2 s; the cancel holds while this pass runs.
+    d.step(2.5, true, &cancelled);
+    assert!(
+        world.take_sent().is_empty(),
+        "a datagram (the SessionAuthHeader) after the cancel"
+    );
+    d.begin_shutdown(2.6);
+    assert_eq!(d.connection_states().0, None, "closed locally");
+    for t in [3.0, 4.6, 8.0, 21.0] {
+        let _ = d.shutdown_step(t);
+        assert!(world.take_sent().is_empty(), "a datagram at {t}");
+    }
+}
+
+#[test]
+fn a_challenge_read_in_a_cancelled_step_is_not_answered() {
+    let (world, mut d) = driver_at_login(Service::default(), 0);
+    assert_eq!(world.take_sent().len(), 1);
+    let login = Server::new(0x0111, 0xBEEF_0001);
+    world.deliver(login.challenge(0xBEEF_0001), LOGIN_SERVER);
+    d.step(0.5, true, &cancelled);
+    assert!(
+        world.take_sent().is_empty(),
+        "a datagram (the ConnectAccept) after the cancel"
+    );
+    d.begin_shutdown(0.6);
+    assert_eq!(d.connection_states().0, None, "closed locally");
+    for t in [1.0, 2.5, 4.6, 21.0] {
+        let _ = d.shutdown_step(t);
+        assert!(world.take_sent().is_empty(), "a datagram at {t}");
+    }
+}
+
+#[test]
 fn a_world_challenge_after_the_cancel_is_not_answered() {
     let (world, mut d, login) = driver_at_characters(Service::default(), 0);
     d.command(
@@ -2492,7 +2531,7 @@ fn driver_with_chat_handshake() -> (World, SessionDriver<FakeNet>, Server) {
     assert!(d.in_world());
     let (player, name) = d.wants_chat(1.2).expect("the chat session is due");
     let net = FakeNet(world.clone());
-    d.attach_chat(net.chat_binder().expect("binder"), player, &name, 1.2);
+    d.attach_chat(net.chat_binder().expect("binder"), player, &name, 1.2, &go);
     // The first attempt follows the initial delay (§6.6.3, 1 s).
     d.step(2.3, true, &go);
     assert!(
@@ -2533,6 +2572,65 @@ fn a_cancel_during_the_chat_handshake_sends_no_chat_datagram() {
         t += 0.5;
     }
     assert!(said_disconnect, "the world connection said Disconnect");
+}
+
+#[test]
+fn a_cancel_during_a_step_with_the_chat_resend_due_sends_nothing() {
+    let (world, mut d, _login) = driver_with_chat_handshake();
+    // The chat handshake's retransmission is due 2 s after 2.3 s; the cancel holds while
+    // this pass runs.
+    d.step(4.5, true, &cancelled);
+    assert!(world.take_sent().is_empty(), "a datagram after the cancel");
+    d.begin_shutdown(4.6);
+    let mut t = 4.6;
+    while t < 30.0 {
+        let _ = d.shutdown_step(t);
+        for (_, dst) in world.take_sent() {
+            assert_ne!(dst, CHAT_SERVER, "a chat datagram at {t}");
+        }
+        t += 0.5;
+    }
+}
+
+#[test]
+fn a_chat_attachment_after_the_cancel_binds_nothing() {
+    let (world, mut d, mut login) = driver_at_characters_with(
+        Service {
+            chat_socket: true,
+            ..Service::default()
+        },
+        0,
+        Some(CHAT_SERVER),
+        Arc::default(),
+    );
+    d.command(
+        &Command::EnterWorld {
+            character: "Aldo".to_owned(),
+        },
+        1.0,
+    )
+    .expect("enter");
+    world.deliver(login.event(0x90, &session_ready()), LOGIN_SERVER);
+    d.step(1.1, true, &go);
+    let (player, name) = d.wants_chat(1.2).expect("the chat session is due");
+    let net = FakeNet(world.clone());
+    d.attach_chat(
+        net.chat_binder().expect("binder"),
+        player,
+        &name,
+        1.2,
+        &cancelled,
+    );
+    assert_eq!(
+        world.chat_binds.load(Ordering::SeqCst),
+        0,
+        "a chat socket was bound"
+    );
+    d.step(2.3, true, &cancelled);
+    assert!(
+        world.take_sent().iter().all(|(_, dst)| *dst != CHAT_SERVER),
+        "a chat datagram after the cancel"
+    );
 }
 
 #[test]

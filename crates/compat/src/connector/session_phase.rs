@@ -749,8 +749,12 @@ impl<N: ConnectorNet> SessionDriver<N> {
     /// One pass: read the socket (when `read` and below [`DRIVER_EVENT_CAP`]; the connector
     /// stops reading while its event queue is full), run the connections, the chat client
     /// and the ticket refresh, and send what is due (acknowledgements and keep-alives go out
-    /// either way). Once `stop` holds (the attempt was cancelled) no referral is accepted
-    /// and no ticket refresh is started. Returns whether anything arrived or was produced.
+    /// either way). Once `stop` holds (the attempt was cancelled) no referral is accepted,
+    /// no ticket refresh is started and nothing is sent: the chat client is not run and
+    /// nothing is ticked or flushed, so a connection still in its handshake sends no
+    /// retransmitted `SessionAuthHeader` or `ReferralAuthHeader` and no `ConnectAccept` for
+    /// a challenge read in this pass; the shutdown that follows closes it without a word
+    /// (module docs "Ending the session"). Returns whether anything arrived or was produced.
     pub fn step(&mut self, now: f64, read: bool, stop: &dyn Fn() -> bool) -> bool {
         if self.ended {
             return false;
@@ -759,11 +763,15 @@ impl<N: ConnectorNet> SessionDriver<N> {
         let read = read && !self.full();
         let read_any = read && self.receive(now, stop) > 0;
         self.run_links(now, stop);
+        self.run_refresh(now, stop);
+        if stop() {
+            return read_any || self.events.len() != before;
+        }
         if read && !self.ended && !self.full() {
-            // The chat client reads its own socket: it pauses with the session's.
+            // The chat client reads its own socket: it pauses with the session's. It ticks
+            // and flushes its own connection, so it runs only before the cancel.
             self.run_chat(now);
         }
-        self.run_refresh(now, stop);
         self.enter_deadline(now);
         if let Some(ack) = self.adapter.portal_loading(true, false) {
             // Interim departure from `official-messages-play.md` §4.5 step 4 (engineering
@@ -774,6 +782,11 @@ impl<N: ConnectorNet> SessionDriver<N> {
         }
         self.send_pending(now);
         self.tick(now);
+        if stop() {
+            // Cancelled while this pass ran: what the tick queued (it may hold the ticket)
+            // is not sent; the shutdown wipes a handshake connection's queue.
+            return read_any || self.events.len() != before;
+        }
         self.flush(now);
         read_any || self.events.len() != before
     }
@@ -1715,17 +1728,22 @@ impl<N: ConnectorNet> SessionDriver<N> {
 
     /// Opens the chat-server session with `binder` (`official-messages-play.md` §6.6). A
     /// failure is tried again after [`CHAT_RETRY_SEC`] (§6.6.3's Initial Connect Policy),
-    /// with one warning.
+    /// with one warning. `stop` is looked at right before the socket is bound: once it holds
+    /// (the attempt was cancelled) nothing is bound and the chat session is not opened.
     pub fn attach_chat(
         &mut self,
         binder: Box<dyn FnMut() -> Result<N::Udp, crate::play::PlayError> + Send>,
         player: u64,
         name: &str,
         now: f64,
+        stop: &dyn Fn() -> bool,
     ) {
         let Some(endpoint) = self.chat_endpoint else {
             return;
         };
+        if stop() || self.ended {
+            return;
+        }
         let config = ChatConfig::new(
             endpoint,
             self.handoff.subscription_name(),

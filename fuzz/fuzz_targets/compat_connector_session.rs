@@ -328,11 +328,13 @@ fuzz_target!(|data: &[u8]| {
     let mut in_world = false;
     let mut now = 0.0f64;
     let step = |driver: &mut SessionDriver<Net>, now: f64| {
-        // Bit 6 of the first byte: the attempt is cancelled (no referral, no refresh).
-        driver.step(now, true, &|| flags & 0x40 != 0);
+        // Bit 6 of the first byte: the attempt is cancelled (no referral, no refresh, no
+        // send, no chat socket).
+        let stop = || flags & 0x40 != 0;
+        driver.step(now, true, &stop);
         if let Some((player, name)) = driver.wants_chat(now) {
             match net.chat_binder() {
-                Some(b) => driver.attach_chat(b, player, &name, now),
+                Some(b) => driver.attach_chat(b, player, &name, now, &stop),
                 None => driver.chat_failed(now),
             }
         }

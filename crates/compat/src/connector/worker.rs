@@ -653,7 +653,7 @@ fn session_loop<N: ConnectorNet>(
             && !control.cancelled()
         {
             match net.chat_binder() {
-                Some(binder) => driver.attach_chat(binder, player, &name, t),
+                Some(binder) => driver.attach_chat(binder, player, &name, t, &stop),
                 None => driver.chat_failed(t),
             }
         }

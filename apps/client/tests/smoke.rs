@@ -2,6 +2,9 @@
 //! End-to-end `--smoke` runs, in process. Skipped when no GPU adapter (not even a software
 //! one) is available. The real-data run needs `TESSERA_GAME_DIR` and only reads the install.
 
+#[path = "../../../crates/render/tests/support/gpu.rs"]
+mod gpu;
+
 use clap::Parser as _;
 use tessera_client::Args;
 use tessera_client::runtime::DataStatus;
@@ -39,6 +42,8 @@ fn run(extra: &[&str]) -> Option<SmokeReport> {
 
 #[test]
 fn smoke_without_game_data() {
+    // One GPU test at a time in this binary (`gpu.rs`), held for the whole test.
+    let _gpu = gpu::GpuLock::acquire();
     let Some(report) = run(&["--no-data"]) else {
         return;
     };
@@ -51,6 +56,8 @@ fn smoke_without_game_data() {
 
 #[test]
 fn smoke_with_real_data() {
+    // One GPU test at a time in this binary (`gpu.rs`), held for the whole test.
+    let _gpu = gpu::GpuLock::acquire();
     let Some(dir) = std::env::var_os("TESSERA_GAME_DIR") else {
         eprintln!("skipping: TESSERA_GAME_DIR is not set");
         return;

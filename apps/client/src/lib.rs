@@ -160,3 +160,18 @@ pub fn dispatch(args: &Args) -> Dispatch {
         Dispatch::Windowed
     }
 }
+
+/// The GPU lock of this crate's unit tests: a test that opens a device holds the guard
+/// for as long as any of its GPU objects lives (take it before the renderer, so that it
+/// is dropped last), and the unit tests then use the GPU one at a time, as the
+/// integration tests do (`crates/render/tests/support/gpu.rs`). Test processes of
+/// `tessera-render` and `tessera-explorer` crashed on the CI's software adapters
+/// (lavapipe, WARP) while several unit tests had their own instance and device open at
+/// once. A test that fails while holding the lock does not block the others (the poison
+/// is ignored).
+#[cfg(test)]
+pub(crate) fn gpu_test_lock() -> std::sync::MutexGuard<'static, ()> {
+    static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    LOCK.lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}

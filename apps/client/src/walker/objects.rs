@@ -4435,7 +4435,9 @@ mod tests {
             surface_draw(&plan, &failed, true, 1.0, true).is_none(),
             "cut-out without texture"
         );
-        // A real texture id needs a renderer.
+        // A real texture id needs a renderer (held under the test GPU lock, taken first so
+        // that it is released after the renderer is dropped).
+        let _gpu = crate::gpu_test_lock();
         let Ok(mut r) =
             tessera_render::Renderer::new_headless(&tessera_render::RendererConfig::default())
         else {

@@ -4296,6 +4296,8 @@ mod tests {
         )
     }
 
+    /// A headless renderer, or `None` without a GPU. Callers hold
+    /// [`crate::gpu_test_lock`] (taken before this call) for the renderer's whole life.
     fn headless() -> Option<Renderer<'static>> {
         match Renderer::new_headless(&tessera_render::RendererConfig::default()) {
             Ok(r) => Some(r),
@@ -4473,6 +4475,7 @@ mod tests {
     #[test]
     fn rule_three_chunks_are_left_out_of_the_scene() {
         use tessera_formats::landblock::SurfaceChunk;
+        let _gpu = crate::gpu_test_lock();
         let Some(mut renderer) = headless() else {
             return;
         };
@@ -4532,6 +4535,7 @@ mod tests {
     /// in the band keeps only its light map on the GPU).
     #[test]
     fn far_blocks_release_their_masks() {
+        let _gpu = crate::gpu_test_lock();
         let Some(mut renderer) = headless() else {
             return;
         };
@@ -4675,6 +4679,7 @@ mod tests {
     /// frees both baked textures.
     #[test]
     fn far_chunks_draw_the_light_map_term_as_emissive() {
+        let _gpu = crate::gpu_test_lock();
         let Some(mut renderer) = headless() else {
             return;
         };
@@ -4777,6 +4782,7 @@ mod tests {
     /// (headless) renderer: meshes are freed, heights follow, seams agree.
     #[test]
     fn layer_tracks_bundles() {
+        let _gpu = crate::gpu_test_lock();
         let Some(mut renderer) = headless() else {
             return;
         };
@@ -4867,6 +4873,7 @@ mod tests {
     /// A failed block job leaves the block settled, without terrain.
     #[test]
     fn failed_block_counts_as_settled() {
+        let _gpu = crate::gpu_test_lock();
         let Some(mut renderer) = headless() else {
             return;
         };

@@ -23,6 +23,9 @@
 //! --nocapture`. Only DIDs, keys, numbers and pass/fail are printed. The images of
 //! `row_cameras_render` are for viewing only and must not be committed.
 
+#[path = "../../../crates/render/tests/support/gpu.rs"]
+mod gpu;
+
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -1036,6 +1039,8 @@ fn settle_wait() -> tessera_client::headless::SettleWait {
 #[test]
 fn row_cameras_render() {
     use clap::Parser as _;
+    // One GPU test at a time in this binary (`gpu.rs`), held for the whole test.
+    let _gpu = gpu::GpuLock::acquire();
     let Some(out) = std::env::var_os("TESSERA_VISUAL_SHOTS").filter(|d| !d.is_empty()) else {
         eprintln!("TESSERA_VISUAL_SHOTS not set; skipping");
         return;
@@ -1226,6 +1231,8 @@ fn water_row_cameras_frame_their_targets() {
 #[test]
 fn water_rows_render() {
     use clap::Parser as _;
+    // One GPU test at a time in this binary (`gpu.rs`), held for the whole test.
+    let _gpu = gpu::GpuLock::acquire();
     let Some(out) = std::env::var_os("TESSERA_VISUAL_SHOTS").filter(|d| !d.is_empty()) else {
         eprintln!("TESSERA_VISUAL_SHOTS not set; skipping");
         return;

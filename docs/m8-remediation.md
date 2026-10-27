@@ -848,3 +848,12 @@ From the `m8-world-feed` build (C4):
 - **W §4.3.1 step 1:** whether starting the schema closure at 0x07000029 is equivalent to the
   avatar table 0x07000417 plus the global root 0x07000000 (with script-table §8.2's combination
   types).
+- **W §5.2.2 / §1.1.3:** when a 0x0D addressed to entity X carries a 0x98 for entity Y followed by
+  a 0x52, does the 0x52 apply to X or to Y (the code keeps X); may null frames sit between the
+  0x98 and the 0x52 (the code: no).
+- **W §4.3.1:** the table lists three schemas, but four script keys of 0x07000029 are keys of the
+  script-key enum 0x23000097 on the reference install: is every such key a `state_schema_id`?
+- **W §2.6 / string-table §9.0 step 1:** whether a literal text received on the wire is shown in
+  display mode (display cut, then escapes; the code: yes).
+- **W §5.1:** whether a 0x0D carried inside another batch ends with the tail flag (the spec covers
+  only a top-level 0x0D; the code accepts both and counts which).

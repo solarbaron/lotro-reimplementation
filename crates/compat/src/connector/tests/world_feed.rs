@@ -653,7 +653,8 @@ fn nested_batches_are_read_and_their_limits_counted() {
             frame(0xCE, position(NPC, NPC_AT, 0, [0.0; 3])),
         ],
     );
-    // A nested `0x0D` with its tail flag, and one without (§5.1 OPEN): both are read.
+    // A nested `0x0D` with its tail flag, and one without (spec silent; question in
+    // `docs/m8-remediation.md` §15 (W §5.1)): both are read.
     let nested_aoi = batch(
         SubEventBatch::EVENT_ID_AOI_ENTER,
         vec![
@@ -951,4 +952,82 @@ fn without_the_installs_enum_the_spec_numbers_map_say_and_tell() {
     );
     assert!(events.is_empty(), "{events:?}");
     assert_eq!(d.play_counters().unmapped_category, 1);
+}
+
+#[test]
+fn past_the_play_event_cap_no_text_is_looked_up_and_signals_still_count() {
+    use crate::connector::session_phase::MAX_MESSAGE_PLAY_EVENTS;
+    let (world, mut d, mut login) = in_world();
+    let extra = 5;
+    let mut frames: Vec<SubEventFrame> = (0..MAX_MESSAGE_PLAY_EVENTS + extra)
+        .map(|i| {
+            frame(
+                OPCODE_UI_PROPERTY_EVENT,
+                chat_line(CATEGORY_SAY, NPC_NAME, NPC, &format!("Line {i}.")),
+            )
+        })
+        .collect();
+    // The world teardown after them is still handled.
+    frames.push(frame(0x3000_001B, vec![0]));
+    let b = batch(SubEventBatch::EVENT_ID_SUB_EVENT, frames);
+    for datagram in event_datagrams(&mut login, 0x4C, &b) {
+        world.deliver(datagram, LOGIN_SERVER);
+    }
+    d.step(2.0, true, &go);
+    let events = d.take_events();
+    let lines = events
+        .iter()
+        .filter(|e| matches!(e, Event::ChatMessage { .. }))
+        .count();
+    assert_eq!(lines, MAX_MESSAGE_PLAY_EVENTS);
+    assert!(
+        events
+            .iter()
+            .any(|e| matches!(e, Event::ReturnedToCharacterSelect { .. })),
+        "the teardown is handled past the cap"
+    );
+    // Each line past the cap asks for its texts (the line and its sender's name), and none
+    // is looked up.
+    let skipped = d.counters().texts_skipped;
+    assert!(skipped >= extra as u64, "{skipped}");
+    assert!(skipped <= 2 * extra as u64, "{skipped}");
+}
+
+/// One event blob larger than a datagram holds, one fragment per datagram (a synthetic
+/// datagram with several fragments fails the receiver's checksum in this build; see the
+/// S §4.4.2 question in `docs/m8-remediation.md` §15).
+fn event_datagrams(login: &mut Server, opcode: u32, inner: &[u8]) -> Vec<Vec<u8>> {
+    login.seq += 1;
+    let frags = split_blob(
+        2,
+        (login.seq & 0xFFFF) as u16,
+        1,
+        0,
+        None,
+        opcode,
+        &encode_event_envelope(inner),
+    )
+    .expect("split");
+    let mut out = Vec::new();
+    for (i, chunk) in frags.chunks(1).enumerate() {
+        if i > 0 {
+            login.seq += 1;
+        }
+        let mask = login.isaac.next_mask();
+        out.push(
+            encode_datagram(
+                DatagramHeader {
+                    rec_id: login.rec_id,
+                    seq_num: login.seq,
+                    ..DatagramHeader::default()
+                },
+                &OptionalHeaders::default(),
+                chunk,
+                Some(mask),
+                None,
+            )
+            .expect("datagram"),
+        );
+    }
+    out
 }

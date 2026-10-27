@@ -21,6 +21,7 @@ const PROP_TEMPLATE: u32 = 0x7000_0456;
 #[derive(Debug, Default)]
 struct Stub {
     uncached: bool,
+    uncached_texts: bool,
     resolves: AtomicUsize,
     template_reads: AtomicUsize,
 }
@@ -54,6 +55,10 @@ impl InstallData for Stub {
 
     fn template_cached(&self, _template_did: u32) -> bool {
         !self.uncached
+    }
+
+    fn text_cached(&self, _table_did: u32) -> bool {
+        !self.uncached_texts
     }
 }
 
@@ -310,10 +315,18 @@ fn uncached_templates_are_read_a_few_per_pass_and_the_rest_wait() {
     );
     assert!(f.has_deferred());
     assert_eq!(f.counters().template_loads_deferred, 5);
+    // Later messages of the same pass do not retry them (counted once per pass).
+    for _ in 0..3 {
+        f.flush(&d, &mut out);
+    }
+    assert_eq!(f.counters().template_loads_deferred, 5);
+    assert_eq!(f.counters().created, MAX_TEMPLATE_LOADS_PER_PASS as u64);
     // The next pass reads the rest, in their `0x98` order.
     let mut out = FeedOutput::default();
     f.begin_pass();
     f.flush(&d, &mut out);
+    assert!(out.events.is_empty(), "a message's flush retries nothing");
+    f.retry_deferred(&d, &mut out);
     assert_eq!(f.counters().created, n as u64);
     assert!(!f.has_deferred());
     let ids: Vec<u64> = out
@@ -328,6 +341,74 @@ fn uncached_templates_are_read_a_few_per_pass_and_the_rest_wait() {
         .map(|i| 100 + i)
         .collect();
     assert_eq!(ids, expected);
+}
+
+#[test]
+fn names_in_uncached_tables_are_rendered_a_few_per_pass_and_the_rest_wait() {
+    let (d, stub) = data(Stub {
+        uncached_texts: true,
+        ..Stub::default()
+    });
+    let mut f = feed();
+    let mut out = FeedOutput::default();
+    let n = MAX_TEXT_LOADS_PER_PASS + 3;
+    for i in 0..n as u64 {
+        create(&mut f, 100 + i, TEMPLATE, &mut out);
+        f.properties(
+            100 + i,
+            &[name_entry(LocalizedTokenText::reference(
+                7 + i as u32,
+                0x2500_0001,
+            ))],
+            &d,
+            &mut out,
+        );
+        f.place(100 + i, Some((at(1.0, 1.0), 0.0)), [0.0; 3], &mut out);
+    }
+    // A literal name and a reference to a DID that is not a string table read no table:
+    // they are created whatever the budget.
+    create(&mut f, 900, TEMPLATE, &mut out);
+    f.properties(
+        900,
+        &[name_entry(LocalizedTokenText::literal("Watcher"))],
+        &d,
+        &mut out,
+    );
+    f.place(900, Some((at(1.0, 1.0), 0.0)), [0.0; 3], &mut out);
+    create(&mut f, 901, TEMPLATE, &mut out);
+    f.properties(
+        901,
+        &[name_entry(LocalizedTokenText::reference(7, 0x0700_0001))],
+        &d,
+        &mut out,
+    );
+    f.place(901, Some((at(1.0, 1.0), 0.0)), [0.0; 3], &mut out);
+    let resolves = stub.resolves.load(Ordering::Relaxed);
+    f.begin_pass();
+    f.flush(&d, &mut out);
+    let c = f.counters();
+    assert_eq!(c.created, MAX_TEXT_LOADS_PER_PASS as u64 + 2);
+    assert_eq!(c.text_loads_deferred, 3);
+    // The non-table reference is not looked up and gives no name.
+    assert_eq!(
+        stub.resolves.load(Ordering::Relaxed) - resolves,
+        MAX_TEXT_LOADS_PER_PASS
+    );
+    assert_eq!(c.unresolved_names, 1);
+    assert!(f.has_deferred());
+    // The next pass renders the rest.
+    let mut out = FeedOutput::default();
+    f.begin_pass();
+    f.retry_deferred(&d, &mut out);
+    assert_eq!(f.counters().created, n as u64 + 2);
+    assert!(!f.has_deferred());
+    assert_eq!(
+        count(
+            &out.events,
+            |e| matches!(e, Event::EntityCreated { name, .. } if name.starts_with("Ref "))
+        ),
+        3
+    );
 }
 
 #[test]

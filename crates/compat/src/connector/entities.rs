@@ -32,8 +32,13 @@
 //!   `0x79…`, §6 row `0x98 + 0x52`), read from the install through
 //!   [`super::data::InstallData::template_value`] when the entity is created. At most
 //!   [`MAX_TEMPLATE_LOADS_PER_PASS`] templates the install has not decoded yet are read per
-//!   driver pass ([`EntityFeed::begin_pass`]); a creation whose template is not read yet
-//!   waits for a later pass ([`FeedCounters::template_loads_deferred`]). Engineering choice.
+//!   driver pass ([`EntityFeed::begin_pass`]), and at most [`MAX_TEXT_LOADS_PER_PASS`]
+//!   names are rendered from string tables the install has not decoded yet
+//!   ([`super::data::InstallData::text_cached`]). A creation that needs a read past either
+//!   budget is put off ([`FeedCounters::template_loads_deferred`],
+//!   [`FeedCounters::text_loads_deferred`]); put-off creations are retried only by
+//!   [`EntityFeed::retry_deferred`], once per pass, so each is counted at most once per
+//!   pass. Engineering choice.
 //! - **Kind.** The inanimate-object flag (`0x10000F53`) set: [`EntityKind::Object`]; else
 //!   the NPC flag (`0x100014EA`): set [`EntityKind::NonPlayer`] (the flag covers NPCs and
 //!   monsters alike), clear [`EntityKind::Player`]. Neither known: `NonPlayer`, counted
@@ -45,7 +50,9 @@
 //!   ([`FeedCounters::name_changes_unshown`], [`FeedCounters::kind_changes_unshown`]). Per
 //!   entity only what the name needs is kept: the token and table of a reference, or a
 //!   literal already shown as text (`string-table.md` §9.0 step 1 through the install's
-//!   resolver) and cut to [`MAX_NAME_LEN`]; authoring strings and arguments are dropped.
+//!   resolver) and cut to [`MAX_NAME_LEN`]; authoring strings and arguments are dropped. A
+//!   reference whose table DID lacks the `0x25` prefix resolves to no name without any
+//!   lookup (`official-messages-world.md` §2.6 row 2b, `string-table.md` §9.1).
 //! - **Body.** A player with both species (`0x100000FC`) and sex (`0x10000A50`) has the
 //!   playable body of those keys (`appearance.md` §2.2: the species keys of enum
 //!   `0x2300000B`, the same mapper as the property); every other entity has its template
@@ -79,7 +86,7 @@ use tessera_net::{
     Appearance, Body, DataId, EntityId, EntityKind, Event, Location, Transform, Vec3,
 };
 
-use super::data::SchemaView;
+use super::data::{SchemaView, is_string_table_did};
 use crate::play::chat::TextResolver;
 use crate::play::{OutgoingEvent, clean_display_name};
 use crate::world::{
@@ -123,6 +130,11 @@ pub const MAX_QUERIED: usize = 4096;
 /// Most templates read from the install per driver pass when the install has not decoded
 /// them yet ([`super::data::InstallData::template_cached`]). Engineering choice.
 pub const MAX_TEMPLATE_LOADS_PER_PASS: usize = 32;
+
+/// Most display names rendered per driver pass from string tables the install has not
+/// decoded yet ([`super::data::InstallData::text_cached`]); a text counts as one read (a
+/// redirect it follows may read one more table). Engineering choice.
+pub const MAX_TEXT_LOADS_PER_PASS: usize = 32;
 
 /// The time a `0x59` path's move is spread over for its velocity, in seconds (module docs
 /// "Paths"). Engineering choice: `speed_param` has no unit in the spec.
@@ -169,7 +181,7 @@ pub struct FeedCounters {
     /// `0x0D` batches inside a batch read with a 1-byte tail flag after their frames.
     pub nested_aoi_tail: u64,
     /// `0x0D` batches inside a batch read without a tail flag (whether a nested `0x0D` has
-    /// one is OPEN, §5.1).
+    /// one: spec silent; question in `docs/m8-remediation.md` §15 (W §5.1)).
     pub nested_aoi_no_tail: u64,
     /// Batches nested deeper than the driver reads.
     pub deep_batches: u64,
@@ -192,6 +204,9 @@ pub struct FeedCounters {
     /// Creations put off to a later pass because their template was not read yet
     /// ([`MAX_TEMPLATE_LOADS_PER_PASS`]); counted once per pass and entity.
     pub template_loads_deferred: u64,
+    /// Creations put off to a later pass because their name's string table was not read
+    /// yet ([`MAX_TEXT_LOADS_PER_PASS`]); counted once per pass and entity.
+    pub text_loads_deferred: u64,
     /// `0xED` updates without a controller or with one cleared: no neutral event.
     pub motion_controllers: u64,
     /// `0xBD` animation-layer states: no neutral event (the layers' meaning for the neutral
@@ -279,10 +294,12 @@ impl NameSource {
         }
     }
 
-    /// The name to show, `None` when a reference does not resolve.
+    /// The name to show, `None` when a reference does not resolve (one whose table DID
+    /// lacks the `0x25` prefix is not looked up).
     fn render(&self, data: &SchemaView) -> Option<String> {
         match self {
             Self::Literal(s) => Some(s.clone()),
+            Self::Reference { table, .. } if !is_string_table_did(*table) => None,
             Self::Reference { mode, token, table } => {
                 let text = LocalizedTokenText {
                     content: LocalizedTokenTextContent::Reference {
@@ -461,13 +478,16 @@ pub struct EntityFeed {
     pending: VecDeque<(u64, u64)>,
     /// Entities in [`State::Pending`].
     pending_live: usize,
-    /// `(id, seq)` of entities placed since the last flush (or put off by it).
+    /// `(id, seq)` of entities placed since the last flush.
     placed: Vec<(u64, u64)>,
+    /// `(id, seq)` of placed entities whose creation was put off (module docs "Baseline").
+    deferred: Vec<(u64, u64)>,
     /// `(id, seq)` of shown entities whose appearance may have changed.
     dirty: Vec<(u64, u64)>,
     moves: Vec<Move>,
     queried: HashSet<u64>,
     loads_left: usize,
+    text_loads_left: usize,
     counters: FeedCounters,
 }
 
@@ -480,10 +500,12 @@ impl Default for EntityFeed {
             pending: VecDeque::new(),
             pending_live: 0,
             placed: Vec::new(),
+            deferred: Vec::new(),
             dirty: Vec::new(),
             moves: Vec::new(),
             queried: HashSet::new(),
             loads_left: MAX_TEMPLATE_LOADS_PER_PASS,
+            text_loads_left: MAX_TEXT_LOADS_PER_PASS,
             counters: FeedCounters::default(),
         }
     }
@@ -603,12 +625,13 @@ impl EntityFeed {
     /// Whether creations wait for a later pass (module docs "Baseline").
     #[must_use]
     pub fn has_deferred(&self) -> bool {
-        !self.placed.is_empty()
+        !self.deferred.is_empty()
     }
 
-    /// A driver pass begins: the template read budget is renewed.
+    /// A driver pass begins: the template and text read budgets are renewed.
     pub fn begin_pass(&mut self) {
         self.loads_left = MAX_TEMPLATE_LOADS_PER_PASS;
+        self.text_loads_left = MAX_TEXT_LOADS_PER_PASS;
     }
 
     /// An event for `id`, which the session does not know: `0xD0` once per entity and
@@ -939,6 +962,65 @@ impl EntityFeed {
         true
     }
 
+    /// Whether the placed entity `id` can be created in this pass (module docs
+    /// "Baseline"): its template baseline is read and its name needs no string-table read
+    /// past the pass's budget. A creation put off is counted under its reason, once.
+    fn ensure_ready(&mut self, id: u64, data: &SchemaView) -> bool {
+        if !self.ensure_baseline(id, data) {
+            return false;
+        }
+        let Some(t) = self.entities.get(&id) else {
+            return false;
+        };
+        let needs_read = match View::of(&t.wire, t.baseline.as_ref()).name {
+            Some(NameSource::Reference { token, table, .. }) => {
+                *token != 0 && is_string_table_did(*table) && !data.0.text_cached(*table)
+            }
+            _ => false,
+        };
+        if !needs_read {
+            return true;
+        }
+        if self.text_loads_left == 0 {
+            self.counters.text_loads_deferred += 1;
+            return false;
+        }
+        self.text_loads_left -= 1;
+        true
+    }
+
+    /// Creates the entities of `list` that can be created in this pass, in the order of
+    /// their `0x98`; the others are put off (the deferred list).
+    fn create_placed(
+        &mut self,
+        mut list: Vec<(u64, u64)>,
+        data: &SchemaView,
+        out: &mut FeedOutput,
+    ) {
+        let entities = &self.entities;
+        list.retain(|(id, seq)| {
+            entities
+                .get(id)
+                .is_some_and(|t| same(t, *seq) && t.state == State::Placed)
+        });
+        list.sort_unstable_by_key(|(_, seq)| *seq);
+        for (id, seq) in list {
+            if self.ensure_ready(id, data) {
+                self.show(id, data, out);
+            } else {
+                self.deferred.push((id, seq));
+            }
+        }
+    }
+
+    /// The creations put off by earlier passes, retried once per pass (module docs
+    /// "Baseline"): those whose reads fit this pass's budgets are made, in the order of
+    /// their `0x98`; the rest wait again (counted once more).
+    pub fn retry_deferred(&mut self, data: &SchemaView, out: &mut FeedOutput) {
+        let list = std::mem::take(&mut self.deferred);
+        self.create_placed(list, data, out);
+    }
+
     /// The creation of the placed entity `id` (module docs "Created, not spawned").
     fn show(&mut self, id: u64, data: &SchemaView, out: &mut FeedOutput) {
         let Some(t) = self.entities.get(&id) else {
@@ -1014,27 +1096,21 @@ impl EntityFeed {
     }
 
     /// The events the message just read completed (module docs "One flush per message"):
-    /// the creations of the placed entities whose template is read, in the order of their
-    /// `0x98`, then one appearance change and one move per entity.
+    /// the creations of the entities placed in it that fit the pass's read budgets, in the
+    /// order of their `0x98` (the others are put off for [`Self::retry_deferred`]), then one
+    /// appearance change and one move per entity.
     pub fn flush(&mut self, data: &SchemaView, out: &mut FeedOutput) {
         if !self.placed.is_empty() {
-            let mut placed = std::mem::take(&mut self.placed);
-            let entities = &self.entities;
-            placed.retain(|(id, seq)| {
-                entities
-                    .get(id)
-                    .is_some_and(|t| same(t, *seq) && t.state == State::Placed)
-            });
-            placed.sort_unstable_by_key(|(_, seq)| *seq);
-            let mut later = Vec::new();
-            for (id, seq) in placed {
-                if self.ensure_baseline(id, data) {
-                    self.show(id, data, out);
-                } else {
-                    later.push((id, seq));
-                }
+            let placed = std::mem::take(&mut self.placed);
+            self.create_placed(placed, data, out);
+            if self.deferred.len() > 2 * MAX_ENTITIES {
+                let entities = &self.entities;
+                self.deferred.retain(|(id, seq)| {
+                    entities
+                        .get(id)
+                        .is_some_and(|t| same(t, *seq) && t.state == State::Placed)
+                });
             }
-            self.placed = later;
         }
         for (id, seq) in std::mem::take(&mut self.dirty) {
             if self.entities.get(&id).is_some_and(|t| same(t, seq)) {

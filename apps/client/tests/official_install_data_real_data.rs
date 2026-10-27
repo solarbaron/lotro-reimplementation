@@ -65,6 +65,17 @@ fn the_state_schemas_from_the_install_match_the_verification_tables() {
         let s = data.portal_state_schema(id).expect("a mounted schema");
         assert!(s.bool_pids.is_empty() && s.enum_pids.is_empty(), "{id:#x}");
     }
+    // The reference install gives four: the three of the verification table and one more
+    // script key of `0x07000029` that is a key of the script-key enum. §4.3.1 lists only
+    // three, so the fourth is not named here; whether every such key is a
+    // `state_schema_id` is the W §4.3.1 question in `docs/m8-remediation.md` §15. A change
+    // in this count means that question needs a new look.
+    assert_eq!(schemas.len(), 4);
+    let unlisted = schemas
+        .keys()
+        .filter(|k| ![DEFAULT_PORTAL_STATE_SCHEMA_ID, 0x1000_0E50, 0x1000_0E51].contains(k))
+        .count();
+    assert_eq!(unlisted, 1);
 }
 
 #[test]
@@ -111,6 +122,28 @@ fn chat_categories_texts_and_templates_read_from_the_install() {
         data.resolve_text(&LocalizedTokenText::reference(0, 0))
             .is_none()
     );
+    // A reference into a record that is not a string table is refused unread
+    // (`official-messages-world.md` §2.6 row 2b, `string-table.md` §9.1); a literal that
+    // shows nothing is no text.
+    assert!(
+        data.resolve_text(&LocalizedTokenText::reference(1, CHAT_CATEGORY_ENUM))
+            .is_none()
+    );
+    assert!(data.text_cached(CHAT_CATEGORY_ENUM));
+    assert!(
+        data.resolve_text(&LocalizedTokenText::literal("[hidden]"))
+            .is_none()
+    );
+    // A table read once is cached afterwards.
+    let (_, first) = mapper
+        .displays()
+        .iter()
+        .find_map(|(k, info)| match &info.source {
+            StringSource::Table { table, .. } => Some((*k, table.0)),
+            StringSource::Literal(_) => None,
+        })
+        .expect("a reference");
+    assert!(data.text_cached(first));
 
     // Template baselines: the first object property sets of the install give values.
     let dict = set.read(PROPERTY_DICTIONARY_DID.0).expect("dictionary");

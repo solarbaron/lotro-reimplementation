@@ -38,6 +38,14 @@ pub const GAMELOGIC_ARCHIVE: &str = "client_gamelogic.dat";
 /// maps are far smaller). Engineering choice, spec silent.
 pub const MAX_RECORD_BYTES: usize = 16 * 1024 * 1024;
 
+/// Whether `did` names a string table: the `0x25` prefix that a `LocalizedTokenText`
+/// reference's `table_did` carries (`official-messages-world.md` §2.6 row 2b), which a
+/// consumer checks before reading the table (`string-table.md` §9.1).
+#[must_use]
+pub const fn is_string_table_did(did: u32) -> bool {
+    did >> 24 == 0x25
+}
+
 /// What went wrong while finding or opening the install: a kind only, never a path of
 /// the user (`official-entry.md` §7.3 "Never on disk or in logs" applies to logs of the
 /// install's location too: engineering choice, spec silent (question with the spec
@@ -112,6 +120,15 @@ pub trait InstallData: Send + Sync + std::fmt::Debug {
     /// cycles templates cannot hold the session thread. The default (no records behind the
     /// lookups) is `true`.
     fn template_cached(&self, _template_did: u32) -> bool {
+        true
+    }
+
+    /// Whether resolving a reference into the string table `table_did` reads nothing from
+    /// the archives (the table is decoded and kept, or the DID is not a string table and is
+    /// refused unread, [`is_string_table_did`]). The entity feed resolves at most a few names
+    /// in uncached tables per pass ([`super::entities::MAX_TEXT_LOADS_PER_PASS`]). The default
+    /// (no tables behind the lookups) is `true`.
+    fn text_cached(&self, _table_did: u32) -> bool {
         true
     }
 

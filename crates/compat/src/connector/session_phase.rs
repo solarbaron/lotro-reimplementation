@@ -73,17 +73,23 @@
 //! reach no neutral event and are counted ([`FeedCounters`]).
 //!
 //! A `0x0D` inside a batch is read with a 1-byte tail flag after its frames or without
-//! one (whether it has one is OPEN, §5.1), each counted. Only the feed and batch messages
+//! one, each counted: `official-messages-world.md` §5.1 covers only a top-level `0x0D`
+//! (spec silent; question in `docs/m8-remediation.md` §15 (W §5.1)). Only the feed and batch messages
 //! must start with `base_flags = 0` here; the play decoders check their own bodies.
 //!
 //! The feed's events of one top-level message are made when it has been read
 //! ([`EntityFeed::flush`]: at most one creation, one appearance change and one move per
 //! entity), and the play-layer events of one message are capped at
 //! [`MAX_MESSAGE_PLAY_EVENTS`] (the rest are dropped and counted,
-//! [`DriverCounters::message_events_dropped`]). With the despawns (one per entity shown
-//! before the message), that bounds what one message adds over [`DRIVER_EVENT_CAP`]
-//! (module docs "Bounded events"). Creations whose template the install has not read yet
-//! wait for a later pass ([`super::entities::MAX_TEMPLATE_LOADS_PER_PASS`]).
+//! [`DriverCounters::message_events_dropped`]). Once a message has reached that cap, the
+//! texts of its further play messages are not looked up at all (no string-table read for
+//! an event that would be dropped; counted, [`DriverCounters::texts_skipped`]), while their
+//! signals (such as the world teardown) and an end of the session are still handled. With
+//! the despawns (one per entity shown before the message), that bounds what one message
+//! adds over [`DRIVER_EVENT_CAP`] (module docs "Bounded events"). Creations whose template
+//! or name table the install has not read yet wait for a later pass
+//! ([`super::entities::MAX_TEMPLATE_LOADS_PER_PASS`],
+//! [`super::entities::MAX_TEXT_LOADS_PER_PASS`]), retried once at the start of each pass.
 //!
 //! Portal space ends on the client's `Command::WorldLoaded` or after
 //! [`PORTAL_LOADING_TIMEOUT_SEC`] (§4.5 item 4). Each portal space starts with a fresh
@@ -125,6 +131,7 @@ use crate::login::{
 use crate::play::adapter::{
     PlayAdapter, PlayCounters, PlaySignal, placement_location, position_location, velocity_or_zero,
 };
+use crate::play::chat::TextResolver;
 use crate::play::inbound::{PlayMessage, decode_play_message};
 use crate::play::movement::{MovementInput, PredictedState};
 use crate::play::{OutgoingEvent, clean_display_name};
@@ -498,6 +505,21 @@ pub struct DriverCounters {
     pub appearance_base_model: u64,
     /// Play-layer events dropped over [`MAX_MESSAGE_PLAY_EVENTS`] in one message.
     pub message_events_dropped: u64,
+    /// Texts not looked up because their message had reached [`MAX_MESSAGE_PLAY_EVENTS`]
+    /// (the play layer may count them as unresolved too).
+    pub texts_skipped: u64,
+}
+
+/// The resolver of a message past [`MAX_MESSAGE_PLAY_EVENTS`]: it looks nothing up and
+/// counts the texts it was asked for (module docs "Entities").
+#[derive(Debug, Default)]
+struct SkippedTexts(std::cell::Cell<u64>);
+
+impl TextResolver for SkippedTexts {
+    fn resolve(&self, _text: &crate::world::LocalizedTokenText) -> Option<String> {
+        self.0.set(self.0.get().saturating_add(1));
+        None
+    }
 }
 
 /// The UDP session (module docs).
@@ -863,6 +885,7 @@ impl<N: ConnectorNet> SessionDriver<N> {
             feed = ?self.feed.counters(),
             appearance_base_model = self.counters.appearance_base_model,
             message_events_dropped = self.counters.message_events_dropped,
+            texts_skipped = self.counters.texts_skipped,
             "official world: entity feed counters"
         );
     }
@@ -898,9 +921,9 @@ impl<N: ConnectorNet> SessionDriver<N> {
         let before = self.events.len();
         let read = read && !self.full();
         self.feed.begin_pass();
+        self.feed_deferred();
         let read_any = read && self.receive(now, stop) > 0;
         self.run_links(now, stop);
-        self.feed_deferred();
         self.run_refresh(now, stop);
         if stop() {
             return read_any || self.events.len() != before;
@@ -1545,13 +1568,15 @@ impl<N: ConnectorNet> SessionDriver<N> {
         self.feed_output(out);
     }
 
-    /// Creations put off for their templates (module docs "Entities"), once per pass.
+    /// Creations put off for their templates or name tables (module docs "Entities"),
+    /// retried once per pass, before the pass reads anything (so they come before the new
+    /// placements of the pass in its read budgets), and only below [`DRIVER_EVENT_CAP`].
     fn feed_deferred(&mut self) {
-        if !self.in_world_still() || !self.feed.has_deferred() {
+        if !self.in_world_still() || !self.feed.has_deferred() || self.full() {
             return;
         }
         let mut out = FeedOutput::default();
-        self.feed.flush(&self.schema, &mut out);
+        self.feed.retry_deferred(&self.schema, &mut out);
         self.feed_output(out);
     }
 
@@ -1669,7 +1694,8 @@ impl<N: ConnectorNet> SessionDriver<N> {
         }
         let aoi = opcode == SubEventBatch::EVENT_ID_AOI_ENTER;
         let decoded = if depth > 0 && aoi {
-            // The frames as a `0x4C` would have them, then 0 or 1 byte of tail (§5.1 OPEN).
+            // The frames as a `0x4C` would have them, then 0 or 1 byte of tail (spec silent;
+            // question in `docs/m8-remediation.md` §15 (W §5.1)).
             let mut r = WireReader::new(body);
             SubEventBatch::decode(&mut r, SubEventBatch::EVENT_ID_SUB_EVENT).and_then(|b| {
                 match r.remaining() {
@@ -1751,7 +1777,15 @@ impl<N: ConnectorNet> SessionDriver<N> {
             self.feed_output(out);
             return;
         }
-        let out = self.adapter.handle(&msg, &self.schema);
+        let out = if self.message_events >= MAX_MESSAGE_PLAY_EVENTS {
+            // Its events would be dropped: no text is looked up (module docs "Entities").
+            let skipped = SkippedTexts::default();
+            let out = self.adapter.handle(&msg, &skipped);
+            self.counters.texts_skipped += skipped.0.get();
+            out
+        } else {
+            self.adapter.handle(&msg, &self.schema)
+        };
         self.pending_out.extend(out.outgoing);
         for e in out.events {
             if let Event::Disconnected { reason } = e {

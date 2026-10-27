@@ -199,12 +199,16 @@ pub const TABLE: &[(&str, &str)] = &[
         "The official service closed the connection.",
     ),
     ("official.error.detail", "The service said: {text}"),
-    // §8.7: the official character placeholder.
+    // §8.7: the official character placeholder of the spec. No screen of this build shows
+    // it: on `Connected` the session goes to the character screens, and the interim screen
+    // shows `official.characters.loading` until the window takes it.
     (
         "official.characters.unavailable",
         "Choosing a character on the official servers is not available in this version of \
          Tessera yet.",
     ),
+    // §8.7: the interim screen while the window takes the session for the character screens.
+    ("official.characters.loading", "Loading characters…"),
 ];
 
 /// The text of `id`; the empty string for an ID the table does not hold (a test checks that

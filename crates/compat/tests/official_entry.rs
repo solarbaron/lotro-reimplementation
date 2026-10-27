@@ -11,6 +11,7 @@ use tessera_compat::consent::{self, UserConfirmation, WarningText};
 use tessera_compat::net_access::{NetworkAccess, created_count};
 use tessera_compat::{
     Availability, CompatBackend, CompatConfig, CompatError, Connector, Credentials, availability,
+    live_connector_built,
 };
 use tessera_net::account::{AccountEvent, LoginRefusal};
 use tessera_net::{Backend, Command, DisconnectReason, Event, Session};
@@ -500,7 +501,19 @@ fn oe_t8b_every_backend_constructor_takes_a_proof() {
 
 #[test]
 fn oe_t9_placeholder_refuses_with_not_available_and_disconnects() {
-    assert_eq!(availability(), Availability::NotBuilt);
+    // This binary has the live connector, so official play is offered (§4.4); a binary with
+    // only the placeholder would answer `NotBuilt`.
+    assert!(live_connector_built());
+    assert_eq!(availability(), Availability::Available);
+    assert_eq!(
+        Availability::from_live_connector(false),
+        Availability::NotBuilt
+    );
+    assert_eq!(
+        Availability::from_live_connector(true),
+        Availability::Available
+    );
+    // The placeholder backend, built explicitly over the placeholder connector.
     let dir = tempfile::tempdir().expect("temp dir");
     let acc = acceptance(dir.path());
     let creds = Credentials::new(b"canary-account", b"canary-password").expect("creds");

@@ -792,8 +792,8 @@ From the `m8-connector` build (entry E = `official-entry.md`):
 From the `m8-hand-over` build (C3):
 
 - **P §4.5 item 4:** the length of the portal-space loading timeout (the code uses 30 s).
-- **P §7.2 item 3:** how long to wait for 0x6C after a world teardown, and what to do when it
-  never comes (the code waits 60 s, then reuses the old list).
+- **P §7.2 item 3:** answered by the item itself ("upon receiving this notice ... returns to
+  Character Selection"); the code now returns at the notice with the list it has.
 - **P §7.2 / W §3.5:** which connection carries 0x6F after a return from the world (the code uses
   the one that delivered the latest 0x6C).
 - **P §6.1.3 / §7.2:** whether the chat-server session stays up or is re-opened (with the new
@@ -803,3 +803,17 @@ From the `m8-hand-over` build (C3):
 - **W §6:** names `CharacterSummary` fields (`public_props`, `visual_desc`) the neutral type does
   not have.
 - **E §8.7 (rev 6):** still describes only the placeholder; it needs a revision for the hand-over.
+- **P §7.2 item 3 / §8:** whether the client returns to character selection on the teardown
+  notice itself, with the list it has (Tessera's reading), or only on the following 0x6C; whether
+  a later 0x6C at character selection is a full replacement (surfaced as removed/added rows).
+- **P §4.5 items 2 and 4:** what starts portal space for a teleport inside the world.
+- **E §8.7 (rev 6):** for the hand-over: which options the character-screen client keeps
+  (Tessera: an allowlist), the message when the handed part ends (§8.6 rows), and that the
+  session never enters a character without the player's choice.
+- **E §4.2:** whether a typed `/logout` counts as device input and is the only allowed source of
+  the leave-world request (start-up lines refused).
+- **P §8:** a later 0x6C at character selection is surfaced as removed and added rows
+  (`CharacterRemoved` / `CharacterInfo`); §8 maps a later list only to `Connected` or
+  `CharacterInfo`.
+- **E §8.6 / §8.7:** which text shows when the handed part ends because the client itself cannot
+  start the character screens or the walker (not a service reply).

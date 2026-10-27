@@ -820,3 +820,31 @@ From the `m8-hand-over` build (C3):
 - **P §7.2 / §8:** whether a chat line refused after the teardown, before the client sees the
   return, is reported to the player, and with which event and text (the code sends a server
   notice with Tessera's text; refused moves stay silent).
+
+From the `m8-world-feed` build (C4):
+
+- **W §5.2.3:** which field of 0x98 / 0x52 carries the classification enums named there; confirm
+  the rule (NPC and object flags over the template baseline), how NPC and creature differ, and
+  what to show when neither flag is known. The section names enums no wire field carries.
+- **W §1.1.3 / §5.1:** whether entity-scoped sub-events after a 0x98 in a batch sent to the
+  default recipient apply to the entity that 0x98 created (the code says yes).
+- **W §6:** 0x98 + 0x52 maps to an `EntitySpawned` with fields the neutral model does not have;
+  which event, and when, if no position has arrived yet (the code creates the entity at its first
+  position).
+- **W §5.2.4 / §6:** whether the template baseline is merged per PID and whether 0x0E / 0xE7 fall
+  back to it (the code does both).
+- **W §2.8 / §5.7:** which descriptor fields map to the neutral appearance (only a uniform scale is
+  mapped).
+- **W §5.3:** how often 0xD0 may be sent (the code: once per entity per world).
+- **W §4.3.1 steps 1-2:** the visit order of a Scriptlet node and its port children, and whether
+  definitions in included tables count (the code: yes to both; matches the verification tables).
+- **W §4.4.2 vs environment.md §3:** directory 0x0F000002 is region 3's descriptor, whose maps hold
+  only key 0, so the calendar lookup cannot work as written.
+- **W §2.6 vs string-table.md §9.0 step 1:** mode 2 is a table reference in one and a source-text
+  placeholder in the other.
+- **P §4.6.2 / §4.6.3 / §8:** the neutral event for 0xED (§8 says `EntityMoved`, but 0xED has no
+  position) and 0xBD.
+- **P §6.7:** which room a world-server chat line in a user-slot category belongs to.
+- **W §4.3.1 step 1:** whether starting the schema closure at 0x07000029 is equivalent to the
+  avatar table 0x07000417 plus the global root 0x07000000 (with script-table §8.2's combination
+  types).

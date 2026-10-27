@@ -22,23 +22,36 @@
 //!
 //! - an `https://` address is requested as given, with full certificate validation;
 //! - an `http://` address is tried first at its HTTPS form ([`https_form`]: same host and
-//!   path, default HTTPS port; the HTTPS client's connect timeout is 5 s,
-//!   `crate::net_access`). When that exchange fails at the transport or TLS level
-//!   (connection refused, a timeout, a TLS or certificate error: any failure of the HTTP
-//!   client), the request is made once more at the address exactly as given, over plain
-//!   HTTP. Any HTTP answer over working HTTPS (a 200, the maintenance 503, a SOAP fault, a
-//!   closed world, a 404) is the service's answer and is used as that answer, never
-//!   retried over plain HTTP;
-//! - an address with no HTTPS form is requested as given.
+//!   path, default HTTPS port; the login client gives the name lookup and the connection
+//!   at most 5 s each, `crate::net_access::CONNECT_TIMEOUT`). Only when that attempt
+//!   failed before the request was sent ([`LoginError::is_unreached`]: the name did not
+//!   resolve, the connection was refused, unreachable or timed out, the TLS handshake or
+//!   the certificate check failed) is the request made once more at the address exactly as
+//!   given, over plain HTTP. Every other outcome over HTTPS is final and never retried
+//!   over plain HTTP: any HTTP answer (a 200, the maintenance 503, a SOAP fault, a closed
+//!   world, a 404), and any failure once the connection was made (a send, receive or body
+//!   timeout, a reset, an oversized head, an unreadable body), because the request may
+//!   have reached the service. A cancel or a revoked right sends nothing at all;
+//! - once a host's HTTPS form was not reached, later exchanges of the same login (and its
+//!   ticket refreshes) to an `http://` address at that host go to the address as given at
+//!   once, without the connect wait ([`PlainSteps`]; engineering choice, the decision
+//!   does not say whether "first" is per request or per login). A host whose HTTPS form
+//!   failed after the connection was made is never remembered so;
+//! - an address with no HTTPS form (another scheme, user information, a port that is not
+//!   a number, a space or control character inside) is refused: nothing is sent to it,
+//!   and the step fails with a reason that names the step (engineering choice, spec
+//!   silent).
 //!
 //! The password and the ticket follow the same rule: they go over plain HTTP only when the
 //! chain works no other way. Redirects stay off and no proxy is used (`crate::net_access`).
 //! Each step that went over plain HTTP logs one `info` line, `official login: step over
-//! plain HTTP` with `step=` only ([`ChainStep::label`]), once per step per login
-//! ([`PlainSteps`]); no host, path or account is ever logged.
+//! plain HTTP` with `step=` only ([`ChainStep::label`]), once per step per login, when the
+//! plain request is actually made ([`PlainSteps`]); no host, path or account is ever
+//! logged.
 
-use std::sync::Arc;
+use std::collections::HashSet;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 use tessera_net::account::MAX_ACCOUNT_DETAIL_LEN;
@@ -58,7 +71,7 @@ use crate::login::{
 };
 
 use super::data::LocalInputs;
-use super::net::{https_form, scheme_label};
+use super::net::https_form;
 
 /// The per-world timeout of the world-list status queries (`official-login.md` §3.3, §5.2).
 pub const WORLD_LIST_STATUS_TIMEOUT_SEC: u64 = 10;
@@ -210,16 +223,30 @@ impl ChainStep {
     }
 }
 
-/// The steps of one login that went over plain HTTP; each is logged once (module docs).
-/// Clones share the record (the ticket refresh runs on a thread of its own).
+/// Most hosts one login remembers as not reached over HTTPS ([`PlainSteps`]); beyond it a
+/// host's HTTPS form is tried again on each exchange. Engineering choice, spec silent: a
+/// chain names a handful of hosts (one status host per world at most).
+pub const MAX_PLAIN_HOSTS: usize = 64;
+
+/// What one login learned about plain HTTP (module docs): the steps that went over plain
+/// HTTP, each logged once, and the hosts whose HTTPS form was not reached. Clones share
+/// the record (the ticket refresh runs on a thread of its own).
 #[derive(Debug, Clone, Default)]
-pub struct PlainSteps(Arc<[AtomicBool; ChainStep::ALL.len()]>);
+pub struct PlainSteps(Arc<PlainRecord>);
+
+#[derive(Debug, Default)]
+struct PlainRecord {
+    steps: [AtomicBool; ChainStep::ALL.len()],
+    /// Hosts (ASCII lower case, [`super::net::HttpsUrl::host`]) whose HTTPS form failed
+    /// before the request was sent; at most [`MAX_PLAIN_HOSTS`].
+    hosts: Mutex<HashSet<String>>,
+}
 
 impl PlainSteps {
-    /// `step` goes over plain HTTP: the one `info` line of the step in this login, with the
+    /// `step` went over plain HTTP: the one `info` line of the step in this login, with the
     /// step's name only.
     pub fn note(&self, step: ChainStep) {
-        if let Some(flag) = self.0.get(step.index())
+        if let Some(flag) = self.0.steps.get(step.index())
             && !flag.swap(true, Ordering::SeqCst)
         {
             tracing::info!(step = step.label(), "official login: step over plain HTTP");
@@ -230,21 +257,43 @@ impl PlainSteps {
     #[must_use]
     pub fn went_plain(&self, step: ChainStep) -> bool {
         self.0
+            .steps
             .get(step.index())
             .is_some_and(|f| f.load(Ordering::SeqCst))
+    }
+
+    /// `host`'s HTTPS form was not reached (it failed before the request was sent).
+    pub fn note_unreached_host(&self, host: &str) {
+        let mut hosts = self.0.hosts.lock().unwrap_or_else(PoisonError::into_inner);
+        if hosts.len() < MAX_PLAIN_HOSTS && !hosts.contains(host) {
+            hosts.insert(host.to_owned());
+        }
+    }
+
+    /// Whether `host`'s HTTPS form was not reached earlier in this login.
+    #[must_use]
+    pub fn host_unreached(&self, host: &str) -> bool {
+        self.0
+            .hosts
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .contains(host)
     }
 }
 
 /// One exchange of `step` at the address `given` (module docs "HTTPS first, then the
 /// address as given"): `req`, built for any URL, is sent at the HTTPS form of an `http://`
-/// address first and, when the HTTP client fails there (transport or TLS), once more at
-/// `given` over plain HTTP; an `https://` address, or one with no HTTPS form, is asked as
-/// given. `req.url` is set here. An HTTP answer over HTTPS, whatever its status, is
-/// returned as it is.
+/// address first and, only when that attempt was not reached
+/// ([`LoginError::is_unreached`]), once more at `given` over plain HTTP; an `https://`
+/// address is asked as given; an address with no HTTPS form is refused. A host whose
+/// HTTPS form was not reached earlier in this login (`plain`) is asked as given at once.
+/// `req.url` is set here. An HTTP answer over HTTPS, whatever its status, and any failure
+/// after the connection was made are returned as they are.
 ///
 /// # Errors
 ///
-/// The HTTP client's failure of the last request made.
+/// The HTTP client's failure of the last request made; [`LoginError::ServiceUnavailable`]
+/// naming the step for an address with no HTTPS form.
 pub fn exchange(
     http: &mut dyn HttpClient,
     step: ChainStep,
@@ -253,27 +302,46 @@ pub fn exchange(
     plain: &PlainSteps,
 ) -> Result<HttpResponse, LoginError> {
     let given = given.trim();
-    match https_form(given) {
-        Some(at) if at.upgraded => {
-            req.url = at.url;
-            match http.execute(req) {
-                Ok(resp) => return Ok(resp),
+    let Some(at) = https_form(given) else {
+        // The step's name only, never the address.
+        tracing::info!(
+            step = step.label(),
+            "official login: address refused (no usable form)"
+        );
+        req.url.clear();
+        return Err(LoginError::ServiceUnavailable {
+            reason: format!("the {} address is not a usable URL", step.label()),
+        });
+    };
+    if !at.upgraded {
+        req.url = at.url;
+        return http.execute(req);
+    }
+    if !plain.host_unreached(&at.host) {
+        req.url = at.url;
+        match http.execute(req) {
+            Err(e) if e.is_unreached() => {
                 // The kind only, never the address.
-                Err(e) => tracing::debug!(
+                tracing::debug!(
                     step = step.label(),
                     class = %e.failure_class(),
-                    "official login: the HTTPS form failed; asking the address as given"
-                ),
+                    "official login: the HTTPS form was not reached; asking the address as given"
+                );
+                plain.note_unreached_host(&at.host);
             }
-            given.clone_into(&mut req.url);
+            // An answer, or a failure once connected (the request may have been sent), or
+            // a cancel: final.
+            other => return other,
         }
-        Some(at) => req.url = at.url,
-        None => given.clone_into(&mut req.url),
     }
-    if scheme_label(&req.url) == "http" {
+    given.clone_into(&mut req.url);
+    let result = http.execute(req);
+    // Logged only when the plain request was made: not after a cancel or a refusal, nor
+    // when the address as given was not reached either.
+    if !matches!(result, Err(LoginError::NotSent { .. })) {
         plain.note(step);
     }
-    http.execute(req)
+    result
 }
 
 /// The authenticated login: what the rest of the session needs from the HTTP exchanges.

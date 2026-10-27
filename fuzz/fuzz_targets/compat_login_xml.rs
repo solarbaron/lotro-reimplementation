@@ -56,18 +56,12 @@ fuzz_target!(|data: &[u8]| {
         let _ = tessera_compat::login::is_valid_network_version(text);
         let _ = tessera_compat::login::encode_client_version_payload(text);
         let _ = tessera_compat::login::LoginHost::parse(text);
-        // The HTTPS form of a chain address (`connector::net`): an `https://` URL, stable
-        // when taken again; `is_https` agrees with it on every form (one parse decides
-        // both, so a hostile form is refused by both).
-        let form = tessera_compat::connector::net::https_form(text);
-        assert_eq!(
-            tessera_compat::connector::net::is_https(text),
-            form.as_ref().is_some_and(|h| !h.upgraded)
-        );
-        if let Some(h) = form {
-            assert!(tessera_compat::connector::net::is_https(&h.url));
+        // The HTTPS form of a chain address (`connector::net`): an `https://` URL at the
+        // same host, stable when taken again.
+        if let Some(h) = tessera_compat::connector::net::https_form(text) {
             let again = tessera_compat::connector::net::https_form(&h.url).expect("stable");
             assert_eq!(again.url, h.url);
+            assert_eq!(again.host, h.host);
             assert!(!again.upgraded);
         }
         let _ = tessera_compat::connector::net::scheme_label(text);

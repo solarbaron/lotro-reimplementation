@@ -2019,8 +2019,12 @@ impl<N: ConnectorNet> SessionDriver<N> {
                     return;
                 }
                 let given = std::mem::take(&mut req.url);
+                // Checked again before every request of the exchange, so a stop or cancel
+                // while the HTTPS form is tried sends no plain request after it.
+                let halted =
+                    || thread_stop.load(Ordering::SeqCst) || cancelled.load(Ordering::SeqCst);
                 let result = super::login_phase::exchange(
-                    &mut *http,
+                    &mut super::net::StopCheckedHttp::new(&mut *http, &halted),
                     super::login_phase::ChainStep::TicketRefresh,
                     &given,
                     &mut req,

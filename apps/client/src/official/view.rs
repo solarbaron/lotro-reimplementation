@@ -716,6 +716,9 @@ fn login(b: &mut B<'_>, flow: &Flow) {
     }
 }
 
+/// §8.7 interim screen: the session waits for the window to hand it to the character
+/// screens (a frame or so); Back ends it. The placeholder text
+/// (`official.characters.unavailable`) is not shown, since this build has the screens.
 fn characters(b: &mut B<'_>) {
     let (x, cw) = b.column(560);
     let y = b.para(
@@ -723,7 +726,7 @@ fn characters(b: &mut B<'_>) {
         b.h / 2 - 60,
         cw,
         Face::Body,
-        text("official.characters.unavailable"),
+        text("official.characters.loading"),
         TEXT,
     );
     let bw = 200;

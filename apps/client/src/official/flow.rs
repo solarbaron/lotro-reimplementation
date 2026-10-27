@@ -741,9 +741,9 @@ impl Flow {
         }
     }
 
-    /// Leaves the character placeholder (Back, Escape or closing the window): the session ends
-    /// (`Disconnect`), the plugin host is stopped if anything started it, the account form
-    /// shows with both fields empty (§8.7, §4.5).
+    /// Leaves the interim character screen (Back, Escape or closing the window): the session
+    /// ends (`Disconnect`), the plugin host is stopped if anything started it, the account
+    /// form shows with both fields empty (§8.7, §4.5).
     fn leave_characters(&mut self) {
         if let Some((mut session, _)) = self.characters.take() {
             let _ = session.send(Instant::now(), Command::Disconnect);
@@ -1005,8 +1005,8 @@ impl Flow {
     /// towards the start screen. A message panel (the not-available message of §4.4 and the
     /// other notices, a login screen's message) is its OK; the warning declines; the account
     /// form is its Back; the progress, world-list and queue screens are Cancel (`Disconnect`,
-    /// the account form); the character placeholder is its Back (§8.7). The "Checking…" screen
-    /// of step 2 goes back to the start screen without an acceptance.
+    /// the account form); the interim character screen is its Back (§8.7). The "Checking…"
+    /// screen of step 2 goes back to the start screen without an acceptance.
     fn close_requested(&mut self, ev: &DeviceInput) {
         let now = ev.at();
         self.pressed_on = None;

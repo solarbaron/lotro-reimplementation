@@ -1339,7 +1339,7 @@ fn oe_t7d_no_plugin_host_before_the_hand_over() {
     f.push(Event::Connected { characters: vec![] });
     f.flow.tick(f.t0);
     assert_eq!(f.flow.screen(), Screen::Characters);
-    // §8.7 placeholder: the plugin host stays stopped (§4.5, OE-T20).
+    // §8.7 interim screen: the plugin host stays stopped (§4.5, OE-T20).
     assert_eq!(f.flow.plugin_host().starts(), 0);
     assert!(!f.flow.plugin_host().is_running());
     // Back: the session ends; the form, then the start screen, show without a host.
@@ -1507,6 +1507,198 @@ fn recording_connector_is_reached_only_after_log_in() {
     flow.tick(t0);
     assert_eq!(*rec.0.lock().expect("calls"), 1);
     assert_eq!(flow.constructions(), 1);
+}
+
+/// Log in on this build's backends in a unit test: `construct` refuses before a connector
+/// exists (`ProductionBackends`, "Tests never reach the live service"), so the flow shows
+/// the login-failed message on the account form and no network-access value is made, even
+/// with `TESSERA_GAME_DIR` exported.
+/// Needs a persisted record (Unix-like systems; on Windows the write fails closed).
+#[cfg(unix)]
+#[test]
+fn production_backends_refuse_log_in_in_tests() {
+    let _guard = net_lock();
+    let before = tessera_compat::net_access::created_count();
+    let record = tempfile::tempdir().expect("temp dir");
+    pre_accept(record.path(), &WarningText::shipped());
+    let mut flow = Flow::new(
+        FlowConfig {
+            record_dir: Some(record.path().to_path_buf()),
+            text: Arc::new(WarningText::shipped()),
+            settings_file: None,
+            last_world: None,
+            queued_plugin_loads: 0,
+        },
+        Box::new(super::backend::ProductionBackends::default()),
+        Box::new(CountingHost::default()),
+    );
+    let t0 = Instant::now();
+    flow.choose_official();
+    flow.wait_checks(t0);
+    assert_eq!(flow.screen(), Screen::Form);
+    let hit = |_: f64, _: f64| None;
+    flow.device_input(&typed("a", t0), &hit);
+    flow.device_input(&press(Key::Tab, t0), &hit);
+    flow.device_input(&typed("b", t0), &hit);
+    flow.device_input(&press(Key::Enter, t0), &hit);
+    flow.tick(t0);
+    assert_eq!(flow.screen(), Screen::Form);
+    assert_eq!(flow.constructions(), 0);
+    assert!(flow.login_screen().is_none());
+    assert_eq!(
+        flow.notice().map(|n| n.message.text.as_str()),
+        Some(consent::strings::text("official.error.other"))
+    );
+    assert_eq!(tessera_compat::net_access::created_count(), before);
+}
+
+/// The `.rs` files below `dir`, every depth (test directories included).
+fn all_rust_files(dir: &Path) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    let mut stack = vec![dir.to_path_buf()];
+    while let Some(d) = stack.pop() {
+        for e in std::fs::read_dir(&d).into_iter().flatten().flatten() {
+            let p = e.path();
+            if p.is_dir() {
+                stack.push(p);
+            } else if p.extension().is_some_and(|x| x == "rs") {
+                out.push(p);
+            }
+        }
+    }
+    out.sort();
+    out
+}
+
+/// Whether `line` holds the identifier `word` (not as part of a longer identifier) anywhere
+/// but as `word` followed by `allowed`.
+fn names_word_except(line: &str, word: &str, allowed: &str) -> bool {
+    let ident = |c: char| c.is_alphanumeric() || c == '_';
+    let mut from = 0;
+    while let Some(k) = line.get(from..).and_then(|r| r.find(word)) {
+        let at = from + k;
+        let end = at + word.len();
+        let before = line[..at].chars().next_back().is_some_and(ident);
+        let after = line[end..].chars().next().is_some_and(ident);
+        if !before && !after && !line[end..].starts_with(allowed) {
+            return true;
+        }
+        from = end;
+    }
+    false
+}
+
+/// N4 (decision 0034: tests never connect to an official server). Unit tests are held by
+/// `ProductionBackends`' `#[cfg(test)]` refusal; this scan holds the rest:
+/// (a) no code in `apps/client/src` but the live `construct` of `backend.rs` names the
+/// live connector's real constructor or the live network types, so no test builds a
+/// `LiveConnector` over the network (the synthetic service's `with_factory` stays allowed);
+/// (b) the integration binaries of `apps/client/tests/` (which link the library without
+/// `cfg(test)`) never name the production backends, the live connector, its configuration
+/// or network factory, the construction site or any `official` module but `install_data`,
+/// and never pass `--official` or `--start-screen` to a spawned client.
+#[test]
+fn no_test_reaches_the_live_connector() {
+    let ws = workspace();
+    let client = ws.join("apps/client");
+    // (a)
+    let backend = client.join("src/official/backend.rs");
+    let live_names = ["LiveConnector::new", "LiveNet"];
+    let mut src_files = all_rust_files(&client.join("src"));
+    assert!(src_files.contains(&backend));
+    src_files.retain(|f| f != &backend);
+    for f in &src_files {
+        let s = strip(&std::fs::read_to_string(f).expect("source"));
+        for (n, line) in s.code.iter().enumerate() {
+            for name in live_names {
+                assert!(!line.contains(name), "{}:{}: {name}", f.display(), n + 1);
+            }
+        }
+    }
+    let src = std::fs::read_to_string(&backend).expect("source");
+    let stripped = strip(&src);
+    let all: usize = stripped
+        .code
+        .iter()
+        .filter(|l| l.contains("LiveConnector::new"))
+        .count();
+    let live: Vec<String> = live_lines(&stripped)
+        .into_iter()
+        .filter(|(_, c, _)| c.contains("LiveConnector::new"))
+        .map(|(f, _, _)| f)
+        .collect();
+    assert_eq!(all, 1, "one real construction of the live connector");
+    assert_eq!(live, ["construct"], "outside #[cfg(test)] code");
+    // The refusal is the #[cfg(test)] `construct`.
+    let refusing = stripped
+        .code
+        .windows(2)
+        .filter(|w| w[0].trim() == "#[cfg(test)]" && w[1].trim_start().starts_with("fn construct("))
+        .count();
+    assert_eq!(refusing, 1, "the cfg(test) construct of ProductionBackends");
+    // (b)
+    let tests_dir = client.join("tests");
+    let files = all_rust_files(&tests_dir);
+    assert!(!files.is_empty());
+    let names = [
+        "ProductionBackends",
+        "BackendFactory",
+        "LiveConnector",
+        "LiveConfig",
+        "LiveNet",
+        "CompatBackend",
+        "construct_backend",
+        "start_flow",
+    ];
+    let options = ["--official", "--start-screen"];
+    let mut scanned_install_data = false;
+    for f in &files {
+        let s = strip(&std::fs::read_to_string(f).expect("source"));
+        for (n, (code, text)) in s.code.iter().zip(&s.text).enumerate() {
+            let at = format!("{}:{}", f.display(), n + 1);
+            for name in names {
+                assert!(!code.contains(name), "{at}: {name}");
+            }
+            assert!(
+                !names_word_except(code, "official", "::install_data"),
+                "{at}: an official module other than install_data: {code}"
+            );
+            scanned_install_data |= code.contains("official::install_data");
+            for o in options {
+                assert!(!text.contains(o), "{at}: {o}");
+            }
+        }
+    }
+    assert!(
+        scanned_install_data,
+        "the scan reads the real-data test's imports"
+    );
+    // The word check is not blinded.
+    assert!(names_word_except(
+        "use tessera_client::official;",
+        "official",
+        "::install_data"
+    ));
+    assert!(names_word_except(
+        "use tessera_client::{official, x};",
+        "official",
+        "::install_data"
+    ));
+    assert!(names_word_except(
+        "tessera_client::official::window::run",
+        "official",
+        "::install_data"
+    ));
+    assert!(!names_word_except(
+        "use tessera_client::official::install_data::loader;",
+        "official",
+        "::install_data"
+    ));
+    assert!(!names_word_except(
+        "fn oe_t22_official_release() {}",
+        "official",
+        "::install_data"
+    ));
 }
 
 // ----- OE-T9 -----
@@ -2858,13 +3050,14 @@ fn oe_t20_character_placeholder() {
         })
         .collect::<Vec<_>>()
         .join(" ");
+    assert!(drawn.contains("Loading characters…"), "{drawn}");
     assert!(
-        drawn.contains("Choosing a character on the official servers"),
-        "{drawn}"
+        !drawn.contains(consent::strings::text("official.characters.unavailable")),
+        "the not-available text is not shown: this build has the character screens: {drawn}"
     );
     assert_eq!(f.flow.plugin_host().starts(), 0);
     // §8.7: the window is asked to hand the session over to the character screens; until
-    // it takes it the screen above (with Back) shows.
+    // it takes it the interim screen above (with Back) shows.
     assert_eq!(f.flow.take_request(), Some(FlowRequest::HandOver));
     let handed = f.flow.take_hand_over().expect("the session");
     assert_eq!(handed.characters.len(), 1);
@@ -3146,7 +3339,7 @@ fn oe_t23_window_close_on_every_official_screen() {
         assert!(f.commands().contains(&Command::Disconnect), "{name}");
         assert_eq!(f.flow.take_request(), None, "{name}");
     }
-    // The character placeholder: Back, `Disconnect`, the account form with empty fields.
+    // The interim character screen: Back, `Disconnect`, the account form with empty fields.
     let mut f = fixture(Availability::Available);
     f.reach_login("name", "secret");
     f.push(Event::Connected { characters: vec![] });

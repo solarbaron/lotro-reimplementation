@@ -33,9 +33,9 @@
 //!   scripted option reaches official play, §4.2) and never enters a character without the
 //!   player's choice. Leaving the screens, closing the window, the session's end (with §8.6's
 //!   message) or a client that cannot start (with the reason) shuts that client down and
-//!   reopens the empty account form. The §8.7 screen with `official.characters.unavailable` and Back is left only as
-//!   the fallback while the window has not taken the session (or could not open the
-//!   screens).
+//!   reopens the empty account form. While the window has not yet taken the session, an
+//!   interim screen shows `official.characters.loading` and Back; the spec's placeholder
+//!   text `official.characters.unavailable` is shown nowhere in this build.
 //! - There is no way back from the offline walker to the start screen: quitting it ends the
 //!   client (§4.1, §4.5).
 //! - On Windows no acceptance record is stored (§5.6 "Windows"): an acceptance lasts for the

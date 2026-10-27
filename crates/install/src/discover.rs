@@ -148,6 +148,40 @@ pub enum Source {
     HomeScan,
 }
 
+impl Source {
+    /// The kind of location, for a log line: never the path a source holds (a Steam
+    /// library, a launcher config, a prefix are all below the user's home).
+    fn kind(&self) -> &'static str {
+        match self {
+            Self::Explicit => "named by the user",
+            Self::Environment => "environment variable",
+            Self::Steam { .. } => "Steam library",
+            Self::LauncherConfig { .. } => "launcher config",
+            Self::Standalone => "standalone installer path",
+            Self::WinePrefix { .. } => "Wine prefix",
+            Self::HomeScan => "home scan",
+        }
+    }
+}
+
+/// The kinds of `sources`, for a log line ([`Source::kind`]).
+fn source_kinds(sources: &[Source]) -> Vec<&'static str> {
+    sources.iter().map(Source::kind).collect()
+}
+
+/// The kind of a validation problem, for a log line: no path, no file content.
+fn problem_kind(problem: &ValidationProblem) -> &'static str {
+    match problem {
+        ValidationProblem::NotADirectory => "not a directory",
+        ValidationProblem::CannotList(_) => "cannot list",
+        ValidationProblem::MissingCoreArchive(_) => "missing core archive",
+        ValidationProblem::CoreArchiveFailed { .. } => "core archive failed",
+        ValidationProblem::NoLanguageArchive => "no language archive",
+        ValidationProblem::NoUsableLanguageArchive => "no usable language archive",
+        ValidationProblem::UnsupportedGame(_) => "unsupported game",
+    }
+}
+
 /// A candidate that was found but is not usable.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Rejected {
@@ -202,7 +236,7 @@ impl Candidates {
         steam: Option<SteamInfo>,
     ) {
         if !fsutil::is_dir(&path) {
-            tracing::debug!(path = %path.display(), ?source, "candidate does not exist");
+            tracing::debug!(source = source.kind(), "candidate does not exist");
             return;
         }
         let canon = fsutil::canonical(&path);
@@ -215,7 +249,7 @@ impl Candidates {
             c.steam = c.steam.take().or(steam);
             return;
         }
-        tracing::debug!(path = %path.display(), ?source, "candidate");
+        tracing::debug!(source = source.kind(), "candidate");
         self.index.insert(canon, self.list.len());
         self.list.push(Candidate {
             path,
@@ -310,8 +344,11 @@ pub(crate) fn context_from_path(dir: &Path) -> PathContext {
 /// searching (§8.1 steps 4–5).
 fn open_named(path: &Path, source: Source) -> Result<Discovery> {
     let mut install = GameInstall::open(path)?;
+    tracing::info!(
+        source = source.kind(),
+        "using the install named by the user"
+    );
     install.sources = vec![source];
-    tracing::info!(root = %install.root.display(), "using install named by the user");
     Ok(Discovery {
         installs: vec![install],
         rejected: Vec::new(),
@@ -334,6 +371,7 @@ pub fn discover_with(env: &SearchEnv, explicit: Option<&Path>) -> Result<Discove
 
     let mut cands = Candidates::default();
     let libraries = steam::all_libraries(env);
+    tracing::debug!(libraries = libraries.len(), "Steam libraries");
 
     // 3. Steam.
     for lib in &libraries {
@@ -387,6 +425,11 @@ pub fn discover_with(env: &SearchEnv, explicit: Option<&Path>) -> Result<Discove
 
     // 5. Standalone installer default paths (native, then inside prefixes).
     let prefixes = find_prefixes(env, &libraries, &launcher_cfgs);
+    tracing::debug!(
+        launcher_configs = launcher_cfgs.len(),
+        prefixes = prefixes.len(),
+        "launcher configs and Wine prefixes"
+    );
     if cfg!(windows) && env.system_locations {
         for rel in STANDALONE_RELATIVE {
             let p = rel.iter().fold(PathBuf::from(r"C:\"), |acc, c| acc.join(c));
@@ -449,10 +492,12 @@ pub fn discover_with(env: &SearchEnv, explicit: Option<&Path>) -> Result<Discove
     }
 
     let mut out = Discovery::default();
+    let candidates = cands.list.len();
     for c in cands.list {
         let report = validate::validate(&c.path);
         if !report.usable {
-            tracing::debug!(path = %c.path.display(), problems = ?report.problems, "candidate rejected");
+            let problems: Vec<&str> = report.problems.iter().map(problem_kind).collect();
+            tracing::debug!(sources = ?source_kinds(&c.sources), ?problems, "candidate rejected");
             out.rejected.push(Rejected {
                 path: c.path,
                 sources: c.sources,
@@ -462,7 +507,7 @@ pub fn discover_with(env: &SearchEnv, explicit: Option<&Path>) -> Result<Discove
         }
         match GameInstall::from_report(report) {
             Ok(mut install) => {
-                tracing::info!(root = %install.root.display(), sources = ?c.sources, "found install");
+                tracing::info!(sources = ?source_kinds(&c.sources), "found install");
                 install.sources = c.sources;
                 // A source that found the install without its prefix (home
                 // scan, standalone path) gets the same context an explicit
@@ -479,7 +524,7 @@ pub fn discover_with(env: &SearchEnv, explicit: Option<&Path>) -> Result<Discove
             }
             Err(e) => {
                 // A usable report always converts; map the error just in case.
-                tracing::debug!(path = %c.path.display(), error = %e, "candidate rejected");
+                tracing::debug!(sources = ?source_kinds(&c.sources), error = %e.class(), "candidate rejected");
                 let problems = match e {
                     Error::NotUsable { problems, .. } => problems,
                     Error::UnsupportedGame { game, .. } => {
@@ -495,6 +540,12 @@ pub fn discover_with(env: &SearchEnv, explicit: Option<&Path>) -> Result<Discove
             }
         }
     }
+    tracing::info!(
+        candidates,
+        usable = out.installs.len(),
+        rejected = out.rejected.len(),
+        "install search done"
+    );
     Ok(out)
 }
 

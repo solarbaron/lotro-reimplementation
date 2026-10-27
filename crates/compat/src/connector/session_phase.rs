@@ -1924,6 +1924,64 @@ impl<N: ConnectorNet> SessionDriver<N> {
         }
     }
 
+    /// When the next pass has timed work, on the clock of `now` (the connector waits until
+    /// then, `worker` "Waiting"): the earliest timer of the connections
+    /// ([`SessionMultiplexer::next_deadline`], replaced connections finishing their
+    /// disconnect included), the entry deadline ([`ENTER_WORLD_TIMEOUT_SEC`]), the next
+    /// chat-server attachment ([`Self::wants_chat`]) and the next ticket refresh
+    /// (`official-login.md` §4.3); `now` when messages wait in the inbox below the event
+    /// cap. A time already past is `now`; `None` once the session ended without a shutdown,
+    /// or when nothing is timed.
+    ///
+    /// The chat client and the reply of a running refresh have no deadline of their own
+    /// here: the connector's longest wait (50 ms) bounds how late they are looked at.
+    #[must_use]
+    pub fn next_deadline(&self, now: f64) -> Option<f64> {
+        if self.ended && !self.shutting_down {
+            return None;
+        }
+        let mut next: Option<f64> = None;
+        let mut at = |t: f64| next = Some(next.map_or(t, |n| n.min(t)));
+        let links = std::iter::once(&self.login)
+            .chain(self.world.iter())
+            .chain(self.old.iter());
+        for l in links {
+            if let Some(t) = l.mux.next_deadline(now) {
+                at(t);
+            }
+        }
+        if !self.ended {
+            if let Stage::Entering { since, .. } = &self.stage {
+                at(since + ENTER_WORLD_TIMEOUT_SEC);
+            }
+            if matches!(self.stage, Stage::InWorld { .. })
+                && self.chat.is_none()
+                && self.chat_endpoint.is_some()
+            {
+                at(self.chat_retry_at);
+            }
+            // The conditions under which `run_refresh` acts on a past deadline
+            // (`TicketRefresher::poll_refresh_request`'s guards, the trusted URL and no
+            // refresh running): a refresh that step would not send is no deadline, so it can
+            // never hold the loop at its shortest wait.
+            let r = &self.refresher;
+            if self.refreshing.is_none()
+                && self.refresh_secure
+                && r.lifetime_sec() > 0
+                && r.attempt_count() <= 2
+                && !r.ticket().is_empty()
+                && !r.account_name().is_empty()
+                && !r.auth_server_url().is_empty()
+            {
+                at(r.start_time_sec() + r.next_refresh_offset_sec());
+            }
+            if !self.inbox.is_empty() && !self.full() {
+                at(now);
+            }
+        }
+        next.map(|t| t.max(now))
+    }
+
     /// The player and name once in the world, for [`Self::attach_chat`], when an attempt
     /// is due.
     #[must_use]

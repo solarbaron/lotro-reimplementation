@@ -31,13 +31,13 @@ use super::session_phase::{
 };
 use super::{EVENT_QUEUE, MAX_BATCH, READ_PAUSE};
 
-/// Shortest wait of the session loop for a command (after a pass in which something
-/// happened).
-pub const LOOP_WAIT_MIN: Duration = Duration::from_millis(2);
+/// Shortest wait of the session loop for a command: after a pass in which something
+/// happened (more datagrams may follow at once) and when a timer is already due.
+pub const LOOP_WAIT_MIN: Duration = Duration::from_millis(1);
 
-/// Longest wait of an idle session loop. The session layer has no query for its next timer
-/// (its shortest is 0.6 s); an idle loop doubles its wait up to this, far below that timer,
-/// and goes back to [`LOOP_WAIT_MIN`] as soon as a datagram, an event or a command comes.
+/// Longest wait of the session loop. The session's socket cannot wake the thread (it is
+/// read without blocking), so an idle loop still looks at it this often; the chat client
+/// and a running ticket refresh, which have no deadline query, are looked at as often.
 /// Engineering choice, spec silent.
 pub const LOOP_WAIT_MAX: Duration = Duration::from_millis(50);
 
@@ -623,6 +623,30 @@ fn login_peer<N: ConnectorNet>(
     net.resolve(&host.remote_host, port).ok()
 }
 
+/// How long the session loop waits for a command before its next pass: until `deadline`
+/// (the driver's [`SessionDriver::next_deadline`], on the clock of `now`), at least
+/// [`LOOP_WAIT_MIN`] and at most [`LOOP_WAIT_MAX`]; the longest wait without a deadline. A
+/// command ends the wait at once either way.
+#[must_use]
+pub fn loop_wait(now: f64, deadline: Option<f64>) -> Duration {
+    let Some(deadline) = deadline else {
+        return LOOP_WAIT_MAX;
+    };
+    let left = deadline - now;
+    if left.is_nan() || left <= LOOP_WAIT_MIN.as_secs_f64() {
+        return LOOP_WAIT_MIN;
+    }
+    if left >= LOOP_WAIT_MAX.as_secs_f64() {
+        return LOOP_WAIT_MAX;
+    }
+    // Finite and between the two bounds here: the conversion cannot panic. One microsecond
+    // more, so that rounding never brings the pass just before the timer.
+    Duration::from_secs_f64(left + 1e-6).clamp(LOOP_WAIT_MIN, LOOP_WAIT_MAX)
+}
+
+/// The session loop: a pass ([`SessionDriver::step`]), then a wait for a command until
+/// the driver's next deadline ([`loop_wait`]); after a pass in which something happened
+/// the wait is the shortest.
 fn session_loop<N: ConnectorNet>(
     net: &mut N,
     driver: &mut SessionDriver<N>,
@@ -631,7 +655,6 @@ fn session_loop<N: ConnectorNet>(
     control: &Control,
     now: impl Fn() -> f64,
 ) {
-    let mut wait = LOOP_WAIT_MIN;
     let stop = || control.cancelled();
     loop {
         if out.gone || control.cancelled() {
@@ -678,12 +701,17 @@ fn session_loop<N: ConnectorNet>(
             shutdown(net, driver, &now);
             return;
         }
-        wait = if busy {
-            LOOP_WAIT_MIN
+        let t = now();
+        // Datagrams still queued after the pass's flush are deliberately not "due now": the
+        // flush stops at a failed send, and a send error that persists (a revoked right
+        // fails every send) would otherwise wake this loop every `LOOP_WAIT_MIN`. The next
+        // timer or `LOOP_WAIT_MAX` tries the queue again (`SessionMultiplexer::next_deadline`).
+        let deadline = if busy {
+            Some(t)
         } else {
-            (wait * 2).min(LOOP_WAIT_MAX)
+            driver.next_deadline(t)
         };
-        match commands.recv_timeout(wait) {
+        match commands.recv_timeout(loop_wait(t, deadline)) {
             Ok(Msg::Command(_)) if control.cancelled() || out.gone => {
                 // Dropped unread: after the cancel nothing new goes out (no `0x6F`, no chat
                 // line for the shutdown to flush).
@@ -694,10 +722,9 @@ fn session_loop<N: ConnectorNet>(
                 if let Err(e) = driver.command(&cmd, now()) {
                     tracing::debug!(command = cmd.name(), error = %e, "official session: command not carried");
                 }
-                wait = LOOP_WAIT_MIN;
             }
-            Ok(Msg::Wake) => wait = LOOP_WAIT_MIN,
-            Err(RecvTimeoutError::Timeout) => {}
+            // The next pass takes the move; a timeout is the deadline (or the longest wait).
+            Ok(Msg::Wake) | Err(RecvTimeoutError::Timeout) => {}
             Err(RecvTimeoutError::Disconnected) => {
                 shutdown(net, driver, &now);
                 return;
@@ -721,7 +748,9 @@ fn shutdown<N: ConnectorNet>(net: &N, driver: &mut SessionDriver<N>, now: &impl 
     driver.begin_shutdown(now());
     let until = Instant::now() + SHUTDOWN_LIMIT;
     while Instant::now() < until && net.is_live() && driver.shutdown_step(now()) {
-        std::thread::sleep(LOOP_WAIT_MIN);
+        let t = now();
+        let left = until.saturating_duration_since(Instant::now());
+        std::thread::sleep(loop_wait(t, driver.next_deadline(t)).min(left));
     }
     tracing::info!("official session closed");
 }

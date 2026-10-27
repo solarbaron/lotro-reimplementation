@@ -788,3 +788,18 @@ From the `m8-connector` build (entry E = `official-entry.md`):
   does), and the world-entry deadline (the code fails the entry after 60 s).
 - **E §7.3:** extend "no credentials in logs" to install paths and other user paths (the code logs
   kinds only).
+
+From the `m8-hand-over` build (C3):
+
+- **P §4.5 item 4:** the length of the portal-space loading timeout (the code uses 30 s).
+- **P §7.2 item 3:** how long to wait for 0x6C after a world teardown, and what to do when it
+  never comes (the code waits 60 s, then reuses the old list).
+- **P §7.2 / W §3.5:** which connection carries 0x6F after a return from the world (the code uses
+  the one that delivered the latest 0x6C).
+- **P §6.1.3 / §7.2:** whether the chat-server session stays up or is re-opened (with the new
+  character) across a return to character selection.
+- **P §8:** maps the logout request to `Command::Disconnect`, while E §8.2 makes `Disconnect` end
+  the session; Tessera adds a neutral `Command::LeaveWorld` and `Event::ReturnedToCharacterSelect`.
+- **W §6:** names `CharacterSummary` fields (`public_props`, `visual_desc`) the neutral type does
+  not have.
+- **E §8.7 (rev 6):** still describes only the placeholder; it needs a revision for the hand-over.

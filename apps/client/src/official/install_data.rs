@@ -4,18 +4,27 @@
 //! read-only and the master property dictionary (`0x34000000`) as the wire property schema,
 //! and from them the tables the world session reads at run time:
 //!
-//! - the `0xCC` state schemas, built from the player-physics script table `0x07000029` and
-//!   its `0x0C` scriptlets by the construction algorithm of `official-messages-world.md`
-//!   §4.3.1 ([`portal_state_schemas`]);
-//! - the texts of `LocalizedTokenText` references, through the string tables of the
-//!   language the login selected (`string-table.md` §9). A message with value slots is
-//!   shown with its literal parts and counted ([`ArchiveData::texts_without_values`]): the
-//!   wire form of arguments is OPEN (`official-messages-world.md` §2.6), so no value can
-//!   fill them;
+//! - the `0xCC` state schemas, built by the construction algorithm of
+//!   `official-messages-world.md` §4.3.1 over the avatar closure that step 1 names
+//!   ([`portal_state_schemas`]);
+//! - the texts of `LocalizedTokenText` values in the language the login selected
+//!   (`string-table.md` §9.0): a literal with the display cut and its escapes decoded
+//!   (step 1), a reference through the string tables. A message with value slots is shown
+//!   with its literal parts and counted ([`ArchiveData::texts_without_values`]): the wire
+//!   form of arguments is OPEN (`official-messages-world.md` §2.6), so no value can fill
+//!   them. Each text the session shows is resolved once (the entity feed renders a name at
+//!   the creation only), so the count is one per text shown;
 //! - the baseline properties of an entity's template game object (`property-system.md`
-//!   §6.2; `official-messages-world.md` §6 row `0x98 + 0x52`);
+//!   §6.2; `official-messages-world.md` §6 row `0x98 + 0x52`), decoded on demand and kept
+//!   for the [`MAX_CACHED_TEMPLATES`] used last;
 //! - the keys of the chat text category enum `0x230002A8` and its base chain
 //!   (`official-messages-play.md` §6.7).
+//!
+//! The in-game calendar (`official-messages-world.md` §4.4.2) is not read here: the spec's
+//! lookup (key `0x96` of directory `0x0F000002`) contradicts `environment.md` §3, which
+//! makes `0x0F000002` region 3's descriptor (question in `docs/m8-remediation.md` §15). A
+//! caller of `tessera_compat::world::WorldCalendarConfig` keeps supplying the record DID
+//! itself until the spec says how to find it (deferred).
 //!
 //! [`loader`] and [`locator`] run on the connector's thread (finding the install, opening
 //! the archives, decoding the dictionary and building the schemas take a while; the frame
@@ -37,14 +46,25 @@ use tessera_compat::world::{
 use tessera_dat::{ArchiveSet, SetOptions, inflate_record};
 use tessera_formats::property::{PropertyDictionary, PropertyValue};
 use tessera_formats::property_set::{PropertySet, PropertySetRecord, object_property_set_did};
+use tessera_formats::script_table::resolve::{
+    COMBINATION_OVERRIDING, RUN_LIST_KINDS, ScriptVocabulary,
+};
 use tessera_formats::script_table::{Node, NodeData, NodeKind, ScriptTable, Scriptlet};
 use tessera_formats::{Did, EnumMapper, Record as _, StringSource};
 use tessera_props::{PROPERTY_DICTIONARY_DID, PropertyRegistry};
-use tessera_text::{RenderOptions, Strings, TableSource, Values};
+use tessera_text::{RenderOptions, Strings, TableSource, Values, decode_escapes};
 
 /// The player-physics script table whose scripts define the `0xCC` state schemas
-/// (`official-messages-world.md` §4.3.1, W3).
+/// (`official-messages-world.md` §4.3.1, W3): its script keys are the schema IDs.
 pub const PLAYER_PHYSICS_TABLE: u32 = 0x0700_0029;
+
+/// The roots of the script-table closure the schemas are gathered over: the avatar table
+/// and the global root (`official-messages-world.md` §4.3.1 step 1).
+pub const SCHEMA_CLOSURE_ROOTS: [u32; 2] = [0x0700_0417, 0x0700_0000];
+
+/// The script-key enum mapper (its base chain followed) whose keys a `state_schema_id` is
+/// one of (`official-messages-world.md` §4.3.1: mapper `0x23000097` / `0x230000F8`).
+pub const SCRIPT_KEY_ENUM: u32 = 0x2300_0097;
 
 /// The chat text category enum (`official-messages-play.md` §6.7; its base `0x230002A9` is
 /// found through the record's own base link).
@@ -58,15 +78,16 @@ pub const MAX_TABLE_RECORD: usize = 16 * 1024 * 1024;
 /// has about 150, `script-table.md` §8.2).
 pub const MAX_CLOSURE_TABLES: usize = 512;
 
-/// Most nodes visited while building all schemas. Engineering choice.
-pub const MAX_SCHEMA_NODES: usize = 2_000_000;
+/// Most nodes visited while building one schema; a schema that hits it is left out, so a
+/// `0xCC` naming it is refused rather than misframed. Engineering choice.
+pub const MAX_SCHEMA_NODES: usize = 1_000_000;
 
 /// Deepest nesting followed while building a schema (nodes inside ports and scriptlets).
 /// Engineering choice: the data stays far below it (`script-table.md` §4.5).
 pub const MAX_SCHEMA_DEPTH: usize = 1024;
 
-/// Most template property sets kept decoded (the cache is emptied when full). Engineering
-/// choice.
+/// Most template property sets kept decoded; beyond it the one used longest ago is
+/// dropped. Engineering choice.
 pub const MAX_CACHED_TEMPLATES: usize = 1024;
 
 /// The 4-byte inflated-length prefix a compressed record's stored `length` includes
@@ -96,6 +117,23 @@ fn bounded_record(set: &ArchiveSet, did: u32, max_bytes: usize) -> Option<Vec<u8
     inflate_record(&stored, max).ok()
 }
 
+/// The display cut of `string-table.md` §7.6: the text before its first `[` not directly
+/// preceded by a backslash, without trailing whitespace (space, LF, CR, TAB, form feed);
+/// the whole text when it has no such `[`.
+#[must_use]
+pub fn display_cut(text: &str) -> &str {
+    let bytes = text.as_bytes();
+    let first = bytes
+        .iter()
+        .enumerate()
+        .find(|&(i, &b)| b == b'[' && (i == 0 || bytes.get(i - 1) != Some(&b'\\')))
+        .map(|(i, _)| i);
+    match first.and_then(|i| text.get(..i)) {
+        Some(head) => head.trim_end_matches([' ', '\n', '\r', '\t', '\u{0C}']),
+        None => text,
+    }
+}
+
 /// The string tables of the set (its language member serves the `0x25` records).
 struct SetTables(Arc<ArchiveSet>);
 
@@ -117,8 +155,42 @@ pub struct ArchiveData {
     strings: Strings,
     schemas: BTreeMap<u32, PortalStateSchema>,
     chat_keys: Option<Vec<u32>>,
-    templates: Mutex<HashMap<u32, Option<Arc<PropertySet>>>>,
+    templates: Mutex<TemplateCache>,
     texts_without_values: AtomicU64,
+}
+
+/// The decoded template sets, the [`MAX_CACHED_TEMPLATES`] used last.
+#[derive(Debug, Default)]
+struct TemplateCache {
+    sets: HashMap<u32, (Option<Arc<PropertySet>>, u64)>,
+    /// Use stamp to template.
+    order: BTreeMap<u64, u32>,
+    clock: u64,
+}
+
+impl TemplateCache {
+    fn get(&mut self, template: u32) -> Option<Option<Arc<PropertySet>>> {
+        let (set, stamp) = self.sets.get_mut(&template)?;
+        self.order.remove(stamp);
+        self.clock += 1;
+        *stamp = self.clock;
+        self.order.insert(self.clock, template);
+        Some(set.clone())
+    }
+
+    fn insert(&mut self, template: u32, set: Option<Arc<PropertySet>>) {
+        if !self.sets.contains_key(&template)
+            && self.sets.len() >= MAX_CACHED_TEMPLATES
+            && let Some((_, oldest)) = self.order.pop_first()
+        {
+            self.sets.remove(&oldest);
+        }
+        self.clock += 1;
+        if let Some((_, old)) = self.sets.insert(template, (set, self.clock)) {
+            self.order.remove(&old);
+        }
+        self.order.insert(self.clock, template);
+    }
 }
 
 impl std::fmt::Debug for ArchiveData {
@@ -146,14 +218,15 @@ impl ArchiveData {
         self.texts_without_values.load(Ordering::Relaxed)
     }
 
-    /// The baseline property set of the game object `template`, decoded once.
+    /// The baseline property set of the game object `template`, decoded once while it
+    /// stays among the [`MAX_CACHED_TEMPLATES`] used last.
     fn template_set(&self, template: u32) -> Option<Arc<PropertySet>> {
         let mut cache = self
             .templates
             .lock()
             .unwrap_or_else(PoisonError::into_inner);
-        if let Some(s) = cache.get(&template) {
-            return s.clone();
+        if let Some(s) = cache.get(template) {
+            return s;
         }
         let set = object_property_set_did(template).and_then(|did| {
             let bytes = bounded_record(&self.set, did.0, MAX_TABLE_RECORD)?;
@@ -161,9 +234,6 @@ impl ArchiveData {
                 .ok()
                 .map(|r| Arc::new(r.set))
         });
-        if cache.len() >= MAX_CACHED_TEMPLATES {
-            cache.clear();
-        }
         cache.insert(template, set.clone());
         set
     }
@@ -214,14 +284,15 @@ impl InstallData for ArchiveData {
         self.schemas.get(&id)
     }
 
-    /// `string-table.md` §9: a literal is its text; a reference is looked up in the
-    /// selected language's tables and rendered (display mode). A miss, or a text that
+    /// `string-table.md` §9: a literal is its text in display mode (§9.0 step 1: the
+    /// display cut of §7.6, then the escapes of §7.7 decoded); a reference is looked up in
+    /// the selected language's tables and rendered (display mode). A miss, or a text that
     /// shows nothing (the emptiness test of §9.0 step 2), is `None`: nothing is shown and
     /// the caller counts it. A message with value slots renders its literal parts
     /// ([`ArchiveData::texts_without_values`]).
     fn resolve_text(&self, text: &LocalizedTokenText) -> Option<String> {
         let (token, table) = match &text.content {
-            LocalizedTokenTextContent::Literal(s) => return Some(s.clone()),
+            LocalizedTokenTextContent::Literal(s) => return Some(decode_escapes(display_cut(s))),
             LocalizedTokenTextContent::Reference {
                 token_id,
                 table_did,
@@ -252,6 +323,14 @@ impl InstallData for ArchiveData {
     fn template_value(&self, template_did: u32, pid: u32) -> Option<EncodedPropertyValue> {
         let set = self.template_set(template_did)?;
         wire_value(set.get(pid)?)
+    }
+
+    fn template_cached(&self, template_did: u32) -> bool {
+        self.templates
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .sets
+            .contains_key(&template_did)
     }
 
     fn chat_category_keys(&self) -> Option<Vec<u32>> {
@@ -291,8 +370,18 @@ struct SchemaBuilder<'a> {
     dict: &'a PropertyDictionary,
     registry: &'a PropertyRegistry,
     scriptlets: HashMap<u32, Option<Arc<Scriptlet>>>,
+    /// `Script_CombinationType` and its `Overriding` key (`script-table.md` §8.2), when
+    /// the install's vocabulary has them; without them every definition is additive.
+    combination: Option<(u32, u32)>,
     visited: usize,
     truncated: bool,
+}
+
+/// A script-table closure: its tables in pre-order and their positions by DID.
+#[derive(Default)]
+struct Closure {
+    tables: Vec<ScriptTable>,
+    index: HashMap<Did, usize>,
 }
 
 impl SchemaBuilder<'_> {
@@ -312,23 +401,87 @@ impl SchemaBuilder<'_> {
         s
     }
 
-    /// The closure of `root`: the table and every table reachable through its includes,
-    /// in pre-order, depth first, in stored include order, each once (`script-table.md`
-    /// §8.2).
-    fn closure(&self, root: Did) -> Vec<ScriptTable> {
-        let mut out = Vec::new();
-        let mut seen = HashSet::new();
-        let mut stack = vec![root];
+    /// The closure of `roots`: the tables and every table reachable through their
+    /// includes, in pre-order, depth first, in stored include order, each once; null
+    /// includes and includes naming their own table are skipped (`script-table.md` §8.2).
+    fn closure(&self, roots: &[Did]) -> Closure {
+        let mut out = Closure::default();
+        let mut stack: Vec<Did> = roots.iter().rev().copied().collect();
         while let Some(did) = stack.pop() {
-            if out.len() >= MAX_CLOSURE_TABLES || did.is_null() || !seen.insert(did) {
+            if out.tables.len() >= MAX_CLOSURE_TABLES
+                || did.is_null()
+                || out.index.contains_key(&did)
+            {
                 continue;
             }
             let Some(t) = self.table(did) else {
                 continue;
             };
             // Reversed, so the first include is visited first.
-            stack.extend(t.includes.iter().rev().copied());
-            out.push(t);
+            stack.extend(
+                t.includes
+                    .iter()
+                    .rev()
+                    .copied()
+                    .filter(|inc| !inc.is_null() && *inc != did),
+            );
+            out.index.insert(did, out.tables.len());
+            out.tables.push(t);
+        }
+        out
+    }
+
+    /// Whether `t`'s definition of `key` is overriding (`script-table.md` §8.2 step 2).
+    fn overriding(&self, t: &ScriptTable, key: u32) -> bool {
+        let Some((pid, overriding)) = self.combination else {
+            return false;
+        };
+        t.script_properties(key)
+            .and_then(|set| set.get(pid))
+            .and_then(PropertyValue::as_f64)
+            .is_some_and(|v| v == f64::from(overriding))
+    }
+
+    /// The tables whose definitions of `key` run, in run order (`script-table.md` §8.2
+    /// steps 2–3): for the kind-1, then the kind-2, then the kind-4 list, the closure from
+    /// `roots` in pre-order; a table whose kind shares a bit with the list's contributes
+    /// its definition, and an overriding definition stops the descent into that table's
+    /// includes. A definition is taken once.
+    fn gather(&self, c: &Closure, roots: &[usize], key: u32) -> Vec<usize> {
+        let mut out = Vec::new();
+        let mut taken = vec![false; c.tables.len()];
+        let mut seen = vec![false; c.tables.len()];
+        for list in RUN_LIST_KINDS {
+            seen.fill(false);
+            let mut stack: Vec<usize> = roots.iter().rev().copied().collect();
+            while let Some(ti) = stack.pop() {
+                match seen.get_mut(ti) {
+                    Some(v) if !*v => *v = true,
+                    _ => continue,
+                }
+                let Some(t) = c.tables.get(ti) else {
+                    continue;
+                };
+                let mut descend = true;
+                if t.kind & list != 0 && t.script(key).is_some() {
+                    if let Some(tk) = taken.get_mut(ti)
+                        && !*tk
+                    {
+                        *tk = true;
+                        out.push(ti);
+                    }
+                    descend = !self.overriding(t, key);
+                }
+                if descend {
+                    for inc in t.includes.iter().rev() {
+                        if let Some(&j) = c.index.get(inc)
+                            && !seen.get(j).copied().unwrap_or(true)
+                        {
+                            stack.push(j);
+                        }
+                    }
+                }
+            }
         }
         out
     }
@@ -350,6 +503,11 @@ impl SchemaBuilder<'_> {
 
     /// Steps 2–3: `node` in pre-order: the node, then (for a Scriptlet node) the roots of
     /// the scriptlet it names, then the children of its ports.
+    ///
+    /// Two readings of step 2, recorded (question in `docs/m8-remediation.md` §15): the
+    /// scriptlet's roots are visited before the node's own port children, and every port of
+    /// a node counts as an output port (the decoded node keeps no port direction). The
+    /// verification tables of §4.3.1 come out the same on the reference install.
     fn visit(
         &mut self,
         node: &Node,
@@ -391,47 +549,101 @@ impl SchemaBuilder<'_> {
     }
 }
 
-/// The `0xCC` state schemas of the install (`official-messages-world.md` §4.3.1): for each
-/// script key of the player-physics table [`PLAYER_PHYSICS_TABLE`], the condition PIDs of
-/// the Switch (12) and When (63) nodes of every definition of that key in the table's
-/// closure (in closure order, `script-table.md` §8.2), visited in pre-order through ports
-/// and the scriptlets they name. Empty when the table is missing or does not decode.
+/// `Script_CombinationType` and its `Overriding` key from the install's vocabulary
+/// (`script-table.md` §8.2), `None` when the install lacks it.
+fn combination_vocabulary(set: &ArchiveSet, dict: &PropertyDictionary) -> Option<(u32, u32)> {
+    let mappers = |did: Did| {
+        bounded_record(set, did.0, MAX_TABLE_RECORD)
+            .and_then(|b| EnumMapper::parse_expecting(&b, did).ok())
+    };
+    let vocab = ScriptVocabulary::from_data(dict, mappers).ok()?;
+    let pid = vocab.combination_type?;
+    Some((
+        pid,
+        vocab
+            .combination_overriding
+            .unwrap_or(COMBINATION_OVERRIDING),
+    ))
+}
+
+/// The `0xCC` state schemas of the install (`official-messages-world.md` §4.3.1).
+///
+/// Step 1: the closure of the avatar table and the global root
+/// ([`SCHEMA_CLOSURE_ROOTS`]). The schema IDs are the script keys of the player-physics
+/// table [`PLAYER_PHYSICS_TABLE`] (the table §4.3.1 names as defining them, which must be
+/// in that closure) that are keys of the script-key enum [`SCRIPT_KEY_ENUM`]. For each, the
+/// definitions of the key in the closure are gathered as `script-table.md` §8.2 runs them
+/// (kind lists 1, 2, 4; overriding definitions prune their tables' includes), and steps
+/// 2–4 collect the condition PIDs of their Switch (12) and When (63) nodes. A schema that
+/// hits [`MAX_SCHEMA_NODES`] or [`MAX_SCHEMA_DEPTH`] is left out. Empty when a table or
+/// the enum is missing.
 #[must_use]
 pub fn portal_state_schemas(
     set: &ArchiveSet,
     registry: &PropertyRegistry,
 ) -> BTreeMap<u32, PortalStateSchema> {
+    let dict = registry.dictionary();
     let mut b = SchemaBuilder {
         set,
-        dict: registry.dictionary(),
+        dict,
         registry,
         scriptlets: HashMap::new(),
+        combination: combination_vocabulary(set, dict),
         visited: 0,
         truncated: false,
     };
-    let closure = b.closure(Did(PLAYER_PHYSICS_TABLE));
-    let Some(root) = closure.first() else {
-        tracing::warn!("official session: the player-physics script table is missing");
+    let roots = SCHEMA_CLOSURE_ROOTS.map(Did);
+    let closure = b.closure(&roots);
+    let Some(physics) = closure
+        .index
+        .get(&Did(PLAYER_PHYSICS_TABLE))
+        .and_then(|&i| closure.tables.get(i))
+    else {
+        tracing::warn!("official session: the player-physics script table is not in the closure");
         return BTreeMap::new();
     };
-    let keys: Vec<u32> = root.scripts.iter().map(|s| s.key).collect();
+    let Some(script_keys) = enum_keys(set, SCRIPT_KEY_ENUM) else {
+        tracing::warn!("official session: the script-key enum is missing");
+        return BTreeMap::new();
+    };
+    let keys: Vec<u32> = physics
+        .scripts
+        .iter()
+        .map(|s| s.key)
+        .filter(|k| script_keys.binary_search(k).is_ok())
+        .collect();
+    let root_positions: Vec<usize> = roots
+        .iter()
+        .filter_map(|d| closure.index.get(d).copied())
+        .collect();
     let mut out = BTreeMap::new();
     for key in keys {
+        b.visited = 0;
+        b.truncated = false;
         let mut schema = PortalStateSchema::default();
         let mut stack = Vec::new();
-        for table in &closure {
-            if let Some(script) = table.script(key) {
-                for r in &script.roots {
-                    b.visit(r, 0, &mut stack, &mut schema);
-                }
+        for ti in b.gather(&closure, &root_positions, key) {
+            let Some(script) = closure.tables.get(ti).and_then(|t| t.script(key)) else {
+                continue;
+            };
+            for r in &script.roots {
+                b.visit(r, 0, &mut stack, &mut schema);
             }
+        }
+        if b.truncated {
+            tracing::warn!(
+                key = format_args!("{key:#010x}"),
+                "official session: a state schema hit its traversal bound and is left out"
+            );
+            continue;
         }
         out.insert(key, schema);
     }
-    if b.truncated {
-        tracing::warn!("official session: a state schema hit its traversal bound");
-    }
-    tracing::debug!(schemas = out.len(), "official session: state schemas built");
+    tracing::debug!(
+        schemas = out.len(),
+        tables = closure.tables.len(),
+        "official session: state schemas built"
+    );
     out
 }
 
@@ -458,7 +670,7 @@ fn open(root: &Path, language: &str) -> Result<ArchiveData, InstallProblem> {
         strings,
         schemas,
         chat_keys,
-        templates: Mutex::new(HashMap::new()),
+        templates: Mutex::new(TemplateCache::default()),
         texts_without_values: AtomicU64::new(0),
     })
 }
@@ -516,4 +728,40 @@ pub fn locator(explicit: Option<PathBuf>) -> InstallLocator {
             root: install.root,
         })
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_display_cut_drops_from_the_first_unescaped_bracket() {
+        assert_eq!(display_cut("Watcher [m]"), "Watcher");
+        assert_eq!(display_cut("Watcher\t \n[[x]] more"), "Watcher");
+        assert_eq!(display_cut(r"A \[b\] c [n]"), r"A \[b\] c");
+        assert_eq!(display_cut("No group  "), "No group  ");
+        assert_eq!(display_cut("[all]"), "");
+        // Escapes are decoded after the cut (§9.0 step 1).
+        assert_eq!(decode_escapes(display_cut(r"A \[b\]\q [n]")), "A [b]\"");
+    }
+
+    #[test]
+    fn the_template_cache_drops_the_set_used_longest_ago_one_at_a_time() {
+        let mut c = TemplateCache::default();
+        for t in 0..MAX_CACHED_TEMPLATES as u32 {
+            c.insert(t, None);
+        }
+        // Template 0 is used again: template 1 is now the oldest.
+        assert!(c.get(0).is_some());
+        c.insert(9_999, None);
+        assert_eq!(c.sets.len(), MAX_CACHED_TEMPLATES);
+        assert!(c.sets.contains_key(&0));
+        assert!(!c.sets.contains_key(&1));
+        assert!(c.sets.contains_key(&2));
+        assert_eq!(c.order.len(), c.sets.len());
+        // Inserting a template already there evicts nothing.
+        c.insert(9_999, None);
+        assert_eq!(c.sets.len(), MAX_CACHED_TEMPLATES);
+        assert!(c.sets.contains_key(&2));
+    }
 }

@@ -14,8 +14,13 @@
 //! the graceful shutdown. Then arbitrary
 //! datagrams from the login, world and chat servers, arbitrary messages wrapped in valid
 //! sequenced datagrams of the login or world connection (the widened opcodes of the bytes
-//! 0xC0 and above fall in the world-teardown band), neutral commands (`LeaveWorld` and
-//! `WorldLoaded` among them) and clock steps follow. No panic, bounded state.
+//! 0xC0 and above fall in the world-teardown band; a selector byte addresses them to no
+//! recipient, the local player, a fixed entity or a recipient from the input), neutral
+//! commands (`LeaveWorld` and `WorldLoaded` among them) and clock steps follow. A chunk
+//! whose kind byte has bit 7 set has a 2-byte length. The synthetic install types the
+//! entity and chat properties as the connector's test service does and has a baseline for
+//! one template. No panic, bounded state: the entity feed stays within its limits after
+//! every step.
 #![no_main]
 
 use std::collections::VecDeque;
@@ -26,19 +31,26 @@ use std::sync::{Arc, Mutex};
 use libfuzzer_sys::fuzz_target;
 use tessera_compat::chat_session::ChatCodecs;
 use tessera_compat::connector::data::{InstallData, SchemaView};
+use tessera_compat::connector::entities::{
+    MAX_ENTITIES, MAX_PENDING, PID_IS_INANIMATE_PROP, PID_IS_NPC_AGENT,
+};
 use tessera_compat::connector::net::{ConnectorNet, SendHttpClient};
 use tessera_compat::connector::session_phase::{SessionDriver, SessionStart};
 use tessera_compat::login::{
     HttpClient, HttpRequest, HttpResponse, LoginError, SessionHandoff, TicketRefresher, VersionInfo,
 };
 use tessera_compat::play::PlayError;
+use tessera_compat::play::chat::{
+    PID_CHAT_CATEGORY, PID_CHAT_SENDER_ID, PID_CHAT_SENDER_NAME, PID_CHAT_TEXT,
+};
 use tessera_compat::session::{
     BitTreeTable, ConnectChallengeHeader, DatagramHeader, IsaacCipher, OptionalHeaders,
     SessionError, UdpDatagramTransport, WorldReferralHeader, encode_datagram, split_blob,
 };
 use tessera_compat::world::{
-    CharacterListResponse, CharacterSummaryEntry, EncodedPropertyTable, EntityAppearanceDesc,
-    PlayerSessionReady, PropertyType, encode_event_envelope,
+    CharacterListResponse, CharacterSummaryEntry, EncodedPropertyTable, EncodedPropertyValue,
+    EntityAppearanceDesc, PID_AGENT_SPECIES, PID_ENTITY_DISPLAY_NAME, PID_SEX, PlayerSessionReady,
+    PropertyType, encode_event_envelope,
 };
 use tessera_net::{ChatChannel, Command, Location, SocialCommand, Vec3};
 
@@ -49,6 +61,27 @@ const CHAT: SocketAddrV4 = SocketAddrV4::new(Ipv4Addr::new(192, 0, 2, 30), 9200)
 const LOGIN_SEED: u32 = 0xBEEF_0001;
 const WORLD_SEED: u32 = 0xBEEF_0002;
 const MAX_STEPS: usize = 256;
+/// The local player of the synthetic world.
+const PLAYER: u64 = 0x0100_0000_0000_0007;
+/// A fixed other entity the selector byte can address.
+const ENTITY: u64 = 0x0300_0000_0000_0101;
+/// The one template with a baseline.
+const TEMPLATE: u32 = 0x7000_0123;
+/// The types the synthetic dictionary gives the entity properties the feed reads
+/// (`official-messages-world.md` §5.2.4) and the chat-line properties
+/// (`official-messages-play.md` §6.5.1), as the connector's synthetic test service does;
+/// every other PID gets a type from its number.
+const DICTIONARY: [(u32, PropertyType); 9] = [
+    (PID_ENTITY_DISPLAY_NAME, PropertyType::LocalizedTokenText),
+    (PID_IS_NPC_AGENT, PropertyType::Boolean),
+    (PID_IS_INANIMATE_PROP, PropertyType::Boolean),
+    (PID_AGENT_SPECIES, PropertyType::Enum),
+    (PID_SEX, PropertyType::Enum),
+    (PID_CHAT_CATEGORY, PropertyType::Enum),
+    (PID_CHAT_TEXT, PropertyType::LocalizedTokenText),
+    (PID_CHAT_SENDER_NAME, PropertyType::LocalizedTokenText),
+    (PID_CHAT_SENDER_ID, PropertyType::InstanceId),
+];
 
 #[derive(Debug)]
 struct NoData;
@@ -59,7 +92,21 @@ impl InstallData for NoData {
     }
 
     fn property_type(&self, pid: u32) -> Option<PropertyType> {
-        PropertyType::from_code(pid % 23).ok()
+        DICTIONARY
+            .iter()
+            .find(|(p, _)| *p == pid)
+            .map(|(_, t)| *t)
+            .or_else(|| PropertyType::from_code(pid % 23).ok())
+    }
+
+    fn template_value(&self, template_did: u32, pid: u32) -> Option<EncodedPropertyValue> {
+        (template_did == TEMPLATE && pid == PID_IS_NPC_AGENT)
+            .then_some(EncodedPropertyValue::Boolean(true))
+    }
+
+    /// Only the one template counts as decoded: the others go through the read budget.
+    fn template_cached(&self, template_did: u32) -> bool {
+        template_did == TEMPLATE
     }
 }
 
@@ -207,6 +254,38 @@ impl Server {
         encode_datagram(hdr, &OptionalHeaders::default(), &frags, Some(mask), None).ok()
     }
 
+    /// A blob to `recipient` as sequenced datagrams of one fragment each, so a long
+    /// message (a 2-byte length) still fits.
+    fn blob_to(&mut self, opcode: u32, recipient: Option<u64>, envelope: &[u8]) -> Vec<Vec<u8>> {
+        let blob_id = (self.seq.wrapping_add(1) & 0xFFFF) as u16;
+        let Ok(frags) = split_blob(2, blob_id, 1, 0, recipient, opcode, envelope) else {
+            return Vec::new();
+        };
+        let mut out = Vec::new();
+        for frag in frags {
+            let Some(seq) = self.seq.checked_add(1) else {
+                break;
+            };
+            self.seq = seq;
+            let mask = self.isaac.next_mask();
+            let hdr = DatagramHeader {
+                rec_id: 0x0111,
+                seq_num: seq,
+                ..DatagramHeader::default()
+            };
+            if let Ok(d) = encode_datagram(
+                hdr,
+                &OptionalHeaders::default(),
+                std::slice::from_ref(&frag),
+                Some(mask),
+                None,
+            ) {
+                out.push(d);
+            }
+        }
+        out
+    }
+
     fn event(&mut self, opcode: u32, inner: &[u8]) -> Option<Vec<u8>> {
         self.blob(opcode, &encode_event_envelope(inner))
     }
@@ -236,7 +315,7 @@ fn character_list() -> Option<Vec<u8>> {
 
 fn session_ready() -> Option<Vec<u8>> {
     PlayerSessionReady {
-        player_id: 0x0100_0000_0000_0007,
+        player_id: PLAYER,
         session_props: EncodedPropertyTable::new(),
     }
     .to_bytes()
@@ -340,6 +419,8 @@ fuzz_target!(|data: &[u8]| {
             }
         }
         let _ = driver.take_events();
+        let (tracked, pending) = driver.feed_sizes();
+        assert!(tracked <= MAX_ENTITIES && pending <= MAX_PENDING && pending <= tracked);
     };
     if flags & 0x01 != 0 {
         deliver(&session, challenge(0x0111, LOGIN_SEED), LOGIN);
@@ -392,11 +473,18 @@ fuzz_target!(|data: &[u8]| {
         if steps > MAX_STEPS || driver.ended() {
             break;
         }
-        let len = usize::from(tail.first().copied().unwrap_or(0));
+        // Bit 7 of the kind: a 2-byte length (large batches), else 1 byte.
+        let (len, header) = if kind & 0x80 != 0 {
+            let lo = tail.first().copied().unwrap_or(0);
+            let hi = tail.get(1).copied().unwrap_or(0);
+            (usize::from(u16::from_le_bytes([lo, hi])), 2)
+        } else {
+            (usize::from(tail.first().copied().unwrap_or(0)), 1)
+        };
         let chunk = tail
-            .get(1..1 + len)
-            .unwrap_or_else(|| tail.get(1..).unwrap_or_default());
-        rest = tail.get(1 + chunk.len()..).unwrap_or_default();
+            .get(header..header + len)
+            .unwrap_or_else(|| tail.get(header..).unwrap_or_default());
+        rest = tail.get(header + chunk.len()..).unwrap_or_default();
         match kind % 8 {
             0 => deliver(&session, Some(chunk.to_vec()), LOGIN),
             1 => deliver(&session, Some(chunk.to_vec()), WORLD),
@@ -410,11 +498,28 @@ fuzz_target!(|data: &[u8]| {
                     Some(&b) => u32::from(b),
                     None => 0x6C,
                 };
-                let body = chunk.get(1..).unwrap_or_default();
-                if in_world {
-                    deliver(&session, world.blob(opcode, body), WORLD);
+                // The selector byte: no recipient, the player, the fixed entity, or eight
+                // bytes of the input.
+                let (recipient, body) = match chunk.get(1).copied().unwrap_or(0) % 4 {
+                    0 => (None, chunk.get(2..)),
+                    1 => (Some(PLAYER), chunk.get(2..)),
+                    2 => (Some(ENTITY), chunk.get(2..)),
+                    _ => {
+                        let id = chunk
+                            .get(2..10)
+                            .and_then(|b| <[u8; 8]>::try_from(b).ok())
+                            .map_or(0, u64::from_le_bytes);
+                        (Some(id), chunk.get(10..))
+                    }
+                };
+                let body = body.unwrap_or_default();
+                let (server, src) = if in_world {
+                    (&mut world, WORLD)
                 } else {
-                    deliver(&session, login.blob(opcode, body), LOGIN);
+                    (&mut login, LOGIN)
+                };
+                for d in server.blob_to(opcode, recipient, body) {
+                    deliver(&session, Some(d), src);
                 }
             }
             4 => {

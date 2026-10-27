@@ -7,7 +7,12 @@
 use super::*;
 use crate::connector::entities::{FeedCounters, PID_IS_INANIMATE_PROP, PID_IS_NPC_AGENT};
 use crate::connector::session_phase::MAX_BATCH_DEPTH;
-// The synthetic service's builders come through the parent test module.
+// The synthetic service's builders, through the parent test module (whose import of
+// `test_support` the official-entry source scan knows as test code).
+use super::{
+    DICTIONARY, NPC, NPC_AT, NPC_NAME, NPC_TEMPLATE, chat_line, entity_batch, entity_properties,
+    position,
+};
 
 use crate::play::chat::{CATEGORY_SAY, CATEGORY_TELL, OPCODE_UI_PROPERTY_EVENT};
 use crate::play::movement::{EntitySplinePath, MotionControllerUpdate, ServerSetPosition};
@@ -436,14 +441,49 @@ fn created_entities_move_by_position_set_position_and_path() {
         .iter()
         .filter(|e| matches!(e, Event::EntityMoved { .. }))
         .collect();
+    // From the `0xBF` place (x 191) to x 200: 9 m, so the bounded speed (7 m/s) along +X.
     assert!(
         matches!(m.as_slice(), [Event::EntityMoved { transform, velocity, .. }]
             if (transform.position.x - 200.0).abs() < 1e-3
                 && transform.heading.abs() < 1e-5
-                && *velocity == Vec3::new(0.0, 0.0, 0.0)),
+                && (velocity.x - 7.0).abs() < 1e-4
+                && velocity.y.abs() < 1e-4),
         "{events:?}"
     );
     assert_eq!(counters(&d).paths, 1);
+    // A heading from a `0xCE` is kept by a one-waypoint path (quantized 64: a quarter turn).
+    deliver(
+        &world,
+        &mut d,
+        login.event(0xCE, &position(NPC, [40.0, 40.0, 6.0], 64, [0.0; 3])),
+        2.31,
+    );
+    let heading = |events: &[Event]| {
+        events.iter().find_map(|e| match e {
+            Event::EntityMoved { transform, .. } => Some(transform.heading),
+            _ => None,
+        })
+    };
+    let one = EntitySplinePath {
+        path_type: 1,
+        entity_id: NPC,
+        path_flags: 0,
+        speed_param: None,
+        waypoints: Some(vec![wp(41.0)]),
+    }
+    .to_bytes()
+    .expect("0x59");
+    let before = {
+        let e = deliver(
+            &world,
+            &mut d,
+            login.event(0xCE, &position(NPC, [40.0, 40.0, 6.0], 64, [0.0; 3])),
+            2.32,
+        );
+        heading(&e).expect("a move")
+    };
+    let events = deliver(&world, &mut d, login.event(0x59, &one), 2.33);
+    assert_eq!(heading(&events), Some(before), "{events:?}");
     // Motion controllers and animation layers reach no event, counted.
     let ed = MotionControllerUpdate::NoController.to_bytes();
     let events = deliver(&world, &mut d, login.event_to(0xED, NPC, &ed), 2.4);
@@ -511,8 +551,14 @@ fn a_despawn_removes_a_created_entity_and_counts_the_rest() {
     assert!(events.is_empty());
     let events = deliver(&world, &mut d, login.event_to(0x40, PLAYER, &[0]), 2.3);
     assert!(events.is_empty());
-    assert_eq!(counters(&d).despawn_unknown, 2);
+    assert_eq!(counters(&d).despawn_unknown, 1);
+    assert_eq!(counters(&d).player_despawns, 1);
     assert_eq!(counters(&d).despawned, 1);
+    // A feed message must start with `base_flags = 0` (§1.3): refused and counted.
+    let before = d.counters().decode_errors;
+    let events = deliver(&world, &mut d, login.event_to(0x40, NPC, &[1]), 2.4);
+    assert!(events.is_empty());
+    assert_eq!(d.counters().decode_errors, before + 1);
 }
 
 #[test]
@@ -607,7 +653,21 @@ fn nested_batches_are_read_and_their_limits_counted() {
             frame(0xCE, position(NPC, NPC_AT, 0, [0.0; 3])),
         ],
     );
-    let nested_aoi = batch(SubEventBatch::EVENT_ID_AOI_ENTER, Vec::new());
+    // A nested `0x0D` with its tail flag, and one without (§5.1 OPEN): both are read.
+    let nested_aoi = batch(
+        SubEventBatch::EVENT_ID_AOI_ENTER,
+        vec![
+            frame(0x98, create(OTHER, NPC_TEMPLATE)),
+            frame(0xCE, position(OTHER, NPC_AT, 0, [0.0; 3])),
+        ],
+    );
+    let untailed = batch(
+        SubEventBatch::EVENT_ID_SUB_EVENT,
+        vec![
+            frame(0x98, create(0x0300_0000_0000_0303, NPC_TEMPLATE)),
+            frame(0xCE, position(0x0300_0000_0000_0303, NPC_AT, 0, [0.0; 3])),
+        ],
+    );
     let outer = batch(
         SubEventBatch::EVENT_ID_AOI_ENTER,
         vec![
@@ -617,13 +677,33 @@ fn nested_batches_are_read_and_their_limits_counted() {
             },
             frame(SubEventBatch::EVENT_ID_SUB_EVENT, inner),
             frame(SubEventBatch::EVENT_ID_AOI_ENTER, nested_aoi),
+            frame(SubEventBatch::EVENT_ID_AOI_ENTER, untailed),
         ],
     );
     let events = deliver(&world, &mut d, login.event(0x0D, &outer), 2.0);
-    assert_eq!(created(&events).len(), 1, "{events:?}");
+    assert_eq!(created(&events).len(), 3, "{events:?}");
     let c = counters(&d);
     assert_eq!(c.null_sub_events, 1);
-    assert_eq!(c.nested_aoi_batches, 1);
+    assert_eq!(c.nested_aoi_tail, 1);
+    assert_eq!(c.nested_aoi_no_tail, 1);
+    // A batch at depth MAX_BATCH_DEPTH - 1 is still read.
+    let id = 0x0300_0000_0000_0404;
+    let mut readable = batch(
+        SubEventBatch::EVENT_ID_SUB_EVENT,
+        vec![
+            frame(0x98, create(id, NPC_TEMPLATE)),
+            frame(0xCE, position(id, NPC_AT, 0, [0.0; 3])),
+        ],
+    );
+    for _ in 0..MAX_BATCH_DEPTH - 1 {
+        readable = batch(
+            SubEventBatch::EVENT_ID_SUB_EVENT,
+            vec![frame(SubEventBatch::EVENT_ID_SUB_EVENT, readable)],
+        );
+    }
+    let events = deliver(&world, &mut d, login.event(0x4C, &readable), 2.05);
+    assert_eq!(created(&events).len(), 1, "{events:?}");
+    assert_eq!(counters(&d).deep_batches, 0);
     // A chain of `0x4C` deeper than the limit stops there.
     let mut deep = batch(SubEventBatch::EVENT_ID_SUB_EVENT, Vec::new());
     for _ in 0..MAX_BATCH_DEPTH {
@@ -646,12 +726,23 @@ fn leaving_the_world_forgets_its_entities() {
         NPC_AT,
     );
     deliver(&world, &mut d, login.event_to(0x0D, NPC, &b), 2.0);
+    // An unknown entity is queried once in this world.
+    let _ = world.take_sent();
+    deliver(
+        &world,
+        &mut d,
+        login.event(0xCE, &position(OTHER, NPC_AT, 0, [0.0; 3])),
+        2.05,
+    );
+    assert_eq!(sent_payloads(&world, 0xD0).len(), 1);
+    assert_eq!(d.feed_sizes(), (1, 0));
     let events = deliver(&world, &mut d, login.event(0x3000_001B, &[0]), 2.1);
     assert!(
         events
             .iter()
             .any(|e| matches!(e, Event::ReturnedToCharacterSelect { .. }))
     );
+    assert_eq!(d.feed_sizes(), (0, 0), "the feed is empty with the world");
     d.command(
         &Command::EnterWorld {
             character: "Aldo".to_owned(),
@@ -673,6 +764,120 @@ fn leaving_the_world_forgets_its_entities() {
             .any(|e| matches!(e, Event::EntityMoved { .. }))
     );
     assert_eq!(counters(&d).unknown_entity_events, before + 1);
+    // The query record starts again with the new world: a second `0xD0` for the entity.
+    let _ = world.take_sent();
+    deliver(
+        &world,
+        &mut d,
+        login.event(0xCE, &position(OTHER, NPC_AT, 0, [0.0; 3])),
+        3.3,
+    );
+    assert_eq!(sent_payloads(&world, 0xD0).len(), 1);
+}
+
+#[test]
+fn only_the_0x52_after_a_0x98_in_an_area_batch_takes_the_created_entity() {
+    let (world, mut d, mut login) = in_world();
+    let visual = VisualDescriptionUpdate {
+        visual_desc: EntityAppearanceDesc {
+            scale: Some([2.0; 3]),
+            ..EntityAppearanceDesc::default()
+        },
+    }
+    .to_bytes()
+    .expect("0x89");
+    // To the default recipient: `0x98`, its `0x52`, a place, then events that have no
+    // entity (§1.1.3): an appearance update and a despawn.
+    let b = batch(
+        SubEventBatch::EVENT_ID_AOI_ENTER,
+        vec![
+            frame(0x98, create(NPC, NPC_TEMPLATE)),
+            frame(0x52, props_payload(&entity_properties(NPC_NAME, true))),
+            frame(0xCE, position(NPC, NPC_AT, 0, [0.0; 3])),
+            frame(0x89, visual.clone()),
+            frame(0x40, vec![0]),
+        ],
+    );
+    let events = deliver(&world, &mut d, login.event(0x0D, &b), 2.0);
+    assert!(
+        matches!(
+            created(&events).as_slice(),
+            [Event::EntityCreated { name, appearance, .. }]
+                if name == NPC_NAME && (appearance.scale - 1.0).abs() < 1e-6
+        ),
+        "{events:?}"
+    );
+    assert!(
+        !events
+            .iter()
+            .any(|e| matches!(e, Event::EntityDespawned { .. })),
+        "a default-recipient 0x40 never despawns the new entity"
+    );
+    assert_eq!(counters(&d).no_target, 2);
+    // A `0x52` that does not directly follow the `0x98`, or one in a `0x4C`, has no entity.
+    for (op, frames) in [
+        (
+            SubEventBatch::EVENT_ID_AOI_ENTER,
+            vec![
+                frame(0x98, create(OTHER, NPC_TEMPLATE)),
+                SubEventFrame::Null {
+                    field_a: 0,
+                    field_b: 0,
+                },
+                frame(0x52, props_payload(&entity_properties("Late", true))),
+            ],
+        ),
+        (
+            SubEventBatch::EVENT_ID_SUB_EVENT,
+            vec![
+                frame(0x98, create(OTHER, NPC_TEMPLATE)),
+                frame(0x52, props_payload(&entity_properties("Late", true))),
+            ],
+        ),
+    ] {
+        let before = counters(&d).no_target;
+        deliver(&world, &mut d, login.event(op, &batch(op, frames)), 2.1);
+        assert_eq!(counters(&d).no_target, before + 1, "{op:#x}");
+    }
+    let events = deliver(
+        &world,
+        &mut d,
+        login.event(0xCE, &position(OTHER, NPC_AT, 0, [0.0; 3])),
+        2.2,
+    );
+    assert!(
+        matches!(created(&events).as_slice(), [Event::EntityCreated { name, .. }] if name.is_empty()),
+        "{events:?}"
+    );
+}
+
+#[test]
+fn many_moves_in_one_batch_make_one_move() {
+    let (world, mut d, mut login) = in_world();
+    let b = entity_batch(
+        NPC,
+        NPC_TEMPLATE,
+        &entity_properties(NPC_NAME, true),
+        NPC_AT,
+    );
+    deliver(&world, &mut d, login.event_to(0x0D, NPC, &b), 2.0);
+    let frames = (0..8u8)
+        .map(|i| frame(0xCE, position(NPC, [f32::from(i), 40.0, 6.0], 0, [0.0; 3])))
+        .collect();
+    let events = deliver(
+        &world,
+        &mut d,
+        login.event(0x4C, &batch(SubEventBatch::EVENT_ID_SUB_EVENT, frames)),
+        2.1,
+    );
+    let moves: Vec<f32> = events
+        .iter()
+        .filter_map(|e| match e {
+            Event::EntityMoved { transform, .. } => Some(transform.position.x),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(moves, vec![160.0 + 7.0], "{events:?}");
 }
 
 #[test]

@@ -106,6 +106,15 @@ pub trait InstallData: Send + Sync + std::fmt::Debug {
         None
     }
 
+    /// Whether [`Self::template_value`] for `template_did` answers without reading a record
+    /// (its baseline set is decoded and kept). The entity feed reads at most a few uncached
+    /// templates per pass ([`super::entities::MAX_TEMPLATE_LOADS_PER_PASS`]), so a server that
+    /// cycles templates cannot hold the session thread. The default (no records behind the
+    /// lookups) is `true`.
+    fn template_cached(&self, _template_did: u32) -> bool {
+        true
+    }
+
     /// Every key of the chat text category enum (`0x230002A8` with its base chain,
     /// `official-messages-play.md` §6.7), or `None` when the client did not read it (the
     /// default). [`chat_categories`] keeps only the categories the spec names that are

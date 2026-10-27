@@ -29,7 +29,7 @@ use super::session_phase::{
     DRIVER_EVENT_CAP, PORTAL_LOADING_TIMEOUT_SEC, SessionDriver, SessionStart, movement_input,
     refusal_cut,
 };
-#[allow(unused_imports)]
+// The synthetic service's world builders, used by `world_feed`.
 use super::test_support::{
     DICTIONARY, NPC, NPC_AT, NPC_NAME, NPC_TEMPLATE, chat_line, entity_batch, entity_properties,
     position,

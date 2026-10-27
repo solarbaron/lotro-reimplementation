@@ -3899,7 +3899,10 @@ fn the_official_flow_hands_its_session_to_the_character_screens_and_back() {
 /// Start screen → login → world list → character list (handed over) → enter world, then the
 /// synthetic world plays another entity: the walker's entity events show it created at its
 /// place with its name, moving and leaving, and the chat shows its line
-/// (`official-messages-world.md` §5.1–§5.4, `official-messages-play.md` §6.5.1, §8).
+/// (`official-messages-world.md` §5.1–§5.4, `official-messages-play.md` §6.5.1, §8). The
+/// walk stops at `net::World` (its entity events, entity table and chat lines): the
+/// walker's drawing of them and the parts that need the install (schemas, string tables,
+/// template baselines) are covered by the compat tests and the real-data tests.
 #[cfg(unix)]
 #[test]
 fn the_official_world_feeds_the_walker_and_the_chat() {
@@ -3923,7 +3926,9 @@ fn the_official_world_feeds_the_walker_and_the_chat() {
     );
     std::mem::swap(&mut f.flow, &mut flow);
     f.reach_login("acct", "pw");
-    let until = Instant::now() + Duration::from_secs(20);
+    // Each stage has its own deadline, so a slow stage names itself.
+    let stage = || Instant::now() + Duration::from_secs(10);
+    let until = stage();
     while f.flow.login_screen() != Some(&LoginScreen::Worlds) {
         assert!(Instant::now() < until, "no world list");
         f.flow.tick(Instant::now());
@@ -3931,6 +3936,7 @@ fn the_official_world_feeds_the_walker_and_the_chat() {
     }
     f.flow
         .device_input(&press(Key::Enter, Instant::now()), &|_, _| None);
+    let until = stage();
     while f.flow.screen() != Screen::Characters {
         assert!(Instant::now() < until, "no character list");
         f.flow.tick(Instant::now());
@@ -3948,6 +3954,7 @@ fn the_official_world_feeds_the_walker_and_the_chat() {
             },
         )
         .expect("enter");
+    let until = stage();
     while world.state() != SessionState::InWorld {
         assert!(Instant::now() < until, "not entered: {:?}", world.state());
         world.update(Instant::now());
@@ -3956,6 +3963,7 @@ fn the_official_world_feeds_the_walker_and_the_chat() {
     let mut events = Vec::new();
     let mut wait_entity =
         |world: &mut crate::net::World, what: &str, pred: &dyn Fn(&Event) -> bool| {
+            let until = stage();
             loop {
                 assert!(Instant::now() < until, "no {what}");
                 world.update(Instant::now());
@@ -4007,6 +4015,7 @@ fn the_official_world_feeds_the_walker_and_the_chat() {
     );
 
     assert!(service.send_world_event(0x1C, None, &chat_line(5, NPC_NAME, NPC, "Well met.")));
+    let until = stage();
     let line = loop {
         assert!(Instant::now() < until, "no chat line");
         world.update(Instant::now());

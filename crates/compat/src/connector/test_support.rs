@@ -83,8 +83,14 @@ pub const NPC_AT: [f32; 3] = [20.0, 40.0, 6.0];
 
 /// The property types of the synthetic install's dictionary: the entity properties of
 /// `official-messages-world.md` §5.2.4 and the chat-line properties of
-/// `official-messages-play.md` §6.5.1 the builders use (the text properties typed as
-/// tokenized texts, the category as an enum).
+/// `official-messages-play.md` §6.5.1 the builders use, the category as an enum.
+///
+/// §6.5.1 describes the chat text (`0x100015D7`) and the sender name (`0x10000914`) as
+/// "Prefixed UTF-16LE string", which is none of the 22 property types of
+/// `official-messages-world.md` §2.7.1 (type 1 is an 8-bit string). The stub types them as
+/// tokenized texts (type 13, whose literal is a prefixed UTF-16LE string); real runs take
+/// every type from the install's property dictionary (`0x34000000`), and the chat line
+/// reads either form (`crate::play::chat`).
 pub const DICTIONARY: [(u32, PropertyType); 9] = [
     (PID_ENTITY_DISPLAY_NAME, PropertyType::LocalizedTokenText),
     (PID_IS_NPC_AGENT, PropertyType::Boolean),

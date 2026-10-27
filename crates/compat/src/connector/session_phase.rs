@@ -37,17 +37,28 @@
 //! the at most [`MAX_ENTRY_MESSAGES`] messages held for it), the events of one chat-server
 //! datagram (the chat client is let read one datagram at a time, [`CHAT_DATAGRAMS_PER_STEP`]
 //! at most per pass, and is not read at the cap), and the events a pass makes without a
-//! datagram: a command's `EnterWorldFailed`, the entry deadline's, the return deadline's
-//! `ReturnedToCharacterSelect`, and the session's end (`LoginRefused` with its
-//! `Disconnected`).
+//! datagram: a command's `EnterWorldFailed`, the entry deadline's, and the session's end
+//! (`LoginRefused` with its `Disconnected`).
 //!
 //! # Leaving the world
 //!
-//! `Command::LeaveWorld` sends the logout request (`official-messages-play.md` §7.2 item 1);
-//! a world teardown (§7.2 item 3) keeps the session and waits for the character list that
-//! follows, which becomes `Event::ReturnedToCharacterSelect` (after [`RETURN_TIMEOUT_SEC`]
-//! without one, the list the session had). Portal space ends on the client's
-//! `Command::WorldLoaded` or after [`PORTAL_LOADING_TIMEOUT_SEC`] (§4.5 item 4).
+//! `Command::LeaveWorld` sends the logout request (`official-messages-play.md` §7.2 item 1).
+//! A world teardown (§7.2 item 3) keeps the session: the client unloads the world on the
+//! notice, so the driver goes back to character selection at once with
+//! `Event::ReturnedToCharacterSelect` and the latest list it has (a `0x6C` that came while
+//! in the world counts). The `0x6C` that follows the teardown is then a later list: its
+//! changes surface as `CharacterInfo` (new names) and `CharacterRemoved` (names gone), as
+//! every later list at character selection does (§8). Moves and chat lines that reach the
+//! driver after the teardown (sent before the client saw the return) are refused and
+//! counted ([`DriverCounters::outside_world`]), never sent. `ReturnedToCharacterSelect` is
+//! Tessera's neutral addition (§8 maps the teardown to the later list; engineering choice
+//! pending a spec answer, listed in `docs/m8-remediation.md` §15).
+//!
+//! Portal space ends on the client's `Command::WorldLoaded` or after
+//! [`PORTAL_LOADING_TIMEOUT_SEC`] (§4.5 item 4). Each portal space starts with a fresh
+//! loading state; the client sends one `WorldLoaded` per placement, and the driver takes
+//! only one that arrives while it is in portal space (one signal per portal space; a
+//! signal outside portal space is ignored).
 //!
 //! # Ending the session
 //!
@@ -70,8 +81,8 @@ use std::sync::mpsc;
 use tessera_net::account::{AccountEvent, LoginRefusal, LoginStage};
 use tessera_net::model::{MAX_NAME_LEN, is_valid_name};
 use tessera_net::{
-    CharacterSummary, ChatChannel, Command, DisconnectReason, EntityId, Event, NoticeLevel,
-    Transform, Vec3,
+    CharacterEvent, CharacterSummary, ChatChannel, Command, DisconnectReason, EntityId, Event,
+    NoticeLevel, Transform, Vec3,
 };
 
 use crate::chat_session::state::INITIAL_CONNECT_POLICY;
@@ -131,15 +142,9 @@ pub const ENTER_WORLD_TIMEOUT_SEC: f64 = 60.0;
 
 /// Longest wait in portal space for the client's [`Command::WorldLoaded`] before portal space
 /// ends anyway (`official-messages-play.md` §4.5 item 4: "or the portal-space loading timeout
-/// expires"; the spec gives no value). Engineering choice, spec silent (question with the
-/// spec writers).
+/// expires"; the spec gives no value). Engineering choice pending a spec answer (listed in
+/// `docs/m8-remediation.md` §15).
 pub const PORTAL_LOADING_TIMEOUT_SEC: f64 = 30.0;
-
-/// Longest wait for the character list (`0x6C`) after a world teardown
-/// (`official-messages-play.md` §7.2 item 3) before the client is sent back to character
-/// selection with the list it had. Engineering choice, spec silent (question with the spec
-/// writers).
-pub const RETURN_TIMEOUT_SEC: f64 = 60.0;
 
 /// Most play messages kept while the world is being entered (those before `0x90`, such as
 /// `0x43`), handed to the play layer once the world is entered. Engineering choice, spec
@@ -365,12 +370,6 @@ enum Stage {
         /// The character's name.
         name: String,
     },
-    /// The world was torn down (`official-messages-play.md` §7.2 item 3); waiting for the
-    /// character list that follows.
-    Returning {
-        /// When the teardown arrived.
-        since: f64,
-    },
 }
 
 /// What the driver needs to start.
@@ -438,6 +437,11 @@ pub struct DriverCounters {
     pub entry_overflow: u64,
     /// Failed chat-server attachments.
     pub chat_failures: u64,
+    /// Moves and chat lines that arrived outside the world (after a teardown, before the
+    /// client saw the return), refused and not sent.
+    pub outside_world: u64,
+    /// `WorldLoaded` signals outside portal space, ignored.
+    pub stray_loaded: u64,
 }
 
 /// The UDP session (module docs).
@@ -810,7 +814,6 @@ impl<N: ConnectorNet> SessionDriver<N> {
             self.run_chat(now);
         }
         self.enter_deadline(now);
-        self.return_deadline(now);
         self.portal_step(now);
         self.send_pending(now);
         self.tick(now);
@@ -871,22 +874,25 @@ impl<N: ConnectorNet> SessionDriver<N> {
         }
     }
 
-    /// No character list within [`RETURN_TIMEOUT_SEC`] after a world teardown: the client
-    /// goes back to character selection with the list it had.
-    fn return_deadline(&mut self, now: f64) {
-        let Stage::Returning { since } = self.stage else {
-            return;
-        };
-        if now - since < RETURN_TIMEOUT_SEC {
-            return;
-        }
-        tracing::info!("official session: no character list after leaving the world");
-        self.returned();
+    /// Starts the portal-space loading state afresh: when a portal space begins (world
+    /// entry, `official-messages-world.md` §4.3.3), so a `WorldLoaded` of an earlier
+    /// placement never ends it, and when the world is left.
+    fn fresh_portal_loading(&mut self) {
+        self.loaded = false;
+        self.portal_since = None;
     }
 
-    /// Back at character selection after a world teardown, with the current list.
-    fn returned(&mut self) {
+    /// The world was torn down (`official-messages-play.md` §7.2 item 3): the session stays
+    /// open, and the client is back at character selection at once with the latest list
+    /// (module docs "Leaving the world"). The list that follows the teardown comes on the
+    /// world connection (§7.2 item 3 keeps it open), so a later `0x6F` goes there too.
+    fn left_world(&mut self) {
+        tracing::info!("official session: the world was left for character selection");
         self.stage = Stage::Characters;
+        self.list_on_world = self.world.is_some();
+        self.entry_messages.clear();
+        self.entry_bytes = 0;
+        self.fresh_portal_loading();
         let characters = self
             .characters
             .iter()
@@ -894,17 +900,6 @@ impl<N: ConnectorNet> SessionDriver<N> {
             .collect();
         self.events
             .push_back(Event::ReturnedToCharacterSelect { characters });
-    }
-
-    /// The world was torn down (`official-messages-play.md` §7.2 item 3): the session stays
-    /// open and waits for the character list.
-    fn left_world(&mut self, now: f64) {
-        tracing::info!("official session: the world was left for character selection");
-        self.stage = Stage::Returning { since: now };
-        self.entry_messages.clear();
-        self.entry_bytes = 0;
-        self.loaded = false;
-        self.portal_since = None;
     }
 
     /// Where a datagram from `src` naming `rec_id` goes (module docs).
@@ -1189,8 +1184,8 @@ impl<N: ConnectorNet> SessionDriver<N> {
         match opcode {
             CharacterListResponse::EVENT_ID => self.character_list(body, world),
             CharacterOperationError::EVENT_ID => self.character_error(body),
-            PlayerSessionReady::EVENT_ID => self.session_ready(body, now),
-            _ => self.play(opcode, recipient, body, world, now),
+            PlayerSessionReady::EVENT_ID => self.session_ready(body),
+            _ => self.play(opcode, recipient, body, world),
         }
     }
 
@@ -1255,21 +1250,44 @@ impl<N: ConnectorNet> SessionDriver<N> {
                 return;
             }
         };
-        self.characters = list
+        let fresh: Vec<(u64, String)> = list
             .characters
             .iter()
             .filter_map(|c| character_name(&c.name).map(|n| (c.character_id, n)))
             .take(MAX_CHARACTERS)
             .collect();
+        let old = std::mem::replace(&mut self.characters, fresh);
         self.list_on_world = world && self.world.is_some();
-        if matches!(self.stage, Stage::Returning { .. }) {
-            tracing::info!(
+        if matches!(self.stage, Stage::Characters | Stage::Entering { .. }) {
+            // A later list at character selection (the one after a teardown among them,
+            // `official-messages-play.md` §8): its changes, names gone first.
+            for (_, name) in &old {
+                if !self.characters.iter().any(|(_, n)| n == name) {
+                    self.events
+                        .push_back(Event::Character(CharacterEvent::CharacterRemoved {
+                            name: name.clone(),
+                        }));
+                }
+            }
+            for (_, name) in &self.characters {
+                if !old.iter().any(|(_, n)| n == name) {
+                    self.events
+                        .push_back(Event::Character(CharacterEvent::CharacterInfo {
+                            name: name.clone(),
+                            body: None,
+                            class: None,
+                            level: None,
+                            look: None,
+                        }));
+                }
+            }
+            tracing::debug!(
                 count = self.characters.len(),
-                "official session: characters listed after leaving the world"
+                "official session: characters listed again"
             );
-            self.returned();
             return;
         }
+        // In the world the list is kept for the return (it counts as the latest).
         if self.stage == Stage::Login {
             self.stage = Stage::Characters;
             let characters = self
@@ -1309,7 +1327,7 @@ impl<N: ConnectorNet> SessionDriver<N> {
         }
     }
 
-    fn session_ready(&mut self, body: &[u8], now: f64) {
+    fn session_ready(&mut self, body: &[u8]) {
         let ready = match PlayerSessionReady::from_bytes(body, &self.schema) {
             Ok(r) => r,
             Err(e) => {
@@ -1327,8 +1345,8 @@ impl<N: ConnectorNet> SessionDriver<N> {
         };
         self.adapter
             .enter_world(ready.player_id, Some(name.clone()));
-        self.loaded = false;
-        self.portal_since = None;
+        // World entry is a portal space (the adapter's `enter_world`).
+        self.fresh_portal_loading();
         self.stage = Stage::InWorld {
             player: ready.player_id,
             name: name.clone(),
@@ -1343,7 +1361,7 @@ impl<N: ConnectorNet> SessionDriver<N> {
         let held = std::mem::take(&mut self.entry_messages);
         self.entry_bytes = 0;
         for (opcode, recipient, body) in held {
-            self.play_in_world(opcode, recipient, &body, now);
+            self.play_in_world(opcode, recipient, &body);
             if self.ended || !matches!(self.stage, Stage::InWorld { .. }) {
                 return;
             }
@@ -1358,7 +1376,7 @@ impl<N: ConnectorNet> SessionDriver<N> {
     /// kept for [`Self::session_ready`]; in the world they go to the play layer when they
     /// come from the world connection, or from the login connection when there was no
     /// referral.
-    fn play(&mut self, opcode: u32, recipient: u64, body: &[u8], world: bool, now: f64) {
+    fn play(&mut self, opcode: u32, recipient: u64, body: &[u8], world: bool) {
         if opcode == AccountEvictionNotice::EVENT_ID {
             self.eviction(opcode, recipient, body);
             return;
@@ -1372,7 +1390,7 @@ impl<N: ConnectorNet> SessionDriver<N> {
             return;
         }
         match self.stage {
-            Stage::InWorld { .. } => self.play_in_world(opcode, recipient, body, now),
+            Stage::InWorld { .. } => self.play_in_world(opcode, recipient, body),
             Stage::Entering { .. } => {
                 if self.entry_messages.len() >= MAX_ENTRY_MESSAGES
                     || self.entry_bytes.saturating_add(body.len()) > MAX_ENTRY_BYTES
@@ -1383,7 +1401,7 @@ impl<N: ConnectorNet> SessionDriver<N> {
                 self.entry_bytes += body.len();
                 self.entry_messages.push((opcode, recipient, body.to_vec()));
             }
-            Stage::Login | Stage::Characters | Stage::Returning { .. } => {
+            Stage::Login | Stage::Characters => {
                 self.counters.unhandled += 1;
                 tracing::trace!(
                     opcode,
@@ -1412,7 +1430,7 @@ impl<N: ConnectorNet> SessionDriver<N> {
         }
     }
 
-    fn play_in_world(&mut self, opcode: u32, recipient: u64, body: &[u8], now: f64) {
+    fn play_in_world(&mut self, opcode: u32, recipient: u64, body: &[u8]) {
         let decoded = decode_play_message(opcode, recipient, body, &self.schema, &self.schema);
         let msg = match decoded {
             Ok(Some(m)) => m,
@@ -1437,9 +1455,8 @@ impl<N: ConnectorNet> SessionDriver<N> {
         }
         for s in out.signals {
             if let PlaySignal::LeftWorld { .. } = s {
-                // §7.2's teardown: back to character selection on the same session; the
-                // next `0x6C` brings the list (`Event::ReturnedToCharacterSelect`).
-                self.left_world(now);
+                // §7.2's teardown: back to character selection on the same session.
+                self.left_world();
                 return;
             }
         }
@@ -1460,9 +1477,9 @@ impl<N: ConnectorNet> SessionDriver<N> {
 
     /// Sends `0x6F` on the connection that delivered the latest character list: the login
     /// connection at first, the world connection after a return from the world
-    /// (`official-messages-play.md` §7.2 item 3 keeps that connection open; which connection
-    /// carries a later `0x6F` is not in the spec: engineering choice, spec silent (question
-    /// with the spec writers)).
+    /// (`official-messages-play.md` §7.2 item 3 keeps that connection open). Which
+    /// connection carries a `0x6F` after a return is not in the spec: engineering choice
+    /// pending a spec answer (listed in `docs/m8-remediation.md` §15).
     fn send_entry(&mut self, env: &[u8], now: f64) -> bool {
         let opcode = CharacterEnterWorldRequest::EVENT_ID;
         match self.world.as_mut() {
@@ -1746,11 +1763,28 @@ impl<N: ConnectorNet> SessionDriver<N> {
                 Ok(())
             }
             Command::WorldLoaded => {
-                // §4.5 item 4: the client's loading for this entry is done.
-                if matches!(self.stage, Stage::InWorld { .. }) {
+                // §4.5 item 4: the client's loading for its latest placement is done. One
+                // signal per portal space: outside one it is ignored (module docs).
+                if matches!(self.stage, Stage::InWorld { .. })
+                    && self.adapter.teleport().in_portal_space()
+                {
                     self.loaded = true;
+                } else {
+                    self.counters.stray_loaded += 1;
+                    tracing::debug!("official session: loading signal outside portal space");
                 }
                 Ok(())
+            }
+            Command::Move { .. } | Command::Chat { .. }
+                if !matches!(self.stage, Stage::InWorld { .. }) =>
+            {
+                // Sent before the client saw the return (module docs "Leaving the world").
+                self.counters.outside_world += 1;
+                tracing::info!(
+                    command = cmd.name(),
+                    "official session: not in the world; refused, not sent"
+                );
+                Err(NetError::InvalidCommand("not in the world"))
             }
             Command::Move {
                 location,
@@ -1953,6 +1987,13 @@ impl<N: ConnectorNet> SessionDriver<N> {
         if !self.ended {
             if let Stage::Entering { since, .. } = &self.stage {
                 at(since + ENTER_WORLD_TIMEOUT_SEC);
+            }
+            // Portal space's loading time-out (§4.5 item 4; `portal_step` notes when it
+            // began on its first pass).
+            if matches!(self.stage, Stage::InWorld { .. })
+                && self.adapter.teleport().in_portal_space()
+            {
+                at(self.portal_since.unwrap_or(now) + PORTAL_LOADING_TIMEOUT_SEC);
             }
             if matches!(self.stage, Stage::InWorld { .. })
                 && self.chat.is_none()

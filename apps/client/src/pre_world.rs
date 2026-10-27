@@ -38,11 +38,20 @@ use crate::screens::{Action, CharacterScreens, ScreenData, ScreenOptions, Status
 /// when they open (no-op otherwise): one the official login handed over
 /// (`official-entry.md` §8.7) or one back from the world (`Event::ReturnedToCharacterSelect`).
 /// Its list was polled before the screens opened, so they start from the world's copy of it
-/// ([`World::character_list`]).
-pub fn seed_from_world(screens: &mut CharacterScreens, world: &World) {
-    if world.state() == SessionState::Connected {
-        let characters = world.character_list().to_vec();
-        screens.handle_events(&[Event::Connected { characters }], Instant::now());
+/// ([`World::character_list`]); after a return they get it as the return event, with the
+/// character entered last selected again. `now` is the frame's time.
+pub fn seed_from_world(screens: &mut CharacterScreens, world: &World, now: Instant) {
+    if world.state() != SessionState::Connected {
+        return;
+    }
+    let characters = world.character_list().to_vec();
+    if world.has_returned() {
+        screens
+            .model_mut()
+            .set_last_entered(world.last_entered().map(str::to_owned));
+        screens.handle_events(&[Event::ReturnedToCharacterSelect { characters }], now);
+    } else {
+        screens.handle_events(&[Event::Connected { characters }], now);
     }
 }
 
@@ -84,7 +93,7 @@ impl PreWorld {
         world.set_manual_enter(true);
         world.set_external_poll(true);
         let mut screens = CharacterScreens::new(world.session_mut(), screen_data, options);
-        seed_from_world(&mut screens, world);
+        seed_from_world(&mut screens, world, Instant::now());
         let ui = ui.map(|(ui, refs)| {
             let s = ScreenUi::open(ui, refs);
             for m in &s.missing {

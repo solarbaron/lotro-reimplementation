@@ -1343,7 +1343,14 @@ impl SandboxBackend {
     /// leaves (the streamed statics with one [`Event::StaticsCleared`]), then
     /// [`Event::ReturnedToCharacterSelect`] lists the characters again.
     fn leave_world(&mut self, now: Instant) {
-        self.resolving = None;
+        if let Some(Resolution {
+            purpose: Purpose::Teleport,
+            ..
+        }) = self.resolving.take()
+        {
+            // Every teleport request gets exactly one answer, before the world goes.
+            self.system(now, "Teleport cancelled: the world was left.");
+        }
         if let Some(source) = self.source.as_mut() {
             self.statics.clear(source.as_mut());
         }

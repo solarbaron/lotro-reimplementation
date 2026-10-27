@@ -236,3 +236,63 @@ fn a_scenario_refuses_to_leave_the_world() {
     ));
     assert_eq!(s.state(), SessionState::InWorld);
 }
+
+/// A world source whose named places never resolve (a teleport stays pending).
+#[derive(Debug)]
+struct NeverResolves;
+
+impl tessera_net::sandbox::world::WorldSource for NeverResolves {
+    fn resolve_place(
+        &mut self,
+        _name: &str,
+    ) -> tessera_net::sandbox::world::Lookup<tessera_net::sandbox::world::ResolvedPlace> {
+        tessera_net::sandbox::world::Lookup::Pending
+    }
+
+    fn static_entities(
+        &mut self,
+        _block: tessera_net::Landblock,
+        _limit: usize,
+        _out: &mut Vec<tessera_net::sandbox::world::StaticEntity>,
+    ) -> tessera_net::sandbox::world::Lookup<()> {
+        tessera_net::sandbox::world::Lookup::Ready(())
+    }
+}
+
+#[test]
+fn leaving_the_world_answers_a_pending_teleport_first() {
+    let t = Instant::now();
+    let mut s = Session::new(
+        SandboxBackend::with_world(SandboxConfig::default(), NeverResolves).expect("sandbox"),
+    );
+    s.send(t, Command::Connect).expect("connect");
+    let ev = s.poll(t);
+    let Some(Event::Connected { characters }) = ev.first() else {
+        panic!("{ev:?}");
+    };
+    let character = characters.first().expect("a character").name.clone();
+    s.send(t, Command::EnterWorld { character }).expect("enter");
+    let _ = s.poll(t);
+    assert_eq!(s.state(), SessionState::InWorld);
+    s.send(
+        t,
+        Command::Teleport {
+            destination: tessera_net::Destination::Named("somewhere".into()),
+        },
+    )
+    .expect("teleport");
+    let _ = s.poll(t);
+    s.send(t, Command::LeaveWorld).expect("leave");
+    let ev = s.poll(t);
+    let cancel = ev.iter().position(
+        |e| matches!(e, Event::ChatMessage { text, .. } if text.starts_with("Teleport cancelled")),
+    );
+    let back = ev
+        .iter()
+        .position(|e| matches!(e, Event::ReturnedToCharacterSelect { .. }));
+    assert!(
+        matches!((cancel, back), (Some(c), Some(b)) if c < b),
+        "the cancellation line comes before the return: {ev:?}"
+    );
+    assert_eq!(s.state(), SessionState::Connected);
+}

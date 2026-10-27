@@ -151,11 +151,34 @@ fn plain(s: &str, max: usize) -> String {
     sanitize_text(s, max).into_owned()
 }
 
-fn detail_line(d: &str) -> String {
+pub(crate) fn detail_line(d: &str) -> String {
     fill(
         text("official.error.detail"),
         &[("text", &plain(d, MAX_ACCOUNT_DETAIL_LEN))],
     )
+}
+
+/// The message of a session's end without `LoginRefused` (§8.6's second table):
+/// `ClientRequested` has none; `TimedOut`, `ServerClosed` (with its text as the detail) and
+/// `TransportFailed` (and any later reason) have their rows' texts.
+#[must_use]
+pub fn disconnect_message(reason: &DisconnectReason) -> Option<Message> {
+    Some(match reason {
+        DisconnectReason::ClientRequested => return None,
+        DisconnectReason::TimedOut => Message {
+            text: text("official.error.no_answer").to_owned(),
+            detail: None,
+        },
+        DisconnectReason::ServerClosed(why) => Message {
+            text: text("official.error.server_closed").to_owned(),
+            detail: (!why.trim().is_empty()).then(|| detail_line(why)),
+        },
+        // `TransportFailed` and any later reason.
+        _ => Message {
+            text: text("official.error.transport").to_owned(),
+            detail: None,
+        },
+    })
 }
 
 /// The queue panel's lines (§8.4).
@@ -421,19 +444,7 @@ impl LoginPresenter {
                 },
                 ..form(None)
             },
-            DisconnectReason::TimedOut => form(Some(Message {
-                text: text("official.error.no_answer").to_owned(),
-                detail: None,
-            })),
-            DisconnectReason::ServerClosed(why) => form(Some(Message {
-                text: text("official.error.server_closed").to_owned(),
-                detail: (!why.trim().is_empty()).then(|| detail_line(why)),
-            })),
-            // `TransportFailed` and any later reason.
-            _ => form(Some(Message {
-                text: text("official.error.transport").to_owned(),
-                detail: None,
-            })),
+            other => form(disconnect_message(other)),
         };
         self.finish(end);
     }

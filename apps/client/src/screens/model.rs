@@ -646,6 +646,12 @@ impl ScreenModel {
         }
     }
 
+    /// Sets the character entered last on this session (screens that re-open after a
+    /// return to character selection select it again; `Event::ReturnedToCharacterSelect`).
+    pub fn set_last_entered(&mut self, name: Option<String>) {
+        self.last_entered = name;
+    }
+
     fn row_index(&self, name: &str) -> Option<usize> {
         self.rows.iter().position(|r| same_name(&r.name, name))
     }

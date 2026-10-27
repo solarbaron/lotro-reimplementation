@@ -17,15 +17,15 @@ use tessera_net::account::{
     AccountCommand, AccountEvent, LoginRefusal, LoginStage, WorldId, WorldRefusal,
 };
 use tessera_net::{
-    Backend, ChatChannel, Command, DisconnectReason, Event, NetError, Session, Vec3,
+    Backend, CharacterEvent, ChatChannel, Command, DisconnectReason, Event, NetError, Session, Vec3,
 };
 
 use super::data::SchemaView;
 use super::data::{InstallData, LocalPaths};
 use super::net::{ConnectorNet, NetFactory, SendHttpClient, carries_secret, is_https};
 use super::session_phase::{
-    DRIVER_EVENT_CAP, PORTAL_LOADING_TIMEOUT_SEC, RETURN_TIMEOUT_SEC, SessionDriver, SessionStart,
-    movement_input, refusal_cut,
+    DRIVER_EVENT_CAP, PORTAL_LOADING_TIMEOUT_SEC, SessionDriver, SessionStart, movement_input,
+    refusal_cut,
 };
 use super::worker::SHUTDOWN_LIMIT;
 use super::{EVENT_QUEUE, LiveConfig, LiveConnector};
@@ -1002,21 +1002,29 @@ fn version_payload(env: &[u8]) -> String {
 }
 
 fn character_list() -> Vec<u8> {
+    character_list_of(&[(0x0200_0000_0000_0042, "Aldo")])
+}
+
+/// A character list (`0x6C`) of `characters` (ID, name).
+fn character_list_of(characters: &[(u64, &str)]) -> Vec<u8> {
     CharacterListResponse {
-        characters: vec![CharacterSummaryEntry {
-            character_id: 0x0200_0000_0000_0042,
-            name: "Aldo".to_owned(),
-            status_or_world: 0,
-            public_props: EncodedPropertyTable::new(),
-            private_props: EncodedPropertyTable::new(),
-            metadata_a: 0,
-            visual_desc: crate::world::EntityAppearanceDesc::default(),
-            metadata_b: 0,
-            metadata_c: u32::MAX,
-            metadata_d: 0,
-            metadata_e: u32::MAX,
-            timestamp_or_meta: 0,
-        }],
+        characters: characters
+            .iter()
+            .map(|(id, name)| CharacterSummaryEntry {
+                character_id: *id,
+                name: (*name).to_owned(),
+                status_or_world: 0,
+                public_props: EncodedPropertyTable::new(),
+                private_props: EncodedPropertyTable::new(),
+                metadata_a: 0,
+                visual_desc: crate::world::EntityAppearanceDesc::default(),
+                metadata_b: 0,
+                metadata_c: u32::MAX,
+                metadata_d: 0,
+                metadata_e: u32::MAX,
+                timestamp_or_meta: 0,
+            })
+            .collect(),
         account_props: EncodedPropertyTable::new(),
     }
     .to_bytes()
@@ -3121,20 +3129,12 @@ fn leaving_the_world_returns_to_the_character_list_on_the_same_session() {
     d.step(2.1, true, &go);
     let sent = sent_blobs(&world);
     assert!(sent.contains(&(0x30, LOGIN_SERVER)), "{sent:?}");
-    // The teardown (§7.2 item 3) keeps the session; the list that follows is the answer.
+    // The teardown (§7.2 item 3) keeps the session; the client unloads the world on the
+    // notice, so the return comes at once with the latest list.
     world.deliver(login.event(0x3000_001B, &[0]), LOGIN_SERVER);
     d.step(3.0, true, &go);
     assert!(!d.ended());
     assert!(!d.in_world());
-    let events = d.take_events();
-    assert!(
-        !events
-            .iter()
-            .any(|e| matches!(e, Event::ReturnedToCharacterSelect { .. })),
-        "not before the list: {events:?}"
-    );
-    world.deliver(login.event(0x6C, &character_list()), LOGIN_SERVER);
-    d.step(3.5, true, &go);
     let events = d.take_events();
     let back = events.iter().find_map(|e| match e {
         Event::ReturnedToCharacterSelect { characters } => Some(characters.clone()),
@@ -3145,11 +3145,15 @@ fn leaving_the_world_returns_to_the_character_list_on_the_same_session() {
         Some(vec!["Aldo".to_owned()]),
         "{events:?}"
     );
+    // The list that follows changes nothing: no event.
+    world.deliver(login.event(0x6C, &character_list()), LOGIN_SERVER);
+    d.step(3.5, true, &go);
+    assert!(d.take_events().is_empty());
     assert!(matches!(
         d.command(&Command::LeaveWorld, 3.6),
         Err(tessera_net::NetError::InvalidCommand(_))
     ));
-    // The character enters again: `0x6F` once more.
+    // The character enters again: `0x6F` once more (no referral: the login connection).
     d.command(
         &Command::EnterWorld {
             character: "Aldo".to_owned(),
@@ -3169,22 +3173,173 @@ fn leaving_the_world_returns_to_the_character_list_on_the_same_session() {
 }
 
 #[test]
-fn without_a_list_after_the_teardown_the_old_list_is_offered() {
+fn a_list_received_in_the_world_is_the_one_the_return_offers() {
     let (world, mut d, mut login) = driver_in_world();
-    world.deliver(login.event(0x3000_0042, &[0]), LOGIN_SERVER);
-    d.step(2.0, true, &go);
-    d.step(2.0 + RETURN_TIMEOUT_SEC - 1.0, true, &go);
+    let two = [
+        (0x0200_0000_0000_0042, "Aldo"),
+        (0x0200_0000_0000_0043, "Bera"),
+    ];
+    world.deliver(login.event(0x6C, &character_list_of(&two)), LOGIN_SERVER);
+    d.step(1.5, true, &go);
     assert!(
         !d.take_events()
             .iter()
+            .any(|e| matches!(e, Event::Character(_))),
+        "in the world the list is only kept"
+    );
+    world.deliver(login.event(0x3000_0042, &[0]), LOGIN_SERVER);
+    d.step(2.0, true, &go);
+    let events = d.take_events();
+    assert!(
+        events.iter().any(|e| matches!(
+            e,
+            Event::ReturnedToCharacterSelect { characters }
+                if characters.iter().map(|c| c.name.as_str()).eq(["Aldo", "Bera"])
+        )),
+        "{events:?}"
+    );
+    assert!(!d.ended());
+}
+
+#[test]
+fn a_later_list_at_character_selection_surfaces_its_changes() {
+    let (world, mut d, mut login) = driver_at_characters(Service::default(), 0);
+    let next = [(0x0200_0000_0000_0043, "Bera")];
+    world.deliver(login.event(0x6C, &character_list_of(&next)), LOGIN_SERVER);
+    d.step(0.5, true, &go);
+    let events = d.take_events();
+    assert!(
+        matches!(
+            events.as_slice(),
+            [
+                Event::Character(CharacterEvent::CharacterRemoved { name: gone }),
+                Event::Character(CharacterEvent::CharacterInfo { name: new, .. }),
+            ] if gone == "Aldo" && new == "Bera"
+        ),
+        "names gone first, then new names (`official-messages-play.md` §8): {events:?}"
+    );
+    // The new list is the one `EnterWorld` reads.
+    d.command(
+        &Command::EnterWorld {
+            character: "Bera".to_owned(),
+        },
+        0.6,
+    )
+    .expect("enter");
+    d.step(0.7, true, &go);
+    assert!(sent_blobs(&world).contains(&(0x6F, LOGIN_SERVER)));
+}
+
+#[test]
+fn moves_and_chat_after_the_teardown_are_refused_and_counted() {
+    let (world, mut d, mut login) = driver_in_world();
+    world.deliver(login.event(0x3000_001B, &[0]), LOGIN_SERVER);
+    d.step(2.0, true, &go);
+    let _ = d.take_events();
+    let _ = sent_blobs(&world);
+    let mv = Command::Move {
+        location: tessera_net::Location::default(),
+        heading: 0.0,
+        velocity: Vec3::ZERO,
+        on_ground: true,
+    };
+    let chat = Command::Chat {
+        channel: tessera_net::ChatChannel::Say,
+        text: "hello".to_owned(),
+    };
+    assert!(matches!(
+        d.command(&mv, 2.1),
+        Err(tessera_net::NetError::InvalidCommand(_))
+    ));
+    assert!(matches!(
+        d.command(&chat, 2.1),
+        Err(tessera_net::NetError::InvalidCommand(_))
+    ));
+    d.step(2.2, true, &go);
+    assert_eq!(d.counters().outside_world, 2);
+    let sent = sent_blobs(&world);
+    assert!(
+        !sent.iter().any(|(op, _)| *op == 0x24 || *op == 0x30),
+        "nothing sent: {sent:?}"
+    );
+}
+
+#[test]
+fn a_teardown_held_during_the_entry_is_replayed_after_the_session_start() {
+    let (world, mut d, mut login) = driver_at_characters(Service::default(), 0);
+    d.command(
+        &Command::EnterWorld {
+            character: "Aldo".to_owned(),
+        },
+        1.0,
+    )
+    .expect("enter");
+    // The teardown arrives before `0x90` (kept for the session start).
+    world.deliver(login.event(0x3000_001D, &[0]), LOGIN_SERVER);
+    d.step(1.05, true, &go);
+    assert!(d.take_events().is_empty());
+    world.deliver(login.event(0x90, &session_ready()), LOGIN_SERVER);
+    d.step(1.1, true, &go);
+    let events = d.take_events();
+    let entered = events
+        .iter()
+        .position(|e| matches!(e, Event::WorldEntered { .. }));
+    let back = events
+        .iter()
+        .position(|e| matches!(e, Event::ReturnedToCharacterSelect { .. }));
+    assert!(
+        matches!((entered, back), (Some(a), Some(b)) if a < b),
+        "{events:?}"
+    );
+    assert!(!d.in_world());
+    assert!(!d.ended());
+}
+
+#[test]
+fn a_stray_loading_signal_does_not_end_the_next_portal_space() {
+    let (world, mut d, mut login) = driver_in_world();
+    // Leaving while still in portal space (no `WorldLoaded` yet).
+    d.command(&Command::LeaveWorld, 1.2)
+        .expect("leave in portal space");
+    d.step(1.3, true, &go);
+    assert!(sent_blobs(&world).contains(&(0x30, LOGIN_SERVER)));
+    world.deliver(login.event(0x3000_001B, &[0]), LOGIN_SERVER);
+    d.step(1.4, true, &go);
+    assert!(
+        d.take_events()
+            .iter()
             .any(|e| matches!(e, Event::ReturnedToCharacterSelect { .. }))
     );
-    d.step(2.1 + RETURN_TIMEOUT_SEC, true, &go);
-    assert!(d.take_events().iter().any(|e| matches!(
-        e,
-        Event::ReturnedToCharacterSelect { characters } if characters.len() == 1
-    )));
-    assert!(!d.ended());
+    // A loading signal of the left world, outside portal space: ignored and counted.
+    d.command(&Command::WorldLoaded, 1.5).expect("accepted");
+    assert_eq!(d.counters().stray_loaded, 1);
+    // Re-entry: a fresh portal space waits for its own signal.
+    d.command(
+        &Command::EnterWorld {
+            character: "Aldo".to_owned(),
+        },
+        2.0,
+    )
+    .expect("enter again");
+    world.deliver(login.event(0x90, &session_ready()), LOGIN_SERVER);
+    d.step(2.1, true, &go);
+    d.step(5.0, true, &go);
+    assert!(
+        !sent_blobs(&world).iter().any(|(op, _)| *op == 0xF4),
+        "the earlier signal does not count for this portal space"
+    );
+    // The portal space's time-out is a deadline of the driver.
+    let next = d.next_deadline(5.0).expect("a deadline");
+    assert!(next <= 2.1 + PORTAL_LOADING_TIMEOUT_SEC + 1e-9, "{next}");
+    d.command(&Command::WorldLoaded, 5.5).expect("loaded");
+    d.step(5.6, true, &go);
+    assert_eq!(
+        sent_blobs(&world)
+            .iter()
+            .filter(|(op, _)| *op == 0xF4)
+            .count(),
+        1
+    );
 }
 
 #[test]
@@ -3202,13 +3357,12 @@ fn the_live_connector_returns_to_character_selection() {
             break;
         }
     }
+    // The teardown on the world connection, and no list after it: the return comes at
+    // once, and the next `0x6F` goes to the world server, which keeps the session.
     run.world
         .deliver(world.event(0x3000_001C, &[0]), WORLD_SERVER);
-    run.world
-        .deliver(world.event(0x6C, &character_list()), WORLD_SERVER);
     run.wait_event(|e| matches!(e, Event::ReturnedToCharacterSelect { .. }));
     assert_eq!(run.session.state(), tessera_net::SessionState::Connected);
-    // The list came on the world connection: the next `0x6F` goes there.
     run.session
         .send(
             Instant::now(),
@@ -3223,5 +3377,10 @@ fn the_live_connector_returns_to_character_selection() {
             break;
         }
     }
+    // The world answers on the same connection: in the world again (referral path).
+    let d = world.event(0x90, &session_ready());
+    run.world.deliver(d, WORLD_SERVER);
+    run.wait_event(|e| matches!(e, Event::WorldEntered { .. }));
+    assert_eq!(run.session.state(), tessera_net::SessionState::InWorld);
     let _ = run.session.send(Instant::now(), Command::Disconnect);
 }

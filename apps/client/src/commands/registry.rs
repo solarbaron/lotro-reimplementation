@@ -127,6 +127,8 @@ pub enum Builtin {
     P5(super::p5::P5Word),
     /// `uiscale` (the UI-scaling built-in, `ui-scaling.md` §7.3; [`super::uiscale`]).
     UiScale,
+    /// `logout` (leave the world for character selection; [`super::logout`]).
+    Logout,
 }
 
 /// What runs a command.

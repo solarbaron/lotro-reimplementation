@@ -554,7 +554,9 @@ impl SocialState {
                 // The player music drops the old session's members (their waiting parts).
                 self.queue_music(ev);
             }
-            Event::Disconnected { .. } => {
+            // Leaving the world for character selection ends the social state as the
+            // session's end does (the chat history stays, as on a disconnect).
+            Event::Disconnected { .. } | Event::ReturnedToCharacterSelect { .. } => {
                 let p = self.player.clone();
                 self.reset(&p, None);
                 self.chat.disconnected();

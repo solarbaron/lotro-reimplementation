@@ -133,6 +133,19 @@ pub enum FlowRequest {
     HandOver,
 }
 
+/// How the handed-over part of an official run ended (§8.7; [`Flow::characters_ended`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum HandOverEnd {
+    /// The player left (quit the character screens, Escape, closed the window): no
+    /// message.
+    Left,
+    /// The session ended: §8.6's row for its reason.
+    SessionEnded(tessera_net::DisconnectReason),
+    /// The character screens or the walker could not start, or the client failed (the
+    /// reason as the message's detail).
+    Failed(String),
+}
+
 /// The start screen's acceptance line (§4.1).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AcceptanceLine<'a> {
@@ -207,6 +220,11 @@ pub struct Flow {
     characters: Option<(Session, Vec<tessera_net::CharacterSummary>)>,
     /// The window took the session ([`Flow::take_hand_over`]) and runs the character screens.
     handed_over: bool,
+    /// The events polled after `Connected` until the window takes the session (at most
+    /// [`crate::net::MAX_HANDED_EVENTS`]), for the hand-over.
+    rest: Vec<Event>,
+    /// Events beyond that bound, dropped.
+    rest_dropped: usize,
     request: Option<FlowRequest>,
     constructions: usize,
     plugin_loads_dropped: bool,
@@ -251,6 +269,8 @@ impl Flow {
             kept_account: None,
             characters: None,
             handed_over: false,
+            rest: Vec::new(),
+            rest_dropped: 0,
             request: None,
             constructions: 0,
             plugin_loads_dropped: false,
@@ -591,6 +611,8 @@ impl Flow {
                 // this request. The plugin host starts with them (the window's runtime,
                 // §4.5), not here.
                 self.characters = Some((session, characters));
+                self.rest.clear();
+                self.rest_dropped = 0;
                 self.handed_over = false;
                 self.screen = Screen::Characters;
                 self.request = Some(FlowRequest::HandOver);
@@ -624,13 +646,21 @@ impl Flow {
         }
         let (session, characters) = self.characters.take()?;
         self.handed_over = true;
+        if self.rest_dropped > 0 {
+            tracing::warn!(
+                dropped = self.rest_dropped,
+                "official session: events after the character list dropped before the hand-over"
+            );
+        }
         tracing::info!(
             characters = characters.len(),
+            later_events = self.rest.len(),
             "official session handed over to the character screens"
         );
         Some(crate::net::HandOver {
             session,
             characters,
+            rest: std::mem::take(&mut self.rest),
         })
     }
 
@@ -640,16 +670,29 @@ impl Flow {
         self.handed_over
     }
 
-    /// The character screens over the handed-over session ended (the player left them, the
-    /// window was closed or the session ended; the window has shut them down, which ended
-    /// the session and stopped their plugin host): the account form shows with both fields
-    /// empty (§8.7, §4.5). The warning is not shown again.
-    pub fn characters_ended(&mut self) {
+    /// The character screens over the handed-over session ended (`end`: the player left
+    /// them or closed the window, the session ended, or they could not start; the window
+    /// has shut them down, which ended the session and stopped their plugin host): the
+    /// account form shows with both fields empty (§8.7, §4.5), with §8.6's message for a
+    /// session that ended (none when the player left), or `official.characters.unavailable`
+    /// with the failure as its detail. The warning is not shown again.
+    pub fn characters_ended(&mut self, end: HandOverEnd) {
         if !self.handed_over {
             return;
         }
         self.handed_over = false;
         self.leave_characters();
+        let message = match &end {
+            HandOverEnd::Left => None,
+            HandOverEnd::SessionEnded(reason) => super::login::disconnect_message(reason),
+            HandOverEnd::Failed(why) => Some(Message {
+                text: text("official.characters.unavailable").to_owned(),
+                detail: (!why.trim().is_empty()).then(|| super::login::detail_line(why)),
+            }),
+        };
+        if let Some(m) = message {
+            self.show(m);
+        }
     }
 
     /// Leaves the character placeholder (Back, Escape or closing the window): the session ends
@@ -659,6 +702,7 @@ impl Flow {
         if let Some((mut session, _)) = self.characters.take() {
             let _ = session.send(Instant::now(), Command::Disconnect);
         }
+        self.rest.clear();
         self.handed_over = false;
         if self.request == Some(FlowRequest::HandOver) {
             // Left before the window took the session: nothing to hand over any more.
@@ -789,10 +833,14 @@ impl Flow {
         let mut events = std::mem::take(&mut self.events);
         let mut ended = None;
         let mut remember = None;
+        let mut connected_at = None;
         if let Some((session, presenter)) = self.login.as_mut() {
             events.clear();
             session.poll_into(now, &mut events);
-            for e in &events {
+            for (i, e) in events.iter().enumerate() {
+                if connected_at.is_none() && matches!(e, Event::Connected { .. }) {
+                    connected_at = Some(i);
+                }
                 presenter.on_event(e, now);
             }
             presenter.tick(now);
@@ -810,6 +858,13 @@ impl Flow {
         }
         if let Some(end) = ended {
             self.login_ended(end, now);
+            // The rest of the batch after `Connected` goes with the hand-over (§8.7).
+            if self.characters.is_some()
+                && let Some(tail) = connected_at.and_then(|i| self.events.get(i + 1..))
+            {
+                let tail = tail.to_vec();
+                self.keep_for_hand_over(tail);
+            }
         }
         if let Some((session, _)) = self.characters.as_mut() {
             let mut events = std::mem::take(&mut self.events);
@@ -818,9 +873,24 @@ impl Flow {
             let ended = events
                 .iter()
                 .any(|e| matches!(e, Event::Disconnected { .. }));
+            let kept = events.clone();
             self.events = events;
             if ended {
                 self.leave_characters();
+            } else {
+                self.keep_for_hand_over(kept);
+            }
+        }
+    }
+
+    /// Keeps events polled after `Connected` for the hand-over, at most
+    /// [`crate::net::MAX_HANDED_EVENTS`] (later ones are dropped and counted).
+    fn keep_for_hand_over(&mut self, events: Vec<Event>) {
+        for e in events {
+            if self.rest.len() < crate::net::MAX_HANDED_EVENTS {
+                self.rest.push(e);
+            } else {
+                self.rest_dropped = self.rest_dropped.saturating_add(1);
             }
         }
     }

@@ -124,9 +124,14 @@ pub struct Runtime {
     pub p5: crate::travel::TravelHub,
     /// The map windows (decision 0024 P5): the install's map facts and the map window.
     pub map: crate::map::MapHub,
-    /// A session handed over by the official login (`official-entry.md` §8.7), until the
-    /// walker's world takes it ([`Runtime::start_walker_session`]).
-    handed: Option<crate::net::HandOver>,
+    /// The world session is the one the official login handed over (`official-entry.md`
+    /// §8.7): it is polled from the start, and the walker attaches to it when it starts
+    /// ([`Runtime::start_walker_session`]).
+    handed: bool,
+    /// Why the handed-over part of the run cannot go on (the character screens cannot
+    /// open, or the walker never started): the client ends that part with the reason
+    /// instead of entering a character by itself.
+    handed_failure: Option<String>,
     /// Progression and crafting (decision 0024 P6): the windows' install names, the
     /// plugins' progression model, the P6 windows on the game UI.
     pub p6: crate::progression::P6Hub,
@@ -172,6 +177,10 @@ fn social_tick(
     }
     crate::social::send_music_requests(world, music, now);
 }
+
+/// The start of the system line of a refused `/logout` (Tessera's wording; the session's
+/// reason follows).
+pub const LOGOUT_REFUSED: &str = "Cannot leave the world: ";
 
 /// Most session chat lines held for the game UI until it takes them.
 pub const MAX_HELD_CHAT: usize = 256;
@@ -282,16 +291,23 @@ impl Runtime {
 
     /// [`Runtime::start`] over a session the official login handed over
     /// (`official-entry.md` §8.7): the world session is that one (no sandbox or test-server
-    /// session is opened), taken by the walker's world once it starts
-    /// ([`Runtime::start_walker_session`]), or at once in a run without the walker. The
-    /// character screens (`--character-select`) are then fed from it.
+    /// session is opened). It is the runtime's world from the start, so the connector is
+    /// drained while the walker loads; the walker attaches to it when it starts
+    /// ([`Runtime::start_walker_session`]). The character screens (`--character-select`) are
+    /// then fed from it. No test-server setting is read (`TESSERA_PASSWORD` is never read
+    /// in official play, §4.2).
     pub fn start_with(
         args: &Args,
         now: Instant,
         handed: Option<crate::net::HandOver>,
     ) -> anyhow::Result<Self> {
-        let mut handed = handed;
-        let remote = crate::cli::remote_settings_from_env(args)?;
+        let handed_world = handed.map(|h| World::handed_over(now, h));
+        let is_handed = handed_world.is_some();
+        let remote = if is_handed {
+            None
+        } else {
+            crate::cli::remote_settings_from_env(args)?
+        };
         // The walker shows no showcase texture and needs the disk for streaming: no
         // texture search and no directory walk then.
         let walker = args.walker();
@@ -317,8 +333,17 @@ impl Runtime {
             .as_deref()
             .and_then(|s| s.enter_character())
             .map(str::to_owned);
-        let session = match &walker_shared {
-            Some(_) => match crate::walker_host::sandbox_config(args) {
+        let session = match (&walker_shared, handed_world) {
+            // The handed-over session (§8.7): the world at once; the walker's settings only
+            // say when the walker has started (no sandbox is made from them).
+            (shared, Some(w)) => {
+                if shared.is_some() {
+                    walker_session =
+                        Some(crate::walker_host::sandbox_config(args).unwrap_or_default());
+                }
+                Ok(Some(w))
+            }
+            (Some(_), None) => match crate::walker_host::sandbox_config(args) {
                 Ok(mut c) => {
                     c.scenario.clone_from(&scenario);
                     walker_session = Some(c);
@@ -326,13 +351,9 @@ impl Runtime {
                 }
                 Err(e) => Err(e),
             },
-            // A handed-over session without the walker: the world session at once.
-            None if handed.is_some() => Ok(handed
-                .take()
-                .map(|h| World::handed_over(now, h.session, h.characters))),
             // No walker (`--no-data`): the plain sandbox with the spawn of `--spawn`,
             // `--place` and `--heading` (`scenario-feed.md` §12.1), as a headless run.
-            None => match scenario {
+            (None, None) => match scenario {
                 // `--scenario` with `--server`: an overlay run (`scenario-feed.md` §12.5).
                 Some(sc) if remote.is_some() => remote
                     .as_ref()
@@ -442,8 +463,31 @@ impl Runtime {
                     .filter_map(|n| crate::progression::parse_p6_panel(n))
                     .collect(),
             ),
-            handed,
+            handed: is_handed,
+            handed_failure: None,
         })
+    }
+
+    /// Whether the world session is the one the official login handed over (§8.7).
+    #[must_use]
+    pub fn is_handed_over(&self) -> bool {
+        self.handed
+    }
+
+    /// Why the handed-over part of the run cannot go on, once it cannot (the character
+    /// screens cannot open, the walker never started).
+    #[must_use]
+    pub fn handed_failure(&self) -> Option<&str> {
+        self.handed_failure.as_deref()
+    }
+
+    /// Ends the handed-over part of the run with `reason` (no-op for other runs, and after
+    /// the first reason).
+    pub fn fail_handed(&mut self, reason: &str) {
+        if self.handed && self.handed_failure.is_none() {
+            tracing::warn!("official session: {reason}");
+            self.handed_failure = Some(reason.to_owned());
+        }
     }
 
     /// Whether the map facts are still to come: their loader runs, the archives are
@@ -506,19 +550,27 @@ impl Runtime {
             c.crowd.appearances.clear();
             c
         });
-        let remote = self.remote.as_ref();
-        let world = if let Some(h) = self.handed.take() {
-            // The official login's session (`official-entry.md` §8.7): the walker draws
-            // from the client's own data; the session is the server's.
-            Some(Ok(World::handed_over(now, h.session, h.characters)))
-        } else {
-            match World::for_walker(now, remote, config, WalkerSource::new(shared.clone())) {
-                Err(e) if retry.is_some() => {
-                    tracing::warn!("world session refused the crowd ({e}); starting without it");
-                    retry.map(|c| World::for_walker(now, remote, c, WalkerSource::new(shared)))
+        if self.handed {
+            // The official login's session (`official-entry.md` §8.7) is the world already
+            // (polled since the start): the walker attaches to it. The walker draws from the
+            // client's own data; the session is the server's.
+            if let Some(w) = self.world.as_mut() {
+                if let Some(d) = self.p1.data() {
+                    w.set_bag_layout(d.bags());
+                    crate::social::attach_data(w.social_mut(), d);
                 }
-                other => Some(other),
+                w.set_look_data(self.p1.screens().cloned());
             }
+            return;
+        }
+        let remote = self.remote.as_ref();
+        let world = match World::for_walker(now, remote, config, WalkerSource::new(shared.clone()))
+        {
+            Err(e) if retry.is_some() => {
+                tracing::warn!("world session refused the crowd ({e}); starting without it");
+                retry.map(|c| World::for_walker(now, remote, c, WalkerSource::new(shared)))
+            }
+            other => Some(other),
         };
         match world {
             Some(Ok(mut w)) => {
@@ -553,8 +605,18 @@ impl Runtime {
     /// facts or no game UI): the world session goes back to entering the account's first
     /// character itself, as without the flag, and a system line says why. Sessions started
     /// later enter on their own too.
+    ///
+    /// A handed-over official session never enters a character by itself
+    /// (`official-entry.md` §8.7): its part of the run ends with the reason instead
+    /// ([`Runtime::handed_failure`]), and the session stays at character selection until
+    /// the client shuts it down.
     pub fn abandon_character_select(&mut self, reason: &str) {
         if !self.character_select {
+            return;
+        }
+        if self.handed {
+            self.character_select = false;
+            self.fail_handed(&format!("the character screens cannot open ({reason})"));
             return;
         }
         self.character_select = false;
@@ -708,6 +770,20 @@ impl Runtime {
         {
             self.map
                 .start(Arc::clone(c), Arc::clone(set), Some(root.clone()));
+        }
+        // `/logout` typed by the player (the dispatcher's built-in, device input only).
+        if self.plugins.dispatcher().logout_queue().take() {
+            match self.world.as_mut() {
+                Some(w) => {
+                    if let Err(e) = w.leave_world(now) {
+                        tracing::info!("logout refused: {e}");
+                        w.push_local_chat(crate::net::ChatLine::system(format!(
+                            "{LOGOUT_REFUSED}{e}"
+                        )));
+                    }
+                }
+                None => tracing::info!("logout: no world session"),
+            }
         }
         if let Some(world) = &mut self.world {
             world.update(now);

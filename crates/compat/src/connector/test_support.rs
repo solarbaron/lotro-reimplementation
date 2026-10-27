@@ -11,7 +11,7 @@
 //! |---|---|
 //! | `SessionAuthHeader` | the connect challenge, an acknowledgement and the version request `0x12F` |
 //! | `0x12C` (version) | `0x12D` (accepted) and the character list `0x6C` (one character, "Aldo") |
-//! | `0x6F` (enter world) | `0x90` (session start); no referral: the login connection carries the world |
+//! | `0x6F` (enter world) | `0x90` (session start) and the player's placement `0xCE` (teleport stamp 0, at [`PLAYER_AT`]); no referral: the login connection carries the world |
 //! | `0xF4` (portal exit) | nothing (counted) |
 //! | `0x30` (an RPC: the logout request of `LeaveWorld`) | a world teardown `0x3000001B` and the list `0x6C` again |
 //!
@@ -28,7 +28,7 @@ use super::data::{InstallData, LocalPaths};
 use super::net::{ConnectorNet, NetFactory, SendHttpClient};
 use crate::login::soap_encoder::{GLS_NAMESPACE, SOAP_ENVELOPE_NAMESPACE};
 use crate::login::{HttpClient, HttpRequest, HttpResponse, LoginError};
-use crate::net_access::{NetworkAccess, Revocation};
+use crate::net_access::NetworkAccess;
 use crate::session::{
     BitTreeTable, ConnectChallengeHeader, DatagramHeader, IsaacCipher, OptionalHeaders,
     SessionError, UdpDatagramTransport, VersionStatusMessage, decode_datagram, encode_datagram,
@@ -36,7 +36,8 @@ use crate::session::{
 };
 use crate::world::{
     CharacterListResponse, CharacterSummaryEntry, EncodedPropertyTable, EntityAppearanceDesc,
-    PlayerSessionReady, PropertyType, encode_event_envelope,
+    EntityPlacement, PlayerSessionReady, PositionUpdate, PropertyType, WirePosition,
+    encode_event_envelope,
 };
 
 /// The client's address on the synthetic network.
@@ -55,6 +56,13 @@ const SEED: u32 = 0xBEEF_0001;
 pub const CHARACTER: &str = "Aldo";
 /// The player entity of the synthetic world.
 pub const PLAYER: u64 = 0x0100_0000_0000_0007;
+/// Where the synthetic world places the player (offsets in its landblock, metres).
+pub const PLAYER_AT: [f32; 3] = [12.0, 34.0, 5.0];
+
+/// Most datagrams waiting for the client and most blob opcodes kept in [`Seen::blobs`]
+/// (the oldest are dropped beyond it): a test that runs long never grows the service
+/// without bound.
+pub const MAX_KEPT: usize = 4096;
 
 /// What the synthetic service saw, for the test's assertions.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -63,8 +71,8 @@ pub struct Seen {
     pub requests: usize,
     /// Sockets bound.
     pub binds: usize,
-    /// Opcodes of the client's blobs, in order.
-    pub blobs: Vec<u32>,
+    /// Opcodes of the client's blobs, in order (the last [`MAX_KEPT`]).
+    pub blobs: VecDeque<u32>,
     /// Datagrams with the transport disconnect.
     pub disconnects: usize,
 }
@@ -74,7 +82,27 @@ struct State {
     seen: Seen,
     inbound: VecDeque<(Vec<u8>, SocketAddrV4)>,
     server: Option<Server>,
-    revocation: Option<Revocation>,
+    /// The attempt's network right, kept for its liveness (its own revocation and
+    /// `revoke_all` both end it).
+    access: Option<NetworkAccess>,
+}
+
+impl State {
+    /// Queues a datagram for the client (the oldest is dropped beyond [`MAX_KEPT`]).
+    fn deliver(&mut self, datagram: Vec<u8>) {
+        if self.inbound.len() >= MAX_KEPT {
+            self.inbound.pop_front();
+        }
+        self.inbound.push_back((datagram, LOGIN_SERVER));
+    }
+
+    /// Notes a blob opcode the client sent (the oldest is dropped beyond [`MAX_KEPT`]).
+    fn saw_blob(&mut self, op: u32) {
+        if self.seen.blobs.len() >= MAX_KEPT {
+            self.seen.blobs.pop_front();
+        }
+        self.seen.blobs.push_back(op);
+    }
 }
 
 /// The synthetic service (module docs). Clones share one state.
@@ -152,11 +180,19 @@ impl SyntheticService {
         SyntheticFactory(self.clone())
     }
 
+    /// Whether the attempt's network right still holds (no attempt yet: live).
     fn live(&self) -> bool {
         self.state()
-            .revocation
+            .access
             .as_ref()
-            .is_none_or(|r| !r.is_revoked())
+            .is_none_or(NetworkAccess::is_live)
+    }
+
+    /// Revokes the attempt's network right, as the reaper does (tests).
+    pub fn revoke(&self) {
+        if let Some(a) = self.state().access.as_ref() {
+            a.revocation().revoke();
+        }
     }
 
     fn answer(&self, req: &HttpRequest) -> Result<HttpResponse, LoginError> {
@@ -201,17 +237,14 @@ impl SyntheticService {
             .is_some_and(|p| p.opt_headers.session_auth.is_some())
         {
             let server = Server::new();
-            st.inbound.push_back((server.challenge(), LOGIN_SERVER));
-            st.inbound.push_back((
-                server.control(OptionalHeaders {
-                    cumulative_ack: Some(0),
-                    ..OptionalHeaders::default()
-                }),
-                LOGIN_SERVER,
-            ));
+            st.deliver(server.challenge());
+            st.deliver(server.control(OptionalHeaders {
+                cumulative_ack: Some(0),
+                ..OptionalHeaders::default()
+            }));
             let mut server = server;
             if let Some(d) = server.event(0x12F, &[]) {
-                st.inbound.push_back((d, LOGIN_SERVER));
+                st.deliver(d);
             }
             st.server = Some(server);
             return;
@@ -222,7 +255,7 @@ impl SyntheticService {
         if pkt.opt_headers.disconnect {
             st.seen.disconnects += 1;
         }
-        let Some(server) = st.server.as_mut() else {
+        let Some(mut server) = st.server.take() else {
             return;
         };
         let acked = pkt.header.seq_num;
@@ -231,7 +264,7 @@ impl SyntheticService {
             let Some(op) = f.header.blob_header_word else {
                 continue;
             };
-            st.seen.blobs.push(op);
+            st.saw_blob(op);
             let answers: Vec<Option<Vec<u8>>> = match op {
                 0x12C => {
                     let ok = VersionStatusMessage {
@@ -244,15 +277,19 @@ impl SyntheticService {
                         server.event(0x6C, &character_list()),
                     ]
                 }
-                0x6F => vec![server.event(0x90, &session_ready())],
+                0x6F => vec![
+                    server.event(0x90, &session_ready()),
+                    server.event(PositionUpdate::EVENT_ID, &placement()),
+                ],
                 0x30 => vec![
                     server.event(0x3000_001B, &[0]),
                     server.event(0x6C, &character_list()),
                 ],
                 _ => Vec::new(),
             };
-            st.inbound
-                .extend(answers.into_iter().flatten().map(|d| (d, LOGIN_SERVER)));
+            for d in answers.into_iter().flatten() {
+                st.deliver(d);
+            }
         }
         if reliable {
             // Acknowledged at once, so nothing is sent twice.
@@ -260,8 +297,9 @@ impl SyntheticService {
                 cumulative_ack: Some(acked),
                 ..OptionalHeaders::default()
             });
-            st.inbound.push_back((ack, LOGIN_SERVER));
+            st.deliver(ack);
         }
+        st.server = Some(server);
     }
 }
 
@@ -363,10 +401,9 @@ impl NetFactory for SyntheticFactory {
     type Net = SyntheticNet;
 
     fn make(&mut self, access: NetworkAccess) -> SyntheticNet {
-        // The synthetic network follows the attempt's own right (the reaper's revocation
-        // and Withdraw's).
-        self.0.state().revocation = Some(access.revocation());
-        drop(access);
+        // The synthetic network keeps the attempt's own right and follows its liveness (the
+        // reaper's revocation and Withdraw's `revoke_all`).
+        self.0.state().access = Some(access);
         SyntheticNet(self.0.clone())
     }
 }
@@ -581,6 +618,25 @@ fn character_list() -> Vec<u8> {
     .unwrap_or_default()
 }
 
+/// The player's placement after the session start: `0xCE` with the teleport stamp 0
+/// (`official-messages-play.md` §4.5 item 3), the client's first location report.
+fn placement() -> Vec<u8> {
+    PositionUpdate {
+        entity_id: PLAYER,
+        seq_byte: Some(0),
+        velocity: [None, None, None],
+        anim_state: None,
+        placement: EntityPlacement::WorldWithHeading {
+            position: WirePosition::from_components(1, 1, 2, 0, 0, PLAYER_AT, [1.0, 0.0, 0.0, 0.0]),
+            heading_raw: 0,
+        },
+        interp_param_a: None,
+        interp_param_b: None,
+    }
+    .to_bytes()
+    .unwrap_or_default()
+}
+
 fn session_ready() -> Vec<u8> {
     PlayerSessionReady {
         player_id: PLAYER,
@@ -608,13 +664,104 @@ mod tests {
             if let Some(e) = s.poll(Instant::now()).into_iter().find(|e| pred(e)) {
                 return e;
             }
-            assert!(Instant::now() < until, "no {what}");
+            assert!(Instant::now() < until, "no {what}: {:?}", s.state());
             std::thread::sleep(Duration::from_millis(2));
         }
     }
 
+    /// A session over the synthetic service, in the world as [`CHARACTER`].
+    fn in_world(dir: &Path, service: &SyntheticService) -> Session {
+        let (acc, write) = consent::accept(
+            Some(dir),
+            &WarningText::shipped(),
+            UserConfirmation::confirmed_by_user(),
+        );
+        let _ = write.wait();
+        let live = service.live_config(&dir.join("install")).expect("install");
+        let connector = LiveConnector::with_factory(live, service.factory());
+        let creds = Credentials::new(b"a", b"b").expect("creds");
+        let backend =
+            CompatBackend::with_connector(CompatConfig::new(acc.proof(), creds), connector)
+                .expect("backend");
+        let mut s = Session::new(backend);
+        s.send(Instant::now(), Command::Connect).expect("connect");
+        let list = wait(&mut s, "world list", |e| {
+            matches!(e, Event::Account(AccountEvent::WorldList { .. }))
+        });
+        let Event::Account(AccountEvent::WorldList { worlds }) = list else {
+            unreachable!("matched")
+        };
+        let world: WorldId = worlds.first().expect("a world").id;
+        s.send(
+            Instant::now(),
+            Command::Account(AccountCommand::ChooseWorld { world }),
+        )
+        .expect("choose");
+        wait(&mut s, "Connected", |e| {
+            matches!(e, Event::Connected { .. })
+        });
+        s.send(
+            Instant::now(),
+            Command::EnterWorld {
+                character: CHARACTER.to_owned(),
+            },
+        )
+        .expect("enter");
+        wait(&mut s, "WorldEntered", |e| {
+            matches!(e, Event::WorldEntered { .. })
+        });
+        s
+    }
+
+    /// The synthetic network follows the attempt's right: once it is revoked in the world,
+    /// nothing more is sent or bound, and the session ends.
+    #[test]
+    fn revoking_the_right_in_the_world_stops_every_send_at_once() {
+        let _guard = crate::net_access::TEST_REVOKE_LOCK
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let dir = tempfile::tempdir().expect("temp");
+        let service = SyntheticService::new();
+        let mut s = in_world(dir.path(), &service);
+        service.revoke();
+        let before = service.seen();
+        // A loading signal and a logout request would each send a blob.
+        let _ = s.send(Instant::now(), Command::WorldLoaded);
+        let _ = s.send(Instant::now(), Command::LeaveWorld);
+        wait(&mut s, "the end", |e| {
+            matches!(e, Event::Disconnected { .. })
+        });
+        let after = service.seen();
+        assert_eq!(
+            after.blobs, before.blobs,
+            "nothing sent after the revocation"
+        );
+        assert_eq!(after.binds, before.binds, "no bind after the revocation");
+        assert_eq!(
+            after.disconnects, before.disconnects,
+            "not even the goodbye"
+        );
+    }
+
+    #[test]
+    fn the_synthetic_service_caps_what_it_keeps() {
+        let service = SyntheticService::new();
+        let mut st = service.state();
+        for i in 0..(MAX_KEPT + 10) {
+            st.deliver(vec![0]);
+            st.saw_blob(u32::try_from(i).unwrap_or(0));
+        }
+        assert_eq!(st.inbound.len(), MAX_KEPT);
+        assert_eq!(st.seen.blobs.len(), MAX_KEPT);
+        assert_eq!(st.seen.blobs.front(), Some(&10), "the oldest are dropped");
+    }
+
     #[test]
     fn the_synthetic_service_walks_login_entry_and_return() {
+        // No other test's `revoke_all` may end this run's right early.
+        let _guard = crate::net_access::TEST_REVOKE_LOCK
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let dir = tempfile::tempdir().expect("temp");
         let (acc, write) = consent::accept(
             Some(dir.path()),

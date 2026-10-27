@@ -277,6 +277,13 @@ pub enum Event {
     /// entity are gone, and `EnterWorld` (or a character command) may follow. Backends
     /// that can leave the world send it after [`Command::LeaveWorld`] (or when the world
     /// source ends the world by itself); the others never send it.
+    ///
+    /// The event implies the end of every entity: a backend may send an
+    /// [`Event::EntityDespawned`] for some or all of them (and [`Event::StaticsCleared`])
+    /// before it, but need not; consumers drop whatever is left when it arrives. Tessera's
+    /// own addition to the neutral model (`official-messages-play.md` §8 maps the teardown
+    /// to the later character list; engineering choice pending a spec answer, listed in
+    /// `docs/m8-remediation.md` §15).
     ReturnedToCharacterSelect {
         /// Characters that may enter the world (as in [`Event::Connected`]).
         characters: Vec<CharacterSummary>,
@@ -428,11 +435,17 @@ pub enum Command {
     /// first, as system chat lines); one that cannot leave the world refuses the command
     /// with [`NetError::InvalidCommand`]. The session stays [`SessionState::InWorld`] until
     /// the answer.
+    ///
+    /// Only the player's own action sends it (a typed command or a menu choice, device
+    /// input): never start-up lines, scripts, plugins or automation (decision 0034).
     LeaveWorld,
-    /// The client finished loading the world around the player after the latest
-    /// [`Event::WorldEntered`] (its first ready frame, or the end of its loading screen)
-    /// (in the world; `official-messages-play.md` §4.5 item 4). Sent once per world entry.
-    /// Backends that do not wait for the client's loading accept and ignore it.
+    /// The client finished loading the world around the player's latest placement (in the
+    /// world; `official-messages-play.md` §4.5 item 4): after [`Event::WorldEntered`] and
+    /// after each later [`Event::LocationReport`] with [`LocationCause::Teleported`] for the
+    /// player, once the client has placed the player at that location and its area is
+    /// loaded. One signal per placement; a backend that waits for it (portal space) takes
+    /// one signal per portal space and ignores the others. Backends that do not wait for
+    /// the client's loading accept and ignore it.
     WorldLoaded,
 }
 

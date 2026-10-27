@@ -790,10 +790,17 @@ impl Controls {
         self.mode
     }
 
-    /// Whether [`Controls::place`] has been called.
+    /// Whether [`Controls::place`] has been called (and not undone by
+    /// [`Controls::unplace`]).
     #[must_use]
     pub fn placed(&self) -> bool {
         self.placed
+    }
+
+    /// Drops the placement (the world was left for character selection): the next
+    /// location the session reports places the viewer afresh, whatever its cause.
+    pub fn unplace(&mut self) {
+        self.placed = false;
     }
 
     /// Feeds one raw input event.
@@ -1194,6 +1201,27 @@ impl Controls {
 mod tests {
     use super::*;
     use tessera_input::KeyCode;
+
+    /// Back at character selection the viewer is unplaced: the next entry's location
+    /// places it afresh at a different position, whatever the report's cause.
+    #[test]
+    fn an_unplaced_viewer_is_placed_afresh_by_the_next_entry() {
+        let mut c = Controls::new(&default_keymap(), MoveMode::Walk, 40.0);
+        let a = WorldPos::new(1, 100.0, 100.0, 50.0);
+        c.place(&a, 0.0, 2.0, -0.3);
+        assert!(c.placed());
+        c.unplace();
+        assert!(!c.placed());
+        assert_eq!(
+            crate::walker::placement(tessera_net::LocationCause::Corrected, c.placed(), false),
+            crate::walker::Placement::Place
+        );
+        let b = WorldPos::new(2, 300.0, 40.0, 10.0);
+        c.place(&b, 1.0, 2.0, -0.3);
+        assert!(c.placed());
+        let at = c.focus();
+        assert_eq!((at.region, at.x, at.y), (2, 300.0, 40.0), "{at:?}");
+    }
 
     /// Review finding (`walker.md` §5): only the walk-mode camera is kept 0.8 m above the
     /// terrain; a free-fly or scripted camera (no avatar) may go below it.

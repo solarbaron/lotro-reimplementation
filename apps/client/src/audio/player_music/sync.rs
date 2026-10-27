@@ -178,7 +178,9 @@ impl SocialItem {
         };
         let s = match ev {
             Event::Social(s) => s,
-            Event::WorldEntered { .. } | Event::Disconnected { .. } => {
+            Event::WorldEntered { .. }
+            | Event::Disconnected { .. }
+            | Event::ReturnedToCharacterSelect { .. } => {
                 return Some(Self::Fellowship {
                     members: Vec::new(),
                 });

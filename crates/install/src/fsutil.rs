@@ -49,9 +49,8 @@ pub(crate) fn pick_ci<'a>(entries: &'a [DirEntry], name: &str) -> Option<&'a Dir
     }
     matches.sort_by(|a, b| a.name.cmp(&b.name));
     if matches.len() > 1 {
+        // No path or name: a name may come from a user path (a translated Windows path).
         tracing::warn!(
-            name,
-            chosen = %matches[0].path.display(),
             count = matches.len(),
             "several entries match case-insensitively; using the smallest"
         );
@@ -159,7 +158,7 @@ pub fn translate_windows_path(prefix: &Path, win: &str) -> Option<PathBuf> {
     let win = win.trim();
     let bytes = win.as_bytes();
     if bytes.len() < 2 || bytes[1] != b':' || !bytes[0].is_ascii_alphabetic() {
-        tracing::debug!(path = win, "not a drive-letter Windows path");
+        tracing::debug!("not a drive-letter Windows path");
         return None;
     }
     let letter = bytes[0].to_ascii_lowercase();
@@ -172,7 +171,7 @@ pub fn translate_windows_path(prefix: &Path, win: &str) -> Option<PathBuf> {
             if fs::metadata(&link).is_ok() {
                 link
             } else {
-                tracing::debug!(path = win, "unresolvable drive letter");
+                tracing::debug!("unresolvable drive letter");
                 return None;
             }
         }
@@ -181,7 +180,7 @@ pub fn translate_windows_path(prefix: &Path, win: &str) -> Option<PathBuf> {
         match comp {
             "" | "." => continue,
             ".." => {
-                tracing::debug!(path = win, "refusing '..' in a Windows path");
+                tracing::debug!("refusing '..' in a Windows path");
                 return None;
             }
             c => {
@@ -236,8 +235,8 @@ pub(crate) fn find_install_dirs(root: &Path, limits: WalkLimits) -> Vec<PathBuf>
     while let Some((dir, depth)) = queue.pop_front() {
         if visited >= limits.max_dirs {
             tracing::info!(
-                root = %root.display(),
                 cap = limits.max_dirs,
+                found = found.len(),
                 "directory cap reached; search truncated"
             );
             break;
@@ -246,7 +245,7 @@ pub(crate) fn find_install_dirs(root: &Path, limits: WalkLimits) -> Vec<PathBuf>
         let entries = match list_dir(&dir) {
             Ok(e) => e,
             Err(e) => {
-                tracing::debug!(dir = %dir.display(), error = %e, "cannot list directory");
+                tracing::debug!(depth, error = %e, "cannot list directory");
                 continue;
             }
         };

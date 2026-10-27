@@ -158,6 +158,57 @@ pub const MAX_UNPACKED_MESSAGES: usize = 65_536;
 /// Default defensive cap on recursive container depth (`8`, §3.5, §9.4).
 pub const DEFAULT_MAX_CONTAINER_DEPTH: usize = 8;
 
+// Session timers. [`SessionConnection::tick`] (and the multiplexer's cleanup) acts on them
+// and [`SessionConnection::next_deadline`] reports them: both read these constants, so the
+// two cannot drift apart.
+
+/// Handshake timeout of States `1` (`SessionAuthSent`) and `2` (`ChallengeAcceptSent`):
+/// `20.0` s (§6.1 table).
+pub const HANDSHAKE_TIMEOUT_SEC: f64 = 20.0;
+
+/// Retransmit interval of the stored `SessionAuthHeader` / `ReferralAuthHeader` in State
+/// `1`: `2.0` s (§6.1 table).
+pub const SESSION_AUTH_RETRANSMIT_SEC: f64 = 2.0;
+
+/// Retransmit interval of `ConnectAcceptHeader` in State `2`: `0.6` s (§6.1 table).
+pub const CONNECT_ACCEPT_RETRANSMIT_SEC: f64 = 0.6;
+
+/// Interval of the periodic `ClockSyncHeader` in State `5`: `30.0` s (§8.1, §6.1 table).
+pub const CLOCK_SYNC_INTERVAL_SEC: f64 = 30.0;
+
+/// Interval of `CumulativeAckHeader` in State `5` while the gap table is empty: `2.0` s
+/// (§5.2).
+pub const CUMULATIVE_ACK_INTERVAL_SEC: f64 = 2.0;
+
+/// Interval of `SequenceNakHeader` in State `5` while gaps exist: `0.6` s (§5.3).
+pub const SEQUENCE_NAK_INTERVAL_SEC: f64 = 0.6;
+
+/// Silence timeout of State `5`: the connection closes once `now - lastRecvTime` exceeds
+/// `60.0` s (§8.2, §6.1 table).
+pub const SILENCE_TIMEOUT_SEC: f64 = 60.0;
+
+/// Silence timeout of State `5` with the extended timeout flag: `300.0` s (§8.2, §6.1
+/// table).
+pub const EXTENDED_SILENCE_TIMEOUT_SEC: f64 = 300.0;
+
+/// Longest wait of State `6` (`DisconnectingFlush`) for the retransmit table to drain:
+/// `20.0` s (§6.1 table, §8.2).
+pub const DISCONNECT_FLUSH_LIMIT_SEC: f64 = 20.0;
+
+/// Retransmit interval of `DisconnectHeader` in State `7` (`DisconnectSent`): `1.0` s
+/// (§6.1 table, §8.2).
+pub const DISCONNECT_RETRANSMIT_SEC: f64 = 1.0;
+
+/// Time in State `7` after which the connection closes: `20.0` s (§6.1 table).
+pub const DISCONNECT_SENT_LIMIT_SEC: f64 = 20.0;
+
+/// Time in State `8` (`Closing`) before the connection is removed: `20.0` s (§6.1 table,
+/// "cleanup after 20.0 s").
+pub const CLOSING_CLEANUP_SEC: f64 = 20.0;
+
+/// Expiry of an incomplete blob, from its first fragment: `30.0` s (§5.6.4 rule 3).
+pub const BLOB_REASSEMBLY_EXPIRY_SEC: f64 = 30.0;
+
 /// `EntityEntryBatchMessage` (`aoi_enter_batch`) opcode (`0x0000000D` = `13`, §9.4.1;
 /// decoded by [`crate::world::SubEventBatch`]).
 pub const OPCODE_ENTITY_ENTRY_BATCH: u32 = 0x0000_000D;
@@ -3858,10 +3909,19 @@ impl BlobReassembler {
         self.incomplete.len()
     }
 
+    /// When the oldest incomplete blob expires ([`BLOB_REASSEMBLY_EXPIRY_SEC`] after its
+    /// first fragment, §5.6.4 rule 3); `None` with no incomplete blob.
+    fn next_expiry(&self) -> Option<f64> {
+        self.incomplete
+            .values()
+            .map(|entry| entry.created_at_sec + BLOB_REASSEMBLY_EXPIRY_SEC)
+            .reduce(f64::min)
+    }
+
     /// Purges incomplete blobs older than `30.0` seconds (§5.6.4).
     pub fn purge_expired(&mut self, now_sec: f64) {
         self.incomplete
-            .retain(|_, entry| now_sec - entry.created_at_sec <= 30.0);
+            .retain(|_, entry| now_sec - entry.created_at_sec <= BLOB_REASSEMBLY_EXPIRY_SEC);
     }
 
     /// The checks of one fragment that need no table state (§5.6.4 rules 1, 4, 5; §7.1;
@@ -3936,7 +3996,8 @@ impl BlobReassembler {
         fragments: &[BlobFragment],
         now_sec: f64,
     ) -> Result<(), SessionError> {
-        let live = |entry: &IncompleteBlob| now_sec - entry.created_at_sec <= 30.0;
+        let live =
+            |entry: &IncompleteBlob| now_sec - entry.created_at_sec <= BLOB_REASSEMBLY_EXPIRY_SEC;
         let mut new_keys: Vec<((u16, u8, u16), u32)> = Vec::new();
         for frag in fragments {
             self.check_fragment(frag)?;
@@ -4526,7 +4587,8 @@ impl SessionConnection {
     /// removed (§6.1).
     #[must_use]
     pub fn closed_for_cleanup(&self, now_sec: f64) -> bool {
-        self.state == ConnectionState::Closing && now_sec - self.state_entered_at_sec >= 20.0
+        self.state == ConnectionState::Closing
+            && now_sec - self.state_entered_at_sec >= CLOSING_CLEANUP_SEC
     }
 
     /// Returns the local client `recId` (`0x0100..=0xFEFF`).
@@ -5363,11 +5425,11 @@ impl SessionConnection {
 
         match self.state {
             ConnectionState::SessionAuthSent => {
-                if now_sec - self.state_entered_at_sec >= 20.0 {
+                if now_sec - self.state_entered_at_sec >= HANDSHAKE_TIMEOUT_SEC {
                     self.close(DisconnectReason::HandshakeTimeout, now_sec);
                     return Ok(());
                 }
-                if now_sec - self.last_handshake_retransmit_sec >= 2.0 {
+                if now_sec - self.last_handshake_retransmit_sec >= SESSION_AUTH_RETRANSMIT_SEC {
                     self.last_handshake_retransmit_sec = now_sec;
                     let hdr = self.base_datagram_header(0, now_sec);
                     let opt = OptionalHeaders {
@@ -5380,11 +5442,11 @@ impl SessionConnection {
                 }
             }
             ConnectionState::ChallengeAcceptSent => {
-                if now_sec - self.state_entered_at_sec >= 20.0 {
+                if now_sec - self.state_entered_at_sec >= HANDSHAKE_TIMEOUT_SEC {
                     self.close(DisconnectReason::HandshakeTimeout, now_sec);
                     return Ok(());
                 }
-                if now_sec - self.last_handshake_retransmit_sec >= 0.6
+                if now_sec - self.last_handshake_retransmit_sec >= CONNECT_ACCEPT_RETRANSMIT_SEC
                     && let Some(resp) = self.stored_connect_accept
                 {
                     self.last_handshake_retransmit_sec = now_sec;
@@ -5399,9 +5461,9 @@ impl SessionConnection {
             }
             ConnectionState::Connected => {
                 let silence_limit = if self.extended_silence_timeout {
-                    300.0
+                    EXTENDED_SILENCE_TIMEOUT_SEC
                 } else {
-                    60.0
+                    SILENCE_TIMEOUT_SEC
                 };
                 if now_sec - self.last_recv_time_sec > silence_limit {
                     self.close(DisconnectReason::SilenceTimeout, now_sec);
@@ -5422,7 +5484,7 @@ impl SessionConnection {
                 }
 
                 // Periodic ClockSyncHeader every 30.0 s (§8.1)
-                if now_sec - self.last_clock_sync_sent_sec >= 30.0 {
+                if now_sec - self.last_clock_sync_sent_sec >= CLOCK_SYNC_INTERVAL_SEC {
                     self.last_clock_sync_sent_sec = now_sec;
                     self.queue_control(
                         now_sec,
@@ -5436,7 +5498,7 @@ impl SessionConnection {
                 // SequenceNakHeader every 0.6 s while gaps exist (§5.3), else
                 // CumulativeAckHeader every 2.0 s (§5.2)
                 if !self.missing_gaps.is_empty() {
-                    if now_sec - self.last_ack_nak_sent_sec >= 0.6 {
+                    if now_sec - self.last_ack_nak_sent_sec >= SEQUENCE_NAK_INTERVAL_SEC {
                         self.last_ack_nak_sent_sec = now_sec;
                         let list: Vec<u32> = self
                             .missing_gaps
@@ -5452,7 +5514,8 @@ impl SessionConnection {
                             },
                         )?;
                     }
-                } else if self.recv_seq_expected > 1 && now_sec - self.last_ack_nak_sent_sec >= 2.0
+                } else if self.recv_seq_expected > 1
+                    && now_sec - self.last_ack_nak_sent_sec >= CUMULATIVE_ACK_INTERVAL_SEC
                 {
                     self.last_ack_nak_sent_sec = now_sec;
                     self.queue_control(
@@ -5465,7 +5528,9 @@ impl SessionConnection {
                 }
             }
             ConnectionState::DisconnectingFlush => {
-                if self.retransmit_table.is_empty() || now_sec - self.state_entered_at_sec >= 20.0 {
+                if self.retransmit_table.is_empty()
+                    || now_sec - self.state_entered_at_sec >= DISCONNECT_FLUSH_LIMIT_SEC
+                {
                     self.state = ConnectionState::DisconnectSent;
                     self.state_entered_at_sec = now_sec;
                     self.last_handshake_retransmit_sec = now_sec;
@@ -5479,9 +5544,10 @@ impl SessionConnection {
                 }
             }
             ConnectionState::DisconnectSent => {
-                if now_sec - self.state_entered_at_sec >= 20.0 {
+                if now_sec - self.state_entered_at_sec >= DISCONNECT_SENT_LIMIT_SEC {
                     self.close(DisconnectReason::LocalDisconnect, now_sec);
-                } else if now_sec - self.last_handshake_retransmit_sec >= 1.0 {
+                } else if now_sec - self.last_handshake_retransmit_sec >= DISCONNECT_RETRANSMIT_SEC
+                {
                     self.last_handshake_retransmit_sec = now_sec;
                     self.queue_control(
                         now_sec,
@@ -5499,6 +5565,74 @@ impl SessionConnection {
         }
 
         Ok(())
+    }
+
+    /// The earliest time (on the clock of `now_sec`) at which [`Self::tick`] or the
+    /// multiplexer's cleanup has work on this connection: the handshake retransmits and
+    /// timeouts (§6.1), the out-of-order acknowledgements waiting (§5.4, due at once), the
+    /// `ClockSyncHeader` (§8.1), the `SequenceNakHeader` or `CumulativeAckHeader` (§5.2,
+    /// §5.3), the silence timeout (§8.2), the disconnect's flush, retransmit and end
+    /// (§6.1, §8.2), the cleanup after [`CLOSING_CLEANUP_SEC`] in State `8` (§6.1) and the expiry of an
+    /// incomplete blob (§5.6.4). `None` when no timer runs (States `0`, `3`, `4` with no
+    /// incomplete blob). A time already past is returned as it is: the caller ticks at once.
+    /// Every timer read here is one [`Self::tick`] (or the multiplexer's cleanup) acts on
+    /// when it is due, from the same constants ([`HANDSHAKE_TIMEOUT_SEC`] and the others),
+    /// so a reported time never stays in the past. Queued outbound datagrams are no
+    /// deadline ([`SessionMultiplexer::next_deadline`]).
+    ///
+    /// A timeout that fires only once `now - t > limit` (the silence timeout, the blob
+    /// expiry) is due at `t + limit`; a tick at exactly that time may find it not yet over,
+    /// so the caller waits a little more (the connector waits at least 1 ms).
+    #[must_use]
+    pub fn next_deadline(&self) -> Option<f64> {
+        let mut next = self.reassembler.next_expiry();
+        let mut at = |t: f64| next = Some(next.map_or(t, |n: f64| n.min(t)));
+        match self.state {
+            ConnectionState::SessionAuthSent => {
+                at(self.state_entered_at_sec + HANDSHAKE_TIMEOUT_SEC);
+                at(self.last_handshake_retransmit_sec + SESSION_AUTH_RETRANSMIT_SEC);
+            }
+            ConnectionState::ChallengeAcceptSent => {
+                at(self.state_entered_at_sec + HANDSHAKE_TIMEOUT_SEC);
+                if self.stored_connect_accept.is_some() {
+                    at(self.last_handshake_retransmit_sec + CONNECT_ACCEPT_RETRANSMIT_SEC);
+                }
+            }
+            ConnectionState::Connected => {
+                let silence_limit = if self.extended_silence_timeout {
+                    EXTENDED_SILENCE_TIMEOUT_SEC
+                } else {
+                    SILENCE_TIMEOUT_SEC
+                };
+                at(self.last_recv_time_sec + silence_limit);
+                if !self.out_of_order_ack_queue.is_empty() {
+                    // Flushed on the next tick (§5.4).
+                    at(f64::NEG_INFINITY);
+                }
+                at(self.last_clock_sync_sent_sec + CLOCK_SYNC_INTERVAL_SEC);
+                if !self.missing_gaps.is_empty() {
+                    at(self.last_ack_nak_sent_sec + SEQUENCE_NAK_INTERVAL_SEC);
+                } else if self.recv_seq_expected > 1 {
+                    at(self.last_ack_nak_sent_sec + CUMULATIVE_ACK_INTERVAL_SEC);
+                }
+            }
+            ConnectionState::DisconnectingFlush => {
+                if self.retransmit_table.is_empty() {
+                    at(f64::NEG_INFINITY);
+                } else {
+                    at(self.state_entered_at_sec + DISCONNECT_FLUSH_LIMIT_SEC);
+                }
+            }
+            ConnectionState::DisconnectSent => {
+                at(self.state_entered_at_sec + DISCONNECT_SENT_LIMIT_SEC);
+                at(self.last_handshake_retransmit_sec + DISCONNECT_RETRANSMIT_SEC);
+            }
+            ConnectionState::Closing => at(self.state_entered_at_sec + CLOSING_CLEANUP_SEC),
+            ConnectionState::Idle
+            | ConnectionState::ServerListening
+            | ConnectionState::ServerConnectSent => {}
+        }
+        next
     }
 
     /// Queues an unsequenced control packet that carries the last assigned `seqNum` without
@@ -5727,6 +5861,27 @@ impl SessionMultiplexer {
             self.remove_connection(id);
         }
         done
+    }
+
+    /// The earliest timer of its connections ([`SessionConnection::next_deadline`]: the
+    /// retransmits, keep-alives, acknowledgements, handshake and silence timeouts, the
+    /// disconnect and the cleanup of State `8`, §5–§8), on the clock of `now_sec`: the time
+    /// at which [`Self::tick`] next has work. A timer already due gives `now_sec`; `None`
+    /// when no connection has a timer (nothing happens until a datagram or a call).
+    ///
+    /// Datagrams waiting in an outbound queue are not a deadline: the pass that queues them
+    /// also flushes them ([`Self::flush_outbound`]), and when a send fails the rest of the
+    /// queue stays. A transport that keeps failing (a revoked right fails every send) would
+    /// make "outbound not empty" due at every pass, so the caller would wake every 1 ms for
+    /// as long as the error lasts; instead the next timer, or the caller's longest wait,
+    /// tries the queue again.
+    #[must_use]
+    pub fn next_deadline(&self, now_sec: f64) -> Option<f64> {
+        self.connections
+            .values()
+            .filter_map(SessionConnection::next_deadline)
+            .reduce(f64::min)
+            .map(|t| t.max(now_sec))
     }
 
     /// Flushes all queued outbound datagrams across all connections to `transport`.

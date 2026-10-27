@@ -149,7 +149,7 @@ pub fn libraries_of_root(root: &Path) -> Vec<SteamLibrary> {
     {
         match read_vdf(&file) {
             Ok(doc) => libs = parse_library_folders(&doc),
-            Err(e) => tracing::debug!(error = %e, "cannot read library list"),
+            Err(e) => tracing::debug!(error = %e.class(), "cannot read library list"),
         }
     }
     let root_canon = fsutil::canonical(root);
@@ -241,7 +241,7 @@ pub fn find_in_library(lib: &SteamLibrary) -> Option<SteamApp> {
         .and_then(|p| match read_vdf(&p) {
             Ok(doc) => parse_app_manifest(&doc),
             Err(e) => {
-                tracing::debug!(error = %e, "cannot read app manifest");
+                tracing::debug!(error = %e.class(), "cannot read app manifest");
                 None
             }
         })

@@ -1470,6 +1470,8 @@ mod tests {
 
     #[test]
     fn renders_a_synthetic_system_when_a_gpu_exists() {
+        // First, so that the renderer is dropped before the lock.
+        let _gpu = crate::viewport::gpu_test_lock();
         let Ok(mut gpu) = PreviewGpu::new() else {
             return;
         };
@@ -1490,6 +1492,40 @@ mod tests {
             )
             .expect("rendered");
         assert_eq!(img.size, [64, 48]);
+    }
+
+    /// Dropping the preview's render thread waits for it, also while it is still starting
+    /// its renderer: when `drop` returns, the thread has dropped its GPU objects and the
+    /// `notify` closure it owns.
+    #[test]
+    fn dropping_the_preview_thread_joins_it() {
+        let _gpu = crate::viewport::gpu_test_lock();
+        let sentinel = Arc::new(());
+        for wait_for_a_frame in [false, true] {
+            let held = Arc::clone(&sentinel);
+            let (tx, rx) = mpsc::channel::<()>();
+            let thread = PreviewThread::spawn(move || {
+                let _held = &held;
+                let _ = tx.send(());
+            });
+            if wait_for_a_frame {
+                let _ = thread.tx.send(Cmd::Draw {
+                    seq: 1,
+                    draws: Vec::new(),
+                    camera: Camera::default(),
+                    size: [16, 16],
+                });
+                // A frame, or the error of a renderer that could not start.
+                let _ = rx.recv_timeout(std::time::Duration::from_secs(60));
+                assert!(thread.rx.try_recv().is_ok(), "no answer from the thread");
+            }
+            drop(thread);
+            assert_eq!(
+                Arc::strong_count(&sentinel),
+                1,
+                "the preview thread outlived its handle"
+            );
+        }
     }
 
     #[test]

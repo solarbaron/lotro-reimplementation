@@ -1214,6 +1214,20 @@ impl OrbitView {
     }
 }
 
+/// The GPU lock of the explorer's unit tests: a test that opens a GPU device (directly, or
+/// through a render thread it starts) holds the guard for as long as any of its GPU
+/// objects lives, so the unit tests use the GPU one at a time, as the renderer's own tests
+/// do: test processes crashed on the CI's software adapters (lavapipe, WARP) while several
+/// unit tests had their own instance and device open at once. Take it first in the test,
+/// so that it is dropped last; a test that fails while holding it does not block the
+/// others (the poison is ignored).
+#[cfg(test)]
+pub(crate) fn gpu_test_lock() -> std::sync::MutexGuard<'static, ()> {
+    static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    LOCK.lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1317,6 +1331,8 @@ mod tests {
     /// drawn, hiding every part leaves the background, and a dye colour changes pixels.
     #[test]
     fn render_function_draws_hides_and_dyes() {
+        // First, so that every GPU object of the test is dropped before the lock.
+        let _gpu = gpu_test_lock();
         let mut r = match Renderer::new_headless(&RendererConfig::default()) {
             Ok(r) => r,
             Err(e) => {
@@ -1392,6 +1408,8 @@ mod tests {
     /// when the location is missing, overlay lines draw over the meshes.
     #[test]
     fn poses_skin_place_and_overlay() {
+        // First, so that every GPU object of the test is dropped before the lock.
+        let _gpu = gpu_test_lock();
         let mut r = match Renderer::new_headless(&RendererConfig::default()) {
             Ok(r) => r,
             Err(e) => {
@@ -1605,6 +1623,9 @@ mod tests {
         let (tx, crx) = mpsc::channel::<Cmd>();
         let (rtx, rx) = mpsc::channel::<Reply>();
         let handle = std::thread::spawn(move || {
+            // The scene, then the request: dying after the scene alone would make the
+            // request's send fail first (a race this test must not depend on).
+            let _ = crx.recv();
             let _ = crx.recv();
             drop(rtx);
         });
@@ -1621,6 +1642,8 @@ mod tests {
 
     #[test]
     fn a_panicking_render_loop_answers_with_an_error() {
+        // First, so that every GPU object of the test is dropped before the lock.
+        let _gpu = gpu_test_lock();
         let (tx, rx) = mpsc::channel::<Reply>();
         let (ctx, crx) = mpsc::channel::<Cmd>();
         // The loop calls `notify` after its first reply (adapter or start error); a
@@ -1680,6 +1703,8 @@ mod tests {
     /// Renders a two-part synthetic scene headless, when a GPU adapter exists.
     #[test]
     fn renders_a_synthetic_scene_when_a_gpu_exists() {
+        // First, so that every GPU object of the test is dropped before the lock.
+        let _gpu = gpu_test_lock();
         let scene = Arc::new(crate::scene::tests_support::two_part_scene());
         let (tx, rx) = std::sync::mpsc::channel::<()>();
         let mut vp = Viewport::spawn(move || {
@@ -1721,5 +1746,46 @@ mod tests {
         assert!(vp.shows(id), "frame not shown");
         let t = vp.texture().expect("texture");
         assert_eq!(t.size(), [64, 64]);
+    }
+
+    /// Dropping the viewport waits for its render thread: when `drop` returns, the thread
+    /// has dropped its renderer (and the `notify` closure it owns), so no GPU object
+    /// outlives the viewport on a thread still inside the driver.
+    #[test]
+    fn dropping_the_viewport_joins_its_render_thread() {
+        let _gpu = gpu_test_lock();
+        let scene = Arc::new(crate::scene::tests_support::two_part_scene());
+        // The render thread owns `notify` and with it this sentinel until it ends.
+        let sentinel = Arc::new(());
+        let (tx, rx) = mpsc::channel::<()>();
+        let held = Arc::clone(&sentinel);
+        let mut vp = Viewport::spawn(move || {
+            let _held = &held;
+            let _ = tx.send(());
+        });
+        // A first request makes the thread start its renderer (or fail to).
+        let id = vp.set_scene(&scene);
+        vp.request(request_for(&scene, id));
+        let ctx = egui::Context::default();
+        let deadline = Instant::now() + std::time::Duration::from_secs(60);
+        while vp.waiting() && Instant::now() < deadline {
+            let _ = rx.recv_timeout(std::time::Duration::from_millis(200));
+            vp.poll(&ctx);
+        }
+        assert!(!vp.waiting(), "no answer from the render thread");
+        assert_eq!(Arc::strong_count(&sentinel), 2, "the thread is running");
+        drop(vp);
+        assert_eq!(
+            Arc::strong_count(&sentinel),
+            1,
+            "the render thread outlived its viewport"
+        );
+        // A viewport dropped before its thread took any command joins it too.
+        let held = Arc::clone(&sentinel);
+        let vp = Viewport::spawn(move || {
+            let _held = &held;
+        });
+        drop(vp);
+        assert_eq!(Arc::strong_count(&sentinel), 1);
     }
 }

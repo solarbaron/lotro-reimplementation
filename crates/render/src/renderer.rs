@@ -3599,6 +3599,8 @@ mod tests {
 
     #[test]
     fn replace_surface_refuses_while_a_surface_frame_is_alive() {
+        // First, so that the renderer is dropped before the lock.
+        let _gpu = crate::context::gpu_test_lock();
         let config = RendererConfig {
             context: crate::ContextOptions {
                 allow_software: true,

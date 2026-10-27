@@ -348,6 +348,8 @@ mod tests {
     /// newest one.
     #[test]
     fn a_frame_given_up_after_its_resolve_is_not_read() {
+        // First, so that every GPU object below is dropped before the lock.
+        let _gpu = crate::context::gpu_test_lock();
         let Some(ctx) = timed_context() else {
             eprintln!("SKIPPED: no adapter with TIMESTAMP_QUERY");
             return;

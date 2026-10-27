@@ -283,6 +283,8 @@ fn vs_shadow(@builtin(vertex_index) i: u32) -> @builtin(position) vec4<f32> {
 
     #[test]
     fn hooks_get_group0_at_the_pass_offset_in_every_stage() -> Result<()> {
+        // First, so that the renderer and the hook's GPU objects are dropped before it.
+        let _gpu = crate::context::gpu_test_lock();
         let Some(mut r) = renderer() else {
             return Ok(());
         };

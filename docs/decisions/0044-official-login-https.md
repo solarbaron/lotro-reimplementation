@@ -1,6 +1,6 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 
-# 0044 — Official login: credentials only over HTTPS, `http://` addresses upgraded
+# 0044 — Official login: HTTPS where possible, `http://` addresses tried over HTTPS first
 
 **Status:** Accepted, 2026-10-27 (owner decision after the first live login run); amended the same day: plain HTTP allowed.
 
@@ -53,7 +53,8 @@ answers over plain HTTP ("make it http only"). This replaces items 3 and 4 above
 
 3. **HTTPS first, then the address as given.** An `http://` address of the login chain is tried as
    `https://` at the same host and path first, with a short connect timeout. If that exchange
-   fails at the transport or TLS level, the request goes to the address exactly as the install
+   fails before the request was sent (name lookup, connect, TLS handshake or certificate check),
+   the request goes to the address exactly as the install
    or the service gave it, over plain HTTP. A real answer from the service over working HTTPS is
    used as that answer and never retried over HTTP.
 4. **Credentials may go over plain HTTP.** When the chain only works over plain HTTP, the account

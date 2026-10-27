@@ -882,10 +882,11 @@ From the owner's first live run (L1, 2026-10-27):
   login chain (`Launcher.DataCenterService.GLS`, `Datacenter/AuthServer`,
   `Datacenter/LauncherConfigurationServer`, `WorldQueue.LoginQueue.URL`, `World/StatusServerUrl`,
   `GameClient.Arg.authserverurl`) is requested as `https://` at the same host and path (default
-  port); no plain-HTTP fallback except the world-list status queries. Does an explicit port carry
-  over, and which steps may use plain HTTP?
-- **E §8.6:** a row for the new category `InsecureService` (the login was stopped by the HTTPS
-  rule; back to the account form).
+  port); as amended by the owner, the address is used as given (plain HTTP, credentials included)
+  when the HTTPS form fails before the request is sent. Does an explicit port carry over, and which
+  steps does the official launcher send over plain HTTP?
+- **E §8.6:** (withdrawn: the `InsecureService` category was removed when decision 0044 was
+  amended to allow plain HTTP.)
 - **W §4.3.1:** is a scriptlet already visited for the same schema entered again (Tessera: once
   per schema; same PIDs in the same order)? With that the reference install builds five schemas
   from the keys of 0x07000029 that are keys of 0x23000097: the three of the table, key 0x05

@@ -635,7 +635,7 @@ fine. Format-level terms like "DID" or "landblock" are fine.
     `docs/m8-remediation.md` §15 for the next spec pass.
   - **Live connector (merged 2026-10-26, `m8-connector`):** `crates/compat/src/connector/`
     reads the install, logs in over HTTPS (`ureq` 3.5 pinned, rustls on ring, OS trust store,
-    no redirects, no proxy, bounded bodies; secrets only along an all-HTTPS chain) and runs the
+    no redirects, no proxy, bounded bodies; decision 0044 as amended: an `http://` login address is tried over HTTPS first and used as given only when HTTPS fails before the request is sent) and runs the
     UDP session through the referral to world entry, with the play adapter and chat client.
     Every network operation needs the revocable `NetworkAccess` (moved, never copied;
     Withdraw calls `revoke_all`); after a cancel, a drop or Withdraw nothing more is sent and

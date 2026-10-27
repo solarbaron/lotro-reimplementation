@@ -275,6 +275,11 @@ pub const USER_AGENT: &str = "login-client/1";
 /// anything larger than [`MAX_XML_INPUT_BYTES`], so one more byte is enough to tell.
 const MAX_RESPONSE_BYTES: u64 = MAX_XML_INPUT_BYTES as u64 + 1;
 
+/// The longest wait for a connection of the login client (decision 0044 as amended
+/// 2026-10-27: a short connect timeout for the HTTPS form of an `http://` address;
+/// engineering choice, 5 s, applied to every login request).
+pub const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
+
 /// The HTTPS client of the login exchanges (`official-login.md` §3, §4.3), made only by
 /// [`NetworkAccess::https_client`].
 ///
@@ -287,16 +292,19 @@ const MAX_RESPONSE_BYTES: u64 = MAX_XML_INPUT_BYTES as u64 + 1;
 ///   crate's defaults read) are not used, so a request goes only to the host its URL names
 ///   (engineering choice, spec silent).
 /// - A neutral `User-Agent` ([`USER_AGENT`], engineering choice, spec silent).
-/// - The request's `timeout_sec` bounds the whole exchange (§5.2); a response head is at
-///   most [`MAX_RESPONSE_HEADER_BYTES`].
+/// - The request's `timeout_sec` bounds the whole exchange (§5.2), and the connection
+///   itself is given at most [`CONNECT_TIMEOUT`], so an `http://` address whose HTTPS form
+///   does not answer falls back to the address as given soon (decision 0044 as amended
+///   2026-10-27, `crate::connector::login_phase` "HTTPS first, then the address as given");
+///   a response head is at most [`MAX_RESPONSE_HEADER_BYTES`].
 /// - Response bodies are read up to the login parsers' input bound plus one byte, into a
 ///   buffer allocated once at that size, so no copy of a body is left behind by a
 ///   reallocation. The HTTP and TLS crates' own buffers cannot be wiped from here (known
 ///   limitation, `official-login.md` §6.3 is best effort).
-/// - A request that carries the password or the ticket
-///   ([`crate::connector::net::carries_secret`]) is sent with the HTTP crate's `https_only`
-///   set as well, so it can never go over plain HTTP; plain `http://` URLs are otherwise
-///   sent as given.
+/// - A URL is sent with the scheme it has: `https://` with the checks above, `http://` as
+///   given. Which one a step uses is the login phase's rule (decision 0044 as amended
+///   2026-10-27: HTTPS first, plain HTTP only when HTTPS fails at the transport or TLS
+///   level).
 /// - It shares the right of the [`NetworkAccess`] that made it: once that is revoked every
 ///   request is refused before anything is sent.
 #[derive(Debug)]
@@ -317,6 +325,7 @@ impl HttpsClient {
             .proxy(None)
             .user_agent(USER_AGENT)
             .http_status_as_error(false)
+            .timeout_connect(Some(CONNECT_TIMEOUT))
             .max_redirects(0)
             .max_redirects_will_error(false)
             .max_response_header_size(MAX_RESPONSE_HEADER_BYTES)
@@ -362,7 +371,6 @@ impl HttpClient for HttpsClient {
             });
         }
         let timeout = Some(Duration::from_secs(request.timeout_sec.clamp(1, 300)));
-        let https_only = crate::connector::net::carries_secret(request);
         let result = match request.method {
             HttpMethod::Get => {
                 let mut b = self
@@ -370,7 +378,6 @@ impl HttpClient for HttpsClient {
                     .get(request.url.as_str())
                     .config()
                     .timeout_global(timeout)
-                    .https_only(https_only)
                     .build();
                 for (k, v) in &request.headers {
                     b = b.header(k.as_str(), v.as_str());
@@ -383,7 +390,6 @@ impl HttpClient for HttpsClient {
                     .post(request.url.as_str())
                     .config()
                     .timeout_global(timeout)
-                    .https_only(https_only)
                     .build();
                 for (k, v) in &request.headers {
                     b = b.header(k.as_str(), v.as_str());
@@ -695,17 +701,18 @@ mod tests {
     }
 
     #[test]
-    fn a_secret_never_goes_over_plain_http() {
+    fn a_secret_goes_to_the_url_with_the_scheme_it_has() {
+        // Decision 0044 as amended 2026-10-27: the login phase decides when a credential may
+        // go over plain HTTP (only after its HTTPS form failed); the client sends it as given.
         let (_f, access) = access();
-        let listener = TcpListener::bind("127.0.0.1:0").expect("loopback");
-        listener.set_nonblocking(true).expect("nonblocking");
-        let addr = listener.local_addr().expect("addr");
-        let mut req = request(HttpMethod::Post, &format!("http://{addr}/login"), b"secret");
+        let (url, server) = serve(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok".to_vec());
+        let mut req = request(HttpMethod::Post, &url, b"secret");
         req.headers
             .push(("SOAPAction".to_owned(), "\"x/LoginAccount\"".to_owned()));
-        assert!(access.https_client().execute(&req).is_err());
-        std::thread::sleep(Duration::from_millis(50));
-        assert!(listener.accept().is_err(), "no connection was made");
+        let resp = access.https_client().execute(&req).expect("answered");
+        assert_eq!(resp.status_code, 200);
+        let seen = server.join().expect("server");
+        assert!(seen.ends_with(b"secret"));
     }
 
     #[test]

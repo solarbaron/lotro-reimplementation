@@ -9,7 +9,8 @@
 use std::path::{Path, PathBuf};
 
 use tessera_client::official::install_data::{
-    CHAT_CATEGORY_ENUM, install_data_at, portal_state_schemas,
+    CHAT_CATEGORY_ENUM, MAX_SCHEMA_NODES, install_data_at, portal_state_schema_build,
+    portal_state_schemas,
 };
 use tessera_compat::connector::InstallData;
 use tessera_compat::world::{DEFAULT_PORTAL_STATE_SCHEMA_ID, LocalizedTokenText};
@@ -65,17 +66,50 @@ fn the_state_schemas_from_the_install_match_the_verification_tables() {
         let s = data.portal_state_schema(id).expect("a mounted schema");
         assert!(s.bool_pids.is_empty() && s.enum_pids.is_empty(), "{id:#x}");
     }
-    // The reference install gives four: the three of the verification table and one more
-    // script key of `0x07000029` that is a key of the script-key enum. §4.3.1 lists only
-    // three, so the fourth is not named here; whether every such key is a
+    // The reference install gives five: the three of the verification table and two more
+    // script keys of `0x07000029` that are keys of the script-key enum. §4.3.1 lists only
+    // three, so the others are not named here; whether every such key is a
     // `state_schema_id` is the W §4.3.1 question in `docs/m8-remediation.md` §15. A change
-    // in this count means that question needs a new look.
-    assert_eq!(schemas.len(), 4);
-    let unlisted = schemas
-        .keys()
-        .filter(|k| ![DEFAULT_PORTAL_STATE_SCHEMA_ID, 0x1000_0E50, 0x1000_0E51].contains(k))
-        .count();
-    assert_eq!(unlisted, 1);
+    // in this count means that question needs a new look. (Until 2026-10-27 one of the two
+    // was left out at the per-key traversal bound, because a scriptlet was walked once per
+    // path that named it; it is entered once per schema now, and the count went from four
+    // to five.)
+    assert_eq!(schemas.len(), 5);
+    let unlisted: Vec<(usize, usize)> = schemas
+        .iter()
+        .filter(|(k, _)| ![DEFAULT_PORTAL_STATE_SCHEMA_ID, 0x1000_0E50, 0x1000_0E51].contains(k))
+        .map(|(_, s)| (s.bool_pids.len(), s.enum_pids.len()))
+        .collect();
+    eprintln!("schemas outside the verification table (booleans, enums): {unlisted:?}");
+    assert_eq!(unlisted.len(), 2);
+}
+
+#[test]
+fn no_state_schema_is_left_out_at_a_traversal_bound() {
+    let Some(root) = game_dir() else {
+        eprintln!("TESSERA_GAME_DIR unset: skipped");
+        return;
+    };
+    let set = ArchiveSet::open(
+        &root,
+        SetOptions {
+            language: Some(language(&root)),
+            ..SetOptions::default()
+        },
+    )
+    .expect("archives");
+    let dict = set.read(PROPERTY_DICTIONARY_DID.0).expect("the dictionary");
+    let registry = PropertyRegistry::parse(&dict).expect("decodes");
+    let build = portal_state_schema_build(&set, &registry);
+    eprintln!(
+        "state schemas built: {}, left out: {}, nodes visited: {}",
+        build.schemas.len(),
+        build.left_out.len(),
+        build.visited
+    );
+    // Each scriptlet is entered once per schema: every key stays far below its bound.
+    assert!(build.left_out.is_empty(), "{:x?}", build.left_out);
+    assert!(build.visited < MAX_SCHEMA_NODES, "{}", build.visited);
 }
 
 #[test]

@@ -359,6 +359,10 @@ commit message.
 
 Other `TESSERA_*` variables are documented next to the tests and apps that read them.
 
+`tessera-client` reads `RUST_LOG` as usual, but always keeps `ureq` and `ureq_proto` off and
+`rustls` at `warn`, whatever `RUST_LOG` says, so a trace log of an official login never
+shows a service host or path (`apps/client/src/main.rs`, decision 0044).
+
 ### Performance assertions (`TESSERA_PERF`)
 
 Real-data tests that measure frame or main-thread update times (the 50 ms limit of ROADMAP

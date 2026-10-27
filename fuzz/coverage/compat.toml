@@ -39,6 +39,23 @@ target = "compat_login_xml"
 
 [[parser]]
 crate = "tessera-compat"
+file = "crates/compat/src/connector/net.rs"
+entry = [
+    "tessera_compat::connector::net::https_form",
+    "tessera_compat::connector::net::scheme_label",
+]
+input = "network"
+target = "compat_login_xml"
+
+[[parser]]
+crate = "tessera-compat"
+file = "crates/compat/src/connector/login_phase.rs"
+entry = ["tessera_compat::connector::login_phase::parse_world_status"]
+input = "network"
+target = "compat_login_xml"
+
+[[parser]]
+crate = "tessera-compat"
 file = "crates/compat/src/login.rs"
 entry = [
     "tessera_compat::login::LauncherConfig::parse",

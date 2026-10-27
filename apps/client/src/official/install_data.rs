@@ -459,6 +459,8 @@ struct SchemaBuilder<'a> {
     limit: usize,
     visited: usize,
     truncated: bool,
+    /// The keys left out at a bound, in build order.
+    left_out: Vec<u32>,
 }
 
 /// A script-table closure: its tables in pre-order and their positions by DID.
@@ -485,6 +487,7 @@ impl<'a> SchemaBuilder<'a> {
             limit: 0,
             visited: 0,
             truncated: false,
+            left_out: Vec::new(),
         }
     }
 
@@ -613,6 +616,18 @@ impl<'a> SchemaBuilder<'a> {
     /// Steps 2–3: `node` in pre-order: the node, then (for a Scriptlet node) the roots of
     /// the scriptlet it names, then the children of its ports.
     ///
+    /// A scriptlet is entered at most once per schema (`entered`, the scriptlets entered
+    /// so far for this key), however many nodes name it: the scriptlets of a closure form a
+    /// graph that many paths share, and walking it once per path grows with the number of
+    /// paths, not of nodes (the reference install's key `0x05` spent the whole per-key
+    /// budget that way). It does not change the schema: step 4 appends a PID only when it is
+    /// not listed yet, and by the time a scriptlet is named again every node its first
+    /// entry reaches has been visited, or is being visited by a scriptlet still being
+    /// entered further up, which a second entry would skip as well; so a second entry
+    /// finds no PID that is not listed already, and the order of first appearance stays
+    /// that of the full pre-order walk. The same set stops a scriptlet that invokes itself
+    /// (directly or through others).
+    ///
     /// Two readings of step 2, recorded (question in `docs/m8-remediation.md` §15): the
     /// scriptlet's roots are visited before the node's own port children, and every port of
     /// a node counts as an output port (the decoded node keeps no port direction). The
@@ -621,7 +636,7 @@ impl<'a> SchemaBuilder<'a> {
         &mut self,
         node: &Node,
         depth: usize,
-        stack: &mut Vec<u32>,
+        entered: &mut HashSet<u32>,
         out: &mut PortalStateSchema,
     ) {
         if self.visited >= self.limit || depth >= MAX_SCHEMA_DEPTH {
@@ -636,23 +651,20 @@ impl<'a> SchemaBuilder<'a> {
                 self.condition(sw.property, out);
             }
             NodeData::Scriptlet { file, .. } if !file.is_null() => {
-                // A scriptlet that invokes itself (directly or through others) is not
-                // entered again.
-                if !stack.contains(&file.0)
+                // Entered once per schema (see above).
+                if entered.insert(file.0)
                     && let Some(s) = self.scriptlet(*file)
                 {
-                    stack.push(file.0);
                     for r in &s.roots {
-                        self.visit(r, depth + 1, stack, out);
+                        self.visit(r, depth + 1, entered, out);
                     }
-                    stack.pop();
                 }
             }
             _ => {}
         }
         for port in &node.ports {
             for child in &port.children {
-                self.visit(child, depth + 1, stack, out);
+                self.visit(child, depth + 1, entered, out);
             }
         }
     }
@@ -674,13 +686,13 @@ impl<'a> SchemaBuilder<'a> {
             self.truncated = false;
             self.limit = self.per_key.min(self.total_left);
             let mut schema = PortalStateSchema::default();
-            let mut stack = Vec::new();
+            let mut entered = HashSet::new();
             for ti in self.gather(c, roots, key) {
                 let Some(script) = c.tables.get(ti).and_then(|t| t.script(key)) else {
                     continue;
                 };
                 for r in &script.roots {
-                    self.visit(r, 0, &mut stack, &mut schema);
+                    self.visit(r, 0, &mut entered, &mut schema);
                 }
                 if self.truncated {
                     break;
@@ -693,6 +705,7 @@ impl<'a> SchemaBuilder<'a> {
                     total_left = self.total_left,
                     "official session: a state schema hit its traversal bound and is left out"
                 );
+                self.left_out.push(key);
                 continue;
             }
             out.insert(key, schema);
@@ -735,6 +748,24 @@ pub fn portal_state_schemas(
     set: &ArchiveSet,
     registry: &PropertyRegistry,
 ) -> BTreeMap<u32, PortalStateSchema> {
+    portal_state_schema_build(set, registry).schemas
+}
+
+/// What [`portal_state_schema_build`] found.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct SchemaBuild {
+    /// The schemas built, by `state_schema_id`.
+    pub schemas: BTreeMap<u32, PortalStateSchema>,
+    /// The schema IDs left out at a traversal bound, in build order.
+    pub left_out: Vec<u32>,
+    /// Nodes visited over all keys.
+    pub visited: usize,
+}
+
+/// [`portal_state_schemas`] with the keys left out and the nodes visited (tests and
+/// tools).
+#[must_use]
+pub fn portal_state_schema_build(set: &ArchiveSet, registry: &PropertyRegistry) -> SchemaBuild {
     let read = |did: Did| bounded_record(set, did.0, MAX_TABLE_RECORD);
     let mut b = SchemaBuilder::new(
         &read,
@@ -749,14 +780,14 @@ pub fn portal_state_schemas(
         .and_then(|&i| closure.tables.get(i))
     else {
         tracing::warn!("official session: the player-physics script table is not in the closure");
-        return BTreeMap::new();
+        return SchemaBuild::default();
     };
     // Tessera's reading (question in `docs/m8-remediation.md` §15 (W §4.3.1)): the keys of
     // `0x07000029` are kept only when they are keys of `0x23000097`, which reaches
     // `0x230000F8` through its base chain ([`SCRIPT_KEY_ENUM`]).
     let Some(script_keys) = enum_keys(set, SCRIPT_KEY_ENUM) else {
         tracing::warn!("official session: the script-key enum is missing");
-        return BTreeMap::new();
+        return SchemaBuild::default();
     };
     let keys: Vec<u32> = physics
         .scripts
@@ -768,13 +799,19 @@ pub fn portal_state_schemas(
         .iter()
         .filter_map(|d| closure.index.get(d).copied())
         .collect();
-    let out = b.build(&closure, &root_positions, &keys);
+    let schemas = b.build(&closure, &root_positions, &keys);
+    let visited = MAX_SCHEMA_TOTAL_NODES.saturating_sub(b.total_left);
     tracing::debug!(
-        schemas = out.len(),
+        schemas = schemas.len(),
         tables = closure.tables.len(),
+        visited,
         "official session: state schemas built"
     );
-    out
+    SchemaBuild {
+        schemas,
+        left_out: b.left_out,
+        visited,
+    }
 }
 
 /// Opens the install at `root` on the calling thread, with the string tables of `language`.
@@ -965,6 +1002,266 @@ mod tests {
         let built = b.build(&closure, &[0], &[1, 2]);
         assert_eq!(built.keys().copied().collect::<Vec<_>>(), [1]);
         assert_eq!(b.total_left, 100 - 3 - 5);
+    }
+
+    /// A Scriptlet node naming `file`.
+    fn scriptlet_node(file: u32) -> Node {
+        Node {
+            data: NodeData::Scriptlet {
+                file: Did(file),
+                parameters: PropertySet::default(),
+            },
+            ..leaf()
+        }
+    }
+
+    #[test]
+    fn a_scriptlet_named_on_many_paths_is_entered_once_per_schema() {
+        // 40 scriptlets, each naming the next twice: walked once per path that is 2^40
+        // entries of the last; entered once per schema it is 80 nodes and one leaf.
+        const N: u32 = 40;
+        const BASE: u32 = 0x0C00_0100;
+        let registry = empty_registry();
+        let read = |_: Did| None;
+        let mut b = SchemaBuilder::new(&read, &registry, None);
+        for i in 0..N {
+            let roots = if i + 1 < N {
+                vec![scriptlet_node(BASE + i + 1), scriptlet_node(BASE + i + 1)]
+            } else {
+                vec![leaf()]
+            };
+            b.scriptlets.insert(
+                BASE + i,
+                Some(Arc::new(Scriptlet {
+                    did: Did(BASE + i),
+                    roots,
+                    dependencies: Vec::new(),
+                })),
+            );
+        }
+        let mut c = closure_of(&[1, 2], 0);
+        for script in &mut c.tables[0].scripts {
+            script.roots = vec![scriptlet_node(BASE), scriptlet_node(BASE)];
+        }
+        let built = b.build(&c, &[0], &[1, 2]);
+        assert_eq!(built.keys().copied().collect::<Vec<_>>(), [1, 2]);
+        assert!(b.left_out.is_empty());
+        // Per key: the two root nodes, two nodes in each of the first 39 scriptlets and the
+        // last one's leaf; each scriptlet is entered again for the next key.
+        let per_key = 2 + 2 * (N as usize - 1) + 1;
+        assert_eq!(b.total_left, MAX_SCHEMA_TOTAL_NODES - 2 * per_key);
+    }
+
+    #[test]
+    fn a_scriptlet_that_names_itself_is_not_entered_again() {
+        let registry = empty_registry();
+        let read = |_: Did| None;
+        let mut b = SchemaBuilder::new(&read, &registry, None);
+        for (did, next) in [(0x0C00_0001, 0x0C00_0002), (0x0C00_0002, 0x0C00_0001)] {
+            b.scriptlets.insert(
+                did,
+                Some(Arc::new(Scriptlet {
+                    did: Did(did),
+                    roots: vec![scriptlet_node(next), scriptlet_node(did)],
+                    dependencies: Vec::new(),
+                })),
+            );
+        }
+        let mut c = closure_of(&[7], 0);
+        c.tables[0].scripts[0].roots = vec![scriptlet_node(0x0C00_0001)];
+        assert_eq!(b.build(&c, &[0], &[7]).len(), 1);
+        // The root, then two nodes in each scriptlet.
+        assert_eq!(b.total_left, MAX_SCHEMA_TOTAL_NODES - 5);
+    }
+
+    /// A synthetic property dictionary (`property-system.md` §2.1, §2.2) defining `defs`
+    /// (PID, type code), without names or defaults. Counts stay below 128, so every VLE is
+    /// one byte.
+    fn typed_registry(defs: &[(u32, u32)]) -> PropertyRegistry {
+        let mut out = 0x3400_0000u32.to_le_bytes().to_vec();
+        out.extend_from_slice(&[0; 8]);
+        out.extend_from_slice(&[0, 0]); // no names
+        out.extend_from_slice(&[0, 0]);
+        out.push(0);
+        out.push(u8::try_from(defs.len()).expect("few"));
+        for &(pid, ty) in defs {
+            for v in [pid, pid, ty, 0, 4, 0, 0, 0] {
+                out.extend_from_slice(&v.to_le_bytes());
+            }
+            out.extend_from_slice(&0x3FC0_0000u32.to_le_bytes());
+            out.extend_from_slice(&[2, 2, 4, 0, 1]);
+            out.push(0); // children (VLE)
+            out.extend_from_slice(&0u32.to_le_bytes()); // subset count
+            out.extend_from_slice(&0u32.to_le_bytes()); // terminator
+        }
+        PropertyRegistry::parse(&out).expect("a synthetic dictionary")
+    }
+
+    /// A Switch node on `pid` whose one port runs `children`.
+    fn switch_node(pid: u32, children: Vec<Node>) -> Node {
+        Node {
+            kind: NodeKind::SWITCH,
+            data: NodeData::Switch(tessera_formats::script_table::SwitchNode {
+                property: pid,
+                ..Default::default()
+            }),
+            ports: vec![tessera_formats::script_table::Port {
+                port_type: tessera_formats::script_table::PortType(1),
+                payload: tessera_formats::script_table::PortPayload::None,
+                children,
+            }],
+            ..leaf()
+        }
+    }
+
+    /// One random node of at most 3 levels: a Switch on one of `pids` with up to 2
+    /// children, a Scriptlet node naming one of the `count` scriptlets from `base`, or a
+    /// leaf.
+    fn random_node(
+        depth: u32,
+        next: &mut dyn FnMut(u32) -> u32,
+        pids: &[(u32, u32)],
+        base: u32,
+        count: u32,
+    ) -> Node {
+        match next(4) {
+            0 | 1 if depth < 3 => {
+                let k = next(3);
+                let children = (0..k)
+                    .map(|_| random_node(depth + 1, next, pids, base, count))
+                    .collect();
+                let n = u32::try_from(pids.len()).expect("few");
+                let (pid, _) = pids[next(n) as usize];
+                switch_node(pid, children)
+            }
+            2 => scriptlet_node(base + next(count)),
+            _ => leaf(),
+        }
+    }
+
+    /// One to three random root nodes ([`random_node`]).
+    fn random_nodes(
+        next: &mut dyn FnMut(u32) -> u32,
+        pids: &[(u32, u32)],
+        base: u32,
+        count: u32,
+    ) -> Vec<Node> {
+        let k = 1 + next(3);
+        (0..k)
+            .map(|_| random_node(0, next, pids, base, count))
+            .collect()
+    }
+
+    /// The naive walk of steps 2–4: pre-order, a scriptlet entered on every path that names
+    /// it (a scriptlet on the current path is not entered again), every PID appended on its
+    /// first appearance. `None` when it visits more than `cap` nodes.
+    fn naive_schema(
+        roots: &[Node],
+        scriptlets: &HashMap<u32, Vec<Node>>,
+        types: &HashMap<u32, u32>,
+        cap: usize,
+    ) -> Option<PortalStateSchema> {
+        fn walk(
+            n: &Node,
+            scriptlets: &HashMap<u32, Vec<Node>>,
+            types: &HashMap<u32, u32>,
+            path: &mut Vec<u32>,
+            left: &mut usize,
+            out: &mut PortalStateSchema,
+        ) -> Option<()> {
+            *left = left.checked_sub(1)?;
+            match &n.data {
+                NodeData::Switch(sw) => {
+                    let list = match types.get(&sw.property) {
+                        Some(21) => Some(&mut out.bool_pids),
+                        Some(8) => Some(&mut out.enum_pids),
+                        _ => None,
+                    };
+                    if let Some(list) = list
+                        && !list.contains(&sw.property)
+                    {
+                        list.push(sw.property);
+                    }
+                }
+                NodeData::Scriptlet { file, .. } if !path.contains(&file.0) => {
+                    if let Some(rs) = scriptlets.get(&file.0) {
+                        path.push(file.0);
+                        for r in rs {
+                            walk(r, scriptlets, types, path, left, out)?;
+                        }
+                        path.pop();
+                    }
+                }
+                _ => {}
+            }
+            for p in &n.ports {
+                for c in &p.children {
+                    walk(c, scriptlets, types, path, left, out)?;
+                }
+            }
+            Some(())
+        }
+        let mut out = PortalStateSchema::default();
+        let mut left = cap;
+        for r in roots {
+            walk(r, scriptlets, types, &mut Vec::new(), &mut left, &mut out)?;
+        }
+        Some(out)
+    }
+
+    #[test]
+    fn the_once_per_schema_walk_finds_the_pids_of_the_naive_walk_in_their_order() {
+        // Small random scriptlet graphs (shared scriptlets, diamonds, cycles, nodes naming
+        // scriptlets inside Switch ports, PIDs of both types and of neither): the schema of
+        // the once-per-schema walk has the PIDs of the naive walk, in the same order.
+        const BASE: u32 = 0x0C00_0200;
+        const SCRIPTLETS: u32 = 7;
+        let pids: [(u32, u32); 7] = [
+            (0x100, 21),
+            (0x101, 8),
+            (0x102, 21),
+            (0x103, 8),
+            (0x104, 21),
+            (0x105, 8),
+            (0x106, 4), // neither type: never listed
+        ];
+        let registry = typed_registry(&pids);
+        let types: HashMap<u32, u32> = pids.iter().copied().collect();
+        let mut seed = 0x2545_F491_4F6C_DD1Du64;
+        let mut next = move |n: u32| {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            u32::try_from(seed % u64::from(n)).expect("small")
+        };
+        let mut compared = 0;
+        for case in 0..300 {
+            let graph: HashMap<u32, Vec<Node>> = (0..SCRIPTLETS)
+                .map(|i| (BASE + i, random_nodes(&mut next, &pids, BASE, SCRIPTLETS)))
+                .collect();
+            let roots = random_nodes(&mut next, &pids, BASE, SCRIPTLETS);
+            let Some(expected) = naive_schema(&roots, &graph, &types, 200_000) else {
+                continue;
+            };
+            let read = |_: Did| None;
+            let mut b = SchemaBuilder::new(&read, &registry, None);
+            for (did, rs) in &graph {
+                b.scriptlets.insert(
+                    *did,
+                    Some(Arc::new(Scriptlet {
+                        did: Did(*did),
+                        roots: rs.clone(),
+                        dependencies: Vec::new(),
+                    })),
+                );
+            }
+            let mut c = closure_of(&[9], 0);
+            c.tables[0].scripts[0].roots = roots;
+            let built = b.build(&c, &[0], &[9]);
+            assert_eq!(built.get(&9), Some(&expected), "case {case}");
+            compared += 1;
+        }
+        assert!(compared > 250, "only {compared} cases compared");
     }
 
     #[test]

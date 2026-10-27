@@ -69,7 +69,9 @@ pub trait ConnectorNet: Send + std::fmt::Debug + 'static {
 
 /// Whether `request` carries the password or the ticket: `LoginAccount` and
 /// `RefreshTicket` (`official-login.md` §3.4, §4.3) and the queue's form posts (§3.5,
-/// `ticket=` / the subscription).
+/// `ticket=` / the subscription). Such a request follows the rule of every other
+/// (`login_phase` "HTTPS first, then the address as given"); tests use this to check where
+/// a credential went.
 #[must_use]
 pub fn carries_secret(request: &HttpRequest) -> bool {
     if request.method != HttpMethod::Post {
@@ -84,45 +86,145 @@ pub fn carries_secret(request: &HttpRequest) -> bool {
     soap || form
 }
 
-/// Whether `url` is an `https://` URL.
+/// Whether `url` is an `https://` URL that [`https_form`] accepts as it is: the one parse
+/// decides both, so a form one of them refuses (whitespace or a control character inside,
+/// user information, an empty host, a port that is not a decimal number) the other refuses
+/// too.
 #[must_use]
 pub fn is_https(url: &str) -> bool {
-    url.trim_start()
-        .get(..8)
-        .is_some_and(|p| p.eq_ignore_ascii_case("https://"))
+    parse_chain_url(url).is_some_and(|p| p.https)
 }
 
-/// The connector's rule over every HTTP exchange: a request that carries the password or
-/// the ticket goes only over `https://` (`official-login.md` §6.2, §6.3: the plaintext
-/// password and the bearer ticket must not be exposed). Where the spec names an endpoint
-/// "HTTP/HTTPS", such a request is refused, not sent: engineering choice, spec silent
-/// (question with the spec writers).
-///
-/// # Errors
-///
-/// [`LoginError::ServiceUnavailable`] for a refused request or a failed exchange.
-pub fn guarded(
-    http: &mut (dyn HttpClient + Send),
-    request: &HttpRequest,
-) -> Result<HttpResponse, LoginError> {
-    check_secret(request)?;
-    http.execute(request)
+/// The HTTPS form of an address of the login chain, the one tried first (decision 0044 as
+/// amended 2026-10-27; `official-login.md` §6.2 names the endpoints "HTTP/HTTPS" and is
+/// silent on it: question with the spec writers).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HttpsUrl {
+    /// The `https://` URL to request.
+    pub url: String,
+    /// The chain gave the address as `http://`: this is its HTTPS form.
+    pub upgraded: bool,
 }
 
-fn check_secret(request: &HttpRequest) -> Result<(), LoginError> {
-    if carries_secret(request) && !is_https(&request.url) {
-        tracing::warn!("official login: a credential was not sent over plain HTTP");
-        return Err(LoginError::ServiceUnavailable {
-            reason: "the service URL for a credential is not HTTPS".to_owned(),
+/// The HTTPS form of `url`, `None` when it has none:
+///
+/// - an `https://` URL is used as given (surrounding ASCII whitespace removed);
+/// - an `http://` URL becomes `https://` at the same host and path (query and fragment
+///   kept). An explicit port is dropped, so the request goes to the default HTTPS port: a
+///   port chosen for plain HTTP says nothing about where the service listens for TLS
+///   (decision 0044);
+/// - any other scheme, user information (`user@host`), an empty host, a port that is not a
+///   decimal number, or a control character or space anywhere has no HTTPS form
+///   (engineering choice, spec silent: no HTTPS form is guessed for it), for `https://` and
+///   `http://` alike; [`is_https`] is `false` for it, and the login asks it as given
+///   (`crate::connector::login_phase::exchange`).
+#[must_use]
+pub fn https_form(url: &str) -> Option<HttpsUrl> {
+    let p = parse_chain_url(url)?;
+    if p.https {
+        return Some(HttpsUrl {
+            url: p.trimmed.to_owned(),
+            upgraded: false,
         });
     }
-    Ok(())
+    Some(HttpsUrl {
+        url: format!("https://{}{}", p.host, p.tail),
+        upgraded: true,
+    })
 }
 
-/// The connector's network as the login module's HTTP client, under the rule of
-/// [`guarded`], and stopped by the connector's cancel flag: once the backend let go, no
-/// further exchange starts (`crate::connector` "Ending a session"), nor once the network
-/// right was revoked.
+/// An `http://` or `https://` address as [`is_https`] and [`https_form`] read it.
+struct ChainUrl<'a> {
+    /// The address without surrounding whitespace.
+    trimmed: &'a str,
+    /// `https://` (otherwise `http://`).
+    https: bool,
+    /// The host without its port (brackets of an IPv6 literal kept).
+    host: &'a str,
+    /// The path, query and fragment.
+    tail: &'a str,
+}
+
+/// The one parse behind [`is_https`] and [`https_form`].
+fn parse_chain_url(url: &str) -> Option<ChainUrl<'_>> {
+    // Only ASCII whitespace around the address is removed; any other space or control
+    // character, anywhere, refuses it.
+    let trimmed = url.trim_matches(|c: char| c.is_ascii_whitespace());
+    if trimmed.chars().any(|c| c.is_control() || c.is_whitespace()) {
+        return None;
+    }
+    let (https, rest) = if let Some(rest) = strip_scheme(trimmed, "https://") {
+        (true, rest)
+    } else {
+        (false, strip_scheme(trimmed, "http://")?)
+    };
+    let end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
+    let (authority, tail) = rest.split_at(end);
+    let host = authority_host(authority)?;
+    Some(ChainUrl {
+        trimmed,
+        https,
+        host,
+        tail,
+    })
+}
+
+/// `url` after `scheme` (compared without regard to ASCII case).
+fn strip_scheme<'a>(url: &'a str, scheme: &str) -> Option<&'a str> {
+    url.get(..scheme.len())
+        .filter(|s| s.eq_ignore_ascii_case(scheme))
+        .and_then(|_| url.get(scheme.len()..))
+}
+
+/// The host of a URL's authority without its port (brackets of an IPv6
+/// literal kept); `None` for user information, an empty host or a malformed port.
+fn authority_host(authority: &str) -> Option<&str> {
+    if authority.contains('@') {
+        return None;
+    }
+    let (host, port) = if let Some(inner) = authority.strip_prefix('[') {
+        // `[` at 0, `]` at `close + 1`: the literal with its brackets.
+        let close = inner.find(']')?;
+        if close == 0 {
+            return None;
+        }
+        let host = authority.get(..close + 2)?;
+        let after = authority.get(close + 2..)?;
+        let port = if after.is_empty() {
+            ""
+        } else {
+            after.strip_prefix(':')?
+        };
+        (host, port)
+    } else {
+        let (h, p) = authority.rsplit_once(':').unwrap_or((authority, ""));
+        if h.is_empty() || h.contains(['[', ']', ':']) {
+            return None;
+        }
+        (h, p)
+    };
+    port.bytes().all(|b| b.is_ascii_digit()).then_some(host)
+}
+
+/// The scheme of `url` for a log line: `"https"`, `"http"`, `"other"` or `"none"`, never
+/// more of the URL (a host or a path may identify the user's service, `official-entry.md`
+/// §7.3).
+#[must_use]
+pub fn scheme_label(url: &str) -> &'static str {
+    let url = url.trim();
+    match url.find("://").and_then(|i| url.get(..i)) {
+        Some(s) if s.eq_ignore_ascii_case("https") => "https",
+        Some(s) if s.eq_ignore_ascii_case("http") => "http",
+        Some(_) => "other",
+        None => "none",
+    }
+}
+
+/// The connector's network as the login module's HTTP client, stopped by the connector's
+/// cancel flag: once the backend let go, no further exchange starts (`crate::connector`
+/// "Ending a session"), nor once the network right was revoked. Which address a request
+/// goes to is the login phase's rule (`login_phase` "HTTPS first, then the address as
+/// given").
 pub struct NetHttp<'a, N: ConnectorNet> {
     net: &'a mut N,
     stop: &'a dyn Fn() -> bool,
@@ -156,7 +258,6 @@ impl<N: ConnectorNet> HttpClient for NetHttp<'_, N> {
                 reason: "the login was cancelled".to_owned(),
             });
         }
-        check_secret(request)?;
         self.net.http(request)
     }
 }

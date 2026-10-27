@@ -21,9 +21,9 @@ use crate::login::{QueueEvaluation, SessionHandoff, TicketRefresher, WorldDescri
 use super::control::{Control, Msg};
 use super::data::{InstallDataLoader, LocalInputs, LocalPaths, SchemaView, discover_local};
 use super::login_phase::{
-    Authenticated, LoginStop, Secure, WORLD_LIST_STATUS_TIMEOUT_SEC, authenticate, get_datacenters,
-    get_remote_config, join_status, leave_queue, local_refusal, queue_poll_interval, take_a_number,
-    world_list, world_refusal, world_status,
+    Authenticated, LoginStop, PlainSteps, WORLD_LIST_STATUS_TIMEOUT_SEC, authenticate,
+    get_datacenters, get_remote_config, join_status, leave_queue, local_refusal,
+    queue_poll_interval, take_a_number, world_list, world_refusal, world_status,
 };
 use super::net::{ConnectorNet, NetHttp};
 use super::session_phase::{
@@ -246,19 +246,19 @@ pub fn run<N: ConnectorNet>(mut net: N, input: WorkerInput) {
         }
     };
     out.progress(LoginStage::Authenticating);
-    // S2.
-    let dc = match get_datacenters(&mut NetHttp::new(&mut net, &stop), &local) {
+    // S2 (`login_phase` "HTTPS first, then the address as given").
+    let plain = PlainSteps::default();
+    let dc = match get_datacenters(&mut NetHttp::new(&mut net, &stop), &local, &plain) {
         Ok(v) => v,
-        Err(e) => return out.stopped(LoginStop::from(&e), net.is_live()),
+        Err(e) => return out.stopped(e, net.is_live()),
     };
     out.progress(LoginStage::Authenticating);
     // S3.
-    let remote = match get_remote_config(&mut NetHttp::new(&mut net, &stop), &dc) {
+    let remote = match get_remote_config(&mut NetHttp::new(&mut net, &stop), &dc, &plain) {
         Ok(v) => v,
-        Err(e) => return out.stopped(LoginStop::from(&e), net.is_live()),
+        Err(e) => return out.stopped(e, net.is_live()),
     };
     out.progress(LoginStage::Authenticating);
-    let secure = Secure::of(&local.config.gls_datacenter_service, &dc, &remote);
     // S5 (the one use of the credentials); a cancel has dropped them already.
     if stop() {
         return;
@@ -271,8 +271,8 @@ pub fn run<N: ConnectorNet>(mut net: N, input: WorkerInput) {
         &local,
         dc,
         remote,
-        secure,
         credentials,
+        &plain,
     ) {
         Ok(a) => a,
         Err(e) => return out.stopped(e, net.is_live()),
@@ -362,7 +362,7 @@ pub fn run<N: ConnectorNet>(mut net: N, input: WorkerInput) {
             other => tracing::debug!(command = other.name(), "official login: command ignored"),
         }
     };
-    let refresh_secure = auth.secure.refresh;
+    let plain = auth.plain.clone();
     drop(auth);
     if stop() {
         return;
@@ -374,7 +374,7 @@ pub fn run<N: ConnectorNet>(mut net: N, input: WorkerInput) {
     let start = SessionStart {
         handoff: joined.handoff,
         login_peer: joined.peer,
-        refresh_secure,
+        plain,
         refresher: joined.refresher,
         chat_endpoint: joined.chat_endpoint,
         version: local.version.clone(),
@@ -426,7 +426,12 @@ fn list_worlds<N: ConnectorNet>(
         if stop() || !http.is_live() {
             return None;
         }
-        let s = world_status(&mut http, w, WORLD_LIST_STATUS_TIMEOUT_SEC);
+        let s = world_status(
+            &mut http,
+            &w.status_server_url,
+            WORLD_LIST_STATUS_TIMEOUT_SEC,
+            &auth.plain,
+        );
         if stop() || !http.is_live() {
             return None;
         }
@@ -485,7 +490,12 @@ fn choose<N: ConnectorNet>(
         }
     };
     out.progress(LoginStage::JoiningWorld);
-    let status = match join_status(&mut NetHttp::new(net, stop), world, &auth.subscription) {
+    let status = match join_status(
+        &mut NetHttp::new(net, stop),
+        world,
+        &auth.subscription,
+        &auth.plain,
+    ) {
         Ok(s) => s,
         Err(_) if halted(net).is_some() => return halted(net).unwrap_or(Choice::Shutdown),
         Err(e) => {

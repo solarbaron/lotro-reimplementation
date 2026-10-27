@@ -14,16 +14,31 @@
 //! (`official-entry.md` §8.1 OPEN; engineering choice, spec silent (question with the spec
 //! writers): the ticket is kept for the session).
 //!
-//! # Where a secret may go
+//! # HTTPS first, then the address as given
 //!
-//! Engineering choice, spec silent (question with the spec writers): every URL carries its
-//! provenance ([`Secure`]); it is trusted only when it is `https://`
-//! and arrived over HTTPS all the way from the install's configuration (the datacenter
-//! service URL is the root; `GetDatacenters` names the authentication server and the remote
-//! configuration's URL; the remote configuration names the queue and may override the
-//! authentication URL). The password and the ticket are sent only to a trusted URL
-//! (`official-login.md` §6.2–§6.3); anything else is refused before a byte is sent.
+//! Decision 0044 as amended by the owner on 2026-10-27 after the second live run
+//! (`official-login.md` §2.1 and §3 allow "HTTP/HTTPS" addresses and are silent on this:
+//! question with the spec writers). Every exchange of the chain goes through [`exchange`]:
+//!
+//! - an `https://` address is requested as given, with full certificate validation;
+//! - an `http://` address is tried first at its HTTPS form ([`https_form`]: same host and
+//!   path, default HTTPS port; the HTTPS client's connect timeout is 5 s,
+//!   `crate::net_access`). When that exchange fails at the transport or TLS level
+//!   (connection refused, a timeout, a TLS or certificate error: any failure of the HTTP
+//!   client), the request is made once more at the address exactly as given, over plain
+//!   HTTP. Any HTTP answer over working HTTPS (a 200, the maintenance 503, a SOAP fault, a
+//!   closed world, a 404) is the service's answer and is used as that answer, never
+//!   retried over plain HTTP;
+//! - an address with no HTTPS form is requested as given.
+//!
+//! The password and the ticket follow the same rule: they go over plain HTTP only when the
+//! chain works no other way. Redirects stay off and no proxy is used (`crate::net_access`).
+//! Each step that went over plain HTTP logs one `info` line, `official login: step over
+//! plain HTTP` with `step=` only ([`ChainStep::label`]), once per step per login
+//! ([`PlainSteps`]); no host, path or account is ever logged.
 
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use tessera_net::account::MAX_ACCOUNT_DETAIL_LEN;
@@ -35,15 +50,15 @@ use tessera_net::account::{
 
 use crate::credentials::Credentials;
 use crate::login::{
-    DatacenterInfo, GameSubscription, HttpClient, LoginAccountResult, LoginError,
-    LoginFailureClass, QueueEvaluation, QueueResult, RemoteLauncherConfig, WorldDescriptor,
-    WorldStatus as ServiceStatus, build_launcher_config_request, build_leave_queue_request,
-    build_take_a_number_request, build_world_status_request, parse_get_datacenters_response,
-    parse_login_account_response, soap_encoder, zeroize_vec,
+    DatacenterInfo, GameSubscription, HttpClient, HttpRequest, HttpResponse, LoginAccountResult,
+    LoginError, LoginFailureClass, QueueEvaluation, QueueResult, RemoteLauncherConfig,
+    WorldDescriptor, WorldStatus as ServiceStatus, build_launcher_config_request,
+    build_leave_queue_request, build_take_a_number_request, build_world_status_request,
+    parse_get_datacenters_response, parse_login_account_response, soap_encoder, zeroize_vec,
 };
 
 use super::data::LocalInputs;
-use super::net::is_https;
+use super::net::{https_form, scheme_label};
 
 /// The per-world timeout of the world-list status queries (`official-login.md` §3.3, §5.2).
 pub const WORLD_LIST_STATUS_TIMEOUT_SEC: u64 = 10;
@@ -141,41 +156,124 @@ impl From<&LoginError> for LoginStop {
     }
 }
 
-/// Which of the authenticated login's URLs may receive the password or the ticket (module
-/// docs "Where a secret may go").
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub struct Secure {
-    /// `GetDatacenters` arrived over HTTPS.
-    pub datacenters: bool,
-    /// The remote configuration arrived over HTTPS through a trusted URL.
-    pub remote: bool,
-    /// The `LoginAccount` URL (`Datacenter/AuthServer`).
-    pub auth: bool,
-    /// The queue URL (`WorldQueue.LoginQueue.URL`).
-    pub queue: bool,
-    /// The in-game refresh URL (the remote override, else the authentication server).
-    pub refresh: bool,
+/// A step of the login chain: an address the install or a service document names, with
+/// its own HTTP exchange (module docs "HTTPS first, then the address as given").
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ChainStep {
+    /// `Launcher.DataCenterService.GLS`, `GetDatacenters` (§3.1).
+    DatacenterDocument,
+    /// `Datacenter/LauncherConfigurationServer`, the remote configuration (§3.2).
+    LauncherConfiguration,
+    /// `Datacenter/AuthServer`, `LoginAccount` (§3.4).
+    AuthServer,
+    /// A world's `StatusServerUrl` (§3.3), for the world list and for joining.
+    StatusUrl,
+    /// `WorldQueue.LoginQueue.URL`, `TakeANumber` and `LeaveQueue` (§3.5).
+    QueueUrl,
+    /// The in-game ticket refresh, `RefreshTicket` (§4.3).
+    TicketRefresh,
 }
 
-impl Secure {
-    /// The provenance of the URLs named by `install_url`'s answer `dc` and by `remote`.
+impl ChainStep {
+    /// Every step, in chain order.
+    pub const ALL: [Self; 6] = [
+        Self::DatacenterDocument,
+        Self::LauncherConfiguration,
+        Self::AuthServer,
+        Self::StatusUrl,
+        Self::QueueUrl,
+        Self::TicketRefresh,
+    ];
+
+    /// The step's name in a log line.
     #[must_use]
-    pub fn of(install_url: &str, dc: &DatacenterInfo, remote: &RemoteLauncherConfig) -> Self {
-        let datacenters = is_https(install_url);
-        let remote_ok = datacenters && is_https(&dc.launcher_configuration_server);
-        let auth = datacenters && is_https(&dc.auth_server);
-        let refresh = match remote.auth_server_url_override.as_deref() {
-            Some(url) => remote_ok && is_https(url),
-            None => auth,
-        };
-        Self {
-            datacenters,
-            remote: remote_ok,
-            auth,
-            queue: remote_ok && is_https(&remote.login_queue_url),
-            refresh,
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::DatacenterDocument => "datacenter document",
+            Self::LauncherConfiguration => "launcher configuration",
+            Self::AuthServer => "auth server",
+            Self::StatusUrl => "status URL",
+            Self::QueueUrl => "queue URL",
+            Self::TicketRefresh => "ticket refresh",
         }
     }
+
+    const fn index(self) -> usize {
+        match self {
+            Self::DatacenterDocument => 0,
+            Self::LauncherConfiguration => 1,
+            Self::AuthServer => 2,
+            Self::StatusUrl => 3,
+            Self::QueueUrl => 4,
+            Self::TicketRefresh => 5,
+        }
+    }
+}
+
+/// The steps of one login that went over plain HTTP; each is logged once (module docs).
+/// Clones share the record (the ticket refresh runs on a thread of its own).
+#[derive(Debug, Clone, Default)]
+pub struct PlainSteps(Arc<[AtomicBool; ChainStep::ALL.len()]>);
+
+impl PlainSteps {
+    /// `step` goes over plain HTTP: the one `info` line of the step in this login, with the
+    /// step's name only.
+    pub fn note(&self, step: ChainStep) {
+        if let Some(flag) = self.0.get(step.index())
+            && !flag.swap(true, Ordering::SeqCst)
+        {
+            tracing::info!(step = step.label(), "official login: step over plain HTTP");
+        }
+    }
+
+    /// Whether `step` went over plain HTTP in this login.
+    #[must_use]
+    pub fn went_plain(&self, step: ChainStep) -> bool {
+        self.0
+            .get(step.index())
+            .is_some_and(|f| f.load(Ordering::SeqCst))
+    }
+}
+
+/// One exchange of `step` at the address `given` (module docs "HTTPS first, then the
+/// address as given"): `req`, built for any URL, is sent at the HTTPS form of an `http://`
+/// address first and, when the HTTP client fails there (transport or TLS), once more at
+/// `given` over plain HTTP; an `https://` address, or one with no HTTPS form, is asked as
+/// given. `req.url` is set here. An HTTP answer over HTTPS, whatever its status, is
+/// returned as it is.
+///
+/// # Errors
+///
+/// The HTTP client's failure of the last request made.
+pub fn exchange(
+    http: &mut dyn HttpClient,
+    step: ChainStep,
+    given: &str,
+    req: &mut HttpRequest,
+    plain: &PlainSteps,
+) -> Result<HttpResponse, LoginError> {
+    let given = given.trim();
+    match https_form(given) {
+        Some(at) if at.upgraded => {
+            req.url = at.url;
+            match http.execute(req) {
+                Ok(resp) => return Ok(resp),
+                // The kind only, never the address.
+                Err(e) => tracing::debug!(
+                    step = step.label(),
+                    class = %e.failure_class(),
+                    "official login: the HTTPS form failed; asking the address as given"
+                ),
+            }
+            given.clone_into(&mut req.url);
+        }
+        Some(at) => req.url = at.url,
+        None => given.clone_into(&mut req.url),
+    }
+    if scheme_label(&req.url) == "http" {
+        plain.note(step);
+    }
+    http.execute(req)
 }
 
 /// The authenticated login: what the rest of the session needs from the HTTP exchanges.
@@ -191,8 +289,8 @@ pub struct Authenticated {
     pub subscription: GameSubscription,
     /// The ticket.
     pub account: LoginAccountResult,
-    /// Where the ticket may go.
-    pub secure: Secure,
+    /// The steps of this login that went over plain HTTP.
+    pub plain: PlainSteps,
 }
 
 fn checked_200(what: &str, status: u16) -> Result<(), LoginError> {
@@ -205,45 +303,57 @@ fn checked_200(what: &str, status: u16) -> Result<(), LoginError> {
     }
 }
 
-/// `S2_GET_DATACENTERS` (§3.1).
+/// `S2_GET_DATACENTERS` (§3.1) at the install's datacenter URL ([`exchange`]).
 ///
 /// # Errors
 ///
-/// [`LoginError`] of class `F03` on a failed exchange or a missing datacenter.
+/// The refusal of class `F03` for a failed exchange or a missing datacenter.
 pub fn get_datacenters(
     http: &mut dyn HttpClient,
     local: &LocalInputs,
-) -> Result<DatacenterInfo, LoginError> {
-    let req = soap_encoder::build_get_datacenters_request(
-        &local.config.gls_datacenter_service,
-        &local.config.datacenter_game_name,
-    );
-    let resp = http.execute(&req)?;
-    checked_200("GetDatacenters", resp.status_code)?;
+    plain: &PlainSteps,
+) -> Result<DatacenterInfo, LoginStop> {
+    let given = &local.config.gls_datacenter_service;
+    let mut req =
+        soap_encoder::build_get_datacenters_request(given, &local.config.datacenter_game_name);
+    let resp = exchange(http, ChainStep::DatacenterDocument, given, &mut req, plain)
+        .map_err(|e| LoginStop::from(&e))?;
+    checked_200("GetDatacenters", resp.status_code).map_err(|e| LoginStop::from(&e))?;
     parse_get_datacenters_response(&resp.body, local.config.target_datacenter())
+        .map_err(|e| LoginStop::from(&e))
 }
 
-/// `S3_GET_LAUNCHER_CONFIG` (§3.2).
+/// `S3_GET_LAUNCHER_CONFIG` (§3.2) at the datacenter's remote-configuration URL
+/// ([`exchange`]).
 ///
 /// # Errors
 ///
-/// [`LoginError`] of class `F03` on a failed exchange.
+/// The refusal of class `F03` for a failed exchange.
 pub fn get_remote_config(
     http: &mut dyn HttpClient,
     dc: &DatacenterInfo,
-) -> Result<RemoteLauncherConfig, LoginError> {
-    let req = build_launcher_config_request(&dc.launcher_configuration_server);
-    let resp = http.execute(&req)?;
-    checked_200("LauncherConfigurationServer", resp.status_code)?;
-    RemoteLauncherConfig::parse(&resp.body)
+    plain: &PlainSteps,
+) -> Result<RemoteLauncherConfig, LoginStop> {
+    let given = &dc.launcher_configuration_server;
+    let mut req = build_launcher_config_request(given);
+    let resp = exchange(
+        http,
+        ChainStep::LauncherConfiguration,
+        given,
+        &mut req,
+        plain,
+    )
+    .map_err(|e| LoginStop::from(&e))?;
+    checked_200("LauncherConfigurationServer", resp.status_code)
+        .map_err(|e| LoginStop::from(&e))?;
+    RemoteLauncherConfig::parse(&resp.body).map_err(|e| LoginStop::from(&e))
 }
 
-/// `S5_LOGIN_ACCOUNT` (§3.4): the one use of the credentials (`official-entry.md` §7.3).
-/// The request body is wiped right after the exchange and the credentials are dropped
-/// (and wiped) before this returns (§6.3); so is the response, which holds the ticket.
-///
-/// The password goes only to a trusted `LoginAccount` URL (module docs); otherwise the
-/// login is refused as `ServiceUnavailable` and nothing is sent.
+/// `S5_LOGIN_ACCOUNT` (§3.4): the one use of the credentials (`official-entry.md` §7.3),
+/// at the datacenter's authentication URL ([`exchange`]: HTTPS first). The request body is
+/// wiped after the exchange (both attempts use the one request) and the credentials are
+/// dropped (and wiped) before it is sent (§6.3); so is the response, which holds the
+/// ticket.
 ///
 /// A login with more than one subscription for the game needs a choice the account form
 /// does not offer (§3.4 "Multiple matching subscriptions"): it is refused as
@@ -257,22 +367,18 @@ pub fn authenticate(
     local: &LocalInputs,
     datacenter: DatacenterInfo,
     remote: RemoteLauncherConfig,
-    secure: Secure,
     credentials: Credentials,
+    plain: &PlainSteps,
 ) -> Result<Authenticated, LoginStop> {
-    if !secure.auth {
-        drop(credentials);
-        tracing::warn!("official login: the account would not have been sent over HTTPS");
-        return Err(LoginStop::Refused(LoginRefusal::ServiceUnavailable, None));
-    }
+    let given = datacenter.auth_server.clone();
     let built = credentials.expose().map(|(account, password)| {
-        soap_encoder::build_login_account_request(&datacenter.auth_server, account, password)
+        soap_encoder::build_login_account_request(&given, account, password)
     });
     drop(credentials);
     let Some(mut req) = built else {
         return Err(LoginStop::Refused(LoginRefusal::Other, None));
     };
-    let result = http.execute(&req);
+    let result = exchange(http, ChainStep::AuthServer, &given, &mut req, plain);
     req.zeroize_body();
     drop(req);
     let mut resp = result.map_err(|e| LoginStop::from(&e))?;
@@ -300,12 +406,28 @@ pub fn authenticate(
         remote,
         subscription,
         account,
-        secure,
+        plain: plain.clone(),
     })
 }
 
-/// Exchange 3 (§3.3) with the given timeout: the world's own `StatusServerUrl` only, no
-/// fallback URL (decision 0042 item 3).
+/// The status in the answer `resp` of Exchange 3 (§3.3).
+///
+/// # Errors
+///
+/// [`LoginError`] of class `F06` for an answer that is not 200, an empty body or a status
+/// with no login server.
+pub fn parse_world_status(resp: &HttpResponse) -> Result<ServiceStatus, LoginError> {
+    if resp.status_code != 200 || resp.body.iter().all(u8::is_ascii_whitespace) {
+        return Err(LoginError::WorldClosed {
+            reason: format!("the status query returned HTTP {}", resp.status_code),
+        });
+    }
+    ServiceStatus::parse(&resp.body)
+}
+
+/// Exchange 3 (§3.3) at `url` with the given timeout ([`exchange`]): the world's own
+/// `StatusServerUrl` only, no fallback URL (decision 0042 item 3), read by
+/// [`parse_world_status`]. The world list and the join ask it the same way.
 ///
 /// # Errors
 ///
@@ -313,25 +435,23 @@ pub fn authenticate(
 /// has no login server.
 pub fn world_status(
     http: &mut dyn HttpClient,
-    world: &WorldDescriptor,
+    url: &str,
     timeout_sec: u64,
+    plain: &PlainSteps,
 ) -> Result<ServiceStatus, LoginError> {
-    if world.status_server_url.trim().is_empty() {
+    if url.trim().is_empty() {
         return Err(LoginError::WorldClosed {
             reason: "the world has no status URL".to_owned(),
         });
     }
-    let mut req = build_world_status_request(&world.status_server_url);
+    let mut req = build_world_status_request(url);
     req.timeout_sec = timeout_sec;
-    let resp = http.execute(&req).map_err(|e| LoginError::WorldClosed {
-        reason: e.to_string(),
+    let resp = exchange(http, ChainStep::StatusUrl, url, &mut req, plain).map_err(|e| {
+        LoginError::WorldClosed {
+            reason: e.to_string(),
+        }
     })?;
-    if resp.status_code != 200 || resp.body.iter().all(u8::is_ascii_whitespace) {
-        return Err(LoginError::WorldClosed {
-            reason: format!("the status query returned HTTP {}", resp.status_code),
-        });
-    }
-    ServiceStatus::parse(&resp.body)
+    parse_world_status(&resp)
 }
 
 /// A world name as the Account group carries it: control characters removed, cut on a
@@ -411,22 +531,29 @@ pub fn world_list(
 }
 
 /// The status of the chosen world for joining it (§3.3, §5.1 `S7`): the query with the
-/// 30 s timeout and the billing-role check.
+/// 30 s timeout ([`world_status`]) and the billing-role check.
 ///
 /// # Errors
 ///
-/// [`LoginError`] of class `F06` or `F07`.
+/// [`LoginError`] of class `F06` or `F07`: the world is refused and the login stays
+/// (`official-entry.md` §8.6).
 pub fn join_status(
     http: &mut dyn HttpClient,
     world: &WorldDescriptor,
     sub: &GameSubscription,
+    plain: &PlainSteps,
 ) -> Result<ServiceStatus, LoginError> {
-    let status = world_status(http, world, crate::login::DEFAULT_HTTP_TIMEOUT_SEC)?;
+    let status = world_status(
+        http,
+        &world.status_server_url,
+        crate::login::DEFAULT_HTTP_TIMEOUT_SEC,
+        plain,
+    )?;
     status.check_billing_role(&sub.product_tokens)?;
     Ok(status)
 }
 
-/// One `TakeANumber` exchange (§3.5).
+/// One `TakeANumber` exchange (§3.5) at the configuration's queue URL ([`exchange`]).
 ///
 /// # Errors
 ///
@@ -436,21 +563,15 @@ pub fn take_a_number(
     auth: &Authenticated,
     queue_url: &str,
 ) -> Result<QueueEvaluation, LoginError> {
-    if !auth.secure.queue {
-        tracing::warn!("official login: the ticket would not have been sent over HTTPS");
-        return Err(LoginError::QueueError {
-            hresult: None,
-            reason: "the queue URL is not trusted for the ticket".to_owned(),
-        });
-    }
+    let given = auth.remote.login_queue_url.as_str();
     let mut req = build_take_a_number_request(
-        &auth.remote.login_queue_url,
+        given,
         &auth.remote.take_a_number_parameters,
         auth.subscription.name(),
         auth.account.ticket(),
         queue_url,
     );
-    let result = http.execute(&req);
+    let result = exchange(http, ChainStep::QueueUrl, given, &mut req, &auth.plain);
     req.zeroize_body();
     let mut resp = result.map_err(|e| LoginError::QueueError {
         hresult: None,
@@ -469,7 +590,7 @@ pub fn take_a_number(
 }
 
 /// `LeaveQueue` (§3.5) when the configuration has its template and a `ContextNumber` is
-/// known; the answer is not needed (the user is leaving).
+/// known ([`exchange`]); the answer is not needed (the user is leaving).
 pub fn leave_queue(
     http: &mut dyn HttpClient,
     auth: &Authenticated,
@@ -480,17 +601,10 @@ pub fn leave_queue(
     else {
         return;
     };
-    if !auth.secure.queue {
-        return;
-    }
-    let mut req = build_leave_queue_request(
-        &auth.remote.login_queue_url,
-        template,
-        auth.subscription.name(),
-        ctx,
-        queue_url,
-    );
-    let result = http.execute(&req);
+    let given = auth.remote.login_queue_url.as_str();
+    let mut req =
+        build_leave_queue_request(given, template, auth.subscription.name(), ctx, queue_url);
+    let result = exchange(http, ChainStep::QueueUrl, given, &mut req, &auth.plain);
     req.zeroize_body();
     if let Err(e) = result {
         tracing::debug!(class = %e.failure_class(), "official login: LeaveQueue failed");

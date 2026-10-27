@@ -153,6 +153,7 @@ use super::data::{SchemaView, chat_categories};
 use super::entities::{
     CreateOutcome, EntityFeed, FeedCounters, FeedOutput, SubTarget, sub_event_target,
 };
+use super::login_phase::PlainSteps;
 use super::net::{ConnectorNet, SendHttpClient};
 
 /// Delivery queue of every message the client sends on the login and world connections.
@@ -438,9 +439,10 @@ pub struct SessionStart {
     /// The login server's address, resolved before the hand-off (an unusable address is a
     /// refusal of the chosen world, `official-login.md` §5.1 `S7`).
     pub login_peer: SocketAddrV4,
-    /// Whether the refresh URL may receive the ticket (`crate::connector::login_phase`
-    /// "Where a secret may go"); without it no refresh is sent.
-    pub refresh_secure: bool,
+    /// The steps of this login that went over plain HTTP: the ticket refresh asks its URL
+    /// as every step of the chain does (`crate::connector::login_phase` "HTTPS first, then
+    /// the address as given") and logs its own step once.
+    pub plain: PlainSteps,
     /// The ticket refresh (`official-login.md` §4.3).
     pub refresher: TicketRefresher,
     /// The chat server's address, resolved before the hand-off with the login server's
@@ -553,8 +555,7 @@ pub struct SessionDriver<N: ConnectorNet> {
     chat_warned: bool,
     handoff: SessionHandoff,
     refresher: TicketRefresher,
-    refresh_secure: bool,
-    refresh_warned: bool,
+    plain: PlainSteps,
     refreshing: Option<Refreshing>,
     background_http: Option<SendHttpClient>,
     cancel: Arc<AtomicBool>,
@@ -746,8 +747,7 @@ impl<N: ConnectorNet> SessionDriver<N> {
             chat_warned: false,
             handoff: start.handoff,
             refresher: start.refresher,
-            refresh_secure: start.refresh_secure,
-            refresh_warned: false,
+            plain: start.plain,
             refreshing: None,
             background_http: Some(net.background_http()),
             cancel: start.cancel,
@@ -1999,15 +1999,6 @@ impl<N: ConnectorNet> SessionDriver<N> {
             return;
         };
         let mut req = req;
-        if !self.refresh_secure {
-            // The ticket goes only to a URL that arrived over HTTPS (§6.2–§6.3).
-            req.zeroize_body();
-            if !self.refresh_warned {
-                self.refresh_warned = true;
-                tracing::warn!("official session: the refresh URL is not trusted; no refresh");
-            }
-            return;
-        }
         let Some(mut http) = self.background_http.take() else {
             req.zeroize_body();
             return;
@@ -2016,6 +2007,7 @@ impl<N: ConnectorNet> SessionDriver<N> {
         let stop = Arc::new(AtomicBool::new(false));
         let thread_stop = Arc::clone(&stop);
         let cancelled = Arc::clone(&self.cancel);
+        let plain = self.plain.clone();
         let spawned = std::thread::Builder::new()
             .name("tessera-official-refresh".into())
             .spawn(move || {
@@ -2026,7 +2018,14 @@ impl<N: ConnectorNet> SessionDriver<N> {
                     req.zeroize_body();
                     return;
                 }
-                let result = super::net::guarded(&mut *http, &req);
+                let given = std::mem::take(&mut req.url);
+                let result = super::login_phase::exchange(
+                    &mut *http,
+                    super::login_phase::ChainStep::TicketRefresh,
+                    &given,
+                    &mut req,
+                    &plain,
+                );
                 req.zeroize_body();
                 drop(req);
                 let _ = tx.send((result, http));
@@ -2376,12 +2375,11 @@ impl<N: ConnectorNet> SessionDriver<N> {
                 at(self.chat_retry_at);
             }
             // The conditions under which `run_refresh` acts on a past deadline
-            // (`TicketRefresher::poll_refresh_request`'s guards, the trusted URL and no
+            // (`TicketRefresher::poll_refresh_request`'s guards and no
             // refresh running): a refresh that step would not send is no deadline, so it can
             // never hold the loop at its shortest wait.
             let r = &self.refresher;
             if self.refreshing.is_none()
-                && self.refresh_secure
                 && r.lifetime_sec() > 0
                 && r.attempt_count() <= 2
                 && !r.ticket().is_empty()

@@ -2131,6 +2131,7 @@ fn oe_t12_decline_changes_nothing_and_withdraw_removes_both_files() {
 
 /// Withdraw ends every network right of the run at once (§5.5, §6.1): a network-access value
 /// made before it can do nothing more.
+#[cfg(unix)]
 #[test]
 fn withdraw_revokes_every_network_right() {
     let _guard = net_lock();

@@ -24,7 +24,7 @@ use winit::keyboard::{KeyCode, PhysicalKey};
 
 use super::flow::{
     AcceptanceLine, BackendFactory, Control, Flow, FlowConfig, FlowRequest, HandOverEnd,
-    PluginHostControl, Screen,
+    HandOverFailure, PluginHostControl, Screen,
 };
 use super::form::{AccountForm, BULLET, FormAction, FormControl, FormField};
 use super::input::{DeviceInput, DeviceInputKind, Key, Modifiers};
@@ -3499,8 +3499,19 @@ fn the_hand_over_carries_later_events_and_its_end_shows_the_reason() {
             Some(("The official service closed the connection.", true)),
         ),
         (
-            HandOverEnd::Failed("the world walker could not start (no GPU)".into()),
-            Some(("Choosing a character on the official servers", true)),
+            HandOverEnd::Failed(HandOverFailure::Walker),
+            Some(("Tessera could not start the world view.", false)),
+        ),
+        (
+            HandOverEnd::Failed(HandOverFailure::Screens),
+            Some(("Tessera could not open the character screens.", false)),
+        ),
+        (
+            HandOverEnd::Failed(HandOverFailure::Client),
+            Some((
+                "Tessera could not continue with the official session.",
+                false,
+            )),
         ),
     ];
     for (end, want) in ends {

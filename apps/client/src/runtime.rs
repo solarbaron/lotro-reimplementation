@@ -131,7 +131,7 @@ pub struct Runtime {
     /// Why the handed-over part of the run cannot go on (the character screens cannot
     /// open, or the walker never started): the client ends that part with the reason
     /// instead of entering a character by itself.
-    handed_failure: Option<String>,
+    handed_failure: Option<crate::official::flow::HandOverFailure>,
     /// Progression and crafting (decision 0024 P6): the windows' install names, the
     /// plugins' progression model, the P6 windows on the game UI.
     pub p6: crate::progression::P6Hub,
@@ -475,18 +475,19 @@ impl Runtime {
     }
 
     /// Why the handed-over part of the run cannot go on, once it cannot (the character
-    /// screens cannot open, the walker never started).
+    /// screens cannot open, the walker never started): the kind only.
     #[must_use]
-    pub fn handed_failure(&self) -> Option<&str> {
-        self.handed_failure.as_deref()
+    pub fn handed_failure(&self) -> Option<crate::official::flow::HandOverFailure> {
+        self.handed_failure
     }
 
-    /// Ends the handed-over part of the run with `reason` (no-op for other runs, and after
-    /// the first reason).
-    pub fn fail_handed(&mut self, reason: &str) {
+    /// Ends the handed-over part of the run with the kind of failure `kind` (no-op for other
+    /// runs, and after the first). Only the kind is logged: the underlying error can name
+    /// user or install paths ([`crate::official::flow::HandOverFailure`]).
+    pub fn fail_handed(&mut self, kind: crate::official::flow::HandOverFailure) {
         if self.handed && self.handed_failure.is_none() {
-            tracing::warn!("official session: {reason}");
-            self.handed_failure = Some(reason.to_owned());
+            tracing::warn!("official session: {}", kind.kind());
+            self.handed_failure = Some(kind);
         }
     }
 
@@ -607,7 +608,7 @@ impl Runtime {
     /// later enter on their own too.
     ///
     /// A handed-over official session never enters a character by itself
-    /// (`official-entry.md` §8.7): its part of the run ends with the reason instead
+    /// (`official-entry.md` §8.7): its part of the run ends with the kind of failure instead
     /// ([`Runtime::handed_failure`]), and the session stays at character selection until
     /// the client shuts it down.
     pub fn abandon_character_select(&mut self, reason: &str) {
@@ -616,7 +617,8 @@ impl Runtime {
         }
         if self.handed {
             self.character_select = false;
-            self.fail_handed(&format!("the character screens cannot open ({reason})"));
+            // Not the reason: it can name user or install paths.
+            self.fail_handed(crate::official::flow::HandOverFailure::Screens);
             return;
         }
         self.character_select = false;

@@ -358,10 +358,12 @@ impl EntryApp {
                 app.resumed(event_loop);
                 self.official = Some(app);
             }
-            Err(e) => {
-                tracing::error!("the character screens cannot open: {e:#}");
+            Err(_) => {
+                // The kind only: the error can name user or install paths.
+                let kind = super::flow::HandOverFailure::Client;
+                tracing::error!("official session: {}", kind.kind());
                 self.flow
-                    .characters_ended(super::flow::HandOverEnd::Failed(format!("{e:#}")));
+                    .characters_ended(super::flow::HandOverEnd::Failed(kind));
                 if let Err(e) = self.create_gfx(event_loop) {
                     self.fail(event_loop, e);
                 }
@@ -386,8 +388,9 @@ impl EntryApp {
                 .take_handed_end()
                 .unwrap_or(super::flow::HandOverEnd::Left);
             app.shutdown();
-            if let Some(e) = app.take_error() {
-                tracing::error!("official session: {e:#}");
+            if app.take_error().is_some() {
+                // Logged by kind when it happened; its text can name user or install paths.
+                tracing::debug!("official session: the handed-over client ended with an error");
             }
         }
         self.flow.characters_ended(end);

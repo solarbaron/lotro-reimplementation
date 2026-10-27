@@ -48,11 +48,16 @@
 //! `Event::ReturnedToCharacterSelect` and the latest list it has (a `0x6C` that came while
 //! in the world counts). The `0x6C` that follows the teardown is then a later list: its
 //! changes surface as `CharacterInfo` (new names) and `CharacterRemoved` (names gone), as
-//! every later list at character selection does (§8). Moves and chat lines that reach the
-//! driver after the teardown (sent before the client saw the return) are refused and
-//! counted ([`DriverCounters::outside_world`]), never sent. `ReturnedToCharacterSelect` is
-//! Tessera's neutral addition (§8 maps the teardown to the later list; engineering choice
-//! pending a spec answer, listed in `docs/m8-remediation.md` §15).
+//! every later list at character selection does. That row mapping is an engineering choice
+//! pending a spec answer (`docs/m8-remediation.md` §15, P §8): §8 maps a later list only to
+//! `Connected` or `CharacterInfo`, and says neither whether a later list replaces the whole
+//! list nor how a name that is gone is surfaced. Moves and chat lines that reach the driver
+//! after the teardown (sent before the client saw the return) are refused and counted
+//! ([`DriverCounters::outside_world`]), never sent; a refused move stays silent, a refused
+//! chat line also gives a system notice (`Event::Notice`), so the player sees that the line
+//! was not sent. `ReturnedToCharacterSelect` is Tessera's neutral addition (§8 maps the
+//! teardown to the later list; engineering choice pending a spec answer, listed in
+//! `docs/m8-remediation.md` §15).
 //!
 //! Portal space ends on the client's `Command::WorldLoaded` or after
 //! [`PORTAL_LOADING_TIMEOUT_SEC`] (§4.5 item 4). Each portal space starts with a fresh
@@ -123,6 +128,11 @@ pub const MAX_DATAGRAMS_PER_STEP: usize = 512;
 /// Most events the driver lets wait before it stops reading (module docs "Bounded events";
 /// `ARCHITECTURE.md` §19.4: reading stops once 256 items wait).
 pub const DRIVER_EVENT_CAP: usize = super::READ_PAUSE;
+
+/// The system notice for a chat line refused because the session left the world before
+/// the client saw the return (module docs "Leaving the world"). Tessera's text, an
+/// engineering choice (spec silent).
+pub const NOT_SENT_OUTSIDE_WORLD: &str = "Your line was not sent: you are no longer in the world.";
 
 /// Most old world connections kept (a later referral replaces the world connection).
 pub const MAX_OLD_LINKS: usize = 4;
@@ -1784,6 +1794,20 @@ impl<N: ConnectorNet> SessionDriver<N> {
                     command = cmd.name(),
                     "official session: not in the world; refused, not sent"
                 );
+                // A refused move stays silent; a refused chat line is a line the player
+                // typed, so a system notice says it was not sent. `ServerNotice`, not
+                // `ChatRejected`: the session is back at character selection, where a
+                // world event is not surfaced. Text and event are an engineering choice
+                // (spec silent, `docs/m8-remediation.md` §15). At most one per command, and
+                // none once the driver holds its cap of events (module docs "Bounded
+                // events").
+                if matches!(cmd, Command::Chat { .. }) && self.events.len() < DRIVER_EVENT_CAP {
+                    self.events.push_back(Event::ServerNotice {
+                        level: NoticeLevel::Info,
+                        seconds: 0,
+                        text: NOT_SENT_OUTSIDE_WORLD.to_owned(),
+                    });
+                }
                 Err(NetError::InvalidCommand("not in the world"))
             }
             Command::Move {

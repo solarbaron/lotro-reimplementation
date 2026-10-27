@@ -141,9 +141,54 @@ pub enum HandOverEnd {
     Left,
     /// The session ended: §8.6's row for its reason.
     SessionEnded(tessera_net::DisconnectReason),
-    /// The character screens or the walker could not start, or the client failed (the
-    /// reason as the message's detail).
-    Failed(String),
+    /// The character screens or the walker could not start, or the client failed: only the
+    /// kind of failure, never its error text (which can name user or install paths).
+    Failed(HandOverFailure),
+}
+
+/// Which part of the handed-over client could not go on ([`HandOverEnd::Failed`]). Only the
+/// kind is kept, logged and shown: the underlying error can name user or install paths, which
+/// the official part of a run neither shows nor logs (Tessera extends `official-entry.md`
+/// §7.3's "no credentials in logs" to them; an engineering choice pending a spec answer,
+/// `docs/m8-remediation.md` §15, E §7.3).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HandOverFailure {
+    /// The handed-over client could not be built.
+    Client,
+    /// The character screens cannot open (no screen data, no facts or no game UI).
+    Screens,
+    /// The world walker could not start (no window, no adapter).
+    Walker,
+    /// The handed-over client failed while it ran.
+    Run,
+}
+
+impl HandOverFailure {
+    /// A short name of the kind, for the log.
+    #[must_use]
+    pub fn kind(self) -> &'static str {
+        match self {
+            Self::Client => "the client could not start",
+            Self::Screens => "the character screens cannot open",
+            Self::Walker => "the world walker could not start",
+            Self::Run => "the client failed",
+        }
+    }
+
+    /// Tessera's own text for the message (§8.6 has no row for a failure of the client
+    /// itself, and the service's "The service said: ..." line is not used for it: nothing
+    /// came from the service). An engineering choice pending a spec answer
+    /// (`docs/m8-remediation.md` §15, E §8.6 / §8.7).
+    #[must_use]
+    pub fn message_text(self) -> &'static str {
+        match self {
+            Self::Client | Self::Run => {
+                "Tessera could not continue with the official session. The session has ended."
+            }
+            Self::Screens => "Tessera could not open the character screens. The session has ended.",
+            Self::Walker => "Tessera could not start the world view. The session has ended.",
+        }
+    }
 }
 
 /// The start screen's acceptance line (§4.1).
@@ -674,8 +719,9 @@ impl Flow {
     /// them or closed the window, the session ended, or they could not start; the window
     /// has shut them down, which ended the session and stopped their plugin host): the
     /// account form shows with both fields empty (§8.7, §4.5), with §8.6's message for a
-    /// session that ended (none when the player left), or `official.characters.unavailable`
-    /// with the failure as its detail. The warning is not shown again.
+    /// session that ended (none when the player left), or, when the client itself failed,
+    /// Tessera's own text for the kind of failure ([`HandOverFailure::message_text`], no
+    /// service detail). The warning is not shown again.
     pub fn characters_ended(&mut self, end: HandOverEnd) {
         if !self.handed_over {
             return;
@@ -685,9 +731,9 @@ impl Flow {
         let message = match &end {
             HandOverEnd::Left => None,
             HandOverEnd::SessionEnded(reason) => super::login::disconnect_message(reason),
-            HandOverEnd::Failed(why) => Some(Message {
-                text: text("official.characters.unavailable").to_owned(),
-                detail: (!why.trim().is_empty()).then(|| super::login::detail_line(why)),
+            HandOverEnd::Failed(kind) => Some(Message {
+                text: kind.message_text().to_owned(),
+                detail: None,
             }),
         };
         if let Some(m) = message {

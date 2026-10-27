@@ -1533,8 +1533,7 @@ mod tests {
         rt.p1.set_failed("strings: unreadable");
         ui.open_screens(&mut rt);
         assert!(
-            rt.handed_failure()
-                .is_some_and(|r| r.contains("character screens cannot open")),
+            rt.handed_failure() == Some(crate::official::flow::HandOverFailure::Screens),
             "{:?}",
             rt.handed_failure()
         );

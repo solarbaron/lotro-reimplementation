@@ -331,16 +331,17 @@ impl App {
         if !self.handed_over {
             return false;
         }
-        use crate::official::flow::HandOverEnd;
+        use crate::official::flow::{HandOverEnd, HandOverFailure};
         let Some(rt) = self.runtime.as_mut() else {
             return false;
         };
-        if let Some(reason) = self.host.as_ref().and_then(|h| h.failed.clone()) {
-            rt.fail_handed(&format!("the world walker could not start ({reason})"));
+        if self.host.as_ref().is_some_and(|h| h.failed.is_some()) {
+            // The kind only: the walker's error can name user or install paths.
+            rt.fail_handed(HandOverFailure::Walker);
         }
         let end =
-            if let Some(r) = rt.handed_failure() {
-                Some(HandOverEnd::Failed(r.to_owned()))
+            if let Some(kind) = rt.handed_failure() {
+                Some(HandOverEnd::Failed(kind))
             } else {
                 rt.world
                     .as_ref()
@@ -377,12 +378,18 @@ impl App {
 
     /// The run failed: the error is kept and the event loop ends; for a handed-over session
     /// only this part of the run ends (the start screen's window shows the account form
-    /// with the error's text).
+    /// with Tessera's text for a failed client). A handed-over run logs only the kind of
+    /// failure, never the error's text, which can name user or install paths
+    /// ([`crate::official::flow::HandOverFailure`]).
     fn fail(&mut self, event_loop: &ActiveEventLoop, err: anyhow::Error) {
-        tracing::error!("{err:#}");
-        let text = format!("{err:#}");
+        let kind = crate::official::flow::HandOverFailure::Run;
+        if self.handed_over {
+            tracing::error!("official session: {}", kind.kind());
+        } else {
+            tracing::error!("{err:#}");
+        }
         self.error.get_or_insert(err);
-        self.end_part(event_loop, crate::official::flow::HandOverEnd::Failed(text));
+        self.end_part(event_loop, crate::official::flow::HandOverEnd::Failed(kind));
     }
 
     fn create_gfx(&self, event_loop: &ActiveEventLoop) -> anyhow::Result<Gfx> {
@@ -1078,7 +1085,7 @@ mod tests {
 
     use clap::Parser as _;
 
-    use crate::official::flow::HandOverEnd;
+    use crate::official::flow::{HandOverEnd, HandOverFailure};
 
     fn handed_app(dir: &std::path::Path) -> super::App {
         let s = |p: &std::path::Path| p.to_str().expect("utf-8").to_owned();
@@ -1105,7 +1112,7 @@ mod tests {
         assert!(!app.handed_over_check());
         assert_eq!(app.left_or_session_end(), HandOverEnd::Left);
         assert!(app.end_handed_part(HandOverEnd::Left), "not the event loop");
-        assert!(app.end_handed_part(HandOverEnd::Failed("later".into())));
+        assert!(app.end_handed_part(HandOverEnd::Failed(HandOverFailure::Run)));
         assert!(app.handed_over_ended());
         assert_eq!(
             app.take_handed_end(),
@@ -1144,10 +1151,11 @@ mod tests {
             h.failed = Some("no adapter".into());
         }
         assert!(app.handed_over_check());
-        assert!(matches!(
+        assert_eq!(
             app.take_handed_end(),
-            Some(HandOverEnd::Failed(r)) if r.contains("world walker could not start")
-        ));
+            Some(HandOverEnd::Failed(HandOverFailure::Walker)),
+            "the kind only, not the walker's error"
+        );
         app.shutdown();
     }
 

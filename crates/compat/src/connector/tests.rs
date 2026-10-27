@@ -3231,7 +3231,7 @@ fn a_later_list_at_character_selection_surfaces_its_changes() {
 }
 
 #[test]
-fn moves_and_chat_after_the_teardown_are_refused_and_counted() {
+fn moves_and_chat_after_the_teardown_are_refused_and_counted_and_chat_is_noticed() {
     let (world, mut d, mut login) = driver_in_world();
     world.deliver(login.event(0x3000_001B, &[0]), LOGIN_SERVER);
     d.step(2.0, true, &go);
@@ -3257,6 +3257,16 @@ fn moves_and_chat_after_the_teardown_are_refused_and_counted() {
     ));
     d.step(2.2, true, &go);
     assert_eq!(d.counters().outside_world, 2);
+    // The refused move is silent; the refused chat line gives one system notice.
+    let events = d.take_events();
+    assert!(
+        matches!(
+            events.as_slice(),
+            [Event::ServerNotice { level: tessera_net::NoticeLevel::Info, seconds: 0, text }]
+                if text == super::session_phase::NOT_SENT_OUTSIDE_WORLD
+        ),
+        "{events:?}"
+    );
     let sent = sent_blobs(&world);
     assert!(
         !sent.iter().any(|(op, _)| *op == 0x24 || *op == 0x30),

@@ -12,8 +12,11 @@
 //!   (class-175 tables and class-1942 barter entries, with the look-up quantities of §6.2);
 //! - the cross-links of §10.
 //!
-//! The census figures are observations of one install (§1). After a game update they may
+//! The census figures are observations of one install (§1): here the owner's install as
+//! patched on 2026-10-27 (`economy.md` states the figures of the install before that patch
+//! until it is re-measured). After a game update they may
 //! change: `TESSERA_ECONOMY_CENSUS=report` prints census differences instead of failing
+
 //! (invariants still fail). Only counts and error kinds are printed; no game data leaves the
 //! install. Run with
 //! `cargo test --release -p tessera-formats --test gameplay_economy_real_data -- --nocapture`.
@@ -184,7 +187,7 @@ fn first_pass(
 const CENSUS: &[(EconomyKind, &[(u32, usize)])] = &[
     (
         EconomyKind::TrophyList,
-        &[(1237, 15_224), (1917, 179), (1918, 47)],
+        &[(1237, 15_227), (1917, 179), (1918, 47)],
     ),
     (
         EconomyKind::TreasureGroupProfile,
@@ -327,7 +330,7 @@ const ATTACHED: &[AttachedRow] = &[
         &[
             (1723, 1_949),
             (794, 1_300),
-            (2814, 3_390),
+            (2814, 3_393),
             (795, 600),
             (802, 246),
             (799, 126),
@@ -342,7 +345,7 @@ const ATTACHED: &[AttachedRow] = &[
             (2227, 1_200),
             (2728, 8_326),
         ],
-        49_757,
+        49_760,
     ),
     (
         1917,
@@ -395,10 +398,10 @@ const FIELD_TARGETS: &[FieldCensus] = &[
         None,
         Some("LootGen_TrophyList_ItemOrProfile"),
         &[
-            (796, 41_762),
-            (795, 5_658),
+            (796, 41_767),
+            (795, 5_663),
             (802, 3_088),
-            (2814, 2_173),
+            (2814, 2_175),
             (799, 1_727),
             (797, 299),
             (805, 273),
@@ -689,7 +692,7 @@ const FIELD_TARGETS: &[FieldCensus] = &[
         Some("Barter_ItemStruct"),
         Some("Barter_Item"),
         &[
-            (796, 54_827),
+            (796, 54_862),
             (795, 3_589),
             (802, 123),
             (799, 8),
@@ -703,12 +706,12 @@ const FIELD_TARGETS: &[FieldCensus] = &[
         Some("Barter_RewardItemStruct"),
         Some("Barter_Item"),
         &[
-            (796, 20_818),
-            (795, 13_583),
+            (796, 20_844),
+            (795, 13_589),
             (802, 3_742),
             (805, 1_524),
             (799, 1_307),
-            (2814, 838),
+            (2814, 841),
             (797, 354),
             (4178, 21),
             (803, 20),
@@ -1154,7 +1157,7 @@ fn economy_family_census_and_invariants() {
     }
     for (class, (entries, quantity, group)) in &trophy_entries {
         let expected = match class {
-            1237 => (77_188, 72_004, 170),
+            1237 => (77_200, 72_016, 170),
             1917 => (436, 121, 73),
             _ => (121, 0, 0),
         };
@@ -1370,7 +1373,7 @@ fn economy_family_census_and_invariants() {
         lookup_profiles += usize::from(has_lookup);
     }
     for (shape, expected) in [
-        (BarterShape::Item { costs: 1 }, 27_676),
+        (BarterShape::Item { costs: 1 }, 27_711),
         (BarterShape::Item { costs: 2 }, 12_720),
         (BarterShape::Item { costs: 3 }, 1_811),
         (
@@ -1394,12 +1397,12 @@ fn economy_family_census_and_invariants() {
             expected,
         );
     }
-    census.eq("barter lists", shapes.values().sum(), 42_214);
-    census.eq("barter costs", costs, 58_556);
-    census.eq("barter cost items", cost_items, 58_554);
+    census.eq("barter lists", shapes.values().sum(), 42_249);
+    census.eq("barter costs", costs, 58_591);
+    census.eq("barter cost items", cost_items, 58_589);
     census.eq("barter look-up costs", lookups, 5_565);
     census.eq("barter look-up profiles", lookup_profiles, 342);
-    census.eq("barter reward items", rewards, 42_207);
+    census.eq("barter reward items", rewards, 42_242);
     census.eq("barter reputation rewards", reputation, 7);
     census.eq("barter sound categories", sounds, 3);
     census.eq("barter min-usage-level rewards", uses_min, 1_649);
@@ -1618,7 +1621,12 @@ fn economy_family_census_and_invariants() {
         }
     }
     census.eq("recipes found by crafted-by", crafted, 7_791);
-    census.eq("barter rewards found by bartered-for", bartered, 42_207);
+    // §10: every item reward of a barter list is found by bartered-for. An invariant over
+    // this run's own reward count, not a census figure.
+    assert_eq!(
+        bartered, rewards,
+        "barter reward items not found by bartered-for"
+    );
     eprintln!(
         "economy links: {} loot edges, {attaching} attaching records, {} loot tables, longest \
          path {}; drops-from sample {with_source} of {} items with sources (deepest {deepest}); \
@@ -1756,12 +1764,14 @@ fn economy_family_census_and_invariants() {
             }
         }
     }
-    census.eq("barter entries", entries, 42_214);
-    census.eq(
-        "barter entries equal to the property form",
-        entries_ok,
-        42_214,
+    census.eq("barter entries", entries, 42_249);
+    // §9.3: every barter entry equals the property form. An invariant over this run's own
+    // entry count, not a census figure.
+    assert_eq!(
+        entries_ok, entries,
+        "barter entries equal to the property form"
     );
+
     census.eq("look-up costs by minimum usage level", by_min_level, 2_446);
     census.eq("look-up costs by item level", by_item_level, 3_119);
     census.eq("look-up costs clamped at the high end", clamped, 220);

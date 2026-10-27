@@ -56,8 +56,11 @@ fn bytecode_census() {
     let c = Census::of(code);
 
     // §1, §2, V1, V2.
-    assert_eq!(c.len, 1_919_904, "L");
-    assert_eq!(c.instructions, 362_178, "V1 instruction count");
+    // The whole-block counts L, V1, V5 and V7 are those of the install as patched on
+    // 2026-10-27 (`wlib-bytecode.md` states the earlier 1,919,904, 362,178, 24,929 and
+    // 134,547); the patch added three instructions to one body.
+    assert_eq!(c.len, 1_919_916, "L");
+    assert_eq!(c.instructions, 362_181, "V1 instruction count");
     assert_eq!(c.bodies, 18_323, "V2 body count");
     assert_eq!(c.uses(0x10), 18_323, "V2 frame entries");
     // V3: return width per body.
@@ -85,7 +88,7 @@ fn bytecode_census() {
     .collect();
     assert_eq!(c.immediate_types, imm, "V4 immediate type bytes");
     // V5, §3.4.
-    assert_eq!(c.branch_targets, 24_929, "V5 branch targets");
+    assert_eq!(c.branch_targets, 24_930, "V5 branch targets");
     assert_eq!(c.switches, 223, "switches");
     assert_eq!(c.uses(0x57), 223, "all switches are 0x57");
     assert_eq!(
@@ -100,7 +103,8 @@ fn bytecode_census() {
         "frame-cell accesses: {} in all, {} touching a local cell",
         c.frame_accesses, c.local_accesses
     );
-    assert_eq!(c.frame_accesses, 134_547, "V7 frame-cell accesses");
+    assert_eq!(c.frame_accesses, 134_548, "V7 frame-cell accesses");
+
     assert_eq!(c.this_accesses, 7_329, "V8 this-attribute accesses");
     // §5 operand censuses.
     assert_eq!(c.virtual_calls, 8_574, "0x14 sites");

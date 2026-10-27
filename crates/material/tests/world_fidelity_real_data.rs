@@ -3,8 +3,10 @@
 //! (read-only), skipped unless `TESSERA_GAME_DIR` is set:
 //!
 //! - `record_counts_and_surface_inputs`: every surface record (0x31), material (0x30) and
-//!   shader record (0x2B) still decodes (13,781, 24,094 and 510 on the reference install,
-//!   `material.md` §4.1, §6.1, §7.1); every shader record's texture-matrix bindings are
+//!   shader record (0x2B) still decodes (at least the 13,781, 24,094 and 510 of the spec's
+//!   install, `material.md` §4.1, §6.1, §7.1, kept as lower bounds because content patches
+//!   add records; 13,783, 24,096 and 510 after the 2026-10-27 patch); every shader record's
+//!   texture-matrix bindings are
 //!   complete (§7.3: 407 matrices, all seven values each); every surface record resolves
 //!   with its feature flags (§11) and its lighting inputs (`lighting.md` §4.1) at several
 //!   times, with every effective float curve and colour finite.
@@ -110,9 +112,14 @@ fn record_counts_and_surface_inputs() {
         material_dids.len(),
         shader_dids.len()
     );
-    assert_eq!(surface_dids.len(), 13_781, "0x31 count (material.md §4.1)");
-    assert_eq!(material_dids.len(), 24_094, "0x30 count (§6.1)");
-    assert_eq!(shader_dids.len(), 510, "0x2B count (§7.1)");
+    // Lower bounds: the counts of the spec's install. Every record decodes to its last
+    // byte (the loops above); content patches add records.
+    assert!(
+        surface_dids.len() >= 13_781,
+        "0x31 count (material.md §4.1)"
+    );
+    assert!(material_dids.len() >= 24_094, "0x30 count (§6.1)");
+    assert!(shader_dids.len() >= 510, "0x2B count (§7.1)");
 
     // Texture-matrix bindings (§7.3).
     let matrices: usize = layouts.values().map(|l| l.matrices.len()).sum();

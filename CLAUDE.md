@@ -620,8 +620,8 @@ fine. Format-level terms like "DID" or "landblock" are fine.
     constructor and the `NetworkAccess` gate (every bind, send, lookup and HTTPS request) require (`consent`,
     `net_access`, `credentials`), the account form and the progress, world-list, queue and
     error screens (`apps/client/src/official/`), `tessera-net` Account events and commands,
-    fuzz `compat_consent_record` and `client_official_entry`; the character screens stay a
-    placeholder until a session can feed them.
+    fuzz `compat_consent_record` and `client_official_entry`; since C3 the session feeds the
+    real character screens (the interim screen says "Loading characters…").
   - **Stage-1 build (2026-10-25/26, merged):** `m8-conform` conformed `login`, `session` and
     `world` to the accepted specs (handshake `checkValue` with session Vector 5, per-buffer send
     checksum, check-before-commit of fragments, the three auth modes, multiplexer reaping,
@@ -640,7 +640,10 @@ fine. Format-level terms like "DID" or "landblock" are fine.
     Every network operation needs the revocable `NetworkAccess` (moved, never copied;
     Withdraw calls `revoke_all`); after a cancel, a drop or Withdraw nothing more is sent and
     no handshake connection resends the ticket. Four fix rounds after two reviews and audits.
-    `availability()` stays `NotBuilt` until the character-screen hand-over exists.
+    Since C5 (2026-10-27) `availability()` answers `Available`: `--official` reaches the login
+    form after the start screen, the ban-risk warning and the acceptance record; unit tests
+    refuse to log in on the live backends and a source scan keeps integration tests away from
+    the live connector.
   - **Built 2026-10-27 (M8 plan C2, C3):** `m8-connector-support` (the connector waits for the
     session's next timer; no user paths in install logs) and `m8-hand-over` (the official
     session feeds the character screens: list, enter world, `EnterWorldFailed` back to the
@@ -654,8 +657,10 @@ fine. Format-level terms like "DID" or "landblock" are fine.
     tables (closure from 0x07000417 + 0x07000000, script-table §8.2), chat categories from the
     install's enum, string-table names in the login's language; every per-entity, per-message
     and per-pass cost is bounded, and open spec questions are skipped and counted.
-  - **Still needs more work:** the steps in `docs/m8-plan.md`: turning on `availability()` (C5), the spec answers of `docs/m8-remediation.md` §15, the P1–P6 gameplay
-    messages (stage 2), and owner live verification (exit criterion 4).
+  - **Still needs more work:** the steps in `docs/m8-plan.md`: the spec answers of
+    `docs/m8-remediation.md` §15 (about 75 questions; S1 lists the eight that block the first
+    live run) and the conformance after them (C7), the P1–P6 gameplay messages (stage 2), and
+    the owner's live runs L1–L7 (exit criterion 4).
   - **Clean-room and content boundaries:** no shipping, mirroring or linking to client
     binaries, dat files, patches or old clients; no modified, patched, redirected or
     injected official client; no Daybreak keys or other secrets in the repository,

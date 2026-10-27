@@ -857,3 +857,15 @@ From the `m8-world-feed` build (C4):
   display mode (display cut, then escapes; the code: yes).
 - **W §5.1:** whether a 0x0D carried inside another batch ends with the tail flag (the spec covers
   only a top-level 0x0D; the code accepts both and counts which).
+
+From the `m8-availability` audit (C5):
+
+- **E §4.4, OE-T9, §10.2:** still describe a placeholder-only build ("While the backend is the
+  placeholder"; the owner check of the not-available message). Every build now answers Available.
+- **E §8.7, §4.5, §4.6, OE-T20, invariant 9:** describe the character placeholder that the
+  hand-over replaced; the spec has no rule for closing the window on the real character screens
+  or in the world (the code ends that part and returns to the account form).
+- **E §4.2:** whether options such as `--autorun`, `--exit-after-frames`, `--camera-loop`,
+  `--spawn`, `--place`, `--fly`, `--mount`, `--crowd`, `--open-panel` must conflict with
+  `--official` (today they are accepted and dropped by the hand-over's allowlist); `--autorun` is
+  automation (decision 0034 §4).

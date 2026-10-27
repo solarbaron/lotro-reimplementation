@@ -648,8 +648,13 @@ fine. Format-level terms like "DID" or "landblock" are fine.
     `Command::WorldLoaded` once per placement, so 0xF4 follows play §4.5 item 4; the handed-over
     client takes an allowlist of options, so no scripted input reaches official play; a
     test-only in-memory login service). Each reviewed twice, fixed and audited.
-  - **Still needs more work:** the steps in `docs/m8-plan.md`: the in-world feed (C4), turning on
-    `availability()` (C5), the spec answers of `docs/m8-remediation.md` §15, the P1–P6 gameplay
+  - **Built 2026-10-27 (M8 plan C4, `m8-world-feed`):** entities from 0x98/0x52 (created at
+    their first position), 0x40 despawns, batches 0x0D/0x4C, remote motion, appearance (uniform
+    scale), world and chat-server chat lines, 0xCC state schemas built from the install's script
+    tables (closure from 0x07000417 + 0x07000000, script-table §8.2), chat categories from the
+    install's enum, string-table names in the login's language; every per-entity, per-message
+    and per-pass cost is bounded, and open spec questions are skipped and counted.
+  - **Still needs more work:** the steps in `docs/m8-plan.md`: turning on `availability()` (C5), the spec answers of `docs/m8-remediation.md` §15, the P1–P6 gameplay
     messages (stage 2), and owner live verification (exit criterion 4).
   - **Clean-room and content boundaries:** no shipping, mirroring or linking to client
     binaries, dat files, patches or old clients; no modified, patched, redirected or

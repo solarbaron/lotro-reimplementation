@@ -33,6 +33,7 @@ by new sessions, a default-mode audit and a squashed merge ([`m8-remediation.md`
 | Fuzz coverage of `crates/compat` | All parsers covered (`m8-conform-notes`), on main |
 | Live connector (`crates/compat/src/connector/`, HTTPS on ureq/rustls) | Merged 2026-10-26 after four fix rounds (C1) |
 | Hand-over of an official session to the character screens | Built (C3, 2026-10-27): list, enter world, return to character select, `/logout`, a loading signal per placement |
+| In-world feed from the official session | Built (C4, 2026-10-27): entities appear, move, change and leave; chat lines; state schemas and chat categories from the install; string-table text |
 | `availability()` | `NotBuilt`: `--official` stops before any network use (C5) |
 | Live verification (exit criterion 4) | Not started |
 

@@ -817,3 +817,6 @@ From the `m8-hand-over` build (C3):
   `CharacterInfo`.
 - **E §8.6 / §8.7:** which text shows when the handed part ends because the client itself cannot
   start the character screens or the walker (not a service reply).
+- **P §7.2 / §8:** whether a chat line refused after the teardown, before the client sees the
+  return, is reported to the player, and with which event and text (the code sends a server
+  notice with Tessera's text; refused moves stay silent).

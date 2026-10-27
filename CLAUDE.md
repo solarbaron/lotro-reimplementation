@@ -641,8 +641,14 @@ fine. Format-level terms like "DID" or "landblock" are fine.
     Withdraw calls `revoke_all`); after a cancel, a drop or Withdraw nothing more is sent and
     no handshake connection resends the ticket. Four fix rounds after two reviews and audits.
     `availability()` stays `NotBuilt` until the character-screen hand-over exists.
-  - **Still needs more work:** the steps in `docs/m8-plan.md`: the connector support package
-    (C2), the §8.7 hand-over to the character screens (C3), the in-world feed (C4), turning on
+  - **Built 2026-10-27 (M8 plan C2, C3):** `m8-connector-support` (the connector waits for the
+    session's next timer; no user paths in install logs) and `m8-hand-over` (the official
+    session feeds the character screens: list, enter world, `EnterWorldFailed` back to the
+    list; `Event::ReturnedToCharacterSelect`, `Command::LeaveWorld` from a typed `/logout`,
+    `Command::WorldLoaded` once per placement, so 0xF4 follows play §4.5 item 4; the handed-over
+    client takes an allowlist of options, so no scripted input reaches official play; a
+    test-only in-memory login service). Each reviewed twice, fixed and audited.
+  - **Still needs more work:** the steps in `docs/m8-plan.md`: the in-world feed (C4), turning on
     `availability()` (C5), the spec answers of `docs/m8-remediation.md` §15, the P1–P6 gameplay
     messages (stage 2), and owner live verification (exit criterion 4).
   - **Clean-room and content boundaries:** no shipping, mirroring or linking to client

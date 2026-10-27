@@ -19,12 +19,13 @@ use crate::login::{
     compression_dictionary_map_did, discover_network_version, extract_didver_from_dat_file,
     resolve_bit_tree_table, resolve_install_language, root_did_map_from_superblock,
 };
-use crate::play::chat::{LiteralTexts, TextResolver};
+use crate::play::chat::{CATEGORY_SAY, CATEGORY_TELL, ChatCategories, LiteralTexts, TextResolver};
 use crate::session::{BitTreeCodec, BitTreeTable};
 use crate::world::{
-    LocalizedTokenText, PortalStateSchema, PortalStateSchemaLookup, PropertySchemaLookup,
-    PropertyType,
+    EncodedPropertyValue, LocalizedTokenText, PortalStateSchema, PortalStateSchemaLookup,
+    PropertySchemaLookup, PropertyType,
 };
+use tessera_net::ChatChannel;
 
 /// The archive whose superblock names the Master DID Map (`official-login.md` §2.4.3,
 /// `official-session.md` §4.1.3 item 1) and whose header carries `didver` (§2.4.1 item 2).
@@ -89,16 +90,64 @@ pub trait InstallData: Send + Sync + std::fmt::Debug {
         None
     }
 
-    /// The display text of a `LocalizedTokenText`. The default resolves literal texts only.
+    /// The display text of a `LocalizedTokenText`. The default resolves literal texts only;
+    /// the client's resolves references through the install's string tables
+    /// (`string-table.md` §9).
     fn resolve_text(&self, text: &LocalizedTokenText) -> Option<String> {
         LiteralTexts.resolve(text)
     }
+
+    /// The value of `pid` in the baseline property set of the game object `template_did`
+    /// (`template_did` + `0x09000000`, `property-system.md` §6.2;
+    /// `official-messages-world.md` §6 row `0x98 + 0x52`), in the wire value form, or
+    /// `None` when the install has none (or the value has no wire form the caller reads:
+    /// texts with arguments, nested tables). The default knows none.
+    fn template_value(&self, _template_did: u32, _pid: u32) -> Option<EncodedPropertyValue> {
+        None
+    }
+
+    /// Every key of the chat text category enum (`0x230002A8` with its base chain,
+    /// `official-messages-play.md` §6.7), or `None` when the client did not read it (the
+    /// default). [`chat_categories`] keeps only the categories the spec names that are
+    /// among these keys.
+    fn chat_category_keys(&self) -> Option<Vec<u32>> {
+        None
+    }
 }
 
-/// Makes the [`InstallData`] of the install root it is given, on the connector's thread
-/// (opening the archives can take a while; it never runs on the frame thread).
+/// The chat categories of the session (`official-messages-play.md` §6.7): the numbers the
+/// spec names (Say `5`, Tell `6`), each kept only when the install's chat text category enum
+/// has it ([`InstallData::chat_category_keys`]). Without the install's enum the spec's numbers
+/// are used as they are. Yell and Fellowship stay unmapped (their numbers are OPEN, §6.7):
+/// lines in other categories are counted by the play layer, and the user channel slots are
+/// the chat server's rooms, which carry their names (`crate::chat_session`).
+#[must_use]
+pub fn chat_categories(data: &dyn InstallData) -> ChatCategories {
+    let Some(keys) = data.chat_category_keys() else {
+        tracing::debug!("official session: no chat category enum from the install; spec numbers");
+        return ChatCategories::default();
+    };
+    let mut c = ChatCategories::empty();
+    if keys.contains(&CATEGORY_SAY) {
+        c.set(CATEGORY_SAY, ChatChannel::Say);
+    }
+    if keys.contains(&CATEGORY_TELL) {
+        c.set(
+            CATEGORY_TELL,
+            ChatChannel::Tell {
+                peer: String::new(),
+            },
+        );
+    }
+    c
+}
+
+/// Makes the [`InstallData`] of the install root it is given, for the `<Lang>` token the
+/// login selected (`official-login.md` §2.2: the language whose string tables texts resolve
+/// through), on the connector's thread (opening the archives can take a while; it never
+/// runs on the frame thread).
 pub type InstallDataLoader =
-    Box<dyn FnOnce(&Path) -> Result<Arc<dyn InstallData>, InstallProblem> + Send>;
+    Box<dyn FnOnce(&Path, &str) -> Result<Arc<dyn InstallData>, InstallProblem> + Send>;
 
 /// Finds the install on the connector's thread (install discovery can scan the disk).
 pub type InstallLocator = Box<dyn FnOnce() -> Result<LocatedInstall, InstallProblem> + Send>;
@@ -294,7 +343,7 @@ pub fn discover_local(
     let (guid, archive_version) = extract_didver_from_dat_file(&root.join(GENERAL_ARCHIVE))
         .or_else(|_| extract_didver_from_dat_file(&root.join(GAMELOGIC_ARCHIVE)))?;
     let version = VersionInfo::new(netver, guid, archive_version)?;
-    let data = loader(root).map_err(|why| {
+    let data = loader(root, &language).map_err(|why| {
         tracing::warn!(problem = %why, "official login: the install's records cannot be read");
         invalid("the install's records cannot be read")
     })?;

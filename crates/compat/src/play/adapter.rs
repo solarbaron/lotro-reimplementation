@@ -130,6 +130,37 @@ pub struct PlayAdapter {
     counters: PlayCounters,
 }
 
+/// A located wire position: the location, the anchor and the heading.
+pub type Located = (tessera_net::Location, Option<tessera_net::Anchor>, f32);
+
+/// The location, anchor and heading of a full wire position (`0xBF`, a `0xCE` placement,
+/// `0x59` waypoints; `official-messages-world.md` §2.5, `official-messages-play.md` §4.4):
+/// `heading` when the message carries a quantized one, else the orientation's heading, else
+/// 0. `None` when the position is no valid location. The one reading of positions the
+/// adapter and the connector's entity feed share.
+#[must_use]
+pub fn position_location(pos: &WirePosition, heading: Option<f32>) -> Option<Located> {
+    let (loc, anchor) = wire_location(pos)?;
+    let heading = heading
+        .or_else(|| quaternion_heading(pos.orientation))
+        .unwrap_or(0.0);
+    Some((loc, anchor, heading))
+}
+
+/// [`position_location`] of a `0xCE` placement (`official-messages-world.md` §5.4): its
+/// quantized heading when it has one; `None` for an attachment.
+#[must_use]
+pub fn placement_location(placement: &EntityPlacement) -> Option<Located> {
+    match placement {
+        EntityPlacement::WorldWithHeading {
+            position,
+            heading_raw,
+        } => position_location(position, Some(wire_heading(*heading_raw))),
+        EntityPlacement::WorldFull { position } => position_location(position, None),
+        EntityPlacement::Attachment { .. } => None,
+    }
+}
+
 fn rpc_event(rpc: &PlayRpc) -> Result<OutgoingEvent, PlayError> {
     OutgoingEvent::new(OPCODE_SCRIPT_RPC, rpc.to_bytes()?)
 }
@@ -390,17 +421,6 @@ impl PlayAdapter {
         t
     }
 
-    fn located(
-        pos: &WirePosition,
-        heading: Option<f32>,
-    ) -> Option<(tessera_net::Location, Option<tessera_net::Anchor>, f32)> {
-        let (loc, anchor) = wire_location(pos)?;
-        let heading = heading
-            .or_else(|| quaternion_heading(pos.orientation))
-            .unwrap_or(0.0);
-        Some((loc, anchor, heading))
-    }
-
     fn moved(id: u64, loc: &tessera_net::Location, heading: f32, velocity: [f32; 3]) -> Event {
         let [x, y, z] = velocity;
         Event::EntityMoved {
@@ -463,7 +483,11 @@ impl PlayAdapter {
                 }
             }
             PlayMessage::SetPosition { entity, msg } => {
-                match msg.position.as_ref().and_then(|p| Self::located(p, None)) {
+                match msg
+                    .position
+                    .as_ref()
+                    .and_then(|p| position_location(p, None))
+                {
                     Some((loc, _, heading)) => out.events.push(Self::moved(
                         *entity,
                         &loc,
@@ -575,14 +599,7 @@ impl PlayAdapter {
     }
 
     fn on_position(&mut self, u: &crate::world::PositionUpdate, out: &mut PlayOutput) {
-        let located = match &u.placement {
-            EntityPlacement::WorldWithHeading {
-                position,
-                heading_raw,
-            } => Self::located(position, Some(wire_heading(*heading_raw))),
-            EntityPlacement::WorldFull { position } => Self::located(position, None),
-            _ => None,
-        };
+        let located = placement_location(&u.placement);
         // §4.4.1, §4.5 item 3: `seq_byte` is present exactly when `header_flags` bit 3 is
         // set (`official-messages-world.md` §5.4). For the local player the stamp is
         // applied first, whatever the placement: a newer or equal stamp is adopted, the
@@ -756,6 +773,7 @@ impl PlayAdapter {
 }
 
 /// The velocity components of `0xCE`, `0.0` where absent (`official-messages-world.md` §5.4).
-fn velocity_or_zero(v: [Option<f32>; 3]) -> [f32; 3] {
+#[must_use]
+pub fn velocity_or_zero(v: [Option<f32>; 3]) -> [f32; 3] {
     v.map(|c| c.unwrap_or(0.0))
 }

@@ -3893,3 +3893,154 @@ fn the_official_flow_hands_its_session_to_the_character_screens_and_back() {
     assert_eq!(f.flow.constructions(), 1);
     assert_eq!(service.seen().binds, 1);
 }
+
+// ----- the world feed over the live connector (M8 plan C4) -----
+
+/// Start screen → login → world list → character list (handed over) → enter world, then the
+/// synthetic world plays another entity: the walker's entity events show it created at its
+/// place with its name, moving and leaving, and the chat shows its line
+/// (`official-messages-world.md` §5.1–§5.4, `official-messages-play.md` §6.5.1, §8). The
+/// walk stops at `net::World` (its entity events, entity table and chat lines): the
+/// walker's drawing of them and the parts that need the install (schemas, string tables,
+/// template baselines) are covered by the compat tests and the real-data tests.
+#[cfg(unix)]
+#[test]
+fn the_official_world_feeds_the_walker_and_the_chat() {
+    use tessera_compat::connector::test_support::{
+        CHARACTER, NPC, NPC_AT, NPC_NAME, NPC_TEMPLATE, SyntheticService, chat_line, entity_batch,
+        entity_properties, position,
+    };
+    use tessera_net::{ChatChannel, EntityId, EntityKind, SessionState};
+
+    let _guard = net_lock();
+    let service = SyntheticService::new();
+    let install = tempfile::tempdir().expect("temp dir");
+    let mut f = fixture(Availability::Available);
+    let mut flow = Flow::new(
+        config(f.record.path(), f.settings.path(), WarningText::shipped()),
+        Box::new(SyntheticBackends {
+            service: service.clone(),
+            install: install.path().join("install"),
+        }),
+        Box::new(CountingHost::default()),
+    );
+    std::mem::swap(&mut f.flow, &mut flow);
+    f.reach_login("acct", "pw");
+    // Each stage has its own deadline, so a slow stage names itself.
+    let stage = || Instant::now() + Duration::from_secs(10);
+    let until = stage();
+    while f.flow.login_screen() != Some(&LoginScreen::Worlds) {
+        assert!(Instant::now() < until, "no world list");
+        f.flow.tick(Instant::now());
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    f.flow
+        .device_input(&press(Key::Enter, Instant::now()), &|_, _| None);
+    let until = stage();
+    while f.flow.screen() != Screen::Characters {
+        assert!(Instant::now() < until, "no character list");
+        f.flow.tick(Instant::now());
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    assert_eq!(f.flow.take_request(), Some(FlowRequest::HandOver));
+    let handed = f.flow.take_hand_over().expect("the hand-over");
+    let mut world = crate::net::World::handed_over(Instant::now(), handed);
+    world.capture_entity_events(true);
+    world
+        .send_command(
+            Instant::now(),
+            Command::EnterWorld {
+                character: CHARACTER.to_owned(),
+            },
+        )
+        .expect("enter");
+    let until = stage();
+    while world.state() != SessionState::InWorld {
+        assert!(Instant::now() < until, "not entered: {:?}", world.state());
+        world.update(Instant::now());
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    let mut events = Vec::new();
+    let mut wait_entity =
+        |world: &mut crate::net::World, what: &str, pred: &dyn Fn(&Event) -> bool| {
+            let until = stage();
+            loop {
+                assert!(Instant::now() < until, "no {what}");
+                world.update(Instant::now());
+                events.clear();
+                world.drain_entity_events(&mut events, usize::MAX);
+                if let Some(e) = events.iter().find(|e| pred(e)) {
+                    return e.clone();
+                }
+                std::thread::sleep(Duration::from_millis(2));
+            }
+        };
+
+    assert!(service.send_world_event(
+        0x0D,
+        Some(NPC),
+        &entity_batch(
+            NPC,
+            NPC_TEMPLATE,
+            &entity_properties(NPC_NAME, true),
+            NPC_AT
+        ),
+    ));
+    let made = wait_entity(
+        &mut world,
+        "creation",
+        &|e| matches!(e, Event::EntityCreated { id, .. } if *id == EntityId(NPC)),
+    );
+    assert!(
+        matches!(&made, Event::EntityCreated { kind: EntityKind::NonPlayer, name, .. } if name == NPC_NAME),
+        "{made:?}"
+    );
+    assert_eq!(
+        world
+            .entities()
+            .get(&EntityId(NPC))
+            .map(|e| e.name.as_str()),
+        Some(NPC_NAME)
+    );
+
+    assert!(service.send_world_event(
+        0xCE,
+        None,
+        &position(NPC, [26.0, 40.0, 6.0], 0, [3.0, 0.0, 0.0])
+    ));
+    wait_entity(
+        &mut world,
+        "move",
+        &|e| matches!(e, Event::EntityMoved { id, velocity, .. } if *id == EntityId(NPC) && velocity.x > 2.9),
+    );
+
+    assert!(service.send_world_event(0x1C, None, &chat_line(5, NPC_NAME, NPC, "Well met.")));
+    let until = stage();
+    let line = loop {
+        assert!(Instant::now() < until, "no chat line");
+        world.update(Instant::now());
+        if let Some(l) = world
+            .take_chat()
+            .into_iter()
+            .find(|l| l.text == "Well met.")
+        {
+            break l;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    };
+    assert_eq!(line.channel, ChatChannel::Say);
+    assert_eq!(line.sender, NPC_NAME);
+
+    assert!(service.send_world_event(0x40, Some(NPC), &[0]));
+    wait_entity(
+        &mut world,
+        "despawn",
+        &|e| matches!(e, Event::EntityDespawned { id } if *id == EntityId(NPC)),
+    );
+    assert!(world.entities().get(&EntityId(NPC)).is_none());
+
+    world.shutdown();
+    drop(world);
+    f.flow.characters_ended(HandOverEnd::Left);
+    assert_eq!(f.flow.screen(), Screen::Form);
+}

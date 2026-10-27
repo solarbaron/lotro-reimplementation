@@ -14,6 +14,13 @@
 //! | `0x6F` (enter world) | `0x90` (session start) and the player's placement `0xCE` (teleport stamp 0, at [`PLAYER_AT`]); no referral: the login connection carries the world |
 //! | `0xF4` (portal exit) | nothing (counted) |
 //! | `0x30` (an RPC: the logout request of `LeaveWorld`) | a world teardown `0x3000001B` and the list `0x6C` again |
+//! | `0xD0` (a missing-entity query) | nothing (counted) |
+//!
+//! A test plays the rest of the world with [`SyntheticService::send_world_event`] and the
+//! payload builders below ([`entity_batch`], [`position`], [`chat_line`]): other entities,
+//! their moves, chat lines and despawns. The synthetic install's property dictionary types
+//! the properties those builders use ([`DICTIONARY`], the types of
+//! `official-messages-world.md` §5.2.4 and `official-messages-play.md` §6.5.1).
 //!
 //! Every endpoint is an RFC 2606 `.example.invalid` placeholder or an RFC 5737 address;
 //! nothing opens a socket, resolves a real name or starts a process.
@@ -26,18 +33,24 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use super::LiveConfig;
 use super::data::{InstallData, LocalPaths};
 use super::net::{ConnectorNet, NetFactory, SendHttpClient};
+use crate::connector::entities::{PID_IS_INANIMATE_PROP, PID_IS_NPC_AGENT};
 use crate::login::soap_encoder::{GLS_NAMESPACE, SOAP_ENVELOPE_NAMESPACE};
 use crate::login::{HttpClient, HttpRequest, HttpResponse, LoginError};
 use crate::net_access::NetworkAccess;
+use crate::play::chat::{
+    PID_CHAT_CATEGORY, PID_CHAT_SENDER_ID, PID_CHAT_SENDER_NAME, PID_CHAT_TEXT, UI_EVENT_CHAT_LINE,
+    UiPropertyEvent,
+};
 use crate::session::{
     BitTreeTable, ConnectChallengeHeader, DatagramHeader, IsaacCipher, OptionalHeaders,
     SessionError, UdpDatagramTransport, VersionStatusMessage, decode_datagram, encode_datagram,
     split_blob,
 };
 use crate::world::{
-    CharacterListResponse, CharacterSummaryEntry, EncodedPropertyTable, EntityAppearanceDesc,
-    EntityPlacement, PlayerSessionReady, PositionUpdate, PropertyType, WirePosition,
-    encode_event_envelope,
+    CharacterListResponse, CharacterSummaryEntry, EncodedPropertyTable, EncodedPropertyValue,
+    EntityAppearanceDesc, EntityCreate, EntityPlacement, LocalizedTokenText, PID_AGENT_SPECIES,
+    PID_ENTITY_DISPLAY_NAME, PID_SEX, PlayerSessionReady, PositionUpdate, PropertyTableUpdate,
+    PropertyType, SubEventBatch, SubEventFrame, WirePosition, encode_event_envelope,
 };
 
 /// The client's address on the synthetic network.
@@ -58,6 +71,37 @@ pub const CHARACTER: &str = "Aldo";
 pub const PLAYER: u64 = 0x0100_0000_0000_0007;
 /// Where the synthetic world places the player (offsets in its landblock, metres).
 pub const PLAYER_AT: [f32; 3] = [12.0, 34.0, 5.0];
+
+/// Another entity of the synthetic world, an NPC.
+pub const NPC: u64 = 0x0300_0000_0000_0101;
+/// The NPC's template game object (a synthetic DID).
+pub const NPC_TEMPLATE: u32 = 0x7000_0123;
+/// The NPC's display name.
+pub const NPC_NAME: &str = "Watcher";
+/// Where the synthetic world first places the NPC (offsets in the player's landblock).
+pub const NPC_AT: [f32; 3] = [20.0, 40.0, 6.0];
+
+/// The property types of the synthetic install's dictionary: the entity properties of
+/// `official-messages-world.md` §5.2.4 and the chat-line properties of
+/// `official-messages-play.md` §6.5.1 the builders use, the category as an enum.
+///
+/// §6.5.1 describes the chat text (`0x100015D7`) and the sender name (`0x10000914`) as
+/// "Prefixed UTF-16LE string", which is none of the 22 property types of
+/// `official-messages-world.md` §2.7.1 (type 1 is an 8-bit string). The stub types them as
+/// tokenized texts (type 13, whose literal is a prefixed UTF-16LE string); real runs take
+/// every type from the install's property dictionary (`0x34000000`), and the chat line
+/// reads either form (`crate::play::chat`).
+pub const DICTIONARY: [(u32, PropertyType); 9] = [
+    (PID_ENTITY_DISPLAY_NAME, PropertyType::LocalizedTokenText),
+    (PID_IS_NPC_AGENT, PropertyType::Boolean),
+    (PID_IS_INANIMATE_PROP, PropertyType::Boolean),
+    (PID_AGENT_SPECIES, PropertyType::Enum),
+    (PID_SEX, PropertyType::Enum),
+    (PID_CHAT_CATEGORY, PropertyType::Enum),
+    (PID_CHAT_TEXT, PropertyType::LocalizedTokenText),
+    (PID_CHAT_SENDER_NAME, PropertyType::LocalizedTokenText),
+    (PID_CHAT_SENDER_ID, PropertyType::InstanceId),
+];
 
 /// Most datagrams waiting for the client and most blob opcodes kept in [`Seen::blobs`]
 /// (the oldest are dropped beyond it): a test that runs long never grows the service
@@ -169,7 +213,7 @@ impl SyntheticService {
                 user_settings_dir: None,
                 network_version: Some("9999".to_owned()),
             },
-            loader: Box::new(|_| Ok(Arc::new(records()) as Arc<dyn InstallData>)),
+            loader: Box::new(|_, _| Ok(Arc::new(records()) as Arc<dyn InstallData>)),
             locate: None,
         })
     }
@@ -186,6 +230,21 @@ impl SyntheticService {
             .access
             .as_ref()
             .is_none_or(NetworkAccess::is_live)
+    }
+
+    /// Sends event `opcode` with the inner payload `inner` to the client as the synthetic
+    /// world's next blob, addressed to `recipient` (`None`: the default recipient). `false`
+    /// before the session's handshake (there is no server connection to send it on).
+    pub fn send_world_event(&self, opcode: u32, recipient: Option<u64>, inner: &[u8]) -> bool {
+        let mut st = self.state();
+        let Some(server) = st.server.as_mut() else {
+            return false;
+        };
+        let Some(d) = server.blob_to(opcode, recipient, &encode_event_envelope(inner)) else {
+            return false;
+        };
+        st.deliver(d);
+        true
     }
 
     /// Revokes the attempt's network right, as the reaper does (tests).
@@ -362,13 +421,17 @@ impl Server {
     }
 
     fn blob(&mut self, opcode: u32, envelope: &[u8]) -> Option<Vec<u8>> {
+        self.blob_to(opcode, None, envelope)
+    }
+
+    fn blob_to(&mut self, opcode: u32, recipient: Option<u64>, envelope: &[u8]) -> Option<Vec<u8>> {
         self.seq += 1;
         let frags = split_blob(
             2,
             u16::try_from(self.seq & 0xFFFF).unwrap_or(0),
             1,
             0,
-            None,
+            recipient,
             opcode,
             envelope,
         )
@@ -518,8 +581,8 @@ impl InstallData for Records {
         self.0.get(&did).filter(|r| r.len() <= max_bytes).cloned()
     }
 
-    fn property_type(&self, _pid: u32) -> Option<PropertyType> {
-        None
+    fn property_type(&self, pid: u32) -> Option<PropertyType> {
+        DICTIONARY.iter().find(|(p, _)| *p == pid).map(|(_, t)| *t)
     }
 }
 
@@ -646,6 +709,112 @@ fn session_ready() -> Vec<u8> {
     .unwrap_or_default()
 }
 
+/// The properties of an entity: its display name (a literal text) and the NPC flag
+/// (`official-messages-world.md` §5.2.4).
+#[must_use]
+pub fn entity_properties(name: &str, npc: bool) -> EncodedPropertyTable {
+    let mut t = EncodedPropertyTable::new();
+    t.push(
+        PID_ENTITY_DISPLAY_NAME,
+        EncodedPropertyValue::LocalizedTokenText(LocalizedTokenText::literal(name)),
+    );
+    t.push(PID_IS_NPC_AGENT, EncodedPropertyValue::Boolean(npc));
+    t
+}
+
+/// A `0xCE` placing `entity` at `at` in the player's landblock with the quantized heading
+/// `heading_raw` and the velocity `velocity` (`official-messages-world.md` §5.4).
+#[must_use]
+pub fn position(entity: u64, at: [f32; 3], heading_raw: u8, velocity: [f32; 3]) -> Vec<u8> {
+    PositionUpdate {
+        entity_id: entity,
+        seq_byte: None,
+        velocity: velocity.map(Some),
+        anim_state: None,
+        placement: EntityPlacement::WorldWithHeading {
+            position: WirePosition::from_components(1, 1, 2, 0, 0, at, [1.0, 0.0, 0.0, 0.0]),
+            heading_raw,
+        },
+        interp_param_a: None,
+        interp_param_b: None,
+    }
+    .to_bytes()
+    .unwrap_or_default()
+}
+
+/// An area-of-interest batch `0x0D` (`official-messages-world.md` §5.1) that creates
+/// `entity` from `template` (`0x98`), gives it `properties` (`0x52`) and places it at `at`
+/// (`0xCE`).
+#[must_use]
+pub fn entity_batch(
+    entity: u64,
+    template: u32,
+    properties: &EncodedPropertyTable,
+    at: [f32; 3],
+) -> Vec<u8> {
+    let create = EntityCreate {
+        template_did: template,
+        entity_id: entity,
+    }
+    .to_bytes()
+    .unwrap_or_default();
+    let props = PropertyTableUpdate {
+        scope: crate::world::PropertyScope::Entity,
+        properties: properties.clone(),
+    };
+    let mut w = crate::world::WireWriter::new();
+    let props = props
+        .encode(&mut w)
+        .map(|()| w.into_vec())
+        .unwrap_or_default();
+    SubEventBatch {
+        event_id: SubEventBatch::EVENT_ID_AOI_ENTER,
+        frames: vec![
+            SubEventFrame::Event {
+                sub_event_id: EntityCreate::EVENT_ID,
+                payload: create,
+            },
+            SubEventFrame::Event {
+                sub_event_id: PropertyTableUpdate::EVENT_ID_ENTITY,
+                payload: props,
+            },
+            SubEventFrame::Event {
+                sub_event_id: PositionUpdate::EVENT_ID,
+                payload: position(entity, at, 0, [0.0; 3]),
+            },
+        ],
+        entry_batch_tail_flag: Some(1),
+    }
+    .to_bytes()
+    .unwrap_or_default()
+}
+
+/// A world-server chat line `0x1C` (`official-messages-play.md` §6.5.1, event code
+/// `0x0102000C`) in chat category `category` from `sender` (entity `sender_id`).
+#[must_use]
+pub fn chat_line(category: u32, sender: &str, sender_id: u64, text: &str) -> Vec<u8> {
+    let mut properties = EncodedPropertyTable::new();
+    properties.push(PID_CHAT_CATEGORY, EncodedPropertyValue::Enum(category));
+    properties.push(
+        PID_CHAT_TEXT,
+        EncodedPropertyValue::LocalizedTokenText(LocalizedTokenText::literal(text)),
+    );
+    properties.push(
+        PID_CHAT_SENDER_NAME,
+        EncodedPropertyValue::LocalizedTokenText(LocalizedTokenText::literal(sender)),
+    );
+    properties.push(
+        PID_CHAT_SENDER_ID,
+        EncodedPropertyValue::InstanceId(sender_id),
+    );
+    UiPropertyEvent {
+        event_code: UI_EVENT_CHAT_LINE,
+        properties,
+    }
+    .to_bytes()
+    .unwrap_or_default()
+}
+
 #[cfg(test)]
 mod tests {
     use std::time::{Duration, Instant};
@@ -740,6 +909,89 @@ mod tests {
         assert_eq!(
             after.disconnects, before.disconnects,
             "not even the goodbye"
+        );
+    }
+
+    /// The world feed over the whole connector: an NPC is created at its place with its
+    /// name, moves, speaks on Say and leaves (`official-messages-world.md` §5.1–§5.4,
+    /// `official-messages-play.md` §6.5.1, §8).
+    #[test]
+    fn the_synthetic_world_spawns_moves_speaks_and_despawns_an_entity() {
+        use tessera_net::{Body, ChatChannel, DataId, EntityId, EntityKind};
+        let _guard = crate::net_access::TEST_REVOKE_LOCK
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let dir = tempfile::tempdir().expect("temp");
+        let service = SyntheticService::new();
+        let mut s = in_world(dir.path(), &service);
+        assert!(service.send_world_event(
+            SubEventBatch::EVENT_ID_AOI_ENTER,
+            Some(NPC),
+            &entity_batch(
+                NPC,
+                NPC_TEMPLATE,
+                &entity_properties(NPC_NAME, true),
+                NPC_AT
+            ),
+        ));
+        let created = wait(
+            &mut s,
+            "the NPC",
+            |e| matches!(e, Event::EntityCreated { id, .. } if *id == EntityId(NPC)),
+        );
+        let Event::EntityCreated {
+            kind,
+            name,
+            class,
+            location,
+            appearance,
+            ..
+        } = created
+        else {
+            unreachable!("matched")
+        };
+        assert_eq!(kind, EntityKind::NonPlayer);
+        assert_eq!(name, NPC_NAME);
+        assert_eq!(class, Some(DataId(NPC_TEMPLATE)));
+        assert_eq!(appearance.body, Body::Object(DataId(NPC_TEMPLATE)));
+        // Block (1, 2) of region 1: 160 m blocks (`coordinates.md`).
+        assert!((location.x - (160.0 + 20.0)).abs() < 1e-3, "{location:?}");
+        assert!((location.y - (320.0 + 40.0)).abs() < 1e-3, "{location:?}");
+        assert!(service.send_world_event(
+            PositionUpdate::EVENT_ID,
+            None,
+            &position(NPC, [25.0, 40.0, 6.0], 64, [2.5, 0.0, 0.0]),
+        ));
+        let moved = wait(
+            &mut s,
+            "the move",
+            |e| matches!(e, Event::EntityMoved { id, .. } if *id == EntityId(NPC)),
+        );
+        let Event::EntityMoved { velocity, .. } = moved else {
+            unreachable!("matched")
+        };
+        assert!((velocity.x - 2.5).abs() < 1e-6);
+        assert!(service.send_world_event(
+            crate::play::chat::OPCODE_UI_PROPERTY_EVENT,
+            None,
+            &chat_line(crate::play::chat::CATEGORY_SAY, NPC_NAME, NPC, "Well met."),
+        ));
+        let line = wait(&mut s, "the chat line", |e| {
+            matches!(e, Event::ChatMessage { .. })
+        });
+        assert_eq!(
+            line,
+            Event::ChatMessage {
+                channel: ChatChannel::Say,
+                sender: Some(NPC_NAME.to_owned()),
+                text: "Well met.".to_owned(),
+            }
+        );
+        assert!(service.send_world_event(0x40, Some(NPC), &[0]));
+        wait(
+            &mut s,
+            "the despawn",
+            |e| matches!(e, Event::EntityDespawned { id } if *id == EntityId(NPC)),
         );
     }
 

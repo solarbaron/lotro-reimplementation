@@ -59,6 +59,38 @@
 //! teardown to the later list; engineering choice pending a spec answer, listed in
 //! `docs/m8-remediation.md` §15).
 //!
+//! # Entities
+//!
+//! In the world, batches (`0x0D`, `0x4C`, `official-messages-world.md` §5.1) are unpacked
+//! in order with their target (§1.1.3; the one exception, a `0x52` directly after a `0x98`
+//! in a `0x0D` to the default recipient, is [`super::entities::sub_event_target`]), the
+//! entity lifecycle and property events (`0x98`, `0x40`, `0x52`, `0x88`, `0x92`, `0x0E`,
+//! `0xE7`, `0x89`) go to the [`EntityFeed`] and the rest to the play layer. The feed turns
+//! them into `EntityCreated`, `AppearanceChanged` and `EntityDespawned` ([`super::entities`]
+//! has the mapping); the positions of every entity but the local player go to the feed too:
+//! they place the entities it waits for, and the remote motion of created entities (`0xCE`,
+//! `0xBF`, and `0x59` as a move to its destination) is `EntityMoved`. `0xED` and `0xBD`
+//! reach no neutral event and are counted ([`FeedCounters`]).
+//!
+//! A `0x0D` inside a batch is read with a 1-byte tail flag after its frames or without
+//! one, each counted: `official-messages-world.md` §5.1 covers only a top-level `0x0D`
+//! (spec silent; question in `docs/m8-remediation.md` §15 (W §5.1)). Only the feed and batch messages
+//! must start with `base_flags = 0` here; the play decoders check their own bodies.
+//!
+//! The feed's events of one top-level message are made when it has been read
+//! ([`EntityFeed::flush`]: at most one creation, one appearance change and one move per
+//! entity), and the play-layer events of one message are capped at
+//! [`MAX_MESSAGE_PLAY_EVENTS`] (the rest are dropped and counted,
+//! [`DriverCounters::message_events_dropped`]). Once a message has reached that cap, the
+//! texts of its further play messages are not looked up at all (no string-table read for
+//! an event that would be dropped; counted, [`DriverCounters::texts_skipped`]), while their
+//! signals (such as the world teardown) and an end of the session are still handled. With
+//! the despawns (one per entity shown before the message), that bounds what one message
+//! adds over [`DRIVER_EVENT_CAP`] (module docs "Bounded events"). Creations whose template
+//! or name table the install has not read yet wait for a later pass
+//! ([`super::entities::MAX_TEMPLATE_LOADS_PER_PASS`],
+//! [`super::entities::MAX_TEXT_LOADS_PER_PASS`]), retried once at the start of each pass.
+//!
 //! Portal space ends on the client's `Command::WorldLoaded` or after
 //! [`PORTAL_LOADING_TIMEOUT_SEC`] (§4.5 item 4). Each portal space starts with a fresh
 //! loading state; the client sends one `WorldLoaded` per placement, and the driver takes
@@ -96,9 +128,11 @@ use crate::login::{
     HttpResponse, LoginError, RefreshOutcome, SessionHandoff, TicketRefresher, VersionInfo,
     zeroize_vec,
 };
-use crate::play::adapter::{PlayAdapter, PlaySignal};
-use crate::play::chat::ChatCategories;
-use crate::play::inbound::decode_play_message;
+use crate::play::adapter::{
+    PlayAdapter, PlayCounters, PlaySignal, placement_location, position_location, velocity_or_zero,
+};
+use crate::play::chat::TextResolver;
+use crate::play::inbound::{PlayMessage, decode_play_message};
 use crate::play::movement::{MovementInput, PredictedState};
 use crate::play::{OutgoingEvent, clean_display_name};
 use crate::session::{
@@ -110,10 +144,15 @@ use crate::session::{
 };
 use crate::world::{
     AccountEvictionNotice, CharacterEnterWorldRequest, CharacterListResponse,
-    CharacterOperationError, PlayerSessionReady, encode_event_envelope,
+    CharacterOperationError, EntityCreate, EntityDespawn, PlayerSessionReady, PropertyRemoval,
+    PropertyScope, PropertyTableUpdate, SinglePropertyUpdate, SubEventBatch, SubEventFrame,
+    VisualDescriptionUpdate, WireReader, WorldError, encode_event_envelope,
 };
 
-use super::data::SchemaView;
+use super::data::{SchemaView, chat_categories};
+use super::entities::{
+    CreateOutcome, EntityFeed, FeedCounters, FeedOutput, SubTarget, sub_event_target,
+};
 use super::net::{ConnectorNet, SendHttpClient};
 
 /// Delivery queue of every message the client sends on the login and world connections.
@@ -155,6 +194,15 @@ pub const ENTER_WORLD_TIMEOUT_SEC: f64 = 60.0;
 /// expires"; the spec gives no value). Engineering choice pending a spec answer (listed in
 /// `docs/m8-remediation.md` §15).
 pub const PORTAL_LOADING_TIMEOUT_SEC: f64 = 30.0;
+
+/// Deepest batch nesting read (`official-messages-world.md` §5.1; §7.1 bounds recursion):
+/// a top-level batch is depth 0, so a `0x4C` inside it is depth 1. Engineering choice,
+/// spec silent.
+pub const MAX_BATCH_DEPTH: usize = 4;
+
+/// Most play-layer events one top-level world message makes (a batch can hold many chat
+/// lines); the rest are dropped and counted. Engineering choice, spec silent.
+pub const MAX_MESSAGE_PLAY_EVENTS: usize = DRIVER_EVENT_CAP;
 
 /// Most play messages kept while the world is being entered (those before `0x90`, such as
 /// `0x43`), handed to the play layer once the world is entered. Engineering choice, spec
@@ -452,6 +500,26 @@ pub struct DriverCounters {
     pub outside_world: u64,
     /// `WorldLoaded` signals outside portal space, ignored.
     pub stray_loaded: u64,
+    /// `0x89` descriptors with a base model, which cannot be decoded (the `model_b` gate
+    /// is OPEN, `official-messages-world.md` §2.8); also counted in `decode_errors`.
+    pub appearance_base_model: u64,
+    /// Play-layer events dropped over [`MAX_MESSAGE_PLAY_EVENTS`] in one message.
+    pub message_events_dropped: u64,
+    /// Texts not looked up because their message had reached [`MAX_MESSAGE_PLAY_EVENTS`]
+    /// (the play layer may count them as unresolved too).
+    pub texts_skipped: u64,
+}
+
+/// The resolver of a message past [`MAX_MESSAGE_PLAY_EVENTS`]: it looks nothing up and
+/// counts the texts it was asked for (module docs "Entities").
+#[derive(Debug, Default)]
+struct SkippedTexts(std::cell::Cell<u64>);
+
+impl TextResolver for SkippedTexts {
+    fn resolve(&self, _text: &crate::world::LocalizedTokenText) -> Option<String> {
+        self.0.set(self.0.get().saturating_add(1));
+        None
+    }
 }
 
 /// The UDP session (module docs).
@@ -475,6 +543,9 @@ pub struct SessionDriver<N: ConnectorNet> {
     /// When the current portal space was first seen (for [`PORTAL_LOADING_TIMEOUT_SEC`]).
     portal_since: Option<f64>,
     adapter: PlayAdapter,
+    feed: EntityFeed,
+    /// Play-layer events the current top-level world message made.
+    message_events: usize,
     chat: Option<ChatClient<Metered<N::Udp>>>,
     chat_allowance: Arc<AtomicUsize>,
     chat_endpoint: Option<SocketAddrV4>,
@@ -649,6 +720,7 @@ impl<N: ConnectorNet> SessionDriver<N> {
         if let Some(c) = login.mux.connection_mut(login.conn) {
             c.start_login(auth, now).map_err(|_| StartFailure::Ticket)?;
         }
+        let categories = chat_categories(start.schema.0.as_ref());
         let mut driver = Self {
             transport,
             codecs: start.codecs,
@@ -664,7 +736,9 @@ impl<N: ConnectorNet> SessionDriver<N> {
             list_on_world: false,
             loaded: false,
             portal_since: None,
-            adapter: PlayAdapter::new(ChatCategories::default()),
+            adapter: PlayAdapter::new(categories),
+            feed: EntityFeed::default(),
+            message_events: 0,
             chat: None,
             chat_allowance: Arc::new(AtomicUsize::new(0)),
             chat_endpoint: start.chat_endpoint,
@@ -746,6 +820,26 @@ impl<N: ConnectorNet> SessionDriver<N> {
         self.counters
     }
 
+    /// The entity feed's counters (module docs "Entities").
+    #[must_use]
+    pub fn feed_counters(&self) -> FeedCounters {
+        self.feed.counters()
+    }
+
+    /// The entities the feed tracks and those of them waiting for a position (fuzzing and
+    /// tests: the feed's bounds).
+    #[doc(hidden)]
+    #[must_use]
+    pub fn feed_sizes(&self) -> (usize, usize) {
+        (self.feed.tracked(), self.feed.pending())
+    }
+
+    /// The play layer's counters (texts, chat categories, admin messages, positions).
+    #[must_use]
+    pub fn play_counters(&self) -> PlayCounters {
+        self.adapter.counters()
+    }
+
     /// Whether a ticket refresh thread is running (tests).
     #[must_use]
     pub fn refresh_running(&self) -> bool {
@@ -777,9 +871,23 @@ impl<N: ConnectorNet> SessionDriver<N> {
         if self.ended {
             return;
         }
+        if matches!(self.stage, Stage::InWorld { .. }) {
+            self.log_world_end();
+        }
         self.ended = true;
         self.stop_refresh();
         self.events.push_back(Event::Disconnected { reason });
+    }
+
+    /// What the world feed counted, once per world (debug).
+    fn log_world_end(&self) {
+        tracing::debug!(
+            feed = ?self.feed.counters(),
+            appearance_base_model = self.counters.appearance_base_model,
+            message_events_dropped = self.counters.message_events_dropped,
+            texts_skipped = self.counters.texts_skipped,
+            "official world: entity feed counters"
+        );
     }
 
     fn refuse(&mut self, reason: LoginRefusal) {
@@ -812,6 +920,8 @@ impl<N: ConnectorNet> SessionDriver<N> {
         }
         let before = self.events.len();
         let read = read && !self.full();
+        self.feed.begin_pass();
+        self.feed_deferred();
         let read_any = read && self.receive(now, stop) > 0;
         self.run_links(now, stop);
         self.run_refresh(now, stop);
@@ -898,11 +1008,14 @@ impl<N: ConnectorNet> SessionDriver<N> {
     /// world connection (§7.2 item 3 keeps it open), so a later `0x6F` goes there too.
     fn left_world(&mut self) {
         tracing::info!("official session: the world was left for character selection");
+        self.log_world_end();
         self.stage = Stage::Characters;
         self.list_on_world = self.world.is_some();
         self.entry_messages.clear();
         self.entry_bytes = 0;
         self.fresh_portal_loading();
+        // The client drops every entity with the world (`ReturnedToCharacterSelect`).
+        self.feed.reset(None);
         let characters = self
             .characters
             .iter()
@@ -1355,6 +1468,7 @@ impl<N: ConnectorNet> SessionDriver<N> {
         };
         self.adapter
             .enter_world(ready.player_id, Some(name.clone()));
+        self.feed.reset(Some(ready.player_id));
         // World entry is a portal space (the adapter's `enter_world`).
         self.fresh_portal_loading();
         self.stage = Stage::InWorld {
@@ -1440,7 +1554,192 @@ impl<N: ConnectorNet> SessionDriver<N> {
         }
     }
 
+    /// A message in the world (module docs "Entities"): batches are unpacked, the entity
+    /// lifecycle and property events go to the [`EntityFeed`], the rest to the play layer;
+    /// the feed's events of the message follow once it has been read.
     fn play_in_world(&mut self, opcode: u32, recipient: u64, body: &[u8]) {
+        self.message_events = 0;
+        self.world_message(opcode, recipient, body, 0);
+        if !self.in_world_still() {
+            return;
+        }
+        let mut out = FeedOutput::default();
+        self.feed.flush(&self.schema, &mut out);
+        self.feed_output(out);
+    }
+
+    /// Creations put off for their templates or name tables (module docs "Entities"),
+    /// retried once per pass, before the pass reads anything (so they come before the new
+    /// placements of the pass in its read budgets), and only below [`DRIVER_EVENT_CAP`].
+    fn feed_deferred(&mut self) {
+        if !self.in_world_still() || !self.feed.has_deferred() || self.full() {
+            return;
+        }
+        let mut out = FeedOutput::default();
+        self.feed.retry_deferred(&self.schema, &mut out);
+        self.feed_output(out);
+    }
+
+    /// Whether the driver still takes world messages.
+    fn in_world_still(&self) -> bool {
+        !self.ended && matches!(self.stage, Stage::InWorld { .. })
+    }
+
+    fn feed_output(&mut self, out: FeedOutput) {
+        self.events.extend(out.events);
+        self.pending_out.extend(out.outgoing);
+    }
+
+    /// Whether `opcode` is a batch or an entity lifecycle or property event the feed reads.
+    fn feed_opcode(opcode: u32) -> bool {
+        matches!(
+            opcode,
+            SubEventBatch::EVENT_ID_AOI_ENTER
+                | SubEventBatch::EVENT_ID_SUB_EVENT
+                | EntityCreate::EVENT_ID
+                | EntityDespawn::EVENT_ID
+                | PropertyTableUpdate::EVENT_ID_ENTITY
+                | VisualDescriptionUpdate::EVENT_ID
+        ) || SinglePropertyUpdate::scope_of(opcode) == Some(PropertyScope::Entity)
+            || PropertyRemoval::scope_of(opcode) == Some(PropertyScope::Entity)
+    }
+
+    /// One world message at batch depth `depth` (`0`: a top-level message); the outcome of
+    /// a `0x98` (for [`sub_event_target`]).
+    fn world_message(
+        &mut self,
+        opcode: u32,
+        recipient: u64,
+        body: &[u8],
+        depth: usize,
+    ) -> Option<CreateOutcome> {
+        if !Self::feed_opcode(opcode) {
+            self.play_message(opcode, recipient, body);
+            return None;
+        }
+        if body.first() != Some(&0) {
+            self.counters.decode_errors += 1;
+            return None;
+        }
+        let mut out = FeedOutput::default();
+        let mut outcome = None;
+        let decoded: Result<(), WorldError> = match opcode {
+            SubEventBatch::EVENT_ID_AOI_ENTER | SubEventBatch::EVENT_ID_SUB_EVENT => {
+                self.batch(opcode, recipient, body, depth);
+                return None;
+            }
+            EntityCreate::EVENT_ID => EntityCreate::from_bytes(body).map(|c| {
+                outcome = Some(self.feed.create(c, &mut out));
+            }),
+            EntityDespawn::EVENT_ID => {
+                EntityDespawn::from_bytes(body).map(|_| self.feed.despawn(recipient, &mut out))
+            }
+            PropertyTableUpdate::EVENT_ID_ENTITY => {
+                let mut r = WireReader::new(body);
+                PropertyTableUpdate::decode(&mut r, opcode, &self.schema)
+                    .and_then(|u| r.finish().map(|()| u))
+                    .map(|u| {
+                        self.feed.properties(
+                            recipient,
+                            &u.properties.entries,
+                            &self.schema,
+                            &mut out,
+                        );
+                    })
+            }
+            VisualDescriptionUpdate::EVENT_ID => VisualDescriptionUpdate::from_bytes(body)
+                .map(|u| self.feed.visual(recipient, &u.visual_desc, &mut out)),
+            op if SinglePropertyUpdate::scope_of(op) == Some(PropertyScope::Entity) => {
+                let mut r = WireReader::new(body);
+                SinglePropertyUpdate::decode(&mut r, op, &self.schema)
+                    .and_then(|u| r.finish().map(|()| u))
+                    .map(|u| {
+                        self.feed.properties(
+                            recipient,
+                            std::iter::once(&u.entry),
+                            &self.schema,
+                            &mut out,
+                        );
+                    })
+            }
+            op => {
+                let mut r = WireReader::new(body);
+                PropertyRemoval::decode(&mut r, op)
+                    .and_then(|u| r.finish().map(|()| u))
+                    .map(|u| {
+                        self.feed
+                            .remove_property(recipient, u.property_id, &mut out)
+                    })
+            }
+        };
+        if let Err(e) = decoded {
+            self.counters.decode_errors += 1;
+            if matches!(e, WorldError::UnsupportedAppearanceBaseModel) {
+                self.counters.appearance_base_model += 1;
+            }
+            tracing::debug!(opcode, error = %e, "official world: entity message refused");
+        }
+        self.feed_output(out);
+        outcome
+    }
+
+    /// A batch `0x0D` or `0x4C` (`official-messages-world.md` §5.1): its sub-events in
+    /// order, each with the target [`sub_event_target`] gives (module docs "Entities"). A
+    /// `0x0D` inside a batch is read with or without its tail flag (counted), a batch
+    /// deeper than [`MAX_BATCH_DEPTH`] is not read (counted).
+    fn batch(&mut self, opcode: u32, recipient: u64, body: &[u8], depth: usize) {
+        if depth >= MAX_BATCH_DEPTH {
+            self.feed.counters_mut().deep_batches += 1;
+            return;
+        }
+        let aoi = opcode == SubEventBatch::EVENT_ID_AOI_ENTER;
+        let decoded = if depth > 0 && aoi {
+            // The frames as a `0x4C` would have them, then 0 or 1 byte of tail (spec silent;
+            // question in `docs/m8-remediation.md` §15 (W §5.1)).
+            let mut r = WireReader::new(body);
+            SubEventBatch::decode(&mut r, SubEventBatch::EVENT_ID_SUB_EVENT).and_then(|b| {
+                match r.remaining() {
+                    0 => self.feed.counters_mut().nested_aoi_no_tail += 1,
+                    1 => self.feed.counters_mut().nested_aoi_tail += 1,
+                    _ => return r.finish().map(|()| b),
+                }
+                Ok(b)
+            })
+        } else {
+            SubEventBatch::from_bytes(body, opcode)
+        };
+        let batch = match decoded {
+            Ok(b) => b,
+            Err(e) => {
+                self.counters.decode_errors += 1;
+                tracing::debug!(opcode, error = %e, "official world: batch refused");
+                return;
+            }
+        };
+        let mut previous = None;
+        for frame in batch.frames {
+            let after = previous.take();
+            match frame {
+                SubEventFrame::Null { .. } => self.feed.counters_mut().null_sub_events += 1,
+                SubEventFrame::Event {
+                    sub_event_id,
+                    payload,
+                } => match sub_event_target(aoi, sub_event_id, recipient, after) {
+                    SubTarget::Skip => self.feed.counters_mut().overflow += 1,
+                    SubTarget::To(target) => {
+                        previous = self.world_message(sub_event_id, target, &payload, depth + 1);
+                        if !self.in_world_still() {
+                            return;
+                        }
+                    }
+                },
+            }
+        }
+    }
+
+    /// A message of the play layer (`official-messages-play.md` §4–§8). The positions of
+    /// every entity but the local player go to the feed ([`EntityFeed::place`]).
+    fn play_message(&mut self, opcode: u32, recipient: u64, body: &[u8]) {
         let decoded = decode_play_message(opcode, recipient, body, &self.schema, &self.schema);
         let msg = match decoded {
             Ok(Some(m)) => m,
@@ -1454,20 +1753,71 @@ impl<N: ConnectorNet> SessionDriver<N> {
                 return;
             }
         };
-        let out = self.adapter.handle(&msg, &self.schema);
+        let placement = match &msg {
+            PlayMessage::PositionUpdate(u) => Some((
+                u.entity_id,
+                placement_location(&u.placement).map(|(l, _, h)| (l, h)),
+                velocity_or_zero(u.velocity),
+            )),
+            PlayMessage::SetPosition { entity, msg } => Some((
+                *entity,
+                msg.position
+                    .as_ref()
+                    .and_then(|p| position_location(p, None))
+                    .map(|(l, _, h)| (l, h)),
+                msg.velocity.unwrap_or_default(),
+            )),
+            _ => None,
+        };
+        if let Some((id, at, velocity)) = placement
+            && !self.feed.is_player(id)
+        {
+            let mut out = FeedOutput::default();
+            self.feed.place(id, at, velocity, &mut out);
+            self.feed_output(out);
+            return;
+        }
+        let out = if self.message_events >= MAX_MESSAGE_PLAY_EVENTS {
+            // Its events would be dropped: no text is looked up (module docs "Entities").
+            let skipped = SkippedTexts::default();
+            let out = self.adapter.handle(&msg, &skipped);
+            self.counters.texts_skipped += skipped.0.get();
+            out
+        } else {
+            self.adapter.handle(&msg, &self.schema)
+        };
         self.pending_out.extend(out.outgoing);
         for e in out.events {
             if let Event::Disconnected { reason } = e {
                 self.end(reason);
                 return;
             }
+            if self.message_events >= MAX_MESSAGE_PLAY_EVENTS {
+                self.counters.message_events_dropped += 1;
+                continue;
+            }
+            self.message_events += 1;
             self.events.push_back(e);
         }
         for s in out.signals {
-            if let PlaySignal::LeftWorld { .. } = s {
-                // §7.2's teardown: back to character selection on the same session.
-                self.left_world();
-                return;
+            match s {
+                PlaySignal::LeftWorld { .. } => {
+                    // §7.2's teardown: back to character selection on the same session.
+                    self.left_world();
+                    return;
+                }
+                PlaySignal::Path {
+                    entity, waypoints, ..
+                } => {
+                    let mut out = FeedOutput::default();
+                    self.feed.path(entity, &waypoints, &mut out);
+                    self.feed_output(out);
+                }
+                PlaySignal::MotionController { .. } => {
+                    self.feed.counters_mut().motion_controllers += 1;
+                }
+                PlaySignal::AnimLayers { .. } => self.feed.counters_mut().anim_layers += 1,
+                _ => {}
             }
         }
     }

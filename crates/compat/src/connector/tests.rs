@@ -5,6 +5,7 @@
 //! (RFC 5737).
 
 mod deadlines;
+mod world_feed;
 
 use std::collections::{BTreeMap, VecDeque};
 use std::net::{Ipv4Addr, SocketAddrV4};
@@ -23,9 +24,15 @@ use tessera_net::{
 use super::data::SchemaView;
 use super::data::{InstallData, LocalPaths};
 use super::net::{ConnectorNet, NetFactory, SendHttpClient, carries_secret, is_https};
+// The synthetic world's builders, for the world-feed tests (`world_feed`).
 use super::session_phase::{
     DRIVER_EVENT_CAP, PORTAL_LOADING_TIMEOUT_SEC, SessionDriver, SessionStart, movement_input,
     refusal_cut,
+};
+// The synthetic service's world builders, used by `world_feed`.
+use super::test_support::{
+    DICTIONARY, NPC, NPC_AT, NPC_NAME, NPC_TEMPLATE, chat_line, entity_batch, entity_properties,
+    position,
 };
 use super::worker::SHUTDOWN_LIMIT;
 use super::{EVENT_QUEUE, LiveConfig, LiveConnector};
@@ -714,7 +721,7 @@ fn backend(service: Service, gls: Option<&str>) -> (tempfile::TempDir, World, Bo
             user_settings_dir: None,
             network_version: Some("9999".to_owned()),
         },
-        loader: Box::new(|_| Ok(Arc::new(records()) as Arc<dyn InstallData>)),
+        loader: Box::new(|_, _| Ok(Arc::new(records()) as Arc<dyn InstallData>)),
         locate: None,
     };
     let connector = LiveConnector::with_factory(config, FakeFactory(world.clone()));
@@ -902,9 +909,21 @@ impl Server {
     }
 
     fn blob(&mut self, opcode: u32, envelope: &[u8]) -> Vec<u8> {
+        self.blob_to(opcode, None, envelope)
+    }
+
+    fn blob_to(&mut self, opcode: u32, recipient: Option<u64>, envelope: &[u8]) -> Vec<u8> {
         self.seq += 1;
-        let frags =
-            split_blob(2, (self.seq & 0xFFFF) as u16, 1, 0, None, opcode, envelope).expect("split");
+        let frags = split_blob(
+            2,
+            (self.seq & 0xFFFF) as u16,
+            1,
+            0,
+            recipient,
+            opcode,
+            envelope,
+        )
+        .expect("split");
         let mask = self.isaac.next_mask();
         encode_datagram(
             DatagramHeader {
@@ -922,6 +941,11 @@ impl Server {
 
     fn event(&mut self, opcode: u32, inner: &[u8]) -> Vec<u8> {
         self.blob(opcode, &encode_event_envelope(inner))
+    }
+
+    /// An event addressed to `recipient` (`FragmentedBlob` field 7).
+    fn event_to(&mut self, opcode: u32, recipient: u64, inner: &[u8]) -> Vec<u8> {
+        self.blob_to(opcode, Some(recipient), &encode_event_envelope(inner))
     }
 
     /// The handshake and the first acknowledgement, from `addr`.

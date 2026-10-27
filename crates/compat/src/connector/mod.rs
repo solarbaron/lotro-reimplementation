@@ -51,6 +51,7 @@
 
 mod control;
 pub mod data;
+pub mod entities;
 pub mod login_phase;
 pub mod net;
 pub mod session_phase;

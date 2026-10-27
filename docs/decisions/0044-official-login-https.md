@@ -2,7 +2,7 @@
 
 # 0044 — Official login: credentials only over HTTPS, `http://` addresses upgraded
 
-**Status:** Accepted, 2026-10-27 (owner decision after the first live login run).
+**Status:** Accepted, 2026-10-27 (owner decision after the first live login run); amended the same day: plain HTTP allowed.
 
 ## Context
 
@@ -40,8 +40,26 @@ collect the password or the ticket.
 
 ## Consequences
 
-- If a service of the chain does not answer over HTTPS at all, the official login stops at
-  that step with a clear message; Tessera never sends the account or the ticket over plain
-  HTTP.
+- (Superseded by the amendment below.) If a service of the chain does not answer over HTTPS at
+  all, the official login stops at that step with a clear message; Tessera never sends the
+  account or the ticket over plain HTTP.
 - `official-login.md` §2, §3.3 and §6.2–§6.3 and `official-entry.md` §8.6 need a spec pass for
   this rule (questions in `docs/m8-remediation.md` §15); until then this record is the rule.
+
+## Amendment (2026-10-27, later): plain HTTP allowed
+
+After the next live run the owner decided that the login must work even where the service only
+answers over plain HTTP ("make it http only"). This replaces items 3 and 4 above:
+
+3. **HTTPS first, then the address as given.** An `http://` address of the login chain is tried as
+   `https://` at the same host and path first, with a short connect timeout. If that exchange
+   fails at the transport or TLS level, the request goes to the address exactly as the install
+   or the service gave it, over plain HTTP. A real answer from the service over working HTTPS is
+   used as that answer and never retried over HTTP.
+4. **Credentials may go over plain HTTP.** When the chain only works over plain HTTP, the account
+   and the ticket are sent that way: the owner accepts that anyone on the network path can read
+   them. Each step that went over plain HTTP logs one line naming the step only (never a host,
+   path or account). `https://` addresses keep full certificate checks, and redirects stay off.
+
+Items 1 and 2 stay: the HTTPS form is derived from the install's address, and an answer read over
+HTTPS counts as HTTPS.

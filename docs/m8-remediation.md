@@ -869,3 +869,26 @@ From the `m8-availability` audit (C5):
   `--spawn`, `--place`, `--fly`, `--mount`, `--crowd`, `--open-panel` must conflict with
   `--official` (today they are accepted and dropped by the hand-over's allowlist); `--autorun` is
   automation (decision 0034 §4).
+
+From the owner's first live run (L1, 2026-10-27):
+
+- **L §2 / §6.2:** one URL in the install's login chain (launcher configuration, datacenter
+  document, auth server, queue or status URLs) is plain `http://`, so Tessera's rule (credentials
+  only along an all-HTTPS chain) stopped the login before sending anything. Owner decision: request
+  such documents over `https://` at the same address first, and never send credentials along a
+  chain that is not HTTPS. Which documents of the chain are HTTP-only, and does each service answer
+  on HTTPS?
+- **L §6.2 (Tessera's rule, decision 0044):** an `http://` address of the
+  login chain (`Launcher.DataCenterService.GLS`, `Datacenter/AuthServer`,
+  `Datacenter/LauncherConfigurationServer`, `WorldQueue.LoginQueue.URL`, `World/StatusServerUrl`,
+  `GameClient.Arg.authserverurl`) is requested as `https://` at the same host and path (default
+  port); no plain-HTTP fallback except the world-list status queries. Does an explicit port carry
+  over, and which steps may use plain HTTP?
+- **E §8.6:** a row for the new category `InsecureService` (the login was stopped by the HTTPS
+  rule; back to the account form).
+- **W §4.3.1:** is a scriptlet already visited for the same schema entered again (Tessera: once
+  per schema; same PIDs in the same order)? With that the reference install builds five schemas
+  from the keys of 0x07000029 that are keys of 0x23000097: the three of the table, key 0x05
+  (script-table §8.2's Startup key) with 63 booleans and 30 enums, and one more with (0, 0). The
+  earlier count of four came from the old traversal bound, not from the data. Is a generic
+  script-table key such as Startup a `state_schema_id`?

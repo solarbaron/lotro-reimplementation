@@ -198,7 +198,7 @@ impl PluginCombat {
                 let level = self.levels.get(&crate::net::name_key(name)).copied();
                 m.world_entered(player.0, name, level)
             }
-            Event::Disconnected { .. } => {
+            Event::Disconnected { .. } | Event::ReturnedToCharacterSelect { .. } => {
                 self.placed.clear();
                 m.left_world()
             }

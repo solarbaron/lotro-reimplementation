@@ -41,6 +41,11 @@ pub enum OwnText {
     ConfirmDelete(String),
     /// The character list is full (`scenario-feed.md` §5.1: 64 names).
     ListFull,
+    /// The ghosted New button's tooltip on an official session (`official-entry.md` §8.7:
+    /// creation waits for the install's enum mappers of `official-messages-world.md` §3.2.5).
+    OfficialCreationUnavailable,
+    /// The ghosted Delete button's tooltip on an official session (§8.7, as above).
+    OfficialDeletionUnavailable,
 }
 
 impl std::fmt::Display for OwnText {
@@ -77,6 +82,14 @@ impl std::fmt::Display for OwnText {
                 "Delete the character {name}? Click Delete again to confirm."
             ),
             Self::ListFull => f.write_str("The character list is full."),
+            Self::OfficialCreationUnavailable => f.write_str(
+                "Creating characters on the official servers is not available in this \
+                 version of Tessera yet.",
+            ),
+            Self::OfficialDeletionUnavailable => f.write_str(
+                "Deleting characters on the official servers is not available in this \
+                 version of Tessera yet.",
+            ),
         }
     }
 }

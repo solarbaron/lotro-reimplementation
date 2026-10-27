@@ -440,7 +440,7 @@ impl NpcWindows {
                 }
                 self.player = Some(*player);
             }
-            Event::Disconnected { .. } => {
+            Event::Disconnected { .. } | Event::ReturnedToCharacterSelect { .. } => {
                 self.clear(out);
                 self.player = None;
             }

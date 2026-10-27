@@ -310,7 +310,7 @@ impl P6State {
                 self.entered = true;
                 self.player = Some(*player);
             }
-            Event::Disconnected { .. } => {
+            Event::Disconnected { .. } | Event::ReturnedToCharacterSelect { .. } => {
                 self.reset(out);
             }
             Event::Character(CharacterEvent::LevelChanged {

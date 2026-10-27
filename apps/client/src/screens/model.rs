@@ -646,6 +646,12 @@ impl ScreenModel {
         }
     }
 
+    /// Sets the character entered last on this session (screens that re-open after a
+    /// return to character selection select it again; `Event::ReturnedToCharacterSelect`).
+    pub fn set_last_entered(&mut self, name: Option<String>) {
+        self.last_entered = name;
+    }
+
     fn row_index(&self, name: &str) -> Option<usize> {
         self.rows.iter().position(|r| same_name(&r.name, name))
     }
@@ -653,17 +659,17 @@ impl ScreenModel {
     /// Takes one session event (`_now`: the frame's time, for answers that start clocks).
     pub fn handle_event(&mut self, event: &Event, _now: Instant) {
         match event {
-            Event::Connected { characters } => {
-                self.rows = characters
-                    .iter()
-                    .take(MAX_ROWS)
-                    .map(|c| CharacterRow::named(c.name.clone()))
-                    .collect();
-                self.selected = self
-                    .last_entered
-                    .as_deref()
-                    .and_then(|n| self.row_index(n))
-                    .or((!self.rows.is_empty()).then_some(0));
+            Event::Connected { characters } => self.set_rows(characters),
+            Event::ReturnedToCharacterSelect { characters } => {
+                // Back from the world on the same session (`official-messages-play.md`
+                // §7.2): the selection screen again, with the list as it stands now; the
+                // character entered last is selected.
+                self.stage = Stage::Select;
+                self.status = Status::Open;
+                self.pending = None;
+                self.timed_out = None;
+                self.confirm = None;
+                self.set_rows(characters);
             }
             Event::Character(c) => self.character_event(c),
             Event::WorldEntered { name, .. } => {
@@ -689,6 +695,21 @@ impl ScreenModel {
             }
             _ => {}
         }
+    }
+
+    /// The selection list from a character list (`Connected`, `ReturnedToCharacterSelect`):
+    /// the character entered last is selected, else the first.
+    fn set_rows(&mut self, characters: &[tessera_net::CharacterSummary]) {
+        self.rows = characters
+            .iter()
+            .take(MAX_ROWS)
+            .map(|c| CharacterRow::named(c.name.clone()))
+            .collect();
+        self.selected = self
+            .last_entered
+            .as_deref()
+            .and_then(|n| self.row_index(n))
+            .or((!self.rows.is_empty()).then_some(0));
     }
 
     fn character_event(&mut self, c: &CharacterEvent) {

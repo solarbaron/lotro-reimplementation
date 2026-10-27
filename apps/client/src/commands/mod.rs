@@ -27,6 +27,7 @@
 //! ([`SharedRegistry`]); plugins load only after the install's names are in.
 
 pub mod line;
+pub mod logout;
 pub mod p5;
 pub mod registry;
 pub mod social;
@@ -218,6 +219,8 @@ pub struct Dispatcher {
     p5: p5::P5Queue,
     /// The requests of the `/uiscale` built-in ([`uiscale`]).
     uiscale: uiscale::UiScaleQueue,
+    /// The request of the `/logout` built-in ([`logout`]).
+    logout: logout::LogoutQueue,
 }
 
 impl Default for Dispatcher {
@@ -378,6 +381,7 @@ fn builtins() -> Vec<(&'static str, Builtin, Help)> {
         v.push((w.name(), Builtin::P5(w), w.help()));
     }
     v.push(("uiscale", Builtin::UiScale, uiscale::help()));
+    v.push(("logout", Builtin::Logout, logout::help()));
     v
 }
 
@@ -452,7 +456,14 @@ impl Dispatcher {
             history: History::new(),
             p5: p5::P5Queue::default(),
             uiscale: uiscale::UiScaleQueue::default(),
+            logout: logout::LogoutQueue::default(),
         }
+    }
+
+    /// The request the `/logout` built-in queued ([`logout`]): the frame loop takes it.
+    #[must_use]
+    pub fn logout_queue(&self) -> &logout::LogoutQueue {
+        &self.logout
     }
 
     /// The requests the P5 built-ins queued ([`p5`]): the frame loop takes them.
@@ -646,6 +657,7 @@ impl Dispatcher {
             Builtin::Social(w) => social::run_word(self, w, inv, ctx, out),
             Builtin::P5(word) => p5::run(word, &inv.arguments, &self.p5, out),
             Builtin::UiScale => uiscale::run(&inv.arguments, &self.uiscale, out),
+            Builtin::Logout => logout::run(&inv.arguments, ctx.origin, &self.logout, out),
         }
     }
 

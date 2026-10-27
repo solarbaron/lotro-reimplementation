@@ -492,7 +492,9 @@ impl PlayerState {
                 self.name = Some(name.clone());
                 out.push(PlayerChange::Header);
             }
-            Event::Disconnected { .. } => {
+            // Leaving the world for character selection ends the player's state as the
+            // session's end does; a new list follows (`official-messages-play.md` §7.2).
+            Event::Disconnected { .. } | Event::ReturnedToCharacterSelect { .. } => {
                 self.reset(out);
                 self.infos.clear();
             }

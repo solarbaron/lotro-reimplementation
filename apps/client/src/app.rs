@@ -125,6 +125,13 @@ pub(crate) struct App {
     /// run that has not written its report by then fails, so it never stays open for ever
     /// (a walker that failed, or a player never placed).
     timing_deadline: Option<Instant>,
+    /// The world session was handed over by the official login (`official-entry.md` §8.7):
+    /// quitting the character screens, closing the window and the session's end do not end
+    /// the client; they end this part of the run ([`App::handed_over_ended`]) and the start
+    /// screen's window takes over again (the account form, §8.7).
+    handed_over: bool,
+    /// The handed-over part of the run is over (see `handed_over`), and how.
+    ended: Option<crate::official::flow::HandOverEnd>,
 }
 
 /// The pointer-lock window operations over the winit window (decision 0015 §2.5).
@@ -169,6 +176,18 @@ fn key_action(code: KeyCode) -> Option<CameraAction> {
 
 impl App {
     pub(crate) fn new(args: Args) -> anyhow::Result<Self> {
+        Self::with_session(args, None)
+    }
+
+    /// The windowed client over `handed`, the session the official login brought to
+    /// character selection (`official-entry.md` §8.7), when given: the character screens
+    /// open over it (`args.character_select`), and the end of this part of the run is
+    /// reported by [`App::handed_over_ended`] instead of ending the event loop.
+    pub(crate) fn with_session(
+        args: Args,
+        handed: Option<crate::net::HandOver>,
+    ) -> anyhow::Result<Self> {
+        let handed_over = handed.is_some();
         if let Some(path) = &args.frame_log {
             crate::runtime::refuse_install_path(&args, None, path)?;
         }
@@ -178,9 +197,10 @@ impl App {
         } else {
             args.clone()
         };
-        let mut runtime = Runtime::start(
+        let mut runtime = Runtime::start_with(
             &crate::ui_host::client::ClientUi::runtime_args(&ui_args),
             now,
+            handed,
         )?;
         let host = runtime
             .walker_shared
@@ -233,7 +253,109 @@ impl App {
             scale_factor: 1.0,
             scenario_caption: args_caption,
             timing_deadline,
+            handed_over,
+            ended: None,
         })
+    }
+
+    /// Whether the handed-over part of an official run is over (the player left the
+    /// character screens, closed the window, the session ended, or the screens or the
+    /// walker could not start): the start screen's window shuts this client down and shows
+    /// the account form (`official-entry.md` §8.7).
+    pub(crate) fn handed_over_ended(&self) -> bool {
+        self.ended.is_some()
+    }
+
+    /// How the handed-over part of the run ended, once (see [`App::handed_over_ended`]).
+    pub(crate) fn take_handed_end(&mut self) -> Option<crate::official::flow::HandOverEnd> {
+        self.ended.take()
+    }
+
+    /// Ends the event loop, or, for a handed-over session, only this part of the run (the
+    /// player left: quit, Escape, closing the window; or the character screens closed
+    /// because the session ended, which keeps the session's reason).
+    fn exit(&mut self, event_loop: &ActiveEventLoop) {
+        let end = self.left_or_session_end();
+        self.end_part(event_loop, end);
+    }
+
+    /// `Left`, or the session's end when it has ended (the character screens close on it
+    /// before the frame's own check sees it).
+    fn left_or_session_end(&self) -> crate::official::flow::HandOverEnd {
+        self.runtime
+            .as_ref()
+            .and_then(|rt| rt.world.as_ref())
+            .filter(|w| w.state() == tessera_net::SessionState::Closed)
+            .and_then(|w| w.disconnect_reason().cloned())
+            .map_or(
+                crate::official::flow::HandOverEnd::Left,
+                crate::official::flow::HandOverEnd::SessionEnded,
+            )
+    }
+
+    /// Ends the event loop, or, for a handed-over session, only this part of the run with
+    /// `end` (the first end counts). Returns whether the event loop was asked to exit.
+    fn end_part(
+        &mut self,
+        event_loop: &ActiveEventLoop,
+        end: crate::official::flow::HandOverEnd,
+    ) -> bool {
+        if self.end_handed_part(end) {
+            return false;
+        }
+        event_loop.exit();
+        true
+    }
+
+    /// For a handed-over session, ends this part of the run with `end` (the first end
+    /// counts) and returns `true`; other runs return `false` (the caller ends the event
+    /// loop).
+    fn end_handed_part(&mut self, end: crate::official::flow::HandOverEnd) -> bool {
+        if !self.handed_over {
+            return false;
+        }
+        if self.ended.is_none() {
+            tracing::info!(
+                ?end,
+                "official session: the character screens and the world end"
+            );
+            self.ended = Some(end);
+        }
+        true
+    }
+
+    /// The handed-over part's own ends, checked each walker frame: the session ended, the
+    /// character screens or the walker cannot start (`official-entry.md` §8.7; never an
+    /// automatic character entry).
+    fn handed_over_check(&mut self) -> bool {
+        if !self.handed_over {
+            return false;
+        }
+        use crate::official::flow::{HandOverEnd, HandOverFailure};
+        let Some(rt) = self.runtime.as_mut() else {
+            return false;
+        };
+        if self.host.as_ref().is_some_and(|h| h.failed.is_some()) {
+            // The kind only: the walker's error can name user or install paths.
+            rt.fail_handed(HandOverFailure::Walker);
+        }
+        let end =
+            if let Some(kind) = rt.handed_failure() {
+                Some(HandOverEnd::Failed(kind))
+            } else {
+                rt.world
+                    .as_ref()
+                    .filter(|w| w.state() == tessera_net::SessionState::Closed)
+                    .map(|w| {
+                        HandOverEnd::SessionEnded(w.disconnect_reason().cloned().unwrap_or(
+                            tessera_net::DisconnectReason::TransportFailed(String::new()),
+                        ))
+                    })
+            };
+        match end {
+            Some(e) => self.end_handed_part(e),
+            None => false,
+        }
     }
 
     /// Ends a windowed scenario timing run that has not finished by its deadline, or whose
@@ -254,10 +376,20 @@ impl App {
         true
     }
 
+    /// The run failed: the error is kept and the event loop ends; for a handed-over session
+    /// only this part of the run ends (the start screen's window shows the account form
+    /// with Tessera's text for a failed client). A handed-over run logs only the kind of
+    /// failure, never the error's text, which can name user or install paths
+    /// ([`crate::official::flow::HandOverFailure`]).
     fn fail(&mut self, event_loop: &ActiveEventLoop, err: anyhow::Error) {
-        tracing::error!("{err:#}");
+        let kind = crate::official::flow::HandOverFailure::Run;
+        if self.handed_over {
+            tracing::error!("official session: {}", kind.kind());
+        } else {
+            tracing::error!("{err:#}");
+        }
         self.error.get_or_insert(err);
-        event_loop.exit();
+        self.end_part(event_loop, crate::official::flow::HandOverEnd::Failed(kind));
     }
 
     fn create_gfx(&self, event_loop: &ActiveEventLoop) -> anyhow::Result<Gfx> {
@@ -374,7 +506,7 @@ impl App {
             .is_some_and(|n| self.frames_total >= n)
         {
             tracing::info!(frames = self.frames_total, "frame limit reached; closing");
-            event_loop.exit();
+            self.exit(event_loop);
             return;
         }
         let elapsed = now.saturating_duration_since(self.title_at);
@@ -402,7 +534,7 @@ impl App {
 
     /// One frame of the world walker (or its loading screen).
     fn redraw_walker(&mut self, event_loop: &ActiveEventLoop, now: Instant, dt: f32) {
-        if self.check_timing_run(event_loop, now) {
+        if self.check_timing_run(event_loop, now) || self.handed_over_check() {
             return;
         }
         let (Some(rt), Some(gfx), Some(host)) =
@@ -444,6 +576,12 @@ impl App {
             if let Some(ui) = self.ui.as_mut() {
                 ui.before_update(walker, rt, &mut WinitCursor(&gfx.window));
             }
+            // The location report the walker reads (and places) in this update.
+            let consumed = rt
+                .world
+                .as_ref()
+                .and_then(crate::net::World::player_location)
+                .map(|l| l.seq);
             let ev = walker.update(
                 &mut gfx.renderer,
                 rt.world
@@ -457,6 +595,18 @@ impl App {
             timing_done = ev.duration_done;
             shot = ev.screenshot;
             flight_done = ev.flight_done;
+            if let Some(w) = rt.world.as_mut() {
+                // Back at character selection: the walker drops its placement, so the next
+                // entry places the player at the new location.
+                if w.take_left_world() {
+                    walker.unplace();
+                }
+                // The client's loading of the player's latest placement
+                // (`Command::WorldLoaded`, `official-messages-play.md` §4.5 item 4): once
+                // the walker has placed this entry's (or teleport's) location and is
+                // settled on a later frame; the official session's portal exit waits for it.
+                w.walker_frame(now, consumed, walker.settled());
+            }
             // P5: the dispatcher's `ride`, `findplace` and `leaveinstance`, the feed's
             // mounts for the walker, and the walker's mount state for the plugin views.
             crate::travel::hub::run_p5_requests(rt, walker, now);
@@ -560,7 +710,7 @@ impl App {
                         }
                     }
                 }
-                event_loop.exit();
+                self.exit(event_loop);
                 return;
             }
         }
@@ -646,7 +796,7 @@ impl App {
                 .exit_after_frames
                 .is_some_and(|n| self.frames_total >= n)
         {
-            event_loop.exit();
+            self.exit(event_loop);
             return;
         }
         let elapsed = now.saturating_duration_since(self.title_at);
@@ -680,7 +830,7 @@ impl App {
             return;
         }
         match code {
-            KeyCode::Escape => event_loop.exit(),
+            KeyCode::Escape => self.exit(event_loop),
             KeyCode::KeyR => {
                 if let Some(gfx) = &mut self.gfx {
                     gfx.scene.camera = default_camera();
@@ -818,7 +968,7 @@ impl ApplicationHandler for App {
                 }
             }
             match event {
-                WindowEvent::CloseRequested => event_loop.exit(),
+                WindowEvent::CloseRequested => self.exit(event_loop),
                 WindowEvent::Resized(size) => {
                     if let Some(gfx) = &mut self.gfx {
                         gfx.renderer.resize(size.width, size.height);
@@ -873,14 +1023,14 @@ impl ApplicationHandler for App {
                         && event.state == ElementState::Pressed
                         && event.physical_key == PhysicalKey::Code(KeyCode::Escape) =>
                 {
-                    event_loop.exit();
+                    self.exit(event_loop);
                 }
                 _ => {}
             }
             return;
         }
         match event {
-            WindowEvent::CloseRequested => event_loop.exit(),
+            WindowEvent::CloseRequested => self.exit(event_loop),
             WindowEvent::Resized(size) => {
                 if let Some(gfx) = &mut self.gfx {
                     gfx.renderer.resize(size.width, size.height);
@@ -931,6 +1081,102 @@ impl ApplicationHandler for App {
 
 #[cfg(test)]
 mod tests {
+    use std::time::Instant;
+
+    use clap::Parser as _;
+
+    use crate::official::flow::{HandOverEnd, HandOverFailure};
+
+    fn handed_app(dir: &std::path::Path) -> super::App {
+        let s = |p: &std::path::Path| p.to_str().expect("utf-8").to_owned();
+        let args = crate::cli::Args::try_parse_from([
+            "t".to_owned(),
+            "--character-select".into(),
+            "--game-dir".into(),
+            s(&dir.join("no-install")),
+            "--data-dir".into(),
+            s(&dir.join("data")),
+        ])
+        .expect("args");
+        let handed = crate::net::test_hand_over(Instant::now());
+        super::App::with_session(args, Some(handed)).expect("app")
+    }
+
+    /// `official-entry.md` §8.7: in a handed-over run, leaving, the session's end and a
+    /// walker that cannot start end only this part of the run, each with its reason.
+    #[test]
+    fn a_handed_over_run_ends_its_part_not_the_client() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut app = handed_app(dir.path());
+        assert!(!app.handed_over_ended());
+        assert!(!app.handed_over_check());
+        assert_eq!(app.left_or_session_end(), HandOverEnd::Left);
+        assert!(app.end_handed_part(HandOverEnd::Left), "not the event loop");
+        assert!(app.end_handed_part(HandOverEnd::Failed(HandOverFailure::Run)));
+        assert!(app.handed_over_ended());
+        assert_eq!(
+            app.take_handed_end(),
+            Some(HandOverEnd::Left),
+            "the first end"
+        );
+        app.shutdown();
+
+        // The session ended.
+        let mut app = handed_app(dir.path());
+        if let Some(rt) = app.runtime.as_mut() {
+            if let Some(w) = rt.world.as_mut() {
+                w.shutdown();
+            }
+            for _ in 0..5 {
+                rt.tick(Instant::now());
+            }
+        }
+        assert_eq!(
+            app.left_or_session_end(),
+            HandOverEnd::SessionEnded(tessera_net::DisconnectReason::ClientRequested),
+            "the screens closing on the session's end keep its reason"
+        );
+        assert!(app.handed_over_check());
+        assert_eq!(
+            app.take_handed_end(),
+            Some(HandOverEnd::SessionEnded(
+                tessera_net::DisconnectReason::ClientRequested
+            ))
+        );
+        app.shutdown();
+
+        // The walker never started.
+        let mut app = handed_app(dir.path());
+        if let Some(h) = app.host.as_mut() {
+            h.failed = Some("no adapter".into());
+        }
+        assert!(app.handed_over_check());
+        assert_eq!(
+            app.take_handed_end(),
+            Some(HandOverEnd::Failed(HandOverFailure::Walker)),
+            "the kind only, not the walker's error"
+        );
+        app.shutdown();
+    }
+
+    #[test]
+    fn a_run_of_its_own_ends_the_event_loop() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let s = |p: &std::path::Path| p.to_str().expect("utf-8").to_owned();
+        let args = crate::cli::Args::try_parse_from([
+            "t".to_owned(),
+            "--game-dir".into(),
+            s(&dir.path().join("no-install")),
+            "--data-dir".into(),
+            s(&dir.path().join("data")),
+        ])
+        .expect("args");
+        let mut app = super::App::new(args).expect("app");
+        assert!(!app.end_handed_part(HandOverEnd::Left));
+        assert!(!app.handed_over_check());
+        app.shutdown();
+    }
+
     #[test]
     fn scenario_titles_are_cleaned_for_the_caption() {
         assert_eq!(super::scenario_caption(None), None);

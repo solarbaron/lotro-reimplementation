@@ -2,7 +2,8 @@
 //! The `Session` state machine over the sandbox backend (`tessera-net` `session`,
 //! `sandbox`), driven by an arbitrary sandbox configuration and an arbitrary sequence of
 //! commands (including non-finite movement, oversized or control-character text and
-//! invalid names), clock steps, including stale clocks, and polls.
+//! invalid names, leaving the world for character selection and the client's loading
+//! signal), clock steps, including stale clocks, and polls.
 //!
 //! Nothing may panic. Commands must be validated before they reach the backend, events
 //! must respect the session order (entity events only while in the world, nothing after
@@ -92,7 +93,11 @@ fn assert_valid(command: &Command) {
             destination.is_valid(),
             "invalid teleport reached backend: {destination:?}"
         ),
-        Command::Connect | Command::Disconnect | Command::QueryLocation => {}
+        Command::Connect
+        | Command::Disconnect
+        | Command::QueryLocation
+        | Command::LeaveWorld
+        | Command::WorldLoaded => {}
         _ => panic!("unchecked command kind; extend assert_valid: {command:?}"),
     }
 }
@@ -118,7 +123,9 @@ impl Backend for Checked {
             Command::Move { .. }
             | Command::Chat { .. }
             | Command::Teleport { .. }
-            | Command::QueryLocation => {
+            | Command::QueryLocation
+            | Command::LeaveWorld
+            | Command::WorldLoaded => {
                 assert!(self.in_world, "in-world command out of state: {command:?}");
             }
             _ => panic!("unchecked command kind; extend submit: {command:?}"),
@@ -143,11 +150,17 @@ impl Backend for Checked {
     fn poll(&mut self, now: Instant, out: &mut Vec<Event>) {
         let start = out.len();
         self.inner.poll(now, out);
-        if out[start..]
-            .iter()
-            .any(|e| matches!(e, Event::WorldEntered { .. }))
-        {
-            self.in_world = true;
+        for e in out.get(start..).unwrap_or(&[]) {
+            match e {
+                Event::WorldEntered { .. } => self.in_world = true,
+                // Back at character selection: in-world commands stop, `EnterWorld` may
+                // follow again.
+                Event::ReturnedToCharacterSelect { .. } => {
+                    self.in_world = false;
+                    self.entering = false;
+                }
+                _ => {}
+            }
         }
     }
 }
@@ -197,6 +210,8 @@ enum Op {
         region: u16,
     },
     TeleportNamed(String),
+    LeaveWorld,
+    WorldLoaded,
     Poll {
         advance_ms: u16,
     },
@@ -286,6 +301,8 @@ fuzz_target!(|input: (Config, Vec<Op>)| {
             Op::TeleportNamed(name) => Some(Command::Teleport {
                 destination: Destination::Named(name),
             }),
+            Op::LeaveWorld => Some(Command::LeaveWorld),
+            Op::WorldLoaded => Some(Command::WorldLoaded),
             Op::Poll { advance_ms } => {
                 now += Duration::from_millis(u64::from(advance_ms));
                 session.poll_into(now, &mut events);
@@ -314,6 +331,11 @@ fuzz_target!(|input: (Config, Vec<Op>)| {
             assert!(!disconnected, "event after Disconnected: {e:?}");
             match e {
                 Event::WorldEntered { .. } => entered = true,
+                // The world is left: entity events stop until the next entry.
+                Event::ReturnedToCharacterSelect { .. } => {
+                    assert!(entered, "a return before any world entry");
+                    entered = false;
+                }
                 Event::EntitySpawned { .. }
                 | Event::EntityCreated { .. }
                 | Event::AppearanceChanged { .. }

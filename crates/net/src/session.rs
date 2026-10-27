@@ -21,8 +21,12 @@
 //!
 //! ```text
 //!  Idle --Connect--> Connecting --Connected--> Connected --EnterWorld--> EnteringWorld
-//!                                                                         |
-//!                     Closed <--Disconnected-- (any) <------WorldEntered--+--> InWorld
+//!                                                ^  ^                        |    |
+//!                                                |  +----EnterWorldFailed----+    |
+//!                                                |                        WorldEntered
+//!                                                +--ReturnedToCharacterSelect-- InWorld
+//!
+//!  (any) --Disconnected--> Closed
 //! ```
 //!
 //! so backends and UI code can rely on events arriving in a sensible order.
@@ -266,6 +270,24 @@ pub enum Event {
     /// An account event of the login before [`Event::Connected`] (official play,
     /// `docs/specs/official-entry.md` §8): progress, world list, queue, refusals.
     Account(AccountEvent),
+    /// The world was left and the session is back at character selection, with the
+    /// account's character list as it stands now (`official-messages-play.md` §7.2 item 3:
+    /// the world is torn down while the session stays open). The session goes from
+    /// [`SessionState::InWorld`] to [`SessionState::Connected`]: the player and every
+    /// entity are gone, and `EnterWorld` (or a character command) may follow. Backends
+    /// that can leave the world send it after [`Command::LeaveWorld`] (or when the world
+    /// source ends the world by itself); the others never send it.
+    ///
+    /// The event implies the end of every entity: a backend may send an
+    /// [`Event::EntityDespawned`] for some or all of them (and [`Event::StaticsCleared`])
+    /// before it, but need not; consumers drop whatever is left when it arrives. Tessera's
+    /// own addition to the neutral model (`official-messages-play.md` §8 maps the teardown
+    /// to the later character list; engineering choice pending a spec answer, listed in
+    /// `docs/m8-remediation.md` §15).
+    ReturnedToCharacterSelect {
+        /// Characters that may enter the world (as in [`Event::Connected`]).
+        characters: Vec<CharacterSummary>,
+    },
 }
 
 impl Event {
@@ -300,6 +322,7 @@ impl Event {
             Self::World(e) => e.name(),
             Self::Progression(e) => e.name(),
             Self::Account(e) => e.name(),
+            Self::ReturnedToCharacterSelect { .. } => "ReturnedToCharacterSelect",
         }
     }
 }
@@ -406,6 +429,24 @@ pub enum Command {
     /// An account command of the login (official play, `docs/specs/official-entry.md` §8):
     /// allowed only while [`SessionState::Connecting`].
     Account(AccountCommand),
+    /// Leave the world for character selection, keeping the session (in the world;
+    /// `official-messages-play.md` §7.2 item 1). The world source answers with
+    /// [`Event::ReturnedToCharacterSelect`] once the world is left (a timed logout may come
+    /// first, as system chat lines); one that cannot leave the world refuses the command
+    /// with [`NetError::InvalidCommand`]. The session stays [`SessionState::InWorld`] until
+    /// the answer.
+    ///
+    /// Only the player's own action sends it (a typed command or a menu choice, device
+    /// input): never start-up lines, scripts, plugins or automation (decision 0034).
+    LeaveWorld,
+    /// The client finished loading the world around the player's latest placement (in the
+    /// world; `official-messages-play.md` §4.5 item 4): after [`Event::WorldEntered`] and
+    /// after each later [`Event::LocationReport`] with [`LocationCause::Teleported`] for the
+    /// player, once the client has placed the player at that location and its area is
+    /// loaded. One signal per placement; a backend that waits for it (portal space) takes
+    /// one signal per portal space and ignores the others. Backends that do not wait for
+    /// the client's loading accept and ignore it.
+    WorldLoaded,
 }
 
 impl Command {
@@ -433,6 +474,8 @@ impl Command {
             Self::World(c) => c.name(),
             Self::Progression(c) => c.name(),
             Self::Account(c) => c.name(),
+            Self::LeaveWorld => "LeaveWorld",
+            Self::WorldLoaded => "WorldLoaded",
         }
     }
 }
@@ -637,7 +680,9 @@ impl Session {
             | Command::Npc(_)
             | Command::Social(_)
             | Command::World(_)
-            | Command::Progression(_) => self.state == S::InWorld,
+            | Command::Progression(_)
+            | Command::LeaveWorld
+            | Command::WorldLoaded => self.state == S::InWorld,
             Command::Account(_) => self.state == S::Connecting && !self.login_refused,
             Command::Disconnect => !matches!(self.state, S::Idle | S::Closing | S::Closed),
         };
@@ -950,6 +995,17 @@ impl Session {
                 _ => Verdict::Invalid("chat before connecting"),
             },
             Event::Account(e) => return self.accept_account(e, now),
+            Event::ReturnedToCharacterSelect { .. } => match self.state {
+                S::InWorld => {
+                    self.state = S::Connected;
+                    self.player = None;
+                    self.player_location = None;
+                    self.player_anchor = None;
+                    Verdict::Surface
+                }
+                _ if closing => Verdict::Stale,
+                _ => Verdict::Invalid("unexpected ReturnedToCharacterSelect"),
+            },
             Event::Disconnected { .. } => {
                 let ok = self.state != S::Closed;
                 self.state = S::Closed;
@@ -1114,7 +1170,9 @@ fn validate(command: &Command) -> Result<(), NetError> {
         | Command::QueryLocation
         | Command::Emote { .. }
         | Command::Stance { .. }
-        | Command::Account(_) => {}
+        | Command::Account(_)
+        | Command::LeaveWorld
+        | Command::WorldLoaded => {}
         Command::Character(c) => c.validate().map_err(NetError::InvalidCommand)?,
         Command::Inventory(c) => c.validate().map_err(NetError::InvalidCommand)?,
         Command::Combat(c) => c.validate().map_err(NetError::InvalidCommand)?,
@@ -1141,7 +1199,7 @@ fn clean(text: &mut String, max_len: usize) -> bool {
 /// returns whether anything changed.
 fn clean_text(event: &mut Event) -> bool {
     match event {
-        Event::Connected { characters } => {
+        Event::Connected { characters } | Event::ReturnedToCharacterSelect { characters } => {
             let before = characters.len();
             characters.retain(|c| is_valid_name(&c.name));
             characters.len() != before

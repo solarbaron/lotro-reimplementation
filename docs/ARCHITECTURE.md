@@ -1605,6 +1605,25 @@ same. The new events follow the entity rule and the three new commands belong to
 test-server backend refuses them like `Craft` and `TrainSkill` and never produces the P6 events,
 so no protocol minor is needed (`server-content.md` §7).
 
+**Leaving the world and the loading signal (M8 plan C3, `official-messages-play.md` §4.5,
+§7.2, §8).** Three neutral items let a session go from the world back to character selection
+and tell the backend when the client has loaded a placement; they are Tessera's additions
+(`official-messages-play.md` §8 maps the teardown to the later character list; the questions
+are listed in `docs/m8-remediation.md` §15):
+
+| Item | Kind | Rule |
+|---|---|---|
+| `Command::LeaveWorld` | command (`InWorld`) | Leave the world for character selection, keeping the session. Sent only on the player's own action (the dispatcher's typed `/logout`, device input): never start-up lines, scripts, plugins or automation. A backend that cannot leave the world refuses it (`InvalidCommand`): the test server, a scenario |
+| `Command::WorldLoaded` | command (`InWorld`) | The client has loaded the world around the player's latest placement: after `WorldEntered` and after each `Teleported` location report for the player, once the walker has placed that location and is settled on a later frame (one signal per placement). The official backend ends portal space on it (one per portal space; others ignored); the rest accept and ignore it |
+| `Event::ReturnedToCharacterSelect { characters }` | event | The world was left; the session is at character selection with the list as it stands. It implies the end of every entity (despawns before it are optional) and runs the client's leave path as `Disconnected` does (player state, combat, social, travel and mounts, quests, NPC windows, progression, the plugin views), the chat history kept |
+
+The session's state machine gains the edge `InWorld → Connected` on
+`ReturnedToCharacterSelect` (player and location dropped, names cleaned as in `Connected`);
+`EnterWorld` and character commands may follow on the same session. A return outside
+`InWorld` is invalid (stale while closing). The sandbox answers `LeaveWorld` itself (a pending
+teleport's cancellation line first, then the despawns, `StaticsCleared` and the return); the
+official backend sends the logout request and returns at the world-teardown notice.
+
 <a id="net-backends"></a>
 ### 19.2 Backends
 

@@ -311,7 +311,12 @@ impl CharacterScreens {
         let mut rows_changed = false;
         for e in events {
             self.model.handle_event(e, now);
-            rows_changed |= matches!(e, Event::Connected { .. } | Event::Character(_));
+            rows_changed |= matches!(
+                e,
+                Event::Connected { .. }
+                    | Event::ReturnedToCharacterSelect { .. }
+                    | Event::Character(_)
+            );
         }
         if rows_changed {
             self.apply_kept_choices();

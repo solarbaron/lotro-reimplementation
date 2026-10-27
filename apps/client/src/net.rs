@@ -33,9 +33,12 @@ use tessera_net::remote::{
 use tessera_net::sandbox::world::WorldSource;
 use tessera_net::sandbox::{SandboxBackend, SandboxConfig};
 use tessera_net::{
-    ChatChannel, Command, Destination, EntityId, EntityKind, Event, Location, LocationCause,
-    NetError, NoticeLevel, Session, SessionState, Transform, Vec3,
+    CharacterSummary, ChatChannel, Command, Destination, EntityId, EntityKind, Event, Location,
+    LocationCause, NetError, NoticeLevel, Session, SessionState, Transform, Vec3,
 };
+
+/// The system line of [`World::leave_world`] (Tessera's wording).
+pub const LEAVING_WORLD: &str = "Leaving the world for character selection...";
 
 /// How long [`World::shutdown`] waits for the backend to confirm the disconnect.
 pub const DISCONNECT_GRACE: Duration = Duration::from_millis(500);
@@ -359,6 +362,42 @@ impl crate::walker::WalkerSession for World {
     }
 }
 
+/// A session someone else opened and brought to character selection, with the characters
+/// of its `Connected`: the official login's hand-over to the character screens
+/// (`official-entry.md` §8.7), taken by [`World::handed_over`].
+#[derive(Debug)]
+pub struct HandOver {
+    /// The session, at `SessionState::Connected`.
+    pub session: Session,
+    /// The characters of its `Connected`.
+    pub characters: Vec<CharacterSummary>,
+    /// The events the login polled after `Connected` (the rest of that poll's batch and
+    /// what came until the hand-over), in order, at most [`MAX_HANDED_EVENTS`]; the world
+    /// applies them first.
+    pub rest: Vec<Event>,
+}
+
+/// Most events a [`HandOver`] carries after `Connected` (Tessera bound; later ones are
+/// dropped and counted by the caller).
+pub const MAX_HANDED_EVENTS: usize = 4096;
+
+/// Most names kept in [`World::character_list`] (as the character screens' rows).
+pub const MAX_LISTED_CHARACTERS: usize = 1024;
+
+/// The client's world loading for the player's latest placement (`Command::WorldLoaded`,
+/// `official-messages-play.md` §4.5 item 4; [`World::walker_frame`]).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+struct LoadWait {
+    /// A placement waits for its loading signal (from `WorldEntered`, or a teleport).
+    pending: bool,
+    /// The location report the walker must place: the first player report with cause
+    /// `Entered` or `Teleported` after the latest `WorldEntered`, or the latest
+    /// `Teleported` one.
+    target: Option<u64>,
+    /// The walker has placed `target` (in an earlier frame).
+    placed: bool,
+}
+
 /// The client's view of the world source.
 #[derive(Debug)]
 pub struct World {
@@ -463,6 +502,28 @@ pub struct World {
     /// Its changes not yet taken ([`World::take_p6_changes`]), at most [`MAX_P6_CHANGES`]
     /// (the oldest are dropped; consumers resynchronise from the state).
     p6_changes: std::collections::VecDeque<crate::progression::state::P6Change>,
+    /// The latest character list (`Connected`, `ReturnedToCharacterSelect`, or the list of
+    /// a session handed over at character selection, [`World::handed_over`]).
+    character_list: Vec<CharacterSummary>,
+    /// A `ReturnedToCharacterSelect` arrived since the last [`World::take_returned`].
+    returned: bool,
+    /// The loading of the player's latest placement ([`World::walker_frame`]).
+    load: LoadWait,
+    /// `WorldLoaded` signals sent (diagnostics and tests).
+    loaded_sent: u64,
+    /// The session was handed over by the official login (`official-entry.md` §8.7): it
+    /// never enters a character without the player's choice, and its shutdown does not
+    /// wait for the backend.
+    handed: bool,
+    /// Why the session ended (its `Disconnected`), once it has.
+    last_disconnect: Option<tessera_net::DisconnectReason>,
+    /// The world was left for character selection since the last
+    /// [`World::take_left_world`] (the walker drops its placement).
+    left_world: bool,
+    /// The character entered last (its `WorldEntered`).
+    last_entered: Option<String>,
+    /// A `ReturnedToCharacterSelect` has arrived on this session.
+    returned_once: bool,
 }
 
 /// Most P6 changes kept for [`World::take_p6_changes`] between two takes.
@@ -611,10 +672,53 @@ impl World {
         Self::from_session(now, Session::new(backend))
     }
 
+    /// A world over a session someone else opened and brought to character selection: the
+    /// official login hands its session over this way (`official-entry.md` §8.7), with the
+    /// `characters` of its `Connected` (already polled by the login screens). No `Connect`
+    /// is sent; the character screens read the list from [`World::character_list`].
+    ///
+    /// The world never enters a character without the player's choice (the character
+    /// screens): neither on `Connected` nor after a return to character selection. The
+    /// events the login polled after `Connected` ([`HandOver::rest`]) are applied first.
+    #[must_use]
+    pub fn handed_over(now: Instant, handed: HandOver) -> Self {
+        let HandOver {
+            session,
+            characters,
+            rest,
+        } = handed;
+        tracing::info!(
+            backend = session.backend_name(),
+            state = ?session.state(),
+            characters = characters.len(),
+            later_events = rest.len(),
+            "world session handed over"
+        );
+        let mut w = Self::over(now, session);
+        w.handed = true;
+        w.manual_enter = true;
+        w.character_list = characters;
+        w.character_list.truncate(MAX_LISTED_CHARACTERS);
+        for ev in rest.iter().take(MAX_HANDED_EVENTS) {
+            w.apply(now, ev);
+        }
+        w
+    }
+
+    /// Whether the session was handed over by the official login ([`World::handed_over`]).
+    #[must_use]
+    pub fn is_handed_over(&self) -> bool {
+        self.handed
+    }
+
     fn from_session(now: Instant, mut session: Session) -> Result<Self, NetError> {
         tracing::info!(backend = session.backend_name(), "world session created");
         session.send(now, Command::Connect)?;
-        Ok(Self {
+        Ok(Self::over(now, session))
+    }
+
+    fn over(now: Instant, session: Session) -> Self {
+        Self {
             session,
             events: Vec::new(),
             entities: BTreeMap::new(),
@@ -660,7 +764,110 @@ impl World {
             p5_changes: std::collections::VecDeque::new(),
             p6: crate::progression::state::P6State::new(),
             p6_changes: std::collections::VecDeque::new(),
-        })
+            character_list: Vec::new(),
+            returned: false,
+            load: LoadWait::default(),
+            loaded_sent: 0,
+            handed: false,
+            last_disconnect: None,
+            left_world: false,
+            last_entered: None,
+            returned_once: false,
+        }
+    }
+
+    /// The latest character list of the session (empty before the first).
+    #[must_use]
+    pub fn character_list(&self) -> &[CharacterSummary] {
+        &self.character_list
+    }
+
+    /// Whether the session came back from the world to character selection since the last
+    /// call (`Event::ReturnedToCharacterSelect`): the character screens open again.
+    pub fn take_returned(&mut self) -> bool {
+        std::mem::take(&mut self.returned)
+    }
+
+    /// Asks to leave the world for character selection, keeping the session
+    /// (`Command::LeaveWorld`; `official-messages-play.md` §7.2). A system line says the
+    /// world is being left (a timed logout's countdown lines may follow).
+    ///
+    /// Only the player's own action may call this: device input, such as the dispatcher's
+    /// typed `/logout` (never a start-up line, a script, a plugin or any automation;
+    /// decision 0034, `official-entry.md` §4.2).
+    ///
+    /// # Errors
+    ///
+    /// As `Session::send` (outside the world, or a backend that cannot leave it).
+    pub fn leave_world(&mut self, now: Instant) -> Result<(), NetError> {
+        self.send(now, Command::LeaveWorld)?;
+        self.push_chat(ChatLine::system(LEAVING_WORLD));
+        Ok(())
+    }
+
+    /// The walker's frame, for the loading signal of the player's latest placement
+    /// (`Command::WorldLoaded`, `official-messages-play.md` §4.5 item 4). `consumed`: the
+    /// sequence number of [`World::player_location`] the walker read in this frame's
+    /// update (it places every new report it reads); `settled`: whether the walker is
+    /// placed and everything around it is loaded after the update.
+    ///
+    /// The signal goes out once per placement: after `WorldEntered`, once the walker has
+    /// placed the first player report with cause `Entered` or `Teleported` that followed
+    /// it, and after each later `Teleported` report for the player, once the walker has
+    /// placed that one; in both cases on a later frame in which the walker is settled. So a
+    /// return to character selection and a new entry wait for the new location, never the
+    /// previous world's. Not written to a scenario log: it is a loading signal, not a
+    /// player's command; backends other than the official one ignore it.
+    pub fn walker_frame(&mut self, now: Instant, consumed: Option<u64>, settled: bool) {
+        if !self.load.pending || self.state() != SessionState::InWorld {
+            return;
+        }
+        let Some(target) = self.load.target else {
+            return;
+        };
+        if !self.load.placed {
+            // Placed in this frame: the loading it starts is judged from the next frame.
+            self.load.placed = consumed.is_some_and(|s| s >= target);
+            return;
+        }
+        if !settled {
+            return;
+        }
+        self.load.pending = false;
+        self.loaded_sent += 1;
+        if let Err(e) = self.session.send(now, Command::WorldLoaded) {
+            tracing::debug!("net: world-loaded signal not sent: {e}");
+        }
+    }
+
+    /// `WorldLoaded` signals sent so far ([`World::walker_frame`]).
+    #[must_use]
+    pub fn loaded_signals(&self) -> u64 {
+        self.loaded_sent
+    }
+
+    /// Whether the world was left for character selection since the last call: the walker
+    /// drops its placement, so the next entry places the player afresh.
+    pub fn take_left_world(&mut self) -> bool {
+        std::mem::take(&mut self.left_world)
+    }
+
+    /// Why the session ended, once it has (its `Disconnected`).
+    #[must_use]
+    pub fn disconnect_reason(&self) -> Option<&tessera_net::DisconnectReason> {
+        self.last_disconnect.as_ref()
+    }
+
+    /// The character entered last on this session.
+    #[must_use]
+    pub fn last_entered(&self) -> Option<&str> {
+        self.last_entered.as_deref()
+    }
+
+    /// Whether the session has come back from the world to character selection.
+    #[must_use]
+    pub fn has_returned(&self) -> bool {
+        self.returned_once
     }
 
     /// The player's social state (decision 0024 P4).
@@ -1463,6 +1670,9 @@ impl World {
         match self.pending_enter.take() {
             Some(_) if disconnected => {}
             Some((name, false)) => self.pending_enter = Some((name, true)),
+            Some(_) if self.handed => {
+                tracing::warn!("net: a handed-over session never enters a character on its own");
+            }
             Some((name, true)) => {
                 let character = name.or_else(|| {
                     self.scenario_input
@@ -1561,10 +1771,53 @@ impl World {
             self.queue_combat_event(c);
         }
         match ev {
+            Event::ReturnedToCharacterSelect { characters } => {
+                tracing::info!(
+                    characters = characters.len(),
+                    "net: back at character selection"
+                );
+                // The walker drops every figure it has (as one despawn each), the placed
+                // ones with the statics.
+                let ids: Vec<EntityId> = self.entities.keys().copied().collect();
+                for id in ids {
+                    self.queue_entity_event(&Event::EntityDespawned { id });
+                }
+                self.queue_entity_event(&Event::StaticsCleared);
+                self.entities.clear();
+                self.placed.clear();
+                self.player = None;
+                self.location = None;
+                self.entered_at = None;
+                self.load = LoadWait::default();
+                self.character_list.clone_from(characters);
+                self.character_list.truncate(MAX_LISTED_CHARACTERS);
+                self.returned = true;
+                self.returned_once = true;
+                self.left_world = true;
+                if !self.manual_enter {
+                    self.enter_from_list(now, characters);
+                }
+            }
+            Event::Character(tessera_net::CharacterEvent::CharacterInfo { name, .. }) => {
+                // A later list's new name (the character screens re-open from this copy).
+                let key = name_key(name);
+                if self.character_list.len() < MAX_LISTED_CHARACTERS
+                    && !self.character_list.iter().any(|c| name_key(&c.name) == key)
+                {
+                    self.character_list
+                        .push(CharacterSummary { name: name.clone() });
+                }
+            }
+            Event::Character(tessera_net::CharacterEvent::CharacterRemoved { name }) => {
+                let key = name_key(name);
+                self.character_list.retain(|c| name_key(&c.name) != key);
+            }
             Event::Connected { characters } => {
                 let names: Vec<&str> = characters.iter().map(|c| c.name.as_str()).collect();
                 tracing::info!(characters = %names.join(","), "net: connected");
                 self.show_motd();
+                self.character_list.clone_from(characters);
+                self.character_list.truncate(MAX_LISTED_CHARACTERS);
                 if self.manual_enter {
                     return;
                 }
@@ -1574,32 +1827,7 @@ impl World {
                     self.pending_enter = Some((self.character.clone(), false));
                     return;
                 }
-                let chosen = match self.character.as_deref() {
-                    Some(w) => {
-                        let key = name_key(w);
-                        let found = characters.iter().find(|c| name_key(&c.name) == key);
-                        if found.is_none() {
-                            let text = no_such_character(w, &names);
-                            tracing::warn!("net: {text}");
-                            self.push_chat(ChatLine::system(text));
-                            if let Err(e) = self.send(now, Command::Disconnect) {
-                                tracing::debug!("net: disconnect not sent: {e}");
-                            }
-                            return;
-                        }
-                        found
-                    }
-                    None => characters.first(),
-                };
-                if let Some(first) = chosen {
-                    let character = first.name.clone();
-                    if let Err(e) = self.send(now, Command::EnterWorld { character }) {
-                        tracing::warn!("net: enter world failed: {e}");
-                    }
-                } else {
-                    tracing::warn!("net: the account has no characters");
-                    self.push_chat(ChatLine::system("This account has no characters."));
-                }
+                self.enter_from_list(now, characters);
             }
             Event::WorldEntered {
                 player,
@@ -1609,6 +1837,14 @@ impl World {
                 tracing::info!(player = player.0, %name, pos = ?transform.position, "net: world entered");
                 self.show_motd();
                 self.entered_at = Some(now);
+                // A new placement waits for its loading signal: the first location report
+                // of this entry ([`World::walker_frame`]).
+                self.load = LoadWait {
+                    pending: true,
+                    target: None,
+                    placed: false,
+                };
+                self.last_entered = Some(name.clone());
                 self.player = Some(*player);
                 self.entities.insert(
                     *player,
@@ -1714,6 +1950,19 @@ impl World {
                         cause: *cause,
                         seq: self.location_seq,
                     });
+                    // The placement the loading signal waits for: the first report of an
+                    // entry, then every teleport (one signal per placement).
+                    let first_of_entry = self.load.pending && self.load.target.is_none();
+                    if (first_of_entry
+                        && matches!(cause, LocationCause::Entered | LocationCause::Teleported))
+                        || *cause == LocationCause::Teleported
+                    {
+                        self.load = LoadWait {
+                            pending: true,
+                            target: Some(self.location_seq),
+                            placed: false,
+                        };
+                    }
                 }
             }
             Event::StaticSpawned { .. } => {}
@@ -1737,6 +1986,8 @@ impl World {
             }
             Event::Disconnected { reason } => {
                 tracing::info!(?reason, "net: disconnected");
+                self.last_disconnect = Some(reason.clone());
+                self.load = LoadWait::default();
                 let pinned = self.pinned;
                 if let Some(text) = self
                     .remote_backend()
@@ -1752,6 +2003,45 @@ impl World {
                 self.location = None;
             }
             other => tracing::debug!(?other, "net: unhandled event"),
+        }
+    }
+
+    /// Enters the chosen character (`--character`, a scenario's) or the first one of
+    /// `characters`, as a session that enters by itself does on `Connected`; a name the list
+    /// does not hold ends the session with a system line listing the characters.
+    fn enter_from_list(&mut self, now: Instant, characters: &[CharacterSummary]) {
+        if self.handed {
+            // `official-entry.md` §8.7: an official session enters only on the player's
+            // choice in the character screens.
+            tracing::warn!("net: a handed-over session never enters a character on its own");
+            return;
+        }
+        let names: Vec<&str> = characters.iter().map(|c| c.name.as_str()).collect();
+        let chosen = match self.character.as_deref() {
+            Some(w) => {
+                let key = name_key(w);
+                let found = characters.iter().find(|c| name_key(&c.name) == key);
+                if found.is_none() {
+                    let text = no_such_character(w, &names);
+                    tracing::warn!("net: {text}");
+                    self.push_chat(ChatLine::system(text));
+                    if let Err(e) = self.send(now, Command::Disconnect) {
+                        tracing::debug!("net: disconnect not sent: {e}");
+                    }
+                    return;
+                }
+                found
+            }
+            None => characters.first(),
+        };
+        if let Some(first) = chosen {
+            let character = first.name.clone();
+            if let Err(e) = self.send(now, Command::EnterWorld { character }) {
+                tracing::warn!("net: enter world failed: {e}");
+            }
+        } else {
+            tracing::warn!("net: the account has no characters");
+            self.push_chat(ChatLine::system("This account has no characters."));
         }
     }
 
@@ -1773,7 +2063,9 @@ impl World {
         }
     }
 
-    /// Disconnect gracefully, polling for at most [`DISCONNECT_GRACE`].
+    /// Disconnect gracefully, polling for at most [`DISCONNECT_GRACE`]. A handed-over
+    /// session (the official connector) is only told to disconnect: the frame thread does
+    /// not wait, the connector's own thread and reaper finish the graceful end.
     pub fn shutdown(&mut self) {
         let start = Instant::now();
         if matches!(self.state(), SessionState::Closed) {
@@ -1781,6 +2073,10 @@ impl World {
         }
         if let Err(e) = self.send(start, Command::Disconnect) {
             tracing::debug!("net: disconnect not sent: {e}");
+            return;
+        }
+        if self.handed {
+            tracing::info!(events = self.events_seen, "net: handed-over session let go");
             return;
         }
         let mut now = start;
@@ -1899,9 +2195,219 @@ pub fn describe_failure(f: &RemoteFailure, pinned: bool) -> String {
     }
 }
 
+/// A sandbox session with the characters "Alda" and "Brenna", brought to character
+/// selection as the official login hands its session over (`official-entry.md` §8.7; tests).
+///
+/// # Panics
+///
+/// When the sandbox does not reach `Connected` in its first poll.
+#[cfg(test)]
+#[must_use]
+pub(crate) fn test_hand_over(now: Instant) -> HandOver {
+    let mut session = Session::new(
+        SandboxBackend::new(SandboxConfig {
+            characters: vec!["Alda".into(), "Brenna".into()],
+            ..SandboxConfig::default()
+        })
+        .expect("sandbox"),
+    );
+    session.send(now, Command::Connect).expect("connect");
+    let mut characters = Vec::new();
+    for ev in session.poll(now) {
+        if let Event::Connected { characters: c } = ev {
+            characters = c;
+        }
+    }
+    assert_eq!(session.state(), SessionState::Connected);
+    HandOver {
+        session,
+        characters,
+        rest: Vec::new(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn handed_sandbox(now: Instant) -> World {
+        World::handed_over(now, test_hand_over(now))
+    }
+
+    fn settle(world: &mut World, now: &mut Instant, frames: usize) {
+        for _ in 0..frames {
+            world.update(*now);
+            *now += Duration::from_millis(16);
+        }
+    }
+
+    #[test]
+    fn a_handed_over_session_never_enters_a_character_on_its_own() {
+        let mut now = Instant::now();
+        let mut world = handed_sandbox(now);
+        assert!(world.is_handed_over());
+        settle(&mut world, &mut now, 10);
+        assert_eq!(world.state(), SessionState::Connected, "no automatic entry");
+        // Even with manual entry switched off (the character screens could not open).
+        world.set_manual_enter(false);
+        settle(&mut world, &mut now, 10);
+        assert_eq!(world.state(), SessionState::Connected);
+        // The player's choice enters.
+        world
+            .send_command(
+                now,
+                Command::EnterWorld {
+                    character: "Brenna".into(),
+                },
+            )
+            .expect("enter");
+        settle(&mut world, &mut now, 10);
+        assert_eq!(world.state(), SessionState::InWorld);
+        assert_eq!(world.last_entered(), Some("Brenna"));
+        // A later return never enters a character on its own either.
+        world.leave_world(now).expect("leave");
+        settle(&mut world, &mut now, 2);
+        assert!(world.take_returned());
+        assert!(world.has_returned());
+        settle(&mut world, &mut now, 20);
+        assert_eq!(world.state(), SessionState::Connected);
+        let names: Vec<&str> = world
+            .character_list()
+            .iter()
+            .map(|c| c.name.as_str())
+            .collect();
+        assert_eq!(names, ["Alda", "Brenna"]);
+        // The hand-back does not wait for the backend.
+        let t = Instant::now();
+        world.shutdown();
+        assert!(t.elapsed() < DISCONNECT_GRACE);
+    }
+
+    #[test]
+    fn the_loading_signal_waits_for_each_entrys_and_teleports_placement() {
+        let mut now = Instant::now();
+        let mut world = handed_sandbox(now);
+        let enter = |world: &mut World, now: &mut Instant| {
+            world
+                .send_command(
+                    *now,
+                    Command::EnterWorld {
+                        character: "Alda".into(),
+                    },
+                )
+                .expect("enter");
+            settle(world, now, 5);
+            assert_eq!(world.state(), SessionState::InWorld);
+        };
+        enter(&mut world, &mut now);
+        let first = world.player_location().expect("placed by the sandbox").seq;
+        // Before the walker read this entry's location: nothing, however settled.
+        world.walker_frame(now, None, true);
+        world.walker_frame(now, Some(first - 1), true);
+        assert_eq!(world.loaded_signals(), 0);
+        // The frame that places it does not count; the next settled one does.
+        world.walker_frame(now, Some(first), true);
+        assert_eq!(world.loaded_signals(), 0);
+        world.walker_frame(now, Some(first), false);
+        assert_eq!(world.loaded_signals(), 0, "not while loading");
+        world.walker_frame(now, Some(first), true);
+        assert_eq!(world.loaded_signals(), 1);
+        world.walker_frame(now, Some(first), true);
+        assert_eq!(world.loaded_signals(), 1, "one signal per placement");
+        // A teleport is a new placement (`LocationReport` with `Teleported`).
+        let here = world.player_location().expect("location").location;
+        world.teleport(
+            now,
+            Destination::Location {
+                location: Location::new(here.region, here.x + 50.0, here.y, here.z),
+                heading: 0.0,
+            },
+        );
+        settle(&mut world, &mut now, 5);
+        let jump = world.player_location().expect("location");
+        assert_eq!(jump.cause, LocationCause::Teleported);
+        world.walker_frame(now, Some(first), true);
+        assert_eq!(
+            world.loaded_signals(),
+            1,
+            "the old placement does not count"
+        );
+        world.walker_frame(now, Some(jump.seq), true);
+        world.walker_frame(now, Some(jump.seq), true);
+        assert_eq!(world.loaded_signals(), 2);
+        // Back at character selection and in again: the new entry's own location.
+        world.leave_world(now).expect("leave");
+        settle(&mut world, &mut now, 2);
+        assert!(world.take_left_world());
+        world.walker_frame(now, Some(jump.seq), true);
+        enter(&mut world, &mut now);
+        world.walker_frame(now, Some(jump.seq), true);
+        world.walker_frame(now, Some(jump.seq), true);
+        assert_eq!(
+            world.loaded_signals(),
+            2,
+            "not the previous world's placement"
+        );
+        let again_at = world.player_location().expect("location");
+        assert_ne!(
+            (again_at.location.x, again_at.location.y),
+            (jump.location.x, jump.location.y),
+            "the re-entry is at another position than the left world's"
+        );
+        let again = again_at.seq;
+        assert!(again > jump.seq);
+        world.walker_frame(now, Some(again), true);
+        world.walker_frame(now, Some(again), true);
+        assert_eq!(world.loaded_signals(), 3);
+    }
+
+    #[test]
+    fn leaving_the_world_runs_every_hubs_leave_path() {
+        let mut now = Instant::now();
+        let mut world = World::sandbox(now).expect("sandbox");
+        settle(&mut world, &mut now, 30);
+        assert_eq!(world.state(), SessionState::InWorld);
+        world.set_manual_enter(true);
+        let _ = world.take_player_changes();
+        let _ = world.take_combat_events();
+        let _ = world.take_p5_changes();
+        let _ = world.take_p6_changes();
+        let _ = world.take_chat();
+        assert!(world.player_state().player().is_some());
+        world.leave_world(now).expect("leave");
+        settle(&mut world, &mut now, 2);
+        assert_eq!(world.state(), SessionState::Connected);
+        assert!(world.take_chat().iter().any(|l| l.text == LEAVING_WORLD));
+        // P1 (and the NPC windows and quests with it), P2, P4, P5, P6 and the plugin views.
+        assert!(world.player_state().player().is_none());
+        assert!(
+            world
+                .take_player_changes()
+                .contains(&crate::character::PlayerChange::Reset)
+        );
+        assert!(world.combat_state().player().is_none());
+        assert!(
+            world
+                .take_combat_events()
+                .iter()
+                .any(|e| matches!(e, Event::ReturnedToCharacterSelect { .. })),
+            "the plugin combat views see the world left"
+        );
+        assert!(world.p5().player().is_none());
+        assert!(
+            world
+                .take_p5_changes()
+                .contains(&crate::travel::state::P5Change::Reset)
+        );
+        assert!(
+            world
+                .take_p6_changes()
+                .contains(&crate::progression::state::P6Change::Reset)
+        );
+        assert!(world.social().player_entity().is_none());
+        assert!(world.entities().is_empty() && world.player().is_none());
+        assert!(world.take_left_world());
+    }
 
     #[test]
     fn player_changes_are_bounded_and_can_be_switched_off() {

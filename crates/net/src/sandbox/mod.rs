@@ -1338,6 +1338,41 @@ impl SandboxBackend {
         }
     }
 
+    /// [`Command::LeaveWorld`]: the world is torn down and the session goes back to
+    /// character selection (no logout timer: Tessera's own sandbox rule). Every entity
+    /// leaves (the streamed statics with one [`Event::StaticsCleared`]), then
+    /// [`Event::ReturnedToCharacterSelect`] lists the characters again.
+    fn leave_world(&mut self, now: Instant) {
+        if let Some(Resolution {
+            purpose: Purpose::Teleport,
+            ..
+        }) = self.resolving.take()
+        {
+            // Every teleport request gets exactly one answer, before the world goes.
+            self.system(now, "Teleport cancelled: the world was left.");
+        }
+        if let Some(source) = self.source.as_mut() {
+            self.statics.clear(source.as_mut());
+        }
+        self.emit(now, Event::StaticsCleared);
+        for actor in std::mem::take(&mut self.wanderers) {
+            self.emit(now, Event::EntityDespawned { id: actor.id });
+        }
+        if let Some(player) = self.player.take() {
+            self.emit(now, Event::EntityDespawned { id: player.id });
+        }
+        self.world_start = None;
+        self.last_tick = None;
+        self.anchor_moved = false;
+        self.phase = Phase::Connected;
+        let characters = self
+            .characters()
+            .into_iter()
+            .map(|name| CharacterSummary { name })
+            .collect();
+        self.emit(now, Event::ReturnedToCharacterSelect { characters });
+    }
+
     fn disconnect(&mut self, now: Instant) {
         if let Some(player) = self.player.take() {
             self.emit(now, Event::EntityDespawned { id: player.id });
@@ -1427,6 +1462,15 @@ impl Backend for SandboxBackend {
                 }
             }
             (Phase::InWorld, Command::QueryLocation) => self.report_location(now),
+            // A scenario has no way back to character selection (`scenario-feed.md` has no
+            // rule for it): refused, so its canonical log stays as it is.
+            #[cfg(feature = "scenario")]
+            (Phase::InWorld, Command::LeaveWorld) if self.feed.is_some() => {
+                return Err(NetError::InvalidCommand(
+                    "a scenario cannot return to character selection",
+                ));
+            }
+            (Phase::InWorld, Command::LeaveWorld) => self.leave_world(now),
             (Phase::InWorld, Command::Stance { stance }) => {
                 self.set_player_state(now, |s| s.stance = stance);
             }

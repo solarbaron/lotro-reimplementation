@@ -526,7 +526,7 @@ impl CombatState {
                     self.remove_entity(id, out);
                 }
             }
-            Event::Disconnected { .. } => {
+            Event::Disconnected { .. } | Event::ReturnedToCharacterSelect { .. } => {
                 let was = self.player.is_some();
                 self.reset();
                 if was {

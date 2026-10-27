@@ -32,10 +32,18 @@ pub enum BackendKind {
         /// The operator's display name, once greeted.
         server_name: Option<String>,
     },
+    /// An official session (`tessera-compat`, `official-entry.md` §8.7): New and Delete
+    /// are ghosted with their reason, since the creation and deletion messages need install
+    /// enum mappers no spec assigns yet (`official-messages-world.md` §3.2.5); choices are
+    /// never kept in the settings.
+    Official,
     /// Any other backend (named): no rule of §7 names it; the screens enable New and
     /// Delete and fall back to §7.2's refusal rule.
     Other(String),
 }
+
+/// The backend name of the compatibility backend (`tessera-compat`).
+pub const OFFICIAL_BACKEND: &str = "compat";
 
 /// Whether a button is enabled, or ghosted with its tooltip.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -75,6 +83,9 @@ impl BackendKind {
                 Self::PlainSandbox
             };
         }
+        if session.backend_name() == OFFICIAL_BACKEND {
+            return Self::Official;
+        }
         Self::Other(session.backend_name().to_owned())
     }
 
@@ -90,6 +101,7 @@ impl BackendKind {
                 ..
             } => ButtonRule::Enabled,
             Self::TestServer { .. } => ButtonRule::Ghosted(Some(OwnText::CreationNotAllowed)),
+            Self::Official => ButtonRule::Ghosted(Some(OwnText::OfficialCreationUnavailable)),
         }
     }
 
@@ -101,6 +113,7 @@ impl BackendKind {
     pub fn delete_button(&self, selected: bool, refused: bool) -> ButtonRule {
         let ghost = ButtonRule::Ghosted(Some(OwnText::DeletionNotSupported));
         match self {
+            Self::Official => ButtonRule::Ghosted(Some(OwnText::OfficialDeletionUnavailable)),
             Self::PlainSandbox | Self::TestServer { .. } => ghost,
             _ if refused => ghost,
             Self::ScenarioFeed | Self::Other(_) if selected => ButtonRule::Enabled,
@@ -118,7 +131,7 @@ impl BackendKind {
         match self {
             Self::ScenarioFeed => true,
             Self::TestServer { minor, .. } => minor.is_some_and(|m| m >= 1),
-            Self::PlainSandbox | Self::Other(_) => false,
+            Self::PlainSandbox | Self::Official | Self::Other(_) => false,
         }
     }
 
@@ -127,14 +140,19 @@ impl BackendKind {
     /// passes as `ScreenOptions::server_key`), else [`SANDBOX_KEY`] for the plain sandbox
     /// and [`SCENARIO_KEY`] for the scenario feed. A test server without an explicit key
     /// has none (`None`: its choices are neither kept nor applied), since its display name
-    /// (by default the same for every server) does not tell servers apart.
+    /// (by default the same for every server) does not tell servers apart. An official
+    /// session has none, whatever the caller passes.
     #[must_use]
     pub fn settings_key(&self, explicit: Option<&str>) -> Option<String> {
+        if *self == Self::Official {
+            // Creation is not offered there; nothing is kept for an official server.
+            return None;
+        }
         if let Some(k) = explicit.filter(|k| !k.is_empty()) {
             return Some(k.to_owned());
         }
         match self {
-            Self::TestServer { .. } => None,
+            Self::TestServer { .. } | Self::Official => None,
             Self::Other(n) => Some(format!("backend:{n}")),
             Self::ScenarioFeed => Some(SCENARIO_KEY.to_owned()),
             Self::PlainSandbox => Some(SANDBOX_KEY.to_owned()),
@@ -232,6 +250,22 @@ mod tests {
             named.settings_key(Some("tessera://h:1")).as_deref(),
             Some("tessera://h:1")
         );
+    }
+
+    #[test]
+    fn official_sessions_ghost_creation_and_deletion() {
+        let o = BackendKind::Official;
+        assert_eq!(
+            o.new_button(),
+            ButtonRule::Ghosted(Some(OwnText::OfficialCreationUnavailable))
+        );
+        assert_eq!(
+            o.delete_button(true, false),
+            ButtonRule::Ghosted(Some(OwnText::OfficialDeletionUnavailable))
+        );
+        assert!(!o.carries_look());
+        assert_eq!(o.settings_key(None), None, "choices are never kept");
+        assert_eq!(o.settings_key(Some("x")), None);
     }
 
     #[test]

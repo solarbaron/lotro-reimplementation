@@ -1730,6 +1730,16 @@ impl Walker {
         self.controls.placed()
     }
 
+    /// Drops the viewer's placement: the session left the world for character selection
+    /// (`Event::ReturnedToCharacterSelect`), so the next entry places the player at its
+    /// own location and the walker is not settled until it has loaded there.
+    pub fn unplace(&mut self) {
+        if self.controls.placed() {
+            tracing::info!("viewer unplaced (back at character selection)");
+        }
+        self.controls.unplace();
+    }
+
     /// Whether everything wanted around the viewer is loaded and on the GPU.
     #[must_use]
     pub fn settled(&self) -> bool {

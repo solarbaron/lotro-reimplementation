@@ -8,6 +8,16 @@
 //! "Explore offline" closes this window and starts the offline walker as the client does
 //! without a mode option (`crate::app::App`, which starts the plugin host with the
 //! `--load-plugin` queue, §4.5); from then on every event goes to it.
+//!
+//! The hand-over of §8.7 does the same with the official session: this window closes and a
+//! client over that session (`crate::app::App::with_session`, the character screens of
+//! `--character-select`, with its own plugin host, §4.5) takes every event. When its part of
+//! the run ends ([`crate::app::App::handed_over_ended`]: the player left the character
+//! screens, closed the window, the session ended, or the character screens or the walker
+//! could not start) it is shut down (its session ends and its plugin host stops) and this
+//! window opens again on the account form, both fields empty, with the end's message. The
+//! handed-over client gets an allowlist of this run's options ([`handed_over_args`]), never
+//! a copy of them.
 
 use std::sync::Arc;
 use std::sync::mpsc;
@@ -76,7 +86,69 @@ pub struct EntryApp {
     scene: Scene,
     modifiers: Modifiers,
     offline: Option<crate::app::App>,
+    /// The client over the handed-over official session (§8.7), while it runs.
+    official: Option<crate::app::App>,
     error: Option<anyhow::Error>,
+}
+
+/// The options of the client that takes the handed-over official session (§8.7): built
+/// from an allowlist of the start-screen run's options (the install, Tessera's folders, the
+/// window, rendering, audio and UI scale), never cloned, so no scripted or automation
+/// option (`--command`, `--duration`, `--exit-after-frames`, `--fly-path`, `--open-panel`,
+/// `--mount`, a scenario, `--load-plugin`, ...) and no test-server option reaches official
+/// play (`official-entry.md` §4.2: no synthetic input; decision 0034: automation stays
+/// offline). The `--command` lines dropped are counted in a warning line, as §4.5 does
+/// for `--load-plugin`. The character screens open (`--character-select`).
+///
+/// # Errors
+///
+/// The client's default options did not parse (not expected).
+pub fn handed_over_args(args: &Args) -> anyhow::Result<Args> {
+    use clap::Parser as _;
+    if !args.commands.is_empty() {
+        tracing::warn!(
+            dropped = args.commands.len(),
+            "official play: {} --command line(s) dropped (no synthetic input in official play)",
+            args.commands.len()
+        );
+    }
+    // Every option at its default (no environment variable feeds an option).
+    let mut a = Args::try_parse_from(["tessera-client"]).context("the default options")?;
+    // The install and Tessera's own folders.
+    a.game_dir.clone_from(&args.game_dir);
+    a.plugins.clone_from(&args.plugins);
+    a.data_dir.clone_from(&args.data_dir);
+    a.no_entry_count = args.no_entry_count;
+    a.keymap.clone_from(&args.keymap);
+    // The window and rendering.
+    a.size = args.size;
+    a.no_vsync = args.no_vsync;
+    a.residency_mib = args.residency_mib;
+    a.view_blocks = args.view_blocks;
+    a.object_distance = args.object_distance;
+    a.gpu_mib = args.gpu_mib;
+    a.landscape_distance = args.landscape_distance;
+    a.object_draw_distance = args.object_draw_distance;
+    a.model_detail = args.model_detail;
+    a.frill_distance = args.frill_distance;
+    a.far_band = args.far_band;
+    a.far_view = args.far_view;
+    a.render_prefs.clone_from(&args.render_prefs);
+    a.texture_cap = args.texture_cap;
+    // Audio.
+    a.audio = args.audio;
+    a.audio_prefs.clone_from(&args.audio_prefs);
+    a.audio_settings.clone_from(&args.audio_settings);
+    // The UI and its scale.
+    a.ui_scale = args.ui_scale;
+    a.ui_safe_aspect = args.ui_safe_aspect;
+    a.ui_cursor = args.ui_cursor;
+    a.skin.clone_from(&args.skin);
+    a.skins_root.clone_from(&args.skins_root);
+    a.walker_hud = args.walker_hud;
+    a.walker_minimap = args.walker_minimap;
+    a.character_select = true;
+    Ok(a)
 }
 
 /// Reads `[Official] last_world` from Tessera's settings file (§8.5).
@@ -150,11 +222,15 @@ impl EntryApp {
             scene: Scene::default(),
             modifiers: Modifiers::default(),
             offline: None,
+            official: None,
             error: None,
         }
     }
 
     fn finish(mut self) -> anyhow::Result<()> {
+        if let Some(mut app) = self.official.take() {
+            app.shutdown();
+        }
         self.flow.finish_writes();
         if let Some(mut app) = self.offline.take() {
             app.shutdown();
@@ -261,7 +337,67 @@ impl EntryApp {
         match self.flow.take_request() {
             Some(FlowRequest::Quit) => event_loop.exit(),
             Some(FlowRequest::ExploreOffline) => self.explore_offline(event_loop),
+            Some(FlowRequest::HandOver) => self.hand_over(event_loop),
             None => {}
+        }
+    }
+
+    /// §8.7: the character screens and the world over the official session, in a client
+    /// window of their own (module docs). If that client cannot start, the session it was
+    /// given ends with it and this window shows the account form again.
+    fn hand_over(&mut self, event_loop: &ActiveEventLoop) {
+        let Some(handed) = self.flow.take_hand_over() else {
+            return;
+        };
+        self.release();
+        event_loop.set_control_flow(ControlFlow::Poll);
+        let app = handed_over_args(&self.args)
+            .and_then(|args| crate::app::App::with_session(args, Some(handed)));
+        match app {
+            Ok(mut app) => {
+                app.resumed(event_loop);
+                self.official = Some(app);
+            }
+            Err(_) => {
+                // The kind only: the error can name user or install paths.
+                let kind = super::flow::HandOverFailure::Client;
+                tracing::error!("official session: {}", kind.kind());
+                self.flow
+                    .characters_ended(super::flow::HandOverEnd::Failed(kind));
+                if let Err(e) = self.create_gfx(event_loop) {
+                    self.fail(event_loop, e);
+                }
+            }
+        }
+    }
+
+    /// The handed-over client's part of the run ended: it is shut down (its session ends
+    /// and its plugin host stops before anything else shows, §4.5) and this window opens
+    /// again on the account form.
+    fn official_ended(&mut self, event_loop: &ActiveEventLoop) {
+        if !self
+            .official
+            .as_ref()
+            .is_some_and(crate::app::App::handed_over_ended)
+        {
+            return;
+        }
+        let mut end = super::flow::HandOverEnd::Left;
+        if let Some(mut app) = self.official.take() {
+            end = app
+                .take_handed_end()
+                .unwrap_or(super::flow::HandOverEnd::Left);
+            app.shutdown();
+            if app.take_error().is_some() {
+                // Logged by kind when it happened; its text can name user or install paths.
+                tracing::debug!("official session: the handed-over client ended with an error");
+            }
+        }
+        self.flow.characters_ended(end);
+        if self.gfx.is_none()
+            && let Err(e) = self.create_gfx(event_loop)
+        {
+            self.fail(event_loop, e);
         }
     }
 
@@ -288,7 +424,7 @@ impl EntryApp {
         let now = Instant::now();
         self.flow.tick(now);
         self.handle_request(event_loop);
-        if self.offline.is_some() {
+        if self.offline.is_some() || self.official.is_some() {
             return;
         }
         let fonts = self.fonts();
@@ -367,6 +503,10 @@ impl ApplicationHandler for EntryApp {
             app.resumed(event_loop);
             return;
         }
+        if let Some(app) = self.official.as_mut() {
+            app.resumed(event_loop);
+            return;
+        }
         if self.gfx.is_none()
             && let Err(e) = self.create_gfx(event_loop)
         {
@@ -379,6 +519,11 @@ impl ApplicationHandler for EntryApp {
     fn window_event(&mut self, event_loop: &ActiveEventLoop, id: WindowId, event: WindowEvent) {
         if let Some(app) = self.offline.as_mut() {
             app.window_event(event_loop, id, event);
+            return;
+        }
+        if let Some(app) = self.official.as_mut() {
+            app.window_event(event_loop, id, event);
+            self.official_ended(event_loop);
             return;
         }
         match &event {
@@ -414,12 +559,19 @@ impl ApplicationHandler for EntryApp {
     fn device_event(&mut self, event_loop: &ActiveEventLoop, id: DeviceId, event: DeviceEvent) {
         if let Some(app) = self.offline.as_mut() {
             app.device_event(event_loop, id, event);
+        } else if let Some(app) = self.official.as_mut() {
+            app.device_event(event_loop, id, event);
         }
     }
 
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
         if let Some(app) = self.offline.as_mut() {
             app.about_to_wait(event_loop);
+            return;
+        }
+        if let Some(app) = self.official.as_mut() {
+            app.about_to_wait(event_loop);
+            self.official_ended(event_loop);
             return;
         }
         event_loop.set_control_flow(ControlFlow::WaitUntil(Instant::now() + FRAME_INTERVAL));
@@ -430,6 +582,9 @@ impl ApplicationHandler for EntryApp {
 
     fn exiting(&mut self, event_loop: &ActiveEventLoop) {
         if let Some(app) = self.offline.as_mut() {
+            app.exiting(event_loop);
+        }
+        if let Some(app) = self.official.as_mut() {
             app.exiting(event_loop);
         }
         self.release();

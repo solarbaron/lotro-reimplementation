@@ -295,7 +295,7 @@ impl P5State {
                 self.entered = true;
                 self.player = Some(*player);
             }
-            Event::Disconnected { .. } => {
+            Event::Disconnected { .. } | Event::ReturnedToCharacterSelect { .. } => {
                 self.reset(out);
                 self.entered = false;
                 self.player = None;

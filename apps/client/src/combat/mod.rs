@@ -121,6 +121,7 @@ pub fn is_combat_relevant(ev: &tessera_net::Event) -> bool {
     match ev {
         Event::WorldEntered { .. }
         | Event::Disconnected { .. }
+        | Event::ReturnedToCharacterSelect { .. }
         | Event::EntitySpawned { .. }
         | Event::EntityCreated { .. }
         | Event::EntityDespawned { .. }

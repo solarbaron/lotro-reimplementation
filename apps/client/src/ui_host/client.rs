@@ -343,6 +343,22 @@ impl ClientUi {
         rt.abandon_character_select(reason);
     }
 
+    /// Back from the world on the same session (`Event::ReturnedToCharacterSelect`,
+    /// `official-messages-play.md` §7.2): the character screens open again (at the next
+    /// [`ClientUi::open_screens`]), seeded with the list and the character entered last.
+    fn note_return(&mut self, rt: &mut Runtime) {
+        if self.pre_world.is_none()
+            && rt.waits_for_character_screens()
+            && rt
+                .world
+                .as_mut()
+                .is_some_and(crate::net::World::take_returned)
+        {
+            tracing::info!("back at character selection: the character screens open again");
+            self.want_screens = true;
+        }
+    }
+
     /// Opens the character screens once the UI, the world session and their data exist
     /// (`--character-select`); when one of them can never exist, the session enters the
     /// first character instead.
@@ -814,6 +830,7 @@ impl ClientUi {
         if !self.attached_walker {
             return;
         }
+        self.note_return(rt);
         self.open_screens(rt);
         let screens = self.pre_world.is_some();
         // The HUDs held back for the character screens show once they closed.
@@ -1484,6 +1501,94 @@ mod tests {
         assert!(!ui.persist_placements);
         let args = Args::try_parse_from(["t", "--ui"]).expect("args");
         assert!(persists_placements(&args));
+    }
+
+    /// `official-entry.md` §8.7: the handed-over session is the runtime's world from the
+    /// start (polled while the walker loads), the walker attaches to it, and when the
+    /// character screens can never open the handed part ends with the reason; no character
+    /// is entered on its own.
+    #[test]
+    fn a_handed_over_session_ends_its_part_when_the_screens_cannot_open() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let args = select_args(dir.path());
+        let now = Instant::now();
+        let mut rt = Runtime::start_with(
+            &ClientUi::runtime_args(&args),
+            now,
+            Some(crate::net::test_hand_over(now)),
+        )
+        .expect("rt");
+        assert!(rt.is_handed_over());
+        let w = rt.world.as_ref().expect("the world from the start");
+        assert!(w.is_handed_over());
+        assert_eq!(w.state(), tessera_net::SessionState::Connected);
+        rt.start_walker_session(now, None, Vec::new());
+        assert!(
+            rt.world
+                .as_ref()
+                .is_some_and(crate::net::World::is_handed_over),
+            "the walker attaches to the same session"
+        );
+        let mut ui = ClientUi::new(&args);
+        rt.p1.set_failed("strings: unreadable");
+        ui.open_screens(&mut rt);
+        assert!(
+            rt.handed_failure() == Some(crate::official::flow::HandOverFailure::Screens),
+            "{:?}",
+            rt.handed_failure()
+        );
+        for _ in 0..10 {
+            rt.tick(Instant::now());
+        }
+        assert_eq!(
+            rt.world.as_ref().map(crate::net::World::state),
+            Some(tessera_net::SessionState::Connected),
+            "never the first character"
+        );
+        rt.shutdown();
+    }
+
+    /// Back from the world on the same session: the character screens are wanted again.
+    #[test]
+    fn the_character_screens_open_again_after_a_return() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let args = select_args(dir.path());
+        let now = Instant::now();
+        let mut rt = Runtime::start_with(
+            &ClientUi::runtime_args(&args),
+            now,
+            Some(crate::net::test_hand_over(now)),
+        )
+        .expect("rt");
+        let mut ui = ClientUi::new(&args);
+        ui.want_screens = false;
+        let w = rt.world.as_mut().expect("world");
+        w.send_command(
+            now,
+            tessera_net::Command::EnterWorld {
+                character: "Alda".into(),
+            },
+        )
+        .expect("enter");
+        for _ in 0..5 {
+            rt.tick(Instant::now());
+        }
+        ui.note_return(&mut rt);
+        assert!(!ui.want_screens, "in the world: nothing to open");
+        rt.world
+            .as_mut()
+            .expect("world")
+            .leave_world(Instant::now())
+            .expect("leave");
+        for _ in 0..3 {
+            rt.tick(Instant::now());
+        }
+        ui.note_return(&mut rt);
+        assert!(ui.want_screens, "the screens open again");
+        ui.want_screens = false;
+        ui.note_return(&mut rt);
+        assert!(!ui.want_screens, "once per return");
+        rt.shutdown();
     }
 
     #[test]

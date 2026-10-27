@@ -11,10 +11,19 @@
 //! | 4 | availability | `NotBuilt`: message, start; `Available`: 5 |
 //! | 5 | [`Screen::Form`] | Log in: backend, session, `Connect`, 6; Back: start |
 //! | 6 | [`Screen::Login`] | `Connected`: 7; a refusal or end: §8.6 |
-//! | 7 | [`Screen::Characters`] | — |
+//! | 7 | [`Screen::Characters`]: the session is handed over | the account form when they end |
 //!
 //! The acceptance made at step 2 or 3 is held for the run; each backend constructed at step 5
 //! gets a new proof from it, without reading the record again. Withdrawing drops it.
+//!
+//! **Hand-over (§8.7).** On `Connected` the flow asks the window for the hand-over
+//! ([`FlowRequest::HandOver`]); the window takes the session ([`Flow::take_hand_over`]) and
+//! runs the character screens and the world over it (`crate::app::App::with_session`, whose
+//! runtime starts the plugin host, §4.5). When that part of the run ends (the player leaves
+//! the character screens, closes the window, or the session ends) the window calls
+//! [`Flow::characters_ended`]: the account form shows with both fields empty. Until the
+//! window takes it the flow keeps polling the session and shows the screen of §8.7 (with
+//! Back), which is also what shows if the character screens cannot open.
 
 use std::collections::HashSet;
 use std::path::PathBuf;
@@ -119,6 +128,67 @@ pub enum FlowRequest {
     ExploreOffline,
     /// End the client (exit code 0).
     Quit,
+    /// Take the session at the character list ([`Flow::take_hand_over`]) and open the
+    /// character screens over it (§8.7).
+    HandOver,
+}
+
+/// How the handed-over part of an official run ended (§8.7; [`Flow::characters_ended`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum HandOverEnd {
+    /// The player left (quit the character screens, Escape, closed the window): no
+    /// message.
+    Left,
+    /// The session ended: §8.6's row for its reason.
+    SessionEnded(tessera_net::DisconnectReason),
+    /// The character screens or the walker could not start, or the client failed: only the
+    /// kind of failure, never its error text (which can name user or install paths).
+    Failed(HandOverFailure),
+}
+
+/// Which part of the handed-over client could not go on ([`HandOverEnd::Failed`]). Only the
+/// kind is kept, logged and shown: the underlying error can name user or install paths, which
+/// the official part of a run neither shows nor logs (Tessera extends `official-entry.md`
+/// §7.3's "no credentials in logs" to them; an engineering choice pending a spec answer,
+/// `docs/m8-remediation.md` §15, E §7.3).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HandOverFailure {
+    /// The handed-over client could not be built.
+    Client,
+    /// The character screens cannot open (no screen data, no facts or no game UI).
+    Screens,
+    /// The world walker could not start (no window, no adapter).
+    Walker,
+    /// The handed-over client failed while it ran.
+    Run,
+}
+
+impl HandOverFailure {
+    /// A short name of the kind, for the log.
+    #[must_use]
+    pub fn kind(self) -> &'static str {
+        match self {
+            Self::Client => "the client could not start",
+            Self::Screens => "the character screens cannot open",
+            Self::Walker => "the world walker could not start",
+            Self::Run => "the client failed",
+        }
+    }
+
+    /// Tessera's own text for the message (§8.6 has no row for a failure of the client
+    /// itself, and the service's "The service said: ..." line is not used for it: nothing
+    /// came from the service). An engineering choice pending a spec answer
+    /// (`docs/m8-remediation.md` §15, E §8.6 / §8.7).
+    #[must_use]
+    pub fn message_text(self) -> &'static str {
+        match self {
+            Self::Client | Self::Run => {
+                "Tessera could not continue with the official session. The session has ended."
+            }
+            Self::Screens => "Tessera could not open the character screens. The session has ended.",
+            Self::Walker => "Tessera could not start the world view. The session has ended.",
+        }
+    }
 }
 
 /// The start screen's acceptance line (§4.1).
@@ -191,8 +261,15 @@ pub struct Flow {
     login: Option<(Session, LoginPresenter)>,
     /// The account name of the running login, only for `BadCredentials` (§8.6).
     kept_account: Option<AccountBuffer>,
-    /// The session handed over to the character screens (§8.7).
+    /// The session at the character list, until the window takes it (§8.7).
     characters: Option<(Session, Vec<tessera_net::CharacterSummary>)>,
+    /// The window took the session ([`Flow::take_hand_over`]) and runs the character screens.
+    handed_over: bool,
+    /// The events polled after `Connected` until the window takes the session (at most
+    /// [`crate::net::MAX_HANDED_EVENTS`]), for the hand-over.
+    rest: Vec<Event>,
+    /// Events beyond that bound, dropped.
+    rest_dropped: usize,
     request: Option<FlowRequest>,
     constructions: usize,
     plugin_loads_dropped: bool,
@@ -236,6 +313,9 @@ impl Flow {
             login: None,
             kept_account: None,
             characters: None,
+            handed_over: false,
+            rest: Vec::new(),
+            rest_dropped: 0,
             request: None,
             constructions: 0,
             plugin_loads_dropped: false,
@@ -572,10 +652,15 @@ impl Flow {
         }
         match end.target {
             Target::CharacterScreens(characters) => {
-                // §8.7: the placeholder; the plugin host stays stopped (§4.5) until real
-                // character screens take the session.
+                // §8.7: the character screens take the session; the window does that on
+                // this request. The plugin host starts with them (the window's runtime,
+                // §4.5), not here.
                 self.characters = Some((session, characters));
+                self.rest.clear();
+                self.rest_dropped = 0;
+                self.handed_over = false;
                 self.screen = Screen::Characters;
+                self.request = Some(FlowRequest::HandOver);
             }
             Target::AccountForm { .. } => {
                 drop(session);
@@ -597,12 +682,77 @@ impl Flow {
         }
     }
 
+    /// The session at the character list for the character screens (§8.7), once: the window
+    /// asks for it on [`FlowRequest::HandOver`]. From then on the window runs it, and the
+    /// flow waits for [`Flow::characters_ended`].
+    pub fn take_hand_over(&mut self) -> Option<crate::net::HandOver> {
+        if self.screen != Screen::Characters {
+            return None;
+        }
+        let (session, characters) = self.characters.take()?;
+        self.handed_over = true;
+        if self.rest_dropped > 0 {
+            tracing::warn!(
+                dropped = self.rest_dropped,
+                "official session: events after the character list dropped before the hand-over"
+            );
+        }
+        tracing::info!(
+            characters = characters.len(),
+            later_events = self.rest.len(),
+            "official session handed over to the character screens"
+        );
+        Some(crate::net::HandOver {
+            session,
+            characters,
+            rest: std::mem::take(&mut self.rest),
+        })
+    }
+
+    /// Whether the window runs the character screens over the handed-over session.
+    #[must_use]
+    pub fn handed_over(&self) -> bool {
+        self.handed_over
+    }
+
+    /// The character screens over the handed-over session ended (`end`: the player left
+    /// them or closed the window, the session ended, or they could not start; the window
+    /// has shut them down, which ended the session and stopped their plugin host): the
+    /// account form shows with both fields empty (§8.7, §4.5), with §8.6's message for a
+    /// session that ended (none when the player left), or, when the client itself failed,
+    /// Tessera's own text for the kind of failure ([`HandOverFailure::message_text`], no
+    /// service detail). The warning is not shown again.
+    pub fn characters_ended(&mut self, end: HandOverEnd) {
+        if !self.handed_over {
+            return;
+        }
+        self.handed_over = false;
+        self.leave_characters();
+        let message = match &end {
+            HandOverEnd::Left => None,
+            HandOverEnd::SessionEnded(reason) => super::login::disconnect_message(reason),
+            HandOverEnd::Failed(kind) => Some(Message {
+                text: kind.message_text().to_owned(),
+                detail: None,
+            }),
+        };
+        if let Some(m) = message {
+            self.show(m);
+        }
+    }
+
     /// Leaves the character placeholder (Back, Escape or closing the window): the session ends
     /// (`Disconnect`), the plugin host is stopped if anything started it, the account form
     /// shows with both fields empty (§8.7, §4.5).
     fn leave_characters(&mut self) {
         if let Some((mut session, _)) = self.characters.take() {
             let _ = session.send(Instant::now(), Command::Disconnect);
+        }
+        self.rest.clear();
+        self.handed_over = false;
+        if self.request == Some(FlowRequest::HandOver) {
+            // Left before the window took the session: nothing to hand over any more.
+            self.request = None;
         }
         self.plugins.stop();
         self.form = Some(AccountForm::new());
@@ -729,10 +879,14 @@ impl Flow {
         let mut events = std::mem::take(&mut self.events);
         let mut ended = None;
         let mut remember = None;
+        let mut connected_at = None;
         if let Some((session, presenter)) = self.login.as_mut() {
             events.clear();
             session.poll_into(now, &mut events);
-            for e in &events {
+            for (i, e) in events.iter().enumerate() {
+                if connected_at.is_none() && matches!(e, Event::Connected { .. }) {
+                    connected_at = Some(i);
+                }
                 presenter.on_event(e, now);
             }
             presenter.tick(now);
@@ -750,6 +904,13 @@ impl Flow {
         }
         if let Some(end) = ended {
             self.login_ended(end, now);
+            // The rest of the batch after `Connected` goes with the hand-over (§8.7).
+            if self.characters.is_some()
+                && let Some(tail) = connected_at.and_then(|i| self.events.get(i + 1..))
+            {
+                let tail = tail.to_vec();
+                self.keep_for_hand_over(tail);
+            }
         }
         if let Some((session, _)) = self.characters.as_mut() {
             let mut events = std::mem::take(&mut self.events);
@@ -758,9 +919,24 @@ impl Flow {
             let ended = events
                 .iter()
                 .any(|e| matches!(e, Event::Disconnected { .. }));
+            let kept = events.clone();
             self.events = events;
             if ended {
                 self.leave_characters();
+            } else {
+                self.keep_for_hand_over(kept);
+            }
+        }
+    }
+
+    /// Keeps events polled after `Connected` for the hand-over, at most
+    /// [`crate::net::MAX_HANDED_EVENTS`] (later ones are dropped and counted).
+    fn keep_for_hand_over(&mut self, events: Vec<Event>) {
+        for e in events {
+            if self.rest.len() < crate::net::MAX_HANDED_EVENTS {
+                self.rest.push(e);
+            } else {
+                self.rest_dropped = self.rest_dropped.saturating_add(1);
             }
         }
     }

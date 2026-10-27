@@ -12,7 +12,7 @@
 //! The hand-over of §8.7 does the same with the official session: this window closes and a
 //! client over that session (`crate::app::App::with_session`, the character screens of
 //! `--character-select`, with its own plugin host, §4.5) takes every event. When its part of
-//! the run ends ([`crate::app::App::handed_over_ended`]: the player left the character
+//! the run ends (`App::handed_over_ended`: the player left the character
 //! screens, closed the window, the session ended, or the character screens or the walker
 //! could not start) it is shut down (its session ends and its plugin host stops) and this
 //! window opens again on the account form, both fields empty, with the end's message. The

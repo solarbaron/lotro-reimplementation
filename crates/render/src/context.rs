@@ -399,6 +399,20 @@ impl wgpu::rwh::HasDisplayHandle for DisplayBox {
     }
 }
 
+/// The GPU lock of this crate's unit tests: a test that opens a device holds the guard
+/// for as long as any of its GPU objects lives (take it first, so that it is dropped
+/// last), and the unit tests then use the GPU one at a time, as the integration tests do
+/// (`tests/support/gpu.rs`). Test processes crashed on the CI's software adapters
+/// (lavapipe, WARP) while several unit tests had their own instance and device open at
+/// once, and some drivers lose or hang devices used in parallel. A test that fails while
+/// holding the lock does not block the others (the poison is ignored).
+#[cfg(test)]
+pub(crate) fn gpu_test_lock() -> std::sync::MutexGuard<'static, ()> {
+    static LOCK: Mutex<()> = Mutex::new(());
+    LOCK.lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

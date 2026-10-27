@@ -1944,7 +1944,6 @@ fn oe_t10_credentials_never_persisted_or_logged() {
             LoginRefusal::ClientNotAccepted,
             LoginRefusal::RateLimited,
             LoginRefusal::ServiceUnavailable,
-            LoginRefusal::InsecureService,
             LoginRefusal::NotAvailable,
             LoginRefusal::Other,
         ];
@@ -2605,7 +2604,7 @@ fn oe_t14_queue_panels() {
 #[test]
 fn oe_t14_every_row_of_8_6_and_the_watchdog() {
     use super::login::LoginEnd;
-    let cases: [(LoginRefusal, &str, Target, bool); 9] = [
+    let cases: [(LoginRefusal, &str, Target, bool); 8] = [
         (
             LoginRefusal::BadCredentials,
             "The account name or password was not accepted.",
@@ -2644,15 +2643,6 @@ fn oe_t14_every_row_of_8_6_and_the_watchdog() {
         (
             LoginRefusal::ServiceUnavailable,
             "The official login service is not available right now.",
-            Target::AccountForm {
-                keep_account: false,
-            },
-            true,
-        ),
-        (
-            LoginRefusal::InsecureService,
-            "The login was stopped because the official service's address is not secure. Your \
-             account was not sent over an insecure connection.",
             Target::AccountForm {
                 keep_account: false,
             },

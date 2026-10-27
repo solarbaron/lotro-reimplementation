@@ -1074,6 +1074,196 @@ mod tests {
         assert_eq!(b.total_left, MAX_SCHEMA_TOTAL_NODES - 5);
     }
 
+    /// A synthetic property dictionary (`property-system.md` §2.1, §2.2) defining `defs`
+    /// (PID, type code), without names or defaults. Counts stay below 128, so every VLE is
+    /// one byte.
+    fn typed_registry(defs: &[(u32, u32)]) -> PropertyRegistry {
+        let mut out = 0x3400_0000u32.to_le_bytes().to_vec();
+        out.extend_from_slice(&[0; 8]);
+        out.extend_from_slice(&[0, 0]); // no names
+        out.extend_from_slice(&[0, 0]);
+        out.push(0);
+        out.push(u8::try_from(defs.len()).expect("few"));
+        for &(pid, ty) in defs {
+            for v in [pid, pid, ty, 0, 4, 0, 0, 0] {
+                out.extend_from_slice(&v.to_le_bytes());
+            }
+            out.extend_from_slice(&0x3FC0_0000u32.to_le_bytes());
+            out.extend_from_slice(&[2, 2, 4, 0, 1]);
+            out.push(0); // children (VLE)
+            out.extend_from_slice(&0u32.to_le_bytes()); // subset count
+            out.extend_from_slice(&0u32.to_le_bytes()); // terminator
+        }
+        PropertyRegistry::parse(&out).expect("a synthetic dictionary")
+    }
+
+    /// A Switch node on `pid` whose one port runs `children`.
+    fn switch_node(pid: u32, children: Vec<Node>) -> Node {
+        Node {
+            kind: NodeKind::SWITCH,
+            data: NodeData::Switch(tessera_formats::script_table::SwitchNode {
+                property: pid,
+                ..Default::default()
+            }),
+            ports: vec![tessera_formats::script_table::Port {
+                port_type: tessera_formats::script_table::PortType(1),
+                payload: tessera_formats::script_table::PortPayload::None,
+                children,
+            }],
+            ..leaf()
+        }
+    }
+
+    /// One random node of at most 3 levels: a Switch on one of `pids` with up to 2
+    /// children, a Scriptlet node naming one of the `count` scriptlets from `base`, or a
+    /// leaf.
+    fn random_node(
+        depth: u32,
+        next: &mut dyn FnMut(u32) -> u32,
+        pids: &[(u32, u32)],
+        base: u32,
+        count: u32,
+    ) -> Node {
+        match next(4) {
+            0 | 1 if depth < 3 => {
+                let k = next(3);
+                let children = (0..k)
+                    .map(|_| random_node(depth + 1, next, pids, base, count))
+                    .collect();
+                let n = u32::try_from(pids.len()).expect("few");
+                let (pid, _) = pids[next(n) as usize];
+                switch_node(pid, children)
+            }
+            2 => scriptlet_node(base + next(count)),
+            _ => leaf(),
+        }
+    }
+
+    /// One to three random root nodes ([`random_node`]).
+    fn random_nodes(
+        next: &mut dyn FnMut(u32) -> u32,
+        pids: &[(u32, u32)],
+        base: u32,
+        count: u32,
+    ) -> Vec<Node> {
+        let k = 1 + next(3);
+        (0..k)
+            .map(|_| random_node(0, next, pids, base, count))
+            .collect()
+    }
+
+    /// The naive walk of steps 2–4: pre-order, a scriptlet entered on every path that names
+    /// it (a scriptlet on the current path is not entered again), every PID appended on its
+    /// first appearance. `None` when it visits more than `cap` nodes.
+    fn naive_schema(
+        roots: &[Node],
+        scriptlets: &HashMap<u32, Vec<Node>>,
+        types: &HashMap<u32, u32>,
+        cap: usize,
+    ) -> Option<PortalStateSchema> {
+        fn walk(
+            n: &Node,
+            scriptlets: &HashMap<u32, Vec<Node>>,
+            types: &HashMap<u32, u32>,
+            path: &mut Vec<u32>,
+            left: &mut usize,
+            out: &mut PortalStateSchema,
+        ) -> Option<()> {
+            *left = left.checked_sub(1)?;
+            match &n.data {
+                NodeData::Switch(sw) => {
+                    let list = match types.get(&sw.property) {
+                        Some(21) => Some(&mut out.bool_pids),
+                        Some(8) => Some(&mut out.enum_pids),
+                        _ => None,
+                    };
+                    if let Some(list) = list
+                        && !list.contains(&sw.property)
+                    {
+                        list.push(sw.property);
+                    }
+                }
+                NodeData::Scriptlet { file, .. } if !path.contains(&file.0) => {
+                    if let Some(rs) = scriptlets.get(&file.0) {
+                        path.push(file.0);
+                        for r in rs {
+                            walk(r, scriptlets, types, path, left, out)?;
+                        }
+                        path.pop();
+                    }
+                }
+                _ => {}
+            }
+            for p in &n.ports {
+                for c in &p.children {
+                    walk(c, scriptlets, types, path, left, out)?;
+                }
+            }
+            Some(())
+        }
+        let mut out = PortalStateSchema::default();
+        let mut left = cap;
+        for r in roots {
+            walk(r, scriptlets, types, &mut Vec::new(), &mut left, &mut out)?;
+        }
+        Some(out)
+    }
+
+    #[test]
+    fn the_once_per_schema_walk_finds_the_pids_of_the_naive_walk_in_their_order() {
+        // Small random scriptlet graphs (shared scriptlets, diamonds, cycles, nodes naming
+        // scriptlets inside Switch ports, PIDs of both types and of neither): the schema of
+        // the once-per-schema walk has the PIDs of the naive walk, in the same order.
+        const BASE: u32 = 0x0C00_0200;
+        const SCRIPTLETS: u32 = 7;
+        let pids: [(u32, u32); 7] = [
+            (0x100, 21),
+            (0x101, 8),
+            (0x102, 21),
+            (0x103, 8),
+            (0x104, 21),
+            (0x105, 8),
+            (0x106, 4), // neither type: never listed
+        ];
+        let registry = typed_registry(&pids);
+        let types: HashMap<u32, u32> = pids.iter().copied().collect();
+        let mut seed = 0x2545_F491_4F6C_DD1Du64;
+        let mut next = move |n: u32| {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            u32::try_from(seed % u64::from(n)).expect("small")
+        };
+        let mut compared = 0;
+        for case in 0..300 {
+            let graph: HashMap<u32, Vec<Node>> = (0..SCRIPTLETS)
+                .map(|i| (BASE + i, random_nodes(&mut next, &pids, BASE, SCRIPTLETS)))
+                .collect();
+            let roots = random_nodes(&mut next, &pids, BASE, SCRIPTLETS);
+            let Some(expected) = naive_schema(&roots, &graph, &types, 200_000) else {
+                continue;
+            };
+            let read = |_: Did| None;
+            let mut b = SchemaBuilder::new(&read, &registry, None);
+            for (did, rs) in &graph {
+                b.scriptlets.insert(
+                    *did,
+                    Some(Arc::new(Scriptlet {
+                        did: Did(*did),
+                        roots: rs.clone(),
+                        dependencies: Vec::new(),
+                    })),
+                );
+            }
+            let mut c = closure_of(&[9], 0);
+            c.tables[0].scripts[0].roots = roots;
+            let built = b.build(&c, &[0], &[9]);
+            assert_eq!(built.get(&9), Some(&expected), "case {case}");
+            compared += 1;
+        }
+        assert!(compared > 250, "only {compared} cases compared");
+    }
+
     #[test]
     fn a_literal_that_shows_nothing_is_no_text() {
         assert_eq!(shown_literal(r"A \[b\] [n]").as_deref(), Some("A [b]"));

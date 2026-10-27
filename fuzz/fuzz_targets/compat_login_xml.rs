@@ -3,7 +3,8 @@
 //! exercises all XML, SOAP, `.launcherconfig`, `LauncherConfigurationServer`,
 //! `UserPreferences.ini`, the world status and queue responses, and entity/URL
 //! encoders and parsers on arbitrary hostile bytes, and the connector's HTTPS form of a
-//! service address (`tessera_compat::connector::net::https_form`).
+//! service address (`tessera_compat::connector::net::https_form`) and its reading of a
+//! world-status answer (`tessera_compat::connector::login_phase::parse_world_status`).
 
 #![no_main]
 
@@ -30,6 +31,14 @@ fuzz_target!(|data: &[u8]| {
         let _ = format!("{login_res:?}");
     }
     let _ = parse_login_account_response(500, data);
+    // The connector's reading of a world-status answer (`connector::login_phase`).
+    for status_code in [200, 503] {
+        let resp = tessera_compat::login::HttpResponse {
+            status_code,
+            body: data.to_vec(),
+        };
+        let _ = tessera_compat::connector::login_phase::parse_world_status(&resp);
+    }
     if let Ok(queue_res) = QueueResult::parse(data) {
         let _ = queue_res.evaluate();
     }
@@ -48,8 +57,14 @@ fuzz_target!(|data: &[u8]| {
         let _ = tessera_compat::login::encode_client_version_payload(text);
         let _ = tessera_compat::login::LoginHost::parse(text);
         // The HTTPS form of a chain address (`connector::net`): an `https://` URL, stable
-        // when taken again.
-        if let Some(h) = tessera_compat::connector::net::https_form(text) {
+        // when taken again; `is_https` agrees with it on every form (one parse decides
+        // both, so a hostile form is refused by both).
+        let form = tessera_compat::connector::net::https_form(text);
+        assert_eq!(
+            tessera_compat::connector::net::is_https(text),
+            form.as_ref().is_some_and(|h| !h.upgraded)
+        );
+        if let Some(h) = form {
             assert!(tessera_compat::connector::net::is_https(&h.url));
             let again = tessera_compat::connector::net::https_form(&h.url).expect("stable");
             assert_eq!(again.url, h.url);

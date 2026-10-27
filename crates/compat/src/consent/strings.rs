@@ -178,13 +178,6 @@ pub const TABLE: &[(&str, &str)] = &[
         "official.error.service_unavailable",
         "The official login service is not available right now.",
     ),
-    // Not a row of §8.6 (owner decision 2026-10-27, "upgrade to HTTPS"; question with the
-    // spec writers): `LoginRefusal::InsecureService`.
-    (
-        "official.error.insecure_service",
-        "The login was stopped because the official service's address is not secure. Your \
-         account was not sent over an insecure connection.",
-    ),
     ("official.error.other", "The login failed."),
     ("official.error.world_full", "{world} is full."),
     ("official.error.world_closed", "{world} is closed."),

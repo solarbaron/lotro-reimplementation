@@ -368,7 +368,7 @@ fn start(net: &mut Net, flags: u8) -> Option<SessionDriver<Net>> {
     let start = SessionStart {
         handoff,
         login_peer: LOGIN,
-        refresh_secure: true,
+        plain: Default::default(),
         refresher,
         chat_endpoint: (flags & 0x10 != 0).then_some(CHAT),
         version,

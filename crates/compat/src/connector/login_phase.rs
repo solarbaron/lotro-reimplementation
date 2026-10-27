@@ -14,38 +14,31 @@
 //! (`official-entry.md` §8.1 OPEN; engineering choice, spec silent (question with the spec
 //! writers): the ticket is kept for the session).
 //!
-//! # Where a secret may go
+//! # HTTPS first, then the address as given
 //!
-//! Engineering choice, spec silent (question with the spec writers): every URL carries its
-//! provenance ([`Secure`]); it is trusted only when it is `https://`
-//! and arrived over HTTPS all the way from the install's configuration (the datacenter
-//! service URL is the root; `GetDatacenters` names the authentication server and the remote
-//! configuration's URL; the remote configuration names the queue and may override the
-//! authentication URL). The password and the ticket are sent only to a trusted URL
-//! (`official-login.md` §6.2–§6.3); anything else is refused before a byte is sent.
+//! Decision 0044 as amended by the owner on 2026-10-27 after the second live run
+//! (`official-login.md` §2.1 and §3 allow "HTTP/HTTPS" addresses and are silent on this:
+//! question with the spec writers). Every exchange of the chain goes through [`exchange`]:
 //!
-//! # Upgrade to HTTPS
+//! - an `https://` address is requested as given, with full certificate validation;
+//! - an `http://` address is tried first at its HTTPS form ([`https_form`]: same host and
+//!   path, default HTTPS port; the HTTPS client's connect timeout is 5 s,
+//!   `crate::net_access`). When that exchange fails at the transport or TLS level
+//!   (connection refused, a timeout, a TLS or certificate error: any failure of the HTTP
+//!   client), the request is made once more at the address exactly as given, over plain
+//!   HTTP. Any HTTP answer over working HTTPS (a 200, the maintenance 503, a SOAP fault, a
+//!   closed world, a 404) is the service's answer and is used as that answer, never
+//!   retried over plain HTTP;
+//! - an address with no HTTPS form is requested as given.
 //!
-//! Owner decision 2026-10-27 ("upgrade to HTTPS"; `official-login.md` §2.1 and §3 allow
-//! "HTTP/HTTPS" addresses and are silent on it: question with the spec writers): an address
-//! the chain gives as `http://` is requested at its HTTPS form ([`https_form`]: same host
-//! and path, default HTTPS port), and a document read that way counts as read over HTTPS.
-//!
-//! - **Steps that carry or lead to the account or the ticket** ([`ChainStep`]): the
-//!   datacenter document (it names the authentication server and the remote
-//!   configuration), the remote configuration (it names the queue and may override the
-//!   refresh URL), `LoginAccount`, the queue and the chosen world's status (it names the
-//!   login server that receives the ticket). They are never fetched over plain HTTP: when
-//!   the HTTPS request fails (connection, TLS, or an HTTP answer that is not the service's
-//!   own), or the address has no HTTPS form, the login stops ([`LoginStop::Insecure`],
-//!   `LoginRefusal::InsecureService`) with one `warn` line naming the step and the scheme
-//!   ([`InsecureStop::log`]), never a host, a path or the account.
-//! - **The world list's status queries** ([`list_world_status`]) carry nothing and lead to
-//!   nothing that receives a credential: their answers only colour the list, and joining a
-//!   world asks its status again ([`join_status`]). They alone fall back to the plain
-//!   `http://` address the chain gave when its HTTPS form fails; a plain answer never gains
-//!   HTTPS provenance.
+//! The password and the ticket follow the same rule: they go over plain HTTP only when the
+//! chain works no other way. Redirects stay off and no proxy is used (`crate::net_access`).
+//! Each step that went over plain HTTP logs one `info` line, `official login: step over
+//! plain HTTP` with `step=` only ([`ChainStep::label`]), once per step per login
+//! ([`PlainSteps`]); no host, path or account is ever logged.
 
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use tessera_net::account::MAX_ACCOUNT_DETAIL_LEN;
@@ -65,7 +58,7 @@ use crate::login::{
 };
 
 use super::data::LocalInputs;
-use super::net::{HttpsUrl, https_form, is_https, scheme_label};
+use super::net::{https_form, scheme_label};
 
 /// The per-world timeout of the world-list status queries (`official-login.md` §3.3, §5.2).
 pub const WORLD_LIST_STATUS_TIMEOUT_SEC: u64 = 10;
@@ -150,122 +143,8 @@ pub fn world_refusal(err: &LoginError) -> WorldRefusal {
 pub enum LoginStop {
     /// A refusal for the user, with the service's text when there is one.
     Refused(LoginRefusal, Option<String>),
-    /// A step that carries or leads to a credential could not be reached over HTTPS
-    /// (module docs "Upgrade to HTTPS"): `LoginRefusal::InsecureService`, logged by
-    /// [`InsecureStop::log`] when it is reported.
-    Insecure(InsecureStop),
     /// The backend let go; nothing more is reported.
     Cancelled,
-}
-
-/// A step of the login chain that carries or leads to the account or the ticket (module
-/// docs "Upgrade to HTTPS").
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum ChainStep {
-    /// `Launcher.DataCenterService.GLS`, `GetDatacenters` (§3.1).
-    DatacenterDocument,
-    /// `Datacenter/LauncherConfigurationServer`, the remote configuration (§3.2).
-    LauncherConfiguration,
-    /// `Datacenter/AuthServer`, `LoginAccount` (§3.4).
-    AuthServer,
-    /// `WorldQueue.LoginQueue.URL`, `TakeANumber` (§3.5).
-    QueueUrl,
-    /// The chosen world's `StatusServerUrl` (§3.3).
-    StatusUrl,
-}
-
-impl ChainStep {
-    /// The step's name in a log line.
-    #[must_use]
-    pub const fn label(self) -> &'static str {
-        match self {
-            Self::DatacenterDocument => "datacenter document",
-            Self::LauncherConfiguration => "launcher configuration",
-            Self::AuthServer => "auth server",
-            Self::QueueUrl => "queue URL",
-            Self::StatusUrl => "status URL",
-        }
-    }
-}
-
-/// Why a step was not reached over HTTPS.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum InsecureCause {
-    /// The address has no HTTPS form ([`https_form`]).
-    NoHttpsForm,
-    /// The address was `http://` and the request at its HTTPS form failed.
-    HttpsFailed,
-}
-
-impl InsecureCause {
-    /// The cause's name in a log line.
-    #[must_use]
-    pub const fn label(self) -> &'static str {
-        match self {
-            Self::NoHttpsForm => "the address has no HTTPS form",
-            Self::HttpsFailed => "the HTTPS request failed",
-        }
-    }
-}
-
-/// A login stopped by the HTTPS rule: the step, the scheme the chain gave it (only
-/// `"http"`, `"https"`, `"other"` or `"none"`, [`scheme_label`]) and the cause.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct InsecureStop {
-    /// The step.
-    pub step: ChainStep,
-    /// The scheme of the address the chain gave.
-    pub scheme: &'static str,
-    /// Why.
-    pub cause: InsecureCause,
-}
-
-impl InsecureStop {
-    /// The step `step` whose address was `url` failed for `cause`.
-    #[must_use]
-    pub fn new(step: ChainStep, url: &str, cause: InsecureCause) -> Self {
-        Self {
-            step,
-            scheme: scheme_label(url),
-            cause,
-        }
-    }
-
-    /// An `http://` address of `step` whose HTTPS form failed.
-    #[must_use]
-    pub const fn https_failed(step: ChainStep) -> Self {
-        Self {
-            step,
-            scheme: "http",
-            cause: InsecureCause::HttpsFailed,
-        }
-    }
-
-    /// The one `warn` line of a login this rule stopped: the step, the scheme and the
-    /// cause; never a host, a path or the account.
-    pub fn log(&self) {
-        tracing::warn!(
-            step = self.step.label(),
-            scheme = self.scheme,
-            cause = self.cause.label(),
-            "official login stopped: the service address was not secure"
-        );
-    }
-}
-
-/// A failure of a step after `ChooseWorld`.
-#[derive(Debug)]
-pub enum JoinError {
-    /// The service's failure: the world is refused, the login stays.
-    Service(LoginError),
-    /// The HTTPS rule stopped the login ([`LoginStop::Insecure`]).
-    Insecure(InsecureStop),
-}
-
-impl From<LoginError> for JoinError {
-    fn from(e: LoginError) -> Self {
-        Self::Service(e)
-    }
 }
 
 impl From<&LoginError> for LoginStop {
@@ -277,90 +156,124 @@ impl From<&LoginError> for LoginStop {
     }
 }
 
-/// Which of the authenticated login's URLs may receive the password or the ticket (module
-/// docs "Where a secret may go").
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub struct Secure {
-    /// `GetDatacenters` arrived over HTTPS.
-    pub datacenters: bool,
-    /// The remote configuration arrived over HTTPS through a trusted URL.
-    pub remote: bool,
-    /// The `LoginAccount` URL (`Datacenter/AuthServer`).
-    pub auth: bool,
-    /// The queue URL (`WorldQueue.LoginQueue.URL`).
-    pub queue: bool,
-    /// The in-game refresh URL (the remote override, else the authentication server).
-    pub refresh: bool,
-    /// Which of the authentication and queue URLs the chain gave as `http://` (they are
-    /// requested at their HTTPS form, and a failure there is [`LoginStop::Insecure`]).
-    pub upgraded: Upgraded,
+/// A step of the login chain: an address the install or a service document names, with
+/// its own HTTP exchange (module docs "HTTPS first, then the address as given").
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ChainStep {
+    /// `Launcher.DataCenterService.GLS`, `GetDatacenters` (§3.1).
+    DatacenterDocument,
+    /// `Datacenter/LauncherConfigurationServer`, the remote configuration (§3.2).
+    LauncherConfiguration,
+    /// `Datacenter/AuthServer`, `LoginAccount` (§3.4).
+    AuthServer,
+    /// A world's `StatusServerUrl` (§3.3), for the world list and for joining.
+    StatusUrl,
+    /// `WorldQueue.LoginQueue.URL`, `TakeANumber` and `LeaveQueue` (§3.5).
+    QueueUrl,
+    /// The in-game ticket refresh, `RefreshTicket` (§4.3).
+    TicketRefresh,
 }
 
-/// Which credential URLs were upgraded from `http://` ([`upgrade_datacenter`],
-/// [`upgrade_remote`]).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub struct Upgraded {
-    /// `Datacenter/AuthServer`.
-    pub auth: bool,
-    /// `Datacenter/LauncherConfigurationServer`.
-    pub launcher: bool,
-    /// `WorldQueue.LoginQueue.URL`.
-    pub queue: bool,
-}
+impl ChainStep {
+    /// Every step, in chain order.
+    pub const ALL: [Self; 6] = [
+        Self::DatacenterDocument,
+        Self::LauncherConfiguration,
+        Self::AuthServer,
+        Self::StatusUrl,
+        Self::QueueUrl,
+        Self::TicketRefresh,
+    ];
 
-/// Puts `url` in its HTTPS form in place when it has one and was `http://`; whether it was
-/// upgraded. An address without an HTTPS form is left as it is (it is not trusted, so the
-/// step that would use it stops).
-fn upgrade_in_place(url: &mut String) -> bool {
-    match https_form(url) {
-        Some(HttpsUrl {
-            url: https,
-            upgraded: true,
-        }) => {
-            *url = https;
-            true
-        }
-        _ => false,
-    }
-}
-
-/// The datacenter's authentication and remote-configuration URLs in their HTTPS form
-/// (module docs "Upgrade to HTTPS"), for a document read over HTTPS. The worlds' status
-/// URLs are left as given: the world list may fall back to them ([`list_world_status`]).
-pub fn upgrade_datacenter(dc: &mut DatacenterInfo, upgraded: &mut Upgraded) {
-    upgraded.auth = upgrade_in_place(&mut dc.auth_server);
-    upgraded.launcher = upgrade_in_place(&mut dc.launcher_configuration_server);
-}
-
-/// The remote configuration's queue URL and authentication override in their HTTPS form,
-/// for a document read over HTTPS.
-pub fn upgrade_remote(remote: &mut RemoteLauncherConfig, upgraded: &mut Upgraded) {
-    upgraded.queue = upgrade_in_place(&mut remote.login_queue_url);
-    if let Some(url) = remote.auth_server_url_override.as_mut() {
-        upgrade_in_place(url);
-    }
-}
-
-impl Secure {
-    /// The provenance of the URLs named by `install_url`'s answer `dc` and by `remote`.
+    /// The step's name in a log line.
     #[must_use]
-    pub fn of(install_url: &str, dc: &DatacenterInfo, remote: &RemoteLauncherConfig) -> Self {
-        let datacenters = is_https(install_url);
-        let remote_ok = datacenters && is_https(&dc.launcher_configuration_server);
-        let auth = datacenters && is_https(&dc.auth_server);
-        let refresh = match remote.auth_server_url_override.as_deref() {
-            Some(url) => remote_ok && is_https(url),
-            None => auth,
-        };
-        Self {
-            datacenters,
-            remote: remote_ok,
-            auth,
-            queue: remote_ok && is_https(&remote.login_queue_url),
-            refresh,
-            upgraded: Upgraded::default(),
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::DatacenterDocument => "datacenter document",
+            Self::LauncherConfiguration => "launcher configuration",
+            Self::AuthServer => "auth server",
+            Self::StatusUrl => "status URL",
+            Self::QueueUrl => "queue URL",
+            Self::TicketRefresh => "ticket refresh",
         }
     }
+
+    const fn index(self) -> usize {
+        match self {
+            Self::DatacenterDocument => 0,
+            Self::LauncherConfiguration => 1,
+            Self::AuthServer => 2,
+            Self::StatusUrl => 3,
+            Self::QueueUrl => 4,
+            Self::TicketRefresh => 5,
+        }
+    }
+}
+
+/// The steps of one login that went over plain HTTP; each is logged once (module docs).
+/// Clones share the record (the ticket refresh runs on a thread of its own).
+#[derive(Debug, Clone, Default)]
+pub struct PlainSteps(Arc<[AtomicBool; ChainStep::ALL.len()]>);
+
+impl PlainSteps {
+    /// `step` goes over plain HTTP: the one `info` line of the step in this login, with the
+    /// step's name only.
+    pub fn note(&self, step: ChainStep) {
+        if let Some(flag) = self.0.get(step.index())
+            && !flag.swap(true, Ordering::SeqCst)
+        {
+            tracing::info!(step = step.label(), "official login: step over plain HTTP");
+        }
+    }
+
+    /// Whether `step` went over plain HTTP in this login.
+    #[must_use]
+    pub fn went_plain(&self, step: ChainStep) -> bool {
+        self.0
+            .get(step.index())
+            .is_some_and(|f| f.load(Ordering::SeqCst))
+    }
+}
+
+/// One exchange of `step` at the address `given` (module docs "HTTPS first, then the
+/// address as given"): `req`, built for any URL, is sent at the HTTPS form of an `http://`
+/// address first and, when the HTTP client fails there (transport or TLS), once more at
+/// `given` over plain HTTP; an `https://` address, or one with no HTTPS form, is asked as
+/// given. `req.url` is set here. An HTTP answer over HTTPS, whatever its status, is
+/// returned as it is.
+///
+/// # Errors
+///
+/// The HTTP client's failure of the last request made.
+pub fn exchange(
+    http: &mut dyn HttpClient,
+    step: ChainStep,
+    given: &str,
+    req: &mut HttpRequest,
+    plain: &PlainSteps,
+) -> Result<HttpResponse, LoginError> {
+    let given = given.trim();
+    match https_form(given) {
+        Some(at) if at.upgraded => {
+            req.url = at.url;
+            match http.execute(req) {
+                Ok(resp) => return Ok(resp),
+                // The kind only, never the address.
+                Err(e) => tracing::debug!(
+                    step = step.label(),
+                    class = %e.failure_class(),
+                    "official login: the HTTPS form failed; asking the address as given"
+                ),
+            }
+            given.clone_into(&mut req.url);
+        }
+        Some(at) => req.url = at.url,
+        None => given.clone_into(&mut req.url),
+    }
+    if scheme_label(&req.url) == "http" {
+        plain.note(step);
+    }
+    http.execute(req)
 }
 
 /// The authenticated login: what the rest of the session needs from the HTTP exchanges.
@@ -376,8 +289,8 @@ pub struct Authenticated {
     pub subscription: GameSubscription,
     /// The ticket.
     pub account: LoginAccountResult,
-    /// Where the ticket may go.
-    pub secure: Secure,
+    /// The steps of this login that went over plain HTTP.
+    pub plain: PlainSteps,
 }
 
 fn checked_200(what: &str, status: u16) -> Result<(), LoginError> {
@@ -390,114 +303,57 @@ fn checked_200(what: &str, status: u16) -> Result<(), LoginError> {
     }
 }
 
-/// One exchange of a step whose document leads to a credential, at `at` (an HTTPS form):
-/// the 200 answer. A failure at an upgraded address is [`LoginStop::Insecure`] (no
-/// plain-HTTP retry), otherwise the service's failure of class `F03`.
-fn fetch_over_https(
-    http: &mut dyn HttpClient,
-    step: ChainStep,
-    what: &str,
-    at: &HttpsUrl,
-    req: &HttpRequest,
-) -> Result<HttpResponse, LoginStop> {
-    let failed = |e: &LoginError| {
-        if at.upgraded {
-            LoginStop::Insecure(InsecureStop::https_failed(step))
-        } else {
-            LoginStop::from(e)
-        }
-    };
-    let resp = http.execute(req).map_err(|e| failed(&e))?;
-    checked_200(what, resp.status_code).map_err(|e| failed(&e))?;
-    Ok(resp)
-}
-
-/// `S2_GET_DATACENTERS` (§3.1) at the HTTPS form of the install's datacenter URL (module
-/// docs "Upgrade to HTTPS"): the datacenter, with its authentication and
-/// remote-configuration URLs in their HTTPS form ([`upgrade_datacenter`]), and the URL the
-/// document was read from.
+/// `S2_GET_DATACENTERS` (§3.1) at the install's datacenter URL ([`exchange`]).
 ///
 /// # Errors
 ///
-/// [`LoginStop::Insecure`] when the URL has no HTTPS form or its upgraded form failed;
-/// otherwise the refusal of class `F03` for a failed exchange or a missing datacenter.
+/// The refusal of class `F03` for a failed exchange or a missing datacenter.
 pub fn get_datacenters(
     http: &mut dyn HttpClient,
     local: &LocalInputs,
-    upgraded: &mut Upgraded,
-) -> Result<(DatacenterInfo, HttpsUrl), LoginStop> {
+    plain: &PlainSteps,
+) -> Result<DatacenterInfo, LoginStop> {
     let given = &local.config.gls_datacenter_service;
-    let Some(at) = https_form(given) else {
-        return Err(LoginStop::Insecure(InsecureStop::new(
-            ChainStep::DatacenterDocument,
-            given,
-            InsecureCause::NoHttpsForm,
-        )));
-    };
-    let req =
-        soap_encoder::build_get_datacenters_request(&at.url, &local.config.datacenter_game_name);
-    let resp = fetch_over_https(
-        http,
-        ChainStep::DatacenterDocument,
-        "GetDatacenters",
-        &at,
-        &req,
-    )?;
-    let mut dc = parse_get_datacenters_response(&resp.body, local.config.target_datacenter())
+    let mut req =
+        soap_encoder::build_get_datacenters_request(given, &local.config.datacenter_game_name);
+    let resp = exchange(http, ChainStep::DatacenterDocument, given, &mut req, plain)
         .map_err(|e| LoginStop::from(&e))?;
-    upgrade_datacenter(&mut dc, upgraded);
-    Ok((dc, at))
+    checked_200("GetDatacenters", resp.status_code).map_err(|e| LoginStop::from(&e))?;
+    parse_get_datacenters_response(&resp.body, local.config.target_datacenter())
+        .map_err(|e| LoginStop::from(&e))
 }
 
-/// `S3_GET_LAUNCHER_CONFIG` (§3.2) at the datacenter's remote-configuration URL (already in
-/// its HTTPS form, [`get_datacenters`]): the configuration with its queue URL and
-/// authentication override in their HTTPS form ([`upgrade_remote`]).
+/// `S3_GET_LAUNCHER_CONFIG` (§3.2) at the datacenter's remote-configuration URL
+/// ([`exchange`]).
 ///
 /// # Errors
 ///
-/// [`LoginStop::Insecure`] when the URL has no HTTPS form or its upgraded form failed;
-/// otherwise the refusal of class `F03` for a failed exchange.
+/// The refusal of class `F03` for a failed exchange.
 pub fn get_remote_config(
     http: &mut dyn HttpClient,
     dc: &DatacenterInfo,
-    upgraded: &mut Upgraded,
+    plain: &PlainSteps,
 ) -> Result<RemoteLauncherConfig, LoginStop> {
     let given = &dc.launcher_configuration_server;
-    let at = match https_form(given) {
-        Some(at) => HttpsUrl {
-            upgraded: upgraded.launcher || at.upgraded,
-            ..at
-        },
-        None => {
-            return Err(LoginStop::Insecure(InsecureStop::new(
-                ChainStep::LauncherConfiguration,
-                given,
-                InsecureCause::NoHttpsForm,
-            )));
-        }
-    };
-    let req = build_launcher_config_request(&at.url);
-    let resp = fetch_over_https(
+    let mut req = build_launcher_config_request(given);
+    let resp = exchange(
         http,
         ChainStep::LauncherConfiguration,
-        "LauncherConfigurationServer",
-        &at,
-        &req,
-    )?;
-    let mut remote = RemoteLauncherConfig::parse(&resp.body).map_err(|e| LoginStop::from(&e))?;
-    upgrade_remote(&mut remote, upgraded);
-    Ok(remote)
+        given,
+        &mut req,
+        plain,
+    )
+    .map_err(|e| LoginStop::from(&e))?;
+    checked_200("LauncherConfigurationServer", resp.status_code)
+        .map_err(|e| LoginStop::from(&e))?;
+    RemoteLauncherConfig::parse(&resp.body).map_err(|e| LoginStop::from(&e))
 }
 
-/// `S5_LOGIN_ACCOUNT` (§3.4): the one use of the credentials (`official-entry.md` §7.3).
-/// The request body is wiped right after the exchange and the credentials are dropped
-/// (and wiped) before this returns (§6.3); so is the response, which holds the ticket.
-///
-/// The password goes only to a trusted `LoginAccount` URL (module docs); otherwise the
-/// login stops as [`LoginStop::Insecure`] and nothing is sent. At an address the chain gave
-/// as `http://` (requested at its HTTPS form), a failed request or an answer that is
-/// neither 200, the maintenance answer (503) nor a SOAP fault stops it the same way; the
-/// password is never sent over plain HTTP.
+/// `S5_LOGIN_ACCOUNT` (§3.4): the one use of the credentials (`official-entry.md` §7.3),
+/// at the datacenter's authentication URL ([`exchange`]: HTTPS first). The request body is
+/// wiped after the exchange (both attempts use the one request) and the credentials are
+/// dropped (and wiped) before it is sent (§6.3); so is the response, which holds the
+/// ticket.
 ///
 /// A login with more than one subscription for the game needs a choice the account form
 /// does not offer (§3.4 "Multiple matching subscriptions"): it is refused as
@@ -511,57 +367,24 @@ pub fn authenticate(
     local: &LocalInputs,
     datacenter: DatacenterInfo,
     remote: RemoteLauncherConfig,
-    secure: Secure,
     credentials: Credentials,
+    plain: &PlainSteps,
 ) -> Result<Authenticated, LoginStop> {
-    if !secure.auth {
-        drop(credentials);
-        let stop = if secure.datacenters {
-            InsecureStop::new(
-                ChainStep::AuthServer,
-                &datacenter.auth_server,
-                InsecureCause::NoHttpsForm,
-            )
-        } else {
-            InsecureStop::new(
-                ChainStep::DatacenterDocument,
-                &local.config.gls_datacenter_service,
-                InsecureCause::NoHttpsForm,
-            )
-        };
-        return Err(LoginStop::Insecure(stop));
-    }
-    let upgraded = secure.upgraded.auth;
+    let given = datacenter.auth_server.clone();
     let built = credentials.expose().map(|(account, password)| {
-        soap_encoder::build_login_account_request(&datacenter.auth_server, account, password)
+        soap_encoder::build_login_account_request(&given, account, password)
     });
     drop(credentials);
     let Some(mut req) = built else {
         return Err(LoginStop::Refused(LoginRefusal::Other, None));
     };
-    let result = http.execute(&req);
+    let result = exchange(http, ChainStep::AuthServer, &given, &mut req, plain);
     req.zeroize_body();
     drop(req);
-    let mut resp = result.map_err(|e| {
-        if upgraded {
-            LoginStop::Insecure(InsecureStop::https_failed(ChainStep::AuthServer))
-        } else {
-            LoginStop::from(&e)
-        }
-    })?;
-    let status = resp.status_code;
-    let parsed = parse_login_account_response(status, &resp.body);
+    let mut resp = result.map_err(|e| LoginStop::from(&e))?;
+    let parsed = parse_login_account_response(resp.status_code, &resp.body);
     zeroize_vec(&mut resp.body);
-    let account = parsed.map_err(|e| {
-        let http_error = status != 200
-            && status != 503
-            && e.failure_class() == LoginFailureClass::F03ServiceUnavailable;
-        if upgraded && http_error {
-            LoginStop::Insecure(InsecureStop::https_failed(ChainStep::AuthServer))
-        } else {
-            LoginStop::from(&e)
-        }
-    })?;
+    let account = parsed.map_err(|e| LoginStop::from(&e))?;
     let mut matching = account
         .matching_subscriptions(&local.config.datacenter_game_name)
         .map_err(|e| LoginStop::from(&e))?;
@@ -583,12 +406,28 @@ pub fn authenticate(
         remote,
         subscription,
         account,
-        secure,
+        plain: plain.clone(),
     })
 }
 
-/// Exchange 3 (§3.3) at `url` with the given timeout: the world's own `StatusServerUrl`
-/// (or its HTTPS form) only, no fallback URL (decision 0042 item 3).
+/// The status in the answer `resp` of Exchange 3 (§3.3).
+///
+/// # Errors
+///
+/// [`LoginError`] of class `F06` for an answer that is not 200, an empty body or a status
+/// with no login server.
+pub fn parse_world_status(resp: &HttpResponse) -> Result<ServiceStatus, LoginError> {
+    if resp.status_code != 200 || resp.body.iter().all(u8::is_ascii_whitespace) {
+        return Err(LoginError::WorldClosed {
+            reason: format!("the status query returned HTTP {}", resp.status_code),
+        });
+    }
+    ServiceStatus::parse(&resp.body)
+}
+
+/// Exchange 3 (§3.3) at `url` with the given timeout ([`exchange`]): the world's own
+/// `StatusServerUrl` only, no fallback URL (decision 0042 item 3), read by
+/// [`parse_world_status`]. The world list and the join ask it the same way.
 ///
 /// # Errors
 ///
@@ -598,6 +437,7 @@ pub fn world_status(
     http: &mut dyn HttpClient,
     url: &str,
     timeout_sec: u64,
+    plain: &PlainSteps,
 ) -> Result<ServiceStatus, LoginError> {
     if url.trim().is_empty() {
         return Err(LoginError::WorldClosed {
@@ -606,40 +446,12 @@ pub fn world_status(
     }
     let mut req = build_world_status_request(url);
     req.timeout_sec = timeout_sec;
-    let resp = http.execute(&req).map_err(|e| LoginError::WorldClosed {
-        reason: e.to_string(),
+    let resp = exchange(http, ChainStep::StatusUrl, url, &mut req, plain).map_err(|e| {
+        LoginError::WorldClosed {
+            reason: e.to_string(),
+        }
     })?;
-    if resp.status_code != 200 || resp.body.iter().all(u8::is_ascii_whitespace) {
-        return Err(LoginError::WorldClosed {
-            reason: format!("the status query returned HTTP {}", resp.status_code),
-        });
-    }
-    ServiceStatus::parse(&resp.body)
-}
-
-/// A world's status for the world list (§3.3, 10 s): at the HTTPS form of its
-/// `StatusServerUrl` first. Only for the list (module docs "Upgrade to HTTPS"): the answer
-/// colours the list and nothing is taken from it to send a credential to (joining asks
-/// again, [`join_status`]), so when the HTTPS form fails, an `http://` address is asked once
-/// more as given, over plain HTTP. An address without an HTTPS form is asked as given.
-///
-/// # Errors
-///
-/// [`LoginError`] of class `F06`, as [`world_status`].
-pub fn list_world_status(
-    http: &mut dyn HttpClient,
-    world: &WorldDescriptor,
-    timeout_sec: u64,
-) -> Result<ServiceStatus, LoginError> {
-    let given = world.status_server_url.as_str();
-    match https_form(given) {
-        Some(at) if at.upgraded => world_status(http, &at.url, timeout_sec).or_else(|_| {
-            tracing::debug!("official login: a world-list status asked over plain HTTP");
-            world_status(http, given, timeout_sec)
-        }),
-        Some(at) => world_status(http, &at.url, timeout_sec),
-        None => world_status(http, given, timeout_sec),
-    }
+    parse_world_status(&resp)
 }
 
 /// A world name as the Account group carries it: control characters removed, cut on a
@@ -719,110 +531,66 @@ pub fn world_list(
 }
 
 /// The status of the chosen world for joining it (§3.3, §5.1 `S7`): the query with the
-/// 30 s timeout and the billing-role check. The answer names the login server that
-/// receives the ticket, so it is read over HTTPS only (module docs "Upgrade to HTTPS").
+/// 30 s timeout ([`world_status`]) and the billing-role check.
 ///
 /// # Errors
 ///
-/// [`JoinError::Service`] of class `F06` or `F07`; [`JoinError::Insecure`] when the
-/// address has no HTTPS form, or was `http://` and its HTTPS form failed.
+/// [`LoginError`] of class `F06` or `F07`: the world is refused and the login stays
+/// (`official-entry.md` §8.6).
 pub fn join_status(
     http: &mut dyn HttpClient,
     world: &WorldDescriptor,
     sub: &GameSubscription,
-) -> Result<ServiceStatus, JoinError> {
-    let given = world.status_server_url.as_str();
-    if given.trim().is_empty() {
-        return Err(JoinError::Service(LoginError::WorldClosed {
-            reason: "the world has no status URL".to_owned(),
-        }));
-    }
-    let Some(at) = https_form(given) else {
-        return Err(JoinError::Insecure(InsecureStop::new(
-            ChainStep::StatusUrl,
-            given,
-            InsecureCause::NoHttpsForm,
-        )));
-    };
-    let status =
-        world_status(http, &at.url, crate::login::DEFAULT_HTTP_TIMEOUT_SEC).map_err(|e| {
-            if at.upgraded {
-                JoinError::Insecure(InsecureStop::https_failed(ChainStep::StatusUrl))
-            } else {
-                JoinError::Service(e)
-            }
-        })?;
+    plain: &PlainSteps,
+) -> Result<ServiceStatus, LoginError> {
+    let status = world_status(
+        http,
+        &world.status_server_url,
+        crate::login::DEFAULT_HTTP_TIMEOUT_SEC,
+        plain,
+    )?;
     status.check_billing_role(&sub.product_tokens)?;
     Ok(status)
 }
 
-/// One `TakeANumber` exchange (§3.5). The ticket goes only to a trusted queue URL; at an
-/// address the chain gave as `http://` (requested at its HTTPS form) a failed request or
-/// a non-200 answer stops the login (module docs "Upgrade to HTTPS").
+/// One `TakeANumber` exchange (§3.5) at the configuration's queue URL ([`exchange`]).
 ///
 /// # Errors
 ///
-/// [`JoinError::Service`] of class `F08` on a failed exchange or a negative `HResult`;
-/// [`JoinError::Insecure`] for an untrusted queue URL or a failed upgraded one.
+/// [`LoginError`] of class `F08` on a failed exchange or a negative `HResult`.
 pub fn take_a_number(
     http: &mut dyn HttpClient,
     auth: &Authenticated,
     queue_url: &str,
-) -> Result<QueueEvaluation, JoinError> {
-    if !auth.secure.queue {
-        let stop = if auth.secure.remote {
-            InsecureStop::new(
-                ChainStep::QueueUrl,
-                &auth.remote.login_queue_url,
-                InsecureCause::NoHttpsForm,
-            )
-        } else {
-            InsecureStop::new(
-                ChainStep::LauncherConfiguration,
-                &auth.datacenter.launcher_configuration_server,
-                InsecureCause::NoHttpsForm,
-            )
-        };
-        return Err(JoinError::Insecure(stop));
-    }
-    let upgraded = auth.secure.upgraded.queue;
-    let insecure = || JoinError::Insecure(InsecureStop::https_failed(ChainStep::QueueUrl));
+) -> Result<QueueEvaluation, LoginError> {
+    let given = auth.remote.login_queue_url.as_str();
     let mut req = build_take_a_number_request(
-        &auth.remote.login_queue_url,
+        given,
         &auth.remote.take_a_number_parameters,
         auth.subscription.name(),
         auth.account.ticket(),
         queue_url,
     );
-    let result = http.execute(&req);
+    let result = exchange(http, ChainStep::QueueUrl, given, &mut req, &auth.plain);
     req.zeroize_body();
-    let mut resp = match result {
-        Ok(r) => r,
-        Err(_) if upgraded => return Err(insecure()),
-        Err(e) => {
-            return Err(JoinError::Service(LoginError::QueueError {
-                hresult: None,
-                reason: e.to_string(),
-            }));
-        }
-    };
+    let mut resp = result.map_err(|e| LoginError::QueueError {
+        hresult: None,
+        reason: e.to_string(),
+    })?;
     if resp.status_code != 200 {
         zeroize_vec(&mut resp.body);
-        if upgraded {
-            return Err(insecure());
-        }
-        return Err(JoinError::Service(LoginError::QueueError {
+        return Err(LoginError::QueueError {
             hresult: None,
             reason: format!("the queue returned HTTP {}", resp.status_code),
-        }));
+        });
     }
     let parsed = QueueResult::parse(&resp.body);
     zeroize_vec(&mut resp.body);
-    Ok(parsed?.evaluate()?)
+    parsed?.evaluate()
 }
 
 /// `LeaveQueue` (§3.5) when the configuration has its template and a `ContextNumber` is
-/// known; the answer is not needed (the user is leaving).
+/// known ([`exchange`]); the answer is not needed (the user is leaving).
 pub fn leave_queue(
     http: &mut dyn HttpClient,
     auth: &Authenticated,
@@ -833,17 +601,10 @@ pub fn leave_queue(
     else {
         return;
     };
-    if !auth.secure.queue {
-        return;
-    }
-    let mut req = build_leave_queue_request(
-        &auth.remote.login_queue_url,
-        template,
-        auth.subscription.name(),
-        ctx,
-        queue_url,
-    );
-    let result = http.execute(&req);
+    let given = auth.remote.login_queue_url.as_str();
+    let mut req =
+        build_leave_queue_request(given, template, auth.subscription.name(), ctx, queue_url);
+    let result = exchange(http, ChainStep::QueueUrl, given, &mut req, &auth.plain);
     req.zeroize_body();
     if let Err(e) = result {
         tracing::debug!(class = %e.failure_class(), "official login: LeaveQueue failed");

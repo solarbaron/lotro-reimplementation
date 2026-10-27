@@ -312,6 +312,8 @@ struct Service {
     /// Addresses (host and path, without the scheme) whose HTTPS request fails as a failed
     /// TLS handshake would.
     https_down: Vec<String>,
+    /// HTTPS answers that replace the routed one: (HTTPS URL, status, body).
+    answers: Vec<(String, u16, String)>,
 }
 
 impl Default for Service {
@@ -336,6 +338,7 @@ impl Default for Service {
             queue_url: "https://gls.example.invalid/queue".to_owned(),
             plain_http: false,
             https_down: Vec::new(),
+            answers: Vec::new(),
         }
     }
 }
@@ -369,6 +372,9 @@ struct Shared {
     resolves: usize,
     /// Local-address probes made.
     probes: usize,
+    /// HTTPS answers set while the test runs ([`World::set_answers`]); they come before
+    /// `Service::answers`.
+    answers: Vec<(String, u16, String)>,
 }
 
 /// The network right as the synthetic network sees it (`Service::follow_withdraw`).
@@ -447,6 +453,15 @@ impl World {
         }
         let url = route(&req.url);
         let svc = &self.service;
+        if !plain {
+            let late = self.shared.lock().expect("shared").answers.clone();
+            if let Some((_, code, body)) = late.iter().chain(&svc.answers).find(|a| a.0 == url) {
+                return Ok(HttpResponse {
+                    status_code: *code,
+                    body: body.as_bytes().to_vec(),
+                });
+            }
+        }
         match url.as_str() {
             "https://gls.example.invalid/datacenter" => {
                 if let Some(g) = &self.service.gate {
@@ -497,6 +512,11 @@ impl World {
 
     fn requests(&self) -> Vec<Recorded> {
         self.shared.lock().expect("shared").requests.clone()
+    }
+
+    /// HTTPS answers that replace the routed ones from now on.
+    fn set_answers(&self, answers: Vec<(String, u16, String)>) {
+        self.shared.lock().expect("shared").answers = answers;
     }
 
     fn requests_to(&self, url: &str) -> usize {
@@ -1333,15 +1353,15 @@ fn several_subscriptions_are_an_unsupported_step() {
 }
 
 // ---------------------------------------------------------------------------
-// The HTTPS rule and the upgrade of `http://` addresses (`login_phase` "Upgrade to HTTPS")
+// HTTPS first, then the address as given (`login_phase`; decision 0044 as amended)
 // ---------------------------------------------------------------------------
 
-/// Held by every test whose login the HTTPS rule stops, so the log-capturing test sees
-/// only its own stop line.
-static HTTPS_RULE_STOPS: Mutex<()> = Mutex::new(());
+/// Held by every test whose login goes over plain HTTP, so the log-capturing test sees
+/// only its own `step over plain HTTP` lines.
+static PLAIN_STEPS: Mutex<()> = Mutex::new(());
 
-fn https_rule_lock() -> std::sync::MutexGuard<'static, ()> {
-    HTTPS_RULE_STOPS
+fn plain_lock() -> std::sync::MutexGuard<'static, ()> {
+    PLAIN_STEPS
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
@@ -1378,10 +1398,52 @@ fn recorded_carries_secret(r: &Recorded) -> bool {
     })
 }
 
+/// Alpha's status in the world list `e`.
+fn alpha_in_list(e: &Event) -> Option<tessera_net::account::WorldStatus> {
+    match e {
+        Event::Account(AccountEvent::WorldList { worlds }) => {
+            worlds.iter().find(|w| w.id == WorldId(0)).map(|w| w.status)
+        }
+        _ => None,
+    }
+}
+
+const ALPHA_HTTP: &str = "http://gls.example.invalid/status/alpha";
+const ALPHA_HTTPS: &str = "https://gls.example.invalid/status/alpha";
+const AUTH_HTTP: &str = "http://auth.example.invalid/login";
+const AUTH_HTTPS: &str = "https://auth.example.invalid/login";
+
+/// A service whose every address is `http://`; `down` lists the host and path of those
+/// whose HTTPS form fails as a refused TLS handshake would.
+fn http_chain(down: &[&str]) -> Service {
+    Service {
+        auth: AUTH_HTTP.to_owned(),
+        launcher_url: "http://gls.example.invalid/launcher.xml".to_owned(),
+        alpha_status_url: ALPHA_HTTP.to_owned(),
+        queue_url: "http://gls.example.invalid/queue".to_owned(),
+        alpha_queue: true,
+        plain_http: true,
+        https_down: down.iter().map(|d| (*d).to_owned()).collect(),
+        ..Service::default()
+    }
+}
+
+/// Every address of [`http_chain`], as host and path.
+const CHAIN: [&str; 5] = [
+    "gls.example.invalid/datacenter",
+    "gls.example.invalid/launcher.xml",
+    "auth.example.invalid/login",
+    "gls.example.invalid/status/alpha",
+    "gls.example.invalid/queue",
+];
+
 #[test]
 fn an_http_datacenter_url_is_asked_over_https_and_the_login_goes_on() {
     let mut run = start_with(
-        Service::default(),
+        Service {
+            plain_http: true,
+            ..Service::default()
+        },
         Some("http://gls.example.invalid/datacenter"),
     );
     run.wait_event(is_world_list);
@@ -1392,208 +1454,291 @@ fn an_http_datacenter_url_is_asked_over_https_and_the_login_goes_on() {
         Some("https://gls.example.invalid/datacenter")
     );
     assert!(plain_requests(&run.world).is_empty(), "{reqs:?}");
-    // The document read at the HTTPS form counts as HTTPS provenance: the account went.
     assert_eq!(login_requests(&run.world), 1);
     let _ = run.session.send(Instant::now(), Command::Disconnect);
 }
 
 #[test]
-fn http_addresses_inside_the_documents_are_upgraded_too() {
-    let mut run = start(
+fn an_https_capable_chain_never_touches_plain_http() {
+    // Every address `http://` (one with a plain-HTTP port), every HTTPS form working, the
+    // service answering plain HTTP too: nothing goes over plain HTTP.
+    let mut run = start_with(
         Service {
             auth: "http://auth.example.invalid:8080/login".to_owned(),
-            launcher_url: "http://gls.example.invalid/launcher.xml".to_owned(),
             queue_url: "HTTP://gls.example.invalid/queue".to_owned(),
-            alpha_queue: true,
-            ..Service::default()
+            ..http_chain(&[])
         },
-        true,
+        Some("http://gls.example.invalid/datacenter"),
     );
     run.wait_event(is_world_list);
     run.choose(0);
     wait_binds(&mut run, 1);
     let urls: Vec<String> = run.world.requests().into_iter().map(|r| r.1).collect();
     // The port given for plain HTTP is dropped: the default HTTPS port.
-    assert!(urls.contains(&"https://auth.example.invalid/login".to_owned()));
+    assert!(urls.contains(&AUTH_HTTPS.to_owned()));
     assert!(urls.contains(&"https://gls.example.invalid/launcher.xml".to_owned()));
     assert!(urls.contains(&"https://gls.example.invalid/queue".to_owned()));
     assert!(plain_requests(&run.world).is_empty(), "{urls:?}");
     let _ = run.session.send(Instant::now(), Command::Disconnect);
 }
 
-/// Runs a login whose step at `down` (host and path) fails over HTTPS while the service
-/// would answer plain HTTP; returns the run once it ended.
-fn run_with_https_down(service: Service, gls: &str, down: &str, choose: bool) -> Run {
-    let _one = https_rule_lock();
-    run_with_https_down_held(service, gls, down, choose)
-}
-
-/// [`run_with_https_down`] for a caller that holds [`https_rule_lock`] already.
-fn run_with_https_down_held(service: Service, gls: &str, down: &str, choose: bool) -> Run {
-    let mut run = start_with(
-        Service {
-            plain_http: true,
-            https_down: vec![down.to_owned()],
-            ..service
-        },
-        Some(gls),
-    );
-    if choose {
+#[test]
+fn an_http_chain_whose_https_form_is_refused_logs_in_over_plain_http() {
+    // Taken before the capture starts, so no other test's plain step is logged meanwhile.
+    let _one = plain_lock();
+    let logs = capture::logs(|| {
+        let mut run = start_with(
+            http_chain(&CHAIN),
+            Some("http://gls.example.invalid/datacenter"),
+        );
         run.wait_event(is_world_list);
         run.choose(0);
+        wait_binds(&mut run, 1);
+        let reqs = run.world.requests();
+        // Each step: once at its HTTPS form (refused), then once as given.
+        for step in CHAIN {
+            let https = reqs
+                .iter()
+                .filter(|r| r.1 == format!("https://{step}"))
+                .count();
+            let plain = reqs
+                .iter()
+                .filter(|r| r.1 == format!("http://{step}"))
+                .count();
+            assert!(https >= 1 && https == plain, "{step}: {https} {plain}");
+        }
+        // The account and the ticket went over plain HTTP, the chain worked no other way.
+        assert!(
+            plain_requests(&run.world)
+                .iter()
+                .filter(|r| recorded_carries_secret(r))
+                .count()
+                >= 2
+        );
+        let _ = run.session.send(Instant::now(), Command::Disconnect);
+        run.wait_exit(true);
+    });
+    let lines: Vec<&str> = logs
+        .lines()
+        .filter(|l| l.contains("official login: step over plain HTTP"))
+        .collect();
+    // One line per step (the status URL was asked for the list and for the join), with the
+    // step's name only.
+    let mut steps: Vec<&str> = lines
+        .iter()
+        .filter_map(|l| l.split("step=\"").nth(1)?.split('"').next())
+        .collect();
+    steps.sort_unstable();
+    assert_eq!(
+        steps,
+        [
+            "auth server",
+            "datacenter document",
+            "launcher configuration",
+            "queue URL",
+            "status URL"
+        ],
+        "{logs}"
+    );
+    for l in &lines {
+        // The message and the step, nothing else.
+        assert!(
+            l.ends_with(&format!(
+                "step=\"{}\" ",
+                l.split("step=\"")
+                    .nth(1)
+                    .and_then(|r| r.split('"').next())
+                    .unwrap_or("")
+            )),
+            "{l}"
+        );
     }
-    run.wait_event(is_disconnected);
-    run.wait_exit(true);
-    run
+    assert!(!logs.contains("example.invalid"), "{logs}");
+    assert!(!logs.contains("/login"), "{logs}");
+    assert!(!logs.contains("canary"), "{logs}");
 }
 
 #[test]
-fn a_failed_https_auth_server_stops_without_sending_the_account_over_plain_http() {
-    let run = run_with_https_down(
-        Service {
-            auth: "http://auth.example.invalid/login".to_owned(),
-            ..Service::default()
-        },
-        GLS,
-        "auth.example.invalid/login",
-        false,
-    );
-    assert_eq!(run.refused(), Some((LoginRefusal::InsecureService, None)));
-    // The one LoginAccount went to the HTTPS form (and failed there); none went plain.
-    assert_eq!(login_requests(&run.world), 1);
-    assert!(
-        run.world
-            .requests()
-            .iter()
-            .all(|r| !recorded_carries_secret(r) || is_https(&r.1))
-    );
-    assert!(plain_requests(&run.world).is_empty());
-}
-
-#[test]
-fn a_failed_https_datacenter_document_stops_before_the_account() {
-    let run = run_with_https_down(
-        Service::default(),
-        "http://gls.example.invalid/datacenter",
-        "gls.example.invalid/datacenter",
-        false,
-    );
-    assert_eq!(run.refused(), Some((LoginRefusal::InsecureService, None)));
-    assert_eq!(login_requests(&run.world), 0, "no LoginAccount was sent");
-    assert!(plain_requests(&run.world).is_empty(), "no plain-HTTP retry");
-}
-
-#[test]
-fn a_failed_https_remote_configuration_stops_before_the_account() {
-    let run = run_with_https_down(
-        Service {
-            launcher_url: "http://gls.example.invalid/launcher.xml".to_owned(),
-            ..Service::default()
-        },
-        GLS,
-        "gls.example.invalid/launcher.xml",
-        false,
-    );
-    assert_eq!(run.refused(), Some((LoginRefusal::InsecureService, None)));
-    assert_eq!(login_requests(&run.world), 0);
-    assert!(plain_requests(&run.world).is_empty());
-}
-
-#[test]
-fn a_failed_https_queue_stops_the_login_without_sending_the_ticket_over_plain_http() {
-    let run = run_with_https_down(
-        Service {
-            queue_url: "http://gls.example.invalid/queue".to_owned(),
-            alpha_queue: true,
-            ..Service::default()
-        },
-        GLS,
-        "gls.example.invalid/queue",
-        true,
-    );
-    assert_eq!(run.refused(), Some((LoginRefusal::InsecureService, None)));
-    assert!(plain_requests(&run.world).is_empty());
-    assert_eq!(run.world.binds(), 0);
-}
-
-#[test]
-fn the_world_list_may_fall_back_to_plain_http_but_joining_never_does() {
-    let _one = https_rule_lock();
+fn a_failed_https_form_of_one_step_sends_only_that_step_over_plain_http() {
+    let _one = plain_lock();
     let mut run = start(
         Service {
-            alpha_status_url: "http://gls.example.invalid/status/alpha".to_owned(),
+            auth: AUTH_HTTP.to_owned(),
             plain_http: true,
-            https_down: vec!["gls.example.invalid/status/alpha".to_owned()],
+            https_down: vec!["auth.example.invalid/login".to_owned()],
             ..Service::default()
         },
         true,
     );
     run.wait_event(is_world_list);
-    // The list's status query tried HTTPS, then plain HTTP (it carries nothing).
+    assert_eq!(run.refused(), None);
     let plain = plain_requests(&run.world);
     assert_eq!(plain.len(), 1, "{plain:?}");
-    assert_eq!(plain[0].1, "http://gls.example.invalid/status/alpha");
-    assert!(!recorded_carries_secret(&plain[0]));
-    // Joining names the login server that receives the ticket: HTTPS only.
-    run.choose(0);
-    run.wait_event(is_disconnected);
-    assert_eq!(run.refused(), Some((LoginRefusal::InsecureService, None)));
-    assert_eq!(plain_requests(&run.world).len(), 1, "no plain join status");
-    assert_eq!(run.world.binds(), 0);
+    assert_eq!(plain[0].1, AUTH_HTTP);
+    assert_eq!(
+        login_requests(&run.world),
+        2,
+        "the HTTPS form, then as given"
+    );
+    let _ = run.session.send(Instant::now(), Command::Disconnect);
 }
 
 #[test]
-fn an_address_without_an_https_form_is_never_asked() {
-    let _one = https_rule_lock();
-    for auth in [
-        "ftp://auth.example.invalid/login",
-        "http://user@auth.example.invalid/login",
-        "auth.example.invalid/login",
-    ] {
-        let mut run = start(
+fn a_real_https_answer_is_not_retried_over_http() {
+    // The service's answer over working HTTPS, whatever it says, is used as that answer.
+    let maintenance = login_fault("The service is down for maintenance");
+    for (gls, service, reason) in [
+        (
+            "http://gls.example.invalid/datacenter",
             Service {
-                auth: auth.to_owned(),
-                plain_http: true,
+                answers: vec![(
+                    "https://gls.example.invalid/datacenter".to_owned(),
+                    503,
+                    String::new(),
+                )],
                 ..Service::default()
             },
-            true,
+            LoginRefusal::ServiceUnavailable,
+        ),
+        (
+            GLS,
+            Service {
+                launcher_url: "http://gls.example.invalid/launcher.xml".to_owned(),
+                answers: vec![(
+                    "https://gls.example.invalid/launcher.xml".to_owned(),
+                    500,
+                    maintenance.clone(),
+                )],
+                ..Service::default()
+            },
+            LoginRefusal::ServiceUnavailable,
+        ),
+        (
+            GLS,
+            Service {
+                auth: AUTH_HTTP.to_owned(),
+                answers: vec![(AUTH_HTTPS.to_owned(), 500, login_fault("bad password"))],
+                ..Service::default()
+            },
+            LoginRefusal::BadCredentials,
+        ),
+        (
+            GLS,
+            Service {
+                auth: AUTH_HTTP.to_owned(),
+                answers: vec![(AUTH_HTTPS.to_owned(), 404, String::new())],
+                ..Service::default()
+            },
+            LoginRefusal::ServiceUnavailable,
+        ),
+    ] {
+        let mut run = start_with(
+            Service {
+                plain_http: true,
+                ..service
+            },
+            Some(gls),
         );
         run.wait_event(is_disconnected);
-        run.wait_exit(true);
-        assert_eq!(
-            run.refused(),
-            Some((LoginRefusal::InsecureService, None)),
-            "{auth}"
-        );
-        assert_eq!(login_requests(&run.world), 0, "{auth}");
+        assert_eq!(run.refused().map(|r| r.0), Some(reason));
+        assert!(plain_requests(&run.world).is_empty());
     }
 }
 
 #[test]
-fn a_stop_by_the_https_rule_logs_the_step_and_scheme_and_no_host() {
-    // Taken before the capture starts, so no other stop is logged while it runs.
-    let _one = https_rule_lock();
-    let logs = capture::logs(|| {
-        let _run = run_with_https_down_held(
-            Service {
-                auth: "http://auth.example.invalid/login".to_owned(),
-                ..Service::default()
-            },
-            GLS,
-            "auth.example.invalid/login",
-            false,
-        );
+fn a_real_https_answer_of_a_status_or_queue_is_not_retried_over_http() {
+    let login = Service::default().login_server;
+    // The world list: a 503 over HTTPS is the answer (Unknown), no plain request.
+    // Joining: an empty 200 refuses the world, the login stays.
+    let mut run = start(
+        Service {
+            alpha_status_url: ALPHA_HTTP.to_owned(),
+            answers: vec![(ALPHA_HTTPS.to_owned(), 503, String::new())],
+            beta_status: Some(status(false, &login)),
+            plain_http: true,
+            ..Service::default()
+        },
+        true,
+    );
+    let list = run.wait_event(is_world_list);
+    assert_eq!(
+        alpha_in_list(&list),
+        Some(tessera_net::account::WorldStatus::Unknown)
+    );
+    run.world
+        .set_answers(vec![(ALPHA_HTTPS.to_owned(), 200, String::new())]);
+    run.choose(0);
+    run.wait_event(|e| {
+        matches!(
+            e,
+            Event::Account(AccountEvent::WorldRefused {
+                world: WorldId(0),
+                reason: WorldRefusal::Closed,
+                ..
+            })
+        )
     });
-    let stops: Vec<&str> = logs
-        .lines()
-        .filter(|l| l.contains("the service address was not secure"))
+    assert_eq!(run.refused(), None);
+    assert!(plain_requests(&run.world).is_empty());
+    run.choose(1);
+    wait_binds(&mut run, 1);
+    let _ = run.session.send(Instant::now(), Command::Disconnect);
+
+    // The queue: a 503 over HTTPS refuses the world; the ticket never went plain.
+    let mut run = start(
+        Service {
+            queue_url: "http://gls.example.invalid/queue".to_owned(),
+            alpha_queue: true,
+            answers: vec![(
+                "https://gls.example.invalid/queue".to_owned(),
+                503,
+                String::new(),
+            )],
+            beta_status: Some(status(false, &login)),
+            plain_http: true,
+            ..Service::default()
+        },
+        true,
+    );
+    run.wait_event(is_world_list);
+    run.choose(0);
+    run.wait_event(|e| {
+        matches!(
+            e,
+            Event::Account(AccountEvent::WorldRefused {
+                world: WorldId(0),
+                ..
+            })
+        )
+    });
+    assert!(plain_requests(&run.world).is_empty());
+    run.choose(1);
+    wait_binds(&mut run, 1);
+    let _ = run.session.send(Instant::now(), Command::Disconnect);
+}
+
+#[test]
+fn an_address_without_an_https_form_is_asked_as_given() {
+    let _one = plain_lock();
+    let given = "http://user@auth.example.invalid/login";
+    let mut run = start(
+        Service {
+            auth: given.to_owned(),
+            plain_http: true,
+            ..Service::default()
+        },
+        true,
+    );
+    run.wait_event(is_world_list);
+    let to_auth: Vec<String> = run
+        .world
+        .requests()
+        .into_iter()
+        .filter(|r| r.1.contains("auth.example.invalid"))
+        .map(|r| r.1)
         .collect();
-    assert_eq!(stops.len(), 1, "{logs}");
-    assert!(stops[0].contains(r#"step="auth server""#), "{logs}");
-    assert!(stops[0].contains(r#"scheme="http""#), "{logs}");
-    assert!(!logs.contains("example.invalid"), "{logs}");
-    assert!(!logs.contains("/login"), "{logs}");
-    assert!(!logs.contains("canary"), "{logs}");
+    assert_eq!(to_auth, [given.to_owned()]);
+    let _ = run.session.send(Instant::now(), Command::Disconnect);
 }
 
 #[test]
@@ -2206,7 +2351,7 @@ fn session_start(
     SessionStart {
         handoff,
         login_peer: LOGIN_SERVER,
-        refresh_secure: true,
+        plain: Default::default(),
         refresher: TicketRefresher::new(auth, sub, TICKET, lifetime, 0.0),
         chat_endpoint: chat,
         version,
@@ -3348,6 +3493,121 @@ fn the_https_form_keeps_host_and_path_and_drops_a_plain_port() {
     assert_eq!(scheme_label(" http://a/"), "http");
     assert_eq!(scheme_label("ftp://a/"), "other");
     assert_eq!(scheme_label("a.example.invalid/x"), "none");
+}
+
+#[test]
+fn an_exchange_tries_https_first_and_the_address_as_given_only_after_a_transport_failure() {
+    use super::login_phase::{ChainStep, PlainSteps, exchange};
+    let _one = plain_lock();
+    /// Answers `answer` to HTTPS requests (an `Err` stands for a transport or TLS failure)
+    /// and 200 to plain ones; records the URLs.
+    struct Fake {
+        https: Result<u16, ()>,
+        urls: Vec<String>,
+    }
+    impl HttpClient for Fake {
+        fn execute(&mut self, req: &HttpRequest) -> Result<HttpResponse, LoginError> {
+            self.urls.push(req.url.clone());
+            let code = if is_https(&req.url) {
+                self.https.map_err(|()| LoginError::ServiceUnavailable {
+                    reason: "TLS".to_owned(),
+                })?
+            } else {
+                200
+            };
+            Ok(HttpResponse {
+                status_code: code,
+                body: Vec::new(),
+            })
+        }
+    }
+    let run = |given: &str, https: Result<u16, ()>| {
+        let mut fake = Fake {
+            https,
+            urls: Vec::new(),
+        };
+        let plain = PlainSteps::default();
+        let mut req = crate::login::build_world_status_request("unused");
+        let code = exchange(&mut fake, ChainStep::TicketRefresh, given, &mut req, &plain)
+            .map(|r| r.status_code)
+            .ok();
+        (code, fake.urls, plain.went_plain(ChainStep::TicketRefresh))
+    };
+    let s = |v: &[&str]| v.iter().map(|u| (*u).to_owned()).collect::<Vec<_>>();
+    // An https:// address: as given, never anything else.
+    assert_eq!(
+        run("https://a.example.invalid/x", Err(())),
+        (None, s(&["https://a.example.invalid/x"]), false)
+    );
+    // An http:// address whose HTTPS form answers, with any status: that answer.
+    for code in [200, 404, 503] {
+        assert_eq!(
+            run("http://a.example.invalid:80/x", Ok(code)),
+            (Some(code), s(&["https://a.example.invalid/x"]), false)
+        );
+    }
+    // Its HTTPS form fails at the transport: once more, as given, over plain HTTP.
+    assert_eq!(
+        run("http://a.example.invalid:80/x", Err(())),
+        (
+            Some(200),
+            s(&[
+                "https://a.example.invalid/x",
+                "http://a.example.invalid:80/x"
+            ]),
+            true
+        )
+    );
+    // No HTTPS form: as given.
+    assert_eq!(
+        run("http://u@a.example.invalid/x", Ok(200)),
+        (Some(200), s(&["http://u@a.example.invalid/x"]), true)
+    );
+}
+
+#[test]
+fn is_https_and_the_https_form_agree_on_every_form() {
+    use super::net::https_form;
+    // One parse decides both (nit F5): a form one refuses, the other refuses too.
+    let hostile = [
+        "https://a.example.invalid/x y",
+        "https://a.example.invalid/\u{7}",
+        "https://a.example.invalid/\u{85}",
+        "https://a.example.invalid\u{a0}/x",
+        "https://a.example.invalid/x\r\nHost: b",
+        "\u{1}https://a.example.invalid/x",
+        "https://user:pw@a.example.invalid/x",
+        "https://",
+        "https:///x",
+        "https://a.example.invalid:44x/x",
+        "https://[]/x",
+        "https//a.example.invalid/x",
+        "http://a.example.invalid/x\ty",
+        "http://user@a.example.invalid/x",
+    ];
+    for u in hostile {
+        assert!(!is_https(u), "{u:?}");
+        assert_eq!(https_form(u), None, "{u:?}");
+    }
+    let good = [
+        " https://a.example.invalid:8443/x ",
+        "HTTPS://a.example.invalid",
+        "https://[2001:db8::1]:443/x?q#f",
+        "http://a.example.invalid/x",
+        "HTTP://a.example.invalid:8080",
+    ];
+    for u in hostile.iter().chain(&good) {
+        let form = https_form(u);
+        assert_eq!(
+            is_https(u),
+            form.as_ref().is_some_and(|h| !h.upgraded),
+            "{u:?}"
+        );
+        if let Some(h) = form {
+            assert!(is_https(&h.url), "{u:?} -> {:?}", h.url);
+            assert_eq!(https_form(&h.url).map(|f| f.url), Some(h.url.clone()));
+        }
+    }
 }
 
 #[test]

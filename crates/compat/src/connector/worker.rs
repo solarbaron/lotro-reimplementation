@@ -216,6 +216,9 @@ pub fn run<N: ConnectorNet>(mut net: N, input: WorkerInput) {
     };
     let stop = || control.cancelled();
     let clock = Instant::now();
+    // Read once per attempt, before any network operation (`super::diag` "The send
+    // checksum switch").
+    let send_checksum = super::diag::send_checksum_from_env();
     out.progress(LoginStage::Authenticating);
     if let Some(locate) = locate {
         match locate() {
@@ -382,6 +385,7 @@ pub fn run<N: ConnectorNet>(mut net: N, input: WorkerInput) {
         codec_uuids: local.codec_uuids.clone(),
         schema: SchemaView(local.data.clone()),
         cancel: control.cancel_flag(),
+        send_checksum,
     };
     let now = || clock.elapsed().as_secs_f64();
     let mut driver = match SessionDriver::start(&mut net, start, now(), &stop) {

@@ -49,6 +49,9 @@ test-support = []
 
 [dev-dependencies]
 tempfile = "3"
+# Log capture for the tests that no log line names a host, an address or a port
+# (decision 0044 item 3; the handshake diagnostics of `connector::diag`).
+tracing-subscriber.workspace = true
 
 # The FIFO of the record tests is made in-process (no program is started, OE-T8 (b)) and
 # without unsafe code: `mkfifoat` of rustix, or `mkfifo` of nix on Apple systems, where rustix

@@ -15,16 +15,24 @@ use tracing_subscriber::{Layer as _, Registry};
 /// The filter when `RUST_LOG` is unset or does not parse.
 const DEFAULT_FILTER: &str = "info,wgpu_core=warn,wgpu_hal=warn,naga=warn,winit=warn";
 
-/// The HTTP and TLS crates of the official login (`tessera-compat`'s `ureq` on `rustls`)
-/// and the most they may log, whatever `RUST_LOG` says: their records (through the `log`
-/// bridge too) can name the service's host, a path or a request line, which the official
-/// login never logs (`official-entry.md` §7.3; decision 0044 item 3). Engineering choice,
-/// spec silent: `rustls` keeps its warnings (alerts, no names).
+/// The HTTP and TLS crates of the official login (`tessera-compat`'s `ureq` on `rustls`
+/// with the platform certificate verifier, and the crates under them), turned fully off,
+/// errors included, whatever `RUST_LOG` says: their records (through the `log` bridge too)
+/// can name the service's host, an address, a path or a request line, which the official
+/// login never logs (`official-entry.md` §7.3; decision 0044 item 3). The login logs its own
+/// neutral line instead where a TLS check fails (`tessera_compat::connector::login_phase`).
+/// Engineering choice, spec silent.
 const QUIET_TARGETS: &[(&str, LevelFilter)] = &[
     ("ureq", LevelFilter::OFF),
     ("ureq_proto", LevelFilter::OFF),
-    ("rustls", LevelFilter::WARN),
-    ("rustls_platform_verifier", LevelFilter::WARN),
+    ("rustls", LevelFilter::OFF),
+    ("rustls_platform_verifier", LevelFilter::OFF),
+    ("rustls_native_certs", LevelFilter::OFF),
+    ("rustls_pki_types", LevelFilter::OFF),
+    ("webpki", LevelFilter::OFF),
+    ("webpki_root_certs", LevelFilter::OFF),
+    ("http", LevelFilter::OFF),
+    ("httparse", LevelFilter::OFF),
 ];
 
 /// The most `target` may log under [`QUIET_TARGETS`]: `None` when it is not one of them
@@ -124,9 +132,27 @@ mod tests {
             tracing::warn!(target: "ureq_proto", "gls.example.invalid closed");
             tracing::debug!(target: "rustls::client::hs", "server name gls.example.invalid");
             tracing::debug!(target: "rustls_platform_verifier", "verifying gls.example.invalid");
+            // The record of the owner's live run: the verifier logs a failed check at error
+            // level with the server's name.
+            tracing::error!(
+                target: "rustls_platform_verifier::verification::others",
+                "failed to verify TLS certificate: invalid peer certificate: certificate not \
+                 valid for name \"gls.example.invalid\""
+            );
+            tracing::error!(target: "rustls::conn", "gls.example.invalid: fatal alert");
             tracing::warn!(target: "rustls::conn", "sending a fatal alert");
+            tracing::error!(target: "ureq::unversioned", "gls.example.invalid refused");
+            tracing::error!(target: "webpki", "gls.example.invalid not valid");
+            tracing::trace!(target: "http", "Host: gls.example.invalid");
             tracing::trace!(target: "other_crate", "kept: not one of the crates");
             tracing::info!(target: "tessera_client", "kept: the client's own");
+            // The login's own neutral line in place of the verifier's (step and kind only).
+            tracing::info!(
+                target: "tessera_compat::connector::login_phase",
+                step = "datacenter document",
+                kind = "name mismatch",
+                "official login: HTTPS certificate not valid for the step's address"
+            );
         });
         let bytes = buf
             .0
@@ -142,6 +168,7 @@ mod tests {
             Some("trace"),
             Some("trace,ureq=trace,ureq_proto=trace,rustls=trace"),
             Some("info,ureq::unversioned=trace,ureq_proto::client=trace,rustls::client=trace"),
+            Some("info,rustls_platform_verifier=error,rustls=error,webpki=trace,http=trace"),
             Some("not a filter ==="),
             None,
         ] {
@@ -151,11 +178,14 @@ mod tests {
                 logs.contains("kept: the client's own"),
                 "{rust_log:?}: {logs}"
             );
+            assert!(
+                logs.contains("HTTPS certificate not valid for the step's address"),
+                "{rust_log:?}: {logs}"
+            );
+            // Fully off, errors and warnings included.
+            assert!(!logs.contains("fatal alert"), "{rust_log:?}: {logs}");
+            assert!(!logs.contains("failed to verify"), "{rust_log:?}: {logs}");
             if rust_log.is_some_and(|s| s.starts_with("trace")) {
-                assert!(
-                    logs.contains("sending a fatal alert"),
-                    "{rust_log:?}: {logs}"
-                );
                 assert!(
                     logs.contains("kept: not one of the crates"),
                     "{rust_log:?}: {logs}"
@@ -169,7 +199,13 @@ mod tests {
         assert_eq!(quiet_cap("ureq"), Some(LevelFilter::OFF));
         assert_eq!(quiet_cap("ureq::pool"), Some(LevelFilter::OFF));
         assert_eq!(quiet_cap("ureq_proto::x"), Some(LevelFilter::OFF));
-        assert_eq!(quiet_cap("rustls::conn"), Some(LevelFilter::WARN));
+        assert_eq!(quiet_cap("rustls::conn"), Some(LevelFilter::OFF));
+        assert_eq!(
+            quiet_cap("rustls_platform_verifier::verification::others"),
+            Some(LevelFilter::OFF)
+        );
+        assert_eq!(quiet_cap("webpki::verify_cert"), Some(LevelFilter::OFF));
+        assert_eq!(quiet_cap("httpx"), None);
         assert_eq!(quiet_cap("ureqx"), None);
         assert_eq!(quiet_cap("tessera_compat::connector"), None);
     }

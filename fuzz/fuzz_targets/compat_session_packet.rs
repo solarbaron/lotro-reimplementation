@@ -13,9 +13,10 @@ use tessera_compat::session::{
     ConnectChallengeHeader, ControlMessage, DatagramHeader, OPCODE_BATCH_CONTAINER,
     OPCODE_CLIENT_VERSION, OPCODE_LOGIN_QUEUE_STATUS, OPCODE_SINGLE_WRAPPER,
     OPCODE_SYSTEM_NOTIFICATION, OPCODE_VERSION_REQUEST, OPCODE_VERSION_STATUS, OptionalHeaders,
-    SessionAuthHeader, SessionConnection, SessionMultiplexer, WireCodecs, WorldReferralHeader,
-    compute_datagram_checksum, decode_datagram, decode_message, decode_ticket_base64,
-    decode_variable_u32, des3_cbc_decrypt, dispatch_message, encode_datagram,
+    SendChecksumRule, SessionAuthHeader, SessionConnection, SessionMultiplexer, WireCodecs,
+    WorldReferralHeader, compute_datagram_checksum, decode_datagram, decode_message,
+    decode_ticket_base64, decode_variable_u32, des3_cbc_decrypt, dispatch_message, encode_datagram,
+    encode_datagram_with_rule,
 };
 
 /// A synthetic record DID (the real one is resolved at run time).
@@ -40,6 +41,30 @@ fuzz_target!(|data: &[u8]| {
     if let Ok(text) = std::str::from_utf8(data) {
         let _ = decode_ticket_base64(text);
         let _ = SessionAuthHeader::for_login("A", Some(text), 0);
+        let _ = SendChecksumRule::parse(text);
+        let _ = tessera_compat::net_access::TlsFailure::from_tls_text(text);
+    }
+    // The handshake diagnostics read a refused datagram once more (no checksum, no codec).
+    let _ = tessera_compat::connector::diag::carries_challenge(data);
+    // The send checksum switch (official-session.md §4.4.2): both rules on what decoded.
+    let rule = if data.first().is_some_and(|b| b & 1 == 1) {
+        SendChecksumRule::WholePayload
+    } else {
+        SendChecksumRule::PerBuffer
+    };
+    if let Ok(pkt) = decode_datagram(data, true, None, false) {
+        let mask = (pkt.header.flags & tessera_compat::session::FLAG_MASKED_CHECKSUM != 0)
+            .then_some(0x1234_5678);
+        if let Ok(again) = encode_datagram_with_rule(
+            pkt.header,
+            &pkt.opt_headers,
+            &pkt.fragments,
+            mask,
+            None,
+            rule,
+        ) {
+            let _ = decode_datagram(&again, true, None, true);
+        }
     }
 
     let tables = BitTreeTable::synthetic_dictionary([0u8; 16]);
@@ -71,6 +96,7 @@ fuzz_target!(|data: &[u8]| {
     // registered codecUuid lets a challenge that names it attach the codecs (§7.3).
     let mut started = SessionConnection::new(0x0100, peer, 0.0);
     started.register_codec_uuid(FUZZ_CODEC_UUID);
+    started.set_send_checksum_rule(rule);
     if let Ok(auth) = SessionAuthHeader::for_login("A", None, 0)
         && started.start_login(auth, 0.0).is_ok()
     {

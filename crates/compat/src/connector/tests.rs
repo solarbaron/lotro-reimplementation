@@ -5,6 +5,7 @@
 //! (RFC 5737).
 
 mod deadlines;
+mod diagnostics;
 mod world_feed;
 
 use std::collections::{BTreeMap, VecDeque};
@@ -2359,6 +2360,7 @@ fn session_start(
         codec_uuids: Vec::new(),
         schema: SchemaView(Arc::new(records())),
         cancel,
+        send_checksum: Default::default(),
     }
 }
 

@@ -35,7 +35,11 @@
 //! chain works no other way. Redirects stay off and no proxy is used (`crate::net_access`).
 //! Each step that went over plain HTTP logs one `info` line, `official login: step over
 //! plain HTTP` with `step=` only ([`ChainStep::label`]), once per step per login
-//! ([`PlainSteps`]); no host, path or account is ever logged.
+//! ([`PlainSteps`]); no host, path or account is ever logged. A step whose HTTPS request
+//! failed its TLS handshake or certificate check logs one `info` line too, once per step
+//! per login: `official login: HTTPS certificate not valid for the step's address` (or
+//! `... HTTPS handshake failed ...`) with `step=` and `kind=` ([`TlsFailure::label`]) only.
+//! The TLS crates' own records name the host; the client's log filter turns them off.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -56,6 +60,8 @@ use crate::login::{
     build_leave_queue_request, build_take_a_number_request, build_world_status_request,
     parse_get_datacenters_response, parse_login_account_response, soap_encoder, zeroize_vec,
 };
+
+use crate::net_access::TlsFailure;
 
 use super::data::LocalInputs;
 use super::net::{https_form, scheme_label};
@@ -210,16 +216,20 @@ impl ChainStep {
     }
 }
 
-/// The steps of one login that went over plain HTTP; each is logged once (module docs).
+/// The steps of one login that went over plain HTTP, and those whose HTTPS request failed
+/// its TLS handshake or certificate check; each is logged once per login (module docs).
 /// Clones share the record (the ticket refresh runs on a thread of its own).
 #[derive(Debug, Clone, Default)]
-pub struct PlainSteps(Arc<[AtomicBool; ChainStep::ALL.len()]>);
+pub struct PlainSteps {
+    plain: Arc<[AtomicBool; ChainStep::ALL.len()]>,
+    tls: Arc<[AtomicBool; ChainStep::ALL.len()]>,
+}
 
 impl PlainSteps {
     /// `step` goes over plain HTTP: the one `info` line of the step in this login, with the
     /// step's name only.
     pub fn note(&self, step: ChainStep) {
-        if let Some(flag) = self.0.get(step.index())
+        if let Some(flag) = self.plain.get(step.index())
             && !flag.swap(true, Ordering::SeqCst)
         {
             tracing::info!(step = step.label(), "official login: step over plain HTTP");
@@ -229,7 +239,42 @@ impl PlainSteps {
     /// Whether `step` went over plain HTTP in this login.
     #[must_use]
     pub fn went_plain(&self, step: ChainStep) -> bool {
-        self.0
+        self.plain
+            .get(step.index())
+            .is_some_and(|f| f.load(Ordering::SeqCst))
+    }
+
+    /// `step`'s HTTPS request failed with `err`: when that was a TLS failure, the one `info`
+    /// line of the step in this login, with the step's name and the failure's kind only
+    /// ([`TlsFailure::label`]), never the host, the address or the TLS crate's text (decision
+    /// 0044 item 3).
+    pub fn note_tls(&self, step: ChainStep, err: &LoginError) {
+        let Some(kind) = TlsFailure::of(err) else {
+            return;
+        };
+        if let Some(flag) = self.tls.get(step.index())
+            && !flag.swap(true, Ordering::SeqCst)
+        {
+            if kind.is_certificate() {
+                tracing::info!(
+                    step = step.label(),
+                    kind = kind.label(),
+                    "official login: HTTPS certificate not valid for the step's address"
+                );
+            } else {
+                tracing::info!(
+                    step = step.label(),
+                    kind = kind.label(),
+                    "official login: HTTPS handshake failed for the step's address"
+                );
+            }
+        }
+    }
+
+    /// Whether `step`'s HTTPS request failed a TLS check in this login.
+    #[must_use]
+    pub fn tls_failed(&self, step: ChainStep) -> bool {
+        self.tls
             .get(step.index())
             .is_some_and(|f| f.load(Ordering::SeqCst))
     }
@@ -259,21 +304,31 @@ pub fn exchange(
             match http.execute(req) {
                 Ok(resp) => return Ok(resp),
                 // The kind only, never the address.
-                Err(e) => tracing::debug!(
-                    step = step.label(),
-                    class = %e.failure_class(),
-                    "official login: the HTTPS form failed; asking the address as given"
-                ),
+                Err(e) => {
+                    plain.note_tls(step, &e);
+                    tracing::debug!(
+                        step = step.label(),
+                        class = %e.failure_class(),
+                        "official login: the HTTPS form failed; asking the address as given"
+                    );
+                }
             }
             given.clone_into(&mut req.url);
         }
         Some(at) => req.url = at.url,
         None => given.clone_into(&mut req.url),
     }
-    if scheme_label(&req.url) == "http" {
+    let scheme = scheme_label(&req.url);
+    if scheme == "http" {
         plain.note(step);
     }
-    http.execute(req)
+    let result = http.execute(req);
+    if scheme == "https"
+        && let Err(e) = &result
+    {
+        plain.note_tls(step, e);
+    }
+    result
 }
 
 /// The authenticated login: what the rest of the session needs from the HTTP exchanges.

@@ -338,11 +338,127 @@ impl HttpsClient {
     }
 }
 
+/// Why an HTTPS exchange failed its TLS handshake or its certificate check, as a kind
+/// only: the TLS crates' own texts name the host and are never logged (decision 0044
+/// item 3; the client's log filter turns those crates off). Engineering choice, spec silent.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum TlsFailure {
+    /// The certificate is not valid for the name the URL gives.
+    NameMismatch,
+    /// The certificate chain leads to no trusted root.
+    UnknownIssuer,
+    /// The certificate has expired.
+    Expired,
+    /// The certificate is not valid yet.
+    NotYetValid,
+    /// The certificate was revoked.
+    Revoked,
+    /// Any other certificate problem.
+    OtherCertificate,
+    /// The TLS handshake failed otherwise (an alert, no common protocol version or cipher).
+    Handshake,
+}
+
+impl TlsFailure {
+    /// Every kind.
+    pub const ALL: [Self; 7] = [
+        Self::NameMismatch,
+        Self::UnknownIssuer,
+        Self::Expired,
+        Self::NotYetValid,
+        Self::Revoked,
+        Self::OtherCertificate,
+        Self::Handshake,
+    ];
+
+    /// The kind's name in a log line.
+    #[must_use]
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::NameMismatch => "name mismatch",
+            Self::UnknownIssuer => "unknown issuer",
+            Self::Expired => "expired",
+            Self::NotYetValid => "not yet valid",
+            Self::Revoked => "revoked",
+            Self::OtherCertificate => "other certificate problem",
+            Self::Handshake => "handshake",
+        }
+    }
+
+    /// Whether the certificate check failed (every kind but [`Self::Handshake`]).
+    #[must_use]
+    pub const fn is_certificate(self) -> bool {
+        !matches!(self, Self::Handshake)
+    }
+
+    /// The `reason` of the [`LoginError::ServiceUnavailable`] the HTTPS client returns for
+    /// this kind (one fixed text per kind, so [`Self::of`] reads it back).
+    #[must_use]
+    pub const fn reason(self) -> &'static str {
+        match self {
+            Self::NameMismatch => "the TLS certificate is not valid for the address",
+            Self::UnknownIssuer => "the TLS certificate has an unknown issuer",
+            Self::Expired => "the TLS certificate has expired",
+            Self::NotYetValid => "the TLS certificate is not valid yet",
+            Self::Revoked => "the TLS certificate was revoked",
+            Self::OtherCertificate => "the TLS certificate check failed",
+            Self::Handshake => "the TLS handshake or certificate check failed",
+        }
+    }
+
+    /// The kind of a failure the HTTPS client returned, `None` when it was no TLS failure.
+    #[must_use]
+    pub fn of(err: &LoginError) -> Option<Self> {
+        let LoginError::ServiceUnavailable { reason } = err else {
+            return None;
+        };
+        Self::ALL.into_iter().find(|k| k.reason() == reason)
+    }
+
+    /// The kind of a TLS error whose text is `text` (the TLS crate's own text, which is
+    /// read here and never kept or logged): `None` when it is no TLS error.
+    #[must_use]
+    pub fn from_tls_text(text: &str) -> Option<Self> {
+        if !text.contains("invalid peer certificate") {
+            return None;
+        }
+        let has = |needles: &[&str]| needles.iter().any(|n| text.contains(n));
+        Some(if has(&["not valid for name", "NotValidForName"]) {
+            Self::NameMismatch
+        } else if has(&["UnknownIssuer"]) {
+            Self::UnknownIssuer
+        } else if has(&["Revoked"]) {
+            Self::Revoked
+        } else if has(&["not valid yet", "NotValidYet"]) {
+            Self::NotYetValid
+        } else if has(&["certificate expired", "Expired"]) {
+            Self::Expired
+        } else {
+            Self::OtherCertificate
+        })
+    }
+}
+
+/// The TLS kind of an error of the HTTP crate, `None` when it is no TLS failure. A TLS
+/// error of the handshake reaches the HTTP crate as an I/O error of kind `InvalidData` that
+/// wraps the TLS crate's error; its text decides the kind ([`TlsFailure::from_tls_text`]).
+fn tls_failure_of(e: &ureq::Error) -> Option<TlsFailure> {
+    match e {
+        ureq::Error::Tls(_) => Some(TlsFailure::Handshake),
+        ureq::Error::Io(io) if io.kind() == std::io::ErrorKind::InvalidData => {
+            let inner = io.get_ref()?;
+            Some(TlsFailure::from_tls_text(&inner.to_string()).unwrap_or(TlsFailure::Handshake))
+        }
+        _ => None,
+    }
+}
+
 fn http_failure(e: &ureq::Error) -> LoginError {
+    let tls = tls_failure_of(e);
     let reason = match e {
+        _ if tls.is_some() => tls.map_or("the request failed", TlsFailure::reason),
         ureq::Error::Timeout(_) => "the request timed out",
         ureq::Error::HostNotFound => "the service name did not resolve",
-        ureq::Error::Tls(_) => "the TLS handshake or certificate check failed",
         ureq::Error::BodyExceedsLimit(_) => "the response is too large",
         ureq::Error::LargeResponseHeader(_, _) => "the response head is too large",
         ureq::Error::BadUri(_) => "the service URL is not valid",
@@ -698,6 +814,90 @@ mod tests {
             .expect_err("refused");
         assert!(matches!(err, LoginError::ServiceUnavailable { .. }));
         let _ = server.join();
+    }
+
+    /// A stand-in for the TLS crate's error inside the HTTP crate's I/O error: its text is
+    /// the TLS crate's (it names the host).
+    #[derive(Debug)]
+    struct TlsText(&'static str);
+
+    impl std::fmt::Display for TlsText {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.write_str(self.0)
+        }
+    }
+
+    impl std::error::Error for TlsText {}
+
+    fn tls_io(text: &'static str) -> ureq::Error {
+        ureq::Error::Io(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            TlsText(text),
+        ))
+    }
+
+    #[test]
+    fn tls_failures_are_told_by_kind_without_the_host() {
+        let cases = [
+            (
+                "invalid peer certificate: certificate not valid for name \"gls.example.invalid\"; \
+                 certificate is only valid for DnsName(\"*.example.invalid\")",
+                TlsFailure::NameMismatch,
+            ),
+            (
+                "invalid peer certificate: NotValidForName",
+                TlsFailure::NameMismatch,
+            ),
+            (
+                "invalid peer certificate: UnknownIssuer",
+                TlsFailure::UnknownIssuer,
+            ),
+            (
+                "invalid peer certificate: certificate expired: verification time 2",
+                TlsFailure::Expired,
+            ),
+            ("invalid peer certificate: Expired", TlsFailure::Expired),
+            (
+                "invalid peer certificate: certificate not valid yet: verification time 1",
+                TlsFailure::NotYetValid,
+            ),
+            ("invalid peer certificate: Revoked", TlsFailure::Revoked),
+            (
+                "invalid peer certificate: BadSignature",
+                TlsFailure::OtherCertificate,
+            ),
+            (
+                "received fatal alert: HandshakeFailure",
+                TlsFailure::Handshake,
+            ),
+        ];
+        for (text, kind) in cases {
+            let err = http_failure(&tls_io(text));
+            assert_eq!(TlsFailure::of(&err), Some(kind), "{text}");
+            let LoginError::ServiceUnavailable { reason } = &err else {
+                panic!("{err:?}");
+            };
+            assert!(!reason.contains("example.invalid"), "{reason}");
+        }
+        assert_eq!(
+            TlsFailure::of(&http_failure(&ureq::Error::Tls("invalid dns name"))),
+            Some(TlsFailure::Handshake)
+        );
+        // Not TLS: a refused connection, a timeout, a name that does not resolve.
+        let refused = ureq::Error::Io(std::io::Error::from(std::io::ErrorKind::ConnectionRefused));
+        assert_eq!(TlsFailure::of(&http_failure(&refused)), None);
+        assert_eq!(
+            TlsFailure::of(&http_failure(&ureq::Error::HostNotFound)),
+            None
+        );
+        // Every kind has its own reason, read back by `of`.
+        for kind in TlsFailure::ALL {
+            let err = LoginError::ServiceUnavailable {
+                reason: kind.reason().to_owned(),
+            };
+            assert_eq!(TlsFailure::of(&err), Some(kind));
+            assert_eq!(kind.is_certificate(), kind != TlsFailure::Handshake);
+        }
     }
 
     #[test]

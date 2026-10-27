@@ -340,7 +340,9 @@ pub enum SessionError {
         actual: u32,
     },
     /// Source `(IPv4, port)` did not match the existing connection for `recId >= 0x0100` (§10.1 rule 4).
-    #[error("source address {actual} does not match peer {expected} for recId {rec_id:#06x}")]
+    /// The text names no address or port: it reaches log lines, which never do (decision
+    /// 0044 item 3).
+    #[error("source address does not match the peer of recId {rec_id:#06x}")]
     SourceAddressMismatch {
         /// Recipient ID.
         rec_id: u16,
@@ -349,8 +351,9 @@ pub enum SessionError {
         /// Actual datagram source address.
         actual: SocketAddrV4,
     },
-    /// No active connection matched the incoming datagram (§3.4).
-    #[error("no connection found for recId {rec_id:#06x} from {source_addr}")]
+    /// No active connection matched the incoming datagram (§3.4). The text names no
+    /// address or port: it reaches log lines, which never do (decision 0044 item 3).
+    #[error("no connection found for recId {rec_id:#06x}")]
     UnknownRecipient {
         /// Recipient ID.
         rec_id: u16,
@@ -1536,6 +1539,46 @@ pub fn send_payload_checksum(
         sum = sum.wrapping_add(compute_datagram_checksum(&buffer));
     }
     Ok(sum)
+}
+
+/// Which `payloadSum` rule of §4.4.2 step 2 the client applies to the datagrams it sends.
+///
+/// §4.4.2 gives the sender rule (a sum per optional header buffer and per fragment) and the
+/// receiver rule (one sum over the whole `pakSize` payload); they differ for some packets
+/// (see [`send_payload_checksum`]) and how they reconcile is a question for the spec
+/// writers (`docs/m8-remediation.md` §15, S §4.4.2). [`Self::PerBuffer`] is the spec's
+/// sender rule and the default; [`Self::WholePayload`] is a diagnostic switch for live
+/// verification only (`TESSERA_OFFICIAL_SEND_CHECKSUM`, `docs/DEVELOPMENT.md`). The receive
+/// rule never changes with it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SendChecksumRule {
+    /// The §4.4.2 send rule: [`send_payload_checksum`].
+    #[default]
+    PerBuffer,
+    /// The §4.4.2 receive rule applied on send: [`compute_datagram_checksum`] over the whole
+    /// payload.
+    WholePayload,
+}
+
+impl SendChecksumRule {
+    /// The rule's name, as `TESSERA_OFFICIAL_SEND_CHECKSUM` takes it and log lines show it.
+    #[must_use]
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::PerBuffer => "per-buffer",
+            Self::WholePayload => "whole-payload",
+        }
+    }
+
+    /// The rule named `value` ([`Self::label`]; surrounding ASCII whitespace ignored,
+    /// letters compared without regard to ASCII case); `None` for any other value.
+    #[must_use]
+    pub fn parse(value: &str) -> Option<Self> {
+        let v = value.trim_matches(|c: char| c.is_ascii_whitespace());
+        [Self::PerBuffer, Self::WholePayload]
+            .into_iter()
+            .find(|r| r.label().eq_ignore_ascii_case(v))
+    }
 }
 
 /// Verifies `header.checksum` against `payload` and `xor_mask` by the receive rule
@@ -4176,11 +4219,35 @@ pub struct DecodedPacket {
 ///
 /// Returns [`SessionError`] if optional headers or fragments are invalid or exceed `MAX_PAK_SIZE`.
 pub fn encode_datagram(
+    header: DatagramHeader,
+    opt_headers: &OptionalHeaders,
+    fragments: &[BlobFragment],
+    xor_mask: Option<u32>,
+    wire_codec: Option<&dyn BitTreeCodec>,
+) -> Result<Vec<u8>, SessionError> {
+    encode_datagram_with_rule(
+        header,
+        opt_headers,
+        fragments,
+        xor_mask,
+        wire_codec,
+        SendChecksumRule::PerBuffer,
+    )
+}
+
+/// [`encode_datagram`] with `payloadSum` computed by `rule` ([`SendChecksumRule`]); every
+/// other byte of the datagram is the same for both rules.
+///
+/// # Errors
+///
+/// See [`encode_datagram`].
+pub fn encode_datagram_with_rule(
     mut header: DatagramHeader,
     opt_headers: &OptionalHeaders,
     fragments: &[BlobFragment],
     xor_mask: Option<u32>,
     wire_codec: Option<&dyn BitTreeCodec>,
+    rule: SendChecksumRule,
 ) -> Result<Vec<u8>, SessionError> {
     if fragments.len() > MAX_FRAGS_PER_PACKET {
         return Err(SessionError::TooManyFragments {
@@ -4225,8 +4292,12 @@ pub fn encode_datagram(
     }
 
     // §4.4.2 step 2, send rule: `payloadSum` is summed per optional header buffer and per
-    // fragment (see [`send_payload_checksum`]); the receiver sums the whole payload.
-    let payload_sum = send_payload_checksum(opt_headers, fragments)?;
+    // fragment (see [`send_payload_checksum`]); the receiver sums the whole payload. The
+    // diagnostic switch applies the receive rule instead ([`SendChecksumRule`]).
+    let payload_sum = match rule {
+        SendChecksumRule::PerBuffer => send_payload_checksum(opt_headers, fragments)?,
+        SendChecksumRule::WholePayload => compute_datagram_checksum(&payload.buf),
+    };
     header.checksum = combine_packet_checksum(header, payload_sum, xor_mask)?;
     let wire_hdr = header.to_wire_bytes();
 
@@ -4463,6 +4534,34 @@ pub struct SentPacketRecord {
     pub retransmit_eligible: bool,
 }
 
+/// What one connection counted of its handshake and its datagrams, for diagnostics: counts
+/// only, never an address, a port or datagram bytes (decision 0044 item 3). Engineering
+/// choice, spec silent.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct HandshakeCounts {
+    /// `SessionAuthHeader` datagrams queued by [`SessionConnection::start_login`] (§6.2).
+    pub session_auth: u64,
+    /// `ReferralAuthHeader` datagrams queued by [`SessionConnection::start_world_login`]
+    /// (§6.5).
+    pub referral_auth: u64,
+    /// Retransmits of the stored `SessionAuthHeader` or `ReferralAuthHeader` in State `1`
+    /// (§6.1, every `2.0` s).
+    pub auth_retransmits: u64,
+    /// `ConnectAcceptHeader` datagrams queued in answer to a `ConnectChallengeHeader` (§6.4).
+    pub connect_accept: u64,
+    /// Retransmits of the `ConnectAcceptHeader` in State `2` (§6.4, every `0.6` s).
+    pub connect_accept_retransmits: u64,
+    /// `ConnectChallengeHeader`s that passed the §10.1 checks and were acted on (§6.3,
+    /// §6.4), an unsupported `codecUuid` included.
+    pub challenges: u64,
+    /// Datagrams handed to the socket ([`SessionMultiplexer::flush_outbound`]).
+    pub sent: u64,
+    /// Datagrams the socket refused to send.
+    pub send_failures: u64,
+    /// Received datagrams that passed every §10.1 check.
+    pub accepted: u64,
+}
+
 /// Per-connection state machine, sequence window, ISAAC generators, and fragmented blob reassembler (§3.4, §5–§8).
 pub struct SessionConnection {
     local_rec_id: u16,
@@ -4501,6 +4600,10 @@ pub struct SessionConnection {
     reassembler: BlobReassembler,
     outbound_datagrams: VecDeque<Vec<u8>>,
     events: VecDeque<SessionEvent>,
+
+    send_checksum: SendChecksumRule,
+    counts: HandshakeCounts,
+    closed_from: Option<ConnectionState>,
 }
 
 impl std::fmt::Debug for SessionConnection {
@@ -4574,7 +4677,37 @@ impl SessionConnection {
             reassembler: BlobReassembler::default(),
             outbound_datagrams: VecDeque::new(),
             events: VecDeque::new(),
+
+            send_checksum: SendChecksumRule::PerBuffer,
+            counts: HandshakeCounts::default(),
+            closed_from: None,
         }
+    }
+
+    /// Sets the `payloadSum` rule of every datagram this connection queues from now on
+    /// ([`SendChecksumRule`]; the default is the §4.4.2 send rule). The receive rule does not
+    /// change.
+    pub fn set_send_checksum_rule(&mut self, rule: SendChecksumRule) {
+        self.send_checksum = rule;
+    }
+
+    /// The `payloadSum` rule of the datagrams this connection queues.
+    #[must_use]
+    pub fn send_checksum_rule(&self) -> SendChecksumRule {
+        self.send_checksum
+    }
+
+    /// What this connection counted of its handshake and its datagrams.
+    #[must_use]
+    pub fn handshake_counts(&self) -> HandshakeCounts {
+        self.counts
+    }
+
+    /// The state the connection was in when it closed (State `8`), `None` while it has not
+    /// closed.
+    #[must_use]
+    pub fn closed_from(&self) -> Option<ConnectionState> {
+        self.closed_from
     }
 
     /// Returns the current connection state (`0..8`, §6.1).
@@ -4706,6 +4839,9 @@ impl SessionConnection {
 
     /// Records `reason`, moves to State `8` (`Closing`) and emits [`SessionEvent::Disconnected`].
     fn close(&mut self, reason: DisconnectReason, now_sec: f64) {
+        if self.state != ConnectionState::Closing {
+            self.closed_from = Some(self.state);
+        }
         self.forget_auth();
         self.state = ConnectionState::Closing;
         self.state_entered_at_sec = now_sec;
@@ -4772,8 +4908,9 @@ impl SessionConnection {
             session_auth: Some(session_auth),
             ..OptionalHeaders::default()
         };
-        let dgram = encode_datagram(hdr, &opt, &[], None, None)?;
+        let dgram = encode_datagram_with_rule(hdr, &opt, &[], None, None, self.send_checksum)?;
         self.outbound_datagrams.push_back(dgram);
+        self.counts.session_auth = self.counts.session_auth.saturating_add(1);
         Ok(())
     }
 
@@ -4802,8 +4939,9 @@ impl SessionConnection {
             referral_auth: Some(wlr),
             ..OptionalHeaders::default()
         };
-        let dgram = encode_datagram(hdr, &opt, &[], None, None)?;
+        let dgram = encode_datagram_with_rule(hdr, &opt, &[], None, None, self.send_checksum)?;
         self.outbound_datagrams.push_back(dgram);
+        self.counts.referral_auth = self.counts.referral_auth.saturating_add(1);
         Ok(())
     }
 
@@ -4868,7 +5006,14 @@ impl SessionConnection {
 
         let hdr = self.base_datagram_header(next_seq, now_sec);
         let codec = self.data_codec(outgoing_codec);
-        let dgram = encode_datagram(hdr, &opt_headers, &fragments, Some(xor_mask), codec)?;
+        let dgram = encode_datagram_with_rule(
+            hdr,
+            &opt_headers,
+            &fragments,
+            Some(xor_mask),
+            codec,
+            self.send_checksum,
+        )?;
         self.retransmit_table.insert(
             next_seq,
             SentPacketRecord {
@@ -5103,6 +5248,7 @@ impl SessionConnection {
         }
 
         // Valid packet accepted: update receive timestamp and flow counter
+        self.counts.accepted = self.counts.accepted.saturating_add(1);
         self.last_recv_time_sec = now_sec;
         self.bytes_received_since_flow = self
             .bytes_received_since_flow
@@ -5206,7 +5352,7 @@ impl SessionConnection {
             clock_sync: Some(now_sec + self.server_clock_offset_sec),
             ..OptionalHeaders::default()
         };
-        let dgram = encode_datagram(hdr, &opt, &[], None, None)?;
+        let dgram = encode_datagram_with_rule(hdr, &opt, &[], None, None, self.send_checksum)?;
         self.outbound_datagrams.push_back(dgram);
         Ok(())
     }
@@ -5217,6 +5363,7 @@ impl SessionConnection {
         cr: &ConnectChallengeHeader,
         now_sec: f64,
     ) -> Result<(), SessionError> {
+        self.counts.challenges = self.counts.challenges.saturating_add(1);
         // Step 3: a non-null codec UUID must match a loaded dictionary (§7.3).
         let is_null_uuid = cr.codec_uuid == [0u8; 16];
         if !is_null_uuid && !self.registered_codec_uuids.contains(&cr.codec_uuid) {
@@ -5260,8 +5407,9 @@ impl SessionConnection {
             connect_accept: Some(resp),
             ..OptionalHeaders::default()
         };
-        let dgram = encode_datagram(hdr, &resp_opt, &[], None, None)?;
+        let dgram = encode_datagram_with_rule(hdr, &resp_opt, &[], None, None, self.send_checksum)?;
         self.outbound_datagrams.push_back(dgram);
+        self.counts.connect_accept = self.counts.connect_accept.saturating_add(1);
 
         if self.state == ConnectionState::SessionAuthSent {
             self.state = ConnectionState::ChallengeAcceptSent;
@@ -5306,12 +5454,13 @@ impl SessionConnection {
                     && rec.retransmit_eligible
                 {
                     let hdr = self.base_datagram_header(rec.seq_num, now_sec);
-                    let dgram = encode_datagram(
+                    let dgram = encode_datagram_with_rule(
                         hdr,
                         &rec.opt_headers,
                         &rec.fragments,
                         Some(rec.xor_mask),
                         codec,
+                        self.send_checksum,
                     )?;
                     self.outbound_datagrams.push_back(dgram);
                 } else if self.out_of_order_ack_queue.len() >= MAX_PENDING_OUT_OF_ORDER_ACKS {
@@ -5437,8 +5586,10 @@ impl SessionConnection {
                         referral_auth: self.stored_referral_auth,
                         ..OptionalHeaders::default()
                     };
-                    let dgram = encode_datagram(hdr, &opt, &[], None, None)?;
+                    let dgram =
+                        encode_datagram_with_rule(hdr, &opt, &[], None, None, self.send_checksum)?;
                     self.outbound_datagrams.push_back(dgram);
+                    self.counts.auth_retransmits = self.counts.auth_retransmits.saturating_add(1);
                 }
             }
             ConnectionState::ChallengeAcceptSent => {
@@ -5455,8 +5606,11 @@ impl SessionConnection {
                         connect_accept: Some(resp),
                         ..OptionalHeaders::default()
                     };
-                    let dgram = encode_datagram(hdr, &opt, &[], None, None)?;
+                    let dgram =
+                        encode_datagram_with_rule(hdr, &opt, &[], None, None, self.send_checksum)?;
                     self.outbound_datagrams.push_back(dgram);
+                    self.counts.connect_accept_retransmits =
+                        self.counts.connect_accept_retransmits.saturating_add(1);
                 }
             }
             ConnectionState::Connected => {
@@ -5639,7 +5793,7 @@ impl SessionConnection {
     /// `MaskedChecksumFlag` and goes out uncompressed (§4.1.1, §5.1).
     fn queue_control(&mut self, now_sec: f64, opt: OptionalHeaders) -> Result<(), SessionError> {
         let hdr = self.base_datagram_header(self.send_seq_num, now_sec);
-        let dgram = encode_datagram(hdr, &opt, &[], None, None)?;
+        let dgram = encode_datagram_with_rule(hdr, &opt, &[], None, None, self.send_checksum)?;
         self.outbound_datagrams.push_back(dgram);
         Ok(())
     }
@@ -5900,7 +6054,11 @@ impl SessionMultiplexer {
                 let sent = transport.send_to(&dgram, remote);
                 // A sent (or failed) datagram may hold the ticket (`official-login.md` §6.3).
                 crate::login::zeroize_vec(&mut dgram);
+                if sent.is_err() {
+                    conn.counts.send_failures = conn.counts.send_failures.saturating_add(1);
+                }
                 sent?;
+                conn.counts.sent = conn.counts.sent.saturating_add(1);
                 count += 1;
             }
         }

@@ -23,6 +23,9 @@
 //! Skipped (reported as passed) unless `TESSERA_GAME_DIR` is set. Run with
 //! `cargo test --release -p tessera-client --test social_panels_real_data -- --nocapture`.
 
+#[path = "../../../crates/render/tests/support/gpu.rs"]
+mod gpu;
+
 #[path = "../../../crates/render/tests/support/golden.rs"]
 mod golden;
 #[path = "ui_common/goldens.rs"]
@@ -344,6 +347,8 @@ fn visible(host: &UiHost, root: ElementKey, id: u32) -> bool {
 
 #[test]
 fn social_scenarios_render_on_the_install() {
+    // One GPU test at a time in this binary (`gpu.rs`), held for the whole test.
+    let _gpu = gpu::GpuLock::acquire();
     let Some(dir) = game_dir() else { return };
     // Decision 0031 tier 2: refuse a golden folder in a work tree before any work.
     let golden_dir = goldens::golden_dir(
@@ -872,6 +877,8 @@ at 2s vital $brin health 600/800
 /// With `TESSERA_SHEET_DIR` the picture is written there (never committed).
 #[test]
 fn member_effects_render_on_the_install() {
+    // One GPU test at a time in this binary (`gpu.rs`), held for the whole test.
+    let _gpu = gpu::GpuLock::acquire();
     let Some(dir) = game_dir() else { return };
     let golden_dir = goldens::golden_dir(
         env!("CARGO_PKG_NAME"),

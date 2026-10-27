@@ -20,6 +20,9 @@
 //! count = the scene's decal count) and the effect entities' particle systems give the
 //! viewport pass vertices.
 
+#[path = "../../../crates/render/tests/support/gpu.rs"]
+mod gpu;
+
 mod chargen_common;
 
 use clap::Parser as _;
@@ -82,6 +85,8 @@ fn run(dir: &std::ffi::OsStr, extra: &[&str]) -> Option<HeadlessReport> {
 
 #[test]
 fn an_effect_bearing_location_draws_particles_and_settles() {
+    // One GPU test at a time in this binary (`gpu.rs`), held for the whole test.
+    let _gpu = gpu::GpuLock::acquire();
     let Some(dir) = std::env::var_os("TESSERA_GAME_DIR").filter(|d| !d.is_empty()) else {
         eprintln!("TESSERA_GAME_DIR not set; skipping");
         return;
@@ -160,6 +165,8 @@ fn an_effect_bearing_location_draws_particles_and_settles() {
 /// the settled frame queues decal batches.
 #[test]
 fn placed_decals_are_drawn_near_a_reference_location() {
+    // One GPU test at a time in this binary (`gpu.rs`), held for the whole test.
+    let _gpu = gpu::GpuLock::acquire();
     let Some(dir) = std::env::var_os("TESSERA_GAME_DIR").filter(|d| !d.is_empty()) else {
         eprintln!("TESSERA_GAME_DIR not set; skipping");
         return;
@@ -191,6 +198,8 @@ fn placed_decals_are_drawn_near_a_reference_location() {
 #[test]
 fn creation_scenes_draw_their_decals_and_effects() {
     use tessera_client::screens::{Action, Stage};
+    // One GPU test at a time in this binary (`gpu.rs`), held for the whole test.
+    let _gpu = gpu::GpuLock::acquire();
     let Some(game) = chargen_common::game_dir() else {
         return;
     };

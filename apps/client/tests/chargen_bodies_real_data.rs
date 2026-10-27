@@ -11,6 +11,9 @@
 //! Prints counts and keys only. Skipped (reported as passed) without `TESSERA_GAME_DIR` or
 //! without a GPU adapter. Writes nothing to the install and no settings.
 
+#[path = "../../../crates/render/tests/support/gpu.rs"]
+mod gpu;
+
 mod chargen_common;
 
 use std::path::PathBuf;
@@ -21,6 +24,8 @@ use tessera_client::walker_host::save_png;
 
 #[test]
 fn every_body_stands_in_the_creation_viewport() {
+    // One GPU test at a time in this binary (`gpu.rs`), held for the whole test.
+    let _gpu = gpu::GpuLock::acquire();
     let Some(game) = game_dir() else { return };
     let dir = tempfile::tempdir().expect("tempdir");
     let Some(mut c) = Client::start(game, dir.path()) else {
@@ -143,6 +148,8 @@ fn every_body_stands_in_the_creation_viewport() {
 /// one class. Prints counts only.
 #[test]
 fn class_branch_props_attach_on_the_race_and_class_figure() {
+    // One GPU test at a time in this binary (`gpu.rs`), held for the whole test.
+    let _gpu = gpu::GpuLock::acquire();
     let Some(game) = game_dir() else { return };
     let dir = tempfile::tempdir().expect("tempdir");
     let Some(mut c) = Client::start(game, dir.path()) else {

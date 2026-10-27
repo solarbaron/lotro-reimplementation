@@ -23,8 +23,7 @@ tessera-anim.workspace = true
 tessera-assets.workspace = true
 tessera-audio.workspace = true
 # Official play (docs/specs/official-entry.md): the ban-risk consent, the consent proof and
-# the compatibility backend (placeholder connector only; decision 0041). Never linked by
-# tessera-server.
+# the compatibility backend with the live connector. Never linked by tessera-server.
 tessera-compat.workspace = true
 tessera-dat.workspace = true
 tessera-entity.workspace = true

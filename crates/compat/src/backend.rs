@@ -7,8 +7,8 @@
 //! when the proof is not for the shipped warning text. A placeholder backend answers
 //! `Connect` with `LoginRefused { reason: NotAvailable }` and one `Disconnected` in the same
 //! poll, opening no socket. The live connector ([`crate::connector::LiveConnector`]) runs the
-//! official login and session; [`availability`] still answers [`Availability::NotBuilt`]
-//! (see there).
+//! official login and session; because it is built into this crate, [`availability`] answers
+//! [`Availability::Available`] (§4.4).
 //!
 //! A backend cannot be built without a proof (OE-T8 (d)). Each `compile_fail` example below
 //! differs from the compiling one only in the step it is about (the error code is checked by
@@ -69,26 +69,38 @@ pub enum Availability {
     NotBuilt,
 }
 
-/// The availability of official play in this binary (§4.4).
-///
-/// It stays [`Availability::NotBuilt`] on purpose while the hand-over to the character
-/// screens (§8.7) is a package of its own: offering official play earlier would end every
-/// login at the placeholder.
-///
-/// [`Availability::NotBuilt`]: the live connector ([`LiveConnector`](crate::connector::LiveConnector)) logs in, lists the
-/// worlds, queues, opens the session and delivers the character list, but the client cannot
-/// yet take an official session past that point: the hand-over to the character screens
-/// (`official-entry.md` §8.7) still shows the placeholder, character creation and deletion
-/// and the in-world gameplay messages wait for their specs, and the `0xCC` state schemas are
-/// not yet built from the install. The answer becomes `Available` when official play can be
-/// used end to end; until then the flow stops at §9 step 4 and no backend is constructed.
-#[must_use]
-pub fn availability() -> Availability {
-    Availability::NotBuilt
+impl Availability {
+    /// The answer of §4.4 for a binary with (`true`) or without (`false`) a live connector:
+    /// [`Availability::Available`] exactly when one is built in. [`availability`] is this
+    /// mapping over [`live_connector_built`]; the `false` case is the placeholder-only binary
+    /// (OE-T9), which the client's flow tests drive through a backend factory of their own.
+    #[must_use]
+    pub const fn from_live_connector(built: bool) -> Self {
+        if built {
+            Self::Available
+        } else {
+            Self::NotBuilt
+        }
+    }
 }
 
-/// Whether the live connector ([`LiveConnector`](crate::connector::LiveConnector)) is compiled into this binary
-/// (diagnostics; independent of [`availability`]).
+/// The availability of official play in this binary (§4.4): [`Availability::Available`],
+/// since the live connector ([`LiveConnector`](crate::connector::LiveConnector)) is built in.
+///
+/// The client asks for it at §9 step 4, after the record check and the warning, so the
+/// answer never shortens the consent gate: with `Available` the flow goes on to the account
+/// form, and no backend exists and no network operation happens before the user's Log in
+/// there (§6.1, §6.2). The connector logs in, lists the worlds, queues, opens the session and
+/// hands it to the character screens (§8.7) and the world. Parts of official play still wait
+/// for their specs (character creation and deletion, the gameplay messages); the client
+/// shows those as unavailable where they are reached.
+#[must_use]
+pub const fn availability() -> Availability {
+    Availability::from_live_connector(live_connector_built())
+}
+
+/// Whether the live connector ([`LiveConnector`](crate::connector::LiveConnector)) is compiled
+/// into this binary; [`availability`] follows it.
 #[must_use]
 pub const fn live_connector_built() -> bool {
     true
@@ -136,8 +148,9 @@ pub trait Connector: Send + std::fmt::Debug {
     fn disconnect(&mut self, _now: Instant) {}
 }
 
-/// The connector of this build: always fails with [`CompatError::ProtocolNotBuilt`] and never
-/// opens a socket (it drops the credentials at once).
+/// The placeholder connector (the default of [`CompatBackend`]; the client builds the live
+/// connector instead): always fails with [`CompatError::ProtocolNotBuilt`] and never opens a
+/// socket (it drops the credentials at once).
 #[derive(Debug, Default, Clone, Copy)]
 pub struct PlaceholderConnector;
 
@@ -203,7 +216,7 @@ impl CompatBackend<PlaceholderConnector> {
 }
 
 impl<C: Connector> CompatBackend<C> {
-    /// A backend over a custom [`Connector`] (tests and future live connectors).
+    /// A backend over a custom [`Connector`] (the live connector, tests).
     ///
     /// # Errors
     ///

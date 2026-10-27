@@ -30,10 +30,12 @@ pub fn construct_backend<C: Connector + 'static>(
     Ok(Box::new(CompatBackend::with_connector(config, connector)?))
 }
 
-/// The backends of this build: the availability answer of `tessera-compat` (§4.4) and the
-/// live connector over the user's install (`--game-dir`, else `TESSERA_GAME_DIR`, else
-/// discovery; found on the connector's thread). While the answer is `NotBuilt` the flow
-/// stops at §9 step 4 and [`BackendFactory::construct`] is never reached.
+/// The backends of this build: the availability answer of `tessera-compat` (§4.4;
+/// `Available`, the live connector is built in) and the live connector over the user's
+/// install (`--game-dir`, else `TESSERA_GAME_DIR`, else discovery; found on the connector's
+/// thread). The flow asks for availability only at §9 step 4, after the record check and the
+/// warning, and reaches [`BackendFactory::construct`] only from the account form's Log in
+/// (§9 step 5): nothing here opens a network before then.
 #[derive(Debug, Default)]
 pub struct ProductionBackends {
     game_dir: Option<PathBuf>,

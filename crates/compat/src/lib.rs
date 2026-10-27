@@ -22,7 +22,7 @@
 //! 3. [`backend`]: the [`CompatBackend`] shell implementing [`tessera_net::Backend`], built
 //!    only from a [`CompatConfig`] carrying a consent proof and the user's
 //!    [`Credentials`], over a [`Connector`]; [`backend::availability`] says whether official
-//!    play can be offered (still `NotBuilt`, see there).
+//!    play can be offered (`Available`: the live connector is built in, see there).
 //! 4. [`login`]: launcher configuration discovery, the SOAP authentication,
 //!    world status and login queue exchanges, ticket refresh and the client
 //!    network version discovery of decision 0042 item 1.

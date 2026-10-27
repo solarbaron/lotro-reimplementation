@@ -1259,8 +1259,10 @@ fn oe_t7d_no_plugin_host_before_the_hand_over() {
             data.path().to_path_buf(),
         ))
     };
-    // --start-screen and --official runs: decline, accept, not-available.
-    for official in [false, true] {
+    // --start-screen and --official runs: decline, accept, then the account form (this
+    // build's backends: `Available`) or the not-available message (a placeholder-only
+    // factory: `NotBuilt`).
+    for (official, available) in [(false, true), (true, true), (false, false), (true, false)] {
         let mut argv = vec!["tessera-client"];
         argv.push(if official {
             "--official"
@@ -1269,10 +1271,19 @@ fn oe_t7d_no_plugin_host_before_the_hand_over() {
         });
         let args = Args::try_parse_from(argv).expect("args");
         let record = tempfile::tempdir().expect("temp dir");
+        let backends: Box<dyn BackendFactory> = if available {
+            Box::new(super::backend::ProductionBackends::default())
+        } else {
+            Box::new(Doubles {
+                availability: Availability::NotBuilt,
+                script: Arc::default(),
+                built: Arc::default(),
+            })
+        };
         let mut flow = super::window::start_flow(
             &args,
             super::window::flow_config(&args, Some(record.path().to_path_buf()), None),
-            Box::new(super::backend::ProductionBackends::default()),
+            backends,
             slot(),
         );
         let t0 = Instant::now();
@@ -1292,7 +1303,16 @@ fn oe_t7d_no_plugin_host_before_the_hand_over() {
             flow.device_input(ev, &warning_layout);
         }
         flow.wait_write(t0);
-        // NotBuilt: the not-available message on the start screen.
+        if available {
+            // Available: the account form; Back returns to the start screen.
+            assert_eq!(flow.screen(), Screen::Form);
+            assert_eq!(flow.plugin_host().starts(), 0);
+            flow.device_input(&press(Key::Escape, t), &|_, _| None);
+            assert_eq!(flow.constructions(), 0);
+        } else {
+            // NotBuilt: the not-available message on the start screen.
+            assert!(flow.notice().is_some());
+        }
         assert_eq!(flow.screen(), Screen::Start);
         assert_eq!(flow.plugin_host().starts(), 0);
         assert_eq!(flow.plugin_host().apartments(), 0);
@@ -1491,10 +1511,23 @@ fn recording_connector_is_reached_only_after_log_in() {
 
 // ----- OE-T9 -----
 
+/// This build offers official play: the production factory answers `Available` (§4.4).
+#[test]
+fn oe_t9_this_build_offers_official_play() {
+    assert_eq!(
+        super::backend::ProductionBackends::default().availability(),
+        Availability::Available
+    );
+    assert_eq!(tessera_compat::availability(), Availability::Available);
+}
+
+/// A placeholder-only binary (`NotBuilt`, built here as a factory of that answer): the
+/// not-available message after the warning, never the form, no backend.
 #[test]
 fn oe_t9_placeholder_shows_not_available_after_the_warning() {
     let _guard = net_lock();
     let record = tempfile::tempdir().expect("temp dir");
+    let built = Arc::new(Mutex::new(0));
     let mut flow = Flow::new(
         FlowConfig {
             record_dir: Some(record.path().to_path_buf()),
@@ -1503,7 +1536,11 @@ fn oe_t9_placeholder_shows_not_available_after_the_warning() {
             last_world: None,
             queued_plugin_loads: 0,
         },
-        Box::new(super::backend::ProductionBackends::default()),
+        Box::new(Doubles {
+            availability: Availability::NotBuilt,
+            script: Arc::default(),
+            built: Arc::clone(&built),
+        }),
         Box::new(CountingHost::default()),
     );
     let t0 = Instant::now();
@@ -1526,6 +1563,70 @@ fn oe_t9_placeholder_shows_not_available_after_the_warning() {
     flow.device_input(&press(Key::Enter, t), &|_, _| None);
     assert!(flow.notice().is_none());
     assert_eq!(flow.constructions(), 0);
+    assert_eq!(*built.lock().expect("built"), 0);
+}
+
+/// `--official` as a release binary runs it, without an acceptance record: only the pieces
+/// the release build uses (the CLI parse, `window::flow_config` and `window::start_flow`,
+/// this build's `ProductionBackends`, the real plugin slot); no test double, no
+/// `consent::test_support` helper and no record made beforehand. (The test binary itself is
+/// built with `tessera-compat`'s test-support feature, which only adds record-building helpers
+/// and lets the writer store test texts; none of that is on this path.) The warning shows
+/// first; declining, and accepting up to the account form, construct no backend and make no
+/// network-access value, so no network operation is possible (§6.1); Back from the form
+/// returns to the start screen without one.
+#[test]
+fn official_release_path_shows_the_warning_and_makes_no_network_operation() {
+    let _guard = net_lock();
+    let before = tessera_compat::net_access::created_count();
+    let plugins = tempfile::tempdir().expect("temp dir");
+    let data = tempfile::tempdir().expect("temp dir");
+    let record = tempfile::tempdir().expect("temp dir");
+    let args = Args::try_parse_from(["tessera-client", "--official"]).expect("args");
+    let mut flow = super::window::start_flow(
+        &args,
+        super::window::flow_config(&args, Some(record.path().to_path_buf()), None),
+        Box::new(super::backend::ProductionBackends::new(None)),
+        Box::new(super::plugin_host::PluginSlot::new(
+            plugins.path().to_path_buf(),
+            data.path().to_path_buf(),
+        )),
+    );
+    let t0 = Instant::now();
+    flow.wait_checks(t0);
+    assert_eq!(flow.screen(), Screen::Warning, "the warning comes first");
+    assert!(flow.form().is_none() && flow.notice().is_none());
+    assert!(snapshot(record.path()).is_empty());
+    // Decline (Escape): the start screen, no file, no network.
+    flow.device_input(&press(Key::Escape, t0), &warning_layout);
+    assert_eq!(flow.screen(), Screen::Start);
+    assert!(
+        snapshot(record.path()).is_empty(),
+        "declining writes nothing"
+    );
+    assert_eq!(tessera_compat::net_access::created_count(), before);
+    // Official servers again: the warning again (no acceptance yet); accept it.
+    flow.choose_official();
+    flow.wait_checks(t0);
+    assert_eq!(flow.screen(), Screen::Warning);
+    flow.warning_mut().expect("warning").set_text_ready(t0);
+    let t = t0 + INPUT_DELAY;
+    for ev in click_seq(0.0, t).iter().chain(click_seq(2.0, t).iter()) {
+        flow.device_input(ev, &warning_layout);
+    }
+    flow.wait_write(t);
+    // Available: the account form, and still nothing has touched a network.
+    assert_eq!(flow.screen(), Screen::Form);
+    assert!(flow.form().is_some());
+    assert_eq!(flow.constructions(), 0);
+    assert_eq!(tessera_compat::net_access::created_count(), before);
+    // Back: the start screen, without a backend or a network right.
+    flow.device_input(&press(Key::Escape, t), &|_, _| None);
+    assert_eq!(flow.screen(), Screen::Start);
+    assert_eq!(flow.constructions(), 0);
+    assert_eq!(tessera_compat::net_access::created_count(), before);
+    assert_eq!(flow.plugin_host().starts(), 0);
+    flow.finish_writes();
 }
 
 #[test]

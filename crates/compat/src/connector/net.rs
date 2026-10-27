@@ -92,6 +92,98 @@ pub fn is_https(url: &str) -> bool {
         .is_some_and(|p| p.eq_ignore_ascii_case("https://"))
 }
 
+/// An address of the login chain in the form it is requested at (owner decision
+/// 2026-10-27, "upgrade to HTTPS"; `official-login.md` §6.2 names the endpoints
+/// "HTTP/HTTPS" and is silent on the upgrade: question with the spec writers).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HttpsUrl {
+    /// The `https://` URL to request.
+    pub url: String,
+    /// The chain gave the address as `http://`: this is its HTTPS form.
+    pub upgraded: bool,
+}
+
+/// The HTTPS form of `url`, `None` when it has none:
+///
+/// - an `https://` URL is used as given (surrounding whitespace removed);
+/// - an `http://` URL becomes `https://` at the same host and path (query and fragment
+///   kept). An explicit port is dropped, so the request goes to the default HTTPS port: a
+///   port chosen for plain HTTP says nothing about where the service listens for TLS, and
+///   the spec does not say to keep it (engineering choice, question with the spec writers);
+/// - any other scheme, an `http://` URL with user information (`user@host`), an empty
+///   host, a port that is not a decimal number, or a control character or space anywhere
+///   has no HTTPS form (engineering choice, spec silent: such an address is refused rather
+///   than guessed at).
+#[must_use]
+pub fn https_form(url: &str) -> Option<HttpsUrl> {
+    let url = url.trim();
+    if url.chars().any(|c| c.is_control() || c.is_whitespace()) {
+        return None;
+    }
+    if is_https(url) {
+        return Some(HttpsUrl {
+            url: url.to_owned(),
+            upgraded: false,
+        });
+    }
+    let scheme = url.get(..7)?;
+    if !scheme.eq_ignore_ascii_case("http://") {
+        return None;
+    }
+    let rest = url.get(7..)?;
+    let end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
+    let (authority, tail) = rest.split_at(end);
+    let host = authority_host(authority)?;
+    Some(HttpsUrl {
+        url: format!("https://{host}{tail}"),
+        upgraded: true,
+    })
+}
+
+/// The host of an `http://` URL's authority without its port (brackets of an IPv6
+/// literal kept); `None` for user information, an empty host or a malformed port.
+fn authority_host(authority: &str) -> Option<&str> {
+    if authority.contains('@') {
+        return None;
+    }
+    let (host, port) = if let Some(inner) = authority.strip_prefix('[') {
+        // `[` at 0, `]` at `close + 1`: the literal with its brackets.
+        let close = inner.find(']')?;
+        if close == 0 {
+            return None;
+        }
+        let host = authority.get(..close + 2)?;
+        let after = authority.get(close + 2..)?;
+        let port = if after.is_empty() {
+            ""
+        } else {
+            after.strip_prefix(':')?
+        };
+        (host, port)
+    } else {
+        let (h, p) = authority.rsplit_once(':').unwrap_or((authority, ""));
+        if h.is_empty() || h.contains(['[', ']', ':']) {
+            return None;
+        }
+        (h, p)
+    };
+    port.bytes().all(|b| b.is_ascii_digit()).then_some(host)
+}
+
+/// The scheme of `url` for a log line: `"https"`, `"http"`, `"other"` or `"none"`, never
+/// more of the URL (a host or a path may identify the user's service, `official-entry.md`
+/// §7.3).
+#[must_use]
+pub fn scheme_label(url: &str) -> &'static str {
+    let url = url.trim();
+    match url.find("://").and_then(|i| url.get(..i)) {
+        Some(s) if s.eq_ignore_ascii_case("https") => "https",
+        Some(s) if s.eq_ignore_ascii_case("http") => "http",
+        Some(_) => "other",
+        None => "none",
+    }
+}
+
 /// The connector's rule over every HTTP exchange: a request that carries the password or
 /// the ticket goes only over `https://` (`official-login.md` §6.2, §6.3: the plaintext
 /// password and the bearer ticket must not be exposed). Where the spec names an endpoint

@@ -129,7 +129,7 @@ fn event(b: &mut Bytes<'_>) -> Event {
             detail: b.opt_text(270),
         }),
         4 => Event::Account(AccountEvent::LoginRefused {
-            reason: match b.u8() % 8 {
+            reason: match b.u8() % 9 {
                 0 => LoginRefusal::BadCredentials,
                 1 => LoginRefusal::AccountNotAllowed,
                 2 => LoginRefusal::UnsupportedStep,
@@ -137,6 +137,7 @@ fn event(b: &mut Bytes<'_>) -> Event {
                 4 => LoginRefusal::RateLimited,
                 5 => LoginRefusal::ServiceUnavailable,
                 6 => LoginRefusal::NotAvailable,
+                7 => LoginRefusal::InsecureService,
                 _ => LoginRefusal::Other,
             },
             retry_after_seconds: b.opt_u32(),

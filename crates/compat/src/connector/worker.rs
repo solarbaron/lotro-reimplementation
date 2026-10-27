@@ -21,9 +21,10 @@ use crate::login::{QueueEvaluation, SessionHandoff, TicketRefresher, WorldDescri
 use super::control::{Control, Msg};
 use super::data::{InstallDataLoader, LocalInputs, LocalPaths, SchemaView, discover_local};
 use super::login_phase::{
-    Authenticated, LoginStop, Secure, WORLD_LIST_STATUS_TIMEOUT_SEC, authenticate, get_datacenters,
-    get_remote_config, join_status, leave_queue, local_refusal, queue_poll_interval, take_a_number,
-    world_list, world_refusal, world_status,
+    Authenticated, InsecureStop, JoinError, LoginStop, Secure, Upgraded,
+    WORLD_LIST_STATUS_TIMEOUT_SEC, authenticate, get_datacenters, get_remote_config, join_status,
+    leave_queue, list_world_status, local_refusal, queue_poll_interval, take_a_number, world_list,
+    world_refusal,
 };
 use super::net::{ConnectorNet, NetHttp};
 use super::session_phase::{
@@ -158,8 +159,13 @@ impl Out {
             self.one(revoked());
             return;
         }
-        if let LoginStop::Refused(reason, detail) = stop {
-            self.refuse(reason, detail);
+        match stop {
+            LoginStop::Refused(reason, detail) => self.refuse(reason, detail),
+            LoginStop::Insecure(why) => {
+                why.log();
+                self.refuse(LoginRefusal::InsecureService, None);
+            }
+            LoginStop::Cancelled => {}
         }
     }
 
@@ -191,6 +197,8 @@ fn revoked() -> Event {
 enum Choice {
     Joined(Box<Joined>),
     Refused(WorldRefusal),
+    /// The HTTPS rule stopped the login (`LoginRefusal::InsecureService`).
+    Insecure(InsecureStop),
     Left,
     /// The attempt was cancelled: nothing more is said or sent.
     Shutdown,
@@ -246,19 +254,22 @@ pub fn run<N: ConnectorNet>(mut net: N, input: WorkerInput) {
         }
     };
     out.progress(LoginStage::Authenticating);
-    // S2.
-    let dc = match get_datacenters(&mut NetHttp::new(&mut net, &stop), &local) {
+    // S2, at the HTTPS form of the install's URL (`login_phase` "Upgrade to HTTPS").
+    let mut upgraded = Upgraded::default();
+    let (dc, gls) = match get_datacenters(&mut NetHttp::new(&mut net, &stop), &local, &mut upgraded)
+    {
         Ok(v) => v,
-        Err(e) => return out.stopped(LoginStop::from(&e), net.is_live()),
+        Err(e) => return out.stopped(e, net.is_live()),
     };
     out.progress(LoginStage::Authenticating);
     // S3.
-    let remote = match get_remote_config(&mut NetHttp::new(&mut net, &stop), &dc) {
+    let remote = match get_remote_config(&mut NetHttp::new(&mut net, &stop), &dc, &mut upgraded) {
         Ok(v) => v,
-        Err(e) => return out.stopped(LoginStop::from(&e), net.is_live()),
+        Err(e) => return out.stopped(e, net.is_live()),
     };
     out.progress(LoginStage::Authenticating);
-    let secure = Secure::of(&local.config.gls_datacenter_service, &dc, &remote);
+    let mut secure = Secure::of(&gls.url, &dc, &remote);
+    secure.upgraded = upgraded;
     // S5 (the one use of the credentials); a cancel has dropped them already.
     if stop() {
         return;
@@ -325,9 +336,15 @@ pub fn run<N: ConnectorNet>(mut net: N, input: WorkerInput) {
                 };
                 match choose(&mut net, &mut out, &ctx, desc) {
                     Choice::Joined(j) => break *j,
-                    Choice::Refused(_) if stop() => return,
-                    Choice::Refused(_) | Choice::Revoked if !net.is_live() => {
+                    Choice::Refused(_) | Choice::Insecure(_) if stop() => return,
+                    Choice::Refused(_) | Choice::Insecure(_) | Choice::Revoked
+                        if !net.is_live() =>
+                    {
                         out.end_unless_cancelled(false);
+                        return;
+                    }
+                    Choice::Insecure(why) => {
+                        out.stopped(LoginStop::Insecure(why), true);
                         return;
                     }
                     Choice::Revoked => return,
@@ -426,7 +443,7 @@ fn list_worlds<N: ConnectorNet>(
         if stop() || !http.is_live() {
             return None;
         }
-        let s = world_status(&mut http, w, WORLD_LIST_STATUS_TIMEOUT_SEC);
+        let s = list_world_status(&mut http, w, WORLD_LIST_STATUS_TIMEOUT_SEC);
         if stop() || !http.is_live() {
             return None;
         }
@@ -488,7 +505,8 @@ fn choose<N: ConnectorNet>(
     let status = match join_status(&mut NetHttp::new(net, stop), world, &auth.subscription) {
         Ok(s) => s,
         Err(_) if halted(net).is_some() => return halted(net).unwrap_or(Choice::Shutdown),
-        Err(e) => {
+        Err(JoinError::Insecure(why)) => return Choice::Insecure(why),
+        Err(JoinError::Service(e)) => {
             tracing::info!(class = %e.failure_class(), "official login: world refused");
             return Choice::Refused(world_refusal(&e));
         }
@@ -551,7 +569,8 @@ fn choose<N: ConnectorNet>(
                     }
                 }
                 Err(_) if halted(net).is_some() => return halted(net).unwrap_or(Choice::Shutdown),
-                Err(e) => {
+                Err(JoinError::Insecure(why)) => return Choice::Insecure(why),
+                Err(JoinError::Service(e)) => {
                     tracing::info!(class = %e.failure_class(), "official login: queue failed");
                     return Choice::Refused(WorldRefusal::Other);
                 }

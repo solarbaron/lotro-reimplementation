@@ -2,7 +2,8 @@
 //! Fuzz target for `tessera_compat::login` (`docs/specs/official-login.md` §2–§7):
 //! exercises all XML, SOAP, `.launcherconfig`, `LauncherConfigurationServer`,
 //! `UserPreferences.ini`, the world status and queue responses, and entity/URL
-//! encoders and parsers on arbitrary hostile bytes.
+//! encoders and parsers on arbitrary hostile bytes, and the connector's HTTPS form of a
+//! service address (`tessera_compat::connector::net::https_form`).
 
 #![no_main]
 
@@ -46,6 +47,15 @@ fuzz_target!(|data: &[u8]| {
         let _ = tessera_compat::login::is_valid_network_version(text);
         let _ = tessera_compat::login::encode_client_version_payload(text);
         let _ = tessera_compat::login::LoginHost::parse(text);
+        // The HTTPS form of a chain address (`connector::net`): an `https://` URL, stable
+        // when taken again.
+        if let Some(h) = tessera_compat::connector::net::https_form(text) {
+            assert!(tessera_compat::connector::net::is_https(&h.url));
+            let again = tessera_compat::connector::net::https_form(&h.url).expect("stable");
+            assert_eq!(again.url, h.url);
+            assert!(!again.upgraded);
+        }
+        let _ = tessera_compat::connector::net::scheme_label(text);
         let _ = build_take_a_number_body(
             "command=TakeANumber&subscription={0}&ticket={1}&ticket_type=GLS&queue_url={2}",
             text,

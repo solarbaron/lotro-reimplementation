@@ -592,6 +592,15 @@ pub fn refusal_end(reason: LoginRefusal, retry: Option<u32>, detail: Option<&str
             },
         ),
         LoginRefusal::NotAvailable => ("official.not_available", Target::StartScreen),
+        // Not a row of §8.6 (owner decision 2026-10-27, "upgrade to HTTPS"; question with
+        // the spec writers): a retry may work once the service answers over HTTPS, so the
+        // form, as for `ServiceUnavailable`.
+        LoginRefusal::InsecureService => (
+            "official.error.insecure_service",
+            Target::AccountForm {
+                keep_account: false,
+            },
+        ),
         _ => (
             "official.error.other",
             Target::AccountForm {

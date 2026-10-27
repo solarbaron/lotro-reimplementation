@@ -128,6 +128,12 @@ pub enum LoginRefusal {
     RateLimited,
     /// The login service is not available.
     ServiceUnavailable,
+    /// The login was stopped because an address of the official service was not secure:
+    /// a step that carries or leads to the account or the ticket could not be reached over
+    /// HTTPS, and Tessera does not fall back to plain HTTP for it. Not a category of
+    /// `official-entry.md` §8.6 (owner decision 2026-10-27, "upgrade to HTTPS"; question
+    /// with the spec writers).
+    InsecureService,
     /// Official play is not available in this build (the placeholder connector, §4.4).
     NotAvailable,
     /// Another failure.

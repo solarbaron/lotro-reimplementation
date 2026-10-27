@@ -459,6 +459,8 @@ struct SchemaBuilder<'a> {
     limit: usize,
     visited: usize,
     truncated: bool,
+    /// The keys left out at a bound, in build order.
+    left_out: Vec<u32>,
 }
 
 /// A script-table closure: its tables in pre-order and their positions by DID.
@@ -485,6 +487,7 @@ impl<'a> SchemaBuilder<'a> {
             limit: 0,
             visited: 0,
             truncated: false,
+            left_out: Vec::new(),
         }
     }
 
@@ -613,6 +616,18 @@ impl<'a> SchemaBuilder<'a> {
     /// Steps 2–3: `node` in pre-order: the node, then (for a Scriptlet node) the roots of
     /// the scriptlet it names, then the children of its ports.
     ///
+    /// A scriptlet is entered at most once per schema (`entered`, the scriptlets entered
+    /// so far for this key), however many nodes name it: the scriptlets of a closure form a
+    /// graph that many paths share, and walking it once per path grows with the number of
+    /// paths, not of nodes (the reference install's key `0x05` spent the whole per-key
+    /// budget that way). It does not change the schema: step 4 appends a PID only when it is
+    /// not listed yet, and by the time a scriptlet is named again every node its first
+    /// entry reaches has been visited, or is being visited by a scriptlet still being
+    /// entered further up, which a second entry would skip as well; so a second entry
+    /// finds no PID that is not listed already, and the order of first appearance stays
+    /// that of the full pre-order walk. The same set stops a scriptlet that invokes itself
+    /// (directly or through others).
+    ///
     /// Two readings of step 2, recorded (question in `docs/m8-remediation.md` §15): the
     /// scriptlet's roots are visited before the node's own port children, and every port of
     /// a node counts as an output port (the decoded node keeps no port direction). The
@@ -621,7 +636,7 @@ impl<'a> SchemaBuilder<'a> {
         &mut self,
         node: &Node,
         depth: usize,
-        stack: &mut Vec<u32>,
+        entered: &mut HashSet<u32>,
         out: &mut PortalStateSchema,
     ) {
         if self.visited >= self.limit || depth >= MAX_SCHEMA_DEPTH {
@@ -636,23 +651,20 @@ impl<'a> SchemaBuilder<'a> {
                 self.condition(sw.property, out);
             }
             NodeData::Scriptlet { file, .. } if !file.is_null() => {
-                // A scriptlet that invokes itself (directly or through others) is not
-                // entered again.
-                if !stack.contains(&file.0)
+                // Entered once per schema (see above).
+                if entered.insert(file.0)
                     && let Some(s) = self.scriptlet(*file)
                 {
-                    stack.push(file.0);
                     for r in &s.roots {
-                        self.visit(r, depth + 1, stack, out);
+                        self.visit(r, depth + 1, entered, out);
                     }
-                    stack.pop();
                 }
             }
             _ => {}
         }
         for port in &node.ports {
             for child in &port.children {
-                self.visit(child, depth + 1, stack, out);
+                self.visit(child, depth + 1, entered, out);
             }
         }
     }
@@ -674,13 +686,13 @@ impl<'a> SchemaBuilder<'a> {
             self.truncated = false;
             self.limit = self.per_key.min(self.total_left);
             let mut schema = PortalStateSchema::default();
-            let mut stack = Vec::new();
+            let mut entered = HashSet::new();
             for ti in self.gather(c, roots, key) {
                 let Some(script) = c.tables.get(ti).and_then(|t| t.script(key)) else {
                     continue;
                 };
                 for r in &script.roots {
-                    self.visit(r, 0, &mut stack, &mut schema);
+                    self.visit(r, 0, &mut entered, &mut schema);
                 }
                 if self.truncated {
                     break;
@@ -693,6 +705,7 @@ impl<'a> SchemaBuilder<'a> {
                     total_left = self.total_left,
                     "official session: a state schema hit its traversal bound and is left out"
                 );
+                self.left_out.push(key);
                 continue;
             }
             out.insert(key, schema);
@@ -735,6 +748,24 @@ pub fn portal_state_schemas(
     set: &ArchiveSet,
     registry: &PropertyRegistry,
 ) -> BTreeMap<u32, PortalStateSchema> {
+    portal_state_schema_build(set, registry).schemas
+}
+
+/// What [`portal_state_schema_build`] found.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct SchemaBuild {
+    /// The schemas built, by `state_schema_id`.
+    pub schemas: BTreeMap<u32, PortalStateSchema>,
+    /// The schema IDs left out at a traversal bound, in build order.
+    pub left_out: Vec<u32>,
+    /// Nodes visited over all keys.
+    pub visited: usize,
+}
+
+/// [`portal_state_schemas`] with the keys left out and the nodes visited (tests and
+/// tools).
+#[must_use]
+pub fn portal_state_schema_build(set: &ArchiveSet, registry: &PropertyRegistry) -> SchemaBuild {
     let read = |did: Did| bounded_record(set, did.0, MAX_TABLE_RECORD);
     let mut b = SchemaBuilder::new(
         &read,
@@ -749,14 +780,14 @@ pub fn portal_state_schemas(
         .and_then(|&i| closure.tables.get(i))
     else {
         tracing::warn!("official session: the player-physics script table is not in the closure");
-        return BTreeMap::new();
+        return SchemaBuild::default();
     };
     // Tessera's reading (question in `docs/m8-remediation.md` §15 (W §4.3.1)): the keys of
     // `0x07000029` are kept only when they are keys of `0x23000097`, which reaches
     // `0x230000F8` through its base chain ([`SCRIPT_KEY_ENUM`]).
     let Some(script_keys) = enum_keys(set, SCRIPT_KEY_ENUM) else {
         tracing::warn!("official session: the script-key enum is missing");
-        return BTreeMap::new();
+        return SchemaBuild::default();
     };
     let keys: Vec<u32> = physics
         .scripts
@@ -768,13 +799,19 @@ pub fn portal_state_schemas(
         .iter()
         .filter_map(|d| closure.index.get(d).copied())
         .collect();
-    let out = b.build(&closure, &root_positions, &keys);
+    let schemas = b.build(&closure, &root_positions, &keys);
+    let visited = MAX_SCHEMA_TOTAL_NODES.saturating_sub(b.total_left);
     tracing::debug!(
-        schemas = out.len(),
+        schemas = schemas.len(),
         tables = closure.tables.len(),
+        visited,
         "official session: state schemas built"
     );
-    out
+    SchemaBuild {
+        schemas,
+        left_out: b.left_out,
+        visited,
+    }
 }
 
 /// Opens the install at `root` on the calling thread, with the string tables of `language`.
@@ -965,6 +1002,76 @@ mod tests {
         let built = b.build(&closure, &[0], &[1, 2]);
         assert_eq!(built.keys().copied().collect::<Vec<_>>(), [1]);
         assert_eq!(b.total_left, 100 - 3 - 5);
+    }
+
+    /// A Scriptlet node naming `file`.
+    fn scriptlet_node(file: u32) -> Node {
+        Node {
+            data: NodeData::Scriptlet {
+                file: Did(file),
+                parameters: PropertySet::default(),
+            },
+            ..leaf()
+        }
+    }
+
+    #[test]
+    fn a_scriptlet_named_on_many_paths_is_entered_once_per_schema() {
+        // 40 scriptlets, each naming the next twice: walked once per path that is 2^40
+        // entries of the last; entered once per schema it is 80 nodes and one leaf.
+        const N: u32 = 40;
+        const BASE: u32 = 0x0C00_0100;
+        let registry = empty_registry();
+        let read = |_: Did| None;
+        let mut b = SchemaBuilder::new(&read, &registry, None);
+        for i in 0..N {
+            let roots = if i + 1 < N {
+                vec![scriptlet_node(BASE + i + 1), scriptlet_node(BASE + i + 1)]
+            } else {
+                vec![leaf()]
+            };
+            b.scriptlets.insert(
+                BASE + i,
+                Some(Arc::new(Scriptlet {
+                    did: Did(BASE + i),
+                    roots,
+                    dependencies: Vec::new(),
+                })),
+            );
+        }
+        let mut c = closure_of(&[1, 2], 0);
+        for script in &mut c.tables[0].scripts {
+            script.roots = vec![scriptlet_node(BASE), scriptlet_node(BASE)];
+        }
+        let built = b.build(&c, &[0], &[1, 2]);
+        assert_eq!(built.keys().copied().collect::<Vec<_>>(), [1, 2]);
+        assert!(b.left_out.is_empty());
+        // Per key: the two root nodes, two nodes in each of the first 39 scriptlets and the
+        // last one's leaf; each scriptlet is entered again for the next key.
+        let per_key = 2 + 2 * (N as usize - 1) + 1;
+        assert_eq!(b.total_left, MAX_SCHEMA_TOTAL_NODES - 2 * per_key);
+    }
+
+    #[test]
+    fn a_scriptlet_that_names_itself_is_not_entered_again() {
+        let registry = empty_registry();
+        let read = |_: Did| None;
+        let mut b = SchemaBuilder::new(&read, &registry, None);
+        for (did, next) in [(0x0C00_0001, 0x0C00_0002), (0x0C00_0002, 0x0C00_0001)] {
+            b.scriptlets.insert(
+                did,
+                Some(Arc::new(Scriptlet {
+                    did: Did(did),
+                    roots: vec![scriptlet_node(next), scriptlet_node(did)],
+                    dependencies: Vec::new(),
+                })),
+            );
+        }
+        let mut c = closure_of(&[7], 0);
+        c.tables[0].scripts[0].roots = vec![scriptlet_node(0x0C00_0001)];
+        assert_eq!(b.build(&c, &[0], &[7]).len(), 1);
+        // The root, then two nodes in each scriptlet.
+        assert_eq!(b.total_left, MAX_SCHEMA_TOTAL_NODES - 5);
     }
 
     #[test]

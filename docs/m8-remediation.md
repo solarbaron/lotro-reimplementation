@@ -827,7 +827,8 @@ From the `m8-world-feed` build (C4):
   the rule (NPC and object flags over the template baseline), how NPC and creature differ, and
   what to show when neither flag is known. The section names enums no wire field carries.
 - **W §1.1.3 / §5.1:** whether entity-scoped sub-events after a 0x98 in a batch sent to the
-  default recipient apply to the entity that 0x98 created (the code says yes).
+  default recipient apply to the entity that 0x98 created (the code redirects only a 0x52 directly
+  after the 0x98, per §5.2.2; everything else keeps the batch's target).
 - **W §6:** 0x98 + 0x52 maps to an `EntitySpawned` with fields the neutral model does not have;
   which event, and when, if no position has arrived yet (the code creates the entity at its first
   position).
@@ -845,6 +846,14 @@ From the `m8-world-feed` build (C4):
 - **P §4.6.2 / §4.6.3 / §8:** the neutral event for 0xED (§8 says `EntityMoved`, but 0xED has no
   position) and 0xBD.
 - **P §6.7:** which room a world-server chat line in a user-slot category belongs to.
-- **W §4.3.1 step 1:** whether starting the schema closure at 0x07000029 is equivalent to the
-  avatar table 0x07000417 plus the global root 0x07000000 (with script-table §8.2's combination
-  types).
+- **W §4.3.1 step 1:** the code now starts the schema closure at 0x07000417 plus 0x07000000 and
+  follows script-table §8.2, as the spec says (answered; kept for the record).
+- **W §5.2.2 / §1.1.3:** when a 0x0D addressed to entity X carries a 0x98 for entity Y followed by
+  a 0x52, does the 0x52 apply to X or to Y (the code keeps X); may null frames sit between the
+  0x98 and the 0x52 (the code: no).
+- **W §4.3.1:** the table lists three schemas, but four script keys of 0x07000029 are keys of the
+  script-key enum 0x23000097 on the reference install: is every such key a `state_schema_id`?
+- **W §2.6 / string-table §9.0 step 1:** whether a literal text received on the wire is shown in
+  display mode (display cut, then escapes; the code: yes).
+- **W §5.1:** whether a 0x0D carried inside another batch ends with the tail flag (the spec covers
+  only a top-level 0x0D; the code accepts both and counts which).

@@ -4,7 +4,9 @@
 //!
 //! `scenery_is_deterministic_on_the_workers` is ROADMAP M4.5 exit criterion 3 (SC8) as the
 //! world streamer runs it: every landblock with a non-zero coarse grid (78,114 in the
-//! owner's install) is built as a landblock bundle by the bundle store on the asset
+//! owner's install on 2026-10-05, 79,586 after the 2026-10-27 patch; the full run checks
+//! that every listed block is built and keeps 78,114 as a floor) is built as a landblock
+//! bundle by the bundle store on the asset
 //! workers, with its real water plane wired into scenery and its collision set built on the
 //! same worker (exit criterion 5). It is done twice: once with 1 worker in ascending DID
 //! order, once with the default worker count in descending order, each with fresh caches.
@@ -249,8 +251,13 @@ fn scenery_is_deterministic_on_the_workers() {
         "water plane not wired into scenery"
     );
     if every == 1 {
-        assert_eq!(a.len(), 78_114, "landblocks with a non-zero coarse grid");
+        assert_eq!(a.len(), n, "every listed block was built");
+        assert!(
+            n >= 78_114,
+            "fewer scenery landblocks than the 2026-10-05 census"
+        );
     }
+
     // A key that is not a scenery block is never in the lists.
     assert!(a.keys().all(|&d| LandblockKey::from_did(d).is_some()));
 }

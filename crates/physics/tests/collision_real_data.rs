@@ -17,16 +17,19 @@
 //!   5.2 mm, every landblock-info cell links its portals reciprocally, and the cell lookup
 //!   finds a cell at the centre of every placed cell;
 //! - **movement record** (CO9);
-//! - **blockers** (§9.3, CO12, CO14): over the Physics SEDs with a position, 82,139 undrawn
-//!   mesh blockers among 97,688 undrawn blocking SEDs in the data census, and the run-time
+//! - **blockers** (§9.3, CO12, CO14): over the Physics SEDs with a position, 82,212 undrawn
+//!   mesh blockers among 97,774 undrawn blocking SEDs in the data census (82,139 and 97,688
+//!   in the spec's install, before the 2026-10-27 patch), and the run-time
 //!   sets with the content-layer test and then the creation-type filter (the SED's own
 //!   value first, else the 0x47 chain; 0, 7 and 8 refused); the creation-type census;
 //! - **sets**: full collision sets of sampled landblocks, with sweeps.
 //!
 //! Skipped (reported as passing) unless `TESSERA_GAME_DIR` points at an install. Run with
 //! `cargo test --release -p tessera-physics --test collision_real_data -- --nocapture`. A
-//! debug build visits a sample unless `TESSERA_FULL=1`. Only counts, DIDs and error kinds
-//! are printed; no game data leaves the install.
+//! debug build visits a sample unless `TESSERA_FULL=1`. The exhaustive census pins are
+//! those of the owner's install as patched on 2026-10-27 (a new landblock region 6); the
+//! spec's figures are of the install before it. Only counts, DIDs and error kinds are
+//! printed; no game data leaves the install.
 
 use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
@@ -360,6 +363,11 @@ fn grids_terrain_ceiling_and_holes() {
     let Some(set) = open_set() else { return };
     let started = Instant::now();
     let mut entries = landblock_entries(set, 0);
+    // LB-E1 / TR18: every Cell archive with landblock data holds a dense 255 × 255 region.
+    let mut per_archive: BTreeMap<usize, usize> = BTreeMap::new();
+    for (member, _) in &entries {
+        *per_archive.entry(*member).or_default() += 1;
+    }
     let every = if exhaustive() { 1 } else { 16 };
     if !exhaustive() {
         entries = sample(&entries, 23);
@@ -398,8 +406,16 @@ fn grids_terrain_ceiling_and_holes() {
         "CO11: never under an open cave"
     );
     if exhaustive() {
-        assert_eq!(t.records, 390_150, "landblock-data records");
-        assert_eq!(t.terrain_trees, 58_546, "terrain trees");
+        assert!(
+            per_archive.values().all(|&n| n == 65_025),
+            "LB-E1: 65,025 landblock-data records per region: {per_archive:?}"
+        );
+        assert_eq!(
+            t.records,
+            65_025 * per_archive.len(),
+            "LB-E1: landblock-data records"
+        );
+        assert_eq!(t.terrain_trees, 60_519, "terrain trees");
         assert_eq!(t.ceiling_trees, 1_095, "ceiling trees");
         assert_eq!(
             t.stored_ceiling_triangles, 5_310_848,
@@ -558,9 +574,14 @@ fn collision_meshes_and_setups() {
     assert_eq!(total.co8_failed, 0, "CO8");
     assert_eq!(total.volume_failed, 0, "volume templates vs physics bounds");
     if exhaustive() {
-        assert_eq!(bounds.len(), 16_819, "0x66 records");
-        assert_eq!(total.co8_checked, 16_812, "CO8 setups");
+        assert_eq!(bounds.len(), 16_823, "0x66 records");
+        assert_eq!(total.co8_checked, 16_816, "CO8 setups");
         let k = |n: &str| total.kinds.get(n).copied().unwrap_or(0);
+        assert_eq!(
+            total.co8_checked,
+            k("mesh only"),
+            "CO8 checks every mesh-only setup"
+        );
         assert_eq!(
             [
                 k("mesh only"),
@@ -570,7 +591,7 @@ fn collision_meshes_and_setups() {
                 k("none"),
                 k("mixture")
             ],
-            [16_812, 1_910, 990, 715, 8_117, 11],
+            [16_816, 1_910, 990, 715, 8_117, 11],
             "§8 volume census"
         );
     }
@@ -720,8 +741,8 @@ fn cells_volumes_links_and_lookup() {
     );
     if exhaustive() {
         assert_eq!(geometries.len(), 1_057, "0x01 records");
-        assert_eq!(total.cells + total.refused, 104_271, "cells");
-        assert_eq!(total.links, 393_842, "neighbour entries");
+        assert_eq!(total.cells + total.refused, 105_424, "cells");
+        assert_eq!(total.links, 398_096, "neighbour entries");
     }
 }
 
@@ -1062,20 +1083,32 @@ fn s9_3_blocker_classification() {
             .get(&("mesh", false, false, false))
             .copied()
             .unwrap_or(0);
-        assert_eq!(mesh_blockers, 82_139, "§9.3 undrawn mesh blockers");
-        assert_eq!(total, 2_380_675, "§9.3: Physics SEDs with a position");
+        assert_eq!(mesh_blockers, 82_212, "§9.3 undrawn mesh blockers");
+        assert_eq!(total, 2_396_242, "§9.3: Physics SEDs with a position");
+        // Relations that hold on any install: the data census's undrawn mesh blockers are
+        // the §9.3 row; each run-time filter only removes blockers, and the creation-type
+        // filter removes no more than the SEDs whose effective value it refuses (CO14).
+        assert_eq!(blocking[0][2], mesh_blockers, "§9.3 row = CO12 data census");
+        for ((data, layered), created) in blocking[0].iter().zip(&blocking[1]).zip(&blocking[2]) {
+            assert!(layered <= data, "CO12: content layers only remove");
+            assert!(created <= layered, "CO12: creation types only remove");
+        }
+        assert!(
+            blocking[1][0] - blocking[2][0] <= creation[0] + creation[1],
+            "CO12: the creation-type filter removes only refused types"
+        );
         // CO12: the data census applies neither run-time filter; the walker's world applies
         // the content-layer test (L = 1, I = 0) and the creation-type filter (the SED's own
         // value first; 0, 7 and 8 refused).
-        assert_eq!(blocking[0], [1_651_097, 97_688, 82_139], "CO12 data census");
+        assert_eq!(blocking[0], [1_662_581, 97_774, 82_212], "CO12 data census");
         assert_eq!(
             blocking[1],
-            [1_607_212, 88_749, 73_509],
+            [1_618_691, 88_835, 73_582],
             "CO12 content layers"
         );
         assert_eq!(
             blocking[2],
-            [1_607_211, 88_749, 73_509],
+            [1_618_690, 88_835, 73_582],
             "CO12 creation types"
         );
         // CO14: no effective 7 or 8, exactly one 0; 1,602 placed SEDs have 7 or 8 on their
@@ -1379,10 +1412,10 @@ fn co4_mesh_level_trees() {
         "CO4: keys outside the host"
     );
     if exhaustive() {
-        assert_eq!(meshes.records, 47_563, "mesh records");
+        assert_eq!(meshes.records, 47_570, "mesh records");
         assert_eq!(
             (meshes.blocks, meshes.coded),
-            (71_167, 70_956),
+            (71_181, 70_970),
             "0x06 tree blocks"
         );
         assert_eq!(meshes.renumbered, 12, "0x06 renumbered levels");

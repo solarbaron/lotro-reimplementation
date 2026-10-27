@@ -4,8 +4,11 @@
 //!
 //! Skipped unless `TESSERA_GAME_DIR` points at an install. `combat_families` walks **every**
 //! record of every family of §2 and of the related objects, on both halves, and checks the
-//! spec's invariants (always asserted) and its census counts. Census counts describe the
-//! install the spec was written against; set `TESSERA_CENSUS_REPORT_ONLY=1` to report
+//! spec's invariants (always asserted) and its census counts. Census counts describe one
+//! install version: the owner's install as patched on 2026-10-27 (`combat-data.md` still
+//! states the figures of the install before that patch until it is re-measured; the labels
+//! say "spec" for the pinned value); set `TESSERA_CENSUS_REPORT_ONLY=1` to report
+
 //! differences (for example after a game patch) without failing. `modifier_entries_whole_install`
 //! repeats the §5 census over every object record of the install and runs only with
 //! `TESSERA_FULL=1`.
@@ -368,10 +371,10 @@ fn combat_families() {
 /// §2.2 and F1, F2, G1 for every family.
 fn families_census(inst: &Install, c: &mut Census) {
     let expected: [(CombatFamily, u64, u64, u64, u64); 8] = [
-        (CombatFamily::Skill, 1, 13_247, 30_685_392, 36_116_542),
-        (CombatFamily::Effect, 87, 32_971, 17_182_958, 15_028_659),
+        (CombatFamily::Skill, 1, 13_250, 30_692_351, 36_127_478),
+        (CombatFamily::Effect, 87, 32_977, 17_186_874, 15_031_822),
         (CombatFamily::Progression, 6, 7_558, 20_337_190, 10_009_116),
-        (CombatFamily::Trait, 9, 3_963, 2_171_653, 1_607_523),
+        (CombatFamily::Trait, 9, 3_965, 2_171_967, 1_608_033),
         (
             CombatFamily::MonsterPlayOrAdvancementLine,
             3,
@@ -424,7 +427,7 @@ fn families_census(inst: &Install, c: &mut Census) {
     c.map(
         "§2.2 trait classes",
         &[
-            (1477, 1_773),
+            (1477, 1_775),
             (3438, 946),
             (3509, 767),
             (2525, 244),
@@ -460,7 +463,7 @@ fn families_census(inst: &Install, c: &mut Census) {
     );
     let effects = per_class(CombatFamily::Effect);
     let top: [(u32, u64); 26] = [
-        (734, 14_475),
+        (734, 14_476),
         (755, 2_438),
         (719, 1_547),
         (708, 1_245),
@@ -468,9 +471,9 @@ fn families_census(inst: &Install, c: &mut Census) {
         (725, 1_103),
         (718, 1_076),
         (763, 767),
-        (2459, 722),
+        (2459, 724),
         (713, 666),
-        (749, 630),
+        (749, 631),
         (709, 617),
         (715, 549),
         (3866, 526),
@@ -482,7 +485,7 @@ fn families_census(inst: &Install, c: &mut Census) {
         (776, 328),
         (737, 310),
         (769, 239),
-        (722, 236),
+        (722, 238),
         (745, 222),
         (2063, 163),
         (3842, 132),
@@ -1182,30 +1185,30 @@ fn effects(inst: &Install, c: &mut Census) {
     );
     let obs = |k: &str| presence.get(k).copied().unwrap_or(0);
     for (label, expected) in [
-        ("Effect_Name", 32_971),
-        ("Effect_Definition_Description", 32_971),
-        ("Effect_Applied_Description", 32_971),
-        ("Effect_Icon", 22_804),
-        ("Effect_Harmful", 32_965),
-        ("Effect_Debuff", 32_952),
-        ("Effect_ConstantApplicationProbability", 32_622),
-        ("Effect_ApplicationProbabilityVariance", 25_901),
-        ("Effect_ApplicationProbability_AdditiveModProp", 22_358),
-        ("Effect_ApplicationProbabilityProgression", 14_144),
-        ("Effect_Resist_Category", 27_131),
-        ("Effect_Resist_Level", 26_491),
-        ("Effect_Resist_Chance_Modifier", 25_929),
+        ("Effect_Name", 32_977),
+        ("Effect_Definition_Description", 32_977),
+        ("Effect_Applied_Description", 32_977),
+        ("Effect_Icon", 22_807),
+        ("Effect_Harmful", 32_971),
+        ("Effect_Debuff", 32_958),
+        ("Effect_ConstantApplicationProbability", 32_628),
+        ("Effect_ApplicationProbabilityVariance", 25_904),
+        ("Effect_ApplicationProbability_AdditiveModProp", 22_361),
+        ("Effect_ApplicationProbabilityProgression", 14_147),
+        ("Effect_Resist_Category", 27_137),
+        ("Effect_Resist_Level", 26_496),
+        ("Effect_Resist_Chance_Modifier", 25_933),
         ("Effect_Duration_ConstantInterval", 10_114),
         ("Effect_Duration_ConstantPulseCount", 3_206),
-        ("Effect_Duration_Permanent", 14_219),
-        ("Effect_Instantaneous", 4_317),
+        ("Effect_Duration_Permanent", 14_222),
+        ("Effect_Instantaneous", 4_321),
         ("Effect_Duration_ProgressionPulseCount", 23),
         ("Effect_Duration_ProgressionInterval", 1),
-        ("Effect_Duration_ExpiresInRealTime", 14_379),
-        ("Effect_Duration_CombatOnly", 18_372),
+        ("Effect_Duration_ExpiresInRealTime", 14_380),
+        ("Effect_Duration_CombatOnly", 18_375),
         ("Effect_Duration_ConstantInterval_ModifierList", 486),
-        ("Effect_EquivalenceClass", 22_638),
-        ("Effect_ClassPriority", 22_676),
+        ("Effect_EquivalenceClass", 22_641),
+        ("Effect_ClassPriority", 22_679),
         ("Effect_Cap", 2_709),
         ("Effect_Critical_Chance", 3_612),
     ] {
@@ -1217,12 +1220,12 @@ fn effects(inst: &Install, c: &mut Census) {
         1,
         prob_prog_nonzero,
     );
-    c.eq("§6.2 Effect_Instantaneous stored true", 3_594, instant_true);
-    c.eq("§6.2 Effect_EquivalenceClass 0", 12_478, eqv_zero);
+    c.eq("§6.2 Effect_Instantaneous stored true", 3_596, instant_true);
+    c.eq("§6.2 Effect_EquivalenceClass 0", 12_480, eqv_zero);
     let g: Vec<(String, u64)> = [
-        ("Unspecified", 6_702),
-        ("Instantaneous", 3_594),
-        ("Permanent", 12_561),
+        ("Unspecified", 6_703),
+        ("Instantaneous", 3_596),
+        ("Permanent", 12_564),
         ("Interval", 5_250),
         ("Pulsed", 3_206),
         ("IntervalPermanent", 1_658),
@@ -1239,7 +1242,7 @@ fn effects(inst: &Install, c: &mut Census) {
         .collect();
     c.map(
         "§6.2 Effect_Instantaneous stored false, by group and class",
-        &[(("Permanent", 2459), 722), (("Interval", 3943), 1)],
+        &[(("Permanent", 2459), 724), (("Interval", 3943), 1)],
         &false_ref,
     );
     let pp_ref: BTreeMap<&str, u64> = prog_pulse_groups
@@ -1254,9 +1257,9 @@ fn effects(inst: &Install, c: &mut Census) {
     c.map(
         "§6.5 Mod_Array holders by effect class",
         &[
-            (734, 14_475),
+            (734, 14_476),
             (708, 1_245),
-            (2459, 719),
+            (2459, 721),
             (713, 190),
             (736, 125),
             (3686, 62),
@@ -1768,21 +1771,21 @@ fn skills(inst: &Install, c: &mut Census) {
         volumes.get("arc").copied().unwrap_or(0),
         compiled_volumes.get("arc").copied().unwrap_or(0),
     );
-    c.eq("§7.7 skills with Skill_AttackHookList", 13_243, hook_lists);
-    c.eq("§7.7 attack hooks", 13_733, hooks);
+    c.eq("§7.7 skills with Skill_AttackHookList", 13_246, hook_lists);
+    c.eq("§7.7 attack hooks", 13_736, hooks);
     c.eq(
         "§4.9 non-zero hook damage progressions",
         6_365,
         hook_prog_nonzero,
     );
     for (label, expected) in [
-        ("HookDamageMax", 13_733),
-        ("HookDamageMax_Progression", 13_733),
-        ("DPSAddMod_Progression", 4_837),
-        ("SuperCriticalDamageMultiplier", 13_714),
-        ("AdditionalThreatValue", 13_714),
-        ("UsesTactical", 13_347),
-        ("DamageTypeOverride", 13_108),
+        ("HookDamageMax", 13_736),
+        ("HookDamageMax_Progression", 13_736),
+        ("DPSAddMod_Progression", 4_840),
+        ("SuperCriticalDamageMultiplier", 13_717),
+        ("AdditionalThreatValue", 13_717),
+        ("UsesTactical", 13_350),
+        ("DamageTypeOverride", 13_111),
     ] {
         c.eq(
             format!("§7.7 hooks with {label}"),
@@ -1792,38 +1795,38 @@ fn skills(inst: &Install, c: &mut Census) {
     }
     let p = |k: &str| presence.get(k).copied().unwrap_or(0);
     for (label, expected) in [
-        ("Skill_VitalCostList", 12_625),
-        ("Skill_Toggle_VitalCostPerSecondList", 12_625),
-        ("Skill_VitalMaxList", 4_642),
+        ("Skill_VitalCostList", 12_628),
+        ("Skill_Toggle_VitalCostPerSecondList", 12_628),
+        ("Skill_VitalMaxList", 4_645),
         ("Skill_AEDetectionVolume_HeadingOffset", 60),
         ("Skill_RecoveryChannel", 1_247),
-        ("Skill_IgnoresResetTime", 4_642),
-        ("Skill_Immediate", 4_642),
-        ("Skill_InductionAction", 3_494),
+        ("Skill_IgnoresResetTime", 4_645),
+        ("Skill_Immediate", 4_645),
+        ("Skill_InductionAction", 3_496),
         ("Skill_Toggle_ChannelingState", 171),
         ("Skill_Toggle_ChannelingDurationOverride", 45),
-        ("Skill_Toggle_Hook_Number", 1_578),
+        ("Skill_Toggle_Hook_Number", 1_581),
         ("Skill_SkillRecoveryTime_Mod_Array", 1_124),
-        ("Skill_RequiredTrait", 815),
-        ("Skill_RequiredEffectList", 1_542),
-        ("Skill_BarringEffectList", 3_638),
+        ("Skill_RequiredTrait", 817),
+        ("Skill_RequiredEffectList", 1_544),
+        ("Skill_BarringEffectList", 3_641),
         ("Skill_UserEffectList", 2_739),
-        ("Skill_UserEffectList_Override", 4_786),
+        ("Skill_UserEffectList_Override", 4_789),
         ("Skill_CriticalEffectList", 159),
-        ("Skill_Toggle_Effect_List", 1_588),
+        ("Skill_Toggle_Effect_List", 1_591),
         ("Skill_Toggle_User_Effect_List", 43),
     ] {
         c.eq(format!("§7 {label} present"), expected, p(label));
     }
     c.eq(
         "§7.3 Skill_VitalInfo entries in cost lists",
-        26_117,
+        26_123,
         cost_entries,
     );
     eprintln!("Skill_VitalInfo entries in toggle cost lists: {toggle_entries}");
     c.eq(
         "§4.9 Skill_Vital_Points_Progression values",
-        52_236,
+        52_248,
         vital_prog_fields,
     );
     c.eq(
@@ -1842,8 +1845,8 @@ fn skills(inst: &Install, c: &mut Census) {
         "§7.9 timing and requirement targets",
         &[
             (("channelling", inst.classes.channelling), 171),
-            (("induction", inst.classes.induction), 3_494),
-            (("required trait", 1479), 815),
+            (("induction", inst.classes.induction), 3_496),
+            (("required trait", 1479), 817),
         ],
         &targets,
     );
@@ -1855,17 +1858,17 @@ fn skills(inst: &Install, c: &mut Census) {
     );
     c.eq(
         "§7.8 Skill_EffectData in skills, placeholders",
-        97_268,
+        97_304,
         r("SkillEffectData in Skill_EffectData (placeholder)"),
     );
     c.eq(
         "§7.8 bare Skill_Effect in skill lists, non-zero",
-        5_687 + 1_562 + 119 + 6,
+        7_382,
         r("Bare in Skill_Effect"),
     );
     c.eq(
         "§6.3 Skill_Toggle_Effect_Data in skills",
-        1_862,
+        1_865,
         refs.iter()
             .filter(|(k, _)| k.starts_with("Toggle in Skill_Toggle_Effect_Data"))
             .map(|(_, v)| v)
@@ -1967,8 +1970,8 @@ fn traits(inst: &Install, c: &mut Census) {
         c.eq(format!("§8.2 {label} in every trait"), n, p(label));
     }
     for (label, expected) in [
-        ("Trait_Icon", 3_950),
-        ("Trait_Minimum_Level", 3_196),
+        ("Trait_Icon", 3_952),
+        ("Trait_Minimum_Level", 3_198),
         ("Mod_Array", 2_262),
         ("Trait_Virtue_Maximum_Rank", 1_273),
         ("Trait_Virtue_Rank_PropertyName", 1_271),

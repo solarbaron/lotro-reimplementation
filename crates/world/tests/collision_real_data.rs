@@ -4,10 +4,11 @@
 //!
 //! - `terrain_render_triangles_equal_collision_triangles`: ROADMAP M4.5 exit criterion 2
 //!   (`collision.md` §6.1–§6.2, §6.4): for every landblock-data record of the install
-//!   (390,150 in the owner's), the 2,048 triangles that `tessera-terrain` renders at level
-//!   0 equal the collision triangles of `tessera-physics`, bit for bit in their vertex
-//!   positions and with the same orientation; ceilings (drawn facing down) equal theirs as
-//!   vertex sets.
+//!   (65,025 per region with landblock data, `landblock.md` LB-E1: 390,150 in the spec's
+//!   install, 455,175 after the 2026-10-27 patch), the 2,048 triangles that
+//!   `tessera-terrain` renders at level 0 equal the collision triangles of
+//!   `tessera-physics`, bit for bit in their vertex positions and with the same
+//!   orientation; ceilings (drawn facing down) equal theirs as vertex sets.
 //! - `cells_and_portals_of_landblock_info`: the collision residency's cells for every
 //!   landblock-info record with cells: every cell is listed with its portals, neighbour
 //!   links are reciprocal (`collision.md` §5.8), the cells the set places answer the
@@ -195,7 +196,15 @@ fn terrain_render_triangles_equal_collision_triangles() {
     assert_eq!(ceiling_equal, ceilings, "ceilings differ");
     assert_eq!(triangles, 2_048 * blocks);
     if full() {
-        assert_eq!(blocks, 390_150, "landblock-data records");
+        // LB-E1: the landblock-data records of each region are dense (255 × 255).
+        let regions: std::collections::BTreeSet<u32> =
+            dids.iter().map(|d| (d >> 16) & 0xF).collect();
+        assert_eq!(
+            blocks,
+            65_025 * regions.len(),
+            "LB-E1: landblock-data records ({} regions)",
+            regions.len()
+        );
     }
 }
 
@@ -309,11 +318,14 @@ fn cells_and_portals_of_landblock_info() {
     assert_eq!(found, placed, "point-in-cell at the cells' centres");
     assert_eq!(left_out, 0, "no portal left out by the per-set budgets");
     if full() {
-        assert_eq!(cells, 104_271, "cells of landblock info");
+        // The install as patched on 2026-10-27 (104,271 cells and 393,842 entries in the
+        // spec's install).
+        assert_eq!(cells, 105_424, "cells of landblock info");
         // `landblock.md` §4.4 (L42): the two cells without an offset lie at the landblock
         // origin and are placed like every other cell.
-        assert_eq!(placed, 104_271, "cells placed");
-        assert_eq!(portals, 393_842, "neighbour entries");
+        assert_eq!(placed, cells, "cells placed");
+        assert_eq!(portals, 398_096, "neighbour entries");
+
         // §5.8: 862 neighbour entries do not coincide within 1 cm; the 10 entries that
         // touch the two cells without an offset have polygons and coincide (L42: their 5
         // joins match exactly at the origin).

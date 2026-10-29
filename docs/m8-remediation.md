@@ -893,3 +893,16 @@ From the owner's first live run (L1, 2026-10-27):
   (script-table §8.2's Startup key) with 63 booleans and 30 enums, and one more with (0, 0). The
   earlier count of four came from the old traversal bound, not from the data. Is a generic
   script-table key such as Startup a `state_schema_id`?
+
+From the owner's live run L2 (2026-10-29, handshake diagnostics):
+
+- **S §4.4.2, §6.2, §3.2 (blocking the first world join):** the login succeeds, but the world
+  login server answers none of the client's SessionAuthHeader datagrams: 1 sent plus 9
+  retransmits, 0 send failures, 0 datagrams received from any address, no ConnectChallengeHeader,
+  timeout after 20 s. Settings in use: bind Case B (computed unique port), local address routed
+  toward the server, destination the `-h` answer (literal IPv4 and port), authType 0x40000002 with
+  authFlags 0x04 (ticket in extraBlob), send checksum per buffer. A silent drop points at the
+  first datagram: which checksum rule the server verifies (S1 item 3), the DatagramHeader values
+  the client must send (iteration, table, ids: the §4.2 question), the SessionAuthHeader layout and
+  the account-name form, or the local port rules. Settling these needs an observation of the
+  official client's first datagram (dirty room).

@@ -936,3 +936,168 @@ fn a_tls_failure_once_connected_is_logged_and_final() {
     assert!(logs.contains("kind=\"expired\""), "{logs}");
     assert_no_endpoint(&logs);
 }
+
+/// The lines of `logs` that contain `text`.
+fn lines_with<'a>(logs: &'a str, text: &str) -> Vec<&'a str> {
+    logs.lines().filter(|l| l.contains(text)).collect()
+}
+
+/// No address of the queue tests' status answers in `logs` (besides [`assert_no_endpoint`]).
+fn assert_no_queue_address(logs: &str) {
+    assert_no_endpoint(logs);
+    for needle in [
+        "10.20.30.40",
+        "192.168.7.8",
+        "8080",
+        "/queue",
+        "/status",
+        "/q",
+    ] {
+        assert!(!logs.contains(needle), "{needle} logged:\n{logs}");
+    }
+}
+
+const READY: &str = "<Result><HResult>0x00000000</HResult><QueueNumber>0x00000010</QueueNumber>\
+                     <NowServingNumber>0x00000010</NowServingNumber></Result>";
+
+const QUEUE_HTTPS: &str = "https://gls.example.invalid/queue";
+
+#[test]
+fn the_queue_step_logs_counts_labels_and_polls_and_no_host() {
+    // Two login servers and two queue URLs, both in a private range: the chosen one is the
+    // first (`official-login.md` §3.3), a private-range one. The queue waits once, then
+    // lets the user in on the second poll.
+    let status = "<Status><loginservers>login.example.invalid:9001;login2.example.invalid:9001;\
+                  </loginservers><queueurls>http://10.20.30.40:8080/q;http://192.168.7.8/q;\
+                  </queueurls></Status>";
+    let ((), logs) = logs_of(|| {
+        let mut run = start(
+            Service {
+                alpha_queue: true,
+                queue_waiting: true,
+                answers: vec![(ALPHA_HTTPS.to_owned(), 200, status.to_owned())],
+                ..Service::default()
+            },
+            true,
+        );
+        run.wait_event(is_world_list);
+        run.choose(0);
+        run.wait_event(|e| {
+            matches!(
+                e,
+                Event::Account(AccountEvent::LoginQueueChanged {
+                    position: Some(3),
+                    ..
+                })
+            )
+        });
+        run.world
+            .set_answers(vec![(QUEUE_HTTPS.to_owned(), 200, READY.to_owned())]);
+        wait_binds(&mut run, 1);
+        let _ = run.session.send(Instant::now(), Command::Disconnect);
+    });
+    let status_lines = lines_with(&logs, "official login: world status read");
+    assert_eq!(status_lines.len(), 1, "{logs}");
+    let line = status_lines.first().copied().unwrap_or_default();
+    for field in [
+        " INFO ",
+        "login_servers=2",
+        "queue_urls=2",
+        "chosen_queue_url=\"private range (RFC 1918)\"",
+    ] {
+        assert!(line.contains(field), "{field} missing: {line}");
+    }
+    let queued = lines_with(&logs, "official login: queued");
+    assert_eq!(queued.len(), 1, "{logs}");
+    let line = queued.first().copied().unwrap_or_default();
+    assert!(line.contains(" DEBUG "), "{line}");
+    assert!(line.contains("position=3"), "{line}");
+    let step = lines_with(&logs, "official login: queue step (TakeANumber)");
+    assert_eq!(step.len(), 1, "{logs}");
+    let line = step.first().copied().unwrap_or_default();
+    for field in [" INFO ", "outcome=\"ready\"", "polls=2"] {
+        assert!(line.contains(field), "{field} missing: {line}");
+    }
+    assert_no_queue_address(&logs);
+}
+
+#[test]
+fn a_world_without_a_queue_url_logs_the_queue_step_skipped() {
+    let ((), logs) = logs_of(|| {
+        let mut run = start(Service::default(), true);
+        run.wait_event(is_world_list);
+        run.choose(0);
+        wait_binds(&mut run, 1);
+        let _ = run.session.send(Instant::now(), Command::Disconnect);
+    });
+    let status_lines = lines_with(&logs, "official login: world status read");
+    assert_eq!(status_lines.len(), 1, "{logs}");
+    let line = status_lines.first().copied().unwrap_or_default();
+    for field in [
+        "login_servers=1",
+        "queue_urls=0",
+        "chosen_queue_url=\"none\"",
+    ] {
+        assert!(line.contains(field), "{field} missing: {line}");
+    }
+    let step = lines_with(&logs, "official login: queue step (TakeANumber)");
+    assert_eq!(step.len(), 1, "{logs}");
+    let line = step.first().copied().unwrap_or_default();
+    for field in [" INFO ", "outcome=\"skipped\"", "reason=\"no queue URL\""] {
+        assert!(line.contains(field), "{field} missing: {line}");
+    }
+    assert!(
+        lines_with(&logs, "official login: queued").is_empty(),
+        "{logs}"
+    );
+    assert_no_queue_address(&logs);
+}
+
+#[test]
+fn a_failed_queue_step_logs_its_class_only() {
+    // A public queue URL; the queue answers a negative `HResult` (§3.5: `F08`).
+    let ((), logs) = logs_of(|| {
+        let mut run = start(
+            Service {
+                alpha_queue: true,
+                answers: vec![(
+                    QUEUE_HTTPS.to_owned(),
+                    200,
+                    "<Result><HResult>0x80004005</HResult></Result>".to_owned(),
+                )],
+                ..Service::default()
+            },
+            true,
+        );
+        run.wait_event(is_world_list);
+        run.choose(0);
+        run.wait_event(|e| {
+            matches!(
+                e,
+                Event::Account(AccountEvent::WorldRefused {
+                    world: WorldId(0),
+                    ..
+                })
+            )
+        });
+        assert_eq!(run.world.binds(), 0);
+        let _ = run.session.send(Instant::now(), Command::Disconnect);
+    });
+    let status_lines = lines_with(&logs, "official login: world status read");
+    let line = status_lines.first().copied().unwrap_or_default();
+    for field in [
+        "login_servers=1",
+        "queue_urls=1",
+        "chosen_queue_url=\"not a private range\"",
+    ] {
+        assert!(line.contains(field), "{field} missing: {line}");
+    }
+    let step = lines_with(&logs, "official login: queue step (TakeANumber)");
+    assert_eq!(step.len(), 1, "{logs}");
+    let line = step.first().copied().unwrap_or_default();
+    for field in [" INFO ", "outcome=\"failed\"", "polls=1", "class=F08"] {
+        assert!(line.contains(field), "{field} missing: {line}");
+    }
+    assert!(!logs.contains("0x80004005"), "{logs}");
+    assert_no_queue_address(&logs);
+}

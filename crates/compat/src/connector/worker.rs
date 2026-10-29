@@ -755,7 +755,7 @@ fn session_loop<N: ConnectorNet>(
 /// revocation during the shutdown ends it at once.
 fn shutdown<N: ConnectorNet>(net: &N, driver: &mut SessionDriver<N>, now: &impl Fn() -> f64) {
     if !net.is_live() {
-        driver.abandon();
+        driver.abandon(now());
         tracing::info!("official session closed: the network access was revoked");
         return;
     }

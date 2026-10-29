@@ -115,7 +115,10 @@
 //! [`super::diag::HANDSHAKE_REPORT_SEC`] while it is in its handshake, and one `info` line
 //! with its counts when it closes from its handshake ([`super::diag`] has the fields;
 //! [`SessionDriver::handshake_report`] gives them to tests). Every datagram the session
-//! sends uses [`SessionStart::send_checksum`]; the receive rule never changes.
+//! sends uses [`SessionStart::send_checksum`], the chat-server connection's too
+//! ([`ChatConfig::with_send_checksum`]); the receive rule never changes. A cancel or a
+//! revoked network right during a handshake logs the counts once
+//! ([`super::diag::HandshakeReport::log_ended`]).
 
 use std::collections::VecDeque;
 use std::net::SocketAddrV4;
@@ -160,7 +163,7 @@ use crate::world::{
 use super::data::{SchemaView, chat_categories};
 use super::diag::{
     AuthMode, BindCase, HANDSHAKE_REPORT_SEC, HandshakeReport, LinkDiag, LocalSource, RejectKind,
-    carries_challenge,
+    RemoteForm, RemoteName, carries_challenge,
 };
 use super::entities::{
     CreateOutcome, EntityFeed, FeedCounters, FeedOutput, SubTarget, sub_event_target,
@@ -304,22 +307,38 @@ struct Refreshing {
 
 /// One connection with its own multiplexer (module docs), and its handshake diagnostics
 /// ([`super::diag`]).
-#[derive(Debug)]
 struct Link {
     mux: SessionMultiplexer,
     conn: u16,
     peer: SocketAddrV4,
     diag: LinkDiag,
     auth: AuthMode,
+    remote: (RemoteForm, RemoteName),
+}
+
+impl std::fmt::Debug for Link {
+    // No peer address: a `Debug` form can reach a log line, which never names one
+    // (decision 0044 item 3).
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Link")
+            .field("mux", &self.mux)
+            .field("conn", &self.conn)
+            .field("diag", &self.diag)
+            .field("auth", &self.auth)
+            .field("remote", &self.remote)
+            .finish_non_exhaustive()
+    }
 }
 
 impl Link {
-    /// A connection to `peer` whose datagrams use the send checksum `rule`.
+    /// A connection to `peer` (of the address form `remote`) whose datagrams use the send
+    /// checksum `rule`.
     fn new(
         peer: SocketAddrV4,
         uuids: &[[u8; 16]],
         rule: SendChecksumRule,
         auth: AuthMode,
+        remote: (RemoteForm, RemoteName),
         now: f64,
     ) -> Result<Self, SessionError> {
         let mut mux = SessionMultiplexer::new();
@@ -336,7 +355,15 @@ impl Link {
             peer,
             diag: LinkDiag::new(now),
             auth,
+            remote,
         })
+    }
+
+    /// The `ConnectChallengeHeader`s the connection acted on so far.
+    fn challenges(&self) -> u64 {
+        self.mux
+            .connection(self.conn)
+            .map_or(0, |c| c.handshake_counts().challenges)
     }
 
     /// Whether the connection closed from its handshake (States `1` and `2`).
@@ -538,6 +565,12 @@ pub struct DriverCounters {
     pub entry_overflow: u64,
     /// Failed chat-server attachments.
     pub chat_failures: u64,
+    /// Socket reads that failed (diagnostics, [`super::diag`]).
+    pub recv_errors: u64,
+    /// Datagrams from another address (counted in `unknown_sources` or
+    /// `address_mismatches`) that carried a `ConnectChallengeHeader` while a connection was
+    /// in its handshake (diagnostics, [`super::diag`]).
+    pub challenge_from_other_address: u64,
     /// Moves and chat lines that arrived outside the world (after a teardown, before the
     /// client saw the return), refused and not sent.
     pub outside_world: u64,
@@ -760,17 +793,28 @@ impl<N: ConnectorNet> SessionDriver<N> {
         let transport = net
             .bind_udp(local_ip, base_port, true)
             .map_err(|_| StartFailure::Bind)?;
-        let bind = transport.local_addr().map_or(BindCase::Ephemeral, |b| {
+        let bind = transport.local_addr().map_or(BindCase::Unknown, |b| {
             BindCase::of(local_ip, base_port, true, b)
         });
+        let remote = (
+            RemoteForm::of_host(host.local_host.is_some(), host.port.is_some()),
+            RemoteName::of_host(&host.remote_host),
+        );
         let client_timestamp = unix_seconds();
         let auth = start
             .handoff
             .session_auth_header(client_timestamp)
             .map_err(|_| StartFailure::Ticket)?;
         let mode = AuthMode::of(auth.auth_type, auth.auth_flags);
-        let mut login = Link::new(peer, &start.codec_uuids, start.send_checksum, mode, now)
-            .map_err(|_| StartFailure::Bind)?;
+        let mut login = Link::new(
+            peer,
+            &start.codec_uuids,
+            start.send_checksum,
+            mode,
+            remote,
+            now,
+        )
+        .map_err(|_| StartFailure::Bind)?;
         if let Some(c) = login.mux.connection_mut(login.conn) {
             c.start_login(auth, now).map_err(|_| StartFailure::Ticket)?;
         }
@@ -1123,8 +1167,12 @@ impl<N: ConnectorNet> SessionDriver<N> {
                 .counters
                 .unknown_sources
                 .saturating_add(self.counters.address_mismatches),
+            challenge_from_other_address: self.counters.challenge_from_other_address,
+            recv_errors: self.counters.recv_errors,
             bind: self.bind,
             local: self.local_source,
+            remote: link.remote.0,
+            remote_name: link.remote.1,
             auth: link.auth,
             send_checksum: self.send_checksum,
         }
@@ -1168,6 +1216,27 @@ impl<N: ConnectorNet> SessionDriver<N> {
         }
     }
 
+    /// Counts `datagram`, from an address no connection takes, when it carries a
+    /// `ConnectChallengeHeader` while a connection is in its handshake ([`super::diag`]).
+    fn challenge_from_elsewhere(&mut self, datagram: &[u8]) {
+        let waiting =
+            self.login.in_handshake() || self.world.as_ref().is_some_and(Link::in_handshake);
+        if waiting && carries_challenge(datagram) {
+            self.counters.challenge_from_other_address =
+                self.counters.challenge_from_other_address.saturating_add(1);
+        }
+    }
+
+    /// Logs the failure line once for each connection still in its handshake, which is
+    /// about to be closed without a `Disconnected` event (a cancel, a revoked right).
+    fn log_abandoned_handshakes(&self, reason: &str, now: f64) {
+        for world in [false, true] {
+            if let Some(l) = self.link_of(world).filter(|l| l.in_handshake()) {
+                self.report(l, world, now).log_ended(reason);
+            }
+        }
+    }
+
     fn link_mut(&mut self, index: usize) -> Option<&mut Link> {
         match index {
             0 => Some(&mut self.login),
@@ -1192,6 +1261,7 @@ impl<N: ConnectorNet> SessionDriver<N> {
                 Ok(Some(r)) => r,
                 Ok(None) => break,
                 Err(e) => {
+                    self.counters.recv_errors = self.counters.recv_errors.saturating_add(1);
                     if let Some(skipped) = self.refused_log.allow(now) {
                         tracing::debug!(error = %e, skipped, "official session: socket read failed");
                     }
@@ -1206,6 +1276,7 @@ impl<N: ConnectorNet> SessionDriver<N> {
                 Route::Link(i) => i,
                 Route::AddressMismatch => {
                     self.counters.address_mismatches += 1;
+                    self.challenge_from_elsewhere(datagram);
                     if let Some(skipped) = self.unknown_log.allow(now) {
                         tracing::debug!(
                             skipped,
@@ -1216,6 +1287,7 @@ impl<N: ConnectorNet> SessionDriver<N> {
                 }
                 Route::Unknown => {
                     self.counters.unknown_sources += 1;
+                    self.challenge_from_elsewhere(datagram);
                     if let Some(skipped) = self.unknown_log.allow(now) {
                         tracing::debug!(
                             skipped,
@@ -1231,6 +1303,7 @@ impl<N: ConnectorNet> SessionDriver<N> {
             };
             link.diag.received = link.diag.received.saturating_add(1);
             let in_handshake = link.in_handshake();
+            let challenges_before = link.challenges();
             let result = link
                 .mux
                 .receive_from_peer(datagram, src, now, codecs.wire());
@@ -1238,7 +1311,12 @@ impl<N: ConnectorNet> SessionDriver<N> {
                 Ok((id, _)) => link.conn = id,
                 Err(e) => {
                     link.diag.rejected.add(RejectKind::of(&e));
-                    if in_handshake && carries_challenge(datagram) {
+                    // A challenge the connection acted on and then refused (an unsupported
+                    // codec) is already in its own count.
+                    if in_handshake
+                        && link.challenges() == challenges_before
+                        && carries_challenge(datagram)
+                    {
                         link.diag.challenge_in_rejected =
                             link.diag.challenge_in_rejected.saturating_add(1);
                     }
@@ -1395,11 +1473,17 @@ impl<N: ConnectorNet> SessionDriver<N> {
             tracing::debug!("official session: referral outside world entry ignored");
             return;
         }
+        let form = if addr.ip() == self.login.peer.ip() {
+            RemoteForm::ReferralLoginIp
+        } else {
+            RemoteForm::ReferralOwnIp
+        };
         match Link::new(
             addr,
             &self.codec_uuids,
             self.send_checksum,
             AuthMode::Referral,
+            (form, RemoteName::FromReferral),
             now,
         ) {
             Ok(mut link) => {
@@ -2359,6 +2443,7 @@ impl<N: ConnectorNet> SessionDriver<N> {
         self.entry_messages.clear();
         self.entry_bytes = 0;
         self.stop_refresh();
+        self.log_abandoned_handshakes("cancelled", now);
         for l in self.links_mut() {
             l.end_session(now);
         }
@@ -2371,8 +2456,9 @@ impl<N: ConnectorNet> SessionDriver<N> {
     }
 
     /// Ends the session without sending anything (the network right was revoked: nothing
-    /// could be sent): every connection is closed locally and the chat client dropped.
-    pub fn abandon(&mut self) {
+    /// could be sent): every connection is closed locally and the chat client dropped. A
+    /// connection still in its handshake logs its counts once, at `now`.
+    pub fn abandon(&mut self, now: f64) {
         self.ended = true;
         self.shutting_down = true;
         self.events.clear();
@@ -2381,6 +2467,7 @@ impl<N: ConnectorNet> SessionDriver<N> {
         self.entry_messages.clear();
         self.entry_bytes = 0;
         self.stop_refresh();
+        self.log_abandoned_handshakes("network right revoked", now);
         for l in self.links_mut() {
             l.close_quietly();
         }
@@ -2433,7 +2520,8 @@ impl<N: ConnectorNet> SessionDriver<N> {
             self.handoff.subscription_name(),
             Some(self.handoff.gls_ticket().to_owned()),
             self.client_timestamp,
-        );
+        )
+        .with_send_checksum(self.send_checksum);
         let mut binder = binder;
         let allowance = Arc::clone(&self.chat_allowance);
         let metered: crate::chat_session::client::TransportBinder<Metered<N::Udp>> =

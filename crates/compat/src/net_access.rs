@@ -439,22 +439,77 @@ impl TlsFailure {
     }
 }
 
-/// The TLS kind of an error of the HTTP crate, `None` when it is no TLS failure. A TLS
-/// error of the handshake reaches the HTTP crate as an I/O error of kind `InvalidData` that
-/// wraps the TLS crate's error; its text decides the kind ([`TlsFailure::from_tls_text`]).
-fn tls_failure_of(e: &ureq::Error) -> Option<TlsFailure> {
+/// The variant names of the TLS crate's error type (`rustls::Error`), as its `Debug` form
+/// begins with one. This crate may not name the TLS crate as a dependency
+/// (`official-entry.md` §6.1, OE-T8 (b): only the HTTP crate is listed), so its error
+/// cannot be downcast; its `Debug` form tells it apart from other I/O errors instead.
+const TLS_ERROR_VARIANTS: &[&str] = &[
+    "InappropriateMessage",
+    "InappropriateHandshakeMessage",
+    "InvalidEncryptedClientHello",
+    "InvalidMessage",
+    "NoCertificatesPresented",
+    "UnsupportedNameType",
+    "DecryptError",
+    "EncryptError",
+    "PeerIncompatible",
+    "PeerMisbehaved",
+    "AlertReceived",
+    "InvalidCertificate",
+    "InvalidCertRevocationList",
+    "General",
+    "FailedToGetCurrentTime",
+    "FailedToGetRandomBytes",
+    "HandshakeNotComplete",
+    "PeerSentOversizedRecord",
+    "NoApplicationProtocol",
+    "BadMaxFragmentSize",
+    "InconsistentKeys",
+    "Other",
+];
+
+/// Whether `debug` (an error's `Debug` form) is that of the TLS crate's error type.
+fn is_tls_error_debug(debug: &str) -> bool {
+    TLS_ERROR_VARIANTS.iter().any(|v| {
+        debug
+            .strip_prefix(v)
+            .is_some_and(|rest| rest.is_empty() || rest.starts_with('(') || rest.starts_with(' '))
+    })
+}
+
+/// The kind of a TLS crate error with `Display` text `text`: a certificate kind when the
+/// text says so ([`TlsFailure::from_tls_text`]), else [`TlsFailure::Handshake`].
+fn tls_kind(text: &str) -> TlsFailure {
+    TlsFailure::from_tls_text(text).unwrap_or(TlsFailure::Handshake)
+}
+
+/// The TLS kind of an error of the HTTP crate for a request to an `https://` URL
+/// (`https`), `None` when it is no TLS failure; a plain-HTTP request has none. A TLS error
+/// of the handshake reaches the HTTP crate either as its own TLS variant or as an I/O error
+/// of kind `InvalidData` that wraps the TLS crate's error ([`is_tls_error_debug`] tells it
+/// apart from other `InvalidData` errors); its text decides the kind. The texts are read
+/// here and never kept or logged.
+fn tls_failure_of(e: &ureq::Error, https: bool) -> Option<TlsFailure> {
+    if !https {
+        return None;
+    }
     match e {
         ureq::Error::Tls(_) => Some(TlsFailure::Handshake),
+        ureq::Error::Rustls(inner) => Some(tls_kind(&inner.to_string())),
         ureq::Error::Io(io) if io.kind() == std::io::ErrorKind::InvalidData => {
             let inner = io.get_ref()?;
-            Some(TlsFailure::from_tls_text(&inner.to_string()).unwrap_or(TlsFailure::Handshake))
+            is_tls_error_debug(&format!("{inner:?}")).then(|| tls_kind(&inner.to_string()))
         }
         _ => None,
     }
 }
 
-fn http_failure(e: &ureq::Error) -> LoginError {
-    let tls = tls_failure_of(e);
+/// The login error of a failed request to `url`.
+fn http_failure(e: &ureq::Error, url: &str) -> LoginError {
+    let https = url
+        .get(..8)
+        .is_some_and(|scheme| scheme.eq_ignore_ascii_case("https://"));
+    let tls = tls_failure_of(e, https);
     let reason = match e {
         _ if tls.is_some() => tls.map_or("the request failed", TlsFailure::reason),
         ureq::Error::Timeout(_) => "the request timed out",
@@ -513,7 +568,7 @@ impl HttpClient for HttpsClient {
                 b.send(request.body.as_slice())
             }
         };
-        let mut response = result.map_err(|e| http_failure(&e))?;
+        let mut response = result.map_err(|e| http_failure(&e, &request.url))?;
         let status_code = response.status().as_u16();
         // One allocation of the full bound: `read_to_end` never grows it (the reader stops
         // at the bound), so no partial copy of a body is freed unwiped.
@@ -817,13 +872,23 @@ mod tests {
     }
 
     /// A stand-in for the TLS crate's error inside the HTTP crate's I/O error: its text is
-    /// the TLS crate's (it names the host).
-    #[derive(Debug)]
+    /// the TLS crate's (it names the host), its `Debug` form begins with the TLS error
+    /// type's variant name, as the TLS crate's does.
     struct TlsText(&'static str);
 
     impl std::fmt::Display for TlsText {
         fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
             f.write_str(self.0)
+        }
+    }
+
+    impl std::fmt::Debug for TlsText {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            if self.0.starts_with("invalid peer certificate") {
+                write!(f, "InvalidCertificate({:?})", self.0)
+            } else {
+                write!(f, "AlertReceived({:?})", self.0)
+            }
         }
     }
 
@@ -834,6 +899,57 @@ mod tests {
             std::io::ErrorKind::InvalidData,
             TlsText(text),
         ))
+    }
+
+    /// An `InvalidData` I/O error that is no TLS error (a body that does not decode).
+    #[derive(Debug)]
+    struct BodyError;
+
+    impl std::fmt::Display for BodyError {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.write_str("invalid chunk size")
+        }
+    }
+
+    impl std::error::Error for BodyError {}
+
+    const HTTPS_URL: &str = "https://gls.example.invalid/x";
+    const HTTP_URL: &str = "http://gls.example.invalid/x";
+
+    #[test]
+    fn an_invalid_data_error_is_tls_only_on_https_and_from_the_tls_crate() {
+        // A plain-HTTP request: no TLS kind, whatever the error.
+        let cert = tls_io("invalid peer certificate: UnknownIssuer");
+        assert_eq!(TlsFailure::of(&http_failure(&cert, HTTP_URL)), None);
+        assert_eq!(
+            TlsFailure::of(&http_failure(&ureq::Error::Tls("x"), HTTP_URL)),
+            None
+        );
+        // An `InvalidData` error that is not the TLS crate's, on either scheme.
+        let body = ureq::Error::Io(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            BodyError,
+        ));
+        for url in [HTTP_URL, HTTPS_URL] {
+            let err = http_failure(&body, url);
+            assert_eq!(TlsFailure::of(&err), None, "{url}");
+            let LoginError::ServiceUnavailable { reason } = &err else {
+                panic!("{err:?}");
+            };
+            assert_eq!(reason, "the request failed");
+        }
+        // The same certificate error on HTTPS is one.
+        assert_eq!(
+            TlsFailure::of(&http_failure(&cert, HTTPS_URL)),
+            Some(TlsFailure::UnknownIssuer)
+        );
+        assert!(is_tls_error_debug("InvalidCertificate(UnknownIssuer)"));
+        assert!(is_tls_error_debug(
+            "InappropriateMessage { expect_types: [], got_type: Alert }"
+        ));
+        assert!(is_tls_error_debug("HandshakeNotComplete"));
+        assert!(!is_tls_error_debug("BodyError"));
+        assert!(!is_tls_error_debug("InvalidCertificateX"));
     }
 
     #[test]
@@ -872,7 +988,7 @@ mod tests {
             ),
         ];
         for (text, kind) in cases {
-            let err = http_failure(&tls_io(text));
+            let err = http_failure(&tls_io(text), HTTPS_URL);
             assert_eq!(TlsFailure::of(&err), Some(kind), "{text}");
             let LoginError::ServiceUnavailable { reason } = &err else {
                 panic!("{err:?}");
@@ -880,14 +996,17 @@ mod tests {
             assert!(!reason.contains("example.invalid"), "{reason}");
         }
         assert_eq!(
-            TlsFailure::of(&http_failure(&ureq::Error::Tls("invalid dns name"))),
+            TlsFailure::of(&http_failure(
+                &ureq::Error::Tls("invalid dns name"),
+                HTTPS_URL
+            )),
             Some(TlsFailure::Handshake)
         );
         // Not TLS: a refused connection, a timeout, a name that does not resolve.
         let refused = ureq::Error::Io(std::io::Error::from(std::io::ErrorKind::ConnectionRefused));
-        assert_eq!(TlsFailure::of(&http_failure(&refused)), None);
+        assert_eq!(TlsFailure::of(&http_failure(&refused, HTTPS_URL)), None);
         assert_eq!(
-            TlsFailure::of(&http_failure(&ureq::Error::HostNotFound)),
+            TlsFailure::of(&http_failure(&ureq::Error::HostNotFound, HTTPS_URL)),
             None
         );
         // Every kind has its own reason, read back by `of`.

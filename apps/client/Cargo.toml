@@ -87,6 +87,10 @@ tessera-protocol.workspace = true
 tessera-server.workspace = true
 # A synthetic, empty object store for the scenario resolver's unit tests.
 tessera-wstate.workspace = true
+# The log filter test sends records through the `log` bridge, as the HTTP and TLS crates
+# log (`src/main.rs`; decision 0044 item 3).
+log = "0.4"
+tracing-log = "0.2"
 
 [lints]
 workspace = true

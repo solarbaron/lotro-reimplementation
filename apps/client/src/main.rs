@@ -153,6 +153,46 @@ mod tests {
                 kind = "name mismatch",
                 "official login: HTTPS certificate not valid for the step's address"
             );
+            // The same records as the `log` bridge delivers them (the HTTP and TLS crates
+            // log through `log`; the subscriber's `init` installs the bridge).
+            for (target, level, text) in [
+                (
+                    "rustls_platform_verifier::verification::others",
+                    log::Level::Error,
+                    "bridged: failed to verify TLS certificate: certificate not valid for \
+                     name \"gls.example.invalid\"",
+                ),
+                (
+                    "rustls::conn",
+                    log::Level::Warn,
+                    "bridged: gls.example.invalid alert",
+                ),
+                (
+                    "ureq::unversioned::transport",
+                    log::Level::Trace,
+                    "bridged: connect gls.example.invalid:443",
+                ),
+                (
+                    "ureq_proto::client",
+                    log::Level::Debug,
+                    "bridged: Host: gls.example.invalid",
+                ),
+                ("webpki", log::Level::Error, "bridged: gls.example.invalid"),
+                (
+                    "other_crate::bridge",
+                    log::Level::Info,
+                    "kept: a bridged record",
+                ),
+            ] {
+                let args = format_args!("{text}");
+                let record = log::Record::builder()
+                    .args(args)
+                    .level(level)
+                    .target(target)
+                    .module_path_static(Some(target))
+                    .build();
+                let _ = tracing_log::format_trace(&record);
+            }
         });
         let bytes = buf
             .0
@@ -185,6 +225,12 @@ mod tests {
             // Fully off, errors and warnings included.
             assert!(!logs.contains("fatal alert"), "{rust_log:?}: {logs}");
             assert!(!logs.contains("failed to verify"), "{rust_log:?}: {logs}");
+            // The bridge reaches the subscriber, and the caps hold for its records too.
+            assert!(
+                logs.contains("kept: a bridged record"),
+                "{rust_log:?}: {logs}"
+            );
+            assert!(!logs.contains("bridged:"), "{rust_log:?}: {logs}");
             if rust_log.is_some_and(|s| s.starts_with("trace")) {
                 assert!(
                     logs.contains("kept: not one of the crates"),

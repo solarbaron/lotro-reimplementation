@@ -353,7 +353,7 @@ commit message.
 | `TESSERA_GOLDEN_BLESS_LOCAL=1` | Re-bless tier-2 goldens that differ (never together with `TESSERA_GOLDEN_REQUIRE`; `TESSERA_BLESS` does not touch them) |
 | `TESSERA_SHEET_DIR` | Also copy the pictures a panel test takes to this folder, for judging them by eye |
 | `TESSERA_SEED`, `TESSERA_SAMPLE` | Reproducible sampling in real-data tests |
-| `TESSERA_OFFICIAL_SEND_CHECKSUM` | M8 live-verification aid, off by default: `per-buffer` or `whole-payload` payload checksum on every datagram the client sends to an official server (see "Official session handshake diagnostics" below) |
+| `TESSERA_OFFICIAL_SEND_CHECKSUM` | M8 live-verification aid, off by default: `per-buffer` or `whole-payload` payload checksum on every datagram the client sends to an official server, chat server included (see "Official session handshake diagnostics" below) |
 | `TESSERA_TARGET_DIR` | Used by `tools/dev-setup.sh --fix` to place the build cache |
 | `TESSERA_CLONES_DIR` | Where `tools/fetch-research-clones.sh` puts the research clones (default `${XDG_CACHE_HOME:-~/.cache}/tessera/clones`) |
 | `TESSERA_RE_DIR` | Dirty-room data root for captures, snapshots, Wine prefixes, Ghidra projects (`docs/TOOLING.md` §5; default `~/.cache/tessera/re`). It also holds `tools/rea` and `tools/ghidra-shim` (decision 0033): machine-local, not carried by git; re-create them per `docs/TOOLING.md` §5.4 on a new machine |
@@ -374,28 +374,47 @@ For the owner's live runs (M8 exit criterion 4) the session logs counts and labe
 handshake, never an address, port, account or ticket (`crates/compat/src/connector/diag.rs`):
 
 - `official session: handshake started` (`info`): the bind case of `official-session.md` §3.2
-  (Case A, B or C, as a label), where the local address came from, the `authType` mode of
-  §6.2.1 and the send checksum rule;
+  (Case A, B or C, read back from the bound port, as a label), where the local address came
+  from, the form of the remote address (`remote`: `remoteHost:port`, `remoteHost` with `-p`,
+  `localHost:remoteHost:port`, or for the world connection the referral address with its own
+  IP or the login server's; `remote_name`: literal IPv4 or resolved name), the `authType`
+  mode of §6.2.1 and the send checksum rule;
 - `official session: handshake waiting` (`debug`, every 5 s while a connection is in its
   handshake) and `official session: handshake failed` (`info`, when a connection closes from
-  its handshake, a `HandshakeTimeout` for example): datagrams sent (`SessionAuthHeader` or
-  `ReferralAuthHeader`, retransmits, `ConnectAcceptHeader`), datagrams received from the
-  server's address, refused datagrams by group (checksum, header, routing, size, other),
-  whether a `ConnectChallengeHeader` arrived (acted on, or inside a refused datagram), the
-  state it ended in and datagrams from other addresses.
+  its handshake, a `HandshakeTimeout` for example, or once with `reason=cancelled` or
+  `reason=network right revoked` when the attempt is cancelled or Withdrawn during it):
+  `auth_sent` and `auth_retransmits` (`SessionAuthHeader` or `ReferralAuthHeader`),
+  `accept_sent` and `accept_retransmits` (`ConnectAcceptHeader`), `received` (datagrams from
+  the server's address), `received_ok` (those taken whole), refused datagrams by group
+  (`rejected_checksum`, `_header`, `_routing`, `_size`, `_codec`, `_other`), whether a
+  `ConnectChallengeHeader` arrived from the server's address (`challenge_seen`, `challenges`
+  acted on, `challenge_in_rejected`), the state it ended in, `other_address` (datagrams from
+  other addresses), `challenge_from_other_address` (those carrying a challenge: the server
+  answered, but from another address or port) and `recv_errors` (failed socket reads, which
+  on some systems is how "nobody listens at that port" shows);
+- `official chat session: handshake failed` (`info`): the same counts of the chat-server
+  connection when it closes from its handshake (no endpoint).
 
 `RUST_LOG=info,tessera_compat=debug` shows the waiting lines too.
 
 **Send checksum switch (off by default).** `official-session.md` §4.4.2 gives two rules for
 the payload checksum, the sender's (a sum per header and fragment buffer) and the receiver's
-(one sum over the whole payload), and they differ for some packets; which one the service
-expects is an open spec question (`docs/m8-remediation.md` §15, S §4.4.2). As a
-live-verification aid only, `TESSERA_OFFICIAL_SEND_CHECKSUM` chooses the rule for every
-datagram the client sends: `per-buffer` (the default, the spec's sender rule) or
-`whole-payload`. It is read once per login attempt, before any network operation; any other
-value is refused with a warning and the default is used. The receive rule never changes. The
-rule in use is in the `handshake started` line. Leave it unset unless a handshake times out
-with `received=0` and you are comparing the two rules:
+(one sum over the whole payload); which one the service expects is an open spec question
+(`docs/m8-remediation.md` §15, S §4.4.2). As a live-verification aid only,
+`TESSERA_OFFICIAL_SEND_CHECKSUM` chooses the rule for every datagram the client sends (login,
+world and chat-server connections): exactly `per-buffer` (the default, the spec's sender
+rule) or exactly `whole-payload` (no other case, no surrounding spaces). It is read once per
+login attempt, before any network operation; any other value is refused with a warning that
+does not repeat it, and the default is used. The receive rule never changes. The rule in use
+is in the `handshake started` line.
+
+The two rules give different bytes only for a datagram with two or more buffers, such as a
+`FlowControlHeader` sent with a blob fragment; those first appear once a connection is
+connected (State 5). The handshake's own datagrams (`SessionAuthHeader`, `ReferralAuthHeader`,
+`ConnectAcceptHeader`) have one buffer each and are the same under both rules, so the switch
+cannot help with a timeout in State 1 or 2 (`received=0`, or `state=Some(ChallengeAcceptSent)`).
+Use it when a session connects but its later messages go unanswered (no character list, a
+silence timeout after `connection established`):
 
 ```sh
 TESSERA_OFFICIAL_SEND_CHECKSUM=whole-payload RUST_LOG=info,tessera_compat=debug \

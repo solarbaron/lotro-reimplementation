@@ -122,7 +122,7 @@ fn the_entry_deadline_fires_on_time() {
 #[test]
 fn an_ended_session_has_no_deadline() {
     let (_world, mut d) = driver_at_login(Service::default(), 0);
-    d.abandon();
+    d.abandon(0.0);
     assert!(d.ended());
     // Abandoned: every connection was closed without a word; nothing is timed.
     assert_eq!(d.next_deadline(1.0), None);

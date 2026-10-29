@@ -565,7 +565,7 @@ fuzz_target!(|data: &[u8]| {
         step(&mut driver, now);
     }
     if flags & 0x80 != 0 {
-        driver.abandon();
+        driver.abandon(now);
     } else {
         driver.begin_shutdown(now);
         let _ = driver.shutdown_step(now + 1.0);

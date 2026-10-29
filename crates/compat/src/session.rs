@@ -340,25 +340,20 @@ pub enum SessionError {
         actual: u32,
     },
     /// Source `(IPv4, port)` did not match the existing connection for `recId >= 0x0100` (§10.1 rule 4).
-    /// The text names no address or port: it reaches log lines, which never do (decision
-    /// 0044 item 3).
+    /// It carries no address or port, in its text or its `Debug` form: errors reach log
+    /// lines, which never name one (decision 0044 item 3).
     #[error("source address does not match the peer of recId {rec_id:#06x}")]
     SourceAddressMismatch {
         /// Recipient ID.
         rec_id: u16,
-        /// Expected remote socket address.
-        expected: SocketAddrV4,
-        /// Actual datagram source address.
-        actual: SocketAddrV4,
     },
-    /// No active connection matched the incoming datagram (§3.4). The text names no
-    /// address or port: it reaches log lines, which never do (decision 0044 item 3).
+    /// No active connection matched the incoming datagram (§3.4). It carries no address or
+    /// port, in its text or its `Debug` form: errors reach log lines, which never name one
+    /// (decision 0044 item 3).
     #[error("no connection found for recId {rec_id:#06x}")]
     UnknownRecipient {
         /// Recipient ID.
         rec_id: u16,
-        /// Source socket address.
-        source_addr: SocketAddrV4,
     },
     /// Incoming sequence number exceeds `recvSeqExpected + 0x7FFF` (§5.1, §10.1 rule 5).
     #[error("sequence number {seq_num} exceeds lookahead window from {expected}")]
@@ -1570,14 +1565,13 @@ impl SendChecksumRule {
         }
     }
 
-    /// The rule named `value` ([`Self::label`]; surrounding ASCII whitespace ignored,
-    /// letters compared without regard to ASCII case); `None` for any other value.
+    /// The rule named exactly `value` ([`Self::label`]: no other case, no surrounding
+    /// whitespace); `None` for any other value.
     #[must_use]
     pub fn parse(value: &str) -> Option<Self> {
-        let v = value.trim_matches(|c: char| c.is_ascii_whitespace());
         [Self::PerBuffer, Self::WholePayload]
             .into_iter()
-            .find(|r| r.label().eq_ignore_ascii_case(v))
+            .find(|r| r.label() == value)
     }
 }
 
@@ -4558,8 +4552,10 @@ pub struct HandshakeCounts {
     pub sent: u64,
     /// Datagrams the socket refused to send.
     pub send_failures: u64,
-    /// Received datagrams that passed every §10.1 check.
-    pub accepted: u64,
+    /// Received datagrams that passed every §10.1 check and were taken whole (their
+    /// optional headers acted on and their fragments ingested); a datagram refused at any
+    /// step is not counted.
+    pub received_ok: u64,
 }
 
 /// Per-connection state machine, sequence window, ISAAC generators, and fragmented blob reassembler (§3.4, §5–§8).
@@ -4608,12 +4604,12 @@ pub struct SessionConnection {
 
 impl std::fmt::Debug for SessionConnection {
     // No datagram bytes, credentials, cookies or ISAAC state: queued datagrams may carry the
-    // ticket (`official-login.md` §6.3).
+    // ticket (`official-login.md` §6.3). No peer address either: a `Debug` form can reach a
+    // log line, which never names one (decision 0044 item 3).
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("SessionConnection")
             .field("local_rec_id", &self.local_rec_id)
             .field("server_rec_id", &self.server_rec_id)
-            .field("remote_addr", &self.remote_addr)
             .field("state", &self.state)
             .field("send_seq_num", &self.send_seq_num)
             .field("recv_seq_expected", &self.recv_seq_expected)
@@ -5179,8 +5175,6 @@ impl SessionConnection {
         if source_addr != self.remote_addr {
             return Err(SessionError::SourceAddressMismatch {
                 rec_id: self.local_rec_id,
-                expected: self.remote_addr,
-                actual: source_addr,
             });
         }
 
@@ -5248,7 +5242,6 @@ impl SessionConnection {
         }
 
         // Valid packet accepted: update receive timestamp and flow counter
-        self.counts.accepted = self.counts.accepted.saturating_add(1);
         self.last_recv_time_sec = now_sec;
         self.bytes_received_since_flow = self
             .bytes_received_since_flow
@@ -5277,6 +5270,8 @@ impl SessionConnection {
             }
         }
 
+        // Counted only once the whole datagram was taken (diagnostics, `HandshakeCounts`).
+        self.counts.received_ok = self.counts.received_ok.saturating_add(1);
         Ok(pkt)
     }
 
@@ -5918,7 +5913,6 @@ impl SessionMultiplexer {
             );
             return Err(SessionError::UnknownRecipient {
                 rec_id: header_rec_id,
-                source_addr,
             });
         }
         let by_id = (MIN_LOCAL_REC_ID..=MAX_LOCAL_REC_ID)
@@ -5950,7 +5944,6 @@ impl SessionMultiplexer {
         let Some(key) = target_key else {
             return Err(SessionError::UnknownRecipient {
                 rec_id: header_rec_id,
-                source_addr,
             });
         };
 
@@ -5961,7 +5954,6 @@ impl SessionMultiplexer {
             .remove(&key)
             .ok_or(SessionError::UnknownRecipient {
                 rec_id: header_rec_id,
-                source_addr,
             })?;
         let result = {
             let others = &self.connections;

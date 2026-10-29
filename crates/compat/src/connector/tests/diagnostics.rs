@@ -5,13 +5,14 @@
 
 use super::*;
 use crate::connector::diag::{
-    AuthMode, BindCase, HANDSHAKE_REPORT_SEC, LocalSource, RejectKind, send_checksum_rule,
+    AuthMode, BindCase, HANDSHAKE_REPORT_SEC, LocalSource, RejectKind, RemoteForm, RemoteName,
+    send_checksum_rule,
 };
 use crate::connector::login_phase::{ChainStep, PlainSteps, exchange};
 use crate::net_access::TlsFailure;
 use crate::session::{
-    DisconnectReason as LinkEnd, SendChecksumRule, compute_datagram_checksum,
-    encode_datagram_with_rule,
+    DisconnectReason as LinkEnd, SendChecksumRule, SessionConnection, combine_packet_checksum,
+    compute_datagram_checksum, encode_datagram_with_rule, send_payload_checksum,
 };
 
 /// A log sink for [`logs_of`].
@@ -97,6 +98,8 @@ fn a_handshake_timeout_logs_its_counts_and_no_endpoint() {
     assert!(!r.challenge_seen());
     assert_eq!(r.auth, AuthMode::Ticket);
     assert_eq!(r.local, LocalSource::Routed);
+    assert_eq!(r.remote, RemoteForm::HostPort);
+    assert_eq!(r.remote_name, RemoteName::Resolved);
     assert_eq!(r.send_checksum, SendChecksumRule::PerBuffer);
     // The start line, the waiting lines (debug, every 5 s) and the failure line.
     assert!(
@@ -124,6 +127,10 @@ fn a_handshake_timeout_logs_its_counts_and_no_endpoint() {
         "challenge_seen=false",
         "bind=\"Case C (ephemeral port)\"",
         "local_address=\"routed toward the server\"",
+        "remote=\"remoteHost:port (port in -h)\"",
+        "remote_name=\"name resolved (first IPv4 address)\"",
+        "recv_errors=0",
+        "challenge_from_other_address=0",
         "auth=\"authType 0x40000002 authFlags 0x04 (ticket in extraBlob)\"",
     ] {
         assert!(line.contains(field), "{field} missing: {line}");
@@ -155,6 +162,8 @@ fn a_challenge_with_a_bad_checksum_is_counted_as_seen() {
     let ((r, ended), logs) = logs_of(|| {
         let (world, mut d) = driver_at_login(Service::default(), 0);
         let login = Server::new(0x0111, 1);
+        // Stray traffic from another address is no challenge.
+        world.deliver(vec![0u8; 40], WORLD_SERVER_2);
         let mut bad = login.challenge(1);
         // The checksum's last byte (wire prefix 2 + header bytes 12..16).
         if let Some(b) = bad.get_mut(2 + 15) {
@@ -174,8 +183,11 @@ fn a_challenge_with_a_bad_checksum_is_counted_as_seen() {
     assert_eq!(r.link.challenge_in_rejected, 1);
     assert_eq!(r.counts.challenges, 0);
     assert!(r.challenge_seen());
-    assert_eq!(r.other_address, 1);
+    assert_eq!(r.other_address, 2);
+    // The challenge from the other address is told apart from stray traffic.
+    assert_eq!(r.challenge_from_other_address, 1);
     assert!(logs.contains("challenge_seen=true"), "{logs}");
+    assert!(logs.contains("challenge_from_other_address=1"), "{logs}");
     assert!(logs.contains("rejected_checksum=1"), "{logs}");
     assert_no_endpoint(&logs);
 }
@@ -196,7 +208,7 @@ fn a_timeout_in_state_two_names_that_state() {
     assert_eq!(r.counts.connect_accept, 1);
     assert!(r.counts.connect_accept_retransmits > 0);
     assert_eq!(r.link.received, 1);
-    assert_eq!(r.counts.accepted, 1);
+    assert_eq!(r.counts.received_ok, 1);
     assert!(logs.contains("state=Some(ChallengeAcceptSent)"), "{logs}");
     assert_no_endpoint(&logs);
 }
@@ -216,36 +228,379 @@ fn a_connected_session_logs_no_handshake_failure() {
     assert_no_endpoint(&logs);
 }
 
+/// The client's outgoing ISAAC masks of a connection seeded by [`Server::challenge`]
+/// (its `outgoing_seed`), the first `n`.
+fn client_masks(n: usize) -> Vec<u32> {
+    let mut isaac = IsaacCipher::from_seed(0xCAFE_1234);
+    (0..n).map(|_| isaac.next_mask()).collect()
+}
+
+/// Which `payloadSum` rules `datagram`'s checksum fits: `(whole payload, per buffer)`. A
+/// masked checksum fits a rule when one of `masks` makes it.
+fn rules_fitting(datagram: &[u8], masks: &[u32]) -> (bool, bool) {
+    let pkt = decode_datagram(datagram, false, None, false).expect("decodes");
+    let whole = compute_datagram_checksum(&pkt.raw_payload);
+    let per = send_payload_checksum(&pkt.opt_headers, &pkt.fragments).expect("re-encodes");
+    let fits = |sum: u32| {
+        if pkt.header.flags & crate::session::FLAG_MASKED_CHECKSUM == 0 {
+            combine_packet_checksum(pkt.header, sum, None).ok() == Some(pkt.header.checksum)
+        } else {
+            masks.iter().any(|m| {
+                combine_packet_checksum(pkt.header, sum, Some(*m)).ok() == Some(pkt.header.checksum)
+            })
+        }
+    };
+    (fits(whole), fits(per))
+}
+
+/// A connected session on the send checksum `rule` that sends traffic with two or more
+/// buffers: every datagram the client sent to the login server, and the logs.
+fn connected_traffic(rule: SendChecksumRule) -> (Vec<Vec<u8>>, String) {
+    let mut start = session_start(0, None, Arc::default());
+    start.send_checksum = rule;
+    let (sent, logs) = logs_of(|| {
+        let (world, mut d, mut login) = driver_at_characters_from(Service::default(), start);
+        // At least 1,400 bytes received, then a blob sent a second later: it carries a
+        // `FlowControlHeader` (6 bytes) before its fragment (`official-session.md` §5.5),
+        // two buffers whose sums differ by the two rules.
+        for _ in 0..30 {
+            world.deliver(login.event(0x6C, &character_list()), LOGIN_SERVER);
+        }
+        d.step(0.2, true, &go);
+        let _ = d.take_events();
+        d.command(
+            &Command::EnterWorld {
+                character: "Aldo".to_owned(),
+            },
+            1.2,
+        )
+        .expect("enter");
+        let mut t = 1.2;
+        while t < 6.0 {
+            d.step(t, true, &go);
+            let _ = d.take_events();
+            t += 0.5;
+        }
+        world.take_sent()
+    });
+    let sent = sent
+        .into_iter()
+        .filter(|(_, to)| *to == LOGIN_SERVER)
+        .map(|(d, _)| d)
+        .collect();
+    (sent, logs)
+}
+
 #[test]
 fn the_whole_payload_rule_reaches_every_datagram_sent() {
-    let mut start = session_start(0, None, Arc::default());
-    start.send_checksum = SendChecksumRule::WholePayload;
-    let ((world, d), logs) = logs_of(|| {
-        let world = new_world(Service::default());
-        let mut net = FakeNet(world.clone());
-        let mut d = SessionDriver::start(&mut net, start, 0.0, &go).expect("start");
-        let login = Server::new(0x0111, 1);
-        world.deliver(login.challenge(1), LOGIN_SERVER);
-        run_until(&mut d, 0.0, 3.0);
-        (world, d)
-    });
-    let r = d.handshake_report(false, 3.0).expect("report");
-    assert_eq!(r.send_checksum, SendChecksumRule::WholePayload);
+    let masks = client_masks(4096);
+    let (whole_run, logs) = connected_traffic(SendChecksumRule::WholePayload);
     assert!(logs.contains("send_checksum=\"whole-payload\""), "{logs}");
-    // Every unsequenced datagram the client sent verifies by the receive rule (the
-    // whole-payload sum), so the switch is applied on send.
-    let sent = world.take_sent();
-    assert!(sent.len() >= 3, "{}", sent.len());
-    for (dgram, to) in &sent {
-        assert_eq!(*to, LOGIN_SERVER);
-        let pkt = decode_datagram(dgram, false, None, false).expect("decodes");
-        if pkt.header.flags & crate::session::FLAG_MASKED_CHECKSUM == 0 {
-            let payload_sum = compute_datagram_checksum(&pkt.raw_payload);
-            let expected = crate::session::combine_packet_checksum(pkt.header, payload_sum, None)
-                .expect("sum");
-            assert_eq!(pkt.header.checksum, expected);
+    let (per_run, _) = connected_traffic(SendChecksumRule::PerBuffer);
+    assert!(whole_run.len() >= 4, "{}", whole_run.len());
+    // Every datagram of each run fits its own rule.
+    for (i, dgram) in whole_run.iter().enumerate() {
+        assert!(rules_fitting(dgram, &masks).0, "whole-payload datagram {i}");
+    }
+    for (i, dgram) in per_run.iter().enumerate() {
+        assert!(rules_fitting(dgram, &masks).1, "per-buffer datagram {i}");
+    }
+    // And the rules differ for some of them: the switch changed bytes on the wire.
+    let differing = whole_run
+        .iter()
+        .filter(|d| rules_fitting(d, &masks) == (true, false))
+        .count();
+    assert!(differing > 0, "no datagram where the rules differ");
+    let per_differing = per_run
+        .iter()
+        .filter(|d| rules_fitting(d, &masks) == (false, true))
+        .count();
+    assert!(per_differing > 0);
+}
+
+/// The handshake datagrams of a connection on `rule`: the `SessionAuthHeader`, the
+/// `ConnectAcceptHeader` after a challenge and, on a second connection, the
+/// `ReferralAuthHeader`.
+fn handshake_datagrams(rule: SendChecksumRule) -> Vec<Vec<u8>> {
+    let start = session_start(0, None, Arc::default());
+    let auth = start.handoff.session_auth_header(1_000).expect("auth");
+    let mut out = Vec::new();
+    let mut conn = SessionConnection::new(0x0100, LOGIN_SERVER, 0.0);
+    conn.set_send_checksum_rule(rule);
+    conn.start_login(auth, 0.0).expect("login");
+    while let Some(d) = conn.pop_outbound_datagram() {
+        out.push(d);
+    }
+    let login = Server::new(0x0111, 1);
+    conn.receive_datagram(&login.challenge(1), LOGIN_SERVER, 0.5, Default::default())
+        .expect("challenge");
+    while let Some(d) = conn.pop_outbound_datagram() {
+        out.push(d);
+    }
+    let mut world = SessionConnection::new(0x0101, WORLD_SERVER, 0.0);
+    world.set_send_checksum_rule(rule);
+    world
+        .start_world_login(0x0102_0304_0506_0708, 0.0)
+        .expect("referral");
+    while let Some(d) = world.pop_outbound_datagram() {
+        out.push(d);
+    }
+    out
+}
+
+#[test]
+fn the_handshake_datagrams_are_the_same_under_both_rules() {
+    // One buffer each: the two rules give the same sum, so the switch cannot change a
+    // State-1 or State-2 timeout (`super::super::diag` "The send checksum switch").
+    let per = handshake_datagrams(SendChecksumRule::PerBuffer);
+    let whole = handshake_datagrams(SendChecksumRule::WholePayload);
+    assert_eq!(per.len(), 3);
+    assert_eq!(per, whole);
+    let kinds: Vec<(bool, bool, bool)> = per
+        .iter()
+        .map(|d| {
+            let o = decode_datagram(d, false, None, false)
+                .expect("decodes")
+                .opt_headers;
+            (
+                o.session_auth.is_some(),
+                o.connect_accept.is_some(),
+                o.referral_auth.is_some(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        kinds,
+        [
+            (true, false, false),
+            (false, true, false),
+            (false, false, true)
+        ]
+    );
+}
+
+#[test]
+fn the_chat_connection_uses_the_send_checksum_rule() {
+    for rule in [SendChecksumRule::WholePayload, SendChecksumRule::PerBuffer] {
+        let mut start = session_start(0, Some(CHAT_SERVER), Arc::default());
+        start.send_checksum = rule;
+        let (world, mut d, mut login) = driver_at_characters_from(
+            Service {
+                chat_socket: true,
+                ..Service::default()
+            },
+            start,
+        );
+        d.command(
+            &Command::EnterWorld {
+                character: "Aldo".to_owned(),
+            },
+            1.0,
+        )
+        .expect("enter");
+        world.deliver(login.event(0x90, &session_ready()), LOGIN_SERVER);
+        d.step(1.1, true, &go);
+        let (player, name) = d.wants_chat(1.2).expect("the chat session is due");
+        let net = FakeNet(world.clone());
+        d.attach_chat(net.chat_binder().expect("binder"), player, &name, 1.2, &go);
+        d.step(2.3, true, &go);
+        let mut chat = Server::new(0x0111, 0xBEEF_0003);
+        world.deliver_chat(chat.challenge(0xBEEF_0003));
+        world.deliver_chat(chat.control(OptionalHeaders {
+            cumulative_ack: Some(0),
+            ..OptionalHeaders::default()
+        }));
+        let status = crate::chat_session::events::ChatEvent::LoginStatus { status: 0 };
+        world.deliver_chat(chat.event(status.opcode(), &status.encode().expect("status")));
+        // Rooms worth more than 1,400 bytes, then silence until the heartbeat (15 s idle):
+        // the heartbeat's blob carries a `FlowControlHeader` before its fragment.
+        for i in 0..60 {
+            let add = crate::chat_session::events::ChatEvent::AddRoom {
+                notice_flags: 0,
+                room: crate::chat_session::wire::ChatRoomDescriptor::new(
+                    crate::chat_session::wire::DescriptorKind::UserRoom,
+                    0,
+                    format!("room{i}"),
+                ),
+            };
+            let inner = add.encode().expect("event");
+            world.deliver_chat(chat.event(add.opcode(), &inner));
+        }
+        let mut t = 2.4;
+        while t < 20.0 {
+            d.step(t, true, &go);
+            let _ = d.take_events();
+            t += 0.5;
+        }
+        let masks = client_masks(4096);
+        let chat_sent: Vec<Vec<u8>> = world
+            .take_sent()
+            .into_iter()
+            .filter(|(_, to)| *to == CHAT_SERVER)
+            .map(|(d, _)| d)
+            .collect();
+        assert!(chat_sent.len() > 3, "{}", chat_sent.len());
+        let fits: Vec<(bool, bool)> = chat_sent.iter().map(|d| rules_fitting(d, &masks)).collect();
+        match rule {
+            SendChecksumRule::WholePayload => {
+                assert!(fits.iter().all(|f| f.0), "{fits:?}");
+                assert!(fits.contains(&(true, false)), "{fits:?}");
+            }
+            SendChecksumRule::PerBuffer => {
+                assert!(fits.iter().all(|f| f.1), "{fits:?}");
+                assert!(fits.contains(&(false, true)), "{fits:?}");
+            }
         }
     }
+}
+
+/// A `ConnectChallengeHeader` naming `codec_uuid`.
+fn challenge_with_codec(codec_uuid: [u8; 16]) -> Vec<u8> {
+    let opt = OptionalHeaders {
+        connect_challenge: Some(ConnectChallengeHeader {
+            server_time: 1.0,
+            assigned_client_rec_id: 0x0111,
+            server_rec_id: 0x0222,
+            outgoing_seed: 0xCAFE_1234,
+            incoming_seed: 1,
+            reserved_dword_14: 0,
+            client_conn_idx: 4,
+            reserved_word_1a: 0,
+            codec_uuid,
+        }),
+        ..OptionalHeaders::default()
+    };
+    encode_datagram(
+        DatagramHeader {
+            rec_id: 0x0111,
+            ..DatagramHeader::default()
+        },
+        &opt,
+        &[],
+        None,
+        None,
+    )
+    .expect("challenge")
+}
+
+#[test]
+fn an_unsupported_codec_challenge_is_counted_once() {
+    let ((r, ended), logs) = logs_of(|| {
+        let (world, mut d) = driver_at_login(Service::default(), 0);
+        world.deliver(challenge_with_codec([7u8; 16]), LOGIN_SERVER);
+        d.step(0.0, true, &go);
+        (d.handshake_report(false, 0.0).expect("report"), d.ended())
+    });
+    assert!(ended);
+    assert_eq!(r.link.received, 1);
+    assert_eq!(r.counts.challenges, 1);
+    assert_eq!(r.counts.received_ok, 0);
+    assert_eq!(r.link.rejected.codec, 1);
+    assert_eq!(r.link.rejected.total(), 1);
+    assert_eq!(r.link.challenge_in_rejected, 0);
+    assert!(r.challenge_seen());
+    let failed: Vec<&str> = logs
+        .lines()
+        .filter(|l| l.contains("official session: handshake failed"))
+        .collect();
+    assert_eq!(failed.len(), 1, "{logs}");
+    let line = failed.first().copied().unwrap_or_default();
+    for field in [
+        "reason=UnsupportedCodec",
+        "received_ok=0",
+        "rejected_codec=1",
+        "rejected_other=0",
+        "challenges=1",
+        "challenge_in_rejected=0",
+    ] {
+        assert!(line.contains(field), "{field} missing: {line}");
+    }
+    assert_no_endpoint(&logs);
+}
+
+#[test]
+fn a_cancel_during_the_handshake_logs_its_counts_once() {
+    let ((), logs) = logs_of(|| {
+        let (_world, mut d) = driver_at_login(Service::default(), 0);
+        run_until(&mut d, 0.0, 10.0);
+        d.begin_shutdown(10.0);
+        let mut t = 10.0;
+        while d.shutdown_step(t) && t < 40.0 {
+            t += 0.5;
+        }
+        d.begin_shutdown(t);
+    });
+    let failed: Vec<&str> = logs
+        .lines()
+        .filter(|l| l.contains("official session: handshake failed"))
+        .collect();
+    assert_eq!(failed.len(), 1, "{logs}");
+    let line = failed.first().copied().unwrap_or_default();
+    for field in [
+        " INFO ",
+        "reason=cancelled",
+        "state=Some(SessionAuthSent)",
+        "auth_retransmits=5",
+    ] {
+        assert!(line.contains(field), "{field} missing: {line}");
+    }
+    assert_no_endpoint(&logs);
+}
+
+#[test]
+fn a_revoked_right_during_the_handshake_logs_its_counts_once() {
+    let ((), logs) = logs_of(|| {
+        let (_world, mut d) = driver_at_login(Service::default(), 0);
+        run_until(&mut d, 0.0, 3.0);
+        d.abandon(3.0);
+        d.abandon(3.5);
+    });
+    let failed: Vec<&str> = logs
+        .lines()
+        .filter(|l| l.contains("official session: handshake failed"))
+        .collect();
+    assert_eq!(failed.len(), 1, "{logs}");
+    assert!(
+        failed
+            .first()
+            .is_some_and(|l| l.contains("reason=network right revoked")),
+        "{logs}"
+    );
+    assert_no_endpoint(&logs);
+}
+
+#[test]
+fn socket_read_errors_are_counted() {
+    let ((), logs) = logs_of(|| {
+        let (world, mut d) = driver_at_login(Service::default(), 0);
+        world.fail_reads(2);
+        d.step(0.5, true, &go);
+        d.step(1.0, true, &go);
+        d.step(1.5, true, &go);
+        let r = d.handshake_report(false, 1.5).expect("report");
+        assert_eq!(r.recv_errors, 2);
+        run_until(&mut d, 2.0, 21.0);
+    });
+    assert!(logs.contains("recv_errors=2"), "{logs}");
+}
+
+#[test]
+fn errors_and_links_print_no_address_in_debug() {
+    let texts = [
+        format!("{:?}", SessionError::UnknownRecipient { rec_id: 0x100 }),
+        format!(
+            "{:?}",
+            SessionError::SourceAddressMismatch { rec_id: 0x100 }
+        ),
+        format!("{:?}", SessionConnection::new(0x0100, LOGIN_SERVER, 0.0)),
+    ];
+    for t in &texts {
+        assert!(!t.contains("192.0.2."), "{t}");
+        assert!(!t.contains("9001"), "{t}");
+    }
+    let (_world, d) = driver_at_login(Service::default(), 0);
+    let t = format!("{d:?}");
+    assert!(!t.contains("192.0.2."), "{t}");
 }
 
 #[test]
@@ -305,10 +660,20 @@ fn the_switch_reads_two_names_and_refuses_the_rest() {
             SendChecksumRule::PerBuffer
         );
         assert_eq!(
-            send_checksum_rule(Some(OsStr::new(" Whole-Payload "))),
+            send_checksum_rule(Some(OsStr::new("whole-payload"))),
             SendChecksumRule::WholePayload
         );
-        for bad in ["", "whole", "wholepayload", "1", "per_buffer"] {
+        // Exactly the two names: no other case, no surrounding spaces.
+        for bad in [
+            "",
+            "whole",
+            "wholepayload",
+            "1",
+            "per_buffer",
+            " whole-payload",
+            "Whole-Payload",
+            "PER-BUFFER",
+        ] {
             assert_eq!(
                 send_checksum_rule(Some(OsStr::new(bad))),
                 SendChecksumRule::PerBuffer,
@@ -318,12 +683,12 @@ fn the_switch_reads_two_names_and_refuses_the_rest() {
     });
     assert_eq!(
         logs.matches("unknown send checksum rule refused").count(),
-        5,
+        8,
         "{logs}"
     );
     assert!(logs.contains(" WARN "), "{logs}");
     assert!(
-        !logs.contains("per_buffer"),
+        !logs.contains("per_buffer") && !logs.contains("PER-BUFFER"),
         "the value is not logged: {logs}"
     );
 }
@@ -366,6 +731,18 @@ fn the_bind_case_is_read_from_the_bound_port() {
     ] {
         assert!(case.label().starts_with("Case "));
     }
+    assert!(BindCase::Unknown.label().starts_with("unknown"));
+    assert_eq!(RemoteForm::of_host(true, true), RemoteForm::LocalHostPort);
+    assert_eq!(RemoteForm::of_host(false, true), RemoteForm::HostPort);
+    assert_eq!(
+        RemoteForm::of_host(false, false),
+        RemoteForm::HostWithPortOption
+    );
+    assert_eq!(RemoteName::of_host("192.0.2.10"), RemoteName::LiteralIpv4);
+    assert_eq!(
+        RemoteName::of_host("login.example.invalid"),
+        RemoteName::Resolved
+    );
 }
 
 #[test]
@@ -391,11 +768,12 @@ fn modes_and_refusals_are_grouped() {
         RejectKind::Size
     );
     assert_eq!(
-        kind(SessionError::UnknownRecipient {
-            rec_id: 0x100,
-            source_addr: LOGIN_SERVER
-        }),
+        kind(SessionError::UnknownRecipient { rec_id: 0x100 }),
         RejectKind::Routing
+    );
+    assert_eq!(
+        kind(SessionError::UnsupportedCodecUuid { uuid: [1; 16] }),
+        RejectKind::Codec
     );
     assert_eq!(
         kind(SessionError::InvalidHeaderFlags { flags: 1 }),
@@ -408,24 +786,6 @@ fn modes_and_refusals_are_grouped() {
         }),
         RejectKind::Other
     );
-    // The two errors that carry addresses name none in their text.
-    let texts = [
-        SessionError::UnknownRecipient {
-            rec_id: 0x100,
-            source_addr: LOGIN_SERVER,
-        }
-        .to_string(),
-        SessionError::SourceAddressMismatch {
-            rec_id: 0x100,
-            expected: LOGIN_SERVER,
-            actual: WORLD_SERVER,
-        }
-        .to_string(),
-    ];
-    for t in texts {
-        assert!(!t.contains("192.0.2."), "{t}");
-        assert!(!t.contains("9001") && !t.contains("9100"), "{t}");
-    }
     let _ = LinkEnd::HandshakeTimeout;
 }
 

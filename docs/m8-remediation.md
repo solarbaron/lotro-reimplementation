@@ -906,3 +906,20 @@ From the owner's live run L2 (2026-10-29, handshake diagnostics):
   the client must send (iteration, table, ids: the §4.2 question), the SessionAuthHeader layout and
   the account-name form, or the local port rules. Settling these needs an observation of the
   official client's first datagram (dirty room).
+- **The first datagram (audit 2026-10-29):** Tessera's first datagram to the world login server
+  matches `official-session.md` §4.1-§4.4 and §6.2-§6.2.1 byte for byte (2-byte prefix 0x0000,
+  20-byte header, SessionAuthHeader with `"180804\0"`, authBlockPaddedLen 180 for a 177-byte block,
+  authType 0x40000002, authFlags 0x04, Unix-seconds clientTimestamp, the subscription name as a
+  VariableU32-counted UTF-16LE string, the Base64-decoded ticket as extraBlob, zero padding), and
+  both checksum readings give the same bytes for it (one buffer). The live run (a second run with
+  `TESSERA_OFFICIAL_SEND_CHECKSUM=whole-payload` too) got no answer, and the owner's machine has no
+  inbound filter while the official client works there. So a fact the code follows is probably
+  wrong or missing in the spec. To check against the official client's first datagram, most likely
+  first: (1) DatagramHeader `iteration` and `table` (Tessera sends 0, 0; §4.2 gives no value);
+  (2) whether the SessionAuthHeader's pieces (7-byte magic, 4-byte length, block) are summed as
+  separate checksum buffers; (3) whether the network-version literal is the constant `"180804"`
+  or comes from the install's netver; (4) whether authBlockPaddedLen is the padded or the unpadded
+  length; (5) whether extraBlob carries the decoded ticket bytes or the Base64 text; (6) the
+  DatagramHeader `time` origin; (7) whether the UDP login needs a TakeANumber `Ready` first even
+  when `<queueurls>` is empty, and the local port rules (`Net.ComputeUniquePort`, `Net.BindInterface`,
+  SO_SNDBUF of §3.1, which the code does not set).

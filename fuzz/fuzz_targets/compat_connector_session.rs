@@ -376,6 +376,7 @@ fn start(net: &mut Net, flags: u8) -> Option<SessionDriver<Net>> {
         codec_uuids,
         schema: SchemaView(Arc::new(NoData)),
         cancel: Arc::new(AtomicBool::new(flags & 0x40 != 0)),
+        send_checksum: Default::default(),
     };
     SessionDriver::start(net, start, 0.0, &|| false).ok()
 }
@@ -564,7 +565,7 @@ fuzz_target!(|data: &[u8]| {
         step(&mut driver, now);
     }
     if flags & 0x80 != 0 {
-        driver.abandon();
+        driver.abandon(now);
     } else {
         driver.begin_shutdown(now);
         let _ = driver.shutdown_step(now + 1.0);

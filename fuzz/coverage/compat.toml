@@ -126,6 +126,14 @@ entry = [
 input = "network"
 target = "compat_session_packet"
 
+# The send checksum switch: the value of TESSERA_OFFICIAL_SEND_CHECKSUM (connector::diag).
+[[parser]]
+crate = "tessera-compat"
+file = "crates/compat/src/session.rs"
+entry = "tessera_compat::session::SendChecksumRule::parse"
+input = "other"
+target = "compat_session_packet"
+
 [[parser]]
 crate = "tessera-compat"
 file = "crates/compat/src/session.rs"

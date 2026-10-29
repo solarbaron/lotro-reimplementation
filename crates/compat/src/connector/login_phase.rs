@@ -47,7 +47,11 @@
 //! Each step that went over plain HTTP logs one `info` line, `official login: step over
 //! plain HTTP` with `step=` only ([`ChainStep::label`]), once per step per login, when the
 //! plain request is actually made ([`PlainSteps`]); no host, path or account is ever
-//! logged.
+//! logged. A step whose HTTPS request failed its TLS handshake or certificate check logs
+//! one `info` line too, once per step per login: `official login: HTTPS certificate not
+//! valid for the step's address` (or `... HTTPS handshake failed ...`) with `step=` and
+//! `kind=` ([`TlsFailure::label`]) only. The TLS crates' own records name the host; the
+//! client's log filter turns them off.
 
 use std::collections::HashSet;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -69,6 +73,8 @@ use crate::login::{
     build_leave_queue_request, build_take_a_number_request, build_world_status_request,
     parse_get_datacenters_response, parse_login_account_response, soap_encoder, zeroize_vec,
 };
+
+use crate::net_access::TlsFailure;
 
 use super::data::LocalInputs;
 use super::net::https_form;
@@ -229,14 +235,17 @@ impl ChainStep {
 pub const MAX_PLAIN_HOSTS: usize = 64;
 
 /// What one login learned about plain HTTP (module docs): the steps that went over plain
-/// HTTP, each logged once, and the hosts whose HTTPS form was not reached. Clones share
-/// the record (the ticket refresh runs on a thread of its own).
+/// HTTP, each logged once, the steps whose HTTPS request failed its TLS handshake or
+/// certificate check, each logged once, and the hosts whose HTTPS form was not reached.
+/// Clones share the record (the ticket refresh runs on a thread of its own).
 #[derive(Debug, Clone, Default)]
 pub struct PlainSteps(Arc<PlainRecord>);
 
 #[derive(Debug, Default)]
 struct PlainRecord {
     steps: [AtomicBool; ChainStep::ALL.len()],
+    /// The steps whose HTTPS request failed a TLS check (logged once each).
+    tls: [AtomicBool; ChainStep::ALL.len()],
     /// Hosts (ASCII lower case, [`super::net::HttpsUrl::host`]) whose HTTPS form failed
     /// before the request was sent; at most [`MAX_PLAIN_HOSTS`].
     hosts: Mutex<HashSet<String>>,
@@ -258,6 +267,42 @@ impl PlainSteps {
     pub fn went_plain(&self, step: ChainStep) -> bool {
         self.0
             .steps
+            .get(step.index())
+            .is_some_and(|f| f.load(Ordering::SeqCst))
+    }
+
+    /// `step`'s HTTPS request failed with `err`: when that was a TLS failure, the one `info`
+    /// line of the step in this login, with the step's name and the failure's kind only
+    /// ([`TlsFailure::label`]), never the host, the address or the TLS crate's text (decision
+    /// 0044 item 3).
+    pub fn note_tls(&self, step: ChainStep, err: &LoginError) {
+        let Some(kind) = TlsFailure::of(err) else {
+            return;
+        };
+        if let Some(flag) = self.0.tls.get(step.index())
+            && !flag.swap(true, Ordering::SeqCst)
+        {
+            if kind.is_certificate() {
+                tracing::info!(
+                    step = step.label(),
+                    kind = kind.label(),
+                    "official login: HTTPS certificate not valid for the step's address"
+                );
+            } else {
+                tracing::info!(
+                    step = step.label(),
+                    kind = kind.label(),
+                    "official login: HTTPS handshake failed for the step's address"
+                );
+            }
+        }
+    }
+
+    /// Whether `step`'s HTTPS request failed a TLS check in this login.
+    #[must_use]
+    pub fn tls_failed(&self, step: ChainStep) -> bool {
+        self.0
+            .tls
             .get(step.index())
             .is_some_and(|f| f.load(Ordering::SeqCst))
     }
@@ -315,11 +360,21 @@ pub fn exchange(
     };
     if !at.upgraded {
         req.url = at.url;
-        return http.execute(req);
+        let result = http.execute(req);
+        if let Err(e) = &result {
+            plain.note_tls(step, e);
+        }
+        return result;
     }
     if !plain.host_unreached(&at.host) {
         req.url = at.url;
-        match http.execute(req) {
+        let result = http.execute(req);
+        if let Err(e) = &result {
+            // A TLS failure is logged by kind once per step, whether or not it lets the
+            // step ask the address as given.
+            plain.note_tls(step, e);
+        }
+        match result {
             Err(e) if e.is_unreached() => {
                 // The kind only, never the address.
                 tracing::debug!(
